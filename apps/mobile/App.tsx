@@ -7,9 +7,24 @@ import HomeScreen from "./src/screens/HomeScreen";
 import AddExpenseScreen from "./src/screens/AddExpenseScreen";
 import HistoryScreen from "./src/screens/HistoryScreen";
 import SettingsScreen from "./src/screens/SettingsScreen";
+import GroupDetailScreen from "./src/screens/GroupDetailScreen";
+import ExpenseInsightsScreen from "./src/screens/ExpenseInsightsScreen"; // Import ExpenseInsightsScreen
+import { Expense } from "./src/types";
 
-const Tab = createBottomTabNavigator();
-const Stack = createStackNavigator();
+// Define RootStackParamList
+export type RootStackParamList = {
+  Main: undefined; // For the Tab Navigator
+  AddExpense: { expense?: Expense } | undefined;
+  GroupDetail: { groupId: string };
+  ExpenseInsights: {
+    contextType: "personal" | "group";
+    contextId: string;
+    initialDate?: Date;
+  };
+};
+
+const Tab = createBottomTabNavigator(); // Tab navigator type can be inferred or defined separately if needed
+const Stack = createStackNavigator<RootStackParamList>(); // Use RootStackParamList
 
 function MainTabs() {
   return (
@@ -30,7 +45,16 @@ export default function App() {
           component={MainTabs}
           options={{ headerShown: false }}
         />
-        <Stack.Screen name="AddExpense" component={AddExpenseScreen} />
+        <Stack.Screen
+          name="AddExpense"
+          component={AddExpenseScreen}
+          options={{ title: "Add/Edit Expense" }}
+        />
+        <Stack.Screen name="GroupDetail" component={GroupDetailScreen} />
+        <Stack.Screen
+          name="ExpenseInsights"
+          component={ExpenseInsightsScreen}
+        />
       </Stack.Navigator>
     </NavigationContainer>
   );
