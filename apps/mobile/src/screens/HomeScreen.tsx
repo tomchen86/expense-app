@@ -12,6 +12,7 @@ import { useExpenseStore } from "../store/expenseStore";
 import { Expense, Participant, ExpenseGroup, UserSettings } from "../types";
 
 import ExpenseListItem from "../components/ExpenseListItem";
+import FloatingActionButton from "../components/FloatingActionButton"; // Import FAB
 import { calculateUserShare } from "../utils/expenseCalculations";
 
 type RootStackParamList = {
@@ -95,6 +96,7 @@ const HomeScreen = () => {
       <ExpenseListItem
         item={item}
         group={groupForDisplay ?? null}
+        allParticipants={participants} // Pass allParticipants
         displayAmount={userShare}
         onEdit={handleEdit}
         onDelete={handleDelete}
@@ -104,12 +106,7 @@ const HomeScreen = () => {
 
   return (
     <View style={styles.container}>
-      <TouchableOpacity
-        style={styles.addButton}
-        onPress={() => navigation.navigate("AddExpense")}
-      >
-        <Text style={styles.addButtonText}>Add New Expense</Text>
-      </TouchableOpacity>
+      {/* Removed old AddButton */}
 
       <TouchableOpacity
         onPress={() => {
@@ -142,6 +139,7 @@ const HomeScreen = () => {
           style={styles.list}
         />
       )}
+      <FloatingActionButton />
     </View>
   );
 };
@@ -152,24 +150,7 @@ const styles = StyleSheet.create({
     padding: 20,
     backgroundColor: "#f5f5f5",
   },
-  addButton: {
-    backgroundColor: "#007bff",
-    paddingVertical: 15,
-    paddingHorizontal: 20,
-    borderRadius: 8,
-    alignItems: "center",
-    marginBottom: 20,
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.23,
-    shadowRadius: 2.62,
-    elevation: 4,
-  },
-  addButtonText: {
-    color: "#ffffff",
-    fontSize: 18,
-    fontWeight: "bold",
-  },
+  // addButton and addButtonText styles removed as the button is replaced by FAB
   totalExpensesContainer: {
     backgroundColor: "#ffffff",
     padding: 15,

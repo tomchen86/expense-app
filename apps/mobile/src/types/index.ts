@@ -28,6 +28,7 @@ export interface Expense {
   groupId?: string; // Reference to the group this expense belongs to
   paidBy?: string; // Participant ID who paid
   splitBetween?: string[]; // Participant IDs to split the expense between
+  participants?: Participant[]; // Participants involved in this expense
 }
 
 export interface UserSettings {

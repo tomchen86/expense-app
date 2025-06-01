@@ -63,7 +63,9 @@ const DatePicker: React.FC<DatePickerProps> = ({
         style={styles.touchable}
       >
         <Text style={[styles.valueText, valueStyle]}>
-          {date.toLocaleDateString()} {/* Display formatted date */}
+          {`${date.getFullYear()}-${(date.getMonth() + 1)
+            .toString()
+            .padStart(2, "0")}-${date.getDate().toString().padStart(2, "0")}`}
         </Text>
       </TouchableOpacity>
 
@@ -77,6 +79,7 @@ const DatePicker: React.FC<DatePickerProps> = ({
             mode={"date"}
             display={Platform.OS === "ios" ? "spinner" : "default"} // 'spinner' looks better on iOS modal
             onChange={handleDateChange}
+            maximumDate={new Date()} // Prevent selecting future dates
             {...rest} // Apply remaining props
           />
         </>

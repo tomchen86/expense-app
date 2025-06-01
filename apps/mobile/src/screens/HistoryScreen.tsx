@@ -15,6 +15,7 @@ import { ExpenseGroup, Participant, Expense } from "../types"; // Add Expense ty
 // Import reusable components and utils
 import GroupListItem from "../components/GroupListItem";
 import TextInputModal from "../components/TextInputModal";
+import FloatingActionButton from "../components/FloatingActionButton"; // Import FAB
 import { calculateGroupTotal } from "../utils/groupCalculations";
 
 // Define navigation param list (ideally move to central types)
@@ -188,6 +189,7 @@ const HistoryScreen = () => {
           setGroupToAddParticipantTo(null); // Clear context on close
         }}
       />
+      <FloatingActionButton />
     </View>
   );
 };

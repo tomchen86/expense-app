@@ -1,10 +1,11 @@
 import React from "react";
 import { View, Text, TouchableOpacity, StyleSheet, Alert } from "react-native";
-import { Expense, ExpenseGroup } from "../types"; // Import necessary types
+import { Expense, ExpenseGroup, Participant } from "../types"; // Import necessary types
 
 interface ExpenseListItemProps {
   item: Expense;
   group: ExpenseGroup | null;
+  allParticipants: Participant[]; // Add allParticipants prop
   displayAmount: number; // Add prop for the amount to display (user's share)
   onEdit: (expense: Expense) => void;
   onDelete: (expenseId: string) => void;
@@ -13,10 +14,17 @@ interface ExpenseListItemProps {
 const ExpenseListItem: React.FC<ExpenseListItemProps> = ({
   item,
   group,
-  displayAmount, // Destructure the new prop
+  allParticipants, // Destructure the new prop
+  displayAmount,
   onEdit,
   onDelete,
 }) => {
+  // Safeguard: Ensure allParticipants is defined before calling .find()
+  const payer =
+    item.paidBy && allParticipants
+      ? allParticipants.find((p) => p.id === item.paidBy)
+      : null;
+
   const handleDeletePress = () => {
     Alert.alert(
       "Delete Expense",
@@ -51,6 +59,9 @@ const ExpenseListItem: React.FC<ExpenseListItemProps> = ({
               </View>
             )}
           </View>
+          {payer && (
+            <Text style={styles.paidByText}>Paid by: {payer.name}</Text>
+          )}
           <Text style={styles.expenseDate}>{item.date}</Text>
           {/* Display caption if it exists */}
           {item.caption && (
@@ -146,6 +157,11 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: "#666",
     fontStyle: "italic",
+    marginTop: 4,
+  },
+  paidByText: {
+    fontSize: 13,
+    color: "#555",
     marginTop: 4,
   },
   actionButtons: {

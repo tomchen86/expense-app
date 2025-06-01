@@ -5,13 +5,16 @@ import {
   StyleSheet,
   ScrollView,
   TouchableOpacity,
-} from "react-native"; // Added TouchableOpacity
+  Platform, // Added Platform
+  Modal, // Added Modal
+  Button, // Added Button for the modal's Done button
+} from "react-native";
 import { RouteProp, useRoute, useNavigation } from "@react-navigation/native";
 import { StackNavigationProp } from "@react-navigation/stack";
 
 import { useExpenseStore } from "../store/expenseStore";
 import { Expense, ExpenseCategory, ExpenseGroup } from "../types";
-import { Picker } from "@react-native-picker/picker"; // Import Picker
+import { Picker } from "@react-native-picker/picker"; // Re-import Picker
 
 import { PieChart } from "react-native-gifted-charts";
 
@@ -56,6 +59,7 @@ const ExpenseInsightsScreen = () => {
   const [selectedMonth, setSelectedMonth] = useState<number>(
     initialDate ? initialDate.getMonth() : new Date().getMonth()
   ); // 0-11
+  const [showDatePickers, setShowDatePickers] = useState(false); // State for picker visibility
 
   const availableYears = useMemo(() => {
     const currentYear = new Date().getFullYear();
@@ -96,12 +100,80 @@ const ExpenseInsightsScreen = () => {
     navigation.setOptions({ title: screenTitle });
   }, [navigation, screenTitle]);
 
+  const handlePreviousPeriod = () => {
+    if (aggregation === "month") {
+      let newMonth = selectedMonth - 1;
+      let newYear = selectedYear;
+      if (newMonth < 0) {
+        newMonth = 11; // December
+        newYear -= 1;
+      }
+      setSelectedMonth(newMonth);
+      setSelectedYear(newYear);
+    } else {
+      // year
+      setSelectedYear(selectedYear - 1);
+    }
+  };
+
+  const handleNextPeriod = () => {
+    const now = new Date();
+    const currentYear = now.getFullYear();
+    const currentMonth = now.getMonth(); // 0-11
+
+    if (aggregation === "month") {
+      let newMonth = selectedMonth + 1;
+      let newYear = selectedYear;
+      if (newMonth > 11) {
+        newMonth = 0; // January
+        newYear += 1;
+      }
+      // Prevent going past the current month and year
+      if (
+        newYear > currentYear ||
+        (newYear === currentYear && newMonth > currentMonth)
+      ) {
+        return; // Do nothing if next period is in the future
+      }
+      setSelectedMonth(newMonth);
+      setSelectedYear(newYear);
+    } else {
+      // year
+      let newYear = selectedYear + 1;
+      // Prevent going past the current year
+      if (newYear > currentYear) {
+        return; // Do nothing if next year is in the future
+      }
+      setSelectedYear(newYear);
+    }
+  };
+
+  const displayPeriodText = useMemo(() => {
+    if (aggregation === "month") {
+      return `${monthNames[selectedMonth]} ${selectedYear}`;
+    }
+    return selectedYear.toString();
+  }, [selectedMonth, selectedYear, aggregation, monthNames]);
+
+  const isNextDisabled = useMemo(() => {
+    const now = new Date();
+    const currentYear = now.getFullYear();
+    const currentMonth = now.getMonth();
+    if (aggregation === "month") {
+      return (
+        selectedYear > currentYear ||
+        (selectedYear === currentYear && selectedMonth >= currentMonth)
+      );
+    }
+    return selectedYear >= currentYear;
+  }, [selectedYear, selectedMonth, aggregation]);
+
   const filteredExpenses = useMemo(() => {
     let relevantExpenses: Expense[] = [];
     if (contextType === "personal" && internalUserId) {
-      relevantExpenses = allExpenses.filter(
-        (e) => e.groupId === internalUserId
-      );
+      // For personal insights, show all expenses paid by the user,
+      // including those in actual groups and those marked as "personal" (where groupId === internalUserId)
+      relevantExpenses = allExpenses.filter((e) => e.paidBy === internalUserId);
     } else if (contextType === "group") {
       relevantExpenses = allExpenses.filter((e) => e.groupId === contextId);
     }
@@ -169,7 +241,7 @@ const ExpenseInsightsScreen = () => {
 
   return (
     <ScrollView style={styles.container}>
-      <Text style={styles.headerText}>{screenTitle}</Text>
+      {/* <Text style={styles.headerText}>{screenTitle}</Text> Removed redundant title */}
 
       <View style={styles.controlsContainer}>
         <View style={styles.aggregationToggleContainer}>
@@ -207,36 +279,85 @@ const ExpenseInsightsScreen = () => {
           </TouchableOpacity>
         </View>
 
-        <View style={styles.dateSelectorsContainer}>
-          {aggregation === "month" && (
-            <View style={styles.pickerContainer}>
-              <Text style={styles.dateSelectorLabel}>Month:</Text>
-              <Picker
-                selectedValue={selectedMonth}
-                style={styles.picker}
-                onValueChange={(itemValue) => setSelectedMonth(itemValue)}
-                itemStyle={styles.pickerItem} // For iOS item styling
-              >
-                {monthNames.map((month, index) => (
-                  <Picker.Item key={index} label={month} value={index} />
-                ))}
-              </Picker>
-            </View>
-          )}
-          <View style={styles.pickerContainer}>
-            <Text style={styles.dateSelectorLabel}>Year:</Text>
-            <Picker
-              selectedValue={selectedYear}
-              style={styles.picker}
-              onValueChange={(itemValue) => setSelectedYear(itemValue)}
-              itemStyle={styles.pickerItem} // For iOS item styling
+        {/* New Date Navigator */}
+        <View style={styles.periodNavigatorContainer}>
+          <TouchableOpacity
+            onPress={handlePreviousPeriod}
+            style={styles.periodArrowButton}
+          >
+            <Text style={styles.periodArrowText}>{"<"}</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            onPress={() => setShowDatePickers(!showDatePickers)}
+          >
+            <Text style={styles.periodDisplayText}>{displayPeriodText}</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            onPress={handleNextPeriod}
+            disabled={isNextDisabled}
+            style={[
+              styles.periodArrowButton,
+              isNextDisabled && styles.disabledArrowButton,
+            ]}
+          >
+            <Text
+              style={[
+                styles.periodArrowText,
+                isNextDisabled && styles.disabledArrowText,
+              ]}
             >
-              {availableYears.map((year) => (
-                <Picker.Item key={year} label={year.toString()} value={year} />
-              ))}
-            </Picker>
-          </View>
+              {">"}
+            </Text>
+          </TouchableOpacity>
         </View>
+        {/* End of New Date Navigator */}
+
+        {/* Modal for Date Pickers */}
+        <Modal
+          transparent={true}
+          visible={showDatePickers}
+          animationType="slide"
+          onRequestClose={() => setShowDatePickers(false)}
+        >
+          <View style={styles.modalOverlay}>
+            <View style={styles.modalContent}>
+              <Text style={styles.modalTitle}>Select Period</Text>
+              {aggregation === "month" && (
+                <View style={styles.pickerContainerModal}>
+                  <Text style={styles.dateSelectorLabel}>Month:</Text>
+                  <Picker
+                    selectedValue={selectedMonth}
+                    style={styles.pickerModal}
+                    onValueChange={(itemValue) => setSelectedMonth(itemValue)}
+                    itemStyle={styles.pickerItem}
+                  >
+                    {monthNames.map((month, index) => (
+                      <Picker.Item key={index} label={month} value={index} />
+                    ))}
+                  </Picker>
+                </View>
+              )}
+              <View style={styles.pickerContainerModal}>
+                <Text style={styles.dateSelectorLabel}>Year:</Text>
+                <Picker
+                  selectedValue={selectedYear}
+                  style={styles.pickerModal}
+                  onValueChange={(itemValue) => setSelectedYear(itemValue)}
+                  itemStyle={styles.pickerItem}
+                >
+                  {availableYears.map((year) => (
+                    <Picker.Item
+                      key={year}
+                      label={year.toString()}
+                      value={year}
+                    />
+                  ))}
+                </Picker>
+              </View>
+              <Button title="Done" onPress={() => setShowDatePickers(false)} />
+            </View>
+          </View>
+        </Modal>
       </View>
 
       <View style={styles.chartContainer}>
@@ -326,36 +447,94 @@ const styles = StyleSheet.create({
   aggregationButtonTextActive: {
     color: "#fff", // Active text color
   },
+  // Styles for dateSelectorsContainer, pickerContainer, picker, pickerItem, dateSelectorLabel
+  // are kept as they are now used by the pickers inside the modal,
+  // but we might need to adjust them or add new styles for modal context.
   dateSelectorsContainer: {
-    flexDirection: "row",
-    justifyContent: "space-around", // Or 'space-between'
-    alignItems: "center",
+    // This style is now for the container *inside* the modal
+    flexDirection: "column", // Changed to column for modal layout
+    justifyContent: "center",
+    alignItems: "stretch", // Stretch items to fill width
+    width: "100%", // Ensure it takes full width of modal content
+    marginBottom: 15,
   },
-  pickerContainer: {
-    // Renamed from dateSelector for clarity
+  pickerContainerModal: {
+    // New style for pickers inside modal
     flexDirection: "row",
     alignItems: "center",
-    // paddingVertical: 5, // Keep or adjust as needed
-    flex: 1, // Allow picker to take available space within its part of the row
-    marginHorizontal: 5, // Add some spacing between pickers
+    marginBottom: 10, // Space between pickers if month and year are shown
+    width: "100%",
   },
-  picker: {
-    flex: 1, // Take available width in the pickerContainer
-    height: 50, // Standard picker height, adjust as needed
-    // backgroundColor: '#f0f0f0', // Optional: for visibility during layout
-    // For Android, wrapper View might be needed for certain styles
+  pickerModal: {
+    // New style for picker element inside modal
+    flex: 1,
+    height: Platform.OS === "ios" ? 180 : 50, // iOS pickers are taller
+    // backgroundColor: '#f0f0f0', // For debugging, to see picker bounds
   },
   pickerItem: {
-    // For iOS: style individual picker items (font size, color)
-    // height: 120, // Example: if you want taller items on iOS
-    // fontSize: 16,
+    // This style is primarily for iOS Picker items
+    color: "#000000", // Explicitly set item text color to black for iOS
+    // fontSize: 16, // Example
   },
   dateSelectorLabel: {
     fontSize: 16,
-    marginRight: 8,
-    color: "#333",
+    color: "#000000", // Explicitly set label text color to black
+    marginRight: Platform.OS === "ios" ? 8 : 4,
+    // Consider a fixed width for labels if alignment is an issue
+    // width: 60,
   },
-  // dateSelectorValue style is no longer needed as it's replaced by Picker
+  modalOverlay: {
+    flex: 1,
+    justifyContent: "center",
+    alignItems: "center",
+    backgroundColor: "rgba(0,0,0,0.5)",
+  },
+  modalContent: {
+    backgroundColor: "white",
+    padding: 20,
+    borderRadius: 10,
+    width: "80%",
+    alignItems: "stretch", // Align items like pickers to stretch
+  },
+  modalTitle: {
+    fontSize: 18,
+    fontWeight: "bold",
+    marginBottom: 15,
+    textAlign: "center",
+  },
+  periodNavigatorContainer: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    paddingVertical: 10,
+    marginTop: 10, // Add some margin if needed
+    // borderWidth: 1,
+    // borderColor: 'blue',
+  },
+  periodArrowButton: {
+    paddingHorizontal: 15,
+    paddingVertical: 8,
+    // backgroundColor: '#ddd', // Example style
+    borderRadius: 5,
+  },
+  disabledArrowButton: {
+    // backgroundColor: '#f0f0f0', // Lighter background for disabled state
+  },
+  periodArrowText: {
+    fontSize: 20,
+    fontWeight: "bold",
+    color: "#007bff",
+  },
+  disabledArrowText: {
+    color: "#aaa", // Greyed out text for disabled state
+  },
+  periodDisplayText: {
+    fontSize: 18,
+    fontWeight: "600",
+    color: "#333",
+    textAlign: "center",
+    flex: 1, // Allow text to take available space and center
+  },
   chartContainer: {
     alignItems: "center",
     justifyContent: "center",

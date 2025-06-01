@@ -29,8 +29,16 @@ const Stack = createStackNavigator<RootStackParamList>(); // Use RootStackParamL
 function MainTabs() {
   return (
     <Tab.Navigator id={undefined}>
-      <Tab.Screen name="History" component={HistoryScreen} />
-      <Tab.Screen name="Home" component={HomeScreen} />
+      <Tab.Screen
+        name="History"
+        component={HistoryScreen}
+        options={{ title: "Group" }}
+      />
+      <Tab.Screen
+        name="Home"
+        component={HomeScreen}
+        options={{ title: "Expense" }}
+      />
       <Tab.Screen name="Settings" component={SettingsScreen} />
     </Tab.Navigator>
   );

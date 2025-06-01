@@ -1,18 +1,24 @@
-import React, { useMemo } from "react";
+import React, { useMemo, useState } from "react"; // Added useState
 import {
   View,
   Text,
   StyleSheet,
   FlatList,
   TouchableOpacity,
-} from "react-native"; // Added TouchableOpacity
+  Pressable, // Added Pressable for consistency if needed, or use TouchableOpacity
+} from "react-native";
 import { RouteProp, useRoute, useNavigation } from "@react-navigation/native";
-import { StackNavigationProp } from "@react-navigation/stack"; // Assuming Stack Navigator
+import { StackNavigationProp } from "@react-navigation/stack";
 
 import { useExpenseStore } from "../store/expenseStore";
-import { Expense, ExpenseGroup } from "../types";
+import { Expense, ExpenseGroup, Participant } from "../types"; // Added Participant
 import ExpenseListItem from "../components/ExpenseListItem";
-import { calculateGroupTotal } from "../utils/groupCalculations"; // Reuse calculation
+import GroupBalancesOverlay from "../components/GroupBalancesOverlay"; // Import the overlay
+import FloatingActionButton from "../components/FloatingActionButton"; // Import FAB
+import {
+  calculateGroupTotal,
+  calculateUserTotalContributionInGroup,
+} from "../utils/groupCalculations"; // Added calculateUserTotalContributionInGroup
 
 // Define ParamList including this screen and its params
 // TODO: This should ideally be defined in a central navigation types file
@@ -40,7 +46,13 @@ const GroupDetailScreen = () => {
   // --- State from Zustand Store ---
   const expenses = useExpenseStore((state) => state.expenses);
   const groups = useExpenseStore((state) => state.groups);
-  const deleteExpense = useExpenseStore((state) => state.deleteExpense); // For delete action
+  const deleteExpense = useExpenseStore((state) => state.deleteExpense);
+  const internalUserId = useExpenseStore((state) => state.internalUserId);
+  const allParticipants = useExpenseStore((state) => state.participants); // Get all participants
+
+  // --- Component State ---
+  const [isBalancesOverlayVisible, setIsBalancesOverlayVisible] =
+    useState(false);
 
   // --- Derived State ---
 
@@ -59,6 +71,20 @@ const GroupDetailScreen = () => {
     // Use the utility function, passing only the relevant expenses
     return calculateGroupTotal(groupExpenses, groupId);
   }, [groupExpenses, groupId]);
+
+  const currentUserTotalContribution = useMemo(() => {
+    if (!internalUserId) return 0;
+    return calculateUserTotalContributionInGroup(
+      internalUserId,
+      groupExpenses,
+      groupId
+    );
+  }, [internalUserId, groupExpenses, groupId]);
+
+  // Get members of the current group
+  const groupMembers = useMemo(() => {
+    return group?.participants || [];
+  }, [group]);
 
   // Create a map for quick group lookup (needed by ExpenseListItem)
   const groupMap = useMemo(() => {
@@ -88,6 +114,7 @@ const GroupDetailScreen = () => {
       <ExpenseListItem
         item={item}
         group={group ?? null}
+        allParticipants={allParticipants} // Pass allParticipants
         displayAmount={item.amount} // Pass the full item amount here
         onEdit={handleEdit}
         onDelete={handleDelete}
@@ -127,6 +154,18 @@ const GroupDetailScreen = () => {
         </View>
       </TouchableOpacity>
 
+      {/* Display User's Total Contribution */}
+      {internalUserId && (
+        <TouchableOpacity
+          onPress={() => setIsBalancesOverlayVisible(true)}
+          style={styles.totalContainer}
+        >
+          <Text style={styles.totalText}>
+            My Total Contribution: ${currentUserTotalContribution.toFixed(2)}
+          </Text>
+        </TouchableOpacity>
+      )}
+
       {/* List of Expenses */}
       <FlatList
         data={groupExpenses}
@@ -143,6 +182,18 @@ const GroupDetailScreen = () => {
       {/* <TouchableOpacity style={styles.addButton} onPress={() => navigation.navigate('AddExpense', { defaultGroupId: groupId })}>
            <Text style={styles.addButtonText}>Add Expense to Group</Text>
        </TouchableOpacity> */}
+
+      {/* Group Balances Overlay Modal */}
+      {group && internalUserId && (
+        <GroupBalancesOverlay
+          visible={isBalancesOverlayVisible}
+          onClose={() => setIsBalancesOverlayVisible(false)}
+          members={groupMembers}
+          expenses={groupExpenses}
+          currentUserId={internalUserId}
+        />
+      )}
+      <FloatingActionButton groupId={groupId} />
     </View>
   );
 };
