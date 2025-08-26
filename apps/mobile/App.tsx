@@ -1,3 +1,4 @@
+import "react-native-gesture-handler";
 import React from "react";
 import { NavigationContainer } from "@react-navigation/native";
 import { createStackNavigator } from "@react-navigation/stack";
@@ -9,6 +10,7 @@ import HistoryScreen from "./src/screens/HistoryScreen";
 import SettingsScreen from "./src/screens/SettingsScreen";
 import GroupDetailScreen from "./src/screens/GroupDetailScreen";
 import ExpenseInsightsScreen from "./src/screens/ExpenseInsightsScreen"; // Import ExpenseInsightsScreen
+import ManageCategoriesScreen from "./src/screens/ManageCategoriesScreen"; // Import ManageCategoriesScreen
 import { Expense } from "./src/types";
 
 // Define RootStackParamList
@@ -21,6 +23,7 @@ export type RootStackParamList = {
     contextId: string;
     initialDate?: Date;
   };
+  ManageCategoriesScreen: undefined; // Add ManageCategoriesScreen
 };
 
 const Tab = createBottomTabNavigator(); // Tab navigator type can be inferred or defined separately if needed
@@ -62,6 +65,11 @@ export default function App() {
         <Stack.Screen
           name="ExpenseInsights"
           component={ExpenseInsightsScreen}
+        />
+        <Stack.Screen
+          name="ManageCategoriesScreen"
+          component={ManageCategoriesScreen}
+          options={{ title: "Manage Categories" }}
         />
       </Stack.Navigator>
     </NavigationContainer>

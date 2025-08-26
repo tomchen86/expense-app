@@ -1,10 +1,17 @@
 import React, { useState, useMemo } from "react";
 import { View, Text, StyleSheet, ScrollView, Button } from "react-native";
-import { RouteProp, useRoute } from "@react-navigation/native";
+import { RouteProp, useRoute, useNavigation } from "@react-navigation/native";
+import { StackNavigationProp } from "@react-navigation/stack";
 
 // Import types and constants
-import { Expense, Participant, ExpenseGroup, ExpenseCategory } from "../types";
-import { EXPENSE_CATEGORIES } from "../constants/expenses";
+import {
+  Expense,
+  Participant,
+  ExpenseGroup,
+  ExpenseCategory,
+  Category,
+} from "../types"; // Added Category
+import { DEFAULT_CATEGORIES } from "../constants/expenses"; // Renamed import
 
 // Import custom hook and components
 import { useExpenseForm } from "../hooks/useExpenseForm";
@@ -13,13 +20,18 @@ import SelectInput from "../components/SelectInput";
 import ParticipantTag from "../components/ParticipantTag";
 import SelectionModal from "../components/SelectionModal";
 import DatePicker from "../components/DatePicker";
+import { RootStackParamList } from "../../App"; // Import RootStackParamList
 
 // Define route params type if not already defined globally
 type AddExpenseRouteParams = {
   AddExpense: { expense?: Expense };
 };
 
+// ScreenStackParamList is removed, RootStackParamList will be used directly
+
 const AddExpenseScreen = () => {
+  const navigation =
+    useNavigation<StackNavigationProp<RootStackParamList, "AddExpense">>();
   // Get route params safely
   const route = useRoute<RouteProp<AddExpenseRouteParams, "AddExpense">>();
   const editingExpense = route.params?.expense;
@@ -53,6 +65,14 @@ const AddExpenseScreen = () => {
     // For now, let's assume only group participants if group is selected
     // return formState.selectedGroup ? formState.selectedGroup.participants : [];
   }, [formState.selectedGroup, participants]);
+
+  const ADD_NEW_CATEGORY_ACTION = "+ Add New Category" as const;
+
+  const categoryModalData = useMemo(() => {
+    const categoryNames = DEFAULT_CATEGORIES.map((cat) => cat.name);
+    // "Other" is the last default category, so add the new action after it.
+    return [...categoryNames, ADD_NEW_CATEGORY_ACTION];
+  }, []);
 
   return (
     <View style={{ flex: 1 }}>
@@ -147,16 +167,26 @@ const AddExpenseScreen = () => {
       {/* --- Modals using reusable component --- */}
 
       {/* Category Modal */}
-      <SelectionModal<ExpenseCategory>
+      <SelectionModal<ExpenseCategory | typeof ADD_NEW_CATEGORY_ACTION>
         visible={showCategoryModal}
         title="Select Category"
-        data={EXPENSE_CATEGORIES as unknown as ExpenseCategory[]} // Need to cast because EXPENSE_CATEGORIES is readonly
+        data={categoryModalData}
         renderItemContent={(item) => (
           <Text style={styles.modalItemText}>{item}</Text>
         )}
         keyExtractor={(item) => item}
-        isSelected={(item) => formState.category === item}
-        onSelect={(item) => handleUpdateFormState("category", item)}
+        isSelected={(item) =>
+          item !== ADD_NEW_CATEGORY_ACTION && formState.category === item
+        }
+        onSelect={(item) => {
+          if (item === ADD_NEW_CATEGORY_ACTION) {
+            navigation.navigate("ManageCategoriesScreen");
+            // Modal will be closed by its onClose prop via SelectionModal's internal logic
+          } else {
+            // item is already ExpenseCategory (string) here due to categoryModalData mapping
+            handleUpdateFormState("category", item);
+          }
+        }}
         onClose={() => setShowCategoryModal(false)}
       />
 
@@ -260,7 +290,7 @@ const styles = StyleSheet.create({
     marginBottom: 0, // Remove default margin from SelectInput container
     borderWidth: 0, // Remove border for button-like appearance
     paddingVertical: 0, // Adjust padding
-    minHeight: 0,
+    // minHeight: 0, // Removed this line as it might be causing issues
   },
   addParticipantButtonText: {
     color: "#007bff", // Style like a link/button

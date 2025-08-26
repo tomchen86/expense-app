@@ -3,8 +3,14 @@ import { Platform, Alert } from "react-native";
 import { useNavigation } from "@react-navigation/native";
 import { DateTimePickerEvent } from "@react-native-community/datetimepicker";
 import { useExpenseStore } from "../store/expenseStore";
-import { Expense, Participant, ExpenseGroup, ExpenseCategory } from "../types";
-import { EXPENSE_CATEGORIES } from "../constants/expenses";
+import {
+  Expense,
+  Participant,
+  ExpenseGroup,
+  ExpenseCategory,
+  Category,
+} from "../types"; // Added Category for type safety if needed
+import { DEFAULT_CATEGORIES } from "../constants/expenses"; // Changed to DEFAULT_CATEGORIES
 
 // Define the shape of the form data
 interface FormState {
@@ -49,7 +55,7 @@ export const useExpenseForm = ({ editingExpense }: UseExpenseFormProps) => {
     amount: "",
     date: new Date(),
     caption: "",
-    category: EXPENSE_CATEGORIES[0],
+    category: DEFAULT_CATEGORIES[0].name, // Use .name from the first Category object
     selectedGroup: null,
     paidByParticipant: null,
     selectedParticipants: [],
@@ -64,7 +70,7 @@ export const useExpenseForm = ({ editingExpense }: UseExpenseFormProps) => {
         amount: "",
         date: new Date(),
         caption: "",
-        category: EXPENSE_CATEGORIES[0],
+        category: DEFAULT_CATEGORIES[0].name, // Use .name from the first Category object
         selectedGroup: null,
         paidByParticipant: null,
         selectedParticipants: [],

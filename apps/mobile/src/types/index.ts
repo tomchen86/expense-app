@@ -1,10 +1,16 @@
 // Centralized type definitions for the application
 
 // Import necessary types if they were defined elsewhere (e.g., constants)
-import { EXPENSE_CATEGORIES } from "../constants/expenses";
+// import { EXPENSE_CATEGORIES } from "../constants/expenses"; // Will be an array of Category objects
 
-// Type derived from the constant array
-export type ExpenseCategory = (typeof EXPENSE_CATEGORIES)[number];
+// Represents the name of the category, used as an identifier
+export type ExpenseCategory = string;
+
+export interface Category {
+  id: string; // Unique identifier for the category (e.g., the name itself or a UUID)
+  name: string;
+  color: string; // Hex color code
+}
 
 export interface Participant {
   id: string;
@@ -41,6 +47,7 @@ export interface ExpenseState {
   expenses: Expense[];
   groups: ExpenseGroup[];
   participants: Participant[];
+  categories: Category[]; // Add categories to the store state
   userSettings: UserSettings | null;
   internalUserId: string | null; // Add internalUserId
   addExpense: (expense: Omit<Expense, "id">) => void;
@@ -64,4 +71,10 @@ export interface ExpenseState {
   // Group participants
   addParticipantToGroup: (groupId: string, participantId: string) => void;
   removeParticipantFromGroup: (groupId: string, participantId: string) => void;
+
+  // Category management
+  addCategory: (categoryData: Omit<Category, "id">) => Category; // Returns the new category with an ID
+  updateCategory: (category: Category) => void;
+  deleteCategory: (categoryId: string) => void;
+  getCategoryByName: (name: string) => Category | undefined;
 }

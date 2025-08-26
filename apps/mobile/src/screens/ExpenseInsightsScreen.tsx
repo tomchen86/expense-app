@@ -51,6 +51,7 @@ const ExpenseInsightsScreen = () => {
   const allExpenses = useExpenseStore((state) => state.expenses);
   const internalUserId = useExpenseStore((state) => state.internalUserId);
   const groups = useExpenseStore((state) => state.groups);
+  const appCategories = useExpenseStore((state) => state.categories); // Get categories from store
 
   const [aggregation, setAggregation] = useState<"month" | "year">("month");
   const [selectedYear, setSelectedYear] = useState<number>(
@@ -214,30 +215,24 @@ const ExpenseInsightsScreen = () => {
 
     if (totalForPeriod === 0) return [];
 
-    const colors = [
-      "#FF6384",
-      "#36A2EB",
-      "#FFCE56",
-      "#4BC0C0",
-      "#9966FF",
-      "#FF9F40",
-      "#C9CBCF",
-      "#61C0BF",
-    ];
-    let colorIndex = 0;
+    // Default color for categories not found in store (should not happen ideally)
+    const DEFAULT_COLOR = "#808080"; // Grey
 
-    return Object.entries(aggregated).map(([category, value]) => ({
-      value: value || 0,
-      label: category,
-      text: `${category}: ${(((value || 0) / totalForPeriod) * 100).toFixed(
-        1
-      )}%`,
-      color: colors[colorIndex++ % colors.length],
-      category: category as ExpenseCategory,
-      absoluteValue: value || 0,
-      percentage: ((value || 0) / totalForPeriod) * 100,
-    }));
-  }, [filteredExpenses]);
+    return Object.entries(aggregated).map(([categoryName, value]) => {
+      const categoryDetails = appCategories.find(
+        (c) => c.name === categoryName
+      );
+      return {
+        value: value || 0,
+        label: categoryName,
+        text: categoryName, // Display only the category name
+        color: categoryDetails ? categoryDetails.color : DEFAULT_COLOR,
+        category: categoryName as ExpenseCategory,
+        absoluteValue: value || 0,
+        percentage: ((value || 0) / totalForPeriod) * 100,
+      };
+    });
+  }, [filteredExpenses, appCategories]);
 
   return (
     <ScrollView style={styles.container}>
@@ -385,7 +380,6 @@ const ExpenseInsightsScreen = () => {
 
       {chartData.length > 0 && (
         <View style={styles.legendContainer}>
-          <Text>Legend:</Text>
           {chartData.map((item) => (
             <View key={item.category} style={styles.legendItem}>
               <View
