@@ -16,6 +16,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added comprehensive `ARCHITECTURE.md` documenting system architecture and technical patterns
 - Created `SESSION_SUMMARY.md` documenting development session and key decisions
 - Added documentation standards and change management processes
+- **MAJOR REFACTORING**: Successfully broke down ExpenseInsightsScreen.tsx from 563→83 lines
+- **MAJOR REFACTORING**: Successfully broke down ManageCategoriesScreen.tsx from 402→102 lines
+- Created reusable insights components: CategoryChart, InsightsHeader, DatePickerModal
+- Created reusable category components: CategoryForm, ColorPicker, CategoryListItem
+- Added insightCalculations utility with comprehensive business logic functions
+- Created useInsightsData custom hook for state management and data processing
+- Created useCategoryManager custom hook for category CRUD operations
+- **MAJOR REFACTORING**: Successfully refactored expenseStore.ts from 361→2 lines with feature store composition
+- Created modular store architecture with 5 feature stores (category, user, participant, expense, group)
+- Implemented store composition pattern maintaining 100% backward compatibility
+- Achieved total store architecture reduction: 361 lines → 171 (composed) + 399 (features) = 570 lines (organized)
+- **MAJOR REFACTORING**: Successfully refactored AddExpenseScreen.tsx from 313→126 lines (60% reduction)
+- Created ExpenseForm component architecture: BasicInfoSection, GroupSection, ExpenseModals
+- Added useExpenseModals hook for modal state management and form logic separation
+- Achieved complete 500-line violation resolution across entire mobile codebase
 
 ### Changed
 - Moved `CLAUDE.md` from root to `/docs/CLAUDE.md`

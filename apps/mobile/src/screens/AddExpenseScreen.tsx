@@ -1,161 +1,82 @@
-import React, { useState, useMemo } from "react";
-import { View, Text, StyleSheet, ScrollView, Button } from "react-native";
-import { RouteProp, useRoute, useNavigation } from "@react-navigation/native";
-import { StackNavigationProp } from "@react-navigation/stack";
-
-// Import types and constants
-import {
-  Expense,
-  Participant,
-  ExpenseGroup,
-  ExpenseCategory,
-  Category,
-} from "../types"; // Added Category
-import { DEFAULT_CATEGORIES } from "../constants/expenses"; // Renamed import
-
-// Import custom hook and components
+import React from "react";
+import { View, StyleSheet, ScrollView, Button } from "react-native";
+import { RouteProp, useRoute } from "@react-navigation/native";
+import { Expense } from "../types";
 import { useExpenseForm } from "../hooks/useExpenseForm";
-import FormInput from "../components/FormInput";
-import SelectInput from "../components/SelectInput";
-import ParticipantTag from "../components/ParticipantTag";
-import SelectionModal from "../components/SelectionModal";
-import DatePicker from "../components/DatePicker";
-import { RootStackParamList } from "../../App"; // Import RootStackParamList
+import { useExpenseModals } from "../hooks/useExpenseModals";
+import { BasicInfoSection } from "../components/ExpenseForm/BasicInfoSection";
+import { GroupSection } from "../components/ExpenseForm/GroupSection";
+import { ExpenseModals } from "../components/ExpenseForm/ExpenseModals";
 
-// Define route params type if not already defined globally
 type AddExpenseRouteParams = {
   AddExpense: { expense?: Expense };
 };
 
-// ScreenStackParamList is removed, RootStackParamList will be used directly
-
 const AddExpenseScreen = () => {
-  const navigation =
-    useNavigation<StackNavigationProp<RootStackParamList, "AddExpense">>();
-  // Get route params safely
   const route = useRoute<RouteProp<AddExpenseRouteParams, "AddExpense">>();
   const editingExpense = route.params?.expense;
 
-  // --- Use the custom form hook ---
   const {
     formState,
-    setFormState, // Get setFormState for direct updates from modals
+    setFormState,
     handleUpdateFormState,
     handleRemoveParticipant,
     onChangeDate,
     handleSubmit,
     isEditing,
-    groups, // Get groups and participants from the hook for modals
+    groups,
     participants,
   } = useExpenseForm({ editingExpense });
 
-  // --- Modal Visibility State ---
-  // (Could potentially be moved to another hook like useModalState if reused)
-  const [showCategoryModal, setShowCategoryModal] = useState(false);
-  const [showGroupModal, setShowGroupModal] = useState(false);
-  const [showPaidByModal, setShowPaidByModal] = useState(false);
-  const [showSplitModal, setShowSplitModal] = useState(false);
-
-  // --- Derived state for modals ---
-  // Participants available for selection depend on the selected group
-  const availableParticipants = useMemo(() => {
-    return formState.selectedGroup
-      ? formState.selectedGroup.participants
-      : participants; // Or maybe all participants if no group? Decide logic.
-    // For now, let's assume only group participants if group is selected
-    // return formState.selectedGroup ? formState.selectedGroup.participants : [];
-  }, [formState.selectedGroup, participants]);
-
-  const ADD_NEW_CATEGORY_ACTION = "+ Add New Category" as const;
-
-  const categoryModalData = useMemo(() => {
-    const categoryNames = DEFAULT_CATEGORIES.map((cat) => cat.name);
-    // "Other" is the last default category, so add the new action after it.
-    return [...categoryNames, ADD_NEW_CATEGORY_ACTION];
-  }, []);
+  const {
+    showCategoryModal,
+    setShowCategoryModal,
+    showGroupModal,
+    setShowGroupModal,
+    showPaidByModal,
+    setShowPaidByModal,
+    showSplitModal,
+    setShowSplitModal,
+    availableParticipants,
+    categoryModalData,
+    handleCategorySelect,
+    handleGroupSelect,
+    handleGroupClear,
+    handleParticipantSelect,
+    ADD_NEW_CATEGORY_ACTION,
+  } = useExpenseModals({
+    formState,
+    participants,
+    handleUpdateFormState,
+    setFormState,
+  });
 
   return (
     <View style={{ flex: 1 }}>
       <ScrollView style={styles.container}>
-        {/* --- Form Inputs using reusable components --- */}
-        <FormInput
-          label="Title:"
-          value={formState.title}
-          onChangeText={(value) => handleUpdateFormState("title", value)}
-          placeholder="Enter expense title"
-        />
-
-        <FormInput
-          label="Amount:"
-          value={formState.amount}
-          onChangeText={(value) => handleUpdateFormState("amount", value)}
-          placeholder="Enter amount"
-          keyboardType="numeric"
-        />
-
-        <SelectInput
-          label="Category:"
-          selectedValue={formState.category}
-          onPress={() => setShowCategoryModal(true)}
-        />
-
-        <SelectInput
-          label="Group (optional):"
-          selectedValue={formState.selectedGroup?.name}
-          placeholder="Select Group"
-          onPress={() => setShowGroupModal(true)}
-        />
-
-        {/* Only show Paid By and Split Between if a group is selected */}
-        {formState.selectedGroup && (
-          <>
-            <SelectInput
-              label="Paid By:"
-              selectedValue={formState.paidByParticipant?.name}
-              placeholder="Select Payer"
-              onPress={() => setShowPaidByModal(true)}
-              // Disable if no participants in group?
-              // disabled={availableParticipants.length === 0}
-            />
-
-            <Text style={styles.label}>Split Between:</Text>
-            <View style={styles.selectedParticipantsContainer}>
-              {formState.selectedParticipants.map((participant) => (
-                <ParticipantTag
-                  key={participant.id}
-                  participantName={participant.name}
-                  onRemove={() => handleRemoveParticipant(participant.id)}
-                />
-              ))}
-              <SelectInput
-                label="" // No label needed for the button part
-                selectedValue="+ Add" // Display text for the button
-                onPress={() => setShowSplitModal(true)}
-                containerStyle={styles.addParticipantButtonContainer}
-                valueStyle={styles.addParticipantButtonText}
-                // Disable if no participants in group?
-                // disabled={availableParticipants.length === 0}
-              />
-            </View>
-          </>
-        )}
-
-        <FormInput
-          label="Caption (optional):"
-          value={formState.caption}
-          onChangeText={(value) => handleUpdateFormState("caption", value)}
-          placeholder="Add a note about this expense"
-          multiline
-          numberOfLines={3}
-        />
-
-        <DatePicker
-          label="Date:"
+        <BasicInfoSection
+          title={formState.title}
+          amount={formState.amount}
+          category={formState.category}
+          caption={formState.caption}
           date={formState.date}
-          onChange={onChangeDate}
+          onTitleChange={(value) => handleUpdateFormState("title", value)}
+          onAmountChange={(value) => handleUpdateFormState("amount", value)}
+          onCategoryPress={() => setShowCategoryModal(true)}
+          onCaptionChange={(value) => handleUpdateFormState("caption", value)}
+          onDateChange={onChangeDate}
         />
 
-        {/* --- Submit Button --- */}
+        <GroupSection
+          selectedGroup={formState.selectedGroup}
+          paidByParticipant={formState.paidByParticipant}
+          selectedParticipants={formState.selectedParticipants}
+          onGroupPress={() => setShowGroupModal(true)}
+          onPaidByPress={() => setShowPaidByModal(true)}
+          onSplitPress={() => setShowSplitModal(true)}
+          onRemoveParticipant={handleRemoveParticipant}
+        />
+
         <View style={styles.buttonContainer}>
           <Button
             title={isEditing ? "Update Expense" : "Add Expense"}
@@ -164,150 +85,42 @@ const AddExpenseScreen = () => {
         </View>
       </ScrollView>
 
-      {/* --- Modals using reusable component --- */}
-
-      {/* Category Modal */}
-      <SelectionModal<ExpenseCategory | typeof ADD_NEW_CATEGORY_ACTION>
-        visible={showCategoryModal}
-        title="Select Category"
-        data={categoryModalData}
-        renderItemContent={(item) => (
-          <Text style={styles.modalItemText}>{item}</Text>
-        )}
-        keyExtractor={(item) => item}
-        isSelected={(item) =>
-          item !== ADD_NEW_CATEGORY_ACTION && formState.category === item
-        }
-        onSelect={(item) => {
-          if (item === ADD_NEW_CATEGORY_ACTION) {
-            navigation.navigate("ManageCategoriesScreen");
-            // Modal will be closed by its onClose prop via SelectionModal's internal logic
-          } else {
-            // item is already ExpenseCategory (string) here due to categoryModalData mapping
-            handleUpdateFormState("category", item);
-          }
-        }}
-        onClose={() => setShowCategoryModal(false)}
-      />
-
-      {/* Group Modal */}
-      <SelectionModal<ExpenseGroup>
-        visible={showGroupModal}
-        title="Select Group"
-        data={groups}
-        renderItemContent={(item) => (
-          <Text style={styles.modalItemText}>{item.name}</Text>
-        )}
-        keyExtractor={(item) => item.id}
-        isSelected={(item) => formState.selectedGroup?.id === item.id}
-        onSelect={(item) => {
-          // Reset paidBy and splitBetween when group changes
-          handleUpdateFormState("selectedGroup", item);
-          handleUpdateFormState("paidByParticipant", null);
-          handleUpdateFormState("selectedParticipants", []);
-        }}
-        onClose={() => setShowGroupModal(false)}
-        onClearSelection={() => {
-          handleUpdateFormState("selectedGroup", null);
-          handleUpdateFormState("paidByParticipant", null);
-          handleUpdateFormState("selectedParticipants", []);
-          setShowGroupModal(false); // Close after clearing
-        }}
-      />
-
-      {/* Paid By Modal */}
-      <SelectionModal<Participant>
-        visible={showPaidByModal && !!formState.selectedGroup} // Only show if group selected
-        title="Who Paid?"
-        data={availableParticipants}
-        renderItemContent={(item) => (
-          <Text style={styles.modalItemText}>{item.name}</Text>
-        )}
-        keyExtractor={(item) => item.id}
-        isSelected={(item) => formState.paidByParticipant?.id === item.id}
-        onSelect={(item) => handleUpdateFormState("paidByParticipant", item)}
-        onClose={() => setShowPaidByModal(false)}
-      />
-
-      {/* Split Between Modal */}
-      <SelectionModal<Participant>
-        visible={showSplitModal && !!formState.selectedGroup} // Only show if group selected
-        title="Split Between"
-        data={availableParticipants}
-        renderItemContent={(item) => (
-          <Text style={styles.modalItemText}>{item.name}</Text>
-        )}
-        keyExtractor={(item) => item.id}
-        isSelected={(item) =>
-          formState.selectedParticipants.some((p) => p.id === item.id)
-        }
-        onSelect={(item) => {
-          // Toggle selection for multi-select
-          setFormState((prev) => {
-            const isSelected = prev.selectedParticipants.some(
-              (p) => p.id === item.id
-            );
-            return {
-              ...prev,
-              selectedParticipants: isSelected
-                ? prev.selectedParticipants.filter((p) => p.id !== item.id)
-                : [...prev.selectedParticipants, item],
-            };
-          });
-        }}
-        onClose={() => setShowSplitModal(false)}
-        multiSelect={true} // Enable multi-select behavior
+      <ExpenseModals
+        showCategoryModal={showCategoryModal}
+        showGroupModal={showGroupModal}
+        showPaidByModal={showPaidByModal}
+        showSplitModal={showSplitModal}
+        categoryModalData={categoryModalData}
+        groups={groups}
+        availableParticipants={availableParticipants}
+        selectedCategory={formState.category}
+        selectedGroup={formState.selectedGroup}
+        selectedPaidBy={formState.paidByParticipant}
+        selectedParticipants={formState.selectedParticipants}
+        onCategorySelect={handleCategorySelect}
+        onGroupSelect={handleGroupSelect}
+        onGroupClear={handleGroupClear}
+        onPaidBySelect={(item) => handleUpdateFormState("paidByParticipant", item)}
+        onParticipantToggle={handleParticipantSelect}
+        onCloseCategoryModal={() => setShowCategoryModal(false)}
+        onCloseGroupModal={() => setShowGroupModal(false)}
+        onClosePaidByModal={() => setShowPaidByModal(false)}
+        onCloseSplitModal={() => setShowSplitModal(false)}
+        ADD_NEW_CATEGORY_ACTION={ADD_NEW_CATEGORY_ACTION}
       />
     </View>
   );
 };
 
-// --- Styles --- (Keep relevant layout styles, component styles are internal)
 const styles = StyleSheet.create({
   container: {
     flex: 1,
     padding: 20,
   },
-  label: {
-    // Keep label style if needed outside components (like for Split Between)
-    fontSize: 16,
-    marginBottom: 5,
-    color: "#333",
-    fontWeight: "500",
-  },
-  selectedParticipantsContainer: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    alignItems: "center", // Align tags and button
-    marginBottom: 15,
-    // Add styling for the container if needed, e.g., border
-    // borderWidth: 1,
-    // borderColor: '#eee',
-    // padding: 10,
-    // borderRadius: 5,
-  },
-  addParticipantButtonContainer: {
-    marginBottom: 0, // Remove default margin from SelectInput container
-    borderWidth: 0, // Remove border for button-like appearance
-    paddingVertical: 0, // Adjust padding
-    // minHeight: 0, // Removed this line as it might be causing issues
-  },
-  addParticipantButtonText: {
-    color: "#007bff", // Style like a link/button
-    fontSize: 16,
-    padding: 8, // Add padding for touch area
-  },
   buttonContainer: {
-    marginTop: 20, // Add some space before the final button
-    marginBottom: 40, // Extra space at the bottom
+    marginTop: 20,
+    marginBottom: 40,
   },
-  modalItemText: {
-    // Style for text inside modal list items
-    fontSize: 16,
-    paddingVertical: 5, // Add some vertical padding inside the item touchable
-  },
-  // Remove old styles that are now handled by individual components
-  // (e.g., input, inputContainer, selectText, dateText, modal styles, category styles, etc.)
 });
 
 export default AddExpenseScreen;

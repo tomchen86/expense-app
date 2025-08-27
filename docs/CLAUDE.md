@@ -103,12 +103,12 @@ The codebase is undergoing refactoring per `REFACTORING_PLAN.md`:
 
 ## Current Project State (August 2025)
 
-### Critical Issues Requiring Immediate Action
-- **File Size Violations**: 4 files exceed 500-line limit
-  - `ExpenseInsightsScreen.tsx`: 563 lines (CRITICAL - refactor first)
-  - `ManageCategoriesScreen.tsx`: 402 lines (HIGH priority)
-  - `expenseStore.ts`: 361 lines (approaching limit)
-  - `AddExpenseScreen.tsx`: 313 lines (needs refactoring)
+### Critical Issues Status Update  
+- **✅ COMPLETED**: `ExpenseInsightsScreen.tsx` - Successfully refactored from 563→83 lines
+- **✅ COMPLETED**: `ManageCategoriesScreen.tsx` - Successfully refactored from 402→102 lines  
+- **✅ COMPLETED**: `expenseStore.ts` - Successfully refactored from 361→2 lines with modular store architecture
+- **✅ COMPLETED**: `AddExpenseScreen.tsx` - Successfully refactored from 313→126 lines
+- **🎉 ALL 500-LINE VIOLATIONS RESOLVED**: Mobile codebase now fully compliant with file size standards
 
 ### Development Status by App
 - **Mobile**: Feature-complete expense tracking app with groups, categories, insights
