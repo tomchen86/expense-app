@@ -8,9 +8,9 @@ interface CategoryChartProps {
   showLegend?: boolean;
 }
 
-const CategoryChart: React.FC<CategoryChartProps> = ({ 
-  data, 
-  showLegend = true 
+const CategoryChart: React.FC<CategoryChartProps> = ({
+  data,
+  showLegend = true,
 }) => {
   if (data.length === 0) {
     return (

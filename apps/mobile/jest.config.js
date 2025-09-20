@@ -1,13 +1,17 @@
 module.exports = {
-  preset: 'ts-jest',
-  testEnvironment: 'node',
-  // setupFilesAfterEnv: ['<rootDir>/src/__tests__/setup.ts'], // Disabled for core tests
+  preset: 'react-native',
+  setupFilesAfterEnv: ['<rootDir>/src/__tests__/setup-component.ts'],
+  transform: {
+    '^.+\\.(js|jsx|ts|tsx)$': ['babel-jest', {
+      presets: ['module:metro-react-native-babel-preset']
+    }],
+  },
   testMatch: [
-    '<rootDir>/src/**/__tests__/**/*.test.{js,ts}',
-    '<rootDir>/src/**/*.test.{js,ts}'
+    '<rootDir>/src/**/__tests__/**/*.test.{js,ts,tsx}',
+    '<rootDir>/src/**/*.test.{js,ts,tsx}'
   ],
   collectCoverageFrom: [
-    'src/**/*.{ts}',
+    'src/**/*.{ts,tsx}',
     '!src/**/*.d.ts',
     '!src/**/__tests__/**',
     '!src/types/**',
@@ -23,5 +27,8 @@ module.exports = {
   moduleNameMapper: {
     '^@/(.*)$': '<rootDir>/src/$1',
   },
-  moduleFileExtensions: ['ts', 'js', 'json', 'node'],
+  moduleFileExtensions: ['ts', 'tsx', 'js', 'jsx', 'json', 'node'],
+  transformIgnorePatterns: [
+    'node_modules/(?!(react-native|@react-native|react-native-.*|@react-navigation|react-navigation|@react-native-community|@react-native-picker)/)',
+  ],
 };

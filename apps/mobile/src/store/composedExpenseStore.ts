@@ -13,31 +13,65 @@ import { useGroupStore } from "./features/groupStore";
 const generateId = () => Math.random().toString(36).substr(2, 9);
 
 export const useExpenseStore = create(
-  subscribeWithSelector<ExpenseState>((set, get) => ({
-    // --- Computed State (delegates to individual stores) ---
-    get expenses() {
-      return useExpenseFeatureStore.getState().expenses;
-    },
-    get groups() {
-      return useGroupStore.getState().groups;
-    },
-    get participants() {
-      return useParticipantStore.getState().participants;
-    },
-    get categories() {
-      return useCategoryStore.getState().categories;
-    },
-    get userSettings() {
-      return useUserStore.getState().userSettings;
-    },
-    get internalUserId() {
-      return useUserStore.getState().internalUserId;
+  subscribeWithSelector<ExpenseState>((set, get) => {
+    // Subscribe to individual stores and sync their state
+    const initialState = {
+      expenses: useExpenseFeatureStore.getState().expenses,
+      groups: useGroupStore.getState().groups,
+      participants: useParticipantStore.getState().participants,
+      categories: useCategoryStore.getState().categories,
+
+      // New structure
+      user: useUserStore.getState().user,
+      settings: useUserStore.getState().settings,
+
+      // Legacy structure (temporary)
+      userSettings: useUserStore.getState().userSettings,
+      internalUserId: useUserStore.getState().internalUserId,
+    };
+
+    // Set up subscriptions to sync changes from individual stores
+    useExpenseFeatureStore.subscribe((state) => set({ expenses: state.expenses }));
+    useGroupStore.subscribe((state) => set({ groups: state.groups }));
+    useParticipantStore.subscribe((state) => set({ participants: state.participants }));
+    useCategoryStore.subscribe((state) => set({ categories: state.categories }));
+    useUserStore.subscribe((state) => set({
+      // New structure
+      user: state.user,
+      settings: state.settings,
+
+      // Legacy structure (temporary)
+      userSettings: state.userSettings,
+      internalUserId: state.internalUserId
+    }));
+
+    return {
+      // --- State from individual stores ---
+      ...initialState,
+
+    // --- New User Actions ---
+    updateUser: (userData) => {
+      useUserStore.getState().updateUser(userData);
+
+      // Sync user as participant
+      const user = useUserStore.getState().user;
+      if (user) {
+        useParticipantStore.getState().syncUserAsParticipant(user.id, { name: user.displayName });
+      }
     },
 
-    // --- User Settings Actions ---
+    updateSettings: (settingsData) => {
+      useUserStore.getState().updateSettings(settingsData);
+    },
+
+    createUser: (displayName) => {
+      return useUserStore.getState().createUser(displayName);
+    },
+
+    // --- Legacy User Settings Actions (temporary) ---
     updateUserSettings: (settings) => {
       useUserStore.getState().updateUserSettings(settings);
-      
+
       // Sync user as participant
       const internalUserId = useUserStore.getState().internalUserId;
       if (internalUserId) {
@@ -64,29 +98,33 @@ export const useExpenseStore = create(
 
     // --- Group Actions ---
     addGroup: (name) => {
-      const internalUserId = useUserStore.getState().internalUserId;
-      const userSettings = useUserStore.getState().userSettings;
-      
+      // Use new user structure with fallback to legacy
+      const user = useUserStore.getState().user;
+      const legacyUserId = useUserStore.getState().internalUserId;
+      const legacySettings = useUserStore.getState().userSettings;
+
       let groupCreatorParticipant = undefined;
-      
-      if (internalUserId && userSettings?.name) {
-        const existingParticipant = useParticipantStore.getState().getParticipantById(internalUserId);
-        
-        if (existingParticipant && existingParticipant.name === userSettings.name) {
+      let userId = user?.id || legacyUserId;
+      let displayName = user?.displayName || legacySettings?.name;
+
+      if (userId) {
+        const existingParticipant = useParticipantStore.getState().getParticipantById(userId);
+
+        if (existingParticipant && displayName && existingParticipant.name === displayName) {
           groupCreatorParticipant = existingParticipant;
-        } else if (!existingParticipant) {
-          console.warn(
-            "[expenseStore.addGroup] User participant for internalUserId not found. Group created without auto-adding creator."
-          );
-        }
-      } else if (internalUserId && !userSettings?.name) {
-        let existingParticipant = useParticipantStore.getState().getParticipantById(internalUserId);
-        
-        if (!existingParticipant) {
-          const placeholderName = `User ${internalUserId.substring(0, 4)}`;
-          useParticipantStore.getState().addParticipant(placeholderName, internalUserId);
+        } else if (!existingParticipant && displayName) {
+          // Create participant for the user
+          useParticipantStore.getState().addParticipant(displayName, userId);
           groupCreatorParticipant = {
-            id: internalUserId,
+            id: userId,
+            name: displayName,
+          };
+        } else if (!existingParticipant && !displayName) {
+          // Create placeholder participant
+          const placeholderName = `User ${userId.substring(0, 4)}`;
+          useParticipantStore.getState().addParticipant(placeholderName, userId);
+          groupCreatorParticipant = {
+            id: userId,
             name: placeholderName,
           };
         } else {
@@ -157,7 +195,8 @@ export const useExpenseStore = create(
     getCategoryByName: (name) => {
       return useCategoryStore.getState().getCategoryByName(name);
     },
-  }))
+    };
+  })
 );
 
 // Initialize migration for orphaned expenses on store creation

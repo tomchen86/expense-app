@@ -37,8 +37,22 @@ export interface Expense {
   participants?: Participant[]; // Participants involved in this expense
 }
 
+// User Identity (rarely changes)
+export interface User {
+  id: string;           // Internal unique ID (replaces internalUserId)
+  displayName: string;  // Human-readable name for all purposes
+}
+
+// User Preferences (frequently changes)
+export interface Settings {
+  theme: 'light' | 'dark';
+  currency: string;
+  dateFormat: string;
+  notifications?: boolean;
+}
+
+// Legacy interface - will be removed after refactor
 export interface UserSettings {
-  // Add export keyword
   name: string;
 }
 
@@ -47,13 +61,28 @@ export interface ExpenseState {
   expenses: Expense[];
   groups: ExpenseGroup[];
   participants: Participant[];
-  categories: Category[]; // Add categories to the store state
+  categories: Category[];
+
+  // New user structure
+  user: User | null;
+  settings: Settings;
+
+  // Legacy structure (temporary - will be removed)
   userSettings: UserSettings | null;
-  internalUserId: string | null; // Add internalUserId
+  internalUserId: string | null;
+
+  // Expense management
   addExpense: (expense: Omit<Expense, "id">) => void;
   updateExpense: (expense: Expense) => void;
   deleteExpense: (id: string) => void;
   getExpenseById: (id: string) => Expense | undefined;
+
+  // New user management
+  updateUser: (userData: Partial<User>) => void;
+  updateSettings: (settingsData: Partial<Settings>) => void;
+  createUser: (displayName: string) => string; // Returns user ID
+
+  // Legacy user management (temporary)
   updateUserSettings: (settings: UserSettings) => void;
 
   // Group management
