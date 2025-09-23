@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2025-09-24]
+
+### Added
+- Collaboration migration `003_collaboration_tables` introducing couples, couple_members, couple_invitations, participants, expense_groups, and group_members tables with enforced constraints.
+- TypeORM entity set plus sql.js and Postgres Jest suites covering collaboration defaults, uniqueness, and regex-based checks.
+- Ledger migration `004_expense_core` with categories, expenses, expense_splits, and expense_attachments tables plus associated entities/tests.
+- Default category seed helper with Postgres regression coverage for idempotency and overrides.
+- Index/trigger migration `005_indexes_and_triggers` providing updated_at automation, expense split balance guard, and query indexes across identity/collaboration/ledger tables.
+- Expense soft-delete support (TypeORM `DeleteDateColumn` + soft delete spec) and Postgres partial index for active expense lookups.
+- Soft-delete extensions for categories, expense groups, and participants (`006`–`007`) with partial indexes and Jest coverage, plus EXPLAIN-based index verification.
+- Soft-delete + partial index support for expense attachments (`008`) and new tenant isolation performance suite.
+- Added deterministic demo seed (`seedSampleData`) with Postgres regression coverage for couples, participants, expenses, splits, and attachments.
+
+### Changed
+- Datasource factory now boots collaboration entities/migrations for both sqlite and Postgres test harnesses.
+- Updated database design, task planning, and TDD playbook docs to reflect the landed collaboration work and current status.
+- Refreshed database schema reference to document ledger tables (cents-based amounts, attachments) and seeding strategy.
+- Added trigger and constraint coverage docs/tests (updated_at + split balance) and recorded deferrable behaviour in the ledger trigger suites.
+- Standardised workspace installs on pnpm (removed npm-managed `apps/mobile/package-lock.json` and reinstalls) and updated tooling docs/scripts to reflect the pnpm-only workflow.
+
 ## [2025-09-23]
 
 ### Added

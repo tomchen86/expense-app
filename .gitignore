@@ -1,1 +1,50 @@
-node_modules
+# Node / pnpm
+node_modules/
+
+# Builds
+build/
+builds/
+dist/
+apps/*/dist/
+.next/
+out/
+
+# Coverage / reports
+coverage/
+apps/*/coverage/
+
+# Expo / Metro / React Native caches
+.expo/
+.expo-shared/
+.expo-dev/
+.expo-packager-cache/
+.expo/.tmp/
+metro-cache/
+
+# Platform-specific
+.DS_Store
+Thumbs.db
+
+# Environment / secrets
+.env
+.env.*
+!.env.example
+
+# IDE / editor
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Misc
+*.log
+*.pid
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+#AI
+AGENTS.md 
+CLAUDE.md 
+.claude

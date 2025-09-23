@@ -22,16 +22,39 @@ describe('Identity migrations', () => {
     expect(migrations.map((migration) => migration.name)).toEqual([
       'EnableExtensions0011738364606484',
       'IdentityTables0021738364606485',
+      'CollaborationTables0031738364606486',
+      'ExpenseCore0041738364606487',
+      'IndexesAndTriggers0051738364606488',
+      'SoftDeleteExtensions0061738364606489',
+      'SoftDeleteParticipants0071738364606490',
+      'SoftDeleteAttachments0081738364606491',
     ]);
 
-    const tables = await dataSource.query<Array<{
-      table_name: string;
-    }>>(
+    const tables = await dataSource.query<
+      Array<{
+        table_name: string;
+      }>
+    >(
       "SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' AND table_type = 'BASE TABLE'",
     );
 
     expect(tables.map((row) => row.table_name)).toEqual(
-      expect.arrayContaining(['users', 'user_settings', 'user_auth_identities', 'user_devices']),
+      expect.arrayContaining([
+        'users',
+        'user_settings',
+        'user_auth_identities',
+        'user_devices',
+        'couples',
+        'couple_members',
+        'couple_invitations',
+        'participants',
+        'expense_groups',
+        'group_members',
+        'categories',
+        'expenses',
+        'expense_splits',
+        'expense_attachments',
+      ]),
     );
   });
 
@@ -42,11 +65,19 @@ describe('Identity migrations', () => {
 
     await dataSource.undoLastMigration();
     await dataSource.undoLastMigration();
+    await dataSource.undoLastMigration();
+    await dataSource.undoLastMigration();
+    await dataSource.undoLastMigration();
+    await dataSource.undoLastMigration();
+    await dataSource.undoLastMigration();
+    await dataSource.undoLastMigration();
 
-    const tables = await dataSource.query<Array<{
-      table_name: string;
-    }>>(
-      "SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' AND table_type = 'BASE TABLE' AND table_name IN ('users','user_settings','user_auth_identities','user_devices')",
+    const tables = await dataSource.query<
+      Array<{
+        table_name: string;
+      }>
+    >(
+      "SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' AND table_type = 'BASE TABLE' AND table_name IN ('users','user_settings','user_auth_identities','user_devices','couples','couple_members','couple_invitations','participants','expense_groups','group_members','categories','expenses','expense_splits','expense_attachments')",
     );
 
     expect(tables).toHaveLength(0);

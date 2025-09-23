@@ -83,101 +83,153 @@ CREATE TABLE user_devices (
 ```
 
 ### 5. Couples Table
-Represents coupled users for shared expense management.
+Represents a shared ledger container created by a user with an invite workflow.
 
 ```sql
 CREATE TABLE couples (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  user1_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  user2_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-  status VARCHAR(20) DEFAULT 'active' CHECK (status IN ('pending', 'active', 'inactive')),
-  UNIQUE(user1_id, user2_id),
-  CHECK (user1_id != user2_id)
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  name VARCHAR(100),
+  invite_code VARCHAR(10) NOT NULL UNIQUE,
+  status VARCHAR(20) NOT NULL DEFAULT 'active' CHECK (status IN ('active','pending','archived')),
+  created_by UUID NOT NULL REFERENCES users(id),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 ```
 
-### 6. Categories Table
-Expense categories with colors for organization.
+### 6. Couple Members Table
+Assigns users to a couple with roles and lifecycle tracking.
 
 ```sql
-CREATE TABLE categories (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  name VARCHAR(100) NOT NULL,
-  color VARCHAR(7) NOT NULL, -- Hex color code
-  user_id UUID REFERENCES users(id) ON DELETE CASCADE, -- NULL for system categories
-  is_default BOOLEAN DEFAULT false,
-  created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-  updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-  UNIQUE(name, user_id) -- Unique per user, or globally for system categories
+CREATE TABLE couple_members (
+  couple_id UUID NOT NULL REFERENCES couples(id) ON DELETE CASCADE,
+  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  role VARCHAR(20) NOT NULL DEFAULT 'member' CHECK (role IN ('owner','member')),
+  status VARCHAR(20) NOT NULL DEFAULT 'active' CHECK (status IN ('active','invited','removed')),
+  joined_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (couple_id, user_id)
 );
 ```
 
-### 7. Groups Table
-Expense groups for organizing shared expenses.
+### 7. Couple Invitations Table
+Supports email-based invitations and pending memberships.
 
 ```sql
-CREATE TABLE groups (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  name VARCHAR(255) NOT NULL,
-  created_by UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  couple_id UUID REFERENCES couples(id) ON DELETE CASCADE, -- NULL for general groups
-  created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-  updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-  is_active BOOLEAN DEFAULT true
+CREATE TABLE couple_invitations (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  couple_id UUID NOT NULL REFERENCES couples(id) ON DELETE CASCADE,
+  inviter_id UUID NOT NULL REFERENCES users(id),
+  invited_user_id UUID REFERENCES users(id),
+  invited_email CITEXT NOT NULL,
+  status VARCHAR(20) NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','accepted','declined','expired')),
+  message TEXT,
+  expires_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 ```
 
 ### 8. Participants Table
-People who can participate in expenses (users + external participants).
+Represents internal users or external contacts scoped to a couple.
 
 ```sql
 CREATE TABLE participants (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  name VARCHAR(255) NOT NULL,
-  user_id UUID REFERENCES users(id) ON DELETE SET NULL, -- NULL for external participants
-  email VARCHAR(255), -- Optional for external participants
-  created_by UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-  updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  couple_id UUID NOT NULL REFERENCES couples(id) ON DELETE CASCADE,
+  user_id UUID REFERENCES users(id),
+  display_name VARCHAR(100) NOT NULL,
+  email CITEXT,
+  is_registered BOOLEAN NOT NULL DEFAULT false,
+  default_currency CHAR(3) NOT NULL DEFAULT 'USD' CHECK (default_currency ~ '^[A-Z]{3}$'),
+  notification_preferences JSONB NOT NULL DEFAULT '{"expenses":true,"invites":true,"reminders":true}'::jsonb,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE (couple_id, user_id),
+  CHECK (user_id IS NOT NULL OR is_registered = false)
 );
 ```
 
-### 9. Group Participants Junction Table
-Many-to-many relationship between groups and participants.
+### 9. Expense Groups Table
+Organizes expenses within a couple into named collections.
 
 ```sql
-CREATE TABLE group_participants (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  group_id UUID NOT NULL REFERENCES groups(id) ON DELETE CASCADE,
-  participant_id UUID NOT NULL REFERENCES participants(id) ON DELETE CASCADE,
-  added_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-  added_by UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  UNIQUE(group_id, participant_id)
+CREATE TABLE expense_groups (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  couple_id UUID NOT NULL REFERENCES couples(id) ON DELETE CASCADE,
+  name VARCHAR(100) NOT NULL,
+  description TEXT,
+  color CHAR(7),
+  default_currency CHAR(3),
+  is_archived BOOLEAN NOT NULL DEFAULT false,
+  created_by UUID NOT NULL REFERENCES users(id),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  deleted_at TIMESTAMPTZ,
+  CHECK (color IS NULL OR color ~ '^#[0-9A-Fa-f]{6}$'),
+  CHECK (default_currency IS NULL OR default_currency ~ '^[A-Z]{3}$')
 );
 ```
 
-### 10. Expenses Table
+### 10. Group Members Table
+Many-to-many join between groups and participants with status tracking.
+
+```sql
+CREATE TABLE group_members (
+  group_id UUID NOT NULL REFERENCES expense_groups(id) ON DELETE CASCADE,
+  participant_id UUID NOT NULL REFERENCES participants(id) ON DELETE CASCADE,
+  role VARCHAR(20) NOT NULL DEFAULT 'member' CHECK (role IN ('owner','member')),
+  status VARCHAR(20) NOT NULL DEFAULT 'active' CHECK (status IN ('active','invited','left')),
+  joined_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (group_id, participant_id)
+);
+```
+
+### 11. Categories Table
+Expense categories remain tenant-scoped and provide canonical lookups.
+
+```sql
+CREATE TABLE categories (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  couple_id UUID NOT NULL REFERENCES couples(id) ON DELETE CASCADE,
+  name CITEXT NOT NULL,
+  color CHAR(7) NOT NULL,
+  icon VARCHAR(50),
+  is_default BOOLEAN NOT NULL DEFAULT false,
+  created_by UUID REFERENCES users(id),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  deleted_at TIMESTAMPTZ,
+  UNIQUE (couple_id, name),
+  CHECK (color ~ '^#[0-9A-Fa-f]{6}$')
+);
+```
+
+### 12. Expenses Table
 Individual expense records.
 
 ```sql
 CREATE TABLE expenses (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  title VARCHAR(255) NOT NULL,
-  amount DECIMAL(12,2) NOT NULL CHECK (amount > 0),
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  couple_id UUID NOT NULL REFERENCES couples(id) ON DELETE CASCADE,
+  group_id UUID REFERENCES expense_groups(id) ON DELETE SET NULL,
+  category_id UUID REFERENCES categories(id) ON DELETE SET NULL,
+  created_by UUID NOT NULL REFERENCES users(id),
+  paid_by_participant_id UUID REFERENCES participants(id) ON DELETE SET NULL,
+  description VARCHAR(200) NOT NULL,
+  amount_cents BIGINT NOT NULL CHECK (amount_cents > 0),
+  currency CHAR(3) NOT NULL DEFAULT 'USD' CHECK (currency ~ '^[A-Z]{3}$'),
+  exchange_rate NUMERIC(12,6),
   expense_date DATE NOT NULL,
-  caption TEXT,
-  category_id UUID NOT NULL REFERENCES categories(id) ON DELETE RESTRICT,
-  group_id UUID REFERENCES groups(id) ON DELETE SET NULL,
-  paid_by UUID REFERENCES participants(id) ON DELETE SET NULL,
-  created_by UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  couple_id UUID REFERENCES couples(id) ON DELETE CASCADE,
-  created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-  updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+  split_type VARCHAR(20) NOT NULL DEFAULT 'equal' CHECK (split_type IN ('equal','custom','percentage')),
+  notes TEXT,
+  receipt_url TEXT,
+  location VARCHAR(200),
+  deleted_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 ```
 
-### 11. Expense Splits Table
+### 13. Expense Splits Table
 Tracks how expenses are split between participants.
 
 ```sql
@@ -185,10 +237,27 @@ CREATE TABLE expense_splits (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   expense_id UUID NOT NULL REFERENCES expenses(id) ON DELETE CASCADE,
   participant_id UUID NOT NULL REFERENCES participants(id) ON DELETE CASCADE,
-  split_amount DECIMAL(12,2) NOT NULL CHECK (split_amount >= 0),
-  split_percentage DECIMAL(5,2), -- Optional percentage representation
+  share_cents BIGINT NOT NULL CHECK (share_cents >= 0),
+  share_percent NUMERIC(5,2),
+  settled_at TIMESTAMPTZ,
   created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
   UNIQUE(expense_id, participant_id)
+);
+```
+
+### 14. Expense Attachments Table
+Stores supporting receipt metadata for expenses.
+
+```sql
+CREATE TABLE expense_attachments (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  expense_id UUID NOT NULL REFERENCES expenses(id) ON DELETE CASCADE,
+  storage_path TEXT NOT NULL,
+  file_type VARCHAR(20),
+  file_size_bytes INTEGER,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  deleted_at TIMESTAMPTZ
 );
 ```
 
@@ -206,27 +275,33 @@ CREATE INDEX idx_user_settings_user_id ON user_settings(user_id);
 CREATE INDEX idx_user_devices_user ON user_devices(user_id);
 CREATE INDEX idx_user_devices_status ON user_devices(sync_status);
 
--- Couple relationships
-CREATE INDEX idx_couples_user1 ON couples(user1_id);
-CREATE INDEX idx_couples_user2 ON couples(user2_id);
+-- Couples & membership
+CREATE INDEX idx_couples_invite_code ON couples(invite_code);
 CREATE INDEX idx_couples_status ON couples(status);
+CREATE INDEX idx_couple_members_user ON couple_members(user_id);
+CREATE INDEX idx_couple_members_status ON couple_members(status);
+
+-- Invitations
+CREATE INDEX idx_couple_invitations_email ON couple_invitations(invited_email);
+CREATE INDEX idx_couple_invitations_status ON couple_invitations(status);
 
 -- Category lookups
-CREATE INDEX idx_categories_user_id ON categories(user_id);
+CREATE INDEX idx_categories_couple_id ON categories(couple_id);
 CREATE INDEX idx_categories_default ON categories(is_default) WHERE is_default = true;
-
--- Group lookups
-CREATE INDEX idx_groups_created_by ON groups(created_by);
-CREATE INDEX idx_groups_couple_id ON groups(couple_id);
-CREATE INDEX idx_groups_active ON groups(is_active) WHERE is_active = true;
+CREATE INDEX idx_categories_deleted_at ON categories(couple_id) WHERE deleted_at IS NULL;
 
 -- Participant lookups
-CREATE INDEX idx_participants_user_id ON participants(user_id);
-CREATE INDEX idx_participants_created_by ON participants(created_by);
+CREATE INDEX idx_participants_couple ON participants(couple_id);
+CREATE INDEX idx_participants_user ON participants(user_id);
+CREATE INDEX idx_participants_deleted_at ON participants(couple_id) WHERE deleted_at IS NULL;
 
--- Group participants
-CREATE INDEX idx_group_participants_group_id ON group_participants(group_id);
-CREATE INDEX idx_group_participants_participant_id ON group_participants(participant_id);
+-- Expense groups
+CREATE INDEX idx_expense_groups_couple ON expense_groups(couple_id);
+CREATE INDEX idx_expense_groups_active ON expense_groups(is_archived) WHERE is_archived = false;
+CREATE INDEX idx_expense_groups_deleted_at ON expense_groups(couple_id) WHERE deleted_at IS NULL;
+
+CREATE INDEX idx_group_members_group_id ON group_members(group_id);
+CREATE INDEX idx_group_members_participant_id ON group_members(participant_id);
 
 -- Expense lookups
 CREATE INDEX idx_expenses_created_by ON expenses(created_by);
@@ -234,11 +309,13 @@ CREATE INDEX idx_expenses_couple_id ON expenses(couple_id);
 CREATE INDEX idx_expenses_group_id ON expenses(group_id);
 CREATE INDEX idx_expenses_category_id ON expenses(category_id);
 CREATE INDEX idx_expenses_expense_date ON expenses(expense_date);
-CREATE INDEX idx_expenses_paid_by ON expenses(paid_by);
+CREATE INDEX idx_expenses_paid_by_participant ON expenses(paid_by_participant_id);
+CREATE INDEX idx_expenses_deleted_at ON expenses(couple_id) WHERE deleted_at IS NULL;
 
 -- Expense splits
 CREATE INDEX idx_expense_splits_expense_id ON expense_splits(expense_id);
 CREATE INDEX idx_expense_splits_participant_id ON expense_splits(participant_id);
+CREATE INDEX idx_expense_attachments_deleted_at ON expense_attachments(expense_id) WHERE deleted_at IS NULL;
 ```
 
 ## Triggers for Updated Timestamps
@@ -254,39 +331,39 @@ END;
 $$ language 'plpgsql';
 
 -- Apply to all tables with updated_at
-CREATE TRIGGER update_users_updated_at BEFORE UPDATE ON users FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
-CREATE TRIGGER update_user_settings_updated_at BEFORE UPDATE ON user_settings FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
-CREATE TRIGGER update_categories_updated_at BEFORE UPDATE ON categories FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
-CREATE TRIGGER update_groups_updated_at BEFORE UPDATE ON groups FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
-CREATE TRIGGER update_participants_updated_at BEFORE UPDATE ON participants FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
-CREATE TRIGGER update_expenses_updated_at BEFORE UPDATE ON expenses FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+CREATE TRIGGER trg_users_updated_at BEFORE UPDATE ON users FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+CREATE TRIGGER trg_user_settings_updated_at BEFORE UPDATE ON user_settings FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+CREATE TRIGGER trg_user_devices_updated_at BEFORE UPDATE ON user_devices FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+CREATE TRIGGER trg_couples_updated_at BEFORE UPDATE ON couples FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+CREATE TRIGGER trg_categories_updated_at BEFORE UPDATE ON categories FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+CREATE TRIGGER trg_expense_groups_updated_at BEFORE UPDATE ON expense_groups FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+CREATE TRIGGER trg_participants_updated_at BEFORE UPDATE ON participants FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+CREATE TRIGGER trg_expenses_updated_at BEFORE UPDATE ON expenses FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 ```
 
 ## Data Constraints and Business Rules
 
 ### Expense Split Validation
 ```sql
--- Ensure expense splits sum to expense amount (enforced at application level)
--- This would be a complex trigger, better handled in application logic
+CREATE OR REPLACE FUNCTION assert_split_balance()
+RETURNS TRIGGER AS $$
+DECLARE
+  total_shares BIGINT;
+  expense_total BIGINT;
+BEGIN
+  SELECT COALESCE(SUM(share_cents), 0) INTO total_shares FROM expense_splits WHERE expense_id = NEW.expense_id;
+  SELECT amount_cents INTO expense_total FROM expenses WHERE id = NEW.expense_id;
+  IF total_shares <> expense_total THEN
+    RAISE EXCEPTION 'Split total % must equal expense amount %', total_shares, expense_total;
+  END IF;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
 
--- Ensure participant exists in group when splitting expenses
-ALTER TABLE expense_splits ADD CONSTRAINT check_participant_in_group
-  CHECK (
-    participant_id IN (
-      SELECT gp.participant_id
-      FROM group_participants gp
-      JOIN expenses e ON e.group_id = gp.group_id
-      WHERE e.id = expense_id
-    ) OR
-    (SELECT group_id FROM expenses WHERE id = expense_id) IS NULL
-  );
-```
-
-### Couple Relationship Rules
-```sql
--- Ensure couple invitation is bidirectional (handled at application level)
--- Prevent duplicate couple relationships with different ordering
-CREATE UNIQUE INDEX idx_couples_ordered ON couples(LEAST(user1_id, user2_id), GREATEST(user1_id, user2_id));
+CREATE CONSTRAINT TRIGGER trg_expense_split_balance
+AFTER INSERT OR UPDATE OR DELETE ON expense_splits
+DEFERRABLE INITIALLY DEFERRED
+FOR EACH ROW EXECUTE FUNCTION assert_split_balance();
 ```
 
 ## Default Categories

@@ -1,0 +1,82 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+REPO_ROOT="$(cd -- "$(dirname "$0")/.." && pwd -P)"
+cd "$REPO_ROOT"
+
+export PATH="$REPO_ROOT/node_modules/.bin:$PATH"
+
+if [[ "${HUSKY_SKIP_PRE_COMMIT:-0}" == "1" ]]; then
+  echo "pre-commit ▶️ skipping (HUSKY_SKIP_PRE_COMMIT=1)"
+  exit 0
+fi
+
+staged_files="$(git diff --cached --name-only)"
+
+if [[ -z "$staged_files" ]]; then
+  echo "pre-commit ▶️ no staged files, skipping checks"
+  exit 0
+fi
+
+run_api=false
+run_mobile=false
+run_web=false
+
+override_all=false
+
+while IFS= read -r file; do
+  [[ -z "$file" ]] && continue
+  case "$file" in
+    apps/api/*)
+      run_api=true
+      ;;
+    apps/mobile/*)
+      run_mobile=true
+      ;;
+    apps/web/*)
+      run_web=true
+      ;;
+    package.json|pnpm-lock.yaml|pnpm-workspace.yaml|.husky/*|scripts/*)
+      override_all=true
+      ;;
+  esac
+done <<< "$staged_files"
+
+if $override_all; then
+  run_api=true
+  run_mobile=true
+  run_web=true
+fi
+
+commands=()
+
+if $run_api; then
+  commands+=("pnpm --filter api lint")
+  commands+=("pnpm --filter api test --runInBand --passWithNoTests")
+fi
+
+if $run_mobile; then
+  commands+=("pnpm --filter mobile lint")
+  commands+=("pnpm --filter mobile test:unit:fast")
+  commands+=("pnpm --filter mobile typecheck")
+fi
+
+if $run_web; then
+  commands+=("pnpm --filter web lint")
+fi
+
+if [[ ${#commands[@]} -eq 0 ]]; then
+  echo "pre-commit ▶️ no project checks required"
+  exit 0
+fi
+
+for cmd in "${commands[@]}"; do
+  echo "pre-commit ▶️ $cmd"
+  if ! eval "$cmd"; then
+    echo "pre-commit ❌ $cmd"
+    exit 1
+  fi
+  echo "pre-commit ✅ $cmd"
+done
+
+echo "pre-commit ✅ all checks passed"
