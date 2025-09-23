@@ -6,17 +6,24 @@ const generateId = () => Math.random().toString(36).substr(2, 9);
 
 export interface GroupState {
   groups: ExpenseGroup[];
-  
+
   // Actions
   addGroup: (name: string, creatorParticipant?: Participant) => string;
   updateGroup: (group: ExpenseGroup) => void;
   deleteGroup: (id: string) => void;
   getGroupById: (id: string) => ExpenseGroup | undefined;
-  
+
   // Participant management
-  addParticipantToGroup: (groupId: string, participantId: string, participant: Participant) => void;
+  addParticipantToGroup: (
+    groupId: string,
+    participantId: string,
+    participant: Participant,
+  ) => void;
   removeParticipantFromGroup: (groupId: string, participantId: string) => void;
-  updateParticipantInGroups: (participantId: string, updatedParticipant: Participant) => void;
+  updateParticipantInGroups: (
+    participantId: string,
+    updatedParticipant: Participant,
+  ) => void;
   removeParticipantFromAllGroups: (participantId: string) => void;
 }
 
@@ -35,14 +42,14 @@ export const useGroupStore = create<GroupState>((set, get) => ({
     set((state) => ({
       groups: [...state.groups, newGroup],
     }));
-    
+
     return newGroupId;
   },
 
   updateGroup: (updatedGroup) =>
     set((state) => ({
       groups: state.groups.map((group) =>
-        group.id === updatedGroup.id ? updatedGroup : group
+        group.id === updatedGroup.id ? updatedGroup : group,
       ),
     })),
 
@@ -62,7 +69,7 @@ export const useGroupStore = create<GroupState>((set, get) => ({
               ...group,
               participants: [...group.participants, participant],
             }
-          : group
+          : group,
       ),
     })),
 
@@ -73,10 +80,10 @@ export const useGroupStore = create<GroupState>((set, get) => ({
           ? {
               ...group,
               participants: group.participants.filter(
-                (p) => p.id !== participantId
+                (p) => p.id !== participantId,
               ),
             }
-          : group
+          : group,
       ),
     })),
 
@@ -85,7 +92,7 @@ export const useGroupStore = create<GroupState>((set, get) => ({
       groups: state.groups.map((group) => ({
         ...group,
         participants: group.participants.map((p) =>
-          p.id === participantId ? updatedParticipant : p
+          p.id === participantId ? updatedParticipant : p,
         ),
       })),
     })),

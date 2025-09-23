@@ -20,7 +20,9 @@ describe('UserDevice Entity (Postgres)', () => {
     if (!dataSource?.isInitialized) {
       return;
     }
-    await dataSource.query('TRUNCATE TABLE "user_devices" RESTART IDENTITY CASCADE;');
+    await dataSource.query(
+      'TRUNCATE TABLE "user_devices" RESTART IDENTITY CASCADE;',
+    );
     await dataSource.query('TRUNCATE TABLE "users" RESTART IDENTITY CASCADE;');
   });
 

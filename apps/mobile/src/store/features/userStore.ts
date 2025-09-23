@@ -32,7 +32,7 @@ export const useUserStore = create<UserState>((set, get) => {
     theme: 'light',
     currency: 'USD',
     dateFormat: 'MM/DD/YYYY',
-    notifications: true
+    notifications: true,
   };
 
   return {
@@ -63,7 +63,7 @@ export const useUserStore = create<UserState>((set, get) => {
       const userId = `user_${generateId()}`;
       const newUser: User = {
         id: userId,
-        displayName
+        displayName,
       };
       set({ user: newUser });
       return userId;
@@ -78,7 +78,10 @@ export const useUserStore = create<UserState>((set, get) => {
         const currentUser = get().user;
         const updatedUser = currentUser
           ? { ...currentUser, displayName: settings.name }
-          : { id: get().internalUserId || initialUserId, displayName: settings.name };
+          : {
+              id: get().internalUserId || initialUserId,
+              displayName: settings.name,
+            };
         set({ user: updatedUser });
       }
     },

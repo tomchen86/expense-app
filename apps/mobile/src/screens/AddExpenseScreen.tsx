@@ -100,7 +100,9 @@ const AddExpenseScreen = () => {
         onCategorySelect={handleCategorySelect}
         onGroupSelect={handleGroupSelect}
         onGroupClear={handleGroupClear}
-        onPaidBySelect={(item) => handleUpdateFormState("paidByParticipant", item)}
+        onPaidBySelect={(item) =>
+          handleUpdateFormState('paidByParticipant', item)
+        }
         onParticipantToggle={handleParticipantSelect}
         onCloseCategoryModal={() => setShowCategoryModal(false)}
         onCloseGroupModal={() => setShowGroupModal(false)}

@@ -62,11 +62,7 @@ export const BasicInfoSection: React.FC<BasicInfoSectionProps> = ({
         numberOfLines={3}
       />
 
-      <DatePicker
-        label="Date:"
-        date={date}
-        onChange={onDateChange}
-      />
+      <DatePicker label="Date:" date={date} onChange={onDateChange} />
     </>
   );
 };

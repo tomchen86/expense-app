@@ -22,19 +22,19 @@ interface UseInsightsDataReturn {
   // Data
   chartData: ChartDataPoint[];
   screenTitle: string;
-  
+
   // Date/Period State
   aggregation: "month" | "year";
   selectedYear: number;
   selectedMonth: number;
   displayPeriodText: string;
   isNextDisabled: boolean;
-  
+
   // Date Picker State
   showDatePickers: boolean;
   availableYears: number[];
   monthNames: string[];
-  
+
   // Actions
   setAggregation: (aggregation: "month" | "year") => void;
   handlePreviousPeriod: () => void;
@@ -58,10 +58,10 @@ export const useInsightsData = ({
   // State
   const [aggregation, setAggregation] = useState<"month" | "year">("month");
   const [selectedYear, setSelectedYear] = useState<number>(
-    initialDate ? initialDate.getFullYear() : new Date().getFullYear()
+    initialDate ? initialDate.getFullYear() : new Date().getFullYear(),
   );
   const [selectedMonth, setSelectedMonth] = useState<number>(
-    initialDate ? initialDate.getMonth() : new Date().getMonth()
+    initialDate ? initialDate.getMonth() : new Date().getMonth(),
   );
   const [showDatePickers, setShowDatePickers] = useState(false);
 
@@ -77,10 +77,20 @@ export const useInsightsData = ({
 
   const monthNames = useMemo(
     () => [
-      "January", "February", "March", "April", "May", "June",
-      "July", "August", "September", "October", "November", "December",
+      "January",
+      'February',
+      'March',
+      'April',
+      'May',
+      "June",
+      "July",
+      'August',
+      'September',
+      'October',
+      'November',
+      "December",
     ],
-    []
+    [],
   );
 
   // Screen title
@@ -94,7 +104,12 @@ export const useInsightsData = ({
 
   // Display period text
   const displayPeriodText = useMemo(() => {
-    return getDisplayPeriodText(selectedYear, selectedMonth, aggregation, monthNames);
+    return getDisplayPeriodText(
+      selectedYear,
+      selectedMonth,
+      aggregation,
+      monthNames,
+    );
   }, [selectedMonth, selectedYear, aggregation, monthNames]);
 
   // Check if next is disabled
@@ -108,14 +123,14 @@ export const useInsightsData = ({
       allExpenses,
       contextType,
       contextId,
-      internalUserId
+      internalUserId,
     );
 
     return filterExpensesByDate(
       relevantExpenses,
       aggregation,
       selectedYear,
-      selectedMonth
+      selectedMonth,
     );
   }, [
     allExpenses,
@@ -134,7 +149,11 @@ export const useInsightsData = ({
 
   // Period navigation handlers
   const handlePreviousPeriod = () => {
-    const previous = getPreviousPeriod(selectedYear, selectedMonth, aggregation);
+    const previous = getPreviousPeriod(
+      selectedYear,
+      selectedMonth,
+      aggregation,
+    );
     setSelectedYear(previous.year);
     setSelectedMonth(previous.month);
   };
@@ -151,19 +170,19 @@ export const useInsightsData = ({
     // Data
     chartData,
     screenTitle,
-    
+
     // Date/Period State
     aggregation,
     selectedYear,
     selectedMonth,
     displayPeriodText,
     isNextDisabled,
-    
+
     // Date Picker State
     showDatePickers,
     availableYears,
     monthNames,
-    
+
     // Actions
     setAggregation,
     handlePreviousPeriod,

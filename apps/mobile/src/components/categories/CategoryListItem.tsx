@@ -1,5 +1,11 @@
 import React from "react";
-import { View, Text, TouchableOpacity, StyleSheet, Animated } from "react-native";
+import {
+  View,
+  Text,
+  TouchableOpacity,
+  StyleSheet,
+  Animated,
+} from "react-native";
 import { Swipeable } from "react-native-gesture-handler";
 import { Category } from "../../types";
 
@@ -18,7 +24,7 @@ const CategoryListItem: React.FC<CategoryListItemProps> = ({
 }) => {
   const renderRightActions = (
     progress: Animated.AnimatedInterpolation<number>,
-    dragX: Animated.AnimatedInterpolation<number>
+    dragX: Animated.AnimatedInterpolation<number>,
   ) => {
     const trans = dragX.interpolate({
       inputRange: [-80, 0],
@@ -53,9 +59,7 @@ const CategoryListItem: React.FC<CategoryListItemProps> = ({
     >
       <View style={[styles.colorDot, { backgroundColor: category.color }]} />
       <Text style={styles.itemName}>{category.name}</Text>
-      {!canDelete && (
-        <Text style={styles.protectedLabel}>Protected</Text>
-      )}
+      {!canDelete && <Text style={styles.protectedLabel}>Protected</Text>}
     </TouchableOpacity>
   );
 

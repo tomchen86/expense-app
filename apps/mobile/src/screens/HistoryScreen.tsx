@@ -39,10 +39,10 @@ const HistoryScreen = () => {
   const addGroup = useExpenseStore((state) => state.addGroup);
   const addParticipant = useExpenseStore((state) => state.addParticipant);
   const addParticipantToGroup = useExpenseStore(
-    (state) => state.addParticipantToGroup
+    (state) => state.addParticipantToGroup,
   );
   const removeParticipantFromGroup = useExpenseStore(
-    (state) => state.removeParticipantFromGroup
+    (state) => state.removeParticipantFromGroup,
   );
   const deleteGroup = useExpenseStore((state) => state.deleteGroup);
 
@@ -67,7 +67,7 @@ const HistoryScreen = () => {
           style: "destructive",
           onPress: () => deleteGroup(groupId),
         },
-      ]
+      ],
     );
   };
 
@@ -83,7 +83,7 @@ const HistoryScreen = () => {
           style: "destructive",
           onPress: () => removeParticipantFromGroup(groupId, participantId),
         },
-      ]
+      ],
     );
   };
 
@@ -99,7 +99,7 @@ const HistoryScreen = () => {
             text: "Go to Settings",
             onPress: () => navigation.navigate("Settings" as any), // Navigate to Settings tab/screen
           },
-        ]
+        ],
       );
       return;
     }

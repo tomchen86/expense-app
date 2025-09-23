@@ -73,11 +73,13 @@ const GroupDetailScreen = () => {
   }, [groupExpenses, groupId]);
 
   const currentUserTotalContribution = useMemo(() => {
-    if (!internalUserId) return 0;
+    if (!internalUserId) {
+      return 0;
+    }
     return calculateUserTotalContributionInGroup(
       internalUserId,
       groupExpenses,
-      groupId
+      groupId,
     );
   }, [internalUserId, groupExpenses, groupId]);
 

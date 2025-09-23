@@ -35,7 +35,7 @@ const DatePicker: React.FC<DatePickerProps> = ({
 
   const handleDateChange = (
     event: DateTimePickerEvent,
-    selectedDate?: Date
+    selectedDate?: Date,
   ) => {
     // On Android, the picker closes automatically. On iOS, we need to hide it manually.
     if (Platform.OS === "android") {

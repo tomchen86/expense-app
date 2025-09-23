@@ -36,7 +36,7 @@ const ExpenseListItem: React.FC<ExpenseListItemProps> = ({
           onPress: () => onDelete(item.id),
           style: "destructive",
         },
-      ]
+      ],
     );
   };
 

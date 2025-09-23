@@ -20,53 +20,76 @@ describe('FloatingActionButton Logic', () => {
     setParams: jest.fn(),
     getId: jest.fn(),
     getParent: jest.fn(),
-    getState: jest.fn()
+    getState: jest.fn(),
   });
 
   describe('navigation logic', () => {
     it('should navigate to AddExpense screen without groupId when no custom onPress', () => {
       const mockNavigation = createMockNavigation();
 
-      const handlePress = (props: FloatingActionButtonProps, navigation: any) => {
+      const handlePress = (
+        props: FloatingActionButtonProps,
+        navigation: any,
+      ) => {
         if (props.onPress) {
           props.onPress();
         } else {
-          navigation.navigate("AddExpense", props.groupId ? { groupId: props.groupId } : undefined);
+          navigation.navigate(
+            "AddExpense",
+            props.groupId ? { groupId: props.groupId } : undefined,
+          );
         }
       };
 
       const props: FloatingActionButtonProps = {};
       handlePress(props, mockNavigation);
 
-      expect(mockNavigation.navigate).toHaveBeenCalledWith("AddExpense", undefined);
+      expect(mockNavigation.navigate).toHaveBeenCalledWith(
+        "AddExpense",
+        undefined,
+      );
     });
 
     it('should navigate to AddExpense screen with groupId when provided', () => {
       const mockNavigation = createMockNavigation();
 
-      const handlePress = (props: FloatingActionButtonProps, navigation: any) => {
+      const handlePress = (
+        props: FloatingActionButtonProps,
+        navigation: any,
+      ) => {
         if (props.onPress) {
           props.onPress();
         } else {
-          navigation.navigate("AddExpense", props.groupId ? { groupId: props.groupId } : undefined);
+          navigation.navigate(
+            "AddExpense",
+            props.groupId ? { groupId: props.groupId } : undefined,
+          );
         }
       };
 
       const props: FloatingActionButtonProps = { groupId: 'group-123' };
       handlePress(props, mockNavigation);
 
-      expect(mockNavigation.navigate).toHaveBeenCalledWith("AddExpense", { groupId: 'group-123' });
+      expect(mockNavigation.navigate).toHaveBeenCalledWith("AddExpense", {
+        groupId: 'group-123',
+      });
     });
 
     it('should call custom onPress handler when provided instead of navigating', () => {
       const mockNavigation = createMockNavigation();
       const mockOnPress = jest.fn();
 
-      const handlePress = (props: FloatingActionButtonProps, navigation: any) => {
+      const handlePress = (
+        props: FloatingActionButtonProps,
+        navigation: any,
+      ) => {
         if (props.onPress) {
           props.onPress();
         } else {
-          navigation.navigate("AddExpense", props.groupId ? { groupId: props.groupId } : undefined);
+          navigation.navigate(
+            "AddExpense",
+            props.groupId ? { groupId: props.groupId } : undefined,
+          );
         }
       };
 
@@ -81,17 +104,23 @@ describe('FloatingActionButton Logic', () => {
       const mockNavigation = createMockNavigation();
       const mockOnPress = jest.fn();
 
-      const handlePress = (props: FloatingActionButtonProps, navigation: any) => {
+      const handlePress = (
+        props: FloatingActionButtonProps,
+        navigation: any,
+      ) => {
         if (props.onPress) {
           props.onPress();
         } else {
-          navigation.navigate("AddExpense", props.groupId ? { groupId: props.groupId } : undefined);
+          navigation.navigate(
+            "AddExpense",
+            props.groupId ? { groupId: props.groupId } : undefined,
+          );
         }
       };
 
       const props: FloatingActionButtonProps = {
         onPress: mockOnPress,
-        groupId: 'group-123'
+        groupId: 'group-123',
       };
       handlePress(props, mockNavigation);
 
@@ -105,7 +134,10 @@ describe('FloatingActionButton Logic', () => {
       const validateProps = (props: Partial<FloatingActionButtonProps>) => {
         const warnings: string[] = [];
 
-        if (props.onPress !== undefined && typeof props.onPress !== 'function') {
+        if (
+          props.onPress !== undefined &&
+          typeof props.onPress !== 'function'
+        ) {
           warnings.push('onPress should be a function');
         }
         if (props.groupId !== undefined && typeof props.groupId !== 'string') {
@@ -117,7 +149,7 @@ describe('FloatingActionButton Logic', () => {
 
         return {
           hasWarnings: warnings.length > 0,
-          warnings
+          warnings,
         };
       };
 
@@ -125,7 +157,7 @@ describe('FloatingActionButton Logic', () => {
       const validProps = {
         onPress: jest.fn(),
         groupId: 'group-123',
-        style: { backgroundColor: 'red' }
+        style: { backgroundColor: 'red' },
       };
 
       const validResult = validateProps(validProps);
@@ -135,7 +167,7 @@ describe('FloatingActionButton Logic', () => {
       const invalidProps = {
         onPress: 'not a function',
         groupId: 123,
-        style: 'not an object'
+        style: 'not an object',
       };
 
       const invalidResult = validateProps(invalidProps);
@@ -148,9 +180,13 @@ describe('FloatingActionButton Logic', () => {
     it('should handle undefined and null props gracefully', () => {
       const processProps = (props: Partial<FloatingActionButtonProps>) => {
         return {
-          hasCustomAction: props.onPress !== undefined && props.onPress !== null,
-          hasGroupContext: props.groupId !== undefined && props.groupId !== null && props.groupId.trim() !== '',
-          hasCustomStyle: props.style !== undefined && props.style !== null
+          hasCustomAction:
+            props.onPress !== undefined && props.onPress !== null,
+          hasGroupContext:
+            props.groupId !== undefined &&
+            props.groupId !== null &&
+            props.groupId.trim() !== '',
+          hasCustomStyle: props.style !== undefined && props.style !== null,
         };
       };
 
@@ -158,7 +194,7 @@ describe('FloatingActionButton Logic', () => {
       const propsWithValues = {
         onPress: jest.fn(),
         groupId: 'group-123',
-        style: { backgroundColor: 'blue' }
+        style: { backgroundColor: 'blue' },
       };
 
       const resultWithValues = processProps(propsWithValues);
@@ -170,7 +206,7 @@ describe('FloatingActionButton Logic', () => {
       const propsWithNulls = {
         onPress: undefined,
         groupId: null,
-        style: undefined
+        style: undefined,
       };
 
       const resultWithNulls = processProps(propsWithNulls);
@@ -199,41 +235,70 @@ describe('FloatingActionButton Logic', () => {
         }
 
         if (trimmed.length > 100) {
-          return { isValid: false, reason: 'GroupId too long (max 100 characters)' };
+          return {
+            isValid: false,
+            reason: 'GroupId too long (max 100 characters)',
+          };
         }
 
         if (!/^[a-zA-Z0-9\-_]+$/.test(trimmed)) {
-          return { isValid: false, reason: 'GroupId can only contain letters, numbers, hyphens, and underscores' };
+          return {
+            isValid: false,
+            reason:
+              'GroupId can only contain letters, numbers, hyphens, and underscores',
+          };
         }
 
         return { isValid: true, reason: 'GroupId is valid' };
       };
 
       // Valid groupIds
-      expect(validateGroupId()).toEqual({ isValid: true, reason: 'GroupId is optional' });
-      expect(validateGroupId('group-123')).toEqual({ isValid: true, reason: 'GroupId is valid' });
-      expect(validateGroupId('Group_456')).toEqual({ isValid: true, reason: 'GroupId is valid' });
+      expect(validateGroupId()).toEqual({
+        isValid: true,
+        reason: 'GroupId is optional',
+      });
+      expect(validateGroupId('group-123')).toEqual({
+        isValid: true,
+        reason: 'GroupId is valid',
+      });
+      expect(validateGroupId('Group_456')).toEqual({
+        isValid: true,
+        reason: 'GroupId is valid',
+      });
 
       // Invalid groupIds
-      expect(validateGroupId('')).toEqual({ isValid: false, reason: 'GroupId cannot be empty string' });
-      expect(validateGroupId('   ')).toEqual({ isValid: false, reason: 'GroupId cannot be empty string' });
+      expect(validateGroupId('')).toEqual({
+        isValid: false,
+        reason: 'GroupId cannot be empty string',
+      });
+      expect(validateGroupId('   ')).toEqual({
+        isValid: false,
+        reason: 'GroupId cannot be empty string',
+      });
       expect(validateGroupId('group with spaces')).toEqual({
         isValid: false,
-        reason: 'GroupId can only contain letters, numbers, hyphens, and underscores'
+        reason:
+          'GroupId can only contain letters, numbers, hyphens, and underscores',
       });
       expect(validateGroupId('A'.repeat(101))).toEqual({
         isValid: false,
-        reason: 'GroupId too long (max 100 characters)'
+        reason: 'GroupId too long (max 100 characters)',
       });
     });
 
     it('should prepare navigation params correctly', () => {
       const prepareNavigationParams = (groupId?: string) => {
-        return groupId && groupId.trim() ? { groupId: groupId.trim() } : undefined;
+        return groupId && groupId.trim()
+          ? { groupId: groupId.trim() }
+          : undefined;
       };
 
-      expect(prepareNavigationParams('group-123')).toEqual({ groupId: 'group-123' });
-      expect(prepareNavigationParams('  group-456  ')).toEqual({ groupId: 'group-456' });
+      expect(prepareNavigationParams('group-123')).toEqual({
+        groupId: 'group-123',
+      });
+      expect(prepareNavigationParams('  group-456  ')).toEqual({
+        groupId: 'group-456',
+      });
       expect(prepareNavigationParams('')).toBeUndefined();
       expect(prepareNavigationParams('   ')).toBeUndefined();
       expect(prepareNavigationParams(undefined)).toBeUndefined();
@@ -249,12 +314,16 @@ describe('FloatingActionButton Logic', () => {
         width: 60,
         height: 60,
         borderRadius: 30,
-        backgroundColor: '#007bff'
+        backgroundColor: '#007bff',
       };
 
       const mergeStyles = (customStyle?: any) => {
-        if (!customStyle) return [defaultStyles];
-        if (Array.isArray(customStyle)) return [defaultStyles, ...customStyle];
+        if (!customStyle) {
+          return [defaultStyles];
+        }
+        if (Array.isArray(customStyle)) {
+          return [defaultStyles, ...customStyle];
+        }
         return [defaultStyles, customStyle];
       };
 
@@ -267,12 +336,17 @@ describe('FloatingActionButton Logic', () => {
 
       // Array of custom styles
       const customStyles = [{ backgroundColor: 'red' }, { opacity: 0.8 }];
-      expect(mergeStyles(customStyles)).toEqual([defaultStyles, ...customStyles]);
+      expect(mergeStyles(customStyles)).toEqual([
+        defaultStyles,
+        ...customStyles,
+      ]);
     });
 
     it('should validate style properties', () => {
       const validateStyle = (style?: any) => {
-        if (!style) return { isValid: true, warnings: [] };
+        if (!style) {
+          return { isValid: true, warnings: [] };
+        }
 
         const warnings: string[] = [];
 
@@ -284,39 +358,58 @@ describe('FloatingActionButton Logic', () => {
         }
 
         // Check for potentially problematic style properties
-        if (style.position && !['absolute', 'relative'].includes(style.position)) {
+        if (
+          style.position &&
+          !['absolute', 'relative'].includes(style.position)
+        ) {
           warnings.push('Position should be "absolute" or "relative"');
         }
 
-        if (style.width && (typeof style.width !== 'number' && typeof style.width !== 'string')) {
+        if (
+          style.width &&
+          typeof style.width !== 'number' &&
+          typeof style.width !== 'string'
+        ) {
           warnings.push('Width should be a number or string');
         }
 
-        if (style.height && (typeof style.height !== 'number' && typeof style.height !== 'string')) {
+        if (
+          style.height &&
+          typeof style.height !== 'number' &&
+          typeof style.height !== 'string'
+        ) {
           warnings.push('Height should be a number or string');
         }
 
         return {
           isValid: warnings.length === 0,
-          warnings
+          warnings,
         };
       };
 
       // Valid styles
       expect(validateStyle()).toEqual({ isValid: true, warnings: [] });
-      expect(validateStyle({ backgroundColor: 'red' })).toEqual({ isValid: true, warnings: [] });
-      expect(validateStyle([{ backgroundColor: 'red' }])).toEqual({ isValid: true, warnings: [] });
+      expect(validateStyle({ backgroundColor: 'red' })).toEqual({
+        isValid: true,
+        warnings: [],
+      });
+      expect(validateStyle([{ backgroundColor: 'red' }])).toEqual({
+        isValid: true,
+        warnings: [],
+      });
 
       // Invalid styles
       const invalidStyle = {
         position: 'fixed', // Not valid in React Native
-        width: true,       // Should be number or string
-        height: {}         // Should be number or string
+        width: true, // Should be number or string
+        height: {}, // Should be number or string
       };
 
       const result = validateStyle(invalidStyle);
       expect(result.isValid).toBe(false);
-      expect(result.warnings).toContain('Position should be "absolute" or "relative"');
+      expect(result.warnings).toContain(
+        'Position should be "absolute" or "relative"',
+      );
       expect(result.warnings).toContain('Width should be a number or string');
       expect(result.warnings).toContain('Height should be a number or string');
     });
@@ -324,7 +417,10 @@ describe('FloatingActionButton Logic', () => {
 
   describe('accessibility logic', () => {
     it('should generate appropriate accessibility props', () => {
-      const generateAccessibilityProps = (groupId?: string, hasCustomAction?: boolean) => {
+      const generateAccessibilityProps = (
+        groupId?: string,
+        hasCustomAction?: boolean,
+      ) => {
         let accessibilityLabel = 'Add new expense';
         let accessibilityHint = 'Opens the add expense screen';
 
@@ -339,18 +435,22 @@ describe('FloatingActionButton Logic', () => {
           accessibilityLabel,
           accessibilityHint,
           accessibilityRole: 'button' as const,
-          accessible: true
+          accessible: true,
         };
       };
 
       // Default action
       const defaultProps = generateAccessibilityProps();
       expect(defaultProps.accessibilityLabel).toBe('Add new expense');
-      expect(defaultProps.accessibilityHint).toBe('Opens the add expense screen');
+      expect(defaultProps.accessibilityHint).toBe(
+        'Opens the add expense screen',
+      );
 
       // With group context
       const groupProps = generateAccessibilityProps('family-group');
-      expect(groupProps.accessibilityHint).toBe('Opens the add expense screen for group family-group');
+      expect(groupProps.accessibilityHint).toBe(
+        'Opens the add expense screen for group family-group',
+      );
 
       // With custom action
       const customProps = generateAccessibilityProps(undefined, true);
@@ -376,7 +476,7 @@ describe('FloatingActionButton Logic', () => {
             shouldExecute: timeSinceLastTap > cooldownMs,
             timeSinceLastTap,
             tapCount,
-            isRapidTap: timeSinceLastTap < cooldownMs
+            isRapidTap: timeSinceLastTap < cooldownMs,
           };
         };
       };
@@ -420,8 +520,8 @@ describe('FloatingActionButton Logic', () => {
           getState: () => ({
             isPressed,
             isDisabled,
-            canPress: !isDisabled
-          })
+            canPress: !isDisabled,
+          }),
         };
       };
 
@@ -431,7 +531,7 @@ describe('FloatingActionButton Logic', () => {
       expect(buttonState.getState()).toEqual({
         isPressed: false,
         isDisabled: false,
-        canPress: true
+        canPress: true,
       });
 
       // Press button
@@ -465,7 +565,7 @@ describe('FloatingActionButton Logic', () => {
         } catch (error) {
           return {
             success: false,
-            error: error instanceof Error ? error.message : 'Navigation failed'
+            error: error instanceof Error ? error.message : 'Navigation failed',
           };
         }
       };
@@ -483,32 +583,39 @@ describe('FloatingActionButton Logic', () => {
 
     it('should handle missing screen names', () => {
       const validateScreenName = (screenName: string) => {
-        const validScreens = ['Home', 'AddExpense', 'History', 'Settings', 'GroupDetail', 'ExpenseInsights'];
+        const validScreens = [
+          'Home',
+          'AddExpense',
+          'History',
+          'Settings',
+          'GroupDetail',
+          'ExpenseInsights',
+        ];
         const trimmed = screenName.trim();
 
         return {
           isValid: validScreens.includes(trimmed),
           validScreens,
-          screenName: trimmed
+          screenName: trimmed,
         };
       };
 
       expect(validateScreenName('AddExpense')).toEqual({
         isValid: true,
         validScreens: expect.any(Array),
-        screenName: 'AddExpense'
+        screenName: 'AddExpense',
       });
 
       expect(validateScreenName('InvalidScreen')).toEqual({
         isValid: false,
         validScreens: expect.any(Array),
-        screenName: 'InvalidScreen'
+        screenName: 'InvalidScreen',
       });
 
       expect(validateScreenName('  AddExpense  ')).toEqual({
         isValid: true,
         validScreens: expect.any(Array),
-        screenName: 'AddExpense'
+        screenName: 'AddExpense',
       });
     });
   });

@@ -53,8 +53,8 @@ cd "$(dirname "$0")/.."
 
 # Check if dependencies are installed
 if [ ! -d "node_modules" ]; then
-    print_status "Installing dependencies..."
-    npm ci
+    print_status "Installing dependencies with pnpm..."
+    pnpm install --filter mobile --frozen-lockfile
 fi
 
 # Initialize test results
@@ -64,7 +64,7 @@ PASSED_TESTS=0
 
 # TypeScript Type Checking
 TOTAL_TESTS=$((TOTAL_TESTS + 1))
-if run_test "TypeScript Type Checking" "npm run typecheck"; then
+if run_test "TypeScript Type Checking" "pnpm run typecheck"; then
     PASSED_TESTS=$((PASSED_TESTS + 1))
 else
     FAILED_TESTS+=("TypeScript Type Checking")
@@ -74,7 +74,7 @@ echo ""
 
 # ESLint
 TOTAL_TESTS=$((TOTAL_TESTS + 1))
-if run_test "ESLint Code Quality" "npm run lint"; then
+if run_test "ESLint Code Quality" "pnpm run lint"; then
     PASSED_TESTS=$((PASSED_TESTS + 1))
 else
     FAILED_TESTS+=("ESLint")
@@ -84,7 +84,7 @@ echo ""
 
 # Unit Tests
 TOTAL_TESTS=$((TOTAL_TESTS + 1))
-if run_test "Unit Tests" "npm run test -- --watchAll=false --coverage"; then
+if run_test "Unit Tests" "pnpm run test -- --watchAll=false --coverage"; then
     PASSED_TESTS=$((PASSED_TESTS + 1))
 else
     FAILED_TESTS+=("Unit Tests")
@@ -94,7 +94,7 @@ echo ""
 
 # Coverage Threshold Check
 TOTAL_TESTS=$((TOTAL_TESTS + 1))
-if run_test "Coverage Threshold Check" "npm run test:coverage-check"; then
+if run_test "Coverage Threshold Check" "pnpm run test:coverage-check"; then
     PASSED_TESTS=$((PASSED_TESTS + 1))
 else
     FAILED_TESTS+=("Coverage Threshold")
@@ -109,7 +109,7 @@ if [[ "$1" == "--e2e" ]] || [[ "$CI" == "true" ]]; then
     # Check if iOS simulator is available
     if command -v xcrun >/dev/null 2>&1 && xcrun simctl list | grep -q "iPhone"; then
         TOTAL_TESTS=$((TOTAL_TESTS + 1))
-        if run_test "E2E Tests (iOS)" "npm run test:e2e:build && npm run test:e2e"; then
+        if run_test "E2E Tests (iOS)" "pnpm run test:e2e:build && pnpm run test:e2e"; then
             PASSED_TESTS=$((PASSED_TESTS + 1))
         else
             FAILED_TESTS+=("E2E Tests (iOS)")

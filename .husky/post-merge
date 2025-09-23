@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+REPO_ROOT="$(cd -- "$(dirname "$0")/.." && pwd -P)"
+cd "$REPO_ROOT"
+
+export PATH="$REPO_ROOT/node_modules/.bin:$PATH"
+
+if [[ "${HUSKY_SKIP_POST_MERGE:-0}" == "1" ]]; then
+  echo "post-merge ▶️ skipping (HUSKY_SKIP_POST_MERGE=1)"
+  exit 0
+fi
+
+if [[ ! -f ORIG_HEAD ]]; then
+  exit 0
+fi
+
+changed_files="$(git diff-tree -r --name-only ORIG_HEAD HEAD || true)"
+
+if [[ -n "$changed_files" ]] && echo "$changed_files" | grep -Eq '(^|/)(package\.json|pnpm-lock\.yaml|pnpm-workspace\.yaml)$'; then
+  echo "post-merge ▶️ Detected dependency manifest changes. Running pnpm install."
+  pnpm install --frozen-lockfile
+  echo "post-merge ✅ Dependencies are up to date."
+fi

@@ -5,14 +5,31 @@ describe('HistoryScreen Logic', () => {
   describe('group list display', () => {
     it('should sort groups by most recent activity', () => {
       const groups = [
-        { ...validGroup, id: '1', name: 'Old Group', lastActivity: '2025-09-15' },
-        { ...validGroup, id: '2', name: 'Recent Group', lastActivity: '2025-09-20' },
-        { ...validGroup, id: '3', name: 'Medium Group', lastActivity: '2025-09-18' }
+        {
+          ...validGroup,
+          id: '1',
+          name: 'Old Group',
+          lastActivity: '2025-09-15',
+        },
+        {
+          ...validGroup,
+          id: '2',
+          name: 'Recent Group',
+          lastActivity: '2025-09-20',
+        },
+        {
+          ...validGroup,
+          id: '3',
+          name: 'Medium Group',
+          lastActivity: '2025-09-18',
+        },
       ];
 
-      const sortGroupsByActivity = (groups: typeof groups) => {
-        return [...groups].sort((a, b) =>
-          new Date(b.lastActivity).getTime() - new Date(a.lastActivity).getTime()
+      const sortGroupsByActivity = (groupList: typeof groups) => {
+        return [...groupList].sort(
+          (a, b) =>
+            new Date(b.lastActivity).getTime() -
+            new Date(a.lastActivity).getTime(),
         );
       };
 
@@ -24,7 +41,10 @@ describe('HistoryScreen Logic', () => {
     });
 
     it('should calculate group member count display', () => {
-      const getGroupMemberDisplay = (participantCount: number, maxDisplay: number = 3) => {
+      const getGroupMemberDisplay = (
+        participantCount: number,
+        maxDisplay: number = 3,
+      ) => {
         if (participantCount <= maxDisplay) {
           return `${participantCount} member${participantCount === 1 ? '' : 's'}`;
         }
@@ -40,8 +60,14 @@ describe('HistoryScreen Logic', () => {
     it('should format group summary information', () => {
       const formatGroupSummary = (group: any) => {
         const totalExpenses = group.expenses?.length || 0;
-        const totalAmount = group.expenses?.reduce((sum: number, exp: any) => sum + exp.amount, 0) || 0;
-        const lastActivity = group.lastActivity ? new Date(group.lastActivity).toLocaleDateString() : 'No activity';
+        const totalAmount =
+          group.expenses?.reduce(
+            (sum: number, exp: any) => sum + exp.amount,
+            0,
+          ) || 0;
+        const lastActivity = group.lastActivity
+          ? new Date(group.lastActivity).toLocaleDateString()
+          : 'No activity';
 
         return {
           name: group.name,
@@ -49,18 +75,15 @@ describe('HistoryScreen Logic', () => {
           expenseCount: totalExpenses,
           totalAmount: `$${totalAmount.toFixed(2)}`,
           lastActivity,
-          isEmpty: totalExpenses === 0
+          isEmpty: totalExpenses === 0,
         };
       };
 
       const group = {
         name: 'Test Group',
         participants: ['user1', 'user2'],
-        expenses: [
-          { amount: 25.50 },
-          { amount: 30.75 }
-        ],
-        lastActivity: '2025-09-20'
+        expenses: [{ amount: 25.5 }, { amount: 30.75 }],
+        lastActivity: '2025-09-20',
       };
 
       const summary = formatGroupSummary(group);
@@ -73,7 +96,10 @@ describe('HistoryScreen Logic', () => {
     });
 
     it('should handle empty groups display', () => {
-      const getEmptyGroupMessage = (groupCount: number, hasUserSetup: boolean) => {
+      const getEmptyGroupMessage = (
+        groupCount: number,
+        hasUserSetup: boolean,
+      ) => {
         if (!hasUserSetup) {
           return 'Set up your username in Settings to create groups';
         }
@@ -83,38 +109,48 @@ describe('HistoryScreen Logic', () => {
         return null;
       };
 
-      expect(getEmptyGroupMessage(0, false)).toBe('Set up your username in Settings to create groups');
-      expect(getEmptyGroupMessage(0, true)).toBe('No groups yet. Create your first group to start sharing expenses.');
+      expect(getEmptyGroupMessage(0, false)).toBe(
+        'Set up your username in Settings to create groups',
+      );
+      expect(getEmptyGroupMessage(0, true)).toBe(
+        'No groups yet. Create your first group to start sharing expenses.',
+      );
       expect(getEmptyGroupMessage(1, true)).toBeNull();
     });
   });
 
   describe('balance calculations', () => {
     it('should calculate individual balances in group', () => {
-      const calculateGroupBalances = (expenses: any[], participants: string[]) => {
+      const calculateGroupBalances = (
+        expenses: any[],
+        participants: string[],
+      ) => {
         const balances: Record<string, number> = {};
 
         // Initialize balances
-        participants.forEach(participant => {
+        participants.forEach((participant) => {
           balances[participant] = 0;
         });
 
         // Calculate what each person paid
         const totalPaid: Record<string, number> = {};
-        participants.forEach(participant => {
+        participants.forEach((participant) => {
           totalPaid[participant] = 0;
         });
 
-        expenses.forEach(expense => {
+        expenses.forEach((expense) => {
           totalPaid[expense.paidBy] += expense.amount;
         });
 
         // Calculate total group spending
-        const totalSpent = expenses.reduce((sum, expense) => sum + expense.amount, 0);
+        const totalSpent = expenses.reduce(
+          (sum, expense) => sum + expense.amount,
+          0,
+        );
         const equalShare = totalSpent / participants.length;
 
         // Calculate balances (what they paid - their fair share)
-        participants.forEach(participant => {
+        participants.forEach((participant) => {
           balances[participant] = totalPaid[participant] - equalShare;
         });
 
@@ -123,7 +159,7 @@ describe('HistoryScreen Logic', () => {
 
       const expenses = [
         { paidBy: 'user1', amount: 60 },
-        { paidBy: 'user2', amount: 40 }
+        { paidBy: 'user2', amount: 40 },
       ];
       const participants = ['user1', 'user2'];
 
@@ -144,7 +180,7 @@ describe('HistoryScreen Logic', () => {
         }
       };
 
-      expect(formatBalance(25.50, 'Alice')).toBe('Alice is owed $25.50');
+      expect(formatBalance(25.5, 'Alice')).toBe('Alice is owed $25.50');
       expect(formatBalance(-15.75, 'Bob')).toBe('Bob owes $15.75');
       expect(formatBalance(0, 'Charlie')).toBe('Charlie is settled up');
     });
@@ -162,17 +198,18 @@ describe('HistoryScreen Logic', () => {
           }
         });
 
-        const settlements: Array<{ from: string; to: string; amount: number }> = [];
+        const settlements: Array<{ from: string; to: string; amount: number }> =
+          [];
 
         // Simple settlement calculation (can be optimized)
-        owes.forEach(debtor => {
-          owed.forEach(creditor => {
+        owes.forEach((debtor) => {
+          owed.forEach((creditor) => {
             if (debtor.amount > 0 && creditor.amount > 0) {
               const settleAmount = Math.min(debtor.amount, creditor.amount);
               settlements.push({
                 from: debtor.person,
                 to: creditor.person,
-                amount: settleAmount
+                amount: settleAmount,
               });
               debtor.amount -= settleAmount;
               creditor.amount -= settleAmount;
@@ -184,16 +221,20 @@ describe('HistoryScreen Logic', () => {
       };
 
       const balances = {
-        'Alice': 30,   // Owed $30
-        'Bob': -20,    // Owes $20
-        'Charlie': -10 // Owes $10
+        Alice: 30, // Owed $30
+        Bob: -20, // Owes $20
+        Charlie: -10, // Owes $10
       };
 
       const settlements = calculateSettlements(balances);
 
       expect(settlements).toHaveLength(2);
       expect(settlements[0]).toEqual({ from: 'Bob', to: 'Alice', amount: 20 });
-      expect(settlements[1]).toEqual({ from: 'Charlie', to: 'Alice', amount: 10 });
+      expect(settlements[1]).toEqual({
+        from: 'Charlie',
+        to: 'Alice',
+        amount: 10,
+      });
     });
   });
 
@@ -201,18 +242,26 @@ describe('HistoryScreen Logic', () => {
     it('should handle group item tap', () => {
       const mockNavigate = jest.fn();
 
-      const handleGroupTap = (groupId: string, navigate: typeof mockNavigate) => {
+      const handleGroupTap = (
+        groupId: string,
+        navigate: typeof mockNavigate,
+      ) => {
         navigate('GroupDetail', { groupId });
       };
 
       handleGroupTap('group-123', mockNavigate);
-      expect(mockNavigate).toHaveBeenCalledWith('GroupDetail', { groupId: 'group-123' });
+      expect(mockNavigate).toHaveBeenCalledWith('GroupDetail', {
+        groupId: 'group-123',
+      });
     });
 
     it('should handle add group action', () => {
       const mockNavigate = jest.fn();
 
-      const handleAddGroup = (hasUsername: boolean, navigate: typeof mockNavigate) => {
+      const handleAddGroup = (
+        hasUsername: boolean,
+        navigate: typeof mockNavigate,
+      ) => {
         if (!hasUsername) {
           return {
             type: 'show-alert',
@@ -220,8 +269,8 @@ describe('HistoryScreen Logic', () => {
             message: 'You need to set a username before creating groups',
             actions: [
               { text: 'Cancel', style: 'cancel' },
-              { text: 'Go to Settings', onPress: () => navigate('Settings') }
-            ]
+              { text: 'Go to Settings', onPress: () => navigate('Settings') },
+            ],
           };
         }
 
@@ -251,9 +300,17 @@ describe('HistoryScreen Logic', () => {
         if (isOwner) {
           options.push({ label: 'Edit Group', action: 'edit-group' });
           options.push({ label: 'Manage Members', action: 'manage-members' });
-          options.push({ label: 'Delete Group', action: 'delete-group', destructive: true });
+          options.push({
+            label: 'Delete Group',
+            action: 'delete-group',
+            destructive: true,
+          });
         } else {
-          options.push({ label: 'Leave Group', action: 'leave-group', destructive: true });
+          options.push({
+            label: 'Leave Group',
+            action: 'leave-group',
+            destructive: true,
+          });
         }
 
         return options;
@@ -265,9 +322,15 @@ describe('HistoryScreen Logic', () => {
       const ownerOptions = getGroupActionOptions(ownerGroup, 'user1');
       const memberOptions = getGroupActionOptions(memberGroup, 'user1');
 
-      expect(ownerOptions.find(opt => opt.action === 'delete-group')).toBeDefined();
-      expect(memberOptions.find(opt => opt.action === 'leave-group')).toBeDefined();
-      expect(memberOptions.find(opt => opt.action === 'delete-group')).toBeUndefined();
+      expect(
+        ownerOptions.find((opt) => opt.action === 'delete-group'),
+      ).toBeDefined();
+      expect(
+        memberOptions.find((opt) => opt.action === 'leave-group'),
+      ).toBeDefined();
+      expect(
+        memberOptions.find((opt) => opt.action === 'delete-group'),
+      ).toBeUndefined();
     });
   });
 
@@ -276,16 +339,21 @@ describe('HistoryScreen Logic', () => {
       const groups = [
         { name: 'Family Expenses', participants: ['user1', 'user2'] },
         { name: 'Work Lunch', participants: ['user1', 'user3'] },
-        { name: 'Vacation Fund', participants: ['user1', 'user2', 'user4'] }
+        { name: 'Vacation Fund', participants: ['user1', 'user2', 'user4'] },
       ];
 
-      const filterGroups = (groups: typeof groups, query: string) => {
-        if (!query) return groups;
+      const filterGroups = (groupList: typeof groups, query: string) => {
+        if (!query) {
+          return groupList;
+        }
 
         const lowercaseQuery = query.toLowerCase();
-        return groups.filter(group =>
-          group.name.toLowerCase().includes(lowercaseQuery) ||
-          group.participants.some(p => p.toLowerCase().includes(lowercaseQuery))
+        return groupList.filter(
+          (group) =>
+            group.name.toLowerCase().includes(lowercaseQuery) ||
+            group.participants.some((p) =>
+              p.toLowerCase().includes(lowercaseQuery),
+            ),
         );
       };
 
@@ -305,24 +373,30 @@ describe('HistoryScreen Logic', () => {
       const groups = [
         { name: 'Work Meeting', relevanceScore: 0 },
         { name: 'Family Work', relevanceScore: 0 },
-        { name: 'Work Lunch', relevanceScore: 0 }
+        { name: 'Work Lunch', relevanceScore: 0 },
       ];
 
       const calculateRelevance = (group: any, query: string) => {
         const name = group.name.toLowerCase();
         const searchQuery = query.toLowerCase();
 
-        if (name.startsWith(searchQuery)) return 3;
-        if (name.includes(` ${searchQuery}`)) return 2;
-        if (name.includes(searchQuery)) return 1;
+        if (name.startsWith(searchQuery)) {
+          return 3;
+        }
+        if (name.includes(` ${searchQuery}`)) {
+          return 2;
+        }
+        if (name.includes(searchQuery)) {
+          return 1;
+        }
         return 0;
       };
 
-      const sortByRelevance = (groups: typeof groups, query: string) => {
-        return groups
-          .map(group => ({
+      const sortByRelevance = (groupList: typeof groups, query: string) => {
+        return groupList
+          .map((group) => ({
             ...group,
-            relevanceScore: calculateRelevance(group, query)
+            relevanceScore: calculateRelevance(group, query),
           }))
           .sort((a, b) => b.relevanceScore - a.relevanceScore);
       };
@@ -355,11 +429,19 @@ describe('HistoryScreen Logic', () => {
     it('should calculate group activity summary', () => {
       const calculateGroupActivity = (group: any, currentDate = new Date()) => {
         const expenses = group.expenses || [];
-        const thisMonth = new Date(currentDate.getFullYear(), currentDate.getMonth(), 1);
-        const lastMonth = new Date(currentDate.getFullYear(), currentDate.getMonth() - 1, 1);
+        const thisMonth = new Date(
+          currentDate.getFullYear(),
+          currentDate.getMonth(),
+          1,
+        );
+        const lastMonth = new Date(
+          currentDate.getFullYear(),
+          currentDate.getMonth() - 1,
+          1,
+        );
 
-        const thisMonthExpenses = expenses.filter((exp: any) =>
-          new Date(exp.date) >= thisMonth
+        const thisMonthExpenses = expenses.filter(
+          (exp: any) => new Date(exp.date) >= thisMonth,
         );
 
         const lastMonthExpenses = expenses.filter((exp: any) => {
@@ -371,8 +453,17 @@ describe('HistoryScreen Logic', () => {
           totalExpenses: expenses.length,
           thisMonthCount: thisMonthExpenses.length,
           lastMonthCount: lastMonthExpenses.length,
-          thisMonthTotal: thisMonthExpenses.reduce((sum: number, exp: any) => sum + exp.amount, 0),
-          averageExpense: expenses.length > 0 ? expenses.reduce((sum: number, exp: any) => sum + exp.amount, 0) / expenses.length : 0
+          thisMonthTotal: thisMonthExpenses.reduce(
+            (sum: number, exp: any) => sum + exp.amount,
+            0,
+          ),
+          averageExpense:
+            expenses.length > 0
+              ? expenses.reduce(
+                  (sum: number, exp: any) => sum + exp.amount,
+                  0,
+                ) / expenses.length
+              : 0,
         };
       };
 
@@ -380,8 +471,8 @@ describe('HistoryScreen Logic', () => {
         expenses: [
           { amount: 50, date: '2025-09-20' },
           { amount: 30, date: '2025-09-15' },
-          { amount: 25, date: '2025-08-20' }
-        ]
+          { amount: 25, date: '2025-08-20' },
+        ],
       };
 
       // Use dependency injection instead of mocking
@@ -414,7 +505,9 @@ describe('HistoryScreen Logic', () => {
       expect(formatActivityTrend(0, 0)).toBe('No activity yet');
       expect(formatActivityTrend(12, 10)).toBe('20% increase from last month');
       expect(formatActivityTrend(8, 10)).toBe('20% decrease from last month');
-      expect(formatActivityTrend(10, 10)).toBe('Similar activity to last month');
+      expect(formatActivityTrend(10, 10)).toBe(
+        'Similar activity to last month',
+      );
     });
   });
 });

@@ -8,24 +8,24 @@ describe('CategoryChart Logic', () => {
       category: 'Food & Dining',
       total: 150,
       percentage: 60,
-      color: '#FF5722'
+      color: '#FF5722',
     },
     {
       category: 'Transportation',
       total: 100,
       percentage: 40,
-      color: '#2196F3'
-    }
+      color: '#2196F3',
+    },
   ];
 
   describe('data validation', () => {
     it('should handle valid chart data', () => {
       const processChartData = (data: ChartDataPoint[]) => {
-        return data.map(item => ({
+        return data.map((item) => ({
           value: item.total,
           color: item.color,
           label: item.category,
-          text: `${item.percentage.toFixed(1)}%`
+          text: `${item.percentage.toFixed(1)}%`,
         }));
       };
 
@@ -36,7 +36,7 @@ describe('CategoryChart Logic', () => {
         value: 150,
         color: '#FF5722',
         label: 'Food & Dining',
-        text: '60.0%'
+        text: '60.0%',
       });
     });
 
@@ -45,10 +45,10 @@ describe('CategoryChart Logic', () => {
         if (!data || data.length === 0) {
           return [];
         }
-        return data.map(item => ({
+        return data.map((item) => ({
           value: item.total,
           color: item.color,
-          label: item.category
+          label: item.category,
         }));
       };
 
@@ -67,7 +67,10 @@ describe('CategoryChart Logic', () => {
     });
 
     it('should determine legend visibility logic', () => {
-      const shouldShowLegend = (data: ChartDataPoint[], showLegend: boolean) => {
+      const shouldShowLegend = (
+        data: ChartDataPoint[],
+        showLegend: boolean,
+      ) => {
         return showLegend && data.length > 0;
       };
 

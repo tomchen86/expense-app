@@ -36,7 +36,9 @@ describe('seedDefaultUserSettings', () => {
     const inserted = await seedDefaultUserSettings(dataSource);
 
     expect(inserted).toBe(1);
-    const settings = await settingsRepository.findOneByOrFail({ userId: user.id });
+    const settings = await settingsRepository.findOneByOrFail({
+      userId: user.id,
+    });
     expect(settings.language).toBe('en-US');
   });
 
@@ -53,7 +55,9 @@ describe('seedDefaultUserSettings', () => {
     const insertedSecondRun = await seedDefaultUserSettings(dataSource);
 
     expect(insertedSecondRun).toBe(0);
-    const settings = await settingsRepository.findOneByOrFail({ userId: user.id });
+    const settings = await settingsRepository.findOneByOrFail({
+      userId: user.id,
+    });
     expect(settings.userId).toBe(user.id);
   });
 });

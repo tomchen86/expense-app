@@ -5,22 +5,22 @@ describe('ExpenseListItem Logic', () => {
   const mockExpense: Expense = {
     id: 'expense-1',
     title: 'Test Lunch',
-    amount: 25.50,
+    amount: 25.5,
     date: '2025-09-20',
     category: 'Food & Dining',
-    paidBy: 'participant-1'
+    paidBy: 'participant-1',
   };
 
   const mockParticipants: Participant[] = [
     { id: 'participant-1', name: 'Alice' },
-    { id: 'participant-2', name: 'Bob' }
+    { id: 'participant-2', name: 'Bob' },
   ];
 
   const mockGroup: ExpenseGroup = {
     id: 'group-1',
     name: 'Test Group',
     participants: mockParticipants,
-    createdAt: '2025-09-20'
+    createdAt: '2025-09-20',
   };
 
   describe('participant resolution logic', () => {
@@ -61,7 +61,10 @@ describe('ExpenseListItem Logic', () => {
     });
 
     it('should handle null allParticipants gracefully', () => {
-      const findPayer = (expense: Expense, allParticipants: Participant[] | null) => {
+      const findPayer = (
+        expense: Expense,
+        allParticipants: Participant[] | null,
+      ) => {
         return expense.paidBy && allParticipants
           ? allParticipants.find((p) => p.id === expense.paidBy)
           : null;
@@ -119,7 +122,7 @@ describe('ExpenseListItem Logic', () => {
         return {
           type: 'edit',
           expenseId: expense.id,
-          expenseData: expense
+          expenseData: expense,
         };
       };
 
@@ -135,13 +138,15 @@ describe('ExpenseListItem Logic', () => {
           title: 'Delete Expense',
           message: 'Are you sure you want to delete this expense?',
           expenseId: expense.id,
-          expenseTitle: expense.title
+          expenseTitle: expense.title,
         };
       };
 
       const deleteData = prepareDeleteConfirmation(mockExpense);
       expect(deleteData.title).toBe('Delete Expense');
-      expect(deleteData.message).toBe('Are you sure you want to delete this expense?');
+      expect(deleteData.message).toBe(
+        'Are you sure you want to delete this expense?',
+      );
       expect(deleteData.expenseId).toBe('expense-1');
       expect(deleteData.expenseTitle).toBe('Test Lunch');
     });
@@ -149,11 +154,11 @@ describe('ExpenseListItem Logic', () => {
     it('should validate callback functions exist', () => {
       const validateCallbacks = (
         onEdit?: (expense: Expense) => void,
-        onDelete?: (expenseId: string) => void
+        onDelete?: (expenseId: string) => void,
       ) => {
         return {
           hasEditCallback: typeof onEdit === 'function',
-          hasDeleteCallback: typeof onDelete === 'function'
+          hasDeleteCallback: typeof onDelete === 'function',
         };
       };
 
@@ -175,17 +180,25 @@ describe('ExpenseListItem Logic', () => {
       const validateExpense = (expense: Expense) => {
         const errors: string[] = [];
 
-        if (!expense.id) errors.push('ID is required');
+        if (!expense.id) {
+          errors.push("ID is required");
+        }
         if (!expense.title || expense.title.trim().length === 0) {
           errors.push('Title is required');
         }
-        if (expense.amount <= 0) errors.push('Amount must be greater than 0');
-        if (!expense.date) errors.push('Date is required');
-        if (!expense.category) errors.push('Category is required');
+        if (expense.amount <= 0) {
+          errors.push("Amount must be greater than 0");
+        }
+        if (!expense.date) {
+          errors.push("Date is required");
+        }
+        if (!expense.category) {
+          errors.push("Category is required");
+        }
 
         return {
           isValid: errors.length === 0,
-          errors
+          errors,
         };
       };
 
@@ -200,7 +213,7 @@ describe('ExpenseListItem Logic', () => {
         title: '',
         amount: -5,
         date: '',
-        category: ''
+        category: '',
       } as Expense;
 
       const invalidResult = validateExpense(invalidExpense);
@@ -213,12 +226,15 @@ describe('ExpenseListItem Logic', () => {
     });
 
     it('should validate display amount consistency', () => {
-      const validateDisplayAmount = (originalAmount: number, displayAmount: number) => {
+      const validateDisplayAmount = (
+        originalAmount: number,
+        displayAmount: number,
+      ) => {
         // Display amount should not exceed original amount
         // (in case of split expenses, user's share should be <= total)
         return {
           isValid: displayAmount <= originalAmount && displayAmount > 0,
-          ratio: displayAmount / originalAmount
+          ratio: displayAmount / originalAmount,
         };
       };
 
@@ -252,16 +268,28 @@ describe('ExpenseListItem Logic', () => {
       const validateProps = (props: Partial<ExpenseListItemProps>) => {
         const errors: string[] = [];
 
-        if (!props.item) errors.push('item is required');
-        if (props.group === undefined) errors.push('group must be defined (can be null)');
-        if (!props.allParticipants) errors.push('allParticipants is required');
-        if (typeof props.displayAmount !== 'number') errors.push('displayAmount must be a number');
-        if (typeof props.onEdit !== 'function') errors.push('onEdit callback is required');
-        if (typeof props.onDelete !== 'function') errors.push('onDelete callback is required');
+        if (!props.item) {
+          errors.push("item is required");
+        }
+        if (props.group === undefined) {
+          errors.push('group must be defined (can be null)');
+        }
+        if (!props.allParticipants) {
+          errors.push("allParticipants is required");
+        }
+        if (typeof props.displayAmount !== 'number') {
+          errors.push('displayAmount must be a number');
+        }
+        if (typeof props.onEdit !== 'function') {
+          errors.push('onEdit callback is required');
+        }
+        if (typeof props.onDelete !== 'function') {
+          errors.push('onDelete callback is required');
+        }
 
         return {
           isValid: errors.length === 0,
-          errors
+          errors,
         };
       };
 
@@ -270,9 +298,9 @@ describe('ExpenseListItem Logic', () => {
         item: mockExpense,
         group: mockGroup,
         allParticipants: mockParticipants,
-        displayAmount: 25.50,
+        displayAmount: 25.5,
         onEdit: jest.fn(),
-        onDelete: jest.fn()
+        onDelete: jest.fn(),
       };
 
       const validResult = validateProps(validProps);
@@ -284,7 +312,7 @@ describe('ExpenseListItem Logic', () => {
         item: null,
         allParticipants: null,
         displayAmount: 'invalid',
-        onEdit: 'not a function'
+        onEdit: 'not a function',
       };
 
       const invalidResult = validateProps(invalidProps);
@@ -300,7 +328,7 @@ describe('ExpenseListItem Logic', () => {
           hasCaption: !!expense.caption,
           hasPaidBy: !!expense.paidBy,
           hasGroupId: !!expense.groupId,
-          captionLength: expense.caption?.length || 0
+          captionLength: expense.caption?.length || 0,
         };
       };
 
@@ -308,7 +336,7 @@ describe('ExpenseListItem Logic', () => {
       const fullExpense: Expense = {
         ...mockExpense,
         caption: 'Business lunch',
-        groupId: 'group-1'
+        groupId: 'group-1',
       };
 
       const fullResult = processExpense(fullExpense);
@@ -321,9 +349,9 @@ describe('ExpenseListItem Logic', () => {
       const minimalExpense: Expense = {
         id: 'exp-1',
         title: 'Coffee',
-        amount: 4.50,
+        amount: 4.5,
         date: '2025-09-20',
-        category: 'Food'
+        category: 'Food',
       };
 
       const minimalResult = processExpense(minimalExpense);
@@ -346,7 +374,9 @@ describe('ExpenseListItem Logic', () => {
 
     it('should handle very long text content', () => {
       const truncateText = (text: string, maxLength: number) => {
-        if (text.length <= maxLength) return text;
+        if (text.length <= maxLength) {
+          return text;
+        }
         return text.substring(0, maxLength - 3) + '...';
       };
 

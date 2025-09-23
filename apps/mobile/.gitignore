@@ -26,6 +26,9 @@ npm-debug.*
 yarn-debug.*
 yarn-error.*
 
+# bundle analysis
+reports/
+
 # macOS
 .DS_Store
 *.pem

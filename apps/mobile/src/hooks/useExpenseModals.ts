@@ -25,7 +25,8 @@ export const useExpenseModals = ({
   handleUpdateFormState,
   setFormState,
 }: UseExpenseModalsProps) => {
-  const navigation = useNavigation<StackNavigationProp<RootStackParamList, "AddExpense">>();
+  const navigation =
+    useNavigation<StackNavigationProp<RootStackParamList, "AddExpense">>();
 
   // Modal visibility state
   const [showCategoryModal, setShowCategoryModal] = useState(false);
@@ -47,7 +48,9 @@ export const useExpenseModals = ({
   }, []);
 
   // Modal handlers
-  const handleCategorySelect = (item: ExpenseCategory | typeof ADD_NEW_CATEGORY_ACTION) => {
+  const handleCategorySelect = (
+    item: ExpenseCategory | typeof ADD_NEW_CATEGORY_ACTION,
+  ) => {
     if (item === ADD_NEW_CATEGORY_ACTION) {
       navigation.navigate("ManageCategoriesScreen");
     } else {
@@ -70,11 +73,15 @@ export const useExpenseModals = ({
 
   const handleParticipantSelect = (item: Participant) => {
     setFormState((prev: any) => {
-      const isSelected = prev.selectedParticipants.some((p: Participant) => p.id === item.id);
+      const isSelected = prev.selectedParticipants.some(
+        (p: Participant) => p.id === item.id,
+      );
       return {
         ...prev,
         selectedParticipants: isSelected
-          ? prev.selectedParticipants.filter((p: Participant) => p.id !== item.id)
+          ? prev.selectedParticipants.filter(
+              (p: Participant) => p.id !== item.id,
+            )
           : [...prev.selectedParticipants, item],
       };
     });
@@ -90,17 +97,17 @@ export const useExpenseModals = ({
     setShowPaidByModal,
     showSplitModal,
     setShowSplitModal,
-    
+
     // Computed data
     availableParticipants,
     categoryModalData,
-    
+
     // Modal handlers
     handleCategorySelect,
     handleGroupSelect,
     handleGroupClear,
     handleParticipantSelect,
-    
+
     // Constants
     ADD_NEW_CATEGORY_ACTION,
   };

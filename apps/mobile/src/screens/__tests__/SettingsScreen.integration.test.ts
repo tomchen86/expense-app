@@ -1,5 +1,5 @@
 // SettingsScreen integration tests - user workflow validation
-import { useExpenseStore } from '../../store/expenseStore';
+import { useExpenseStore } from '../../store/composedExpenseStore';
 import { mockUser } from '../../__tests__/fixtures';
 
 describe('SettingsScreen Integration', () => {
@@ -15,8 +15,8 @@ describe('SettingsScreen Integration', () => {
         theme: 'light',
         currency: 'USD',
         dateFormat: 'MM/DD/YYYY',
-        notifications: true
-      }
+        notifications: true,
+      },
     });
   });
 
@@ -52,7 +52,9 @@ describe('SettingsScreen Integration', () => {
       // Test invalid names
       expect(validateDisplayName('')).toBe('Display name is required');
       expect(validateDisplayName('   ')).toBe('Display name is required');
-      expect(validateDisplayName('A'.repeat(51))).toBe('Display name must be 50 characters or less');
+      expect(validateDisplayName('A'.repeat(51))).toBe(
+        'Display name must be 50 characters or less',
+      );
     });
 
     it('should handle settings persistence workflow', () => {
@@ -62,7 +64,7 @@ describe('SettingsScreen Integration', () => {
       const newSettings = {
         theme: 'dark' as const,
         currency: 'EUR',
-        dateFormat: 'DD/MM/YYYY'
+        dateFormat: 'DD/MM/YYYY',
       };
 
       store.updateSettings(newSettings);
@@ -118,13 +120,14 @@ describe('SettingsScreen Integration', () => {
       // Set up user and test with user
       const store2 = useExpenseStore.getState();
       store2.updateUser({ displayName: 'Valid User' });
-      const validUserValidation = validateGroupCreation(useExpenseStore.getState().user);
+      const validUserValidation = validateGroupCreation(
+        useExpenseStore.getState().user,
+      );
       expect(validUserValidation).toBeNull();
     });
 
     it('should handle participant management in groups', () => {
-      // This test runs after the group creation workflow beforeEach,
-      // so we need to reset state completely
+      // Reset state completely for this isolated test
       useExpenseStore.setState({
         expenses: [],
         groups: [],
@@ -135,8 +138,8 @@ describe('SettingsScreen Integration', () => {
           theme: 'light',
           currency: 'USD',
           dateFormat: 'MM/DD/YYYY',
-          notifications: true
-        }
+          notifications: true,
+        },
       });
 
       const store = useExpenseStore.getState();
@@ -144,13 +147,13 @@ describe('SettingsScreen Integration', () => {
       store.updateUser({ displayName: 'Test User' });
 
       // Create group (participants are managed separately)
-      store.addGroup('Family Group');
+      const groupId = store.addGroup('Family Group');
 
       const groups = useExpenseStore.getState().groups;
-      const familyGroup = groups[0];
+      const familyGroup = groups.find(g => g.id === groupId);
 
-      expect(familyGroup.participants).toHaveLength(1); // Creator only initially
-      expect(familyGroup.name).toBe('Family Group');
+      expect(familyGroup?.participants).toHaveLength(1); // Creator only initially
+      expect(familyGroup?.name).toBe('Family Group');
     });
   });
 
@@ -178,7 +181,7 @@ describe('SettingsScreen Integration', () => {
 
       const supportedCurrencies = ['USD', 'EUR', 'GBP', 'JPY', 'CAD'];
 
-      supportedCurrencies.forEach(currency => {
+      supportedCurrencies.forEach((currency) => {
         store.updateSettings({ currency });
         const settings = useExpenseStore.getState().settings;
         expect(settings.currency).toBe(currency);
@@ -190,7 +193,7 @@ describe('SettingsScreen Integration', () => {
 
       const dateFormats = ['MM/DD/YYYY', 'DD/MM/YYYY', 'YYYY-MM-DD'];
 
-      dateFormats.forEach(format => {
+      dateFormats.forEach((format) => {
         store.updateSettings({ dateFormat: format });
         const settings = useExpenseStore.getState().settings;
         expect(settings.dateFormat).toBe(format);
@@ -223,7 +226,7 @@ describe('SettingsScreen Integration', () => {
       const validSettings = {
         theme: 'dark',
         currency: 'EUR',
-        dateFormat: 'DD/MM/YYYY'
+        dateFormat: 'DD/MM/YYYY',
       };
       expect(validateSettings(validSettings)).toBeNull();
 
@@ -231,13 +234,13 @@ describe('SettingsScreen Integration', () => {
       const invalidSettings = {
         theme: 'purple',
         currency: 'INVALID',
-        dateFormat: 'WRONG'
+        dateFormat: 'WRONG',
       };
       const errors = validateSettings(invalidSettings);
       expect(errors).toEqual({
         theme: 'Invalid theme selection',
         currency: 'Invalid currency selection',
-        dateFormat: 'Invalid date format'
+        dateFormat: 'Invalid date format',
       });
     });
   });
@@ -248,7 +251,7 @@ describe('SettingsScreen Integration', () => {
         return {
           headerLeft: hasUnsavedChanges ? 'Cancel' : 'Back',
           headerRight: hasUnsavedChanges ? 'Save' : null,
-          gestureEnabled: !hasUnsavedChanges
+          gestureEnabled: !hasUnsavedChanges,
         };
       };
 
@@ -268,7 +271,7 @@ describe('SettingsScreen Integration', () => {
     it('should handle save confirmation workflow', () => {
       const shouldShowSaveConfirmation = (
         hasUnsavedChanges: boolean,
-        isNavigatingAway: boolean
+        isNavigatingAway: boolean,
       ) => {
         return hasUnsavedChanges && isNavigatingAway;
       };
@@ -288,7 +291,7 @@ describe('SettingsScreen Integration', () => {
             theme: storedSettings.theme || 'light',
             currency: storedSettings.currency || 'USD',
             dateFormat: storedSettings.dateFormat || 'MM/DD/YYYY',
-            version: '1.0'
+            version: '1.0',
           };
         }
         return storedSettings;
@@ -301,7 +304,7 @@ describe('SettingsScreen Integration', () => {
         theme: 'dark',
         currency: 'USD',
         dateFormat: 'MM/DD/YYYY',
-        version: '1.0'
+        version: '1.0',
       });
 
       // Test modern settings (no migration needed)
@@ -309,7 +312,7 @@ describe('SettingsScreen Integration', () => {
         theme: 'light',
         currency: 'EUR',
         dateFormat: 'DD/MM/YYYY',
-        version: '1.0'
+        version: '1.0',
       };
       const notMigrated = migrateSettings(modernSettings);
       expect(notMigrated).toEqual(modernSettings);

@@ -72,9 +72,12 @@ jest.mock('react-native-gifted-charts', () => {
   const React = require('react');
   const { View } = require('react-native');
   return {
-    PieChart: (props: any) => React.createElement(View, { testID: "pie-chart", ...props }),
-    BarChart: (props: any) => React.createElement(View, { testID: "bar-chart", ...props }),
-    LineChart: (props: any) => React.createElement(View, { testID: "line-chart", ...props }),
+    PieChart: (props: any) =>
+      React.createElement(View, { testID: "pie-chart", ...props }),
+    BarChart: (props: any) =>
+      React.createElement(View, { testID: "bar-chart", ...props }),
+    LineChart: (props: any) =>
+      React.createElement(View, { testID: "line-chart", ...props }),
   };
 });
 

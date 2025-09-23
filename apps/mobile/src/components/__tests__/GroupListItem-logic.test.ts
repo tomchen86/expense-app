@@ -5,14 +5,14 @@ describe('GroupListItem Logic', () => {
   const mockParticipants: Participant[] = [
     { id: 'participant-1', name: 'Alice' },
     { id: 'participant-2', name: 'Bob' },
-    { id: 'participant-3', name: 'Charlie' }
+    { id: 'participant-3', name: 'Charlie' },
   ];
 
   const mockGroup: ExpenseGroup = {
     id: 'group-1',
     name: 'Test Group',
     participants: mockParticipants,
-    createdAt: '2025-09-20'
+    createdAt: '2025-09-20',
   };
 
   describe('total amount formatting', () => {
@@ -31,7 +31,9 @@ describe('GroupListItem Logic', () => {
 
       expect(formatTotal(0.001)).toBe('$0.00'); // Rounds down
       expect(formatTotal(0.999)).toBe('$1.00'); // Rounds up
-      expect(formatTotal(Number.MAX_SAFE_INTEGER)).toBe(`$${Number.MAX_SAFE_INTEGER.toFixed(2)}`);
+      expect(formatTotal(Number.MAX_SAFE_INTEGER)).toBe(
+        `$${Number.MAX_SAFE_INTEGER.toFixed(2)}`,
+      );
     });
   });
 
@@ -48,8 +50,13 @@ describe('GroupListItem Logic', () => {
     });
 
     it('should validate participant removal eligibility', () => {
-      const canRemoveParticipant = (group: ExpenseGroup, participantId: string) => {
-        const participant = group.participants.find(p => p.id === participantId);
+      const canRemoveParticipant = (
+        group: ExpenseGroup,
+        participantId: string,
+      ) => {
+        const participant = group.participants.find(
+          (p) => p.id === participantId,
+        );
         const hasMinimumParticipants = group.participants.length > 1;
 
         return {
@@ -57,8 +64,8 @@ describe('GroupListItem Logic', () => {
           reason: !participant
             ? 'Participant not found in group'
             : !hasMinimumParticipants
-            ? 'Cannot remove last participant from group'
-            : 'Can remove'
+              ? 'Cannot remove last participant from group'
+              : 'Can remove',
         };
       };
 
@@ -75,16 +82,21 @@ describe('GroupListItem Logic', () => {
       // Last participant
       const singleParticipantGroup = {
         ...mockGroup,
-        participants: [{ id: 'p1', name: 'Alice' }]
+        participants: [{ id: 'p1', name: 'Alice' }],
       };
-      const lastParticipant = canRemoveParticipant(singleParticipantGroup, 'p1');
+      const lastParticipant = canRemoveParticipant(
+        singleParticipantGroup,
+        'p1',
+      );
       expect(lastParticipant.canRemove).toBe(false);
-      expect(lastParticipant.reason).toBe('Cannot remove last participant from group');
+      expect(lastParticipant.reason).toBe(
+        'Cannot remove last participant from group',
+      );
     });
 
     it('should find participant by id', () => {
       const findParticipant = (group: ExpenseGroup, participantId: string) => {
-        return group.participants.find(p => p.id === participantId);
+        return group.participants.find((p) => p.id === participantId);
       };
 
       const found = findParticipant(mockGroup, 'participant-2');
@@ -96,7 +108,10 @@ describe('GroupListItem Logic', () => {
     });
 
     it('should validate new participant addition', () => {
-      const validateNewParticipant = (group: ExpenseGroup, newParticipantName: string) => {
+      const validateNewParticipant = (
+        group: ExpenseGroup,
+        newParticipantName: string,
+      ) => {
         const errors: string[] = [];
 
         if (!newParticipantName || newParticipantName.trim().length === 0) {
@@ -108,7 +123,8 @@ describe('GroupListItem Logic', () => {
         }
 
         const nameExists = group.participants.some(
-          p => p.name.toLowerCase() === newParticipantName.trim().toLowerCase()
+          (p) =>
+            p.name.toLowerCase() === newParticipantName.trim().toLowerCase(),
         );
         if (nameExists) {
           errors.push('Participant with this name already exists');
@@ -116,7 +132,7 @@ describe('GroupListItem Logic', () => {
 
         return {
           isValid: errors.length === 0,
-          errors
+          errors,
         };
       };
 
@@ -133,12 +149,16 @@ describe('GroupListItem Logic', () => {
       // Duplicate name (case insensitive)
       const duplicateResult = validateNewParticipant(mockGroup, 'alice');
       expect(duplicateResult.isValid).toBe(false);
-      expect(duplicateResult.errors).toContain('Participant with this name already exists');
+      expect(duplicateResult.errors).toContain(
+        'Participant with this name already exists',
+      );
 
       // Too long name
       const longResult = validateNewParticipant(mockGroup, 'A'.repeat(51));
       expect(longResult.isValid).toBe(false);
-      expect(longResult.errors).toContain('Participant name must be 50 characters or less');
+      expect(longResult.errors).toContain(
+        'Participant name must be 50 characters or less',
+      );
     });
   });
 
@@ -148,7 +168,7 @@ describe('GroupListItem Logic', () => {
         return {
           groupId: group.id,
           groupName: group.name,
-          participantCount: group.participants.length
+          participantCount: group.participants.length,
         };
       };
 
@@ -164,7 +184,7 @@ describe('GroupListItem Logic', () => {
           title: 'Delete Group',
           message: `Are you sure you want to delete "${group.name}"? This will also delete all associated expenses.`,
           groupId: group.id,
-          hasParticipants: group.participants.length > 0
+          hasParticipants: group.participants.length > 0,
         };
       };
 
@@ -176,8 +196,13 @@ describe('GroupListItem Logic', () => {
     });
 
     it('should prepare participant removal data', () => {
-      const prepareParticipantRemoval = (group: ExpenseGroup, participantId: string) => {
-        const participant = group.participants.find(p => p.id === participantId);
+      const prepareParticipantRemoval = (
+        group: ExpenseGroup,
+        participantId: string,
+      ) => {
+        const participant = group.participants.find(
+          (p) => p.id === participantId,
+        );
 
         return {
           groupId: group.id,
@@ -186,7 +211,7 @@ describe('GroupListItem Logic', () => {
           isValid: participant !== undefined,
           confirmationMessage: participant
             ? `Remove ${participant.name} from ${group.name}?`
-            : 'Participant not found'
+            : 'Participant not found',
         };
       };
 
@@ -195,7 +220,9 @@ describe('GroupListItem Logic', () => {
       expect(removalData.participantId).toBe('participant-2');
       expect(removalData.participantName).toBe('Bob');
       expect(removalData.isValid).toBe(true);
-      expect(removalData.confirmationMessage).toBe('Remove Bob from Test Group?');
+      expect(removalData.confirmationMessage).toBe(
+        'Remove Bob from Test Group?',
+      );
 
       const invalidRemoval = prepareParticipantRemoval(mockGroup, 'invalid-id');
       expect(invalidRemoval.isValid).toBe(false);
@@ -211,9 +238,11 @@ describe('GroupListItem Logic', () => {
       }) => {
         return {
           hasDeleteCallback: typeof callbacks.onDeleteGroup === 'function',
-          hasRemoveParticipantCallback: typeof callbacks.onRemoveParticipant === 'function',
-          hasAddParticipantCallback: typeof callbacks.onAddParticipant === 'function',
-          hasPressCallback: typeof callbacks.onPress === 'function'
+          hasRemoveParticipantCallback:
+            typeof callbacks.onRemoveParticipant === 'function',
+          hasAddParticipantCallback:
+            typeof callbacks.onAddParticipant === 'function',
+          hasPressCallback: typeof callbacks.onPress === 'function',
         };
       };
 
@@ -221,7 +250,7 @@ describe('GroupListItem Logic', () => {
         onDeleteGroup: jest.fn(),
         onRemoveParticipant: jest.fn(),
         onAddParticipant: jest.fn(),
-        onPress: jest.fn()
+        onPress: jest.fn(),
       };
 
       const validation1 = validateCallbacks(allCallbacks);
@@ -243,7 +272,9 @@ describe('GroupListItem Logic', () => {
       const validateGroup = (group: ExpenseGroup) => {
         const errors: string[] = [];
 
-        if (!group.id) errors.push('Group ID is required');
+        if (!group.id) {
+          errors.push("Group ID is required");
+        }
         if (!group.name || group.name.trim().length === 0) {
           errors.push('Group name is required');
         }
@@ -252,11 +283,13 @@ describe('GroupListItem Logic', () => {
         } else if (group.participants.length === 0) {
           errors.push('Group must have at least one participant');
         }
-        if (!group.createdAt) errors.push('Created date is required');
+        if (!group.createdAt) {
+          errors.push("Created date is required");
+        }
 
         return {
           isValid: errors.length === 0,
-          errors
+          errors,
         };
       };
 
@@ -270,14 +303,16 @@ describe('GroupListItem Logic', () => {
         id: '',
         name: '',
         participants: [],
-        createdAt: ''
+        createdAt: '',
       } as ExpenseGroup;
 
       const invalidResult = validateGroup(invalidGroup);
       expect(invalidResult.isValid).toBe(false);
       expect(invalidResult.errors).toContain('Group ID is required');
       expect(invalidResult.errors).toContain('Group name is required');
-      expect(invalidResult.errors).toContain('Group must have at least one participant');
+      expect(invalidResult.errors).toContain(
+        'Group must have at least one participant',
+      );
       expect(invalidResult.errors).toContain('Created date is required');
     });
 
@@ -287,7 +322,7 @@ describe('GroupListItem Logic', () => {
           isValid: !isNaN(amount) && isFinite(amount),
           isPositive: amount >= 0,
           isReasonable: amount >= 0 && amount < 1000000, // Less than $1M
-          formattedValue: isNaN(amount) ? '$0.00' : `$${amount.toFixed(2)}`
+          formattedValue: isNaN(amount) ? '$0.00' : `$${amount.toFixed(2)}`,
         };
       };
 
@@ -322,16 +357,28 @@ describe('GroupListItem Logic', () => {
       const validateProps = (props: Partial<GroupListItemProps>) => {
         const errors: string[] = [];
 
-        if (!props.group) errors.push('group is required');
-        if (typeof props.totalAmount !== 'number') errors.push('totalAmount must be a number');
-        if (typeof props.onDeleteGroup !== 'function') errors.push('onDeleteGroup callback is required');
-        if (typeof props.onRemoveParticipant !== 'function') errors.push('onRemoveParticipant callback is required');
-        if (typeof props.onAddParticipant !== 'function') errors.push('onAddParticipant callback is required');
-        if (typeof props.onPress !== 'function') errors.push('onPress callback is required');
+        if (!props.group) {
+          errors.push("group is required");
+        }
+        if (typeof props.totalAmount !== 'number') {
+          errors.push('totalAmount must be a number');
+        }
+        if (typeof props.onDeleteGroup !== 'function') {
+          errors.push('onDeleteGroup callback is required');
+        }
+        if (typeof props.onRemoveParticipant !== 'function') {
+          errors.push('onRemoveParticipant callback is required');
+        }
+        if (typeof props.onAddParticipant !== 'function') {
+          errors.push('onAddParticipant callback is required');
+        }
+        if (typeof props.onPress !== 'function') {
+          errors.push('onPress callback is required');
+        }
 
         return {
           isValid: errors.length === 0,
-          errors
+          errors,
         };
       };
 
@@ -342,7 +389,7 @@ describe('GroupListItem Logic', () => {
         onDeleteGroup: jest.fn(),
         onRemoveParticipant: jest.fn(),
         onAddParticipant: jest.fn(),
-        onPress: jest.fn()
+        onPress: jest.fn(),
       };
 
       const validResult = validateProps(validProps);
@@ -353,7 +400,7 @@ describe('GroupListItem Logic', () => {
       const invalidProps = {
         group: null,
         totalAmount: 'invalid',
-        onDeleteGroup: 'not a function'
+        onDeleteGroup: 'not a function',
       };
 
       const invalidResult = validateProps(invalidProps);
@@ -365,14 +412,15 @@ describe('GroupListItem Logic', () => {
   describe('edge case handling', () => {
     it('should handle empty participants array gracefully', () => {
       const processEmptyGroup = (group: ExpenseGroup) => {
-        const hasParticipants = group.participants && group.participants.length > 0;
+        const hasParticipants =
+          group.participants && group.participants.length > 0;
 
         return {
           hasParticipants,
           participantCount: group.participants ? group.participants.length : 0,
           displayMessage: hasParticipants
             ? `${group.participants.length} participants`
-            : 'No participants'
+            : 'No participants',
         };
       };
 
@@ -391,11 +439,14 @@ describe('GroupListItem Logic', () => {
 
     it('should handle very long group names', () => {
       const truncateGroupName = (name: string, maxLength: number = 30) => {
-        if (name.length <= maxLength) return name;
+        if (name.length <= maxLength) {
+          return name;
+        }
         return name.substring(0, maxLength - 3) + '...';
       };
 
-      const longName = 'This is a very long group name that should be truncated';
+      const longName =
+        'This is a very long group name that should be truncated';
       const truncated = truncateGroupName(longName, 20);
       expect(truncated).toHaveLength(20);
       expect(truncated.endsWith('...')).toBe(true);
@@ -411,7 +462,7 @@ describe('GroupListItem Logic', () => {
           original: name,
           trimmed: name.trim(),
           hasSpecialChars: /[!@#$%^&*(),.?":{}|<>]/.test(name),
-          isValid: name.trim().length > 0 && name.trim().length <= 50
+          isValid: name.trim().length > 0 && name.trim().length <= 50,
         };
       };
 

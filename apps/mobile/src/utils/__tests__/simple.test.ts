@@ -20,18 +20,36 @@ describe('Insight Calculations', () => {
   describe('calculateCategoryTotals', () => {
     it('should calculate totals correctly', () => {
       const expenses: SimpleExpense[] = [
-        { id: '1', title: 'Coffee', amount: 4.50, date: '2025-09-19', category: 'Food & Dining' },
-        { id: '2', title: 'Lunch', amount: 12.50, date: '2025-09-19', category: 'Food & Dining' },
-        { id: '3', title: 'Gas', amount: 45.00, date: '2025-09-19', category: 'Transportation' },
+        {
+          id: '1',
+          title: 'Coffee',
+          amount: 4.5,
+          date: '2025-09-19',
+          category: 'Food & Dining',
+        },
+        {
+          id: '2',
+          title: 'Lunch',
+          amount: 12.5,
+          date: '2025-09-19',
+          category: 'Food & Dining',
+        },
+        {
+          id: '3',
+          title: 'Gas',
+          amount: 45.0,
+          date: '2025-09-19',
+          category: 'Transportation',
+        },
       ];
 
       const result = calculateCategoryTotals(expenses as any);
 
       expect(result.totals).toEqual({
-        'Food & Dining': 17.00,
-        'Transportation': 45.00,
+        'Food & Dining': 17.0,
+        Transportation: 45.0,
       });
-      expect(result.total).toBe(62.00);
+      expect(result.total).toBe(62.0);
     });
 
     it('should handle empty array', () => {
@@ -43,20 +61,43 @@ describe('Insight Calculations', () => {
 
   describe('filterExpensesByDate', () => {
     const testExpenses: SimpleExpense[] = [
-      { id: '1', title: 'Jan 2025', amount: 100, date: '2025-01-15', category: 'Food' },
-      { id: '2', title: 'Mar 2025', amount: 150, date: '2025-03-10', category: 'Food' },
-      { id: '3', title: 'Dec 2024', amount: 200, date: '2024-12-25', category: 'Food' },
+      {
+        id: '1',
+        title: 'Jan 2025',
+        amount: 100,
+        date: '2025-01-15',
+        category: 'Food',
+      },
+      {
+        id: '2',
+        title: 'Mar 2025',
+        amount: 150,
+        date: '2025-03-10',
+        category: 'Food',
+      },
+      {
+        id: '3',
+        title: 'Dec 2024',
+        amount: 200,
+        date: '2024-12-25',
+        category: 'Food',
+      },
     ];
 
     it('should filter by year', () => {
       const result = filterExpensesByDate(testExpenses as any, 'year', 2025);
       expect(result).toHaveLength(2);
-      expect(result.map(e => e.title)).toContain('Jan 2025');
-      expect(result.map(e => e.title)).toContain('Mar 2025');
+      expect(result.map((e) => e.title)).toContain('Jan 2025');
+      expect(result.map((e) => e.title)).toContain('Mar 2025');
     });
 
     it('should filter by month', () => {
-      const result = filterExpensesByDate(testExpenses as any, 'month', 2025, 0); // January = 0
+      const result = filterExpensesByDate(
+        testExpenses as any,
+        'month',
+        2025,
+        0,
+      ); // January = 0
       expect(result).toHaveLength(1);
       expect(result[0].title).toBe('Jan 2025');
     });
@@ -64,8 +105,18 @@ describe('Insight Calculations', () => {
 
   describe('getDisplayPeriodText', () => {
     const monthNames = [
-      'January', 'February', 'March', 'April', 'May', 'June',
-      'July', 'August', 'September', 'October', 'November', 'December'
+      'January',
+      'February',
+      'March',
+      'April',
+      'May',
+      'June',
+      'July',
+      'August',
+      'September',
+      'October',
+      'November',
+      'December',
     ];
 
     it('should return month and year for month aggregation', () => {

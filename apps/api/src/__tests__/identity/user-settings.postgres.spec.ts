@@ -20,8 +20,12 @@ describe('UserSettings Entity (Postgres)', () => {
     if (!dataSource?.isInitialized) {
       return;
     }
-    await dataSource.query('TRUNCATE TABLE "user_auth_identities" RESTART IDENTITY CASCADE;');
-    await dataSource.query('TRUNCATE TABLE "user_settings" RESTART IDENTITY CASCADE;');
+    await dataSource.query(
+      'TRUNCATE TABLE "user_auth_identities" RESTART IDENTITY CASCADE;',
+    );
+    await dataSource.query(
+      'TRUNCATE TABLE "user_settings" RESTART IDENTITY CASCADE;',
+    );
     await dataSource.query('TRUNCATE TABLE "users" RESTART IDENTITY CASCADE;');
   });
 

@@ -47,11 +47,7 @@ const DatePickerModal: React.FC<DatePickerModalProps> = ({
                   itemStyle={styles.pickerItem}
                 >
                   {monthNames.map((monthName, index) => (
-                    <Picker.Item
-                      key={index}
-                      label={monthName}
-                      value={index}
-                    />
+                    <Picker.Item key={index} label={monthName} value={index} />
                   ))}
                 </Picker>
               </View>

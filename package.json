@@ -1,5 +1,13 @@
 {
+  "name": "app",
+  "private": true,
+  "scripts": {
+    "prepare": "husky install"
+  },
   "dependencies": {
     "@react-native-picker/picker": "^2.11.0"
+  },
+  "devDependencies": {
+    "husky": "^9.1.6"
   }
 }

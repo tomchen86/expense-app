@@ -1,5 +1,12 @@
 import React, { useState, useEffect } from "react";
-import { View, Text, TextInput, TouchableOpacity, StyleSheet, Modal } from "react-native";
+import {
+  View,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  StyleSheet,
+  Modal,
+} from "react-native";
 import ColorPicker, { DEFAULT_COLORS } from "./ColorPicker";
 import { Category } from "../../types";
 
@@ -36,7 +43,7 @@ const CategoryForm: React.FC<CategoryFormProps> = ({
     if (!trimmedName) {
       return; // Don't save empty categories
     }
-    
+
     onSave(trimmedName, selectedColor);
     handleClose();
   };
@@ -59,7 +66,7 @@ const CategoryForm: React.FC<CategoryFormProps> = ({
       <View style={styles.modalOverlay}>
         <View style={styles.modalContent}>
           <Text style={styles.modalTitle}>{modalTitle}</Text>
-          
+
           <TextInput
             style={styles.input}
             placeholder="Category Name"
@@ -68,12 +75,12 @@ const CategoryForm: React.FC<CategoryFormProps> = ({
             autoFocus
             maxLength={50}
           />
-          
+
           <ColorPicker
             selectedColor={selectedColor}
             onColorSelect={setSelectedColor}
           />
-          
+
           <View style={styles.modalActions}>
             <TouchableOpacity
               style={[styles.modalButton, styles.cancelButton]}
@@ -81,20 +88,22 @@ const CategoryForm: React.FC<CategoryFormProps> = ({
             >
               <Text style={styles.modalButtonText}>Cancel</Text>
             </TouchableOpacity>
-            
+
             <TouchableOpacity
               style={[
-                styles.modalButton, 
+                styles.modalButton,
                 styles.saveButton,
-                !categoryName.trim() && styles.disabledButton
+                !categoryName.trim() && styles.disabledButton,
               ]}
               onPress={handleSave}
               disabled={!categoryName.trim()}
             >
-              <Text style={[
-                styles.modalButtonText,
-                !categoryName.trim() && styles.disabledButtonText
-              ]}>
+              <Text
+                style={[
+                  styles.modalButtonText,
+                  !categoryName.trim() && styles.disabledButtonText,
+                ]}
+              >
                 Save
               </Text>
             </TouchableOpacity>

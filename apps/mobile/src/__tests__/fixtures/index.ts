@@ -31,7 +31,7 @@ export const mockExpenses = [
   {
     id: 'exp-1',
     title: 'Coffee',
-    amount: 4.50,
+    amount: 4.5,
     date: '2025-09-19',
     category: 'Food & Dining',
     groupId: null,
@@ -49,7 +49,7 @@ export const mockExpenses = [
   {
     id: 'exp-3',
     title: 'Gas',
-    amount: 45.00,
+    amount: 45.0,
     date: '2025-09-17',
     category: 'Transportation',
     groupId: null,
@@ -80,6 +80,38 @@ export const mockGroups = [
   },
 ];
 
+export const validExpense = {
+  ...mockExpenses[0],
+  id: 'expense-valid',
+  title: 'Sample Expense',
+  amount: 42.5,
+  date: '2025-09-20',
+  category: 'Food & Dining',
+  caption: 'Team dinner',
+  groupId: 'group-1',
+  paidBy: 'user-1',
+  splitBetween: ['user-1', 'user-2'],
+  participants: [
+    { id: 'user-1', name: 'Test User 1' },
+    { id: 'user-2', name: 'Test User 2' },
+  ],
+};
+
+export const validGroup = {
+  ...mockGroups[0],
+  id: 'group-valid',
+  name: 'Sample Group',
+  lastActivity: '2025-09-20',
+  expenses: [
+    {
+      id: 'expense-1',
+      title: 'Shared Dinner',
+      amount: 60,
+      date: '2025-09-19',
+    },
+  ],
+};
+
 export const mockUser = {
   id: 'user-1',
   internalUserId: 'internal-1',
@@ -99,7 +131,7 @@ export const mockParticipants = [
 export const createMockExpense = (overrides = {}) => ({
   id: `exp-${Date.now()}`,
   title: 'Test Expense',
-  amount: 25.00,
+  amount: 25.0,
   date: '2025-09-19',
   category: 'Food & Dining',
   groupId: null,

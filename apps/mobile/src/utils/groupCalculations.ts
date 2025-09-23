@@ -8,7 +8,7 @@ import { Expense, Participant } from "../types";
  */
 export const calculateGroupTotal = (
   expenses: Expense[],
-  groupId: string
+  groupId: string,
 ): number => {
   return expenses
     .filter((e) => e.groupId === groupId) // Filter expenses for the group
@@ -25,7 +25,7 @@ export const calculateGroupTotal = (
 export const calculateUserTotalContributionInGroup = (
   userId: string,
   expenses: Expense[],
-  groupId: string
+  groupId: string,
 ): number => {
   return expenses
     .filter((e) => e.groupId === groupId && e.paidBy === userId)
@@ -50,7 +50,7 @@ export interface MemberBalanceDetails {
  */
 export const calculateAllMemberBalancesInGroup = (
   groupMembers: Participant[],
-  groupExpenses: Expense[]
+  groupExpenses: Expense[],
 ): MemberBalanceDetails[] => {
   if (!groupMembers || groupMembers.length === 0) {
     return [];

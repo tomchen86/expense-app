@@ -1,5 +1,8 @@
 // Category form validation logic tests
-import { validCategoryForm, invalidCategoryForm } from '../../__tests__/fixtures';
+import {
+  validCategoryForm,
+  invalidCategoryForm,
+} from '../../__tests__/fixtures';
 
 describe('CategoryForm Logic', () => {
   describe('form validation', () => {
@@ -17,7 +20,9 @@ describe('CategoryForm Logic', () => {
       expect(validateCategoryName('Food & Dining')).toBeNull();
       expect(validateCategoryName('')).toBe('Category name is required');
       expect(validateCategoryName('   ')).toBe('Category name is required');
-      expect(validateCategoryName('A'.repeat(51))).toBe('Category name must be 50 characters or less');
+      expect(validateCategoryName('A'.repeat(51))).toBe(
+        'Category name must be 50 characters or less',
+      );
     });
 
     it('should validate color format', () => {
@@ -56,7 +61,7 @@ describe('CategoryForm Logic', () => {
       expect(validateCategoryForm(validCategoryForm)).toBeNull();
       expect(validateCategoryForm(invalidCategoryForm)).toEqual({
         name: 'Category name is required',
-        color: 'Valid color is required'
+        color: 'Valid color is required',
       });
     });
   });
@@ -78,29 +83,46 @@ describe('CategoryForm Logic', () => {
     it('should check for duplicate names', () => {
       const existingCategories = [
         { id: '1', name: 'Food & Dining', color: '#FF5722' },
-        { id: '2', name: 'Transportation', color: '#2196F3' }
+        { id: '2', name: 'Transportation', color: '#2196F3' },
       ];
 
-      const isDuplicateName = (name: string, categories: typeof existingCategories, excludeId?: string) => {
-        return categories.some(cat =>
-          cat.name.toLowerCase() === name.toLowerCase() && cat.id !== excludeId
+      const isDuplicateName = (
+        name: string,
+        categories: typeof existingCategories,
+        excludeId?: string,
+      ) => {
+        return categories.some(
+          (cat) =>
+            cat.name.toLowerCase() === name.toLowerCase() &&
+            cat.id !== excludeId,
         );
       };
 
       expect(isDuplicateName('Food & Dining', existingCategories)).toBe(true);
       expect(isDuplicateName('food & dining', existingCategories)).toBe(true); // Case insensitive
       expect(isDuplicateName('New Category', existingCategories)).toBe(false);
-      expect(isDuplicateName('Food & Dining', existingCategories, '1')).toBe(false); // Exclude self
+      expect(isDuplicateName('Food & Dining', existingCategories, '1')).toBe(
+        false,
+      ); // Exclude self
     });
 
     it('should provide default colors', () => {
       const defaultColors = [
-        '#FF5722', '#2196F3', '#4CAF50', '#FF9800',
-        '#9C27B0', '#F44336', '#795548', '#607D8B'
+        '#FF5722',
+        '#2196F3',
+        '#4CAF50',
+        '#FF9800',
+        '#9C27B0',
+        '#F44336',
+        '#795548',
+        '#607D8B',
       ];
 
       const getNextDefaultColor = (usedColors: string[]) => {
-        return defaultColors.find(color => !usedColors.includes(color)) || defaultColors[0];
+        return (
+          defaultColors.find((color) => !usedColors.includes(color)) ||
+          defaultColors[0]
+        );
       };
 
       expect(getNextDefaultColor([])).toBe('#FF5722');
@@ -121,10 +143,14 @@ describe('CategoryForm Logic', () => {
       const initialState: FormState = {
         name: '',
         color: '#FF5722',
-        isDefault: false
+        isDefault: false,
       };
 
-      const updateFormField = (state: FormState, field: keyof FormState, value: any): FormState => {
+      const updateFormField = (
+        state: FormState,
+        field: keyof FormState,
+        value: any,
+      ): FormState => {
         return { ...state, [field]: value };
       };
 
@@ -135,7 +161,7 @@ describe('CategoryForm Logic', () => {
       expect(state).toEqual({
         name: 'Food & Dining',
         color: '#2196F3',
-        isDefault: false
+        isDefault: false,
       });
     });
 
@@ -143,7 +169,7 @@ describe('CategoryForm Logic', () => {
       const resetForm = () => ({
         name: '',
         color: '#FF5722',
-        isDefault: false
+        isDefault: false,
       });
 
       const form = resetForm();

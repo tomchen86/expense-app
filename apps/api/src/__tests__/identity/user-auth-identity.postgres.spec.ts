@@ -20,8 +20,12 @@ describe('UserAuthIdentity Entity (Postgres)', () => {
     if (!dataSource?.isInitialized) {
       return;
     }
-    await dataSource.query('TRUNCATE TABLE "user_auth_identities" RESTART IDENTITY CASCADE;');
-    await dataSource.query('TRUNCATE TABLE "user_settings" RESTART IDENTITY CASCADE;');
+    await dataSource.query(
+      'TRUNCATE TABLE "user_auth_identities" RESTART IDENTITY CASCADE;',
+    );
+    await dataSource.query(
+      'TRUNCATE TABLE "user_settings" RESTART IDENTITY CASCADE;',
+    );
     await dataSource.query('TRUNCATE TABLE "users" RESTART IDENTITY CASCADE;');
   });
 
@@ -55,7 +59,9 @@ describe('UserAuthIdentity Entity (Postgres)', () => {
         provider: 'google',
         providerAccountId: 'def',
       }),
-    ).rejects.toThrow(/duplicate key value|user_auth_identities_user_id_provider_key/i);
+    ).rejects.toThrow(
+      /duplicate key value|user_auth_identities_user_id_provider_key/i,
+    );
   });
 
   it('enforces unique provider account identifiers globally', async () => {
@@ -76,7 +82,9 @@ describe('UserAuthIdentity Entity (Postgres)', () => {
         provider: 'apple',
         providerAccountId: 'global-123',
       }),
-    ).rejects.toThrow(/duplicate key value|user_auth_identities_provider_provider_account_id_key/i);
+    ).rejects.toThrow(
+      /duplicate key value|user_auth_identities_provider_provider_account_id_key/i,
+    );
   });
 
   it('persists metadata as jsonb', async () => {

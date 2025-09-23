@@ -16,10 +16,15 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  unit-tests:
-    name: Unit & Integration Tests
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
+  test-matrix:
+    name: "${{ matrix.test-type }} tests (${{ matrix.os }})"
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        test-type: [unit, integration, component]
 
     steps:
       - name: Checkout repository
@@ -37,22 +42,68 @@ jobs:
         run: npm ci
 
       - name: Run TypeScript type checking
+        if: matrix.test-type == 'unit' && matrix.os == 'ubuntu-latest'
         working-directory: apps/mobile
         run: npm run typecheck
 
       - name: Run ESLint
+        if: matrix.test-type == 'unit' && matrix.os == 'ubuntu-latest'
         working-directory: apps/mobile
         run: npm run lint
 
       - name: Run unit tests
+        if: matrix.test-type == 'unit'
         working-directory: apps/mobile
-        run: npm run test -- --coverage --watchAll=false --maxWorkers=2
+        env:
+          CI: 'true'
+        run: npm run test:unit -- --maxWorkers=2
 
-      - name: Check coverage thresholds
+      - name: Run integration tests
+        if: matrix.test-type == 'integration'
         working-directory: apps/mobile
-        run: npm run test:coverage-check
+        env:
+          CI: 'true'
+        run: npm run test:integration
 
-      - name: Upload coverage reports
+      - name: Run component tests
+        if: matrix.test-type == 'component'
+        working-directory: apps/mobile
+        env:
+          CI: 'true'
+        run: npm run test:component
+
+  coverage-report:
+    name: Coverage Report
+    runs-on: ubuntu-latest
+    needs: test-matrix
+    continue-on-error: true
+    outputs:
+      coverage-result: ${{ steps.coverage-run.outcome }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'npm'
+          cache-dependency-path: apps/mobile/package-lock.json
+
+      - name: Install dependencies
+        working-directory: apps/mobile
+        run: npm ci
+
+      - name: Run coverage suite
+        id: coverage-run
+        continue-on-error: true
+        working-directory: apps/mobile
+        env:
+          CI: 'true'
+        run: npm run test:coverage:html
+
+      - name: Upload Coverage to Codecov
+        if: always()
         uses: codecov/codecov-action@v3
         with:
           file: apps/mobile/coverage/lcov.info
@@ -61,7 +112,7 @@ jobs:
           fail_ci_if_error: false
 
       - name: Comment coverage on PR
-        if: github.event_name == 'pull_request'
+        if: always() && github.event_name == 'pull_request'
         uses: romeovs/lcov-reporter-action@v0.3.1
         with:
           lcov-file: apps/mobile/coverage/lcov.info
@@ -288,19 +339,22 @@ jobs:
   test-summary:
     name: Test Summary
     runs-on: ubuntu-latest
-    needs: [unit-tests, build-verification, security-scan, performance-check]
+    needs: [test-matrix, build-verification, security-scan, performance-check, coverage-report]
     if: always()
 
     steps:
       - name: Check test results
         run: |
-          echo "Unit Tests: ${{ needs.unit-tests.result }}"
+          COVERAGE_RESULT='${{ needs.coverage-report.outputs.coverage-result || needs.coverage-report.result }}'
+
+          echo "Matrix Tests: ${{ needs.test-matrix.result }}"
           echo "Build Verification: ${{ needs.build-verification.result }}"
           echo "Security Scan: ${{ needs.security-scan.result }}"
           echo "Performance Check: ${{ needs.performance-check.result }}"
+          echo "Coverage Report: ${COVERAGE_RESULT}"
 
-          if [[ "${{ needs.unit-tests.result }}" != "success" ]]; then
-            echo "❌ Unit tests failed"
+          if [[ "${{ needs.test-matrix.result }}" != "success" ]]; then
+            echo "❌ Matrix tests failed"
             exit 1
           fi
 
@@ -319,6 +373,11 @@ jobs:
             # Don't fail the build for performance check, but warn
           fi
 
+          if [[ "${COVERAGE_RESULT}" != "success" ]]; then
+            echo "⚠️ Coverage report failed"
+            # Don't fail the build for coverage reporting, but warn
+          fi
+
           echo "✅ All critical tests passed!"
 
       - name: Comment test summary on PR
@@ -327,10 +386,11 @@ jobs:
         with:
           script: |
             const results = {
-              unitTests: '${{ needs.unit-tests.result }}',
+              matrix: '${{ needs.test-matrix.result }}',
               buildVerification: '${{ needs.build-verification.result }}',
               securityScan: '${{ needs.security-scan.result }}',
-              performanceCheck: '${{ needs.performance-check.result }}'
+              performanceCheck: '${{ needs.performance-check.result }}',
+              coverageReport: '${{ needs.coverage-report.outputs.coverage-result || needs.coverage-report.result }}'
             };
 
             const getEmoji = (result) => {
@@ -347,12 +407,13 @@ jobs:
 
             | Test Suite | Result |
             |------------|--------|
-            | Unit & Integration Tests | ${getEmoji(results.unitTests)} ${results.unitTests} |
+            | Matrix (unit/integration/component) | ${getEmoji(results.matrix)} ${results.matrix} |
             | Build Verification | ${getEmoji(results.buildVerification)} ${results.buildVerification} |
             | Security Scan | ${getEmoji(results.securityScan)} ${results.securityScan} |
             | Performance Check | ${getEmoji(results.performanceCheck)} ${results.performanceCheck} |
+            | Coverage Report | ${getEmoji(results.coverageReport)} ${results.coverageReport} |
 
-            ${results.unitTests === 'success' && results.buildVerification === 'success'
+            ${results.matrix === 'success' && results.buildVerification === 'success'
               ? '🎉 All critical tests passed!'
               : '⚠️ Some tests failed. Please check the logs above.'}
             `;

@@ -6,20 +6,20 @@ import { Category } from "../types";
 interface UseCategoryManagerReturn {
   // Store data
   categories: Category[];
-  
+
   // Modal state
   modalVisible: boolean;
   isEditing: Category | null;
-  
+
   // Modal actions
   openAddModal: () => void;
   openEditModal: (category: Category) => void;
   closeModal: () => void;
-  
+
   // Category operations
   saveCategory: (name: string, color: string) => void;
   deleteCategory: (categoryId: string) => void;
-  
+
   // Helper functions
   canDeleteCategory: (category: Category) => boolean;
 }
@@ -29,7 +29,9 @@ export const useCategoryManager = (): UseCategoryManagerReturn => {
   const categories = useExpenseStore((state) => state.categories);
   const addCategory = useExpenseStore((state) => state.addCategory);
   const updateCategory = useExpenseStore((state) => state.updateCategory);
-  const deleteCategoryFromStore = useExpenseStore((state) => state.deleteCategory);
+  const deleteCategoryFromStore = useExpenseStore(
+    (state) => state.deleteCategory,
+  );
 
   // Local state for modal management
   const [modalVisible, setModalVisible] = useState(false);
@@ -54,7 +56,7 @@ export const useCategoryManager = (): UseCategoryManagerReturn => {
   // Category operations
   const saveCategory = (name: string, color: string) => {
     const trimmedName = name.trim();
-    
+
     if (!trimmedName) {
       Alert.alert("Error", "Category name cannot be empty.");
       return;
@@ -67,38 +69,38 @@ export const useCategoryManager = (): UseCategoryManagerReturn => {
         name: trimmedName,
         color,
       };
-      
+
       updateCategory(updatedCategory);
     } else {
       // Check if category with same name already exists
       const existingCategory = categories.find(
-        (cat) => cat.name.toLowerCase() === trimmedName.toLowerCase()
+        (cat) => cat.name.toLowerCase() === trimmedName.toLowerCase(),
       );
-      
+
       if (existingCategory) {
         Alert.alert("Error", "A category with this name already exists.");
         return;
       }
-      
+
       // Create new category
       addCategory({ name: trimmedName, color });
     }
-    
+
     closeModal();
   };
 
   const deleteCategory = (categoryId: string) => {
     const categoryToDelete = categories.find((c) => c.id === categoryId);
-    
+
     if (!categoryToDelete) {
       return;
     }
-    
+
     if (!canDeleteCategory(categoryToDelete)) {
       Alert.alert("Error", "The 'Other' category cannot be deleted.");
       return;
     }
-    
+
     Alert.alert(
       "Delete Category",
       `Are you sure you want to delete "${categoryToDelete.name}"? Expenses using this category might be affected.`,
@@ -109,7 +111,7 @@ export const useCategoryManager = (): UseCategoryManagerReturn => {
           style: "destructive",
           onPress: () => deleteCategoryFromStore(categoryId),
         },
-      ]
+      ],
     );
   };
 
@@ -121,20 +123,20 @@ export const useCategoryManager = (): UseCategoryManagerReturn => {
   return {
     // Store data
     categories,
-    
+
     // Modal state
     modalVisible,
     isEditing,
-    
+
     // Modal actions
     openAddModal,
     openEditModal,
     closeModal,
-    
+
     // Category operations
     saveCategory,
     deleteCategory,
-    
+
     // Helper functions
     canDeleteCategory,
   };

@@ -1,36 +1,75 @@
 // AddExpenseScreen integration tests - workflow validation
-import { useExpenseStore } from '../../store/expenseStore';
+import { useExpenseStore } from '../../store/composedExpenseStore';
 import { validExpense, validGroup, mockUser } from '../../__tests__/fixtures';
 
 describe('AddExpenseScreen Integration', () => {
   beforeEach(() => {
-    // Reset to clean state
+    // Reset individual stores first
+    const { useExpenseStore: useExpenseFeatureStore } = require('../../store/features/expenseStore');
+    const { useGroupStore } = require('../../store/features/groupStore');
+    const { useParticipantStore } = require('../../store/features/participantStore');
+    const { useCategoryStore } = require('../../store/features/categoryStore');
+    const { useUserStore } = require('../../store/features/userStore');
+
+    // Reset individual stores
+    useExpenseFeatureStore.setState({ expenses: [] });
+    useGroupStore.setState({ groups: [] });
+    useParticipantStore.setState({ participants: [] });
+    useUserStore.setState({
+      user: null,
+      settings: {
+        theme: 'light',
+        currency: 'USD',
+        dateFormat: 'MM/DD/YYYY',
+        notifications: true,
+      },
+      userSettings: null,
+      internalUserId: `user_${Math.random().toString(36).substr(2, 9)}`,
+    });
+
+    // Reset categories to default test categories
+    useCategoryStore.setState({
+      categories: [
+        {
+          id: 'cat-1',
+          name: 'Food & Dining',
+          color: '#FF5722',
+        },
+        {
+          id: 'cat-2',
+          name: 'Transportation',
+          color: '#2196F3',
+        },
+      ],
+    });
+
+    // Reset composed store to sync state
     useExpenseStore.setState({
       expenses: [],
       groups: [],
       participants: [],
       categories: [
-        { id: 'cat-1', name: 'Food & Dining', color: '#FF5722', isDefault: true },
-        { id: 'cat-2', name: 'Transportation', color: '#2196F3', isDefault: true }
+        {
+          id: 'cat-1',
+          name: 'Food & Dining',
+          color: '#FF5722',
+        },
+        {
+          id: 'cat-2',
+          name: 'Transportation',
+          color: '#2196F3',
+        },
       ],
       user: null,
       settings: {
         theme: 'light',
         currency: 'USD',
         dateFormat: 'MM/DD/YYYY',
-        notifications: true
-      }
+        notifications: true,
+      },
+      userSettings: null,
+      internalUserId: useUserStore.getState().internalUserId,
     });
-
-    // Reset the store's ID counter if it exists
-    try {
-      const { resetIdCounter } = require('../../store/features/expenseStore');
-      if (typeof resetIdCounter === 'function') {
-        resetIdCounter();
-      }
-    } catch (error) {
-      // resetIdCounter doesn't exist, continue without it
-    }
   });
 
   describe('expense creation workflow', () => {
@@ -40,10 +79,10 @@ describe('AddExpenseScreen Integration', () => {
       // Simulate form input
       const expenseData = {
         title: 'Test Lunch',
-        amount: 15.50,
+        amount: 15.5,
         category: 'Food & Dining',
         date: '2025-09-20',
-        userId: mockUser.internalUserId
+        userId: mockUser.internalUserId,
       };
 
       // Add expense through store
@@ -53,7 +92,7 @@ describe('AddExpenseScreen Integration', () => {
       const expenses = useExpenseStore.getState().expenses;
       expect(expenses).toHaveLength(1);
       expect(expenses[0].title).toBe('Test Lunch');
-      expect(expenses[0].amount).toBe(15.50);
+      expect(expenses[0].amount).toBe(15.5);
       expect(expenses[0].category).toBe('Food & Dining');
     });
 
@@ -61,23 +100,18 @@ describe('AddExpenseScreen Integration', () => {
       const store = useExpenseStore.getState();
 
       // First add a group
-      const group = {
-        name: 'Test Group',
-        participants: [mockUser.internalId, 'user-2']
-      };
-      store.addGroup(group);
+      const groupId = store.addGroup('Test Group');
 
       const groups = useExpenseStore.getState().groups;
-      const groupId = groups[0].id;
 
       // Create group expense
       const groupExpense = {
         title: 'Group Dinner',
-        amount: 80.00,
+        amount: 80.0,
         category: 'Food & Dining',
         date: '2025-09-20',
         userId: mockUser.internalUserId,
-        groupId: groupId
+        groupId: groupId,
       };
 
       store.addExpense(groupExpense);
@@ -114,9 +148,9 @@ describe('AddExpenseScreen Integration', () => {
       // Test valid form
       const validForm = {
         title: 'Valid Expense',
-        amount: 10.50,
+        amount: 10.5,
         category: 'Food & Dining',
-        date: '2025-09-20'
+        date: '2025-09-20',
       };
       expect(validateExpenseForm(validForm)).toBeNull();
 
@@ -124,13 +158,13 @@ describe('AddExpenseScreen Integration', () => {
       expect(validateExpenseForm({ title: '', amount: 10 })).toEqual({
         title: 'Title is required',
         category: 'Category is required',
-        date: 'Date is required'
+        date: 'Date is required',
       });
 
       expect(validateExpenseForm({ title: 'Test', amount: 0 })).toEqual({
         amount: 'Amount must be greater than 0',
         category: 'Category is required',
-        date: 'Date is required'
+        date: 'Date is required',
       });
     });
 
@@ -138,21 +172,33 @@ describe('AddExpenseScreen Integration', () => {
       const store = useExpenseStore.getState();
       const initialExpenseCount = store.expenses.length;
 
-      // Add multiple expenses
+      // Add multiple expenses with different dates to ensure predictable sorting
       const expenses = [
-        { title: 'Coffee', amount: 4.50, category: 'Food & Dining', date: '2025-09-20', userId: mockUser.internalId },
-        { title: 'Bus Ticket', amount: 2.25, category: 'Transportation', date: '2025-09-20', userId: mockUser.internalId }
+        {
+          title: 'Coffee',
+          amount: 4.5,
+          category: 'Food & Dining',
+          date: '2025-09-20',
+          userId: mockUser.internalId,
+        },
+        {
+          title: 'Bus Ticket',
+          amount: 2.25,
+          category: 'Transportation',
+          date: '2025-09-21', // Later date, should be first when sorted
+          userId: mockUser.internalId,
+        },
       ];
 
-      expenses.forEach(expense => store.addExpense(expense));
+      expenses.forEach((expense) => store.addExpense(expense));
 
       // Verify store state
       const updatedState = useExpenseStore.getState();
       expect(updatedState.expenses).toHaveLength(initialExpenseCount + 2);
 
       // Verify expense order (should be most recent first)
-      const sortedExpenses = updatedState.expenses.sort((a, b) =>
-        new Date(b.date).getTime() - new Date(a.date).getTime()
+      const sortedExpenses = updatedState.expenses.sort(
+        (a, b) => new Date(b.date).getTime() - new Date(a.date).getTime(),
       );
       expect(sortedExpenses[0].title).toBe('Bus Ticket');
       expect(sortedExpenses[1].title).toBe('Coffee');
@@ -163,7 +209,10 @@ describe('AddExpenseScreen Integration', () => {
     it('should handle navigation back on successful save', () => {
       const mockNavigate = jest.fn();
 
-      const simulateExpenseSave = (expenseData: any, navigate: typeof mockNavigate) => {
+      const simulateExpenseSave = (
+        expenseData: any,
+        navigate: typeof mockNavigate,
+      ) => {
         try {
           const store = useExpenseStore.getState();
           store.addExpense(expenseData);
@@ -174,13 +223,16 @@ describe('AddExpenseScreen Integration', () => {
         }
       };
 
-      const result = simulateExpenseSave({
-        title: 'Test Expense',
-        amount: 25.00,
-        category: 'Food & Dining',
-        date: '2025-09-20',
-        userId: mockUser.internalUserId
-      }, mockNavigate);
+      const result = simulateExpenseSave(
+        {
+          title: 'Test Expense',
+          amount: 25.0,
+          category: 'Food & Dining',
+          date: '2025-09-20',
+          userId: mockUser.internalUserId,
+        },
+        mockNavigate,
+      );
 
       expect(result.success).toBe(true);
       expect(mockNavigate).toHaveBeenCalledWith('Home');
@@ -199,11 +251,15 @@ describe('AddExpenseScreen Integration', () => {
         title: 'Partial Entry',
         amount: '15.50',
         category: '',
-        date: '2025-09-20'
+        date: '2025-09-20',
       };
 
       // Simulate user typing and then selecting category
-      const updateFormField = (state: FormState, field: keyof FormState, value: string): FormState => {
+      const updateFormField = (
+        state: FormState,
+        field: keyof FormState,
+        value: string,
+      ): FormState => {
         return { ...state, [field]: value };
       };
 
@@ -223,7 +279,7 @@ describe('AddExpenseScreen Integration', () => {
         amount: '',
         category: '',
         date: new Date().toISOString().split('T')[0],
-        groupId: undefined
+        groupId: undefined,
       });
 
       const resetForm = () => getInitialFormState();
@@ -234,7 +290,7 @@ describe('AddExpenseScreen Integration', () => {
         amount: '50.00',
         category: 'Food & Dining',
         date: '2025-09-20',
-        groupId: 'group-1'
+        groupId: 'group-1',
       };
 
       // After successful submission, reset form
@@ -254,39 +310,37 @@ describe('AddExpenseScreen Integration', () => {
       const categories = store.categories;
 
       expect(categories).toHaveLength(2);
-      expect(categories.find(c => c.name === 'Food & Dining')).toBeDefined();
-      expect(categories.find(c => c.name === 'Transportation')).toBeDefined();
+      expect(categories.find((c) => c.name === 'Food & Dining')).toBeDefined();
+      expect(categories.find((c) => c.name === 'Transportation')).toBeDefined();
     });
 
     it('should load available groups for expense assignment', () => {
       const store = useExpenseStore.getState();
 
       // Add test groups
-      store.addGroup({ name: 'Family', participants: [mockUser.internalId, 'user-2'] });
-      store.addGroup({ name: 'Friends', participants: [mockUser.internalId, 'user-3'] });
+      store.addGroup('Family');
+      store.addGroup('Friends');
 
       const groups = useExpenseStore.getState().groups;
       expect(groups).toHaveLength(2);
-      expect(groups.map(g => g.name)).toContain('Family');
-      expect(groups.map(g => g.name)).toContain('Friends');
+      expect(groups.map((g) => g.name)).toContain('Family');
+      expect(groups.map((g) => g.name)).toContain('Friends');
     });
 
     it('should handle expense assignment to specific group', () => {
       const store = useExpenseStore.getState();
 
       // Create group first
-      store.addGroup({ name: 'Vacation Group', participants: [mockUser.internalId, 'user-2', 'user-3'] });
-      const groups = useExpenseStore.getState().groups;
-      const vacationGroupId = groups[0].id;
+      const vacationGroupId = store.addGroup('Vacation Group');
 
       // Create expense assigned to group
       store.addExpense({
         title: 'Hotel Stay',
-        amount: 200.00,
+        amount: 200.0,
         category: 'Food & Dining',
         date: '2025-09-20',
         userId: mockUser.internalUserId,
-        groupId: vacationGroupId
+        groupId: vacationGroupId,
       });
 
       const expenses = useExpenseStore.getState().expenses;
@@ -294,7 +348,7 @@ describe('AddExpenseScreen Integration', () => {
 
       // Verify group still has the expense
       const updatedGroups = useExpenseStore.getState().groups;
-      const vacationGroup = updatedGroups.find(g => g.id === vacationGroupId);
+      const vacationGroup = updatedGroups.find((g) => g.id === vacationGroupId);
       expect(vacationGroup).toBeDefined();
     });
   });

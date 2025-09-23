@@ -12,7 +12,10 @@ describe('SelectInput Logic', () => {
 
   describe('value display logic', () => {
     it('should display selected value when available', () => {
-      const getDisplayValue = (selectedValue: string | null | undefined, placeholder: string = 'Select...') => {
+      const getDisplayValue = (
+        selectedValue: string | null | undefined,
+        placeholder: string = 'Select...',
+      ) => {
         return selectedValue || placeholder;
       };
 
@@ -24,12 +27,17 @@ describe('SelectInput Logic', () => {
     });
 
     it('should handle custom placeholder text', () => {
-      const getDisplayValue = (selectedValue: string | null | undefined, placeholder: string = 'Select...') => {
+      const getDisplayValue = (
+        selectedValue: string | null | undefined,
+        placeholder: string = 'Select...',
+      ) => {
         return selectedValue || placeholder;
       };
 
       expect(getDisplayValue(null, 'Choose category')).toBe('Choose category');
-      expect(getDisplayValue(undefined, 'Pick an option')).toBe('Pick an option');
+      expect(getDisplayValue(undefined, 'Pick an option')).toBe(
+        'Pick an option',
+      );
       expect(getDisplayValue('', 'No selection')).toBe('No selection');
     });
 
@@ -51,7 +59,7 @@ describe('SelectInput Logic', () => {
         return {
           displayValue: trimmed || 'Select...',
           isPlaceholder: !trimmed,
-          originalValue: selectedValue
+          originalValue: selectedValue,
         };
       };
 
@@ -80,7 +88,7 @@ describe('SelectInput Logic', () => {
 
         return {
           isValid: errors.length === 0,
-          errors
+          errors,
         };
       };
 
@@ -88,7 +96,7 @@ describe('SelectInput Logic', () => {
       const validProps: SelectInputProps = {
         label: 'Category',
         selectedValue: 'Food',
-        onPress: jest.fn()
+        onPress: jest.fn(),
       };
 
       const validResult = validateRequiredProps(validProps);
@@ -98,7 +106,7 @@ describe('SelectInput Logic', () => {
       // Invalid props
       const invalidProps = {
         label: '',
-        onPress: 'not a function'
+        onPress: 'not a function',
       };
 
       const invalidResult = validateRequiredProps(invalidProps);
@@ -111,25 +119,41 @@ describe('SelectInput Logic', () => {
       const validateOptionalProps = (props: Partial<SelectInputProps>) => {
         const warnings: string[] = [];
 
-        if (props.selectedValue !== undefined && props.selectedValue !== null && typeof props.selectedValue !== 'string') {
+        if (
+          props.selectedValue !== undefined &&
+          props.selectedValue !== null &&
+          typeof props.selectedValue !== 'string'
+        ) {
           warnings.push('selectedValue should be a string, null, or undefined');
         }
-        if (props.placeholder !== undefined && typeof props.placeholder !== 'string') {
+        if (
+          props.placeholder !== undefined &&
+          typeof props.placeholder !== 'string'
+        ) {
           warnings.push('placeholder should be a string');
         }
-        if (props.containerStyle !== undefined && typeof props.containerStyle !== 'object') {
+        if (
+          props.containerStyle !== undefined &&
+          typeof props.containerStyle !== 'object'
+        ) {
           warnings.push('containerStyle should be an object');
         }
-        if (props.labelStyle !== undefined && typeof props.labelStyle !== 'object') {
+        if (
+          props.labelStyle !== undefined &&
+          typeof props.labelStyle !== 'object'
+        ) {
           warnings.push('labelStyle should be an object');
         }
-        if (props.valueStyle !== undefined && typeof props.valueStyle !== 'object') {
+        if (
+          props.valueStyle !== undefined &&
+          typeof props.valueStyle !== 'object'
+        ) {
           warnings.push('valueStyle should be an object');
         }
 
         return {
           hasWarnings: warnings.length > 0,
-          warnings
+          warnings,
         };
       };
 
@@ -139,7 +163,7 @@ describe('SelectInput Logic', () => {
         placeholder: 'Choose...',
         containerStyle: { marginTop: 10 },
         labelStyle: { color: 'blue' },
-        valueStyle: { fontSize: 18 }
+        valueStyle: { fontSize: 18 },
       };
 
       const validResult = validateOptionalProps(validProps);
@@ -151,14 +175,20 @@ describe('SelectInput Logic', () => {
         placeholder: true,
         containerStyle: 'not an object',
         labelStyle: 'invalid',
-        valueStyle: []
+        valueStyle: [],
       };
 
       const invalidResult = validateOptionalProps(invalidProps);
       expect(invalidResult.hasWarnings).toBe(true);
-      expect(invalidResult.warnings).toContain('selectedValue should be a string, null, or undefined');
-      expect(invalidResult.warnings).toContain('placeholder should be a string');
-      expect(invalidResult.warnings).toContain('containerStyle should be an object');
+      expect(invalidResult.warnings).toContain(
+        'selectedValue should be a string, null, or undefined',
+      );
+      expect(invalidResult.warnings).toContain(
+        'placeholder should be a string',
+      );
+      expect(invalidResult.warnings).toContain(
+        'containerStyle should be an object',
+      );
     });
   });
 
@@ -176,12 +206,12 @@ describe('SelectInput Logic', () => {
           getStats: () => ({
             interactionCount,
             lastInteraction,
-            hasInteractions: interactionCount > 0
+            hasInteractions: interactionCount > 0,
           }),
           reset: () => {
             interactionCount = 0;
             lastInteraction = 0;
-          }
+          },
         };
       };
 
@@ -252,7 +282,10 @@ describe('SelectInput Logic', () => {
         } catch (error) {
           return {
             canExecute: false,
-            reason: error instanceof Error ? error.message : 'Callback execution failed'
+            reason:
+              error instanceof Error
+                ? error.message
+                : 'Callback execution failed',
           };
         }
       };
@@ -269,7 +302,9 @@ describe('SelectInput Logic', () => {
       expect(invalidResult.reason).toBe('onPress is not a function');
 
       // Throwing callback
-      const throwingCallback = () => { throw new Error('Test error'); };
+      const throwingCallback = () => {
+        throw new Error('Test error');
+      };
       const throwingResult = validateCallback(throwingCallback);
       expect(throwingResult.canExecute).toBe(false);
       expect(throwingResult.reason).toBe('Test error');
@@ -279,8 +314,12 @@ describe('SelectInput Logic', () => {
   describe('style handling logic', () => {
     it('should merge styles correctly', () => {
       const mergeStyles = (baseStyle: any, customStyle?: any) => {
-        if (!customStyle) return [baseStyle];
-        if (Array.isArray(customStyle)) return [baseStyle, ...customStyle];
+        if (!customStyle) {
+          return [baseStyle];
+        }
+        if (Array.isArray(customStyle)) {
+          return [baseStyle, ...customStyle];
+        }
         return [baseStyle, customStyle];
       };
 
@@ -291,11 +330,17 @@ describe('SelectInput Logic', () => {
 
       // Single custom style
       const customStyle = { color: '#blue', fontWeight: 'bold' };
-      expect(mergeStyles(baseStyle, customStyle)).toEqual([baseStyle, customStyle]);
+      expect(mergeStyles(baseStyle, customStyle)).toEqual([
+        baseStyle,
+        customStyle,
+      ]);
 
       // Array of custom styles
       const customStyles = [{ color: '#blue' }, { fontWeight: 'bold' }];
-      expect(mergeStyles(baseStyle, customStyles)).toEqual([baseStyle, ...customStyles]);
+      expect(mergeStyles(baseStyle, customStyles)).toEqual([
+        baseStyle,
+        ...customStyles,
+      ]);
     });
 
     it('should determine placeholder style application', () => {
@@ -303,7 +348,7 @@ describe('SelectInput Logic', () => {
         isPlaceholder: boolean,
         baseStyle: any,
         placeholderStyle: any,
-        customStyle?: any
+        customStyle?: any,
       ) => {
         const styles = [baseStyle];
 
@@ -323,18 +368,34 @@ describe('SelectInput Logic', () => {
       const customStyle = { fontWeight: 'bold' };
 
       // With selected value (not placeholder)
-      const selectedStyles = getValueStyle(false, baseStyle, placeholderStyle, customStyle);
+      const selectedStyles = getValueStyle(
+        false,
+        baseStyle,
+        placeholderStyle,
+        customStyle,
+      );
       expect(selectedStyles).toEqual([baseStyle, customStyle]);
       expect(selectedStyles).not.toContain(placeholderStyle);
 
       // With placeholder
-      const placeholderStyles = getValueStyle(true, baseStyle, placeholderStyle, customStyle);
-      expect(placeholderStyles).toEqual([baseStyle, placeholderStyle, customStyle]);
+      const placeholderStyles = getValueStyle(
+        true,
+        baseStyle,
+        placeholderStyle,
+        customStyle,
+      );
+      expect(placeholderStyles).toEqual([
+        baseStyle,
+        placeholderStyle,
+        customStyle,
+      ]);
     });
 
     it('should validate style objects', () => {
       const validateStyle = (style?: any) => {
-        if (!style) return { isValid: true, warnings: [] };
+        if (!style) {
+          return { isValid: true, warnings: [] };
+        }
 
         const warnings: string[] = [];
 
@@ -353,32 +414,52 @@ describe('SelectInput Logic', () => {
           warnings.push('color should be a string');
         }
 
-        if (style.fontWeight && !['normal', 'bold', '100', '200', '300', '400', '500', '600', '700', '800', '900'].includes(style.fontWeight)) {
+        if (
+          style.fontWeight &&
+          ![
+            'normal',
+            'bold',
+            '100',
+            '200',
+            '300',
+            '400',
+            '500',
+            '600',
+            '700',
+            '800',
+            '900',
+          ].includes(style.fontWeight)
+        ) {
           warnings.push('fontWeight should be a valid weight value');
         }
 
         return {
           isValid: warnings.length === 0,
-          warnings
+          warnings,
         };
       };
 
       // Valid styles
       expect(validateStyle()).toEqual({ isValid: true, warnings: [] });
-      expect(validateStyle({ fontSize: 16, color: '#000' })).toEqual({ isValid: true, warnings: [] });
+      expect(validateStyle({ fontSize: 16, color: '#000' })).toEqual({
+        isValid: true,
+        warnings: [],
+      });
 
       // Invalid styles
       const invalidStyle = {
         fontSize: '16px', // Should be number, not string
-        color: 123,       // Should be string, not number
-        fontWeight: 'thick' // Invalid weight
+        color: 123, // Should be string, not number
+        fontWeight: 'thick', // Invalid weight
       };
 
       const result = validateStyle(invalidStyle);
       expect(result.isValid).toBe(false);
       expect(result.warnings).toContain('fontSize should be a number');
       expect(result.warnings).toContain('color should be a string');
-      expect(result.warnings).toContain('fontWeight should be a valid weight value');
+      expect(result.warnings).toContain(
+        'fontWeight should be a valid weight value',
+      );
     });
   });
 
@@ -387,7 +468,7 @@ describe('SelectInput Logic', () => {
       const generateAccessibilityProps = (
         label: string,
         selectedValue: string | null | undefined,
-        isPlaceholder: boolean
+        isPlaceholder: boolean,
       ) => {
         const displayValue = selectedValue || 'No selection';
 
@@ -398,18 +479,28 @@ describe('SelectInput Logic', () => {
             ? `Tap to select ${label.toLowerCase()}`
             : `Currently selected: ${displayValue}. Tap to change.`,
           accessibilityRole: 'button' as const,
-          accessible: true
+          accessible: true,
         };
       };
 
       // With selected value
-      const selectedProps = generateAccessibilityProps('Category', 'Food & Dining', false);
+      const selectedProps = generateAccessibilityProps(
+        'Category',
+        'Food & Dining',
+        false,
+      );
       expect(selectedProps.accessibilityLabel).toBe('Category');
       expect(selectedProps.accessibilityValue.text).toBe('Food & Dining');
-      expect(selectedProps.accessibilityHint).toBe('Currently selected: Food & Dining. Tap to change.');
+      expect(selectedProps.accessibilityHint).toBe(
+        'Currently selected: Food & Dining. Tap to change.',
+      );
 
       // With placeholder
-      const placeholderProps = generateAccessibilityProps('Category', null, true);
+      const placeholderProps = generateAccessibilityProps(
+        'Category',
+        null,
+        true,
+      );
       expect(placeholderProps.accessibilityValue.text).toBe('No selection');
       expect(placeholderProps.accessibilityHint).toBe('Tap to select category');
     });
@@ -423,11 +514,15 @@ describe('SelectInput Logic', () => {
         const issues: string[] = [];
 
         if (!props.label && !props.accessibilityLabel) {
-          issues.push('Either label or accessibilityLabel is required for screen readers');
+          issues.push(
+            'Either label or accessibilityLabel is required for screen readers',
+          );
         }
 
         if (props.accessibilityHint && props.accessibilityHint.length > 100) {
-          issues.push('AccessibilityHint should be concise (under 100 characters)');
+          issues.push(
+            'AccessibilityHint should be concise (under 100 characters)',
+          );
         }
 
         if (props.label && props.label.length === 0) {
@@ -436,42 +531,48 @@ describe('SelectInput Logic', () => {
 
         return {
           isAccessible: issues.length === 0,
-          issues
+          issues,
         };
       };
 
       // Valid accessibility
       const validResult = validateAccessibility({
         label: 'Category',
-        accessibilityHint: 'Tap to select category'
+        accessibilityHint: 'Tap to select category',
       });
       expect(validResult.isAccessible).toBe(true);
 
       // Missing label
       const missingResult = validateAccessibility({});
       expect(missingResult.isAccessible).toBe(false);
-      expect(missingResult.issues).toContain('Either label or accessibilityLabel is required for screen readers');
+      expect(missingResult.issues).toContain(
+        'Either label or accessibilityLabel is required for screen readers',
+      );
 
       // Too long hint
       const longHintResult = validateAccessibility({
         label: 'Category',
-        accessibilityHint: 'A'.repeat(101)
+        accessibilityHint: 'A'.repeat(101),
       });
       expect(longHintResult.isAccessible).toBe(false);
-      expect(longHintResult.issues).toContain('AccessibilityHint should be concise (under 100 characters)');
+      expect(longHintResult.issues).toContain(
+        'AccessibilityHint should be concise (under 100 characters)',
+      );
     });
   });
 
   describe('edge case handling', () => {
     it('should handle special characters in values', () => {
       const processSpecialValue = (value: string | null | undefined) => {
-        if (!value) return { displayValue: 'Select...', hasSpecialChars: false };
+        if (!value) {
+          return { displayValue: 'Select...', hasSpecialChars: false };
+        }
 
         return {
           displayValue: value,
           hasSpecialChars: /[!@#$%^&*(),.?":{}|<>]/.test(value),
           hasUnicode: /[^\x00-\x7F]/.test(value),
-          isLongValue: value.length > 50
+          isLongValue: value.length > 50,
         };
       };
 
@@ -489,51 +590,60 @@ describe('SelectInput Logic', () => {
     });
 
     it('should handle null and undefined selectedValue gracefully', () => {
-      const processValue = (selectedValue: string | null | undefined, fallback: string = 'Select...') => {
+      const processValue = (
+        selectedValue: string | null | undefined,
+        fallback: string = 'Select...',
+      ) => {
         // Handle all falsy values consistently
-        if (selectedValue === null || selectedValue === undefined || selectedValue === '') {
+        if (
+          selectedValue === null ||
+          selectedValue === undefined ||
+          selectedValue === ''
+        ) {
           return {
             displayValue: fallback,
             isPlaceholder: true,
-            originalValue: selectedValue
+            originalValue: selectedValue,
           };
         }
 
         return {
           displayValue: selectedValue,
           isPlaceholder: false,
-          originalValue: selectedValue
+          originalValue: selectedValue,
         };
       };
 
       expect(processValue(null)).toEqual({
         displayValue: 'Select...',
         isPlaceholder: true,
-        originalValue: null
+        originalValue: null,
       });
 
       expect(processValue(undefined)).toEqual({
         displayValue: 'Select...',
         isPlaceholder: true,
-        originalValue: undefined
+        originalValue: undefined,
       });
 
       expect(processValue('')).toEqual({
         displayValue: 'Select...',
         isPlaceholder: true,
-        originalValue: ''
+        originalValue: '',
       });
 
       expect(processValue('Valid Value')).toEqual({
         displayValue: 'Valid Value',
         isPlaceholder: false,
-        originalValue: 'Valid Value'
+        originalValue: 'Valid Value',
       });
     });
 
     it('should handle very long labels and values', () => {
       const truncateIfNeeded = (text: string, maxLength: number = 30) => {
-        if (text.length <= maxLength) return text;
+        if (text.length <= maxLength) {
+          return text;
+        }
         return text.substring(0, maxLength - 3) + '...';
       };
 

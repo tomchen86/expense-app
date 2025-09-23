@@ -1,0 +1,30 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+REPO_ROOT="$(cd -- "$(dirname "$0")/.." && pwd -P)"
+cd "$REPO_ROOT"
+
+export PATH="$REPO_ROOT/node_modules/.bin:$PATH"
+
+if [[ "${HUSKY_SKIP_PRE_PUSH:-0}" == "1" ]]; then
+  echo "pre-push ▶️ skipping (HUSKY_SKIP_PRE_PUSH=1)"
+  exit 0
+fi
+
+checks=(
+  "pnpm --filter api test"
+  "pnpm --filter mobile test:unit"
+  "pnpm --filter mobile typecheck"
+  "pnpm --filter web lint"
+)
+
+for cmd in "${checks[@]}"; do
+  echo "pre-push ▶️ $cmd"
+  if ! eval "$cmd"; then
+    echo "pre-push ❌ $cmd"
+    exit 1
+  fi
+  echo "pre-push ✅ $cmd"
+done
+
+echo "pre-push ✅ all checks passed"

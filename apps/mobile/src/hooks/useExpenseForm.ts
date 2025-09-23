@@ -79,10 +79,10 @@ export const useExpenseForm = ({ editingExpense }: UseExpenseFormProps) => {
     }
 
     const group = editingExpense.groupId
-      ? groups.find((g) => g.id === editingExpense.groupId) ?? null
+      ? (groups.find((g) => g.id === editingExpense.groupId) ?? null)
       : null;
     const paidBy = editingExpense.paidBy
-      ? participants.find((p) => p.id === editingExpense.paidBy) ?? null
+      ? (participants.find((p) => p.id === editingExpense.paidBy) ?? null)
       : null;
     const splitBetween = editingExpense.splitBetween
       ? participants.filter((p) => editingExpense.splitBetween?.includes(p.id))
@@ -110,7 +110,7 @@ export const useExpenseForm = ({ editingExpense }: UseExpenseFormProps) => {
     setFormState((prev) => ({
       ...prev,
       selectedParticipants: prev.selectedParticipants.filter(
-        (p) => p.id !== participantId
+        (p) => p.id !== participantId,
       ),
     }));
   };
@@ -148,15 +148,15 @@ export const useExpenseForm = ({ editingExpense }: UseExpenseFormProps) => {
     ) {
       Alert.alert(
         "Validation Error",
-        "When adding to a group, please select who paid and who to split with."
+        "When adding to a group, please select who paid and who to split with.",
       );
       return;
     }
     // --- End Validation ---
 
     // Determine who paid and the groupId
-    let paidById: string | undefined = undefined;
-    let groupIdForExpense: string | undefined = undefined;
+    let paidById: string | undefined;
+    let groupIdForExpense: string | undefined;
 
     if (formState.selectedGroup) {
       // If group expense, use the selected payer and group ID
@@ -171,7 +171,7 @@ export const useExpenseForm = ({ editingExpense }: UseExpenseFormProps) => {
         // This case should ideally not happen if internalUserId is always generated.
         // If it does, the expense will have no payer and no group.
         console.warn(
-          "[useExpenseForm] internalUserId is null, personal expense will have no payer/group."
+          "[useExpenseForm] internalUserId is null, personal expense will have no payer/group.",
         );
       }
     }

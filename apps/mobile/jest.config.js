@@ -1,6 +1,7 @@
 module.exports = {
   preset: 'react-native',
   setupFilesAfterEnv: ['<rootDir>/src/__tests__/setup-component.ts'],
+  coverageProvider: 'v8',
   transform: {
     '^.+\\.(js|jsx|ts|tsx)$': ['babel-jest', {
       presets: ['module:metro-react-native-babel-preset']
@@ -11,18 +12,25 @@ module.exports = {
     '<rootDir>/src/**/*.test.{js,ts,tsx}'
   ],
   collectCoverageFrom: [
-    'src/**/*.{ts,tsx}',
-    '!src/**/*.d.ts',
+    'src/store/**/*.{ts,tsx}',
+    'src/hooks/**/*.{ts,tsx}',
+    'src/utils/**/*.{ts,tsx}',
+    'src/constants/**/*.{ts,tsx}',
     '!src/**/__tests__/**',
-    '!src/types/**',
+  ],
+  coverageReporters: ['text-summary', 'lcov', 'html', 'html-spa'],
+  coveragePathIgnorePatterns: [
+    '<rootDir>/src/components/',
+    '<rootDir>/src/screens/',
+    '<rootDir>/src/app',
   ],
   coverageThreshold: {
     global: {
-      branches: 70,
-      functions: 70,
-      lines: 70,
-      statements: 70
-    }
+      branches: 80,
+      functions: 90,
+      lines: 90,
+      statements: 90,
+    },
   },
   moduleNameMapper: {
     '^@/(.*)$': '<rootDir>/src/$1',

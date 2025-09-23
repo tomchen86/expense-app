@@ -27,7 +27,7 @@ describe('FormInput Logic', () => {
 
         return {
           isValid: errors.length === 0,
-          errors
+          errors,
         };
       };
 
@@ -35,7 +35,7 @@ describe('FormInput Logic', () => {
       const validProps: FormInputProps = {
         label: 'Test Label',
         value: 'test value',
-        onChangeText: jest.fn()
+        onChangeText: jest.fn(),
       };
 
       const validResult = validateRequiredProps(validProps);
@@ -46,36 +46,50 @@ describe('FormInput Logic', () => {
       const invalidProps = {
         label: '',
         value: null,
-        onChangeText: 'not a function'
+        onChangeText: 'not a function',
       };
 
       const invalidResult = validateRequiredProps(invalidProps);
       expect(invalidResult.isValid).toBe(false);
       expect(invalidResult.errors).toContain('Label is required');
       expect(invalidResult.errors).toContain('Value must be a string');
-      expect(invalidResult.errors).toContain('onChangeText callback is required');
+      expect(invalidResult.errors).toContain(
+        'onChangeText callback is required',
+      );
     });
 
     it('should validate optional props have correct types', () => {
       const validateOptionalProps = (props: Partial<FormInputProps>) => {
         const warnings: string[] = [];
 
-        if (props.placeholder !== undefined && typeof props.placeholder !== 'string') {
+        if (
+          props.placeholder !== undefined &&
+          typeof props.placeholder !== 'string'
+        ) {
           warnings.push('Placeholder should be a string');
         }
-        if (props.keyboardType !== undefined && typeof props.keyboardType !== 'string') {
+        if (
+          props.keyboardType !== undefined &&
+          typeof props.keyboardType !== 'string'
+        ) {
           warnings.push('KeyboardType should be a string');
         }
-        if (props.multiline !== undefined && typeof props.multiline !== 'boolean') {
+        if (
+          props.multiline !== undefined &&
+          typeof props.multiline !== 'boolean'
+        ) {
           warnings.push('Multiline should be a boolean');
         }
-        if (props.numberOfLines !== undefined && typeof props.numberOfLines !== 'number') {
+        if (
+          props.numberOfLines !== undefined &&
+          typeof props.numberOfLines !== 'number'
+        ) {
           warnings.push('NumberOfLines should be a number');
         }
 
         return {
           hasWarnings: warnings.length > 0,
-          warnings
+          warnings,
         };
       };
 
@@ -84,7 +98,7 @@ describe('FormInput Logic', () => {
         placeholder: 'Enter text',
         keyboardType: 'numeric',
         multiline: true,
-        numberOfLines: 3
+        numberOfLines: 3,
       };
 
       const validResult = validateOptionalProps(validProps);
@@ -95,15 +109,21 @@ describe('FormInput Logic', () => {
         placeholder: 123,
         keyboardType: true,
         multiline: 'yes',
-        numberOfLines: 'three'
+        numberOfLines: 'three',
       };
 
       const invalidResult = validateOptionalProps(invalidProps);
       expect(invalidResult.hasWarnings).toBe(true);
-      expect(invalidResult.warnings).toContain('Placeholder should be a string');
-      expect(invalidResult.warnings).toContain('KeyboardType should be a string');
+      expect(invalidResult.warnings).toContain(
+        'Placeholder should be a string',
+      );
+      expect(invalidResult.warnings).toContain(
+        'KeyboardType should be a string',
+      );
       expect(invalidResult.warnings).toContain('Multiline should be a boolean');
-      expect(invalidResult.warnings).toContain('NumberOfLines should be a number');
+      expect(invalidResult.warnings).toContain(
+        'NumberOfLines should be a number',
+      );
     });
   });
 
@@ -127,23 +147,23 @@ describe('FormInput Logic', () => {
           'numeric',
           'email-address',
           'phone-pad',
-          'url'
+          'url',
         ];
 
         return {
           isValid: validTypes.includes(keyboardType),
-          validTypes
+          validTypes,
         };
       };
 
       expect(validateKeyboardType('numeric')).toEqual({
         isValid: true,
-        validTypes: expect.any(Array)
+        validTypes: expect.any(Array),
       });
 
       expect(validateKeyboardType('invalid-type')).toEqual({
         isValid: false,
-        validTypes: expect.any(Array)
+        validTypes: expect.any(Array),
       });
     });
 
@@ -151,18 +171,38 @@ describe('FormInput Logic', () => {
       const suggestKeyboardType = (label: string, placeholder?: string) => {
         const text = `${label} ${placeholder || ''}`.toLowerCase();
 
-        if (text.includes('email')) return 'email-address';
-        if (text.includes('phone') || text.includes('mobile')) return 'phone-pad';
-        if (text.includes('url') || text.includes('website')) return 'url';
-        if (text.includes('amount') || text.includes('price') || text.includes('cost')) return 'decimal-pad';
-        if (text.includes('number') || text.includes('quantity') || text.includes('count')) return 'numeric';
+        if (text.includes('email')) {
+          return 'email-address';
+        }
+        if (text.includes('phone') || text.includes('mobile')) {
+          return 'phone-pad';
+        }
+        if (text.includes('url') || text.includes('website')) {
+          return 'url';
+        }
+        if (
+          text.includes('amount') ||
+          text.includes('price') ||
+          text.includes('cost')
+        ) {
+          return 'decimal-pad';
+        }
+        if (
+          text.includes('number') ||
+          text.includes('quantity') ||
+          text.includes('count')
+        ) {
+          return 'numeric';
+        }
 
         return 'default';
       };
 
       expect(suggestKeyboardType('Email Address')).toBe('email-address');
       expect(suggestKeyboardType('Phone Number')).toBe('phone-pad');
-      expect(suggestKeyboardType('Amount', 'Enter dollar amount')).toBe('decimal-pad');
+      expect(suggestKeyboardType('Amount', 'Enter dollar amount')).toBe(
+        'decimal-pad',
+      );
       expect(suggestKeyboardType('Name')).toBe('default');
       expect(suggestKeyboardType('Quantity')).toBe('numeric');
     });
@@ -170,8 +210,14 @@ describe('FormInput Logic', () => {
 
   describe('multiline logic', () => {
     it('should determine when multiline should be enabled', () => {
-      const shouldUseMultiline = (multiline?: boolean, numberOfLines?: number) => {
-        return multiline === true || (numberOfLines !== undefined && numberOfLines > 1);
+      const shouldUseMultiline = (
+        multiline?: boolean,
+        numberOfLines?: number,
+      ) => {
+        return (
+          multiline === true ||
+          (numberOfLines !== undefined && numberOfLines > 1)
+        );
       };
 
       expect(shouldUseMultiline(true)).toBe(true);
@@ -182,8 +228,13 @@ describe('FormInput Logic', () => {
     });
 
     it('should calculate appropriate number of lines', () => {
-      const calculateNumberOfLines = (multiline?: boolean, numberOfLines?: number) => {
-        if (!multiline) return 1;
+      const calculateNumberOfLines = (
+        multiline?: boolean,
+        numberOfLines?: number,
+      ) => {
+        if (!multiline) {
+          return 1;
+        }
         return numberOfLines && numberOfLines > 0 ? numberOfLines : 3; // Default to 3 lines
       };
 
@@ -207,7 +258,10 @@ describe('FormInput Logic', () => {
 
   describe('input validation logic', () => {
     it('should validate text input based on keyboard type', () => {
-      const validateInput = (value: string, keyboardType: string = 'default') => {
+      const validateInput = (
+        value: string,
+        keyboardType: string = 'default',
+      ) => {
         const errors: string[] = [];
 
         switch (keyboardType) {
@@ -239,7 +293,7 @@ describe('FormInput Logic', () => {
 
         return {
           isValid: errors.length === 0,
-          errors
+          errors,
         };
       };
 
@@ -254,18 +308,28 @@ describe('FormInput Logic', () => {
       expect(validateInput('abc.45', 'decimal-pad').isValid).toBe(false);
 
       // Email validation
-      expect(validateInput('test@example.com', 'email-address').isValid).toBe(true);
-      expect(validateInput('invalid-email', 'email-address').isValid).toBe(false);
+      expect(validateInput('test@example.com', 'email-address').isValid).toBe(
+        true,
+      );
+      expect(validateInput('invalid-email', 'email-address').isValid).toBe(
+        false,
+      );
       expect(validateInput('', 'email-address').isValid).toBe(true); // Empty is valid
 
       // Phone validation
       expect(validateInput('123-456-7890', 'phone-pad').isValid).toBe(true);
-      expect(validateInput('+1 (234) 567-8900', 'phone-pad').isValid).toBe(true);
+      expect(validateInput('+1 (234) 567-8900', 'phone-pad').isValid).toBe(
+        true,
+      );
       expect(validateInput('abc-def-ghij', 'phone-pad').isValid).toBe(false);
     });
 
     it('should validate input length constraints', () => {
-      const validateLength = (value: string, maxLength?: number, minLength?: number) => {
+      const validateLength = (
+        value: string,
+        maxLength?: number,
+        minLength?: number,
+      ) => {
         const errors: string[] = [];
 
         if (minLength !== undefined && value.length < minLength) {
@@ -278,7 +342,7 @@ describe('FormInput Logic', () => {
         return {
           isValid: errors.length === 0,
           errors,
-          currentLength: value.length
+          currentLength: value.length,
         };
       };
 
@@ -327,7 +391,10 @@ describe('FormInput Logic', () => {
     });
 
     it('should handle debounced text changes', () => {
-      const createDebouncedHandler = (originalHandler: (text: string) => void, delay: number = 300) => {
+      const createDebouncedHandler = (
+        originalHandler: (text: string) => void,
+        delay: number = 300,
+      ) => {
         let timeoutId: NodeJS.Timeout | null = null;
 
         return (text: string) => {
@@ -387,7 +454,7 @@ describe('FormInput Logic', () => {
           },
           clear: () => {
             history.length = 0;
-          }
+          },
         };
       };
 
@@ -407,16 +474,26 @@ describe('FormInput Logic', () => {
 
   describe('accessibility logic', () => {
     it('should generate appropriate accessibility props', () => {
-      const generateAccessibilityProps = (label: string, value: string, isRequired?: boolean) => {
+      const generateAccessibilityProps = (
+        label: string,
+        value: string,
+        isRequired?: boolean,
+      ) => {
         return {
           accessibilityLabel: label,
           accessibilityValue: { text: value },
-          accessibilityHint: isRequired ? `${label} is required` : `Enter ${label.toLowerCase()}`,
-          accessibilityRole: 'text' as const
+          accessibilityHint: isRequired
+            ? `${label} is required`
+            : `Enter ${label.toLowerCase()}`,
+          accessibilityRole: 'text' as const,
         };
       };
 
-      const props = generateAccessibilityProps('Email Address', 'test@example.com', true);
+      const props = generateAccessibilityProps(
+        'Email Address',
+        'test@example.com',
+        true,
+      );
       expect(props.accessibilityLabel).toBe('Email Address');
       expect(props.accessibilityValue.text).toBe('test@example.com');
       expect(props.accessibilityHint).toBe('Email Address is required');
@@ -427,20 +504,27 @@ describe('FormInput Logic', () => {
     });
 
     it('should validate accessibility requirements', () => {
-      const validateAccessibility = (props: { label?: string; accessibilityLabel?: string }) => {
+      const validateAccessibility = (props: {
+        label?: string;
+        accessibilityLabel?: string;
+      }) => {
         const issues: string[] = [];
 
         if (!props.label && !props.accessibilityLabel) {
-          issues.push('Either label or accessibilityLabel is required for screen readers');
+          issues.push(
+            'Either label or accessibilityLabel is required for screen readers',
+          );
         }
 
         if (props.label && props.label.length > 50) {
-          issues.push('Label should be concise (under 50 characters) for better accessibility');
+          issues.push(
+            'Label should be concise (under 50 characters) for better accessibility',
+          );
         }
 
         return {
           isAccessible: issues.length === 0,
-          issues
+          issues,
         };
       };
 
@@ -451,12 +535,16 @@ describe('FormInput Logic', () => {
       // Missing label
       const missingResult = validateAccessibility({});
       expect(missingResult.isAccessible).toBe(false);
-      expect(missingResult.issues).toContain('Either label or accessibilityLabel is required for screen readers');
+      expect(missingResult.issues).toContain(
+        'Either label or accessibilityLabel is required for screen readers',
+      );
 
       // Too long label
       const longResult = validateAccessibility({ label: 'A'.repeat(51) });
       expect(longResult.isAccessible).toBe(false);
-      expect(longResult.issues).toContain('Label should be concise (under 50 characters) for better accessibility');
+      expect(longResult.issues).toContain(
+        'Label should be concise (under 50 characters) for better accessibility',
+      );
     });
   });
 
@@ -482,10 +570,13 @@ describe('FormInput Logic', () => {
       const processSpecialText = (text: string) => {
         return {
           original: text,
-          hasEmoji: /[\u{1F600}-\u{1F64F}]|[\u{1F300}-\u{1F5FF}]|[\u{1F680}-\u{1F6FF}]|[\u{1F1E0}-\u{1F1FF}]/u.test(text),
+          hasEmoji:
+            /[\u{1F600}-\u{1F64F}]|[\u{1F300}-\u{1F5FF}]|[\u{1F680}-\u{1F6FF}]|[\u{1F1E0}-\u{1F1FF}]/u.test(
+              text,
+            ),
           hasUnicode: /[^\x00-\x7F]/.test(text),
           byteLength: new TextEncoder().encode(text).length,
-          characterCount: text.length
+          characterCount: text.length,
         };
       };
 
@@ -518,7 +609,7 @@ describe('FormInput Logic', () => {
             changeCount,
             timeSinceLastUpdate,
             isRapidChange: timeSinceLastUpdate < 100, // Less than 100ms
-            shouldThrottle: changeCount > 50 // More than 50 changes
+            shouldThrottle: changeCount > 50, // More than 50 changes
           };
         };
       };

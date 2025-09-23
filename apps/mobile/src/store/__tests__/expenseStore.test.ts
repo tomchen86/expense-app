@@ -1,112 +1,41 @@
 import { useExpenseStore } from '../features/expenseStore';
 import { mockExpenses, createMockExpense } from '../../__tests__/fixtures';
 
-// Mock the generateId function for predictable tests
-jest.mock('../features/expenseStore', () => {
-  const actual = jest.requireActual('../features/expenseStore');
-  let idCounter = 1;
-  const mockGenerateId = () => `test-id-${idCounter++}`;
-
-  // Export reset function for tests
-  const resetIdCounter = () => { idCounter = 1; };
-
-  return {
-    ...actual,
-    resetIdCounter,
-    useExpenseStore: jest.requireActual('zustand').create((set, get) => ({
-      expenses: [],
-
-      addExpense: (expense) => {
-        const newExpenseWithId = {
-          ...expense,
-          id: mockGenerateId(),
-        };
-        set((state) => ({
-          expenses: [...state.expenses, newExpenseWithId].sort(
-            (a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()
-          ),
-        }));
-      },
-
-      updateExpense: (updatedExpense) =>
-        set((state) => ({
-          expenses: state.expenses
-            .map((expense) =>
-              expense.id === updatedExpense.id ? updatedExpense : expense
-            )
-            .sort(
-              (a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()
-            ),
-        })),
-
-      deleteExpense: (id) =>
-        set((state) => ({
-          expenses: state.expenses.filter((expense) => expense.id !== id),
-        })),
-
-      getExpenseById: (id) => get().expenses.find((expense) => expense.id === id),
-
-      migrateOrphanedExpenses: (internalUserId) => {
-        set((state) => ({
-          expenses: state.expenses.map((exp) => {
-            if (!exp.groupId && !exp.paidBy) {
-              return {
-                ...exp,
-                groupId: internalUserId,
-                paidBy: internalUserId,
-              };
-            }
-            return exp;
-          }),
-        }));
-      },
-
-      removeExpensesForGroup: (groupId) => {
-        set((state) => ({
-          expenses: state.expenses.map((expense) =>
-            expense.groupId === groupId ? { ...expense, groupId: undefined } : expense
-          ),
-        }));
-      },
-
-      updateExpensesForParticipantRemoval: (participantId) => {
-        set((state) => ({
-          expenses: state.expenses.map((expense) => ({
-            ...expense,
-            paidBy: expense.paidBy === participantId ? undefined : expense.paidBy,
-            splitBetween: expense.splitBetween?.filter((pid) => pid !== participantId),
-          })),
-        }));
-      },
-    })),
-  };
-});
-
 describe('ExpenseStore', () => {
+  let randomSpy: jest.SpyInstance<number, []>;
+
   beforeEach(() => {
-    // Reset store state and ID counter before each test
+    // Reset store state and provide deterministic IDs
     useExpenseStore.setState({ expenses: [] });
-    const { resetIdCounter } = require('../features/expenseStore');
-    resetIdCounter();
+    let counter = 1;
+    randomSpy = jest.spyOn(Math, 'random').mockImplementation(() => {
+      const value = counter / 1000;
+      counter += 1;
+      return value;
+    });
+  });
+
+  afterEach(() => {
+    randomSpy.mockRestore();
   });
 
   describe('addExpense', () => {
     it('should add expense with generated ID', () => {
       const expense = createMockExpense({
         title: 'Test Expense',
-        amount: 25.50,
+        amount: 25.5,
         date: '2025-09-19',
       });
 
       useExpenseStore.getState().addExpense(expense);
       const expenses = useExpenseStore.getState().expenses;
+      const { id: _ignored, ...expectedFields } = expense;
 
       expect(expenses).toHaveLength(1);
       expect(expenses[0]).toMatchObject({
-        ...expense,
-        id: 'test-id-1',
+        ...expectedFields,
+        id: expect.any(String),
       });
-      expect(expenses[0].id).toBeDefined();
     });
 
     it('should sort expenses by date descending (newest first)', () => {
@@ -143,14 +72,14 @@ describe('ExpenseStore', () => {
       const expenses = useExpenseStore.getState().expenses;
       expect(expenses).toHaveLength(2);
       // Both should be present, order may vary for same date
-      expect(expenses.map(e => e.title)).toContain('First Expense');
-      expect(expenses.map(e => e.title)).toContain('Second Expense');
+      expect(expenses.map((e) => e.title)).toContain('First Expense');
+      expect(expenses.map((e) => e.title)).toContain('Second Expense');
     });
 
     it('should handle group expenses', () => {
       const groupExpense = createMockExpense({
         title: 'Group Lunch',
-        amount: 50.00,
+        amount: 50.0,
         groupId: 'group-1',
         paidBy: 'user-1',
         splitBetween: ['user-1', 'user-2'],
@@ -159,9 +88,11 @@ describe('ExpenseStore', () => {
       useExpenseStore.getState().addExpense(groupExpense);
       const expenses = useExpenseStore.getState().expenses;
 
+      const { id: _ignored, ...expectedGroupFields } = groupExpense;
+
       expect(expenses[0]).toMatchObject({
-        ...groupExpense,
-        id: 'test-id-1',
+        ...expectedGroupFields,
+        id: expect.any(String),
       });
       expect(expenses[0].groupId).toBe('group-1');
       expect(expenses[0].paidBy).toBe('user-1');
@@ -173,7 +104,7 @@ describe('ExpenseStore', () => {
     it('should update existing expense', () => {
       const expense = createMockExpense({
         title: 'Original Title',
-        amount: 25.00,
+        amount: 25.0,
       });
 
       useExpenseStore.getState().addExpense(expense);
@@ -182,7 +113,7 @@ describe('ExpenseStore', () => {
       const updatedExpense = {
         ...addedExpense,
         title: 'Updated Title',
-        amount: 30.00,
+        amount: 30.0,
       };
 
       useExpenseStore.getState().updateExpense(updatedExpense);
@@ -190,7 +121,7 @@ describe('ExpenseStore', () => {
 
       expect(expenses).toHaveLength(1);
       expect(expenses[0].title).toBe('Updated Title');
-      expect(expenses[0].amount).toBe(30.00);
+      expect(expenses[0].amount).toBe(30.0);
       expect(expenses[0].id).toBe(addedExpense.id);
     });
 
@@ -208,7 +139,7 @@ describe('ExpenseStore', () => {
       useExpenseStore.getState().addExpense(expense2);
 
       const expenses = useExpenseStore.getState().expenses;
-      const olderExpense = expenses.find(e => e.title === 'Expense 1');
+      const olderExpense = expenses.find((e) => e.title === 'Expense 1');
 
       // Update older expense to newer date
       const updatedExpense = {
@@ -232,7 +163,7 @@ describe('ExpenseStore', () => {
       useExpenseStore.getState().addExpense(expense2);
 
       const expenses = useExpenseStore.getState().expenses;
-      const targetExpense = expenses.find(e => e.title === 'Expense 1');
+      const targetExpense = expenses.find((e) => e.title === 'Expense 1');
 
       useExpenseStore.getState().updateExpense({
         ...targetExpense!,
@@ -241,8 +172,12 @@ describe('ExpenseStore', () => {
 
       const updatedExpenses = useExpenseStore.getState().expenses;
       expect(updatedExpenses).toHaveLength(2);
-      expect(updatedExpenses.find(e => e.title === 'Updated Expense 1')).toBeDefined();
-      expect(updatedExpenses.find(e => e.title === 'Expense 2')).toBeDefined();
+      expect(
+        updatedExpenses.find((e) => e.title === 'Updated Expense 1'),
+      ).toBeDefined();
+      expect(
+        updatedExpenses.find((e) => e.title === 'Expense 2'),
+      ).toBeDefined();
     });
   });
 
@@ -267,7 +202,7 @@ describe('ExpenseStore', () => {
       useExpenseStore.getState().addExpense(expense2);
 
       const expenses = useExpenseStore.getState().expenses;
-      const toDelete = expenses.find(e => e.title === 'Delete This');
+      const toDelete = expenses.find((e) => e.title === 'Delete This');
 
       useExpenseStore.getState().deleteExpense(toDelete!.id);
       const remainingExpenses = useExpenseStore.getState().expenses;
@@ -294,7 +229,9 @@ describe('ExpenseStore', () => {
       useExpenseStore.getState().addExpense(expense);
 
       const addedExpense = useExpenseStore.getState().expenses[0];
-      const foundExpense = useExpenseStore.getState().getExpenseById(addedExpense.id);
+      const foundExpense = useExpenseStore
+        .getState()
+        .getExpenseById(addedExpense.id);
 
       expect(foundExpense).toBeDefined();
       expect(foundExpense!.title).toBe('Find Me');
@@ -302,7 +239,9 @@ describe('ExpenseStore', () => {
     });
 
     it('should return undefined for non-existent ID', () => {
-      const foundExpense = useExpenseStore.getState().getExpenseById('non-existent');
+      const foundExpense = useExpenseStore
+        .getState()
+        .getExpenseById('non-existent');
       expect(foundExpense).toBeUndefined();
     });
   });
@@ -326,8 +265,8 @@ describe('ExpenseStore', () => {
       useExpenseStore.getState().migrateOrphanedExpenses('internal-user-1');
       const expenses = useExpenseStore.getState().expenses;
 
-      const migratedExpense = expenses.find(e => e.title === 'Orphaned');
-      const untouchedExpense = expenses.find(e => e.title === 'Normal');
+      const migratedExpense = expenses.find((e) => e.title === 'Orphaned');
+      const untouchedExpense = expenses.find((e) => e.title === 'Normal');
 
       expect(migratedExpense!.groupId).toBe('internal-user-1');
       expect(migratedExpense!.paidBy).toBe('internal-user-1');
@@ -353,8 +292,8 @@ describe('ExpenseStore', () => {
       useExpenseStore.getState().migrateOrphanedExpenses('internal-user-1');
       const expenses = useExpenseStore.getState().expenses;
 
-      const groupExpense = expenses.find(e => e.title === 'Has Group');
-      const paidByExpense = expenses.find(e => e.title === 'Has PaidBy');
+      const groupExpense = expenses.find((e) => e.title === 'Has Group');
+      const paidByExpense = expenses.find((e) => e.title === 'Has PaidBy');
 
       expect(groupExpense!.groupId).toBe('group-1');
       expect(groupExpense!.paidBy).toBeUndefined();
@@ -385,9 +324,13 @@ describe('ExpenseStore', () => {
       useExpenseStore.getState().removeExpensesForGroup('group-1');
       const expenses = useExpenseStore.getState().expenses;
 
-      const updatedExpense1 = expenses.find(e => e.title === 'Group Expense 1');
-      const updatedExpense2 = expenses.find(e => e.title === 'Group Expense 2');
-      const untouchedExpense = expenses.find(e => e.title === 'Other Group');
+      const updatedExpense1 = expenses.find(
+        (e) => e.title === 'Group Expense 1',
+      );
+      const updatedExpense2 = expenses.find(
+        (e) => e.title === 'Group Expense 2',
+      );
+      const untouchedExpense = expenses.find((e) => e.title === 'Other Group');
 
       expect(updatedExpense1!.groupId).toBeUndefined();
       expect(updatedExpense2!.groupId).toBeUndefined();

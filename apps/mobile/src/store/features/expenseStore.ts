@@ -6,13 +6,13 @@ const generateId = () => Math.random().toString(36).substr(2, 9);
 
 export interface ExpenseStoreState {
   expenses: Expense[];
-  
+
   // Actions
   addExpense: (expense: Omit<Expense, "id">) => void;
   updateExpense: (expense: Expense) => void;
   deleteExpense: (id: string) => void;
   getExpenseById: (id: string) => Expense | undefined;
-  
+
   // Data migration helpers
   migrateOrphanedExpenses: (internalUserId: string) => void;
   removeExpensesForGroup: (groupId: string) => void;
@@ -29,7 +29,7 @@ export const useExpenseStore = create<ExpenseStoreState>((set, get) => ({
     };
     set((state) => ({
       expenses: [...state.expenses, newExpenseWithId].sort(
-        (a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()
+        (a, b) => new Date(b.date).getTime() - new Date(a.date).getTime(),
       ),
     }));
   },
@@ -38,10 +38,10 @@ export const useExpenseStore = create<ExpenseStoreState>((set, get) => ({
     set((state) => ({
       expenses: state.expenses
         .map((expense) =>
-          expense.id === updatedExpense.id ? updatedExpense : expense
+          expense.id === updatedExpense.id ? updatedExpense : expense,
         )
         .sort(
-          (a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()
+          (a, b) => new Date(b.date).getTime() - new Date(a.date).getTime(),
         ),
     })),
 
@@ -70,7 +70,9 @@ export const useExpenseStore = create<ExpenseStoreState>((set, get) => ({
   removeExpensesForGroup: (groupId: string) => {
     set((state) => ({
       expenses: state.expenses.map((expense) =>
-        expense.groupId === groupId ? { ...expense, groupId: undefined } : expense
+        expense.groupId === groupId
+          ? { ...expense, groupId: undefined }
+          : expense,
       ),
     }));
   },
@@ -80,7 +82,9 @@ export const useExpenseStore = create<ExpenseStoreState>((set, get) => ({
       expenses: state.expenses.map((expense) => ({
         ...expense,
         paidBy: expense.paidBy === participantId ? undefined : expense.paidBy,
-        splitBetween: expense.splitBetween?.filter((pid) => pid !== participantId),
+        splitBetween: expense.splitBetween?.filter(
+          (pid) => pid !== participantId,
+        ),
       })),
     }));
   },

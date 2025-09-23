@@ -24,10 +24,18 @@ describe('SettingsScreen Logic', () => {
       expect(validateUsername('user-name')).toBeNull();
 
       expect(validateUsername('')).toBe('Username is required');
-      expect(validateUsername('a')).toBe('Username must be at least 2 characters');
-      expect(validateUsername('a'.repeat(31))).toBe('Username must be 30 characters or less');
-      expect(validateUsername('user@name')).toBe('Username can only contain letters, numbers, underscores, and hyphens');
-      expect(validateUsername('user name')).toBe('Username can only contain letters, numbers, underscores, and hyphens');
+      expect(validateUsername('a')).toBe(
+        'Username must be at least 2 characters',
+      );
+      expect(validateUsername('a'.repeat(31))).toBe(
+        'Username must be 30 characters or less',
+      );
+      expect(validateUsername('user@name')).toBe(
+        'Username can only contain letters, numbers, underscores, and hyphens',
+      );
+      expect(validateUsername('user name')).toBe(
+        'Username can only contain letters, numbers, underscores, and hyphens',
+      );
     });
 
     it('should check for reserved usernames', () => {
@@ -57,13 +65,13 @@ describe('SettingsScreen Logic', () => {
         username: '',
         displayName: '',
         notifications: true,
-        darkMode: false
+        darkMode: false,
       };
 
       const updateSetting = <K extends keyof UserSettings>(
         settings: UserSettings,
         key: K,
-        value: UserSettings[K]
+        value: UserSettings[K],
       ): UserSettings => {
         return { ...settings, [key]: value };
       };
@@ -77,7 +85,7 @@ describe('SettingsScreen Logic', () => {
         username: 'testuser',
         displayName: 'Test User',
         notifications: true,
-        darkMode: true
+        darkMode: true,
       });
     });
 
@@ -100,20 +108,20 @@ describe('SettingsScreen Logic', () => {
         username: 'testuser',
         displayName: 'Test User',
         notifications: true,
-        darkMode: false
+        darkMode: false,
       };
 
       const invalidSettings: UserSettings = {
         username: '',
         displayName: 'A'.repeat(101),
         notifications: true,
-        darkMode: false
+        darkMode: false,
       };
 
       expect(validateSettings(validSettings)).toBeNull();
       expect(validateSettings(invalidSettings)).toEqual({
         username: 'Username is required',
-        displayName: 'Display name must be 100 characters or less'
+        displayName: 'Display name must be 100 characters or less',
       });
     });
   });
@@ -124,27 +132,27 @@ describe('SettingsScreen Logic', () => {
         return {
           headerLeft: hasUnsavedChanges ? 'Cancel' : 'Back',
           headerRight: hasUnsavedChanges ? 'Save' : null,
-          gestureEnabled: !hasUnsavedChanges
+          gestureEnabled: !hasUnsavedChanges,
         };
       };
 
       expect(getNavigationOptions(false)).toEqual({
         headerLeft: 'Back',
         headerRight: null,
-        gestureEnabled: true
+        gestureEnabled: true,
       });
 
       expect(getNavigationOptions(true)).toEqual({
         headerLeft: 'Cancel',
         headerRight: 'Save',
-        gestureEnabled: false
+        gestureEnabled: false,
       });
     });
 
     it('should handle save confirmation', () => {
       const shouldShowSaveConfirmation = (
         hasUnsavedChanges: boolean,
-        isNavigatingAway: boolean
+        isNavigatingAway: boolean,
       ) => {
         return hasUnsavedChanges && isNavigatingAway;
       };
@@ -162,7 +170,7 @@ describe('SettingsScreen Logic', () => {
         return {
           ...settings,
           lastUpdated: new Date().toISOString(),
-          version: '1.0'
+          version: '1.0',
         };
       };
 
@@ -171,7 +179,9 @@ describe('SettingsScreen Logic', () => {
 
       expect(formatted.username).toBe('testuser');
       expect(formatted.darkMode).toBe(true);
-      expect(formatted.lastUpdated).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/);
+      expect(formatted.lastUpdated).toMatch(
+        /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/,
+      );
       expect(formatted.version).toBe('1.0');
     });
 
@@ -183,7 +193,7 @@ describe('SettingsScreen Logic', () => {
             ...storedSettings,
             notifications: storedSettings.notifications ?? true,
             darkMode: storedSettings.darkMode ?? false,
-            version: '1.0'
+            version: '1.0',
           };
         }
         return storedSettings;
@@ -196,7 +206,7 @@ describe('SettingsScreen Logic', () => {
         username: 'olduser',
         notifications: true,
         darkMode: false,
-        version: '1.0'
+        version: '1.0',
       });
     });
   });

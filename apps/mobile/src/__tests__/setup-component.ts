@@ -8,7 +8,9 @@ jest.mock('react-native-reanimated', () => {
 });
 
 // Mock react-native-gesture-handler
-jest.mock('react-native-gesture-handler', () => require('react-native-gesture-handler/jestSetup'));
+jest.mock('react-native-gesture-handler', () =>
+  require('react-native-gesture-handler/jestSetup'),
+);
 
 // Mock react-native-safe-area-context
 jest.mock('react-native-safe-area-context', () => ({
@@ -86,15 +88,18 @@ jest.mock('react-native-gifted-charts', () => {
   const { View } = require('react-native');
 
   return {
-    PieChart: (props: any) => React.createElement(View, { testID: 'pie-chart', ...props }),
-    BarChart: (props: any) => React.createElement(View, { testID: 'bar-chart', ...props }),
-    LineChart: (props: any) => React.createElement(View, { testID: 'line-chart', ...props }),
+    PieChart: (props: any) =>
+      React.createElement(View, { testID: 'pie-chart', ...props }),
+    BarChart: (props: any) =>
+      React.createElement(View, { testID: 'bar-chart', ...props }),
+    LineChart: (props: any) =>
+      React.createElement(View, { testID: 'line-chart', ...props }),
   };
 });
 
 // Mock AsyncStorage
 jest.mock('@react-native-async-storage/async-storage', () =>
-  require('@react-native-async-storage/async-storage/jest/async-storage-mock')
+  require('@react-native-async-storage/async-storage/jest/async-storage-mock'),
 );
 
 // Mock DateTimePicker

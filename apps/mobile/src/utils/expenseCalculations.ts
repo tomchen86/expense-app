@@ -20,7 +20,7 @@ export const calculateTotalExpenses = (expenses: Expense[]): number => {
  */
 export const calculateUserShare = (
   expense: Expense,
-  userId: string | null | undefined
+  userId: string | null | undefined,
 ): number => {
   // Case 1: Expense is split
   if (expense.splitBetween && expense.splitBetween.length > 0) {

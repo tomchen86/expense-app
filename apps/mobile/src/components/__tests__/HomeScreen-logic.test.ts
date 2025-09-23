@@ -7,12 +7,12 @@ describe('HomeScreen Logic', () => {
       const expenses = [
         { ...validExpense, id: '1', date: '2025-09-18', title: 'Older' },
         { ...validExpense, id: '2', date: '2025-09-20', title: 'Newer' },
-        { ...validExpense, id: '3', date: '2025-09-19', title: 'Middle' }
+        { ...validExpense, id: '3', date: '2025-09-19', title: 'Middle' },
       ];
 
       const sortExpensesByDate = (expenses: typeof expenses) => {
-        return [...expenses].sort((a, b) =>
-          new Date(b.date).getTime() - new Date(a.date).getTime()
+        return [...expenses].sort(
+          (a, b) => new Date(b.date).getTime() - new Date(a.date).getTime(),
         );
       };
 
@@ -25,20 +25,41 @@ describe('HomeScreen Logic', () => {
 
     it('should group expenses by date for display', () => {
       const expenses = [
-        { ...validExpense, id: '1', date: '2025-09-20', title: 'Today 1', amount: 10 },
-        { ...validExpense, id: '2', date: '2025-09-20', title: 'Today 2', amount: 20 },
-        { ...validExpense, id: '3', date: '2025-09-19', title: 'Yesterday', amount: 15 }
+        {
+          ...validExpense,
+          id: '1',
+          date: '2025-09-20',
+          title: 'Today 1',
+          amount: 10,
+        },
+        {
+          ...validExpense,
+          id: '2',
+          date: '2025-09-20',
+          title: 'Today 2',
+          amount: 20,
+        },
+        {
+          ...validExpense,
+          id: '3',
+          date: '2025-09-19',
+          title: 'Yesterday',
+          amount: 15,
+        },
       ];
 
       const groupExpensesByDate = (expenses: typeof expenses) => {
-        return expenses.reduce((groups, expense) => {
-          const date = expense.date;
-          if (!groups[date]) {
-            groups[date] = [];
-          }
-          groups[date].push(expense);
-          return groups;
-        }, {} as Record<string, typeof expenses>);
+        return expenses.reduce(
+          (groups, expense) => {
+            const date = expense.date;
+            if (!groups[date]) {
+              groups[date] = [];
+            }
+            groups[date].push(expense);
+            return groups;
+          },
+          {} as Record<string, typeof expenses>,
+        );
       };
 
       const grouped = groupExpensesByDate(expenses);
@@ -50,9 +71,9 @@ describe('HomeScreen Logic', () => {
 
     it('should calculate daily totals', () => {
       const dailyExpenses = [
-        { amount: 10.50, category: 'Food & Dining' },
+        { amount: 10.5, category: 'Food & Dining' },
         { amount: 25.75, category: 'Transportation' },
-        { amount: 5.25, category: 'Food & Dining' }
+        { amount: 5.25, category: 'Food & Dining' },
       ];
 
       const calculateDailyTotal = (expenses: typeof dailyExpenses) => {
@@ -60,7 +81,7 @@ describe('HomeScreen Logic', () => {
       };
 
       const total = calculateDailyTotal(dailyExpenses);
-      expect(total).toBe(41.50);
+      expect(total).toBe(41.5);
     });
 
     it('should format currency display', () => {
@@ -69,7 +90,7 @@ describe('HomeScreen Logic', () => {
           style: 'currency',
           currency: currency,
           minimumFractionDigits: 2,
-          maximumFractionDigits: 2
+          maximumFractionDigits: 2,
         });
         return formatter.format(amount);
       };
@@ -111,7 +132,7 @@ describe('HomeScreen Logic', () => {
       const getFABPosition = (screenHeight: number, bottomPadding: number) => {
         return {
           bottom: bottomPadding + 16, // 16px from bottom safe area
-          right: 16 // 16px from right edge
+          right: 16, // 16px from right edge
         };
       };
 
@@ -123,31 +144,47 @@ describe('HomeScreen Logic', () => {
 
   describe('total calculations display', () => {
     it('should calculate current period total', () => {
-      const getCurrentPeriodTotal = (expenses: any[], period: 'day' | 'week' | 'month', currentDate = new Date()) => {
+      const getCurrentPeriodTotal = (
+        expenses: any[],
+        period: 'day' | 'week' | 'month',
+        currentDate = new Date(),
+      ) => {
         let startDate: Date;
 
         switch (period) {
           case 'day':
-            startDate = new Date(currentDate.getFullYear(), currentDate.getMonth(), currentDate.getDate());
+            startDate = new Date(
+              currentDate.getFullYear(),
+              currentDate.getMonth(),
+              currentDate.getDate(),
+            );
             break;
           case 'week':
             const weekStart = currentDate.getDate() - currentDate.getDay();
-            startDate = new Date(currentDate.getFullYear(), currentDate.getMonth(), weekStart);
+            startDate = new Date(
+              currentDate.getFullYear(),
+              currentDate.getMonth(),
+              weekStart,
+            );
             break;
           case 'month':
-            startDate = new Date(currentDate.getFullYear(), currentDate.getMonth(), 1);
+            startDate = new Date(
+              currentDate.getFullYear(),
+              currentDate.getMonth(),
+              1,
+            );
             break;
         }
 
         return expenses
-          .filter(expense => new Date(expense.date) >= startDate)
+          .filter((expense) => new Date(expense.date) >= startDate)
           .reduce((total, expense) => total + expense.amount, 0);
       };
 
       const expenses = [
         { amount: 10, date: '2025-09-20' },
         { amount: 20, date: '2025-09-19' },
-        { amount: 30, date: '2025-08-15' } // Previous month
+        { amount: 30, date: '2025-08-15' }, // Previous month
       ];
 
       // Use dependency injection instead of mocking
@@ -161,7 +198,7 @@ describe('HomeScreen Logic', () => {
         if (amount >= 1000) {
           return amount.toLocaleString('en-US', {
             style: 'currency',
-            currency: 'USD'
+            currency: 'USD',
           });
         }
         return `$${amount.toFixed(2)}`;
@@ -184,7 +221,7 @@ describe('HomeScreen Logic', () => {
       };
 
       expect(formatDisplayTotal(0)).toBe('$0.00');
-      expect(formatDisplayTotal(-15.50)).toBe('-$15.50');
+      expect(formatDisplayTotal(-15.5)).toBe('-$15.50');
       expect(formatDisplayTotal(25.75)).toBe('$25.75');
     });
 
@@ -193,14 +230,18 @@ describe('HomeScreen Logic', () => {
         { amount: 30, category: 'Food & Dining' },
         { amount: 20, category: 'Food & Dining' },
         { amount: 15, category: 'Transportation' },
-        { amount: 10, category: 'Entertainment' }
+        { amount: 10, category: 'Entertainment' },
       ];
 
       const getCategoryBreakdown = (expenses: typeof expenses) => {
-        const breakdown = expenses.reduce((acc, expense) => {
-          acc[expense.category] = (acc[expense.category] || 0) + expense.amount;
-          return acc;
-        }, {} as Record<string, number>);
+        const breakdown = expenses.reduce(
+          (acc, expense) => {
+            acc[expense.category] =
+              (acc[expense.category] || 0) + expense.amount;
+            return acc;
+          },
+          {} as Record<string, number>,
+        );
 
         return Object.entries(breakdown)
           .sort(([, a], [, b]) => b - a)
@@ -217,7 +258,10 @@ describe('HomeScreen Logic', () => {
 
   describe('empty state handling', () => {
     it('should show appropriate empty state message', () => {
-      const getEmptyStateMessage = (hasExpenses: boolean, isFirstTime: boolean) => {
+      const getEmptyStateMessage = (
+        hasExpenses: boolean,
+        isFirstTime: boolean,
+      ) => {
         if (!hasExpenses) {
           if (isFirstTime) {
             return 'Welcome! Tap the + button to add your first expense.';
@@ -227,8 +271,12 @@ describe('HomeScreen Logic', () => {
         return null;
       };
 
-      expect(getEmptyStateMessage(false, true)).toBe('Welcome! Tap the + button to add your first expense.');
-      expect(getEmptyStateMessage(false, false)).toBe('No expenses yet. Start tracking by adding an expense.');
+      expect(getEmptyStateMessage(false, true)).toBe(
+        'Welcome! Tap the + button to add your first expense.',
+      );
+      expect(getEmptyStateMessage(false, false)).toBe(
+        'No expenses yet. Start tracking by adding an expense.',
+      );
       expect(getEmptyStateMessage(true, false)).toBeNull();
     });
 
@@ -237,7 +285,7 @@ describe('HomeScreen Logic', () => {
         if (isEmpty) {
           return {
             text: 'Add First Expense',
-            action: 'navigate-to-add-expense'
+            action: 'navigate-to-add-expense',
           };
         }
         return null;
@@ -246,7 +294,7 @@ describe('HomeScreen Logic', () => {
       const action = getEmptyStateAction(true);
       expect(action).toEqual({
         text: 'Add First Expense',
-        action: 'navigate-to-add-expense'
+        action: 'navigate-to-add-expense',
       });
 
       expect(getEmptyStateAction(false)).toBeNull();
@@ -279,7 +327,7 @@ describe('HomeScreen Logic', () => {
           category: expense.category,
           date: new Date(expense.date).toLocaleDateString(),
           isGroupExpense: !!expense.groupId,
-          categoryColor: expense.categoryColor || '#757575'
+          categoryColor: expense.categoryColor || '#757575',
         };
       };
 
@@ -290,7 +338,7 @@ describe('HomeScreen Logic', () => {
         category: 'Food & Dining',
         date: '2025-09-20',
         groupId: 'group-1',
-        categoryColor: '#FF5722'
+        categoryColor: '#FF5722',
       };
 
       const formatted = formatExpenseItem(expense);
@@ -303,16 +351,24 @@ describe('HomeScreen Logic', () => {
     it('should handle expense item tap action', () => {
       const mockNavigate = jest.fn();
 
-      const handleExpenseItemTap = (expenseId: string, navigate: typeof mockNavigate) => {
+      const handleExpenseItemTap = (
+        expenseId: string,
+        navigate: typeof mockNavigate,
+      ) => {
         navigate('EditExpense', { expenseId });
       };
 
       handleExpenseItemTap('exp-123', mockNavigate);
-      expect(mockNavigate).toHaveBeenCalledWith('EditExpense', { expenseId: 'exp-123' });
+      expect(mockNavigate).toHaveBeenCalledWith('EditExpense', {
+        expenseId: 'exp-123',
+      });
     });
 
     it('should determine expense item swipe actions', () => {
-      const getSwipeActions = (expense: any, userRole: 'owner' | 'participant') => {
+      const getSwipeActions = (
+        expense: any,
+        userRole: 'owner' | 'participant',
+      ) => {
         const actions = [];
 
         if (userRole === 'owner' || expense.userId === mockUser.internalId) {
@@ -343,7 +399,7 @@ describe('HomeScreen Logic', () => {
       const handleRefresh = (onRefresh: () => Promise<void>) => {
         const refreshState = {
           isRefreshing: false,
-          lastRefresh: null as Date | null
+          lastRefresh: null as Date | null,
         };
 
         const performRefresh = async () => {
@@ -369,8 +425,14 @@ describe('HomeScreen Logic', () => {
     });
 
     it('should determine if sync is needed', () => {
-      const shouldSync = (lastSync: Date | null, currentTime: number, threshold: number = 5 * 60 * 1000) => {
-        if (!lastSync) return true;
+      const shouldSync = (
+        lastSync: Date | null,
+        currentTime: number,
+        threshold: number = 5 * 60 * 1000,
+      ) => {
+        if (!lastSync) {
+          return true;
+        }
         return currentTime - lastSync.getTime() > threshold;
       };
 
@@ -388,7 +450,7 @@ describe('HomeScreen Logic', () => {
         isOnline: boolean,
         lastSync: Date | null,
         hasError: boolean,
-        currentTime: number
+        currentTime: number,
       ) => {
         if (!isOnline) {
           return 'Offline - changes will sync when online';
@@ -397,7 +459,9 @@ describe('HomeScreen Logic', () => {
           return 'Sync failed - tap to retry';
         }
         if (lastSync) {
-          const minutes = Math.floor((currentTime - lastSync.getTime()) / 60000);
+          const minutes = Math.floor(
+            (currentTime - lastSync.getTime()) / 60000,
+          );
           if (minutes < 1) {
             return 'Synced just now';
           }
@@ -410,10 +474,18 @@ describe('HomeScreen Logic', () => {
       const fiveMinutesAgo = new Date(now - 5 * 60 * 1000);
       const justNow = new Date(now - 30 * 1000); // 30 seconds ago
 
-      expect(getSyncStatusMessage(false, justNow, false, now)).toBe('Offline - changes will sync when online');
-      expect(getSyncStatusMessage(true, null, true, now)).toBe('Sync failed - tap to retry');
-      expect(getSyncStatusMessage(true, justNow, false, now)).toBe('Synced just now');
-      expect(getSyncStatusMessage(true, fiveMinutesAgo, false, now)).toBe('Synced 5 minutes ago');
+      expect(getSyncStatusMessage(false, justNow, false, now)).toBe(
+        'Offline - changes will sync when online',
+      );
+      expect(getSyncStatusMessage(true, null, true, now)).toBe(
+        'Sync failed - tap to retry',
+      );
+      expect(getSyncStatusMessage(true, justNow, false, now)).toBe(
+        'Synced just now',
+      );
+      expect(getSyncStatusMessage(true, fiveMinutesAgo, false, now)).toBe(
+        'Synced 5 minutes ago',
+      );
     });
   });
 });

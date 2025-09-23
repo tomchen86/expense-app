@@ -39,8 +39,8 @@ export interface Expense {
 
 // User Identity (rarely changes)
 export interface User {
-  id: string;           // Internal unique ID (replaces internalUserId)
-  displayName: string;  // Human-readable name for all purposes
+  id: string; // Internal unique ID (replaces internalUserId)
+  displayName: string; // Human-readable name for all purposes
 }
 
 // User Preferences (frequently changes)

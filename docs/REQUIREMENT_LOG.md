@@ -7,6 +7,7 @@ _Last updated: September 23, 2025_
 - Keep each row concise—one requirement per line—linking to deeper docs instead of duplicating details.
 - Update the status and priority immediately after working on an item; note the highest-level tests that cover it.
 - When you spin up a new requirement, add it to the appropriate table with a quick Next/Notes entry so you remember the follow-up.
+- If a requirement originated in `docs/ISSUE_LOG.md`, reference the issue ID in the Notes column (e.g., `Origin: ISS-002`) and archive the issue once shipped.
 
 ## Status Legend
 `✅ Implemented` finished and validated by listed tests
@@ -22,7 +23,7 @@ _Last updated: September 23, 2025_
 
 ## Backlog Snapshot
 - **Now**: expand expense filtering/search, refine group name UX, expand category colors, finish API schema draft, testing coverage improvements (see docs/Testing/TESTING_IMPROVEMENT_PLAN.md).
-- **Next**: group permission rules, unique user identifier, cloud sync foundation, API endpoints.
+- **Next**: group permission rules, unique user identifier, persistence provider contract rollout, API endpoints.
 - **Blocked**: mobile ↔ API integration (waiting on core endpoints), monitoring rollout (needs production API).
 
 ## Requirement Catalogue
@@ -47,7 +48,7 @@ _Last updated: September 23, 2025_
 | Tap to edit & swipe to delete expenses | ✅ | Later | Unit, E2E | Keep Detox regression tests current.
 | Group expenses show badge in list | ✅ | Later | Unit | Covered via store tests.
 | Date range filtering | ✅ | Now | Unit | Expand to keyword search (see below).
-| Keyword search for expenses | 📋 | Now | — | Add search field + store selector; link: docs/planning/ROADMAP.md#phase-3.
+| Keyword search for expenses | 📋 | Now | — | Origin: ISS-002. Add search field + store selector; link: docs/planning/ROADMAP.md#phase-3.
 | Expense sorting (date, amount, category) | 📋 | Next | — | Keep design simple (three toggles).
 
 #### Insights & Analytics
@@ -73,7 +74,7 @@ _Last updated: September 23, 2025_
 | Group list shows totals, contributions, expense feed | ✅ | Later | Unit | Align data model with backend schema.
 | Group insights accessible from totals view | ✅ | Later | Unit | Compare outputs with API once available.
 | "My Total Contribution" shows participant balances | ✅ | Later | Unit | Keep an eye on rounding with API data.
-| Group name validation UX (alert styling) | 🔄 | Now | Manual | Improve modal feedback; reference docs/Testing/PHASE3_TESTING_REPORT.md findings.
+| Group name validation UX (alert styling) | 🔄 | Now | Manual | Origin: ISS-101. Improve modal feedback; reference docs/Testing/PHASE3_TESTING_REPORT.md findings.
 | Restrict delete to creator; allow leaving group | 📋 | Next | — | Needs role metadata; depends on unique IDs.
 | Preserve group tags after member leaves | 📋 | Next | — | Requires store history strategy.
 
@@ -89,8 +90,9 @@ _Last updated: September 23, 2025_
 | Requirement | Status | Priority | Tests | Next / Notes |
 |-------------|--------|----------|-------|---------------|
 | Local persistence with Zustand + AsyncStorage | ✅ | Later | Unit | Keep store-performance.test.ts updated.
-| Cloud sync with API backend | 📋 | Next | — | Implement after API MVP.
-| User selectable storage mode (local vs cloud) | 📋 | Later | — | UX decision once sync exists.
+| Pluggable persistence provider architecture (AsyncStorage → SQLite → Cloud) | 📋 | Next | — | Origin: ISS-201. Align with `docs/Storage_Strategy.md`; depends on Task 2.2 groundwork.
+| Cloud sync with API backend | 📋 | Next | — | Follows provider contract + auth; see `docs/planning/PHASE_2_API_DEVELOPMENT_PLAN.md`.
+| User selectable storage mode (local vs cloud) | 📋 | Later | — | Guided upgrade/downgrade flows defined in `docs/Storage_Strategy.md`.
 
 ### API (`apps/api`)
 | Requirement | Status | Priority | Tests | Next / Notes |

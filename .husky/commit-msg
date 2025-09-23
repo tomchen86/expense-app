@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+REPO_ROOT="$(cd -- "$(dirname "$0")/.." && pwd -P)"
+cd "$REPO_ROOT"
+
+export PATH="$REPO_ROOT/node_modules/.bin:$PATH"
+
+if [[ "${HUSKY_SKIP_COMMIT_MSG:-0}" == "1" ]]; then
+  echo "commit-msg ▶️ skipping (HUSKY_SKIP_COMMIT_MSG=1)"
+  exit 0
+fi
+
+node scripts/git/commit-msg-check.mjs "$1"

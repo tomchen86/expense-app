@@ -8,7 +8,11 @@ import {
   getPreviousPeriod,
   getNextPeriod,
 } from '../calculations/insightCalculations';
-import { mockExpenses, mockCategories, createMockExpense } from '../../__tests__/fixtures';
+import {
+  mockExpenses,
+  mockCategories,
+  createMockExpense,
+} from '../../__tests__/fixtures';
 
 describe('insightCalculations', () => {
   describe('calculateCategoryTotals', () => {
@@ -23,7 +27,7 @@ describe('insightCalculations', () => {
 
       expect(result.totals).toEqual({
         'Food & Dining': 80,
-        'Transportation': 20,
+        Transportation: 20,
       });
       expect(result.total).toBe(100);
     });
@@ -50,7 +54,7 @@ describe('insightCalculations', () => {
 
     it('should handle decimal amounts correctly', () => {
       const expenses = [
-        createMockExpense({ category: 'Food & Dining', amount: 25.50 }),
+        createMockExpense({ category: 'Food & Dining', amount: 25.5 }),
         createMockExpense({ category: 'Food & Dining', amount: 12.75 }),
       ];
 
@@ -70,7 +74,7 @@ describe('insightCalculations', () => {
 
       expect(result.totals).toEqual({
         'Food & Dining': 0,
-        'Transportation': 25,
+        Transportation: 25,
       });
       expect(result.total).toBe(25);
     });
@@ -87,8 +91,8 @@ describe('insightCalculations', () => {
 
       expect(result).toHaveLength(2);
 
-      const foodData = result.find(d => d.category === 'Food & Dining');
-      const transportData = result.find(d => d.category === 'Transportation');
+      const foodData = result.find((d) => d.category === 'Food & Dining');
+      const transportData = result.find((d) => d.category === 'Transportation');
 
       expect(foodData).toMatchObject({
         value: 80,
@@ -116,7 +120,11 @@ describe('insightCalculations', () => {
         createMockExpense({ category: 'Unknown Category', amount: 50 }),
       ];
 
-      const result = generateCategoryChartData(expenses, mockCategories, '#CCCCCC');
+      const result = generateCategoryChartData(
+        expenses,
+        mockCategories,
+        '#CCCCCC',
+      );
 
       expect(result).toHaveLength(1);
       expect(result[0]).toMatchObject({
@@ -151,9 +159,15 @@ describe('insightCalculations', () => {
       const result = generateCategoryChartData(expenses, mockCategories);
 
       expect(result).toHaveLength(3);
-      expect(result.find(d => d.category === 'Food & Dining')?.percentage).toBe(60);
-      expect(result.find(d => d.category === 'Transportation')?.percentage).toBe(30);
-      expect(result.find(d => d.category === 'Entertainment')?.percentage).toBe(10);
+      expect(
+        result.find((d) => d.category === 'Food & Dining')?.percentage,
+      ).toBe(60);
+      expect(
+        result.find((d) => d.category === 'Transportation')?.percentage,
+      ).toBe(30);
+      expect(
+        result.find((d) => d.category === 'Entertainment')?.percentage,
+      ).toBe(10);
     });
   });
 
@@ -169,8 +183,8 @@ describe('insightCalculations', () => {
       const result = filterExpensesByDate(testExpenses, 'year', 2025);
 
       expect(result).toHaveLength(2);
-      expect(result.map(e => e.title)).toContain('Jan 2025');
-      expect(result.map(e => e.title)).toContain('Mar 2025');
+      expect(result.map((e) => e.title)).toContain('Jan 2025');
+      expect(result.map((e) => e.title)).toContain('Mar 2025');
     });
 
     it('should filter by month and year correctly', () => {
@@ -187,8 +201,16 @@ describe('insightCalculations', () => {
 
     it('should handle edge case of month boundaries', () => {
       const testExpenses = [
-        createMockExpense({ title: 'Last day of Jan', date: '2025-01-31', amount: 100 }),
-        createMockExpense({ title: 'First day of Feb', date: '2025-02-01', amount: 150 }),
+        createMockExpense({
+          title: 'Last day of Jan',
+          date: '2025-01-31',
+          amount: 100,
+        }),
+        createMockExpense({
+          title: 'First day of Feb',
+          date: '2025-02-01',
+          amount: 150,
+        }),
       ];
 
       const janResult = filterExpensesByDate(testExpenses, 'month', 2025, 0);
@@ -203,28 +225,58 @@ describe('insightCalculations', () => {
 
   describe('getRelevantExpenses', () => {
     const testExpenses = [
-      createMockExpense({ title: 'Personal 1', paidBy: 'user-1', groupId: undefined }),
-      createMockExpense({ title: 'Personal 2', paidBy: 'user-1', groupId: 'some-group' }),
-      createMockExpense({ title: 'Group 1', paidBy: 'user-2', groupId: 'group-1' }),
-      createMockExpense({ title: 'Group 2', paidBy: 'user-1', groupId: 'group-1' }),
-      createMockExpense({ title: 'Other Group', paidBy: 'user-3', groupId: 'group-2' }),
+      createMockExpense({
+        title: 'Personal 1',
+        paidBy: 'user-1',
+        groupId: undefined,
+      }),
+      createMockExpense({
+        title: 'Personal 2',
+        paidBy: 'user-1',
+        groupId: 'some-group',
+      }),
+      createMockExpense({
+        title: 'Group 1',
+        paidBy: 'user-2',
+        groupId: 'group-1',
+      }),
+      createMockExpense({
+        title: 'Group 2',
+        paidBy: 'user-1',
+        groupId: 'group-1',
+      }),
+      createMockExpense({
+        title: 'Other Group',
+        paidBy: 'user-3',
+        groupId: 'group-2',
+      }),
     ];
 
     it('should return personal expenses for user', () => {
-      const result = getRelevantExpenses(testExpenses, 'personal', '', 'user-1');
+      const result = getRelevantExpenses(
+        testExpenses,
+        'personal',
+        '',
+        'user-1',
+      );
 
       expect(result).toHaveLength(3); // All expenses paid by user-1
-      expect(result.map(e => e.title)).toContain('Personal 1');
-      expect(result.map(e => e.title)).toContain('Personal 2');
-      expect(result.map(e => e.title)).toContain('Group 2');
+      expect(result.map((e) => e.title)).toContain('Personal 1');
+      expect(result.map((e) => e.title)).toContain('Personal 2');
+      expect(result.map((e) => e.title)).toContain('Group 2');
     });
 
     it('should return group expenses for specified group', () => {
-      const result = getRelevantExpenses(testExpenses, 'group', 'group-1', 'user-1');
+      const result = getRelevantExpenses(
+        testExpenses,
+        'group',
+        'group-1',
+        'user-1',
+      );
 
       expect(result).toHaveLength(2);
-      expect(result.map(e => e.title)).toContain('Group 1');
-      expect(result.map(e => e.title)).toContain('Group 2');
+      expect(result.map((e) => e.title)).toContain('Group 1');
+      expect(result.map((e) => e.title)).toContain('Group 2');
     });
 
     it('should return empty array for personal context without internal user ID', () => {
@@ -233,7 +285,12 @@ describe('insightCalculations', () => {
     });
 
     it('should return empty array for non-existent group', () => {
-      const result = getRelevantExpenses(testExpenses, 'group', 'non-existent', 'user-1');
+      const result = getRelevantExpenses(
+        testExpenses,
+        'group',
+        'non-existent',
+        'user-1',
+      );
       expect(result).toEqual([]);
     });
   });
@@ -284,8 +341,18 @@ describe('insightCalculations', () => {
 
   describe('getDisplayPeriodText', () => {
     const monthNames = [
-      'January', 'February', 'March', 'April', 'May', 'June',
-      'July', 'August', 'September', 'October', 'November', 'December'
+      'January',
+      'February',
+      'March',
+      'April',
+      'May',
+      'June',
+      'July',
+      'August',
+      'September',
+      'October',
+      'November',
+      'December',
     ];
 
     it('should return month and year for month aggregation', () => {

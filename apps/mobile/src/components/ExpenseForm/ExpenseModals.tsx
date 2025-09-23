@@ -9,31 +9,31 @@ interface ExpenseModalsProps {
   showGroupModal: boolean;
   showPaidByModal: boolean;
   showSplitModal: boolean;
-  
+
   // Data
   categoryModalData: (ExpenseCategory | string)[];
   groups: ExpenseGroup[];
   availableParticipants: Participant[];
-  
+
   // Current selections
   selectedCategory: ExpenseCategory;
   selectedGroup: ExpenseGroup | null;
   selectedPaidBy: Participant | null;
   selectedParticipants: Participant[];
-  
+
   // Handlers
   onCategorySelect: (item: ExpenseCategory | string) => void;
   onGroupSelect: (item: ExpenseGroup) => void;
   onGroupClear: () => void;
   onPaidBySelect: (item: Participant) => void;
   onParticipantToggle: (item: Participant) => void;
-  
+
   // Close handlers
   onCloseCategoryModal: () => void;
   onCloseGroupModal: () => void;
   onClosePaidByModal: () => void;
   onCloseSplitModal: () => void;
-  
+
   // Constants
   ADD_NEW_CATEGORY_ACTION: string;
 }
