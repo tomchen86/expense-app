@@ -1,15 +1,7 @@
 module.exports = {
-  preset: 'react-native',
+  preset: 'jest-expo',
   setupFilesAfterEnv: ['<rootDir>/src/__tests__/setup-component.ts'],
   coverageProvider: 'v8',
-  transform: {
-    '^.+\\.(js|jsx|ts|tsx)$': [
-      'babel-jest',
-      {
-        presets: ['module:metro-react-native-babel-preset'],
-      },
-    ],
-  },
   testMatch: [
     '<rootDir>/src/**/__tests__/**/*.test.{js,ts,tsx}',
     '<rootDir>/src/**/*.test.{js,ts,tsx}',
@@ -40,6 +32,6 @@ module.exports = {
   },
   moduleFileExtensions: ['ts', 'tsx', 'js', 'jsx', 'json', 'node'],
   transformIgnorePatterns: [
-    'node_modules/(?!(react-native|@react-native|react-native-.*|@react-navigation|react-navigation|@react-native-community|@react-native-picker)/)',
+    'node_modules/(?!.*(?:@react-native/js-polyfills|(jest-)?react-native|@react-native(?:-community)?|react-native-.*|expo(nent)?|@expo(nent)?/.*|@expo-google-fonts/.*|react-navigation|@react-navigation/.*|@unimodules/.*|unimodules|expo-modules-core|sentry-expo|native-base|react-native-svg))',
   ],
 };

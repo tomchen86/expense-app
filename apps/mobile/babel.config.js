@@ -8,11 +8,17 @@ module.exports = function (api) {
 
   return {
     presets: ['babel-preset-expo'],
-    plugins: privateFeaturePlugins,
+    plugins: [
+      ...privateFeaturePlugins,
+      '@babel/plugin-transform-flow-strip-types',
+    ],
     env: {
       test: {
         presets: ['babel-preset-expo'],
-        plugins: privateFeaturePlugins,
+        plugins: [
+          ...privateFeaturePlugins,
+          '@babel/plugin-transform-flow-strip-types',
+        ],
       },
     },
   };

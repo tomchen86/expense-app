@@ -44,7 +44,3 @@ yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
 
-#AI
-AGENTS.md 
-CLAUDE.md 
-.claude
