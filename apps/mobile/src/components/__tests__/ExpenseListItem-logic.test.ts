@@ -268,6 +268,12 @@ describe('ExpenseListItem Logic', () => {
       const validateProps = (props: Partial<ExpenseListItemProps>) => {
         const errors: string[] = [];
 
+        const isFiniteNumber = (v: unknown): v is number =>
+          typeof v === 'number' &&
+          !Number.isNaN(v) &&
+          v !== Infinity &&
+          v !== -Infinity;
+
         if (!props.item) {
           errors.push('item is required');
         }
@@ -277,7 +283,7 @@ describe('ExpenseListItem Logic', () => {
         if (!props.allParticipants) {
           errors.push('allParticipants is required');
         }
-        if (typeof props.displayAmount !== 'number') {
+        if (!isFiniteNumber(props.displayAmount)) {
           errors.push('displayAmount must be a number');
         }
         if (typeof props.onEdit !== 'function') {
@@ -318,9 +324,11 @@ describe('ExpenseListItem Logic', () => {
       // Invalid props (semantic validation)
       const invalidSemanticProps = {
         item: mockExpense,
+        group: null, // property must exist; null is allowed per validation message
         allParticipants: mockParticipants,
         displayAmount: NaN,
         onEdit: jest.fn(),
+        onDelete: jest.fn(),
       };
 
       const invalidResult = validateProps(invalidProps);
@@ -331,7 +339,7 @@ describe('ExpenseListItem Logic', () => {
       const invalidSemanticResult = validateProps(invalidSemanticProps);
       expect(invalidSemanticResult.isValid).toBe(false);
       expect(invalidSemanticResult.errors).toContain(
-        'displayAmount must be a valid number',
+        'displayAmount must be a number',
       );
     });
   });

@@ -356,11 +356,13 @@ describe('GroupListItem Logic', () => {
 
       const validateProps = (props: Partial<GroupListItemProps>) => {
         const errors: string[] = [];
+        const isFiniteNumber = (v: unknown): v is number =>
+          typeof v === 'number' && Number.isFinite(v);
 
         if (!props.group) {
           errors.push('group is required');
         }
-        if (typeof props.totalAmount !== 'number') {
+        if (!isFiniteNumber(props.totalAmount)) {
           errors.push('totalAmount must be a number');
         }
         if (typeof props.onDeleteGroup !== 'function') {
@@ -408,6 +410,9 @@ describe('GroupListItem Logic', () => {
         group: mockGroup,
         totalAmount: NaN,
         onDeleteGroup: jest.fn(),
+        onRemoveParticipant: jest.fn(),
+        onAddParticipant: jest.fn(),
+        onPress: jest.fn(),
       };
 
       const invalidResult = validateProps(invalidProps);
@@ -418,7 +423,7 @@ describe('GroupListItem Logic', () => {
       const invalidSemanticResult = validateProps(invalidSemanticProps);
       expect(invalidSemanticResult.isValid).toBe(false);
       expect(invalidSemanticResult.errors).toContain(
-        'totalAmount must be a valid number',
+        'totalAmount must be a number',
       );
     });
   });
