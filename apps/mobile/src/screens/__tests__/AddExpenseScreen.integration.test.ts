@@ -1,81 +1,75 @@
 // AddExpenseScreen integration tests - workflow validation
+
+// Hoisted mocks at top (before imports)
+jest.mock('@react-navigation/native', () => ({
+  useNavigation: () => ({ goBack: jest.fn(), navigate: jest.fn() }),
+}));
+
+// Static imports at top of file
 import { useExpenseStore } from '../../store/composedExpenseStore';
+import { useExpenseStore as useExpenseFeatureStore } from '../../store/features/expenseStore';
+import { useGroupStore } from '../../store/features/groupStore';
+import { useParticipantStore } from '../../store/features/participantStore';
+import { useCategoryStore } from '../../store/features/categoryStore';
+import { useUserStore } from '../../store/features/userStore';
 import { validExpense, validGroup, mockUser } from '../../__tests__/fixtures';
+import { Alert } from 'react-native';
+
+// Alert mock setup
+jest.spyOn(Alert, 'alert').mockImplementation(() => {});
+
+// Reset utility for cleaner test setup
+const resetAllStores = () => {
+  // Reset individual stores (merge, don't replace completely)
+  useExpenseFeatureStore.setState({ expenses: [] });
+  useGroupStore.setState({ groups: [] });
+  useParticipantStore.setState({ participants: [] });
+
+  // Reset user store with fresh internal ID
+  useUserStore.setState({
+    user: null,
+    settings: {
+      theme: 'light',
+      currency: 'USD',
+      dateFormat: 'MM/DD/YYYY',
+      notifications: true,
+    },
+    userSettings: null,
+    internalUserId: `user_${Math.random().toString(36).substr(2, 9)}`,
+  });
+
+  // Reset categories to test defaults
+  useCategoryStore.setState({
+    categories: [
+      { id: 'cat-1', name: 'Food & Dining', color: '#FF5722' },
+      { id: 'cat-2', name: 'Transportation', color: '#2196F3' },
+    ],
+  });
+
+  // Sync composed store (merge to preserve methods)
+  useExpenseStore.setState({
+    expenses: [],
+    groups: [],
+    participants: [],
+    categories: [
+      { id: 'cat-1', name: 'Food & Dining', color: '#FF5722' },
+      { id: 'cat-2', name: 'Transportation', color: '#2196F3' },
+    ],
+    user: null,
+    settings: {
+      theme: 'light',
+      currency: 'USD',
+      dateFormat: 'MM/DD/YYYY',
+      notifications: true,
+    },
+    userSettings: null,
+    internalUserId: useUserStore.getState().internalUserId,
+  });
+};
 
 describe('AddExpenseScreen Integration', () => {
-  beforeEach(async () => {
-    // Reset individual stores first
-    const { useExpenseStore: useExpenseFeatureStore } = await import(
-      '../../store/features/expenseStore'
-    );
-    const { useGroupStore } = await import('../../store/features/groupStore');
-    const { useParticipantStore } = await import(
-      '../../store/features/participantStore'
-    );
-    const { useCategoryStore } = await import(
-      '../../store/features/categoryStore'
-    );
-    const { useUserStore } = await import('../../store/features/userStore');
-
-    // Reset individual stores
-    useExpenseFeatureStore.setState({ expenses: [] });
-    useGroupStore.setState({ groups: [] });
-    useParticipantStore.setState({ participants: [] });
-    useUserStore.setState({
-      user: null,
-      settings: {
-        theme: 'light',
-        currency: 'USD',
-        dateFormat: 'MM/DD/YYYY',
-        notifications: true,
-      },
-      userSettings: null,
-      internalUserId: `user_${Math.random().toString(36).substr(2, 9)}`,
-    });
-
-    // Reset categories to default test categories
-    useCategoryStore.setState({
-      categories: [
-        {
-          id: 'cat-1',
-          name: 'Food & Dining',
-          color: '#FF5722',
-        },
-        {
-          id: 'cat-2',
-          name: 'Transportation',
-          color: '#2196F3',
-        },
-      ],
-    });
-
-    // Reset composed store to sync state
-    useExpenseStore.setState({
-      expenses: [],
-      groups: [],
-      participants: [],
-      categories: [
-        {
-          id: 'cat-1',
-          name: 'Food & Dining',
-          color: '#FF5722',
-        },
-        {
-          id: 'cat-2',
-          name: 'Transportation',
-          color: '#2196F3',
-        },
-      ],
-      user: null,
-      settings: {
-        theme: 'light',
-        currency: 'USD',
-        dateFormat: 'MM/DD/YYYY',
-        notifications: true,
-      },
-      userSettings: null,
-      internalUserId: useUserStore.getState().internalUserId,
-    });
+  beforeEach(() => {
+    resetAllStores();
   });
 
   describe('expense creation workflow', () => {
