@@ -372,7 +372,10 @@ describe('HomeScreen Logic', () => {
       ) => {
         const actions = [];
 
-        if (userRole === 'owner' || expense.userId === mockUser.internalId) {
+        if (
+          userRole === 'owner' ||
+          expense.userId === mockUser.internalUserId
+        ) {
           actions.push({ type: 'edit', label: 'Edit', color: '#2196F3' });
           actions.push({ type: 'delete', label: 'Delete', color: '#F44336' });
         }
@@ -384,7 +387,7 @@ describe('HomeScreen Logic', () => {
         return actions;
       };
 
-      const ownerExpense = { userId: mockUser.internalId, groupId: null };
+      const ownerExpense = { userId: mockUser.internalUserId, groupId: null };
       const groupExpense = { userId: 'other-user', groupId: 'group-1' };
 
       const ownerActions = getSwipeActions(ownerExpense, 'owner');

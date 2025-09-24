@@ -396,16 +396,30 @@ describe('GroupListItem Logic', () => {
       expect(validResult.isValid).toBe(true);
       expect(validResult.errors).toHaveLength(0);
 
-      // Invalid props
+      // Invalid props (type validation)
       const invalidProps = {
         group: null,
         totalAmount: 'invalid',
         onDeleteGroup: 'not a function',
+      } as unknown as Partial<GroupListItemProps>;
+
+      // Invalid props (semantic validation)
+      const invalidSemanticProps = {
+        group: mockGroup,
+        totalAmount: NaN,
+        onDeleteGroup: jest.fn(),
       };
 
       const invalidResult = validateProps(invalidProps);
       expect(invalidResult.isValid).toBe(false);
       expect(invalidResult.errors.length).toBeGreaterThan(0);
+
+      // Test semantic validation
+      const invalidSemanticResult = validateProps(invalidSemanticProps);
+      expect(invalidSemanticResult.isValid).toBe(false);
+      expect(invalidSemanticResult.errors).toContain(
+        'totalAmount must be a valid number',
+      );
     });
   });
 

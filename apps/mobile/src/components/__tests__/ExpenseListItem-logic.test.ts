@@ -307,17 +307,32 @@ describe('ExpenseListItem Logic', () => {
       expect(validResult.isValid).toBe(true);
       expect(validResult.errors).toHaveLength(0);
 
-      // Invalid props
+      // Invalid props (type validation)
       const invalidProps = {
         item: null,
         allParticipants: null,
         displayAmount: 'invalid',
         onEdit: 'not a function',
+      } as unknown as Partial<ExpenseListItemProps>;
+
+      // Invalid props (semantic validation)
+      const invalidSemanticProps = {
+        item: mockExpense,
+        allParticipants: mockParticipants,
+        displayAmount: NaN,
+        onEdit: jest.fn(),
       };
 
       const invalidResult = validateProps(invalidProps);
       expect(invalidResult.isValid).toBe(false);
       expect(invalidResult.errors.length).toBeGreaterThan(0);
+
+      // Test semantic validation
+      const invalidSemanticResult = validateProps(invalidSemanticProps);
+      expect(invalidSemanticResult.isValid).toBe(false);
+      expect(invalidSemanticResult.errors).toContain(
+        'displayAmount must be a valid number',
+      );
     });
   });
 

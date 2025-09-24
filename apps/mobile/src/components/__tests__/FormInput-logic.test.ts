@@ -47,7 +47,7 @@ describe('FormInput Logic', () => {
         label: '',
         value: null,
         onChangeText: 'not a function',
-      };
+      } as unknown as Partial<FormInputProps>;
 
       const invalidResult = validateRequiredProps(invalidProps);
       expect(invalidResult.isValid).toBe(false);
@@ -110,7 +110,7 @@ describe('FormInput Logic', () => {
         keyboardType: true,
         multiline: 'yes',
         numberOfLines: 'three',
-      };
+      } as unknown as Partial<FormInputProps>;
 
       const invalidResult = validateOptionalProps(invalidProps);
       expect(invalidResult.hasWarnings).toBe(true);

@@ -168,7 +168,7 @@ describe('FloatingActionButton Logic', () => {
         onPress: 'not a function',
         groupId: 123,
         style: 'not an object',
-      };
+      } as unknown as Partial<FloatingActionButtonProps>;
 
       const invalidResult = validateProps(invalidProps);
       expect(invalidResult.hasWarnings).toBe(true);

@@ -6,15 +6,21 @@ describe('CategoryChart Logic', () => {
   const mockData: ChartDataPoint[] = [
     {
       category: 'Food & Dining',
-      total: 150,
+      value: 150,
+      absoluteValue: 150,
       percentage: 60,
       color: '#FF5722',
+      label: 'Food & Dining',
+      text: '60.0%',
     },
     {
       category: 'Transportation',
-      total: 100,
+      value: 100,
+      absoluteValue: 100,
       percentage: 40,
       color: '#2196F3',
+      label: 'Transportation',
+      text: '40.0%',
     },
   ];
 
@@ -22,7 +28,7 @@ describe('CategoryChart Logic', () => {
     it('should handle valid chart data', () => {
       const processChartData = (data: ChartDataPoint[]) => {
         return data.map((item) => ({
-          value: item.total,
+          value: item.value,
           color: item.color,
           label: item.category,
           text: `${item.percentage.toFixed(1)}%`,
@@ -46,7 +52,7 @@ describe('CategoryChart Logic', () => {
           return [];
         }
         return data.map((item) => ({
-          value: item.total,
+          value: item.value,
           color: item.color,
           label: item.category,
         }));

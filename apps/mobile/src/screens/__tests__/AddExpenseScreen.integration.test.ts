@@ -88,7 +88,7 @@ describe('AddExpenseScreen Integration', () => {
         amount: 15.5,
         category: 'Food & Dining',
         date: '2025-09-20',
-        userId: mockUser.internalUserId,
+        paidBy: mockUser.internalUserId,
       };
 
       // Add expense through store
@@ -116,7 +116,7 @@ describe('AddExpenseScreen Integration', () => {
         amount: 80.0,
         category: 'Food & Dining',
         date: '2025-09-20',
-        userId: mockUser.internalUserId,
+        paidBy: mockUser.internalUserId,
         groupId: groupId,
       };
 
@@ -185,14 +185,14 @@ describe('AddExpenseScreen Integration', () => {
           amount: 4.5,
           category: 'Food & Dining',
           date: '2025-09-20',
-          userId: mockUser.internalId,
+          paidBy: mockUser.internalUserId,
         },
         {
           title: 'Bus Ticket',
           amount: 2.25,
           category: 'Transportation',
           date: '2025-09-21', // Later date, should be first when sorted
-          userId: mockUser.internalId,
+          paidBy: mockUser.internalUserId,
         },
       ];
 
@@ -235,7 +235,7 @@ describe('AddExpenseScreen Integration', () => {
           amount: 25.0,
           category: 'Food & Dining',
           date: '2025-09-20',
-          userId: mockUser.internalUserId,
+          paidBy: mockUser.internalUserId,
         },
         mockNavigate,
       );
@@ -345,7 +345,7 @@ describe('AddExpenseScreen Integration', () => {
         amount: 200.0,
         category: 'Food & Dining',
         date: '2025-09-20',
-        userId: mockUser.internalUserId,
+        paidBy: mockUser.internalUserId,
         groupId: vacationGroupId,
       });
 

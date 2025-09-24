@@ -107,7 +107,7 @@ describe('SelectInput Logic', () => {
       const invalidProps = {
         label: '',
         onPress: 'not a function',
-      };
+      } as unknown as Partial<SelectInputProps>;
 
       const invalidResult = validateRequiredProps(invalidProps);
       expect(invalidResult.isValid).toBe(false);
@@ -176,7 +176,7 @@ describe('SelectInput Logic', () => {
         containerStyle: 'not an object',
         labelStyle: 'invalid',
         valueStyle: [],
-      };
+      } as unknown as Partial<SelectInputProps>;
 
       const invalidResult = validateOptionalProps(invalidProps);
       expect(invalidResult.hasWarnings).toBe(true);
