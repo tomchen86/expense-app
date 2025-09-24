@@ -28,8 +28,15 @@ const defaultSettings = {
   notifications: true,
 };
 
-import * as navigationModule from '@react-navigation/native';
-const originalUseNavigation = navigationModule.useNavigation;
+// Mock @react-navigation/native at the module level
+jest.mock('@react-navigation/native', () => ({
+  useNavigation: jest.fn(),
+}));
+
+import { useNavigation } from '@react-navigation/native';
+const mockUseNavigation = useNavigation as jest.MockedFunction<
+  typeof useNavigation
+>;
 
 const resetAllStores = () => {
   const { internalUserId } = useUserStore.getState();
@@ -87,12 +94,12 @@ describe('useExpenseForm', () => {
   });
 
   afterEach(() => {
-    navigationModule.useNavigation = originalUseNavigation;
+    mockUseNavigation.mockReset();
   });
 
   it('creates a personal expense using the internal user identifier', () => {
     const navigationMock = createNavigationMock();
-    navigationModule.useNavigation = jest.fn(() => navigationMock);
+    mockUseNavigation.mockReturnValue(navigationMock);
 
     const ref = createRef<ReturnType<typeof useExpenseForm>>();
     let renderer: TestRenderer.ReactTestRenderer;
@@ -129,7 +136,7 @@ describe('useExpenseForm', () => {
 
   it('validates group expenses require payer and participants', () => {
     const navigationMock = createNavigationMock();
-    navigationModule.useNavigation = jest.fn(() => navigationMock);
+    mockUseNavigation.mockReturnValue(navigationMock);
 
     const group: ExpenseGroup = {
       id: 'group-1',
@@ -170,7 +177,7 @@ describe('useExpenseForm', () => {
 
   it('updates an existing expense when editing', () => {
     const navigationMock = createNavigationMock();
-    navigationModule.useNavigation = jest.fn(() => navigationMock);
+    mockUseNavigation.mockReturnValue(navigationMock);
 
     const participant: Participant = { id: 'p1', name: 'Alex' };
     const group: ExpenseGroup = {

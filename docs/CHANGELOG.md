@@ -15,6 +15,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Removed the API-specific Prettier override so every workspace now inherits the shared settings.
 
+### Fixed
+
+- **Mobile Unit Tests**: Fixed all failing unit tests (3 failed → 0 failed, 271 passing total).
+  - Fixed dynamic import issues in useExpenseModals.test.tsx and store-performance.test.ts.
+  - Fixed navigation mock behavior in useExpenseForm.test.tsx using proper Jest module mocking.
+  - No production code changes - only test configuration and mocking improvements.
+
 ## [2025-09-24]
 
 ### Added

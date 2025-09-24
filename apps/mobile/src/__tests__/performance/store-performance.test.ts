@@ -9,12 +9,8 @@ const now = () => {
     return performance.now();
   }
 
-  try {
-    const { performance } = await import('perf_hooks');
-    return performance.now();
-  } catch (error) {
-    return Date.now();
-  }
+  // In test environment, fall back to Date.now for consistent behavior
+  return Date.now();
 };
 
 const createExpense = (index: number) => ({

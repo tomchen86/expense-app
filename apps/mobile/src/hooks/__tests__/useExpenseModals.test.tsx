@@ -111,10 +111,12 @@ describe('useExpenseModals', () => {
     expect(ref.current!.getFormState().selectedParticipants).toEqual([]);
   });
 
-  it('navigates to category management when add-new action selected', async () => {
-    const navigationModule = await import('@react-navigation/native');
+  it('navigates to category management when add-new action selected', () => {
     const navigate = jest.fn();
-    (navigationModule.useNavigation as jest.Mock).mockReturnValue({ navigate });
+    const mockUseNavigation = jest.requireMock(
+      '@react-navigation/native',
+    ).useNavigation;
+    mockUseNavigation.mockReturnValue({ navigate });
 
     const Harness = buildHarness(participants);
     const ref = createRef<HookHandle>();
@@ -130,6 +132,6 @@ describe('useExpenseModals', () => {
     });
 
     expect(navigate).toHaveBeenCalledWith('ManageCategoriesScreen');
-    (navigationModule.useNavigation as jest.Mock).mockReset();
+    mockUseNavigation.mockReset();
   });
 });
