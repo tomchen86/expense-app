@@ -45,7 +45,7 @@
     "@types/bcryptjs": "^3.0.0",
     "@types/express": "^5.0.0",
     "@types/jest": "^29.5.14",
-    "@types/node": "^22.10.7",
+    "@types/node": "^24.5.2",
     "@types/pg": "^8.15.5",
     "@types/supertest": "^6.0.2",
     "@types/uuid": "^11.0.0",
