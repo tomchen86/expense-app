@@ -1,6 +1,6 @@
 # System Architecture
 
-*Last Updated: August 26, 2025*
+_Last Updated: August 26, 2025_
 
 ## System Overview
 
@@ -11,24 +11,24 @@ This document describes the architecture of the Expense Tracking Application, a 
 ```mermaid
 graph TB
     User[👤 User] --> Mobile[📱 Mobile App]
-    Mobile --> Store[🗄️ Zustand Store] 
+    Mobile --> Store[🗄️ Zustand Store]
     Store --> AsyncStorage[💾 Local Storage]
-    
+
     API[🔧 NestJS API] -.-> Database[(🗄️ PostgreSQL)]
     Web[🌐 Next.js Web] -.-> API
-    
+
     subgraph "Current State"
         Mobile
         Store
         AsyncStorage
     end
-    
+
     subgraph "Future State (Phase 2-3)"
         API
         Database
         Web
     end
-    
+
     classDef current fill:#e1f5fe
     classDef future fill:#fff3e0
     class Mobile,Store,AsyncStorage current
@@ -41,36 +41,36 @@ graph TB
 graph TB
     MobileUser[👤 Mobile User] --> MobileApp[📱 Mobile App]
     WebUser[👤 Web User] --> WebApp[🌐 Web Dashboard]
-    
+
     MobileApp --> Auth[🔐 Auth Service]
     WebApp --> Auth
-    
+
     MobileApp --> APIGateway[🚪 API Gateway]
     WebApp --> APIGateway
-    
+
     APIGateway --> ExpenseAPI[💰 Expense Service]
     APIGateway --> UserAPI[👥 User Service]
     APIGateway --> GroupAPI[👨‍👩‍👧‍👦 Group Service]
-    
+
     ExpenseAPI --> Database[(🗄️ PostgreSQL)]
     UserAPI --> Database
     GroupAPI --> Database
-    
+
     ExpenseAPI --> Cache[(⚡ Redis Cache)]
-    
+
     Database --> Backup[(📦 Backups)]
-    
+
     subgraph "Authentication Layer"
         Auth
     end
-    
+
     subgraph "API Layer"
         APIGateway
         ExpenseAPI
         UserAPI
         GroupAPI
     end
-    
+
     subgraph "Data Layer"
         Database
         Cache
@@ -83,97 +83,101 @@ graph TB
 ### Core Business Entities
 
 #### Expense Entity
+
 The central entity representing a financial transaction.
 
 ```typescript
 interface Expense {
-  id: string;                    // Unique identifier (UUID in production)
-  title: string;                 // Human-readable description
-  amount: number;                // Amount in smallest currency unit (cents)
-  currency: string;              // ISO currency code (future: 'USD', 'EUR', etc.)
-  date: string;                  // ISO date string
-  caption?: string;              // Optional additional description
-  category: ExpenseCategory;     // Category classification
-  
+  id: string; // Unique identifier (UUID in production)
+  title: string; // Human-readable description
+  amount: number; // Amount in smallest currency unit (cents)
+  currency: string; // ISO currency code (future: 'USD', 'EUR', etc.)
+  date: string; // ISO date string
+  caption?: string; // Optional additional description
+  category: ExpenseCategory; // Category classification
+
   // Group & Participant Management
-  groupId?: string;              // Optional group association
-  paidBy?: string;               // Participant ID who made the payment
-  splitBetween?: string[];       // Array of participant IDs for cost splitting
-  participants?: Participant[];  // Cached participant data for offline use
-  
+  groupId?: string; // Optional group association
+  paidBy?: string; // Participant ID who made the payment
+  splitBetween?: string[]; // Array of participant IDs for cost splitting
+  participants?: Participant[]; // Cached participant data for offline use
+
   // Metadata
-  createdAt: string;             // Creation timestamp
-  updatedAt: string;             // Last modification timestamp
+  createdAt: string; // Creation timestamp
+  updatedAt: string; // Last modification timestamp
   syncStatus?: 'local' | 'synced' | 'pending'; // Sync status with server
 }
 ```
 
 #### ExpenseGroup Entity
+
 Groups for organizing shared expenses between multiple participants.
 
 ```typescript
 interface ExpenseGroup {
-  id: string;                    // Unique identifier
-  name: string;                  // Group display name
-  description?: string;          // Optional group description
-  participants: Participant[];   // Members of this group
-  
+  id: string; // Unique identifier
+  name: string; // Group display name
+  description?: string; // Optional group description
+  participants: Participant[]; // Members of this group
+
   // Metadata
-  createdAt: string;             // Creation timestamp
-  createdBy: string;             // Creator participant ID
-  
+  createdAt: string; // Creation timestamp
+  createdBy: string; // Creator participant ID
+
   // Group Settings
-  defaultCurrency: string;       // Default currency for group expenses
+  defaultCurrency: string; // Default currency for group expenses
   splitStrategy: 'equal' | 'custom'; // Default split strategy
-  
+
   // Invitation & Access
-  inviteCode?: string;           // Shareable invite code
-  isArchived: boolean;           // Soft deletion flag
+  inviteCode?: string; // Shareable invite code
+  isArchived: boolean; // Soft deletion flag
 }
 ```
 
 #### Participant Entity
+
 Represents users who can participate in expenses and groups.
 
 ```typescript
 interface Participant {
-  id: string;                    // Unique identifier
-  name: string;                  // Display name
-  email?: string;                // Email address (for invitations)
-  avatar?: string;               // Profile image URL
-  
+  id: string; // Unique identifier
+  name: string; // Display name
+  email?: string; // Email address (for invitations)
+  avatar?: string; // Profile image URL
+
   // User Status
-  isRegistered: boolean;         // Whether user has registered account
-  lastActiveAt?: string;         // Last activity timestamp
-  
+  isRegistered: boolean; // Whether user has registered account
+  lastActiveAt?: string; // Last activity timestamp
+
   // Preferences
-  defaultCurrency: string;       // Preferred currency
+  defaultCurrency: string; // Preferred currency
   notifications: {
-    expenses: boolean;           // Expense notifications
-    invites: boolean;            // Group invite notifications
-    reminders: boolean;          // Payment reminder notifications
+    expenses: boolean; // Expense notifications
+    invites: boolean; // Group invite notifications
+    reminders: boolean; // Payment reminder notifications
   };
 }
 ```
 
 #### Category Entity
+
 Customizable expense categories with visual styling.
 
 ```typescript
 interface Category {
-  id: string;                    // Unique identifier (name-based or UUID)
-  name: string;                  // Category display name
-  color: string;                 // Hex color code for UI
-  icon?: string;                 // Optional icon identifier
-  
+  id: string; // Unique identifier (name-based or UUID)
+  name: string; // Category display name
+  color: string; // Hex color code for UI
+  icon?: string; // Optional icon identifier
+
   // Category Management
-  isDefault: boolean;            // System default vs. user-created
-  createdBy?: string;            // Creator participant ID (for custom categories)
-  groupId?: string;              // Group-specific categories
-  
+  isDefault: boolean; // System default vs. user-created
+  createdBy?: string; // Creator participant ID (for custom categories)
+  groupId?: string; // Group-specific categories
+
   // Usage Tracking
-  usageCount?: number;           // Number of expenses using this category
-  lastUsedAt?: string;           // Last usage timestamp
+  usageCount?: number; // Number of expenses using this category
+  lastUsedAt?: string; // Last usage timestamp
 }
 ```
 
@@ -185,19 +189,20 @@ erDiagram
     Expense ||--o{ Participant : "split between"
     Expense ||--|| Category : "categorized as"
     Expense ||--o| ExpenseGroup : "belongs to"
-    
+
     ExpenseGroup ||--o{ Participant : "contains"
     ExpenseGroup ||--|| Participant : "created by"
-    
+
     Category ||--o| Participant : "created by"
     Category ||--o| ExpenseGroup : "scoped to"
-    
+
     Participant ||--o{ UserSettings : "has"
 ```
 
 ### Business Rules & Constraints
 
 #### Expense Rules
+
 - Amount must be positive (> 0)
 - At least one participant must be specified for group expenses
 - PaidBy participant must be in splitBetween array
@@ -205,12 +210,14 @@ erDiagram
 - Category must exist and be accessible to the user
 
 #### Group Rules
+
 - Groups must have at least one participant
 - Group creator cannot be removed from group
 - Invite codes expire after 7 days
 - Maximum 50 participants per group
 
 #### Participant Rules
+
 - Names must be unique within a group
 - Email addresses must be unique globally (when registered)
 - Unregistered participants can only access via invite codes
@@ -220,6 +227,7 @@ erDiagram
 ### State Management Architecture
 
 #### Zustand Store Pattern
+
 The mobile app uses Zustand for centralized state management with a single store approach.
 
 ```typescript
@@ -230,11 +238,11 @@ interface ExpenseState {
   groups: ExpenseGroup[];
   participants: Participant[];
   categories: Category[];
-  
+
   // User State
   userSettings: UserSettings | null;
-  internalUserId: string | null;    // Temporary user ID for local-only mode
-  
+  internalUserId: string | null; // Temporary user ID for local-only mode
+
   // Actions (CRUD Operations)
   addExpense: (expense: Omit<Expense, 'id'>) => void;
   updateExpense: (expense: Expense) => void;
@@ -244,23 +252,26 @@ interface ExpenseState {
 ```
 
 #### Planned Store Refactoring
+
 To comply with 500-line file limit, the store will be decomposed:
 
 ```typescript
 // Future Store Composition
-interface AppState extends 
-  ExpenseStore,      // Core expense operations
-  GroupStore,        // Group management
-  ParticipantStore,  // Participant operations
-  CategoryStore,     // Category management
-  UserStore,         // User settings
-  UIStore            // UI state, modals, loading
-{}
+interface AppState
+  extends ExpenseStore, // Core expense operations
+    GroupStore, // Group management
+    ParticipantStore, // Participant operations
+    CategoryStore, // Category management
+    UserStore, // User settings
+    UIStore {
+  // UI state, modals, loading
+}
 ```
 
 ### Navigation Architecture
 
 #### Stack + Tab Navigation Pattern
+
 ```typescript
 // Navigation Structure
 RootStackParamList = {
@@ -285,6 +296,7 @@ TabParamList = {
 ### Component Architecture
 
 #### Current Structure (Pre-Refactoring)
+
 ```
 src/
 ├── components/          # Reusable UI components
@@ -297,6 +309,7 @@ src/
 ```
 
 #### Target Atomic Design Structure
+
 ```
 src/
 ├── components/
@@ -320,12 +333,13 @@ src/
 ### Data Flow Patterns
 
 #### Current: Local-Only Data Flow
+
 ```mermaid
 sequenceDiagram
     participant UI as Screen Component
     participant Store as Zustand Store
     participant Storage as AsyncStorage
-    
+
     UI->>Store: Dispatch Action (addExpense)
     Store->>Store: Update State
     Store->>Storage: Persist to Local Storage
@@ -334,13 +348,14 @@ sequenceDiagram
 ```
 
 #### Future: Server-Sync Data Flow
+
 ```mermaid
 sequenceDiagram
     participant UI as Screen Component
     participant Store as Zustand Store
     participant API as API Client
     participant Server as NestJS API
-    
+
     UI->>Store: Dispatch Action (addExpense)
     Store->>Store: Optimistic Update
     Store->>API: POST /expenses
@@ -353,11 +368,13 @@ sequenceDiagram
 ### Performance Considerations
 
 #### Bundle Size Management
+
 - Code splitting by screen using dynamic imports
 - Image optimization with Expo's asset pipeline
 - Font subsetting for international support
 
 #### Rendering Optimization
+
 - React.memo for expensive components
 - FlatList for large data sets (expense lists)
 - Lazy loading for analytics charts
@@ -365,11 +382,13 @@ sequenceDiagram
 ## API Architecture (NestJS)
 
 ### Current State
+
 The API is currently a minimal NestJS scaffold with only a "Hello World" endpoint. Development will follow the phases outlined in the ROADMAP.md.
 
 ### Planned Architecture
 
 #### Module Structure
+
 ```
 src/
 ├── auth/                # Authentication & authorization
@@ -391,6 +410,7 @@ src/
 ```
 
 #### Service Layer Pattern
+
 ```typescript
 @Injectable()
 export class ExpenseService {
@@ -402,7 +422,7 @@ export class ExpenseService {
 
   async createExpense(
     createExpenseDto: CreateExpenseDto,
-    userId: string
+    userId: string,
   ): Promise<Expense> {
     // Validate user permissions
     // Create expense entity
@@ -414,6 +434,7 @@ export class ExpenseService {
 ```
 
 #### Database Schema (TypeORM)
+
 ```typescript
 @Entity()
 export class Expense {
@@ -447,6 +468,7 @@ export class Expense {
 ### API Design Patterns
 
 #### RESTful Endpoints
+
 ```
 GET    /api/expenses              # List user's expenses
 POST   /api/expenses              # Create new expense
@@ -461,6 +483,7 @@ GET    /api/groups/:id/expenses  # Get group expenses
 ```
 
 #### Authentication & Authorization
+
 - JWT-based authentication with refresh tokens
 - Role-based access control (Owner, Member, Guest)
 - Rate limiting for API endpoints
@@ -469,11 +492,13 @@ GET    /api/groups/:id/expenses  # Get group expenses
 ## Web Application Architecture (Next.js)
 
 ### Current State
+
 Basic Next.js 15 setup with App Router. No custom functionality implemented yet.
 
 ### Planned Architecture
 
 #### App Router Structure
+
 ```
 src/app/
 ├── (auth)/              # Authentication routes
@@ -489,12 +514,14 @@ src/app/
 ```
 
 #### State Management Strategy
+
 - Server Components for data fetching
 - React Query for client-side caching
 - Zustand for complex client state
 - Form state with React Hook Form
 
 #### Component Architecture
+
 ```
 src/components/
 ├── ui/                  # Shadcn/ui components
@@ -507,6 +534,7 @@ src/components/
 ### Server vs. Client Components
 
 #### Server Components (Data Fetching)
+
 ```typescript
 // app/dashboard/expenses/page.tsx
 export default async function ExpensesPage() {
@@ -516,6 +544,7 @@ export default async function ExpensesPage() {
 ```
 
 #### Client Components (Interactivity)
+
 ```typescript
 'use client';
 // components/forms/ExpenseForm.tsx
@@ -528,6 +557,7 @@ export default function ExpenseForm() {
 ## Deployment & Infrastructure
 
 ### Development Environment
+
 ```
 Local Development:
 - Mobile: Expo Development Build + Expo Go
@@ -541,6 +571,7 @@ Testing:
 ```
 
 ### Production Architecture (Phase 6)
+
 ```
 Infrastructure:
 - Mobile: Expo Application Services (EAS)
@@ -553,20 +584,26 @@ Infrastructure:
 ```
 
 ### CI/CD Pipeline
+
 ```yaml
-# .github/workflows/main.yml
-Stages:
-1. Lint & Type Check (all apps)
-2. Unit Tests (all apps)
-3. Build & Bundle Size Check
-4. E2E Tests (critical paths)
-5. Deploy to Staging
-6. Manual Production Deploy Approval
+# .github/workflows/ci.yml
+jobs:
+  api:
+    - pnpm --filter api lint
+    - pnpm --filter api build
+    - pnpm --filter api test (Postgres service)
+  web:
+    - pnpm --filter web lint
+    - pnpm --filter web build
+  mobile:
+    - pnpm --filter mobile typecheck
+    - pnpm --filter mobile test:unit:fast
 ```
 
 ## Migration Path: Local-Only to Multi-User
 
 ### Phase 1: Local Data Export/Import
+
 ```typescript
 // Data migration utilities
 interface MigrationData {
@@ -587,12 +624,13 @@ export const exportLocalData = (): MigrationData => {
     participants: store.participants,
     categories: store.categories,
     exportedAt: new Date().toISOString(),
-    version: '1.0.0'
+    version: '1.0.0',
   };
 };
 ```
 
 ### Phase 2: Hybrid Mode (Local + Server Sync)
+
 ```typescript
 // Sync strategy for offline-first functionality
 interface SyncQueue {
@@ -608,11 +646,12 @@ interface SyncQueue {
 enum ConflictResolution {
   SERVER_WINS = 'server',
   CLIENT_WINS = 'client',
-  MANUAL_RESOLVE = 'manual'
+  MANUAL_RESOLVE = 'manual',
 }
 ```
 
 ### Phase 3: Full Server Integration
+
 - Replace local Zustand store with API calls
 - Implement real-time updates via WebSocket
 - Add proper user authentication
@@ -621,12 +660,14 @@ enum ConflictResolution {
 ## Security Considerations
 
 ### Data Protection
+
 - End-to-end encryption for sensitive financial data
 - PII (Personally Identifiable Information) protection
 - GDPR compliance for EU users
 - Data retention policies
 
 ### API Security
+
 - Rate limiting (100 requests/minute per user)
 - Input validation and sanitization
 - SQL injection prevention
@@ -634,6 +675,7 @@ enum ConflictResolution {
 - API versioning for backwards compatibility
 
 ### Mobile Security
+
 - Secure storage for authentication tokens
 - Certificate pinning for API communications
 - Biometric authentication for app access
@@ -642,18 +684,21 @@ enum ConflictResolution {
 ## Performance & Scalability
 
 ### Database Optimization
+
 - Proper indexing strategy for expense queries
 - Partitioning for large expense tables
 - Read replicas for analytics queries
 - Connection pooling and query optimization
 
 ### Caching Strategy
+
 - Redis for session data and frequent queries
 - CDN for static assets and images
 - Application-level caching for calculated balances
 - Browser caching for web assets
 
 ### Mobile Performance
+
 - Image optimization and lazy loading
 - Bundle size monitoring (<10MB initial)
 - Memory usage optimization
@@ -661,4 +706,4 @@ enum ConflictResolution {
 
 ---
 
-*This architecture document is a living specification that evolves with the application. All major architectural changes should be documented here and reflected in the codebase.*
+_This architecture document is a living specification that evolves with the application. All major architectural changes should be documented here and reflected in the codebase._

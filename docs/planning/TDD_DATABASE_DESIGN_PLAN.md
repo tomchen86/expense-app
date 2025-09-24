@@ -1,8 +1,8 @@
 # TDD Database Design - Implementation Plan
 
-*Created: September 23, 2025*  
-*Parent Task: TASK_2.1_DATABASE_DESIGN_PLAN.md*  
-*Methodology: Test-Driven Development*
+_Created: September 23, 2025_  
+_Parent Task: TASK_2.1_DATABASE_DESIGN_PLAN.md_  
+_Methodology: Test-Driven Development_
 
 ## Overview
 
@@ -27,45 +27,52 @@ This playbook explains how we will use TDD to deliver the PostgreSQL schema, mig
 ## TDD Implementation Sequence
 
 ### Phase 0: Test Harness Bootstrapping (Fail First)
+
 - Specs: `setup/datasource.factory.spec.ts`, `setup/extensions.spec.ts`
 - Goals: Failing tests that prove we spin up SQLite + Postgres DataSources, extensions exist, and migrations directory is detectable.
 - Implementation: add helper to spawn dockerised Postgres, enable `uuid-ossp` and `citext`, expose `resetDatabase()` utility.
 
 ### Phase 1: Identity Module
+
 - Specs: `identity/user.entity.spec.ts`, `identity/user-settings.entity.spec.ts`, `identity/user-auth-identity.spec.ts`
 - Failing cases: email uniqueness (case-insensitive), password hash persistence, default notification payloads, provider uniqueness.
 - Implementation targets: `User`, `UserSettings`, `UserAuthIdentity` entities + migration `002_users_and_settings` with constraints.
-*Status: ✅ Landed September 23, 2025 alongside postgres/sqljs suites and idempotent default settings seed (migration `002_identity_tables`).*
+  _Status: ✅ Landed September 23, 2025 alongside postgres/sqljs suites and idempotent default settings seed (migration `002_identity_tables`)._
 
 ### Phase 2: Collaboration Module
+
 - Specs: `collaboration/couple.entity.spec.ts`, `couple-member.spec.ts`, `couple-invitation.spec.ts`, `participant.entity.spec.ts`, `expense-group.entity.spec.ts`, `group-member.spec.ts`
 - Failing cases: duplicate memberships, invitation lifecycle, participant linkage to users, archived groups excluded from default queries.
 - Implementation targets: migrations `003_couples_and_participants`, TypeORM relations, repository helpers.
-*Status: ✅ Delivered September 24, 2025 via `003_collaboration_tables`, coupled sqlite/postgres entity suites, and migration regression coverage.*
+  _Status: ✅ Delivered September 24, 2025 via `003_collaboration_tables`, coupled sqlite/postgres entity suites, and migration regression coverage._
 
 ### Phase 3: Expense Ledger Module
+
 - Specs: `ledger/category.entity.spec.ts`, `ledger/expense.entity.spec.ts`, `ledger/expense-split.entity.spec.ts`, `ledger/expense-attachment.spec.ts`
 - Failing cases: amount stored in cents, split type validation, category scope isolation, attachment FK cascade.
 - Implementation targets: migration `004_expense_core`, `Expense*` entities, enum mappings, cascades.
-*Status: ✅ Delivered September 24, 2025 with ledger migrations/entities, sqlite + Postgres specs, and seed coverage.*
+  _Status: ✅ Delivered September 24, 2025 with ledger migrations/entities, sqlite + Postgres specs, and seed coverage._
 
 ### Phase 4: Data Quality Automation
+
 - Specs: `ledger/triggers/updated-at.trigger.spec.ts`, `ledger/triggers/split-balance.trigger.spec.ts`, `ledger/soft-delete.spec.ts`
 - Failing cases: `updated_at` not bumping on updates, split totals not matching, soft-deleted expenses excluded by default scope.
 - Implementation targets: trigger functions from Task 2.1, repository query scopes, TypeORM subscribers if needed.
-*Status: ✅ Updated-at + split-balance triggers and soft-delete coverage (expenses, categories, groups) shipped September 24, 2025 (`005`–`006` migrations).* 
+  _Status: ✅ Updated-at + split-balance triggers and soft-delete coverage (expenses, categories, groups) shipped September 24, 2025 (`005`–`006` migrations)._
 
 ### Phase 5: Migrations & Seeds
+
 - Specs: `migrations/apply-in-order.spec.ts`, `migrations/rollback.spec.ts`, `seeds/default-categories.spec.ts`, `seeds/sample-data.spec.ts`
 - Failing cases: migration chain fails on clean DB, rollback leaves residue, seeds not idempotent, default categories missing.
 - Implementation targets: migration CLI scripts, seed executors, deterministic fixtures.
-*Status: ✅ Default + sample seed specs landed September 24, 2025; CLI polish deferred to Task 2.2.*
+  _Status: ✅ Default + sample seed specs landed September 24, 2025; CLI polish deferred to Task 2.2._
 
 ### Phase 6: Performance & Regression Guards
+
 - Specs: `performance/expense-indexes.spec.ts`, `performance/couple-tenant-isolation.spec.ts`, `performance/trigger-cost.spec.ts`
 - Failing cases: sequential scan detected where index expected, cross-couple query leakage, triggers exceeding budget.
 - Implementation targets: index verification queries, EXPLAIN plans snapshot, baseline metrics stored in snapshots.
-*Status: ✅ Expense index verification (partial active indexes + EXPLAIN plan) and tenant isolation sanity checks landed September 24, 2025; trigger cost suite remains open.*
+  _Status: ✅ Expense index verification (partial active indexes + EXPLAIN plan) and tenant isolation sanity checks landed September 24, 2025; trigger cost suite remains open._
 
 ## Test Infrastructure Design
 
@@ -150,32 +157,52 @@ apps/api/src/__tests__/
 ## Key Red/Green Workflows
 
 ### Example 1: Participant Linking
+
 ```typescript
 // RED
 it('prevents duplicate participant records for the same user', async () => {
   const { user } = await createUser();
-  await participantsRepo.insert({ coupleId, userId: user.id, displayName: 'A' });
+  await participantsRepo.insert({
+    coupleId,
+    userId: user.id,
+    displayName: 'A',
+  });
   await expect(
-    participantsRepo.insert({ coupleId, userId: user.id, displayName: 'B' })
+    participantsRepo.insert({ coupleId, userId: user.id, displayName: 'B' }),
   ).rejects.toThrow(/duplicate key/);
 });
 
 // GREEN (migration + entity constraint)
 @Entity('participants')
 @Unique(['coupleId', 'userId'])
-export class Participant { /* ... */ }
+export class Participant {
+  /* ... */
+}
 ```
 
 ### Example 2: Expense Split Balance Trigger
+
 ```typescript
 // RED
 it('rejects splits when totals do not match expense amount', async () => {
   const expense = await createExpense({ amountCents: 10000 });
-  await splitsRepo.insert({ expenseId: expense.id, participantId: p1.id, shareCents: 6000 });
-  await splitsRepo.insert({ expenseId: expense.id, participantId: p2.id, shareCents: 3000 });
+  await splitsRepo.insert({
+    expenseId: expense.id,
+    participantId: p1.id,
+    shareCents: 6000,
+  });
+  await splitsRepo.insert({
+    expenseId: expense.id,
+    participantId: p2.id,
+    shareCents: 3000,
+  });
 
   await expect(
-    splitsRepo.insert({ expenseId: expense.id, participantId: p3.id, shareCents: 2000 })
+    splitsRepo.insert({
+      expenseId: expense.id,
+      participantId: p3.id,
+      shareCents: 2000,
+    }),
   ).rejects.toThrow(/must equal expense amount/);
 });
 
@@ -183,6 +210,7 @@ it('rejects splits when totals do not match expense amount', async () => {
 ```
 
 ### Example 3: Migration Rollback Safety
+
 ```typescript
 // RED
 it('rolls back 004_expense_core without leaving tables behind', async () => {
@@ -207,7 +235,7 @@ it('rolls back 004_expense_core without leaving tables behind', async () => {
 
 ## Implementation Checklist
 
-1. [x] Land datasource factories and Jest project configuration.  (`pnpm --filter api test --setupFilesAfterEnv src/__tests__/setup/reset.ts`)
+1. [x] Land datasource factories and Jest project configuration. (`pnpm --filter api test --setupFilesAfterEnv src/__tests__/setup/reset.ts`)
 2. [x] Write failing identity specs; implement entities + migration `002_identity_tables`.
 3. [x] Write failing collaboration specs; implement migration `003_collaboration_tables` and related entities.
 4. [x] Write failing ledger specs; implement migration `004_expense_core`, triggers, attachments.
@@ -226,4 +254,4 @@ it('rolls back 004_expense_core without leaving tables behind', async () => {
 
 ---
 
-*Following this plan keeps database changes deliberate, reversible, and well documented through executable tests.*
+_Following this plan keeps database changes deliberate, reversible, and well documented through executable tests._

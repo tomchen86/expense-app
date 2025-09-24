@@ -26,15 +26,15 @@ This roadmap shows how to start with a **React Native (Expo)** prototype and g
 | Basic UX flow   | `npx create-expo-app` → TypeScript template. Build screens **Home → Add Expense → History → Settings**. | • React Navigation (Stack + Bottom Tabs)<br>• Zustand / Redux Toolkit<br>• AsyncStorage for local persistence |
 | Rapid iteration | Use **Expo Go** on iOS & Android for hot reload.                                                        | `expo start`                                                                                                  |
 
-*Outcome*: Demo core idea **offline**, collect feedback, add screenshots to CV.
+_Outcome_: Demo core idea **offline**, collect feedback, add screenshots to CV.
 
 ---
 
 ## Phase 2 – Back‑End Skeleton (1 day)
 
-1. `nest new api` (TypeScript preset).  
-2. Add `/health` controller + Jest test (shows TDD).  
-3. Install **class‑validator / class‑transformer** for DTOs.  
+1. `nest new api` (TypeScript preset).
+2. Add `/health` controller + Jest test (shows TDD).
+3. Install **class‑validator / class‑transformer** for DTOs.
 4. Local PostgreSQL in Docker:
 
    ```bash
@@ -43,37 +43,37 @@ This roadmap shows how to start with a **React Native (Expo)** prototype and g
 
 5. First model (`expense.entity.ts`):
 
-   | Column | Purpose |
-   |--------|---------|
-   | id | PK |
-   | coupleId | FK |
-   | amount, currency | Money fields |
-   | category, title, date | Metadata |
+   | Column                | Purpose      |
+   | --------------------- | ------------ |
+   | id                    | PK           |
+   | coupleId              | FK           |
+   | amount, currency      | Money fields |
+   | category, title, date | Metadata     |
 
 ---
 
 ## Phase 3 – Wire Mobile → API (1 day)
 
-* **Env management** – `.env` + `dotenv`.  
-* **Networking** – TanStack Query (React Query).  
-* **Error handling** – Toasts via react‑native‑paper / react‑native‑flash‑message.
+- **Env management** – `.env` + `dotenv`.
+- **Networking** – TanStack Query (React Query).
+- **Error handling** – Toasts via react‑native‑paper / react‑native‑flash‑message.
 
 ---
 
 ## Phase 4 – Move Data to the Cloud (Supabase) (½ day)
 
-1. Create free Supabase project; update API `.env.production`.  
-2. Push schema (Prisma or TypeORM migrations).  
+1. Create free Supabase project; update API `.env.production`.
+2. Push schema (Prisma or TypeORM migrations).
 3. Configure **Row‑Level Security** so each couple sees only their rows.
 
 ---
 
 ## Phase 5 – Auth & Couple Context (1 day)
 
-| Choice | Why |
-|--------|-----|
-| **Supabase Auth (Google/Apple)** | One SDK for mobile & web; free tier. |
-| Couple grouping | After login, front‑end asks: “Join or create a couple code” → POST `/couples/join`. |
+| Choice                           | Why                                                                                 |
+| -------------------------------- | ----------------------------------------------------------------------------------- |
+| **Supabase Auth (Google/Apple)** | One SDK for mobile & web; free tier.                                                |
+| Couple grouping                  | After login, front‑end asks: “Join or create a couple code” → POST `/couples/join`. |
 
 NestJS: use Passport‑Supabase strategy or verify Supabase JWT.
 
@@ -81,31 +81,31 @@ NestJS: use Passport‑Supabase strategy or verify Supabase JWT.
 
 ## Phase 6 – Dashboard in Next.js (1 day)
 
-1. `npx create-next-app web --ts --tailwind`  
-2. **App Router (React 18)** with **Server Components**.  
-3. `@supabase/auth-helpers-nextjs` for SSR session.  
-4. Charts via TanStack React Charts or Recharts.  
+1. `npx create-next-app web --ts --tailwind`
+2. **App Router (React 18)** with **Server Components**.
+3. `@supabase/auth-helpers-nextjs` for SSR session.
+4. Charts via TanStack React Charts or Recharts.
 5. Deploy preview to **Vercel**; connect to GitHub.
 
 ---
 
 ## Phase 7 – CI/CD & Infra Polish (1 day)
 
-* GitHub Actions matrix: lint, unit‑tests, build Expo `.apk`, web, Docker API.  
-* **Terraform or AWS CDK** (optional) for RDS if you outgrow Supabase.  
-* E2E: Playwright (web), Detox (mobile).
+- GitHub Actions matrix: lint, unit‑tests, build Expo `.apk`, web, Docker API.
+- **Terraform or AWS CDK** (optional) for RDS if you outgrow Supabase.
+- E2E: Playwright (web), Detox (mobile).
 
 ---
 
 ## Phase 8 – Résumé Packaging (ongoing)
 
-| Evidence | Surface it |
-|----------|------------|
-| Production pipeline | GitHub Actions badge, Vercel build logs. |
-| Clean architecture | Link to `domain/` and `infra/` folders. |
-| Testing discipline | Coverage badge, sample Detox script. |
-| Polyglot ability | Branch porting *Add Expense* screen to Flutter. |
-| Business impact | Loom video: two phones log expenses → dashboard live‑updates. |
+| Evidence            | Surface it                                                    |
+| ------------------- | ------------------------------------------------------------- |
+| Production pipeline | GitHub Actions badge, Vercel build logs.                      |
+| Clean architecture  | Link to `domain/` and `infra/` folders.                       |
+| Testing discipline  | Coverage badge, sample Detox script.                          |
+| Polyglot ability    | Branch porting _Add Expense_ screen to Flutter.               |
+| Business impact     | Loom video: two phones log expenses → dashboard live‑updates. |
 
 ---
 

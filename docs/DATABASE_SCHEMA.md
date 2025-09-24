@@ -7,6 +7,7 @@ This document defines the PostgreSQL schema for the expense tracking application
 ## Core Entities
 
 ### 1. Users Table
+
 Primary user accounts for authentication and identity. Requires the `uuid-ossp` and `citext` extensions.
 
 ```sql
@@ -27,6 +28,7 @@ CREATE TABLE users (
 ```
 
 ### 2. User Settings Table
+
 User preferences and storage modes.
 
 ```sql
@@ -43,6 +45,7 @@ CREATE TABLE user_settings (
 ```
 
 ### 3. User Auth Identities Table
+
 External provider linkages for SSO and OAuth flows.
 
 ```sql
@@ -61,6 +64,7 @@ CREATE TABLE user_auth_identities (
 ```
 
 ### 4. User Devices Table
+
 Tracks per-device sync metadata for clients connecting to the platform.
 
 ```sql
@@ -83,6 +87,7 @@ CREATE TABLE user_devices (
 ```
 
 ### 5. Couples Table
+
 Represents a shared ledger container created by a user with an invite workflow.
 
 ```sql
@@ -98,6 +103,7 @@ CREATE TABLE couples (
 ```
 
 ### 6. Couple Members Table
+
 Assigns users to a couple with roles and lifecycle tracking.
 
 ```sql
@@ -112,6 +118,7 @@ CREATE TABLE couple_members (
 ```
 
 ### 7. Couple Invitations Table
+
 Supports email-based invitations and pending memberships.
 
 ```sql
@@ -129,6 +136,7 @@ CREATE TABLE couple_invitations (
 ```
 
 ### 8. Participants Table
+
 Represents internal users or external contacts scoped to a couple.
 
 ```sql
@@ -149,6 +157,7 @@ CREATE TABLE participants (
 ```
 
 ### 9. Expense Groups Table
+
 Organizes expenses within a couple into named collections.
 
 ```sql
@@ -170,6 +179,7 @@ CREATE TABLE expense_groups (
 ```
 
 ### 10. Group Members Table
+
 Many-to-many join between groups and participants with status tracking.
 
 ```sql
@@ -184,6 +194,7 @@ CREATE TABLE group_members (
 ```
 
 ### 11. Categories Table
+
 Expense categories remain tenant-scoped and provide canonical lookups.
 
 ```sql
@@ -204,6 +215,7 @@ CREATE TABLE categories (
 ```
 
 ### 12. Expenses Table
+
 Individual expense records.
 
 ```sql
@@ -230,6 +242,7 @@ CREATE TABLE expenses (
 ```
 
 ### 13. Expense Splits Table
+
 Tracks how expenses are split between participants.
 
 ```sql
@@ -247,6 +260,7 @@ CREATE TABLE expense_splits (
 ```
 
 ### 14. Expense Attachments Table
+
 Stores supporting receipt metadata for expenses.
 
 ```sql
@@ -344,6 +358,7 @@ CREATE TRIGGER trg_expenses_updated_at BEFORE UPDATE ON expenses FOR EACH ROW EX
 ## Data Constraints and Business Rules
 
 ### Expense Split Validation
+
 ```sql
 CREATE OR REPLACE FUNCTION assert_split_balance()
 RETURNS TRIGGER AS $$

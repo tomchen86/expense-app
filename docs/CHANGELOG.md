@@ -7,9 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Added repository-wide `prettier.config.cjs` to standardize formatting across all apps.
+
+### Changed
+
+- Removed the API-specific Prettier override so every workspace now inherits the shared settings.
+
 ## [2025-09-24]
 
 ### Added
+
 - Collaboration migration `003_collaboration_tables` introducing couples, couple_members, couple_invitations, participants, expense_groups, and group_members tables with enforced constraints.
 - TypeORM entity set plus sql.js and Postgres Jest suites covering collaboration defaults, uniqueness, and regex-based checks.
 - Ledger migration `004_expense_core` with categories, expenses, expense_splits, and expense_attachments tables plus associated entities/tests.
@@ -21,6 +30,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added deterministic demo seed (`seedSampleData`) with Postgres regression coverage for couples, participants, expenses, splits, and attachments.
 
 ### Changed
+
 - Datasource factory now boots collaboration entities/migrations for both sqlite and Postgres test harnesses.
 - Updated database design, task planning, and TDD playbook docs to reflect the landed collaboration work and current status.
 - Refreshed database schema reference to document ledger tables (cents-based amounts, attachments) and seeding strategy.
@@ -30,18 +40,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [2025-09-23]
 
 ### Added
+
 - Initial identity database migrations (`users`, `user_settings`, `user_auth_identities`, `user_devices`) plus repeatable seed for default settings.
 - Postgres-backed Jest suites covering identity entities, migrations, and seeds in the API workspace.
 - CI workflow step to provision Postgres and execute `pnpm --filter api test` on every PR.
 - Identity phase checklist documenting completion steps.
 
 ### Changed
+
 - Updated database schema reference to match the new identity tables and indexes.
 - Refreshed identity status report to reflect completed migrations, seed coverage, and CI integration.
 
 ## [2025-09-21]
 
 ### Added
+
 - **PHASE 2.3 COMPLETED**: Component Test Expansion - Added 83 new component logic tests.
 - Created comprehensive test suite for ExpenseListItem component (18 tests).
 - Created comprehensive test suite for GroupListItem component (15 tests).
@@ -57,6 +70,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [2025-09-19]
 
 ### Added
+
 - Created comprehensive documentation restructure with `/docs` folder.
 - Added `CLAUDE.md` with development guidelines and 500-line file limit.
 - Created `/docs/archive/` folder for legacy documentation.
@@ -88,12 +102,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **NEW**: Created `UPDATE_CHECKLIST.md` with smart conditional update logic.
 
 ### Fixed
+
 - **CRITICAL**: Fixed username bug in composedExpenseStore.ts where Settings page updates weren't reflected in Group creation validation.
   - Root cause: Zustand getters didn't trigger component re-renders.
   - Solution: Implemented subscription-based state synchronization for userSettings and internalUserId.
   - Impact: Group creation now properly recognizes username set in Settings page.
 
 ### Changed
+
 - Moved `CLAUDE.md` from root to `/docs/CLAUDE.md`.
 - Archived legacy `couples_expense_architecture_roadmap.md` to `/docs/archive/`.
 - Archived legacy `REFACTORING_PLAN.md` to `/docs/archive/`.
@@ -103,6 +119,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **DOCUMENTATION**: Optimized update frequencies - always/conditional/never categories for efficient AI collaboration.
 
 ### Architecture Documentation Added
+
 - **System Overview**: Current local-only vs. future multi-user architecture diagrams.
 - **Domain Models**: Complete specifications for Expense, Group, Participant, Category entities.
 - **App-Specific Patterns**: Mobile (Zustand + React Navigation), API (NestJS), Web (Next.js) architectures.
@@ -110,6 +127,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Performance & Security**: Scalability considerations and security requirements.
 
 ### Development Guidelines Established
+
 - **Documentation Standards**: All docs in `/docs` folder with archive system.
 - **Code Quality**: 500-line file limit with refactoring guidelines.
 - **Planning System**: Roadmap for long-term, PLANNING.md for immediate actions.

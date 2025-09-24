@@ -4,9 +4,13 @@ const { getDefaultConfig } = require('@expo/webpack-config');
 const { BundleAnalyzerPlugin } = require('webpack-bundle-analyzer');
 
 module.exports = async (env = {}, argv = {}) => {
-  const config = await getDefaultConfig({ projectRoot: __dirname, ...env }, argv);
+  const config = await getDefaultConfig(
+    { projectRoot: __dirname, ...env },
+    argv,
+  );
 
-  const shouldAnalyze = env?.analyze === 'true' || process.env.ANALYZE_BUNDLE === 'true';
+  const shouldAnalyze =
+    env?.analyze === 'true' || process.env.ANALYZE_BUNDLE === 'true';
 
   if (shouldAnalyze) {
     const reportsDir = path.resolve(__dirname, 'reports');

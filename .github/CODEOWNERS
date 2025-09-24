@@ -1,0 +1,8 @@
+# Default reviewers
+* @htchen
+
+# Surface-specific ownership
+/apps/api/ @htchen
+/apps/web/ @htchen
+/apps/mobile/ @htchen
+/docs/ @htchen

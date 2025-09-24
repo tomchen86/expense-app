@@ -12,10 +12,12 @@ Implement secure authentication system supporting user registration, login, and 
 ## Detailed Subtasks
 
 ### 2.3.1 JWT Authentication Infrastructure
+
 **Duration**: 3-4 hours
 **Output**: JWT token management system
 
 #### Authentication Service
+
 ```typescript
 // JwtAuthService - Token generation and validation
 // AuthGuard - Route protection middleware
@@ -23,6 +25,7 @@ Implement secure authentication system supporting user registration, login, and 
 ```
 
 #### Token Strategy
+
 ```typescript
 interface JwtPayload {
   userId: string;
@@ -39,10 +42,12 @@ interface JwtPayload {
 ```
 
 ### 2.3.2 Authentication Endpoints
+
 **Duration**: 3-4 hours
 **Output**: Complete auth API
 
 #### Auth Controller (`/api/auth`)
+
 ```typescript
 // POST /api/auth/register - User registration
 // POST /api/auth/login - User login
@@ -54,6 +59,7 @@ interface JwtPayload {
 ```
 
 #### DTOs Required
+
 ```typescript
 interface RegisterDto {
   email: string;
@@ -77,10 +83,12 @@ interface AuthResponseDto {
 ```
 
 ### 2.3.3 Password Security
+
 **Duration**: 2-3 hours
 **Output**: Secure password handling
 
 #### Security Implementation
+
 ```typescript
 // bcrypt for password hashing (12 rounds)
 // Password strength validation
@@ -89,16 +97,19 @@ interface AuthResponseDto {
 ```
 
 #### Password Requirements
+
 - Minimum 8 characters
 - At least one uppercase letter
 - At least one number
 - Optional special character requirement
 
 ### 2.3.4 Mobile Integration
+
 **Duration**: 4-6 hours
 **Output**: Mobile auth flow wired into persistence providers
 
 #### Mobile Auth Store
+
 ```typescript
 // Replace current internalUserId with proper authentication
 // Secure token storage using device keychain/keystore
@@ -109,6 +120,7 @@ interface AuthResponseDto {
 ```
 
 #### Authentication Screens (Mobile)
+
 ```typescript
 // LoginScreen - Email/username and password
 // RegisterScreen - Full registration form
@@ -117,10 +129,12 @@ interface AuthResponseDto {
 ```
 
 ### 2.3.5 Session Management
+
 **Duration**: 2-3 hours
 **Output**: Robust session handling
 
 #### Session Features
+
 ```typescript
 // Device-based session tracking
 // Multiple device support per user
@@ -130,6 +144,7 @@ interface AuthResponseDto {
 ```
 
 #### Security Headers
+
 ```typescript
 // CORS configuration for mobile app
 // Rate limiting per IP and user
@@ -138,15 +153,18 @@ interface AuthResponseDto {
 ```
 
 ### 2.3.6 Local-Only Mode & Account Linking
+
 **Duration**: 3 hours
 **Output**: Seamless transition between guest (local) and authenticated (cloud) modes
 
 #### Requirements
+
 - Maintain "guest" session for users who decline authentication while keeping existing local data intact.
 - Provide upgrade path: sign in → upload local snapshot → continue syncing in cloud mode.
 - Allow downgrade path: authenticated user can switch back to local-only, revoking tokens and stopping sync.
 
 #### Implementation Notes
+
 ```typescript
 // guestProfileService - wraps local user state when no auth token exists
 // accountLinker - orchestrates local data upload during cloud upgrade
@@ -155,6 +173,7 @@ interface AuthResponseDto {
 ```
 
 #### UX Considerations
+
 - Present clear messaging on data location and privacy when switching modes.
 - Confirm destructive operations (e.g., deleting cloud copy when going local-only).
 - Provide conflict resolution guidance if upgrade detects divergent data.
@@ -162,6 +181,7 @@ interface AuthResponseDto {
 ## Implementation Architecture
 
 ### Authentication Flow
+
 ```
 1. User registers/logs in → JWT tokens issued
 2. Mobile stores tokens securely
@@ -173,6 +193,7 @@ interface AuthResponseDto {
 ```
 
 ### Mobile Security
+
 ```typescript
 // Token Storage: Expo SecureStore
 // Biometric authentication support
@@ -181,7 +202,9 @@ interface AuthResponseDto {
 ```
 
 ### Database Schema Additions
-*(Task 2.1 introduces these columns/tables; confirm presence before applying migrations.)*
+
+_(Task 2.1 introduces these columns/tables; confirm presence before applying migrations.)_
+
 ```sql
 -- Add to users table
 ALTER TABLE users ADD COLUMN password_hash VARCHAR(255) NOT NULL;
@@ -208,6 +231,7 @@ CREATE TABLE refresh_tokens (
 ## Mobile Integration Steps
 
 ### Step 1: Auth Store Setup
+
 1. Create new authentication store
 2. Implement secure token storage
 3. Add automatic refresh logic
@@ -216,6 +240,7 @@ CREATE TABLE refresh_tokens (
 6. Emit persistence mode change events to the persistence provider interface
 
 ### Step 2: Screen Implementation
+
 1. Design login/register UI
 2. Implement form validation
 3. Add loading states and error handling
@@ -223,6 +248,7 @@ CREATE TABLE refresh_tokens (
 5. Surface persistence mode selection during onboarding (local-only vs cloud-sync)
 
 ### Step 3: API Integration
+
 1. Update all API calls to include auth headers
 2. Handle 401 responses with token refresh
 3. Implement logout functionality
@@ -231,6 +257,7 @@ CREATE TABLE refresh_tokens (
 6. Wire sync queue to use authenticated endpoints only when persistence mode is `cloud_sync`
 
 ### Step 4: User Migration
+
 1. Create migration from internalUserId to proper auth
 2. Preserve existing user data
 3. Force re-authentication on app update
@@ -240,6 +267,7 @@ CREATE TABLE refresh_tokens (
 7. Run persistence provider migrations (AsyncStorage → SQLite) before uploading snapshot
 
 ### Step 5: Persistence Provider Rollout (depends on Task 2.2 groundwork)
+
 1. Register AsyncStorage adapter as baseline provider
 2. Implement SQLite adapter with deterministic migrations and hydrate hooks
 3. Connect cloud-sync provider to queue + React Query cache
@@ -249,18 +277,21 @@ CREATE TABLE refresh_tokens (
 ## Security Considerations
 
 ### API Security
+
 - Rate limiting: 5 requests/minute for auth endpoints
 - Account lockout: 5 failed attempts = 15 minute lockout
 - Password reset tokens: 1 hour expiration
 - HTTPS only in production
 
 ### Mobile Security
+
 - Biometric authentication option
 - App background state protection
 - Secure token storage
 - Certificate pinning consideration
 
 ### Data Protection
+
 - Password hashing with bcrypt
 - No passwords in logs or responses
 - User data encryption at rest
@@ -294,6 +325,7 @@ CREATE TABLE refresh_tokens (
 ## Files to Create/Modify
 
 ### API
+
 - `apps/api/src/auth/JwtAuthService.ts`
 - `apps/api/src/auth/AuthController.ts`
 - `apps/api/src/auth/AuthGuard.ts`
@@ -301,6 +333,7 @@ CREATE TABLE refresh_tokens (
 - `apps/api/src/entities/RefreshToken.entity.ts`
 
 ### Mobile
+
 - `apps/mobile/src/store/authStore.ts`
 - `apps/mobile/src/store/guestProfileStore.ts`
 - `apps/mobile/src/screens/auth/LoginScreen.tsx`
@@ -312,6 +345,7 @@ CREATE TABLE refresh_tokens (
 ## Next Task Dependencies
 
 This task enables:
+
 - Task 2.4: Mobile API Integration (authentication required)
 - Task 2.5: Real-time sync features
 - All subsequent user-specific functionality

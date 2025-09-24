@@ -1,13 +1,17 @@
 # Mobile Test Comprehensive Summary
 
 ## Overview
+
 The React Native Expo mobile app has **26 test files** covering **6 main domains**: Components, Screens, Utils, Hooks, Store, and Performance. The test suite validates behavior across 204 test cases, focusing on component logic, state management operations, business logic calculations, user interaction handling, and performance characteristics.
 
 ## Components
+
 ### CategoryChart-simple.test.ts
+
 **Test Suite**: `CategoryChart Logic`
 
 #### Test Cases:
+
 1. **`should handle valid chart data`**
    - **Behavior**: Processes chart data points and transforms them for chart rendering
    - **Validates**: Data transformation, percentage formatting, and value mapping
@@ -33,9 +37,11 @@ The React Native Expo mobile app has **26 test files** covering **6 main domains
    - **Validates**: Fallback to default gray color (#757575) for invalid inputs
 
 ### CategoryForm-logic.test.ts
+
 **Test Suite**: `CategoryForm Logic`
 
 #### Test Cases:
+
 1. **`should validate category name`**
    - **Behavior**: Validates category name requirements and constraints
    - **Validates**: Required field, length limits (50 chars), non-empty strings
@@ -69,9 +75,11 @@ The React Native Expo mobile app has **26 test files** covering **6 main domains
    - **Validates**: All fields return to default values
 
 ### ExpenseListItem-logic.test.ts
+
 **Test Suite**: `ExpenseListItem Logic`
 
 #### Test Cases:
+
 1. **`should find payer when participant exists`**
    - **Behavior**: Resolves payer participant from expense data
    - **Validates**: Correct participant lookup by ID
@@ -141,9 +149,11 @@ The React Native Expo mobile app has **26 test files** covering **6 main domains
     - **Validates**: Text truncation with ellipsis for long content
 
 ### GroupListItem-logic.test.ts
+
 **Test Suite**: `GroupListItem Logic`
 
 #### Test Cases:
+
 1. **`should format total amount correctly`**
    - **Behavior**: Formats group total amounts for display
    - **Validates**: Currency formatting with proper decimal handling
@@ -209,9 +219,11 @@ The React Native Expo mobile app has **26 test files** covering **6 main domains
     - **Validates**: Special character handling and name sanitization
 
 ### FormInput-logic.test.ts
+
 **Test Suite**: `FormInput Logic`
 
 #### Test Cases:
+
 1. **`should validate required props`**
    - **Behavior**: Validates essential props for form input component
    - **Validates**: Label, value, and onChange callback requirements
@@ -285,9 +297,11 @@ The React Native Expo mobile app has **26 test files** covering **6 main domains
     - **Validates**: Performance metrics and change throttling
 
 ### FloatingActionButton-logic.test.ts
+
 **Test Suite**: `FloatingActionButton Logic`
 
 #### Test Cases:
+
 1. **`should navigate to AddExpense screen without groupId when no custom onPress`**
    - **Behavior**: Default navigation behavior to add expense screen
    - **Validates**: Navigation call with correct screen name and no params
@@ -349,9 +363,11 @@ The React Native Expo mobile app has **26 test files** covering **6 main domains
     - **Validates**: Screen name validation and trimming
 
 ### HomeScreen-logic.test.ts
+
 **Test Suite**: `HomeScreen Logic`
 
 #### Test Cases:
+
 1. **`should sort expenses by date (newest first)`**
    - **Behavior**: Sorts expense list with most recent expenses first
    - **Validates**: Date-based sorting algorithm accuracy
@@ -433,9 +449,11 @@ The React Native Expo mobile app has **26 test files** covering **6 main domains
     - **Validates**: Status messaging based on connectivity and sync state
 
 ### SelectInput-logic.test.ts
+
 **Test Suite**: `SelectInput Logic`
 
 #### Test Cases:
+
 1. **`should display selected value when available`**
    - **Behavior**: Shows selected value or placeholder text
    - **Validates**: Value display logic with fallback handling
@@ -505,9 +523,11 @@ The React Native Expo mobile app has **26 test files** covering **6 main domains
     - **Validates**: Text truncation with ellipsis
 
 ### HistoryScreen-logic.test.ts
+
 **Test Suite**: `HistoryScreen Logic`
 
 #### Test Cases:
+
 1. **`should sort groups by most recent activity`**
    - **Behavior**: Sorts group list by last activity date
    - **Validates**: Activity-based sorting algorithm
@@ -569,10 +589,13 @@ The React Native Expo mobile app has **26 test files** covering **6 main domains
     - **Validates**: Trend calculation and percentage change formatting
 
 ## Screens
+
 ### SettingsScreen-logic.test.ts
+
 **Test Suite**: `SettingsScreen Logic`
 
 #### Test Cases:
+
 1. **`should validate username requirements`**
    - **Behavior**: Validates username format and constraints
    - **Validates**: Length limits, character restrictions, required field
@@ -606,9 +629,11 @@ The React Native Expo mobile app has **26 test files** covering **6 main domains
    - **Validates**: Version-based migration logic
 
 ### SettingsScreen.integration.test.ts
+
 **Test Suite**: `SettingsScreen Integration`
 
 #### Test Cases:
+
 1. **`should complete new user onboarding flow`**
    - **Behavior**: Tests complete user setup workflow
    - **Validates**: User creation and display name setting
@@ -662,9 +687,11 @@ The React Native Expo mobile app has **26 test files** covering **6 main domains
     - **Validates**: Legacy settings upgrade logic
 
 ### AddExpenseScreen.integration.test.ts
+
 **Test Suite**: `AddExpenseScreen Integration`
 
 #### Test Cases:
+
 1. **`should complete full expense creation flow`**
    - **Behavior**: Tests complete expense creation workflow
    - **Validates**: Expense creation and store integration
@@ -706,10 +733,13 @@ The React Native Expo mobile app has **26 test files** covering **6 main domains
     - **Validates**: Group assignment and data consistency
 
 ## Utils
+
 ### insightCalculations.test.ts
+
 **Test Suite**: `insightCalculations`
 
 #### Test Cases:
+
 1. **`should calculate correct category totals`**
    - **Behavior**: Calculates expense totals grouped by category
    - **Validates**: Category aggregation and total calculation
@@ -859,9 +889,11 @@ The React Native Expo mobile app has **26 test files** covering **6 main domains
     - **Validates**: Future year navigation prevention
 
 ### simple.test.ts
+
 **Test Suite**: `Insight Calculations`
 
 #### Test Cases:
+
 1. **`should calculate totals correctly`**
    - **Behavior**: Tests basic expense total calculation
    - **Validates**: Simple category aggregation
@@ -931,9 +963,11 @@ The React Native Expo mobile app has **26 test files** covering **6 main domains
     - **Validates**: Current year boundary
 
 ### expenseCalculations.test.ts
+
 **Test Suite**: `expenseCalculations`
 
 #### Test Cases:
+
 1. **`sums all expense amounts`**
    - **Behavior**: Calculates total of all expense amounts
    - **Validates**: Sum calculation across multiple expenses
@@ -967,9 +1001,11 @@ The React Native Expo mobile app has **26 test files** covering **6 main domains
    - **Validates**: Non-involvement calculation
 
 ### groupCalculations.test.ts
+
 **Test Suite**: `groupCalculations`
 
 #### Test Cases:
+
 1. **`calculates the total for a specific group`**
    - **Behavior**: Sums all expenses for a specific group
    - **Validates**: Group-specific total calculation
@@ -987,10 +1023,13 @@ The React Native Expo mobile app has **26 test files** covering **6 main domains
    - **Validates**: Empty member list handling
 
 ## Hooks
+
 ### useExpenseForm.test.tsx
+
 **Test Suite**: `useExpenseForm`
 
 #### Test Cases:
+
 1. **`creates a personal expense using the internal user identifier`**
    - **Behavior**: Creates personal expense with internal user ID
    - **Validates**: Personal expense creation and user ID assignment
@@ -1004,9 +1043,11 @@ The React Native Expo mobile app has **26 test files** covering **6 main domains
    - **Validates**: Expense update workflow and data persistence
 
 ### useCategoryManager.test.tsx
+
 **Test Suite**: `useCategoryManager`
 
 #### Test Cases:
+
 1. **`opens and closes modals for create vs edit flows`**
    - **Behavior**: Manages modal state for category creation and editing
    - **Validates**: Modal state management and mode switching
@@ -1024,9 +1065,11 @@ The React Native Expo mobile app has **26 test files** covering **6 main domains
    - **Validates**: Category update and system category protection
 
 ### useInsightsData.test.tsx
+
 **Test Suite**: `useInsightsData`
 
 #### Test Cases:
+
 1. **`computes chart data for personal context and navigates periods`**
    - **Behavior**: Generates chart data for personal expenses and handles period navigation
    - **Validates**: Personal context chart generation and time period navigation
@@ -1036,9 +1079,11 @@ The React Native Expo mobile app has **26 test files** covering **6 main domains
    - **Validates**: Group context filtering and participant consideration
 
 ### useExpenseModals.test.tsx
+
 **Test Suite**: `useExpenseModals`
 
 #### Test Cases:
+
 1. **`sets and clears group selections and dependent fields`**
    - **Behavior**: Manages group selection and clears dependent form fields
    - **Validates**: Group selection state management and field dependency
@@ -1052,10 +1097,13 @@ The React Native Expo mobile app has **26 test files** covering **6 main domains
    - **Validates**: Navigation trigger for category management
 
 ## Store
+
 ### composedExpenseStore.test.ts
+
 **Test Suite**: `ComposedExpenseStore`
 
 #### Test Cases:
+
 1. **`synchronizes the user profile to the participant store`**
    - **Behavior**: Syncs user data to participant store
    - **Validates**: User-participant synchronization
@@ -1093,9 +1141,11 @@ The React Native Expo mobile app has **26 test files** covering **6 main domains
    - **Validates**: Group participant management
 
 ### categoryStore.test.ts
+
 **Test Suite**: `CategoryStore`
 
 #### Test Cases:
+
 1. **`adds a new category when the name is unique`**
    - **Behavior**: Creates new categories with unique names
    - **Validates**: Category creation and uniqueness
@@ -1117,9 +1167,11 @@ The React Native Expo mobile app has **26 test files** covering **6 main domains
    - **Validates**: Category lookup and retrieval consistency
 
 ### participantStore.test.ts
+
 **Test Suite**: `ParticipantStore`
 
 #### Test Cases:
+
 1. **`adds a participant and returns the generated identifier`**
    - **Behavior**: Creates participants with generated IDs
    - **Validates**: Participant creation and ID generation
@@ -1145,9 +1197,11 @@ The React Native Expo mobile app has **26 test files** covering **6 main domains
    - **Validates**: Participant lookup and sync logic
 
 ### groupStore.test.ts
+
 **Test Suite**: `GroupStore`
 
 #### Test Cases:
+
 1. **`creates a group with the optional creator participant`**
    - **Behavior**: Creates groups with initial participant
    - **Validates**: Group creation with participant seeding
@@ -1173,9 +1227,11 @@ The React Native Expo mobile app has **26 test files** covering **6 main domains
    - **Validates**: Participant management utilities
 
 ### userStore.test.ts
+
 **Test Suite**: `UserStore`
 
 #### Test Cases:
+
 1. **`updates the user profile while preserving the internal identifier`**
    - **Behavior**: Updates user data while maintaining ID consistency
    - **Validates**: User update with ID preservation
@@ -1201,9 +1257,11 @@ The React Native Expo mobile app has **26 test files** covering **6 main domains
    - **Validates**: Fallback ID generation
 
 ### expenseStore.test.ts
+
 **Test Suite**: `ExpenseStore`
 
 #### Test Cases:
+
 1. **`should add expense with generated ID`**
    - **Behavior**: Creates expenses with auto-generated IDs
    - **Validates**: Expense creation and ID generation
@@ -1277,10 +1335,13 @@ The React Native Expo mobile app has **26 test files** covering **6 main domains
     - **Validates**: Selective participant cleanup
 
 ## Performance
+
 ### store-performance.test.ts
+
 **Test Suite**: `Store Performance Benchmarks`
 
 #### Test Cases:
+
 1. **`should handle 1000 expense inserts within expected bounds`**
    - **Behavior**: Tests bulk expense insertion performance
    - **Validates**: Performance threshold for 1000 insertions (< 800ms or < 1500ms with coverage)
@@ -1296,6 +1357,7 @@ The React Native Expo mobile app has **26 test files** covering **6 main domains
 ## Summary Statistics
 
 ### Test Coverage by Domain:
+
 - **Components**: 8 test files, 76 test cases - Component logic, rendering behavior, prop validation
 - **Screens**: 3 test files, 26 test cases - User interaction handling, integration workflows
 - **Utils**: 4 test files, 47 test cases - Business logic calculations, data transformations
@@ -1304,6 +1366,7 @@ The React Native Expo mobile app has **26 test files** covering **6 main domains
 - **Performance**: 1 test file, 3 test cases - Performance benchmarks, memory efficiency
 
 ### Key Test Characteristics:
+
 - **Comprehensive Validation**: Tests cover all major user flows from expense creation to insights generation
 - **Edge Case Handling**: Extensive testing of null values, empty states, and boundary conditions
 - **Integration Testing**: Screen tests validate complete user workflows and store integration
@@ -1312,6 +1375,7 @@ The React Native Expo mobile app has **26 test files** covering **6 main domains
 - **Error Handling**: Robust testing of error conditions and graceful failure scenarios
 
 ### Technology Focus:
+
 - **React Native Testing Library**: Used for component interaction testing
 - **Zustand State Management**: Comprehensive testing of store operations and state synchronization
 - **Jest Framework**: Standard testing framework with mocking and timing utilities

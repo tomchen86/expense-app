@@ -3,13 +3,16 @@ module.exports = {
   setupFilesAfterEnv: ['<rootDir>/src/__tests__/setup-component.ts'],
   coverageProvider: 'v8',
   transform: {
-    '^.+\\.(js|jsx|ts|tsx)$': ['babel-jest', {
-      presets: ['module:metro-react-native-babel-preset']
-    }],
+    '^.+\\.(js|jsx|ts|tsx)$': [
+      'babel-jest',
+      {
+        presets: ['module:metro-react-native-babel-preset'],
+      },
+    ],
   },
   testMatch: [
     '<rootDir>/src/**/__tests__/**/*.test.{js,ts,tsx}',
-    '<rootDir>/src/**/*.test.{js,ts,tsx}'
+    '<rootDir>/src/**/*.test.{js,ts,tsx}',
   ],
   collectCoverageFrom: [
     'src/store/**/*.{ts,tsx}',

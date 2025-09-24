@@ -1,11 +1,13 @@
 # Testing Strategy
 
-*Last Updated: September 19, 2025*
+_Last Updated: September 19, 2025_
 
 ## Overview
+
 Comprehensive testing strategy for the expense tracking monorepo covering Mobile (React Native), API (NestJS), and Web (Next.js) applications.
 
 ## Testing Philosophy
+
 - **Test Pyramid**: More unit tests, fewer E2E tests
 - **Test-Driven Development**: Write tests before or alongside implementation
 - **Continuous Testing**: Automated testing in CI/CD pipeline
@@ -18,6 +20,7 @@ Comprehensive testing strategy for the expense tracking monorepo covering Mobile
 ## Test Framework Setup
 
 ### Unit & Integration Testing
+
 ```bash
 # Dependencies
 pnpm add -D jest @testing-library/react-native @testing-library/jest-native
@@ -48,6 +51,7 @@ module.exports = {
 ```
 
 ### End-to-End Testing
+
 ```bash
 # Detox setup for E2E
 pnpm add -D detox @config/detox
@@ -75,6 +79,7 @@ module.exports = {
 ## Test Structure & Organization
 
 ### Directory Structure
+
 ```
 apps/mobile/src/
 ├── __tests__/
@@ -110,6 +115,7 @@ e2e/
 ### Unit Tests (80% of test effort)
 
 #### Store Logic Tests
+
 ```typescript
 // store/__tests__/expenseStore.test.ts
 describe('ExpenseStore', () => {
@@ -122,9 +128,9 @@ describe('ExpenseStore', () => {
     it('should add expense with valid data', () => {
       const expense = {
         title: 'Lunch',
-        amount: 12.50,
+        amount: 12.5,
         category: { id: '1', name: 'Food', color: '#FF5722' },
-        date: '2025-09-19'
+        date: '2025-09-19',
       };
 
       useExpenseStore.getState().addExpense(expense);
@@ -161,10 +167,10 @@ describe('ExpenseStore', () => {
       const expenses = [
         { title: 'Expense 1', amount: 20, groupId },
         { title: 'Expense 2', amount: 30, groupId },
-        { title: 'Other', amount: 15, groupId: 'group-2' }
+        { title: 'Other', amount: 15, groupId: 'group-2' },
       ];
 
-      expenses.forEach(exp => useExpenseStore.getState().addExpense(exp));
+      expenses.forEach((exp) => useExpenseStore.getState().addExpense(exp));
 
       const groupTotal = useExpenseStore.getState().getGroupTotal(groupId);
       expect(groupTotal).toBe(50);
@@ -182,12 +188,14 @@ describe('ExpenseStore', () => {
         amount: 60,
         groupId,
         paidBy: userId1,
-        splitBetween: [userId1, userId2]
+        splitBetween: [userId1, userId2],
       };
 
       useExpenseStore.getState().addExpense(expense);
 
-      const balance = useExpenseStore.getState().getUserBalanceInGroup(groupId, userId1);
+      const balance = useExpenseStore
+        .getState()
+        .getUserBalanceInGroup(groupId, userId1);
       expect(balance).toBe(30); // Paid $60, owes $30
     });
   });
@@ -195,6 +203,7 @@ describe('ExpenseStore', () => {
 ```
 
 #### Component Tests
+
 ```typescript
 // components/__tests__/CategoryChart.test.tsx
 import { render, screen } from '@testing-library/react-native';
@@ -231,15 +240,24 @@ describe('CategoryChart', () => {
 ```
 
 #### Utility Function Tests
+
 ```typescript
 // utils/__tests__/insightCalculations.test.ts
-import { calculateCategoryBreakdown, calculateMonthlyTrends } from '../insightCalculations';
+import {
+  calculateCategoryBreakdown,
+  calculateMonthlyTrends,
+} from '../insightCalculations';
 
 describe('insightCalculations', () => {
   const mockExpenses = [
     { id: '1', amount: 50, category: { name: 'Food' }, date: '2025-09-15' },
     { id: '2', amount: 30, category: { name: 'Food' }, date: '2025-09-16' },
-    { id: '3', amount: 20, category: { name: 'Transport' }, date: '2025-09-17' }
+    {
+      id: '3',
+      amount: 20,
+      category: { name: 'Transport' },
+      date: '2025-09-17',
+    },
   ];
 
   describe('calculateCategoryBreakdown', () => {
@@ -248,7 +266,7 @@ describe('insightCalculations', () => {
 
       expect(breakdown).toEqual([
         { category: { name: 'Food' }, total: 80, percentage: 80 },
-        { category: { name: 'Transport' }, total: 20, percentage: 20 }
+        { category: { name: 'Transport' }, total: 20, percentage: 20 },
       ]);
     });
 
@@ -257,7 +275,7 @@ describe('insightCalculations', () => {
       const breakdown = calculateCategoryBreakdown(singleExpense);
 
       expect(breakdown).toEqual([
-        { category: { name: 'Food' }, total: 50, percentage: 100 }
+        { category: { name: 'Food' }, total: 50, percentage: 100 },
       ]);
     });
 
@@ -272,14 +290,14 @@ describe('insightCalculations', () => {
       const expenses = [
         { amount: 100, date: '2025-08-15' },
         { amount: 150, date: '2025-08-20' },
-        { amount: 200, date: '2025-09-10' }
+        { amount: 200, date: '2025-09-10' },
       ];
 
       const trends = calculateMonthlyTrends(expenses, 3);
 
       expect(trends).toEqual([
         { month: '2025-08', total: 250, count: 2 },
-        { month: '2025-09', total: 200, count: 1 }
+        { month: '2025-09', total: 200, count: 1 },
       ]);
     });
   });
@@ -289,6 +307,7 @@ describe('insightCalculations', () => {
 ### Integration Tests (15% of test effort)
 
 #### Screen Integration Tests
+
 ```typescript
 // screens/__tests__/AddExpenseScreen.test.tsx
 import { render, fireEvent, waitFor, screen } from '@testing-library/react-native';
@@ -371,6 +390,7 @@ describe('AddExpenseScreen Integration', () => {
 ### End-to-End Tests (5% of test effort)
 
 #### Critical User Journeys
+
 ```javascript
 // e2e/expenseFlow.e2e.js
 describe('Expense Management Flow', () => {
@@ -442,7 +462,7 @@ describe('Expense Management Flow', () => {
     const expenses = [
       { title: 'Groceries', amount: '150.00', category: 'Food & Dining' },
       { title: 'Gas', amount: '45.00', category: 'Transportation' },
-      { title: 'Movie', amount: '25.00', category: 'Entertainment' }
+      { title: 'Movie', amount: '25.00', category: 'Entertainment' },
     ];
 
     for (const expense of expenses) {
@@ -476,6 +496,7 @@ describe('Expense Management Flow', () => {
 ## Test Automation & CI/CD
 
 ### Pre-commit Hooks
+
 ```bash
 # .husky/pre-commit
 #!/bin/sh
@@ -485,60 +506,97 @@ pnpm --filter mobile run typecheck
 ```
 
 ### GitHub Actions Workflow
+
 ```yaml
-# .github/workflows/mobile-tests.yml
-name: Mobile App Tests
+# .github/workflows/ci.yml
+name: Monorepo CI
 
 on:
-  pull_request:
-    paths:
-      - 'apps/mobile/**'
   push:
     branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  NODE_VERSION: '20'
+  PNPM_VERSION: '9'
+
+permissions:
+  contents: read
 
 jobs:
-  unit-tests:
+  api:
+    name: API lint & tests
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: app_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+          run_install: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter api lint
+      - run: pnpm --filter api build
+      - run: pnpm --filter api test
+        env:
+          TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/app_test
+
+  web:
+    name: Web lint & build
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
-      - uses: actions/setup-node@v3
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
         with:
-          node-version: '18'
-          cache: 'pnpm'
-
-      - name: Install dependencies
-        run: |
-          pnpm install --filter mobile --frozen-lockfile
-
-      - name: Run unit tests
-        run: |
-          pnpm --filter mobile run test:unit -- --coverage --watchAll=false
-
-      - name: Upload coverage
-        uses: codecov/codecov-action@v3
+          version: ${{ env.PNPM_VERSION }}
+          run_install: false
+      - uses: actions/setup-node@v4
         with:
-          file: apps/mobile/coverage/lcov.info
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter web lint
+      - run: pnpm --filter web build
 
-  e2e-tests:
-    runs-on: macos-latest
+  mobile:
+    name: Mobile checks
+    runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
-      - uses: actions/setup-node@v3
-
-      - name: Install dependencies
-        run: |
-          cd apps/mobile
-          npm ci
-
-      - name: Build iOS app for testing
-        run: |
-          cd apps/mobile
-          pnpm exec detox build --configuration ios.sim.debug
-
-      - name: Run E2E tests
-        run: |
-          cd apps/mobile
-          pnpm exec detox test --configuration ios.sim.debug --cleanup
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+          run_install: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter mobile typecheck
+      - run: pnpm --filter mobile test:unit:fast
 ```
 
 ---
@@ -548,6 +606,7 @@ jobs:
 ## Test Framework Setup
 
 ### Unit & Integration Testing
+
 ```bash
 # Dependencies
 pnpm add -D jest @nestjs/testing supertest
@@ -565,6 +624,7 @@ pnpm add -D jest @nestjs/testing supertest
 ```
 
 ### Database Testing Setup
+
 ```typescript
 // test/database-test.module.ts
 import { TypeOrmModule } from '@nestjs/typeorm';
@@ -580,6 +640,7 @@ export const DatabaseTestModule = TypeOrmModule.forRoot({
 ## Critical Test Scenarios
 
 ### Service Layer Tests
+
 ```typescript
 // src/expenses/expenses.service.spec.ts
 describe('ExpensesService', () => {
@@ -600,19 +661,19 @@ describe('ExpensesService', () => {
     it('should create expense with valid data', async () => {
       const createExpenseDto = {
         title: 'Test Expense',
-        amount: 25.50,
+        amount: 25.5,
         categoryId: 'category-1',
         splitType: 'equal',
         splits: [
           { userId: 'user-1', amount: 12.75 },
-          { userId: 'user-2', amount: 12.75 }
-        ]
+          { userId: 'user-2', amount: 12.75 },
+        ],
       };
 
       const result = await service.create(createExpenseDto, 'user-1');
 
       expect(result.title).toBe('Test Expense');
-      expect(result.amount).toBe(25.50);
+      expect(result.amount).toBe(25.5);
       expect(result.splits).toHaveLength(2);
     });
 
@@ -622,19 +683,21 @@ describe('ExpensesService', () => {
         amount: 100,
         splits: [
           { userId: 'user-1', amount: 40 },
-          { userId: 'user-2', amount: 50 } // Total: 90, not 100
-        ]
+          { userId: 'user-2', amount: 50 }, // Total: 90, not 100
+        ],
       };
 
-      await expect(service.create(invalidDto, 'user-1'))
-        .rejects.toThrow('Split amounts must equal total expense amount');
+      await expect(service.create(invalidDto, 'user-1')).rejects.toThrow(
+        'Split amounts must equal total expense amount',
+      );
     });
 
     it('should enforce couple permissions', async () => {
       const expense = { title: 'Test', amount: 50 };
 
-      await expect(service.create(expense, 'unauthorized-user'))
-        .rejects.toThrow('User not authorized for this couple');
+      await expect(
+        service.create(expense, 'unauthorized-user'),
+      ).rejects.toThrow('User not authorized for this couple');
     });
   });
 
@@ -643,7 +706,7 @@ describe('ExpensesService', () => {
       // Create test data
       await repository.save([
         { title: 'Couple 1 Expense', coupleId: 'couple-1' },
-        { title: 'Couple 2 Expense', coupleId: 'couple-2' }
+        { title: 'Couple 2 Expense', coupleId: 'couple-2' },
       ]);
 
       const result = await service.findByCoupleId('couple-1');
@@ -657,12 +720,18 @@ describe('ExpensesService', () => {
       const expenses = Array.from({ length: 25 }, (_, i) => ({
         title: `Expense ${i}`,
         amount: 10,
-        coupleId: 'couple-1'
+        coupleId: 'couple-1',
       }));
       await repository.save(expenses);
 
-      const page1 = await service.findByCoupleId('couple-1', { page: 1, limit: 10 });
-      const page2 = await service.findByCoupleId('couple-1', { page: 2, limit: 10 });
+      const page1 = await service.findByCoupleId('couple-1', {
+        page: 1,
+        limit: 10,
+      });
+      const page2 = await service.findByCoupleId('couple-1', {
+        page: 2,
+        limit: 10,
+      });
 
       expect(page1.data).toHaveLength(10);
       expect(page2.data).toHaveLength(10);
@@ -673,6 +742,7 @@ describe('ExpensesService', () => {
 ```
 
 ### Controller Integration Tests
+
 ```typescript
 // src/expenses/expenses.controller.spec.ts
 describe('ExpensesController (Integration)', () => {
@@ -707,10 +777,10 @@ describe('ExpensesController (Integration)', () => {
         .send({
           title: 'API Test Expense',
           amount: 75.25,
-          categoryId: 'category-1'
+          categoryId: 'category-1',
         })
         .expect(201)
-        .expect(res => {
+        .expect((res) => {
           expect(res.body.title).toBe('API Test Expense');
           expect(res.body.amount).toBe(75.25);
         });
@@ -729,9 +799,11 @@ describe('ExpensesController (Integration)', () => {
         .set('Authorization', `Bearer ${authToken}`)
         .send({ title: '', amount: -10 }) // Invalid data
         .expect(400)
-        .expect(res => {
+        .expect((res) => {
           expect(res.body.message).toContain('title should not be empty');
-          expect(res.body.message).toContain('amount must be a positive number');
+          expect(res.body.message).toContain(
+            'amount must be a positive number',
+          );
         });
     });
   });
@@ -742,7 +814,7 @@ describe('ExpensesController (Integration)', () => {
         .get('/expenses?page=1&limit=5')
         .set('Authorization', `Bearer ${authToken}`)
         .expect(200)
-        .expect(res => {
+        .expect((res) => {
           expect(res.body.data).toBeInstanceOf(Array);
           expect(res.body.meta.page).toBe(1);
           expect(res.body.meta.limit).toBe(5);
@@ -754,8 +826,8 @@ describe('ExpensesController (Integration)', () => {
         .get('/expenses?start_date=2025-09-01&end_date=2025-09-30')
         .set('Authorization', `Bearer ${authToken}`)
         .expect(200)
-        .expect(res => {
-          res.body.data.forEach(expense => {
+        .expect((res) => {
+          res.body.data.forEach((expense) => {
             const expenseDate = new Date(expense.date);
             expect(expenseDate >= new Date('2025-09-01')).toBeTruthy();
             expect(expenseDate <= new Date('2025-09-30')).toBeTruthy();
@@ -767,6 +839,7 @@ describe('ExpensesController (Integration)', () => {
 ```
 
 ### Database Integration Tests
+
 ```typescript
 // test/database.e2e-spec.ts
 describe('Database Integration', () => {
@@ -790,8 +863,7 @@ describe('Database Integration', () => {
       expense.amount = 50;
       expense.coupleId = 'non-existent-couple';
 
-      await expect(dataSource.manager.save(expense))
-        .rejects.toThrow(); // Foreign key violation
+      await expect(dataSource.manager.save(expense)).rejects.toThrow(); // Foreign key violation
     });
 
     it('should cascade delete expense splits', async () => {
@@ -799,12 +871,12 @@ describe('Database Integration', () => {
       const expense = await dataSource.manager.save(Expense, {
         title: 'Test',
         amount: 100,
-        coupleId: 'test-couple'
+        coupleId: 'test-couple',
       });
 
       await dataSource.manager.save(ExpenseSplit, [
         { expenseId: expense.id, userId: 'user-1', amount: 50 },
-        { expenseId: expense.id, userId: 'user-2', amount: 50 }
+        { expenseId: expense.id, userId: 'user-2', amount: 50 },
       ]);
 
       // Delete expense
@@ -812,7 +884,7 @@ describe('Database Integration', () => {
 
       // Verify splits were deleted
       const splits = await dataSource.manager.find(ExpenseSplit, {
-        where: { expenseId: expense.id }
+        where: { expenseId: expense.id },
       });
       expect(splits).toHaveLength(0);
     });
@@ -824,8 +896,8 @@ describe('Database Integration', () => {
         dataSource.manager.save(Expense, {
           title: `Concurrent ${i}`,
           amount: 10 + i,
-          coupleId: 'test-couple'
-        })
+          coupleId: 'test-couple',
+        }),
       );
 
       const results = await Promise.all(promises);
@@ -833,7 +905,7 @@ describe('Database Integration', () => {
 
       // Verify all expenses were saved
       const count = await dataSource.manager.count(Expense, {
-        where: { coupleId: 'test-couple' }
+        where: { coupleId: 'test-couple' },
       });
       expect(count).toBeGreaterThanOrEqual(10);
     });
@@ -848,6 +920,7 @@ describe('Database Integration', () => {
 ## Test Framework Setup
 
 ### Unit & Integration Testing
+
 ```bash
 # Dependencies
 pnpm add -D jest @testing-library/react @testing-library/jest-dom
@@ -863,6 +936,7 @@ pnpm add -D jest @testing-library/react @testing-library/jest-dom
 ```
 
 ### End-to-End Testing
+
 ```bash
 # Playwright setup
 pnpm add -D @playwright/test
@@ -887,6 +961,7 @@ export default {
 ## Critical Test Scenarios
 
 ### Component Tests
+
 ```typescript
 // components/__tests__/ExpenseForm.test.tsx
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
@@ -946,6 +1021,7 @@ describe('ExpenseForm', () => {
 ```
 
 ### Page Tests
+
 ```typescript
 // app/dashboard/expenses/__tests__/page.test.tsx
 import { render, screen } from '@testing-library/react';
@@ -981,6 +1057,7 @@ describe('ExpensesPage', () => {
 ```
 
 ### End-to-End Tests
+
 ```typescript
 // e2e/expense-management.spec.ts
 import { test, expect } from '@playwright/test';
@@ -1035,7 +1112,10 @@ test.describe('Expense Management', () => {
 
     // Verify all expenses are within date range
     for (let i = 0; i < count; i++) {
-      const dateText = await expenses.nth(i).locator('[data-testid="expense-date"]').textContent();
+      const dateText = await expenses
+        .nth(i)
+        .locator('[data-testid="expense-date"]')
+        .textContent();
       const expenseDate = new Date(dateText);
       expect(expenseDate >= new Date('2025-09-01')).toBeTruthy();
       expect(expenseDate <= new Date('2025-09-30')).toBeTruthy();
@@ -1079,33 +1159,35 @@ test.describe('Responsive Design', () => {
 # Test Data Management
 
 ## Test Fixtures
+
 ```typescript
 // test/fixtures/expenses.ts
 export const expenseFixtures = {
   validExpense: {
     title: 'Test Expense',
-    amount: 25.50,
+    amount: 25.5,
     category: { id: '1', name: 'Food', color: '#FF5722' },
-    date: '2025-09-19'
+    date: '2025-09-19',
   },
 
   groupExpense: {
     title: 'Group Dinner',
-    amount: 120.00,
+    amount: 120.0,
     groupId: 'group-1',
     paidBy: 'user-1',
-    splitBetween: ['user-1', 'user-2']
+    splitBetween: ['user-1', 'user-2'],
   },
 
   expenseList: [
-    { id: '1', title: 'Coffee', amount: 4.50, date: '2025-09-19' },
+    { id: '1', title: 'Coffee', amount: 4.5, date: '2025-09-19' },
     { id: '2', title: 'Lunch', amount: 12.75, date: '2025-09-18' },
-    { id: '3', title: 'Gas', amount: 45.00, date: '2025-09-17' }
-  ]
+    { id: '3', title: 'Gas', amount: 45.0, date: '2025-09-17' },
+  ],
 };
 ```
 
 ## Database Seeding for Tests
+
 ```typescript
 // test/seeds/test-data.ts
 export async function seedTestData(dataSource: DataSource) {
@@ -1117,31 +1199,41 @@ export async function seedTestData(dataSource: DataSource) {
   // Create test users
   const users = await dataSource.manager.save(User, [
     { id: 'user-1', email: 'test1@example.com', username: 'user1' },
-    { id: 'user-2', email: 'test2@example.com', username: 'user2' }
+    { id: 'user-2', email: 'test2@example.com', username: 'user2' },
   ]);
 
   // Create test couple
   const couple = await dataSource.manager.save(Couple, {
     id: 'couple-1',
     user1Id: 'user-1',
-    user2Id: 'user-2'
+    user2Id: 'user-2',
   });
 
   // Create test categories
   await dataSource.manager.save(Category, [
-    { id: 'cat-1', name: 'Food & Dining', color: '#FF5722', coupleId: 'couple-1' },
-    { id: 'cat-2', name: 'Transportation', color: '#2196F3', coupleId: 'couple-1' }
+    {
+      id: 'cat-1',
+      name: 'Food & Dining',
+      color: '#FF5722',
+      coupleId: 'couple-1',
+    },
+    {
+      id: 'cat-2',
+      name: 'Transportation',
+      color: '#2196F3',
+      coupleId: 'couple-1',
+    },
   ]);
 
   // Create test expenses
   await dataSource.manager.save(Expense, [
     {
       title: 'Test Expense 1',
-      amount: 50.00,
+      amount: 50.0,
       coupleId: 'couple-1',
       categoryId: 'cat-1',
-      paidBy: 'user-1'
-    }
+      paidBy: 'user-1',
+    },
   ]);
 }
 ```
@@ -1151,102 +1243,27 @@ export async function seedTestData(dataSource: DataSource) {
 # Continuous Integration & Quality Gates
 
 ## GitHub Actions Workflow
+
 ```yaml
-# .github/workflows/test-all.yml
-name: Test All Applications
-
-on:
-  pull_request:
-  push:
-    branches: [main]
-
+# .github/workflows/ci.yml
 jobs:
-  mobile-tests:
-    runs-on: ubuntu-latest
+  api:
     steps:
-      - uses: actions/checkout@v3
-      - uses: actions/setup-node@v3
-        with:
-          node-version: '18'
-
-      - name: Install dependencies
-        run: |
-          pnpm install --filter mobile --frozen-lockfile
-
-      - name: Run unit tests
-        run: |
-          pnpm --filter mobile run test -- --coverage --watchAll=false
-
-      - name: Check coverage threshold
-        run: |
-          pnpm --filter mobile run test:coverage-check
-
-  api-tests:
-    runs-on: ubuntu-latest
-    services:
-      postgres:
-        image: postgres:15
-        env:
-          POSTGRES_PASSWORD: test
-          POSTGRES_DB: test
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-
+      - run: pnpm --filter api lint
+      - run: pnpm --filter api build
+      - run: pnpm --filter api test
+  web:
     steps:
-      - uses: actions/checkout@v3
-      - uses: actions/setup-node@v3
-
-      - name: Install dependencies
-        run: |
-          pnpm install --filter api --frozen-lockfile
-
-      - name: Run unit tests
-        run: |
-          pnpm --filter api run test
-
-      - name: Run integration tests
-        run: |
-          pnpm --filter api run test:e2e
-        env:
-          DATABASE_URL: postgresql://postgres:test@localhost:5432/test
-
-  web-tests:
-    runs-on: ubuntu-latest
+      - run: pnpm --filter web lint
+      - run: pnpm --filter web build
+  mobile:
     steps:
-      - uses: actions/checkout@v3
-      - uses: actions/setup-node@v3
-
-      - name: Install dependencies
-        run: |
-          pnpm install --filter web --frozen-lockfile
-
-      - name: Run unit tests
-        run: |
-          pnpm --filter web run test
-
-      - name: Build application
-        run: |
-          pnpm --filter web run build
-
-      - name: Run E2E tests
-        run: |
-          pnpm exec playwright test
-
-  e2e-integration:
-    runs-on: ubuntu-latest
-    needs: [mobile-tests, api-tests, web-tests]
-    if: github.event_name == 'pull_request'
-
-    steps:
-      - name: Run full integration tests
-        run: echo "Full integration test suite"
-        # Would include cross-app integration tests
+      - run: pnpm --filter mobile typecheck
+      - run: pnpm --filter mobile test:unit:fast
 ```
 
 ## Quality Gates
+
 - **Unit Test Coverage**: Minimum 80% for mobile, 90% for API
 - **Integration Tests**: All critical paths must pass
 - **E2E Tests**: Core user journeys must pass

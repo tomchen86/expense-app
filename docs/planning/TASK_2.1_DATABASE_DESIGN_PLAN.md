@@ -25,6 +25,7 @@ Design and implement the PostgreSQL schema that unlocks multi-user, couple-centr
 ## Detailed Subtasks
 
 ### 2.1.1 Identity & Preference Schema
+
 **Duration**: 4-6 hours  
 **Output**: User, settings, and auth identity tables
 
@@ -91,6 +92,7 @@ CREATE TABLE user_devices (
 ```
 
 ### 2.1.2 Couple & Collaboration Schema
+
 **Duration**: 4-5 hours  
 **Output**: Couple membership, invitations, participants, groups
 
@@ -170,6 +172,7 @@ CREATE TABLE group_members (
 **Status**: ✅ Delivered via `003_collaboration_tables` migration, new entity set (Couple, CoupleMember, CoupleInvitation, Participant, ExpenseGroup, GroupMember), plus sqlite/postgres Jest coverage on 2025-09-24.
 
 ### 2.1.3 Expense & Settlement Schema
+
 **Duration**: 3-4 hours  
 **Output**: Expense core tables, splits, attachments
 
@@ -238,6 +241,7 @@ CREATE TABLE expense_attachments (
 **Status**: ✅ Delivered September 24, 2025 via `004_expense_core` migration, TypeORM entities (sql.js + Postgres), ledger Jest suites, and default category seeding helper/tests.
 
 ### 2.1.4 Indexing & Derived Data
+
 **Duration**: 1-2 hours  
 **Output**: Optimized indexes, triggers, aggregate helpers
 
@@ -302,6 +306,7 @@ FOR EACH ROW EXECUTE FUNCTION assert_split_balance();
 **Status**: ✅ Delivered with `005_indexes_and_triggers` (updated_at triggers, expense split balance constraint, and index suite).
 
 ### 2.1.6 Soft Deletes & Archival Hooks
+
 **Duration**: 1 hour  
 **Output**: Soft delete columns/indexes for ledger tables
 
@@ -312,6 +317,7 @@ FOR EACH ROW EXECUTE FUNCTION assert_split_balance();
 **Status**: ✅ Delivered September 24, 2025 via `006_soft_delete_extensions`, Postgres soft-delete specs, and partial index verification.
 
 ### 2.1.7 Participant Soft Delete & Indices
+
 **Duration**: 1 hour  
 **Output**: Extend soft delete + indexes to participant table
 
@@ -322,6 +328,7 @@ FOR EACH ROW EXECUTE FUNCTION assert_split_balance();
 **Status**: ✅ Delivered September 24, 2025 via `007_soft_delete_participants`, participant soft-delete tests, and performance validation.
 
 ### 2.1.8 Attachment Soft Delete & Index
+
 **Duration**: 30 minutes  
 **Output**: Extend soft delete to expense attachments and verify index usage
 
@@ -332,6 +339,7 @@ FOR EACH ROW EXECUTE FUNCTION assert_split_balance();
 **Status**: ✅ Delivered September 24, 2025 via `008_soft_delete_attachments`, ledger soft-delete spec, and performance checks.
 
 ### 2.1.9 Demo Sample Seed
+
 **Duration**: 1 hour  
 **Output**: Deterministic demo dataset for smoke tests and Task 2.2 handoff
 
@@ -342,6 +350,7 @@ FOR EACH ROW EXECUTE FUNCTION assert_split_balance();
 **Status**: ✅ Delivered September 24, 2025 via `seedSampleData` helper and `sample-data.seed.spec.ts` regression.
 
 ### 2.1.5 Data Quality & Security Controls
+
 **Duration**: 1 hour  
 **Output**: Row-level tenancy guardrails and archival strategy
 

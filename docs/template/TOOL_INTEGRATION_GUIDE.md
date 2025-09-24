@@ -1,23 +1,27 @@
 # Tool Integration Guide
 
-*Last Updated: September 19, 2025*
+_Last Updated: September 19, 2025_
 
 ## Overview
+
 Integration between documentation system and development tools to reduce manual overhead while maintaining visibility.
 
 ## GitHub Integration
 
 ### Issues as Task Tracking
+
 Replace manual `TASK_X.X_COMPLETION_LOG.md` with GitHub Issues:
 
 ```markdown
 # GitHub Issue Template: Task Implementation
+
 **Task**: 2.1 Database Design
 **Parent Phase**: Phase 2 - API Development
 **Estimated Duration**: 2-3 days
 **Dependencies**: None
 
 ## Acceptance Criteria
+
 - [ ] PostgreSQL schema created for users, couples, expenses
 - [ ] TypeORM entities implemented with proper relationships
 - [ ] Database migrations working
@@ -25,6 +29,7 @@ Replace manual `TASK_X.X_COMPLETION_LOG.md` with GitHub Issues:
 - [ ] Unit tests for entity relationships
 
 ## Subtasks
+
 - [ ] Design user authentication schema
 - [ ] Design expense tracking schema
 - [ ] Implement foreign key constraints
@@ -32,6 +37,7 @@ Replace manual `TASK_X.X_COMPLETION_LOG.md` with GitHub Issues:
 - [ ] Add data validation constraints
 
 ## Files to Create
+
 - `apps/api/src/entities/User.entity.ts`
 - `apps/api/src/entities/Couple.entity.ts`
 - `apps/api/src/entities/Expense.entity.ts`
@@ -39,6 +45,7 @@ Replace manual `TASK_X.X_COMPLETION_LOG.md` with GitHub Issues:
 ```
 
 ### Project Board Setup
+
 ```yaml
 # .github/project-automation.yml
 name: Project Board Automation
@@ -63,6 +70,7 @@ jobs:
 ```
 
 ### Automated Documentation Updates
+
 ```yaml
 # .github/workflows/update-function-log.yml
 name: Update Function Log
@@ -101,25 +109,26 @@ jobs:
 ## Linear Integration (Alternative)
 
 ### Linear API Automation
+
 ```javascript
 // scripts/sync-linear-tasks.js
 const { LinearClient } = require('@linear/sdk');
 
 const client = new LinearClient({
-  apiKey: process.env.LINEAR_API_KEY
+  apiKey: process.env.LINEAR_API_KEY,
 });
 
 async function syncTasksToDocumentation() {
   const issues = await client.issues({
-    filter: { project: { name: { eq: "Expense Tracker" } } }
+    filter: { project: { name: { eq: 'Expense Tracker' } } },
   });
 
   // Update FUNCTION_LOG.md based on Linear issue status
   const completedFeatures = issues.nodes
-    .filter(issue => issue.state.name === 'Done')
-    .map(issue => ({
+    .filter((issue) => issue.state.name === 'Done')
+    .map((issue) => ({
       title: issue.title,
-      labels: issue.labels.nodes.map(l => l.name)
+      labels: issue.labels.nodes.map((l) => l.name),
     }));
 
   // Auto-update documentation files
@@ -134,6 +143,7 @@ function updateFunctionLog(completedFeatures) {
 ```
 
 ### Linear Webhook Integration
+
 ```javascript
 // api/webhooks/linear.js
 export default function handler(req, res) {
@@ -152,6 +162,7 @@ export default function handler(req, res) {
 ## Slack Integration
 
 ### Development Notifications
+
 ```yaml
 # .github/workflows/slack-notifications.yml
 name: Development Notifications
@@ -187,6 +198,7 @@ jobs:
 ## Documentation Automation
 
 ### Auto-Generate API Documentation
+
 ```yaml
 # .github/workflows/api-docs.yml
 name: Generate API Documentation
@@ -225,6 +237,7 @@ jobs:
 ```
 
 ### Test Coverage Integration
+
 ```yaml
 # .github/workflows/coverage-update.yml
 name: Update Test Coverage
@@ -258,6 +271,7 @@ jobs:
 ## Monitoring Integration
 
 ### Production Monitoring Alerts
+
 ```javascript
 // scripts/production-monitor.js
 const { WebClient } = require('@slack/web-api');
@@ -272,10 +286,11 @@ async function checkProductionHealth() {
   const crashRate = await getMobileCrashRate();
 
   // Update performance documentation
-  if (crashRate > 0.01) { // 1% crash rate
+  if (crashRate > 0.01) {
+    // 1% crash rate
     await slack.chat.postMessage({
       channel: '#development',
-      text: `🚨 Mobile crash rate elevated: ${crashRate * 100}%\n\nAction required:\n- [ ] Review crash logs\n- [ ] Update RISK_ASSESSMENT.md\n- [ ] Plan hotfix if needed`
+      text: `🚨 Mobile crash rate elevated: ${crashRate * 100}%\n\nAction required:\n- [ ] Review crash logs\n- [ ] Update RISK_ASSESSMENT.md\n- [ ] Plan hotfix if needed`,
     });
   }
 }
@@ -284,6 +299,7 @@ async function checkProductionHealth() {
 ## Development Workflow Integration
 
 ### Pre-commit Hook Integration
+
 ```bash
 #!/bin/sh
 # .husky/pre-commit
@@ -309,6 +325,7 @@ echo "Remember to complete UPDATE_CHECKLIST.md before pushing!"
 ```
 
 ### IDE Integration (VS Code)
+
 ```json
 // .vscode/tasks.json
 {
@@ -350,6 +367,7 @@ echo "Remember to complete UPDATE_CHECKLIST.md before pushing!"
 ## Metrics Dashboard Integration
 
 ### GitHub Actions Dashboard
+
 ```yaml
 # .github/workflows/metrics-dashboard.yml
 name: Update Metrics Dashboard
@@ -391,16 +409,19 @@ jobs:
 ## Integration Benefits
 
 ### Automated Maintenance
+
 - **Reduced Manual Work**: GitHub Issues replace manual task logs
 - **Real-time Updates**: Webhooks keep documentation current
 - **Coverage Tracking**: Automated test coverage updates
 
 ### Improved Visibility
+
 - **Slack Notifications**: Team awareness of progress
 - **Dashboard Metrics**: Visual progress tracking
 - **Automated Alerts**: Proactive issue identification
 
 ### Quality Assurance
+
 - **Pre-commit Checks**: Ensure documentation consistency
 - **Automated Testing**: CI/CD integration with quality gates
 - **Performance Monitoring**: Production health integration
@@ -408,20 +429,23 @@ jobs:
 ## Implementation Priority
 
 ### Phase 1: Basic Integration
+
 1. GitHub Issues for task tracking
 2. Pre-commit hooks for documentation checks
 3. Slack notifications for major milestones
 
 ### Phase 2: Advanced Automation
+
 1. Auto-update FUNCTION_LOG.md from PR labels
 2. Test coverage integration
 3. API documentation generation
 
 ### Phase 3: Production Integration
+
 1. Monitoring alerts integration
 2. Performance metrics dashboard
 3. Advanced workflow automation
 
 ---
 
-*This integration guide bridges manual documentation with automated tooling to reduce overhead while maintaining project visibility and quality.*
+_This integration guide bridges manual documentation with automated tooling to reduce overhead while maintaining project visibility and quality._

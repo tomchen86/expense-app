@@ -12,7 +12,9 @@ let raw;
 try {
   raw = fs.readFileSync(commitMsgFile, 'utf8');
 } catch (error) {
-  console.error(`commit-msg ❌ Unable to read commit message file: ${error instanceof Error ? error.message : String(error)}`);
+  console.error(
+    `commit-msg ❌ Unable to read commit message file: ${error instanceof Error ? error.message : String(error)}`,
+  );
   process.exit(1);
 }
 
@@ -35,7 +37,9 @@ if (header.length > 72) {
 }
 
 if (/\b(?:WIP|FIXUP|SQUASH)\b/i.test(header)) {
-  errors.push('Remove placeholders like WIP, FIXUP, or SQUASH from the summary.');
+  errors.push(
+    'Remove placeholders like WIP, FIXUP, or SQUASH from the summary.',
+  );
 }
 
 if (header.endsWith('.')) {
@@ -44,7 +48,9 @@ if (header.endsWith('.')) {
 
 const headerAfterEmoji = header.replace(/^[^\p{L}\p{N}]+\s*/u, '');
 if (/^[a-z]/.test(headerAfterEmoji)) {
-  errors.push('Start the summary with an imperative, capitalized verb (optionally after a single emoji).');
+  errors.push(
+    'Start the summary with an imperative, capitalized verb (optionally after a single emoji).',
+  );
 }
 
 const hasBodyContent = bodyLines.some((line) => line.trim().length > 0);
@@ -64,7 +70,9 @@ if (hasBodyContent) {
 if (errors.length > 0) {
   console.error('commit-msg ❌ Commit message validation failed:');
   errors.forEach((message) => console.error(`  - ${message}`));
-  console.error('\nGuideline: Optional leading emoji, imperative summary <= 72 chars, blank line before details.');
+  console.error(
+    '\nGuideline: Optional leading emoji, imperative summary <= 72 chars, blank line before details.',
+  );
   process.exit(1);
 }
 

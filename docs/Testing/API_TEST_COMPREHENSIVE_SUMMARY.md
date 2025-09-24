@@ -5,6 +5,7 @@ This document provides a complete analysis of all test cases in the `/Users/htch
 ## Overview
 
 The test suite contains **29 test files** covering the following domains:
+
 - **Setup** (2 files): Database configuration and extensions
 - **Identity** (8 files): User management, authentication, devices, and settings
 - **Collaboration** (7 files): Couples, participants, groups, and memberships
@@ -18,9 +19,11 @@ The test suite contains **29 test files** covering the following domains:
 ## Setup Domain
 
 ### datasource.factory.spec.ts
+
 **Test Suite**: `datasource.factory`
 
 #### Test Cases:
+
 1. **`produces an in-memory sqlite datasource configured for synchronize()`**
    - **Behavior**: Tests SQLite in-memory database factory
    - **Validates**: DataSource instance creation, SQLite configuration, synchronize mode, memory location
@@ -30,9 +33,11 @@ The test suite contains **29 test files** covering the following domains:
    - **Validates**: DataSource instance creation, presence of required extensions (uuid-ossp, citext)
 
 ### extensions.spec.ts
+
 **Test Suite**: `ensureRequiredExtensions`
 
 #### Test Cases:
+
 1. **`asks postgres for uuids and citext extensions and returns the installed names`**
    - **Behavior**: Tests PostgreSQL extension verification utility
    - **Validates**: Extension query execution, return of installed extension names
@@ -42,9 +47,11 @@ The test suite contains **29 test files** covering the following domains:
 ## Identity Domain
 
 ### user.entity.spec.ts
+
 **Test Suite**: `User Entity`
 
 #### Test Cases:
+
 1. **`should create a user with required fields`**
    - **Behavior**: Tests basic user entity creation with required fields
    - **Validates**: User persistence, default values (USD currency, UTC timezone, invited status), timestamp generation
@@ -62,17 +69,21 @@ The test suite contains **29 test files** covering the following domains:
    - **Validates**: Custom values for avatarUrl, currency, timezone, onboarding status, timestamp fields
 
 ### user.postgres.spec.ts
+
 **Test Suite**: `User Entity (Postgres)`
 
 #### Test Cases:
+
 1. **`preserves email casing while enforcing case-insensitive uniqueness via citext`**
    - **Behavior**: Tests PostgreSQL citext extension functionality
    - **Validates**: Email case preservation, case-insensitive uniqueness constraint
 
 ### user-auth-identity.entity.spec.ts
+
 **Test Suite**: `UserAuthIdentity Entity (SQLite)`
 
 #### Test Cases:
+
 1. **`stores provider credentials and allows optional tokens`**
    - **Behavior**: Tests OAuth/auth provider credential storage
    - **Validates**: Provider data persistence, metadata storage, optional token fields
@@ -86,9 +97,11 @@ The test suite contains **29 test files** covering the following domains:
    - **Validates**: Cross-user provider account ID uniqueness constraint
 
 ### user-auth-identity.postgres.spec.ts
+
 **Test Suite**: `UserAuthIdentity Entity (Postgres)`
 
 #### Test Cases:
+
 1. **`enforces provider uniqueness per user`**
    - **Behavior**: Tests PostgreSQL-specific user-provider uniqueness
    - **Validates**: Unique constraint on (user_id, provider) combination
@@ -102,9 +115,11 @@ The test suite contains **29 test files** covering the following domains:
    - **Validates**: JSON metadata persistence and retrieval
 
 ### user-device.entity.spec.ts
+
 **Test Suite**: `UserDevice Entity (SQLite)`
 
 #### Test Cases:
+
 1. **`applies default sync metadata values on insert`**
    - **Behavior**: Tests device registration with default values
    - **Validates**: Default persistence mode ('local_only'), sync status ('idle'), timestamps
@@ -114,9 +129,11 @@ The test suite contains **29 test files** covering the following domains:
    - **Validates**: Unique constraint on (user_id, device_uuid) combination
 
 ### user-device.postgres.spec.ts
+
 **Test Suite**: `UserDevice Entity (Postgres)`
 
 #### Test Cases:
+
 1. **`stores metadata with defaults for persistence and sync status`**
    - **Behavior**: Tests PostgreSQL device metadata defaults
    - **Validates**: Default persistence mode and sync status values
@@ -130,9 +147,11 @@ The test suite contains **29 test files** covering the following domains:
    - **Validates**: Unique constraint on (user_id, device_uuid) combination
 
 ### user-settings.entity.spec.ts
+
 **Test Suite**: `UserSettings Entity (SQLite)`
 
 #### Test Cases:
+
 1. **`persists defaults for notification and persistence preferences`**
    - **Behavior**: Tests user settings creation with defaults
    - **Validates**: Default language (en-US), notification preferences, push settings, persistence mode
@@ -142,9 +161,11 @@ The test suite contains **29 test files** covering the following domains:
    - **Validates**: One-to-one relationship constraint between users and settings
 
 ### user-settings.postgres.spec.ts
+
 **Test Suite**: `UserSettings Entity (Postgres)`
 
 #### Test Cases:
+
 1. **`stores notifications JSON with defaults while preserving casing`**
    - **Behavior**: Tests PostgreSQL JSON notification storage
    - **Validates**: JSON field persistence, default notification preferences, case preservation
@@ -162,9 +183,11 @@ The test suite contains **29 test files** covering the following domains:
 ## Collaboration Domain
 
 ### couple.entity.spec.ts
+
 **Test Suite**: `Couple Entity (sql.js)`
 
 #### Test Cases:
+
 1. **`persists couples with defaults and creator reference`**
    - **Behavior**: Tests couple entity creation
    - **Validates**: Couple persistence, default status ('active'), creator reference, timestamps
@@ -174,9 +197,11 @@ The test suite contains **29 test files** covering the following domains:
    - **Validates**: Unique constraint on invite codes
 
 ### couple-member.entity.spec.ts
+
 **Test Suite**: `CoupleMember Entity (sql.js)`
 
 #### Test Cases:
+
 1. **`defaults role to member and status to active`**
    - **Behavior**: Tests couple membership creation with defaults
    - **Validates**: Default role ('member'), default status ('active'), join timestamp
@@ -186,9 +211,11 @@ The test suite contains **29 test files** covering the following domains:
    - **Validates**: Unique constraint on (couple_id, user_id) combination
 
 ### participant.entity.spec.ts
+
 **Test Suite**: `Participant Entity (sql.js)`
 
 #### Test Cases:
+
 1. **`stores default notification preferences for external participants`**
    - **Behavior**: Tests external participant creation
    - **Validates**: Default registration status (false), default currency (USD), notification preferences
@@ -198,9 +225,11 @@ The test suite contains **29 test files** covering the following domains:
    - **Validates**: Unique constraint on (couple_id, user_id) combination
 
 ### participant.postgres.spec.ts
+
 **Test Suite**: `Participant Entity (Postgres)`
 
 #### Test Cases:
+
 1. **`prevents marking participant as registered without a linked user`**
    - **Behavior**: Tests business logic constraint on participant registration
    - **Validates**: Check constraint requiring user_id when is_registered is true
@@ -214,9 +243,11 @@ The test suite contains **29 test files** covering the following domains:
    - **Validates**: Soft delete behavior, deleted_at timestamp, exclusion from default queries
 
 ### expense-group.entity.spec.ts
+
 **Test Suite**: `ExpenseGroup Entity (sql.js)`
 
 #### Test Cases:
+
 1. **`persists with defaults and optional fields`**
    - **Behavior**: Tests expense group creation
    - **Validates**: Group persistence, archive status default (false), null default currency
@@ -226,9 +257,11 @@ The test suite contains **29 test files** covering the following domains:
    - **Validates**: Check constraint on hex color format
 
 ### expense-group.postgres.spec.ts
+
 **Test Suite**: `ExpenseGroup Entity (Postgres)`
 
 #### Test Cases:
+
 1. **`rejects colors that do not match hex pattern`**
    - **Behavior**: Tests PostgreSQL color format validation
    - **Validates**: Check constraint on hex color pattern matching
@@ -242,9 +275,11 @@ The test suite contains **29 test files** covering the following domains:
    - **Validates**: Soft delete behavior, deleted_at timestamp, archive flag preservation
 
 ### group-member.entity.spec.ts
+
 **Test Suite**: `GroupMember Entity (sql.js)`
 
 #### Test Cases:
+
 1. **`applies defaults for role and status`**
    - **Behavior**: Tests group membership creation
    - **Validates**: Default role ('member'), default status ('active'), join timestamp
@@ -258,9 +293,11 @@ The test suite contains **29 test files** covering the following domains:
 ## Ledger Domain
 
 ### category.entity.spec.ts
+
 **Test Suite**: `Category Entity (sql.js)`
 
 #### Test Cases:
+
 1. **`stores required fields with defaults`**
    - **Behavior**: Tests category entity creation
    - **Validates**: Category persistence, default is_default flag (false), timestamps
@@ -270,9 +307,11 @@ The test suite contains **29 test files** covering the following domains:
    - **Validates**: Unique constraint on (couple_id, name) combination
 
 ### category.postgres.spec.ts
+
 **Test Suite**: `Category Entity (Postgres)`
 
 #### Test Cases:
+
 1. **`enforces case-insensitive uniqueness for category names per couple`**
    - **Behavior**: Tests PostgreSQL case-insensitive category name uniqueness
    - **Validates**: Case-insensitive unique constraint on category names per couple
@@ -286,9 +325,11 @@ The test suite contains **29 test files** covering the following domains:
    - **Validates**: Soft delete behavior, deleted_at timestamp, exclusion from default queries
 
 ### expense.entity.spec.ts
+
 **Test Suite**: `Expense Entity (sql.js)`
 
 #### Test Cases:
+
 1. **`persists expenses with defaults and relationships`**
    - **Behavior**: Tests expense entity creation with all relationships
    - **Validates**: Expense persistence, default split type ('equal'), timestamps, relationships
@@ -298,9 +339,11 @@ The test suite contains **29 test files** covering the following domains:
    - **Validates**: Check constraint preventing negative expense amounts
 
 ### expense.postgres.spec.ts
+
 **Test Suite**: `Expense Entity (Postgres)`
 
 #### Test Cases:
+
 1. **`rejects currency values that are not uppercase ISO codes`**
    - **Behavior**: Tests PostgreSQL currency format validation
    - **Validates**: Check constraint on uppercase ISO currency codes
@@ -310,9 +353,11 @@ The test suite contains **29 test files** covering the following domains:
    - **Validates**: Check constraint on valid split type enum values
 
 ### expense-split.entity.spec.ts
+
 **Test Suite**: `ExpenseSplit Entity (sql.js)`
 
 #### Test Cases:
+
 1. **`enforces unique participant per expense`**
    - **Behavior**: Tests expense split uniqueness constraint
    - **Validates**: Unique constraint on (expense_id, participant_id) combination
@@ -322,17 +367,21 @@ The test suite contains **29 test files** covering the following domains:
    - **Validates**: Check constraint limiting share percentage to maximum 100
 
 ### soft-delete.spec.ts
+
 **Test Suite**: `Expense soft delete`
 
 #### Test Cases:
+
 1. **`softRemove sets deletedAt and excludes rows from default queries`**
    - **Behavior**: Tests TypeORM soft delete functionality on expenses
    - **Validates**: Soft delete behavior, deleted_at timestamp, query exclusion, recovery with withDeleted
 
 ### triggers/split-balance.trigger.spec.ts
+
 **Test Suite**: `expense split balance trigger`
 
 #### Test Cases:
+
 1. **`allows splits that sum to the expense total`**
    - **Behavior**: Tests database trigger for expense split balance validation (valid case)
    - **Validates**: Transaction success when split totals match expense amount
@@ -342,9 +391,11 @@ The test suite contains **29 test files** covering the following domains:
    - **Validates**: Transaction failure when split totals don't match expense amount
 
 ### triggers/updated-at.trigger.spec.ts
+
 **Test Suite**: `updated_at triggers`
 
 #### Test Cases:
+
 1. **`automatically updates updated_at timestamp on expenses`**
    - **Behavior**: Tests PostgreSQL trigger for automatic timestamp updates
    - **Validates**: Automatic updated_at field modification on record updates
@@ -354,9 +405,11 @@ The test suite contains **29 test files** covering the following domains:
 ## Migrations Domain
 
 ### identity.migrations.spec.ts
+
 **Test Suite**: `Identity migrations`
 
 #### Test Cases:
+
 1. **`applies migrations sequentially on a clean database`**
    - **Behavior**: Tests database migration execution and table creation
    - **Validates**: Migration sequence, table creation, migration names and order (includes SoftDeleteParticipants migration)
@@ -370,9 +423,11 @@ The test suite contains **29 test files** covering the following domains:
 ## Seeds Domain
 
 ### default-categories.seed.spec.ts
+
 **Test Suite**: `seedDefaultCategories`
 
 #### Test Cases:
+
 1. **`inserts default categories for a couple and is idempotent`**
    - **Behavior**: Tests default category seeding functionality
    - **Validates**: Category insertion, idempotent behavior (no duplicates on re-run)
@@ -382,9 +437,11 @@ The test suite contains **29 test files** covering the following domains:
    - **Validates**: Custom category list support, override functionality
 
 ### default-user-settings.seed.spec.ts
+
 **Test Suite**: `seedDefaultUserSettings`
 
 #### Test Cases:
+
 1. **`creates settings rows for users without configuration`**
    - **Behavior**: Tests default user settings seeding
    - **Validates**: Settings creation for users, default language assignment
@@ -398,9 +455,11 @@ The test suite contains **29 test files** covering the following domains:
 ## Performance Domain
 
 ### expense-indexes.spec.ts
+
 **Test Suite**: `Expense indexes`
 
 #### Test Cases:
+
 1. **`includes partial index for active expenses`**
    - **Behavior**: Tests database index performance optimization
    - **Validates**: Partial index existence, query plan optimization, index usage verification
@@ -414,6 +473,7 @@ The test suite contains **29 test files** covering the following domains:
 ## Summary Statistics
 
 ### Test Coverage by Type:
+
 - **Entity Validation**: 32 test cases
 - **Database Constraints**: 22 test cases
 - **Business Logic**: 8 test cases
@@ -422,6 +482,7 @@ The test suite contains **29 test files** covering the following domains:
 - **Performance**: 2 test cases
 
 ### Domains Covered:
+
 - **Identity Management**: User accounts, authentication, devices, settings
 - **Collaboration**: Multi-user couples, participants, groups
 - **Financial Ledger**: Expenses, categories, splits, calculations
@@ -429,6 +490,7 @@ The test suite contains **29 test files** covering the following domains:
 - **Database Features**: Soft deletes, triggers, JSONB, citext, check constraints
 
 ### Database Features Tested:
+
 - **PostgreSQL-specific**: citext, JSONB, check constraints, triggers, indexes
 - **SQLite compatibility**: In-memory testing, basic constraints
 - **TypeORM features**: Soft deletes, migrations, entity validation

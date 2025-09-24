@@ -3,9 +3,11 @@
 _Last updated: September 23, 2025_
 
 ## Purpose
+
 This guide is the companion to `docs/UPDATE_CHECKLIST.md`. Use it to understand which documents exist, what they capture, and when each one should change. When the checklist says “update docs,” consult this table to decide which files apply.
 
 ## How to Use
+
 1. Finish a task or session.
 2. Run the steps in `docs/UPDATE_CHECKLIST.md`.
 3. When you reach the documentation step, skim the tables below to confirm which files require updates (Always → Conditional → Never).
@@ -16,6 +18,7 @@ This guide is the companion to `docs/UPDATE_CHECKLIST.md`. Use it to understand 
 ## Document Catalogue & Update Triggers
 
 ### Always Update
+
 These files reflect current work and must change whenever their subject changes.
 | Document | Purpose | Trigger | Notes |
 |----------|---------|---------|-------|
@@ -23,6 +26,7 @@ These files reflect current work and must change whenever their subject changes.
 | `docs/CHANGELOG.md` | High-level log of shipped changes | Any user-facing or structural change | Keep entries concise and link to detailed logs. |
 
 ### Conditional Updates
+
 Update these when their trigger occurs.
 | Category | Document | Purpose | Trigger | Notes |
 |----------|----------|---------|---------|-------|
@@ -44,6 +48,7 @@ Update these when their trigger occurs.
 | AI Guidance | `docs/CLAUDE.md`, `docs/UPDATE_CHECKLIST.md`, `docs/DOCUMENT_STRUCTURE_GUIDE.md` | Working agreements for AI/human collaboration | Whenever process or expectations change | Update all three in tandem. |
 
 ### Never Modify (Archive Only)
+
 These documents capture historical truth. Create new siblings or archive entries instead of editing.
 | Document Type | Examples | Replacement Action |
 |---------------|----------|--------------------|
@@ -55,6 +60,7 @@ These documents capture historical truth. Create new siblings or archive entries
 ---
 
 ## Naming & Location Conventions
+
 - Planning files live under `docs/planning/` using the pattern shown above.
 - Testing docs sit beneath `docs/Testing/` and mirror the strategy → improvement plan → report hierarchy.
 - Historical files move into `docs/archive/` with a `_COMPLETED` or `_ARCHIVED_YYYY-MM-DD` suffix.
@@ -63,6 +69,7 @@ These documents capture historical truth. Create new siblings or archive entries
 ---
 
 ## Document Lifecycle Rules
+
 1. **Create** a new document only when no existing file fits (prefer updating current docs).
 2. **Archive** by moving to `docs/archive/` once a phase/task/plan is complete and adding `_COMPLETED` to the name.
 3. **Cross-reference** major updates in `docs/CHANGELOG.md` and `docs/FUNCTION_LOG.md` to keep the high-level index current.
@@ -71,7 +78,9 @@ These documents capture historical truth. Create new siblings or archive entries
 ---
 
 ## Checklist Pairing
+
 Whenever you edit this guide or the checklist:
+
 - Update both documents in the same PR/commit.
 - Note the change in `docs/CHANGELOG.md` under Documentation.
 - Add a reminder in the relevant session summary or task completion log so future you knows why the process shifted.

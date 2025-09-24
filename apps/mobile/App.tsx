@@ -1,17 +1,17 @@
-import "react-native-gesture-handler";
-import React from "react";
-import { NavigationContainer } from "@react-navigation/native";
-import { createStackNavigator } from "@react-navigation/stack";
-import { createBottomTabNavigator } from "@react-navigation/bottom-tabs";
+import 'react-native-gesture-handler';
+import React from 'react';
+import { NavigationContainer } from '@react-navigation/native';
+import { createStackNavigator } from '@react-navigation/stack';
+import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 
-import HomeScreen from "./src/screens/HomeScreen";
-import AddExpenseScreen from "./src/screens/AddExpenseScreen";
-import HistoryScreen from "./src/screens/HistoryScreen";
-import SettingsScreen from "./src/screens/SettingsScreen";
-import GroupDetailScreen from "./src/screens/GroupDetailScreen";
-import ExpenseInsightsScreen from "./src/screens/ExpenseInsightsScreen"; // Import ExpenseInsightsScreen
-import ManageCategoriesScreen from "./src/screens/ManageCategoriesScreen"; // Import ManageCategoriesScreen
-import { Expense } from "./src/types";
+import HomeScreen from './src/screens/HomeScreen';
+import AddExpenseScreen from './src/screens/AddExpenseScreen';
+import HistoryScreen from './src/screens/HistoryScreen';
+import SettingsScreen from './src/screens/SettingsScreen';
+import GroupDetailScreen from './src/screens/GroupDetailScreen';
+import ExpenseInsightsScreen from './src/screens/ExpenseInsightsScreen'; // Import ExpenseInsightsScreen
+import ManageCategoriesScreen from './src/screens/ManageCategoriesScreen'; // Import ManageCategoriesScreen
+import { Expense } from './src/types';
 
 // Define RootStackParamList
 export type RootStackParamList = {
@@ -19,7 +19,7 @@ export type RootStackParamList = {
   AddExpense: { expense?: Expense } | undefined;
   GroupDetail: { groupId: string };
   ExpenseInsights: {
-    contextType: "personal" | "group";
+    contextType: 'personal' | 'group';
     contextId: string;
     initialDate?: Date;
   };
@@ -33,16 +33,16 @@ function MainTabs() {
   return (
     <Tab.Navigator id={undefined}>
       <Tab.Screen
-        name="History"
+        name='History'
         component={HistoryScreen}
-        options={{ title: "Group" }}
+        options={{ title: 'Group' }}
       />
       <Tab.Screen
-        name="Home"
+        name='Home'
         component={HomeScreen}
-        options={{ title: "Expense" }}
+        options={{ title: 'Expense' }}
       />
-      <Tab.Screen name="Settings" component={SettingsScreen} />
+      <Tab.Screen name='Settings' component={SettingsScreen} />
     </Tab.Navigator>
   );
 }
@@ -52,24 +52,24 @@ export default function App() {
     <NavigationContainer>
       <Stack.Navigator id={undefined}>
         <Stack.Screen
-          name="Main"
+          name='Main'
           component={MainTabs}
           options={{ headerShown: false }}
         />
         <Stack.Screen
-          name="AddExpense"
+          name='AddExpense'
           component={AddExpenseScreen}
-          options={{ title: "Add/Edit Expense" }}
+          options={{ title: 'Add/Edit Expense' }}
         />
-        <Stack.Screen name="GroupDetail" component={GroupDetailScreen} />
+        <Stack.Screen name='GroupDetail' component={GroupDetailScreen} />
         <Stack.Screen
-          name="ExpenseInsights"
+          name='ExpenseInsights'
           component={ExpenseInsightsScreen}
         />
         <Stack.Screen
-          name="ManageCategoriesScreen"
+          name='ManageCategoriesScreen'
           component={ManageCategoriesScreen}
-          options={{ title: "Manage Categories" }}
+          options={{ title: 'Manage Categories' }}
         />
       </Stack.Navigator>
     </NavigationContainer>

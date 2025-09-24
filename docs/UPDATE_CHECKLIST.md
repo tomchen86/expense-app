@@ -3,9 +3,11 @@
 _Last updated: September 23, 2025_
 
 ## Purpose
+
 Follow this checklist at the end of every coding session or before committing. Each step calls out when it applies so you can keep momentum without running unnecessary commands.
 
 ## Session Flow
+
 1. Snapshot the workspace
 2. Run quality gates for any areas you touched
 3. Refresh documentation (always/triggered/never)
@@ -15,6 +17,7 @@ Follow this checklist at the end of every coding session or before committing. E
 ---
 
 ## 1. Workspace Snapshot (Always)
+
 - `git status` — confirm staged vs. unstaged changes
 - `git diff` & `git diff --staged` — skim for unintentional edits or secrets
 - `pnpm install --frozen-lockfile` — only if `package.json`, `pnpm-lock.yaml`, or workspace deps changed
@@ -22,32 +25,37 @@ Follow this checklist at the end of every coding session or before committing. E
 ---
 
 ## 2. Quality Gates (Run Per Touched Surface)
-| Surface | Run When | Commands | Notes |
-|---------|----------|----------|-------|
-| Mobile (`apps/mobile`) | Any mobile code, store, or hooks touched | `pnpm --filter mobile lint`<br>`pnpm --filter mobile typecheck`<br>`pnpm --filter mobile test` | Add `pnpm --filter mobile test:e2e` when flows change; do a device/simulator smoke test for major UI moves. |
-| API (`apps/api`) | Backend services, entities, DTOs, migrations touched | `pnpm --filter api lint`<br>`pnpm --filter api build` (typecheck)<br>`pnpm --filter api test` | Add `pnpm --filter api test:e2e` when routes/auth/database logic changes. Run pending migrations against test DB if schema updated. |
-| Web (`apps/web`) | Frontend components/routes/shared web utilities touched | `pnpm --filter web lint`<br>`pnpm --filter web typecheck`<br>`pnpm --filter web test` | Run `pnpm --filter web build` when touching routing/config/build output. Spot-check responsive states for UI work. |
-| Monorepo shared code | Packages, configs, tooling, git hooks touched | `pnpm lint --recursive`<br>`pnpm test --recursive` (if shared logic added) | Ensure Husky/pre-commit scripts still pass locally. |
+
+| Surface                | Run When                                                | Commands                                                                                       | Notes                                                                                                                               |
+| ---------------------- | ------------------------------------------------------- | ---------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| Mobile (`apps/mobile`) | Any mobile code, store, or hooks touched                | `pnpm --filter mobile lint`<br>`pnpm --filter mobile typecheck`<br>`pnpm --filter mobile test` | Add `pnpm --filter mobile test:e2e` when flows change; do a device/simulator smoke test for major UI moves.                         |
+| API (`apps/api`)       | Backend services, entities, DTOs, migrations touched    | `pnpm --filter api lint`<br>`pnpm --filter api build` (typecheck)<br>`pnpm --filter api test`  | Add `pnpm --filter api test:e2e` when routes/auth/database logic changes. Run pending migrations against test DB if schema updated. |
+| Web (`apps/web`)       | Frontend components/routes/shared web utilities touched | `pnpm --filter web lint`<br>`pnpm --filter web typecheck`<br>`pnpm --filter web test`          | Run `pnpm --filter web build` when touching routing/config/build output. Spot-check responsive states for UI work.                  |
+| Monorepo shared code   | Packages, configs, tooling, git hooks touched           | `pnpm lint --recursive`<br>`pnpm test --recursive` (if shared logic added)                     | Ensure Husky/pre-commit scripts still pass locally.                                                                                 |
 
 ---
 
 ## 3. Documentation Pass
+
 ### Always Update
+
 - `docs/FUNCTION_LOG.md` — adjust requirement statuses, tests, and priority buckets you touched.
 - `docs/CHANGELOG.md` — add one-line entries linking to detailed logs or PRs.
 
 ### Conditional Updates (apply when the trigger happened)
-| Document | Trigger | Quick Action |
-|----------|---------|--------------|
-| `docs/SESSION_SUMMARY_[YYYY-MM-DD].md` | You made strategic decisions or discoveries | Jot key insights, blockers, or next bets. |
-| `docs/TASK_[N].[N]_COMPLETION_LOG.md` | You worked on a tracked task | Log progress, subtasks finished, references to commits. |
-| `docs/Testing/TESTING_STRATEGY.md` / `docs/Testing/TESTING_IMPROVEMENT_PLAN.md` | Testing approach or coverage goals changed | Update scenarios, coverage targets, or new gaps. |
-| `docs/ARCHITECTURE.md` / `docs/ARCHITECTURE_DECISION_RECORDS.md` | Architecture or platform decision made | Record decision, rationale, and impact. |
-| `docs/RISK_ASSESSMENT.md` | New risks discovered or mitigated | Add entry with status/mitigation. |
-| `docs/planning/ROADMAP.md` & `docs/planning/PHASE_*` | Phase scope adjusted | Update milestones or archive completed plans. |
-| `.env.example` / deployment docs | Environment or deployment variables changed | Keep onboarding accurate. |
+
+| Document                                                                        | Trigger                                     | Quick Action                                            |
+| ------------------------------------------------------------------------------- | ------------------------------------------- | ------------------------------------------------------- |
+| `docs/SESSION_SUMMARY_[YYYY-MM-DD].md`                                          | You made strategic decisions or discoveries | Jot key insights, blockers, or next bets.               |
+| `docs/TASK_[N].[N]_COMPLETION_LOG.md`                                           | You worked on a tracked task                | Log progress, subtasks finished, references to commits. |
+| `docs/Testing/TESTING_STRATEGY.md` / `docs/Testing/TESTING_IMPROVEMENT_PLAN.md` | Testing approach or coverage goals changed  | Update scenarios, coverage targets, or new gaps.        |
+| `docs/ARCHITECTURE.md` / `docs/ARCHITECTURE_DECISION_RECORDS.md`                | Architecture or platform decision made      | Record decision, rationale, and impact.                 |
+| `docs/RISK_ASSESSMENT.md`                                                       | New risks discovered or mitigated           | Add entry with status/mitigation.                       |
+| `docs/planning/ROADMAP.md` & `docs/planning/PHASE_*`                            | Phase scope adjusted                        | Update milestones or archive completed plans.           |
+| `.env.example` / deployment docs                                                | Environment or deployment variables changed | Keep onboarding accurate.                               |
 
 ### Never Modify (Protect History)
+
 - Archived plans (`docs/archive/`)
 - Original task plans (`TASK_[N].[N]_..._PLAN.md`)
 - Closed ADRs and past session summaries
@@ -57,6 +65,7 @@ Refer to `docs/DOCUMENT_STRUCTURE_GUIDE.md` for fuller document ownership detail
 ---
 
 ## 4. Git & Release Readiness
+
 - Ensure staging area only contains intended files (`git add -p` can help).
 - Verify no secrets, API keys, or large binaries slipped into commits.
 - Write a concise, imperative commit message that matches project conventions.
@@ -66,6 +75,7 @@ Refer to `docs/DOCUMENT_STRUCTURE_GUIDE.md` for fuller document ownership detail
 ---
 
 ## 5. Situational Checks (Run When Relevant)
+
 - `pnpm --filter mobile expo start --clear` — only when Expo cache issues block testing.
 - `pnpm --filter api test:load` (or Artillery/k6 scripts) — for performance-sensitive backend changes.
 - `pnpm --filter web test:e2e` or Playwright runs — when you changed web journeys.
@@ -75,6 +85,7 @@ Refer to `docs/DOCUMENT_STRUCTURE_GUIDE.md` for fuller document ownership detail
 ---
 
 ## Quick Command Reference
+
 ```bash
 # Lint / type / test per workspace
 pnpm --filter mobile lint

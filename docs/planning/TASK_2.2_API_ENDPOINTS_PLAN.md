@@ -12,10 +12,12 @@ Implement complete RESTful API endpoints for all expense tracking functionality.
 ## Detailed Subtasks
 
 ### 2.2.1 User Management Endpoints
+
 **Duration**: 4-6 hours
 **Output**: User authentication and profile management
 
 #### User Controller (`/api/users`)
+
 ```typescript
 // GET /api/users/profile - Get current user profile
 // PUT /api/users/profile - Update user profile
@@ -26,6 +28,7 @@ Implement complete RESTful API endpoints for all expense tracking functionality.
 ```
 
 #### DTOs Required
+
 ```typescript
 interface UpdateUserProfileDto {
   username?: string;
@@ -46,10 +49,12 @@ interface UpdatePersistenceSettingsDto {
 ```
 
 ### 2.2.2 Couple Management Endpoints
+
 **Duration**: 3-4 hours
 **Output**: Couple relationship management
 
 #### Couple Controller (`/api/couples`)
+
 ```typescript
 // POST /api/couples - Create couple relationship (send invitation)
 // GET /api/couples/current - Get current user's couple info
@@ -59,6 +64,7 @@ interface UpdatePersistenceSettingsDto {
 ```
 
 #### DTOs Required
+
 ```typescript
 interface CreateCoupleDto {
   partner_username: string;
@@ -74,10 +80,12 @@ interface CoupleInvitationDto {
 ```
 
 ### 2.2.3 Category Management Endpoints
+
 **Duration**: 2-3 hours
 **Output**: Expense category CRUD operations
 
 #### Category Controller (`/api/categories`)
+
 ```typescript
 // GET /api/categories - List couple's categories
 // POST /api/categories - Create new category
@@ -87,6 +95,7 @@ interface CoupleInvitationDto {
 ```
 
 #### DTOs Required
+
 ```typescript
 interface CreateCategoryDto {
   name: string;
@@ -102,10 +111,12 @@ interface UpdateCategoryDto {
 ```
 
 ### 2.2.4 Expense Management Endpoints
+
 **Duration**: 6-8 hours
 **Output**: Core expense tracking functionality
 
 #### Expense Controller (`/api/expenses`)
+
 ```typescript
 // GET /api/expenses - List couple's expenses with pagination/filtering
 // POST /api/expenses - Create new expense
@@ -117,6 +128,7 @@ interface UpdateCategoryDto {
 ```
 
 #### Query Parameters for GET /api/expenses
+
 ```typescript
 interface ExpenseQueryDto {
   page?: number;
@@ -132,6 +144,7 @@ interface ExpenseQueryDto {
 ```
 
 #### DTOs Required
+
 ```typescript
 interface CreateExpenseDto {
   amount: number;
@@ -159,10 +172,12 @@ interface ExpenseStatisticsDto {
 ```
 
 ### 2.2.5 Analytics and Insights Endpoints
+
 **Duration**: 3-4 hours
 **Output**: Data analysis for mobile insights screen
 
 #### Analytics Controller (`/api/analytics`)
+
 ```typescript
 // GET /api/analytics/summary?period=month - Get expense summary
 // GET /api/analytics/categories?period=month - Category breakdown
@@ -171,6 +186,7 @@ interface ExpenseStatisticsDto {
 ```
 
 #### DTOs Required
+
 ```typescript
 interface AnalyticsSummaryDto {
   period: string;
@@ -190,10 +206,12 @@ interface CategoryBreakdownDto {
 ```
 
 ### 2.2.6 Device Sync & Persistence Endpoints
+
 **Duration**: 3 hours
 **Output**: APIs enabling dual persistence and device tracking
 
 #### Device Controller (`/api/devices`)
+
 ```typescript
 // POST /api/devices - Register device + persistence context
 // PUT /api/devices/:id/sync - Update sync heartbeat + snapshot hash
@@ -201,11 +219,13 @@ interface CategoryBreakdownDto {
 ```
 
 #### Persistence Considerations
+
 - `POST /api/devices` should accept local-only registrations to capture analytics without forcing sync.
 - `PUT /api/devices/:id/sync` stores last sync timestamps and errors for cloud mode.
 - Operations must be idempotent to support offline retries.
 
 #### DTOs Required
+
 ```typescript
 interface RegisterDeviceDto {
   device_uuid: string;
@@ -226,6 +246,7 @@ interface DeviceSyncUpdateDto {
 ## Implementation Architecture
 
 ### Service Layer Structure
+
 ```typescript
 // UserService - User profile and search functionality
 // CoupleService - Relationship management and invitations
@@ -237,6 +258,7 @@ interface DeviceSyncUpdateDto {
 ```
 
 ### Validation and Security
+
 - Input validation using class-validator decorators
 - Authorization guards ensuring users only access their couple's data
 - Rate limiting on expensive operations (analytics, search)
@@ -244,6 +266,7 @@ interface DeviceSyncUpdateDto {
 - Enforce persistence preference transitions (local → cloud) with additional confirmation and device context
 
 ### Error Handling
+
 ```typescript
 // Custom exception filters for:
 // - CoupleNotFound
@@ -256,6 +279,7 @@ interface DeviceSyncUpdateDto {
 ## API Response Standards
 
 ### Success Response Format
+
 ```typescript
 interface ApiResponse<T> {
   success: true;
@@ -268,6 +292,7 @@ interface ApiResponse<T> {
 ```
 
 ### Error Response Format
+
 ```typescript
 interface ApiError {
   success: false;
@@ -282,30 +307,35 @@ interface ApiError {
 ## Implementation Steps
 
 ### Step 1: Core Infrastructure
+
 1. Set up base controller structure
 2. Implement authentication guards
 3. Create common DTOs and interfaces
 4. Set up validation pipes
 
 ### Step 2: User and Couple Management
+
 1. Implement user profile endpoints
 2. Create couple relationship logic
 3. Add invitation system
 4. Test user flows
 
 ### Step 3: Category and Expense APIs
+
 1. Build category CRUD operations
 2. Implement expense management
 3. Add expense splitting logic
 4. Create analytics endpoints
 
 ### Step 4: Device & Persistence APIs
+
 1. Implement device registration and sync endpoints
 2. Wire persistence preference updates to `user_settings`
 3. Ensure local-only mode requests short-circuit cloud operations safely
 4. Add auditing logs for persistence transitions
 
 ### Step 5: Integration Testing
+
 1. Test all endpoint combinations
 2. Validate data consistency
 3. Performance test with realistic data
@@ -351,6 +381,7 @@ interface ApiError {
 ## Next Task Dependencies
 
 This task enables:
+
 - Task 2.3: Authentication Integration
 - Task 2.4: Mobile API Integration
 - Task 2.5: Offline Sync Implementation
