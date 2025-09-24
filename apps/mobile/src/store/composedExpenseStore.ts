@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import { subscribeWithSelector } from "zustand/middleware";
+import { subscribeWithSelector } from 'zustand/middleware';
 import { ExpenseState } from '../types';
 
 // Import individual stores
@@ -10,10 +10,10 @@ import { useExpenseStore as useExpenseFeatureStore } from './features/expenseSto
 import { useGroupStore } from './features/groupStore';
 
 // Helper to generate a simple unique ID
-const generateId = () => Math.random().toString(36).substr(2, 9);
+const _generateId = () => Math.random().toString(36).substr(2, 9);
 
 export const useExpenseStore = create(
-  subscribeWithSelector<ExpenseState>((set, get) => {
+  subscribeWithSelector<ExpenseState>((set, _get) => {
     // Subscribe to individual stores and sync their state
     const initialState = {
       expenses: useExpenseFeatureStore.getState().expenses,
@@ -116,8 +116,8 @@ export const useExpenseStore = create(
         const legacySettings = useUserStore.getState().userSettings;
 
         let groupCreatorParticipant;
-        let userId = user?.id || legacyUserId;
-        let displayName = user?.displayName || legacySettings?.name;
+        const userId = user?.id || legacyUserId;
+        const displayName = user?.displayName || legacySettings?.name;
 
         if (userId) {
           const existingParticipant = useParticipantStore

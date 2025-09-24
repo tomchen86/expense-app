@@ -1,26 +1,31 @@
-import React, { useMemo } from "react";
+import React, { useMemo } from 'react';
 import {
   View,
   Text,
   StyleSheet,
   FlatList,
   TouchableOpacity,
-} from "react-native";
-import { useNavigation } from "@react-navigation/native";
-import { StackNavigationProp } from "@react-navigation/stack";
-import { useExpenseStore } from "../store/expenseStore";
-import { Expense, Participant, ExpenseGroup, UserSettings } from "../types";
+} from 'react-native';
+import { useNavigation } from '@react-navigation/native';
+import { StackNavigationProp } from '@react-navigation/stack';
+import { useExpenseStore } from '../store/expenseStore';
+import {
+  Expense,
+  Participant as _Participant,
+  ExpenseGroup,
+  UserSettings as _UserSettings,
+} from '../types';
 
-import ExpenseListItem from "../components/ExpenseListItem";
-import FloatingActionButton from "../components/FloatingActionButton"; // Import FAB
-import { calculateUserShare } from "../utils/expenseCalculations";
+import ExpenseListItem from '../components/ExpenseListItem';
+import FloatingActionButton from '../components/FloatingActionButton'; // Import FAB
+import { calculateUserShare } from '../utils/expenseCalculations';
 
 type RootStackParamList = {
   Home: undefined;
   AddExpense: { expense?: Expense } | undefined;
   GroupDetail: { groupId: string }; // Added from App.tsx for consistency
   ExpenseInsights: {
-    contextType: "personal" | "group";
+    contextType: 'personal' | 'group';
     contextId: string;
     initialDate?: Date;
   };
@@ -31,7 +36,7 @@ const HomeScreen = () => {
 
   const expenses = useExpenseStore((state) => state.expenses);
   const participants = useExpenseStore((state) => state.participants);
-  const userSettings = useExpenseStore((state) => state.userSettings);
+  const _userSettings = useExpenseStore((state) => state.userSettings);
   const groups = useExpenseStore((state) => state.groups);
   const deleteExpense = useExpenseStore((state) => state.deleteExpense);
   const internalUserId = useExpenseStore((state) => state.internalUserId);
@@ -78,7 +83,7 @@ const HomeScreen = () => {
   }, [groups, internalUserId]);
 
   const handleEdit = (expense: Expense) => {
-    navigation.navigate("AddExpense", { expense });
+    navigation.navigate('AddExpense', { expense });
   };
 
   const handleDelete = (expenseId: string) => {
@@ -111,8 +116,8 @@ const HomeScreen = () => {
       <TouchableOpacity
         onPress={() => {
           if (internalUserId) {
-            navigation.navigate("ExpenseInsights", {
-              contextType: "personal",
+            navigation.navigate('ExpenseInsights', {
+              contextType: 'personal',
               contextId: internalUserId,
             });
           }
@@ -148,16 +153,16 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     padding: 20,
-    backgroundColor: "#f5f5f5",
+    backgroundColor: '#f5f5f5',
   },
   // addButton and addButtonText styles removed as the button is replaced by FAB
   totalExpensesContainer: {
-    backgroundColor: "#ffffff",
+    backgroundColor: '#ffffff',
     padding: 15,
     borderRadius: 8,
     marginBottom: 20,
-    alignItems: "center",
-    shadowColor: "#000",
+    alignItems: 'center',
+    shadowColor: '#000',
     shadowOffset: { width: 0, height: 1 },
     shadowOpacity: 0.2,
     shadowRadius: 1.41,
@@ -165,17 +170,17 @@ const styles = StyleSheet.create({
   },
   totalExpensesText: {
     fontSize: 18,
-    fontWeight: "bold",
-    color: "#333",
+    fontWeight: 'bold',
+    color: '#333',
   },
   list: {
-    width: "100%",
+    width: '100%',
   },
   noExpensesText: {
-    textAlign: "center",
+    textAlign: 'center',
     marginTop: 50,
     fontSize: 16,
-    color: "#6c757d",
+    color: '#6c757d',
   },
 });
 

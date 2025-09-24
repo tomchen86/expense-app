@@ -1,13 +1,13 @@
-import React from "react";
+import React from 'react';
 import {
   View,
   Text,
   TouchableOpacity,
   StyleSheet,
   Animated,
-} from "react-native";
-import { Swipeable } from "react-native-gesture-handler";
-import { Category } from "../../types";
+} from 'react-native';
+import { Swipeable } from 'react-native-gesture-handler';
+import { Category } from '../../types';
 
 interface CategoryListItemProps {
   category: Category;
@@ -29,7 +29,7 @@ const CategoryListItem: React.FC<CategoryListItemProps> = ({
     const trans = dragX.interpolate({
       inputRange: [-80, 0],
       outputRange: [0, 80],
-      extrapolate: "clamp",
+      extrapolate: 'clamp',
     });
 
     return (
@@ -77,12 +77,12 @@ const CategoryListItem: React.FC<CategoryListItemProps> = ({
 
 const styles = StyleSheet.create({
   itemContainer: {
-    flexDirection: "row",
-    alignItems: "center",
+    flexDirection: 'row',
+    alignItems: 'center',
     padding: 15,
-    backgroundColor: "white",
+    backgroundColor: 'white',
     borderBottomWidth: 1,
-    borderBottomColor: "#f0f0f0",
+    borderBottomColor: '#f0f0f0',
   },
   colorDot: {
     width: 20,
@@ -90,29 +90,29 @@ const styles = StyleSheet.create({
     borderRadius: 10,
     marginRight: 15,
     borderWidth: 1,
-    borderColor: "#ddd",
+    borderColor: '#ddd',
   },
   itemName: {
     fontSize: 16,
-    color: "#333",
+    color: '#333',
     flex: 1,
   },
   protectedLabel: {
     fontSize: 12,
-    color: "#666",
-    fontStyle: "italic",
+    color: '#666',
+    fontStyle: 'italic',
   },
   deleteButton: {
-    backgroundColor: "#FF3B30",
-    justifyContent: "center",
-    alignItems: "center",
+    backgroundColor: '#FF3B30',
+    justifyContent: 'center',
+    alignItems: 'center',
     width: 80,
-    height: "100%",
+    height: '100%',
   },
   deleteButtonText: {
-    color: "white",
+    color: 'white',
     fontSize: 14,
-    fontWeight: "600",
+    fontWeight: '600',
   },
 });
 

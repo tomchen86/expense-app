@@ -1,5 +1,5 @@
-import { useState, useMemo, useEffect } from "react";
-import { useExpenseStore } from "../store/expenseStore";
+import { useState, useMemo, useEffect as _useEffect } from 'react';
+import { useExpenseStore } from '../store/expenseStore';
 import {
   generateCategoryChartData,
   getRelevantExpenses,
@@ -9,11 +9,11 @@ import {
   getPreviousPeriod,
   getNextPeriod,
   ChartDataPoint,
-} from "../utils/calculations/insightCalculations";
-import { ExpenseGroup } from "../types";
+} from '../utils/calculations/insightCalculations';
+import { ExpenseGroup as _ExpenseGroup } from '../types';
 
 interface UseInsightsDataProps {
-  contextType: "personal" | "group";
+  contextType: 'personal' | 'group';
   contextId: string;
   initialDate?: Date;
 }
@@ -24,7 +24,7 @@ interface UseInsightsDataReturn {
   screenTitle: string;
 
   // Date/Period State
-  aggregation: "month" | "year";
+  aggregation: 'month' | 'year';
   selectedYear: number;
   selectedMonth: number;
   displayPeriodText: string;
@@ -36,7 +36,7 @@ interface UseInsightsDataReturn {
   monthNames: string[];
 
   // Actions
-  setAggregation: (aggregation: "month" | "year") => void;
+  setAggregation: (aggregation: 'month' | 'year') => void;
   handlePreviousPeriod: () => void;
   handleNextPeriod: () => void;
   setShowDatePickers: (show: boolean) => void;
@@ -56,7 +56,7 @@ export const useInsightsData = ({
   const appCategories = useExpenseStore((state) => state.categories);
 
   // State
-  const [aggregation, setAggregation] = useState<"month" | "year">("month");
+  const [aggregation, setAggregation] = useState<'month' | 'year'>('month');
   const [selectedYear, setSelectedYear] = useState<number>(
     initialDate ? initialDate.getFullYear() : new Date().getFullYear(),
   );
@@ -77,29 +77,29 @@ export const useInsightsData = ({
 
   const monthNames = useMemo(
     () => [
-      "January",
+      'January',
       'February',
       'March',
       'April',
       'May',
-      "June",
-      "July",
+      'June',
+      'July',
       'August',
       'September',
       'October',
       'November',
-      "December",
+      'December',
     ],
     [],
   );
 
   // Screen title
   const screenTitle = useMemo(() => {
-    if (contextType === "group") {
+    if (contextType === 'group') {
       const group = groups.find((g) => g.id === contextId);
-      return group ? `${group.name} Insights` : "Group Insights";
+      return group ? `${group.name} Insights` : 'Group Insights';
     }
-    return "Personal Expense Insights";
+    return 'Personal Expense Insights';
   }, [contextType, contextId, groups]);
 
   // Display period text

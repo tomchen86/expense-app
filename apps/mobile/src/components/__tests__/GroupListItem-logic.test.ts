@@ -273,7 +273,7 @@ describe('GroupListItem Logic', () => {
         const errors: string[] = [];
 
         if (!group.id) {
-          errors.push("Group ID is required");
+          errors.push('Group ID is required');
         }
         if (!group.name || group.name.trim().length === 0) {
           errors.push('Group name is required');
@@ -284,7 +284,7 @@ describe('GroupListItem Logic', () => {
           errors.push('Group must have at least one participant');
         }
         if (!group.createdAt) {
-          errors.push("Created date is required");
+          errors.push('Created date is required');
         }
 
         return {
@@ -358,7 +358,7 @@ describe('GroupListItem Logic', () => {
         const errors: string[] = [];
 
         if (!props.group) {
-          errors.push("group is required");
+          errors.push('group is required');
         }
         if (typeof props.totalAmount !== 'number') {
           errors.push('totalAmount must be a number');

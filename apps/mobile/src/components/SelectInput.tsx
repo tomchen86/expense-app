@@ -1,4 +1,4 @@
-import React from "react";
+import React from 'react';
 import {
   View,
   Text,
@@ -6,7 +6,7 @@ import {
   StyleSheet,
   ViewStyle,
   TextStyle,
-} from "react-native";
+} from 'react-native';
 
 interface SelectInputProps {
   label: string;
@@ -21,7 +21,7 @@ interface SelectInputProps {
 const SelectInput: React.FC<SelectInputProps> = ({
   label,
   selectedValue,
-  placeholder = "Select...",
+  placeholder = 'Select...',
   onPress,
   containerStyle,
   labelStyle,
@@ -56,25 +56,25 @@ const styles = StyleSheet.create({
   label: {
     fontSize: 16,
     marginBottom: 5,
-    color: "#333",
-    fontWeight: "500",
+    color: '#333',
+    fontWeight: '500',
   },
   touchable: {
     borderWidth: 1,
-    borderColor: "#ccc",
+    borderColor: '#ccc',
     borderRadius: 5,
     paddingHorizontal: 10,
     paddingVertical: 10, // Adjust padding for touchable area
-    backgroundColor: "#fff",
+    backgroundColor: '#fff',
     minHeight: 40, // Consistent height with FormInput
-    justifyContent: "center",
+    justifyContent: 'center',
   },
   valueText: {
     fontSize: 16,
-    color: "#000",
+    color: '#000',
   },
   placeholderText: {
-    color: "#999", // Lighter color for placeholder
+    color: '#999', // Lighter color for placeholder
   },
 });
 

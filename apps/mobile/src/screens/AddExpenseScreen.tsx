@@ -1,19 +1,19 @@
-import React from "react";
-import { View, StyleSheet, ScrollView, Button } from "react-native";
-import { RouteProp, useRoute } from "@react-navigation/native";
-import { Expense } from "../types";
-import { useExpenseForm } from "../hooks/useExpenseForm";
-import { useExpenseModals } from "../hooks/useExpenseModals";
-import { BasicInfoSection } from "../components/ExpenseForm/BasicInfoSection";
-import { GroupSection } from "../components/ExpenseForm/GroupSection";
-import { ExpenseModals } from "../components/ExpenseForm/ExpenseModals";
+import React from 'react';
+import { View, StyleSheet, ScrollView, Button } from 'react-native';
+import { RouteProp, useRoute } from '@react-navigation/native';
+import { Expense } from '../types';
+import { useExpenseForm } from '../hooks/useExpenseForm';
+import { useExpenseModals } from '../hooks/useExpenseModals';
+import { BasicInfoSection } from '../components/ExpenseForm/BasicInfoSection';
+import { GroupSection } from '../components/ExpenseForm/GroupSection';
+import { ExpenseModals } from '../components/ExpenseForm/ExpenseModals';
 
 type AddExpenseRouteParams = {
   AddExpense: { expense?: Expense };
 };
 
 const AddExpenseScreen = () => {
-  const route = useRoute<RouteProp<AddExpenseRouteParams, "AddExpense">>();
+  const route = useRoute<RouteProp<AddExpenseRouteParams, 'AddExpense'>>();
   const editingExpense = route.params?.expense;
 
   const {
@@ -52,7 +52,7 @@ const AddExpenseScreen = () => {
   });
 
   return (
-    <View style={{ flex: 1 }}>
+    <View style={styles.screen}>
       <ScrollView style={styles.container}>
         <BasicInfoSection
           title={formState.title}
@@ -60,10 +60,10 @@ const AddExpenseScreen = () => {
           category={formState.category}
           caption={formState.caption}
           date={formState.date}
-          onTitleChange={(value) => handleUpdateFormState("title", value)}
-          onAmountChange={(value) => handleUpdateFormState("amount", value)}
+          onTitleChange={(value) => handleUpdateFormState('title', value)}
+          onAmountChange={(value) => handleUpdateFormState('amount', value)}
           onCategoryPress={() => setShowCategoryModal(true)}
-          onCaptionChange={(value) => handleUpdateFormState("caption", value)}
+          onCaptionChange={(value) => handleUpdateFormState('caption', value)}
           onDateChange={onChangeDate}
         />
 
@@ -79,7 +79,7 @@ const AddExpenseScreen = () => {
 
         <View style={styles.buttonContainer}>
           <Button
-            title={isEditing ? "Update Expense" : "Add Expense"}
+            title={isEditing ? 'Update Expense' : 'Add Expense'}
             onPress={handleSubmit}
           />
         </View>
@@ -115,6 +115,9 @@ const AddExpenseScreen = () => {
 };
 
 const styles = StyleSheet.create({
+  screen: {
+    flex: 1,
+  },
   container: {
     flex: 1,
     padding: 20,

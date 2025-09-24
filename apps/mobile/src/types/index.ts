@@ -72,7 +72,7 @@ export interface ExpenseState {
   internalUserId: string | null;
 
   // Expense management
-  addExpense: (expense: Omit<Expense, "id">) => void;
+  addExpense: (expense: Omit<Expense, 'id'>) => void;
   updateExpense: (expense: Expense) => void;
   deleteExpense: (id: string) => void;
   getExpenseById: (id: string) => Expense | undefined;
@@ -102,7 +102,7 @@ export interface ExpenseState {
   removeParticipantFromGroup: (groupId: string, participantId: string) => void;
 
   // Category management
-  addCategory: (categoryData: Omit<Category, "id">) => Category; // Returns the new category with an ID
+  addCategory: (categoryData: Omit<Category, 'id'>) => Category; // Returns the new category with an ID
   updateCategory: (category: Category) => void;
   deleteCategory: (categoryId: string) => void;
   getCategoryByName: (name: string) => Category | undefined;

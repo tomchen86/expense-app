@@ -1,7 +1,7 @@
-import React from "react";
-import { View, Text, StyleSheet } from "react-native";
-import { PieChart } from "react-native-gifted-charts";
-import { ChartDataPoint } from "../../utils/calculations/insightCalculations";
+import React from 'react';
+import { View, Text, StyleSheet } from 'react-native';
+import { PieChart } from 'react-native-gifted-charts';
+import { ChartDataPoint } from '../../utils/calculations/insightCalculations';
 
 interface CategoryChartProps {
   data: ChartDataPoint[];
@@ -32,7 +32,7 @@ const CategoryChart: React.FC<CategoryChartProps> = ({
           donut
           focusOnPress
           showText
-          textColor="black"
+          textColor='black'
           textSize={10}
         />
       </View>
@@ -58,29 +58,29 @@ const CategoryChart: React.FC<CategoryChartProps> = ({
 
 const styles = StyleSheet.create({
   container: {
-    backgroundColor: "#fff",
+    backgroundColor: '#fff',
     borderRadius: 8,
     padding: 15,
     marginBottom: 20,
   },
   chartContainer: {
-    alignItems: "center",
-    justifyContent: "center",
+    alignItems: 'center',
+    justifyContent: 'center',
     minHeight: 200,
     marginBottom: 15,
   },
   noDataText: {
     fontSize: 16,
-    color: "#666",
-    textAlign: "center",
-    fontStyle: "italic",
+    color: '#666',
+    textAlign: 'center',
+    fontStyle: 'italic',
   },
   legendContainer: {
     marginTop: 10,
   },
   legendItem: {
-    flexDirection: "row",
-    alignItems: "center",
+    flexDirection: 'row',
+    alignItems: 'center',
     marginBottom: 8,
     paddingHorizontal: 5,
   },
@@ -92,7 +92,7 @@ const styles = StyleSheet.create({
   },
   legendText: {
     fontSize: 14,
-    color: "#333",
+    color: '#333',
     flex: 1,
   },
 });

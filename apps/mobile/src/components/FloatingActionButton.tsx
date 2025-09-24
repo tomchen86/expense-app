@@ -1,7 +1,7 @@
-import React from "react";
-import { TouchableOpacity, Text, StyleSheet, ViewStyle } from "react-native";
-import { useNavigation } from "@react-navigation/native";
-import { StackNavigationProp } from "@react-navigation/stack";
+import React from 'react';
+import { TouchableOpacity, Text, StyleSheet, ViewStyle } from 'react-native';
+import { useNavigation } from '@react-navigation/native';
+import { StackNavigationProp } from '@react-navigation/stack';
 
 // Define your RootStackParamList or import it
 // This should match the one used in your navigator
@@ -11,7 +11,7 @@ type RootStackParamList = {
   History: undefined;
   GroupDetail: { groupId: string };
   ExpenseInsights: {
-    contextType: "personal" | "group";
+    contextType: 'personal' | 'group';
     contextId: string;
     initialDate?: Date;
   };
@@ -19,7 +19,7 @@ type RootStackParamList = {
   // Add other screens here
 };
 
-type NavigationProp = StackNavigationProp<RootStackParamList, "AddExpense">;
+type NavigationProp = StackNavigationProp<RootStackParamList, 'AddExpense'>;
 
 interface FloatingActionButtonProps {
   onPress?: () => void; // Custom press action
@@ -38,7 +38,7 @@ const FloatingActionButton: React.FC<FloatingActionButtonProps> = ({
     if (onPress) {
       onPress();
     } else {
-      navigation.navigate("AddExpense", groupId ? { groupId } : undefined);
+      navigation.navigate('AddExpense', groupId ? { groupId } : undefined);
     }
   };
 
@@ -51,18 +51,18 @@ const FloatingActionButton: React.FC<FloatingActionButtonProps> = ({
 
 const styles = StyleSheet.create({
   fab: {
-    position: "absolute",
+    position: 'absolute',
     bottom: 25,
     // right: 25, // Removed to allow centering
-    alignSelf: "center", // Center horizontally
+    alignSelf: 'center', // Center horizontally
     width: 60,
     height: 60,
     borderRadius: 30,
-    backgroundColor: "#007bff", // Example color, adjust as needed
-    justifyContent: "center",
-    alignItems: "center",
+    backgroundColor: '#007bff', // Example color, adjust as needed
+    justifyContent: 'center',
+    alignItems: 'center',
     elevation: 8, // For Android shadow
-    shadowColor: "#000", // For iOS shadow
+    shadowColor: '#000', // For iOS shadow
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.3,
     shadowRadius: 4,
@@ -70,7 +70,7 @@ const styles = StyleSheet.create({
   },
   fabText: {
     fontSize: 30,
-    color: "white",
+    color: 'white',
     lineHeight: 30, // Adjust for vertical centering of '+'
   },
 });

@@ -1,4 +1,4 @@
-const testHelpers = require('./helpers/testHelpers');
+import testHelpers from './helpers/testHelpers.js';
 
 describe('Data Validation and Consistency', () => {
   beforeAll(async () => {
@@ -13,7 +13,11 @@ describe('Data Validation and Consistency', () => {
   describe('Cross-Screen Data Consistency', () => {
     it('should persist expense across app restart', async () => {
       // Create expense
-      await testHelpers.createExpense('Persistent Test', '50.00', 'Food & Dining');
+      await testHelpers.createExpense(
+        'Persistent Test',
+        '50.00',
+        'Food & Dining',
+      );
       await testHelpers.verifyExpenseInList('Persistent Test', '50.00');
 
       // Restart app
@@ -39,7 +43,10 @@ describe('Data Validation and Consistency', () => {
       await testHelpers.waitAndTap(by.text('Settings'));
       await testHelpers.waitAndTap(by.text('Manage Categories'));
       await testHelpers.waitAndTap(by.id('add-category-button'));
-      await testHelpers.waitAndType(by.id('category-name-input'), 'Custom Food');
+      await testHelpers.waitAndType(
+        by.id('category-name-input'),
+        'Custom Food',
+      );
       await testHelpers.waitAndTap(by.id('color-option-blue'));
       await testHelpers.waitAndTap(by.text('Save'));
 
@@ -54,7 +61,10 @@ describe('Data Validation and Consistency', () => {
 
       // Use new category
       await testHelpers.waitAndTap(by.text('Custom Food'));
-      await testHelpers.waitAndType(by.id('expense-title-input'), 'Custom Meal');
+      await testHelpers.waitAndType(
+        by.id('expense-title-input'),
+        'Custom Meal',
+      );
       await testHelpers.waitAndType(by.id('expense-amount-input'), '30.00');
       await testHelpers.waitAndTap(by.id('save-expense-button'));
 
@@ -95,7 +105,7 @@ describe('Data Validation and Consistency', () => {
       const expenses = [
         { title: 'Quick 1', amount: '10.00' },
         { title: 'Quick 2', amount: '20.00' },
-        { title: 'Quick 3', amount: '30.00' }
+        { title: 'Quick 3', amount: '30.00' },
       ];
 
       for (const expense of expenses) {
@@ -121,17 +131,26 @@ describe('Data Validation and Consistency', () => {
         { input: '10.5', expected: '10.50' },
         { input: '10.99', expected: '10.99' },
         { input: '10.999', expected: '10.99' }, // Should round to 2 decimals
-        { input: '0.01', expected: '0.01' }
+        { input: '0.01', expected: '0.01' },
       ];
 
       for (const test of amountTests) {
         await testHelpers.waitAndTap(by.id('add-expense-fab'));
-        await testHelpers.waitAndType(by.id('expense-title-input'), `Amount Test ${test.input}`);
-        await testHelpers.waitAndType(by.id('expense-amount-input'), test.input);
+        await testHelpers.waitAndType(
+          by.id('expense-title-input'),
+          `Amount Test ${test.input}`,
+        );
+        await testHelpers.waitAndType(
+          by.id('expense-amount-input'),
+          test.input,
+        );
         await testHelpers.waitAndTap(by.id('save-expense-button'));
 
         // Verify amount is displayed correctly
-        await testHelpers.verifyExpenseInList(`Amount Test ${test.input}`, test.expected);
+        await testHelpers.verifyExpenseInList(
+          `Amount Test ${test.input}`,
+          test.expected,
+        );
       }
     });
 
@@ -165,7 +184,7 @@ describe('Data Validation and Consistency', () => {
         'Test & More',
         'Quote "Test"',
         "Apostrophe's Test",
-        'Emoji 🎉 Test'
+        'Emoji 🎉 Test',
       ];
 
       for (const title of specialTitles) {
@@ -192,10 +211,15 @@ describe('Data Validation and Consistency', () => {
       await testHelpers.waitAndTap(by.text('Save'));
 
       // Should show validation error or truncate
-      const visible = await testHelpers.isVisible(by.text('Category name must be 50 characters or less'));
+      const visible = await testHelpers.isVisible(
+        by.text('Category name must be 50 characters or less'),
+      );
       if (visible) {
         // Fix length and try again
-        await testHelpers.waitAndReplace(by.id('category-name-input'), 'Valid Length Name');
+        await testHelpers.waitAndReplace(
+          by.id('category-name-input'),
+          'Valid Length Name',
+        );
         await testHelpers.waitAndTap(by.text('Save'));
       }
 
@@ -275,7 +299,11 @@ describe('Data Validation and Consistency', () => {
 
     it('should handle missing category gracefully', async () => {
       // Create expense with existing category
-      await testHelpers.createExpense('Category Test', '20.00', 'Food & Dining');
+      await testHelpers.createExpense(
+        'Category Test',
+        '20.00',
+        'Food & Dining',
+      );
 
       // If category management allows deletion of categories with expenses
       await testHelpers.waitAndTap(by.text('Settings'));
@@ -291,7 +319,9 @@ describe('Data Validation and Consistency', () => {
         // 2. Move expenses to "Other" category
         // 3. Show confirmation dialog
 
-        const warningVisible = await testHelpers.isVisible(by.text('Cannot delete category with expenses'));
+        const warningVisible = await testHelpers.isVisible(
+          by.text('Cannot delete category with expenses'),
+        );
         if (warningVisible) {
           // Good - prevented deletion
           await testHelpers.waitAndTap(by.text('OK'));
@@ -361,7 +391,9 @@ describe('Data Validation and Consistency', () => {
       // Insights should show empty state
       await testHelpers.waitAndTap(by.text('Home'));
       await testHelpers.waitAndTap(by.id('total-share-button'));
-      await testHelpers.expectVisible(by.text('No expense data for the selected period.'));
+      await testHelpers.expectVisible(
+        by.text('No expense data for the selected period.'),
+      );
     });
 
     it('should handle date boundary conditions', async () => {

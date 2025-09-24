@@ -1,4 +1,4 @@
-import { Expense, ExpenseCategory, Category } from "../../types";
+import { Expense, ExpenseCategory, Category } from '../../types';
 
 export interface ChartDataPoint {
   value: number;
@@ -37,7 +37,7 @@ export const calculateCategoryTotals = (
 export const generateCategoryChartData = (
   expenses: Expense[],
   categories: Category[],
-  defaultColor: string = "#808080",
+  defaultColor: string = '#808080',
 ): ChartDataPoint[] => {
   if (expenses.length === 0) {
     return [];
@@ -69,14 +69,14 @@ export const generateCategoryChartData = (
  */
 export const filterExpensesByDate = (
   expenses: Expense[],
-  aggregation: "month" | "year",
+  aggregation: 'month' | 'year',
   selectedYear: number,
   selectedMonth?: number,
 ): Expense[] => {
   return expenses.filter((expense) => {
     const expenseDate = new Date(expense.date);
 
-    if (aggregation === "year") {
+    if (aggregation === 'year') {
       return expenseDate.getFullYear() === selectedYear;
     } else {
       // month aggregation
@@ -93,14 +93,14 @@ export const filterExpensesByDate = (
  */
 export const getRelevantExpenses = (
   allExpenses: Expense[],
-  contextType: "personal" | "group",
+  contextType: 'personal' | 'group',
   contextId: string,
   internalUserId: string | null,
 ): Expense[] => {
-  if (contextType === "personal" && internalUserId) {
+  if (contextType === 'personal' && internalUserId) {
     // For personal insights, show all expenses paid by the user
     return allExpenses.filter((expense) => expense.paidBy === internalUserId);
-  } else if (contextType === "group") {
+  } else if (contextType === 'group') {
     return allExpenses.filter((expense) => expense.groupId === contextId);
   }
 
@@ -113,13 +113,13 @@ export const getRelevantExpenses = (
 export const isNextPeriodDisabled = (
   selectedYear: number,
   selectedMonth: number,
-  aggregation: "month" | "year",
+  aggregation: 'month' | 'year',
 ): boolean => {
   const now = new Date();
   const currentYear = now.getFullYear();
   const currentMonth = now.getMonth();
 
-  if (aggregation === "month") {
+  if (aggregation === 'month') {
     return (
       selectedYear > currentYear ||
       (selectedYear === currentYear && selectedMonth >= currentMonth)
@@ -135,10 +135,10 @@ export const isNextPeriodDisabled = (
 export const getDisplayPeriodText = (
   selectedYear: number,
   selectedMonth: number,
-  aggregation: "month" | "year",
+  aggregation: 'month' | 'year',
   monthNames: string[],
 ): string => {
-  if (aggregation === "month") {
+  if (aggregation === 'month') {
     return `${monthNames[selectedMonth]} ${selectedYear}`;
   }
   return selectedYear.toString();
@@ -150,9 +150,9 @@ export const getDisplayPeriodText = (
 export const getPreviousPeriod = (
   selectedYear: number,
   selectedMonth: number,
-  aggregation: "month" | "year",
+  aggregation: 'month' | 'year',
 ): { year: number; month: number } => {
-  if (aggregation === "month") {
+  if (aggregation === 'month') {
     let newMonth = selectedMonth - 1;
     let newYear = selectedYear;
 
@@ -173,13 +173,13 @@ export const getPreviousPeriod = (
 export const getNextPeriod = (
   selectedYear: number,
   selectedMonth: number,
-  aggregation: "month" | "year",
+  aggregation: 'month' | 'year',
 ): { year: number; month: number } | null => {
   const now = new Date();
   const currentYear = now.getFullYear();
   const currentMonth = now.getMonth();
 
-  if (aggregation === "month") {
+  if (aggregation === 'month') {
     let newMonth = selectedMonth + 1;
     let newYear = selectedYear;
 

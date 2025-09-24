@@ -1,6 +1,6 @@
-import { useParticipantStore } from "../features/participantStore";
+import { useParticipantStore } from '../features/participantStore';
 
-describe("ParticipantStore", () => {
+describe('ParticipantStore', () => {
   beforeEach(() => {
     useParticipantStore.setState({ participants: [] });
   });
@@ -9,38 +9,38 @@ describe("ParticipantStore", () => {
     jest.restoreAllMocks();
   });
 
-  it("adds a participant and returns the generated identifier", () => {
+  it('adds a participant and returns the generated identifier', () => {
     const { addParticipant } = useParticipantStore.getState();
 
-    const id = addParticipant("Alex");
+    const id = addParticipant('Alex');
 
     expect(id).toBeTruthy();
     expect(useParticipantStore.getState().participants).toContainEqual({
       id,
-      name: "Alex",
+      name: 'Alex',
     });
   });
 
-  it("updates the display name when adding with an existing override identifier", () => {
+  it('updates the display name when adding with an existing override identifier', () => {
     const { addParticipant } = useParticipantStore.getState();
 
-    addParticipant("Original", "participant-1");
-    addParticipant("Updated", "participant-1");
+    addParticipant('Original', 'participant-1');
+    addParticipant('Updated', 'participant-1');
 
     expect(useParticipantStore.getState().participants).toContainEqual({
-      id: "participant-1",
-      name: "Updated",
+      id: 'participant-1',
+      name: 'Updated',
     });
   });
 
-  it("prevents duplicate names and logs a warning", () => {
+  it('prevents duplicate names and logs a warning', () => {
     const warnSpy = jest
-      .spyOn(console, "warn")
+      .spyOn(console, 'warn')
       .mockImplementation(() => undefined);
     const { addParticipant } = useParticipantStore.getState();
 
-    addParticipant("Taylor");
-    addParticipant("Taylor");
+    addParticipant('Taylor');
+    addParticipant('Taylor');
 
     expect(useParticipantStore.getState().participants).toHaveLength(1);
     expect(warnSpy).toHaveBeenCalledWith(
@@ -48,43 +48,44 @@ describe("ParticipantStore", () => {
     );
   });
 
-  it("syncs the signed-in user as a participant and updates their name", () => {
+  it('syncs the signed-in user as a participant and updates their name', () => {
     const { syncUserAsParticipant } = useParticipantStore.getState();
 
-    syncUserAsParticipant("user-1", { name: "Initial" });
+    syncUserAsParticipant('user-1', { name: 'Initial' });
     expect(useParticipantStore.getState().participants).toContainEqual({
-      id: "user-1",
-      name: "Initial",
+      id: 'user-1',
+      name: 'Initial',
     });
 
-    syncUserAsParticipant("user-1", { name: "Updated" });
+    syncUserAsParticipant('user-1', { name: 'Updated' });
     expect(useParticipantStore.getState().participants).toContainEqual({
-      id: "user-1",
-      name: "Updated",
+      id: 'user-1',
+      name: 'Updated',
     });
   });
 
-  it("deletes a participant by identifier", () => {
-    const { addParticipant, deleteParticipant } = useParticipantStore.getState();
+  it('deletes a participant by identifier', () => {
+    const { addParticipant, deleteParticipant } =
+      useParticipantStore.getState();
 
-    const id = addParticipant("Casey");
+    const id = addParticipant('Casey');
     deleteParticipant(id);
 
     expect(useParticipantStore.getState().participants).not.toContainEqual({
       id,
-      name: "Casey",
+      name: 'Casey',
     });
   });
 
-  it("retrieves participants and syncs when details missing", () => {
+  it('retrieves participants and syncs when details missing', () => {
     const store = useParticipantStore.getState();
-    const identifier = store.addParticipant("Jordan");
+    const identifier = store.addParticipant('Jordan');
     expect(store.getParticipantById(identifier)).toEqual({
       id: identifier,
-      name: "Jordan",
+      name: 'Jordan',
     });
 
-    store.syncUserAsParticipant("user-sync", null);
-    expect(store.getParticipantById("user-sync")).toBeUndefined();
+    store.syncUserAsParticipant('user-sync', null);
+    expect(store.getParticipantById('user-sync')).toBeUndefined();
   });
 });

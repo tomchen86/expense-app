@@ -3,13 +3,19 @@ import { useExpenseStore } from '../../store/composedExpenseStore';
 import { validExpense, validGroup, mockUser } from '../../__tests__/fixtures';
 
 describe('AddExpenseScreen Integration', () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     // Reset individual stores first
-    const { useExpenseStore: useExpenseFeatureStore } = require('../../store/features/expenseStore');
-    const { useGroupStore } = require('../../store/features/groupStore');
-    const { useParticipantStore } = require('../../store/features/participantStore');
-    const { useCategoryStore } = require('../../store/features/categoryStore');
-    const { useUserStore } = require('../../store/features/userStore');
+    const { useExpenseStore: useExpenseFeatureStore } = await import(
+      '../../store/features/expenseStore'
+    );
+    const { useGroupStore } = await import('../../store/features/groupStore');
+    const { useParticipantStore } = await import(
+      '../../store/features/participantStore'
+    );
+    const { useCategoryStore } = await import(
+      '../../store/features/categoryStore'
+    );
+    const { useUserStore } = await import('../../store/features/userStore');
 
     // Reset individual stores
     useExpenseFeatureStore.setState({ expenses: [] });

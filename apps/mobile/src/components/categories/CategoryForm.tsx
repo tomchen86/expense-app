@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect } from 'react';
 import {
   View,
   Text,
@@ -6,9 +6,9 @@ import {
   TouchableOpacity,
   StyleSheet,
   Modal,
-} from "react-native";
-import ColorPicker, { DEFAULT_COLORS } from "./ColorPicker";
-import { Category } from "../../types";
+} from 'react-native';
+import ColorPicker, { DEFAULT_COLORS } from './ColorPicker';
+import { Category } from '../../types';
 
 interface CategoryFormProps {
   visible: boolean;
@@ -25,7 +25,7 @@ const CategoryForm: React.FC<CategoryFormProps> = ({
   editingCategory,
   title,
 }) => {
-  const [categoryName, setCategoryName] = useState("");
+  const [categoryName, setCategoryName] = useState('');
   const [selectedColor, setSelectedColor] = useState(DEFAULT_COLORS[0]);
 
   useEffect(() => {
@@ -33,7 +33,7 @@ const CategoryForm: React.FC<CategoryFormProps> = ({
       setCategoryName(editingCategory.name);
       setSelectedColor(editingCategory.color);
     } else {
-      setCategoryName("");
+      setCategoryName('');
       setSelectedColor(DEFAULT_COLORS[0]);
     }
   }, [editingCategory, visible]);
@@ -49,16 +49,16 @@ const CategoryForm: React.FC<CategoryFormProps> = ({
   };
 
   const handleClose = () => {
-    setCategoryName("");
+    setCategoryName('');
     setSelectedColor(DEFAULT_COLORS[0]);
     onClose();
   };
 
-  const modalTitle = title || `${editingCategory ? "Edit" : "Add"} Category`;
+  const modalTitle = title || `${editingCategory ? 'Edit' : 'Add'} Category`;
 
   return (
     <Modal
-      animationType="slide"
+      animationType='slide'
       transparent={true}
       visible={visible}
       onRequestClose={handleClose}
@@ -69,7 +69,7 @@ const CategoryForm: React.FC<CategoryFormProps> = ({
 
           <TextInput
             style={styles.input}
-            placeholder="Category Name"
+            placeholder='Category Name'
             value={categoryName}
             onChangeText={setCategoryName}
             autoFocus
@@ -117,61 +117,61 @@ const CategoryForm: React.FC<CategoryFormProps> = ({
 const styles = StyleSheet.create({
   modalOverlay: {
     flex: 1,
-    justifyContent: "center",
-    alignItems: "center",
-    backgroundColor: "rgba(0, 0, 0, 0.5)",
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
   },
   modalContent: {
-    backgroundColor: "white",
+    backgroundColor: 'white',
     padding: 20,
     borderRadius: 15,
-    width: "90%",
+    width: '90%',
     maxWidth: 400,
-    maxHeight: "80%",
+    maxHeight: '80%',
   },
   modalTitle: {
     fontSize: 20,
-    fontWeight: "bold",
-    textAlign: "center",
+    fontWeight: 'bold',
+    textAlign: 'center',
     marginBottom: 20,
-    color: "#333",
+    color: '#333',
   },
   input: {
     borderWidth: 1,
-    borderColor: "#ddd",
+    borderColor: '#ddd',
     padding: 15,
     borderRadius: 8,
     fontSize: 16,
     marginBottom: 10,
-    backgroundColor: "#f9f9f9",
+    backgroundColor: '#f9f9f9',
   },
   modalActions: {
-    flexDirection: "row",
-    justifyContent: "space-around",
+    flexDirection: 'row',
+    justifyContent: 'space-around',
     marginTop: 20,
   },
   modalButton: {
     padding: 15,
     borderRadius: 8,
     minWidth: 100,
-    alignItems: "center",
+    alignItems: 'center',
   },
   cancelButton: {
-    backgroundColor: "#6c757d",
+    backgroundColor: '#6c757d',
   },
   saveButton: {
-    backgroundColor: "#007bff",
+    backgroundColor: '#007bff',
   },
   disabledButton: {
-    backgroundColor: "#ccc",
+    backgroundColor: '#ccc',
   },
   modalButtonText: {
-    color: "white",
+    color: 'white',
     fontSize: 16,
-    fontWeight: "600",
+    fontWeight: '600',
   },
   disabledButtonText: {
-    color: "#999",
+    color: '#999',
   },
 });
 

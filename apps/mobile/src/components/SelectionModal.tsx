@@ -1,4 +1,4 @@
-import React from "react";
+import React from 'react';
 import {
   Modal,
   View,
@@ -6,9 +6,8 @@ import {
   FlatList,
   TouchableOpacity,
   StyleSheet,
-  Button,
   SafeAreaView,
-} from "react-native";
+} from 'react-native';
 
 interface SelectionModalProps<T> {
   visible: boolean;
@@ -48,7 +47,7 @@ function SelectionModal<T>({
     <Modal
       visible={visible}
       transparent
-      animationType="slide"
+      animationType='slide'
       onRequestClose={onClose}
     >
       <SafeAreaView style={styles.safeArea}>
@@ -82,7 +81,7 @@ function SelectionModal<T>({
               )}
               <TouchableOpacity style={styles.closeButton} onPress={onClose}>
                 <Text style={styles.buttonText}>
-                  {multiSelect ? "Done" : "Cancel"}
+                  {multiSelect ? 'Done' : 'Cancel'}
                 </Text>
               </TouchableOpacity>
             </View>
@@ -96,20 +95,20 @@ function SelectionModal<T>({
 const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
-    justifyContent: "flex-end", // Position modal at the bottom
+    justifyContent: 'flex-end', // Position modal at the bottom
   },
   modalContainer: {
     flex: 1, // Take full screen height
-    justifyContent: "flex-end",
-    backgroundColor: "rgba(0, 0, 0, 0.5)", // Dim background
+    justifyContent: 'flex-end',
+    backgroundColor: 'rgba(0, 0, 0, 0.5)', // Dim background
   },
   modalContent: {
-    backgroundColor: "white",
+    backgroundColor: 'white',
     borderTopLeftRadius: 15,
     borderTopRightRadius: 15,
     padding: 20,
-    maxHeight: "70%", // Limit modal height
-    shadowColor: "#000",
+    maxHeight: '70%', // Limit modal height
+    shadowColor: '#000',
     shadowOffset: { width: 0, height: -2 },
     shadowOpacity: 0.25,
     shadowRadius: 4,
@@ -117,9 +116,9 @@ const styles = StyleSheet.create({
   },
   modalTitle: {
     fontSize: 20,
-    fontWeight: "bold",
+    fontWeight: 'bold',
     marginBottom: 20,
-    textAlign: "center",
+    textAlign: 'center',
   },
   list: {
     marginBottom: 15,
@@ -128,36 +127,36 @@ const styles = StyleSheet.create({
     paddingVertical: 15,
     paddingHorizontal: 10,
     borderBottomWidth: 1,
-    borderBottomColor: "#eee",
+    borderBottomColor: '#eee',
   },
   selectedItem: {
-    backgroundColor: "#e3f2fd", // Light blue for selected item
+    backgroundColor: '#e3f2fd', // Light blue for selected item
   },
   buttonContainer: {
-    flexDirection: "row",
-    justifyContent: "space-between", // Space out buttons
+    flexDirection: 'row',
+    justifyContent: 'space-between', // Space out buttons
     marginTop: 10,
   },
   closeButton: {
     flex: 1, // Make buttons take equal width if needed
-    backgroundColor: "#007bff",
+    backgroundColor: '#007bff',
     padding: 12,
     borderRadius: 8,
-    alignItems: "center",
+    alignItems: 'center',
     marginLeft: 5, // Add space if clear button exists
   },
   clearButton: {
     flex: 1,
-    backgroundColor: "#6c757d", // Grey for clear/cancel
+    backgroundColor: '#6c757d', // Grey for clear/cancel
     padding: 12,
     borderRadius: 8,
-    alignItems: "center",
+    alignItems: 'center',
     marginRight: 5,
   },
   buttonText: {
-    color: "#fff",
+    color: '#fff',
     fontSize: 16,
-    fontWeight: "500",
+    fontWeight: '500',
   },
 });
 

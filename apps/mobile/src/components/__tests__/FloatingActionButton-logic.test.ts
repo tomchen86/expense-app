@@ -35,7 +35,7 @@ describe('FloatingActionButton Logic', () => {
           props.onPress();
         } else {
           navigation.navigate(
-            "AddExpense",
+            'AddExpense',
             props.groupId ? { groupId: props.groupId } : undefined,
           );
         }
@@ -45,7 +45,7 @@ describe('FloatingActionButton Logic', () => {
       handlePress(props, mockNavigation);
 
       expect(mockNavigation.navigate).toHaveBeenCalledWith(
-        "AddExpense",
+        'AddExpense',
         undefined,
       );
     });
@@ -61,7 +61,7 @@ describe('FloatingActionButton Logic', () => {
           props.onPress();
         } else {
           navigation.navigate(
-            "AddExpense",
+            'AddExpense',
             props.groupId ? { groupId: props.groupId } : undefined,
           );
         }
@@ -70,7 +70,7 @@ describe('FloatingActionButton Logic', () => {
       const props: FloatingActionButtonProps = { groupId: 'group-123' };
       handlePress(props, mockNavigation);
 
-      expect(mockNavigation.navigate).toHaveBeenCalledWith("AddExpense", {
+      expect(mockNavigation.navigate).toHaveBeenCalledWith('AddExpense', {
         groupId: 'group-123',
       });
     });
@@ -87,7 +87,7 @@ describe('FloatingActionButton Logic', () => {
           props.onPress();
         } else {
           navigation.navigate(
-            "AddExpense",
+            'AddExpense',
             props.groupId ? { groupId: props.groupId } : undefined,
           );
         }
@@ -112,7 +112,7 @@ describe('FloatingActionButton Logic', () => {
           props.onPress();
         } else {
           navigation.navigate(
-            "AddExpense",
+            'AddExpense',
             props.groupId ? { groupId: props.groupId } : undefined,
           );
         }

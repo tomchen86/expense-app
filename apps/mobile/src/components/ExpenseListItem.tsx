@@ -1,6 +1,6 @@
-import React from "react";
-import { View, Text, TouchableOpacity, StyleSheet, Alert } from "react-native";
-import { Expense, ExpenseGroup, Participant } from "../types"; // Import necessary types
+import React from 'react';
+import { View, Text, TouchableOpacity, StyleSheet, Alert } from 'react-native';
+import { Expense, ExpenseGroup, Participant } from '../types'; // Import necessary types
 
 interface ExpenseListItemProps {
   item: Expense;
@@ -27,14 +27,14 @@ const ExpenseListItem: React.FC<ExpenseListItemProps> = ({
 
   const handleDeletePress = () => {
     Alert.alert(
-      "Delete Expense",
-      "Are you sure you want to delete this expense?",
+      'Delete Expense',
+      'Are you sure you want to delete this expense?',
       [
-        { text: "Cancel", style: "cancel" },
+        { text: 'Cancel', style: 'cancel' },
         {
-          text: "Delete",
+          text: 'Delete',
           onPress: () => onDelete(item.id),
-          style: "destructive",
+          style: 'destructive',
         },
       ],
     );
@@ -92,11 +92,11 @@ const ExpenseListItem: React.FC<ExpenseListItemProps> = ({
 // Styles copied and adapted from HomeScreen.tsx
 const styles = StyleSheet.create({
   expenseItem: {
-    backgroundColor: "#ffffff",
+    backgroundColor: '#ffffff',
     padding: 15,
     borderRadius: 8,
     marginBottom: 10,
-    shadowColor: "#000",
+    shadowColor: '#000',
     shadowOffset: { width: 0, height: 1 },
     shadowOpacity: 0.2,
     shadowRadius: 1.41,
@@ -110,87 +110,87 @@ const styles = StyleSheet.create({
     // marginRight: 10, // Add margin if actions are beside content
   },
   expenseMain: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
     marginBottom: 5,
   },
   expenseTitle: {
     fontSize: 18,
-    fontWeight: "bold",
+    fontWeight: 'bold',
     // flexShrink: 1, // Allow title to shrink if too long
   },
   expenseAmount: {
     fontSize: 16,
-    color: "#28a745", // Green for amount
-    fontWeight: "500",
+    color: '#28a745', // Green for amount
+    fontWeight: '500',
   },
   expenseDetails: {
     // No changes needed here for now
   },
   expenseMetadata: {
-    flexDirection: "row",
-    alignItems: "center",
+    flexDirection: 'row',
+    alignItems: 'center',
     gap: 8,
     marginTop: 4, // Add some space above metadata
   },
   expenseCategory: {
     fontSize: 14,
-    color: "#666",
+    color: '#666',
   },
   groupTag: {
-    backgroundColor: "#e3f2fd", // Light blue background
+    backgroundColor: '#e3f2fd', // Light blue background
     paddingHorizontal: 8,
     paddingVertical: 2,
     borderRadius: 12,
   },
   groupTagText: {
-    color: "#1976d2", // Blue text
+    color: '#1976d2', // Blue text
     fontSize: 12,
   },
   expenseDate: {
     fontSize: 14,
-    color: "#6c757d",
+    color: '#6c757d',
     marginTop: 4,
   },
   expenseCaption: {
     fontSize: 14,
-    color: "#666",
-    fontStyle: "italic",
+    color: '#666',
+    fontStyle: 'italic',
     marginTop: 4,
   },
   paidByText: {
     fontSize: 13,
-    color: "#555",
+    color: '#555',
     marginTop: 4,
   },
   actionButtons: {
-    flexDirection: "row",
-    justifyContent: "flex-end", // Align buttons to the right
+    flexDirection: 'row',
+    justifyContent: 'flex-end', // Align buttons to the right
     marginTop: 10, // Space between content and buttons
     gap: 10, // Space between buttons
   },
   editButton: {
     paddingHorizontal: 12,
     paddingVertical: 6,
-    backgroundColor: "#007bff", // Blue for edit
+    backgroundColor: '#007bff', // Blue for edit
     borderRadius: 4,
   },
   editButtonText: {
-    color: "#fff",
+    color: '#fff',
     fontSize: 14,
-    fontWeight: "500",
+    fontWeight: '500',
   },
   deleteButton: {
     paddingHorizontal: 12,
     paddingVertical: 6,
-    backgroundColor: "#dc3545", // Red for delete
+    backgroundColor: '#dc3545', // Red for delete
     borderRadius: 4,
   },
   deleteButtonText: {
-    color: "#fff",
+    color: '#fff',
     fontSize: 14,
-    fontWeight: "500",
+    fontWeight: '500',
   },
 });
 

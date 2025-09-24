@@ -1,4 +1,4 @@
-import React from "react";
+import React from 'react';
 import {
   View,
   Text,
@@ -6,7 +6,7 @@ import {
   StyleSheet,
   TextInputProps,
   KeyboardTypeOptions,
-} from "react-native";
+} from 'react-native';
 
 interface FormInputProps extends TextInputProps {
   label: string;
@@ -24,7 +24,7 @@ const FormInput: React.FC<FormInputProps> = ({
   value,
   onChangeText,
   placeholder,
-  keyboardType = "default",
+  keyboardType = 'default',
   multiline = false,
   numberOfLines,
   ...rest // Pass down any other TextInput props
@@ -40,7 +40,7 @@ const FormInput: React.FC<FormInputProps> = ({
         keyboardType={keyboardType}
         multiline={multiline}
         numberOfLines={multiline ? numberOfLines : 1}
-        textAlignVertical={multiline ? "top" : "center"} // Better multiline editing
+        textAlignVertical={multiline ? 'top' : 'center'} // Better multiline editing
         {...rest} // Apply remaining props
       />
     </View>
@@ -54,17 +54,17 @@ const styles = StyleSheet.create({
   label: {
     fontSize: 16,
     marginBottom: 5,
-    color: "#333",
-    fontWeight: "500",
+    color: '#333',
+    fontWeight: '500',
   },
   input: {
     borderWidth: 1,
-    borderColor: "#ccc",
+    borderColor: '#ccc',
     borderRadius: 5,
     paddingHorizontal: 10,
     paddingVertical: 8,
     fontSize: 16,
-    backgroundColor: "#fff",
+    backgroundColor: '#fff',
     minHeight: 40, // Ensure consistent height
   },
   multilineInput: {

@@ -285,7 +285,7 @@ describe('FormInput Logic', () => {
             break;
 
           case 'phone-pad':
-            if (!/^[\d\s\-\+\(\)]*$/.test(value)) {
+            if (!/^[\d\s\-+()]*$/.test(value)) {
               errors.push('Invalid phone number format');
             }
             break;
@@ -574,7 +574,7 @@ describe('FormInput Logic', () => {
             /[\u{1F600}-\u{1F64F}]|[\u{1F300}-\u{1F5FF}]|[\u{1F680}-\u{1F6FF}]|[\u{1F1E0}-\u{1F1FF}]/u.test(
               text,
             ),
-          hasUnicode: /[^\x00-\x7F]/.test(text),
+          hasUnicode: /[^ -~]/.test(text),
           byteLength: new TextEncoder().encode(text).length,
           characterCount: text.length,
         };

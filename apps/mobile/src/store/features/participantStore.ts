@@ -1,5 +1,5 @@
-import { create } from "zustand";
-import { Participant, UserSettings } from "../../types";
+import { create } from 'zustand';
+import { Participant, UserSettings } from '../../types';
 
 // Helper to generate a simple unique ID
 const generateId = () => Math.random().toString(36).substr(2, 9);
@@ -86,7 +86,7 @@ export const useParticipantStore = create<ParticipantState>((set, get) => ({
 
     set((state) => {
       let newParticipants = [...state.participants];
-      let userAsParticipant = newParticipants.find(
+      const userAsParticipant = newParticipants.find(
         (p) => p.id === internalUserId,
       );
 

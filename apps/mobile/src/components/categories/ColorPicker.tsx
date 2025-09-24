@@ -1,19 +1,19 @@
-import React from "react";
-import { View, TouchableOpacity, Text, StyleSheet } from "react-native";
+import React from 'react';
+import { View, TouchableOpacity, Text, StyleSheet } from 'react-native';
 
 export const DEFAULT_COLORS = [
-  "#FF6384",
-  "#36A2EB",
-  "#FFCE56",
-  "#4BC0C0",
-  "#9966FF",
-  "#FF9F40",
-  "#C9CBCF",
-  "#61C0BF",
-  "#F7464A",
-  "#46BFBD",
-  "#FDB45C",
-  "#949FB1",
+  '#FF6384',
+  '#36A2EB',
+  '#FFCE56',
+  '#4BC0C0',
+  '#9966FF',
+  '#FF9F40',
+  '#C9CBCF',
+  '#61C0BF',
+  '#F7464A',
+  '#46BFBD',
+  '#FDB45C',
+  '#949FB1',
 ];
 
 interface ColorPickerProps {
@@ -27,7 +27,7 @@ const ColorPicker: React.FC<ColorPickerProps> = ({
   selectedColor,
   onColorSelect,
   colors = DEFAULT_COLORS,
-  label = "Select Color:",
+  label = 'Select Color:',
 }) => {
   return (
     <View style={styles.container}>
@@ -42,7 +42,7 @@ const ColorPicker: React.FC<ColorPickerProps> = ({
               selectedColor === color && styles.selectedColorOption,
             ]}
             onPress={() => onColorSelect(color)}
-            accessibilityRole="button"
+            accessibilityRole='button'
             accessibilityLabel={`Select color ${color}`}
           />
         ))}
@@ -57,14 +57,14 @@ const styles = StyleSheet.create({
   },
   label: {
     fontSize: 16,
-    fontWeight: "600",
+    fontWeight: '600',
     marginBottom: 10,
-    color: "#333",
+    color: '#333',
   },
   colorGrid: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    justifyContent: "space-between",
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'space-between',
   },
   colorOption: {
     width: 40,
@@ -72,10 +72,10 @@ const styles = StyleSheet.create({
     borderRadius: 20,
     margin: 5,
     borderWidth: 2,
-    borderColor: "transparent",
+    borderColor: 'transparent',
   },
   selectedColorOption: {
-    borderColor: "#000",
+    borderColor: '#000',
     borderWidth: 3,
   },
 });

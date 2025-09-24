@@ -1,7 +1,7 @@
-import { useState } from "react";
-import { Alert } from "react-native";
-import { useExpenseStore } from "../store/expenseStore";
-import { Category } from "../types";
+import { useState } from 'react';
+import { Alert } from 'react-native';
+import { useExpenseStore } from '../store/expenseStore';
+import { Category } from '../types';
 
 interface UseCategoryManagerReturn {
   // Store data
@@ -58,7 +58,7 @@ export const useCategoryManager = (): UseCategoryManagerReturn => {
     const trimmedName = name.trim();
 
     if (!trimmedName) {
-      Alert.alert("Error", "Category name cannot be empty.");
+      Alert.alert('Error', 'Category name cannot be empty.');
       return;
     }
 
@@ -78,7 +78,7 @@ export const useCategoryManager = (): UseCategoryManagerReturn => {
       );
 
       if (existingCategory) {
-        Alert.alert("Error", "A category with this name already exists.");
+        Alert.alert('Error', 'A category with this name already exists.');
         return;
       }
 
@@ -97,18 +97,18 @@ export const useCategoryManager = (): UseCategoryManagerReturn => {
     }
 
     if (!canDeleteCategory(categoryToDelete)) {
-      Alert.alert("Error", "The 'Other' category cannot be deleted.");
+      Alert.alert('Error', "The 'Other' category cannot be deleted.");
       return;
     }
 
     Alert.alert(
-      "Delete Category",
+      'Delete Category',
       `Are you sure you want to delete "${categoryToDelete.name}"? Expenses using this category might be affected.`,
       [
-        { text: "Cancel", style: "cancel" },
+        { text: 'Cancel', style: 'cancel' },
         {
-          text: "Delete",
-          style: "destructive",
+          text: 'Delete',
+          style: 'destructive',
           onPress: () => deleteCategoryFromStore(categoryId),
         },
       ],
@@ -117,7 +117,7 @@ export const useCategoryManager = (): UseCategoryManagerReturn => {
 
   // Helper functions
   const canDeleteCategory = (category: Category): boolean => {
-    return category.name !== "Other";
+    return category.name !== 'Other';
   };
 
   return {

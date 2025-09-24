@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from "react";
+import React, { useState, useMemo as _useMemo } from 'react';
 import {
   View,
   Text,
@@ -6,17 +6,17 @@ import {
   FlatList,
   TouchableOpacity,
   Alert,
-} from "react-native";
-import { useNavigation } from "@react-navigation/native"; // Import useNavigation
-import { StackNavigationProp } from "@react-navigation/stack"; // Import StackNavigationProp
-import { useExpenseStore } from "../store/expenseStore";
-import { ExpenseGroup, Participant, Expense } from "../types"; // Add Expense type
+} from 'react-native';
+import { useNavigation } from '@react-navigation/native'; // Import useNavigation
+import { StackNavigationProp } from '@react-navigation/stack'; // Import StackNavigationProp
+import { useExpenseStore } from '../store/expenseStore';
+import { ExpenseGroup, Participant as _Participant, Expense } from '../types'; // Add Expense type
 
 // Import reusable components and utils
-import GroupListItem from "../components/GroupListItem";
-import TextInputModal from "../components/TextInputModal";
-import FloatingActionButton from "../components/FloatingActionButton"; // Import FAB
-import { calculateGroupTotal } from "../utils/groupCalculations";
+import GroupListItem from '../components/GroupListItem';
+import TextInputModal from '../components/TextInputModal';
+import FloatingActionButton from '../components/FloatingActionButton'; // Import FAB
+import { calculateGroupTotal } from '../utils/groupCalculations';
 
 // Define navigation param list (ideally move to central types)
 type RootStackParamList = {
@@ -58,13 +58,13 @@ const HistoryScreen = () => {
   // Delete Group Confirmation
   const handleDeleteGroup = (groupId: string) => {
     Alert.alert(
-      "Delete Group",
-      "Are you sure you want to delete this group? This will not delete the expenses.",
+      'Delete Group',
+      'Are you sure you want to delete this group? This will not delete the expenses.',
       [
-        { text: "Cancel", style: "cancel" },
+        { text: 'Cancel', style: 'cancel' },
         {
-          text: "Delete",
-          style: "destructive",
+          text: 'Delete',
+          style: 'destructive',
           onPress: () => deleteGroup(groupId),
         },
       ],
@@ -74,13 +74,13 @@ const HistoryScreen = () => {
   // Remove Participant Confirmation
   const handleRemoveParticipant = (groupId: string, participantId: string) => {
     Alert.alert(
-      "Remove Participant",
-      "Are you sure you want to remove this participant from the group?",
+      'Remove Participant',
+      'Are you sure you want to remove this participant from the group?',
       [
-        { text: "Cancel", style: "cancel" },
+        { text: 'Cancel', style: 'cancel' },
         {
-          text: "Remove",
-          style: "destructive",
+          text: 'Remove',
+          style: 'destructive',
           onPress: () => removeParticipantFromGroup(groupId, participantId),
         },
       ],
@@ -91,13 +91,13 @@ const HistoryScreen = () => {
   const openNewGroupModal = () => {
     if (!userSettings?.name?.trim()) {
       Alert.alert(
-        "Username Required",
-        "Please set your username in Settings before creating a group.",
+        'Username Required',
+        'Please set your username in Settings before creating a group.',
         [
-          { text: "Cancel", style: "cancel" },
+          { text: 'Cancel', style: 'cancel' },
           {
-            text: "Go to Settings",
-            onPress: () => navigation.navigate("Settings" as any), // Navigate to Settings tab/screen
+            text: 'Go to Settings',
+            onPress: () => navigation.navigate('Settings' as any), // Navigate to Settings tab/screen
           },
         ],
       );
@@ -126,7 +126,7 @@ const HistoryScreen = () => {
 
   // Navigate to Group Detail Screen
   const handleGroupPress = (groupId: string) => {
-    navigation.navigate("GroupDetail", { groupId });
+    navigation.navigate('GroupDetail', { groupId });
   };
 
   // --- Render Logic ---
@@ -171,18 +171,18 @@ const HistoryScreen = () => {
       {/* Reusable Modals */}
       <TextInputModal
         visible={isNewGroupModalVisible}
-        title="Create New Group"
-        placeholder="Enter group name"
-        submitButtonText="Create"
+        title='Create New Group'
+        placeholder='Enter group name'
+        submitButtonText='Create'
         onSubmit={handleNewGroupSubmit}
         onClose={() => setIsNewGroupModalVisible(false)}
       />
 
       <TextInputModal
         visible={isAddParticipantModalVisible}
-        title={`Add Participant to ${groupToAddParticipantTo?.name || ""}`}
-        placeholder="Enter participant name"
-        submitButtonText="Add"
+        title={`Add Participant to ${groupToAddParticipantTo?.name || ''}`}
+        placeholder='Enter participant name'
+        submitButtonText='Add'
         onSubmit={handleAddParticipantSubmit}
         onClose={() => {
           setIsAddParticipantModalVisible(false);
@@ -199,34 +199,34 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     padding: 20,
-    backgroundColor: "#f5f5f5",
+    backgroundColor: '#f5f5f5',
   },
   createGroupButton: {
-    backgroundColor: "#007bff",
+    backgroundColor: '#007bff',
     paddingVertical: 15,
     paddingHorizontal: 20,
     borderRadius: 8,
-    alignItems: "center",
+    alignItems: 'center',
     marginBottom: 20,
-    shadowColor: "#000",
+    shadowColor: '#000',
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.23,
     shadowRadius: 2.62,
     elevation: 4,
   },
   createGroupButtonText: {
-    color: "#ffffff",
+    color: '#ffffff',
     fontSize: 18,
-    fontWeight: "bold",
+    fontWeight: 'bold',
   },
   groupsList: {
     paddingBottom: 20,
   },
   emptyListText: {
-    textAlign: "center",
+    textAlign: 'center',
     marginTop: 50,
     fontSize: 16,
-    color: "#6c757d",
+    color: '#6c757d',
   },
   // Remove styles that are now handled by GroupListItem or TextInputModal
 });

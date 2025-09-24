@@ -1,7 +1,7 @@
-import React from "react";
-import { Text, StyleSheet } from "react-native";
-import { ExpenseCategory, ExpenseGroup, Participant } from "../../types";
-import SelectionModal from "../SelectionModal";
+import React from 'react';
+import { Text, StyleSheet } from 'react-native';
+import { ExpenseCategory, ExpenseGroup, Participant } from '../../types';
+import SelectionModal from '../SelectionModal';
 
 interface ExpenseModalsProps {
   // Modal visibility
@@ -66,7 +66,7 @@ export const ExpenseModals: React.FC<ExpenseModalsProps> = ({
       {/* Category Modal */}
       <SelectionModal<ExpenseCategory | string>
         visible={showCategoryModal}
-        title="Select Category"
+        title='Select Category'
         data={categoryModalData}
         renderItemContent={(item) => (
           <Text style={styles.modalItemText}>{item}</Text>
@@ -82,7 +82,7 @@ export const ExpenseModals: React.FC<ExpenseModalsProps> = ({
       {/* Group Modal */}
       <SelectionModal<ExpenseGroup>
         visible={showGroupModal}
-        title="Select Group"
+        title='Select Group'
         data={groups}
         renderItemContent={(item) => (
           <Text style={styles.modalItemText}>{item.name}</Text>
@@ -97,7 +97,7 @@ export const ExpenseModals: React.FC<ExpenseModalsProps> = ({
       {/* Paid By Modal */}
       <SelectionModal<Participant>
         visible={showPaidByModal && !!selectedGroup}
-        title="Who Paid?"
+        title='Who Paid?'
         data={availableParticipants}
         renderItemContent={(item) => (
           <Text style={styles.modalItemText}>{item.name}</Text>
@@ -111,7 +111,7 @@ export const ExpenseModals: React.FC<ExpenseModalsProps> = ({
       {/* Split Between Modal */}
       <SelectionModal<Participant>
         visible={showSplitModal && !!selectedGroup}
-        title="Split Between"
+        title='Split Between'
         data={availableParticipants}
         renderItemContent={(item) => (
           <Text style={styles.modalItemText}>{item.name}</Text>

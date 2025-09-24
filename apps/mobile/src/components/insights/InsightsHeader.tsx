@@ -1,9 +1,9 @@
-import React from "react";
-import { View, Text, StyleSheet, TouchableOpacity } from "react-native";
+import React from 'react';
+import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
 
 interface InsightsHeaderProps {
-  aggregation: "month" | "year";
-  onAggregationChange: (aggregation: "month" | "year") => void;
+  aggregation: 'month' | 'year';
+  onAggregationChange: (aggregation: 'month' | 'year') => void;
   displayPeriodText: string;
   onPeriodPress: () => void;
   onPreviousPeriod: () => void;
@@ -26,14 +26,14 @@ const InsightsHeader: React.FC<InsightsHeaderProps> = ({
         <TouchableOpacity
           style={[
             styles.aggregationButton,
-            aggregation === "month" && styles.aggregationButtonActive,
+            aggregation === 'month' && styles.aggregationButtonActive,
           ]}
-          onPress={() => onAggregationChange("month")}
+          onPress={() => onAggregationChange('month')}
         >
           <Text
             style={[
               styles.aggregationButtonText,
-              aggregation === "month" && styles.aggregationButtonTextActive,
+              aggregation === 'month' && styles.aggregationButtonTextActive,
             ]}
           >
             By Month
@@ -42,14 +42,14 @@ const InsightsHeader: React.FC<InsightsHeaderProps> = ({
         <TouchableOpacity
           style={[
             styles.aggregationButton,
-            aggregation === "year" && styles.aggregationButtonActive,
+            aggregation === 'year' && styles.aggregationButtonActive,
           ]}
-          onPress={() => onAggregationChange("year")}
+          onPress={() => onAggregationChange('year')}
         >
           <Text
             style={[
               styles.aggregationButtonText,
-              aggregation === "year" && styles.aggregationButtonTextActive,
+              aggregation === 'year' && styles.aggregationButtonTextActive,
             ]}
           >
             By Year
@@ -62,7 +62,7 @@ const InsightsHeader: React.FC<InsightsHeaderProps> = ({
           onPress={onPreviousPeriod}
           style={styles.periodArrowButton}
         >
-          <Text style={styles.periodArrowText}>{"<"}</Text>
+          <Text style={styles.periodArrowText}>{'<'}</Text>
         </TouchableOpacity>
         <TouchableOpacity onPress={onPeriodPress}>
           <Text style={styles.periodDisplayText}>{displayPeriodText}</Text>
@@ -81,7 +81,7 @@ const InsightsHeader: React.FC<InsightsHeaderProps> = ({
               isNextDisabled && styles.disabledArrowText,
             ]}
           >
-            {">"}
+            {'>'}
           </Text>
         </TouchableOpacity>
       </View>
@@ -93,39 +93,39 @@ const styles = StyleSheet.create({
   controlsContainer: {
     marginBottom: 20,
     padding: 10,
-    backgroundColor: "#fff",
+    backgroundColor: '#fff',
     borderRadius: 8,
     paddingVertical: 15,
   },
   aggregationToggleContainer: {
-    flexDirection: "row",
-    justifyContent: "space-around",
+    flexDirection: 'row',
+    justifyContent: 'space-around',
     marginBottom: 15,
     borderWidth: 1,
-    borderColor: "#007bff",
+    borderColor: '#007bff',
     borderRadius: 8,
-    overflow: "hidden",
+    overflow: 'hidden',
   },
   aggregationButton: {
     flex: 1,
     paddingVertical: 10,
-    alignItems: "center",
-    backgroundColor: "#fff",
+    alignItems: 'center',
+    backgroundColor: '#fff',
   },
   aggregationButtonActive: {
-    backgroundColor: "#007bff",
+    backgroundColor: '#007bff',
   },
   aggregationButtonText: {
-    color: "#007bff",
-    fontWeight: "600",
+    color: '#007bff',
+    fontWeight: '600',
   },
   aggregationButtonTextActive: {
-    color: "#fff",
+    color: '#fff',
   },
   periodNavigatorContainer: {
-    flexDirection: "row",
-    justifyContent: "center",
-    alignItems: "center",
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   periodArrowButton: {
     padding: 10,
@@ -133,21 +133,21 @@ const styles = StyleSheet.create({
   },
   periodArrowText: {
     fontSize: 18,
-    color: "#007bff",
-    fontWeight: "bold",
+    color: '#007bff',
+    fontWeight: 'bold',
   },
   disabledArrowButton: {
     opacity: 0.3,
   },
   disabledArrowText: {
-    color: "#ccc",
+    color: '#ccc',
   },
   periodDisplayText: {
     fontSize: 18,
-    fontWeight: "600",
-    color: "#333",
+    fontWeight: '600',
+    color: '#333',
     paddingHorizontal: 20,
-    textAlign: "center",
+    textAlign: 'center',
     minWidth: 150,
   },
 });

@@ -150,7 +150,7 @@ describe('SettingsScreen Integration', () => {
       const groupId = store.addGroup('Family Group');
 
       const groups = useExpenseStore.getState().groups;
-      const familyGroup = groups.find(g => g.id === groupId);
+      const familyGroup = groups.find((g) => g.id === groupId);
 
       expect(familyGroup?.participants).toHaveLength(1); // Creator only initially
       expect(familyGroup?.name).toBe('Family Group');

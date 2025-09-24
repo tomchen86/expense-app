@@ -10,8 +10,8 @@ describe('HomeScreen Logic', () => {
         { ...validExpense, id: '3', date: '2025-09-19', title: 'Middle' },
       ];
 
-      const sortExpensesByDate = (expenses: typeof expenses) => {
-        return [...expenses].sort(
+      const sortExpensesByDate = (expenseList: typeof expenses) => {
+        return [...expenseList].sort(
           (a, b) => new Date(b.date).getTime() - new Date(a.date).getTime(),
         );
       };
@@ -48,8 +48,8 @@ describe('HomeScreen Logic', () => {
         },
       ];
 
-      const groupExpensesByDate = (expenses: typeof expenses) => {
-        return expenses.reduce(
+      const groupExpensesByDate = (expenseList: typeof expenses) => {
+        return expenseList.reduce(
           (groups, expense) => {
             const date = expense.date;
             if (!groups[date]) {
@@ -159,7 +159,7 @@ describe('HomeScreen Logic', () => {
               currentDate.getDate(),
             );
             break;
-          case 'week':
+          case 'week': {
             const weekStart = currentDate.getDate() - currentDate.getDay();
             startDate = new Date(
               currentDate.getFullYear(),
@@ -167,6 +167,7 @@ describe('HomeScreen Logic', () => {
               weekStart,
             );
             break;
+          }
           case 'month':
             startDate = new Date(
               currentDate.getFullYear(),
@@ -233,8 +234,8 @@ describe('HomeScreen Logic', () => {
         { amount: 10, category: 'Entertainment' },
       ];
 
-      const getCategoryBreakdown = (expenses: typeof expenses) => {
-        const breakdown = expenses.reduce(
+      const getCategoryBreakdown = (expenseList: typeof expenses) => {
+        const breakdown = expenseList.reduce(
           (acc, expense) => {
             acc[expense.category] =
               (acc[expense.category] || 0) + expense.amount;

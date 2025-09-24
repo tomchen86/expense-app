@@ -1,16 +1,21 @@
-import React, { createRef, forwardRef, useImperativeHandle, useState } from "react";
-import TestRenderer, { act } from "react-test-renderer";
-import { useExpenseModals } from "../useExpenseModals";
-import type { ExpenseGroup, Participant } from "../../types";
+import React, {
+  createRef,
+  forwardRef,
+  useImperativeHandle,
+  useState,
+} from 'react';
+import TestRenderer, { act } from 'react-test-renderer';
+import { useExpenseModals } from '../useExpenseModals';
+import type { ExpenseGroup, Participant } from '../../types';
 
-jest.mock("@react-navigation/native", () => ({
+jest.mock('@react-navigation/native', () => ({
   useNavigation: jest.fn(),
 }));
 
 type HookHandle = {
   hookValue: ReturnType<typeof useExpenseModals>;
   getFormState: () => {
-    category: "Food & Dining";
+    category: 'Food & Dining';
     selectedGroup: ExpenseGroup | null;
     paidByParticipant: Participant | null;
     selectedParticipants: Participant[];
@@ -23,7 +28,7 @@ const buildHarness = (
 ) => {
   const participants = initialParticipants;
   const initialState = {
-    category: "Food & Dining" as const,
+    category: 'Food & Dining' as const,
     selectedGroup: initialGroup,
     paidByParticipant: null,
     selectedParticipants: [] as Participant[],
@@ -49,20 +54,20 @@ const buildHarness = (
   });
 };
 
-describe("useExpenseModals", () => {
+describe('useExpenseModals', () => {
   const participants: Participant[] = [
-    { id: "p1", name: "Alice" },
-    { id: "p2", name: "Bob" },
+    { id: 'p1', name: 'Alice' },
+    { id: 'p2', name: 'Bob' },
   ];
 
   const group: ExpenseGroup = {
-    id: "g1",
-    name: "Trip",
+    id: 'g1',
+    name: 'Trip',
     participants,
-    createdAt: "2025-02-01",
+    createdAt: '2025-02-01',
   };
 
-  it("sets and clears group selections and dependent fields", () => {
+  it('sets and clears group selections and dependent fields', () => {
     const Harness = buildHarness(participants);
     const ref = createRef<HookHandle>();
 
@@ -83,7 +88,7 @@ describe("useExpenseModals", () => {
     expect(ref.current!.getFormState().selectedParticipants).toHaveLength(0);
   });
 
-  it("toggles participants in split selections", () => {
+  it('toggles participants in split selections', () => {
     const Harness = buildHarness(participants, group);
     const ref = createRef<HookHandle>();
 
@@ -96,7 +101,9 @@ describe("useExpenseModals", () => {
     act(() => {
       ref.current!.hookValue.handleParticipantSelect(participant);
     });
-    expect(ref.current!.getFormState().selectedParticipants).toEqual([participant]);
+    expect(ref.current!.getFormState().selectedParticipants).toEqual([
+      participant,
+    ]);
 
     act(() => {
       ref.current!.hookValue.handleParticipantSelect(participant);
@@ -104,8 +111,8 @@ describe("useExpenseModals", () => {
     expect(ref.current!.getFormState().selectedParticipants).toEqual([]);
   });
 
-  it("navigates to category management when add-new action selected", () => {
-    const navigationModule = require("@react-navigation/native");
+  it('navigates to category management when add-new action selected', async () => {
+    const navigationModule = await import('@react-navigation/native');
     const navigate = jest.fn();
     (navigationModule.useNavigation as jest.Mock).mockReturnValue({ navigate });
 
@@ -122,7 +129,7 @@ describe("useExpenseModals", () => {
       );
     });
 
-    expect(navigate).toHaveBeenCalledWith("ManageCategoriesScreen");
+    expect(navigate).toHaveBeenCalledWith('ManageCategoriesScreen');
     (navigationModule.useNavigation as jest.Mock).mockReset();
   });
 });

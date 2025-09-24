@@ -29,7 +29,8 @@ describe('ExpenseStore', () => {
 
       useExpenseStore.getState().addExpense(expense);
       const expenses = useExpenseStore.getState().expenses;
-      const { id: _ignored, ...expectedFields } = expense;
+
+      const { id: _id, ...expectedFields } = expense;
 
       expect(expenses).toHaveLength(1);
       expect(expenses[0]).toMatchObject({
@@ -88,7 +89,7 @@ describe('ExpenseStore', () => {
       useExpenseStore.getState().addExpense(groupExpense);
       const expenses = useExpenseStore.getState().expenses;
 
-      const { id: _ignored, ...expectedGroupFields } = groupExpense;
+      const { id: _id, ...expectedGroupFields } = groupExpense;
 
       expect(expenses[0]).toMatchObject({
         ...expectedGroupFields,

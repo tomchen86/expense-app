@@ -1,4 +1,4 @@
-const testHelpers = require('./helpers/testHelpers');
+import testHelpers from './helpers/testHelpers.js';
 
 describe('User Onboarding Journey', () => {
   beforeAll(async () => {
@@ -19,7 +19,10 @@ describe('User Onboarding Journey', () => {
       await testHelpers.waitAndTap(by.id('add-expense-fab'));
 
       // Step 3: Fill out expense form
-      await testHelpers.waitAndType(by.id('expense-title-input'), 'First Coffee');
+      await testHelpers.waitAndType(
+        by.id('expense-title-input'),
+        'First Coffee',
+      );
       await testHelpers.waitAndType(by.id('expense-amount-input'), '4.50');
 
       // Step 4: Select category from defaults
@@ -47,7 +50,9 @@ describe('User Onboarding Journey', () => {
 
       // Step 3: Should show username requirement dialog
       await testHelpers.expectVisible(by.text('Username Required'));
-      await testHelpers.expectVisible(by.text('You need to set a username before creating groups'));
+      await testHelpers.expectVisible(
+        by.text('You need to set a username before creating groups'),
+      );
 
       // Step 4: User chooses to set username
       await testHelpers.waitAndTap(by.text('Go to Settings'));
@@ -68,7 +73,10 @@ describe('User Onboarding Journey', () => {
 
       // Step 9: Should now be able to create group
       await testHelpers.waitAndTap(by.id('add-group-button'));
-      await testHelpers.waitAndType(by.id('group-name-input'), 'My First Group');
+      await testHelpers.waitAndType(
+        by.id('group-name-input'),
+        'My First Group',
+      );
       await testHelpers.waitAndTap(by.text('Create'));
 
       // Step 10: Verify group was created
@@ -115,7 +123,9 @@ describe('User Onboarding Journey', () => {
 
       // Step 3: Should see group with helpful message
       await testHelpers.expectVisible(by.text('Family'));
-      await testHelpers.expectVisible(by.text('Add expenses to start tracking'));
+      await testHelpers.expectVisible(
+        by.text('Add expenses to start tracking'),
+      );
 
       // Step 4: User taps on group
       await testHelpers.waitAndTap(by.text('Family'));
@@ -131,11 +141,15 @@ describe('User Onboarding Journey', () => {
         { title: 'Groceries', amount: '75.00', category: 'Food & Dining' },
         { title: 'Gas', amount: '45.00', category: 'Transportation' },
         { title: 'Coffee', amount: '5.00', category: 'Food & Dining' },
-        { title: 'Movie', amount: '20.00', category: 'Entertainment' }
+        { title: 'Movie', amount: '20.00', category: 'Entertainment' },
       ];
 
       for (const expense of expenses) {
-        await testHelpers.createExpense(expense.title, expense.amount, expense.category);
+        await testHelpers.createExpense(
+          expense.title,
+          expense.amount,
+          expense.category,
+        );
       }
 
       // User should now see meaningful insights
@@ -173,7 +187,10 @@ describe('User Onboarding Journey', () => {
 
       // Step 5: Add new category
       await testHelpers.waitAndTap(by.id('add-category-button'));
-      await testHelpers.waitAndType(by.id('category-name-input'), 'Gym & Fitness');
+      await testHelpers.waitAndType(
+        by.id('category-name-input'),
+        'Gym & Fitness',
+      );
       await testHelpers.waitAndTap(by.id('color-option-green'));
       await testHelpers.waitAndTap(by.text('Save'));
 
@@ -183,7 +200,10 @@ describe('User Onboarding Journey', () => {
       // Step 7: Use new category in expense
       await testHelpers.waitAndTap(by.text('Home'));
       await testHelpers.waitAndTap(by.id('add-expense-fab'));
-      await testHelpers.waitAndType(by.id('expense-title-input'), 'Monthly Membership');
+      await testHelpers.waitAndType(
+        by.id('expense-title-input'),
+        'Monthly Membership',
+      );
       await testHelpers.waitAndType(by.id('expense-amount-input'), '50.00');
       await testHelpers.waitAndTap(by.id('category-picker'));
       await testHelpers.waitAndTap(by.text('Gym & Fitness'));
@@ -250,7 +270,10 @@ describe('User Onboarding Journey', () => {
     it('should handle network-like errors gracefully', async () => {
       // Simulate user entering data that might fail to save
       await testHelpers.waitAndTap(by.id('add-expense-fab'));
-      await testHelpers.waitAndType(by.id('expense-title-input'), 'Network Test');
+      await testHelpers.waitAndType(
+        by.id('expense-title-input'),
+        'Network Test',
+      );
       await testHelpers.waitAndType(by.id('expense-amount-input'), '100.00');
 
       // Save should succeed (local storage)
@@ -291,9 +314,16 @@ describe('User Onboarding Journey', () => {
       const invalidUsernames = [
         { input: '', error: 'Username is required' },
         { input: 'a', error: 'Username must be at least 2 characters' },
-        { input: 'a'.repeat(31), error: 'Username must be 30 characters or less' },
-        { input: 'user@name', error: 'Username can only contain letters, numbers, underscores, and hyphens' },
-        { input: 'admin', error: 'Username is reserved' }
+        {
+          input: 'a'.repeat(31),
+          error: 'Username must be 30 characters or less',
+        },
+        {
+          input: 'user@name',
+          error:
+            'Username can only contain letters, numbers, underscores, and hyphens',
+        },
+        { input: 'admin', error: 'Username is reserved' },
       ];
 
       for (const test of invalidUsernames) {

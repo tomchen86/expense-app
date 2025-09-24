@@ -1,15 +1,15 @@
-import { create } from "zustand";
-import { Category } from "../../types";
-import { DEFAULT_CATEGORIES } from "../../constants/expenses";
+import { create } from 'zustand';
+import { Category } from '../../types';
+import { DEFAULT_CATEGORIES } from '../../constants/expenses';
 
 // Helper to generate a simple unique ID
-const generateId = () => Math.random().toString(36).substr(2, 9);
+const _generateId = () => Math.random().toString(36).substr(2, 9);
 
 export interface CategoryState {
   categories: Category[];
 
   // Actions
-  addCategory: (categoryData: Omit<Category, "id">) => Category;
+  addCategory: (categoryData: Omit<Category, 'id'>) => Category;
   updateCategory: (category: Category) => void;
   deleteCategory: (categoryId: string) => void;
   getCategoryByName: (name: string) => Category | undefined;
@@ -64,7 +64,7 @@ export const useCategoryStore = create<CategoryState>((set, get) => ({
       const categoryToDelete = state.categories.find(
         (c) => c.id === categoryId,
       );
-      if (categoryToDelete && categoryToDelete.name === "Other") {
+      if (categoryToDelete && categoryToDelete.name === 'Other') {
         console.warn("Cannot delete the 'Other' category.");
         return state; // Prevent deletion of "Other"
       }

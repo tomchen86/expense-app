@@ -1,4 +1,4 @@
-import React from "react";
+import React from 'react';
 import {
   View,
   Text,
@@ -6,12 +6,12 @@ import {
   StyleSheet,
   Pressable,
   FlatList,
-} from "react-native";
-import { Participant, Expense } from "../types"; // Use Participant type
+} from 'react-native';
+import { Participant, Expense } from '../types'; // Use Participant type
 import {
   calculateAllMemberBalancesInGroup,
   MemberBalanceDetails,
-} from "../utils/groupCalculations"; // Import the new util
+} from '../utils/groupCalculations'; // Import the new util
 
 interface GroupBalancesOverlayProps {
   visible: boolean;
@@ -37,20 +37,20 @@ const GroupBalancesOverlay: React.FC<GroupBalancesOverlayProps> = ({
 
   const renderMemberBalance = ({ item }: { item: MemberBalanceDetails }) => {
     const balance = item.netBalance;
-    let balanceText = "";
+    let balanceText = '';
     if (balance > 0) {
       balanceText = `Is Owed $${balance.toFixed(2)}`;
     } else if (balance < 0) {
       balanceText = `Owes $${Math.abs(balance).toFixed(2)}`;
     } else {
-      balanceText = "Settled up";
+      balanceText = 'Settled up';
     }
 
     return (
       <View style={styles.memberItem}>
         <Text style={styles.memberName}>
           {item.memberName}
-          {item.memberId === currentUserId ? " (You)" : ""}
+          {item.memberId === currentUserId ? ' (You)' : ''}
         </Text>
         <Text style={styles.memberBalance}>{balanceText}</Text>
         <Text style={styles.balanceDetail}>
@@ -63,7 +63,7 @@ const GroupBalancesOverlay: React.FC<GroupBalancesOverlayProps> = ({
 
   return (
     <Modal
-      animationType="slide"
+      animationType='slide'
       transparent={true}
       visible={visible}
       onRequestClose={onClose}
@@ -92,17 +92,17 @@ const GroupBalancesOverlay: React.FC<GroupBalancesOverlayProps> = ({
 const styles = StyleSheet.create({
   centeredView: {
     flex: 1,
-    justifyContent: "center",
-    alignItems: "center",
-    backgroundColor: "rgba(0,0,0,0.5)", // Semi-transparent background
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: 'rgba(0,0,0,0.5)', // Semi-transparent background
   },
   modalView: {
     margin: 20,
-    backgroundColor: "white",
+    backgroundColor: 'white',
     borderRadius: 20,
     padding: 35,
-    alignItems: "center",
-    shadowColor: "#000",
+    alignItems: 'center',
+    shadowColor: '#000',
     shadowOffset: {
       width: 0,
       height: 2,
@@ -110,36 +110,36 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.25,
     shadowRadius: 4,
     elevation: 5,
-    width: "90%", // Occupy approx half screen, adjust as needed
-    maxHeight: "80%",
+    width: '90%', // Occupy approx half screen, adjust as needed
+    maxHeight: '80%',
   },
   modalTitle: {
     fontSize: 20,
-    fontWeight: "bold",
+    fontWeight: 'bold',
     marginBottom: 15,
-    textAlign: "center",
+    textAlign: 'center',
   },
   list: {
-    width: "100%",
+    width: '100%',
   },
   memberItem: {
     paddingVertical: 10,
     borderBottomWidth: 1,
-    borderBottomColor: "#eee",
-    width: "100%",
+    borderBottomColor: '#eee',
+    width: '100%',
   },
   memberName: {
     fontSize: 16,
-    fontWeight: "bold",
+    fontWeight: 'bold',
   },
   memberBalance: {
     fontSize: 14,
-    color: "gray",
+    color: 'gray',
   },
   balanceDetail: {
     fontSize: 12,
-    color: "darkgray",
-    fontStyle: "italic",
+    color: 'darkgray',
+    fontStyle: 'italic',
   },
   button: {
     borderRadius: 10,
@@ -148,12 +148,12 @@ const styles = StyleSheet.create({
     marginTop: 15,
   },
   buttonClose: {
-    backgroundColor: "#2196F3",
+    backgroundColor: '#2196F3',
   },
   textStyle: {
-    color: "white",
-    fontWeight: "bold",
-    textAlign: "center",
+    color: 'white',
+    fontWeight: 'bold',
+    textAlign: 'center',
   },
 });
 

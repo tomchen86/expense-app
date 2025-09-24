@@ -1,16 +1,16 @@
-import { useState, useEffect, useMemo } from "react";
-import { Platform, Alert } from "react-native";
-import { useNavigation } from "@react-navigation/native";
-import { DateTimePickerEvent } from "@react-native-community/datetimepicker";
-import { useExpenseStore } from "../store/expenseStore";
+import { useState, useEffect, useMemo } from 'react';
+import { Platform as _Platform, Alert } from 'react-native';
+import { useNavigation } from '@react-navigation/native';
+import { DateTimePickerEvent } from '@react-native-community/datetimepicker';
+import { useExpenseStore } from '../store/expenseStore';
 import {
   Expense,
   Participant,
   ExpenseGroup,
   ExpenseCategory,
-  Category,
-} from "../types"; // Added Category for type safety if needed
-import { DEFAULT_CATEGORIES } from "../constants/expenses"; // Changed to DEFAULT_CATEGORIES
+  Category as _Category,
+} from '../types'; // Added Category for type safety if needed
+import { DEFAULT_CATEGORIES } from '../constants/expenses'; // Changed to DEFAULT_CATEGORIES
 
 // Define the shape of the form data
 interface FormState {
@@ -43,7 +43,7 @@ export const useExpenseForm = ({ editingExpense }: UseExpenseFormProps) => {
   const isEditing = !!editingExpense;
 
   // Find the current user's participant entry
-  const currentUserParticipant = useMemo(() => {
+  const _currentUserParticipant = useMemo(() => {
     return userSettings?.name
       ? participants.find((p) => p.name === userSettings.name)
       : null;
@@ -51,10 +51,10 @@ export const useExpenseForm = ({ editingExpense }: UseExpenseFormProps) => {
 
   // Initialize state with default values
   const [formState, setFormState] = useState<FormState>({
-    title: "",
-    amount: "",
+    title: '',
+    amount: '',
     date: new Date(),
-    caption: "",
+    caption: '',
     category: DEFAULT_CATEGORIES[0].name, // Use .name from the first Category object
     selectedGroup: null,
     paidByParticipant: null,
@@ -66,10 +66,10 @@ export const useExpenseForm = ({ editingExpense }: UseExpenseFormProps) => {
     if (!editingExpense) {
       // Reset form if editingExpense becomes null/undefined (e.g., navigating back)
       setFormState({
-        title: "",
-        amount: "",
+        title: '',
+        amount: '',
         date: new Date(),
-        caption: "",
+        caption: '',
         category: DEFAULT_CATEGORIES[0].name, // Use .name from the first Category object
         selectedGroup: null,
         paidByParticipant: null,
@@ -92,7 +92,7 @@ export const useExpenseForm = ({ editingExpense }: UseExpenseFormProps) => {
       title: editingExpense.title,
       amount: editingExpense.amount.toString(),
       date: new Date(editingExpense.date), // Ensure date is a Date object
-      caption: editingExpense.caption ?? "",
+      caption: editingExpense.caption ?? '',
       category: editingExpense.category,
       selectedGroup: group,
       paidByParticipant: paidBy,
@@ -131,13 +131,13 @@ export const useExpenseForm = ({ editingExpense }: UseExpenseFormProps) => {
       !formState.date ||
       !formState.category
     ) {
-      Alert.alert("Validation Error", "Please fill all required fields.");
+      Alert.alert('Validation Error', 'Please fill all required fields.');
       return;
     }
 
     const numericAmount = parseFloat(formState.amount);
     if (isNaN(numericAmount) || numericAmount <= 0) {
-      Alert.alert("Validation Error", "Amount must be a positive number.");
+      Alert.alert('Validation Error', 'Amount must be a positive number.');
       return;
     }
 
@@ -147,8 +147,8 @@ export const useExpenseForm = ({ editingExpense }: UseExpenseFormProps) => {
         formState.selectedParticipants.length === 0)
     ) {
       Alert.alert(
-        "Validation Error",
-        "When adding to a group, please select who paid and who to split with.",
+        'Validation Error',
+        'When adding to a group, please select who paid and who to split with.',
       );
       return;
     }
@@ -171,7 +171,7 @@ export const useExpenseForm = ({ editingExpense }: UseExpenseFormProps) => {
         // This case should ideally not happen if internalUserId is always generated.
         // If it does, the expense will have no payer and no group.
         console.warn(
-          "[useExpenseForm] internalUserId is null, personal expense will have no payer/group.",
+          '[useExpenseForm] internalUserId is null, personal expense will have no payer/group.',
         );
       }
     }
@@ -180,7 +180,7 @@ export const useExpenseForm = ({ editingExpense }: UseExpenseFormProps) => {
     const expenseData = {
       title: formState.title.trim(),
       amount: numericAmount,
-      date: formState.date.toISOString().split("T")[0],
+      date: formState.date.toISOString().split('T')[0],
       category: formState.category,
       ...(formState.caption.trim()
         ? { caption: formState.caption.trim() }

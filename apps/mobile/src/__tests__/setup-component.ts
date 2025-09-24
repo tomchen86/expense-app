@@ -50,7 +50,6 @@ jest.mock('@react-navigation/native', () => {
 
 // Mock React Native SVG
 jest.mock('react-native-svg', () => {
-  const React = require('react');
   const { View } = require('react-native');
 
   return {

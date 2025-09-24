@@ -1,12 +1,12 @@
-import React, { createRef, forwardRef, useImperativeHandle } from "react";
-import { Alert } from "react-native";
-import TestRenderer, { act } from "react-test-renderer";
-import { DEFAULT_CATEGORIES } from "../../constants/expenses";
-import { useExpenseStore as useComposedExpenseStore } from "../../store/expenseStore";
-import { useCategoryStore } from "../../store/features/categoryStore";
-import { useCategoryManager } from "../useCategoryManager";
+import React, { createRef, forwardRef, useImperativeHandle } from 'react';
+import { Alert } from 'react-native';
+import TestRenderer, { act } from 'react-test-renderer';
+import { DEFAULT_CATEGORIES } from '../../constants/expenses';
+import { useExpenseStore as useComposedExpenseStore } from '../../store/expenseStore';
+import { useCategoryStore } from '../../store/features/categoryStore';
+import { useCategoryManager } from '../useCategoryManager';
 
-jest.mock("react-native", () => ({
+jest.mock('react-native', () => ({
   Alert: {
     alert: jest.fn(),
   },
@@ -17,7 +17,7 @@ const HookHarness = forwardRef((_, ref) => {
   useImperativeHandle(ref, () => hookValue, [hookValue]);
   return null;
 });
-HookHarness.displayName = "HookHarness";
+HookHarness.displayName = 'HookHarness';
 
 const resetCategoryStores = () => {
   useCategoryStore.setState({
@@ -29,13 +29,13 @@ const resetCategoryStores = () => {
   }));
 };
 
-describe("useCategoryManager", () => {
+describe('useCategoryManager', () => {
   beforeEach(() => {
     resetCategoryStores();
     (Alert.alert as jest.Mock).mockClear();
   });
 
-  it("opens and closes modals for create vs edit flows", () => {
+  it('opens and closes modals for create vs edit flows', () => {
     const ref = createRef<ReturnType<typeof useCategoryManager>>();
 
     act(() => {
@@ -65,7 +65,7 @@ describe("useCategoryManager", () => {
     expect(ref.current?.isEditing).toBeNull();
   });
 
-  it("adds new categories when name unique", () => {
+  it('adds new categories when name unique', () => {
     const ref = createRef<ReturnType<typeof useCategoryManager>>();
 
     act(() => {
@@ -74,16 +74,16 @@ describe("useCategoryManager", () => {
 
     act(() => {
       ref.current?.openAddModal();
-      ref.current?.saveCategory("Fitness", "#00FF00");
+      ref.current?.saveCategory('Fitness', '#00FF00');
     });
 
     expect(Alert.alert).not.toHaveBeenCalled();
     expect(
-      useCategoryStore.getState().getCategoryByName("Fitness")?.color,
-    ).toBe("#00FF00");
+      useCategoryStore.getState().getCategoryByName('Fitness')?.color,
+    ).toBe('#00FF00');
   });
 
-  it("rejects duplicate category names", () => {
+  it('rejects duplicate category names', () => {
     const ref = createRef<ReturnType<typeof useCategoryManager>>();
 
     act(() => {
@@ -94,12 +94,12 @@ describe("useCategoryManager", () => {
 
     act(() => {
       ref.current?.openAddModal();
-      ref.current?.saveCategory(existing.name, "#123456");
+      ref.current?.saveCategory(existing.name, '#123456');
     });
 
     expect(Alert.alert).toHaveBeenCalledWith(
-      "Error",
-      "A category with this name already exists.",
+      'Error',
+      'A category with this name already exists.',
     );
   });
 
@@ -114,21 +114,21 @@ describe("useCategoryManager", () => {
 
     act(() => {
       ref.current?.openEditModal(categoryToEdit);
-      ref.current?.saveCategory("Updated Name", "#654321");
+      ref.current?.saveCategory('Updated Name', '#654321');
     });
 
     expect(
-      useCategoryStore.getState().getCategoryByName("Updated Name")?.color,
-    ).toBe("#654321");
+      useCategoryStore.getState().getCategoryByName('Updated Name')?.color,
+    ).toBe('#654321');
 
     act(() => {
       ref.current?.deleteCategory(
-        ref.current!.categories.find((cat) => cat.name === "Other")!.id,
+        ref.current!.categories.find((cat) => cat.name === 'Other')!.id,
       );
     });
 
     expect(Alert.alert).toHaveBeenCalledWith(
-      "Error",
+      'Error',
       "The 'Other' category cannot be deleted.",
     );
   });

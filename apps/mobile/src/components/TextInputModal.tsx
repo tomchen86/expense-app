@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect } from 'react';
 import {
   Modal,
   View,
@@ -8,7 +8,7 @@ import {
   StyleSheet,
   KeyboardAvoidingView,
   Platform,
-} from "react-native";
+} from 'react-native';
 
 interface TextInputModalProps {
   visible: boolean;
@@ -25,11 +25,11 @@ const TextInputModal: React.FC<TextInputModalProps> = ({
   visible,
   title,
   placeholder,
-  submitButtonText = "Submit",
-  cancelButtonText = "Cancel",
+  submitButtonText = 'Submit',
+  cancelButtonText = 'Cancel',
   onSubmit,
   onClose,
-  initialValue = "",
+  initialValue = '',
 }) => {
   const [inputValue, setInputValue] = useState(initialValue);
 
@@ -46,7 +46,7 @@ const TextInputModal: React.FC<TextInputModalProps> = ({
       onClose(); // Close after successful submit
     } else {
       // Optional: Add validation feedback (e.g., Alert or inline message)
-      alert("Input cannot be empty.");
+      alert('Input cannot be empty.');
     }
   };
 
@@ -54,11 +54,11 @@ const TextInputModal: React.FC<TextInputModalProps> = ({
     <Modal
       visible={visible}
       transparent
-      animationType="slide"
+      animationType='slide'
       onRequestClose={onClose}
     >
       <KeyboardAvoidingView
-        behavior={Platform.OS === "ios" ? "padding" : "height"}
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
         style={styles.keyboardAvoidingView}
       >
         <View style={styles.modalContainer}>
@@ -102,16 +102,16 @@ const styles = StyleSheet.create({
   },
   modalContainer: {
     flex: 1,
-    justifyContent: "center", // Center modal vertically
-    alignItems: "center", // Center modal horizontally
-    backgroundColor: "rgba(0, 0, 0, 0.5)",
+    justifyContent: 'center', // Center modal vertically
+    alignItems: 'center', // Center modal horizontally
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
   },
   modalContent: {
-    backgroundColor: "white",
+    backgroundColor: 'white',
     borderRadius: 8,
     padding: 20,
-    width: "85%", // Adjust width as needed
-    shadowColor: "#000",
+    width: '85%', // Adjust width as needed
+    shadowColor: '#000',
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.25,
     shadowRadius: 4,
@@ -119,13 +119,13 @@ const styles = StyleSheet.create({
   },
   modalTitle: {
     fontSize: 20,
-    fontWeight: "bold",
+    fontWeight: 'bold',
     marginBottom: 20,
-    textAlign: "center",
+    textAlign: 'center',
   },
   input: {
     height: 45, // Slightly taller input
-    borderColor: "#ccc",
+    borderColor: '#ccc',
     borderWidth: 1,
     marginBottom: 20,
     paddingHorizontal: 10,
@@ -133,29 +133,29 @@ const styles = StyleSheet.create({
     fontSize: 16,
   },
   modalButtons: {
-    flexDirection: "row",
-    justifyContent: "space-between",
+    flexDirection: 'row',
+    justifyContent: 'space-between',
   },
   cancelButton: {
     flex: 1,
-    backgroundColor: "#6c757d",
+    backgroundColor: '#6c757d',
     padding: 12,
     borderRadius: 5,
     marginRight: 10,
-    alignItems: "center",
+    alignItems: 'center',
   },
   submitButton: {
     flex: 1,
-    backgroundColor: "#007bff",
+    backgroundColor: '#007bff',
     padding: 12,
     borderRadius: 5,
     marginLeft: 10,
-    alignItems: "center",
+    alignItems: 'center',
   },
   buttonText: {
-    color: "#ffffff",
+    color: '#ffffff',
     fontSize: 16,
-    fontWeight: "500",
+    fontWeight: '500',
   },
 });
 

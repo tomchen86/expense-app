@@ -2,13 +2,15 @@ import { useExpenseStore as useExpenseFeatureStore } from '../../store/features/
 
 // Use high-resolution timing when available, otherwise fall back to Date.now
 const now = () => {
-  if (typeof performance !== 'undefined' && typeof performance.now === 'function') {
+  if (
+    typeof performance !== 'undefined' &&
+    typeof performance.now === 'function'
+  ) {
     return performance.now();
   }
 
   try {
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const { performance } = require('perf_hooks');
+    const { performance } = await import('perf_hooks');
     return performance.now();
   } catch (error) {
     return Date.now();
@@ -72,7 +74,7 @@ describe('Store Performance Benchmarks', () => {
       const totals = expenses.reduce(
         (accumulated, expense) => {
           const key = expense.category;
-          // eslint-disable-next-line no-param-reassign
+
           accumulated[key] = (accumulated[key] ?? 0) + expense.amount;
           return accumulated;
         },

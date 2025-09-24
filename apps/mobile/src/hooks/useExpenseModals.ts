@@ -1,11 +1,11 @@
-import { useState, useMemo } from "react";
-import { useNavigation } from "@react-navigation/native";
-import { StackNavigationProp } from "@react-navigation/stack";
-import { ExpenseCategory, Participant, ExpenseGroup } from "../types";
-import { DEFAULT_CATEGORIES } from "../constants/expenses";
-import { RootStackParamList } from "../../App";
+import { useState, useMemo } from 'react';
+import { useNavigation } from '@react-navigation/native';
+import { StackNavigationProp } from '@react-navigation/stack';
+import { ExpenseCategory, Participant, ExpenseGroup } from '../types';
+import { DEFAULT_CATEGORIES } from '../constants/expenses';
+import { RootStackParamList } from '../../App';
 
-const ADD_NEW_CATEGORY_ACTION = "+ Add New Category" as const;
+const ADD_NEW_CATEGORY_ACTION = '+ Add New Category' as const;
 
 interface UseExpenseModalsProps {
   formState: {
@@ -26,7 +26,7 @@ export const useExpenseModals = ({
   setFormState,
 }: UseExpenseModalsProps) => {
   const navigation =
-    useNavigation<StackNavigationProp<RootStackParamList, "AddExpense">>();
+    useNavigation<StackNavigationProp<RootStackParamList, 'AddExpense'>>();
 
   // Modal visibility state
   const [showCategoryModal, setShowCategoryModal] = useState(false);
@@ -52,22 +52,22 @@ export const useExpenseModals = ({
     item: ExpenseCategory | typeof ADD_NEW_CATEGORY_ACTION,
   ) => {
     if (item === ADD_NEW_CATEGORY_ACTION) {
-      navigation.navigate("ManageCategoriesScreen");
+      navigation.navigate('ManageCategoriesScreen');
     } else {
-      handleUpdateFormState("category", item);
+      handleUpdateFormState('category', item);
     }
   };
 
   const handleGroupSelect = (item: ExpenseGroup) => {
-    handleUpdateFormState("selectedGroup", item);
-    handleUpdateFormState("paidByParticipant", null);
-    handleUpdateFormState("selectedParticipants", []);
+    handleUpdateFormState('selectedGroup', item);
+    handleUpdateFormState('paidByParticipant', null);
+    handleUpdateFormState('selectedParticipants', []);
   };
 
   const handleGroupClear = () => {
-    handleUpdateFormState("selectedGroup", null);
-    handleUpdateFormState("paidByParticipant", null);
-    handleUpdateFormState("selectedParticipants", []);
+    handleUpdateFormState('selectedGroup', null);
+    handleUpdateFormState('paidByParticipant', null);
+    handleUpdateFormState('selectedParticipants', []);
     setShowGroupModal(false);
   };
 

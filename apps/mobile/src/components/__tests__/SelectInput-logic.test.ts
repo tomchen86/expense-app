@@ -571,7 +571,7 @@ describe('SelectInput Logic', () => {
         return {
           displayValue: value,
           hasSpecialChars: /[!@#$%^&*(),.?":{}|<>]/.test(value),
-          hasUnicode: /[^\x00-\x7F]/.test(value),
+          hasUnicode: /[^ -~]/.test(value),
           isLongValue: value.length > 50,
         };
       };

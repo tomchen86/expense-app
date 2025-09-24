@@ -1,24 +1,24 @@
-import React, { useMemo, useState } from "react"; // Added useState
+import React, { useMemo, useState } from 'react'; // Added useState
 import {
   View,
   Text,
   StyleSheet,
   FlatList,
   TouchableOpacity,
-  Pressable, // Added Pressable for consistency if needed, or use TouchableOpacity
-} from "react-native";
-import { RouteProp, useRoute, useNavigation } from "@react-navigation/native";
-import { StackNavigationProp } from "@react-navigation/stack";
+  Pressable as _Pressable, // Added Pressable for consistency if needed, or use TouchableOpacity
+} from 'react-native';
+import { RouteProp, useRoute, useNavigation } from '@react-navigation/native';
+import { StackNavigationProp } from '@react-navigation/stack';
 
-import { useExpenseStore } from "../store/expenseStore";
-import { Expense, ExpenseGroup, Participant } from "../types"; // Added Participant
-import ExpenseListItem from "../components/ExpenseListItem";
-import GroupBalancesOverlay from "../components/GroupBalancesOverlay"; // Import the overlay
-import FloatingActionButton from "../components/FloatingActionButton"; // Import FAB
+import { useExpenseStore } from '../store/expenseStore';
+import { Expense, ExpenseGroup, Participant as _Participant } from '../types'; // Added Participant
+import ExpenseListItem from '../components/ExpenseListItem';
+import GroupBalancesOverlay from '../components/GroupBalancesOverlay'; // Import the overlay
+import FloatingActionButton from '../components/FloatingActionButton'; // Import FAB
 import {
   calculateGroupTotal,
   calculateUserTotalContributionInGroup,
-} from "../utils/groupCalculations"; // Added calculateUserTotalContributionInGroup
+} from '../utils/groupCalculations'; // Added calculateUserTotalContributionInGroup
 
 // Define ParamList including this screen and its params
 // TODO: This should ideally be defined in a central navigation types file
@@ -29,14 +29,14 @@ type RootStackParamList = {
   GroupDetail: { groupId: string };
   ExpenseInsights: {
     // Added ExpenseInsights for navigation
-    contextType: "personal" | "group";
+    contextType: 'personal' | 'group';
     contextId: string;
     initialDate?: Date;
   };
 };
 
 // Define the specific route prop type for this screen
-type GroupDetailScreenRouteProp = RouteProp<RootStackParamList, "GroupDetail">;
+type GroupDetailScreenRouteProp = RouteProp<RootStackParamList, 'GroupDetail'>;
 
 const GroupDetailScreen = () => {
   const route = useRoute<GroupDetailScreenRouteProp>();
@@ -89,7 +89,7 @@ const GroupDetailScreen = () => {
   }, [group]);
 
   // Create a map for quick group lookup (needed by ExpenseListItem)
-  const groupMap = useMemo(() => {
+  const _groupMap = useMemo(() => {
     const map = new Map<string, ExpenseGroup>();
     if (group) {
       // Only need the current group in the map for this screen
@@ -101,7 +101,7 @@ const GroupDetailScreen = () => {
   // --- Handlers ---
   const handleEdit = (expense: Expense) => {
     // Navigate to AddExpense screen, passing the expense to edit
-    navigation.navigate("AddExpense", { expense });
+    navigation.navigate('AddExpense', { expense });
   };
 
   const handleDelete = (expenseId: string) => {
@@ -126,7 +126,7 @@ const GroupDetailScreen = () => {
 
   // Set the header title dynamically
   React.useLayoutEffect(() => {
-    navigation.setOptions({ title: group ? group.name : "Group Details" });
+    navigation.setOptions({ title: group ? group.name : 'Group Details' });
   }, [navigation, group]);
 
   if (!group) {
@@ -143,8 +143,8 @@ const GroupDetailScreen = () => {
       {/* Display Group Total - Make it Touchable */}
       <TouchableOpacity
         onPress={() =>
-          navigation.navigate("ExpenseInsights", {
-            contextType: "group",
+          navigation.navigate('ExpenseInsights', {
+            contextType: 'group',
             contextId: groupId,
           })
         }
@@ -205,15 +205,15 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     padding: 20,
-    backgroundColor: "#f5f5f5",
+    backgroundColor: '#f5f5f5',
   },
   totalContainer: {
-    backgroundColor: "#ffffff",
+    backgroundColor: '#ffffff',
     padding: 15,
     borderRadius: 8,
     marginBottom: 20,
-    alignItems: "center",
-    shadowColor: "#000",
+    alignItems: 'center',
+    shadowColor: '#000',
     shadowOffset: { width: 0, height: 1 },
     shadowOpacity: 0.2,
     shadowRadius: 1.41,
@@ -221,23 +221,23 @@ const styles = StyleSheet.create({
   },
   totalText: {
     fontSize: 18,
-    fontWeight: "bold",
-    color: "#333",
+    fontWeight: 'bold',
+    color: '#333',
   },
   list: {
     flex: 1, // Ensure list takes remaining space
   },
   emptyListText: {
-    textAlign: "center",
+    textAlign: 'center',
     marginTop: 50,
     fontSize: 16,
-    color: "#6c757d",
+    color: '#6c757d',
   },
   errorText: {
-    textAlign: "center",
+    textAlign: 'center',
     marginTop: 50,
     fontSize: 18,
-    color: "red",
+    color: 'red',
   },
   // Optional Add Button Styles
   // addButton: { ... },

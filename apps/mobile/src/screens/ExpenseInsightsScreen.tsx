@@ -1,13 +1,13 @@
-import React, { useEffect } from "react";
-import { StyleSheet, ScrollView } from "react-native";
-import { RouteProp, useRoute, useNavigation } from "@react-navigation/native";
-import { StackNavigationProp } from "@react-navigation/stack";
+import React, { useEffect } from 'react';
+import { StyleSheet, ScrollView } from 'react-native';
+import { RouteProp, useRoute, useNavigation } from '@react-navigation/native';
+import { StackNavigationProp } from '@react-navigation/stack';
 
-import { Expense } from "../types";
-import { useInsightsData } from "../hooks/useInsightsData";
-import CategoryChart from "../components/insights/CategoryChart";
-import InsightsHeader from "../components/insights/InsightsHeader";
-import DatePickerModal from "../components/insights/DatePickerModal";
+import { Expense } from '../types';
+import { useInsightsData } from '../hooks/useInsightsData';
+import CategoryChart from '../components/insights/CategoryChart';
+import InsightsHeader from '../components/insights/InsightsHeader';
+import DatePickerModal from '../components/insights/DatePickerModal';
 
 type RootStackParamList = {
   Home: undefined;
@@ -15,7 +15,7 @@ type RootStackParamList = {
   History: undefined;
   GroupDetail: { groupId: string };
   ExpenseInsights: {
-    contextType: "personal" | "group";
+    contextType: 'personal' | 'group';
     contextId: string;
     initialDate?: Date;
   };
@@ -25,7 +25,7 @@ type RootStackParamList = {
 
 type ExpenseInsightsScreenRouteProp = RouteProp<
   RootStackParamList,
-  "ExpenseInsights"
+  'ExpenseInsights'
 >;
 
 const ExpenseInsightsScreen = () => {
@@ -77,7 +77,7 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     padding: 15,
-    backgroundColor: "#f5f5f5",
+    backgroundColor: '#f5f5f5',
   },
 });
 

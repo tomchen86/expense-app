@@ -1,4 +1,4 @@
-import { Expense, Participant } from "../types";
+import { Expense, Participant } from '../types';
 
 /**
  * Calculates the total amount of expenses for a specific group.

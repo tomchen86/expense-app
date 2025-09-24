@@ -1,11 +1,11 @@
-import React from "react";
-import { View, Text, StyleSheet, Modal, Button } from "react-native";
-import { Picker } from "@react-native-picker/picker";
+import React from 'react';
+import { View, Text, StyleSheet, Modal, Button } from 'react-native';
+import { Picker } from '@react-native-picker/picker';
 
 interface DatePickerModalProps {
   visible: boolean;
   onClose: () => void;
-  aggregation: "month" | "year";
+  aggregation: 'month' | 'year';
   selectedYear: number;
   selectedMonth: number;
   onYearChange: (year: number) => void;
@@ -29,7 +29,7 @@ const DatePickerModal: React.FC<DatePickerModalProps> = ({
     <Modal
       transparent={true}
       visible={visible}
-      animationType="slide"
+      animationType='slide'
       onRequestClose={onClose}
     >
       <View style={styles.modalOverlay}>
@@ -37,7 +37,7 @@ const DatePickerModal: React.FC<DatePickerModalProps> = ({
           <Text style={styles.modalTitle}>Select Period</Text>
 
           <View style={styles.dateSelectorsContainer}>
-            {aggregation === "month" && (
+            {aggregation === 'month' && (
               <View style={styles.pickerContainer}>
                 <Text style={styles.dateSelectorLabel}>Month:</Text>
                 <Picker
@@ -72,7 +72,7 @@ const DatePickerModal: React.FC<DatePickerModalProps> = ({
             </View>
           </View>
 
-          <Button title="Done" onPress={onClose} />
+          <Button title='Done' onPress={onClose} />
         </View>
       </View>
     </Modal>
@@ -82,25 +82,25 @@ const DatePickerModal: React.FC<DatePickerModalProps> = ({
 const styles = StyleSheet.create({
   modalOverlay: {
     flex: 1,
-    justifyContent: "center",
-    alignItems: "center",
-    backgroundColor: "rgba(0,0,0,0.5)",
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: 'rgba(0,0,0,0.5)',
   },
   modalContent: {
-    backgroundColor: "white",
+    backgroundColor: 'white',
     padding: 20,
     borderRadius: 10,
-    width: "80%",
+    width: '80%',
     maxWidth: 400,
   },
   modalTitle: {
     fontSize: 18,
-    fontWeight: "bold",
-    textAlign: "center",
+    fontWeight: 'bold',
+    textAlign: 'center',
     marginBottom: 15,
   },
   dateSelectorsContainer: {
-    flexDirection: "column",
+    flexDirection: 'column',
     marginBottom: 20,
   },
   pickerContainer: {
@@ -108,14 +108,14 @@ const styles = StyleSheet.create({
   },
   dateSelectorLabel: {
     fontSize: 16,
-    fontWeight: "600",
+    fontWeight: '600',
     marginBottom: 5,
-    color: "#333",
+    color: '#333',
   },
   picker: {
     height: 150,
     borderWidth: 1,
-    borderColor: "#ddd",
+    borderColor: '#ddd',
     borderRadius: 5,
   },
   pickerItem: {

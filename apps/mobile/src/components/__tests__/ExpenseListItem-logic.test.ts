@@ -181,19 +181,19 @@ describe('ExpenseListItem Logic', () => {
         const errors: string[] = [];
 
         if (!expense.id) {
-          errors.push("ID is required");
+          errors.push('ID is required');
         }
         if (!expense.title || expense.title.trim().length === 0) {
           errors.push('Title is required');
         }
         if (expense.amount <= 0) {
-          errors.push("Amount must be greater than 0");
+          errors.push('Amount must be greater than 0');
         }
         if (!expense.date) {
-          errors.push("Date is required");
+          errors.push('Date is required');
         }
         if (!expense.category) {
-          errors.push("Category is required");
+          errors.push('Category is required');
         }
 
         return {
@@ -269,13 +269,13 @@ describe('ExpenseListItem Logic', () => {
         const errors: string[] = [];
 
         if (!props.item) {
-          errors.push("item is required");
+          errors.push('item is required');
         }
         if (props.group === undefined) {
           errors.push('group must be defined (can be null)');
         }
         if (!props.allParticipants) {
-          errors.push("allParticipants is required");
+          errors.push('allParticipants is required');
         }
         if (typeof props.displayAmount !== 'number') {
           errors.push('displayAmount must be a number');

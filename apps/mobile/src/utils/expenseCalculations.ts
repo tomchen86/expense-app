@@ -1,4 +1,4 @@
-import { Expense } from "../types";
+import { Expense } from '../types';
 
 /**
  * Calculates the total amount from a list of expenses.

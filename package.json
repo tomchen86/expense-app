@@ -2,12 +2,31 @@
   "name": "app",
   "private": true,
   "scripts": {
-    "prepare": "husky install"
+    "prepare": "husky",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix"
+  },
+  "pnpm": {
+    "overrides": {
+      "prettier": "^3.3.3"
+    }
   },
   "dependencies": {
     "@react-native-picker/picker": "^2.11.0"
   },
   "devDependencies": {
-    "husky": "^9.1.6"
+    "@eslint/js": "^9.26.0",
+    "eslint": "^9.26.0",
+    "eslint-config-prettier": "^9.1.2",
+    "eslint-plugin-react": "^7.37.5",
+    "eslint-plugin-react-hooks": "^4.6.2",
+    "eslint-plugin-react-native": "^5.0.0",
+    "globals": "^15.15.0",
+    "husky": "^9.1.7",
+    "lint-staged": "^16.2.0",
+    "prettier": "^3.6.2",
+    "typescript-eslint": "^8.32.0"
   }
 }

@@ -1,6 +1,6 @@
-import React from "react";
-import { View, Text, TouchableOpacity, StyleSheet } from "react-native";
-import { ExpenseGroup, Participant } from "../types";
+import React from 'react';
+import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
+import { ExpenseGroup, Participant as _Participant } from '../types';
 
 interface GroupListItemProps {
   group: ExpenseGroup;
@@ -67,54 +67,54 @@ const GroupListItem: React.FC<GroupListItemProps> = ({
 // Styles copied and adapted from HistoryScreen.tsx
 const styles = StyleSheet.create({
   groupCard: {
-    backgroundColor: "#ffffff",
+    backgroundColor: '#ffffff',
     padding: 15,
     borderRadius: 8,
     marginBottom: 15,
-    shadowColor: "#000",
+    shadowColor: '#000',
     shadowOffset: { width: 0, height: 1 },
     shadowOpacity: 0.2,
     shadowRadius: 1.41,
     elevation: 2,
   },
   groupHeader: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
     marginBottom: 10,
   },
   groupName: {
     fontSize: 20,
-    fontWeight: "bold",
+    fontWeight: 'bold',
   },
   deleteButton: {
-    backgroundColor: "#dc3545",
+    backgroundColor: '#dc3545',
     paddingHorizontal: 12,
     paddingVertical: 6,
     borderRadius: 4,
   },
   deleteButtonText: {
-    color: "#ffffff",
+    color: '#ffffff',
     fontSize: 14,
-    fontWeight: "500",
+    fontWeight: '500',
   },
   groupTotal: {
     fontSize: 16,
-    color: "#28a745",
+    color: '#28a745',
     marginBottom: 10,
   },
   participantsLabel: {
     fontSize: 16,
-    fontWeight: "500",
+    fontWeight: '500',
     marginBottom: 10,
   },
   participantsList: {
     marginLeft: 10,
   },
   participantItem: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
     marginBottom: 5,
   },
   participantName: {
@@ -124,15 +124,15 @@ const styles = StyleSheet.create({
     padding: 5,
   },
   removeParticipantText: {
-    color: "#dc3545",
+    color: '#dc3545',
     fontSize: 20,
-    fontWeight: "bold",
+    fontWeight: 'bold',
   },
   addParticipantButton: {
     marginTop: 10,
   },
   addParticipantText: {
-    color: "#007bff",
+    color: '#007bff',
     fontSize: 16,
   },
 });

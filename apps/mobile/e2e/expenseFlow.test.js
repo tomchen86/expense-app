@@ -131,9 +131,15 @@ describe('Expense Management Flow', () => {
 
     it('should create expense with optional caption', async () => {
       await testHelpers.waitAndTap(by.id('add-expense-fab'));
-      await testHelpers.waitAndType(by.id('expense-title-input'), 'Business Lunch');
+      await testHelpers.waitAndType(
+        by.id('expense-title-input'),
+        'Business Lunch',
+      );
       await testHelpers.waitAndType(by.id('expense-amount-input'), '45.00');
-      await testHelpers.waitAndType(by.id('expense-caption-input'), 'Client meeting');
+      await testHelpers.waitAndType(
+        by.id('expense-caption-input'),
+        'Client meeting',
+      );
 
       await testHelpers.waitAndTap(by.id('save-expense-button'));
 
@@ -161,7 +167,10 @@ describe('Expense Management Flow', () => {
       await testHelpers.waitAndTap(by.id('add-expense-fab'));
 
       // Fill group expense form
-      await testHelpers.waitAndType(by.id('expense-title-input'), 'Restaurant Bill');
+      await testHelpers.waitAndType(
+        by.id('expense-title-input'),
+        'Restaurant Bill',
+      );
       await testHelpers.waitAndType(by.id('expense-amount-input'), '80.00');
 
       // Save group expense
@@ -303,11 +312,15 @@ describe('Expense Management Flow', () => {
       const expenses = [
         { title: 'Groceries', amount: '150.00', category: 'Food & Dining' },
         { title: 'Gas', amount: '45.00', category: 'Transportation' },
-        { title: 'Movie', amount: '25.00', category: 'Entertainment' }
+        { title: 'Movie', amount: '25.00', category: 'Entertainment' },
       ];
 
       for (const expense of expenses) {
-        await testHelpers.createExpense(expense.title, expense.amount, expense.category);
+        await testHelpers.createExpense(
+          expense.title,
+          expense.amount,
+          expense.category,
+        );
       }
 
       // Navigate to insights
@@ -337,7 +350,9 @@ describe('Expense Management Flow', () => {
       await testHelpers.waitAndTap(by.id('total-share-button'));
 
       // Should show no data message
-      await testHelpers.expectVisible(by.text('No expense data for the selected period.'));
+      await testHelpers.expectVisible(
+        by.text('No expense data for the selected period.'),
+      );
     });
 
     it('should filter insights by time period', async () => {
@@ -354,7 +369,9 @@ describe('Expense Management Flow', () => {
       await testHelpers.waitAndTap(by.id('previous-month-button'));
 
       // Should show no data for previous month
-      await testHelpers.expectVisible(by.text('No expense data for the selected period.'));
+      await testHelpers.expectVisible(
+        by.text('No expense data for the selected period.'),
+      );
 
       // Navigate back to current month
       await testHelpers.waitAndTap(by.id('next-month-button'));
@@ -390,7 +407,10 @@ describe('Expense Management Flow', () => {
   describe('Error Handling', () => {
     it('should handle invalid expense amounts gracefully', async () => {
       await testHelpers.waitAndTap(by.id('add-expense-fab'));
-      await testHelpers.waitAndType(by.id('expense-title-input'), 'Invalid Amount Test');
+      await testHelpers.waitAndType(
+        by.id('expense-title-input'),
+        'Invalid Amount Test',
+      );
 
       // Try various invalid amounts
       const invalidAmounts = ['abc', '0', '-10', '', '   '];

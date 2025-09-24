@@ -200,7 +200,7 @@ describe('insightCalculations', () => {
     });
 
     it('should handle edge case of month boundaries', () => {
-      const testExpenses = [
+      const monthBoundaryExpenses = [
         createMockExpense({
           title: 'Last day of Jan',
           date: '2025-01-31',
@@ -213,8 +213,18 @@ describe('insightCalculations', () => {
         }),
       ];
 
-      const janResult = filterExpensesByDate(testExpenses, 'month', 2025, 0);
-      const febResult = filterExpensesByDate(testExpenses, 'month', 2025, 1);
+      const janResult = filterExpensesByDate(
+        monthBoundaryExpenses,
+        'month',
+        2025,
+        0,
+      );
+      const febResult = filterExpensesByDate(
+        monthBoundaryExpenses,
+        'month',
+        2025,
+        1,
+      );
 
       expect(janResult).toHaveLength(1);
       expect(janResult[0].title).toBe('Last day of Jan');

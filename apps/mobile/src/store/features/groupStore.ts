@@ -1,5 +1,5 @@
-import { create } from "zustand";
-import { ExpenseGroup, Participant } from "../../types";
+import { create } from 'zustand';
+import { ExpenseGroup, Participant } from '../../types';
 
 // Helper to generate a simple unique ID
 const generateId = () => Math.random().toString(36).substr(2, 9);

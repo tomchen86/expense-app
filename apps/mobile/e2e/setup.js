@@ -1,4 +1,4 @@
-const { reloadApp } = require('detox');
+import { reloadApp } from 'detox';
 
 beforeAll(async () => {
   await device.launchApp();
@@ -13,39 +13,31 @@ afterAll(async () => {
 });
 
 // Global test helpers
-global.sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+global.sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 // Common test utilities
 global.testHelpers = {
   // Helper to wait for element and tap
   waitAndTap: async (elementMatcher, timeout = 5000) => {
-    await waitFor(element(elementMatcher))
-      .toBeVisible()
-      .withTimeout(timeout);
+    await waitFor(element(elementMatcher)).toBeVisible().withTimeout(timeout);
     await element(elementMatcher).tap();
   },
 
   // Helper to type text with wait
   waitAndType: async (elementMatcher, text, timeout = 5000) => {
-    await waitFor(element(elementMatcher))
-      .toBeVisible()
-      .withTimeout(timeout);
+    await waitFor(element(elementMatcher)).toBeVisible().withTimeout(timeout);
     await element(elementMatcher).typeText(text);
   },
 
   // Helper to replace text with wait
   waitAndReplace: async (elementMatcher, text, timeout = 5000) => {
-    await waitFor(element(elementMatcher))
-      .toBeVisible()
-      .withTimeout(timeout);
+    await waitFor(element(elementMatcher)).toBeVisible().withTimeout(timeout);
     await element(elementMatcher).replaceText(text);
   },
 
   // Helper to verify element is visible
   expectVisible: async (elementMatcher, timeout = 5000) => {
-    await waitFor(element(elementMatcher))
-      .toBeVisible()
-      .withTimeout(timeout);
+    await waitFor(element(elementMatcher)).toBeVisible().withTimeout(timeout);
     await expect(element(elementMatcher)).toBeVisible();
   },
 
@@ -58,7 +50,11 @@ global.testHelpers = {
   },
 
   // Helper to scroll to element
-  scrollToElement: async (scrollViewMatcher, elementMatcher, direction = 'down') => {
+  scrollToElement: async (
+    scrollViewMatcher,
+    elementMatcher,
+    direction = 'down',
+  ) => {
     await waitFor(element(elementMatcher))
       .toBeVisible()
       .whileElement(scrollViewMatcher)

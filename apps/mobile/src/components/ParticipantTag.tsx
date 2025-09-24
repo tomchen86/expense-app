@@ -1,5 +1,5 @@
-import React from "react";
-import { View, Text, TouchableOpacity, StyleSheet } from "react-native";
+import React from 'react';
+import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
 
 interface ParticipantTagProps {
   participantName: string;
@@ -22,9 +22,9 @@ const ParticipantTag: React.FC<ParticipantTagProps> = ({
 
 const styles = StyleSheet.create({
   tag: {
-    flexDirection: "row",
-    alignItems: "center",
-    backgroundColor: "#e3f2fd", // Light blue background
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#e3f2fd', // Light blue background
     paddingHorizontal: 12,
     paddingVertical: 6,
     borderRadius: 16, // Pill shape
@@ -32,7 +32,7 @@ const styles = StyleSheet.create({
     marginBottom: 8, // Spacing for wrapping
   },
   tagText: {
-    color: "#1976d2", // Blue text
+    color: '#1976d2', // Blue text
     marginRight: 6,
     fontSize: 14,
   },
@@ -41,9 +41,9 @@ const styles = StyleSheet.create({
     padding: 2, // Small padding for touch area
   },
   removeButtonText: {
-    color: "#1976d2", // Blue 'x'
+    color: '#1976d2', // Blue 'x'
     fontSize: 16,
-    fontWeight: "bold",
+    fontWeight: 'bold',
   },
 });
 

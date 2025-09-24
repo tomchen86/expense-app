@@ -45,10 +45,12 @@ const testHelpers = {
       await this.waitAndTap(by.text('Save Settings'));
 
       // Wait for success message or return to home
-      const successVisible = await this.isVisible(by.text('Settings saved successfully'));
+      const successVisible = await this.isVisible(
+        by.text('Settings saved successfully'),
+      );
       if (successVisible) {
         // Wait a moment for the message to disappear
-        await new Promise(resolve => setTimeout(resolve, 1000));
+        await new Promise((resolve) => setTimeout(resolve, 1000));
       }
 
       // Return to home
@@ -125,7 +127,7 @@ const testHelpers = {
       'expense-amount-input',
       'expense-caption-input',
       'group-name-input',
-      'category-name-input'
+      'category-name-input',
     ];
 
     for (const field of fields) {
@@ -232,7 +234,9 @@ const testHelpers = {
     await this.navigateToHistory();
     await this.waitAndTap(by.text(groupName));
 
-    const balanceButtonExists = await this.isVisible(by.id('group-balances-button'));
+    const balanceButtonExists = await this.isVisible(
+      by.id('group-balances-button'),
+    );
     if (balanceButtonExists) {
       await this.waitAndTap(by.id('group-balances-button'));
       await this.expectVisible(by.text(expectedBalance));
@@ -323,7 +327,9 @@ const testHelpers = {
   async selectDate(year, month, day) {
     // Implementation depends on the specific date picker component used
     // This is a placeholder for date selection functionality
-    console.log(`Date selection not fully implemented: ${year}-${month}-${day}`);
+    console.log(
+      `Date selection not fully implemented: ${year}-${month}-${day}`,
+    );
   },
 
   // Complex workflow helpers
@@ -339,7 +345,13 @@ const testHelpers = {
     await this.navigateToHome();
   },
 
-  async createExpenseWithAllFields(title, amount, category, caption = null, date = null) {
+  async createExpenseWithAllFields(
+    title,
+    amount,
+    category,
+    caption = null,
+    date = null,
+  ) {
     await this.waitAndTap(by.id('add-expense-fab'));
     await this.waitAndType(by.id('expense-title-input'), title);
     await this.waitAndType(by.id('expense-amount-input'), amount);
@@ -359,7 +371,7 @@ const testHelpers = {
 
     await this.waitAndTap(by.id('save-expense-button'));
     await this.expectVisible(by.text('Home'));
-  }
+  },
 };
 
 module.exports = testHelpers;

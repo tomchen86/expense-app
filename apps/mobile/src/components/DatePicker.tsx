@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState } from 'react';
 import {
   View,
   Text,
@@ -7,10 +7,10 @@ import {
   Platform,
   ViewStyle,
   TextStyle,
-} from "react-native";
+} from 'react-native';
 import DateTimePicker, {
   DateTimePickerEvent,
-} from "@react-native-community/datetimepicker";
+} from '@react-native-community/datetimepicker';
 
 interface DatePickerProps {
   label: string;
@@ -38,7 +38,7 @@ const DatePicker: React.FC<DatePickerProps> = ({
     selectedDate?: Date,
   ) => {
     // On Android, the picker closes automatically. On iOS, we need to hide it manually.
-    if (Platform.OS === "android") {
+    if (Platform.OS === 'android') {
       setShowPicker(false);
     }
     // Propagate the change up, regardless of whether a date was selected (event type 'dismissed')
@@ -65,19 +65,19 @@ const DatePicker: React.FC<DatePickerProps> = ({
         <Text style={[styles.valueText, valueStyle]}>
           {`${date.getFullYear()}-${(date.getMonth() + 1)
             .toString()
-            .padStart(2, "0")}-${date.getDate().toString().padStart(2, "0")}`}
+            .padStart(2, '0')}-${date.getDate().toString().padStart(2, '0')}`}
         </Text>
       </TouchableOpacity>
 
       {showPicker && (
         <>
           {/* iOS requires a confirmation button, often placed above or below */}
-          {Platform.OS === "ios" && renderIOSConfirmationButton()}
+          {Platform.OS === 'ios' && renderIOSConfirmationButton()}
           <DateTimePicker
-            testID="dateTimePicker"
+            testID='dateTimePicker'
             value={date}
-            mode={"date"}
-            display={Platform.OS === "ios" ? "spinner" : "default"} // 'spinner' looks better on iOS modal
+            mode={'date'}
+            display={Platform.OS === 'ios' ? 'spinner' : 'default'} // 'spinner' looks better on iOS modal
             onChange={handleDateChange}
             maximumDate={new Date()} // Prevent selecting future dates
             {...rest} // Apply remaining props
@@ -95,34 +95,34 @@ const styles = StyleSheet.create({
   label: {
     fontSize: 16,
     marginBottom: 5,
-    color: "#333",
-    fontWeight: "500",
+    color: '#333',
+    fontWeight: '500',
   },
   touchable: {
     borderWidth: 1,
-    borderColor: "#ccc",
+    borderColor: '#ccc',
     borderRadius: 5,
     paddingHorizontal: 10,
     paddingVertical: 10,
-    backgroundColor: "#fff",
+    backgroundColor: '#fff',
     minHeight: 40,
-    justifyContent: "center",
+    justifyContent: 'center',
   },
   valueText: {
     fontSize: 16,
-    color: "#000",
+    color: '#000',
   },
   // Styles specific to iOS confirmation button (adjust as needed)
   iosDoneButton: {
-    alignSelf: "flex-end", // Position button to the right
+    alignSelf: 'flex-end', // Position button to the right
     padding: 10,
-    backgroundColor: "#007bff",
+    backgroundColor: '#007bff',
     borderRadius: 5,
     marginVertical: 5, // Add some spacing
   },
   iosDoneButtonText: {
-    color: "#fff",
-    fontWeight: "500",
+    color: '#fff',
+    fontWeight: '500',
   },
 });
 

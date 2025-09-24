@@ -1,5 +1,5 @@
-import { create } from "zustand";
-import { Expense } from "../../types";
+import { create } from 'zustand';
+import { Expense } from '../../types';
 
 // Helper to generate a simple unique ID
 const generateId = () => Math.random().toString(36).substr(2, 9);
@@ -8,7 +8,7 @@ export interface ExpenseStoreState {
   expenses: Expense[];
 
   // Actions
-  addExpense: (expense: Omit<Expense, "id">) => void;
+  addExpense: (expense: Omit<Expense, 'id'>) => void;
   updateExpense: (expense: Expense) => void;
   deleteExpense: (id: string) => void;
   getExpenseById: (id: string) => Expense | undefined;
