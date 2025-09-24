@@ -41,7 +41,7 @@
     "react-native-gifted-charts": "^1.4.61",
     "react-native-linear-gradient": "^2.8.3",
     "react-native-reanimated": "~3.17.4",
-    "react-native-safe-area-context": "5.4.0",
+    "react-native-safe-area-context": "5.6.1",
     "react-native-screens": "~4.11.1",
     "react-native-svg": "15.11.2",
     "zustand": "^5.0.4"
