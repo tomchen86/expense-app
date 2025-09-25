@@ -13,7 +13,7 @@ fi
 
 checks=(
   "pnpm --filter api test"
-  "pnpm --filter mobile test:unit"
+  "pnpm --filter mobile test"
   "pnpm --filter mobile typecheck"
   "pnpm --filter web lint"
 )
