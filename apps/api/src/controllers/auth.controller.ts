@@ -64,28 +64,28 @@ export class AuthController {
   @Post('register')
   @HttpCode(HttpStatus.CREATED)
   async register(@Body() registerDto: RegisterDto): Promise<ApiResponse<any>> {
+    // Validate required fields up front so we can return a 400 with the mobile error envelope.
+    if (
+      !registerDto.email ||
+      !registerDto.password ||
+      !registerDto.displayName
+    ) {
+      const missingFields: string[] = [];
+      if (!registerDto.email) missingFields.push('email');
+      if (!registerDto.password) missingFields.push('password');
+      if (!registerDto.displayName) missingFields.push('displayName');
+
+      throw new BadRequestException({
+        success: false,
+        error: {
+          code: 'VALIDATION_ERROR',
+          message: 'Required fields are missing',
+          details: missingFields,
+        },
+      });
+    }
+
     try {
-      // Validate required fields
-      if (
-        !registerDto.email ||
-        !registerDto.password ||
-        !registerDto.displayName
-      ) {
-        const missingFields: string[] = [];
-        if (!registerDto.email) missingFields.push('email');
-        if (!registerDto.password) missingFields.push('password');
-        if (!registerDto.displayName) missingFields.push('displayName');
-
-        return {
-          success: false,
-          error: {
-            code: 'VALIDATION_ERROR',
-            message: 'Required fields are missing',
-            details: missingFields,
-          },
-        };
-      }
-
       const result = await this.authService.register(
         registerDto.email,
         registerDto.password,
@@ -105,15 +105,15 @@ export class AuthController {
         },
       };
     } catch (error) {
-      if (error.message.includes('already exists')) {
-        return {
+      if (error instanceof Error && error.message.includes('already exists')) {
+        throw new ConflictException({
           success: false,
           error: {
             code: 'EMAIL_ALREADY_EXISTS',
             message: 'An account with this email already exists',
             field: 'email',
           },
-        };
+        });
       }
       throw error;
     }
@@ -122,17 +122,17 @@ export class AuthController {
   @Post('login')
   @HttpCode(HttpStatus.OK)
   async login(@Body() loginDto: LoginDto): Promise<ApiResponse<any>> {
-    try {
-      if (!loginDto.email || !loginDto.password) {
-        return {
-          success: false,
-          error: {
-            code: 'VALIDATION_ERROR',
-            message: 'Email and password are required',
-          },
-        };
-      }
+    if (!loginDto.email || !loginDto.password) {
+      throw new BadRequestException({
+        success: false,
+        error: {
+          code: 'VALIDATION_ERROR',
+          message: 'Email and password are required',
+        },
+      });
+    }
 
+    try {
       const result = await this.authService.login(
         loginDto.email,
         loginDto.password,
@@ -157,14 +157,17 @@ export class AuthController {
         },
       };
     } catch (error) {
-      if (error.message.includes('Invalid credentials')) {
-        return {
+      if (
+        error instanceof Error &&
+        error.message.includes('Invalid credentials')
+      ) {
+        throw new UnauthorizedException({
           success: false,
           error: {
             code: 'INVALID_CREDENTIALS',
             message: 'Invalid email or password',
           },
-        };
+        });
       }
       throw error;
     }
@@ -175,17 +178,17 @@ export class AuthController {
   async refreshToken(
     @Body('refreshToken') refreshToken: string,
   ): Promise<ApiResponse<any>> {
-    try {
-      if (!refreshToken) {
-        return {
-          success: false,
-          error: {
-            code: 'VALIDATION_ERROR',
-            message: 'Refresh token is required',
-          },
-        };
-      }
+    if (!refreshToken) {
+      throw new BadRequestException({
+        success: false,
+        error: {
+          code: 'VALIDATION_ERROR',
+          message: 'Refresh token is required',
+        },
+      });
+    }
 
+    try {
       const result = await this.authService.refreshToken(refreshToken);
 
       return {
@@ -196,13 +199,13 @@ export class AuthController {
         },
       };
     } catch (error) {
-      return {
+      throw new UnauthorizedException({
         success: false,
         error: {
           code: 'INVALID_REFRESH_TOKEN',
           message: 'Refresh token is invalid or expired',
         },
-      };
+      });
     }
   }
 
@@ -235,13 +238,13 @@ export class AuthController {
         },
       };
     } catch (error) {
-      return {
+      throw new UnauthorizedException({
         success: false,
         error: {
           code: 'USER_NOT_FOUND',
           message: 'User not found',
         },
-      };
+      });
     }
   }
 
@@ -252,21 +255,21 @@ export class AuthController {
     @Req() req: AuthenticatedRequest,
     @Body() updateDto: UpdatePersistenceModeDto,
   ): Promise<ApiResponse<any>> {
-    try {
-      if (
-        !updateDto.persistenceMode ||
-        !['local_only', 'cloud_sync'].includes(updateDto.persistenceMode)
-      ) {
-        return {
-          success: false,
-          error: {
-            code: 'VALIDATION_ERROR',
-            message: 'Persistence mode must be either local_only or cloud_sync',
-            field: 'persistenceMode',
-          },
-        };
-      }
+    if (
+      !updateDto.persistenceMode ||
+      !['local_only', 'cloud_sync'].includes(updateDto.persistenceMode)
+    ) {
+      throw new BadRequestException({
+        success: false,
+        error: {
+          code: 'VALIDATION_ERROR',
+          message: 'Persistence mode must be local_only or cloud_sync',
+          field: 'persistenceMode',
+        },
+      });
+    }
 
+    try {
       const result = await this.authService.updatePersistenceMode(
         req.user.id,
         updateDto.persistenceMode,
@@ -286,13 +289,13 @@ export class AuthController {
         },
       };
     } catch (error) {
-      return {
+      throw new BadRequestException({
         success: false,
         error: {
           code: 'UPDATE_FAILED',
           message: 'Failed to update persistence mode',
         },
-      };
+      });
     }
   }
 }

@@ -123,15 +123,16 @@ export function validateMobileParticipantResponse(
 export function convertExpenseToMobileFormat(expense: any): MobileExpense {
   return {
     id: expense.id,
-    title: expense.title,
-    amount: Number((expense.amount_cents / 100).toFixed(2)), // Convert cents to dollars
-    date: expense.expense_date.toISOString(),
-    category: expense.category.name, // Use category name, not UUID
-    groupId: expense.expense_group?.id,
-    paidBy: expense.paid_by?.id,
-    splitBetween: expense.expense_splits?.map(
-      (split: any) => split.participant.id,
-    ),
+    title: expense.description,
+    amount: Number((Number(expense.amountCents) / 100).toFixed(2)),
+    date:
+      typeof expense.expenseDate === 'string'
+        ? expense.expenseDate
+        : (expense.expenseDate?.toISOString?.() ?? ''),
+    category: expense.category?.name ?? '',
+    groupId: expense.group?.id ?? expense.groupId,
+    paidBy: expense.payer?.id ?? expense.paidByParticipantId,
+    splitBetween: expense.splits?.map((split: any) => split.participant.id),
     notes: expense.notes,
   };
 }
@@ -144,11 +145,14 @@ export function convertExpenseGroupToMobileFormat(
 ): MobileExpenseGroup {
   return {
     id: group.id,
-    name: group.group_name,
-    description: group.group_description,
+    name: group.name,
+    description: group.description,
     participants:
-      group.group_members?.map((member: any) => member.participant.id) || [],
-    createdDate: group.created_date.toISOString(),
+      group.members?.map((member: any) => member.participant.id) || [],
+    createdDate:
+      group.createdAt instanceof Date
+        ? group.createdAt.toISOString()
+        : (group.createdAt ?? new Date().toISOString()),
   };
 }
 
@@ -159,8 +163,8 @@ export function convertUserSettingsToMobileFormat(
   settings: any,
 ): MobileUserSettings {
   return {
-    preferredCurrency: settings.preferred_currency,
-    dateFormat: settings.date_format,
-    defaultSplitMethod: settings.default_split_method,
+    preferredCurrency: settings.defaultCurrency ?? 'USD',
+    dateFormat: settings.dateFormat ?? 'MM/DD/YYYY',
+    defaultSplitMethod: settings.defaultSplitMethod ?? 'equal',
   };
 }

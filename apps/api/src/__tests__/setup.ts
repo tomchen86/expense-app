@@ -1,3 +1,6 @@
+process.env.DB_DRIVER = process.env.DB_DRIVER || 'sqljs';
+process.env.NODE_ENV = process.env.NODE_ENV || 'test';
+
 import { DataSource } from 'typeorm';
 import { DatabaseTestHelper } from './helpers/database-test-helper';
 

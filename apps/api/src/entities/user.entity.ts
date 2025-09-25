@@ -20,8 +20,8 @@ export class User {
   @Column({ name: 'display_name', length: 100 })
   displayName: string;
 
-  @Column({ name: 'avatar_url', nullable: true })
-  avatarUrl?: string;
+  @Column({ name: 'avatar_url', type: 'text', nullable: true })
+  avatarUrl?: string | null;
 
   @Column({ name: 'default_currency', length: 3, default: 'USD' })
   defaultCurrency: string;

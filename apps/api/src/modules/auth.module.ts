@@ -6,12 +6,11 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { AuthController } from '../controllers/auth.controller';
 import { AuthService } from '../services/auth.service';
 import { JwtAuthGuard } from '../guards/jwt-auth.guard';
-import { User } from '../entities/user.entity';
-import { UserSettings } from '../entities/user-settings.entity';
+import { Entities } from '../entities/runtime-entities';
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([User, UserSettings]),
+    TypeOrmModule.forFeature([Entities.User, Entities.UserSettings]),
     JwtModule.register({
       global: true, // Make JwtService available globally
       secret:

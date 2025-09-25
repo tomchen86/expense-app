@@ -38,7 +38,7 @@ export class CoupleInvitationSimple {
   @Column({ nullable: true })
   message?: string;
 
-  @Column({ name: 'expires_at', type: 'datetime', nullable: true })
+  @Column({ name: 'expires_at', nullable: true })
   expiresAt?: Date;
 
   @CreateDateColumn({ name: 'created_at' })

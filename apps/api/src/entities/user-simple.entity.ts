@@ -21,7 +21,7 @@ export class UserSimple {
   @Column({ name: 'display_name', length: 100 })
   displayName: string;
 
-  @Column({ name: 'avatar_url', nullable: true })
+  @Column({ name: 'avatar_url', type: 'text', nullable: true })
   avatarUrl?: string;
 
   @Column({ name: 'default_currency', length: 3, default: 'USD' })
@@ -33,10 +33,10 @@ export class UserSimple {
   @Column({ name: 'onboarding_status', length: 20, default: 'invited' })
   onboardingStatus: string;
 
-  @Column({ name: 'email_verified_at', type: 'datetime', nullable: true })
+  @Column({ name: 'email_verified_at', nullable: true })
   emailVerifiedAt?: Date;
 
-  @Column({ name: 'last_active_at', type: 'datetime', nullable: true })
+  @Column({ name: 'last_active_at', nullable: true })
   lastActiveAt?: Date;
 
   @CreateDateColumn({ name: 'created_at' })

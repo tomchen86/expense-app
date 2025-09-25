@@ -47,7 +47,7 @@ export class UserDeviceSimple {
   @Column({ name: 'app_version', length: 20, nullable: true })
   appVersion?: string;
 
-  @Column({ name: 'last_sync_at', type: 'datetime', nullable: true })
+  @Column({ name: 'last_sync_at', nullable: true })
   lastSyncAt?: Date;
 
   @Column({ name: 'last_snapshot_hash', length: 64, nullable: true })

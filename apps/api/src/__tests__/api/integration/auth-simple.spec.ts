@@ -3,13 +3,15 @@
 
 import { INestApplication } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
-import request from 'supertest';
+import { SuperTest, Test as SuperTestRequest } from 'supertest';
+const supertest = require('supertest');
 import { AppModule } from '../../../app.module';
 import { PerformanceAssertions } from '../../helpers/performance-assertions';
 
 describe('Authentication API - Simple TDD', () => {
   let app: INestApplication;
   let httpServer: any;
+  let api: SuperTest<SuperTestRequest>;
 
   beforeAll(async () => {
     const moduleRef = await Test.createTestingModule({
@@ -19,6 +21,7 @@ describe('Authentication API - Simple TDD', () => {
     app = moduleRef.createNestApplication();
     await app.init();
     httpServer = app.getHttpServer();
+    api = supertest(httpServer);
   });
 
   afterAll(async () => {
@@ -29,7 +32,7 @@ describe('Authentication API - Simple TDD', () => {
   describe('POST /auth/register', () => {
     it('should create authentication endpoints that do not exist yet', async () => {
       // This test expects to fail with 404 since auth endpoints don't exist
-      const response = await request(httpServer).post('/auth/register').send({
+      const response = await api.post('/auth/register').send({
         email: 'test@example.com',
         password: 'password123',
         displayName: 'Test User',
@@ -42,7 +45,7 @@ describe('Authentication API - Simple TDD', () => {
 
   describe('POST /auth/login', () => {
     it('should create login endpoint that does not exist yet', async () => {
-      const response = await request(httpServer).post('/auth/login').send({
+      const response = await api.post('/auth/login').send({
         email: 'test@example.com',
         password: 'password123',
       });
@@ -54,7 +57,7 @@ describe('Authentication API - Simple TDD', () => {
 
   describe('GET /auth/me', () => {
     it('should create me endpoint that does not exist yet', async () => {
-      const response = await request(httpServer)
+      const response = await api
         .get('/auth/me')
         .set('Authorization', 'Bearer fake-token');
 
@@ -70,7 +73,7 @@ describe('Authentication API - Simple TDD', () => {
         'Auth endpoint response time test',
         async () => {
           // This will fail with 404, but we measure the performance
-          return request(httpServer).get('/auth/me');
+          return api.get('/auth/me');
         },
       );
 

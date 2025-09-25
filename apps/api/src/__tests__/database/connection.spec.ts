@@ -1,5 +1,4 @@
 import { testDataSource, dbHelper } from '../setup';
-import { Category } from '../../entities/category.entity';
 
 describe('Database Connection Tests', () => {
   it('should establish test database connection', async () => {
@@ -13,49 +12,70 @@ describe('Database Connection Tests', () => {
   });
 
   it('should seed default categories matching mobile app', async () => {
-    const categoryRepo = testDataSource.getRepository(Category);
+    const categoryRepo = dbHelper.getRepository('Category');
     const categories = await categoryRepo.find({
-      order: { sort_order: 'ASC' },
+      order: { name: 'ASC' },
     });
 
     expect(categories).toHaveLength(10);
 
-    // Verify mobile app's default categories are present
+    // Verify mobile app's default categories are present (alphabetical order)
     const expectedCategories = [
-      'Food & Dining',
-      'Transportation',
-      'Shopping',
-      'Entertainment',
       'Bills & Utilities',
-      'Healthcare',
-      'Travel',
       'Education',
-      'Personal Care',
+      'Entertainment',
+      'Food & Dining',
+      'Healthcare',
       'Other',
+      'Personal Care',
+      'Shopping',
+      'Transportation',
+      'Travel',
     ];
 
     const categoryNames = categories.map((cat) => cat.name);
     expect(categoryNames).toEqual(expectedCategories);
 
-    // Verify all categories are marked as system defaults
+    // Verify all categories are marked as defaults
     categories.forEach((category) => {
-      expect(category.is_system_default).toBe(true);
+      expect(category.isDefault).toBe(true);
       expect(category.color).toMatch(/^#[0-9A-F]{6}$/i); // Valid hex color
     });
   });
 
   it('should handle database operations within transactions', async () => {
     await testDataSource.transaction(async (manager) => {
-      const categoryRepo = manager.getRepository(Category);
-      const testCategory = new Category();
+      // Create valid couple fixture first
+      const CoupleEntity = dbHelper['entityRefs'].Couple;
+      const UserEntity = dbHelper['entityRefs'].User;
+
+      // Create user first (required for couple.createdBy FK)
+      const testUser = new UserEntity();
+      testUser.displayName = 'Test User';
+      testUser.email = 'test@transaction.com';
+      testUser.passwordHash = 'hashed';
+      const savedUser = await manager.save(testUser);
+
+      // Create couple
+      const testCouple = new CoupleEntity();
+      testCouple.name = 'Test Couple';
+      testCouple.inviteCode = 'TEST123';
+      testCouple.createdBy = savedUser.id;
+      testCouple.status = 'active';
+      const savedCouple = await manager.save(testCouple);
+
+      // Now create category with valid coupleId
+      const CategoryEntity = dbHelper['entityRefs'].Category;
+      const testCategory = new CategoryEntity();
       testCategory.name = 'Test Category';
       testCategory.color = '#FF0000';
-      testCategory.sort_order = 999;
+      testCategory.coupleId = savedCouple.id;
+      testCategory.isDefault = false;
 
-      const saved = await categoryRepo.save(testCategory);
-      expect(saved.id).toBeDefined();
+      const savedCategory = await manager.save(testCategory);
+      expect(savedCategory.id).toBeDefined();
 
-      const found = await categoryRepo.findOne({
+      const found = await manager.findOne(CategoryEntity, {
         where: { name: 'Test Category' },
       });
       expect(found).toBeDefined();

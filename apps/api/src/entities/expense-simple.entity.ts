@@ -69,7 +69,7 @@ export class ExpenseSimple {
   @Column({ nullable: true, length: 200 })
   location?: string;
 
-  @DeleteDateColumn({ name: 'deleted_at', type: 'datetime', nullable: true })
+  @DeleteDateColumn({ name: 'deleted_at', nullable: true })
   deletedAt?: Date;
 
   @CreateDateColumn({ name: 'created_at' })

@@ -6,17 +6,19 @@ import { JwtService } from '@nestjs/jwt';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import * as bcrypt from 'bcryptjs';
-import { User } from '../entities/user.entity';
-import { UserSettings } from '../entities/user-settings.entity';
+import { Entities } from '../entities/runtime-entities';
+
+type UserEntity = InstanceType<typeof Entities.User>;
+type UserSettingsEntity = InstanceType<typeof Entities.UserSettings>;
 
 interface RegisterResult {
-  user: User;
+  user: UserEntity;
   accessToken: string;
   refreshToken: string;
 }
 
 interface LoginResult {
-  user: User;
+  user: UserEntity;
   accessToken: string;
   refreshToken: string;
   settings?: {
@@ -33,7 +35,7 @@ interface RefreshResult {
 }
 
 interface UserWithSettings {
-  user: User;
+  user: UserEntity;
   settings?: {
     preferredCurrency: string;
     dateFormat: string;
@@ -55,10 +57,10 @@ interface PersistenceUpdateResult {
 @Injectable()
 export class AuthService {
   constructor(
-    @InjectRepository(User)
-    private readonly userRepository: Repository<User>,
-    @InjectRepository(UserSettings)
-    private readonly userSettingsRepository: Repository<UserSettings>,
+    @InjectRepository(Entities.User)
+    private readonly userRepository: Repository<UserEntity>,
+    @InjectRepository(Entities.UserSettings)
+    private readonly userSettingsRepository: Repository<UserSettingsEntity>,
     private readonly jwtService: JwtService,
   ) {}
 
@@ -80,7 +82,8 @@ export class AuthService {
     const passwordHash = await bcrypt.hash(password, saltRounds);
 
     // Create user
-    const user = new User();
+    const UserCtor = Entities.User;
+    const user = new UserCtor();
     user.email = email;
     user.passwordHash = passwordHash;
     user.displayName = displayName;
@@ -91,7 +94,8 @@ export class AuthService {
     const savedUser = await this.userRepository.save(user);
 
     // Create default user settings (mobile app starts with local_only)
-    const settings = new UserSettings();
+    const SettingsCtor = Entities.UserSettings;
+    const settings = new SettingsCtor();
     settings.user = savedUser;
     settings.userId = savedUser.id;
     settings.language = 'en-US';
@@ -212,11 +216,13 @@ export class AuthService {
         throw new Error('User not found');
       }
 
-      userSettings = new UserSettings();
-      userSettings.user = user;
-      userSettings.userId = userId;
-      userSettings.language = 'en-US';
-      userSettings.pushEnabled = true;
+      const SettingsCtor = Entities.UserSettings;
+      const newSettings = new SettingsCtor();
+      newSettings.user = user;
+      newSettings.userId = userId;
+      newSettings.language = 'en-US';
+      newSettings.pushEnabled = true;
+      userSettings = newSettings;
     }
 
     // Update persistence mode
@@ -237,7 +243,10 @@ export class AuthService {
     };
   }
 
-  async validateUser(email: string, password: string): Promise<User | null> {
+  async validateUser(
+    email: string,
+    password: string,
+  ): Promise<UserEntity | null> {
     const user = await this.userRepository.findOne({ where: { email } });
     if (user && (await bcrypt.compare(password, user.passwordHash))) {
       return user;
@@ -246,7 +255,7 @@ export class AuthService {
   }
 
   private async generateTokens(
-    user: User,
+    user: UserEntity,
   ): Promise<{ accessToken: string; refreshToken: string }> {
     const payload = {
       email: user.email,

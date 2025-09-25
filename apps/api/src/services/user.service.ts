@@ -1,155 +1,206 @@
 import {
   Injectable,
-  ConflictException,
   NotFoundException,
+  BadRequestException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
-import * as bcrypt from 'bcryptjs';
-import { User } from '../entities/user.entity';
-import { UserSettings } from '../entities/user-settings.entity';
+import { Like, Repository } from 'typeorm';
+import { Entities } from '../entities/runtime-entities';
 import {
-  CreateUserDto,
-  UpdateUserDto,
-  UserResponseDto,
-  UserSettingsDto,
+  UpdateUserProfileDto,
+  UserProfileResponse,
+  UserSettingsResponse,
+  UserSummary,
 } from '../dto/user.dto';
+
+const DEFAULT_NOTIFICATIONS = {
+  expenses: true,
+  invites: true,
+  reminders: true,
+};
+
+const ALLOWED_PERSISTENCE_MODES = ['local_only', 'cloud_sync'] as const;
+export type PersistenceMode = (typeof ALLOWED_PERSISTENCE_MODES)[number];
+
+type UserEntity = InstanceType<typeof Entities.User>;
+type UserSettingsEntity = InstanceType<typeof Entities.UserSettings>;
 
 @Injectable()
 export class UserService {
   constructor(
-    @InjectRepository(User)
-    private userRepository: Repository<User>,
-    @InjectRepository(UserSettings)
-    private userSettingsRepository: Repository<UserSettings>,
+    @InjectRepository(Entities.User)
+    private readonly userRepository: Repository<UserEntity>,
+    @InjectRepository(Entities.UserSettings)
+    private readonly userSettingsRepository: Repository<UserSettingsEntity>,
   ) {}
 
-  async create(createUserDto: CreateUserDto): Promise<UserResponseDto> {
-    const existingUser = await this.userRepository.findOne({
-      where: { email: createUserDto.email.toLowerCase() },
-    });
+  async getUserProfile(userId: string): Promise<UserProfileResponse> {
+    const user = await this.userRepository.findOne({ where: { id: userId } });
 
-    if (existingUser) {
-      throw new ConflictException('User with this email already exists');
-    }
-
-    const hashedPassword = await bcrypt.hash(createUserDto.password, 12);
-
-    const user = this.userRepository.create({
-      ...createUserDto,
-      email: createUserDto.email.toLowerCase(),
-      password_hash: hashedPassword,
-    });
-
-    const savedUser = await this.userRepository.save(user);
-
-    // Create default user settings
-    const userSettings = this.userSettingsRepository.create({
-      user_id: savedUser.id,
-      language: 'en-US',
-      notifications: {
-        expenses: true,
-        invites: true,
-        reminders: true,
-      },
-      push_enabled: true,
-      persistence_mode: 'local_only',
-    });
-
-    await this.userSettingsRepository.save(userSettings);
-
-    return this.toResponseDto(savedUser);
-  }
-
-  async findById(id: string): Promise<UserResponseDto> {
-    const user = await this.userRepository.findOne({ where: { id } });
-    if (!user) {
-      throw new NotFoundException('User not found');
-    }
-    return this.toResponseDto(user);
-  }
-
-  async findByEmail(email: string): Promise<User | null> {
-    return this.userRepository.findOne({
-      where: { email: email.toLowerCase() },
-    });
-  }
-
-  async update(
-    id: string,
-    updateUserDto: UpdateUserDto,
-  ): Promise<UserResponseDto> {
-    const user = await this.userRepository.findOne({ where: { id } });
     if (!user) {
       throw new NotFoundException('User not found');
     }
 
-    await this.userRepository.update(id, updateUserDto);
-    const updatedUser = await this.userRepository.findOne({ where: { id } });
-    return this.toResponseDto(updatedUser!);
-  }
-
-  async validateUser(email: string, password: string): Promise<User | null> {
-    const user = await this.findByEmail(email);
-    if (user && (await bcrypt.compare(password, user.password_hash))) {
-      return user;
-    }
-    return null;
-  }
-
-  async updateLastActive(id: string): Promise<void> {
-    await this.userRepository.update(id, {
-      last_active_at: new Date(),
-    });
-  }
-
-  async getUserSettings(userId: string): Promise<UserSettingsDto> {
-    const settings = await this.userSettingsRepository.findOne({
-      where: { user_id: userId },
-    });
-
-    if (!settings) {
-      throw new NotFoundException('User settings not found');
-    }
+    const settings = await this.getOrCreateUserSettings(userId);
 
     return {
-      language: settings.language,
-      notifications: settings.notifications,
-      push_enabled: settings.push_enabled,
-      persistence_mode: settings.persistence_mode as
-        | 'local_only'
-        | 'cloud_sync',
+      user: this.mapUserToProfile(user),
+      settings: this.mapSettings(settings),
     };
   }
 
-  async updateUserSettings(
+  async updateUserProfile(
     userId: string,
-    settingsDto: UserSettingsDto,
-  ): Promise<UserSettingsDto> {
-    const settings = await this.userSettingsRepository.findOne({
-      where: { user_id: userId },
+    payload: UpdateUserProfileDto,
+  ): Promise<UserProfileResponse['user']> {
+    const user = await this.userRepository.findOne({ where: { id: userId } });
+
+    if (!user) {
+      throw new NotFoundException('User not found');
+    }
+
+    if (payload.defaultCurrency) {
+      user.defaultCurrency = payload.defaultCurrency;
+    }
+
+    if (payload.displayName) {
+      user.displayName = payload.displayName.trim();
+    }
+
+    if (payload.timezone) {
+      user.timezone = payload.timezone;
+    }
+
+    if (payload.avatarUrl !== undefined) {
+      user.avatarUrl = payload.avatarUrl || null;
+    }
+
+    const updatedUser = await this.userRepository.save(user);
+
+    return this.mapUserToProfile(updatedUser);
+  }
+
+  async getUserSettings(userId: string): Promise<UserSettingsResponse> {
+    const settings = await this.getOrCreateUserSettings(userId);
+    return this.mapSettings(settings);
+  }
+
+  async updatePersistenceMode(
+    userId: string,
+    mode: PersistenceMode,
+  ): Promise<{ settings: UserSettingsResponse; changedAt: Date }> {
+    if (!ALLOWED_PERSISTENCE_MODES.includes(mode)) {
+      throw new BadRequestException(
+        'Persistence mode must be local_only or cloud_sync',
+      );
+    }
+
+    const settings = await this.getOrCreateUserSettings(userId);
+
+    if (settings.persistenceMode !== mode) {
+      settings.persistenceMode = mode;
+      settings.lastPersistenceChange = new Date();
+      await this.userSettingsRepository.save(settings);
+    }
+
+    return {
+      settings: this.mapSettings(settings),
+      changedAt: settings.lastPersistenceChange,
+    };
+  }
+
+  async searchUsers(
+    requestingUserId: string,
+    query: string,
+    limit = 10,
+  ): Promise<UserSummary[]> {
+    const trimmedQuery = query.trim();
+    if (!trimmedQuery) {
+      throw new BadRequestException('Search query is required');
+    }
+
+    const finalLimit = Math.max(1, Math.min(limit, 25));
+
+    const users = await this.userRepository.find({
+      where: [
+        { displayName: Like(`%${trimmedQuery}%`) },
+        { email: Like(`%${trimmedQuery}%`) },
+      ],
+      take: finalLimit,
+      order: {
+        displayName: 'ASC',
+      },
+    });
+
+    return users
+      .filter((user) => user.id !== requestingUserId)
+      .map((user) => this.mapUserToSummary(user));
+  }
+
+  private mapUserToProfile(user: UserEntity): UserProfileResponse['user'] {
+    return {
+      id: user.id,
+      email: user.email,
+      displayName: user.displayName,
+      avatarUrl: user.avatarUrl ?? null,
+      defaultCurrency: user.defaultCurrency ?? 'USD',
+      timezone: user.timezone ?? 'UTC',
+    };
+  }
+
+  private mapUserToSummary(user: UserEntity): UserSummary {
+    return {
+      id: user.id,
+      email: user.email,
+      displayName: user.displayName,
+      avatarUrl: user.avatarUrl ?? null,
+      defaultCurrency: user.defaultCurrency ?? 'USD',
+      timezone: user.timezone ?? 'UTC',
+    };
+  }
+
+  private mapSettings(settings: UserSettingsEntity): UserSettingsResponse {
+    return {
+      language: settings.language,
+      notifications: settings.notifications ?? DEFAULT_NOTIFICATIONS,
+      pushEnabled: settings.pushEnabled,
+      persistenceMode: settings.persistenceMode,
+      lastPersistenceChange: (
+        settings.lastPersistenceChange || new Date()
+      ).toISOString(),
+    };
+  }
+
+  private async getOrCreateUserSettings(
+    userId: string,
+  ): Promise<UserSettingsEntity> {
+    let settings = await this.userSettingsRepository.findOne({
+      where: { userId },
     });
 
     if (!settings) {
-      throw new NotFoundException('User settings not found');
+      const user = await this.userRepository.findOne({ where: { id: userId } });
+      if (!user) {
+        throw new NotFoundException('User not found');
+      }
+
+      settings = this.userSettingsRepository.create({
+        user,
+        userId: user.id,
+        language: 'en-US',
+        notifications: DEFAULT_NOTIFICATIONS,
+        pushEnabled: true,
+        persistenceMode: 'local_only',
+        lastPersistenceChange: new Date(),
+      });
+
+      settings = await this.userSettingsRepository.save(settings);
     }
 
-    await this.userSettingsRepository.update(
-      { user_id: userId },
-      {
-        ...settingsDto,
-        last_persistence_change:
-          settingsDto.persistence_mode !== settings.persistence_mode
-            ? new Date()
-            : settings.last_persistence_change,
-      },
-    );
+    if (!settings.notifications) {
+      settings.notifications = DEFAULT_NOTIFICATIONS;
+    }
 
-    return this.getUserSettings(userId);
-  }
-
-  private toResponseDto(user: User): UserResponseDto {
-    const { password_hash, ...userResponse } = user;
-    return userResponse as UserResponseDto;
+    return settings;
   }
 }

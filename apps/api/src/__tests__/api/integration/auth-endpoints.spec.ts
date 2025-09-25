@@ -3,7 +3,8 @@
 
 import { Test, TestingModule } from '@nestjs/testing';
 import { INestApplication } from '@nestjs/common';
-import request from 'supertest';
+import { SuperTest, Test as SuperTestRequest } from 'supertest';
+const supertest = require('supertest');
 import { AuthController } from '../../../controllers/auth.controller';
 import { AuthService } from '../../../services/auth.service';
 import { JwtAuthGuard } from '../../../guards/jwt-auth.guard';
@@ -26,6 +27,7 @@ const mockJwtService = {
 
 describe('Authentication Endpoints - TDD GREEN Phase', () => {
   let app: INestApplication;
+  let api: SuperTest<SuperTestRequest>;
 
   beforeAll(async () => {
     const moduleFixture: TestingModule = await Test.createTestingModule({
@@ -45,6 +47,7 @@ describe('Authentication Endpoints - TDD GREEN Phase', () => {
 
     app = moduleFixture.createNestApplication();
     await app.init();
+    api = supertest(app.getHttpServer());
   });
 
   afterAll(async () => {
@@ -68,13 +71,11 @@ describe('Authentication Endpoints - TDD GREEN Phase', () => {
         refreshToken: 'mock-refresh-token',
       });
 
-      const response = await request(app.getHttpServer())
-        .post('/auth/register')
-        .send({
-          email: 'test@example.com',
-          password: 'password123',
-          displayName: 'Test User',
-        });
+      const response = await api.post('/auth/register').send({
+        email: 'test@example.com',
+        password: 'password123',
+        displayName: 'Test User',
+      });
 
       // Should NOT be 404 - endpoint exists
       expect(response.status).toBe(201);
@@ -88,11 +89,9 @@ describe('Authentication Endpoints - TDD GREEN Phase', () => {
     });
 
     it('should validate required fields', async () => {
-      const response = await request(app.getHttpServer())
-        .post('/auth/register')
-        .send({}); // Empty payload
+      const response = await api.post('/auth/register').send({}); // Empty payload
 
-      expect(response.status).toBe(201); // Controller handles validation
+      expect(response.status).toBe(400); // Bad Request for validation failure
       expect(response.body.success).toBe(false);
       expect(response.body.error.code).toBe('VALIDATION_ERROR');
     });
@@ -117,12 +116,10 @@ describe('Authentication Endpoints - TDD GREEN Phase', () => {
         },
       });
 
-      const response = await request(app.getHttpServer())
-        .post('/auth/login')
-        .send({
-          email: 'test@example.com',
-          password: 'password123',
-        });
+      const response = await api.post('/auth/login').send({
+        email: 'test@example.com',
+        password: 'password123',
+      });
 
       // Should NOT be 404 - endpoint exists
       expect(response.status).toBe(200);
@@ -136,11 +133,11 @@ describe('Authentication Endpoints - TDD GREEN Phase', () => {
     });
 
     it('should validate required fields for login', async () => {
-      const response = await request(app.getHttpServer())
+      const response = await api
         .post('/auth/login')
         .send({ email: 'test@example.com' }); // Missing password
 
-      expect(response.status).toBe(200); // Controller handles validation
+      expect(response.status).toBe(400); // Bad Request for validation failure
       expect(response.body.success).toBe(false);
       expect(response.body.error.code).toBe('VALIDATION_ERROR');
     });
@@ -154,7 +151,7 @@ describe('Authentication Endpoints - TDD GREEN Phase', () => {
         refreshToken: 'new-refresh-token',
       });
 
-      const response = await request(app.getHttpServer())
+      const response = await api
         .post('/auth/refresh')
         .send({ refreshToken: 'valid-refresh-token' });
 
@@ -190,7 +187,7 @@ describe('Authentication Endpoints - TDD GREEN Phase', () => {
         },
       });
 
-      const response = await request(app.getHttpServer())
+      const response = await api
         .get('/auth/me')
         .set('Authorization', 'Bearer mock-jwt-token');
 
@@ -202,7 +199,7 @@ describe('Authentication Endpoints - TDD GREEN Phase', () => {
     });
 
     it('should reject requests without authorization header', async () => {
-      const response = await request(app.getHttpServer()).get('/auth/me');
+      const response = await api.get('/auth/me');
 
       expect(response.status).toBe(401);
       expect(response.body.success).toBe(false);
@@ -230,7 +227,7 @@ describe('Authentication Endpoints - TDD GREEN Phase', () => {
         persistenceChangeTimestamp: new Date().toISOString(),
       });
 
-      const response = await request(app.getHttpServer())
+      const response = await api
         .put('/auth/settings/persistence')
         .set('Authorization', 'Bearer mock-jwt-token')
         .send({
@@ -253,12 +250,12 @@ describe('Authentication Endpoints - TDD GREEN Phase', () => {
         displayName: 'Test User',
       });
 
-      const response = await request(app.getHttpServer())
+      const response = await api
         .put('/auth/settings/persistence')
         .set('Authorization', 'Bearer mock-jwt-token')
         .send({ persistenceMode: 'invalid_mode' });
 
-      expect(response.status).toBe(200); // Controller handles validation
+      expect(response.status).toBe(400); // Bad Request for validation failure
       expect(response.body.success).toBe(false);
       expect(response.body.error.code).toBe('VALIDATION_ERROR');
       expect(response.body.error.field).toBe('persistenceMode');
@@ -277,9 +274,7 @@ describe('Authentication Endpoints - TDD GREEN Phase', () => {
         displayName: 'Test User',
       });
 
-      await request(app.getHttpServer())
-        .get('/auth/me')
-        .set('Authorization', 'Bearer mock-jwt-token');
+      await api.get('/auth/me').set('Authorization', 'Bearer mock-jwt-token');
 
       const endTime = performance.now();
       const duration = endTime - startTime;

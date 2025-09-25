@@ -52,7 +52,6 @@ export class UserSettingsSimple {
 
   @Column({
     name: 'last_persistence_change',
-    type: 'datetime',
     default: () => 'CURRENT_TIMESTAMP',
   })
   lastPersistenceChange: Date;

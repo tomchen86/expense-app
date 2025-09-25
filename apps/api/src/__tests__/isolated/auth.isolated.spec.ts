@@ -3,7 +3,7 @@
 
 import { Test, TestingModule } from '@nestjs/testing';
 import { INestApplication } from '@nestjs/common';
-import * as request from 'supertest';
+import request from 'supertest';
 import { AuthController } from '../../controllers/auth.controller';
 import { AuthService } from '../../services/auth.service';
 import { JwtAuthGuard } from '../../guards/jwt-auth.guard';
@@ -100,7 +100,7 @@ describe('Authentication Endpoints - TRUE GREEN PHASE (Isolated)', () => {
       const response = await request(app.getHttpServer())
         .post('/auth/register')
         .send({})
-        .expect(201);
+        .expect(400);
 
       expect(response.body).toEqual({
         success: false,
@@ -124,7 +124,7 @@ describe('Authentication Endpoints - TRUE GREEN PHASE (Isolated)', () => {
           password: 'password123',
           displayName: 'Test User',
         })
-        .expect(201);
+        .expect(409);
 
       expect(response.body).toEqual({
         success: false,
@@ -192,7 +192,7 @@ describe('Authentication Endpoints - TRUE GREEN PHASE (Isolated)', () => {
           email: 'wrong@example.com',
           password: 'wrongpassword',
         })
-        .expect(200);
+        .expect(401);
 
       expect(response.body).toEqual({
         success: false,
@@ -233,7 +233,7 @@ describe('Authentication Endpoints - TRUE GREEN PHASE (Isolated)', () => {
       const response = await request(app.getHttpServer())
         .post('/auth/refresh')
         .send({ refreshToken: 'invalid-token' })
-        .expect(200);
+        .expect(401);
 
       expect(response.body).toEqual({
         success: false,
@@ -382,13 +382,13 @@ describe('Authentication Endpoints - TRUE GREEN PHASE (Isolated)', () => {
         .put('/auth/settings/persistence')
         .set('Authorization', 'Bearer valid-jwt-token')
         .send({ persistenceMode: 'invalid_mode' })
-        .expect(200);
+        .expect(400);
 
       expect(response.body).toEqual({
         success: false,
         error: {
           code: 'VALIDATION_ERROR',
-          message: 'Persistence mode must be either local_only or cloud_sync',
+          message: 'Persistence mode must be local_only or cloud_sync',
           field: 'persistenceMode',
         },
       });

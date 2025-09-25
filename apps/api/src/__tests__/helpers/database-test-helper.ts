@@ -1,12 +1,18 @@
 import { DataSource, Repository } from 'typeorm';
-import { Category } from '../../entities/category.entity';
-import { User } from '../../entities/user.entity';
-import { UserSettings } from '../../entities/user-settings.entity';
-import { UserAuthIdentity } from '../../entities/user-auth-identity.entity';
-import { ExpenseGroup } from '../../entities/expense-group.entity';
-import { Participant } from '../../entities/participant.entity';
-import { Expense } from '../../entities/expense.entity';
-import { Couple } from '../../entities/couple.entity';
+import { resolveDriver } from '../../config/database.config';
+import type { EntityCollection } from '../../entities/entity-sets';
+import { getEntityCollection } from '../../entities/entity-sets';
+
+type CategoryEntity = InstanceType<EntityCollection['Category']>;
+type UserEntity = InstanceType<EntityCollection['User']>;
+type UserSettingsEntity = InstanceType<EntityCollection['UserSettings']>;
+type UserAuthIdentityEntity = InstanceType<
+  EntityCollection['UserAuthIdentity']
+>;
+type ExpenseGroupEntity = InstanceType<EntityCollection['ExpenseGroup']>;
+type ParticipantEntity = InstanceType<EntityCollection['Participant']>;
+type ExpenseEntity = InstanceType<EntityCollection['Expense']>;
+type CoupleEntity = InstanceType<EntityCollection['Couple']>;
 
 // Mobile app's default categories for seeding test data
 const MOBILE_DEFAULT_CATEGORIES = [
@@ -24,27 +30,57 @@ const MOBILE_DEFAULT_CATEGORIES = [
 
 export class DatabaseTestHelper {
   private dataSource: DataSource;
+  private usingPostgres = false;
+  private entityRefs: EntityCollection;
   private repositories: {
-    category?: Repository<Category>;
-    user?: Repository<User>;
-    userSettings?: Repository<UserSettings>;
-    userAuthIdentity?: Repository<UserAuthIdentity>;
-    expenseGroup?: Repository<ExpenseGroup>;
-    participant?: Repository<Participant>;
-    expense?: Repository<Expense>;
-    couple?: Repository<Couple>;
+    category?: Repository<CategoryEntity>;
+    user?: Repository<UserEntity>;
+    userSettings?: Repository<UserSettingsEntity>;
+    userAuthIdentity?: Repository<UserAuthIdentityEntity>;
+    expenseGroup?: Repository<ExpenseGroupEntity>;
+    participant?: Repository<ParticipantEntity>;
+    expense?: Repository<ExpenseEntity>;
+    couple?: Repository<CoupleEntity>;
   } = {};
 
   async createTestDatabase(): Promise<DataSource> {
-    this.dataSource = new DataSource({
-      type: 'sqlite',
-      database: ':memory:', // In-memory database for tests
-      dropSchema: true,
-      synchronize: false, // Use migrations instead
-      entities: ['src/entities/*.entity.ts'],
-      migrations: ['src/database/migrations/*.ts'],
-      logging: false, // Disable SQL logging in tests
-    });
+    const driver = resolveDriver();
+    const collection = getEntityCollection(driver);
+
+    if (driver === 'postgres') {
+      this.usingPostgres = true;
+      this.entityRefs = collection;
+      this.dataSource = new DataSource({
+        type: 'postgres',
+        url: process.env.TEST_DB_URL,
+        host: process.env.TEST_DB_HOST || process.env.DB_HOST || 'localhost',
+        port: parseInt(process.env.TEST_DB_PORT || '5432', 10),
+        username:
+          process.env.TEST_DB_USERNAME || process.env.DB_USERNAME || 'dev_user',
+        password:
+          process.env.TEST_DB_PASSWORD ||
+          process.env.DB_PASSWORD ||
+          'dev_password',
+        database:
+          process.env.TEST_DB_DATABASE ||
+          process.env.DB_DATABASE ||
+          'expense_tracker_test',
+        synchronize: false,
+        entities: Object.values(this.entityRefs),
+        migrations: ['src/database/migrations/*.ts'],
+        logging: false,
+      });
+    } else {
+      this.entityRefs = collection;
+      this.dataSource = new DataSource({
+        type: 'sqljs',
+        autoSave: false,
+        synchronize: true, // Generate schema for simplified entities
+        entities: Object.values(this.entityRefs),
+        migrations: [],
+        logging: false, // Disable SQL logging in tests
+      });
+    }
 
     await this.dataSource.initialize();
     this.initializeRepositories();
@@ -52,20 +88,33 @@ export class DatabaseTestHelper {
   }
 
   private initializeRepositories(): void {
-    this.repositories.category = this.dataSource.getRepository(Category);
-    this.repositories.user = this.dataSource.getRepository(User);
-    this.repositories.userSettings =
-      this.dataSource.getRepository(UserSettings);
-    this.repositories.userAuthIdentity =
-      this.dataSource.getRepository(UserAuthIdentity);
-    this.repositories.expenseGroup =
-      this.dataSource.getRepository(ExpenseGroup);
-    this.repositories.participant = this.dataSource.getRepository(Participant);
-    this.repositories.expense = this.dataSource.getRepository(Expense);
-    this.repositories.couple = this.dataSource.getRepository(Couple);
+    this.repositories.category = this.dataSource.getRepository(
+      this.entityRefs.Category,
+    );
+    this.repositories.user = this.dataSource.getRepository(
+      this.entityRefs.User,
+    );
+    this.repositories.userSettings = this.dataSource.getRepository(
+      this.entityRefs.UserSettings,
+    );
+    this.repositories.userAuthIdentity = this.dataSource.getRepository(
+      this.entityRefs.UserAuthIdentity,
+    );
+    this.repositories.expenseGroup = this.dataSource.getRepository(
+      this.entityRefs.ExpenseGroup,
+    );
+    this.repositories.participant = this.dataSource.getRepository(
+      this.entityRefs.Participant,
+    );
+    this.repositories.expense = this.dataSource.getRepository(
+      this.entityRefs.Expense,
+    );
+    this.repositories.couple = this.dataSource.getRepository(
+      this.entityRefs.Couple,
+    );
   }
 
-  async seedDefaultCategories(coupleId?: string): Promise<Category[]> {
+  async seedDefaultCategories(coupleId?: string): Promise<CategoryEntity[]> {
     const categoryRepo = this.repositories.category;
     if (!categoryRepo) throw new Error('Category repository not initialized');
 
@@ -80,8 +129,9 @@ export class DatabaseTestHelper {
       actualCoupleId = testCouple.id;
     }
 
-    const categories = MOBILE_DEFAULT_CATEGORIES.map((cat, index) => {
-      const category = new Category();
+    const CategoryEntity = this.entityRefs.Category;
+    const categories = MOBILE_DEFAULT_CATEGORIES.map((cat) => {
+      const category = new CategoryEntity();
       category.name = cat.name;
       category.color = cat.color;
       category.coupleId = actualCoupleId;
@@ -92,11 +142,14 @@ export class DatabaseTestHelper {
     return await categoryRepo.save(categories);
   }
 
-  async createTestUser(overrides: Partial<User> = {}): Promise<User> {
+  async createTestUser(
+    overrides: Partial<UserEntity> = {},
+  ): Promise<UserEntity> {
     const userRepo = this.repositories.user;
     if (!userRepo) throw new Error('User repository not initialized');
 
-    const user = new User();
+    const UserEntity = this.entityRefs.User;
+    const user = new UserEntity();
     user.displayName = overrides.displayName || 'Test User';
     user.email = overrides.email || 'test@example.com';
     user.passwordHash = overrides.passwordHash || 'hashed_password';
@@ -105,15 +158,21 @@ export class DatabaseTestHelper {
   }
 
   async createTestCouple(
-    user: User,
-    overrides: Partial<Couple> = {},
-  ): Promise<Couple> {
+    user: UserEntity,
+    overrides: Partial<CoupleEntity> = {},
+  ): Promise<CoupleEntity> {
     const coupleRepo = this.repositories.couple;
     if (!coupleRepo) throw new Error('Couple repository not initialized');
 
-    const couple = new Couple();
+    const CoupleEntity = this.entityRefs.Couple;
+    const couple = new CoupleEntity();
     couple.name = overrides.name || 'Test Couple';
-    couple.inviteCode = overrides.inviteCode || `TC${Date.now()}`;
+    if (overrides.inviteCode && overrides.inviteCode.length > 10) {
+      throw new Error('inviteCode overrides must be 10 characters or fewer');
+    }
+
+    const randomSuffix = Date.now().toString(36).toUpperCase().padStart(8, '0');
+    couple.inviteCode = overrides.inviteCode || `TC${randomSuffix.slice(-8)}`;
     couple.createdBy = user.id;
     couple.status = overrides.status || 'active';
 
@@ -121,14 +180,15 @@ export class DatabaseTestHelper {
   }
 
   async createTestUserSettings(
-    user: User,
-    overrides: Partial<UserSettings> = {},
-  ): Promise<UserSettings> {
+    user: UserEntity,
+    overrides: Partial<UserSettingsEntity> = {},
+  ): Promise<UserSettingsEntity> {
     const userSettingsRepo = this.repositories.userSettings;
     if (!userSettingsRepo)
       throw new Error('UserSettings repository not initialized');
 
-    const settings = new UserSettings();
+    const SettingsEntity = this.entityRefs.UserSettings;
+    const settings = new SettingsEntity();
     settings.user = user;
     settings.userId = user.id;
     settings.language = overrides.language || 'en-US';
@@ -139,14 +199,15 @@ export class DatabaseTestHelper {
   }
 
   async createTestExpenseGroup(
-    user: User,
+    user: UserEntity,
     coupleId: string,
-    overrides: Partial<ExpenseGroup> = {},
-  ): Promise<ExpenseGroup> {
+    overrides: Partial<ExpenseGroupEntity> = {},
+  ): Promise<ExpenseGroupEntity> {
     const groupRepo = this.repositories.expenseGroup;
     if (!groupRepo) throw new Error('ExpenseGroup repository not initialized');
 
-    const group = new ExpenseGroup();
+    const GroupEntity = this.entityRefs.ExpenseGroup;
+    const group = new GroupEntity();
     group.name = overrides.name || 'Test Group';
     group.description = overrides.description || 'Test group description';
     group.createdBy = user.id;
@@ -157,15 +218,16 @@ export class DatabaseTestHelper {
   }
 
   async createTestExpense(
-    user: User,
-    category: Category,
+    user: UserEntity,
+    category: CategoryEntity,
     coupleId: string,
-    overrides: Partial<Expense> = {},
-  ): Promise<Expense> {
+    overrides: Partial<ExpenseEntity> = {},
+  ): Promise<ExpenseEntity> {
     const expenseRepo = this.repositories.expense;
     if (!expenseRepo) throw new Error('Expense repository not initialized');
 
-    const expense = new Expense();
+    const ExpenseEntity = this.entityRefs.Expense;
+    const expense = new ExpenseEntity();
     expense.description = overrides.description || 'Test Expense';
     expense.amountCents = overrides.amountCents || '2550'; // $25.50 in cents
     expense.expenseDate =
@@ -201,18 +263,33 @@ export class DatabaseTestHelper {
   // Clean up test data after each test
   async cleanupTestData(): Promise<void> {
     const tables = [
+      'expense_attachments',
       'expense_splits',
       'expenses',
+      'group_members',
       'expense_groups',
       'participants',
+      'couple_members',
+      'couple_invitations',
+      'user_devices',
       'user_settings',
       'user_auth_identities',
+      'couples',
       'users',
     ];
 
-    // Clean in reverse dependency order to avoid FK constraints
-    for (const table of tables) {
-      await this.dataSource.query(`DELETE FROM ${table}`);
+    if (this.usingPostgres) {
+      const tableNames = tables.join(', ');
+      await this.dataSource.query(
+        `TRUNCATE TABLE ${tableNames} RESTART IDENTITY CASCADE`,
+      );
+    } else {
+      // Clean in reverse dependency order to avoid FK constraints
+      await this.dataSource.query('PRAGMA foreign_keys = OFF');
+      for (const table of tables) {
+        await this.dataSource.query(`DELETE FROM ${table}`);
+      }
+      await this.dataSource.query('PRAGMA foreign_keys = ON');
     }
   }
 
@@ -220,15 +297,19 @@ export class DatabaseTestHelper {
     if (typeof entity === 'string') {
       // Handle string entity names for backward compatibility
       const entityMap: { [key: string]: any } = {
-        User: User,
-        UserSettings: UserSettings,
-        Category: Category,
-        ExpenseGroup: ExpenseGroup,
-        Participant: Participant,
-        Expense: Expense,
-        Couple: Couple,
+        User: this.entityRefs.User,
+        UserSettings: this.entityRefs.UserSettings,
+        Category: this.entityRefs.Category,
+        ExpenseGroup: this.entityRefs.ExpenseGroup,
+        Participant: this.entityRefs.Participant,
+        Expense: this.entityRefs.Expense,
+        Couple: this.entityRefs.Couple,
       };
-      return this.dataSource.getRepository(entityMap[entity]);
+      const target = entityMap[entity];
+      if (!target) {
+        throw new Error(`Unknown entity requested: ${entity}`);
+      }
+      return this.dataSource.getRepository(target);
     }
     return this.dataSource.getRepository(entity);
   }

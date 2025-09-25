@@ -1,5 +1,6 @@
 // Test data factories that match mobile app's data patterns exactly
 
+import { randomUUID } from 'crypto';
 import { User } from '../../entities/user.entity';
 import { Category } from '../../entities/category.entity';
 import { Expense } from '../../entities/expense.entity';
@@ -14,10 +15,12 @@ export class UserFactory {
   static create(overrides: Partial<User> = {}): User {
     const user = new User();
     user.displayName =
-      overrides.displayName ||
+      overrides.displayName ??
       `Test User ${Math.random().toString(36).substring(7)}`;
-    user.email = overrides.email || `test${Date.now()}@example.com`;
-    user.passwordHash = overrides.passwordHash || 'hashed_password';
+    user.email = overrides.email ?? `test${Date.now()}@example.com`;
+    user.passwordHash = overrides.passwordHash ?? 'hashed_password';
+    user.timezone = overrides.timezone ?? 'UTC';
+    user.defaultCurrency = overrides.defaultCurrency ?? 'USD';
     return user;
   }
 
@@ -27,6 +30,8 @@ export class UserFactory {
     user.displayName = 'Mobile Test User';
     user.email = 'mobile@test.com';
     user.passwordHash = 'hashed_password';
+    user.timezone = 'UTC';
+    user.defaultCurrency = 'USD';
     return user;
   }
 }
@@ -42,9 +47,14 @@ export class UserSettingsFactory {
     const settings = new UserSettings();
     settings.user = user;
     settings.userId = user.id;
-    settings.language = overrides.language || 'en-US';
-    settings.persistenceMode = overrides.persistenceMode || 'local_only';
+    settings.language = overrides.language ?? 'en-US';
+    settings.persistenceMode = overrides.persistenceMode ?? 'local_only';
     settings.pushEnabled = overrides.pushEnabled ?? true;
+    settings.notifications = overrides.notifications ?? {
+      expenses: true,
+      invites: true,
+      reminders: true,
+    };
     return settings;
   }
 
@@ -56,6 +66,11 @@ export class UserSettingsFactory {
     settings.language = 'en-US';
     settings.persistenceMode = 'local_only'; // Mobile starts with local-only
     settings.pushEnabled = true;
+    settings.notifications = {
+      expenses: true,
+      invites: true,
+      reminders: true,
+    };
     return settings;
   }
 }
@@ -70,27 +85,45 @@ export class ExpenseFactory {
     overrides: Partial<Expense> = {},
   ): Expense {
     const expense = new Expense();
-    expense.title =
-      overrides.title ||
+    expense.description =
+      overrides.description ??
       `Test Expense ${Math.random().toString(36).substring(7)}`;
-    expense.amount_cents =
-      overrides.amount_cents || Math.floor(Math.random() * 10000) + 100; // $1-$100
-    expense.expense_date = overrides.expense_date || new Date();
-    expense.category = category;
-    expense.created_by = user;
-    expense.notes = overrides.notes || null;
+    const randomAmount = Math.floor(Math.random() * 10000) + 100;
+    expense.amountCents = overrides.amountCents ?? randomAmount.toString();
+    expense.currency = overrides.currency ?? 'USD';
+    expense.expenseDate =
+      overrides.expenseDate ?? new Date().toISOString().split('T')[0];
+    const inferredCoupleId = overrides.coupleId ?? category.coupleId;
+    expense.category = overrides.category ?? category;
+    expense.categoryId = overrides.categoryId ?? category.id;
+    expense.coupleId = inferredCoupleId ?? randomUUID();
+    expense.createdBy = overrides.createdBy ?? user.id;
+    expense.creator = overrides.creator ?? user;
+    expense.notes = overrides.notes ?? undefined;
+    expense.group = overrides.group;
+    expense.groupId = overrides.groupId ?? overrides.group?.id;
+    expense.paidByParticipantId = overrides.paidByParticipantId;
+    expense.payer = overrides.payer;
+    expense.exchangeRate = overrides.exchangeRate;
+    expense.splitType = overrides.splitType ?? 'equal';
+    expense.receiptUrl = overrides.receiptUrl;
+    expense.location = overrides.location;
     return expense;
   }
 
   static createMobileTypical(user: User, category: Category): Expense {
     // Typical expense as created by mobile app
     const expense = new Expense();
-    expense.title = 'Lunch at Cafe';
-    expense.amount_cents = 1850; // $18.50
-    expense.expense_date = new Date();
+    expense.description = 'Lunch at Cafe';
+    expense.amountCents = '1850'; // $18.50
+    expense.expenseDate = new Date().toISOString().split('T')[0];
     expense.category = category;
-    expense.created_by = user;
-    expense.notes = null;
+    expense.categoryId = category.id;
+    expense.coupleId = category.coupleId ?? randomUUID();
+    expense.createdBy = user.id;
+    expense.creator = user;
+    expense.currency = 'USD';
+    expense.splitType = 'equal';
     return expense;
   }
 
@@ -101,12 +134,16 @@ export class ExpenseFactory {
     title?: string,
   ): Expense {
     const expense = new Expense();
-    expense.title = title || `Expense $${dollarAmount.toFixed(2)}`;
-    expense.amount_cents = Math.round(dollarAmount * 100); // Convert to cents
-    expense.expense_date = new Date();
+    expense.description = title || `Expense $${dollarAmount.toFixed(2)}`;
+    expense.amountCents = Math.round(dollarAmount * 100).toString();
+    expense.expenseDate = new Date().toISOString().split('T')[0];
     expense.category = category;
-    expense.created_by = user;
-    expense.notes = null;
+    expense.categoryId = category.id;
+    expense.coupleId = category.coupleId ?? randomUUID();
+    expense.createdBy = user.id;
+    expense.creator = user;
+    expense.currency = 'USD';
+    expense.splitType = 'equal';
     return expense;
   }
 }
@@ -120,23 +157,29 @@ export class ExpenseGroupFactory {
     overrides: Partial<ExpenseGroup> = {},
   ): ExpenseGroup {
     const group = new ExpenseGroup();
-    group.group_name =
-      overrides.group_name ||
-      `Test Group ${Math.random().toString(36).substring(7)}`;
-    group.group_description =
-      overrides.group_description || 'Test group for sharing expenses';
-    group.created_by = createdBy;
-    group.is_active = overrides.is_active ?? true;
+    group.name =
+      overrides.name ?? `Test Group ${Math.random().toString(36).substring(7)}`;
+    group.description =
+      overrides.description ?? 'Test group for sharing expenses';
+    group.color = overrides.color;
+    group.defaultCurrency = overrides.defaultCurrency ?? 'USD';
+    group.createdBy = overrides.createdBy ?? createdBy.id;
+    group.creator = overrides.creator ?? createdBy;
+    group.coupleId = overrides.coupleId ?? randomUUID();
+    group.isArchived = overrides.isArchived ?? false;
     return group;
   }
 
-  static createMobileTypical(createdBy: User): ExpenseGroup {
+  static createMobileTypical(createdBy: User, coupleId?: string): ExpenseGroup {
     // Typical group as created by mobile app
     const group = new ExpenseGroup();
-    group.group_name = 'Weekend Trip';
-    group.group_description = 'Shared expenses for our weekend getaway';
-    group.created_by = createdBy;
-    group.is_active = true;
+    group.name = 'Weekend Trip';
+    group.description = 'Shared expenses for our weekend getaway';
+    group.createdBy = createdBy.id;
+    group.creator = createdBy;
+    group.isArchived = false;
+    group.coupleId = coupleId ?? randomUUID();
+    group.defaultCurrency = 'USD';
     return group;
   }
 }
@@ -178,19 +221,36 @@ export class ParticipantFactory {
   static create(user: User, overrides: Partial<Participant> = {}): Participant {
     const participant = new Participant();
     participant.user = user;
-    participant.display_name = overrides.display_name || user.display_name;
-    participant.email_address = overrides.email_address || user.email_address;
-    participant.is_active = overrides.is_active ?? true;
+    participant.displayName = overrides.displayName ?? user.displayName;
+    participant.email = overrides.email ?? user.email;
+    participant.isRegistered = overrides.isRegistered ?? true;
+    const inferredCoupleId =
+      overrides.coupleId ?? (user as any).coupleId ?? undefined;
+    participant.coupleId = inferredCoupleId ?? randomUUID();
+    participant.defaultCurrency = overrides.defaultCurrency ?? 'USD';
+    participant.notificationPreferences = overrides.notificationPreferences ?? {
+      expenses: true,
+      invites: true,
+      reminders: true,
+    };
     return participant;
   }
 
-  static createFromUser(user: User): Participant {
+  static createFromUser(user: User, coupleId?: string): Participant {
     // Create participant directly from user (common mobile app pattern)
     const participant = new Participant();
     participant.user = user;
-    participant.display_name = user.display_name;
-    participant.email_address = user.email_address;
-    participant.is_active = true;
+    participant.displayName = user.displayName;
+    participant.email = user.email;
+    participant.isRegistered = true;
+    const inferredCoupleId = coupleId ?? (user as any).coupleId;
+    participant.coupleId = inferredCoupleId ?? randomUUID();
+    participant.defaultCurrency = 'USD';
+    participant.notificationPreferences = {
+      expenses: true,
+      invites: true,
+      reminders: true,
+    };
     return participant;
   }
 }
@@ -203,12 +263,14 @@ export class ScenarioFactory {
     const user = UserFactory.createMobileCompatible();
     const savedUser = await dbHelper.getRepository(User).save(user);
 
+    const couple = await dbHelper.createTestCouple(savedUser);
+
     const settings = UserSettingsFactory.createMobileDefaults(savedUser);
     const savedSettings = await dbHelper
       .getRepository(UserSettings)
       .save(settings);
 
-    const participant = ParticipantFactory.createFromUser(savedUser);
+    const participant = ParticipantFactory.createFromUser(savedUser, couple.id);
     const savedParticipant = await dbHelper
       .getRepository(Participant)
       .save(participant);
@@ -217,6 +279,7 @@ export class ScenarioFactory {
       user: savedUser,
       settings: savedSettings,
       participant: savedParticipant,
+      couple,
     };
   }
 
@@ -225,7 +288,8 @@ export class ScenarioFactory {
     user: User,
     category: Category,
   ) {
-    const group = ExpenseGroupFactory.createMobileTypical(user);
+    const coupleId = category.coupleId ?? randomUUID();
+    const group = ExpenseGroupFactory.createMobileTypical(user, coupleId);
     const savedGroup = await dbHelper.getRepository(ExpenseGroup).save(group);
 
     const expense = ExpenseFactory.createWithDollarAmount(
@@ -234,7 +298,9 @@ export class ScenarioFactory {
       25.5,
       'Test Restaurant',
     );
-    expense.expense_group = savedGroup;
+    expense.group = savedGroup;
+    expense.groupId = savedGroup.id;
+    expense.coupleId = expense.coupleId || category.coupleId || coupleId;
     const savedExpense = await dbHelper.getRepository(Expense).save(expense);
 
     return {

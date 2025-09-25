@@ -35,7 +35,7 @@ export class ExpenseSplitSimple {
   @Column({ name: 'share_percent', type: 'real', nullable: true })
   sharePercent?: number;
 
-  @Column({ name: 'settled_at', type: 'datetime', nullable: true })
+  @Column({ name: 'settled_at', nullable: true })
   settledAt?: Date;
 
   @CreateDateColumn({ name: 'created_at' })

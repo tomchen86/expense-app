@@ -28,7 +28,6 @@ export class CoupleMemberSimple {
 
   @Column({
     name: 'joined_at',
-    type: 'datetime',
     default: () => 'CURRENT_TIMESTAMP',
   })
   joinedAt: Date;
