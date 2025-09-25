@@ -36,7 +36,7 @@
     "expo": "54.0.10",
     "expo-status-bar": "~2.2.3",
     "react": "19.0.0",
-    "react-native": "0.79.5",
+    "react-native": "0.81.4",
     "react-native-gesture-handler": "~2.24.0",
     "react-native-gifted-charts": "^1.4.61",
     "react-native-linear-gradient": "^2.8.3",
