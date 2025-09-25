@@ -73,7 +73,7 @@
     "metro-react-native-babel-preset": "^0.77.0",
     "prettier": "^3.6.2",
     "react-native-reanimated": "~3.17.4",
-    "react-test-renderer": "19.0.0",
+    "react-test-renderer": "19.1.0",
     "ts-jest": "^29.1.0",
     "typescript": "~5.8.3",
     "webpack-bundle-analyzer": "^4.10.2"
