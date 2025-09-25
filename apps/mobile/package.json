@@ -75,7 +75,7 @@
     "react-native-reanimated": "~3.17.4",
     "react-test-renderer": "19.0.0",
     "ts-jest": "^29.1.0",
-    "typescript": "~5.8.3",
+    "typescript": "~5.9.2",
     "webpack-bundle-analyzer": "^4.10.2"
   },
   "private": true
