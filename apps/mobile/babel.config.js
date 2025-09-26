@@ -11,6 +11,7 @@ module.exports = function (api) {
     plugins: [
       ...privateFeaturePlugins,
       '@babel/plugin-transform-flow-strip-types',
+      'react-native-reanimated/plugin',
     ],
     env: {
       test: {
@@ -18,6 +19,7 @@ module.exports = function (api) {
         plugins: [
           ...privateFeaturePlugins,
           '@babel/plugin-transform-flow-strip-types',
+          'react-native-reanimated/plugin',
         ],
       },
     },
