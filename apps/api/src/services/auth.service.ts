@@ -189,7 +189,7 @@ export class AuthService {
         accessToken: tokens.accessToken,
         refreshToken: tokens.refreshToken,
       };
-    } catch (error) {
+    } catch {
       throw new ApiUnauthorizedException(
         'INVALID_REFRESH_TOKEN',
         'Refresh token is invalid or expired',
@@ -223,7 +223,6 @@ export class AuthService {
   async updatePersistenceMode(
     userId: string,
     persistenceMode: 'local_only' | 'cloud_sync',
-    deviceId?: string,
   ): Promise<PersistenceUpdateResult> {
     // Get or create user settings
     let userSettings = await this.userSettingsRepository.findOne({

@@ -64,7 +64,7 @@ export class GroupController {
   @HttpCode(HttpStatus.CREATED)
   async createGroup(
     @Req() req: AuthenticatedRequest,
-    @Body() body: any,
+    @Body() body: unknown,
   ): Promise<ApiResponse<{ group: GroupResponse }>> {
     const dto = this.validateDto(CreateGroupDto, body, {
       messageOverride: 'Invalid group payload',
@@ -84,7 +84,7 @@ export class GroupController {
   async updateGroup(
     @Req() req: AuthenticatedRequest,
     @Param('groupId') groupId: string,
-    @Body() body: any,
+    @Body() body: unknown,
   ): Promise<ApiResponse<{ group: GroupResponse }>> {
     const dto = this.validateDto(UpdateGroupDto, body, {
       skipMissingProperties: true,
@@ -116,7 +116,7 @@ export class GroupController {
 
   private validateDto<T>(
     cls: new () => T,
-    payload: any,
+    payload: unknown,
     options: {
       skipMissingProperties?: boolean;
       messageOverride?: string;

@@ -1,12 +1,14 @@
+interface ResponseMeta {
+  pagination?: PaginationMeta;
+  filters?: Record<string, unknown>;
+}
+
 export class ApiResponse<T> {
   success: boolean = true;
   data: T;
-  meta?: {
-    pagination?: PaginationMeta;
-    filters?: any;
-  };
+  meta?: ResponseMeta;
 
-  constructor(data: T, meta?: any) {
+  constructor(data: T, meta?: ResponseMeta) {
     this.data = data;
     this.meta = meta;
   }
@@ -17,10 +19,10 @@ export class ApiError {
   error: {
     code: string;
     message: string;
-    details?: any;
+    details?: unknown;
   };
 
-  constructor(code: string, message: string, details?: any) {
+  constructor(code: string, message: string, details?: unknown) {
     this.error = { code, message, details };
   }
 }

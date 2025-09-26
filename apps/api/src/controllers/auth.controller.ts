@@ -42,9 +42,48 @@ interface ApiResponse<T> {
     code: string;
     message: string;
     field?: string;
-    details?: any;
+    details?: unknown;
   };
 }
+
+interface AuthUserPayload {
+  id: string;
+  displayName: string;
+  email: string;
+}
+
+interface UserSettingsPayload {
+  preferredCurrency: string;
+  dateFormat: string;
+  defaultSplitMethod: string;
+  persistenceMode: 'local_only' | 'cloud_sync';
+}
+
+interface TokenPair {
+  accessToken: string;
+  refreshToken: string;
+}
+
+type RegisterResponsePayload = TokenPair & {
+  user: AuthUserPayload;
+};
+
+type LoginResponsePayload = TokenPair & {
+  user: AuthUserPayload;
+  settings: UserSettingsPayload;
+};
+
+type RefreshResponsePayload = TokenPair;
+
+type CurrentUserResponsePayload = {
+  user: AuthUserPayload;
+  settings: UserSettingsPayload;
+};
+
+type UpdatePersistenceResponsePayload = {
+  settings: UserSettingsPayload;
+  persistenceChangeTimestamp: string | Date;
+};
 
 // Authenticated user interface for requests
 interface AuthenticatedRequest extends Request {
@@ -61,7 +100,9 @@ export class AuthController {
 
   @Post('register')
   @HttpCode(HttpStatus.CREATED)
-  async register(@Body() registerDto: RegisterDto): Promise<ApiResponse<any>> {
+  async register(
+    @Body() registerDto: RegisterDto,
+  ): Promise<ApiResponse<RegisterResponsePayload>> {
     // Validate required fields up front so we can return a 400 with the mobile error envelope.
     if (
       !registerDto.email ||
@@ -104,7 +145,9 @@ export class AuthController {
 
   @Post('login')
   @HttpCode(HttpStatus.OK)
-  async login(@Body() loginDto: LoginDto): Promise<ApiResponse<any>> {
+  async login(
+    @Body() loginDto: LoginDto,
+  ): Promise<ApiResponse<LoginResponsePayload>> {
     if (!loginDto.email || !loginDto.password) {
       throw new ApiBadRequestException(
         'VALIDATION_ERROR',
@@ -131,7 +174,9 @@ export class AuthController {
           preferredCurrency: result.settings?.preferredCurrency || 'USD',
           dateFormat: result.settings?.dateFormat || 'MM/DD/YYYY',
           defaultSplitMethod: result.settings?.defaultSplitMethod || 'equal',
-          persistenceMode: result.settings?.persistenceMode || 'local_only',
+          persistenceMode:
+            (result.settings?.persistenceMode as 'local_only' | 'cloud_sync') ||
+            'local_only',
         },
       },
     };
@@ -141,7 +186,7 @@ export class AuthController {
   @HttpCode(HttpStatus.OK)
   async refreshToken(
     @Body('refreshToken') refreshToken: string,
-  ): Promise<ApiResponse<any>> {
+  ): Promise<ApiResponse<RefreshResponsePayload>> {
     if (!refreshToken) {
       throw new ApiBadRequestException(
         'VALIDATION_ERROR',
@@ -164,7 +209,7 @@ export class AuthController {
   @UseGuards(JwtAuthGuard)
   async getCurrentUser(
     @Req() req: AuthenticatedRequest,
-  ): Promise<ApiResponse<any>> {
+  ): Promise<ApiResponse<CurrentUserResponsePayload>> {
     const userDetails = await this.authService.getUserWithSettings(req.user.id);
 
     return {
@@ -181,7 +226,9 @@ export class AuthController {
           defaultSplitMethod:
             userDetails.settings?.defaultSplitMethod || 'equal',
           persistenceMode:
-            userDetails.settings?.persistenceMode || 'local_only',
+            (userDetails.settings?.persistenceMode as
+              | 'local_only'
+              | 'cloud_sync') || 'local_only',
         },
       },
     };
@@ -193,7 +240,7 @@ export class AuthController {
   async updatePersistenceMode(
     @Req() req: AuthenticatedRequest,
     @Body() updateDto: UpdatePersistenceModeDto,
-  ): Promise<ApiResponse<any>> {
+  ): Promise<ApiResponse<UpdatePersistenceResponsePayload>> {
     if (
       !updateDto.persistenceMode ||
       !['local_only', 'cloud_sync'].includes(updateDto.persistenceMode)
@@ -209,7 +256,6 @@ export class AuthController {
       const result = await this.authService.updatePersistenceMode(
         req.user.id,
         updateDto.persistenceMode,
-        updateDto.deviceId,
       );
 
       return {
@@ -219,12 +265,14 @@ export class AuthController {
             preferredCurrency: result.settings.preferredCurrency || 'USD',
             dateFormat: result.settings.dateFormat || 'MM/DD/YYYY',
             defaultSplitMethod: result.settings.defaultSplitMethod || 'equal',
-            persistenceMode: result.settings.persistenceMode,
+            persistenceMode: result.settings.persistenceMode as
+              | 'local_only'
+              | 'cloud_sync',
           },
           persistenceChangeTimestamp: result.persistenceChangeTimestamp,
         },
       };
-    } catch (error) {
+    } catch {
       throw new ApiBadRequestException(
         'UPDATE_FAILED',
         'Failed to update persistence mode',

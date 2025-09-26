@@ -52,7 +52,7 @@ export class ExpenseController {
   @Get()
   async listExpenses(
     @Req() req: AuthenticatedRequest,
-    @Query() query: Record<string, any>,
+    @Query() query: Record<string, unknown>,
   ): Promise<
     ApiResponse<{
       expenses: ExpenseResponseDto[];
@@ -87,7 +87,7 @@ export class ExpenseController {
   @Get('statistics')
   async getExpenseStatistics(
     @Req() req: AuthenticatedRequest,
-    @Query() query: Record<string, any>,
+    @Query() query: Record<string, unknown>,
   ): Promise<ApiResponse<{ statistics: ExpenseStatisticsResponse }>> {
     const filters = this.validateDto(ExpenseQueryDto, query, {
       skipMissingProperties: true,
@@ -143,7 +143,7 @@ export class ExpenseController {
   @HttpCode(HttpStatus.CREATED)
   async createExpense(
     @Req() req: AuthenticatedRequest,
-    @Body() body: any,
+    @Body() body: unknown,
   ): Promise<ApiResponse<{ expense: ExpenseResponseDto }>> {
     const dto = this.validateDto(CreateExpenseDto, body, {
       messageOverride: 'Invalid expense payload',
@@ -166,7 +166,7 @@ export class ExpenseController {
   async updateExpense(
     @Req() req: AuthenticatedRequest,
     @Param('expenseId') expenseId: string,
-    @Body() body: any,
+    @Body() body: unknown,
   ): Promise<ApiResponse<{ expense: ExpenseResponseDto }>> {
     const dto = this.validateDto(UpdateExpenseDto, body, {
       skipMissingProperties: true,

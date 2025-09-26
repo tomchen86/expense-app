@@ -6,12 +6,26 @@ import { JwtService } from '@nestjs/jwt';
 import { Request, Response } from 'express';
 import { createApiError } from '../common/api-error';
 
+interface JwtPayload {
+  sub: string;
+  email?: string;
+  displayName?: string;
+}
+
+interface AuthenticatedRequest extends Request {
+  user?: {
+    id: string;
+    email?: string;
+    displayName?: string;
+  };
+}
+
 @Injectable()
 export class JwtAuthGuard implements CanActivate {
   constructor(private readonly jwtService: JwtService) {}
 
   canActivate(context: ExecutionContext): boolean {
-    const request = context.switchToHttp().getRequest<Request>();
+    const request = context.switchToHttp().getRequest<AuthenticatedRequest>();
     const response = context.switchToHttp().getResponse<Response>();
 
     const authHeader = request.headers.authorization;
@@ -35,20 +49,20 @@ export class JwtAuthGuard implements CanActivate {
     }
 
     try {
-      const payload = this.jwtService.verify(token, {
+      const payload = this.jwtService.verify<JwtPayload>(token, {
         secret:
           process.env.JWT_SECRET || 'development-secret-change-in-production',
       });
 
       // Attach user to request for controller access
-      (request as any).user = {
+      request.user = {
         id: payload.sub,
         email: payload.email,
         displayName: payload.displayName,
       };
 
       return true;
-    } catch (error) {
+    } catch {
       response
         .status(401)
         .json(

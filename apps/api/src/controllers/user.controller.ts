@@ -72,7 +72,7 @@ export class UserController {
   @Put('profile')
   async updateProfile(
     @Req() req: AuthenticatedRequest,
-    @Body() body: any,
+    @Body() body: unknown,
   ): Promise<ApiResponse<{ user: UserProfileResponse['user'] }>> {
     const dto = this.validateDto(UpdateUserProfileDto, body, {
       skipMissingProperties: true,
@@ -116,7 +116,7 @@ export class UserController {
   @Put('settings')
   async updateSettings(
     @Req() req: AuthenticatedRequest,
-    @Body() body: any,
+    @Body() body: unknown,
   ): Promise<ApiResponse<{ settings: UserSettingsResponse }>> {
     const dto = this.validateDto(UpdateUserSettingsDto, body, {
       skipMissingProperties: true,
@@ -139,7 +139,7 @@ export class UserController {
   @Put('settings/persistence')
   async updatePersistenceMode(
     @Req() req: AuthenticatedRequest,
-    @Body() body: any,
+    @Body() body: unknown,
   ): Promise<
     ApiResponse<{
       settings: UserSettingsResponse;
@@ -169,7 +169,7 @@ export class UserController {
   @HttpCode(HttpStatus.CREATED)
   async registerDevice(
     @Req() req: AuthenticatedRequest,
-    @Body() body: any,
+    @Body() body: unknown,
   ): Promise<ApiResponse<{ device: UserDeviceResponse }>> {
     const dto = this.validateDto(RegisterDeviceDto, body, {
       messageOverride: 'Invalid device registration payload',
@@ -203,7 +203,7 @@ export class UserController {
   async updateDevice(
     @Req() req: AuthenticatedRequest,
     @Param('deviceUuid') deviceUuid: string,
-    @Body() body: any,
+    @Body() body: unknown,
   ): Promise<ApiResponse<{ device: UserDeviceResponse }>> {
     const dto = this.validateDto(UpdateDeviceSyncDto, body, {
       skipMissingProperties: true,
@@ -263,7 +263,7 @@ export class UserController {
 
   private validateDto<T>(
     cls: new () => T,
-    payload: any,
+    payload: unknown,
     options: {
       skipMissingProperties?: boolean;
       messageOverride?: string;

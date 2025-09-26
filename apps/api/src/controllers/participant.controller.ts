@@ -66,7 +66,7 @@ export class ParticipantController {
   @HttpCode(HttpStatus.CREATED)
   async createParticipant(
     @Req() req: AuthenticatedRequest,
-    @Body() body: any,
+    @Body() body: unknown,
   ): Promise<ApiResponse<{ participant: ParticipantResponse }>> {
     const dto = this.validateDto(CreateParticipantDto, body, {
       messageOverride: 'Invalid participant payload',
@@ -89,7 +89,7 @@ export class ParticipantController {
   async updateParticipant(
     @Req() req: AuthenticatedRequest,
     @Param('participantId') participantId: string,
-    @Body() body: any,
+    @Body() body: unknown,
   ): Promise<ApiResponse<{ participant: ParticipantResponse }>> {
     const dto = this.validateDto(UpdateParticipantDto, body, {
       skipMissingProperties: true,
@@ -124,7 +124,7 @@ export class ParticipantController {
 
   private validateDto<T>(
     cls: new () => T,
-    payload: any,
+    payload: unknown,
     options: {
       skipMissingProperties?: boolean;
       messageOverride?: string;

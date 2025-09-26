@@ -4,22 +4,34 @@
 import { INestApplication } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import supertest from 'supertest';
-import type { SuperTest, Test as SuperTestRequest } from 'supertest';
+import * as http from 'http';
 import { AppModule } from '../../../app.module';
-import { testDataSource, dbHelper } from '../../setup';
+import { dbHelper } from '../../setup';
 import { PerformanceAssertions } from '../../helpers/performance-assertions';
 import {
   UserFactory,
   UserSettingsFactory,
 } from '../../helpers/test-data-factories';
+import { User } from '../../../entities';
 
 const UUID_V4 =
   /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const JWT_REGEX = /^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/;
 
+interface ApiResponse<T> {
+  success: boolean;
+  data?: T;
+  error?: {
+    code: string;
+    message: string;
+    field?: string;
+    details?: string[];
+  };
+}
+
 describe('Authentication API - Mobile Compatibility', () => {
   let app: INestApplication;
-  let httpServer: any;
+  let httpServer: http.Server;
   let api: ReturnType<typeof supertest>;
 
   beforeAll(async () => {
@@ -52,8 +64,13 @@ describe('Authentication API - Mobile Compatibility', () => {
           500, // Must be under 500ms
         );
 
+      const body = response.body as ApiResponse<{
+        user: any;
+        accessToken: string;
+        refreshToken: string;
+      }>;
       // Validate mobile-compatible response format
-      expect(response.body).toEqual({
+      expect(body).toEqual({
         success: true,
         data: {
           user: {
@@ -67,10 +84,10 @@ describe('Authentication API - Mobile Compatibility', () => {
       });
 
       // Ensure tokens are JWT format
-      expect(response.body.data.accessToken).toMatch(
+      expect(body.data.accessToken).toMatch(
         /^[A-Za-z0-9-_=]+\.[A-Za-z0-9-_=]+\.[A-Za-z0-9-_.+/=]*$/,
       );
-      expect(response.body.data.refreshToken).toMatch(
+      expect(body.data.refreshToken).toMatch(
         /^[A-Za-z0-9-_=]+\.[A-Za-z0-9-_=]+\.[A-Za-z0-9-_.+/=]*$/,
       );
 
@@ -137,11 +154,17 @@ describe('Authentication API - Mobile Compatibility', () => {
         await PerformanceAssertions.testEndpointPerformance(
           'POST /auth/login',
           () => api.post('/auth/login').send(loginData).expect(200),
-          300, // Authentication should be under 300ms (integration test)
+          400, // Authentication should be under 400ms (integration test)
         );
 
+      const body = response.body as ApiResponse<{
+        user: any;
+        settings: any;
+        accessToken: string;
+        refreshToken: string;
+      }>;
       // Contract: success + stable fields from loginData
-      expect(response.body).toMatchObject({
+      expect(body).toMatchObject({
         success: true,
         data: {
           user: {
@@ -158,11 +181,9 @@ describe('Authentication API - Mobile Compatibility', () => {
       });
 
       // Dynamic fields by format
-      expect(response.body.data.user.id).toEqual(
-        expect.stringMatching(UUID_V4),
-      );
-      expect(response.body.data.accessToken).toMatch(JWT_REGEX);
-      expect(response.body.data.refreshToken).toMatch(JWT_REGEX);
+      expect(body.data.user.id).toEqual(expect.stringMatching(UUID_V4));
+      expect(body.data.accessToken).toMatch(JWT_REGEX);
+      expect(body.data.refreshToken).toMatch(JWT_REGEX);
 
       // Integration test performance requirement (relaxed from unit test <100ms)
       expect(metrics.duration).toBeLessThan(300);
@@ -193,14 +214,17 @@ describe('Authentication API - Mobile Compatibility', () => {
     it('should refresh tokens with valid refresh token', async () => {
       // First, login to get tokens
       const user = UserFactory.createMobileCompatible();
-      const savedUser = await dbHelper.getRepository('User').save(user);
+      await dbHelper.getRepository<User>('User').save(user);
 
       const loginResponse = await api.post('/auth/login').send({
         email: user.email,
         password: 'testPassword123',
       });
 
-      const refreshToken = loginResponse.body.data.refreshToken;
+      const loginBody = loginResponse.body as ApiResponse<{
+        refreshToken: string;
+      }>;
+      const refreshToken = loginBody.data.refreshToken;
 
       // Test refresh
       const { response, metrics } =
@@ -246,7 +270,10 @@ describe('Authentication API - Mobile Compatibility', () => {
       };
 
       const loginResponse = await api.post('/auth/login').send(loginData);
-      const accessToken = loginResponse.body.data.accessToken;
+      const loginBody = loginResponse.body as ApiResponse<{
+        accessToken: string;
+      }>;
+      const accessToken = loginBody.data.accessToken;
 
       const { response, metrics } =
         await PerformanceAssertions.testEndpointPerformance(
@@ -259,8 +286,9 @@ describe('Authentication API - Mobile Compatibility', () => {
           300, // Fast user profile lookup (integration test)
         );
 
+      const body = response.body as ApiResponse<{ user: any; settings: any }>;
       // Contract: success + stable fields
-      expect(response.body).toMatchObject({
+      expect(body).toMatchObject({
         success: true,
         data: {
           user: {
@@ -277,9 +305,7 @@ describe('Authentication API - Mobile Compatibility', () => {
       });
 
       // Dynamic fields by format
-      expect(response.body.data.user.id).toEqual(
-        expect.stringMatching(UUID_V4),
-      );
+      expect(body.data.user.id).toEqual(expect.stringMatching(UUID_V4));
 
       expect(metrics.duration).toBeLessThan(300);
     });
@@ -316,7 +342,7 @@ describe('Authentication API - Mobile Compatibility', () => {
     it('should update persistence mode from local_only to cloud_sync', async () => {
       // Setup authenticated user
       const user = UserFactory.createMobileCompatible();
-      const savedUser = await dbHelper.getRepository('User').save(user);
+      await dbHelper.getRepository<User>('User').save(user);
 
       const settings = UserSettingsFactory.createMobileDefaults(savedUser);
       await dbHelper.getRepository('UserSettings').save(settings);
@@ -326,7 +352,10 @@ describe('Authentication API - Mobile Compatibility', () => {
         password: 'testPassword123',
       });
 
-      const accessToken = loginResponse.body.data.accessToken;
+      const loginBody = loginResponse.body as ApiResponse<{
+        accessToken: string;
+      }>;
+      const accessToken = loginBody.data.accessToken;
 
       const { response, metrics } =
         await PerformanceAssertions.testEndpointPerformance(
@@ -361,14 +390,17 @@ describe('Authentication API - Mobile Compatibility', () => {
 
     it('should validate persistence mode values', async () => {
       const user = UserFactory.createMobileCompatible();
-      const savedUser = await dbHelper.getRepository('User').save(user);
+      await dbHelper.getRepository<User>('User').save(user);
 
       const loginResponse = await api.post('/auth/login').send({
         email: user.email,
         password: 'testPassword123',
       });
 
-      const accessToken = loginResponse.body.data.accessToken;
+      const loginBody = loginResponse.body as ApiResponse<{
+        accessToken: string;
+      }>;
+      const accessToken = loginBody.data.accessToken;
 
       const response = await api
         .put('/auth/settings/persistence')

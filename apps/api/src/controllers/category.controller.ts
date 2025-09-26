@@ -81,7 +81,7 @@ export class CategoryController {
   @HttpCode(HttpStatus.CREATED)
   async createCategory(
     @Req() req: AuthenticatedRequest,
-    @Body() body: any,
+    @Body() body: unknown,
   ): Promise<ApiResponse<{ category: CategoryResponse }>> {
     const dto = this.validateDto(CreateCategoryDto, body, {
       messageOverride: 'Invalid category payload',
@@ -104,7 +104,7 @@ export class CategoryController {
   async updateCategory(
     @Req() req: AuthenticatedRequest,
     @Param('categoryId') categoryId: string,
-    @Body() body: any,
+    @Body() body: unknown,
   ): Promise<ApiResponse<{ category: CategoryResponse }>> {
     const dto = this.validateDto(UpdateCategoryDto, body, {
       skipMissingProperties: true,
@@ -136,7 +136,7 @@ export class CategoryController {
 
   private validateDto<T>(
     cls: new () => T,
-    payload: any,
+    payload: unknown,
     options: {
       skipMissingProperties?: boolean;
       messageOverride?: string;

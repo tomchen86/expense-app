@@ -1,6 +1,6 @@
 import { TypeOrmModuleOptions } from '@nestjs/typeorm';
 import path from 'node:path';
-import { getEntityArray, getEntityCollection } from '../entities/entity-sets';
+import { getEntityCollection } from '../entities/entity-sets';
 
 type SupportedDriver = 'postgres' | 'sqlite' | 'sqljs';
 

@@ -210,7 +210,7 @@ export class GroupService {
           participantIds,
         );
 
-      await this.syncGroupMembers(group.id, participants, selfParticipantId!);
+      await this.syncGroupMembers(group.id, participants, selfParticipantId);
 
       participantResponses = participants.map((participant) =>
         this.participantService.mapParticipantEntity(participant),

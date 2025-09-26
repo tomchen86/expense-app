@@ -383,7 +383,6 @@ describe('Authentication Endpoints - TRUE GREEN PHASE (Isolated)', () => {
       expect(authService.updatePersistenceMode).toHaveBeenCalledWith(
         'user-123',
         'cloud_sync',
-        'mobile_device_123',
       );
     });
 

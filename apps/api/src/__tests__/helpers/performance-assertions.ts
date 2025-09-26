@@ -99,7 +99,7 @@ export class PerformanceAssertions {
   static async batchPerformanceTest(
     operations: Array<{
       name: string;
-      fn: () => Promise<any>;
+      fn: () => Promise<unknown>;
       maxMs: number;
     }>,
   ): Promise<PerformanceMetrics[]> {
@@ -146,6 +146,7 @@ export class PerformanceAssertions {
 /**
  * Jest custom matcher for performance assertions
  */
+/* eslint-disable @typescript-eslint/no-namespace */
 declare global {
   namespace jest {
     interface Matchers<R> {
@@ -156,6 +157,7 @@ declare global {
     }
   }
 }
+/* eslint-enable @typescript-eslint/no-namespace */
 
 // Custom Jest matchers
 expect.extend({
