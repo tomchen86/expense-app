@@ -1,12 +1,7 @@
 import React from 'react';
-import {
-  View,
-  Text,
-  TouchableOpacity,
-  StyleSheet,
-  Animated,
-} from 'react-native';
+import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
 import { Swipeable } from 'react-native-gesture-handler';
+import Animated, { interpolate } from 'react-native-reanimated';
 import { Category } from '../../types';
 
 interface CategoryListItemProps {
@@ -22,15 +17,10 @@ const CategoryListItem: React.FC<CategoryListItemProps> = ({
   onDelete,
   canDelete = true,
 }) => {
-  const renderRightActions = (
-    progress: Animated.AnimatedInterpolation<number>,
-    dragX: Animated.AnimatedInterpolation<number>,
-  ) => {
-    const trans = dragX.interpolate({
-      inputRange: [-80, 0],
-      outputRange: [0, 80],
-      extrapolate: 'clamp',
-    });
+  const renderRightActions = (progress: any, dragX: any) => {
+    // Note: react-native-gesture-handler passes Animated values
+    // Use Reanimated's interpolate function
+    const trans = interpolate(dragX, [-80, 0], [0, 80], 'clamp');
 
     return (
       <TouchableOpacity

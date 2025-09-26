@@ -1,3 +1,4 @@
+import './src/utils/global-require';
 import { registerRootComponent } from 'expo';
 
 import App from './App';
