@@ -7,6 +7,10 @@ import { getDatabaseConfig } from './config/database.config';
 import { getAppConfig } from './config/app.config';
 import { AuthModule } from './modules/auth.module';
 import { UserModule } from './modules/user.module';
+import { CategoryModule } from './modules/category.module';
+import { ParticipantModule } from './modules/participant.module';
+import { GroupModule } from './modules/group.module';
+import { ExpenseModule } from './modules/expense.module';
 
 @Module({
   imports: [
@@ -17,6 +21,10 @@ import { UserModule } from './modules/user.module';
     TypeOrmModule.forRoot(getDatabaseConfig()),
     AuthModule,
     UserModule,
+    CategoryModule,
+    ParticipantModule,
+    GroupModule,
+    ExpenseModule,
   ],
   controllers: [AppController],
   providers: [AppService],

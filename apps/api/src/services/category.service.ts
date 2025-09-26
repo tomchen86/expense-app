@@ -1,204 +1,238 @@
-import {
-  Injectable,
-  NotFoundException,
-  ConflictException,
-  BadRequestException,
-} from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
-import { Category } from '../entities/category.entity';
-import { Expense } from '../entities/expense.entity';
+import { Entities } from '../entities/runtime-entities';
 import {
   CreateCategoryDto,
   UpdateCategoryDto,
-  CategoryResponseDto,
+  CategoryResponse,
+  DefaultCategoryResponse,
 } from '../dto/category.dto';
+import {
+  ApiBadRequestException,
+  ApiConflictException,
+  ApiNotFoundException,
+} from '../common/api-error';
+import { LedgerService } from './ledger.service';
+
+const HEX_COLOR_REGEX = /^#[0-9A-F]{6}$/i;
+
+type CategoryEntity = InstanceType<typeof Entities.Category>;
+type ExpenseEntity = InstanceType<typeof Entities.Expense>;
 
 @Injectable()
 export class CategoryService {
   constructor(
-    @InjectRepository(Category)
-    private categoryRepository: Repository<Category>,
-    @InjectRepository(Expense)
-    private expenseRepository: Repository<Expense>,
+    @InjectRepository(Entities.Category)
+    private readonly categoryRepository: Repository<CategoryEntity>,
+    @InjectRepository(Entities.Expense)
+    private readonly expenseRepository: Repository<ExpenseEntity>,
+    private readonly ledgerService: LedgerService,
   ) {}
 
-  async findAll(coupleId: string): Promise<CategoryResponseDto[]> {
-    const categories = await this.categoryRepository.find({
-      where: {
-        couple_id: coupleId,
-        deleted_at: null,
-      },
-      order: { created_at: 'DESC' },
+  async listCategoriesForUser(userId: string): Promise<CategoryResponse[]> {
+    const { coupleId } = await this.ledgerService.ensureLedgerForUser(userId, {
+      ensureDefaultCategories: true,
+      ensureParticipant: true,
     });
 
-    return categories.map(this.toResponseDto);
+    const categories = await this.categoryRepository
+      .createQueryBuilder('category')
+      .where('category.coupleId = :coupleId', { coupleId })
+      .andWhere('category.deletedAt IS NULL')
+      .orderBy('category.name', 'ASC')
+      .getMany();
+
+    return categories.map((category) => this.mapCategory(category));
   }
 
-  async findById(id: string, coupleId: string): Promise<CategoryResponseDto> {
+  async getDefaultCategories(): Promise<DefaultCategoryResponse[]> {
+    return this.ledgerService.getDefaultCategories().map((definition) => ({
+      name: definition.name,
+      color: definition.color,
+      icon: definition.icon ?? null,
+    }));
+  }
+
+  async createCategoryForUser(
+    userId: string,
+    payload: CreateCategoryDto,
+  ): Promise<CategoryResponse> {
+    const { coupleId } = await this.ledgerService.ensureLedgerForUser(userId, {
+      ensureDefaultCategories: true,
+      ensureParticipant: true,
+    });
+
+    const normalizedName = payload.name.trim();
+    const normalizedColor = payload.color.toUpperCase();
+
+    if (!normalizedName) {
+      throw new ApiBadRequestException(
+        'VALIDATION_ERROR',
+        'Category name is required',
+        { field: 'name' },
+      );
+    }
+
+    if (!HEX_COLOR_REGEX.test(normalizedColor)) {
+      throw new ApiBadRequestException(
+        'VALIDATION_ERROR',
+        'Invalid category payload',
+        { field: 'color' },
+      );
+    }
+
+    const existing = await this.categoryRepository
+      .createQueryBuilder('category')
+      .where('category.coupleId = :coupleId', { coupleId })
+      .andWhere('category.deletedAt IS NULL')
+      .andWhere('LOWER(category.name) = LOWER(:name)', {
+        name: normalizedName,
+      })
+      .getOne();
+
+    if (existing) {
+      throw new ApiConflictException(
+        'CATEGORY_EXISTS',
+        'Category with this name already exists',
+        { field: 'name' },
+      );
+    }
+
+    const category = this.categoryRepository.create();
+    category.name = normalizedName;
+    category.color = normalizedColor;
+    category.icon = payload.icon ?? null;
+    category.coupleId = coupleId;
+    category.createdBy = userId;
+    category.isDefault = false;
+
+    const saved = await this.categoryRepository.save(category);
+    return this.mapCategory(saved);
+  }
+
+  async updateCategoryForUser(
+    userId: string,
+    categoryId: string,
+    payload: UpdateCategoryDto,
+  ): Promise<CategoryResponse> {
+    const { coupleId } = await this.ledgerService.ensureLedgerForUser(userId, {
+      ensureDefaultCategories: true,
+      ensureParticipant: true,
+    });
+
     const category = await this.categoryRepository.findOne({
-      where: {
-        id,
-        couple_id: coupleId,
-        deleted_at: null,
-      },
+      where: { id: categoryId, coupleId },
     });
 
-    if (!category) {
-      throw new NotFoundException('Category not found');
+    if (!category || category.deletedAt) {
+      throw new ApiNotFoundException(
+        'CATEGORY_NOT_FOUND',
+        'Category not found',
+      );
     }
 
-    return this.toResponseDto(category);
-  }
-
-  async create(
-    createCategoryDto: CreateCategoryDto,
-    coupleId: string,
-    createdBy: string,
-  ): Promise<CategoryResponseDto> {
-    // Check if category name already exists for this couple
-    const existingCategory = await this.categoryRepository.findOne({
-      where: {
-        couple_id: coupleId,
-        name: createCategoryDto.name,
-        deleted_at: null,
-      },
-    });
-
-    if (existingCategory) {
-      throw new ConflictException('Category with this name already exists');
-    }
-
-    const category = this.categoryRepository.create({
-      ...createCategoryDto,
-      couple_id: coupleId,
-      created_by: createdBy,
-    });
-
-    const savedCategory = await this.categoryRepository.save(category);
-    return this.toResponseDto(savedCategory);
-  }
-
-  async update(
-    id: string,
-    updateCategoryDto: UpdateCategoryDto,
-    coupleId: string,
-  ): Promise<CategoryResponseDto> {
-    const category = await this.categoryRepository.findOne({
-      where: {
-        id,
-        couple_id: coupleId,
-        deleted_at: null,
-      },
-    });
-
-    if (!category) {
-      throw new NotFoundException('Category not found');
-    }
-
-    // Check if new name conflicts with existing category
-    if (updateCategoryDto.name && updateCategoryDto.name !== category.name) {
-      const existingCategory = await this.categoryRepository.findOne({
-        where: {
-          couple_id: coupleId,
-          name: updateCategoryDto.name,
-          deleted_at: null,
-        },
-      });
-
-      if (existingCategory && existingCategory.id !== id) {
-        throw new ConflictException('Category with this name already exists');
+    if (payload.name && payload.name.trim() !== category.name) {
+      const normalizedName = payload.name.trim();
+      if (!normalizedName) {
+        throw new ApiBadRequestException(
+          'VALIDATION_ERROR',
+          'Category name is required',
+          { field: 'name' },
+        );
       }
+
+      const existing = await this.categoryRepository
+        .createQueryBuilder('category')
+        .where('category.coupleId = :coupleId', { coupleId })
+        .andWhere('category.deletedAt IS NULL')
+        .andWhere('category.id != :categoryId', { categoryId: category.id })
+        .andWhere('LOWER(category.name) = LOWER(:name)', {
+          name: normalizedName,
+        })
+        .getOne();
+
+      if (existing) {
+        throw new ApiConflictException(
+          'CATEGORY_EXISTS',
+          'Category with this name already exists',
+          { field: 'name' },
+        );
+      }
+
+      category.name = normalizedName;
     }
 
-    await this.categoryRepository.update(id, updateCategoryDto);
-    const updatedCategory = await this.categoryRepository.findOne({
-      where: { id },
-    });
+    if (payload.color) {
+      const normalizedColor = payload.color.toUpperCase();
+      if (!HEX_COLOR_REGEX.test(normalizedColor)) {
+        throw new ApiBadRequestException(
+          'VALIDATION_ERROR',
+          'Invalid category payload',
+          { field: 'color' },
+        );
+      }
+      category.color = normalizedColor;
+    }
 
-    return this.toResponseDto(updatedCategory!);
+    if (payload.icon !== undefined) {
+      category.icon = payload.icon || null;
+    }
+
+    const saved = await this.categoryRepository.save(category);
+    return this.mapCategory(saved);
   }
 
-  async delete(id: string, coupleId: string): Promise<void> {
-    const category = await this.categoryRepository.findOne({
-      where: {
-        id,
-        couple_id: coupleId,
-        deleted_at: null,
-      },
+  async deleteCategoryForUser(
+    userId: string,
+    categoryId: string,
+  ): Promise<void> {
+    const { coupleId } = await this.ledgerService.ensureLedgerForUser(userId, {
+      ensureDefaultCategories: true,
+      ensureParticipant: true,
     });
 
-    if (!category) {
-      throw new NotFoundException('Category not found');
+    const category = await this.categoryRepository.findOne({
+      where: { id: categoryId, coupleId },
+    });
+
+    if (!category || category.deletedAt) {
+      throw new ApiNotFoundException(
+        'CATEGORY_NOT_FOUND',
+        'Category not found',
+      );
     }
 
-    // Check if category is being used by any expenses
-    const expenseCount = await this.expenseRepository.count({
-      where: {
-        category_id: id,
-        deleted_at: null,
-      },
-    });
+    const expenseCount = await this.expenseRepository
+      .createQueryBuilder('expense')
+      .where('expense.categoryId = :categoryId', { categoryId: category.id })
+      .andWhere('expense.deletedAt IS NULL')
+      .getCount();
 
     if (expenseCount > 0) {
-      throw new BadRequestException(
+      throw new ApiBadRequestException(
+        'CATEGORY_IN_USE',
         'Cannot delete category that is being used by expenses',
       );
     }
 
-    // Soft delete the category
-    await this.categoryRepository.update(id, {
-      deleted_at: new Date(),
-    });
+    category.deletedAt = new Date();
+    await this.categoryRepository.save(category);
   }
 
-  async getDefaultCategories(): Promise<CategoryResponseDto[]> {
-    const defaultCategories = await this.categoryRepository.find({
-      where: { is_default: true },
-      order: { name: 'ASC' },
-    });
-
-    return defaultCategories.map(this.toResponseDto);
-  }
-
-  async createDefaultCategoriesForCouple(
-    coupleId: string,
-    createdBy: string,
-  ): Promise<void> {
-    const defaultCategories = [
-      { name: 'Food & Dining', color: '#FF5722', icon: 'restaurant' },
-      { name: 'Transportation', color: '#2196F3', icon: 'directions-car' },
-      { name: 'Shopping', color: '#9C27B0', icon: 'shopping-cart' },
-      { name: 'Entertainment', color: '#FF9800', icon: 'movie' },
-      { name: 'Bills & Utilities', color: '#F44336', icon: 'receipt' },
-      { name: 'Healthcare', color: '#4CAF50', icon: 'local-hospital' },
-      { name: 'Travel', color: '#00BCD4', icon: 'flight' },
-      { name: 'Other', color: '#607D8B', icon: 'category' },
-    ];
-
-    const categories = defaultCategories.map((cat) =>
-      this.categoryRepository.create({
-        ...cat,
-        couple_id: coupleId,
-        created_by: createdBy,
-        is_default: false, // These are couple-specific, not global defaults
-      }),
-    );
-
-    await this.categoryRepository.save(categories);
-  }
-
-  private toResponseDto(category: Category): CategoryResponseDto {
+  private mapCategory(category: CategoryEntity): CategoryResponse {
     return {
       id: category.id,
-      couple_id: category.couple_id,
       name: category.name,
       color: category.color,
-      icon: category.icon,
-      is_default: category.is_default,
-      created_by: category.created_by,
-      created_at: category.created_at,
-      updated_at: category.updated_at,
+      icon: category.icon ?? null,
+      isDefault: category.isDefault ?? false,
+      createdAt: category.createdAt?.toISOString?.()
+        ? category.createdAt.toISOString()
+        : new Date().toISOString(),
+      updatedAt: category.updatedAt?.toISOString?.()
+        ? category.updatedAt.toISOString()
+        : new Date().toISOString(),
     };
   }
 }

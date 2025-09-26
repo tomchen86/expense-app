@@ -1,9 +1,11 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
-  HttpException,
+  HttpCode,
   HttpStatus,
+  Param,
   Post,
   Put,
   Query,
@@ -17,12 +19,17 @@ import { JwtAuthGuard } from '../guards/jwt-auth.guard';
 import { UserService } from '../services/user.service';
 import {
   UpdatePersistenceModeDto,
+  UpdateUserSettingsDto,
+  RegisterDeviceDto,
+  UpdateDeviceSyncDto,
   UpdateUserProfileDto,
   UserProfileResponse,
   UserSearchQueryDto,
   UserSettingsResponse,
   UserSummary,
+  UserDeviceResponse,
 } from '../dto/user.dto';
+import { ApiBadRequestException, ApiHttpException } from '../common/api-error';
 
 interface ApiResponse<T> {
   success: boolean;
@@ -85,15 +92,10 @@ export class UserController {
 
   @Post('avatar')
   async uploadAvatar(): Promise<ApiResponse<never>> {
-    throw new HttpException(
-      {
-        success: false,
-        error: {
-          code: 'NOT_IMPLEMENTED',
-          message: 'Avatar uploads are not available yet',
-        },
-      },
+    throw new ApiHttpException(
       HttpStatus.NOT_IMPLEMENTED,
+      'NOT_IMPLEMENTED',
+      'Avatar uploads are not available yet',
     );
   }
 
@@ -102,6 +104,29 @@ export class UserController {
     @Req() req: AuthenticatedRequest,
   ): Promise<ApiResponse<{ settings: UserSettingsResponse }>> {
     const settings = await this.userService.getUserSettings(req.user.id);
+
+    return {
+      success: true,
+      data: {
+        settings,
+      },
+    };
+  }
+
+  @Put('settings')
+  async updateSettings(
+    @Req() req: AuthenticatedRequest,
+    @Body() body: any,
+  ): Promise<ApiResponse<{ settings: UserSettingsResponse }>> {
+    const dto = this.validateDto(UpdateUserSettingsDto, body, {
+      skipMissingProperties: true,
+      messageOverride: 'Invalid settings payload',
+    });
+
+    const settings = await this.userService.updateUserSettings(
+      req.user.id,
+      dto,
+    );
 
     return {
       success: true,
@@ -138,6 +163,74 @@ export class UserController {
         persistenceChangeTimestamp: changedAt.toISOString(),
       },
     };
+  }
+
+  @Post('settings/devices')
+  @HttpCode(HttpStatus.CREATED)
+  async registerDevice(
+    @Req() req: AuthenticatedRequest,
+    @Body() body: any,
+  ): Promise<ApiResponse<{ device: UserDeviceResponse }>> {
+    const dto = this.validateDto(RegisterDeviceDto, body, {
+      messageOverride: 'Invalid device registration payload',
+    });
+
+    const device = await this.userService.registerDevice(req.user.id, dto);
+
+    return {
+      success: true,
+      data: {
+        device,
+      },
+    };
+  }
+
+  @Get('settings/devices')
+  async listDevices(
+    @Req() req: AuthenticatedRequest,
+  ): Promise<ApiResponse<{ devices: UserDeviceResponse[] }>> {
+    const devices = await this.userService.listDevices(req.user.id);
+
+    return {
+      success: true,
+      data: {
+        devices,
+      },
+    };
+  }
+
+  @Put('settings/devices/:deviceUuid')
+  async updateDevice(
+    @Req() req: AuthenticatedRequest,
+    @Param('deviceUuid') deviceUuid: string,
+    @Body() body: any,
+  ): Promise<ApiResponse<{ device: UserDeviceResponse }>> {
+    const dto = this.validateDto(UpdateDeviceSyncDto, body, {
+      skipMissingProperties: true,
+      messageOverride: 'Invalid device update payload',
+    });
+
+    const device = await this.userService.updateDevice(
+      req.user.id,
+      deviceUuid,
+      dto,
+    );
+
+    return {
+      success: true,
+      data: {
+        device,
+      },
+    };
+  }
+
+  @Delete('settings/devices/:deviceUuid')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  async deleteDevice(
+    @Req() req: AuthenticatedRequest,
+    @Param('deviceUuid') deviceUuid: string,
+  ): Promise<void> {
+    await this.userService.removeDevice(req.user.id, deviceUuid);
   }
 
   @Get('search')
@@ -185,20 +278,29 @@ export class UserController {
 
     if (errors.length > 0) {
       const primaryError = errors[0];
+      const nestedError =
+        primaryError.children && primaryError.children.length > 0
+          ? primaryError.children[0]
+          : undefined;
       const constraintMessage = primaryError.constraints
         ? Object.values(primaryError.constraints)[0]
         : 'Invalid payload';
+      const field = (
+        nestedError?.property
+          ? `${primaryError.property}`
+          : primaryError.property
+      )
+        .toString()
+        .split('.')[0];
 
-      throw new HttpException(
-        {
-          success: false,
-          error: {
-            code: 'VALIDATION_ERROR',
-            message: options.messageOverride ?? constraintMessage,
-            field: primaryError.property,
-          },
-        },
-        HttpStatus.BAD_REQUEST,
+      const message = nestedError?.constraints
+        ? Object.values(nestedError.constraints)[0]
+        : constraintMessage;
+
+      throw new ApiBadRequestException(
+        'VALIDATION_ERROR',
+        options.messageOverride ?? message,
+        { field },
       );
     }
 

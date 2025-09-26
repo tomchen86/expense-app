@@ -12,9 +12,13 @@ if [[ "${HUSKY_SKIP_PRE_PUSH:-0}" == "1" ]]; then
 fi
 
 checks=(
+  "pnpm --filter api lint"
+  "pnpm --filter api build"
   "pnpm --filter api test"
-  "pnpm --filter mobile test"
+  "pnpm --filter api test:e2e"
+  "pnpm --filter mobile lint"
   "pnpm --filter mobile typecheck"
+  "pnpm --filter mobile test"
   "pnpm --filter web lint"
 )
 

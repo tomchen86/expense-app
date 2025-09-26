@@ -4,15 +4,18 @@ This document provides a complete analysis of all test cases in the `/Users/htch
 
 ## Overview
 
-The test suite contains **29 test files** covering the following domains:
+The test suite contains **38 test files** covering the following domains:
 
 - **Setup** (2 files): Database configuration and extensions
 - **Identity** (8 files): User management, authentication, devices, and settings
 - **Collaboration** (7 files): Couples, participants, groups, and memberships
 - **Ledger** (9 files): Expenses, categories, splits, triggers, and soft-delete functionality
 - **Migrations** (1 file): Database migration testing
-- **Seeds** (2 files): Default data seeding functionality
-- **Performance** (1 file): Index optimization testing
+- **Seeds** (3 files): Default data seeding functionality
+- **Performance** (3 files): Index optimization and trigger performance testing
+- **API Integration** (4 files): End-to-end tests for authentication and user management flows
+- **Isolated** (1 file): Isolated controller tests with mocked services
+- **Database** (1 file): Connection and initial state validation
 
 ---
 
@@ -450,6 +453,16 @@ The test suite contains **29 test files** covering the following domains:
    - **Behavior**: Tests user settings seeding idempotency
    - **Validates**: No duplicate settings creation, consistent behavior on re-run
 
+### sample-data.seed.spec.ts
+
+**Test Suite**: `seedSampleData`
+
+#### Test Cases:
+
+1. **`creates a deterministic demo data set and is idempotent`**
+   - **Behavior**: Tests the `seedSampleData` function.
+   - **Validates**: Creation of a demo couple, members, participants, expenses, and attachments, and ensures the seeding process is idempotent.
+
 ---
 
 ## Performance Domain
@@ -468,6 +481,130 @@ The test suite contains **29 test files** covering the following domains:
    - **Behavior**: Tests participant table index performance optimization
    - **Validates**: Partial index existence for participants where deleted_at IS NULL
 
+### tenant-isolation.spec.ts
+
+**Test Suite**: `Tenant isolation sanity`
+
+#### Test Cases:
+
+1. **`keeps expense queries scoped by couple_id`**
+   - **Behavior**: Ensures that expense queries are properly isolated by `couple_id`.
+   - **Validates**: Prevents data leakage between different couples (tenants).
+
+### trigger-cost.spec.ts
+
+**Test Suite**: `Trigger metadata baseline`
+
+#### Test Cases:
+
+1. **`marks expense split balance trigger as deferrable and initially deferred`**
+   - **Behavior**: Checks the configuration of the `trg_expense_split_balance` trigger.
+   - **Validates**: Ensures the trigger is deferrable and initially deferred to optimize performance during bulk inserts.
+
+---
+
+## API Integration Domain
+
+### auth-endpoints.spec.ts
+
+**Test Suite**: `Authentication Endpoints - TDD GREEN Phase`
+
+#### Test Cases:
+
+1. **`should respond to registration, login, refresh, and profile requests`**
+   - **Behavior**: Basic tests to confirm that auth-related endpoints exist and return successful status codes.
+   - **Validates**: Endpoint existence and basic success response structure, with mocked services.
+
+### auth-flow.spec.ts
+
+**Test Suite**: `Authentication API - Mobile Compatibility`
+
+#### Test Cases:
+
+1. **`should register user with mobile-compatible response format`**
+   - **Behavior**: Full integration test for user registration.
+   - **Validates**: Correct response format, token generation, and performance.
+
+2. **`should authenticate with mobile-compatible response format`**
+   - **Behavior**: Full integration test for user login.
+   - **Validates**: Correct response format, including user and settings data, and performance.
+
+3. **`should refresh tokens with valid refresh token`**
+   - **Behavior**: Tests the token refresh mechanism.
+   - **Validates**: Generation of new access and refresh tokens.
+
+### auth-simple.spec.ts
+
+**Test Suite**: `Authentication API - Simple TDD`
+
+#### Test Cases:
+
+1. **`should create authentication endpoints that do not exist yet`**
+   - **Behavior**: "Red phase" TDD tests that are expected to fail initially.
+   - **Validates**: Drives the creation of the basic authentication endpoints.
+
+### user-management.spec.ts
+
+**Test Suite**: `User Management API - Mobile Compatibility`
+
+#### Test Cases:
+
+1. **`should return the authenticated user profile with settings`**
+   - **Behavior**: Tests the `/api/users/profile` endpoint.
+   - **Validates**: Correctly returns the user's profile and settings data.
+
+2. **`should update profile fields allowed by mobile app`**
+   - **Behavior**: Tests `PUT /api/users/profile` for updating user information.
+   - **Validates**: Persistence of updated display name, timezone, and currency.
+
+3. **`should return settings synchronized with persistence mode`**
+   - **Behavior**: Tests the `/api/users/settings` endpoint.
+   - **Validates**: Returns the user's application settings.
+
+4. **`should toggle persistence mode and record change timestamp`**
+   - **Behavior**: Tests `PUT /api/users/settings/persistence`.
+   - **Validates**: Correctly updates the user's persistence mode.
+
+5. **`should return matching users excluding the requester`**
+   - **Behavior**: Tests the user search functionality at `/api/users/search`.
+   - **Validates**: Returns a list of users matching the query, excluding the user making the request.
+
+---
+
+## Isolated Domain
+
+### auth.isolated.spec.ts
+
+**Test Suite**: `Authentication Endpoints - TRUE GREEN PHASE (Isolated)`
+
+#### Test Cases:
+
+1. **`should successfully register, login, refresh, and get user profile`**
+   - **Behavior**: Tests the `AuthController` in complete isolation with mocked `AuthService` and `JwtService`.
+   - **Validates**: Correct handling of success and error cases for all authentication-related actions, ensuring the controller logic is sound without database or service implementation dependencies.
+
+---
+
+## Database Domain
+
+### connection.spec.ts
+
+**Test Suite**: `Database Connection Tests`
+
+#### Test Cases:
+
+1. **`should establish test database connection`**
+   - **Behavior**: Verifies that the test database source is initialized.
+   - **Validates**: `testDataSource.isInitialized` is true.
+
+2. **`should run migrations successfully`**
+   - **Behavior**: Checks for pending migrations.
+   - **Validates**: No pending migrations are found.
+
+3. **`should seed default categories matching mobile app`**
+   - **Behavior**: Verifies that the default categories are seeded correctly.
+   - **Validates**: The correct number and names of default categories are present in the database.
+
 ---
 
 ## Summary Statistics
@@ -478,8 +615,10 @@ The test suite contains **29 test files** covering the following domains:
 - **Database Constraints**: 22 test cases
 - **Business Logic**: 8 test cases
 - **Database Infrastructure**: 7 test cases
-- **Migration/Seeding**: 5 test cases
-- **Performance**: 2 test cases
+- **Migration/Seeding**: 6 test cases
+- **Performance**: 4 test cases
+- **API Integration**: 9 test cases
+- **Isolated**: 1 test case
 
 ### Domains Covered:
 
@@ -488,6 +627,7 @@ The test suite contains **29 test files** covering the following domains:
 - **Financial Ledger**: Expenses, categories, splits, calculations
 - **Data Infrastructure**: Migrations, seeding, indexing, constraints
 - **Database Features**: Soft deletes, triggers, JSONB, citext, check constraints
+- **API and Controllers**: End-to-end and isolated testing of API endpoints.
 
 ### Database Features Tested:
 

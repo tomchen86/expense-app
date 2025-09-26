@@ -8,6 +8,10 @@ import { AuthController } from '../../controllers/auth.controller';
 import { AuthService } from '../../services/auth.service';
 import { JwtAuthGuard } from '../../guards/jwt-auth.guard';
 import { JwtService } from '@nestjs/jwt';
+import {
+  ApiConflictException,
+  ApiUnauthorizedException,
+} from '../../common/api-error';
 
 describe('Authentication Endpoints - TRUE GREEN PHASE (Isolated)', () => {
   let app: INestApplication;
@@ -114,7 +118,11 @@ describe('Authentication Endpoints - TRUE GREEN PHASE (Isolated)', () => {
 
     it('should handle duplicate email error', async () => {
       authService.register.mockRejectedValue(
-        new Error('User with this email already exists'),
+        new ApiConflictException(
+          'EMAIL_ALREADY_EXISTS',
+          'An account with this email already exists',
+          { field: 'email' },
+        ),
       );
 
       const response = await request(app.getHttpServer())
@@ -184,7 +192,12 @@ describe('Authentication Endpoints - TRUE GREEN PHASE (Isolated)', () => {
     });
 
     it('should handle invalid credentials', async () => {
-      authService.login.mockRejectedValue(new Error('Invalid credentials'));
+      authService.login.mockRejectedValue(
+        new ApiUnauthorizedException(
+          'INVALID_CREDENTIALS',
+          'Invalid email or password',
+        ),
+      );
 
       const response = await request(app.getHttpServer())
         .post('/auth/login')
@@ -227,7 +240,10 @@ describe('Authentication Endpoints - TRUE GREEN PHASE (Isolated)', () => {
 
     it('should handle invalid refresh token', async () => {
       authService.refreshToken.mockRejectedValue(
-        new Error('Invalid refresh token'),
+        new ApiUnauthorizedException(
+          'INVALID_REFRESH_TOKEN',
+          'Refresh token is invalid or expired',
+        ),
       );
 
       const response = await request(app.getHttpServer())

@@ -8,14 +8,14 @@ export type DefaultCategory = {
 };
 
 const DEFAULT_CATEGORIES: DefaultCategory[] = [
-  { name: 'Food & Dining', color: '#FF5722' },
-  { name: 'Transportation', color: '#2196F3' },
-  { name: 'Shopping', color: '#9C27B0' },
-  { name: 'Entertainment', color: '#FF9800' },
-  { name: 'Bills & Utilities', color: '#F44336' },
-  { name: 'Healthcare', color: '#4CAF50' },
-  { name: 'Travel', color: '#00BCD4' },
-  { name: 'Other', color: '#607D8B' },
+  { name: 'Food & Dining', color: '#FF5722', icon: 'restaurant' },
+  { name: 'Transportation', color: '#2196F3', icon: 'directions-car' },
+  { name: 'Shopping', color: '#9C27B0', icon: 'shopping-cart' },
+  { name: 'Entertainment', color: '#FF9800', icon: 'movie' },
+  { name: 'Bills & Utilities', color: '#F44336', icon: 'receipt' },
+  { name: 'Healthcare', color: '#4CAF50', icon: 'local-hospital' },
+  { name: 'Travel', color: '#00BCD4', icon: 'flight' },
+  { name: 'Other', color: '#607D8B', icon: 'category' },
 ];
 
 export type SeedDefaultCategoriesOptions = {

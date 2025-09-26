@@ -1,7 +1,8 @@
-import { IsString, IsOptional, IsBoolean, IsHexColor } from 'class-validator';
+import { IsHexColor, IsNotEmpty, IsOptional, IsString } from 'class-validator';
 
 export class CreateCategoryDto {
   @IsString()
+  @IsNotEmpty()
   name: string;
 
   @IsHexColor()
@@ -9,16 +10,13 @@ export class CreateCategoryDto {
 
   @IsOptional()
   @IsString()
-  icon?: string;
-
-  @IsOptional()
-  @IsBoolean()
-  is_default?: boolean = false;
+  icon?: string | null;
 }
 
 export class UpdateCategoryDto {
   @IsOptional()
   @IsString()
+  @IsNotEmpty()
   name?: string;
 
   @IsOptional()
@@ -27,17 +25,21 @@ export class UpdateCategoryDto {
 
   @IsOptional()
   @IsString()
-  icon?: string;
+  icon?: string | null;
 }
 
-export class CategoryResponseDto {
+export interface CategoryResponse {
   id: string;
-  couple_id: string;
   name: string;
   color: string;
-  icon?: string;
-  is_default: boolean;
-  created_by?: string;
-  created_at: Date;
-  updated_at: Date;
+  icon: string | null;
+  isDefault: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface DefaultCategoryResponse {
+  name: string;
+  color: string;
+  icon: string | null;
 }

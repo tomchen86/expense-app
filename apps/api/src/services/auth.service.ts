@@ -1,12 +1,16 @@
 // Authentication Service - Mobile-First TDD Implementation
 // GREEN Phase: Business logic to support the controller
 
-import { Injectable, UnauthorizedException } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import * as bcrypt from 'bcryptjs';
 import { Entities } from '../entities/runtime-entities';
+import {
+  ApiConflictException,
+  ApiUnauthorizedException,
+} from '../common/api-error';
 
 type UserEntity = InstanceType<typeof Entities.User>;
 type UserSettingsEntity = InstanceType<typeof Entities.UserSettings>;
@@ -74,7 +78,11 @@ export class AuthService {
       where: { email },
     });
     if (existingUser) {
-      throw new Error('User with this email already exists');
+      throw new ApiConflictException(
+        'EMAIL_ALREADY_EXISTS',
+        'An account with this email already exists',
+        { field: 'email' },
+      );
     }
 
     // Hash password
@@ -118,13 +126,19 @@ export class AuthService {
     // Find user with settings
     const user = await this.userRepository.findOne({ where: { email } });
     if (!user) {
-      throw new Error('Invalid credentials');
+      throw new ApiUnauthorizedException(
+        'INVALID_CREDENTIALS',
+        'Invalid email or password',
+      );
     }
 
     // Verify password
     const isPasswordValid = await bcrypt.compare(password, user.passwordHash);
     if (!isPasswordValid) {
-      throw new Error('Invalid credentials');
+      throw new ApiUnauthorizedException(
+        'INVALID_CREDENTIALS',
+        'Invalid email or password',
+      );
     }
 
     // Get user settings
@@ -162,7 +176,10 @@ export class AuthService {
         where: { id: payload.sub },
       });
       if (!user) {
-        throw new UnauthorizedException('Invalid refresh token');
+        throw new ApiUnauthorizedException(
+          'INVALID_REFRESH_TOKEN',
+          'Refresh token is invalid or expired',
+        );
       }
 
       // Generate new tokens
@@ -173,14 +190,17 @@ export class AuthService {
         refreshToken: tokens.refreshToken,
       };
     } catch (error) {
-      throw new UnauthorizedException('Invalid refresh token');
+      throw new ApiUnauthorizedException(
+        'INVALID_REFRESH_TOKEN',
+        'Refresh token is invalid or expired',
+      );
     }
   }
 
   async getUserWithSettings(userId: string): Promise<UserWithSettings> {
     const user = await this.userRepository.findOne({ where: { id: userId } });
     if (!user) {
-      throw new Error('User not found');
+      throw new ApiUnauthorizedException('USER_NOT_FOUND', 'User not found');
     }
 
     const userSettings = await this.userSettingsRepository.findOne({
@@ -213,7 +233,7 @@ export class AuthService {
     if (!userSettings) {
       const user = await this.userRepository.findOne({ where: { id: userId } });
       if (!user) {
-        throw new Error('User not found');
+        throw new ApiUnauthorizedException('USER_NOT_FOUND', 'User not found');
       }
 
       const SettingsCtor = Entities.UserSettings;

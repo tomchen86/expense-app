@@ -1,14 +1,10 @@
 // JWT Authentication Guard - Mobile-Compatible
 // Protects routes and provides mobile-friendly error responses
 
-import {
-  Injectable,
-  CanActivate,
-  ExecutionContext,
-  UnauthorizedException,
-} from '@nestjs/common';
+import { Injectable, CanActivate, ExecutionContext } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { Request, Response } from 'express';
+import { createApiError } from '../common/api-error';
 
 @Injectable()
 export class JwtAuthGuard implements CanActivate {
@@ -22,25 +18,19 @@ export class JwtAuthGuard implements CanActivate {
 
     if (!authHeader) {
       // Mobile-compatible error response
-      response.status(401).json({
-        success: false,
-        error: {
-          code: 'UNAUTHORIZED',
-          message: 'Authorization header is required',
-        },
-      });
+      response
+        .status(401)
+        .json(
+          createApiError('UNAUTHORIZED', 'Authorization header is required'),
+        );
       return false;
     }
 
     const token = authHeader.replace('Bearer ', '');
     if (!token) {
-      response.status(401).json({
-        success: false,
-        error: {
-          code: 'UNAUTHORIZED',
-          message: 'Bearer token is required',
-        },
-      });
+      response
+        .status(401)
+        .json(createApiError('UNAUTHORIZED', 'Bearer token is required'));
       return false;
     }
 
@@ -59,13 +49,11 @@ export class JwtAuthGuard implements CanActivate {
 
       return true;
     } catch (error) {
-      response.status(401).json({
-        success: false,
-        error: {
-          code: 'INVALID_TOKEN',
-          message: 'JWT token is invalid or expired',
-        },
-      });
+      response
+        .status(401)
+        .json(
+          createApiError('INVALID_TOKEN', 'JWT token is invalid or expired'),
+        );
       return false;
     }
   }

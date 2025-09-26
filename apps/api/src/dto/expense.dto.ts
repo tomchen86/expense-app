@@ -68,6 +68,11 @@ export class CreateExpenseDto {
   @IsOptional()
   @IsString()
   location?: string;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  exchange_rate?: number;
 }
 
 export class UpdateExpenseDto {
@@ -121,13 +126,18 @@ export class UpdateExpenseDto {
   @IsOptional()
   @IsString()
   location?: string;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  exchange_rate?: number | null;
 }
 
 export class ExpenseResponseDto {
   id: string;
   couple_id: string;
-  group_id?: string;
-  category_id?: string;
+  group_id: string | null;
+  category_id: string | null;
   created_by: string;
   paid_by_participant_id: string;
   description: string;
@@ -136,20 +146,22 @@ export class ExpenseResponseDto {
   exchange_rate?: number;
   expense_date: string;
   split_type: string;
-  notes?: string;
-  receipt_url?: string;
-  location?: string;
-  created_at: Date;
-  updated_at: Date;
+  notes: string | null;
+  receipt_url: string | null;
+  location: string | null;
+  created_at: string;
+  updated_at: string;
   splits: ExpenseSplitDto[];
 }
 
 export class ExpenseQueryDto {
   @IsOptional()
+  @Type(() => Number)
   @IsNumber()
   page?: number = 1;
 
   @IsOptional()
+  @Type(() => Number)
   @IsNumber()
   limit?: number = 50;
 
@@ -170,14 +182,29 @@ export class ExpenseQueryDto {
   end_date?: string;
 
   @IsOptional()
+  @Type(() => Number)
   @IsNumber()
   min_amount?: number;
 
   @IsOptional()
+  @Type(() => Number)
   @IsNumber()
   max_amount?: number;
 
   @IsOptional()
   @IsString()
   search?: string;
+}
+
+export interface ExpenseStatisticsResponse {
+  total_spent_cents: number;
+  total_transactions: number;
+  totals_by_category: Array<{
+    category_id: string | null;
+    amount_cents: number;
+  }>;
+  totals_by_participant: Array<{
+    participant_id: string;
+    amount_cents: number;
+  }>;
 }

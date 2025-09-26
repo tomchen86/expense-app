@@ -1,12 +1,15 @@
 import {
+  IsBoolean,
   IsEnum,
   IsInt,
   IsNotEmpty,
   IsOptional,
   IsString,
+  IsISO8601,
   Matches,
   Max,
   Min,
+  ValidateNested,
 } from 'class-validator';
 import { Type } from 'class-transformer';
 
@@ -54,6 +57,79 @@ export class UserSearchQueryDto {
   limit?: number;
 }
 
+export class NotificationPreferencesDto {
+  @IsOptional()
+  @IsBoolean()
+  expenses?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  invites?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  reminders?: boolean;
+}
+
+export class UpdateUserSettingsDto {
+  @IsOptional()
+  @Matches(/^[a-z]{2}-[A-Z]{2}$/)
+  language?: string;
+
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => NotificationPreferencesDto)
+  notifications?: NotificationPreferencesDto;
+
+  @IsOptional()
+  @IsBoolean()
+  pushEnabled?: boolean;
+}
+
+export class RegisterDeviceDto {
+  @IsString()
+  @IsNotEmpty()
+  deviceUuid: string;
+
+  @IsOptional()
+  @IsString()
+  deviceName?: string;
+
+  @IsOptional()
+  @IsString()
+  platform?: string;
+
+  @IsOptional()
+  @IsString()
+  appVersion?: string;
+
+  @IsOptional()
+  @IsEnum(['local_only', 'cloud_sync'])
+  persistenceModeAtSync?: 'local_only' | 'cloud_sync';
+}
+
+export class UpdateDeviceSyncDto {
+  @IsOptional()
+  @IsEnum(['local_only', 'cloud_sync'])
+  persistenceModeAtSync?: 'local_only' | 'cloud_sync';
+
+  @IsOptional()
+  @IsEnum(['idle', 'syncing', 'error'])
+  syncStatus?: 'idle' | 'syncing' | 'error';
+
+  @IsOptional()
+  @IsISO8601()
+  lastSyncAt?: string;
+
+  @IsOptional()
+  @IsString()
+  lastSnapshotHash?: string;
+
+  @IsOptional()
+  @IsString()
+  lastError?: string;
+}
+
 export interface UserProfileResponse {
   user: {
     id: string;
@@ -85,4 +161,19 @@ export interface UserSummary {
   avatarUrl: string | null;
   defaultCurrency: string;
   timezone: string;
+}
+
+export interface UserDeviceResponse {
+  id: string;
+  deviceUuid: string;
+  deviceName: string | null;
+  platform: string | null;
+  appVersion: string | null;
+  persistenceModeAtSync: 'local_only' | 'cloud_sync';
+  syncStatus: 'idle' | 'syncing' | 'error';
+  lastSyncAt: string | null;
+  lastSnapshotHash: string | null;
+  lastError: string | null;
+  createdAt: string;
+  updatedAt: string;
 }

@@ -11,13 +11,11 @@ import {
   Req,
   HttpStatus,
   HttpCode,
-  BadRequestException,
-  ConflictException,
-  UnauthorizedException,
 } from '@nestjs/common';
 import { AuthService } from '../services/auth.service';
 import { JwtAuthGuard } from '../guards/jwt-auth.guard';
 import { Request } from 'express';
+import { ApiBadRequestException } from '../common/api-error';
 
 // Mobile-compatible DTOs
 interface RegisterDto {
@@ -75,102 +73,68 @@ export class AuthController {
       if (!registerDto.password) missingFields.push('password');
       if (!registerDto.displayName) missingFields.push('displayName');
 
-      throw new BadRequestException({
-        success: false,
-        error: {
-          code: 'VALIDATION_ERROR',
-          message: 'Required fields are missing',
+      throw new ApiBadRequestException(
+        'VALIDATION_ERROR',
+        'Required fields are missing',
+        {
           details: missingFields,
         },
-      });
-    }
-
-    try {
-      const result = await this.authService.register(
-        registerDto.email,
-        registerDto.password,
-        registerDto.displayName,
       );
-
-      return {
-        success: true,
-        data: {
-          user: {
-            id: result.user.id,
-            displayName: result.user.displayName,
-            email: result.user.email,
-          },
-          accessToken: result.accessToken,
-          refreshToken: result.refreshToken,
-        },
-      };
-    } catch (error) {
-      if (error instanceof Error && error.message.includes('already exists')) {
-        throw new ConflictException({
-          success: false,
-          error: {
-            code: 'EMAIL_ALREADY_EXISTS',
-            message: 'An account with this email already exists',
-            field: 'email',
-          },
-        });
-      }
-      throw error;
     }
+
+    const result = await this.authService.register(
+      registerDto.email,
+      registerDto.password,
+      registerDto.displayName,
+    );
+
+    return {
+      success: true,
+      data: {
+        user: {
+          id: result.user.id,
+          displayName: result.user.displayName,
+          email: result.user.email,
+        },
+        accessToken: result.accessToken,
+        refreshToken: result.refreshToken,
+      },
+    };
   }
 
   @Post('login')
   @HttpCode(HttpStatus.OK)
   async login(@Body() loginDto: LoginDto): Promise<ApiResponse<any>> {
     if (!loginDto.email || !loginDto.password) {
-      throw new BadRequestException({
-        success: false,
-        error: {
-          code: 'VALIDATION_ERROR',
-          message: 'Email and password are required',
-        },
-      });
-    }
-
-    try {
-      const result = await this.authService.login(
-        loginDto.email,
-        loginDto.password,
+      throw new ApiBadRequestException(
+        'VALIDATION_ERROR',
+        'Email and password are required',
       );
-
-      return {
-        success: true,
-        data: {
-          user: {
-            id: result.user.id,
-            displayName: result.user.displayName,
-            email: result.user.email,
-          },
-          accessToken: result.accessToken,
-          refreshToken: result.refreshToken,
-          settings: {
-            preferredCurrency: result.settings?.preferredCurrency || 'USD',
-            dateFormat: result.settings?.dateFormat || 'MM/DD/YYYY',
-            defaultSplitMethod: result.settings?.defaultSplitMethod || 'equal',
-            persistenceMode: result.settings?.persistenceMode || 'local_only',
-          },
-        },
-      };
-    } catch (error) {
-      if (
-        error instanceof Error &&
-        error.message.includes('Invalid credentials')
-      ) {
-        throw new UnauthorizedException({
-          success: false,
-          error: {
-            code: 'INVALID_CREDENTIALS',
-            message: 'Invalid email or password',
-          },
-        });
-      }
-      throw error;
     }
+
+    const result = await this.authService.login(
+      loginDto.email,
+      loginDto.password,
+    );
+
+    return {
+      success: true,
+      data: {
+        user: {
+          id: result.user.id,
+          displayName: result.user.displayName,
+          email: result.user.email,
+        },
+        accessToken: result.accessToken,
+        refreshToken: result.refreshToken,
+        settings: {
+          preferredCurrency: result.settings?.preferredCurrency || 'USD',
+          dateFormat: result.settings?.dateFormat || 'MM/DD/YYYY',
+          defaultSplitMethod: result.settings?.defaultSplitMethod || 'equal',
+          persistenceMode: result.settings?.persistenceMode || 'local_only',
+        },
+      },
+    };
   }
 
   @Post('refresh')
@@ -179,34 +143,21 @@ export class AuthController {
     @Body('refreshToken') refreshToken: string,
   ): Promise<ApiResponse<any>> {
     if (!refreshToken) {
-      throw new BadRequestException({
-        success: false,
-        error: {
-          code: 'VALIDATION_ERROR',
-          message: 'Refresh token is required',
-        },
-      });
+      throw new ApiBadRequestException(
+        'VALIDATION_ERROR',
+        'Refresh token is required',
+      );
     }
 
-    try {
-      const result = await this.authService.refreshToken(refreshToken);
+    const result = await this.authService.refreshToken(refreshToken);
 
-      return {
-        success: true,
-        data: {
-          accessToken: result.accessToken,
-          refreshToken: result.refreshToken,
-        },
-      };
-    } catch (error) {
-      throw new UnauthorizedException({
-        success: false,
-        error: {
-          code: 'INVALID_REFRESH_TOKEN',
-          message: 'Refresh token is invalid or expired',
-        },
-      });
-    }
+    return {
+      success: true,
+      data: {
+        accessToken: result.accessToken,
+        refreshToken: result.refreshToken,
+      },
+    };
   }
 
   @Get('me')
@@ -214,38 +165,26 @@ export class AuthController {
   async getCurrentUser(
     @Req() req: AuthenticatedRequest,
   ): Promise<ApiResponse<any>> {
-    try {
-      const userDetails = await this.authService.getUserWithSettings(
-        req.user.id,
-      );
+    const userDetails = await this.authService.getUserWithSettings(req.user.id);
 
-      return {
-        success: true,
-        data: {
-          user: {
-            id: userDetails.user.id,
-            displayName: userDetails.user.displayName,
-            email: userDetails.user.email,
-          },
-          settings: {
-            preferredCurrency: userDetails.settings?.preferredCurrency || 'USD',
-            dateFormat: userDetails.settings?.dateFormat || 'MM/DD/YYYY',
-            defaultSplitMethod:
-              userDetails.settings?.defaultSplitMethod || 'equal',
-            persistenceMode:
-              userDetails.settings?.persistenceMode || 'local_only',
-          },
+    return {
+      success: true,
+      data: {
+        user: {
+          id: userDetails.user.id,
+          displayName: userDetails.user.displayName,
+          email: userDetails.user.email,
         },
-      };
-    } catch (error) {
-      throw new UnauthorizedException({
-        success: false,
-        error: {
-          code: 'USER_NOT_FOUND',
-          message: 'User not found',
+        settings: {
+          preferredCurrency: userDetails.settings?.preferredCurrency || 'USD',
+          dateFormat: userDetails.settings?.dateFormat || 'MM/DD/YYYY',
+          defaultSplitMethod:
+            userDetails.settings?.defaultSplitMethod || 'equal',
+          persistenceMode:
+            userDetails.settings?.persistenceMode || 'local_only',
         },
-      });
-    }
+      },
+    };
   }
 
   @Put('settings/persistence')
@@ -259,14 +198,11 @@ export class AuthController {
       !updateDto.persistenceMode ||
       !['local_only', 'cloud_sync'].includes(updateDto.persistenceMode)
     ) {
-      throw new BadRequestException({
-        success: false,
-        error: {
-          code: 'VALIDATION_ERROR',
-          message: 'Persistence mode must be local_only or cloud_sync',
-          field: 'persistenceMode',
-        },
-      });
+      throw new ApiBadRequestException(
+        'VALIDATION_ERROR',
+        'Persistence mode must be local_only or cloud_sync',
+        { field: 'persistenceMode' },
+      );
     }
 
     try {
@@ -289,13 +225,10 @@ export class AuthController {
         },
       };
     } catch (error) {
-      throw new BadRequestException({
-        success: false,
-        error: {
-          code: 'UPDATE_FAILED',
-          message: 'Failed to update persistence mode',
-        },
-      });
+      throw new ApiBadRequestException(
+        'UPDATE_FAILED',
+        'Failed to update persistence mode',
+      );
     }
   }
 }

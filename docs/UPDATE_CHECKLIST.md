@@ -1,6 +1,6 @@
 # Update Checklist
 
-_Last updated: September 25, 2025_
+_Last updated: September 26, 2025_
 
 ## Purpose
 
@@ -41,6 +41,7 @@ Follow this checklist at the end of every coding session or before committing. E
 
 - `docs/FUNCTION_LOG.md` — adjust requirement statuses, tests, and priority buckets you touched.
 - `docs/CHANGELOG.md` — add one-line entries linking to detailed logs or PRs.
+- `docs/CURRENT_STATUS_AND_NEXT_STEPS.md` — note delivered work, outstanding verification (e.g., tests that must rerun outside sandbox), and the next milestone focus.
 
 ### Conditional Updates (apply when the trigger happened)
 
@@ -48,6 +49,7 @@ Follow this checklist at the end of every coding session or before committing. E
 | ------------------------------------------------------------------------------- | ------------------------------------------- | ------------------------------------------------------- |
 | `docs/SESSION_SUMMARY_[YYYY-MM-DD].md`                                          | You made strategic decisions or discoveries | Jot key insights, blockers, or next bets.               |
 | `docs/TASK_[N].[N]_COMPLETION_LOG.md`                                           | You worked on a tracked task                | Log progress, subtasks finished, references to commits. |
+| `AGENTS.md`                                                                     | Contributor expectations changed            | Capture new guardrails or process updates.              |
 | `docs/Testing/TESTING_STRATEGY.md` / `docs/Testing/TESTING_IMPROVEMENT_PLAN.md` | Testing approach or coverage goals changed  | Update scenarios, coverage targets, or new gaps.        |
 | `docs/ARCHITECTURE.md` / `docs/ARCHITECTURE_DECISION_RECORDS.md`                | Architecture or platform decision made      | Record decision, rationale, and impact.                 |
 | `docs/RISK_ASSESSMENT.md`                                                       | New risks discovered or mitigated           | Add entry with status/mitigation.                       |

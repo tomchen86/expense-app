@@ -67,13 +67,6 @@ Key types defined in `src/types/index.ts`:
 - `Participant` - users who can be part of groups and pay/split expenses
 - `Category` - expense categories with names and colors
 
-### Current Refactoring
-The codebase is undergoing refactoring per `REFACTORING_PLAN.md`:
-- Breaking down large screen components into reusable components
-- Extracting business logic into custom hooks
-- Centralizing utilities and calculations
-- Improving separation of concerns
-
 ### Key Features
 - Personal and group expense tracking
 - Expense splitting between participants
@@ -83,10 +76,7 @@ The codebase is undergoing refactoring per `REFACTORING_PLAN.md`:
 
 ## Development Guidelines
 
-### Documentation Standards
-- Keep all documentation files in the `/docs` folder
-- Maintain a changelog in `/docs/CHANGELOG.md` to record all changes over time
-- Document architectural decisions and significant changes
+Always follow TDD and Don't edit test case withou user's permission.
 
 ### Code Standards
 - **File Size Limit**: Each code file must not exceed 500 lines
@@ -100,6 +90,7 @@ The codebase is undergoing refactoring per `REFACTORING_PLAN.md`:
 - Record all significant changes in `/docs/CHANGELOG.md`
 - Include date, type of change, and brief description
 - Track refactoring efforts and architectural improvements
+- Write a session summary or task complete log if significant change has been made.
 
 ## Current Project State (September 2025)
 

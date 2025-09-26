@@ -31,8 +31,8 @@ export class CategorySimple {
   @Column({ length: 7 })
   color: string;
 
-  @Column({ nullable: true })
-  icon?: string;
+  @Column({ type: 'text', nullable: true })
+  icon?: string | null;
 
   @Column({ name: 'is_default', default: false })
   isDefault: boolean;
