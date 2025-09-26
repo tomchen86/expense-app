@@ -326,6 +326,9 @@ importers:
       expect:
         specifier: 29.7.0
         version: 29.7.0
+      expo-doctor:
+        specifier: ^1.17.8
+        version: 1.17.8
       globals:
         specifier: ^16.4.0
         version: 16.4.0
@@ -4293,6 +4296,10 @@ packages:
     peerDependencies:
       expo: '*'
       react-native: '*'
+
+  expo-doctor@1.17.8:
+    resolution: {integrity: sha512-6OWNrElIyxPHNR1stfApUXlrFPFS9NFhE+5M2kOBxIx2+6iKmW4PxdYz1eY/sdlLtR4LbgUQD5lACnlGBZXKyQ==}
+    hasBin: true
 
   expo-file-system@19.0.15:
     resolution: {integrity: sha512-sRLW+3PVJDiuoCE2LuteHhC7OxPjh1cfqLylf1YG1TDEbbQXnzwjfsKeRm6dslEPZLkMWfSLYIrVbnuq5mF7kQ==}
@@ -12663,6 +12670,8 @@ snapshots:
       react-native: 0.81.4(@babel/core@7.28.4)(@types/react@19.1.13)(react@19.1.0)
     transitivePeerDependencies:
       - supports-color
+
+  expo-doctor@1.17.8: {}
 
   expo-file-system@19.0.15(expo@54.0.10(@babel/core@7.28.4)(react-native@0.81.4(@babel/core@7.28.4)(@types/react@19.1.13)(react@19.1.0))(react@19.1.0))(react-native@0.81.4(@babel/core@7.28.4)(@types/react@19.1.13)(react@19.1.0)):
     dependencies:

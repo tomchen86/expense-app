@@ -1,0 +1,6 @@
+# Allow builds for native modules used in mobile development
+enable-pre-post-scripts=true
+
+# Allow specific packages that need to build native components
+# detox - for E2E testing
+# dtrace-provider - for debugging/profiling
