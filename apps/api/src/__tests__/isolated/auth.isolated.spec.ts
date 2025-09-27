@@ -12,11 +12,14 @@ import {
   ApiConflictException,
   ApiUnauthorizedException,
 } from '../../common/api-error';
+import * as http from 'http';
+import { User } from '../../entities/user.entity';
 
 describe('Authentication Endpoints - TRUE GREEN PHASE (Isolated)', () => {
   let app: INestApplication;
   let authService: jest.Mocked<AuthService>;
   let jwtService: jest.Mocked<JwtService>;
+  let httpServer: http.Server;
 
   beforeAll(async () => {
     // Create complete mocks
@@ -26,6 +29,7 @@ describe('Authentication Endpoints - TRUE GREEN PHASE (Isolated)', () => {
       refreshToken: jest.fn(),
       getUserWithSettings: jest.fn(),
       updatePersistenceMode: jest.fn(),
+      validateUser: jest.fn(),
     };
 
     const mockJwtService = {
@@ -44,6 +48,7 @@ describe('Authentication Endpoints - TRUE GREEN PHASE (Isolated)', () => {
 
     app = moduleFixture.createNestApplication();
     await app.init();
+    httpServer = app.getHttpServer();
 
     authService = app.get(AuthService);
     jwtService = app.get(JwtService);
@@ -65,12 +70,12 @@ describe('Authentication Endpoints - TRUE GREEN PHASE (Isolated)', () => {
           id: 'user-123',
           displayName: 'Test User',
           email: 'test@example.com',
-        } as any,
+        } as User,
         accessToken: 'jwt-access-token',
         refreshToken: 'jwt-refresh-token',
       });
 
-      const response = await request(app.getHttpServer())
+      const response = await request(httpServer)
         .post('/auth/register')
         .send({
           email: 'test@example.com',
@@ -101,7 +106,7 @@ describe('Authentication Endpoints - TRUE GREEN PHASE (Isolated)', () => {
     });
 
     it('should validate missing required fields', async () => {
-      const response = await request(app.getHttpServer())
+      const response = await request(httpServer)
         .post('/auth/register')
         .send({})
         .expect(400);
@@ -125,7 +130,7 @@ describe('Authentication Endpoints - TRUE GREEN PHASE (Isolated)', () => {
         ),
       );
 
-      const response = await request(app.getHttpServer())
+      const response = await request(httpServer)
         .post('/auth/register')
         .send({
           email: 'existing@example.com',
@@ -152,7 +157,7 @@ describe('Authentication Endpoints - TRUE GREEN PHASE (Isolated)', () => {
           id: 'user-123',
           displayName: 'Test User',
           email: 'test@example.com',
-        } as any,
+        } as User,
         accessToken: 'jwt-access-token',
         refreshToken: 'jwt-refresh-token',
         settings: {
@@ -163,7 +168,7 @@ describe('Authentication Endpoints - TRUE GREEN PHASE (Isolated)', () => {
         },
       });
 
-      const response = await request(app.getHttpServer())
+      const response = await request(httpServer)
         .post('/auth/login')
         .send({
           email: 'test@example.com',
@@ -199,7 +204,7 @@ describe('Authentication Endpoints - TRUE GREEN PHASE (Isolated)', () => {
         ),
       );
 
-      const response = await request(app.getHttpServer())
+      const response = await request(httpServer)
         .post('/auth/login')
         .send({
           email: 'wrong@example.com',
@@ -224,7 +229,7 @@ describe('Authentication Endpoints - TRUE GREEN PHASE (Isolated)', () => {
         refreshToken: 'new-refresh-token',
       });
 
-      const response = await request(app.getHttpServer())
+      const response = await request(httpServer)
         .post('/auth/refresh')
         .send({ refreshToken: 'valid-refresh-token' })
         .expect(200);
@@ -246,7 +251,7 @@ describe('Authentication Endpoints - TRUE GREEN PHASE (Isolated)', () => {
         ),
       );
 
-      const response = await request(app.getHttpServer())
+      const response = await request(httpServer)
         .post('/auth/refresh')
         .send({ refreshToken: 'invalid-token' })
         .expect(401);
@@ -274,7 +279,7 @@ describe('Authentication Endpoints - TRUE GREEN PHASE (Isolated)', () => {
           id: 'user-123',
           displayName: 'Test User',
           email: 'test@example.com',
-        } as any,
+        } as User,
         settings: {
           preferredCurrency: 'USD',
           dateFormat: 'MM/DD/YYYY',
@@ -283,7 +288,7 @@ describe('Authentication Endpoints - TRUE GREEN PHASE (Isolated)', () => {
         },
       });
 
-      const response = await request(app.getHttpServer())
+      const response = await request(httpServer)
         .get('/auth/me')
         .set('Authorization', 'Bearer valid-jwt-token')
         .expect(200);
@@ -307,9 +312,7 @@ describe('Authentication Endpoints - TRUE GREEN PHASE (Isolated)', () => {
     });
 
     it('should reject request without authorization header', async () => {
-      const response = await request(app.getHttpServer())
-        .get('/auth/me')
-        .expect(401);
+      const response = await request(httpServer).get('/auth/me').expect(401);
 
       expect(response.body).toEqual({
         success: false,
@@ -325,7 +328,7 @@ describe('Authentication Endpoints - TRUE GREEN PHASE (Isolated)', () => {
         throw new Error('Invalid token');
       });
 
-      const response = await request(app.getHttpServer())
+      const response = await request(httpServer)
         .get('/auth/me')
         .set('Authorization', 'Bearer invalid-jwt-token')
         .expect(401);
@@ -358,7 +361,7 @@ describe('Authentication Endpoints - TRUE GREEN PHASE (Isolated)', () => {
         persistenceChangeTimestamp: '2025-09-25T14:30:00.000Z',
       });
 
-      const response = await request(app.getHttpServer())
+      const response = await request(httpServer)
         .put('/auth/settings/persistence')
         .set('Authorization', 'Bearer valid-jwt-token')
         .send({
@@ -393,7 +396,7 @@ describe('Authentication Endpoints - TRUE GREEN PHASE (Isolated)', () => {
         displayName: 'Test User',
       });
 
-      const response = await request(app.getHttpServer())
+      const response = await request(httpServer)
         .put('/auth/settings/persistence')
         .set('Authorization', 'Bearer valid-jwt-token')
         .send({ persistenceMode: 'invalid_mode' })
@@ -420,7 +423,7 @@ describe('Authentication Endpoints - TRUE GREEN PHASE (Isolated)', () => {
 
       const startTime = performance.now();
 
-      await request(app.getHttpServer())
+      await request(httpServer)
         .get('/auth/me')
         .set('Authorization', 'Bearer valid-jwt-token');
 

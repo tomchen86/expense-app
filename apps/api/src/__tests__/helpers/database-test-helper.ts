@@ -1,4 +1,4 @@
-import { DataSource, Repository } from 'typeorm';
+import { DataSource, ObjectLiteral, Repository } from 'typeorm';
 import { resolveDriver } from '../../config/database.config';
 import type { EntityCollection } from '../../entities/entity-sets';
 import { getEntityCollection } from '../../entities/entity-sets';
@@ -31,7 +31,7 @@ const MOBILE_DEFAULT_CATEGORIES = [
 export class DatabaseTestHelper {
   private dataSource: DataSource;
   private usingPostgres = false;
-  private entityRefs: EntityCollection;
+  public entityRefs: EntityCollection;
   private repositories: {
     category?: Repository<CategoryEntity>;
     user?: Repository<UserEntity>;
@@ -68,7 +68,7 @@ export class DatabaseTestHelper {
         synchronize: false,
         entities: Object.values(this.entityRefs),
         migrations: ['src/database/migrations/*.ts'],
-        logging: false,
+        logging: true,
       });
     } else {
       this.entityRefs = collection;
@@ -78,7 +78,7 @@ export class DatabaseTestHelper {
         synchronize: true, // Generate schema for simplified entities
         entities: Object.values(this.entityRefs),
         migrations: [],
-        logging: false, // Disable SQL logging in tests
+        logging: true, // Disable SQL logging in tests
       });
     }
 
@@ -241,13 +241,16 @@ export class DatabaseTestHelper {
   }
 
   // Mobile app compatibility validator
-  validateMobileResponse<T>(response: T, expectedKeys: string[]): boolean {
+  validateMobileResponse<T extends object>(
+    response: T,
+    expectedKeys: (keyof T)[],
+  ): boolean {
     if (typeof response !== 'object' || response === null) {
       return false;
     }
 
-    const responseKeys = Object.keys(response as object);
-    return expectedKeys.every((key) => responseKeys.includes(key));
+    const responseKeys = Object.keys(response);
+    return expectedKeys.every((key) => responseKeys.includes(key as string));
   }
 
   // Convert database cents to mobile dollars format
@@ -293,10 +296,12 @@ export class DatabaseTestHelper {
     }
   }
 
-  getRepository<T>(entity: string | (new () => T)): Repository<any> {
+  getRepository<T extends ObjectLiteral>(
+    entity: string | (new () => T),
+  ): Repository<T> {
     if (typeof entity === 'string') {
       // Handle string entity names for backward compatibility
-      const entityMap: { [key: string]: any } = {
+      const entityMap: { [key: string]: new () => ObjectLiteral } = {
         User: this.entityRefs.User,
         UserSettings: this.entityRefs.UserSettings,
         Category: this.entityRefs.Category,

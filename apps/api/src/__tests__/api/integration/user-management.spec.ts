@@ -6,8 +6,8 @@ process.env.NODE_ENV = process.env.NODE_ENV || 'test';
 
 import { INestApplication } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
-import type { SuperTest, Test as SuperTestRequest } from 'supertest';
-const supertest = require('supertest');
+import supertest from 'supertest';
+import * as http from 'http';
 import { AppModule } from '../../../app.module';
 import { PerformanceAssertions } from '../../helpers/performance-assertions';
 
@@ -16,10 +16,20 @@ const PASSWORD = 'TestPassword123!';
 const uniqueEmail = (prefix: string) =>
   `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}@example.com`;
 
+interface ApiResponse<T> {
+  success: boolean;
+  data?: T;
+  error?: {
+    code: string;
+    message: string;
+    field?: string;
+  };
+}
+
 describe('User Management API - Mobile Compatibility', () => {
   let app: INestApplication;
-  let httpServer: any;
-  let api: SuperTest<SuperTestRequest>;
+  let httpServer: http.Server;
+  let api: ReturnType<typeof supertest>;
 
   beforeAll(async () => {
     const moduleRef = await Test.createTestingModule({
@@ -51,12 +61,21 @@ describe('User Management API - Mobile Compatibility', () => {
       })
       .expect(201);
 
+    const body = response.body as ApiResponse<{
+      user: { id: string };
+      accessToken: string;
+      refreshToken: string;
+    }>;
+    if (!body.success || !body.data) {
+      throw new Error('Failed to register user');
+    }
+
     return {
       email,
       displayName,
-      userId: response.body.data.user.id,
-      accessToken: response.body.data.accessToken,
-      refreshToken: response.body.data.refreshToken,
+      userId: body.data.user.id,
+      accessToken: body.data.accessToken,
+      refreshToken: body.data.refreshToken,
     };
   };
 
@@ -77,7 +96,8 @@ describe('User Management API - Mobile Compatibility', () => {
           100,
         );
 
-      expect(response.body).toEqual({
+      const body = response.body as ApiResponse<{ user: any; settings: any }>;
+      expect(body).toEqual({
         success: true,
         data: {
           user: expect.objectContaining({
@@ -135,7 +155,8 @@ describe('User Management API - Mobile Compatibility', () => {
         .send(updatePayload)
         .expect(200);
 
-      expect(updateResponse.body).toEqual({
+      const updateBody = updateResponse.body as ApiResponse<{ user: any }>;
+      expect(updateBody).toEqual({
         success: true,
         data: {
           user: {
@@ -155,14 +176,17 @@ describe('User Management API - Mobile Compatibility', () => {
         .set('Authorization', `Bearer ${accessToken}`)
         .expect(200);
 
-      expect(profileResponse.body.data.user).toEqual({
-        id: userId,
-        email,
-        displayName: 'Updated Mobile Name',
-        avatarUrl: null,
-        defaultCurrency: 'EUR',
-        timezone: 'America/New_York',
-      });
+      const profileBody = profileResponse.body as ApiResponse<{ user: any }>;
+      if (profileBody.success && profileBody.data) {
+        expect(profileBody.data.user).toEqual({
+          id: userId,
+          email,
+          displayName: 'Updated Mobile Name',
+          avatarUrl: null,
+          defaultCurrency: 'EUR',
+          timezone: 'America/New_York',
+        });
+      }
     });
 
     it('should validate currency format and reject invalid updates', async () => {
@@ -252,9 +276,12 @@ describe('User Management API - Mobile Compatibility', () => {
         .set('Authorization', `Bearer ${accessToken}`)
         .expect(200);
 
-      expect(settingsResponse.body.data.settings.persistenceMode).toBe(
-        'cloud_sync',
-      );
+      const settingsBody = settingsResponse.body as ApiResponse<{
+        settings: { persistenceMode: string };
+      }>;
+      if (settingsBody.success && settingsBody.data) {
+        expect(settingsBody.data.settings.persistenceMode).toBe('cloud_sync');
+      }
     });
 
     it('should validate persistence mode values', async () => {
@@ -303,19 +330,22 @@ describe('User Management API - Mobile Compatibility', () => {
           200,
         );
 
-      expect(response.body.success).toBe(true);
-      expect(Array.isArray(response.body.data.users)).toBe(true);
-      expect(response.body.data.users.length).toBeGreaterThanOrEqual(2);
-      response.body.data.users.forEach((user: any) => {
-        expect(user.id).not.toBe(requester.userId);
-        expect(user.email).toMatch(/partner/);
-        expect(user).toEqual(
-          expect.objectContaining({
-            displayName: expect.stringMatching(/^Partner/),
-            avatarUrl: null,
-          }),
-        );
-      });
+      const body = response.body as ApiResponse<{ users: any[] }>;
+      expect(body.success).toBe(true);
+      if (body.success && body.data) {
+        expect(Array.isArray(body.data.users)).toBe(true);
+        expect(body.data.users.length).toBeGreaterThanOrEqual(2);
+        body.data.users.forEach((user: any) => {
+          expect(user.id).not.toBe(requester.userId);
+          expect(user.email).toMatch(/partner/);
+          expect(user).toEqual(
+            expect.objectContaining({
+              displayName: expect.stringMatching(/^Partner/),
+              avatarUrl: null,
+            }),
+          );
+        });
+      }
 
       expect(metrics).toBeFastOperation();
     });

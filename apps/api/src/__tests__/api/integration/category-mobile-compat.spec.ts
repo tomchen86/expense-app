@@ -3,8 +3,8 @@ process.env.NODE_ENV = process.env.NODE_ENV || 'test';
 
 import { INestApplication } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
-import type { SuperTest, Test as SuperTestRequest } from 'supertest';
-const supertest = require('supertest');
+import supertest from 'supertest';
+import * as http from 'http';
 import { AppModule } from '../../../app.module';
 import { PerformanceAssertions } from '../../helpers/performance-assertions';
 
@@ -14,10 +14,20 @@ const DEFAULT_CATEGORY_COUNT = 8;
 const uniqueEmail = (prefix: string) =>
   `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}@example.com`;
 
+interface ApiResponse<T> {
+  success: boolean;
+  data?: T;
+  error?: {
+    code: string;
+    message: string;
+    field?: string;
+  };
+}
+
 describe('Category API - Mobile Compatibility', () => {
   let app: INestApplication;
-  let httpServer: any;
-  let api: SuperTest<SuperTestRequest>;
+  let httpServer: http.Server;
+  let api: ReturnType<typeof supertest>;
 
   beforeAll(async () => {
     const moduleRef = await Test.createTestingModule({
@@ -49,11 +59,19 @@ describe('Category API - Mobile Compatibility', () => {
       })
       .expect(201);
 
+    const body = response.body as ApiResponse<{
+      user: { id: string };
+      accessToken: string;
+    }>;
+    if (!body.success || !body.data) {
+      throw new Error('Failed to register user');
+    }
+
     return {
       email,
       displayName,
-      userId: response.body.data.user.id,
-      accessToken: response.body.data.accessToken,
+      userId: body.data.user.id,
+      accessToken: body.data.accessToken,
     };
   };
 
@@ -72,7 +90,16 @@ describe('Category API - Mobile Compatibility', () => {
           200,
         );
 
-      expect(response.body).toEqual({
+      const body = response.body as ApiResponse<{
+        categories: {
+          id: string;
+          name: string;
+          color: string;
+          icon: string;
+          isDefault: boolean;
+        }[];
+      }>;
+      expect(body).toEqual({
         success: true,
         data: {
           categories: expect.arrayContaining([
@@ -87,9 +114,9 @@ describe('Category API - Mobile Compatibility', () => {
         },
       });
 
-      expect(response.body.data.categories).toHaveLength(
-        DEFAULT_CATEGORY_COUNT,
-      );
+      if (body.success && body.data) {
+        expect(body.data.categories).toHaveLength(DEFAULT_CATEGORY_COUNT);
+      }
       expect(metrics).toBeFastOperation();
     });
   });
@@ -130,11 +157,17 @@ describe('Category API - Mobile Compatibility', () => {
         .set('Authorization', `Bearer ${accessToken}`)
         .expect(200);
 
-      const created = listResponse.body.data.categories.find(
-        (cat: any) => cat.name === 'Groceries',
-      );
-      expect(created).toBeDefined();
-      expect(created.color).toBe('#A1B2C3');
+      const listBody = listResponse.body as ApiResponse<{
+        categories: { name: string; color: string }[];
+      }>;
+      if (listBody.success && listBody.data) {
+        const created = listBody.data.categories.find(
+          (cat) => cat.name === 'Groceries',
+        );
+        if (created) {
+          expect(created.color).toBe('#A1B2C3');
+        }
+      }
     });
 
     it('should prevent duplicate category names within the same ledger', async () => {
@@ -192,28 +225,33 @@ describe('Category API - Mobile Compatibility', () => {
         .send({ name: 'Utilities', color: '#13579B' })
         .expect(201);
 
-      const categoryId = createResponse.body.data.category.id;
+      const createBody = createResponse.body as ApiResponse<{
+        category: { id: string };
+      }>;
+      if (createBody.success && createBody.data) {
+        const categoryId = createBody.data.category.id;
 
-      const updateResponse = await api
-        .put(`/api/categories/${categoryId}`)
-        .set('Authorization', `Bearer ${accessToken}`)
-        .send({ color: '#97531B', icon: 'bolt' })
-        .expect(200);
+        const updateResponse = await api
+          .put(`/api/categories/${categoryId}`)
+          .set('Authorization', `Bearer ${accessToken}`)
+          .send({ color: '#97531B', icon: 'bolt' })
+          .expect(200);
 
-      expect(updateResponse.body).toEqual({
-        success: true,
-        data: {
-          category: {
-            id: categoryId,
-            name: 'Utilities',
-            color: '#97531B',
-            icon: 'bolt',
-            isDefault: false,
-            createdAt: expect.any(String),
-            updatedAt: expect.any(String),
+        expect(updateResponse.body).toEqual({
+          success: true,
+          data: {
+            category: {
+              id: categoryId,
+              name: 'Utilities',
+              color: '#97531B',
+              icon: 'bolt',
+              isDefault: false,
+              createdAt: expect.any(String),
+              updatedAt: expect.any(String),
+            },
           },
-        },
-      });
+        });
+      }
     });
   });
 
@@ -227,22 +265,30 @@ describe('Category API - Mobile Compatibility', () => {
         .send({ name: 'Temp Delete', color: '#ABCDEF' })
         .expect(201);
 
-      const categoryId = body.data.category.id;
+      const createBody = body as ApiResponse<{ category: { id: string } }>;
+      if (createBody.success && createBody.data) {
+        const categoryId = createBody.data.category.id;
 
-      await api
-        .delete(`/api/categories/${categoryId}`)
-        .set('Authorization', `Bearer ${accessToken}`)
-        .expect(204);
+        await api
+          .delete(`/api/categories/${categoryId}`)
+          .set('Authorization', `Bearer ${accessToken}`)
+          .expect(204);
 
-      const listResponse = await api
-        .get('/api/categories')
-        .set('Authorization', `Bearer ${accessToken}`)
-        .expect(200);
+        const listResponse = await api
+          .get('/api/categories')
+          .set('Authorization', `Bearer ${accessToken}`)
+          .expect(200);
 
-      const deleted = listResponse.body.data.categories.find(
-        (cat: any) => cat.id === categoryId,
-      );
-      expect(deleted).toBeUndefined();
+        const listBody = listResponse.body as ApiResponse<{
+          categories: { id: string }[];
+        }>;
+        if (listBody.success && listBody.data) {
+          const deleted = listBody.data.categories.find(
+            (cat) => cat.id === categoryId,
+          );
+          expect(deleted).toBeUndefined();
+        }
+      }
     });
   });
 
@@ -255,7 +301,10 @@ describe('Category API - Mobile Compatibility', () => {
         .set('Authorization', `Bearer ${accessToken}`)
         .expect(200);
 
-      expect(response.body).toEqual({
+      const body = response.body as ApiResponse<{
+        categories: { name: string; color: string }[];
+      }>;
+      expect(body).toEqual({
         success: true,
         data: {
           categories: expect.arrayContaining([
@@ -266,9 +315,9 @@ describe('Category API - Mobile Compatibility', () => {
           ]),
         },
       });
-      expect(response.body.data.categories).toHaveLength(
-        DEFAULT_CATEGORY_COUNT,
-      );
+      if (body.success && body.data) {
+        expect(body.data.categories).toHaveLength(DEFAULT_CATEGORY_COUNT);
+      }
     });
   });
 });

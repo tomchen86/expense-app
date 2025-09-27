@@ -46,7 +46,7 @@ export class CategoryService {
     return categories.map((category) => this.mapCategory(category));
   }
 
-  async getDefaultCategories(): Promise<DefaultCategoryResponse[]> {
+  getDefaultCategories(): DefaultCategoryResponse[] {
     return this.ledgerService.getDefaultCategories().map((definition) => ({
       name: definition.name,
       color: definition.color,

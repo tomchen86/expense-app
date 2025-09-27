@@ -7,6 +7,7 @@ import { Expense } from '../../entities/expense.entity';
 import { ExpenseGroup } from '../../entities/expense-group.entity';
 import { UserSettings } from '../../entities/user-settings.entity';
 import { Participant } from '../../entities/participant.entity';
+import { DatabaseTestHelper } from './database-test-helper';
 
 /**
  * Factory for creating test users matching mobile app patterns
@@ -218,14 +219,17 @@ export class CategoryFactory {
  * Factory for creating test participants
  */
 export class ParticipantFactory {
-  static create(user: User, overrides: Partial<Participant> = {}): Participant {
+  static create(
+    user: User & { coupleId?: string },
+    coupleId: string,
+    overrides: Partial<Participant> = {},
+  ): Participant {
     const participant = new Participant();
     participant.user = user;
     participant.displayName = overrides.displayName ?? user.displayName;
     participant.email = overrides.email ?? user.email;
     participant.isRegistered = overrides.isRegistered ?? true;
-    const inferredCoupleId =
-      overrides.coupleId ?? (user as any).coupleId ?? undefined;
+    const inferredCoupleId = overrides.coupleId ?? user.coupleId ?? undefined;
     participant.coupleId = inferredCoupleId ?? randomUUID();
     participant.defaultCurrency = overrides.defaultCurrency ?? 'USD';
     participant.notificationPreferences = overrides.notificationPreferences ?? {
@@ -236,15 +240,14 @@ export class ParticipantFactory {
     return participant;
   }
 
-  static createFromUser(user: User, coupleId?: string): Participant {
+  static createFromUser(user: User, coupleId: string): Participant {
     // Create participant directly from user (common mobile app pattern)
     const participant = new Participant();
     participant.user = user;
     participant.displayName = user.displayName;
     participant.email = user.email;
     participant.isRegistered = true;
-    const inferredCoupleId = coupleId ?? (user as any).coupleId;
-    participant.coupleId = inferredCoupleId ?? randomUUID();
+    participant.coupleId = coupleId;
     participant.defaultCurrency = 'USD';
     participant.notificationPreferences = {
       expenses: true,
@@ -259,7 +262,7 @@ export class ParticipantFactory {
  * Combined factory for creating complete test scenarios
  */
 export class ScenarioFactory {
-  static async createUserWithBasics(dbHelper: any) {
+  static async createUserWithBasics(dbHelper: DatabaseTestHelper) {
     const user = UserFactory.createMobileCompatible();
     const savedUser = await dbHelper.getRepository(User).save(user);
 
@@ -284,7 +287,7 @@ export class ScenarioFactory {
   }
 
   static async createExpenseScenario(
-    dbHelper: any,
+    dbHelper: DatabaseTestHelper,
     user: User,
     category: Category,
   ) {

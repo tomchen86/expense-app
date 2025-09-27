@@ -31,4 +31,16 @@ export default tseslint.config(
       '@typescript-eslint/no-unsafe-argument': 'warn',
     },
   },
+  // Relax a few strict safety rules in test files where we commonly
+  // deserialize JSON, use supertest responses, and rely on Jest mocks.
+  {
+    files: ['src/__tests__/**/*.{ts,tsx}', 'test/**/*.{ts,tsx}'],
+    rules: {
+      '@typescript-eslint/no-unsafe-assignment': 'off',
+      '@typescript-eslint/no-unsafe-member-access': 'off',
+      '@typescript-eslint/no-unsafe-call': 'off',
+      '@typescript-eslint/no-require-imports': 'off',
+      '@typescript-eslint/unbound-method': 'off',
+    },
+  },
 );

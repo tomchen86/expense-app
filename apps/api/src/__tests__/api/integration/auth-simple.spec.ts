@@ -3,15 +3,15 @@
 
 import { INestApplication } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
-import { SuperTest, Test as SuperTestRequest } from 'supertest';
-const supertest = require('supertest');
+import supertest from 'supertest';
+import * as http from 'http';
 import { AppModule } from '../../../app.module';
 import { PerformanceAssertions } from '../../helpers/performance-assertions';
 
 describe('Authentication API - Simple TDD', () => {
   let app: INestApplication;
-  let httpServer: any;
-  let api: SuperTest<SuperTestRequest>;
+  let httpServer: http.Server;
+  let api: ReturnType<typeof supertest>;
 
   beforeAll(async () => {
     const moduleRef = await Test.createTestingModule({

@@ -4,7 +4,7 @@ process.env.NODE_ENV = process.env.NODE_ENV || 'test';
 import { INestApplication } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import type { SuperTest, Test as SuperTestRequest } from 'supertest';
-const supertest = require('supertest');
+import supertest from 'supertest';
 import { AppModule } from '../../../app.module';
 import { PerformanceAssertions } from '../../helpers/performance-assertions';
 
@@ -12,6 +12,16 @@ const PASSWORD = 'TestPassword123!';
 
 const uniqueEmail = (prefix: string) =>
   `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}@example.com`;
+
+interface ApiResponse<T> {
+  success: boolean;
+  data?: T;
+  error?: {
+    code: string;
+    message: string;
+    field?: string;
+  };
+}
 
 describe('User Settings API - Mobile Compatibility', () => {
   let app: INestApplication;
@@ -48,12 +58,18 @@ describe('User Settings API - Mobile Compatibility', () => {
       })
       .expect(201);
 
+    const body = response.body as ApiResponse<{
+      user: { id: string };
+      accessToken: string;
+      refreshToken: string;
+    }>;
+
     return {
       email,
       displayName,
-      userId: response.body.data.user.id,
-      accessToken: response.body.data.accessToken,
-      refreshToken: response.body.data.refreshToken,
+      userId: body.data?.user.id,
+      accessToken: body.data?.accessToken,
+      refreshToken: body.data?.refreshToken,
     };
   };
 
@@ -108,7 +124,11 @@ describe('User Settings API - Mobile Compatibility', () => {
         .set('Authorization', `Bearer ${accessToken}`)
         .expect(200);
 
-      expect(settingsResponse.body.data.settings).toEqual({
+      const settingsBody = settingsResponse.body as ApiResponse<{
+        settings: any;
+      }>;
+
+      expect(settingsBody.data?.settings).toEqual({
         language: 'fr-FR',
         pushEnabled: false,
         persistenceMode: 'local_only',
@@ -146,7 +166,11 @@ describe('User Settings API - Mobile Compatibility', () => {
         })
         .expect(200);
 
-      expect(response.body.data.settings.notifications).toEqual({
+      const body = response.body as ApiResponse<{
+        settings: { notifications: any };
+      }>;
+
+      expect(body.data?.settings.notifications).toEqual({
         expenses: false,
         invites: false,
         reminders: true,
@@ -219,10 +243,10 @@ describe('User Settings API - Mobile Compatibility', () => {
         .set('Authorization', `Bearer ${accessToken}`)
         .expect(200);
 
-      expect(listResponse.body.data.devices).toHaveLength(1);
-      expect(listResponse.body.data.devices[0].deviceUuid).toBe(
-        'ios-simulator-123',
-      );
+      const listBody = listResponse.body as ApiResponse<{ devices: any[] }>;
+
+      expect(listBody.data?.devices).toHaveLength(1);
+      expect(listBody.data?.devices[0].deviceUuid).toBe('ios-simulator-123');
     });
 
     it('should update device sync metadata', async () => {
@@ -285,7 +309,9 @@ describe('User Settings API - Mobile Compatibility', () => {
         .set('Authorization', `Bearer ${accessToken}`)
         .expect(200);
 
-      expect(listResponse.body.data.devices).toHaveLength(0);
+      const listBody = listResponse.body as ApiResponse<{ devices: any[] }>;
+
+      expect(listBody.data?.devices).toHaveLength(0);
     });
 
     it('should validate device payloads', async () => {

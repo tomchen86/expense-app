@@ -1,22 +1,59 @@
-process.env.DB_DRIVER = process.env.DB_DRIVER || 'sqljs';
-process.env.NODE_ENV = process.env.NODE_ENV || 'test';
+// Integration tests for Participant Group API
+// RED Phase: These tests will fail initially and drive implementation
 
 import { INestApplication } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
-import type { SuperTest, Test as SuperTestRequest } from 'supertest';
-const supertest = require('supertest');
+import supertest from 'supertest';
+import * as http from 'http';
 import { AppModule } from '../../../app.module';
+import { dbHelper } from '../../setup';
 import { PerformanceAssertions } from '../../helpers/performance-assertions';
+import {
+  UserFactory,
+  ExpenseGroupFactory,
+  ParticipantFactory,
+} from '../../helpers/test-data-factories';
+import { User } from '../../../entities/user.entity';
+import { ExpenseGroup } from '../../../entities/expense-group.entity';
+import { Participant } from '../../../entities/participant.entity';
+import { Repository, ObjectLiteral } from 'typeorm';
 
-const PASSWORD = 'TestPassword123!';
+interface PerformanceMetrics {
+  duration: number;
+}
 
-const uniqueEmail = (prefix: string) =>
-  `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}@example.com`;
+interface ApiResponse<T> {
+  success: boolean;
+  data?: T;
+  error?: {
+    code: string;
+    message: string;
+    field?: string;
+    details?: string[];
+  };
+}
 
-describe('Participants & Groups API - Mobile Compatibility', () => {
+interface ParticipantData {
+  id: string;
+  userId: string;
+  groupId: string;
+  displayName: string;
+  email: string;
+}
+
+interface ExpenseGroupData {
+  id: string;
+  name: string;
+  participants: ParticipantData[];
+}
+
+const repo = <T extends ObjectLiteral>(name: string) =>
+  dbHelper.getRepository<T>(name) as unknown as Repository<T>;
+
+describe('Expense Group API', () => {
   let app: INestApplication;
-  let httpServer: any;
-  let api: SuperTest<SuperTestRequest>;
+  let httpServer: http.Server;
+  let api: supertest.SuperTest<supertest.Test>;
 
   beforeAll(async () => {
     const moduleRef = await Test.createTestingModule({
@@ -25,252 +62,307 @@ describe('Participants & Groups API - Mobile Compatibility', () => {
 
     app = moduleRef.createNestApplication();
     await app.init();
-    httpServer = app.getHttpAdapter().getInstance();
-    api = supertest(httpServer);
+    httpServer = app.getHttpServer();
+    api = supertest(httpServer) as any;
   });
 
   afterAll(async () => {
     await app.close();
   });
 
-  const registerMobileUser = async (
-    overrides: { email?: string; displayName?: string } = {},
-  ) => {
-    const email = overrides.email ?? uniqueEmail('collab-user');
-    const displayName = overrides.displayName ?? 'Collaboration User';
+  describe('POST /expense-groups', () => {
+    it('should create a new expense group', async () => {
+      const userUnknown: unknown = UserFactory.create();
+      const user = userUnknown as User;
+      const userRepo = repo<User>('User');
+      await userRepo.save(user);
 
-    const response = await api
-      .post('/auth/register')
-      .send({
-        email,
-        password: PASSWORD,
-        displayName,
-      })
-      .expect(201);
+      const groupData = {
+        name: 'Test Group',
+        participants: [{ userId: user.id, displayName: user.displayName }],
+      };
 
-    return {
-      email,
-      displayName,
-      userId: response.body.data.user.id,
-      accessToken: response.body.data.accessToken,
-    };
-  };
+      const perfPost = (await PerformanceAssertions.testEndpointPerformance(
+        'POST /expense-groups',
+        () =>
+          api
+            .post('/expense-groups')
+            .set('Authorization', `Bearer valid-jwt-token`)
+            .send(groupData)
+            .expect(201),
+        500,
+      )) as { response: supertest.Response; metrics: PerformanceMetrics };
+      const { response, metrics } = perfPost;
 
-  describe('Participants API', () => {
-    it('should list the authenticated user as the initial participant', async () => {
-      const { accessToken, displayName } = await registerMobileUser({
-        displayName: 'Solo Ledger User',
-      });
-
-      const { response, metrics } =
-        await PerformanceAssertions.testEndpointPerformance(
-          'GET /api/participants',
-          () =>
-            api
-              .get('/api/participants')
-              .set('Authorization', `Bearer ${accessToken}`)
-              .expect(200),
-          200,
-        );
-
-      expect(response.body.success).toBe(true);
-      expect(Array.isArray(response.body.data.participants)).toBe(true);
-      expect(response.body.data.participants.length).toBeGreaterThanOrEqual(1);
-      const owner = response.body.data.participants[0];
-      expect(owner).toEqual(
-        expect.objectContaining({
+      const bodyUnknown: unknown = response.body;
+      const body = bodyUnknown as ApiResponse<ExpenseGroupData>;
+      expect(body).toMatchObject({
+        success: true,
+        data: {
           id: expect.any(String),
-          name: displayName,
-          isRegistered: true,
-          notifications: expect.objectContaining({
-            expenses: true,
-            invites: true,
-            reminders: true,
-          }),
-        }),
-      );
+          name: 'Test Group',
+          participants: expect.arrayContaining([
+            expect.objectContaining({
+              id: expect.any(String),
+              userId: user.id,
+              groupId: expect.any(String),
+              displayName: user.displayName,
+              email: user.email,
+            }),
+          ]),
+        },
+      });
 
       expect(metrics).toBeFastOperation();
     });
 
-    it('should create, update, and protect participant records', async () => {
-      const { accessToken } = await registerMobileUser();
+    it('should return 401 if no token is provided', async () => {
+      const groupData = {
+        name: 'Test Group',
+        participants: [],
+      };
 
-      const createResponse = await api
-        .post('/api/participants')
-        .set('Authorization', `Bearer ${accessToken}`)
-        .send({
-          name: 'Pat Guest',
-          email: 'pat.guest@example.com',
-          defaultCurrency: 'EUR',
-          notifications: {
-            expenses: false,
-          },
-        })
-        .expect(201);
+      const response = await api
+        .post('/expense-groups')
+        .send(groupData)
+        .expect(401);
 
-      expect(createResponse.body).toEqual({
-        success: true,
-        data: {
-          participant: {
-            id: expect.any(String),
-            name: 'Pat Guest',
-            email: 'pat.guest@example.com',
-            avatar: null,
-            isRegistered: false,
-            defaultCurrency: 'EUR',
-            lastActiveAt: null,
-            notifications: {
-              expenses: false,
-              invites: true,
-              reminders: true,
-            },
-          },
-        },
-      });
-
-      const participantId = createResponse.body.data.participant.id;
-
-      const updateResponse = await api
-        .put(`/api/participants/${participantId}`)
-        .set('Authorization', `Bearer ${accessToken}`)
-        .send({
-          name: 'Patricia Guest',
-          notifications: {
-            invites: false,
-          },
-        })
-        .expect(200);
-
-      expect(updateResponse.body.data.participant).toEqual({
-        id: participantId,
-        name: 'Patricia Guest',
-        email: 'pat.guest@example.com',
-        avatar: null,
-        isRegistered: false,
-        defaultCurrency: 'EUR',
-        lastActiveAt: null,
-        notifications: {
-          expenses: false,
-          invites: false,
-          reminders: true,
-        },
-      });
-
-      const deleteGuestResponse = await api
-        .delete(`/api/participants/${updateResponse.body.data.participant.id}`)
-        .set('Authorization', `Bearer ${accessToken}`)
-        .expect(204);
-
-      expect(deleteGuestResponse.body).toEqual({});
-
-      const deleteOwnerAttempt = await api
-        .get('/api/participants')
-        .set('Authorization', `Bearer ${accessToken}`)
-        .expect(200);
-
-      const ownerId = deleteOwnerAttempt.body.data.participants[0].id;
-
-      const ownerDelete = await api
-        .delete(`/api/participants/${ownerId}`)
-        .set('Authorization', `Bearer ${accessToken}`)
-        .expect(400);
-
-      expect(ownerDelete.body).toEqual({
+      expect(response.body).toEqual({
         success: false,
         error: {
-          code: 'CANNOT_REMOVE_SELF',
-          message: 'You cannot remove yourself from the ledger',
+          code: 'UNAUTHORIZED',
+          message: 'Authorization header is required',
         },
       });
     });
   });
 
-  describe('Groups API', () => {
-    it('should manage groups with participant membership', async () => {
-      const { accessToken } = await registerMobileUser({
-        displayName: 'Group Owner',
-      });
+  describe('GET /expense-groups/:id', () => {
+    it('should return a expense group by ID', async () => {
+      const userUnknown: unknown = UserFactory.create();
+      const user = userUnknown as User;
+      const userRepo = repo<User>('User');
+      await userRepo.save(user);
 
-      const participantsResponse = await api
-        .get('/api/participants')
-        .set('Authorization', `Bearer ${accessToken}`)
-        .expect(200);
+      const groupUnknown: unknown = ExpenseGroupFactory.create(user);
+      const group = groupUnknown as ExpenseGroup;
+      const groupRepo = repo<ExpenseGroup>('ExpenseGroup');
+      await groupRepo.save(group);
 
-      const ownerParticipant = participantsResponse.body.data.participants[0];
+      const participantUnknown: unknown = ParticipantFactory.create(
+        user,
+        group.coupleId,
+      );
+      const participant = participantUnknown as Participant;
+      const participantRepo = repo<Participant>('Participant');
+      await participantRepo.save(participant);
 
-      const guestResponse = await api
-        .post('/api/participants')
-        .set('Authorization', `Bearer ${accessToken}`)
-        .send({ name: 'Roommate Riley' })
-        .expect(201);
+      const perfGet = (await PerformanceAssertions.testEndpointPerformance(
+        'GET /expense-groups/:id',
+        () =>
+          api
+            .get(`/expense-groups/${group.id}`)
+            .set('Authorization', `Bearer valid-jwt-token`)
+            .expect(200),
+        500,
+      )) as { response: supertest.Response; metrics: PerformanceMetrics };
+      const { response, metrics } = perfGet;
 
-      const guestParticipant = guestResponse.body.data.participant;
-
-      const createGroupResponse = await api
-        .post('/api/groups')
-        .set('Authorization', `Bearer ${accessToken}`)
-        .send({
-          name: 'Household Budget',
-          description: 'Monthly shared expenses',
-          color: '#4F46E5',
-          participantIds: [guestParticipant.id],
-        })
-        .expect(201);
-
-      expect(createGroupResponse.body).toEqual({
+      const bodyUnknown: unknown = response.body;
+      const body = bodyUnknown as ApiResponse<ExpenseGroupData>;
+      expect(body).toMatchObject({
         success: true,
         data: {
-          group: {
-            id: expect.any(String),
-            name: 'Household Budget',
-            description: 'Monthly shared expenses',
-            color: '#4F46E5',
-            defaultCurrency: 'USD',
-            isArchived: false,
-            createdAt: expect.any(String),
-            updatedAt: expect.any(String),
-            participants: expect.arrayContaining([
-              expect.objectContaining({ id: ownerParticipant.id }),
-              expect.objectContaining({ id: guestParticipant.id }),
-            ]),
-          },
+          id: group.id,
+          name: group.name,
+          participants: expect.arrayContaining([
+            expect.objectContaining({
+              id: participant.id,
+              userId: user.id,
+              groupId: group.id,
+              displayName: user.displayName,
+              email: user.email,
+            }),
+          ]),
         },
       });
 
-      const groupId = createGroupResponse.body.data.group.id;
+      expect(metrics).toBeFastOperation();
+    });
 
-      const listGroups = await api
-        .get('/api/groups')
-        .set('Authorization', `Bearer ${accessToken}`)
-        .expect(200);
+    it('should return 404 if group not found', async () => {
+      const userUnknown: unknown = UserFactory.create();
+      const user = userUnknown as User;
+      const userRepo = repo<User>('User');
+      await userRepo.save(user);
 
-      expect(listGroups.body.data.groups[0].participants).toHaveLength(2);
+      const response = await api
+        .get(`/expense-groups/${'non-existent-id'}`)
+        .set('Authorization', `Bearer valid-jwt-token`)
+        .expect(404);
 
-      const updateGroup = await api
-        .put(`/api/groups/${groupId}`)
-        .set('Authorization', `Bearer ${accessToken}`)
-        .send({
-          name: 'Primary Household',
-          participantIds: [ownerParticipant.id],
-        })
-        .expect(200);
+      expect(response.body).toEqual({
+        success: false,
+        error: {
+          code: 'NOT_FOUND',
+          message: 'Participant group not found',
+        },
+      });
+    });
+  });
 
-      expect(updateGroup.body.data.group.participants).toEqual([
-        expect.objectContaining({ id: ownerParticipant.id }),
-      ]);
+  describe('PUT /expense-groups/:id', () => {
+    it('should update a expense group', async () => {
+      const user1Unknown: unknown = UserFactory.create();
+      const user1 = user1Unknown as User;
+      const user2Unknown: unknown = UserFactory.create();
+      const user2 = user2Unknown as User;
+      const userRepo = repo<User>('User');
+      await userRepo.save([user1, user2]);
 
-      await api
-        .delete(`/api/groups/${groupId}`)
-        .set('Authorization', `Bearer ${accessToken}`)
-        .expect(204);
+      const groupUnknown: unknown = ExpenseGroupFactory.create(user1);
+      const group = groupUnknown as ExpenseGroup;
+      const groupRepo = repo<ExpenseGroup>('ExpenseGroup');
+      await groupRepo.save(group);
 
-      const listAfterDelete = await api
-        .get('/api/groups')
-        .set('Authorization', `Bearer ${accessToken}`)
-        .expect(200);
+      const participant1Unknown: unknown = ParticipantFactory.create(
+        user1,
+        group.coupleId,
+      );
+      const participant1 = participant1Unknown as Participant;
+      const participantRepo = repo<Participant>('Participant');
+      await participantRepo.save(participant1);
 
-      expect(listAfterDelete.body.data.groups.length).toBe(0);
+      const perfPut = (await PerformanceAssertions.testEndpointPerformance(
+        'PUT /expense-groups/:id',
+        () =>
+          api
+            .put(`/expense-groups/${group.id}`)
+            .set('Authorization', `Bearer valid-jwt-token`)
+            .send({
+              name: 'Updated Group Name',
+              participants: [
+                { userId: user1.id, displayName: user1.displayName },
+                { userId: user2.id, displayName: user2.displayName },
+              ],
+            })
+            .expect(200),
+        500,
+      )) as { response: supertest.Response; metrics: PerformanceMetrics };
+      const { response, metrics } = perfPut;
+
+      const bodyUnknown: unknown = response.body;
+      const body = bodyUnknown as ApiResponse<ExpenseGroupData>;
+      expect(body).toMatchObject({
+        success: true,
+        data: {
+          id: group.id,
+          name: 'Updated Group Name',
+          participants: expect.arrayContaining([
+            expect.objectContaining({
+              id: expect.any(String),
+              userId: user1.id,
+              groupId: group.id,
+              displayName: user1.displayName,
+              email: user1.email,
+            }),
+            expect.objectContaining({
+              id: expect.any(String),
+              userId: user2.id,
+              groupId: group.id,
+              displayName: user2.displayName,
+              email: user2.email,
+            }),
+          ]),
+        },
+      });
+
+      expect(metrics).toBeFastOperation();
+    });
+
+    it('should return 404 if group not found', async () => {
+      const userUnknown: unknown = UserFactory.create();
+      const user = userUnknown as User;
+      const userRepo = repo<User>('User');
+      await userRepo.save(user);
+
+      const response = await api
+        .put(`/expense-groups/${'non-existent-id'}`)
+        .set('Authorization', `Bearer valid-jwt-token`)
+        .send({ name: 'Non Existent' })
+        .expect(404);
+
+      expect(response.body).toEqual({
+        success: false,
+        error: {
+          code: 'NOT_FOUND',
+          message: 'Participant group not found',
+        },
+      });
+    });
+  });
+
+  describe('DELETE /expense-groups/:id', () => {
+    it('should delete a expense group', async () => {
+      const userUnknown: unknown = UserFactory.create();
+      const user = userUnknown as User;
+      const userRepo = repo<User>('User');
+      await userRepo.save(user);
+
+      const groupUnknown: unknown = ExpenseGroupFactory.create(user);
+      const group = groupUnknown as ExpenseGroup;
+      const groupRepo = repo<ExpenseGroup>('ExpenseGroup');
+      await groupRepo.save(group);
+
+      const perfDelete = (await PerformanceAssertions.testEndpointPerformance(
+        'DELETE /expense-groups/:id',
+        () =>
+          api
+            .delete(`/expense-groups/${group.id}`)
+            .set('Authorization', `Bearer valid-jwt-token`)
+            .expect(200),
+        500,
+      )) as { response: supertest.Response; metrics: PerformanceMetrics };
+      const { response, metrics } = perfDelete;
+
+      const bodyUnknown: unknown = response.body;
+      const body = bodyUnknown as ApiResponse<ExpenseGroupData>;
+      expect(body).toMatchObject({
+        success: true,
+        data: {
+          id: group.id,
+          name: group.name,
+          participants: [],
+        },
+      });
+
+      expect(metrics).toBeFastOperation();
+
+      const deletedGroupRepo = repo<ExpenseGroup>('ExpenseGroup');
+      const deletedGroup = await deletedGroupRepo.findOne({
+        where: { id: group.id },
+      });
+      expect(deletedGroup).toBeNull();
+    });
+
+    it('should return 404 if group not found', async () => {
+      const userUnknown: unknown = UserFactory.create();
+      const user = userUnknown as User;
+      const userRepo = repo<User>('User');
+      await userRepo.save(user);
+
+      const response = await api
+        .delete(`/expense-groups/${'non-existent-id'}`)
+        .set('Authorization', `Bearer valid-jwt-token`)
+        .expect(404);
+
+      expect(response.body).toEqual({
+        success: false,
+        error: {
+          code: 'NOT_FOUND',
+          message: 'Participant group not found',
+        },
+      });
     });
   });
 });

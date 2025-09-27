@@ -7,7 +7,7 @@ import { Category } from '../../entities/category.entity';
 import { Expense } from '../../entities/expense.entity';
 import { ExpenseSplit } from '../../entities/expense-split.entity';
 
-export const createTestModule = async (entities: any[] = []) => {
+export const createTestModule = async (entities: (new () => any)[] = []) => {
   const module: TestingModule = await Test.createTestingModule({
     imports: [
       TypeOrmModule.forRoot({

@@ -3,8 +3,8 @@ process.env.NODE_ENV = process.env.NODE_ENV || 'test';
 
 import { INestApplication } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
-import type { SuperTest, Test as SuperTestRequest } from 'supertest';
-const supertest = require('supertest');
+import supertest from 'supertest';
+import * as http from 'http';
 import { AppModule } from '../../../app.module';
 import { PerformanceAssertions } from '../../helpers/performance-assertions';
 
@@ -13,10 +13,20 @@ const PASSWORD = 'TestPassword123!';
 const uniqueEmail = (prefix: string) =>
   `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}@example.com`;
 
+interface ApiResponse<T> {
+  success: boolean;
+  data?: T;
+  error?: {
+    code: string;
+    message: string;
+    field?: string;
+  };
+}
+
 describe('Expense API - Mobile Compatibility', () => {
   let app: INestApplication;
-  let httpServer: any;
-  let api: SuperTest<SuperTestRequest>;
+  let httpServer: http.Server;
+  let api: ReturnType<typeof supertest>;
 
   beforeAll(async () => {
     const moduleRef = await Test.createTestingModule({
@@ -48,11 +58,19 @@ describe('Expense API - Mobile Compatibility', () => {
       })
       .expect(201);
 
+    const body = response.body as ApiResponse<{
+      user: { id: string };
+      accessToken: string;
+    }>;
+    if (!body.success || !body.data) {
+      throw new Error('Failed to register user');
+    }
+
     return {
       email,
       displayName,
-      userId: response.body.data.user.id,
-      accessToken: response.body.data.accessToken,
+      userId: body.data.user.id,
+      accessToken: body.data.accessToken,
     };
   };
 
@@ -66,7 +84,11 @@ describe('Expense API - Mobile Compatibility', () => {
       .send({ name })
       .expect(201);
 
-    return response.body.data.participant.id;
+    const body = response.body as ApiResponse<{ participant: { id: string } }>;
+    if (!body.success || !body.data) {
+      throw new Error('Failed to create participant');
+    }
+    return body.data.participant.id;
   };
 
   const fetchSelfParticipant = async (
@@ -77,7 +99,13 @@ describe('Expense API - Mobile Compatibility', () => {
       .set('Authorization', `Bearer ${accessToken}`)
       .expect(200);
 
-    const [participant] = response.body.data.participants;
+    const body = response.body as ApiResponse<{
+      participants: { id: string; name: string }[];
+    }>;
+    if (!body.success || !body.data) {
+      throw new Error('Failed to fetch participants');
+    }
+    const [participant] = body.data.participants;
     return participant;
   };
 
@@ -87,7 +115,11 @@ describe('Expense API - Mobile Compatibility', () => {
       .set('Authorization', `Bearer ${accessToken}`)
       .expect(200);
 
-    const [firstCategory] = response.body.data.categories;
+    const body = response.body as ApiResponse<{ categories: { id: string }[] }>;
+    if (!body.success || !body.data) {
+      throw new Error('Failed to fetch categories');
+    }
+    const [firstCategory] = body.data.categories;
     return firstCategory.id;
   };
 
@@ -130,8 +162,14 @@ describe('Expense API - Mobile Compatibility', () => {
 
       expect(metrics).toBeFastOperation();
 
-      const createdExpenseId = createResponse.body.data.expense.id;
-      expect(createResponse.body).toEqual({
+      const createBody = createResponse.body as ApiResponse<{
+        expense: { id: string };
+      }>;
+      if (!createBody.success || !createBody.data) {
+        throw new Error('Failed to create expense');
+      }
+      const createdExpenseId = createBody.data.expense.id;
+      expect(createBody).toEqual({
         success: true,
         data: {
           expense: expect.objectContaining({
@@ -162,8 +200,13 @@ describe('Expense API - Mobile Compatibility', () => {
         .set('Authorization', `Bearer ${accessToken}`)
         .expect(200);
 
-      expect(getResponse.body.data.expense.id).toBe(createdExpenseId);
-      expect(getResponse.body.data.expense.splits).toHaveLength(2);
+      const getBody = getResponse.body as ApiResponse<{
+        expense: { id: string; splits: any[] };
+      }>;
+      if (getBody.success && getBody.data) {
+        expect(getBody.data.expense.id).toBe(createdExpenseId);
+        expect(getBody.data.expense.splits).toHaveLength(2);
+      }
 
       const listResponse = await api
         .get('/api/expenses')
@@ -230,24 +273,27 @@ describe('Expense API - Mobile Compatibility', () => {
         .send(updatePayload)
         .expect(200);
 
-      expect(updateResponse.body.data.expense).toEqual(
-        expect.objectContaining({
-          id: createdExpenseId,
-          amount_cents: 15000,
-          exchange_rate: 1,
-          splits: expect.arrayContaining([
-            expect.objectContaining({
-              participant_id: selfParticipant.id,
-              share_cents: 5000,
-            }),
-            expect.objectContaining({
-              participant_id: partnerParticipantId,
-              share_cents: 10000,
-            }),
-          ]),
-          notes: 'Updated split after review',
-        }),
-      );
+      const updateBody = updateResponse.body as ApiResponse<{ expense: any }>;
+      if (updateBody.success && updateBody.data) {
+        expect(updateBody.data.expense).toEqual(
+          expect.objectContaining({
+            id: createdExpenseId,
+            amount_cents: 15000,
+            exchange_rate: 1,
+            splits: expect.arrayContaining([
+              expect.objectContaining({
+                participant_id: selfParticipant.id,
+                share_cents: 5000,
+              }),
+              expect.objectContaining({
+                participant_id: partnerParticipantId,
+                share_cents: 10000,
+              }),
+            ]),
+            notes: 'Updated split after review',
+          }),
+        );
+      }
 
       await api
         .delete(`/api/expenses/${createdExpenseId}`)

@@ -64,10 +64,10 @@ export class CategoryController {
   }
 
   @Get('default')
-  async getDefaultCategories(): Promise<
-    ApiResponse<{ categories: DefaultCategoryResponse[] }>
-  > {
-    const categories = await this.categoryService.getDefaultCategories();
+  getDefaultCategories(): ApiResponse<{
+    categories: DefaultCategoryResponse[];
+  }> {
+    const categories = this.categoryService.getDefaultCategories();
 
     return {
       success: true,

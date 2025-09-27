@@ -91,7 +91,7 @@ export class UserController {
   }
 
   @Post('avatar')
-  async uploadAvatar(): Promise<ApiResponse<never>> {
+  uploadAvatar(): Promise<ApiResponse<never>> {
     throw new ApiHttpException(
       HttpStatus.NOT_IMPLEMENTED,
       'NOT_IMPLEMENTED',
