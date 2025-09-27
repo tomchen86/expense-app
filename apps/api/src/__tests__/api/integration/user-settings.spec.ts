@@ -3,7 +3,6 @@ process.env.NODE_ENV = process.env.NODE_ENV || 'test';
 
 import { INestApplication } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
-import type { SuperTest, Test as SuperTestRequest } from 'supertest';
 import supertest from 'supertest';
 import { AppModule } from '../../../app.module';
 import { PerformanceAssertions } from '../../helpers/performance-assertions';
@@ -26,7 +25,7 @@ interface ApiResponse<T> {
 describe('User Settings API - Mobile Compatibility', () => {
   let app: INestApplication;
   let httpServer: any;
-  let api: SuperTest<SuperTestRequest>;
+  let api: ReturnType<typeof supertest>;
 
   beforeAll(async () => {
     const moduleRef = await Test.createTestingModule({

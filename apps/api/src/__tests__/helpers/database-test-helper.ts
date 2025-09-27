@@ -1,4 +1,4 @@
-import { DataSource, ObjectLiteral, Repository } from 'typeorm';
+import { DataSource, ObjectLiteral, Repository, EntityTarget } from 'typeorm';
 import { resolveDriver } from '../../config/database.config';
 import type { EntityCollection } from '../../entities/entity-sets';
 import { getEntityCollection } from '../../entities/entity-sets';
@@ -296,26 +296,26 @@ export class DatabaseTestHelper {
     }
   }
 
-  getRepository<T extends ObjectLiteral>(
-    entity: string | (new () => T),
-  ): Repository<T> {
+  // Overloads provide precise typing for both class constructors and
+  // string keys that reference entries on entityRefs.
+  getRepository<K extends keyof EntityCollection>(
+    entity: K,
+  ): Repository<InstanceType<EntityCollection[K]>>;
+  getRepository<T extends ObjectLiteral>(entity: new () => T): Repository<T>;
+  getRepository<T extends ObjectLiteral>(entity: string): Repository<T>;
+  getRepository(entity: any): Repository<any> {
     if (typeof entity === 'string') {
-      // Handle string entity names for backward compatibility
-      const entityMap: { [key: string]: new () => ObjectLiteral } = {
-        User: this.entityRefs.User,
-        UserSettings: this.entityRefs.UserSettings,
-        Category: this.entityRefs.Category,
-        ExpenseGroup: this.entityRefs.ExpenseGroup,
-        Participant: this.entityRefs.Participant,
-        Expense: this.entityRefs.Expense,
-        Couple: this.entityRefs.Couple,
-      };
-      const target = entityMap[entity];
+      const key = entity as keyof EntityCollection;
+      const target = (this.entityRefs as Record<string, EntityTarget<any>>)[
+        key as string
+      ];
       if (!target) {
-        throw new Error(`Unknown entity requested: ${entity}`);
+        throw new Error(`Unknown entity requested: ${String(entity)}`);
       }
-      return this.dataSource.getRepository(target);
+      return this.dataSource.getRepository(
+        target as EntityTarget<ObjectLiteral>,
+      );
     }
-    return this.dataSource.getRepository(entity);
+    return this.dataSource.getRepository(entity as EntityTarget<ObjectLiteral>);
   }
 }
