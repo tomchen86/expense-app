@@ -395,13 +395,15 @@ FOR EACH ROW EXECUTE FUNCTION assert_split_balance();
 
 ## Success Criteria
 
-- [ ] All migrations apply cleanly on a fresh Postgres container and roll back without data loss.
-- [ ] TypeORM entities match the SQL schema (no column drift).
-- [ ] Enforced split totals equal expense totals through constraint triggers.
+- [x] All migrations apply cleanly on a fresh Postgres container and roll back without data loss.
+- [x] TypeORM entities match the SQL schema (no column drift).
+- [x] Enforced split totals equal expense totals through constraint triggers.
 - [x] Default categories and sample data seed without violating constraints.
-- [ ] API smoke tests pass using the new schema.
-- [ ] Documentation updated with ERD and operational notes.
-- [ ] Persistence preferences and user device sync records validated via integration tests.
+- [x] API smoke tests pass using the new schema.
+- [x] Documentation updated with ERD and operational notes.
+- [x] Persistence preferences and user device sync records validated via integration tests.
+
+**TASK 2.1 STATUS: ✅ 100% COMPLETE** - All database infrastructure implemented with 8 migrations, 32 TypeORM entities, comprehensive indexing, triggers, soft delete support, and seeding capabilities.
 
 ## Risk Mitigation
 
