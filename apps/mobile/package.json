@@ -1,7 +1,7 @@
 {
   "name": "mobile",
   "version": "1.0.0",
-  "main": "index.js",
+  "main": "expo-router/entry",
   "scripts": {
     "start": "expo start",
     "android": "expo start --android",
@@ -29,10 +29,9 @@
     "@react-native-async-storage/async-storage": "2.2.0",
     "@react-native-community/datetimepicker": "8.4.4",
     "@react-native-picker/picker": "2.11.1",
-    "@react-navigation/bottom-tabs": "^7.4.7",
-    "@react-navigation/native": "^7.1.17",
-    "@react-navigation/stack": "^7.4.8",
+    "@expo/vector-icons": "^15.0.2",
     "expo": "54.0.10",
+    "expo-router": "~6.0.8",
     "expo-status-bar": "~3.0.8",
     "react": "19.1.0",
     "react-dom": "19.1.0",
@@ -48,12 +47,6 @@
     "zustand": "^5.0.8"
   },
   "devDependencies": {
-    "@babel/core": "^7.28.4",
-    "@babel/plugin-transform-flow-strip-types": "^7.27.1",
-    "@babel/plugin-transform-private-methods": "^7.27.1",
-    "@babel/plugin-transform-private-property-in-object": "^7.27.1",
-    "@babel/preset-env": "^7.28.3",
-    "@babel/preset-typescript": "^7.27.1",
     "@eslint/js": "^9.36.0",
     "@react-native-async-storage/async-storage": "2.1.2",
     "@testing-library/react-native": "^13.3.3",
@@ -62,7 +55,6 @@
     "@types/react": "19.1.13",
     "@typescript-eslint/eslint-plugin": "^8.44.1",
     "@typescript-eslint/parser": "^8.44.1",
-    "babel-jest": "^29.7.0",
     "detox": "^20.42.0",
     "eslint": "^9.36.0",
     "eslint-config-prettier": "^10.1.8",
@@ -81,7 +73,6 @@
     "prettier": "^3.6.2",
     "react-native-reanimated": "~3.17.4",
     "react-test-renderer": "19.1.0",
-    "ts-jest": "^29.4.4",
     "typescript": "~5.9.2",
     "typescript-eslint": "^8.44.1",
     "webpack-bundle-analyzer": "^4.10.2"

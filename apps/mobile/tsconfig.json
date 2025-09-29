@@ -10,6 +10,8 @@
     "src/**/*.ts",
     "src/**/*.tsx",
     "src/**/*.test.ts",
-    "src/**/*.test.tsx"
+    "src/**/*.test.tsx",
+    ".expo/types/**/*.ts",
+    "expo-env.d.ts"
   ]
 }

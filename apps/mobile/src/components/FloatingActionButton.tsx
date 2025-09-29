@@ -1,25 +1,6 @@
 import React from 'react';
 import { TouchableOpacity, Text, StyleSheet, ViewStyle } from 'react-native';
-import { useNavigation } from '@react-navigation/native';
-import { StackNavigationProp } from '@react-navigation/stack';
-
-// Define your RootStackParamList or import it
-// This should match the one used in your navigator
-type RootStackParamList = {
-  Home: undefined;
-  AddExpense: { groupId?: string } | undefined; // Allow passing groupId
-  History: undefined;
-  GroupDetail: { groupId: string };
-  ExpenseInsights: {
-    contextType: 'personal' | 'group';
-    contextId: string;
-    initialDate?: Date;
-  };
-  Settings: undefined;
-  // Add other screens here
-};
-
-type NavigationProp = StackNavigationProp<RootStackParamList, 'AddExpense'>;
+import { router } from 'expo-router';
 
 interface FloatingActionButtonProps {
   onPress?: () => void; // Custom press action
@@ -32,13 +13,18 @@ const FloatingActionButton: React.FC<FloatingActionButtonProps> = ({
   style,
   groupId,
 }) => {
-  const navigation = useNavigation<NavigationProp>();
-
   const handlePress = () => {
     if (onPress) {
       onPress();
     } else {
-      navigation.navigate('AddExpense', groupId ? { groupId } : undefined);
+      if (groupId) {
+        router.push({
+          pathname: '/add-expense',
+          params: { groupId },
+        });
+      } else {
+        router.push('/add-expense');
+      }
     }
   };
 

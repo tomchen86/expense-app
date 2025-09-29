@@ -1,4 +1,4 @@
-# Node / pnpm
+# Node / pnpm dependencies
 node_modules/
 
 # Builds
@@ -20,9 +20,10 @@ apps/*/coverage/
 .expo-packager-cache/
 .expo/.tmp/
 metro-cache/
+web-build/
+expo-env.d.ts
 
 # Platform-specific
-.DS_Store
 Thumbs.db
 
 # Environment / secrets
@@ -44,3 +45,35 @@ yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
 
+# Native
+.kotlin/
+*.orig.*
+*.jks
+*.p8
+*.p12
+*.key
+*.mobileprovision
+
+# Metro
+.metro-health-check*
+
+# debug
+npm-debug.*
+yarn-debug.*
+yarn-error.*
+
+# macOS
+.DS_Store
+*.pem
+
+# local env files
+.env*.local
+
+# typescript
+*.tsbuildinfo
+
+app-example
+
+# generated native folders
+/ios
+/android

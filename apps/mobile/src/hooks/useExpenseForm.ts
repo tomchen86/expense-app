@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo } from 'react';
 import { Platform as _Platform, Alert } from 'react-native';
-import { useNavigation } from '@react-navigation/native';
+import { router } from 'expo-router';
 import { DateTimePickerEvent } from '@react-native-community/datetimepicker';
 import { useExpenseStore } from '../store/expenseStore';
 import {
@@ -30,8 +30,6 @@ interface UseExpenseFormProps {
 }
 
 export const useExpenseForm = ({ editingExpense }: UseExpenseFormProps) => {
-  const navigation = useNavigation();
-
   // Get data and actions from the Zustand store
   const addExpenseToStore = useExpenseStore((state) => state.addExpense);
   const updateExpenseToStore = useExpenseStore((state) => state.updateExpense);
@@ -207,7 +205,7 @@ export const useExpenseForm = ({ editingExpense }: UseExpenseFormProps) => {
       addExpenseToStore(expenseData);
     }
 
-    navigation.goBack(); // Navigate back after successful submission
+    router.back(); // Navigate back after successful submission
   };
 
   return {
