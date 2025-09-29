@@ -77,3 +77,7 @@ app-example
 # generated native folders
 /ios
 /android
+
+# referenc folder
+my-app/
+legacy/
