@@ -57,8 +57,9 @@ The mobile app uses the following key technologies and patterns:
 - Uses a unique `internalUserId` system for user identification
 
 ### Navigation
-- **React Navigation** with stack and bottom tab navigators
-- Main screens: Home, History, Settings, AddExpense, ExpenseInsights
+- **Expo Router** with file-based routing system
+- Tab navigation: `app/(tabs)/` with index, history, settings
+- Stack screens: `app/add-expense.tsx`, `app/group-detail.tsx`, `app/insights.tsx`, `app/manage-categories.tsx`
 
 ### Core Data Models
 Key types defined in `src/types/index.ts`:
@@ -106,7 +107,7 @@ Always follow TDD and Don't edit test case withou user's permission.
   - Test infrastructure being established for mobile compatibility
 
 ### Development Status by App
-- **Mobile**: 100% complete - 294/294 tests, feature-complete expense tracking with local-only storage
+- **Mobile**: 100% complete - Migrated to Expo Router, feature-complete expense tracking with local-only storage
 - **Database**: 100% complete - Full PostgreSQL schema with TDD coverage and seed data
 - **API**: 15% complete - NestJS scaffold with TypeORM config, implementing TDD methodology for mobile compatibility
 - **Web**: Basic Next.js setup, deferred until API completion
@@ -125,6 +126,10 @@ Always follow TDD and Don't edit test case withou user's permission.
 ## Development Notes
 
 - **Mobile App**: Feature-complete local-only expense tracking with sophisticated Zustand state management
+- **Navigation Migration**: Successfully migrated from React Navigation to Expo Router (September 2025)
+  - Eliminated babel dependencies and simplified build configuration
+  - Implemented file-based routing with type safety
+  - Preserved all 294 tests and functionality
 - **Database Layer**: Production-ready PostgreSQL schema with comprehensive migrations and TDD coverage
 - **API Strategy**: Mobile-first TDD approach ensuring exact compatibility with existing mobile app interfaces
 - **Critical Insight**: API must exactly replicate mobile app's local functionality server-side, not add new features
