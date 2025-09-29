@@ -28,15 +28,8 @@ const defaultSettings = {
   notifications: true,
 };
 
-// Mock @react-navigation/native at the module level
-jest.mock('@react-navigation/native', () => ({
-  useNavigation: jest.fn(),
-}));
-
-import { useNavigation } from '@react-navigation/native';
-const mockUseNavigation = useNavigation as jest.MockedFunction<
-  typeof useNavigation
->;
+// Expo router is already mocked in jest.setup.unit.ts
+import { router } from 'expo-router';
 
 const resetAllStores = () => {
   const { internalUserId } = useUserStore.getState();
@@ -66,17 +59,7 @@ const resetAllStores = () => {
   });
 };
 
-const createNavigationMock = () => ({
-  navigate: jest.fn(),
-  dispatch: jest.fn(),
-  reset: jest.fn(),
-  goBack: jest.fn(),
-  isFocused: jest.fn(() => true),
-  canGoBack: jest.fn(() => true),
-  getId: jest.fn(),
-  getParent: jest.fn(),
-  getState: jest.fn(() => ({ routes: [], index: 0 })),
-});
+// Router mocking is handled in jest.setup.unit.ts
 
 const HookHarness = forwardRef(
   ({ editingExpense }: { editingExpense?: Expense | null }, ref) => {
@@ -94,13 +77,10 @@ describe('useExpenseForm', () => {
   });
 
   afterEach(() => {
-    mockUseNavigation.mockReset();
+    jest.clearAllMocks();
   });
 
   it('creates a personal expense using the internal user identifier', () => {
-    const navigationMock = createNavigationMock();
-    mockUseNavigation.mockReturnValue(navigationMock);
-
     const ref = createRef<ReturnType<typeof useExpenseForm>>();
     let renderer: TestRenderer.ReactTestRenderer;
     act(() => {
@@ -130,14 +110,11 @@ describe('useExpenseForm', () => {
       groupId: internalUserId,
       caption: 'Morning treat',
     });
-    expect(navigationMock.goBack).toHaveBeenCalledTimes(1);
+    expect(router.back).toHaveBeenCalledTimes(1);
     expect(Alert.alert).not.toHaveBeenCalled();
   });
 
   it('validates group expenses require payer and participants', () => {
-    const navigationMock = createNavigationMock();
-    mockUseNavigation.mockReturnValue(navigationMock);
-
     const group: ExpenseGroup = {
       id: 'group-1',
       name: 'Roommates',
@@ -172,13 +149,10 @@ describe('useExpenseForm', () => {
       'When adding to a group, please select who paid and who to split with.',
     );
     expect(useComposedExpenseStore.getState().expenses).toHaveLength(0);
-    expect(navigationMock.goBack).not.toHaveBeenCalled();
+    expect(router.back).not.toHaveBeenCalled();
   });
 
   it('updates an existing expense when editing', () => {
-    const navigationMock = createNavigationMock();
-    mockUseNavigation.mockReturnValue(navigationMock);
-
     const participant: Participant = { id: 'p1', name: 'Alex' };
     const group: ExpenseGroup = {
       id: 'group-2',
@@ -236,7 +210,7 @@ describe('useExpenseForm', () => {
       amount: 21.5,
       caption: 'Updated snacks',
     });
-    expect(navigationMock.goBack).toHaveBeenCalledTimes(1);
+    expect(router.back).toHaveBeenCalledTimes(1);
     expect(Alert.alert).not.toHaveBeenCalled();
   });
 });

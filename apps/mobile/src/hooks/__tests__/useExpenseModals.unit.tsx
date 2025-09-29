@@ -8,9 +8,8 @@ import TestRenderer, { act } from 'react-test-renderer';
 import { useExpenseModals } from '../useExpenseModals';
 import type { ExpenseGroup, Participant } from '../../types';
 
-jest.mock('@react-navigation/native', () => ({
-  useNavigation: jest.fn(),
-}));
+// Expo router is already mocked in jest.setup.unit.ts
+import { router } from 'expo-router';
 
 type HookHandle = {
   hookValue: ReturnType<typeof useExpenseModals>;
@@ -112,12 +111,6 @@ describe('useExpenseModals', () => {
   });
 
   it('navigates to category management when add-new action selected', () => {
-    const navigate = jest.fn();
-    const mockUseNavigation = jest.requireMock(
-      '@react-navigation/native',
-    ).useNavigation;
-    mockUseNavigation.mockReturnValue({ navigate });
-
     const Harness = buildHarness(participants);
     const ref = createRef<HookHandle>();
 
@@ -131,7 +124,6 @@ describe('useExpenseModals', () => {
       );
     });
 
-    expect(navigate).toHaveBeenCalledWith('ManageCategoriesScreen');
-    mockUseNavigation.mockReset();
+    expect(router.push).toHaveBeenCalledWith('/manage-categories');
   });
 });
