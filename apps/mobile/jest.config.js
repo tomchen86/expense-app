@@ -8,6 +8,9 @@ module.exports = {
       setupFilesAfterEnv: ['<rootDir>/jest.setup.unit.ts'],
       testEnvironment: 'jsdom',
       transform: { '^.+\\.[jt]sx?$': 'babel-jest' },
+      transformIgnorePatterns: [
+        'node_modules/(?!.*(?:@react-native/js-polyfills|(jest-)?react-native|@react-native(?:-community)?|react-native-.*|expo(nent)?|@expo(nent)?/.*|@expo-google-fonts/.*|react-navigation|@react-navigation/.*|@unimodules/.*|unimodules|expo-modules-core|sentry-expo|native-base|react-native-svg))',
+      ],
       collectCoverageFrom: [
         'src/store/**/*.{ts,tsx}',
         'src/hooks/**/*.{ts,tsx}',
@@ -35,6 +38,9 @@ module.exports = {
       setupFilesAfterEnv: ['<rootDir>/jest.setup.int.ts'],
       testEnvironment: 'jsdom',
       transform: { '^.+\\.[jt]sx?$': 'babel-jest' },
+      transformIgnorePatterns: [
+        'node_modules/(?!.*(?:@react-native/js-polyfills|(jest-)?react-native|@react-native(?:-community)?|react-native-.*|expo(nent)?|@expo(nent)?/.*|@expo-google-fonts/.*|react-navigation|@react-navigation/.*|@unimodules/.*|unimodules|expo-modules-core|sentry-expo|native-base|react-native-svg))',
+      ],
     },
   ],
   coverageReporters: ['text-summary', 'lcov', 'html', 'html-spa'],
@@ -42,7 +48,4 @@ module.exports = {
     '^@/(.*)$': '<rootDir>/src/$1',
   },
   moduleFileExtensions: ['ts', 'tsx', 'js', 'jsx', 'json', 'node'],
-  transformIgnorePatterns: [
-    'node_modules/(?!(?:\\.pnpm/)?((jest-)?react-native|@react-native(-community)?|expo(nent)?|@expo(nent)?/.*|expo-router|@expo-google-fonts/.*|react-navigation|@react-navigation/.*|@sentry/react-native|native-base|react-native-svg))',
-  ],
 };

@@ -79,7 +79,6 @@ describe('useExpenseForm', () => {
   afterEach(() => {
     jest.clearAllMocks();
   });
-
   it('creates a personal expense using the internal user identifier', () => {
     const ref = createRef<ReturnType<typeof useExpenseForm>>();
     let renderer: TestRenderer.ReactTestRenderer;
@@ -113,7 +112,6 @@ describe('useExpenseForm', () => {
     expect(router.back).toHaveBeenCalledTimes(1);
     expect(Alert.alert).not.toHaveBeenCalled();
   });
-
   it('validates group expenses require payer and participants', () => {
     const group: ExpenseGroup = {
       id: 'group-1',
@@ -151,7 +149,6 @@ describe('useExpenseForm', () => {
     expect(useComposedExpenseStore.getState().expenses).toHaveLength(0);
     expect(router.back).not.toHaveBeenCalled();
   });
-
   it('updates an existing expense when editing', () => {
     const participant: Participant = { id: 'p1', name: 'Alex' };
     const group: ExpenseGroup = {
