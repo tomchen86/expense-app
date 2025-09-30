@@ -78,6 +78,7 @@
 ### iOS Build Requirements
 
 - **Xcode**: Required for iOS builds (macOS only)
+
 - **Simulator**: iPhone 15 (configured in .detoxrc.js)
 - **CocoaPods**: Already installed during prebuild
 
@@ -104,6 +105,7 @@ pnpm test:e2e -- --configuration android.emu.debug
 
 # Run specific test file
 pnpm test:e2e -- --configuration ios.sim.debug e2e/expenseFlow.test.js
+
 ```
 
 ### Ejection Impact

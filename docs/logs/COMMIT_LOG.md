@@ -28,6 +28,7 @@ Implemented testIDs for core expense creation flow:
 - BasicInfoSection: `expense-title-input`, `expense-amount-input`, `expense-caption-input`
 - SelectInput: Added testID prop support with `category-picker`
 - DatePicker: `date-picker`
+
 - AddExpenseScreen: `save-expense-button`
 - SettingsScreen: `username-input`
 
@@ -51,6 +52,7 @@ Implemented testIDs for core expense creation flow:
 - src/components/FloatingActionButton.tsx - Added testID
 - src/components/ExpenseForm/BasicInfoSection.tsx - Added testIDs to all inputs
 - src/components/SelectInput.tsx - Added testID prop support
+
 - src/screens/AddExpenseScreen.tsx - Added save button testID
 - src/screens/SettingsScreen.tsx - Added username input testID
 - New: ios/ and android/ native directories (full native projects)
