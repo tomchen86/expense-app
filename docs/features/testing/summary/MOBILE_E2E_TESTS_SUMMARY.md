@@ -1,24 +1,27 @@
-# E2E and Integration Test Comprehensive Summary
+# Mobile E2E Tests (Detox)
 
-This document provides a complete analysis of all End-to-End (E2E) and Integration test cases in the mobile application, covering real user workflows, data persistence, and complete feature validation.
+_Last updated: September 30, 2025_
 
 ## Overview
 
-The mobile app contains **5 E2E/Integration test files** covering comprehensive user journeys and system integration:
+The mobile app uses **Detox v20.42.0** for End-to-End testing on real devices and simulators. This document covers:
 
-- **E2E Tests** (3 files): Complete user workflows using Detox framework on real devices/simulators
-- **Integration Tests** (2 files): Screen-to-store workflow validation using Jest and React Native Testing Library
-- **Test Infrastructure**: Detox configuration for iOS/Android, custom helper utilities, state management
+- Complete E2E test scenarios (62 tests across 3 files)
+- TestID mapping for component identification
+- Test infrastructure and configuration
+- Status and next steps
+
+**Current Status**: 🚧 Infrastructure complete, iOS build pending
 
 ---
 
-## E2E Tests (Detox Framework)
+## E2E Test Suites
 
-### expenseFlow.test.js
+### 1. expenseFlow.test.js (20+ tests)
 
 **Test Suite**: `Expense Management Flow`
 
-#### New User Onboarding
+#### New User Onboarding (2 tests)
 
 1. **`should complete new user expense journey`**
    - **Behavior**: Tests complete first-time user workflow from username setup to expense creation
@@ -28,7 +31,7 @@ The mobile app contains **5 E2E/Integration test files** covering comprehensive 
    - **Behavior**: Tests username validation workflow for group features
    - **Validates**: Group creation blocked without username, navigation to settings, username setup, successful group creation after setup
 
-#### Expense Management
+#### Expense Management (3 tests)
 
 3. **`should create, edit, and delete expense`**
    - **Behavior**: Tests complete CRUD operations on expenses
@@ -42,7 +45,7 @@ The mobile app contains **5 E2E/Integration test files** covering comprehensive 
    - **Behavior**: Tests optional field handling in expense creation
    - **Validates**: Caption field functionality, persistence, display in expense list
 
-#### Group Management
+#### Group Management (3 tests)
 
 6. **`should create and manage group expense`**
    - **Behavior**: Tests group-based expense management workflow
@@ -56,7 +59,7 @@ The mobile app contains **5 E2E/Integration test files** covering comprehensive 
    - **Behavior**: Tests expense splitting and balance calculation
    - **Validates**: Group balance display, participant identification, split calculation (assuming equal split: $30.00 from $60.00)
 
-#### Category Management
+#### Category Management (3 tests)
 
 9. **`should create, edit, and delete categories`**
    - **Behavior**: Tests complete category lifecycle management
@@ -70,7 +73,7 @@ The mobile app contains **5 E2E/Integration test files** covering comprehensive 
     - **Behavior**: Tests category creation to usage workflow
     - **Validates**: Category creation, category availability in expense form, expense creation with custom category
 
-#### Insights and Analytics
+#### Insights and Analytics (3 tests)
 
 12. **`should navigate insights and view analytics`**
     - **Behavior**: Tests comprehensive analytics feature with multiple data points
@@ -84,13 +87,13 @@ The mobile app contains **5 E2E/Integration test files** covering comprehensive 
     - **Behavior**: Tests time-based filtering and navigation
     - **Validates**: Current month data display, previous/next month navigation, data filtering by time period
 
-#### Data Persistence
+#### Data Persistence (1 test)
 
 15. **`should persist data across app restarts`**
     - **Behavior**: Tests data persistence through app lifecycle
     - **Validates**: Expense persistence after app restart, username persistence, data integrity across sessions
 
-#### Error Handling
+#### Error Handling (2 tests)
 
 16. **`should handle invalid expense amounts gracefully`**
     - **Behavior**: Tests comprehensive amount validation with various invalid inputs
@@ -100,11 +103,13 @@ The mobile app contains **5 E2E/Integration test files** covering comprehensive 
     - **Behavior**: Tests group creation validation
     - **Validates**: Empty name validation, error message display, successful creation with valid name
 
-### userOnboarding.e2e.js
+---
+
+### 2. userOnboarding.e2e.js (17 tests)
 
 **Test Suite**: `User Onboarding Journey`
 
-#### First Time User Experience
+#### First Time User Experience (3 tests)
 
 1. **`should complete first-time user setup`**
    - **Behavior**: Tests virgin app state and initial user journey
@@ -118,7 +123,7 @@ The mobile app contains **5 E2E/Integration test files** covering comprehensive 
    - **Behavior**: Tests feature access control based on setup completion
    - **Validates**: Individual expense creation without username, insights access, category management access, group feature blocking
 
-#### Progressive Feature Discovery
+#### Progressive Feature Discovery (3 tests)
 
 4. **`should guide through first group creation`**
    - **Behavior**: Tests first-time group creation experience
@@ -132,7 +137,7 @@ The mobile app contains **5 E2E/Integration test files** covering comprehensive 
    - **Behavior**: Tests discovery and use of category management
    - **Validates**: Category picker exploration, settings navigation, custom category creation, usage in expense creation
 
-#### Data Migration and Settings
+#### Data Migration and Settings (2 tests)
 
 7. **`should handle settings preferences setup`**
    - **Behavior**: Tests settings configuration and persistence
@@ -142,7 +147,7 @@ The mobile app contains **5 E2E/Integration test files** covering comprehensive 
    - **Behavior**: Tests user profile management
    - **Validates**: Display name entry, settings persistence, display name usage in group context
 
-#### Error Recovery and Help
+#### Error Recovery and Help (3 tests)
 
 9. **`should handle network-like errors gracefully`**
    - **Behavior**: Tests data persistence and local storage reliability
@@ -156,11 +161,13 @@ The mobile app contains **5 E2E/Integration test files** covering comprehensive 
     - **Behavior**: Tests username field validation with edge cases
     - **Validates**: Empty username, length limits (2-30 chars), special character restrictions, reserved name prevention
 
-### dataValidation.e2e.js
+---
+
+### 3. dataValidation.e2e.js (25 tests)
 
 **Test Suite**: `Data Validation and Consistency`
 
-#### Cross-Screen Data Consistency
+#### Cross-Screen Data Consistency (4 tests)
 
 1. **`should persist expense across app restart`**
    - **Behavior**: Tests data persistence and cross-screen consistency
@@ -178,7 +185,7 @@ The mobile app contains **5 E2E/Integration test files** covering comprehensive 
    - **Behavior**: Tests rapid operations and state consistency
    - **Validates**: Multiple rapid expense creation, data integrity, accurate total calculations
 
-#### Data Integrity Validation
+#### Data Integrity Validation (4 tests)
 
 5. **`should validate expense amount precision`**
    - **Behavior**: Tests numerical precision and rounding behavior
@@ -196,7 +203,7 @@ The mobile app contains **5 E2E/Integration test files** covering comprehensive 
    - **Behavior**: Tests category validation with boundary conditions
    - **Validates**: Category name length limits (100→50 chars), validation error handling
 
-#### Calculation Accuracy
+#### Calculation Accuracy (3 tests)
 
 9. **`should calculate totals accurately with multiple currencies`**
    - **Behavior**: Tests financial calculation precision
@@ -210,7 +217,7 @@ The mobile app contains **5 E2E/Integration test files** covering comprehensive 
     - **Behavior**: Tests numerical limits and large amount handling
     - **Validates**: Large amounts (999.99, 1000.00, 9999.99), accurate summation ($11,999.98)
 
-#### State Recovery and Error Handling
+#### State Recovery and Error Handling (3 tests)
 
 12. **`should recover from partial data corruption`**
     - **Behavior**: Tests app resilience and recovery capabilities
@@ -224,7 +231,7 @@ The mobile app contains **5 E2E/Integration test files** covering comprehensive 
     - **Behavior**: Tests system stability under stress
     - **Validates**: Rapid CRUD operations, selective deletion, accurate calculations
 
-#### Edge Cases and Boundary Conditions
+#### Edge Cases and Boundary Conditions (3 tests)
 
 15. **`should handle minimum and maximum amounts`**
     - **Behavior**: Tests numerical boundary conditions
@@ -240,121 +247,64 @@ The mobile app contains **5 E2E/Integration test files** covering comprehensive 
 
 ---
 
-## Integration Tests (Jest + React Native Testing Library)
+## TestID Mapping
 
-### SettingsScreen.integration.test.ts
+This section maps the required test IDs to their corresponding components.
 
-**Test Suite**: `SettingsScreen Integration`
+### Implementation Status
 
-#### User Setup Workflow
+**Phase 1: Critical Path** ✅ Complete (8/8)
 
-1. **`should complete new user onboarding flow`**
-   - **Behavior**: Tests store integration for user creation
-   - **Validates**: User creation with display name, ID generation, state persistence
+- Essential for basic expense creation flow
+- All testIDs implemented
 
-2. **`should validate display name requirements during setup`**
-   - **Behavior**: Tests validation logic integration
-   - **Validates**: Required field validation, length limits (50 chars), Unicode support
+**Phase 2-3: Full Coverage** 🚧 In Progress (0/15)
 
-3. **`should handle settings persistence workflow`**
-   - **Behavior**: Tests settings store integration
-   - **Validates**: Multiple setting updates (theme, currency, date format), state persistence
+- Additional navigation and interaction elements
+- Pending implementation
 
-#### Group Creation Workflow
+### Required TestIDs by Screen
 
-4. **`should create group after username setup`**
-   - **Behavior**: Tests user-to-group workflow integration
-   - **Validates**: User setup verification, group creation, automatic participant addition
+#### Home Screen & FAB
 
-5. **`should require user before group creation`**
-   - **Behavior**: Tests validation workflow integration
-   - **Validates**: User validation, group creation blocking, validation error handling
+- ✅ `add-expense-fab` → `src/components/FloatingActionButton.tsx`
+- `expense-list` → `src/screens/HomeScreen.tsx` (FlatList)
+- `total-share-button` → `src/screens/HomeScreen.tsx` (Insights button)
 
-6. **`should handle participant management in groups`**
-   - **Behavior**: Tests group-participant relationship management
-   - **Validates**: Group creation, participant management, creator addition
+#### Add Expense Form
 
-#### Settings Management Workflow
+- ✅ `expense-title-input` → `src/components/ExpenseForm/BasicInfoSection.tsx`
+- ✅ `expense-amount-input` → `src/components/ExpenseForm/BasicInfoSection.tsx`
+- ✅ `expense-caption-input` → `src/components/ExpenseForm/BasicInfoSection.tsx`
+- ✅ `category-picker` → `src/components/ExpenseForm/BasicInfoSection.tsx` (via SelectInput)
+- ✅ `date-picker` → `src/components/DatePicker.tsx`
+- ✅ `save-expense-button` → `src/screens/AddExpenseScreen.tsx`
 
-7. **`should handle theme switching`**
-   - **Behavior**: Tests theme preference integration
-   - **Validates**: Theme state management, setting persistence, bidirectional changes
+#### Settings Screen
 
-8. **`should handle currency settings`**
-   - **Behavior**: Tests currency preference workflow
-   - **Validates**: Multiple currency support (USD, EUR, GBP, JPY, CAD), setting persistence
+- ✅ `username-input` → `src/screens/SettingsScreen.tsx`
+- `display-name-input` → `src/screens/SettingsScreen.tsx`
 
-9. **`should handle date format preferences`**
-   - **Behavior**: Tests date format integration
-   - **Validates**: Format options (MM/DD/YYYY, DD/MM/YYYY, YYYY-MM-DD), preference persistence
+#### Group Management
 
-10. **`should validate settings before saving`**
-    - **Behavior**: Tests comprehensive settings validation
-    - **Validates**: Theme validation, currency validation, date format validation, error collection
+- ✅ `add-group-button` → `src/screens/HistoryScreen.tsx`
+- `group-name-input` → `src/components/TextInputModal.tsx` (group creation modal)
+- `group-tag` → `src/components/ExpenseListItem.tsx` (group indicator)
+- `group-balances-button` → `src/screens/GroupDetailScreen.tsx`
 
-#### Navigation and State Transitions
+#### Category Management
 
-11. **`should handle unsaved changes warning`**
-    - **Behavior**: Tests navigation state management
-    - **Validates**: Navigation option changes, gesture control, save state awareness
+- `add-category-button` → `src/screens/ManageCategoriesScreen.tsx`
+- `category-name-input` → `src/components/categories/CategoryForm.tsx`
+- `color-option-blue` → `src/components/categories/ColorPicker.tsx`
+- `color-option-green` → `src/components/categories/ColorPicker.tsx`
 
-12. **`should handle save confirmation workflow`**
-    - **Behavior**: Tests save confirmation logic
-    - **Validates**: Confirmation trigger conditions, navigation awareness
+#### Insights Screen
 
-13. **`should handle settings migration on load`**
-    - **Behavior**: Tests data migration and backward compatibility
-    - **Validates**: Legacy settings handling, version migration, default value assignment
-
-### AddExpenseScreen.integration.test.ts
-
-**Test Suite**: `AddExpenseScreen Integration`
-
-#### Expense Creation Workflow
-
-1. **`should complete full expense creation flow`**
-   - **Behavior**: Tests complete expense creation through store integration
-   - **Validates**: Form data processing, store integration, expense persistence
-
-2. **`should handle group expense assignment`**
-   - **Behavior**: Tests expense-to-group assignment workflow
-   - **Validates**: Group creation, expense assignment, group relationship persistence
-
-3. **`should validate required fields`**
-   - **Behavior**: Tests form validation integration
-   - **Validates**: Required field validation (title, amount, category, date), comprehensive error collection
-
-4. **`should integrate with store correctly`**
-   - **Behavior**: Tests store integration with multiple operations
-   - **Validates**: Multiple expense creation, state updates, expense ordering by date
-
-#### Navigation and State Management
-
-5. **`should handle navigation back on successful save`**
-   - **Behavior**: Tests navigation integration after successful operations
-   - **Validates**: Save success handling, navigation triggering, error handling
-
-6. **`should maintain form state during category selection`**
-   - **Behavior**: Tests form state persistence during UI interactions
-   - **Validates**: Form field preservation, state immutability, UI interaction handling
-
-7. **`should handle form reset after successful submission`**
-   - **Behavior**: Tests form lifecycle management
-   - **Validates**: Form reset logic, initial state restoration, date default handling
-
-#### Category and Group Integration
-
-8. **`should load available categories`**
-   - **Behavior**: Tests category data integration
-   - **Validates**: Category loading, data availability, store synchronization
-
-9. **`should load available groups for expense assignment`**
-   - **Behavior**: Tests group data integration
-   - **Validates**: Group loading, selection availability, group management integration
-
-10. **`should handle expense assignment to specific group`**
-    - **Behavior**: Tests group assignment workflow
-    - **Validates**: Group creation, expense assignment, relationship persistence, group-expense association
+- `pie-chart` → `src/components/insights/CategoryChart.tsx`
+- `previous-month-button` → `src/components/insights/InsightsHeader.tsx`
+- `next-month-button` → `src/components/insights/InsightsHeader.tsx`
+- `date-period-selector` → `src/components/insights/DatePickerModal.tsx`
 
 ---
 
@@ -362,64 +312,189 @@ The mobile app contains **5 E2E/Integration test files** covering comprehensive 
 
 ### Detox Configuration (.detoxrc.js)
 
-- **iOS Support**: iPhone 15 simulator with Xcode build configurations
-- **Android Support**: Pixel 3a API 30 emulator and attached device support
-- **Build Configurations**: Debug and release builds for both platforms
-- **Port Configuration**: Metro bundler port forwarding (8081)
+```javascript
+module.exports = {
+  testRunner: 'jest',
+  runnerConfig: 'e2e/jest.config.js',
+  apps: {
+    'ios.debug': {
+      type: 'ios.app',
+      binaryPath: 'ios/build/Build/Products/Debug-iphonesimulator/mobile.app',
+      build:
+        'xcodebuild -workspace ios/mobile.xcworkspace -scheme mobile -configuration Debug -sdk iphonesimulator -derivedDataPath ios/build',
+    },
+    'android.debug': {
+      type: 'android.apk',
+      binaryPath: 'android/app/build/outputs/apk/debug/app-debug.apk',
+      build:
+        'cd android && ./gradlew assembleDebug assembleAndroidTest -DtestBuildType=debug',
+    },
+  },
+  devices: {
+    'ios.simulator': {
+      type: 'ios.simulator',
+      device: { type: 'iPhone 15' },
+    },
+    'android.emulator': {
+      type: 'android.emulator',
+      device: { avdName: 'Pixel_3a_API_30_x86' },
+    },
+  },
+  configurations: {
+    'ios.sim.debug': {
+      device: 'ios.simulator',
+      app: 'ios.debug',
+    },
+    'android.emu.debug': {
+      device: 'android.emulator',
+      app: 'android.debug',
+    },
+  },
+};
+```
+
+**Key Points**:
+
+- App name: `mobile` (after Expo Router migration)
+- Workspace: `ios/mobile.xcworkspace`
+- iOS simulator: iPhone 15
+- Android emulator: Pixel 3a API 30
 
 ### Test Setup (e2e/setup.js)
 
-- **Global Helpers**: Custom wait/tap/type/scroll utilities
-- **App Lifecycle**: Launch, reload, terminate management
-- **Test Data Management**: Expense creation, group creation, username setup helpers
-- **State Management**: App state clearing, test isolation
-- **Error Handling**: Alert dismissal, graceful failure handling
+**Global Helpers**:
+
+- Custom wait/tap/type/scroll utilities
+- App lifecycle management (launch, reload, terminate)
+- Test data helpers (expense creation, group setup, username)
+- State management (app reset, test isolation)
+- Error handling (alert dismissal, graceful failures)
 
 ### Jest Configuration (e2e/jest.config.js)
 
-- **Test Timeout**: 120 seconds for E2E operations
-- **Worker Limit**: Single worker for test isolation
-- **Global Setup/Teardown**: Detox environment management
-- **Test Pattern**: `<rootDir>/e2e/**/*.test.js`
+```javascript
+module.exports = {
+  rootDir: '..',
+  testMatch: ['<rootDir>/e2e/**/*.test.js'],
+  testTimeout: 120000,
+  maxWorkers: 1,
+  globalSetup: 'detox/runners/jest/globalSetup',
+  globalTeardown: 'detox/runners/jest/globalTeardown',
+  reporters: ['detox/runners/jest/reporter'],
+  testEnvironment: 'detox/runners/jest/testEnvironment',
+  verbose: true,
+};
+```
 
 ---
 
-## Summary Statistics
+## Running E2E Tests
 
-### Test Coverage by Type:
+### Build & Run Commands
 
-- **E2E Tests**: 3 files, 44 comprehensive user journey scenarios
-- **Integration Tests**: 2 files, 23 workflow validation scenarios
-- **Total Test Scenarios**: 67 comprehensive behavioral validations
+```bash
+# Build iOS app for testing
+pnpm test:e2e:build -- --configuration ios.sim.debug
 
-### E2E Test Coverage Areas:
+# Build Android app for testing
+pnpm test:e2e:build -- --configuration android.emu.debug
 
-- **User Onboarding**: Complete first-time user experience (11 scenarios)
-- **Expense Management**: CRUD operations and validation (9 scenarios)
-- **Group Management**: Creation, assignment, calculations (6 scenarios)
-- **Category Management**: Lifecycle and integration (3 scenarios)
-- **Analytics**: Insights and time-based filtering (3 scenarios)
-- **Data Persistence**: Cross-session and restart scenarios (3 scenarios)
-- **Error Handling**: Validation and edge cases (6 scenarios)
-- **Data Validation**: Precision, integrity, boundaries (5 scenarios)
+# Run all E2E tests (iOS)
+pnpm test:e2e -- --configuration ios.sim.debug
 
-### Integration Test Coverage Areas:
+# Run all E2E tests (Android)
+pnpm test:e2e -- --configuration android.emu.debug
 
-- **Settings Management**: User setup, preferences, validation (13 scenarios)
-- **Expense Workflows**: Creation, form handling, store integration (10 scenarios)
+# Run specific test file
+pnpm test:e2e -- --configuration ios.sim.debug e2e/expenseFlow.test.js
 
-### Platform Coverage:
+# Run with debug logging
+pnpm test:e2e -- --configuration ios.sim.debug --loglevel trace
+```
+
+### Prerequisites
+
+**iOS**:
+
+- macOS with Xcode installed
+- iOS Simulator (iPhone 15)
+- CocoaPods installed
+
+**Android**:
+
+- Android Studio with SDK
+- Android Emulator (Pixel 3a API 30)
+- JDK 11+
+
+---
+
+## Current Status & Next Steps
+
+### ✅ Completed
+
+1. Ejected to bare workflow (generated ios/ and android/ folders)
+2. Updated Detox configuration for bare workflow
+3. Added Phase 1 testIDs (8 critical components)
+4. All 294 unit/integration tests still passing
+
+### 🚧 In Progress
+
+5. Build iOS app for simulator (~5-10 minutes)
+6. Run first E2E test (expense creation flow)
+
+### 📋 Pending
+
+7. Add Phase 2-3 testIDs (15 remaining components)
+8. Run complete E2E test suite (62 tests)
+9. Add Android E2E testing
+10. Integrate E2E tests into CI/CD pipeline
+
+---
+
+## Test Coverage Summary
+
+### By Test Suite
+
+- **expenseFlow.test.js**: 17 tests - Core expense workflows
+- **userOnboarding.e2e.js**: 17 tests - First-time user experience
+- **dataValidation.e2e.js**: 25 tests - Data integrity and edge cases
+
+### By Feature Area
+
+- **User Onboarding**: 11 scenarios
+- **Expense Management**: 9 scenarios
+- **Group Management**: 6 scenarios
+- **Category Management**: 3 scenarios
+- **Analytics/Insights**: 3 scenarios
+- **Data Persistence**: 3 scenarios
+- **Error Handling**: 6 scenarios
+- **Data Validation**: 21 scenarios
+
+### Platform Coverage
 
 - **iOS**: iPhone 15 simulator with complete gesture support
 - **Android**: Pixel 3a emulator and physical device support
 - **Real Device Testing**: Both platforms support attached device testing
 
-### Key Validation Strengths:
+### Key Validation Strengths
 
-- **Complete User Journeys**: End-to-end workflows from onboarding to advanced features
-- **Data Persistence**: Cross-session data integrity validation
-- **Financial Accuracy**: Precise calculation validation with edge cases
-- **Unicode Support**: International character and emoji handling
-- **Error Resilience**: Comprehensive validation and error recovery
-- **Performance**: Large dataset handling (1000+ expenses in unit tests)
-- **Accessibility**: UI element identification and interaction patterns
+- ✅ Complete user journeys from onboarding to advanced features
+- ✅ Data persistence and cross-session integrity
+- ✅ Financial accuracy with precise calculation validation
+- ✅ Unicode and special character support
+- ✅ Comprehensive error handling and recovery
+- ✅ Performance testing with large datasets
+- ✅ Accessibility through proper UI element identification
+
+---
+
+## Related Documentation
+
+- **Integration Tests**: See `MOBILE_INTEGRATION_TESTS.md` for Jest integration tests
+- **Unit Tests**: See `MOBILE_UNIT_TESTS.md` for component/hook unit tests
+- **Router Testing**: See `EXPO_ROUTER_TESTING_ANALYSIS.md` for navigation test strategy
+- **Testing Overview**: See `TESTING_OVERVIEW.md` for complete testing documentation
+
+---
+
+_For questions about E2E testing infrastructure or strategy, refer to this document or the TESTING_OVERVIEW.md._

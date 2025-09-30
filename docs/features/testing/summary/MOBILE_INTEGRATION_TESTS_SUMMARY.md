@@ -1,5 +1,7 @@
 # Mobile Integration Tests Summary
 
+_Last updated: September 30, 2025_
+
 ## Overview
 
 The React Native Expo mobile app has **2 integration test files** covering **Screen-level workflows**. The integration test suite validates complete user flows, store integration, and cross-component interactions across 23 test cases.
@@ -13,6 +15,8 @@ Integration tests focus on:
 - **Cross-Component Interactions**: Testing how components work together
 - **Real State Management**: Using actual store state, not test fixtures
 - **User Experience Validation**: Ensuring workflows match user expectations
+
+**Router Testing Strategy**: These integration tests use mocked `expo-router` for navigation. For tests requiring actual navigation flows, see [EXPO_ROUTER_TESTING_ANALYSIS.md](./EXPO_ROUTER_TESTING_ANALYSIS.md) for guidance on using `renderRouter` (ISS-106).
 
 ## Key Differences from Unit Tests
 

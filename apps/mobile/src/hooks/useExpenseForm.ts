@@ -10,7 +10,6 @@ import {
   ExpenseCategory,
   Category as _Category,
 } from '../types'; // Added Category for type safety if needed
-import { DEFAULT_CATEGORIES } from '../constants/expenses'; // Changed to DEFAULT_CATEGORIES
 
 // Define the shape of the form data
 interface FormState {
@@ -35,6 +34,7 @@ export const useExpenseForm = ({ editingExpense }: UseExpenseFormProps) => {
   const updateExpenseToStore = useExpenseStore((state) => state.updateExpense);
   const groups = useExpenseStore((state) => state.groups);
   const participants = useExpenseStore((state) => state.participants);
+  const categories = useExpenseStore((state) => state.categories);
   const userSettings = useExpenseStore((state) => state.userSettings);
   const internalUserId = useExpenseStore((state) => state.internalUserId); // Get internalUserId
 
@@ -53,7 +53,7 @@ export const useExpenseForm = ({ editingExpense }: UseExpenseFormProps) => {
     amount: '',
     date: new Date(),
     caption: '',
-    category: DEFAULT_CATEGORIES[0].name, // Use .name from the first Category object
+    category: categories[0]?.name ?? 'Other', // Use first category from store
     selectedGroup: null,
     paidByParticipant: null,
     selectedParticipants: [],
@@ -68,7 +68,7 @@ export const useExpenseForm = ({ editingExpense }: UseExpenseFormProps) => {
         amount: '',
         date: new Date(),
         caption: '',
-        category: DEFAULT_CATEGORIES[0].name, // Use .name from the first Category object
+        category: categories[0]?.name ?? 'Other', // Use first category from store
         selectedGroup: null,
         paidByParticipant: null,
         selectedParticipants: [],
@@ -96,7 +96,7 @@ export const useExpenseForm = ({ editingExpense }: UseExpenseFormProps) => {
       paidByParticipant: paidBy,
       selectedParticipants: splitBetween,
     });
-  }, [editingExpense, groups, participants]); // Rerun effect if these change
+  }, [editingExpense, groups, participants, categories]); // Rerun effect if these change
 
   // Generic handler to update any form field
   const handleUpdateFormState = (field: keyof FormState, value: any) => {
@@ -219,5 +219,6 @@ export const useExpenseForm = ({ editingExpense }: UseExpenseFormProps) => {
     // Expose necessary data for modals/pickers if not handled by components
     groups,
     participants,
+    categories,
   };
 };
