@@ -1,3 +1,29 @@
+[5f1c454] #Tue Sep 30 13:30:00 2025
+⏺ Organize documentation files
+
+## Major Changes
+
+- Moved 3 E2E/Expo Router testing docs from apps/mobile/ to docs/features/testing/
+  - E2E_TESTID_MAPPING.md
+  - EXPO_ROUTER_TESTING_ANALYSIS.md
+  - EXPO_ROUTER_TESTING_REFERENCE.md
+- Archived completed Task 2.1 database design plan (✅-PLAN-TASK_2.1_DATABASE_DESIGN.md)
+- Archived Phase 2 audit reports (✅-STATUS-PHASE_2_COMPLETION_AUDIT.md, ✅-STATUS-PHASE_2_IMPLEMENTATION_AUDIT.md)
+- Archived completed Expo Router migration plan (✅-PLAN-EXPO_ROUTER_MIGRATION.md)
+- Organized developer brainstorming note (DEVELOPER_NOTE.md)
+- Archived duplicate Claude implementation plan (PLAN-TASK_2.2_CLAUDE_IMPLEMENTATION.md)
+
+## Files Modified
+
+- 10 files renamed/moved with git history preserved
+- All changes follow hybrid documentation structure (planning/, status/, logs/, features/, archive/)
+
+## Next Steps
+
+1. Continue with E2E test execution (build iOS app, run first test)
+
+---
+
 [PENDING_COMMIT] #Tue Sep 30 13:XX:XX 2025
 ⏺ Ejected to bare workflow and implemented E2E testing infrastructure
 

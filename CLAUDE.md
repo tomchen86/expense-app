@@ -93,6 +93,13 @@ Always follow TDD and Don't edit test case withou user's permission.
 - Track refactoring efforts and architectural improvements
 - Write a session summary or task complete log if significant change has been made.
 
+### Documentation Structure
+- **Check current progress**: See `/docs/status/` for active work tracking
+- **Maintain documentation**: Follow `/docs/UPDATE_CHECKLIST.md` for when/what to update
+- **Understand structure**: Refer to `/docs/DOCUMENT_STRUCTURE_GUIDE.md` for organization rules
+- Use hybrid structure: planning/, status/, logs/, features/, architecture/, archive/
+- Follow naming conventions: PLAN-, STATUS-, LOG-, ✅ prefixes
+
 ## Current Project State (September 2025)
 
 ### Phase 2: API Development Status
@@ -118,10 +125,17 @@ Always follow TDD and Don't edit test case withou user's permission.
 - **Goal**: Enable mobile app's transition from local-only to cloud-sync persistence mode
 
 ### Key Documentation
-- `/docs/TDD_API_IMPLEMENTATION_PLAN.md` - Polished strategic plan for API development
-- `/docs/mobile-app-analysis.md` - Complete analysis of mobile app data structures for API compatibility
-- `/docs/DATABASE_SCHEMA.md` - Complete database schema documentation
-- `/docs/STORAGE_STRATEGY.md` - Dual persistence architecture (local-only ↔ cloud-sync)
+
+**Documentation System**:
+- `/docs/status/` - Current progress on active work
+- `/docs/UPDATE_CHECKLIST.md` - AI reminder for when/what to update
+- `/docs/DOCUMENT_STRUCTURE_GUIDE.md` - Organization rules and naming conventions
+
+**Planning & Architecture**:
+- `/docs/planning/PLAN-TDD_API_IMPLEMENTATION.md` - Strategic plan for API development
+- `/docs/planning/mobile-app-analysis.md` - Mobile app data structures for API compatibility
+- `/docs/features/database/DATABASE_SCHEMA.md` - Complete database schema documentation
+- `/docs/architecture/STORAGE_STRATEGY.md` - Dual persistence architecture (local-only ↔ cloud-sync)
 
 ## Development Notes
 
