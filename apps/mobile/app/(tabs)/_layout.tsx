@@ -5,19 +5,19 @@ export default function TabLayout() {
   return (
     <Tabs
       screenOptions={{
-        headerShown: false,
+        headerShown: true,
       }}
     >
-      <Tabs.Screen
-        name='index'
-        options={{
-          title: 'Expense',
-        }}
-      />
       <Tabs.Screen
         name='history'
         options={{
           title: 'Group',
+        }}
+      />
+      <Tabs.Screen
+        name='index'
+        options={{
+          title: 'Expense',
         }}
       />
       <Tabs.Screen
