@@ -77,7 +77,7 @@ const AddExpenseScreen = () => {
           onRemoveParticipant={handleRemoveParticipant}
         />
 
-        <View style={styles.buttonContainer}>
+        <View style={styles.buttonContainer} testID='save-expense-button'>
           <Button
             title={isEditing ? 'Update Expense' : 'Add Expense'}
             onPress={handleSubmit}

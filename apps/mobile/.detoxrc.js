@@ -11,17 +11,15 @@ module.exports = {
   apps: {
     'ios.debug': {
       type: 'ios.app',
-      binaryPath:
-        'ios/build/Build/Products/Debug-iphonesimulator/ExpenseTracker.app',
+      binaryPath: 'ios/build/Build/Products/Debug-iphonesimulator/mobile.app',
       build:
-        'xcodebuild -workspace ios/ExpenseTracker.xcworkspace -scheme ExpenseTracker -configuration Debug -sdk iphonesimulator -derivedDataPath ios/build',
+        'xcodebuild -workspace ios/mobile.xcworkspace -scheme mobile -configuration Debug -sdk iphonesimulator -derivedDataPath ios/build',
     },
     'ios.release': {
       type: 'ios.app',
-      binaryPath:
-        'ios/build/Build/Products/Release-iphonesimulator/ExpenseTracker.app',
+      binaryPath: 'ios/build/Build/Products/Release-iphonesimulator/mobile.app',
       build:
-        'xcodebuild -workspace ios/ExpenseTracker.xcworkspace -scheme ExpenseTracker -configuration Release -sdk iphonesimulator -derivedDataPath ios/build',
+        'xcodebuild -workspace ios/mobile.xcworkspace -scheme mobile -configuration Release -sdk iphonesimulator -derivedDataPath ios/build',
     },
     'android.debug': {
       type: 'android.apk',

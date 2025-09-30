@@ -37,6 +37,7 @@ export const BasicInfoSection: React.FC<BasicInfoSectionProps> = ({
         value={title}
         onChangeText={onTitleChange}
         placeholder='Enter expense title'
+        testID='expense-title-input'
       />
 
       <FormInput
@@ -45,12 +46,14 @@ export const BasicInfoSection: React.FC<BasicInfoSectionProps> = ({
         onChangeText={onAmountChange}
         placeholder='Enter amount'
         keyboardType='numeric'
+        testID='expense-amount-input'
       />
 
       <SelectInput
         label='Category:'
         selectedValue={category}
         onPress={onCategoryPress}
+        testID='category-picker'
       />
 
       <FormInput
@@ -60,9 +63,15 @@ export const BasicInfoSection: React.FC<BasicInfoSectionProps> = ({
         placeholder='Add a note about this expense'
         multiline
         numberOfLines={3}
+        testID='expense-caption-input'
       />
 
-      <DatePicker label='Date:' date={date} onChange={onDateChange} />
+      <DatePicker
+        label='Date:'
+        date={date}
+        onChange={onDateChange}
+        testID='date-picker'
+      />
     </>
   );
 };

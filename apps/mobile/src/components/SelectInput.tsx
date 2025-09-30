@@ -16,6 +16,7 @@ interface SelectInputProps {
   containerStyle?: ViewStyle;
   labelStyle?: TextStyle;
   valueStyle?: TextStyle;
+  testID?: string;
 }
 
 const SelectInput: React.FC<SelectInputProps> = ({
@@ -26,6 +27,7 @@ const SelectInput: React.FC<SelectInputProps> = ({
   containerStyle,
   labelStyle,
   valueStyle,
+  testID,
 }) => {
   const displayValue = selectedValue || placeholder;
   const isPlaceholder = !selectedValue;
@@ -33,7 +35,11 @@ const SelectInput: React.FC<SelectInputProps> = ({
   return (
     <View style={[styles.container, containerStyle]}>
       <Text style={[styles.label, labelStyle]}>{label}</Text>
-      <TouchableOpacity onPress={onPress} style={styles.touchable}>
+      <TouchableOpacity
+        onPress={onPress}
+        style={styles.touchable}
+        testID={testID}
+      >
         <Text
           style={[
             styles.valueText,

@@ -29,7 +29,11 @@ const FloatingActionButton: React.FC<FloatingActionButtonProps> = ({
   };
 
   return (
-    <TouchableOpacity style={[styles.fab, style]} onPress={handlePress}>
+    <TouchableOpacity
+      style={[styles.fab, style]}
+      onPress={handlePress}
+      testID='add-expense-fab'
+    >
       <Text style={styles.fabText}>+</Text>
     </TouchableOpacity>
   );

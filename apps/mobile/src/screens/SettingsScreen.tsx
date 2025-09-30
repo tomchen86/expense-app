@@ -46,6 +46,7 @@ const SettingsScreen = () => {
         value={name}
         onChangeText={setName}
         placeholder='Enter your name'
+        testID='username-input'
       />
 
       <TouchableOpacity style={styles.saveButton} onPress={handleSave}>
