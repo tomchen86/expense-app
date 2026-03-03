@@ -1,6 +1,6 @@
 # Document Structure Guide
 
-_Last updated: September 30, 2025_
+_Last updated: March 3, 2026_
 
 ## Purpose
 
@@ -90,26 +90,9 @@ docs/
     COMMIT_LOG.md → logs/       # Detailed technical changes (moved)
 ```
 
-## When to Update Which Documents
+## When to Update & Immutability Rules
 
-### Always Update
-
-| Document             | Purpose                  | Trigger                    | Location       |
-| -------------------- | ------------------------ | -------------------------- | -------------- |
-| `logs/COMMIT_LOG.md` | Technical commit details | Every commit               | `docs/logs/`   |
-| `STATUS-*.md`        | Current progress         | Work progress on that task | `docs/status/` |
-
-### Conditional Updates
-
-| Category         | Document                           | Purpose            | Trigger                 | Location                  |
-| ---------------- | ---------------------------------- | ------------------ | ----------------------- | ------------------------- |
-| **Planning**     | `PLAN-*.md`                        | Task/feature plans | Creating new work plan  | `docs/planning/`          |
-| **Planning**     | `ROADMAP.md`                       | Phase sequencing   | Roadmap/scope changes   | `docs/planning/`          |
-| **Status**       | `STATUS-*.md`                      | Progress tracking  | Work starts on plan     | `docs/status/`            |
-| **Logs**         | `LOG-SESSION_*.md`                 | Session summary    | End of work session     | `docs/logs/`              |
-| **Features**     | Feature docs                       | Technical details  | Feature implementation  | `docs/features/[domain]/` |
-| **Architecture** | `ARCHITECTURE.md`                  | System design      | Cross-app changes       | `docs/architecture/`      |
-| **Architecture** | `ARCHITECTURE_DECISION_RECORDS.md` | ADR log            | Architectural decisions | `docs/architecture/`      |
+> For detailed update triggers, session workflow, and quality gates, see `docs/UPDATE_CHECKLIST.md`.
 
 ### Never Modify (Archive Only)
 
@@ -155,18 +138,9 @@ docs/
 
 ### 3. Logs (`docs/logs/`)
 
-**Purpose**: Append-only historical records
+**Purpose**: Append-only historical records (session logs, commit log, changelog).
 
-**What goes here**:
-
-- `LOG-SESSION_YYYY_MM_DD.md` - Session work summaries
-- `COMMIT_LOG.md` - Detailed technical commit history
-
-**Lifecycle**:
-
-- Created per session/commit
-- **Never modified** after creation
-- Never archived (logs are permanent history)
+> For log templates, formats, and anti-overlap rules, see `docs/GUIDE-LOG_TRACKING.md`.
 
 ### 4. Features (`docs/features/`)
 
@@ -239,42 +213,9 @@ docs/
 ❌ docs/archive/PLAN-OLD_FEATURE.md (not marked as complete with ✅)
 ```
 
-## Migration Rules
-
-When reorganizing existing documentation:
-
-1. **Add prefix** to documents missing them
-   - `PHASE_2_API_DEVELOPMENT_PLAN.md` → `PLAN-PHASE_2_API_DEVELOPMENT.md`
-
-2. **Move to correct category**
-   - `E2E_IMPLEMENTATION_STATUS.md` → `status/STATUS-E2E_IMPLEMENTATION.md`
-   - `SESSION_SUMMARY_*.md` → `logs/LOG-SESSION_*.md`
-
-3. **Archive completed work**
-   - `planning/PLAN-DATABASE_SCHEMA.md` → `archive/✅-PLAN-DATABASE_SCHEMA.md`
-   - `status/STATUS-DATABASE_IMPLEMENTATION.md` → `archive/✅-STATUS-DATABASE_IMPLEMENTATION.md`
-
-4. **Group by feature**
-   - `MOBILE_UNIT_TESTS.md` → `features/testing/MOBILE_UNIT_TESTS.md`
-   - `DATABASE_SCHEMA.md` → `features/database/DATABASE_SCHEMA.md`
-
 ## CHANGELOG vs COMMIT_LOG
 
-**COMMIT_LOG.md** (Technical - Recommended):
-
-- Detailed technical changes per commit
-- For developers reviewing implementation
-- Located in `docs/logs/COMMIT_LOG.md`
-- Append-only, chronological
-
-**CHANGELOG.md** (User-facing - Optional):
-
-- High-level feature releases
-- Version numbers (1.0.0, 1.1.0)
-- For stakeholders/users
-- Located in `docs/CHANGELOG.md`
-
-**Recommendation**: Use COMMIT_LOG.md as primary. CHANGELOG.md is optional for versioned releases.
+> For detailed comparison, templates, and anti-overlap rules between the three log types, see `docs/GUIDE-LOG_TRACKING.md`.
 
 ## Best Practices
 

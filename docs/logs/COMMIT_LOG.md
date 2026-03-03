@@ -1,3 +1,38 @@
+[61529ff] 2026-03-03 ~23:00
+Title: Consolidate documentation — deduplicate meta-docs, fix archive naming
+Work ID: WORK-2026-03-03-01
+Authoring: Human+AI
+
+Intent
+
+- Three meta-docs (DOCUMENT_STRUCTURE_GUIDE, UPDATE_CHECKLIST, GUIDE-LOG_TRACKING) had significant overlap
+- Archive files lacked ✅- prefix convention; one log file had wrong prefix
+
+Changes
+
+- Trimmed ~60 lines from DOCUMENT_STRUCTURE_GUIDE.md (removed duplicated update triggers, log templates, changelog comparison)
+- Trimmed ~110 lines from UPDATE_CHECKLIST.md (removed duplicated key principles, COMMIT_LOG template, never-modify table, workflow summary)
+- Added cross-reference header to GUIDE-LOG_TRACKING.md
+- Created docs/README.md as universal entry point
+- Rewrote CLAUDE.md (lean, qualitative status, no hardcoded test counts)
+- Renamed 10 archive files to add ✅- prefix
+- Renamed LOG_PHASE3_TESTING_REPORT.md → LOG-PHASE3_TESTING_REPORT.md
+
+Verification
+
+- V1-V7 checks all pass (cross-references, no duplicate templates, archive naming, no broken real links, no hardcoded counts)
+
+Risks / Rollback
+
+- Content was trimmed, not deleted — replaced with cross-references to the owning doc
+- `git revert <hash>` restores all three files
+
+Links
+
+- Session: this commit covers the full documentation consolidation task
+
+---
+
 [5f1c454] #Tue Sep 30 13:30:00 2025
 ⏺ Organize documentation files
 

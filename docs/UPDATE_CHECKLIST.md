@@ -1,17 +1,12 @@
 # Update Checklist
 
-_Last updated: September 30, 2025_
+_Last updated: March 3, 2026_
 
 ## Purpose
 
 This checklist works in tandem with `docs/DOCUMENT_STRUCTURE_GUIDE.md`. Use this at the end of every coding session or before committing to ensure code quality, documentation accuracy, and proper version control.
 
-**Key Principles**:
-
-- Follow the hybrid documentation structure (planning/, status/, logs/, features/, architecture/, archive/)
-- Use prefixes consistently (PLAN-, STATUS-, LOG-, ✅)
-- Archive completed work, don't delete it
-- Keep session logs append-only
+> Naming conventions, lifecycle rules, and folder structure: see `docs/DOCUMENT_STRUCTURE_GUIDE.md`.
 
 ---
 
@@ -60,37 +55,12 @@ Ask yourself: **What kind of work did I do?**
 
 ### Step 2: Always Update (Every Session)
 
-| Document                | Location       | Purpose                  | Action                                              |
-| ----------------------- | -------------- | ------------------------ | --------------------------------------------------- |
-| **COMMIT_LOG.md**       | `docs/logs/`   | Technical commit details | Append entry with commit details (see format below) |
-| **STATUS-[FEATURE].md** | `docs/status/` | Track current progress   | Update progress, blockers, next steps               |
+| Document                | Location       | Purpose                  | Action                                |
+| ----------------------- | -------------- | ------------------------ | ------------------------------------- |
+| **COMMIT_LOG.md**       | `docs/logs/`   | Technical commit details | Append entry per commit               |
+| **STATUS-[FEATURE].md** | `docs/status/` | Track current progress   | Update progress, blockers, next steps |
 
-**COMMIT_LOG Entry Format**:
-
-```markdown
-[COMMIT_HASH] #Day Month DD HH:MM:SS YYYY
-⏺ Brief description of what was accomplished
-
-## Major Changes
-
-- Change 1
-- Change 2
-
-## Files Modified
-
-- File 1 - what changed
-- File 2 - what changed
-
-## Test Status
-
-- ✅ All tests passing (X/X)
-- ❌ Known issues
-
-## Next Steps
-
-1. Next action
-2. Follow-up work
-```
+> For COMMIT_LOG, session log, and changelog templates, see `docs/GUIDE-LOG_TRACKING.md`.
 
 ### Step 3: Conditional Updates (When Triggered)
 
@@ -111,15 +81,7 @@ Ask yourself: **What kind of work did I do?**
 
 ### Step 4: Never Modify (Archive Only)
 
-**These documents are historical records - never edit after archival**:
-
-| Document Type       | Location                                             | Rule                                    |
-| ------------------- | ---------------------------------------------------- | --------------------------------------- |
-| Archived plans      | `docs/archive/✅-PLAN-*.md`                          | Never modify once archived              |
-| Archived status     | `docs/archive/✅-STATUS-*.md`                        | Never modify once archived              |
-| Session logs        | `docs/logs/LOG-SESSION-*.md`                         | Append-only, create new for new session |
-| Closed ADRs         | `docs/architecture/ARCHITECTURE_DECISION_RECORDS.md` | Append new ADRs, don't edit old ones    |
-| Completed task logs | `docs/archive/`                                      | Historical reference only               |
+> Archive and immutability rules: see `docs/DOCUMENT_STRUCTURE_GUIDE.md` (Never Modify table).
 
 ---
 
@@ -253,58 +215,7 @@ ls docs/archive/✅-*.md              # Completed work
 
 ---
 
-## Integration with DOCUMENT_STRUCTURE_GUIDE.md
+## Related Guides
 
-This checklist follows the structure defined in `docs/DOCUMENT_STRUCTURE_GUIDE.md`:
-
-- **Naming**: Use prefixes (PLAN-, STATUS-, LOG-, ✅)
-- **Organization**: Follow hybrid folder structure
-- **Lifecycle**: Plan → Status → Log → Archive (✅)
-- **Updates**: Refer to guide for "when to update which documents"
-
-**When to consult the guide**:
-
-- Creating new document types
-- Unsure where document belongs
-- Need lifecycle clarification
-- Reorganizing documentation
-
----
-
-## Workflow Summary
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│ 1. CODE CHANGES                                             │
-│    - Write code, tests                                      │
-│    - Run quality gates                                      │
-└───────────────────────┬─────────────────────────────────────┘
-                        │
-┌───────────────────────▼─────────────────────────────────────┐
-│ 2. UPDATE DOCS (Hybrid Structure)                          │
-│    Planning:   docs/planning/PLAN-*.md                      │
-│    Status:     docs/status/STATUS-*.md                      │
-│    Logs:       docs/logs/LOG-SESSION-*.md, COMMIT_LOG.md    │
-│    Features:   docs/features/[domain]/*.md                  │
-│    Archive:    docs/archive/✅-*.md (when complete)          │
-└───────────────────────┬─────────────────────────────────────┘
-                        │
-┌───────────────────────▼─────────────────────────────────────┐
-│ 3. GIT COMMIT                                               │
-│    - Review staged changes                                  │
-│    - Check for secrets                                      │
-│    - Write concise commit message                           │
-│    - Reference COMMIT_LOG.md                                │
-└───────────────────────┬─────────────────────────────────────┘
-                        │
-┌───────────────────────▼─────────────────────────────────────┐
-│ 4. PUSH & NEXT                                              │
-│    - Push to remote                                         │
-│    - Update STATUS-*.md with next steps                     │
-│    - Archive if work complete (add ✅ prefix)               │
-└─────────────────────────────────────────────────────────────┘
-```
-
----
-
-**Last Review**: Update this checklist alongside `docs/DOCUMENT_STRUCTURE_GUIDE.md` when workflows change. Keep both documents synchronized.
+- Folder structure, naming, lifecycle, immutability rules: `docs/DOCUMENT_STRUCTURE_GUIDE.md`
+- Log templates, formats, anti-overlap rules: `docs/GUIDE-LOG_TRACKING.md`
