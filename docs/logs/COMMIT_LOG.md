@@ -1,3 +1,48 @@
+[46c89ff] 2026-03-04
+Title: Upgrade to Expo SDK 55 (React Native 0.83, React 19.2)
+Work ID: WORK-2026-03-04-01
+Authoring: Human+AI
+
+Intent
+
+- Upgrade Expo SDK 54 → 55, React 19.1 → 19.2, React Native 0.81.4 → 0.83.2
+- SDK 55 removes Legacy Architecture and mandates New Architecture
+- Align all peer dependencies to SDK 55 compatible versions
+
+Changes
+
+- Updated expo 54.0.10 → 55.0.4
+- Updated react 19.1.0 → 19.2.0, react-dom 19.1.0 → 19.2.0
+- Updated react-native 0.81.4 → 0.83.2
+- Updated expo-router ~6.0.8 → ~55.0.3, expo-status-bar ~3.0.8 → ~55.0.4
+- Updated react-native-reanimated ~4.1.2 → 4.2.1 (moved back to dependencies)
+- Updated react-native-screens ~4.16.0 → ~4.23.0, react-native-gesture-handler ~2.28.0 → ~2.30.0
+- Updated react-native-svg 15.12.1 → 15.15.3, react-native-worklets ^0.5.1 → ^0.7.2
+- Updated @react-native-community/datetimepicker 8.4.4 → 8.6.0, picker 2.11.1 → 2.11.4
+- Added explicit deps: expo-constants ~55.0.7, expo-font ~55.0.4, expo-linking ~55.0.7
+- app.json: removed newArchEnabled (now mandatory default) and edgeToEdgeEnabled (now mandatory)
+- app.json: added @react-native-community/datetimepicker and expo-font config plugins
+- tsconfig.json: added esModuleInterop, allowSyntheticDefaultImports; expanded include paths
+- **mocks**/expo-router.ts: replaced React.ReactNode with ReactNode import (React 19.2 compat)
+- useExpenseModals.ts: generic type parameter for type-safe setFormState
+
+Verification
+
+- `npx expo-doctor@latest` → 17/17 checks pass
+- `pnpm --filter mobile typecheck` → 0 errors
+- `pnpm --filter mobile test` → 270/270 tests pass, 26/26 suites
+
+Risks / Rollback
+
+- Native builds (iOS/Android) require Xcode 26+ and a dev build rebuild
+- `git revert <hash>` to roll back; run `pnpm install` after to restore lockfile
+
+Links
+
+- Session: Expo SDK 55 upgrade, March 4 2026
+
+---
+
 [61529ff] 2026-03-03 ~23:00
 Title: Consolidate documentation — deduplicate meta-docs, fix archive naming
 Work ID: WORK-2026-03-03-01

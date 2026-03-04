@@ -1,3 +1,6 @@
+/// <reference types="jest" />
+import type { ReactNode } from 'react';
+
 export const router = {
   push: jest.fn(),
   replace: jest.fn(),
@@ -15,18 +18,18 @@ export const useSegments = jest.fn(() => []);
 export const useNavigationContainerRef = jest.fn();
 
 export const Stack = {
-  Screen: ({ children }: { children?: React.ReactNode }) => children || null,
+  Screen: ({ children }: { children?: ReactNode }) => children || null,
 };
 
 export const Tabs = {
-  Screen: ({ children }: { children?: React.ReactNode }) => children || null,
+  Screen: ({ children }: { children?: ReactNode }) => children || null,
 };
 
-export const Link = ({ children }: { children?: React.ReactNode }) =>
+export const Link = ({ children }: { children?: ReactNode }) =>
   children || null;
 
 export const Redirect = () => null;
-export const Slot = ({ children }: { children?: React.ReactNode }) =>
+export const Slot = ({ children }: { children?: ReactNode }) =>
   children || null;
 
 export default {

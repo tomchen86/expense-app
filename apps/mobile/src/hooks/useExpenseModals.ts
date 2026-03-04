@@ -1,28 +1,37 @@
 import { useState, useMemo } from 'react';
+import type { Dispatch, SetStateAction } from 'react';
 import { router } from 'expo-router';
 import { ExpenseCategory, Participant, ExpenseGroup } from '../types';
 import { DEFAULT_CATEGORIES } from '../constants/expenses';
 
 const ADD_NEW_CATEGORY_ACTION = '+ Add New Category' as const;
 
-interface UseExpenseModalsProps {
-  formState: {
-    category: ExpenseCategory;
-    selectedGroup: ExpenseGroup | null;
-    paidByParticipant: Participant | null;
-    selectedParticipants: Participant[];
-  };
+type ModalFormState = {
+  category: ExpenseCategory;
+  selectedGroup: ExpenseGroup | null;
+  paidByParticipant: Participant | null;
+  selectedParticipants: Participant[];
+};
+
+type ModalFormField =
+  | 'category'
+  | 'selectedGroup'
+  | 'paidByParticipant'
+  | 'selectedParticipants';
+
+interface UseExpenseModalsPropsGeneric<TFormState extends ModalFormState> {
+  formState: TFormState;
   participants: Participant[];
-  handleUpdateFormState: (field: string, value: any) => void;
-  setFormState: React.Dispatch<React.SetStateAction<any>>;
+  handleUpdateFormState: (field: ModalFormField, value: any) => void;
+  setFormState: Dispatch<SetStateAction<TFormState>>;
 }
 
-export const useExpenseModals = ({
+export const useExpenseModals = <TFormState extends ModalFormState>({
   formState,
   participants,
   handleUpdateFormState,
   setFormState,
-}: UseExpenseModalsProps) => {
+}: UseExpenseModalsPropsGeneric<TFormState>) => {
   // Modal visibility state
   const [showCategoryModal, setShowCategoryModal] = useState(false);
   const [showGroupModal, setShowGroupModal] = useState(false);
@@ -67,7 +76,7 @@ export const useExpenseModals = ({
   };
 
   const handleParticipantSelect = (item: Participant) => {
-    setFormState((prev: any) => {
+    setFormState((prev) => {
       const isSelected = prev.selectedParticipants.some(
         (p: Participant) => p.id === item.id,
       );
@@ -78,7 +87,7 @@ export const useExpenseModals = ({
               (p: Participant) => p.id !== item.id,
             )
           : [...prev.selectedParticipants, item],
-      };
+      } as TFormState;
     });
   };
 

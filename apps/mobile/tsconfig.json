@@ -3,14 +3,21 @@
   "compilerOptions": {
     "types": ["jest", "node"],
     "skipLibCheck": true,
-    "jsx": "react-jsx"
+    "jsx": "react-jsx",
+    "esModuleInterop": true,
+    "allowSyntheticDefaultImports": true
   },
   "include": [
+    "app",
+    "app/**/*.ts",
+    "app/**/*.tsx",
     "src",
     "src/**/*.ts",
     "src/**/*.tsx",
     "src/**/*.test.ts",
     "src/**/*.test.tsx",
+    "__mocks__",
+    "__mocks__/**/*.ts",
     ".expo/types/**/*.ts",
     "expo-env.d.ts"
   ]
