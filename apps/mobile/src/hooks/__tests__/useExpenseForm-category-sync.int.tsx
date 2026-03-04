@@ -31,7 +31,7 @@ describe('useExpenseForm - Category Sync Integration', () => {
       groups: [],
       participants: [],
       categories: TEST_CATEGORIES,
-      userSettings: { name: 'Test User', currency: 'USD' },
+      userSettings: { name: 'Test User' },
       internalUserId: 'test-user-id',
     });
   });

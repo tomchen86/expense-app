@@ -19,6 +19,7 @@ interface DatePickerProps {
   containerStyle?: ViewStyle;
   labelStyle?: TextStyle;
   valueStyle?: TextStyle;
+  testID?: string;
   // Add other DateTimePicker props if needed (e.g., minimumDate, maximumDate)
 }
 
@@ -29,6 +30,7 @@ const DatePicker: React.FC<DatePickerProps> = ({
   containerStyle,
   labelStyle,
   valueStyle,
+  testID,
   ...rest // Pass down other DateTimePicker props
 }) => {
   const [showPicker, setShowPicker] = useState(false);
@@ -59,6 +61,7 @@ const DatePicker: React.FC<DatePickerProps> = ({
     <View style={[styles.container, containerStyle]}>
       <Text style={[styles.label, labelStyle]}>{label}</Text>
       <TouchableOpacity
+        testID={testID}
         onPress={() => setShowPicker(true)}
         style={styles.touchable}
       >
