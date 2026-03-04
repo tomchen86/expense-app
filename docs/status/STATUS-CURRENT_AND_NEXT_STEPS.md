@@ -1,5 +1,7 @@
 # API Status & Next Actions (September 27, 2025)
 
+> Resume note (March 3, 2026): Check `docs/status/STATUS-RESUME_AUDIT_2026_03_03.md` first for the latest verified build/test snapshot and restart checklist.
+
 ## ✅ PHASE 2 COMPLETE: API Development
 
 ### Current State - API Infrastructure Complete
