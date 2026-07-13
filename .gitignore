@@ -1,5 +1,6 @@
 # Node / pnpm dependencies
 node_modules/
+.pnpm-store/
 
 # Builds
 build/
