@@ -2,24 +2,25 @@
 
 ## Quick Start — What to Read First
 
-| You want to...                                      | Read                                      |
-| --------------------------------------------------- | ----------------------------------------- |
-| Understand the project & run commands               | `../CLAUDE.md`                            |
-| Check current progress / next steps                 | `status/STATUS-CURRENT_AND_NEXT_STEPS.md` |
-| Know where to put a new document                    | `DOCUMENT_STRUCTURE_GUIDE.md`             |
-| Run end-of-session checks                           | `UPDATE_CHECKLIST.md`                     |
-| Write a session log, commit log, or changelog entry | `GUIDE-LOG_TRACKING.md`                   |
-| Review the API development plan                     | `planning/PLAN-TDD_API_IMPLEMENTATION.md` |
-| Learn the current API code and architecture         | `features/api/GUIDE-API_CODE.md`          |
-| Learn which API tests currently exist               | `features/testing/GUIDE-API_TESTS.md`     |
-| Learn which Mobile tests currently exist            | `features/testing/GUIDE-MOBILE-TESTS.md`  |
-| Understand the storage architecture                 | `architecture/STORAGE_STRATEGY.md`        |
+| You want to...                                      | Read                                         |
+| --------------------------------------------------- | -------------------------------------------- |
+| Understand the project & run commands               | `../CLAUDE.md`                               |
+| Check current progress / next steps                 | `status/STATUS-CURRENT_AND_NEXT_STEPS.md`    |
+| Know where to put a new document                    | `DOCUMENT_STRUCTURE_GUIDE.md`                |
+| Run end-of-session checks                           | `UPDATE_CHECKLIST.md`                        |
+| Write a session log, commit log, or changelog entry | `GUIDE-LOG_TRACKING.md`                      |
+| Learn JavaScript/TypeScript web development basics  | `GUIDE-JAVASCRIPT_WEB_DEVELOPMENT_BASICS.md` |
+| Review the API development plan                     | `planning/PLAN-TDD_API_IMPLEMENTATION.md`    |
+| Learn the current API code and architecture         | `features/api/GUIDE-API_CODE.md`             |
+| Learn which API tests currently exist               | `features/testing/GUIDE-API_TESTS.md`        |
+| Learn which Mobile tests currently exist            | `features/testing/GUIDE-MOBILE-TESTS.md`     |
+| Understand the storage architecture                 | `architecture/STORAGE_STRATEGY.md`           |
 
 ## Project Status (qualitative)
 
 - **Mobile app**: Feature-complete, local-only storage. Run `pnpm --filter mobile test` for current counts.
 - **Database schema**: Complete (PostgreSQL, TypeORM, migrations, seeds).
-- **API**: In progress — NestJS, mobile-first TDD. Run `pnpm --filter api test` for current counts.
+- **API**: In progress — NestJS, mobile-first TDD. See `features/testing/GUIDE-API_TESTS.md` for current counts and safe test commands.
 - **Web**: Deferred until API is complete.
 
 ## Folder Structure
