@@ -81,3 +81,7 @@ android/
 # referenc folder
 my-app/
 legacy/
+
+# Spectra app data
+.spectra/
+openspec/.vector-search.db*
