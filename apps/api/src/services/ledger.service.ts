@@ -19,9 +19,7 @@ type CoupleMemberEntity = InstanceType<typeof Entities.CoupleMember>;
 type ParticipantEntity = InstanceType<typeof Entities.Participant>;
 type UserEntity = InstanceType<typeof Entities.User>;
 
-type CoupleStatus = CoupleEntity['status'];
 type CoupleMemberStatus = CoupleMemberEntity['status'];
-type CoupleMemberRole = CoupleMemberEntity['role'];
 
 type EnsureLedgerOptions = {
   ensureDefaultCategories?: boolean;
@@ -79,7 +77,7 @@ export class LedgerService {
     const couple = this.coupleRepository.create();
     couple.name = 'Personal Ledger';
     couple.inviteCode = this.generateInviteCode();
-    couple.status = 'active' as CoupleStatus;
+    couple.status = 'active';
     couple.createdBy = userId;
 
     const savedCouple = await this.coupleRepository.save(couple);
@@ -87,8 +85,8 @@ export class LedgerService {
     const membership = this.coupleMemberRepository.create();
     membership.coupleId = savedCouple.id;
     membership.userId = userId;
-    membership.role = 'owner' as CoupleMemberRole;
-    membership.status = 'active' as CoupleMemberStatus;
+    membership.role = 'owner';
+    membership.status = 'active';
 
     await this.coupleMemberRepository.save(membership);
 

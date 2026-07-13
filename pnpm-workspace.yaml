@@ -3,3 +3,17 @@ packages:
   - packages/*
   - '!apps/legacy'
   - '!apps/my-app'
+
+overrides:
+  prettier: ^3.9.5
+
+allowBuilds:
+  '@swc/core': true
+  detox: true
+  dtrace-provider: false
+  sqlite3: true
+  unrs-resolver: true
+
+peerDependencyRules:
+  allowedVersions:
+    'jest-watch-typeahead>jest': '30'

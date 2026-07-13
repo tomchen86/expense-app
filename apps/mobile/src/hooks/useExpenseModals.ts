@@ -14,10 +14,7 @@ type ModalFormState = {
 };
 
 type ModalFormField =
-  | 'category'
-  | 'selectedGroup'
-  | 'paidByParticipant'
-  | 'selectedParticipants';
+  'category' | 'selectedGroup' | 'paidByParticipant' | 'selectedParticipants';
 
 interface UseExpenseModalsPropsGeneric<TFormState extends ModalFormState> {
   formState: TFormState;

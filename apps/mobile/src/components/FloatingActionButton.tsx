@@ -51,11 +51,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#007bff', // Example color, adjust as needed
     justifyContent: 'center',
     alignItems: 'center',
-    elevation: 8, // For Android shadow
-    shadowColor: '#000', // For iOS shadow
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.3,
-    shadowRadius: 4,
+    boxShadow: '0 2px 4px rgba(0, 0, 0, 0.3)',
     opacity: 0.85, // Slightly transparent
   },
   fabText: {

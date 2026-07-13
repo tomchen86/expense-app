@@ -24,30 +24,6 @@ jest.mock('expo-status-bar', () => ({
   StatusBar: 'StatusBar',
 }));
 
-// Mock React Navigation
-jest.mock('@react-navigation/native', () => {
-  return {
-    ...jest.requireActual('@react-navigation/native'),
-    useNavigation: () => ({
-      navigate: jest.fn(),
-      dispatch: jest.fn(),
-      reset: jest.fn(),
-      goBack: jest.fn(),
-      isFocused: jest.fn(() => true),
-      canGoBack: jest.fn(() => true),
-      getId: jest.fn(),
-      getParent: jest.fn(),
-      getState: jest.fn(() => ({ routes: [], index: 0 })),
-    }),
-    useRoute: () => ({
-      key: 'test',
-      name: 'test',
-      params: {},
-    }),
-    useFocusEffect: jest.fn(),
-  };
-});
-
 // Mock React Native SVG
 jest.mock('react-native-svg', () => {
   const { View } = require('react-native');

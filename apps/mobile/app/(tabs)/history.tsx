@@ -9,11 +9,7 @@ import {
 } from 'react-native';
 import { router } from 'expo-router';
 import { useExpenseStore } from '../../src/store/expenseStore';
-import {
-  ExpenseGroup,
-  Participant as _Participant,
-  Expense,
-} from '../../src/types';
+import { ExpenseGroup, Participant as _Participant } from '../../src/types';
 
 import GroupListItem from '../../src/components/GroupListItem';
 import TextInputModal from '../../src/components/TextInputModal';
@@ -185,11 +181,7 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     alignItems: 'center',
     marginBottom: 20,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.23,
-    shadowRadius: 2.62,
-    elevation: 4,
+    boxShadow: '0 2px 2.62px rgba(0, 0, 0, 0.23)',
   },
   createGroupButtonText: {
     color: '#ffffff',

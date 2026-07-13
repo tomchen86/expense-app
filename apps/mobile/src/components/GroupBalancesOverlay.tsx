@@ -37,14 +37,12 @@ const GroupBalancesOverlay: React.FC<GroupBalancesOverlayProps> = ({
 
   const renderMemberBalance = ({ item }: { item: MemberBalanceDetails }) => {
     const balance = item.netBalance;
-    let balanceText = '';
-    if (balance > 0) {
-      balanceText = `Is Owed $${balance.toFixed(2)}`;
-    } else if (balance < 0) {
-      balanceText = `Owes $${Math.abs(balance).toFixed(2)}`;
-    } else {
-      balanceText = 'Settled up';
-    }
+    const balanceText =
+      balance > 0
+        ? `Is Owed $${balance.toFixed(2)}`
+        : balance < 0
+          ? `Owes $${Math.abs(balance).toFixed(2)}`
+          : 'Settled up';
 
     return (
       <View style={styles.memberItem}>
@@ -102,14 +100,7 @@ const styles = StyleSheet.create({
     borderRadius: 20,
     padding: 35,
     alignItems: 'center',
-    shadowColor: '#000',
-    shadowOffset: {
-      width: 0,
-      height: 2,
-    },
-    shadowOpacity: 0.25,
-    shadowRadius: 4,
-    elevation: 5,
+    boxShadow: '0 2px 4px rgba(0, 0, 0, 0.25)',
     width: '90%', // Occupy approx half screen, adjust as needed
     maxHeight: '80%',
   },
@@ -144,7 +135,7 @@ const styles = StyleSheet.create({
   button: {
     borderRadius: 10,
     padding: 10,
-    elevation: 2,
+    boxShadow: '0 1px 2px rgba(0, 0, 0, 0.2)',
     marginTop: 15,
   },
   buttonClose: {

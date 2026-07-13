@@ -100,31 +100,6 @@ jest.mock('@react-native-async-storage/async-storage', () => ({
   clear: jest.fn(() => Promise.resolve()),
 }));
 
-// Mock React Navigation
-jest.mock('@react-navigation/native', () => {
-  const actualNav = jest.requireActual('@react-navigation/native');
-  return {
-    ...actualNav,
-    useNavigation: () => ({
-      navigate: jest.fn(),
-      dispatch: jest.fn(),
-      reset: jest.fn(),
-      goBack: jest.fn(),
-      isFocused: jest.fn(() => true),
-      canGoBack: jest.fn(() => true),
-      getId: jest.fn(),
-      getParent: jest.fn(),
-      getState: jest.fn(() => ({ routes: [], index: 0 })),
-    }),
-    useRoute: () => ({
-      key: 'test',
-      name: 'test',
-      params: {},
-    }),
-    useFocusEffect: jest.fn(),
-  };
-});
-
 // Silence the warning: Animated: `useNativeDriver` is not supported
 // jest.mock('react-native/Libraries/Animated/NativeAnimatedHelper');
 

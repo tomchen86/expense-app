@@ -2,7 +2,7 @@ import { useExpenseStore } from '../features/expenseStore';
 import { mockExpenses, createMockExpense } from '../../__tests__/fixtures';
 
 describe('ExpenseStore', () => {
-  let randomSpy: jest.SpyInstance<number, []>;
+  let randomSpy: jest.SpiedFunction<typeof Math.random>;
 
   beforeEach(() => {
     // Reset store state and provide deterministic IDs

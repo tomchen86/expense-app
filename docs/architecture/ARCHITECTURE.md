@@ -258,7 +258,8 @@ To comply with 500-line file limit, the store will be decomposed:
 ```typescript
 // Future Store Composition
 interface AppState
-  extends ExpenseStore, // Core expense operations
+  extends
+    ExpenseStore, // Core expense operations
     GroupStore, // Group management
     ParticipantStore, // Participant operations
     CategoryStore, // Category management

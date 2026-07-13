@@ -11,10 +11,7 @@ import { Couple } from './couple.entity';
 import { User } from './user.entity';
 
 export type CoupleInvitationStatus =
-  | 'pending'
-  | 'accepted'
-  | 'declined'
-  | 'expired';
+  'pending' | 'accepted' | 'declined' | 'expired';
 
 @Entity('couple_invitations')
 @Check(

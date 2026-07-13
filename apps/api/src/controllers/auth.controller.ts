@@ -227,8 +227,7 @@ export class AuthController {
             userDetails.settings?.defaultSplitMethod || 'equal',
           persistenceMode:
             (userDetails.settings?.persistenceMode as
-              | 'local_only'
-              | 'cloud_sync') || 'local_only',
+              'local_only' | 'cloud_sync') || 'local_only',
         },
       },
     };
@@ -266,8 +265,7 @@ export class AuthController {
             dateFormat: result.settings.dateFormat || 'MM/DD/YYYY',
             defaultSplitMethod: result.settings.defaultSplitMethod || 'equal',
             persistenceMode: result.settings.persistenceMode as
-              | 'local_only'
-              | 'cloud_sync',
+              'local_only' | 'cloud_sync',
           },
           persistenceChangeTimestamp: result.persistenceChangeTimestamp,
         },

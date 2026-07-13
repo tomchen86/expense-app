@@ -62,23 +62,22 @@ const postgresCollection: EntityCollection = {
 };
 
 const simpleCollection: EntityCollection = {
-  Category: CategorySimple as unknown as typeof Category,
-  CoupleInvitation:
-    CoupleInvitationSimple as unknown as typeof CoupleInvitation,
-  CoupleMember: CoupleMemberSimple as unknown as typeof CoupleMember,
-  Couple: CoupleSimple as unknown as typeof Couple,
+  Category: CategorySimple,
+  CoupleInvitation: CoupleInvitationSimple,
+  CoupleMember: CoupleMemberSimple,
+  Couple: CoupleSimple,
   ExpenseAttachment:
     ExpenseAttachmentSimple as unknown as typeof ExpenseAttachment,
-  ExpenseGroup: ExpenseGroupSimple as unknown as typeof ExpenseGroup,
+  ExpenseGroup: ExpenseGroupSimple,
   ExpenseSplit: ExpenseSplitSimple as unknown as typeof ExpenseSplit,
   Expense: ExpenseSimple as unknown as typeof Expense,
-  GroupMember: GroupMemberSimple as unknown as typeof GroupMember,
-  Participant: ParticipantSimple as unknown as typeof Participant,
+  GroupMember: GroupMemberSimple,
+  Participant: ParticipantSimple,
   UserAuthIdentity:
     UserAuthIdentitySimple as unknown as typeof UserAuthIdentity,
-  UserDevice: UserDeviceSimple as unknown as typeof UserDevice,
-  UserSettings: UserSettingsSimple as unknown as typeof UserSettings,
-  User: UserSimple as unknown as typeof User,
+  UserDevice: UserDeviceSimple,
+  UserSettings: UserSettingsSimple,
+  User: UserSimple,
 };
 
 export const getEntityCollection = (

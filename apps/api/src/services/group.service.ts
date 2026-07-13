@@ -116,10 +116,8 @@ export class GroupService {
       membership.groupId = savedGroup.id;
       membership.participantId = participant.id;
       membership.role =
-        participant.id === selfParticipantId
-          ? ('owner' as GroupMemberRole)
-          : ('member' as GroupMemberRole);
-      membership.status = 'active' as GroupMemberStatus;
+        participant.id === selfParticipantId ? 'owner' : 'member';
+      membership.status = 'active';
       return membership;
     });
 
@@ -253,7 +251,7 @@ export class GroupService {
     if (memberships.length > 0) {
       await this.groupMemberRepository.save(
         memberships.map((membership) => {
-          membership.status = 'left' as GroupMemberStatus;
+          membership.status = 'left';
           return membership;
         }),
       );
@@ -353,7 +351,7 @@ export class GroupService {
         const changed =
           membership.status !== ('active' as GroupMemberStatus) ||
           membership.role !== desiredRole;
-        membership.status = 'active' as GroupMemberStatus;
+        membership.status = 'active';
         membership.role = desiredRole;
         if (changed) {
           updates.push(membership);
@@ -363,7 +361,7 @@ export class GroupService {
         newMembership.groupId = groupId;
         newMembership.participantId = participant.id;
         newMembership.role = desiredRole;
-        newMembership.status = 'active' as GroupMemberStatus;
+        newMembership.status = 'active';
         additions.push(newMembership);
       }
     }
@@ -393,7 +391,7 @@ export class GroupService {
     if (removals.length > 0) {
       await this.groupMemberRepository.save(
         removals.map((member) => {
-          member.status = 'left' as GroupMemberStatus;
+          member.status = 'left';
           return member;
         }),
       );

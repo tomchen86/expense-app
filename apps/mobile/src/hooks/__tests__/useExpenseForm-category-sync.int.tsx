@@ -2,6 +2,7 @@ import { renderHook, act, waitFor } from '@testing-library/react-native';
 import { useExpenseForm } from '../useExpenseForm';
 import { useExpenseStore } from '../../store/expenseStore';
 import { useCategoryStore } from '../../store/features/categoryStore';
+import type { Expense } from '../../types';
 
 // Mock expo-router
 jest.mock('expo-router', () => ({
@@ -142,12 +143,12 @@ describe('useExpenseForm - Category Sync Integration', () => {
       caption: '',
     };
 
-    const { result, rerender } = renderHook(
-      ({ editingExpense }) => useExpenseForm({ editingExpense }),
-      {
-        initialProps: { editingExpense: mockExpense },
-      },
-    );
+    const { result, rerender } = renderHook<
+      ReturnType<typeof useExpenseForm>,
+      { editingExpense: Expense | null }
+    >(({ editingExpense }) => useExpenseForm({ editingExpense }), {
+      initialProps: { editingExpense: mockExpense },
+    });
 
     // Initially editing expense with "Transport" category
     expect(result.current.formState.category).toBe('Transport');

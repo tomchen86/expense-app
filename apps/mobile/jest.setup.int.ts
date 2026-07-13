@@ -1,6 +1,5 @@
 // Integration test setup - minimal mocks only
-// DO NOT load setup-component.ts as it mocks @react-navigation/native
-// which breaks expo-router/testing-library
+// DO NOT load setup-component.ts because integration tests need real router behavior.
 
 // Define React Native globals
 global.__DEV__ = true;
@@ -28,5 +27,5 @@ jest.mock('expo-status-bar', () => ({
   StatusBar: 'StatusBar',
 }));
 
-// IMPORTANT: Do not mock expo-router or @react-navigation/native
+// IMPORTANT: Do not mock expo-router
 // Integration tests need real router functionality

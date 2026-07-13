@@ -29,7 +29,8 @@
     "plugins": [
       "expo-router",
       "@react-native-community/datetimepicker",
-      "expo-font"
+      "expo-font",
+      "expo-status-bar"
     ],
     "experiments": {
       "typedRoutes": true

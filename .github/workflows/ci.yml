@@ -11,8 +11,8 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  NODE_VERSION: '20'
-  PNPM_VERSION: '9'
+  NODE_VERSION: '22.22.1'
+  PNPM_VERSION: '11.12.0'
 
 permissions:
   contents: read
@@ -118,5 +118,5 @@ jobs:
       - name: Typecheck mobile workspace
         run: pnpm --filter mobile typecheck
 
-      - name: Run fast mobile unit tests
-        run: pnpm --filter mobile test:unit:fast
+      - name: Run mobile unit tests
+        run: pnpm --filter mobile test:unit

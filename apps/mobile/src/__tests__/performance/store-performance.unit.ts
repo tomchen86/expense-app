@@ -26,7 +26,7 @@ const createExpense = (index: number) => ({
 
 const isCoverageRun = Boolean(
   (globalThis as { __coverage__?: unknown }).__coverage__ ||
-    process.env.NODE_V8_COVERAGE,
+  process.env.NODE_V8_COVERAGE,
 );
 
 const INSERT_THRESHOLD_MS = isCoverageRun ? 1500 : 800;
@@ -37,6 +37,11 @@ const resetStore = () => {
   if (store.expenses.length) {
     useExpenseFeatureStore.setState({ expenses: [] });
   }
+};
+
+const collectGarbage = () => {
+  const gc = (globalThis as typeof globalThis & { gc?: () => void }).gc;
+  gc?.();
 };
 
 describe('Store Performance Benchmarks', () => {
@@ -92,12 +97,14 @@ describe('Store Performance Benchmarks', () => {
   it('should maintain heap growth below 12MB when processing 1500 expenses', () => {
     const addExpense = useExpenseFeatureStore.getState().addExpense;
 
+    collectGarbage();
     const baselineMemory = process.memoryUsage().heapUsed;
 
     for (let index = 0; index < 1500; index += 1) {
       addExpense(createExpense(index));
     }
 
+    collectGarbage();
     const peakMemory = process.memoryUsage().heapUsed;
     const heapDeltaInMb = (peakMemory - baselineMemory) / (1024 * 1024);
 

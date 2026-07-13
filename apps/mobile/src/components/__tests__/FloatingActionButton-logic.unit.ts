@@ -3,7 +3,7 @@ describe('FloatingActionButton Logic', () => {
   interface FloatingActionButtonProps {
     onPress?: () => void;
     style?: any;
-    groupId?: string;
+    groupId?: string | null;
   }
 
   // Mock navigation object

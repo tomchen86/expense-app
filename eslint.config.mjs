@@ -1,9 +1,7 @@
 // eslint.config.mjs
 import js from '@eslint/js';
 import tseslint from 'typescript-eslint';
-import react from 'eslint-plugin-react';
 import reactHooks from 'eslint-plugin-react-hooks';
-import reactNative from 'eslint-plugin-react-native';
 import globals from 'globals';
 import prettier from 'eslint-config-prettier';
 
@@ -38,6 +36,9 @@ export default [
     languageOptions: {
       ecmaVersion: 2023,
       sourceType: 'module',
+      parserOptions: {
+        tsconfigRootDir: import.meta.dirname,
+      },
       globals: {
         ...globals.node,
         ...globals.es2021,
@@ -63,7 +64,6 @@ export default [
   {
     files: ['**/*.{jsx,tsx}'],
     plugins: {
-      react,
       'react-hooks': reactHooks,
     },
     languageOptions: {
@@ -80,28 +80,17 @@ export default [
       },
     },
     rules: {
-      // React rules
-      'react/jsx-uses-react': 'off', // New JSX transform
-      'react/react-in-jsx-scope': 'off',
       'react-hooks/rules-of-hooks': 'error',
       'react-hooks/exhaustive-deps': 'warn',
 
       // JSX quotes - prefer double quotes
       'jsx-quotes': ['error', 'prefer-double'],
     },
-    settings: {
-      react: {
-        version: 'detect',
-      },
-    },
   },
 
   // Mobile app specific overrides
   {
     files: ['apps/mobile/**/*.{js,jsx,ts,tsx}'],
-    plugins: {
-      'react-native': reactNative,
-    },
     languageOptions: {
       globals: {
         ...globals.browser,
@@ -111,8 +100,6 @@ export default [
       },
     },
     rules: {
-      // React Native specific adjustments
-      'react-native/no-inline-styles': 'warn',
       // Allow more flexible patterns for test files
       '@typescript-eslint/no-explicit-any': 'off',
     },
@@ -172,7 +159,7 @@ export default [
 
   // Test setup files (allow CommonJS for Jest mocks)
   {
-    files: ['**/__tests__/setup*.{js,ts}', '**/jest.setup.{js,ts}'],
+    files: ['**/__tests__/setup*.{js,ts}', '**/jest.setup*.{js,ts}'],
     languageOptions: {
       globals: {
         ...globals.jest,
@@ -194,7 +181,7 @@ export default [
       '**/*.{test,spec}.{js,jsx,ts,tsx}',
       '**/__tests__/**/*.{js,jsx,ts,tsx}',
     ],
-    ignores: ['**/__tests__/setup*.{js,ts}', '**/jest.setup.{js,ts}'],
+    ignores: ['**/__tests__/setup*.{js,ts}', '**/jest.setup*.{js,ts}'],
     languageOptions: {
       globals: {
         ...globals.jest,

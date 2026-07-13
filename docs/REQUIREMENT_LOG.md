@@ -117,7 +117,7 @@ _Last updated: September 23, 2025_
 | Expense CRUD endpoints                             | 📋     | Next     | —                                | Blocker for mobile integration.                                                               |
 | Group management endpoints                         | 📋     | Later    | —                                | Build after auth.                                                                             |
 | Category endpoints (CRUD + defaults)               | 📋     | Later    | —                                | Reuse seed logic.                                                                             |
-| Mobile ↔ API integration                          | ❌     | Blocked  | —                                | Depends on auth + expense endpoints.                                                          |
+| Mobile ↔ API integration                           | ❌     | Blocked  | —                                | Depends on auth + expense endpoints.                                                          |
 
 ### Web App (`apps/web`)
 

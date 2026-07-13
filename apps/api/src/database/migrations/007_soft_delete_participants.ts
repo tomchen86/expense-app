@@ -1,8 +1,6 @@
 import { MigrationInterface, QueryRunner } from 'typeorm';
 
-export class SoftDeleteParticipants0071738364606490
-  implements MigrationInterface
-{
+export class SoftDeleteParticipants0071738364606490 implements MigrationInterface {
   name = 'SoftDeleteParticipants0071738364606490';
 
   public async up(queryRunner: QueryRunner): Promise<void> {

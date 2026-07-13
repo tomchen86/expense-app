@@ -34,7 +34,7 @@ export const mockExpenses = [
     amount: 4.5,
     date: '2025-09-19',
     category: 'Food & Dining',
-    groupId: null,
+    groupId: undefined,
     caption: '',
   },
   {
@@ -52,7 +52,7 @@ export const mockExpenses = [
     amount: 45.0,
     date: '2025-09-17',
     category: 'Transportation',
-    groupId: null,
+    groupId: undefined,
     caption: '',
   },
 ];
@@ -134,7 +134,7 @@ export const createMockExpense = (overrides = {}) => ({
   amount: 25.0,
   date: '2025-09-19',
   category: 'Food & Dining',
-  groupId: null,
+  groupId: undefined,
   caption: '',
   ...overrides,
 });

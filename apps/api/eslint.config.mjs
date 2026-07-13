@@ -6,7 +6,13 @@ import tseslint from 'typescript-eslint';
 
 export default tseslint.config(
   {
-    ignores: ['eslint.config.mjs'],
+    ignores: [
+      'eslint.config.mjs',
+      'dist/**',
+      'coverage/**',
+      'node_modules/**',
+      'src/__tests__/.eslintrc.js',
+    ],
   },
   eslint.configs.recommended,
   ...tseslint.configs.recommendedTypeChecked,
@@ -30,6 +36,10 @@ export default tseslint.config(
       '@typescript-eslint/no-floating-promises': 'warn',
       '@typescript-eslint/no-unsafe-argument': 'warn',
     },
+  },
+  {
+    ...tseslint.configs.disableTypeChecked,
+    files: ['*.config.js'],
   },
   // Relax a few strict safety rules in test files where we commonly
   // deserialize JSON, use supertest responses, and rely on Jest mocks.

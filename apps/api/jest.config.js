@@ -8,7 +8,7 @@ const config = {
   roots: ['<rootDir>/src'],
   testMatch: ['**/__tests__/**/*.spec.ts', '**/*.spec.ts'],
   transform: {
-    '^.+\\.ts$': 'ts-jest',
+    '^.+\\.ts$': ['ts-jest', { tsconfig: 'tsconfig.json' }],
   },
   moduleFileExtensions: ['ts', 'js', 'json'],
   collectCoverageFrom: [
@@ -23,12 +23,6 @@ const config = {
   testTimeout: 30000,
   maxWorkers: 1, // Ensure tests run serially for database consistency
   watchman: false,
-  // Global test variables
-  globals: {
-    'ts-jest': {
-      tsconfig: 'tsconfig.json',
-    },
-  },
 };
 
 module.exports = config;

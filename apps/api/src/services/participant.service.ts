@@ -23,8 +23,6 @@ const DEFAULT_NOTIFICATIONS = {
 type ParticipantEntity = InstanceType<typeof Entities.Participant>;
 type GroupMemberEntity = InstanceType<typeof Entities.GroupMember>;
 
-type GroupMemberStatus = GroupMemberEntity['status'];
-
 type NotificationPrefs = ParticipantEntity['notificationPreferences'];
 
 @Injectable()
@@ -214,7 +212,7 @@ export class ParticipantService {
     if (groupMemberships.length > 0) {
       await this.groupMemberRepository.save(
         groupMemberships.map((membership) => {
-          membership.status = 'left' as GroupMemberStatus;
+          membership.status = 'left';
           return membership;
         }),
       );

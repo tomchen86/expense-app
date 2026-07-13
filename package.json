@@ -1,6 +1,10 @@
 {
   "name": "app",
   "private": true,
+  "packageManager": "pnpm@11.12.0",
+  "engines": {
+    "node": ">=22.22.1"
+  },
   "scripts": {
     "prepare": "husky",
     "format": "prettier --write .",
@@ -8,25 +12,20 @@
     "lint": "eslint .",
     "lint:fix": "eslint . --fix"
   },
-  "pnpm": {
-    "overrides": {
-      "prettier": "^3.3.3"
-    }
-  },
   "dependencies": {
-    "@react-native-picker/picker": "^2.11.0"
+    "@react-native-picker/picker": "^2.11.4"
   },
   "devDependencies": {
-    "@eslint/js": "^9.26.0",
-    "eslint": "^9.36.0",
-    "eslint-config-prettier": "^9.1.2",
-    "eslint-plugin-react": "^7.37.5",
-    "eslint-plugin-react-hooks": "^5.2.0",
-    "eslint-plugin-react-native": "^5.0.0",
-    "globals": "^15.15.0",
+    "@eslint/js": "^10.0.1",
+    "@typescript/native": "npm:typescript@^7.0.2",
+    "eslint": "10.6.0",
+    "eslint-config-prettier": "^10.1.8",
+    "eslint-plugin-react-hooks": "^7.1.1",
+    "globals": "^17.7.0",
     "husky": "^9.1.7",
-    "lint-staged": "^16.2.0",
-    "prettier": "^3.6.2",
-    "typescript-eslint": "^8.44.1"
+    "lint-staged": "^17.0.8",
+    "prettier": "^3.9.5",
+    "typescript": "npm:@typescript/typescript6@^6.0.2",
+    "typescript-eslint": "^8.63.0"
   }
 }

@@ -3,7 +3,6 @@ import {
   createSqliteDataSource,
   createPostgresDataSource,
 } from './datasource.factory';
-import { SqljsConnectionOptions } from 'typeorm/driver/sqljs/SqljsConnectionOptions';
 
 jest.setTimeout(30000);
 
@@ -13,8 +12,9 @@ describe('datasource.factory', () => {
 
     expect(dataSource).toBeInstanceOf(DataSource);
     expect(dataSource.options.type).toBe('sqljs');
-    const sqljsOptions = dataSource.options as SqljsConnectionOptions;
-    expect(sqljsOptions.location).toBe(':memory:');
+    expect(dataSource.options).toEqual(
+      expect.objectContaining({ location: ':memory:' }),
+    );
     expect(dataSource.options.synchronize).toBe(true);
 
     await expect(dataSource.initialize()).resolves.toBeDefined();
