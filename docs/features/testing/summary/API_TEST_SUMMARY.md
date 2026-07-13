@@ -1,6 +1,9 @@
 # API Test Comprehensive Summary
 
-This document provides a complete analysis of all test cases in the `/Users/htchen/code_base/app/apps/api/src/__tests__/` directory, organized by domain and functionality.
+> [!IMPORTANT]
+> 本文件是 2025-09-30 的歷史測試快照。若要查看目前測試檔、靜態 case 數量、執行方式與 coverage 空白，請改讀 [`../GUIDE-API_TESTS.md`](../GUIDE-API_TESTS.md)，並以測試原始碼及最新 Jest 執行結果為準。
+
+This document provides a historical analysis of the test cases in `apps/api/src/__tests__/`, organized by domain and functionality.
 
 ## Overview
 

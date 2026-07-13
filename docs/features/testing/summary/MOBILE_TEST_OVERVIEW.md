@@ -1,8 +1,11 @@
 # Mobile Test Documentation
 
+> [!IMPORTANT]
+> 本文件是 2025 年的測試快照。若要查看目前 Mobile Jest/Detox 的測試檔、實際收集範圍、最新執行結果與 coverage 空白，請改讀 [`../GUIDE-MOBILE-TESTS.md`](../GUIDE-MOBILE-TESTS.md)，並以測試原始碼與最新 runner output 為準。
+
 This document has been split into two focused files for better organization:
 
-## 📋 [Unit Tests](./MOBILE_UNIT_TESTS.md)
+## 📋 [Unit Tests](./MOBILE_UNIT_TESTS_SUMMARY.md)
 
 Comprehensive documentation of **23 unit test files** covering:
 
@@ -14,7 +17,7 @@ Comprehensive documentation of **23 unit test files** covering:
 
 **Total: 268 unit test cases**
 
-## 🔗 [Integration Tests](./MOBILE_INTEGRATION_TESTS.md)
+## 🔗 [Integration Tests](./MOBILE_INTEGRATION_TESTS_SUMMARY.md)
 
 Comprehensive documentation of **2 integration test files** covering:
 
@@ -60,7 +63,7 @@ pnpm test --selectProjects=integration
 pnpm test FormInput
 ```
 
-## Current Status
+## Historical Status (2025-09-30)
 
 - ✅ **Total Test Suites**: 27 passing (28 total including this migration)
 - ✅ **Total Tests**: 294 passing
@@ -70,10 +73,10 @@ pnpm test FormInput
 ## Documentation Structure
 
 ```
-docs/Testing/
-├── MOBILE_TEST_COMPREHENSIVE_SUMMARY.md  (this file - index)
-├── MOBILE_UNIT_TESTS.md                   (detailed unit test docs)
-└── MOBILE_INTEGRATION_TESTS.md            (detailed integration test docs)
+docs/features/testing/summary/
+├── MOBILE_TEST_OVERVIEW.md                 (this file - index)
+├── MOBILE_UNIT_TESTS_SUMMARY.md            (detailed unit test docs)
+└── MOBILE_INTEGRATION_TESTS_SUMMARY.md     (detailed integration test docs)
 ```
 
 ## Recent Updates

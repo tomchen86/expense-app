@@ -10,6 +10,9 @@
 | Run end-of-session checks                           | `UPDATE_CHECKLIST.md`                     |
 | Write a session log, commit log, or changelog entry | `GUIDE-LOG_TRACKING.md`                   |
 | Review the API development plan                     | `planning/PLAN-TDD_API_IMPLEMENTATION.md` |
+| Learn the current API code and architecture         | `features/api/GUIDE-API_CODE.md`          |
+| Learn which API tests currently exist               | `features/testing/GUIDE-API_TESTS.md`     |
+| Learn which Mobile tests currently exist            | `features/testing/GUIDE-MOBILE-TESTS.md`  |
 | Understand the storage architecture                 | `architecture/STORAGE_STRATEGY.md`        |
 
 ## Project Status (qualitative)

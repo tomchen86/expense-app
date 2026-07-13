@@ -1,5 +1,8 @@
 # API 實作細節深度教學
 
+> [!WARNING]
+> 本文件是歷史設計草稿，不是目前架構說明。Passport strategy、全域 DTO validation、全域 exception filter、檔案上傳與部分 routes 等內容可能仍是未實作範例。若要了解目前 API 的實際架構、路由與程式碼流程，請改讀 [`GUIDE-API_CODE.md`](./GUIDE-API_CODE.md)，並以 `apps/api/src/` 與 integration tests 為最終依據。
+
 本文件提供了一份關於 API 實作細節、架構和設計模式的深度教學，旨在幫助開發者快速理解並參與開發。
 
 ## 1. 總覽
@@ -17,7 +20,7 @@
 - **ORM (Object-Relational Mapping)**: **[TypeORM](https://typeorm.io/)**
   - **選擇原因**: TypeORM 是一個成熟的 ORM，可以與 TypeScript 和最新的 JavaScript 功能無縫整合。它允許我們使用 TypeScript 類別來定義資料庫模型（Entities），並透過裝飾器（Decorators）來對應資料庫表格的欄位。這使得資料庫操作更加直觀和型別安全。
 
-- **認證 (Authentication)**: **[Passport.js](http.www.passportjs.org/)**
+- **認證 (Authentication)**: **[Passport.js](https://www.passportjs.org/)**
   - **選擇原因**: Passport.js 是 Node.js 中最受歡迎的認證中介軟體。它極其靈活和模組化，可以輕鬆地整合各種認證策略（例如 JWT、OAuth、LDAP 等）。我們主要使用其 JWT 策略來保護我們的 API 端點。
 
 ## 2. 專案結構
@@ -71,7 +74,7 @@
 
 ### 資料庫綱要 (Schema)
 
-我們的資料庫綱要設計旨在支援應用程式的所有功能，包括多使用者協作、費用追蹤和資料同步。詳細的綱要定義可以在 `docs/DATABASE_SCHEMA.md` 中找到。
+我們的資料庫綱要設計旨在支援應用程式的所有功能，包括多使用者協作、費用追蹤和資料同步。詳細的綱要定義可以在 `docs/features/database/DATABASE_SCHEMA.md` 中找到。
 
 ### ORM 與實體 (Entities)
 
