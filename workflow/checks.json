@@ -46,6 +46,16 @@
       ],
       "destructiveDatabase": false
     },
+    "managed-documents": {
+      "command": [
+        "node",
+        "packages/workflow-engine/src/cli.ts",
+        "documents",
+        "validate",
+        "--json"
+      ],
+      "destructiveDatabase": false
+    },
     "workflow-format": {
       "command": [
         "node-package-bin",

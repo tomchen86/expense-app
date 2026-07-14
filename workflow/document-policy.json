@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "enforcementMode": "audit-only",
+  "enforcementMode": "enforced",
   "documents": {
     "docs/ROADMAP.md": {
       "mode": "curated"
@@ -11,7 +11,9 @@
     },
     "docs/ISSUE_LOG.md": {
       "mode": "generated",
-      "enforcement": "planned"
+      "enforcement": "active",
+      "source": "docs/issues/issues.yaml",
+      "validator": "managed-documents"
     },
     "docs/REQUIREMENT_LOG.md": {
       "mode": "reference",

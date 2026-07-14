@@ -7,6 +7,7 @@ import { pathToFileURL } from 'node:url';
 import { loadChangeContract, loadWorkflowConfig } from './contracts.ts';
 import { ExitCode, WorkflowError, workflowError } from './errors.ts';
 import { discoverRepository } from './git.ts';
+import { dispatchIssueCommand } from './issue-cli.ts';
 import {
   commitSession,
   completeTask,
@@ -20,6 +21,7 @@ import {
   listSessions,
   startSession,
 } from './session.ts';
+import { validateManagedDocuments } from './managed-documents.ts';
 
 type CommandResult = Record<string, unknown>;
 
@@ -116,6 +118,26 @@ function dispatch(args: string[], cwd: string): CommandResult {
     case 'check':
       requireArgumentCount(command, rest, 1, 1);
       return { command, ok: true, result: checkSession(cwd, rest[0]) };
+    case 'issue':
+      return {
+        command,
+        ok: true,
+        result: dispatchIssueCommand(
+          rest,
+          discoverRepository(cwd).repositoryRoot,
+        ),
+      };
+    case 'documents':
+      if (rest.length !== 1 || rest[0] !== 'validate') {
+        throw usage('Usage: pnpm workflow documents validate [--json]');
+      }
+      return {
+        command,
+        ok: true,
+        validated: validateManagedDocuments(
+          discoverRepository(cwd).repositoryRoot,
+        ),
+      };
     case 'complete-task':
       requireArgumentCount(command, rest, 1, 1);
       return { command, ok: true, result: completeTask(cwd, rest[0]) };
@@ -252,6 +274,8 @@ function usageText(): string {
     '  pnpm workflow start <change-id> --task <task-id> [--json]',
     '  pnpm workflow status [session-id] [--json]',
     '  pnpm workflow check <session-id> [--json]',
+    '  pnpm workflow issue <add|update|close|render|validate> ... [--json]',
+    '  pnpm workflow documents validate [--json]',
     '  pnpm workflow complete-task <session-id> [--json]',
     '  pnpm workflow finish <session-id> [--json]',
     '  pnpm workflow commit <session-id> --message <subject> [--json]',

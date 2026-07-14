@@ -1,0 +1,155 @@
+{
+  "schemaVersion": 1,
+  "lastUpdated": "2025-09-23",
+  "issues": [
+    {
+      "id": "ISS-001",
+      "category": "feature",
+      "title": "Dual persistence toggle UX",
+      "status": "proposed",
+      "priority": "Next",
+      "requirement": null,
+      "references": [
+        "docs/Storage_Strategy.md",
+        "docs/planning/TASK_2.3_AUTH_INTEGRATION_PLAN.md"
+      ],
+      "notes": "Design settings UI copy and confirmation dialogs for switching modes."
+    },
+    {
+      "id": "ISS-002",
+      "category": "feature",
+      "title": "Expense keyword search",
+      "status": "in-progress",
+      "priority": "Now",
+      "requirement": {
+        "label": "Req: Expense capture & list",
+        "href": "docs/REQUIREMENT_LOG.md#expense-capture--list"
+      },
+      "references": ["docs/planning/ROADMAP.md#phase-3"],
+      "notes": "Implement selector + UI field per current backlog."
+    },
+    {
+      "id": "ISS-101",
+      "category": "bug",
+      "title": "Group name validation lacks inline feedback",
+      "status": "in-progress",
+      "priority": "Now",
+      "requirement": {
+        "label": "Req: Groups",
+        "href": "docs/REQUIREMENT_LOG.md#groups"
+      },
+      "references": ["docs/Testing/PHASE3_TESTING_REPORT.md"],
+      "notes": "Replace alert with inline error + focus handling."
+    },
+    {
+      "id": "ISS-102",
+      "category": "bug",
+      "title": "Post-migration tests still rely on sqlite entity mirrors",
+      "status": "icebox",
+      "priority": "Later",
+      "requirement": null,
+      "references": ["apps/api/src/entities/*simple.entity.ts"],
+      "notes": "Decide whether to remove mirrors after Postgres-first testing lands."
+    },
+    {
+      "id": "ISS-103",
+      "category": "bug",
+      "title": "Tab bar navigation wrong order after Expo Router migration",
+      "status": "proposed",
+      "priority": "Now",
+      "requirement": null,
+      "references": ["apps/mobile/app/(tabs)/_layout.tsx"],
+      "notes": "Should be: Group, Expense (middle), Settings. Currently: Expense, Group, Settings."
+    },
+    {
+      "id": "ISS-104",
+      "category": "bug",
+      "title": "Category swipe-to-delete shows red background but no \"Delete\" text",
+      "status": "proposed",
+      "priority": "Now",
+      "requirement": null,
+      "references": [
+        "apps/mobile/src/components/categories/CategoryListItem.tsx"
+      ],
+      "notes": "Swipeable delete action displays red color but text not visible. Check Reanimated interpolate transform."
+    },
+    {
+      "id": "ISS-105",
+      "category": "bug",
+      "title": "Deleted categories still appear in Add Expense form",
+      "status": "done",
+      "priority": "Now",
+      "requirement": null,
+      "references": ["apps/mobile/src/hooks/useExpenseForm.ts"],
+      "notes": "Fixed: useExpenseForm now reads from useCategoryStore. Added integration test coverage."
+    },
+    {
+      "id": "ISS-106",
+      "category": "bug",
+      "title": "Create navigation integration tests using renderRouter",
+      "status": "proposed",
+      "priority": "Next",
+      "requirement": null,
+      "references": [
+        "docs/features/testing/EXPO_ROUTER_TESTING_ANALYSIS.md"
+      ],
+      "notes": "Add integration tests for: Home→AddExpense flow, expense editing with params, group detail navigation, tab navigation. Use `renderRouter` from expo-router/testing-library."
+    },
+    {
+      "id": "ISS-201",
+      "category": "enhancement",
+      "title": "Persistence provider contract package",
+      "status": "proposed",
+      "priority": "Next",
+      "requirement": {
+        "label": "Req: Data & Sync",
+        "href": "docs/REQUIREMENT_LOG.md#data--sync"
+      },
+      "references": [
+        "docs/Storage_Strategy.md",
+        "docs/planning/PHASE_2_API_DEVELOPMENT_PLAN.md"
+      ],
+      "notes": "Extract interfaces + adapters into shared library before mobile rollout."
+    },
+    {
+      "id": "ISS-202",
+      "category": "enhancement",
+      "title": "API conflict resolution telemetry",
+      "status": "proposed",
+      "priority": "Later",
+      "requirement": null,
+      "references": ["docs/Storage_Strategy.md#sync--conflict-handling"],
+      "notes": "Add logging/metrics for queue failures once sync exists."
+    },
+    {
+      "id": "ISS-207",
+      "category": "enhancement",
+      "title": "Create TESTING_OVERVIEW.md as single source of truth",
+      "status": "done",
+      "priority": "Next",
+      "requirement": null,
+      "references": ["docs/features/testing/TESTING_OVERVIEW.md"],
+      "notes": "Completed: Created comprehensive testing overview with coverage summary, framework details, and links to all test docs."
+    },
+    {
+      "id": "ISS-208",
+      "category": "enhancement",
+      "title": "Migrate API tests from Jest to Vitest",
+      "status": "proposed",
+      "priority": "Next",
+      "requirement": null,
+      "references": ["apps/api/"],
+      "notes": "Migrate 142 API tests to Vitest for native ESM support and faster execution. Update config, setup files, and test syntax."
+    },
+    {
+      "id": "ISS-209",
+      "category": "enhancement",
+      "title": "Migrate Web tests from Jest to Vitest",
+      "status": "proposed",
+      "priority": "Later",
+      "requirement": null,
+      "references": ["apps/web/"],
+      "notes": "Migrate web tests to Vitest. Keep mobile on Jest (React Native ecosystem requirement)."
+    }
+  ]
+}

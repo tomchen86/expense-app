@@ -35,7 +35,7 @@ Bootstrap evidence recorded on 2026-07-14 under the one-time exception in
 
 ## 3. Controlled Documentation
 
-- [ ] 3.1 Seed structured issue data and implement lossless issue add/update/
+- [x] 3.1 Seed structured issue data and implement lossless issue add/update/
       close/render commands before locking `ISSUE_LOG.md`.
 - [ ] 3.2 Generate the six-field semantic `CURRENT_AND_NEXT_STEPS.md` handoff
       from controlled change state without persisting commit hashes, runtime

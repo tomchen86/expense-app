@@ -7,6 +7,7 @@ import test from 'node:test';
 import { WorkflowError } from '../src/errors.ts';
 import { abortSession, checkSession, startSession } from '../src/session.ts';
 import './completion.integration.test.ts';
+import './issues.integration.test.ts';
 import './ignored-state.integration.test.ts';
 import './runner.integration.test.ts';
 import {
