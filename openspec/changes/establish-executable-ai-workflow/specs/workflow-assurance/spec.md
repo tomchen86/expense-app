@@ -68,9 +68,11 @@ current engine evidence rather than an AI assertion or Markdown state alone.
 ### Requirement: Allowlisted Check Execution
 
 The workflow engine SHALL execute every required check by resolving its ID from
-the pinned check configuration and spawning its executable with the configured
-argv array without a shell, interpolation, or evaluation. A non-zero exit,
-signal, or spawn error SHALL fail verification with structured check evidence.
+the pinned check configuration and using only the current Node executable or a
+declared workspace package bin invoked through that Node executable. It SHALL
+NOT resolve bare executables from caller-controlled `PATH`, a global package
+manager, a shell, interpolation, or evaluation. A non-zero exit, signal, spawn
+error, or runner mutation SHALL fail verification with structured evidence.
 
 #### Scenario: Shell syntax appears in an argument
 
@@ -85,6 +87,14 @@ signal, or spawn error SHALL fail verification with structured check evidence.
 - WHEN verification runs
 - THEN verification fails with the check ID and exit outcome
 - AND later required checks are not reported as passing
+
+#### Scenario: PATH contains a fake executable
+
+- GIVEN a required check uses the `node` runner
+- AND caller-controlled `PATH` points to a different executable named `node`
+- WHEN verification runs
+- THEN the engine uses its own `process.execPath`
+- AND the PATH substitute is not executed
 
 ### Requirement: Disposable Database Preflight
 
@@ -111,6 +121,15 @@ database identity in results and errors.
 - WHEN verification executes destructive checks
 - THEN each destructive check receives the explicit test URL
 - AND evidence contains only its redacted identity
+
+#### Scenario: Explicit test database is unavailable
+
+- GIVEN a destructive API check receives an explicit validated
+  `TEST_DATABASE_URL`
+- AND that database is unavailable
+- WHEN the API test harness selects its target
+- THEN it fails without trying a compose, development, or auto-provisioned
+  database
 
 ### Requirement: Controlled Managed-Document Mutation
 

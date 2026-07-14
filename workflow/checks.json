@@ -12,27 +12,52 @@
       "destructiveDatabase": false
     },
     "workflow-typecheck": {
-      "command": ["pnpm", "run", "workflow:typecheck"],
+      "command": [
+        "node-package-bin",
+        ".",
+        "@typescript/native",
+        "tsc",
+        "-p",
+        "packages/workflow-engine/tsconfig.json"
+      ],
       "destructiveDatabase": false
     },
     "workflow-lint": {
       "command": [
-        "pnpm",
-        "exec",
+        "node-package-bin",
+        ".",
+        "eslint",
         "eslint",
         "packages/workflow-engine/src",
         "packages/workflow-engine/test"
       ],
       "destructiveDatabase": false
     },
+    "api-database-policy-test": {
+      "command": [
+        "node-package-bin",
+        "apps/api",
+        "jest",
+        "jest",
+        "--config",
+        "apps/api/jest.isolated.config.js",
+        "--runInBand",
+        "apps/api/src/__tests__/isolated/database-target-policy.isolated.spec.ts"
+      ],
+      "destructiveDatabase": false
+    },
     "workflow-format": {
       "command": [
-        "pnpm",
-        "exec",
+        "node-package-bin",
+        ".",
+        "prettier",
         "prettier",
         "--check",
         "packages/workflow-engine",
         "workflow",
+        "apps/api/src/__tests__/setup/datasource.factory.ts",
+        "apps/api/src/__tests__/setup/database-target-policy.ts",
+        "apps/api/src/__tests__/isolated/database-target-policy.isolated.spec.ts",
         "package.json",
         "pnpm-workspace.yaml",
         "openspec/changes/establish-executable-ai-workflow",

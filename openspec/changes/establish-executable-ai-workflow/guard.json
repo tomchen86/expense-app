@@ -48,11 +48,18 @@
       ]
     },
     "2.1": {
-      "allowedPaths": ["packages/workflow-engine/**", "workflow/**"],
+      "allowedPaths": [
+        "packages/workflow-engine/**",
+        "workflow/**",
+        "apps/api/src/__tests__/setup/datasource.factory.ts",
+        "apps/api/src/__tests__/setup/database-target-policy.ts",
+        "apps/api/src/__tests__/isolated/database-target-policy.isolated.spec.ts"
+      ],
       "requiredChecks": [
         "workflow-tests",
         "workflow-typecheck",
         "workflow-lint",
+        "api-database-policy-test",
         "workflow-format"
       ]
     },

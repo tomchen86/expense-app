@@ -87,10 +87,13 @@ and symlink escapes are rejected. Prefix matching is segment-aware, so
 ## Check Execution and Database Safety
 
 Required check IDs resolve only through `workflow/checks.json`. The engine
-spawns the configured executable and argv directly with `shell: false`; it does
-not concatenate, interpolate, evaluate, or pass configured values through a
-shell. A non-zero exit, signal, or spawn error fails verification with
-structured evidence.
+accepts only `node` and `node-package-bin` command runners. `node` maps to the
+engine's `process.execPath`; package bins resolve from a declared workspace
+package and are invoked through that same Node executable. Bare executables,
+the caller's `PATH`, global pnpm, shell interpolation, and `eval` are not
+execution authorities. Runner realpaths and entrypoint digests are checked
+before and after execution. A non-zero exit, signal, spawn error, or runner
+mutation fails verification with structured evidence.
 
 Before any check marked `destructiveDatabase` starts, all destructive checks
 are preflighted together. The operator must set
@@ -100,6 +103,11 @@ are preflighted together. The operator must set
 development/shared/staging/production token, and must not identify the same
 server/database as `DATABASE_URL`. Output and errors expose only a redacted
 database identity without credentials, query, fragment, or raw URL.
+
+When the API harness receives an explicit `TEST_DATABASE_URL`, failure to
+connect is terminal. It does not continue to `COMPOSE_TEST_DATABASE_URL`, a
+development URL, or an auto-provisioned target. This preserves the engine's
+validated database decision through the test harness itself.
 
 ## Bootstrap Exception
 

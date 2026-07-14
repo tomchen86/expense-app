@@ -161,8 +161,9 @@ Rules:
 - Absolute paths, traversal, unsupported glob syntax, and symlink escapes fail.
 - Prefix matching is segment-aware.
 - Check IDs must exist in `workflow/checks.json`.
-- Check commands are fixed argv arrays; never use Markdown commands, a shell,
-  interpolation, or `eval`.
+- Check commands are fixed argv arrays using only `node` or
+  `node-package-bin`; never use a bare PATH executable, global package manager,
+  Markdown command, shell, interpolation, or `eval`.
 - `tasks.md` and `guard.json` task IDs must match exactly.
 
 ## Session Contract
