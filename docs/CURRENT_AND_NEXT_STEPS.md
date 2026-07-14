@@ -8,19 +8,20 @@ This generated handoff contains semantic project state only. Its sources are the
 
 ## Current Task
 
-`5.1` — Audit legacy requirements into capability OpenSpec specs.
+`5.2` — Review and create `docs/WORKFLOW.md`, then separately approve legacy document archival.
 
 ## Next Task
 
-`5.2` — Review and create `docs/WORKFLOW.md`, then separately approve legacy document archival.
+`5.3` — Evaluate a controlled AI adapter and filesystem sandbox only after the local engine and CI boundaries are stable.
 
 ## Current Focus
 
-Audit legacy requirements into capability OpenSpec specs.
+Review and create `docs/WORKFLOW.md`, then separately approve legacy document archival.
 
 ## Known Blockers
 
-None.
+- `ISS-003` — Activate workflow-assurance branch rules
+- `ISS-205` — Recover the web application source boundary
 
 ## References
 

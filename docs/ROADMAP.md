@@ -1,43 +1,56 @@
 # Roadmap
 
-_Last verified: July 14, 2026_
+_Last verified: July 15, 2026_
 
 This document owns project priority. Detailed implementation tasks belong only
 in the linked OpenSpec change.
 
 ## Now
 
-### Establish executable AI workflow assurance
+### Finish repository workflow adoption
 
-- Make OpenSpec specs and changes the only normative requirement and active
-  planning/task artifacts.
-- Keep Spectra installed but outside the workflow.
-- Add a repository-owned CLI for Git, branch, clean-baseline, task-policy,
-  session-lock, and diff-scope checks.
-- Establish canonical documentation entry points without deleting legacy files.
+- Complete Section 5 of
+  `openspec/changes/establish-executable-ai-workflow/`: publish audited base
+  capability specs, document the workflow, and evaluate the AI adapter boundary.
+- Keep Spectra installed for compatibility but outside every execution path.
+- Activate the remote GitHub ruleset only after the workflow is present on the
+  default branch: require `workflow-assurance`, an up-to-date base, code-owner
+  approval with stale dismissal, and no bypass (`ISS-003`).
+- Do not archive legacy documents until the maintainer gives the separate
+  approval required by Task 5.2.
 
-Active change:
-`openspec/changes/establish-executable-ai-workflow/`
+### Correct product integrity gaps before mobile/API integration
+
+1. Remove fallback JWT secrets and make non-test API startup fail closed
+   (`ISS-111`).
+2. Make group balances honor `splitBetween` and enforce owner-only group
+   mutations (`ISS-108`, `ISS-109`).
+3. Make expense category selection use live category state (`ISS-105`,
+   `ISS-107`).
+4. Define the mobile/API contract boundary, including identifiers, token
+   lifecycle, money units, and response adapters (`ISS-203`, `ISS-204`).
+5. Add explicit mobile persistence; current Zustand domain state is process
+   memory only (`ISS-112`).
 
 ## Next
 
-1. Add check execution, disposable API database protection, immutable reports,
-   and evidence-authorized task completion.
-2. Seed structured issue data and implement the Document Gateway so
-   `ISSUE_LOG.md` cannot be arbitrarily rewritten.
-3. Audit `REQUIREMENT_LOG.md` into capability-based OpenSpec specs before
-   downgrading the old file to legacy.
-4. Re-audit product implementation and tests, then rebuild the product roadmap
-   from verified repository evidence rather than the conflicting 2025 plans.
+- Add mobile expense search, date filtering, and user-selectable sorting on top
+  of the API's existing query support (`ISS-002`).
+- Define the persistence provider contract before exposing a local/cloud toggle
+  (`ISS-201`, then `ISS-001`).
+- Protect default categories on the API and add refresh-token revocation
+  (`ISS-110`, `ISS-206`).
+- Replace global group-name alerts with inline validation and add router-level
+  mobile integration tests (`ISS-101`, `ISS-106`).
 
 ## Later
 
-- Add Git hook delegation and authoritative CI verification.
-- Add controlled document refresh proposals for architecture and feature docs.
-- Create the reviewed `docs/WORKFLOW.md` and only then supersede
-  `UPDATE_CHECKLIST.md`.
-- Evaluate a controlled AI adapter and stronger filesystem sandboxing after the
-  local policy engine is stable.
+- Recover the missing `apps/web` submodule declaration and source before making
+  any web capability claim (`ISS-205`).
+- Add conflict telemetry and production monitoring only after sync and a
+  deployed API exist (`ISS-202`).
+- Keep framework-only test migrations in the icebox until they solve a measured
+  delivery problem (`ISS-208`, `ISS-209`).
 
 ## Legacy Roadmap
 

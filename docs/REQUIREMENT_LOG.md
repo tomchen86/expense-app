@@ -1,19 +1,23 @@
-# Function Log
+# Legacy Function Log
 
-> **Migration inventory, not the normative source:** New and changed
-> requirements belong in `openspec/specs/**` through an OpenSpec change. Keep
-> this file until its accepted requirements have been audited and migrated; do
-> not add a second requirement truth here.
+> **Audited legacy inventory, not the normative source:** The 52 rows in this
+> file were audited on July 15, 2026. Current verified behavior now lives in
+> capability specs under `openspec/specs/**`; gaps and priorities live in
+> `docs/issues/issues.yaml` and `docs/ROADMAP.md`. The detailed row-by-row
+> disposition is in
+> `openspec/changes/establish-executable-ai-workflow/requirement-audit.md`.
+> Do not add or update requirements here.
 
-_Last updated: September 23, 2025_
+_Legacy snapshot: September 23, 2025. Audit completed: July 15, 2026._
 
-## How to Use
+## How to Use This Legacy Snapshot
 
-- Treat this as the single backlog: every requirement lives here with its current status, priority, and test touchpoints.
-- Keep each row concise—one requirement per line—linking to deeper docs instead of duplicating details.
-- Update the status and priority immediately after working on an item; note the highest-level tests that cover it.
-- When you spin up a new requirement, add it to the appropriate table with a quick Next/Notes entry so you remember the follow-up.
-- If a requirement originated in `docs/ISSUE_LOG.md`, reference the issue ID in the Notes column (e.g., `Origin: ISS-002`) and archive the issue once shipped.
+- Use this file only to trace 2025 requirement claims into the audit.
+- Audit IDs `RL-001` through `RL-052` follow the table rows in document order.
+- Treat the recorded status, priority, and test columns as historical claims;
+  several were contradicted by the 2026 repository audit.
+- Add or change normative requirements through OpenSpec. Record product gaps in
+  the structured issue source rather than editing this snapshot.
 
 ## Status Legend
 
@@ -30,6 +34,8 @@ _Last updated: September 23, 2025_
 `Later` nice-to-have or future phase
 
 ## Backlog Snapshot
+
+The bullets below are preserved 2025 context and no longer own priority.
 
 - **Now**: expand expense filtering/search, refine group name UX, expand category colors, finish API schema draft, testing coverage improvements (see docs/Testing/TESTING_IMPROVEMENT_PLAN.md).
 - **Next**: group permission rules, unique user identifier, persistence provider contract rollout, API endpoints.
@@ -143,13 +149,20 @@ _Last updated: September 23, 2025_
 
 ## Linked References
 
+- `openspec/changes/establish-executable-ai-workflow/requirement-audit.md` —
+  disposition of every `RL-*` row with current evidence and follow-up.
+- `openspec/specs/**` — normative current capability behavior.
+- `docs/ROADMAP.md` — current evidence-based product priority.
 - `docs/planning/ROADMAP.md` — phase timelines and milestones.
 - `docs/planning/TASK_2.1_DATABASE_DESIGN_PLAN.md` — API/database WIP.
 - `docs/Testing/TESTING_STRATEGY.md` & `docs/Testing/TESTING_IMPROVEMENT_PLAN.md` — detailed testing intentions and gaps.
 - `docs/Testing/PHASE3_TESTING_REPORT.md` — latest coverage findings.
 
-## Maintenance Notes
+## Legacy Maintenance Notes
 
-- Review this log at the start/end of each session to bump dates, statuses, and priority buckets.
-- When closing a requirement, ensure relevant tests exist and are noted; otherwise flag it as `🔄 Needs polish`.
-- Prune stale notes and add blockers as they emerge so the backlog stays trustworthy.
+- Preserve the audited rows for traceability until the maintainer separately
+  approves archival.
+- Do not refresh statuses, priorities, or test claims in this file.
+- Correct only provenance or transcription errors through a reviewed OpenSpec
+  change; keep product work in the normative specs, structured issues, and
+  current roadmap.

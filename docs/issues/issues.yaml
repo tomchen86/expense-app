@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "lastUpdated": "2025-09-23",
+  "lastUpdated": "2026-07-15",
   "issues": [
     {
       "id": "ISS-001",
@@ -13,33 +13,53 @@
         "docs/Storage_Strategy.md",
         "docs/planning/TASK_2.3_AUTH_INTEGRATION_PLAN.md"
       ],
-      "notes": "Design settings UI copy and confirmation dialogs for switching modes."
+      "notes": "No persistence provider contract exists yet. Define storage-mode semantics only after the provider and authentication boundaries are specified."
     },
     {
       "id": "ISS-002",
       "category": "feature",
-      "title": "Expense keyword search",
-      "status": "in-progress",
+      "title": "Expense discovery controls",
+      "status": "proposed",
       "priority": "Now",
       "requirement": {
-        "label": "Req: Expense capture & list",
-        "href": "docs/REQUIREMENT_LOG.md#expense-capture--list"
+        "label": "Expense ledger",
+        "href": "../openspec/specs/expense-ledger/spec.md"
       },
-      "references": ["docs/planning/ROADMAP.md#phase-3"],
-      "notes": "Implement selector + UI field per current backlog."
+      "references": [
+        "docs/planning/ROADMAP.md#phase-3"
+      ],
+      "notes": "The API supports search and filters, but the mobile list has no keyword search, date-range filter, or user-selectable sort controls."
+    },
+    {
+      "id": "ISS-003",
+      "category": "feature",
+      "title": "Activate workflow-assurance branch rules",
+      "status": "blocked",
+      "priority": "Now",
+      "requirement": {
+        "label": "Workflow assurance",
+        "href": "../openspec/changes/establish-executable-ai-workflow/specs/workflow-assurance/spec.md"
+      },
+      "references": [
+        ".github/workflows/workflow-assurance.yml",
+        ".github/CODEOWNERS"
+      ],
+      "notes": "After the workflow exists on the remote default branch, require workflow-assurance, an up-to-date base, code-owner approval with stale dismissal, and no bypass. Remote inspection is currently blocked by invalid GitHub authentication."
     },
     {
       "id": "ISS-101",
       "category": "bug",
       "title": "Group name validation lacks inline feedback",
-      "status": "in-progress",
+      "status": "proposed",
       "priority": "Now",
       "requirement": {
-        "label": "Req: Groups",
-        "href": "docs/REQUIREMENT_LOG.md#groups"
+        "label": "Group collaboration",
+        "href": "../openspec/specs/group-collaboration/spec.md"
       },
-      "references": ["docs/Testing/PHASE3_TESTING_REPORT.md"],
-      "notes": "Replace alert with inline error + focus handling."
+      "references": [
+        "docs/Testing/PHASE3_TESTING_REPORT.md"
+      ],
+      "notes": "TextInputModal reports an empty group name through a global alert rather than inline field feedback and focus handling."
     },
     {
       "id": "ISS-102",
@@ -48,18 +68,26 @@
       "status": "icebox",
       "priority": "Later",
       "requirement": null,
-      "references": ["apps/api/src/entities/*simple.entity.ts"],
+      "references": [
+        "apps/api/src/entities/*simple.entity.ts"
+      ],
       "notes": "Decide whether to remove mirrors after Postgres-first testing lands."
     },
     {
       "id": "ISS-103",
       "category": "bug",
       "title": "Tab bar navigation wrong order after Expo Router migration",
-      "status": "proposed",
+      "status": "done",
       "priority": "Now",
       "requirement": null,
-      "references": ["apps/mobile/app/(tabs)/_layout.tsx"],
-      "notes": "Should be: Group, Expense (middle), Settings. Currently: Expense, Group, Settings."
+      "references": [
+        "apps/mobile/app/(tabs)/_layout.tsx"
+      ],
+      "notes": "Verified the Expo Router tab order is Group, Expense, Settings.",
+      "closed": {
+        "date": "2026-07-15",
+        "notes": "Repository audit confirmed the intended tab order in apps/mobile/app/(tabs)/_layout.tsx."
+      }
     },
     {
       "id": "ISS-104",
@@ -77,11 +105,13 @@
       "id": "ISS-105",
       "category": "bug",
       "title": "Deleted categories still appear in Add Expense form",
-      "status": "done",
+      "status": "proposed",
       "priority": "Now",
       "requirement": null,
-      "references": ["apps/mobile/src/hooks/useExpenseForm.ts"],
-      "notes": "Fixed: useExpenseForm now reads from useCategoryStore. Added integration test coverage."
+      "references": [
+        "apps/mobile/src/hooks/useExpenseForm.ts"
+      ],
+      "notes": "Reopened: useExpenseForm reads the category store, but useExpenseModals still builds its selector from DEFAULT_CATEGORIES, so deleted or custom categories can drift."
     },
     {
       "id": "ISS-106",
@@ -96,14 +126,123 @@
       "notes": "Add integration tests for: Home→AddExpense flow, expense editing with params, group detail navigation, tab navigation. Use `renderRouter` from expo-router/testing-library."
     },
     {
+      "id": "ISS-107",
+      "category": "bug",
+      "title": "Expense category selector bypasses category store",
+      "status": "proposed",
+      "priority": "Now",
+      "requirement": {
+        "label": "Category management",
+        "href": "../openspec/specs/category-management/spec.md"
+      },
+      "references": [
+        "apps/mobile/src/hooks/useExpenseModals.ts",
+        "apps/mobile/src/hooks/useExpenseForm.ts"
+      ],
+      "notes": "Build modal options from current store categories so add/edit flows reflect custom and deleted categories."
+    },
+    {
+      "id": "ISS-108",
+      "category": "bug",
+      "title": "Group balances ignore splitBetween selections",
+      "status": "proposed",
+      "priority": "Now",
+      "requirement": {
+        "label": "Group collaboration",
+        "href": "../openspec/specs/group-collaboration/spec.md"
+      },
+      "references": [
+        "apps/mobile/src/utils/groupCalculations.ts",
+        "apps/mobile/src/hooks/useExpenseForm.ts"
+      ],
+      "notes": "The form stores participant IDs in splitBetween, while balance calculation reads expense.participants and can divide across the wrong members."
+    },
+    {
+      "id": "ISS-109",
+      "category": "bug",
+      "title": "Group mutations do not enforce owner role",
+      "status": "proposed",
+      "priority": "Now",
+      "requirement": {
+        "label": "Group collaboration",
+        "href": "../openspec/specs/group-collaboration/spec.md"
+      },
+      "references": [
+        "apps/api/src/services/group.service.ts",
+        "apps/mobile/app/(tabs)/history.tsx"
+      ],
+      "notes": "Membership roles are stored, but update/delete operations authorize by ledger membership rather than requiring the group owner."
+    },
+    {
+      "id": "ISS-110",
+      "category": "bug",
+      "title": "API can delete default categories",
+      "status": "proposed",
+      "priority": "Next",
+      "requirement": {
+        "label": "Category management",
+        "href": "../openspec/specs/category-management/spec.md"
+      },
+      "references": [
+        "apps/api/src/services/category.service.ts"
+      ],
+      "notes": "The API blocks deletion of categories in use but does not reject deletion when isDefault is true; align server protection with the reserved mobile category rule."
+    },
+    {
+      "id": "ISS-111",
+      "category": "bug",
+      "title": "API authentication accepts fallback JWT secrets",
+      "status": "proposed",
+      "priority": "Now",
+      "requirement": {
+        "label": "Identity and access",
+        "href": "../openspec/specs/identity-and-access/spec.md"
+      },
+      "references": [
+        "apps/api/src/modules/auth.module.ts",
+        "apps/api/src/services/auth.service.ts",
+        "apps/api/src/guards/jwt-auth.guard.ts"
+      ],
+      "notes": "Production-capable code falls back to known development access and refresh secrets; startup must fail closed outside an explicit local test mode."
+    },
+    {
+      "id": "ISS-112",
+      "category": "bug",
+      "title": "Mobile domain state is not persisted",
+      "status": "proposed",
+      "priority": "Now",
+      "requirement": null,
+      "references": [
+        "apps/mobile/src/store/composedExpenseStore.ts",
+        "apps/mobile/src/store/features/userStore.ts"
+      ],
+      "notes": "Zustand stores use subscribeWithSelector without persist middleware or an AsyncStorage adapter, so expenses, groups, categories, and identity reset with process state."
+    },
+    {
+      "id": "ISS-113",
+      "category": "bug",
+      "title": "Mobile can delete categories that are in use",
+      "status": "proposed",
+      "priority": "Next",
+      "requirement": {
+        "label": "Category management",
+        "href": "../openspec/specs/category-management/spec.md"
+      },
+      "references": [
+        "apps/mobile/src/hooks/useCategoryManager.ts",
+        "apps/api/src/services/category.service.ts"
+      ],
+      "notes": "The mobile flow warns and then deletes; the API already rejects CATEGORY_IN_USE. Align local behavior before synchronization."
+    },
+    {
       "id": "ISS-201",
       "category": "enhancement",
       "title": "Persistence provider contract package",
       "status": "proposed",
       "priority": "Next",
       "requirement": {
-        "label": "Req: Data & Sync",
-        "href": "docs/REQUIREMENT_LOG.md#data--sync"
+        "label": "Persistence and sync gap",
+        "href": "../openspec/changes/establish-executable-ai-workflow/requirement-audit.md"
       },
       "references": [
         "docs/Storage_Strategy.md",
@@ -115,11 +254,70 @@
       "id": "ISS-202",
       "category": "enhancement",
       "title": "API conflict resolution telemetry",
-      "status": "proposed",
+      "status": "icebox",
       "priority": "Later",
       "requirement": null,
-      "references": ["docs/Storage_Strategy.md#sync--conflict-handling"],
+      "references": [
+        "docs/Storage_Strategy.md#sync--conflict-handling"
+      ],
       "notes": "Add logging/metrics for queue failures once sync exists."
+    },
+    {
+      "id": "ISS-203",
+      "category": "enhancement",
+      "title": "Integrate mobile with authenticated API contracts",
+      "status": "proposed",
+      "priority": "Now",
+      "requirement": {
+        "label": "API platform",
+        "href": "../openspec/specs/api-platform/spec.md"
+      },
+      "references": [
+        "apps/api/src/controllers",
+        "apps/mobile/src/store"
+      ],
+      "notes": "Core API endpoints exist; define token handling, identifier mapping, response adapters, offline behavior, and migration from in-memory mobile stores."
+    },
+    {
+      "id": "ISS-204",
+      "category": "enhancement",
+      "title": "Define shared domain and money mapping",
+      "status": "proposed",
+      "priority": "Now",
+      "requirement": null,
+      "references": [
+        "apps/mobile/src/types/index.ts",
+        "apps/api/src/dto/expense.dto.ts"
+      ],
+      "notes": "Reconcile mobile amount/title/name fields with API amountCents/description/UUID contracts before integration; do not share persistence entities directly."
+    },
+    {
+      "id": "ISS-205",
+      "category": "enhancement",
+      "title": "Recover the web application source boundary",
+      "status": "blocked",
+      "priority": "Later",
+      "requirement": null,
+      "references": [
+        "apps/web",
+        ".gitmodules"
+      ],
+      "notes": "apps/web is a gitlink but the repository has no .gitmodules declaration and the checkout contains no source, so web requirements cannot be verified."
+    },
+    {
+      "id": "ISS-206",
+      "category": "enhancement",
+      "title": "Add refresh-token revocation lifecycle",
+      "status": "proposed",
+      "priority": "Next",
+      "requirement": {
+        "label": "Identity and access",
+        "href": "../openspec/specs/identity-and-access/spec.md"
+      },
+      "references": [
+        "apps/api/src/services/auth.service.ts"
+      ],
+      "notes": "Refresh tokens are signed but not backed by a revocable server-side session or token-family record."
     },
     {
       "id": "ISS-207",
@@ -128,28 +326,47 @@
       "status": "done",
       "priority": "Next",
       "requirement": null,
-      "references": ["docs/features/testing/TESTING_OVERVIEW.md"],
+      "references": [
+        "docs/features/testing/TESTING_OVERVIEW.md"
+      ],
       "notes": "Completed: Created comprehensive testing overview with coverage summary, framework details, and links to all test docs."
     },
     {
       "id": "ISS-208",
       "category": "enhancement",
       "title": "Migrate API tests from Jest to Vitest",
-      "status": "proposed",
-      "priority": "Next",
+      "status": "icebox",
+      "priority": "Later",
       "requirement": null,
-      "references": ["apps/api/"],
+      "references": [
+        "apps/api/"
+      ],
       "notes": "Migrate 142 API tests to Vitest for native ESM support and faster execution. Update config, setup files, and test syntax."
     },
     {
       "id": "ISS-209",
       "category": "enhancement",
       "title": "Migrate Web tests from Jest to Vitest",
+      "status": "icebox",
+      "priority": "Later",
+      "requirement": null,
+      "references": [
+        "apps/web/"
+      ],
+      "notes": "Migrate web tests to Vitest. Keep mobile on Jest (React Native ecosystem requirement)."
+    },
+    {
+      "id": "ISS-210",
+      "category": "enhancement",
+      "title": "Define production API observability baseline",
       "status": "proposed",
       "priority": "Later",
       "requirement": null,
-      "references": ["apps/web/"],
-      "notes": "Migrate web tests to Vitest. Keep mobile on Jest (React Native ecosystem requirement)."
+      "references": [
+        "apps/api/src",
+        "docs/ROADMAP.md"
+      ],
+      "notes": "Define health signals, structured logging, metrics, alert ownership, and deployment targets after a production API environment exists."
     }
   ]
 }
