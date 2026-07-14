@@ -8,15 +8,15 @@ This generated handoff contains semantic project state only. Its sources are the
 
 ## Current Task
 
-`5.2` — Review and create `docs/WORKFLOW.md`, then separately approve legacy document archival.
+`5.3` — Evaluate a controlled AI adapter and filesystem sandbox only after the local engine and CI boundaries are stable.
 
 ## Next Task
 
-`5.3` — Evaluate a controlled AI adapter and filesystem sandbox only after the local engine and CI boundaries are stable.
+None.
 
 ## Current Focus
 
-Review and create `docs/WORKFLOW.md`, then separately approve legacy document archival.
+Evaluate a controlled AI adapter and filesystem sandbox only after the local engine and CI boundaries are stable.
 
 ## Known Blockers
 

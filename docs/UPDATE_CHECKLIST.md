@@ -1,9 +1,10 @@
 # Update Checklist
 
-> **Legacy operational reference:** `docs/WORKFLOW.md` is planned but has not
-> been created yet. This checklist contains stale commands and old manual-log
-> requirements. Follow `AGENTS.md` and the executable workflow guard; verify a
-> command against current package scripts before running it.
+> **SUPERSEDED — DO NOT FOLLOW:** Use `docs/WORKFLOW.md` for the executable
+> OpenSpec task lifecycle. The manual log, staging, commit, push, and archival
+> instructions below are a historical snapshot and conflict with the managed
+> workflow. This file is retained only until the maintainer separately approves
+> archival or deletion.
 
 _Last updated: March 3, 2026_
 

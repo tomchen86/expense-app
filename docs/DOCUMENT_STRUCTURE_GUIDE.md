@@ -1,6 +1,6 @@
 # Document Structure Guide
 
-_Last updated: July 14, 2026_
+_Last updated: July 15, 2026_
 
 ## Purpose
 
@@ -17,7 +17,7 @@ docs/
 ├── CHANGELOG.md
 ├── ISSUE_LOG.md
 ├── DOCUMENT_STRUCTURE_GUIDE.md
-├── WORKFLOW.md                 # planned; do not create in bootstrap
+├── WORKFLOW.md                 # executable OpenSpec task lifecycle
 ├── issues/                     # structured issue source
 ├── architecture/               # curated system-wide design
 │   └── decisions/              # append-only ADRs
@@ -49,6 +49,7 @@ does not make them canonical.
 | Why and how is a change being made?           | `openspec/changes/<change-id>/proposal.md` and `design.md`        |
 | What are the executable tasks?                | `openspec/changes/<change-id>/tasks.md`                           |
 | What may each task change and run?            | `openspec/changes/<change-id>/guard.json`                         |
+| How is an OpenSpec task executed?             | `docs/WORKFLOW.md`                                                |
 | How does the implemented system work?         | `docs/architecture/**` and `docs/features/**`                     |
 | What is the runtime evidence?                 | Git plus workflow sessions/reports under the Git common directory |
 
@@ -57,19 +58,21 @@ tracked Markdown.
 
 ## Mutation Policies
 
-| Class           | Rule                                                                          | Typical paths                                                        |
-| --------------- | ----------------------------------------------------------------------------- | -------------------------------------------------------------------- |
-| Generated       | Update structured source, then render; never edit the view directly           | `ISSUE_LOG.md`, eventually `CURRENT_AND_NEXT_STEPS.md`               |
-| Append-only     | Add validated entries; never rewrite prior history                            | `CHANGELOG.md`, accepted ADRs                                        |
-| Curated         | Read freely; update only in explicitly scoped and reviewed work               | `ROADMAP.md`, `architecture/**`, `features/**`, future `WORKFLOW.md` |
-| Normative       | Modify through a reviewed OpenSpec change                                     | `openspec/specs/**`                                                  |
-| Change artifact | Mutate through the active change lifecycle; task completion requires evidence | `openspec/changes/**`                                                |
-| Reference       | May inform work but is never current truth                                    | `research/**`, `ai-responses/**`, retained Spectra files             |
-| Immutable       | Do not edit, rename, or delete without explicit maintainer approval           | `archive/**`, historical logs and reports                            |
+| Class           | Rule                                                                          | Typical paths                                                 |
+| --------------- | ----------------------------------------------------------------------------- | ------------------------------------------------------------- |
+| Generated       | Update structured source, then render; never edit the view directly           | `ISSUE_LOG.md`, `CURRENT_AND_NEXT_STEPS.md`                   |
+| Append-only     | Add validated entries; never rewrite prior history                            | `CHANGELOG.md`, accepted ADRs                                 |
+| Curated         | Read freely; update only in explicitly scoped and reviewed work               | `ROADMAP.md`, `WORKFLOW.md`, `architecture/**`, `features/**` |
+| Normative       | Modify through a reviewed OpenSpec change                                     | `openspec/specs/**`                                           |
+| Change artifact | Mutate through the active change lifecycle; task completion requires evidence | `openspec/changes/**`                                         |
+| Reference       | May inform work but is never current truth                                    | `research/**`, `ai-responses/**`, retained Spectra files      |
+| Immutable       | Do not edit, rename, or delete without explicit maintainer approval           | `archive/**`, historical logs and reports                     |
 
-The Document Gateway and CI enforcement are being implemented incrementally.
-Until a policy is blocking, its status must be described as advisory or
-audit-only rather than claimed as a hard guarantee.
+The workflow engine enforces managed documents and session scope, delegates
+local hooks, provides controlled reviewed-section refreshes, and supplies the
+repository CI verifier. Remote merge authority still depends on separately
+configured repository rules; until those rules are verified, do not claim that
+the CI check is required for merge.
 
 ## Document Creation Rules
 
@@ -85,7 +88,8 @@ audit-only rather than claimed as a hard guarantee.
    `guides/` according to scope.
 8. Put investigation notes at `docs/research/<topic>.md` and label assumptions.
 9. Do not create new per-session logs or manually maintained commit logs.
-10. Do not create `WORKFLOW.md` until its content is reviewed as a separate task.
+10. Keep executable lifecycle instructions in `WORKFLOW.md`; do not duplicate
+    them in per-session checklists or planning files.
 
 ## Non-Destructive Migration
 
@@ -99,6 +103,6 @@ audit-only rather than claimed as a hard guarantee.
 - Never rewrite historical links inside immutable changelog/archive snapshots
   merely to make them look current.
 
-The detailed adoption sequence lives in
-`planning/PLAN-DOCUMENTATION_STRUCTURE_V2.md` until the future `WORKFLOW.md` is
-approved.
+Use `WORKFLOW.md` for current execution. Retained legacy planning and checklist
+documents remain historical inputs until the maintainer separately approves
+their archival or deletion.

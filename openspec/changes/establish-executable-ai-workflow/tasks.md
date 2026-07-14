@@ -51,7 +51,7 @@ Bootstrap evidence recorded on 2026-07-14 under the one-time exception in
 ## 5. Workflow Adoption
 
 - [x] 5.1 Audit legacy requirements into capability OpenSpec specs.
-- [ ] 5.2 Review and create `docs/WORKFLOW.md`, then separately approve legacy
+- [x] 5.2 Review and create `docs/WORKFLOW.md`, then separately approve legacy
       document archival.
 - [ ] 5.3 Evaluate a controlled AI adapter and filesystem sandbox only after the
       local engine and CI boundaries are stable.

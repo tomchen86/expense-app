@@ -9,6 +9,7 @@ change planning, reference material, and immutable history.
 | ----------------------------------------------- | ------------------------------------------------------------ |
 | Current priorities                              | [`ROADMAP.md`](ROADMAP.md)                                   |
 | Current state, handoff, and exact next step     | [`CURRENT_AND_NEXT_STEPS.md`](CURRENT_AND_NEXT_STEPS.md)     |
+| Executable OpenSpec task workflow               | [`WORKFLOW.md`](WORKFLOW.md)                                 |
 | Documentation placement and mutation rules      | [`DOCUMENT_STRUCTURE_GUIDE.md`](DOCUMENT_STRUCTURE_GUIDE.md) |
 | Normative system requirements                   | [`../openspec/specs/`](../openspec/specs/)                   |
 | Active proposal, design, delta specs, and tasks | [`../openspec/changes/`](../openspec/changes/)               |
@@ -17,10 +18,9 @@ change planning, reference material, and immutable history.
 | Open issues                                     | [`ISSUE_LOG.md`](ISSUE_LOG.md)                               |
 | Delivered user-visible outcomes                 | [`CHANGELOG.md`](CHANGELOG.md)                               |
 
-`WORKFLOW.md` is planned but intentionally not created during the current
-bootstrap. Until its reviewed replacement exists, `UPDATE_CHECKLIST.md` is a
-legacy operational reference only; verify every command against the repository
-and `AGENTS.md` before running it.
+`UPDATE_CHECKLIST.md` is a retained legacy snapshot. Do not follow its manual
+logging, staging, commit, or archival instructions; use `WORKFLOW.md`. Moving
+or deleting the legacy file still requires separate maintainer approval.
 
 ## Source Boundaries
 
@@ -47,7 +47,7 @@ docs/
 ├── CHANGELOG.md
 ├── ISSUE_LOG.md
 ├── DOCUMENT_STRUCTURE_GUIDE.md
-├── WORKFLOW.md                 # planned, not created yet
+├── WORKFLOW.md
 ├── issues/
 ├── architecture/
 ├── features/
