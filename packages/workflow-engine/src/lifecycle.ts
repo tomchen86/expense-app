@@ -29,6 +29,7 @@ import {
   assertReportChecks,
   readSessionReport,
   reportString,
+  reportStringArray,
   reportTaskIds,
   staleReport,
 } from './report-validation.ts';
@@ -39,6 +40,11 @@ import {
   persistSession,
   writeSessionReport,
 } from './verification.ts';
+import {
+  refreshCompletionDocuments,
+  rollbackGeneratedDocuments,
+  type GeneratedDocumentMutation,
+} from './managed-documents.ts';
 import {
   projectTasksCompleted,
   digestTaskContent,
@@ -110,12 +116,16 @@ function completeTaskUnlocked(
   ];
   const projection = projectTasksCompleted(initial.tasksPath, completedTaskIds);
   const projectionSourceDigest = digestTaskContent(projection.before);
+  let generatedDocuments: GeneratedDocumentMutation[] = [];
 
   try {
+    generatedDocuments = refreshCompletionDocuments(initial.git.repositoryRoot);
+    const transitionPaths = generatedDocuments.map(({ path }) => path).sort();
     const projected = inspectSession(cwd, initial.session.sessionId, {
       expectedSession: initial.session,
       projectedTaskIds: completedTaskIds,
       projectionSourceDigest,
+      authorizedTransitionPaths: transitionPaths,
     });
     const report: WorkflowReport = {
       schemaVersion: 1,
@@ -138,6 +148,7 @@ function completeTaskUnlocked(
       fingerprint: projected.fingerprint,
       completedTaskIds,
       projectionSourceDigest,
+      transitionPaths,
       reconciledTasks: reconciliation,
     };
     const reportId = writeSessionReport(projected, report);
@@ -148,11 +159,18 @@ function completeTaskUnlocked(
     persistSession(projected, session);
     return { session, reportId, completedTaskIds };
   } catch (error) {
-    restoreTaskProjection(
-      initial.tasksPath,
-      projection.after,
-      projection.before,
-    );
+    try {
+      rollbackGeneratedDocuments(
+        initial.git.repositoryRoot,
+        generatedDocuments,
+      );
+    } finally {
+      restoreTaskProjection(
+        initial.tasksPath,
+        projection.after,
+        projection.before,
+      );
+    }
     throw error;
   }
 }
@@ -202,9 +220,15 @@ function finishSessionUnlocked(
     'projectionSourceDigest',
     'COMPLETION_REPORT_STALE',
   );
+  const transitionPaths = reportStringArray(
+    completionReport,
+    'transitionPaths',
+    'COMPLETION_REPORT_STALE',
+  );
   const unprojected = inspectSession(cwd, requestedSessionId, {
     projectedTaskIds: completedTaskIds,
     projectionSourceDigest,
+    authorizedTransitionPaths: transitionPaths,
   });
   assertInspectionReport(
     completionReport,
@@ -228,6 +252,7 @@ function finishSessionUnlocked(
     environment,
     completedTaskIds,
     projectionSourceDigest,
+    transitionPaths,
   );
   const staged = stageExactPaths(
     verified.inspection.git.repositoryRoot,
@@ -238,6 +263,7 @@ function finishSessionUnlocked(
     expectedSession: session,
     projectedTaskIds: completedTaskIds,
     projectionSourceDigest,
+    authorizedTransitionPaths: transitionPaths,
   });
   const report: WorkflowReport = {
     schemaVersion: 1,
@@ -260,6 +286,7 @@ function finishSessionUnlocked(
     fingerprint: finished.fingerprint,
     completedTaskIds,
     projectionSourceDigest,
+    transitionPaths,
     checks: verified.checks,
     stagedPaths: staged.stagedPaths,
     tree: staged.tree,
@@ -325,9 +352,15 @@ function commitSessionUnlocked(
     'projectionSourceDigest',
     'COMPLETION_REPORT_STALE',
   );
+  const transitionPaths = reportStringArray(
+    completionReport,
+    'transitionPaths',
+    'COMPLETION_REPORT_STALE',
+  );
   const inspection = inspectSession(cwd, requestedSessionId, {
     projectedTaskIds: completedTaskIds,
     projectionSourceDigest,
+    authorizedTransitionPaths: transitionPaths,
   });
   const finishReport = readSessionReport(
     inspection,
@@ -394,6 +427,7 @@ function commitSessionUnlocked(
     changedPaths: inspection.changedPaths,
     completedTaskIds,
     projectionSourceDigest,
+    transitionPaths,
     message: facts.message,
   };
   const reportId = writeSessionReport(inspection, report);

@@ -43,6 +43,23 @@ test('parseTasks rejects duplicate task IDs', () => {
   );
 });
 
+test('parseTasks preserves wrapped task titles', () => {
+  assert.deepEqual(
+    parseTasks(`
+- [ ] 3.2 Generate the six-field semantic handoff
+      from controlled change state without hashes.
+`),
+    [
+      {
+        id: '3.2',
+        completed: false,
+        title:
+          'Generate the six-field semantic handoff from controlled change state without hashes.',
+      },
+    ],
+  );
+});
+
 test('policy paths accept exact paths and segment-aware directory prefixes', () => {
   assert.equal(
     normalizePolicyPath('apps/api/src/file.ts'),

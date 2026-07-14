@@ -317,9 +317,13 @@ export function loadChangeContract(
 export function parseTasks(markdown: string): ParsedTask[] {
   const tasks: ParsedTask[] = [];
   const seen = new Set<string>();
-  const pattern = /^- \[([ xX])\] (\d+(?:\.\d+)+)\s+(.+)$/gm;
+  const lines = markdown.split('\n');
 
-  for (const match of markdown.matchAll(pattern)) {
+  for (let index = 0; index < lines.length; index += 1) {
+    const match = /^- \[([ xX])\] (\d+(?:\.\d+)+)\s+(.+)$/.exec(lines[index]);
+    if (!match) {
+      continue;
+    }
     const id = assertTaskId(match[2]);
     if (seen.has(id)) {
       throw workflowError(
@@ -329,10 +333,15 @@ export function parseTasks(markdown: string): ParsedTask[] {
       );
     }
     seen.add(id);
+    const titleParts = [match[3].trim()];
+    while (/^\s{2,}\S/.test(lines[index + 1] ?? '')) {
+      titleParts.push(lines[index + 1].trim());
+      index += 1;
+    }
     tasks.push({
       id,
       completed: match[1].toLowerCase() === 'x',
-      title: match[3].trim(),
+      title: titleParts.join(' '),
     });
   }
 

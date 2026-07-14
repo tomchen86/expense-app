@@ -29,7 +29,8 @@
             "enum": ["planned", "planned-supersession", "active"]
           },
           "source": { "type": "string", "minLength": 1 },
-          "validator": { "type": "string", "minLength": 1 }
+          "validator": { "type": "string", "minLength": 1 },
+          "transition": { "enum": ["completion"] }
         }
       }
     }

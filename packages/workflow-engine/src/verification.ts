@@ -20,6 +20,7 @@ import {
   createCheckEnvironment,
 } from './database-policy.ts';
 import { ExitCode, workflowError } from './errors.ts';
+import { completionDocumentPaths } from './managed-documents.ts';
 import {
   discoverRepository,
   fingerprintWorkingState,
@@ -138,6 +139,7 @@ export function inspectSession(
     expectedSession?: WorkflowSession;
     projectedTaskIds?: string[];
     projectionSourceDigest?: string;
+    authorizedTransitionPaths?: string[];
   } = {},
 ): SessionInspection {
   const git = discoverRepository(cwd);
@@ -224,9 +226,23 @@ export function inspectSession(
   );
   const projectedPaths =
     (options.projectedTaskIds?.length ?? 0) > 0 ? [relativeTasksPath] : [];
+  const transitionPaths = options.authorizedTransitionPaths ?? [];
+  const allowedTransitionPaths = completionDocumentPaths(git.repositoryRoot);
+  if (
+    transitionPaths.some(
+      (transitionPath) => !allowedTransitionPaths.includes(transitionPath),
+    )
+  ) {
+    throw workflowError(
+      'UNAUTHORIZED_TRANSITION_PATH',
+      'A transition path is not an active generated completion document.',
+      ExitCode.staleState,
+    );
+  }
   const unexpectedPaths = changedPaths.filter(
     (changedPath) =>
       !projectedPaths.includes(changedPath) &&
+      !transitionPaths.includes(changedPath) &&
       !policy.allowedPaths.some((allowedPath) =>
         matchesAllowedPath(changedPath, allowedPath),
       ),
@@ -265,6 +281,7 @@ export function executeChecks(
   environment: NodeJS.ProcessEnv,
   projectedTaskIds: string[] = [],
   projectionSourceDigest?: string,
+  authorizedTransitionPaths: string[] = [],
 ): { checks: CheckEvidence[]; inspection: SessionInspection } {
   const requiredChecks = checkIds.map((checkId) => ({
     checkId,
@@ -298,6 +315,7 @@ export function executeChecks(
       expectedSession: initial.session,
       projectedTaskIds,
       projectionSourceDigest,
+      authorizedTransitionPaths,
     });
     if (inspection.fingerprint !== fingerprint) {
       throw workflowError(

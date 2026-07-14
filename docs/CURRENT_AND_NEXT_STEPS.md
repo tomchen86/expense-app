@@ -1,7 +1,6 @@
 # Current and Next Steps
 
-This is a handoff, not a history log. Git owns commit history and the workflow
-engine resolves commit relationships from semantic change/task identifiers.
+This generated handoff contains semantic project state only. Its sources are the active OpenSpec change and structured issue data.
 
 ## Current Change
 
@@ -9,26 +8,24 @@ engine resolves commit relationships from semantic change/task identifiers.
 
 ## Current Task
 
-`2.1` — execute allowlisted checks and enforce disposable database policy.
+`3.3` — Add scoped, reviewed architecture and feature refresh proposals.
 
 ## Next Task
 
-`2.2` — add immutable reports and evidence-authorized completion transitions.
+`4.1` — Delegate local Git hooks to the engine without copying guard logic or using `eval`.
 
 ## Current Focus
 
-Implement fixed-argv check execution, destructive-database preflight, redacted
-evidence, and command-injection/unsafe-database regression coverage.
+Add scoped, reviewed architecture and feature refresh proposals.
 
 ## Known Blockers
 
-None for the current task.
+None.
 
 ## References
 
 - [Roadmap](ROADMAP.md)
 - [Active change](../openspec/changes/establish-executable-ai-workflow/)
-- [Workflow engine plan](planning/PLAN-EXECUTABLE_AI_WORKFLOW_ENGINE.md)
-- [Documentation structure plan](planning/PLAN-DOCUMENTATION_STRUCTURE_V2.md)
+- [Workflow assurance delta](../openspec/changes/establish-executable-ai-workflow/specs/workflow-assurance/spec.md)
+- [Issue log](ISSUE_LOG.md)
 - [System architecture](architecture/ARCHITECTURE.md)
-- [Testing reference](features/testing/TESTING_OVERVIEW.md)

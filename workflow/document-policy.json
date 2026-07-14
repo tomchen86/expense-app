@@ -7,7 +7,10 @@
     },
     "docs/CURRENT_AND_NEXT_STEPS.md": {
       "mode": "generated",
-      "enforcement": "planned"
+      "enforcement": "active",
+      "source": "openspec/changes/*/tasks.md",
+      "validator": "managed-documents",
+      "transition": "completion"
     },
     "docs/ISSUE_LOG.md": {
       "mode": "generated",

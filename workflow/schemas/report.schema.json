@@ -82,6 +82,7 @@
             "parentReportId",
             "completedTaskIds",
             "projectionSourceDigest",
+            "transitionPaths",
             "reconciledTasks"
           ]
         }
@@ -96,6 +97,7 @@
             "parentReportId",
             "completedTaskIds",
             "projectionSourceDigest",
+            "transitionPaths",
             "checks",
             "stagedPaths",
             "tree"
@@ -117,6 +119,7 @@
             "changedPaths",
             "completedTaskIds",
             "projectionSourceDigest",
+            "transitionPaths",
             "message"
           ]
         }

@@ -7,6 +7,7 @@ import { pathToFileURL } from 'node:url';
 import { loadChangeContract, loadWorkflowConfig } from './contracts.ts';
 import { ExitCode, WorkflowError, workflowError } from './errors.ts';
 import { discoverRepository } from './git.ts';
+import { renderHandoff, validateHandoff } from './handoff.ts';
 import { dispatchIssueCommand } from './issue-cli.ts';
 import {
   commitSession,
@@ -138,6 +139,18 @@ function dispatch(args: string[], cwd: string): CommandResult {
           discoverRepository(cwd).repositoryRoot,
         ),
       };
+    case 'handoff': {
+      const repositoryRoot = discoverRepository(cwd).repositoryRoot;
+      if (rest.length !== 1 || !['render', 'validate'].includes(rest[0])) {
+        throw usage('Usage: pnpm workflow handoff <render|validate> [--json]');
+      }
+      if (rest[0] === 'render') {
+        renderHandoff(repositoryRoot);
+      } else {
+        validateHandoff(repositoryRoot);
+      }
+      return { command, ok: true, action: rest[0] };
+    }
     case 'complete-task':
       requireArgumentCount(command, rest, 1, 1);
       return { command, ok: true, result: completeTask(cwd, rest[0]) };
@@ -276,6 +289,7 @@ function usageText(): string {
     '  pnpm workflow check <session-id> [--json]',
     '  pnpm workflow issue <add|update|close|render|validate> ... [--json]',
     '  pnpm workflow documents validate [--json]',
+    '  pnpm workflow handoff <render|validate> [--json]',
     '  pnpm workflow complete-task <session-id> [--json]',
     '  pnpm workflow finish <session-id> [--json]',
     '  pnpm workflow commit <session-id> --message <subject> [--json]',
