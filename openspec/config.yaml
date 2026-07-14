@@ -1,20 +1,21 @@
 schema: spec-driven
 
-# Project context (optional)
-# This is shown to AI when creating artifacts.
-# Add your tech stack, conventions, style guides, domain knowledge, etc.
-# Example:
-#   context: |
-#     Tech stack: TypeScript, React, Node.js
-#     We use conventional commits
-#     Domain: e-commerce platform
+context: |
+  Monorepo: NestJS API, React Native mobile, Next.js web, TypeScript.
+  Follow RED -> GREEN -> REFACTOR for behavior changes.
+  API tests are destructive and require an explicitly disposable TEST_DATABASE_URL.
+  OpenSpec specs and changes are canonical planning artifacts.
+  The repository workflow engine, Git hooks, and CI own execution assurance.
+  Spectra is retained but must not be invoked or used by the workflow.
 
-# Per-artifact rules (optional)
-# Add custom rules for specific artifacts.
-# Example:
-#   rules:
-#     proposal:
-#       - Keep proposals under 500 words
-#       - Always include a "Non-goals" section
-#     tasks:
-#       - Break tasks into chunks of max 2 hours
+rules:
+  proposal:
+    - Include explicit scope and non-goals.
+    - Link the roadmap item or issue that motivated the change.
+  design:
+    - State trust boundaries, failure behavior, and evidence for guard changes.
+    - Do not duplicate normative requirements from delta specs.
+  tasks:
+    - Keep tasks small enough to verify independently.
+    - Put descriptions in tasks.md and machine path/check policy only in guard.json.
+    - A checked task is a projection; execution evidence is authoritative.

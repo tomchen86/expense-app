@@ -32,10 +32,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - Added repository-wide `prettier.config.cjs` to standardize formatting across all apps.
+- Added an executable repository workflow guard with validated OpenSpec change
+  contracts, clean-baseline sessions, pinned policy digests, path-scope checks,
+  stable exit codes, and disposable-Git integration tests.
+- Added canonical `docs/ROADMAP.md` and `docs/CURRENT_AND_NEXT_STEPS.md` entry
+  points for project direction and current-state handoff.
 
 ### Changed
 
 - Removed the API-specific Prettier override so every workspace now inherits the shared settings.
+- Made OpenSpec change artifacts the single source for proposals, designs, and
+  tasks; retained Spectra installation files without using Spectra in the
+  project workflow.
+- Elevated RED → GREEN → REFACTOR and explicit verification evidence to
+  repository-level development rules.
 
 ### Fixed
 

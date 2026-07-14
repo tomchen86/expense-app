@@ -1,262 +1,102 @@
 # Document Structure Guide
 
-_Last updated: March 3, 2026_
+_Last updated: July 14, 2026_
 
 ## Purpose
 
-This guide defines the organizational structure and naming conventions for all documentation in this project. It uses a **hybrid approach** combining:
+Keep project knowledge small, navigable, and enforceable without duplicating
+requirements, tasks, current state, or execution history.
 
-- **Category-based organization** (planning, status, logs, features, architecture)
-- **Feature-based grouping** within categories
-- **Prefix-based naming** for document lifecycle management
+## Canonical Structure
 
-## File Naming Conventions
-
-### Prefixes by Document Type
-
-| Prefix       | Status      | Purpose                               | Example                           | Lifecycle                           |
-| ------------ | ----------- | ------------------------------------- | --------------------------------- | ----------------------------------- |
-| `PLAN-`      | Active      | Planning document for work to be done | `PLAN-E2E_TESTING.md`             | Created before work starts          |
-| `✅-PLAN-`   | Complete    | Completed planning document           | `✅-PLAN-DATABASE_SCHEMA.md`      | Renamed when work is done           |
-| `STATUS-`    | Active      | Current progress/state tracking       | `STATUS-E2E_IMPLEMENTATION.md`    | Living document, updated frequently |
-| `✅-STATUS-` | Complete    | Final status snapshot                 | `✅-STATUS-E2E_IMPLEMENTATION.md` | Renamed when work is complete       |
-| `LOG-`       | Append-only | Historical record of sessions/work    | `LOG-SESSION_2025_09_30.md`       | Created per session, never modified |
-| `GUIDE-`     | Reference   | How-to instructions                   | `GUIDE-TESTING_SETUP.md`          | Updated as process evolves          |
-| None         | Reference   | Feature/technical documentation       | `DATABASE_SCHEMA.md`              | Updated as features evolve          |
-
-### Document Lifecycle
-
-```
-1. Planning Phase:
-   PLAN-E2E_TESTING.md (created)
-
-2. Work Starts:
-   STATUS-E2E_IMPLEMENTATION.md (created to track progress)
-
-3. During Work:
-   LOG-SESSION_2025_09_30.md (created each work session)
-   STATUS-E2E_IMPLEMENTATION.md (updated with progress)
-
-4. Work Complete:
-   ✅-PLAN-E2E_TESTING.md (renamed, moved to archive/)
-   ✅-STATUS-E2E_IMPLEMENTATION.md (renamed, moved to archive/)
-   Feature docs remain active (e.g., E2E_TESTID_MAPPING.md)
-```
-
-## Directory Structure (Hybrid Organization)
-
-```
+```text
 docs/
-├── planning/                    # All planning documents (by category)
-│   ├── PLAN-E2E_TESTING.md
-│   ├── PLAN-API_ENDPOINTS.md
-│   ├── ROADMAP.md
-│   └── TDD_METHODOLOGY.md
-│
-├── status/                      # Current state snapshots (by category)
-│   ├── STATUS-E2E_IMPLEMENTATION.md
-│   ├── STATUS-API_PROGRESS.md
-│   └── STATUS-MOBILE_TEST_COVERAGE.md
-│
-├── logs/                        # Historical records (by category)
-│   ├── COMMIT_LOG.md           # Technical commit details
-│   ├── LOG-SESSION_2025_09_30.md
-│   └── LOG-SESSION_2025_09_29.md
-│
-├── features/                    # Feature-specific docs (by feature)
-│   ├── testing/
-│   │   ├── MOBILE_UNIT_TESTS.md
-│   │   ├── MOBILE_INTEGRATION_TESTS.md
-│   │   ├── E2E_TESTID_MAPPING.md
-│   │   └── API_TEST_COMPREHENSIVE_SUMMARY.md
-│   ├── database/
-│   │   ├── DATABASE_SCHEMA.md
-│   │   └── MIGRATION_GUIDE.md
-│   └── api/
-│       ├── API_ENDPOINTS.md
-│       └── AUTHENTICATION.md
-│
-├── architecture/                # System design docs (by category)
-│   ├── ARCHITECTURE.md
-│   ├── STORAGE_STRATEGY.md
-│   └── ARCHITECTURE_DECISION_RECORDS.md
-│
-├── archive/                     # Completed/obsolete docs (by category)
-│   ├── ✅-PLAN-EXPO_ROUTER_MIGRATION.md
-│   ├── ✅-STATUS-PHASE_1.md
-│   └── ✅-PLAN-DATABASE_DESIGN.md
-│
-└── CHANGELOG.md                 # High-level user-facing changes (optional)
-    COMMIT_LOG.md → logs/       # Detailed technical changes (moved)
+├── README.md
+├── ROADMAP.md
+├── CURRENT_AND_NEXT_STEPS.md
+├── CHANGELOG.md
+├── ISSUE_LOG.md
+├── DOCUMENT_STRUCTURE_GUIDE.md
+├── WORKFLOW.md                 # planned; do not create in bootstrap
+├── issues/                     # structured issue source
+├── architecture/               # curated system-wide design
+│   └── decisions/              # append-only ADRs
+├── features/                   # curated implementation reference by domain
+├── guides/                     # stable how-to material
+├── research/                   # one background topic per <topic>.md
+├── templates/                  # reusable document templates
+└── archive/                    # immutable historical material
+
+openspec/
+├── specs/<capability>/spec.md  # normative current behavior
+└── changes/<change-id>/        # proposal, design, delta specs, tasks, guard
+
+workflow/                       # executable policy/configuration, no plans
+└── ...
 ```
 
-## When to Update & Immutability Rules
+Existing `docs/planning/`, `docs/status/`, `docs/logs/`, and `docs/template/`
+directories remain in place during non-destructive migration. Their presence
+does not make them canonical.
 
-> For detailed update triggers, session workflow, and quality gates, see `docs/UPDATE_CHECKLIST.md`.
+## Source-of-Truth Matrix
 
-### Never Modify (Archive Only)
+| Question                                      | Source of truth                                                   |
+| --------------------------------------------- | ----------------------------------------------------------------- |
+| What should happen next?                      | `docs/ROADMAP.md`                                                 |
+| What is active, completed, blocked, and next? | `docs/CURRENT_AND_NEXT_STEPS.md`                                  |
+| What must the system do?                      | `openspec/specs/**`                                               |
+| Why and how is a change being made?           | `openspec/changes/<change-id>/proposal.md` and `design.md`        |
+| What are the executable tasks?                | `openspec/changes/<change-id>/tasks.md`                           |
+| What may each task change and run?            | `openspec/changes/<change-id>/guard.json`                         |
+| How does the implemented system work?         | `docs/architecture/**` and `docs/features/**`                     |
+| What is the runtime evidence?                 | Git plus workflow sessions/reports under the Git common directory |
 
-| Document Type                          | Action                                  |
-| -------------------------------------- | --------------------------------------- |
-| Archived plans (`✅-PLAN-*.md`)        | Leave untouched in `docs/archive/`      |
-| Archived status (`✅-STATUS-*.md`)     | Leave untouched in `docs/archive/`      |
-| Past session logs (`LOG-SESSION-*.md`) | Never modify, create new log            |
-| Closed ADRs                            | Append new ADR, don't edit past entries |
+There is no `workflow/changes/` planning tree. Runtime state never belongs in
+tracked Markdown.
 
-## Document Categories Explained
+## Mutation Policies
 
-### 1. Planning (`docs/planning/`)
+| Class           | Rule                                                                          | Typical paths                                                        |
+| --------------- | ----------------------------------------------------------------------------- | -------------------------------------------------------------------- |
+| Generated       | Update structured source, then render; never edit the view directly           | `ISSUE_LOG.md`, eventually `CURRENT_AND_NEXT_STEPS.md`               |
+| Append-only     | Add validated entries; never rewrite prior history                            | `CHANGELOG.md`, accepted ADRs                                        |
+| Curated         | Read freely; update only in explicitly scoped and reviewed work               | `ROADMAP.md`, `architecture/**`, `features/**`, future `WORKFLOW.md` |
+| Normative       | Modify through a reviewed OpenSpec change                                     | `openspec/specs/**`                                                  |
+| Change artifact | Mutate through the active change lifecycle; task completion requires evidence | `openspec/changes/**`                                                |
+| Reference       | May inform work but is never current truth                                    | `research/**`, `ai-responses/**`, retained Spectra files             |
+| Immutable       | Do not edit, rename, or delete without explicit maintainer approval           | `archive/**`, historical logs and reports                            |
 
-**Purpose**: Documents describing work to be done
+The Document Gateway and CI enforcement are being implemented incrementally.
+Until a policy is blocking, its status must be described as advisory or
+audit-only rather than claimed as a hard guarantee.
 
-**What goes here**:
+## Document Creation Rules
 
-- `PLAN-[FEATURE].md` - Detailed implementation plans
-- `ROADMAP.md` - High-level project roadmap
-- `TDD_METHODOLOGY.md` - Development approach docs
+1. Prefer updating the canonical document over creating another tracker.
+2. Put normative behavior in an OpenSpec spec, not in a roadmap or issue.
+3. Put proposal, design, and tasks in one OpenSpec change directory.
+4. Put machine scope and check IDs in `guard.json`; do not repeat prose tasks.
+5. Put current handoff facts only in `CURRENT_AND_NEXT_STEPS.md`; history belongs
+   in Git, reports, changelog, or immutable archives.
+6. Put reusable technical explanations under `architecture/`, `features/`, or
+   `guides/` according to scope.
+7. Put investigation notes at `docs/research/<topic>.md` and label assumptions.
+8. Do not create new per-session logs or manually maintained commit logs.
+9. Do not create `WORKFLOW.md` until its content is reviewed as a separate task.
 
-**Lifecycle**:
+## Non-Destructive Migration
 
-- Created before work starts
-- Rarely modified once work begins
-- Renamed with ✅ prefix and moved to `archive/` when complete
+- Create and link new canonical entry points first.
+- Add a superseded notice to old live documents without deleting their content.
+- Migrate accepted requirements before downgrading `REQUIREMENT_LOG.md` to a
+  historical inventory.
+- Seed structured issue data and prove lossless rendering before making
+  `ISSUE_LOG.md` generated-only.
+- Update live references before moving any historical document.
+- Never rewrite historical links inside immutable changelog/archive snapshots
+  merely to make them look current.
 
-### 2. Status (`docs/status/`)
-
-**Purpose**: Living documents tracking current progress
-
-**What goes here**:
-
-- `STATUS-[FEATURE]_IMPLEMENTATION.md` - Current progress on active work
-- `STATUS-[PHASE].md` - Phase-level progress tracking
-
-**Lifecycle**:
-
-- Created when work starts
-- Updated frequently during work
-- Renamed with ✅ prefix and moved to `archive/` when work is complete
-
-### 3. Logs (`docs/logs/`)
-
-**Purpose**: Append-only historical records (session logs, commit log, changelog).
-
-> For log templates, formats, and anti-overlap rules, see `docs/GUIDE-LOG_TRACKING.md`.
-
-### 4. Features (`docs/features/`)
-
-**Purpose**: Feature-specific technical documentation
-
-**What goes here**:
-
-- `testing/` - Test documentation
-- `database/` - Database schema and migrations
-- `api/` - API endpoints and contracts
-- `mobile/` - Mobile app specific docs
-
-**Lifecycle**:
-
-- Created when feature is implemented
-- Updated as feature evolves
-- Rarely archived (these are living reference docs)
-
-### 5. Architecture (`docs/architecture/`)
-
-**Purpose**: System-wide design decisions
-
-**What goes here**:
-
-- `ARCHITECTURE.md` - System overview
-- `STORAGE_STRATEGY.md` - Data persistence approach
-- `ARCHITECTURE_DECISION_RECORDS.md` - ADR log
-
-**Lifecycle**:
-
-- Updated when architectural changes occur
-- ADRs are append-only
-- Never archived
-
-### 6. Archive (`docs/archive/`)
-
-**Purpose**: Completed or obsolete documentation
-
-**What goes here**:
-
-- Completed plans (`✅-PLAN-*.md`)
-- Completed status docs (`✅-STATUS-*.md`)
-- Outdated/superseded documentation
-
-**Lifecycle**:
-
-- Files moved here when work is complete
-- **Never modified** once archived
-- Kept for historical reference
-
-## Naming Examples
-
-### Good Names
-
-```
-✅ docs/planning/PLAN-E2E_TESTING.md
-✅ docs/status/STATUS-E2E_IMPLEMENTATION.md
-✅ docs/logs/LOG-SESSION_2025_09_30.md
-✅ docs/features/testing/MOBILE_UNIT_TESTS.md
-✅ docs/archive/✅-PLAN-DATABASE_SCHEMA.md
-✅ docs/archive/✅-STATUS-PHASE_2.md
-```
-
-### Bad Names
-
-```
-❌ docs/E2E_IMPLEMENTATION_STATUS.md (no prefix, wrong location)
-❌ docs/planning/DATABASE_PLAN.md (no PLAN- prefix)
-❌ docs/SESSION_SUMMARY_2025_09_30.md (no LOG- prefix, wrong location)
-❌ docs/archive/PLAN-OLD_FEATURE.md (not marked as complete with ✅)
-```
-
-## CHANGELOG vs COMMIT_LOG
-
-> For detailed comparison, templates, and anti-overlap rules between the three log types, see `docs/GUIDE-LOG_TRACKING.md`.
-
-## Best Practices
-
-1. **Create new documents sparingly** - Update existing docs when possible
-
-2. **Use prefixes consistently** - Every document should have appropriate prefix
-
-3. **Archive completed work** - Don't delete, move to `archive/` with ✅ prefix
-
-4. **One status doc per feature** - Track progress in single `STATUS-*.md` file
-
-5. **Session logs are append-only** - Create new log per session, never edit old ones
-
-6. **Feature docs stay active** - Don't archive technical reference documentation
-
-7. **Cross-reference in commits** - Link to relevant docs in commit messages
-
-8. **Update this guide** - When structure changes, update this guide first
-
-## Quick Reference
-
-### Starting New Work
-
-1. Create `docs/planning/PLAN-[FEATURE].md`
-2. Begin work, create `docs/status/STATUS-[FEATURE]_IMPLEMENTATION.md`
-3. Each session, create `docs/logs/LOG-SESSION_YYYY_MM_DD.md`
-
-### Completing Work
-
-1. Rename `docs/planning/PLAN-[FEATURE].md` → `docs/archive/✅-PLAN-[FEATURE].md`
-2. Rename `docs/status/STATUS-[FEATURE].md` → `docs/archive/✅-STATUS-[FEATURE].md`
-3. Keep feature docs active in `docs/features/[domain]/`
-
-### Finding Documents
-
-- **"What should I work on next?"** → `docs/planning/ROADMAP.md`
-- **"What's the current progress?"** → `docs/status/STATUS-*.md`
-- **"What happened last session?"** → `docs/logs/LOG-SESSION_*.md`
-- **"How does testing work?"** → `docs/features/testing/`
-- **"What was the database plan?"** → `docs/archive/✅-PLAN-DATABASE_SCHEMA.md`
-
----
-
-_This guide supersedes previous documentation structure. All new documents should follow these conventions._
+The detailed adoption sequence lives in
+`planning/PLAN-DOCUMENTATION_STRUCTURE_V2.md` until the future `WORKFLOW.md` is
+approved.

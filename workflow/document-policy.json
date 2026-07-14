@@ -1,0 +1,43 @@
+{
+  "schemaVersion": 1,
+  "enforcementMode": "audit-only",
+  "documents": {
+    "docs/ROADMAP.md": {
+      "mode": "curated"
+    },
+    "docs/CURRENT_AND_NEXT_STEPS.md": {
+      "mode": "generated",
+      "enforcement": "planned"
+    },
+    "docs/ISSUE_LOG.md": {
+      "mode": "generated",
+      "enforcement": "planned"
+    },
+    "docs/CHANGELOG.md": {
+      "mode": "append-only",
+      "enforcement": "planned"
+    },
+    "docs/architecture/**": {
+      "mode": "curated"
+    },
+    "docs/features/**": {
+      "mode": "curated"
+    },
+    "docs/research/**": {
+      "mode": "reference"
+    },
+    "docs/archive/**": {
+      "mode": "immutable",
+      "enforcement": "planned"
+    },
+    "openspec/specs/**": {
+      "mode": "normative"
+    },
+    "openspec/changes/**": {
+      "mode": "change-artifact"
+    },
+    ".agents/skills/spectra-*/**": {
+      "mode": "reference"
+    }
+  }
+}

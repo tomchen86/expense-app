@@ -1,0 +1,40 @@
+{
+  "schemaVersion": 1,
+  "checks": {
+    "workflow-tests": {
+      "command": [
+        "node",
+        "--experimental-strip-types",
+        "--test",
+        "packages/workflow-engine/test/contracts.test.ts",
+        "packages/workflow-engine/test/session.integration.test.ts"
+      ],
+      "destructiveDatabase": false
+    },
+    "workflow-typecheck": {
+      "command": ["pnpm", "run", "workflow:typecheck"],
+      "destructiveDatabase": false
+    },
+    "workflow-format": {
+      "command": [
+        "pnpm",
+        "exec",
+        "prettier",
+        "--check",
+        "packages/workflow-engine",
+        "workflow",
+        "package.json",
+        "pnpm-workspace.yaml",
+        "openspec/changes/establish-executable-ai-workflow",
+        "docs/planning/PLAN-EXECUTABLE_AI_WORKFLOW_ENGINE.md",
+        "docs/planning/PLAN-DOCUMENTATION_STRUCTURE_V2.md",
+        "docs/README.md",
+        "docs/ROADMAP.md",
+        "docs/CURRENT_AND_NEXT_STEPS.md",
+        "docs/DOCUMENT_STRUCTURE_GUIDE.md",
+        "AGENTS.md"
+      ],
+      "destructiveDatabase": false
+    }
+  }
+}

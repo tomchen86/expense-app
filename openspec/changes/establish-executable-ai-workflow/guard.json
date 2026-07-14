@@ -1,0 +1,129 @@
+{
+  "schemaVersion": 1,
+  "changeId": "establish-executable-ai-workflow",
+  "tasks": {
+    "1.1": {
+      "allowedPaths": [
+        "AGENTS.md",
+        "docs/README.md",
+        "docs/ROADMAP.md",
+        "docs/CURRENT_AND_NEXT_STEPS.md",
+        "docs/DOCUMENT_STRUCTURE_GUIDE.md",
+        "docs/UPDATE_CHECKLIST.md",
+        "docs/REQUIREMENT_LOG.md",
+        "docs/planning/ROADMAP.md",
+        "docs/status/STATUS-CURRENT_AND_NEXT_STEPS.md",
+        "docs/planning/PLAN-DOCUMENTATION_STRUCTURE_V2.md",
+        "docs/planning/PLAN-EXECUTABLE_AI_WORKFLOW_ENGINE.md",
+        "openspec/config.yaml",
+        "openspec/changes/establish-executable-ai-workflow/**"
+      ],
+      "requiredChecks": ["workflow-tests", "workflow-format"]
+    },
+    "1.2": {
+      "allowedPaths": [
+        "package.json",
+        "pnpm-lock.yaml",
+        "pnpm-workspace.yaml",
+        "packages/workflow-engine/**",
+        "workflow/**",
+        "openspec/changes/establish-executable-ai-workflow/**"
+      ],
+      "requiredChecks": [
+        "workflow-tests",
+        "workflow-typecheck",
+        "workflow-format"
+      ]
+    },
+    "1.3": {
+      "allowedPaths": [
+        "packages/workflow-engine/test/**",
+        "openspec/changes/establish-executable-ai-workflow/tasks.md",
+        "docs/CURRENT_AND_NEXT_STEPS.md"
+      ],
+      "requiredChecks": [
+        "workflow-tests",
+        "workflow-typecheck",
+        "workflow-format"
+      ]
+    },
+    "2.1": {
+      "allowedPaths": ["packages/workflow-engine/**", "workflow/**"],
+      "requiredChecks": ["workflow-tests", "workflow-format"]
+    },
+    "2.2": {
+      "allowedPaths": [
+        "packages/workflow-engine/**",
+        "workflow/**",
+        "openspec/changes/**"
+      ],
+      "requiredChecks": ["workflow-tests", "workflow-format"]
+    },
+    "3.1": {
+      "allowedPaths": [
+        "packages/workflow-engine/**",
+        "workflow/**",
+        "docs/issues/**",
+        "docs/ISSUE_LOG.md"
+      ],
+      "requiredChecks": ["workflow-tests", "workflow-format"]
+    },
+    "3.2": {
+      "allowedPaths": [
+        "packages/workflow-engine/**",
+        "workflow/**",
+        "docs/CURRENT_AND_NEXT_STEPS.md"
+      ],
+      "requiredChecks": ["workflow-tests", "workflow-format"]
+    },
+    "3.3": {
+      "allowedPaths": [
+        "packages/workflow-engine/**",
+        "workflow/**",
+        "docs/architecture/**",
+        "docs/features/**"
+      ],
+      "requiredChecks": ["workflow-tests", "workflow-format"]
+    },
+    "4.1": {
+      "allowedPaths": [
+        "packages/workflow-engine/**",
+        "workflow/**",
+        ".husky/**"
+      ],
+      "requiredChecks": ["workflow-tests", "workflow-format"]
+    },
+    "4.2": {
+      "allowedPaths": [
+        "packages/workflow-engine/**",
+        "workflow/**",
+        ".github/workflows/**",
+        "CODEOWNERS"
+      ],
+      "requiredChecks": ["workflow-tests", "workflow-format"]
+    },
+    "5.1": {
+      "allowedPaths": [
+        "openspec/specs/**",
+        "openspec/changes/**",
+        "docs/REQUIREMENT_LOG.md",
+        "docs/ISSUE_LOG.md",
+        "docs/ROADMAP.md"
+      ],
+      "requiredChecks": ["workflow-format"]
+    },
+    "5.2": {
+      "allowedPaths": [
+        "docs/WORKFLOW.md",
+        "docs/UPDATE_CHECKLIST.md",
+        "docs/README.md",
+        "docs/DOCUMENT_STRUCTURE_GUIDE.md"
+      ],
+      "requiredChecks": ["workflow-format"]
+    },
+    "5.3": {
+      "allowedPaths": ["packages/workflow-engine/**", "workflow/**"],
+      "requiredChecks": ["workflow-tests", "workflow-format"]
+    }
+  }
+}

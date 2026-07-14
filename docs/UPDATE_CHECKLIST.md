@@ -1,5 +1,10 @@
 # Update Checklist
 
+> **Legacy operational reference:** `docs/WORKFLOW.md` is planned but has not
+> been created yet. This checklist contains stale commands and old manual-log
+> requirements. Follow `AGENTS.md` and the executable workflow guard; verify a
+> command against current package scripts before running it.
+
 _Last updated: March 3, 2026_
 
 ## Purpose

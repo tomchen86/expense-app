@@ -1,0 +1,9 @@
+{
+  "schemaVersion": 1,
+  "repositoryName": "expense-app",
+  "changeRoot": "openspec/changes",
+  "runtimeDirectory": "workflow-engine",
+  "protectedBranches": ["main", "master"],
+  "branchTemplate": "work/{changeId}",
+  "allowedPathModes": ["exact", "directory-prefix"]
+}

@@ -7,6 +7,11 @@ packages:
 overrides:
   prettier: ^3.9.5
 
+# Keep local and CI installs on the same node_modules layout. pnpm 11 otherwise
+# enables the global virtual store locally but disables it under CI, causing
+# every non-interactive script run to attempt a reinstall.
+enableGlobalVirtualStore: false
+
 allowBuilds:
   '@swc/core': true
   detox: true

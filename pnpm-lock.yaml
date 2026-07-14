@@ -384,6 +384,12 @@ importers:
         specifier: ^4.10.2
         version: 4.10.2
 
+  packages/workflow-engine:
+    devDependencies:
+      '@types/node':
+        specifier: ^24.13.3
+        version: 24.13.3
+
 packages:
 
   '@adobe/css-tools@4.5.0':

@@ -1,0 +1,16 @@
+{
+  "name": "@expense/workflow-engine",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.22.1"
+  },
+  "scripts": {
+    "workflow": "node --experimental-strip-types src/cli.ts",
+    "test": "node --experimental-strip-types --test test/contracts.test.ts test/session.integration.test.ts",
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "devDependencies": {
+    "@types/node": "^24.13.3"
+  }
+}

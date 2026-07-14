@@ -1,45 +1,60 @@
-# Documentation — Entry Point
+# Documentation Entry Point
 
-## Quick Start — What to Read First
+This directory separates current project truth, normative requirements,
+change planning, reference material, and immutable history.
 
-| You want to...                                      | Read                                         |
-| --------------------------------------------------- | -------------------------------------------- |
-| Understand the project & run commands               | `../CLAUDE.md`                               |
-| Check current progress / next steps                 | `status/STATUS-CURRENT_AND_NEXT_STEPS.md`    |
-| Know where to put a new document                    | `DOCUMENT_STRUCTURE_GUIDE.md`                |
-| Run end-of-session checks                           | `UPDATE_CHECKLIST.md`                        |
-| Write a session log, commit log, or changelog entry | `GUIDE-LOG_TRACKING.md`                      |
-| Learn JavaScript/TypeScript web development basics  | `GUIDE-JAVASCRIPT_WEB_DEVELOPMENT_BASICS.md` |
-| Review the API development plan                     | `planning/PLAN-TDD_API_IMPLEMENTATION.md`    |
-| Learn the current API code and architecture         | `features/api/GUIDE-API_CODE.md`             |
-| Learn which API tests currently exist               | `features/testing/GUIDE-API_TESTS.md`        |
-| Learn which Mobile tests currently exist            | `features/testing/GUIDE-MOBILE-TESTS.md`     |
-| Understand the storage architecture                 | `architecture/STORAGE_STRATEGY.md`           |
+## Read First
 
-## Project Status (qualitative)
+| Need                                            | Canonical source                                             |
+| ----------------------------------------------- | ------------------------------------------------------------ |
+| Current priorities                              | [`ROADMAP.md`](ROADMAP.md)                                   |
+| Current state, handoff, and exact next step     | [`CURRENT_AND_NEXT_STEPS.md`](CURRENT_AND_NEXT_STEPS.md)     |
+| Documentation placement and mutation rules      | [`DOCUMENT_STRUCTURE_GUIDE.md`](DOCUMENT_STRUCTURE_GUIDE.md) |
+| Normative system requirements                   | [`../openspec/specs/`](../openspec/specs/)                   |
+| Active proposal, design, delta specs, and tasks | [`../openspec/changes/`](../openspec/changes/)               |
+| System architecture                             | [`architecture/`](architecture/)                             |
+| Feature implementation references               | [`features/`](features/)                                     |
+| Open issues                                     | [`ISSUE_LOG.md`](ISSUE_LOG.md)                               |
+| Delivered user-visible outcomes                 | [`CHANGELOG.md`](CHANGELOG.md)                               |
 
-- **Mobile app**: Feature-complete, local-only storage. Run `pnpm --filter mobile test` for current counts.
-- **Database schema**: Complete (PostgreSQL, TypeORM, migrations, seeds).
-- **API**: In progress — NestJS, mobile-first TDD. See `features/testing/GUIDE-API_TESTS.md` for current counts and safe test commands.
-- **Web**: Deferred until API is complete.
+`WORKFLOW.md` is planned but intentionally not created during the current
+bootstrap. Until its reviewed replacement exists, `UPDATE_CHECKLIST.md` is a
+legacy operational reference only; verify every command against the repository
+and `AGENTS.md` before running it.
 
-## Folder Structure
+## Source Boundaries
 
-| Folder          | Contents                                                 |
-| --------------- | -------------------------------------------------------- |
-| `planning/`     | Active plans (`PLAN-*.md`), roadmap, methodology         |
-| `status/`       | Living progress trackers (`STATUS-*.md`)                 |
-| `logs/`         | Session logs, `COMMIT_LOG.md` (append-only)              |
-| `features/`     | Feature-specific technical docs (testing, database, api) |
-| `architecture/` | System design, ADRs, storage strategy                    |
-| `archive/`      | Completed/obsolete docs (prefixed with `✅-`)            |
+- `openspec/specs/**` is the only normative requirements source.
+- `openspec/changes/<change-id>/**` is the only active change-planning and task
+  source. `guard.json` adds machine execution policy without repeating task
+  descriptions.
+- The repository workflow engine owns runtime sessions, Git facts, diff scope,
+  check evidence, and completion authorization.
+- Architecture and feature documents are read freely but updated only through
+  explicitly scoped, reviewed work.
+- `docs/research/<topic>.md` is background material, never current truth.
+- Existing `planning/`, `status/`, and `logs/` files are legacy inputs until
+  individually migrated. Do not infer current state from them.
+- Spectra remains installed but is not used by the repository workflow.
 
-## Conventions (three meta-docs, each with a clear domain)
+## Target Structure
 
-| Guide                         | Owns                                                                              |
-| ----------------------------- | --------------------------------------------------------------------------------- |
-| `DOCUMENT_STRUCTURE_GUIDE.md` | Folder structure, prefix naming, lifecycle, categories, immutability rules        |
-| `UPDATE_CHECKLIST.md`         | Session workflow, quality gates, update triggers, git workflow                    |
-| `GUIDE-LOG_TRACKING.md`       | Log templates (session, commit, changelog), anti-overlap rules, cross-referencing |
+```text
+docs/
+├── README.md
+├── ROADMAP.md
+├── CURRENT_AND_NEXT_STEPS.md
+├── CHANGELOG.md
+├── ISSUE_LOG.md
+├── DOCUMENT_STRUCTURE_GUIDE.md
+├── WORKFLOW.md                 # planned, not created yet
+├── issues/
+├── architecture/
+├── features/
+├── guides/
+├── research/
+├── templates/
+└── archive/
+```
 
-Each guide cross-references the other two. No content is duplicated across them.
+See `DOCUMENT_STRUCTURE_GUIDE.md` for mutation policies and migration rules.

@@ -10,7 +10,10 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "lint": "eslint .",
-    "lint:fix": "eslint . --fix"
+    "lint:fix": "eslint . --fix",
+    "workflow": "node --experimental-strip-types packages/workflow-engine/src/cli.ts",
+    "workflow:test": "node --experimental-strip-types --test packages/workflow-engine/test/contracts.test.ts packages/workflow-engine/test/session.integration.test.ts",
+    "workflow:typecheck": "tsc -p packages/workflow-engine/tsconfig.json"
   },
   "dependencies": {
     "@react-native-picker/picker": "^2.11.4"

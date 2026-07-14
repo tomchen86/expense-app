@@ -1,0 +1,45 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://expense-app.local/workflow/session.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "sessionId",
+    "state",
+    "changeId",
+    "taskId",
+    "repositoryRoot",
+    "gitCommonDirectory",
+    "branch",
+    "baseline",
+    "artifacts",
+    "allowedPaths",
+    "requiredChecks",
+    "createdAt"
+  ],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "sessionId": { "type": "string", "minLength": 1 },
+    "state": { "enum": ["active", "aborted"] },
+    "changeId": { "type": "string" },
+    "taskId": { "type": "string" },
+    "repositoryRoot": { "type": "string" },
+    "gitCommonDirectory": { "type": "string" },
+    "branch": { "type": "string" },
+    "baseline": {
+      "type": "object",
+      "required": ["head", "tree"],
+      "properties": {
+        "head": { "type": "string" },
+        "tree": { "type": "string" }
+      }
+    },
+    "artifacts": { "type": "object" },
+    "allowedPaths": { "type": "array", "items": { "type": "string" } },
+    "requiredChecks": { "type": "array", "items": { "type": "string" } },
+    "createdAt": { "type": "string", "format": "date-time" },
+    "abortedAt": { "type": "string", "format": "date-time" },
+    "abortReason": { "type": "string" }
+  }
+}

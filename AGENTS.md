@@ -1,35 +1,42 @@
-<!-- SPECTRA:START v1.0.2 -->
+# Repository Workflow
 
-# Spectra Instructions
+This repository uses OpenSpec artifacts as versioned planning data and a
+repository-owned workflow engine for execution assurance.
 
-This project uses Spectra for Spec-Driven Development(SDD). Specs live in `openspec/specs/`, change proposals in `openspec/changes/`.
+- Normative requirements live in `openspec/specs/`.
+- Proposals, designs, delta specs, and task lists live in
+  `openspec/changes/<change-id>/`.
+- `guard.json` inside each change contains machine policy only: task path scope
+  and required check IDs.
+- Runtime sessions, locks, reports, Git validation, and completion authority
+  belong to the executable workflow engine, not to Markdown or an AI prompt.
+- `docs/ROADMAP.md` owns priority; `docs/CURRENT_AND_NEXT_STEPS.md` owns the
+  current handoff.
 
-## Use `$spectra-*` skills when:
+Spectra files remain installed for compatibility and historical reference, but
+agents must not invoke Spectra commands, skills, adapters, or lifecycle state.
+Do not delete or rewrite the retained Spectra installation unless the
+maintainer explicitly requests it.
 
-- A discussion needs structure before coding → `$spectra-discuss`
-- User wants to plan, propose, or design a change → `$spectra-propose`
-- Tasks are ready to implement → `$spectra-apply`
-- There's an in-progress change to continue → `$spectra-ingest`
-- User asks about specs or how something works → `$spectra-ask`
-- Implementation is done → `$spectra-archive`
-- Commit only files related to a specific change → `$spectra-commit`
+During the workflow-engine bootstrap, use `pnpm workflow doctor` for diagnostics
+and `pnpm workflow validate-change <change-id>` to validate tracked artifacts.
+Only an executable workflow command may eventually authorize task checkbox,
+completion, archive, staging, or commit transitions; never treat an AI claim as
+evidence.
 
-## Workflow
+## Development Principle: Test-Driven Development
 
-discuss? → propose → apply ⇄ ingest → archive
-
-- `discuss` is optional — skip if requirements are clear
-- Requirements change mid-work? `ingest` → resume `apply`
-
-## Parked Changes
-
-Changes can be parked（暫存）— temporarily moved out of `openspec/changes/`. Parked changes won't appear in `spectra list` but can be found with `spectra list --parked`. To restore: `spectra unpark <name>`. The `$spectra-apply` and `$spectra-ingest` skills handle parked changes automatically.
-
-<!-- SPECTRA:END -->
-
-## Spectra Maintenance
-
-Before running `spectra update`, read `.agents/README.md`. Generated skill updates overwrite repository-specific safety and compatibility fixes and must be reviewed before they are accepted.
+- Behavior changes and bug fixes follow RED → GREEN → REFACTOR.
+- Before changing production behavior, add or identify a test that fails for
+  the intended reason.
+- Implement the smallest change that makes the test pass, then refactor while
+  keeping the suite green.
+- Documentation-only, formatting-only, dependency-only, and time-boxed research
+  work may be exempt, but the reason must be stated.
+- Database-writing API tests require an explicitly disposable
+  `TEST_DATABASE_URL`; never use a development-database fallback.
+- A task's configured checks and workflow report are the evidence; a checkbox
+  or prose statement is not.
 
 # Repository Guidelines
 

@@ -1,5 +1,9 @@
 # Expense Tracking App - Development Roadmap
 
+> **Superseded planning snapshot:** The canonical roadmap is now
+> `docs/ROADMAP.md`. This 2025 document is retained unchanged below as legacy
+> input and contains claims that require re-verification.
+
 _Last Updated: September 19, 2025_
 
 ## Current State Assessment

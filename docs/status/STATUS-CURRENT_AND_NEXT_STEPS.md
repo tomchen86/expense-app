@@ -1,5 +1,9 @@
 # API Status & Next Actions (September 27, 2025)
 
+> **Superseded status snapshot:** The canonical current handoff is now
+> `docs/CURRENT_AND_NEXT_STEPS.md`. This document is retained as historical
+> input and contains internally conflicting completion/next-task claims.
+
 > Resume note (March 3, 2026): Check `docs/status/STATUS-RESUME_AUDIT_2026_03_03.md` first for the latest verified build/test snapshot and restart checklist.
 
 ## ✅ PHASE 2 COMPLETE: API Development

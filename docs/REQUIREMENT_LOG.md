@@ -1,5 +1,10 @@
 # Function Log
 
+> **Migration inventory, not the normative source:** New and changed
+> requirements belong in `openspec/specs/**` through an OpenSpec change. Keep
+> this file until its accepted requirements have been audited and migrated; do
+> not add a second requirement truth here.
+
 _Last updated: September 23, 2025_
 
 ## How to Use
