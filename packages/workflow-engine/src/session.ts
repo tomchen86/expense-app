@@ -5,9 +5,16 @@ import {
   digestArtifacts,
   loadChangeContract,
   loadWorkflowConfig,
+  type ChangeContract,
+  type TaskPolicy,
 } from './contracts.ts';
+import { runCheck, type CheckEvidence } from './check-runner.ts';
+import {
+  assertDisposableDatabase,
+  createCheckEnvironment,
+} from './database-policy.ts';
 import { ExitCode, workflowError } from './errors.ts';
-import { discoverRepository, listChangedPaths } from './git.ts';
+import { discoverRepository, listChangedPaths, type GitState } from './git.ts';
 import {
   assertChangeId,
   assertSessionId,
@@ -15,6 +22,7 @@ import {
   matchesAllowedPath,
 } from './paths.ts';
 import {
+  assertOwnedLock,
   createSessionId,
   readSessionFile,
   releaseOwnedLock,
@@ -31,7 +39,21 @@ export type SessionCheck = {
   taskId: string;
   changedPaths: string[];
   unexpectedPaths: string[];
+  checks: CheckEvidence[];
   passed: boolean;
+};
+
+export type SessionCheckOptions = {
+  environment?: NodeJS.ProcessEnv;
+};
+
+type SessionInspection = {
+  git: GitState;
+  session: WorkflowSession;
+  contract: ChangeContract;
+  policy: TaskPolicy;
+  changedPaths: string[];
+  unexpectedPaths: string[];
 };
 
 export function startSession(
@@ -184,7 +206,51 @@ export function startSession(
 export function checkSession(
   cwd: string,
   requestedSessionId: string,
+  options: SessionCheckOptions = {},
 ): SessionCheck {
+  const initial = inspectSession(cwd, requestedSessionId);
+
+  const environment = options.environment ?? process.env;
+  const requiredChecks = initial.session.requiredChecks.map((checkId) => ({
+    checkId,
+    definition: initial.contract.checks.checks[checkId],
+  }));
+  const databaseEvidence = requiredChecks.some(
+    ({ definition }) => definition.destructiveDatabase,
+  )
+    ? assertDisposableDatabase(environment)
+    : undefined;
+  const checks: CheckEvidence[] = [];
+  let final = initial;
+  for (const { checkId, definition } of requiredChecks) {
+    checks.push(
+      runCheck(
+        initial.git.repositoryRoot,
+        checkId,
+        definition,
+        createCheckEnvironment(environment, definition.destructiveDatabase),
+        definition.destructiveDatabase ? databaseEvidence?.identity : undefined,
+      ),
+    );
+    final = inspectSession(cwd, requestedSessionId, initial.session);
+  }
+
+  return {
+    sessionId: initial.session.sessionId,
+    changeId: initial.session.changeId,
+    taskId: initial.session.taskId,
+    changedPaths: final.changedPaths,
+    unexpectedPaths: final.unexpectedPaths,
+    checks,
+    passed: true,
+  };
+}
+
+function inspectSession(
+  cwd: string,
+  requestedSessionId: string,
+  expectedSession?: WorkflowSession,
+): SessionInspection {
   const git = discoverRepository(cwd);
   const session = loadSession(
     git.gitCommonDirectory,
@@ -196,6 +262,16 @@ export function checkSession(
     throw workflowError(
       'SESSION_NOT_ACTIVE',
       `Session ${session.sessionId} is ${session.state}.`,
+      ExitCode.staleState,
+    );
+  }
+  if (
+    expectedSession &&
+    JSON.stringify(session) !== JSON.stringify(expectedSession)
+  ) {
+    throw workflowError(
+      'SESSION_CHANGED_DURING_CHECK',
+      'The active session changed while required checks were running.',
       ExitCode.staleState,
     );
   }
@@ -223,14 +299,24 @@ export function checkSession(
   }
 
   const contract = loadChangeContract(git.repositoryRoot, session.changeId);
-  const currentPolicy = contract.guard.tasks[session.taskId];
-  if (!currentPolicy) {
+  const policy = contract.guard.tasks[session.taskId];
+  if (!policy) {
     throw workflowError(
       'SESSION_TASK_REMOVED',
       `Session task ${session.taskId} no longer exists in guard.json.`,
       ExitCode.staleState,
     );
   }
+  assertOwnedLock(
+    path.join(
+      runtimePaths(git.gitCommonDirectory, contract.config.runtimeDirectory)
+        .locks,
+      `${session.changeId}.lock`,
+    ),
+    session.sessionId,
+    session.changeId,
+    session.taskId,
+  );
   const currentDigests = digestArtifacts(
     git.repositoryRoot,
     contract.artifactPaths,
@@ -247,9 +333,9 @@ export function checkSession(
     );
   }
   if (
-    JSON.stringify(currentPolicy.allowedPaths) !==
+    JSON.stringify(policy.allowedPaths) !==
       JSON.stringify(session.allowedPaths) ||
-    JSON.stringify(currentPolicy.requiredChecks) !==
+    JSON.stringify(policy.requiredChecks) !==
       JSON.stringify(session.requiredChecks)
   ) {
     throw workflowError(
@@ -265,11 +351,10 @@ export function checkSession(
   );
   const unexpectedPaths = changedPaths.filter(
     (changedPath) =>
-      !currentPolicy.allowedPaths.some((allowedPath) =>
+      !policy.allowedPaths.some((allowedPath) =>
         matchesAllowedPath(changedPath, allowedPath),
       ),
   );
-
   if (unexpectedPaths.length > 0) {
     throw workflowError(
       'OUT_OF_SCOPE_PATHS',
@@ -280,12 +365,12 @@ export function checkSession(
   }
 
   return {
-    sessionId: session.sessionId,
-    changeId: session.changeId,
-    taskId: session.taskId,
+    git,
+    session,
+    contract,
+    policy,
     changedPaths,
     unexpectedPaths,
-    passed: true,
   };
 }
 

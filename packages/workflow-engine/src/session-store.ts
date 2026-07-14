@@ -112,6 +112,29 @@ export function releaseOwnedLock(lockPath: string, sessionId: string): void {
   }
 }
 
+export function assertOwnedLock(
+  lockPath: string,
+  sessionId: string,
+  changeId: string,
+  taskId: string,
+): void {
+  let value: unknown;
+  try {
+    value = JSON.parse(fs.readFileSync(lockPath, 'utf8'));
+  } catch {
+    throw invalidSessionLock();
+  }
+
+  if (
+    !isRecord(value) ||
+    value.sessionId !== sessionId ||
+    value.changeId !== changeId ||
+    value.taskId !== taskId
+  ) {
+    throw invalidSessionLock();
+  }
+}
+
 export function createSessionId(): string {
   const timestamp = new Date().toISOString().replace(/[^0-9]/g, '');
   return `session-${timestamp}-${crypto.randomUUID()}`;
@@ -166,5 +189,13 @@ function isStringRecord(value: unknown): value is Record<string, string> {
   return (
     isRecord(value) &&
     Object.values(value).every((item) => typeof item === 'string')
+  );
+}
+
+function invalidSessionLock() {
+  return workflowError(
+    'SESSION_LOCK_INVALID',
+    'The active session lock is missing or does not match the session.',
+    ExitCode.staleState,
   );
 }

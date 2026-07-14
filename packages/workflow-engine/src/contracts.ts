@@ -322,7 +322,7 @@ function validateTaskPolicy(
   }
 
   const unknownChecks = policy.requiredChecks.filter(
-    (checkId) => !(checkId in checks.checks),
+    (checkId) => !Object.hasOwn(checks.checks, checkId),
   );
   if (unknownChecks.length > 0) {
     throw workflowError(
