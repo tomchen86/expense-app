@@ -5,6 +5,7 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 import { loadChangeContract, loadWorkflowConfig } from './contracts.ts';
+import { verifyPullRequest } from './ci.ts';
 import { dispatchDocumentRefreshCommand } from './document-refresh-cli.ts';
 import { ExitCode, WorkflowError, workflowError } from './errors.ts';
 import { discoverRepository } from './git.ts';
@@ -121,6 +122,18 @@ function dispatch(args: string[], cwd: string): CommandResult {
     case 'check':
       requireArgumentCount(command, rest, 1, 1);
       return { command, ok: true, result: checkSession(cwd, rest[0]) };
+    case 'ci': {
+      if (rest.length !== 4 || rest[0] !== '--base' || rest[2] !== '--head') {
+        throw usage(
+          'Usage: pnpm workflow ci --base <commit> --head <commit> [--json]',
+        );
+      }
+      return {
+        command,
+        ok: true,
+        result: verifyPullRequest(cwd, rest[1], rest[3]),
+      };
+    }
     case 'issue':
       return {
         command,
@@ -303,6 +316,7 @@ function usageText(): string {
     '  pnpm workflow start <change-id> --task <task-id> [--json]',
     '  pnpm workflow status [session-id] [--json]',
     '  pnpm workflow check <session-id> [--json]',
+    '  pnpm workflow ci --base <commit> --head <commit> [--json]',
     '  pnpm workflow issue <add|update|close|render|validate> ... [--json]',
     '  pnpm workflow documents validate [--json]',
     '  pnpm workflow document-refresh <propose|show|review|apply> ... [--json]',

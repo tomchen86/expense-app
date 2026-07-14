@@ -1,0 +1,111 @@
+{
+  "schemaVersion": 1,
+  "bootstrapExceptions": [
+    {
+      "changeId": "establish-executable-ai-workflow",
+      "taskIds": ["1.1", "1.2", "1.3"],
+      "compatibilityCommits": [
+        {
+          "taskId": "1.3",
+          "subject": "Adopt semantic workflow handoff",
+          "changedPaths": [
+            "AGENTS.md",
+            "docs/CHANGELOG.md",
+            "docs/CURRENT_AND_NEXT_STEPS.md",
+            "docs/DOCUMENT_STRUCTURE_GUIDE.md",
+            "docs/GUIDE-LOG_TRACKING.md",
+            "docs/planning/PLAN-DOCUMENTATION_STRUCTURE_V2.md",
+            "docs/planning/PLAN-EXECUTABLE_AI_WORKFLOW_ENGINE.md",
+            "openspec/changes/establish-executable-ai-workflow/design.md",
+            "openspec/changes/establish-executable-ai-workflow/guard.json",
+            "openspec/changes/establish-executable-ai-workflow/proposal.md",
+            "openspec/changes/establish-executable-ai-workflow/specs/workflow-assurance/spec.md",
+            "openspec/changes/establish-executable-ai-workflow/tasks.md",
+            "workflow/checks.json"
+          ]
+        },
+        {
+          "taskId": "2.1",
+          "subject": "Execute workflow checks with fail-closed guards",
+          "changedPaths": [
+            "packages/workflow-engine/src/check-runner.ts",
+            "packages/workflow-engine/src/contracts.ts",
+            "packages/workflow-engine/src/database-policy.ts",
+            "packages/workflow-engine/src/session-store.ts",
+            "packages/workflow-engine/src/session.ts",
+            "packages/workflow-engine/test/contracts.test.ts",
+            "packages/workflow-engine/test/fixture.ts",
+            "packages/workflow-engine/test/session.integration.test.ts"
+          ]
+        },
+        {
+          "taskId": "2.1",
+          "subject": "Expand Task 2.1 safety contract",
+          "changedPaths": [
+            "docs/planning/PLAN-EXECUTABLE_AI_WORKFLOW_ENGINE.md",
+            "openspec/changes/establish-executable-ai-workflow/design.md",
+            "openspec/changes/establish-executable-ai-workflow/guard.json",
+            "openspec/changes/establish-executable-ai-workflow/specs/workflow-assurance/spec.md",
+            "openspec/changes/establish-executable-ai-workflow/tasks.md",
+            "workflow/checks.json"
+          ]
+        },
+        {
+          "taskId": "2.1",
+          "subject": "Harden pinned workflow verification",
+          "changedPaths": [
+            "apps/api/src/__tests__/isolated/database-target-policy.isolated.spec.ts",
+            "apps/api/src/__tests__/setup/database-target-policy.ts",
+            "apps/api/src/__tests__/setup/datasource.factory.ts",
+            "packages/workflow-engine/src/check-runner.ts",
+            "packages/workflow-engine/src/contracts.ts",
+            "packages/workflow-engine/src/database-policy.ts",
+            "packages/workflow-engine/src/execution-environment.ts",
+            "packages/workflow-engine/src/git.ts",
+            "packages/workflow-engine/src/package-closure.ts",
+            "packages/workflow-engine/src/paths.ts",
+            "packages/workflow-engine/src/runner-resolution.ts",
+            "packages/workflow-engine/src/session.ts",
+            "packages/workflow-engine/test/contracts.test.ts",
+            "packages/workflow-engine/test/fixture.ts",
+            "packages/workflow-engine/test/git-security.test.ts",
+            "packages/workflow-engine/test/ignored-state.integration.test.ts",
+            "packages/workflow-engine/test/runner-closure.integration.test.ts",
+            "packages/workflow-engine/test/runner-package-security.integration.test.ts",
+            "packages/workflow-engine/test/runner.integration.test.ts",
+            "packages/workflow-engine/test/session.integration.test.ts"
+          ]
+        }
+      ],
+      "introductionPaths": [
+        "openspec/changes/establish-executable-ai-workflow/proposal.md",
+        "openspec/changes/establish-executable-ai-workflow/design.md",
+        "openspec/changes/establish-executable-ai-workflow/tasks.md",
+        "openspec/changes/establish-executable-ai-workflow/guard.json",
+        "openspec/changes/establish-executable-ai-workflow/specs/workflow-assurance/spec.md"
+      ],
+      "allowedPaths": [
+        "AGENTS.md",
+        "docs/CHANGELOG.md",
+        "docs/CURRENT_AND_NEXT_STEPS.md",
+        "docs/DOCUMENT_STRUCTURE_GUIDE.md",
+        "docs/GUIDE-LOG_TRACKING.md",
+        "docs/README.md",
+        "docs/REQUIREMENT_LOG.md",
+        "docs/ROADMAP.md",
+        "docs/UPDATE_CHECKLIST.md",
+        "docs/planning/PLAN-DOCUMENTATION_STRUCTURE_V2.md",
+        "docs/planning/PLAN-EXECUTABLE_AI_WORKFLOW_ENGINE.md",
+        "docs/planning/ROADMAP.md",
+        "docs/status/STATUS-CURRENT_AND_NEXT_STEPS.md",
+        "openspec/config.yaml",
+        "openspec/changes/establish-executable-ai-workflow/**",
+        "package.json",
+        "pnpm-lock.yaml",
+        "pnpm-workspace.yaml",
+        "packages/workflow-engine/**",
+        "workflow/**"
+      ]
+    }
+  ]
+}

@@ -6,3 +6,15 @@
 /apps/web/ @htchen
 /apps/mobile/ @htchen
 /docs/ @htchen
+
+# Workflow authority and policy boundaries
+/AGENTS.md @htchen
+/.husky/ @htchen
+/.github/workflows/ @htchen
+/.github/CODEOWNERS @htchen
+/openspec/ @htchen
+/workflow/ @htchen
+/packages/workflow-engine/ @htchen
+/package.json @htchen
+/pnpm-lock.yaml @htchen
+/pnpm-workspace.yaml @htchen

@@ -21,11 +21,15 @@ export function workflowContractArtifactPaths(
     repositoryRoot,
     'workflow/document-policy.json',
   );
+  const ciPolicy = path.join(repositoryRoot, 'workflow/ci-policy.json');
   return [
     ...required,
     ...schemas,
     ...(fs.statSync(documentPolicy, { throwIfNoEntry: false })?.isFile()
       ? [documentPolicy]
+      : []),
+    ...(fs.statSync(ciPolicy, { throwIfNoEntry: false })?.isFile()
+      ? [ciPolicy]
       : []),
   ].sort();
 }

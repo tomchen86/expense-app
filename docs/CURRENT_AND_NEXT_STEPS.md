@@ -8,15 +8,15 @@ This generated handoff contains semantic project state only. Its sources are the
 
 ## Current Task
 
-`4.2` — Add authoritative CI verification and protect workflow policy paths.
+`5.1` — Audit legacy requirements into capability OpenSpec specs.
 
 ## Next Task
 
-`5.1` — Audit legacy requirements into capability OpenSpec specs.
+`5.2` — Review and create `docs/WORKFLOW.md`, then separately approve legacy document archival.
 
 ## Current Focus
 
-Add authoritative CI verification and protect workflow policy paths.
+Audit legacy requirements into capability OpenSpec specs.
 
 ## Known Blockers
 
