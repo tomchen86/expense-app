@@ -4,6 +4,7 @@ import path from 'node:path';
 
 import { ExitCode, workflowError } from './errors.ts';
 import { workflowContractArtifactPaths } from './contract-artifacts.ts';
+import { isRecord, isStringArray } from './contract-values.ts';
 import {
   assertChangeId,
   assertPolicyPathInsideRepository,
@@ -489,16 +490,6 @@ function invalidContract(
   return workflowError(code, message, ExitCode.guard, {
     details: { filePath, ...details },
   });
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
-function isStringArray(value: unknown): value is string[] {
-  return (
-    Array.isArray(value) && value.every((item) => typeof item === 'string')
-  );
 }
 
 function relative(root: string, target: string): string {

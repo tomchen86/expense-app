@@ -30,7 +30,8 @@
           },
           "source": { "type": "string", "minLength": 1 },
           "validator": { "type": "string", "minLength": 1 },
-          "transition": { "enum": ["completion"] }
+          "transition": { "enum": ["completion"] },
+          "refresh": { "enum": ["reviewed-section"] }
         }
       }
     }

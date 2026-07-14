@@ -5,6 +5,7 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 import { loadChangeContract, loadWorkflowConfig } from './contracts.ts';
+import { dispatchDocumentRefreshCommand } from './document-refresh-cli.ts';
 import { ExitCode, WorkflowError, workflowError } from './errors.ts';
 import { discoverRepository } from './git.ts';
 import { renderHandoff, validateHandoff } from './handoff.ts';
@@ -138,6 +139,12 @@ function dispatch(args: string[], cwd: string): CommandResult {
         validated: validateManagedDocuments(
           discoverRepository(cwd).repositoryRoot,
         ),
+      };
+    case 'document-refresh':
+      return {
+        command,
+        ok: true,
+        result: dispatchDocumentRefreshCommand(rest, cwd),
       };
     case 'handoff': {
       const repositoryRoot = discoverRepository(cwd).repositoryRoot;
@@ -289,6 +296,7 @@ function usageText(): string {
     '  pnpm workflow check <session-id> [--json]',
     '  pnpm workflow issue <add|update|close|render|validate> ... [--json]',
     '  pnpm workflow documents validate [--json]',
+    '  pnpm workflow document-refresh <propose|show|review|apply> ... [--json]',
     '  pnpm workflow handoff <render|validate> [--json]',
     '  pnpm workflow complete-task <session-id> [--json]',
     '  pnpm workflow finish <session-id> [--json]',

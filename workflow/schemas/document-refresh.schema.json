@@ -1,0 +1,55 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://expense-app.local/workflow/document-refresh.schema.json",
+  "oneOf": [
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "kind",
+        "createdAt",
+        "target",
+        "section",
+        "sourceDigest",
+        "resultDigest",
+        "policyDigest",
+        "replacement"
+      ],
+      "properties": {
+        "schemaVersion": { "const": 1 },
+        "kind": { "const": "document-refresh-proposal" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "target": { "type": "string" },
+        "section": { "type": "string" },
+        "sourceDigest": { "$ref": "#/$defs/digest" },
+        "resultDigest": { "$ref": "#/$defs/digest" },
+        "policyDigest": { "$ref": "#/$defs/digest" },
+        "replacement": { "type": "string" }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "kind",
+        "createdAt",
+        "proposalId",
+        "decision",
+        "reviewer"
+      ],
+      "properties": {
+        "schemaVersion": { "const": 1 },
+        "kind": { "const": "document-refresh-review" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "proposalId": { "$ref": "#/$defs/digest" },
+        "decision": { "enum": ["approve", "reject"] },
+        "reviewer": { "type": "string", "minLength": 1 }
+      }
+    }
+  ],
+  "$defs": {
+    "digest": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+  }
+}

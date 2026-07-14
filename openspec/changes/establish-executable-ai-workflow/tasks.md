@@ -40,7 +40,7 @@ Bootstrap evidence recorded on 2026-07-14 under the one-time exception in
 - [x] 3.2 Generate the six-field semantic `CURRENT_AND_NEXT_STEPS.md` handoff
       from controlled change state without persisting commit hashes, runtime
       session facts, or execution history.
-- [ ] 3.3 Add scoped, reviewed architecture and feature refresh proposals.
+- [x] 3.3 Add scoped, reviewed architecture and feature refresh proposals.
 
 ## 4. Repository Enforcement
 

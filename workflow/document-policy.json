@@ -35,10 +35,12 @@
       "enforcement": "planned"
     },
     "docs/architecture/**": {
-      "mode": "curated"
+      "mode": "curated",
+      "refresh": "reviewed-section"
     },
     "docs/features/**": {
-      "mode": "curated"
+      "mode": "curated",
+      "refresh": "reviewed-section"
     },
     "docs/research/**": {
       "mode": "reference"

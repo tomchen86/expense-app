@@ -8,15 +8,15 @@ This generated handoff contains semantic project state only. Its sources are the
 
 ## Current Task
 
-`3.3` — Add scoped, reviewed architecture and feature refresh proposals.
+`4.1` — Delegate local Git hooks to the engine without copying guard logic or using `eval`.
 
 ## Next Task
 
-`4.1` — Delegate local Git hooks to the engine without copying guard logic or using `eval`.
+`4.2` — Add authoritative CI verification and protect workflow policy paths.
 
 ## Current Focus
 
-Add scoped, reviewed architecture and feature refresh proposals.
+Delegate local Git hooks to the engine without copying guard logic or using `eval`.
 
 ## Known Blockers
 

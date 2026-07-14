@@ -38,6 +38,20 @@ export function createFixtureRepository(): string {
       },
     },
   });
+  writeJson(path.join(repository, 'workflow/document-policy.json'), {
+    schemaVersion: 1,
+    enforcementMode: 'enforced',
+    documents: {
+      'docs/architecture/**': {
+        mode: 'curated',
+        refresh: 'reviewed-section',
+      },
+      'docs/features/**': {
+        mode: 'curated',
+        refresh: 'reviewed-section',
+      },
+    },
+  });
 
   const changeDirectory = path.join(repository, 'openspec/changes/demo-change');
   fs.mkdirSync(path.join(changeDirectory, 'specs/demo'), { recursive: true });
