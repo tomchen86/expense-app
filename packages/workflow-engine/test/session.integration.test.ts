@@ -6,6 +6,8 @@ import test from 'node:test';
 
 import { WorkflowError } from '../src/errors.ts';
 import { abortSession, checkSession, startSession } from '../src/session.ts';
+import './ignored-state.integration.test.ts';
+import './runner.integration.test.ts';
 import {
   addFixtureScripts,
   configureChecks,
@@ -137,7 +139,7 @@ test('check executes required argv literally from the repository root', () => {
       {
         literal: {
           command: [
-            process.execPath,
+            'node',
             'scripts/capture-args.mjs',
             outputPath,
             literalArgument,
@@ -186,11 +188,11 @@ test('check fails on the first non-zero check and does not run later checks', ()
       repository,
       {
         failing: {
-          command: [process.execPath, '-e', 'process.exit(7)'],
+          command: ['node', 'scripts/fail.mjs'],
           destructiveDatabase: false,
         },
         later: {
-          command: [process.execPath, 'scripts/write-file.mjs', markerPath],
+          command: ['node', 'scripts/write-file.mjs', markerPath],
           destructiveDatabase: false,
         },
       },
@@ -231,11 +233,11 @@ test('destructive database preflight runs before any required check', () => {
       repository,
       {
         first: {
-          command: [process.execPath, 'scripts/write-file.mjs', markerPath],
+          command: ['node', 'scripts/write-file.mjs', markerPath],
           destructiveDatabase: false,
         },
         destructive: {
-          command: [process.execPath, '--version'],
+          command: ['node', 'scripts/pass.mjs'],
           destructiveDatabase: true,
         },
       },
@@ -266,7 +268,7 @@ test('destructive check evidence includes only the redacted database identity', 
       repository,
       {
         destructive: {
-          command: [process.execPath, '--version'],
+          command: ['node', 'scripts/pass.mjs'],
           destructiveDatabase: true,
         },
       },
@@ -310,11 +312,11 @@ test('check revalidates scope before running the next required check', () => {
       repository,
       {
         mutating: {
-          command: [process.execPath, 'scripts/write-file.mjs', outsidePath],
+          command: ['node', 'scripts/write-file.mjs', outsidePath],
           destructiveDatabase: false,
         },
         later: {
-          command: [process.execPath, 'scripts/write-file.mjs', laterMarker],
+          command: ['node', 'scripts/write-file.mjs', laterMarker],
           destructiveDatabase: false,
         },
       },
@@ -348,11 +350,7 @@ test('check rejects a lock removed by a passing required check', () => {
       repository,
       {
         mutating: {
-          command: [
-            process.execPath,
-            '-e',
-            `require('node:fs').rmSync(${JSON.stringify(lockPath)})`,
-          ],
+          command: ['node', 'scripts/remove-file.mjs', lockPath],
           destructiveDatabase: false,
         },
       },
@@ -370,9 +368,19 @@ test('check rejects a lock removed by a passing required check', () => {
   }
 });
 
-test('check converts synchronous spawn errors without leaking environment values', () => {
+test('check converts spawn errors without leaking environment values', () => {
   const repository = createFixtureRepository();
   try {
+    configureChecks(
+      repository,
+      {
+        overflowing: {
+          command: ['node', 'scripts/overflow.mjs'],
+          destructiveDatabase: false,
+        },
+      },
+      ['overflowing'],
+    );
     git(repository, ['checkout', '-b', 'work/demo-change']);
     const session = startSession(repository, 'demo-change', '1.1');
 
@@ -381,7 +389,7 @@ test('check converts synchronous spawn errors without leaking environment values
         checkSession(repository, session.sessionId, {
           environment: {
             ...process.env,
-            WORKFLOW_TEST_SECRET: 'marker-secret\0',
+            WORKFLOW_TEST_SECRET: 'marker-secret',
           },
         }),
       (error) => {
@@ -403,7 +411,7 @@ test('change validation rejects inherited object properties as check IDs', () =>
       repository,
       {
         fixture: {
-          command: ['node', '--version'],
+          command: ['node', 'scripts/pass.mjs'],
           destructiveDatabase: false,
         },
       },
@@ -414,6 +422,65 @@ test('change validation rejects inherited object properties as check IDs', () =>
     assert.throws(
       () => startSession(repository, 'demo-change', '1.1'),
       (error) => isWorkflowError(error, 'UNKNOWN_REQUIRED_CHECK'),
+    );
+  } finally {
+    fs.rmSync(repository, { recursive: true, force: true });
+  }
+});
+
+test(
+  'node runner ignores caller-controlled PATH substitutes',
+  { skip: process.platform === 'win32' },
+  () => {
+    const repository = createFixtureRepository();
+    const fakeBin = fs.mkdtempSync(
+      path.join(os.tmpdir(), 'workflow-fake-bin-'),
+    );
+    const markerPath = path.join(fakeBin, 'fake-node-ran');
+    const fakeNodePath = path.join(fakeBin, 'node');
+
+    try {
+      fs.writeFileSync(
+        fakeNodePath,
+        `#!/bin/sh\n/usr/bin/touch ${JSON.stringify(markerPath)}\nexit 0\n`,
+      );
+      fs.chmodSync(fakeNodePath, 0o755);
+      git(repository, ['checkout', '-b', 'work/demo-change']);
+      const session = startSession(repository, 'demo-change', '1.1');
+
+      const result = checkSession(repository, session.sessionId, {
+        environment: { ...process.env, PATH: fakeBin },
+      });
+
+      assert.equal(result.passed, true);
+      assert.equal(fs.existsSync(markerPath), false);
+      assert.equal(result.checks[0].runner, 'node');
+      assert.match(result.checks[0].runnerDigest, /^[0-9a-f]{64}$/);
+    } finally {
+      fs.rmSync(repository, { recursive: true, force: true });
+      fs.rmSync(fakeBin, { recursive: true, force: true });
+    }
+  },
+);
+
+test('change validation rejects bare executable check runners', () => {
+  const repository = createFixtureRepository();
+  try {
+    configureChecks(
+      repository,
+      {
+        unsafe: {
+          command: ['pnpm', '--version'],
+          destructiveDatabase: false,
+        },
+      },
+      ['unsafe'],
+    );
+    git(repository, ['checkout', '-b', 'work/demo-change']);
+
+    assert.throws(
+      () => startSession(repository, 'demo-change', '1.1'),
+      (error) => isWorkflowError(error, 'INVALID_CHECK_DEFINITION'),
     );
   } finally {
     fs.rmSync(repository, { recursive: true, force: true });

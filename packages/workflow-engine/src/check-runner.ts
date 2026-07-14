@@ -2,26 +2,44 @@ import { spawnSync } from 'node:child_process';
 
 import type { CheckDefinition } from './contracts.ts';
 import { ExitCode, workflowError } from './errors.ts';
+import {
+  resolveCheckRunner,
+  type ResolvedCheckRunner,
+} from './runner-resolution.ts';
 
 export type CheckEvidence = {
   checkId: string;
   outcome: 'passed';
   exitCode: 0;
+  runner: string;
+  runnerDigest: string;
   destructiveDatabase: boolean;
   databaseIdentity?: string;
 };
+
+export type PinnedCheckRunner = Readonly<ResolvedCheckRunner>;
+
+export function pinCheckRunner(
+  repositoryRoot: string,
+  checkId: string,
+  definition: CheckDefinition,
+): PinnedCheckRunner {
+  return resolveCheckRunner(repositoryRoot, checkId, definition);
+}
 
 export function runCheck(
   repositoryRoot: string,
   checkId: string,
   definition: CheckDefinition,
+  pinnedRunner: PinnedCheckRunner,
   environment: NodeJS.ProcessEnv,
   databaseIdentity?: string,
 ): CheckEvidence {
-  const [executable, ...args] = definition.command;
+  const resolved = resolveCheckRunner(repositoryRoot, checkId, definition);
+  assertRunnerUnchanged(checkId, pinnedRunner, resolved);
   let result: ReturnType<typeof spawnSync>;
   try {
-    result = spawnSync(executable, args, {
+    result = spawnSync(resolved.executable, resolved.args, {
       cwd: repositoryRoot,
       shell: false,
       env: environment,
@@ -54,15 +72,40 @@ export function runCheck(
     );
   }
 
+  const resolvedAfter = resolveCheckRunner(repositoryRoot, checkId, definition);
+  assertRunnerUnchanged(checkId, pinnedRunner, resolvedAfter);
+
   return {
     checkId,
     outcome: 'passed',
     exitCode: 0,
+    runner: resolved.runner,
+    runnerDigest: resolved.digest,
     destructiveDatabase: definition.destructiveDatabase,
     ...(definition.destructiveDatabase && databaseIdentity
       ? { databaseIdentity }
       : {}),
   };
+}
+
+function assertRunnerUnchanged(
+  checkId: string,
+  expected: PinnedCheckRunner,
+  actual: ResolvedCheckRunner,
+): void {
+  if (
+    actual.runner !== expected.runner ||
+    actual.executable !== expected.executable ||
+    actual.digest !== expected.digest ||
+    JSON.stringify(actual.args) !== JSON.stringify(expected.args)
+  ) {
+    throw workflowError(
+      'CHECK_RUNNER_CHANGED',
+      `Required check ${checkId} changed its resolved runner during verification.`,
+      ExitCode.staleState,
+      { details: { checkId } },
+    );
+  }
 }
 
 function executionFailure(checkId: string, error: unknown) {

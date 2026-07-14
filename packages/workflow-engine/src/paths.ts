@@ -76,11 +76,25 @@ export function normalizePolicyPath(value: string): string {
 }
 
 export function normalizeChangedPath(value: string): string {
-  const normalized = normalizePolicyPath(value);
-  if (normalized.endsWith('/**')) {
-    throw invalidPolicyPath(value);
+  if (
+    !value ||
+    value.includes('\\') ||
+    path.posix.isAbsolute(value) ||
+    WINDOWS_ABSOLUTE_PATTERN.test(value) ||
+    value.startsWith('./') ||
+    value.endsWith('/')
+  ) {
+    throw invalidRepositoryPath(value);
   }
-  return normalized;
+
+  const segments = value.split('/');
+  if (
+    segments.some((segment) => !segment || segment === '.' || segment === '..')
+  ) {
+    throw invalidRepositoryPath(value);
+  }
+
+  return value;
 }
 
 export function matchesAllowedPath(
@@ -150,5 +164,16 @@ function invalidPolicyPath(value: string): ReturnType<typeof workflowError> {
       recovery:
         'Use a repository-relative exact path or a directory prefix ending in /**.',
     },
+  );
+}
+
+function invalidRepositoryPath(
+  value: string,
+): ReturnType<typeof workflowError> {
+  return workflowError(
+    'INVALID_REPOSITORY_PATH',
+    `Invalid repository path reported by Git: ${value}`,
+    ExitCode.guard,
+    { details: { path: value } },
   );
 }

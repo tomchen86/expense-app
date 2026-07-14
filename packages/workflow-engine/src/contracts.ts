@@ -29,6 +29,20 @@ export type ChecksConfig = {
   checks: Record<string, CheckDefinition>;
 };
 
+export type ParsedCheckCommand =
+  | {
+      runner: 'node';
+      args: string[];
+      entrypoints: string[];
+    }
+  | {
+      runner: 'node-package-bin';
+      workspace: string;
+      packageName: string;
+      binName: string;
+      args: string[];
+    };
+
 export type TaskPolicy = {
   allowedPaths: string[];
   requiredChecks: string[];
@@ -105,8 +119,7 @@ export function loadChecksConfig(repositoryRoot: string): ChecksConfig {
       !/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(checkId) ||
       !isRecord(definition) ||
       !isStringArray(definition.command) ||
-      definition.command.length === 0 ||
-      definition.command.some((part) => part.length === 0) ||
+      !parseCheckCommand(definition.command) ||
       typeof definition.destructiveDatabase !== 'boolean'
     ) {
       throw invalidContract(
@@ -118,6 +131,95 @@ export function loadChecksConfig(repositoryRoot: string): ChecksConfig {
   }
 
   return value as ChecksConfig;
+}
+
+export function parseCheckCommand(
+  command: string[],
+): ParsedCheckCommand | undefined {
+  if (
+    command.length < 2 ||
+    command.some(
+      (part) =>
+        part.trim() !== part ||
+        [...part].some((character) => {
+          const codePoint = character.codePointAt(0) ?? 0;
+          return codePoint <= 31 || codePoint === 127;
+        }),
+    )
+  ) {
+    return undefined;
+  }
+
+  if (command[0] === 'node') {
+    const args = command.slice(1);
+    const entrypoints = nodeEntrypoints(args);
+    return entrypoints ? { runner: 'node', args, entrypoints } : undefined;
+  }
+  if (command[0] !== 'node-package-bin' || command.length < 4) {
+    return undefined;
+  }
+
+  const [, workspace, packageName, binName, ...args] = command;
+  if (
+    (workspace !== '.' && !isExactPolicyPath(workspace)) ||
+    !isPackageName(packageName) ||
+    !isPackageSegment(binName)
+  ) {
+    return undefined;
+  }
+
+  return {
+    runner: 'node-package-bin',
+    workspace,
+    packageName,
+    binName,
+    args,
+  };
+}
+
+function nodeEntrypoints(args: string[]): string[] | undefined {
+  let entrypoints: string[];
+  if (args[0] === '--test') {
+    entrypoints = args.slice(1);
+  } else if (args[0] === '--experimental-strip-types' && args[1] === '--test') {
+    entrypoints = args.slice(2);
+  } else {
+    if (!args[0] || args[0].startsWith('-')) {
+      return undefined;
+    }
+    entrypoints = [args[0]];
+  }
+
+  return entrypoints.length > 0 && entrypoints.every(isExactPolicyPath)
+    ? entrypoints
+    : undefined;
+}
+
+function isExactPolicyPath(value: string): boolean {
+  if (value.startsWith('-')) {
+    return false;
+  }
+  try {
+    normalizePolicyPath(value);
+    return value !== '.' && !value.endsWith('/**');
+  } catch {
+    return false;
+  }
+}
+
+function isPackageName(value: string): boolean {
+  if (value.length > 214) {
+    return false;
+  }
+  const segments = value.startsWith('@') ? value.slice(1).split('/') : [value];
+  return (
+    (segments.length === 1 || segments.length === 2) &&
+    segments.every(isPackageSegment)
+  );
+}
+
+function isPackageSegment(value: string): boolean {
+  return /^[a-z0-9](?:[a-z0-9._-]*[a-z0-9])?$/.test(value);
 }
 
 export function loadChangeContract(

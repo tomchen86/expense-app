@@ -30,6 +30,7 @@ import { ExpenseSplitSimple } from '../../entities/expense-split-simple.entity';
 import { ExpenseAttachmentSimple } from '../../entities/expense-attachment-simple.entity';
 
 import { ensureTestPostgresUri } from './postgres-test-container';
+import { resolvePostgresTestDatabaseUrl } from './database-target-policy';
 import { EnableExtensions0011738364606484 } from '../../database/migrations/001_enable_extensions';
 import { IdentityTables0021738364606485 } from '../../database/migrations/002_identity_tables';
 import { CollaborationTables0031738364606486 } from '../../database/migrations/003_collaboration_tables';
@@ -88,29 +89,31 @@ const isConnectionAvailable = async (
   }
 };
 
+const resolveLegacyPostgresTestDatabaseUrl = async (): Promise<string> => {
+  const candidateUrls = [
+    process.env.COMPOSE_TEST_DATABASE_URL,
+    'postgres://dev_user:dev_password@127.0.0.1:5432/expense_tracker_dev',
+  ].filter((value): value is string => Boolean(value));
+
+  for (const candidate of candidateUrls) {
+    if (await isConnectionAvailable(candidate)) {
+      return candidate;
+    }
+  }
+
+  return ensureTestPostgresUri();
+};
+
 export const createPostgresDataSource = async (
   options: CreatePostgresOptions = {},
 ): Promise<DataSource> => {
   const { runMigrations = true } = options;
 
-  const candidateUrls = [
-    process.env.TEST_DATABASE_URL,
-    process.env.COMPOSE_TEST_DATABASE_URL,
-    'postgres://dev_user:dev_password@127.0.0.1:5432/expense_tracker_dev',
-  ].filter((value): value is string => Boolean(value));
-
-  let connectionString: string | undefined;
-
-  for (const candidate of candidateUrls) {
-    if (await isConnectionAvailable(candidate)) {
-      connectionString = candidate;
-      break;
-    }
-  }
-
-  if (!connectionString) {
-    connectionString = await ensureTestPostgresUri();
-  }
+  const connectionString = await resolvePostgresTestDatabaseUrl(
+    process.env,
+    isConnectionAvailable,
+    resolveLegacyPostgresTestDatabaseUrl,
+  );
 
   process.env.TEST_DATABASE_URL = connectionString;
 

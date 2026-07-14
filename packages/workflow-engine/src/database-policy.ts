@@ -1,4 +1,6 @@
 import { ExitCode, workflowError } from './errors.ts';
+import { createTrustedExecutionEnvironment } from './execution-environment.ts';
+import { resolveGitExecutable } from './git.ts';
 
 export type DisposableDatabaseEvidence = {
   identity: string;
@@ -10,7 +12,7 @@ type ValidatedDisposableDatabase = {
 };
 
 type DatabaseIdentity = {
-  key: string;
+  databaseKey: string;
   redacted: string;
   database: string;
   hostname: string;
@@ -45,16 +47,10 @@ export function createCheckEnvironment(
   environment: NodeJS.ProcessEnv,
   destructiveDatabase: boolean,
 ): NodeJS.ProcessEnv {
-  const checkEnvironment = { ...environment };
-  delete checkEnvironment.DATABASE_URL;
-  delete checkEnvironment.COMPOSE_TEST_DATABASE_URL;
-  delete checkEnvironment.TEST_DATABASE_URL;
-  delete checkEnvironment.WORKFLOW_DISPOSABLE_DATABASE;
-  for (const key of Object.keys(checkEnvironment)) {
-    if (key.startsWith('PG')) {
-      delete checkEnvironment[key];
-    }
-  }
+  const checkEnvironment = createTrustedExecutionEnvironment([
+    resolveGitExecutable(),
+  ]);
+  checkEnvironment.WORKFLOW_CHECK_EXECUTION = '1';
 
   if (destructiveDatabase) {
     const validated = validateDisposableDatabase(environment);
@@ -114,10 +110,10 @@ function validateDisposableDatabase(
       'DATABASE_URL_UNREADABLE',
       'DATABASE_URL cannot be safely compared with TEST_DATABASE_URL.',
     );
-    if (developmentIdentity.key === testIdentity.key) {
+    if (developmentIdentity.databaseKey === testIdentity.databaseKey) {
       throw workflowError(
         'TEST_DATABASE_MATCHES_DATABASE_URL',
-        'TEST_DATABASE_URL identifies the same database as DATABASE_URL.',
+        'TEST_DATABASE_URL does not prove a database distinct from DATABASE_URL.',
         ExitCode.unsafeEnvironment,
         { details: { databaseIdentity: testIdentity.redacted } },
       );
@@ -158,10 +154,13 @@ function parseDatabaseIdentity(
       throw new Error('missing or ambiguous database name');
     }
 
-    const hostname = parsed.hostname.toLowerCase();
+    const hostname = parsed.hostname.toLowerCase().replace(/\.+$/, '');
+    if (!hostname) {
+      throw new Error('missing database hostname');
+    }
     const port = parsed.port || '5432';
     return {
-      key: `${hostname}:${port}/${database.toLowerCase()}`,
+      databaseKey: database.toLowerCase(),
       redacted: `postgresql://${hostname}:${port}/${encodeURIComponent(database)}`,
       database,
       hostname,

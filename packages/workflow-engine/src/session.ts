@@ -8,13 +8,22 @@ import {
   type ChangeContract,
   type TaskPolicy,
 } from './contracts.ts';
-import { runCheck, type CheckEvidence } from './check-runner.ts';
+import {
+  pinCheckRunner,
+  runCheck,
+  type CheckEvidence,
+} from './check-runner.ts';
 import {
   assertDisposableDatabase,
   createCheckEnvironment,
 } from './database-policy.ts';
 import { ExitCode, workflowError } from './errors.ts';
-import { discoverRepository, listChangedPaths, type GitState } from './git.ts';
+import {
+  discoverRepository,
+  fingerprintWorkingState,
+  listChangedPaths,
+  type GitState,
+} from './git.ts';
 import {
   assertChangeId,
   assertSessionId,
@@ -220,19 +229,43 @@ export function checkSession(
   )
     ? assertDisposableDatabase(environment)
     : undefined;
+  const pinnedChecks = requiredChecks.map(({ checkId, definition }) => ({
+    checkId,
+    definition,
+    runner: pinCheckRunner(initial.git.repositoryRoot, checkId, definition),
+  }));
+  const workingStateFingerprint = fingerprintWorkingState(
+    initial.git.repositoryRoot,
+    initial.session.baseline.head,
+    initial.git.statusEntries,
+  );
   const checks: CheckEvidence[] = [];
   let final = initial;
-  for (const { checkId, definition } of requiredChecks) {
+  for (const { checkId, definition, runner } of pinnedChecks) {
     checks.push(
       runCheck(
         initial.git.repositoryRoot,
         checkId,
         definition,
+        runner,
         createCheckEnvironment(environment, definition.destructiveDatabase),
         definition.destructiveDatabase ? databaseEvidence?.identity : undefined,
       ),
     );
     final = inspectSession(cwd, requestedSessionId, initial.session);
+    const currentFingerprint = fingerprintWorkingState(
+      final.git.repositoryRoot,
+      final.session.baseline.head,
+      final.git.statusEntries,
+    );
+    if (currentFingerprint !== workingStateFingerprint) {
+      throw workflowError(
+        'CHECK_MUTATED_WORKTREE',
+        `Required check ${checkId} changed the Git working state.`,
+        ExitCode.staleState,
+        { details: { checkId } },
+      );
+    }
   }
 
   return {

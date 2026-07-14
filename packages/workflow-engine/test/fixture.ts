@@ -21,11 +21,19 @@ export function createFixtureRepository(): string {
     protectedBranches: ['main', 'master'],
     branchTemplate: 'work/{changeId}',
   });
+  writeJson(path.join(repository, 'package.json'), {
+    name: 'workflow-fixture',
+    private: true,
+    devDependencies: {
+      'fixture-tool': '1.0.0',
+    },
+  });
+  fs.writeFileSync(path.join(repository, '.gitignore'), 'node_modules/\n');
   writeJson(path.join(repository, 'workflow/checks.json'), {
     schemaVersion: 1,
     checks: {
       fixture: {
-        command: ['node', '--version'],
+        command: ['node', 'scripts/pass.mjs'],
         destructiveDatabase: false,
       },
     },
@@ -34,6 +42,7 @@ export function createFixtureRepository(): string {
   const changeDirectory = path.join(repository, 'openspec/changes/demo-change');
   fs.mkdirSync(path.join(changeDirectory, 'specs/demo'), { recursive: true });
   fs.mkdirSync(path.join(repository, 'src'), { recursive: true });
+  addFixtureScripts(repository);
   fs.writeFileSync(path.join(changeDirectory, 'proposal.md'), '# Proposal\n');
   fs.writeFileSync(path.join(changeDirectory, 'design.md'), '# Design\n');
   fs.writeFileSync(
@@ -84,6 +93,72 @@ export function addFixtureScripts(repository: string): void {
       '',
     ].join('\n'),
   );
+  fs.writeFileSync(
+    path.join(scriptsDirectory, 'pass.mjs'),
+    'process.exit(0);\n',
+  );
+  fs.writeFileSync(
+    path.join(scriptsDirectory, 'fail.mjs'),
+    'process.exit(7);\n',
+  );
+  fs.writeFileSync(
+    path.join(scriptsDirectory, 'remove-file.mjs'),
+    ["import fs from 'node:fs';", 'fs.rmSync(process.argv[2]);', ''].join('\n'),
+  );
+  fs.writeFileSync(
+    path.join(scriptsDirectory, 'mutate-self.mjs'),
+    [
+      "import fs from 'node:fs';",
+      'fs.appendFileSync(import.meta.filename, "\\n");',
+      '',
+    ].join('\n'),
+  );
+  fs.writeFileSync(
+    path.join(scriptsDirectory, 'overflow.mjs'),
+    "process.stdout.write('x'.repeat(11 * 1024 * 1024));\n",
+  );
+  fs.writeFileSync(
+    path.join(scriptsDirectory, 'replace-file.mjs'),
+    [
+      "import fs from 'node:fs';",
+      'fs.writeFileSync(process.argv[2], process.argv[3]);',
+      '',
+    ].join('\n'),
+  );
+  fs.writeFileSync(
+    path.join(scriptsDirectory, 'chmod-file.mjs'),
+    [
+      "import fs from 'node:fs';",
+      'fs.chmodSync(process.argv[2], 0o755);',
+      '',
+    ].join('\n'),
+  );
+  fs.writeFileSync(
+    path.join(scriptsDirectory, 'replace-preserve-times.mjs'),
+    [
+      "import fs from 'node:fs';",
+      'const targetPath = process.argv[2];',
+      'const before = fs.statSync(targetPath);',
+      'fs.writeFileSync(targetPath, process.argv[3]);',
+      'fs.utimesSync(targetPath, before.atime, before.mtime);',
+      '',
+    ].join('\n'),
+  );
+}
+
+export function addFixturePackage(
+  repository: string,
+  source = 'process.exit(0);\n',
+): void {
+  const packageDirectory = path.join(repository, 'node_modules/fixture-tool');
+  fs.mkdirSync(path.join(packageDirectory, 'bin'), { recursive: true });
+  writeJson(path.join(packageDirectory, 'package.json'), {
+    name: 'fixture-tool',
+    version: '1.0.0',
+    exports: { '.': './index.mjs' },
+    bin: './bin/run.mjs',
+  });
+  fs.writeFileSync(path.join(packageDirectory, 'bin/run.mjs'), source);
 }
 
 export function configureChecks(
