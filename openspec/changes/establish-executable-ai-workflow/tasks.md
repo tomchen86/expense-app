@@ -29,14 +29,16 @@ Bootstrap evidence recorded on 2026-07-14 under the one-time exception in
 - [ ] 2.1 Execute allowlisted check IDs as argv arrays and enforce disposable
       database policy for destructive API tests.
 - [ ] 2.2 Add immutable reports and evidence-authorized `complete-task`,
-      `finish`, staging, and commit transitions.
+      `finish`, staging, and commit transitions with exact `Change:`/`Task:`
+      trailers and Git-backed status lookup.
 
 ## 3. Controlled Documentation
 
 - [ ] 3.1 Seed structured issue data and implement lossless issue add/update/
       close/render commands before locking `ISSUE_LOG.md`.
-- [ ] 3.2 Generate `CURRENT_AND_NEXT_STEPS.md` from Git/change/session evidence
-      while preserving an explicit maintainer decision field.
+- [ ] 3.2 Generate the six-field semantic `CURRENT_AND_NEXT_STEPS.md` handoff
+      from controlled change state without persisting commit hashes, runtime
+      session facts, or execution history.
 - [ ] 3.3 Add scoped, reviewed architecture and feature refresh proposals.
 
 ## 4. Repository Enforcement

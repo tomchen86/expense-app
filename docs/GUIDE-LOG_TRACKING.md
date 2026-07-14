@@ -1,5 +1,11 @@
 # Guide: Progress Tracking Logs for Human + AI Collaboration
 
+> **Legacy reference:** This March 2026 workflow is superseded by
+> `docs/DOCUMENT_STRUCTURE_GUIDE.md` and the repository workflow engine. Do not
+> create new session logs, manually append `COMMIT_LOG.md`, or copy commit hashes
+> into current-state documents. Use semantic `Change:`/`Task:` trailers and
+> query Git when commit identity is needed.
+
 _Last updated: March 3, 2026_
 
 > Related guides:

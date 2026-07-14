@@ -49,7 +49,12 @@
     },
     "2.1": {
       "allowedPaths": ["packages/workflow-engine/**", "workflow/**"],
-      "requiredChecks": ["workflow-tests", "workflow-format"]
+      "requiredChecks": [
+        "workflow-tests",
+        "workflow-typecheck",
+        "workflow-lint",
+        "workflow-format"
+      ]
     },
     "2.2": {
       "allowedPaths": [

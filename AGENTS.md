@@ -73,6 +73,10 @@ API tests are destructive to their configured PostgreSQL database. Before any AP
 
 ## Commit & Pull Request Guidelines
 - Commit messages use imperative mood (“Add participant service”), scoped to a logical change set.
+- Managed workflow commits include exact `Change: <change-id>` and
+  `Task: <task-id>` trailers. Use Git or `workflow status` to resolve hashes;
+  never write commit hashes into `docs/CURRENT_AND_NEXT_STEPS.md` or create a
+  hash-only metadata commit.
 - PRs should:
   - Summarize intent and reference planning docs/issues.
   - List executed commands (`pnpm --filter api test -- ...`).

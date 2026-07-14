@@ -14,6 +14,8 @@ guards while retaining a small, readable planning system.
   immutable baselines, diff scope, verification evidence, and later completion.
 - Establish `docs/ROADMAP.md` and `docs/CURRENT_AND_NEXT_STEPS.md` as the current
   project entry points.
+- Keep the handoff semantic and compact; resolve commit relationships from Git
+  change/task trailers instead of storing commit hashes in Markdown.
 - Add controlled document mutation in later tasks.
 - Retain the Spectra installation without invoking or integrating it.
 
@@ -34,6 +36,7 @@ guards while retaining a small, readable planning system.
   changes.
 - Generated and immutable document policies become CI-verifiable in later
   tasks.
+- Current-state updates never require a hash-only metadata commit.
 - Spectra is absent from the execution path.
 
 ## Roadmap

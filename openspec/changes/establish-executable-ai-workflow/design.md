@@ -84,6 +84,23 @@ ending in `/**`. Absolute paths, traversal, empty paths, ambiguous glob syntax,
 and symlink escapes are rejected. Prefix matching is segment-aware, so
 `apps/api/**` does not match `apps/api-copy/file.ts`.
 
+## Check Execution and Database Safety
+
+Required check IDs resolve only through `workflow/checks.json`. The engine
+spawns the configured executable and argv directly with `shell: false`; it does
+not concatenate, interpolate, evaluate, or pass configured values through a
+shell. A non-zero exit, signal, or spawn error fails verification with
+structured evidence.
+
+Before any check marked `destructiveDatabase` starts, all destructive checks
+are preflighted together. The operator must set
+`WORKFLOW_DISPOSABLE_DATABASE=1` and an explicit PostgreSQL
+`TEST_DATABASE_URL`. The parsed database name must contain a disposable token
+(`test`, `ci`, `tmp`, `temp`, `disposable`, or `ephemeral`), must not contain a
+development/shared/staging/production token, and must not identify the same
+server/database as `DATABASE_URL`. Output and errors expose only a redacted
+database identity without credentials, query, fragment, or raw URL.
+
 ## Bootstrap Exception
 
 The engine cannot guard the edits that create itself. This change therefore
@@ -97,6 +114,18 @@ The policy registry begins in audit-only mode. A document mode is not described
 as a hard guarantee until its command, validator, bypass tests, and CI boundary
 exist. `ISSUE_LOG.md` becomes generated-only only after structured source is
 seeded and lossless rendering is proven.
+
+## Handoff and Commit Traceability
+
+`docs/CURRENT_AND_NEXT_STEPS.md` contains exactly the current change, current
+task, next task, current focus, known blockers, and durable references. It does
+not record commit hashes or runtime session facts. A document cannot contain
+the hash of the commit that creates it, and a second commit whose only purpose
+is copying the first hash is prohibited by the design.
+
+Managed commits use exact `Change:` and `Task:` trailers. The engine may resolve
+and display matching commits from Git at runtime without copying those hashes
+back into tracked current-state documents.
 
 ## Spectra Boundary
 

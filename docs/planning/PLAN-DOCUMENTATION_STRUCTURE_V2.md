@@ -29,12 +29,15 @@ database.
 6. Change-local `guard.json` contains machine scope/check policy only.
 7. New session logs and manually maintained commit logs stop after adoption;
    Git plus workflow evidence provide technical history.
-8. Architecture and feature references are automatically readable but updated
+8. The handoff stores semantic change/task identifiers, focus, blockers, and
+   durable references; it never stores commit hashes or triggers hash-only
+   metadata commits.
+9. Architecture and feature references are automatically readable but updated
    only through explicit, reviewed scope.
-9. Generated and append-only documents use structured commands rather than
-   unrestricted AI edits.
-10. Spectra remains installed but is not invoked, integrated, or authoritative.
-11. `WORKFLOW.md` will eventually replace `UPDATE_CHECKLIST.md`, but it is a
+10. Generated and append-only documents use structured commands rather than
+    unrestricted AI edits.
+11. Spectra remains installed but is not invoked, integrated, or authoritative.
+12. `WORKFLOW.md` will eventually replace `UPDATE_CHECKLIST.md`, but it is a
     separate reviewed task and is not created now.
 
 ## Target Structure
@@ -132,16 +135,19 @@ implementation diaries.
 
 `docs/CURRENT_AND_NEXT_STEPS.md` contains only current handoff information:
 
-- verified timestamp and baseline commit;
-- active change/task/session;
-- short current system picture with durable links;
-- current blockers and decisions;
-- most recent meaningful completion;
-- exact next task and verification expectation.
+- current change;
+- current task;
+- next task;
+- current focus;
+- known blockers;
+- durable references.
 
-History belongs in Git, reports, changelog, or immutable legacy archives. The
-target renderer may preserve one explicitly maintained decisions field, but it
-must not grow into another log.
+It does not store baseline, latest, or implementation commit hashes. Managed
+commit messages carry `Change:` and `Task:` trailers, and runtime commands query
+Git when a commit relationship is needed. History belongs in Git, reports,
+changelog, or immutable legacy archives. The handoff update is prepared as part
+of the meaningful task transition; it must not become a standalone metadata
+commit.
 
 ## Requirements Migration
 
@@ -256,6 +262,7 @@ current. Redirect notices are preferred during migration.
 ## Adoption Criteria
 
 - one canonical roadmap and current handoff exist;
+- no current-state document stores commit hashes or requires hash-only commits;
 - requirements exist only in capability specs after audited migration;
 - active proposal/design/tasks exist only in OpenSpec changes;
 - no new session/manual commit logs are required;

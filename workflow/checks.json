@@ -15,6 +15,16 @@
       "command": ["pnpm", "run", "workflow:typecheck"],
       "destructiveDatabase": false
     },
+    "workflow-lint": {
+      "command": [
+        "pnpm",
+        "exec",
+        "eslint",
+        "packages/workflow-engine/src",
+        "packages/workflow-engine/test"
+      ],
+      "destructiveDatabase": false
+    },
     "workflow-format": {
       "command": [
         "pnpm",

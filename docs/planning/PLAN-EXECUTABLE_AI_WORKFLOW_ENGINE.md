@@ -117,6 +117,25 @@ Session: created  -> active -> verifying -> passed -> committed
 current evidence is invalid. After bootstrap, only `workflow complete-task` may
 authorize a checkbox transition.
 
+## Semantic Handoff and Git Traceability
+
+`docs/CURRENT_AND_NEXT_STEPS.md` answers what a new maintainer or agent needs to
+resume work: current change, current task, next task, focus, blockers, and
+durable references. It does not persist a baseline, latest, or implementation
+commit hash. A commit cannot contain its own final hash, and a follow-up commit
+whose only purpose is recording the preceding hash adds no project value.
+
+Managed commits instead carry semantic trailers:
+
+```text
+Change: establish-executable-ai-workflow
+Task: 2.1
+```
+
+`workflow status` and later traceability commands may query Git trailers to
+resolve `Task -> Commit -> PR -> Release` at runtime. Git remains the commit
+history source; tracked Markdown never mirrors that history.
+
 ## Guard Contract
 
 `guard.json` contains machine policy only:
@@ -191,7 +210,9 @@ The command never stashes, resets, deletes, rebases, or absorbs existing work.
 
 - a current passing finish report exists;
 - staged paths equal the verified set;
-- commit includes machine-readable change/task/session trailers;
+- commit includes exact machine-readable `Change:` and `Task:` trailers;
+- current-state documents contain semantic identifiers rather than commit
+  hashes;
 - hooks delegate to the engine rather than copy logic;
 - CI recomputes authoritative evidence from the PR base/head;
 - branch protection requires CI.
@@ -219,8 +240,10 @@ API tests may truncate or drop their configured PostgreSQL database. Before any
 destructive check, the engine will:
 
 - require `TEST_DATABASE_URL` rather than accept a fallback;
-- require an explicit disposable marker;
+- require `WORKFLOW_DISPOSABLE_DATABASE=1` as explicit operator confirmation;
 - parse the URL without shell evaluation;
+- require a database-name token such as `test`, `ci`, `tmp`, `temp`,
+  `disposable`, or `ephemeral`;
 - reject development, shared, staging, and production identities;
 - reject equality with the development `DATABASE_URL`;
 - record only a redacted database identity.

@@ -79,11 +79,13 @@ audit-only rather than claimed as a hard guarantee.
 4. Put machine scope and check IDs in `guard.json`; do not repeat prose tasks.
 5. Put current handoff facts only in `CURRENT_AND_NEXT_STEPS.md`; history belongs
    in Git, reports, changelog, or immutable archives.
-6. Put reusable technical explanations under `architecture/`, `features/`, or
+6. Use semantic `Change:` and `Task:` commit trailers for traceability; never
+   copy commit hashes into the handoff or create hash-only metadata commits.
+7. Put reusable technical explanations under `architecture/`, `features/`, or
    `guides/` according to scope.
-7. Put investigation notes at `docs/research/<topic>.md` and label assumptions.
-8. Do not create new per-session logs or manually maintained commit logs.
-9. Do not create `WORKFLOW.md` until its content is reviewed as a separate task.
+8. Put investigation notes at `docs/research/<topic>.md` and label assumptions.
+9. Do not create new per-session logs or manually maintained commit logs.
+10. Do not create `WORKFLOW.md` until its content is reviewed as a separate task.
 
 ## Non-Destructive Migration
 

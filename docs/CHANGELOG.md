@@ -46,6 +46,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   project workflow.
 - Elevated RED → GREEN → REFACTOR and explicit verification evidence to
   repository-level development rules.
+- Reduced the current-state document to a semantic handoff keyed by change and
+  task IDs; commit traceability now belongs to Git trailers rather than
+  hash-only metadata commits.
 
 ### Fixed
 
