@@ -44,7 +44,7 @@ Bootstrap evidence recorded on 2026-07-14 under the one-time exception in
 
 ## 4. Repository Enforcement
 
-- [ ] 4.1 Delegate local Git hooks to the engine without copying guard logic or
+- [x] 4.1 Delegate local Git hooks to the engine without copying guard logic or
       using `eval`.
 - [ ] 4.2 Add authoritative CI verification and protect workflow policy paths.
 

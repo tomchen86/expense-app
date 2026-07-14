@@ -9,6 +9,7 @@ import { dispatchDocumentRefreshCommand } from './document-refresh-cli.ts';
 import { ExitCode, WorkflowError, workflowError } from './errors.ts';
 import { discoverRepository } from './git.ts';
 import { renderHandoff, validateHandoff } from './handoff.ts';
+import { runRepositoryHook } from './hooks.ts';
 import { dispatchIssueCommand } from './issue-cli.ts';
 import {
   commitSession,
@@ -158,6 +159,14 @@ function dispatch(args: string[], cwd: string): CommandResult {
       }
       return { command, ok: true, action: rest[0] };
     }
+    case 'hook': {
+      const [hook, ...hookArgs] = rest;
+      return {
+        command,
+        ok: true,
+        result: runRepositoryHook(cwd, hook ?? '', hookArgs),
+      };
+    }
     case 'complete-task':
       requireArgumentCount(command, rest, 1, 1);
       return { command, ok: true, result: completeTask(cwd, rest[0]) };
@@ -298,6 +307,7 @@ function usageText(): string {
     '  pnpm workflow documents validate [--json]',
     '  pnpm workflow document-refresh <propose|show|review|apply> ... [--json]',
     '  pnpm workflow handoff <render|validate> [--json]',
+    '  pnpm workflow hook <pre-commit|commit-msg|pre-push|post-merge> ... [--json]',
     '  pnpm workflow complete-task <session-id> [--json]',
     '  pnpm workflow finish <session-id> [--json]',
     '  pnpm workflow commit <session-id> --message <subject> [--json]',

@@ -8,15 +8,15 @@ This generated handoff contains semantic project state only. Its sources are the
 
 ## Current Task
 
-`4.1` — Delegate local Git hooks to the engine without copying guard logic or using `eval`.
+`4.2` — Add authoritative CI verification and protect workflow policy paths.
 
 ## Next Task
 
-`4.2` — Add authoritative CI verification and protect workflow policy paths.
+`5.1` — Audit legacy requirements into capability OpenSpec specs.
 
 ## Current Focus
 
-Delegate local Git hooks to the engine without copying guard logic or using `eval`.
+Add authoritative CI verification and protect workflow policy paths.
 
 ## Known Blockers
 

@@ -10,6 +10,7 @@ import './completion.integration.test.ts';
 import './issues.integration.test.ts';
 import './handoff.integration.test.ts';
 import './document-refresh.integration.test.ts';
+import './hooks.integration.test.ts';
 import './ignored-state.integration.test.ts';
 import './runner.integration.test.ts';
 import {
