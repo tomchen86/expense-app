@@ -8,6 +8,12 @@ import { loadChangeContract, loadWorkflowConfig } from './contracts.ts';
 import { ExitCode, WorkflowError, workflowError } from './errors.ts';
 import { discoverRepository } from './git.ts';
 import {
+  commitSession,
+  completeTask,
+  findTaskCommits,
+  finishSession,
+} from './lifecycle.ts';
+import {
   abortSession,
   checkSession,
   getSession,
@@ -84,14 +90,57 @@ function dispatch(args: string[], cwd: string): CommandResult {
         session: startSession(cwd, changeId, taskId),
       };
     }
-    case 'status':
+    case 'status': {
       requireArgumentCount(command, rest, 0, 1);
-      return rest[0]
-        ? { command, ok: true, session: getSession(cwd, rest[0]) }
-        : { command, ok: true, sessions: listSessions(cwd) };
+      if (rest[0]) {
+        const session = getSession(cwd, rest[0]);
+        return {
+          command,
+          ok: true,
+          session,
+          taskCommits: findTaskCommits(cwd, session.changeId, session.taskId),
+        };
+      }
+      const sessions = listSessions(cwd);
+      return {
+        command,
+        ok: true,
+        sessions,
+        taskCommits: sessions.map((session) => ({
+          changeId: session.changeId,
+          taskId: session.taskId,
+          commits: findTaskCommits(cwd, session.changeId, session.taskId),
+        })),
+      };
+    }
     case 'check':
       requireArgumentCount(command, rest, 1, 1);
       return { command, ok: true, result: checkSession(cwd, rest[0]) };
+    case 'complete-task':
+      requireArgumentCount(command, rest, 1, 1);
+      return { command, ok: true, result: completeTask(cwd, rest[0]) };
+    case 'finish':
+      requireArgumentCount(command, rest, 1, 1);
+      return { command, ok: true, result: finishSession(cwd, rest[0]) };
+    case 'commit': {
+      const sessionId = rest[0];
+      const message = optionValue(rest.slice(1), '--message');
+      if (
+        !sessionId ||
+        !message ||
+        rest.length !== 3 ||
+        rest[1] !== '--message'
+      ) {
+        throw usage(
+          'Usage: pnpm workflow commit <session-id> --message <subject> [--json]',
+        );
+      }
+      return {
+        command,
+        ok: true,
+        result: commitSession(cwd, sessionId, message),
+      };
+    }
     case 'abort': {
       const sessionId = rest[0];
       const reason = optionValue(rest.slice(1), '--reason');
@@ -203,6 +252,9 @@ function usageText(): string {
     '  pnpm workflow start <change-id> --task <task-id> [--json]',
     '  pnpm workflow status [session-id] [--json]',
     '  pnpm workflow check <session-id> [--json]',
+    '  pnpm workflow complete-task <session-id> [--json]',
+    '  pnpm workflow finish <session-id> [--json]',
+    '  pnpm workflow commit <session-id> --message <subject> [--json]',
     '  pnpm workflow abort <session-id> --reason <text> [--json]',
   ].join('\n');
 }

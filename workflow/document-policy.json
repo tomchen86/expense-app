@@ -13,6 +13,18 @@
       "mode": "generated",
       "enforcement": "planned"
     },
+    "docs/REQUIREMENT_LOG.md": {
+      "mode": "reference",
+      "enforcement": "planned-supersession"
+    },
+    "docs/UPDATE_CHECKLIST.md": {
+      "mode": "reference",
+      "enforcement": "planned-supersession"
+    },
+    "docs/WORKFLOW.md": {
+      "mode": "curated",
+      "enforcement": "planned"
+    },
     "docs/CHANGELOG.md": {
       "mode": "append-only",
       "enforcement": "planned"

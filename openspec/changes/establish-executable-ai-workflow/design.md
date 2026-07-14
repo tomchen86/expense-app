@@ -54,6 +54,7 @@ Runtime files live under the Git common directory:
 ```text
 <git-common-dir>/workflow-engine/
 ├── locks/
+├── operations/
 ├── sessions/
 └── reports/
 ```
@@ -70,12 +71,24 @@ workflow validate-change <change-id>
 workflow start <change-id> --task <task-id>
 workflow status [session-id]
 workflow check <session-id>
+workflow complete-task <session-id>
+workflow finish <session-id>
+workflow commit <session-id> --message <subject>
 workflow abort <session-id> --reason <text>
 ```
 
 `doctor` is diagnostic and may report a dirty/protected-branch warning without
 failing. `start` is blocking: it requires the expected non-protected branch, a
 completely clean baseline, valid artifacts, known checks, and no active lock.
+
+Completion, finish, and commit remain serialized by a per-session operation
+lock. Passing checks produce content-addressed immutable reports. Completion
+projects only the authorized checkbox bytes, finish reruns the pinned checks
+and stages the exact verified path set, and commit creates an exact Git commit
+object before atomically advancing the branch ref with a compare-and-swap.
+Authorized commits bypass repository hooks because local hooks are feedback,
+not commit authority; postconditions still verify parent, tree, paths, and
+message bytes before the ref update.
 
 ## Path Policy
 

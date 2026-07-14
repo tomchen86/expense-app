@@ -179,6 +179,23 @@ export function runGit(
   args: string[],
   allowFailure = false,
 ): string {
+  return executeGit(cwd, args, allowFailure, {});
+}
+
+export function runGitWithEnvironment(
+  cwd: string,
+  args: string[],
+  environment: NodeJS.ProcessEnv,
+): string {
+  return executeGit(cwd, args, false, environment);
+}
+
+function executeGit(
+  cwd: string,
+  args: string[],
+  allowFailure: boolean,
+  environment: NodeJS.ProcessEnv,
+): string {
   const executable = resolveGitExecutable();
   const commandArgs =
     args[0] === 'diff'
@@ -202,7 +219,10 @@ export function runGit(
       encoding: 'utf8',
       shell: false,
       maxBuffer: 64 * 1024 * 1024,
-      env: createTrustedExecutionEnvironment([executable]),
+      env: {
+        ...createTrustedExecutionEnvironment([executable]),
+        ...environment,
+      },
     },
   );
 

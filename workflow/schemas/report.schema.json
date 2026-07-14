@@ -1,0 +1,126 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://expense-app.local/workflow/report.schema.json",
+  "oneOf": [
+    { "$ref": "#/$defs/check" },
+    { "$ref": "#/$defs/completion" },
+    { "$ref": "#/$defs/finish" },
+    { "$ref": "#/$defs/commit" }
+  ],
+  "$defs": {
+    "digest": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "commitHash": {
+      "type": "string",
+      "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$"
+    },
+    "base": {
+      "type": "object",
+      "required": [
+        "schemaVersion",
+        "kind",
+        "sessionId",
+        "changeId",
+        "taskId",
+        "createdAt"
+      ],
+      "properties": {
+        "schemaVersion": { "const": 1 },
+        "kind": { "enum": ["check", "completion", "finish", "commit"] },
+        "sessionId": { "type": "string" },
+        "changeId": { "type": "string" },
+        "taskId": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "parentReportId": { "$ref": "#/$defs/digest" }
+      }
+    },
+    "inspection": {
+      "allOf": [
+        { "$ref": "#/$defs/base" },
+        {
+          "type": "object",
+          "required": [
+            "baseline",
+            "branch",
+            "artifactDigests",
+            "allowedPaths",
+            "requiredChecks",
+            "requiredCheckDigests",
+            "changedPaths",
+            "fingerprint"
+          ],
+          "properties": {
+            "baseline": { "type": "object" },
+            "branch": { "type": "string" },
+            "artifactDigests": { "type": "object" },
+            "allowedPaths": { "type": "array", "items": { "type": "string" } },
+            "requiredChecks": {
+              "type": "array",
+              "items": { "type": "string" }
+            },
+            "requiredCheckDigests": { "type": "object" },
+            "changedPaths": { "type": "array", "items": { "type": "string" } },
+            "fingerprint": { "$ref": "#/$defs/digest" }
+          }
+        }
+      ]
+    },
+    "check": {
+      "allOf": [
+        { "$ref": "#/$defs/inspection" },
+        {
+          "properties": { "kind": { "const": "check" } },
+          "required": ["checks"]
+        }
+      ]
+    },
+    "completion": {
+      "allOf": [
+        { "$ref": "#/$defs/inspection" },
+        {
+          "properties": { "kind": { "const": "completion" } },
+          "required": [
+            "parentReportId",
+            "completedTaskIds",
+            "projectionSourceDigest",
+            "reconciledTasks"
+          ]
+        }
+      ]
+    },
+    "finish": {
+      "allOf": [
+        { "$ref": "#/$defs/inspection" },
+        {
+          "properties": { "kind": { "const": "finish" } },
+          "required": [
+            "parentReportId",
+            "completedTaskIds",
+            "projectionSourceDigest",
+            "checks",
+            "stagedPaths",
+            "tree"
+          ]
+        }
+      ]
+    },
+    "commit": {
+      "allOf": [
+        { "$ref": "#/$defs/base" },
+        {
+          "properties": { "kind": { "const": "commit" } },
+          "required": [
+            "parentReportId",
+            "baseline",
+            "branch",
+            "commitHash",
+            "tree",
+            "changedPaths",
+            "completedTaskIds",
+            "projectionSourceDigest",
+            "message"
+          ]
+        }
+      ]
+    }
+  }
+}

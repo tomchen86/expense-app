@@ -7,7 +7,7 @@ import { ExitCode, workflowError } from './errors.ts';
 export type WorkflowSession = {
   schemaVersion: 1;
   sessionId: string;
-  state: 'active' | 'aborted';
+  state: 'active' | 'aborted' | 'committed';
   changeId: string;
   taskId: string;
   repositoryRoot: string;
@@ -20,7 +20,14 @@ export type WorkflowSession = {
   artifacts: Record<string, string>;
   allowedPaths: string[];
   requiredChecks: string[];
+  requiredCheckDigests?: Record<string, string>;
   createdAt: string;
+  latestCheckReportId?: string;
+  completionReportId?: string;
+  finishReportId?: string;
+  commitReportId?: string;
+  commitHash?: string;
+  committedAt?: string;
   abortedAt?: string;
   abortReason?: string;
 };
@@ -33,8 +40,49 @@ export function runtimePaths(
   return {
     root,
     locks: path.join(root, 'locks'),
+    operations: path.join(root, 'operations'),
     sessions: path.join(root, 'sessions'),
+    reports: path.join(root, 'reports'),
   };
+}
+
+export function withSessionOperation<T>(
+  runtime: ReturnType<typeof runtimePaths>,
+  sessionId: string,
+  operation: () => T,
+): T {
+  fs.mkdirSync(runtime.operations, { recursive: true });
+  const lockPath = path.join(runtime.operations, `${sessionId}.lock`);
+  let descriptor: number | undefined;
+  try {
+    descriptor = fs.openSync(lockPath, 'wx', 0o600);
+    fs.writeFileSync(
+      descriptor,
+      `${JSON.stringify({ sessionId, pid: process.pid })}\n`,
+      'utf8',
+    );
+    fs.fsyncSync(descriptor);
+    fs.closeSync(descriptor);
+    descriptor = undefined;
+  } catch (error) {
+    if (descriptor !== undefined) {
+      fs.closeSync(descriptor);
+    }
+    if (isNodeError(error) && error.code === 'EEXIST') {
+      throw workflowError(
+        'SESSION_OPERATION_CONFLICT',
+        `Session ${sessionId} already has an operation in progress.`,
+        ExitCode.conflict,
+      );
+    }
+    throw error;
+  }
+
+  try {
+    return operation();
+  } finally {
+    fs.rmSync(lockPath, { force: true });
+  }
 }
 
 export function readSessionFile(sessionPath: string): WorkflowSession {
@@ -144,9 +192,36 @@ function isWorkflowSession(value: unknown): value is WorkflowSession {
   if (!isRecord(value) || value.schemaVersion !== 1) {
     return false;
   }
+  const allowedFields = new Set([
+    'schemaVersion',
+    'sessionId',
+    'state',
+    'changeId',
+    'taskId',
+    'repositoryRoot',
+    'gitCommonDirectory',
+    'branch',
+    'baseline',
+    'artifacts',
+    'allowedPaths',
+    'requiredChecks',
+    'requiredCheckDigests',
+    'createdAt',
+    'latestCheckReportId',
+    'completionReportId',
+    'finishReportId',
+    'commitReportId',
+    'commitHash',
+    'committedAt',
+    'abortedAt',
+    'abortReason',
+  ]);
+  if (Object.keys(value).some((field) => !allowedFields.has(field))) {
+    return false;
+  }
   if (
     typeof value.sessionId !== 'string' ||
-    (value.state !== 'active' && value.state !== 'aborted') ||
+    !['active', 'aborted', 'committed'].includes(String(value.state)) ||
     typeof value.changeId !== 'string' ||
     typeof value.taskId !== 'string' ||
     typeof value.repositoryRoot !== 'string' ||
@@ -163,6 +238,36 @@ function isWorkflowSession(value: unknown): value is WorkflowSession {
   ) {
     return false;
   }
+  for (const field of [
+    'latestCheckReportId',
+    'completionReportId',
+    'finishReportId',
+    'commitReportId',
+  ]) {
+    const fieldValue = value[field];
+    if (fieldValue !== undefined && !isDigest(fieldValue)) {
+      return false;
+    }
+  }
+  if (
+    value.requiredCheckDigests !== undefined &&
+    !isStringRecord(value.requiredCheckDigests)
+  ) {
+    return false;
+  }
+  if (
+    (value.commitHash !== undefined && !isCommitHash(value.commitHash)) ||
+    (value.commitReportId === undefined) !== (value.commitHash === undefined)
+  ) {
+    return false;
+  }
+  if (
+    value.state === 'active' &&
+    value.commitReportId !== undefined &&
+    (value.finishReportId === undefined || value.committedAt !== undefined)
+  ) {
+    return false;
+  }
   if (
     value.state === 'aborted' &&
     (typeof value.abortedAt !== 'string' ||
@@ -172,7 +277,29 @@ function isWorkflowSession(value: unknown): value is WorkflowSession {
   ) {
     return false;
   }
+  if (
+    value.state === 'committed' &&
+    (!isDigest(value.latestCheckReportId) ||
+      !isDigest(value.completionReportId) ||
+      !isDigest(value.finishReportId) ||
+      !isDigest(value.commitReportId) ||
+      !isCommitHash(value.commitHash) ||
+      typeof value.committedAt !== 'string' ||
+      Number.isNaN(Date.parse(value.committedAt)))
+  ) {
+    return false;
+  }
   return true;
+}
+
+function isDigest(value: unknown): value is string {
+  return typeof value === 'string' && /^[0-9a-f]{64}$/.test(value);
+}
+
+function isCommitHash(value: unknown): value is string {
+  return (
+    typeof value === 'string' && /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(value)
+  );
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -198,4 +325,8 @@ function invalidSessionLock() {
     'The active session lock is missing or does not match the session.',
     ExitCode.staleState,
   );
+}
+
+function isNodeError(error: unknown): error is NodeJS.ErrnoException {
+  return error instanceof Error && 'code' in error;
 }

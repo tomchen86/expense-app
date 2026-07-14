@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 import { ExitCode, workflowError } from './errors.ts';
+import { workflowContractArtifactPaths } from './contract-artifacts.ts';
 import {
   assertChangeId,
   assertPolicyPathInsideRepository,
@@ -298,8 +299,7 @@ export function loadChangeContract(
     tasksPath,
     guardPath,
     ...specPaths,
-    path.join(repositoryRoot, 'workflow/config.json'),
-    path.join(repositoryRoot, 'workflow/checks.json'),
+    ...workflowContractArtifactPaths(repositoryRoot),
   ];
 
   return {

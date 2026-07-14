@@ -20,8 +20,8 @@
   ],
   "properties": {
     "schemaVersion": { "const": 1 },
-    "sessionId": { "type": "string", "minLength": 1 },
-    "state": { "enum": ["active", "aborted"] },
+    "sessionId": { "type": "string", "pattern": "^session-[A-Za-z0-9-]+$" },
+    "state": { "enum": ["active", "aborted", "committed"] },
     "changeId": { "type": "string" },
     "taskId": { "type": "string" },
     "repositoryRoot": { "type": "string" },
@@ -29,17 +29,55 @@
     "branch": { "type": "string" },
     "baseline": {
       "type": "object",
+      "additionalProperties": false,
       "required": ["head", "tree"],
       "properties": {
-        "head": { "type": "string" },
-        "tree": { "type": "string" }
+        "head": { "$ref": "#/$defs/commitHash" },
+        "tree": { "$ref": "#/$defs/commitHash" }
       }
     },
-    "artifacts": { "type": "object" },
+    "artifacts": { "$ref": "#/$defs/digestRecord" },
     "allowedPaths": { "type": "array", "items": { "type": "string" } },
     "requiredChecks": { "type": "array", "items": { "type": "string" } },
+    "requiredCheckDigests": { "$ref": "#/$defs/digestRecord" },
     "createdAt": { "type": "string", "format": "date-time" },
+    "latestCheckReportId": { "$ref": "#/$defs/digest" },
+    "completionReportId": { "$ref": "#/$defs/digest" },
+    "finishReportId": { "$ref": "#/$defs/digest" },
+    "commitReportId": { "$ref": "#/$defs/digest" },
+    "commitHash": { "$ref": "#/$defs/commitHash" },
+    "committedAt": { "type": "string", "format": "date-time" },
     "abortedAt": { "type": "string", "format": "date-time" },
-    "abortReason": { "type": "string" }
+    "abortReason": { "type": "string", "minLength": 1 }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "state": { "const": "aborted" } } },
+      "then": { "required": ["abortedAt", "abortReason"] }
+    },
+    {
+      "if": { "properties": { "state": { "const": "committed" } } },
+      "then": {
+        "required": [
+          "latestCheckReportId",
+          "completionReportId",
+          "finishReportId",
+          "commitReportId",
+          "commitHash",
+          "committedAt"
+        ]
+      }
+    }
+  ],
+  "$defs": {
+    "digest": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "commitHash": {
+      "type": "string",
+      "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$"
+    },
+    "digestRecord": {
+      "type": "object",
+      "additionalProperties": { "$ref": "#/$defs/digest" }
+    }
   }
 }

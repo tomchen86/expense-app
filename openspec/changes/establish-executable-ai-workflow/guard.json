@@ -78,7 +78,12 @@
         "docs/issues/**",
         "docs/ISSUE_LOG.md"
       ],
-      "requiredChecks": ["workflow-tests", "workflow-format"]
+      "requiredChecks": [
+        "workflow-tests",
+        "workflow-typecheck",
+        "workflow-lint",
+        "workflow-format"
+      ]
     },
     "3.2": {
       "allowedPaths": [
@@ -86,7 +91,12 @@
         "workflow/**",
         "docs/CURRENT_AND_NEXT_STEPS.md"
       ],
-      "requiredChecks": ["workflow-tests", "workflow-format"]
+      "requiredChecks": [
+        "workflow-tests",
+        "workflow-typecheck",
+        "workflow-lint",
+        "workflow-format"
+      ]
     },
     "3.3": {
       "allowedPaths": [
@@ -95,7 +105,12 @@
         "docs/architecture/**",
         "docs/features/**"
       ],
-      "requiredChecks": ["workflow-tests", "workflow-format"]
+      "requiredChecks": [
+        "workflow-tests",
+        "workflow-typecheck",
+        "workflow-lint",
+        "workflow-format"
+      ]
     },
     "4.1": {
       "allowedPaths": [
@@ -103,16 +118,26 @@
         "workflow/**",
         ".husky/**"
       ],
-      "requiredChecks": ["workflow-tests", "workflow-format"]
+      "requiredChecks": [
+        "workflow-tests",
+        "workflow-typecheck",
+        "workflow-lint",
+        "workflow-format"
+      ]
     },
     "4.2": {
       "allowedPaths": [
         "packages/workflow-engine/**",
         "workflow/**",
         ".github/workflows/**",
-        "CODEOWNERS"
+        ".github/CODEOWNERS"
       ],
-      "requiredChecks": ["workflow-tests", "workflow-format"]
+      "requiredChecks": [
+        "workflow-tests",
+        "workflow-typecheck",
+        "workflow-lint",
+        "workflow-format"
+      ]
     },
     "5.1": {
       "allowedPaths": [
@@ -120,6 +145,7 @@
         "openspec/changes/**",
         "docs/REQUIREMENT_LOG.md",
         "docs/ISSUE_LOG.md",
+        "docs/issues/**",
         "docs/ROADMAP.md"
       ],
       "requiredChecks": ["workflow-format"]
@@ -135,7 +161,12 @@
     },
     "5.3": {
       "allowedPaths": ["packages/workflow-engine/**", "workflow/**"],
-      "requiredChecks": ["workflow-tests", "workflow-format"]
+      "requiredChecks": [
+        "workflow-tests",
+        "workflow-typecheck",
+        "workflow-lint",
+        "workflow-format"
+      ]
     }
   }
 }

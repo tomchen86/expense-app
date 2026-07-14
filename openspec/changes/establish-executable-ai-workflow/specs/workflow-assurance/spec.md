@@ -96,6 +96,73 @@ error, or runner mutation SHALL fail verification with structured evidence.
 - THEN the engine uses its own `process.execPath`
 - AND the PATH substitute is not executed
 
+### Requirement: Immutable Evidence Chain
+
+Each passing check, completion projection, finish projection, and managed
+commit SHALL produce a content-addressed immutable report. A transition SHALL
+validate the report digest, kind, parent, session identity, pinned contract,
+Git baseline, changed paths, working-state fingerprint, and required check
+evidence before relying on it.
+
+#### Scenario: Passing report payload is replaced
+
+- GIVEN a report ID is stored on an active session
+- AND the file content no longer hashes to that ID
+- WHEN the next transition is requested
+- THEN the transition fails as stale state
+- AND no checkbox, staging, or ref update is authorized
+
+#### Scenario: Report omits required check evidence
+
+- GIVEN a content-addressed report matches the current diff fingerprint
+- BUT its check evidence does not contain every required ID in order
+- WHEN completion or commit validation runs
+- THEN the report is rejected
+
+### Requirement: Serialized Completion Authority
+
+Only one state-changing operation SHALL act on a session at a time. Completion
+SHALL change only the exact unchecked checkbox bytes authorized by the current
+passing report, and finish SHALL rerun required checks before staging exactly
+the verified paths and tree.
+
+#### Scenario: Concurrent transition is requested
+
+- GIVEN one state-changing session operation holds the operation lock
+- WHEN another check, completion, finish, commit, or abort is requested
+- THEN the second operation fails with a conflict
+- AND it does not overwrite report pointers or projections
+
+#### Scenario: Existing manual staging is present
+
+- GIVEN a completion projection has current evidence
+- AND the index already contains manually staged paths
+- WHEN finish is requested
+- THEN finish rejects the index
+- AND only an engine-controlled finish may create the staging projection
+
+### Requirement: Atomic Managed Commit
+
+The engine SHALL create and fully verify a commit object with the authorized
+single parent, tree, changed paths, and exact canonical trailer block before it
+atomically advances the current branch from the pinned baseline using a
+compare-and-swap ref update. Repository hooks SHALL NOT be commit authority.
+
+#### Scenario: Branch moves before commit authorization
+
+- GIVEN a verified finish report pins one baseline
+- AND the branch no longer points to that baseline
+- WHEN commit is requested
+- THEN the compare-and-swap fails
+- AND the engine does not overwrite the moved branch
+
+#### Scenario: Local commit hook is hostile
+
+- GIVEN a repository hook exits non-zero or attempts to rewrite a message
+- WHEN the engine creates an already-authorized managed commit
+- THEN the engine uses Git plumbing without invoking that hook
+- AND it verifies the exact commit object before updating the ref
+
 ### Requirement: Disposable Database Preflight
 
 Before executing any destructive database check, the workflow engine SHALL

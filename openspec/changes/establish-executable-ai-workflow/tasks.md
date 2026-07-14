@@ -26,10 +26,10 @@ Bootstrap evidence recorded on 2026-07-14 under the one-time exception in
 
 ## 2. Verification and Completion Authority
 
-- [ ] 2.1 Execute allowlisted check IDs through pinned Node/package runners,
+- [x] 2.1 Execute allowlisted check IDs through pinned Node/package runners,
       enforce disposable database policy, and make destructive API test target
       selection fail closed without development fallback.
-- [ ] 2.2 Add immutable reports and evidence-authorized `complete-task`,
+- [x] 2.2 Add immutable reports and evidence-authorized `complete-task`,
       `finish`, staging, and commit transitions with exact `Change:`/`Task:`
       trailers and Git-backed status lookup.
 
