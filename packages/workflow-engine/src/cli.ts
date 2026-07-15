@@ -5,7 +5,7 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 import { dispatchAiAdapterCommand } from './ai-adapter-cli.ts';
-import { loadChangeContract, loadWorkflowConfig } from './contracts.ts';
+import { loadWorkflowConfig } from './contracts.ts';
 import { verifyPullRequest } from './ci.ts';
 import { dispatchDocumentRefreshCommand } from './document-refresh-cli.ts';
 import { ExitCode, WorkflowError, workflowError } from './errors.ts';
@@ -30,6 +30,7 @@ import {
 import { validateManagedDocuments } from './managed-documents.ts';
 import { diagnoseOpenSpec } from './openspec-doctor.ts';
 import { commitPlanningTransition } from './planning-transition.ts';
+import { loadStableValidatedChangeContract } from './validated-contract-context.ts';
 
 type CommandResult = Record<string, unknown>;
 
@@ -64,16 +65,21 @@ function dispatch(args: string[], cwd: string): CommandResult {
       return doctor(cwd);
     case 'validate-change': {
       requireArgumentCount(command, rest, 1, 1);
-      const contract = loadChangeContract(
-        discoverRepository(cwd).repositoryRoot,
+      const contract = loadStableValidatedChangeContract(
+        discoverRepository(cwd),
         rest[0],
-      );
+      ).contract;
       return {
         command,
         ok: true,
         changeId: contract.changeId,
         tasks: contract.tasks,
         artifactDigests: contract.artifactDigests,
+        artifactModes: contract.artifactModes,
+        schemaName: contract.schemaName,
+        openspec: contract.openspec,
+        diagnostics: contract.diagnostics,
+        contractDigest: contract.contractDigest,
       };
     }
     case 'plan-commit':

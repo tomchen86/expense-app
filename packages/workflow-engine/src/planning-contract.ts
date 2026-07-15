@@ -8,10 +8,10 @@ import {
   type ParsedTask,
 } from './contracts.ts';
 import { ExitCode, workflowError } from './errors.ts';
-import { runGit } from './git.ts';
-import { createOpenSpecAdapter } from './openspec-adapter.ts';
-import { inspectOpenSpecSchemaContract } from './openspec-schema-contract.ts';
+import { discoverRepository, runGit } from './git.ts';
 import { normalizeChangedPath } from './paths.ts';
+import { assertPlanningPaths } from './planning-paths.ts';
+import { loadStableValidatedChangeContract } from './validated-contract-context.ts';
 import type {
   PlanningTaskState,
   PlanningTransitionReport,
@@ -25,6 +25,8 @@ export type PlanningInspection = {
   currentPaths: string[];
   artifactDigests: Record<string, string>;
 };
+
+export { assertPlanningPaths } from './planning-paths.ts';
 
 export function inspectPlanningTransition(
   repositoryRoot: string,
@@ -100,81 +102,10 @@ export function validateOpenSpecPlanning(
       ExitCode.verification,
     );
   }
-  inspectOpenSpecSchemaContract(repositoryRoot);
-  const adapter = createOpenSpecAdapter(repositoryRoot);
-  for (const managedSchema of ['spec-driven', 'expense-app']) {
-    adapter.whichSchema(managedSchema);
-    adapter.validateSchema(managedSchema);
-  }
-  const status = adapter.status(changeId, schemaName);
-  const validation = adapter.validateChange(changeId);
-  if (!status.isComplete || !validation.valid) {
-    throw workflowError(
-      'OPENSPEC_CHANGE_INVALID',
-      'OpenSpec status and strict validation must both accept the planning tree.',
-      ExitCode.verification,
-      {
-        details: {
-          statusComplete: status.isComplete,
-          validationValid: validation.valid,
-        },
-      },
-    );
-  }
-  return {
-    version: adapter.version(),
-    schemaName,
-    statusComplete: true,
-    validationValid: true,
-  };
-}
-
-export function assertPlanningPaths(
-  changeRoot: string,
-  changeId: string,
-  changedPaths: string[],
-): void {
-  if (changeId === 'archive') {
-    throw workflowError(
-      'PLANNING_CHANGE_ID_RESERVED',
-      'The OpenSpec archive container cannot be used as an active change ID.',
-      ExitCode.guard,
-    );
-  }
-  const prefix = `${changeRoot}/${changeId}/`;
-  const exact = new Set([
-    `${prefix}.openspec.yaml`,
-    `${prefix}proposal.md`,
-    `${prefix}design.md`,
-    `${prefix}tasks.md`,
-    `${prefix}guard.json`,
-  ]);
-  const invalid = changedPaths.filter((candidate) => {
-    const normalized = normalizeChangedPath(candidate);
-    if (exact.has(normalized)) {
-      return false;
-    }
-    if (!normalized.startsWith(`${prefix}specs/`)) {
-      return true;
-    }
-    const relative = normalized.slice(`${prefix}specs/`.length);
-    const segments = relative.split('/');
-    return (
-      segments.length < 2 ||
-      segments.at(-1) !== 'spec.md' ||
-      segments
-        .slice(0, -1)
-        .some((segment) => !/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(segment))
-    );
-  });
-  if (invalid.length > 0) {
-    throw workflowError(
-      'PLANNING_PATHS_INVALID',
-      'Planning transition contains paths outside the named planning tree.',
-      ExitCode.guard,
-      { details: { invalidPaths: invalid.sort() } },
-    );
-  }
+  return loadStableValidatedChangeContract(
+    discoverRepository(repositoryRoot),
+    changeId,
+  ).contract.openspec;
 }
 
 export function assertPlanningTaskHistory(

@@ -127,6 +127,31 @@ export function stageExactPaths(
   }
 }
 
+export function rollbackExactStaging(
+  repositoryRoot: string,
+  previousIndexTree: string,
+  workflowStagedTree: string,
+  cause: unknown,
+): void {
+  const currentIndexTree = runGit(repositoryRoot, ['write-tree']).trim();
+  if (currentIndexTree !== workflowStagedTree) {
+    throw workflowError(
+      'STAGING_INDEX_DIVERGED',
+      'The Git index changed after workflow staging; foreign staging was preserved.',
+      ExitCode.staleState,
+      {
+        details: {
+          causeCode:
+            cause instanceof Error && 'code' in cause
+              ? String(cause.code)
+              : undefined,
+        },
+      },
+    );
+  }
+  runGit(repositoryRoot, ['read-tree', previousIndexTree]);
+}
+
 function predictIndexTree(
   repositoryRoot: string,
   baselineHead: string,

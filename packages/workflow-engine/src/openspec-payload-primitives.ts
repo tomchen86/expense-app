@@ -112,10 +112,8 @@ export function parseSchemaIssue(value: unknown): Record<string, unknown> {
   const issue = record(value);
   if (
     issue.level !== 'error' ||
-    typeof issue.path !== 'string' ||
-    !issue.path ||
-    typeof issue.message !== 'string' ||
-    !issue.message ||
+    !isSafeDiagnosticPath(issue.path) ||
+    !isSafeDiagnosticMessage(issue.message) ||
     Object.keys(issue).some(
       (key) => !['level', 'path', 'message'].includes(key),
     )
@@ -129,10 +127,8 @@ export function parseIssue(value: unknown): Record<string, unknown> {
   const issue = record(value);
   if (
     !['ERROR', 'WARNING', 'INFO'].includes(String(issue.level)) ||
-    typeof issue.path !== 'string' ||
-    !issue.path ||
-    typeof issue.message !== 'string' ||
-    !issue.message ||
+    !isSafeDiagnosticPath(issue.path) ||
+    !isSafeDiagnosticMessage(issue.message) ||
     !optionalPositiveInteger(issue.line) ||
     !optionalPositiveInteger(issue.column) ||
     Object.keys(issue).some(
@@ -142,6 +138,34 @@ export function parseIssue(value: unknown): Record<string, unknown> {
     throw invalidPayload();
   }
   return issue;
+}
+
+function isSafeDiagnosticPath(value: unknown): value is string {
+  return (
+    typeof value === 'string' &&
+    value.length > 0 &&
+    value.length <= 4096 &&
+    value === value.trim() &&
+    !value.includes('\\') &&
+    !path.posix.isAbsolute(value) &&
+    !path.win32.isAbsolute(value) &&
+    !hasControlCharacter(value) &&
+    value
+      .split('/')
+      .every(
+        (segment) => segment.length > 0 && segment !== '.' && segment !== '..',
+      )
+  );
+}
+
+function isSafeDiagnosticMessage(value: unknown): value is string {
+  return (
+    typeof value === 'string' &&
+    value.length > 0 &&
+    value.length <= 16_384 &&
+    value === value.trim() &&
+    !hasControlCharacter(value)
+  );
 }
 
 export function nonNegativeInteger(value: unknown): number {

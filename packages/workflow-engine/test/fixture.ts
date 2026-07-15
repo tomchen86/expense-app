@@ -62,6 +62,10 @@ export function createFixtureRepository(): string {
   fs.mkdirSync(path.join(changeDirectory, 'specs/demo'), { recursive: true });
   fs.mkdirSync(path.join(repository, 'src'), { recursive: true });
   addFixtureScripts(repository);
+  fs.writeFileSync(
+    path.join(changeDirectory, '.openspec.yaml'),
+    'schema: expense-app\ncreated: 2026-07-15\n',
+  );
   fs.writeFileSync(path.join(changeDirectory, 'proposal.md'), '# Proposal\n');
   fs.writeFileSync(path.join(changeDirectory, 'design.md'), '# Design\n');
   fs.writeFileSync(
@@ -83,6 +87,7 @@ export function createFixtureRepository(): string {
     },
   });
   fs.writeFileSync(path.join(repository, 'src/.gitkeep'), '');
+  installFakeOpenSpec(repository);
 
   git(repository, ['add', '.']);
   git(repository, ['commit', '-m', 'Create fixture']);
@@ -198,6 +203,211 @@ export function configureChecks(
   writeJson(guardPath, guard);
   git(repository, ['add', '.']);
   git(repository, ['commit', '-m', 'Configure fixture checks']);
+}
+
+export function installFakeOpenSpec(repository: string): void {
+  fs.mkdirSync(path.join(repository, 'openspec'), { recursive: true });
+  fs.copyFileSync(
+    path.join(sourceRepositoryRoot, 'openspec/config.yaml'),
+    path.join(repository, 'openspec/config.yaml'),
+  );
+  fs.cpSync(
+    path.join(sourceRepositoryRoot, 'openspec/schemas/expense-app'),
+    path.join(repository, 'openspec/schemas/expense-app'),
+    { recursive: true },
+  );
+
+  const manifestPath = path.join(repository, 'package.json');
+  const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+  manifest.devDependencies['@fission-ai/openspec'] = '1.6.0';
+  fs.writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
+  fs.writeFileSync(
+    path.join(repository, 'pnpm-workspace.yaml'),
+    [
+      'packages:',
+      "  - 'packages/*'",
+      '',
+      'allowBuilds:',
+      "  '@fission-ai/openspec': false",
+      '',
+    ].join('\n'),
+  );
+  fs.writeFileSync(
+    path.join(repository, 'pnpm-lock.yaml'),
+    [
+      "lockfileVersion: '9.0'",
+      '',
+      'importers:',
+      '',
+      '  .:',
+      '    devDependencies:',
+      "      '@fission-ai/openspec':",
+      '        specifier: 1.6.0',
+      '        version: 1.6.0',
+      '',
+      'packages:',
+      '',
+      "  '@fission-ai/openspec@1.6.0':",
+      '    resolution: {integrity: sha512-7yFTQ3hrrk11mQ2ACClNv2gtAN0o116vCgwoiQKmreoB6ambSnrZh7wf2FNFoSDBXHBi9iiCQ7G16fG71ZNppA==}',
+      '    hasBin: true',
+      '',
+      'snapshots:',
+      '',
+      "  '@fission-ai/openspec@1.6.0': {}",
+      '',
+    ].join('\n'),
+  );
+
+  const packageDirectory = path.join(
+    repository,
+    'node_modules/@fission-ai/openspec',
+  );
+  fs.mkdirSync(path.join(packageDirectory, 'bin'), { recursive: true });
+  fs.cpSync(
+    path.join(
+      sourceRepositoryRoot,
+      'node_modules/@fission-ai/openspec/schemas/spec-driven',
+    ),
+    path.join(packageDirectory, 'schemas/spec-driven'),
+    { recursive: true },
+  );
+  fs.writeFileSync(
+    path.join(packageDirectory, 'package.json'),
+    `${JSON.stringify(
+      {
+        name: '@fission-ai/openspec',
+        version: '1.6.0',
+        type: 'module',
+        bin: { openspec: './bin/openspec.js' },
+      },
+      null,
+      2,
+    )}\n`,
+  );
+  fs.writeFileSync(
+    path.join(packageDirectory, 'bin/openspec.js'),
+    `import './runtime-helper.js';
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+if (process.argv[2] === '--version') {
+  process.stdout.write('1.6.0\\n');
+  process.exit(0);
+}
+if (process.argv[2] === 'schema') {
+  const operation = process.argv[3];
+  const schemaName = process.argv[4];
+  const root = process.cwd();
+  const packageRoot = path.join(
+    path.dirname(fileURLToPath(import.meta.url)),
+    '..'
+  );
+  const schemaPath = schemaName === 'spec-driven'
+    ? path.join(packageRoot, 'schemas/spec-driven')
+    : path.join(root, 'openspec/schemas/expense-app');
+  process.stderr.write('Note: Schema commands are experimental and may change.\\n');
+  process.stdout.write(JSON.stringify(operation === 'which'
+    ? {
+        name: schemaName,
+        source: schemaName === 'spec-driven' ? 'package' : 'project',
+        path: schemaPath,
+        shadows: []
+      }
+    : { name: schemaName, path: schemaPath, valid: true, issues: [] }
+  ));
+  process.exit(0);
+}
+if (process.argv[2] === 'status') {
+  const changeId = process.argv[4];
+  const schemaName = process.argv[6];
+  const root = process.cwd();
+  const changeRoot = path.join(root, 'openspec/changes', changeId);
+  const gitDirectory = path.join(root, '.git');
+  const lifecycleMutation = path.join(gitDirectory, 'mutate-on-lifecycle-start');
+  const operationLock = path.join(
+    gitDirectory,
+    'workflow-engine/operations/repository-lifecycle.lock'
+  );
+  const checkMutation = path.join(gitDirectory, 'mutate-on-next-status');
+  const statusCountdown = path.join(gitDirectory, 'mutate-status-countdown');
+  if (fs.existsSync(lifecycleMutation) && fs.existsSync(operationLock)) {
+    fs.rmSync(lifecycleMutation);
+    fs.writeFileSync(path.join(root, 'src/injected.ts'), 'export const injected = true;\\n');
+  } else if (fs.existsSync(checkMutation)) {
+    fs.rmSync(checkMutation);
+    fs.writeFileSync(path.join(root, 'src/feature.ts'), 'export const injected = true;\\n');
+  } else if (fs.existsSync(statusCountdown)) {
+    const remaining = Number(fs.readFileSync(statusCountdown, 'utf8'));
+    if (remaining <= 1) {
+      fs.rmSync(statusCountdown);
+      fs.appendFileSync(path.join(changeRoot, 'proposal.md'), '\\nPost-stage mutation.\\n');
+    } else {
+      fs.writeFileSync(statusCountdown, String(remaining - 1));
+    }
+  }
+  const artifacts = [
+    ['proposal', 'proposal.md', [path.join(changeRoot, 'proposal.md')]],
+    ['design', 'design.md', [path.join(changeRoot, 'design.md')]],
+    ['specs', 'specs/**/*.md', [path.join(changeRoot, 'specs/demo/spec.md')]],
+    ['tasks', 'tasks.md', [path.join(changeRoot, 'tasks.md')]],
+    ['guard', 'guard.json', [path.join(changeRoot, 'guard.json')]]
+  ];
+  process.stdout.write(JSON.stringify({
+    changeName: changeId,
+    schemaName,
+    changeRoot,
+    planningHome: {
+      kind: 'repo', root,
+      changesDir: path.join(root, 'openspec/changes'),
+      defaultSchema: 'spec-driven'
+    },
+    artifactPaths: Object.fromEntries(artifacts.map(([id, outputPath, existingOutputPaths]) => [
+      id,
+      {
+        outputPath,
+        resolvedOutputPath: path.join(changeRoot, outputPath),
+        existingOutputPaths
+      }
+    ])),
+    artifacts: artifacts.map(([id, outputPath]) => ({
+      id, outputPath, status: 'done'
+    })),
+    applyRequires: ['tasks', 'guard'],
+    isComplete: true,
+    root: { path: root, source: 'nearest' }
+  }));
+  process.exit(0);
+}
+const changeId = process.argv[3];
+const changeRoot = path.join(process.cwd(), 'openspec/changes', changeId);
+const invalid = fs.readFileSync(path.join(changeRoot, 'proposal.md'), 'utf8')
+  .includes('INVALID');
+const passed = invalid ? 0 : 1;
+const failed = invalid ? 1 : 0;
+process.stdout.write(JSON.stringify({
+  items: [{
+    id: changeId,
+    type: 'change',
+    valid: !invalid,
+    issues: invalid
+      ? [{ level: 'ERROR', path: 'proposal.md', message: 'invalid fixture' }]
+      : [],
+    durationMs: 1
+  }],
+  summary: {
+    totals: { items: 1, passed, failed },
+    byType: { change: { items: 1, passed, failed } }
+  },
+  version: '1.0',
+  root: { path: process.cwd(), source: 'nearest' }
+}));
+process.exitCode = invalid ? 1 : 0;
+`,
+  );
+  fs.writeFileSync(
+    path.join(packageDirectory, 'bin/runtime-helper.js'),
+    'export const fixtureRuntime = true;\n',
+  );
 }
 
 export function git(repository: string, args: string[]): string {

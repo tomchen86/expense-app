@@ -6,7 +6,6 @@ import {
   loadChangeContract,
   loadWorkflowConfig,
   parseTasks,
-  type ChangeContract,
   type TaskPolicy,
 } from './contracts.ts';
 import { digestRequiredCheckDefinitions } from './contract-digests.ts';
@@ -29,6 +28,7 @@ import {
   runGit,
   type GitState,
 } from './git.ts';
+import { type ValidatedChangeContract } from './managed-change-contract.ts';
 import { assertSessionId, matchesAllowedPath } from './paths.ts';
 import { writeImmutableReport, type WorkflowReport } from './report-store.ts';
 import {
@@ -40,6 +40,7 @@ import {
   writeJsonAtomic,
 } from './session-store.ts';
 import { assertTaskProjectionSourceDigest } from './task-projection.ts';
+import { loadStableValidatedChangeContract } from './validated-contract-context.ts';
 
 export type SessionCheck = {
   sessionId: string;
@@ -59,7 +60,7 @@ export type SessionCheckOptions = {
 export type SessionInspection = {
   git: GitState;
   session: WorkflowSession;
-  contract: ChangeContract;
+  contract: ValidatedChangeContract;
   policy: TaskPolicy;
   artifactDigests: Record<string, string>;
   changedPaths: string[];
@@ -74,9 +75,12 @@ export function checkSession(
   requestedSessionId: string,
   options: SessionCheckOptions = {},
 ): SessionCheck {
-  const git = discoverRepository(cwd);
-  const config = loadWorkflowConfig(git.repositoryRoot);
-  const runtime = runtimePaths(git.gitCommonDirectory, config.runtimeDirectory);
+  const discovered = discoverRepository(cwd);
+  const config = loadWorkflowConfig(discovered.repositoryRoot);
+  const runtime = runtimePaths(
+    discovered.gitCommonDirectory,
+    config.runtimeDirectory,
+  );
   const sessionId = assertSessionId(requestedSessionId);
   return withSessionOperation(runtime, sessionId, () =>
     checkSessionUnlocked(cwd, sessionId, options),
@@ -143,9 +147,12 @@ export function inspectSession(
     authorizedTransitionPaths?: string[];
   } = {},
 ): SessionInspection {
-  const git = discoverRepository(cwd);
-  const config = loadWorkflowConfig(git.repositoryRoot);
-  const runtime = runtimePaths(git.gitCommonDirectory, config.runtimeDirectory);
+  const discovered = discoverRepository(cwd);
+  const config = loadWorkflowConfig(discovered.repositoryRoot);
+  const runtime = runtimePaths(
+    discovered.gitCommonDirectory,
+    config.runtimeDirectory,
+  );
   const sessionId = assertSessionId(requestedSessionId);
   const sessionPath = path.join(runtime.sessions, `${sessionId}.json`);
   const session = readSessionFile(sessionPath);
@@ -166,9 +173,12 @@ export function inspectSession(
       ExitCode.staleState,
     );
   }
-  assertPinnedGit(git, session);
+  assertPinnedGit(discovered, session);
 
-  const contract = loadChangeContract(git.repositoryRoot, session.changeId);
+  const { git, contract } = loadStableValidatedChangeContract(
+    discovered,
+    session.changeId,
+  );
   const policy = contract.guard.tasks[session.taskId];
   if (!policy) {
     throw workflowError(
@@ -213,7 +223,7 @@ export function inspectSession(
     options.projectedTaskIds ?? [],
     options.projectionSourceDigest,
   );
-  assertArtifactDrift(
+  const bootstrapArtifactUpgrade = assertArtifactDrift(
     session,
     contract,
     artifactDigests,
@@ -257,9 +267,18 @@ export function inspectSession(
     );
   }
 
+  const inspectedSession = bootstrapArtifactUpgrade
+    ? persistBootstrapArtifactUpgrade(
+        sessionPath,
+        session,
+        contract,
+        artifactDigests,
+      )
+    : session;
+
   return {
     git,
-    session,
+    session: inspectedSession,
     contract,
     policy,
     artifactDigests,
@@ -407,17 +426,29 @@ function assertPinnedGit(git: GitState, session: WorkflowSession): void {
 
 function assertArtifactDrift(
   session: WorkflowSession,
-  contract: ChangeContract,
+  contract: ValidatedChangeContract,
   currentDigests: Record<string, string>,
   tasksPath: string,
   projectedTaskIds: string[],
-): void {
+): boolean {
+  const task32BootstrapArtifactSet = isTask32BootstrapArtifactSet(
+    session,
+    contract,
+    tasksPath,
+    projectedTaskIds,
+  );
   const allPaths = new Set([
     ...Object.keys(session.artifacts),
     ...Object.keys(currentDigests),
   ]);
   for (const artifactPath of allPaths) {
     if (session.artifacts[artifactPath] === currentDigests[artifactPath]) {
+      continue;
+    }
+    if (
+      task32BootstrapArtifactSet &&
+      !Object.hasOwn(session.artifacts, artifactPath)
+    ) {
       continue;
     }
     if (artifactPath === 'workflow/config.json') {
@@ -446,6 +477,104 @@ function assertArtifactDrift(
       throw artifactsChanged();
     }
   }
+  return task32BootstrapArtifactSet;
+}
+
+function persistBootstrapArtifactUpgrade(
+  sessionPath: string,
+  session: WorkflowSession,
+  contract: ValidatedChangeContract,
+  artifactDigests: Record<string, string>,
+): WorkflowSession {
+  if (!sameStringRecord(contract.artifactDigests, artifactDigests)) {
+    throw workflowError(
+      'OPENSPEC_CHANGE_STATE_CHANGED',
+      'Managed change inputs changed before the bootstrap session could be upgraded.',
+      ExitCode.staleState,
+    );
+  }
+  const current = readSessionFile(sessionPath);
+  if (JSON.stringify(current) !== JSON.stringify(session)) {
+    throw workflowError(
+      'SESSION_CHANGED_DURING_CHECK',
+      'The active session changed before its artifact contract could be upgraded.',
+      ExitCode.staleState,
+    );
+  }
+  const upgraded: WorkflowSession = {
+    ...session,
+    artifacts: { ...artifactDigests },
+  };
+  writeJsonAtomic(sessionPath, upgraded);
+  if (
+    JSON.stringify(readSessionFile(sessionPath)) !== JSON.stringify(upgraded)
+  ) {
+    throw workflowError(
+      'SESSION_WRITE_VERIFICATION_FAILED',
+      'The upgraded session artifact contract could not be verified.',
+      ExitCode.staleState,
+    );
+  }
+  return upgraded;
+}
+
+function isTask32BootstrapArtifactSet(
+  session: WorkflowSession,
+  contract: ValidatedChangeContract,
+  tasksPath: string,
+  projectedTaskIds: string[],
+): boolean {
+  if (
+    session.changeId !== 'integrate-openspec-with-workflow' ||
+    session.taskId !== '3.2'
+  ) {
+    return false;
+  }
+  const bootstrapModule =
+    'packages/workflow-engine/src/managed-change-contract.ts';
+  const baselinePaths = runGit(session.repositoryRoot, [
+    'ls-tree',
+    '-r',
+    '--name-only',
+    '-z',
+    session.baseline.head,
+    '--',
+    `:(literal)${bootstrapModule}`,
+  ]);
+  if (baselinePaths !== '') {
+    return false;
+  }
+
+  const legacyArtifacts = loadChangeContract(
+    session.repositoryRoot,
+    session.changeId,
+  ).artifactDigests;
+  const sessionPaths = Object.keys(session.artifacts).sort(compareText);
+  const legacyPaths = Object.keys(legacyArtifacts).sort(compareText);
+  if (JSON.stringify(sessionPaths) !== JSON.stringify(legacyPaths)) {
+    return false;
+  }
+  return legacyPaths.every(
+    (artifactPath) =>
+      (artifactPath === tasksPath && projectedTaskIds.length > 0) ||
+      session.artifacts[artifactPath] === legacyArtifacts[artifactPath],
+  );
+}
+
+function compareText(left: string, right: string): number {
+  return Buffer.from(left).compare(Buffer.from(right));
+}
+
+function sameStringRecord(
+  left: Record<string, string>,
+  right: Record<string, string>,
+): boolean {
+  const leftKeys = Object.keys(left).sort(compareText);
+  const rightKeys = Object.keys(right).sort(compareText);
+  return (
+    JSON.stringify(leftKeys) === JSON.stringify(rightKeys) &&
+    leftKeys.every((key) => left[key] === right[key])
+  );
 }
 
 function assertTaskProjection(

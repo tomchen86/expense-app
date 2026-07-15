@@ -8,6 +8,7 @@ import { WorkflowError } from '../src/errors.ts';
 import { abortSession, checkSession, startSession } from '../src/session.ts';
 import './atomic-text.test.ts';
 import './completion.integration.test.ts';
+import './contract-artifact-digests.test.ts';
 import './issues.integration.test.ts';
 import './handoff.integration.test.ts';
 import './document-refresh.integration.test.ts';
@@ -19,6 +20,8 @@ import './ci-bootstrap.integration.test.ts';
 import './ai-adapter-evaluation.integration.test.ts';
 import './ignored-state.integration.test.ts';
 import './planning-transition.integration.test.ts';
+import './managed-change-contract.integration.test.ts';
+import './managed-change-lifecycle.integration.test.ts';
 import './runner.integration.test.ts';
 import {
   addFixtureScripts,

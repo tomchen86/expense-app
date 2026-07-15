@@ -1,11 +1,12 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
-import { loadChangeContract, loadWorkflowConfig } from './contracts.ts';
+import { loadWorkflowConfig } from './contracts.ts';
 import { digestRequiredCheckDefinitions } from './contract-digests.ts';
 import { ExitCode, workflowError } from './errors.ts';
 import { ensurePlainDirectory } from './filesystem-safety.ts';
 import { discoverRepository } from './git.ts';
+import type { ValidatedChangeContract } from './managed-change-contract.ts';
 import { assertChangeId, assertSessionId, assertTaskId } from './paths.ts';
 import {
   createSessionId,
@@ -17,6 +18,7 @@ import {
   withSessionOperation,
   writeJsonAtomic,
 } from './session-store.ts';
+import { loadStableValidatedChangeContract } from './validated-contract-context.ts';
 
 export type { WorkflowSession } from './session-store.ts';
 
@@ -48,13 +50,16 @@ function inspectSessionStart(
   changeId: string;
   taskId: string;
   git: ReturnType<typeof discoverRepository>;
-  contract: ReturnType<typeof loadChangeContract>;
+  contract: ValidatedChangeContract;
   branch: string;
 } {
   const changeId = assertChangeId(requestedChangeId);
   const taskId = assertTaskId(requestedTaskId);
-  const git = discoverRepository(cwd);
-  const contract = loadChangeContract(git.repositoryRoot, changeId);
+  const discovered = discoverRepository(cwd);
+  const { git, contract } = loadStableValidatedChangeContract(
+    discovered,
+    changeId,
+  );
   const task = contract.tasks.find((candidate) => candidate.id === taskId);
 
   if (!task) {

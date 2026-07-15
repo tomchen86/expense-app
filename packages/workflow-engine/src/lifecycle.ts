@@ -16,6 +16,7 @@ import {
   createManagedCommitObject,
   findExactTaskCommits,
   listStagedPaths,
+  rollbackExactStaging,
   stageExactPaths,
   updateManagedRef,
   type TaskCommit,
@@ -530,47 +531,57 @@ function finishSessionUnlocked(
     session.baseline.head,
     verified.inspection.changedPaths,
   );
-  const finished = inspectSession(cwd, session.sessionId, {
-    expectedSession: session,
-    projectedTaskIds: completedTaskIds,
-    projectionSourceDigest,
-    authorizedTransitionPaths: transitionPaths,
-  });
-  const report: WorkflowReport = {
-    schemaVersion: 1,
-    kind: 'finish',
-    sessionId: session.sessionId,
-    changeId: session.changeId,
-    taskId: session.taskId,
-    createdAt: new Date().toISOString(),
-    parentReportId: session.completionReportId,
-    baseline: session.baseline,
-    branch: session.branch,
-    artifactDigests: finished.artifactDigests,
-    allowedPaths: session.allowedPaths,
-    requiredChecks: session.requiredChecks,
-    requiredCheckDigests: digestRequiredCheckDefinitions(
-      finished.contract.checks,
-      session.requiredChecks,
-    ),
-    changedPaths: finished.changedPaths,
-    fingerprint: finished.fingerprint,
-    completedTaskIds,
-    projectionSourceDigest,
-    transitionPaths,
-    checks: verified.checks,
-    stagedPaths: staged.stagedPaths,
-    tree: staged.tree,
-  };
-  const reportId = writeSessionReport(finished, report);
-  const updated: WorkflowSession = { ...session, finishReportId: reportId };
-  persistSession(finished, updated);
-  return {
-    session: updated,
-    reportId,
-    stagedPaths: staged.stagedPaths,
-    tree: staged.tree,
-  };
+  try {
+    const finished = inspectSession(cwd, session.sessionId, {
+      expectedSession: session,
+      projectedTaskIds: completedTaskIds,
+      projectionSourceDigest,
+      authorizedTransitionPaths: transitionPaths,
+    });
+    const report: WorkflowReport = {
+      schemaVersion: 1,
+      kind: 'finish',
+      sessionId: session.sessionId,
+      changeId: session.changeId,
+      taskId: session.taskId,
+      createdAt: new Date().toISOString(),
+      parentReportId: session.completionReportId,
+      baseline: session.baseline,
+      branch: session.branch,
+      artifactDigests: finished.artifactDigests,
+      allowedPaths: session.allowedPaths,
+      requiredChecks: session.requiredChecks,
+      requiredCheckDigests: digestRequiredCheckDefinitions(
+        finished.contract.checks,
+        session.requiredChecks,
+      ),
+      changedPaths: finished.changedPaths,
+      fingerprint: finished.fingerprint,
+      completedTaskIds,
+      projectionSourceDigest,
+      transitionPaths,
+      checks: verified.checks,
+      stagedPaths: staged.stagedPaths,
+      tree: staged.tree,
+    };
+    const reportId = writeSessionReport(finished, report);
+    const updated: WorkflowSession = { ...session, finishReportId: reportId };
+    persistSession(finished, updated);
+    return {
+      session: updated,
+      reportId,
+      stagedPaths: staged.stagedPaths,
+      tree: staged.tree,
+    };
+  } catch (error) {
+    rollbackExactStaging(
+      verified.inspection.git.repositoryRoot,
+      staged.previousIndexTree,
+      staged.tree,
+      error,
+    );
+    throw error;
+  }
 }
 
 export function commitSession(

@@ -228,6 +228,30 @@ test('plan-commit requires the reviewed expense-app schema', () => {
   }
 });
 
+test('plan-commit consumes the exact combined managed-change contract', () => {
+  const repository = createPlanningRepository('demo-change', true);
+  try {
+    fs.appendFileSync(
+      path.join(repository, 'openspec/changes/demo-change/.openspec.yaml'),
+      'unexpected: value\n',
+    );
+    fs.appendFileSync(
+      path.join(repository, 'openspec/changes/demo-change/proposal.md'),
+      '\nReviewed revision.\n',
+    );
+    const baselineHead = git(repository, ['rev-parse', 'HEAD']).trim();
+
+    assert.throws(
+      () => commitPlanningTransition(repository, 'demo-change'),
+      (error) => isWorkflowError(error, 'OPENSPEC_CHANGE_METADATA_INVALID'),
+    );
+    assert.equal(git(repository, ['rev-parse', 'HEAD']).trim(), baselineHead);
+    assert.equal(git(repository, ['diff', '--cached', '--name-only']), '');
+  } finally {
+    fs.rmSync(repository, { recursive: true, force: true });
+  }
+});
+
 test('plan-commit migrates only legacy metadata to expense-app', () => {
   const repository = createPlanningRepository('demo-change', true);
   const metadataPath = path.join(
@@ -555,7 +579,12 @@ function createPlanningRepository(changeId: string, existing = false): string {
     );
   }
   git(repository, ['add', '-A']);
-  git(repository, ['commit', '-m', 'Configure planning fixture']);
+  git(repository, [
+    'commit',
+    '--allow-empty',
+    '-m',
+    'Configure planning fixture',
+  ]);
   git(repository, ['checkout', '-b', `work/${changeId}`]);
   return repository;
 }

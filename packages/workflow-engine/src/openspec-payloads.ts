@@ -489,11 +489,15 @@ export function parseValidation(
     ) {
       throw invalidPayload();
     }
+    const issues = item.issues.map(parseIssue);
+    if (item.valid !== !issues.some(({ level }) => level === 'ERROR')) {
+      throw invalidPayload();
+    }
     return {
       id,
       type: context.expectedType,
       valid: item.valid,
-      issues: item.issues.map(parseIssue),
+      issues,
     };
   });
   assertUnique(items.map(({ id }) => id));

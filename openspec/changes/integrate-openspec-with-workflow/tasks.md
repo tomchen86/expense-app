@@ -44,7 +44,7 @@ to migrate only this change's `.openspec.yaml` from `spec-driven` to
 `expense-app`. This is a planning revision, not a checkbox task, and it must be
 committed before Task 3.2 starts.
 
-- [ ] 3.2 Combine OpenSpec status and strict change validation with repository
+- [x] 3.2 Combine OpenSpec status and strict change validation with repository
       policy, full regular-file/mode digests, stable diagnostics, and one
       validated contract consumed consistently by session start, check, and
       finish.

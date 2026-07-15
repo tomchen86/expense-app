@@ -8,15 +8,15 @@ This generated handoff contains semantic project state only. Its sources are the
 
 ## Current Task
 
-`3.2` — Combine OpenSpec status and strict change validation with repository policy, full regular-file/mode digests, stable diagnostics, and one validated contract consumed consistently by session start, check, and finish.
+`4.1` — Generate only reviewed OpenSpec explore/propose assets in isolated temporary homes, apply the repository overlay, record source/overlay digests, add check-only drift validation, and implement an explicit non-overwriting planning-prompt installer without writing to a real Codex home during tests.
 
 ## Next Task
 
-`4.1` — Generate only reviewed OpenSpec explore/propose assets in isolated temporary homes, apply the repository overlay, record source/overlay digests, add check-only drift validation, and implement an explicit non-overwriting planning-prompt installer without writing to a real Codex home during tests.
+`5.1` — Add archive eligibility tests and implement canonical identity, completion evidence, base reachability, active-session, worktree, artifact, destination, mode, and exclusive-lock preconditions using existing workflow primitives.
 
 ## Current Focus
 
-Combine OpenSpec status and strict change validation with repository policy, full regular-file/mode digests, stable diagnostics, and one validated contract consumed consistently by session start, check, and finish.
+Generate only reviewed OpenSpec explore/propose assets in isolated temporary homes, apply the repository overlay, record source/overlay digests, add check-only drift validation, and implement an explicit non-overwriting planning-prompt installer without writing to a real Codex home during tests.
 
 ## Known Blockers
 

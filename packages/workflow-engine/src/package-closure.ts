@@ -89,6 +89,52 @@ export function collectWorkspacePackageClosure(
   });
 }
 
+export function collectInstalledPackageClosure(
+  repositoryRoot: string,
+  packageManifestPath: string,
+): PackageClosureEntry[] {
+  const initialManifestPath = fs.realpathSync(packageManifestPath);
+  assertRegularFileInside(repositoryRoot, initialManifestPath);
+  const pending = [initialManifestPath];
+  const visitedManifests = new Set<string>();
+  const closureEntries = new Map<string, PackageClosureEntry>();
+
+  while (pending.length > 0) {
+    const currentManifestPath = pending.shift();
+    if (!currentManifestPath || visitedManifests.has(currentManifestPath)) {
+      continue;
+    }
+    visitedManifests.add(currentManifestPath);
+    const manifest = readJsonRecord(currentManifestPath);
+    const packageDirectory = fs.realpathSync(path.dirname(currentManifestPath));
+    assertInside(repositoryRoot, packageDirectory);
+    for (const entry of listPackageEntries(repositoryRoot, packageDirectory)) {
+      const entryPath = entry.kind === 'file' ? entry.filePath : entry.linkPath;
+      closureEntries.set(`${entry.kind}:${entryPath}`, entry);
+    }
+    for (const dependency of declaredDependencies(manifest, false)) {
+      const resolved = resolveDeclaredPackage(
+        repositoryRoot,
+        currentManifestPath,
+        dependency.name,
+        dependency.spec,
+        dependency.optional,
+      );
+      if (resolved) {
+        pending.push(resolved.manifestPath);
+      }
+    }
+  }
+
+  return [...closureEntries.values()].sort((left, right) => {
+    const leftPath = left.kind === 'file' ? left.filePath : left.linkPath;
+    const rightPath = right.kind === 'file' ? right.filePath : right.linkPath;
+    return (
+      leftPath.localeCompare(rightPath) || left.kind.localeCompare(right.kind)
+    );
+  });
+}
+
 export function resolveDeclaredPackage(
   repositoryRoot: string,
   requiringManifestPath: string,
