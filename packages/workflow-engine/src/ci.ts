@@ -28,6 +28,7 @@ import {
 } from './contracts.ts';
 import { ExitCode, workflowError } from './errors.ts';
 import { discoverRepository } from './git.ts';
+import { validateWorkflowIntegrationAssets } from './integration-assets.ts';
 import { validateRepositoryState } from './repository-validation.ts';
 
 export type { CompletedTask } from './ci-task-state.ts';
@@ -56,6 +57,9 @@ export function verifyPullRequest(
   }
   const commits = listRangeCommits(git.repositoryRoot, mergeBase, head);
   const validated = validateRepositoryState(git.repositoryRoot);
+  validateWorkflowIntegrationAssets(git.repositoryRoot, {
+    regeneratePlanningAssets: true,
+  });
   const contracts = new Map(
     validated.changes.map((changeId) => [
       changeId,
@@ -69,6 +73,11 @@ export function verifyPullRequest(
       loadWorkflowConfig(git.repositoryRoot).changeRoot,
     ),
     contracts,
+    new Set(
+      commits.flatMap((commit) =>
+        commit.trailers?.kind === 'archive' ? [commit.trailers.changeId] : [],
+      ),
+    ),
   );
   assertPoliciesAnchored(git.repositoryRoot, mergeBase);
   const exceptions = activeBootstrapExceptions(
@@ -91,6 +100,7 @@ export function verifyPullRequest(
     contracts,
     completedTasks,
     replay.requiredCheckDefinitions,
+    new Set(replay.archivedChanges),
   );
   const checks = runCiChecks(git.repositoryRoot, head, checkIds, environment);
   return {
@@ -99,6 +109,7 @@ export function verifyPullRequest(
     mergeBase,
     commits: commits.map(({ hash }) => hash),
     completedTasks,
+    archivedChanges: replay.archivedChanges,
     changedPaths,
     checks,
     managedDocuments: validated.documents,
@@ -109,8 +120,11 @@ export function verifyPullRequest(
 function assertChangesPreserved(
   baseChanges: string[],
   contracts: Map<string, ChangeContract>,
+  archiveClaims: Set<string>,
 ): void {
-  const removed = baseChanges.filter((changeId) => !contracts.has(changeId));
+  const removed = baseChanges.filter(
+    (changeId) => !contracts.has(changeId) && !archiveClaims.has(changeId),
+  );
   if (removed.length > 0) {
     throw ciError(
       'CI_CHANGE_REMOVED',
@@ -143,12 +157,19 @@ function assertHistoricalChecksCurrent(
   contracts: Map<string, ChangeContract>,
   completedTasks: CompletedTask[],
   historicalDefinitions: Record<string, string>,
+  archivedChanges: Set<string>,
 ): string[] {
   const current = loadChecksConfig(repositoryRoot);
   const required = new Map(Object.entries(historicalDefinitions));
   for (const task of completedTasks) {
     const policy = contracts.get(task.changeId)?.guard.tasks[task.taskId];
     if (!policy) {
+      if (
+        archivedChanges.has(task.changeId) &&
+        Object.keys(historicalDefinitions).length > 0
+      ) {
+        continue;
+      }
       throw ciError(
         'CI_MANAGED_TRAILER_UNKNOWN',
         'A completed task is absent from the current validated contract.',

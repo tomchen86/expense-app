@@ -1,5 +1,4 @@
-import path from 'node:path';
-
+import { validateCiArchiveCommit } from './ci-archive.ts';
 import { assertExactPlanningBootstrap } from './ci-bootstrap.ts';
 import {
   loadHistoricalTaskAuthority,
@@ -30,6 +29,7 @@ import { assertExactTaskProjection } from './task-projection.ts';
 
 export type CommitSequenceResult = {
   completedTasks: CompletedTask[];
+  archivedChanges: string[];
   requiredCheckDefinitions: Record<string, string>;
 };
 
@@ -42,6 +42,7 @@ export function replayCommitSequence(
 ): CommitSequenceResult {
   const priorTaskTrailers = new Set<string>();
   const completedTasks = new Map<string, CompletedTask>();
+  const archivedChanges = new Set<string>();
   const requiredCheckDefinitions = new Map<string, string>();
   const completionPaths = completionDocumentPaths(repositoryRoot);
   const expectedCompatibility = legacyExceptions.flatMap((exception) =>
@@ -85,11 +86,7 @@ export function replayCommitSequence(
       : expectedCompatibility[compatibilityIndex];
 
     if (legacyIntroduction) {
-      const transitions = taskTransitionsForCommit(
-        repositoryRoot,
-        commit,
-        contracts,
-      );
+      const transitions = taskTransitionsForCommit(repositoryRoot, commit);
       assertLegacyBootstrapTransitions(transitions, legacyExceptions);
       validateScope(
         repositoryRoot,
@@ -103,11 +100,7 @@ export function replayCommitSequence(
     }
 
     if (compatibility) {
-      const transitions = taskTransitionsForCommit(
-        repositoryRoot,
-        commit,
-        contracts,
-      );
+      const transitions = taskTransitionsForCommit(repositoryRoot, commit);
       assertCompatibilityCommit(
         repositoryRoot,
         commit,
@@ -145,17 +138,17 @@ export function replayCommitSequence(
       continue;
     }
     if (commit.trailers.kind === 'archive') {
-      throw ciError(
-        'CI_ARCHIVE_TRANSITION_UNSUPPORTED',
-        'Archive transitions are unavailable until archive authority is installed.',
+      const archive = validateCiArchiveCommit(
+        repositoryRoot,
+        commit.hash,
+        commit.trailers.changeId,
       );
+      recordDefinitions(requiredCheckDefinitions, archive.checkDefinitions);
+      archivedChanges.add(archive.changeId);
+      continue;
     }
 
-    const transitions = taskTransitionsForCommit(
-      repositoryRoot,
-      commit,
-      contracts,
-    );
+    const transitions = taskTransitionsForCommit(repositoryRoot, commit);
     if (transitions.length === 0) {
       throw ciError(
         'CI_TASK_TRANSITION_REQUIRED',
@@ -197,6 +190,7 @@ export function replayCommitSequence(
 
   return {
     completedTasks: [...completedTasks.values()].sort(compareTasks),
+    archivedChanges: [...archivedChanges].sort(),
     requiredCheckDefinitions: Object.fromEntries(
       [...requiredCheckDefinitions].sort(([left], [right]) =>
         left.localeCompare(right),
@@ -208,14 +202,13 @@ export function replayCommitSequence(
 function taskTransitionsForCommit(
   repositoryRoot: string,
   commit: RangeCommit,
-  contracts: Map<string, ChangeContract>,
 ): CompletedTask[] {
   const transitions: CompletedTask[] = [];
-  for (const [changeId, contract] of contracts) {
-    const tasksPath = relative(
-      repositoryRoot,
-      path.join(contract.changeDirectory, 'tasks.md'),
-    );
+  const taskPaths = listCommitPaths(repositoryRoot, commit).filter((filePath) =>
+    /^openspec\/changes\/[a-z0-9]+(?:-[a-z0-9]+)*\/tasks\.md$/.test(filePath),
+  );
+  for (const tasksPath of taskPaths) {
+    const changeId = tasksPath.split('/')[2];
     const beforeContent = readFileAtCommit(
       repositoryRoot,
       commit.parents[0],
@@ -454,9 +447,14 @@ function recordCheckDefinitions(
   collected: Map<string, string>,
   authority: HistoricalTaskAuthority,
 ): void {
-  for (const [checkId, definition] of Object.entries(
-    authority.checkDefinitions,
-  )) {
+  recordDefinitions(collected, authority.checkDefinitions);
+}
+
+function recordDefinitions(
+  collected: Map<string, string>,
+  definitions: Record<string, string>,
+): void {
+  for (const [checkId, definition] of Object.entries(definitions)) {
     const previous = collected.get(checkId);
     if (previous !== undefined && previous !== definition) {
       throw ciError(
@@ -466,10 +464,6 @@ function recordCheckDefinitions(
     }
     collected.set(checkId, definition);
   }
-}
-
-function relative(root: string, target: string): string {
-  return path.relative(root, target).split(path.sep).join('/');
 }
 
 function ciError(

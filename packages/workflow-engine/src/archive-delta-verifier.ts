@@ -1,9 +1,14 @@
 import crypto from 'node:crypto';
 
-import type { ArchiveEligibility } from './archive-eligibility.ts';
-import type { ArchiveTransformation } from './archive-transformation.ts';
 import { readFileAtCommit } from './ci-git.ts';
 import { ExitCode, workflowError } from './errors.ts';
+
+type ArchiveDeltaSource = { changeId: string; head: string };
+type ArchiveDeltaProjection = {
+  baseSpecPaths: string[];
+  tree: string;
+  totals?: Record<Operation, number>;
+};
 
 type Operation = 'added' | 'modified' | 'removed' | 'renamed';
 type RequirementBlock = { name: string; raw: string };
@@ -21,8 +26,8 @@ export type ArchiveDeltaVerification = {
 
 export function verifyArchiveDeltaOutcomes(
   repositoryRoot: string,
-  eligibility: ArchiveEligibility,
-  transformation: ArchiveTransformation,
+  eligibility: ArchiveDeltaSource,
+  transformation: ArchiveDeltaProjection,
 ): ArchiveDeltaVerification {
   const totals = { added: 0, modified: 0, removed: 0, renamed: 0 };
   const promotedSpecDigests: Record<string, string> = {};

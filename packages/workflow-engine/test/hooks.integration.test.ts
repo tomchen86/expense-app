@@ -164,6 +164,34 @@ test('pre-commit permits an ordinary unrelated staged change without mutation', 
   }
 });
 
+test('hooks reject reviewed planning asset drift and forbidden lifecycle authority', () => {
+  const repository = createFixtureRepository();
+  try {
+    fs.cpSync(
+      path.join(sourceRepositoryRoot, '.codex'),
+      path.join(repository, '.codex'),
+      { recursive: true },
+    );
+    fs.cpSync(
+      path.join(sourceRepositoryRoot, 'workflow/codex-assets'),
+      path.join(repository, 'workflow/codex-assets'),
+      { recursive: true },
+    );
+    runRepositoryHook(repository, 'pre-push', []);
+
+    fs.appendFileSync(
+      path.join(repository, '.codex/skills/openspec-explore/SKILL.md'),
+      '\nopenspec archive demo-change\n',
+    );
+    assert.throws(
+      () => runRepositoryHook(repository, 'pre-push', []),
+      (error) => isWorkflowError(error, 'CODEX_ASSET_FORBIDDEN_AUTHORITY'),
+    );
+  } finally {
+    fs.rmSync(repository, { recursive: true, force: true });
+  }
+});
+
 test('commit-msg validates format and rejects every forged managed kind', () => {
   const repository = createFixtureRepository();
   try {

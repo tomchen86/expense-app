@@ -74,7 +74,7 @@ committed before Task 3.2 starts.
 
 ## 6. Recomputed Repository Assurance
 
-- [ ] 6.1 Recompute task, plan, and archive validity in hooks and the stable
+- [x] 6.1 Recompute task, plan, and archive validity in hooks and the stable
       `workflow-assurance` CI job, including dependency/schema/asset drift,
       forbidden lifecycle assets, bypass cases, archive replay, and UTC-date
       normalization.

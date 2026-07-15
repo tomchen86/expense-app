@@ -5,6 +5,7 @@ import { loadWorkflowConfig } from './contracts.ts';
 import { ExitCode, workflowError } from './errors.ts';
 import { discoverRepository, runGit } from './git.ts';
 import { listStagedPaths } from './git-transitions.ts';
+import { validateWorkflowIntegrationAssets } from './integration-assets.ts';
 import { hasManagedTrailerLine } from './managed-trailers.ts';
 import { validateRepositoryState } from './repository-validation.ts';
 import { listSessions } from './session.ts';
@@ -25,6 +26,7 @@ export function runRepositoryHook(
     validateCommitMessage(cwd, args[0]);
   }
   const validated = validateRepositoryState(cwd);
+  validateWorkflowIntegrationAssets(validated.repositoryRoot);
   const repositoryRealPath = fs.realpathSync(validated.repositoryRoot);
   if (
     requestedHook === 'pre-commit' &&
