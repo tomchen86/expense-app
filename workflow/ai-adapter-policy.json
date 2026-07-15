@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "mode": "evaluation-only",
+  "launchPolicy": "deny",
+  "requiredControls": [
+    "separate-security-principal",
+    "kernel-enforced-write-boundary",
+    "git-common-directory-isolation",
+    "network-egress-control",
+    "secret-isolation",
+    "subprocess-tree-confinement",
+    "resource-limits",
+    "immutable-runtime"
+  ],
+  "approvedProviders": []
+}

@@ -188,6 +188,54 @@ test('CI rejects completion that skips an earlier task', () => {
   }
 });
 
+test('CI rejects reordering existing tasks to manufacture a valid prefix', () => {
+  const repository = createFixtureRepository();
+  try {
+    const tasksPath = path.join(
+      repository,
+      'openspec/changes/demo-change/tasks.md',
+    );
+    fs.writeFileSync(
+      tasksPath,
+      '# Tasks\n\n- [ ] 1.1 Demo task\n- [ ] 1.2 Second task\n',
+    );
+    const guardPath = path.join(
+      repository,
+      'openspec/changes/demo-change/guard.json',
+    );
+    const guard = JSON.parse(fs.readFileSync(guardPath, 'utf8'));
+    guard.tasks['1.2'] = {
+      allowedPaths: ['openspec/changes/demo-change/tasks.md', 'src/**'],
+      requiredChecks: ['fixture'],
+    };
+    fs.writeFileSync(guardPath, `${JSON.stringify(guard, null, 2)}\n`);
+    git(repository, ['add', '.']);
+    git(repository, ['commit', '-m', 'Add second reorderable fixture task']);
+    const base = git(repository, ['rev-parse', 'HEAD']).trim();
+    git(repository, ['checkout', '-b', 'work/reorder-task']);
+    fs.writeFileSync(
+      tasksPath,
+      '# Tasks\n\n- [x] 1.2 Second task\n- [ ] 1.1 Demo task\n',
+    );
+    fs.writeFileSync(path.join(repository, 'src/feature.ts'), 'export {};\n');
+    git(repository, ['add', '.']);
+    git(repository, [
+      'commit',
+      '-m',
+      'Reorder tasks around the completion frontier',
+      '-m',
+      'Change: demo-change\nTask: 1.2',
+    ]);
+    const head = git(repository, ['rev-parse', 'HEAD']).trim();
+    assert.throws(
+      () => verifyPullRequest(repository, base, head),
+      (error) => isWorkflowError(error, 'CI_TASK_ORDER_CHANGED'),
+    );
+  } finally {
+    fs.rmSync(repository, { recursive: true, force: true });
+  }
+});
+
 test('CI rejects head policy self-broadening for an existing change', () => {
   const repository = createFixtureRepository();
   try {

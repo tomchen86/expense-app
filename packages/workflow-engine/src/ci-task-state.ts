@@ -9,12 +9,18 @@ export function assertTaskHistory(
   headTasks: ParsedTask[],
 ): void {
   const headById = new Map(headTasks.map((task) => [task.id, task]));
-  for (const baseTask of baseTasks) {
+  for (const [index, baseTask] of baseTasks.entries()) {
     const headTask = headById.get(baseTask.id);
     if (!headTask) {
       throw taskError(
         'CI_TASK_REMOVED',
         `Task ${changeId}/${baseTask.id} was removed.`,
+      );
+    }
+    if (headTasks[index]?.id !== baseTask.id) {
+      throw taskError(
+        'CI_TASK_ORDER_CHANGED',
+        `Existing tasks in ${changeId} must remain an exact ordered prefix.`,
       );
     }
     if (baseTask.completed && !headTask.completed) {

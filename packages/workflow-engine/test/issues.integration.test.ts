@@ -79,7 +79,7 @@ test('issue commands preserve structured fields and deterministic rendering', ()
 
 test('repository issue seed is complete and renders without drift', () => {
   const data = readIssueData(process.cwd());
-  assert.equal(data.issues.length, 13);
+  assert.equal(data.issues.length, 26);
   assert.deepEqual(
     Object.fromEntries(
       ['feature', 'bug', 'enhancement'].map((category) => [
@@ -87,7 +87,7 @@ test('repository issue seed is complete and renders without drift', () => {
         data.issues.filter((issue) => issue.category === category).length,
       ]),
     ),
-    { feature: 2, bug: 6, enhancement: 5 },
+    { feature: 3, bug: 13, enhancement: 10 },
   );
   validateIssueLog(process.cwd());
 });

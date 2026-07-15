@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://expense.local/workflow/ai-adapter-policy.schema.json",
+  "title": "AI Adapter Evaluation Policy",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "mode",
+    "launchPolicy",
+    "requiredControls",
+    "approvedProviders"
+  ],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "mode": { "const": "evaluation-only" },
+    "launchPolicy": { "const": "deny" },
+    "requiredControls": {
+      "type": "array",
+      "minItems": 8,
+      "maxItems": 8,
+      "prefixItems": [
+        { "const": "separate-security-principal" },
+        { "const": "kernel-enforced-write-boundary" },
+        { "const": "git-common-directory-isolation" },
+        { "const": "network-egress-control" },
+        { "const": "secret-isolation" },
+        { "const": "subprocess-tree-confinement" },
+        { "const": "resource-limits" },
+        { "const": "immutable-runtime" }
+      ],
+      "items": false
+    },
+    "approvedProviders": {
+      "type": "array",
+      "maxItems": 0,
+      "items": false
+    }
+  }
+}
