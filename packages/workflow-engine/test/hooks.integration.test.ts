@@ -6,13 +6,18 @@ import test from 'node:test';
 
 import { runRepositoryHook } from '../src/hooks.ts';
 import { startSession } from '../src/session.ts';
-import { createFixtureRepository, git, isWorkflowError } from './fixture.ts';
+import {
+  createFixtureRepository,
+  git,
+  isWorkflowError,
+  sourceRepositoryRoot,
+} from './fixture.ts';
 
 const HOOKS = ['pre-commit', 'commit-msg', 'pre-push', 'post-merge'];
 
 test('repository hooks are executable two-line workflow proxies', () => {
   for (const hook of HOOKS) {
-    const hookPath = path.join(process.cwd(), '.husky', hook);
+    const hookPath = path.join(sourceRepositoryRoot, '.husky', hook);
     assert.equal(
       fs.readFileSync(hookPath, 'utf8'),
       `#!/usr/bin/env sh\nexec pnpm workflow hook ${hook} "$@"\n`,

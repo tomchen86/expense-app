@@ -14,6 +14,7 @@ import {
   writeIssueData,
   type IssueData,
 } from '../src/issues.ts';
+import { sourceRepositoryRoot } from './fixture.ts';
 
 test('issue commands preserve structured fields and deterministic rendering', () => {
   const repository = fs.mkdtempSync(path.join(os.tmpdir(), 'workflow-issues-'));
@@ -78,7 +79,7 @@ test('issue commands preserve structured fields and deterministic rendering', ()
 });
 
 test('repository issue seed is complete and renders without drift', () => {
-  const data = readIssueData(process.cwd());
+  const data = readIssueData(sourceRepositoryRoot);
   assert.equal(data.issues.length, 26);
   assert.deepEqual(
     Object.fromEntries(
@@ -89,5 +90,5 @@ test('repository issue seed is complete and renders without drift', () => {
     ),
     { feature: 3, bug: 13, enhancement: 10 },
   );
-  validateIssueLog(process.cwd());
+  validateIssueLog(sourceRepositoryRoot);
 });

@@ -11,6 +11,7 @@ import {
   git,
   isWorkflowError,
   runtimeRoot,
+  sourceRepositoryRoot,
 } from './fixture.ts';
 
 const REQUIRED_CONTROLS = [
@@ -209,7 +210,7 @@ function runCli(
     process.execPath,
     [
       '--experimental-strip-types',
-      path.join(process.cwd(), 'packages/workflow-engine/src/cli.ts'),
+      path.join(sourceRepositoryRoot, 'packages/workflow-engine/src/cli.ts'),
       ...args,
     ],
     {

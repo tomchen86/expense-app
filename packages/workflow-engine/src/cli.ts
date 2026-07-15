@@ -18,6 +18,7 @@ import {
   completeTask,
   findTaskCommits,
   finishSession,
+  rollbackCompletion,
 } from './lifecycle.ts';
 import {
   abortSession,
@@ -196,6 +197,25 @@ function dispatch(args: string[], cwd: string): CommandResult {
     case 'finish':
       requireArgumentCount(command, rest, 1, 1);
       return { command, ok: true, result: finishSession(cwd, rest[0]) };
+    case 'rollback-completion': {
+      const sessionId = rest[0];
+      const reason = optionValue(rest.slice(1), '--reason');
+      if (
+        !sessionId ||
+        !reason ||
+        rest.length !== 3 ||
+        rest[1] !== '--reason'
+      ) {
+        throw usage(
+          'Usage: pnpm workflow rollback-completion <session-id> --reason <text> [--json]',
+        );
+      }
+      return {
+        command,
+        ok: true,
+        result: rollbackCompletion(cwd, sessionId, reason),
+      };
+    }
     case 'commit': {
       const sessionId = rest[0];
       const message = optionValue(rest.slice(1), '--message');
@@ -335,6 +355,7 @@ function usageText(): string {
     '  pnpm workflow hook <pre-commit|commit-msg|pre-push|post-merge> ... [--json]',
     '  pnpm workflow complete-task <session-id> [--json]',
     '  pnpm workflow finish <session-id> [--json]',
+    '  pnpm workflow rollback-completion <session-id> --reason <text> [--json]',
     '  pnpm workflow commit <session-id> --message <subject> [--json]',
     '  pnpm workflow abort <session-id> --reason <text> [--json]',
   ].join('\n');

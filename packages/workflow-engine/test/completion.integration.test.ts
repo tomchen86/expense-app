@@ -8,8 +8,10 @@ import {
   completeTask,
   findTaskCommits,
   finishSession,
+  rollbackCompletion,
 } from '../src/lifecycle.ts';
 import { hasExactTrailers } from '../src/git-transitions.ts';
+import { renderHandoff } from '../src/handoff.ts';
 import {
   writeImmutableReport,
   type WorkflowReport,
@@ -86,6 +88,93 @@ test('current report authorizes completion, exact staging, and commit', () => {
         (entry) => entry.hash,
       ),
       [committed.commitHash],
+    );
+  } finally {
+    fs.rmSync(repository, { recursive: true, force: true });
+  }
+});
+
+test('completion rollback restores controlled projections and permits fresh evidence', () => {
+  const repository = createFixtureRepository();
+  try {
+    const documentPolicyPath = path.join(
+      repository,
+      'workflow/document-policy.json',
+    );
+    const documentPolicy = JSON.parse(
+      fs.readFileSync(documentPolicyPath, 'utf8'),
+    );
+    documentPolicy.documents['docs/CURRENT_AND_NEXT_STEPS.md'] = {
+      mode: 'generated',
+      enforcement: 'active',
+      transition: 'completion',
+    };
+    fs.writeFileSync(
+      documentPolicyPath,
+      `${JSON.stringify(documentPolicy, null, 2)}\n`,
+    );
+    fs.mkdirSync(path.join(repository, 'docs'));
+    renderHandoff(repository);
+    git(repository, ['add', 'workflow/document-policy.json', 'docs']);
+    git(repository, ['commit', '-m', 'Enable completion handoff']);
+    git(repository, ['checkout', '-b', 'work/demo-change']);
+    const tasksPath = path.join(
+      repository,
+      'openspec/changes/demo-change/tasks.md',
+    );
+    const handoffPath = path.join(repository, 'docs/CURRENT_AND_NEXT_STEPS.md');
+    const baselineTasks = fs.readFileSync(tasksPath, 'utf8');
+    const baselineHandoff = fs.readFileSync(handoffPath, 'utf8');
+    const session = startSession(repository, 'demo-change', '1.1');
+    fs.writeFileSync(path.join(repository, 'src/feature.ts'), 'export {};\n');
+    checkSession(repository, session.sessionId);
+    const completed = completeTask(repository, session.sessionId);
+
+    const rolledBack = rollbackCompletion(
+      repository,
+      session.sessionId,
+      'A verification subprocess changed ignored filesystem metadata.',
+    );
+
+    assert.equal(fs.readFileSync(tasksPath, 'utf8'), baselineTasks);
+    assert.equal(fs.readFileSync(handoffPath, 'utf8'), baselineHandoff);
+    assert.equal(
+      fs.readFileSync(path.join(repository, 'src/feature.ts'), 'utf8'),
+      'export {};\n',
+    );
+    assert.equal(rolledBack.completionReportId, completed.reportId);
+    assert.deepEqual(rolledBack.restoredPaths, [
+      'docs/CURRENT_AND_NEXT_STEPS.md',
+      'openspec/changes/demo-change/tasks.md',
+    ]);
+    const reset = getSession(repository, session.sessionId);
+    assert.equal(reset.state, 'active');
+    assert.equal(reset.latestCheckReportId, undefined);
+    assert.equal(reset.completionReportId, undefined);
+    assert.doesNotThrow(() => checkSession(repository, session.sessionId));
+  } finally {
+    fs.rmSync(repository, { recursive: true, force: true });
+  }
+});
+
+test('completion rollback rejects empty reasons and finished sessions', () => {
+  const repository = createFixtureRepository();
+  try {
+    git(repository, ['checkout', '-b', 'work/demo-change']);
+    const session = startSession(repository, 'demo-change', '1.1');
+    fs.writeFileSync(path.join(repository, 'src/feature.ts'), 'export {};\n');
+    checkSession(repository, session.sessionId);
+    completeTask(repository, session.sessionId);
+
+    assert.throws(
+      () => rollbackCompletion(repository, session.sessionId, '   '),
+      (error) => isWorkflowError(error, 'ROLLBACK_REASON_REQUIRED'),
+    );
+
+    finishSession(repository, session.sessionId);
+    assert.throws(
+      () => rollbackCompletion(repository, session.sessionId, 'Too late'),
+      (error) => isWorkflowError(error, 'ROLLBACK_REQUIRES_PROJECTED_SESSION'),
     );
   } finally {
     fs.rmSync(repository, { recursive: true, force: true });

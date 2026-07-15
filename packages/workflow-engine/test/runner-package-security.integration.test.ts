@@ -141,10 +141,7 @@ test(
       fs.chmodSync(alternateExecutable, 0o755);
 
       const moduleUrl = pathToFileURL(
-        path.join(
-          process.cwd(),
-          'packages/workflow-engine/src/runner-resolution.ts',
-        ),
+        path.join(import.meta.dirname, '../src/runner-resolution.ts'),
       ).href;
       const script = [
         `import { resolveCheckRunner } from ${JSON.stringify(moduleUrl)};`,

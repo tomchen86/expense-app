@@ -4,19 +4,19 @@ This generated handoff contains semantic project state only. Its sources are the
 
 ## Current Change
 
-`establish-executable-ai-workflow`
+`integrate-openspec-with-workflow`
 
 ## Current Task
 
-None — all tasks are complete.
+`1.2` — Add contract tests and implement the typed, shell-free OpenSpec 1.6.0 adapter with exact binary resolution, isolated environment, timeout/output limits, strict JSON/stderr handling, and canonical root/path validation.
 
 ## Next Task
 
-None.
+`1.3` — Extend workflow doctor with pinned-version, package provenance, root/store, schema-payload, and OpenSpec diagnostics without trusting process exit status alone.
 
 ## Current Focus
 
-Prepare the completed change for explicit archival review.
+Add contract tests and implement the typed, shell-free OpenSpec 1.6.0 adapter with exact binary resolution, isolated environment, timeout/output limits, strict JSON/stderr handling, and canonical root/path validation.
 
 ## Known Blockers
 
@@ -26,7 +26,7 @@ Prepare the completed change for explicit archival review.
 ## References
 
 - [Roadmap](ROADMAP.md)
-- [Active change](../openspec/changes/establish-executable-ai-workflow/)
-- [Workflow assurance delta](../openspec/changes/establish-executable-ai-workflow/specs/workflow-assurance/spec.md)
+- [Active change](../openspec/changes/integrate-openspec-with-workflow/)
+- [Workflow assurance delta](../openspec/changes/integrate-openspec-with-workflow/specs/workflow-assurance/spec.md)
 - [Issue log](ISSUE_LOG.md)
 - [System architecture](architecture/ARCHITECTURE.md)

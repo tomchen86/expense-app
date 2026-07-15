@@ -101,7 +101,7 @@ function selectChange(repositoryRoot: string): ChangeContract {
   const root = path.join(repositoryRoot, config.changeRoot);
   const contracts = fs
     .readdirSync(root, { withFileTypes: true })
-    .filter((entry) => entry.isDirectory())
+    .filter((entry) => entry.isDirectory() && entry.name !== 'archive')
     .map((entry) => loadChangeContract(repositoryRoot, entry.name));
   const active = contracts.filter((contract) =>
     contract.tasks.some(({ completed }) => !completed),

@@ -8,7 +8,7 @@ RED-only commit cannot satisfy workflow completion checks.
 
 ## 1. Portable Test and OpenSpec Process Boundary
 
-- [ ] 1.1 Reproduce the package-filter CWD regression and OpenSpec reserved
+- [x] 1.1 Reproduce the package-filter CWD regression and OpenSpec reserved
       `changes/archive` misclassification from the root workflow suite, then
       make repository resolution module-relative and active-change enumeration
       OpenSpec-compatible so root/package-scoped tests pass with the same set.

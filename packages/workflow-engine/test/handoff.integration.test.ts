@@ -9,25 +9,30 @@ import { checkSession, startSession } from '../src/session.ts';
 import { createFixtureRepository, git } from './fixture.ts';
 
 test('repository handoff has exactly six semantic sections and no hashes', () => {
-  renderHandoff(process.cwd());
-  validateHandoff(process.cwd());
-  const handoff = fs.readFileSync(
-    path.join(process.cwd(), 'docs/CURRENT_AND_NEXT_STEPS.md'),
-    'utf8',
-  );
-  assert.deepEqual(
-    [...handoff.matchAll(/^## (.+)$/gm)].map((match) => match[1]),
-    [
-      'Current Change',
-      'Current Task',
-      'Next Task',
-      'Current Focus',
-      'Known Blockers',
-      'References',
-    ],
-  );
-  assert.doesNotMatch(handoff, /\b[0-9a-f]{40,64}\b/i);
-  assert.doesNotMatch(handoff, /session-[A-Za-z0-9-]+/);
+  const repository = createFixtureRepository();
+  try {
+    renderHandoff(repository);
+    validateHandoff(repository);
+    const handoff = fs.readFileSync(
+      path.join(repository, 'docs/CURRENT_AND_NEXT_STEPS.md'),
+      'utf8',
+    );
+    assert.deepEqual(
+      [...handoff.matchAll(/^## (.+)$/gm)].map((match) => match[1]),
+      [
+        'Current Change',
+        'Current Task',
+        'Next Task',
+        'Current Focus',
+        'Known Blockers',
+        'References',
+      ],
+    );
+    assert.doesNotMatch(handoff, /\b[0-9a-f]{40,64}\b/i);
+    assert.doesNotMatch(handoff, /session-[A-Za-z0-9-]+/);
+  } finally {
+    fs.rmSync(repository, { recursive: true, force: true });
+  }
 });
 
 test('completion projection refreshes the handoff to the next task', () => {
@@ -67,6 +72,19 @@ test('completion projection refreshes the handoff to the next task', () => {
     );
     assert.match(handoff, /## Current Task\n\nNone — all tasks are complete\./);
     validateHandoff(repository);
+  } finally {
+    fs.rmSync(repository, { recursive: true, force: true });
+  }
+});
+
+test('reserved OpenSpec archive directory is not an active change', () => {
+  const repository = createFixtureRepository();
+  try {
+    fs.mkdirSync(path.join(repository, 'openspec/changes/archive'));
+
+    const handoff = renderHandoff(repository);
+
+    assert.match(handoff, /## Current Change\n\n`demo-change`/);
   } finally {
     fs.rmSync(repository, { recursive: true, force: true });
   }

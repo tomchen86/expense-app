@@ -5,6 +5,11 @@ import path from 'node:path';
 
 import { WorkflowError } from '../src/errors.ts';
 
+export const sourceRepositoryRoot = path.resolve(
+  import.meta.dirname,
+  '../../..',
+);
+
 export function createFixtureRepository(): string {
   const repository = fs.mkdtempSync(
     path.join(os.tmpdir(), 'workflow-session-repo-'),

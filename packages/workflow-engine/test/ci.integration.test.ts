@@ -9,6 +9,7 @@ import {
   createFixtureRepository,
   git,
   isWorkflowError,
+  sourceRepositoryRoot,
 } from './fixture.ts';
 
 test('CI recomputes task, scope, trailers, and checks without runtime reports', () => {
@@ -428,7 +429,7 @@ test('a semantic bootstrap exception applies only when its change is introduced'
 
 test('workflow assurance CI is read-only and policy paths have owners', () => {
   const workflow = fs.readFileSync(
-    path.join(process.cwd(), '.github/workflows/workflow-assurance.yml'),
+    path.join(sourceRepositoryRoot, '.github/workflows/workflow-assurance.yml'),
     'utf8',
   );
   assert.match(workflow, /permissions:\n {2}contents: read/);
@@ -446,7 +447,7 @@ test('workflow assurance CI is read-only and policy paths have owners', () => {
   assert.ok(actionRefs.every((reference) => /^[0-9a-f]{40}$/.test(reference)));
 
   const owners = fs.readFileSync(
-    path.join(process.cwd(), '.github/CODEOWNERS'),
+    path.join(sourceRepositoryRoot, '.github/CODEOWNERS'),
     'utf8',
   );
   for (const protectedPath of [

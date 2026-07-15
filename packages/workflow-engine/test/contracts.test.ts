@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -17,6 +18,27 @@ import {
 } from '../src/paths.ts';
 import { parseTasks } from '../src/contracts.ts';
 import './git-security.test.ts';
+
+test('runner security suite is portable to the package working directory', () => {
+  execFileSync(
+    process.execPath,
+    [
+      '--experimental-strip-types',
+      '--test',
+      'test/runner-package-security.integration.test.ts',
+    ],
+    {
+      cwd: path.resolve(import.meta.dirname, '..'),
+      encoding: 'utf8',
+      env: Object.fromEntries(
+        Object.entries(process.env).filter(
+          ([name]) => name !== 'NODE_TEST_CONTEXT',
+        ),
+      ),
+      stdio: ['ignore', 'pipe', 'pipe'],
+    },
+  );
+});
 
 test('parseTasks reads ordered checkbox tasks', () => {
   const tasks = parseTasks(`
