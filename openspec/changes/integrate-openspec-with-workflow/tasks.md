@@ -26,7 +26,7 @@ RED-only commit cannot satisfy workflow completion checks.
       commit command with a content-addressed report, planning-only diff checks,
       exact staging, compare-and-swap commit construction, and exclusive
       `Change:` plus `Transition: plan` trailers.
-- [ ] 2.2 Extend hooks and CI for planning introductions/revisions,
+- [x] 2.2 Extend hooks and CI for planning introductions/revisions,
       active-session exclusion, stale-evidence invalidation, exact
       bootstrap-exception verification, and rejection of code, checkbox,
       base-spec, archive, other-change, or mixed-trailer diffs.

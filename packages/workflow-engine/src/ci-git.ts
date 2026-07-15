@@ -1,12 +1,14 @@
 import { ExitCode, workflowError } from './errors.ts';
 import { commitChangedPaths, commitFacts } from './git-transitions.ts';
 import { runGit } from './git.ts';
+import {
+  ManagedTrailerSyntaxError,
+  parseManagedTrailers,
+  type ManagedTrailers,
+} from './managed-trailers.ts';
 import { normalizeChangedPath } from './paths.ts';
 
-export type ManagedTrailers = {
-  changeId: string;
-  taskId: string;
-};
+export type { ManagedTrailers } from './managed-trailers.ts';
 
 export type RangeCommit = {
   hash: string;
@@ -68,7 +70,18 @@ export function listRangeCommits(
   }
   return hashes.map((hash) => {
     const facts = commitFacts(repositoryRoot, hash);
-    const trailers = parseManagedTrailers(facts.message);
+    let trailers: ManagedTrailers | undefined;
+    try {
+      trailers = parseManagedTrailers(facts.message);
+    } catch (error) {
+      if (error instanceof ManagedTrailerSyntaxError) {
+        throw ciGitError(
+          'CI_INVALID_MANAGED_TRAILERS',
+          'A PR commit contains a non-canonical managed trailer block.',
+        );
+      }
+      throw error;
+    }
     return {
       hash: facts.hash,
       subject: facts.message.split('\n', 1)[0],
@@ -156,32 +169,6 @@ export function listCommitPaths(
   commit: RangeCommit,
 ): string[] {
   return commitChangedPaths(repositoryRoot, commit.hash);
-}
-
-function parseManagedTrailers(message: string): ManagedTrailers | undefined {
-  const normalized = message.endsWith('\n') ? message.slice(0, -1) : message;
-  const lines = normalized.split('\n');
-  const hasManagedLine = lines.some((line) => /^(?:Change|Task):/.test(line));
-  if (!hasManagedLine) {
-    return undefined;
-  }
-  const change = /^Change: ([a-z0-9]+(?:-[a-z0-9]+)*)$/.exec(
-    lines.at(-2) ?? '',
-  );
-  const task = /^Task: (\d+(?:\.\d+)+)$/.exec(lines.at(-1) ?? '');
-  if (
-    normalized.endsWith('\n') ||
-    lines.at(-3) !== '' ||
-    !change ||
-    !task ||
-    lines.slice(0, -2).some((line) => /^(?:Change|Task):/.test(line))
-  ) {
-    throw ciGitError(
-      'CI_INVALID_MANAGED_TRAILERS',
-      'A PR commit contains a non-canonical managed trailer block.',
-    );
-  }
-  return { changeId: change[1], taskId: task[1] };
 }
 
 function ciGitError(code: string, message: string) {

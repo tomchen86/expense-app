@@ -8,15 +8,15 @@ This generated handoff contains semantic project state only. Its sources are the
 
 ## Current Task
 
-`2.2` — Extend hooks and CI for planning introductions/revisions, active-session exclusion, stale-evidence invalidation, exact bootstrap-exception verification, and rejection of code, checkbox, base-spec, archive, other-change, or mixed-trailer diffs.
+`3.1` — Fork the pinned `spec-driven` schema to project-local `expense-app`, add the apply-required guard artifact, configure the project default, and implement strict schema, guard, task, check-ID, path, provenance, and payload validation without changing this change's metadata in the task commit.
 
 ## Next Task
 
-`3.1` — Fork the pinned `spec-driven` schema to project-local `expense-app`, add the apply-required guard artifact, configure the project default, and implement strict schema, guard, task, check-ID, path, provenance, and payload validation without changing this change's metadata in the task commit.
+`3.2` — Combine OpenSpec status and strict change validation with repository policy, full regular-file/mode digests, stable diagnostics, and one validated contract consumed consistently by session start, check, and finish.
 
 ## Current Focus
 
-Extend hooks and CI for planning introductions/revisions, active-session exclusion, stale-evidence invalidation, exact bootstrap-exception verification, and rejection of code, checkbox, base-spec, archive, other-change, or mixed-trailer diffs.
+Fork the pinned `spec-driven` schema to project-local `expense-app`, add the apply-required guard artifact, configure the project default, and implement strict schema, guard, task, check-ID, path, provenance, and payload validation without changing this change's metadata in the task commit.
 
 ## Known Blockers
 

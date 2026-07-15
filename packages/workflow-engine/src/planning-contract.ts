@@ -121,6 +121,13 @@ export function assertPlanningPaths(
   changeId: string,
   changedPaths: string[],
 ): void {
+  if (changeId === 'archive') {
+    throw workflowError(
+      'PLANNING_CHANGE_ID_RESERVED',
+      'The OpenSpec archive container cannot be used as an active change ID.',
+      ExitCode.guard,
+    );
+  }
   const prefix = `${changeRoot}/${changeId}/`;
   const exact = new Set([
     `${prefix}.openspec.yaml`,

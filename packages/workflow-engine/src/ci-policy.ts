@@ -18,10 +18,31 @@ export type BootstrapCompatibilityCommit = {
   changedPaths: string[];
 };
 
+export type PlanningBootstrapException = {
+  changeId: string;
+  subject: string;
+  expectedParent: string;
+  changedPaths: string[];
+  fileDigests: Record<string, string>;
+};
+
 export function loadCiPolicy(repositoryRoot: string): BootstrapException[] {
+  return loadPolicyDocument(repositoryRoot).bootstrapExceptions;
+}
+
+export function loadPlanningBootstrapPolicy(
+  repositoryRoot: string,
+): PlanningBootstrapException[] {
+  return loadPolicyDocument(repositoryRoot).planningBootstrapExceptions;
+}
+
+function loadPolicyDocument(repositoryRoot: string): {
+  bootstrapExceptions: BootstrapException[];
+  planningBootstrapExceptions: PlanningBootstrapException[];
+} {
   const policyPath = path.join(repositoryRoot, 'workflow/ci-policy.json');
   if (!fs.existsSync(policyPath)) {
-    return [];
+    return { bootstrapExceptions: [], planningBootstrapExceptions: [] };
   }
   let value: unknown;
   try {
@@ -36,18 +57,89 @@ export function loadCiPolicy(repositoryRoot: string): BootstrapException[] {
   ) {
     throw invalidPolicy();
   }
-  const allowedRootKeys = ['schemaVersion', 'bootstrapExceptions'];
+  const allowedRootKeys = [
+    'schemaVersion',
+    'bootstrapExceptions',
+    'planningBootstrapExceptions',
+  ];
   if (Object.keys(value).some((key) => !allowedRootKeys.includes(key))) {
     throw invalidPolicy();
   }
   const exceptions = value.bootstrapExceptions.map(parseException);
+  const planningValues = value.planningBootstrapExceptions ?? [];
+  if (!Array.isArray(planningValues)) {
+    throw invalidPolicy();
+  }
+  const planningBootstrapExceptions = planningValues.map(
+    parsePlanningBootstrapException,
+  );
   if (
     new Set(exceptions.map(({ changeId }) => changeId)).size !==
-    exceptions.length
+      exceptions.length ||
+    new Set(planningBootstrapExceptions.map(({ changeId }) => changeId))
+      .size !== planningBootstrapExceptions.length ||
+    planningBootstrapExceptions.length > 1
   ) {
     throw invalidPolicy();
   }
-  return exceptions;
+  return {
+    bootstrapExceptions: exceptions,
+    planningBootstrapExceptions,
+  };
+}
+
+function parsePlanningBootstrapException(
+  value: unknown,
+): PlanningBootstrapException {
+  if (
+    !isRecord(value) ||
+    Object.keys(value).some(
+      (key) =>
+        ![
+          'changeId',
+          'subject',
+          'expectedParent',
+          'changedPaths',
+          'fileDigests',
+        ].includes(key),
+    ) ||
+    typeof value.changeId !== 'string' ||
+    typeof value.subject !== 'string' ||
+    !value.subject ||
+    value.subject.length > 200 ||
+    /[\r\n\0]/.test(value.subject) ||
+    typeof value.expectedParent !== 'string' ||
+    !/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(value.expectedParent) ||
+    !isStringArray(value.changedPaths) ||
+    value.changedPaths.length === 0 ||
+    !isRecord(value.fileDigests)
+  ) {
+    throw invalidPolicy();
+  }
+  const changedPaths = value.changedPaths.map(normalizePolicyPath).sort();
+  const fileDigests = Object.fromEntries(
+    Object.entries(value.fileDigests)
+      .map(([filePath, digest]) => {
+        if (typeof digest !== 'string' || !/^[0-9a-f]{64}$/.test(digest)) {
+          throw invalidPolicy();
+        }
+        return [normalizePolicyPath(filePath), digest] as const;
+      })
+      .sort(([left], [right]) => left.localeCompare(right)),
+  );
+  if (
+    new Set(changedPaths).size !== changedPaths.length ||
+    JSON.stringify(Object.keys(fileDigests)) !== JSON.stringify(changedPaths)
+  ) {
+    throw invalidPolicy();
+  }
+  return {
+    changeId: assertChangeId(value.changeId),
+    subject: value.subject,
+    expectedParent: value.expectedParent,
+    changedPaths,
+    fileDigests,
+  };
 }
 
 function parseException(value: unknown): BootstrapException {

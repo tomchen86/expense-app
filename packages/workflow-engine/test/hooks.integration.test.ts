@@ -4,6 +4,11 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
+import {
+  commitFacts,
+  createPlanningCommitObject,
+  planningCommitMessage,
+} from '../src/git-transitions.ts';
 import { runRepositoryHook } from '../src/hooks.ts';
 import { startSession } from '../src/session.ts';
 import {
@@ -69,7 +74,97 @@ test('an active session does not block a different linked worktree', () => {
   }
 });
 
-test('commit-msg validates format and rejects forged managed trailers', () => {
+test('pre-commit rejects staged OpenSpec lifecycle diffs without mutating the index', async (t) => {
+  const cases: Array<{
+    name: string;
+    stage(repository: string): void;
+  }> = [
+    {
+      name: 'task projection read from the index',
+      stage(repository) {
+        const tasksPath = path.join(
+          repository,
+          'openspec/changes/demo-change/tasks.md',
+        );
+        const original = fs.readFileSync(tasksPath, 'utf8');
+        fs.writeFileSync(tasksPath, original.replace('- [ ] 1.1', '- [x] 1.1'));
+        git(repository, ['add', '--', 'openspec/changes/demo-change/tasks.md']);
+        fs.writeFileSync(tasksPath, original);
+      },
+    },
+    {
+      name: 'planning artifact',
+      stage(repository) {
+        fs.appendFileSync(
+          path.join(repository, 'openspec/changes/demo-change/design.md'),
+          '\nRevision.\n',
+        );
+        git(repository, [
+          'add',
+          '--',
+          'openspec/changes/demo-change/design.md',
+        ]);
+      },
+    },
+    {
+      name: 'archive artifact',
+      stage(repository) {
+        const archivePath = path.join(
+          repository,
+          'openspec/changes/archive/2026-07-15-demo-change/proposal.md',
+        );
+        fs.mkdirSync(path.dirname(archivePath), { recursive: true });
+        fs.writeFileSync(archivePath, '# Archived proposal\n');
+        git(repository, ['add', '--', path.relative(repository, archivePath)]);
+      },
+    },
+    {
+      name: 'base spec promotion',
+      stage(repository) {
+        const specPath = path.join(repository, 'openspec/specs/demo/spec.md');
+        fs.mkdirSync(path.dirname(specPath), { recursive: true });
+        fs.writeFileSync(specPath, '# Promoted spec\n');
+        git(repository, ['add', '--', path.relative(repository, specPath)]);
+      },
+    },
+  ];
+
+  for (const testCase of cases) {
+    await t.test(testCase.name, () => {
+      const repository = createFixtureRepository();
+      try {
+        testCase.stage(repository);
+        const before = hookState(repository);
+        assert.throws(
+          () => runRepositoryHook(repository, 'pre-commit', []),
+          (error) =>
+            isWorkflowError(error, 'MANAGED_DIFF_REQUIRES_WORKFLOW_COMMIT'),
+        );
+        assert.deepEqual(hookState(repository), before);
+      } finally {
+        fs.rmSync(repository, { recursive: true, force: true });
+      }
+    });
+  }
+});
+
+test('pre-commit permits an ordinary unrelated staged change without mutation', () => {
+  const repository = createFixtureRepository();
+  try {
+    fs.writeFileSync(path.join(repository, 'src/unrelated.ts'), 'export {};\n');
+    git(repository, ['add', '--', 'src/unrelated.ts']);
+    const before = hookState(repository);
+
+    const result = runRepositoryHook(repository, 'pre-commit', []);
+
+    assert.equal(result.hook, 'pre-commit');
+    assert.deepEqual(hookState(repository), before);
+  } finally {
+    fs.rmSync(repository, { recursive: true, force: true });
+  }
+});
+
+test('commit-msg validates format and rejects every forged managed kind', () => {
   const repository = createFixtureRepository();
   try {
     const messagePath = path.join(repository, '.git/COMMIT_EDITMSG');
@@ -83,15 +178,23 @@ test('commit-msg validates format and rejects forged managed trailers', () => {
       (error) => isWorkflowError(error, 'COMMIT_MESSAGE_FILE_UNEXPECTED'),
     );
 
-    fs.writeFileSync(
-      messagePath,
-      'Forge managed commit\n\nChange: demo-change\nTask: 1.1\n',
-    );
-    assert.throws(
-      () => runRepositoryHook(repository, 'commit-msg', [messagePath]),
-      (error) =>
-        isWorkflowError(error, 'MANAGED_TRAILERS_REQUIRE_WORKFLOW_COMMIT'),
-    );
+    for (const message of [
+      'Forge task\n\nChange: demo-change\nTask: 1.1\n',
+      'Forge plan\n\nChange: demo-change\nTransition: plan\n',
+      'Forge archive\n\nChange: demo-change\nTransition: archive\n',
+      'Forge malformed plan\n\nchange : demo-change\ntransition : plan\n',
+      'Forge unknown transition\n\nTransition: deploy\n',
+    ]) {
+      fs.writeFileSync(messagePath, message);
+      assert.throws(
+        () => runRepositoryHook(repository, 'commit-msg', [messagePath]),
+        (error) =>
+          isWorkflowError(error, 'MANAGED_TRAILERS_REQUIRE_WORKFLOW_COMMIT'),
+        message,
+      );
+      assert.equal(fs.readFileSync(messagePath, 'utf8'), message);
+      assert.equal(git(repository, ['status', '--porcelain=v1']), '');
+    }
 
     fs.writeFileSync(messagePath, 'wip unfinished.\n');
     assert.throws(
@@ -99,6 +202,38 @@ test('commit-msg validates format and rejects forged managed trailers', () => {
       (error) => isWorkflowError(error, 'COMMIT_MESSAGE_INVALID'),
     );
   } finally {
+    fs.rmSync(repository, { recursive: true, force: true });
+  }
+});
+
+test('commit-tree remains the hook-free path for managed commits', () => {
+  const repository = createFixtureRepository();
+  const hooksDirectory = fs.mkdtempSync(
+    path.join(os.tmpdir(), 'workflow-hostile-hooks-'),
+  );
+  try {
+    const hookPath = path.join(hooksDirectory, 'commit-msg');
+    fs.writeFileSync(hookPath, '#!/bin/sh\nexit 99\n');
+    fs.chmodSync(hookPath, 0o755);
+    git(repository, ['config', 'core.hooksPath', hooksDirectory]);
+
+    const parent = git(repository, ['rev-parse', 'HEAD']).trim();
+    const tree = git(repository, ['write-tree']).trim();
+    const commit = createPlanningCommitObject(
+      repository,
+      tree,
+      parent,
+      'demo-change',
+    );
+
+    assert.equal(
+      commitFacts(repository, commit).message,
+      `${planningCommitMessage('demo-change')}\n`,
+    );
+    assert.equal(git(repository, ['rev-parse', 'HEAD']).trim(), parent);
+    assert.equal(git(repository, ['status', '--porcelain=v1']), '');
+  } finally {
+    fs.rmSync(hooksDirectory, { recursive: true, force: true });
     fs.rmSync(repository, { recursive: true, force: true });
   }
 });
@@ -127,3 +262,20 @@ test('hook dispatch rejects invalid arguments and invalid change contracts', () 
     fs.rmSync(repository, { recursive: true, force: true });
   }
 });
+
+function hookState(repository: string) {
+  return {
+    head: git(repository, ['rev-parse', 'HEAD']).trim(),
+    indexTree: git(repository, ['write-tree']).trim(),
+    status: git(repository, ['status', '--porcelain=v2', '-z']),
+    stagedDiff: git(repository, [
+      'diff',
+      '--cached',
+      '--binary',
+      '--full-index',
+      '--',
+    ]),
+    worktreeDiff: git(repository, ['diff', '--binary', '--full-index', '--']),
+    runtimeExists: fs.existsSync(path.join(repository, '.git/workflow-engine')),
+  };
+}

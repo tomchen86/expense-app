@@ -12,6 +12,7 @@ import './issues.integration.test.ts';
 import './handoff.integration.test.ts';
 import './document-refresh.integration.test.ts';
 import './hooks.integration.test.ts';
+import './managed-trailers.contract.test.ts';
 import './ci.integration.test.ts';
 import './ci-bootstrap.integration.test.ts';
 import './ai-adapter-evaluation.integration.test.ts';

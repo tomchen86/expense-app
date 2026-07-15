@@ -83,7 +83,7 @@ export function validateCommitSequence(
         : (compatibility?.definition.changedPaths ?? []),
       completionPaths,
     );
-    if (commit.trailers) {
+    if (commit.trailers?.kind === 'task') {
       priorTrailers.add(taskKey(commit.trailers));
     }
   }
@@ -105,7 +105,8 @@ function assertCompatibilityCommit(
   const changedPaths = listCommitPaths(repositoryRoot, commit);
   if (
     transitions.length !== 0 ||
-    commit.trailers?.changeId !== changeId ||
+    commit.trailers?.kind !== 'task' ||
+    commit.trailers.changeId !== changeId ||
     commit.trailers.taskId !== expected.taskId ||
     commit.subject !== expected.subject ||
     changedPaths.length !== expected.changedPaths.length ||
@@ -191,7 +192,7 @@ function validateManagedTransitions(
   contracts: Map<string, ChangeContract>,
   priorTrailers: Set<string>,
 ): void {
-  if (!commit.trailers) {
+  if (commit.trailers?.kind !== 'task') {
     return;
   }
   if (transitions.length === 0) {
@@ -245,13 +246,14 @@ function validateCommitScope(
   exceptionPaths: string[],
   completionPaths: string[],
 ): void {
-  const allowed = commit.trailers
-    ? [
-        ...(contracts.get(commit.trailers.changeId)?.guard.tasks[
-          commit.trailers.taskId
-        ]?.allowedPaths ?? []),
-      ]
-    : [];
+  const allowed =
+    commit.trailers?.kind === 'task'
+      ? [
+          ...(contracts.get(commit.trailers.changeId)?.guard.tasks[
+            commit.trailers.taskId
+          ]?.allowedPaths ?? []),
+        ]
+      : [];
   allowed.push(...exceptionPaths);
   const transitionPaths = new Set(
     transitions.map(({ changeId }) => `openspec/changes/${changeId}/tasks.md`),
@@ -280,6 +282,12 @@ function assertKnownTrailer(
   contracts: Map<string, ChangeContract>,
 ): void {
   const trailers = commit.trailers!;
+  if (trailers.kind !== 'task') {
+    throw ciError(
+      'CI_MANAGED_TRAILER_UNKNOWN',
+      'Legacy task validation accepts only task trailers.',
+    );
+  }
   const contract = contracts.get(trailers.changeId);
   if (!contract?.tasks.some(({ id }) => id === trailers.taskId)) {
     throw ciError(

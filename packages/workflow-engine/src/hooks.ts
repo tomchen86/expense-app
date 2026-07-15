@@ -1,8 +1,11 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
+import { loadWorkflowConfig } from './contracts.ts';
 import { ExitCode, workflowError } from './errors.ts';
 import { discoverRepository, runGit } from './git.ts';
+import { listStagedPaths } from './git-transitions.ts';
+import { hasManagedTrailerLine } from './managed-trailers.ts';
 import { validateRepositoryState } from './repository-validation.ts';
 import { listSessions } from './session.ts';
 
@@ -37,11 +40,37 @@ export function runRepositoryHook(
       ExitCode.guard,
     );
   }
+  if (requestedHook === 'pre-commit') {
+    const stagedLifecyclePaths = findStagedLifecyclePaths(
+      validated.repositoryRoot,
+    );
+    if (stagedLifecyclePaths.length > 0) {
+      throw workflowError(
+        'MANAGED_DIFF_REQUIRES_WORKFLOW_COMMIT',
+        'OpenSpec task, planning, and archive diffs require a workflow commit-tree transition.',
+        ExitCode.guard,
+        { details: { stagedPaths: stagedLifecyclePaths } },
+      );
+    }
+  }
   return {
     hook: requestedHook,
     changes: validated.changes,
     documents: validated.documents,
   };
+}
+
+function findStagedLifecyclePaths(repositoryRoot: string): string[] {
+  const config = loadWorkflowConfig(repositoryRoot);
+  const head = runGit(repositoryRoot, ['rev-parse', 'HEAD']).trim();
+  const stagedPaths = listStagedPaths(repositoryRoot, head);
+  const openspecRoot = path.posix.dirname(config.changeRoot);
+  const baseSpecRoot = `${openspecRoot}/specs/`;
+  const changeRoot = `${config.changeRoot}/`;
+  return stagedPaths.filter(
+    (filePath) =>
+      filePath.startsWith(changeRoot) || filePath.startsWith(baseSpecRoot),
+  );
 }
 
 function assertHookArguments(hook: string, args: string[]): void {
@@ -93,10 +122,10 @@ function validateCommitMessage(cwd: string, requestedPath: string): void {
     .replaceAll('\r\n', '\n')
     .split('\n')
     .filter((line) => !line.startsWith('#'));
-  if (lines.some((line) => /^(?:Change|Task):/.test(line))) {
+  if (hasManagedTrailerLine(lines.join('\n'))) {
     throw workflowError(
       'MANAGED_TRAILERS_REQUIRE_WORKFLOW_COMMIT',
-      'Managed Change and Task trailers may only be created by workflow commit.',
+      'Managed trailers may only be created by a workflow commit transition.',
       ExitCode.guard,
     );
   }

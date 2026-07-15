@@ -37,6 +37,16 @@ test('planning paths accept only the exact named OpenSpec planning grammar', () 
   }
 });
 
+test('planning paths reject the reserved OpenSpec archive container as a change', () => {
+  assert.throws(
+    () =>
+      assertPlanningPaths('openspec/changes', 'archive', [
+        'openspec/changes/archive/proposal.md',
+      ]),
+    (error) => isWorkflowError(error, 'PLANNING_CHANGE_ID_RESERVED'),
+  );
+});
+
 test('planning introductions require every task to be unchecked', () => {
   assert.doesNotThrow(() =>
     assertPlanningTaskHistory(undefined, [

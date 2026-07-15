@@ -6,6 +6,48 @@
   "required": ["schemaVersion", "bootstrapExceptions"],
   "properties": {
     "schemaVersion": { "const": 1 },
+    "planningBootstrapExceptions": {
+      "type": "array",
+      "maxItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "changeId",
+          "subject",
+          "expectedParent",
+          "changedPaths",
+          "fileDigests"
+        ],
+        "properties": {
+          "changeId": {
+            "type": "string",
+            "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"
+          },
+          "subject": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200,
+            "pattern": "^[^\\r\\n\\u0000]+$"
+          },
+          "expectedParent": {
+            "type": "string",
+            "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$"
+          },
+          "changedPaths": { "$ref": "#/$defs/paths" },
+          "fileDigests": {
+            "type": "object",
+            "minProperties": 1,
+            "propertyNames": { "type": "string", "minLength": 1 },
+            "additionalProperties": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            }
+          }
+        }
+      }
+    },
     "bootstrapExceptions": {
       "type": "array",
       "items": {
