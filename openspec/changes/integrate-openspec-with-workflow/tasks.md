@@ -12,7 +12,7 @@ RED-only commit cannot satisfy workflow completion checks.
       `changes/archive` misclassification from the root workflow suite, then
       make repository resolution module-relative and active-change enumeration
       OpenSpec-compatible so root/package-scoped tests pass with the same set.
-- [ ] 1.2 Add contract tests and implement the typed, shell-free OpenSpec 1.6.0
+- [x] 1.2 Add contract tests and implement the typed, shell-free OpenSpec 1.6.0
       adapter with exact binary resolution, isolated environment,
       timeout/output limits, strict JSON/stderr handling, and canonical
       root/path validation.

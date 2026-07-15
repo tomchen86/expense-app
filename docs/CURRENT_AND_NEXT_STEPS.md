@@ -8,15 +8,15 @@ This generated handoff contains semantic project state only. Its sources are the
 
 ## Current Task
 
-`1.2` — Add contract tests and implement the typed, shell-free OpenSpec 1.6.0 adapter with exact binary resolution, isolated environment, timeout/output limits, strict JSON/stderr handling, and canonical root/path validation.
+`1.3` — Extend workflow doctor with pinned-version, package provenance, root/store, schema-payload, and OpenSpec diagnostics without trusting process exit status alone.
 
 ## Next Task
 
-`1.3` — Extend workflow doctor with pinned-version, package provenance, root/store, schema-payload, and OpenSpec diagnostics without trusting process exit status alone.
+`2.1` — Add planning-transition contract tests and implement the planning commit command with a content-addressed report, planning-only diff checks, exact staging, compare-and-swap commit construction, and exclusive `Change:` plus `Transition: plan` trailers.
 
 ## Current Focus
 
-Add contract tests and implement the typed, shell-free OpenSpec 1.6.0 adapter with exact binary resolution, isolated environment, timeout/output limits, strict JSON/stderr handling, and canonical root/path validation.
+Extend workflow doctor with pinned-version, package provenance, root/store, schema-payload, and OpenSpec diagnostics without trusting process exit status alone.
 
 ## Known Blockers
 
