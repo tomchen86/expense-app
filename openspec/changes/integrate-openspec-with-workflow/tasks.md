@@ -78,7 +78,7 @@ committed before Task 3.2 starts.
       `workflow-assurance` CI job, including dependency/schema/asset drift,
       forbidden lifecycle assets, bypass cases, archive replay, and UTC-date
       normalization.
-- [ ] 6.2 Add a disposable-repository end-to-end rehearsal covering planning
+- [x] 6.2 Add a disposable-repository end-to-end rehearsal covering planning
       validation, plan commit, managed task completion, archive, idempotency,
       and cross-date CI replay without claiming that the real post-merge pilot
       has run.

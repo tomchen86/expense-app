@@ -8,15 +8,15 @@ This generated handoff contains semantic project state only. Its sources are the
 
 ## Current Task
 
-`6.2` — Add a disposable-repository end-to-end rehearsal covering planning validation, plan commit, managed task completion, archive, idempotency, and cross-date CI replay without claiming that the real post-merge pilot has run.
+`7.1` — Update active repository guidance, the task/plan/archive trailer matrix, OpenSpec upgrade procedure, observed Codex discovery status, Spectra compatibility boundary, semantic handoff, and exact instructions for the separate post-merge pilot without commit hashes or unsupported invocation claims.
 
 ## Next Task
 
-`7.1` — Update active repository guidance, the task/plan/archive trailer matrix, OpenSpec upgrade procedure, observed Codex discovery status, Spectra compatibility boundary, semantic handoff, and exact instructions for the separate post-merge pilot without commit hashes or unsupported invocation claims.
+None.
 
 ## Current Focus
 
-Add a disposable-repository end-to-end rehearsal covering planning validation, plan commit, managed task completion, archive, idempotency, and cross-date CI replay without claiming that the real post-merge pilot has run.
+Update active repository guidance, the task/plan/archive trailer matrix, OpenSpec upgrade procedure, observed Codex discovery status, Spectra compatibility boundary, semantic handoff, and exact instructions for the separate post-merge pilot without commit hashes or unsupported invocation claims.
 
 ## Known Blockers
 
