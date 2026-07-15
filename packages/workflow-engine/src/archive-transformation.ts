@@ -3,6 +3,10 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 import type { ArchiveEligibility } from './archive-eligibility.ts';
+import {
+  assertPlainArchiveOutputFile,
+  listPlainArchiveFiles,
+} from './archive-output-safety.ts';
 import { readFileAtCommit } from './ci-git.ts';
 import { ExitCode, WorkflowError, workflowError } from './errors.ts';
 import { createTrustedExecutionEnvironment } from './execution-environment.ts';
@@ -26,6 +30,8 @@ export type ArchiveTransformation = {
   changedPaths: string[];
   patch: string;
   patchDigest: string;
+  tree: string;
+  archivedArtifactDigests: Record<string, string>;
   openspecVersion: '1.6.0';
   totals?: ArchiveTotals;
 };
@@ -111,11 +117,12 @@ function verifyTransformation(
 ): ArchiveTransformation {
   const activeRoot = `openspec/changes/${eligibility.changeId}`;
   const activeFiles = listTreeFiles(worktree, eligibility.head, activeRoot);
-  const archivedFiles = listPlainFiles(worktree, payloadPath(payload));
+  const archivedFiles = listPlainArchiveFiles(worktree, payloadPath(payload));
   const expectedArchivedFiles = activeFiles.map(
     (filePath) =>
       `${payloadPath(payload)}/${filePath.slice(activeRoot.length + 1)}`,
   );
+  const archivedArtifactDigests: Record<string, string> = {};
   if (JSON.stringify(archivedFiles) !== JSON.stringify(expectedArchivedFiles)) {
     throw archiveError(
       'ARCHIVE_TRANSFORMATION_TREE_INVALID',
@@ -135,6 +142,9 @@ function verifyTransformation(
         'Archived file content differs from the active change.',
       );
     }
+    archivedArtifactDigests[
+      archivedFiles[index].slice(payloadPath(payload).length + 1)
+    ] = crypto.createHash('sha256').update(after).digest('hex');
   }
 
   const changedPaths = listChangedPaths(worktree, eligibility.head);
@@ -162,7 +172,7 @@ function verifyTransformation(
     changedPath.startsWith('openspec/specs/'),
   );
   for (const baseSpecPath of baseSpecPaths) {
-    assertPlainOutputFile(worktree, baseSpecPath);
+    assertPlainArchiveOutputFile(worktree, baseSpecPath);
   }
   if (payload.specsUpdated !== baseSpecPaths.length > 0) {
     throw archiveError(
@@ -188,6 +198,7 @@ function verifyTransformation(
       'Archive did not produce a non-empty full-index patch.',
     );
   }
+  const tree = runGit(worktree, ['write-tree']).trim();
   return {
     changeId: eligibility.changeId,
     archiveName: payload.archivedAs,
@@ -196,6 +207,8 @@ function verifyTransformation(
     changedPaths,
     patch,
     patchDigest: crypto.createHash('sha256').update(patch).digest('hex'),
+    tree,
+    archivedArtifactDigests,
     openspecVersion,
     ...(payload.totals ? { totals: payload.totals } : {}),
   };
@@ -232,23 +245,6 @@ function assertTemporaryProjectionCurrent(
     throw archiveError(
       'ARCHIVE_TRANSFORMATION_CHANGED',
       'Temporary archive patch changed during validation.',
-    );
-  }
-}
-
-function assertPlainOutputFile(repository: string, relativePath: string): void {
-  const absolutePath = path.join(repository, relativePath);
-  const stats = fs.lstatSync(absolutePath, { throwIfNoEntry: false });
-  if (
-    !stats?.isFile() ||
-    stats.isSymbolicLink() ||
-    fs.realpathSync(absolutePath) !== absolutePath ||
-    (stats.mode & 0o111) !== 0
-  ) {
-    throw archiveError(
-      'ARCHIVE_TRANSFORMATION_TREE_INVALID',
-      'Archive produced an unsafe base-spec target.',
-      { path: relativePath },
     );
   }
 }
@@ -394,43 +390,6 @@ function listTreeFiles(
     .split('\0')
     .filter(Boolean)
     .sort();
-}
-
-function listPlainFiles(repository: string, relativeRoot: string): string[] {
-  const files: string[] = [];
-  walk(path.join(repository, relativeRoot));
-  return files.sort();
-
-  function walk(directory: string): void {
-    const stats = fs.lstatSync(directory, { throwIfNoEntry: false });
-    if (!stats?.isDirectory() || stats.isSymbolicLink()) {
-      throw archiveError(
-        'ARCHIVE_TRANSFORMATION_TREE_INVALID',
-        'Archive output contains an unsafe directory.',
-      );
-    }
-    for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
-      const entryPath = path.join(directory, entry.name);
-      if (entry.isDirectory() && !entry.isSymbolicLink()) {
-        walk(entryPath);
-      } else {
-        const entryStats = fs.lstatSync(entryPath);
-        if (
-          !entryStats.isFile() ||
-          entryStats.isSymbolicLink() ||
-          (entryStats.mode & 0o111) !== 0
-        ) {
-          throw archiveError(
-            'ARCHIVE_TRANSFORMATION_TREE_INVALID',
-            'Archive output contains an unsafe file.',
-          );
-        }
-        files.push(
-          path.relative(repository, entryPath).split(path.sep).join('/'),
-        );
-      }
-    }
-  }
 }
 
 function payloadPath(payload: ArchivePayload): string {

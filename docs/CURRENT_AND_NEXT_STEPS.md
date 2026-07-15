@@ -8,15 +8,15 @@ This generated handoff contains semantic project state only. Its sources are the
 
 ## Current Task
 
-`5.3` — Add archive reports, fingerprint rechecks, verified patch application, exact staging/commit authorization, `Transition: archive` trailers, fault/concurrency coverage, and workflow-owned already-archived detection.
+`6.1` — Recompute task, plan, and archive validity in hooks and the stable `workflow-assurance` CI job, including dependency/schema/asset drift, forbidden lifecycle assets, bypass cases, archive replay, and UTC-date normalization.
 
 ## Next Task
 
-`6.1` — Recompute task, plan, and archive validity in hooks and the stable `workflow-assurance` CI job, including dependency/schema/asset drift, forbidden lifecycle assets, bypass cases, archive replay, and UTC-date normalization.
+`6.2` — Add a disposable-repository end-to-end rehearsal covering planning validation, plan commit, managed task completion, archive, idempotency, and cross-date CI replay without claiming that the real post-merge pilot has run.
 
 ## Current Focus
 
-Add archive reports, fingerprint rechecks, verified patch application, exact staging/commit authorization, `Transition: archive` trailers, fault/concurrency coverage, and workflow-owned already-archived detection.
+Recompute task, plan, and archive validity in hooks and the stable `workflow-assurance` CI job, including dependency/schema/asset drift, forbidden lifecycle assets, bypass cases, archive replay, and UTC-date normalization.
 
 ## Known Blockers
 

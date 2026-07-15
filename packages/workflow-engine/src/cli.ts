@@ -5,6 +5,7 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 import { dispatchAiAdapterCommand } from './ai-adapter-cli.ts';
+import { commitArchiveTransition } from './archive-transition.ts';
 import { loadWorkflowConfig } from './contracts.ts';
 import {
   checkCodexPlanningAssets,
@@ -93,6 +94,13 @@ function dispatch(args: string[], cwd: string): CommandResult {
         command,
         ok: true,
         result: commitPlanningTransition(cwd, rest[0]),
+      };
+    case 'archive':
+      requireArgumentCount(command, rest, 1, 1);
+      return {
+        command,
+        ok: true,
+        result: commitArchiveTransition(cwd, rest[0]),
       };
     case 'codex-assets': {
       const repositoryRoot = discoverRepository(cwd).repositoryRoot;
@@ -405,6 +413,7 @@ function usageText(): string {
     '  pnpm workflow doctor [--json]',
     '  pnpm workflow validate-change <change-id> [--json]',
     '  pnpm workflow plan-commit <change-id> [--json]',
+    '  pnpm workflow archive <change-id> [--json]',
     '  pnpm workflow codex-assets <generate|check|install-prompts --codex-home <path>> [--json]',
     '  pnpm workflow start <change-id> --task <task-id> [--json]',
     '  pnpm workflow status [session-id] [--json]',

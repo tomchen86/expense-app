@@ -296,6 +296,32 @@ export function createPlanningCommitObject(
   ).trim();
 }
 
+export function createArchiveCommitObject(
+  repositoryRoot: string,
+  tree: string,
+  parent: string,
+  changeId: string,
+  environment: NodeJS.ProcessEnv = process.env,
+): string {
+  const subject = `Archive ${changeId}`;
+  validateCommitSubject(subject);
+  const identity = resolveCommitIdentity(repositoryRoot, environment);
+  return runGitWithEnvironment(
+    repositoryRoot,
+    [
+      'commit-tree',
+      tree,
+      '-p',
+      parent,
+      '-m',
+      subject,
+      '-m',
+      `Change: ${changeId}\nTransition: archive`,
+    ],
+    identity,
+  ).trim();
+}
+
 export function updateManagedRef(
   repositoryRoot: string,
   expectedHead: string,
@@ -323,6 +349,12 @@ export function planningCommitMessage(changeId: string): string {
   const subject = `Plan ${changeId}`;
   validateCommitSubject(subject);
   return [subject, '', `Change: ${changeId}`, 'Transition: plan'].join('\n');
+}
+
+export function archiveCommitMessage(changeId: string): string {
+  const subject = `Archive ${changeId}`;
+  validateCommitSubject(subject);
+  return [subject, '', `Change: ${changeId}`, 'Transition: archive'].join('\n');
 }
 
 export function managedCommitMessage(

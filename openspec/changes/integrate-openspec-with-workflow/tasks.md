@@ -67,7 +67,7 @@ committed before Task 3.2 starts.
       isolated detached temporary worktree and verify JSON roots, UTC
       destination, delta targets, rebuilt specs, full-index patch paths, modes,
       digests, and partial-failure isolation before real-worktree mutation.
-- [ ] 5.3 Add archive reports, fingerprint rechecks, verified patch application,
+- [x] 5.3 Add archive reports, fingerprint rechecks, verified patch application,
       exact staging/commit authorization, `Transition: archive` trailers,
       fault/concurrency coverage, and workflow-owned already-archived
       detection.
