@@ -22,7 +22,7 @@ RED-only commit cannot satisfy workflow completion checks.
 
 ## 2. Planning Transition Authority
 
-- [ ] 2.1 Add planning-transition contract tests and implement the planning
+- [x] 2.1 Add planning-transition contract tests and implement the planning
       commit command with a content-addressed report, planning-only diff checks,
       exact staging, compare-and-swap commit construction, and exclusive
       `Change:` plus `Transition: plan` trailers.

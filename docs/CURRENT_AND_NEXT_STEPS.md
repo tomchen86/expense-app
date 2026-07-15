@@ -8,15 +8,15 @@ This generated handoff contains semantic project state only. Its sources are the
 
 ## Current Task
 
-`2.1` — Add planning-transition contract tests and implement the planning commit command with a content-addressed report, planning-only diff checks, exact staging, compare-and-swap commit construction, and exclusive `Change:` plus `Transition: plan` trailers.
+`2.2` — Extend hooks and CI for planning introductions/revisions, active-session exclusion, stale-evidence invalidation, exact bootstrap-exception verification, and rejection of code, checkbox, base-spec, archive, other-change, or mixed-trailer diffs.
 
 ## Next Task
 
-`2.2` — Extend hooks and CI for planning introductions/revisions, active-session exclusion, stale-evidence invalidation, exact bootstrap-exception verification, and rejection of code, checkbox, base-spec, archive, other-change, or mixed-trailer diffs.
+`3.1` — Fork the pinned `spec-driven` schema to project-local `expense-app`, add the apply-required guard artifact, configure the project default, and implement strict schema, guard, task, check-ID, path, provenance, and payload validation without changing this change's metadata in the task commit.
 
 ## Current Focus
 
-Add planning-transition contract tests and implement the planning commit command with a content-addressed report, planning-only diff checks, exact staging, compare-and-swap commit construction, and exclusive `Change:` plus `Transition: plan` trailers.
+Extend hooks and CI for planning introductions/revisions, active-session exclusion, stale-evidence invalidation, exact bootstrap-exception verification, and rejection of code, checkbox, base-spec, archive, other-change, or mixed-trailer diffs.
 
 ## Known Blockers
 

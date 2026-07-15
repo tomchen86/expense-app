@@ -16,6 +16,7 @@ import './ci.integration.test.ts';
 import './ci-bootstrap.integration.test.ts';
 import './ai-adapter-evaluation.integration.test.ts';
 import './ignored-state.integration.test.ts';
+import './planning-transition.integration.test.ts';
 import './runner.integration.test.ts';
 import {
   addFixtureScripts,

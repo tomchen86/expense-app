@@ -208,7 +208,10 @@ export function git(repository: string, args: string[]): string {
 }
 
 export function runtimeRoot(repository: string): string {
-  return path.join(repository, '.git/workflow-engine');
+  return path.join(
+    fs.realpathSync(path.join(repository, '.git')),
+    'workflow-engine',
+  );
 }
 
 export function isWorkflowError(error: unknown, code: string): boolean {

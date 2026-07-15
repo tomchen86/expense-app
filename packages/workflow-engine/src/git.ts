@@ -121,6 +121,21 @@ export function fingerprintRepositoryProjection(
     baselineHead,
     statusEntries,
     process.platform !== 'darwin',
+    true,
+  );
+}
+
+export function fingerprintRepositoryWorktree(
+  repositoryRoot: string,
+  baselineHead: string,
+): string {
+  return fingerprintState(
+    repositoryRoot,
+    baselineHead,
+    [],
+    process.platform !== 'darwin',
+    false,
+    true,
   );
 }
 
@@ -129,23 +144,29 @@ function fingerprintState(
   baselineHead: string,
   statusEntries: string[],
   includeVolatileMetadata: boolean,
+  includeIndex: boolean = true,
+  trackedFromBaseline: boolean = false,
 ): string {
   try {
     const digest = crypto.createHash('sha256');
-    const trackedPaths = listTrackedPaths(repositoryRoot);
+    const trackedPaths = trackedFromBaseline
+      ? listTrackedPathsAtCommit(repositoryRoot, baselineHead)
+      : listTrackedPaths(repositoryRoot);
     const changedPaths = listChangedPaths(repositoryRoot, baselineHead);
     const ignoredPaths = listRepositoryIgnoredPaths(repositoryRoot);
-    const indexState = runGit(repositoryRoot, [
-      'diff',
-      '--cached',
-      '--raw',
-      '-z',
-      baselineHead,
-      '--',
-    ]);
-    updateFramed(digest, 'index', indexState);
-    for (const statusEntry of statusEntries) {
-      updateFramed(digest, 'status', statusEntry);
+    if (includeIndex) {
+      const indexState = runGit(repositoryRoot, [
+        'diff',
+        '--cached',
+        '--raw',
+        '-z',
+        baselineHead,
+        '--',
+      ]);
+      updateFramed(digest, 'index', indexState);
+      for (const statusEntry of statusEntries) {
+        updateFramed(digest, 'status', statusEntry);
+      }
     }
 
     for (const trackedPath of trackedPaths) {
@@ -341,6 +362,22 @@ function listControlledUntrackedPaths(repositoryRoot: string): string[] {
 function listTrackedPaths(repositoryRoot: string): string[] {
   return splitNull(
     runGit(repositoryRoot, ['ls-files', '--cached', '-z', '--']),
+  ).map(normalizeChangedPath);
+}
+
+function listTrackedPathsAtCommit(
+  repositoryRoot: string,
+  commit: string,
+): string[] {
+  return splitNull(
+    runGit(repositoryRoot, [
+      'ls-tree',
+      '-r',
+      '--name-only',
+      '-z',
+      commit,
+      '--',
+    ]),
   ).map(normalizeChangedPath);
 }
 

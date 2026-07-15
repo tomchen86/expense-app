@@ -3,6 +3,10 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 import { ExitCode, workflowError } from './errors.ts';
+import {
+  assertPlainDirectory,
+  ensurePlainDirectory,
+} from './filesystem-safety.ts';
 
 export type ContentRecord = {
   schemaVersion: 1;
@@ -17,8 +21,7 @@ export function writeContentRecord(
 ): string {
   const content = `${JSON.stringify(record, null, 2)}\n`;
   const id = digest(content);
-  fs.mkdirSync(directory, { recursive: true });
-  assertPlainDirectory(directory);
+  ensurePlainDirectory(directory);
   const recordPath = path.join(directory, `${id}.json`);
   let descriptor: number | undefined;
   let created = false;
@@ -34,7 +37,7 @@ export function writeContentRecord(
       fs.closeSync(descriptor);
     }
     if (isNodeError(error) && error.code === 'EEXIST') {
-      if (fs.readFileSync(recordPath, 'utf8') === content) {
+      if (readPlainRecordFile(recordPath) === content) {
         return id;
       }
       throw invalidRecord('CONTENT_RECORD_COLLISION');
@@ -58,7 +61,7 @@ export function readContentRecord(
   const recordPath = path.join(directory, `${recordId}.json`);
   let content: string;
   try {
-    content = fs.readFileSync(recordPath, 'utf8');
+    content = readPlainRecordFile(recordPath);
   } catch {
     throw invalidRecord('CONTENT_RECORD_UNREADABLE');
   }
@@ -83,11 +86,18 @@ export function readContentRecord(
   return value as ContentRecord;
 }
 
-function assertPlainDirectory(directory: string): void {
-  const stats = fs.lstatSync(directory, { throwIfNoEntry: false });
-  if (!stats?.isDirectory() || stats.isSymbolicLink()) {
-    throw invalidRecord('CONTENT_RECORD_DIRECTORY_UNSAFE');
+function readPlainRecordFile(recordPath: string): string {
+  const absolute = path.resolve(recordPath);
+  const stats = fs.lstatSync(absolute, { throwIfNoEntry: false });
+  if (
+    !stats?.isFile() ||
+    stats.isSymbolicLink() ||
+    stats.nlink !== 1 ||
+    fs.realpathSync(absolute) !== absolute
+  ) {
+    throw invalidRecord('CONTENT_RECORD_FILE_UNSAFE');
   }
+  return fs.readFileSync(absolute, 'utf8');
 }
 
 function digest(value: string): string {

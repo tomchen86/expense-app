@@ -4,6 +4,7 @@ import path from 'node:path';
 import { loadChangeContract, loadWorkflowConfig } from './contracts.ts';
 import { digestRequiredCheckDefinitions } from './contract-digests.ts';
 import { ExitCode, workflowError } from './errors.ts';
+import { ensurePlainDirectory } from './filesystem-safety.ts';
 import { discoverRepository } from './git.ts';
 import { assertChangeId, assertSessionId, assertTaskId } from './paths.ts';
 import {
@@ -12,6 +13,7 @@ import {
   releaseOwnedLock,
   runtimePaths,
   type WorkflowSession,
+  withRepositoryLifecycleOperation,
   withSessionOperation,
   writeJsonAtomic,
 } from './session-store.ts';
@@ -26,6 +28,29 @@ export function startSession(
   requestedChangeId: string,
   requestedTaskId: string,
 ): WorkflowSession {
+  const initial = inspectSessionStart(cwd, requestedChangeId, requestedTaskId);
+  const runtime = runtimePaths(
+    initial.git.gitCommonDirectory,
+    initial.contract.config.runtimeDirectory,
+  );
+  return withRepositoryLifecycleOperation(runtime, () =>
+    persistSessionStart(
+      inspectSessionStart(cwd, requestedChangeId, requestedTaskId),
+    ),
+  );
+}
+
+function inspectSessionStart(
+  cwd: string,
+  requestedChangeId: string,
+  requestedTaskId: string,
+): {
+  changeId: string;
+  taskId: string;
+  git: ReturnType<typeof discoverRepository>;
+  contract: ReturnType<typeof loadChangeContract>;
+  branch: string;
+} {
   const changeId = assertChangeId(requestedChangeId);
   const taskId = assertTaskId(requestedTaskId);
   const git = discoverRepository(cwd);
@@ -90,14 +115,21 @@ export function startSession(
     );
   }
 
+  return { changeId, taskId, git, contract, branch: git.branch };
+}
+
+function persistSessionStart(
+  inspection: ReturnType<typeof inspectSessionStart>,
+): WorkflowSession {
+  const { changeId, taskId, git, contract, branch } = inspection;
   const policy = contract.guard.tasks[taskId];
   const sessionId = createSessionId();
   const runtime = runtimePaths(
     git.gitCommonDirectory,
     contract.config.runtimeDirectory,
   );
-  fs.mkdirSync(runtime.sessions, { recursive: true });
-  fs.mkdirSync(runtime.locks, { recursive: true });
+  ensurePlainDirectory(runtime.sessions);
+  ensurePlainDirectory(runtime.locks);
 
   const lockPath = path.join(runtime.locks, `${changeId}.lock`);
   let lockDescriptor: number | undefined;
@@ -139,7 +171,7 @@ export function startSession(
     taskId,
     repositoryRoot: git.repositoryRealPath,
     gitCommonDirectory: git.gitCommonDirectory,
-    branch: git.branch,
+    branch,
     baseline: { head: git.head, tree: git.tree },
     artifacts: contract.artifactDigests,
     allowedPaths: [...policy.allowedPaths],

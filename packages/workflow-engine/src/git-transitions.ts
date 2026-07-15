@@ -1,4 +1,8 @@
 import { ExitCode, workflowError } from './errors.ts';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+
 import { listChangedPaths, runGit, runGitWithEnvironment } from './git.ts';
 import { normalizeChangedPath } from './paths.ts';
 
@@ -11,7 +15,11 @@ export function stageExactPaths(
   repositoryRoot: string,
   baselineHead: string,
   expectedPaths: string[],
-): { stagedPaths: string[]; tree: string } {
+): {
+  stagedPaths: string[];
+  tree: string;
+  previousIndexTree: string;
+} {
   if (expectedPaths.length === 0) {
     throw workflowError(
       'EMPTY_FINISH_DIFF',
@@ -41,8 +49,29 @@ export function stageExactPaths(
 
   const previousIndexTree = runGit(repositoryRoot, ['write-tree']).trim();
   const literalPaths = expected.map((entry) => `:(literal)${entry}`);
+  const workflowIndexTree = predictIndexTree(
+    repositoryRoot,
+    baselineHead,
+    previousIndexTree,
+    literalPaths,
+    expected,
+  );
   try {
+    if (runGit(repositoryRoot, ['write-tree']).trim() !== previousIndexTree) {
+      throw workflowError(
+        'STAGING_INDEX_DIVERGED',
+        'The Git index changed before workflow staging; foreign staging was preserved.',
+        ExitCode.staleState,
+      );
+    }
     runGit(repositoryRoot, ['add', '-A', '--', ...literalPaths]);
+    if (runGit(repositoryRoot, ['write-tree']).trim() !== workflowIndexTree) {
+      throw workflowError(
+        'STAGING_INDEX_DIVERGED',
+        'The Git index differs from the isolated workflow projection; foreign staging was preserved.',
+        ExitCode.staleState,
+      );
+    }
     const changedPaths = listChangedPaths(repositoryRoot, baselineHead);
     const stagedPaths = listStagedPaths(repositoryRoot, baselineHead);
     if (
@@ -69,10 +98,103 @@ export function stageExactPaths(
         { details: { unstagedPaths } },
       );
     }
-    return { stagedPaths, tree: runGit(repositoryRoot, ['write-tree']).trim() };
+    return {
+      stagedPaths,
+      tree: workflowIndexTree,
+      previousIndexTree,
+    };
   } catch (error) {
-    runGit(repositoryRoot, ['read-tree', previousIndexTree]);
+    const currentIndexTree = runGit(repositoryRoot, ['write-tree']).trim();
+    if (
+      currentIndexTree !== previousIndexTree &&
+      currentIndexTree !== workflowIndexTree
+    ) {
+      throw workflowError(
+        'STAGING_INDEX_DIVERGED',
+        'The Git index changed during workflow staging; foreign staging was preserved.',
+        ExitCode.staleState,
+        {
+          details: {
+            causeCode: error instanceof Error ? error.name : String(error),
+          },
+        },
+      );
+    }
+    if (currentIndexTree === workflowIndexTree) {
+      runGit(repositoryRoot, ['read-tree', previousIndexTree]);
+    }
     throw error;
+  }
+}
+
+function predictIndexTree(
+  repositoryRoot: string,
+  baselineHead: string,
+  previousIndexTree: string,
+  literalPaths: string[],
+  expectedPaths: string[],
+): string {
+  const temporaryDirectory = fs.mkdtempSync(
+    path.join(os.tmpdir(), 'workflow-index-'),
+  );
+  const indexEnvironment = {
+    GIT_INDEX_FILE: path.join(temporaryDirectory, 'index'),
+  };
+  try {
+    runGitWithEnvironment(
+      repositoryRoot,
+      ['read-tree', previousIndexTree],
+      indexEnvironment,
+    );
+    runGitWithEnvironment(
+      repositoryRoot,
+      ['add', '-A', '--', ...literalPaths],
+      indexEnvironment,
+    );
+    const tree = runGitWithEnvironment(
+      repositoryRoot,
+      ['write-tree'],
+      indexEnvironment,
+    ).trim();
+    const stagedPaths = splitNull(
+      runGitWithEnvironment(
+        repositoryRoot,
+        [
+          'diff',
+          '--cached',
+          '--name-only',
+          '--no-renames',
+          '-z',
+          baselineHead,
+          '--',
+        ],
+        indexEnvironment,
+      ),
+    )
+      .map(normalizeChangedPath)
+      .sort();
+    const unstagedPaths = splitNull(
+      runGitWithEnvironment(
+        repositoryRoot,
+        ['diff', '--name-only', '--no-renames', '-z', '--'],
+        indexEnvironment,
+      ),
+    )
+      .map(normalizeChangedPath)
+      .sort();
+    if (
+      JSON.stringify(stagedPaths) !== JSON.stringify(expectedPaths) ||
+      unstagedPaths.length > 0
+    ) {
+      throw workflowError(
+        'STAGED_PATHS_MISMATCH',
+        'The isolated staging projection did not match the verified paths.',
+        ExitCode.staleState,
+      );
+    }
+    return tree;
+  } finally {
+    fs.rmSync(temporaryDirectory, { recursive: true, force: true });
   }
 }
 
@@ -84,6 +206,7 @@ export function listStagedPaths(
     runGit(repositoryRoot, [
       'diff',
       '--cached',
+      '--ita-visible-in-index',
       '--name-only',
       '--no-renames',
       '-z',
@@ -122,26 +245,59 @@ export function createManagedCommitObject(
   ).trim();
 }
 
+export function createPlanningCommitObject(
+  repositoryRoot: string,
+  tree: string,
+  parent: string,
+  changeId: string,
+  environment: NodeJS.ProcessEnv = process.env,
+): string {
+  const subject = `Plan ${changeId}`;
+  validateCommitSubject(subject);
+  const identity = resolveCommitIdentity(repositoryRoot, environment);
+  return runGitWithEnvironment(
+    repositoryRoot,
+    [
+      'commit-tree',
+      tree,
+      '-p',
+      parent,
+      '-m',
+      subject,
+      '-m',
+      `Change: ${changeId}\nTransition: plan`,
+    ],
+    identity,
+  ).trim();
+}
+
 export function updateManagedRef(
   repositoryRoot: string,
   expectedHead: string,
   commitHash: string,
+  ref = 'HEAD',
 ): void {
   runGit(repositoryRoot, [
     'update-ref',
     '-m',
     'workflow managed commit',
-    'HEAD',
+    ref,
     commitHash,
     expectedHead,
   ]);
-  if (runGit(repositoryRoot, ['rev-parse', 'HEAD']).trim() !== commitHash) {
+  if (runGit(repositoryRoot, ['rev-parse', ref]).trim() !== commitHash) {
     throw workflowError(
       'COMMIT_REF_UPDATE_FAILED',
       'The branch ref did not advance to the authorized commit.',
       ExitCode.staleState,
     );
   }
+}
+
+export function planningCommitMessage(changeId: string): string {
+  const subject = `Plan ${changeId}`;
+  validateCommitSubject(subject);
+  return [subject, '', `Change: ${changeId}`, 'Transition: plan'].join('\n');
 }
 
 export function managedCommitMessage(

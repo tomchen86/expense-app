@@ -29,6 +29,7 @@ import {
 } from './session.ts';
 import { validateManagedDocuments } from './managed-documents.ts';
 import { diagnoseOpenSpec } from './openspec-doctor.ts';
+import { commitPlanningTransition } from './planning-transition.ts';
 
 type CommandResult = Record<string, unknown>;
 
@@ -75,6 +76,13 @@ function dispatch(args: string[], cwd: string): CommandResult {
         artifactDigests: contract.artifactDigests,
       };
     }
+    case 'plan-commit':
+      requireArgumentCount(command, rest, 1, 1);
+      return {
+        command,
+        ok: true,
+        result: commitPlanningTransition(cwd, rest[0]),
+      };
     case 'start': {
       const changeId = rest[0];
       const taskId = optionValue(rest.slice(1), '--task');
@@ -354,6 +362,7 @@ function usageText(): string {
     'Usage:',
     '  pnpm workflow doctor [--json]',
     '  pnpm workflow validate-change <change-id> [--json]',
+    '  pnpm workflow plan-commit <change-id> [--json]',
     '  pnpm workflow start <change-id> --task <task-id> [--json]',
     '  pnpm workflow status [session-id] [--json]',
     '  pnpm workflow check <session-id> [--json]',

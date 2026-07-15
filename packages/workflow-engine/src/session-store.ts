@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 import { ExitCode, workflowError } from './errors.ts';
+import { ensurePlainDirectory } from './filesystem-safety.ts';
 
 export type WorkflowSession = {
   schemaVersion: 1;
@@ -51,7 +52,7 @@ export function withSessionOperation<T>(
   sessionId: string,
   operation: () => T,
 ): T {
-  fs.mkdirSync(runtime.operations, { recursive: true });
+  ensurePlainDirectory(runtime.operations);
   const lockPath = path.join(runtime.operations, `${sessionId}.lock`);
   let descriptor: number | undefined;
   try {
@@ -83,6 +84,103 @@ export function withSessionOperation<T>(
   } finally {
     fs.rmSync(lockPath, { force: true });
   }
+}
+
+export function withRepositoryLifecycleOperation<T>(
+  runtime: ReturnType<typeof runtimePaths>,
+  operation: (assertOwned: () => void) => T,
+): T {
+  ensurePlainDirectory(runtime.operations);
+  const lockPath = path.join(runtime.operations, 'repository-lifecycle.lock');
+  const ownerToken = crypto.randomUUID();
+  const content = `${JSON.stringify({
+    kind: 'repository-lifecycle',
+    ownerToken,
+    pid: process.pid,
+  })}\n`;
+  let descriptor: number | undefined;
+  const assertOwned = () => {
+    if (descriptor === undefined) {
+      throw invalidRepositoryLifecycleLock(
+        'Repository lifecycle lock ownership was lost.',
+      );
+    }
+    const owned = fs.fstatSync(descriptor);
+    const observed = fs.lstatSync(lockPath, { throwIfNoEntry: false });
+    let observedContent: string | undefined;
+    try {
+      observedContent = fs.readFileSync(lockPath, 'utf8');
+    } catch {
+      observedContent = undefined;
+    }
+    if (
+      !observed?.isFile() ||
+      observed.isSymbolicLink() ||
+      observed.dev !== owned.dev ||
+      observed.ino !== owned.ino ||
+      observedContent !== content
+    ) {
+      throw invalidRepositoryLifecycleLock(
+        'Repository lifecycle lock ownership changed during the transition.',
+      );
+    }
+  };
+  try {
+    descriptor = fs.openSync(lockPath, 'wx', 0o600);
+    fs.writeFileSync(descriptor, content, 'utf8');
+    fs.fsyncSync(descriptor);
+  } catch (error) {
+    if (descriptor !== undefined) {
+      fs.closeSync(descriptor);
+      descriptor = undefined;
+    }
+    if (isNodeError(error) && error.code === 'EEXIST') {
+      throw workflowError(
+        'REPOSITORY_LIFECYCLE_CONFLICT',
+        'Another repository lifecycle transition is in progress.',
+        ExitCode.conflict,
+      );
+    }
+    throw error;
+  }
+
+  const release = () => {
+    try {
+      assertOwned();
+    } catch (error) {
+      if (descriptor !== undefined) {
+        fs.closeSync(descriptor);
+        descriptor = undefined;
+      }
+      throw error;
+    }
+    if (descriptor === undefined) {
+      throw invalidRepositoryLifecycleLock(
+        'Repository lifecycle lock ownership was lost.',
+      );
+    }
+    fs.closeSync(descriptor);
+    descriptor = undefined;
+    fs.unlinkSync(lockPath);
+  };
+
+  let result: T;
+  try {
+    result = operation(assertOwned);
+  } catch (error) {
+    release();
+    throw error;
+  }
+  release();
+  return result;
+}
+
+function invalidRepositoryLifecycleLock(message: string) {
+  return workflowError(
+    'REPOSITORY_LIFECYCLE_LOCK_INVALID',
+    message,
+    ExitCode.staleState,
+  );
 }
 
 export function readSessionFile(sessionPath: string): WorkflowSession {
