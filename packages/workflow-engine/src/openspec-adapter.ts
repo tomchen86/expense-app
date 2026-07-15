@@ -8,6 +8,7 @@ import {
   type OpenSpecInstallation,
 } from './openspec-executor.ts';
 import { assertChangeId } from './paths.ts';
+import { parseDoctor, type OpenSpecDoctor } from './openspec-doctor-payload.ts';
 import {
   parseChangeList,
   parseInstructions,
@@ -34,6 +35,7 @@ export type OpenSpecAdapterOptions = {
 
 export type OpenSpecAdapter = {
   version(): '1.6.0';
+  doctor(): OpenSpecDoctor;
   listChanges(): OpenSpecChangeList;
   whichSchema(name: string): OpenSpecSchemaResolution;
   validateSchema(name: string): OpenSpecSchemaValidation;
@@ -57,6 +59,14 @@ export function createOpenSpecAdapter(
 
   return {
     version: () => openspec.version(),
+    doctor: () => {
+      const executed = openspec.doctor();
+      return parseDoctor(
+        executed.value,
+        installation.repositoryRoot,
+        executed.status,
+      );
+    },
     listChanges: () => {
       const changesDirectory = path.join(
         installation.repositoryRoot,
@@ -78,7 +88,7 @@ export function createOpenSpecAdapter(
         openspec.whichSchema(schema.name).value,
         schema,
       );
-      assertSchemaDirectory(installation, schema);
+      assertOpenSpecSchemaDirectory(installation, schema);
       return resolution;
     },
     validateSchema: (name) => {
@@ -87,7 +97,7 @@ export function createOpenSpecAdapter(
         openspec.validateSchema(schema.name).value,
         schema,
       );
-      assertSchemaDirectory(installation, schema);
+      assertOpenSpecSchemaDirectory(installation, schema);
       return validation;
     },
     status: (changeId, schemaName) => {
@@ -173,11 +183,11 @@ function schemaExpectation(
             name,
           ),
         };
-  assertSchemaDirectory(installation, expected);
+  assertOpenSpecSchemaDirectory(installation, expected);
   return expected;
 }
 
-function assertSchemaDirectory(
+export function assertOpenSpecSchemaDirectory(
   installation: OpenSpecInstallation,
   expected: { source: 'package' | 'project'; path: string },
 ): void {

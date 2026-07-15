@@ -23,6 +23,7 @@ import { ExitCode, workflowError } from './errors.ts';
 import { completionDocumentPaths } from './managed-documents.ts';
 import {
   discoverRepository,
+  fingerprintRepositoryProjection,
   fingerprintWorkingState,
   listChangedPaths,
   runGit,
@@ -264,7 +265,7 @@ export function inspectSession(
     artifactDigests,
     changedPaths,
     unexpectedPaths,
-    fingerprint: fingerprintWorkingState(
+    fingerprint: fingerprintRepositoryProjection(
       git.repositoryRoot,
       session.baseline.head,
       git.statusEntries,
@@ -297,7 +298,11 @@ export function executeChecks(
     definition,
     runner: pinCheckRunner(initial.git.repositoryRoot, checkId, definition),
   }));
-  const fingerprint = initial.fingerprint;
+  const fingerprint = fingerprintWorkingState(
+    initial.git.repositoryRoot,
+    initial.session.baseline.head,
+    initial.git.statusEntries,
+  );
   const checks: CheckEvidence[] = [];
   let inspection = initial;
   for (const { checkId, definition, runner } of pinnedChecks) {
@@ -317,7 +322,13 @@ export function executeChecks(
       projectionSourceDigest,
       authorizedTransitionPaths,
     });
-    if (inspection.fingerprint !== fingerprint) {
+    if (
+      fingerprintWorkingState(
+        inspection.git.repositoryRoot,
+        inspection.session.baseline.head,
+        inspection.git.statusEntries,
+      ) !== fingerprint
+    ) {
       throw workflowError(
         'CHECK_MUTATED_WORKTREE',
         `Required check ${checkId} changed the Git working state.`,

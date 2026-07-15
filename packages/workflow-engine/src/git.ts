@@ -105,6 +105,31 @@ export function fingerprintWorkingState(
   baselineHead: string,
   statusEntries: string[],
 ): string {
+  return fingerprintState(repositoryRoot, baselineHead, statusEntries, true);
+}
+
+// macOS may rewrite com.apple.provenance asynchronously without changing the
+// Git projection. Persisted evidence therefore omits tracked and controlled-
+// changed entry ctime only on Darwin; check mutation detection stays strict.
+export function fingerprintRepositoryProjection(
+  repositoryRoot: string,
+  baselineHead: string,
+  statusEntries: string[],
+): string {
+  return fingerprintState(
+    repositoryRoot,
+    baselineHead,
+    statusEntries,
+    process.platform !== 'darwin',
+  );
+}
+
+function fingerprintState(
+  repositoryRoot: string,
+  baselineHead: string,
+  statusEntries: string[],
+  includeVolatileMetadata: boolean,
+): string {
   try {
     const digest = crypto.createHash('sha256');
     const trackedPaths = listTrackedPaths(repositoryRoot);
@@ -125,7 +150,12 @@ export function fingerprintWorkingState(
 
     for (const trackedPath of trackedPaths) {
       updateFramed(digest, 'tracked-path', trackedPath);
-      fingerprintTrackedEntry(digest, repositoryRoot, trackedPath);
+      fingerprintTrackedEntry(
+        digest,
+        repositoryRoot,
+        trackedPath,
+        includeVolatileMetadata,
+      );
     }
 
     for (const changedPath of changedPaths) {
@@ -142,7 +172,7 @@ export function fingerprintWorkingState(
       updateFramed(
         digest,
         'changed-stat',
-        `${stats.mode}:${stats.size}:${stats.mtimeNs}:${stats.ctimeNs}`,
+        fingerprintStats(stats, includeVolatileMetadata),
       );
       if (stats.isSymbolicLink()) {
         updateFramed(digest, 'changed-kind', 'symlink');
@@ -341,18 +371,7 @@ function fingerprintIgnoredEntry(
     updateFramed(digest, 'ignored-kind', 'missing');
     return;
   }
-  updateFramed(
-    digest,
-    'ignored-stat',
-    [
-      stats.dev,
-      stats.ino,
-      stats.mode,
-      stats.size,
-      stats.mtimeNs,
-      stats.ctimeNs,
-    ].join(':'),
-  );
+  updateFramed(digest, 'ignored-stat', fingerprintStats(stats, true));
   if (stats.isSymbolicLink()) {
     updateFramed(digest, 'ignored-kind', 'symlink');
     updateFramed(digest, 'ignored-link', fs.readlinkSync(absolutePath));
@@ -369,6 +388,7 @@ function fingerprintTrackedEntry(
   digest: ReturnType<typeof crypto.createHash>,
   repositoryRoot: string,
   trackedPath: string,
+  includeVolatileMetadata: boolean,
 ): void {
   const absolutePath = path.join(repositoryRoot, trackedPath);
   const stats = fs.lstatSync(absolutePath, {
@@ -382,14 +402,7 @@ function fingerprintTrackedEntry(
   updateFramed(
     digest,
     'tracked-stat',
-    [
-      stats.dev,
-      stats.ino,
-      stats.mode,
-      stats.size,
-      stats.mtimeNs,
-      stats.ctimeNs,
-    ].join(':'),
+    fingerprintStats(stats, includeVolatileMetadata),
   );
   if (stats.isSymbolicLink()) {
     updateFramed(digest, 'tracked-kind', 'symlink');
@@ -402,6 +415,23 @@ function fingerprintTrackedEntry(
   } else {
     throw new Error('unsupported tracked filesystem entry');
   }
+}
+
+function fingerprintStats(
+  stats: fs.BigIntStats,
+  includeVolatileMetadata: boolean,
+): string {
+  return [
+    stats.dev,
+    stats.ino,
+    stats.mode,
+    stats.nlink,
+    stats.uid,
+    stats.gid,
+    stats.size,
+    stats.mtimeNs,
+    ...(includeVolatileMetadata ? [stats.ctimeNs] : []),
+  ].join(':');
 }
 
 function updateFramed(

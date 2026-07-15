@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
@@ -12,17 +14,120 @@ import {
 } from '../src/lifecycle.ts';
 import { hasExactTrailers } from '../src/git-transitions.ts';
 import { renderHandoff } from '../src/handoff.ts';
+import { projectTasksCompleted } from '../src/task-projection.ts';
 import {
   writeImmutableReport,
   type WorkflowReport,
 } from '../src/report-store.ts';
 import { checkSession, getSession, startSession } from '../src/session.ts';
 import {
+  configureChecks,
   createFixtureRepository,
   git,
   isWorkflowError,
   runtimeRoot,
 } from './fixture.ts';
+
+test(
+  'task projection preserves existing extended attributes on macOS',
+  { skip: process.platform !== 'darwin' },
+  () => {
+    const directory = fs.mkdtempSync(
+      path.join(os.tmpdir(), 'workflow-task-projection-xattr-'),
+    );
+    const tasksPath = path.join(directory, 'tasks.md');
+    fs.writeFileSync(tasksPath, '- [ ] 1.1 Demo task\n');
+    try {
+      execFileSync('/usr/bin/xattr', [
+        '-wx',
+        'com.apple.provenance',
+        '0102',
+        tasksPath,
+      ]);
+      const provenance = execFileSync('/usr/bin/xattr', [
+        '-px',
+        'com.apple.provenance',
+        tasksPath,
+      ]);
+
+      projectTasksCompleted(tasksPath, ['1.1']);
+
+      assert.deepEqual(
+        execFileSync('/usr/bin/xattr', [
+          '-px',
+          'com.apple.provenance',
+          tasksPath,
+        ]),
+        provenance,
+      );
+    } finally {
+      fs.rmSync(directory, { recursive: true, force: true });
+    }
+  },
+);
+
+test(
+  'completion evidence remains current after Git-invisible macOS provenance metadata changes',
+  { skip: process.platform !== 'darwin' },
+  () => {
+    const repository = createFixtureRepository();
+    try {
+      git(repository, ['checkout', '-b', 'work/demo-change']);
+      const session = startSession(repository, 'demo-change', '1.1');
+      fs.writeFileSync(path.join(repository, 'src/feature.ts'), 'export {};\n');
+      checkSession(repository, session.sessionId);
+
+      execFileSync('/usr/bin/xattr', [
+        '-wx',
+        'com.apple.provenance',
+        '0102',
+        path.join(repository, 'src/.gitkeep'),
+      ]);
+
+      assert.doesNotThrow(() => completeTask(repository, session.sessionId));
+    } finally {
+      fs.rmSync(repository, { recursive: true, force: true });
+    }
+  },
+);
+
+test('completion evidence becomes stale after ignored content changes', () => {
+  const repository = createFixtureRepository();
+  const ignoredPath = path.join(repository, 'ignored-state.txt');
+  try {
+    fs.appendFileSync(
+      path.join(repository, '.gitignore'),
+      'ignored-state.txt\n',
+    );
+    fs.writeFileSync(ignoredPath, 'before');
+    const stableTime = new Date(1_700_000_000_000);
+    fs.utimesSync(ignoredPath, stableTime, stableTime);
+    configureChecks(
+      repository,
+      {
+        passing: {
+          command: ['node', 'scripts/pass.mjs'],
+          destructiveDatabase: false,
+        },
+      },
+      ['passing'],
+    );
+    git(repository, ['checkout', '-b', 'work/demo-change']);
+    const session = startSession(repository, 'demo-change', '1.1');
+    fs.writeFileSync(path.join(repository, 'src/feature.ts'), 'export {};\n');
+    checkSession(repository, session.sessionId);
+
+    fs.writeFileSync(ignoredPath, 'after!');
+    fs.utimesSync(ignoredPath, stableTime, stableTime);
+
+    assert.throws(
+      () => completeTask(repository, session.sessionId),
+      (error) => isWorkflowError(error, 'CHECK_REPORT_STALE'),
+    );
+  } finally {
+    fs.rmSync(repository, { recursive: true, force: true });
+  }
+});
 
 test('current report authorizes completion, exact staging, and commit', () => {
   const repository = createFixtureRepository();

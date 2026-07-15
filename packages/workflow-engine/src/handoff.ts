@@ -1,7 +1,7 @@
-import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 
+import { AtomicTextSafetyError, replaceTextAtomic } from './atomic-text.ts';
 import {
   loadChangeContract,
   loadWorkflowConfig,
@@ -139,20 +139,18 @@ function writeTextAtomic(filePath: string, content: string): void {
   if (existing && fs.readFileSync(filePath, 'utf8') === content) {
     return;
   }
-  const temporary = `${filePath}.${process.pid}.${crypto.randomUUID()}.tmp`;
-  let descriptor: number | undefined;
   try {
-    descriptor = fs.openSync(temporary, 'wx', existing?.mode ?? 0o644);
-    fs.writeFileSync(descriptor, content, 'utf8');
-    fs.fsyncSync(descriptor);
-    fs.closeSync(descriptor);
-    descriptor = undefined;
-    fs.renameSync(temporary, filePath);
+    replaceTextAtomic(filePath, content, {
+      allowCreate: true,
+      defaultMode: existing?.mode ?? 0o644,
+    });
   } catch (error) {
-    if (descriptor !== undefined) {
-      fs.closeSync(descriptor);
+    if (error instanceof AtomicTextSafetyError) {
+      throw invalidHandoff(
+        'HANDOFF_PATH_UNSAFE',
+        'Managed handoff path is not a plain file.',
+      );
     }
-    fs.rmSync(temporary, { force: true });
     throw error;
   }
 }

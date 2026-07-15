@@ -31,6 +31,13 @@ fs.writeFileSync(${JSON.stringify(capturePath)}, JSON.stringify({
 }));
 if (args[0] === '--version') {
   process.stdout.write('1.6.0\\n');
+} else if (args[0] === 'doctor') {
+  process.stdout.write(JSON.stringify({
+    root: {
+      path: process.cwd(), source: 'nearest', healthy: true, status: []
+    },
+    store: null, references: [], status: []
+  }));
 } else {
   process.stdout.write(JSON.stringify({
     changes: [{
@@ -97,6 +104,27 @@ if (args[0] === '--version') {
     ]) {
       assert.equal(fs.existsSync(capture.environment[key]), false, key);
     }
+
+    const doctor = adapter.doctor();
+    assert.equal(doctor.healthy, true);
+    const doctorCapture = JSON.parse(fs.readFileSync(capturePath, 'utf8'));
+    assert.deepEqual(doctorCapture.args, ['doctor', '--json']);
+    assert.equal(doctorCapture.cwd, fs.realpathSync(repository));
+    assert.equal(doctorCapture.environment.CI, 'true');
+    assert.equal(doctorCapture.environment.OPENSPEC_TELEMETRY, '0');
+    assert.equal(doctorCapture.environment.NODE_OPTIONS, undefined);
+    assert.equal(doctorCapture.environment.PRIVATE_TOKEN, undefined);
+    for (const key of [
+      'HOME',
+      'XDG_CONFIG_HOME',
+      'XDG_DATA_HOME',
+      'CODEX_HOME',
+      'TMPDIR',
+      'TMP',
+      'TEMP',
+    ]) {
+      assert.equal(fs.existsSync(doctorCapture.environment[key]), false, key);
+    }
   } finally {
     if (previousTemporaryDirectory === undefined) {
       delete process.env.TMPDIR;
@@ -129,6 +157,49 @@ test('OpenSpec adapter accepts only the exact installed 1.6.0 package', () => {
   }
 });
 
+test('OpenSpec adapter requires the exact lock provenance and denied build script', () => {
+  const cases = [
+    {
+      file: 'pnpm-workspace.yaml',
+      from: "  '@fission-ai/openspec': false",
+      to: "  '@fission-ai/openspec': true",
+    },
+    {
+      file: 'pnpm-lock.yaml',
+      from: '        specifier: 1.6.0',
+      to: '        specifier: ^1.6.0',
+    },
+    {
+      file: 'pnpm-lock.yaml',
+      from: '    resolution: {integrity: sha512-7yFTQ3hrrk11mQ2ACClNv2gtAN0o116vCgwoiQKmreoB6ambSnrZh7wf2FNFoSDBXHBi9iiCQ7G16fG71ZNppA==}',
+      to: '    resolution: {integrity: sha512-tampered}',
+    },
+    {
+      file: 'pnpm-lock.yaml',
+      from: "  '@fission-ai/openspec@1.6.0': {}",
+      to: "  '@fission-ai/openspec@1.7.0': {}",
+    },
+  ];
+
+  for (const fixture of cases) {
+    const repository = createFakeOpenSpecRepository(
+      "process.stdout.write('1.6.0\\n');",
+    );
+    const filePath = path.join(repository, fixture.file);
+    try {
+      const before = fs.readFileSync(filePath, 'utf8');
+      assert.match(before, new RegExp(escapeRegExp(fixture.from)));
+      fs.writeFileSync(filePath, before.replace(fixture.from, fixture.to));
+      assert.throws(
+        () => resolveOpenSpecInstallation(repository),
+        (error) => isWorkflowError(error, 'OPENSPEC_INSTALLATION_INVALID'),
+      );
+    } finally {
+      fs.rmSync(repository, { recursive: true, force: true });
+    }
+  }
+});
+
 test('OpenSpec adapter probes the runtime version before exposing operations', () => {
   const repository = createFakeOpenSpecRepository(
     "process.stdout.write('{}');",
@@ -137,7 +208,7 @@ test('OpenSpec adapter probes the runtime version before exposing operations', (
   try {
     assert.throws(
       () => createOpenSpecAdapter(repository),
-      (error) => isWorkflowError(error, 'OPENSPEC_OUTPUT_INVALID'),
+      (error) => isWorkflowError(error, 'OPENSPEC_VERSION_MISMATCH'),
     );
   } finally {
     fs.rmSync(repository, { recursive: true, force: true });
@@ -180,6 +251,48 @@ if (args[0] === 'schema' && args[1] === 'validate') {
     ]);
   } finally {
     fs.rmSync(repository, { recursive: true, force: true });
+  }
+});
+
+test('OpenSpec adapter rejects schema payload extras and validity contradictions', () => {
+  const cases = [
+    {
+      body: `
+process.stderr.write('Note: Schema commands are experimental and may change.\\n');
+process.stdout.write(JSON.stringify({
+  name: process.argv[4], source: 'package',
+  path: new URL('../schemas/spec-driven', import.meta.url).pathname,
+  shadows: [], unexpected: true
+}));
+`,
+      invoke: (adapter: ReturnType<typeof createOpenSpecAdapter>) =>
+        adapter.whichSchema('spec-driven'),
+    },
+    {
+      body: `
+process.stderr.write('Note: Schema commands are experimental and may change.\\n');
+process.stdout.write(JSON.stringify({
+  name: process.argv[4],
+  path: new URL('../schemas/spec-driven', import.meta.url).pathname,
+  valid: true,
+  issues: [{ level: 'error', path: 'schema.yaml', message: 'contradiction' }]
+}));
+`,
+      invoke: (adapter: ReturnType<typeof createOpenSpecAdapter>) =>
+        adapter.validateSchema('spec-driven'),
+    },
+  ];
+
+  for (const fixture of cases) {
+    const repository = createFakeOpenSpecRepository(fixture.body);
+    try {
+      assert.throws(
+        () => fixture.invoke(createOpenSpecAdapter(repository)),
+        (error) => isWorkflowError(error, 'OPENSPEC_PAYLOAD_INVALID'),
+      );
+    } finally {
+      fs.rmSync(repository, { recursive: true, force: true });
+    }
   }
 });
 
@@ -453,6 +566,42 @@ function createFakeOpenSpecRepository(
     )}\n`,
   );
   fs.writeFileSync(
+    path.join(repository, 'pnpm-workspace.yaml'),
+    [
+      'packages:',
+      "  - 'packages/*'",
+      '',
+      'allowBuilds:',
+      "  '@fission-ai/openspec': false",
+      '',
+    ].join('\n'),
+  );
+  fs.writeFileSync(
+    path.join(repository, 'pnpm-lock.yaml'),
+    [
+      "lockfileVersion: '9.0'",
+      '',
+      'importers:',
+      '',
+      '  .:',
+      '    devDependencies:',
+      "      '@fission-ai/openspec':",
+      `        specifier: ${versions.declared}`,
+      `        version: ${versions.installed}`,
+      '',
+      'packages:',
+      '',
+      "  '@fission-ai/openspec@1.6.0':",
+      '    resolution: {integrity: sha512-7yFTQ3hrrk11mQ2ACClNv2gtAN0o116vCgwoiQKmreoB6ambSnrZh7wf2FNFoSDBXHBi9iiCQ7G16fG71ZNppA==}',
+      '    hasBin: true',
+      '',
+      'snapshots:',
+      '',
+      `  '@fission-ai/openspec@${versions.installed}': {}`,
+      '',
+    ].join('\n'),
+  );
+  fs.writeFileSync(
     path.join(packageDirectory, 'package.json'),
     `${JSON.stringify(
       {
@@ -483,4 +632,8 @@ function isInside(root: string, target: string): boolean {
     !relative.startsWith(`..${path.sep}`) &&
     !path.isAbsolute(relative)
   );
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }

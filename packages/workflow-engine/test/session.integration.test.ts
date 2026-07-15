@@ -6,6 +6,7 @@ import test from 'node:test';
 
 import { WorkflowError } from '../src/errors.ts';
 import { abortSession, checkSession, startSession } from '../src/session.ts';
+import './atomic-text.test.ts';
 import './completion.integration.test.ts';
 import './issues.integration.test.ts';
 import './handoff.integration.test.ts';

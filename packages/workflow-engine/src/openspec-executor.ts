@@ -5,13 +5,19 @@ import path from 'node:path';
 import { ExitCode, WorkflowError, workflowError } from './errors.ts';
 import { createTrustedExecutionEnvironment } from './execution-environment.ts';
 import { resolveDeclaredPackage } from './package-closure.ts';
+import {
+  OPENSPEC_PACKAGE_NAME,
+  OPENSPEC_PACKAGE_VERSION,
+  verifyOpenSpecSupplyChain,
+  type OpenSpecSupplyChainProvenance,
+} from './openspec-provenance.ts';
 
-const PACKAGE_NAME = '@fission-ai/openspec';
-const PINNED_OPENSPEC_VERSION = '1.6.0';
+const PACKAGE_NAME = OPENSPEC_PACKAGE_NAME;
+export const PINNED_OPENSPEC_VERSION = OPENSPEC_PACKAGE_VERSION;
 const OPENSPEC_SCHEMA_DIAGNOSTIC =
   'Note: Schema commands are experimental and may change.\n';
 
-export type OpenSpecInstallation = {
+export type OpenSpecInstallation = OpenSpecSupplyChainProvenance & {
   repositoryRoot: string;
   packageDirectory: string;
   binPath: string;
@@ -20,6 +26,7 @@ export type OpenSpecInstallation = {
 
 type OpenSpecOperation =
   | 'version'
+  | 'doctor'
   | 'list-changes'
   | 'schema-which'
   | 'schema-validate'
@@ -35,6 +42,7 @@ export type OpenSpecProcessOptions = {
 
 export type OpenSpecProcess = {
   version(): '1.6.0';
+  doctor(): ProcessDocument;
   listChanges(): ProcessDocument;
   whichSchema(name: string): ProcessDocument;
   validateSchema(name: string): ProcessDocument;
@@ -65,6 +73,7 @@ export function resolveOpenSpecInstallation(
     if (developmentDependencies[PACKAGE_NAME] !== PINNED_OPENSPEC_VERSION) {
       throw new Error('OpenSpec dependency is not pinned exactly');
     }
+    const provenance = verifyOpenSpecSupplyChain(root);
     const resolved = resolveDeclaredPackage(
       root,
       rootManifestPath,
@@ -92,6 +101,7 @@ export function resolveOpenSpecInstallation(
     const binPath = fs.realpathSync(unresolvedBinPath);
     assertInside(packageDirectory, binPath);
     return {
+      ...provenance,
       repositoryRoot: root,
       packageDirectory,
       binPath,
@@ -119,6 +129,7 @@ export function createOpenSpecProcess(
   const executor = new OpenSpecExecutor(installation, options);
   return {
     version: () => executor.version(),
+    doctor: () => executor.json('doctor', ['doctor', '--json'], '', [0, 1]),
     listChanges: () =>
       executor.json(
         'list-changes',
@@ -208,8 +219,22 @@ class OpenSpecExecutor {
 
   version(): '1.6.0' {
     const result = this.execute('version', ['--version'], '', [0]);
-    if (!/^1\.6\.0(?:\r?\n)?$/.test(result.stdout)) {
+    const match = /^(\d+\.\d+\.\d+)(?:\r?\n)?$/.exec(result.stdout);
+    if (!match) {
       throw outputInvalid('version');
+    }
+    if (match[1] !== PINNED_OPENSPEC_VERSION) {
+      throw workflowError(
+        'OPENSPEC_VERSION_MISMATCH',
+        'The project-local OpenSpec runtime version differs from the exact repository pin.',
+        ExitCode.unsafeEnvironment,
+        {
+          details: {
+            expectedVersion: PINNED_OPENSPEC_VERSION,
+            observedVersion: match[1],
+          },
+        },
+      );
     }
     return PINNED_OPENSPEC_VERSION;
   }

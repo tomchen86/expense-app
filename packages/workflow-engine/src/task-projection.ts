@@ -1,6 +1,7 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 
+import { AtomicTextSafetyError, replaceTextAtomic } from './atomic-text.ts';
 import { ExitCode, workflowError } from './errors.ts';
 
 export function projectTasksCompleted(
@@ -24,7 +25,7 @@ export function projectTasksCompleted(
     after = after.replace(unchecked, '$1x]$2');
   }
 
-  writeTextAtomic(tasksPath, after);
+  replaceTaskTextAtomic(tasksPath, after);
   return { before, after };
 }
 
@@ -81,28 +82,20 @@ export function restoreTaskProjection(
   if (fs.readFileSync(tasksPath, 'utf8') !== projected) {
     throw invalidProjection();
   }
-  writeTextAtomic(tasksPath, original);
+  replaceTaskTextAtomic(tasksPath, original);
 }
 
-function writeTextAtomic(filePath: string, content: string): void {
+function replaceTaskTextAtomic(filePath: string, content: string): void {
   const stats = fs.lstatSync(filePath);
   if (!stats.isFile() || stats.isSymbolicLink()) {
     throw invalidProjection();
   }
-  const temporaryPath = `${filePath}.${process.pid}.${crypto.randomUUID()}.tmp`;
-  let descriptor: number | undefined;
   try {
-    descriptor = fs.openSync(temporaryPath, 'wx', stats.mode & 0o777);
-    fs.writeFileSync(descriptor, content, 'utf8');
-    fs.fsyncSync(descriptor);
-    fs.closeSync(descriptor);
-    descriptor = undefined;
-    fs.renameSync(temporaryPath, filePath);
+    replaceTextAtomic(filePath, content);
   } catch (error) {
-    if (descriptor !== undefined) {
-      fs.closeSync(descriptor);
+    if (error instanceof AtomicTextSafetyError) {
+      throw invalidProjection();
     }
-    fs.rmSync(temporaryPath, { force: true });
     throw error;
   }
 }

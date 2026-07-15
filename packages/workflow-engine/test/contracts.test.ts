@@ -19,6 +19,7 @@ import {
 import { parseTasks } from '../src/contracts.ts';
 import './git-security.test.ts';
 import './openspec-adapter.integration.test.ts';
+import './openspec-doctor.integration.test.ts';
 
 test('runner security suite is portable to the package working directory', () => {
   execFileSync(

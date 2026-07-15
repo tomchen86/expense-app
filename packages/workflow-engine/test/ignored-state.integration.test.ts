@@ -1,9 +1,15 @@
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
+import {
+  discoverRepository,
+  fingerprintRepositoryProjection,
+  fingerprintWorkingState,
+} from '../src/git.ts';
 import { checkSession, startSession } from '../src/session.ts';
 import {
   configureChecks,
@@ -11,6 +17,90 @@ import {
   git,
   isWorkflowError,
 } from './fixture.ts';
+
+test(
+  'working-state fingerprints ignore Git-invisible macOS provenance metadata',
+  { skip: process.platform !== 'darwin' },
+  () => {
+    const repository = createFixtureRepository();
+    try {
+      git(repository, ['checkout', '-b', 'work/demo-change']);
+      const targetPath = path.join(repository, 'src/.gitkeep');
+      const before = discoverRepository(repository);
+      const strictFingerprint = fingerprintWorkingState(
+        repository,
+        before.head,
+        before.statusEntries,
+      );
+      const projectionFingerprint = fingerprintRepositoryProjection(
+        repository,
+        before.head,
+        before.statusEntries,
+      );
+
+      execFileSync('/usr/bin/xattr', [
+        '-wx',
+        'com.apple.provenance',
+        '0102',
+        targetPath,
+      ]);
+
+      const after = discoverRepository(repository);
+      assert.notEqual(
+        fingerprintWorkingState(repository, after.head, after.statusEntries),
+        strictFingerprint,
+      );
+      assert.equal(
+        fingerprintRepositoryProjection(
+          repository,
+          after.head,
+          after.statusEntries,
+        ),
+        projectionFingerprint,
+      );
+    } finally {
+      fs.rmSync(repository, { recursive: true, force: true });
+    }
+  },
+);
+
+test(
+  'required checks cannot hide a macOS provenance metadata mutation',
+  { skip: process.platform !== 'darwin' },
+  () => {
+    const repository = createFixtureRepository();
+    const targetPath = path.join(repository, 'src/.gitkeep');
+    try {
+      fs.writeFileSync(
+        path.join(repository, 'scripts/set-provenance.mjs'),
+        [
+          "import { execFileSync } from 'node:child_process';",
+          "execFileSync('/usr/bin/xattr', ['-wx', 'com.apple.provenance', '0102', process.argv[2]]);",
+          '',
+        ].join('\n'),
+      );
+      configureChecks(
+        repository,
+        {
+          mutating: {
+            command: ['node', 'scripts/set-provenance.mjs', targetPath],
+            destructiveDatabase: false,
+          },
+        },
+        ['mutating'],
+      );
+      git(repository, ['checkout', '-b', 'work/demo-change']);
+      const session = startSession(repository, 'demo-change', '1.1');
+
+      assert.throws(
+        () => checkSession(repository, session.sessionId),
+        (error) => isWorkflowError(error, 'CHECK_MUTATED_WORKTREE'),
+      );
+    } finally {
+      fs.rmSync(repository, { recursive: true, force: true });
+    }
+  },
+);
 
 test('passing checks cannot mutate repository-ignored files', () => {
   const repository = createFixtureRepository();

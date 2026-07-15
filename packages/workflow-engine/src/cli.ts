@@ -28,6 +28,7 @@ import {
   startSession,
 } from './session.ts';
 import { validateManagedDocuments } from './managed-documents.ts';
+import { diagnoseOpenSpec } from './openspec-doctor.ts';
 
 type CommandResult = Record<string, unknown>;
 
@@ -268,6 +269,7 @@ function dispatch(args: string[], cwd: string): CommandResult {
 function doctor(cwd: string): CommandResult {
   const git = discoverRepository(cwd);
   const config = loadWorkflowConfig(git.repositoryRoot);
+  const openspec = diagnoseOpenSpec(git.repositoryRoot);
   const warnings: Array<{ code: string; message: string }> = [];
 
   if (!git.branch) {
@@ -291,6 +293,14 @@ function doctor(cwd: string): CommandResult {
         'openspec/specs does not exist yet; migrate accepted legacy requirements before retiring REQUIREMENT_LOG.md.',
     });
   }
+  for (const diagnostic of openspec.diagnostics) {
+    if (diagnostic.severity !== 'info') {
+      warnings.push({
+        code: diagnostic.code,
+        message: diagnostic.message,
+      });
+    }
+  }
 
   return {
     command: 'doctor',
@@ -310,6 +320,7 @@ function doctor(cwd: string): CommandResult {
       protectedBranches: config.protectedBranches,
       branchTemplate: config.branchTemplate,
     },
+    openspec,
     retainedSpectraUsed: false,
     activeSessionCount: listSessions(cwd).filter(
       (session) => session.state === 'active',

@@ -134,6 +134,7 @@ export function parseSchemaResolution(
   const payload = record(value);
   const expectedPath = fs.realpathSync(expected.path);
   if (
+    !hasExactKeys(payload, ['name', 'path', 'shadows', 'source']) ||
     payload.name !== expected.name ||
     payload.source !== expected.source ||
     payload.path !== expectedPath ||
@@ -152,6 +153,7 @@ export function parseSchemaValidation(
   const payload = record(value);
   const expectedPath = fs.realpathSync(expected.path);
   if (
+    !hasExactKeys(payload, ['issues', 'name', 'path', 'valid']) ||
     payload.name !== expected.name ||
     payload.path !== expectedPath ||
     typeof payload.valid !== 'boolean' ||
@@ -159,11 +161,15 @@ export function parseSchemaValidation(
   ) {
     throw invalidPayload();
   }
+  const issues = payload.issues.map(parseSchemaIssue);
+  if (payload.valid !== (issues.length === 0)) {
+    throw invalidPayload();
+  }
   return {
     name: expected.name,
     path: expectedPath,
     valid: payload.valid,
-    issues: payload.issues.map(parseSchemaIssue),
+    issues,
   };
 }
 
@@ -357,4 +363,15 @@ export function parseValidation(
     throw invalidPayload();
   }
   return { valid: passed === items.length, items, root };
+}
+
+function hasExactKeys(
+  value: Record<string, unknown>,
+  expected: string[],
+): boolean {
+  const keys = Object.keys(value);
+  return (
+    keys.length === expected.length &&
+    expected.every((key) => Object.hasOwn(value, key))
+  );
 }

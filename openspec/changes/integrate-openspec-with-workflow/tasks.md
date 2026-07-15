@@ -16,7 +16,7 @@ RED-only commit cannot satisfy workflow completion checks.
       adapter with exact binary resolution, isolated environment,
       timeout/output limits, strict JSON/stderr handling, and canonical
       root/path validation.
-- [ ] 1.3 Extend workflow doctor with pinned-version, package provenance,
+- [x] 1.3 Extend workflow doctor with pinned-version, package provenance,
       root/store, schema-payload, and OpenSpec diagnostics without trusting
       process exit status alone.
 

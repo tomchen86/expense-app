@@ -8,15 +8,15 @@ This generated handoff contains semantic project state only. Its sources are the
 
 ## Current Task
 
-`1.3` — Extend workflow doctor with pinned-version, package provenance, root/store, schema-payload, and OpenSpec diagnostics without trusting process exit status alone.
+`2.1` — Add planning-transition contract tests and implement the planning commit command with a content-addressed report, planning-only diff checks, exact staging, compare-and-swap commit construction, and exclusive `Change:` plus `Transition: plan` trailers.
 
 ## Next Task
 
-`2.1` — Add planning-transition contract tests and implement the planning commit command with a content-addressed report, planning-only diff checks, exact staging, compare-and-swap commit construction, and exclusive `Change:` plus `Transition: plan` trailers.
+`2.2` — Extend hooks and CI for planning introductions/revisions, active-session exclusion, stale-evidence invalidation, exact bootstrap-exception verification, and rejection of code, checkbox, base-spec, archive, other-change, or mixed-trailer diffs.
 
 ## Current Focus
 
-Extend workflow doctor with pinned-version, package provenance, root/store, schema-payload, and OpenSpec diagnostics without trusting process exit status alone.
+Add planning-transition contract tests and implement the planning commit command with a content-addressed report, planning-only diff checks, exact staging, compare-and-swap commit construction, and exclusive `Change:` plus `Transition: plan` trailers.
 
 ## Known Blockers
 
