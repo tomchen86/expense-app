@@ -20,6 +20,7 @@
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
+    "@fission-ai/openspec": "1.6.0",
     "@typescript/native": "npm:typescript@^7.0.2",
     "eslint": "10.6.0",
     "eslint-config-prettier": "^10.1.8",

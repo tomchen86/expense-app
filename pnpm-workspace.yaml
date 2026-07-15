@@ -13,6 +13,9 @@ overrides:
 enableGlobalVirtualStore: false
 
 allowBuilds:
+  # OpenSpec's postinstall only prints an optional shell-completion hint; the
+  # workflow uses the packaged CLI and deliberately does not execute it.
+  '@fission-ai/openspec': false
   '@swc/core': true
   detox: true
   dtrace-provider: false

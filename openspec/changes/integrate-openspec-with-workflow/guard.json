@@ -1,0 +1,160 @@
+{
+  "schemaVersion": 1,
+  "changeId": "integrate-openspec-with-workflow",
+  "tasks": {
+    "1.1": {
+      "allowedPaths": ["packages/workflow-engine/**"],
+      "requiredChecks": [
+        "workflow-tests",
+        "workflow-typecheck",
+        "workflow-lint",
+        "workflow-format"
+      ]
+    },
+    "1.2": {
+      "allowedPaths": ["packages/workflow-engine/**"],
+      "requiredChecks": [
+        "workflow-tests",
+        "workflow-typecheck",
+        "workflow-lint",
+        "workflow-format"
+      ]
+    },
+    "1.3": {
+      "allowedPaths": ["packages/workflow-engine/**"],
+      "requiredChecks": [
+        "workflow-tests",
+        "workflow-typecheck",
+        "workflow-lint",
+        "workflow-format"
+      ]
+    },
+    "2.1": {
+      "allowedPaths": ["packages/workflow-engine/**", "workflow/**"],
+      "requiredChecks": [
+        "workflow-tests",
+        "workflow-typecheck",
+        "workflow-lint",
+        "workflow-format"
+      ]
+    },
+    "2.2": {
+      "allowedPaths": [
+        "packages/workflow-engine/**",
+        "workflow/**",
+        ".husky/**",
+        ".github/workflows/**",
+        ".github/CODEOWNERS"
+      ],
+      "requiredChecks": [
+        "workflow-tests",
+        "workflow-typecheck",
+        "workflow-lint",
+        "workflow-format"
+      ]
+    },
+    "3.1": {
+      "allowedPaths": [
+        "packages/workflow-engine/**",
+        "workflow/**",
+        "openspec/config.yaml",
+        "openspec/schemas/expense-app/**"
+      ],
+      "requiredChecks": [
+        "workflow-tests",
+        "workflow-typecheck",
+        "workflow-lint",
+        "workflow-format"
+      ]
+    },
+    "3.2": {
+      "allowedPaths": ["packages/workflow-engine/**", "workflow/**"],
+      "requiredChecks": [
+        "workflow-tests",
+        "workflow-typecheck",
+        "workflow-lint",
+        "workflow-format"
+      ]
+    },
+    "4.1": {
+      "allowedPaths": [
+        "packages/workflow-engine/**",
+        "workflow/**",
+        ".codex/skills/openspec-explore/**",
+        ".codex/skills/openspec-propose/**"
+      ],
+      "requiredChecks": [
+        "workflow-tests",
+        "workflow-typecheck",
+        "workflow-lint",
+        "workflow-format"
+      ]
+    },
+    "5.1": {
+      "allowedPaths": ["packages/workflow-engine/**", "workflow/**"],
+      "requiredChecks": [
+        "workflow-tests",
+        "workflow-typecheck",
+        "workflow-lint",
+        "workflow-format"
+      ]
+    },
+    "5.2": {
+      "allowedPaths": ["packages/workflow-engine/**", "workflow/**"],
+      "requiredChecks": [
+        "workflow-tests",
+        "workflow-typecheck",
+        "workflow-lint",
+        "workflow-format"
+      ]
+    },
+    "5.3": {
+      "allowedPaths": ["packages/workflow-engine/**", "workflow/**"],
+      "requiredChecks": [
+        "workflow-tests",
+        "workflow-typecheck",
+        "workflow-lint",
+        "workflow-format"
+      ]
+    },
+    "6.1": {
+      "allowedPaths": [
+        "packages/workflow-engine/**",
+        "workflow/**",
+        ".codex/skills/openspec-explore/**",
+        ".codex/skills/openspec-propose/**",
+        ".husky/**",
+        ".github/workflows/workflow-assurance.yml",
+        ".github/CODEOWNERS"
+      ],
+      "requiredChecks": [
+        "workflow-tests",
+        "workflow-typecheck",
+        "workflow-lint",
+        "workflow-format"
+      ]
+    },
+    "6.2": {
+      "allowedPaths": ["packages/workflow-engine/**", "workflow/**"],
+      "requiredChecks": [
+        "workflow-tests",
+        "workflow-typecheck",
+        "workflow-lint",
+        "workflow-format"
+      ]
+    },
+    "7.1": {
+      "allowedPaths": [
+        "AGENTS.md",
+        "docs/CHANGELOG.md",
+        "docs/CURRENT_AND_NEXT_STEPS.md",
+        "docs/DOCUMENT_STRUCTURE_GUIDE.md",
+        "docs/README.md",
+        "docs/ROADMAP.md",
+        "docs/WORKFLOW.md",
+        "docs/planning/PLAN-OPENSPEC-WORKFLOW-INTEGRATION.md"
+      ],
+      "requiredChecks": ["managed-documents", "workflow-format"]
+    }
+  }
+}
