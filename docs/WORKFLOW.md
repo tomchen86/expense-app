@@ -1,6 +1,6 @@
 # Repository Workflow
 
-_Last reviewed: July 15, 2026_
+_Last reviewed: July 16, 2026_
 
 This repository plans changes with OpenSpec and executes them with the
 repository-owned `pnpm workflow` engine. Spectra is retained only for
@@ -22,6 +22,19 @@ compatibility and historical reference; it is not an execution path.
 Markdown does not authorize completion. A checked task, handoff update, staged
 index, or commit is valid only when the workflow engine produces it from
 current evidence.
+
+## Managed Transition Matrix
+
+| Kind    | Exact trailers                           | Public authority                          |
+| ------- | ---------------------------------------- | ----------------------------------------- |
+| Task    | `Change: <id>` and `Task: <task-id>`     | session `complete-task`/`finish`/`commit` |
+| Plan    | `Change: <id>` and `Transition: plan`    | `pnpm workflow plan-commit <id>`          |
+| Archive | `Change: <id>` and `Transition: archive` | `pnpm workflow archive <id>`              |
+
+The forms are mutually exclusive. A plan or archive commit has no `Task:`
+trailer, a task commit has no `Transition:` trailer, and none may be mixed with
+extra managed trailers. Do not hand-author the trailers or use raw `git commit`
+for one of these transitions.
 
 ## Before Starting
 
@@ -45,6 +58,53 @@ current evidence.
 `doctor` is diagnostic. It can exit successfully while reporting warnings, so
 read its output. A successful diagnostic does not grant permission to skip any
 later transition.
+
+### Bootstrap and routine maintenance
+
+Run `pnpm install` from the repository root to install the exact lockfile and
+the repository hooks through the root `prepare` script. Do not substitute a
+global or floating OpenSpec binary. After install or toolchain maintenance,
+run:
+
+```bash
+pnpm workflow doctor --json
+pnpm workflow codex-assets check --json
+pnpm workflow documents validate --json
+```
+
+Treat dependency, schema provenance, generated-asset, hook, or managed-document
+drift as a reviewed change. Remote repository rules remain maintainer-owned and
+must be verified separately; a local hook or checked-in workflow file does not
+prove that `workflow-assurance` is required for merge.
+
+## Planning Lifecycle
+
+OpenSpec owns proposal, design, delta-spec, task, and artifact-graph creation.
+It does not authorize implementation or Git transitions. Create or revise the
+artifacts on the exact `work/<change-id>` branch, keep every task unchecked,
+then submit the planning-only diff with:
+
+```bash
+pnpm workflow validate-change <change-id> --json
+pnpm workflow plan-commit <change-id> --json
+```
+
+`plan-commit` rejects implementation files, normative base specs, archives,
+task-checkbox changes, an active session, wrong branches, and unrelated
+planning paths. It validates the pinned OpenSpec graph and repository contract,
+records current evidence, stages the exact planning paths, and creates the plan
+form from the transition matrix. A later planning revision uses the same
+command and invalidates stale task evidence.
+
+Repository planning assets are limited to `.codex/skills/openspec-explore` and
+`.codex/skills/openspec-propose`, with reviewed prompt copies and a digest
+manifest under `workflow/codex-assets/`. As observed in the Codex session on
+July 16, 2026, these repository-local skills were present and passed asset
+validation but were not surfaced in the session's available-skill catalog.
+Discovery and invocation syntax therefore remain unproven. Do not claim a
+slash command or other invocation unless the running Codex UI actually exposes
+it. Use the pinned OpenSpec planning interface directly when necessary, and
+record a real discovery smoke test in the post-merge pilot.
 
 ## Managed Task Lifecycle
 
@@ -124,6 +184,30 @@ pnpm workflow abort <session-id> --reason "Concrete reason" --json
 Abort is available only before the session has a completion, finish, or commit
 report. It records the reason and releases the session; it does not discard or
 reset working-tree changes.
+
+## Archive Lifecycle
+
+Archive is a separate managed transition, not a synthetic task. Every task
+must already be completed by exactly one canonical task commit reachable from
+the first configured protected branch. There must be no active session or
+unowned worktree/index change. After the task commits have been merged into
+that configured base, create a clean archive branch from the updated base and
+run:
+
+```bash
+pnpm workflow validate-change <change-id> --json
+pnpm workflow archive <change-id> --json
+```
+
+The engine runs the exact pinned OpenSpec archive operation only in a detached
+temporary worktree. It validates the returned JSON and roots, archive date,
+delta outcomes, rebuilt specs, modes, digests, and exact patch before touching
+the real worktree. It then compare-and-swap commits the archive form from the
+transition matrix. A repeated `archive` call is an idempotency check: it may
+return only the one already-archived identity accepted by the engine.
+
+Do not run `openspec archive` directly, manually move the change directory,
+stage an archive, or use an OpenSpec apply/sync/bulk lifecycle interface.
 
 ## Pull Request Assurance
 
@@ -216,9 +300,113 @@ Treat a nonzero exit as a stop condition. Correct the underlying input and
 produce fresh evidence; do not bypass hooks, edit reports, or manually perform
 the rejected transition.
 
+## Recovery and Rollback
+
+- If implementation changes after `check`, rerun `check`; old evidence is
+  intentionally stale.
+- If `finish` fails, inspect `git status` and `workflow status`, correct only
+  the authorized input, and rerun the managed transition. Do not reset, stash,
+  hand-stage, edit reports, or create a replacement commit.
+- If commit ref advancement is interrupted, rerun the same managed command.
+  The engine reconciles only the exact report/tree/commit identity.
+- If planning or archive validation fails, preserve the error and worktree
+  state. Archive upstream failures remain isolated; real-worktree drift or an
+  ownership mismatch is a stop condition, not permission for manual repair.
+- Before a successful real pilot, rollback of this integration requires a
+  separately reviewed logical revert. Keep OpenSpec artifacts readable as
+  Markdown/JSON, do not archive a partial migration, do not delete user/global
+  state, and do not reactivate Spectra.
+- After the pilot, change OpenSpec, schema, workflow policy, or generated-asset
+  contracts only through a new proposal with compatibility tests.
+
+## OpenSpec Upgrade Procedure
+
+Every OpenSpec upgrade is a separate reviewed change. In that change:
+
+1. Update `@fission-ai/openspec` to one exact version in `package.json` and the
+   matching integrity-pinned `pnpm-lock.yaml` resolution. Keep
+   `allowBuilds['@fission-ai/openspec']` explicitly `false`.
+2. Inspect the installed public CLI and packaged `schemas/spec-driven` source.
+   Review and update the `expense-app` schema fork and
+   `openspec/schemas/expense-app/provenance.json`; do not deep-import internals
+   or copy the archive merge implementation.
+3. Regenerate and compare the planning-only Codex assets:
+
+   ```bash
+   pnpm workflow codex-assets generate --json
+   pnpm workflow codex-assets check --json
+   ```
+
+4. Run `pnpm workflow doctor --json`, validate every affected active change,
+   and run the workflow tests, typecheck, lint, and format checks through the
+   change's registered checks.
+5. Require CI to recompute dependency, schema provenance, generated assets,
+   planning, tasks, and archive replay from Git. Do not weaken a validator to
+   accept unexplained upstream drift.
+
+## Maintainer-Owned Post-Merge Pilot
+
+The disposable repository rehearsal proves the implementation path but is not
+the real pilot. Support remains undeclared until a maintainer performs this
+gate after the integration is merged and reachable from the configured base:
+
+1. Update the configured base locally and create a new small, non-database
+   OpenSpec change with one task and a harmless, tightly scoped repository
+   change. Use a new `work/<pilot-change-id>` branch. Create planning artifacts
+   with the pinned OpenSpec interface; use a Codex skill only if that running UI
+   visibly exposes it.
+2. Validate its complete planning tree and create the plan commit:
+
+   ```bash
+   pnpm workflow validate-change <pilot-change-id> --json
+   pnpm workflow plan-commit <pilot-change-id> --json
+   ```
+
+3. Execute its one task with the full managed sequence:
+
+   ```bash
+   pnpm workflow start <pilot-change-id> --task <task-id> --json
+   pnpm workflow check <session-id> --json
+   pnpm workflow complete-task <session-id> --json
+   pnpm workflow finish <session-id> --json
+   pnpm workflow commit <session-id> --message "Complete pilot task" --json
+   ```
+
+   Record the semantic change/task IDs, exact commands, check outcomes, and
+   observed Codex skill-discovery surface in the pilot review; do not put
+   commit hashes in the semantic handoff.
+
+4. Merge the task commit into the configured base through normal review, then
+   create a fresh archive branch from the updated base and run the following
+   command twice:
+
+   ```bash
+   pnpm workflow archive <pilot-change-id> --json
+   ```
+
+   The second result must be `already-archived` for the same identity.
+
+5. Open the archive change for review and require the real
+   `workflow-assurance` PR check. For a local replay, pass the exact archive
+   parent and archive head:
+
+   ```bash
+   pnpm workflow ci --base <base-commit> --head <head-commit> --json
+   ```
+
+6. Verify that CI succeeds without developer runtime reports and that only the
+   UTC date prefix varies if the replay crosses a day. Declare support only
+   after all results are recorded and the required remote rule is confirmed.
+
+Do not perform this pilot inside the integration branch, describe the
+disposable rehearsal as the pilot, or invent a Codex invocation the UI did not
+surface.
+
 ## Retained Legacy Material
 
 `docs/UPDATE_CHECKLIST.md`, older planning/status/log documents, and the
 retained Spectra installation are historical or compatibility inputs. They do
 not override this workflow. Moving, deleting, or archiving retained legacy
-documents requires separate explicit maintainer approval.
+documents requires separate explicit maintainer approval. Spectra is never a
+fallback when OpenSpec or the workflow rejects a transition, and rollback does
+not reactivate it.

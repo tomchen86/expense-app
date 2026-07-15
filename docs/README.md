@@ -35,7 +35,19 @@ or deleting the legacy file still requires separate maintainer approval.
 - `docs/research/<topic>.md` is background material, never current truth.
 - Existing `planning/`, `status/`, and `logs/` files are legacy inputs until
   individually migrated. Do not infer current state from them.
-- Spectra remains installed but is not used by the repository workflow.
+- Spectra remains installed for compatibility/history but is never invoked or
+  used as fallback lifecycle authority.
+
+## OpenSpec and Codex Status
+
+The repository pins OpenSpec and provides two planning-only Codex assets:
+`openspec-explore` and `openspec-propose`. Their checked files and manifest are
+repository inputs, not evidence that a particular Codex installation discovers
+or exposes them. The July 16, 2026 Codex session did not surface them in its
+available-skill catalog, so repository-local discovery remains a post-merge
+pilot gate. Follow `WORKFLOW.md` for supported planning, task, archive,
+upgrade, recovery, and pilot commands; do not infer an invocation syntax from a
+filename.
 
 ## Target Structure
 

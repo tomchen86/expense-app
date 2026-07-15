@@ -8,7 +8,7 @@ This generated handoff contains semantic project state only. Its sources are the
 
 ## Current Task
 
-`7.1` — Update active repository guidance, the task/plan/archive trailer matrix, OpenSpec upgrade procedure, observed Codex discovery status, Spectra compatibility boundary, semantic handoff, and exact instructions for the separate post-merge pilot without commit hashes or unsupported invocation claims.
+None — all tasks are complete.
 
 ## Next Task
 
@@ -16,7 +16,7 @@ None.
 
 ## Current Focus
 
-Update active repository guidance, the task/plan/archive trailer matrix, OpenSpec upgrade procedure, observed Codex discovery status, Spectra compatibility boundary, semantic handoff, and exact instructions for the separate post-merge pilot without commit hashes or unsupported invocation claims.
+Prepare the completed change for explicit archival review.
 
 ## Known Blockers
 

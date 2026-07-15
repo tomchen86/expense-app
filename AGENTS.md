@@ -18,11 +18,24 @@ agents must not invoke Spectra commands, skills, adapters, or lifecycle state.
 Do not delete or rewrite the retained Spectra installation unless the
 maintainer explicitly requests it.
 
-During the workflow-engine bootstrap, use `pnpm workflow doctor` for diagnostics
-and `pnpm workflow validate-change <change-id>` to validate tracked artifacts.
-Only an executable workflow command may eventually authorize task checkbox,
-completion, archive, staging, or commit transitions; never treat an AI claim as
-evidence.
+Use `pnpm workflow doctor` for diagnostics and
+`pnpm workflow validate-change <change-id>` to validate tracked artifacts.
+Only an executable workflow command may authorize a planning commit, task
+checkbox/completion, archive, staging, or managed commit; never treat an AI
+claim as evidence.
+
+Managed commit forms are mutually exclusive:
+
+| Kind    | Exact trailers                                   | Command family              |
+| ------- | ------------------------------------------------ | --------------------------- |
+| Task    | `Change: <id>` and `Task: <task-id>`             | session lifecycle           |
+| Plan    | `Change: <id>` and `Transition: plan`            | `workflow plan-commit`      |
+| Archive | `Change: <id>` and `Transition: archive`         | `workflow archive`          |
+
+Do not hand-author or mix these trailers. OpenSpec creates planning artifacts;
+`pnpm workflow` validates and commits them, executes tasks, and verifies
+archive transitions. The exact lifecycle, recovery, upgrade, and post-merge
+pilot procedures are in `docs/WORKFLOW.md`.
 
 ## Development Principle: Test-Driven Development
 
@@ -73,10 +86,11 @@ API tests are destructive to their configured PostgreSQL database. Before any AP
 
 ## Commit & Pull Request Guidelines
 - Commit messages use imperative mood (“Add participant service”), scoped to a logical change set.
-- Managed workflow commits include exact `Change: <change-id>` and
-  `Task: <task-id>` trailers. Use Git or `workflow status` to resolve hashes;
-  never write commit hashes into `docs/CURRENT_AND_NEXT_STEPS.md` or create a
-  hash-only metadata commit.
+- Managed task commits include exact `Change: <change-id>` and
+  `Task: <task-id>` trailers; plan and archive commits use their exact
+  `Transition:` form from the matrix above. Use Git or `workflow status` to
+  resolve hashes; never write commit hashes into
+  `docs/CURRENT_AND_NEXT_STEPS.md` or create a hash-only metadata commit.
 - PRs should:
   - Summarize intent and reference planning docs/issues.
   - List executed commands (`pnpm --filter api test -- ...`).

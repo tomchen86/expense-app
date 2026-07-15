@@ -1,6 +1,6 @@
 # Document Structure Guide
 
-_Last updated: July 15, 2026_
+_Last updated: July 16, 2026_
 
 ## Purpose
 
@@ -82,8 +82,10 @@ the CI check is required for merge.
 4. Put machine scope and check IDs in `guard.json`; do not repeat prose tasks.
 5. Put current handoff facts only in `CURRENT_AND_NEXT_STEPS.md`; history belongs
    in Git, reports, changelog, or immutable archives.
-6. Use semantic `Change:` and `Task:` commit trailers for traceability; never
-   copy commit hashes into the handoff or create hash-only metadata commits.
+6. Use the mutually exclusive semantic trailer forms in `WORKFLOW.md`: task
+   commits have `Change:` plus `Task:`, while planning and archive commits have
+   `Change:` plus the exact `Transition:` value. Never mix forms, copy commit
+   hashes into the handoff, or create hash-only metadata commits.
 7. Put reusable technical explanations under `architecture/`, `features/`, or
    `guides/` according to scope.
 8. Put investigation notes at `docs/research/<topic>.md` and label assumptions.

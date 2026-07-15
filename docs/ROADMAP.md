@@ -1,6 +1,6 @@
 # Roadmap
 
-_Last verified: July 15, 2026_
+_Last verified: July 16, 2026_
 
 This document owns project priority. Detailed implementation tasks belong only
 in the linked OpenSpec change.
@@ -9,9 +9,12 @@ in the linked OpenSpec change.
 
 ### Finish repository workflow adoption
 
-- Complete Section 5 of
-  `openspec/changes/establish-executable-ai-workflow/`: publish audited base
-  capability specs, document the workflow, and evaluate the AI adapter boundary.
+- Complete and merge `integrate-openspec-with-workflow`, then run the separate
+  maintainer-owned, non-database post-merge pilot in `docs/WORKFLOW.md`. The
+  disposable-repository rehearsal is test evidence, not that pilot.
+- Keep support undeclared until the pilot proves plan, task, archive,
+  idempotency, repository-local Codex discovery observation, and real
+  `workflow-assurance` replay from the configured base.
 - Keep Spectra installed for compatibility but outside every execution path.
 - Activate the remote GitHub ruleset only after the workflow is present on the
   default branch: require `workflow-assurance`, an up-to-date base, code-owner

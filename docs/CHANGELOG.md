@@ -35,6 +35,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added an executable repository workflow guard with validated OpenSpec change
   contracts, clean-baseline sessions, pinned policy digests, path-scope checks,
   stable exit codes, and disposable-Git integration tests.
+- Added the pinned OpenSpec planning adapter, project schema contract,
+  workflow-owned plan/archive transitions, planning-only Codex assets, and
+  Git-recomputed archive assurance with cross-date replay coverage.
+- Added a disposable-repository rehearsal for planning validation, task
+  completion, archive idempotency, and CI replay. The separate maintainer-owned
+  post-merge pilot remains pending and is not claimed by this rehearsal.
 - Added canonical `docs/ROADMAP.md` and `docs/CURRENT_AND_NEXT_STEPS.md` entry
   points for project direction and current-state handoff.
 
@@ -49,6 +55,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Reduced the current-state document to a semantic handoff keyed by change and
   task IDs; commit traceability now belongs to Git trailers rather than
   hash-only metadata commits.
+- Defined mutually exclusive task, plan, and archive trailer forms and retained
+  Spectra strictly as inactive compatibility/history material.
 
 ### Fixed
 

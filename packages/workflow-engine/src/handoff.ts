@@ -112,10 +112,30 @@ function selectChange(repositoryRoot: string): ChangeContract {
   if (active.length === 0 && contracts.length === 1) {
     return contracts[0];
   }
+  if (active.length === 0) {
+    const selectedChangeId = readSelectedChangeId(repositoryRoot);
+    const selected = contracts.find(
+      (contract) => contract.changeId === selectedChangeId,
+    );
+    if (selected?.tasks.every(({ completed }) => completed)) {
+      return selected;
+    }
+  }
   throw invalidHandoff(
     'HANDOFF_CHANGE_AMBIGUOUS',
-    'Exactly one active OpenSpec change is required for the handoff.',
+    'The handoff requires one active change or one previously selected completed change.',
   );
+}
+
+function readSelectedChangeId(repositoryRoot: string): string | undefined {
+  const filePath = handoffPath(repositoryRoot);
+  const stats = fs.lstatSync(filePath, { throwIfNoEntry: false });
+  if (!stats?.isFile() || stats.isSymbolicLink()) return undefined;
+  const content = fs.readFileSync(filePath, 'utf8');
+  const matches = [
+    ...content.matchAll(/^## Current Change\n\n`([^`\n]+)`(?:\n|$)/gm),
+  ];
+  return matches.length === 1 ? matches[0]?.[1] : undefined;
 }
 
 function readBlockers(repositoryRoot: string) {

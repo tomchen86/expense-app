@@ -85,7 +85,7 @@ committed before Task 3.2 starts.
 
 ## 7. Documentation and Pilot Handoff
 
-- [ ] 7.1 Update active repository guidance, the task/plan/archive trailer
+- [x] 7.1 Update active repository guidance, the task/plan/archive trailer
       matrix, OpenSpec upgrade procedure, observed Codex discovery status,
       Spectra compatibility boundary, semantic handoff (including final-task
       selection when other completed changes remain), and exact instructions
