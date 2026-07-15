@@ -152,9 +152,17 @@
         "docs/README.md",
         "docs/ROADMAP.md",
         "docs/WORKFLOW.md",
-        "docs/planning/PLAN-OPENSPEC-WORKFLOW-INTEGRATION.md"
+        "docs/planning/PLAN-OPENSPEC-WORKFLOW-INTEGRATION.md",
+        "packages/workflow-engine/src/handoff.ts",
+        "packages/workflow-engine/test/handoff.integration.test.ts"
       ],
-      "requiredChecks": ["managed-documents", "workflow-format"]
+      "requiredChecks": [
+        "managed-documents",
+        "workflow-tests",
+        "workflow-typecheck",
+        "workflow-lint",
+        "workflow-format"
+      ]
     }
   }
 }

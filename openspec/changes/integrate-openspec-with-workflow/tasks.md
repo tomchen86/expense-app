@@ -87,7 +87,8 @@ committed before Task 3.2 starts.
 
 - [ ] 7.1 Update active repository guidance, the task/plan/archive trailer
       matrix, OpenSpec upgrade procedure, observed Codex discovery status,
-      Spectra compatibility boundary, semantic handoff, and exact instructions
+      Spectra compatibility boundary, semantic handoff (including final-task
+      selection when other completed changes remain), and exact instructions
       for the separate post-merge pilot without commit hashes or unsupported
       invocation claims.
 
