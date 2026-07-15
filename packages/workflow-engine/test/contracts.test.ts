@@ -22,6 +22,7 @@ import './openspec-adapter.integration.test.ts';
 import './openspec-doctor.integration.test.ts';
 import './openspec-schema-contract.integration.test.ts';
 import './planning-transition.contract.test.ts';
+import './codex-planning-assets.integration.test.ts';
 
 test('runner security suite is portable to the package working directory', () => {
   execFileSync(

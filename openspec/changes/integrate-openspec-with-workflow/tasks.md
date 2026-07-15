@@ -51,7 +51,7 @@ committed before Task 3.2 starts.
 
 ## 4. Planning-Only Codex Integration
 
-- [ ] 4.1 Generate only reviewed OpenSpec explore/propose assets in isolated
+- [x] 4.1 Generate only reviewed OpenSpec explore/propose assets in isolated
       temporary homes, apply the repository overlay, record source/overlay
       digests, add check-only drift validation, and implement an explicit
       non-overwriting planning-prompt installer without writing to a real Codex

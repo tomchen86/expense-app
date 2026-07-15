@@ -6,6 +6,11 @@ import { pathToFileURL } from 'node:url';
 
 import { dispatchAiAdapterCommand } from './ai-adapter-cli.ts';
 import { loadWorkflowConfig } from './contracts.ts';
+import {
+  checkCodexPlanningAssets,
+  generateCodexPlanningAssets,
+  installCodexPlanningPrompts,
+} from './codex-planning-assets.ts';
 import { verifyPullRequest } from './ci.ts';
 import { dispatchDocumentRefreshCommand } from './document-refresh-cli.ts';
 import { ExitCode, WorkflowError, workflowError } from './errors.ts';
@@ -89,6 +94,37 @@ function dispatch(args: string[], cwd: string): CommandResult {
         ok: true,
         result: commitPlanningTransition(cwd, rest[0]),
       };
+    case 'codex-assets': {
+      const repositoryRoot = discoverRepository(cwd).repositoryRoot;
+      if (rest.length === 1 && rest[0] === 'generate') {
+        return {
+          command,
+          ok: true,
+          result: generateCodexPlanningAssets(repositoryRoot),
+        };
+      }
+      if (rest.length === 1 && rest[0] === 'check') {
+        return {
+          command,
+          ok: true,
+          result: checkCodexPlanningAssets(repositoryRoot),
+        };
+      }
+      if (
+        rest.length === 3 &&
+        rest[0] === 'install-prompts' &&
+        rest[1] === '--codex-home'
+      ) {
+        return {
+          command,
+          ok: true,
+          result: installCodexPlanningPrompts(repositoryRoot, rest[2]!),
+        };
+      }
+      throw usage(
+        'Usage: pnpm workflow codex-assets <generate|check|install-prompts --codex-home <path>> [--json]',
+      );
+    }
     case 'start': {
       const changeId = rest[0];
       const taskId = optionValue(rest.slice(1), '--task');
@@ -369,6 +405,7 @@ function usageText(): string {
     '  pnpm workflow doctor [--json]',
     '  pnpm workflow validate-change <change-id> [--json]',
     '  pnpm workflow plan-commit <change-id> [--json]',
+    '  pnpm workflow codex-assets <generate|check|install-prompts --codex-home <path>> [--json]',
     '  pnpm workflow start <change-id> --task <task-id> [--json]',
     '  pnpm workflow status [session-id] [--json]',
     '  pnpm workflow check <session-id> [--json]',
