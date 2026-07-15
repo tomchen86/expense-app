@@ -33,11 +33,13 @@ type OpenSpecOperation =
   | 'status'
   | 'instructions'
   | 'validate-change'
-  | 'validate-specs';
+  | 'validate-specs'
+  | 'archive';
 
 export type OpenSpecProcessOptions = {
   timeoutMs?: number;
   maxOutputBytes?: number;
+  executionRoot?: string;
 };
 
 export type OpenSpecProcess = {
@@ -54,6 +56,7 @@ export type OpenSpecProcess = {
   ): ProcessDocument;
   validateChange(changeId: string): ProcessDocument;
   validateAllSpecs(): ProcessDocument;
+  archive(changeId: string): ProcessDocument;
 };
 
 type ProcessDocument = { value: unknown; status: number };
@@ -198,6 +201,8 @@ export function createOpenSpecProcess(
         '',
         [0, 1],
       ),
+    archive: (changeId) =>
+      executor.json('archive', ['archive', changeId, '--yes', '--json'], ''),
   };
 }
 
@@ -205,6 +210,7 @@ class OpenSpecExecutor {
   private readonly installation: OpenSpecInstallation;
   private readonly timeoutMs: number;
   private readonly maxOutputBytes: number;
+  private readonly executionRoot: string;
 
   constructor(
     installation: OpenSpecInstallation,
@@ -214,6 +220,9 @@ class OpenSpecExecutor {
     this.timeoutMs = positiveLimit(options.timeoutMs ?? 15_000);
     this.maxOutputBytes = positiveLimit(
       options.maxOutputBytes ?? 8 * 1024 * 1024,
+    );
+    this.executionRoot = canonicalExecutionRoot(
+      options.executionRoot ?? installation.repositoryRoot,
     );
   }
 
@@ -300,7 +309,7 @@ class OpenSpecExecutor {
         fs.realpathSync(process.execPath),
         [this.installation.binPath, ...args],
         {
-          cwd: this.installation.repositoryRoot,
+          cwd: this.executionRoot,
           shell: false,
           env: {
             ...trustedEnvironment,
@@ -369,6 +378,27 @@ class OpenSpecExecutor {
     } finally {
       fs.rmSync(temporaryRoot, { recursive: true, force: true });
     }
+  }
+}
+
+function canonicalExecutionRoot(directory: string): string {
+  try {
+    const absolute = path.resolve(directory);
+    const stats = fs.lstatSync(absolute);
+    if (
+      !stats.isDirectory() ||
+      stats.isSymbolicLink() ||
+      fs.realpathSync(absolute) !== absolute
+    ) {
+      throw new Error('unsafe execution root');
+    }
+    return absolute;
+  } catch {
+    throw workflowError(
+      'OPENSPEC_EXECUTION_ROOT_UNSAFE',
+      'The OpenSpec execution root must be a canonical plain directory.',
+      ExitCode.unsafeEnvironment,
+    );
   }
 }
 

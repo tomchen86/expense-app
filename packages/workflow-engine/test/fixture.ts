@@ -378,6 +378,67 @@ if (process.argv[2] === 'status') {
   }));
   process.exit(0);
 }
+if (process.argv[2] === 'archive') {
+  const changeId = process.argv[3];
+  const expected = ['archive', changeId, '--yes', '--json'];
+  if (JSON.stringify(process.argv.slice(2)) !== JSON.stringify(expected)) {
+    process.stderr.write('unexpected archive argv');
+    process.exit(2);
+  }
+  const root = process.cwd();
+  const changeRoot = path.join(root, 'openspec/changes', changeId);
+  const deltaRoot = path.join(changeRoot, 'specs');
+  const marker = fs.readFileSync(
+    path.join(deltaRoot, 'demo/spec.md'),
+    'utf8'
+  );
+  const baseSpec = path.join(root, 'openspec/specs/demo/spec.md');
+  fs.mkdirSync(path.dirname(baseSpec), { recursive: true });
+  fs.writeFileSync(
+    baseSpec,
+    '# Demo Specification\\n\\n## Requirements\\n\\n### Requirement: Demo\\nThe system SHALL provide a demo.\\n'
+  );
+  if (marker.includes('PARTIAL_FAILURE')) {
+    process.stdout.write(JSON.stringify({
+      archive: null,
+      root: { path: root, source: 'nearest' },
+      status: [{ code: 'archive_spec_update_failed' }]
+    }));
+    process.exit(1);
+  }
+  const archiveName = new Date().toISOString().slice(0, 10) + '-' + changeId;
+  const archivePath = path.join(root, 'openspec/changes/archive', archiveName);
+  fs.mkdirSync(path.dirname(archivePath), { recursive: true });
+  fs.renameSync(changeRoot, archivePath);
+  if (marker.includes('ARCHIVE_UNEXPECTED')) {
+    fs.writeFileSync(path.join(root, 'unexpected.txt'), 'unexpected\\n');
+  }
+  process.stdout.write(JSON.stringify({
+    archive: {
+      change: changeId,
+      archivedAs: archiveName,
+      path: marker.includes('ARCHIVE_ESCAPE')
+        ? path.join(root, '..', 'escape')
+        : archivePath,
+      specsUpdated: true,
+      totals: { added: 1, modified: 0, removed: 0, renamed: 0 }
+    },
+    root: { path: root, source: 'nearest' }
+  }));
+  process.exit(0);
+}
+if (process.argv[2] === 'validate' && process.argv.includes('--specs')) {
+  process.stdout.write(JSON.stringify({
+    items: [{ id: 'demo', type: 'spec', valid: true, issues: [], durationMs: 1 }],
+    summary: {
+      totals: { items: 1, passed: 1, failed: 0 },
+      byType: { spec: { items: 1, passed: 1, failed: 0 } }
+    },
+    version: '1.0',
+    root: { path: process.cwd(), source: 'nearest' }
+  }));
+  process.exit(0);
+}
 const changeId = process.argv[3];
 const changeRoot = path.join(process.cwd(), 'openspec/changes', changeId);
 const invalid = fs.readFileSync(path.join(changeRoot, 'proposal.md'), 'utf8')

@@ -63,7 +63,7 @@ committed before Task 3.2 starts.
       completion evidence, base reachability, active-session, worktree,
       artifact, destination, mode, and exclusive-lock preconditions using
       existing workflow primitives.
-- [ ] 5.2 Execute the exact pinned OpenSpec archive operation only in an
+- [x] 5.2 Execute the exact pinned OpenSpec archive operation only in an
       isolated detached temporary worktree and verify JSON roots, UTC
       destination, delta targets, rebuilt specs, full-index patch paths, modes,
       digests, and partial-failure isolation before real-worktree mutation.

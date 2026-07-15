@@ -8,15 +8,15 @@ This generated handoff contains semantic project state only. Its sources are the
 
 ## Current Task
 
-`5.2` — Execute the exact pinned OpenSpec archive operation only in an isolated detached temporary worktree and verify JSON roots, UTC destination, delta targets, rebuilt specs, full-index patch paths, modes, digests, and partial-failure isolation before real-worktree mutation.
+`5.3` — Add archive reports, fingerprint rechecks, verified patch application, exact staging/commit authorization, `Transition: archive` trailers, fault/concurrency coverage, and workflow-owned already-archived detection.
 
 ## Next Task
 
-`5.3` — Add archive reports, fingerprint rechecks, verified patch application, exact staging/commit authorization, `Transition: archive` trailers, fault/concurrency coverage, and workflow-owned already-archived detection.
+`6.1` — Recompute task, plan, and archive validity in hooks and the stable `workflow-assurance` CI job, including dependency/schema/asset drift, forbidden lifecycle assets, bypass cases, archive replay, and UTC-date normalization.
 
 ## Current Focus
 
-Execute the exact pinned OpenSpec archive operation only in an isolated detached temporary worktree and verify JSON roots, UTC destination, delta targets, rebuilt specs, full-index patch paths, modes, digests, and partial-failure isolation before real-worktree mutation.
+Add archive reports, fingerprint rechecks, verified patch application, exact staging/commit authorization, `Transition: archive` trailers, fault/concurrency coverage, and workflow-owned already-archived detection.
 
 ## Known Blockers
 

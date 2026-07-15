@@ -5,6 +5,7 @@ import path from 'node:path';
 import test from 'node:test';
 
 import './archive-eligibility.integration.test.ts';
+import './archive-transformation.integration.test.ts';
 
 import { WorkflowError } from '../src/errors.ts';
 import { abortSession, checkSession, startSession } from '../src/session.ts';
