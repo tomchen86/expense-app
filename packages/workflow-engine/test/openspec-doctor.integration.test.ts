@@ -275,6 +275,16 @@ test('workflow OpenSpec diagnostics report package provenance and semantic failu
         },
         validation: { valid: false, issueCount: 1 },
       },
+      {
+        name: 'expense-app',
+        expectedSource: 'project',
+        ok: true,
+        resolution: {
+          source: 'project',
+          path: path.join(repository, 'openspec/schemas/expense-app'),
+        },
+        validation: { valid: true, issueCount: 0 },
+      },
     ]);
     assert.deepEqual(
       report.diagnostics.map(({ code }) => code),
@@ -382,6 +392,9 @@ function createDoctorFixture(runtimeVersion = '1.6.0'): string {
   });
   fs.mkdirSync(path.join(repository, 'openspec/changes'), { recursive: true });
   fs.mkdirSync(path.join(repository, 'openspec/specs'), { recursive: true });
+  fs.mkdirSync(path.join(repository, 'openspec/schemas/expense-app'), {
+    recursive: true,
+  });
   writeJson(path.join(repository, 'package.json'), {
     name: 'doctor-fixture',
     private: true,
@@ -447,19 +460,25 @@ if (args[0] === '--version') {
     store: null, references: [], status: []
   }));
 } else if (args[0] === 'schema' && args[1] === 'which') {
+  const project = args[2] === 'expense-app';
   process.stderr.write('Note: Schema commands are experimental and may change.\\n');
   process.stdout.write(JSON.stringify({
-    name: args[2], source: 'package',
-    path: new URL('../schemas/spec-driven', import.meta.url).pathname,
+    name: args[2], source: project ? 'project' : 'package',
+    path: project
+      ? process.cwd() + '/openspec/schemas/expense-app'
+      : new URL('../schemas/spec-driven', import.meta.url).pathname,
     shadows: []
   }));
 } else if (args[0] === 'schema' && args[1] === 'validate') {
+  const project = args[2] === 'expense-app';
   process.stderr.write('Note: Schema commands are experimental and may change.\\n');
   process.stdout.write(JSON.stringify({
     name: args[2],
-    path: new URL('../schemas/spec-driven', import.meta.url).pathname,
-    valid: false,
-    issues: [{
+    path: project
+      ? process.cwd() + '/openspec/schemas/expense-app'
+      : new URL('../schemas/spec-driven', import.meta.url).pathname,
+    valid: project,
+    issues: project ? [] : [{
       level: 'error', path: 'schema.yaml', message: 'invalid fixture schema'
     }]
   }));

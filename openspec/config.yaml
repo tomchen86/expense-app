@@ -1,4 +1,4 @@
-schema: spec-driven
+schema: expense-app
 
 context: |
   Monorepo: NestJS API, React Native mobile, Next.js web, TypeScript.

@@ -11,12 +11,12 @@ import {
   nonNegativeInteger,
   parseArtifactPaths,
   parseIssue,
-  parsePlanningHome,
   parseRoot,
   parseSchemaIssue,
   record,
   safeIdentifier,
 } from './openspec-payload-primitives.ts';
+import { schemaGraphFor } from './openspec-schema-contract.ts';
 
 export type OpenSpecChangeSummary = {
   name: string;
@@ -49,7 +49,16 @@ export type OpenSpecStatus = {
   changeRoot: string;
   isComplete: boolean;
   artifactIds: string[];
+  artifacts: OpenSpecArtifactStatus[];
+  applyRequires: string[];
   root: { path: string; source: 'nearest' };
+};
+
+export type OpenSpecArtifactStatus = {
+  id: string;
+  outputPath: string;
+  status: 'done' | 'ready' | 'blocked';
+  missingDependencies: string[];
 };
 
 export type OpenSpecInstructions = {
@@ -74,13 +83,6 @@ export type OpenSpecValidation = {
     issues: Array<Record<string, unknown>>;
   }>;
   root: { path: string; source: 'nearest' };
-};
-
-type ParsedArtifactStatus = {
-  id: string;
-  outputPath: string;
-  status: 'done' | 'ready' | 'blocked';
-  missingDependencies: string[];
 };
 
 export function parseChangeList(
@@ -192,12 +194,22 @@ export function parseStatus(
   ) {
     throw invalidPayload();
   }
-  parsePlanningHome(payload.planningHome, context.repositoryRoot);
+  parsePlanningHomeIdentity(payload.planningHome, context.repositoryRoot);
+  const graph = schemaGraphFor(context.schemaName);
   const artifactPaths = new Map(
-    Object.entries(record(payload.artifactPaths)).map(([id, artifact]) => [
-      safeIdentifier(id),
-      parseArtifactPaths(artifact, changeRoot),
-    ]),
+    Object.entries(record(payload.artifactPaths)).map(([id, artifact]) => {
+      const pathPayload = record(artifact);
+      if (
+        !hasExactKeys(pathPayload, [
+          'existingOutputPaths',
+          'outputPath',
+          'resolvedOutputPath',
+        ])
+      ) {
+        throw invalidPayload();
+      }
+      return [safeIdentifier(id), parseArtifactPaths(pathPayload, changeRoot)];
+    }),
   );
   if (
     !Array.isArray(payload.artifacts) ||
@@ -205,15 +217,25 @@ export function parseStatus(
   ) {
     throw invalidPayload();
   }
-  const artifacts: ParsedArtifactStatus[] = payload.artifacts.map((entry) => {
+  const artifacts: OpenSpecArtifactStatus[] = payload.artifacts.map((entry) => {
     const artifact = record(entry);
     const id = safeIdentifier(artifact.id);
     const outputPath = assertSafeOutputPath(artifact.outputPath);
     if (!['ready', 'blocked', 'done'].includes(String(artifact.status))) {
       throw invalidPayload();
     }
-    const status = artifact.status as ParsedArtifactStatus['status'];
+    const status = artifact.status as OpenSpecArtifactStatus['status'];
     const hasMissingDependencies = Object.hasOwn(artifact, 'missingDeps');
+    if (
+      !hasExactKeys(
+        artifact,
+        hasMissingDependencies
+          ? ['id', 'missingDeps', 'outputPath', 'status']
+          : ['id', 'outputPath', 'status'],
+      )
+    ) {
+      throw invalidPayload();
+    }
     const missingDependencies = hasMissingDependencies
       ? identifierArray(artifact.missingDeps)
       : [];
@@ -226,16 +248,23 @@ export function parseStatus(
     return { id, outputPath, status, missingDependencies };
   });
   const artifactIds = artifacts.map(({ id }) => id);
+  const expectedIds = graph.artifacts.map(({ id }) => id);
   if (artifactIds.length === 0) {
     throw invalidPayload();
   }
   assertUnique(artifactIds);
-  assertSameMembers([...artifactPaths.keys()], artifactIds);
+  assertSameMembers(artifactIds, expectedIds);
+  assertSameMembers([...artifactPaths.keys()], expectedIds);
   const artifactIdSet = new Set(artifactIds);
   for (const artifact of artifacts) {
     const paths = artifactPaths.get(artifact.id);
+    const expectedArtifact = graph.artifacts.find(
+      ({ id }) => id === artifact.id,
+    );
     if (
       !paths ||
+      !expectedArtifact ||
+      artifact.outputPath !== expectedArtifact.generates ||
       paths.outputPath !== artifact.outputPath ||
       (artifact.status === 'done') !== paths.existingOutputPaths.length > 0 ||
       artifact.missingDependencies.some((id) => !artifactIdSet.has(id))
@@ -243,10 +272,33 @@ export function parseStatus(
       throw invalidPayload();
     }
   }
+  const statusById = new Map(
+    artifacts.map((artifact) => [artifact.id, artifact]),
+  );
+  for (const artifact of artifacts) {
+    const expectedArtifact = graph.artifacts.find(
+      ({ id }) => id === artifact.id,
+    )!;
+    const expectedMissing = expectedArtifact.requires.filter(
+      (id) => statusById.get(id)?.status !== 'done',
+    );
+    const expectedStatus =
+      artifact.status === 'done'
+        ? 'done'
+        : expectedMissing.length > 0
+          ? 'blocked'
+          : 'ready';
+    if (
+      artifact.status !== expectedStatus ||
+      JSON.stringify(artifact.missingDependencies) !==
+        JSON.stringify(expectedMissing)
+    ) {
+      throw invalidPayload();
+    }
+  }
   const applyRequires = identifierArray(payload.applyRequires);
   if (
-    applyRequires.length === 0 ||
-    applyRequires.some((id) => !artifactIdSet.has(id)) ||
+    JSON.stringify(applyRequires) !== JSON.stringify(graph.apply.requires) ||
     payload.isComplete !== artifacts.every(({ status }) => status === 'done')
   ) {
     throw invalidPayload();
@@ -257,6 +309,8 @@ export function parseStatus(
     changeRoot,
     isComplete: payload.isComplete,
     artifactIds,
+    artifacts,
+    applyRequires,
     root,
   };
 }
@@ -287,9 +341,50 @@ export function parseInstructions(
   ) {
     throw invalidPayload();
   }
-  parsePlanningHome(payload.planningHome, context.repositoryRoot);
+  parsePlanningHomeIdentity(payload.planningHome, context.repositoryRoot);
+  const graph = schemaGraphFor(context.schemaName);
+  const artifact = graph.artifacts.find(({ id }) => id === context.artifactId);
+  if (!artifact) {
+    throw invalidPayload();
+  }
   const paths = parseArtifactPaths(payload, changeDir);
   if (!Array.isArray(payload.dependencies) || !Array.isArray(payload.unlocks)) {
+    throw invalidPayload();
+  }
+  const dependencies = payload.dependencies.map((value) => {
+    const dependency = record(value);
+    if (
+      !hasExactKeys(dependency, ['description', 'done', 'id', 'path']) ||
+      typeof dependency.description !== 'string' ||
+      !dependency.description ||
+      typeof dependency.done !== 'boolean'
+    ) {
+      throw invalidPayload();
+    }
+    return {
+      id: safeIdentifier(dependency.id),
+      path: assertSafeOutputPath(dependency.path),
+      done: dependency.done,
+    };
+  });
+  const expectedDependencies = artifact.requires.map((id) => ({
+    id,
+    path: graph.artifacts.find((candidate) => candidate.id === id)!.generates,
+    done: artifactOutputExists(
+      changeDir,
+      graph.artifacts.find((candidate) => candidate.id === id)!.generates,
+    ),
+  }));
+  const unlocks = identifierArray(payload.unlocks);
+  const expectedUnlocks = graph.artifacts
+    .filter(({ requires }) => requires.includes(artifact.id))
+    .map(({ id }) => id)
+    .sort();
+  if (
+    paths.outputPath !== artifact.generates ||
+    JSON.stringify(dependencies) !== JSON.stringify(expectedDependencies) ||
+    JSON.stringify(unlocks) !== JSON.stringify(expectedUnlocks)
+  ) {
     throw invalidPayload();
   }
   return {
@@ -302,6 +397,70 @@ export function parseInstructions(
     template: payload.template,
     root,
   };
+}
+
+function artifactOutputExists(
+  changeDirectory: string,
+  outputPath: string,
+): boolean {
+  let found = false;
+  visit(changeDirectory);
+  return found;
+
+  function visit(directory: string): void {
+    const directoryStats = fs.lstatSync(directory, { throwIfNoEntry: false });
+    if (
+      !directoryStats?.isDirectory() ||
+      directoryStats.isSymbolicLink() ||
+      fs.realpathSync(directory) !== path.resolve(directory)
+    ) {
+      throw invalidPayload();
+    }
+    for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+      const absolutePath = path.join(directory, entry.name);
+      const stats = fs.lstatSync(absolutePath);
+      if (stats.isDirectory() && !stats.isSymbolicLink()) {
+        visit(absolutePath);
+        continue;
+      }
+      if (!stats.isFile() || stats.isSymbolicLink()) {
+        throw invalidPayload();
+      }
+      const relativePath = path
+        .relative(changeDirectory, absolutePath)
+        .split(path.sep)
+        .join('/');
+      try {
+        if (path.matchesGlob(relativePath, outputPath)) {
+          found = true;
+        }
+      } catch {
+        throw invalidPayload();
+      }
+    }
+  }
+}
+
+function parsePlanningHomeIdentity(
+  value: unknown,
+  repositoryRoot: string,
+): void {
+  const planningHome = record(value);
+  if (
+    !hasExactKeys(planningHome, [
+      'changesDir',
+      'defaultSchema',
+      'kind',
+      'root',
+    ]) ||
+    planningHome.kind !== 'repo' ||
+    planningHome.root !== repositoryRoot ||
+    planningHome.changesDir !== path.join(repositoryRoot, 'openspec/changes') ||
+    typeof planningHome.defaultSchema !== 'string' ||
+    !/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(planningHome.defaultSchema)
+  ) {
+    throw invalidPayload();
+  }
 }
 
 export function parseValidation(

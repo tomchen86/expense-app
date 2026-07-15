@@ -215,7 +215,7 @@ test('OpenSpec adapter probes the runtime version before exposing operations', (
   }
 });
 
-test('OpenSpec adapter validates schema diagnostics and valid false payloads', () => {
+test('OpenSpec adapter rejects an exit-zero schema result with valid false', () => {
   const repository = createFakeOpenSpecRepository(`
 const args = process.argv.slice(2);
 if (args[0] === 'schema' && args[1] === 'validate') {
@@ -240,15 +240,10 @@ if (args[0] === 'schema' && args[1] === 'validate') {
   try {
     const adapter = createOpenSpecAdapter(repository);
     assert.equal(adapter.whichSchema('spec-driven').source, 'package');
-    const validation = adapter.validateSchema('spec-driven');
-    assert.equal(validation.valid, false);
-    assert.deepEqual(validation.issues, [
-      {
-        level: 'error',
-        path: 'schema.yaml',
-        message: 'invalid fixture schema',
-      },
-    ]);
+    assert.throws(
+      () => adapter.validateSchema('spec-driven'),
+      (error) => isWorkflowError(error, 'OPENSPEC_SCHEMA_INVALID'),
+    );
   } finally {
     fs.rmSync(repository, { recursive: true, force: true });
   }
@@ -263,6 +258,18 @@ process.stdout.write(JSON.stringify({
   name: process.argv[4], source: 'package',
   path: new URL('../schemas/spec-driven', import.meta.url).pathname,
   shadows: [], unexpected: true
+}));
+`,
+      invoke: (adapter: ReturnType<typeof createOpenSpecAdapter>) =>
+        adapter.whichSchema('spec-driven'),
+    },
+    {
+      body: `
+process.stderr.write('Note: Schema commands are experimental and may change.\\n');
+process.stdout.write(JSON.stringify({
+  name: process.argv[4], source: 'package',
+  path: new URL('../schemas/spec-driven', import.meta.url).pathname,
+  shadows: ['/tmp/shadowed-schema']
 }));
 `,
       invoke: (adapter: ReturnType<typeof createOpenSpecAdapter>) =>
@@ -522,6 +529,14 @@ test('real pinned OpenSpec adapter validates package, schema, status, and change
   assert.equal(adapter.version(), '1.6.0');
   const schema = adapter.whichSchema('spec-driven');
   assert.equal(schema.source, 'package');
+  assert.equal(adapter.validateSchema('spec-driven').valid, true);
+  const projectSchema = adapter.whichSchema('expense-app');
+  assert.equal(projectSchema.source, 'project');
+  assert.equal(adapter.validateSchema('expense-app').valid, true);
+  assert.throws(
+    () => adapter.whichSchema('unreviewed-schema'),
+    (error) => isWorkflowError(error, 'OPENSPEC_SCHEMA_UNSUPPORTED'),
+  );
   const status = adapter.status(
     'integrate-openspec-with-workflow',
     'spec-driven',
@@ -529,6 +544,26 @@ test('real pinned OpenSpec adapter validates package, schema, status, and change
   assert.equal(status.changeName, 'integrate-openspec-with-workflow');
   assert.equal(status.schemaName, 'spec-driven');
   assert.equal(status.isComplete, true);
+  const projectStatus = adapter.status(
+    'integrate-openspec-with-workflow',
+    'expense-app',
+  );
+  assert.deepEqual(projectStatus.applyRequires, ['tasks', 'guard']);
+  assert.deepEqual(projectStatus.artifactIds.sort(), [
+    'design',
+    'guard',
+    'proposal',
+    'specs',
+    'tasks',
+  ]);
+  assert.equal(
+    adapter.instructions(
+      'integrate-openspec-with-workflow',
+      'expense-app',
+      'guard',
+    ).outputPath,
+    'guard.json',
+  );
   const validation = adapter.validateChange('integrate-openspec-with-workflow');
   assert.equal(validation.valid, true);
 });

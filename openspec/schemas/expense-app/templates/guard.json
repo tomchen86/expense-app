@@ -1,0 +1,10 @@
+{
+  "schemaVersion": 1,
+  "changeId": "<change-id>",
+  "tasks": {
+    "<task-id>": {
+      "allowedPaths": ["<repository-relative-path-or-glob>"],
+      "requiredChecks": ["<registered-check-id>"]
+    }
+  }
+}

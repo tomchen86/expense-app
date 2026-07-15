@@ -98,6 +98,14 @@ export function createOpenSpecAdapter(
         schema,
       );
       assertOpenSpecSchemaDirectory(installation, schema);
+      if (!validation.valid) {
+        throw workflowError(
+          'OPENSPEC_SCHEMA_INVALID',
+          'OpenSpec did not validate the managed schema.',
+          ExitCode.verification,
+          { details: { schemaName: schema.name } },
+        );
+      }
       return validation;
     },
     status: (changeId, schemaName) => {
@@ -167,6 +175,13 @@ function schemaExpectation(
   requestedName: string,
 ): { name: string; source: 'package' | 'project'; path: string } {
   const name = safeName(requestedName);
+  if (name !== 'spec-driven' && name !== 'expense-app') {
+    throw workflowError(
+      'OPENSPEC_SCHEMA_UNSUPPORTED',
+      'Only the pinned package schema and reviewed project schema are managed.',
+      ExitCode.guard,
+    );
+  }
   const expected =
     name === 'spec-driven'
       ? {

@@ -10,6 +10,7 @@ import {
 import { ExitCode, workflowError } from './errors.ts';
 import { runGit } from './git.ts';
 import { createOpenSpecAdapter } from './openspec-adapter.ts';
+import { inspectOpenSpecSchemaContract } from './openspec-schema-contract.ts';
 import { normalizeChangedPath } from './paths.ts';
 import type {
   PlanningTaskState,
@@ -92,7 +93,19 @@ export function validateOpenSpecPlanning(
   changeId: string,
   schemaName: string,
 ): PlanningTransitionReport['openspec'] {
+  if (schemaName !== 'expense-app') {
+    throw workflowError(
+      'OPENSPEC_MANAGED_SCHEMA_REQUIRED',
+      'Managed planning transitions require the reviewed expense-app schema.',
+      ExitCode.verification,
+    );
+  }
+  inspectOpenSpecSchemaContract(repositoryRoot);
   const adapter = createOpenSpecAdapter(repositoryRoot);
+  for (const managedSchema of ['spec-driven', 'expense-app']) {
+    adapter.whichSchema(managedSchema);
+    adapter.validateSchema(managedSchema);
+  }
   const status = adapter.status(changeId, schemaName);
   const validation = adapter.validateChange(changeId);
   if (!status.isComplete || !validation.valid) {

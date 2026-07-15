@@ -8,15 +8,15 @@ This generated handoff contains semantic project state only. Its sources are the
 
 ## Current Task
 
-`3.1` — Fork the pinned `spec-driven` schema to project-local `expense-app`, add the apply-required guard artifact, configure the project default, and implement strict schema, guard, task, check-ID, path, provenance, and payload validation without changing this change's metadata in the task commit.
+`3.2` — Combine OpenSpec status and strict change validation with repository policy, full regular-file/mode digests, stable diagnostics, and one validated contract consumed consistently by session start, check, and finish.
 
 ## Next Task
 
-`3.2` — Combine OpenSpec status and strict change validation with repository policy, full regular-file/mode digests, stable diagnostics, and one validated contract consumed consistently by session start, check, and finish.
+`4.1` — Generate only reviewed OpenSpec explore/propose assets in isolated temporary homes, apply the repository overlay, record source/overlay digests, add check-only drift validation, and implement an explicit non-overwriting planning-prompt installer without writing to a real Codex home during tests.
 
 ## Current Focus
 
-Fork the pinned `spec-driven` schema to project-local `expense-app`, add the apply-required guard artifact, configure the project default, and implement strict schema, guard, task, check-ID, path, provenance, and payload validation without changing this change's metadata in the task commit.
+Combine OpenSpec status and strict change validation with repository policy, full regular-file/mode digests, stable diagnostics, and one validated contract consumed consistently by session start, check, and finish.
 
 ## Known Blockers
 

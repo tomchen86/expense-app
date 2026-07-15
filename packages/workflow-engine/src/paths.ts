@@ -47,7 +47,12 @@ export function assertSessionId(value: string): string {
 }
 
 export function normalizePolicyPath(value: string): string {
-  if (!value || value.trim() !== value || value.includes('\\')) {
+  if (
+    !value ||
+    value.trim() !== value ||
+    value.includes('\\') ||
+    containsControlCharacter(value)
+  ) {
     throw invalidPolicyPath(value);
   }
 
@@ -67,7 +72,13 @@ export function normalizePolicyPath(value: string): string {
 
   const segments = candidate.split('/');
   if (
-    segments.some((segment) => !segment || segment === '.' || segment === '..')
+    segments.some(
+      (segment) =>
+        !segment ||
+        segment === '.' ||
+        segment === '..' ||
+        segment.toLowerCase() === '.git',
+    )
   ) {
     throw invalidPolicyPath(value);
   }
@@ -79,6 +90,7 @@ export function normalizeChangedPath(value: string): string {
   if (
     !value ||
     value.includes('\\') ||
+    containsControlCharacter(value) ||
     path.posix.isAbsolute(value) ||
     WINDOWS_ABSOLUTE_PATTERN.test(value) ||
     value.startsWith('./') ||
@@ -89,12 +101,25 @@ export function normalizeChangedPath(value: string): string {
 
   const segments = value.split('/');
   if (
-    segments.some((segment) => !segment || segment === '.' || segment === '..')
+    segments.some(
+      (segment) =>
+        !segment ||
+        segment === '.' ||
+        segment === '..' ||
+        segment.toLowerCase() === '.git',
+    )
   ) {
     throw invalidRepositoryPath(value);
   }
 
   return value;
+}
+
+function containsControlCharacter(value: string): boolean {
+  return [...value].some((character) => {
+    const codePoint = character.codePointAt(0) ?? 0;
+    return codePoint <= 31 || (codePoint >= 127 && codePoint <= 159);
+  });
 }
 
 export function matchesAllowedPath(
@@ -124,18 +149,35 @@ export function assertPolicyPathInsideRepository(
   const targetPath = path.resolve(repositoryRealPath, relative);
 
   assertInside(repositoryRealPath, targetPath, policyPath);
+  assertNoSymlinkSegments(repositoryRealPath, relative, policyPath);
+}
 
-  let existingPath = targetPath;
-  while (!fs.existsSync(existingPath)) {
-    const parent = path.dirname(existingPath);
-    if (parent === existingPath) {
-      break;
+function assertNoSymlinkSegments(
+  repositoryRoot: string,
+  relativePath: string,
+  policyPath: string,
+): void {
+  let currentPath = repositoryRoot;
+  for (const segment of relativePath.split('/')) {
+    currentPath = path.join(currentPath, segment);
+    const stats = fs.lstatSync(currentPath, { throwIfNoEntry: false });
+    if (!stats) {
+      return;
     }
-    existingPath = parent;
+    if (stats.isSymbolicLink()) {
+      let resolvedPath: string;
+      try {
+        resolvedPath = fs.realpathSync(currentPath);
+      } catch {
+        throw invalidPolicySymlink(repositoryRoot, currentPath, policyPath);
+      }
+      assertInside(repositoryRoot, resolvedPath, policyPath);
+      throw invalidPolicySymlink(repositoryRoot, currentPath, policyPath);
+    }
+    if (!stats.isDirectory()) {
+      return;
+    }
   }
-
-  const existingRealPath = fs.realpathSync(existingPath);
-  assertInside(repositoryRealPath, existingRealPath, policyPath);
 }
 
 function assertInside(
@@ -163,6 +205,25 @@ function invalidPolicyPath(value: string): ReturnType<typeof workflowError> {
       details: { path: value },
       recovery:
         'Use a repository-relative exact path or a directory prefix ending in /**.',
+    },
+  );
+}
+
+function invalidPolicySymlink(
+  repositoryRoot: string,
+  symlinkPath: string,
+  policyPath: string,
+): ReturnType<typeof workflowError> {
+  return workflowError(
+    'SYMLINK_POLICY_PATH',
+    `Policy path crosses a symbolic link: ${policyPath}`,
+    ExitCode.guard,
+    {
+      details: {
+        policyPath,
+        symlinkPath: path.relative(repositoryRoot, symlinkPath),
+      },
+      recovery: 'Use a direct repository path without symbolic-link aliases.',
     },
   );
 }

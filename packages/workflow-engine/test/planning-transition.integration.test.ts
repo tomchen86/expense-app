@@ -207,6 +207,102 @@ test('plan-commit rejects checkbox, code, staged-index, and OpenSpec-invalid dri
   }
 });
 
+test('plan-commit requires the reviewed expense-app schema', () => {
+  const repository = createPlanningRepository('demo-change', true);
+  try {
+    fs.writeFileSync(
+      path.join(repository, 'openspec/changes/demo-change/.openspec.yaml'),
+      'schema: spec-driven\ncreated: 2026-07-15\n',
+    );
+    fs.appendFileSync(
+      path.join(repository, 'openspec/changes/demo-change/proposal.md'),
+      '\nSchema migration required.\n',
+    );
+
+    assert.throws(
+      () => commitPlanningTransition(repository, 'demo-change'),
+      (error) => isWorkflowError(error, 'OPENSPEC_MANAGED_SCHEMA_REQUIRED'),
+    );
+  } finally {
+    fs.rmSync(repository, { recursive: true, force: true });
+  }
+});
+
+test('plan-commit migrates only legacy metadata to expense-app', () => {
+  const repository = createPlanningRepository('demo-change', true);
+  const metadataPath = path.join(
+    repository,
+    'openspec/changes/demo-change/.openspec.yaml',
+  );
+  try {
+    fs.writeFileSync(
+      metadataPath,
+      'schema: spec-driven\ncreated: 2026-07-15\n',
+    );
+    git(repository, [
+      'add',
+      '--',
+      'openspec/changes/demo-change/.openspec.yaml',
+    ]);
+    git(repository, ['commit', '-m', 'Record legacy schema baseline']);
+    const planningTreeBefore = planningPaths('demo-change')
+      .filter((filePath) => !filePath.endsWith('/.openspec.yaml'))
+      .map(
+        (filePath) =>
+          [
+            filePath,
+            fs.readFileSync(path.join(repository, filePath), 'utf8'),
+          ] as const,
+      );
+
+    fs.writeFileSync(
+      metadataPath,
+      'schema: expense-app\ncreated: 2026-07-15\n',
+    );
+    const result = commitPlanningTransition(repository, 'demo-change');
+
+    assert.equal(result.kind, 'revision');
+    assert.deepEqual(result.changedPaths, [
+      'openspec/changes/demo-change/.openspec.yaml',
+    ]);
+    assert.equal(git(repository, ['status', '--porcelain']), '');
+    for (const [filePath, content] of planningTreeBefore) {
+      assert.equal(
+        fs.readFileSync(path.join(repository, filePath), 'utf8'),
+        content,
+      );
+    }
+  } finally {
+    fs.rmSync(repository, { recursive: true, force: true });
+  }
+});
+
+test('plan-commit rejects project schema contract drift before staging', () => {
+  const repository = createPlanningRepository('demo-change', true);
+  try {
+    fs.appendFileSync(
+      path.join(repository, 'openspec/config.yaml'),
+      '\nschema : spec-driven\n',
+    );
+    git(repository, ['add', '--', 'openspec/config.yaml']);
+    git(repository, ['commit', '-m', 'Tamper planning schema config']);
+    const baselineHead = git(repository, ['rev-parse', 'HEAD']).trim();
+    fs.appendFileSync(
+      path.join(repository, 'openspec/changes/demo-change/proposal.md'),
+      '\nReviewed revision.\n',
+    );
+
+    assert.throws(
+      () => commitPlanningTransition(repository, 'demo-change'),
+      (error) => isWorkflowError(error, 'OPENSPEC_SCHEMA_CONTRACT_INVALID'),
+    );
+    assert.equal(git(repository, ['rev-parse', 'HEAD']).trim(), baselineHead);
+    assert.equal(git(repository, ['diff', '--cached', '--name-only']), '');
+  } finally {
+    fs.rmSync(repository, { recursive: true, force: true });
+  }
+});
+
 test('plan-commit rejects an intent-to-add index entry without changing it', () => {
   const repository = createPlanningRepository('planned-change');
   try {
@@ -455,7 +551,7 @@ function createPlanningRepository(changeId: string, existing = false): string {
   if (existing) {
     fs.writeFileSync(
       path.join(repository, 'openspec/changes/demo-change/.openspec.yaml'),
-      'schema: spec-driven\ncreated: 2026-07-15\n',
+      'schema: expense-app\ncreated: 2026-07-15\n',
     );
   }
   git(repository, ['add', '-A']);
@@ -477,7 +573,7 @@ function writeChange(
   fs.mkdirSync(path.join(changeDirectory, 'specs/demo'), { recursive: true });
   fs.writeFileSync(
     path.join(changeDirectory, '.openspec.yaml'),
-    'schema: spec-driven\ncreated: 2026-07-15\n',
+    'schema: expense-app\ncreated: 2026-07-15\n',
   );
   fs.writeFileSync(path.join(changeDirectory, 'proposal.md'), '# Proposal\n');
   fs.writeFileSync(path.join(changeDirectory, 'design.md'), '# Design\n');
@@ -547,6 +643,16 @@ function planningPaths(changeId: string): string[] {
 }
 
 function installFakeOpenSpec(repository: string): void {
+  fs.mkdirSync(path.join(repository, 'openspec'), { recursive: true });
+  fs.copyFileSync(
+    path.join(sourceRepositoryRoot, 'openspec/config.yaml'),
+    path.join(repository, 'openspec/config.yaml'),
+  );
+  fs.cpSync(
+    path.join(sourceRepositoryRoot, 'openspec/schemas/expense-app'),
+    path.join(repository, 'openspec/schemas/expense-app'),
+    { recursive: true },
+  );
   const manifestPath = path.join(repository, 'package.json');
   const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
   manifest.devDependencies['@fission-ai/openspec'] = '1.6.0';
@@ -593,6 +699,14 @@ function installFakeOpenSpec(repository: string): void {
     'node_modules/@fission-ai/openspec',
   );
   fs.mkdirSync(path.join(packageDirectory, 'bin'), { recursive: true });
+  fs.cpSync(
+    path.join(
+      sourceRepositoryRoot,
+      'node_modules/@fission-ai/openspec/schemas/spec-driven',
+    ),
+    path.join(packageDirectory, 'schemas/spec-driven'),
+    { recursive: true },
+  );
   fs.writeFileSync(
     path.join(packageDirectory, 'package.json'),
     `${JSON.stringify(
@@ -610,8 +724,32 @@ function installFakeOpenSpec(repository: string): void {
     path.join(packageDirectory, 'bin/openspec.js'),
     `import fs from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 if (process.argv[2] === '--version') {
   process.stdout.write('1.6.0\\n');
+  process.exit(0);
+}
+if (process.argv[2] === 'schema') {
+  const operation = process.argv[3];
+  const schemaName = process.argv[4];
+  const root = process.cwd();
+  const packageRoot = path.join(
+    path.dirname(fileURLToPath(import.meta.url)),
+    '..'
+  );
+  const schemaPath = schemaName === 'spec-driven'
+    ? path.join(packageRoot, 'schemas/spec-driven')
+    : path.join(root, 'openspec/schemas/expense-app');
+  process.stderr.write('Note: Schema commands are experimental and may change.\\n');
+  process.stdout.write(JSON.stringify(operation === 'which'
+    ? {
+        name: schemaName,
+        source: schemaName === 'spec-driven' ? 'package' : 'project',
+        path: schemaPath,
+        shadows: []
+      }
+    : { name: schemaName, path: schemaPath, valid: true, issues: [] }
+  ));
   process.exit(0);
 }
 if (process.argv[2] === 'status') {
@@ -621,9 +759,10 @@ if (process.argv[2] === 'status') {
   const changeRoot = path.join(root, 'openspec/changes', changeId);
   const artifacts = [
     ['proposal', 'proposal.md', [path.join(changeRoot, 'proposal.md')]],
-    ['specs', 'specs/**/*.md', [path.join(changeRoot, 'specs/demo/spec.md')]],
     ['design', 'design.md', [path.join(changeRoot, 'design.md')]],
-    ['tasks', 'tasks.md', [path.join(changeRoot, 'tasks.md')]]
+    ['specs', 'specs/**/*.md', [path.join(changeRoot, 'specs/demo/spec.md')]],
+    ['tasks', 'tasks.md', [path.join(changeRoot, 'tasks.md')]],
+    ['guard', 'guard.json', [path.join(changeRoot, 'guard.json')]]
   ];
   process.stdout.write(JSON.stringify({
     changeName: changeId,
@@ -645,7 +784,7 @@ if (process.argv[2] === 'status') {
     artifacts: artifacts.map(([id, outputPath]) => ({
       id, outputPath, status: 'done'
     })),
-    applyRequires: ['tasks'],
+    applyRequires: ['tasks', 'guard'],
     isComplete: true,
     root: { path: root, source: 'nearest' }
   }));

@@ -11,6 +11,7 @@ import './completion.integration.test.ts';
 import './issues.integration.test.ts';
 import './handoff.integration.test.ts';
 import './document-refresh.integration.test.ts';
+import './guard-contract.integration.test.ts';
 import './hooks.integration.test.ts';
 import './managed-trailers.contract.test.ts';
 import './ci.integration.test.ts';

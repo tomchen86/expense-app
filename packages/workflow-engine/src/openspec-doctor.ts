@@ -45,10 +45,10 @@ type RootDiagnostic = {
 };
 
 type SchemaDiagnostic = {
-  name: 'spec-driven';
-  expectedSource: 'package';
+  name: 'spec-driven' | 'expense-app';
+  expectedSource: 'package' | 'project';
   ok: boolean;
-  resolution: { source: 'package'; path: string } | null;
+  resolution: { source: 'package' | 'project'; path: string } | null;
   validation: { valid: boolean; issueCount: number } | null;
 };
 
@@ -133,21 +133,31 @@ export function diagnoseOpenSpec(
     );
   }
 
-  diagnosePackageSchema(report, installation, openspec);
+  for (const schema of report.schemas) {
+    diagnoseSchema(report, installation, openspec, schema);
+  }
   return finalize(report);
 }
 
-function diagnosePackageSchema(
+function diagnoseSchema(
   report: OpenSpecDiagnosticReport,
   installation: OpenSpecInstallation,
   openspec: ReturnType<typeof createOpenSpecProcess>,
+  schema: SchemaDiagnostic,
 ): void {
-  const schema = report.schemas[0]!;
   const expectation = {
     name: schema.name,
     source: schema.expectedSource,
-    path: path.join(installation.packageDirectory, 'schemas', schema.name),
-  } as const;
+    path:
+      schema.expectedSource === 'package'
+        ? path.join(installation.packageDirectory, 'schemas', schema.name)
+        : path.join(
+            installation.repositoryRoot,
+            'openspec/schemas',
+            schema.name,
+          ),
+  };
+  const target = `openspec.schema.${schema.name}`;
   try {
     assertOpenSpecSchemaDirectory(installation, expectation);
     const resolution = parseSchemaResolution(
@@ -164,7 +174,7 @@ function diagnosePackageSchema(
       diagnosticFrom(
         error,
         'OPENSPEC_SCHEMA_RESOLUTION_DIAGNOSTIC_FAILED',
-        'openspec.schema.spec-driven',
+        target,
       ),
     );
   }
@@ -184,8 +194,8 @@ function diagnosePackageSchema(
       report.diagnostics.push({
         severity: 'error',
         code: 'OPENSPEC_SCHEMA_INVALID',
-        message: 'The pinned spec-driven schema payload is not valid.',
-        target: 'openspec.schema.spec-driven',
+        message: `The managed ${schema.name} schema payload is not valid.`,
+        target,
       });
     }
   } catch (error) {
@@ -193,7 +203,7 @@ function diagnosePackageSchema(
       diagnosticFrom(
         error,
         'OPENSPEC_SCHEMA_VALIDATION_DIAGNOSTIC_FAILED',
-        'openspec.schema.spec-driven',
+        target,
       ),
     );
   }
@@ -232,6 +242,13 @@ function emptyReport(): OpenSpecDiagnosticReport {
       {
         name: 'spec-driven',
         expectedSource: 'package',
+        ok: false,
+        resolution: null,
+        validation: null,
+      },
+      {
+        name: 'expense-app',
+        expectedSource: 'project',
         ok: false,
         resolution: null,
         validation: null,

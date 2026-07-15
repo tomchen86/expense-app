@@ -33,7 +33,7 @@ RED-only commit cannot satisfy workflow completion checks.
 
 ## 3. Project Schema and Combined Validation
 
-- [ ] 3.1 Fork the pinned `spec-driven` schema to project-local `expense-app`,
+- [x] 3.1 Fork the pinned `spec-driven` schema to project-local `expense-app`,
       add the apply-required guard artifact, configure the project default, and
       implement strict schema, guard, task, check-ID, path, provenance, and
       payload validation without changing this change's metadata in the task

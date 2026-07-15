@@ -12,6 +12,8 @@ import {
   normalizePolicyPath,
 } from './paths.ts';
 
+const CHECK_ID_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
+
 export type WorkflowConfig = {
   schemaVersion: 1;
   repositoryName: string;
@@ -118,7 +120,7 @@ export function loadChecksConfig(repositoryRoot: string): ChecksConfig {
 
   for (const [checkId, definition] of Object.entries(value.checks)) {
     if (
-      !/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(checkId) ||
+      !CHECK_ID_PATTERN.test(checkId) ||
       !isRecord(definition) ||
       !isStringArray(definition.command) ||
       !parseCheckCommand(definition.command) ||
@@ -273,6 +275,12 @@ export function loadChangeContract(
 
   const markdownTaskIds = new Set(tasks.map((task) => task.id));
   const guardTaskIds = new Set(Object.keys(guard.tasks));
+
+  for (const [taskId, policy] of Object.entries(guard.tasks)) {
+    assertTaskId(taskId);
+    validateTaskPolicy(repositoryRoot, taskId, policy, checks);
+  }
+
   const missingPolicies = [...markdownTaskIds].filter(
     (taskId) => !guardTaskIds.has(taskId),
   );
@@ -287,11 +295,6 @@ export function loadChangeContract(
       guardPath,
       { missingPolicies, unknownPolicies },
     );
-  }
-
-  for (const [taskId, policy] of Object.entries(guard.tasks)) {
-    assertTaskId(taskId);
-    validateTaskPolicy(repositoryRoot, taskId, policy, checks);
   }
 
   const artifactPaths = [
@@ -322,7 +325,15 @@ export function parseTasks(markdown: string): ParsedTask[] {
 
   for (let index = 0; index < lines.length; index += 1) {
     const match = /^- \[([ xX])\] (\d+(?:\.\d+)+)\s+(.+)$/.exec(lines[index]);
-    if (!match) {
+    if (!match || match[3].trim().length === 0) {
+      if (looksLikeTaskCheckbox(lines[index])) {
+        throw workflowError(
+          'MALFORMED_TASK_LINE',
+          `Malformed workflow task at line ${index + 1}.`,
+          ExitCode.guard,
+          { details: { lineNumber: index + 1 } },
+        );
+      }
       continue;
     }
     const id = assertTaskId(match[2]);
@@ -347,6 +358,17 @@ export function parseTasks(markdown: string): ParsedTask[] {
   }
 
   return tasks;
+}
+
+function looksLikeTaskCheckbox(line: string): boolean {
+  const match = /^- \[([^\]]*)\](.*)$/.exec(line);
+  if (!match) {
+    return false;
+  }
+  if (match[2].startsWith('(') || match[2].startsWith('[')) {
+    return false;
+  }
+  return match[1] === '' || /^[ xX]$/.test(match[1]) || /^\s+\d/.test(match[2]);
 }
 
 export function digestArtifacts(
@@ -374,6 +396,7 @@ function parseGuardContract(
 
   if (
     !isRecord(value) ||
+    !hasExactKeys(value, ['changeId', 'schemaVersion', 'tasks']) ||
     value.schemaVersion !== 1 ||
     value.changeId !== expectedChangeId ||
     !isRecord(value.tasks) ||
@@ -389,6 +412,7 @@ function parseGuardContract(
   for (const [taskId, policy] of Object.entries(value.tasks)) {
     if (
       !isRecord(policy) ||
+      !hasExactKeys(policy, ['allowedPaths', 'requiredChecks']) ||
       !isStringArray(policy.allowedPaths) ||
       policy.allowedPaths.length === 0 ||
       !isStringArray(policy.requiredChecks) ||
@@ -425,6 +449,18 @@ function validateTaskPolicy(
     );
   }
 
+  const malformedChecks = policy.requiredChecks.filter(
+    (checkId) => !CHECK_ID_PATTERN.test(checkId),
+  );
+  if (malformedChecks.length > 0) {
+    throw workflowError(
+      'INVALID_REQUIRED_CHECK_ID',
+      `Task ${taskId} contains malformed required check IDs: ${malformedChecks.join(', ')}`,
+      ExitCode.guard,
+      { details: { taskId, malformedChecks } },
+    );
+  }
+
   if (new Set(policy.requiredChecks).size !== policy.requiredChecks.length) {
     throw workflowError(
       'DUPLICATE_REQUIRED_CHECK',
@@ -444,6 +480,17 @@ function validateTaskPolicy(
       { details: { taskId, unknownChecks } },
     );
   }
+}
+
+function hasExactKeys(
+  value: Record<string, unknown>,
+  expectedKeys: string[],
+): boolean {
+  const actualKeys = Object.keys(value);
+  return (
+    actualKeys.length === expectedKeys.length &&
+    expectedKeys.every((key) => Object.hasOwn(value, key))
+  );
 }
 
 function listMarkdownFiles(directory: string): string[] {

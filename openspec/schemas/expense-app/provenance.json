@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "source": {
+    "package": "@fission-ai/openspec",
+    "version": "1.6.0",
+    "schema": "spec-driven",
+    "path": "schemas/spec-driven",
+    "files": {
+      "schema.yaml": "9b82d32d3fdb270090aad4a1b28a25b56a973cd76b195370cbe7b53b218d958c",
+      "templates/proposal.md": "9c554e0dbe918e3dc745dcc143a999e1d102954d75fb6e51e231c4cba78f06f3",
+      "templates/spec.md": "e025078f238dc6e4df552a1e0a140cf9efce0bbdecbeb9f45837d45ed91dca01",
+      "templates/design.md": "3251f08057d142f6e3c26f65f5f100ab602ee7ce880d5503bfaa45668ba19f59",
+      "templates/tasks.md": "b2a6a4c08c15f347a1d8c3e2d43e0c8fb066dc5cc0feb795f47555f176f9c421"
+    }
+  }
+}
