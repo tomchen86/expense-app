@@ -17,26 +17,41 @@ export function withPlanningAuthority<T>(
   changeId: string,
   operation: (assertOwned: () => void) => T,
 ): T {
+  return withChangeTransitionAuthority(runtime, changeId, 'plan', operation);
+}
+
+export function withChangeTransitionAuthority<T>(
+  runtime: RuntimePaths,
+  changeId: string,
+  transition: 'plan' | 'archive',
+  operation: (assertOwned: () => void) => T,
+): T {
   return withRepositoryLifecycleOperation(runtime, (assertRepositoryLock) =>
-    withPlanningChangeLock(runtime, changeId, (assertChangeLock) => {
-      assertNoActiveSessions(runtime);
-      return operation(() => {
-        assertRepositoryLock();
-        assertChangeLock();
-      });
-    }),
+    withChangeTransitionLock(
+      runtime,
+      changeId,
+      transition,
+      (assertChangeLock) => {
+        assertNoActiveSessions(runtime);
+        return operation(() => {
+          assertRepositoryLock();
+          assertChangeLock();
+        });
+      },
+    ),
   );
 }
 
-function withPlanningChangeLock<T>(
+function withChangeTransitionLock<T>(
   runtime: RuntimePaths,
   changeId: string,
+  transition: 'plan' | 'archive',
   operation: (assertOwned: () => void) => T,
 ): T {
   ensurePlainDirectory(runtime.locks);
   const lockPath = path.join(runtime.locks, `${changeId}.lock`);
-  const operationId = `plan-${crypto.randomUUID()}`;
-  const content = `${JSON.stringify({ operationId, changeId, transition: 'plan' })}\n`;
+  const operationId = `${transition}-${crypto.randomUUID()}`;
+  const content = `${JSON.stringify({ operationId, changeId, transition })}\n`;
   let descriptor: number | undefined;
   const assertOwned = () => {
     if (descriptor === undefined) {
@@ -70,7 +85,7 @@ function withPlanningChangeLock<T>(
       descriptor = undefined;
     }
     if (isNodeError(error) && error.code === 'EEXIST') {
-      throw existingChangeLockError(lockPath);
+      throw existingChangeLockError(lockPath, transition);
     }
     throw error;
   }
@@ -132,7 +147,10 @@ function assertNoActiveSessions(runtime: RuntimePaths): void {
   }
 }
 
-function existingChangeLockError(lockPath: string) {
+function existingChangeLockError(
+  lockPath: string,
+  transition: 'plan' | 'archive',
+) {
   try {
     const value = JSON.parse(fs.readFileSync(lockPath, 'utf8')) as unknown;
     if (
@@ -151,8 +169,10 @@ function existingChangeLockError(lockPath: string) {
     // A malformed occupied lock remains an exclusive conflict.
   }
   return workflowError(
-    'PLANNING_TRANSITION_CONFLICT',
-    'Change already has a lifecycle transition in progress.',
+    transition === 'archive'
+      ? 'ARCHIVE_TRANSITION_CONFLICT'
+      : 'PLANNING_TRANSITION_CONFLICT',
+    `Change already has a ${transition} transition in progress.`,
     ExitCode.conflict,
   );
 }

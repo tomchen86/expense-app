@@ -8,15 +8,15 @@ This generated handoff contains semantic project state only. Its sources are the
 
 ## Current Task
 
-`5.1` — Add archive eligibility tests and implement canonical identity, completion evidence, base reachability, active-session, worktree, artifact, destination, mode, and exclusive-lock preconditions using existing workflow primitives.
+`5.2` — Execute the exact pinned OpenSpec archive operation only in an isolated detached temporary worktree and verify JSON roots, UTC destination, delta targets, rebuilt specs, full-index patch paths, modes, digests, and partial-failure isolation before real-worktree mutation.
 
 ## Next Task
 
-`5.2` — Execute the exact pinned OpenSpec archive operation only in an isolated detached temporary worktree and verify JSON roots, UTC destination, delta targets, rebuilt specs, full-index patch paths, modes, digests, and partial-failure isolation before real-worktree mutation.
+`5.3` — Add archive reports, fingerprint rechecks, verified patch application, exact staging/commit authorization, `Transition: archive` trailers, fault/concurrency coverage, and workflow-owned already-archived detection.
 
 ## Current Focus
 
-Add archive eligibility tests and implement canonical identity, completion evidence, base reachability, active-session, worktree, artifact, destination, mode, and exclusive-lock preconditions using existing workflow primitives.
+Execute the exact pinned OpenSpec archive operation only in an isolated detached temporary worktree and verify JSON roots, UTC destination, delta targets, rebuilt specs, full-index patch paths, modes, digests, and partial-failure isolation before real-worktree mutation.
 
 ## Known Blockers
 

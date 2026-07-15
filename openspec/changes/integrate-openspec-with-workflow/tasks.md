@@ -59,7 +59,7 @@ committed before Task 3.2 starts.
 
 ## 5. Workflow-Owned Archive
 
-- [ ] 5.1 Add archive eligibility tests and implement canonical identity,
+- [x] 5.1 Add archive eligibility tests and implement canonical identity,
       completion evidence, base reachability, active-session, worktree,
       artifact, destination, mode, and exclusive-lock preconditions using
       existing workflow primitives.
