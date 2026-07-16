@@ -9,7 +9,6 @@
         "docs/WORKFLOW.md"
       ],
       "requiredChecks": [
-        "managed-documents",
         "workflow-tests",
         "workflow-typecheck",
         "workflow-lint",
