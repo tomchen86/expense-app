@@ -1,0 +1,12 @@
+{
+  "schemaVersion": 1,
+  "changeId": "align-auth-integration-performance-budget",
+  "tasks": {
+    "1.1": {
+      "allowedPaths": [
+        "apps/api/src/__tests__/api/integration/auth-flow.spec.ts"
+      ],
+      "requiredChecks": ["api-database-policy-test"]
+    }
+  }
+}
