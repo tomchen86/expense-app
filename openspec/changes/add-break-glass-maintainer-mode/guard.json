@@ -1,0 +1,141 @@
+{
+  "schemaVersion": 1,
+  "changeId": "add-break-glass-maintainer-mode",
+  "tasks": {
+    "1.1": {
+      "allowedPaths": [
+        "packages/workflow-engine/src/maintainer-grant.ts",
+        "packages/workflow-engine/src/maintainer-policy.ts",
+        "packages/workflow-engine/src/paths.ts",
+        "packages/workflow-engine/test/contracts.test.ts",
+        "packages/workflow-engine/test/maintainer-mode.integration.test.ts",
+        "packages/workflow-engine/test/session.integration.test.ts",
+        "workflow/maintainer-policy.json",
+        "workflow/schemas/maintainer-grant.schema.json",
+        "workflow/schemas/maintainer-policy.schema.json"
+      ],
+      "requiredChecks": [
+        "workflow-tests",
+        "workflow-typecheck",
+        "workflow-lint",
+        "workflow-format"
+      ]
+    },
+    "1.2": {
+      "allowedPaths": [
+        "packages/workflow-engine/src/cli.ts",
+        "packages/workflow-engine/src/git.ts",
+        "packages/workflow-engine/src/maintainer-grant.ts",
+        "packages/workflow-engine/src/maintainer-signer.ts",
+        "packages/workflow-engine/test/maintainer-mode.integration.test.ts"
+      ],
+      "requiredChecks": [
+        "workflow-tests",
+        "workflow-typecheck",
+        "workflow-lint",
+        "workflow-format"
+      ]
+    },
+    "2.1": {
+      "allowedPaths": [
+        "packages/workflow-engine/src/cli.ts",
+        "packages/workflow-engine/src/maintainer-store.ts",
+        "packages/workflow-engine/src/planning-lock.ts",
+        "packages/workflow-engine/src/session-store.ts",
+        "packages/workflow-engine/test/maintainer-mode.integration.test.ts"
+      ],
+      "requiredChecks": [
+        "workflow-tests",
+        "workflow-typecheck",
+        "workflow-lint",
+        "workflow-format"
+      ]
+    },
+    "2.2": {
+      "allowedPaths": [
+        "packages/workflow-engine/src/check-runner.ts",
+        "packages/workflow-engine/src/cli.ts",
+        "packages/workflow-engine/src/maintainer-report.ts",
+        "packages/workflow-engine/src/maintainer-session.ts",
+        "packages/workflow-engine/src/maintainer-store.ts",
+        "packages/workflow-engine/src/report-store.ts",
+        "packages/workflow-engine/test/maintainer-mode.integration.test.ts"
+      ],
+      "requiredChecks": [
+        "workflow-tests",
+        "workflow-typecheck",
+        "workflow-lint",
+        "workflow-format"
+      ]
+    },
+    "3.1": {
+      "allowedPaths": [
+        "packages/workflow-engine/src/cli.ts",
+        "packages/workflow-engine/src/git-transitions.ts",
+        "packages/workflow-engine/src/hooks.ts",
+        "packages/workflow-engine/src/maintainer-commit.ts",
+        "packages/workflow-engine/src/maintainer-recovery.ts",
+        "packages/workflow-engine/src/maintainer-store.ts",
+        "packages/workflow-engine/src/managed-trailers.ts",
+        "packages/workflow-engine/test/maintainer-mode.integration.test.ts",
+        "packages/workflow-engine/test/managed-trailers.contract.test.ts"
+      ],
+      "requiredChecks": [
+        "workflow-tests",
+        "workflow-typecheck",
+        "workflow-lint",
+        "workflow-format"
+      ]
+    },
+    "4.1": {
+      "allowedPaths": [
+        "packages/workflow-engine/src/ci-authority.ts",
+        "packages/workflow-engine/src/ci-commit-validation.ts",
+        "packages/workflow-engine/src/ci-git.ts",
+        "packages/workflow-engine/src/ci-sequence.ts",
+        "packages/workflow-engine/src/ci.ts",
+        "packages/workflow-engine/src/maintainer-grant.ts",
+        "packages/workflow-engine/src/maintainer-policy.ts",
+        "packages/workflow-engine/src/managed-trailers.ts",
+        "packages/workflow-engine/test/maintainer-mode.integration.test.ts"
+      ],
+      "requiredChecks": [
+        "workflow-tests",
+        "workflow-typecheck",
+        "workflow-lint",
+        "workflow-format"
+      ]
+    },
+    "4.2": {
+      "allowedPaths": [
+        ".github/workflows/workflow-assurance.yml",
+        "packages/workflow-engine/src/ci.ts",
+        "packages/workflow-engine/src/cli.ts",
+        "packages/workflow-engine/src/git.ts",
+        "packages/workflow-engine/test/maintainer-mode.integration.test.ts"
+      ],
+      "requiredChecks": [
+        "workflow-tests",
+        "workflow-typecheck",
+        "workflow-lint",
+        "workflow-format"
+      ]
+    },
+    "5.1": {
+      "allowedPaths": [
+        "AGENTS.md",
+        "docs/CURRENT_AND_NEXT_STEPS.md",
+        "docs/ROADMAP.md",
+        "docs/WORKFLOW.md",
+        "packages/workflow-engine/test/contracts.test.ts"
+      ],
+      "requiredChecks": [
+        "workflow-tests",
+        "workflow-typecheck",
+        "workflow-lint",
+        "workflow-format",
+        "managed-documents"
+      ]
+    }
+  }
+}
