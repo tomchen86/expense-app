@@ -49,7 +49,7 @@ export function runRepositoryHook(
     if (stagedLifecyclePaths.length > 0) {
       throw workflowError(
         'MANAGED_DIFF_REQUIRES_WORKFLOW_COMMIT',
-        'OpenSpec task, planning, and archive diffs require a workflow commit-tree transition.',
+        'OpenSpec task, planning, archive, and authority diffs require a workflow commit-tree transition.',
         ExitCode.guard,
         { details: { stagedPaths: stagedLifecyclePaths } },
       );

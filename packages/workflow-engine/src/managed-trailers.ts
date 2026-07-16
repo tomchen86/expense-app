@@ -16,13 +16,25 @@ export type ArchiveManagedTrailers = {
   transition: 'archive';
 };
 
-export type ManagedTrailers =
-  TaskManagedTrailers | PlanManagedTrailers | ArchiveManagedTrailers;
+export type AuthorityManagedTrailers = {
+  kind: 'authority';
+  changeId: string;
+  transition: 'authority-maintenance';
+  grantId: string;
+};
 
-const RESERVED_TRAILER_LINE = /^[\t ]*(?:change|task|transition)[\t ]*:/i;
+export type ManagedTrailers =
+  | TaskManagedTrailers
+  | PlanManagedTrailers
+  | ArchiveManagedTrailers
+  | AuthorityManagedTrailers;
+
+const RESERVED_TRAILER_LINE = /^[\t ]*(?:change|task|transition|grant)[\t ]*:/i;
 const CHANGE_TRAILER = /^Change: ([a-z0-9]+(?:-[a-z0-9]+)*)$/;
 const TASK_TRAILER = /^Task: (\d+(?:\.\d+)+)$/;
-const TRANSITION_TRAILER = /^Transition: (plan|archive)$/;
+const TRANSITION_TRAILER = /^Transition: (plan|archive|authority-maintenance)$/;
+const GRANT_TRAILER =
+  /^Grant: ([0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$/;
 
 export class ManagedTrailerSyntaxError extends Error {
   constructor() {
@@ -54,25 +66,41 @@ export function parseManagedTrailers(
 
   const normalized = message.endsWith('\n') ? message.slice(0, -1) : message;
   const lines = normalized.split('\n');
-  const change = CHANGE_TRAILER.exec(lines.at(-2) ?? '');
-  const task = TASK_TRAILER.exec(lines.at(-1) ?? '');
-  const transition = TRANSITION_TRAILER.exec(lines.at(-1) ?? '');
+  const authority =
+    CHANGE_TRAILER.exec(lines.at(-3) ?? '') &&
+    TRANSITION_TRAILER.exec(lines.at(-2) ?? '')?.[1] ===
+      'authority-maintenance' &&
+    GRANT_TRAILER.exec(lines.at(-1) ?? '');
+  const trailerStart = authority ? -3 : -2;
+  const change = CHANGE_TRAILER.exec(lines.at(trailerStart) ?? '');
+  const task = authority ? null : TASK_TRAILER.exec(lines.at(-1) ?? '');
+  const transition = authority
+    ? TRANSITION_TRAILER.exec(lines.at(-2) ?? '')
+    : TRANSITION_TRAILER.exec(lines.at(-1) ?? '');
   const earlierReservedLine = lines
-    .slice(0, -2)
+    .slice(0, trailerStart)
     .some((line) => RESERVED_TRAILER_LINE.test(line));
 
   if (
     normalized.endsWith('\n') ||
-    lines.at(-3) !== '' ||
+    lines.at(trailerStart - 1) !== '' ||
     !change ||
     earlierReservedLine ||
-    (task === null) === (transition === null)
+    (!authority && (task === null) === (transition === null))
   ) {
     throw new ManagedTrailerSyntaxError();
   }
 
   if (task) {
     return { kind: 'task', changeId: change[1], taskId: task[1] };
+  }
+  if (authority && transition?.[1] === 'authority-maintenance') {
+    return {
+      kind: 'authority',
+      changeId: change[1],
+      transition: 'authority-maintenance',
+      grantId: authority[1],
+    };
   }
   if (transition?.[1] === 'plan') {
     return { kind: 'plan', changeId: change[1], transition: 'plan' };

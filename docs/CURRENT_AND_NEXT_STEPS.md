@@ -8,15 +8,15 @@ This generated handoff contains semantic project state only. Its sources are the
 
 ## Current Task
 
-`3.1` — Add signed authority commit isolation, canonical trailers, durable transaction journaling, and fail-closed crash recovery.
+`4.1` — Add parent-policy authority replay, audit-tag and commit-signature verification, unique-use enforcement, and sealed trust-root rules.
 
 ## Next Task
 
-`4.1` — Add parent-policy authority replay, audit-tag and commit-signature verification, unique-use enforcement, and sealed trust-root rules.
+`4.2` — Run workflow assurance from the pull-request base and cover candidate-verifier, phase, rotation, expiry, and replay attacks.
 
 ## Current Focus
 
-Add signed authority commit isolation, canonical trailers, durable transaction journaling, and fail-closed crash recovery.
+Add parent-policy authority replay, audit-tag and commit-signature verification, unique-use enforcement, and sealed trust-root rules.
 
 ## Known Blockers
 

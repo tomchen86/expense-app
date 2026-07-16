@@ -13,6 +13,17 @@ test('managed trailer parser returns one canonical transition kind', () => {
   );
   assert.deepEqual(
     parseManagedTrailers(
+      'Repair authority\n\nChange: demo-change\nTransition: authority-maintenance\nGrant: 11111111-1111-4111-8111-111111111111\n',
+    ),
+    {
+      kind: 'authority',
+      changeId: 'demo-change',
+      transition: 'authority-maintenance',
+      grantId: '11111111-1111-4111-8111-111111111111',
+    },
+  );
+  assert.deepEqual(
+    parseManagedTrailers(
       'Plan demo-change\n\nChange: demo-change\nTransition: plan\n',
     ),
     { kind: 'plan', changeId: 'demo-change', transition: 'plan' },
@@ -60,6 +71,9 @@ test('managed trailer parser rejects every non-canonical reserved block', () => 
     'Missing pair\n\nChange: demo-change\n',
     'Missing pair\n\nTask: 1.1\n',
     'Missing pair\n\nTransition: archive\n',
+    'Missing grant\n\nChange: demo-change\nTransition: authority-maintenance\n',
+    'Mixed authority\n\nChange: demo-change\nTask: 1.1\nTransition: authority-maintenance\nGrant: 11111111-1111-4111-8111-111111111111\n',
+    'Bad grant\n\nChange: demo-change\nTransition: authority-maintenance\nGrant: not-a-grant\n',
   ];
 
   for (const message of invalidMessages) {

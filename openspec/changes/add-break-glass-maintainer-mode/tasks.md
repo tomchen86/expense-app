@@ -10,7 +10,7 @@
 
 ## 3. Commit and Recovery
 
-- [ ] 3.1 Add signed authority commit isolation, canonical trailers, durable transaction journaling, and fail-closed crash recovery.
+- [x] 3.1 Add signed authority commit isolation, canonical trailers, durable transaction journaling, and fail-closed crash recovery.
 
 ## 4. Independent Assurance
 
