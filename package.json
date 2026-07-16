@@ -8,7 +8,7 @@
   "scripts": {
     "prepare": "husky",
     "format": "prettier --write .",
-    "format:check": "prettier --check .",
+    "format:check": "pnpm workflow run-check workflow-format --json",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
     "workflow": "node --experimental-strip-types packages/workflow-engine/src/cli.ts",
