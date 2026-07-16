@@ -1,6 +1,6 @@
 # Repository Workflow
 
-_Last reviewed: July 16, 2026_
+_Last reviewed: July 17, 2026_
 
 This repository plans changes with OpenSpec and executes them with the
 repository-owned `pnpm workflow` engine. Spectra is retained only for
@@ -25,11 +25,12 @@ current evidence.
 
 ## Managed Transition Matrix
 
-| Kind    | Exact trailers                           | Public authority                          |
-| ------- | ---------------------------------------- | ----------------------------------------- |
-| Task    | `Change: <id>` and `Task: <task-id>`     | session `complete-task`/`finish`/`commit` |
-| Plan    | `Change: <id>` and `Transition: plan`    | `pnpm workflow plan-commit <id>`          |
-| Archive | `Change: <id>` and `Transition: archive` | `pnpm workflow archive <id>`              |
+| Kind      | Exact trailers                                                               | Public authority                          |
+| --------- | ---------------------------------------------------------------------------- | ----------------------------------------- |
+| Task      | `Change: <id>` and `Task: <task-id>`                                         | session `complete-task`/`finish`/`commit` |
+| Plan      | `Change: <id>` and `Transition: plan`                                        | `pnpm workflow plan-commit <id>`          |
+| Archive   | `Change: <id>` and `Transition: archive`                                     | `pnpm workflow archive <id>`              |
+| Authority | `Change: <id>`, `Transition: authority-maintenance`, and `Grant: <grant-id>` | human-only authority lifecycle            |
 
 The forms are mutually exclusive. A plan or archive commit has no `Task:`
 trailer, a task commit has no `Transition:` trailer, and none may be mixed with
@@ -228,6 +229,159 @@ approval with stale-review dismissal is additionally required only when at
 least two independent eligible human maintainers exist. Until those remote
 rules are configured, local and workflow-file enforcement must not be described
 as merge authority.
+
+## Break-Glass Maintainer Mode
+
+Break-glass maintenance is a human-only fourth commit kind for changing exact
+workflow authority files when the ordinary task lifecycle must remain closed.
+It is not a bypass for product code, ordinary documents, failed checks, task
+completion, plan commits, or archives. The engine keeps local grants,
+reservations, terminal records, sessions, and commit journals in the Git common
+directory shared by linked worktrees; none is a reusable worktree credential.
+
+The checked-in implementation starts in `bootstrap`. Describe it as
+**bootstrap-only**, and do not claim sealed enforcement, until a maintainer has
+independently verified every remote prerequisite below:
+
+- protect the `workflow-grant/**` tag namespace against creation, update, and
+  deletion by unapproved actors while retaining administrator audit recovery;
+- require pull requests, an up-to-date base, the real `workflow-assurance`
+  check, and no bypass on the configured protected branch;
+- configure and verify the protected environment/approval gate that will be
+  required before the sealing PR can merge; and
+- retain the signed, non-secret audit envelope outside the local grant store so
+  a repository administrator can investigate a deleted or disputed remote tag.
+
+A checked-in workflow, a local hook, or a successful local replay does not
+prove any of these GitHub settings. The implementation PR is the one bootstrap
+exception: its base does not contain the verifier, so it remains an ordinary
+managed change. After that PR merges, `pull_request_target` loads the exact base
+workflow and trust material, checks the candidate separately without persisted
+credentials, and imports only the base repository's protected grant tags.
+
+### Human signer and repository prerequisites
+
+Perform grant issuance and authority commit creation directly from a
+controlling interactive terminal. Redirected or unattended use is rejected.
+The exact base policy must trust the configured key. Use a passphrase-encrypted
+SSH private key or a human-presence FIDO `*-sk` key; an unencrypted software
+key, SSH agent, askpass program, environment force switch, or candidate-added
+key cannot create authority.
+
+Configure the repository-local Git signer before issuing a grant:
+
+```bash
+git config --local gpg.format ssh
+git config --local user.signingkey ~/.ssh/<trusted-maintainer-key>
+```
+
+`user.signingkey` must resolve to an absolute regular file (a `~/` path is
+accepted), its fingerprint must match a signer in the exact base
+`workflow/maintainer-policy.json`, and normal Git author name/email must also be
+configured. Keep the worktree clean, use the canonical origin, and create an
+ordinary reviewed OpenSpec change plus planning commit on the exact
+`work/<change-id>` branch before issuing authority.
+
+### Maintainer command reference
+
+| Command                                                                                                                                             | Use and boundary                                                                                                                                                                                                                                    |
+| --------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `pnpm workflow maintainer grant --change <id> --paths <exact-path> [--paths <exact-path> ...] --reason <text> [--ttl <minutes>m] [--uses 1] --json` | Interactively sign one grant bound to the current full base commit, base policy blob, repository, change, sorted exact eligible paths, reason, signer, expiry, and one use. The default and maximum TTL are 30 minutes.                             |
+| `pnpm workflow maintainer inspect [grant-id] --json`                                                                                                | Read redacted available, reserved, consumed, or revoked local state. It grants no authority and exposes no private signing material.                                                                                                                |
+| `pnpm workflow maintainer revoke <grant-id> --json`                                                                                                 | Terminally revoke an available or reserved grant. Repeating it is cleanup-safe; a consumed or revoked grant never becomes available again.                                                                                                          |
+| `pnpm workflow authority-start <change-id> --grant <grant-id> --json`                                                                               | Atomically reserve the grant on its exact clean base and `work/<change-id>` branch, then pin policy, contract, signer, exact paths, and the complete normal check set.                                                                              |
+| `pnpm workflow authority-check <session-id> --json`                                                                                                 | Require at least one changed granted path, reject every ungranted path, run all base-pinned normal checks, and record current content-addressed evidence. Any later edit makes it stale.                                                            |
+| `pnpm workflow authority-commit <session-id> --message "Imperative subject" --json`                                                                 | Revalidate human presence and the same signer, stage only the exact diff, create one SSH-signed authority-maintenance commit with engine-owned trailers, advance the ref, and consume the grant. There is no authority `complete-task` or `finish`. |
+| `pnpm workflow authority-recover <session-id> --json`                                                                                               | Resume only a durable authority-commit journal. It may complete the exact pending old-OID ref update or idempotent consumption; ambiguity terminally revokes the use.                                                                               |
+| `pnpm workflow authority-abort <session-id> --reason "Concrete reason" --json`                                                                      | Cancel an active session before commit journaling and terminally revoke the reservation. It does not discard or reset worktree edits.                                                                                                               |
+
+Grant issuance creates both the local single-use token and an annotated audit
+tag. Run the exact `publishCommand` returned by the command immediately; it has
+this form:
+
+```bash
+git push origin refs/tags/workflow-grant/<grant-id>:refs/tags/workflow-grant/<grant-id>
+```
+
+Do not delete or replace the tag after revocation, failure, expiry, or
+consumption. The envelope is non-secret audit evidence, and CI requires the
+exact protected tag. Do not extend, copy, or reuse an expired grant; issue a
+new grant from the new exact base.
+
+### Authority execution sequence
+
+Use one grant for one authority commit:
+
+```bash
+pnpm workflow maintainer grant --change <change-id> \
+  --paths <exact-authority-path> --reason "Reviewed reason" --json
+git push origin refs/tags/workflow-grant/<grant-id>:refs/tags/workflow-grant/<grant-id>
+pnpm workflow maintainer inspect <grant-id> --json
+pnpm workflow authority-start <change-id> --grant <grant-id> --json
+# Edit at least one and only the exact granted paths.
+pnpm workflow authority-check <session-id> --json
+pnpm workflow authority-commit <session-id> \
+  --message "Imperative authority subject" --json
+pnpm workflow maintainer inspect <grant-id> --json
+```
+
+Push the branch, open a PR, and require the base-owned
+`workflow-assurance` result. CI verifies the grant and commit signatures, audit
+tag, parent/base, policy blob, repository identity, expiry both at commit time
+and PR evaluation time, exact diff, single claim across the PR range, phase
+transition, and every normal check. If CI queues past expiry, issue a new grant
+and new isolated authority commit; never amend, replay, or relax the old one.
+
+Any failure after reservation closes the session and terminally revokes that
+use. `authority-abort` is for an active session that has not started commit
+journaling. `authority-recover` is only for a journal created by
+`authority-commit`; it is not a retry for a failed check, expired grant, dirty
+branch, missing tag, signature error, or divergent tree. Preserve the error,
+inspect the session and grant, and obtain explicit maintainer approval before
+discarding any leftover edits. A lost trusted key, missing/altered journal,
+divergent branch, or damaged trust root is a repository-admin, out-of-band
+recovery event with separately retained audit evidence—not a workflow command
+or AI-accessible override.
+
+### Bootstrap pilot and one-way sealing
+
+After this implementation is merged, first verify the remote prerequisites and
+run a dedicated, non-database bootstrap pilot from the updated configured base:
+
+1. Create and plan-commit a small OpenSpec change for one harmless exact file
+   already allowed by `bootstrapEligiblePaths`. Do not put product work or the
+   phase transition in this pilot.
+2. With separate grants, record read-only inspection, idempotent explicit
+   revocation, a one-minute expiry rejection, and terminal cleanup after a
+   deliberate pre-commit failure. Never reuse those grant IDs or delete their
+   audit tags.
+3. Issue and publish a fresh grant for the successful pilot, run the full
+   authority sequence, then call `authority-recover` on the consumed session to
+   prove idempotent journal finalization. Interrupted commit points remain
+   integration-test evidence; do not deliberately crash or corrupt a real
+   repository.
+4. Push the pilot PR and record the exact commands, semantic change/grant IDs,
+   audit-tag publication, check results, commit-signature verification, and
+   base-owned `workflow-assurance` result. Merge only through the configured
+   remote rules.
+5. Confirm or rotate to a human-presence hardware signer while the parent
+   policy is still in bootstrap. A new signer is trusted only after an
+   old-key-authorized authority commit merges.
+
+Only after that evidence and protected-environment approval may a separate
+authority-maintenance change set `phase` from `bootstrap` to `sealed`. The
+grant must be signed by a signer trusted in the parent policy and must target
+the exact policy file. The transition is one-way: CI rejects
+`sealed` → `bootstrap`, removal of immutable paths or required checks, and any
+sealed grant that targets the verifier, policy/signer loader, policy itself, or
+other `sealedImmutablePaths`. Review the sealed path list before the transition
+because later maintenance of those paths requires repository-admin,
+out-of-band recovery; there is no force flag.
+
+Before sealing, rollback means a separately reviewed ordinary managed revert
+of this integration. After sealing, ordinary eligible non-immutable authority
+paths may still use a valid old-policy grant, but the immutable trust root
+cannot be rolled back through maintainer mode.
 
 ### Standalone registered checks
 

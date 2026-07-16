@@ -1,6 +1,6 @@
 # Roadmap
 
-_Last verified: July 16, 2026_
+_Last verified: July 17, 2026_
 
 This document owns project priority. Detailed implementation tasks belong only
 in the linked OpenSpec change.
@@ -9,20 +9,33 @@ in the linked OpenSpec change.
 
 ### Finish repository workflow adoption
 
-- Complete and merge `integrate-openspec-with-workflow`, then run the separate
-  maintainer-owned, non-database post-merge pilot in `docs/WORKFLOW.md`. The
-  disposable-repository rehearsal is test evidence, not that pilot.
+- Complete and merge `add-break-glass-maintainer-mode` through the ordinary
+  managed lifecycle; this implementation PR is the bootstrap exception and
+  must not contain or claim an authority-maintenance commit.
+- Keep break-glass maintainer mode explicitly **bootstrap-only** until a human
+  maintainer independently verifies protected `workflow-grant/**` tags, the
+  required base-owned `workflow-assurance` check, no-bypass/up-to-date branch
+  rules, and the protected environment approval for sealing.
+- Run both maintainer-owned, non-database post-merge gates in
+  `docs/WORKFLOW.md`: the ordinary plan/task/archive pilot and the separate
+  break-glass bootstrap pilot. Disposable-repository and interrupted-commit
+  rehearsals are test evidence, not the real pilots.
 - Keep support undeclared until the pilot proves plan, task, archive,
-  idempotency, repository-local Codex discovery observation, and real
-  `workflow-assurance` replay from the configured base.
+  authority grant/revoke/expiry/cleanup, idempotent recovery, repository-local
+  Codex discovery observation, protected audit-tag publication, and real
+  base-owned `workflow-assurance` replay from the configured base.
+- Confirm or rotate to a human-presence hardware signer while still in
+  bootstrap, then use a separately approved old-key-authorized authority commit
+  for the one-way `bootstrap` → `sealed` transition. Lost-key or immutable
+  trust-root recovery remains repository-admin and out-of-band.
 - Keep the retained root Spectra configuration historical-only; keep
   Spectra-generated agent skills removed and every Spectra command, adapter,
   and lifecycle state outside all execution paths.
-- Activate the remote GitHub ruleset only after the workflow is present on the
-  default branch: require pull requests, `workflow-assurance`, an up-to-date
-  base, and no bypass. Require code-owner approval with stale-review dismissal
-  only when at least two independent eligible human maintainers exist
-  (`ISS-003`).
+- Activate the remote GitHub ruleset only after the base-owned workflow is
+  present on the default branch: require pull requests,
+  `workflow-assurance`, an up-to-date base, and no bypass. Require code-owner
+  approval with stale-review dismissal only when at least two independent
+  eligible human maintainers exist (`ISS-003`).
 - Complete the approved `refresh-agent-document-governance-v2` managed change to
   move noncanonical legacy documents into the immutable archive and update
   current references.

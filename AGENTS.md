@@ -17,6 +17,11 @@ Only an executable workflow command may authorize a planning commit, task
 completion, controlled-document update, staging, managed commit, or archive.
 Never treat an AI claim, checked box, or prose status as evidence.
 
+Break-glass authority is human-only. An agent may explain the maintainer
+commands or prepare an ordinary reviewed OpenSpec change, but must not attempt
+to satisfy the controlling-terminal, trusted-signer, protected-tag, or remote
+approval requirements on the maintainer's behalf.
+
 ## Planning Skill Routing
 
 The exact supported skill names are listed below. Do not invent aliases from
@@ -81,6 +86,29 @@ edit checkboxes, or commit managed task work by hand.
 Archive is a separate transition. Do not manually move an active OpenSpec
 change or run an upstream archive command directly.
 
+### Human-only break-glass maintenance
+
+These commands are not an alternate task lifecycle. Grant issuance and commit
+creation require the eligible maintainer at a controlling interactive terminal;
+use `docs/WORKFLOW.md` for the complete bootstrap, pilot, sealing, and recovery
+procedure.
+
+| Command | Use when |
+| ------- | -------- |
+| `pnpm workflow maintainer grant ... --json` | A human maintainer is issuing one short-lived, single-use grant for sorted exact eligible authority paths |
+| `pnpm workflow maintainer inspect [grant-id] --json` | Reading redacted local grant, reservation, or terminal state |
+| `pnpm workflow maintainer revoke <grant-id> --json` | Terminally revoking an unused, reserved, or already-terminal grant; repeated use is cleanup-safe |
+| `pnpm workflow authority-start <id> --grant <grant-id> --json` | Reserving the published grant on the exact clean `work/<id>` branch and base |
+| `pnpm workflow authority-check <session-id> --json` | Running all base-pinned normal checks against an exact-path authority diff |
+| `pnpm workflow authority-commit <session-id> --message "Subject" --json` | Creating the signed authority-maintenance commit and consuming the grant from current evidence |
+| `pnpm workflow authority-recover <session-id> --json` | Finalizing only an exact durable commit journal after an interrupted authority commit |
+| `pnpm workflow authority-abort <session-id> --reason "Reason" --json` | Cancelling an active pre-commit authority session and terminally revoking its grant |
+
+Never stage or commit authority work manually, reuse a failed or expired grant,
+delete its audit tag to erase history, or use `authority-recover` as a general
+retry. Until the remote prerequisites in `docs/WORKFLOW.md` are independently
+verified, describe the facility as bootstrap-only, not sealed enforcement.
+
 ### Issues and managed documents
 
 | Command                                          | Use when                                                        |
@@ -121,6 +149,7 @@ Managed commit forms are mutually exclusive:
 | Task    | `Change: <id>` and `Task: <task-id>`             | session lifecycle           |
 | Plan    | `Change: <id>` and `Transition: plan`            | `workflow plan-commit`      |
 | Archive | `Change: <id>` and `Transition: archive`         | `workflow archive`          |
+| Authority | `Change: <id>`, `Transition: authority-maintenance`, and `Grant: <grant-id>` | human-only authority lifecycle |
 
 Do not hand-author or mix these trailers. The exact lifecycle, recovery,
 upgrade, and post-merge pilot procedures are in `docs/WORKFLOW.md`.
