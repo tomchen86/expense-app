@@ -5,6 +5,18 @@
     "1.1": {
       "allowedPaths": [
         "apps/web",
+        "packages/workflow-engine/test/contracts.test.ts"
+      ],
+      "requiredChecks": [
+        "workflow-tests",
+        "workflow-typecheck",
+        "workflow-lint",
+        "workflow-format"
+      ]
+    },
+    "1.2": {
+      "allowedPaths": [
+        "apps/web",
         "apps/web/**",
         ".github/workflows/workflow-assurance.yml",
         "packages/workflow-engine/test/contracts.test.ts"

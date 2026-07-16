@@ -64,17 +64,28 @@ checkout, exact event-head selection, `fetch-depth: 0`, and
 `persist-credentials: false`. A failure is hard and blocks the registered
 `workflow-tests` check; there is no compatibility fallback.
 
-### Convert the tree and workflow in one managed task
+### Cross the Git file-to-directory boundary in two managed task commits
 
-Removing only the shim would break checkout while the gitlink remains.
-Converting only the gitlink would leave unnecessary runner mutation and dead
-security-sensitive code. One narrowly scoped task makes the repository tree,
-workflow, and registered contract change atomically.
+Git cannot represent deletion of an indexed gitlink and untracked descendants
+below the same path as one unstaged worktree projection. The workflow engine
+correctly reserves staging for `finish`, so manually removing the gitlink from
+the index before finish is forbidden.
 
-Planning has its own workflow-owned commit. Task scope names the gitlink path,
-its future descendants, the assurance workflow, and the single registered
-contract file. The workflow report is the authority for allowed paths and
-non-database checks; Markdown completion is not evidence.
+Task 1.1 therefore adds a RED -> GREEN transition contract and removes only the
+gitlink. Its committed baseline has no entry at `apps/web` while the checkout
+shim remains. Task 1.2 then adds the ordinary README, replaces the transitional
+contract with the permanent index/workflow contract, and removes the shim.
+Both commits land in one protected pull request, so the default branch observes
+only the final coherent directory state.
+
+Removing the shim in Task 1.1 is rejected because checkout still needs it for
+the pull-request head until the final tree exists. Adding the README before the
+gitlink deletion is rejected because Git hides descendants beneath the indexed
+gitlink from the engine's unstaged change inspection.
+
+Planning has its own workflow-owned revision commit. Each task has exact path
+scope and the same four registered non-database checks. The workflow report is
+the authority for allowed paths and completion; Markdown state is not evidence.
 
 ## Trust Boundaries and Evidence
 
@@ -100,26 +111,32 @@ non-database checks; Markdown completion is not evidence.
 - **Checkout security is weakened while removing the shim** -> Preserve and
   assert the pinned action, exact event head, full history, and disabled
   credential persistence.
-- **The tree conversion is partially applied** -> Workflow path checks and the
-  task commit bind the index, README, workflow, and contract as one transition.
+- **The first task commit lacks a web path** -> Keep it only as an intermediate
+  commit in the protected branch; Task 2 supplies the final ordinary directory
+  before the pull request may merge.
 
 ## Migration Plan
 
 1. Commit this complete planning tree with `workflow plan-commit`.
-2. Start Task 1.1 and change only the registered contract to record the RED
-   failure against the retained gitlink and workaround.
-3. Remove the gitlink, add the placeholder README, and remove only the three
-   transient compatibility phases plus `clean: false` from assurance checkout.
-4. Run the targeted contract, structural Git checks, frozen install, and the
-   authoritative task check before complete-task, finish, and workflow commit.
-5. Push and rebase-merge only after the active ruleset's real
+2. Start Task 1.1, add a transitional contract that fails while the `apps/web`
+   worktree path exists, remove the empty gitlink path without staging it, and
+   let workflow finish stage and commit the deletion.
+3. Start Task 1.2 and replace the transitional contract with the permanent
+   Git-index and checkout contract, observe RED against the absent placeholder
+   and retained shim, then add `apps/web/README.md` and remove only the three
+   transient compatibility phases plus `clean: false`.
+4. For each task, run the targeted contract and authoritative checks before
+   complete-task, finish, and workflow commit. After Task 1.2, additionally run
+   structural Git checks and frozen install.
+5. Push and rebase-merge both task commits only after the active ruleset's real
    `workflow-assurance` check passes.
 6. From an updated default branch, run workflow archive twice, verify
    idempotency, and merge the archive pull request through the same rule.
 
-Rollback before merge is a correction on the managed branch. Rollback after
-merge is another managed ordinary-directory change; recreating the malformed
-gitlink or restoring the transient shim is not an acceptable shortcut.
+Rollback before merge completes Task 1.2 or corrects the managed branch; the
+intermediate deletion commit must not merge alone. Rollback after merge is
+another managed ordinary-directory change; recreating the malformed gitlink or
+restoring the transient shim is not an acceptable shortcut.
 
 ## Open Questions
 
