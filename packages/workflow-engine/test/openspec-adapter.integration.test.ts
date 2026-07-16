@@ -11,6 +11,13 @@ import {
 import { parseInstructions } from '../src/openspec-payloads.ts';
 import { isWorkflowError, sourceRepositoryRoot } from './fixture.ts';
 
+test('repository base specs satisfy pinned strict validation', () => {
+  const validation =
+    createOpenSpecAdapter(sourceRepositoryRoot).validateAllSpecs();
+
+  assert.equal(validation.valid, true);
+});
+
 test('OpenSpec adapter pins argv, cwd, environment, and temporary homes', () => {
   const capturePath = path.join(
     os.tmpdir(),
