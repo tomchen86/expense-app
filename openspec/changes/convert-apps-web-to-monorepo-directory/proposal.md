@@ -18,6 +18,9 @@ capability claims.
 - Replace the retained-gitlink regression contract with a permanent contract
   that rejects gitlinks under `apps/web`, rejects the retired workaround, and
   preserves pinned credential-free exact-head checkout with full history.
+- Preserve the existing retained-gitlink scenario identity as an explicit
+  regression case so pinned OpenSpec can safely merge the modified requirement
+  without dropping historical coverage during archive.
 - Prove ordinary Git and submodule inspection, frozen dependency installation,
   and managed workflow checks without inventing a submodule URL.
 
@@ -68,5 +71,7 @@ None.
 Git changes the `apps/web` tree entry from mode `160000` to ordinary tracked
 files. GitHub Actions loses the transient compatibility steps but retains the
 pinned checkout action, exact pull-request head selection, full reachable
-history, and `persist-credentials: false`. No runtime application, API,
+history, and `persist-credentials: false`. The post-merge planning repair adds
+only archive-compatible regression wording to the delta spec; it does not
+restore the shim or change runtime behavior. No runtime application, API,
 database, dependency, or public interface changes.

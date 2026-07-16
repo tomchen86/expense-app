@@ -20,6 +20,15 @@ checkout.
 - **AND** no transient submodule compatibility step runs before or after
   repository-controlled commands
 
+#### Scenario: Retained gitlink has no configured submodule URL
+
+- **GIVEN** a proposed repository tree retains the `apps/web` gitlink
+- **AND** no persistent `.gitmodules` entry assigns that gitlink a URL
+- **WHEN** the registered repository-governance contract runs
+- **THEN** workflow assurance rejects the gitlink regression before merge
+- **AND** no transient compatibility metadata is synthesized to mask the
+  invalid tree
+
 #### Scenario: Gitlink regression under the web path
 
 - **GIVEN** Git records `apps/web` or one of its descendants with mode
