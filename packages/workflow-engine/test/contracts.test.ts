@@ -97,6 +97,53 @@ test('workflow assurance checks out an ordinary apps/web directory without gitli
   assert.ok(checkout < verify);
 });
 
+test('format verification delegates to the unchanged registered authority', () => {
+  const repositoryRoot = path.resolve(import.meta.dirname, '../../..');
+  const manifest = JSON.parse(
+    fs.readFileSync(path.join(repositoryRoot, 'package.json'), 'utf8'),
+  );
+  assert.equal(
+    manifest.scripts['format:check'],
+    'pnpm workflow run-check workflow-format --json',
+  );
+
+  const formatWorkflow = fs.readFileSync(
+    path.join(repositoryRoot, '.github/workflows/format.yml'),
+    'utf8',
+  );
+  assert.match(formatWorkflow, /run: pnpm run format:check/);
+  assert.doesNotMatch(formatWorkflow, /prettier\s+--check/);
+
+  const checks = JSON.parse(
+    fs.readFileSync(path.join(repositoryRoot, 'workflow/checks.json'), 'utf8'),
+  );
+  assert.deepEqual(checks.checks['workflow-format'], {
+    command: [
+      'node-package-bin',
+      '.',
+      'prettier',
+      'prettier',
+      '--check',
+      'packages/workflow-engine',
+      'workflow',
+      'apps/api/src/__tests__/setup/datasource.factory.ts',
+      'apps/api/src/__tests__/setup/database-target-policy.ts',
+      'apps/api/src/__tests__/isolated/database-target-policy.isolated.spec.ts',
+      'package.json',
+      'pnpm-workspace.yaml',
+      'openspec/changes/establish-executable-ai-workflow',
+      'docs/planning/PLAN-EXECUTABLE_AI_WORKFLOW_ENGINE.md',
+      'docs/planning/PLAN-DOCUMENTATION_STRUCTURE_V2.md',
+      'docs/README.md',
+      'docs/ROADMAP.md',
+      'docs/CURRENT_AND_NEXT_STEPS.md',
+      'docs/DOCUMENT_STRUCTURE_GUIDE.md',
+      'AGENTS.md',
+    ],
+    destructiveDatabase: false,
+  });
+});
+
 test('repository exposes only reviewed OpenSpec planning skills', () => {
   const repositoryRoot = path.resolve(import.meta.dirname, '../../..');
   const agentSkillsRoot = path.join(repositoryRoot, '.agents/skills');

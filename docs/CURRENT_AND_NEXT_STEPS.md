@@ -8,7 +8,7 @@ This generated handoff contains semantic project state only. Its sources are the
 
 ## Current Task
 
-`1.2` — Add a failing repository routing contract, then make the existing `format:check` package entry point delegate to `run-check workflow-format` so GitHub, local verification, managed checks, and replay share the unchanged registry definition.
+None — all tasks are complete.
 
 ## Next Task
 
@@ -16,7 +16,7 @@ None.
 
 ## Current Focus
 
-Add a failing repository routing contract, then make the existing `format:check` package entry point delegate to `run-check workflow-format` so GitHub, local verification, managed checks, and replay share the unchanged registry definition.
+Prepare the completed change for explicit archival review.
 
 ## Known Blockers
 
