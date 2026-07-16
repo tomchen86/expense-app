@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "changeId": "correct-codeowner-identity",
+  "tasks": {
+    "1.1": {
+      "allowedPaths": [
+        ".github/CODEOWNERS",
+        "docs/ROADMAP.md",
+        "docs/WORKFLOW.md"
+      ],
+      "requiredChecks": [
+        "managed-documents",
+        "workflow-tests",
+        "workflow-typecheck",
+        "workflow-lint",
+        "workflow-format"
+      ]
+    }
+  }
+}
