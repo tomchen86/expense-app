@@ -88,8 +88,8 @@ repository code executes.
 The transient URL is never committed and the submodule is never initialized.
 This preserves full-history exact-head checkout without exposing the GitHub
 token to repository code or asserting that `apps/web` is a valid submodule.
-Task 1.2 follows RED -> GREEN -> REFACTOR by first extending the workflow
-integration contract, observing the failure, and then changing the workflow.
+Task 1.2 follows RED -> GREEN -> REFACTOR by first extending the registered
+workflow contract, observing the failure, and then changing the workflow.
 
 ## Risks / Trade-offs
 
