@@ -60,7 +60,7 @@ Every approved source is renamed to
 `docs/archive/**` immutable policy remains byte-identical to `main`; an ordinary
 managed task does not attempt to change pinned authority.
 
-### 5. Use one atomic managed task
+### 5. Keep migration and post-merge command reconciliation separate
 
 The archive moves and the corresponding `workflow-format` path update must land
 in the same task so no intermediate task commit refers to missing paths. Because
@@ -68,6 +68,13 @@ the task changes the `workflow-format` definition, that check is not allowed to
 serve as its own pinned completion authority. Unchanged `workflow-tests`,
 `workflow-lint`, and `managed-documents` provide managed evidence; after commit,
 the new format command is run explicitly against the final tree before branch CI.
+
+After the independent format-authority repair reaches the base, a second task
+reconciles the agent command table and its contracts with the new public
+`run-check` command. This follow-up does not change the registry again: it makes
+the adapter-delegation contract expect the canonical scope already established
+by the atomic migration task and documents when standalone registered checks are
+appropriate.
 
 ### 6. Track `/memo/` in `.gitignore`
 
@@ -92,9 +99,12 @@ without weakening untracked detection elsewhere.
 2. Start Task 1.1, establish RED contract evidence, and atomically update the
    guide, overview, memo rule, current references, archive paths, tests, and
    formatting registry.
-3. Verify all 35 destination blobs match their source blobs, run the managed
-   task lifecycle, run the final format command, and execute full branch CI.
-4. Push and merge only after maintainer authorization. Archive the OpenSpec
+3. Verify all 35 destination blobs match their source blobs and complete the
+   first managed task lifecycle.
+4. After rebasing onto the format-authority repair, add and complete the separate
+   command-routing reconciliation task, then run the final format command and
+   full branch CI.
+5. Push and merge only after maintainer authorization. Archive the OpenSpec
    change in a separate post-merge transition.
 
 ## Open Questions

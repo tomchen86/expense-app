@@ -44,6 +44,17 @@
         "workflow-lint",
         "managed-documents"
       ]
+    },
+    "1.2": {
+      "allowedPaths": [
+        "AGENTS.md",
+        "packages/workflow-engine/test/contracts.test.ts"
+      ],
+      "requiredChecks": [
+        "workflow-tests",
+        "workflow-lint",
+        "workflow-format"
+      ]
     }
   }
 }
