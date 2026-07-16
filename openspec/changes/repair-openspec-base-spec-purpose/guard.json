@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "changeId": "repair-openspec-base-spec-purpose",
+  "tasks": {
+    "1.1": {
+      "allowedPaths": [
+        "openspec/specs/category-management/spec.md",
+        "openspec/specs/group-collaboration/spec.md",
+        "openspec/specs/identity-and-access/spec.md",
+        "packages/workflow-engine/test/openspec-adapter.integration.test.ts"
+      ],
+      "requiredChecks": [
+        "workflow-tests",
+        "workflow-typecheck",
+        "workflow-lint",
+        "workflow-format"
+      ]
+    }
+  }
+}
