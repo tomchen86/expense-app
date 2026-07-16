@@ -183,12 +183,162 @@ test('repository exposes only reviewed OpenSpec planning skills', () => {
     path.join(repositoryRoot, 'docs/ROADMAP.md'),
     'utf8',
   );
-  assert.match(agents, /tracked root `.spectra\.yaml`.*historical-only/s);
-  assert.doesNotMatch(agents, /Spectra files remain installed|\$spectra-/);
+  assert.doesNotMatch(agents, /spectra/i);
+  assert.match(agents, /`openspec-explore`/);
+  assert.match(agents, /`openspec-propose`/);
   assert.match(maintenance, /^# OpenSpec skill mirror maintenance/m);
   assert.doesNotMatch(maintenance, /spectra update/i);
   assert.match(roadmap, /retained root Spectra configuration historical-only/);
   assert.doesNotMatch(roadmap, /Keep Spectra installed/);
+});
+
+test('agent guide documents the complete public workflow surface and source-size rule', () => {
+  const repositoryRoot = path.resolve(import.meta.dirname, '../../..');
+  const agents = fs.readFileSync(
+    path.join(repositoryRoot, 'AGENTS.md'),
+    'utf8',
+  );
+  const commands = [
+    'pnpm workflow doctor',
+    'pnpm workflow validate-change',
+    'pnpm workflow plan-commit',
+    'pnpm workflow archive',
+    'pnpm workflow codex-assets generate',
+    'pnpm workflow codex-assets check',
+    'pnpm workflow codex-assets install-prompts',
+    'pnpm workflow start',
+    'pnpm workflow status',
+    'pnpm workflow check',
+    'pnpm workflow ci',
+    'pnpm workflow adapter evaluate',
+    'pnpm workflow issue add',
+    'pnpm workflow issue update',
+    'pnpm workflow issue close',
+    'pnpm workflow issue render',
+    'pnpm workflow issue validate',
+    'pnpm workflow documents validate',
+    'pnpm workflow document-refresh propose',
+    'pnpm workflow document-refresh show',
+    'pnpm workflow document-refresh review',
+    'pnpm workflow document-refresh apply',
+    'pnpm workflow handoff render',
+    'pnpm workflow handoff validate',
+    'pnpm workflow hook pre-commit',
+    'pnpm workflow hook commit-msg',
+    'pnpm workflow hook pre-push',
+    'pnpm workflow hook post-merge',
+    'pnpm workflow complete-task',
+    'pnpm workflow finish',
+    'pnpm workflow rollback-completion',
+    'pnpm workflow commit',
+    'pnpm workflow abort',
+  ];
+
+  for (const command of commands) {
+    assert.match(agents, new RegExp(command.replaceAll(' ', '\\s+')));
+  }
+  assert.match(
+    agents,
+    /Do not change, split, or refactor source\s+solely because it exceeds 500 lines\./,
+  );
+  assert.doesNotMatch(agents, /keep files under 500 LOC/i);
+});
+
+test('documentation entry point is a project overview and archive policy remains immutable', () => {
+  const repositoryRoot = path.resolve(import.meta.dirname, '../../..');
+  const readme = fs.readFileSync(
+    path.join(repositoryRoot, 'docs/README.md'),
+    'utf8',
+  );
+  const gitignore = fs.readFileSync(
+    path.join(repositoryRoot, '.gitignore'),
+    'utf8',
+  );
+  const documentPolicy = JSON.parse(
+    fs.readFileSync(
+      path.join(repositoryRoot, 'workflow/document-policy.json'),
+      'utf8',
+    ),
+  ) as { documents: Record<string, unknown> };
+
+  assert.match(readme, /^# Expense App$/m);
+  assert.match(readme, /React Native/);
+  assert.match(readme, /NestJS/);
+  assert.match(readme, /apps\/web/);
+  assert.match(readme, /DOCUMENT_STRUCTURE_GUIDE\.md/);
+  assert.doesNotMatch(readme, /^# Documentation Entry Point$/m);
+  assert.doesNotMatch(readme, /^## Target Structure$/m);
+  assert.match(gitignore, /^\/memo\/$/m);
+
+  assert.deepEqual(documentPolicy.documents['docs/archive/**'], {
+    mode: 'immutable',
+    enforcement: 'planned',
+  });
+  assert.ok(documentPolicy.documents['docs/ROADMAP.md']);
+  assert.ok(documentPolicy.documents['openspec/specs/**']);
+  assert.ok(documentPolicy.documents['openspec/changes/**']);
+});
+
+test('legacy documents exist only under the immutable archive boundary', () => {
+  const repositoryRoot = path.resolve(import.meta.dirname, '../../..');
+  const gitignore = fs.readFileSync(
+    path.join(repositoryRoot, '.gitignore'),
+    'utf8',
+  );
+  const legacyPaths = [
+    'DEVELOPER_NOTE.md',
+    'GUIDE-JAVASCRIPT_WEB_DEVELOPMENT_BASICS.md',
+    'GUIDE-LOG_TRACKING.md',
+    'PROJECT_EVALUATION_REPORT.md',
+    'REQUIREMENT_LOG.md',
+    'UPDATE_CHECKLIST.md',
+    'logs/COMMIT_LOG.md',
+    'logs/LOG-PHASE3_TESTING_REPORT.md',
+    'logs/LOG-SESSION_2025_09_19.md',
+    'logs/LOG-SESSION_2025_09_19_DOCUMENTATION_OPTIMIZATION.md',
+    'logs/LOG-SESSION_2025_09_19_TESTING.md',
+    'logs/LOG-SESSION_2025_09_19_TESTING_FIXES.md',
+    'logs/LOG-SESSION_2025_09_21.md',
+    'logs/LOG-SESSION_2025_09_23_IDENTITY_PHASE.md',
+    'logs/LOG-SESSION_2025_09_25.md',
+    'logs/LOG-SESSION_2025_09_26.md',
+    'planning/PLAN-DOCUMENTATION_STRUCTURE_V2.md',
+    'planning/PLAN-EXECUTABLE_AI_WORKFLOW_ENGINE.md',
+    'planning/PLAN-MOBILE_E2E_TEST_MIGRATION.md',
+    'planning/PLAN-PHASE_2_API_DEVELOPMENT.md',
+    'planning/PLAN-TASK_2.2_API_ENDPOINTS.md',
+    'planning/PLAN-TASK_2.2_IMPLEMENTATION.md',
+    'planning/PLAN-TASK_2.3_AUTH_INTEGRATION.md',
+    'planning/PLAN-TDD_API_IMPLEMENTATION.md',
+    'planning/PLAN-TDD_DATABASE_DESIGN.md',
+    'planning/ROADMAP.md',
+    'planning/mobile-app-analysis.md',
+    'planning/✅ NEXT_STEPS_STRATEGIC_PLAN.md',
+    'status/STATUS-CURRENT_AND_NEXT_STEPS.md',
+    'status/STATUS-E2E_IMPLEMENTATION.md',
+    'status/STATUS-RESUME_AUDIT_2026_03_03.md',
+    'template/ARCHITECTURE_DECISION_RECORDS.md',
+    'template/PERFORMANCE_METRICS.md',
+    'template/RISK_ASSESSMENT.md',
+    'template/TOOL_INTEGRATION_GUIDE.md',
+  ];
+
+  assert.match(gitignore, /^\/legacy\/$/m);
+  assert.doesNotMatch(gitignore, /^legacy\/$/m);
+  for (const legacyPath of legacyPaths) {
+    assert.equal(
+      fs.existsSync(path.join(repositoryRoot, 'docs', legacyPath)),
+      false,
+      `legacy source still exists: docs/${legacyPath}`,
+    );
+    assert.equal(
+      fs.existsSync(
+        path.join(repositoryRoot, 'docs/archive/legacy', legacyPath),
+      ),
+      true,
+      `archived copy is missing: docs/archive/legacy/${legacyPath}`,
+    );
+  }
 });
 
 test('parseTasks reads ordered checkbox tasks', () => {

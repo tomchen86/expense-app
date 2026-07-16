@@ -33,8 +33,8 @@ Track bugs, feature proposals, and technical chores without relying on GitHub Is
 
 | ID | Title | Status | Priority | Requirement | References | Notes / Next Steps |
 | --- | --- | --- | --- | --- | --- | --- |
-| ISS-001 | Dual persistence toggle UX | 📋 | Next | — | `docs/Storage_Strategy.md`, `docs/planning/TASK_2.3_AUTH_INTEGRATION_PLAN.md` | No persistence provider contract exists yet. Define storage-mode semantics only after the provider and authentication boundaries are specified. |
-| ISS-002 | Expense discovery controls | 📋 | Now | [Expense ledger](../openspec/specs/expense-ledger/spec.md) | `docs/planning/ROADMAP.md#phase-3` | The API supports search and filters, but the mobile list has no keyword search, date-range filter, or user-selectable sort controls. |
+| ISS-001 | Dual persistence toggle UX | 📋 | Next | — | `docs/architecture/STORAGE_STRATEGY.md`, `docs/archive/legacy/planning/PLAN-TASK_2.3_AUTH_INTEGRATION.md` | No persistence provider contract exists yet. Define storage-mode semantics only after the provider and authentication boundaries are specified. |
+| ISS-002 | Expense discovery controls | 📋 | Now | [Expense ledger](../openspec/specs/expense-ledger/spec.md) | `docs/archive/legacy/planning/ROADMAP.md#phase-3` | The API supports search and filters, but the mobile list has no keyword search, date-range filter, or user-selectable sort controls. |
 | ISS-003 | Activate workflow-assurance branch rules | ❌ | Now | [Workflow assurance](../openspec/changes/establish-executable-ai-workflow/specs/workflow-assurance/spec.md) | `.github/workflows/workflow-assurance.yml`, `.github/CODEOWNERS` | After the workflow exists on the remote default branch, require workflow-assurance, an up-to-date base, code-owner approval with stale dismissal, and no bypass. Remote inspection is currently blocked by invalid GitHub authentication. |
 
 ## Bugs & Regressions
@@ -58,8 +58,8 @@ Track bugs, feature proposals, and technical chores without relying on GitHub Is
 
 | ID | Title | Status | Priority | Requirement | References | Notes / Next Steps |
 | --- | --- | --- | --- | --- | --- | --- |
-| ISS-201 | Persistence provider contract package | 📋 | Next | [Persistence and sync gap](../openspec/changes/establish-executable-ai-workflow/requirement-audit.md) | `docs/Storage_Strategy.md`, `docs/planning/PHASE_2_API_DEVELOPMENT_PLAN.md` | Extract interfaces + adapters into shared library before mobile rollout. |
-| ISS-202 | API conflict resolution telemetry | 🕒 | Later | — | `docs/Storage_Strategy.md#sync--conflict-handling` | Add logging/metrics for queue failures once sync exists. |
+| ISS-201 | Persistence provider contract package | 📋 | Next | [Persistence and sync gap](../openspec/changes/establish-executable-ai-workflow/requirement-audit.md) | `docs/architecture/STORAGE_STRATEGY.md`, `docs/archive/legacy/planning/PLAN-PHASE_2_API_DEVELOPMENT.md` | Extract interfaces + adapters into shared library before mobile rollout. |
+| ISS-202 | API conflict resolution telemetry | 🕒 | Later | — | `docs/architecture/STORAGE_STRATEGY.md#sync--conflict-handling` | Add logging/metrics for queue failures once sync exists. |
 | ISS-203 | Integrate mobile with authenticated API contracts | 📋 | Now | [API platform](../openspec/specs/api-platform/spec.md) | `apps/api/src/controllers`, `apps/mobile/src/store` | Core API endpoints exist; define token handling, identifier mapping, response adapters, offline behavior, and migration from in-memory mobile stores. |
 | ISS-204 | Define shared domain and money mapping | 📋 | Now | — | `apps/mobile/src/types/index.ts`, `apps/api/src/dto/expense.dto.ts` | Reconcile mobile amount/title/name fields with API amountCents/description/UUID contracts before integration; do not share persistence entities directly. |
 | ISS-205 | Recover the web application source boundary | ❌ | Later | — | `apps/web`, `.gitmodules` | apps/web is a gitlink but the repository has no .gitmodules declaration and the checkout contains no source, so web requirements cannot be verified. |
@@ -67,7 +67,7 @@ Track bugs, feature proposals, and technical chores without relying on GitHub Is
 | ISS-207 | Create TESTING_OVERVIEW.md as single source of truth | ✅ | Next | — | `docs/features/testing/TESTING_OVERVIEW.md` | Completed: Created comprehensive testing overview with coverage summary, framework details, and links to all test docs. |
 | ISS-208 | Migrate API tests from Jest to Vitest | 🕒 | Later | — | `apps/api/` | Migrate 142 API tests to Vitest for native ESM support and faster execution. Update config, setup files, and test syntax. |
 | ISS-209 | Migrate Web tests from Jest to Vitest | 🕒 | Later | — | `apps/web/` | Migrate web tests to Vitest. Keep mobile on Jest (React Native ecosystem requirement). |
-| ISS-210 | Define production API observability baseline | 📋 | Later | — | `apps/api/src`, `docs/ROADMAP.md` | Define health signals, structured logging, metrics, alert ownership, and deployment targets after a production API environment exists. |
+| ISS-210 | Define production API observability baseline | 📋 | Later | — | `apps/api/src`, `docs/archive/legacy/planning/ROADMAP.md` | Define health signals, structured logging, metrics, alert ownership, and deployment targets after a production API environment exists. |
 
 ## Archive
 

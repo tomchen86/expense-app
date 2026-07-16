@@ -23,8 +23,9 @@ in the linked OpenSpec change.
   base, and no bypass. Require code-owner approval with stale-review dismissal
   only when at least two independent eligible human maintainers exist
   (`ISS-003`).
-- Do not archive legacy documents until the maintainer gives the separate
-  approval required by Task 5.2.
+- Complete the approved `refresh-agent-document-governance-v2` managed change to
+  move noncanonical legacy documents into the immutable archive and update
+  current references.
 
 ### Correct product integrity gaps before mobile/API integration
 
@@ -52,8 +53,9 @@ in the linked OpenSpec change.
 
 ## Later
 
-- Recover the missing `apps/web` submodule declaration and source before making
-  any web capability claim (`ISS-205`).
+- Plan and implement a web surface from the tracked `apps/web` placeholder only
+  when it becomes a product priority; do not make a web capability claim before
+  then (`ISS-205`).
 - Add conflict telemetry and production monitoring only after sync and a
   deployed API exist (`ISS-202`).
 - Keep framework-only test migrations in the icebox until they solve a measured
@@ -61,6 +63,6 @@ in the linked OpenSpec change.
 
 ## Legacy Roadmap
 
-`docs/planning/ROADMAP.md` is retained as a 2025 historical planning snapshot.
-It contains known stale product-state claims and is not a current source of
-truth.
+`docs/archive/legacy/planning/ROADMAP.md` is the preserved 2025 historical
+planning snapshot. It contains known stale product-state claims and is not a
+current source of truth.

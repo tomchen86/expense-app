@@ -6,28 +6,108 @@ repository-owned workflow engine for execution assurance.
 - Normative requirements live in `openspec/specs/`.
 - Proposals, designs, delta specs, and task lists live in
   `openspec/changes/<change-id>/`.
-- `guard.json` inside each change contains machine policy only: task path scope
-  and required check IDs.
+- `guard.json` contains machine policy only: task path scope and required check
+  IDs.
 - Runtime sessions, locks, reports, Git validation, and completion authority
   belong to the executable workflow engine, not to Markdown or an AI prompt.
-- `docs/ROADMAP.md` owns priority; `docs/CURRENT_AND_NEXT_STEPS.md` owns the
-  current handoff.
+- `docs/ROADMAP.md` owns priority; generated
+  `docs/CURRENT_AND_NEXT_STEPS.md` owns the current handoff.
 
-The tracked root `.spectra.yaml` is retained as historical-only compatibility
-data and grants no execution authority. Spectra-generated agent skills have
-been removed with explicit maintainer approval. Agents must not invoke Spectra
-commands, skills, adapters, generated lifecycle assets, or lifecycle state, and
-must not regenerate Spectra assets.
-
-Repository agent planning skills under `.agents/skills/openspec-*` are
-byte-identical mirrors of the canonical `.codex/skills/openspec-*` files. These
-skills are planning-only; execution authority remains with `pnpm workflow`.
-
-Use `pnpm workflow doctor` for diagnostics and
-`pnpm workflow validate-change <change-id>` to validate tracked artifacts.
 Only an executable workflow command may authorize a planning commit, task
-checkbox/completion, archive, staging, or managed commit; never treat an AI
-claim as evidence.
+completion, controlled-document update, staging, managed commit, or archive.
+Never treat an AI claim, checked box, or prose status as evidence.
+
+## Planning Skill Routing
+
+The exact supported skill names are listed below. Do not invent aliases from
+prompt filenames or from another tool's command syntax.
+
+| Skill               | Use when                                                                 | Do not use it for                                      |
+| ------------------- | ------------------------------------------------------------------------ | ------------------------------------------------------ |
+| `openspec-explore`  | Investigating a problem, comparing options, or clarifying requirements   | Editing files, authorizing work, or lifecycle changes  |
+| `openspec-propose`  | Creating a complete proposal, design, delta specs, tasks, and `guard.json` | Implementation, task completion, commit, or archive    |
+
+There is no repository skill for implementation, recovery, completion,
+commit, or archive. Use the workflow commands below for those operations.
+
+## Workflow Command Routing
+
+### Planning, diagnosis, and assurance
+
+| Command                                                     | Use when                                                        |
+| ----------------------------------------------------------- | --------------------------------------------------------------- |
+| `pnpm workflow doctor --json`                               | Diagnosing repository, dependency, hook, asset, or policy drift |
+| `pnpm workflow validate-change <id> --json`                 | Validating tracked artifacts before a plan, task, or archive    |
+| `pnpm workflow plan-commit <id> --json`                     | Committing a new or revised planning-only change                |
+| `pnpm workflow ci --base <sha> --head <sha> --json`         | Recomputing PR assurance from exact Git commits                 |
+| `pnpm workflow adapter evaluate --input <path> --json`      | Evaluating a supported AI adapter request under repository policy |
+
+### Codex planning assets
+
+| Command                                           | Use when                                                        |
+| ------------------------------------------------- | --------------------------------------------------------------- |
+| `pnpm workflow codex-assets generate --json`      | Regenerating reviewed planning assets during an approved upgrade |
+| `pnpm workflow codex-assets check --json`         | Checking tracked planning assets and their digest manifest      |
+| `pnpm workflow codex-assets install-prompts --json` | Installing reviewed prompt copies into a supported local target |
+
+### Managed task lifecycle
+
+| Command                                                        | Use when                                                       |
+| -------------------------------------------------------------- | -------------------------------------------------------------- |
+| `pnpm workflow start <id> --task <task-id> --json`             | Opening one authorized task session on `work/<id>`             |
+| `pnpm workflow status <session-id> --json`                     | Inspecting session state or resolving semantic task history    |
+| `pnpm workflow check <session-id> --json`                      | Producing fresh scoped check evidence for the current diff     |
+| `pnpm workflow complete-task <session-id> --json`              | Applying the task checkbox and generated-document projection   |
+| `pnpm workflow finish <session-id> --json`                     | Rechecking and staging the exact authorized task tree          |
+| `pnpm workflow commit <session-id> --message "Subject" --json` | Creating the managed task commit with engine-owned trailers  |
+| `pnpm workflow rollback-completion <session-id> --json`        | Reverting an uncommitted completion projection through the engine |
+| `pnpm workflow abort <session-id> --reason "Reason" --json`   | Abandoning a pre-completion session without discarding files   |
+
+Run `start` → implement → `check` → `complete-task` → `finish` →
+`commit`. If content changes after `check`, run `check` again. Never stage,
+edit checkboxes, or commit managed task work by hand.
+
+### Archive transition
+
+| Command                                     | Use when                                                         |
+| ------------------------------------------- | ---------------------------------------------------------------- |
+| `pnpm workflow archive <id> --json`         | Archiving a fully completed change after its task commits are on the configured base |
+
+Archive is a separate transition. Do not manually move an active OpenSpec
+change or run an upstream archive command directly.
+
+### Issues and managed documents
+
+| Command                                          | Use when                                                        |
+| ------------------------------------------------ | --------------------------------------------------------------- |
+| `pnpm workflow issue add ... --json`             | Adding a structured issue to `docs/issues/issues.yaml`          |
+| `pnpm workflow issue update <id> ... --json`     | Updating an allowed field on a structured issue                 |
+| `pnpm workflow issue close <id> ... --json`      | Closing a structured issue with a date and note                 |
+| `pnpm workflow issue render --json`              | Regenerating `docs/ISSUE_LOG.md` after issue-source changes     |
+| `pnpm workflow issue validate --json`            | Checking that issue source and generated view agree             |
+| `pnpm workflow documents validate --json`        | Validating all managed-document policies and generated views    |
+| `pnpm workflow handoff render --json`             | Regenerating the handoff inside an authorized task scope        |
+| `pnpm workflow handoff validate --json`           | Checking the handoff against controlled change and issue state  |
+
+### Curated document refresh
+
+| Command                                                     | Use when                                                     |
+| ----------------------------------------------------------- | ------------------------------------------------------------ |
+| `pnpm workflow document-refresh propose ... --json`         | Proposing an exact reviewed-section replacement              |
+| `pnpm workflow document-refresh show --proposal <id> --json` | Inspecting the bound proposal and source digest               |
+| `pnpm workflow document-refresh review ... --json`          | Recording an independent approve/reject decision              |
+| `pnpm workflow document-refresh apply ... --json`           | Applying the exact approved replacement if inputs are current |
+
+### Hook entry points
+
+These are normally invoked by Git or CI rather than by an agent directly.
+
+| Command                                      | Use when                                                |
+| -------------------------------------------- | ------------------------------------------------------- |
+| `pnpm workflow hook pre-commit`              | Validating a pending commit through the installed hook  |
+| `pnpm workflow hook commit-msg <path>`       | Validating commit-message structure and managed trailers |
+| `pnpm workflow hook pre-push ...`            | Validating the pushed commit range                      |
+| `pnpm workflow hook post-merge`              | Checking repository state after a merge or pull         |
 
 Managed commit forms are mutually exclusive:
 
@@ -37,10 +117,8 @@ Managed commit forms are mutually exclusive:
 | Plan    | `Change: <id>` and `Transition: plan`            | `workflow plan-commit`      |
 | Archive | `Change: <id>` and `Transition: archive`         | `workflow archive`          |
 
-Do not hand-author or mix these trailers. OpenSpec creates planning artifacts;
-`pnpm workflow` validates and commits them, executes tasks, and verifies
-archive transitions. The exact lifecycle, recovery, upgrade, and post-merge
-pilot procedures are in `docs/WORKFLOW.md`.
+Do not hand-author or mix these trailers. The exact lifecycle, recovery,
+upgrade, and post-merge pilot procedures are in `docs/WORKFLOW.md`.
 
 ## Development Principle: Test-Driven Development
 
@@ -59,10 +137,11 @@ pilot procedures are in `docs/WORKFLOW.md`.
 # Repository Guidelines
 
 ## Project Structure & Module Organization
+
 - `apps/api/` – NestJS backend: controllers, services, modules, entities, and integration tests.
 - `apps/mobile/` – React Native client with Zustand stores and Expo configuration for offline-first UX.
-- `apps/web/` – Next.js web surface (currently secondary).
-- `docs/` – Planning roadmaps, architecture notes, TDD plans, and testing strategy references.
+- `apps/web/` – ordinary-directory placeholder; no current web capability is claimed.
+- `docs/` – project overview, roadmap, handoff, workflow, architecture, feature references, and immutable archive.
 - `apps/api/src/__tests__/` – Jest suites (`integration/`, `isolated/`, `migrations/`) aligned with RED→GREEN cycles.
 
 ## Build, Test, and Development Commands
@@ -78,7 +157,9 @@ pnpm prettier --check .            # formatting verification
 API tests are destructive to their configured PostgreSQL database. Before any API test command, set `TEST_DATABASE_URL` to an explicitly disposable database whose contents may be truncated or dropped; never rely on the development-database fallback.
 
 ## Coding Style & Naming Conventions
-- TypeScript everywhere; keep files under 500 LOC per docs.
+
+- Use TypeScript and prefer focused modules with clear responsibilities.
+- Do not change, split, or refactor source solely because it exceeds 500 lines.
 - Filenames use kebab-case (e.g., `ledger.service.ts`). Controllers stay thin; services encapsulate business logic.
 - Formatting via Prettier (`prettier.config.cjs`) and linting via ESLint (`eslint.config.mjs`). Do not bypass CI hooks.
 - Never delete or rename repository files without explicit maintainer approval.

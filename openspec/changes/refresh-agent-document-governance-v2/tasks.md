@@ -1,6 +1,6 @@
 ## 1. Repository Knowledge Governance
 
-- [ ] 1.1 Add failing governance and archive-boundary contracts, then atomically
+- [x] 1.1 Add failing governance and archive-boundary contracts, then atomically
       align the agent routing guide, source-size rule, project overview, canonical
       document references, registered formatting scope, local memo exclusion, and
       exact content-preserving legacy archive migration; this is documentation and

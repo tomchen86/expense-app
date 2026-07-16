@@ -100,6 +100,8 @@ Decision: ship AsyncStorage persistence in production now; target SQLite-backed 
 
 ## References
 
-- `docs/planning/ROADMAP.md` – Phase 2.3 outlines cloud integration milestones.
-- `docs/planning/PHASE_2_API_DEVELOPMENT_PLAN.md` – Detailed API and sync plan.
-- `docs/Testing/TESTING_STRATEGY.md` – Testing expectations per surface.
+- `docs/archive/legacy/planning/ROADMAP.md` – Historical Phase 2.3 cloud
+  integration milestones.
+- `docs/archive/legacy/planning/PLAN-PHASE_2_API_DEVELOPMENT.md` – Historical
+  API and sync plan.
+- `docs/archive/✅-TESTING_STRATEGY.md` – Testing expectations per surface.

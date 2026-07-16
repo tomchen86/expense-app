@@ -71,20 +71,23 @@ Key types defined in `src/types/index.ts`:
 Always follow TDD and Don't edit test case withou user's permission.
 
 ### Code Standards
-- **File Size Limit**: Each code file must not exceed 500 lines
-- When a file approaches this limit, refactor by extracting components, utilities, or separating concerns
+- Keep TypeScript modules focused and extract components, utilities, or concerns
+  when that improves cohesion, testability, or maintainability.
+- Do not change, split, or refactor source solely because it exceeds 500 lines.
 
 ### Change Management
-- Record significant changes in `/docs/CHANGELOG.md`
-- Write a session summary or task complete log if significant change has been made
-- For log templates and formats, see `/docs/GUIDE-LOG_TRACKING.md`
+- Follow the managed lifecycle in `/docs/WORKFLOW.md` for planning, checks,
+  completion, and commits.
+- Do not create session logs or manual commit logs; Git and workflow reports are
+  the execution record.
+- Record delivered user-visible outcomes in `/docs/CHANGELOG.md` when relevant.
 
 ### Documentation
-- **Start here**: `/docs/README.md` — routes you to the right doc for any task
-- **Current progress**: `/docs/status/`
-- **Session workflow & quality gates**: `/docs/UPDATE_CHECKLIST.md`
+- **Start here**: `/docs/README.md` — project overview and canonical links
+- **Current progress**: `/docs/CURRENT_AND_NEXT_STEPS.md`
+- **Workflow & quality gates**: `/docs/WORKFLOW.md`
 - **Structure & naming rules**: `/docs/DOCUMENT_STRUCTURE_GUIDE.md`
-- **Log system (session, commit, changelog)**: `/docs/GUIDE-LOG_TRACKING.md`
+- **Delivered outcomes**: `/docs/CHANGELOG.md`
 
 ## Current Project Status
 

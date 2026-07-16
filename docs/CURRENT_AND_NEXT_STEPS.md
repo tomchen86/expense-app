@@ -4,7 +4,7 @@ This generated handoff contains semantic project state only. Its sources are the
 
 ## Current Change
 
-`unify-format-check-authority`
+`refresh-agent-document-governance-v2`
 
 ## Current Task
 
@@ -26,7 +26,7 @@ Prepare the completed change for explicit archival review.
 ## References
 
 - [Roadmap](ROADMAP.md)
-- [Active change](../openspec/changes/unify-format-check-authority/)
-- [Workflow assurance delta](../openspec/changes/unify-format-check-authority/specs/workflow-assurance/spec.md)
+- [Active change](../openspec/changes/refresh-agent-document-governance-v2/)
+- [Workflow assurance delta](../openspec/changes/refresh-agent-document-governance-v2/specs/workflow-assurance/spec.md)
 - [Issue log](ISSUE_LOG.md)
 - [System architecture](architecture/ARCHITECTURE.md)
