@@ -40,7 +40,12 @@ commit, or archive. Use the workflow commands below for those operations.
 | `pnpm workflow validate-change <id> --json`                 | Validating tracked artifacts before a plan, task, or archive    |
 | `pnpm workflow plan-commit <id> --json`                     | Committing a new or revised planning-only change                |
 | `pnpm workflow ci --base <sha> --head <sha> --json`         | Recomputing PR assurance from exact Git commits                 |
+| `pnpm workflow run-check <check-id> --json`                 | Running one registered non-destructive check on clean HEAD for evidence only |
 | `pnpm workflow adapter evaluate --input <path> --json`      | Evaluating a supported AI adapter request under repository policy |
+
+`run-check` is for local or external-CI adapters that need the exact registered
+runner and path scope. It does not authorize task completion, staging, commit,
+archive, or merge; use the managed task lifecycle for those transitions.
 
 ### Codex planning assets
 
