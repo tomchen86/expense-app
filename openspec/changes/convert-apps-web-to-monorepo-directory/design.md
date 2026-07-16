@@ -87,6 +87,25 @@ Planning has its own workflow-owned revision commit. Each task has exact path
 scope and the same four registered non-database checks. The workflow report is
 the authority for allowed paths and completion; Markdown state is not evidence.
 
+### Repair the post-merge archive delta without weakening the invariant
+
+Pinned OpenSpec 1.6 refuses to archive a `MODIFIED` requirement when its delta
+omits a scenario already present in the base requirement. The first archive
+attempt therefore failed closed before changing files because the delta
+replaced the retained-gitlink scenario with new ordinary-directory scenarios.
+
+A planning-only revision preserves the exact historical scenario heading but
+rewrites its body as a negative regression case: an unconfigured retained
+gitlink is rejected by the registered contract and cannot merge. This satisfies
+OpenSpec's no-silent-scenario-loss rule while keeping the permanent ordinary-
+directory invariant; it does not restore checkout compatibility metadata or
+permit a gitlink.
+
+No implementation task is created because delta specs are planning authority
+and task commits are forbidden from mutating them. The repair is exempt from
+RED -> GREEN TDD; its evidence is strict OpenSpec validation, local and remote
+PR assurance, and a successful idempotent archive replay.
+
 ## Trust Boundaries and Evidence
 
 - The committed Git index, not the working-directory shape, proves that
@@ -130,7 +149,10 @@ the authority for allowed paths and completion; Markdown state is not evidence.
    structural Git checks and frozen install.
 5. Push and rebase-merge both task commits only after the active ruleset's real
    `workflow-assurance` check passes.
-6. From an updated default branch, run workflow archive twice, verify
+6. If archive detects scenario-loss incompatibility, submit a planning-only
+   revision that retains the historical scenario as an explicit gitlink-
+   regression case, and merge the repair through the same protected workflow.
+7. From an updated default branch, run workflow archive twice, verify
    idempotency, and merge the archive pull request through the same rule.
 
 Rollback before merge completes Task 1.2 or corrects the managed branch; the
