@@ -8,15 +8,15 @@ This generated handoff contains semantic project state only. Its sources are the
 
 ## Current Task
 
-`2.2` — Add authority session start/check transitions, pinned normal-check evidence, and terminal failure cleanup.
+`3.1` — Add signed authority commit isolation, canonical trailers, durable transaction journaling, and fail-closed crash recovery.
 
 ## Next Task
 
-`3.1` — Add signed authority commit isolation, canonical trailers, durable transaction journaling, and fail-closed crash recovery.
+`4.1` — Add parent-policy authority replay, audit-tag and commit-signature verification, unique-use enforcement, and sealed trust-root rules.
 
 ## Current Focus
 
-Add authority session start/check transitions, pinned normal-check evidence, and terminal failure cleanup.
+Add signed authority commit isolation, canonical trailers, durable transaction journaling, and fail-closed crash recovery.
 
 ## Known Blockers
 
