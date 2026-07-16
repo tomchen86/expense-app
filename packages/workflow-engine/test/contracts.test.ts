@@ -16,6 +16,7 @@ import {
   normalizeChangedPath,
   normalizePolicyPath,
 } from '../src/paths.ts';
+import { workflowContractArtifactPaths } from '../src/contract-artifacts.ts';
 import { parseTasks } from '../src/contracts.ts';
 import './git-security.test.ts';
 import './openspec-adapter.integration.test.ts';
@@ -23,6 +24,21 @@ import './openspec-doctor.integration.test.ts';
 import './openspec-schema-contract.integration.test.ts';
 import './planning-transition.contract.test.ts';
 import './codex-planning-assets.integration.test.ts';
+
+test('maintainer policy is a pinned workflow contract artifact', () => {
+  const repositoryRoot = path.resolve(import.meta.dirname, '../../..');
+  const artifacts = workflowContractArtifactPaths(repositoryRoot).map(
+    (artifact) => path.relative(repositoryRoot, artifact),
+  );
+
+  assert.ok(artifacts.includes('workflow/maintainer-policy.json'));
+  assert.ok(
+    artifacts.includes('workflow/schemas/maintainer-policy.schema.json'),
+  );
+  assert.ok(
+    artifacts.includes('workflow/schemas/maintainer-grant.schema.json'),
+  );
+});
 
 test('runner security suite is portable to the package working directory', () => {
   execFileSync(

@@ -4,19 +4,19 @@ This generated handoff contains semantic project state only. Its sources are the
 
 ## Current Change
 
-`refresh-agent-document-governance-v2`
+`add-break-glass-maintainer-mode`
 
 ## Current Task
 
-None — all tasks are complete.
+`1.2` — Add the human-present SSH signer, interactive grant command, and signed audit-tag creation.
 
 ## Next Task
 
-None.
+`2.1` — Add Git-common-directory grant storage, atomic reservation, inspection, idempotent revocation, and cross-worktree exclusion.
 
 ## Current Focus
 
-Prepare the completed change for explicit archival review.
+Add the human-present SSH signer, interactive grant command, and signed audit-tag creation.
 
 ## Known Blockers
 
@@ -26,7 +26,7 @@ Prepare the completed change for explicit archival review.
 ## References
 
 - [Roadmap](ROADMAP.md)
-- [Active change](../openspec/changes/refresh-agent-document-governance-v2/)
-- [Workflow assurance delta](../openspec/changes/refresh-agent-document-governance-v2/specs/workflow-assurance/spec.md)
+- [Active change](../openspec/changes/add-break-glass-maintainer-mode/)
+- [Workflow assurance delta](../openspec/changes/add-break-glass-maintainer-mode/specs/workflow-assurance/spec.md)
 - [Issue log](ISSUE_LOG.md)
 - [System architecture](architecture/ARCHITECTURE.md)

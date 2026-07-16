@@ -22,6 +22,10 @@ export function workflowContractArtifactPaths(
     'workflow/document-policy.json',
   );
   const ciPolicy = path.join(repositoryRoot, 'workflow/ci-policy.json');
+  const maintainerPolicy = path.join(
+    repositoryRoot,
+    'workflow/maintainer-policy.json',
+  );
   return [
     ...required,
     ...schemas,
@@ -30,6 +34,9 @@ export function workflowContractArtifactPaths(
       : []),
     ...(fs.statSync(ciPolicy, { throwIfNoEntry: false })?.isFile()
       ? [ciPolicy]
+      : []),
+    ...(fs.statSync(maintainerPolicy, { throwIfNoEntry: false })?.isFile()
+      ? [maintainerPolicy]
       : []),
   ].sort();
 }
