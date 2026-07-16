@@ -118,6 +118,7 @@
         "packages/workflow-engine/src/ci.ts",
         "packages/workflow-engine/src/cli.ts",
         "packages/workflow-engine/src/git.ts",
+        "packages/workflow-engine/test/ci.integration.test.ts",
         "packages/workflow-engine/test/maintainer-mode.integration.test.ts"
       ],
       "requiredChecks": [
