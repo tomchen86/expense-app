@@ -15,7 +15,9 @@ in the linked OpenSpec change.
 - Keep support undeclared until the pilot proves plan, task, archive,
   idempotency, repository-local Codex discovery observation, and real
   `workflow-assurance` replay from the configured base.
-- Keep Spectra installed for compatibility but outside every execution path.
+- Keep the retained root Spectra configuration historical-only; keep
+  Spectra-generated agent skills removed and every Spectra command, adapter,
+  and lifecycle state outside all execution paths.
 - Activate the remote GitHub ruleset only after the workflow is present on the
   default branch: require pull requests, `workflow-assurance`, an up-to-date
   base, and no bypass. Require code-owner approval with stale-review dismissal
