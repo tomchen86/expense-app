@@ -15,7 +15,7 @@
 ## 4. Independent Assurance
 
 - [x] 4.1 Add parent-policy authority replay, audit-tag and commit-signature verification, unique-use enforcement, and sealed trust-root rules.
-- [ ] 4.2 Run workflow assurance from the pull-request base and cover candidate-verifier, phase, rotation, expiry, and replay attacks.
+- [x] 4.2 Run workflow assurance from the pull-request base and cover candidate-verifier, phase, rotation, expiry, and replay attacks.
 
 ## 5. Operator Contract
 

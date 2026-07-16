@@ -660,9 +660,34 @@ test('workflow assurance CI is read-only and policy paths have owners', () => {
   assert.match(workflow, /persist-credentials: false/);
   assert.match(workflow, /runs-on: ubuntu-24\.04/);
   assert.match(workflow, /timeout-minutes: 30/);
-  assert.match(workflow, /pnpm install --frozen-lockfile --ignore-scripts/);
-  assert.match(workflow, /pnpm workflow ci/);
-  assert.doesNotMatch(workflow, /pull_request_target|secrets\./);
+  assert.match(workflow, /on:\n {2}pull_request_target:/);
+  assert.match(
+    workflow,
+    /ref: \$\{\{ github\.event\.pull_request\.base\.sha \}\}\n {10}path: trusted-base/,
+  );
+  assert.match(
+    workflow,
+    /repository: \$\{\{ github\.event\.pull_request\.head\.repo\.full_name \}\}/,
+  );
+  assert.match(workflow, /path: candidate/);
+  assert.match(workflow, /fetch-tags: true/);
+  assert.match(
+    workflow,
+    /for-each-ref --format='delete %\(refname\)' refs\/tags\/workflow-grant\//,
+  );
+  assert.match(
+    workflow,
+    /refs\/tags\/workflow-grant\/\*:refs\/tags\/workflow-grant\/\*/,
+  );
+  assert.equal(
+    workflow.match(/pnpm install --frozen-lockfile --ignore-scripts/g)?.length,
+    2,
+  );
+  assert.match(
+    workflow,
+    /\.\.\/trusted-base\/packages\/workflow-engine\/src\/cli\.ts ci/,
+  );
+  assert.doesNotMatch(workflow, /secrets\.|pnpm workflow ci/);
   const actionRefs = [...workflow.matchAll(/uses: [^@\s]+@([^\s]+)/g)].map(
     (match) => match[1],
   );

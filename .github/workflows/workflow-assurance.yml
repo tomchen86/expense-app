@@ -1,7 +1,7 @@
 name: Workflow Assurance
 
 on:
-  pull_request:
+  pull_request_target:
 
 permissions:
   contents: read
@@ -16,12 +16,32 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
+      - name: Checkout exact PR base
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: trusted-base
+          fetch-depth: 0
+          fetch-tags: true
+          persist-credentials: false
+
       - name: Checkout exact PR head
         uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
         with:
+          repository: ${{ github.event.pull_request.head.repo.full_name }}
           ref: ${{ github.event.pull_request.head.sha }}
+          path: candidate
           fetch-depth: 0
+          fetch-tags: false
           persist-credentials: false
+
+      - name: Import protected maintainer audit tags
+        working-directory: candidate
+        run: |
+          git for-each-ref --format='delete %(refname)' refs/tags/workflow-grant/ |
+            git update-ref --stdin
+          git fetch --no-tags ../trusted-base/.git \
+            '+refs/tags/workflow-grant/*:refs/tags/workflow-grant/*'
 
       - name: Setup pnpm
         uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
@@ -34,12 +54,25 @@ jobs:
         with:
           node-version: 22.22.1
           cache: pnpm
+          cache-dependency-path: |
+            trusted-base/pnpm-lock.yaml
+            candidate/pnpm-lock.yaml
 
-      - name: Install locked dependencies
+      - name: Install trusted base dependencies
+        working-directory: trusted-base
+        run: pnpm install --frozen-lockfile --ignore-scripts
+
+      - name: Install candidate dependencies without scripts
+        working-directory: candidate
         run: pnpm install --frozen-lockfile --ignore-scripts
 
       - name: Recompute workflow assurance
+        working-directory: candidate
+        env:
+          GH_TOKEN: ''
+          GITHUB_TOKEN: ''
         run: >-
-          pnpm workflow ci
+          node --experimental-strip-types
+          ../trusted-base/packages/workflow-engine/src/cli.ts ci
           --base "${{ github.event.pull_request.base.sha }}"
           --head "${{ github.event.pull_request.head.sha }}"
