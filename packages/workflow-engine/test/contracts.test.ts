@@ -97,6 +97,53 @@ test('workflow assurance checks out an ordinary apps/web directory without gitli
   assert.ok(checkout < verify);
 });
 
+test('repository exposes only reviewed OpenSpec planning skills', () => {
+  const repositoryRoot = path.resolve(import.meta.dirname, '../../..');
+  const agentSkillsRoot = path.join(repositoryRoot, '.agents/skills');
+  const skillNames = fs
+    .readdirSync(agentSkillsRoot, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => entry.name)
+    .sort();
+
+  assert.deepEqual(skillNames, ['openspec-explore', 'openspec-propose']);
+  for (const skillName of skillNames) {
+    const agentSkill = fs.readFileSync(
+      path.join(agentSkillsRoot, skillName, 'SKILL.md'),
+      'utf8',
+    );
+    const canonicalSkill = fs.readFileSync(
+      path.join(repositoryRoot, '.codex/skills', skillName, 'SKILL.md'),
+      'utf8',
+    );
+    assert.equal(agentSkill, canonicalSkill, `${skillName} mirror drifted`);
+  }
+
+  const nestedSpectraMetadata = fs
+    .readdirSync(path.join(repositoryRoot, 'openspec'), { recursive: true })
+    .filter((entry) => path.basename(entry.toString()) === '.spectra.yaml');
+  assert.deepEqual(nestedSpectraMetadata, []);
+
+  const agents = fs.readFileSync(
+    path.join(repositoryRoot, 'AGENTS.md'),
+    'utf8',
+  );
+  const maintenance = fs.readFileSync(
+    path.join(repositoryRoot, '.agents/README.md'),
+    'utf8',
+  );
+  const roadmap = fs.readFileSync(
+    path.join(repositoryRoot, 'docs/ROADMAP.md'),
+    'utf8',
+  );
+  assert.match(agents, /tracked root `.spectra\.yaml`.*historical-only/s);
+  assert.doesNotMatch(agents, /Spectra files remain installed|\$spectra-/);
+  assert.match(maintenance, /^# OpenSpec skill mirror maintenance/m);
+  assert.doesNotMatch(maintenance, /spectra update/i);
+  assert.match(roadmap, /retained root Spectra configuration historical-only/);
+  assert.doesNotMatch(roadmap, /Keep Spectra installed/);
+});
+
 test('parseTasks reads ordered checkbox tasks', () => {
   const tasks = parseTasks(`
 # Tasks

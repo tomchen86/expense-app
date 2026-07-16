@@ -13,10 +13,15 @@ repository-owned workflow engine for execution assurance.
 - `docs/ROADMAP.md` owns priority; `docs/CURRENT_AND_NEXT_STEPS.md` owns the
   current handoff.
 
-Spectra files remain installed for compatibility and historical reference, but
-agents must not invoke Spectra commands, skills, adapters, or lifecycle state.
-Do not delete or rewrite the retained Spectra installation unless the
-maintainer explicitly requests it.
+The tracked root `.spectra.yaml` is retained as historical-only compatibility
+data and grants no execution authority. Spectra-generated agent skills have
+been removed with explicit maintainer approval. Agents must not invoke Spectra
+commands, skills, adapters, generated lifecycle assets, or lifecycle state, and
+must not regenerate Spectra assets.
+
+Repository agent planning skills under `.agents/skills/openspec-*` are
+byte-identical mirrors of the canonical `.codex/skills/openspec-*` files. These
+skills are planning-only; execution authority remains with `pnpm workflow`.
 
 Use `pnpm workflow doctor` for diagnostics and
 `pnpm workflow validate-change <change-id>` to validate tracked artifacts.
