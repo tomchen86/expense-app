@@ -40,6 +40,7 @@
     "2.1": {
       "allowedPaths": [
         "packages/workflow-engine/src/cli.ts",
+        "packages/workflow-engine/src/maintainer-grant.ts",
         "packages/workflow-engine/src/maintainer-store.ts",
         "packages/workflow-engine/src/planning-lock.ts",
         "packages/workflow-engine/src/session-store.ts",
