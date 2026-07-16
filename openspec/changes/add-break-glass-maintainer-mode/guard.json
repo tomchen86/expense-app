@@ -73,6 +73,7 @@
     },
     "3.1": {
       "allowedPaths": [
+        "packages/workflow-engine/src/ci-sequence.ts",
         "packages/workflow-engine/src/cli.ts",
         "packages/workflow-engine/src/git-transitions.ts",
         "packages/workflow-engine/src/hooks.ts",
