@@ -1,0 +1,49 @@
+{
+  "schemaVersion": 1,
+  "changeId": "refresh-agent-document-governance-v2",
+  "tasks": {
+    "1.1": {
+      "allowedPaths": [
+        ".gitignore",
+        "AGENTS.md",
+        "CLAUDE.md",
+        "docs/DEVELOPER_NOTE.md",
+        "docs/GUIDE-JAVASCRIPT_WEB_DEVELOPMENT_BASICS.md",
+        "docs/GUIDE-LOG_TRACKING.md",
+        "docs/PROJECT_EVALUATION_REPORT.md",
+        "docs/REQUIREMENT_LOG.md",
+        "docs/UPDATE_CHECKLIST.md",
+        "docs/logs/**",
+        "docs/planning/**",
+        "docs/status/**",
+        "docs/template/**",
+        "docs/archive/legacy/DEVELOPER_NOTE.md",
+        "docs/archive/legacy/GUIDE-JAVASCRIPT_WEB_DEVELOPMENT_BASICS.md",
+        "docs/archive/legacy/GUIDE-LOG_TRACKING.md",
+        "docs/archive/legacy/PROJECT_EVALUATION_REPORT.md",
+        "docs/archive/legacy/REQUIREMENT_LOG.md",
+        "docs/archive/legacy/UPDATE_CHECKLIST.md",
+        "docs/archive/legacy/logs/**",
+        "docs/archive/legacy/planning/**",
+        "docs/archive/legacy/status/**",
+        "docs/archive/legacy/template/**",
+        "docs/CURRENT_AND_NEXT_STEPS.md",
+        "docs/DOCUMENT_STRUCTURE_GUIDE.md",
+        "docs/ISSUE_LOG.md",
+        "docs/README.md",
+        "docs/ROADMAP.md",
+        "docs/WORKFLOW.md",
+        "docs/architecture/STORAGE_STRATEGY.md",
+        "docs/features/testing/IDENTITY_PHASE_STATUS.md",
+        "docs/issues/issues.yaml",
+        "packages/workflow-engine/test/contracts.test.ts",
+        "workflow/checks.json"
+      ],
+      "requiredChecks": [
+        "workflow-tests",
+        "workflow-lint",
+        "managed-documents"
+      ]
+    }
+  }
+}
