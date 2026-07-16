@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
@@ -44,6 +45,15 @@ import {
   startAuthoritySession,
 } from '../src/maintainer-session.ts';
 import { readImmutableReport } from '../src/report-store.ts';
+import {
+  commitAuthoritySession,
+  SimulatedAuthorityCrash,
+} from '../src/maintainer-commit.ts';
+import {
+  readAuthorityCommitJournal,
+  recoverAuthorityCommit,
+} from '../src/maintainer-recovery.ts';
+import { commitFacts } from '../src/git-transitions.ts';
 
 const POLICY: MaintainerPolicy = {
   schemaVersion: 1,
@@ -796,10 +806,268 @@ test('authority session state cannot broaden signed paths or remove pinned check
   }
 });
 
-function installFixtureMaintainerPolicy(repository: string): void {
+test('authority commit signs the exact checked diff and consumes one grant', () => {
+  const fixture = prepareAuthorityCommitFixture(
+    '88888888-8888-4888-8888-888888888888',
+  );
+  try {
+    const result = commitAuthoritySession(
+      fixture.repository,
+      fixture.sessionId,
+      'Repair exact authority',
+      {
+        now: new Date('2026-07-16T12:03:00.000Z'),
+        signer: fixtureSigner(),
+      },
+    );
+    const facts = commitFacts(fixture.repository, result.commitHash);
+    assert.deepEqual(facts.parents, [fixture.baseCommit]);
+    assert.equal(
+      facts.message,
+      [
+        'Repair exact authority',
+        '',
+        'Change: demo-change',
+        'Transition: authority-maintenance',
+        `Grant: ${fixture.grantId}`,
+        '',
+      ].join('\n'),
+    );
+    assert.equal(git(fixture.repository, ['status', '--porcelain']).trim(), '');
+    assert.equal(
+      readAuthoritySession(fixture.repository, fixture.sessionId).state,
+      'committed',
+    );
+    assert.equal(
+      inspectMaintainerGrants(fixture.commonDirectory, fixture.grantId)[0]
+        ?.state,
+      'consumed',
+    );
+    assert.equal(
+      readAuthorityCommitJournal(fixture.commonDirectory, fixture.sessionId)
+        .state,
+      'consumed',
+    );
+    assert.match(
+      fs.readFileSync(
+        path.join(fixture.repository, 'openspec/changes/demo-change/tasks.md'),
+        'utf8',
+      ),
+      /- \[ \] 1\.1/,
+    );
+  } finally {
+    cleanupAuthorityCommitFixture(fixture);
+  }
+});
+
+test('authority recovery completes a crash after signed commit creation', () => {
+  const fixture = prepareAuthorityCommitFixture(
+    '99999999-9999-4999-8999-999999999999',
+  );
+  try {
+    assert.throws(
+      () =>
+        commitAuthoritySession(
+          fixture.repository,
+          fixture.sessionId,
+          'Repair exact authority',
+          {
+            now: new Date('2026-07-16T12:03:00.000Z'),
+            signer: fixtureSigner(),
+            testCrashAfter: 'commit-created',
+          },
+        ),
+      SimulatedAuthorityCrash,
+    );
+    assert.equal(
+      git(fixture.repository, ['rev-parse', 'HEAD']).trim(),
+      fixture.baseCommit,
+    );
+    assert.equal(
+      readAuthorityCommitJournal(fixture.commonDirectory, fixture.sessionId)
+        .state,
+      'commit-created',
+    );
+
+    const recovered = recoverAuthorityCommit(
+      fixture.repository,
+      fixture.sessionId,
+      new Date('2026-07-16T12:04:00.000Z'),
+    );
+    assert.equal(
+      git(fixture.repository, ['rev-parse', 'HEAD']).trim(),
+      recovered.commitHash,
+    );
+    assert.equal(recovered.journalState, 'consumed');
+    assert.equal(
+      recoverAuthorityCommit(
+        fixture.repository,
+        fixture.sessionId,
+        new Date('2026-07-16T12:05:00.000Z'),
+      ).commitHash,
+      recovered.commitHash,
+    );
+  } finally {
+    cleanupAuthorityCommitFixture(fixture);
+  }
+});
+
+test('authority recovery finalizes a crash after the ref update', () => {
+  const fixture = prepareAuthorityCommitFixture(
+    'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+  );
+  try {
+    assert.throws(
+      () =>
+        commitAuthoritySession(
+          fixture.repository,
+          fixture.sessionId,
+          'Repair exact authority',
+          {
+            now: new Date('2026-07-16T12:03:00.000Z'),
+            signer: fixtureSigner(),
+            testCrashAfter: 'ref-updated',
+          },
+        ),
+      SimulatedAuthorityCrash,
+    );
+    const journal = readAuthorityCommitJournal(
+      fixture.commonDirectory,
+      fixture.sessionId,
+    );
+    assert.equal(journal.state, 'ref-updated');
+    assert.equal(
+      git(fixture.repository, ['rev-parse', 'HEAD']).trim(),
+      journal.commitHash,
+    );
+
+    const recovered = recoverAuthorityCommit(
+      fixture.repository,
+      fixture.sessionId,
+      new Date('2026-07-16T12:04:00.000Z'),
+    );
+    assert.equal(recovered.commitHash, journal.commitHash);
+    assert.equal(
+      inspectMaintainerGrants(fixture.commonDirectory, fixture.grantId)[0]
+        ?.state,
+      'consumed',
+    );
+  } finally {
+    cleanupAuthorityCommitFixture(fixture);
+  }
+});
+
+test('ambiguous authority recovery revokes the use without a second commit', () => {
+  const fixture = prepareAuthorityCommitFixture(
+    'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+  );
+  try {
+    assert.throws(
+      () =>
+        commitAuthoritySession(
+          fixture.repository,
+          fixture.sessionId,
+          'Repair exact authority',
+          {
+            now: new Date('2026-07-16T12:03:00.000Z'),
+            signer: fixtureSigner(),
+            testCrashAfter: 'commit-created',
+          },
+        ),
+      SimulatedAuthorityCrash,
+    );
+    const journalPath = path.join(
+      fixture.commonDirectory,
+      'workflow-engine/maintainer-grants/journals',
+      `${fixture.sessionId}.json`,
+    );
+    const altered = JSON.parse(fs.readFileSync(journalPath, 'utf8'));
+    altered.commitHash = 'c'.repeat(40);
+    fs.writeFileSync(journalPath, `${JSON.stringify(altered)}\n`, {
+      mode: 0o600,
+    });
+
+    assert.throws(() =>
+      recoverAuthorityCommit(
+        fixture.repository,
+        fixture.sessionId,
+        new Date('2026-07-16T12:04:00.000Z'),
+      ),
+    );
+    assert.equal(
+      git(fixture.repository, ['rev-parse', 'HEAD']).trim(),
+      fixture.baseCommit,
+    );
+    assert.equal(
+      inspectMaintainerGrants(fixture.commonDirectory, fixture.grantId)[0]
+        ?.state,
+      'revoked',
+    );
+    assert.equal(
+      readAuthoritySession(fixture.repository, fixture.sessionId).state,
+      'failed',
+    );
+    assert.equal(
+      readAuthorityCommitJournal(fixture.commonDirectory, fixture.sessionId)
+        .state,
+      'revoked',
+    );
+  } finally {
+    cleanupAuthorityCommitFixture(fixture);
+  }
+});
+
+test('untrusted commit signing key is rejected before the branch ref advances', () => {
+  const fixture = prepareAuthorityCommitFixture(
+    'cccccccc-cccc-4ccc-8ccc-cccccccccccc',
+  );
+  try {
+    const untrustedKey = path.join(fixture.signingDirectory, 'untrusted');
+    const generated = spawnSync(
+      '/usr/bin/ssh-keygen',
+      ['-q', '-t', 'ed25519', '-N', '', '-C', 'untrusted', '-f', untrustedKey],
+      { encoding: 'utf8' },
+    );
+    assert.equal(generated.status, 0, generated.stderr);
+    git(fixture.repository, ['config', 'user.signingkey', untrustedKey]);
+
+    assert.throws(() =>
+      commitAuthoritySession(
+        fixture.repository,
+        fixture.sessionId,
+        'Repair exact authority',
+        {
+          now: new Date('2026-07-16T12:03:00.000Z'),
+          signer: fixtureSigner(),
+        },
+      ),
+    );
+    assert.equal(
+      git(fixture.repository, ['rev-parse', 'HEAD']).trim(),
+      fixture.baseCommit,
+    );
+    assert.equal(
+      inspectMaintainerGrants(fixture.commonDirectory, fixture.grantId)[0]
+        ?.state,
+      'revoked',
+    );
+    assert.equal(
+      readAuthorityCommitJournal(fixture.commonDirectory, fixture.sessionId)
+        .state,
+      'revoked',
+    );
+  } finally {
+    cleanupAuthorityCommitFixture(fixture);
+  }
+});
+
+function installFixtureMaintainerPolicy(
+  repository: string,
+  policy: MaintainerPolicy = POLICY,
+): void {
   fs.writeFileSync(
     path.join(repository, 'workflow/maintainer-policy.json'),
-    `${JSON.stringify(POLICY, null, 2)}\n`,
+    `${JSON.stringify(policy, null, 2)}\n`,
   );
   git(repository, [
     'remote',
@@ -809,6 +1077,103 @@ function installFixtureMaintainerPolicy(repository: string): void {
   ]);
   git(repository, ['add', 'workflow/maintainer-policy.json']);
   git(repository, ['commit', '-m', 'Add maintainer fixture policy']);
+}
+
+type AuthorityCommitFixture = {
+  repository: string;
+  signingDirectory: string;
+  commonDirectory: string;
+  grantId: string;
+  sessionId: string;
+  baseCommit: string;
+};
+
+function prepareAuthorityCommitFixture(
+  grantId: string,
+): AuthorityCommitFixture {
+  const repository = createFixtureRepository();
+  const signingDirectory = fs.mkdtempSync(
+    path.join(os.tmpdir(), 'workflow-authority-key-'),
+  );
+  const privateKey = path.join(signingDirectory, 'id_ed25519');
+  const generated = spawnSync(
+    '/usr/bin/ssh-keygen',
+    [
+      '-q',
+      '-t',
+      'ed25519',
+      '-N',
+      '',
+      '-C',
+      'fixture-maintainer',
+      '-f',
+      privateKey,
+    ],
+    { encoding: 'utf8' },
+  );
+  assert.equal(generated.status, 0, generated.stderr);
+  const publicKey = fs
+    .readFileSync(`${privateKey}.pub`, 'utf8')
+    .trim()
+    .split(/\s+/)
+    .slice(0, 2)
+    .join(' ');
+  const fingerprintOutput = spawnSync(
+    '/usr/bin/ssh-keygen',
+    ['-l', '-E', 'sha256', '-f', `${privateKey}.pub`],
+    { encoding: 'utf8' },
+  );
+  assert.equal(fingerprintOutput.status, 0, fingerprintOutput.stderr);
+  const fingerprint = fingerprintOutput.stdout.match(
+    /SHA256:[A-Za-z0-9+/]+/,
+  )?.[0];
+  assert.ok(fingerprint);
+  const policy: MaintainerPolicy = {
+    ...POLICY,
+    trustedSigners: [
+      { identity: 'fixture-maintainer', publicKey, fingerprint },
+    ],
+  };
+  installFixtureMaintainerPolicy(repository, policy);
+  git(repository, ['config', 'gpg.format', 'ssh']);
+  git(repository, ['config', 'user.signingkey', privateKey]);
+  issueMaintainerGrant(
+    repository,
+    {
+      changeId: 'demo-change',
+      paths: ['workflow/checks.json'],
+      reason: 'Repair exact workflow authority',
+    },
+    {
+      now: new Date('2026-07-16T12:00:00.000Z'),
+      grantId,
+      signer: fixtureSigner(),
+    },
+  );
+  git(repository, ['switch', '-c', 'work/demo-change']);
+  const session = startAuthoritySession(repository, 'demo-change', grantId, {
+    now: new Date('2026-07-16T12:01:00.000Z'),
+    signer: fixtureSigner(),
+  });
+  const checksPath = path.join(repository, 'workflow/checks.json');
+  fs.writeFileSync(checksPath, ` ${fs.readFileSync(checksPath, 'utf8')}`);
+  checkAuthoritySession(repository, session.sessionId, {
+    now: new Date('2026-07-16T12:02:00.000Z'),
+    signer: fixtureSigner(),
+  });
+  return {
+    repository,
+    signingDirectory,
+    commonDirectory: fs.realpathSync(path.join(repository, '.git')),
+    grantId,
+    sessionId: session.sessionId,
+    baseCommit: session.baseCommit,
+  };
+}
+
+function cleanupAuthorityCommitFixture(fixture: AuthorityCommitFixture): void {
+  fs.rmSync(fixture.repository, { recursive: true, force: true });
+  fs.rmSync(fixture.signingDirectory, { recursive: true, force: true });
 }
 
 function fixtureSigner(): MaintainerSignerProvider {

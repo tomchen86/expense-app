@@ -27,6 +27,8 @@ import {
   inspectMaintainerGrants,
   revokeMaintainerGrant,
 } from './maintainer-store.ts';
+import { commitAuthoritySession } from './maintainer-commit.ts';
+import { recoverAuthorityCommit } from './maintainer-recovery.ts';
 import {
   abortAuthoritySession,
   checkAuthoritySession,
@@ -288,6 +290,32 @@ function dispatch(args: string[], cwd: string): CommandResult {
         command,
         ok: true,
         result: checkAuthoritySession(cwd, rest[0]),
+      };
+    case 'authority-commit': {
+      const sessionId = rest[0];
+      const message = optionValue(rest.slice(1), '--message');
+      if (
+        !sessionId ||
+        !message ||
+        rest.length !== 3 ||
+        rest[1] !== '--message'
+      ) {
+        throw usage(
+          'Usage: pnpm workflow authority-commit <session-id> --message <subject> [--json]',
+        );
+      }
+      return {
+        command,
+        ok: true,
+        result: commitAuthoritySession(cwd, sessionId, message),
+      };
+    }
+    case 'authority-recover':
+      requireArgumentCount(command, rest, 1, 1);
+      return {
+        command,
+        ok: true,
+        result: recoverAuthorityCommit(cwd, rest[0]),
       };
     case 'authority-abort': {
       const sessionId = rest[0];
@@ -596,6 +624,8 @@ function usageText(): string {
     '  pnpm workflow maintainer revoke <grant-id> [--json]',
     '  pnpm workflow authority-start <change-id> --grant <grant-id> [--json]',
     '  pnpm workflow authority-check <session-id> [--json]',
+    '  pnpm workflow authority-commit <session-id> --message <subject> [--json]',
+    '  pnpm workflow authority-recover <session-id> [--json]',
     '  pnpm workflow authority-abort <session-id> --reason <text> [--json]',
     '  pnpm workflow documents validate [--json]',
     '  pnpm workflow document-refresh <propose|show|review|apply> ... [--json]',

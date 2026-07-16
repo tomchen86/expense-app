@@ -147,6 +147,12 @@ export function replayCommitSequence(
       archivedChanges.add(archive.changeId);
       continue;
     }
+    if (commit.trailers.kind === 'authority') {
+      throw ciError(
+        'CI_AUTHORITY_VERIFIER_REQUIRED',
+        'Authority commits require independent parent-policy verification.',
+      );
+    }
 
     const transitions = taskTransitionsForCommit(repositoryRoot, commit);
     if (transitions.length === 0) {

@@ -55,7 +55,7 @@ export type AuthorityPinnedCheck = {
 export type AuthoritySession = {
   schemaVersion: 1;
   sessionId: string;
-  state: 'active' | 'failed' | 'aborted';
+  state: 'active' | 'failed' | 'aborted' | 'committed';
   grantId: string;
   changeId: string;
   repositoryRoot: string;
@@ -78,6 +78,8 @@ export type AuthoritySession = {
   failureReason?: string;
   abortedAt?: string;
   abortReason?: string;
+  committedAt?: string;
+  commitHash?: string;
 };
 
 export type AuthoritySessionOptions = {
@@ -388,7 +390,7 @@ export function readAuthoritySession(
       raw !== `${JSON.stringify(value)}\n` ||
       value.schemaVersion !== 1 ||
       value.sessionId !== sessionId ||
-      !['active', 'failed', 'aborted'].includes(value.state) ||
+      !['active', 'failed', 'aborted', 'committed'].includes(value.state) ||
       value.gitCommonDirectory !== git.gitCommonDirectory ||
       !Array.isArray(value.allowedPaths) ||
       !Array.isArray(value.requiredChecks) ||
@@ -403,6 +405,51 @@ export function readAuthoritySession(
       'Authority session state is malformed.',
     );
   }
+}
+
+export function inspectActiveAuthoritySession(
+  cwd: string,
+  requestedSessionId: string,
+  options: AuthoritySessionOptions = {},
+) {
+  const session = readAuthoritySession(cwd, requestedSessionId);
+  if (session.state !== 'active') {
+    throw authorityError(
+      'AUTHORITY_SESSION_NOT_ACTIVE',
+      `Authority session ${session.sessionId} is ${session.state}.`,
+    );
+  }
+  return { session, ...inspectAuthoritySession(cwd, session, options) };
+}
+
+export function markAuthoritySessionCommitted(
+  cwd: string,
+  expected: AuthoritySession,
+  commitHash: string,
+  now = new Date(),
+): AuthoritySession {
+  const current = readAuthoritySession(cwd, expected.sessionId);
+  if (current.state === 'committed' && current.commitHash === commitHash) {
+    return current;
+  }
+  if (
+    current.state !== 'active' ||
+    JSON.stringify(current) !== JSON.stringify(expected) ||
+    !/^[0-9a-f]{40,64}$/.test(commitHash)
+  ) {
+    throw authorityError(
+      'AUTHORITY_SESSION_CHANGED',
+      'Authority session changed before commit finalization.',
+    );
+  }
+  const committed: AuthoritySession = {
+    ...current,
+    state: 'committed',
+    committedAt: exactDate(now).toISOString(),
+    commitHash,
+  };
+  writeAuthoritySession(committed, false);
+  return committed;
 }
 
 function inspectAuthoritySession(
@@ -536,7 +583,7 @@ function inspectAuthoritySession(
   };
 }
 
-function failAuthoritySession(
+export function failAuthoritySession(
   session: AuthoritySession,
   error: unknown,
   now = new Date(),

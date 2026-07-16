@@ -322,6 +322,34 @@ export function createArchiveCommitObject(
   ).trim();
 }
 
+export function createSignedAuthorityCommitObject(
+  repositoryRoot: string,
+  tree: string,
+  parent: string,
+  subject: string,
+  changeId: string,
+  grantId: string,
+  environment: NodeJS.ProcessEnv = process.env,
+): string {
+  validateCommitSubject(subject);
+  const identity = resolveCommitIdentity(repositoryRoot, environment);
+  return runGitWithEnvironment(
+    repositoryRoot,
+    [
+      'commit-tree',
+      tree,
+      '-p',
+      parent,
+      '-S',
+      '-m',
+      subject,
+      '-m',
+      `Change: ${changeId}\nTransition: authority-maintenance\nGrant: ${grantId}`,
+    ],
+    identity,
+  ).trim();
+}
+
 export function updateManagedRef(
   repositoryRoot: string,
   expectedHead: string,
@@ -357,6 +385,21 @@ export function archiveCommitMessage(changeId: string): string {
   return [subject, '', `Change: ${changeId}`, 'Transition: archive'].join('\n');
 }
 
+export function authorityCommitMessage(
+  subject: string,
+  changeId: string,
+  grantId: string,
+): string {
+  validateCommitSubject(subject);
+  return [
+    subject,
+    '',
+    `Change: ${changeId}`,
+    'Transition: authority-maintenance',
+    `Grant: ${grantId}`,
+  ].join('\n');
+}
+
 export function managedCommitMessage(
   subject: string,
   changeId: string,
@@ -374,7 +417,7 @@ function validateCommitSubject(subject: string): void {
       const codePoint = character.codePointAt(0) ?? 0;
       return codePoint <= 31 || codePoint === 127;
     }) ||
-    /^(?:Change|Task):/i.test(subject)
+    /^(?:Change|Task|Transition|Grant):/i.test(subject)
   ) {
     throw workflowError(
       'INVALID_COMMIT_SUBJECT',

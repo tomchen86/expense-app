@@ -270,6 +270,93 @@ export function terminallyRevokeMaintainerReservation(
   );
 }
 
+export function consumeMaintainerReservation(
+  gitCommonDirectory: string,
+  requestedGrantId: string,
+  requestedSessionId: string,
+  requestedCommitHash: string,
+  now: Date = new Date(),
+): MaintainerGrantInspection {
+  const grantId = assertMaintainerGrantId(requestedGrantId);
+  const sessionId = nonEmpty(requestedSessionId, 'reservation session ID');
+  const commitHash = requestedCommitHash.trim();
+  if (!/^[0-9a-f]{40,64}$/.test(commitHash)) {
+    throw workflowError(
+      'MAINTAINER_COMMIT_INVALID',
+      'Maintainer consumption requires a full commit object ID.',
+      ExitCode.guard,
+    );
+  }
+  const paths = maintainerGrantStorePaths(gitCommonDirectory);
+  return withRepositoryLifecycleOperation(
+    paths.runtime,
+    (assertOwned) => {
+      assertOwned();
+      return consumeMaintainerReservationUnderLifecycleLock(
+        gitCommonDirectory,
+        grantId,
+        sessionId,
+        commitHash,
+        now,
+      );
+    },
+    { allowMaintainerGrantId: grantId },
+  );
+}
+
+export function consumeMaintainerReservationUnderLifecycleLock(
+  gitCommonDirectory: string,
+  requestedGrantId: string,
+  requestedSessionId: string,
+  requestedCommitHash: string,
+  now: Date = new Date(),
+): MaintainerGrantInspection {
+  const grantId = assertMaintainerGrantId(requestedGrantId);
+  const sessionId = nonEmpty(requestedSessionId, 'reservation session ID');
+  const commitHash = requestedCommitHash.trim();
+  if (!/^[0-9a-f]{40,64}$/.test(commitHash)) {
+    throw workflowError(
+      'MAINTAINER_COMMIT_INVALID',
+      'Maintainer consumption requires a full commit object ID.',
+      ExitCode.guard,
+    );
+  }
+  const paths = maintainerGrantStorePaths(gitCommonDirectory);
+  ensureStoreDirectories(paths);
+  const terminalPath = grantPath(paths.terminal, grantId);
+  if (fs.existsSync(terminalPath)) {
+    const terminal = readTerminal(terminalPath, grantId);
+    if (
+      terminal.state !== 'consumed' ||
+      terminal.sessionId !== sessionId ||
+      terminal.commitHash !== commitHash
+    ) {
+      throw unavailableGrant(grantId);
+    }
+    cleanupNonterminalCopies(paths, grantId, terminal.envelope);
+    return inspectTerminal(terminal);
+  }
+
+  const reservedPath = grantPath(paths.reserved, grantId);
+  const reservation = readReservation(reservedPath, grantId);
+  if (reservation.sessionId !== sessionId) {
+    throw unavailableGrant(grantId);
+  }
+  const terminal: MaintainerTerminalRecord = {
+    schemaVersion: 1,
+    state: 'consumed',
+    grantId,
+    sessionId,
+    commitHash,
+    reason: 'Signed authority commit accepted',
+    recordedAt: exactDate(now).toISOString(),
+    envelope: reservation.envelope,
+  };
+  createPrivateFileAtomic(terminalPath, serializeRecord(terminal));
+  cleanupNonterminalCopies(paths, grantId, reservation.envelope);
+  return inspectTerminal(terminal);
+}
+
 function inspectOne(
   paths: ReturnType<typeof maintainerGrantStorePaths>,
   grantId: string,
