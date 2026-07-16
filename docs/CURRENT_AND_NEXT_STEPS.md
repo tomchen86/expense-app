@@ -8,15 +8,15 @@ This generated handoff contains semantic project state only. Its sources are the
 
 ## Current Task
 
-`4.1` — Add parent-policy authority replay, audit-tag and commit-signature verification, unique-use enforcement, and sealed trust-root rules.
+`4.2` — Run workflow assurance from the pull-request base and cover candidate-verifier, phase, rotation, expiry, and replay attacks.
 
 ## Next Task
 
-`4.2` — Run workflow assurance from the pull-request base and cover candidate-verifier, phase, rotation, expiry, and replay attacks.
+`5.1` — Document every maintainer command, bootstrap/pilot/sealing procedure, recovery boundary, and maintainer-owned remote prerequisite.
 
 ## Current Focus
 
-Add parent-policy authority replay, audit-tag and commit-signature verification, unique-use enforcement, and sealed trust-root rules.
+Run workflow assurance from the pull-request base and cover candidate-verifier, phase, rotation, expiry, and replay attacks.
 
 ## Known Blockers
 
