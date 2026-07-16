@@ -4,11 +4,11 @@ This generated handoff contains semantic project state only. Its sources are the
 
 ## Current Change
 
-`integrate-openspec-with-workflow`
+`convert-apps-web-to-monorepo-directory`
 
 ## Current Task
 
-None — all tasks are complete.
+`1.2` — Replace the transitional contract with a failing permanent contract for ordinary `apps/web` Git index entries and credential-free exact-head checkout, add the documented placeholder directory, remove the transient checkout compatibility phases, and prove structural Git, frozen-install, targeted contract, and authoritative non-database checks.
 
 ## Next Task
 
@@ -16,7 +16,7 @@ None.
 
 ## Current Focus
 
-Prepare the completed change for explicit archival review.
+Replace the transitional contract with a failing permanent contract for ordinary `apps/web` Git index entries and credential-free exact-head checkout, add the documented placeholder directory, remove the transient checkout compatibility phases, and prove structural Git, frozen-install, targeted contract, and authoritative non-database checks.
 
 ## Known Blockers
 
@@ -26,7 +26,7 @@ Prepare the completed change for explicit archival review.
 ## References
 
 - [Roadmap](ROADMAP.md)
-- [Active change](../openspec/changes/integrate-openspec-with-workflow/)
-- [Workflow assurance delta](../openspec/changes/integrate-openspec-with-workflow/specs/workflow-assurance/spec.md)
+- [Active change](../openspec/changes/convert-apps-web-to-monorepo-directory/)
+- [Workflow assurance delta](../openspec/changes/convert-apps-web-to-monorepo-directory/specs/workflow-assurance/spec.md)
 - [Issue log](ISSUE_LOG.md)
 - [System architecture](architecture/ARCHITECTURE.md)
