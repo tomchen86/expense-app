@@ -62,3 +62,22 @@ state and a pull request whose required `workflow-assurance` check is enforced.
   effective
 - **AND** an archive pull request proves the required status check before
   workflow support is declared
+
+### Requirement: Credential-Free Assurance Checkout Compatibility
+
+The pull-request assurance workflow SHALL check out the exact event head with
+full reachable history without persisting repository credentials. A retained
+unconfigured gitlink SHALL NOT prevent checkout, and any runner-only
+compatibility metadata SHALL be removed before repository-controlled commands
+execute.
+
+#### Scenario: Retained gitlink has no configured submodule URL
+
+- **GIVEN** the repository tree contains the retained `apps/web` gitlink
+- **AND** no persistent `.gitmodules` entry assigns that gitlink a URL
+- **WHEN** the pull-request assurance job checks out the event head
+- **THEN** the pinned checkout completes without persisting credentials
+- **AND** the workflow verifies the exact event head with full reachable
+  history
+- **AND** transient compatibility metadata is absent before dependency
+  installation or workflow-engine execution
