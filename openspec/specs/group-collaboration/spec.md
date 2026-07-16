@@ -1,6 +1,6 @@
 # Group Collaboration Specification
 
-## Current-State Scope
+## Purpose
 
 This specification records the independent mobile in-memory group model and
 authenticated API ledger model that exist today. It does not assert mobile/API

@@ -1,6 +1,6 @@
 # Category Management Specification
 
-## Current-State Scope
+## Purpose
 
 This specification records the category behavior that exists today. The mobile
 in-memory catalog and the authenticated API ledger catalog are separate

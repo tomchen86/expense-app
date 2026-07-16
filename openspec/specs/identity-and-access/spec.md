@@ -1,6 +1,6 @@
 # Identity and Access Specification
 
-## Current-State Scope
+## Purpose
 
 This specification records the mobile session-local identity and the API
 account/access capabilities that exist today. The mobile app does not yet use
