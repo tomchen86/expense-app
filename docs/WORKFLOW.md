@@ -230,6 +230,28 @@ least two independent eligible human maintainers exist. Until those remote
 rules are configured, local and workflow-file enforcement must not be described
 as merge authority.
 
+### Standalone registered checks
+
+Use the evidence-only entry point below when local verification or an external
+CI job must execute exactly one non-destructive check from
+`workflow/checks.json`:
+
+```bash
+pnpm workflow run-check <check-id> --json
+```
+
+The command requires a clean checkout, resolves the named registry entry,
+executes it through the same pinned runner used by managed checks and replay,
+binds the result to current HEAD, and rejects checkout mutation. It fails before
+execution for an unknown or destructive check. Its structured result is check
+evidence only: it cannot authorize task completion, staging, commit, archive,
+or a merge.
+
+CI and package-script adapters must delegate to this command instead of copying
+a registered command or maintaining another path scope. In particular,
+formatting verification resolves `workflow-format`; the registry entry remains
+the sole authority for its Prettier paths.
+
 ## Controlled Issues and Documents
 
 ### Issues

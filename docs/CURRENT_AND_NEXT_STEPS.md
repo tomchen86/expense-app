@@ -4,11 +4,11 @@ This generated handoff contains semantic project state only. Its sources are the
 
 ## Current Change
 
-`convert-apps-web-to-monorepo-directory`
+`unify-format-check-authority`
 
 ## Current Task
 
-None — all tasks are complete.
+`1.2` — Add a failing repository routing contract, then make the existing `format:check` package entry point delegate to `run-check workflow-format` so GitHub, local verification, managed checks, and replay share the unchanged registry definition.
 
 ## Next Task
 
@@ -16,7 +16,7 @@ None.
 
 ## Current Focus
 
-Prepare the completed change for explicit archival review.
+Add a failing repository routing contract, then make the existing `format:check` package entry point delegate to `run-check workflow-format` so GitHub, local verification, managed checks, and replay share the unchanged registry definition.
 
 ## Known Blockers
 
@@ -26,7 +26,7 @@ Prepare the completed change for explicit archival review.
 ## References
 
 - [Roadmap](ROADMAP.md)
-- [Active change](../openspec/changes/convert-apps-web-to-monorepo-directory/)
-- [Workflow assurance delta](../openspec/changes/convert-apps-web-to-monorepo-directory/specs/workflow-assurance/spec.md)
+- [Active change](../openspec/changes/unify-format-check-authority/)
+- [Workflow assurance delta](../openspec/changes/unify-format-check-authority/specs/workflow-assurance/spec.md)
 - [Issue log](ISSUE_LOG.md)
 - [System architecture](architecture/ARCHITECTURE.md)

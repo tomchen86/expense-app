@@ -36,6 +36,7 @@ import {
 import { validateManagedDocuments } from './managed-documents.ts';
 import { diagnoseOpenSpec } from './openspec-doctor.ts';
 import { commitPlanningTransition } from './planning-transition.ts';
+import { runRegisteredCheck } from './registered-check.ts';
 import { loadStableValidatedChangeContract } from './validated-contract-context.ts';
 
 type CommandResult = Record<string, unknown>;
@@ -183,6 +184,13 @@ function dispatch(args: string[], cwd: string): CommandResult {
     case 'check':
       requireArgumentCount(command, rest, 1, 1);
       return { command, ok: true, result: checkSession(cwd, rest[0]) };
+    case 'run-check':
+      requireArgumentCount(command, rest, 1, 1);
+      return {
+        command,
+        ok: true,
+        result: runRegisteredCheck(cwd, rest[0], process.env),
+      };
     case 'ci': {
       if (rest.length !== 4 || rest[0] !== '--base' || rest[2] !== '--head') {
         throw usage(
@@ -418,6 +426,7 @@ function usageText(): string {
     '  pnpm workflow start <change-id> --task <task-id> [--json]',
     '  pnpm workflow status [session-id] [--json]',
     '  pnpm workflow check <session-id> [--json]',
+    '  pnpm workflow run-check <check-id> [--json]',
     '  pnpm workflow ci --base <commit> --head <commit> [--json]',
     '  pnpm workflow adapter evaluate [--json]',
     '  pnpm workflow issue <add|update|close|render|validate> ... [--json]',
