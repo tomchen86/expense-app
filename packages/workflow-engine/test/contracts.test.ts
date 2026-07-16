@@ -45,6 +45,55 @@ test('runner security suite is portable to the package working directory', () =>
   );
 });
 
+test('workflow assurance contains retained-gitlink checkout compatibility around repository code', () => {
+  const workflow = fs.readFileSync(
+    path.resolve(
+      import.meta.dirname,
+      '../../../.github/workflows/workflow-assurance.yml',
+    ),
+    'utf8',
+  );
+
+  assert.match(
+    workflow,
+    /- name: Prepare retained gitlink checkout compatibility/,
+  );
+  assert.match(workflow, /git init \./);
+  assert.match(
+    workflow,
+    /git remote add origin "\$\{\{ github\.server_url \}\}\/\$\{\{ github\.repository \}\}"/,
+  );
+  assert.match(
+    workflow,
+    /git config --file \.gitmodules submodule\.apps\/web\.path apps\/web/,
+  );
+  assert.match(workflow, /clean: false/);
+  assert.match(
+    workflow,
+    /- name: Remove transient gitlink checkout compatibility\n\s+run: rm -- \.gitmodules/,
+  );
+  assert.match(
+    workflow,
+    /- name: Restore transient gitlink checkout compatibility\n\s+if: always\(\)/,
+  );
+
+  const prepare = workflow.indexOf(
+    '- name: Prepare retained gitlink checkout compatibility',
+  );
+  const checkout = workflow.indexOf('- name: Checkout exact PR head');
+  const remove = workflow.indexOf(
+    '- name: Remove transient gitlink checkout compatibility',
+  );
+  const verify = workflow.indexOf('- name: Recompute workflow assurance');
+  const restore = workflow.indexOf(
+    '- name: Restore transient gitlink checkout compatibility',
+  );
+  assert.ok(prepare < checkout);
+  assert.ok(checkout < remove);
+  assert.ok(remove < verify);
+  assert.ok(verify < restore);
+});
+
 test('parseTasks reads ordered checkbox tasks', () => {
   const tasks = parseTasks(`
 # Tasks

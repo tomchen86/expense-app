@@ -6,7 +6,7 @@
       the configuration/documentation-only TDD exemption with managed
       non-database checks and GitHub CODEOWNERS diagnostics without changing
       retained legacy paths.
-- [ ] 1.2 Add a failing regression contract for the retained unconfigured
+- [x] 1.2 Add a failing regression contract for the retained unconfigured
       `apps/web` gitlink, then make the pinned credential-free exact-head
       `workflow-assurance` checkout pass with transient runner-only
       compatibility metadata that is removed before repository code executes.
