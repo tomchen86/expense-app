@@ -96,15 +96,14 @@ records current evidence, stages the exact planning paths, and creates the plan
 form from the transition matrix. A later planning revision uses the same
 command and invalidates stale task evidence.
 
-Repository planning assets are limited to `.codex/skills/openspec-explore` and
-`.codex/skills/openspec-propose`, with reviewed prompt copies and a digest
-manifest under `workflow/codex-assets/`. As observed in the Codex session on
-July 16, 2026, these repository-local skills were present and passed asset
-validation but were not surfaced in the session's available-skill catalog.
-Discovery and invocation syntax therefore remain unproven. Do not claim a
-slash command or other invocation unless the running Codex UI actually exposes
-it. Use the pinned OpenSpec planning interface directly when necessary, and
-record a real discovery smoke test in the post-merge pilot.
+Repository planning assets are limited to the exact exposed skill names
+`openspec-explore` and `openspec-propose`, with reviewed prompt copies and a
+digest manifest under `workflow/codex-assets/`. Use `openspec-explore` for
+read-only investigation and requirement clarification. Use `openspec-propose`
+to create a complete proposal, design, delta specs, tasks, and `guard.json`.
+Do not infer a slash command or alias from an internal prompt filename. If the
+running Codex UI does not expose the skills, use the pinned OpenSpec planning
+CLI directly and record the discovery result in the post-merge pilot.
 
 ## Managed Task Lifecycle
 
@@ -338,8 +337,8 @@ the rejected transition.
   ownership mismatch is a stop condition, not permission for manual repair.
 - Before a successful real pilot, rollback of this integration requires a
   separately reviewed logical revert. Keep OpenSpec artifacts readable as
-  Markdown/JSON, do not archive a partial migration, do not delete user/global
-  state, and do not reactivate Spectra.
+  Markdown/JSON, do not archive a partial migration, and do not delete
+  user/global state.
 - After the pilot, change OpenSpec, schema, workflow policy, or generated-asset
   contracts only through a new proposal with compatibility tests.
 
@@ -426,11 +425,10 @@ Do not perform this pilot inside the integration branch, describe the
 disposable rehearsal as the pilot, or invent a Codex invocation the UI did not
 surface.
 
-## Retained Legacy Material
+## Archived Legacy Material
 
-`docs/UPDATE_CHECKLIST.md`, older planning/status/log documents, and the
-retained Spectra installation are historical or compatibility inputs. They do
-not override this workflow. Moving, deleting, or archiving retained legacy
-documents requires separate explicit maintainer approval. Spectra is never a
-fallback when OpenSpec or the workflow rejects a transition, and rollback does
-not reactivate it.
+Superseded checklists, plans, status reports, logs, and templates are preserved
+under `docs/archive/legacy/` using their former path below `docs/`. They are
+immutable historical inputs and never override this workflow or current
+canonical documents. Editing, restoring, renaming, or deleting archived
+material requires new explicit maintainer approval.

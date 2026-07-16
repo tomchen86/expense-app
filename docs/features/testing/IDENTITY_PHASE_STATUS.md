@@ -31,4 +31,6 @@ _Last updated: September 23, 2025_
 
 ## Next Checkpoint
 
-- Target completion of the remaining Phase 1 entities and migration specs before moving into collaboration tables (Phase 2) per `docs/planning/TDD_DATABASE_DESIGN_PLAN.md`.
+- Target completion of the remaining Phase 1 entities and migration specs before
+  moving into collaboration tables (Phase 2) per the historical
+  `docs/archive/legacy/planning/PLAN-TDD_DATABASE_DESIGN.md`.

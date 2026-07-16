@@ -81,7 +81,10 @@ android/
 
 # referenc folder
 my-app/
-legacy/
+/legacy/
+
+# Local memo / discussion board
+/memo/
 
 # Spectra app data
 .spectra/

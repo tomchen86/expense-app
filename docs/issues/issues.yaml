@@ -10,8 +10,8 @@
       "priority": "Next",
       "requirement": null,
       "references": [
-        "docs/Storage_Strategy.md",
-        "docs/planning/TASK_2.3_AUTH_INTEGRATION_PLAN.md"
+        "docs/architecture/STORAGE_STRATEGY.md",
+        "docs/archive/legacy/planning/PLAN-TASK_2.3_AUTH_INTEGRATION.md"
       ],
       "notes": "No persistence provider contract exists yet. Define storage-mode semantics only after the provider and authentication boundaries are specified."
     },
@@ -26,7 +26,7 @@
         "href": "../openspec/specs/expense-ledger/spec.md"
       },
       "references": [
-        "docs/planning/ROADMAP.md#phase-3"
+        "docs/archive/legacy/planning/ROADMAP.md#phase-3"
       ],
       "notes": "The API supports search and filters, but the mobile list has no keyword search, date-range filter, or user-selectable sort controls."
     },
@@ -245,8 +245,8 @@
         "href": "../openspec/changes/establish-executable-ai-workflow/requirement-audit.md"
       },
       "references": [
-        "docs/Storage_Strategy.md",
-        "docs/planning/PHASE_2_API_DEVELOPMENT_PLAN.md"
+        "docs/architecture/STORAGE_STRATEGY.md",
+        "docs/archive/legacy/planning/PLAN-PHASE_2_API_DEVELOPMENT.md"
       ],
       "notes": "Extract interfaces + adapters into shared library before mobile rollout."
     },
@@ -258,7 +258,7 @@
       "priority": "Later",
       "requirement": null,
       "references": [
-        "docs/Storage_Strategy.md#sync--conflict-handling"
+        "docs/architecture/STORAGE_STRATEGY.md#sync--conflict-handling"
       ],
       "notes": "Add logging/metrics for queue failures once sync exists."
     },
@@ -364,7 +364,7 @@
       "requirement": null,
       "references": [
         "apps/api/src",
-        "docs/ROADMAP.md"
+        "docs/archive/legacy/planning/ROADMAP.md"
       ],
       "notes": "Define health signals, structured logging, metrics, alert ownership, and deployment targets after a production API environment exists."
     }

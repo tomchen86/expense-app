@@ -1,72 +1,87 @@
-# Documentation Entry Point
+# Expense App
 
-This directory separates current project truth, normative requirements,
-change planning, reference material, and immutable history.
+Expense App is a monorepo for recording personal and shared expenses. The
+product direction is an offline-first React Native experience backed by a
+NestJS/PostgreSQL API, with clear contracts for authentication, groups,
+categories, expenses, and insights.
 
-## Read First
+## What Exists Today
 
-| Need                                            | Canonical source                                             |
-| ----------------------------------------------- | ------------------------------------------------------------ |
-| Current priorities                              | [`ROADMAP.md`](ROADMAP.md)                                   |
-| Current state, handoff, and exact next step     | [`CURRENT_AND_NEXT_STEPS.md`](CURRENT_AND_NEXT_STEPS.md)     |
-| Executable OpenSpec task workflow               | [`WORKFLOW.md`](WORKFLOW.md)                                 |
-| Documentation placement and mutation rules      | [`DOCUMENT_STRUCTURE_GUIDE.md`](DOCUMENT_STRUCTURE_GUIDE.md) |
-| Normative system requirements                   | [`../openspec/specs/`](../openspec/specs/)                   |
-| Active proposal, design, delta specs, and tasks | [`../openspec/changes/`](../openspec/changes/)               |
-| System architecture                             | [`architecture/`](architecture/)                             |
-| Feature implementation references               | [`features/`](features/)                                     |
-| Open issues                                     | [`ISSUE_LOG.md`](ISSUE_LOG.md)                               |
-| Delivered user-visible outcomes                 | [`CHANGELOG.md`](CHANGELOG.md)                               |
+The React Native mobile app implements the main local user flows for expenses,
+groups, categories, and spending insights. Zustand stores coordinate the
+current UI state, and Expo provides the mobile development environment.
 
-`UPDATE_CHECKLIST.md` is a retained legacy snapshot. Do not follow its manual
-logging, staging, commit, or archival instructions; use `WORKFLOW.md`. Moving
-or deleting the legacy file still requires separate maintainer approval.
+The NestJS API contains modules for authentication, users, groups, categories,
+expenses, and related persistence. PostgreSQL entities, migrations, validation,
+and integration/isolated test suites establish the backend foundation.
 
-## Source Boundaries
+`apps/web/` is currently an ordinary-directory placeholder. It is intentionally
+tracked so a future web surface can be planned without relying on a Git
+submodule, but the repository does not currently claim a working web app.
 
-- `openspec/specs/**` is the only normative requirements source.
-- `openspec/changes/<change-id>/**` is the only active change-planning and task
-  source. `guard.json` adds machine execution policy without repeating task
-  descriptions.
-- The repository workflow engine owns runtime sessions, Git facts, diff scope,
-  check evidence, and completion authorization.
-- Architecture and feature documents are read freely but updated only through
-  explicitly scoped, reviewed work.
-- `docs/research/<topic>.md` is background material, never current truth.
-- Existing `planning/`, `status/`, and `logs/` files are legacy inputs until
-  individually migrated. Do not infer current state from them.
-- Spectra remains installed for compatibility/history but is never invoked or
-  used as fallback lifecycle authority.
+## Current Maturity
 
-## OpenSpec and Codex Status
+This is active development, not a production-ready system. The mobile and API
+surfaces are not yet fully integrated, mobile domain state is not yet durable,
+and the roadmap still tracks security, authorization, expense-split,
+persistence, and contract-alignment gaps. Read the roadmap and generated
+handoff before choosing the next implementation task.
 
-The repository pins OpenSpec and provides two planning-only Codex assets:
-`openspec-explore` and `openspec-propose`. Their checked files and manifest are
-repository inputs, not evidence that a particular Codex installation discovers
-or exposes them. The July 16, 2026 Codex session did not surface them in its
-available-skill catalog, so repository-local discovery remains a post-merge
-pilot gate. Follow `WORKFLOW.md` for supported planning, task, archive,
-upgrade, recovery, and pilot commands; do not infer an invocation syntax from a
-filename.
+## Monorepo Surfaces
 
-## Target Structure
+- `apps/mobile/` — React Native/Expo client and Zustand domain stores.
+- `apps/api/` — NestJS API, PostgreSQL persistence, migrations, and tests.
+- `apps/web/` — tracked placeholder for a future web application.
+- `packages/workflow-engine/` — repository-owned execution and assurance
+  engine.
+- `openspec/specs/` — normative current requirements.
+- `openspec/changes/` — active proposals, designs, requirement deltas, tasks,
+  and task guards.
+- `docs/` — project, architecture, workflow, feature, issue, and historical
+  knowledge.
 
-```text
-docs/
-├── README.md
-├── ROADMAP.md
-├── CURRENT_AND_NEXT_STEPS.md
-├── CHANGELOG.md
-├── ISSUE_LOG.md
-├── DOCUMENT_STRUCTURE_GUIDE.md
-├── WORKFLOW.md
-├── issues/
-├── architecture/
-├── features/
-├── guides/
-├── research/
-├── templates/
-└── archive/
+## Getting Started
+
+Install the pinned workspace dependencies from the repository root:
+
+```bash
+pnpm install
 ```
 
-See `DOCUMENT_STRUCTURE_GUIDE.md` for mutation policies and migration rules.
+Common development commands:
+
+```bash
+pnpm --filter api start:dev
+pnpm --filter api build
+pnpm --filter api test
+pnpm --filter api test -- <spec>
+pnpm prettier --check .
+```
+
+API tests that write to PostgreSQL are destructive to the configured test
+database. Set `TEST_DATABASE_URL` to an explicitly disposable database before
+running them; never fall back to a development database.
+
+Repository workflow diagnostics and managed-document validation are available
+through:
+
+```bash
+pnpm workflow doctor --json
+pnpm workflow documents validate --json
+```
+
+## Where to Read Next
+
+- [`ROADMAP.md`](ROADMAP.md) — current priorities.
+- [`CURRENT_AND_NEXT_STEPS.md`](CURRENT_AND_NEXT_STEPS.md) — generated handoff
+  and next executable step.
+- [`WORKFLOW.md`](WORKFLOW.md) — managed OpenSpec planning, task, commit,
+  assurance, and archive lifecycle.
+- [`architecture/`](architecture/) — current system-wide design references.
+- [`features/`](features/) — implementation references grouped by feature.
+- [`ISSUE_LOG.md`](ISSUE_LOG.md) — generated open-issue view.
+- [`DOCUMENT_STRUCTURE_GUIDE.md`](DOCUMENT_STRUCTURE_GUIDE.md) — canonical
+  document placement and mutation rules.
+- [`../openspec/specs/`](../openspec/specs/) and
+  [`../openspec/changes/`](../openspec/changes/) — normative behavior and active
+  change planning.

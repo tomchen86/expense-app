@@ -35,9 +35,9 @@ workflow/                       # executable policy/configuration, no plans
 └── ...
 ```
 
-Existing `docs/planning/`, `docs/status/`, `docs/logs/`, and `docs/template/`
-directories remain in place during non-destructive migration. Their presence
-does not make them canonical.
+Legacy material excluded from this structure is preserved under
+`docs/archive/legacy/` with its former path below `docs/`. Do not recreate the
+old `planning/`, `status/`, `logs/`, or singular `template/` trees.
 
 ## Source-of-Truth Matrix
 
@@ -65,7 +65,7 @@ tracked Markdown.
 | Curated         | Read freely; update only in explicitly scoped and reviewed work               | `ROADMAP.md`, `WORKFLOW.md`, `architecture/**`, `features/**` |
 | Normative       | Modify through a reviewed OpenSpec change                                     | `openspec/specs/**`                                           |
 | Change artifact | Mutate through the active change lifecycle; task completion requires evidence | `openspec/changes/**`                                         |
-| Reference       | May inform work but is never current truth                                    | `research/**`, `ai-responses/**`, retained Spectra files      |
+| Reference       | May inform work but is never current truth                                    | `research/**`                                                 |
 | Immutable       | Do not edit, rename, or delete without explicit maintainer approval           | `archive/**`, historical logs and reports                     |
 
 The workflow engine enforces managed documents and session scope, delegates
@@ -93,18 +93,20 @@ the CI check is required for merge.
 10. Keep executable lifecycle instructions in `WORKFLOW.md`; do not duplicate
     them in per-session checklists or planning files.
 
-## Non-Destructive Migration
+## Legacy Archive Rules
 
-- Create and link new canonical entry points first.
-- Add a superseded notice to old live documents without deleting their content.
-- Migrate accepted requirements before downgrading `REQUIREMENT_LOG.md` to a
-  historical inventory.
-- Seed structured issue data and prove lossless rendering before making
-  `ISSUE_LOG.md` generated-only.
-- Update live references before moving any historical document.
-- Never rewrite historical links inside immutable changelog/archive snapshots
-  merely to make them look current.
+- Move content into `docs/archive/legacy/` only when it is excluded from the
+  canonical structure and the maintainer has approved the archival scope.
+- Preserve the former path below `docs/`; for example,
+  `docs/planning/ROADMAP.md` becomes
+  `docs/archive/legacy/planning/ROADMAP.md`.
+- Update current, mutable references as part of the same managed change.
+- Never rewrite immutable changelog or archive snapshots merely to make their
+  historical links look current.
+- Do not edit, restore, rename, or delete archived content without new explicit
+  maintainer approval.
+- Do not recreate per-session logs, parallel roadmaps, or the singular
+  `docs/template/` directory.
 
-Use `WORKFLOW.md` for current execution. Retained legacy planning and checklist
-documents remain historical inputs until the maintainer separately approves
-their archival or deletion.
+Use `WORKFLOW.md` for current execution and the canonical sources above for
+current project truth.
