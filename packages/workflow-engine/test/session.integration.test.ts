@@ -10,6 +10,7 @@ import './archive-transition.integration.test.ts';
 import './ci-archive.integration.test.ts';
 
 import { WorkflowError } from '../src/errors.ts';
+import { runRegisteredCheck } from '../src/registered-check.ts';
 import { abortSession, checkSession, startSession } from '../src/session.ts';
 import './atomic-text.test.ts';
 import './completion.integration.test.ts';
@@ -37,6 +38,97 @@ import {
   isWorkflowError,
   runtimeRoot,
 } from './fixture.ts';
+
+test('registered check execution returns pinned non-destructive evidence', () => {
+  const repository = createFixtureRepository();
+  try {
+    const result = runRegisteredCheck(repository, 'fixture', process.env);
+
+    assert.equal(result.head, git(repository, ['rev-parse', 'HEAD']).trim());
+    assert.deepEqual(
+      {
+        checkId: result.check.checkId,
+        outcome: result.check.outcome,
+        exitCode: result.check.exitCode,
+        destructiveDatabase: result.check.destructiveDatabase,
+      },
+      {
+        checkId: 'fixture',
+        outcome: 'passed',
+        exitCode: 0,
+        destructiveDatabase: false,
+      },
+    );
+    assert.match(result.check.runnerDigest, /^[0-9a-f]{64}$/);
+  } finally {
+    fs.rmSync(repository, { recursive: true, force: true });
+  }
+});
+
+test('registered check execution rejects unknown and destructive checks', () => {
+  const repository = createFixtureRepository();
+  try {
+    assert.throws(
+      () => runRegisteredCheck(repository, 'unknown', process.env),
+      (error) => isWorkflowError(error, 'CI_CHECK_UNKNOWN'),
+    );
+
+    configureChecks(
+      repository,
+      {
+        destructive: {
+          command: ['node', 'scripts/pass.mjs'],
+          destructiveDatabase: true,
+        },
+      },
+      ['destructive'],
+    );
+
+    assert.throws(
+      () => runRegisteredCheck(repository, 'destructive', process.env),
+      (error) => isWorkflowError(error, 'STANDALONE_DESTRUCTIVE_CHECK'),
+    );
+  } finally {
+    fs.rmSync(repository, { recursive: true, force: true });
+  }
+});
+
+test('registered check execution rejects dirty and mutated checkouts', () => {
+  const dirtyRepository = createFixtureRepository();
+  try {
+    fs.writeFileSync(path.join(dirtyRepository, 'dirty.txt'), 'dirty\n');
+    assert.throws(
+      () => runRegisteredCheck(dirtyRepository, 'fixture', process.env),
+      (error) => isWorkflowError(error, 'STANDALONE_CHECK_DIRTY_WORKTREE'),
+    );
+  } finally {
+    fs.rmSync(dirtyRepository, { recursive: true, force: true });
+  }
+
+  const mutatingRepository = createFixtureRepository();
+  try {
+    configureChecks(
+      mutatingRepository,
+      {
+        mutating: {
+          command: [
+            'node',
+            'scripts/write-file.mjs',
+            path.join(mutatingRepository, 'mutated.txt'),
+          ],
+          destructiveDatabase: false,
+        },
+      },
+      ['mutating'],
+    );
+    assert.throws(
+      () => runRegisteredCheck(mutatingRepository, 'mutating', process.env),
+      (error) => isWorkflowError(error, 'CI_CHECK_MUTATED_WORKTREE'),
+    );
+  } finally {
+    fs.rmSync(mutatingRepository, { recursive: true, force: true });
+  }
+});
 
 test('start rejects protected and dirty repositories without leaving runtime state', () => {
   const repository = createFixtureRepository();
