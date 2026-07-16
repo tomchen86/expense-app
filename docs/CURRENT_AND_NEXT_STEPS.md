@@ -8,7 +8,7 @@ This generated handoff contains semantic project state only. Its sources are the
 
 ## Current Task
 
-`5.1` — Document every maintainer command, bootstrap/pilot/sealing procedure, recovery boundary, and maintainer-owned remote prerequisite.
+None — all tasks are complete.
 
 ## Next Task
 
@@ -16,7 +16,7 @@ None.
 
 ## Current Focus
 
-Document every maintainer command, bootstrap/pilot/sealing procedure, recovery boundary, and maintainer-owned remote prerequisite.
+Prepare the completed change for explicit archival review.
 
 ## Known Blockers
 

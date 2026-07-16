@@ -232,6 +232,14 @@ test('agent guide documents the complete public workflow surface and source-size
     'pnpm workflow issue close',
     'pnpm workflow issue render',
     'pnpm workflow issue validate',
+    'pnpm workflow maintainer grant',
+    'pnpm workflow maintainer inspect',
+    'pnpm workflow maintainer revoke',
+    'pnpm workflow authority-start',
+    'pnpm workflow authority-check',
+    'pnpm workflow authority-commit',
+    'pnpm workflow authority-recover',
+    'pnpm workflow authority-abort',
     'pnpm workflow documents validate',
     'pnpm workflow document-refresh propose',
     'pnpm workflow document-refresh show',
@@ -258,6 +266,42 @@ test('agent guide documents the complete public workflow surface and source-size
     /Do not change, split, or refactor source\s+solely because it exceeds 500 lines\./,
   );
   assert.doesNotMatch(agents, /keep files under 500 LOC/i);
+});
+
+test('break-glass maintainer operator contract is complete and bootstrap-only', () => {
+  const repositoryRoot = path.resolve(import.meta.dirname, '../../..');
+  const workflow = fs.readFileSync(
+    path.join(repositoryRoot, 'docs/WORKFLOW.md'),
+    'utf8',
+  );
+  const roadmap = fs.readFileSync(
+    path.join(repositoryRoot, 'docs/ROADMAP.md'),
+    'utf8',
+  );
+
+  for (const command of [
+    'pnpm workflow maintainer grant',
+    'pnpm workflow maintainer inspect',
+    'pnpm workflow maintainer revoke',
+    'pnpm workflow authority-start',
+    'pnpm workflow authority-check',
+    'pnpm workflow authority-commit',
+    'pnpm workflow authority-recover',
+    'pnpm workflow authority-abort',
+  ]) {
+    assert.match(workflow, new RegExp(command.replaceAll(' ', '\\s+')));
+  }
+
+  assert.match(workflow, /controlling interactive terminal/i);
+  assert.match(workflow, /git config --local gpg\.format ssh/);
+  assert.match(workflow, /git config --local user\.signingkey/);
+  assert.match(workflow, /workflow-grant\/\*\*/);
+  assert.match(workflow, /protected environment/i);
+  assert.match(workflow, /one-way/i);
+  assert.match(workflow, /repository-admin, out-of-band/i);
+  assert.match(roadmap, /bootstrap-only/i);
+  assert.match(roadmap, /workflow-grant\/\*\*/);
+  assert.match(roadmap, /protected environment/i);
 });
 
 test('documentation entry point is a project overview and archive policy remains immutable', () => {

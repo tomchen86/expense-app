@@ -19,4 +19,4 @@
 
 ## 5. Operator Contract
 
-- [ ] 5.1 Document every maintainer command, bootstrap/pilot/sealing procedure, recovery boundary, and maintainer-owned remote prerequisite.
+- [x] 5.1 Document every maintainer command, bootstrap/pilot/sealing procedure, recovery boundary, and maintainer-owned remote prerequisite.
