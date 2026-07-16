@@ -1,4 +1,5 @@
 import { validateCiArchiveCommit } from './ci-archive.ts';
+import { validateCiAuthorityCommit } from './ci-authority.ts';
 import { assertExactPlanningBootstrap } from './ci-bootstrap.ts';
 import {
   loadHistoricalTaskAuthority,
@@ -30,6 +31,7 @@ import { assertExactTaskProjection } from './task-projection.ts';
 export type CommitSequenceResult = {
   completedTasks: CompletedTask[];
   archivedChanges: string[];
+  authorityGrants: string[];
   requiredCheckDefinitions: Record<string, string>;
 };
 
@@ -39,10 +41,12 @@ export function replayCommitSequence(
   contracts: Map<string, ChangeContract>,
   legacyExceptions: BootstrapException[],
   planningBootstrapPolicies: PlanningBootstrapException[],
+  evaluatedAt: Date = new Date(),
 ): CommitSequenceResult {
   const priorTaskTrailers = new Set<string>();
   const completedTasks = new Map<string, CompletedTask>();
   const archivedChanges = new Set<string>();
+  const authorityGrants = new Set<string>();
   const requiredCheckDefinitions = new Map<string, string>();
   const completionPaths = completionDocumentPaths(repositoryRoot);
   const expectedCompatibility = legacyExceptions.flatMap((exception) =>
@@ -148,10 +152,23 @@ export function replayCommitSequence(
       continue;
     }
     if (commit.trailers.kind === 'authority') {
-      throw ciError(
-        'CI_AUTHORITY_VERIFIER_REQUIRED',
-        'Authority commits require independent parent-policy verification.',
+      if (authorityGrants.has(commit.trailers.grantId)) {
+        throw ciError(
+          'CI_AUTHORITY_GRANT_DUPLICATE',
+          'A pull-request range may claim each authority grant only once.',
+        );
+      }
+      const authority = validateCiAuthorityCommit(
+        repositoryRoot,
+        commit,
+        evaluatedAt,
       );
+      recordDefinitions(
+        requiredCheckDefinitions,
+        authority.requiredCheckDefinitions,
+      );
+      authorityGrants.add(authority.grantId);
+      continue;
     }
 
     const transitions = taskTransitionsForCommit(repositoryRoot, commit);
@@ -197,6 +214,7 @@ export function replayCommitSequence(
   return {
     completedTasks: [...completedTasks.values()].sort(compareTasks),
     archivedChanges: [...archivedChanges].sort(),
+    authorityGrants: [...authorityGrants].sort(),
     requiredCheckDefinitions: Object.fromEntries(
       [...requiredCheckDefinitions].sort(([left], [right]) =>
         left.localeCompare(right),

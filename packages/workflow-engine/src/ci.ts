@@ -38,6 +38,7 @@ export function verifyPullRequest(
   requestedBase: string,
   requestedHead: string,
   environment: NodeJS.ProcessEnv = process.env,
+  evaluatedAt: Date = new Date(),
 ) {
   const git = discoverRepository(cwd);
   const base = assertCiCommit(git.repositoryRoot, requestedBase);
@@ -92,6 +93,7 @@ export function verifyPullRequest(
     contracts,
     exceptions,
     loadPlanningBootstrapPolicy(git.repositoryRoot),
+    evaluatedAt,
   );
   const completedTasks = replay.completedTasks;
   const changedPaths = listRangePaths(git.repositoryRoot, mergeBase, head);
@@ -110,6 +112,7 @@ export function verifyPullRequest(
     commits: commits.map(({ hash }) => hash),
     completedTasks,
     archivedChanges: replay.archivedChanges,
+    authorityGrants: replay.authorityGrants,
     changedPaths,
     checks,
     managedDocuments: validated.documents,
