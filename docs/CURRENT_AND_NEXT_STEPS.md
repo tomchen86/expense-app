@@ -8,15 +8,15 @@ This generated handoff contains semantic project state only. Its sources are the
 
 ## Current Task
 
-`1.2` — Add the human-present SSH signer, interactive grant command, and signed audit-tag creation.
+`2.1` — Add Git-common-directory grant storage, atomic reservation, inspection, idempotent revocation, and cross-worktree exclusion.
 
 ## Next Task
 
-`2.1` — Add Git-common-directory grant storage, atomic reservation, inspection, idempotent revocation, and cross-worktree exclusion.
+`2.2` — Add authority session start/check transitions, pinned normal-check evidence, and terminal failure cleanup.
 
 ## Current Focus
 
-Add the human-present SSH signer, interactive grant command, and signed audit-tag creation.
+Add Git-common-directory grant storage, atomic reservation, inspection, idempotent revocation, and cross-worktree exclusion.
 
 ## Known Blockers
 

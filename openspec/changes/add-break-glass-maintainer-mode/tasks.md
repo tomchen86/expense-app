@@ -1,7 +1,7 @@
 ## 1. Grant Contract and Issuance
 
 - [x] 1.1 Add the trusted maintainer policy, canonical grant model, exact-path validation, and maintainer-mode coverage under the existing workflow-test authority.
-- [ ] 1.2 Add the human-present SSH signer, interactive grant command, and signed audit-tag creation.
+- [x] 1.2 Add the human-present SSH signer, interactive grant command, and signed audit-tag creation.
 
 ## 2. Local Grant and Session State
 

@@ -1,12 +1,19 @@
+import crypto from 'node:crypto';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 
 import { ExitCode, workflowError } from './errors.ts';
-import { runGit } from './git.ts';
+import { discoverRepository, runGit, runGitWithEnvironment } from './git.ts';
 import {
   isAuthorityPathEligible,
+  parseMaintainerPolicy,
   type MaintainerPolicy,
 } from './maintainer-policy.ts';
+import {
+  createInteractiveSshSigner,
+  type MaintainerSignerProvider,
+} from './maintainer-signer.ts';
 import {
   assertChangeId,
   assertPolicyPathInsideRepository,
@@ -48,6 +55,33 @@ export type MaintainerGrantPayload = {
   signer: string;
 };
 
+export type MaintainerGrantEnvelope = {
+  payload: MaintainerGrantPayload;
+  signature: string;
+};
+
+export type MaintainerGrantRequest = {
+  changeId: string;
+  paths: string[];
+  reason: string;
+  ttlMinutes?: number;
+  maxUses?: number;
+};
+
+export type MaintainerGrantIssueOptions = {
+  now?: Date;
+  grantId?: string;
+  signer?: MaintainerSignerProvider;
+};
+
+export type MaintainerGrantIssueResult = {
+  grantId: string;
+  tagRef: string;
+  publishCommand: string;
+  availableTokenPath: string;
+  envelope: MaintainerGrantEnvelope;
+};
+
 export type GrantValidationOptions = {
   now: Date;
   expectedBase: string;
@@ -71,6 +105,151 @@ export function canonicalGrantPayload(payload: MaintainerGrantPayload): string {
     reason: payload.reason,
     signer: payload.signer,
   })}\n`;
+}
+
+export function canonicalGrantEnvelope(
+  envelope: MaintainerGrantEnvelope,
+): string {
+  const canonicalPayload = JSON.parse(
+    canonicalGrantPayload(envelope.payload),
+  ) as MaintainerGrantPayload;
+  return `${JSON.stringify({
+    payload: canonicalPayload,
+    signature: envelope.signature,
+  })}\n`;
+}
+
+export function issueMaintainerGrant(
+  cwd: string,
+  request: MaintainerGrantRequest,
+  options: MaintainerGrantIssueOptions = {},
+): MaintainerGrantIssueResult {
+  const repository = discoverRepository(cwd);
+  if (repository.statusEntries.length > 0) {
+    throw workflowError(
+      'MAINTAINER_GRANT_DIRTY_WORKTREE',
+      'Maintainer grants can be issued only from a clean worktree.',
+      ExitCode.conflict,
+    );
+  }
+
+  const policy = loadBasePolicy(repository.repositoryRoot, repository.head);
+  const origin = runGit(repository.repositoryRoot, [
+    'remote',
+    'get-url',
+    'origin',
+  ]).trim();
+  if (origin !== policy.repository.origin) {
+    throw workflowError(
+      'MAINTAINER_REPOSITORY_MISMATCH',
+      'The repository origin does not match the trusted maintainer policy.',
+      ExitCode.guard,
+    );
+  }
+
+  const requestedPaths = normalizeRequestedPaths(request.paths);
+  const allowedPaths = assertGrantPathsEligible(
+    repository.repositoryRoot,
+    requestedPaths,
+    policy,
+  );
+  const ttlMinutes = request.ttlMinutes ?? policy.maxTtlMinutes;
+  const maxUses = request.maxUses ?? policy.maxUses;
+  if (
+    !Number.isInteger(ttlMinutes) ||
+    ttlMinutes < 1 ||
+    ttlMinutes > policy.maxTtlMinutes ||
+    maxUses !== 1
+  ) {
+    throw invalidGrant('Maintainer grant bounds exceed trusted policy.');
+  }
+
+  const now = options.now ? new Date(options.now) : new Date();
+  if (!Number.isFinite(now.getTime())) {
+    throw invalidGrant('Maintainer grant issue time is invalid.');
+  }
+  const grantId = options.grantId ?? crypto.randomUUID();
+  if (!GRANT_ID.test(grantId)) {
+    throw invalidGrant('Maintainer grant ID is invalid.');
+  }
+  const tagRef = `${policy.auditTagPrefix}${grantId}`;
+  const availableDirectory = path.join(
+    repository.gitCommonDirectory,
+    'workflow-engine',
+    'maintainer-grants',
+    'available',
+  );
+  const availableTokenPath = path.join(availableDirectory, `${grantId}.json`);
+  if (
+    fs.existsSync(availableTokenPath) ||
+    runGit(
+      repository.repositoryRoot,
+      ['rev-parse', '--verify', tagRef],
+      true,
+    ).trim()
+  ) {
+    throw grantExists(grantId);
+  }
+
+  const signer =
+    options.signer ??
+    createInteractiveSshSigner(repository.repositoryRoot, policy);
+  signer.assertHumanPresent();
+  const signerIdentity = signer.identity();
+  const policyBlob = runGit(repository.repositoryRoot, [
+    'rev-parse',
+    `${repository.head}:workflow/maintainer-policy.json`,
+  ]).trim();
+  const payload: MaintainerGrantPayload = {
+    version: 1,
+    grantId,
+    repositoryId: policy.repository.id,
+    repositoryOrigin: policy.repository.origin,
+    baseCommit: repository.head,
+    policyBlob,
+    changeId: request.changeId,
+    allowedPaths,
+    issuedAt: now.toISOString(),
+    expiresAt: new Date(now.getTime() + ttlMinutes * 60_000).toISOString(),
+    maxUses: 1,
+    reason: request.reason,
+    signer: signerIdentity,
+  };
+  validateGrantPayload(payload, policy, {
+    now,
+    expectedBase: repository.head,
+    expectedPolicyBlob: policyBlob,
+  });
+
+  const canonicalPayload = canonicalGrantPayload(payload);
+  const signature = signer.sign(canonicalPayload);
+  assertArmoredSshSignature(signature);
+  signer.verify(canonicalPayload, signature, signerIdentity);
+  const envelope = { payload, signature };
+  const canonicalEnvelope = canonicalGrantEnvelope(envelope);
+
+  const tagObject = createAuditTag(
+    repository.repositoryRoot,
+    repository.head,
+    tagRef,
+    canonicalEnvelope,
+    signerIdentity,
+  );
+  try {
+    ensurePrivateDirectory(availableDirectory);
+    writeNewPrivateFile(availableTokenPath, canonicalEnvelope);
+  } catch (error) {
+    runGit(repository.repositoryRoot, ['update-ref', '-d', tagRef, tagObject]);
+    throw error;
+  }
+
+  return {
+    grantId,
+    tagRef,
+    publishCommand: `git push origin ${tagRef}:${tagRef}`,
+    availableTokenPath,
+    envelope,
+  };
 }
 
 export function validateGrantPayload(
@@ -199,6 +378,164 @@ function exactTimestamp(value: string): number | undefined {
     : undefined;
 }
 
+function loadBasePolicy(
+  repositoryRoot: string,
+  baseCommit: string,
+): MaintainerPolicy {
+  try {
+    return parseMaintainerPolicy(
+      JSON.parse(
+        runGit(repositoryRoot, [
+          'show',
+          `${baseCommit}:workflow/maintainer-policy.json`,
+        ]),
+      ),
+    );
+  } catch (error) {
+    if (error && typeof error === 'object' && 'code' in error) {
+      throw error;
+    }
+    throw workflowError(
+      'MAINTAINER_POLICY_INVALID',
+      'The base commit does not contain a valid maintainer policy.',
+      ExitCode.guard,
+    );
+  }
+}
+
+function normalizeRequestedPaths(requestedPaths: string[]): string[] {
+  if (!Array.isArray(requestedPaths)) {
+    throw invalidGrantPath();
+  }
+  let normalized: string[];
+  try {
+    normalized = requestedPaths.map(normalizeExactRepositoryPath).sort();
+  } catch {
+    throw invalidGrantPath();
+  }
+  if (normalized.length !== new Set(normalized).size) {
+    throw invalidGrantPath();
+  }
+  return normalized;
+}
+
+function assertArmoredSshSignature(signature: string): void {
+  if (
+    typeof signature !== 'string' ||
+    signature.length > 16_384 ||
+    signature.includes('\r') ||
+    !/^-----BEGIN SSH SIGNATURE-----\n(?:[A-Za-z0-9+/=]+\n)+-----END SSH SIGNATURE-----\n$/.test(
+      signature,
+    )
+  ) {
+    throw workflowError(
+      'MAINTAINER_SIGNATURE_INVALID',
+      'The maintainer grant SSH signature is invalid.',
+      ExitCode.verification,
+    );
+  }
+}
+
+function createAuditTag(
+  repositoryRoot: string,
+  baseCommit: string,
+  tagRef: string,
+  message: string,
+  signerIdentity: string,
+): string {
+  const temporaryDirectory = fs.mkdtempSync(
+    path.join(os.tmpdir(), 'workflow-grant-tag-'),
+  );
+  fs.chmodSync(temporaryDirectory, 0o700);
+  const messagePath = path.join(temporaryDirectory, 'message');
+  try {
+    fs.writeFileSync(messagePath, message, { encoding: 'utf8', mode: 0o600 });
+    const shortName = tagRef.slice('refs/tags/'.length);
+    runGitWithEnvironment(
+      repositoryRoot,
+      [
+        'tag',
+        '--annotate',
+        '--cleanup=verbatim',
+        '--file',
+        messagePath,
+        shortName,
+        baseCommit,
+      ],
+      {
+        GIT_COMMITTER_NAME: signerIdentity,
+        GIT_COMMITTER_EMAIL: 'workflow-maintainer@users.noreply.github.com',
+      },
+    );
+    return runGit(repositoryRoot, ['rev-parse', `${tagRef}^{tag}`]).trim();
+  } catch (error) {
+    if (
+      runGit(repositoryRoot, ['rev-parse', '--verify', tagRef], true).trim()
+    ) {
+      throw grantExists(tagRef.slice(policyTagPrefixLength(tagRef)));
+    }
+    throw error;
+  } finally {
+    fs.rmSync(temporaryDirectory, { recursive: true, force: true });
+  }
+}
+
+function policyTagPrefixLength(tagRef: string): number {
+  return tagRef.lastIndexOf('/') + 1;
+}
+
+function ensurePrivateDirectory(directory: string): void {
+  const grantsDirectory = path.dirname(directory);
+  for (const current of [grantsDirectory, directory]) {
+    fs.mkdirSync(current, { recursive: true, mode: 0o700 });
+    const stats = fs.lstatSync(current);
+    if (!stats.isDirectory() || stats.isSymbolicLink()) {
+      throw workflowError(
+        'MAINTAINER_GRANT_STORE_UNSAFE',
+        'Maintainer grant storage is not a private regular directory.',
+        ExitCode.unsafeEnvironment,
+      );
+    }
+    fs.chmodSync(current, 0o700);
+  }
+}
+
+function writeNewPrivateFile(filePath: string, content: string): void {
+  let descriptor: number | undefined;
+  let created = false;
+  try {
+    descriptor = fs.openSync(
+      filePath,
+      fs.constants.O_CREAT |
+        fs.constants.O_EXCL |
+        fs.constants.O_WRONLY |
+        fs.constants.O_NOFOLLOW,
+      0o600,
+    );
+    created = true;
+    fs.writeFileSync(descriptor, content, 'utf8');
+    fs.fsyncSync(descriptor);
+    fs.closeSync(descriptor);
+    descriptor = undefined;
+  } catch (error) {
+    if (descriptor !== undefined) {
+      fs.closeSync(descriptor);
+    }
+    if (created) {
+      fs.rmSync(filePath, { force: true });
+    }
+    if (
+      error &&
+      typeof error === 'object' &&
+      'code' in error &&
+      error.code === 'EEXIST'
+    ) {
+      throw grantExists(path.basename(filePath, '.json'));
+    }
+    throw error;
+  }
+}
+
 function validReason(value: string): boolean {
   return (
     typeof value === 'string' &&
@@ -230,6 +567,14 @@ function hasExactKeys(value: Record<string, unknown>, keys: string[]): boolean {
 
 function invalidGrant(message: string) {
   return workflowError('MAINTAINER_GRANT_INVALID', message, ExitCode.guard);
+}
+
+function grantExists(grantId: string) {
+  return workflowError(
+    'MAINTAINER_GRANT_EXISTS',
+    `Maintainer grant ${grantId} already has local state or an audit tag.`,
+    ExitCode.conflict,
+  );
 }
 
 function invalidGrantPath(filePath?: string) {

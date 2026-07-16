@@ -20,6 +20,10 @@ import { renderHandoff, validateHandoff } from './handoff.ts';
 import { runRepositoryHook } from './hooks.ts';
 import { dispatchIssueCommand } from './issue-cli.ts';
 import {
+  issueMaintainerGrant,
+  type MaintainerGrantRequest,
+} from './maintainer-grant.ts';
+import {
   commitSession,
   completeTask,
   findTaskCommits,
@@ -221,6 +225,20 @@ function dispatch(args: string[], cwd: string): CommandResult {
           discoverRepository(cwd).repositoryRoot,
         ),
       };
+    case 'maintainer': {
+      const request = parseMaintainerGrantArguments(rest);
+      const grant = issueMaintainerGrant(cwd, request);
+      return {
+        command,
+        action: 'grant',
+        ok: true,
+        grantId: grant.grantId,
+        tagRef: grant.tagRef,
+        expiresAt: grant.envelope.payload.expiresAt,
+        allowedPaths: grant.envelope.payload.allowedPaths,
+        publishCommand: grant.publishCommand,
+      };
+    }
     case 'documents':
       if (rest.length !== 1 || rest[0] !== 'validate') {
         throw usage('Usage: pnpm workflow documents validate [--json]');
@@ -400,6 +418,74 @@ function optionValue(args: string[], name: string): string | undefined {
   return index === -1 ? undefined : args[index + 1];
 }
 
+function parseMaintainerGrantArguments(args: string[]): MaintainerGrantRequest {
+  if (args[0] !== 'grant') {
+    throw maintainerGrantUsage();
+  }
+  const values = args.slice(1);
+  const paths: string[] = [];
+  let changeId: string | undefined;
+  let reason: string | undefined;
+  let ttlMinutes: number | undefined;
+  let maxUses: number | undefined;
+
+  for (let index = 0; index < values.length; index += 2) {
+    const option = values[index];
+    const value = values[index + 1];
+    if (!option || !value || !option.startsWith('--')) {
+      throw maintainerGrantUsage();
+    }
+    switch (option) {
+      case '--change':
+        if (changeId !== undefined) {
+          throw maintainerGrantUsage();
+        }
+        changeId = value;
+        break;
+      case '--paths':
+        paths.push(value);
+        break;
+      case '--reason':
+        if (reason !== undefined) {
+          throw maintainerGrantUsage();
+        }
+        reason = value;
+        break;
+      case '--ttl': {
+        if (ttlMinutes !== undefined || !/^[1-9][0-9]*m$/.test(value)) {
+          throw maintainerGrantUsage();
+        }
+        ttlMinutes = Number.parseInt(value.slice(0, -1), 10);
+        break;
+      }
+      case '--uses':
+        if (maxUses !== undefined || !/^[1-9][0-9]*$/.test(value)) {
+          throw maintainerGrantUsage();
+        }
+        maxUses = Number.parseInt(value, 10);
+        break;
+      default:
+        throw maintainerGrantUsage();
+    }
+  }
+  if (!changeId || paths.length === 0 || !reason) {
+    throw maintainerGrantUsage();
+  }
+  return {
+    changeId,
+    paths,
+    reason,
+    ...(ttlMinutes === undefined ? {} : { ttlMinutes }),
+    ...(maxUses === undefined ? {} : { maxUses }),
+  };
+}
+
+function maintainerGrantUsage(): WorkflowError {
+  return usage(
+    'Usage: pnpm workflow maintainer grant --change <change-id> --paths <exact-path> [--paths <exact-path> ...] --reason <text> [--ttl <minutes>m] [--uses 1] [--json]',
+  );
+}
+
 function requireArgumentCount(
   command: string,
   args: string[],
@@ -430,6 +516,7 @@ function usageText(): string {
     '  pnpm workflow ci --base <commit> --head <commit> [--json]',
     '  pnpm workflow adapter evaluate [--json]',
     '  pnpm workflow issue <add|update|close|render|validate> ... [--json]',
+    '  pnpm workflow maintainer grant --change <change-id> --paths <exact-path> [--paths <exact-path> ...] --reason <text> [--ttl <minutes>m] [--uses 1] [--json]',
     '  pnpm workflow documents validate [--json]',
     '  pnpm workflow document-refresh <propose|show|review|apply> ... [--json]',
     '  pnpm workflow handoff <render|validate> [--json]',
