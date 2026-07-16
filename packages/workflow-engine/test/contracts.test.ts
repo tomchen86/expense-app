@@ -45,7 +45,32 @@ test('runner security suite is portable to the package working directory', () =>
   );
 });
 
-test('workflow assurance contains retained-gitlink checkout compatibility around repository code', () => {
+test('workflow assurance checks out an ordinary apps/web directory without gitlink compatibility', () => {
+  const repositoryRoot = path.resolve(import.meta.dirname, '../../..');
+  const webEntries = execFileSync(
+    'git',
+    ['ls-files', '--stage', '--', 'apps/web'],
+    {
+      cwd: repositoryRoot,
+      encoding: 'utf8',
+    },
+  )
+    .trim()
+    .split('\n')
+    .filter(Boolean);
+
+  for (const entry of webEntries) {
+    assert.doesNotMatch(
+      entry,
+      /^160000\s/,
+      `apps/web must not contain a gitlink: ${entry}`,
+    );
+  }
+  assert.ok(
+    fs.existsSync(path.join(repositoryRoot, 'apps/web/README.md')),
+    'apps/web must contain its ordinary-directory placeholder',
+  );
+
   const workflow = fs.readFileSync(
     path.resolve(
       import.meta.dirname,
@@ -54,54 +79,22 @@ test('workflow assurance contains retained-gitlink checkout compatibility around
     'utf8',
   );
 
+  assert.match(workflow, /uses: actions\/checkout@[0-9a-f]{40}/);
   assert.match(
     workflow,
-    /- name: Prepare retained gitlink checkout compatibility/,
+    /ref: \$\{\{ github\.event\.pull_request\.head\.sha \}\}/,
   );
-  assert.match(workflow, /git init \./);
-  assert.match(
-    workflow,
-    /git remote add origin "\$\{\{ github\.server_url \}\}\/\$\{\{ github\.repository \}\}"/,
-  );
-  assert.match(
-    workflow,
-    /git config --file \.gitmodules submodule\.apps\/web\.path apps\/web/,
-  );
-  assert.match(workflow, /clean: false/);
-  assert.match(
-    workflow,
-    /- name: Remove transient gitlink checkout compatibility\n\s+run: rm -- \.gitmodules/,
-  );
-  assert.match(
-    workflow,
-    /- name: Restore transient gitlink checkout compatibility\n\s+if: always\(\)/,
-  );
+  assert.match(workflow, /fetch-depth: 0/);
+  assert.match(workflow, /persist-credentials: false/);
+  assert.doesNotMatch(workflow, /retained gitlink/i);
+  assert.doesNotMatch(workflow, /transient gitlink/i);
+  assert.doesNotMatch(workflow, /\.gitmodules/);
+  assert.doesNotMatch(workflow, /clean: false/);
 
-  const prepare = workflow.indexOf(
-    '- name: Prepare retained gitlink checkout compatibility',
-  );
   const checkout = workflow.indexOf('- name: Checkout exact PR head');
-  const remove = workflow.indexOf(
-    '- name: Remove transient gitlink checkout compatibility',
-  );
   const verify = workflow.indexOf('- name: Recompute workflow assurance');
-  const restore = workflow.indexOf(
-    '- name: Restore transient gitlink checkout compatibility',
-  );
-  assert.ok(prepare < checkout);
-  assert.ok(checkout < remove);
-  assert.ok(remove < verify);
-  assert.ok(verify < restore);
-});
-
-test('apps/web gitlink removal phase leaves no worktree path', () => {
-  const repositoryRoot = path.resolve(import.meta.dirname, '../../..');
-
-  assert.equal(
-    fs.existsSync(path.join(repositoryRoot, 'apps/web')),
-    false,
-    'the malformed apps/web gitlink worktree path must be removed before its ordinary replacement is added',
-  );
+  assert.ok(checkout >= 0);
+  assert.ok(checkout < verify);
 });
 
 test('parseTasks reads ordered checkbox tasks', () => {

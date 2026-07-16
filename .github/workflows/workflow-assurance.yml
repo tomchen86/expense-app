@@ -16,23 +16,12 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
-      - name: Prepare retained gitlink checkout compatibility
-        run: |
-          git init .
-          git remote add origin "${{ github.server_url }}/${{ github.repository }}"
-          git config --file .gitmodules submodule.apps/web.path apps/web
-          git config --file .gitmodules submodule.apps/web.url "${{ github.server_url }}/${{ github.repository }}"
-
       - name: Checkout exact PR head
         uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
         with:
           ref: ${{ github.event.pull_request.head.sha }}
           fetch-depth: 0
           persist-credentials: false
-          clean: false
-
-      - name: Remove transient gitlink checkout compatibility
-        run: rm -- .gitmodules
 
       - name: Setup pnpm
         uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
@@ -54,9 +43,3 @@ jobs:
           pnpm workflow ci
           --base "${{ github.event.pull_request.base.sha }}"
           --head "${{ github.event.pull_request.head.sha }}"
-
-      - name: Restore transient gitlink checkout compatibility
-        if: always()
-        run: |
-          git config --file .gitmodules submodule.apps/web.path apps/web
-          git config --file .gitmodules submodule.apps/web.url "${{ github.server_url }}/${{ github.repository }}"

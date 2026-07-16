@@ -5,7 +5,7 @@
       it, retain checkout compatibility until the replacement exists, and let
       workflow finish authorize the deletion commit with all registered
       non-database checks.
-- [ ] 1.2 Replace the transitional contract with a failing permanent contract
+- [x] 1.2 Replace the transitional contract with a failing permanent contract
       for ordinary `apps/web` Git index entries and credential-free exact-head
       checkout, add the documented placeholder directory, remove the transient
       checkout compatibility phases, and prove structural Git, frozen-install,
