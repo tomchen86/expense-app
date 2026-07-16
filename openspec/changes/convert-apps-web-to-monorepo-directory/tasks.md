@@ -1,6 +1,6 @@
 ## 1. Web Tree Conversion
 
-- [ ] 1.1 Add a failing transitional contract for removal of the empty
+- [x] 1.1 Add a failing transitional contract for removal of the empty
       `apps/web` worktree path, remove the malformed gitlink without pre-staging
       it, retain checkout compatibility until the replacement exists, and let
       workflow finish authorize the deletion commit with all registered

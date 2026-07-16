@@ -94,6 +94,16 @@ test('workflow assurance contains retained-gitlink checkout compatibility around
   assert.ok(verify < restore);
 });
 
+test('apps/web gitlink removal phase leaves no worktree path', () => {
+  const repositoryRoot = path.resolve(import.meta.dirname, '../../..');
+
+  assert.equal(
+    fs.existsSync(path.join(repositoryRoot, 'apps/web')),
+    false,
+    'the malformed apps/web gitlink worktree path must be removed before its ordinary replacement is added',
+  );
+});
+
 test('parseTasks reads ordered checkbox tasks', () => {
   const tasks = parseTasks(`
 # Tasks
