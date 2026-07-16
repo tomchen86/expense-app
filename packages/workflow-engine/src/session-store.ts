@@ -5,6 +5,9 @@ import path from 'node:path';
 import { ExitCode, workflowError } from './errors.ts';
 import { ensurePlainDirectory } from './filesystem-safety.ts';
 
+const MAINTAINER_GRANT_STATE_FILE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\.json$/;
+
 export type WorkflowSession = {
   schemaVersion: 1;
   sessionId: string;
@@ -89,6 +92,7 @@ export function withSessionOperation<T>(
 export function withRepositoryLifecycleOperation<T>(
   runtime: ReturnType<typeof runtimePaths>,
   operation: (assertOwned: () => void) => T,
+  options: { allowMaintainerGrantId?: string } = {},
 ): T {
   ensurePlainDirectory(runtime.operations);
   const lockPath = path.join(runtime.operations, 'repository-lifecycle.lock');
@@ -166,6 +170,10 @@ export function withRepositoryLifecycleOperation<T>(
 
   let result: T;
   try {
+    assertMaintainerReservationCompatibility(
+      runtime,
+      options.allowMaintainerGrantId,
+    );
     result = operation(assertOwned);
   } catch (error) {
     release();
@@ -173,6 +181,81 @@ export function withRepositoryLifecycleOperation<T>(
   }
   release();
   return result;
+}
+
+export function listActiveWorkflowSessionIds(
+  runtime: ReturnType<typeof runtimePaths>,
+): string[] {
+  const stats = fs.lstatSync(runtime.sessions, { throwIfNoEntry: false });
+  if (!stats) {
+    return [];
+  }
+  if (!stats.isDirectory() || stats.isSymbolicLink()) {
+    throw workflowError(
+      'SESSION_DIRECTORY_UNSAFE',
+      'Workflow session directory is unsafe.',
+      ExitCode.staleState,
+    );
+  }
+  return fs
+    .readdirSync(runtime.sessions)
+    .filter((entry) => entry.endsWith('.json'))
+    .map((entry) => readSessionFile(path.join(runtime.sessions, entry)))
+    .filter((session) => session.state === 'active')
+    .map((session) => session.sessionId)
+    .sort();
+}
+
+function assertMaintainerReservationCompatibility(
+  runtime: ReturnType<typeof runtimePaths>,
+  allowedGrantId: string | undefined,
+): void {
+  const reservedDirectory = path.join(
+    runtime.root,
+    'maintainer-grants',
+    'reserved',
+  );
+  const stats = fs.lstatSync(reservedDirectory, { throwIfNoEntry: false });
+  if (!stats) {
+    return;
+  }
+  if (
+    !stats.isDirectory() ||
+    stats.isSymbolicLink() ||
+    fs.realpathSync(reservedDirectory) !== path.resolve(reservedDirectory) ||
+    (stats.mode & 0o777) !== 0o700
+  ) {
+    throw workflowError(
+      'MAINTAINER_GRANT_STORE_UNSAFE',
+      'Maintainer grant reservation storage is unsafe.',
+      ExitCode.staleState,
+    );
+  }
+  const entries = fs.readdirSync(reservedDirectory);
+  if (entries.some((entry) => !MAINTAINER_GRANT_STATE_FILE.test(entry))) {
+    throw workflowError(
+      'MAINTAINER_GRANT_STORE_UNSAFE',
+      'Maintainer grant reservation storage contains an invalid entry.',
+      ExitCode.staleState,
+    );
+  }
+  const reservations = entries
+    .map((entry) => entry.slice(0, -'.json'.length))
+    .sort();
+  if (
+    reservations.length === 0 ||
+    (allowedGrantId !== undefined &&
+      reservations.length === 1 &&
+      reservations[0] === allowedGrantId)
+  ) {
+    return;
+  }
+  throw workflowError(
+    'ACTIVE_AUTHORITY_CONFLICT',
+    'A maintainer authority reservation already owns the repository lifecycle.',
+    ExitCode.conflict,
+    { details: { grantIds: reservations } },
+  );
 }
 
 function invalidRepositoryLifecycleLock(message: string) {

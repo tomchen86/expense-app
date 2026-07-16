@@ -15,6 +15,10 @@ import {
   type MaintainerSignerProvider,
 } from './maintainer-signer.ts';
 import {
+  maintainerGrantStorePaths,
+  storeAvailableMaintainerGrant,
+} from './maintainer-store.ts';
+import {
   assertChangeId,
   assertPolicyPathInsideRepository,
   normalizeExactRepositoryPath,
@@ -119,6 +123,68 @@ export function canonicalGrantEnvelope(
   })}\n`;
 }
 
+export function assertMaintainerGrantId(requestedGrantId: string): string {
+  if (
+    typeof requestedGrantId !== 'string' ||
+    !GRANT_ID.test(requestedGrantId)
+  ) {
+    throw invalidGrant('Maintainer grant ID is invalid.');
+  }
+  return requestedGrantId;
+}
+
+export function parseMaintainerGrantEnvelope(
+  raw: string,
+): MaintainerGrantEnvelope {
+  try {
+    if (typeof raw !== 'string' || raw.length > 32_768) {
+      throw new Error('invalid envelope size');
+    }
+    const value = JSON.parse(raw) as unknown;
+    if (
+      typeof value !== 'object' ||
+      value === null ||
+      Array.isArray(value) ||
+      !hasExactKeys(value as Record<string, unknown>, ['payload', 'signature'])
+    ) {
+      throw new Error('invalid envelope');
+    }
+    const candidate = value as Record<string, unknown>;
+    if (
+      typeof candidate.payload !== 'object' ||
+      candidate.payload === null ||
+      Array.isArray(candidate.payload) ||
+      !hasExactKeys(
+        candidate.payload as Record<string, unknown>,
+        PAYLOAD_KEYS,
+      ) ||
+      typeof candidate.signature !== 'string'
+    ) {
+      throw new Error('invalid envelope fields');
+    }
+    const envelope = {
+      payload: candidate.payload as MaintainerGrantPayload,
+      signature: candidate.signature,
+    };
+    assertArmoredSshSignature(envelope.signature);
+    assertMaintainerGrantId(envelope.payload.grantId);
+    if (canonicalGrantEnvelope(envelope) !== raw) {
+      throw new Error('non-canonical envelope');
+    }
+    return envelope;
+  } catch (error) {
+    if (
+      error &&
+      typeof error === 'object' &&
+      'code' in error &&
+      error.code === 'MAINTAINER_SIGNATURE_INVALID'
+    ) {
+      throw error;
+    }
+    throw invalidGrant('Maintainer grant envelope is invalid.');
+  }
+}
+
 export function issueMaintainerGrant(
   cwd: string,
   request: MaintainerGrantRequest,
@@ -173,13 +239,8 @@ export function issueMaintainerGrant(
     throw invalidGrant('Maintainer grant ID is invalid.');
   }
   const tagRef = `${policy.auditTagPrefix}${grantId}`;
-  const availableDirectory = path.join(
-    repository.gitCommonDirectory,
-    'workflow-engine',
-    'maintainer-grants',
-    'available',
-  );
-  const availableTokenPath = path.join(availableDirectory, `${grantId}.json`);
+  const storePaths = maintainerGrantStorePaths(repository.gitCommonDirectory);
+  const availableTokenPath = path.join(storePaths.available, `${grantId}.json`);
   if (
     fs.existsSync(availableTokenPath) ||
     runGit(
@@ -236,8 +297,7 @@ export function issueMaintainerGrant(
     signerIdentity,
   );
   try {
-    ensurePrivateDirectory(availableDirectory);
-    writeNewPrivateFile(availableTokenPath, canonicalEnvelope);
+    storeAvailableMaintainerGrant(repository.gitCommonDirectory, envelope);
   } catch (error) {
     runGit(repository.repositoryRoot, ['update-ref', '-d', tagRef, tagObject]);
     throw error;
@@ -482,58 +542,6 @@ function createAuditTag(
 
 function policyTagPrefixLength(tagRef: string): number {
   return tagRef.lastIndexOf('/') + 1;
-}
-
-function ensurePrivateDirectory(directory: string): void {
-  const grantsDirectory = path.dirname(directory);
-  for (const current of [grantsDirectory, directory]) {
-    fs.mkdirSync(current, { recursive: true, mode: 0o700 });
-    const stats = fs.lstatSync(current);
-    if (!stats.isDirectory() || stats.isSymbolicLink()) {
-      throw workflowError(
-        'MAINTAINER_GRANT_STORE_UNSAFE',
-        'Maintainer grant storage is not a private regular directory.',
-        ExitCode.unsafeEnvironment,
-      );
-    }
-    fs.chmodSync(current, 0o700);
-  }
-}
-
-function writeNewPrivateFile(filePath: string, content: string): void {
-  let descriptor: number | undefined;
-  let created = false;
-  try {
-    descriptor = fs.openSync(
-      filePath,
-      fs.constants.O_CREAT |
-        fs.constants.O_EXCL |
-        fs.constants.O_WRONLY |
-        fs.constants.O_NOFOLLOW,
-      0o600,
-    );
-    created = true;
-    fs.writeFileSync(descriptor, content, 'utf8');
-    fs.fsyncSync(descriptor);
-    fs.closeSync(descriptor);
-    descriptor = undefined;
-  } catch (error) {
-    if (descriptor !== undefined) {
-      fs.closeSync(descriptor);
-    }
-    if (created) {
-      fs.rmSync(filePath, { force: true });
-    }
-    if (
-      error &&
-      typeof error === 'object' &&
-      'code' in error &&
-      error.code === 'EEXIST'
-    ) {
-      throw grantExists(path.basename(filePath, '.json'));
-    }
-    throw error;
-  }
 }
 
 function validReason(value: string): boolean {

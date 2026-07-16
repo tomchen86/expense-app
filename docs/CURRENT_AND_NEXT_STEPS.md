@@ -8,15 +8,15 @@ This generated handoff contains semantic project state only. Its sources are the
 
 ## Current Task
 
-`2.1` — Add Git-common-directory grant storage, atomic reservation, inspection, idempotent revocation, and cross-worktree exclusion.
+`2.2` — Add authority session start/check transitions, pinned normal-check evidence, and terminal failure cleanup.
 
 ## Next Task
 
-`2.2` — Add authority session start/check transitions, pinned normal-check evidence, and terminal failure cleanup.
+`3.1` — Add signed authority commit isolation, canonical trailers, durable transaction journaling, and fail-closed crash recovery.
 
 ## Current Focus
 
-Add Git-common-directory grant storage, atomic reservation, inspection, idempotent revocation, and cross-worktree exclusion.
+Add authority session start/check transitions, pinned normal-check evidence, and terminal failure cleanup.
 
 ## Known Blockers
 

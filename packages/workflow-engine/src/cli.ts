@@ -24,6 +24,10 @@ import {
   type MaintainerGrantRequest,
 } from './maintainer-grant.ts';
 import {
+  inspectMaintainerGrants,
+  revokeMaintainerGrant,
+} from './maintainer-store.ts';
+import {
   commitSession,
   completeTask,
   findTaskCommits,
@@ -226,18 +230,38 @@ function dispatch(args: string[], cwd: string): CommandResult {
         ),
       };
     case 'maintainer': {
-      const request = parseMaintainerGrantArguments(rest);
-      const grant = issueMaintainerGrant(cwd, request);
-      return {
-        command,
-        action: 'grant',
-        ok: true,
-        grantId: grant.grantId,
-        tagRef: grant.tagRef,
-        expiresAt: grant.envelope.payload.expiresAt,
-        allowedPaths: grant.envelope.payload.allowedPaths,
-        publishCommand: grant.publishCommand,
-      };
+      if (rest[0] === 'grant') {
+        const request = parseMaintainerGrantArguments(rest);
+        const grant = issueMaintainerGrant(cwd, request);
+        return {
+          command,
+          action: 'grant',
+          ok: true,
+          grantId: grant.grantId,
+          tagRef: grant.tagRef,
+          expiresAt: grant.envelope.payload.expiresAt,
+          allowedPaths: grant.envelope.payload.allowedPaths,
+          publishCommand: grant.publishCommand,
+        };
+      }
+      const git = discoverRepository(cwd);
+      if (rest[0] === 'inspect' && rest.length <= 2) {
+        return {
+          command,
+          action: 'inspect',
+          ok: true,
+          grants: inspectMaintainerGrants(git.gitCommonDirectory, rest[1]),
+        };
+      }
+      if (rest[0] === 'revoke' && rest.length === 2) {
+        return {
+          command,
+          action: 'revoke',
+          ok: true,
+          grant: revokeMaintainerGrant(git.gitCommonDirectory, rest[1]),
+        };
+      }
+      throw maintainerUsage();
     }
     case 'documents':
       if (rest.length !== 1 || rest[0] !== 'validate') {
@@ -486,6 +510,12 @@ function maintainerGrantUsage(): WorkflowError {
   );
 }
 
+function maintainerUsage(): WorkflowError {
+  return usage(
+    'Usage: pnpm workflow maintainer <grant ...|inspect [grant-id]|revoke <grant-id>> [--json]',
+  );
+}
+
 function requireArgumentCount(
   command: string,
   args: string[],
@@ -517,6 +547,8 @@ function usageText(): string {
     '  pnpm workflow adapter evaluate [--json]',
     '  pnpm workflow issue <add|update|close|render|validate> ... [--json]',
     '  pnpm workflow maintainer grant --change <change-id> --paths <exact-path> [--paths <exact-path> ...] --reason <text> [--ttl <minutes>m] [--uses 1] [--json]',
+    '  pnpm workflow maintainer inspect [grant-id] [--json]',
+    '  pnpm workflow maintainer revoke <grant-id> [--json]',
     '  pnpm workflow documents validate [--json]',
     '  pnpm workflow document-refresh <propose|show|review|apply> ... [--json]',
     '  pnpm workflow handoff <render|validate> [--json]',

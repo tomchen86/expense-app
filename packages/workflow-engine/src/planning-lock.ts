@@ -5,7 +5,7 @@ import path from 'node:path';
 import { ExitCode, workflowError } from './errors.ts';
 import { ensurePlainDirectory } from './filesystem-safety.ts';
 import {
-  readSessionFile,
+  listActiveWorkflowSessionIds,
   type runtimePaths,
   withRepositoryLifecycleOperation,
 } from './session-store.ts';
@@ -119,24 +119,7 @@ function withChangeTransitionLock<T>(
 }
 
 function assertNoActiveSessions(runtime: RuntimePaths): void {
-  const stats = fs.lstatSync(runtime.sessions, { throwIfNoEntry: false });
-  if (!stats) {
-    return;
-  }
-  if (!stats.isDirectory() || stats.isSymbolicLink()) {
-    throw workflowError(
-      'SESSION_DIRECTORY_UNSAFE',
-      'Workflow session directory is unsafe.',
-      ExitCode.staleState,
-    );
-  }
-  const active = fs
-    .readdirSync(runtime.sessions)
-    .filter((entry) => entry.endsWith('.json'))
-    .map((entry) => readSessionFile(path.join(runtime.sessions, entry)))
-    .filter((session) => session.state === 'active')
-    .map((session) => session.sessionId)
-    .sort();
+  const active = listActiveWorkflowSessionIds(runtime);
   if (active.length > 0) {
     throw workflowError(
       'ACTIVE_SESSION_CONFLICT',
