@@ -1,0 +1,49 @@
+{
+  "schemaVersion": 1,
+  "repository": {
+    "id": "github:R_kgDOOotVag",
+    "origin": "https://github.com/tomchen86/expense-app.git"
+  },
+  "phase": "bootstrap",
+  "auditTagPrefix": "refs/tags/workflow-grant/",
+  "signatureNamespace": "expense-app.workflow.maintainer-grant.v1",
+  "maxTtlMinutes": 30,
+  "maxUses": 1,
+  "bootstrapEligiblePaths": [
+    ".github/workflows/workflow-assurance.yml",
+    "packages/workflow-engine/src/**",
+    "workflow/ai-adapter-policy.json",
+    "workflow/checks.json",
+    "workflow/ci-policy.json",
+    "workflow/config.json",
+    "workflow/document-policy.json",
+    "workflow/maintainer-policy.json",
+    "workflow/schemas/**"
+  ],
+  "sealedImmutablePaths": [
+    ".github/workflows/workflow-assurance.yml",
+    "packages/workflow-engine/src/ci-authority.ts",
+    "packages/workflow-engine/src/ci.ts",
+    "packages/workflow-engine/src/maintainer-grant.ts",
+    "packages/workflow-engine/src/maintainer-policy.ts",
+    "packages/workflow-engine/src/maintainer-signer.ts",
+    "packages/workflow-engine/src/managed-trailers.ts",
+    "workflow/maintainer-policy.json",
+    "workflow/schemas/maintainer-grant.schema.json",
+    "workflow/schemas/maintainer-policy.schema.json"
+  ],
+  "requiredChecks": [
+    "managed-documents",
+    "workflow-format",
+    "workflow-lint",
+    "workflow-tests",
+    "workflow-typecheck"
+  ],
+  "trustedSigners": [
+    {
+      "identity": "tomchen86",
+      "publicKey": "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIJL6dVljsgm9EAbjCiOhA/tKsgApOhKmcB/NRewL1uns",
+      "fingerprint": "SHA256:7UB1aHADtIMUJBFt3sjo9RwoBDgCKc1B1GlEucUDL4U"
+    }
+  ]
+}

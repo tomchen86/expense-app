@@ -115,6 +115,14 @@ export function normalizeChangedPath(value: string): string {
   return value;
 }
 
+export function normalizeExactRepositoryPath(value: string): string {
+  const normalized = normalizeChangedPath(value);
+  if (UNSUPPORTED_GLOB_PATTERN.test(normalized)) {
+    throw invalidRepositoryPath(value);
+  }
+  return normalized;
+}
+
 function containsControlCharacter(value: string): boolean {
   return [...value].some((character) => {
     const codePoint = character.codePointAt(0) ?? 0;
