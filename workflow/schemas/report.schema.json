@@ -5,7 +5,8 @@
     { "$ref": "#/$defs/check" },
     { "$ref": "#/$defs/completion" },
     { "$ref": "#/$defs/finish" },
-    { "$ref": "#/$defs/commit" }
+    { "$ref": "#/$defs/commit" },
+    { "$ref": "#/$defs/authorityCheck" }
   ],
   "$defs": {
     "digest": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
@@ -25,7 +26,9 @@
       ],
       "properties": {
         "schemaVersion": { "const": 1 },
-        "kind": { "enum": ["check", "completion", "finish", "commit"] },
+        "kind": {
+          "enum": ["check", "completion", "finish", "commit", "authority-check"]
+        },
         "sessionId": { "type": "string" },
         "changeId": { "type": "string" },
         "taskId": { "type": "string" },
@@ -121,6 +124,51 @@
             "projectionSourceDigest",
             "transitionPaths",
             "message"
+          ]
+        }
+      ]
+    },
+    "authorityCheck": {
+      "allOf": [
+        { "$ref": "#/$defs/base" },
+        {
+          "properties": {
+            "kind": { "const": "authority-check" },
+            "grantId": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+            },
+            "baseCommit": { "$ref": "#/$defs/commitHash" },
+            "policyBlob": { "$ref": "#/$defs/commitHash" },
+            "contractDigest": { "$ref": "#/$defs/digest" },
+            "allowedPaths": {
+              "type": "array",
+              "items": { "type": "string" }
+            },
+            "changedPaths": {
+              "type": "array",
+              "items": { "type": "string" }
+            },
+            "requiredChecks": {
+              "type": "array",
+              "items": { "type": "string" }
+            },
+            "checks": {
+              "type": "array",
+              "items": { "type": "object" }
+            },
+            "fingerprint": { "$ref": "#/$defs/digest" }
+          },
+          "required": [
+            "grantId",
+            "baseCommit",
+            "policyBlob",
+            "contractDigest",
+            "allowedPaths",
+            "changedPaths",
+            "requiredChecks",
+            "checks",
+            "fingerprint"
           ]
         }
       ]

@@ -66,6 +66,7 @@ export function maintainerGrantStorePaths(gitCommonDirectory: string) {
     reserved: path.join(root, 'reserved'),
     terminal: path.join(root, 'terminal'),
     journals: path.join(root, 'journals'),
+    sessions: path.join(root, 'sessions'),
   };
 }
 
@@ -215,6 +216,54 @@ export function revokeMaintainerGrant(
       };
       createPrivateFileAtomic(terminalPath, serializeRecord(terminal));
       cleanupNonterminalCopies(paths, grantId, envelope);
+      return inspectTerminal(terminal);
+    },
+    { allowMaintainerGrantId: grantId },
+  );
+}
+
+export function terminallyRevokeMaintainerReservation(
+  gitCommonDirectory: string,
+  requestedGrantId: string,
+  requestedSessionId: string,
+  reason: string,
+  now: Date = new Date(),
+): MaintainerGrantInspection {
+  const grantId = assertMaintainerGrantId(requestedGrantId);
+  const sessionId = nonEmpty(requestedSessionId, 'reservation session ID');
+  const terminalReason = nonEmpty(reason, 'terminal reason');
+  const paths = maintainerGrantStorePaths(gitCommonDirectory);
+  return withRepositoryLifecycleOperation(
+    paths.runtime,
+    (assertOwned) => {
+      ensureStoreDirectories(paths);
+      assertOwned();
+      const terminalPath = grantPath(paths.terminal, grantId);
+      if (fs.existsSync(terminalPath)) {
+        const terminal = readTerminal(terminalPath, grantId);
+        if (terminal.sessionId !== sessionId) {
+          throw unavailableGrant(grantId);
+        }
+        cleanupNonterminalCopies(paths, grantId, terminal.envelope);
+        return inspectTerminal(terminal);
+      }
+      const reservedPath = grantPath(paths.reserved, grantId);
+      const reservation = readReservation(reservedPath, grantId);
+      if (reservation.sessionId !== sessionId) {
+        throw unavailableGrant(grantId);
+      }
+      const terminal: MaintainerTerminalRecord = {
+        schemaVersion: 1,
+        state: 'revoked',
+        grantId,
+        sessionId,
+        commitHash: null,
+        reason: terminalReason,
+        recordedAt: exactDate(now).toISOString(),
+        envelope: reservation.envelope,
+      };
+      createPrivateFileAtomic(terminalPath, serializeRecord(terminal));
+      cleanupNonterminalCopies(paths, grantId, reservation.envelope);
       return inspectTerminal(terminal);
     },
     { allowMaintainerGrantId: grantId },
@@ -412,6 +461,7 @@ function ensureStoreDirectories(
     paths.reserved,
     paths.terminal,
     paths.journals,
+    paths.sessions,
   ]) {
     const existed = fs.existsSync(directory);
     ensurePlainDirectory(directory);

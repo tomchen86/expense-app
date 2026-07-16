@@ -38,6 +38,12 @@ import {
   runtimePaths,
   withRepositoryLifecycleOperation,
 } from '../src/session-store.ts';
+import {
+  checkAuthoritySession,
+  readAuthoritySession,
+  startAuthoritySession,
+} from '../src/maintainer-session.ts';
+import { readImmutableReport } from '../src/report-store.ts';
 
 const POLICY: MaintainerPolicy = {
   schemaVersion: 1,
@@ -623,6 +629,169 @@ test('common-dir reservation is exclusive across worktrees and revocation is ide
         fs.rmSync(linkedWorktree, { recursive: true, force: true });
       }
     }
+    fs.rmSync(repository, { recursive: true, force: true });
+  }
+});
+
+test('authority session pins normal checks and terminally revokes failed scope', () => {
+  const repository = createFixtureRepository();
+  const grantId = '55555555-5555-4555-8555-555555555555';
+  const now = new Date('2026-07-16T12:00:00.000Z');
+  try {
+    installFixtureMaintainerPolicy(repository);
+    issueMaintainerGrant(
+      repository,
+      {
+        changeId: 'demo-change',
+        paths: ['workflow/checks.json'],
+        reason: 'Repair exact workflow authority',
+      },
+      { now, grantId, signer: fixtureSigner() },
+    );
+    git(repository, ['switch', '-c', 'work/demo-change']);
+    const session = startAuthoritySession(repository, 'demo-change', grantId, {
+      now: new Date('2026-07-16T12:01:00.000Z'),
+      signer: fixtureSigner(),
+    });
+    assert.deepEqual(session.requiredChecks, ['fixture']);
+    assert.equal(session.pinnedChecks[0]?.runner.digest.length, 64);
+
+    const checksPath = path.join(repository, 'workflow/checks.json');
+    fs.writeFileSync(checksPath, ` ${fs.readFileSync(checksPath, 'utf8')}`);
+    const checked = checkAuthoritySession(repository, session.sessionId, {
+      now: new Date('2026-07-16T12:02:00.000Z'),
+      signer: fixtureSigner(),
+    });
+    assert.equal(checked.passed, true);
+    assert.deepEqual(checked.changedPaths, ['workflow/checks.json']);
+    const commonDirectory = fs.realpathSync(path.join(repository, '.git'));
+    const store = maintainerGrantStorePaths(commonDirectory);
+    const report = readImmutableReport(
+      store.runtime.reports,
+      session.sessionId,
+      checked.reportId,
+    );
+    assert.equal(report.kind, 'authority-check');
+    assert.equal(report.grantId, grantId);
+    assert.equal(
+      readAuthoritySession(repository, session.sessionId).state,
+      'active',
+    );
+
+    fs.writeFileSync(path.join(repository, 'src/unexpected.ts'), 'unsafe\n');
+    assert.throws(
+      () =>
+        checkAuthoritySession(repository, session.sessionId, {
+          now: new Date('2026-07-16T12:03:00.000Z'),
+          signer: fixtureSigner(),
+        }),
+      (error) => isWorkflowError(error, 'AUTHORITY_SCOPE_INVALID'),
+    );
+    assert.equal(
+      readAuthoritySession(repository, session.sessionId).state,
+      'failed',
+    );
+    assert.equal(
+      inspectMaintainerGrants(commonDirectory, grantId)[0]?.state,
+      'revoked',
+    );
+  } finally {
+    fs.rmSync(repository, { recursive: true, force: true });
+  }
+});
+
+test('authority start failure after reservation never returns the grant to available', () => {
+  const repository = createFixtureRepository();
+  const grantId = '66666666-6666-4666-8666-666666666666';
+  try {
+    installFixtureMaintainerPolicy(repository);
+    const issued = issueMaintainerGrant(
+      repository,
+      {
+        changeId: 'demo-change',
+        paths: ['workflow/checks.json'],
+        reason: 'Repair exact workflow authority',
+      },
+      {
+        now: new Date('2026-07-16T12:00:00.000Z'),
+        grantId,
+        signer: fixtureSigner(),
+      },
+    );
+    git(repository, ['update-ref', '-d', issued.tagRef]);
+    git(repository, ['switch', '-c', 'work/demo-change']);
+    assert.throws(
+      () =>
+        startAuthoritySession(repository, 'demo-change', grantId, {
+          now: new Date('2026-07-16T12:01:00.000Z'),
+          signer: fixtureSigner(),
+        }),
+      (error) => isWorkflowError(error, 'AUTHORITY_AUDIT_TAG_INVALID'),
+    );
+    const commonDirectory = fs.realpathSync(path.join(repository, '.git'));
+    assert.equal(
+      inspectMaintainerGrants(commonDirectory, grantId)[0]?.state,
+      'revoked',
+    );
+  } finally {
+    fs.rmSync(repository, { recursive: true, force: true });
+  }
+});
+
+test('authority session state cannot broaden signed paths or remove pinned checks', () => {
+  const repository = createFixtureRepository();
+  const grantId = '77777777-7777-4777-8777-777777777777';
+  try {
+    installFixtureMaintainerPolicy(repository);
+    issueMaintainerGrant(
+      repository,
+      {
+        changeId: 'demo-change',
+        paths: ['workflow/checks.json'],
+        reason: 'Repair exact workflow authority',
+      },
+      {
+        now: new Date('2026-07-16T12:00:00.000Z'),
+        grantId,
+        signer: fixtureSigner(),
+      },
+    );
+    git(repository, ['switch', '-c', 'work/demo-change']);
+    const session = startAuthoritySession(repository, 'demo-change', grantId, {
+      now: new Date('2026-07-16T12:01:00.000Z'),
+      signer: fixtureSigner(),
+    });
+    const sessionPath = path.join(
+      session.gitCommonDirectory,
+      'workflow-engine/maintainer-grants/sessions',
+      `${session.sessionId}.json`,
+    );
+    const altered = JSON.parse(fs.readFileSync(sessionPath, 'utf8'));
+    altered.allowedPaths.push('src/unexpected.ts');
+    altered.requiredChecks = [];
+    altered.pinnedChecks = [];
+    fs.writeFileSync(sessionPath, `${JSON.stringify(altered)}\n`, {
+      mode: 0o600,
+    });
+    fs.writeFileSync(
+      path.join(repository, 'workflow/checks.json'),
+      ` ${fs.readFileSync(path.join(repository, 'workflow/checks.json'), 'utf8')}`,
+    );
+    fs.writeFileSync(path.join(repository, 'src/unexpected.ts'), 'unsafe\n');
+
+    assert.throws(
+      () =>
+        checkAuthoritySession(repository, session.sessionId, {
+          now: new Date('2026-07-16T12:02:00.000Z'),
+          signer: fixtureSigner(),
+        }),
+      (error) => isWorkflowError(error, 'AUTHORITY_SESSION_MISMATCH'),
+    );
+    assert.equal(
+      inspectMaintainerGrants(session.gitCommonDirectory, grantId)[0]?.state,
+      'revoked',
+    );
+  } finally {
     fs.rmSync(repository, { recursive: true, force: true });
   }
 });

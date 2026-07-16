@@ -28,6 +28,11 @@ import {
   revokeMaintainerGrant,
 } from './maintainer-store.ts';
 import {
+  abortAuthoritySession,
+  checkAuthoritySession,
+  startAuthoritySession,
+} from './maintainer-session.ts';
+import {
   commitSession,
   completeTask,
   findTaskCommits,
@@ -262,6 +267,46 @@ function dispatch(args: string[], cwd: string): CommandResult {
         };
       }
       throw maintainerUsage();
+    }
+    case 'authority-start': {
+      const changeId = rest[0];
+      const grantId = optionValue(rest.slice(1), '--grant');
+      if (!changeId || !grantId || rest.length !== 3 || rest[1] !== '--grant') {
+        throw usage(
+          'Usage: pnpm workflow authority-start <change-id> --grant <grant-id> [--json]',
+        );
+      }
+      return {
+        command,
+        ok: true,
+        session: startAuthoritySession(cwd, changeId, grantId),
+      };
+    }
+    case 'authority-check':
+      requireArgumentCount(command, rest, 1, 1);
+      return {
+        command,
+        ok: true,
+        result: checkAuthoritySession(cwd, rest[0]),
+      };
+    case 'authority-abort': {
+      const sessionId = rest[0];
+      const reason = optionValue(rest.slice(1), '--reason');
+      if (
+        !sessionId ||
+        !reason ||
+        rest.length !== 3 ||
+        rest[1] !== '--reason'
+      ) {
+        throw usage(
+          'Usage: pnpm workflow authority-abort <session-id> --reason <text> [--json]',
+        );
+      }
+      return {
+        command,
+        ok: true,
+        session: abortAuthoritySession(cwd, sessionId, reason),
+      };
     }
     case 'documents':
       if (rest.length !== 1 || rest[0] !== 'validate') {
@@ -549,6 +594,9 @@ function usageText(): string {
     '  pnpm workflow maintainer grant --change <change-id> --paths <exact-path> [--paths <exact-path> ...] --reason <text> [--ttl <minutes>m] [--uses 1] [--json]',
     '  pnpm workflow maintainer inspect [grant-id] [--json]',
     '  pnpm workflow maintainer revoke <grant-id> [--json]',
+    '  pnpm workflow authority-start <change-id> --grant <grant-id> [--json]',
+    '  pnpm workflow authority-check <session-id> [--json]',
+    '  pnpm workflow authority-abort <session-id> --reason <text> [--json]',
     '  pnpm workflow documents validate [--json]',
     '  pnpm workflow document-refresh <propose|show|review|apply> ... [--json]',
     '  pnpm workflow handoff <render|validate> [--json]',

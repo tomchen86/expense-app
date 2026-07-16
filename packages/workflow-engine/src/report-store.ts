@@ -7,7 +7,7 @@ import { assertSessionId } from './paths.ts';
 
 export type WorkflowReport = {
   schemaVersion: 1;
-  kind: 'check' | 'completion' | 'finish' | 'commit';
+  kind: 'check' | 'completion' | 'finish' | 'commit' | 'authority-check';
   sessionId: string;
   changeId: string;
   taskId: string;
@@ -103,7 +103,9 @@ export function readImmutableReport(
   if (
     !isRecord(value) ||
     value.schemaVersion !== 1 ||
-    !['check', 'completion', 'finish', 'commit'].includes(String(value.kind)) ||
+    !['check', 'completion', 'finish', 'commit', 'authority-check'].includes(
+      String(value.kind),
+    ) ||
     value.sessionId !== sessionId ||
     typeof value.changeId !== 'string' ||
     typeof value.taskId !== 'string' ||
