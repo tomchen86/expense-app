@@ -4,6 +4,7 @@
   "tasks": {
     "1.1": {
       "allowedPaths": [
+        "packages/workflow-engine/src/contract-artifacts.ts",
         "packages/workflow-engine/src/maintainer-grant.ts",
         "packages/workflow-engine/src/maintainer-policy.ts",
         "packages/workflow-engine/src/paths.ts",
