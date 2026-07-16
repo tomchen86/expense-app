@@ -23,10 +23,11 @@ capability claims.
 
 ## Scope
 
-The managed task is limited to `apps/web`,
+The managed tasks are limited to `apps/web`,
 `.github/workflows/workflow-assurance.yml`, and
 `packages/workflow-engine/test/contracts.test.ts`. Planning artifacts record
-the selected source strategy and managed evidence.
+the selected source strategy, the Git transition boundary, and managed
+evidence.
 
 ## Non-Goals
 
