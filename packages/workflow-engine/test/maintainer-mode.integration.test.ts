@@ -17,6 +17,12 @@ import {
   type MaintainerSignerProvider,
 } from '../src/maintainer-signer.ts';
 import {
+  inspectMaintainerGrants,
+  maintainerGrantStorePaths,
+  reserveMaintainerGrant,
+  revokeMaintainerGrant,
+} from '../src/maintainer-store.ts';
+import {
   loadMaintainerPolicy,
   parseMaintainerPolicy,
   type MaintainerPolicy,
@@ -27,6 +33,11 @@ import {
   isWorkflowError,
   sourceRepositoryRoot,
 } from './fixture.ts';
+import { abortSession, startSession } from '../src/session.ts';
+import {
+  runtimePaths,
+  withRepositoryLifecycleOperation,
+} from '../src/session-store.ts';
 
 const POLICY: MaintainerPolicy = {
   schemaVersion: 1,
@@ -431,6 +442,191 @@ test('failed signature verification leaves no token or audit tag', () => {
   }
 });
 
+test('common-dir reservation is exclusive across worktrees and revocation is idempotent', () => {
+  const repository = createFixtureRepository();
+  const grantId = '44444444-4444-4444-8444-444444444444';
+  let linkedWorktree: string | undefined;
+  try {
+    installFixtureMaintainerPolicy(repository);
+    issueMaintainerGrant(
+      repository,
+      {
+        changeId: 'demo-change',
+        paths: ['workflow/checks.json'],
+        reason: 'Repair exact workflow authority',
+      },
+      {
+        now: new Date('2026-07-16T12:00:00.000Z'),
+        grantId,
+        signer: fixtureSigner(),
+      },
+    );
+    const commonDirectory = fs.realpathSync(path.join(repository, '.git'));
+    assert.deepEqual(inspectMaintainerGrants(commonDirectory, grantId), [
+      {
+        grantId,
+        state: 'available',
+        changeId: 'demo-change',
+        baseCommit: git(repository, ['rev-parse', 'HEAD']).trim(),
+        allowedPaths: ['workflow/checks.json'],
+        issuedAt: '2026-07-16T12:00:00.000Z',
+        expiresAt: '2026-07-16T12:30:00.000Z',
+        signer: 'fixture-maintainer',
+      },
+    ]);
+
+    git(repository, ['switch', '-c', 'work/demo-change']);
+    const ordinary = startSession(repository, 'demo-change', '1.1');
+    assert.throws(
+      () =>
+        reserveMaintainerGrant(commonDirectory, grantId, {
+          sessionId: 'authority-conflict',
+          repositoryRoot: fs.realpathSync(repository),
+        }),
+      (error) => isWorkflowError(error, 'ACTIVE_SESSION_CONFLICT'),
+    );
+    abortSession(repository, ordinary.sessionId, 'Fixture conflict complete');
+
+    linkedWorktree = fs.mkdtempSync(
+      path.join(path.dirname(repository), 'workflow-linked-'),
+    );
+    fs.rmdirSync(linkedWorktree);
+    git(repository, [
+      'worktree',
+      'add',
+      '-b',
+      'work/linked-authority',
+      linkedWorktree,
+      'HEAD',
+    ]);
+    const linkedCommon = fs.realpathSync(
+      git(linkedWorktree, ['rev-parse', '--git-common-dir']).trim(),
+    );
+    assert.equal(linkedCommon, commonDirectory);
+
+    const reservation = reserveMaintainerGrant(linkedCommon, grantId, {
+      sessionId: 'authority-session-fixture',
+      repositoryRoot: fs.realpathSync(linkedWorktree),
+      now: new Date('2026-07-16T12:05:00.000Z'),
+    });
+    assert.equal(reservation.state, 'reserved');
+    assert.equal(reservation.repositoryRoot, fs.realpathSync(linkedWorktree));
+    assert.throws(
+      () =>
+        reserveMaintainerGrant(commonDirectory, grantId, {
+          sessionId: 'authority-session-attacker',
+          repositoryRoot: fs.realpathSync(repository),
+        }),
+      (error) => isWorkflowError(error, 'ACTIVE_AUTHORITY_CONFLICT'),
+    );
+    assert.throws(
+      () =>
+        withRepositoryLifecycleOperation(
+          runtimePaths(commonDirectory, 'workflow-engine'),
+          () => undefined,
+        ),
+      (error) => isWorkflowError(error, 'ACTIVE_AUTHORITY_CONFLICT'),
+    );
+
+    const inspection = inspectMaintainerGrants(commonDirectory, grantId)[0];
+    assert.equal(inspection?.state, 'reserved');
+    assert.equal(inspection?.reservationSessionId, 'authority-session-fixture');
+    assert.equal(
+      JSON.stringify(inspection).includes(fs.realpathSync(linkedWorktree)),
+      false,
+    );
+    const store = maintainerGrantStorePaths(commonDirectory);
+    for (const directory of [
+      store.root,
+      store.available,
+      store.reserved,
+      store.terminal,
+      store.journals,
+    ]) {
+      assert.equal(fs.statSync(directory).mode & 0o777, 0o700);
+    }
+    assert.equal(
+      fs.statSync(path.join(store.reserved, `${grantId}.json`)).mode & 0o777,
+      0o600,
+    );
+    assert.equal(
+      fs.existsSync(path.join(linkedWorktree, 'workflow-engine')),
+      false,
+    );
+
+    const cli = path.join(
+      sourceRepositoryRoot,
+      'packages/workflow-engine/src/cli.ts',
+    );
+    const inspectedByCli = spawnSync(
+      process.execPath,
+      [
+        '--experimental-strip-types',
+        cli,
+        'maintainer',
+        'inspect',
+        grantId,
+        '--json',
+      ],
+      { cwd: linkedWorktree, encoding: 'utf8' },
+    );
+    assert.equal(inspectedByCli.status, 0);
+    assert.equal(inspectedByCli.stdout.includes(linkedWorktree), false);
+    assert.equal(JSON.parse(inspectedByCli.stdout).grants[0].state, 'reserved');
+
+    const revokedByCli = spawnSync(
+      process.execPath,
+      [
+        '--experimental-strip-types',
+        cli,
+        'maintainer',
+        'revoke',
+        grantId,
+        '--json',
+      ],
+      { cwd: linkedWorktree, encoding: 'utf8' },
+    );
+    assert.equal(revokedByCli.status, 0);
+    const revoked = JSON.parse(revokedByCli.stdout).grant;
+    const repeated = revokeMaintainerGrant(
+      linkedCommon,
+      grantId,
+      new Date('2026-07-16T12:07:00.000Z'),
+    );
+    assert.deepEqual(repeated, revoked);
+    assert.equal(revoked.state, 'revoked');
+    assert.equal(
+      fs.existsSync(path.join(store.reserved, `${grantId}.json`)),
+      false,
+    );
+    assert.equal(
+      fs.statSync(path.join(store.terminal, `${grantId}.json`)).mode & 0o777,
+      0o600,
+    );
+
+    const ambiguousReservation = path.join(store.reserved, 'attacker.tmp');
+    fs.writeFileSync(ambiguousReservation, 'untrusted', { mode: 0o600 });
+    assert.throws(
+      () =>
+        withRepositoryLifecycleOperation(
+          runtimePaths(commonDirectory, 'workflow-engine'),
+          () => undefined,
+        ),
+      (error) => isWorkflowError(error, 'MAINTAINER_GRANT_STORE_UNSAFE'),
+    );
+    fs.rmSync(ambiguousReservation);
+  } finally {
+    if (linkedWorktree && fs.existsSync(repository)) {
+      try {
+        git(repository, ['worktree', 'remove', '--force', linkedWorktree]);
+      } catch {
+        fs.rmSync(linkedWorktree, { recursive: true, force: true });
+      }
+    }
+    fs.rmSync(repository, { recursive: true, force: true });
+  }
+});
+
 function installFixtureMaintainerPolicy(repository: string): void {
   fs.writeFileSync(
     path.join(repository, 'workflow/maintainer-policy.json'),
@@ -444,4 +640,22 @@ function installFixtureMaintainerPolicy(repository: string): void {
   ]);
   git(repository, ['add', 'workflow/maintainer-policy.json']);
   git(repository, ['commit', '-m', 'Add maintainer fixture policy']);
+}
+
+function fixtureSigner(): MaintainerSignerProvider {
+  return {
+    assertHumanPresent() {},
+    identity() {
+      return 'fixture-maintainer';
+    },
+    sign() {
+      return [
+        '-----BEGIN SSH SIGNATURE-----',
+        'ZmFrZQ==',
+        '-----END SSH SIGNATURE-----',
+        '',
+      ].join('\n');
+    },
+    verify() {},
+  };
 }
