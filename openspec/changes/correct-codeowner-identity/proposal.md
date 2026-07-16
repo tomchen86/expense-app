@@ -24,8 +24,8 @@ documented policy would deadlock once remote enforcement is activated under
 
 The governance correction is limited to `.github/CODEOWNERS`,
 `docs/ROADMAP.md`, and `docs/WORKFLOW.md`. A pilot-discovered CI bootstrap task
-is additionally limited to `.github/workflows/workflow-assurance.yml` and its
-existing workflow-engine integration test. Validation uses the repository
+is additionally limited to `.github/workflows/workflow-assurance.yml` and the
+registered workflow-engine contract test. Validation uses the repository
 workflow plus GitHub's CODEOWNERS diagnostics and remote ruleset state.
 
 ## Non-Goals

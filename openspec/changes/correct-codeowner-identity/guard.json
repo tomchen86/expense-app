@@ -18,7 +18,7 @@
     "1.2": {
       "allowedPaths": [
         ".github/workflows/workflow-assurance.yml",
-        "packages/workflow-engine/test/ci.integration.test.ts"
+        "packages/workflow-engine/test/contracts.test.ts"
       ],
       "requiredChecks": [
         "workflow-tests",
