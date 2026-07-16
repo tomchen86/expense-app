@@ -1,0 +1,32 @@
+{
+  "schemaVersion": 1,
+  "changeId": "replace-spectra-agent-skills-with-openspec",
+  "tasks": {
+    "1.1": {
+      "allowedPaths": [
+        ".agents/README.md",
+        ".agents/skills/openspec-explore/**",
+        ".agents/skills/openspec-propose/**",
+        ".agents/skills/spectra-apply/SKILL.md",
+        ".agents/skills/spectra-archive/SKILL.md",
+        ".agents/skills/spectra-ask/SKILL.md",
+        ".agents/skills/spectra-audit/SKILL.md",
+        ".agents/skills/spectra-commit/SKILL.md",
+        ".agents/skills/spectra-debug/SKILL.md",
+        ".agents/skills/spectra-discuss/SKILL.md",
+        ".agents/skills/spectra-drift/SKILL.md",
+        ".agents/skills/spectra-ingest/SKILL.md",
+        ".agents/skills/spectra-propose/SKILL.md",
+        "AGENTS.md",
+        "docs/ROADMAP.md",
+        "packages/workflow-engine/test/contracts.test.ts"
+      ],
+      "requiredChecks": [
+        "workflow-tests",
+        "workflow-typecheck",
+        "workflow-lint",
+        "workflow-format"
+      ]
+    }
+  }
+}
