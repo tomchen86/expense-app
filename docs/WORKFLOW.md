@@ -223,10 +223,12 @@ projection, then recomputes required checks. Runtime reports from a developer
 session are not trusted as CI evidence.
 
 `.github/workflows/workflow-assurance.yml` invokes this verifier for pull
-requests. Repository rules must separately require the `workflow-assurance`
-check, an up-to-date base, code-owner approval with stale-review dismissal,
-and no bypass. Until those remote rules are configured, local and workflow-file
-enforcement must not be described as merge authority.
+requests. Repository rules must separately require pull requests, the
+`workflow-assurance` check, an up-to-date base, and no bypass. Code-owner
+approval with stale-review dismissal is additionally required only when at
+least two independent eligible human maintainers exist. Until those remote
+rules are configured, local and workflow-file enforcement must not be described
+as merge authority.
 
 ## Controlled Issues and Documents
 

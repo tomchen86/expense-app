@@ -1,20 +1,20 @@
 # Default reviewers
-* @htchen
+* @tomchen86
 
 # Surface-specific ownership
-/apps/api/ @htchen
-/apps/web/ @htchen
-/apps/mobile/ @htchen
-/docs/ @htchen
+/apps/api/ @tomchen86
+/apps/web/ @tomchen86
+/apps/mobile/ @tomchen86
+/docs/ @tomchen86
 
 # Workflow authority and policy boundaries
-/AGENTS.md @htchen
-/.husky/ @htchen
-/.github/workflows/ @htchen
-/.github/CODEOWNERS @htchen
-/openspec/ @htchen
-/workflow/ @htchen
-/packages/workflow-engine/ @htchen
-/package.json @htchen
-/pnpm-lock.yaml @htchen
-/pnpm-workspace.yaml @htchen
+/AGENTS.md @tomchen86
+/.husky/ @tomchen86
+/.github/workflows/ @tomchen86
+/.github/CODEOWNERS @tomchen86
+/openspec/ @tomchen86
+/workflow/ @tomchen86
+/packages/workflow-engine/ @tomchen86
+/package.json @tomchen86
+/pnpm-lock.yaml @tomchen86
+/pnpm-workspace.yaml @tomchen86

@@ -17,8 +17,10 @@ in the linked OpenSpec change.
   `workflow-assurance` replay from the configured base.
 - Keep Spectra installed for compatibility but outside every execution path.
 - Activate the remote GitHub ruleset only after the workflow is present on the
-  default branch: require `workflow-assurance`, an up-to-date base, code-owner
-  approval with stale dismissal, and no bypass (`ISS-003`).
+  default branch: require pull requests, `workflow-assurance`, an up-to-date
+  base, and no bypass. Require code-owner approval with stale-review dismissal
+  only when at least two independent eligible human maintainers exist
+  (`ISS-003`).
 - Do not archive legacy documents until the maintainer gives the separate
   approval required by Task 5.2.
 
