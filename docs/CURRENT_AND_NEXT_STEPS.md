@@ -8,7 +8,7 @@ This generated handoff contains semantic project state only. Its sources are the
 
 ## Current Task
 
-`1.2` — Replace the transitional contract with a failing permanent contract for ordinary `apps/web` Git index entries and credential-free exact-head checkout, add the documented placeholder directory, remove the transient checkout compatibility phases, and prove structural Git, frozen-install, targeted contract, and authoritative non-database checks.
+None — all tasks are complete.
 
 ## Next Task
 
@@ -16,7 +16,7 @@ None.
 
 ## Current Focus
 
-Replace the transitional contract with a failing permanent contract for ordinary `apps/web` Git index entries and credential-free exact-head checkout, add the documented placeholder directory, remove the transient checkout compatibility phases, and prove structural Git, frozen-install, targeted contract, and authoritative non-database checks.
+Prepare the completed change for explicit archival review.
 
 ## Known Blockers
 
