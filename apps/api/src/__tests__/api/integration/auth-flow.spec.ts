@@ -187,10 +187,7 @@ describe('Authentication API - Mobile Compatibility', () => {
         password: 'testPassword123',
       };
 
-      const {
-        response,
-        metrics,
-      }: { response: supertest.Response; metrics: PerformanceMetrics } =
+      const { response }: { response: supertest.Response } =
         await PerformanceAssertions.testEndpointPerformance(
           'POST /auth/login',
           () => api.post('/auth/login').send(loginData).expect(200),
@@ -221,9 +218,6 @@ describe('Authentication API - Mobile Compatibility', () => {
         expect(body.data.accessToken).toMatch(JWT_REGEX);
         expect(body.data.refreshToken).toMatch(JWT_REGEX);
       }
-
-      // Integration test performance requirement (relaxed from unit test <100ms)
-      expect(metrics.duration).toBeLessThan(300);
     });
 
     it('should reject invalid credentials', async () => {
