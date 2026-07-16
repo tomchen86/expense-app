@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
@@ -6,9 +7,15 @@ import test from 'node:test';
 import {
   assertGrantPathsEligible,
   canonicalGrantPayload,
+  issueMaintainerGrant,
   validateGrantPayload,
+  type MaintainerGrantEnvelope,
   type MaintainerGrantPayload,
 } from '../src/maintainer-grant.ts';
+import {
+  assertInteractiveSignerContext,
+  type MaintainerSignerProvider,
+} from '../src/maintainer-signer.ts';
 import {
   loadMaintainerPolicy,
   parseMaintainerPolicy,
@@ -205,3 +212,236 @@ test('grant paths require exact-case tracked regular eligible files', () => {
     fs.rmSync(repository, { recursive: true, force: true });
   }
 });
+
+test('grant signer requires controlling input and output terminals', () => {
+  for (const context of [
+    { stdinIsTty: false, stdoutIsTty: true, stderrIsTty: true },
+    { stdinIsTty: true, stdoutIsTty: false, stderrIsTty: true },
+    { stdinIsTty: true, stdoutIsTty: true, stderrIsTty: false },
+  ]) {
+    assert.throws(
+      () => assertInteractiveSignerContext(context),
+      (error) => isWorkflowError(error, 'MAINTAINER_INTERACTIVE_REQUIRED'),
+    );
+  }
+  assert.doesNotThrow(() =>
+    assertInteractiveSignerContext({
+      stdinIsTty: true,
+      stdoutIsTty: true,
+      stderrIsTty: true,
+    }),
+  );
+});
+
+test('maintainer grant CLI rejects non-interactive and unattended issuance', () => {
+  const repository = createFixtureRepository();
+  const cli = path.join(
+    sourceRepositoryRoot,
+    'packages/workflow-engine/src/cli.ts',
+  );
+  const validArguments = [
+    '--experimental-strip-types',
+    cli,
+    'maintainer',
+    'grant',
+    '--change',
+    'demo-change',
+    '--paths',
+    'workflow/checks.json',
+    '--reason',
+    'Repair exact workflow authority',
+    '--json',
+  ];
+  try {
+    installFixtureMaintainerPolicy(repository);
+    const nonInteractive = spawnSync(process.execPath, validArguments, {
+      cwd: repository,
+      encoding: 'utf8',
+    });
+    assert.equal(nonInteractive.status, 12);
+    assert.equal(
+      JSON.parse(nonInteractive.stderr).error.code,
+      'MAINTAINER_INTERACTIVE_REQUIRED',
+    );
+
+    const unattended = spawnSync(
+      process.execPath,
+      [...validArguments.slice(0, -1), '--unattended', '--json'],
+      { cwd: repository, encoding: 'utf8' },
+    );
+    assert.equal(unattended.status, 2);
+    assert.equal(JSON.parse(unattended.stderr).error.code, 'INVALID_USAGE');
+  } finally {
+    fs.rmSync(repository, { recursive: true, force: true });
+  }
+});
+
+test('grant issuance signs canonical bytes and writes only common-dir state and an audit tag', () => {
+  const repository = createFixtureRepository();
+  const now = new Date('2026-07-16T12:00:00.000Z');
+  const grantId = '22222222-2222-4222-8222-222222222222';
+  const signedInputs: string[] = [];
+  const verified: MaintainerGrantEnvelope[] = [];
+  const signer: MaintainerSignerProvider = {
+    assertHumanPresent() {},
+    identity() {
+      return 'fixture-maintainer';
+    },
+    sign(payload) {
+      signedInputs.push(payload);
+      return [
+        '-----BEGIN SSH SIGNATURE-----',
+        'ZmFrZQ==',
+        '-----END SSH SIGNATURE-----',
+        '',
+      ].join('\n');
+    },
+    verify(payload, signature, identity) {
+      verified.push({ payload: JSON.parse(payload), signature });
+      assert.equal(identity, 'fixture-maintainer');
+    },
+  };
+
+  try {
+    installFixtureMaintainerPolicy(repository);
+    const result = issueMaintainerGrant(
+      repository,
+      {
+        changeId: 'demo-change',
+        paths: ['workflow/checks.json'],
+        reason: 'Repair exact workflow authority',
+      },
+      { now, grantId, signer },
+    );
+
+    assert.equal(result.grantId, grantId);
+    assert.equal(result.tagRef, `refs/tags/workflow-grant/${grantId}`);
+    assert.equal(
+      result.publishCommand,
+      `git push origin ${result.tagRef}:${result.tagRef}`,
+    );
+    assert.equal(signedInputs.length, 1);
+    assert.equal(verified.length, 1);
+    assert.equal(
+      signedInputs[0],
+      canonicalGrantPayload(result.envelope.payload),
+    );
+    assert.equal(
+      result.envelope.payload.baseCommit,
+      git(repository, ['rev-parse', 'HEAD']).trim(),
+    );
+    assert.equal(
+      result.envelope.payload.policyBlob,
+      git(repository, [
+        'rev-parse',
+        'HEAD:workflow/maintainer-policy.json',
+      ]).trim(),
+    );
+    assert.equal(result.envelope.payload.expiresAt, '2026-07-16T12:30:00.000Z');
+    assert.equal(result.envelope.payload.maxUses, 1);
+
+    const available = path.join(
+      repository,
+      '.git/workflow-engine/maintainer-grants/available',
+      `${grantId}.json`,
+    );
+    assert.equal(fs.statSync(available).mode & 0o777, 0o600);
+    assert.deepEqual(
+      JSON.parse(fs.readFileSync(available, 'utf8')),
+      result.envelope,
+    );
+    const rawTag = git(repository, ['cat-file', 'tag', result.tagRef]);
+    assert.equal(
+      rawTag.slice(rawTag.indexOf('\n\n') + 2),
+      `${JSON.stringify(result.envelope)}\n`,
+    );
+    assert.equal(git(repository, ['status', '--porcelain']).trim(), '');
+
+    assert.throws(
+      () =>
+        issueMaintainerGrant(
+          repository,
+          {
+            changeId: 'demo-change',
+            paths: ['workflow/checks.json'],
+            reason: 'Repair exact workflow authority',
+          },
+          { now, grantId, signer },
+        ),
+      (error) => isWorkflowError(error, 'MAINTAINER_GRANT_EXISTS'),
+    );
+  } finally {
+    fs.rmSync(repository, { recursive: true, force: true });
+  }
+});
+
+test('failed signature verification leaves no token or audit tag', () => {
+  const repository = createFixtureRepository();
+  const grantId = '33333333-3333-4333-8333-333333333333';
+  const signer: MaintainerSignerProvider = {
+    assertHumanPresent() {},
+    identity() {
+      return 'fixture-maintainer';
+    },
+    sign() {
+      return [
+        '-----BEGIN SSH SIGNATURE-----',
+        'YmFk',
+        '-----END SSH SIGNATURE-----',
+        '',
+      ].join('\n');
+    },
+    verify() {
+      throw new Error('altered signature');
+    },
+  };
+
+  try {
+    installFixtureMaintainerPolicy(repository);
+    assert.throws(() =>
+      issueMaintainerGrant(
+        repository,
+        {
+          changeId: 'demo-change',
+          paths: ['workflow/checks.json'],
+          reason: 'Repair exact workflow authority',
+        },
+        {
+          now: new Date('2026-07-16T12:00:00.000Z'),
+          grantId,
+          signer,
+        },
+      ),
+    );
+    assert.equal(
+      fs.existsSync(
+        path.join(
+          repository,
+          '.git/workflow-engine/maintainer-grants/available',
+          `${grantId}.json`,
+        ),
+      ),
+      false,
+    );
+    assert.throws(() =>
+      git(repository, ['rev-parse', `refs/tags/workflow-grant/${grantId}`]),
+    );
+  } finally {
+    fs.rmSync(repository, { recursive: true, force: true });
+  }
+});
+
+function installFixtureMaintainerPolicy(repository: string): void {
+  fs.writeFileSync(
+    path.join(repository, 'workflow/maintainer-policy.json'),
+    `${JSON.stringify(POLICY, null, 2)}\n`,
+  );
+  git(repository, [
+    'remote',
+    'add',
+    'origin',
+    'https://github.com/example/fixture.git',
+  ]);
+  git(repository, ['add', 'workflow/maintainer-policy.json']);
+  git(repository, ['commit', '-m', 'Add maintainer fixture policy']);
+}
