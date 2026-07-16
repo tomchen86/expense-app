@@ -97,7 +97,7 @@ test('workflow assurance checks out an ordinary apps/web directory without gitli
   assert.ok(checkout < verify);
 });
 
-test('format verification delegates to the unchanged registered authority', () => {
+test('format verification delegates to the registered canonical authority', () => {
   const repositoryRoot = path.resolve(import.meta.dirname, '../../..');
   const manifest = JSON.parse(
     fs.readFileSync(path.join(repositoryRoot, 'package.json'), 'utf8'),
@@ -132,12 +132,11 @@ test('format verification delegates to the unchanged registered authority', () =
       'package.json',
       'pnpm-workspace.yaml',
       'openspec/changes/establish-executable-ai-workflow',
-      'docs/planning/PLAN-EXECUTABLE_AI_WORKFLOW_ENGINE.md',
-      'docs/planning/PLAN-DOCUMENTATION_STRUCTURE_V2.md',
       'docs/README.md',
       'docs/ROADMAP.md',
       'docs/CURRENT_AND_NEXT_STEPS.md',
       'docs/DOCUMENT_STRUCTURE_GUIDE.md',
+      'docs/WORKFLOW.md',
       'AGENTS.md',
     ],
     destructiveDatabase: false,
@@ -202,6 +201,7 @@ test('agent guide documents the complete public workflow surface and source-size
     'pnpm workflow doctor',
     'pnpm workflow validate-change',
     'pnpm workflow plan-commit',
+    'pnpm workflow run-check',
     'pnpm workflow archive',
     'pnpm workflow codex-assets generate',
     'pnpm workflow codex-assets check',
