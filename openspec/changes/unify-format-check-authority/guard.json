@@ -1,0 +1,32 @@
+{
+  "schemaVersion": 1,
+  "changeId": "unify-format-check-authority",
+  "tasks": {
+    "1.1": {
+      "allowedPaths": [
+        "docs/WORKFLOW.md",
+        "packages/workflow-engine/src/cli.ts",
+        "packages/workflow-engine/src/registered-check.ts",
+        "packages/workflow-engine/test/session.integration.test.ts"
+      ],
+      "requiredChecks": [
+        "workflow-tests",
+        "workflow-typecheck",
+        "workflow-lint",
+        "workflow-format"
+      ]
+    },
+    "1.2": {
+      "allowedPaths": [
+        "package.json",
+        "packages/workflow-engine/test/contracts.test.ts"
+      ],
+      "requiredChecks": [
+        "workflow-tests",
+        "workflow-typecheck",
+        "workflow-lint",
+        "workflow-format"
+      ]
+    }
+  }
+}
