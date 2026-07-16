@@ -14,6 +14,18 @@
         "workflow-lint",
         "workflow-format"
       ]
+    },
+    "1.2": {
+      "allowedPaths": [
+        ".github/workflows/workflow-assurance.yml",
+        "packages/workflow-engine/test/ci.integration.test.ts"
+      ],
+      "requiredChecks": [
+        "workflow-tests",
+        "workflow-typecheck",
+        "workflow-lint",
+        "workflow-format"
+      ]
     }
   }
 }

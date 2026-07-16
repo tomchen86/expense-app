@@ -20,6 +20,8 @@ surface without relying on developer runtime reports.
   bypass mandatory in both solo- and multi-maintainer operation.
 - Avoid an impossible approval gate when the sole eligible maintainer is also
   the pull-request author.
+- Preserve credential-free exact-head checkout even though the retained
+  `apps/web` gitlink has no `.gitmodules` entry.
 - Exercise the complete managed plan, task, archive, idempotency, and CI path.
 
 **Non-Goals:**
@@ -27,7 +29,9 @@ surface without relying on developer runtime reports.
 - Mutating remote GitHub rules inside the task commit.
 - Adding collaborators or deciding who a future second maintainer should be.
 - Rewriting historical usernames or filesystem paths in retained documents.
-- Changing workflow engine code, check policy, application code, or databases.
+- Changing workflow engine production code, check policy, application code, or
+  databases.
+- Removing the retained gitlink or assigning it a persistent guessed URL.
 
 ## Decisions
 
@@ -71,6 +75,22 @@ behavior. The task therefore uses the repository's documented TDD exemption.
 Verification consists of managed non-database checks, GitHub CODEOWNERS
 diagnostics, the real pull-request check, archive replay, and ruleset state.
 
+### Bootstrap checkout with transient compatibility metadata
+
+The real pilot showed that pinned `actions/checkout` cannot remove its
+temporary authentication when Git sees the retained `apps/web` gitlink without
+a matching `.gitmodules` entry. The assurance workflow therefore preinitializes
+the runner repository with the expected origin and a transient `.gitmodules`
+entry, invokes the pinned checkout with cleaning disabled and credential
+persistence still disabled, then removes the transient file before any
+repository code executes.
+
+The transient URL is never committed and the submodule is never initialized.
+This preserves full-history exact-head checkout without exposing the GitHub
+token to repository code or asserting that `apps/web` is a valid submodule.
+Task 1.2 follows RED -> GREEN -> REFACTOR by first extending the workflow
+integration contract, observing the failure, and then changing the workflow.
+
 ## Risks / Trade-offs
 
 - **The replacement login lacks access later** -> Check GitHub CODEOWNERS
@@ -84,15 +104,20 @@ diagnostics, the real pull-request check, archive replay, and ruleset state.
   normative rule requires code-owner approval and stale dismissal once two
   independent eligible humans exist; that transition needs a reviewed
   governance change.
+- **Transient compatibility metadata leaks into verification** -> Remove it in
+  the first post-checkout step and assert both preparation and cleanup in the
+  workflow integration contract.
 
 ## Migration Plan
 
 1. Commit the complete planning tree through `pnpm workflow plan-commit`.
 2. Execute Task 1.1 through the managed task lifecycle.
-3. Merge the task pull request after its real `workflow-assurance` run passes.
-4. Verify zero CODEOWNERS errors on `main` and activate the existing solo-mode
+3. If the real check exposes the retained-gitlink checkout failure, execute the
+   regression-tested Task 1.2 in the same pilot pull request.
+4. Merge the task pull request after its real `workflow-assurance` run passes.
+5. Verify zero CODEOWNERS errors on `main` and activate the existing solo-mode
    ruleset.
-5. Archive the change twice from a fresh branch, require the second result to
+6. Archive the change twice from a fresh branch, require the second result to
    be `already-archived`, and merge the archive pull request through the active
    remote rule.
 
