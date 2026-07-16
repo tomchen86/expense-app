@@ -7,6 +7,7 @@ import test from 'node:test';
 
 import {
   assertGrantPathsEligible,
+  canonicalGrantEnvelope,
   canonicalGrantPayload,
   issueMaintainerGrant,
   validateGrantPayload,
@@ -72,10 +73,12 @@ const POLICY: MaintainerPolicy = {
   bootstrapEligiblePaths: [
     'packages/workflow-engine/src/**',
     'workflow/checks.json',
+    'workflow/maintainer-policy.json',
     'workflow/schemas/**',
   ],
   sealedImmutablePaths: [
     'packages/workflow-engine/src/maintainer-policy.ts',
+    'workflow/maintainer-policy.json',
     'workflow/schemas/maintainer-policy.schema.json',
   ],
   requiredChecks: ['fixture'],
@@ -1186,20 +1189,251 @@ test('CI rejects a duplicate authority grant claim in one pull-request range', (
   }
 });
 
-test('sealed parent policy rejects an immutable authority path', () => {
-  const policy: MaintainerPolicy = { ...POLICY, phase: 'sealed' };
-  const payload = grant({
-    allowedPaths: ['packages/workflow-engine/src/maintainer-policy.ts'],
-  });
-  assert.throws(
-    () =>
-      validateGrantPayload(payload, policy, {
-        now: new Date('2026-07-16T12:10:00.000Z'),
-        expectedBase: payload.baseCommit,
-        expectedPolicyBlob: payload.policyBlob,
-      }),
-    (error) => isWorkflowError(error, 'MAINTAINER_GRANT_INVALID'),
+test('CI accepts an old-key-authorized trusted signer rotation', () => {
+  const fixture = prepareAuthorityCommitFixture(
+    '12121212-1212-4212-8212-121212121212',
+    {
+      allowedPath: 'workflow/maintainer-policy.json',
+      mutate(repository, policy) {
+        const rotated: MaintainerPolicy = {
+          ...policy,
+          trustedSigners: POLICY.trustedSigners,
+        };
+        fs.writeFileSync(
+          path.join(repository, 'workflow/maintainer-policy.json'),
+          `${JSON.stringify(rotated, null, 2)}\n`,
+        );
+      },
+    },
   );
+  try {
+    const committed = commitAuthoritySession(
+      fixture.repository,
+      fixture.sessionId,
+      'Rotate trusted maintainer key',
+      {
+        now: fixtureTime(fixture, 30),
+        signer: fixtureSigner(),
+      },
+    );
+    const [commit] = listRangeCommits(
+      fixture.repository,
+      fixture.baseCommit,
+      committed.commitHash,
+    );
+    assert.ok(commit);
+
+    assert.doesNotThrow(() =>
+      validateCiAuthorityCommit(
+        fixture.repository,
+        commit,
+        fixtureTime(fixture, 40),
+      ),
+    );
+  } finally {
+    cleanupAuthorityCommitFixture(fixture);
+  }
+});
+
+test('CI rejects a candidate key that attempts to trust its own grant', () => {
+  const repository = createFixtureRepository();
+  const signingDirectory = fs.mkdtempSync(
+    path.join(os.tmpdir(), 'workflow-candidate-key-'),
+  );
+  try {
+    const oldKey = generateFixtureSshKey(
+      signingDirectory,
+      'old',
+      'fixture-maintainer',
+    );
+    const candidateKey = generateFixtureSshKey(
+      signingDirectory,
+      'candidate',
+      'fixture-maintainer',
+    );
+    const parentPolicy: MaintainerPolicy = {
+      ...POLICY,
+      trustedSigners: [oldKey.trustedSigner],
+    };
+    installFixtureMaintainerPolicy(repository, parentPolicy);
+    const base = git(repository, ['rev-parse', 'HEAD']).trim();
+    const grantId = '13131313-1313-4313-8313-131313131313';
+    const now = new Date(Date.now() - 60_000);
+    const payload: MaintainerGrantPayload = {
+      version: 1,
+      grantId,
+      repositoryId: parentPolicy.repository.id,
+      repositoryOrigin: parentPolicy.repository.origin,
+      baseCommit: base,
+      policyBlob: git(repository, [
+        'rev-parse',
+        `${base}:workflow/maintainer-policy.json`,
+      ]).trim(),
+      changeId: 'demo-change',
+      allowedPaths: ['workflow/maintainer-policy.json'],
+      issuedAt: now.toISOString(),
+      expiresAt: new Date(now.getTime() + 30 * 60_000).toISOString(),
+      maxUses: 1,
+      reason: 'Attempt candidate-controlled signer rotation',
+      signer: candidateKey.trustedSigner.identity,
+    };
+    const signature = fixtureSshSigner(candidateKey.privateKey, {
+      ...parentPolicy,
+      trustedSigners: [candidateKey.trustedSigner],
+    }).sign(canonicalGrantPayload(payload));
+    writeFixtureAuditTag(repository, base, grantId, {
+      payload,
+      signature,
+    });
+
+    git(repository, ['switch', '-c', 'work/demo-change']);
+    fs.writeFileSync(
+      path.join(repository, 'workflow/maintainer-policy.json'),
+      `${JSON.stringify(
+        { ...parentPolicy, trustedSigners: [candidateKey.trustedSigner] },
+        null,
+        2,
+      )}\n`,
+    );
+    git(repository, ['config', 'gpg.format', 'ssh']);
+    git(repository, ['config', 'user.signingkey', candidateKey.privateKey]);
+    git(repository, ['add', 'workflow/maintainer-policy.json']);
+    git(repository, [
+      'commit',
+      '-S',
+      '-m',
+      'Attempt candidate signer rotation',
+      '-m',
+      [
+        'Change: demo-change',
+        'Transition: authority-maintenance',
+        `Grant: ${grantId}`,
+      ].join('\n'),
+    ]);
+    const head = git(repository, ['rev-parse', 'HEAD']).trim();
+    const [commit] = listRangeCommits(repository, base, head);
+    assert.ok(commit);
+
+    assert.throws(
+      () => validateCiAuthorityCommit(repository, commit, new Date()),
+      (error) => isWorkflowError(error, 'CI_AUTHORITY_GRANT_SIGNATURE_INVALID'),
+    );
+  } finally {
+    fs.rmSync(repository, { recursive: true, force: true });
+    fs.rmSync(signingDirectory, { recursive: true, force: true });
+  }
+});
+
+test('CI rejects an authority grant that expires while the PR is evaluated', () => {
+  const fixture = prepareAuthorityCommitFixture(
+    '14141414-1414-4414-8414-141414141414',
+  );
+  try {
+    const committed = commitAuthoritySession(
+      fixture.repository,
+      fixture.sessionId,
+      'Repair exact authority',
+      {
+        now: fixtureTime(fixture, 30),
+        signer: fixtureSigner(),
+      },
+    );
+    const [commit] = listRangeCommits(
+      fixture.repository,
+      fixture.baseCommit,
+      committed.commitHash,
+    );
+    assert.ok(commit);
+
+    assert.throws(
+      () =>
+        validateCiAuthorityCommit(
+          fixture.repository,
+          commit,
+          fixtureTime(fixture, 30 * 60 + 1),
+        ),
+      (error) => isWorkflowError(error, 'MAINTAINER_GRANT_EXPIRED'),
+    );
+  } finally {
+    cleanupAuthorityCommitFixture(fixture);
+  }
+});
+
+test('CI rejects a sealed-to-bootstrap phase rollback from parent policy', () => {
+  const repository = createFixtureRepository();
+  const signingDirectory = fs.mkdtempSync(
+    path.join(os.tmpdir(), 'workflow-sealed-rollback-'),
+  );
+  try {
+    const key = generateFixtureSshKey(
+      signingDirectory,
+      'sealed',
+      'fixture-maintainer',
+    );
+    const parentPolicy: MaintainerPolicy = {
+      ...POLICY,
+      phase: 'sealed',
+      trustedSigners: [key.trustedSigner],
+    };
+    installFixtureMaintainerPolicy(repository, parentPolicy);
+    const base = git(repository, ['rev-parse', 'HEAD']).trim();
+    const grantId = '15151515-1515-4515-8515-151515151515';
+    const now = new Date(Date.now() - 60_000);
+    const payload: MaintainerGrantPayload = {
+      version: 1,
+      grantId,
+      repositoryId: parentPolicy.repository.id,
+      repositoryOrigin: parentPolicy.repository.origin,
+      baseCommit: base,
+      policyBlob: git(repository, [
+        'rev-parse',
+        `${base}:workflow/maintainer-policy.json`,
+      ]).trim(),
+      changeId: 'demo-change',
+      allowedPaths: ['workflow/maintainer-policy.json'],
+      issuedAt: now.toISOString(),
+      expiresAt: new Date(now.getTime() + 30 * 60_000).toISOString(),
+      maxUses: 1,
+      reason: 'Attempt sealed maintainer policy rollback',
+      signer: key.trustedSigner.identity,
+    };
+    const signature = fixtureSshSigner(key.privateKey, parentPolicy).sign(
+      canonicalGrantPayload(payload),
+    );
+    writeFixtureAuditTag(repository, base, grantId, { payload, signature });
+
+    git(repository, ['switch', '-c', 'work/demo-change']);
+    fs.writeFileSync(
+      path.join(repository, 'workflow/maintainer-policy.json'),
+      `${JSON.stringify({ ...parentPolicy, phase: 'bootstrap' }, null, 2)}\n`,
+    );
+    git(repository, ['config', 'gpg.format', 'ssh']);
+    git(repository, ['config', 'user.signingkey', key.privateKey]);
+    git(repository, ['add', 'workflow/maintainer-policy.json']);
+    git(repository, [
+      'commit',
+      '-S',
+      '-m',
+      'Attempt sealed policy rollback',
+      '-m',
+      [
+        'Change: demo-change',
+        'Transition: authority-maintenance',
+        `Grant: ${grantId}`,
+      ].join('\n'),
+    ]);
+    const head = git(repository, ['rev-parse', 'HEAD']).trim();
+    const [commit] = listRangeCommits(repository, base, head);
+    assert.ok(commit);
+
+    assert.throws(
+      () => validateCiAuthorityCommit(repository, commit, new Date()),
+      (error) => isWorkflowError(error, 'MAINTAINER_GRANT_INVALID'),
+    );
+  } finally {
+    fs.rmSync(repository, { recursive: true, force: true });
+    fs.rmSync(signingDirectory, { recursive: true, force: true });
+  }
 });
 
 function installFixtureMaintainerPolicy(
@@ -1232,8 +1466,18 @@ type AuthorityCommitFixture = {
   policy: MaintainerPolicy;
 };
 
+type AuthorityCommitFixtureOptions = {
+  allowedPath?: string;
+  mutate?: (
+    repository: string,
+    policy: MaintainerPolicy,
+    signingDirectory: string,
+  ) => void;
+};
+
 function prepareAuthorityCommitFixture(
   grantId: string,
+  options: AuthorityCommitFixtureOptions = {},
 ): AuthorityCommitFixture {
   const repository = createFixtureRepository();
   const signingDirectory = fs.mkdtempSync(
@@ -1282,11 +1526,12 @@ function prepareAuthorityCommitFixture(
   git(repository, ['config', 'gpg.format', 'ssh']);
   git(repository, ['config', 'user.signingkey', privateKey]);
   const now = new Date(Date.now() - 60_000);
+  const allowedPath = options.allowedPath ?? 'workflow/checks.json';
   issueMaintainerGrant(
     repository,
     {
       changeId: 'demo-change',
-      paths: ['workflow/checks.json'],
+      paths: [allowedPath],
       reason: 'Repair exact workflow authority',
     },
     {
@@ -1300,8 +1545,12 @@ function prepareAuthorityCommitFixture(
     now: new Date(now.getTime() + 10_000),
     signer: fixtureSigner(),
   });
-  const checksPath = path.join(repository, 'workflow/checks.json');
-  fs.writeFileSync(checksPath, ` ${fs.readFileSync(checksPath, 'utf8')}`);
+  if (options.mutate) {
+    options.mutate(repository, policy, signingDirectory);
+  } else {
+    const targetPath = path.join(repository, allowedPath);
+    fs.writeFileSync(targetPath, ` ${fs.readFileSync(targetPath, 'utf8')}`);
+  }
   checkAuthoritySession(repository, session.sessionId, {
     now: new Date(now.getTime() + 20_000),
     signer: fixtureSigner(),
@@ -1344,6 +1593,71 @@ function fixtureSigner(): MaintainerSignerProvider {
     },
     verify() {},
   };
+}
+
+function generateFixtureSshKey(
+  directory: string,
+  basename: string,
+  identity: string,
+): {
+  privateKey: string;
+  trustedSigner: MaintainerPolicy['trustedSigners'][number];
+} {
+  const privateKey = path.join(directory, basename);
+  const generated = spawnSync(
+    '/usr/bin/ssh-keygen',
+    ['-q', '-t', 'ed25519', '-N', '', '-C', identity, '-f', privateKey],
+    { encoding: 'utf8' },
+  );
+  assert.equal(generated.status, 0, generated.stderr);
+  const publicKey = fs
+    .readFileSync(`${privateKey}.pub`, 'utf8')
+    .trim()
+    .split(/\s+/)
+    .slice(0, 2)
+    .join(' ');
+  const fingerprintResult = spawnSync(
+    '/usr/bin/ssh-keygen',
+    ['-l', '-E', 'sha256', '-f', `${privateKey}.pub`],
+    { encoding: 'utf8' },
+  );
+  assert.equal(fingerprintResult.status, 0, fingerprintResult.stderr);
+  const fingerprint = fingerprintResult.stdout.match(
+    /SHA256:[A-Za-z0-9+/]+/,
+  )?.[0];
+  assert.ok(fingerprint);
+  return {
+    privateKey,
+    trustedSigner: { identity, publicKey, fingerprint },
+  };
+}
+
+function writeFixtureAuditTag(
+  repository: string,
+  base: string,
+  grantId: string,
+  envelope: MaintainerGrantEnvelope,
+): void {
+  const directory = fs.mkdtempSync(
+    path.join(os.tmpdir(), 'workflow-fixture-tag-'),
+  );
+  const messagePath = path.join(directory, 'message');
+  try {
+    fs.writeFileSync(messagePath, canonicalGrantEnvelope(envelope), {
+      mode: 0o600,
+    });
+    git(repository, [
+      'tag',
+      '--annotate',
+      '--cleanup=verbatim',
+      '--file',
+      messagePath,
+      `workflow-grant/${grantId}`,
+      base,
+    ]);
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
 }
 
 function fixtureSshSigner(

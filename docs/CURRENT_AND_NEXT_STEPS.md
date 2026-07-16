@@ -8,15 +8,15 @@ This generated handoff contains semantic project state only. Its sources are the
 
 ## Current Task
 
-`4.2` — Run workflow assurance from the pull-request base and cover candidate-verifier, phase, rotation, expiry, and replay attacks.
+`5.1` — Document every maintainer command, bootstrap/pilot/sealing procedure, recovery boundary, and maintainer-owned remote prerequisite.
 
 ## Next Task
 
-`5.1` — Document every maintainer command, bootstrap/pilot/sealing procedure, recovery boundary, and maintainer-owned remote prerequisite.
+None.
 
 ## Current Focus
 
-Run workflow assurance from the pull-request base and cover candidate-verifier, phase, rotation, expiry, and replay attacks.
+Document every maintainer command, bootstrap/pilot/sealing procedure, recovery boundary, and maintainer-owned remote prerequisite.
 
 ## Known Blockers
 
