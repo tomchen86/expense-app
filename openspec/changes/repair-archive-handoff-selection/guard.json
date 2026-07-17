@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "changeId": "repair-archive-handoff-selection",
+  "tasks": {
+    "1.1": {
+      "allowedPaths": [
+        "docs/CURRENT_AND_NEXT_STEPS.md",
+        "packages/workflow-engine/src/handoff.ts",
+        "packages/workflow-engine/test/handoff.integration.test.ts",
+        "packages/workflow-engine/test/hooks.integration.test.ts"
+      ],
+      "requiredChecks": [
+        "workflow-tests",
+        "workflow-typecheck",
+        "workflow-lint",
+        "workflow-format",
+        "managed-documents"
+      ]
+    }
+  }
+}
