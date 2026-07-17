@@ -1,0 +1,33 @@
+{
+  "schemaVersion": 1,
+  "changeId": "pilot-break-glass-maintainer-authority",
+  "tasks": {
+    "1.1": {
+      "allowedPaths": [
+        "docs/CURRENT_AND_NEXT_STEPS.md",
+        "docs/research/BREAK_GLASS_BOOTSTRAP_PILOT.md"
+      ],
+      "requiredChecks": [
+        "workflow-tests",
+        "workflow-typecheck",
+        "workflow-lint",
+        "workflow-format",
+        "managed-documents"
+      ]
+    },
+    "1.2": {
+      "allowedPaths": [
+        "docs/CURRENT_AND_NEXT_STEPS.md",
+        "docs/ROADMAP.md",
+        "docs/research/BREAK_GLASS_BOOTSTRAP_PILOT.md"
+      ],
+      "requiredChecks": [
+        "workflow-tests",
+        "workflow-typecheck",
+        "workflow-lint",
+        "workflow-format",
+        "managed-documents"
+      ]
+    }
+  }
+}
