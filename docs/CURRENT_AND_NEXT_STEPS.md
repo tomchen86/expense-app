@@ -4,19 +4,19 @@ This generated handoff contains semantic project state only. Its sources are tra
 
 ## Current Change
 
-`repair-archive-handoff-selection`
+`pilot-break-glass-maintainer-authority`
 
 ## Current Task
 
-None — all tasks are complete.
+`1.2` — Record local grant inspection, idempotent revocation, one-minute expiry rejection, harmless failed-check cleanup, the successful signed authority commit, and idempotent recovery evidence after the one-file non-database pilot.
 
 ## Next Task
 
-None.
+`1.3` — After the protected PR passes and merges, record audit-tag publication, exact remote check results, merged identity, main ruleset read-back, and the remaining bootstrap-to-sealed boundary before archival.
 
 ## Current Focus
 
-No implementation tasks remain; follow the Roadmap for the next explicit transition.
+Record local grant inspection, idempotent revocation, one-minute expiry rejection, harmless failed-check cleanup, the successful signed authority commit, and idempotent recovery evidence after the one-file non-database pilot.
 
 ## Known Blockers
 
