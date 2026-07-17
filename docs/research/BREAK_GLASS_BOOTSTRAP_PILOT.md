@@ -2,10 +2,12 @@
 
 ## Status
 
-Local bootstrap evidence is complete as of 2026-07-17 UTC. The protected pull
-request, base-owned CI result, merge identity, and post-merge ruleset read-back
-remain intentionally pending under Task 1.3. The repository remains in
-`bootstrap`; this pilot does not authorize sealing.
+The real bootstrap pilot completed its protected remote path on 2026-07-17
+UTC through pull request [#54](https://github.com/tomchen86/expense-app/pull/54).
+All normal checks and the base-owned `workflow-assurance` check passed before
+the PR was merged through the active main ruleset. The repository remains in
+`bootstrap`; this pilot proves the configured authority path but does not
+authorize sealing.
 
 This was a non-database pilot. It changed no product code, dependency, check
 command, trusted signer, verifier, maintainer policy, or phase. The only
@@ -31,6 +33,18 @@ tests, and all five pinned non-database checks.
   `edad1c109b2f51b1d91fd9eb230a001ac24534e7`
 - Successful authority base:
   `edad1c109b2f51b1d91fd9eb230a001ac24534e7`
+
+GitHub's required rebase merge rewrote each PR commit onto `main`. The original
+PR identities above remain the identities checked by `workflow-assurance`; the
+corresponding main identities are:
+
+| Transition            | PR identity                                | Main identity                              |
+| --------------------- | ------------------------------------------ | ------------------------------------------ |
+| Initial plan          | `440c0d4307a7a7eff65c1eb52ba9bd54a2ee8a35` | `58383bd`                                  |
+| Corrective plan       | `ffb9fbf2788b79459a7119766b08a9a80ae8268b` | `b752854`                                  |
+| Handoff baseline      | `edad1c109b2f51b1d91fd9eb230a001ac24534e7` | `0c1bdb8`                                  |
+| Authority maintenance | `3f9cc46ec6018b1e02d3db1553af1ca3a00c2e9d` | `263f1bdd9cd7cc417eb2db62c1b81df3c98641d0` |
+| Local evidence        | `2d5e84f6877381031a9e02832ca8e895b6141563` | `278ba02dd7c8648aa6b35616028726c2d347bbe9` |
 
 The human issued every grant and created the authority commit from a
 controlling terminal using the configured passphrase-protected SSH key. No
@@ -145,10 +159,88 @@ grant ID and supplied no authority. It was deliberately not deleted, replaced,
 or reused; retaining it preserves the audit anomaly under the protected tag
 ruleset.
 
-## Pending Remote Evidence
+## Remote Pull Request and CI Evidence
 
-Task 1.3 must add the protected pull-request URL, exact base-owned
-`workflow-assurance` result, normal CI results, merge commit identity, audit-tag
-read-back, main ruleset read-back, and the remaining bootstrap-to-sealed
-boundary. Until that task and normal archival complete, this document makes no
-claim that the remote pilot is complete.
+- Pull request: [#54](https://github.com/tomchen86/expense-app/pull/54)
+- Exact PR head: `2d5e84f6877381031a9e02832ca8e895b6141563`
+- Base-owned Workflow Assurance run:
+  [29553270612](https://github.com/tomchen86/expense-app/actions/runs/29553270612)
+- Assurance event: `pull_request_target`
+- Assurance run start: `2026-07-17T03:48:12Z`
+- Assurance completion: `2026-07-17T03:52:17Z`
+- Assurance conclusion: `success`
+- Protected merge time: `2026-07-17T03:52:54Z`
+- Main identity after the rebase merge:
+  `278ba02dd7c8648aa6b35616028726c2d347bbe9`
+
+The exact PR head passed all six reported checks:
+
+| Check                | Result    | Duration |
+| -------------------- | --------- | -------- |
+| `workflow-assurance` | `success` | 4m01s    |
+| `API lint & tests`   | `success` | 1m50s    |
+| `Mobile checks`      | `success` | 35s      |
+| `Web lint & build`   | `success` | 32s      |
+| `prettier`           | `success` | 40s      |
+| `claude-review`      | `success` | 34s      |
+
+The assurance job imported the protected maintainer audit tags and began
+recomputation at `2026-07-17T03:48:46Z`, before the successful grant expired at
+`2026-07-17T03:52:01.035Z`. The run completed successfully 16 seconds after
+expiry; this records that evaluation was admitted while the grant was valid,
+not that an expired grant was reused.
+
+## Protected-State Read-Back
+
+The post-merge GitHub API read-back returned:
+
+- Main ruleset `18963372`, `protect-main-workflow-assurance`: `active`, scoped
+  to the default branch, with no bypass actors. It requires pull requests,
+  linear history, rebase-only merge, thread resolution, and the strict
+  up-to-date `workflow-assurance` status check. Code-owner review is disabled
+  for the current solo-maintainer mode.
+- Audit-tag ruleset `19080010`, `protect-workflow-grant-audit-tags`: `active`,
+  scoped to `refs/tags/workflow-grant/**`, with creation, update, and deletion
+  restricted and no configured bypass actors in the ruleset response.
+- The exact successful audit ref still points to annotated tag object
+  `16a6fe3553876cf07c79e4031777c2a4f7edfe09`.
+- The retained truncated anomaly ref also points to that object; it remains
+  non-authoritative because its ref name is not the exact grant ID.
+- Protected environment `workflow-sealing` has ID `18291408883` and requires
+  reviewer `tomchen86` (GitHub user ID `111215589`). No tracked GitHub Actions
+  workflow currently declares that environment, so it is configured but is
+  not yet an effective sealing gate.
+
+## Rebase Signature Finding
+
+The original authority commit
+`3f9cc46ec6018b1e02d3db1553af1ca3a00c2e9d` contains the expected SSH
+signature. GitHub reports that signature as `unknown_key`, while the
+repository-owned verifier trusted it through the pinned signer policy and the
+base-owned `workflow-assurance` run passed.
+
+The required rebase merge then created main commit
+`263f1bdd9cd7cc417eb2db62c1b81df3c98641d0`. GitHub reports that rewritten
+commit as `unsigned`. The protected PR and audit tag retain the evidence that
+CI evaluated the original signed commit, but the current rebase-only policy
+does not retain the human signature in main history. Sealing must not proceed
+until a separate reviewed change defines and proves compatible merge semantics
+or otherwise makes the signed authority identity durable without weakening
+the base-owned checks.
+
+## Remaining Bootstrap-to-Sealed Boundary
+
+This pilot is complete and may be archived, but the repository remains
+bootstrap-only. Before a separate one-way sealing change may proceed:
+
+1. Resolve and pilot the rebase-signature durability finding.
+2. Bind the sealing workflow to the protected `workflow-sealing` environment
+   and verify its approval behavior.
+3. Confirm or rotate to a human-presence hardware signer while the parent
+   policy remains in bootstrap.
+4. Complete or retain the separate ordinary plan/task/archive pilot evidence
+   required by `docs/WORKFLOW.md`.
+
+No pilot grant, tag, commit, check result, or environment configuration is by
+itself authority to change `workflow/maintainer-policy.json` from `bootstrap`
+to `sealed`.
