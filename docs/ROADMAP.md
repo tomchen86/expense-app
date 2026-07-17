@@ -9,17 +9,20 @@ in the linked OpenSpec change.
 
 ### Finish repository workflow adoption
 
-- Complete and merge `add-break-glass-maintainer-mode` through the ordinary
-  managed lifecycle; this implementation PR is the bootstrap exception and
-  must not contain or claim an authority-maintenance commit.
-- Keep break-glass maintainer mode explicitly **bootstrap-only** until a human
-  maintainer independently verifies protected `workflow-grant/**` tags, the
-  required base-owned `workflow-assurance` check, no-bypass/up-to-date branch
-  rules, and the protected environment approval for sealing.
-- Run both maintainer-owned, non-database post-merge gates in
-  `docs/WORKFLOW.md`: the ordinary plan/task/archive pilot and the separate
-  break-glass bootstrap pilot. Disposable-repository and interrupted-commit
-  rehearsals are test evidence, not the real pilots.
+- Preserve the completed break-glass implementation and real bootstrap-pilot
+  evidence from PRs #51 and #54. PR #54 passed all normal checks plus the
+  base-owned `workflow-assurance` check without a ruleset exception.
+- Keep break-glass maintainer mode explicitly **bootstrap-only**. The pilot
+  confirmed the protected `workflow-grant/**` tags, strict
+  no-bypass/up-to-date main rules, and base-owned assurance, but also showed
+  that rebase merge rewrites the human-signed authority commit to an unsigned
+  main commit and that the `workflow-sealing` environment is not yet bound to a
+  tracked workflow.
+- Before sealing, complete a separate managed repair and pilot for durable
+  authority-commit merge semantics, bind and verify the protected environment,
+  and confirm or rotate to a human-presence hardware signer. Keep the separate
+  ordinary plan/task/archive pilot requirement in `docs/WORKFLOW.md` satisfied;
+  disposable-repository and interrupted-commit rehearsals remain test evidence.
 - Keep support undeclared until the pilot proves plan, task, archive,
   authority grant/revoke/expiry/cleanup, idempotent recovery, repository-local
   Codex discovery observation, protected audit-tag publication, and real

@@ -8,7 +8,7 @@ This generated handoff contains semantic project state only. Its sources are tra
 
 ## Current Task
 
-`1.3` — After the protected PR passes and merges, record audit-tag publication, exact remote check results, merged identity, main ruleset read-back, and the remaining bootstrap-to-sealed boundary before archival.
+None — all tasks are complete.
 
 ## Next Task
 
@@ -16,7 +16,7 @@ None.
 
 ## Current Focus
 
-After the protected PR passes and merges, record audit-tag publication, exact remote check results, merged identity, main ruleset read-back, and the remaining bootstrap-to-sealed boundary before archival.
+No implementation tasks remain; follow the Roadmap for the next explicit transition.
 
 ## Known Blockers
 
