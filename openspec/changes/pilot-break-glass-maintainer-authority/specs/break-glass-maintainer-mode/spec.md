@@ -14,7 +14,8 @@ base-owned CI boundaries.
 
 #### Scenario: Successful authority transition is independently verified
 
-- **WHEN** a fresh human-signed grant authorizes one exact harmless authority file, all pinned checks pass, the signed authority commit is created, and recovery is called again
+- **WHEN** the active pilot's semantic handoff is first refreshed through its scoped ordinary task and a fresh human-signed grant then authorizes one exact harmless authority file
+- **AND** all pinned checks pass, the signed authority commit is created, and recovery is called again
 - **THEN** the grant is consumed exactly once, recovery returns the same commit identity, and no ordinary or product path is included
 - **AND** the pull request passes the strict base-owned `workflow-assurance` check without a ruleset exception
 

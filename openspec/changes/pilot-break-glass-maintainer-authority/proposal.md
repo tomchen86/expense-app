@@ -8,6 +8,8 @@ base-owned GitHub assurance against the configured repository.
 
 ## What Changes
 
+- Refresh the generated semantic handoff through an ordinary managed task before
+  reserving the successful short-lived authority grant.
 - Run separate human-signed grants for inspection and idempotent revocation, a
   one-minute expiry rejection, and cleanup after a harmless pre-commit failure.
 - Use a fresh one-use grant to make one semantically neutral ordering-only edit
@@ -20,10 +22,11 @@ base-owned GitHub assurance against the configured repository.
 
 ## Scope
 
-The authority commit may change only `workflow/checks.json`. Ordinary tasks may
-change only the pilot evidence document, the Roadmap after remote proof exists,
-and the generated handoff. No application, dependency, database, API, workflow
-verifier, trusted key, maintainer policy, or phase transition is in scope.
+The authority commit may change only `workflow/checks.json`. An initial ordinary
+task may refresh only the generated handoff; later ordinary tasks may change the
+pilot evidence document, the Roadmap after remote proof exists, and that same
+generated handoff. No application, dependency, database, API, workflow verifier,
+trusted key, maintainer policy, or phase transition is in scope.
 
 ## Non-Goals
 
