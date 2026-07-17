@@ -1,0 +1,106 @@
+{
+  "schemaVersion": 1,
+  "changeId": "add-authority-tree-attestation",
+  "tasks": {
+    "1.1": {
+      "allowedPaths": ["docs/CURRENT_AND_NEXT_STEPS.md"],
+      "requiredChecks": [
+        "workflow-tests",
+        "workflow-typecheck",
+        "workflow-lint",
+        "workflow-format",
+        "managed-documents"
+      ]
+    },
+    "2.1": {
+      "allowedPaths": [
+        "packages/workflow-engine/src/authority-attestation.ts",
+        "packages/workflow-engine/test/authority-attestation.contract.test.ts",
+        "workflow/schemas/authority-attestation.schema.json"
+      ],
+      "requiredChecks": [
+        "workflow-tests",
+        "workflow-typecheck",
+        "workflow-lint",
+        "workflow-format",
+        "managed-documents"
+      ]
+    },
+    "2.2": {
+      "allowedPaths": [
+        "packages/workflow-engine/src/cli.ts",
+        "packages/workflow-engine/src/maintainer-attestation.ts",
+        "packages/workflow-engine/src/maintainer-signer.ts",
+        "packages/workflow-engine/test/maintainer-attestation.integration.test.ts"
+      ],
+      "requiredChecks": [
+        "workflow-tests",
+        "workflow-typecheck",
+        "workflow-lint",
+        "workflow-format",
+        "managed-documents"
+      ]
+    },
+    "2.3": {
+      "allowedPaths": [
+        "packages/workflow-engine/src/ci-attestation.ts",
+        "packages/workflow-engine/src/ci-authority.ts",
+        "packages/workflow-engine/src/ci-git.ts",
+        "packages/workflow-engine/src/ci-sequence.ts",
+        "packages/workflow-engine/src/ci-signature.ts",
+        "packages/workflow-engine/src/ci.ts",
+        "packages/workflow-engine/test/ci-attestation.integration.test.ts",
+        "packages/workflow-engine/test/maintainer-mode.integration.test.ts"
+      ],
+      "requiredChecks": [
+        "workflow-tests",
+        "workflow-typecheck",
+        "workflow-lint",
+        "workflow-format",
+        "managed-documents"
+      ]
+    },
+    "3.1": {
+      "allowedPaths": [
+        "docs/ROADMAP.md",
+        "docs/WORKFLOW.md",
+        "packages/workflow-engine/test/contracts.test.ts"
+      ],
+      "requiredChecks": [
+        "workflow-tests",
+        "workflow-typecheck",
+        "workflow-lint",
+        "workflow-format",
+        "managed-documents"
+      ]
+    },
+    "4.1": {
+      "allowedPaths": [
+        "docs/CURRENT_AND_NEXT_STEPS.md",
+        "docs/ROADMAP.md",
+        "docs/research/AUTHORITY_TREE_ATTESTATION_PILOT.md"
+      ],
+      "requiredChecks": [
+        "workflow-tests",
+        "workflow-typecheck",
+        "workflow-lint",
+        "workflow-format",
+        "managed-documents"
+      ]
+    },
+    "4.2": {
+      "allowedPaths": [
+        "docs/CURRENT_AND_NEXT_STEPS.md",
+        "docs/ROADMAP.md",
+        "docs/research/AUTHORITY_TREE_ATTESTATION_PILOT.md"
+      ],
+      "requiredChecks": [
+        "workflow-tests",
+        "workflow-typecheck",
+        "workflow-lint",
+        "workflow-format",
+        "managed-documents"
+      ]
+    }
+  }
+}
