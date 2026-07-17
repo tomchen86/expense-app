@@ -134,7 +134,89 @@ test('reserved OpenSpec archive directory is not an active change', () => {
   }
 });
 
+test('completed handoff remains byte-stable when its change is archived beside multiple active changes', () => {
+  const repository = createFixtureRepository();
+  try {
+    writeChange(repository, 'selected-completed-change', true);
+    writeChange(repository, 'another-active-change', false);
+    writeSelectedHandoff(repository, 'selected-completed-change');
+
+    const beforeArchive = renderHandoff(repository);
+    archiveChange(repository, 'selected-completed-change', '2026-07-17');
+    const afterArchive = renderHandoff(repository);
+
+    assert.equal(afterArchive, beforeArchive);
+    assert.match(
+      afterArchive,
+      /## Current Change\n\n`selected-completed-change`/,
+    );
+    validateHandoff(repository);
+  } finally {
+    fs.rmSync(repository, { recursive: true, force: true });
+  }
+});
+
+test('exact work branch selects its active change when the previous handoff change is archived', () => {
+  const repository = createFixtureRepository();
+  try {
+    writeChange(repository, 'selected-completed-change', true);
+    archiveChange(repository, 'selected-completed-change', '2026-07-17');
+    writeChange(repository, 'branch-selected-change', false);
+    writeSelectedHandoff(repository, 'selected-completed-change');
+    git(repository, ['checkout', '-b', 'work/branch-selected-change']);
+
+    const handoff = renderHandoff(repository);
+
+    assert.match(handoff, /## Current Change\n\n`branch-selected-change`/);
+    validateHandoff(repository);
+  } finally {
+    fs.rmSync(repository, { recursive: true, force: true });
+  }
+});
+
+test('ambiguous and incomplete archived handoff selections fail closed', () => {
+  for (const scenario of ['ambiguous', 'incomplete'] as const) {
+    const repository = createFixtureRepository();
+    try {
+      writeChange(
+        repository,
+        'selected-completed-change',
+        scenario !== 'incomplete',
+      );
+      archiveChange(repository, 'selected-completed-change', '2026-07-17');
+      if (scenario === 'ambiguous') {
+        fs.cpSync(
+          path.join(
+            repository,
+            'openspec/changes/archive/2026-07-17-selected-completed-change',
+          ),
+          path.join(
+            repository,
+            'openspec/changes/archive/2026-07-16-selected-completed-change',
+          ),
+          { recursive: true },
+        );
+      }
+      writeSelectedHandoff(repository, 'selected-completed-change');
+
+      assert.throws(() => renderHandoff(repository), {
+        code: 'HANDOFF_ARCHIVE_INVALID',
+      });
+    } finally {
+      fs.rmSync(repository, { recursive: true, force: true });
+    }
+  }
+});
+
 function writeCompletedChange(repository: string, changeId: string): void {
+  writeChange(repository, changeId, true);
+}
+
+function writeChange(
+  repository: string,
+  changeId: string,
+  completed: boolean,
+): void {
   const directory = path.join(repository, 'openspec/changes', changeId);
   fs.mkdirSync(path.join(directory, 'specs/demo'), { recursive: true });
   fs.writeFileSync(
@@ -145,7 +227,9 @@ function writeCompletedChange(repository: string, changeId: string): void {
   fs.writeFileSync(path.join(directory, 'design.md'), '# Design\n');
   fs.writeFileSync(
     path.join(directory, 'tasks.md'),
-    '# Tasks\n\n- [x] 1.1 Completed task\n',
+    `# Tasks\n\n- [${completed ? 'x' : ' '}] 1.1 ${
+      completed ? 'Completed' : 'Pending'
+    } task\n`,
   );
   fs.writeFileSync(
     path.join(directory, 'specs/demo/spec.md'),
@@ -167,5 +251,28 @@ function writeCompletedChange(repository: string, changeId: string): void {
       null,
       2,
     )}\n`,
+  );
+}
+
+function writeSelectedHandoff(repository: string, changeId: string): void {
+  const filePath = path.join(repository, 'docs/CURRENT_AND_NEXT_STEPS.md');
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  fs.writeFileSync(
+    filePath,
+    `# Existing handoff\n\n## Current Change\n\n\`${changeId}\`\n`,
+  );
+}
+
+function archiveChange(
+  repository: string,
+  changeId: string,
+  date: string,
+): void {
+  const changeRoot = path.join(repository, 'openspec/changes');
+  const archiveRoot = path.join(changeRoot, 'archive');
+  fs.mkdirSync(archiveRoot, { recursive: true });
+  fs.renameSync(
+    path.join(changeRoot, changeId),
+    path.join(archiveRoot, `${date}-${changeId}`),
   );
 }
