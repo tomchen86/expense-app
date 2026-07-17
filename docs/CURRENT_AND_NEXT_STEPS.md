@@ -1,10 +1,10 @@
 # Current and Next Steps
 
-This generated handoff contains semantic project state only. Its sources are the active OpenSpec change and structured issue data.
+This generated handoff contains semantic project state only. Its sources are tracked OpenSpec change records and structured issue data.
 
 ## Current Change
 
-`add-break-glass-maintainer-mode`
+`repair-archive-handoff-selection`
 
 ## Current Task
 
@@ -16,7 +16,7 @@ None.
 
 ## Current Focus
 
-Prepare the completed change for explicit archival review.
+No implementation tasks remain; follow the Roadmap for the next explicit transition.
 
 ## Known Blockers
 
@@ -26,7 +26,7 @@ Prepare the completed change for explicit archival review.
 ## References
 
 - [Roadmap](ROADMAP.md)
-- [Active change](../openspec/changes/add-break-glass-maintainer-mode/)
-- [Workflow assurance delta](../openspec/changes/add-break-glass-maintainer-mode/specs/workflow-assurance/spec.md)
+- [Change records](../openspec/changes/)
+- [Base specifications](../openspec/specs/)
 - [Issue log](ISSUE_LOG.md)
 - [System architecture](architecture/ARCHITECTURE.md)
