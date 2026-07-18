@@ -1,0 +1,85 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://expense-app.local/workflow/authority-attestation.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["payload", "signature"],
+  "properties": {
+    "payload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "version",
+        "grantId",
+        "repositoryId",
+        "repositoryOrigin",
+        "protectedBranch",
+        "originalCommit",
+        "mainCommit",
+        "grantBases",
+        "policyBlob",
+        "issuedAt",
+        "signer"
+      ],
+      "properties": {
+        "version": { "const": 1 },
+        "grantId": { "$ref": "#/$defs/grantId" },
+        "repositoryId": {
+          "type": "string",
+          "pattern": "^github:[A-Za-z0-9_-]+$"
+        },
+        "repositoryOrigin": {
+          "type": "string",
+          "pattern": "^https://github\\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+\\.git$"
+        },
+        "protectedBranch": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._/-]{0,127}$"
+        },
+        "originalCommit": { "$ref": "#/$defs/commitOid" },
+        "mainCommit": { "$ref": "#/$defs/commitOid" },
+        "grantBases": {
+          "type": "array",
+          "maxItems": 64,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["originalBase", "mainBase", "grantIds"],
+            "properties": {
+              "originalBase": { "$ref": "#/$defs/commitOid" },
+              "mainBase": { "$ref": "#/$defs/commitOid" },
+              "grantIds": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 64,
+                "uniqueItems": true,
+                "items": { "$ref": "#/$defs/grantId" }
+              }
+            }
+          }
+        },
+        "policyBlob": { "$ref": "#/$defs/commitOid" },
+        "issuedAt": { "type": "string", "format": "date-time" },
+        "signer": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._@+-]{0,127}$"
+        }
+      }
+    },
+    "signature": {
+      "type": "string",
+      "minLength": 64,
+      "maxLength": 16384
+    }
+  },
+  "$defs": {
+    "commitOid": {
+      "type": "string",
+      "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$"
+    },
+    "grantId": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+    }
+  }
+}

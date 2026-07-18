@@ -8,15 +8,15 @@ This generated handoff contains semantic project state only. Its sources are tra
 
 ## Current Task
 
-`2.1` — Follow RED → GREEN → REFACTOR to define the canonical authority-attestation envelope, exact mapping parser, schema contract, and transition-identity validation primitives.
+`2.2` — Follow RED → GREEN → REFACTOR to add the human-present `maintainer attest` command, distinct signature namespace, protected annotated-tag creation, and concise publication handoff.
 
 ## Next Task
 
-`2.2` — Follow RED → GREEN → REFACTOR to add the human-present `maintainer attest` command, distinct signature namespace, protected annotated-tag creation, and concise publication handoff.
+`2.3` — Follow RED → GREEN → REFACTOR to add base-owned first-parent replay, trusted original-signature verification, unique authority mapping, historical grant-base mapping, and fail-closed CI integration.
 
 ## Current Focus
 
-Follow RED → GREEN → REFACTOR to define the canonical authority-attestation envelope, exact mapping parser, schema contract, and transition-identity validation primitives.
+Follow RED → GREEN → REFACTOR to add the human-present `maintainer attest` command, distinct signature namespace, protected annotated-tag creation, and concise publication handoff.
 
 ## Known Blockers
 
