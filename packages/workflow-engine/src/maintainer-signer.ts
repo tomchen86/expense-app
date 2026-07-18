@@ -17,8 +17,13 @@ export type InteractiveSignerContext = {
 export type MaintainerSignerProvider = {
   assertHumanPresent(): void;
   identity(): string;
-  sign(payload: string): string;
-  verify(payload: string, signature: string, identity: string): void;
+  sign(payload: string, namespace?: string): string;
+  verify(
+    payload: string,
+    signature: string,
+    identity: string,
+    namespace?: string,
+  ): void;
 };
 
 type SigningMaterial = {
@@ -66,7 +71,7 @@ export function createInteractiveSshSigner(
     identity() {
       return requireMaterial().identity;
     },
-    sign(payload) {
+    sign(payload, namespace) {
       const selected = requireMaterial();
       const temporaryDirectory = privateTemporaryDirectory(
         'workflow-maintainer-sign-',
@@ -83,7 +88,7 @@ export function createInteractiveSshSigner(
             '-f',
             selected.keyPath,
             '-n',
-            policy.signatureNamespace,
+            namespace ?? policy.signatureNamespace,
             payloadPath,
           ],
           {
@@ -105,7 +110,7 @@ export function createInteractiveSshSigner(
         fs.rmSync(temporaryDirectory, { recursive: true, force: true });
       }
     },
-    verify(payload, signature, identity) {
+    verify(payload, signature, identity, namespace) {
       const signer = policy.trustedSigners.find(
         (candidate) => candidate.identity === identity,
       );
@@ -118,7 +123,7 @@ export function createInteractiveSshSigner(
         signature,
         identity,
         signer.publicKey,
-        policy.signatureNamespace,
+        namespace ?? policy.signatureNamespace,
       );
     },
   };
