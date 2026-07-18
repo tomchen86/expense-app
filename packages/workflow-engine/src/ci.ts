@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
+import { verifyBaseAuthorityAttestations } from './ci-attestation.ts';
 import { runCiChecks } from './ci-checks.ts';
 import { canonicalCheckDefinition } from './ci-historical-contract.ts';
 import { replayCommitSequence } from './ci-sequence.ts';
@@ -57,6 +58,11 @@ export function verifyPullRequest(
     );
   }
   const commits = listRangeCommits(git.repositoryRoot, mergeBase, head);
+  const attestations = verifyBaseAuthorityAttestations(
+    git.repositoryRoot,
+    mergeBase,
+    evaluatedAt,
+  );
   const validated = validateRepositoryState(git.repositoryRoot);
   validateWorkflowIntegrationAssets(git.repositoryRoot, {
     regeneratePlanningAssets: true,
@@ -113,6 +119,7 @@ export function verifyPullRequest(
     completedTasks,
     archivedChanges: replay.archivedChanges,
     authorityGrants: replay.authorityGrants,
+    attestedAuthorities: attestations.attestedAuthorities,
     changedPaths,
     checks,
     managedDocuments: validated.documents,

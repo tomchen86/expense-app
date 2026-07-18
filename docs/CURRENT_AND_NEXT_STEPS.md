@@ -8,15 +8,15 @@ This generated handoff contains semantic project state only. Its sources are tra
 
 ## Current Task
 
-`2.3` — Follow RED → GREEN → REFACTOR to add base-owned first-parent replay, trusted original-signature verification, unique authority mapping, historical grant-base mapping, and fail-closed CI integration.
+`3.1` — Document the attestation command, trust boundaries, migration gate, recovery behavior, and remaining environment/signer/sealing work; update contract tests and roadmap wording without claiming sealed enforcement.
 
 ## Next Task
 
-`3.1` — Document the attestation command, trust boundaries, migration gate, recovery behavior, and remaining environment/signer/sealing work; update contract tests and roadmap wording without claiming sealed enforcement.
+`4.1` — After the implementation PR merges, protect `workflow-attestation/**`, create and publish the human-signed pilot attestation for the three observed original/main mappings, run base-owned replay, and record exact local and remote tag evidence.
 
 ## Current Focus
 
-Follow RED → GREEN → REFACTOR to add base-owned first-parent replay, trusted original-signature verification, unique authority mapping, historical grant-base mapping, and fail-closed CI integration.
+Document the attestation command, trust boundaries, migration gate, recovery behavior, and remaining environment/signer/sealing work; update contract tests and roadmap wording without claiming sealed enforcement.
 
 ## Known Blockers
 
