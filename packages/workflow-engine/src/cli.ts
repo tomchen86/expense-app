@@ -24,6 +24,10 @@ import {
   type MaintainerGrantRequest,
 } from './maintainer-grant.ts';
 import {
+  issueAuthorityAttestation,
+  type AuthorityAttestationRequest,
+} from './maintainer-attestation.ts';
+import {
   inspectMaintainerGrants,
   revokeMaintainerGrant,
 } from './maintainer-store.ts';
@@ -249,6 +253,21 @@ function dispatch(args: string[], cwd: string): CommandResult {
           expiresAt: grant.envelope.payload.expiresAt,
           allowedPaths: grant.envelope.payload.allowedPaths,
           publishCommand: grant.publishCommand,
+        };
+      }
+      if (rest[0] === 'attest') {
+        const request = parseMaintainerAttestArguments(rest);
+        const attestation = issueAuthorityAttestation(cwd, request);
+        return {
+          command,
+          action: 'attest',
+          ok: true,
+          grantId: attestation.grantId,
+          tagRef: attestation.tagRef,
+          originalCommit: attestation.envelope.payload.originalCommit,
+          mainCommit: attestation.envelope.payload.mainCommit,
+          grantBases: attestation.envelope.payload.grantBases,
+          publishCommand: attestation.publishCommand,
         };
       }
       const git = discoverRepository(cwd);
@@ -583,9 +602,66 @@ function maintainerGrantUsage(): WorkflowError {
   );
 }
 
+function parseMaintainerAttestArguments(
+  args: string[],
+): AuthorityAttestationRequest {
+  if (args[0] !== 'attest') {
+    throw maintainerAttestUsage();
+  }
+  const values = args.slice(1);
+  let originalCommit: string | undefined;
+  let mainCommit: string | undefined;
+  const grantBasePairs: Array<{ originalBase: string; mainBase: string }> = [];
+
+  for (let index = 0; index < values.length; index += 2) {
+    const option = values[index];
+    const value = values[index + 1];
+    if (!option || !value || !option.startsWith('--')) {
+      throw maintainerAttestUsage();
+    }
+    switch (option) {
+      case '--original':
+        if (originalCommit !== undefined) {
+          throw maintainerAttestUsage();
+        }
+        originalCommit = value;
+        break;
+      case '--main':
+        if (mainCommit !== undefined) {
+          throw maintainerAttestUsage();
+        }
+        mainCommit = value;
+        break;
+      case '--base': {
+        const separator = value.indexOf('=');
+        if (separator === -1) {
+          throw maintainerAttestUsage();
+        }
+        grantBasePairs.push({
+          originalBase: value.slice(0, separator),
+          mainBase: value.slice(separator + 1),
+        });
+        break;
+      }
+      default:
+        throw maintainerAttestUsage();
+    }
+  }
+  if (!originalCommit || !mainCommit) {
+    throw maintainerAttestUsage();
+  }
+  return { originalCommit, mainCommit, grantBasePairs };
+}
+
+function maintainerAttestUsage(): WorkflowError {
+  return usage(
+    'Usage: pnpm workflow maintainer attest --original <commit> --main <commit> [--base <original>=<main> ...] [--json]',
+  );
+}
+
 function maintainerUsage(): WorkflowError {
   return usage(
-    'Usage: pnpm workflow maintainer <grant ...|inspect [grant-id]|revoke <grant-id>> [--json]',
+    'Usage: pnpm workflow maintainer <grant ...|attest ...|inspect [grant-id]|revoke <grant-id>> [--json]',
   );
 }
 
@@ -620,6 +696,7 @@ function usageText(): string {
     '  pnpm workflow adapter evaluate [--json]',
     '  pnpm workflow issue <add|update|close|render|validate> ... [--json]',
     '  pnpm workflow maintainer grant --change <change-id> --paths <exact-path> [--paths <exact-path> ...] --reason <text> [--ttl <minutes>m] [--uses 1] [--json]',
+    '  pnpm workflow maintainer attest --original <commit> --main <commit> [--base <original>=<main> ...] [--json]',
     '  pnpm workflow maintainer inspect [grant-id] [--json]',
     '  pnpm workflow maintainer revoke <grant-id> [--json]',
     '  pnpm workflow authority-start <change-id> --grant <grant-id> [--json]',
