@@ -24,6 +24,9 @@ import './openspec-doctor.integration.test.ts';
 import './openspec-schema-contract.integration.test.ts';
 import './planning-transition.contract.test.ts';
 import './codex-planning-assets.integration.test.ts';
+import './authority-attestation.contract.test.ts';
+import './maintainer-attestation.integration.test.ts';
+import './ci-attestation.integration.test.ts';
 
 test('maintainer policy is a pinned workflow contract artifact', () => {
   const repositoryRoot = path.resolve(import.meta.dirname, '../../..');
@@ -37,6 +40,9 @@ test('maintainer policy is a pinned workflow contract artifact', () => {
   );
   assert.ok(
     artifacts.includes('workflow/schemas/maintainer-grant.schema.json'),
+  );
+  assert.ok(
+    artifacts.includes('workflow/schemas/authority-attestation.schema.json'),
   );
 });
 
@@ -281,6 +287,7 @@ test('break-glass maintainer operator contract is complete and bootstrap-only', 
 
   for (const command of [
     'pnpm workflow maintainer grant',
+    'pnpm workflow maintainer attest',
     'pnpm workflow maintainer inspect',
     'pnpm workflow maintainer revoke',
     'pnpm workflow authority-start',
@@ -296,11 +303,14 @@ test('break-glass maintainer operator contract is complete and bootstrap-only', 
   assert.match(workflow, /git config --local gpg\.format ssh/);
   assert.match(workflow, /git config --local user\.signingkey/);
   assert.match(workflow, /workflow-grant\/\*\*/);
+  assert.match(workflow, /workflow-attestation\/\*\*/);
+  assert.match(workflow, /migration gate/i);
   assert.match(workflow, /protected environment/i);
   assert.match(workflow, /one-way/i);
   assert.match(workflow, /repository-admin, out-of-band/i);
   assert.match(roadmap, /bootstrap-only/i);
   assert.match(roadmap, /workflow-grant\/\*\*/);
+  assert.match(roadmap, /workflow-attestation\/\*\*/);
   assert.match(roadmap, /protected environment/i);
 });
 

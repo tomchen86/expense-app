@@ -8,15 +8,15 @@ This generated handoff contains semantic project state only. Its sources are tra
 
 ## Current Task
 
-`3.1` — Document the attestation command, trust boundaries, migration gate, recovery behavior, and remaining environment/signer/sealing work; update contract tests and roadmap wording without claiming sealed enforcement.
+`4.1` — After the implementation PR merges, protect `workflow-attestation/**`, create and publish the human-signed pilot attestation for the three observed original/main mappings, run base-owned replay, and record exact local and remote tag evidence.
 
 ## Next Task
 
-`4.1` — After the implementation PR merges, protect `workflow-attestation/**`, create and publish the human-signed pilot attestation for the three observed original/main mappings, run base-owned replay, and record exact local and remote tag evidence.
+`4.2` — After the first migration-evidence PR passes and merges, record its required-check results, merged identity, ruleset read-back, and bootstrap-only remainder before archival.
 
 ## Current Focus
 
-Document the attestation command, trust boundaries, migration gate, recovery behavior, and remaining environment/signer/sealing work; update contract tests and roadmap wording without claiming sealed enforcement.
+After the implementation PR merges, protect `workflow-attestation/**`, create and publish the human-signed pilot attestation for the three observed original/main mappings, run base-owned replay, and record exact local and remote tag evidence.
 
 ## Known Blockers
 
