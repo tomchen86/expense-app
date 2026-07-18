@@ -6,7 +6,7 @@
 
 - [x] 2.1 Follow RED → GREEN → REFACTOR to define the canonical authority-attestation envelope, exact mapping parser, schema contract, and transition-identity validation primitives.
 - [x] 2.2 Follow RED → GREEN → REFACTOR to add the human-present `maintainer attest` command, distinct signature namespace, protected annotated-tag creation, and concise publication handoff.
-- [ ] 2.3 Follow RED → GREEN → REFACTOR to add base-owned first-parent replay, trusted original-signature verification, unique authority mapping, historical grant-base mapping, and fail-closed CI integration.
+- [x] 2.3 Follow RED → GREEN → REFACTOR to add base-owned first-parent replay, trusted original-signature verification, unique authority mapping, historical grant-base mapping, and fail-closed CI integration.
 
 ## 3. Operator Contract
 
