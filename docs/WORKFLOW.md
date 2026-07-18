@@ -245,6 +245,9 @@ independently verified every remote prerequisite below:
 
 - protect the `workflow-grant/**` tag namespace against creation, update, and
   deletion by unapproved actors while retaining administrator audit recovery;
+- protect the `workflow-attestation/**` tag namespace with the same no-bypass
+  creation, update, and deletion rules so published authority attestations
+  cannot be replaced or removed by unapproved actors;
 - require pull requests, an up-to-date base, the real `workflow-assurance`
   check, and no bypass on the configured protected branch;
 - configure and verify the protected environment/approval gate that will be
@@ -287,6 +290,7 @@ ordinary reviewed OpenSpec change plus planning commit on the exact
 | Command                                                                                                                                             | Use and boundary                                                                                                                                                                                                                                    |
 | --------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `pnpm workflow maintainer grant --change <id> --paths <exact-path> [--paths <exact-path> ...] --reason <text> [--ttl <minutes>m] [--uses 1] --json` | Interactively sign one grant bound to the current full base commit, base policy blob, repository, change, sorted exact eligible paths, reason, signer, expiry, and one use. The default and maximum TTL are 30 minutes.                             |
+| `pnpm workflow maintainer attest --original <commit> --main <commit> [--base <original>=<main> ...] --json`                                         | Interactively sign one canonical authority attestation binding a rebase-rewritten protected-main authority commit to its retained signed original, then create the immutable `workflow-attestation/<grant-id>` tag targeting the original.          |
 | `pnpm workflow maintainer inspect [grant-id] --json`                                                                                                | Read redacted available, reserved, consumed, or revoked local state. It grants no authority and exposes no private signing material.                                                                                                                |
 | `pnpm workflow maintainer revoke <grant-id> --json`                                                                                                 | Terminally revoke an available or reserved grant. Repeating it is cleanup-safe; a consumed or revoked grant never becomes available again.                                                                                                          |
 | `pnpm workflow authority-start <change-id> --grant <grant-id> --json`                                                                               | Atomically reserve the grant on its exact clean base and `work/<change-id>` branch, then pin policy, contract, signer, exact paths, and the complete normal check set.                                                                              |
@@ -342,6 +346,57 @@ discarding any leftover edits. A lost trusted key, missing/altered journal,
 divergent branch, or damaged trust root is a repository-admin, out-of-band
 recovery event with separately retained audit evidence—not a workflow command
 or AI-accessible override.
+
+### Authority tree attestation
+
+GitHub's required rebase merge rewrites every authority commit, so the
+human-signed original is never the object reachable from the protected branch.
+An authority attestation binds the rewritten protected-main commit back to its
+retained signed original by transition identity, not commit identity: equal
+result trees, equal single-parent trees, byte-identical canonical managed
+messages, the exact grant, and a valid original commit signature.
+
+Trust is split across three boundaries. The protected branch decides which
+rewritten commit is authoritative; retained Git objects and protected tags
+preserve the signed original and its human-signed statement; and base-owned
+workflow code plus previously trusted signer material decide whether the
+mapping is acceptable. A candidate commit can never validate its own evidence
+or add its own trust.
+
+After the authority PR merges, create the attestation from an updated, clean,
+controlling worktree whose fetched protected branch contains every claimed
+main commit:
+
+```bash
+pnpm workflow maintainer attest --original <original-commit> \
+  --main <protected-main-commit> [--base <original-base>=<main-base> ...] --json
+```
+
+The command derives the primary grant from the authority trailers, validates
+every mapping including the explicit grant-base pairs used by historical grant
+replay, signs one canonical envelope in the distinct
+`expense-app.workflow.authority-attestation.v1` namespace, and creates the
+immutable annotated tag `refs/tags/workflow-attestation/<grant-id>` targeting
+the signed original so it stays reachable. Run the exact returned
+`publishCommand` immediately, exactly like a grant tag.
+
+Base-owned `workflow-assurance` replays protected first-parent history before
+candidate commits are evaluated: every authority commit on the base must
+resolve to exactly one valid protected attestation, and every referenced
+historical grant base must have a complete explicit mapping. Missing,
+conflicting, duplicated, malformed, or candidate-supplied evidence fails
+closed. This is an intentional migration gate: after the verifier merges, the
+next pull request stays red until the historical pilot attestation tag is
+protected, published, and replayable. Never re-disable the required check to
+step around it.
+
+Recovery is maintainer-controlled tag publication, not rewriting. A missing or
+malformed local attestation tag is repaired by issuing and publishing the tag
+again through this command. A published conflicting protected tag is a
+repository-admin, out-of-band recovery event, never an automatic rewrite.
+Environment binding, hardware-signer confirmation or rotation, immutable-path
+hardening, and the one-way sealed transition remain separately approved work;
+the repository stays bootstrap-only until they are proven.
 
 ### Bootstrap pilot and one-way sealing
 

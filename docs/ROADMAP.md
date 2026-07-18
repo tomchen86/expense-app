@@ -18,11 +18,16 @@ in the linked OpenSpec change.
   that rebase merge rewrites the human-signed authority commit to an unsigned
   main commit and that the `workflow-sealing` environment is not yet bound to a
   tracked workflow.
-- Before sealing, complete a separate managed repair and pilot for durable
-  authority-commit merge semantics, bind and verify the protected environment,
-  and confirm or rotate to a human-presence hardware signer. Keep the separate
-  ordinary plan/task/archive pilot requirement in `docs/WORKFLOW.md` satisfied;
-  disposable-repository and interrupted-commit rehearsals remain test evidence.
+- Bind every rebase-rewritten authority commit to its retained signed original
+  through protected `workflow-attestation/**` tags and base-owned first-parent
+  replay. Publishing and protecting the historical pilot attestation is the
+  explicit migration gate: the next pull request after the verifier merges
+  stays red until that tag is replayable.
+- Before sealing, publish the historical attestation migration tag, bind and
+  verify the protected environment, and confirm or rotate to a human-presence
+  hardware signer. Keep the separate ordinary plan/task/archive pilot
+  requirement in `docs/WORKFLOW.md` satisfied; disposable-repository and
+  interrupted-commit rehearsals remain test evidence.
 - Keep support undeclared until the pilot proves plan, task, archive,
   authority grant/revoke/expiry/cleanup, idempotent recovery, repository-local
   Codex discovery observation, protected audit-tag publication, and real

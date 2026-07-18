@@ -10,7 +10,7 @@
 
 ## 3. Operator Contract
 
-- [ ] 3.1 Document the attestation command, trust boundaries, migration gate, recovery behavior, and remaining environment/signer/sealing work; update contract tests and roadmap wording without claiming sealed enforcement.
+- [x] 3.1 Document the attestation command, trust boundaries, migration gate, recovery behavior, and remaining environment/signer/sealing work; update contract tests and roadmap wording without claiming sealed enforcement.
 
 ## 4. Post-Merge Migration Pilot
 
