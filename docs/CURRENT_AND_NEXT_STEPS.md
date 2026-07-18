@@ -4,19 +4,19 @@ This generated handoff contains semantic project state only. Its sources are tra
 
 ## Current Change
 
-`pilot-break-glass-maintainer-authority`
+`add-authority-tree-attestation`
 
 ## Current Task
 
-None — all tasks are complete.
+`2.1` — Follow RED → GREEN → REFACTOR to define the canonical authority-attestation envelope, exact mapping parser, schema contract, and transition-identity validation primitives.
 
 ## Next Task
 
-None.
+`2.2` — Follow RED → GREEN → REFACTOR to add the human-present `maintainer attest` command, distinct signature namespace, protected annotated-tag creation, and concise publication handoff.
 
 ## Current Focus
 
-No implementation tasks remain; follow the Roadmap for the next explicit transition.
+Follow RED → GREEN → REFACTOR to define the canonical authority-attestation envelope, exact mapping parser, schema contract, and transition-identity validation primitives.
 
 ## Known Blockers
 
