@@ -846,3 +846,41 @@ process.exitCode = invalid ? 1 : 0;
 `,
   );
 }
+
+test('plan-commit deletes non-canonical noise inside the named change tree', () => {
+  const repository = createPlanningRepository('demo-change');
+  try {
+    writeChange(repository, 'demo-change', [
+      { id: '1.1', completed: false, title: 'First task' },
+    ]);
+    fs.writeFileSync(
+      path.join(
+        repository,
+        'openspec/changes/demo-change/requirement-audit.md',
+      ),
+      'Bootstrap-era audit noise.\n',
+    );
+    git(repository, ['add', '-A']);
+    git(repository, ['commit', '-m', 'Record fixture baseline with noise']);
+
+    fs.rmSync(
+      path.join(
+        repository,
+        'openspec/changes/demo-change/requirement-audit.md',
+      ),
+    );
+    fs.appendFileSync(
+      path.join(repository, 'openspec/changes/demo-change/design.md'),
+      '\nNoise retired.\n',
+    );
+
+    const result = commitPlanningTransition(repository, 'demo-change');
+    assert.equal(result.kind, 'revision');
+    assert.deepEqual(result.changedPaths, [
+      'openspec/changes/demo-change/design.md',
+      'openspec/changes/demo-change/requirement-audit.md',
+    ]);
+  } finally {
+    fs.rmSync(repository, { recursive: true, force: true });
+  }
+});

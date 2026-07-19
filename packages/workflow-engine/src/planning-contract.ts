@@ -34,8 +34,9 @@ export function inspectPlanningTransition(
   changeRoot: string,
   changeId: string,
   changedPaths: string[],
+  deletedPaths: readonly string[] = [],
 ): PlanningInspection {
-  assertPlanningPaths(changeRoot, changeId, changedPaths);
+  assertPlanningPaths(changeRoot, changeId, changedPaths, deletedPaths);
   const currentPaths = assertPlanningArtifactTree(
     repositoryRoot,
     changeRoot,

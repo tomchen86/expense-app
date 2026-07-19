@@ -70,8 +70,6 @@ export function validateCiPlanningCommit(
       'Planning commits require a non-empty planning diff.',
     );
   }
-  assertPlanningPaths(normalizedChangeRoot, changeId, changedPaths);
-
   const prefix = `${normalizedChangeRoot}/${changeId}`;
   const beforeEntries = listTreeEntries(
     repositoryRoot,
@@ -79,6 +77,19 @@ export function validateCiPlanningCommit(
     prefix,
   );
   const afterEntries = listTreeEntries(repositoryRoot, facts.hash, prefix);
+  const afterPaths = new Set(afterEntries.map(({ path }) => path));
+  const deletedPaths = beforeEntries
+    .map(({ path }) => path)
+    .filter(
+      (beforePath) =>
+        !afterPaths.has(beforePath) && changedPaths.includes(beforePath),
+    );
+  assertPlanningPaths(
+    normalizedChangeRoot,
+    changeId,
+    changedPaths,
+    deletedPaths,
+  );
   assertCompletePlanningTree(normalizedChangeRoot, changeId, afterEntries);
 
   let beforeTasks: ParsedTask[] | undefined;
@@ -96,7 +107,12 @@ export function validateCiPlanningCommit(
     }
   } else {
     kind = 'revision';
-    assertCompletePlanningTree(normalizedChangeRoot, changeId, beforeEntries);
+    assertCompletePlanningTree(
+      normalizedChangeRoot,
+      changeId,
+      beforeEntries,
+      deletedPaths,
+    );
     beforeTasks = parseTasks(
       readRequiredFile(repositoryRoot, facts.parents[0], `${prefix}/tasks.md`),
     );
@@ -119,9 +135,10 @@ function assertCompletePlanningTree(
   changeRoot: string,
   changeId: string,
   entries: TreeEntry[],
+  toleratedDeletedPaths: readonly string[] = [],
 ): void {
   const paths = entries.map(({ path }) => path);
-  assertPlanningPaths(changeRoot, changeId, paths);
+  assertPlanningPaths(changeRoot, changeId, paths, toleratedDeletedPaths);
   const prefix = `${changeRoot}/${changeId}`;
   const required = [
     '.openspec.yaml',

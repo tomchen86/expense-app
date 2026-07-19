@@ -322,3 +322,73 @@ function planningPaths(changeId: string): string[] {
     `${prefix}/tasks.md`,
   ];
 }
+
+test('CI accepts a revision that deletes non-canonical planning noise', () => {
+  const repository = createRepository();
+  try {
+    writePlanningTree(repository);
+    const noisePath = path.join(
+      changeDirectory(repository),
+      'requirement-audit.md',
+    );
+    fs.writeFileSync(noisePath, 'Bootstrap-era audit noise.\n');
+    commit(repository, 'Add bootstrap noise');
+    fs.rmSync(noisePath);
+    fs.appendFileSync(
+      path.join(changeDirectory(repository), 'design.md'),
+      '\nNoise retired.\n',
+    );
+    const revision = commitPlan(repository);
+
+    const result = validateCiPlanningCommit(repository, revision, CHANGE_ID);
+    assert.equal(result.kind, 'revision');
+    assert.deepEqual(result.changedPaths, [
+      `openspec/changes/${CHANGE_ID}/design.md`,
+      `openspec/changes/${CHANGE_ID}/requirement-audit.md`,
+    ]);
+  } finally {
+    fs.rmSync(repository, { recursive: true, force: true });
+  }
+});
+
+test('CI still rejects added or escaping non-canonical planning paths', () => {
+  const added = createRepository();
+  try {
+    writePlanningTree(added);
+    commitPlan(added);
+    fs.writeFileSync(
+      path.join(changeDirectory(added), 'requirement-audit.md'),
+      'New noise.\n',
+    );
+    const additionCommit = commitPlan(added);
+    assert.throws(
+      () => validateCiPlanningCommit(added, additionCommit, CHANGE_ID),
+      (error) => isWorkflowError(error, 'PLANNING_PATHS_INVALID'),
+    );
+  } finally {
+    fs.rmSync(added, { recursive: true, force: true });
+  }
+
+  const escaping = createRepository();
+  try {
+    writePlanningTree(escaping);
+    const outsidePath = path.join(
+      escaping,
+      'openspec/changes/other-change-note.md',
+    );
+    fs.writeFileSync(outsidePath, 'Outside the named change tree.\n');
+    commit(escaping, 'Add outside note');
+    fs.rmSync(outsidePath);
+    fs.appendFileSync(
+      path.join(changeDirectory(escaping), 'design.md'),
+      '\nRevision.\n',
+    );
+    const escapeCommit = commitPlan(escaping);
+    assert.throws(
+      () => validateCiPlanningCommit(escaping, escapeCommit, CHANGE_ID),
+      (error) => isWorkflowError(error, 'PLANNING_PATHS_INVALID'),
+    );
+  } finally {
+    fs.rmSync(escaping, { recursive: true, force: true });
+  }
+});

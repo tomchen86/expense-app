@@ -86,3 +86,34 @@ test('planning revisions preserve shared state and add only unchecked tasks', ()
     );
   }
 });
+
+test('planning paths accept only in-tree deletions of non-canonical files', () => {
+  assert.doesNotThrow(() =>
+    assertPlanningPaths(
+      'openspec/changes',
+      'demo-change',
+      [
+        'openspec/changes/demo-change/design.md',
+        'openspec/changes/demo-change/requirement-audit.md',
+      ],
+      ['openspec/changes/demo-change/requirement-audit.md'],
+    ),
+  );
+  assert.throws(
+    () =>
+      assertPlanningPaths('openspec/changes', 'demo-change', [
+        'openspec/changes/demo-change/requirement-audit.md',
+      ]),
+    (error) => isWorkflowError(error, 'PLANNING_PATHS_INVALID'),
+  );
+  assert.throws(
+    () =>
+      assertPlanningPaths(
+        'openspec/changes',
+        'demo-change',
+        ['openspec/changes/other-change/noise.md'],
+        ['openspec/changes/other-change/noise.md'],
+      ),
+    (error) => isWorkflowError(error, 'PLANNING_PATHS_INVALID'),
+  );
+});

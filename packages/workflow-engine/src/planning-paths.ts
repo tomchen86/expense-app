@@ -5,6 +5,7 @@ export function assertPlanningPaths(
   changeRoot: string,
   changeId: string,
   changedPaths: string[],
+  deletedPaths: readonly string[] = [],
 ): void {
   if (changeId === 'archive') {
     throw workflowError(
@@ -21,9 +22,13 @@ export function assertPlanningPaths(
     `${prefix}tasks.md`,
     `${prefix}guard.json`,
   ]);
+  const deleted = new Set(deletedPaths.map(normalizeChangedPath));
   const invalid = changedPaths.filter((candidate) => {
     const normalized = normalizeChangedPath(candidate);
     if (exact.has(normalized)) {
+      return false;
+    }
+    if (deleted.has(normalized) && normalized.startsWith(prefix)) {
       return false;
     }
     if (!normalized.startsWith(`${prefix}specs/`)) {

@@ -1,4 +1,5 @@
 import crypto from 'node:crypto';
+import fs from 'node:fs';
 import path from 'node:path';
 
 import { loadWorkflowConfig } from './contracts.ts';
@@ -144,7 +145,11 @@ function commitPlanningTransitionLocked(
       ExitCode.verification,
     );
   }
-  assertPlanningPaths(config.changeRoot, changeId, changedPaths);
+  const deletedPaths = changedPaths.filter(
+    (changedPath) =>
+      !fs.existsSync(path.join(initial.repositoryRoot, changedPath)),
+  );
+  assertPlanningPaths(config.changeRoot, changeId, changedPaths, deletedPaths);
   const initialFingerprint = fingerprintRepositoryWorktree(
     initial.repositoryRoot,
     initial.head,
@@ -155,6 +160,7 @@ function commitPlanningTransitionLocked(
     config.changeRoot,
     changeId,
     changedPaths,
+    deletedPaths,
   );
   const openspec = validateOpenSpecPlanning(
     initial.repositoryRoot,
@@ -174,6 +180,8 @@ function commitPlanningTransitionLocked(
     config.changeRoot,
     changeId,
     changedPaths,
+
+    deletedPaths,
   );
   if (
     verified.transitionKind !== inspection.transitionKind ||
