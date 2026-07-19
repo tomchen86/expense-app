@@ -4,19 +4,19 @@ This generated handoff contains semantic project state only. Its sources are tra
 
 ## Current Change
 
-`decouple-tests-from-live-change-fixtures`
+`retire-bootstrap-planning-noise`
 
 ## Current Task
 
-None — all tasks are complete.
+`2.1` — Follow RED -> GREEN -> REFACTOR to allow deletion-only planning revisions of non-canonical files inside the named change tree, in both live transitions and CI plan replay, while additions and modifications remain rejected.
 
 ## Next Task
 
-None.
+`2.2` — Make the workflow-format contract assertion accept exactly the current registered command or the same command without the archived bootstrap path, and no other form.
 
 ## Current Focus
 
-No implementation tasks remain; follow the Roadmap for the next explicit transition.
+Follow RED -> GREEN -> REFACTOR to allow deletion-only planning revisions of non-canonical files inside the named change tree, in both live transitions and CI plan replay, while additions and modifications remain rejected.
 
 ## Known Blockers
 
