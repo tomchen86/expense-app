@@ -14,5 +14,5 @@
 
 ## 4. Post-Merge Migration Pilot
 
-- [ ] 4.1 After the implementation PR merges, protect `workflow-attestation/**`, create and publish the human-signed pilot attestation for the three observed original/main mappings, run base-owned replay, and record exact local and remote tag evidence.
+- [x] 4.1 After the implementation PR merges, protect `workflow-attestation/**`, create and publish the human-signed pilot attestation for the three observed original/main mappings, run base-owned replay, and record exact local and remote tag evidence.
 - [ ] 4.2 After the first migration-evidence PR passes and merges, record its required-check results, merged identity, ruleset read-back, and bootstrap-only remainder before archival.
