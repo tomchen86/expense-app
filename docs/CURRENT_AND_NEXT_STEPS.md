@@ -4,11 +4,11 @@ This generated handoff contains semantic project state only. Its sources are tra
 
 ## Current Change
 
-`add-authority-tree-attestation`
+`decouple-tests-from-live-change-fixtures`
 
 ## Current Task
 
-None — all tasks are complete.
+`1.2` — Rewrite the adapter and managed-contract integration tests to build synthetic change fixtures in temporary repositories, preserving every existing assertion, with the recorded PR #62 failure as RED evidence and a full-bundle pass on both the current and archive trees as GREEN evidence.
 
 ## Next Task
 
@@ -16,7 +16,7 @@ None.
 
 ## Current Focus
 
-No implementation tasks remain; follow the Roadmap for the next explicit transition.
+Rewrite the adapter and managed-contract integration tests to build synthetic change fixtures in temporary repositories, preserving every existing assertion, with the recorded PR #62 failure as RED evidence and a full-bundle pass on both the current and archive trees as GREEN evidence.
 
 ## Known Blockers
 
