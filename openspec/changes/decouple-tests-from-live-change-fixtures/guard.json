@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "changeId": "decouple-tests-from-live-change-fixtures",
+  "tasks": {
+    "1.1": {
+      "allowedPaths": [
+        "packages/workflow-engine/test/managed-change-contract.integration.test.ts",
+        "packages/workflow-engine/test/openspec-adapter.integration.test.ts"
+      ],
+      "requiredChecks": [
+        "workflow-tests",
+        "workflow-typecheck",
+        "workflow-lint",
+        "workflow-format",
+        "managed-documents"
+      ]
+    }
+  }
+}
