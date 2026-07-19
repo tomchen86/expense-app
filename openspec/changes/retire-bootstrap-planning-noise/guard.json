@@ -1,0 +1,43 @@
+{
+  "schemaVersion": 1,
+  "changeId": "retire-bootstrap-planning-noise",
+  "tasks": {
+    "1.1": {
+      "allowedPaths": ["docs/CURRENT_AND_NEXT_STEPS.md"],
+      "requiredChecks": [
+        "workflow-tests",
+        "workflow-typecheck",
+        "workflow-lint",
+        "workflow-format",
+        "managed-documents"
+      ]
+    },
+    "2.1": {
+      "allowedPaths": [
+        "packages/workflow-engine/src/ci-planning.ts",
+        "packages/workflow-engine/src/planning-paths.ts",
+        "packages/workflow-engine/src/planning-transition.ts",
+        "packages/workflow-engine/test/ci-planning.integration.test.ts",
+        "packages/workflow-engine/test/planning-transition.contract.test.ts",
+        "packages/workflow-engine/test/planning-transition.integration.test.ts"
+      ],
+      "requiredChecks": [
+        "workflow-tests",
+        "workflow-typecheck",
+        "workflow-lint",
+        "workflow-format",
+        "managed-documents"
+      ]
+    },
+    "2.2": {
+      "allowedPaths": ["packages/workflow-engine/test/contracts.test.ts"],
+      "requiredChecks": [
+        "workflow-tests",
+        "workflow-typecheck",
+        "workflow-lint",
+        "workflow-format",
+        "managed-documents"
+      ]
+    }
+  }
+}
