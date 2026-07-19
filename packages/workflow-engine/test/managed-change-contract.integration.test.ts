@@ -9,10 +9,16 @@ import { loadValidatedChangeContract } from '../src/managed-change-contract.ts';
 import { parseValidation } from '../src/openspec-payloads.ts';
 import { sourceRepositoryRoot } from './fixture.ts';
 
-const CHANGE_ID = 'integrate-openspec-with-workflow';
+const CHANGE_ID = 'fixture-managed-change';
 
 test('validated managed contract binds OpenSpec readiness to a full mode-aware snapshot', () => {
-  const contract = loadValidatedChangeContract(sourceRepositoryRoot, CHANGE_ID);
+  const repository = createManagedRepository();
+  let contract;
+  try {
+    contract = loadValidatedChangeContract(repository, CHANGE_ID);
+  } finally {
+    fs.rmSync(repository, { recursive: true, force: true });
+  }
 
   assert.equal(contract.changeId, CHANGE_ID);
   assert.equal(contract.schemaName, 'expense-app');
@@ -144,7 +150,7 @@ test('managed contract emits stable sorted diagnostics for strict OpenSpec failu
             },
             {
               level: 'WARNING',
-              path: 'specs/openspec-workflow-integration/spec.md',
+              path: 'specs/fixture-capability/spec.md',
               message: 'secondary diagnostic',
             },
           ],
@@ -254,11 +260,7 @@ function createManagedRepository(): string {
     path.join(repository, 'openspec/schemas/expense-app'),
     { recursive: true },
   );
-  fs.cpSync(
-    path.join(sourceRepositoryRoot, 'openspec/changes', CHANGE_ID),
-    path.join(repository, 'openspec/changes', CHANGE_ID),
-    { recursive: true },
-  );
+  writeSyntheticChange(repository);
   installFakeOpenSpec(repository);
   return repository;
 }
@@ -380,7 +382,7 @@ if (args[0] === 'validate') {
     ? [
         {
           level: 'WARNING',
-          path: 'specs/openspec-workflow-integration/spec.md',
+          path: 'specs/fixture-capability/spec.md',
           message: 'secondary diagnostic'
         },
         {
@@ -412,6 +414,52 @@ if (args[0] === 'validate') {
   process.exitCode = invalid ? 1 : 0;
 }
 `;
+}
+
+function writeSyntheticChange(repository: string): void {
+  const changeRoot = path.join(repository, 'openspec/changes', CHANGE_ID);
+  fs.mkdirSync(path.join(changeRoot, 'specs/fixture-capability'), {
+    recursive: true,
+  });
+  const artifacts: Array<[string, string]> = [
+    ['.openspec.yaml', 'schema: expense-app\ncreated: 2026-07-19\n'],
+    [
+      'proposal.md',
+      '## Why\n\nSynthetic fixture change for contract tests.\n\n## What Changes\n\n- Exercise the managed contract loader.\n',
+    ],
+    [
+      'design.md',
+      '## Context\n\nSynthetic design content for contract fixtures.\n',
+    ],
+    [
+      'tasks.md',
+      '## 1. Fixture\n\n- [ ] 1.1 Exercise the managed contract loader.\n',
+    ],
+    [
+      'guard.json',
+      `${JSON.stringify(
+        {
+          schemaVersion: 1,
+          changeId: CHANGE_ID,
+          tasks: {
+            '1.1': {
+              allowedPaths: ['package.json'],
+              requiredChecks: ['workflow-tests'],
+            },
+          },
+        },
+        null,
+        2,
+      )}\n`,
+    ],
+    [
+      'specs/fixture-capability/spec.md',
+      '## ADDED Requirements\n\n### Requirement: Fixture capability\n\nThe fixture MUST exist.\n\n#### Scenario: Fixture loads\n\n- **WHEN** the fixture change is validated\n- **THEN** the loader accepts it\n',
+    ],
+  ];
+  for (const [relativePath, content] of artifacts) {
+    fs.writeFileSync(path.join(changeRoot, relativePath), content);
+  }
 }
 
 function copy(relativePath: string, repository: string): void {

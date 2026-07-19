@@ -8,7 +8,7 @@ This generated handoff contains semantic project state only. Its sources are tra
 
 ## Current Task
 
-`1.2` — Rewrite the adapter and managed-contract integration tests to build synthetic change fixtures in temporary repositories, preserving every existing assertion, with the recorded PR #62 failure as RED evidence and a full-bundle pass on both the current and archive trees as GREEN evidence.
+None — all tasks are complete.
 
 ## Next Task
 
@@ -16,7 +16,7 @@ None.
 
 ## Current Focus
 
-Rewrite the adapter and managed-contract integration tests to build synthetic change fixtures in temporary repositories, preserving every existing assertion, with the recorded PR #62 failure as RED evidence and a full-bundle pass on both the current and archive trees as GREEN evidence.
+No implementation tasks remain; follow the Roadmap for the next explicit transition.
 
 ## Known Blockers
 

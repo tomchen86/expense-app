@@ -544,36 +544,180 @@ test('real pinned OpenSpec adapter validates package, schema, status, and change
     () => adapter.whichSchema('unreviewed-schema'),
     (error) => isWorkflowError(error, 'OPENSPEC_SCHEMA_UNSUPPORTED'),
   );
-  const status = adapter.status(
-    'integrate-openspec-with-workflow',
-    'spec-driven',
-  );
-  assert.equal(status.changeName, 'integrate-openspec-with-workflow');
-  assert.equal(status.schemaName, 'spec-driven');
-  assert.equal(status.isComplete, true);
-  const projectStatus = adapter.status(
-    'integrate-openspec-with-workflow',
-    'expense-app',
-  );
-  assert.deepEqual(projectStatus.applyRequires, ['tasks', 'guard']);
-  assert.deepEqual(projectStatus.artifactIds.sort(), [
-    'design',
-    'guard',
-    'proposal',
-    'specs',
-    'tasks',
-  ]);
-  assert.equal(
-    adapter.instructions(
-      'integrate-openspec-with-workflow',
+  const fixture = createRealAdapterFixtureRepository();
+  try {
+    const fixtureAdapter = createOpenSpecAdapter(fixture);
+    const status = fixtureAdapter.status(
+      'fixture-adapter-change',
+      'spec-driven',
+    );
+    assert.equal(status.changeName, 'fixture-adapter-change');
+    assert.equal(status.schemaName, 'spec-driven');
+    assert.equal(status.isComplete, true);
+    const projectStatus = fixtureAdapter.status(
+      'fixture-adapter-change',
       'expense-app',
+    );
+    assert.deepEqual(projectStatus.applyRequires, ['tasks', 'guard']);
+    assert.deepEqual(projectStatus.artifactIds.sort(), [
+      'design',
       'guard',
-    ).outputPath,
-    'guard.json',
-  );
-  const validation = adapter.validateChange('integrate-openspec-with-workflow');
-  assert.equal(validation.valid, true);
+      'proposal',
+      'specs',
+      'tasks',
+    ]);
+    assert.equal(
+      fixtureAdapter.instructions(
+        'fixture-adapter-change',
+        'expense-app',
+        'guard',
+      ).outputPath,
+      'guard.json',
+    );
+    const validation = fixtureAdapter.validateChange('fixture-adapter-change');
+    assert.equal(validation.valid, true);
+  } finally {
+    fs.rmSync(fixture, { recursive: true, force: true });
+  }
 });
+
+function createRealAdapterFixtureRepository(): string {
+  const repository = fs.realpathSync(
+    fs.mkdtempSync(path.join(os.tmpdir(), 'openspec-real-adapter-')),
+  );
+  for (const filePath of [
+    'package.json',
+    'pnpm-lock.yaml',
+    'pnpm-workspace.yaml',
+    'openspec/config.yaml',
+  ]) {
+    const target = path.join(repository, filePath);
+    fs.mkdirSync(path.dirname(target), { recursive: true });
+    fs.copyFileSync(path.join(sourceRepositoryRoot, filePath), target);
+  }
+  fs.cpSync(
+    path.join(sourceRepositoryRoot, 'openspec/schemas/expense-app'),
+    path.join(repository, 'openspec/schemas/expense-app'),
+    { recursive: true },
+  );
+  const pinnedPackageEntry = path.dirname(
+    path.dirname(
+      fs.realpathSync(
+        path.join(sourceRepositoryRoot, 'node_modules/@fission-ai/openspec'),
+      ),
+    ),
+  );
+  fs.cpSync(pinnedPackageEntry, path.join(repository, 'node_modules'), {
+    recursive: true,
+    dereference: true,
+  });
+  const changeRoot = path.join(
+    repository,
+    'openspec/changes/fixture-adapter-change',
+  );
+  fs.mkdirSync(path.join(changeRoot, 'specs/fixture-adapter-capability'), {
+    recursive: true,
+  });
+  const artifacts: Array<[string, string]> = [
+    ['.openspec.yaml', 'schema: expense-app\ncreated: 2026-07-19\n'],
+    [
+      'proposal.md',
+      [
+        '## Why',
+        '',
+        'Synthetic fixture change so the real pinned adapter validates a change',
+        'without depending on mutable repository planning state.',
+        '',
+        '## What Changes',
+        '',
+        '- Exercise pinned status, instructions, and validation end to end.',
+        '',
+        '## Capabilities',
+        '',
+        '### New Capabilities',
+        '',
+        '- `fixture-adapter-capability`: Synthetic capability used only by the',
+        '  adapter integration fixture.',
+        '',
+        '### Modified Capabilities',
+        '',
+        'None.',
+        '',
+        '## Impact',
+        '',
+        '- Affected systems: none; this change exists only inside a temporary',
+        '  test repository.',
+        '',
+      ].join('\n'),
+    ],
+    [
+      'design.md',
+      [
+        '## Context',
+        '',
+        'The adapter integration test needs a schema-valid change fixture.',
+        '',
+        '## Goals / Non-Goals',
+        '',
+        '**Goals:**',
+        '',
+        '- Stay valid under the expense-app schema.',
+        '',
+        '**Non-Goals:**',
+        '',
+        '- Represent real product work.',
+        '',
+        '## Decisions',
+        '',
+        '### Keep the fixture minimal',
+        '',
+        'The fixture carries exactly the canonical artifact graph.',
+        '',
+      ].join('\n'),
+    ],
+    [
+      'tasks.md',
+      '## 1. Fixture\n\n- [ ] 1.1 Exercise the pinned adapter end to end.\n',
+    ],
+    [
+      'guard.json',
+      `${JSON.stringify(
+        {
+          schemaVersion: 1,
+          changeId: 'fixture-adapter-change',
+          tasks: {
+            '1.1': {
+              allowedPaths: ['package.json'],
+              requiredChecks: ['workflow-tests'],
+            },
+          },
+        },
+        null,
+        2,
+      )}\n`,
+    ],
+    [
+      'specs/fixture-adapter-capability/spec.md',
+      [
+        '## ADDED Requirements',
+        '',
+        '### Requirement: Fixture capability exists',
+        '',
+        'The synthetic fixture MUST validate under the expense-app schema.',
+        '',
+        '#### Scenario: Adapter validates the fixture',
+        '',
+        '- **WHEN** the pinned adapter validates the fixture change',
+        '- **THEN** validation succeeds with no diagnostics',
+        '',
+      ].join('\n'),
+    ],
+  ];
+  for (const [relativePath, content] of artifacts) {
+    fs.writeFileSync(path.join(changeRoot, relativePath), content);
+  }
+  return repository;
+}
 
 function createFakeOpenSpecRepository(
   cliSource: string,
