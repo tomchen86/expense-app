@@ -8,15 +8,15 @@ This generated handoff contains semantic project state only. Its sources are tra
 
 ## Current Task
 
-`2.1` — Follow RED -> GREEN -> REFACTOR to allow deletion-only planning revisions of non-canonical files inside the named change tree, in both live transitions and CI plan replay, while additions and modifications remain rejected.
+`2.2` — Make the workflow-format contract assertion accept exactly the current registered command or the same command without the archived bootstrap path, and no other form.
 
 ## Next Task
 
-`2.2` — Make the workflow-format contract assertion accept exactly the current registered command or the same command without the archived bootstrap path, and no other form.
+None.
 
 ## Current Focus
 
-Follow RED -> GREEN -> REFACTOR to allow deletion-only planning revisions of non-canonical files inside the named change tree, in both live transitions and CI plan replay, while additions and modifications remain rejected.
+Make the workflow-format contract assertion accept exactly the current registered command or the same command without the archived bootstrap path, and no other form.
 
 ## Known Blockers
 
