@@ -115,6 +115,33 @@ before the one-way `bootstrap` → `sealed` transition:
    an old-key-authorized authority commit and attest its rebased result
    through this same mechanism.
 
-The pull request that carries this evidence document is itself the first
-post-gate pull request; its base-owned `workflow-assurance` result is the
-CI-grade confirmation recorded for task 4.2 after merge.
+## Migration-evidence PR confirmation (task 4.2)
+
+PR `#58` (`Record attestation pilot evidence`) was the first pull request
+evaluated by the attestation-aware base-owned verifier, and it produced
+CI-grade evidence in two acts:
+
+1. **First run failed closed on real namespace pollution.** Run
+   `29669951694` ended with `CI_ATTESTATION_GRANT_INVALID`: the protected
+   `workflow-grant/**` namespace contained a mispushed alias ref
+   `…/402b4c86-4b97-4c69-8c5c-bba5995b438` (final character truncated during a
+   manual pilot push) pointing at the same tag object `16a6fe35…` as the
+   canonical `…bba5995b4387` ref. The verifier's exact-name enumeration
+   detected the payload/ref-name mismatch on first contact — pollution that
+   had sat unnoticed in the protected namespace since the pilot.
+2. **Recovery used the governed path.** The maintainer deleted only the
+   malformed alias with their own SSH identity through the tag-ruleset bypass
+   (`git push origin :refs/tags/workflow-grant/…b438`); the canonical ref and
+   its audit envelope were retained untouched. The rerun of the same run
+   succeeded with no code, policy, or ruleset change.
+
+Merged identity: PR `#58`, merged 2026-07-19T02:28:09Z by `tomchen86-bot`
+through required `workflow-assurance` success, up-to-date base, rebase merge,
+no bypass. Rebased evidence commit on `main`: `0099db3`. Ruleset read-back at
+merge time was unchanged from the table above (`protect-main-workflow-assurance`,
+`protect-workflow-grant-audit-tags`, `protect-workflow-attestation-tags`, all
+active).
+
+The bootstrap-only remainder in the previous section is unchanged: environment
+binding, hardware-signer confirmation or rotation, and the one-way sealed
+transition remain separately approved work.

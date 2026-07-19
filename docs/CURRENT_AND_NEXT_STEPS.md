@@ -8,7 +8,7 @@ This generated handoff contains semantic project state only. Its sources are tra
 
 ## Current Task
 
-`4.2` — After the first migration-evidence PR passes and merges, record its required-check results, merged identity, ruleset read-back, and bootstrap-only remainder before archival.
+None — all tasks are complete.
 
 ## Next Task
 
@@ -16,7 +16,7 @@ None.
 
 ## Current Focus
 
-After the first migration-evidence PR passes and merges, record its required-check results, merged identity, ruleset read-back, and bootstrap-only remainder before archival.
+No implementation tasks remain; follow the Roadmap for the next explicit transition.
 
 ## Known Blockers
 
