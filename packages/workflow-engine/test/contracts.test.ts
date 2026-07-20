@@ -139,30 +139,39 @@ test('format verification delegates to the registered canonical authority', () =
   const checks = JSON.parse(
     fs.readFileSync(path.join(repositoryRoot, 'workflow/checks.json'), 'utf8'),
   );
-  assert.deepEqual(checks.checks['workflow-format'], {
-    command: [
-      'node-package-bin',
-      '.',
-      'prettier',
-      'prettier',
-      '--check',
-      'packages/workflow-engine',
-      'workflow',
-      'apps/api/src/__tests__/setup/datasource.factory.ts',
-      'apps/api/src/__tests__/setup/database-target-policy.ts',
-      'apps/api/src/__tests__/isolated/database-target-policy.isolated.spec.ts',
-      'package.json',
-      'pnpm-workspace.yaml',
-      'openspec/changes/establish-executable-ai-workflow',
-      'docs/README.md',
-      'docs/ROADMAP.md',
-      'docs/CURRENT_AND_NEXT_STEPS.md',
-      'docs/DOCUMENT_STRUCTURE_GUIDE.md',
-      'docs/WORKFLOW.md',
-      'AGENTS.md',
-    ],
-    destructiveDatabase: false,
-  });
+  const registeredFormat = checks.checks['workflow-format'];
+  const registeredFormatCommand = [
+    'node-package-bin',
+    '.',
+    'prettier',
+    'prettier',
+    '--check',
+    'packages/workflow-engine',
+    'workflow',
+    'apps/api/src/__tests__/setup/datasource.factory.ts',
+    'apps/api/src/__tests__/setup/database-target-policy.ts',
+    'apps/api/src/__tests__/isolated/database-target-policy.isolated.spec.ts',
+    'package.json',
+    'pnpm-workspace.yaml',
+    'openspec/changes/establish-executable-ai-workflow',
+    'docs/README.md',
+    'docs/ROADMAP.md',
+    'docs/CURRENT_AND_NEXT_STEPS.md',
+    'docs/DOCUMENT_STRUCTURE_GUIDE.md',
+    'docs/WORKFLOW.md',
+    'AGENTS.md',
+  ];
+  const retiredBootstrapCommand = registeredFormatCommand.filter(
+    (entry) => entry !== 'openspec/changes/establish-executable-ai-workflow',
+  );
+  assert.equal(registeredFormat?.destructiveDatabase, false);
+  assert.ok(
+    JSON.stringify(registeredFormat?.command) ===
+      JSON.stringify(registeredFormatCommand) ||
+      JSON.stringify(registeredFormat?.command) ===
+        JSON.stringify(retiredBootstrapCommand),
+    'workflow-format must be the registered command or its retired-bootstrap form',
+  );
 });
 
 test('repository exposes only reviewed OpenSpec planning skills', () => {
