@@ -8,7 +8,7 @@ This generated handoff contains semantic project state only. Its sources are tra
 
 ## Current Task
 
-`2.2` — Make the workflow-format contract assertion accept exactly the current registered command or the same command without the archived bootstrap path, and no other form.
+None — all tasks are complete.
 
 ## Next Task
 
@@ -16,7 +16,7 @@ None.
 
 ## Current Focus
 
-Make the workflow-format contract assertion accept exactly the current registered command or the same command without the archived bootstrap path, and no other form.
+No implementation tasks remain; follow the Roadmap for the next explicit transition.
 
 ## Known Blockers
 
