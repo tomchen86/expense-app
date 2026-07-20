@@ -4,4 +4,4 @@
 
 ## 2. Definition Transition
 
-- [ ] 2.1 Follow RED -> GREEN -> REFACTOR to make validated authority commits contribute superseding check definitions from their own tree while all other definition-drift rejections stay strict.
+- [x] 2.1 Follow RED -> GREEN -> REFACTOR to make validated authority commits contribute superseding check definitions from their own tree while all other definition-drift rejections stay strict.

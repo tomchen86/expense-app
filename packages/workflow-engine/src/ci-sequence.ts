@@ -166,6 +166,7 @@ export function replayCommitSequence(
       recordDefinitions(
         requiredCheckDefinitions,
         authority.requiredCheckDefinitions,
+        true,
       );
       authorityGrants.add(authority.grantId);
       continue;
@@ -477,10 +478,11 @@ function recordCheckDefinitions(
 function recordDefinitions(
   collected: Map<string, string>,
   definitions: Record<string, string>,
+  supersede = false,
 ): void {
   for (const [checkId, definition] of Object.entries(definitions)) {
     const previous = collected.get(checkId);
-    if (previous !== undefined && previous !== definition) {
+    if (!supersede && previous !== undefined && previous !== definition) {
       throw ciError(
         'CI_CHECK_DEFINITION_CHANGED',
         `Required check ${checkId} changed between task commits.`,
