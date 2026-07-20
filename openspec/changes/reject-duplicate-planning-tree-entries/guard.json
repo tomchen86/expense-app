@@ -1,0 +1,29 @@
+{
+  "schemaVersion": 1,
+  "changeId": "reject-duplicate-planning-tree-entries",
+  "tasks": {
+    "1.1": {
+      "allowedPaths": ["docs/CURRENT_AND_NEXT_STEPS.md"],
+      "requiredChecks": [
+        "workflow-tests",
+        "workflow-typecheck",
+        "workflow-lint",
+        "workflow-format",
+        "managed-documents"
+      ]
+    },
+    "2.1": {
+      "allowedPaths": [
+        "packages/workflow-engine/src/ci-planning.ts",
+        "packages/workflow-engine/test/ci-planning.integration.test.ts"
+      ],
+      "requiredChecks": [
+        "workflow-tests",
+        "workflow-typecheck",
+        "workflow-lint",
+        "workflow-format",
+        "managed-documents"
+      ]
+    }
+  }
+}
