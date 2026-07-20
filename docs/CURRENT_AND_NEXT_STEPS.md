@@ -4,11 +4,11 @@ This generated handoff contains semantic project state only. Its sources are tra
 
 ## Current Change
 
-`reject-duplicate-planning-tree-entries`
+`make-api-jwt-fail-closed`
 
 ## Current Task
 
-None — all tasks are complete.
+`2.1` — Follow RED -> GREEN -> REFACTOR to introduce the fail-closed JWT secret resolver, wire module registration, guard verification, service refresh/signing, and app config through it, remove every inline fallback, give the test setup explicit secrets, and pin the forbidden literals with a regression test.
 
 ## Next Task
 
@@ -16,7 +16,7 @@ None.
 
 ## Current Focus
 
-No implementation tasks remain; follow the Roadmap for the next explicit transition.
+Follow RED -> GREEN -> REFACTOR to introduce the fail-closed JWT secret resolver, wire module registration, guard verification, service refresh/signing, and app config through it, remove every inline fallback, give the test setup explicit secrets, and pin the forbidden literals with a regression test.
 
 ## Known Blockers
 
