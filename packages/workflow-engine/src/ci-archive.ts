@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 import { verifyArchiveDeltaOutcomes } from './archive-delta-verifier.ts';
+import { preEpochCompletedTaskIds } from './bootstrap-task-exemption.ts';
 import { canonicalCheckDefinition } from './ci-historical-contract.ts';
 import {
   assertArchiveReplayContent,
@@ -104,6 +105,7 @@ export function validateCiArchiveCommit(
     assertTaskEvidence(
       repositoryRoot,
       parent,
+      config.changeRoot,
       contract.changeId,
       contract.tasks,
     );
@@ -252,18 +254,33 @@ function validateRebuiltSpecs(
 function assertTaskEvidence(
   repositoryRoot: string,
   parent: string,
+  changeRoot: string,
   changeId: string,
   tasks: Array<{ id: string }>,
 ): void {
+  const exemptTaskIds = preEpochCompletedTaskIds(
+    repositoryRoot,
+    changeRoot,
+    changeId,
+    parent,
+  );
   for (const task of tasks) {
     const commits = findExactTaskCommits(repositoryRoot, changeId, task.id);
+    if (commits.length !== 1) {
+      if (exemptTaskIds.has(task.id)) {
+        continue;
+      }
+      throw archiveError(
+        'CI_ARCHIVE_TASK_EVIDENCE_INVALID',
+        'Every archived task requires one reachable canonical task commit.',
+      );
+    }
     if (
-      commits.length !== 1 ||
       runGit(
         repositoryRoot,
-        ['merge-base', commits[0]?.hash ?? '', parent],
+        ['merge-base', commits[0].hash, parent],
         true,
-      ).trim() !== commits[0]?.hash
+      ).trim() !== commits[0].hash
     ) {
       throw archiveError(
         'CI_ARCHIVE_TASK_EVIDENCE_INVALID',

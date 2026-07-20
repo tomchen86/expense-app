@@ -183,6 +183,51 @@ test('CI rejects forbidden generated lifecycle authority when hooks are bypassed
   }
 });
 
+test('CI archive replay exempts pre-epoch task completions', () => {
+  const repository = createFixtureRepository();
+  try {
+    const deltaPath = path.join(
+      repository,
+      'openspec/changes/demo-change/specs/demo/spec.md',
+    );
+    fs.writeFileSync(deltaPath, addedDelta());
+    git(repository, ['add', '.']);
+    git(repository, ['commit', '-m', 'Configure archive fixture']);
+
+    const tasksPath = path.join(
+      repository,
+      'openspec/changes/demo-change/tasks.md',
+    );
+    fs.writeFileSync(
+      tasksPath,
+      fs.readFileSync(tasksPath, 'utf8').replace('- [ ] 1.1', '- [x] 1.1'),
+    );
+    git(repository, ['add', '.']);
+    git(repository, ['commit', '-m', 'Bootstrap completion']);
+    fs.appendFileSync(
+      path.join(repository, 'openspec/changes/demo-change/design.md'),
+      '\nEpoch revision.\n',
+    );
+    git(repository, ['add', '.']);
+    git(repository, [
+      'commit',
+      '-m',
+      'Plan demo-change',
+      '-m',
+      'Change: demo-change\nTransition: plan',
+    ]);
+    const base = git(repository, ['rev-parse', 'HEAD']).trim();
+    git(repository, ['checkout', '-b', 'work/archive-demo']);
+    const archived = commitArchiveTransition(repository, 'demo-change');
+
+    const result = verifyPullRequest(repository, base, archived.commitHash);
+
+    assert.deepEqual(result.archivedChanges, ['demo-change']);
+  } finally {
+    fs.rmSync(repository, { recursive: true, force: true });
+  }
+});
+
 function archivedFixture(): {
   repository: string;
   base: string;
