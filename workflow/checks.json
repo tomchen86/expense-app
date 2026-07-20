@@ -70,7 +70,6 @@
         "apps/api/src/__tests__/isolated/database-target-policy.isolated.spec.ts",
         "package.json",
         "pnpm-workspace.yaml",
-        "openspec/changes/establish-executable-ai-workflow",
         "docs/README.md",
         "docs/ROADMAP.md",
         "docs/CURRENT_AND_NEXT_STEPS.md",
