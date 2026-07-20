@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -279,6 +280,31 @@ function writeTasks(repository: string, tasks: string): void {
   );
 }
 
+function mktree(repository: string, listing: string): string {
+  return execFileSync('git', ['-C', repository, 'mktree'], {
+    encoding: 'utf8',
+    input: listing,
+  }).trim();
+}
+
+function replaceTreeEntry(
+  repository: string,
+  treeRef: string,
+  name: string,
+  newHash: string,
+): string {
+  const listing = git(repository, ['ls-tree', treeRef])
+    .split('\n')
+    .filter(Boolean)
+    .map((line) =>
+      line.endsWith(`\t${name}`)
+        ? line.replace(/^(\d+ \S+) [0-9a-f]+\t/, `$1 ${newHash}\t`)
+        : line,
+    )
+    .join('\n');
+  return mktree(repository, `${listing}\n`);
+}
+
 function commitPlan(repository: string, subject = `Plan ${CHANGE_ID}`): string {
   git(repository, ['add', '-A']);
   git(repository, [
@@ -392,6 +418,66 @@ test('CI still rejects a revision whose before tree stays incomplete', () => {
       '\nRevision without repair.\n',
     );
     const revision = commitPlan(repository);
+
+    assert.throws(
+      () => validateCiPlanningCommit(repository, revision, CHANGE_ID),
+      (error) => isWorkflowError(error, 'CI_PLANNING_TREE_INVALID'),
+    );
+  } finally {
+    fs.rmSync(repository, { recursive: true, force: true });
+  }
+});
+
+test('CI rejects a planning tree with duplicate entries', () => {
+  const repository = createRepository();
+  try {
+    writePlanningTree(repository);
+    const introduction = commitPlan(repository);
+
+    const prefix = `openspec/changes/${CHANGE_ID}`;
+    const forgedBlob = execFileSync(
+      'git',
+      ['-C', repository, 'hash-object', '-w', '--stdin'],
+      { encoding: 'utf8', input: '# Forged proposal\n' },
+    ).trim();
+    const duplicatedChangeTree = mktree(
+      repository,
+      `${git(repository, ['ls-tree', `${introduction}:${prefix}`])}100644 blob ${forgedBlob}\tproposal.md\n`,
+    );
+    const changesTree = replaceTreeEntry(
+      repository,
+      `${introduction}:openspec/changes`,
+      CHANGE_ID,
+      duplicatedChangeTree,
+    );
+    const openspecTree = replaceTreeEntry(
+      repository,
+      `${introduction}:openspec`,
+      'changes',
+      changesTree,
+    );
+    const rootTree = replaceTreeEntry(
+      repository,
+      introduction,
+      'openspec',
+      openspecTree,
+    );
+    const revision = execFileSync(
+      'git',
+      [
+        '-C',
+        repository,
+        'commit-tree',
+        rootTree,
+        '-p',
+        introduction,
+        '-m',
+        `Plan ${CHANGE_ID}`,
+        '-m',
+        `Change: ${CHANGE_ID}\nTransition: plan`,
+      ],
+      { encoding: 'utf8' },
+    ).trim();
 
     assert.throws(
       () => validateCiPlanningCommit(repository, revision, CHANGE_ID),
