@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "changeId": "retire-bootstrap-format-scope",
+  "tasks": {
+    "1.1": {
+      "allowedPaths": ["docs/CURRENT_AND_NEXT_STEPS.md"],
+      "requiredChecks": [
+        "workflow-tests",
+        "workflow-typecheck",
+        "workflow-lint",
+        "workflow-format",
+        "managed-documents"
+      ]
+    }
+  }
+}
