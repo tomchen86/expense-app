@@ -4,11 +4,11 @@ This generated handoff contains semantic project state only. Its sources are tra
 
 ## Current Change
 
-`retire-bootstrap-planning-noise`
+`reject-duplicate-planning-tree-entries`
 
 ## Current Task
 
-None — all tasks are complete.
+`2.1` — Follow RED -> GREEN -> REFACTOR to reject planning trees whose recursive listings contain duplicate normalized paths at the CI replay parse boundary, crafting the adversarial tree with git plumbing in the test, while unique-path trees stay unaffected.
 
 ## Next Task
 
@@ -16,7 +16,7 @@ None.
 
 ## Current Focus
 
-No implementation tasks remain; follow the Roadmap for the next explicit transition.
+Follow RED -> GREEN -> REFACTOR to reject planning trees whose recursive listings contain duplicate normalized paths at the CI replay parse boundary, crafting the adversarial tree with git plumbing in the test, while unique-path trees stay unaffected.
 
 ## Known Blockers
 
