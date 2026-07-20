@@ -1,0 +1,28 @@
+{
+  "schemaVersion": 1,
+  "changeId": "make-api-jwt-fail-closed",
+  "tasks": {
+    "1.1": {
+      "allowedPaths": ["docs/CURRENT_AND_NEXT_STEPS.md"],
+      "requiredChecks": [
+        "workflow-tests",
+        "workflow-typecheck",
+        "workflow-lint",
+        "workflow-format",
+        "managed-documents"
+      ]
+    },
+    "2.1": {
+      "allowedPaths": [
+        "apps/api/src/__tests__/isolated/jwt-secret-policy.isolated.spec.ts",
+        "apps/api/src/__tests__/setup.ts",
+        "apps/api/src/config/app.config.ts",
+        "apps/api/src/config/jwt-secret-policy.ts",
+        "apps/api/src/guards/jwt-auth.guard.ts",
+        "apps/api/src/modules/auth.module.ts",
+        "apps/api/src/services/auth.service.ts"
+      ],
+      "requiredChecks": ["api-database-policy-test", "managed-documents"]
+    }
+  }
+}
