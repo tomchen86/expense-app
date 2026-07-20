@@ -1,6 +1,6 @@
 ## 1. Managed Baseline
 
-- [ ] 1.1 Refresh the generated semantic handoff for this active change and prove the managed-document baseline is clean before implementation begins.
+- [x] 1.1 Refresh the generated semantic handoff for this active change and prove the managed-document baseline is clean before implementation begins.
 
 ## 2. Fail-Closed JWT Secrets
 
