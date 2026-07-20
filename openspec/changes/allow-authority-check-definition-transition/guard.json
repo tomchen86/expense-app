@@ -1,0 +1,30 @@
+{
+  "schemaVersion": 1,
+  "changeId": "allow-authority-check-definition-transition",
+  "tasks": {
+    "1.1": {
+      "allowedPaths": ["docs/CURRENT_AND_NEXT_STEPS.md"],
+      "requiredChecks": [
+        "workflow-tests",
+        "workflow-typecheck",
+        "workflow-lint",
+        "workflow-format",
+        "managed-documents"
+      ]
+    },
+    "2.1": {
+      "allowedPaths": [
+        "packages/workflow-engine/src/ci-authority.ts",
+        "packages/workflow-engine/src/ci-sequence.ts",
+        "packages/workflow-engine/test/maintainer-mode.integration.test.ts"
+      ],
+      "requiredChecks": [
+        "workflow-tests",
+        "workflow-typecheck",
+        "workflow-lint",
+        "workflow-format",
+        "managed-documents"
+      ]
+    }
+  }
+}
