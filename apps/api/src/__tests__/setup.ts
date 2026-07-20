@@ -1,5 +1,7 @@
 process.env.DB_DRIVER = process.env.DB_DRIVER || 'sqljs';
 process.env.NODE_ENV = process.env.NODE_ENV || 'test';
+process.env.JWT_SECRET ??= 'unit-test-access-secret-value';
+process.env.JWT_REFRESH_SECRET ??= 'unit-test-refresh-secret-value';
 
 import { DataSource } from 'typeorm';
 import { DatabaseTestHelper } from './helpers/database-test-helper';

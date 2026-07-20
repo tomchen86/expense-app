@@ -7,15 +7,17 @@ import { AuthController } from '../controllers/auth.controller';
 import { AuthService } from '../services/auth.service';
 import { JwtAuthGuard } from '../guards/jwt-auth.guard';
 import { Entities } from '../entities/runtime-entities';
+import { resolveJwtSecrets } from '../config/jwt-secret-policy';
 
 @Module({
   imports: [
     TypeOrmModule.forFeature([Entities.User, Entities.UserSettings]),
-    JwtModule.register({
+    JwtModule.registerAsync({
       global: true, // Make JwtService available globally
-      secret:
-        process.env.JWT_SECRET || 'development-secret-change-in-production',
-      signOptions: { expiresIn: '15m' },
+      useFactory: () => ({
+        secret: resolveJwtSecrets(process.env).accessSecret,
+        signOptions: { expiresIn: '15m' },
+      }),
     }),
   ],
   controllers: [AuthController],

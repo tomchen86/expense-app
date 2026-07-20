@@ -49,10 +49,9 @@ export class JwtAuthGuard implements CanActivate {
     }
 
     try {
-      const payload = this.jwtService.verify<JwtPayload>(token, {
-        secret:
-          process.env.JWT_SECRET || 'development-secret-change-in-production',
-      });
+      // The module-level JwtService secret is resolved fail-closed at
+      // bootstrap; a running app can never hold a fallback secret here.
+      const payload = this.jwtService.verify<JwtPayload>(token);
 
       // Attach user to request for controller access
       request.user = {

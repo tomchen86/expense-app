@@ -11,6 +11,7 @@ import {
   ApiConflictException,
   ApiUnauthorizedException,
 } from '../common/api-error';
+import { resolveJwtSecrets } from '../config/jwt-secret-policy';
 
 type UserEntity = InstanceType<typeof Entities.User>;
 type UserSettingsEntity = InstanceType<typeof Entities.UserSettings>;
@@ -166,9 +167,10 @@ export class AuthService {
 
   async refreshToken(refreshToken: string): Promise<RefreshResult> {
     try {
+      const { refreshSecret } = resolveJwtSecrets(process.env);
       // Verify the refresh token
       const payload = this.jwtService.verify<{ sub: string }>(refreshToken, {
-        secret: process.env.JWT_REFRESH_SECRET || 'development-refresh-secret',
+        secret: refreshSecret,
       });
 
       // Get user
@@ -282,15 +284,15 @@ export class AuthService {
       sub: user.id,
       displayName: user.displayName,
     };
+    const { accessSecret, refreshSecret } = resolveJwtSecrets(process.env);
 
     const accessToken = this.jwtService.sign(payload, {
-      secret:
-        process.env.JWT_SECRET || 'development-secret-change-in-production',
+      secret: accessSecret,
       expiresIn: '15m', // Short-lived access token
     });
 
     const refreshToken = this.jwtService.sign(payload, {
-      secret: process.env.JWT_REFRESH_SECRET || 'development-refresh-secret',
+      secret: refreshSecret,
       expiresIn: '7d', // Long-lived refresh token
     });
 
