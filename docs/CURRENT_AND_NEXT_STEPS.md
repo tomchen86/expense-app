@@ -8,7 +8,7 @@ This generated handoff contains semantic project state only. Its sources are tra
 
 ## Current Task
 
-`2.1` — Follow RED -> GREEN -> REFACTOR to introduce the fail-closed JWT secret resolver, wire module registration, guard verification, service refresh/signing, and app config through it, remove every inline fallback, give the test setup explicit secrets, and pin the forbidden literals with a regression test.
+None — all tasks are complete.
 
 ## Next Task
 
@@ -16,7 +16,7 @@ None.
 
 ## Current Focus
 
-Follow RED -> GREEN -> REFACTOR to introduce the fail-closed JWT secret resolver, wire module registration, guard verification, service refresh/signing, and app config through it, remove every inline fallback, give the test setup explicit secrets, and pin the forbidden literals with a regression test.
+No implementation tasks remain; follow the Roadmap for the next explicit transition.
 
 ## Known Blockers
 
