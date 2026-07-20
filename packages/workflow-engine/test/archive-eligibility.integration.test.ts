@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
@@ -184,6 +185,80 @@ test('archive eligibility rejects an exact dated destination collision', () => {
   }
 });
 
+test('archive eligibility exempts pre-epoch task completions', () => {
+  const unevidenced = configuredFixture();
+  const ambiguous = configuredFixture();
+  try {
+    completeTasks(unevidenced);
+    git(unevidenced, ['add', '.']);
+    git(unevidenced, ['commit', '-m', 'Bootstrap completion']);
+    commitPlanRevision(unevidenced);
+    git(unevidenced, ['checkout', '-b', 'work/archive-demo']);
+    const result = withArchiveEligibility(
+      unevidenced,
+      'demo-change',
+      (eligibility) => eligibility,
+    );
+    assert.equal(result.taskCommits.length, 0);
+
+    completeTasks(ambiguous);
+    commitTask(ambiguous);
+    fs.writeFileSync(path.join(ambiguous, 'second.txt'), 'second\n');
+    commitTask(ambiguous);
+    commitPlanRevision(ambiguous);
+    git(ambiguous, ['checkout', '-b', 'work/archive-demo']);
+    const ambiguousResult = withArchiveEligibility(
+      ambiguous,
+      'demo-change',
+      (eligibility) => eligibility,
+    );
+    assert.equal(ambiguousResult.taskCommits.length, 0);
+  } finally {
+    fs.rmSync(unevidenced, { recursive: true, force: true });
+    fs.rmSync(ambiguous, { recursive: true, force: true });
+  }
+});
+
+test('archive eligibility ignores a backdated parallel plan commit as epoch', () => {
+  const repository = configuredFixture();
+  try {
+    commitPlanRevision(repository);
+    completeTasks(repository);
+    git(repository, ['add', '.']);
+    git(repository, ['commit', '-m', 'Forge completion after epoch']);
+    git(repository, ['checkout', '-b', 'side/backdated-plan']);
+    commitPlanRevision(repository, '2020-01-01T00:00:00Z');
+    git(repository, ['checkout', 'main']);
+    git(repository, ['merge', '--no-ff', '--no-edit', 'side/backdated-plan']);
+    git(repository, ['checkout', '-b', 'work/archive-demo']);
+
+    assert.throws(
+      () => withArchiveEligibility(repository, 'demo-change', () => undefined),
+      (error) => isWorkflowError(error, 'ARCHIVE_TASK_EVIDENCE_MISSING'),
+    );
+  } finally {
+    fs.rmSync(repository, { recursive: true, force: true });
+  }
+});
+
+test('archive eligibility keeps canonical-era completions enforced', () => {
+  const repository = configuredFixture();
+  try {
+    commitPlanRevision(repository);
+    completeTasks(repository);
+    git(repository, ['add', '.']);
+    git(repository, ['commit', '-m', 'Forge completion after epoch']);
+    git(repository, ['checkout', '-b', 'work/archive-demo']);
+
+    assert.throws(
+      () => withArchiveEligibility(repository, 'demo-change', () => undefined),
+      (error) => isWorkflowError(error, 'ARCHIVE_TASK_EVIDENCE_MISSING'),
+    );
+  } finally {
+    fs.rmSync(repository, { recursive: true, force: true });
+  }
+});
+
 function configuredFixture(): string {
   return createFixtureRepository();
 }
@@ -216,4 +291,35 @@ function commitTask(repository: string): void {
     '-m',
     'Change: demo-change\nTask: 1.1',
   ]);
+}
+
+function commitPlanRevision(repository: string, committerDate?: string): void {
+  fs.appendFileSync(
+    path.join(repository, 'openspec/changes/demo-change/design.md'),
+    '\nEpoch revision.\n',
+  );
+  git(repository, ['add', '.']);
+  execFileSync(
+    'git',
+    [
+      '-C',
+      repository,
+      'commit',
+      '-m',
+      'Plan demo-change',
+      '-m',
+      'Change: demo-change\nTransition: plan',
+    ],
+    {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+      env: committerDate
+        ? {
+            ...process.env,
+            GIT_AUTHOR_DATE: committerDate,
+            GIT_COMMITTER_DATE: committerDate,
+          }
+        : process.env,
+    },
+  );
 }

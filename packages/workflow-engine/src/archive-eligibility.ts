@@ -8,6 +8,7 @@ import {
   fingerprintRepositoryWorktree,
   runGit,
 } from './git.ts';
+import { preEpochCompletedTaskIds } from './bootstrap-task-exemption.ts';
 import { findExactTaskCommits, type TaskCommit } from './git-transitions.ts';
 import { withChangeTransitionAuthority } from './planning-lock.ts';
 import { runtimePaths } from './session-store.ts';
@@ -116,6 +117,12 @@ function inspectEligibility(
     );
   }
 
+  const exemptTaskIds = preEpochCompletedTaskIds(
+    git.repositoryRoot,
+    config.changeRoot,
+    contract.changeId,
+    git.head,
+  );
   const taskCommits = contract.tasks.flatMap(({ id: taskId }) => {
     const commits = findExactTaskCommits(
       git.repositoryRoot,
@@ -123,6 +130,9 @@ function inspectEligibility(
       taskId,
     );
     if (commits.length !== 1) {
+      if (exemptTaskIds.has(taskId)) {
+        return [];
+      }
       throw archiveError(
         commits.length === 0
           ? 'ARCHIVE_TASK_EVIDENCE_MISSING'
