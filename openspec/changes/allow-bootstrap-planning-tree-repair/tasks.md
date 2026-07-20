@@ -4,4 +4,4 @@
 
 ## 2. Planning Tree Repair
 
-- [ ] 2.1 Follow RED -> GREEN -> REFACTOR to let CI plan replay accept a revision that repairs a bootstrap-era planning tree by adding its missing required artifacts, while every other before-tree or after-tree incompleteness keeps failing closed.
+- [x] 2.1 Follow RED -> GREEN -> REFACTOR to let CI plan replay accept a revision that repairs a bootstrap-era planning tree by adding its missing required artifacts, while every other before-tree or after-tree incompleteness keeps failing closed.

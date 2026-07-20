@@ -107,11 +107,22 @@ export function validateCiPlanningCommit(
     }
   } else {
     kind = 'revision';
+    const beforePaths = new Set(beforeEntries.map(({ path }) => path));
+    const repairedPaths = requiredArtifactPaths(
+      normalizedChangeRoot,
+      changeId,
+    ).filter(
+      (requiredPath) =>
+        !beforePaths.has(requiredPath) &&
+        afterPaths.has(requiredPath) &&
+        changedPaths.includes(requiredPath),
+    );
     assertCompletePlanningTree(
       normalizedChangeRoot,
       changeId,
       beforeEntries,
       deletedPaths,
+      repairedPaths,
     );
     beforeTasks = parseTasks(
       readRequiredFile(repositoryRoot, facts.parents[0], `${prefix}/tasks.md`),
@@ -131,24 +142,38 @@ export function validateCiPlanningCommit(
   };
 }
 
-function assertCompletePlanningTree(
-  changeRoot: string,
-  changeId: string,
-  entries: TreeEntry[],
-  toleratedDeletedPaths: readonly string[] = [],
-): void {
-  const paths = entries.map(({ path }) => path);
-  assertPlanningPaths(changeRoot, changeId, paths, toleratedDeletedPaths);
+function requiredArtifactPaths(changeRoot: string, changeId: string): string[] {
   const prefix = `${changeRoot}/${changeId}`;
-  const required = [
+  return [
     '.openspec.yaml',
     'proposal.md',
     'design.md',
     'tasks.md',
     'guard.json',
   ].map((relativePath) => `${prefix}/${relativePath}`);
+}
+
+/**
+ * A required artifact may be absent only from a revision's before tree, and
+ * only when that same revision adds it (bootstrap-era tree repair).
+ */
+function assertCompletePlanningTree(
+  changeRoot: string,
+  changeId: string,
+  entries: TreeEntry[],
+  toleratedDeletedPaths: readonly string[] = [],
+  toleratedMissingPaths: readonly string[] = [],
+): void {
+  const paths = entries.map(({ path }) => path);
+  assertPlanningPaths(changeRoot, changeId, paths, toleratedDeletedPaths);
+  const prefix = `${changeRoot}/${changeId}`;
+  const required = requiredArtifactPaths(changeRoot, changeId);
   if (
-    required.some((requiredPath) => !paths.includes(requiredPath)) ||
+    required.some(
+      (requiredPath) =>
+        !paths.includes(requiredPath) &&
+        !toleratedMissingPaths.includes(requiredPath),
+    ) ||
     !paths.some(
       (filePath) =>
         filePath.startsWith(`${prefix}/specs/`) &&

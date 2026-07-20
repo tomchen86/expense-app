@@ -351,6 +351,57 @@ test('CI accepts a revision that deletes non-canonical planning noise', () => {
   }
 });
 
+test('CI accepts a revision that repairs a bootstrap-era planning tree', () => {
+  const repository = createRepository();
+  try {
+    writePlanningTree(repository);
+    const metadataPath = path.join(
+      changeDirectory(repository),
+      '.openspec.yaml',
+    );
+    fs.rmSync(metadataPath);
+    const noisePath = path.join(
+      changeDirectory(repository),
+      'requirement-audit.md',
+    );
+    fs.writeFileSync(noisePath, 'Bootstrap-era audit noise.\n');
+    commit(repository, 'Admit bootstrap tree without metadata');
+    fs.writeFileSync(metadataPath, 'schema: spec-driven\n');
+    fs.rmSync(noisePath);
+    const revision = commitPlan(repository);
+
+    const result = validateCiPlanningCommit(repository, revision, CHANGE_ID);
+    assert.equal(result.kind, 'revision');
+    assert.deepEqual(result.changedPaths, [
+      `openspec/changes/${CHANGE_ID}/.openspec.yaml`,
+      `openspec/changes/${CHANGE_ID}/requirement-audit.md`,
+    ]);
+  } finally {
+    fs.rmSync(repository, { recursive: true, force: true });
+  }
+});
+
+test('CI still rejects a revision whose before tree stays incomplete', () => {
+  const repository = createRepository();
+  try {
+    writePlanningTree(repository);
+    fs.rmSync(path.join(changeDirectory(repository), '.openspec.yaml'));
+    commit(repository, 'Admit bootstrap tree without metadata');
+    fs.appendFileSync(
+      path.join(changeDirectory(repository), 'design.md'),
+      '\nRevision without repair.\n',
+    );
+    const revision = commitPlan(repository);
+
+    assert.throws(
+      () => validateCiPlanningCommit(repository, revision, CHANGE_ID),
+      (error) => isWorkflowError(error, 'CI_PLANNING_TREE_INVALID'),
+    );
+  } finally {
+    fs.rmSync(repository, { recursive: true, force: true });
+  }
+});
+
 test('CI still rejects added or escaping non-canonical planning paths', () => {
   const added = createRepository();
   try {
