@@ -198,7 +198,7 @@ function listTreeEntries(
   commit: string,
   prefix: string,
 ): TreeEntry[] {
-  return runGit(repositoryRoot, [
+  const entries = runGit(repositoryRoot, [
     'ls-tree',
     '-r',
     '-z',
@@ -223,6 +223,19 @@ function listTreeEntries(
       };
     })
     .sort((left, right) => left.path.localeCompare(right.path));
+  // Git accepts trees whose entries repeat a name; downstream membership
+  // checks would collapse the duplicates and read an ambiguous tree as valid.
+  const seenPaths = new Set<string>();
+  for (const { path: entryPath } of entries) {
+    if (seenPaths.has(entryPath)) {
+      throw ciPlanningError(
+        'CI_PLANNING_TREE_INVALID',
+        'Planning trees must not contain duplicate entries.',
+      );
+    }
+    seenPaths.add(entryPath);
+  }
+  return entries;
 }
 
 function readRequiredFile(
