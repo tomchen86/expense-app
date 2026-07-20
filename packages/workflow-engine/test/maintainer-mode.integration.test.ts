@@ -58,6 +58,7 @@ import { commitFacts } from '../src/git-transitions.ts';
 import { validateCiAuthorityCommit } from '../src/ci-authority.ts';
 import { listRangeCommits } from '../src/ci-git.ts';
 import { replayCommitSequence } from '../src/ci-sequence.ts';
+import { canonicalCheckDefinition } from '../src/ci-historical-contract.ts';
 
 const POLICY: MaintainerPolicy = {
   schemaVersion: 1,
@@ -1733,3 +1734,55 @@ function fixtureSshSigner(
     },
   };
 }
+
+test('CI adopts a check definition changed by a validated authority commit', () => {
+  const fixture = prepareAuthorityCommitFixture(
+    '21212121-2121-4121-8121-212121212121',
+    {
+      mutate(repository) {
+        const checksPath = path.join(repository, 'workflow/checks.json');
+        const checks = JSON.parse(fs.readFileSync(checksPath, 'utf8')) as {
+          checks: Record<string, { command: string[] }>;
+        };
+        checks.checks.fixture.command = [
+          'node',
+          'scripts/pass.mjs',
+          '--transitioned',
+        ];
+        fs.writeFileSync(checksPath, `${JSON.stringify(checks, null, 2)}\n`);
+      },
+    },
+  );
+  try {
+    const committed = commitAuthoritySession(
+      fixture.repository,
+      fixture.sessionId,
+      'Transition fixture check definition',
+      {
+        now: fixtureTime(fixture, 30),
+        signer: fixtureSigner(),
+      },
+    );
+    const result = replayCommitSequence(
+      fixture.repository,
+      listRangeCommits(
+        fixture.repository,
+        fixture.baseCommit,
+        committed.commitHash,
+      ),
+      new Map(),
+      [],
+      [],
+      fixtureTime(fixture, 40),
+    );
+    assert.equal(
+      result.requiredCheckDefinitions.fixture,
+      canonicalCheckDefinition({
+        command: ['node', 'scripts/pass.mjs', '--transitioned'],
+        destructiveDatabase: false,
+      }),
+    );
+  } finally {
+    cleanupAuthorityCommitFixture(fixture);
+  }
+});

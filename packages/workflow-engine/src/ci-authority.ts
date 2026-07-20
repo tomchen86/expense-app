@@ -127,6 +127,7 @@ export function validateCiAuthorityCommit(
     requiredCheckDefinitions: loadAuthorityCheckDefinitions(
       repositoryRoot,
       parent,
+      commit.hash,
       envelope.payload.changeId,
       parentPolicy.requiredChecks,
     ),
@@ -324,6 +325,7 @@ function assertPolicyTransition(
 function loadAuthorityCheckDefinitions(
   repositoryRoot: string,
   parent: string,
+  definitionSource: string,
   changeId: string,
   policyChecks: string[],
 ): Record<string, string> {
@@ -373,7 +375,7 @@ function loadAuthorityCheckDefinitions(
   });
   const requiredChecks = [...new Set([...policyChecks, ...taskChecks])].sort();
   const checksDocument = parseJson(
-    requiredFile(repositoryRoot, parent, 'workflow/checks.json'),
+    requiredFile(repositoryRoot, definitionSource, 'workflow/checks.json'),
   );
   if (
     !isRecord(checksDocument) ||
