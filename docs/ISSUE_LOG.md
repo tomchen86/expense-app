@@ -1,6 +1,6 @@
 # Issue Log
 
-_Last updated: July 15, 2026_
+_Last updated: July 21, 2026_
 
 ## Purpose
 
@@ -50,7 +50,6 @@ Track bugs, feature proposals, and technical chores without relying on GitHub Is
 | ISS-108 | Group balances ignore splitBetween selections | 📋 | Now | [Group collaboration](../openspec/specs/group-collaboration/spec.md) | `apps/mobile/src/utils/groupCalculations.ts`, `apps/mobile/src/hooks/useExpenseForm.ts` | The form stores participant IDs in splitBetween, while balance calculation reads expense.participants and can divide across the wrong members. |
 | ISS-109 | Group mutations do not enforce owner role | 📋 | Now | [Group collaboration](../openspec/specs/group-collaboration/spec.md) | `apps/api/src/services/group.service.ts`, `apps/mobile/app/(tabs)/history.tsx` | Membership roles are stored, but update/delete operations authorize by ledger membership rather than requiring the group owner. |
 | ISS-110 | API can delete default categories | 📋 | Next | [Category management](../openspec/specs/category-management/spec.md) | `apps/api/src/services/category.service.ts` | The API blocks deletion of categories in use but does not reject deletion when isDefault is true; align server protection with the reserved mobile category rule. |
-| ISS-111 | API authentication accepts fallback JWT secrets | 📋 | Now | [Identity and access](../openspec/specs/identity-and-access/spec.md) | `apps/api/src/modules/auth.module.ts`, `apps/api/src/services/auth.service.ts`, `apps/api/src/guards/jwt-auth.guard.ts` | Production-capable code falls back to known development access and refresh secrets; startup must fail closed outside an explicit local test mode. |
 | ISS-112 | Mobile domain state is not persisted | 📋 | Now | — | `apps/mobile/src/store/composedExpenseStore.ts`, `apps/mobile/src/store/features/userStore.ts` | Zustand stores use subscribeWithSelector without persist middleware or an AsyncStorage adapter, so expenses, groups, categories, and identity reset with process state. |
 | ISS-113 | Mobile can delete categories that are in use | 📋 | Next | [Category management](../openspec/specs/category-management/spec.md) | `apps/mobile/src/hooks/useCategoryManager.ts`, `apps/api/src/services/category.service.ts` | The mobile flow warns and then deletes; the API already rejects CATEGORY_IN_USE. Align local behavior before synchronization. |
 
@@ -74,3 +73,4 @@ Track bugs, feature proposals, and technical chores without relying on GitHub Is
 | ID | Title | Requirement | Completion Notes | Date |
 | --- | --- | --- | --- | --- |
 | ISS-103 | Tab bar navigation wrong order after Expo Router migration | — | Repository audit confirmed the intended tab order in apps/mobile/app/(tabs)/_layout.tsx. | 2026-07-15 |
+| ISS-111 | API authentication accepts fallback JWT secrets | [Identity and access](../openspec/specs/identity-and-access/spec.md) | Fail-closed JWT secret resolution landed via make-api-jwt-fail-closed (PR #78, archived PR #79): startup and token operations require explicit non-forbidden secrets; published development literals rejected. | 2026-07-20 |

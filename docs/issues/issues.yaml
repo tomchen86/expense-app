@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "lastUpdated": "2026-07-15",
+  "lastUpdated": "2026-07-21",
   "issues": [
     {
       "id": "ISS-001",
@@ -192,7 +192,7 @@
       "id": "ISS-111",
       "category": "bug",
       "title": "API authentication accepts fallback JWT secrets",
-      "status": "proposed",
+      "status": "done",
       "priority": "Now",
       "requirement": {
         "label": "Identity and access",
@@ -203,7 +203,11 @@
         "apps/api/src/services/auth.service.ts",
         "apps/api/src/guards/jwt-auth.guard.ts"
       ],
-      "notes": "Production-capable code falls back to known development access and refresh secrets; startup must fail closed outside an explicit local test mode."
+      "notes": "Production-capable code falls back to known development access and refresh secrets; startup must fail closed outside an explicit local test mode.",
+      "closed": {
+        "date": "2026-07-20",
+        "notes": "Fail-closed JWT secret resolution landed via make-api-jwt-fail-closed (PR #78, archived PR #79): startup and token operations require explicit non-forbidden secrets; published development literals rejected."
+      }
     },
     {
       "id": "ISS-112",
