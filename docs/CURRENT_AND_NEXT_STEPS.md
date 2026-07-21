@@ -8,7 +8,7 @@ This generated handoff contains semantic project state only. Its sources are tra
 
 ## Current Task
 
-`2.1` — Follow RED -> GREEN -> REFACTOR to extract the shared protectedBranchRef spelling, resolve the archive eligibility base from the protected remote-tracking ref (consumed identically by maintainer attestation), and update the archive integration fixtures to establish the remote-tracking ref, keeping every fail-closed and unreachable case intact.
+None — all tasks are complete.
 
 ## Next Task
 
@@ -16,7 +16,7 @@ None.
 
 ## Current Focus
 
-Follow RED -> GREEN -> REFACTOR to extract the shared protectedBranchRef spelling, resolve the archive eligibility base from the protected remote-tracking ref (consumed identically by maintainer attestation), and update the archive integration fixtures to establish the remote-tracking ref, keeping every fail-closed and unreachable case intact.
+No implementation tasks remain; follow the Roadmap for the next explicit transition.
 
 ## Known Blockers
 

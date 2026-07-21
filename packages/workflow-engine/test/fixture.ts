@@ -91,7 +91,19 @@ export function createFixtureRepository(): string {
 
   git(repository, ['add', '.']);
   git(repository, ['commit', '-m', 'Create fixture']);
+  syncOriginMain(repository);
   return repository;
+}
+
+/**
+ * Mirror the local protected branch tip into its remote-tracking ref, which is
+ * the base archive eligibility resolves. Fixtures call this whenever `main`
+ * advances to a new intended integration base, reproducing the ref a real
+ * clone would track.
+ */
+export function syncOriginMain(repository: string): void {
+  const tip = git(repository, ['rev-parse', 'main']).trim();
+  git(repository, ['update-ref', 'refs/remotes/origin/main', tip]);
 }
 
 export function addFixtureScripts(repository: string): void {

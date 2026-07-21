@@ -11,6 +11,7 @@ import {
   isWorkflowError,
   runtimeRoot,
   sourceRepositoryRoot,
+  syncOriginMain,
 } from './fixture.ts';
 
 test('CI replays an archive from Git without trusting local runtime evidence', () => {
@@ -217,6 +218,7 @@ test('CI archive replay exempts pre-epoch task completions', () => {
       'Change: demo-change\nTransition: plan',
     ]);
     const base = git(repository, ['rev-parse', 'HEAD']).trim();
+    syncOriginMain(repository);
     git(repository, ['checkout', '-b', 'work/archive-demo']);
     const archived = commitArchiveTransition(repository, 'demo-change');
 
@@ -260,6 +262,7 @@ function archivedFixture(): {
     'Change: demo-change\nTask: 1.1',
   ]);
   const base = git(repository, ['rev-parse', 'HEAD']).trim();
+  syncOriginMain(repository);
   git(repository, ['checkout', '-b', 'work/archive-demo']);
   const archived = commitArchiveTransition(repository, 'demo-change');
   return {

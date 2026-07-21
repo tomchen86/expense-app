@@ -10,6 +10,7 @@ import {
   git,
   isWorkflowError,
   runtimeRoot,
+  syncOriginMain,
 } from './fixture.ts';
 
 test('archive transition persists evidence, applies exact staging, commits, and is idempotent', () => {
@@ -195,6 +196,7 @@ function completedFixture(delta: string): string {
     '-m',
     'Change: demo-change\nTask: 1.1',
   ]);
+  syncOriginMain(repository);
   git(repository, ['checkout', '-b', 'work/archive-demo']);
   return repository;
 }

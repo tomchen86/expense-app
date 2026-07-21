@@ -4,4 +4,4 @@
 
 ## 2. Archive Base Authority
 
-- [ ] 2.1 Follow RED -> GREEN -> REFACTOR to extract the shared protectedBranchRef spelling, resolve the archive eligibility base from the protected remote-tracking ref (consumed identically by maintainer attestation), and update the archive integration fixtures to establish the remote-tracking ref, keeping every fail-closed and unreachable case intact.
+- [x] 2.1 Follow RED -> GREEN -> REFACTOR to extract the shared protectedBranchRef spelling, resolve the archive eligibility base from the protected remote-tracking ref (consumed identically by maintainer attestation), and update the archive integration fixtures to establish the remote-tracking ref, keeping every fail-closed and unreachable case intact.
