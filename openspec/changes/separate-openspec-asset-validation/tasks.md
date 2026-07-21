@@ -4,7 +4,7 @@
 
 ## 2. Authority Transition Evidence
 
-- [ ] 2.1 Add a characterization regression for one validated authority commit that changes an existing required check definition while adding an unused definition, prove that only a later guard reference activates the new check, and establish an exact temporary old/new `workflow-format` contract for the planned asset-scope transition.
+- [x] 2.1 Add a characterization regression for one validated authority commit that changes an existing required check definition while adding an unused definition, prove that only a later guard reference activates the new check, and establish an exact temporary old/new `workflow-format` contract for the planned asset-scope transition.
 
 ## 3. Tool-Plural OpenSpec Assets
 

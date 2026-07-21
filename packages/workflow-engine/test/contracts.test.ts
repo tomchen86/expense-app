@@ -140,7 +140,7 @@ test('format verification delegates to the registered canonical authority', () =
     fs.readFileSync(path.join(repositoryRoot, 'workflow/checks.json'), 'utf8'),
   );
   const registeredFormat = checks.checks['workflow-format'];
-  const registeredFormatCommand = [
+  const currentFormatCommand = [
     'node-package-bin',
     '.',
     'prettier',
@@ -153,7 +153,6 @@ test('format verification delegates to the registered canonical authority', () =
     'apps/api/src/__tests__/isolated/database-target-policy.isolated.spec.ts',
     'package.json',
     'pnpm-workspace.yaml',
-    'openspec/changes/establish-executable-ai-workflow',
     'docs/README.md',
     'docs/ROADMAP.md',
     'docs/CURRENT_AND_NEXT_STEPS.md',
@@ -161,16 +160,24 @@ test('format verification delegates to the registered canonical authority', () =
     'docs/WORKFLOW.md',
     'AGENTS.md',
   ];
-  const retiredBootstrapCommand = registeredFormatCommand.filter(
-    (entry) => entry !== 'openspec/changes/establish-executable-ai-workflow',
-  );
+  const assetSeparatedFormatCommand = [
+    ...currentFormatCommand.slice(0, 6),
+    'workflow/ai-adapter-policy.json',
+    'workflow/checks.json',
+    'workflow/ci-policy.json',
+    'workflow/config.json',
+    'workflow/document-policy.json',
+    'workflow/maintainer-policy.json',
+    'workflow/schemas',
+    ...currentFormatCommand.slice(7),
+  ];
   assert.equal(registeredFormat?.destructiveDatabase, false);
   assert.ok(
     JSON.stringify(registeredFormat?.command) ===
-      JSON.stringify(registeredFormatCommand) ||
+      JSON.stringify(currentFormatCommand) ||
       JSON.stringify(registeredFormat?.command) ===
-        JSON.stringify(retiredBootstrapCommand),
-    'workflow-format must be the registered command or its retired-bootstrap form',
+        JSON.stringify(assetSeparatedFormatCommand),
+    'workflow-format must be the current command or the exact asset-separated transition form',
   );
 });
 
