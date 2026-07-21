@@ -17,7 +17,12 @@ import {
 import { loadWorkflowConfig } from './contracts.ts';
 import { ExitCode, workflowError } from './errors.ts';
 import { commitFacts } from './git-transitions.ts';
-import { discoverRepository, runGit, runGitWithEnvironment } from './git.ts';
+import {
+  discoverRepository,
+  protectedBranchRef,
+  runGit,
+  runGitWithEnvironment,
+} from './git.ts';
 import {
   canonicalGrantPayload,
   parseMaintainerGrantEnvelope,
@@ -87,7 +92,7 @@ export function issueAuthorityAttestation(
   if (!protectedBranch) {
     throw invalidRequest('No protected branch is configured.');
   }
-  const protectedRef = `refs/remotes/origin/${protectedBranch}`;
+  const protectedRef = protectedBranchRef(protectedBranch);
   if (
     !runGit(
       repositoryRoot,

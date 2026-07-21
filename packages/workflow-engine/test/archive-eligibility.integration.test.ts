@@ -11,6 +11,7 @@ import {
   git,
   isWorkflowError,
   runtimeRoot,
+  syncOriginMain,
 } from './fixture.ts';
 
 test('archive eligibility binds completed task evidence to the configured base', () => {
@@ -23,8 +24,11 @@ test('archive eligibility binds completed task evidence to the configured base',
     );
 
     assert.equal(result.changeId, 'demo-change');
-    assert.equal(result.baseRef, 'main');
-    assert.equal(result.base, git(repository, ['rev-parse', 'main']).trim());
+    assert.equal(result.baseRef, 'refs/remotes/origin/main');
+    assert.equal(
+      result.base,
+      git(repository, ['rev-parse', 'refs/remotes/origin/main']).trim(),
+    );
     assert.equal(result.taskCommits.length, 1);
     assert.match(result.contractDigest, /^[0-9a-f]{64}$/);
     assert.match(result.fingerprint, /^[0-9a-f]{64}$/);
@@ -259,6 +263,43 @@ test('archive eligibility keeps canonical-era completions enforced', () => {
   }
 });
 
+test('archive eligibility resolves the base from the protected remote-tracking ref', () => {
+  const repository = configuredFixture();
+  try {
+    completeTasks(repository);
+    commitTask(repository);
+    git(repository, ['checkout', '-b', 'work/archive-demo']);
+    const integrationTip = git(repository, ['rev-parse', 'HEAD']).trim();
+    git(repository, ['update-ref', 'refs/remotes/origin/main', integrationTip]);
+    // The local protected branch falls behind the remote-tracking ref.
+    git(repository, ['branch', '-f', 'main', `${integrationTip}~1`]);
+
+    const result = withArchiveEligibility(
+      repository,
+      'demo-change',
+      (eligibility) => eligibility,
+    );
+
+    assert.equal(result.base, integrationTip);
+    assert.equal(result.taskCommits.length, 1);
+  } finally {
+    fs.rmSync(repository, { recursive: true, force: true });
+  }
+});
+
+test('archive eligibility fails closed when the remote-tracking base is unresolvable', () => {
+  const repository = completedFixture();
+  try {
+    git(repository, ['update-ref', '-d', 'refs/remotes/origin/main']);
+    assert.throws(
+      () => withArchiveEligibility(repository, 'demo-change', () => undefined),
+      (error) => isWorkflowError(error, 'ARCHIVE_BASE_UNRESOLVED'),
+    );
+  } finally {
+    fs.rmSync(repository, { recursive: true, force: true });
+  }
+});
+
 function configuredFixture(): string {
   return createFixtureRepository();
 }
@@ -291,6 +332,7 @@ function commitTask(repository: string): void {
     '-m',
     'Change: demo-change\nTask: 1.1',
   ]);
+  syncOriginMain(repository);
 }
 
 function commitPlanRevision(repository: string, committerDate?: string): void {

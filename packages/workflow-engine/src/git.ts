@@ -233,6 +233,16 @@ export function runGit(
   return executeGit(cwd, args, allowFailure, {});
 }
 
+/**
+ * The remote-tracking ref for a protected branch. Authority operations resolve
+ * the protected base through this single spelling rather than a bare local
+ * branch, whose freshness is not a contract; both maintainer attestation and
+ * archive eligibility consume it so the rule cannot diverge.
+ */
+export function protectedBranchRef(branch: string): string {
+  return `refs/remotes/origin/${branch}`;
+}
+
 export function runGitWithEnvironment(
   cwd: string,
   args: string[],

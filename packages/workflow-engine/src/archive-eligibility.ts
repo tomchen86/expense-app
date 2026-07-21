@@ -6,6 +6,7 @@ import { ExitCode, workflowError } from './errors.ts';
 import {
   discoverRepository,
   fingerprintRepositoryWorktree,
+  protectedBranchRef,
   runGit,
 } from './git.ts';
 import { preEpochCompletedTaskIds } from './bootstrap-task-exemption.ts';
@@ -82,13 +83,14 @@ function inspectEligibility(
   }
 
   const config = loadWorkflowConfig(initial.repositoryRoot);
-  const baseRef = config.protectedBranches[0];
-  if (!baseRef) {
+  const protectedBranch = config.protectedBranches[0];
+  if (!protectedBranch) {
     throw archiveError(
       'ARCHIVE_BASE_REF_REQUIRED',
       'workflow/config.json must configure a protected archive base.',
     );
   }
+  const baseRef = protectedBranchRef(protectedBranch);
   const base = resolveBase(initial.repositoryRoot, baseRef);
   assertAncestor(
     initial.repositoryRoot,

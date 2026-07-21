@@ -5,7 +5,12 @@ import test from 'node:test';
 
 import { withArchiveEligibility } from '../src/archive-eligibility.ts';
 import { createArchiveTransformation } from '../src/archive-transformation.ts';
-import { createFixtureRepository, git, isWorkflowError } from './fixture.ts';
+import {
+  createFixtureRepository,
+  git,
+  isWorkflowError,
+  syncOriginMain,
+} from './fixture.ts';
 
 test('archive transformation returns an exact full-index patch without mutating the real worktree', () => {
   const repository = completedFixture();
@@ -90,6 +95,7 @@ function completedFixture(marker?: string): string {
     '-m',
     'Change: demo-change\nTask: 1.1',
   ]);
+  syncOriginMain(repository);
   git(repository, ['checkout', '-b', 'work/archive-demo']);
   return repository;
 }

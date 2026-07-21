@@ -12,7 +12,12 @@ import {
 } from '../src/lifecycle.ts';
 import { commitPlanningTransition } from '../src/planning-transition.ts';
 import { checkSession, startSession } from '../src/session.ts';
-import { createFixtureRepository, git, runtimeRoot } from './fixture.ts';
+import {
+  createFixtureRepository,
+  git,
+  runtimeRoot,
+  syncOriginMain,
+} from './fixture.ts';
 
 const changeId = 'rehearsal-change';
 
@@ -46,6 +51,7 @@ test('disposable repository rehearses plan, task, archive, idempotency, and cros
 
     git(repository, ['checkout', 'main']);
     git(repository, ['merge', '--ff-only', completed.commitHash]);
+    syncOriginMain(repository);
     git(repository, ['checkout', '-b', 'work/archive-rehearsal']);
 
     const archived = commitArchiveTransition(repository, changeId);
