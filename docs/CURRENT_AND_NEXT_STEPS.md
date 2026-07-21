@@ -8,15 +8,15 @@ This generated handoff contains semantic project state only. Its sources are tra
 
 ## Current Task
 
-`2.1` — Add a characterization regression for one validated authority commit that changes an existing required check definition while adding an unused definition, prove that only a later guard reference activates the new check, and establish an exact temporary old/new `workflow-format` contract for the planned asset-scope transition.
+`3.1` — Follow RED -> GREEN -> REFACTOR to build the tool-neutral schema-v2 manifest, single-run Codex/Claude source generation, three-stage digest model, all-target delivery/closure rules, hardened forbidden-authority checks, deterministic generator, and formatter-independent read-only checker alongside the still-live Codex asset surface.
 
 ## Next Task
 
-`3.1` — Follow RED -> GREEN -> REFACTOR to build the tool-neutral schema-v2 manifest, single-run Codex/Claude source generation, three-stage digest model, all-target delivery/closure rules, hardened forbidden-authority checks, deterministic generator, and formatter-independent read-only checker alongside the still-live Codex asset surface.
+`3.2` — Follow RED -> GREEN -> REFACTOR to atomically cut the live repository over from `codex-assets` to `openspec-assets`: switch CLI/integration consumers, make missing or renamed manifests fail closed in hooks and CI, migrate/regenerate Codex, Claude, `.agents`, and prompt targets, remove the old modules/home, update full-integration fixtures and regressions, and align active agent/workflow guidance without changing `workflow/checks.json`.
 
 ## Current Focus
 
-Add a characterization regression for one validated authority commit that changes an existing required check definition while adding an unused definition, prove that only a later guard reference activates the new check, and establish an exact temporary old/new `workflow-format` contract for the planned asset-scope transition.
+Follow RED -> GREEN -> REFACTOR to build the tool-neutral schema-v2 manifest, single-run Codex/Claude source generation, three-stage digest model, all-target delivery/closure rules, hardened forbidden-authority checks, deterministic generator, and formatter-independent read-only checker alongside the still-live Codex asset surface.
 
 ## Known Blockers
 

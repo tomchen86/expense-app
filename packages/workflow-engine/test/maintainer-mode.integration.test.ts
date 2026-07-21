@@ -35,7 +35,13 @@ import {
   isWorkflowError,
   sourceRepositoryRoot,
 } from './fixture.ts';
-import { abortSession, startSession } from '../src/session.ts';
+import { abortSession, checkSession, startSession } from '../src/session.ts';
+import {
+  commitSession,
+  completeTask,
+  finishSession,
+} from '../src/lifecycle.ts';
+import { commitPlanningTransition } from '../src/planning-transition.ts';
 import {
   runtimePaths,
   withRepositoryLifecycleOperation,
@@ -1735,20 +1741,27 @@ function fixtureSshSigner(
   };
 }
 
-test('CI adopts a check definition changed by a validated authority commit', () => {
+test('authority replay defers an unused added check until a later guard drives managed activation', () => {
   const fixture = prepareAuthorityCommitFixture(
     '21212121-2121-4121-8121-212121212121',
     {
       mutate(repository) {
         const checksPath = path.join(repository, 'workflow/checks.json');
         const checks = JSON.parse(fs.readFileSync(checksPath, 'utf8')) as {
-          checks: Record<string, { command: string[] }>;
+          checks: Record<
+            string,
+            { command: string[]; destructiveDatabase: boolean }
+          >;
         };
         checks.checks.fixture.command = [
           'node',
           'scripts/pass.mjs',
           '--transitioned',
         ];
+        checks.checks['asset-check'] = {
+          command: ['node', 'scripts/pass.mjs', '--asset-check'],
+          destructiveDatabase: false,
+        };
         fs.writeFileSync(checksPath, `${JSON.stringify(checks, null, 2)}\n`);
       },
     },
@@ -1763,7 +1776,7 @@ test('CI adopts a check definition changed by a validated authority commit', () 
         signer: fixtureSigner(),
       },
     );
-    const result = replayCommitSequence(
+    const authorityOnly = replayCommitSequence(
       fixture.repository,
       listRangeCommits(
         fixture.repository,
@@ -1776,12 +1789,68 @@ test('CI adopts a check definition changed by a validated authority commit', () 
       fixtureTime(fixture, 40),
     );
     assert.equal(
-      result.requiredCheckDefinitions.fixture,
+      authorityOnly.requiredCheckDefinitions.fixture,
       canonicalCheckDefinition({
         command: ['node', 'scripts/pass.mjs', '--transitioned'],
         destructiveDatabase: false,
       }),
     );
+    assert.deepEqual(Object.keys(authorityOnly.requiredCheckDefinitions), [
+      'fixture',
+    ]);
+
+    const guardPath = path.join(
+      fixture.repository,
+      'openspec/changes/demo-change/guard.json',
+    );
+    const guard = JSON.parse(fs.readFileSync(guardPath, 'utf8')) as {
+      tasks: Record<string, { requiredChecks: string[] }>;
+    };
+    guard.tasks['1.1']!.requiredChecks = ['fixture', 'asset-check'];
+    fs.writeFileSync(guardPath, `${JSON.stringify(guard, null, 2)}\n`);
+    commitPlanningTransition(fixture.repository, 'demo-change');
+
+    const taskSession = startSession(fixture.repository, 'demo-change', '1.1');
+    fs.writeFileSync(
+      path.join(fixture.repository, 'src/asset-check-activation.ts'),
+      'export const assetCheckActivated = true;\n',
+    );
+    const checked = checkSession(fixture.repository, taskSession.sessionId);
+    assert.deepEqual(
+      checked.checks.map(({ checkId }) => checkId),
+      ['fixture', 'asset-check'],
+    );
+    completeTask(fixture.repository, taskSession.sessionId);
+    finishSession(fixture.repository, taskSession.sessionId);
+    const taskCommit = commitSession(
+      fixture.repository,
+      taskSession.sessionId,
+      'Activate fixture asset check',
+    );
+
+    const activated = replayCommitSequence(
+      fixture.repository,
+      listRangeCommits(
+        fixture.repository,
+        fixture.baseCommit,
+        taskCommit.commitHash,
+      ),
+      new Map(),
+      [],
+      [],
+      fixtureTime(fixture, 50),
+    );
+    assert.equal(
+      activated.requiredCheckDefinitions['asset-check'],
+      canonicalCheckDefinition({
+        command: ['node', 'scripts/pass.mjs', '--asset-check'],
+        destructiveDatabase: false,
+      }),
+    );
+    assert.deepEqual(Object.keys(activated.requiredCheckDefinitions), [
+      'asset-check',
+      'fixture',
+    ]);
   } finally {
     cleanupAuthorityCommitFixture(fixture);
   }
