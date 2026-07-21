@@ -1,6 +1,6 @@
 ## 1. Managed Baseline
 
-- [ ] 1.1 Refresh the generated semantic handoff for this active change and prove the managed-document baseline is clean before implementation or any later planning revision.
+- [x] 1.1 Refresh the generated semantic handoff for this active change and prove the managed-document baseline is clean before implementation or any later planning revision.
 
 ## 2. Authority Transition Evidence
 
