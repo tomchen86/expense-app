@@ -8,7 +8,7 @@
 
 ## 3. Tool-Plural OpenSpec Assets
 
-- [ ] 3.1 Follow RED -> GREEN -> REFACTOR to build the tool-neutral schema-v2 manifest, single-run Codex/Claude source generation, three-stage digest model, all-target delivery/closure rules, hardened forbidden-authority checks, deterministic generator, and formatter-independent read-only checker alongside the still-live Codex asset surface.
+- [x] 3.1 Follow RED -> GREEN -> REFACTOR to build the tool-neutral schema-v2 manifest, single-run Codex/Claude source generation, three-stage digest model, all-target delivery/closure rules, hardened forbidden-authority checks, deterministic generator, and formatter-independent read-only checker alongside the still-live Codex asset surface.
 - [ ] 3.2 Follow RED -> GREEN -> REFACTOR to atomically cut the live repository over from `codex-assets` to `openspec-assets`: switch CLI/integration consumers, make missing or renamed manifests fail closed in hooks and CI, migrate/regenerate Codex, Claude, `.agents`, and prompt targets, remove the old modules/home, update full-integration fixtures and regressions, and align active agent/workflow guidance without changing `workflow/checks.json`.
 
 ## Human-Only Authority Transition (Not an Executable Task)

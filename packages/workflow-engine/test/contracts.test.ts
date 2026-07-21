@@ -24,6 +24,7 @@ import './openspec-doctor.integration.test.ts';
 import './openspec-schema-contract.integration.test.ts';
 import './planning-transition.contract.test.ts';
 import './codex-planning-assets.integration.test.ts';
+import './openspec-planning-assets.integration.test.ts';
 import './authority-attestation.contract.test.ts';
 import './maintainer-attestation.integration.test.ts';
 import './ci-attestation.integration.test.ts';
