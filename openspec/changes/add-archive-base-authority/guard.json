@@ -1,0 +1,40 @@
+{
+  "schemaVersion": 1,
+  "changeId": "add-archive-base-authority",
+  "tasks": {
+    "1.1": {
+      "allowedPaths": [
+        "docs/CURRENT_AND_NEXT_STEPS.md",
+        "docs/ISSUE_LOG.md",
+        "docs/issues/issues.yaml"
+      ],
+      "requiredChecks": [
+        "workflow-tests",
+        "workflow-typecheck",
+        "workflow-lint",
+        "workflow-format",
+        "managed-documents"
+      ]
+    },
+    "2.1": {
+      "allowedPaths": [
+        "packages/workflow-engine/src/archive-eligibility.ts",
+        "packages/workflow-engine/src/git.ts",
+        "packages/workflow-engine/src/maintainer-attestation.ts",
+        "packages/workflow-engine/test/archive-eligibility.integration.test.ts",
+        "packages/workflow-engine/test/archive-transformation.integration.test.ts",
+        "packages/workflow-engine/test/archive-transition.integration.test.ts",
+        "packages/workflow-engine/test/ci-archive.integration.test.ts",
+        "packages/workflow-engine/test/fixture.ts",
+        "packages/workflow-engine/test/workflow-rehearsal.integration.test.ts"
+      ],
+      "requiredChecks": [
+        "workflow-tests",
+        "workflow-typecheck",
+        "workflow-lint",
+        "workflow-format",
+        "managed-documents"
+      ]
+    }
+  }
+}
