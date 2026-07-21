@@ -1,0 +1,81 @@
+{
+  "schemaVersion": 1,
+  "changeId": "separate-openspec-asset-validation",
+  "tasks": {
+    "1.1": {
+      "allowedPaths": ["docs/CURRENT_AND_NEXT_STEPS.md"],
+      "requiredChecks": [
+        "managed-documents",
+        "workflow-tests",
+        "workflow-typecheck",
+        "workflow-lint",
+        "workflow-format"
+      ]
+    },
+    "2.1": {
+      "allowedPaths": [
+        "packages/workflow-engine/test/contracts.test.ts",
+        "packages/workflow-engine/test/fixture.ts",
+        "packages/workflow-engine/test/maintainer-mode.integration.test.ts"
+      ],
+      "requiredChecks": [
+        "managed-documents",
+        "workflow-tests",
+        "workflow-typecheck",
+        "workflow-lint",
+        "workflow-format"
+      ]
+    },
+    "3.1": {
+      "allowedPaths": [
+        "packages/workflow-engine/src/openspec-planning-asset-contract.ts",
+        "packages/workflow-engine/src/openspec-planning-assets.ts",
+        "packages/workflow-engine/test/contracts.test.ts",
+        "packages/workflow-engine/test/fixtures/**",
+        "packages/workflow-engine/test/openspec-planning-assets.integration.test.ts"
+      ],
+      "requiredChecks": [
+        "managed-documents",
+        "workflow-tests",
+        "workflow-typecheck",
+        "workflow-lint",
+        "workflow-format"
+      ]
+    },
+    "3.2": {
+      "allowedPaths": [
+        ".agents/README.md",
+        ".agents/skills/openspec-explore/**",
+        ".agents/skills/openspec-propose/**",
+        ".claude/skills/openspec-explore/**",
+        ".claude/skills/openspec-propose/**",
+        ".codex/skills/openspec-explore/**",
+        ".codex/skills/openspec-propose/**",
+        "AGENTS.md",
+        "docs/WORKFLOW.md",
+        "packages/workflow-engine/src/cli.ts",
+        "packages/workflow-engine/src/codex-planning-asset-contract.ts",
+        "packages/workflow-engine/src/codex-planning-assets.ts",
+        "packages/workflow-engine/src/integration-assets.ts",
+        "packages/workflow-engine/src/openspec-planning-asset-contract.ts",
+        "packages/workflow-engine/src/openspec-planning-assets.ts",
+        "packages/workflow-engine/test/ci-archive.integration.test.ts",
+        "packages/workflow-engine/test/codex-planning-assets.integration.test.ts",
+        "packages/workflow-engine/test/contracts.test.ts",
+        "packages/workflow-engine/test/fixture.ts",
+        "packages/workflow-engine/test/fixtures/**",
+        "packages/workflow-engine/test/hooks.integration.test.ts",
+        "packages/workflow-engine/test/openspec-planning-assets.integration.test.ts",
+        "workflow/codex-assets/**",
+        "workflow/openspec-assets/**"
+      ],
+      "requiredChecks": [
+        "managed-documents",
+        "workflow-tests",
+        "workflow-typecheck",
+        "workflow-lint",
+        "workflow-format"
+      ]
+    }
+  }
+}
