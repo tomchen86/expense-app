@@ -4,11 +4,11 @@ This generated handoff contains semantic project state only. Its sources are tra
 
 ## Current Change
 
-`make-api-jwt-fail-closed`
+`add-archive-base-authority`
 
 ## Current Task
 
-None — all tasks are complete.
+`2.1` — Follow RED -> GREEN -> REFACTOR to extract the shared protectedBranchRef spelling, resolve the archive eligibility base from the protected remote-tracking ref (consumed identically by maintainer attestation), and update the archive integration fixtures to establish the remote-tracking ref, keeping every fail-closed and unreachable case intact.
 
 ## Next Task
 
@@ -16,7 +16,7 @@ None.
 
 ## Current Focus
 
-No implementation tasks remain; follow the Roadmap for the next explicit transition.
+Follow RED -> GREEN -> REFACTOR to extract the shared protectedBranchRef spelling, resolve the archive eligibility base from the protected remote-tracking ref (consumed identically by maintainer attestation), and update the archive integration fixtures to establish the remote-tracking ref, keeping every fail-closed and unreachable case intact.
 
 ## Known Blockers
 

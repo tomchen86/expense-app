@@ -1,6 +1,6 @@
 ## 1. Managed Baseline
 
-- [ ] 1.1 Refresh the generated semantic handoff, record the ISS-111 closure in the managed issue log, and prove the managed-document baseline is clean before implementation begins.
+- [x] 1.1 Refresh the generated semantic handoff, record the ISS-111 closure in the managed issue log, and prove the managed-document baseline is clean before implementation begins.
 
 ## 2. Archive Base Authority
 
