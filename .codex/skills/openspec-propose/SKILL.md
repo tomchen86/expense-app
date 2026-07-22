@@ -27,7 +27,7 @@ When ready to implement, run pnpm workflow start <change-id> --task <task-id>
 
 1. **If no clear input provided, ask what they want to build**
 
-   Use the an open-ended question (open-ended, no preset options) to ask:
+   Use an open-ended question (open-ended, no preset options) to ask:
 
    > "What change do you want to work on? Describe what you want to build or fix."
 
@@ -56,7 +56,7 @@ When ready to implement, run pnpm workflow start <change-id> --task <task-id>
 
 4. **Create artifacts in sequence until apply-ready**
 
-   Use the a task list to track progress through the artifacts.
+   Use a task list to track progress through the artifacts.
 
    Loop through artifacts in dependency order (artifacts with no pending dependencies first):
 

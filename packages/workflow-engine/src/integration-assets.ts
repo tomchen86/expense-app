@@ -1,13 +1,12 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
-import { checkCodexPlanningAssets } from './codex-planning-assets.ts';
+import { checkOpenSpecPlanningAssets } from './openspec-planning-assets.ts';
 import {
-  MANIFEST_PATH,
-  readManifest,
-  verifyRepositoryAssetClosure,
-  verifyRepositoryAssets,
-} from './codex-planning-asset-contract.ts';
+  readOpenSpecAssetManifest,
+  verifyOpenSpecRepositoryAssets,
+  verifyOpenSpecRepositoryClosure,
+} from './openspec-planning-asset-contract.ts';
 import { inspectOpenSpecSchemaContract } from './openspec-schema-contract.ts';
 
 export function validateWorkflowIntegrationAssets(
@@ -20,10 +19,9 @@ export function validateWorkflowIntegrationAssets(
   if (installationPresent || options.regeneratePlanningAssets) {
     inspectOpenSpecSchemaContract(repositoryRoot);
   }
-  if (!fs.existsSync(path.join(repositoryRoot, MANIFEST_PATH))) return;
-  const manifest = readManifest(repositoryRoot);
-  verifyRepositoryAssets(repositoryRoot, manifest);
-  verifyRepositoryAssetClosure(repositoryRoot);
+  const manifest = readOpenSpecAssetManifest(repositoryRoot);
+  verifyOpenSpecRepositoryAssets(repositoryRoot, manifest);
+  verifyOpenSpecRepositoryClosure(repositoryRoot);
   if (options.regeneratePlanningAssets)
-    checkCodexPlanningAssets(repositoryRoot);
+    checkOpenSpecPlanningAssets(repositoryRoot);
 }

@@ -3,6 +3,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 
+import { replaceTextAtomic } from './atomic-text.ts';
 import {
   OPENSPEC_ASSET_MANIFEST_PATH,
   OPENSPEC_SOURCE_CLOSURES,
@@ -23,6 +24,7 @@ import {
   type OpenSpecFormatterMetadata,
 } from './openspec-planning-asset-contract.ts';
 import { createTrustedExecutionEnvironment } from './execution-environment.ts';
+import { ensurePlainDirectory } from './filesystem-safety.ts';
 import { resolveOpenSpecInstallation } from './openspec-executor.ts';
 import { resolveCheckRunner } from './runner-resolution.ts';
 
@@ -116,6 +118,44 @@ export function checkOpenSpecPlanningAssets(
     valid: true,
     assetPaths: manifest.assets.map((entry) => entry.destinationPath),
   };
+}
+
+export function installOpenSpecPlanningPrompts(
+  repositoryRoot: string,
+  codexHome: string,
+): { installedPaths: string[] } {
+  const root = canonicalOpenSpecAssetDirectory(repositoryRoot);
+  const manifest = readOpenSpecAssetManifest(root);
+  verifyOpenSpecRepositoryAssets(root, manifest);
+  verifyOpenSpecRepositoryClosure(root);
+
+  const home = canonicalOpenSpecAssetDirectory(codexHome);
+  const promptsDirectory = path.join(home, 'prompts');
+  ensurePlainDirectory(promptsDirectory);
+  const targets = manifest.assets
+    .filter((entry) => entry.target === 'codex' && entry.kind === 'prompt')
+    .map((entry) => ({
+      entry,
+      path: path.join(promptsDirectory, path.basename(entry.sourcePath)),
+    }));
+  for (const target of targets) {
+    if (fs.lstatSync(target.path, { throwIfNoEntry: false })) {
+      throw openSpecAssetError(
+        'OPENSPEC_ASSET_PROMPT_EXISTS',
+        'An OpenSpec planning prompt already exists; the installer never overwrites prompts.',
+      );
+    }
+  }
+  for (const target of targets) {
+    const source = readOpenSpecAssetFile(
+      path.join(root, target.entry.destinationPath),
+    );
+    replaceTextAtomic(target.path, source, {
+      allowCreate: true,
+      defaultMode: 0o600,
+    });
+  }
+  return { installedPaths: targets.map((target) => target.path) };
 }
 
 function generateUpstreamAssets(

@@ -164,28 +164,46 @@ test('pre-commit permits an ordinary unrelated staged change without mutation', 
   }
 });
 
+test('hooks fail closed when the OpenSpec asset manifest is missing or renamed', async (t) => {
+  for (const operation of ['missing', 'renamed'] as const) {
+    await t.test(operation, () => {
+      const repository = createFixtureRepository();
+      try {
+        const manifestPath = path.join(
+          repository,
+          'workflow/openspec-assets/manifest.json',
+        );
+        if (operation === 'missing') {
+          fs.rmSync(manifestPath);
+        } else {
+          fs.renameSync(
+            manifestPath,
+            path.join(path.dirname(manifestPath), 'manifest.retired.json'),
+          );
+        }
+        assert.throws(
+          () => runRepositoryHook(repository, 'pre-push', []),
+          (error) => isWorkflowError(error, 'OPENSPEC_ASSET_MANIFEST_INVALID'),
+        );
+      } finally {
+        fs.rmSync(repository, { recursive: true, force: true });
+      }
+    });
+  }
+});
+
 test('hooks reject reviewed planning asset drift and forbidden lifecycle authority', () => {
   const repository = createFixtureRepository();
   try {
-    fs.cpSync(
-      path.join(sourceRepositoryRoot, '.codex'),
-      path.join(repository, '.codex'),
-      { recursive: true },
-    );
-    fs.cpSync(
-      path.join(sourceRepositoryRoot, 'workflow/codex-assets'),
-      path.join(repository, 'workflow/codex-assets'),
-      { recursive: true },
-    );
     runRepositoryHook(repository, 'pre-push', []);
 
     fs.appendFileSync(
-      path.join(repository, '.codex/skills/openspec-explore/SKILL.md'),
+      path.join(repository, '.claude/skills/openspec-explore/SKILL.md'),
       '\nopenspec archive demo-change\n',
     );
     assert.throws(
       () => runRepositoryHook(repository, 'pre-push', []),
-      (error) => isWorkflowError(error, 'CODEX_ASSET_FORBIDDEN_AUTHORITY'),
+      (error) => isWorkflowError(error, 'OPENSPEC_ASSET_FORBIDDEN_AUTHORITY'),
     );
   } finally {
     fs.rmSync(repository, { recursive: true, force: true });

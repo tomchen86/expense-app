@@ -1,6 +1,12 @@
 ---
-description: Propose a new change - create it and generate all artifacts in one step
-argument-hint: command arguments
+name: openspec-propose
+description: Propose a new change with all artifacts generated in one step. Use when the user wants to quickly describe what they want to build and get a complete proposal with design, specs, and tasks ready for implementation.
+license: MIT
+compatibility: Requires the repository-pinned OpenSpec CLI and workflow engine.
+metadata:
+  author: openspec
+  version: '1.0'
+  generatedBy: '1.6.0'
 ---
 
 Propose a new change - create the change and generate all artifacts in one step.
@@ -15,13 +21,13 @@ When ready to implement, run pnpm workflow start <change-id> --task <task-id>
 
 ---
 
-**Input**: The argument after `openspec-propose` is the change name (kebab-case), OR a description of what the user wants to build.
+**Input**: The user's request should include a change name (kebab-case) OR a description of what they want to build.
 
 **Steps**
 
-1. **If no input provided, ask what they want to build**
+1. **If no clear input provided, ask what they want to build**
 
-   Use the an open-ended question (open-ended, no preset options) to ask:
+   Use an open-ended question (open-ended, no preset options) to ask:
 
    > "What change do you want to work on? Describe what you want to build or fix."
 
@@ -50,7 +56,7 @@ When ready to implement, run pnpm workflow start <change-id> --task <task-id>
 
 4. **Create artifacts in sequence until apply-ready**
 
-   Use the a task list to track progress through the artifacts.
+   Use a task list to track progress through the artifacts.
 
    Loop through artifacts in dependency order (artifacts with no pending dependencies first):
 
@@ -92,7 +98,7 @@ After completing all artifacts, summarize:
 - Change name and location
 - List of artifacts created with brief descriptions
 - What's ready: "All artifacts created! Ready for implementation."
-- Prompt: "Run `pnpm workflow start <change-id> --task <task-id>` to start implementing."
+- Prompt: "Run `pnpm workflow start <change-id> --task <task-id>` or ask me to implement to start working on the tasks."
 
 **Artifact Creation Guidelines**
 

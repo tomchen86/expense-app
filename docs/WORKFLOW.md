@@ -69,7 +69,7 @@ run:
 
 ```bash
 pnpm workflow doctor --json
-pnpm workflow codex-assets check --json
+pnpm workflow openspec-assets check --json
 pnpm workflow documents validate --json
 ```
 
@@ -98,13 +98,14 @@ form from the transition matrix. A later planning revision uses the same
 command and invalidates stale task evidence.
 
 Repository planning assets are limited to the exact exposed skill names
-`openspec-explore` and `openspec-propose`, with reviewed prompt copies and a
-digest manifest under `workflow/codex-assets/`. Use `openspec-explore` for
+`openspec-explore` and `openspec-propose` across Codex, Claude Code, and the
+`.agents` mirror, with reviewed Codex prompt copies and a schema-v2 digest
+manifest under `workflow/openspec-assets/`. Use `openspec-explore` for
 read-only investigation and requirement clarification. Use `openspec-propose`
 to create a complete proposal, design, delta specs, tasks, and `guard.json`.
-Do not infer a slash command or alias from an internal prompt filename. If the
-running Codex UI does not expose the skills, use the pinned OpenSpec planning
-CLI directly and record the discovery result in the post-merge pilot.
+Do not infer a slash command or alias from an internal prompt filename. If a
+running tool does not expose the skills, use the pinned OpenSpec planning CLI
+directly and record the discovery result in the post-merge pilot.
 
 ## Managed Task Lifecycle
 
@@ -562,11 +563,11 @@ Every OpenSpec upgrade is a separate reviewed change. In that change:
    Review and update the `expense-app` schema fork and
    `openspec/schemas/expense-app/provenance.json`; do not deep-import internals
    or copy the archive merge implementation.
-3. Regenerate and compare the planning-only Codex assets:
+3. Regenerate and compare the planning-only tool-plural OpenSpec assets:
 
    ```bash
-   pnpm workflow codex-assets generate --json
-   pnpm workflow codex-assets check --json
+   pnpm workflow openspec-assets generate --json
+   pnpm workflow openspec-assets check --json
    ```
 
 4. Run `pnpm workflow doctor --json`, validate every affected active change,

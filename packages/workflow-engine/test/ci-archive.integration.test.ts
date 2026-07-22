@@ -10,7 +10,6 @@ import {
   git,
   isWorkflowError,
   runtimeRoot,
-  sourceRepositoryRoot,
   syncOriginMain,
 } from './fixture.ts';
 
@@ -156,28 +155,47 @@ test('CI rejects reviewed schema drift before archive replay', () => {
   }
 });
 
+test('CI regeneration fails closed when the OpenSpec asset manifest is missing or renamed', async (t) => {
+  for (const operation of ['missing', 'renamed'] as const) {
+    await t.test(operation, () => {
+      const fixture = archivedFixture();
+      try {
+        const manifestPath = path.join(
+          fixture.repository,
+          'workflow/openspec-assets/manifest.json',
+        );
+        if (operation === 'missing') {
+          fs.rmSync(manifestPath);
+        } else {
+          fs.renameSync(
+            manifestPath,
+            path.join(path.dirname(manifestPath), 'manifest.retired.json'),
+          );
+        }
+        const head = amendArchive(fixture.repository);
+        assert.throws(
+          () => verifyPullRequest(fixture.repository, fixture.base, head),
+          (error) => isWorkflowError(error, 'OPENSPEC_ASSET_MANIFEST_INVALID'),
+        );
+      } finally {
+        fs.rmSync(fixture.repository, { recursive: true, force: true });
+      }
+    });
+  }
+});
+
 test('CI rejects forbidden generated lifecycle authority when hooks are bypassed', () => {
   const fixture = archivedFixture();
   try {
-    fs.cpSync(
-      path.join(sourceRepositoryRoot, '.codex'),
-      path.join(fixture.repository, '.codex'),
-      { recursive: true },
-    );
-    fs.cpSync(
-      path.join(sourceRepositoryRoot, 'workflow/codex-assets'),
-      path.join(fixture.repository, 'workflow/codex-assets'),
-      { recursive: true },
-    );
     fs.appendFileSync(
-      path.join(fixture.repository, '.codex/skills/openspec-explore/SKILL.md'),
+      path.join(fixture.repository, '.claude/skills/openspec-explore/SKILL.md'),
       '\nopenspec archive demo-change\n',
     );
     const head = amendArchive(fixture.repository);
 
     assert.throws(
       () => verifyPullRequest(fixture.repository, fixture.base, head),
-      (error) => isWorkflowError(error, 'CODEX_ASSET_FORBIDDEN_AUTHORITY'),
+      (error) => isWorkflowError(error, 'OPENSPEC_ASSET_FORBIDDEN_AUTHORITY'),
     );
   } finally {
     fs.rmSync(fixture.repository, { recursive: true, force: true });

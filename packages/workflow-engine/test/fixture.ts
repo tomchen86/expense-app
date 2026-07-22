@@ -4,11 +4,14 @@ import os from 'node:os';
 import path from 'node:path';
 
 import { WorkflowError } from '../src/errors.ts';
+import { generateOpenSpecPlanningAssets } from '../src/openspec-planning-assets.ts';
 
 export const sourceRepositoryRoot = path.resolve(
   import.meta.dirname,
   '../../..',
 );
+
+let openSpecAssetTemplateRoot: string | undefined;
 
 export function createFixtureRepository(): string {
   const repository = fs.mkdtempSync(
@@ -88,6 +91,7 @@ export function createFixtureRepository(): string {
   });
   fs.writeFileSync(path.join(repository, 'src/.gitkeep'), '');
   installFakeOpenSpec(repository);
+  installOpenSpecAssetFixture(repository);
 
   git(repository, ['add', '.']);
   git(repository, ['commit', '-m', 'Create fixture']);
@@ -302,6 +306,10 @@ export function installFakeOpenSpec(repository: string): void {
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+if (process.argv[2] === 'init') {
+  await import('./openspec-asset-init.mjs');
+  process.exit(0);
+}
 if (process.argv[2] === '--version') {
   process.stdout.write('1.6.0\\n');
   process.exit(0);
@@ -477,10 +485,61 @@ process.stdout.write(JSON.stringify({
 process.exitCode = invalid ? 1 : 0;
 `,
   );
+  fs.copyFileSync(
+    path.join(
+      sourceRepositoryRoot,
+      'packages/workflow-engine/test/fixtures/openspec-assets/fake-openspec.mjs',
+    ),
+    path.join(packageDirectory, 'bin/openspec-asset-init.mjs'),
+  );
   fs.writeFileSync(
     path.join(packageDirectory, 'bin/runtime-helper.js'),
     'export const fixtureRuntime = true;\n',
   );
+}
+
+function installOpenSpecAssetFixture(repository: string): void {
+  const templateRoot = openSpecAssetTemplate();
+  for (const relativePath of [
+    '.codex/skills',
+    '.claude/skills',
+    '.agents/skills',
+    'workflow/openspec-assets',
+  ]) {
+    const destination = path.join(repository, relativePath);
+    fs.mkdirSync(path.dirname(destination), { recursive: true });
+    fs.cpSync(path.join(templateRoot, relativePath), destination, {
+      recursive: true,
+    });
+  }
+}
+
+function openSpecAssetTemplate(): string {
+  if (openSpecAssetTemplateRoot) return openSpecAssetTemplateRoot;
+
+  const repository = fs.mkdtempSync(
+    path.join(os.tmpdir(), 'workflow-openspec-asset-fixture-template-'),
+  );
+  try {
+    writeJson(path.join(repository, 'package.json'), {
+      name: 'workflow-openspec-asset-fixture-template',
+      private: true,
+      devDependencies: {},
+    });
+    installFakeOpenSpec(repository);
+    generateOpenSpecPlanningAssets(repository, {
+      installationRepositoryRoot: repository,
+      formatterRepositoryRoot: sourceRepositoryRoot,
+    });
+    openSpecAssetTemplateRoot = repository;
+    process.once('exit', () => {
+      fs.rmSync(repository, { recursive: true, force: true });
+    });
+    return repository;
+  } catch (error) {
+    fs.rmSync(repository, { recursive: true, force: true });
+    throw error;
+  }
 }
 
 export function git(repository: string, args: string[]): string {

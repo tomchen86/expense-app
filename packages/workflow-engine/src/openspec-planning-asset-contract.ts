@@ -574,6 +574,7 @@ export function verifyOpenSpecRepositoryAssets(
 
 export function verifyOpenSpecRepositoryClosure(repositoryRoot: string): void {
   const root = canonicalOpenSpecAssetDirectory(repositoryRoot);
+  verifyRetiredCodexAssetHomeAbsent(root);
   verifyOpenSpecSkillClosures(root, false);
   verifyOpenSpecClaudeCommandClosure(root);
   verifyOpenSpecAssetHomeClosure(root, false);
@@ -583,6 +584,7 @@ export function verifyOpenSpecRepositoryWritePlan(
   repositoryRoot: string,
 ): void {
   const root = canonicalOpenSpecAssetDirectory(repositoryRoot);
+  verifyRetiredCodexAssetHomeAbsent(root);
   for (const relativePath of [
     ...OPENSPEC_ASSET_DEFINITIONS.map((entry) => entry.destinationPath),
     OPENSPEC_ASSET_MANIFEST_PATH,
@@ -592,6 +594,19 @@ export function verifyOpenSpecRepositoryWritePlan(
   verifyOpenSpecSkillClosures(root, true);
   verifyOpenSpecClaudeCommandClosure(root);
   verifyOpenSpecAssetHomeClosure(root, true);
+}
+
+function verifyRetiredCodexAssetHomeAbsent(repositoryRoot: string): void {
+  if (
+    fs.lstatSync(path.join(repositoryRoot, 'workflow/codex-assets'), {
+      throwIfNoEntry: false,
+    })
+  ) {
+    throw openSpecAssetError(
+      'OPENSPEC_ASSET_CLOSURE_INVALID',
+      'The retired Codex-only asset home must not remain in the repository.',
+    );
+  }
 }
 
 function verifyOpenSpecSkillClosures(
