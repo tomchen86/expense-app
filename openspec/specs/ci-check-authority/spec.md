@@ -5,23 +5,25 @@ TBD - created by archiving change unify-format-check-authority. Update Purpose a
 ## Requirements
 ### Requirement: Registered Checks Are the Sole CI Command Authority
 
-External CI and local verification SHALL resolve a named check through the
-versioned workflow check registry and execute it through the repository-owned
-workflow runner. An adapter command or CI workflow MUST NOT maintain a second
-command, runner, or path-scope definition for that check.
+External CI and local verification SHALL resolve a named check through the versioned workflow check registry and execute it through the repository-owned workflow runner. An adapter command or CI workflow MUST NOT maintain a second command, runner, or path-scope definition for that check.
 
 #### Scenario: GitHub runs the formatting check
 
 - **WHEN** the GitHub formatting job invokes its local verification entry point
-- **THEN** the workflow engine resolves `workflow-format` from
-  `workflow/checks.json`
-- **THEN** the unchanged registered command and path scope are executed
+- **THEN** the workflow engine resolves `workflow-format` from `workflow/checks.json`
+- **THEN** the registered command and path scope are executed
+
+#### Scenario: Task runs generated-asset validation
+
+- **WHEN** a managed task or CI evidence set requires `openspec-assets`
+- **THEN** the workflow engine resolves it from `workflow/checks.json`
+- **THEN** the registered command is the only task-level OpenSpec asset validation command executed
 
 #### Scenario: Historical definition is replayed
 
-- **WHEN** historical task evidence references `workflow-format`
+- **WHEN** historical task evidence references `workflow-format` or `openspec-assets`
 - **THEN** replay continues to use the definition committed with that evidence
-- **THEN** the CI adapter introduces no alternate formatting scope
+- **THEN** the CI adapter introduces no alternate formatting or asset-validation scope
 
 ### Requirement: Standalone Registered Check Execution Is Fail-Closed
 
@@ -54,19 +56,6 @@ completion, staging, commit, or archive authority.
 - **WHEN** the checkout is dirty before execution or the check changes it
 - **THEN** the command fails and produces no authoritative passing result
 
-### Requirement: Formatting Scope Remains Historically Stable
-
-The authority-unification migration MUST preserve the complete
-`workflow-format` definition in `workflow/checks.json` byte-for-byte and MUST
-NOT format, ignore, or rewrite files merely because the superseded global
-Prettier invocation reported them.
-
-#### Scenario: Migration is reviewed
-
-- **WHEN** the repair task is compared with its planning base
-- **THEN** the `workflow-format` registry definition is identical
-- **THEN** generated documents and unrelated OpenSpec artifacts are unchanged
-
 ### Requirement: Registered format scope excludes archived bootstrap trees
 
 The registered `workflow-format` check command SHALL NOT name the planning
@@ -85,4 +74,25 @@ authority commit MUST be attested before the next pull request is evaluated.
 
 - **WHEN** an ordinary task changes a required check definition
 - **THEN** the engine fails closed at check time and in CI replay
+
+### Requirement: Formatting and Generated Asset Validation Have Disjoint Scope
+
+The registered `workflow-format` check SHALL own workflow-engine sources and explicitly listed human-maintained policy, schema, package, and governance documents. It MUST exclude the generated OpenSpec asset home. The registered `openspec-assets` check SHALL be the task-level validity authority for that generated asset home and every delivered target.
+
+#### Scenario: Human-maintained workflow files are formatted
+
+- **WHEN** `workflow-format` executes after the authority transition
+- **THEN** it checks each declared human-maintained workflow policy and schema path
+- **AND** it does not traverse `workflow/openspec-assets/`
+
+#### Scenario: Generated assets are validated
+
+- **WHEN** a task guard requires `openspec-assets`
+- **THEN** the workflow runner executes the registered read-only asset check
+- **AND** managed evidence and CI use that same registered definition without an alternate formatter scope
+
+#### Scenario: Ordinary task changes required check ownership
+
+- **WHEN** an ordinary task edits a check definition required by its policy or guard
+- **THEN** task authorization and CI replay fail closed
 

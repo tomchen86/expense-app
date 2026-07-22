@@ -27,20 +27,18 @@ rule.
 - **WHEN** a planning diff deletes a file outside the named change's tree
 - **THEN** the transition fails closed
 
-### Requirement: Bootstrap format scope retirement is transition-tolerant
+### Requirement: Generated OpenSpec Asset Format Scope Is Exact
 
-The workflow-format contract assertion SHALL accept exactly the currently
-registered command or the identical command without the archived bootstrap
-path entry, and MUST reject every other form.
+The workflow-format contract assertion SHALL accept only the registered command that explicitly covers the reviewed human-maintained workflow paths and excludes the generated OpenSpec asset home. It MUST reject the former broad workflow-directory form and every other command.
 
-#### Scenario: Authority edit retires the bootstrap path
+#### Scenario: Asset-separated format scope is active
 
-- **WHEN** `checks.json` drops the archived bootstrap directory from the
-  registered workflow-format command
-- **THEN** the contract test passes without modification
+- **WHEN** the post-authority repository contract validates `workflow-format`
+- **THEN** the exact asset-separated command passes
+- **AND** generated OpenSpec assets remain outside formatting ownership
 
-#### Scenario: Any other command drift
+#### Scenario: Broad or otherwise drifted format scope returns
 
-- **WHEN** the registered workflow-format command changes in any other way
-- **THEN** the contract test fails
+- **WHEN** `workflow-format` names the broad workflow directory, omits a required human-maintained path, includes the generated asset home, or otherwise changes
+- **THEN** the repository contract fails
 
