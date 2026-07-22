@@ -150,8 +150,6 @@ export const OPENSPEC_ASSET_DEFINITIONS: readonly OpenSpecAssetDefinition[] = [
   }),
 ];
 
-export const OPENSPEC_ASSET_DELIVERIES = OPENSPEC_ASSET_DEFINITIONS;
-
 const OPENSPEC_SKILL_CLOSURE = [
   'openspec-explore/SKILL.md',
   'openspec-propose/SKILL.md',
@@ -240,23 +238,8 @@ export function materializeOpenSpecReviewedEntries(
   const reviewedByDestination = new Map<string, OpenSpecReviewedAssetEntry>();
   for (const asset of OPENSPEC_ASSET_DEFINITIONS) {
     if (asset.mirrorOf !== null) {
-      const canonical = reviewedByDestination.get(asset.mirrorOf);
-      if (!canonical) {
-        throw openSpecAssetError(
-          'OPENSPEC_ASSET_SOURCE_INVALID',
-          'An OpenSpec planning asset mirror has no reviewed canonical source.',
-          { destinationPath: asset.destinationPath },
-        );
-      }
-      reviewedByDestination.set(asset.destinationPath, {
-        ...asset,
-        sourceDigest: canonical.sourceDigest,
-        overlayDigest: canonical.overlayDigest,
-        overlayContent: canonical.overlayContent,
-      });
       continue;
     }
-
     const source = generated.get(asset.sourceKey);
     if (source === undefined) {
       throw openSpecAssetError(
@@ -275,6 +258,26 @@ export function materializeOpenSpecReviewedEntries(
     });
   }
 
+  for (const asset of OPENSPEC_ASSET_DEFINITIONS) {
+    if (asset.mirrorOf === null) {
+      continue;
+    }
+    const canonical = reviewedByDestination.get(asset.mirrorOf);
+    if (!canonical) {
+      throw openSpecAssetError(
+        'OPENSPEC_ASSET_SOURCE_INVALID',
+        'An OpenSpec planning asset mirror has no reviewed canonical source.',
+        { destinationPath: asset.destinationPath },
+      );
+    }
+    reviewedByDestination.set(asset.destinationPath, {
+      ...asset,
+      sourceDigest: canonical.sourceDigest,
+      overlayDigest: canonical.overlayDigest,
+      overlayContent: canonical.overlayContent,
+    });
+  }
+
   return OPENSPEC_ASSET_DEFINITIONS.map((asset) => {
     const reviewed = reviewedByDestination.get(asset.destinationPath);
     if (!reviewed) {
@@ -287,9 +290,6 @@ export function materializeOpenSpecReviewedEntries(
     return reviewed;
   });
 }
-
-export const reviewOpenSpecPlanningAssetSources =
-  materializeOpenSpecReviewedEntries;
 
 export function materializeOpenSpecFinalEntries(
   reviewed: readonly OpenSpecReviewedAssetEntry[],
@@ -734,8 +734,6 @@ export function assertExactOpenSpecAssetFiles(
     );
   }
 }
-
-export const assertExactOpenSpecFiles = assertExactOpenSpecAssetFiles;
 
 export function canonicalOpenSpecAssetDirectory(directory: string): string {
   try {
