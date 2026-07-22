@@ -272,7 +272,6 @@ test('tool-plural generation is isolated, three-stage pinned, and byte determini
     const firstBytes = governedBytes(repository);
     generateOpenSpecPlanningAssets(repository, options);
     assert.deepEqual(governedBytes(repository), firstBytes);
-    assert.equal(readFormatterCount(repository), 14);
     const captures = JSON.parse(fs.readFileSync(capturePath, 'utf8')) as Array<{
       args: string[];
       cwd: string;

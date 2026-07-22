@@ -140,14 +140,20 @@ test('format verification delegates to the registered canonical authority', () =
     fs.readFileSync(path.join(repositoryRoot, 'workflow/checks.json'), 'utf8'),
   );
   const registeredFormat = checks.checks['workflow-format'];
-  const currentFormatCommand = [
+  const assetSeparatedFormatCommand = [
     'node-package-bin',
     '.',
     'prettier',
     'prettier',
     '--check',
     'packages/workflow-engine',
-    'workflow',
+    'workflow/ai-adapter-policy.json',
+    'workflow/checks.json',
+    'workflow/ci-policy.json',
+    'workflow/config.json',
+    'workflow/document-policy.json',
+    'workflow/maintainer-policy.json',
+    'workflow/schemas',
     'apps/api/src/__tests__/setup/datasource.factory.ts',
     'apps/api/src/__tests__/setup/database-target-policy.ts',
     'apps/api/src/__tests__/isolated/database-target-policy.isolated.spec.ts',
@@ -160,25 +166,8 @@ test('format verification delegates to the registered canonical authority', () =
     'docs/WORKFLOW.md',
     'AGENTS.md',
   ];
-  const assetSeparatedFormatCommand = [
-    ...currentFormatCommand.slice(0, 6),
-    'workflow/ai-adapter-policy.json',
-    'workflow/checks.json',
-    'workflow/ci-policy.json',
-    'workflow/config.json',
-    'workflow/document-policy.json',
-    'workflow/maintainer-policy.json',
-    'workflow/schemas',
-    ...currentFormatCommand.slice(7),
-  ];
   assert.equal(registeredFormat?.destructiveDatabase, false);
-  assert.ok(
-    JSON.stringify(registeredFormat?.command) ===
-      JSON.stringify(currentFormatCommand) ||
-      JSON.stringify(registeredFormat?.command) ===
-        JSON.stringify(assetSeparatedFormatCommand),
-    'workflow-format must be the current command or the exact asset-separated transition form',
-  );
+  assert.deepEqual(registeredFormat?.command, assetSeparatedFormatCommand);
 });
 
 test('repository exposes only reviewed OpenSpec planning skills', () => {
