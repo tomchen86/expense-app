@@ -64,7 +64,13 @@
         "prettier",
         "--check",
         "packages/workflow-engine",
-        "workflow",
+        "workflow/ai-adapter-policy.json",
+        "workflow/checks.json",
+        "workflow/ci-policy.json",
+        "workflow/config.json",
+        "workflow/document-policy.json",
+        "workflow/maintainer-policy.json",
+        "workflow/schemas",
         "apps/api/src/__tests__/setup/datasource.factory.ts",
         "apps/api/src/__tests__/setup/database-target-policy.ts",
         "apps/api/src/__tests__/isolated/database-target-policy.isolated.spec.ts",
@@ -76,6 +82,16 @@
         "docs/DOCUMENT_STRUCTURE_GUIDE.md",
         "docs/WORKFLOW.md",
         "AGENTS.md"
+      ],
+      "destructiveDatabase": false
+    },
+    "openspec-assets": {
+      "command": [
+        "node",
+        "packages/workflow-engine/src/cli.ts",
+        "openspec-assets",
+        "check",
+        "--json"
       ],
       "destructiveDatabase": false
     }
