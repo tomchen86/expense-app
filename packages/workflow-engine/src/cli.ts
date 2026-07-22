@@ -8,10 +8,10 @@ import { dispatchAiAdapterCommand } from './ai-adapter-cli.ts';
 import { commitArchiveTransition } from './archive-transition.ts';
 import { loadWorkflowConfig } from './contracts.ts';
 import {
-  checkCodexPlanningAssets,
-  generateCodexPlanningAssets,
-  installCodexPlanningPrompts,
-} from './codex-planning-assets.ts';
+  checkOpenSpecPlanningAssets,
+  generateOpenSpecPlanningAssets,
+  installOpenSpecPlanningPrompts,
+} from './openspec-planning-assets.ts';
 import { verifyPullRequest } from './ci.ts';
 import { dispatchDocumentRefreshCommand } from './document-refresh-cli.ts';
 import { ExitCode, WorkflowError, workflowError } from './errors.ts';
@@ -122,20 +122,20 @@ function dispatch(args: string[], cwd: string): CommandResult {
         ok: true,
         result: commitArchiveTransition(cwd, rest[0]),
       };
-    case 'codex-assets': {
+    case 'openspec-assets': {
       const repositoryRoot = discoverRepository(cwd).repositoryRoot;
       if (rest.length === 1 && rest[0] === 'generate') {
         return {
           command,
           ok: true,
-          result: generateCodexPlanningAssets(repositoryRoot),
+          result: generateOpenSpecPlanningAssets(repositoryRoot),
         };
       }
       if (rest.length === 1 && rest[0] === 'check') {
         return {
           command,
           ok: true,
-          result: checkCodexPlanningAssets(repositoryRoot),
+          result: checkOpenSpecPlanningAssets(repositoryRoot),
         };
       }
       if (
@@ -146,11 +146,11 @@ function dispatch(args: string[], cwd: string): CommandResult {
         return {
           command,
           ok: true,
-          result: installCodexPlanningPrompts(repositoryRoot, rest[2]!),
+          result: installOpenSpecPlanningPrompts(repositoryRoot, rest[2]!),
         };
       }
       throw usage(
-        'Usage: pnpm workflow codex-assets <generate|check|install-prompts --codex-home <path>> [--json]',
+        'Usage: pnpm workflow openspec-assets <generate|check|install-prompts --codex-home <path>> [--json]',
       );
     }
     case 'start': {
@@ -687,7 +687,7 @@ function usageText(): string {
     '  pnpm workflow validate-change <change-id> [--json]',
     '  pnpm workflow plan-commit <change-id> [--json]',
     '  pnpm workflow archive <change-id> [--json]',
-    '  pnpm workflow codex-assets <generate|check|install-prompts --codex-home <path>> [--json]',
+    '  pnpm workflow openspec-assets <generate|check|install-prompts --codex-home <path>> [--json]',
     '  pnpm workflow start <change-id> --task <task-id> [--json]',
     '  pnpm workflow status [session-id] [--json]',
     '  pnpm workflow check <session-id> [--json]',

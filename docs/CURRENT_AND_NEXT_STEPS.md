@@ -8,7 +8,7 @@ This generated handoff contains semantic project state only. Its sources are tra
 
 ## Current Task
 
-`3.2` — Follow RED -> GREEN -> REFACTOR to atomically cut the live repository over from `codex-assets` to `openspec-assets`: switch CLI/integration consumers, make missing or renamed manifests fail closed in hooks and CI, migrate/regenerate Codex, Claude, `.agents`, and prompt targets, remove the old modules/home, update full-integration fixtures and regressions, and align active agent/workflow guidance without changing `workflow/checks.json`.
+None — all tasks are complete.
 
 ## Next Task
 
@@ -16,7 +16,7 @@ None.
 
 ## Current Focus
 
-Follow RED -> GREEN -> REFACTOR to atomically cut the live repository over from `codex-assets` to `openspec-assets`: switch CLI/integration consumers, make missing or renamed manifests fail closed in hooks and CI, migrate/regenerate Codex, Claude, `.agents`, and prompt targets, remove the old modules/home, update full-integration fixtures and regressions, and align active agent/workflow guidance without changing `workflow/checks.json`.
+No implementation tasks remain; follow the Roadmap for the next explicit transition.
 
 ## Known Blockers
 

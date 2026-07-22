@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -23,7 +23,6 @@ import './openspec-adapter.integration.test.ts';
 import './openspec-doctor.integration.test.ts';
 import './openspec-schema-contract.integration.test.ts';
 import './planning-transition.contract.test.ts';
-import './codex-planning-assets.integration.test.ts';
 import './openspec-planning-assets.integration.test.ts';
 import './authority-attestation.contract.test.ts';
 import './maintainer-attestation.integration.test.ts';
@@ -242,9 +241,9 @@ test('agent guide documents the complete public workflow surface and source-size
     'pnpm workflow plan-commit',
     'pnpm workflow run-check',
     'pnpm workflow archive',
-    'pnpm workflow codex-assets generate',
-    'pnpm workflow codex-assets check',
-    'pnpm workflow codex-assets install-prompts',
+    'pnpm workflow openspec-assets generate',
+    'pnpm workflow openspec-assets check',
+    'pnpm workflow openspec-assets install-prompts',
     'pnpm workflow start',
     'pnpm workflow status',
     'pnpm workflow check',
@@ -289,6 +288,54 @@ test('agent guide documents the complete public workflow surface and source-size
     /Do not change, split, or refactor source\s+solely because it exceeds 500 lines\./,
   );
   assert.doesNotMatch(agents, /keep files under 500 LOC/i);
+});
+
+test('the public asset CLI exposes only the tool-plural command', () => {
+  const repositoryRoot = path.resolve(import.meta.dirname, '../../..');
+  const cliPath = path.join(
+    repositoryRoot,
+    'packages/workflow-engine/src/cli.ts',
+  );
+  const run = (args: string[]) =>
+    spawnSync(
+      process.execPath,
+      ['--experimental-strip-types', cliPath, ...args, '--json'],
+      {
+        cwd: repositoryRoot,
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'pipe'],
+      },
+    );
+
+  const current = run(['openspec-assets', 'check']);
+  assert.equal(current.status, 0, current.stderr);
+  assert.equal(JSON.parse(current.stdout).command, 'openspec-assets');
+
+  const legacy = run(['codex-assets', 'check']);
+  assert.equal(legacy.status, 2);
+  assert.equal(JSON.parse(legacy.stderr).error.code, 'INVALID_USAGE');
+
+  const help = run(['help']);
+  assert.equal(help.status, 0, help.stderr);
+  const usage = JSON.parse(help.stdout).usage as string;
+  assert.match(usage, /pnpm workflow openspec-assets/);
+  assert.doesNotMatch(usage, /pnpm workflow codex-assets/);
+});
+
+test('the retired Codex-only asset implementation and home are absent', () => {
+  const repositoryRoot = path.resolve(import.meta.dirname, '../../..');
+  for (const retiredPath of [
+    'packages/workflow-engine/src/codex-planning-asset-contract.ts',
+    'packages/workflow-engine/src/codex-planning-assets.ts',
+    'packages/workflow-engine/test/codex-planning-assets.integration.test.ts',
+    'workflow/codex-assets',
+  ]) {
+    assert.equal(
+      fs.existsSync(path.join(repositoryRoot, retiredPath)),
+      false,
+      `${retiredPath} must not remain as a compatibility surface`,
+    );
+  }
 });
 
 test('break-glass maintainer operator contract is complete and bootstrap-only', () => {

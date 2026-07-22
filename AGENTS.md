@@ -52,13 +52,13 @@ commit, or archive. Use the workflow commands below for those operations.
 runner and path scope. It does not authorize task completion, staging, commit,
 archive, or merge; use the managed task lifecycle for those transitions.
 
-### Codex planning assets
+### OpenSpec planning assets
 
-| Command                                           | Use when                                                        |
-| ------------------------------------------------- | --------------------------------------------------------------- |
-| `pnpm workflow codex-assets generate --json`      | Regenerating reviewed planning assets during an approved upgrade |
-| `pnpm workflow codex-assets check --json`         | Checking tracked planning assets and their digest manifest      |
-| `pnpm workflow codex-assets install-prompts --json` | Installing reviewed prompt copies into a supported local target |
+| Command                                                                    | Use when                                                               |
+| -------------------------------------------------------------------------- | ---------------------------------------------------------------------- |
+| `pnpm workflow openspec-assets generate --json`                            | Regenerating reviewed tool-plural planning assets during an upgrade    |
+| `pnpm workflow openspec-assets check --json`                               | Checking tracked planning assets and their digest manifest             |
+| `pnpm workflow openspec-assets install-prompts --codex-home <path> --json` | Installing reviewed prompt copies into an explicit local Codex target  |
 
 ### Managed task lifecycle
 

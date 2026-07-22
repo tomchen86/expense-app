@@ -13,6 +13,7 @@ import {
 import {
   checkOpenSpecPlanningAssets,
   generateOpenSpecPlanningAssets,
+  installOpenSpecPlanningPrompts,
 } from '../src/openspec-planning-assets.ts';
 import {
   installFakeOpenSpec,
@@ -342,6 +343,68 @@ test('checking never resolves the formatter and never rewrites success or failur
     );
     assert.deepEqual(repositorySnapshot(repository), beforeFailure);
     assert.equal(readFormatterCount(repository), formatterCount);
+  } finally {
+    fs.rmSync(repository, { recursive: true, force: true });
+  }
+});
+
+test('prompt installation uses reviewed Codex targets and never overwrites', () => {
+  const repository = temporaryRepository();
+  const codexHome = fs.mkdtempSync(
+    path.join(os.tmpdir(), 'openspec-assets-install-home-'),
+  );
+  try {
+    const options = fixtureOptions(repository);
+    generateOpenSpecPlanningAssets(repository, options);
+    const formatterCount = readFormatterCount(repository);
+    const installed = installOpenSpecPlanningPrompts(repository, codexHome);
+    const canonicalHome = fs.realpathSync(codexHome);
+    assert.deepEqual(installed.installedPaths, [
+      path.join(canonicalHome, 'prompts/opsx-explore.md'),
+      path.join(canonicalHome, 'prompts/opsx-propose.md'),
+    ]);
+    for (const installedPath of installed.installedPaths) {
+      const reviewedPath = path.join(
+        repository,
+        'workflow/openspec-assets/prompts',
+        path.basename(installedPath),
+      );
+      assert.equal(
+        fs.readFileSync(installedPath, 'utf8'),
+        fs.readFileSync(reviewedPath, 'utf8'),
+      );
+      assert.equal(fs.statSync(installedPath).mode & 0o777, 0o600);
+    }
+    assert.equal(readFormatterCount(repository), formatterCount);
+
+    const existing = fs.readFileSync(installed.installedPaths[0]!, 'utf8');
+    assert.throws(
+      () => installOpenSpecPlanningPrompts(repository, codexHome),
+      (error) => isWorkflowError(error, 'OPENSPEC_ASSET_PROMPT_EXISTS'),
+    );
+    assert.equal(
+      fs.readFileSync(installed.installedPaths[0]!, 'utf8'),
+      existing,
+    );
+  } finally {
+    fs.rmSync(repository, { recursive: true, force: true });
+    fs.rmSync(codexHome, { recursive: true, force: true });
+  }
+});
+
+test('checking rejects a surviving Codex-only asset home', () => {
+  const repository = temporaryRepository();
+  try {
+    const options = fixtureOptions(repository);
+    generateOpenSpecPlanningAssets(repository, options);
+    const retiredHome = path.join(repository, 'workflow/codex-assets');
+    fs.mkdirSync(retiredHome, { recursive: true });
+    fs.writeFileSync(path.join(retiredHome, 'manifest.json'), '{}\n');
+
+    assert.throws(
+      () => checkOpenSpecPlanningAssets(repository, options),
+      (error) => isWorkflowError(error, 'OPENSPEC_ASSET_CLOSURE_INVALID'),
+    );
   } finally {
     fs.rmSync(repository, { recursive: true, force: true });
   }
