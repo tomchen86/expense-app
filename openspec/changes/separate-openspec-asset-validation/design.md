@@ -51,7 +51,7 @@ The change remains one WIP item but crosses three pull-request phases:
 2. a human maintainer changes only `workflow/checks.json` in one signed authority commit;
 3. a planning revision adds the first task whose guard requires `openspec-assets`, and that task removes the temporary dual-form assertion and records managed evidence from the new check.
 
-The initial guard cannot name `openspec-assets`, because change validation correctly rejects unknown check IDs. The phase-three checkbox and guard entry will therefore be added only by the planned revision after the authority commit is merged and attested. Until then, the activation work is described in `tasks.md` but is not an executable task.
+The initial guard could not name `openspec-assets`, because change validation correctly rejects unknown check IDs. After the authority commit merged and received its required attestation, this phase-three planning revision added the executable activation task and guard entry.
 
 Splitting the directory/CLI rename into its own change was rejected. The current missing-manifest return would make a partially renamed tree fail open. A separate authority-only change was also rejected because it would add another active lifecycle without removing the required deferred-activation step.
 
@@ -118,18 +118,18 @@ This fixture cost is accepted because a fixture exercising the complete reposito
 
 ### 7. Give formatting and asset validity disjoint registered scopes
 
-The future authority commit makes exactly two semantic edits to `workflow/checks.json`:
+The completed authority commit made exactly two semantic edits to `workflow/checks.json`:
 
 - add non-destructive `openspec-assets`, executing `node packages/workflow-engine/src/cli.ts openspec-assets check --json` through the registered runner;
 - replace the broad `workflow` argument of `workflow-format` with exact human-maintained top-level workflow JSON files plus `workflow/schemas`, leaving `workflow/openspec-assets/**` out of the format check.
 
-Before that commit, an ordinary test change accepts only the exact old and proposed new format definitions. The authority candidate is checked with its parent-pinned required set. CI adopts the changed required `workflow-format` definition from the signed candidate; the newly added but unused asset definition is structurally validated but not reported or executed as required evidence.
+Before that commit, an ordinary test change accepted only the exact old and proposed new format definitions. The authority candidate was checked with its parent-pinned required set. CI adopted the changed required `workflow-format` definition from the signed candidate; the newly added but unused asset definition was structurally validated but not reported or executed as required evidence.
 
-After merge and authority attestation, a planning revision adds a final task whose guard requires `openspec-assets`. That task is the first managed and CI execution of the new definition and changes the contract assertion to accept only the new format scope. Adding the new check to maintainer policy was rejected: asset validation is relevant to asset-changing tasks and CI integration, not every unrelated authority commit.
+After merge and authority attestation, this planning revision adds a final task whose guard requires `openspec-assets`. That task is the first managed and CI execution of the new definition and changes the contract assertion to accept only the new format scope. It also folds in behavior-preserving post-merge review cleanup: make reviewed mirror resolution order-independent, remove three unused alias exports, and remove an implementation-coupled formatter call-count assertion while retaining the stronger formatter-independence regression. Adding the new check to maintainer policy was rejected: asset validation is relevant to asset-changing tasks and CI integration, not every unrelated authority commit.
 
 ### 8. Preserve TDD and executable evidence boundaries
 
-Behavioral gaps receive failing tests before production changes: missing manifest, plural target drift, forbidden pinned lifecycle/Spectra commands, read-only checking without a formatter, and closure/digest failures. The authority add-definition behavior already exists; its test is characterization evidence rather than a fabricated RED. The old/new format assertion supplies RED evidence for the later authority form.
+Behavioral gaps receive failing tests before production changes: missing manifest, plural target drift, forbidden pinned lifecycle/Spectra commands, read-only checking without a formatter, and closure/digest failures. The authority add-definition behavior already existed; its test is characterization evidence rather than a fabricated RED. The old/new format assertion supplied exact pre-transition evidence for the authority form. The final review cleanup changes no supported behavior, so the existing mirror, formatter-independence, typecheck, and integration coverage provide its refactor evidence.
 
 No API tests or `TEST_DATABASE_URL` are involved. Task completion, staging, commits, and archive remain exclusively workflow-engine transitions; a green standalone asset check is evidence only.
 
@@ -161,7 +161,7 @@ No API tests or `TEST_DATABASE_URL` are involved. Task completion, staging, comm
 5. Merge the ordinary task commits and synchronize the active change branch with the configured base.
 6. A human maintainer issues one short-lived grant for exact path `workflow/checks.json`, applies only the reviewed registry/format edits, runs `authority-check`, creates the signed authority commit, merges it through strict CI, and publishes/verifies the required authority attestation. Agents stop and report if any of these human prerequisites is absent.
 7. Revise the plan to add the final activation task and guard entry requiring `openspec-assets`; submit that planning-only revision through `plan-commit` before starting the task.
-8. Complete the activation task: require the new-only format contract, refresh the semantic handoff, and capture fresh managed/CI evidence from `openspec-assets` and all other required checks.
+8. Complete the activation task: require the new-only format contract; apply the accepted order-independent mirror, dead-alias, and formatter-test cleanup; refresh the semantic handoff; and capture fresh managed/CI evidence from `openspec-assets` and all other required checks.
 9. Merge and archive through the normal workflow transition.
 
 Before the authority commit, rollback is a managed logical revert of ordinary task commits. An unused/revoked/failed grant follows the maintainer cleanup lifecycle. After a signed authority commit is merged, rollback requires a separately reviewed authority transition; audit and attestation tags are never deleted to erase history.

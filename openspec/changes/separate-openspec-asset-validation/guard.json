@@ -76,6 +76,22 @@
         "workflow-lint",
         "workflow-format"
       ]
+    },
+    "4.1": {
+      "allowedPaths": [
+        "docs/CURRENT_AND_NEXT_STEPS.md",
+        "packages/workflow-engine/src/openspec-planning-asset-contract.ts",
+        "packages/workflow-engine/test/contracts.test.ts",
+        "packages/workflow-engine/test/openspec-planning-assets.integration.test.ts"
+      ],
+      "requiredChecks": [
+        "managed-documents",
+        "openspec-assets",
+        "workflow-tests",
+        "workflow-typecheck",
+        "workflow-lint",
+        "workflow-format"
+      ]
     }
   }
 }
