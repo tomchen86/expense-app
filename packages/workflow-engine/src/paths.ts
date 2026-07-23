@@ -6,6 +6,8 @@ import { ExitCode, workflowError } from './errors.ts';
 const CHANGE_ID_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 const TASK_ID_PATTERN = /^\d+(?:\.\d+)+$/;
 const SESSION_ID_PATTERN = /^session-[a-zA-Z0-9-]+$/;
+const INVESTIGATION_ID_PATTERN = /^investigation-[a-zA-Z0-9-]+$/;
+const INVOCATION_ID_PATTERN = /^invocation-[a-zA-Z0-9-]+$/;
 const WINDOWS_ABSOLUTE_PATTERN = /^[a-zA-Z]:[\\/]/;
 const UNSUPPORTED_GLOB_PATTERN = /[*?[\]{}!]/;
 
@@ -16,6 +18,7 @@ export type InvestigationRuntimePaths = {
   refs: string;
   sessions: string;
   invocations: string;
+  locks: string;
 };
 
 /**
@@ -39,6 +42,7 @@ export function investigationRuntimePaths(
     refs: path.join(root, 'refs'),
     sessions: path.join(root, 'sessions'),
     invocations: path.join(root, 'invocations'),
+    locks: path.join(root, 'locks'),
   };
 }
 
@@ -73,6 +77,28 @@ export function assertSessionId(value: string): string {
     throw workflowError(
       'INVALID_SESSION_ID',
       `Invalid session ID: ${value}`,
+      ExitCode.usage,
+    );
+  }
+  return value;
+}
+
+export function assertInvestigationId(value: string): string {
+  if (!INVESTIGATION_ID_PATTERN.test(value)) {
+    throw workflowError(
+      'INVALID_INVESTIGATION_ID',
+      `Invalid investigation ID: ${value}`,
+      ExitCode.usage,
+    );
+  }
+  return value;
+}
+
+export function assertInvocationId(value: string): string {
+  if (!INVOCATION_ID_PATTERN.test(value)) {
+    throw workflowError(
+      'INVALID_INVOCATION_ID',
+      `Invalid provider invocation ID: ${value}`,
       ExitCode.usage,
     );
   }

@@ -27,6 +27,7 @@ import './ci-bootstrap.integration.test.ts';
 import './ai-adapter-evaluation.integration.test.ts';
 import './ignored-state.integration.test.ts';
 import './investigation-scanner.integration.test.ts';
+import './investigation-session.integration.test.ts';
 import './investigation-why.integration.test.ts';
 import './planning-transition.integration.test.ts';
 import './workflow-rehearsal.integration.test.ts';

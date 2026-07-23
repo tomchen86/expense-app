@@ -4,7 +4,11 @@ import { loadWorkflowConfig } from './contracts.ts';
 import { ExitCode, workflowError } from './errors.ts';
 import { listStagedPaths } from './git-transitions.ts';
 import { discoverRepository, runGit } from './git.ts';
-import { assertSessionId } from './paths.ts';
+import {
+  assertInvestigationId,
+  assertSessionId,
+  investigationRuntimePaths,
+} from './paths.ts';
 import type { WorkflowReport } from './report-store.ts';
 import {
   reportString,
@@ -37,6 +41,27 @@ export function loadActiveSessionContext(
     );
   }
   return { git, config, runtime, session };
+}
+
+export function loadInvestigationRuntimeContext(cwd: string) {
+  const git = discoverRepository(cwd);
+  const config = loadWorkflowConfig(git.repositoryRoot);
+  return {
+    git,
+    config,
+    runtime: investigationRuntimePaths(
+      git.gitCommonDirectory,
+      config.runtimeDirectory,
+    ),
+    lifecycleRuntime: runtimePaths(
+      git.gitCommonDirectory,
+      config.runtimeDirectory,
+    ),
+  };
+}
+
+export function assertInvestigationSubjectId(value: string): string {
+  return assertInvestigationId(value);
 }
 
 export function runSessionOperation<T>(
