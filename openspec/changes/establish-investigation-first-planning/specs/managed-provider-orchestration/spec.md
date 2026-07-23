@@ -150,6 +150,30 @@ A malformed result, mismatched binding, excessive output, timeout, signal, spawn
 - **THEN** no successful report is created
 - **AND** the lifecycle exposes a durable retry, correction, or waiting outcome
 
+#### Scenario: Provider and propose policies remain distinct
+
+- **GIVEN** a propose authorization node and one prepared provider invocation
+- **WHEN** the lifecycle launches the invocation
+- **THEN** the authorization node remains bound to the code-owned propose policy
+- **AND** the provider request is bound to the exact raw adapter-policy digest and its effective lowered limits
+- **AND** the authorization node ID links the two authorities without treating either policy digest as the other
+
+#### Scenario: Durable prepared work is dispatched
+
+- **GIVEN** a current prepared blind-survey or PlanReview invocation
+- **WHEN** the resumable wrapper dispatches provider work
+- **THEN** a lifecycle-owned worker claims that exact invocation under a fenced lease
+- **AND** it uses the code-owned schema, validator, and fixed built-in adapter for the bound purpose
+- **AND** replay does not replace the prepared request merely because a later wrapper process generated a different candidate ID
+
+#### Scenario: Real runner output completes durable invocation state
+
+- **GIVEN** the built-in runner returns a bound semantic result and unchanged governed projection
+- **WHEN** lifecycle completion validates the runner report
+- **THEN** the exact durable invocation records the semantic result and its projection, executable-identity, containment, residual, and runtime assurance
+- **AND** tracked provider-result evidence retains the durable assurance
+- **AND** the lifecycle does not fabricate a fake stdout process envelope to reconstruct success
+
 ### Requirement: Read-Only Provider Results Require an Unchanged Governed Projection
 
 Survey and plan-review providers SHALL receive the reviewed repository-read-only capability profile. The engine SHALL compare the governed repository and runtime projection before and after invocation, including HEAD/ref/tree, refs, index, tracked/untracked/ignored worktree manifests, planning artifacts, and governed runtime inputs.
@@ -175,3 +199,14 @@ Any observed drift outside the exact engine-owned invocation output MUST make th
 - **WHEN** its assurance is rendered
 - **THEN** it reports unchanged governed projection
 - **AND** it does not claim proof that the same OS user could not perform unobserved writes
+
+### Requirement: Provider Baselines Preserve the Repository Object Format
+
+Every provider request, propose authorization, durable checkpoint, and resume validator SHALL bind complete Git commit and tree object IDs. The lifecycle SHALL accept the repository-native 40-hex SHA-1 form or 64-hex SHA-256 form consistently and MUST NOT abbreviate, truncate, or silently translate either form.
+
+#### Scenario: Propose runs in a SHA-256 repository
+
+- **GIVEN** the repository HEAD, tree, and protected base are 64-hex Git object IDs
+- **WHEN** propose starts, dispatches provider work, and resumes from a durable checkpoint
+- **THEN** each request, authorization, stored baseline, and output envelope retains the complete 64-hex values
+- **AND** the same validators continue to accept complete 40-hex values in a SHA-1 repository
