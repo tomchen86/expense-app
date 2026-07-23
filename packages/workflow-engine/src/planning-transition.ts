@@ -21,7 +21,6 @@ import {
 } from './git.ts';
 import { assertChangeId, normalizeChangedPath } from './paths.ts';
 import {
-  assertPlanningPaths,
   inspectPlanningTransition,
   taskStates,
   validateOpenSpecPlanning,
@@ -149,7 +148,6 @@ function commitPlanningTransitionLocked(
     (changedPath) =>
       !fs.existsSync(path.join(initial.repositoryRoot, changedPath)),
   );
-  assertPlanningPaths(config.changeRoot, changeId, changedPaths, deletedPaths);
   const initialFingerprint = fingerprintRepositoryWorktree(
     initial.repositoryRoot,
     initial.head,

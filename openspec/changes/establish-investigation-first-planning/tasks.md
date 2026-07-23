@@ -18,7 +18,7 @@
 
 - [x] 4.1 Follow RED -> GREEN -> REFACTOR to add full-blob manifests and typed WHY/invariant/question/answer rows, preserve semantic-author provenance, render the single engine-managed `design.md` ledger region, and fail on stale blobs, placeholders, omitted load-bearing rows, ambiguous markers, or projection drift.
 - [x] 4.2 Follow RED -> GREEN -> REFACTOR to introduce the non-default `expense-app-v2` schema registry, engine-owned `investigation.json`/`execution.json`/`plan-review.json` templates and validators, schema-aware change-contract loading, and legacy/v2 schema fixtures without adding the activation marker or changing the project default.
-- [ ] 4.3 Follow RED -> GREEN -> REFACTOR to make planning-path, planning-transition, local archive, and transformation contracts select the explicit legacy or v2 artifact grammar and replay both fixture generations while activation remains disabled.
+- [x] 4.3 Follow RED -> GREEN -> REFACTOR to make planning-path, planning-transition, local archive, and transformation contracts select the explicit legacy or v2 artifact grammar and replay both fixture generations while activation remains disabled.
 
 ## 5. Durable Investigation Orchestration
 

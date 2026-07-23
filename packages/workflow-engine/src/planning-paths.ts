@@ -1,3 +1,4 @@
+import type { ManagedSchemaName } from './contracts.ts';
 import { ExitCode, workflowError } from './errors.ts';
 import { normalizeChangedPath } from './paths.ts';
 
@@ -6,6 +7,7 @@ export function assertPlanningPaths(
   changeId: string,
   changedPaths: string[],
   deletedPaths: readonly string[] = [],
+  schemaName: ManagedSchemaName = 'expense-app',
 ): void {
   if (changeId === 'archive') {
     throw workflowError(
@@ -15,13 +17,9 @@ export function assertPlanningPaths(
     );
   }
   const prefix = `${changeRoot}/${changeId}/`;
-  const exact = new Set([
-    `${prefix}.openspec.yaml`,
-    `${prefix}proposal.md`,
-    `${prefix}design.md`,
-    `${prefix}tasks.md`,
-    `${prefix}guard.json`,
-  ]);
+  const exact = new Set(
+    requiredPlanningArtifactPaths(changeRoot, changeId, schemaName),
+  );
   const deleted = new Set(deletedPaths.map(normalizeChangedPath));
   const invalid = changedPaths.filter((candidate) => {
     const normalized = normalizeChangedPath(candidate);
@@ -47,9 +45,29 @@ export function assertPlanningPaths(
   if (invalid.length > 0) {
     throw workflowError(
       'PLANNING_PATHS_INVALID',
-      'Planning transition contains paths outside the named planning tree.',
+      `Planning transition contains paths outside the named ${schemaName} planning tree.`,
       ExitCode.guard,
       { details: { invalidPaths: invalid.sort() } },
     );
   }
+}
+
+export function requiredPlanningArtifactPaths(
+  changeRoot: string,
+  changeId: string,
+  schemaName: ManagedSchemaName = 'expense-app',
+): string[] {
+  const prefix = `${changeRoot}/${changeId}/`;
+  return [
+    '.openspec.yaml',
+    'proposal.md',
+    'design.md',
+    'tasks.md',
+    'guard.json',
+    ...(schemaName === 'expense-app-v2'
+      ? ['investigation.json', 'execution.json', 'plan-review.json']
+      : []),
+  ]
+    .map((entry) => `${prefix}${entry}`)
+    .sort();
 }

@@ -5,12 +5,17 @@ import {
   digestArtifacts,
   loadChangeContract,
   parseTasks,
+  readManagedSchemaName,
+  type ManagedSchemaName,
   type ParsedTask,
 } from './contracts.ts';
 import { ExitCode, workflowError } from './errors.ts';
 import { discoverRepository, runGit } from './git.ts';
 import { normalizeChangedPath } from './paths.ts';
-import { assertPlanningPaths } from './planning-paths.ts';
+import {
+  assertPlanningPaths,
+  requiredPlanningArtifactPaths,
+} from './planning-paths.ts';
 import { loadStableValidatedChangeContract } from './validated-contract-context.ts';
 import type {
   PlanningTaskState,
@@ -19,7 +24,7 @@ import type {
 
 export type PlanningInspection = {
   transitionKind: 'introduction' | 'revision';
-  schemaName: string;
+  schemaName: ManagedSchemaName;
   contract: ReturnType<typeof loadChangeContract>;
   beforeTasks: ParsedTask[] | undefined;
   currentPaths: string[];
@@ -36,11 +41,25 @@ export function inspectPlanningTransition(
   changedPaths: string[],
   deletedPaths: readonly string[] = [],
 ): PlanningInspection {
-  assertPlanningPaths(changeRoot, changeId, changedPaths, deletedPaths);
+  const metadataPath = path.join(
+    repositoryRoot,
+    changeRoot,
+    changeId,
+    '.openspec.yaml',
+  );
+  const schemaName = readManagedSchemaName(repositoryRoot, metadataPath);
+  assertPlanningPaths(
+    changeRoot,
+    changeId,
+    changedPaths,
+    deletedPaths,
+    schemaName,
+  );
   const currentPaths = assertPlanningArtifactTree(
     repositoryRoot,
     changeRoot,
     changeId,
+    schemaName,
   );
   const tasksPath = `${changeRoot}/${changeId}/tasks.md`;
   const beforeTaskContent = readFileAtCommit(
@@ -68,15 +87,8 @@ export function inspectPlanningTransition(
       ExitCode.guard,
     );
   }
-  const contract = loadChangeContract(repositoryRoot, changeId);
+  const contract = loadChangeContract(repositoryRoot, changeId, schemaName);
   assertPlanningTaskHistory(beforeTasks, contract.tasks);
-  const metadataPath = path.join(
-    repositoryRoot,
-    changeRoot,
-    changeId,
-    '.openspec.yaml',
-  );
-  const schemaName = parseSchemaName(fs.readFileSync(metadataPath, 'utf8'));
   const artifactDigests = digestArtifacts(repositoryRoot, [
     ...contract.artifactPaths,
     metadataPath,
@@ -94,19 +106,20 @@ export function inspectPlanningTransition(
 export function validateOpenSpecPlanning(
   repositoryRoot: string,
   changeId: string,
-  schemaName: string,
+  schemaName: ManagedSchemaName,
 ): PlanningTransitionReport['openspec'] {
-  if (schemaName !== 'expense-app') {
-    throw workflowError(
-      'OPENSPEC_MANAGED_SCHEMA_REQUIRED',
-      'Managed planning transitions require the reviewed expense-app schema.',
-      ExitCode.verification,
-    );
-  }
-  return loadStableValidatedChangeContract(
+  const validated = loadStableValidatedChangeContract(
     discoverRepository(repositoryRoot),
     changeId,
-  ).contract.openspec;
+  ).contract;
+  if (validated.schemaName !== schemaName) {
+    throw workflowError(
+      'OPENSPEC_CHANGE_STATE_CHANGED',
+      'Managed change schema selection changed during planning validation.',
+      ExitCode.staleState,
+    );
+  }
+  return validated.openspec;
 }
 
 export function assertPlanningTaskHistory(
@@ -141,6 +154,7 @@ function assertPlanningArtifactTree(
   repositoryRoot: string,
   changeRoot: string,
   changeId: string,
+  schemaName: ManagedSchemaName,
 ): string[] {
   const changeDirectory = path.join(repositoryRoot, changeRoot, changeId);
   const files: string[] = [];
@@ -148,14 +162,12 @@ function assertPlanningArtifactTree(
   const relativeFiles = files
     .map((filePath) => relative(repositoryRoot, filePath))
     .sort();
-  assertPlanningPaths(changeRoot, changeId, relativeFiles);
-  const required = [
-    '.openspec.yaml',
-    'proposal.md',
-    'design.md',
-    'tasks.md',
-    'guard.json',
-  ].map((entry) => `${changeRoot}/${changeId}/${entry}`);
+  assertPlanningPaths(changeRoot, changeId, relativeFiles, [], schemaName);
+  const required = requiredPlanningArtifactPaths(
+    changeRoot,
+    changeId,
+    schemaName,
+  );
   if (
     required.some((requiredPath) => !relativeFiles.includes(requiredPath)) ||
     !relativeFiles.some((filePath) =>
@@ -196,21 +208,6 @@ function assertPlanningArtifactTree(
       }
     }
   }
-}
-
-function parseSchemaName(metadata: string): string {
-  const matches = metadata
-    .split('\n')
-    .map((line) => /^schema: ([a-z0-9]+(?:-[a-z0-9]+)*)$/.exec(line))
-    .filter((match): match is RegExpExecArray => Boolean(match));
-  if (matches.length !== 1) {
-    throw workflowError(
-      'PLANNING_METADATA_INVALID',
-      '.openspec.yaml must declare exactly one safe schema name.',
-      ExitCode.guard,
-    );
-  }
-  return matches[0][1];
 }
 
 function listTreePaths(

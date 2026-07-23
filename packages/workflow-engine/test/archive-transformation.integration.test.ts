@@ -41,6 +41,50 @@ test('archive transformation returns an exact full-index patch without mutating 
     assert.match(result.patch, /^diff --git /m);
     assert.match(result.patch, /^index [0-9a-f]{40}\.\.[0-9a-f]{40}/m);
     assert.match(result.patchDigest, /^[0-9a-f]{64}$/);
+    assert.deepEqual(Object.keys(result.archivedArtifactDigests).sort(), [
+      '.openspec.yaml',
+      'design.md',
+      'guard.json',
+      'proposal.md',
+      'specs/demo/spec.md',
+      'tasks.md',
+    ]);
+  } finally {
+    fs.rmSync(repository, { recursive: true, force: true });
+  }
+});
+
+test('archive transformation rejects an eligibility manifest that differs from the active tree', () => {
+  const repository = completedFixture();
+  try {
+    assert.throws(
+      () =>
+        withArchiveEligibility(repository, 'demo-change', (eligible) =>
+          createArchiveTransformation({
+            ...eligible,
+            activeArtifactPaths: eligible.activeArtifactPaths.slice(1),
+          }),
+        ),
+      (error) => isWorkflowError(error, 'ARCHIVE_TRANSFORMATION_TREE_INVALID'),
+    );
+  } finally {
+    fs.rmSync(repository, { recursive: true, force: true });
+  }
+});
+
+test('archive transformation rejects a schema selection that contradicts its manifest', () => {
+  const repository = completedFixture();
+  try {
+    assert.throws(
+      () =>
+        withArchiveEligibility(repository, 'demo-change', (eligible) =>
+          createArchiveTransformation({
+            ...eligible,
+            schemaName: 'expense-app-v2',
+          }),
+        ),
+      (error) => isWorkflowError(error, 'ARCHIVE_TRANSFORMATION_TREE_INVALID'),
+    );
   } finally {
     fs.rmSync(repository, { recursive: true, force: true });
   }

@@ -12,6 +12,7 @@ import {
   isWorkflowError,
   runtimeRoot,
   syncOriginMain,
+  writeV2ChangeArtifacts,
 } from './fixture.ts';
 
 test('archive eligibility binds completed task evidence to the configured base', () => {
@@ -30,6 +31,17 @@ test('archive eligibility binds completed task evidence to the configured base',
       git(repository, ['rev-parse', 'refs/remotes/origin/main']).trim(),
     );
     assert.equal(result.taskCommits.length, 1);
+    assert.equal(result.changeRoot, 'openspec/changes');
+    assert.equal(result.activeRoot, 'openspec/changes/demo-change');
+    assert.equal(result.schemaName, 'expense-app');
+    assert.deepEqual(result.activeArtifactPaths, [
+      'openspec/changes/demo-change/.openspec.yaml',
+      'openspec/changes/demo-change/design.md',
+      'openspec/changes/demo-change/guard.json',
+      'openspec/changes/demo-change/proposal.md',
+      'openspec/changes/demo-change/specs/demo/spec.md',
+      'openspec/changes/demo-change/tasks.md',
+    ]);
     assert.match(result.contractDigest, /^[0-9a-f]{64}$/);
     assert.match(result.fingerprint, /^[0-9a-f]{64}$/);
     assert.equal(
@@ -37,6 +49,23 @@ test('archive eligibility binds completed task evidence to the configured base',
         path.join(runtimeRoot(repository), 'locks', 'demo-change.lock'),
       ),
       false,
+    );
+  } finally {
+    fs.rmSync(repository, { recursive: true, force: true });
+  }
+});
+
+test('archive eligibility selects the v2 tree before its semantic readiness gate', () => {
+  const repository = configuredFixture();
+  try {
+    writeV2ChangeArtifacts(repository);
+    git(repository, ['add', '.']);
+    git(repository, ['commit', '-m', 'Record v2 archive fixture']);
+    git(repository, ['checkout', '-b', 'work/archive-demo']);
+
+    assert.throws(
+      () => withArchiveEligibility(repository, 'demo-change', () => undefined),
+      (error) => isWorkflowError(error, 'OPENSPEC_CHANGE_NOT_READY'),
     );
   } finally {
     fs.rmSync(repository, { recursive: true, force: true });

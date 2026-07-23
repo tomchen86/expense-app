@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
-import { loadWorkflowConfig } from './contracts.ts';
+import { loadWorkflowConfig, type ManagedSchemaName } from './contracts.ts';
 import { ExitCode, workflowError } from './errors.ts';
 import {
   discoverRepository,
@@ -12,6 +12,10 @@ import {
 import { preEpochCompletedTaskIds } from './bootstrap-task-exemption.ts';
 import { findExactTaskCommits, type TaskCommit } from './git-transitions.ts';
 import { withChangeTransitionAuthority } from './planning-lock.ts';
+import {
+  assertPlanningPaths,
+  requiredPlanningArtifactPaths,
+} from './planning-paths.ts';
 import { runtimePaths } from './session-store.ts';
 import { loadStableValidatedChangeContract } from './validated-contract-context.ts';
 
@@ -23,6 +27,10 @@ export type ArchiveEligibility = {
   branch: string;
   head: string;
   tree: string;
+  changeRoot: string;
+  activeRoot: string;
+  schemaName: ManagedSchemaName;
+  activeArtifactPaths: string[];
   baseRef: string;
   base: string;
   contractDigest: string;
@@ -108,6 +116,37 @@ function inspectEligibility(
       'Archive requires an attached branch.',
     );
   }
+  const activePrefix = `${config.changeRoot}/${contract.changeId}/`;
+  const activeArtifactPaths = Object.keys(contract.artifactDigests)
+    .filter((artifactPath) => artifactPath.startsWith(activePrefix))
+    .sort();
+  assertPlanningPaths(
+    config.changeRoot,
+    contract.changeId,
+    activeArtifactPaths,
+    [],
+    contract.schemaName,
+  );
+  const requiredArtifactPaths = requiredPlanningArtifactPaths(
+    config.changeRoot,
+    contract.changeId,
+    contract.schemaName,
+  );
+  if (
+    requiredArtifactPaths.some(
+      (requiredPath) => !activeArtifactPaths.includes(requiredPath),
+    ) ||
+    !activeArtifactPaths.some(
+      (artifactPath) =>
+        artifactPath.startsWith(`${activePrefix}specs/`) &&
+        artifactPath.endsWith('/spec.md'),
+    )
+  ) {
+    throw archiveError(
+      'ARCHIVE_ARTIFACT_MANIFEST_INVALID',
+      'Archive eligibility requires the complete schema-selected planning manifest.',
+    );
+  }
   const incomplete = contract.tasks
     .filter(({ completed }) => !completed)
     .map(({ id }) => id);
@@ -186,6 +225,10 @@ function inspectEligibility(
     branch: git.branch,
     head: git.head,
     tree: git.tree,
+    changeRoot: config.changeRoot,
+    activeRoot: activePrefix.slice(0, -1),
+    schemaName: contract.schemaName,
+    activeArtifactPaths,
     baseRef,
     base,
     contractDigest: contract.contractDigest,

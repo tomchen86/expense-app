@@ -11,6 +11,7 @@ import {
   commitPlanningTransition,
   type PlanningTransitionTestHooks,
 } from '../src/planning-transition.ts';
+import { inspectPlanningTransition } from '../src/planning-contract.ts';
 import { abortSession, startSession } from '../src/session.ts';
 import {
   createFixtureRepository,
@@ -18,6 +19,7 @@ import {
   isWorkflowError,
   runtimeRoot,
   sourceRepositoryRoot,
+  writeV2ChangeArtifacts,
 } from './fixture.ts';
 
 test('plan-commit introduces an unchecked change through one exact managed commit', () => {
@@ -90,6 +92,74 @@ test('plan-commit introduces an unchecked change through one exact managed commi
       'Change: planned-change',
       'Transition: plan',
     ]);
+  } finally {
+    fs.rmSync(repository, { recursive: true, force: true });
+  }
+});
+
+test('planning inspection selects the explicit v2 grammar before semantic activation', () => {
+  const repository = createPlanningRepository('v2-change');
+  try {
+    const canonicalRepository = fs.realpathSync(repository);
+    writeChange(repository, 'v2-change', [
+      { id: '1.1', completed: false, title: 'First task' },
+    ]);
+    writeV2ChangeArtifacts(repository, 'v2-change');
+    git(repository, ['add', '--', 'workflow/schemas']);
+    git(repository, ['commit', '-m', 'Install v2 workflow schemas']);
+    const baselineHead = git(repository, ['rev-parse', 'HEAD']).trim();
+    const expectedPaths = planningPaths('v2-change', 'expense-app-v2');
+
+    const executionPath = path.join(
+      repository,
+      'openspec/changes/v2-change/execution.json',
+    );
+    const execution = fs.readFileSync(executionPath);
+    fs.rmSync(executionPath);
+    assert.throws(
+      () =>
+        inspectPlanningTransition(
+          canonicalRepository,
+          baselineHead,
+          'openspec/changes',
+          'v2-change',
+          expectedPaths.filter(
+            (filePath) =>
+              filePath !== 'openspec/changes/v2-change/execution.json',
+          ),
+        ),
+      (error) => isWorkflowError(error, 'PLANNING_TREE_INVALID'),
+    );
+    fs.writeFileSync(executionPath, execution);
+
+    const inspection = inspectPlanningTransition(
+      canonicalRepository,
+      baselineHead,
+      'openspec/changes',
+      'v2-change',
+      expectedPaths,
+    );
+    assert.equal(inspection.schemaName, 'expense-app-v2');
+    assert.deepEqual(inspection.currentPaths, expectedPaths);
+    for (const artifactName of [
+      'investigation.json',
+      'execution.json',
+      'plan-review.json',
+    ]) {
+      assert.match(
+        inspection.artifactDigests[
+          `openspec/changes/v2-change/${artifactName}`
+        ],
+        /^[0-9a-f]{64}$/,
+      );
+    }
+
+    assert.throws(
+      () => commitPlanningTransition(repository, 'v2-change'),
+      (error) => isWorkflowError(error, 'OPENSPEC_CHANGE_NOT_READY'),
+    );
+    assert.equal(git(repository, ['rev-parse', 'HEAD']).trim(), baselineHead);
+    assert.equal(git(repository, ['diff', '--cached', '--name-only']), '');
   } finally {
     fs.rmSync(repository, { recursive: true, force: true });
   }
@@ -658,10 +728,16 @@ function writeGuard(repository: string, changeId: string, taskIds: string[]) {
   );
 }
 
-function planningPaths(changeId: string): string[] {
+function planningPaths(
+  changeId: string,
+  schemaName: 'expense-app' | 'expense-app-v2' = 'expense-app',
+): string[] {
   return [
     `.openspec.yaml`,
     'design.md',
+    ...(schemaName === 'expense-app-v2'
+      ? ['execution.json', 'investigation.json', 'plan-review.json']
+      : []),
     'guard.json',
     'proposal.md',
     'specs/demo/spec.md',

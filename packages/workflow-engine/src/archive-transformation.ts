@@ -21,6 +21,10 @@ import {
   resolveOpenSpecInstallation,
 } from './openspec-executor.ts';
 import { parseValidation } from './openspec-payloads.ts';
+import {
+  assertPlanningPaths,
+  requiredPlanningArtifactPaths,
+} from './planning-paths.ts';
 
 export type ArchiveTransformation = {
   changeId: string;
@@ -53,6 +57,7 @@ export function createArchiveTransformation(
   eligibility: ArchiveEligibility,
 ): ArchiveTransformation {
   assertEligibilityCurrent(eligibility);
+  assertEligibilityArtifactManifest(eligibility);
   const installation = resolveOpenSpecInstallation(eligibility.repositoryRoot);
   const temporaryBase = createTrustedExecutionEnvironment().TMPDIR;
   if (!temporaryBase) {
@@ -115,12 +120,24 @@ function verifyTransformation(
   payload: ArchivePayload,
   openspecVersion: '1.6.0',
 ): ArchiveTransformation {
-  const activeRoot = `openspec/changes/${eligibility.changeId}`;
-  const activeFiles = listTreeFiles(worktree, eligibility.head, activeRoot);
-  const archivedFiles = listPlainArchiveFiles(worktree, payloadPath(payload));
+  const activeRoot = eligibility.activeRoot;
+  const activeFiles = [...eligibility.activeArtifactPaths].sort();
+  if (
+    JSON.stringify(listTreeFiles(worktree, eligibility.head, activeRoot)) !==
+    JSON.stringify(activeFiles)
+  ) {
+    throw archiveError(
+      'ARCHIVE_TRANSFORMATION_TREE_INVALID',
+      'Archive eligibility manifest differs from the active change tree.',
+    );
+  }
+  const archivedFiles = listPlainArchiveFiles(
+    worktree,
+    eligibility.archiveDestination,
+  );
   const expectedArchivedFiles = activeFiles.map(
     (filePath) =>
-      `${payloadPath(payload)}/${filePath.slice(activeRoot.length + 1)}`,
+      `${eligibility.archiveDestination}/${filePath.slice(activeRoot.length + 1)}`,
   );
   const archivedArtifactDigests: Record<string, string> = {};
   if (JSON.stringify(archivedFiles) !== JSON.stringify(expectedArchivedFiles)) {
@@ -136,15 +153,20 @@ function verifyTransformation(
       activeFiles[index],
     );
     const after = fs.readFileSync(path.join(worktree, archivedFiles[index]));
-    if (before === undefined || !Buffer.from(before).equals(after)) {
+    const digest = crypto.createHash('sha256').update(after).digest('hex');
+    if (
+      before === undefined ||
+      !Buffer.from(before).equals(after) ||
+      eligibility.artifactDigests[activeFiles[index]] !== digest
+    ) {
       throw archiveError(
         'ARCHIVE_TRANSFORMATION_TREE_INVALID',
-        'Archived file content differs from the active change.',
+        'Archived file content differs from the eligible active change.',
       );
     }
     archivedArtifactDigests[
-      archivedFiles[index].slice(payloadPath(payload).length + 1)
-    ] = crypto.createHash('sha256').update(after).digest('hex');
+      archivedFiles[index].slice(eligibility.archiveDestination.length + 1)
+    ] = digest;
   }
 
   const changedPaths = listChangedPaths(worktree, eligibility.head);
@@ -202,7 +224,7 @@ function verifyTransformation(
   return {
     changeId: eligibility.changeId,
     archiveName: payload.archivedAs,
-    archivePath: payloadPath(payload),
+    archivePath: eligibility.archiveDestination,
     baseSpecPaths,
     changedPaths,
     patch,
@@ -373,6 +395,67 @@ function assertEligibilityCurrent(eligibility: ArchiveEligibility): void {
   }
 }
 
+function assertEligibilityArtifactManifest(
+  eligibility: ArchiveEligibility,
+): void {
+  const activeRoot = `${eligibility.changeRoot}/${eligibility.changeId}`;
+  const required = requiredPlanningArtifactPaths(
+    eligibility.changeRoot,
+    eligibility.changeId,
+    eligibility.schemaName,
+  );
+  try {
+    assertPlanningPaths(
+      eligibility.changeRoot,
+      eligibility.changeId,
+      eligibility.activeArtifactPaths,
+      [],
+      eligibility.schemaName,
+    );
+  } catch {
+    throw archiveError(
+      'ARCHIVE_TRANSFORMATION_TREE_INVALID',
+      'Archive eligibility manifest does not match its selected schema.',
+    );
+  }
+  if (
+    eligibility.activeRoot !== activeRoot ||
+    required.some(
+      (requiredPath) => !eligibility.activeArtifactPaths.includes(requiredPath),
+    ) ||
+    !eligibility.activeArtifactPaths.some(
+      (artifactPath) =>
+        artifactPath.startsWith(`${activeRoot}/specs/`) &&
+        artifactPath.endsWith('/spec.md'),
+    ) ||
+    JSON.stringify(
+      listTreeFiles(eligibility.repositoryRoot, eligibility.head, activeRoot),
+    ) !== JSON.stringify(eligibility.activeArtifactPaths)
+  ) {
+    throw archiveError(
+      'ARCHIVE_TRANSFORMATION_TREE_INVALID',
+      'Archive eligibility manifest differs from the active change tree.',
+    );
+  }
+  for (const artifactPath of eligibility.activeArtifactPaths) {
+    const content = readFileAtCommit(
+      eligibility.repositoryRoot,
+      eligibility.head,
+      artifactPath,
+    );
+    if (
+      content === undefined ||
+      crypto.createHash('sha256').update(content).digest('hex') !==
+        eligibility.artifactDigests[artifactPath]
+    ) {
+      throw archiveError(
+        'ARCHIVE_TRANSFORMATION_TREE_INVALID',
+        'Archive eligibility manifest digest differs from the active change.',
+      );
+    }
+  }
+}
+
 function listTreeFiles(
   repository: string,
   commit: string,
@@ -390,10 +473,6 @@ function listTreeFiles(
     .split('\0')
     .filter(Boolean)
     .sort();
-}
-
-function payloadPath(payload: ArchivePayload): string {
-  return `openspec/changes/archive/${payload.archivedAs}`;
 }
 
 function archiveFailure(error: unknown) {

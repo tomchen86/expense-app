@@ -37,6 +37,32 @@ test('planning paths accept only the exact named OpenSpec planning grammar', () 
   }
 });
 
+test('planning paths select legacy or v2 grammar explicitly', () => {
+  const investigationPath = 'openspec/changes/demo-change/investigation.json';
+  const v2Paths = [
+    investigationPath,
+    'openspec/changes/demo-change/execution.json',
+    'openspec/changes/demo-change/plan-review.json',
+  ];
+
+  assert.doesNotThrow(() =>
+    assertPlanningPaths(
+      'openspec/changes',
+      'demo-change',
+      v2Paths,
+      [],
+      'expense-app-v2',
+    ),
+  );
+  for (const v2Path of v2Paths) {
+    assert.throws(
+      () => assertPlanningPaths('openspec/changes', 'demo-change', [v2Path]),
+      (error) => isWorkflowError(error, 'PLANNING_PATHS_INVALID'),
+      v2Path,
+    );
+  }
+});
+
 test('planning paths reject the reserved OpenSpec archive container as a change', () => {
   assert.throws(
     () =>
