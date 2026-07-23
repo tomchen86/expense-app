@@ -350,12 +350,27 @@ if (process.argv[2] === 'status') {
   );
   const checkMutation = path.join(gitDirectory, 'mutate-on-next-status');
   const statusCountdown = path.join(gitDirectory, 'mutate-status-countdown');
+  const allowedStatusCountdown = path.join(
+    gitDirectory,
+    'mutate-allowed-status-countdown'
+  );
   if (fs.existsSync(lifecycleMutation) && fs.existsSync(operationLock)) {
     fs.rmSync(lifecycleMutation);
     fs.writeFileSync(path.join(root, 'src/injected.ts'), 'export const injected = true;\\n');
   } else if (fs.existsSync(checkMutation)) {
     fs.rmSync(checkMutation);
     fs.writeFileSync(path.join(root, 'src/feature.ts'), 'export const injected = true;\\n');
+  } else if (fs.existsSync(allowedStatusCountdown)) {
+    const remaining = Number(fs.readFileSync(allowedStatusCountdown, 'utf8'));
+    if (remaining <= 1) {
+      fs.rmSync(allowedStatusCountdown);
+      fs.appendFileSync(
+        path.join(root, 'src/feature.ts'),
+        'export const postCheckDrift = true;\\n'
+      );
+    } else {
+      fs.writeFileSync(allowedStatusCountdown, String(remaining - 1));
+    }
   } else if (fs.existsSync(statusCountdown)) {
     const remaining = Number(fs.readFileSync(statusCountdown, 'utf8'));
     if (remaining <= 1) {

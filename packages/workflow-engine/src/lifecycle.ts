@@ -29,6 +29,10 @@ import {
   runSessionOperation,
 } from './lifecycle-context.ts';
 import { reconcilePredecessor } from './predecessor-reconciliation.ts';
+import {
+  finalizeTaskUnlocked,
+  type FinalizeTaskResult,
+} from './projected-finalization.ts';
 import { readImmutableReport, type WorkflowReport } from './report-store.ts';
 import {
   assertCompletionTaskIds,
@@ -89,6 +93,17 @@ export type RollbackCompletionResult = {
 };
 
 export type { CommitSessionResult } from './commit-recovery.ts';
+export type { FinalizeTaskResult } from './projected-finalization.ts';
+
+export function finalizeTask(
+  cwd: string,
+  requestedSessionId: string,
+  environment: NodeJS.ProcessEnv = process.env,
+): FinalizeTaskResult {
+  return runSessionOperation(cwd, requestedSessionId, () =>
+    finalizeTaskUnlocked(cwd, requestedSessionId, environment),
+  );
+}
 
 export function completeTask(
   cwd: string,

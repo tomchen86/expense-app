@@ -11,14 +11,38 @@ export type TaskCommit = {
   subject: string;
 };
 
-export function stageExactPaths(
+export type ExactStagingPin = {
+  expectedTree: string;
+  expectedPreviousIndexTree: string;
+};
+
+/**
+ * Compute the prospective checked tree and the current real index tree using an
+ * isolated temporary index, enforcing the same expected-changed-path and
+ * empty-index preconditions as {@link stageExactPaths} without mutating the real
+ * index. Callers pin these values to detect same-path byte drift before staging.
+ */
+export function previewExactStaging(
+  repositoryRoot: string,
+  baselineHead: string,
+  expectedPaths: string[],
+): { tree: string; previousIndexTree: string } {
+  const plan = planExactStaging(repositoryRoot, baselineHead, expectedPaths);
+  return {
+    tree: plan.workflowIndexTree,
+    previousIndexTree: plan.previousIndexTree,
+  };
+}
+
+function planExactStaging(
   repositoryRoot: string,
   baselineHead: string,
   expectedPaths: string[],
 ): {
-  stagedPaths: string[];
-  tree: string;
+  expected: string[];
+  literalPaths: string[];
   previousIndexTree: string;
+  workflowIndexTree: string;
 } {
   if (expectedPaths.length === 0) {
     throw workflowError(
@@ -56,6 +80,40 @@ export function stageExactPaths(
     literalPaths,
     expected,
   );
+  return { expected, literalPaths, previousIndexTree, workflowIndexTree };
+}
+
+export function stageExactPaths(
+  repositoryRoot: string,
+  baselineHead: string,
+  expectedPaths: string[],
+  pin?: ExactStagingPin,
+): {
+  stagedPaths: string[];
+  tree: string;
+  previousIndexTree: string;
+} {
+  const { expected, literalPaths, previousIndexTree, workflowIndexTree } =
+    planExactStaging(repositoryRoot, baselineHead, expectedPaths);
+  if (
+    pin &&
+    (workflowIndexTree !== pin.expectedTree ||
+      previousIndexTree !== pin.expectedPreviousIndexTree)
+  ) {
+    throw workflowError(
+      'FINALIZE_PROJECTION_CHANGED',
+      'The prospective checked tree changed after the single verification pass; the real index was left unchanged.',
+      ExitCode.staleState,
+      {
+        details: {
+          expectedTree: pin.expectedTree,
+          actualTree: workflowIndexTree,
+          expectedPreviousIndexTree: pin.expectedPreviousIndexTree,
+          actualPreviousIndexTree: previousIndexTree,
+        },
+      },
+    );
+  }
   try {
     if (runGit(repositoryRoot, ['write-tree']).trim() !== previousIndexTree) {
       throw workflowError(

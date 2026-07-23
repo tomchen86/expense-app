@@ -41,6 +41,7 @@ import {
 import {
   commitSession,
   completeTask,
+  finalizeTask,
   findTaskCommits,
   finishSession,
   rollbackCompletion,
@@ -398,6 +399,9 @@ function dispatch(args: string[], cwd: string): CommandResult {
     case 'finish':
       requireArgumentCount(command, rest, 1, 1);
       return { command, ok: true, result: finishSession(cwd, rest[0]) };
+    case 'finalize-task':
+      requireArgumentCount(command, rest, 1, 1);
+      return { command, ok: true, result: finalizeTask(cwd, rest[0]) };
     case 'rollback-completion': {
       const sessionId = rest[0];
       const reason = optionValue(rest.slice(1), '--reason');
@@ -710,6 +714,7 @@ function usageText(): string {
     '  pnpm workflow hook <pre-commit|commit-msg|pre-push|post-merge> ... [--json]',
     '  pnpm workflow complete-task <session-id> [--json]',
     '  pnpm workflow finish <session-id> [--json]',
+    '  pnpm workflow finalize-task <session-id> [--json]',
     '  pnpm workflow rollback-completion <session-id> --reason <text> [--json]',
     '  pnpm workflow commit <session-id> --message <subject> [--json]',
     '  pnpm workflow abort <session-id> --reason <text> [--json]',

@@ -8,14 +8,20 @@ import test from 'node:test';
 import {
   commitSession,
   completeTask,
+  finalizeTask,
   findTaskCommits,
   finishSession,
   rollbackCompletion,
 } from '../src/lifecycle.ts';
-import { hasExactTrailers } from '../src/git-transitions.ts';
+import {
+  hasExactTrailers,
+  previewExactStaging,
+  stageExactPaths,
+} from '../src/git-transitions.ts';
 import { renderHandoff } from '../src/handoff.ts';
 import { projectTasksCompleted } from '../src/task-projection.ts';
 import {
+  readImmutableReport,
   writeImmutableReport,
   type WorkflowReport,
 } from '../src/report-store.ts';
@@ -193,6 +199,247 @@ test('current report authorizes completion, exact staging, and commit', () => {
         (entry) => entry.hash,
       ),
       [committed.commitHash],
+    );
+  } finally {
+    fs.rmSync(repository, { recursive: true, force: true });
+  }
+});
+
+test('projected single-pass finalize checks and stages one exact final tree', () => {
+  const repository = createFixtureRepository();
+  const outputDirectory = fs.mkdtempSync(
+    path.join(os.tmpdir(), 'projected-finalize-success-'),
+  );
+  const counterPath = path.join(outputDirectory, 'count');
+  try {
+    enableCompletionHandoff(repository);
+    fs.writeFileSync(
+      path.join(repository, 'scripts/assert-final-projection.mjs'),
+      [
+        "import fs from 'node:fs';",
+        'const counterPath = process.argv[2];',
+        "const count = fs.existsSync(counterPath) ? Number(fs.readFileSync(counterPath, 'utf8')) : 0;",
+        'fs.writeFileSync(counterPath, String(count + 1));',
+        "const tasks = fs.readFileSync('openspec/changes/demo-change/tasks.md', 'utf8');",
+        "const handoff = fs.readFileSync('docs/CURRENT_AND_NEXT_STEPS.md', 'utf8');",
+        'if (!/- \\[x\\] 1\\.1 Demo task/.test(tasks)) process.exit(17);',
+        "if (!handoff.includes('None — all tasks are complete.')) process.exit(18);",
+        '',
+      ].join('\n'),
+    );
+    configureChecks(
+      repository,
+      {
+        projected: {
+          command: ['node', 'scripts/assert-final-projection.mjs', counterPath],
+          destructiveDatabase: false,
+        },
+      },
+      ['projected'],
+    );
+    git(repository, ['checkout', '-b', 'work/demo-change']);
+    const session = startSession(repository, 'demo-change', '1.1');
+    fs.writeFileSync(path.join(repository, 'src/feature.ts'), 'export {};\n');
+
+    const cliPath = path.resolve(import.meta.dirname, '../src/cli.ts');
+    const cliOutput = execFileSync(
+      process.execPath,
+      [
+        '--experimental-strip-types',
+        cliPath,
+        'finalize-task',
+        session.sessionId,
+        '--json',
+      ],
+      { cwd: repository, encoding: 'utf8' },
+    );
+    const finalized = JSON.parse(cliOutput).result;
+
+    assert.equal(finalized.assurance, 'projected-single-pass-ordinary-failure');
+    assert.equal(fs.readFileSync(counterPath, 'utf8'), '1');
+    assert.deepEqual(finalized.stagedPaths, [
+      'docs/CURRENT_AND_NEXT_STEPS.md',
+      'openspec/changes/demo-change/tasks.md',
+      'src/feature.ts',
+    ]);
+    assert.equal(git(repository, ['write-tree']).trim(), finalized.tree);
+    assert.equal(git(repository, ['diff', '--name-only']).trim(), '');
+
+    const finalizedSession = getSession(repository, session.sessionId);
+    assert.match(finalizedSession.latestCheckReportId ?? '', /^[0-9a-f]{64}$/);
+    assert.match(finalizedSession.completionReportId ?? '', /^[0-9a-f]{64}$/);
+    assert.match(finalizedSession.finishReportId ?? '', /^[0-9a-f]{64}$/);
+    const reportsRoot = path.join(runtimeRoot(repository), 'reports');
+    const checkReport = readImmutableReport(
+      reportsRoot,
+      session.sessionId,
+      finalizedSession.latestCheckReportId!,
+    );
+    const completionReport = readImmutableReport(
+      reportsRoot,
+      session.sessionId,
+      finalizedSession.completionReportId!,
+    );
+    const finishReport = readImmutableReport(
+      reportsRoot,
+      session.sessionId,
+      finalizedSession.finishReportId!,
+    );
+    assert.equal(
+      completionReport.parentReportId,
+      finalizedSession.latestCheckReportId,
+    );
+    assert.equal(
+      finishReport.parentReportId,
+      finalizedSession.completionReportId,
+    );
+    assert.deepEqual(checkReport.checks, finishReport.checks);
+    assert.equal(finishReport.tree, finalized.tree);
+
+    commitSession(repository, session.sessionId, 'Complete once');
+    assert.equal(fs.readFileSync(counterPath, 'utf8'), '1');
+  } finally {
+    fs.rmSync(repository, { recursive: true, force: true });
+    fs.rmSync(outputDirectory, { recursive: true, force: true });
+  }
+});
+
+test('projected single-pass failure restores projections and leaves no evidence pointers', () => {
+  const repository = createFixtureRepository();
+  const outputDirectory = fs.mkdtempSync(
+    path.join(os.tmpdir(), 'projected-finalize-failure-'),
+  );
+  const observationPath = path.join(outputDirectory, 'observation');
+  try {
+    enableCompletionHandoff(repository);
+    fs.writeFileSync(
+      path.join(repository, 'scripts/reject-final-projection.mjs'),
+      [
+        "import fs from 'node:fs';",
+        'const observationPath = process.argv[2];',
+        "const tasks = fs.readFileSync('openspec/changes/demo-change/tasks.md', 'utf8');",
+        "const handoff = fs.readFileSync('docs/CURRENT_AND_NEXT_STEPS.md', 'utf8');",
+        "const projected = /- \\[x\\] 1\\.1 Demo task/.test(tasks) && handoff.includes('None — all tasks are complete.');",
+        "fs.writeFileSync(observationPath, projected ? 'projected' : 'missing');",
+        'process.exit(projected ? 17 : 18);',
+        '',
+      ].join('\n'),
+    );
+    configureChecks(
+      repository,
+      {
+        rejecting: {
+          command: [
+            'node',
+            'scripts/reject-final-projection.mjs',
+            observationPath,
+          ],
+          destructiveDatabase: false,
+        },
+      },
+      ['rejecting'],
+    );
+    git(repository, ['checkout', '-b', 'work/demo-change']);
+    const tasksPath = path.join(
+      repository,
+      'openspec/changes/demo-change/tasks.md',
+    );
+    const handoffPath = path.join(repository, 'docs/CURRENT_AND_NEXT_STEPS.md');
+    const beforeTasks = fs.readFileSync(tasksPath);
+    const beforeHandoff = fs.readFileSync(handoffPath);
+    const beforeTaskMode = fs.statSync(tasksPath).mode;
+    const beforeHandoffMode = fs.statSync(handoffPath).mode;
+    const session = startSession(repository, 'demo-change', '1.1');
+    fs.writeFileSync(path.join(repository, 'src/feature.ts'), 'export {};\n');
+
+    assert.throws(
+      () => finalizeTask(repository, session.sessionId),
+      (error) => isWorkflowError(error, 'CHECK_FAILED'),
+    );
+
+    assert.equal(fs.readFileSync(observationPath, 'utf8'), 'projected');
+    assert.deepEqual(fs.readFileSync(tasksPath), beforeTasks);
+    assert.deepEqual(fs.readFileSync(handoffPath), beforeHandoff);
+    assert.equal(fs.statSync(tasksPath).mode, beforeTaskMode);
+    assert.equal(fs.statSync(handoffPath).mode, beforeHandoffMode);
+    assert.equal(git(repository, ['diff', '--cached', '--name-only']), '');
+    assert.equal(
+      fs.readFileSync(path.join(repository, 'src/feature.ts'), 'utf8'),
+      'export {};\n',
+    );
+    const restored = getSession(repository, session.sessionId);
+    assert.equal(restored.state, 'active');
+    assert.equal(restored.latestCheckReportId, undefined);
+    assert.equal(restored.completionReportId, undefined);
+    assert.equal(restored.finishReportId, undefined);
+  } finally {
+    fs.rmSync(repository, { recursive: true, force: true });
+    fs.rmSync(outputDirectory, { recursive: true, force: true });
+  }
+});
+
+test('projected single-pass rejects post-check worktree drift and rolls back staging', () => {
+  const repository = createFixtureRepository();
+  try {
+    git(repository, ['checkout', '-b', 'work/demo-change']);
+    const tasksPath = path.join(
+      repository,
+      'openspec/changes/demo-change/tasks.md',
+    );
+    const beforeTasks = fs.readFileSync(tasksPath);
+    const session = startSession(repository, 'demo-change', '1.1');
+    fs.writeFileSync(path.join(repository, 'src/feature.ts'), 'export {};\n');
+    fs.writeFileSync(
+      path.join(repository, '.git/mutate-allowed-status-countdown'),
+      '4',
+    );
+
+    assert.throws(
+      () => finalizeTask(repository, session.sessionId),
+      (error) => isWorkflowError(error, 'OPENSPEC_MUTATED_REPOSITORY'),
+    );
+
+    assert.deepEqual(fs.readFileSync(tasksPath), beforeTasks);
+    assert.equal(git(repository, ['diff', '--cached', '--name-only']), '');
+    assert.match(
+      fs.readFileSync(path.join(repository, 'src/feature.ts'), 'utf8'),
+      /postCheckDrift/,
+    );
+    const restored = getSession(repository, session.sessionId);
+    assert.equal(restored.state, 'active');
+    assert.equal(restored.latestCheckReportId, undefined);
+    assert.equal(restored.completionReportId, undefined);
+    assert.equal(restored.finishReportId, undefined);
+  } finally {
+    fs.rmSync(repository, { recursive: true, force: true });
+  }
+});
+
+test('exact staging rejects allowed-path bytes that differ from the checked prospective tree', () => {
+  const repository = createFixtureRepository();
+  try {
+    git(repository, ['checkout', '-b', 'work/demo-change']);
+    const baselineHead = git(repository, ['rev-parse', 'HEAD']).trim();
+    const featurePath = path.join(repository, 'src/feature.ts');
+    fs.writeFileSync(featurePath, 'export const checked = true;\n');
+    const preview = previewExactStaging(repository, baselineHead, [
+      'src/feature.ts',
+    ]);
+
+    fs.writeFileSync(featurePath, 'export const drifted = true;\n');
+
+    assert.throws(
+      () =>
+        stageExactPaths(repository, baselineHead, ['src/feature.ts'], {
+          expectedTree: preview.tree,
+          expectedPreviousIndexTree: preview.previousIndexTree,
+        }),
+      (error) => isWorkflowError(error, 'FINALIZE_PROJECTION_CHANGED'),
+    );
+    assert.equal(git(repository, ['diff', '--cached', '--name-only']), '');
+    assert.equal(
+      fs.readFileSync(featurePath, 'utf8'),
+      'export const drifted = true;\n',
     );
   } finally {
     fs.rmSync(repository, { recursive: true, force: true });
@@ -563,3 +810,24 @@ test('Git lookup returns multiple exact trailer matches without whitespace drift
     fs.rmSync(repository, { recursive: true, force: true });
   }
 });
+
+function enableCompletionHandoff(repository: string): void {
+  const documentPolicyPath = path.join(
+    repository,
+    'workflow/document-policy.json',
+  );
+  const documentPolicy = JSON.parse(
+    fs.readFileSync(documentPolicyPath, 'utf8'),
+  );
+  documentPolicy.documents['docs/CURRENT_AND_NEXT_STEPS.md'] = {
+    mode: 'generated',
+    enforcement: 'active',
+    transition: 'completion',
+  };
+  fs.writeFileSync(
+    documentPolicyPath,
+    `${JSON.stringify(documentPolicy, null, 2)}\n`,
+  );
+  fs.mkdirSync(path.join(repository, 'docs'), { recursive: true });
+  renderHandoff(repository);
+}
