@@ -13,29 +13,27 @@ export type CapabilityPurpose = 'survey' | 'plan-review';
 export type CapabilityProfile = 'repository-read-only';
 
 export type ProviderCapability = {
-  purpose: CapabilityPurpose;
-  profile: CapabilityProfile;
+  readonly purpose: CapabilityPurpose;
+  readonly profile: CapabilityProfile;
 };
 
 export type BuiltInProvider = {
-  id: ProviderId;
-  capabilities: ProviderCapability[];
+  readonly id: ProviderId;
+  readonly capabilities: readonly ProviderCapability[];
 };
 
-function readOnlyCapabilities(): ProviderCapability[] {
+function readOnlyCapabilities(): readonly ProviderCapability[] {
   return [
     Object.freeze({ purpose: 'survey', profile: 'repository-read-only' }),
     Object.freeze({ purpose: 'plan-review', profile: 'repository-read-only' }),
-  ] as ProviderCapability[];
+  ];
 }
 
 const BUILT_IN_PROVIDERS: readonly BuiltInProvider[] = Object.freeze(
   (['codex', 'claude'] as const).map((id) =>
     Object.freeze({
       id,
-      capabilities: Object.freeze(
-        readOnlyCapabilities(),
-      ) as ProviderCapability[],
+      capabilities: Object.freeze(readOnlyCapabilities()),
     }),
   ),
 );

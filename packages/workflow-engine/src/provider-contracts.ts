@@ -12,7 +12,7 @@ import {
 import type { OrdinaryRole, RoleAssignment } from './role-scheduler.ts';
 
 const HEX64 = /^[0-9a-f]{64}$/;
-const HEX40 = /^[0-9a-f]{40}$/;
+const GIT_OBJECT_ID = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
 
 const REQUEST_SCHEMA_VERSION = 1;
 const RESULT_SCHEMA_VERSION = 1;
@@ -35,6 +35,21 @@ const ROLE_PURPOSE: Record<OrdinaryRole, CapabilityPurpose> = {
 export type ProviderLimits = {
   timeoutMs: number;
   aggregateOutputBytes: number;
+};
+
+/**
+ * A fully constructed, code-owned provider launch plan. Every field is derived
+ * from fixed engine argv and canonical private runtime paths; no repository,
+ * caller, prompt, or model value contributes an executable, flag, or shell
+ * fragment. `shell` is always `false` and `stdinSource` is the canonical prompt
+ * file the engine writes.
+ */
+export type ProviderInvocationPlan = {
+  executable: string;
+  shell: false;
+  cwd: string;
+  args: string[];
+  stdinSource: string;
 };
 
 export type ProviderOutputSchema = {
@@ -203,8 +218,8 @@ export function createProviderInvocationRequest(
     !isProviderId(input.providerId) ||
     input.capabilityProfile !== 'repository-read-only' ||
     !isNonEmptyString(input.repositoryId) ||
-    !HEX40.test(input.baseCommit) ||
-    !HEX40.test(input.baseTree) ||
+    !GIT_OBJECT_ID.test(input.baseCommit) ||
+    !GIT_OBJECT_ID.test(input.baseTree) ||
     !HEX64.test(input.targetDigest) ||
     !HEX64.test(input.inputManifestDigest) ||
     !HEX64.test(input.authorizationNodeId) ||

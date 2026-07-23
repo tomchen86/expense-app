@@ -1,3 +1,5 @@
+import os from 'node:os';
+
 import {
   loadAiAdapterPolicy,
   REQUIRED_AI_ADAPTER_CONTROLS,
@@ -9,6 +11,11 @@ import {
   type CapabilityPurpose,
   type ProviderId,
 } from './provider-registry.ts';
+import {
+  preflightBuiltInProvider,
+  PROVIDER_RUNNER_RESIDUALS,
+  type ProviderResolution,
+} from './provider-runner.ts';
 
 export type AiAdapterProviderReport = {
   id: ProviderId;
@@ -17,22 +24,25 @@ export type AiAdapterProviderReport = {
     purpose: CapabilityPurpose;
     profile: CapabilityProfile;
   }>;
-  resolver: {
-    status: 'not-implemented';
-  };
+  resolver: ProviderResolution;
 };
 
 /**
- * The diagnostic-only adapter evaluation. This slice performs no executable
- * resolution, provider preflight, or launch: it honestly reports the configured
- * providers and limits, an unimplemented resolver, an unauthorized launch, and
- * unverified controls/residuals on every platform.
+ * The managed-read-only adapter evaluation. It is a diagnostic that never
+ * invokes a model: it reports the configured providers/limits, the honest
+ * bounded resolver status of each provider (a version/help/auth preflight that
+ * records the reviewed executable identity and version when present), unverified
+ * isolation controls, an unauthorized launch, and the retained
+ * same-user/observed-projection residuals on every platform. Real read-only
+ * launch is reachable only through lifecycle orchestration, never this generic
+ * pass-through.
  */
 export type AiAdapterEvaluation = {
-  schemaVersion: 2;
-  mode: 'evaluation-only';
+  schemaVersion: 3;
+  mode: 'managed-read-only';
   decision: 'deny';
   launchAuthorized: false;
+  lifecycleLaunchPolicy: 'lifecycle-only';
   filesystemSandboxVerified: false;
   sameUserProcessConfined: false;
   platform: NodeJS.Platform;
@@ -40,9 +50,15 @@ export type AiAdapterEvaluation = {
   providers: AiAdapterProviderReport[];
   controls: Array<{ id: string; status: 'not-verified' }>;
   reasons: string[];
-  futureExecutionModel: 'isolated-patch-import';
+  residuals: string[];
   policyDigest: string;
 };
+
+const EVALUATION_REASONS = [
+  'DIAGNOSTIC_COMMAND_DOES_NOT_LAUNCH',
+  'SAME_USER_PROCESS_NOT_CONFINED',
+  'OBSERVED_PROJECTION_EQUALITY_ONLY',
+];
 
 export function evaluateAiAdapter(
   repositoryRoot: string,
@@ -57,14 +73,20 @@ export function evaluateAiAdapter(
         purpose: capability.purpose,
         profile: capability.profile,
       })),
-      resolver: { status: 'not-implemented' },
+      resolver: preflightBuiltInProvider(provider.id, {
+        platform,
+        enabled: loaded.policy.providers[provider.id].enabled,
+        sourceEnvironment: process.env,
+        temporaryDirectory: os.tmpdir(),
+      }),
     }),
   );
   return {
-    schemaVersion: 2,
+    schemaVersion: 3,
     mode: loaded.policy.mode,
     decision: 'deny',
     launchAuthorized: false,
+    lifecycleLaunchPolicy: loaded.policy.launchPolicy,
     filesystemSandboxVerified: false,
     sameUserProcessConfined: false,
     platform,
@@ -78,12 +100,8 @@ export function evaluateAiAdapter(
       id,
       status: 'not-verified',
     })),
-    reasons: [
-      'PROVIDER_RESOLUTION_NOT_IMPLEMENTED',
-      'SAME_USER_PROCESS_NOT_CONFINED',
-      'ISOLATED_PATCH_IMPORT_NOT_IMPLEMENTED',
-    ],
-    futureExecutionModel: 'isolated-patch-import',
+    reasons: [...EVALUATION_REASONS],
+    residuals: [...PROVIDER_RUNNER_RESIDUALS],
     policyDigest: loaded.digest,
   };
 }

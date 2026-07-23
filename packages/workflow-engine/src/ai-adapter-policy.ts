@@ -37,9 +37,9 @@ export type AiAdapterProviderPolicy = {
 };
 
 export type AiAdapterPolicy = {
-  schemaVersion: 2;
-  mode: 'evaluation-only';
-  launchPolicy: 'deny';
+  schemaVersion: 3;
+  mode: 'managed-read-only';
+  launchPolicy: 'lifecycle-only';
   requiredControls: string[];
   providers: Record<ProviderId, AiAdapterProviderPolicy>;
   limits: AiAdapterLimits;
@@ -123,9 +123,9 @@ function isAiAdapterPolicy(value: unknown): value is AiAdapterPolicy {
   const actualKeys = Object.keys(value).sort();
   return (
     JSON.stringify(actualKeys) === JSON.stringify(expectedKeys) &&
-    value.schemaVersion === 2 &&
-    value.mode === 'evaluation-only' &&
-    value.launchPolicy === 'deny' &&
+    value.schemaVersion === 3 &&
+    value.mode === 'managed-read-only' &&
+    value.launchPolicy === 'lifecycle-only' &&
     Array.isArray(value.requiredControls) &&
     JSON.stringify(value.requiredControls) ===
       JSON.stringify(REQUIRED_AI_ADAPTER_CONTROLS) &&

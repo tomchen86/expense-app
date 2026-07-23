@@ -1,7 +1,7 @@
 {
-  "schemaVersion": 2,
-  "mode": "evaluation-only",
-  "launchPolicy": "deny",
+  "schemaVersion": 3,
+  "mode": "managed-read-only",
+  "launchPolicy": "lifecycle-only",
   "requiredControls": [
     "separate-security-principal",
     "kernel-enforced-write-boundary",

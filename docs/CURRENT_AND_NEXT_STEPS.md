@@ -8,15 +8,15 @@ This generated handoff contains semantic project state only. Its sources are tra
 
 ## Current Task
 
-`5.3` — Follow RED -> GREEN -> REFACTOR to evolve the strict adapter policy and diagnostic, add fixed-candidate Codex and Claude read-only adapters, minimized capability-specific invocation, bounded structured output, governed before/after mutation fingerprints, and honest unavailable/observed-projection behavior.
+`6.1` — Follow RED -> GREEN -> REFACTOR to add component-typed plan targets, conservative authored/mixed/structured canonicalization, immutable planning generations, exact PlanReview with evidence-bound scope/depth challenge, advisory verdict semantics, direct bounded `proposedTerms` projection, challenge dispositions, and non-blocking intake candidates.
 
 ## Next Task
 
-`6.1` — Follow RED -> GREEN -> REFACTOR to add component-typed plan targets, conservative authored/mixed/structured canonicalization, immutable planning generations, exact PlanReview with evidence-bound scope/depth challenge, advisory verdict semantics, direct bounded `proposedTerms` projection, challenge dispositions, and non-blocking intake candidates.
+`6.2` — Follow RED -> GREEN -> REFACTOR to add the separate controlling-TTY collaboration-grant namespace, canonical signed one-use envelopes, atomic reserve/consume/revoke/inspect state, same-provider fresh-session and no-callable-adapter degraded forms, and downstream assurance that cannot suppress investigation or review content.
 
 ## Current Focus
 
-Follow RED -> GREEN -> REFACTOR to evolve the strict adapter policy and diagnostic, add fixed-candidate Codex and Claude read-only adapters, minimized capability-specific invocation, bounded structured output, governed before/after mutation fingerprints, and honest unavailable/observed-projection behavior.
+Follow RED -> GREEN -> REFACTOR to add component-typed plan targets, conservative authored/mixed/structured canonicalization, immutable planning generations, exact PlanReview with evidence-bound scope/depth challenge, advisory verdict semantics, direct bounded `proposedTerms` projection, challenge dispositions, and non-blocking intake candidates.
 
 ## Known Blockers
 

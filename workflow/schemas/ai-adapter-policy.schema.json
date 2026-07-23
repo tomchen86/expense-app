@@ -13,9 +13,9 @@
     "limits"
   ],
   "properties": {
-    "schemaVersion": { "const": 2 },
-    "mode": { "const": "evaluation-only" },
-    "launchPolicy": { "const": "deny" },
+    "schemaVersion": { "const": 3 },
+    "mode": { "const": "managed-read-only" },
+    "launchPolicy": { "const": "lifecycle-only" },
     "requiredControls": {
       "type": "array",
       "minItems": 8,

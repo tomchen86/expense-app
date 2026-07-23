@@ -525,6 +525,7 @@ function fingerprintTrackedEntry(
   repositoryRoot: string,
   trackedPath: string,
   includeVolatileMetadata: boolean,
+  budget?: GovernedProjectionBudget,
 ): void {
   const absolutePath = path.join(repositoryRoot, trackedPath);
   const stats = fs.lstatSync(absolutePath, {
@@ -545,7 +546,11 @@ function fingerprintTrackedEntry(
     updateFramed(digest, 'tracked-link', fs.readlinkSync(absolutePath));
   } else if (stats.isFile()) {
     updateFramed(digest, 'tracked-kind', 'file');
-    updateFramed(digest, 'tracked-content', fs.readFileSync(absolutePath));
+    if (budget) {
+      updateFramedFile(digest, 'tracked-content', absolutePath, stats, budget);
+    } else {
+      updateFramed(digest, 'tracked-content', fs.readFileSync(absolutePath));
+    }
   } else if (stats.isDirectory()) {
     updateFramed(digest, 'tracked-kind', 'directory');
   } else {
@@ -580,6 +585,860 @@ function updateFramed(
   digest.update(bytes);
 }
 
+function updateBoundedFramed(
+  digest: ReturnType<typeof crypto.createHash>,
+  domain: string,
+  value: string | Buffer,
+  budget: GovernedProjectionBudget,
+): void {
+  const bytes = Buffer.isBuffer(value) ? value : Buffer.from(value);
+  consumeProjectionBytes(budget, bytes.length);
+  updateFramed(digest, domain, bytes);
+}
+
+function updateFramedFile(
+  digest: ReturnType<typeof crypto.createHash>,
+  domain: string,
+  absolutePath: string,
+  expected: fs.BigIntStats,
+  budget: GovernedProjectionBudget,
+): void {
+  if (
+    expected.size < 0n ||
+    expected.size > BigInt(MAX_GOVERNED_PROJECTION_FILE_BYTES)
+  ) {
+    throw new Error('Governed projection file-size limit exceeded.');
+  }
+  const size = Number(expected.size);
+  consumeProjectionBytes(budget, size);
+  const domainPrefix = `${domain.length}:${domain}:${size}:`;
+  digest.update(domainPrefix);
+
+  const noFollow =
+    process.platform !== 'win32' && typeof fs.constants.O_NOFOLLOW === 'number'
+      ? fs.constants.O_NOFOLLOW
+      : 0;
+  const descriptor = fs.openSync(
+    absolutePath,
+    fs.constants.O_RDONLY | noFollow,
+  );
+  try {
+    const opened = fs.fstatSync(descriptor, { bigint: true });
+    if (
+      !opened.isFile() ||
+      opened.dev !== expected.dev ||
+      opened.ino !== expected.ino ||
+      opened.size !== expected.size ||
+      opened.mode !== expected.mode ||
+      opened.nlink !== expected.nlink
+    ) {
+      throw new Error('Governed projection file identity changed.');
+    }
+    const buffer = Buffer.allocUnsafe(64 * 1024);
+    let consumed = 0;
+    while (consumed < size) {
+      const requested = Math.min(buffer.length, size - consumed);
+      const read = fs.readSync(descriptor, buffer, 0, requested, null);
+      if (read <= 0) {
+        throw new Error('Governed projection file was truncated.');
+      }
+      digest.update(buffer.subarray(0, read));
+      consumed += read;
+    }
+    const after = fs.fstatSync(descriptor, { bigint: true });
+    if (
+      consumed !== size ||
+      after.dev !== expected.dev ||
+      after.ino !== expected.ino ||
+      after.size !== expected.size ||
+      after.mode !== expected.mode ||
+      after.nlink !== expected.nlink ||
+      after.mtimeNs !== expected.mtimeNs
+    ) {
+      throw new Error('Governed projection file changed while being read.');
+    }
+  } finally {
+    fs.closeSync(descriptor);
+  }
+}
+
+function readDirectoryEntriesBounded(
+  absoluteDirectory: string,
+  budget: GovernedProjectionBudget,
+): fs.Dirent[] {
+  const entries: fs.Dirent[] = [];
+  const directory = fs.opendirSync(absoluteDirectory);
+  try {
+    for (;;) {
+      const entry = directory.readSync();
+      if (!entry) {
+        break;
+      }
+      consumeProjectionEntries(budget, 1);
+      entries.push(entry);
+    }
+  } finally {
+    directory.closeSync();
+  }
+  return entries;
+}
+
+function consumeProjectionEntries(
+  budget: GovernedProjectionBudget,
+  count: number,
+): void {
+  if (
+    !Number.isSafeInteger(count) ||
+    count < 0 ||
+    count > budget.remainingEntries
+  ) {
+    throw new Error('Governed projection entry limit exceeded.');
+  }
+  budget.remainingEntries -= count;
+}
+
+function consumeProjectionBytes(
+  budget: GovernedProjectionBudget,
+  count: number,
+): void {
+  if (
+    !Number.isSafeInteger(count) ||
+    count < 0 ||
+    count > budget.remainingBytes
+  ) {
+    throw new Error('Governed projection aggregate byte limit exceeded.');
+  }
+  budget.remainingBytes -= count;
+}
+
 function splitNull(value: string): string[] {
   return value.split('\0').filter(Boolean);
+}
+
+/**
+ * A single engine-owned governed runtime input. The projection binds each input
+ * by its stable `id` and exact file bytes/metadata so a provider process that
+ * rewrites a governed input is observed as drift rather than silently accepted.
+ */
+export type GovernedRuntimeInput =
+  | { id: string; path: string; kind?: 'file' }
+  | {
+      id: string;
+      path: string;
+      kind: 'directory-closure';
+      expectedFiles: string[];
+      mutableContentPaths: string[];
+    };
+
+export type GovernedProviderProjection = {
+  categories: Record<string, string>;
+  digest: string;
+};
+
+export type GovernedProviderProjectionComparison = {
+  unchanged: boolean;
+  changedCategories: string[];
+  beforeDigest: string;
+  afterDigest: string;
+};
+
+/**
+ * The fixed governed-projection category order. Comparison reports drift in this
+ * order so callers observe a stable category vocabulary.
+ */
+const GOVERNED_PROJECTION_CATEGORIES = [
+  'refs',
+  'git-control',
+  'index',
+  'tracked-worktree',
+  'untracked-worktree',
+  'ignored-worktree-manifest',
+  'planning-artifacts',
+  'governed-runtime-inputs',
+] as const;
+
+const MAX_GOVERNED_PROJECTION_ENTRIES = 100_000;
+const MAX_GOVERNED_PROJECTION_FILE_BYTES = 128 * 1024 * 1024;
+const MAX_GOVERNED_PROJECTION_TOTAL_BYTES = 512 * 1024 * 1024;
+const MAX_GOVERNED_PROJECTION_DEPTH = 64;
+
+type GovernedProjectionBudget = {
+  remainingEntries: number;
+  remainingBytes: number;
+};
+
+// macOS may asynchronously rewrite com.apple.provenance and bump ctime without
+// any governed change, so the projection omits volatile ctime on Darwin exactly
+// as the persisted repository projection does.
+const INCLUDE_VOLATILE_PROJECTION_METADATA = process.platform !== 'darwin';
+
+/**
+ * Capture the engine-owned governed projection of a repository before or after a
+ * bounded provider process. It binds the symbolic HEAD/ref/OID/tree and every
+ * ref, the exact index stages/flags and staged tree, the tracked, untracked,
+ * and ignored worktree manifests, the planning artifacts, and the exact governed
+ * runtime inputs. Equality of two projections establishes only that this
+ * observed governed surface did not change; it does not prove same-user process
+ * confinement or global filesystem immutability.
+ */
+export function captureGovernedProviderProjection(
+  repositoryRoot: string,
+  runtimeInputs: GovernedRuntimeInput[] = [],
+): GovernedProviderProjection {
+  try {
+    const first = sampleGovernedProviderProjectionCategories(
+      repositoryRoot,
+      runtimeInputs,
+    );
+    const categories = sampleGovernedProviderProjectionCategories(
+      repositoryRoot,
+      runtimeInputs,
+    );
+    if (
+      GOVERNED_PROJECTION_CATEGORIES.some(
+        (category) => first[category] !== categories[category],
+      )
+    ) {
+      throw workflowError(
+        'GOVERNED_PROJECTION_UNSTABLE',
+        'Governed provider projection changed while it was being sampled.',
+        ExitCode.staleState,
+      );
+    }
+    const overall = crypto.createHash('sha256');
+    for (const category of GOVERNED_PROJECTION_CATEGORIES) {
+      updateFramed(overall, category, categories[category] ?? '');
+    }
+    return { categories, digest: overall.digest('hex') };
+  } catch (error) {
+    if (error instanceof WorkflowError) {
+      throw error;
+    }
+    throw workflowError(
+      'GOVERNED_PROJECTION_FAILED',
+      'Unable to capture the governed provider projection safely.',
+      ExitCode.staleState,
+    );
+  }
+}
+
+function sampleGovernedProviderProjectionCategories(
+  repositoryRoot: string,
+  runtimeInputs: GovernedRuntimeInput[],
+): Record<(typeof GOVERNED_PROJECTION_CATEGORIES)[number], string> {
+  const budget: GovernedProjectionBudget = {
+    remainingEntries: MAX_GOVERNED_PROJECTION_ENTRIES,
+    remainingBytes: MAX_GOVERNED_PROJECTION_TOTAL_BYTES,
+  };
+  return {
+    refs: digestRefsProjection(repositoryRoot, budget),
+    'git-control': digestGitControlProjection(repositoryRoot, budget),
+    index: digestIndexProjection(repositoryRoot, budget),
+    'tracked-worktree': digestTrackedWorktreeProjection(repositoryRoot, budget),
+    'untracked-worktree': digestUntrackedWorktreeProjection(
+      repositoryRoot,
+      budget,
+    ),
+    'ignored-worktree-manifest': digestIgnoredWorktreeProjection(
+      repositoryRoot,
+      budget,
+    ),
+    'planning-artifacts': digestPlanningArtifactsProjection(
+      repositoryRoot,
+      budget,
+    ),
+    'governed-runtime-inputs': digestGovernedRuntimeInputs(
+      runtimeInputs,
+      budget,
+    ),
+  };
+}
+
+/**
+ * Compare two governed projections, naming every category whose digest changed
+ * in the fixed category order. `unchanged` is true only when no category and the
+ * overall digest are identical.
+ */
+export function compareGovernedProviderProjections(
+  before: GovernedProviderProjection,
+  after: GovernedProviderProjection,
+): GovernedProviderProjectionComparison {
+  const changedCategories = GOVERNED_PROJECTION_CATEGORIES.filter(
+    (category) => before.categories[category] !== after.categories[category],
+  );
+  return {
+    unchanged: changedCategories.length === 0 && before.digest === after.digest,
+    changedCategories: [...changedCategories],
+    beforeDigest: before.digest,
+    afterDigest: after.digest,
+  };
+}
+
+function digestRefsProjection(
+  repositoryRoot: string,
+  budget: GovernedProjectionBudget,
+): string {
+  const digest = crypto.createHash('sha256');
+  updateBoundedFramed(
+    digest,
+    'head-symbolic',
+    runGit(repositoryRoot, ['symbolic-ref', '--quiet', 'HEAD'], true),
+    budget,
+  );
+  updateBoundedFramed(
+    digest,
+    'head-oid',
+    runGit(repositoryRoot, ['rev-parse', 'HEAD']),
+    budget,
+  );
+  updateBoundedFramed(
+    digest,
+    'head-tree',
+    runGit(repositoryRoot, ['rev-parse', 'HEAD^{tree}']),
+    budget,
+  );
+  // Binding %(symref) keeps a symbolic ref (for example refs/remotes/origin/HEAD)
+  // pinned to its exact target, so retargeting a non-HEAD symref to another ref
+  // at the same object is still observed as drift.
+  updateBoundedFramed(
+    digest,
+    'for-each-ref',
+    runGit(repositoryRoot, [
+      'for-each-ref',
+      '--format=%(objectname) %(objecttype) %(refname) %(symref)',
+    ]),
+    budget,
+  );
+  return digest.digest('hex');
+}
+
+/**
+ * Digest the local Git control surface a provider process could weaponize
+ * without touching a tracked worktree path: the repository-local configuration
+ * and the executable hook programs and local exclude/attribute inputs under the
+ * Git common directory. A change to any of these is governed drift.
+ */
+const GIT_WORKTREE_CONTROL_FILES = [
+  'AUTO_MERGE',
+  'BISECT_ANCESTORS_OK',
+  'BISECT_EXPECTED_REV',
+  'BISECT_HEAD',
+  'BISECT_LOG',
+  'BISECT_NAMES',
+  'BISECT_RUN',
+  'BISECT_START',
+  'BISECT_TERMS',
+  'CHERRY_PICK_HEAD',
+  'FETCH_HEAD',
+  'MERGE_AUTOSTASH',
+  'MERGE_HEAD',
+  'MERGE_MODE',
+  'MERGE_MSG',
+  'MERGE_RR',
+  'ORIG_HEAD',
+  'REBASE_AUTOSTASH',
+  'REBASE_HEAD',
+  'REVERT_HEAD',
+  'SQUASH_MSG',
+  'commondir',
+  'config.worktree',
+  'gitdir',
+  'info/sparse-checkout',
+  'index.lock',
+] as const;
+
+function digestGitControlProjection(
+  repositoryRoot: string,
+  budget: GovernedProjectionBudget,
+): string {
+  const digest = crypto.createHash('sha256');
+  updateBoundedFramed(
+    digest,
+    'config-local',
+    runGit(repositoryRoot, ['config', '--list', '--local', '-z'], true),
+    budget,
+  );
+  const commonDirectory = localGitCommonDirectory(repositoryRoot);
+  for (const relative of [
+    'config',
+    'config.worktree',
+    'info/exclude',
+    'info/attributes',
+    'info/grafts',
+    'objects/info/alternates',
+    'shallow',
+  ]) {
+    updateFramed(digest, 'control-path', relative);
+    fingerprintControlEntry(
+      digest,
+      path.join(commonDirectory, relative),
+      budget,
+    );
+  }
+  digestControlTree(
+    digest,
+    path.join(commonDirectory, 'hooks'),
+    'hooks',
+    budget,
+    0,
+  );
+  const gitDirectory = localGitDirectory(repositoryRoot);
+  for (const relative of GIT_WORKTREE_CONTROL_FILES) {
+    updateFramed(digest, 'worktree-control-path', relative);
+    fingerprintControlEntry(digest, path.join(gitDirectory, relative), budget);
+  }
+  for (const relative of ['rebase-apply', 'rebase-merge', 'sequencer']) {
+    digestControlTree(
+      digest,
+      path.join(gitDirectory, relative),
+      `worktree/${relative}`,
+      budget,
+      0,
+    );
+  }
+  digestControlTree(
+    digest,
+    path.join(commonDirectory, 'rr-cache'),
+    'common/rr-cache',
+    budget,
+    0,
+  );
+  return digest.digest('hex');
+}
+
+function digestControlTree(
+  digest: ReturnType<typeof crypto.createHash>,
+  absoluteDirectory: string,
+  label: string,
+  budget: GovernedProjectionBudget,
+  depth: number,
+): void {
+  if (depth > MAX_GOVERNED_PROJECTION_DEPTH) {
+    throw new Error('Governed projection directory depth exceeded.');
+  }
+  const stats = fs.lstatSync(absoluteDirectory, {
+    bigint: true,
+    throwIfNoEntry: false,
+  });
+  if (!stats) {
+    updateFramed(digest, 'control-tree', 'missing');
+    return;
+  }
+  if (!stats.isDirectory() || stats.isSymbolicLink()) {
+    throw new Error('Git control-tree root is not a plain directory.');
+  }
+  updateFramed(
+    digest,
+    'control-tree-stat',
+    fingerprintStats(stats, INCLUDE_VOLATILE_PROJECTION_METADATA),
+  );
+  const entries = readDirectoryEntriesBounded(absoluteDirectory, budget);
+  for (const entry of entries.sort((left, right) =>
+    left.name < right.name ? -1 : left.name > right.name ? 1 : 0,
+  )) {
+    const childLabel = `${label}/${entry.name}`;
+    updateFramed(digest, 'control-path', childLabel);
+    const absoluteChild = path.join(absoluteDirectory, entry.name);
+    if (entry.isDirectory()) {
+      digestControlTree(digest, absoluteChild, childLabel, budget, depth + 1);
+    } else {
+      fingerprintControlEntry(digest, absoluteChild, budget);
+    }
+  }
+}
+
+function fingerprintControlEntry(
+  digest: ReturnType<typeof crypto.createHash>,
+  absolutePath: string,
+  budget: GovernedProjectionBudget,
+): void {
+  const stats = fs.lstatSync(absolutePath, {
+    bigint: true,
+    throwIfNoEntry: false,
+  });
+  if (!stats) {
+    updateFramed(digest, 'control-kind', 'missing');
+    return;
+  }
+  updateFramed(digest, 'control-stat', fingerprintStats(stats, false));
+  if (stats.isSymbolicLink()) {
+    updateFramed(digest, 'control-kind', 'symlink');
+    updateBoundedFramed(
+      digest,
+      'control-link',
+      fs.readlinkSync(absolutePath),
+      budget,
+    );
+  } else if (stats.isFile()) {
+    updateFramed(digest, 'control-kind', 'file');
+    updateFramedFile(digest, 'control-content', absolutePath, stats, budget);
+  } else if (stats.isDirectory()) {
+    updateFramed(digest, 'control-kind', 'directory');
+  } else {
+    updateFramed(digest, 'control-kind', 'other');
+  }
+}
+
+function localGitCommonDirectory(repositoryRoot: string): string {
+  const value = runGit(repositoryRoot, [
+    'rev-parse',
+    '--git-common-dir',
+  ]).trim();
+  return fs.realpathSync(
+    path.isAbsolute(value) ? value : path.resolve(repositoryRoot, value),
+  );
+}
+
+function localGitDirectory(repositoryRoot: string): string {
+  const value = runGit(repositoryRoot, ['rev-parse', '--git-dir']).trim();
+  return fs.realpathSync(
+    path.isAbsolute(value) ? value : path.resolve(repositoryRoot, value),
+  );
+}
+
+function digestIndexProjection(
+  repositoryRoot: string,
+  budget: GovernedProjectionBudget,
+): string {
+  const digest = crypto.createHash('sha256');
+  updateBoundedFramed(
+    digest,
+    'ls-files-stage',
+    runGit(repositoryRoot, ['ls-files', '--stage', '-z', '--']),
+    budget,
+  );
+  updateBoundedFramed(
+    digest,
+    'ls-files-flags',
+    runGit(repositoryRoot, ['ls-files', '-v', '-z', '--']),
+    budget,
+  );
+  updateBoundedFramed(
+    digest,
+    'diff-cached',
+    runGit(repositoryRoot, ['diff', '--cached', '--raw', '-z', 'HEAD', '--']),
+    budget,
+  );
+  return digest.digest('hex');
+}
+
+function digestTrackedWorktreeProjection(
+  repositoryRoot: string,
+  budget: GovernedProjectionBudget,
+): string {
+  const digest = crypto.createHash('sha256');
+  const trackedPaths = listTrackedPaths(repositoryRoot);
+  consumeProjectionEntries(budget, trackedPaths.length);
+  for (const trackedPath of trackedPaths) {
+    updateFramed(digest, 'tracked-path', trackedPath);
+    fingerprintTrackedEntry(
+      digest,
+      repositoryRoot,
+      trackedPath,
+      INCLUDE_VOLATILE_PROJECTION_METADATA,
+      budget,
+    );
+  }
+  return digest.digest('hex');
+}
+
+function digestUntrackedWorktreeProjection(
+  repositoryRoot: string,
+  budget: GovernedProjectionBudget,
+): string {
+  const digest = crypto.createHash('sha256');
+  const untrackedPaths = listControlledUntrackedPaths(repositoryRoot);
+  consumeProjectionEntries(budget, untrackedPaths.length);
+  for (const untrackedPath of untrackedPaths) {
+    updateFramed(digest, 'untracked-path', untrackedPath);
+    fingerprintWorktreeEntry(
+      digest,
+      path.join(repositoryRoot, untrackedPath),
+      'untracked',
+      true,
+      budget,
+    );
+  }
+  return digest.digest('hex');
+}
+
+function digestIgnoredWorktreeProjection(
+  repositoryRoot: string,
+  budget: GovernedProjectionBudget,
+): string {
+  const digest = crypto.createHash('sha256');
+  const ignoredPaths = listRepositoryIgnoredPaths(repositoryRoot);
+  consumeProjectionEntries(budget, ignoredPaths.length);
+  for (const ignoredPath of ignoredPaths) {
+    updateFramed(digest, 'ignored-path', ignoredPath);
+    fingerprintWorktreeEntry(
+      digest,
+      path.join(repositoryRoot, ignoredPath),
+      'ignored',
+      false,
+      budget,
+    );
+  }
+  return digest.digest('hex');
+}
+
+function digestPlanningArtifactsProjection(
+  repositoryRoot: string,
+  budget: GovernedProjectionBudget,
+): string {
+  const digest = crypto.createHash('sha256');
+  digestPlanningTree(digest, repositoryRoot, 'openspec/changes', budget, 0);
+  return digest.digest('hex');
+}
+
+function digestPlanningTree(
+  digest: ReturnType<typeof crypto.createHash>,
+  repositoryRoot: string,
+  relativeDirectory: string,
+  budget: GovernedProjectionBudget,
+  depth: number,
+): void {
+  if (depth > MAX_GOVERNED_PROJECTION_DEPTH) {
+    throw new Error('Governed projection directory depth exceeded.');
+  }
+  const absolute = path.join(repositoryRoot, relativeDirectory);
+  const directoryStats = fs.lstatSync(absolute, {
+    bigint: true,
+    throwIfNoEntry: false,
+  });
+  if (!directoryStats?.isDirectory()) {
+    updateFramed(digest, 'planning-missing', relativeDirectory);
+    return;
+  }
+  const entries = readDirectoryEntriesBounded(absolute, budget);
+  for (const entry of entries.sort((left, right) =>
+    left.name < right.name ? -1 : left.name > right.name ? 1 : 0,
+  )) {
+    const childRelative = path.join(relativeDirectory, entry.name);
+    updateFramed(digest, 'planning-path', childRelative);
+    const absoluteChild = path.join(repositoryRoot, childRelative);
+    if (entry.isSymbolicLink()) {
+      updateFramed(digest, 'planning-kind', 'symlink');
+      updateFramed(digest, 'planning-link', fs.readlinkSync(absoluteChild));
+    } else if (entry.isDirectory()) {
+      updateFramed(digest, 'planning-kind', 'directory');
+      digestPlanningTree(
+        digest,
+        repositoryRoot,
+        childRelative,
+        budget,
+        depth + 1,
+      );
+    } else if (entry.isFile()) {
+      updateFramed(digest, 'planning-kind', 'file');
+      const childStats = fs.lstatSync(absoluteChild, {
+        bigint: true,
+        throwIfNoEntry: false,
+      });
+      if (!childStats?.isFile()) {
+        throw new Error('Planning entry changed while being fingerprinted.');
+      }
+      updateFramedFile(
+        digest,
+        'planning-content',
+        absoluteChild,
+        childStats,
+        budget,
+      );
+    } else {
+      updateFramed(digest, 'planning-kind', 'other');
+    }
+  }
+}
+
+function digestGovernedRuntimeInputs(
+  inputs: GovernedRuntimeInput[],
+  budget: GovernedProjectionBudget,
+): string {
+  const digest = crypto.createHash('sha256');
+  const sorted = [...inputs].sort((left, right) =>
+    left.id < right.id ? -1 : left.id > right.id ? 1 : 0,
+  );
+  consumeProjectionEntries(budget, sorted.length);
+  for (const input of sorted) {
+    updateFramed(digest, 'runtime-id', input.id);
+    updateFramed(digest, 'runtime-kind', input.kind ?? 'file');
+    if (input.kind === 'directory-closure') {
+      const expectedFiles = new Set(input.expectedFiles);
+      const mutableContentPaths = new Set(input.mutableContentPaths);
+      if (
+        expectedFiles.size !== input.expectedFiles.length ||
+        mutableContentPaths.size !== input.mutableContentPaths.length ||
+        [...expectedFiles, ...mutableContentPaths].some(
+          (relativePath) =>
+            relativePath === '' ||
+            path.isAbsolute(relativePath) ||
+            path.posix.normalize(relativePath) !== relativePath ||
+            relativePath.startsWith('../') ||
+            relativePath.includes('\\') ||
+            relativePath.includes('\0') ||
+            relativePath.includes('/'),
+        ) ||
+        [...mutableContentPaths].some(
+          (relativePath) => !expectedFiles.has(relativePath),
+        )
+      ) {
+        throw new Error('Invalid governed runtime directory policy.');
+      }
+      fingerprintRuntimeDirectoryClosure(
+        digest,
+        input.path,
+        expectedFiles,
+        mutableContentPaths,
+        budget,
+      );
+    } else {
+      fingerprintWorktreeEntry(digest, input.path, 'runtime', true, budget);
+    }
+  }
+  return digest.digest('hex');
+}
+
+function fingerprintRuntimeDirectoryClosure(
+  digest: ReturnType<typeof crypto.createHash>,
+  absoluteDirectory: string,
+  expectedFiles: ReadonlySet<string>,
+  mutableContentPaths: ReadonlySet<string>,
+  budget: GovernedProjectionBudget,
+): void {
+  const directoryStats = fs.lstatSync(absoluteDirectory, {
+    bigint: true,
+    throwIfNoEntry: false,
+  });
+  if (!directoryStats?.isDirectory() || directoryStats.isSymbolicLink()) {
+    updateFramed(
+      digest,
+      'runtime-tree-kind',
+      directoryStats ? 'not-directory' : 'missing',
+    );
+    return;
+  }
+  updateFramed(
+    digest,
+    'runtime-tree-directory-stat',
+    fingerprintStats(directoryStats, INCLUDE_VOLATILE_PROJECTION_METADATA),
+  );
+  const entryNames: string[] = [];
+  let unexpectedEntry = false;
+  const directory = fs.opendirSync(absoluteDirectory);
+  try {
+    for (;;) {
+      const entry = directory.readSync();
+      if (!entry) {
+        break;
+      }
+      consumeProjectionEntries(budget, 1);
+      if (!expectedFiles.has(entry.name)) {
+        unexpectedEntry = true;
+        break;
+      }
+      entryNames.push(entry.name);
+    }
+  } finally {
+    directory.closeSync();
+  }
+  if (unexpectedEntry) {
+    updateFramed(digest, 'runtime-tree-kind', 'unexpected-entry');
+    return;
+  }
+  entryNames.sort();
+  for (const entryName of entryNames) {
+    updateFramed(digest, 'runtime-tree-entry', entryName);
+  }
+  for (const relativePath of [...expectedFiles].sort()) {
+    const absolutePath = path.join(absoluteDirectory, relativePath);
+    updateFramed(digest, 'runtime-tree-path', relativePath);
+    const stats = fs.lstatSync(absolutePath, {
+      bigint: true,
+      throwIfNoEntry: false,
+    });
+    if (!stats) {
+      updateFramed(digest, 'runtime-tree-kind', 'missing');
+    } else if (stats.isSymbolicLink()) {
+      updateFramed(digest, 'runtime-tree-kind', 'symlink');
+      updateFramed(digest, 'runtime-tree-link', fs.readlinkSync(absolutePath));
+    } else if (stats.isFile()) {
+      updateFramed(digest, 'runtime-tree-kind', 'file');
+      if (mutableContentPaths.has(relativePath)) {
+        updateFramed(
+          digest,
+          'runtime-tree-mutable-file-identity',
+          [
+            stats.dev,
+            stats.ino,
+            stats.mode,
+            stats.nlink,
+            stats.uid,
+            stats.gid,
+          ].join(':'),
+        );
+      } else {
+        updateFramed(
+          digest,
+          'runtime-tree-file-stat',
+          fingerprintStats(stats, INCLUDE_VOLATILE_PROJECTION_METADATA),
+        );
+        updateFramedFile(
+          digest,
+          'runtime-tree-file-content',
+          absolutePath,
+          stats,
+          budget,
+        );
+      }
+    } else {
+      updateFramed(digest, 'runtime-tree-kind', 'other');
+      updateFramed(
+        digest,
+        'runtime-tree-other-stat',
+        fingerprintStats(stats, INCLUDE_VOLATILE_PROJECTION_METADATA),
+      );
+    }
+  }
+}
+
+function fingerprintWorktreeEntry(
+  digest: ReturnType<typeof crypto.createHash>,
+  absolutePath: string,
+  domain: string,
+  includeContent: boolean,
+  budget: GovernedProjectionBudget,
+): void {
+  const stats = fs.lstatSync(absolutePath, {
+    bigint: true,
+    throwIfNoEntry: false,
+  });
+  if (!stats) {
+    updateFramed(digest, `${domain}-kind`, 'missing');
+    return;
+  }
+  updateFramed(
+    digest,
+    `${domain}-stat`,
+    fingerprintStats(stats, INCLUDE_VOLATILE_PROJECTION_METADATA),
+  );
+  if (stats.isSymbolicLink()) {
+    updateFramed(digest, `${domain}-kind`, 'symlink');
+    updateFramed(digest, `${domain}-link`, fs.readlinkSync(absolutePath));
+  } else if (stats.isFile()) {
+    updateFramed(digest, `${domain}-kind`, 'file');
+    if (includeContent) {
+      updateFramedFile(
+        digest,
+        `${domain}-content`,
+        absolutePath,
+        stats,
+        budget,
+      );
+    }
+  } else if (stats.isDirectory()) {
+    updateFramed(digest, `${domain}-kind`, 'directory');
+  } else {
+    updateFramed(digest, `${domain}-kind`, 'other');
+  }
 }

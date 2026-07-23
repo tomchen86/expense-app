@@ -25,6 +25,7 @@ import './maintainer-mode.integration.test.ts';
 import './ci.integration.test.ts';
 import './ci-bootstrap.integration.test.ts';
 import './ai-adapter-evaluation.integration.test.ts';
+import './provider-adapters.integration.test.ts';
 import './ignored-state.integration.test.ts';
 import './investigation-scanner.integration.test.ts';
 import './investigation-session.integration.test.ts';

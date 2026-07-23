@@ -36,9 +36,11 @@ test('AI adapter evaluation denies launch on every platform without side effects
 
     for (const platform of ['darwin', 'linux', 'win32'] as const) {
       const result = evaluateAiAdapter(repository, platform);
-      assert.equal(result.mode, 'evaluation-only');
+      assert.equal(result.schemaVersion, 3);
+      assert.equal(result.mode, 'managed-read-only');
       assert.equal(result.decision, 'deny');
       assert.equal(result.launchAuthorized, false);
+      assert.equal(result.lifecycleLaunchPolicy, 'lifecycle-only');
       assert.equal(result.filesystemSandboxVerified, false);
       assert.equal(result.sameUserProcessConfined, false);
       assert.equal(result.platform, platform);
@@ -47,51 +49,85 @@ test('AI adapter evaluation denies launch on every platform without side effects
         aggregateOutputBytes: 1_048_576,
         maxConcurrent: 2,
       });
-      assert.deepEqual(result.providers, [
-        {
-          id: 'codex',
-          enabled: true,
-          capabilities: [
-            {
-              purpose: 'survey',
-              profile: 'repository-read-only',
-            },
-            {
-              purpose: 'plan-review',
-              profile: 'repository-read-only',
-            },
-          ],
-          resolver: {
-            status: 'not-implemented',
+      assert.deepEqual(
+        result.providers.map(({ id, enabled, capabilities }) => ({
+          id,
+          enabled,
+          capabilities,
+        })),
+        [
+          {
+            id: 'codex',
+            enabled: true,
+            capabilities: [
+              {
+                purpose: 'survey',
+                profile: 'repository-read-only',
+              },
+              {
+                purpose: 'plan-review',
+                profile: 'repository-read-only',
+              },
+            ],
           },
-        },
-        {
-          id: 'claude',
-          enabled: true,
-          capabilities: [
-            {
-              purpose: 'survey',
-              profile: 'repository-read-only',
-            },
-            {
-              purpose: 'plan-review',
-              profile: 'repository-read-only',
-            },
-          ],
-          resolver: {
-            status: 'not-implemented',
+          {
+            id: 'claude',
+            enabled: true,
+            capabilities: [
+              {
+                purpose: 'survey',
+                profile: 'repository-read-only',
+              },
+              {
+                purpose: 'plan-review',
+                profile: 'repository-read-only',
+              },
+            ],
           },
-        },
-      ]);
+        ],
+      );
+      for (const provider of result.providers) {
+        assert.ok(
+          [
+            'available',
+            'absent',
+            'unsafe-candidate',
+            'incompatible',
+            'unauthenticated',
+            'unsupported-platform',
+          ].includes(provider.resolver.status),
+        );
+        if (platform !== 'darwin') {
+          assert.equal(provider.resolver.status, 'unsupported-platform');
+        }
+        if (platform === 'darwin' && provider.resolver.status === 'available') {
+          const resolver = provider.resolver as unknown as {
+            version?: unknown;
+            executable?: { realPath?: unknown; sha256?: unknown };
+          };
+          assert.equal(typeof resolver.version, 'string');
+          assert.equal(typeof resolver.executable?.realPath, 'string');
+          assert.match(String(resolver.executable?.sha256), /^[0-9a-f]{64}$/);
+        }
+      }
       assert.deepEqual(
         result.controls.map(({ id, status }) => ({ id, status })),
         REQUIRED_CONTROLS.map((id) => ({ id, status: 'not-verified' })),
       );
       assert.deepEqual(result.reasons, [
-        'PROVIDER_RESOLUTION_NOT_IMPLEMENTED',
+        'DIAGNOSTIC_COMMAND_DOES_NOT_LAUNCH',
         'SAME_USER_PROCESS_NOT_CONFINED',
-        'ISOLATED_PATCH_IMPORT_NOT_IMPLEMENTED',
+        'OBSERVED_PROJECTION_EQUALITY_ONLY',
       ]);
+      assert.ok(
+        result.residuals.includes('TRANSIENT_WRITE_RESTORE_NOT_DETECTABLE'),
+      );
+      assert.ok(result.residuals.includes('SUBPROCESS_TREE_NOT_CONFINED'));
+      assert.ok(
+        result.residuals.includes(
+          'TRANSIENT_EXECUTABLE_SUBSTITUTION_NOT_DETECTABLE',
+        ),
+      );
       assert.match(result.policyDigest, /^[0-9a-f]{64}$/);
       assert.equal(JSON.stringify(result).includes(marker), false);
     }
@@ -112,7 +148,7 @@ test('AI adapter policy changes fail closed instead of enabling a launcher', () 
   const repository = createFixtureRepository();
   try {
     const invalidPolicies: unknown[] = [
-      { ...validPolicy(), schemaVersion: 1 },
+      { ...validPolicy(), schemaVersion: 2 },
       { ...validPolicy(), mode: 'enabled' },
       { ...validPolicy(), launchPolicy: 'allow' },
       {
@@ -220,10 +256,14 @@ test('AI adapter policy may only disable built-ins and lower positive limits', (
 
     const result = evaluateAiAdapter(repository, 'linux');
     assert.deepEqual(
-      result.providers.map(({ id, enabled }) => ({ id, enabled })),
+      result.providers.map(({ id, enabled, resolver }) => ({
+        id,
+        enabled,
+        resolver: resolver.status,
+      })),
       [
-        { id: 'codex', enabled: false },
-        { id: 'claude', enabled: true },
+        { id: 'codex', enabled: false, resolver: 'disabled' },
+        { id: 'claude', enabled: true, resolver: 'unsupported-platform' },
       ],
     );
     assert.deepEqual(result.limits, {
@@ -250,9 +290,9 @@ test('AI adapter policy may only disable built-ins and lower positive limits', (
   }
 });
 
-test('tracked adapter policy and schema publish the same strict v2 bounds', () => {
+test('tracked adapter policy and schema publish the same strict v3 bounds', () => {
   const result = evaluateAiAdapter(sourceRepositoryRoot, 'linux');
-  assert.equal(result.schemaVersion, 2);
+  assert.equal(result.schemaVersion, 3);
   assert.deepEqual(result.limits, limitsPolicy());
   assert.deepEqual(
     result.providers.map(({ id, enabled }) => ({ id, enabled })),
@@ -272,7 +312,7 @@ test('tracked adapter policy and schema publish the same strict v2 bounds', () =
     ),
   );
   assert.equal(schema.additionalProperties, false);
-  assert.equal(schema.properties.schemaVersion.const, 2);
+  assert.equal(schema.properties.schemaVersion.const, 3);
   assert.deepEqual(schema.properties.providers.required, ['codex', 'claude']);
   assert.equal(schema.properties.providers.additionalProperties, false);
   assert.deepEqual(
@@ -359,9 +399,9 @@ test('AI adapter CLI exposes evaluation only and ignores fake sandbox tools', ()
 
 function validPolicy(): Record<string, unknown> {
   return {
-    schemaVersion: 2,
-    mode: 'evaluation-only',
-    launchPolicy: 'deny',
+    schemaVersion: 3,
+    mode: 'managed-read-only',
+    launchPolicy: 'lifecycle-only',
     requiredControls: [...REQUIRED_CONTROLS],
     providers: providersPolicy(),
     limits: limitsPolicy(),
