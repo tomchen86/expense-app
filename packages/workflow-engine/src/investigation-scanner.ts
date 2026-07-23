@@ -1,0 +1,534 @@
+import crypto from 'node:crypto';
+import { performance } from 'node:perf_hooks';
+
+import { canonicalJson } from './canonical-json.ts';
+import { createEvidenceNode, type EvidenceNode } from './evidence-node.ts';
+import { ExitCode, workflowError } from './errors.ts';
+import {
+  assertInvestigationLimits,
+  INVESTIGATION_LIMITS,
+  normalizeInvestigationTerm,
+  type InvestigationLimits,
+  type InvestigationTermProvenance,
+  type NormalizedInvestigationTerm,
+} from './investigation-terms.ts';
+import {
+  readPinnedTrackedTree,
+  type TrackedTreeEntry,
+  type TrackedTreeOperationalDeadline,
+  type TrackedTreePathIdentity,
+  type TrackedTreeSkipReason,
+  type TrackedTreeSnapshot,
+} from './tracked-tree-reader.ts';
+
+const NODE_TYPE = 'investigation-term-scan';
+const NODE_SCHEMA = 'investigation.term-scan.v1';
+const NODE_EVALUATOR = 'investigation-scanner.v1';
+const OUTPUT_SCHEMA = 'investigation.term-scan-output.v1';
+const INVENTORY_NODE_TYPE = 'investigation-tree-inventory';
+const INVENTORY_NODE_SCHEMA = 'investigation.tree-inventory.v1';
+const INVENTORY_OUTPUT_SCHEMA = 'investigation.tree-inventory-output.v1';
+const POLICY_SCHEMA = 'investigation-scan-policy.v1';
+const TERM_DIGEST_SCHEMA = 'investigation-term-input-v1';
+
+/**
+ * A sealed term as consumed by the scanner: its normalized identity plus the
+ * retained union provenance. Provenance never affects node identity; the node is
+ * bound to the semantic term, the pinned tree, and the effective scan policy.
+ */
+export type ScanInvestigationTerm = NormalizedInvestigationTerm & {
+  provenance: InvestigationTermProvenance[];
+};
+
+/**
+ * Stable pinned object identity carried by every scan hit so Task 3.2 grouping
+ * and the exact-blob WHY task can bind matches to their exact source object. A
+ * skipped object still yields `literal-path` hits: scanned text carries a
+ * SHA-256 and a null `skipReason`; a skipped path carries a null SHA-256 and its
+ * exact reason.
+ */
+export type ScanHitSourceObject = {
+  objectId: string;
+  objectType: string;
+  mode: string;
+  byteSize: number | null;
+  contentSha256: string | null;
+  skipReason: TrackedTreeSkipReason | null;
+};
+
+export type ScanHit = {
+  path: TrackedTreePathIdentity;
+  sourceObject: ScanHitSourceObject;
+  surface: 'path' | 'content';
+  byteOffset: number;
+  byteLength: number;
+};
+
+export type ScanSkippedObject = {
+  path: { rawBase64: string; utf8: string | null };
+  objectId: string;
+  objectType: string;
+  mode: string;
+  byteSize: number | null;
+  reason: TrackedTreeSkipReason;
+};
+
+export type ScanInventory = {
+  treeDigest: string;
+  skippedObjects: readonly ScanSkippedObject[];
+  evidenceNode: EvidenceNode;
+};
+
+export type ScanViolation = {
+  code:
+    | 'TERM_HIT_LIMIT_EXCEEDED'
+    | 'TOTAL_HIT_LIMIT_EXCEEDED'
+    | 'HIT_DISPOSITION_WORK_LIMIT_EXCEEDED'
+    | 'SCANNED_BYTE_LIMIT_EXCEEDED'
+    | 'SCAN_WORK_LIMIT_EXCEEDED';
+  termId?: string;
+};
+
+export type ReadyScanResult = {
+  outcome: 'ready';
+  nodes: EvidenceNode[];
+  inventory: ScanInventory;
+};
+
+export type NarrowingScanResult = {
+  outcome: 'requires-narrowing';
+  nodes: [];
+  inventory: ScanInventory;
+  violations: ScanViolation[];
+  terms: ScanInvestigationTerm[];
+};
+
+export type InvestigationScanResult = ReadyScanResult | NarrowingScanResult;
+
+/**
+ * Deterministically scan every sealed term against the pinned Git-tracked tree
+ * and emit one independent EvidenceNode per term, sorted by term ID so caller
+ * order is irrelevant. Each node is bound to the semantic term, the pinned tree
+ * digest, and the effective (lower-only) scan policy — not term provenance. The
+ * scanner reads only the pinned object graph — never task `allowedPaths`,
+ * working-tree files, recognized environment files, a shell, or the caller PATH
+ * — and matches exact literal bytes with no regex. Each supplied term is
+ * revalidated by recomputation; a forged term field or duplicate term ID fails
+ * closed. A per-term, aggregate, work, or scanned-byte overage returns typed
+ * `requires-narrowing` with the original terms and no partial nodes.
+ */
+export function scanInvestigationTree(request: {
+  repositoryRoot: string;
+  treeOid: string;
+  terms: ScanInvestigationTerm[];
+  limits?: InvestigationLimits;
+}): InvestigationScanResult {
+  const { repositoryRoot, treeOid, terms } = request;
+  const limits = assertInvestigationLimits(
+    request.limits ?? { ...INVESTIGATION_LIMITS },
+  );
+  assertScanTerms(terms);
+  if (terms.length > limits.maxEffectiveTerms) {
+    throw scanInvalid(
+      'Supplied terms exceed the effective-term limit and are not a sealed union.',
+    );
+  }
+
+  const operationalDeadline: TrackedTreeOperationalDeadline = {
+    expiresAtMonotonicMillis: performance.now() + limits.maxScanCpuMillis,
+  };
+  const scanCpuStart = process.cpuUsage();
+  const snapshot = readPinnedTrackedTree({
+    repositoryRoot,
+    treeOid,
+    limits: {
+      maxBlobBytes: limits.maxBlobBytes,
+      maxTotalScannedBytes: limits.maxTotalScannedBlobBytes,
+    },
+    operationalDeadline,
+  });
+  assertOperationalScanBudget(
+    operationalDeadline,
+    scanCpuStart,
+    limits.maxScanCpuMillis,
+  );
+
+  const policyDigest = computePolicyDigest(limits);
+  const inventory = buildInventory(snapshot, policyDigest);
+  const violations: ScanViolation[] = [];
+  if (snapshot.budgetExceeded) {
+    violations.push({ code: 'SCANNED_BYTE_LIMIT_EXCEEDED' });
+  }
+
+  // Semantic narrowing uses a deterministic byte-work ceiling. The separate
+  // operational wall/CPU watchdog throws without returning evidence, so
+  // runtime/JIT speed can never change canonical scan output.
+  let remainingScanWork = limits.maxScanWorkBytes;
+  const perTermHits: ScanHit[][] = [];
+  let totalHits = 0;
+  for (const term of terms) {
+    const collected = collectTermHits(
+      term,
+      snapshot.entries,
+      limits.maxHitsPerTerm,
+      remainingScanWork,
+      operationalDeadline,
+      scanCpuStart,
+      limits.maxScanCpuMillis,
+    );
+    if (collected.workLimitExceeded) {
+      violations.push({ code: 'SCAN_WORK_LIMIT_EXCEEDED' });
+      break;
+    }
+    remainingScanWork -= collected.workBytes;
+    const { hits } = collected;
+    if (hits.length > limits.maxHitsPerTerm) {
+      violations.push({ code: 'TERM_HIT_LIMIT_EXCEEDED', termId: term.termId });
+    }
+    totalHits += hits.length;
+    perTermHits.push(hits);
+  }
+  if (totalHits > limits.maxTotalHits) {
+    violations.push({ code: 'TOTAL_HIT_LIMIT_EXCEEDED' });
+  }
+  if (totalHits > limits.maxHitDispositionWorkItems) {
+    violations.push({ code: 'HIT_DISPOSITION_WORK_LIMIT_EXCEEDED' });
+  }
+
+  assertOperationalScanBudget(
+    operationalDeadline,
+    scanCpuStart,
+    limits.maxScanCpuMillis,
+  );
+  if (violations.length > 0) {
+    violations.sort(compareViolations);
+    return {
+      outcome: 'requires-narrowing',
+      nodes: [],
+      inventory,
+      violations,
+      terms,
+    };
+  }
+
+  const nodes = terms
+    .map((term, index) =>
+      buildScanNode(
+        term,
+        perTermHits[index]!,
+        snapshot.treeDigest,
+        policyDigest,
+      ),
+    )
+    .sort((left, right) =>
+      scanNodeTermId(left) < scanNodeTermId(right) ? -1 : 1,
+    );
+
+  return { outcome: 'ready', nodes, inventory };
+}
+
+function assertScanTerms(terms: ScanInvestigationTerm[]): void {
+  const seen = new Set<string>();
+  for (const term of terms) {
+    let recomputed: NormalizedInvestigationTerm;
+    try {
+      recomputed = normalizeInvestigationTerm({
+        kind: term.kind,
+        value: term.value,
+      });
+    } catch {
+      throw scanInvalid('Supplied term is not a valid normalized term.');
+    }
+    if (
+      recomputed.termId !== term.termId ||
+      recomputed.matching !== term.matching
+    ) {
+      throw scanInvalid('Supplied term identity does not match its fields.');
+    }
+    if (seen.has(term.termId)) {
+      throw scanInvalid('Duplicate term ID supplied to scan.');
+    }
+    seen.add(term.termId);
+  }
+}
+
+function collectTermHits(
+  term: ScanInvestigationTerm,
+  entries: TrackedTreeEntry[],
+  maxHitsPerTerm: number,
+  workBudget: number,
+  operationalDeadline: TrackedTreeOperationalDeadline,
+  scanCpuStart: NodeJS.CpuUsage,
+  maxScanCpuMillis: number,
+): {
+  hits: ScanHit[];
+  workBytes: number;
+  workLimitExceeded: boolean;
+} {
+  const needle = Buffer.from(term.value, 'utf8');
+  const hits: ScanHit[] = [];
+  const cap = maxHitsPerTerm + 1;
+  let workBytes = 0;
+
+  for (const entry of entries) {
+    assertOperationalScanBudget(
+      operationalDeadline,
+      scanCpuStart,
+      maxScanCpuMillis,
+    );
+    const sourceObject = entrySourceObject(entry);
+    // A skipped blob suppresses content scanning but never path scanning:
+    // `literal-path` still matches the raw tracked path bytes of every entry.
+    if (term.kind === 'literal-path') {
+      const pathBytes = Buffer.from(entry.path.rawBase64, 'base64');
+      if (workBytes + pathBytes.byteLength > workBudget) {
+        return { hits: [], workBytes, workLimitExceeded: true };
+      }
+      workBytes += pathBytes.byteLength;
+      for (const offset of findOccurrences(
+        pathBytes,
+        needle,
+        operationalDeadline,
+        scanCpuStart,
+        maxScanCpuMillis,
+      )) {
+        hits.push(makeHit(entry.path, sourceObject, 'path', offset, needle));
+        if (hits.length >= cap) {
+          return {
+            hits: sortHits(hits),
+            workBytes,
+            workLimitExceeded: false,
+          };
+        }
+      }
+    }
+    if (entry.content !== undefined) {
+      if (workBytes + entry.content.byteLength > workBudget) {
+        return { hits: [], workBytes, workLimitExceeded: true };
+      }
+      workBytes += entry.content.byteLength;
+      for (const offset of findOccurrences(
+        entry.content,
+        needle,
+        operationalDeadline,
+        scanCpuStart,
+        maxScanCpuMillis,
+      )) {
+        hits.push(makeHit(entry.path, sourceObject, 'content', offset, needle));
+        if (hits.length >= cap) {
+          return {
+            hits: sortHits(hits),
+            workBytes,
+            workLimitExceeded: false,
+          };
+        }
+      }
+    }
+  }
+
+  return {
+    hits: sortHits(hits),
+    workBytes,
+    workLimitExceeded: false,
+  };
+}
+
+function entrySourceObject(entry: TrackedTreeEntry): ScanHitSourceObject {
+  return {
+    objectId: entry.objectId,
+    objectType: entry.objectType,
+    mode: entry.mode,
+    byteSize: entry.byteSize,
+    contentSha256: entry.contentSha256 ?? null,
+    skipReason: entry.skipReason ?? null,
+  };
+}
+
+function makeHit(
+  path: TrackedTreePathIdentity,
+  sourceObject: ScanHitSourceObject,
+  surface: 'path' | 'content',
+  byteOffset: number,
+  needle: Buffer,
+): ScanHit {
+  return {
+    path: { rawBase64: path.rawBase64, utf8: path.utf8 },
+    sourceObject,
+    surface,
+    byteOffset,
+    byteLength: needle.length,
+  };
+}
+
+function* findOccurrences(
+  haystack: Buffer,
+  needle: Buffer,
+  operationalDeadline: TrackedTreeOperationalDeadline,
+  scanCpuStart: NodeJS.CpuUsage,
+  maxScanCpuMillis: number,
+): Generator<number> {
+  let from = 0;
+  for (;;) {
+    assertOperationalScanBudget(
+      operationalDeadline,
+      scanCpuStart,
+      maxScanCpuMillis,
+    );
+    const index = haystack.indexOf(needle, from);
+    assertOperationalScanBudget(
+      operationalDeadline,
+      scanCpuStart,
+      maxScanCpuMillis,
+    );
+    if (index === -1) {
+      break;
+    }
+    yield index;
+    // Advance by one byte so overlapping occurrences are all reported
+    // (for example `ZXZ` occurs at offsets 0 and 2 within `ZXZXZ`).
+    from = index + 1;
+  }
+}
+
+function sortHits(hits: ScanHit[]): ScanHit[] {
+  return hits.sort((left, right) => {
+    const pathOrder = Buffer.compare(
+      Buffer.from(left.path.rawBase64, 'base64'),
+      Buffer.from(right.path.rawBase64, 'base64'),
+    );
+    if (pathOrder !== 0) {
+      return pathOrder;
+    }
+    if (left.surface !== right.surface) {
+      return left.surface < right.surface ? -1 : 1;
+    }
+    return left.byteOffset - right.byteOffset;
+  });
+}
+
+function buildScanNode(
+  term: ScanInvestigationTerm,
+  hits: ScanHit[],
+  treeDigest: string,
+  policyDigest: string,
+): EvidenceNode {
+  const output = {
+    termId: term.termId,
+    hits: hits.map((hit) => ({
+      path: { rawBase64: hit.path.rawBase64, utf8: hit.path.utf8 },
+      sourceObject: hit.sourceObject,
+      surface: hit.surface,
+      byteOffset: hit.byteOffset,
+      byteLength: hit.byteLength,
+    })),
+  };
+  return createEvidenceNode({
+    type: NODE_TYPE,
+    nodeSchema: NODE_SCHEMA,
+    evaluator: NODE_EVALUATOR,
+    policyDigest,
+    exactInputDigests: {
+      term: sha256(
+        canonicalJson({
+          schema: TERM_DIGEST_SCHEMA,
+          termId: term.termId,
+          kind: term.kind,
+          value: term.value,
+          matching: term.matching,
+        }),
+      ),
+      tree: treeDigest,
+    },
+    semanticParentResultDigests: {},
+    provenanceParentNodeIds: {},
+    outputSchema: OUTPUT_SCHEMA,
+    output,
+    runtimeMetadata: {},
+  });
+}
+
+function buildInventory(
+  snapshot: TrackedTreeSnapshot,
+  policyDigest: string,
+): ScanInventory {
+  const skippedObjects = snapshot.entries
+    .filter((entry) => entry.skipReason !== undefined)
+    .map((entry) => ({
+      path: { rawBase64: entry.path.rawBase64, utf8: entry.path.utf8 },
+      objectId: entry.objectId,
+      objectType: entry.objectType,
+      mode: entry.mode,
+      byteSize: entry.byteSize,
+      reason: entry.skipReason!,
+    }));
+  return {
+    treeDigest: snapshot.treeDigest,
+    skippedObjects,
+    evidenceNode: createEvidenceNode({
+      type: INVENTORY_NODE_TYPE,
+      nodeSchema: INVENTORY_NODE_SCHEMA,
+      evaluator: NODE_EVALUATOR,
+      policyDigest,
+      exactInputDigests: { tree: snapshot.treeDigest },
+      semanticParentResultDigests: {},
+      provenanceParentNodeIds: {},
+      outputSchema: INVENTORY_OUTPUT_SCHEMA,
+      output: { skippedObjects },
+      runtimeMetadata: {},
+    }),
+  };
+}
+
+function computePolicyDigest(limits: InvestigationLimits): string {
+  return sha256(
+    canonicalJson({
+      schema: POLICY_SCHEMA,
+      limits: {
+        maxHitsPerTerm: limits.maxHitsPerTerm,
+        maxTotalHits: limits.maxTotalHits,
+        maxHitDispositionWorkItems: limits.maxHitDispositionWorkItems,
+        maxScanWorkBytes: limits.maxScanWorkBytes,
+        maxBlobBytes: limits.maxBlobBytes,
+        maxTotalScannedBlobBytes: limits.maxTotalScannedBlobBytes,
+      },
+    }),
+  );
+}
+
+function scanNodeTermId(node: EvidenceNode): string {
+  return (node.output as { termId: string }).termId;
+}
+
+function compareViolations(left: ScanViolation, right: ScanViolation): number {
+  if (left.code !== right.code) {
+    return left.code < right.code ? -1 : 1;
+  }
+  return (left.termId ?? '') < (right.termId ?? '') ? -1 : 1;
+}
+
+function sha256(value: string): string {
+  return crypto.createHash('sha256').update(value).digest('hex');
+}
+
+function scanInvalid(message: string) {
+  return workflowError('INVESTIGATION_SCAN_INVALID', message, ExitCode.usage);
+}
+
+function assertOperationalScanBudget(
+  deadline: TrackedTreeOperationalDeadline,
+  cpuStart: NodeJS.CpuUsage,
+  maxCpuMillis: number,
+): void {
+  const cpu = process.cpuUsage(cpuStart);
+  if (
+    performance.now() >= deadline.expiresAtMonotonicMillis ||
+    cpu.user + cpu.system >= maxCpuMillis * 1000
+  ) {
+    throw workflowError(
+      'INVESTIGATION_SCAN_TIMEOUT',
+      'Investigation scan exceeded its operational wall/CPU deadline.',
+      ExitCode.unsafeEnvironment,
+      { details: { limitMillis: maxCpuMillis } },
+    );
+  }
+}

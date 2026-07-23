@@ -314,6 +314,90 @@ function executeGit(
   return result.stdout;
 }
 
+/**
+ * Binary-safe trusted Git primitive for reading pinned objects. It shares the
+ * resolved absolute system Git, `shell:false`, clean trusted environment, and
+ * the no-pager/locks/replace-objects/fsmonitor hardening, returns raw stdout as
+ * a Buffer, accepts optional Buffer stdin (for batched `cat-file`), and adds
+ * `GIT_NO_LAZY_FETCH=1` so object reads never trigger a network fetch. It never
+ * searches the caller PATH and never runs a shell.
+ */
+export function runGitBuffer(
+  cwd: string,
+  args: string[],
+  options: {
+    input?: Buffer;
+    allowFailure?: boolean;
+    timeoutMs?: number;
+  } = {},
+): Buffer {
+  const timeoutMs = options.timeoutMs ?? 30_000;
+  if (!Number.isInteger(timeoutMs) || timeoutMs < 1) {
+    throw workflowError(
+      'GIT_TIMEOUT_INVALID',
+      'Git timeout must be a positive integer number of milliseconds.',
+      ExitCode.usage,
+      { details: { timeoutMs } },
+    );
+  }
+  const executable = resolveGitExecutable();
+  const commandArgs =
+    args[0] === 'diff'
+      ? ['diff', '--no-ext-diff', '--no-textconv', ...args.slice(1)]
+      : args;
+  const result = spawnSync(
+    executable,
+    [
+      '--no-pager',
+      '--no-optional-locks',
+      '--no-replace-objects',
+      '-c',
+      'core.fsmonitor=false',
+      '-c',
+      'core.fileMode=true',
+      '-C',
+      cwd,
+      ...commandArgs,
+    ],
+    {
+      shell: false,
+      maxBuffer: 80 * 1024 * 1024,
+      timeout: timeoutMs,
+      input: options.input,
+      env: {
+        ...createTrustedExecutionEnvironment([executable]),
+        GIT_NO_LAZY_FETCH: '1',
+      },
+    },
+  );
+
+  if (result.error) {
+    throw workflowError(
+      'GIT_EXECUTION_FAILED',
+      `Unable to run Git: ${result.error.message}`,
+      ExitCode.unsafeEnvironment,
+      { details: { args } },
+    );
+  }
+
+  if (result.status !== 0 && !options.allowFailure) {
+    throw workflowError(
+      'GIT_COMMAND_FAILED',
+      `Git command failed: git ${args.join(' ')}`,
+      ExitCode.unsafeEnvironment,
+      {
+        details: {
+          args,
+          status: result.status,
+          stderr: result.stderr?.toString('utf8').trim(),
+        },
+      },
+    );
+  }
+
+  return result.stdout;
+}
+
 let pinnedGitExecutable: string | undefined;
 
 export function resolveGitExecutable(): string {

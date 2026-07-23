@@ -11,7 +11,7 @@
 
 ## 3. Deterministic Breadth Investigation
 
-- [ ] 3.1 Follow RED -> GREEN -> REFACTOR to build a binary-safe pinned Git-tree reader, engine floor derivation, fixed typed term normalization/deduplication, aggregate preview budgets, and independent per-term path/content scan nodes that never use task `allowedPaths`, working-tree files, a shell, or caller `PATH`.
+- [x] 3.1 Follow RED -> GREEN -> REFACTOR to build a binary-safe pinned Git-tree reader, engine floor derivation, fixed typed term normalization/deduplication, aggregate preview budgets, and independent per-term path/content scan nodes that never use task `allowedPaths`, working-tree files, a shell, or caller `PATH`.
 - [ ] 3.2 Follow RED -> GREEN -> REFACTOR to add deterministic conservative evidence groups, explicit exceptions and mutation-class visibility, exactly-once effective hit dispositions, zero-hit currentness, and precise scan/group/disposition invalidation over the evidence DAG.
 
 ## 4. Depth Evidence and Versioned Planning Schema

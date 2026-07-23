@@ -8,15 +8,15 @@ This generated handoff contains semantic project state only. Its sources are tra
 
 ## Current Task
 
-`3.1` — Follow RED -> GREEN -> REFACTOR to build a binary-safe pinned Git-tree reader, engine floor derivation, fixed typed term normalization/deduplication, aggregate preview budgets, and independent per-term path/content scan nodes that never use task `allowedPaths`, working-tree files, a shell, or caller `PATH`.
+`3.2` — Follow RED -> GREEN -> REFACTOR to add deterministic conservative evidence groups, explicit exceptions and mutation-class visibility, exactly-once effective hit dispositions, zero-hit currentness, and precise scan/group/disposition invalidation over the evidence DAG.
 
 ## Next Task
 
-`3.2` — Follow RED -> GREEN -> REFACTOR to add deterministic conservative evidence groups, explicit exceptions and mutation-class visibility, exactly-once effective hit dispositions, zero-hit currentness, and precise scan/group/disposition invalidation over the evidence DAG.
+`4.1` — Follow RED -> GREEN -> REFACTOR to add full-blob manifests and typed WHY/invariant/question/answer rows, preserve semantic-author provenance, render the single engine-managed `design.md` ledger region, and fail on stale blobs, placeholders, omitted load-bearing rows, ambiguous markers, or projection drift.
 
 ## Current Focus
 
-Follow RED -> GREEN -> REFACTOR to build a binary-safe pinned Git-tree reader, engine floor derivation, fixed typed term normalization/deduplication, aggregate preview budgets, and independent per-term path/content scan nodes that never use task `allowedPaths`, working-tree files, a shell, or caller `PATH`.
+Follow RED -> GREEN -> REFACTOR to add deterministic conservative evidence groups, explicit exceptions and mutation-class visibility, exactly-once effective hit dispositions, zero-hit currentness, and precise scan/group/disposition invalidation over the evidence DAG.
 
 ## Known Blockers
 
