@@ -42,12 +42,53 @@ test('AI adapter evaluation denies launch on every platform without side effects
       assert.equal(result.filesystemSandboxVerified, false);
       assert.equal(result.sameUserProcessConfined, false);
       assert.equal(result.platform, platform);
+      assert.deepEqual(result.limits, {
+        timeoutMs: 300_000,
+        aggregateOutputBytes: 1_048_576,
+        maxConcurrent: 2,
+      });
+      assert.deepEqual(result.providers, [
+        {
+          id: 'codex',
+          enabled: true,
+          capabilities: [
+            {
+              purpose: 'survey',
+              profile: 'repository-read-only',
+            },
+            {
+              purpose: 'plan-review',
+              profile: 'repository-read-only',
+            },
+          ],
+          resolver: {
+            status: 'not-implemented',
+          },
+        },
+        {
+          id: 'claude',
+          enabled: true,
+          capabilities: [
+            {
+              purpose: 'survey',
+              profile: 'repository-read-only',
+            },
+            {
+              purpose: 'plan-review',
+              profile: 'repository-read-only',
+            },
+          ],
+          resolver: {
+            status: 'not-implemented',
+          },
+        },
+      ]);
       assert.deepEqual(
         result.controls.map(({ id, status }) => ({ id, status })),
         REQUIRED_CONTROLS.map((id) => ({ id, status: 'not-verified' })),
       );
       assert.deepEqual(result.reasons, [
-        'NO_APPROVED_ISOLATION_PROVIDER',
+        'PROVIDER_RESOLUTION_NOT_IMPLEMENTED',
         'SAME_USER_PROCESS_NOT_CONFINED',
         'ISOLATED_PATCH_IMPORT_NOT_IMPLEMENTED',
       ]);
@@ -71,7 +112,7 @@ test('AI adapter policy changes fail closed instead of enabling a launcher', () 
   const repository = createFixtureRepository();
   try {
     const invalidPolicies: unknown[] = [
-      { ...validPolicy(), schemaVersion: 2 },
+      { ...validPolicy(), schemaVersion: 1 },
       { ...validPolicy(), mode: 'enabled' },
       { ...validPolicy(), launchPolicy: 'allow' },
       {
@@ -90,7 +131,57 @@ test('AI adapter policy changes fail closed instead of enabling a launcher', () 
         ...validPolicy(),
         requiredControls: [...REQUIRED_CONTROLS].reverse(),
       },
-      { ...validPolicy(), approvedProviders: ['sandbox-exec'] },
+      {
+        ...validPolicy(),
+        providers: {
+          ...providersPolicy(),
+          unknown: { enabled: true },
+        },
+      },
+      {
+        ...validPolicy(),
+        providers: {
+          ...providersPolicy(),
+          codex: {
+            enabled: true,
+            command: ['codex', 'exec'],
+          },
+        },
+      },
+      {
+        ...validPolicy(),
+        providers: {
+          codex: { enabled: true },
+        },
+      },
+      {
+        ...validPolicy(),
+        limits: {
+          ...limitsPolicy(),
+          timeoutMs: 300_001,
+        },
+      },
+      {
+        ...validPolicy(),
+        limits: {
+          ...limitsPolicy(),
+          aggregateOutputBytes: 1_048_577,
+        },
+      },
+      {
+        ...validPolicy(),
+        limits: {
+          ...limitsPolicy(),
+          maxConcurrent: 3,
+        },
+      },
+      {
+        ...validPolicy(),
+        limits: {
+          ...limitsPolicy(),
+          maxConcurrent: 1.5,
+        },
+      },
       { ...validPolicy(), command: ['ai', 'run'] },
       (() => {
         const value = validPolicy() as Record<string, unknown>;
@@ -109,6 +200,92 @@ test('AI adapter policy changes fail closed instead of enabling a launcher', () 
   } finally {
     fs.rmSync(repository, { recursive: true, force: true });
   }
+});
+
+test('AI adapter policy may only disable built-ins and lower positive limits', () => {
+  const repository = createFixtureRepository();
+  try {
+    writePolicy(repository, {
+      ...validPolicy(),
+      providers: {
+        codex: { enabled: false },
+        claude: { enabled: true },
+      },
+      limits: {
+        timeoutMs: 10_000,
+        aggregateOutputBytes: 32_768,
+        maxConcurrent: 1,
+      },
+    });
+
+    const result = evaluateAiAdapter(repository, 'linux');
+    assert.deepEqual(
+      result.providers.map(({ id, enabled }) => ({ id, enabled })),
+      [
+        { id: 'codex', enabled: false },
+        { id: 'claude', enabled: true },
+      ],
+    );
+    assert.deepEqual(result.limits, {
+      timeoutMs: 10_000,
+      aggregateOutputBytes: 32_768,
+      maxConcurrent: 1,
+    });
+
+    for (const limits of [
+      { ...limitsPolicy(), timeoutMs: 0 },
+      { ...limitsPolicy(), timeoutMs: 1.5 },
+      { ...limitsPolicy(), aggregateOutputBytes: 0 },
+      { ...limitsPolicy(), aggregateOutputBytes: 1.5 },
+      { ...limitsPolicy(), maxConcurrent: 0 },
+    ]) {
+      writePolicy(repository, { ...validPolicy(), limits });
+      assert.throws(
+        () => evaluateAiAdapter(repository, 'linux'),
+        (error) => isWorkflowError(error, 'AI_ADAPTER_POLICY_INVALID'),
+      );
+    }
+  } finally {
+    fs.rmSync(repository, { recursive: true, force: true });
+  }
+});
+
+test('tracked adapter policy and schema publish the same strict v2 bounds', () => {
+  const result = evaluateAiAdapter(sourceRepositoryRoot, 'linux');
+  assert.equal(result.schemaVersion, 2);
+  assert.deepEqual(result.limits, limitsPolicy());
+  assert.deepEqual(
+    result.providers.map(({ id, enabled }) => ({ id, enabled })),
+    [
+      { id: 'codex', enabled: true },
+      { id: 'claude', enabled: true },
+    ],
+  );
+
+  const schema = JSON.parse(
+    fs.readFileSync(
+      path.join(
+        sourceRepositoryRoot,
+        'workflow/schemas/ai-adapter-policy.schema.json',
+      ),
+      'utf8',
+    ),
+  );
+  assert.equal(schema.additionalProperties, false);
+  assert.equal(schema.properties.schemaVersion.const, 2);
+  assert.deepEqual(schema.properties.providers.required, ['codex', 'claude']);
+  assert.equal(schema.properties.providers.additionalProperties, false);
+  assert.deepEqual(
+    {
+      timeoutMs: schema.properties.limits.properties.timeoutMs.maximum,
+      aggregateOutputBytes:
+        schema.properties.limits.properties.aggregateOutputBytes.maximum,
+      maxConcurrent: schema.properties.limits.properties.maxConcurrent.maximum,
+    },
+    limitsPolicy(),
+  );
+  assert.equal(schema.properties.limits.additionalProperties, false);
+  assert.equal(schema.$defs.providerPolicy.additionalProperties, false);
 });
 
 test(
@@ -182,11 +359,27 @@ test('AI adapter CLI exposes evaluation only and ignores fake sandbox tools', ()
 
 function validPolicy(): Record<string, unknown> {
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     mode: 'evaluation-only',
     launchPolicy: 'deny',
     requiredControls: [...REQUIRED_CONTROLS],
-    approvedProviders: [],
+    providers: providersPolicy(),
+    limits: limitsPolicy(),
+  };
+}
+
+function providersPolicy() {
+  return {
+    codex: { enabled: true },
+    claude: { enabled: true },
+  };
+}
+
+function limitsPolicy() {
+  return {
+    timeoutMs: 300_000,
+    aggregateOutputBytes: 1_048_576,
+    maxConcurrent: 2,
   };
 }
 

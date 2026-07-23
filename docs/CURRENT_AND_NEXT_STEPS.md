@@ -8,15 +8,15 @@ This generated handoff contains semantic project state only. Its sources are tra
 
 ## Current Task
 
-`2.3` — Follow RED -> GREEN -> REFACTOR to add typed provider request/result envelopes, the code-owned Codex/Claude capability registry, actor-signal conflict handling, role-relative independence, bounded fake adapters/processes, and the expanded diagnostic adapter-policy result without enabling real provider launch.
+`3.1` — Follow RED -> GREEN -> REFACTOR to build a binary-safe pinned Git-tree reader, engine floor derivation, fixed typed term normalization/deduplication, aggregate preview budgets, and independent per-term path/content scan nodes that never use task `allowedPaths`, working-tree files, a shell, or caller `PATH`.
 
 ## Next Task
 
-`3.1` — Follow RED -> GREEN -> REFACTOR to build a binary-safe pinned Git-tree reader, engine floor derivation, fixed typed term normalization/deduplication, aggregate preview budgets, and independent per-term path/content scan nodes that never use task `allowedPaths`, working-tree files, a shell, or caller `PATH`.
+`3.2` — Follow RED -> GREEN -> REFACTOR to add deterministic conservative evidence groups, explicit exceptions and mutation-class visibility, exactly-once effective hit dispositions, zero-hit currentness, and precise scan/group/disposition invalidation over the evidence DAG.
 
 ## Current Focus
 
-Follow RED -> GREEN -> REFACTOR to add typed provider request/result envelopes, the code-owned Codex/Claude capability registry, actor-signal conflict handling, role-relative independence, bounded fake adapters/processes, and the expanded diagnostic adapter-policy result without enabling real provider launch.
+Follow RED -> GREEN -> REFACTOR to build a binary-safe pinned Git-tree reader, engine floor derivation, fixed typed term normalization/deduplication, aggregate preview budgets, and independent per-term path/content scan nodes that never use task `allowedPaths`, working-tree files, a shell, or caller `PATH`.
 
 ## Known Blockers
 

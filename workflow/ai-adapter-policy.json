@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "mode": "evaluation-only",
   "launchPolicy": "deny",
   "requiredControls": [
@@ -12,5 +12,13 @@
     "resource-limits",
     "immutable-runtime"
   ],
-  "approvedProviders": []
+  "providers": {
+    "codex": { "enabled": true },
+    "claude": { "enabled": true }
+  },
+  "limits": {
+    "timeoutMs": 300000,
+    "aggregateOutputBytes": 1048576,
+    "maxConcurrent": 2
+  }
 }
