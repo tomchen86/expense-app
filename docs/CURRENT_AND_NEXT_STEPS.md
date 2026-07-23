@@ -8,15 +8,15 @@ This generated handoff contains semantic project state only. Its sources are tra
 
 ## Current Task
 
-`3.2` — Follow RED -> GREEN -> REFACTOR to add deterministic conservative evidence groups, explicit exceptions and mutation-class visibility, exactly-once effective hit dispositions, zero-hit currentness, and precise scan/group/disposition invalidation over the evidence DAG.
+`4.1` — Follow RED -> GREEN -> REFACTOR to add full-blob manifests and typed WHY/invariant/question/answer rows, preserve semantic-author provenance, render the single engine-managed `design.md` ledger region, and fail on stale blobs, placeholders, omitted load-bearing rows, ambiguous markers, or projection drift.
 
 ## Next Task
 
-`4.1` — Follow RED -> GREEN -> REFACTOR to add full-blob manifests and typed WHY/invariant/question/answer rows, preserve semantic-author provenance, render the single engine-managed `design.md` ledger region, and fail on stale blobs, placeholders, omitted load-bearing rows, ambiguous markers, or projection drift.
+`4.2` — Follow RED -> GREEN -> REFACTOR to introduce the non-default `expense-app-v2` schema registry, engine-owned `investigation.json`/`execution.json`/`plan-review.json` templates and validators, schema-aware change-contract loading, and legacy/v2 schema fixtures without adding the activation marker or changing the project default.
 
 ## Current Focus
 
-Follow RED -> GREEN -> REFACTOR to add deterministic conservative evidence groups, explicit exceptions and mutation-class visibility, exactly-once effective hit dispositions, zero-hit currentness, and precise scan/group/disposition invalidation over the evidence DAG.
+Follow RED -> GREEN -> REFACTOR to add full-blob manifests and typed WHY/invariant/question/answer rows, preserve semantic-author provenance, render the single engine-managed `design.md` ledger region, and fail on stale blobs, placeholders, omitted load-bearing rows, ambiguous markers, or projection drift.
 
 ## Known Blockers
 
