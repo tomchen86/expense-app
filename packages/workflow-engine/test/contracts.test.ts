@@ -27,6 +27,7 @@ import './openspec-planning-assets.integration.test.ts';
 import './authority-attestation.contract.test.ts';
 import './maintainer-attestation.integration.test.ts';
 import './ci-attestation.integration.test.ts';
+import './evidence-node.contract.test.ts';
 
 test('maintainer policy is a pinned workflow contract artifact', () => {
   const repositoryRoot = path.resolve(import.meta.dirname, '../../..');

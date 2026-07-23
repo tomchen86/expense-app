@@ -5,7 +5,7 @@
 
 ## 2. Evidence and Provider Contract Substrate
 
-- [ ] 2.1 Follow RED -> GREEN -> REFACTOR to add canonical evidence-node envelopes, separate provenance-sensitive `nodeId` and semantic `resultDigest`, metadata-excluding canonicalization, and an immutable no-follow object/ref store with compare-and-swap current refs.
+- [x] 2.1 Follow RED -> GREEN -> REFACTOR to add canonical evidence-node envelopes, separate provenance-sensitive `nodeId` and semantic `resultDigest`, metadata-excluding canonicalization, and an immutable no-follow object/ref store with compare-and-swap current refs.
 - [ ] 2.2 Follow RED -> GREEN -> REFACTOR to implement dependency-specific currentness, compatible convergence records, complete multi-parent descendant-reuse proofs, and a content-pure validator interface shared by live and CI loaders.
 - [ ] 2.3 Follow RED -> GREEN -> REFACTOR to add typed provider request/result envelopes, the code-owned Codex/Claude capability registry, actor-signal conflict handling, role-relative independence, bounded fake adapters/processes, and the expanded diagnostic adapter-policy result without enabling real provider launch.
 

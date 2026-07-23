@@ -9,6 +9,39 @@ const SESSION_ID_PATTERN = /^session-[a-zA-Z0-9-]+$/;
 const WINDOWS_ABSOLUTE_PATTERN = /^[a-zA-Z]:[\\/]/;
 const UNSUPPORTED_GLOB_PATTERN = /[*?[\]{}!]/;
 
+export type InvestigationRuntimePaths = {
+  base: string;
+  root: string;
+  objects: string;
+  refs: string;
+  sessions: string;
+  invocations: string;
+};
+
+/**
+ * Resolve the investigation runtime layout beneath the configured Git-common
+ * runtime root: content-addressed objects, current refs, sessions, and
+ * invocations. The Git-common root is canonicalized so platform aliases (for
+ * example macOS `/var` → `/private/var`) do not later force symlink-safety
+ * false positives; `base` is the trusted directory below which every runtime
+ * path component must be created no-follow.
+ */
+export function investigationRuntimePaths(
+  gitCommonDirectory: string,
+  runtimeDirectory: string,
+): InvestigationRuntimePaths {
+  const base = fs.realpathSync(path.resolve(gitCommonDirectory));
+  const root = path.join(base, runtimeDirectory, 'investigations');
+  return {
+    base,
+    root,
+    objects: path.join(root, 'objects', 'sha256'),
+    refs: path.join(root, 'refs'),
+    sessions: path.join(root, 'sessions'),
+    invocations: path.join(root, 'invocations'),
+  };
+}
+
 export function assertChangeId(value: string): string {
   if (!CHANGE_ID_PATTERN.test(value)) {
     throw workflowError(
