@@ -1,6 +1,7 @@
 ## 1. Managed Baseline
 
 - [x] 1.1 Refresh the generated semantic handoff for `establish-investigation-first-planning` and prove the legacy-schema managed baseline is clean before implementation.
+- [ ] 1.2 Follow RED -> GREEN -> REFACTOR to add the projected single-pass finalize substrate and `workflow finalize-task`: prove a counting current-task check executes once against the exact implementation + checkbox + handoff projection while independently required predecessor reconciliation remains distinct; caught ordinary failures restore the exact pre-invocation projection bytes/modes with no real-index or report-pointer change; HEAD/session/worktree/index drift creates no staging; success stages a tree identical to the checked prospective tree and emits a schema-compatible check/completion/finish evidence chain; CLI output labels ordinary-failure-only assurance; `workflow commit` remains separate and does not rerun checks; and the legacy `check -> complete-task -> finish` path remains supported. Do not add exact-diff AI review, revision/resume, durable invocation recovery, commit transaction, unsafe external dependency resolution, report-schema expansion, or a crash-safe/fully atomic claim.
 
 ## 2. Evidence and Provider Contract Substrate
 
@@ -42,4 +43,4 @@ After Task 6.8 is committed with no active task session, run the new managed leg
 
 ## 7. Adoption and Real-Provider Pilot
 
-- [ ] 7.1 Update the governed OpenSpec propose assets and executable workflow guidance for the investigation-first wrapper, run fake-backed registered checks plus a healthy Codex/Claude read-only local pilot when both adapters are available, exercise only human-authorized degraded paths if actually required, refresh the semantic handoff, and verify no documentation overclaims breadth, depth, identity, containment, verdict correctness, or semantic closure.
+- [ ] 7.1 Update the governed OpenSpec propose assets, executable workflow guidance, and Roadmap ownership note for the investigation-first wrapper and pulled-forward projected single-pass substrate; keep exact-diff AI review, crash-safe finalize recovery, and commit transaction assigned to T2.3; run fake-backed registered checks plus a healthy Codex/Claude read-only local pilot when both adapters are available; exercise only human-authorized degraded paths if actually required; refresh the semantic handoff; and verify no documentation overclaims breadth, depth, identity, containment, verdict correctness, semantic closure, or finalize atomicity.

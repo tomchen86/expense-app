@@ -87,6 +87,46 @@ Planning evidence MUST distinguish a provenance-sensitive `nodeId` from a canoni
 - **WHEN** semantic planning identity is recomputed under unchanged policy
 - **THEN** `nodeId` and `resultDigest` remain unchanged
 
+### Requirement: Serialized Completion Authority
+
+Only one state-changing operation SHALL act on a session at a time. The engine SHALL continue to support the legacy `check -> complete-task -> finish` sequence, in which completion changes only the exact unchecked checkbox and generated handoff bytes authorized by current evidence and finish reruns required checks before exact staging.
+
+The engine SHALL additionally provide a projected single-pass path that constructs the exact implementation + checkbox + handoff prospective tree, executes every current-task required check exactly once against that complete projection, and stages only a tree proven identical to the checked prospective tree. Immediate-predecessor reconciliation MAY independently execute the predecessor's required checks and MUST keep that evidence distinct from the current task's finalization evidence. The single-pass path SHALL emit a schema-compatible check, completion, and finish evidence chain and SHALL leave managed commit as a separate transition that does not rerun required checks.
+
+For a caught ordinary failure before successful final application, the single-pass path SHALL restore the exact pre-invocation engine-owned projection bytes and modes, leave the real index and session report pointers unchanged, remove its temporary state, and return the session to active use. It SHALL revalidate HEAD, session, contract, worktree, index, projection, runner inputs, and operation ownership before staging; a mismatch is stale state and MUST NOT cause partial staging. This substrate MUST NOT claim recovery from process death, machine loss, or mutation outside the governed projection; durable invocation recovery and commit transaction remain separate future requirements.
+
+#### Scenario: Single-pass completion succeeds
+
+- **GIVEN** an active task session has an allowed implementation diff, an empty index, and current pinned inputs
+- **WHEN** projected single-pass finalization succeeds
+- **THEN** every current-task required check executes exactly once against the implementation, checked task row, and generated handoff that will be staged
+- **AND** the staged tree equals the checked prospective tree
+- **AND** compatible check, completion, and finish reports bind that same tree
+- **AND** the session awaits the separate managed commit transition
+
+#### Scenario: Required check rejects the final projection
+
+- **GIVEN** a required check would pass on the implementation-only tree but fails when the projected checkbox or handoff is present
+- **WHEN** projected single-pass finalization runs
+- **THEN** the command fails without staging
+- **AND** the engine-owned worktree projection bytes and modes equal their pre-invocation state
+- **AND** no check, completion, or finish report pointer is advanced
+
+#### Scenario: Real state drifts before exact staging
+
+- **GIVEN** all checks passed against one prospective tree
+- **AND** HEAD, session, contract, worktree, index, projection, runner inputs, or operation ownership no longer matches the pinned inspection
+- **WHEN** the engine attempts final application
+- **THEN** it rejects the evidence as stale
+- **AND** it creates no partial staging projection
+
+#### Scenario: Legacy completion remains available
+
+- **GIVEN** a caller uses the existing serialized completion commands
+- **WHEN** `check`, `complete-task`, and `finish` run under their existing preconditions
+- **THEN** the engine retains their existing report and recovery semantics
+- **AND** introduction of the single-pass path does not silently reinterpret legacy reports
+
 ## ADDED Requirements
 
 ### Requirement: Planning Evidence Invalidation Is Dependency-Specific and Fail-Closed

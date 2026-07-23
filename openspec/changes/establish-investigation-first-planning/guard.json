@@ -3,8 +3,36 @@
   "changeId": "establish-investigation-first-planning",
   "tasks": {
     "1.1": {
+      "allowedPaths": ["docs/CURRENT_AND_NEXT_STEPS.md"],
+      "requiredChecks": [
+        "managed-documents",
+        "openspec-assets",
+        "workflow-tests",
+        "workflow-typecheck",
+        "workflow-lint",
+        "workflow-format"
+      ]
+    },
+    "1.2": {
       "allowedPaths": [
-        "docs/CURRENT_AND_NEXT_STEPS.md"
+        "packages/workflow-engine/src/check-runner.ts",
+        "packages/workflow-engine/src/cli.ts",
+        "packages/workflow-engine/src/errors.ts",
+        "packages/workflow-engine/src/git-transitions.ts",
+        "packages/workflow-engine/src/git.ts",
+        "packages/workflow-engine/src/handoff.ts",
+        "packages/workflow-engine/src/lifecycle-context.ts",
+        "packages/workflow-engine/src/lifecycle.ts",
+        "packages/workflow-engine/src/projected-finalization.ts",
+        "packages/workflow-engine/src/report-store.ts",
+        "packages/workflow-engine/src/report-validation.ts",
+        "packages/workflow-engine/src/session-store.ts",
+        "packages/workflow-engine/src/task-projection.ts",
+        "packages/workflow-engine/src/verification.ts",
+        "packages/workflow-engine/test/completion.integration.test.ts",
+        "packages/workflow-engine/test/contracts.test.ts",
+        "packages/workflow-engine/test/fixture.ts",
+        "packages/workflow-engine/test/session.integration.test.ts"
       ],
       "requiredChecks": [
         "managed-documents",
@@ -472,6 +500,7 @@
         ".codex/skills/openspec-propose/**",
         "AGENTS.md",
         "docs/CURRENT_AND_NEXT_STEPS.md",
+        "docs/ROADMAP.md",
         "docs/WORKFLOW.md",
         "packages/workflow-engine/src/integration-assets.ts",
         "packages/workflow-engine/src/openspec-planning-asset-contract.ts",
