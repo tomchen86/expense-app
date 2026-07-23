@@ -8,15 +8,15 @@ This generated handoff contains semantic project state only. Its sources are tra
 
 ## Current Task
 
-`2.2` — Follow RED -> GREEN -> REFACTOR to implement dependency-specific currentness, compatible convergence records, complete multi-parent descendant-reuse proofs, and a content-pure validator interface shared by live and CI loaders.
+`2.3` — Follow RED -> GREEN -> REFACTOR to add typed provider request/result envelopes, the code-owned Codex/Claude capability registry, actor-signal conflict handling, role-relative independence, bounded fake adapters/processes, and the expanded diagnostic adapter-policy result without enabling real provider launch.
 
 ## Next Task
 
-`2.3` — Follow RED -> GREEN -> REFACTOR to add typed provider request/result envelopes, the code-owned Codex/Claude capability registry, actor-signal conflict handling, role-relative independence, bounded fake adapters/processes, and the expanded diagnostic adapter-policy result without enabling real provider launch.
+`3.1` — Follow RED -> GREEN -> REFACTOR to build a binary-safe pinned Git-tree reader, engine floor derivation, fixed typed term normalization/deduplication, aggregate preview budgets, and independent per-term path/content scan nodes that never use task `allowedPaths`, working-tree files, a shell, or caller `PATH`.
 
 ## Current Focus
 
-Follow RED -> GREEN -> REFACTOR to implement dependency-specific currentness, compatible convergence records, complete multi-parent descendant-reuse proofs, and a content-pure validator interface shared by live and CI loaders.
+Follow RED -> GREEN -> REFACTOR to add typed provider request/result envelopes, the code-owned Codex/Claude capability registry, actor-signal conflict handling, role-relative independence, bounded fake adapters/processes, and the expanded diagnostic adapter-policy result without enabling real provider launch.
 
 ## Known Blockers
 
