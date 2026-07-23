@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "changeId": "accept-git-ignored-directory-records",
+  "tasks": {
+    "1.1": {
+      "allowedPaths": [
+        "packages/workflow-engine/src/git.ts",
+        "packages/workflow-engine/test/contracts.test.ts",
+        "packages/workflow-engine/test/ignored-state.integration.test.ts"
+      ],
+      "requiredChecks": [
+        "workflow-tests",
+        "workflow-typecheck",
+        "workflow-lint",
+        "workflow-format"
+      ]
+    }
+  }
+}
