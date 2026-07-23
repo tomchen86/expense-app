@@ -401,7 +401,12 @@ function listRepositoryIgnoredPaths(repositoryRoot: string): string[] {
       '-z',
       '--',
     ]),
-  ).map(normalizeChangedPath);
+  ).map(normalizeGitIgnoredPath);
+}
+
+function normalizeGitIgnoredPath(value: string): string {
+  const candidate = value.endsWith('/') ? value.slice(0, -1) : value;
+  return normalizeChangedPath(candidate);
 }
 
 function fingerprintIgnoredEntry(
