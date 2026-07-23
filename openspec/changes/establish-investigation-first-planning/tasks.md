@@ -23,7 +23,7 @@
 ## 5. Durable Investigation Orchestration
 
 - [x] 5.1 Follow RED -> GREEN -> REFACTOR to add durable investigation sessions, short transition locks, invocation leases, blind-envelope-before-main-input ordering, typed caller checkpoints for terms/dispositions/WHY, and provider wait/retry/status/resume without requiring one long-lived process.
-- [ ] 5.2 Follow RED -> GREEN -> REFACTOR to compose the fake-backed resumable `workflow propose` wrapper from intent through sealed investigation, managed planning materialization, and typed next-action envelopes without enabling real provider launch.
+- [x] 5.2 Follow RED -> GREEN -> REFACTOR to compose the fake-backed resumable `workflow propose` wrapper from intent through sealed investigation, managed planning materialization, and typed next-action envelopes without enabling real provider launch.
 - [ ] 5.3 Follow RED -> GREEN -> REFACTOR to evolve the strict adapter policy and diagnostic, add fixed-candidate Codex and Claude read-only adapters, minimized capability-specific invocation, bounded structured output, governed before/after mutation fingerprints, and honest unavailable/observed-projection behavior.
 
 ## 6. Exact Plan Challenge, Degraded Continuation, and Cutover

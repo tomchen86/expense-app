@@ -448,6 +448,74 @@ if (process.argv[2] === 'schema') {
   ));
   process.exit(0);
 }
+if (process.argv[2] === 'instructions') {
+  const artifactId = process.argv[3];
+  const changeId = process.argv[5];
+  const schemaName = process.argv[7];
+  const root = process.cwd();
+  const changeRoot = path.join(root, 'openspec/changes', changeId);
+  const graph = [
+    ['investigation', 'investigation.json', []],
+    ['proposal', 'proposal.md', ['investigation']],
+    ['specs', 'specs/**/*.md', ['proposal']],
+    ['design', 'design.md', ['proposal']],
+    ['tasks', 'tasks.md', ['specs', 'design']],
+    ['guard', 'guard.json', ['tasks']],
+    ['execution', 'execution.json', ['tasks']],
+    ['plan-review', 'plan-review.json', ['guard', 'execution']]
+  ];
+  const artifact = graph.find(([id]) => id === artifactId);
+  if (schemaName !== 'expense-app-v2' || !artifact) {
+    process.stderr.write('unsupported fixture instructions');
+    process.exit(2);
+  }
+  const exists = (id) => {
+    const candidate = graph.find(([entryId]) => entryId === id);
+    if (!candidate) return false;
+    if (candidate[1] === 'specs/**/*.md') {
+      return fs.existsSync(path.join(changeRoot, 'specs/demo/spec.md'));
+    }
+    return fs.existsSync(path.join(changeRoot, candidate[1]));
+  };
+  const outputPath = artifact[1];
+  const resolvedOutputPath = path.join(changeRoot, outputPath);
+  const existingOutputPaths = exists(artifactId)
+    ? [outputPath === 'specs/**/*.md'
+        ? path.join(changeRoot, 'specs/demo/spec.md')
+        : resolvedOutputPath]
+    : [];
+  process.stdout.write(JSON.stringify({
+    changeName: changeId,
+    artifactId,
+    schemaName,
+    changeDir: changeRoot,
+    planningHome: {
+      kind: 'repo', root,
+      changesDir: path.join(root, 'openspec/changes'),
+      defaultSchema: 'spec-driven'
+    },
+    outputPath,
+    resolvedOutputPath,
+    existingOutputPaths,
+    dependencies: artifact[2].map((id) => {
+      const dependency = graph.find(([entryId]) => entryId === id);
+      return {
+        id,
+        path: dependency[1],
+        description: id + ' dependency',
+        done: exists(id)
+      };
+    }),
+    unlocks: graph
+      .filter(([, , dependencies]) => dependencies.includes(artifactId))
+      .map(([id]) => id)
+      .sort(),
+    instruction: 'Author the reviewed ' + artifactId + ' artifact.',
+    template: artifactId === 'proposal' ? '# Proposal\\n' : '',
+    root: { path: root, source: 'nearest' }
+  }));
+  process.exit(0);
+}
 if (process.argv[2] === 'status') {
   const changeId = process.argv[4];
   const schemaName = process.argv[6];
@@ -511,6 +579,37 @@ if (process.argv[2] === 'status') {
   const artifacts = schemaName === 'expense-app-v2'
     ? v2Artifacts
     : legacyArtifacts;
+  const dependencies = schemaName === 'expense-app-v2'
+    ? {
+        investigation: [],
+        proposal: ['investigation'],
+        specs: ['proposal'],
+        design: ['proposal'],
+        tasks: ['specs', 'design'],
+        guard: ['tasks'],
+        execution: ['tasks'],
+        'plan-review': ['guard', 'execution']
+      }
+    : {
+        proposal: [],
+        design: [],
+        specs: [],
+        tasks: [],
+        guard: []
+      };
+  const done = Object.fromEntries(artifacts.map(([id, , existingOutputPaths]) => [
+    id,
+    existingOutputPaths.some((candidate) => fs.existsSync(candidate))
+  ]));
+  const statuses = artifacts.map(([id, outputPath]) => {
+    const missingDeps = dependencies[id].filter((dependency) => !done[dependency]);
+    return {
+      id,
+      outputPath,
+      status: done[id] ? 'done' : missingDeps.length === 0 ? 'ready' : 'blocked',
+      ...(missingDeps.length === 0 ? {} : { missingDeps })
+    };
+  });
   process.stdout.write(JSON.stringify({
     changeName: changeId,
     schemaName,
@@ -525,16 +624,16 @@ if (process.argv[2] === 'status') {
       {
         outputPath,
         resolvedOutputPath: path.join(changeRoot, outputPath),
-        existingOutputPaths
+        existingOutputPaths: existingOutputPaths.filter((candidate) =>
+          fs.existsSync(candidate)
+        )
       }
     ])),
-    artifacts: artifacts.map(([id, outputPath]) => ({
-      id, outputPath, status: 'done'
-    })),
+    artifacts: statuses,
     applyRequires: schemaName === 'expense-app-v2'
       ? ['investigation', 'tasks', 'guard', 'execution', 'plan-review']
       : ['tasks', 'guard'],
-    isComplete: true,
+    isComplete: statuses.every(({ status }) => status === 'done'),
     root: { path: root, source: 'nearest' }
   }));
   process.exit(0);

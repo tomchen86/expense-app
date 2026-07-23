@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -7,6 +8,7 @@ import test from 'node:test';
 
 import { canonicalJson } from '../src/canonical-json.ts';
 import { discoverRepository } from '../src/git.ts';
+import { readInvestigationGroupNode } from '../src/investigation-groups.ts';
 import {
   createInvestigationCheckpointEnvelope,
   getInvestigationStatus,
@@ -15,6 +17,13 @@ import {
   retryInvestigationProvider,
   startInvestigationSession,
 } from '../src/investigation-session.ts';
+import {
+  createPlanningContributionEnvelope,
+  getProposeStatus,
+  resumePropose,
+  startPropose,
+  startProposeFromFile,
+} from '../src/propose-orchestrator.ts';
 import {
   checkpointContributionDigest,
   compareAndSwapInvestigationSession,
@@ -46,12 +55,766 @@ import {
   git,
   isWorkflowError,
   runtimeRoot,
+  sourceRepositoryRoot,
 } from './fixture.ts';
 
 const FIRST_INSTANT = '2026-07-24T00:00:00.000Z';
 const DURING_COMPLETION_GRACE = '2026-07-24T00:00:01.100Z';
 const BEFORE_EXPIRY = '2026-07-24T00:00:30.999Z';
 const AT_EXPIRY = '2026-07-24T00:00:31.000Z';
+
+test('fake-backed propose composes breadth and depth before materializing an uncommitted planning draft', () => {
+  const repository = createFixtureRepository();
+  const changeId = 'fresh-investigation';
+  try {
+    fs.mkdirSync(path.join(repository, 'docs/archive'), { recursive: true });
+    fs.mkdirSync(path.join(repository, 'docs/research'), { recursive: true });
+    fs.writeFileSync(
+      path.join(repository, 'docs/generated.md'),
+      'EngineFloorNeedle generated projection\n',
+    );
+    fs.writeFileSync(
+      path.join(repository, 'docs/CHANGELOG.md'),
+      'EngineFloorNeedle append-only history\n',
+    );
+    fs.writeFileSync(
+      path.join(repository, 'docs/archive/legacy.md'),
+      'EngineFloorNeedle immutable archive\n',
+    );
+    fs.writeFileSync(
+      path.join(repository, 'docs/research/reference.md'),
+      'EngineFloorNeedle historical reference\n',
+    );
+    fs.writeFileSync(
+      path.join(repository, 'workflow/document-policy.json'),
+      `${JSON.stringify(
+        {
+          schemaVersion: 1,
+          enforcementMode: 'enforced',
+          documents: {
+            'docs/architecture/**': {
+              mode: 'curated',
+              refresh: 'reviewed-section',
+            },
+            'docs/features/**': {
+              mode: 'curated',
+              refresh: 'reviewed-section',
+            },
+            'docs/generated.md': { mode: 'generated' },
+            'docs/CHANGELOG.md': { mode: 'append-only' },
+            'docs/archive/**': { mode: 'immutable' },
+            'docs/research/**': { mode: 'reference' },
+          },
+        },
+        null,
+        2,
+      )}\n`,
+    );
+    git(repository, ['mv', 'src/.gitkeep', 'src/renamed-fixture.ts']);
+    fs.writeFileSync(
+      path.join(repository, 'src/investigation-target.ts'),
+      [
+        'export const EngineFloorNeedle = true;',
+        'export const MainSurveyNeedle = true;',
+        'export const BlindSurveyNeedle = true;',
+        '',
+      ].join('\n'),
+    );
+    git(repository, [
+      'add',
+      'src/investigation-target.ts',
+      'docs',
+      'workflow/document-policy.json',
+    ]);
+    git(repository, ['commit', '-m', 'Add investigation target']);
+    git(repository, ['checkout', '-b', `work/${changeId}`]);
+
+    let providerRuns = 0;
+    const intent = {
+      schemaVersion: 1 as const,
+      summary: 'Extend the investigation target without losing consumers.',
+      explicitPaths: [
+        '.codex/skills/openspec-propose/SKILL.md',
+        'workflow/openspec-assets/manifest.json',
+      ],
+      explicitSymbols: ['EngineFloorNeedle'],
+      explicitConfigKeys: [],
+      renamePairs: [],
+    };
+    const started = startPropose(repository, changeId, intent, {
+      explicitActor: 'codex',
+      environment: {},
+      providerDriver: ({ paths, request }) => {
+        providerRuns += 1;
+        const claim = claimProviderInvocation(paths, request.invocationId, {
+          workerId: 'fake-propose-worker',
+          leaseDurationMs: 60_000,
+        });
+        completeProviderInvocation(paths, request.invocationId, {
+          expectedRevision: claim.record.revision,
+          leaseGeneration: claim.record.leaseGeneration,
+          leaseToken: claim.leaseToken,
+          outcome: {
+            exitCode: 0,
+            signal: null,
+            timedOut: false,
+            spawnErrorCode: null,
+            elapsedMs: 1,
+            stdout: JSON.stringify(
+              providerWireResult(request, {
+                reference: request.invocationId,
+                terms: [{ kind: 'symbol', value: 'BlindSurveyNeedle' }],
+              }),
+            ),
+            stderr: '',
+          },
+        });
+      },
+    });
+
+    assert.equal(started.state, 'awaiting-main-terms');
+    assert.equal(started.investigation?.provider.providerId, 'claude');
+    assert.equal(providerRuns, 1);
+    const replayedStart = startPropose(repository, changeId, intent, {
+      explicitActor: 'codex',
+      environment: {},
+      providerDriver: () => {
+        providerRuns += 1;
+      },
+    });
+    assert.equal(
+      replayedStart.investigation?.investigationId,
+      started.investigation?.investigationId,
+    );
+    assert.equal(
+      replayedStart.investigation?.providerInvocationId,
+      started.investigation?.providerInvocationId,
+    );
+    assert.equal(providerRuns, 1);
+    assert.throws(
+      () =>
+        startPropose(repository, changeId, intent, {
+          explicitActor: 'claude',
+          environment: {},
+        }),
+      (error) => isWorkflowError(error, 'CURRENT_INVESTIGATION_ACTOR_CONFLICT'),
+    );
+    assert.equal(
+      getInvestigationStatus(repository, started.investigation!.investigationId)
+        .provider.providerId,
+      'claude',
+    );
+    assert.equal(
+      fs.existsSync(path.join(repository, 'openspec/changes', changeId)),
+      false,
+    );
+
+    const mainTermsInput = createInvestigationCheckpointEnvelope(
+      started.investigation!,
+      {
+        reference: 'main-survey',
+        terms: [{ kind: 'symbol', value: 'MainSurveyNeedle' }],
+      },
+    );
+    const afterMain = resumePropose(repository, changeId, mainTermsInput);
+    assert.equal(afterMain.state, 'awaiting-group-dispositions');
+    assert.deepEqual(afterMain.work?.termSources, {
+      engine: 7,
+      main: 1,
+      reviewer: 0,
+      survey: 1,
+    });
+    assert.ok((afterMain.work?.groups.length ?? 0) > 0);
+    assert.ok(
+      afterMain.work?.groups.some((group) =>
+        group.paths.includes('src/investigation-target.ts'),
+      ),
+    );
+    assert.ok(
+      afterMain.work?.groups.some((group) =>
+        group.paths.includes('src/renamed-fixture.ts'),
+      ),
+    );
+    assert.ok(
+      afterMain.work?.groups.some((group) =>
+        group.paths.includes('.codex/skills/openspec-propose/SKILL.md'),
+      ),
+    );
+    assert.ok(
+      afterMain.work?.groups.some((group) =>
+        group.paths.includes('.agents/skills/openspec-propose/SKILL.md'),
+      ),
+    );
+    assert.ok(
+      afterMain.work?.groups.some((group) =>
+        group.paths.includes('workflow/openspec-assets/manifest.json'),
+      ),
+    );
+
+    assert.throws(
+      () =>
+        resumePropose(
+          repository,
+          changeId,
+          createInvestigationCheckpointEnvelope(afterMain.investigation!, {
+            dispositions: [],
+          }),
+        ),
+      (error) => isWorkflowError(error, 'INVESTIGATION_DISPOSITIONS_INVALID'),
+    );
+
+    const afterDispositions = resumePropose(
+      repository,
+      changeId,
+      createInvestigationCheckpointEnvelope(afterMain.investigation!, {
+        dispositions: afterMain.work!.groups.map((group) => ({
+          groupId: group.groupId,
+          classification: 'load-bearing' as const,
+          rationale: 'This tracked consumer is load-bearing for the change.',
+          author: 'codex',
+        })),
+      }),
+    );
+    assert.equal(afterDispositions.state, 'awaiting-ledger-answers');
+    assert.ok((afterDispositions.work?.fullBlobManifest.length ?? 0) > 0);
+    assert.ok(
+      afterDispositions.work?.fullBlobManifest.some((entry) =>
+        Buffer.from(entry.contentBase64, 'base64')
+          .toString('utf8')
+          .includes('Needle'),
+      ),
+    );
+
+    const incompleteAnswers = afterDispositions
+      .work!.fullBlobManifest.slice(1)
+      .map((entry) => whyAnswer(entry.manifestEntryId));
+    assert.throws(
+      () =>
+        resumePropose(
+          repository,
+          changeId,
+          createInvestigationCheckpointEnvelope(
+            afterDispositions.investigation!,
+            { answers: incompleteAnswers },
+          ),
+        ),
+      (error) => isWorkflowError(error, 'INVESTIGATION_WHY_INVALID'),
+    );
+
+    const sealed = resumePropose(
+      repository,
+      changeId,
+      createInvestigationCheckpointEnvelope(afterDispositions.investigation!, {
+        answers: afterDispositions.work!.fullBlobManifest.map((entry) =>
+          whyAnswer(entry.manifestEntryId),
+        ),
+      }),
+    );
+    assert.equal(sealed.state, 'awaiting-planning-contribution');
+    assert.equal(sealed.investigation?.state, 'investigation-sealed');
+    const changeDirectory = path.join(repository, 'openspec/changes', changeId);
+    assert.equal(
+      fs.readFileSync(path.join(changeDirectory, '.openspec.yaml'), 'utf8'),
+      `schema: expense-app-v2\ncreated: ${sealed.createdDate}\n`,
+    );
+    const trackedInvestigation = JSON.parse(
+      fs.readFileSync(path.join(changeDirectory, 'investigation.json'), 'utf8'),
+    );
+    assert.equal(trackedInvestigation.kind, 'investigation-artifact');
+    const authorizationEvidence = trackedInvestigation.nodes.find(
+      (node: { type: string }) => node.type === 'propose-authorization',
+    );
+    assert.equal(authorizationEvidence.output.actor.providerId, 'codex');
+    assert.equal(authorizationEvidence.output.assignment.providerId, 'claude');
+    assert.equal(
+      trackedInvestigation.nodes.filter(
+        (node: { type: string }) =>
+          node.type === 'investigation-term-contribution',
+      ).length,
+      3,
+    );
+    const engineContribution = trackedInvestigation.nodes.find(
+      (node: { type: string; output?: { source?: string } }) =>
+        node.type === 'investigation-term-contribution' &&
+        node.output?.source === 'engine',
+    );
+    assert.ok(
+      engineContribution.output.terms.some(
+        (term: { value: string }) => term.value === 'renamed-fixture.ts',
+      ),
+    );
+    assert.ok(
+      engineContribution.output.terms.some(
+        (term: { value: string }) => term.value === 'renamed-fixture',
+      ),
+    );
+    assert.ok(
+      engineContribution.output.terms.some(
+        (term: { value: string }) =>
+          term.value === '.codex/skills/openspec-propose/SKILL.md',
+      ),
+    );
+    assert.ok(
+      engineContribution.output.terms.some(
+        (term: { value: string }) =>
+          term.value === '.agents/skills/openspec-propose/SKILL.md',
+      ),
+    );
+    const trackedGroups: Array<{
+      selector: { mutationClass: string; relationshipId: string | null };
+      hits: Array<{ path: { utf8: string | null } }>;
+    }> = trackedInvestigation.nodes
+      .filter((node: { type: string }) => node.type === 'investigation-group')
+      .map((node: Parameters<typeof readInvestigationGroupNode>[0]) =>
+        readInvestigationGroupNode(node),
+      );
+    const hasClassifiedPath = (
+      expectedPath: string,
+      mutationClass: string,
+      relationship: 'present' | 'any' = 'any',
+    ) =>
+      trackedGroups.some(
+        (group) =>
+          group.selector.mutationClass === mutationClass &&
+          (relationship === 'any' || group.selector.relationshipId !== null) &&
+          group.hits.some((hit) => hit.path.utf8 === expectedPath),
+      );
+    assert.equal(
+      hasClassifiedPath(
+        '.codex/skills/openspec-propose/SKILL.md',
+        'generated',
+        'present',
+      ),
+      true,
+    );
+    assert.equal(
+      hasClassifiedPath(
+        '.agents/skills/openspec-propose/SKILL.md',
+        'mirror',
+        'present',
+      ),
+      true,
+    );
+    assert.equal(
+      hasClassifiedPath('workflow/openspec-assets/manifest.json', 'generated'),
+      true,
+    );
+    assert.equal(hasClassifiedPath('docs/generated.md', 'generated'), true);
+    assert.equal(hasClassifiedPath('docs/CHANGELOG.md', 'append-only'), true);
+    assert.equal(
+      hasClassifiedPath('docs/archive/legacy.md', 'immutable'),
+      true,
+    );
+    assert.equal(
+      hasClassifiedPath('docs/research/reference.md', 'historical-reference'),
+      true,
+    );
+    assert.ok(
+      trackedInvestigation.nodes.some(
+        (node: { type: string }) =>
+          node.type === 'investigation-provider-result',
+      ),
+    );
+    assert.ok(
+      trackedInvestigation.nodes.some(
+        (node: { type: string }) => node.type === 'investigation-term-union',
+      ),
+    );
+    const sealEvidence = trackedInvestigation.nodes.find(
+      (node: { type: string }) => node.type === 'sealed-investigation',
+    );
+    assert.match(sealEvidence.exactInputDigests.blindRequest, /^[0-9a-f]{64}$/);
+    assert.match(sealEvidence.exactInputDigests.blindResult, /^[0-9a-f]{64}$/);
+    assert.equal(fs.existsSync(path.join(changeDirectory, 'design.md')), false);
+    assert.equal(
+      fs.existsSync(path.join(changeDirectory, 'plan-review.json')),
+      false,
+    );
+
+    const planningInput = createPlanningContributionEnvelope(sealed, {
+      proposal: '# Proposal\n\nAdd investigation-first behavior.\n',
+      design: [
+        '# Design',
+        '',
+        'Authored prefix.',
+        '',
+        '## Investigation Ledger',
+        '',
+        '<!-- workflow:investigation-ledger:start v1 -->',
+        '',
+        '<!-- workflow:investigation-ledger:end v1 -->',
+        '',
+        'Authored suffix.',
+        '',
+      ].join('\n'),
+      specs: [
+        {
+          path: 'specs/demo/spec.md',
+          content: [
+            '# Delta',
+            '',
+            '## ADDED Requirements',
+            '',
+            '### Requirement: Investigation behavior',
+            '',
+            'The system SHALL retain investigation evidence.',
+            '',
+            '#### Scenario: Evidence is retained',
+            '',
+            '- **WHEN** planning is materialized',
+            '- **THEN** the evidence remains current',
+            '',
+          ].join('\n'),
+        },
+      ],
+      tasks: '# Tasks\n\n- [ ] 1.1 Add investigation behavior\n',
+      guard: {
+        schemaVersion: 1,
+        changeId,
+        tasks: {
+          '1.1': {
+            allowedPaths: ['src/**'],
+            requiredChecks: ['fixture'],
+          },
+        },
+      },
+      executionTasks: {
+        '1.1': {
+          strategy: 'direct-reviewed',
+          enforcement: 'available',
+          allowedPaths: ['src/**'],
+          requiredChecks: ['fixture'],
+          diffReview: 'policy-required',
+          exemptionKind: 'narrowly-scoped-non-behavioral',
+          exemptionReason:
+            'The fixture exercises planning orchestration without product behavior.',
+          legacyBootstrap: null,
+        },
+      },
+    });
+    const stalePlanningInput = structuredClone(planningInput);
+    stalePlanningInput.baseline.tree = 'f'.repeat(40);
+    assert.throws(
+      () => resumePropose(repository, changeId, stalePlanningInput),
+      (error) => isWorkflowError(error, 'PROPOSE_INPUT_STALE'),
+    );
+
+    const unmanagedPath = path.join(changeDirectory, 'unexpected.md');
+    fs.writeFileSync(unmanagedPath, '# Unmanaged\n');
+    assert.throws(
+      () => resumePropose(repository, changeId, planningInput),
+      (error) => isWorkflowError(error, 'UNMANAGED_PLANNING_CONFLICT'),
+    );
+    fs.rmSync(unmanagedPath);
+
+    const materialized = resumePropose(repository, changeId, planningInput);
+    assert.equal(materialized.state, 'plan-review-required');
+    assert.equal(materialized.nextAction, 'obtain-plan-review');
+    const durableWrapperStatus = getProposeStatus(
+      repository,
+      materialized.investigation!.investigationId,
+    );
+    assert.equal(durableWrapperStatus.state, 'plan-review-required');
+    assert.deepEqual(
+      durableWrapperStatus.materializedArtifacts,
+      materialized.materializedArtifacts,
+    );
+    assert.equal(
+      fs
+        .readFileSync(path.join(changeDirectory, 'design.md'), 'utf8')
+        .includes('Authored prefix.'),
+      true,
+    );
+    assert.equal(
+      fs
+        .readFileSync(path.join(changeDirectory, 'design.md'), 'utf8')
+        .includes('Protected invariant:'),
+      true,
+    );
+    assert.equal(
+      fs.existsSync(path.join(changeDirectory, 'plan-review.json')),
+      false,
+    );
+    assert.equal(
+      git(repository, ['diff', '--cached', '--name-only']).trim(),
+      '',
+    );
+    assert.equal(
+      git(repository, ['log', '-1', '--format=%s']).trim(),
+      'Add investigation target',
+    );
+
+    const beforeReplay = git(repository, ['diff', '--no-ext-diff']);
+    const replayedCompletedStart = startPropose(repository, changeId, intent, {
+      explicitActor: 'codex',
+      environment: {},
+      providerDriver: () => {
+        providerRuns += 1;
+      },
+    });
+    assert.equal(replayedCompletedStart.state, 'plan-review-required');
+    assert.deepEqual(
+      replayedCompletedStart.materializedArtifacts,
+      materialized.materializedArtifacts,
+    );
+    assert.equal(providerRuns, 1);
+    const replayedCompletedCheckpoint = resumePropose(
+      repository,
+      changeId,
+      mainTermsInput,
+    );
+    assert.equal(replayedCompletedCheckpoint.state, 'plan-review-required');
+    assert.deepEqual(
+      replayedCompletedCheckpoint.materializedArtifacts,
+      materialized.materializedArtifacts,
+    );
+    assert.deepEqual(
+      resumePropose(repository, changeId, planningInput),
+      materialized,
+    );
+    assert.equal(git(repository, ['diff', '--no-ext-diff']), beforeReplay);
+
+    const proposalPath = path.join(changeDirectory, 'proposal.md');
+    const proposalBytes = fs.readFileSync(proposalPath, 'utf8');
+    fs.writeFileSync(proposalPath, `${proposalBytes}drift\n`);
+    assert.throws(
+      () =>
+        getProposeStatus(
+          repository,
+          materialized.investigation!.investigationId,
+        ),
+      (error) => isWorkflowError(error, 'PLANNING_MATERIALIZATION_STALE'),
+    );
+    assert.throws(
+      () => resumePropose(repository, changeId, planningInput),
+      (error) => isWorkflowError(error, 'UNMANAGED_PLANNING_CONFLICT'),
+    );
+    fs.writeFileSync(proposalPath, proposalBytes);
+
+    const executionPath = path.join(changeDirectory, 'execution.json');
+    const executionBytes = fs.readFileSync(executionPath, 'utf8');
+    fs.rmSync(executionPath);
+    assert.throws(
+      () =>
+        getProposeStatus(
+          repository,
+          materialized.investigation!.investigationId,
+        ),
+      (error) => isWorkflowError(error, 'PLANNING_MATERIALIZATION_STALE'),
+    );
+    const divergentRecovery = structuredClone(planningInput);
+    divergentRecovery.payload.proposal +=
+      'A divergent replacement must not be written after a receipt exists.\n';
+    assert.throws(
+      () => resumePropose(repository, changeId, divergentRecovery),
+      (error) => isWorkflowError(error, 'PLANNING_MATERIALIZATION_CONFLICT'),
+    );
+    assert.equal(fs.existsSync(executionPath), false);
+    assert.equal(
+      resumePropose(repository, changeId, planningInput).state,
+      'plan-review-required',
+    );
+    assert.equal(fs.readFileSync(executionPath, 'utf8'), executionBytes);
+  } finally {
+    fs.rmSync(repository, { recursive: true, force: true });
+  }
+});
+
+test('propose CLI persists a fake-backed wait for read-only status in a fresh process', () => {
+  const repository = createFixtureRepository();
+  const inputDirectory = fs.mkdtempSync(
+    path.join(os.tmpdir(), 'workflow-propose-cli-'),
+  );
+  const changeId = 'cli-investigation';
+  try {
+    git(repository, ['checkout', '-b', `work/${changeId}`]);
+    const intentPath = path.join(inputDirectory, 'intent.json');
+    fs.writeFileSync(
+      intentPath,
+      JSON.stringify({
+        schemaVersion: 1,
+        summary: 'Inspect the fixture through the durable CLI wrapper.',
+        explicitPaths: ['src/.gitkeep'],
+        explicitSymbols: [],
+        explicitConfigKeys: [],
+        renamePairs: [],
+      }),
+    );
+
+    const started = runWorkflowCli(
+      repository,
+      ['propose', changeId, '--intent', intentPath, '--actor', 'codex'],
+      {},
+    );
+    assert.equal(started.status, 0, started.stderr);
+    const startedPayload = JSON.parse(started.stdout);
+    assert.equal(startedPayload.result.state, 'awaiting-main-terms');
+    const investigationId = startedPayload.result.investigation.investigationId;
+    const revision = startedPayload.result.investigation.revision;
+    assert.equal(
+      startedPayload.result.investigation.provider.state,
+      'prepared',
+    );
+    assert.equal(
+      fs.existsSync(path.join(repository, 'openspec/changes', changeId)),
+      false,
+    );
+    const sessionFile = path.join(
+      runtimeRoot(repository),
+      'investigations/sessions',
+      `${investigationId}.json`,
+    );
+    const sessionBytes = fs.readFileSync(sessionFile, 'utf8');
+    const sessionMtime = fs.statSync(sessionFile).mtimeMs;
+
+    const beforeStatus = git(repository, ['status', '--porcelain=v1']);
+    const status = runWorkflowCli(repository, ['status', investigationId], {});
+    assert.equal(status.status, 0, status.stderr);
+    const statusPayload = JSON.parse(status.stdout);
+    assert.equal(
+      statusPayload.result.investigation.investigationId,
+      investigationId,
+    );
+    assert.equal(statusPayload.result.investigation.revision, revision);
+    assert.equal(statusPayload.result.state, 'awaiting-main-terms');
+    assert.equal(git(repository, ['status', '--porcelain=v1']), beforeStatus);
+    assert.equal(fs.readFileSync(sessionFile, 'utf8'), sessionBytes);
+    assert.equal(fs.statSync(sessionFile).mtimeMs, sessionMtime);
+    assert.equal(
+      fs.existsSync(
+        path.join(runtimeRoot(repository), 'locks', `${changeId}.lock`),
+      ),
+      false,
+    );
+
+    const mainTermsPath = path.join(inputDirectory, 'main-terms.json');
+    fs.writeFileSync(
+      mainTermsPath,
+      JSON.stringify(
+        createInvestigationCheckpointEnvelope(
+          startedPayload.result.investigation,
+          {
+            reference: 'cli-main-survey',
+            terms: [{ kind: 'symbol', value: 'CliMainNeedle' }],
+          },
+        ),
+      ),
+    );
+    const resumed = runWorkflowCli(
+      repository,
+      ['propose', changeId, '--resume', '--input', mainTermsPath],
+      {},
+    );
+    assert.equal(resumed.status, 0, resumed.stderr);
+    const resumedPayload = JSON.parse(resumed.stdout);
+    assert.equal(resumedPayload.result.state, 'waiting-for-provider');
+    assert.equal(resumedPayload.result.investigation.revision, revision + 1);
+    assert.equal(
+      resumedPayload.result.investigation.providerInvocationId,
+      startedPayload.result.investigation.providerInvocationId,
+    );
+    assert.equal(
+      fs
+        .readdirSync(
+          path.join(runtimeRoot(repository), 'investigations/invocations'),
+        )
+        .filter((name) => name.startsWith('invocation-')).length,
+      1,
+    );
+    const afterResumeStatus = runWorkflowCli(
+      repository,
+      ['status', investigationId],
+      {},
+    );
+    assert.equal(afterResumeStatus.status, 0, afterResumeStatus.stderr);
+    assert.deepEqual(
+      JSON.parse(afterResumeStatus.stdout).result.investigation,
+      resumedPayload.result.investigation,
+    );
+
+    for (const args of [
+      ['propose', changeId, '--resume', '--input'],
+      ['propose', changeId, '--actor', 'codex', '--intent', intentPath],
+      ['propose', changeId, '--intent', intentPath, '--actor'],
+    ]) {
+      const rejected = runWorkflowCli(repository, args, {});
+      assert.equal(rejected.status, 2);
+      assert.equal(JSON.parse(rejected.stderr).error.code, 'INVALID_USAGE');
+    }
+  } finally {
+    fs.rmSync(repository, { recursive: true, force: true });
+    fs.rmSync(inputDirectory, { recursive: true, force: true });
+  }
+});
+
+test('propose resolves actor before runtime creation and safely bounds caller files', () => {
+  const repository = createFixtureRepository();
+  const inputDirectory = fs.mkdtempSync(
+    path.join(os.tmpdir(), 'workflow-propose-input-'),
+  );
+  const changeId = 'actor-investigation';
+  try {
+    git(repository, ['checkout', '-b', `work/${changeId}`]);
+    const intent = {
+      schemaVersion: 1 as const,
+      summary: 'Inspect actor and input safety.',
+      explicitPaths: ['src/.gitkeep'],
+      explicitSymbols: [],
+      explicitConfigKeys: [],
+      renamePairs: [],
+    };
+    const unresolved = startPropose(repository, changeId, intent, {
+      environment: {},
+    });
+    assert.equal(unresolved.state, 'actor-resolution-required');
+    assert.equal(
+      unresolved.actorResolution?.outcome,
+      'actor-resolution-required',
+    );
+    assert.equal(fs.existsSync(runtimeRoot(repository)), false);
+
+    const conflicting = startPropose(repository, changeId, intent, {
+      explicitActor: 'codex',
+      environment: { CLAUDECODE: '1' },
+    });
+    assert.equal(conflicting.state, 'actor-resolution-required');
+    assert.equal(
+      conflicting.actorResolution?.outcome === 'actor-resolution-required'
+        ? conflicting.actorResolution.code
+        : null,
+      'ACTOR_IDENTITY_CONFLICT',
+    );
+    assert.equal(fs.existsSync(runtimeRoot(repository)), false);
+
+    const intentPath = path.join(inputDirectory, 'intent.json');
+    fs.writeFileSync(intentPath, JSON.stringify(intent));
+    const symlinkPath = path.join(inputDirectory, 'intent-link.json');
+    fs.symlinkSync(intentPath, symlinkPath);
+    assert.throws(
+      () =>
+        startProposeFromFile(repository, changeId, symlinkPath, {
+          explicitActor: 'codex',
+          environment: {},
+        }),
+      (error) => isWorkflowError(error, 'PROPOSE_INPUT_FILE_INVALID'),
+    );
+
+    const oversizedPath = path.join(inputDirectory, 'oversized.json');
+    fs.writeFileSync(oversizedPath, ' '.repeat(4 * 1024 * 1024 + 1));
+    assert.throws(
+      () =>
+        startProposeFromFile(repository, changeId, oversizedPath, {
+          explicitActor: 'codex',
+          environment: {},
+        }),
+      (error) => isWorkflowError(error, 'PROPOSE_INPUT_FILE_INVALID'),
+    );
+    assert.equal(fs.existsSync(runtimeRoot(repository)), false);
+  } finally {
+    fs.rmSync(repository, { recursive: true, force: true });
+    fs.rmSync(inputDirectory, { recursive: true, force: true });
+  }
+});
 
 test('start seals a manifest-bound blind request before accepting main terms', () => {
   const fixture = investigationFixture('invocation-blind-start');
@@ -1437,6 +2200,50 @@ function providerOutcome(
     stdout: JSON.stringify(providerWireResult(request, output)),
     stderr: '',
     ...override,
+  };
+}
+
+function runWorkflowCli(
+  repository: string,
+  args: string[],
+  environment: Record<string, string | undefined>,
+) {
+  return spawnSync(
+    process.execPath,
+    [
+      '--experimental-strip-types',
+      path.join(sourceRepositoryRoot, 'packages/workflow-engine/src/cli.ts'),
+      ...args,
+      '--json',
+    ],
+    {
+      cwd: repository,
+      encoding: 'utf8',
+      env: {
+        ...process.env,
+        AGENT: undefined,
+        CLAUDECODE: undefined,
+        CLAUDE_CODE_ENTRYPOINT: undefined,
+        CODEX_SANDBOX: undefined,
+        ...environment,
+      },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    },
+  );
+}
+
+function whyAnswer(manifestEntryId: string) {
+  return {
+    manifestEntryId,
+    why: 'This complete module coordinates the load-bearing behavior.',
+    protectedInvariant:
+      'Every accepted transition preserves the pinned evidence relationship.',
+    reviewerQuestion:
+      'What prevents a stale implementation blob from satisfying this row?',
+    answer:
+      'The manifest and evidence node bind the exact complete source blob.',
+    semanticAuthor: 'codex',
+    readComplete: true as const,
   };
 }
 

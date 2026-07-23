@@ -56,6 +56,11 @@ import {
 import { validateManagedDocuments } from './managed-documents.ts';
 import { diagnoseOpenSpec } from './openspec-doctor.ts';
 import { commitPlanningTransition } from './planning-transition.ts';
+import {
+  getProposeStatus,
+  resumeProposeFromFile,
+  startProposeFromFile,
+} from './propose-orchestrator.ts';
 import { runRegisteredCheck } from './registered-check.ts';
 import { loadStableValidatedChangeContract } from './validated-contract-context.ts';
 
@@ -116,6 +121,37 @@ function dispatch(args: string[], cwd: string): CommandResult {
         ok: true,
         result: commitPlanningTransition(cwd, rest[0]),
       };
+    case 'propose': {
+      const changeId = rest[0];
+      if (
+        changeId &&
+        rest.length === 4 &&
+        rest[1] === '--resume' &&
+        rest[2] === '--input'
+      ) {
+        return {
+          command,
+          ok: true,
+          result: resumeProposeFromFile(cwd, changeId, rest[3]!),
+        };
+      }
+      if (
+        changeId &&
+        (rest.length === 3 || rest.length === 5) &&
+        rest[1] === '--intent' &&
+        (rest.length === 3 || rest[3] === '--actor')
+      ) {
+        return {
+          command,
+          ok: true,
+          result: startProposeFromFile(cwd, changeId, rest[2]!, {
+            ...(rest[4] === undefined ? {} : { explicitActor: rest[4] }),
+            environment: process.env,
+          }),
+        };
+      }
+      throw proposeUsage();
+    }
     case 'archive':
       requireArgumentCount(command, rest, 1, 1);
       return {
@@ -181,6 +217,13 @@ function dispatch(args: string[], cwd: string): CommandResult {
     case 'status': {
       requireArgumentCount(command, rest, 0, 1);
       if (rest[0]) {
+        if (rest[0].startsWith('investigation-')) {
+          return {
+            command,
+            ok: true,
+            result: getProposeStatus(cwd, rest[0]),
+          };
+        }
         const session = getSession(cwd, rest[0]);
         return {
           command,
@@ -669,6 +712,12 @@ function maintainerUsage(): WorkflowError {
   );
 }
 
+function proposeUsage(): WorkflowError {
+  return usage(
+    'Usage: pnpm workflow propose <change-id> --intent <intent.json> [--actor <id>] [--json]\n       pnpm workflow propose <change-id> --resume --input <envelope.json> [--json]',
+  );
+}
+
 function requireArgumentCount(
   command: string,
   args: string[],
@@ -689,11 +738,13 @@ function usageText(): string {
     'Usage:',
     '  pnpm workflow doctor [--json]',
     '  pnpm workflow validate-change <change-id> [--json]',
+    '  pnpm workflow propose <change-id> --intent <intent.json> [--actor <id>] [--json]',
+    '  pnpm workflow propose <change-id> --resume --input <envelope.json> [--json]',
     '  pnpm workflow plan-commit <change-id> [--json]',
     '  pnpm workflow archive <change-id> [--json]',
     '  pnpm workflow openspec-assets <generate|check|install-prompts --codex-home <path>> [--json]',
     '  pnpm workflow start <change-id> --task <task-id> [--json]',
-    '  pnpm workflow status [session-id] [--json]',
+    '  pnpm workflow status [investigation-or-task-id] [--json]',
     '  pnpm workflow check <session-id> [--json]',
     '  pnpm workflow run-check <check-id> [--json]',
     '  pnpm workflow ci --base <commit> --head <commit> [--json]',
