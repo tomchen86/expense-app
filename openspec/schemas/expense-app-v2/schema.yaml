@@ -1,0 +1,91 @@
+name: expense-app-v2
+version: 1
+description: Expense app investigation-first workflow
+artifacts:
+  - id: investigation
+    generates: investigation.json
+    description: Engine-owned sealed investigation evidence
+    template: investigation.json
+    instruction: |
+      Do not author this file through OpenSpec.
+      Run `pnpm workflow propose` so the workflow engine can generate and validate it.
+    requires: []
+
+  - id: proposal
+    generates: proposal.md
+    description: Authored change motivation and capability declaration
+    template: proposal.md
+    instruction: |
+      Write the proposal only after the current investigation is available.
+      Explain why the change is needed, what changes, capabilities, and impact.
+    requires:
+      - investigation
+
+  - id: specs
+    generates: "specs/**/*.md"
+    description: Authored testable delta specifications
+    template: spec.md
+    instruction: |
+      Write one delta specification per affected capability.
+      Use exact requirement and four-hash scenario headings.
+    requires:
+      - proposal
+
+  - id: design
+    generates: design.md
+    description: Authored design with one engine-managed investigation ledger
+    template: design.md
+    instruction: |
+      Explain architecture, decisions, alternatives, risks, and migration.
+      Do not edit the engine-managed investigation ledger region.
+    requires:
+      - proposal
+
+  - id: tasks
+    generates: tasks.md
+    description: Ordered implementation tasks
+    template: tasks.md
+    instruction: |
+      Define small dependency-ordered checkbox tasks.
+      Do not mark tasks complete while planning.
+    requires:
+      - specs
+      - design
+
+  - id: guard
+    generates: guard.json
+    description: Task-only repository path and registered-check policy
+    template: guard.json
+    instruction: |
+      Map every task to non-empty allowed paths and registered checks.
+      Keep lifecycle, investigation, and execution strategy evidence out of guard.json.
+    requires:
+      - tasks
+
+  - id: execution
+    generates: execution.json
+    description: Engine-validated per-task execution strategy declaration
+    template: execution.json
+    instruction: |
+      Do not author this file through OpenSpec.
+      Run `pnpm workflow propose` so the workflow engine can generate and validate it.
+    requires:
+      - tasks
+
+  - id: plan-review
+    generates: plan-review.json
+    description: Engine-owned exact-target advisory plan review evidence
+    template: plan-review.json
+    instruction: |
+      Do not author this file through OpenSpec.
+      Run `pnpm workflow propose` so the workflow engine can generate and validate it.
+    requires:
+      - guard
+      - execution
+
+apply:
+  requires: [investigation, tasks, guard, execution, plan-review]
+  tracks: tasks.md
+  instruction: |
+    Read the reviewed planning generation, then hand execution to `pnpm workflow`.
+    Do not edit task checkboxes or treat OpenSpec presence as workflow evidence.

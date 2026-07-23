@@ -6,7 +6,13 @@ import path from 'node:path';
 import test from 'node:test';
 
 import {
+  parseExecutionArtifact,
+  parseInvestigationArtifact,
+  parsePlanReviewArtifact,
+} from '../src/contracts.ts';
+import {
   EXPENSE_APP_SCHEMA_GRAPH,
+  EXPENSE_APP_V2_SCHEMA_GRAPH,
   EXPENSE_APP_CONFIG_DIGEST,
   EXPENSE_APP_GUARD_TEMPLATE_DIGEST,
   EXPENSE_APP_SCHEMA_DIGEST,
@@ -42,7 +48,14 @@ test('schema contract pins package provenance and the project graph', () => {
     requires: ['tasks', 'guard'],
     tracks: 'tasks.md',
   });
-  assert.equal(contract.trackedPaths.length, 8);
+  assert.equal(contract.projectSchemaV2.name, 'expense-app-v2');
+  assert.equal(contract.projectSchemaV2.source, 'project');
+  assert.deepEqual(contract.projectSchemaV2.graph, EXPENSE_APP_V2_SCHEMA_GRAPH);
+  assert.deepEqual(contract.projectSchemaV2.graph.apply, {
+    requires: ['investigation', 'tasks', 'guard', 'execution', 'plan-review'],
+    tracks: 'tasks.md',
+  });
+  assert.equal(contract.trackedPaths.length, 18);
   assert.equal(
     contract.configPath,
     path.join(sourceRepositoryRoot, 'openspec/config.yaml'),
@@ -56,12 +69,111 @@ test('schema contract pins package provenance and the project graph', () => {
     fs.readFileSync(contract.projectSchema.files['schema.yaml']!.path, 'utf8'),
     /hand implementation to `pnpm workflow`[\s\S]*Do not edit task checkboxes[\s\S]*workflow engine owns sessions, checks, completion, and Git/,
   );
-  for (const schema of [contract.packageSchema, contract.projectSchema]) {
+  for (const schema of [
+    contract.packageSchema,
+    contract.projectSchema,
+    contract.projectSchemaV2,
+  ]) {
     for (const file of Object.values(schema.files)) {
       assert.equal(file.mode, '100644');
       assert.match(file.digest, /^[0-9a-f]{64}$/);
     }
   }
+});
+
+test('v2 schema has the exact investigation-first graph and route-back engine templates', () => {
+  const contract = inspectOpenSpecSchemaContract(sourceRepositoryRoot);
+
+  assert.deepEqual(
+    EXPENSE_APP_V2_SCHEMA_GRAPH.artifacts.map(
+      ({ id, generates, requires }) => ({ id, generates, requires }),
+    ),
+    [
+      { id: 'investigation', generates: 'investigation.json', requires: [] },
+      {
+        id: 'proposal',
+        generates: 'proposal.md',
+        requires: ['investigation'],
+      },
+      { id: 'specs', generates: 'specs/**/*.md', requires: ['proposal'] },
+      { id: 'design', generates: 'design.md', requires: ['proposal'] },
+      {
+        id: 'tasks',
+        generates: 'tasks.md',
+        requires: ['specs', 'design'],
+      },
+      { id: 'guard', generates: 'guard.json', requires: ['tasks'] },
+      { id: 'execution', generates: 'execution.json', requires: ['tasks'] },
+      {
+        id: 'plan-review',
+        generates: 'plan-review.json',
+        requires: ['guard', 'execution'],
+      },
+    ],
+  );
+
+  for (const artifact of [
+    'investigation.json',
+    'execution.json',
+    'plan-review.json',
+  ]) {
+    const template = fs.readFileSync(
+      contract.projectSchemaV2.files[`templates/${artifact}`]!.path,
+      'utf8',
+    );
+    assert.match(template, /pnpm workflow propose/);
+    assert.match(template, /engine-owned/i);
+    const parsed = JSON.parse(template);
+    if (artifact === 'investigation.json') {
+      assert.throws(
+        () => parseInvestigationArtifact(parsed, 'demo-change'),
+        (error) => isWorkflowError(error, 'INVALID_INVESTIGATION_ARTIFACT'),
+      );
+    } else if (artifact === 'execution.json') {
+      assert.throws(
+        () =>
+          parseExecutionArtifact(
+            parsed,
+            'demo-change',
+            [],
+            { schemaVersion: 1, changeId: 'demo-change', tasks: {} },
+            { schemaVersion: 1, checks: {} },
+            [],
+          ),
+        (error) => isWorkflowError(error, 'INVALID_EXECUTION_ARTIFACT'),
+      );
+    } else {
+      assert.throws(
+        () => parsePlanReviewArtifact(parsed, 'demo-change'),
+        (error) => isWorkflowError(error, 'INVALID_PLAN_REVIEW_ARTIFACT'),
+      );
+    }
+  }
+  assert.match(
+    fs.readFileSync(
+      contract.projectSchemaV2.files['templates/design.md']!.path,
+      'utf8',
+    ),
+    /<!-- workflow:investigation-ledger:start v1 -->[\s\S]*<!-- workflow:investigation-ledger:end v1 -->/,
+  );
+  const config = fs.readFileSync(
+    path.join(sourceRepositoryRoot, 'openspec/config.yaml'),
+    'utf8',
+  );
+  assert.deepEqual(
+    config.split('\n').filter((line) => line.startsWith('schema:')),
+    ['schema: expense-app'],
+  );
+  assert.doesNotMatch(config, /schema: expense-app-v2/);
+  assert.equal(
+    fs.existsSync(
+      path.join(
+        sourceRepositoryRoot,
+        'workflow/schemas/investigation-planning-v1.schema.json',
+      ),
+    ),
+    false,
+  );
 });
 
 test('schema contract rejects digest, graph, file-set, mode, and symlink drift', () => {
@@ -124,6 +236,41 @@ test('schema contract rejects digest, graph, file-set, mode, and symlink drift',
         fs
           .readFileSync(configPath, 'utf8')
           .replace('schema: expense-app', 'schema: spec-driven'),
+      );
+    },
+    (repository) => {
+      const schemaPath = path.join(
+        repository,
+        'openspec/schemas/expense-app-v2/schema.yaml',
+      );
+      fs.writeFileSync(
+        schemaPath,
+        fs
+          .readFileSync(schemaPath, 'utf8')
+          .replace('tracks: tasks.md', 'tracks: execution.json'),
+      );
+    },
+    (repository) => {
+      fs.writeFileSync(
+        path.join(repository, 'openspec/schemas/expense-app-v2/unreviewed.txt'),
+        'unexpected\n',
+      );
+    },
+    (repository) => {
+      fs.appendFileSync(
+        path.join(
+          repository,
+          'openspec/schemas/expense-app-v2/templates/investigation.json',
+        ),
+        '\n',
+      );
+    },
+    (repository) => {
+      fs.rmSync(
+        path.join(
+          repository,
+          'openspec/schemas/expense-app-v2/templates/plan-review.json',
+        ),
       );
     },
   ];
@@ -230,6 +377,116 @@ test('schema status validation uses the explicit schema graph, not the configure
         (error) => isWorkflowError(error, 'OPENSPEC_PAYLOAD_INVALID'),
       );
     }
+  } finally {
+    fs.rmSync(repository, { recursive: true, force: true });
+  }
+});
+
+test('v2 status and instructions use the exact investigation-first graph', () => {
+  const repository = fs.realpathSync(
+    fs.mkdtempSync(path.join(os.tmpdir(), 'workflow-schema-v2-status-')),
+  );
+  const changeRoot = path.join(repository, 'openspec/changes/example-change');
+  fs.mkdirSync(path.join(changeRoot, 'specs/example'), { recursive: true });
+  for (const file of [
+    'investigation.json',
+    'proposal.md',
+    'design.md',
+    'tasks.md',
+    'guard.json',
+    'execution.json',
+    'plan-review.json',
+    'specs/example/spec.md',
+  ]) {
+    fs.writeFileSync(path.join(changeRoot, file), `${file}\n`);
+  }
+  try {
+    const status = parseStatus(
+      completeV2StatusPayload(repository, changeRoot),
+      {
+        repositoryRoot: repository,
+        changeId: 'example-change',
+        schemaName: 'expense-app-v2',
+      },
+    );
+    assert.deepEqual(status.applyRequires, [
+      'investigation',
+      'tasks',
+      'guard',
+      'execution',
+      'plan-review',
+    ]);
+    assert.deepEqual(status.artifactIds, [
+      'investigation',
+      'proposal',
+      'specs',
+      'design',
+      'tasks',
+      'guard',
+      'execution',
+      'plan-review',
+    ]);
+
+    const instruction = parseInstructions(
+      {
+        changeName: 'example-change',
+        artifactId: 'plan-review',
+        schemaName: 'expense-app-v2',
+        changeDir: changeRoot,
+        planningHome: {
+          kind: 'repo',
+          root: repository,
+          changesDir: path.join(repository, 'openspec/changes'),
+          defaultSchema: 'expense-app',
+        },
+        outputPath: 'plan-review.json',
+        resolvedOutputPath: path.join(changeRoot, 'plan-review.json'),
+        existingOutputPaths: [path.join(changeRoot, 'plan-review.json')],
+        instruction: 'Return to the workflow engine.',
+        template: '{"kind":"workflow-propose-required"}\n',
+        dependencies: [
+          {
+            id: 'guard',
+            done: true,
+            path: 'guard.json',
+            description: 'Guard',
+          },
+          {
+            id: 'execution',
+            done: true,
+            path: 'execution.json',
+            description: 'Execution',
+          },
+        ],
+        unlocks: [],
+        root: { path: repository, source: 'nearest' },
+      },
+      {
+        repositoryRoot: repository,
+        changeId: 'example-change',
+        schemaName: 'expense-app-v2',
+        artifactId: 'plan-review',
+      },
+    );
+    assert.equal(instruction.outputPath, 'plan-review.json');
+
+    const reordered = completeV2StatusPayload(repository, changeRoot);
+    reordered.applyRequires = [
+      'tasks',
+      'investigation',
+      'guard',
+      'execution',
+      'plan-review',
+    ];
+    assert.throws(
+      () =>
+        parseStatus(reordered, {
+          repositoryRoot: repository,
+          changeId: 'example-change',
+          schemaName: 'expense-app-v2',
+        }),
+      (error) => isWorkflowError(error, 'OPENSPEC_PAYLOAD_INVALID'),
+    );
   } finally {
     fs.rmSync(repository, { recursive: true, force: true });
   }
@@ -361,6 +618,74 @@ function completeStatusPayload(repository: string, changeRoot: string) {
   };
 }
 
+function completeV2StatusPayload(repository: string, changeRoot: string) {
+  const outputs = {
+    investigation: 'investigation.json',
+    proposal: 'proposal.md',
+    specs: 'specs/**/*.md',
+    design: 'design.md',
+    tasks: 'tasks.md',
+    guard: 'guard.json',
+    execution: 'execution.json',
+    'plan-review': 'plan-review.json',
+  } as const;
+  const artifactIds = [
+    'investigation',
+    'proposal',
+    'specs',
+    'design',
+    'tasks',
+    'guard',
+    'execution',
+    'plan-review',
+  ] as const;
+  const existing = {
+    investigation: [path.join(changeRoot, 'investigation.json')],
+    proposal: [path.join(changeRoot, 'proposal.md')],
+    specs: [path.join(changeRoot, 'specs/example/spec.md')],
+    design: [path.join(changeRoot, 'design.md')],
+    tasks: [path.join(changeRoot, 'tasks.md')],
+    guard: [path.join(changeRoot, 'guard.json')],
+    execution: [path.join(changeRoot, 'execution.json')],
+    'plan-review': [path.join(changeRoot, 'plan-review.json')],
+  };
+  return {
+    changeName: 'example-change',
+    schemaName: 'expense-app-v2',
+    changeRoot,
+    planningHome: {
+      kind: 'repo',
+      root: repository,
+      changesDir: path.join(repository, 'openspec/changes'),
+      defaultSchema: 'expense-app',
+    },
+    artifactPaths: Object.fromEntries(
+      artifactIds.map((id) => [
+        id,
+        {
+          outputPath: outputs[id],
+          resolvedOutputPath: path.join(changeRoot, outputs[id]),
+          existingOutputPaths: existing[id],
+        },
+      ]),
+    ),
+    artifacts: artifactIds.map((id) => ({
+      id,
+      outputPath: outputs[id],
+      status: 'done' as const,
+    })),
+    applyRequires: [
+      'investigation',
+      'tasks',
+      'guard',
+      'execution',
+      'plan-review',
+    ],
+    isComplete: true,
+    root: { path: repository, source: 'nearest' },
+  };
+}
+
 function createSchemaFixture(): string {
   const repository = fs.realpathSync(
     fs.mkdtempSync(path.join(os.tmpdir(), 'workflow-schema-contract-')),
@@ -386,6 +711,11 @@ function createSchemaFixture(): string {
   fs.cpSync(
     path.join(sourceRepositoryRoot, 'openspec/schemas/expense-app'),
     path.join(repository, 'openspec/schemas/expense-app'),
+    { recursive: true },
+  );
+  fs.cpSync(
+    path.join(sourceRepositoryRoot, 'openspec/schemas/expense-app-v2'),
+    path.join(repository, 'openspec/schemas/expense-app-v2'),
     { recursive: true },
   );
   fs.writeFileSync(

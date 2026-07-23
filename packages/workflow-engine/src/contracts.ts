@@ -2,13 +2,26 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 
+import { canonicalJson } from './canonical-json.ts';
 import { ExitCode, workflowError } from './errors.ts';
 import { workflowContractArtifactPaths } from './contract-artifacts.ts';
 import { isRecord, isStringArray } from './contract-values.ts';
 import {
+  assertStoredEvidenceNode,
+  type EvidenceNode,
+} from './evidence-node.ts';
+import { validateClosedEvidenceDag } from './evidence-currentness.ts';
+import {
+  createConvergenceRecord,
+  createDescendantReuseProof,
+  readConvergenceBinding,
+  readReuseProofBinding,
+} from './evidence-convergence.ts';
+import {
   assertChangeId,
   assertPolicyPathInsideRepository,
   assertTaskId,
+  matchesAllowedPath,
   normalizePolicyPath,
 } from './paths.ts';
 
@@ -64,13 +77,107 @@ export type ParsedTask = {
   title: string;
 };
 
+export type ManagedSchemaName = 'expense-app' | 'expense-app-v2';
+export type ChangeSchemaName = 'spec-driven' | ManagedSchemaName;
+
+export type EvidenceArtifactBundle = {
+  schemaVersion: 1;
+  kind: 'investigation-artifact' | 'plan-review-artifact';
+  changeId: string;
+  nodes: EvidenceNode[];
+  currentRefs: Record<string, string>;
+};
+
+export type InvestigationArtifact = EvidenceArtifactBundle & {
+  kind: 'investigation-artifact';
+  legacyMigration: boolean;
+};
+
+export type PlanReviewArtifact = EvidenceArtifactBundle & {
+  kind: 'plan-review-artifact';
+};
+
+type ExecutionCommon = {
+  allowedPaths: string[];
+  requiredChecks: string[];
+  diffReview: 'required' | 'policy-required';
+};
+
+export type BehaviorContractRef = {
+  specPath: string;
+  requirement: string;
+  scenario: string | null;
+};
+
+export type CrossAgentTddExecution = ExecutionCommon & {
+  strategy: 'cross-agent-tdd';
+  enforcement: 'planned';
+  behaviorContractRefs: BehaviorContractRef[];
+  testPathScopes: string[];
+  fixturePathScopes: string[];
+  implementationPathScopes: string[];
+  redCheck: string;
+  greenChecks: string[];
+  requiredImplementerIndependence: 'provider-independent';
+};
+
+export type TransformationTerm = {
+  kind: 'path' | 'content' | 'symbol' | 'config';
+  value: string;
+};
+
+export type TransformationContract = {
+  rule: string;
+  examples: Array<{ before: string; after: string }>;
+  fileScopes: string[];
+  oldTerms: TransformationTerm[];
+  replacementTerms: TransformationTerm[];
+  redInapplicableReason: string;
+};
+
+export type MechanicalTransformExecution = ExecutionCommon & {
+  strategy: 'mechanical-transform';
+  enforcement: 'planned';
+  transformationContract: TransformationContract;
+};
+
+export type DirectReviewedExecution = ExecutionCommon & {
+  strategy: 'direct-reviewed';
+  enforcement: 'available' | 'planned';
+  exemptionKind:
+    | 'documentation-only'
+    | 'formatting-only'
+    | 'dependency-only'
+    | 'narrowly-scoped-non-behavioral'
+    | 'legacy-bootstrap';
+  exemptionReason: string;
+  legacyBootstrap: null | 'establish-investigation-first-planning';
+};
+
+export type ExecutionTask =
+  | CrossAgentTddExecution
+  | MechanicalTransformExecution
+  | DirectReviewedExecution;
+
+export type ExecutionArtifact = {
+  schemaVersion: 1;
+  kind: 'execution-artifact';
+  changeId: string;
+  tasks: Record<string, ExecutionTask>;
+};
+
 export type ChangeContract = {
   changeId: string;
   changeDirectory: string;
+  schemaName: ChangeSchemaName;
   config: WorkflowConfig;
   checks: ChecksConfig;
   guard: GuardContract;
   tasks: ParsedTask[];
+  behaviorContracts: BehaviorContractRef[];
+  investigation?: InvestigationArtifact;
+  execution?: ExecutionArtifact;
+  planReview?: PlanReviewArtifact;
   artifactPaths: string[];
   artifactDigests: Record<string, string>;
 };
@@ -227,10 +334,19 @@ function isPackageSegment(value: string): boolean {
 }
 
 export function loadChangeContract(
-  repositoryRoot: string,
+  repositoryRootInput: string,
   requestedChangeId: string,
+  expectedSchemaName?: ChangeSchemaName,
 ): ChangeContract {
+  const repositoryRoot = path.resolve(repositoryRootInput);
   const changeId = assertChangeId(requestedChangeId);
+  if (changeId === 'archive') {
+    throw workflowError(
+      'PLANNING_CHANGE_ID_RESERVED',
+      'The OpenSpec archive container cannot be used as an active change ID.',
+      ExitCode.guard,
+    );
+  }
   const config = loadWorkflowConfig(repositoryRoot);
   const checks = loadChecksConfig(repositoryRoot);
   const changeDirectory = path.join(
@@ -238,12 +354,33 @@ export function loadChangeContract(
     config.changeRoot,
     changeId,
   );
+  const metadataPath = path.join(changeDirectory, '.openspec.yaml');
+  const schemaName = readChangeSchemaName(repositoryRoot, metadataPath);
+  if (expectedSchemaName && schemaName !== expectedSchemaName) {
+    throw workflowError(
+      'OPENSPEC_CHANGE_STATE_CHANGED',
+      'Managed change schema selection changed while the contract was loaded.',
+      ExitCode.staleState,
+    );
+  }
   const proposalPath = path.join(changeDirectory, 'proposal.md');
   const designPath = path.join(changeDirectory, 'design.md');
   const tasksPath = path.join(changeDirectory, 'tasks.md');
   const guardPath = path.join(changeDirectory, 'guard.json');
+  const investigationPath = path.join(changeDirectory, 'investigation.json');
+  const executionPath = path.join(changeDirectory, 'execution.json');
+  const planReviewPath = path.join(changeDirectory, 'plan-review.json');
 
-  for (const requiredPath of [proposalPath, designPath, tasksPath, guardPath]) {
+  const requiredPaths = [
+    proposalPath,
+    designPath,
+    tasksPath,
+    guardPath,
+    ...(schemaName === 'expense-app-v2'
+      ? [investigationPath, executionPath, planReviewPath]
+      : []),
+  ];
+  for (const requiredPath of requiredPaths) {
     if (!fs.statSync(requiredPath, { throwIfNoEntry: false })?.isFile()) {
       throw invalidContract(
         'MISSING_CHANGE_ARTIFACT',
@@ -261,6 +398,7 @@ export function loadChangeContract(
       path.join(changeDirectory, 'specs'),
     );
   }
+  const behaviorContracts = indexBehaviorContracts(changeDirectory, specPaths);
 
   const guard = parseGuardContract(guardPath, changeId);
   const tasks = parseTasks(fs.readFileSync(tasksPath, 'utf8'));
@@ -297,11 +435,51 @@ export function loadChangeContract(
     );
   }
 
+  const investigation =
+    schemaName === 'expense-app-v2'
+      ? parseInvestigationArtifact(
+          readCanonicalJson(
+            investigationPath,
+            'investigation artifact',
+            'INVALID_INVESTIGATION_ARTIFACT',
+          ),
+          changeId,
+        )
+      : undefined;
+  const execution =
+    schemaName === 'expense-app-v2'
+      ? parseExecutionArtifact(
+          readCanonicalJson(
+            executionPath,
+            'execution artifact',
+            'INVALID_EXECUTION_ARTIFACT',
+          ),
+          changeId,
+          tasks,
+          guard,
+          checks,
+          behaviorContracts,
+        )
+      : undefined;
+  const planReview =
+    schemaName === 'expense-app-v2'
+      ? parsePlanReviewArtifact(
+          readCanonicalJson(
+            planReviewPath,
+            'plan review artifact',
+            'INVALID_PLAN_REVIEW_ARTIFACT',
+          ),
+          changeId,
+        )
+      : undefined;
   const artifactPaths = [
     proposalPath,
     designPath,
     tasksPath,
     guardPath,
+    ...(schemaName === 'expense-app-v2'
+      ? [investigationPath, executionPath, planReviewPath]
+      : []),
     ...specPaths,
     ...workflowContractArtifactPaths(repositoryRoot),
   ];
@@ -309,13 +487,483 @@ export function loadChangeContract(
   return {
     changeId,
     changeDirectory,
+    schemaName,
     config,
     checks,
     guard,
     tasks,
+    behaviorContracts,
+    ...(investigation ? { investigation } : {}),
+    ...(execution ? { execution } : {}),
+    ...(planReview ? { planReview } : {}),
     artifactPaths,
     artifactDigests: digestArtifacts(repositoryRoot, artifactPaths),
   };
+}
+
+export function readManagedSchemaName(
+  repositoryRoot: string,
+  metadataPath: string,
+): ManagedSchemaName {
+  const schemaName = readChangeSchemaName(repositoryRoot, metadataPath);
+  if (schemaName === 'spec-driven') {
+    throw workflowError(
+      'OPENSPEC_MANAGED_SCHEMA_REQUIRED',
+      'Managed changes must declare a reviewed expense-app schema.',
+      ExitCode.verification,
+    );
+  }
+  return schemaName;
+}
+
+export function readChangeSchemaName(
+  repositoryRoot: string,
+  metadataPath: string,
+): ChangeSchemaName {
+  let descriptor: number | undefined;
+  let content: Buffer;
+  try {
+    const repository = canonicalRepositoryRoot(repositoryRoot);
+    const absolutePath = path.resolve(metadataPath);
+    const artifactRelativePath = repositoryRelativePath(
+      repository,
+      absolutePath,
+    );
+    if (!artifactRelativePath) {
+      throw new Error('metadata path escapes the repository');
+    }
+    const before = fs.lstatSync(absolutePath, { bigint: true });
+    if (
+      !before.isFile() ||
+      before.isSymbolicLink() ||
+      fs.realpathSync(absolutePath) !==
+        path.join(repository.canonicalRoot, artifactRelativePath) ||
+      logicalGitFileMode(before.mode) !== '100644'
+    ) {
+      throw new Error('unsafe metadata');
+    }
+    descriptor = fs.openSync(
+      absolutePath,
+      fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW,
+    );
+    const opened = fs.fstatSync(descriptor, { bigint: true });
+    if (!opened.isFile() || !sameArtifactIdentity(before, opened)) {
+      throw new Error('metadata identity changed before reading');
+    }
+    content = fs.readFileSync(descriptor);
+    const after = fs.fstatSync(descriptor, { bigint: true });
+    const pathAfter = fs.lstatSync(absolutePath, { bigint: true });
+    if (
+      !sameArtifactIdentity(opened, after) ||
+      !sameArtifactIdentity(before, pathAfter) ||
+      fs.realpathSync(absolutePath) !==
+        path.join(repository.canonicalRoot, artifactRelativePath)
+    ) {
+      throw new Error('metadata identity changed while reading');
+    }
+  } catch {
+    throw unsafeManagedMetadata();
+  } finally {
+    if (descriptor !== undefined) {
+      fs.closeSync(descriptor);
+    }
+  }
+  let text: string;
+  try {
+    text = new TextDecoder('utf-8', { fatal: true }).decode(content);
+  } catch {
+    throw invalidMetadata();
+  }
+  if (text.startsWith('\uFEFF') || text.includes('\0') || text.includes('\r')) {
+    throw invalidMetadata();
+  }
+  if (text === 'schema: spec-driven\n') {
+    return 'spec-driven';
+  }
+  const lines = text.endsWith('\n') ? text.slice(0, -1).split('\n') : [];
+  const fields = new Map<string, string>();
+  for (const line of lines) {
+    const match = /^([a-z][a-z0-9-]*): ([^\s].*)$/.exec(line);
+    if (!match || fields.has(match[1])) {
+      throw invalidMetadata();
+    }
+    fields.set(match[1], match[2]);
+  }
+  if (
+    fields.size !== 2 ||
+    !fields.has('schema') ||
+    !fields.has('created') ||
+    !isCanonicalDate(fields.get('created') ?? '')
+  ) {
+    throw invalidMetadata();
+  }
+  const schemaName = fields.get('schema');
+  if (
+    schemaName !== 'spec-driven' &&
+    schemaName !== 'expense-app' &&
+    schemaName !== 'expense-app-v2'
+  ) {
+    throw workflowError(
+      'OPENSPEC_MANAGED_SCHEMA_REQUIRED',
+      'Managed changes must declare a reviewed expense-app schema.',
+      ExitCode.verification,
+    );
+  }
+  return schemaName;
+}
+
+export function parseInvestigationArtifact(
+  value: unknown,
+  expectedChangeId: string,
+): InvestigationArtifact {
+  const artifact = parseEvidenceArtifactBundle(
+    value,
+    expectedChangeId,
+    'investigation-artifact',
+    'INVALID_INVESTIGATION_ARTIFACT',
+    [
+      'changeId',
+      'currentRefs',
+      'kind',
+      'legacyMigration',
+      'nodes',
+      'schemaVersion',
+    ],
+  );
+  if (
+    !isRecord(value) ||
+    typeof value.legacyMigration !== 'boolean' ||
+    (value.legacyMigration &&
+      expectedChangeId !== 'establish-investigation-first-planning')
+  ) {
+    throw artifactInvalid(
+      'INVALID_INVESTIGATION_ARTIFACT',
+      'investigation.json does not match schema version 1.',
+    );
+  }
+  return {
+    ...artifact,
+    kind: 'investigation-artifact',
+    legacyMigration: value.legacyMigration,
+  };
+}
+
+export function parsePlanReviewArtifact(
+  value: unknown,
+  expectedChangeId: string,
+): PlanReviewArtifact {
+  const artifact = parseEvidenceArtifactBundle(
+    value,
+    expectedChangeId,
+    'plan-review-artifact',
+    'INVALID_PLAN_REVIEW_ARTIFACT',
+    ['changeId', 'currentRefs', 'kind', 'nodes', 'schemaVersion'],
+  );
+  return { ...artifact, kind: 'plan-review-artifact' };
+}
+
+export function parseExecutionArtifact(
+  value: unknown,
+  expectedChangeId: string,
+  tasks: ParsedTask[],
+  guard: GuardContract,
+  checks: ChecksConfig,
+  behaviorContracts: BehaviorContractRef[],
+): ExecutionArtifact {
+  const invalid = () =>
+    artifactInvalid(
+      'INVALID_EXECUTION_ARTIFACT',
+      'execution.json does not match schema version 1.',
+    );
+  if (
+    !isRecord(value) ||
+    !hasExactKeys(value, ['changeId', 'kind', 'schemaVersion', 'tasks']) ||
+    value.schemaVersion !== 1 ||
+    value.kind !== 'execution-artifact' ||
+    value.changeId !== expectedChangeId ||
+    !isRecord(value.tasks) ||
+    Object.keys(value.tasks).length === 0
+  ) {
+    throw invalid();
+  }
+  const expectedTaskIds = tasks.map(({ id }) => id);
+  const executionTaskIds = Object.keys(value.tasks);
+  if (
+    !sameMembers(executionTaskIds, expectedTaskIds) ||
+    !sameMembers(executionTaskIds, Object.keys(guard.tasks))
+  ) {
+    throw invalid();
+  }
+
+  const parsedTasks: Record<string, ExecutionTask> = {};
+  for (const taskId of expectedTaskIds) {
+    const policy = guard.tasks[taskId];
+    const task = tasks.find(({ id }) => id === taskId);
+    const candidate = value.tasks[taskId];
+    if (!policy || !task || !isRecord(candidate)) {
+      throw invalid();
+    }
+    const commonKeys = [
+      'allowedPaths',
+      'diffReview',
+      'enforcement',
+      'requiredChecks',
+      'strategy',
+    ];
+    if (
+      !isStringArray(candidate.allowedPaths) ||
+      !isStringArray(candidate.requiredChecks) ||
+      JSON.stringify(candidate.allowedPaths) !==
+        JSON.stringify(policy.allowedPaths) ||
+      JSON.stringify(candidate.requiredChecks) !==
+        JSON.stringify(policy.requiredChecks) ||
+      (candidate.enforcement !== 'available' &&
+        candidate.enforcement !== 'planned') ||
+      (candidate.diffReview !== 'required' &&
+        candidate.diffReview !== 'policy-required') ||
+      candidate.requiredChecks.some(
+        (checkId) => !Object.hasOwn(checks.checks, checkId),
+      )
+    ) {
+      throw invalid();
+    }
+
+    if (candidate.strategy === 'cross-agent-tdd') {
+      if (
+        !hasExactKeys(candidate, [
+          ...commonKeys,
+          'behaviorContractRefs',
+          'fixturePathScopes',
+          'greenChecks',
+          'implementationPathScopes',
+          'redCheck',
+          'requiredImplementerIndependence',
+          'testPathScopes',
+        ]) ||
+        !areResolvedBehaviorContractRefs(
+          candidate.behaviorContractRefs,
+          behaviorContracts,
+        ) ||
+        !isScopePartition(
+          candidate.testPathScopes,
+          policy.allowedPaths,
+          true,
+        ) ||
+        !isScopePartition(candidate.fixturePathScopes, policy.allowedPaths) ||
+        !isScopePartition(
+          candidate.implementationPathScopes,
+          policy.allowedPaths,
+          true,
+        ) ||
+        !implementationScopesAreDisjoint(
+          candidate.implementationPathScopes,
+          candidate.testPathScopes,
+          candidate.fixturePathScopes,
+        ) ||
+        typeof candidate.redCheck !== 'string' ||
+        !isStringArray(candidate.greenChecks) ||
+        JSON.stringify(candidate.greenChecks) !==
+          JSON.stringify(policy.requiredChecks) ||
+        !candidate.greenChecks.includes(candidate.redCheck) ||
+        candidate.enforcement !== 'planned' ||
+        candidate.requiredImplementerIndependence !== 'provider-independent'
+      ) {
+        throw invalid();
+      }
+      parsedTasks[taskId] = candidate as CrossAgentTddExecution;
+      continue;
+    }
+
+    if (candidate.strategy === 'mechanical-transform') {
+      if (
+        !hasExactKeys(candidate, [...commonKeys, 'transformationContract']) ||
+        candidate.enforcement !== 'planned' ||
+        !isTransformationContract(
+          candidate.transformationContract,
+          policy.allowedPaths,
+        )
+      ) {
+        throw invalid();
+      }
+      parsedTasks[taskId] = candidate as MechanicalTransformExecution;
+      continue;
+    }
+
+    if (candidate.strategy === 'direct-reviewed') {
+      if (
+        !hasExactKeys(candidate, [
+          ...commonKeys,
+          'exemptionKind',
+          'exemptionReason',
+          'legacyBootstrap',
+        ]) ||
+        ![
+          'documentation-only',
+          'formatting-only',
+          'dependency-only',
+          'narrowly-scoped-non-behavioral',
+          'legacy-bootstrap',
+        ].includes(String(candidate.exemptionKind)) ||
+        !isSemanticText(candidate.exemptionReason)
+      ) {
+        throw invalid();
+      }
+      const legacyBootstrap = candidate.legacyBootstrap;
+      if (
+        candidate.exemptionKind === 'legacy-bootstrap'
+          ? expectedChangeId !== 'establish-investigation-first-planning' ||
+            taskId !== '7.1' ||
+            legacyBootstrap !== 'establish-investigation-first-planning'
+          : legacyBootstrap !== null
+      ) {
+        throw invalid();
+      }
+      parsedTasks[taskId] = candidate as DirectReviewedExecution;
+      continue;
+    }
+    throw invalid();
+  }
+
+  return {
+    schemaVersion: 1,
+    kind: 'execution-artifact',
+    changeId: expectedChangeId,
+    tasks: parsedTasks,
+  };
+}
+
+function parseEvidenceArtifactBundle(
+  value: unknown,
+  expectedChangeId: string,
+  expectedKind: EvidenceArtifactBundle['kind'],
+  errorCode: 'INVALID_INVESTIGATION_ARTIFACT' | 'INVALID_PLAN_REVIEW_ARTIFACT',
+  exactKeys: string[],
+): EvidenceArtifactBundle {
+  const invalid = () =>
+    artifactInvalid(
+      errorCode,
+      `${expectedKind} does not match schema version 1.`,
+    );
+  if (
+    !isRecord(value) ||
+    !hasExactKeys(value, exactKeys) ||
+    value.schemaVersion !== 1 ||
+    value.kind !== expectedKind ||
+    value.changeId !== expectedChangeId ||
+    !Array.isArray(value.nodes) ||
+    value.nodes.length === 0 ||
+    !isRecord(value.currentRefs) ||
+    Object.keys(value.currentRefs).length === 0
+  ) {
+    throw invalid();
+  }
+  const nodes = value.nodes.map((node) =>
+    assertStoredEvidenceNode(node, invalid),
+  );
+  try {
+    validateEvidenceArtifactNodes(nodes);
+  } catch {
+    throw invalid();
+  }
+  const nodeIds = nodes.map(({ nodeId }) => nodeId);
+  if (
+    new Set(nodeIds).size !== nodeIds.length ||
+    JSON.stringify(nodeIds) !== JSON.stringify([...nodeIds].sort()) ||
+    nodes.some(({ runtimeMetadata }) => Object.keys(runtimeMetadata).length > 0)
+  ) {
+    throw invalid();
+  }
+  const nodeIdSet = new Set(nodeIds);
+  if (
+    nodes.some((node) =>
+      Object.values(node.provenanceParentNodeIds).some(
+        (parentNodeId) => !nodeIdSet.has(parentNodeId),
+      ),
+    )
+  ) {
+    throw invalid();
+  }
+  const currentRefs: Record<string, string> = {};
+  for (const [role, nodeId] of Object.entries(value.currentRefs)) {
+    if (
+      !/^[a-zA-Z0-9]+(?:[._:/-][a-zA-Z0-9]+)*$/.test(role) ||
+      typeof nodeId !== 'string' ||
+      !/^[0-9a-f]{64}$/.test(nodeId) ||
+      !nodeIdSet.has(nodeId)
+    ) {
+      throw invalid();
+    }
+    currentRefs[role] = nodeId;
+  }
+  return {
+    schemaVersion: 1,
+    kind: expectedKind,
+    changeId: expectedChangeId,
+    nodes,
+    currentRefs,
+  };
+}
+
+function validateEvidenceArtifactNodes(nodes: EvidenceNode[]): void {
+  const byId = new Map(nodes.map((node) => [node.nodeId, node]));
+  const ordinaryNodes = nodes.filter(
+    ({ type }) =>
+      type !== 'evidence-convergence' && type !== 'evidence-reuse-proof',
+  );
+  validateClosedEvidenceDag(ordinaryNodes);
+
+  for (const node of nodes.filter(
+    ({ type }) => type === 'evidence-convergence',
+  )) {
+    const binding = readConvergenceBinding(node);
+    const oldParent = binding ? byId.get(binding.oldParentNode) : undefined;
+    const newParent = binding ? byId.get(binding.newParentNode) : undefined;
+    if (!binding || !oldParent || !newParent) {
+      throw new Error('invalid convergence record');
+    }
+    const reconstructed = createConvergenceRecord({
+      oldParent,
+      newParent,
+      validatorVersion: binding.validatorVersion,
+      runtimeMetadata: {},
+    });
+    if (canonicalJson(reconstructed) !== canonicalJson(node)) {
+      throw new Error('invalid convergence record');
+    }
+  }
+
+  for (const node of nodes.filter(
+    ({ type }) => type === 'evidence-reuse-proof',
+  )) {
+    const binding = readReuseProofBinding(node);
+    const descendant = binding ? byId.get(binding.descendantNode) : undefined;
+    const oldParent = binding ? byId.get(binding.oldParentNode) : undefined;
+    const newParent = binding ? byId.get(binding.newParentNode) : undefined;
+    const convergenceRecord = binding
+      ? byId.get(binding.convergenceNode)
+      : undefined;
+    if (
+      !binding ||
+      !descendant ||
+      !oldParent ||
+      !newParent ||
+      !convergenceRecord
+    ) {
+      throw new Error('invalid descendant reuse proof');
+    }
+    const reconstructed = createDescendantReuseProof({
+      descendant,
+      parentRole: binding.parentRole,
+      oldParent,
+      newParent,
+      convergenceRecord,
+      validatorVersion: binding.validatorVersion,
+      runtimeMetadata: {},
+    });
+    if (canonicalJson(reconstructed) !== canonicalJson(node)) {
+      throw new Error('invalid descendant reuse proof');
+    }
+  }
 }
 
 export function parseTasks(markdown: string): ParsedTask[] {
@@ -641,6 +1289,331 @@ function listMarkdownFiles(directory: string): string[] {
     }
   }
   return files.sort();
+}
+
+function indexBehaviorContracts(
+  changeDirectory: string,
+  specPaths: string[],
+): BehaviorContractRef[] {
+  const refs: BehaviorContractRef[] = [];
+  for (const specPath of specPaths) {
+    const relativeSpecPath = relative(changeDirectory, specPath);
+    if (!isDeltaSpecReferencePath(relativeSpecPath)) {
+      continue;
+    }
+    const requirements = new Map<
+      string,
+      { count: number; scenarios: Map<string, number> }
+    >();
+    let currentRequirement:
+      { count: number; scenarios: Map<string, number> } | undefined;
+    for (const line of fs.readFileSync(specPath, 'utf8').split('\n')) {
+      const requirementMatch = /^### Requirement: (.+)$/.exec(line);
+      if (requirementMatch) {
+        const title = requirementMatch[1];
+        if (!isReferenceTitle(title)) {
+          currentRequirement = undefined;
+          continue;
+        }
+        currentRequirement = requirements.get(title) ?? {
+          count: 0,
+          scenarios: new Map<string, number>(),
+        };
+        currentRequirement.count += 1;
+        requirements.set(title, currentRequirement);
+        continue;
+      }
+      if (/^#{1,3}(?:\s|$)/.test(line)) {
+        currentRequirement = undefined;
+        continue;
+      }
+      const scenarioMatch = /^#### Scenario: (.+)$/.exec(line);
+      if (
+        !scenarioMatch ||
+        !currentRequirement ||
+        !isReferenceTitle(scenarioMatch[1])
+      ) {
+        continue;
+      }
+      const title = scenarioMatch[1];
+      currentRequirement.scenarios.set(
+        title,
+        (currentRequirement.scenarios.get(title) ?? 0) + 1,
+      );
+    }
+    for (const [requirement, entry] of requirements) {
+      if (entry.count !== 1) {
+        continue;
+      }
+      refs.push({ specPath: relativeSpecPath, requirement, scenario: null });
+      for (const [scenario, count] of entry.scenarios) {
+        if (count === 1) {
+          refs.push({ specPath: relativeSpecPath, requirement, scenario });
+        }
+      }
+    }
+  }
+  return refs.sort((left, right) =>
+    compareText(canonicalJson(left), canonicalJson(right)),
+  );
+}
+
+function readCanonicalJson(
+  filePath: string,
+  label: string,
+  errorCode:
+    | 'INVALID_INVESTIGATION_ARTIFACT'
+    | 'INVALID_EXECUTION_ARTIFACT'
+    | 'INVALID_PLAN_REVIEW_ARTIFACT',
+): unknown {
+  let text: string;
+  let value: unknown;
+  try {
+    text = new TextDecoder('utf-8', { fatal: true }).decode(
+      fs.readFileSync(filePath),
+    );
+    value = JSON.parse(text);
+    if (text !== `${canonicalJson(value)}\n`) {
+      throw new Error('noncanonical JSON');
+    }
+  } catch {
+    throw invalidContract(
+      errorCode,
+      `Unable to read canonical ${label}.`,
+      filePath,
+    );
+  }
+  return value;
+}
+
+function isScopePartition(
+  value: unknown,
+  allowedPaths: string[],
+  requireNonEmpty = false,
+): value is string[] {
+  return (
+    isStringArray(value) &&
+    (!requireNonEmpty || value.length > 0) &&
+    new Set(value).size === value.length &&
+    value.every((scope) => isPolicyScopeInside(scope, allowedPaths))
+  );
+}
+
+function implementationScopesAreDisjoint(
+  implementationScopes: string[],
+  testScopes: string[],
+  fixtureScopes: string[],
+): boolean {
+  return implementationScopes.every((implementationScope) =>
+    [...testScopes, ...fixtureScopes].every(
+      (redScope) => !policyScopesOverlap(implementationScope, redScope),
+    ),
+  );
+}
+
+function policyScopesOverlap(left: string, right: string): boolean {
+  try {
+    const normalizedLeft = normalizePolicyPath(left);
+    const normalizedRight = normalizePolicyPath(right);
+    const leftPrefix = normalizedLeft.endsWith('/**');
+    const rightPrefix = normalizedRight.endsWith('/**');
+    if (!leftPrefix && !rightPrefix) {
+      return normalizedLeft === normalizedRight;
+    }
+    if (!leftPrefix) {
+      return matchesAllowedPath(normalizedLeft, normalizedRight);
+    }
+    if (!rightPrefix) {
+      return matchesAllowedPath(normalizedRight, normalizedLeft);
+    }
+    return (
+      matchesAllowedPath(normalizedLeft.slice(0, -3), normalizedRight) ||
+      matchesAllowedPath(normalizedRight.slice(0, -3), normalizedLeft)
+    );
+  } catch {
+    return true;
+  }
+}
+
+function isPolicyScopeInside(scope: string, allowedPaths: string[]): boolean {
+  try {
+    const normalizedScope = normalizePolicyPath(scope);
+    if (!normalizedScope.endsWith('/**')) {
+      return allowedPaths.some((allowedPath) =>
+        matchesAllowedPath(normalizedScope, allowedPath),
+      );
+    }
+    const scopeBase = normalizedScope.slice(0, -3);
+    return allowedPaths.some((allowedPath) => {
+      const normalizedAllowed = normalizePolicyPath(allowedPath);
+      return (
+        normalizedAllowed.endsWith('/**') &&
+        matchesAllowedPath(scopeBase, normalizedAllowed)
+      );
+    });
+  } catch {
+    return false;
+  }
+}
+
+function isTransformationContract(
+  value: unknown,
+  allowedPaths: string[],
+): value is TransformationContract {
+  if (
+    !isRecord(value) ||
+    !hasExactKeys(value, [
+      'examples',
+      'fileScopes',
+      'oldTerms',
+      'redInapplicableReason',
+      'replacementTerms',
+      'rule',
+    ]) ||
+    !isSemanticText(value.rule) ||
+    !isSemanticText(value.redInapplicableReason) ||
+    !isScopePartition(value.fileScopes, allowedPaths, true) ||
+    !Array.isArray(value.examples) ||
+    value.examples.length === 0 ||
+    !Array.isArray(value.oldTerms) ||
+    value.oldTerms.length === 0 ||
+    !Array.isArray(value.replacementTerms)
+  ) {
+    return false;
+  }
+  const examplesValid = value.examples.every(
+    (example) =>
+      isRecord(example) &&
+      hasExactKeys(example, ['after', 'before']) &&
+      isSemanticText(example.before) &&
+      isSemanticText(example.after) &&
+      example.before !== example.after,
+  );
+  const terms = [...value.oldTerms, ...value.replacementTerms];
+  if (!examplesValid || !terms.every(isTransformationTerm)) {
+    return false;
+  }
+  const oldTermKeys = new Set(
+    value.oldTerms.map((term) => canonicalJson(term)),
+  );
+  const replacementTermKeys = new Set(
+    value.replacementTerms.map((term) => canonicalJson(term)),
+  );
+  if (
+    new Set(value.examples.map((example) => canonicalJson(example))).size !==
+      value.examples.length ||
+    oldTermKeys.size !== value.oldTerms.length ||
+    replacementTermKeys.size !== value.replacementTerms.length ||
+    [...oldTermKeys].some((term) => replacementTermKeys.has(term))
+  ) {
+    return false;
+  }
+  return true;
+}
+
+function isTransformationTerm(value: unknown): value is TransformationTerm {
+  return (
+    isRecord(value) &&
+    hasExactKeys(value, ['kind', 'value']) &&
+    ['path', 'content', 'symbol', 'config'].includes(String(value.kind)) &&
+    isReferenceTitle(value.value)
+  );
+}
+
+function areResolvedBehaviorContractRefs(
+  value: unknown,
+  availableRefs: BehaviorContractRef[],
+): value is BehaviorContractRef[] {
+  if (!Array.isArray(value) || value.length === 0) {
+    return false;
+  }
+  const available = new Set(availableRefs.map((ref) => canonicalJson(ref)));
+  const seen = new Set<string>();
+  for (const candidate of value) {
+    if (
+      !isRecord(candidate) ||
+      !hasExactKeys(candidate, ['requirement', 'scenario', 'specPath']) ||
+      typeof candidate.specPath !== 'string' ||
+      !isDeltaSpecReferencePath(candidate.specPath) ||
+      !isReferenceTitle(candidate.requirement) ||
+      (candidate.scenario !== null && !isReferenceTitle(candidate.scenario))
+    ) {
+      return false;
+    }
+    const key = canonicalJson(candidate);
+    if (seen.has(key) || !available.has(key)) {
+      return false;
+    }
+    seen.add(key);
+  }
+  return true;
+}
+
+function isDeltaSpecReferencePath(value: string): boolean {
+  return /^specs\/[a-z0-9]+(?:-[a-z0-9]+)*(?:\/[a-z0-9]+(?:-[a-z0-9]+)*)*\/spec\.md$/.test(
+    value,
+  );
+}
+
+function isReferenceTitle(value: unknown): value is string {
+  return (
+    isSemanticText(value) &&
+    ![...value].some((character) => {
+      const codePoint = character.codePointAt(0) ?? 0;
+      return codePoint <= 31 || (codePoint >= 127 && codePoint <= 159);
+    })
+  );
+}
+
+function isSemanticText(value: unknown): value is string {
+  if (typeof value !== 'string' || value.trim() !== value || !value) {
+    return false;
+  }
+  const normalized = value.toLowerCase();
+  return (
+    !normalized.includes('<!--') &&
+    !normalized.includes('<todo>') &&
+    !normalized.includes('<placeholder>') &&
+    normalized !== 'todo' &&
+    normalized !== 'tbd'
+  );
+}
+
+function sameMembers(left: string[], right: string[]): boolean {
+  return (
+    left.length === right.length && left.every((value) => right.includes(value))
+  );
+}
+
+function isCanonicalDate(value: string): boolean {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    return false;
+  }
+  const milliseconds = Date.parse(`${value}T00:00:00.000Z`);
+  return (
+    !Number.isNaN(milliseconds) &&
+    new Date(milliseconds).toISOString().slice(0, 10) === value
+  );
+}
+
+function invalidMetadata() {
+  return workflowError(
+    'OPENSPEC_CHANGE_METADATA_INVALID',
+    'Managed change metadata must contain one reviewed schema and canonical created date.',
+    ExitCode.guard,
+  );
+}
+
+function unsafeManagedMetadata() {
+  return workflowError(
+    'OPENSPEC_CHANGE_TREE_UNSAFE',
+    'Managed change metadata must be a canonical non-executable repository file.',
+    ExitCode.unsafeEnvironment,
+  );
+}
+
+function artifactInvalid(code: string, message: string) {
+  return workflowError(code, message, ExitCode.guard);
 }
 
 function readJson(filePath: string, label: string): unknown {

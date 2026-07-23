@@ -237,7 +237,7 @@ export function parseStatus(
       throw invalidPayload();
     }
     const missingDependencies = hasMissingDependencies
-      ? identifierArray(artifact.missingDeps)
+      ? identifierArray(artifact.missingDeps).sort()
       : [];
     if (
       (status === 'blocked' && missingDependencies.length === 0) ||
@@ -279,9 +279,12 @@ export function parseStatus(
     const expectedArtifact = graph.artifacts.find(
       ({ id }) => id === artifact.id,
     )!;
-    const expectedMissing = expectedArtifact.requires.filter(
-      (id) => statusById.get(id)?.status !== 'done',
-    );
+    const expectedMissing =
+      artifact.status === 'done'
+        ? []
+        : expectedArtifact.requires
+            .filter((id) => statusById.get(id)?.status !== 'done')
+            .sort();
     const expectedStatus =
       artifact.status === 'done'
         ? 'done'

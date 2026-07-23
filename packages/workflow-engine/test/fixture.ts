@@ -3,6 +3,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
+import { canonicalJson } from '../src/canonical-json.ts';
+import { createEvidenceNode } from '../src/evidence-node.ts';
 import { WorkflowError } from '../src/errors.ts';
 import { generateOpenSpecPlanningAssets } from '../src/openspec-planning-assets.ts';
 
@@ -77,7 +79,21 @@ export function createFixtureRepository(): string {
   );
   fs.writeFileSync(
     path.join(changeDirectory, 'specs/demo/spec.md'),
-    '# Delta\n\n## ADDED Requirements\n',
+    [
+      '# Delta',
+      '',
+      '## ADDED Requirements',
+      '',
+      '### Requirement: Demo behavior',
+      '',
+      'The system SHALL provide the demo behavior.',
+      '',
+      '#### Scenario: Demo succeeds',
+      '',
+      '- **WHEN** the demo is exercised',
+      '- **THEN** the behavior succeeds',
+      '',
+    ].join('\n'),
   );
   writeJson(path.join(changeDirectory, 'guard.json'), {
     schemaVersion: 1,
@@ -97,6 +113,96 @@ export function createFixtureRepository(): string {
   git(repository, ['commit', '-m', 'Create fixture']);
   syncOriginMain(repository);
   return repository;
+}
+
+export function writeV2ChangeArtifacts(
+  repository: string,
+  changeId = 'demo-change',
+) {
+  const changeDirectory = path.join(repository, 'openspec/changes', changeId);
+  fs.writeFileSync(
+    path.join(changeDirectory, '.openspec.yaml'),
+    'schema: expense-app-v2\ncreated: 2026-07-15\n',
+  );
+  const investigationNode = createEvidenceNode({
+    type: 'fixture-investigation',
+    nodeSchema: 'fixture.investigation.v1',
+    evaluator: 'fixture.investigation.v1',
+    policyDigest: '1'.repeat(64),
+    exactInputDigests: { intent: '2'.repeat(64) },
+    semanticParentResultDigests: {},
+    provenanceParentNodeIds: {},
+    outputSchema: 'fixture.investigation-output.v1',
+    output: { sealed: true },
+    runtimeMetadata: {},
+  });
+  const reviewNode = createEvidenceNode({
+    type: 'fixture-plan-review',
+    nodeSchema: 'fixture.plan-review.v1',
+    evaluator: 'fixture.plan-review.v1',
+    policyDigest: '3'.repeat(64),
+    exactInputDigests: { target: '4'.repeat(64) },
+    semanticParentResultDigests: {},
+    provenanceParentNodeIds: {},
+    outputSchema: 'fixture.plan-review-output.v1',
+    output: { verdict: 'advisory-approve' },
+    runtimeMetadata: {},
+  });
+  const investigation = {
+    schemaVersion: 1 as const,
+    kind: 'investigation-artifact' as const,
+    changeId,
+    legacyMigration: false,
+    nodes: [investigationNode],
+    currentRefs: { sealedInvestigation: investigationNode.nodeId },
+  };
+  const execution = {
+    schemaVersion: 1 as const,
+    kind: 'execution-artifact' as const,
+    changeId,
+    tasks: {
+      '1.1': {
+        strategy: 'direct-reviewed' as const,
+        enforcement: 'available' as const,
+        allowedPaths: ['src/**'],
+        requiredChecks: ['fixture'],
+        diffReview: 'policy-required' as const,
+        exemptionKind: 'documentation-only' as const,
+        exemptionReason: 'documentation-only',
+        legacyBootstrap: null,
+      },
+    },
+  };
+  const planReview = {
+    schemaVersion: 1 as const,
+    kind: 'plan-review-artifact' as const,
+    changeId,
+    nodes: [reviewNode],
+    currentRefs: { planReview: reviewNode.nodeId },
+  };
+  for (const [name, artifact] of Object.entries({
+    'investigation.json': investigation,
+    'execution.json': execution,
+    'plan-review.json': planReview,
+  })) {
+    fs.writeFileSync(
+      path.join(changeDirectory, name),
+      `${canonicalJson(artifact)}\n`,
+    );
+  }
+  for (const schemaName of [
+    'investigation-artifact.schema.json',
+    'execution-artifact.schema.json',
+    'plan-review-artifact.schema.json',
+  ]) {
+    const target = path.join(repository, 'workflow/schemas', schemaName);
+    fs.mkdirSync(path.dirname(target), { recursive: true });
+    fs.copyFileSync(
+      path.join(sourceRepositoryRoot, 'workflow/schemas', schemaName),
+      target,
+    );
+  }
+  return { investigation, execution, planReview };
 }
 
 /**
@@ -232,6 +338,11 @@ export function installFakeOpenSpec(repository: string): void {
     path.join(repository, 'openspec/schemas/expense-app'),
     { recursive: true },
   );
+  fs.cpSync(
+    path.join(sourceRepositoryRoot, 'openspec/schemas/expense-app-v2'),
+    path.join(repository, 'openspec/schemas/expense-app-v2'),
+    { recursive: true },
+  );
 
   const manifestPath = path.join(repository, 'package.json');
   const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
@@ -324,7 +435,7 @@ if (process.argv[2] === 'schema') {
   );
   const schemaPath = schemaName === 'spec-driven'
     ? path.join(packageRoot, 'schemas/spec-driven')
-    : path.join(root, 'openspec/schemas/expense-app');
+    : path.join(root, 'openspec/schemas', schemaName);
   process.stderr.write('Note: Schema commands are experimental and may change.\\n');
   process.stdout.write(JSON.stringify(operation === 'which'
     ? {
@@ -380,13 +491,26 @@ if (process.argv[2] === 'status') {
       fs.writeFileSync(statusCountdown, String(remaining - 1));
     }
   }
-  const artifacts = [
+  const legacyArtifacts = [
     ['proposal', 'proposal.md', [path.join(changeRoot, 'proposal.md')]],
     ['design', 'design.md', [path.join(changeRoot, 'design.md')]],
     ['specs', 'specs/**/*.md', [path.join(changeRoot, 'specs/demo/spec.md')]],
     ['tasks', 'tasks.md', [path.join(changeRoot, 'tasks.md')]],
     ['guard', 'guard.json', [path.join(changeRoot, 'guard.json')]]
   ];
+  const v2Artifacts = [
+    ['investigation', 'investigation.json', [path.join(changeRoot, 'investigation.json')]],
+    ['proposal', 'proposal.md', [path.join(changeRoot, 'proposal.md')]],
+    ['specs', 'specs/**/*.md', [path.join(changeRoot, 'specs/demo/spec.md')]],
+    ['design', 'design.md', [path.join(changeRoot, 'design.md')]],
+    ['tasks', 'tasks.md', [path.join(changeRoot, 'tasks.md')]],
+    ['guard', 'guard.json', [path.join(changeRoot, 'guard.json')]],
+    ['execution', 'execution.json', [path.join(changeRoot, 'execution.json')]],
+    ['plan-review', 'plan-review.json', [path.join(changeRoot, 'plan-review.json')]]
+  ];
+  const artifacts = schemaName === 'expense-app-v2'
+    ? v2Artifacts
+    : legacyArtifacts;
   process.stdout.write(JSON.stringify({
     changeName: changeId,
     schemaName,
@@ -407,7 +531,9 @@ if (process.argv[2] === 'status') {
     artifacts: artifacts.map(([id, outputPath]) => ({
       id, outputPath, status: 'done'
     })),
-    applyRequires: ['tasks', 'guard'],
+    applyRequires: schemaName === 'expense-app-v2'
+      ? ['investigation', 'tasks', 'guard', 'execution', 'plan-review']
+      : ['tasks', 'guard'],
     isComplete: true,
     root: { path: root, source: 'nearest' }
   }));

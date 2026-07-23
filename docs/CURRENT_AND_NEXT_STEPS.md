@@ -8,15 +8,15 @@ This generated handoff contains semantic project state only. Its sources are tra
 
 ## Current Task
 
-`4.2` — Follow RED -> GREEN -> REFACTOR to introduce the non-default `expense-app-v2` schema registry, engine-owned `investigation.json`/`execution.json`/`plan-review.json` templates and validators, schema-aware change-contract loading, and legacy/v2 schema fixtures without adding the activation marker or changing the project default.
+`4.3` — Follow RED -> GREEN -> REFACTOR to make planning-path, planning-transition, local archive, and transformation contracts select the explicit legacy or v2 artifact grammar and replay both fixture generations while activation remains disabled.
 
 ## Next Task
 
-`4.3` — Follow RED -> GREEN -> REFACTOR to make planning-path, planning-transition, local archive, and transformation contracts select the explicit legacy or v2 artifact grammar and replay both fixture generations while activation remains disabled.
+`5.1` — Follow RED -> GREEN -> REFACTOR to add durable investigation sessions, short transition locks, invocation leases, blind-envelope-before-main-input ordering, typed caller checkpoints for terms/dispositions/WHY, and provider wait/retry/status/resume without requiring one long-lived process.
 
 ## Current Focus
 
-Follow RED -> GREEN -> REFACTOR to introduce the non-default `expense-app-v2` schema registry, engine-owned `investigation.json`/`execution.json`/`plan-review.json` templates and validators, schema-aware change-contract loading, and legacy/v2 schema fixtures without adding the activation marker or changing the project default.
+Follow RED -> GREEN -> REFACTOR to make planning-path, planning-transition, local archive, and transformation contracts select the explicit legacy or v2 artifact grammar and replay both fixture generations while activation remains disabled.
 
 ## Known Blockers
 

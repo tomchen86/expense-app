@@ -45,7 +45,7 @@ type RootDiagnostic = {
 };
 
 type SchemaDiagnostic = {
-  name: 'spec-driven' | 'expense-app';
+  name: 'spec-driven' | 'expense-app' | 'expense-app-v2';
   expectedSource: 'package' | 'project';
   ok: boolean;
   resolution: { source: 'package' | 'project'; path: string } | null;
@@ -248,6 +248,13 @@ function emptyReport(): OpenSpecDiagnosticReport {
       },
       {
         name: 'expense-app',
+        expectedSource: 'project',
+        ok: false,
+        resolution: null,
+        validation: null,
+      },
+      {
+        name: 'expense-app-v2',
         expectedSource: 'project',
         ok: false,
         resolution: null,

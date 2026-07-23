@@ -7,6 +7,8 @@ import {
   loadChangeContract,
   loadWorkflowConfig,
   type ChangeContract,
+  type ManagedSchemaName,
+  readManagedSchemaName,
 } from './contracts.ts';
 import { workflowContractArtifactPaths } from './contract-artifacts.ts';
 import { ExitCode, workflowError } from './errors.ts';
@@ -19,7 +21,7 @@ import {
   type OpenSpecSchemaContract,
 } from './openspec-schema-contract.ts';
 import { collectInstalledPackageClosure } from './package-closure.ts';
-import { assertChangeId } from './paths.ts';
+import { assertChangeId, normalizeChangedPath } from './paths.ts';
 import { assertPlanningPaths } from './planning-paths.ts';
 
 export type ManagedChangeDiagnostic = {
@@ -31,10 +33,10 @@ export type ManagedChangeDiagnostic = {
 };
 
 export type ValidatedChangeContract = ChangeContract & {
-  schemaName: 'expense-app';
+  schemaName: ManagedSchemaName;
   openspec: {
     version: '1.6.0';
-    schemaName: 'expense-app';
+    schemaName: ManagedSchemaName;
     statusComplete: true;
     validationValid: true;
   };
@@ -45,7 +47,7 @@ export type ValidatedChangeContract = ChangeContract & {
 
 type ContractSnapshot = {
   contract: ChangeContract;
-  schemaName: 'expense-app';
+  schemaName: ManagedSchemaName;
   schema: OpenSpecSchemaContract;
   artifactPaths: string[];
   artifactDigests: Record<string, string>;
@@ -59,6 +61,18 @@ export function loadValidatedChangeContract(
 ): ValidatedChangeContract {
   const root = canonicalRepositoryRoot(repositoryRoot);
   const before = inspectSnapshot(root, requestedChangeId);
+  if (before.schemaName === 'expense-app-v2') {
+    throw workflowError(
+      'OPENSPEC_CHANGE_NOT_READY',
+      'Investigation-first semantic readiness is not available yet.',
+      ExitCode.verification,
+      {
+        details: {
+          reason: 'investigation-first-semantic-readiness-unavailable',
+        },
+      },
+    );
+  }
   const adapter = createOpenSpecAdapter(root);
 
   for (const schemaName of ['spec-driven', 'expense-app']) {
@@ -128,15 +142,24 @@ function inspectSnapshot(
 ): ContractSnapshot {
   const config = loadWorkflowConfig(repositoryRoot);
   const changeId = assertChangeId(requestedChangeId);
+  if (changeId === 'archive') {
+    throw workflowError(
+      'PLANNING_CHANGE_ID_RESERVED',
+      'The OpenSpec archive container cannot be used as an active change ID.',
+      ExitCode.guard,
+    );
+  }
+  const schemaName = readManagedSchemaName(
+    repositoryRoot,
+    path.join(repositoryRoot, config.changeRoot, changeId, '.openspec.yaml'),
+  );
   const changePaths = inspectChangeTree(
     repositoryRoot,
     config.changeRoot,
     changeId,
+    schemaName,
   );
-  const schemaName = readManagedMetadata(
-    path.join(repositoryRoot, config.changeRoot, changeId, '.openspec.yaml'),
-  );
-  const preliminary = loadChangeContract(repositoryRoot, changeId);
+  const preliminary = loadChangeContract(repositoryRoot, changeId, schemaName);
   const schema = inspectOpenSpecSchemaContract(repositoryRoot);
   const installation = resolveOpenSpecInstallation(repositoryRoot);
   let runtimeClosure: ReturnType<typeof collectInstalledPackageClosure>;
@@ -212,6 +235,7 @@ function inspectChangeTree(
   repositoryRoot: string,
   changeRoot: string,
   changeId: string,
+  schemaName: ManagedSchemaName,
 ): string[] {
   const changeDirectory = path.join(repositoryRoot, changeRoot, changeId);
   const files: string[] = [];
@@ -219,7 +243,11 @@ function inspectChangeTree(
   const relativePaths = files.map((filePath) =>
     relative(repositoryRoot, filePath),
   );
-  assertPlanningPaths(changeRoot, changeId, relativePaths);
+  if (schemaName === 'expense-app-v2') {
+    assertV2PlanningPaths(changeRoot, changeId, relativePaths);
+  } else {
+    assertPlanningPaths(changeRoot, changeId, relativePaths);
+  }
   return files.sort((left, right) =>
     compareText(
       relative(repositoryRoot, left),
@@ -273,43 +301,55 @@ function inspectChangeTree(
   }
 }
 
-function readManagedMetadata(metadataPath: string): 'expense-app' {
-  let text: string;
-  try {
-    text = new TextDecoder('utf-8', { fatal: true }).decode(
-      fs.readFileSync(metadataPath),
-    );
-  } catch {
-    throw invalidMetadata();
-  }
-  if (text.startsWith('\uFEFF') || text.includes('\0') || text.includes('\r')) {
-    throw invalidMetadata();
-  }
-  const lines = text.endsWith('\n') ? text.slice(0, -1).split('\n') : [];
-  const fields = new Map<string, string>();
-  for (const line of lines) {
-    const match = /^([a-z][a-z0-9-]*): ([^\s].*)$/.exec(line);
-    if (!match || fields.has(match[1])) {
-      throw invalidMetadata();
-    }
-    fields.set(match[1], match[2]);
-  }
-  if (
-    fields.size !== 2 ||
-    !fields.has('schema') ||
-    !fields.has('created') ||
-    !isCanonicalDate(fields.get('created') ?? '')
-  ) {
-    throw invalidMetadata();
-  }
-  if (fields.get('schema') !== 'expense-app') {
+function assertV2PlanningPaths(
+  changeRoot: string,
+  changeId: string,
+  paths: string[],
+): void {
+  if (changeId === 'archive') {
     throw workflowError(
-      'OPENSPEC_MANAGED_SCHEMA_REQUIRED',
-      'Managed changes must declare the reviewed expense-app schema.',
-      ExitCode.verification,
+      'PLANNING_CHANGE_ID_RESERVED',
+      'The OpenSpec archive container cannot be used as an active change ID.',
+      ExitCode.guard,
     );
   }
-  return 'expense-app';
+  const prefix = `${changeRoot}/${changeId}/`;
+  const exact = new Set([
+    `${prefix}.openspec.yaml`,
+    `${prefix}proposal.md`,
+    `${prefix}design.md`,
+    `${prefix}tasks.md`,
+    `${prefix}guard.json`,
+    `${prefix}investigation.json`,
+    `${prefix}execution.json`,
+    `${prefix}plan-review.json`,
+  ]);
+  const invalid = paths.filter((candidate) => {
+    const normalized = normalizeChangedPath(candidate);
+    if (exact.has(normalized)) {
+      return false;
+    }
+    if (!normalized.startsWith(`${prefix}specs/`)) {
+      return true;
+    }
+    const relativePath = normalized.slice(`${prefix}specs/`.length);
+    const segments = relativePath.split('/');
+    return (
+      segments.length < 2 ||
+      segments.at(-1) !== 'spec.md' ||
+      segments
+        .slice(0, -1)
+        .some((segment) => !/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(segment))
+    );
+  });
+  if (invalid.length > 0) {
+    throw workflowError(
+      'PLANNING_PATHS_INVALID',
+      'Planning transition contains paths outside the named v2 planning tree.',
+      ExitCode.guard,
+      { details: { invalidPaths: invalid.sort() } },
+    );
+  }
 }
 
 function workflowPolicyPaths(repositoryRoot: string): string[] {
@@ -371,25 +411,6 @@ function canonicalRepositoryRoot(repositoryRoot: string): string {
 
 function logicalGitMode(mode: number): '100644' | '100755' {
   return (mode & 0o111) === 0 ? '100644' : '100755';
-}
-
-function isCanonicalDate(value: string): boolean {
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) {
-    return false;
-  }
-  const milliseconds = Date.parse(`${value}T00:00:00.000Z`);
-  return (
-    !Number.isNaN(milliseconds) &&
-    new Date(milliseconds).toISOString().slice(0, 10) === value
-  );
-}
-
-function invalidMetadata() {
-  return workflowError(
-    'OPENSPEC_CHANGE_METADATA_INVALID',
-    'Managed change metadata must contain one schema and canonical created date.',
-    ExitCode.guard,
-  );
 }
 
 function unsafeChangeTree() {

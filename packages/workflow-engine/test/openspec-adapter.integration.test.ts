@@ -540,6 +540,9 @@ test('real pinned OpenSpec adapter validates package, schema, status, and change
   const projectSchema = adapter.whichSchema('expense-app');
   assert.equal(projectSchema.source, 'project');
   assert.equal(adapter.validateSchema('expense-app').valid, true);
+  const projectSchemaV2 = adapter.whichSchema('expense-app-v2');
+  assert.equal(projectSchemaV2.source, 'project');
+  assert.equal(adapter.validateSchema('expense-app-v2').valid, true);
   assert.throws(
     () => adapter.whichSchema('unreviewed-schema'),
     (error) => isWorkflowError(error, 'OPENSPEC_SCHEMA_UNSUPPORTED'),
@@ -576,6 +579,86 @@ test('real pinned OpenSpec adapter validates package, schema, status, and change
     );
     const validation = fixtureAdapter.validateChange('fixture-adapter-change');
     assert.equal(validation.valid, true);
+
+    fs.writeFileSync(
+      path.join(
+        fixture,
+        'openspec/changes/fixture-adapter-change/.openspec.yaml',
+      ),
+      'schema: expense-app-v2\ncreated: 2026-07-19\n',
+    );
+    const incompleteV2 = fixtureAdapter.status(
+      'fixture-adapter-change',
+      'expense-app-v2',
+    );
+    assert.equal(incompleteV2.isComplete, false);
+    assert.equal(
+      incompleteV2.artifacts.find(({ id }) => id === 'proposal')?.status,
+      'done',
+    );
+    assert.equal(
+      incompleteV2.artifacts.find(({ id }) => id === 'investigation')?.status,
+      'ready',
+    );
+
+    for (const artifact of [
+      'investigation.json',
+      'execution.json',
+      'plan-review.json',
+    ]) {
+      fs.copyFileSync(
+        path.join(
+          sourceRepositoryRoot,
+          'openspec/schemas/expense-app-v2/templates',
+          artifact,
+        ),
+        path.join(fixture, 'openspec/changes/fixture-adapter-change', artifact),
+      );
+    }
+    const completeV2 = fixtureAdapter.status(
+      'fixture-adapter-change',
+      'expense-app-v2',
+    );
+    assert.equal(completeV2.isComplete, true);
+    assert.deepEqual(completeV2.applyRequires, [
+      'investigation',
+      'tasks',
+      'guard',
+      'execution',
+      'plan-review',
+    ]);
+    assert.deepEqual(completeV2.artifactIds.sort(), [
+      'design',
+      'execution',
+      'guard',
+      'investigation',
+      'plan-review',
+      'proposal',
+      'specs',
+      'tasks',
+    ]);
+    assert.equal(
+      fixtureAdapter.validateChange('fixture-adapter-change').valid,
+      true,
+    );
+
+    const emptyV2Root = path.join(fixture, 'openspec/changes/empty-v2-change');
+    fs.mkdirSync(emptyV2Root, { recursive: true });
+    fs.writeFileSync(
+      path.join(emptyV2Root, '.openspec.yaml'),
+      'schema: expense-app-v2\ncreated: 2026-07-19\n',
+    );
+    const emptyV2 = fixtureAdapter.status('empty-v2-change', 'expense-app-v2');
+    assert.equal(emptyV2.isComplete, false);
+    assert.deepEqual(
+      emptyV2.artifacts.find(({ id }) => id === 'tasks')?.missingDependencies,
+      ['design', 'specs'],
+    );
+    assert.deepEqual(
+      emptyV2.artifacts.find(({ id }) => id === 'plan-review')
+        ?.missingDependencies,
+      ['execution', 'guard'],
+    );
   } finally {
     fs.rmSync(fixture, { recursive: true, force: true });
   }
@@ -598,6 +681,11 @@ function createRealAdapterFixtureRepository(): string {
   fs.cpSync(
     path.join(sourceRepositoryRoot, 'openspec/schemas/expense-app'),
     path.join(repository, 'openspec/schemas/expense-app'),
+    { recursive: true },
+  );
+  fs.cpSync(
+    path.join(sourceRepositoryRoot, 'openspec/schemas/expense-app-v2'),
+    path.join(repository, 'openspec/schemas/expense-app-v2'),
     { recursive: true },
   );
   const pinnedPackageEntry = path.dirname(

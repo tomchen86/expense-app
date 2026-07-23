@@ -1,0 +1,250 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://expense-app.local/workflow/execution-artifact.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "kind", "changeId", "tasks"],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "kind": { "const": "execution-artifact" },
+    "changeId": { "$ref": "#/$defs/changeId" },
+    "tasks": {
+      "type": "object",
+      "minProperties": 1,
+      "propertyNames": { "pattern": "^\\d+(?:\\.\\d+)+$" },
+      "additionalProperties": { "$ref": "#/$defs/executionTask" }
+    }
+  },
+  "$defs": {
+    "changeId": {
+      "type": "string",
+      "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"
+    },
+    "path": { "type": "string", "minLength": 1 },
+    "check": {
+      "type": "string",
+      "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"
+    },
+    "paths": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/path" }
+    },
+    "nonEmptyPaths": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/path" }
+    },
+    "checks": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/check" }
+    },
+    "text": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^(?![\\s\\S]*<!--)(?![\\s\\S]*<[Tt][Oo][Dd][Oo]>)(?![\\s\\S]*<[Pp][Ll][Aa][Cc][Ee][Hh][Oo][Ll][Dd][Ee][Rr]>)(?![Tt][Oo][Dd][Oo]$)(?![Tt][Bb][Dd]$)\\S(?:[\\s\\S]*\\S)?$"
+    },
+    "referenceTitle": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^(?!.*<!--)(?!.*<[Tt][Oo][Dd][Oo]>)(?!.*<[Pp][Ll][Aa][Cc][Ee][Hh][Oo][Ll][Dd][Ee][Rr]>)(?![Tt][Oo][Dd][Oo]$)(?![Tt][Bb][Dd]$)\\S(?:[^\\u0000-\\u001f\\u007f-\\u009f]*\\S)?$"
+    },
+    "behaviorContractRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["specPath", "requirement", "scenario"],
+      "properties": {
+        "specPath": {
+          "type": "string",
+          "pattern": "^specs/[a-z0-9]+(?:-[a-z0-9]+)*(?:/[a-z0-9]+(?:-[a-z0-9]+)*)*/spec\\.md$"
+        },
+        "requirement": { "$ref": "#/$defs/referenceTitle" },
+        "scenario": {
+          "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/referenceTitle" }]
+        }
+      }
+    },
+    "transformationTerm": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "value"],
+      "properties": {
+        "kind": {
+          "enum": ["path", "content", "symbol", "config"]
+        },
+        "value": { "$ref": "#/$defs/referenceTitle" }
+      }
+    },
+    "transformationExample": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["before", "after"],
+      "properties": {
+        "before": { "$ref": "#/$defs/text" },
+        "after": { "$ref": "#/$defs/text" }
+      }
+    },
+    "transformationContract": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "rule",
+        "examples",
+        "fileScopes",
+        "oldTerms",
+        "replacementTerms",
+        "redInapplicableReason"
+      ],
+      "properties": {
+        "rule": { "$ref": "#/$defs/text" },
+        "examples": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/transformationExample" }
+        },
+        "fileScopes": { "$ref": "#/$defs/nonEmptyPaths" },
+        "oldTerms": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/transformationTerm" }
+        },
+        "replacementTerms": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/transformationTerm" }
+        },
+        "redInapplicableReason": { "$ref": "#/$defs/text" }
+      }
+    },
+    "executionTask": {
+      "oneOf": [
+        { "$ref": "#/$defs/crossAgentTdd" },
+        { "$ref": "#/$defs/mechanicalTransform" },
+        { "$ref": "#/$defs/directReviewed" }
+      ]
+    },
+    "crossAgentTdd": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "strategy",
+        "enforcement",
+        "allowedPaths",
+        "requiredChecks",
+        "diffReview",
+        "behaviorContractRefs",
+        "testPathScopes",
+        "fixturePathScopes",
+        "implementationPathScopes",
+        "redCheck",
+        "greenChecks",
+        "requiredImplementerIndependence"
+      ],
+      "properties": {
+        "strategy": { "const": "cross-agent-tdd" },
+        "enforcement": { "const": "planned" },
+        "allowedPaths": { "$ref": "#/$defs/nonEmptyPaths" },
+        "requiredChecks": { "$ref": "#/$defs/checks" },
+        "diffReview": { "enum": ["required", "policy-required"] },
+        "behaviorContractRefs": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/behaviorContractRef" }
+        },
+        "testPathScopes": { "$ref": "#/$defs/nonEmptyPaths" },
+        "fixturePathScopes": { "$ref": "#/$defs/paths" },
+        "implementationPathScopes": { "$ref": "#/$defs/nonEmptyPaths" },
+        "redCheck": { "$ref": "#/$defs/check" },
+        "greenChecks": { "$ref": "#/$defs/checks" },
+        "requiredImplementerIndependence": {
+          "const": "provider-independent"
+        }
+      }
+    },
+    "mechanicalTransform": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "strategy",
+        "enforcement",
+        "allowedPaths",
+        "requiredChecks",
+        "diffReview",
+        "transformationContract"
+      ],
+      "properties": {
+        "strategy": { "const": "mechanical-transform" },
+        "enforcement": { "const": "planned" },
+        "allowedPaths": { "$ref": "#/$defs/nonEmptyPaths" },
+        "requiredChecks": { "$ref": "#/$defs/checks" },
+        "diffReview": { "enum": ["required", "policy-required"] },
+        "transformationContract": {
+          "$ref": "#/$defs/transformationContract"
+        }
+      }
+    },
+    "directReviewed": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "strategy",
+        "enforcement",
+        "allowedPaths",
+        "requiredChecks",
+        "diffReview",
+        "exemptionKind",
+        "exemptionReason",
+        "legacyBootstrap"
+      ],
+      "properties": {
+        "strategy": { "const": "direct-reviewed" },
+        "enforcement": { "enum": ["available", "planned"] },
+        "allowedPaths": { "$ref": "#/$defs/nonEmptyPaths" },
+        "requiredChecks": { "$ref": "#/$defs/checks" },
+        "diffReview": { "enum": ["required", "policy-required"] },
+        "exemptionKind": {
+          "enum": [
+            "documentation-only",
+            "formatting-only",
+            "dependency-only",
+            "narrowly-scoped-non-behavioral",
+            "legacy-bootstrap"
+          ]
+        },
+        "exemptionReason": { "$ref": "#/$defs/text" },
+        "legacyBootstrap": {
+          "type": ["null", "string"],
+          "enum": [null, "establish-investigation-first-planning"]
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "exemptionKind": { "const": "legacy-bootstrap" }
+            },
+            "required": ["exemptionKind"]
+          },
+          "then": {
+            "properties": {
+              "legacyBootstrap": {
+                "const": "establish-investigation-first-planning"
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "legacyBootstrap": { "type": "null" }
+            }
+          }
+        }
+      ]
+    }
+  }
+}

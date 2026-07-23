@@ -1,0 +1,77 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://expense-app.local/workflow/plan-review-artifact.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "kind", "changeId", "nodes", "currentRefs"],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "kind": { "const": "plan-review-artifact" },
+    "changeId": { "$ref": "#/$defs/changeId" },
+    "nodes": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/evidenceNode" }
+    },
+    "currentRefs": { "$ref": "#/$defs/currentRefs" }
+  },
+  "$defs": {
+    "digest": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "changeId": {
+      "type": "string",
+      "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"
+    },
+    "label": { "type": "string", "minLength": 1 },
+    "role": {
+      "type": "string",
+      "pattern": "^[a-zA-Z0-9]+(?:[._:/-][a-zA-Z0-9]+)*$"
+    },
+    "digestMap": {
+      "type": "object",
+      "propertyNames": { "$ref": "#/$defs/role" },
+      "additionalProperties": { "$ref": "#/$defs/digest" }
+    },
+    "currentRefs": {
+      "type": "object",
+      "minProperties": 1,
+      "propertyNames": { "$ref": "#/$defs/role" },
+      "additionalProperties": { "$ref": "#/$defs/digest" }
+    },
+    "evidenceNode": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "nodeSchema",
+        "nodeId",
+        "type",
+        "evaluator",
+        "policyDigest",
+        "exactInputDigests",
+        "semanticParentResultDigests",
+        "provenanceParentNodeIds",
+        "outputSchema",
+        "output",
+        "resultDigest",
+        "runtimeMetadata"
+      ],
+      "properties": {
+        "nodeSchema": { "$ref": "#/$defs/label" },
+        "nodeId": { "$ref": "#/$defs/digest" },
+        "type": { "$ref": "#/$defs/label" },
+        "evaluator": { "$ref": "#/$defs/label" },
+        "policyDigest": { "$ref": "#/$defs/digest" },
+        "exactInputDigests": { "$ref": "#/$defs/digestMap" },
+        "semanticParentResultDigests": { "$ref": "#/$defs/digestMap" },
+        "provenanceParentNodeIds": { "$ref": "#/$defs/digestMap" },
+        "outputSchema": { "$ref": "#/$defs/label" },
+        "output": true,
+        "resultDigest": { "$ref": "#/$defs/digest" },
+        "runtimeMetadata": {
+          "type": "object",
+          "maxProperties": 0,
+          "additionalProperties": false
+        }
+      }
+    }
+  }
+}

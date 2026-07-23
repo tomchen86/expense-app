@@ -9,6 +9,18 @@ import {
   assertDisposableDatabase,
   createCheckEnvironment,
 } from '../src/database-policy.ts';
+import {
+  loadChangeContract,
+  parseExecutionArtifact,
+  parseInvestigationArtifact,
+  parsePlanReviewArtifact,
+  parseTasks,
+} from '../src/contracts.ts';
+import {
+  createConvergenceRecord,
+  createDescendantReuseProof,
+} from '../src/evidence-convergence.ts';
+import { createEvidenceNode } from '../src/evidence-node.ts';
 import { WorkflowError } from '../src/errors.ts';
 import {
   assertPolicyPathInsideRepository,
@@ -17,7 +29,6 @@ import {
   normalizePolicyPath,
 } from '../src/paths.ts';
 import { workflowContractArtifactPaths } from '../src/contract-artifacts.ts';
-import { parseTasks } from '../src/contracts.ts';
 import './git-security.test.ts';
 import './openspec-adapter.integration.test.ts';
 import './openspec-doctor.integration.test.ts';
@@ -31,6 +42,7 @@ import './evidence-node.contract.test.ts';
 import './evidence-currentness.contract.test.ts';
 import './investigation-groups.contract.test.ts';
 import './provider-orchestration.contract.test.ts';
+import { createFixtureRepository, writeV2ChangeArtifacts } from './fixture.ts';
 
 test('maintainer policy is a pinned workflow contract artifact', () => {
   const repositoryRoot = path.resolve(import.meta.dirname, '../../..');
@@ -480,6 +492,660 @@ test('parseTasks reads ordered checkbox tasks', () => {
     { id: '1.1', completed: false, title: 'Add failing test' },
     { id: '1.2', completed: true, title: 'Implement behavior' },
   ]);
+});
+
+test('change contracts preserve legacy loading and strictly load v2 engine artifacts', () => {
+  const repository = createFixtureRepository();
+  try {
+    const legacy = loadChangeContract(repository, 'demo-change');
+    assert.equal(
+      loadChangeContract(
+        path.relative(process.cwd(), repository),
+        'demo-change',
+      ).schemaName,
+      'expense-app',
+    );
+    assert.equal(legacy.schemaName, 'expense-app');
+    assert.equal(legacy.investigation, undefined);
+    assert.equal(legacy.execution, undefined);
+    assert.equal(legacy.planReview, undefined);
+
+    const metadataPath = path.join(
+      repository,
+      'openspec/changes/demo-change/.openspec.yaml',
+    );
+    fs.writeFileSync(metadataPath, 'schema: spec-driven\n');
+    assert.equal(
+      loadChangeContract(repository, 'demo-change').schemaName,
+      'spec-driven',
+    );
+    fs.writeFileSync(
+      metadataPath,
+      'schema: spec-driven\ncreated: 2026-07-15\n',
+    );
+    assert.equal(
+      loadChangeContract(repository, 'demo-change').schemaName,
+      'spec-driven',
+    );
+    fs.writeFileSync(
+      metadataPath,
+      'schema: expense-app\ncreated: 2026-07-15\n',
+    );
+
+    const artifacts = writeV2ChangeArtifacts(repository);
+    const v2 = loadChangeContract(repository, 'demo-change');
+    assert.equal(v2.schemaName, 'expense-app-v2');
+    assert.deepEqual(v2.investigation, artifacts.investigation);
+    assert.deepEqual(v2.execution, artifacts.execution);
+    assert.deepEqual(v2.planReview, artifacts.planReview);
+    for (const artifact of [
+      'investigation.json',
+      'execution.json',
+      'plan-review.json',
+    ]) {
+      assert.ok(
+        v2.artifactPaths.includes(
+          path.join(repository, 'openspec/changes/demo-change', artifact),
+        ),
+      );
+    }
+  } finally {
+    fs.rmSync(repository, { recursive: true, force: true });
+  }
+});
+
+test('raw change loading rejects final and ancestor metadata symlink escapes', () => {
+  for (const escape of ['metadata', 'change-directory'] as const) {
+    const repository = createFixtureRepository();
+    const outside = fs.mkdtempSync(
+      path.join(os.tmpdir(), 'workflow-metadata-outside-'),
+    );
+    try {
+      const changeDirectory = path.join(
+        repository,
+        'openspec/changes/demo-change',
+      );
+      if (escape === 'metadata') {
+        const metadataPath = path.join(changeDirectory, '.openspec.yaml');
+        const outsideMetadata = path.join(outside, '.openspec.yaml');
+        fs.writeFileSync(
+          outsideMetadata,
+          'schema: expense-app\ncreated: 2026-07-15\n',
+        );
+        fs.rmSync(metadataPath);
+        fs.symlinkSync(outsideMetadata, metadataPath);
+      } else {
+        const outsideChange = path.join(outside, 'demo-change');
+        fs.renameSync(changeDirectory, outsideChange);
+        fs.symlinkSync(outsideChange, changeDirectory, 'dir');
+      }
+      assert.throws(
+        () => loadChangeContract(repository, 'demo-change'),
+        (error) => isWorkflowError(error, 'OPENSPEC_CHANGE_TREE_UNSAFE'),
+        escape,
+      );
+    } finally {
+      fs.rmSync(repository, { recursive: true, force: true });
+      fs.rmSync(outside, { recursive: true, force: true });
+    }
+  }
+});
+
+test('raw change loading rejects the reserved archive container', () => {
+  const repository = createFixtureRepository();
+  try {
+    assert.throws(
+      () => loadChangeContract(repository, 'archive'),
+      (error) => isWorkflowError(error, 'PLANNING_CHANGE_ID_RESERVED'),
+    );
+  } finally {
+    fs.rmSync(repository, { recursive: true, force: true });
+  }
+});
+
+test('engine artifact validators reject noncanonical, forged, over-keyed, and scope-expanding inputs', () => {
+  const repository = createFixtureRepository();
+  try {
+    const { investigation, execution, planReview } =
+      writeV2ChangeArtifacts(repository);
+    assert.deepEqual(
+      parseInvestigationArtifact(investigation, 'demo-change'),
+      investigation,
+    );
+    assert.deepEqual(
+      parseExecutionArtifact(
+        execution,
+        'demo-change',
+        loadChangeContract(repository, 'demo-change').tasks,
+        loadChangeContract(repository, 'demo-change').guard,
+        loadChangeContract(repository, 'demo-change').checks,
+        loadChangeContract(repository, 'demo-change').behaviorContracts,
+      ),
+      execution,
+    );
+    assert.deepEqual(
+      parsePlanReviewArtifact(planReview, 'demo-change'),
+      planReview,
+    );
+
+    const forgedInvestigation = structuredClone(investigation);
+    forgedInvestigation.nodes[0]!.resultDigest = 'f'.repeat(64);
+    assert.throws(
+      () => parseInvestigationArtifact(forgedInvestigation, 'demo-change'),
+      (error) => isWorkflowError(error, 'INVALID_INVESTIGATION_ARTIFACT'),
+    );
+    assert.throws(
+      () =>
+        parseInvestigationArtifact(
+          { ...investigation, unexpected: true },
+          'demo-change',
+        ),
+      (error) => isWorkflowError(error, 'INVALID_INVESTIGATION_ARTIFACT'),
+    );
+    assert.throws(
+      () =>
+        parsePlanReviewArtifact(
+          { ...planReview, changeId: 'another-change' },
+          'demo-change',
+        ),
+      (error) => isWorkflowError(error, 'INVALID_PLAN_REVIEW_ARTIFACT'),
+    );
+    assert.throws(
+      () =>
+        parseInvestigationArtifact(
+          {
+            ...investigation,
+            nodes: [investigation.nodes[0], investigation.nodes[0]],
+          },
+          'demo-change',
+        ),
+      (error) => isWorkflowError(error, 'INVALID_INVESTIGATION_ARTIFACT'),
+    );
+    assert.throws(
+      () =>
+        parsePlanReviewArtifact(
+          {
+            ...planReview,
+            currentRefs: { planReview: '9'.repeat(64) },
+          },
+          'demo-change',
+        ),
+      (error) => isWorkflowError(error, 'INVALID_PLAN_REVIEW_ARTIFACT'),
+    );
+    assert.throws(
+      () =>
+        parseInvestigationArtifact(
+          { ...investigation, legacyMigration: true },
+          'demo-change',
+        ),
+      (error) => isWorkflowError(error, 'INVALID_INVESTIGATION_ARTIFACT'),
+    );
+    const namedMigration = {
+      ...investigation,
+      changeId: 'establish-investigation-first-planning',
+      legacyMigration: true,
+    };
+    assert.deepEqual(
+      parseInvestigationArtifact(
+        namedMigration,
+        'establish-investigation-first-planning',
+      ),
+      namedMigration,
+    );
+    const orphan = createEvidenceNode({
+      type: 'fixture-orphan',
+      nodeSchema: 'fixture.orphan.v1',
+      evaluator: 'fixture.orphan.v1',
+      policyDigest: '6'.repeat(64),
+      exactInputDigests: {},
+      semanticParentResultDigests: { parent: '7'.repeat(64) },
+      provenanceParentNodeIds: { parent: '8'.repeat(64) },
+      outputSchema: 'fixture.orphan-output.v1',
+      output: { valid: false },
+      runtimeMetadata: {},
+    });
+    assert.throws(
+      () =>
+        parseInvestigationArtifact(
+          {
+            ...investigation,
+            nodes: [orphan],
+            currentRefs: { sealedInvestigation: orphan.nodeId },
+          },
+          'demo-change',
+        ),
+      (error) => isWorkflowError(error, 'INVALID_INVESTIGATION_ARTIFACT'),
+    );
+    const parent = investigation.nodes[0]!;
+    const mismatchedRoles = createEvidenceNode({
+      type: 'fixture-child',
+      nodeSchema: 'fixture.child.v1',
+      evaluator: 'fixture.child.v1',
+      policyDigest: '6'.repeat(64),
+      exactInputDigests: {},
+      semanticParentResultDigests: { semantic: parent.resultDigest },
+      provenanceParentNodeIds: { provenance: parent.nodeId },
+      outputSchema: 'fixture.child-output.v1',
+      output: { valid: false },
+      runtimeMetadata: {},
+    });
+    assert.throws(
+      () =>
+        parseInvestigationArtifact(
+          {
+            ...investigation,
+            nodes: [parent, mismatchedRoles].sort((left, right) =>
+              left.nodeId.localeCompare(right.nodeId),
+            ),
+            currentRefs: { sealedInvestigation: mismatchedRoles.nodeId },
+          },
+          'demo-change',
+        ),
+      (error) => isWorkflowError(error, 'INVALID_INVESTIGATION_ARTIFACT'),
+    );
+    const forgedParentResult = createEvidenceNode({
+      type: 'fixture-child',
+      nodeSchema: 'fixture.child.v1',
+      evaluator: 'fixture.child.v1',
+      policyDigest: '6'.repeat(64),
+      exactInputDigests: {},
+      semanticParentResultDigests: { parent: '7'.repeat(64) },
+      provenanceParentNodeIds: { parent: parent.nodeId },
+      outputSchema: 'fixture.child-output.v1',
+      output: { valid: false },
+      runtimeMetadata: {},
+    });
+    assert.throws(
+      () =>
+        parseInvestigationArtifact(
+          {
+            ...investigation,
+            nodes: [parent, forgedParentResult].sort((left, right) =>
+              left.nodeId.localeCompare(right.nodeId),
+            ),
+            currentRefs: { sealedInvestigation: forgedParentResult.nodeId },
+          },
+          'demo-change',
+        ),
+      (error) => isWorkflowError(error, 'INVALID_INVESTIGATION_ARTIFACT'),
+    );
+    const oldParent = createEvidenceNode({
+      type: 'fixture-parent',
+      nodeSchema: 'fixture.parent.v1',
+      evaluator: 'fixture.parent.v1',
+      policyDigest: 'a'.repeat(64),
+      exactInputDigests: { source: 'b'.repeat(64) },
+      semanticParentResultDigests: {},
+      provenanceParentNodeIds: {},
+      outputSchema: 'fixture.parent-output.v1',
+      output: { equivalent: true },
+      runtimeMetadata: {},
+    });
+    const newParent = createEvidenceNode({
+      type: 'fixture-parent',
+      nodeSchema: 'fixture.parent.v1',
+      evaluator: 'fixture.parent.v1',
+      policyDigest: 'a'.repeat(64),
+      exactInputDigests: { source: 'c'.repeat(64) },
+      semanticParentResultDigests: {},
+      provenanceParentNodeIds: {},
+      outputSchema: 'fixture.parent-output.v1',
+      output: { equivalent: true },
+      runtimeMetadata: {},
+    });
+    const descendant = createEvidenceNode({
+      type: 'fixture-descendant',
+      nodeSchema: 'fixture.descendant.v1',
+      evaluator: 'fixture.descendant.v1',
+      policyDigest: 'd'.repeat(64),
+      exactInputDigests: {},
+      semanticParentResultDigests: { source: oldParent.resultDigest },
+      provenanceParentNodeIds: { source: oldParent.nodeId },
+      outputSchema: 'fixture.descendant-output.v1',
+      output: { valid: true },
+      runtimeMetadata: {},
+    });
+    const convergence = createConvergenceRecord({
+      oldParent,
+      newParent,
+      validatorVersion: 'fixture-convergence.v1',
+      runtimeMetadata: {},
+    });
+    const reuseProof = createDescendantReuseProof({
+      descendant,
+      parentRole: 'source',
+      oldParent,
+      newParent,
+      convergenceRecord: convergence,
+      validatorVersion: 'fixture-convergence.v1',
+      runtimeMetadata: {},
+    });
+    const artifactWithReuse = {
+      ...investigation,
+      nodes: [oldParent, newParent, descendant, convergence, reuseProof].sort(
+        (left, right) => left.nodeId.localeCompare(right.nodeId),
+      ),
+      currentRefs: { sealedInvestigation: descendant.nodeId },
+    };
+    assert.deepEqual(
+      parseInvestigationArtifact(artifactWithReuse, 'demo-change'),
+      artifactWithReuse,
+    );
+
+    const expandedExecution = structuredClone(execution);
+    expandedExecution.tasks['1.1']!.allowedPaths = ['outside/**'];
+    const contract = loadChangeContract(repository, 'demo-change');
+    assert.throws(
+      () =>
+        parseExecutionArtifact(
+          expandedExecution,
+          'demo-change',
+          contract.tasks,
+          contract.guard,
+          contract.checks,
+          contract.behaviorContracts,
+        ),
+      (error) => isWorkflowError(error, 'INVALID_EXECUTION_ARTIFACT'),
+    );
+
+    const investigationPath = path.join(
+      repository,
+      'openspec/changes/demo-change/investigation.json',
+    );
+    fs.writeFileSync(
+      investigationPath,
+      `${JSON.stringify(investigation, null, 2)}\n`,
+    );
+    assert.throws(
+      () => loadChangeContract(repository, 'demo-change'),
+      (error) => isWorkflowError(error, 'INVALID_INVESTIGATION_ARTIFACT'),
+    );
+  } finally {
+    fs.rmSync(repository, { recursive: true, force: true });
+  }
+});
+
+test('execution artifacts use one exact strategy variant per task without claiming execution', () => {
+  const repository = createFixtureRepository();
+  try {
+    writeV2ChangeArtifacts(repository);
+    const contract = loadChangeContract(repository, 'demo-change');
+    const common = {
+      enforcement: 'planned' as const,
+      allowedPaths: ['src/**'],
+      requiredChecks: ['fixture'],
+      diffReview: 'required' as const,
+    };
+    const transformationContract = {
+      rule: 'Rename the reviewed symbol exactly.',
+      examples: [{ before: 'OLD_NAME', after: 'NEW_NAME' }],
+      fileScopes: ['src/features/**'],
+      oldTerms: [{ kind: 'symbol' as const, value: 'OLD_NAME' }],
+      replacementTerms: [{ kind: 'symbol' as const, value: 'NEW_NAME' }],
+      redInapplicableReason:
+        'Exact-byte closure and registered checks specify this codemod.',
+    };
+    const variants = [
+      {
+        ...common,
+        strategy: 'cross-agent-tdd' as const,
+        behaviorContractRefs: [
+          {
+            specPath: 'specs/demo/spec.md',
+            requirement: 'Demo behavior',
+            scenario: null,
+          },
+          {
+            specPath: 'specs/demo/spec.md',
+            requirement: 'Demo behavior',
+            scenario: 'Demo succeeds',
+          },
+        ],
+        testPathScopes: ['src/__tests__/**'],
+        fixturePathScopes: ['src/__tests__/fixtures/**'],
+        implementationPathScopes: ['src/features/**'],
+        redCheck: 'fixture',
+        greenChecks: ['fixture'],
+        requiredImplementerIndependence: 'provider-independent' as const,
+      },
+      {
+        ...common,
+        strategy: 'mechanical-transform' as const,
+        transformationContract,
+      },
+      {
+        ...common,
+        strategy: 'direct-reviewed' as const,
+        exemptionKind: 'documentation-only' as const,
+        exemptionReason: 'Only authored documentation changes.',
+        legacyBootstrap: null,
+      },
+    ];
+
+    for (const task of variants) {
+      const artifact = {
+        schemaVersion: 1 as const,
+        kind: 'execution-artifact' as const,
+        changeId: 'demo-change',
+        tasks: { '1.1': task },
+      };
+      assert.deepEqual(
+        parseExecutionArtifact(
+          artifact,
+          'demo-change',
+          contract.tasks,
+          contract.guard,
+          contract.checks,
+          contract.behaviorContracts,
+        ),
+        artifact,
+      );
+    }
+
+    const invalid = [
+      {
+        ...variants[0],
+        strategy: 'unknown-strategy',
+      },
+      {
+        ...variants[1],
+        exemptionReason: 'mixed union branch',
+      },
+      {
+        ...variants[1],
+        transformationContract: {
+          ...transformationContract,
+          examples: [],
+        },
+      },
+      {
+        ...variants[1],
+        transformationContract: {
+          ...transformationContract,
+          fileScopes: ['outside/**'],
+        },
+      },
+      {
+        ...variants[1],
+        transformationContract: {
+          ...transformationContract,
+          replacementTerms: [{ kind: 'symbol' as const, value: 'OLD_NAME' }],
+        },
+      },
+      {
+        ...variants[2],
+        requiredChecks: ['unregistered'],
+      },
+      {
+        ...variants[2],
+        allowedPaths: [],
+      },
+      {
+        ...variants[2],
+        exemptionKind: 'legacy-bootstrap',
+        legacyBootstrap: 'establish-investigation-first-planning',
+      },
+      {
+        ...variants[0],
+        enforcement: 'available',
+      },
+      {
+        ...variants[1],
+        enforcement: 'available',
+      },
+      {
+        ...variants[0],
+        behaviorContractRefs: ['specs/demo/spec.md#demo'],
+      },
+      {
+        ...variants[0],
+        behaviorContractRefs: [
+          {
+            specPath: 'specs/demo/spec.md',
+            requirement: 'Missing behavior',
+            scenario: null,
+          },
+        ],
+      },
+      {
+        ...variants[0],
+        behaviorContractRefs: [
+          {
+            specPath: 'specs/demo/spec.md',
+            requirement: 'Demo behavior',
+            scenario: 'Missing scenario',
+          },
+        ],
+      },
+      {
+        ...variants[0],
+        implementationPathScopes: ['src/__tests__/fixtures/**'],
+      },
+      {
+        ...variants[0],
+        testPathScopes: ['outside/**'],
+      },
+    ];
+    for (const task of invalid) {
+      assert.throws(
+        () =>
+          parseExecutionArtifact(
+            {
+              schemaVersion: 1,
+              kind: 'execution-artifact',
+              changeId: 'demo-change',
+              tasks: { '1.1': task },
+            },
+            'demo-change',
+            contract.tasks,
+            contract.guard,
+            contract.checks,
+            contract.behaviorContracts,
+          ),
+        (error) => isWorkflowError(error, 'INVALID_EXECUTION_ARTIFACT'),
+      );
+    }
+    assert.throws(
+      () =>
+        parseExecutionArtifact(
+          {
+            schemaVersion: 1,
+            kind: 'execution-artifact',
+            changeId: 'demo-change',
+            tasks: {},
+          },
+          'demo-change',
+          [],
+          { schemaVersion: 1, changeId: 'demo-change', tasks: {} },
+          contract.checks,
+          contract.behaviorContracts,
+        ),
+      (error) => isWorkflowError(error, 'INVALID_EXECUTION_ARTIFACT'),
+    );
+
+    const overbroadBootstrap = {
+      schemaVersion: 1 as const,
+      kind: 'execution-artifact' as const,
+      changeId: 'establish-investigation-first-planning',
+      tasks: {
+        '1.1': {
+          ...variants[2],
+          exemptionKind: 'legacy-bootstrap' as const,
+          legacyBootstrap: 'establish-investigation-first-planning' as const,
+        },
+      },
+    };
+    assert.throws(
+      () =>
+        parseExecutionArtifact(
+          overbroadBootstrap,
+          overbroadBootstrap.changeId,
+          contract.tasks,
+          contract.guard,
+          contract.checks,
+          contract.behaviorContracts,
+        ),
+      (error) => isWorkflowError(error, 'INVALID_EXECUTION_ARTIFACT'),
+    );
+
+    const bootstrapTasks = [
+      { id: '6.8', completed: true, title: 'Activate the schema.' },
+      { id: '7.1', completed: false, title: 'Adopt the schema.' },
+    ];
+    const bootstrapGuard = {
+      schemaVersion: 1 as const,
+      changeId: 'establish-investigation-first-planning',
+      tasks: {
+        '6.8': {
+          allowedPaths: ['src/**'],
+          requiredChecks: ['fixture'],
+        },
+        '7.1': {
+          allowedPaths: ['src/**'],
+          requiredChecks: ['fixture'],
+        },
+      },
+    };
+    const bootstrapExecution = {
+      schemaVersion: 1 as const,
+      kind: 'execution-artifact' as const,
+      changeId: 'establish-investigation-first-planning',
+      tasks: {
+        '6.8': variants[2],
+        '7.1': {
+          ...variants[2],
+          exemptionKind: 'legacy-bootstrap' as const,
+          exemptionReason:
+            'Adopt the named pre-T2 plan under its reviewed bootstrap.',
+          legacyBootstrap: 'establish-investigation-first-planning' as const,
+        },
+      },
+    };
+    assert.deepEqual(
+      parseExecutionArtifact(
+        bootstrapExecution,
+        bootstrapExecution.changeId,
+        bootstrapTasks,
+        bootstrapGuard,
+        contract.checks,
+        contract.behaviorContracts,
+      ),
+      bootstrapExecution,
+    );
+    assert.deepEqual(
+      parseExecutionArtifact(
+        bootstrapExecution,
+        bootstrapExecution.changeId,
+        bootstrapTasks.map((task) => ({ ...task, completed: true })),
+        bootstrapGuard,
+        contract.checks,
+        contract.behaviorContracts,
+      ),
+      bootstrapExecution,
+    );
+  } finally {
+    fs.rmSync(repository, { recursive: true, force: true });
+  }
 });
 
 test('parseTasks rejects duplicate task IDs', () => {

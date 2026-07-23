@@ -30,7 +30,7 @@ export type OpenSpecSchemaFile = {
 };
 
 export type OpenSpecSchemaSurface = {
-  name: 'spec-driven' | 'expense-app';
+  name: 'spec-driven' | 'expense-app' | 'expense-app-v2';
   source: 'package' | 'project';
   directory: string;
   graph: OpenSpecSchemaGraph;
@@ -41,6 +41,7 @@ export type OpenSpecSchemaContract = {
   version: typeof PINNED_OPENSPEC_VERSION;
   packageSchema: OpenSpecSchemaSurface;
   projectSchema: OpenSpecSchemaSurface;
+  projectSchemaV2: OpenSpecSchemaSurface;
   sourceDigests: Record<string, string>;
   configPath: string;
   trackedPaths: string[];
@@ -64,12 +65,51 @@ const PROJECT_FILES = [
   'templates/tasks.md',
 ] as const;
 
+const PROJECT_V2_FILES = [
+  'provenance.json',
+  'schema.yaml',
+  'templates/design.md',
+  'templates/execution.json',
+  'templates/guard.json',
+  'templates/investigation.json',
+  'templates/plan-review.json',
+  'templates/proposal.md',
+  'templates/spec.md',
+  'templates/tasks.md',
+] as const;
+
 export const EXPENSE_APP_SCHEMA_DIGEST =
   '923edffcaaf8670a0324f2cfd380fe5715e286852768b120044d392e024e1019';
 export const EXPENSE_APP_GUARD_TEMPLATE_DIGEST =
   'f1c44b8e477fa42dcf7d42de603e374b27073dd36e06a3f0027ab35fd16aec5a';
 export const EXPENSE_APP_CONFIG_DIGEST =
   '160beaf2d52aaebd61aeec9e1808f5425acd146c4a51e0642008540ba6097c64';
+
+const EXPENSE_APP_V2_FILE_DIGESTS: Record<
+  (typeof PROJECT_V2_FILES)[number],
+  string
+> = {
+  'provenance.json':
+    'c83ec0dfb200ab7e2b6ad8284c62389c66f6bf5c4b93384560933d255995f55d',
+  'schema.yaml':
+    '910e97a4eb6e1797cf453b1a7c54f5207ccb504ab2dfceac94939ea7808a329f',
+  'templates/design.md':
+    '037c25fcd0b9b6567627a8d27cbff946f1fe76cd906f25b7b691c6ef57d1e779',
+  'templates/execution.json':
+    '142eb08e4a27940db0c18fd0ab487e965da2420bc522eda7d988e176ceaa0185',
+  'templates/guard.json':
+    'f1c44b8e477fa42dcf7d42de603e374b27073dd36e06a3f0027ab35fd16aec5a',
+  'templates/investigation.json':
+    '09772d00adc2bc37c880d9273d765cf64209466d4c97a4a0803e2ce1d07d99aa',
+  'templates/plan-review.json':
+    'bf92aa9a2682622fb6a7513295af3d260adc0c48ee64e5e7ff6e77ce415e2fac',
+  'templates/proposal.md':
+    '9c554e0dbe918e3dc745dcc143a999e1d102954d75fb6e51e231c4cba78f06f3',
+  'templates/spec.md':
+    'e025078f238dc6e4df552a1e0a140cf9efce0bbdecbeb9f45837d45ed91dca01',
+  'templates/tasks.md':
+    'b2a6a4c08c15f347a1d8c3e2d43e0c8fb066dc5cc0feb795f47555f176f9c421',
+};
 
 export const SPEC_DRIVEN_SCHEMA_GRAPH: OpenSpecSchemaGraph = {
   name: 'spec-driven',
@@ -121,12 +161,74 @@ export const EXPENSE_APP_SCHEMA_GRAPH: OpenSpecSchemaGraph = {
   apply: { requires: ['tasks', 'guard'], tracks: 'tasks.md' },
 };
 
+export const EXPENSE_APP_V2_SCHEMA_GRAPH: OpenSpecSchemaGraph = {
+  name: 'expense-app-v2',
+  version: 1,
+  artifacts: [
+    {
+      id: 'investigation',
+      generates: 'investigation.json',
+      template: 'investigation.json',
+      requires: [],
+    },
+    {
+      id: 'proposal',
+      generates: 'proposal.md',
+      template: 'proposal.md',
+      requires: ['investigation'],
+    },
+    {
+      id: 'specs',
+      generates: 'specs/**/*.md',
+      template: 'spec.md',
+      requires: ['proposal'],
+    },
+    {
+      id: 'design',
+      generates: 'design.md',
+      template: 'design.md',
+      requires: ['proposal'],
+    },
+    {
+      id: 'tasks',
+      generates: 'tasks.md',
+      template: 'tasks.md',
+      requires: ['specs', 'design'],
+    },
+    {
+      id: 'guard',
+      generates: 'guard.json',
+      template: 'guard.json',
+      requires: ['tasks'],
+    },
+    {
+      id: 'execution',
+      generates: 'execution.json',
+      template: 'execution.json',
+      requires: ['tasks'],
+    },
+    {
+      id: 'plan-review',
+      generates: 'plan-review.json',
+      template: 'plan-review.json',
+      requires: ['guard', 'execution'],
+    },
+  ],
+  apply: {
+    requires: ['investigation', 'tasks', 'guard', 'execution', 'plan-review'],
+    tracks: 'tasks.md',
+  },
+};
+
 export function schemaGraphFor(name: string): OpenSpecSchemaGraph {
   if (name === 'spec-driven') {
     return SPEC_DRIVEN_SCHEMA_GRAPH;
   }
   if (name === 'expense-app') {
     return EXPENSE_APP_SCHEMA_GRAPH;
+  }
+  if (name === 'expense-app-v2') {
+    return EXPENSE_APP_V2_SCHEMA_GRAPH;
   }
   throw invalidSchemaContract('Unsupported managed OpenSpec schema.');
 }
@@ -143,8 +245,25 @@ export function inspectOpenSpecSchemaContract(
     installation.repositoryRoot,
     'openspec/schemas/expense-app',
   );
+  const projectV2Directory = path.join(
+    installation.repositoryRoot,
+    'openspec/schemas/expense-app-v2',
+  );
   const packageFiles = inspectExactFiles(packageDirectory, SOURCE_FILES);
   const projectFiles = inspectExactFiles(projectDirectory, PROJECT_FILES);
+  const projectV2Files = inspectExactFiles(
+    projectV2Directory,
+    PROJECT_V2_FILES,
+  );
+  for (const filePath of PROJECT_V2_FILES) {
+    if (
+      projectV2Files[filePath]?.digest !== EXPENSE_APP_V2_FILE_DIGESTS[filePath]
+    ) {
+      throw invalidSchemaContract(
+        'The project v2 OpenSpec schema content differs from the reviewed contract.',
+      );
+    }
+  }
   const configPath = inspectProjectConfig(installation.repositoryRoot);
   const provenance = parseProvenance(
     fs.readFileSync(path.join(projectDirectory, 'provenance.json'), 'utf8'),
@@ -185,8 +304,44 @@ export function inspectOpenSpecSchemaContract(
   const projectGraph = parseSchemaGraph(
     fs.readFileSync(path.join(projectDirectory, 'schema.yaml'), 'utf8'),
   );
+  const projectV2Graph = parseSchemaGraph(
+    fs.readFileSync(path.join(projectV2Directory, 'schema.yaml'), 'utf8'),
+  );
   assertExactGraph(packageGraph, SPEC_DRIVEN_SCHEMA_GRAPH);
   assertExactGraph(projectGraph, EXPENSE_APP_SCHEMA_GRAPH);
+  assertExactGraph(projectV2Graph, EXPENSE_APP_V2_SCHEMA_GRAPH);
+
+  const v2Provenance = parseProvenance(
+    fs.readFileSync(path.join(projectV2Directory, 'provenance.json'), 'utf8'),
+  );
+  for (const sourcePath of SOURCE_FILES) {
+    if (v2Provenance.files[sourcePath] !== provenance.files[sourcePath]) {
+      throw invalidSchemaContract(
+        'The v2 schema provenance does not match the pinned package source.',
+      );
+    }
+  }
+  for (const sourcePath of [
+    'templates/proposal.md',
+    'templates/spec.md',
+    'templates/tasks.md',
+  ] as const) {
+    if (
+      projectV2Files[sourcePath]?.digest !== packageFiles[sourcePath]?.digest
+    ) {
+      throw invalidSchemaContract(
+        'The v2 authored templates do not match the pinned package source.',
+      );
+    }
+  }
+  if (
+    projectV2Files['templates/guard.json']?.digest !==
+    projectFiles['templates/guard.json']?.digest
+  ) {
+    throw invalidSchemaContract(
+      'The v2 guard template does not match the reviewed legacy policy template.',
+    );
+  }
 
   return {
     version: PINNED_OPENSPEC_VERSION,
@@ -204,11 +359,21 @@ export function inspectOpenSpecSchemaContract(
       graph: projectGraph,
       files: projectFiles,
     },
+    projectSchemaV2: {
+      name: 'expense-app-v2',
+      source: 'project',
+      directory: projectV2Directory,
+      graph: projectV2Graph,
+      files: projectV2Files,
+    },
     sourceDigests: { ...provenance.files },
     configPath,
     trackedPaths: [
       configPath,
       ...PROJECT_FILES.map((filePath) => path.join(projectDirectory, filePath)),
+      ...PROJECT_V2_FILES.map((filePath) =>
+        path.join(projectV2Directory, filePath),
+      ),
     ].sort(),
   };
 }

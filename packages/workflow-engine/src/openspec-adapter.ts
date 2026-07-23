@@ -175,7 +175,11 @@ function schemaExpectation(
   requestedName: string,
 ): { name: string; source: 'package' | 'project'; path: string } {
   const name = safeName(requestedName);
-  if (name !== 'spec-driven' && name !== 'expense-app') {
+  if (
+    name !== 'spec-driven' &&
+    name !== 'expense-app' &&
+    name !== 'expense-app-v2'
+  ) {
     throw workflowError(
       'OPENSPEC_SCHEMA_UNSUPPORTED',
       'Only the pinned package schema and reviewed project schema are managed.',

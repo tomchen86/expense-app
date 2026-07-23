@@ -4,10 +4,15 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
+import { loadChangeContract } from '../src/contracts.ts';
 import { WorkflowError } from '../src/errors.ts';
 import { loadValidatedChangeContract } from '../src/managed-change-contract.ts';
 import { parseValidation } from '../src/openspec-payloads.ts';
-import { sourceRepositoryRoot } from './fixture.ts';
+import {
+  createFixtureRepository,
+  sourceRepositoryRoot,
+  writeV2ChangeArtifacts,
+} from './fixture.ts';
 
 const CHANGE_ID = 'fixture-managed-change';
 
@@ -52,6 +57,35 @@ test('validated managed contract binds OpenSpec readiness to a full mode-aware s
     Object.keys(contract.artifactDigests),
     [...Object.keys(contract.artifactDigests)].sort(),
   );
+});
+
+test('v2 artifacts are structurally loadable but remain ineligible for workflow readiness', () => {
+  const repository = createFixtureRepository();
+  try {
+    const legacy = loadValidatedChangeContract(repository, 'demo-change');
+    assert.equal(legacy.schemaName, 'expense-app');
+    assert.equal(legacy.investigation, undefined);
+
+    writeV2ChangeArtifacts(repository);
+    const v2 = loadChangeContract(repository, 'demo-change');
+    assert.equal(v2.schemaName, 'expense-app-v2');
+    assert.equal(v2.investigation?.kind, 'investigation-artifact');
+    assert.equal(v2.execution?.kind, 'execution-artifact');
+    assert.equal(v2.planReview?.kind, 'plan-review-artifact');
+    assert.throws(
+      () => loadValidatedChangeContract(repository, 'demo-change'),
+      (error) => {
+        assert.ok(error instanceof WorkflowError);
+        assert.equal(error.code, 'OPENSPEC_CHANGE_NOT_READY');
+        assert.deepEqual(error.details, {
+          reason: 'investigation-first-semantic-readiness-unavailable',
+        });
+        return true;
+      },
+    );
+  } finally {
+    fs.rmSync(repository, { recursive: true, force: true });
+  }
 });
 
 test('managed contract rejects unsafe metadata and incomplete artifact trees before readiness is trusted', () => {
@@ -102,11 +136,27 @@ test('managed contract rejects unsafe metadata and incomplete artifact trees bef
       code: 'OPENSPEC_CHANGE_TREE_UNSAFE',
     },
     {
+      name: 'executable metadata',
+      mutate(repository) {
+        fs.chmodSync(changePath(repository, '.openspec.yaml'), 0o755);
+      },
+      code: 'OPENSPEC_CHANGE_TREE_UNSAFE',
+    },
+    {
       name: 'symlink artifact',
       mutate(repository) {
         const proposalPath = changePath(repository, 'proposal.md');
         fs.rmSync(proposalPath);
         fs.symlinkSync(path.join(repository, 'package.json'), proposalPath);
+      },
+      code: 'OPENSPEC_CHANGE_TREE_UNSAFE',
+    },
+    {
+      name: 'symlink metadata',
+      mutate(repository) {
+        const metadataPath = changePath(repository, '.openspec.yaml');
+        fs.rmSync(metadataPath);
+        fs.symlinkSync(path.join(repository, 'package.json'), metadataPath);
       },
       code: 'OPENSPEC_CHANGE_TREE_UNSAFE',
     },
@@ -124,6 +174,23 @@ test('managed contract rejects unsafe metadata and incomplete artifact trees bef
     } finally {
       fs.rmSync(repository, { recursive: true, force: true });
     }
+  }
+});
+
+test('v2 managed tree rejects paths outside its temporary schema grammar', () => {
+  const repository = createFixtureRepository();
+  try {
+    writeV2ChangeArtifacts(repository);
+    fs.writeFileSync(
+      path.join(repository, 'openspec/changes/demo-change/notes.txt'),
+      'not a managed artifact\n',
+    );
+    assert.throws(
+      () => loadValidatedChangeContract(repository, 'demo-change'),
+      (error) => isWorkflowError(error, 'PLANNING_PATHS_INVALID'),
+    );
+  } finally {
+    fs.rmSync(repository, { recursive: true, force: true });
   }
 });
 
@@ -260,6 +327,11 @@ function createManagedRepository(): string {
     path.join(repository, 'openspec/schemas/expense-app'),
     { recursive: true },
   );
+  fs.cpSync(
+    path.join(sourceRepositoryRoot, 'openspec/schemas/expense-app-v2'),
+    path.join(repository, 'openspec/schemas/expense-app-v2'),
+    { recursive: true },
+  );
   writeSyntheticChange(repository);
   installFakeOpenSpec(repository);
   return repository;
@@ -318,7 +390,7 @@ if (args[0] === 'schema') {
   const packageRoot = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
   const schemaPath = schemaName === 'spec-driven'
     ? path.join(packageRoot, 'schemas/spec-driven')
-    : path.join(root, 'openspec/schemas/expense-app');
+    : path.join(root, 'openspec/schemas', schemaName);
   process.stderr.write('Note: Schema commands are experimental and may change.\\n');
   process.stdout.write(JSON.stringify(operation === 'which'
     ? {
@@ -344,13 +416,26 @@ if (args[0] === 'status') {
     .filter((entry) => String(entry).endsWith('spec.md'))
     .map((entry) => path.join(changeRoot, 'specs', String(entry)))
     .sort();
-  const artifacts = [
+  const legacyArtifacts = [
     ['proposal', 'proposal.md', [path.join(changeRoot, 'proposal.md')], 'done'],
     ['specs', 'specs/**/*.md', specPaths, 'done'],
     ['design', 'design.md', [path.join(changeRoot, 'design.md')], 'done'],
     ['tasks', 'tasks.md', [path.join(changeRoot, 'tasks.md')], 'done'],
     ['guard', 'guard.json', incomplete ? [] : [path.join(changeRoot, 'guard.json')], incomplete ? 'ready' : 'done']
   ];
+  const v2Artifacts = [
+    ['investigation', 'investigation.json', [path.join(changeRoot, 'investigation.json')], 'done'],
+    ['proposal', 'proposal.md', [path.join(changeRoot, 'proposal.md')], 'done'],
+    ['specs', 'specs/**/*.md', specPaths, 'done'],
+    ['design', 'design.md', [path.join(changeRoot, 'design.md')], 'done'],
+    ['tasks', 'tasks.md', [path.join(changeRoot, 'tasks.md')], 'done'],
+    ['guard', 'guard.json', incomplete ? [] : [path.join(changeRoot, 'guard.json')], incomplete ? 'ready' : 'done'],
+    ['execution', 'execution.json', [path.join(changeRoot, 'execution.json')], 'done'],
+    ['plan-review', 'plan-review.json', [path.join(changeRoot, 'plan-review.json')], 'done']
+  ];
+  const artifacts = schemaName === 'expense-app-v2'
+    ? v2Artifacts
+    : legacyArtifacts;
   process.stdout.write(JSON.stringify({
     changeName: changeId,
     schemaName,
@@ -365,7 +450,9 @@ if (args[0] === 'status') {
       { outputPath, resolvedOutputPath: path.join(changeRoot, outputPath), existingOutputPaths }
     ])),
     artifacts: artifacts.map(([id, outputPath, _paths, status]) => ({ id, outputPath, status })),
-    applyRequires: ['tasks', 'guard'],
+    applyRequires: schemaName === 'expense-app-v2'
+      ? ['investigation', 'tasks', 'guard', 'execution', 'plan-review']
+      : ['tasks', 'guard'],
     isComplete: !incomplete,
     root: { path: root, source: 'nearest' }
   }));
