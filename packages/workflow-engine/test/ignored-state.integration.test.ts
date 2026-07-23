@@ -11,6 +11,7 @@ import {
   fingerprintWorkingState,
 } from '../src/git.ts';
 import { checkSession, startSession } from '../src/session.ts';
+import { loadStableValidatedChangeContract } from '../src/validated-contract-context.ts';
 import {
   configureChecks,
   createFixtureRepository,
@@ -155,6 +156,51 @@ test('working-state fingerprints accept literal Git path metacharacters', () => 
     const session = startSession(repository, 'demo-change', '1.1');
 
     assert.doesNotThrow(() => checkSession(repository, session.sessionId));
+  } finally {
+    fs.rmSync(repository, { recursive: true, force: true });
+  }
+});
+
+test('ignored nested repositories use canonical directory records in fingerprints', () => {
+  const repository = createFixtureRepository();
+  const ignoredRepository = path.join(repository, 'memo');
+  const renamedRepository = path.join(repository, 'memo2');
+  try {
+    fs.appendFileSync(path.join(repository, '.gitignore'), '/memo/\n/memo2/\n');
+    git(repository, ['add', '.gitignore']);
+    git(repository, ['commit', '-m', 'Ignore nested repositories']);
+    fs.mkdirSync(ignoredRepository);
+    git(ignoredRepository, ['init', '-b', 'main']);
+
+    const ignoredRecords = git(repository, [
+      'ls-files',
+      '--others',
+      '--ignored',
+      '--exclude-per-directory=.gitignore',
+      '-z',
+      '--',
+    ]);
+    assert.match(ignoredRecords, /memo\/\0/);
+
+    const before = discoverRepository(repository);
+    assert.doesNotThrow(() =>
+      loadStableValidatedChangeContract(before, 'demo-change'),
+    );
+    const beforeFingerprint = fingerprintWorkingState(
+      repository,
+      before.head,
+      before.statusEntries,
+    );
+
+    fs.renameSync(ignoredRepository, renamedRepository);
+    const after = discoverRepository(repository);
+    assert.doesNotThrow(() =>
+      loadStableValidatedChangeContract(after, 'demo-change'),
+    );
+    assert.notEqual(
+      fingerprintWorkingState(repository, after.head, after.statusEntries),
+      beforeFingerprint,
+    );
   } finally {
     fs.rmSync(repository, { recursive: true, force: true });
   }

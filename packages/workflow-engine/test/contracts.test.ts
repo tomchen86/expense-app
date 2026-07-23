@@ -532,6 +532,13 @@ test('policy paths accept exact paths and segment-aware directory prefixes', () 
   );
 });
 
+test('generic changed paths reject Git directory markers', () => {
+  assert.throws(
+    () => normalizeChangedPath('memo/'),
+    (error) => isWorkflowError(error, 'INVALID_REPOSITORY_PATH'),
+  );
+});
+
 test('policy paths reject traversal, absolute paths, and unsupported globs', () => {
   for (const invalidPath of [
     '../secret',
