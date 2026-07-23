@@ -4,19 +4,19 @@ This generated handoff contains semantic project state only. Its sources are tra
 
 ## Current Change
 
-`separate-openspec-asset-validation`
+`establish-investigation-first-planning`
 
 ## Current Task
 
-None — all tasks are complete.
+`2.1` — Follow RED -> GREEN -> REFACTOR to add canonical evidence-node envelopes, separate provenance-sensitive `nodeId` and semantic `resultDigest`, metadata-excluding canonicalization, and an immutable no-follow object/ref store with compare-and-swap current refs.
 
 ## Next Task
 
-None.
+`2.2` — Follow RED -> GREEN -> REFACTOR to implement dependency-specific currentness, compatible convergence records, complete multi-parent descendant-reuse proofs, and a content-pure validator interface shared by live and CI loaders.
 
 ## Current Focus
 
-No implementation tasks remain; follow the Roadmap for the next explicit transition.
+Follow RED -> GREEN -> REFACTOR to add canonical evidence-node envelopes, separate provenance-sensitive `nodeId` and semantic `resultDigest`, metadata-excluding canonicalization, and an immutable no-follow object/ref store with compare-and-swap current refs.
 
 ## Known Blockers
 

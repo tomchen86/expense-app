@@ -1,6 +1,6 @@
 ## 1. Managed Baseline
 
-- [ ] 1.1 Refresh the generated semantic handoff for `establish-investigation-first-planning` and prove the legacy-schema managed baseline is clean before implementation.
+- [x] 1.1 Refresh the generated semantic handoff for `establish-investigation-first-planning` and prove the legacy-schema managed baseline is clean before implementation.
 
 ## 2. Evidence and Provider Contract Substrate
 
