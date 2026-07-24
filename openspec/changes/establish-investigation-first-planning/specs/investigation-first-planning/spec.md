@@ -1,14 +1,14 @@
 ## ADDED Requirements
 
-### Requirement: Sealed Investigation Gates Authoritative Planning
+### Requirement: Current Investigation Applicability Gates Authoritative Planning
 
-The workflow engine SHALL bind each investigation to a structured change intent and pinned repository baseline. It MUST NOT authorize or materialize the authoritative design or planning transition until the current investigation is sealed.
+The workflow engine SHALL bind each investigation applicability decision to a structured change intent and pinned repository baseline. It MUST NOT authorize or materialize the authoritative design or planning transition until the current applicability ref selects either a current sealed investigation or a current eligible structured investigation exemption.
 
 Non-authoritative scratch material MUST NOT be adopted automatically as authoritative planning input.
 
 #### Scenario: Design is requested before investigation seal
 
-- **GIVEN** a change has no current sealed investigation
+- **GIVEN** a change has neither a current sealed investigation nor an eligible current investigation exemption
 - **WHEN** authoritative design materialization is requested
 - **THEN** the operation fails without authorizing a design or planning transition
 - **AND** any scratch or unmanaged design remains non-authoritative and unmodified
@@ -27,15 +27,44 @@ Non-authoritative scratch material MUST NOT be adopted automatically as authorit
 - **THEN** the migration records that investigation did not precede the legacy plan's cognition
 - **AND** the resulting planning revision MUST satisfy every current investigation and review gate
 
+### Requirement: Investigation Exemption Is Structured, Narrow, and Reviewed
+
+The workflow engine SHALL permit an `investigation-exemption` only for documentation-only, formatting-only, deterministic-generated-projection, or time-boxed-research work that neither modifies nor relies on existing non-trivial behavior. The exemption MUST bind category, exact baseline and normalized intent, normalized declared paths/scope, bounded non-empty rationale, semantic author/provenance, `nonTrivialBehaviorReliance: none-declared`, applicable research budget, and the code-owned exemption-policy digest.
+
+Security, migration, shared-contract, public-API, rename/removal, and behavioral work MUST be ineligible. The exact-plan review target MUST contain and challenge the exemption. Only scan, hit disposition, and WHY-ledger requirements are exempted; every other planning and execution gate remains required. The engine MUST NOT represent an exemption as an empty sealed investigation or claim that exemption proves breadth or depth.
+
+#### Scenario: Eligible documentation-only change uses an exemption
+
+- **GIVEN** a documentation-only change neither changes nor relies on non-trivial behavior
+- **WHEN** its exact structured exemption and PlanReview are validated
+- **THEN** planning may proceed without scan, disposition, or WHY nodes
+- **AND** all non-investigation planning, review, task, check, and Git gates still apply
+
+#### Scenario: Behavioral work requests an exemption
+
+- **GIVEN** a change modifies behavior, security, migration, a shared contract, public API, or a rename/removal
+- **WHEN** investigation exemption eligibility is evaluated
+- **THEN** the exemption is rejected
+- **AND** the ordinary sealed-investigation path remains required
+
+#### Scenario: Exemption contains empty investigation stand-ins
+
+- **GIVEN** an exemption artifact contains empty term, scan, disposition, or WHY nodes as if they were completed evidence
+- **WHEN** the applicability branch is validated
+- **THEN** validation fails
+- **AND** the empty nodes do not satisfy breadth or depth claims
+
 ### Requirement: Investigation Uses Three Term Sources With a Blind Independent Pass
 
-The workflow engine SHALL derive a non-removable engine search floor, accept a typed main-agent term contribution, and on the ordinary path obtain a provider-independent blind survey contribution before sealing the effective term union. The survey provider MUST differ from the investigation author's provider; only an eligible exact collaboration grant may replace that ordinary contribution with a visibly degraded alternative.
+The workflow engine SHALL derive a non-removable engine search floor, accept a typed main-agent term contribution, and on the ordinary path obtain a provider-independent blind survey contribution before sealing the effective term union. Every main-agent term MUST include normalized kind/value plus bounded non-empty rationale and expected relationship to the change. The survey provider MUST differ from the investigation author's provider; only an eligible exact collaboration grant may replace that ordinary contribution with a visibly degraded alternative.
 
 The floor SHALL deterministically include every valid term derivable from available machine-readable facts: explicit paths, symbols, and configuration keys in normalized intent; both old and new identifiers for rename, removal, or transformation intent; renamed or removed path basenames and stems available from a pinned diff; and reviewed generated or mirror counterparts of a derived subject. Every floor term SHALL retain the source fact and derivation rule. If any qualifying fact exists, the engine MUST NOT emit an empty or incomplete floor.
 
 If no qualifying fact exists, the engine SHALL record a typed `noDerivableFloorFacts` result naming every checked category. That result MUST NOT be represented as a breadth contribution, and sealing SHALL still require non-empty main and ordinary provider-independent survey term contributions.
 
 The blind request MUST contain the normalized intent, pinned repository baseline, read-only repository access, and a structured architecture-level survey question. It MUST be sealed before the engine reads the main contribution and MUST NOT contain the engine floor, main-agent terms, prior hit lists, or prior conclusions.
+
+Term identity and scan deduplication SHALL depend on normalized kind, value, and matching semantics, while the contribution digest SHALL include rationale and expected relationship and preserve those fields per source. The engine validates their structure and binding but MUST NOT claim either explanation is true.
 
 #### Scenario: Blind survey input is constructed
 
@@ -50,6 +79,19 @@ The blind request MUST contain the normalized intent, pinned repository baseline
 - **WHEN** the investigation term union is sealed
 - **THEN** every accepted term from each source appears in the effective union
 - **AND** every term retains all source provenance
+
+#### Scenario: Main term omits semantic metadata
+
+- **GIVEN** a main-agent term has kind and value but lacks rationale or expected relationship
+- **WHEN** the contribution is validated
+- **THEN** it is rejected before term sealing
+
+#### Scenario: Multiple sources contribute the same term
+
+- **GIVEN** main and survey contributions normalize to the same term identity
+- **WHEN** the effective union is built
+- **THEN** the term is scanned once under its stable term identity
+- **AND** each source contribution retains its own provenance and semantic metadata
 
 #### Scenario: Qualifying floor facts exist
 

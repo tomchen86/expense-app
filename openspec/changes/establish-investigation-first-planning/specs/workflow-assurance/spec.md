@@ -21,7 +21,7 @@ Detailed runtime transcripts, leases, and mutable refs MAY remain under the Git 
 
 ### Requirement: Blocking Session Preflight
 
-The workflow engine SHALL refuse to create an active task session unless repository identity, branch, clean baseline, governing planning generation, change artifacts, sealed investigation when applicable, current PlanReview when applicable, task strategy, task policy, and exclusive lock invariants pass. For an investigation-first generation, the session SHALL pin both `planningGenerationId` and the exact current PlanReview node/digest.
+The workflow engine SHALL refuse to create an active task session unless repository identity, branch, clean baseline, governing planning generation, change artifacts, a current sealed investigation or eligible structured investigation exemption, current PlanReview when applicable, task strategy, task policy, and exclusive lock invariants pass. For an investigation-first generation, the session SHALL pin `planningGenerationId`, exact investigation applicability node/digest, and exact current PlanReview node/digest.
 
 #### Scenario: Dirty worktree is rejected
 
@@ -35,10 +35,10 @@ The workflow engine SHALL refuse to create an active task session unless reposit
 #### Scenario: Valid investigation-first baseline creates a pinned session
 
 - **GIVEN** a clean worktree on the exact change branch
-- **AND** the latest managed plan generation, investigation, proposal, design, delta specs, tasks, guard, execution strategy, and PlanReview validate
+- **AND** the latest managed plan generation, selected investigation applicability branch, proposal, design, delta specs, tasks, guard, execution strategy, and PlanReview validate
 - **WHEN** session start is requested
 - **THEN** one exclusive change lock is acquired
-- **AND** an atomic session records repository, Git, planning generation, exact PlanReview node/digest, artifact digest, task strategy/scope, role constraints, and required checks
+- **AND** an atomic session records repository, Git, planning generation, exact investigation applicability node/digest, exact PlanReview node/digest, artifact digest, task strategy/scope, actual orchestration and achieved independence, any grant/use/direct-human-attestation references, role constraints, and required checks
 
 #### Scenario: Plan review belongs to an older generation
 
@@ -164,7 +164,7 @@ Unknown dependencies, missing parents, ambiguous grouping coverage, incompatible
 
 ### Requirement: Live and CI Planning Assurance Share Content-Pure Validators
 
-Every replayable investigation, projection, planning-generation, PlanReview, actor/role, collaboration-grant, and evidence-DAG gate SHALL have one content-pure validator over a canonical subject, reviewed policy, immutable artifacts, and resolved Git objects. Live transitions and CI SHALL call the same validator semantics.
+Every replayable investigation or exemption, projection, planning-generation, PlanReview, actor/role result, collaboration-grant use, and evidence-DAG gate SHALL have one content-pure validator over a canonical subject, reviewed policy, immutable artifacts, and resolved Git objects. Live transitions and CI SHALL call the same validator semantics. Collaboration evidence SHALL additionally pass one aggregate validator that rejects duplicate grant/use identities across the complete replayed subject.
 
 Provider invocation itself MUST NOT be replayed in CI. CI MUST NOT upgrade soft identity, orchestration, independence, containment, WHY truth, or reviewer judgment claims.
 
@@ -178,7 +178,7 @@ Provider invocation itself MUST NOT be replayed in CI. CI MUST NOT upgrade soft 
 
 - **GIVEN** tracked PlanReview and investigation evidence are structurally current
 - **WHEN** CI validates them without Codex, Claude, credentials, or local invocation transcripts
-- **THEN** CI replays schema, digest, scan, projection, target, role, grant, and freshness gates
+- **THEN** CI replays schema, digest, applicability/exemption, scan when applicable, projection, target, role-result admission, grant/use including aggregate uniqueness, and freshness gates
 - **AND** it does not rerun or reinterpret AI judgment
 
 #### Scenario: Candidate evidence requires runtime-only semantic data
@@ -189,9 +189,11 @@ Provider invocation itself MUST NOT be replayed in CI. CI MUST NOT upgrade soft 
 
 ### Requirement: Assurance Claims Preserve Their Actual Hardness
 
-Workflow artifacts and output SHALL distinguish hard mechanical facts from soft semantic or local-identity claims. They SHALL distinguish self-declared, runtime-hint, adapter-assigned, provider-signed, and workload-attested identity when present, and SHALL distinguish provider independence, session independence, and no independence.
+Workflow artifacts and output SHALL use the stable claim-ID registry from the formal design and distinguish hard mechanical facts from soft semantic or local-identity claims. They SHALL preserve each claim's registered hardness and delivery owner; future T2 claims MUST be labeled undelivered until their owner is implemented. They SHALL distinguish self-declared, runtime-hint, adapter-assigned, provider-signed, and workload-attested identity when present, and SHALL distinguish provider independence, session independence, and no independence.
 
 No report or documentation SHALL claim complete breadth, genuine depth, correct WHY, correct AI verdict, cryptographic local model identity, same-user adversarial confinement, or semantic closure from exact-term scans.
+
+An investigation exemption MUST mark `C-TERM-SCAN`, `C-WHY-BINDING`, and related breadth/depth claims inapplicable for its exact scope rather than satisfied. It MUST NOT strengthen `C-TERM-COMPLETENESS`, `C-GRAPH-COMPLETENESS`, or any other soft claim.
 
 #### Scenario: Runtime hint selects an actor
 
@@ -213,3 +215,17 @@ No report or documentation SHALL claim complete breadth, genuine depth, correct 
 - **WHEN** depth assurance is summarized
 - **THEN** the report claims current exact-blob field binding
 - **AND** it does not claim that the explanation is true or that cognition was proved
+
+#### Scenario: Exempt investigation renders assurance
+
+- **GIVEN** the current plan used an eligible structured investigation exemption
+- **WHEN** local or CI assurance is rendered
+- **THEN** scan and WHY claims are labeled inapplicable rather than passed
+- **AND** the exemption does not imply semantic completeness or understanding
+
+#### Scenario: Future claim is rendered before its owner is implemented
+
+- **GIVEN** the registry assigns a claim such as exact closure or coverage composition to a future T2 change
+- **WHEN** T1.5 assurance is rendered
+- **THEN** the claim is labeled undelivered
+- **AND** no synonym promotes it to a current hard guarantee

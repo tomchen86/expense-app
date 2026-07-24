@@ -82,9 +82,36 @@ The actual achieved independence and orchestration MUST be recorded. A grant MUS
 - **THEN** the transition fails
 - **AND** the grant does not suppress the missing assurance
 
+### Requirement: Granted Role Results Have Exact Distinct Content Forms
+
+The workflow SHALL represent ordinary engine-spawned provider results, granted same-provider engine-spawned results, granted caller-supplied typed results, and direct-human signed attestations as a closed discriminated union. Only the two provider forms MAY create or satisfy a provider invocation request. Caller-supplied or direct-human work MUST NOT fabricate an executable identity, provider session, invocation, or unchanged-provider-projection claim.
+
+Every form MUST bind semantic author, participants, actual orchestration, required and achieved independence, exact transition and target, content parent, output schema/evaluator/policy identities, canonical content digest, and any grant/use. A direct-human attestation MUST additionally carry a separate eligible signature bound to the exact transition, target, result/node identity, and content digest.
+
+#### Scenario: Caller-supplied survey is admitted under a grant
+
+- **GIVEN** an exact grant permits caller-supplied survey content because no provider is callable
+- **WHEN** the typed result is validated
+- **THEN** its structured content may become the survey evidence parent
+- **AND** orchestration records caller-supplied with no provider or session independence
+- **AND** no provider invocation is recorded
+
+#### Scenario: Direct human reviews an exact plan
+
+- **GIVEN** policy and an exact grant permit direct-human review content
+- **WHEN** an eligible human signs the complete bound attestation
+- **THEN** the structured PlanReview content may be admitted for that exact target
+- **AND** the separate signature, semantic author, transition, target, node/result identity, and content digest remain replayable
+
+#### Scenario: Result form and orchestration conflict
+
+- **GIVEN** a caller-supplied or direct-human result claims an engine-spawned provider invocation
+- **WHEN** result admission runs
+- **THEN** the result is rejected
+
 ### Requirement: Grant Use Is Atomic, Bounded, and Replay-Resistant
 
-The workflow engine SHALL reserve and record a grant use atomically at the exact conflicting transition. Expired, revoked, exhausted, consumed, mismatched, or failed grants MUST NOT authorize another transition.
+The workflow engine SHALL reserve and record a grant use atomically at the exact conflicting transition. Reservation authorizes only an attempt. The use SHALL be consumed only after the exact result form and independently derived semantic content pass the shared pure admission validator and match the reserved transition; invalid content SHALL fail the reservation without publishing successful evidence. Expired, revoked, exhausted, consumed, mismatched, failed, or duplicate uses MUST NOT authorize another transition.
 
 Repeated cleanup or inspection MAY be idempotent, but authorization MUST remain bounded by the signed grant.
 
@@ -101,6 +128,19 @@ Repeated cleanup or inspection MAY be idempotent, but authorization MUST remain 
 - **WHEN** another transition presents the grant
 - **THEN** authorization fails
 
+#### Scenario: Reserved result fails content admission
+
+- **GIVEN** a use is reserved for one exact degraded transition
+- **WHEN** the submitted result has invalid structure, content binding, signature, target, orchestration, or achieved independence
+- **THEN** no successful role evidence is published
+- **AND** the reservation becomes terminally failed rather than consumed as success
+
+#### Scenario: One grant use appears twice in replayed evidence
+
+- **GIVEN** two tracked evidence records claim the same signed grant and use identity
+- **WHEN** aggregate use-set validation runs
+- **THEN** validation fails even if each record is individually well formed
+
 #### Scenario: Grant expires or is revoked while unused
 
 - **GIVEN** a grant expired or was revoked
@@ -110,7 +150,7 @@ Repeated cleanup or inspection MAY be idempotent, but authorization MUST remain 
 
 ### Requirement: Degraded Independence Remains Verifiable Downstream
 
-Every tracked artifact, report, and assurance summary derived from a collaboration-granted transition SHALL identify the signed grant and actual achieved independence. Plan, task, CI, merge, and archive validation MUST NOT relabel a granted same-provider or caller-supplied result as provider-independent.
+Every tracked artifact, report, and assurance summary derived from a collaboration-granted transition SHALL identify the signed grant, exact use, admitted result form, actual orchestration, and achieved independence. Plan, task, CI, merge, and archive validation MUST NOT relabel a granted same-provider, caller-supplied, or direct-human result as provider-independent or engine-spawned.
 
 Policy MAY require direct human review for a trust-critical transition even when a grant is otherwise valid.
 

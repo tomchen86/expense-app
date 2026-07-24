@@ -77,6 +77,24 @@ A non-load-bearing group MUST have an explicit classification and concrete ratio
 - **THEN** it requires current full-blob WHY coverage
 - **AND** the remaining group retains only its effective covered hits
 
+### Requirement: Investigation Exemption Does Not Manufacture Evidence
+
+When the current applicability ref selects an eligible `investigation-exemption`, the tracked investigation artifact SHALL contain the exact exemption subject and SHALL omit sealed-investigation term, scan, hit-disposition, and WHY-ledger nodes. An empty collection, placeholder row, or synthetic zero-hit result MUST NOT be used to claim that those gates executed.
+
+#### Scenario: Exemption is rendered as its own branch
+
+- **GIVEN** a current eligible investigation exemption
+- **WHEN** the tracked investigation projection is rendered
+- **THEN** it identifies the exemption category, exact scope, baseline, intent, rationale, author, policy, and behavior-reliance declaration
+- **AND** it does not contain fabricated scan, disposition, or WHY evidence
+
+#### Scenario: Exempt plan reports breadth or depth completion
+
+- **GIVEN** a plan used an investigation exemption
+- **WHEN** its assurance summary claims sealed-term scan or WHY binding completed
+- **THEN** validation fails
+- **AND** the summary must label those claims inapplicable rather than satisfied
+
 ### Requirement: Design Ledger Is an Engine-Managed Projection
 
 The workflow engine SHALL render one marked investigation-ledger region of the authoritative design from structured investigation evidence. The engine SHALL own the markers, objective fields, and all projection bytes inside that region.

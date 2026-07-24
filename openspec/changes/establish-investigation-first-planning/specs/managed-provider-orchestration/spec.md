@@ -210,3 +210,23 @@ Every provider request, propose authorization, durable checkpoint, and resume va
 - **WHEN** propose starts, dispatches provider work, and resumes from a durable checkpoint
 - **THEN** each request, authorization, stored baseline, and output envelope retains the complete 64-hex values
 - **AND** the same validators continue to accept complete 40-hex values in a SHA-1 repository
+
+### Requirement: Role Result Admission Distinguishes Provider and Non-Provider Work
+
+The role-result contract SHALL be a closed discriminated union. `ordinary-provider` and `granted-same-provider` results MUST reference an actual engine-spawned bound provider invocation. `granted-caller-supplied` and `direct-human-attestation` results MUST carry the required typed semantic content without creating a provider request or provider-runner report.
+
+All forms SHALL preserve author, participants, actual orchestration, required and achieved independence, exact target, content identity, and any grant/use. The same content-pure admission validator SHALL be callable by live orchestration and CI; runtime launch metadata MAY strengthen an observed provider form but MUST NOT be required to replay caller-supplied or direct-human content.
+
+#### Scenario: Granted same-provider result uses the provider runner
+
+- **GIVEN** an exact grant permits the only callable provider in a fresh session
+- **WHEN** the role runs
+- **THEN** the engine creates and validates a bound provider invocation
+- **AND** records actual orchestration as engine-spawned and achieved independence as session-independent
+
+#### Scenario: Direct-human result reaches provider scheduling
+
+- **GIVEN** a direct-human signed result is selected for an eligible exact role
+- **WHEN** orchestration advances
+- **THEN** no provider invocation is prepared or launched
+- **AND** the signed typed content enters result admission directly

@@ -329,10 +329,50 @@
         "workflow-format"
       ]
     },
+    "6.2.1": {
+      "allowedPaths": [
+        "packages/workflow-engine/src/collaboration-grant-store.ts",
+        "packages/workflow-engine/src/collaboration-grant.ts",
+        "packages/workflow-engine/src/contracts.ts",
+        "packages/workflow-engine/src/investigation-applicability.ts",
+        "packages/workflow-engine/src/investigation-session-store.ts",
+        "packages/workflow-engine/src/investigation-session.ts",
+        "packages/workflow-engine/src/investigation-terms.ts",
+        "packages/workflow-engine/src/plan-review-validation.ts",
+        "packages/workflow-engine/src/plan-review.ts",
+        "packages/workflow-engine/src/propose-orchestrator.ts",
+        "packages/workflow-engine/src/provider-contracts.ts",
+        "packages/workflow-engine/src/role-scheduler.ts",
+        "packages/workflow-engine/test/collaboration-grant.integration.test.ts",
+        "packages/workflow-engine/test/contracts.test.ts",
+        "packages/workflow-engine/test/fixture.ts",
+        "packages/workflow-engine/test/investigation-scanner.integration.test.ts",
+        "packages/workflow-engine/test/investigation-session.integration.test.ts",
+        "packages/workflow-engine/test/managed-change-contract.integration.test.ts",
+        "packages/workflow-engine/test/plan-review.contract.test.ts",
+        "packages/workflow-engine/test/plan-review.integration.test.ts",
+        "packages/workflow-engine/test/provider-orchestration.contract.test.ts",
+        "packages/workflow-engine/test/session.integration.test.ts",
+        "workflow/schemas/collaboration-grant.schema.json",
+        "workflow/schemas/investigation-artifact.schema.json",
+        "workflow/schemas/plan-review-artifact.schema.json"
+      ],
+      "requiredChecks": [
+        "managed-documents",
+        "openspec-assets",
+        "workflow-tests",
+        "workflow-typecheck",
+        "workflow-lint",
+        "workflow-format"
+      ]
+    },
     "6.3": {
       "allowedPaths": [
         "packages/workflow-engine/src/cli.ts",
+        "packages/workflow-engine/src/collaboration-grant.ts",
+        "packages/workflow-engine/src/investigation-applicability.ts",
         "packages/workflow-engine/src/managed-change-contract.ts",
+        "packages/workflow-engine/src/plan-review-validation.ts",
         "packages/workflow-engine/src/planning-assurance-validator.ts",
         "packages/workflow-engine/src/planning-contract.ts",
         "packages/workflow-engine/src/planning-report.ts",
@@ -353,6 +393,8 @@
     },
     "6.4": {
       "allowedPaths": [
+        "packages/workflow-engine/src/collaboration-grant.ts",
+        "packages/workflow-engine/src/contracts.ts",
         "packages/workflow-engine/src/lifecycle-context.ts",
         "packages/workflow-engine/src/lifecycle.ts",
         "packages/workflow-engine/src/planning-assurance-validator.ts",
@@ -380,6 +422,9 @@
     "6.5": {
       "allowedPaths": [
         "packages/workflow-engine/src/cli.ts",
+        "packages/workflow-engine/src/collaboration-grant-store.ts",
+        "packages/workflow-engine/src/collaboration-grant.ts",
+        "packages/workflow-engine/src/investigation-applicability.ts",
         "packages/workflow-engine/src/investigation-session.ts",
         "packages/workflow-engine/src/lifecycle-context.ts",
         "packages/workflow-engine/src/plan-review-validation.ts",
@@ -393,6 +438,8 @@
         "packages/workflow-engine/src/provider-invocation-store.ts",
         "packages/workflow-engine/src/provider-runner.ts",
         "packages/workflow-engine/src/provider-worker.ts",
+        "packages/workflow-engine/src/role-scheduler.ts",
+        "packages/workflow-engine/test/collaboration-grant.integration.test.ts",
         "packages/workflow-engine/test/fixture.ts",
         "packages/workflow-engine/test/investigation-session.integration.test.ts",
         "packages/workflow-engine/test/plan-review.contract.test.ts",
@@ -421,15 +468,19 @@
         "packages/workflow-engine/src/ci-planning.ts",
         "packages/workflow-engine/src/ci-sequence.ts",
         "packages/workflow-engine/src/ci.ts",
+        "packages/workflow-engine/src/collaboration-grant.ts",
         "packages/workflow-engine/src/contract-artifacts.ts",
         "packages/workflow-engine/src/contract-digests.ts",
         "packages/workflow-engine/src/contracts.ts",
+        "packages/workflow-engine/src/investigation-applicability.ts",
+        "packages/workflow-engine/src/plan-review-validation.ts",
         "packages/workflow-engine/src/planning-assurance-validator.ts",
         "packages/workflow-engine/src/planning-contract.ts",
         "packages/workflow-engine/test/archive-eligibility.integration.test.ts",
         "packages/workflow-engine/test/ci-archive.integration.test.ts",
         "packages/workflow-engine/test/ci-planning.integration.test.ts",
         "packages/workflow-engine/test/ci.integration.test.ts",
+        "packages/workflow-engine/test/collaboration-grant.integration.test.ts",
         "packages/workflow-engine/test/contracts.test.ts",
         "packages/workflow-engine/test/fixture.ts",
         "packages/workflow-engine/test/managed-change-contract.integration.test.ts",

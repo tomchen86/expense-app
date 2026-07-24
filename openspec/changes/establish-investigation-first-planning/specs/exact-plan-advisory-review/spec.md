@@ -4,7 +4,7 @@
 
 Before plan commit, the workflow engine SHALL assign the complete reviewed planning set an immutable planning generation and SHALL construct a component-typed review target.
 
-The target MUST include applicable schema metadata, proposal, design, delta specifications, tasks, guard, execution strategy, investigation and WHY dependencies, requirement clauses, and relevant policies. It MUST exclude the review artifact itself and runtime-only invocation metadata.
+The target MUST include applicable schema metadata, proposal, design, delta specifications, tasks, guard, execution strategy, the exact investigation applicability node and its selected sealed-investigation or exemption dependencies, requirement clauses, and relevant policies. It MUST exclude the review artifact itself and runtime-only invocation metadata.
 
 Engine-owned structured components SHALL use versioned semantic canonicalization. Agent-authored Markdown SHALL use exact normalized-byte identity. Mixed documents MUST bind authored regions separately from engine-owned projections. General prose, whitespace, or model-based semantic equivalence MUST NOT be used.
 
@@ -32,6 +32,13 @@ Engine-owned structured components SHALL use versioned semantic canonicalization
 - **GIVEN** review is current
 - **WHEN** applicable schema, canonicalizer, renderer, or review-policy identity changes
 - **THEN** the review becomes stale even if rendered bytes happen to match
+
+#### Scenario: Investigation applicability changes
+
+- **GIVEN** review is current for a sealed investigation or one exact exemption
+- **WHEN** the applicability branch, exemption scope, category, rationale, behavior-reliance declaration, or policy changes
+- **THEN** the review target changes
+- **AND** the prior review becomes stale
 
 ### Requirement: PlanReview Currentness Follows the Governing Planning Generation
 
@@ -62,6 +69,8 @@ Task start and CI MUST resolve the governing plan from immutable managed Git his
 ### Requirement: Plan Review Performs the Evidence-Bound Scope and Depth Challenge
 
 The exact-plan reviewer SHALL examine the complete plan and investigation subject for missing scope, missing consumers, weak WHY explanations, unsupported invariants, contradictory artifacts, task-strategy risks, and additional search terms.
+
+When the target uses an investigation exemption, the reviewer SHALL instead challenge the exemption's eligibility, declared scope, and assertion that the work neither changes nor relies on non-trivial behavior. It MUST NOT assume breadth or depth evidence exists for the exempt branch.
 
 Every scope challenge, including a structured no-challenge conclusion, MUST cite at least one independent survey record, investigation evidence node, or reviewer-observed repository `file:line`. A bare no-challenge attestation MUST fail. The workflow MUST NOT launch a separate duplicate scope/depth reviewer over the same canonical subject.
 
@@ -110,6 +119,31 @@ The workflow engine MUST NOT require the AI verdict to be `approve`. An advisory
 - **GIVEN** a current PlanReview contains one challenge with no current disposition
 - **WHEN** plan commit is requested
 - **THEN** the transition fails regardless of advisory verdict
+
+### Requirement: PlanReview Findings and Residuals Are Structurally Explicit
+
+Every PlanReview finding SHALL include exactly one severity from `critical`, `high`, `medium`, `low`, or `informational`. Every PlanReview result SHALL include bounded non-empty `residualRisk` and `uncertainty`. Finding severity, residual risk, and uncertainty MUST enter the immutable result digest; missing or unknown values MUST fail schema validation.
+
+Severity remains advisory classification. Every challenge requires disposition regardless of severity, while a suggestion MUST NOT become an automatic gate solely because its severity is critical.
+
+#### Scenario: Finding omits severity
+
+- **GIVEN** a PlanReview finding lacks severity or uses an unknown value
+- **WHEN** review result validation runs
+- **THEN** the result is rejected
+
+#### Scenario: Review omits residual risk or uncertainty
+
+- **GIVEN** a PlanReview result has findings and verdict but lacks bounded non-empty residual risk or uncertainty
+- **WHEN** review result validation runs
+- **THEN** the result is rejected
+
+#### Scenario: Critical suggestion is not a hidden gate
+
+- **GIVEN** a structurally valid finding is classified as a critical suggestion rather than a challenge
+- **WHEN** plan eligibility is evaluated
+- **THEN** severity alone does not block plan commit
+- **AND** the suggestion remains visible for human or later planning action
 
 ### Requirement: Reviewer Terms Enter Only the Fixed Term Projector
 
