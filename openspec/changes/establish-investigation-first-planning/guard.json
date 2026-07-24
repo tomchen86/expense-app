@@ -371,6 +371,7 @@
       "allowedPaths": [
         "packages/workflow-engine/src/cli.ts",
         "packages/workflow-engine/src/collaboration-grant.ts",
+        "packages/workflow-engine/src/contracts.ts",
         "packages/workflow-engine/src/investigation-applicability.ts",
         "packages/workflow-engine/src/managed-change-contract.ts",
         "packages/workflow-engine/src/plan-review-validation.ts",
