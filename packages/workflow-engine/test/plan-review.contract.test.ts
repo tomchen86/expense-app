@@ -45,6 +45,30 @@ const DIGESTS = {
   investigationResult: 'b'.repeat(64),
 } as const;
 
+test('plan review v2 requires finding severity, residual risk, and explicit uncertainty', () => {
+  assert.equal(PLAN_REVIEW_OUTPUT_SCHEMA.version, 2);
+  assert.equal(PLAN_REVIEW_OUTPUT_VALIDATOR.version, 2);
+
+  const missingResidualRisk = structuredClone(
+    challengeSubmission(),
+  ) as unknown as Record<string, unknown>;
+  delete missingResidualRisk.residualRisk;
+  assert.equal(
+    PLAN_REVIEW_OUTPUT_VALIDATOR.validate(missingResidualRisk),
+    false,
+  );
+
+  const invalidSeverity = structuredClone(challengeSubmission()) as unknown as {
+    findings: Array<Record<string, unknown>>;
+  };
+  invalidSeverity.findings[0]!.severity = 'urgent';
+  assert.equal(PLAN_REVIEW_OUTPUT_VALIDATOR.validate(invalidSeverity), false);
+  assert.equal(
+    PLAN_REVIEW_OUTPUT_VALIDATOR.validate(challengeSubmission()),
+    true,
+  );
+});
+
 test('plan target canonicalizes only enumerated component semantics', () => {
   const original = createPlanTarget(planTargetInput());
 
@@ -848,7 +872,14 @@ test('reviewer terms enter only the fixed bounded projector with node provenance
       {
         source: 'main',
         reference: 'main-input',
-        terms: [{ kind: 'symbol', value: 'SharedConsumer' }],
+        terms: [
+          {
+            kind: 'symbol',
+            value: 'SharedConsumer',
+            rationale: 'The main investigation identified the shared symbol.',
+            expectedRelationship: 'Existing consumers import this symbol.',
+          },
+        ],
       },
     ],
   });
@@ -857,8 +888,18 @@ test('reviewer terms enter only the fixed bounded projector with node provenance
     ({ value }) => value === 'SharedConsumer',
   );
   assert.deepEqual(shared?.provenance, [
-    { source: 'main', reference: 'main-input' },
-    { source: 'reviewer', reference: reviewNode.nodeId },
+    {
+      source: 'main',
+      reference: 'main-input',
+      rationale: 'The main investigation identified the shared symbol.',
+      expectedRelationship: 'Existing consumers import this symbol.',
+    },
+    {
+      source: 'reviewer',
+      reference: reviewNode.nodeId,
+      rationale: null,
+      expectedRelationship: null,
+    },
   ]);
 
   const broadSubmission = challengeSubmission({
@@ -1186,13 +1227,14 @@ function challengeSubmission(
   overrides: Partial<PlanReviewSubmission> = {},
 ): PlanReviewSubmission {
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     verdict: 'advisory-reject',
     coverage: [...PLAN_REVIEW_COVERAGE],
     scopeAssessment: { kind: 'challenges' },
     findings: [
       {
         kind: 'challenge',
+        severity: 'high',
         category: 'missing-scope',
         currentChangeImpact: 'required',
         summary: 'A load-bearing consumer may be missing.',
@@ -1208,6 +1250,8 @@ function challengeSubmission(
     ],
     proposedTerms: [],
     suggestions: [],
+    residualRisk: 'No residual risk beyond the documented challenge.',
+    uncertainty: 'No additional uncertainty identified.',
     ...overrides,
   };
 }
@@ -1215,6 +1259,7 @@ function challengeSubmission(
 function suggestion(summary: string) {
   return {
     kind: 'suggestion' as const,
+    severity: 'low' as const,
     category: 'follow-up' as const,
     currentChangeImpact: 'independent-follow-up' as const,
     summary,

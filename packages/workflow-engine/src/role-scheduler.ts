@@ -1,3 +1,6 @@
+import crypto from 'node:crypto';
+
+import { canonicalJson } from './canonical-json.ts';
 import { ExitCode, workflowError } from './errors.ts';
 import type { ActorAssurance } from './actor-identity.ts';
 import {
@@ -9,7 +12,12 @@ import {
   type CollaborationDegradedForm,
   type DirectHumanReviewAttestation,
 } from './collaboration-grant.ts';
-import type { CollaborationReservationRecord } from './collaboration-grant-store.ts';
+import {
+  validateCollaborationGrantUseProjection,
+  type CollaborationGrantUseProjection,
+  type CollaborationGrantUseValidationOptions,
+  type CollaborationReservationRecord,
+} from './collaboration-grant-store.ts';
 import type { MaintainerPolicy } from './maintainer-policy.ts';
 import type { MaintainerSignerProvider } from './maintainer-signer.ts';
 import {
@@ -119,6 +127,113 @@ export type GrantedRoleAssignment = {
   callableProviderIds: readonly ProviderId[];
   directHumanReviewAttestationDigest: string | null;
 };
+
+export type GrantedSameProviderRoleAssignment = GrantedRoleAssignment & {
+  providerId: ProviderId;
+  sessionId: string;
+  achievedIndependence: 'session-independent';
+  sessionIndependent: true;
+  engineSpawned: true;
+  orchestration: 'engine-spawned-provider';
+  degradedForm: 'same-provider-fresh-session';
+  directHumanReviewAttestationDigest: null;
+};
+
+export type ProviderRoleAssignment =
+  RoleAssignment | GrantedSameProviderRoleAssignment;
+
+export type RoleContentAdmission = {
+  kind: 'blind-survey' | 'plan-review';
+  nodeId: string;
+  resultDigest: string;
+  outputSchema: { id: string; version: number; digest: string };
+  evaluator: string;
+  policyDigest: string;
+  contentDigest: string;
+  current: true;
+};
+
+export type RoleProviderInvocationEvidence = {
+  invocationId: string;
+  requestDigest: string;
+  outputDigest: string;
+  providerId: ProviderId;
+  sessionId: string;
+  targetDigest: string;
+  engineSpawned: true;
+};
+
+export type AdmittedRoleResult = {
+  schemaVersion: 1;
+  form:
+    | 'ordinary-provider'
+    | 'granted-same-provider'
+    | 'granted-caller-supplied'
+    | 'direct-human-attestation';
+  role: OrdinaryRole;
+  targetDigest: string;
+  assignment: RoleAssignment | GrantedRoleAssignment;
+  author: RecordedRoleParticipant;
+  participant: RecordedRoleParticipant;
+  orchestration:
+    'engine-spawned-provider' | 'caller-supplied' | 'direct-human-review';
+  requiredIndependence: 'provider-independent';
+  achievedIndependence: IndependenceDimension;
+  content: RoleContentAdmission;
+  providerInvocation: RoleProviderInvocationEvidence | null;
+  grantUse: CollaborationGrantUseProjection | null;
+  directHumanReviewAttestation: DirectHumanReviewAttestation | null;
+  resultDigest: string;
+};
+
+export type AdmitRoleResultInput = {
+  assignment: RoleAssignment | GrantedRoleAssignment;
+  author: RoleParticipant | RecordedRoleParticipant;
+  participant: RoleParticipant | RecordedRoleParticipant;
+  content: RoleContentAdmission;
+  providerInvocation: RoleProviderInvocationEvidence | null;
+  grantUse: unknown | null;
+  grantValidation: Omit<
+    CollaborationGrantUseValidationOptions,
+    'expectedAssignment' | 'contentAdmission'
+  > | null;
+};
+
+const ORDINARY_ASSIGNMENT_KEYS = [
+  'role',
+  'providerId',
+  'sessionId',
+  'targetDigest',
+  'requiredIndependence',
+  'achievedIndependence',
+] as const;
+const ROLE_CONTENT_KEYS = [
+  'kind',
+  'nodeId',
+  'resultDigest',
+  'outputSchema',
+  'evaluator',
+  'policyDigest',
+  'contentDigest',
+  'current',
+] as const;
+const OUTPUT_SCHEMA_KEYS = ['id', 'version', 'digest'] as const;
+const PROVIDER_INVOCATION_KEYS = [
+  'invocationId',
+  'requestDigest',
+  'outputDigest',
+  'providerId',
+  'sessionId',
+  'targetDigest',
+  'engineSpawned',
+] as const;
+const RECORDED_PARTICIPANT_KEYS = [
+  'providerId',
+  'sessionId',
+  'principalId',
+  'identityAssurance',
+  'engineSpawned',
+] as const;
 
 export type DirectHumanReviewProof = {
   attestation: DirectHumanReviewAttestation;
@@ -428,6 +543,258 @@ export function authorizeGrantedOrdinaryRole(
   throw grantedRoleInvalid();
 }
 
+/**
+ * Admit one exact role result without conflating provider execution with
+ * caller-supplied or direct-human content. The result form is derived from the
+ * assignment and observed orchestration; callers cannot select a stronger
+ * label. Grant-backed forms replay the same signed-use validator used by live
+ * grant consumption and CI.
+ */
+export function admitRoleResult(
+  input: AdmitRoleResultInput,
+): AdmittedRoleResult {
+  if (!input || typeof input !== 'object') {
+    throw roleResultInvalid();
+  }
+  const assignment = input.assignment;
+  const content = assertRoleContentAdmission(input.content);
+  const author = normalizeRecordedParticipant(input.author);
+  const participant = normalizeRecordedParticipant(input.participant);
+  if (
+    (assignment.role !== 'blind-surveyor' &&
+      assignment.role !== 'plan-reviewer') ||
+    !/^[0-9a-f]{64}$/.test(assignment.targetDigest)
+  ) {
+    throw roleResultInvalid();
+  }
+  const expectedContentKind =
+    assignment.role === 'blind-surveyor' ? 'blind-survey' : 'plan-review';
+  if (content.kind !== expectedContentKind) {
+    throw roleResultInvalid();
+  }
+
+  let form: AdmittedRoleResult['form'];
+  let providerInvocation: RoleProviderInvocationEvidence | null = null;
+  let grantUse: CollaborationGrantUseProjection | null = null;
+  let directHumanReviewAttestation: DirectHumanReviewAttestation | null = null;
+  let orchestration: AdmittedRoleResult['orchestration'];
+  let achievedIndependence: IndependenceDimension;
+
+  if (isOrdinaryRoleAssignment(assignment)) {
+    if (input.grantUse !== null || input.grantValidation !== null) {
+      throw roleResultInvalid();
+    }
+    if (
+      participant.providerId !== assignment.providerId ||
+      participant.sessionId !== assignment.sessionId ||
+      participant.engineSpawned !== true
+    ) {
+      throw roleResultInvalid();
+    }
+    providerInvocation = assertProviderInvocation(
+      input.providerInvocation,
+      assignment,
+    );
+    form = 'ordinary-provider';
+    orchestration = 'engine-spawned-provider';
+    achievedIndependence = 'provider-independent';
+  } else {
+    if (
+      canonicalJson(author) !== canonicalJson(assignment.author) ||
+      canonicalJson(participant) !== canonicalJson(assignment.participant) ||
+      input.grantUse === null ||
+      input.grantValidation === null
+    ) {
+      throw roleResultInvalid();
+    }
+    grantUse = validateCollaborationGrantUseProjection(input.grantUse, {
+      ...input.grantValidation,
+      expectedAssignment: assignment,
+      contentAdmission: {
+        kind: content.kind,
+        nodeId: content.nodeId,
+        resultDigest: content.resultDigest,
+        current: true,
+      },
+    });
+    orchestration = assignment.orchestration;
+    achievedIndependence = assignment.achievedIndependence;
+
+    if (isGrantedSameProviderRoleAssignment(assignment)) {
+      providerInvocation = assertProviderInvocation(
+        input.providerInvocation,
+        assignment,
+      );
+      form = 'granted-same-provider';
+    } else {
+      if (input.providerInvocation !== null) {
+        throw roleResultInvalid();
+      }
+      if (assignment.degradedForm === 'caller-supplied') {
+        form = 'granted-caller-supplied';
+      } else if (assignment.degradedForm === 'direct-human-review') {
+        if (
+          assignment.orchestration !== 'direct-human-review' ||
+          !grantUse.directHumanReviewAttestation ||
+          assignment.directHumanReviewAttestationDigest !==
+            directHumanReviewAttestationDigest(
+              grantUse.directHumanReviewAttestation,
+            )
+        ) {
+          throw roleResultInvalid();
+        }
+        form = 'direct-human-attestation';
+        directHumanReviewAttestation = grantUse.directHumanReviewAttestation;
+      } else {
+        throw roleResultInvalid();
+      }
+    }
+  }
+
+  const semantic = {
+    schemaVersion: 1 as const,
+    form,
+    role: assignment.role,
+    targetDigest: assignment.targetDigest,
+    assignment: structuredClone(assignment),
+    author,
+    participant,
+    orchestration,
+    requiredIndependence: 'provider-independent' as const,
+    achievedIndependence,
+    content,
+    providerInvocation,
+    grantUse,
+    directHumanReviewAttestation,
+  };
+  return deepFreeze({
+    ...semantic,
+    resultDigest: crypto
+      .createHash('sha256')
+      .update(canonicalJson({ schema: 'admitted-role-result.v1', ...semantic }))
+      .digest('hex'),
+  });
+}
+
+export function isGrantedSameProviderRoleAssignment(
+  value: GrantedRoleAssignment,
+): value is GrantedSameProviderRoleAssignment {
+  return (
+    value.degradedForm === 'same-provider-fresh-session' &&
+    value.orchestration === 'engine-spawned-provider' &&
+    value.providerId !== null &&
+    value.sessionId !== null &&
+    value.achievedIndependence === 'session-independent' &&
+    value.sessionIndependent === true &&
+    value.engineSpawned === true &&
+    value.directHumanReviewAttestationDigest === null
+  );
+}
+
+function isOrdinaryRoleAssignment(
+  value: RoleAssignment | GrantedRoleAssignment,
+): value is RoleAssignment {
+  return (
+    !('grantId' in value) &&
+    hasExactKeys(value, ORDINARY_ASSIGNMENT_KEYS) &&
+    (value.role === 'blind-surveyor' || value.role === 'plan-reviewer') &&
+    isProviderId(value.providerId) &&
+    typeof value.sessionId === 'string' &&
+    value.sessionId.length > 0 &&
+    /^[0-9a-f]{64}$/.test(value.targetDigest) &&
+    value.requiredIndependence === 'provider-independent' &&
+    value.achievedIndependence === 'provider-independent'
+  );
+}
+
+function assertRoleContentAdmission(
+  value: RoleContentAdmission,
+): RoleContentAdmission {
+  if (
+    !value ||
+    typeof value !== 'object' ||
+    !hasExactKeys(value, ROLE_CONTENT_KEYS) ||
+    !['blind-survey', 'plan-review'].includes(value.kind) ||
+    !/^[0-9a-f]{64}$/.test(value.nodeId) ||
+    !/^[0-9a-f]{64}$/.test(value.resultDigest) ||
+    !value.outputSchema ||
+    typeof value.outputSchema !== 'object' ||
+    !hasExactKeys(value.outputSchema, OUTPUT_SCHEMA_KEYS) ||
+    typeof value.outputSchema.id !== 'string' ||
+    value.outputSchema.id.length === 0 ||
+    !Number.isInteger(value.outputSchema.version) ||
+    value.outputSchema.version < 1 ||
+    !/^[0-9a-f]{64}$/.test(value.outputSchema.digest) ||
+    typeof value.evaluator !== 'string' ||
+    value.evaluator.length === 0 ||
+    !/^[0-9a-f]{64}$/.test(value.policyDigest) ||
+    value.contentDigest !== value.resultDigest ||
+    value.current !== true
+  ) {
+    throw roleResultInvalid();
+  }
+  return deepFreeze(structuredClone(value));
+}
+
+function assertProviderInvocation(
+  value: RoleProviderInvocationEvidence | null,
+  assignment: ProviderRoleAssignment,
+): RoleProviderInvocationEvidence {
+  if (
+    !value ||
+    typeof value !== 'object' ||
+    !hasExactKeys(value, PROVIDER_INVOCATION_KEYS) ||
+    typeof value.invocationId !== 'string' ||
+    value.invocationId.length === 0 ||
+    !/^[0-9a-f]{64}$/.test(value.requestDigest) ||
+    !/^[0-9a-f]{64}$/.test(value.outputDigest) ||
+    value.providerId !== assignment.providerId ||
+    value.sessionId !== assignment.sessionId ||
+    value.targetDigest !== assignment.targetDigest ||
+    value.engineSpawned !== true
+  ) {
+    throw roleResultInvalid();
+  }
+  return deepFreeze(structuredClone(value));
+}
+
+function normalizeRecordedParticipant(
+  value: RoleParticipant | RecordedRoleParticipant,
+): RecordedRoleParticipant {
+  if (!value || typeof value !== 'object') {
+    throw roleResultInvalid();
+  }
+  if (!hasExactKeys(value, RECORDED_PARTICIPANT_KEYS)) {
+    throw roleResultInvalid();
+  }
+  const providerId = value.providerId ?? null;
+  const sessionId = value.sessionId ?? null;
+  const principalId = value.principalId ?? null;
+  if (
+    (providerId !== null && !isProviderId(providerId)) ||
+    (sessionId !== null &&
+      (typeof sessionId !== 'string' || sessionId.length === 0)) ||
+    (principalId !== null &&
+      (typeof principalId !== 'string' || principalId.length === 0)) ||
+    ![
+      'self-declared',
+      'runtime-hint',
+      'adapter-assigned',
+      'maintainer-signed',
+    ].includes(value.identityAssurance) ||
+    typeof value.engineSpawned !== 'boolean'
+  ) {
+    throw roleResultInvalid();
+  }
+  return deepFreeze({
+    providerId,
+    sessionId,
+    principalId,
+    identityAssurance: value.identityAssurance,
+    engineSpawned: value.engineSpawned,
+  });
+}
+
 function recordParticipant(
   participant: RoleParticipant,
 ): RecordedRoleParticipant {
@@ -464,4 +831,33 @@ function grantedRoleInvalid() {
     'Collaboration grant does not authorize this exact degraded role assignment.',
     ExitCode.guard,
   );
+}
+
+function roleResultInvalid() {
+  return workflowError(
+    'ROLE_RESULT_INVALID',
+    'Role result does not match its exact assignment, orchestration, content, and grant facts.',
+    ExitCode.guard,
+  );
+}
+
+function hasExactKeys(value: object, expected: readonly string[]): boolean {
+  const keys = Reflect.ownKeys(value);
+  return (
+    keys.length === expected.length &&
+    keys.every((key) => typeof key === 'string') &&
+    expected.every((key) =>
+      Object.prototype.propertyIsEnumerable.call(value, key),
+    )
+  );
+}
+
+function deepFreeze<T>(value: T): T {
+  if (value && typeof value === 'object' && !Object.isFrozen(value)) {
+    Object.freeze(value);
+    for (const child of Object.values(value)) {
+      deepFreeze(child);
+    }
+  }
+  return value;
 }

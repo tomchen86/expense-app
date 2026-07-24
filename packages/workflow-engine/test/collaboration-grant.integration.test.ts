@@ -41,6 +41,7 @@ import {
 import type { MaintainerPolicy } from '../src/maintainer-policy.ts';
 import type { MaintainerSignerProvider } from '../src/maintainer-signer.ts';
 import {
+  admitRoleResult,
   authorizeGrantedOrdinaryRole,
   scheduleOrdinaryRole,
   type RoleParticipant,
@@ -363,10 +364,11 @@ test('collaboration store reserves once across worktrees and rejects replay', ()
     const consumed = consumeCollaborationGrant(common, GRANT_ID, {
       transitionDigest: TRANSITION_DIGEST,
       assignment,
-      structuredContent: {
+      contentAdmission: {
         kind: 'blind-survey',
         nodeId: CONTENT_NODE_ID,
         resultDigest: CONTENT_RESULT_DIGEST,
+        current: true,
       },
       now: new Date(NOW.getTime() + 120_000),
     });
@@ -397,14 +399,41 @@ test('collaboration store reserves once across worktrees and rejects replay', ()
     );
     assert.equal(consumed.use?.replayScope, COLLABORATION_GRANT_REPLAY_SCOPE);
     assert.deepEqual(consumed.use?.residuals, COLLABORATION_GRANT_RESIDUALS);
+    assert.ok(consumed.use);
+    const admitted = admitRoleResult({
+      assignment,
+      author: assignment.author,
+      participant: assignment.participant,
+      content: roleContent('blind-survey'),
+      providerInvocation: {
+        invocationId: 'same-provider-invocation',
+        requestDigest: '5'.repeat(64),
+        outputDigest: '6'.repeat(64),
+        providerId: 'codex',
+        sessionId: 'fresh-session',
+        targetDigest: TARGET_DIGEST,
+        engineSpawned: true,
+      },
+      grantUse: consumed.use,
+      grantValidation: {
+        now: new Date(NOW.getTime() + 120_000),
+        expectedBinding: expectedBinding(issued.envelope),
+        policy: POLICY,
+        verifier: signer,
+        transitionDigest: TRANSITION_DIGEST,
+      },
+    });
+    assert.equal(admitted.form, 'granted-same-provider');
+    assert.equal(admitted.achievedIndependence, 'session-independent');
 
     const repeated = consumeCollaborationGrant(common, GRANT_ID, {
       transitionDigest: TRANSITION_DIGEST,
       assignment,
-      structuredContent: {
+      contentAdmission: {
         kind: 'blind-survey',
         nodeId: CONTENT_NODE_ID,
         resultDigest: CONTENT_RESULT_DIGEST,
+        current: true,
       },
       now: new Date(NOW.getTime() + 180_000),
     });
@@ -414,10 +443,11 @@ test('collaboration store reserves once across worktrees and rejects replay', ()
         consumeCollaborationGrant(common, GRANT_ID, {
           transitionDigest: TRANSITION_DIGEST,
           assignment,
-          structuredContent: {
+          contentAdmission: {
             kind: 'blind-survey',
             nodeId: '6'.repeat(64),
             resultDigest: CONTENT_RESULT_DIGEST,
+            current: true,
           },
           now: new Date(NOW.getTime() + 180_000),
         }),
@@ -474,10 +504,11 @@ test('grant reserve and consume compose under an already-owned lifecycle lock', 
           {
             transitionDigest: TRANSITION_DIGEST,
             assignment,
-            structuredContent: {
+            contentAdmission: {
               kind: 'blind-survey',
               nodeId: CONTENT_NODE_ID,
               resultDigest: CONTENT_RESULT_DIGEST,
+              current: true,
             },
             now: new Date(NOW.getTime() + 120_000),
           },
@@ -832,31 +863,17 @@ test('no-callable degraded forms record no provider invocation or independence',
             }),
           (error) => isWorkflowError(error, 'COLLABORATION_SIGNATURE_INVALID'),
         );
-        assert.throws(
-          () =>
-            consumeCollaborationGrant(fixture.common, fixture.grantId, {
-              transitionDigest: TRANSITION_DIGEST,
-              assignment,
-              structuredContent: {
-                kind: 'plan-review',
-                nodeId: '9'.repeat(64),
-                resultDigest: CONTENT_RESULT_DIGEST,
-              },
-              directHumanReviewAttestation: directHumanReview.attestation,
-              now: new Date(NOW.getTime() + 120_000),
-            }),
-          (error) => isWorkflowError(error, 'COLLABORATION_GRANT_USE_INVALID'),
-        );
         const consumed = consumeCollaborationGrant(
           fixture.common,
           fixture.grantId,
           {
             transitionDigest: TRANSITION_DIGEST,
             assignment,
-            structuredContent: {
+            contentAdmission: {
               kind: 'plan-review',
               nodeId: CONTENT_NODE_ID,
               resultDigest: CONTENT_RESULT_DIGEST,
+              current: true,
             },
             directHumanReviewAttestation: directHumanReview.attestation,
             now: new Date(NOW.getTime() + 120_000),
@@ -879,6 +896,24 @@ test('no-callable degraded forms record no provider invocation or independence',
             },
           }),
         );
+        const admitted = admitRoleResult({
+          assignment,
+          author: assignment.author,
+          participant: assignment.participant,
+          content: roleContent('plan-review'),
+          providerInvocation: null,
+          grantUse: consumed.use,
+          grantValidation: {
+            now: new Date(NOW.getTime() + 120_000),
+            expectedBinding: expectedBinding(fixture.reservation.envelope),
+            policy: POLICY,
+            verifier: fixture.signer,
+            transitionDigest: TRANSITION_DIGEST,
+          },
+        });
+        assert.equal(admitted.form, 'direct-human-attestation');
+        assert.equal(admitted.providerInvocation, null);
+        assert.ok(admitted.directHumanReviewAttestation);
       }
 
       assert.throws(
@@ -899,7 +934,7 @@ test('no-callable degraded forms record no provider invocation or independence',
   }
 });
 
-test('grant consumption requires structured survey or review content and retains every assurance obligation', () => {
+test('invalid content admission terminally fails a reserved grant', () => {
   const fixture = reservedFixture('caller-supplied');
   try {
     const assignment = authorizeGrantedOrdinaryRole({
@@ -921,21 +956,53 @@ test('grant consumption requires structured survey or review content and retains
         consumeCollaborationGrant(fixture.common, fixture.grantId, {
           transitionDigest: TRANSITION_DIGEST,
           assignment,
-          structuredContent: undefined as never,
+          contentAdmission: {
+            kind: 'blind-survey',
+            nodeId: CONTENT_NODE_ID,
+            resultDigest: CONTENT_RESULT_DIGEST,
+            current: false,
+          } as never,
           now: new Date(NOW.getTime() + 120_000),
         }),
       (error) => isWorkflowError(error, 'COLLABORATION_GRANT_USE_INVALID'),
     );
+    assert.equal(
+      inspectCollaborationGrants(fixture.common, fixture.grantId)[0]?.state,
+      'failed',
+    );
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+test('grant consumption requires structured survey or review content and retains every assurance obligation', () => {
+  const fixture = reservedFixture('caller-supplied');
+  try {
+    const assignment = authorizeGrantedOrdinaryRole({
+      role: 'blind-surveyor',
+      author: participant('codex', 'author-session'),
+      targetDigest: TARGET_DIGEST,
+      reservation: fixture.reservation,
+      actualParticipant: {
+        providerId: undefined,
+        sessionId: undefined,
+        principalId: 'fixture-caller',
+        identityAssurance: 'self-declared',
+        engineSpawned: false,
+      },
+      callableProviderIds: [],
+    });
     const consumed = consumeCollaborationGrant(
       fixture.common,
       fixture.grantId,
       {
         transitionDigest: TRANSITION_DIGEST,
         assignment,
-        structuredContent: {
+        contentAdmission: {
           kind: 'blind-survey',
           nodeId: CONTENT_NODE_ID,
           resultDigest: CONTENT_RESULT_DIGEST,
+          current: true,
         },
         now: new Date(NOW.getTime() + 120_000),
       },
@@ -995,6 +1062,52 @@ test('grant consumption requires structured survey or review content and retains
       ]).length,
       1,
     );
+    const admitted = admitRoleResult({
+      assignment,
+      author: assignment.author,
+      participant: assignment.participant,
+      content: roleContent('blind-survey'),
+      providerInvocation: null,
+      grantUse: use,
+      grantValidation: {
+        now: validationOptions.now,
+        expectedBinding: validationOptions.expectedBinding,
+        policy: validationOptions.policy,
+        verifier: validationOptions.verifier,
+        transitionDigest: validationOptions.transitionDigest,
+      },
+    });
+    assert.equal(admitted.form, 'granted-caller-supplied');
+    assert.equal(admitted.orchestration, 'caller-supplied');
+    assert.equal(admitted.providerInvocation, null);
+    assert.match(admitted.resultDigest, /^[0-9a-f]{64}$/);
+    assert.throws(
+      () =>
+        admitRoleResult({
+          assignment,
+          author: assignment.author,
+          participant: assignment.participant,
+          content: roleContent('blind-survey'),
+          providerInvocation: {
+            invocationId: 'fabricated',
+            requestDigest: '5'.repeat(64),
+            outputDigest: '6'.repeat(64),
+            providerId: 'codex',
+            sessionId: 'fabricated',
+            targetDigest: TARGET_DIGEST,
+            engineSpawned: true,
+          },
+          grantUse: use,
+          grantValidation: {
+            now: validationOptions.now,
+            expectedBinding: validationOptions.expectedBinding,
+            policy: validationOptions.policy,
+            verifier: validationOptions.verifier,
+            transitionDigest: validationOptions.transitionDigest,
+          },
+        }),
+      (error) => isWorkflowError(error, 'ROLE_RESULT_INVALID'),
+    );
     assert.throws(
       () =>
         validateCollaborationGrantUseSet([
@@ -1034,6 +1147,23 @@ test('grant consumption requires structured survey or review content and retains
     fixture.cleanup();
   }
 });
+
+function roleContent(kind: 'blind-survey' | 'plan-review') {
+  return {
+    kind,
+    nodeId: CONTENT_NODE_ID,
+    resultDigest: CONTENT_RESULT_DIGEST,
+    outputSchema: {
+      id: `${kind}-output.v1`,
+      version: 1,
+      digest: '5'.repeat(64),
+    },
+    evaluator: `${kind}-evaluator.v1`,
+    policyDigest: '6'.repeat(64),
+    contentDigest: CONTENT_RESULT_DIGEST,
+    current: true as const,
+  };
+}
 
 function collaborationFixture(): string {
   const repository = createFixtureRepository();

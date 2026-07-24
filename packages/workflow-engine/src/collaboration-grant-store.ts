@@ -144,7 +144,7 @@ export type CollaborationReservationRequest = {
 export type CollaborationConsumptionRequest = {
   transitionDigest: string;
   assignment: unknown;
-  structuredContent: CollaborationStructuredContent;
+  contentAdmission: CollaborationContentAdmission;
   directHumanReviewAttestation?: DirectHumanReviewAttestation | null;
   now?: Date;
 };
@@ -434,21 +434,47 @@ export function consumeCollaborationGrantUnderLifecycleLock(
   if (reservation.transitionDigest !== transitionDigest) {
     throw unavailableGrant(grantId);
   }
-  const assignment = assertGrantedAssignment(
-    request.assignment,
-    reservation.envelope,
-  );
-  const structuredContent = assertStructuredContent(
-    request.structuredContent,
-    reservation.envelope.payload.lifecyclePhase,
-  );
-  const directHumanReviewAttestation = assertDirectHumanAttestationReference(
-    request.directHumanReviewAttestation ?? null,
-    assignment,
-    reservation.envelope,
-    transitionDigest,
-    structuredContent,
-  );
+  let assignment: CollaborationGrantedAssignmentRecord;
+  let structuredContent: CollaborationStructuredContent;
+  let directHumanReviewAttestation: DirectHumanReviewAttestation | null;
+  try {
+    assignment = assertGrantedAssignment(
+      request.assignment,
+      reservation.envelope,
+    );
+    const contentAdmission = assertContentAdmission(
+      request.contentAdmission,
+      reservation.envelope.payload.lifecyclePhase,
+    );
+    structuredContent = {
+      kind: contentAdmission.kind,
+      nodeId: contentAdmission.nodeId,
+      resultDigest: contentAdmission.resultDigest,
+    };
+    directHumanReviewAttestation = assertDirectHumanAttestationReference(
+      request.directHumanReviewAttestation ?? null,
+      assignment,
+      reservation.envelope,
+      transitionDigest,
+      structuredContent,
+    );
+  } catch (error) {
+    const failed: CollaborationTerminalRecord = {
+      schemaVersion: 1,
+      state: 'failed',
+      grantId,
+      transitionDigest,
+      reason: 'Exact role-result content admission failed',
+      recordedAt: exactDate(request.now ?? new Date()).toISOString(),
+      envelope: reservation.envelope,
+      use: null,
+    };
+    assertOwned();
+    createPrivateFileAtomic(terminalPath, serialize(failed));
+    cleanupNonterminal(paths, grantId, reservation.envelope);
+    assertOwned();
+    throw error;
+  }
   const use: CollaborationGrantUseProjection = {
     schemaVersion: 1,
     grantId,
@@ -1345,10 +1371,15 @@ function consumptionMatches(
       request.assignment,
       use.envelope,
     );
-    const structuredContent = assertStructuredContent(
-      request.structuredContent,
+    const contentAdmission = assertContentAdmission(
+      request.contentAdmission,
       use.lifecyclePhase,
     );
+    const structuredContent: CollaborationStructuredContent = {
+      kind: contentAdmission.kind,
+      nodeId: contentAdmission.nodeId,
+      resultDigest: contentAdmission.resultDigest,
+    };
     const directHumanReviewAttestation = assertDirectHumanAttestationReference(
       request.directHumanReviewAttestation ?? null,
       assignment,

@@ -9,7 +9,11 @@ import {
   type CapabilityPurpose,
   type ProviderId,
 } from './provider-registry.ts';
-import type { OrdinaryRole, RoleAssignment } from './role-scheduler.ts';
+import type {
+  GrantedSameProviderRoleAssignment,
+  OrdinaryRole,
+  ProviderRoleAssignment,
+} from './role-scheduler.ts';
 
 const HEX64 = /^[0-9a-f]{64}$/;
 const GIT_OBJECT_ID = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
@@ -70,7 +74,7 @@ export type ProviderInvocationRequest = {
   nonce: string;
   purpose: CapabilityPurpose;
   providerId: ProviderId;
-  roleAssignment: RoleAssignment;
+  roleAssignment: ProviderRoleAssignment;
   roleAssignmentDigest: string;
   capabilityProfile: CapabilityProfile;
   repositoryId: string;
@@ -92,7 +96,7 @@ export type ProviderInvocationRequestInput = {
   nonce: string;
   purpose: CapabilityPurpose;
   providerId: ProviderId;
-  roleAssignment: RoleAssignment;
+  roleAssignment: ProviderRoleAssignment;
   capabilityProfile: CapabilityProfile;
   repositoryId: string;
   baseCommit: string;
@@ -171,6 +175,26 @@ const ROLE_ASSIGNMENT_KEYS = [
   'targetDigest',
   'requiredIndependence',
   'achievedIndependence',
+] as const;
+
+const GRANTED_ROLE_ASSIGNMENT_KEYS = [
+  'role',
+  'providerId',
+  'sessionId',
+  'targetDigest',
+  'requiredIndependence',
+  'achievedIndependence',
+  'providerIndependent',
+  'sessionIndependent',
+  'engineSpawned',
+  'orchestration',
+  'grantId',
+  'degradedForm',
+  'authorizedEffect',
+  'author',
+  'participant',
+  'callableProviderIds',
+  'directHumanReviewAttestationDigest',
 ] as const;
 
 const OUTPUT_SCHEMA_KEYS = ['id', 'version', 'digest'] as const;
@@ -262,7 +286,7 @@ export function createProviderInvocationRequest(
 
   const roleAssignment = deepFreeze(
     structuredClone(input.roleAssignment),
-  ) as RoleAssignment;
+  ) as ProviderRoleAssignment;
   const outputSchema = deepFreeze(
     structuredClone(input.outputSchema),
   ) as ProviderOutputSchema;
@@ -485,11 +509,11 @@ function isOutputSchema(value: unknown): value is ProviderOutputSchema {
   );
 }
 
-function isFullRoleAssignment(value: unknown): value is RoleAssignment {
+function isFullRoleAssignment(value: unknown): value is ProviderRoleAssignment {
   // An ordinary role assignment used by an invocation request is valid only
   // when both independence fields are provider-independent; a forged assignment
   // that weakens either field is rejected.
-  return (
+  const ordinary =
     isRecord(value) &&
     hasExactKeys(value, ROLE_ASSIGNMENT_KEYS) &&
     (value.role === 'blind-surveyor' || value.role === 'plan-reviewer') &&
@@ -498,7 +522,82 @@ function isFullRoleAssignment(value: unknown): value is RoleAssignment {
     typeof value.targetDigest === 'string' &&
     HEX64.test(value.targetDigest) &&
     value.requiredIndependence === 'provider-independent' &&
-    value.achievedIndependence === 'provider-independent'
+    value.achievedIndependence === 'provider-independent';
+  if (ordinary) {
+    return true;
+  }
+  return isGrantedSameProviderAssignment(value);
+}
+
+function isGrantedSameProviderAssignment(
+  value: unknown,
+): value is GrantedSameProviderRoleAssignment {
+  if (
+    !isRecord(value) ||
+    !hasExactKeys(value, GRANTED_ROLE_ASSIGNMENT_KEYS) ||
+    (value.role !== 'blind-surveyor' && value.role !== 'plan-reviewer') ||
+    !isProviderId(value.providerId) ||
+    !isNonEmptyString(value.sessionId) ||
+    typeof value.targetDigest !== 'string' ||
+    !HEX64.test(value.targetDigest) ||
+    value.requiredIndependence !== 'provider-independent' ||
+    value.achievedIndependence !== 'session-independent' ||
+    value.providerIndependent !== false ||
+    value.sessionIndependent !== true ||
+    value.engineSpawned !== true ||
+    value.orchestration !== 'engine-spawned-provider' ||
+    typeof value.grantId !== 'string' ||
+    !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(
+      value.grantId,
+    ) ||
+    value.degradedForm !== 'same-provider-fresh-session' ||
+    value.authorizedEffect !== 'role-independence-degradation-only' ||
+    !isRecordedParticipant(value.author) ||
+    !isRecordedParticipant(value.participant) ||
+    !Array.isArray(value.callableProviderIds) ||
+    value.callableProviderIds.length !== 1 ||
+    value.callableProviderIds[0] !== value.providerId ||
+    value.directHumanReviewAttestationDigest !== null
+  ) {
+    return false;
+  }
+  return (
+    value.author.providerId === value.providerId &&
+    typeof value.author.sessionId === 'string' &&
+    value.author.sessionId !== value.sessionId &&
+    value.participant.providerId === value.providerId &&
+    value.participant.sessionId === value.sessionId &&
+    value.participant.engineSpawned === true
+  );
+}
+
+function isRecordedParticipant(value: unknown): value is {
+  providerId: ProviderId | null;
+  sessionId: string | null;
+  principalId: string | null;
+  identityAssurance:
+    'self-declared' | 'runtime-hint' | 'adapter-assigned' | 'maintainer-signed';
+  engineSpawned: boolean;
+} {
+  return (
+    isRecord(value) &&
+    hasExactKeys(value, [
+      'providerId',
+      'sessionId',
+      'principalId',
+      'identityAssurance',
+      'engineSpawned',
+    ]) &&
+    (value.providerId === null || isProviderId(value.providerId)) &&
+    (value.sessionId === null || isNonEmptyString(value.sessionId)) &&
+    (value.principalId === null || isNonEmptyString(value.principalId)) &&
+    [
+      'self-declared',
+      'runtime-hint',
+      'adapter-assigned',
+      'maintainer-signed',
+    ].includes(String(value.identityAssurance)) &&
+    typeof value.engineSpawned === 'boolean'
   );
 }
 

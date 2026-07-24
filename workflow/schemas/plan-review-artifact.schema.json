@@ -13,7 +13,11 @@
       "minItems": 1,
       "items": { "$ref": "#/$defs/evidenceNode" }
     },
-    "currentRefs": { "$ref": "#/$defs/currentRefs" }
+    "currentRefs": { "$ref": "#/$defs/currentRefs" },
+    "roleResults": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/admittedRoleResult" }
+    }
   },
   "$defs": {
     "digest": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
@@ -36,6 +40,160 @@
       "minProperties": 1,
       "propertyNames": { "$ref": "#/$defs/role" },
       "additionalProperties": { "$ref": "#/$defs/digest" }
+    },
+    "admittedRoleResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "form",
+        "role",
+        "targetDigest",
+        "assignment",
+        "author",
+        "participant",
+        "orchestration",
+        "requiredIndependence",
+        "achievedIndependence",
+        "content",
+        "providerInvocation",
+        "grantUse",
+        "directHumanReviewAttestation",
+        "resultDigest"
+      ],
+      "properties": {
+        "schemaVersion": { "const": 1 },
+        "form": {
+          "enum": [
+            "ordinary-provider",
+            "granted-same-provider",
+            "granted-caller-supplied",
+            "direct-human-attestation"
+          ]
+        },
+        "role": { "enum": ["blind-surveyor", "plan-reviewer"] },
+        "targetDigest": { "$ref": "#/$defs/digest" },
+        "assignment": { "type": "object" },
+        "author": { "type": "object" },
+        "participant": { "type": "object" },
+        "orchestration": {
+          "enum": [
+            "engine-spawned-provider",
+            "caller-supplied",
+            "direct-human-review"
+          ]
+        },
+        "requiredIndependence": { "const": "provider-independent" },
+        "achievedIndependence": {
+          "enum": ["provider-independent", "session-independent", "none"]
+        },
+        "content": { "$ref": "#/$defs/roleContentAdmission" },
+        "providerInvocation": {
+          "oneOf": [{ "type": "null" }, { "type": "object" }]
+        },
+        "grantUse": {
+          "oneOf": [{ "type": "null" }, { "type": "object" }]
+        },
+        "directHumanReviewAttestation": {
+          "oneOf": [{ "type": "null" }, { "type": "object" }]
+        },
+        "resultDigest": { "$ref": "#/$defs/digest" }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": { "form": { "const": "ordinary-provider" } },
+            "required": ["form"]
+          },
+          "then": {
+            "properties": {
+              "orchestration": { "const": "engine-spawned-provider" },
+              "achievedIndependence": { "const": "provider-independent" },
+              "providerInvocation": { "type": "object" },
+              "grantUse": { "type": "null" },
+              "directHumanReviewAttestation": { "type": "null" }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": { "form": { "const": "granted-same-provider" } },
+            "required": ["form"]
+          },
+          "then": {
+            "properties": {
+              "orchestration": { "const": "engine-spawned-provider" },
+              "achievedIndependence": { "const": "session-independent" },
+              "providerInvocation": { "type": "object" },
+              "grantUse": { "type": "object" },
+              "directHumanReviewAttestation": { "type": "null" }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": { "form": { "const": "granted-caller-supplied" } },
+            "required": ["form"]
+          },
+          "then": {
+            "properties": {
+              "orchestration": { "const": "caller-supplied" },
+              "achievedIndependence": { "const": "none" },
+              "providerInvocation": { "type": "null" },
+              "grantUse": { "type": "object" },
+              "directHumanReviewAttestation": { "type": "null" }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": { "form": { "const": "direct-human-attestation" } },
+            "required": ["form"]
+          },
+          "then": {
+            "properties": {
+              "orchestration": { "const": "direct-human-review" },
+              "achievedIndependence": { "const": "none" },
+              "providerInvocation": { "type": "null" },
+              "grantUse": { "type": "object" },
+              "directHumanReviewAttestation": { "type": "object" }
+            }
+          }
+        }
+      ]
+    },
+    "roleContentAdmission": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "nodeId",
+        "resultDigest",
+        "outputSchema",
+        "evaluator",
+        "policyDigest",
+        "contentDigest",
+        "current"
+      ],
+      "properties": {
+        "kind": { "enum": ["blind-survey", "plan-review"] },
+        "nodeId": { "$ref": "#/$defs/digest" },
+        "resultDigest": { "$ref": "#/$defs/digest" },
+        "outputSchema": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["id", "version", "digest"],
+          "properties": {
+            "id": { "type": "string", "minLength": 1 },
+            "version": { "type": "integer", "minimum": 1 },
+            "digest": { "$ref": "#/$defs/digest" }
+          }
+        },
+        "evaluator": { "type": "string", "minLength": 1 },
+        "policyDigest": { "$ref": "#/$defs/digest" },
+        "contentDigest": { "$ref": "#/$defs/digest" },
+        "current": { "const": true }
+      }
     },
     "evidenceNode": {
       "type": "object",

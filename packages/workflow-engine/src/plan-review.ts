@@ -23,15 +23,15 @@ import {
 } from './planning-generation.ts';
 
 const PLAN_REVIEW_TYPE = 'plan-review';
-const PLAN_REVIEW_SCHEMA = 'plan-review.v1';
-const PLAN_REVIEW_EVALUATOR = 'plan-review.v1';
-const PLAN_REVIEW_OUTPUT_SCHEMA_ID = 'plan-review-output.v1';
-const PLAN_REVIEW_NODE_OUTPUT_SCHEMA_ID = 'plan-review-node-output.v1';
+const PLAN_REVIEW_SCHEMA = 'plan-review.v2';
+const PLAN_REVIEW_EVALUATOR = 'plan-review.v2';
+const PLAN_REVIEW_OUTPUT_SCHEMA_ID = 'plan-review-output.v2';
+const PLAN_REVIEW_NODE_OUTPUT_SCHEMA_ID = 'plan-review-node-output.v2';
 
 const PROVIDER_RESULT_TYPE = 'plan-review-provider-result';
-const PROVIDER_RESULT_SCHEMA = 'plan-review-provider-result.v1';
-const PROVIDER_RESULT_EVALUATOR = 'plan-review-provider-result.v1';
-const PROVIDER_RESULT_OUTPUT_SCHEMA = 'plan-review-provider-result-output.v1';
+const PROVIDER_RESULT_SCHEMA = 'plan-review-provider-result.v2';
+const PROVIDER_RESULT_EVALUATOR = 'plan-review-provider-result.v2';
+const PROVIDER_RESULT_OUTPUT_SCHEMA = 'plan-review-provider-result-output.v2';
 
 const DISPOSITION_TYPE = 'plan-review-disposition';
 const DISPOSITION_SCHEMA = 'plan-review-disposition.v1';
@@ -51,6 +51,8 @@ const PLAN_REVIEW_LIMITS = Object.freeze({
   maxInvestigationDependencies: 4096,
   maxSummaryBytes: 16 * 1024,
   maxObservationBytes: 16 * 1024,
+  maxResidualRiskBytes: 16 * 1024,
+  maxUncertaintyBytes: 16 * 1024,
   maxDispositionRationaleBytes: 16 * 1024,
   maxAuthorBytes: 1024,
   maxRepositoryPathBytes: 4096,
@@ -76,6 +78,13 @@ const FOLLOWUP_CATEGORIES: ReadonlySet<string> = new Set(['follow-up']);
 const VERDICTS: ReadonlySet<string> = new Set([
   'advisory-approve',
   'advisory-reject',
+]);
+const SEVERITIES: ReadonlySet<string> = new Set([
+  'critical',
+  'high',
+  'medium',
+  'low',
+  'informational',
 ]);
 const TERM_KINDS: ReadonlySet<string> = new Set([
   'literal-content',
@@ -108,6 +117,8 @@ const SUBMISSION_KEYS = [
   'findings',
   'proposedTerms',
   'suggestions',
+  'residualRisk',
+  'uncertainty',
 ] as const;
 
 const OUTPUT_KEYS = [
@@ -122,6 +133,8 @@ const OUTPUT_KEYS = [
   'findings',
   'suggestions',
   'proposedTerms',
+  'residualRisk',
+  'uncertainty',
   'requiredIndependence',
   'achievedIndependence',
 ] as const;
@@ -154,6 +167,8 @@ const ROLE_ASSIGNMENT_KEYS = [
 ] as const;
 
 export type PlanReviewVerdict = 'advisory-approve' | 'advisory-reject';
+export type PlanReviewSeverity =
+  'critical' | 'high' | 'medium' | 'low' | 'informational';
 
 export type PlanReviewEvidence =
   | {
@@ -178,6 +193,7 @@ export type PlanReviewProposedTerm = {
  */
 export type PlanReviewFinding = {
   kind: 'challenge' | 'suggestion';
+  severity: PlanReviewSeverity;
   category: string;
   currentChangeImpact: 'required' | 'independent-follow-up';
   summary: string;
@@ -189,18 +205,21 @@ export type PlanReviewScopeAssessment =
   | { kind: 'no-challenge'; evidence: PlanReviewEvidence[] };
 
 export type PlanReviewSubmission = {
-  schemaVersion: 1;
+  schemaVersion: 2;
   verdict: PlanReviewVerdict;
   coverage: string[];
   scopeAssessment: PlanReviewScopeAssessment;
   findings: PlanReviewFinding[];
   proposedTerms: PlanReviewProposedTerm[];
   suggestions: PlanReviewFinding[];
+  residualRisk: string;
+  uncertainty: string;
 };
 
 export type PlanReviewChallenge = {
   findingId: string;
   kind: 'challenge';
+  severity: PlanReviewSeverity;
   category: string;
   currentChangeImpact: 'required';
   summary: string;
@@ -210,6 +229,7 @@ export type PlanReviewChallenge = {
 export type PlanReviewSuggestion = {
   suggestionId: string;
   kind: 'suggestion';
+  severity: PlanReviewSeverity;
   category: string;
   currentChangeImpact: 'independent-follow-up';
   summary: string;
@@ -217,7 +237,7 @@ export type PlanReviewSuggestion = {
 };
 
 export type PlanReviewReport = {
-  schemaVersion: 1;
+  schemaVersion: 2;
   nodeId: string;
   resultDigest: string;
   policyDigest: string;
@@ -233,6 +253,8 @@ export type PlanReviewReport = {
   findings: PlanReviewChallenge[];
   suggestions: PlanReviewSuggestion[];
   proposedTerms: PlanReviewProposedTerm[];
+  residualRisk: string;
+  uncertainty: string;
   requiredIndependence: IndependenceDimension;
   achievedIndependence: IndependenceDimension;
 };
@@ -298,6 +320,7 @@ export type PlanReviewProviderResultNodeInput = {
 type NormalizedFinding = {
   findingId: string;
   kind: 'challenge';
+  severity: PlanReviewSeverity;
   category: string;
   currentChangeImpact: 'required';
   summary: string;
@@ -307,6 +330,7 @@ type NormalizedFinding = {
 type NormalizedSuggestion = {
   suggestionId: string;
   kind: 'suggestion';
+  severity: PlanReviewSeverity;
   category: string;
   currentChangeImpact: 'independent-follow-up';
   summary: string;
@@ -320,12 +344,14 @@ type NormalizedSubmission = {
   findings: NormalizedFinding[];
   suggestions: NormalizedSuggestion[];
   proposedTerms: PlanReviewProposedTerm[];
+  residualRisk: string;
+  uncertainty: string;
 };
 
 const PLAN_REVIEW_SCHEMA_GRAMMAR = {
-  schema: 'plan-review-output-grammar.v1',
+  schema: 'plan-review-output-grammar.v2',
   id: PLAN_REVIEW_OUTPUT_SCHEMA_ID,
-  version: 1,
+  version: 2,
   submissionKeys: [...SUBMISSION_KEYS],
   storedOutputKeys: [...OUTPUT_KEYS],
   subjectKeys: [...SUBJECT_KEYS],
@@ -354,6 +380,7 @@ const PLAN_REVIEW_SCHEMA_GRAMMAR = {
   challenge: {
     submissionKeys: [
       'kind',
+      'severity',
       'category',
       'currentChangeImpact',
       'summary',
@@ -362,6 +389,7 @@ const PLAN_REVIEW_SCHEMA_GRAMMAR = {
     storedKeys: [
       'findingId',
       'kind',
+      'severity',
       'category',
       'currentChangeImpact',
       'summary',
@@ -373,6 +401,7 @@ const PLAN_REVIEW_SCHEMA_GRAMMAR = {
   suggestion: {
     submissionKeys: [
       'kind',
+      'severity',
       'category',
       'currentChangeImpact',
       'summary',
@@ -381,6 +410,7 @@ const PLAN_REVIEW_SCHEMA_GRAMMAR = {
     storedKeys: [
       'suggestionId',
       'kind',
+      'severity',
       'category',
       'currentChangeImpact',
       'summary',
@@ -410,6 +440,7 @@ const PLAN_REVIEW_SCHEMA_GRAMMAR = {
     provenanceParentRoles: ['review'],
   },
   independenceDimensions: [...INDEPENDENCE_DIMENSIONS],
+  severities: [...SEVERITIES],
   limits: PLAN_REVIEW_LIMITS,
 } as const;
 
@@ -425,7 +456,7 @@ const PLAN_REVIEW_OUTPUT_DIGEST = sha256(
  */
 export const PLAN_REVIEW_OUTPUT_SCHEMA = Object.freeze({
   id: PLAN_REVIEW_OUTPUT_SCHEMA_ID,
-  version: 1,
+  version: 2,
   digest: PLAN_REVIEW_OUTPUT_DIGEST,
 });
 
@@ -437,7 +468,7 @@ export const PLAN_REVIEW_OUTPUT_SCHEMA = Object.freeze({
  */
 export const PLAN_REVIEW_OUTPUT_VALIDATOR = Object.freeze({
   id: PLAN_REVIEW_OUTPUT_SCHEMA_ID,
-  version: 1,
+  version: 2,
   digest: PLAN_REVIEW_OUTPUT_DIGEST,
   validate(value: unknown): boolean {
     try {
@@ -632,7 +663,7 @@ export function createPlanReviewProviderResultNode(
     provenanceParentNodeIds: {},
     outputSchema: PROVIDER_RESULT_OUTPUT_SCHEMA,
     output: {
-      schemaVersion: 1,
+      schemaVersion: 2,
       subjectDigest: subject.subjectDigest,
       assignment,
       submission,
@@ -655,7 +686,7 @@ export function planReviewSubmissionDigest(
 ): string {
   return sha256(
     canonicalJson({
-      schema: 'plan-review-submission.v1',
+      schema: 'plan-review-submission.v2',
       submission,
     }),
   );
@@ -694,7 +725,7 @@ export function createPlanReviewNode(input: PlanReviewNodeInput): EvidenceNode {
   );
 
   const output = {
-    schemaVersion: 1,
+    schemaVersion: 2,
     planningGenerationId: subject.planningGenerationId,
     planTargetDigest: subject.planTargetDigest,
     subjectDigest: subject.subjectDigest,
@@ -705,6 +736,8 @@ export function createPlanReviewNode(input: PlanReviewNodeInput): EvidenceNode {
     findings: normalized.findings,
     suggestions: normalized.suggestions,
     proposedTerms: normalized.proposedTerms,
+    residualRisk: normalized.residualRisk,
+    uncertainty: normalized.uncertainty,
     requiredIndependence: subject.requiredIndependence,
     achievedIndependence: assignment.achievedIndependence,
   };
@@ -774,8 +807,8 @@ export function readPlanReviewNode(node: EvidenceNode): PlanReviewReport {
   }
 
   const output = assertExactKeys(validated.output, OUTPUT_KEYS);
-  if (output.schemaVersion !== 1) {
-    throw planReviewInvalid('Plan review output schema version must be 1.');
+  if (output.schemaVersion !== 2) {
+    throw planReviewInvalid('Plan review output schema version must be 2.');
   }
   if (
     !isDigest(output.planningGenerationId) ||
@@ -819,6 +852,16 @@ export function readPlanReviewNode(node: EvidenceNode): PlanReviewReport {
     true,
   );
   const proposedTerms = assertProposedTerms(output.proposedTerms);
+  const residualRisk = assertBoundedRequiredText(
+    output.residualRisk,
+    PLAN_REVIEW_LIMITS.maxResidualRiskBytes,
+    'Plan review residual risk is malformed.',
+  );
+  const uncertainty = assertBoundedRequiredText(
+    output.uncertainty,
+    PLAN_REVIEW_LIMITS.maxUncertaintyBytes,
+    'Plan review uncertainty is malformed.',
+  );
   const scopeAssessment = assertScopeAssessment(
     output.scopeAssessment,
     findings,
@@ -832,23 +875,27 @@ export function readPlanReviewNode(node: EvidenceNode): PlanReviewReport {
     throw planReviewInvalid('Plan review independence labels are unexpected.');
   }
   const normalizedSubmission = assertPlanReviewSubmission({
-    schemaVersion: 1,
+    schemaVersion: 2,
     verdict: output.verdict,
     coverage,
     scopeAssessment,
     findings: findings.map(stripChallengeIdentity),
     proposedTerms,
     suggestions: suggestions.map(stripSuggestionIdentity),
+    residualRisk,
+    uncertainty,
   });
   const submission = canonicalSubmission(normalizedSubmission);
   const storedSubmission = {
-    schemaVersion: 1,
+    schemaVersion: 2,
     verdict: output.verdict,
     coverage: output.coverage,
     scopeAssessment: output.scopeAssessment,
     findings: findings.map(stripChallengeIdentity),
     proposedTerms: output.proposedTerms,
     suggestions: suggestions.map(stripSuggestionIdentity),
+    residualRisk: output.residualRisk,
+    uncertainty: output.uncertainty,
   };
   if (canonicalJson(storedSubmission) !== canonicalJson(submission)) {
     throw planReviewInvalid(
@@ -863,7 +910,7 @@ export function readPlanReviewNode(node: EvidenceNode): PlanReviewReport {
   }
 
   const report: PlanReviewReport = {
-    schemaVersion: 1,
+    schemaVersion: 2,
     nodeId: validated.nodeId,
     resultDigest: validated.resultDigest,
     policyDigest: validated.policyDigest,
@@ -880,6 +927,8 @@ export function readPlanReviewNode(node: EvidenceNode): PlanReviewReport {
     findings,
     suggestions,
     proposedTerms,
+    residualRisk,
+    uncertainty,
     requiredIndependence: assignment.requiredIndependence,
     achievedIndependence: assignment.achievedIndependence,
   };
@@ -1123,7 +1172,7 @@ function assertProviderResult(
   }
   const output = assertExactKeys(node.output, PROVIDER_RESULT_OUTPUT_KEYS);
   if (
-    output.schemaVersion !== 1 ||
+    output.schemaVersion !== 2 ||
     output.subjectDigest !== subject.subjectDigest ||
     node.exactInputDigests.subject !== subject.subjectDigest
   ) {
@@ -1159,8 +1208,8 @@ function assertPlanReviewSubmission(value: unknown): NormalizedSubmission {
   if (!isRecord(value) || !hasExactKeys(value, SUBMISSION_KEYS)) {
     throw planReviewInvalid('Plan review submission shape is malformed.');
   }
-  if (value.schemaVersion !== 1) {
-    throw planReviewInvalid('Plan review submission schema version must be 1.');
+  if (value.schemaVersion !== 2) {
+    throw planReviewInvalid('Plan review submission schema version must be 2.');
   }
   if (typeof value.verdict !== 'string' || !VERDICTS.has(value.verdict)) {
     throw planReviewInvalid('Plan review verdict is unexpected.');
@@ -1198,6 +1247,16 @@ function assertPlanReviewSubmission(value: unknown): NormalizedSubmission {
     value.scopeAssessment,
     findings,
   );
+  const residualRisk = assertBoundedRequiredText(
+    value.residualRisk,
+    PLAN_REVIEW_LIMITS.maxResidualRiskBytes,
+    'Plan review residual risk is malformed.',
+  );
+  const uncertainty = assertBoundedRequiredText(
+    value.uncertainty,
+    PLAN_REVIEW_LIMITS.maxUncertaintyBytes,
+    'Plan review uncertainty is malformed.',
+  );
   return {
     verdict: value.verdict as PlanReviewVerdict,
     coverage,
@@ -1205,6 +1264,8 @@ function assertPlanReviewSubmission(value: unknown): NormalizedSubmission {
     findings,
     suggestions,
     proposedTerms,
+    residualRisk,
+    uncertainty,
   };
 }
 
@@ -1212,7 +1273,7 @@ function canonicalSubmission(
   submission: NormalizedSubmission,
 ): PlanReviewSubmission {
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     verdict: submission.verdict,
     coverage: [...submission.coverage],
     scopeAssessment:
@@ -1227,12 +1288,15 @@ function canonicalSubmission(
     findings: submission.findings.map(stripChallengeIdentity),
     proposedTerms: submission.proposedTerms.map((term) => ({ ...term })),
     suggestions: submission.suggestions.map(stripSuggestionIdentity),
+    residualRisk: submission.residualRisk,
+    uncertainty: submission.uncertainty,
   };
 }
 
 function stripChallengeIdentity(finding: NormalizedFinding): PlanReviewFinding {
   return {
     kind: 'challenge',
+    severity: finding.severity,
     category: finding.category,
     currentChangeImpact: 'required',
     summary: finding.summary,
@@ -1245,6 +1309,7 @@ function stripSuggestionIdentity(
 ): PlanReviewFinding {
   return {
     kind: 'suggestion',
+    severity: suggestion.severity,
     category: suggestion.category,
     currentChangeImpact: 'independent-follow-up',
     summary: suggestion.summary,
@@ -1286,6 +1351,7 @@ function assertSubmissionEvidenceBindings(
 function assertSubmissionChallenge(value: unknown): NormalizedFinding {
   const record = assertExactKeys(value, [
     'kind',
+    'severity',
     'category',
     'currentChangeImpact',
     'summary',
@@ -1298,6 +1364,7 @@ function assertStoredChallenge(value: unknown): NormalizedFinding {
   const record = assertExactKeys(value, [
     'findingId',
     'kind',
+    'severity',
     'category',
     'currentChangeImpact',
     'summary',
@@ -1333,16 +1400,19 @@ function normalizeChallenge(
     throw planReviewInvalid('Plan review challenge category is unexpected.');
   }
   const summary = assertSummary(record.summary);
+  const severity = assertSeverity(record.severity);
   const evidence = assertEvidenceArray(record.evidence);
   return {
     findingId: findingDigest(
       'challenge',
+      severity,
       category,
       'required',
       summary,
       evidence,
     ),
     kind: 'challenge',
+    severity,
     category,
     currentChangeImpact: 'required',
     summary,
@@ -1353,6 +1423,7 @@ function normalizeChallenge(
 function assertSubmissionSuggestion(value: unknown): NormalizedSuggestion {
   const record = assertExactKeys(value, [
     'kind',
+    'severity',
     'category',
     'currentChangeImpact',
     'summary',
@@ -1365,6 +1436,7 @@ function assertStoredSuggestion(value: unknown): NormalizedSuggestion {
   const record = assertExactKeys(value, [
     'suggestionId',
     'kind',
+    'severity',
     'category',
     'currentChangeImpact',
     'summary',
@@ -1400,16 +1472,19 @@ function normalizeSuggestion(
     throw planReviewInvalid('Plan review suggestion category is unexpected.');
   }
   const summary = assertSummary(record.summary);
+  const severity = assertSeverity(record.severity);
   const evidence = assertEvidenceArray(record.evidence);
   return {
     suggestionId: findingDigest(
       'suggestion',
+      severity,
       category,
       'independent-follow-up',
       summary,
       evidence,
     ),
     kind: 'suggestion',
+    severity,
     category,
     currentChangeImpact: 'independent-follow-up',
     summary,
@@ -1688,8 +1763,27 @@ function assertDependencies(value: unknown): Array<{
 }
 
 function assertSummary(value: unknown): string {
-  if (!isBoundedNonBlankText(value, PLAN_REVIEW_LIMITS.maxSummaryBytes)) {
-    throw planReviewInvalid('Plan review summary is required.');
+  return assertBoundedRequiredText(
+    value,
+    PLAN_REVIEW_LIMITS.maxSummaryBytes,
+    'Plan review summary is required.',
+  );
+}
+
+function assertSeverity(value: unknown): PlanReviewSeverity {
+  if (typeof value !== 'string' || !SEVERITIES.has(value)) {
+    throw planReviewInvalid('Plan review finding severity is unexpected.');
+  }
+  return value as PlanReviewSeverity;
+}
+
+function assertBoundedRequiredText(
+  value: unknown,
+  maximumBytes: number,
+  message: string,
+): string {
+  if (!isBoundedNonBlankText(value, maximumBytes)) {
+    throw planReviewInvalid(message);
   }
   return value as string;
 }
@@ -1702,6 +1796,7 @@ function assertUniqueChallengeIds(ids: string[]): void {
 
 function findingDigest(
   kind: 'challenge' | 'suggestion',
+  severity: PlanReviewSeverity,
   category: string,
   currentChangeImpact: string,
   summary: string,
@@ -1709,8 +1804,9 @@ function findingDigest(
 ): string {
   return sha256(
     canonicalJson({
-      schema: 'plan-review-finding.v1',
+      schema: 'plan-review-finding.v2',
       kind,
+      severity,
       category,
       currentChangeImpact,
       summary,

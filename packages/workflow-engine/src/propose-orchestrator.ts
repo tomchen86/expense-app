@@ -1315,8 +1315,8 @@ function createTermContributionNode(
 ): EvidenceNode {
   return createEvidenceNode({
     type: 'investigation-term-contribution',
-    nodeSchema: 'investigation.term-contribution.v1',
-    evaluator: 'workflow-propose.v1',
+    nodeSchema: 'investigation.term-contribution.v2',
+    evaluator: 'workflow-propose.term-contribution.v2',
     policyDigest: PROPOSE_POLICY_DIGEST,
     exactInputDigests: {
       baseline: sha256(canonicalJson(session.baseline)),
@@ -1324,7 +1324,7 @@ function createTermContributionNode(
     },
     semanticParentResultDigests: {},
     provenanceParentNodeIds: {},
-    outputSchema: 'investigation.term-contribution-output.v1',
+    outputSchema: 'investigation.term-contribution-output.v2',
     output: contribution,
     runtimeMetadata: {},
   });
@@ -1346,8 +1346,8 @@ function createTermUnionNode(
     });
   return createEvidenceNode({
     type: 'investigation-term-union',
-    nodeSchema: 'investigation.term-union.v1',
-    evaluator: 'workflow-propose.v1',
+    nodeSchema: 'investigation.term-union.v2',
+    evaluator: 'workflow-propose.term-union.v2',
     policyDigest: PROPOSE_POLICY_DIGEST,
     exactInputDigests: {
       baseline: sha256(canonicalJson(session.baseline)),
@@ -1355,7 +1355,7 @@ function createTermUnionNode(
     },
     semanticParentResultDigests,
     provenanceParentNodeIds,
-    outputSchema: 'investigation.term-union-output.v1',
+    outputSchema: 'investigation.term-union-output.v2',
     output: { rawCounts, terms },
     runtimeMetadata: {},
   });

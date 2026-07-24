@@ -8,7 +8,8 @@ import type { InvestigationDispositionInput } from './investigation-groups.ts';
 import type { InvestigationWhyAnswer } from './investigation-why.ts';
 import {
   INVESTIGATION_LIMITS,
-  normalizeInvestigationTerm,
+  previewInvestigationTermUnion,
+  type InvestigationMainTermInput,
   type InvestigationTermKind,
 } from './investigation-terms.ts';
 import {
@@ -42,7 +43,7 @@ export type InvestigationCheckpointKind =
 
 export type MainTermsPayload = {
   reference: string;
-  terms: Array<{ kind: InvestigationTermKind; value: string }>;
+  terms: InvestigationMainTermInput[];
 };
 
 export type GroupDispositionsPayload = {
@@ -831,16 +832,37 @@ function assertMainTermsPayload(
   for (const term of value.terms) {
     if (
       !isRecord(term) ||
-      !hasExactKeys(term, ['kind', 'value']) ||
+      !hasExactKeys(term, [
+        'kind',
+        'value',
+        'rationale',
+        'expectedRelationship',
+      ]) ||
       typeof term.kind !== 'string' ||
-      typeof term.value !== 'string'
+      typeof term.value !== 'string' ||
+      typeof term.rationale !== 'string' ||
+      typeof term.expectedRelationship !== 'string'
     ) {
       throw checkpointInvalid();
     }
-    normalizeInvestigationTerm({
-      kind: term.kind as InvestigationTermKind,
-      value: term.value,
-    });
+    try {
+      previewInvestigationTermUnion([
+        {
+          source: 'main',
+          reference: value.reference,
+          terms: [
+            {
+              kind: term.kind as InvestigationTermKind,
+              value: term.value,
+              rationale: term.rationale,
+              expectedRelationship: term.expectedRelationship,
+            },
+          ],
+        },
+      ]);
+    } catch {
+      throw checkpointInvalid();
+    }
   }
 }
 

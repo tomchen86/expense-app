@@ -213,7 +213,7 @@ test('fake-backed propose composes breadth and depth before materializing an unc
       started.investigation!,
       {
         reference: 'main-survey',
-        terms: [{ kind: 'symbol', value: 'MainSurveyNeedle' }],
+        terms: [mainTerm('MainSurveyNeedle')],
       },
     );
     const afterMain = resumePropose(repository, changeId, mainTermsInput);
@@ -695,7 +695,7 @@ test('propose CLI persists a fake-backed wait for read-only status in a fresh pr
           startedPayload.result.investigation,
           {
             reference: 'cli-main-survey',
-            terms: [{ kind: 'symbol', value: 'CliMainNeedle' }],
+            terms: [mainTerm('CliMainNeedle')],
           },
         ),
       ),
@@ -913,7 +913,7 @@ test('start seals a manifest-bound blind request before accepting main terms', (
 
     const envelope = createInvestigationCheckpointEnvelope(status, {
       reference: 'main-agent-survey',
-      terms: [{ kind: 'symbol', value: 'MainOnlyTerm' }],
+      terms: [mainTerm('MainOnlyTerm')],
     });
     assert.deepEqual(Object.keys(envelope).sort(), [
       'baseline',
@@ -2134,8 +2134,17 @@ function mainTermsEnvelope(
 ) {
   return createInvestigationCheckpointEnvelope(status, {
     reference: 'main-agent-survey',
-    terms: [{ kind: 'symbol' as const, value: 'MainOnlyTerm' }],
+    terms: [mainTerm('MainOnlyTerm')],
   });
+}
+
+function mainTerm(value: string) {
+  return {
+    kind: 'symbol' as const,
+    value,
+    rationale: `The main investigation identified ${value}.`,
+    expectedRelationship: 'An existing consumer may depend on this symbol.',
+  };
 }
 
 function completeBlindInvocation(

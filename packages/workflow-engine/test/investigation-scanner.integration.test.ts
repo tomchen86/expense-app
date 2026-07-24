@@ -17,6 +17,10 @@ import {
   type ScanSkippedObject,
 } from '../src/investigation-scanner.ts';
 import {
+  INVESTIGATION_APPLICABILITY_POLICY_DIGEST,
+  createInvestigationApplicability,
+} from '../src/investigation-applicability.ts';
+import {
   INVESTIGATION_LIMITS,
   normalizeInvestigationTerm,
   previewInvestigationTermUnion,
@@ -117,8 +121,19 @@ test('typed terms preserve exact bytes, deduplicate semantics, and retain every 
   assert.equal(preview.terms.length, 3);
   const shared = preview.terms.find((term) => term.value === 'shared-token');
   assert.deepEqual(shared?.provenance, [
-    { source: 'main', reference: 'main-1' },
-    { source: 'survey', reference: 'survey-1' },
+    {
+      source: 'main',
+      reference: 'main-1',
+      rationale: 'Main investigation expects literal-content shared-token.',
+      expectedRelationship:
+        'The term may identify an existing consumer or invariant.',
+    },
+    {
+      source: 'survey',
+      reference: 'survey-1',
+      rationale: null,
+      expectedRelationship: null,
+    },
   ]);
   assert.equal(Object.isFrozen(preview), true);
   assert.equal(Object.isFrozen(preview.terms), true);
@@ -140,6 +155,157 @@ test('typed terms preserve exact bytes, deduplicate semantics, and retain every 
     ]),
   ]);
   assert.deepEqual(reordered, preview);
+});
+
+test('main terms require bounded rationale and expected relationship without changing term identity', () => {
+  assert.throws(
+    () =>
+      previewInvestigationTermUnion([
+        {
+          source: 'main',
+          reference: 'main:missing-metadata',
+          terms: [{ kind: 'symbol', value: 'SharedContract' }],
+        } as never,
+      ]),
+    (error) => isWorkflowError(error, 'INVESTIGATION_TERM_INVALID'),
+  );
+
+  const main = {
+    source: 'main' as const,
+    reference: 'main:contract',
+    terms: [
+      {
+        kind: 'symbol' as const,
+        value: 'SharedContract',
+        rationale: 'The change modifies the shared contract surface.',
+        expectedRelationship: 'Existing consumers import this symbol.',
+      },
+    ],
+  };
+  const preview = previewInvestigationTermUnion([
+    main,
+    contribution('survey', 'survey:contract', [
+      { kind: 'symbol', value: 'SharedContract' },
+    ]),
+  ]);
+  assert.equal(preview.outcome, 'ready');
+  assert.equal(preview.terms.length, 1);
+  assert.deepEqual(preview.terms[0]?.provenance, [
+    {
+      source: 'main',
+      reference: 'main:contract',
+      rationale: 'The change modifies the shared contract surface.',
+      expectedRelationship: 'Existing consumers import this symbol.',
+    },
+    {
+      source: 'survey',
+      reference: 'survey:contract',
+      rationale: null,
+      expectedRelationship: null,
+    },
+  ]);
+  assert.equal(
+    preview.terms[0]?.termId,
+    normalizeInvestigationTerm({
+      kind: 'symbol',
+      value: 'SharedContract',
+    }).termId,
+  );
+
+  const changedMetadata = previewInvestigationTermUnion([
+    {
+      ...main,
+      terms: [
+        {
+          ...main.terms[0]!,
+          rationale: 'A different rationale must change contribution meaning.',
+        },
+      ],
+    },
+  ]);
+  assert.equal(changedMetadata.terms[0]?.termId, preview.terms[0]?.termId);
+  assert.notDeepEqual(changedMetadata, preview);
+});
+
+test('investigation applicability admits only exact reviewed low-risk exemptions', () => {
+  const eligible = createInvestigationApplicability({
+    kind: 'investigation-exemption',
+    category: 'documentation-only',
+    baseline: { head: 'a'.repeat(40), tree: 'b'.repeat(40) },
+    intentDigest: 'c'.repeat(64),
+    declaredPaths: ['docs/WORKFLOW.md'],
+    declaredChangeClasses: ['documentation-only'],
+    rationale: 'This revision changes explanatory prose only.',
+    semanticAuthor: {
+      id: 'codex',
+      provenance: 'typed-caller-contribution',
+    },
+    nonTrivialBehaviorReliance: 'none-declared',
+    researchBudgetMinutes: null,
+  });
+  assert.equal(eligible.kind, 'investigation-exemption');
+  assert.equal(
+    eligible.policyDigest,
+    INVESTIGATION_APPLICABILITY_POLICY_DIGEST,
+  );
+  assert.match(eligible.applicabilityDigest, /^[0-9a-f]{64}$/);
+  assert.equal(Object.isFrozen(eligible), true);
+
+  assert.throws(
+    () =>
+      createInvestigationApplicability({
+        kind: 'investigation-exemption',
+        category: eligible.category,
+        baseline: eligible.baseline,
+        intentDigest: eligible.intentDigest,
+        declaredPaths: [...eligible.declaredPaths],
+        declaredChangeClasses: ['documentation-only', 'behavioral'],
+        rationale: eligible.rationale,
+        semanticAuthor: eligible.semanticAuthor,
+        nonTrivialBehaviorReliance: 'none-declared',
+        researchBudgetMinutes: null,
+      }),
+    (error) => isWorkflowError(error, 'INVESTIGATION_EXEMPTION_INELIGIBLE'),
+  );
+  assert.throws(
+    () =>
+      createInvestigationApplicability({
+        kind: 'investigation-exemption',
+        category: 'time-boxed-research',
+        baseline: eligible.baseline,
+        intentDigest: eligible.intentDigest,
+        declaredPaths: [...eligible.declaredPaths],
+        declaredChangeClasses: ['time-boxed-research'],
+        rationale: eligible.rationale,
+        semanticAuthor: eligible.semanticAuthor,
+        nonTrivialBehaviorReliance: 'none-declared',
+        researchBudgetMinutes: null,
+      }),
+    (error) => isWorkflowError(error, 'INVESTIGATION_EXEMPTION_INVALID'),
+  );
+
+  const sealed = createInvestigationApplicability({
+    kind: 'sealed-investigation',
+    baseline: eligible.baseline,
+    intentDigest: eligible.intentDigest,
+    sealNodeId: 'd'.repeat(64),
+    sealResultDigest: 'e'.repeat(64),
+  });
+  assert.equal(sealed.kind, 'sealed-investigation');
+  assert.notEqual(sealed.applicabilityDigest, eligible.applicabilityDigest);
+
+  const trackedSchema = JSON.parse(
+    fs.readFileSync(
+      new URL(
+        '../../../workflow/schemas/investigation-artifact.schema.json',
+        import.meta.url,
+      ),
+      'utf8',
+    ),
+  ) as {
+    $defs: { investigationApplicability: { oneOf: unknown[] } };
+  };
+  assert.equal(trackedSchema.$defs.investigationApplicability.oneOf.length, 2);
 });
 
 test('term preview reports source and effective overage without dropping proposals', () => {
@@ -833,7 +999,12 @@ test('literal scans are deterministic, per-term independent, and include zero-hi
           ...content,
           provenance: [
             ...content.provenance,
-            { source: 'survey', reference: 'survey:shared-term' },
+            {
+              source: 'survey',
+              reference: 'survey:shared-term',
+              rationale: null,
+              expectedRelationship: null,
+            },
           ],
         },
       ],
@@ -1250,8 +1421,23 @@ function treeOid(repository: string): string {
 function contribution(
   source: InvestigationTermContribution['source'],
   reference: string,
-  terms: InvestigationTermContribution['terms'],
+  terms: Array<{
+    kind: 'literal-content' | 'literal-path' | 'symbol' | 'config-key';
+    value: string;
+  }>,
 ): InvestigationTermContribution {
+  if (source === 'main') {
+    return {
+      source,
+      reference,
+      terms: terms.map((term) => ({
+        ...term,
+        rationale: `Main investigation expects ${term.kind} ${term.value}.`,
+        expectedRelationship:
+          'The term may identify an existing consumer or invariant.',
+      })),
+    };
+  }
   return { source, reference, terms };
 }
 
@@ -1261,7 +1447,15 @@ function termWithProvenance(
 ) {
   return {
     ...normalizeInvestigationTerm({ kind, value }),
-    provenance: [{ source: 'main' as const, reference: `main:${value}` }],
+    provenance: [
+      {
+        source: 'main' as const,
+        reference: `main:${value}`,
+        rationale: `Main investigation expects ${kind} ${value}.`,
+        expectedRelationship:
+          'The term may identify an existing consumer or invariant.',
+      },
+    ],
   };
 }
 

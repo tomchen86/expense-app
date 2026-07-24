@@ -4,7 +4,10 @@ import {
   normalizeInvestigationTerm,
   previewInvestigationTermUnion,
   type InvestigationTermContribution,
+  type InvestigationMainTermInput,
+  type InvestigationTermInput,
   type InvestigationTermKind,
+  type InvestigationTermSource,
   type InvestigationTermUnionPreview,
 } from './investigation-terms.ts';
 import {
@@ -42,6 +45,7 @@ const MAX_PREVIEW_RAW_TERMS =
   MAX_EXISTING_RAW_TERMS + PLAN_REVIEW_MAX_PROPOSED_TERMS;
 const MAX_REVIEWER_INPUT_TERMS = PLAN_REVIEW_MAX_PROPOSED_TERMS;
 const MAX_REFERENCE_BYTES = 512;
+const MAX_MAIN_TERM_SEMANTIC_BYTES = 4096;
 
 export type ProjectPlanReviewTermsInput = {
   validationInput: ValidatePlanReviewInput;
@@ -195,8 +199,9 @@ function assertExistingContributions(
         terms,
         MAX_EXISTING_RAW_TERMS,
         'Existing term contribution exceeds the bounded raw input.',
+        source as InvestigationTermSource,
       ),
-    };
+    } as InvestigationTermContribution;
   });
 }
 
@@ -204,14 +209,20 @@ function assertTerms(
   value: unknown,
   maximum: number,
   overLimitMessage: string,
-): Array<{ kind: InvestigationTermKind; value: string }> {
+  source: InvestigationTermSource = 'reviewer',
+): Array<InvestigationTermInput | InvestigationMainTermInput> {
   if (!Array.isArray(value) || value.length > maximum || !isDenseArray(value)) {
     throw projectionInvalid(overLimitMessage);
   }
   return value.map((entry) => {
     if (
       !isPlainRecord(entry) ||
-      !hasExactKeys(entry, ['kind', 'value']) ||
+      !hasExactKeys(
+        entry,
+        source === 'main'
+          ? ['kind', 'value', 'rationale', 'expectedRelationship']
+          : ['kind', 'value'],
+      ) ||
       typeof entry.kind !== 'string' ||
       typeof entry.value !== 'string'
     ) {
@@ -222,13 +233,38 @@ function assertTerms(
         kind: entry.kind as InvestigationTermKind,
         value: entry.value,
       });
-      return { kind: normalized.kind, value: normalized.value };
+      if (source !== 'main') {
+        return { kind: normalized.kind, value: normalized.value };
+      }
+      if (
+        !isBoundedSemanticText(entry.rationale) ||
+        !isBoundedSemanticText(entry.expectedRelationship)
+      ) {
+        throw projectionInvalid(
+          'Main investigation term metadata is malformed.',
+        );
+      }
+      return {
+        kind: normalized.kind,
+        value: normalized.value,
+        rationale: entry.rationale,
+        expectedRelationship: entry.expectedRelationship,
+      };
     } catch {
       throw projectionInvalid(
         'Investigation term does not satisfy the fixed term grammar.',
       );
     }
   });
+}
+
+function isBoundedSemanticText(value: unknown): value is string {
+  return (
+    typeof value === 'string' &&
+    value.trim().length > 0 &&
+    Buffer.byteLength(value, 'utf8') <= MAX_MAIN_TERM_SEMANTIC_BYTES &&
+    isControlFree(value)
+  );
 }
 
 function isDenseArray(value: unknown[]): boolean {

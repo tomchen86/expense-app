@@ -57,13 +57,14 @@ test('exact PlanReview composes target, generation, challenge, terms, and adviso
     achievedIndependence: 'provider-independent' as const,
   };
   const submission = {
-    schemaVersion: 1 as const,
+    schemaVersion: 2 as const,
     verdict: 'advisory-reject' as const,
     coverage: [...PLAN_REVIEW_COVERAGE],
     scopeAssessment: { kind: 'challenges' as const },
     findings: [
       {
         kind: 'challenge' as const,
+        severity: 'high' as const,
         category: 'missing-scope',
         currentChangeImpact: 'required' as const,
         summary: 'Explain the preserved authorization invariant.',
@@ -82,6 +83,7 @@ test('exact PlanReview composes target, generation, challenge, terms, and adviso
     suggestions: [
       {
         kind: 'suggestion' as const,
+        severity: 'low' as const,
         category: 'follow-up',
         currentChangeImpact: 'independent-follow-up' as const,
         summary: 'Add a visualization in a later change.',
@@ -95,6 +97,8 @@ test('exact PlanReview composes target, generation, challenge, terms, and adviso
         ],
       },
     ],
+    residualRisk: 'The authorization explanation remains the only known risk.',
+    uncertainty: 'No additional uncertainty identified.',
   };
   const providerResultNode = createPlanReviewProviderResultNode({
     subject,

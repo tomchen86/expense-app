@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
 import test from 'node:test';
 
 import { resolveActorIdentity } from '../src/actor-identity.ts';
@@ -15,8 +16,11 @@ import {
   requireProviderCapability,
 } from '../src/provider-registry.ts';
 import {
+  admitRoleResult,
   assessRoleIndependence,
   scheduleOrdinaryRole,
+  type GrantedSameProviderRoleAssignment,
+  type ProviderRoleAssignment,
   type RoleAssignment,
   type RoleParticipant,
 } from '../src/role-scheduler.ts';
@@ -545,6 +549,83 @@ test('typed provider request is immutable, bounded, and assignment-bound', () =>
   );
 });
 
+test('provider requests admit only ordinary or granted same-provider assignments', () => {
+  const ordinary = surveyAssignment();
+  const admitted = admitRoleResult({
+    assignment: ordinary,
+    author: participant({
+      providerId: 'codex',
+      sessionId: 'author-session',
+      engineSpawned: false,
+    }),
+    participant: participant({
+      providerId: ordinary.providerId,
+      sessionId: ordinary.sessionId,
+      identityAssurance: 'adapter-assigned',
+      engineSpawned: true,
+    }),
+    content: roleContent(),
+    providerInvocation: {
+      invocationId: 'invocation-1',
+      requestDigest: '7'.repeat(64),
+      outputDigest: '8'.repeat(64),
+      providerId: ordinary.providerId,
+      sessionId: ordinary.sessionId,
+      targetDigest: ordinary.targetDigest,
+      engineSpawned: true,
+    },
+    grantUse: null,
+    grantValidation: null,
+  });
+  assert.equal(admitted.form, 'ordinary-provider');
+  assert.equal(admitted.orchestration, 'engine-spawned-provider');
+
+  const granted = grantedSameProviderAssignment();
+  const request = createProviderInvocationRequest(requestInput(granted));
+  assert.equal(
+    request.roleAssignment.achievedIndependence,
+    'session-independent',
+  );
+  assert.equal(request.providerId, 'codex');
+
+  assert.throws(
+    () =>
+      createProviderInvocationRequest(
+        requestInput({
+          ...granted,
+          orchestration: 'caller-supplied',
+          engineSpawned: false,
+        } as unknown as ProviderRoleAssignment),
+      ),
+    (error) => isWorkflowError(error, 'PROVIDER_REQUEST_INVALID'),
+  );
+});
+
+test('tracked planning schemas expose every admitted role-result form', () => {
+  for (const relativePath of [
+    '../../../workflow/schemas/investigation-artifact.schema.json',
+    '../../../workflow/schemas/plan-review-artifact.schema.json',
+  ]) {
+    const schema = JSON.parse(
+      fs.readFileSync(new URL(relativePath, import.meta.url), 'utf8'),
+    ) as {
+      $defs: {
+        admittedRoleResult: {
+          properties: { form: { enum: string[] } };
+          allOf: unknown[];
+        };
+      };
+    };
+    assert.deepEqual(schema.$defs.admittedRoleResult.properties.form.enum, [
+      'ordinary-provider',
+      'granted-same-provider',
+      'granted-caller-supplied',
+      'direct-human-attestation',
+    ]);
+    assert.equal(schema.$defs.admittedRoleResult.allOf.length, 4);
+  }
+});
+
 test('deterministic fake process accepts only a fully bound structured result', () => {
   const request = createProviderInvocationRequest(
     requestInput(surveyAssignment()),
@@ -827,12 +908,12 @@ function surveyAssignment(): RoleAssignment {
   return scheduled.assignment;
 }
 
-function requestInput(assignment: RoleAssignment) {
+function requestInput(assignment: ProviderRoleAssignment) {
   return {
     invocationId: 'invocation-1',
     nonce: 'nonce-with-at-least-16-bytes',
     purpose: 'survey' as const,
-    providerId: 'claude' as const,
+    providerId: assignment.providerId,
     roleAssignment: assignment,
     capabilityProfile: 'repository-read-only' as const,
     repositoryId: 'expense-app@canonical-origin',
@@ -853,6 +934,57 @@ function requestInput(assignment: RoleAssignment) {
       timeoutMs: 300_000,
       aggregateOutputBytes: 1_048_576,
     },
+  };
+}
+
+function grantedSameProviderAssignment(): GrantedSameProviderRoleAssignment {
+  return {
+    role: 'blind-surveyor',
+    providerId: 'codex',
+    sessionId: 'fresh-session',
+    targetDigest: DIGESTS.target,
+    requiredIndependence: 'provider-independent',
+    achievedIndependence: 'session-independent',
+    providerIndependent: false,
+    sessionIndependent: true,
+    engineSpawned: true,
+    orchestration: 'engine-spawned-provider',
+    grantId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+    degradedForm: 'same-provider-fresh-session',
+    authorizedEffect: 'role-independence-degradation-only',
+    author: {
+      providerId: 'codex',
+      sessionId: 'author-session',
+      principalId: null,
+      identityAssurance: 'runtime-hint',
+      engineSpawned: false,
+    },
+    participant: {
+      providerId: 'codex',
+      sessionId: 'fresh-session',
+      principalId: null,
+      identityAssurance: 'runtime-hint',
+      engineSpawned: true,
+    },
+    callableProviderIds: ['codex'],
+    directHumanReviewAttestationDigest: null,
+  };
+}
+
+function roleContent() {
+  return {
+    kind: 'blind-survey' as const,
+    nodeId: '9'.repeat(64),
+    resultDigest: 'a'.repeat(64),
+    outputSchema: {
+      id: 'blind-survey-output.v1',
+      version: 1,
+      digest: DIGESTS.outputSchema,
+    },
+    evaluator: 'blind-survey-evaluator.v1',
+    policyDigest: DIGESTS.policy,
+    contentDigest: 'a'.repeat(64),
+    current: true as const,
   };
 }
 

@@ -24,6 +24,7 @@ const TERM_KINDS: ReadonlySet<string> = new Set<InvestigationTermKind>([
 ]);
 
 const MAX_TERM_BYTES = 256;
+const MAX_TERM_SEMANTIC_TEXT_BYTES = 4096;
 
 /**
  * A normalized term binds its exact kind, byte-preserving value, and fixed
@@ -46,16 +47,32 @@ export type InvestigationTermSource = 'engine' | 'main' | 'survey' | 'reviewer';
 export type InvestigationTermProvenance = {
   source: InvestigationTermSource;
   reference: string;
+  rationale: string | null;
+  expectedRelationship: string | null;
+};
+
+export type InvestigationTermInput = {
+  kind: InvestigationTermKind;
+  value: string;
+};
+
+export type InvestigationMainTermInput = InvestigationTermInput & {
+  rationale: string;
+  expectedRelationship: string;
 };
 
 /**
  * A raw contribution from one source. Terms are typed but not yet normalized;
  * they are snapshotted on preview so later caller mutation cannot alter results.
  */
-export type InvestigationTermContribution = {
-  source: InvestigationTermSource;
+export type InvestigationTermContribution<
+  Source extends InvestigationTermSource = InvestigationTermSource,
+> = {
+  source: Source;
   reference: string;
-  terms: Array<{ kind: InvestigationTermKind; value: string }>;
+  terms: Source extends 'main'
+    ? InvestigationMainTermInput[]
+    : InvestigationTermInput[];
 };
 
 export type PreviewInvestigationTerm = NormalizedInvestigationTerm & {
@@ -220,6 +237,7 @@ export function previewInvestigationTermUnion(
   >();
 
   for (const contribution of contributions) {
+    assertContribution(contribution);
     rawCounts[contribution.source] += contribution.terms.length;
     for (const rawTerm of contribution.terms) {
       const term = normalizeInvestigationTerm(rawTerm);
@@ -227,14 +245,17 @@ export function previewInvestigationTermUnion(
         term,
         provenance: new Map<string, InvestigationTermProvenance>(),
       };
+      const mainTerm =
+        contribution.source === 'main'
+          ? (rawTerm as InvestigationMainTermInput)
+          : null;
       const provenance: InvestigationTermProvenance = {
         source: contribution.source,
         reference: contribution.reference,
+        rationale: mainTerm?.rationale ?? null,
+        expectedRelationship: mainTerm?.expectedRelationship ?? null,
       };
-      entry.provenance.set(
-        `${provenance.source}\u0000${provenance.reference}`,
-        provenance,
-      );
+      entry.provenance.set(canonicalJson(provenance), provenance);
       union.set(term.termId, entry);
     }
   }
@@ -302,9 +323,89 @@ function compareProvenance(
     return left.source < right.source ? -1 : 1;
   }
   if (left.reference === right.reference) {
-    return 0;
+    const leftMetadata = `${left.rationale ?? ''}\u0000${left.expectedRelationship ?? ''}`;
+    const rightMetadata = `${right.rationale ?? ''}\u0000${right.expectedRelationship ?? ''}`;
+    return leftMetadata < rightMetadata
+      ? -1
+      : leftMetadata > rightMetadata
+        ? 1
+        : 0;
   }
   return left.reference < right.reference ? -1 : 1;
+}
+
+function assertContribution(
+  value: InvestigationTermContribution,
+): asserts value is InvestigationTermContribution {
+  if (
+    typeof value !== 'object' ||
+    value === null ||
+    !['engine', 'main', 'survey', 'reviewer'].includes(value.source) ||
+    typeof value.reference !== 'string' ||
+    value.reference.trim().length === 0 ||
+    !Array.isArray(value.terms)
+  ) {
+    throw termInvalid();
+  }
+  for (const term of value.terms) {
+    if (typeof term !== 'object' || term === null) {
+      throw termInvalid();
+    }
+    const record = term as unknown as Record<string, unknown>;
+    const expectedKeys =
+      value.source === 'main'
+        ? ['kind', 'value', 'rationale', 'expectedRelationship']
+        : ['kind', 'value'];
+    if (!hasExactKeys(record, expectedKeys)) {
+      throw termInvalid();
+    }
+    if (value.source === 'main') {
+      assertSemanticText(record.rationale);
+      assertSemanticText(record.expectedRelationship);
+    }
+  }
+}
+
+function assertSemanticText(value: unknown): asserts value is string {
+  if (
+    typeof value !== 'string' ||
+    value.trim().length === 0 ||
+    Buffer.byteLength(value, 'utf8') > MAX_TERM_SEMANTIC_TEXT_BYTES ||
+    hasForbiddenControl(value)
+  ) {
+    throw termInvalid();
+  }
+}
+
+function hasForbiddenControl(value: string): boolean {
+  for (const character of value) {
+    const codePoint = character.codePointAt(0) ?? 0;
+    if (
+      codePoint <= 0x1f ||
+      codePoint === 0x7f ||
+      (codePoint >= 0x80 && codePoint <= 0x9f)
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function hasExactKeys(
+  value: Record<string, unknown>,
+  keys: readonly string[],
+): boolean {
+  const ownKeys = Reflect.ownKeys(value);
+  return (
+    ownKeys.length === keys.length &&
+    ownKeys.every((key) => typeof key === 'string') &&
+    keys.every((key) => {
+      const descriptor = Object.getOwnPropertyDescriptor(value, key);
+      return Boolean(
+        descriptor && descriptor.enumerable && 'value' in descriptor,
+      );
+    })
+  );
 }
 
 function deepFreeze<Value>(value: Value): Value {

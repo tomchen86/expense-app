@@ -255,6 +255,38 @@
     },
     "actorAssurance": {
       "enum": ["self-declared", "runtime-hint", "adapter-assigned"]
+    },
+    "contentAdmission": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "nodeId", "resultDigest", "current"],
+      "properties": {
+        "kind": { "enum": ["blind-survey", "plan-review"] },
+        "nodeId": { "$ref": "#/$defs/digest" },
+        "resultDigest": { "$ref": "#/$defs/digest" },
+        "current": { "const": true }
+      }
+    },
+    "grantUseIdentity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "grantId",
+        "signedEnvelopeDigest",
+        "transitionDigest",
+        "targetDigest",
+        "contentAdmission"
+      ],
+      "properties": {
+        "grantId": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+        },
+        "signedEnvelopeDigest": { "$ref": "#/$defs/digest" },
+        "transitionDigest": { "$ref": "#/$defs/digest" },
+        "targetDigest": { "$ref": "#/$defs/digest" },
+        "contentAdmission": { "$ref": "#/$defs/contentAdmission" }
+      }
     }
   }
 }
