@@ -8,15 +8,15 @@ This generated handoff contains semantic project state only. Its sources are tra
 
 ## Current Task
 
-`6.2` — Follow RED -> GREEN -> REFACTOR to add the separate controlling-TTY collaboration-grant namespace, canonical signed one-use envelopes, atomic reserve/consume/revoke/inspect state, same-provider fresh-session and no-callable-adapter degraded forms, and downstream assurance that cannot suppress investigation or review content.
+`6.3` — Follow RED -> GREEN -> REFACTOR to integrate sealed investigation, managed projection, execution strategy, immutable planning generation, exact PlanReview, challenge disposition, and collaboration-grant validation into live readiness and `plan-commit` while preserving legacy governing plans.
 
 ## Next Task
 
-`6.3` — Follow RED -> GREEN -> REFACTOR to integrate sealed investigation, managed projection, execution strategy, immutable planning generation, exact PlanReview, challenge disposition, and collaboration-grant validation into live readiness and `plan-commit` while preserving legacy governing plans.
+`6.4` — Follow RED -> GREEN -> REFACTOR to bind task start and every check/completion/finish/commit report to the governing `planningGenerationId` and exact PlanReview node/digest, with schema-backed persistence and stale/mismatch rejection.
 
 ## Current Focus
 
-Follow RED -> GREEN -> REFACTOR to add the separate controlling-TTY collaboration-grant namespace, canonical signed one-use envelopes, atomic reserve/consume/revoke/inspect state, same-provider fresh-session and no-callable-adapter degraded forms, and downstream assurance that cannot suppress investigation or review content.
+Follow RED -> GREEN -> REFACTOR to integrate sealed investigation, managed projection, execution strategy, immutable planning generation, exact PlanReview, challenge disposition, and collaboration-grant validation into live readiness and `plan-commit` while preserving legacy governing plans.
 
 ## Known Blockers
 

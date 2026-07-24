@@ -14,6 +14,7 @@ import { runRegisteredCheck } from '../src/registered-check.ts';
 import { abortSession, checkSession, startSession } from '../src/session.ts';
 import './atomic-text.test.ts';
 import './completion.integration.test.ts';
+import './collaboration-grant.integration.test.ts';
 import './contract-artifact-digests.test.ts';
 import './issues.integration.test.ts';
 import './handoff.integration.test.ts';

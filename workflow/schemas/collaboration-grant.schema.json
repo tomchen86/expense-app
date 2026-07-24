@@ -1,0 +1,260 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://expense-app.local/workflow/collaboration-grant.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["payload", "signature"],
+  "properties": {
+    "payload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "version",
+        "grantId",
+        "repositoryId",
+        "repositoryOrigin",
+        "policyBlob",
+        "collaborationPolicyDigest",
+        "changeId",
+        "taskId",
+        "baselineCommit",
+        "baselineTree",
+        "targetDigest",
+        "lifecyclePhase",
+        "rolePair",
+        "availableActor",
+        "degradedForm",
+        "authorizedEffect",
+        "reason",
+        "issuedAt",
+        "expiresAt",
+        "maxUses",
+        "signer"
+      ],
+      "properties": {
+        "version": { "const": 1 },
+        "grantId": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+        },
+        "repositoryId": { "type": "string", "minLength": 1 },
+        "repositoryOrigin": { "type": "string", "minLength": 1 },
+        "policyBlob": { "$ref": "#/$defs/objectOid" },
+        "collaborationPolicyDigest": {
+          "const": "fead45158ecbb42192deddac55e7b0becc3d1daafa2347b14ab977080dd98f77"
+        },
+        "changeId": { "$ref": "#/$defs/changeId" },
+        "taskId": {
+          "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/taskId" }]
+        },
+        "baselineCommit": { "$ref": "#/$defs/objectOid" },
+        "baselineTree": { "$ref": "#/$defs/objectOid" },
+        "targetDigest": { "$ref": "#/$defs/digest" },
+        "lifecyclePhase": {
+          "enum": ["blind-survey", "plan-review"]
+        },
+        "rolePair": {
+          "oneOf": [
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["authorRole", "conflictingRole"],
+              "properties": {
+                "authorRole": { "const": "investigation-author" },
+                "conflictingRole": { "const": "blind-surveyor" }
+              }
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["authorRole", "conflictingRole"],
+              "properties": {
+                "authorRole": { "const": "plan-author" },
+                "conflictingRole": { "const": "plan-reviewer" }
+              }
+            }
+          ]
+        },
+        "availableActor": {
+          "oneOf": [
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["kind", "providerId", "assurance"],
+              "properties": {
+                "kind": { "const": "provider" },
+                "providerId": { "enum": ["codex", "claude"] },
+                "assurance": { "$ref": "#/$defs/actorAssurance" }
+              }
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["kind", "callerId", "assurance"],
+              "properties": {
+                "kind": { "const": "caller" },
+                "callerId": { "$ref": "#/$defs/identity" },
+                "assurance": { "$ref": "#/$defs/actorAssurance" }
+              }
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["kind", "identity", "assurance"],
+              "properties": {
+                "kind": { "const": "direct-human" },
+                "identity": { "$ref": "#/$defs/identity" },
+                "assurance": { "const": "maintainer-signed" }
+              }
+            }
+          ]
+        },
+        "degradedForm": {
+          "enum": [
+            "same-provider-fresh-session",
+            "caller-supplied",
+            "direct-human-review"
+          ]
+        },
+        "authorizedEffect": {
+          "const": "role-independence-degradation-only"
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 12,
+          "maxLength": 500,
+          "pattern": "^(?!\\s)(?![\\s\\S]*\\s$)[^\\u0000-\\u001F\\u007F-\\u009F]+$"
+        },
+        "issuedAt": {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$"
+        },
+        "expiresAt": {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$"
+        },
+        "maxUses": { "const": 1 },
+        "signer": { "$ref": "#/$defs/identity" }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "lifecyclePhase": { "const": "blind-survey" }
+            },
+            "required": ["lifecyclePhase"]
+          },
+          "then": {
+            "properties": {
+              "rolePair": {
+                "properties": {
+                  "authorRole": { "const": "investigation-author" },
+                  "conflictingRole": { "const": "blind-surveyor" }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "lifecyclePhase": { "const": "plan-review" }
+            },
+            "required": ["lifecyclePhase"]
+          },
+          "then": {
+            "properties": {
+              "rolePair": {
+                "properties": {
+                  "authorRole": { "const": "plan-author" },
+                  "conflictingRole": { "const": "plan-reviewer" }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "degradedForm": {
+                "const": "same-provider-fresh-session"
+              }
+            },
+            "required": ["degradedForm"]
+          },
+          "then": {
+            "properties": {
+              "availableActor": {
+                "properties": { "kind": { "const": "provider" } }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "degradedForm": { "const": "caller-supplied" }
+            },
+            "required": ["degradedForm"]
+          },
+          "then": {
+            "properties": {
+              "availableActor": {
+                "properties": { "kind": { "const": "caller" } }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "degradedForm": { "const": "direct-human-review" }
+            },
+            "required": ["degradedForm"]
+          },
+          "then": {
+            "properties": {
+              "lifecyclePhase": { "const": "plan-review" },
+              "availableActor": {
+                "properties": { "kind": { "const": "direct-human" } }
+              }
+            }
+          }
+        }
+      ]
+    },
+    "signature": {
+      "type": "string",
+      "minLength": 64,
+      "maxLength": 16384,
+      "pattern": "^-----BEGIN SSH SIGNATURE-----\\n(?:[A-Za-z0-9+/=]+\\n)+-----END SSH SIGNATURE-----\\n$"
+    }
+  },
+  "$defs": {
+    "objectOid": {
+      "type": "string",
+      "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$"
+    },
+    "digest": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "changeId": {
+      "type": "string",
+      "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"
+    },
+    "taskId": {
+      "type": "string",
+      "pattern": "^\\d+(?:\\.\\d+)+$"
+    },
+    "identity": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._@:+/-]{0,127}$"
+    },
+    "actorAssurance": {
+      "enum": ["self-declared", "runtime-hint", "adapter-assigned"]
+    }
+  }
+}
