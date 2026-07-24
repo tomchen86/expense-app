@@ -259,6 +259,7 @@ export function startInvestigationSession(
         milestones: {
           mainTerms: null,
           blindResult: null,
+          reviewerTermSourceNodeId: null,
           groupDispositions: null,
           whyAnswers: null,
         },
@@ -480,6 +481,62 @@ export function publishProviderResultToInvestigation(
     requestedInvestigationId,
     (context, current) =>
       publishProviderResultUnlocked(context, current, input),
+  );
+}
+
+export function reopenInvestigationForReviewerTerms(
+  cwd: string,
+  requestedInvestigationId: string,
+  input: { expectedRevision: number; sourceNodeId: string },
+): InvestigationStatus {
+  return withInvestigationMutation(
+    cwd,
+    requestedInvestigationId,
+    (context, current) => {
+      if (
+        current.revision !== input.expectedRevision ||
+        !/^[0-9a-f]{64}$/.test(input.sourceNodeId)
+      ) {
+        throw workflowError(
+          'INVESTIGATION_REVIEWER_REOPEN_STALE',
+          'Reviewer-term reopening is not bound to the current investigation revision.',
+          ExitCode.staleState,
+        );
+      }
+      if (
+        current.state !== 'investigation-sealed' ||
+        current.milestones.groupDispositions === null ||
+        current.milestones.whyAnswers === null ||
+        current.milestones.reviewerTermSourceNodeId !== null
+      ) {
+        throw workflowError(
+          'INVESTIGATION_REVIEWER_REOPEN_INVALID',
+          'Reviewer terms may reopen exactly one currently sealed investigation revision.',
+          ExitCode.guard,
+        );
+      }
+      const next = compareAndSwapInvestigationSession(
+        context.runtime,
+        current.investigationId,
+        current.revision,
+        (session) => {
+          const candidate: InvestigationSession = {
+            ...session,
+            revision: session.revision + 1,
+            milestones: {
+              ...session.milestones,
+              reviewerTermSourceNodeId: input.sourceNodeId,
+              groupDispositions: null,
+              whyAnswers: null,
+            },
+            updatedAt: new Date().toISOString(),
+          };
+          candidate.state = deriveInvestigationSessionState(candidate);
+          return candidate;
+        },
+      );
+      return statusFromSession(context, next);
+    },
   );
 }
 

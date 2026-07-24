@@ -3,14 +3,28 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 import { resolveActorIdentity, type ActorSignal } from './actor-identity.ts';
+import { loadAiAdapterPolicy } from './ai-adapter-policy.ts';
 import { replaceTextAtomic } from './atomic-text.ts';
 import { canonicalJson } from './canonical-json.ts';
+import {
+  COLLABORATION_GRANT_POLICY_DIGEST,
+  type CollaborationGrantRequest,
+  type CollaborationGrantExpectedBinding,
+} from './collaboration-grant.ts';
+import {
+  consumeCollaborationGrant,
+  reserveCollaborationGrant,
+  reserveCollaborationGrantUnderLifecycleLock,
+  type CollaborationGrantUseProjection,
+} from './collaboration-grant-store.ts';
 import {
   loadChecksConfig,
   parseExecutionArtifact,
   parseInvestigationArtifact,
+  parsePlanReviewArtifact,
   parseTasks,
   type BehaviorContractRef,
+  type ChangeContract,
   type ExecutionArtifact,
   type GuardContract,
 } from './contracts.ts';
@@ -34,21 +48,26 @@ import {
   createInvestigationDispositionNodes,
   deriveInvestigationGroups,
   readInvestigationGroupNode,
+  type InvestigationDispositionInput,
   type ReviewedPathRelationship,
 } from './investigation-groups.ts';
 import { scanInvestigationTree } from './investigation-scanner.ts';
 import {
   getInvestigationStatus,
+  reopenInvestigationForReviewerTerms,
   resumeInvestigationSession,
   startInvestigationSession,
   type InvestigationStatus,
 } from './investigation-session.ts';
+import { projectPlanReviewTerms } from './investigation-term-projection.ts';
 import {
   assertInvestigationCheckpointEnvelope,
   checkpointContributionDigest,
+  readCurrentInvestigationRef,
   readInvestigationSession,
   type InvestigationCheckpointEnvelope,
   type InvestigationSession,
+  type StoredInvestigationCheckpoint,
 } from './investigation-session-store.ts';
 import {
   previewInvestigationTermUnion,
@@ -60,9 +79,22 @@ import {
   createInvestigationWhyNodes,
   deriveInvestigationFullBlobManifest,
   type InvestigationFullBlobManifestEntry,
+  type InvestigationWhyAnswer,
 } from './investigation-why.ts';
 import { projectInvestigationLedger } from './investigation-design-projection.ts';
+import {
+  createInvestigationApplicability,
+  INVESTIGATION_APPLICABILITY_POLICY_DIGEST,
+  type InvestigationChangeClass,
+  type InvestigationExemptionCategory,
+  type InvestigationSemanticAuthor,
+} from './investigation-applicability.ts';
 import { loadInvestigationRuntimeContext } from './lifecycle-context.ts';
+import { parseMaintainerPolicy } from './maintainer-policy.ts';
+import {
+  createInteractiveSshSigner,
+  type MaintainerSignerProvider,
+} from './maintainer-signer.ts';
 import {
   createMutationClassPolicy,
   type MutationClass,
@@ -76,21 +108,62 @@ import {
 import { assertChangeId, normalizePolicyPath } from './paths.ts';
 import { withInvestigationTransitionAuthority } from './planning-lock.ts';
 import {
+  commitPlanningTransition,
+  type PlanningTransitionResult,
+} from './planning-transition.ts';
+import {
+  createPlanReviewDispositionNode,
+  createPlanReviewNode,
+  createPlanReviewProviderResultNode,
+  assertPlanReviewSubject,
+  readPlanReviewNode,
+  readPlanReviewDispositionNode,
+  PLAN_REVIEW_OUTPUT_SCHEMA,
+  type PlanReviewDispositionEntry,
+  type PlanReviewSubmission,
+  type PlanReviewSubject,
+} from './plan-review.ts';
+import {
+  deriveInvestigationFirstPlanningSubject,
+  resolvePlanReviewRepositoryEvidence,
+  type InvestigationFirstPlanningSubject,
+} from './planning-assurance-validator.ts';
+import {
   createProviderInvocationRequest,
   type ProviderInvocationRequest,
   type ProviderProcessResult,
 } from './provider-contracts.ts';
 import {
+  createProposeExemptionSession,
+  isProposeExemptionInvestigationId,
+  readCurrentProposeExemptionSession,
+  readProposeExemptionSession,
+  type ProposeExemptionSession,
+} from './propose-exemption-store.ts';
+import {
   BLIND_SURVEY_OUTPUT_SCHEMA,
   blindSurveyIntentDigest,
   blindSurveyManifestDigest,
+  createProviderInvocation,
+  providerInvocationExists,
+  providerInvocationManifestDigest,
   readBlindSurveyManifest,
   readProviderInvocation,
   readProviderInvocationRequest,
   type BlindSurveyManifest,
   type NormalizedChangeIntent,
+  type PlanReviewManifest,
 } from './provider-invocation-store.ts';
-import { scheduleOrdinaryRole } from './role-scheduler.ts';
+import {
+  admitRoleResult,
+  authorizeGrantedOrdinaryRole,
+  scheduleOrdinaryRole,
+  type AdmittedRoleResult,
+  type GrantedSameProviderRoleAssignment,
+  type ProviderRoleAssignment,
+  type RoleParticipant,
+  type RecordedRoleParticipant,
+} from './role-scheduler.ts';
 import {
   readPinnedTrackedTree,
   type TrackedTreeSnapshot,
@@ -103,16 +176,65 @@ const PROPOSE_POLICY_DIGEST = sha256(
 );
 const PROPOSE_AUTHORIZATION_SCHEMA = 'workflow-propose-authorization.v1';
 const PLANNING_MATERIALIZATION_REF = 'propose/planning-materialization';
+const PLAN_REVIEW_REQUEST_REF = 'propose/plan-review-request';
+const PLAN_REVIEW_GRANT_REQUIREMENT_REF =
+  'propose/plan-review-grant-requirement';
 
 export type ProposeProviderDriver = (input: {
   paths: ReturnType<typeof loadInvestigationRuntimeContext>['runtime'];
   request: ProviderInvocationRequest;
 }) => void;
 
+export type ProposeProviderDispatcher = (
+  cwd: string,
+  invocationId: string,
+) => unknown;
+
 export type ProposeOptions = {
   explicitActor?: string;
   environment?: Record<string, string | undefined>;
   providerDriver?: ProposeProviderDriver;
+  providerDispatcher?: ProposeProviderDispatcher;
+  collaborationGrant?: {
+    grantId: string;
+    now?: Date;
+    verifier?: MaintainerSignerProvider;
+  };
+};
+
+export type ProposeResumeOptions = {
+  providerDispatcher?: ProposeProviderDispatcher;
+  providerDriver?: ProposeProviderDriver;
+  collaborationGrant?: {
+    grantId: string;
+    now?: Date;
+    verifier?: MaintainerSignerProvider;
+  };
+  collaborationGrantValidation?: {
+    now?: Date;
+    verifier?: MaintainerSignerProvider;
+  };
+};
+
+export type PlanReviewProgressEnvelope = {
+  schemaVersion: 1;
+  kind: 'plan-review-progress';
+  investigationId: string;
+  changeId: string;
+  subjectDigest: string;
+  invocationId: string;
+  requestDigest: string;
+};
+
+export type PlanReviewDispositionsEnvelope = {
+  schemaVersion: 1;
+  kind: 'plan-review-dispositions';
+  investigationId: string;
+  changeId: string;
+  subjectDigest: string;
+  reviewNodeId: string;
+  reviewResultDigest: string;
+  dispositions: PlanReviewDispositionEntry[];
 };
 
 export type PlanningContributionPayload = {
@@ -139,6 +261,39 @@ export type PlanningContributionEnvelope = {
   payload: PlanningContributionPayload;
 };
 
+export type ExemptionPlanningContributionEnvelope = {
+  schemaVersion: 1;
+  kind: 'exemption-planning-contribution';
+  investigationId: string;
+  changeId: string;
+  expectedRevision: 0;
+  baseline: {
+    head: string;
+    tree: string;
+  };
+  intentDigest: string;
+  applicabilityDigest: string;
+  payload: PlanningContributionPayload;
+};
+
+export type InvestigationExemptionRequest = {
+  schemaVersion: 1;
+  kind: 'investigation-exemption-request';
+  intent: NormalizedChangeIntent;
+  exemption: {
+    category: InvestigationExemptionCategory;
+    declaredPaths: string[];
+    declaredChangeClasses: InvestigationChangeClass[];
+    rationale: string;
+    semanticAuthor: InvestigationSemanticAuthor;
+    nonTrivialBehaviorReliance: 'none-declared';
+    researchBudgetMinutes: number | null;
+  };
+};
+
+export type ProposeStartInput =
+  NormalizedChangeIntent | InvestigationExemptionRequest;
+
 export type ProviderProgressEnvelope = {
   schemaVersion: 1;
   kind: 'provider-progress';
@@ -156,7 +311,22 @@ export type ProviderProgressEnvelope = {
 export type ProposeInput =
   | InvestigationCheckpointEnvelope
   | PlanningContributionEnvelope
-  | ProviderProgressEnvelope;
+  | ExemptionPlanningContributionEnvelope
+  | ProviderProgressEnvelope
+  | PlanReviewProgressEnvelope
+  | PlanReviewDispositionsEnvelope;
+
+export type ProposePlanReviewStatus = {
+  subjectDigest: string;
+  planningGenerationId: string;
+  invocationId: string;
+  requestDigest: string;
+  providerId: 'codex' | 'claude';
+  state: 'prepared' | 'leased' | 'succeeded' | 'failed';
+  failure: { kind: string; code: string; message: string } | null;
+  reviewNodeId: string | null;
+  reviewResultDigest: string | null;
+};
 
 export type ProposeGroupWork = {
   groupId: string;
@@ -193,12 +363,21 @@ export type ProposeOutput = {
     | InvestigationStatus['state']
     | 'actor-resolution-required'
     | 'awaiting-planning-contribution'
-    | 'plan-review-required';
+    | 'plan-review-required'
+    | 'waiting-for-plan-review'
+    | 'awaiting-challenge-dispositions'
+    | 'planning-complete'
+    | 'human-action-required';
   nextAction:
     | InvestigationStatus['nextAction']
     | 'submit-planning-contribution'
-    | 'obtain-plan-review';
-  investigation: InvestigationStatus | null;
+    | 'obtain-plan-review'
+    | 'wait-for-plan-review'
+    | 'resume-plan-review'
+    | 'submit-challenge-dispositions'
+    | 'planning-complete'
+    | 'human-action';
+  investigation: InvestigationStatus | ProposeExemptionSession | null;
   createdDate: string;
   actorResolution:
     | {
@@ -216,6 +395,16 @@ export type ProposeOutput = {
   inputSchema: Record<string, unknown> | null;
   work: ProposeWork | null;
   materializedArtifacts: Record<string, string> | null;
+  planReview: ProposePlanReviewStatus | null;
+  planningTransition: PlanningTransitionResult | null;
+};
+
+export type OrdinaryProposeOutput = Omit<ProposeOutput, 'investigation'> & {
+  investigation: InvestigationStatus | null;
+};
+
+export type ExemptionProposeOutput = Omit<ProposeOutput, 'investigation'> & {
+  investigation: ProposeExemptionSession | null;
 };
 
 type RebuiltInvestigation = {
@@ -225,6 +414,13 @@ type RebuiltInvestigation = {
   termSources: InvestigationTermRawCounts;
   authorizationNode: EvidenceNode;
   providerResultNode: EvidenceNode | null;
+  providerRoleResult: AdmittedRoleResult | null;
+  reviewerTermSourceNode: EvidenceNode | null;
+  reviewerPlanReviewNode: EvidenceNode | null;
+  reviewerProviderResultNode: EvidenceNode | null;
+  reviewerRoleResult: AdmittedRoleResult | null;
+  reviewerPriorGroupDispositions: StoredInvestigationCheckpoint | null;
+  reviewerPriorWhyAnswers: StoredInvestigationCheckpoint | null;
   contributionNodes: EvidenceNode[];
   termUnionNode: EvidenceNode | null;
   scanNodes: EvidenceNode[];
@@ -237,6 +433,221 @@ type RebuiltInvestigation = {
   whyNodes: EvidenceNode[];
 };
 
+type ProposeLifecycleStatus = InvestigationStatus | ProposeExemptionSession;
+
+type ProposeGrantAuthorization = {
+  grantId: string;
+  transitionDigest: string;
+  expectedBinding: CollaborationGrantExpectedBinding;
+};
+
+const BLIND_SURVEY_GRANT_REASON =
+  'No provider-independent blind surveyor is callable for this exact investigation.';
+const PLAN_REVIEW_GRANT_REASON =
+  'No provider-independent exact-plan reviewer is callable for this exact planning generation.';
+
+function blindSurveyGrantRequest(input: {
+  changeId: string;
+  baseline: { head: string; tree: string };
+  targetDigest: string;
+  author: RoleParticipant;
+  callableProviderIds: Array<'codex' | 'claude'>;
+}): CollaborationGrantRequest | null {
+  if (
+    input.author.providerId === undefined ||
+    input.callableProviderIds.length !== 1 ||
+    input.callableProviderIds[0] !== input.author.providerId
+  ) {
+    return null;
+  }
+  return {
+    changeId: input.changeId,
+    taskId: null,
+    baselineCommit: input.baseline.head,
+    baselineTree: input.baseline.tree,
+    targetDigest: input.targetDigest,
+    lifecyclePhase: 'blind-survey',
+    rolePair: {
+      authorRole: 'investigation-author',
+      conflictingRole: 'blind-surveyor',
+    },
+    availableActor: {
+      kind: 'provider',
+      providerId: input.author.providerId,
+      assurance: input.author.identityAssurance,
+    },
+    degradedForm: 'same-provider-fresh-session',
+    reason: BLIND_SURVEY_GRANT_REASON,
+    ttlMinutes: 30,
+    maxUses: 1,
+  };
+}
+
+function planReviewGrantRequest(input: {
+  changeId: string;
+  baseline: { head: string; tree: string };
+  targetDigest: string;
+  author: RoleParticipant;
+  callableProviderIds: Array<'codex' | 'claude'>;
+}): CollaborationGrantRequest | null {
+  if (
+    input.author.providerId === undefined ||
+    input.callableProviderIds.length !== 1 ||
+    input.callableProviderIds[0] !== input.author.providerId
+  ) {
+    return null;
+  }
+  return {
+    changeId: input.changeId,
+    taskId: null,
+    baselineCommit: input.baseline.head,
+    baselineTree: input.baseline.tree,
+    targetDigest: input.targetDigest,
+    lifecyclePhase: 'plan-review',
+    rolePair: {
+      authorRole: 'plan-author',
+      conflictingRole: 'plan-reviewer',
+    },
+    availableActor: {
+      kind: 'provider',
+      providerId: input.author.providerId,
+      assurance: input.author.identityAssurance,
+    },
+    degradedForm: 'same-provider-fresh-session',
+    reason: PLAN_REVIEW_GRANT_REASON,
+    ttlMinutes: 30,
+    maxUses: 1,
+  };
+}
+
+function collaborationGrantRequiredOutput(input: {
+  changeId: string;
+  actorResolution: Extract<
+    ReturnType<typeof resolveActorIdentity>,
+    { outcome: 'resolved' }
+  >;
+  grantRequest: CollaborationGrantRequest | null;
+  lifecyclePhase: 'blind-survey' | 'plan-review';
+  conflictingRole: 'blind-surveyor' | 'plan-reviewer';
+}): OrdinaryProposeOutput {
+  return {
+    schemaVersion: 1,
+    kind: 'workflow-propose',
+    changeId: input.changeId,
+    state: 'human-action-required',
+    nextAction: 'human-action',
+    investigation: null,
+    createdDate: new Date().toISOString().slice(0, 10),
+    actorResolution: {
+      outcome: 'resolved',
+      providerId: input.actorResolution.actor.providerId,
+      assurance: input.actorResolution.actor.assurance,
+      signals: input.actorResolution.signals,
+    },
+    inputSchema: {
+      schemaVersion: 1,
+      kind: 'collaboration-grant-selection',
+      lifecyclePhase: input.lifecyclePhase,
+      conflictingRole: input.conflictingRole,
+      grantRequest: input.grantRequest,
+      allowedDegradedForms:
+        input.grantRequest === null
+          ? ['caller-supplied']
+          : ['same-provider-fresh-session'],
+      resumeOption: '--grant <grant-id>',
+    },
+    work: null,
+    materializedArtifacts: null,
+    planReview: null,
+    planningTransition: null,
+  };
+}
+
+function deriveCollaborationGrantBinding(
+  repositoryRoot: string,
+  request: CollaborationGrantRequest,
+): CollaborationGrantExpectedBinding {
+  const policy = loadMaintainerPolicyAtCommit(
+    repositoryRoot,
+    request.baselineCommit,
+  );
+  return {
+    repositoryId: policy.repository.id,
+    repositoryOrigin: policy.repository.origin,
+    policyBlob: runGit(repositoryRoot, [
+      'rev-parse',
+      `${request.baselineCommit}:workflow/maintainer-policy.json`,
+    ]).trim(),
+    collaborationPolicyDigest: COLLABORATION_GRANT_POLICY_DIGEST,
+    changeId: request.changeId,
+    taskId: request.taskId,
+    baselineCommit: request.baselineCommit,
+    baselineTree: request.baselineTree,
+    targetDigest: request.targetDigest,
+    lifecyclePhase: request.lifecyclePhase,
+    rolePair: request.rolePair,
+    availableActor: request.availableActor,
+    degradedForm: request.degradedForm,
+    reason: request.reason,
+  };
+}
+
+function loadMaintainerPolicyAtCommit(
+  repositoryRoot: string,
+  baselineCommit: string,
+): ReturnType<typeof parseMaintainerPolicy> {
+  const policyText = runGit(repositoryRoot, [
+    'show',
+    `${baselineCommit}:workflow/maintainer-policy.json`,
+  ]);
+  let policyValue: unknown;
+  try {
+    policyValue = JSON.parse(policyText);
+  } catch (error) {
+    throw workflowError(
+      'MAINTAINER_POLICY_INVALID',
+      'The baseline maintainer policy is not valid JSON.',
+      ExitCode.guard,
+      {
+        details: {
+          cause: error instanceof Error ? error.message : String(error),
+        },
+      },
+    );
+  }
+  return parseMaintainerPolicy(policyValue);
+}
+
+function collaborationTransitionDigest(
+  expectedBinding: CollaborationGrantExpectedBinding,
+): string {
+  return sha256(
+    canonicalJson({
+      schemaVersion: 1,
+      kind: 'collaboration-role-transition',
+      expectedBinding,
+    }),
+  );
+}
+
+export function startPropose(
+  cwd: string,
+  requestedChangeId: string,
+  intentInput: NormalizedChangeIntent,
+  options?: ProposeOptions,
+): OrdinaryProposeOutput;
+export function startPropose(
+  cwd: string,
+  requestedChangeId: string,
+  intentInput: InvestigationExemptionRequest,
+  options?: ProposeOptions,
+): ExemptionProposeOutput;
+export function startPropose(
+  cwd: string,
+  requestedChangeId: string,
+  intentInput: unknown,
+  options?: ProposeOptions,
+): ProposeOutput;
 export function startPropose(
   cwd: string,
   requestedChangeId: string,
@@ -244,7 +655,10 @@ export function startPropose(
   options: ProposeOptions = {},
 ): ProposeOutput {
   const changeId = assertChangeId(requestedChangeId);
-  const intent = assertNormalizedIntent(intentInput);
+  const startInput = assertProposeStartInput(intentInput);
+  const intent = isInvestigationExemptionRequest(startInput)
+    ? startInput.intent
+    : startInput;
   const environment = options.environment ?? process.env;
   const actorResolution = resolveActorIdentity({
     ...(options.explicitActor === undefined
@@ -269,40 +683,117 @@ export function startPropose(
       },
       work: null,
       materializedArtifacts: null,
+      planReview: null,
+      planningTransition: null,
     };
   }
 
+  if (isInvestigationExemptionRequest(startInput)) {
+    return startExemptionPropose(cwd, changeId, startInput, actorResolution);
+  }
+
   const context = loadInvestigationRuntimeContext(cwd);
+  if (readCurrentProposeExemptionSession(context.runtime, changeId) !== null) {
+    throw workflowError(
+      'CURRENT_INVESTIGATION_EXEMPTION_CONFLICT',
+      'The current change already has a structured investigation-exemption branch.',
+      ExitCode.conflict,
+    );
+  }
+  const adapterPolicy = loadAiAdapterPolicy(context.git.repositoryRoot);
   const intentDigest = sha256(canonicalJson(intent));
   const invocationId = createRuntimeId('invocation');
   const providerSessionId = createRuntimeId('provider-session');
+  const author: RoleParticipant = {
+    providerId: actorResolution.actor.providerId,
+    sessionId: `author-${actorResolution.actor.providerId}`,
+    principalId: undefined,
+    identityAssurance: actorResolution.actor.assurance,
+    engineSpawned: false,
+  };
   const candidates = (['codex', 'claude'] as const).map((providerId) => ({
     providerId,
     sessionId:
       providerId === actorResolution.actor.providerId
         ? `author-${providerSessionId}`
         : providerSessionId,
-    enabled: true,
-    available: true,
+    enabled: adapterPolicy.policy.providers[providerId].enabled,
+    available: adapterPolicy.policy.providers[providerId].enabled,
   }));
   const scheduled = scheduleOrdinaryRole({
     role: 'blind-surveyor',
-    author: {
-      providerId: actorResolution.actor.providerId,
-      sessionId: `author-${actorResolution.actor.providerId}`,
-      principalId: undefined,
-      identityAssurance: actorResolution.actor.assurance,
-      engineSpawned: false,
-    },
+    author,
     targetDigest: intentDigest,
     candidates,
   });
-  if (scheduled.outcome !== 'assigned') {
-    throw workflowError(
-      'COLLABORATION_GRANT_REQUIRED',
-      'No provider-independent blind surveyor is currently assignable.',
-      ExitCode.guard,
+  const callableProviderIds = candidates
+    .filter(({ enabled, available }) => enabled && available)
+    .map(({ providerId }) => providerId);
+  const grantRequest = blindSurveyGrantRequest({
+    changeId,
+    baseline: { head: context.git.head, tree: context.git.tree },
+    targetDigest: intentDigest,
+    author,
+    callableProviderIds,
+  });
+  let assignment: ProviderRoleAssignment;
+  let grantAuthorization: ProposeGrantAuthorization | null = null;
+  if (scheduled.outcome === 'assigned') {
+    assignment = scheduled.assignment;
+  } else if (!options.collaborationGrant) {
+    return collaborationGrantRequiredOutput({
+      changeId,
+      actorResolution,
+      grantRequest,
+      lifecyclePhase: 'blind-survey',
+      conflictingRole: 'blind-surveyor',
+    });
+  } else {
+    if (grantRequest === null) {
+      throw workflowError(
+        'COLLABORATION_GRANT_FORM_REQUIRED',
+        'No provider is callable; submit an explicitly typed caller-supplied survey grant.',
+        ExitCode.guard,
+      );
+    }
+    const expectedBinding = deriveCollaborationGrantBinding(
+      context.git.repositoryRoot,
+      grantRequest,
     );
+    const transitionDigest = collaborationTransitionDigest(expectedBinding);
+    const reservation = reserveCollaborationGrant(
+      context.git.repositoryRoot,
+      options.collaborationGrant.grantId,
+      {
+        transitionDigest,
+        expected: expectedBinding,
+        ...(options.collaborationGrant.now === undefined
+          ? {}
+          : { now: options.collaborationGrant.now }),
+        ...(options.collaborationGrant.verifier === undefined
+          ? {}
+          : { verifier: options.collaborationGrant.verifier }),
+      },
+    );
+    assignment = authorizeGrantedOrdinaryRole({
+      role: 'blind-surveyor',
+      author,
+      targetDigest: intentDigest,
+      reservation,
+      actualParticipant: {
+        providerId: actorResolution.actor.providerId,
+        sessionId: providerSessionId,
+        principalId: undefined,
+        identityAssurance: actorResolution.actor.assurance,
+        engineSpawned: true,
+      },
+      callableProviderIds,
+    }) as GrantedSameProviderRoleAssignment;
+    grantAuthorization = {
+      grantId: reservation.grantId,
+      transitionDigest,
+      expectedBinding,
+    };
   }
   const protectedBranch = context.config.protectedBranches[0];
   if (!protectedBranch) {
@@ -318,7 +809,7 @@ export function startPropose(
     '--verify',
     `${protectedBaseRef}^{commit}`,
   ]).trim();
-  if (!/^[0-9a-f]{40}$/.test(protectedBaseCommit)) {
+  if (!/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(protectedBaseCommit)) {
     throw workflowError(
       'PROPOSE_BASE_REF_INVALID',
       'The configured protected base did not resolve to an exact commit.',
@@ -352,7 +843,8 @@ export function startPropose(
           signals: actorResolution.signals,
         }),
       ),
-      assignment: sha256(canonicalJson(scheduled.assignment)),
+      assignment: sha256(canonicalJson(assignment)),
+      grantAuthorization: sha256(canonicalJson(grantAuthorization)),
       baseline: sha256(
         canonicalJson({ head: context.git.head, tree: context.git.tree }),
       ),
@@ -370,7 +862,8 @@ export function startPropose(
     output: {
       actor: actorResolution.actor,
       signals: actorResolution.signals,
-      assignment: scheduled.assignment,
+      assignment,
+      grantAuthorization,
       intent,
       baseline: { head: context.git.head, tree: context.git.tree },
       protectedBase: {
@@ -385,8 +878,8 @@ export function startPropose(
     invocationId,
     nonce: `propose-${crypto.randomUUID()}`,
     purpose: 'survey',
-    providerId: scheduled.assignment.providerId,
-    roleAssignment: scheduled.assignment,
+    providerId: assignment.providerId,
+    roleAssignment: assignment,
     capabilityProfile: 'repository-read-only',
     repositoryId: context.config.repositoryName,
     baseCommit: context.git.head,
@@ -397,10 +890,10 @@ export function startPropose(
     writeAllowedPaths: [],
     outputSchema: BLIND_SURVEY_OUTPUT_SCHEMA,
     evaluatorVersion: 'blind-survey-evaluator.v1',
-    policyDigest: PROPOSE_POLICY_DIGEST,
+    policyDigest: adapterPolicy.digest,
     limits: {
-      timeoutMs: 300_000,
-      aggregateOutputBytes: 1_048_576,
+      timeoutMs: adapterPolicy.policy.limits.timeoutMs,
+      aggregateOutputBytes: adapterPolicy.policy.limits.aggregateOutputBytes,
     },
   });
   const status = startInvestigationSession(cwd, {
@@ -429,26 +922,286 @@ export function startPropose(
       ExitCode.conflict,
     );
   }
-  if (
-    options.providerDriver &&
-    durableInvocation.state === 'prepared' &&
-    status.providerInvocationId === request.invocationId
-  ) {
-    options.providerDriver({ paths: context.runtime, request });
+  if (durableInvocation.state === 'prepared') {
+    if (options.providerDriver) {
+      options.providerDriver({
+        paths: context.runtime,
+        request: durableRequest,
+      });
+    } else if (options.providerDispatcher) {
+      options.providerDispatcher(cwd, durableRequest.invocationId);
+    }
   }
 
-  return renderProposeOutputWithPlanningAuthority(cwd, status, {
-    outcome: 'resolved',
-    providerId: durableAuthorization.actor.providerId,
-    assurance: durableAuthorization.actor.assurance,
-    signals: durableAuthorization.signals,
+  return renderProposeOutputWithPlanningAuthority(
+    cwd,
+    status,
+    {
+      outcome: 'resolved',
+      providerId: durableAuthorization.actor.providerId,
+      assurance: durableAuthorization.actor.assurance,
+      signals: durableAuthorization.signals,
+    },
+    options.collaborationGrant,
+  );
+}
+
+function startExemptionPropose(
+  cwd: string,
+  changeId: string,
+  request: InvestigationExemptionRequest,
+  actorResolution: Extract<
+    ReturnType<typeof resolveActorIdentity>,
+    { outcome: 'resolved' }
+  >,
+): ProposeOutput {
+  const context = loadInvestigationRuntimeContext(cwd);
+  const ordinary = readCurrentInvestigationRef(context.runtime, changeId);
+  if (ordinary !== null) {
+    throw workflowError(
+      'CURRENT_INVESTIGATION_CONFLICT',
+      'The current change already has an ordinary investigation session.',
+      ExitCode.conflict,
+    );
+  }
+  const intentDigest = sha256(canonicalJson(request.intent));
+  const applicability = createInvestigationApplicability({
+    kind: 'investigation-exemption',
+    ...request.exemption,
+    baseline: { head: context.git.head, tree: context.git.tree },
+    intentDigest,
   });
+  if (applicability.kind !== 'investigation-exemption') {
+    throw workflowError(
+      'INVESTIGATION_EXEMPTION_INVALID',
+      'The structured investigation exemption did not produce its exact branch.',
+      ExitCode.staleState,
+    );
+  }
+  const applicabilityNode = createEvidenceNode({
+    type: 'investigation-applicability',
+    nodeSchema: 'investigation.applicability.v1',
+    evaluator: 'investigation-applicability.v1',
+    policyDigest: INVESTIGATION_APPLICABILITY_POLICY_DIGEST,
+    exactInputDigests: {
+      applicability: applicability.applicabilityDigest,
+    },
+    semanticParentResultDigests: {},
+    provenanceParentNodeIds: {},
+    outputSchema: 'investigation.applicability-output.v1',
+    output: applicability,
+    runtimeMetadata: {},
+  });
+  const session = createProposeExemptionSession(context.runtime, {
+    changeId,
+    repositoryRoot: context.git.repositoryRealPath,
+    gitCommonDirectory: context.git.gitCommonDirectory,
+    branch: context.git.branch,
+    baseline: { head: context.git.head, tree: context.git.tree },
+    intentDigest,
+    intent: request.intent,
+    applicability,
+    applicabilityNode,
+    actor: actorResolution.actor,
+    signals: actorResolution.signals,
+  });
+  if (
+    session.actor.providerId !== actorResolution.actor.providerId ||
+    session.actor.assurance !== actorResolution.actor.assurance
+  ) {
+    throw workflowError(
+      'CURRENT_INVESTIGATION_ACTOR_CONFLICT',
+      'The current structured investigation exemption is pinned to a different actor.',
+      ExitCode.conflict,
+    );
+  }
+  const scaffold = prepareExemptionPlanningScaffold(cwd, session);
+  return renderExemptionProposeOutput(cwd, session, scaffold);
+}
+
+function exemptionAwaitingPlanningOutput(
+  session: ProposeExemptionSession,
+  scaffold: ReturnType<typeof prepareExemptionPlanningScaffold>,
+): ExemptionProposeOutput {
+  return {
+    schemaVersion: 1,
+    kind: 'workflow-propose',
+    changeId: session.changeId,
+    state: 'awaiting-planning-contribution',
+    nextAction: 'submit-planning-contribution',
+    investigation: session,
+    createdDate: session.createdAt.slice(0, 10),
+    actorResolution: {
+      outcome: 'resolved',
+      providerId: session.actor.providerId,
+      assurance: session.actor.assurance,
+      signals: session.signals,
+    },
+    inputSchema: exemptionPlanningContributionSchema(session),
+    work: {
+      termSources: { engine: 0, main: 0, reviewer: 0, survey: 0 },
+      groups: [],
+      fullBlobManifest: [],
+      authoredInstructions: scaffold.instructions,
+    },
+    materializedArtifacts: null,
+    planReview: null,
+    planningTransition: null,
+  };
+}
+
+function prepareExemptionPlanningScaffold(
+  cwd: string,
+  session: ProposeExemptionSession,
+  allowAuthoredExisting = false,
+  allowManagedPlanReview = false,
+): {
+  changeDirectory: string;
+  investigationBytes: string;
+  instructions: ProposeWork['authoredInstructions'];
+} {
+  const context = loadInvestigationRuntimeContext(cwd);
+  const changeDirectory = path.join(
+    context.git.repositoryRoot,
+    context.config.changeRoot,
+    session.changeId,
+  );
+  const metadataBytes = `schema: expense-app-v2\ncreated: ${session.createdAt.slice(0, 10)}\n`;
+  const investigation = parseInvestigationArtifact(
+    {
+      schemaVersion: 1,
+      kind: 'investigation-artifact',
+      changeId: session.changeId,
+      legacyMigration: false,
+      nodes: [session.applicabilityNode],
+      currentRefs: {
+        investigationApplicability: session.applicabilityNode.nodeId,
+      },
+      applicability: session.applicability,
+    },
+    session.changeId,
+  );
+  const investigationBytes = `${canonicalJson(investigation)}\n`;
+  const scaffoldEntries = new Map([
+    ['.openspec.yaml', metadataBytes],
+    ['investigation.json', investigationBytes],
+  ]);
+  assertPlanningTargetsCompatible(
+    changeDirectory,
+    scaffoldEntries,
+    true,
+    allowAuthoredExisting,
+    allowManagedPlanReview,
+  );
+  writeMissingEntries(changeDirectory, scaffoldEntries);
+  const adapter = createOpenSpecAdapter(context.git.repositoryRoot);
+  const proposalInstruction = adapter.instructions(
+    session.changeId,
+    'expense-app-v2',
+    'proposal',
+  );
+  return {
+    changeDirectory,
+    investigationBytes,
+    instructions: [
+      {
+        artifactId: 'proposal',
+        outputPath: proposalInstruction.outputPath,
+        instruction: proposalInstruction.instruction,
+        template: proposalInstruction.template,
+      },
+    ],
+  };
+}
+
+function resumeExemptionPlanningContribution(
+  cwd: string,
+  input: ExemptionPlanningContributionEnvelope,
+  options: ProposeResumeOptions,
+): ExemptionProposeOutput {
+  const initialContext = loadInvestigationRuntimeContext(cwd);
+  const output = withInvestigationTransitionAuthority(
+    initialContext.lifecycleRuntime,
+    input.changeId,
+    (assertOwned) => {
+      assertOwned();
+      const session = readProposeExemptionSession(
+        initialContext.runtime,
+        input.investigationId,
+      );
+      assertExemptionPlanningBinding(session, input);
+      const materializedArtifacts = materializeExemptionPlanningContribution(
+        cwd,
+        session,
+        input.payload,
+        options.collaborationGrant,
+        assertOwned,
+      );
+      assertOwned();
+      return renderExemptionProposeOutput(
+        cwd,
+        session,
+        prepareExemptionPlanningScaffold(cwd, session, true),
+        materializedArtifacts,
+      );
+    },
+  );
+  dispatchPreparedPlanReview(cwd, output, options);
+  return getExemptionProposeStatus(cwd, input.investigationId);
+}
+
+function assertExemptionPlanningBinding(
+  session: ProposeExemptionSession,
+  input: ExemptionPlanningContributionEnvelope,
+): void {
+  if (
+    input.investigationId !== session.investigationId ||
+    input.changeId !== session.changeId ||
+    input.expectedRevision !== session.revision ||
+    canonicalJson(input.baseline) !== canonicalJson(session.baseline) ||
+    input.intentDigest !== session.intentDigest ||
+    input.applicabilityDigest !== session.applicability.applicabilityDigest
+  ) {
+    throw workflowError(
+      'PROPOSE_INPUT_STALE',
+      'Planning contribution is not bound to the current structured investigation exemption.',
+      ExitCode.staleState,
+    );
+  }
 }
 
 export function resumePropose(
   cwd: string,
   requestedChangeId: string,
+  inputValue:
+    | InvestigationCheckpointEnvelope
+    | PlanningContributionEnvelope
+    | ProviderProgressEnvelope,
+  options?: ProposeResumeOptions,
+): OrdinaryProposeOutput;
+export function resumePropose(
+  cwd: string,
+  requestedChangeId: string,
+  inputValue: ExemptionPlanningContributionEnvelope,
+  options?: ProposeResumeOptions,
+): ExemptionProposeOutput;
+export function resumePropose(
+  cwd: string,
+  requestedChangeId: string,
+  inputValue: PlanReviewProgressEnvelope | PlanReviewDispositionsEnvelope,
+  options?: ProposeResumeOptions,
+): ProposeOutput;
+export function resumePropose(
+  cwd: string,
+  requestedChangeId: string,
   inputValue: unknown,
+  options?: ProposeResumeOptions,
+): ProposeOutput;
+export function resumePropose(
+  cwd: string,
+  requestedChangeId: string,
+  inputValue: unknown,
+  options: ProposeResumeOptions = {},
 ): ProposeOutput {
   const changeId = assertChangeId(requestedChangeId);
   const input = assertProposeInput(inputValue);
@@ -459,9 +1212,12 @@ export function resumePropose(
       ExitCode.staleState,
     );
   }
+  if (input.kind === 'exemption-planning-contribution') {
+    return resumeExemptionPlanningContribution(cwd, input, options);
+  }
   if (input.kind === 'planning-contribution') {
     const initialContext = loadInvestigationRuntimeContext(cwd);
-    return withInvestigationTransitionAuthority(
+    const output = withInvestigationTransitionAuthority(
       initialContext.lifecycleRuntime,
       changeId,
       (assertOwned) => {
@@ -475,20 +1231,42 @@ export function resumePropose(
             ExitCode.guard,
           );
         }
-        const rebuilt = rebuildInvestigation(cwd, status.investigationId);
+        const rebuilt = rebuildInvestigation(
+          cwd,
+          status.investigationId,
+          options.collaborationGrantValidation,
+        );
         assertOwned();
         const materializedArtifacts = materializePlanningContribution(
           cwd,
           status,
           rebuilt,
           input.payload,
+          options.collaborationGrant,
+          assertOwned,
         );
         assertOwned();
         const current = getInvestigationStatus(cwd, input.investigationId);
         assertPlanningBinding(current, input);
-        return renderProposeOutput(cwd, current, null, materializedArtifacts);
+        return renderProposeOutput(
+          cwd,
+          current,
+          null,
+          materializedArtifacts,
+          options.collaborationGrantValidation,
+        );
       },
     );
+    dispatchPreparedPlanReview(cwd, output, options);
+    return getProposeStatus(cwd, input.investigationId);
+  }
+
+  if (input.kind === 'plan-review-progress') {
+    return resumePlanReview(cwd, input, options);
+  }
+
+  if (input.kind === 'plan-review-dispositions') {
+    return completePlanReviewDispositions(cwd, input);
   }
 
   if (input.kind === 'provider-progress') {
@@ -501,26 +1279,58 @@ export function resumePropose(
         ExitCode.conflict,
       );
     }
+    dispatchPreparedInvocation(cwd, current, options.providerDispatcher);
     const resumed = resumeInvestigationSession(cwd, input.investigationId);
-    return renderProposeOutputWithPlanningAuthority(cwd, resumed);
+    return renderProposeOutputWithPlanningAuthority(
+      cwd,
+      resumed,
+      null,
+      options.collaborationGrantValidation,
+    );
   }
 
-  const checkpoint = assertInvestigationCheckpointEnvelope(input);
-  const before = getInvestigationStatus(cwd, checkpoint.investigationId);
+  const suppliedCheckpoint = assertInvestigationCheckpointEnvelope(input);
+  const before = getInvestigationStatus(
+    cwd,
+    suppliedCheckpoint.investigationId,
+  );
+  dispatchPreparedInvocation(cwd, before, options.providerDispatcher);
+  let checkpoint = suppliedCheckpoint;
   if (checkpoint.kind === 'group-dispositions') {
-    const rebuilt = rebuildInvestigation(cwd, before.investigationId);
+    const rebuilt = rebuildInvestigation(
+      cwd,
+      before.investigationId,
+      options.collaborationGrantValidation,
+    );
+    const effectiveCheckpoint = mergeReviewerReopenCheckpoint(
+      rebuilt,
+      checkpoint,
+    ) as Extract<
+      InvestigationCheckpointEnvelope,
+      { kind: 'group-dispositions' }
+    >;
+    checkpoint = effectiveCheckpoint;
     createInvestigationDispositionNodes({
       groupNodes: rebuilt.groupNodes,
-      dispositions: checkpoint.payload.dispositions,
+      dispositions: effectiveCheckpoint.payload.dispositions,
     });
   } else if (checkpoint.kind === 'why-answers') {
-    const rebuilt = rebuildInvestigation(cwd, before.investigationId);
+    const rebuilt = rebuildInvestigation(
+      cwd,
+      before.investigationId,
+      options.collaborationGrantValidation,
+    );
+    const effectiveCheckpoint = mergeReviewerReopenCheckpoint(
+      rebuilt,
+      checkpoint,
+    ) as Extract<InvestigationCheckpointEnvelope, { kind: 'why-answers' }>;
+    checkpoint = effectiveCheckpoint;
     createInvestigationWhyNodes({
       manifest: rebuilt.fullBlobManifest,
       hitNodes: rebuilt.hitNodes,
       groupNodes: rebuilt.groupNodes,
       dispositionNodes: rebuilt.dispositionNodes,
-      answers: checkpoint.payload.answers,
+      answers: effectiveCheckpoint.payload.answers,
     });
   }
 
@@ -536,13 +1346,39 @@ export function resumePropose(
   ) {
     status = resumeInvestigationSession(cwd, checkpoint.investigationId);
   }
-  return renderProposeOutputWithPlanningAuthority(cwd, status);
+  if (
+    status.state === 'investigation-sealed' &&
+    readInvestigationSession(
+      loadInvestigationRuntimeContext(cwd).runtime,
+      status.investigationId,
+    ).milestones.reviewerTermSourceNodeId !== null
+  ) {
+    return reconcileReviewerTermPlanningRevision(cwd, status, options);
+  }
+  return renderProposeOutputWithPlanningAuthority(
+    cwd,
+    status,
+    null,
+    options.collaborationGrantValidation,
+  );
 }
 
 export function createPlanningContributionEnvelope(
+  output: OrdinaryProposeOutput,
+  payload: PlanningContributionPayload,
+): PlanningContributionEnvelope;
+export function createPlanningContributionEnvelope(
+  output: ExemptionProposeOutput,
+  payload: PlanningContributionPayload,
+): ExemptionPlanningContributionEnvelope;
+export function createPlanningContributionEnvelope(
   output: ProposeOutput,
   payload: PlanningContributionPayload,
-): PlanningContributionEnvelope {
+): PlanningContributionEnvelope | ExemptionPlanningContributionEnvelope;
+export function createPlanningContributionEnvelope(
+  output: ProposeOutput,
+  payload: PlanningContributionPayload,
+): PlanningContributionEnvelope | ExemptionPlanningContributionEnvelope {
   if (
     output.state !== 'awaiting-planning-contribution' ||
     output.investigation === null
@@ -554,6 +1390,19 @@ export function createPlanningContributionEnvelope(
     );
   }
   const status = output.investigation;
+  if (status.state === 'investigation-exempt') {
+    return assertExemptionPlanningContributionEnvelope({
+      schemaVersion: 1,
+      kind: 'exemption-planning-contribution',
+      investigationId: status.investigationId,
+      changeId: status.changeId,
+      expectedRevision: status.revision,
+      baseline: status.baseline,
+      intentDigest: status.intentDigest,
+      applicabilityDigest: status.applicability.applicabilityDigest,
+      payload,
+    });
+  }
   return assertPlanningContributionEnvelope({
     schemaVersion: 1,
     kind: 'planning-contribution',
@@ -582,6 +1431,55 @@ export function createProviderProgressEnvelope(
   };
 }
 
+export function createPlanReviewProgressEnvelope(
+  output: ProposeOutput,
+): PlanReviewProgressEnvelope {
+  if (!output.investigation || !output.planReview) {
+    throw workflowError(
+      'PLAN_REVIEW_PROGRESS_NOT_AVAILABLE',
+      'The propose wrapper has no current PlanReview invocation.',
+      ExitCode.guard,
+    );
+  }
+  return {
+    schemaVersion: 1,
+    kind: 'plan-review-progress',
+    investigationId: output.investigation.investigationId,
+    changeId: output.changeId,
+    subjectDigest: output.planReview.subjectDigest,
+    invocationId: output.planReview.invocationId,
+    requestDigest: output.planReview.requestDigest,
+  };
+}
+
+export function createPlanReviewDispositionsEnvelope(
+  output: ProposeOutput,
+  dispositions: PlanReviewDispositionEntry[],
+): PlanReviewDispositionsEnvelope {
+  if (
+    output.state !== 'awaiting-challenge-dispositions' ||
+    !output.investigation ||
+    !output.planReview?.reviewNodeId ||
+    !output.planReview.reviewResultDigest
+  ) {
+    throw workflowError(
+      'PLAN_REVIEW_DISPOSITIONS_NOT_AVAILABLE',
+      'The propose wrapper is not waiting for review dispositions.',
+      ExitCode.guard,
+    );
+  }
+  return {
+    schemaVersion: 1,
+    kind: 'plan-review-dispositions',
+    investigationId: output.investigation.investigationId,
+    changeId: output.changeId,
+    subjectDigest: output.planReview.subjectDigest,
+    reviewNodeId: output.planReview.reviewNodeId,
+    reviewResultDigest: output.planReview.reviewResultDigest,
+    dispositions,
+  };
+}
+
 export function startProposeFromFile(
   cwd: string,
   changeId: string,
@@ -595,14 +1493,520 @@ export function resumeProposeFromFile(
   cwd: string,
   changeId: string,
   inputPath: string,
+  options: ProposeResumeOptions = {},
 ): ProposeOutput {
-  return resumePropose(cwd, changeId, readCallerJson(cwd, inputPath));
+  return resumePropose(cwd, changeId, readCallerJson(cwd, inputPath), options);
+}
+
+function dispatchPreparedInvocation(
+  cwd: string,
+  status: InvestigationStatus,
+  dispatcher: ProposeProviderDispatcher | undefined,
+): void {
+  if (!dispatcher || status.provider.state !== 'prepared') {
+    return;
+  }
+  dispatcher(cwd, status.providerInvocationId);
+}
+
+function dispatchPreparedPlanReview(
+  cwd: string,
+  output: ProposeOutput,
+  options: ProposeResumeOptions,
+): void {
+  if (output.planReview?.state !== 'prepared') {
+    return;
+  }
+  const context = loadInvestigationRuntimeContext(cwd);
+  const request = readProviderInvocationRequest(
+    context.runtime,
+    output.planReview.invocationId,
+  );
+  if (options.providerDriver) {
+    options.providerDriver({ paths: context.runtime, request });
+  } else if (options.providerDispatcher) {
+    options.providerDispatcher(cwd, request.invocationId);
+  }
+}
+
+function resumePlanReview(
+  cwd: string,
+  input: PlanReviewProgressEnvelope,
+  options: ProposeResumeOptions,
+): ProposeOutput {
+  const status = getProposeLifecycleStatus(cwd, input.investigationId);
+  if (status.changeId !== input.changeId) {
+    throw workflowError(
+      'PROPOSE_INPUT_STALE',
+      'PlanReview progress belongs to another investigation.',
+      ExitCode.staleState,
+    );
+  }
+  const context = loadInvestigationRuntimeContext(cwd);
+  const reservation = readPlanReviewReservation(context.runtime, status);
+  if (
+    reservation === null ||
+    reservation.subject.subjectDigest !== input.subjectDigest ||
+    reservation.request.invocationId !== input.invocationId ||
+    reservation.request.requestDigest !== input.requestDigest
+  ) {
+    throw workflowError(
+      'PROPOSE_INPUT_STALE',
+      'PlanReview progress is not bound to the current exact request.',
+      ExitCode.staleState,
+    );
+  }
+  let invocation = readProviderInvocation(
+    context.runtime,
+    reservation.request.invocationId,
+  );
+  if (invocation.state === 'prepared') {
+    if (options.providerDriver) {
+      options.providerDriver({
+        paths: context.runtime,
+        request: reservation.request,
+      });
+    } else if (options.providerDispatcher) {
+      options.providerDispatcher(cwd, reservation.request.invocationId);
+    }
+    invocation = readProviderInvocation(
+      context.runtime,
+      reservation.request.invocationId,
+    );
+  }
+  if (invocation.state !== 'succeeded' || invocation.result === null) {
+    return getProposeStatus(cwd, status.investigationId);
+  }
+  const tracked = materializePlanReviewResult(
+    cwd,
+    status,
+    reservation,
+    invocation.result,
+    options.collaborationGrantValidation,
+  );
+  if ('reopenedInvestigation' in tracked) {
+    return renderProposeOutputWithPlanningAuthority(
+      cwd,
+      tracked.reopenedInvestigation,
+      null,
+      options.collaborationGrantValidation,
+    );
+  }
+  const review = readPlanReviewNode(tracked.reviewNode);
+  if (review.findings.length > 0) {
+    return getProposeStatus(cwd, status.investigationId);
+  }
+  return commitCompletedPlanning(cwd, status);
+}
+
+function materializePlanReviewResult(
+  cwd: string,
+  status: ProposeLifecycleStatus,
+  reservation: PlanReviewReservation,
+  result: ProviderProcessResult,
+  grantValidation?: ProposeResumeOptions['collaborationGrantValidation'],
+):
+  | {
+      nodes: EvidenceNode[];
+      reviewNode: EvidenceNode;
+      dispositionNode: EvidenceNode | null;
+      roleResult: AdmittedRoleResult;
+    }
+  | {
+      reopenedInvestigation: InvestigationStatus;
+    } {
+  const context = loadInvestigationRuntimeContext(cwd);
+  const existing = readTrackedPlanReview(
+    context.git.repositoryRoot,
+    status.changeId,
+  );
+  if (existing !== null) {
+    return existing;
+  }
+  if (result.runtimeObservation === null) {
+    throw workflowError(
+      'PLAN_REVIEW_RUNTIME_ASSURANCE_REQUIRED',
+      'An ordinary provider PlanReview requires a fixed-runner observation.',
+      ExitCode.verification,
+    );
+  }
+  const submission = result.output as PlanReviewSubmission;
+  const providerResultNode = createPlanReviewProviderResultNode({
+    subject: reservation.subject,
+    assignment: reservation.assignment,
+    submission,
+    providerPolicyDigest: reservation.request.policyDigest,
+    runtimeAssurance: {
+      assurance: result.runtimeObservation.assurance,
+      projectionDigest: result.runtimeObservation.projection.beforeDigest,
+      sameUserProcessConfined:
+        result.runtimeObservation.sameUserProcessConfined,
+      residuals: result.runtimeObservation.residuals,
+      executableSha256: result.runtimeObservation.executable.sha256,
+    },
+  });
+  const reviewNode = createPlanReviewNode({
+    subject: reservation.subject,
+    assignment: reservation.assignment,
+    providerResultNode,
+    submission,
+  });
+  const review = readPlanReviewNode(reviewNode);
+  const content = {
+    kind: 'plan-review' as const,
+    nodeId: reviewNode.nodeId,
+    resultDigest: reviewNode.resultDigest,
+    outputSchema: PLAN_REVIEW_OUTPUT_SCHEMA,
+    evaluator: reviewNode.evaluator,
+    policyDigest: reviewNode.policyDigest,
+    contentDigest: reviewNode.resultDigest,
+    current: true as const,
+  };
+  let grantUse: CollaborationGrantUseProjection | null = null;
+  let grantAdmission: NonNullable<
+    Parameters<typeof admitRoleResult>[0]['grantValidation']
+  > | null = null;
+  if ('grantId' in reservation.assignment) {
+    if (
+      reservation.grantAuthorization === null ||
+      reservation.grantAuthorization.grantId !== reservation.assignment.grantId
+    ) {
+      throw workflowError(
+        'COLLABORATION_GRANT_ADMISSION_REQUIRED',
+        'A granted PlanReview requires its exact durable grant authorization.',
+        ExitCode.guard,
+      );
+    }
+    const policy = loadMaintainerPolicyAtCommit(
+      context.git.repositoryRoot,
+      reservation.grantAuthorization.expectedBinding.baselineCommit,
+    );
+    const verifier =
+      grantValidation?.verifier ??
+      createInteractiveSshSigner(context.git.repositoryRoot, policy);
+    const now = grantValidation?.now ?? new Date();
+    const consumed = consumeCollaborationGrant(
+      context.git.gitCommonDirectory,
+      reservation.grantAuthorization.grantId,
+      {
+        transitionDigest: reservation.grantAuthorization.transitionDigest,
+        assignment: reservation.assignment,
+        contentAdmission: {
+          kind: content.kind,
+          nodeId: content.nodeId,
+          resultDigest: content.resultDigest,
+          current: true,
+        },
+        now,
+      },
+    );
+    if (!consumed.use) {
+      throw workflowError(
+        'COLLABORATION_GRANT_ADMISSION_REQUIRED',
+        'The exact PlanReview collaboration grant use was not durably consumed.',
+        ExitCode.staleState,
+      );
+    }
+    grantUse = consumed.use;
+    grantAdmission = {
+      now,
+      expectedBinding: reservation.grantAuthorization.expectedBinding,
+      policy,
+      verifier,
+      transitionDigest: reservation.grantAuthorization.transitionDigest,
+    };
+  }
+  const roleResult = admitRoleResult({
+    assignment: reservation.assignment,
+    author: reservation.author,
+    participant:
+      'grantId' in reservation.assignment
+        ? reservation.assignment.participant
+        : {
+            providerId: reservation.assignment.providerId,
+            sessionId: reservation.assignment.sessionId,
+            principalId: null,
+            identityAssurance: 'adapter-assigned',
+            engineSpawned: true,
+          },
+    content,
+    providerInvocation: {
+      invocationId: reservation.request.invocationId,
+      requestDigest: reservation.request.requestDigest,
+      outputDigest: result.outputDigest,
+      providerId: reservation.assignment.providerId,
+      sessionId: reservation.assignment.sessionId,
+      targetDigest: reservation.assignment.targetDigest,
+      engineSpawned: true,
+    },
+    grantUse,
+    grantValidation: grantAdmission,
+  });
+  if (review.proposedTerms.length > 0) {
+    if (status.state === 'investigation-exempt') {
+      throw workflowError(
+        'INVESTIGATION_EXEMPTION_REVIEWER_TERMS_REQUIRED',
+        'Reviewer terms invalidate the zero-scan exemption and require an ordinary investigation revision.',
+        ExitCode.guard,
+      );
+    }
+    const rebuilt = rebuildInvestigation(
+      cwd,
+      status.investigationId,
+      grantValidation,
+    );
+    const existingContributions = rebuilt.contributionNodes.map((node) =>
+      structuredClone(node.output),
+    ) as InvestigationTermContribution[];
+    const projection = projectPlanReviewTerms({
+      validationInput: {
+        reviewNode,
+        dispositionNode: null,
+        subject: reservation.planning.subject,
+        generation: reservation.planning.generation,
+        target: reservation.planning.target,
+        expectedReviewPolicyDigest:
+          reservation.planning.policies.reviewPolicyDigest,
+        requiredIndependence: 'provider-independent',
+        independenceAuthorization: {
+          kind: 'admitted-role-result',
+          roleResult,
+        },
+        repositoryEvidence: resolvePlanReviewRepositoryEvidence(
+          context.git.repositoryRoot,
+          reservation.planning.generation.investigationBaseline.tree,
+          reviewNode,
+        ),
+      },
+      existingContributions,
+    });
+    if (projection.preview.outcome !== 'ready') {
+      throw workflowError(
+        'INVESTIGATION_TERM_NARROWING_REQUIRED',
+        'Reviewer-proposed terms exceed the fixed investigation budgets.',
+        ExitCode.guard,
+        { details: { violations: projection.preview.violations } },
+      );
+    }
+    const sourceNode = createReviewerTermSourceNode({
+      status,
+      providerResultNode,
+      reviewNode,
+      roleResult,
+      terms: review.proposedTerms,
+      priorGroupDispositions: rebuilt.session.milestones.groupDispositions!,
+      priorWhyAnswers: rebuilt.session.milestones.whyAnswers!,
+    });
+    for (const node of [providerResultNode, reviewNode, sourceNode]) {
+      writeEvidenceNode(context.runtime, node);
+    }
+    return {
+      reopenedInvestigation: reopenInvestigationForReviewerTerms(
+        cwd,
+        status.investigationId,
+        {
+          expectedRevision: status.revision,
+          sourceNodeId: sourceNode.nodeId,
+        },
+      ),
+    };
+  }
+  const tracked = {
+    nodes: [providerResultNode, reviewNode],
+    reviewNode,
+    dispositionNode: null,
+    roleResult,
+  };
+  writeTrackedPlanReview(context.git.repositoryRoot, status.changeId, {
+    nodes: [providerResultNode, reviewNode],
+    roleResult,
+    dispositionNode: null,
+  });
+  return tracked;
+}
+
+function completePlanReviewDispositions(
+  cwd: string,
+  input: PlanReviewDispositionsEnvelope,
+): ProposeOutput {
+  const status = getProposeLifecycleStatus(cwd, input.investigationId);
+  const context = loadInvestigationRuntimeContext(cwd);
+  const reservation = readPlanReviewReservation(context.runtime, status);
+  const tracked = readTrackedPlanReview(
+    context.git.repositoryRoot,
+    status.changeId,
+  );
+  if (
+    status.changeId !== input.changeId ||
+    reservation === null ||
+    reservation.subject.subjectDigest !== input.subjectDigest ||
+    tracked === null ||
+    tracked.reviewNode.nodeId !== input.reviewNodeId ||
+    tracked.reviewNode.resultDigest !== input.reviewResultDigest ||
+    tracked.dispositionNode !== null
+  ) {
+    throw workflowError(
+      'PROPOSE_INPUT_STALE',
+      'PlanReview dispositions are not bound to the current review.',
+      ExitCode.staleState,
+    );
+  }
+  const dispositionNode = createPlanReviewDispositionNode({
+    reviewNode: tracked.reviewNode,
+    policyDigest: reservation.subject.reviewPolicyDigest,
+    dispositions: input.dispositions,
+  });
+  writeTrackedPlanReview(context.git.repositoryRoot, status.changeId, {
+    nodes: tracked.nodes,
+    roleResult: tracked.roleResult,
+    dispositionNode,
+  });
+  return commitCompletedPlanning(cwd, status);
+}
+
+function writeTrackedPlanReview(
+  repositoryRoot: string,
+  changeId: string,
+  input: {
+    nodes: EvidenceNode[];
+    roleResult: AdmittedRoleResult;
+    dispositionNode: EvidenceNode | null;
+  },
+): void {
+  const reviewNode = input.nodes.find(({ type }) => type === 'plan-review');
+  if (!reviewNode) {
+    throw workflowError(
+      'PLAN_REVIEW_ARTIFACT_INVALID',
+      'PlanReview artifact has no review node.',
+      ExitCode.verification,
+    );
+  }
+  const nodes = uniqueNodes([
+    ...input.nodes,
+    ...(input.dispositionNode ? [input.dispositionNode] : []),
+  ]);
+  const artifact = parsePlanReviewArtifact(
+    {
+      schemaVersion: 1,
+      kind: 'plan-review-artifact',
+      changeId,
+      nodes,
+      currentRefs: {
+        planReview: reviewNode.nodeId,
+        ...(input.dispositionNode
+          ? { planReviewDisposition: input.dispositionNode.nodeId }
+          : {}),
+      },
+      roleResults: [input.roleResult],
+    },
+    changeId,
+  );
+  const target = path.join(
+    repositoryRoot,
+    loadInvestigationRuntimeContext(repositoryRoot).config.changeRoot,
+    changeId,
+    'plan-review.json',
+  );
+  const bytes = `${canonicalJson(artifact)}\n`;
+  if (fs.existsSync(target)) {
+    const current = fs.readFileSync(target, 'utf8');
+    if (current === bytes) {
+      return;
+    }
+    replaceTextAtomic(target, bytes, { allowCreate: false });
+    return;
+  }
+  replaceTextAtomic(target, bytes, { allowCreate: true, defaultMode: 0o644 });
+}
+
+function commitCompletedPlanning(
+  cwd: string,
+  status: ProposeLifecycleStatus,
+): ProposeOutput {
+  const before = getProposeStatus(cwd, status.investigationId);
+  const planningTransition = commitPlanningTransition(cwd, status.changeId);
+  return {
+    ...before,
+    state: 'planning-complete',
+    nextAction: 'planning-complete',
+    inputSchema: null,
+    planningTransition,
+  };
+}
+
+function getProposeLifecycleStatus(
+  cwd: string,
+  investigationId: string,
+): ProposeLifecycleStatus {
+  if (isProposeExemptionInvestigationId(investigationId)) {
+    const context = loadInvestigationRuntimeContext(cwd);
+    return readProposeExemptionSession(context.runtime, investigationId);
+  }
+  return getInvestigationStatus(cwd, investigationId);
+}
+
+function getExemptionProposeStatus(
+  cwd: string,
+  investigationId: string,
+): ExemptionProposeOutput {
+  const context = loadInvestigationRuntimeContext(cwd);
+  const session = readProposeExemptionSession(context.runtime, investigationId);
+  return renderExemptionProposeOutput(cwd, session);
+}
+
+function renderExemptionProposeOutput(
+  cwd: string,
+  session: ProposeExemptionSession,
+  knownScaffold?: ReturnType<typeof prepareExemptionPlanningScaffold>,
+  knownMaterializedArtifacts?: Record<string, string>,
+): ExemptionProposeOutput {
+  const context = loadInvestigationRuntimeContext(cwd);
+  const receipt = readExemptionPlanningMaterializationReceipt(
+    context.runtime,
+    session,
+  );
+  if (receipt === null) {
+    return exemptionAwaitingPlanningOutput(
+      session,
+      knownScaffold ?? prepareExemptionPlanningScaffold(cwd, session),
+    );
+  }
+  const scaffold =
+    knownScaffold ?? prepareExemptionPlanningScaffold(cwd, session, true, true);
+  const materializedArtifacts =
+    knownMaterializedArtifacts ??
+    readMaterializedExemptionPlanningArtifacts(
+      cwd,
+      session,
+      scaffold.changeDirectory,
+    );
+  return renderMaterializedProposeOutput(
+    cwd,
+    session,
+    {
+      outcome: 'resolved',
+      providerId: session.actor.providerId,
+      assurance: session.actor.assurance,
+      signals: session.signals,
+    },
+    session.createdAt.slice(0, 10),
+    {
+      termSources: { engine: 0, main: 0, reviewer: 0, survey: 0 },
+      groups: [],
+      fullBlobManifest: [],
+      authoredInstructions: scaffold.instructions,
+    },
+    materializedArtifacts,
+  ) as ExemptionProposeOutput;
 }
 
 export function getProposeStatus(
   cwd: string,
   requestedInvestigationId: string,
 ): ProposeOutput {
+  if (isProposeExemptionInvestigationId(requestedInvestigationId)) {
+    return getExemptionProposeStatus(cwd, requestedInvestigationId);
+  }
   const status = getInvestigationStatus(cwd, requestedInvestigationId);
   const rebuilt = rebuildInvestigation(cwd, status.investigationId);
   const context = loadInvestigationRuntimeContext(cwd);
@@ -649,30 +2053,34 @@ export function getProposeStatus(
       inputSchema: planningContributionSchema(status),
       work: workFromRebuilt(rebuilt, []),
       materializedArtifacts: null,
+      planReview: null,
+      planningTransition: null,
     };
   }
-  return {
-    schemaVersion: 1,
-    kind: 'workflow-propose',
-    changeId: status.changeId,
-    state: 'plan-review-required',
-    nextAction: 'obtain-plan-review',
-    investigation: status,
-    createdDate,
+  return renderMaterializedProposeOutput(
+    cwd,
+    status,
     actorResolution,
-    inputSchema: null,
-    work: workFromRebuilt(rebuilt, []),
-    materializedArtifacts: materialized,
-  };
+    createdDate,
+    workFromRebuilt(rebuilt, []),
+    materialized,
+  );
 }
 
 function renderProposeOutputWithPlanningAuthority(
   cwd: string,
   status: InvestigationStatus,
   actorResolution: ProposeOutput['actorResolution'] = null,
+  grantValidation?: ProposeResumeOptions['collaborationGrantValidation'],
 ): ProposeOutput {
   if (status.state !== 'investigation-sealed') {
-    return renderProposeOutput(cwd, status, actorResolution);
+    return renderProposeOutput(
+      cwd,
+      status,
+      actorResolution,
+      undefined,
+      grantValidation,
+    );
   }
   const initialContext = loadInvestigationRuntimeContext(cwd);
   return withInvestigationTransitionAuthority(
@@ -692,7 +2100,13 @@ function renderProposeOutputWithPlanningAuthority(
           ExitCode.staleState,
         );
       }
-      const result = renderProposeOutput(cwd, current, actorResolution);
+      const result = renderProposeOutput(
+        cwd,
+        current,
+        actorResolution,
+        undefined,
+        grantValidation,
+      );
       assertOwned();
       return result;
     },
@@ -704,8 +2118,13 @@ function renderProposeOutput(
   status: InvestigationStatus,
   actorResolution: ProposeOutput['actorResolution'] = null,
   knownMaterializedArtifacts?: Record<string, string>,
+  grantValidation?: ProposeResumeOptions['collaborationGrantValidation'],
 ): ProposeOutput {
-  const rebuilt = rebuildInvestigation(cwd, status.investigationId);
+  const rebuilt = rebuildInvestigation(
+    cwd,
+    status.investigationId,
+    grantValidation,
+  );
   const createdDate = rebuilt.session.createdAt.slice(0, 10);
   if (status.state === 'investigation-sealed') {
     const context = loadInvestigationRuntimeContext(cwd);
@@ -722,19 +2141,14 @@ function renderProposeOutput(
       knownMaterializedArtifacts ??
       readMaterializedPlanningArtifacts(cwd, status, rebuilt, receiptLookup);
     if (materialized !== null) {
-      return {
-        schemaVersion: 1,
-        kind: 'workflow-propose',
-        changeId: status.changeId,
-        state: 'plan-review-required',
-        nextAction: 'obtain-plan-review',
-        investigation: status,
-        createdDate,
+      return renderMaterializedProposeOutput(
+        cwd,
+        status,
         actorResolution,
-        inputSchema: null,
-        work: workFromRebuilt(rebuilt, receiptLookup.instructions),
-        materializedArtifacts: materialized,
-      };
+        createdDate,
+        workFromRebuilt(rebuilt, receiptLookup.instructions),
+        materialized,
+      );
     }
     const scaffold = preparePlanningScaffold(cwd, status, rebuilt, createdDate);
     return {
@@ -749,6 +2163,8 @@ function renderProposeOutput(
       inputSchema: planningContributionSchema(status),
       work: workFromRebuilt(rebuilt, scaffold.instructions),
       materializedArtifacts: null,
+      planReview: null,
+      planningTransition: null,
     };
   }
 
@@ -764,12 +2180,239 @@ function renderProposeOutput(
     inputSchema: inputSchemaForStatus(status),
     work: workFromRebuilt(rebuilt, []),
     materializedArtifacts: null,
+    planReview: null,
+    planningTransition: null,
+  };
+}
+
+function renderMaterializedProposeOutput(
+  cwd: string,
+  status: ProposeLifecycleStatus,
+  actorResolution: ProposeOutput['actorResolution'],
+  createdDate: string,
+  work: ProposeWork,
+  materializedArtifacts: Record<string, string>,
+): ProposeOutput {
+  const context = loadInvestigationRuntimeContext(cwd);
+  const reservation = readPlanReviewReservation(context.runtime, status);
+  if (reservation === null) {
+    const grantRequirement = readPlanReviewGrantRequirement(
+      context.runtime,
+      status,
+    );
+    return {
+      schemaVersion: 1,
+      kind: 'workflow-propose',
+      changeId: status.changeId,
+      state:
+        grantRequirement === null
+          ? 'plan-review-required'
+          : 'human-action-required',
+      nextAction:
+        grantRequirement === null ? 'obtain-plan-review' : 'human-action',
+      investigation: status,
+      createdDate,
+      actorResolution,
+      inputSchema:
+        grantRequirement === null
+          ? null
+          : {
+              schemaVersion: 1,
+              kind: 'collaboration-grant-selection',
+              lifecyclePhase: 'plan-review',
+              conflictingRole: 'plan-reviewer',
+              subjectDigest: grantRequirement.subject.subjectDigest,
+              grantRequest: grantRequirement.grantRequest,
+              allowedDegradedForms:
+                grantRequirement.grantRequest === null
+                  ? ['caller-supplied', 'direct-human-review']
+                  : ['same-provider-fresh-session'],
+              resumeOption: '--grant <grant-id>',
+            },
+      work,
+      materializedArtifacts,
+      planReview: null,
+      planningTransition: null,
+    };
+  }
+  ensurePlanReviewInvocation(context.runtime, status, reservation);
+  const invocation = readProviderInvocation(
+    context.runtime,
+    reservation.request.invocationId,
+  );
+  const trackedReview = readTrackedPlanReview(
+    context.git.repositoryRoot,
+    status.changeId,
+  );
+  const planReview: ProposePlanReviewStatus = {
+    subjectDigest: reservation.subject.subjectDigest,
+    planningGenerationId: reservation.subject.planningGenerationId,
+    invocationId: reservation.request.invocationId,
+    requestDigest: reservation.request.requestDigest,
+    providerId: reservation.request.providerId,
+    state: invocation.state,
+    failure: invocation.failure,
+    reviewNodeId: trackedReview?.reviewNode.nodeId ?? null,
+    reviewResultDigest: trackedReview?.reviewNode.resultDigest ?? null,
+  };
+  if (invocation.state === 'failed') {
+    return {
+      schemaVersion: 1,
+      kind: 'workflow-propose',
+      changeId: status.changeId,
+      state: 'human-action-required',
+      nextAction: 'human-action',
+      investigation: status,
+      createdDate,
+      actorResolution,
+      inputSchema: null,
+      work,
+      materializedArtifacts,
+      planReview,
+      planningTransition: null,
+    };
+  }
+  if (trackedReview !== null) {
+    const review = readPlanReviewNode(trackedReview.reviewNode);
+    if (review.findings.length > 0 && trackedReview.dispositionNode === null) {
+      return {
+        schemaVersion: 1,
+        kind: 'workflow-propose',
+        changeId: status.changeId,
+        state: 'awaiting-challenge-dispositions',
+        nextAction: 'submit-challenge-dispositions',
+        investigation: status,
+        createdDate,
+        actorResolution,
+        inputSchema: planReviewDispositionSchema(status, review),
+        work,
+        materializedArtifacts,
+        planReview,
+        planningTransition: null,
+      };
+    }
+  }
+  return {
+    schemaVersion: 1,
+    kind: 'workflow-propose',
+    changeId: status.changeId,
+    state: 'waiting-for-plan-review',
+    nextAction:
+      invocation.state === 'succeeded'
+        ? 'resume-plan-review'
+        : 'wait-for-plan-review',
+    investigation: status,
+    createdDate,
+    actorResolution,
+    inputSchema: planReviewProgressSchema(status, reservation),
+    work,
+    materializedArtifacts,
+    planReview,
+    planningTransition: null,
+  };
+}
+
+function readTrackedPlanReview(
+  repositoryRoot: string,
+  changeId: string,
+): {
+  nodes: EvidenceNode[];
+  reviewNode: EvidenceNode;
+  dispositionNode: EvidenceNode | null;
+  roleResult: AdmittedRoleResult;
+} | null {
+  const context = loadInvestigationRuntimeContext(repositoryRoot);
+  const reviewPath = path.join(
+    repositoryRoot,
+    context.config.changeRoot,
+    changeId,
+    'plan-review.json',
+  );
+  if (!fs.existsSync(reviewPath)) {
+    return null;
+  }
+  const artifact = parsePlanReviewArtifact(
+    JSON.parse(fs.readFileSync(reviewPath, 'utf8')),
+    changeId,
+  );
+  const reviewNodeId = artifact.currentRefs.planReview;
+  const reviewNodes = artifact.nodes.filter(
+    ({ nodeId }) => nodeId === reviewNodeId,
+  );
+  const roleResults = (artifact.roleResults ?? []).filter(
+    (value) =>
+      isRecord(value) &&
+      isRecord(value.content) &&
+      value.content.nodeId === reviewNodeId,
+  );
+  if (reviewNodes.length !== 1 || roleResults.length !== 1) {
+    throw workflowError(
+      'PLAN_REVIEW_ARTIFACT_STALE',
+      'Tracked PlanReview does not select one admitted review result.',
+      ExitCode.staleState,
+    );
+  }
+  const dispositionId = artifact.currentRefs.planReviewDisposition;
+  const dispositionNode = dispositionId
+    ? (artifact.nodes.find(({ nodeId }) => nodeId === dispositionId) ?? null)
+    : null;
+  if (dispositionId && dispositionNode === null) {
+    throw workflowError(
+      'PLAN_REVIEW_ARTIFACT_STALE',
+      'Tracked PlanReview disposition is unavailable.',
+      ExitCode.staleState,
+    );
+  }
+  if (dispositionNode !== null) {
+    readPlanReviewDispositionNode(dispositionNode);
+  }
+  return {
+    nodes: artifact.nodes,
+    reviewNode: reviewNodes[0]!,
+    dispositionNode,
+    roleResult: roleResults[0] as unknown as AdmittedRoleResult,
+  };
+}
+
+function planReviewProgressSchema(
+  status: ProposeLifecycleStatus,
+  reservation: PlanReviewReservation,
+): Record<string, unknown> {
+  return {
+    schemaVersion: 1,
+    kind: 'plan-review-progress',
+    required: {
+      investigationId: status.investigationId,
+      changeId: status.changeId,
+      subjectDigest: reservation.subject.subjectDigest,
+      invocationId: reservation.request.invocationId,
+      requestDigest: reservation.request.requestDigest,
+    },
+  };
+}
+
+function planReviewDispositionSchema(
+  status: ProposeLifecycleStatus,
+  review: ReturnType<typeof readPlanReviewNode>,
+): Record<string, unknown> {
+  return {
+    schemaVersion: 1,
+    kind: 'plan-review-dispositions',
+    required: {
+      investigationId: status.investigationId,
+      changeId: status.changeId,
+      subjectDigest: review.subjectDigest,
+      reviewNodeId: review.nodeId,
+      reviewResultDigest: review.resultDigest,
+      challengeIds: review.findings.map(({ findingId }) => findingId),
+    },
   };
 }
 
 function rebuildInvestigation(
   cwd: string,
   investigationId: string,
+  grantValidation?: ProposeResumeOptions['collaborationGrantValidation'],
 ): RebuiltInvestigation {
   const context = loadInvestigationRuntimeContext(cwd);
   const session = readInvestigationSession(context.runtime, investigationId);
@@ -846,6 +2489,11 @@ function rebuildInvestigation(
     );
   }
   const blindOutput = assertBlindOutput(invocation.result.output);
+  const reviewerSource = readReviewerTermSource(
+    context.runtime,
+    session.milestones.reviewerTermSourceNodeId,
+    session,
+  );
   const main = session.milestones.mainTerms.envelope;
   if (main.kind !== 'main-terms') {
     throw workflowError(
@@ -874,9 +2522,24 @@ function rebuildInvestigation(
       reference: blindOutput.reference,
       terms: blindOutput.terms,
     },
+    ...(reviewerSource === null
+      ? []
+      : [
+          {
+            source: 'reviewer' as const,
+            reference: reviewerSource.reviewNode.nodeId,
+            terms: reviewerSource.terms,
+          },
+        ]),
   ];
   const contributionNodes = contributions.map((contribution) =>
-    createTermContributionNode(session, contribution),
+    createTermContributionNode(
+      session,
+      contribution,
+      contribution.source === 'reviewer'
+        ? (reviewerSource?.sourceNode ?? null)
+        : null,
+    ),
   );
   const preview = previewInvestigationTermUnion(contributions);
   if (preview.outcome !== 'ready') {
@@ -898,6 +2561,14 @@ function rebuildInvestigation(
     providerRequest,
     invocation.result,
     authorizationNode,
+  );
+  const providerRoleResult = createBlindSurveyRoleResult(
+    context,
+    authorization,
+    providerRequest,
+    invocation.result,
+    providerResultNode,
+    grantValidation,
   );
   const scan = scanInvestigationTree({
     repositoryRoot: context.git.repositoryRoot,
@@ -981,6 +2652,14 @@ function rebuildInvestigation(
     termSources: preview.rawCounts,
     authorizationNode,
     providerResultNode,
+    providerRoleResult,
+    reviewerTermSourceNode: reviewerSource?.sourceNode ?? null,
+    reviewerPlanReviewNode: reviewerSource?.reviewNode ?? null,
+    reviewerProviderResultNode: reviewerSource?.providerResultNode ?? null,
+    reviewerRoleResult: reviewerSource?.roleResult ?? null,
+    reviewerPriorGroupDispositions:
+      reviewerSource?.priorGroupDispositions ?? null,
+    reviewerPriorWhyAnswers: reviewerSource?.priorWhyAnswers ?? null,
     contributionNodes,
     termUnionNode,
     scanNodes: scan.nodes,
@@ -1008,6 +2687,13 @@ function emptyRebuilt(
     termSources,
     authorizationNode,
     providerResultNode: null,
+    providerRoleResult: null,
+    reviewerTermSourceNode: null,
+    reviewerPlanReviewNode: null,
+    reviewerProviderResultNode: null,
+    reviewerRoleResult: null,
+    reviewerPriorGroupDispositions: null,
+    reviewerPriorWhyAnswers: null,
     contributionNodes: [],
     termUnionNode: null,
     scanNodes: [],
@@ -1281,37 +2967,138 @@ function workFromRebuilt(
   rebuilt: RebuiltInvestigation,
   authoredInstructions: ProposeWork['authoredInstructions'],
 ): ProposeWork {
+  const reusableGroupIds = new Set(
+    reviewerReusableGroupDispositions(rebuilt).map(({ groupId }) => groupId),
+  );
+  const reusableManifestEntryIds = new Set(
+    reviewerReusableWhyAnswers(rebuilt).map(
+      ({ manifestEntryId }) => manifestEntryId,
+    ),
+  );
   return {
     termSources: rebuilt.termSources,
-    groups: rebuilt.groupNodes.map((node) => {
-      const group = readInvestigationGroupNode(node);
-      return {
-        groupId: group.groupId,
-        termId: group.selector.termId,
-        paths: [
-          ...new Set(
-            group.hits
-              .map(({ path: hitPath }) => hitPath.utf8)
-              .filter((value): value is string => value !== null),
-          ),
-        ].sort(),
-        hitIds: group.hitIds,
-      };
-    }),
-    fullBlobManifest: rebuilt.fullBlobManifest.map((entry) => ({
-      manifestEntryId: entry.manifestEntryId,
-      path: entry.path.utf8 ?? `base64:${entry.path.rawBase64}`,
-      objectId: entry.blob.objectId,
-      contentSha256: entry.blob.contentSha256,
-      contentBase64: entry.blob.contentBase64,
-    })),
+    groups: rebuilt.groupNodes
+      .map((node) => {
+        const group = readInvestigationGroupNode(node);
+        return {
+          groupId: group.groupId,
+          termId: group.selector.termId,
+          paths: [
+            ...new Set(
+              group.hits
+                .map(({ path: hitPath }) => hitPath.utf8)
+                .filter((value): value is string => value !== null),
+            ),
+          ].sort(),
+          hitIds: group.hitIds,
+        };
+      })
+      .filter(({ groupId }) => !reusableGroupIds.has(groupId)),
+    fullBlobManifest: rebuilt.fullBlobManifest
+      .filter(
+        ({ manifestEntryId }) => !reusableManifestEntryIds.has(manifestEntryId),
+      )
+      .map((entry) => ({
+        manifestEntryId: entry.manifestEntryId,
+        path: entry.path.utf8 ?? `base64:${entry.path.rawBase64}`,
+        objectId: entry.blob.objectId,
+        contentSha256: entry.blob.contentSha256,
+        contentBase64: entry.blob.contentBase64,
+      })),
     authoredInstructions,
   };
+}
+
+function reviewerReusableGroupDispositions(
+  rebuilt: RebuiltInvestigation,
+): InvestigationDispositionInput[] {
+  const checkpoint = rebuilt.reviewerPriorGroupDispositions?.envelope;
+  if (checkpoint?.kind !== 'group-dispositions') {
+    return [];
+  }
+  const currentGroupIds = new Set(
+    rebuilt.groupNodes.map((node) => readInvestigationGroupNode(node).groupId),
+  );
+  return checkpoint.payload.dispositions.filter(({ groupId }) =>
+    currentGroupIds.has(groupId),
+  );
+}
+
+function reviewerReusableWhyAnswers(
+  rebuilt: RebuiltInvestigation,
+): InvestigationWhyAnswer[] {
+  const checkpoint = rebuilt.reviewerPriorWhyAnswers?.envelope;
+  if (checkpoint?.kind !== 'why-answers') {
+    return [];
+  }
+  const currentEntryIds = new Set(
+    rebuilt.fullBlobManifest.map(({ manifestEntryId }) => manifestEntryId),
+  );
+  return checkpoint.payload.answers.filter(({ manifestEntryId }) =>
+    currentEntryIds.has(manifestEntryId),
+  );
+}
+
+function mergeReviewerReopenCheckpoint(
+  rebuilt: RebuiltInvestigation,
+  checkpoint: InvestigationCheckpointEnvelope,
+): InvestigationCheckpointEnvelope {
+  if (checkpoint.kind === 'main-terms') {
+    return checkpoint;
+  }
+  if (checkpoint.kind === 'group-dispositions') {
+    const reusable = reviewerReusableGroupDispositions(rebuilt);
+    const reusableIds = new Set(reusable.map(({ groupId }) => groupId));
+    if (
+      checkpoint.payload.dispositions.some(({ groupId }) =>
+        reusableIds.has(groupId),
+      )
+    ) {
+      throw workflowError(
+        'INVESTIGATION_REVIEWER_REOPEN_SCOPE_INVALID',
+        'Reviewer-term reopening accepts answers only for new or changed groups.',
+        ExitCode.guard,
+      );
+    }
+    return assertInvestigationCheckpointEnvelope({
+      ...checkpoint,
+      payload: {
+        dispositions: [...reusable, ...checkpoint.payload.dispositions].sort(
+          (left, right) => left.groupId.localeCompare(right.groupId),
+        ),
+      },
+    });
+  }
+  const reusable = reviewerReusableWhyAnswers(rebuilt);
+  const reusableIds = new Set(
+    reusable.map(({ manifestEntryId }) => manifestEntryId),
+  );
+  if (
+    checkpoint.payload.answers.some(({ manifestEntryId }) =>
+      reusableIds.has(manifestEntryId),
+    )
+  ) {
+    throw workflowError(
+      'INVESTIGATION_REVIEWER_REOPEN_SCOPE_INVALID',
+      'Reviewer-term reopening accepts WHY answers only for new or changed manifest rows.',
+      ExitCode.guard,
+    );
+  }
+  return assertInvestigationCheckpointEnvelope({
+    ...checkpoint,
+    payload: {
+      answers: [...reusable, ...checkpoint.payload.answers].sort(
+        (left, right) =>
+          left.manifestEntryId.localeCompare(right.manifestEntryId),
+      ),
+    },
+  });
 }
 
 function createTermContributionNode(
   session: InvestigationSession,
   contribution: InvestigationTermContribution,
+  reviewerSourceNode: EvidenceNode | null = null,
 ): EvidenceNode {
   return createEvidenceNode({
     type: 'investigation-term-contribution',
@@ -1322,12 +3109,217 @@ function createTermContributionNode(
       baseline: sha256(canonicalJson(session.baseline)),
       contribution: sha256(canonicalJson(contribution)),
     },
-    semanticParentResultDigests: {},
-    provenanceParentNodeIds: {},
+    semanticParentResultDigests:
+      reviewerSourceNode === null
+        ? {}
+        : { reviewerSource: reviewerSourceNode.resultDigest },
+    provenanceParentNodeIds:
+      reviewerSourceNode === null
+        ? {}
+        : { reviewerSource: reviewerSourceNode.nodeId },
     outputSchema: 'investigation.term-contribution-output.v2',
     output: contribution,
     runtimeMetadata: {},
   });
+}
+
+function createReviewerTermSourceNode(input: {
+  status: InvestigationStatus;
+  providerResultNode: EvidenceNode;
+  reviewNode: EvidenceNode;
+  roleResult: AdmittedRoleResult;
+  terms: Array<{
+    kind: 'literal-content' | 'literal-path' | 'symbol' | 'config-key';
+    value: string;
+  }>;
+  priorGroupDispositions: StoredInvestigationCheckpoint;
+  priorWhyAnswers: StoredInvestigationCheckpoint;
+}): EvidenceNode {
+  return createEvidenceNode({
+    type: 'investigation-reviewer-term-source',
+    nodeSchema: 'investigation.reviewer-term-source.v2',
+    evaluator: 'workflow-propose.reviewer-term-source.v2',
+    policyDigest: PROPOSE_POLICY_DIGEST,
+    exactInputDigests: {
+      baseline: sha256(canonicalJson(input.status.baseline)),
+      terms: sha256(canonicalJson(input.terms)),
+      roleResult: input.roleResult.resultDigest,
+      priorGroupDispositions: input.priorGroupDispositions.envelopeDigest,
+      priorWhyAnswers: input.priorWhyAnswers.envelopeDigest,
+    },
+    semanticParentResultDigests: {
+      review: input.reviewNode.resultDigest,
+      providerResult: input.providerResultNode.resultDigest,
+    },
+    provenanceParentNodeIds: {
+      review: input.reviewNode.nodeId,
+      providerResult: input.providerResultNode.nodeId,
+    },
+    outputSchema: 'investigation.reviewer-term-source-output.v2',
+    output: {
+      investigationId: input.status.investigationId,
+      baseline: input.status.baseline,
+      providerResultNode: input.providerResultNode,
+      reviewNode: input.reviewNode,
+      roleResult: input.roleResult,
+      terms: input.terms,
+      priorGroupDispositions: input.priorGroupDispositions,
+      priorWhyAnswers: input.priorWhyAnswers,
+    },
+    runtimeMetadata: {},
+  });
+}
+
+function readReviewerTermSource(
+  paths: ReturnType<typeof loadInvestigationRuntimeContext>['runtime'],
+  nodeId: string | null,
+  session: InvestigationSession,
+): {
+  sourceNode: EvidenceNode;
+  providerResultNode: EvidenceNode;
+  reviewNode: EvidenceNode;
+  roleResult: AdmittedRoleResult;
+  priorGroupDispositions: StoredInvestigationCheckpoint;
+  priorWhyAnswers: StoredInvestigationCheckpoint;
+  terms: Array<{
+    kind: 'literal-content' | 'literal-path' | 'symbol' | 'config-key';
+    value: string;
+  }>;
+} | null {
+  if (nodeId === null) {
+    return null;
+  }
+  const sourceNode = readEvidenceNode(paths, nodeId);
+  const output = sourceNode.output;
+  if (
+    sourceNode.type !== 'investigation-reviewer-term-source' ||
+    sourceNode.nodeSchema !== 'investigation.reviewer-term-source.v2' ||
+    sourceNode.evaluator !== 'workflow-propose.reviewer-term-source.v2' ||
+    sourceNode.policyDigest !== PROPOSE_POLICY_DIGEST ||
+    !isRecord(output) ||
+    !hasExactKeys(output, [
+      'investigationId',
+      'baseline',
+      'providerResultNode',
+      'reviewNode',
+      'roleResult',
+      'terms',
+      'priorGroupDispositions',
+      'priorWhyAnswers',
+    ]) ||
+    !isRecord(output.providerResultNode) ||
+    !isRecord(output.reviewNode) ||
+    !isRecord(output.roleResult) ||
+    !isRecord(output.priorGroupDispositions) ||
+    !isRecord(output.priorWhyAnswers) ||
+    !hasExactKeys(output.priorGroupDispositions, [
+      'envelopeDigest',
+      'contributionDigest',
+      'envelope',
+    ]) ||
+    !hasExactKeys(output.priorWhyAnswers, [
+      'envelopeDigest',
+      'contributionDigest',
+      'envelope',
+    ]) ||
+    !Array.isArray(output.terms)
+  ) {
+    throw workflowError(
+      'INVESTIGATION_REVIEWER_TERM_SOURCE_INVALID',
+      'Reviewer-term source evidence is malformed.',
+      ExitCode.staleState,
+    );
+  }
+  const providerResultNode = output.providerResultNode as EvidenceNode;
+  const reviewNode = output.reviewNode as EvidenceNode;
+  const roleResult = output.roleResult as AdmittedRoleResult;
+  const rawPriorGroupDispositions = output.priorGroupDispositions as Record<
+    string,
+    unknown
+  >;
+  const rawPriorWhyAnswers = output.priorWhyAnswers as Record<string, unknown>;
+  const priorGroupEnvelope = assertInvestigationCheckpointEnvelope(
+    rawPriorGroupDispositions.envelope,
+  );
+  const priorWhyEnvelope = assertInvestigationCheckpointEnvelope(
+    rawPriorWhyAnswers.envelope,
+  );
+  const priorGroupDispositions: StoredInvestigationCheckpoint = {
+    envelopeDigest: String(rawPriorGroupDispositions.envelopeDigest),
+    contributionDigest: String(rawPriorGroupDispositions.contributionDigest),
+    envelope: priorGroupEnvelope,
+  };
+  const priorWhyAnswers: StoredInvestigationCheckpoint = {
+    envelopeDigest: String(rawPriorWhyAnswers.envelopeDigest),
+    contributionDigest: String(rawPriorWhyAnswers.contributionDigest),
+    envelope: priorWhyEnvelope,
+  };
+  const review = readPlanReviewNode(reviewNode);
+  const terms = output.terms as Array<{
+    kind: 'literal-content' | 'literal-path' | 'symbol' | 'config-key';
+    value: string;
+  }>;
+  if (
+    output.investigationId !== session.investigationId ||
+    !isBaseline(output.baseline) ||
+    canonicalJson(output.baseline) !== canonicalJson(session.baseline) ||
+    canonicalJson(terms) !== canonicalJson(review.proposedTerms) ||
+    providerResultNode.nodeId !== review.providerResultNodeId ||
+    providerResultNode.resultDigest !== review.providerResultResultDigest ||
+    roleResult.content.nodeId !== reviewNode.nodeId ||
+    roleResult.content.resultDigest !== reviewNode.resultDigest ||
+    sourceNode.exactInputDigests.baseline !==
+      sha256(canonicalJson(output.baseline)) ||
+    sourceNode.exactInputDigests.terms !== sha256(canonicalJson(terms)) ||
+    sourceNode.exactInputDigests.roleResult !== roleResult.resultDigest ||
+    priorGroupDispositions.envelopeDigest !==
+      sourceNode.exactInputDigests.priorGroupDispositions ||
+    priorWhyAnswers.envelopeDigest !==
+      sourceNode.exactInputDigests.priorWhyAnswers ||
+    priorGroupDispositions.envelopeDigest !==
+      sha256(canonicalJson(priorGroupEnvelope)) ||
+    priorWhyAnswers.envelopeDigest !==
+      sha256(canonicalJson(priorWhyEnvelope)) ||
+    priorGroupDispositions.contributionDigest !==
+      checkpointContributionDigest(priorGroupEnvelope) ||
+    priorWhyAnswers.contributionDigest !==
+      checkpointContributionDigest(priorWhyEnvelope) ||
+    priorGroupDispositions.envelope.kind !== 'group-dispositions' ||
+    priorWhyAnswers.envelope.kind !== 'why-answers' ||
+    priorGroupEnvelope.investigationId !== output.investigationId ||
+    priorWhyEnvelope.investigationId !== output.investigationId ||
+    priorGroupEnvelope.changeId !== session.changeId ||
+    priorWhyEnvelope.changeId !== session.changeId ||
+    priorGroupEnvelope.intentDigest !== session.intentDigest ||
+    priorWhyEnvelope.intentDigest !== session.intentDigest ||
+    priorGroupEnvelope.blindManifestDigest !== session.blindManifestDigest ||
+    priorWhyEnvelope.blindManifestDigest !== session.blindManifestDigest ||
+    canonicalJson(priorGroupEnvelope.baseline) !==
+      canonicalJson(output.baseline) ||
+    canonicalJson(priorWhyEnvelope.baseline) !==
+      canonicalJson(output.baseline) ||
+    sourceNode.provenanceParentNodeIds.review !== reviewNode.nodeId ||
+    sourceNode.semanticParentResultDigests.review !== reviewNode.resultDigest ||
+    sourceNode.provenanceParentNodeIds.providerResult !==
+      providerResultNode.nodeId ||
+    sourceNode.semanticParentResultDigests.providerResult !==
+      providerResultNode.resultDigest
+  ) {
+    throw workflowError(
+      'INVESTIGATION_REVIEWER_TERM_SOURCE_INVALID',
+      'Reviewer-term source evidence no longer matches its review and admitted role result.',
+      ExitCode.staleState,
+    );
+  }
+  return {
+    sourceNode,
+    providerResultNode,
+    reviewNode,
+    roleResult,
+    terms,
+    priorGroupDispositions,
+    priorWhyAnswers,
+  };
 }
 
 function createTermUnionNode(
@@ -1389,12 +3381,128 @@ function createProviderResultNode(
   });
 }
 
+function createBlindSurveyRoleResult(
+  context: ReturnType<typeof loadInvestigationRuntimeContext>,
+  authorization: ReturnType<typeof readProposeAuthorization>,
+  request: ProviderInvocationRequest,
+  result: ProviderProcessResult,
+  providerResultNode: EvidenceNode,
+  validation?: ProposeResumeOptions['collaborationGrantValidation'],
+): AdmittedRoleResult {
+  const grantAuthorization = authorization.grantAuthorization;
+  const content = {
+    kind: 'blind-survey' as const,
+    nodeId: providerResultNode.nodeId,
+    resultDigest: providerResultNode.resultDigest,
+    outputSchema: BLIND_SURVEY_OUTPUT_SCHEMA,
+    evaluator: request.evaluatorVersion,
+    policyDigest: request.policyDigest,
+    contentDigest: providerResultNode.resultDigest,
+    current: true as const,
+  };
+  const author: RecordedRoleParticipant = {
+    providerId: authorization.actor.providerId,
+    sessionId: `author-${authorization.actor.providerId}`,
+    principalId: null,
+    identityAssurance: authorization.actor.assurance,
+    engineSpawned: false,
+  };
+  const participant: RecordedRoleParticipant =
+    'grantId' in request.roleAssignment
+      ? request.roleAssignment.participant
+      : {
+          providerId: request.roleAssignment.providerId,
+          sessionId: request.roleAssignment.sessionId,
+          principalId: null,
+          identityAssurance: 'adapter-assigned',
+          engineSpawned: true,
+        };
+  let grantUse: CollaborationGrantUseProjection | null = null;
+  let grantAdmission: NonNullable<
+    Parameters<typeof admitRoleResult>[0]['grantValidation']
+  > | null = null;
+  if ('grantId' in request.roleAssignment) {
+    if (
+      grantAuthorization === null ||
+      grantAuthorization.grantId !== request.roleAssignment.grantId
+    ) {
+      throw workflowError(
+        'COLLABORATION_GRANT_ADMISSION_REQUIRED',
+        'A granted blind survey requires its exact durable grant authorization.',
+        ExitCode.guard,
+      );
+    }
+    const policy = loadMaintainerPolicyAtCommit(
+      context.git.repositoryRoot,
+      grantAuthorization.expectedBinding.baselineCommit,
+    );
+    const verifier =
+      validation?.verifier ??
+      createInteractiveSshSigner(context.git.repositoryRoot, policy);
+    const now = validation?.now ?? new Date();
+    const consumed = consumeCollaborationGrant(
+      context.git.gitCommonDirectory,
+      grantAuthorization.grantId,
+      {
+        transitionDigest: grantAuthorization.transitionDigest,
+        assignment: request.roleAssignment,
+        contentAdmission: {
+          kind: content.kind,
+          nodeId: content.nodeId,
+          resultDigest: content.resultDigest,
+          current: true,
+        },
+        now,
+      },
+    );
+    if (!consumed.use) {
+      throw workflowError(
+        'COLLABORATION_GRANT_ADMISSION_REQUIRED',
+        'The exact collaboration grant use was not durably consumed.',
+        ExitCode.staleState,
+      );
+    }
+    grantUse = consumed.use;
+    grantAdmission = {
+      now,
+      expectedBinding: grantAuthorization.expectedBinding,
+      policy,
+      verifier,
+      transitionDigest: grantAuthorization.transitionDigest,
+    };
+  } else if (grantAuthorization !== null) {
+    throw workflowError(
+      'PROPOSE_AUTHORIZATION_INVALID',
+      'Ordinary survey authorization cannot carry a collaboration grant.',
+      ExitCode.staleState,
+    );
+  }
+  return admitRoleResult({
+    assignment: request.roleAssignment,
+    author,
+    participant,
+    content,
+    providerInvocation: {
+      invocationId: request.invocationId,
+      requestDigest: request.requestDigest,
+      outputDigest: result.outputDigest,
+      providerId: request.roleAssignment.providerId,
+      sessionId: request.roleAssignment.sessionId,
+      targetDigest: request.roleAssignment.targetDigest,
+      engineSpawned: true,
+    },
+    grantUse,
+    grantValidation: grantAdmission,
+  });
+}
+
 function preparePlanningScaffold(
   cwd: string,
   status: InvestigationStatus,
   rebuilt: RebuiltInvestigation,
   createdDate: string,
   allowAuthoredExisting = false,
+  materializeScaffold = true,
 ): {
   changeDirectory: string;
   investigationBytes: string;
@@ -1422,11 +3530,27 @@ function preparePlanningScaffold(
   );
   const metadataBytes = `schema: expense-app-v2\ncreated: ${createdDate}\n`;
   const sealNode = createInvestigationSealNode(rebuilt);
+  const applicability = createInvestigationApplicability({
+    kind: 'sealed-investigation',
+    baseline: rebuilt.session.baseline,
+    intentDigest: rebuilt.session.intentDigest,
+    sealNodeId: sealNode.nodeId,
+    sealResultDigest: sealNode.resultDigest,
+  });
   const nodes = uniqueNodes([
     rebuilt.authorizationNode,
     ...(rebuilt.providerResultNode === null
       ? []
       : [rebuilt.providerResultNode]),
+    ...(rebuilt.reviewerProviderResultNode === null
+      ? []
+      : [rebuilt.reviewerProviderResultNode]),
+    ...(rebuilt.reviewerPlanReviewNode === null
+      ? []
+      : [rebuilt.reviewerPlanReviewNode]),
+    ...(rebuilt.reviewerTermSourceNode === null
+      ? []
+      : [rebuilt.reviewerTermSourceNode]),
     ...rebuilt.contributionNodes,
     ...(rebuilt.termUnionNode === null ? [] : [rebuilt.termUnionNode]),
     rebuilt.inventoryNode,
@@ -1449,6 +3573,14 @@ function preparePlanningScaffold(
         coverage: rebuilt.coverageNode.nodeId,
         sealedInvestigation: sealNode.nodeId,
       },
+      applicability,
+      ...(() => {
+        const roleResults = [
+          rebuilt.providerRoleResult,
+          rebuilt.reviewerRoleResult,
+        ].filter((value): value is AdmittedRoleResult => value !== null);
+        return roleResults.length === 0 ? {} : { roleResults };
+      })(),
     },
     status.changeId,
   );
@@ -1457,13 +3589,15 @@ function preparePlanningScaffold(
     ['.openspec.yaml', metadataBytes],
     ['investigation.json', investigationBytes],
   ]);
-  assertPlanningTargetsCompatible(
-    changeDirectory,
-    scaffoldEntries,
-    true,
-    allowAuthoredExisting,
-  );
-  writeMissingEntries(changeDirectory, scaffoldEntries);
+  if (materializeScaffold) {
+    assertPlanningTargetsCompatible(
+      changeDirectory,
+      scaffoldEntries,
+      true,
+      allowAuthoredExisting,
+    );
+    writeMissingEntries(changeDirectory, scaffoldEntries);
+  }
 
   const adapter = createOpenSpecAdapter(context.git.repositoryRoot);
   const proposalInstruction = adapter.instructions(
@@ -1506,10 +3640,15 @@ function createInvestigationSealNode(
       ExitCode.guard,
     );
   }
-  provenance.providerResult = rebuilt.providerResultNode.nodeId;
-  semantic.providerResult = rebuilt.providerResultNode.resultDigest;
-  provenance.termUnion = rebuilt.termUnionNode.nodeId;
-  semantic.termUnion = rebuilt.termUnionNode.resultDigest;
+  provenance['provider-result'] = rebuilt.providerResultNode.nodeId;
+  semantic['provider-result'] = rebuilt.providerResultNode.resultDigest;
+  provenance['term-union'] = rebuilt.termUnionNode.nodeId;
+  semantic['term-union'] = rebuilt.termUnionNode.resultDigest;
+  if (rebuilt.reviewerTermSourceNode !== null) {
+    provenance['reviewer-term-source'] = rebuilt.reviewerTermSourceNode.nodeId;
+    semantic['reviewer-term-source'] =
+      rebuilt.reviewerTermSourceNode.resultDigest;
+  }
   [...rebuilt.whyNodes]
     .sort((left, right) => left.nodeId.localeCompare(right.nodeId))
     .forEach((node, index) => {
@@ -1529,6 +3668,9 @@ function createInvestigationSealNode(
       mainTerms: checkpointContributionDigest(
         rebuilt.session.milestones.mainTerms!.envelope,
       ),
+      reviewerTermSource:
+        rebuilt.session.milestones.reviewerTermSourceNodeId ??
+        sha256(canonicalJson(null)),
       groupDispositions: checkpointContributionDigest(
         rebuilt.session.milestones.groupDispositions!.envelope,
       ),
@@ -1550,11 +3692,246 @@ function createInvestigationSealNode(
   });
 }
 
+function reconcileReviewerTermPlanningRevision(
+  cwd: string,
+  status: InvestigationStatus,
+  options: ProposeResumeOptions,
+): ProposeOutput {
+  const initialContext = loadInvestigationRuntimeContext(cwd);
+  withInvestigationTransitionAuthority(
+    initialContext.lifecycleRuntime,
+    status.changeId,
+    (assertOwned) => {
+      assertOwned();
+      const current = getInvestigationStatus(cwd, status.investigationId);
+      if (current.state !== 'investigation-sealed') {
+        throw workflowError(
+          'INVESTIGATION_REVIEWER_REOPEN_STALE',
+          'Reviewer-term planning reconciliation requires the resealed investigation.',
+          ExitCode.staleState,
+        );
+      }
+      const context = loadInvestigationRuntimeContext(cwd);
+      const rebuilt = rebuildInvestigation(
+        cwd,
+        current.investigationId,
+        options.collaborationGrantValidation,
+      );
+      if (rebuilt.reviewerTermSourceNode === null) {
+        throw workflowError(
+          'INVESTIGATION_REVIEWER_REOPEN_STALE',
+          'The resealed investigation has no reviewer-term source.',
+          ExitCode.staleState,
+        );
+      }
+      const receiptNodeId = readEvidenceRefs(context.runtime, current.changeId)[
+        PLANNING_MATERIALIZATION_REF
+      ];
+      if (!receiptNodeId) {
+        throw workflowError(
+          'PLANNING_MATERIALIZATION_STALE',
+          'Reviewer-term reconciliation has no prior planning materialization.',
+          ExitCode.staleState,
+        );
+      }
+      const receiptNode = readEvidenceNode(context.runtime, receiptNodeId);
+      const receiptOutput = receiptNode.output;
+      if (
+        receiptNode.type !== 'propose-planning-materialization' ||
+        !isRecord(receiptOutput) ||
+        receiptOutput.investigationId !== current.investigationId ||
+        receiptOutput.changeId !== current.changeId ||
+        !isDigestRecord(receiptOutput.artifacts)
+      ) {
+        throw workflowError(
+          'PLANNING_MATERIALIZATION_STALE',
+          'Prior planning materialization cannot authorize reviewer-term reconciliation.',
+          ExitCode.staleState,
+        );
+      }
+      const previousArtifacts = receiptOutput.artifacts as Record<
+        string,
+        string
+      >;
+      const changeDirectory = path.join(
+        context.git.repositoryRoot,
+        context.config.changeRoot,
+        current.changeId,
+      );
+      for (const [relativePath, digest] of Object.entries(previousArtifacts)) {
+        const target = path.join(
+          changeDirectory,
+          normalizePolicyPath(relativePath),
+        );
+        if (
+          !fs.existsSync(target) ||
+          sha256(fs.readFileSync(target, 'utf8')) !== digest
+        ) {
+          throw planningMaterializationStale(
+            'Planning bytes changed before reviewer-term reconciliation.',
+          );
+        }
+      }
+      const scaffold = preparePlanningScaffold(
+        cwd,
+        current,
+        rebuilt,
+        rebuilt.session.createdAt.slice(0, 10),
+        true,
+        false,
+      );
+      const investigationPath = path.join(
+        changeDirectory,
+        'investigation.json',
+      );
+      const designPath = path.join(changeDirectory, 'design.md');
+      const previousInvestigation = fs.readFileSync(investigationPath, 'utf8');
+      const previousDesign = fs.readFileSync(designPath, 'utf8');
+      const nextDesign = projectInvestigationLedger(
+        previousDesign,
+        rebuilt.whyNodes,
+      );
+      let receiptAdvanced = false;
+      try {
+        replaceTextAtomic(investigationPath, scaffold.investigationBytes, {
+          allowCreate: false,
+        });
+        replaceTextAtomic(designPath, nextDesign, { allowCreate: false });
+        const nextArtifacts = Object.fromEntries(
+          Object.keys(previousArtifacts)
+            .sort()
+            .map((relativePath) => [
+              relativePath,
+              sha256(
+                fs.readFileSync(
+                  path.join(changeDirectory, normalizePolicyPath(relativePath)),
+                  'utf8',
+                ),
+              ),
+            ]),
+        );
+        const sealNode = createInvestigationSealNode(rebuilt);
+        persistPlanningMaterializationReceipt(
+          context.runtime,
+          current,
+          sealNode,
+          nextArtifacts,
+        );
+        receiptAdvanced = true;
+        const planning = derivePlanningSubjectFromCurrentDraft(
+          cwd,
+          current,
+          scaffold.investigationBytes,
+          nextArtifacts,
+        );
+        preparePlanReviewInvocation(
+          cwd,
+          current,
+          planning,
+          options.collaborationGrant,
+          assertOwned,
+        );
+      } catch (error) {
+        if (!receiptAdvanced) {
+          replaceTextAtomic(investigationPath, previousInvestigation, {
+            allowCreate: false,
+          });
+          replaceTextAtomic(designPath, previousDesign, { allowCreate: false });
+        }
+        throw error;
+      }
+      assertOwned();
+    },
+  );
+  let output = getProposeStatus(cwd, status.investigationId);
+  dispatchPreparedPlanReview(cwd, output, options);
+  output = getProposeStatus(cwd, status.investigationId);
+  return output;
+}
+
+function derivePlanningSubjectFromCurrentDraft(
+  cwd: string,
+  status: InvestigationStatus,
+  investigationBytes: string,
+  artifactDigestMap: Record<string, string>,
+): InvestigationFirstPlanningSubject {
+  const context = loadInvestigationRuntimeContext(cwd);
+  const changeDirectory = path.join(
+    context.git.repositoryRoot,
+    context.config.changeRoot,
+    status.changeId,
+  );
+  const tasks = parseTasks(
+    fs.readFileSync(path.join(changeDirectory, 'tasks.md'), 'utf8'),
+  );
+  const guard = assertGuardContribution(
+    JSON.parse(
+      fs.readFileSync(path.join(changeDirectory, 'guard.json'), 'utf8'),
+    ),
+    status.changeId,
+    tasks.map(({ id }) => id),
+    Object.keys(loadChecksConfig(context.git.repositoryRoot).checks),
+  );
+  const specs = Object.keys(artifactDigestMap)
+    .filter((relativePath) => relativePath.startsWith('specs/'))
+    .sort()
+    .map((relativePath) => ({
+      path: relativePath,
+      content: fs.readFileSync(
+        path.join(changeDirectory, relativePath),
+        'utf8',
+      ),
+    }));
+  const behaviorContracts = indexBehaviorContracts(specs);
+  const execution = parseExecutionArtifact(
+    JSON.parse(
+      fs.readFileSync(path.join(changeDirectory, 'execution.json'), 'utf8'),
+    ),
+    status.changeId,
+    tasks,
+    guard,
+    loadChecksConfig(context.git.repositoryRoot),
+    behaviorContracts,
+  );
+  const investigation = parseInvestigationArtifact(
+    JSON.parse(investigationBytes),
+    status.changeId,
+  );
+  const checks = loadChecksConfig(context.git.repositoryRoot);
+  const contract: ChangeContract = {
+    changeId: status.changeId,
+    changeDirectory,
+    schemaName: 'expense-app-v2',
+    config: context.config,
+    checks,
+    guard,
+    tasks,
+    behaviorContracts,
+    investigation,
+    execution,
+    artifactPaths: Object.keys(artifactDigestMap).map((relativePath) =>
+      path.join(changeDirectory, relativePath),
+    ),
+    artifactDigests: Object.fromEntries(
+      Object.entries(artifactDigestMap).map(([relativePath, digest]) => [
+        path.join(changeDirectory, relativePath),
+        digest,
+      ]),
+    ),
+  };
+  return deriveInvestigationFirstPlanningSubject(
+    context.git.repositoryRoot,
+    contract,
+  );
+}
+
 function materializePlanningContribution(
   cwd: string,
   status: InvestigationStatus,
   rebuilt: RebuiltInvestigation,
   payloadInput: unknown,
+  collaborationGrant?: ProposeResumeOptions['collaborationGrant'],
+  assertOwned: () => void = () => {},
 ): Record<string, string> {
   const payload = assertPlanningPayload(payloadInput);
   const scaffold = preparePlanningScaffold(
@@ -1678,6 +4055,205 @@ function materializePlanningContribution(
       sealNode,
       digests,
     );
+    const investigation = parseInvestigationArtifact(
+      JSON.parse(scaffold.investigationBytes),
+      status.changeId,
+    );
+    const checks = loadChecksConfig(context.git.repositoryRoot);
+    const draftContract: ChangeContract = {
+      changeId: status.changeId,
+      changeDirectory: scaffold.changeDirectory,
+      schemaName: 'expense-app-v2',
+      config: context.config,
+      checks,
+      guard,
+      tasks,
+      behaviorContracts,
+      investigation,
+      execution,
+      artifactPaths: [...entries.keys()].map((relativePath) =>
+        path.join(scaffold.changeDirectory, relativePath),
+      ),
+      artifactDigests: Object.fromEntries(
+        Object.entries(digests).map(([relativePath, digest]) => [
+          path.join(scaffold.changeDirectory, relativePath),
+          digest,
+        ]),
+      ),
+    };
+    const planningSubject = deriveInvestigationFirstPlanningSubject(
+      context.git.repositoryRoot,
+      draftContract,
+    );
+    preparePlanReviewInvocation(
+      cwd,
+      status,
+      planningSubject,
+      collaborationGrant,
+      assertOwned,
+    );
+  } catch (error) {
+    for (const target of createdPaths.reverse()) {
+      fs.rmSync(target, { force: true });
+    }
+    throw error;
+  }
+  return digests;
+}
+
+function materializeExemptionPlanningContribution(
+  cwd: string,
+  session: ProposeExemptionSession,
+  payloadInput: unknown,
+  collaborationGrant?: ProposeResumeOptions['collaborationGrant'],
+  assertOwned: () => void = () => {},
+): Record<string, string> {
+  const payload = assertPlanningPayload(payloadInput);
+  const scaffold = prepareExemptionPlanningScaffold(cwd, session, true);
+  const context = loadInvestigationRuntimeContext(cwd);
+  const tasks = parseTasks(payload.tasks);
+  if (tasks.length === 0 || tasks.some(({ completed }) => completed)) {
+    throw planningContributionInvalid(
+      'Planning tasks must be non-empty and unchecked.',
+    );
+  }
+  const guard = assertGuardContribution(
+    payload.guard,
+    session.changeId,
+    tasks.map(({ id }) => id),
+    Object.keys(loadChecksConfig(context.git.repositoryRoot).checks),
+  );
+  const behaviorContracts = indexBehaviorContracts(payload.specs);
+  const execution = parseExecutionArtifact(
+    {
+      schemaVersion: 1,
+      kind: 'execution-artifact',
+      changeId: session.changeId,
+      tasks: payload.executionTasks,
+    },
+    session.changeId,
+    tasks,
+    guard,
+    loadChecksConfig(context.git.repositoryRoot),
+    behaviorContracts,
+  );
+  const entries = new Map<string, string>([
+    [
+      '.openspec.yaml',
+      `schema: expense-app-v2\ncreated: ${session.createdAt.slice(0, 10)}\n`,
+    ],
+    ['investigation.json', scaffold.investigationBytes],
+    ['proposal.md', assertAuthoredMarkdown(payload.proposal, 'proposal')],
+    ['design.md', assertAuthoredMarkdown(payload.design, 'design')],
+    ['tasks.md', assertAuthoredMarkdown(payload.tasks, 'tasks')],
+    ['guard.json', `${canonicalJson(guard)}\n`],
+    ['execution.json', `${canonicalJson(execution)}\n`],
+  ]);
+  for (const spec of assertSpecContributions(payload.specs)) {
+    entries.set(spec.path, spec.content);
+  }
+
+  const digests = artifactDigests(entries);
+  const existingReceipt = readExemptionPlanningMaterializationReceipt(
+    context.runtime,
+    session,
+  );
+  if (
+    existingReceipt !== null &&
+    canonicalJson(existingReceipt) !== canonicalJson(digests)
+  ) {
+    throw workflowError(
+      'PLANNING_MATERIALIZATION_CONFLICT',
+      'A different planning materialization is already current.',
+      ExitCode.conflict,
+    );
+  }
+  assertPlanningTargetsCompatible(scaffold.changeDirectory, entries, false);
+  const createdPaths: string[] = [];
+  try {
+    for (const [relativePath, content] of entries) {
+      const target = path.join(scaffold.changeDirectory, relativePath);
+      if (fs.existsSync(target)) {
+        const stats = fs.lstatSync(target);
+        if (
+          !stats.isFile() ||
+          stats.isSymbolicLink() ||
+          fs.readFileSync(target, 'utf8') !== content
+        ) {
+          throw workflowError(
+            'UNMANAGED_PLANNING_CONFLICT',
+            'Planning bytes changed during managed materialization.',
+            ExitCode.conflict,
+          );
+        }
+        continue;
+      }
+      replaceTextAtomic(target, content, {
+        allowCreate: true,
+        defaultMode: 0o644,
+      });
+      createdPaths.push(target);
+    }
+    const adapter = createOpenSpecAdapter(context.git.repositoryRoot);
+    const statusPayload = adapter.status(session.changeId, 'expense-app-v2');
+    const planReview = statusPayload.artifacts.find(
+      ({ id }) => id === 'plan-review',
+    );
+    if (
+      statusPayload.isComplete ||
+      planReview?.status !== 'ready' ||
+      statusPayload.artifacts.some(
+        ({ id, status: artifactStatus }) =>
+          id !== 'plan-review' && artifactStatus !== 'done',
+      )
+    ) {
+      throw planningContributionInvalid(
+        'OpenSpec did not observe the expected review-pending planning graph.',
+      );
+    }
+    assertPlanningTargetsCompatible(scaffold.changeDirectory, entries, false);
+    persistExemptionPlanningMaterializationReceipt(
+      context.runtime,
+      session,
+      digests,
+    );
+    const investigation = parseInvestigationArtifact(
+      JSON.parse(scaffold.investigationBytes),
+      session.changeId,
+    );
+    const checks = loadChecksConfig(context.git.repositoryRoot);
+    const draftContract: ChangeContract = {
+      changeId: session.changeId,
+      changeDirectory: scaffold.changeDirectory,
+      schemaName: 'expense-app-v2',
+      config: context.config,
+      checks,
+      guard,
+      tasks,
+      behaviorContracts,
+      investigation,
+      execution,
+      artifactPaths: [...entries.keys()].map((relativePath) =>
+        path.join(scaffold.changeDirectory, relativePath),
+      ),
+      artifactDigests: Object.fromEntries(
+        Object.entries(digests).map(([relativePath, digest]) => [
+          path.join(scaffold.changeDirectory, relativePath),
+          digest,
+        ]),
+      ),
+    };
+    const planningSubject = deriveInvestigationFirstPlanningSubject(
+      context.git.repositoryRoot,
+      draftContract,
+    );
+    preparePlanReviewInvocation(
+      cwd,
+      session,
+      planningSubject,
+      collaborationGrant,
+      assertOwned,
+    );
   } catch (error) {
     for (const target of createdPaths.reverse()) {
       fs.rmSync(target, { force: true });
@@ -1728,7 +4304,10 @@ function persistPlanningMaterializationReceipt(
   if (current === node.nodeId) {
     return;
   }
-  if (current !== null) {
+  const reviewerRevision =
+    readInvestigationSession(paths, status.investigationId).milestones
+      .reviewerTermSourceNodeId !== null;
+  if (current !== null && !reviewerRevision) {
     throw workflowError(
       'PLANNING_MATERIALIZATION_CONFLICT',
       'A different planning materialization is already current.',
@@ -1738,9 +4317,620 @@ function persistPlanningMaterializationReceipt(
   compareAndSwapEvidenceRef(paths, {
     changeId: status.changeId,
     refName: PLANNING_MATERIALIZATION_REF,
+    expectedNodeId: current,
+    nextNodeId: node.nodeId,
+  });
+}
+
+function persistExemptionPlanningMaterializationReceipt(
+  paths: ReturnType<typeof loadInvestigationRuntimeContext>['runtime'],
+  session: ProposeExemptionSession,
+  artifacts: Record<string, string>,
+): void {
+  const applicabilityNode = session.applicabilityNode;
+  const node = createEvidenceNode({
+    type: 'propose-exemption-planning-materialization',
+    nodeSchema: 'workflow.propose-exemption-planning-materialization.v1',
+    evaluator: 'workflow-propose.v1',
+    policyDigest: PROPOSE_POLICY_DIGEST,
+    exactInputDigests: {
+      artifacts: sha256(canonicalJson(artifacts)),
+      baseline: sha256(canonicalJson(session.baseline)),
+      applicability: applicabilityNode.nodeId,
+    },
+    semanticParentResultDigests: {
+      applicability: applicabilityNode.resultDigest,
+    },
+    provenanceParentNodeIds: {
+      applicability: applicabilityNode.nodeId,
+    },
+    outputSchema:
+      'workflow.propose-exemption-planning-materialization-output.v1',
+    output: {
+      investigationId: session.investigationId,
+      changeId: session.changeId,
+      revision: session.revision,
+      baseline: session.baseline,
+      artifacts,
+      applicabilityNodeId: applicabilityNode.nodeId,
+      applicabilityResultDigest: applicabilityNode.resultDigest,
+    },
+    runtimeMetadata: {},
+  });
+  writeEvidenceNode(paths, node);
+  const current =
+    readEvidenceRefs(paths, session.changeId)[PLANNING_MATERIALIZATION_REF] ??
+    null;
+  if (current === node.nodeId) {
+    return;
+  }
+  if (current !== null) {
+    throw workflowError(
+      'PLANNING_MATERIALIZATION_CONFLICT',
+      'A different planning materialization is already current.',
+      ExitCode.conflict,
+    );
+  }
+  compareAndSwapEvidenceRef(paths, {
+    changeId: session.changeId,
+    refName: PLANNING_MATERIALIZATION_REF,
     expectedNodeId: null,
     nextNodeId: node.nodeId,
   });
+}
+
+type PlanReviewReservation = {
+  planning: InvestigationFirstPlanningSubject;
+  subject: PlanReviewSubject;
+  assignment: ProviderRoleAssignment;
+  author: RecordedRoleParticipant;
+  manifest: PlanReviewManifest;
+  request: ProviderInvocationRequest;
+  grantAuthorization: ProposeGrantAuthorization | null;
+};
+
+type PlanReviewGrantRequirement = {
+  subject: PlanReviewSubject;
+  author: RecordedRoleParticipant;
+  grantRequest: CollaborationGrantRequest | null;
+};
+
+function preparePlanReviewInvocation(
+  cwd: string,
+  status: ProposeLifecycleStatus,
+  planning: InvestigationFirstPlanningSubject,
+  collaborationGrant?: ProposeResumeOptions['collaborationGrant'],
+  assertOwned: () => void = () => {},
+): PlanReviewReservation | null {
+  const context = loadInvestigationRuntimeContext(cwd);
+  const existing = readPlanReviewReservation(context.runtime, status);
+  if (
+    existing !== null &&
+    canonicalJson(existing.subject) === canonicalJson(planning.subject)
+  ) {
+    ensurePlanReviewInvocation(context.runtime, status, existing);
+    return existing;
+  }
+  const expectedReservationNodeId =
+    readEvidenceRefs(context.runtime, status.changeId)[
+      PLAN_REVIEW_REQUEST_REF
+    ] ?? null;
+
+  const author = planAuthor(context.runtime, status);
+  const recordedAuthor: RecordedRoleParticipant = {
+    providerId: author.providerId ?? null,
+    sessionId: author.sessionId ?? null,
+    principalId: author.principalId ?? null,
+    identityAssurance: author.identityAssurance,
+    engineSpawned: author.engineSpawned,
+  };
+  const policy = loadAiAdapterPolicy(context.git.repositoryRoot);
+  const providerSessionId = createRuntimeId('provider-session');
+  const scheduled = scheduleOrdinaryRole({
+    role: 'plan-reviewer',
+    author,
+    targetDigest: planning.subject.subjectDigest,
+    candidates: (['codex', 'claude'] as const).map((providerId) => ({
+      providerId,
+      sessionId:
+        providerId === author.providerId
+          ? `author-${providerSessionId}`
+          : providerSessionId,
+      enabled: policy.policy.providers[providerId].enabled,
+      available: policy.policy.providers[providerId].enabled,
+    })),
+  });
+  const callableProviderIds = (['codex', 'claude'] as const).filter(
+    (providerId) => policy.policy.providers[providerId].enabled,
+  );
+  const grantRequest = planReviewGrantRequest({
+    changeId: status.changeId,
+    baseline: status.baseline,
+    targetDigest: planning.subject.subjectDigest,
+    author,
+    callableProviderIds,
+  });
+  let assignment: ProviderRoleAssignment;
+  let grantAuthorization: ProposeGrantAuthorization | null = null;
+  if (scheduled.outcome === 'assigned') {
+    assignment = scheduled.assignment;
+  } else if (!collaborationGrant) {
+    persistPlanReviewGrantRequirement(context.runtime, status, {
+      subject: planning.subject,
+      author: recordedAuthor,
+      grantRequest,
+    });
+    return null;
+  } else {
+    if (grantRequest === null) {
+      throw workflowError(
+        'COLLABORATION_GRANT_FORM_REQUIRED',
+        'No provider is callable; submit an explicitly typed caller-supplied or direct-human PlanReview grant.',
+        ExitCode.guard,
+      );
+    }
+    const expectedBinding = deriveCollaborationGrantBinding(
+      context.git.repositoryRoot,
+      grantRequest,
+    );
+    const transitionDigest = collaborationTransitionDigest(expectedBinding);
+    const reservation = reserveCollaborationGrantUnderLifecycleLock(
+      context.git.repositoryRoot,
+      collaborationGrant.grantId,
+      {
+        transitionDigest,
+        expected: expectedBinding,
+        ...(collaborationGrant.now === undefined
+          ? {}
+          : { now: collaborationGrant.now }),
+        ...(collaborationGrant.verifier === undefined
+          ? {}
+          : { verifier: collaborationGrant.verifier }),
+      },
+      assertOwned,
+    );
+    assignment = authorizeGrantedOrdinaryRole({
+      role: 'plan-reviewer',
+      author,
+      targetDigest: planning.subject.subjectDigest,
+      reservation,
+      actualParticipant: {
+        providerId: author.providerId,
+        sessionId: providerSessionId,
+        principalId: undefined,
+        identityAssurance: author.identityAssurance,
+        engineSpawned: true,
+      },
+      callableProviderIds,
+    }) as GrantedSameProviderRoleAssignment;
+    grantAuthorization = {
+      grantId: reservation.grantId,
+      transitionDigest,
+      expectedBinding,
+    };
+  }
+  const materializationNodeId = readEvidenceRefs(
+    context.runtime,
+    status.changeId,
+  )[PLANNING_MATERIALIZATION_REF];
+  if (!materializationNodeId) {
+    throw workflowError(
+      'PLANNING_MATERIALIZATION_STALE',
+      'Plan review requires current planning materialization evidence.',
+      ExitCode.staleState,
+    );
+  }
+  const reviewAuthorization = createEvidenceNode({
+    type: 'plan-review-authorization',
+    nodeSchema: 'workflow.plan-review-authorization.v1',
+    evaluator: 'workflow-propose.v1',
+    policyDigest: PROPOSE_POLICY_DIGEST,
+    exactInputDigests: {
+      subject: planning.subject.subjectDigest,
+      generation: planning.generation.planningGenerationId,
+      assignment: sha256(canonicalJson(assignment)),
+      grantAuthorization: sha256(canonicalJson(grantAuthorization)),
+    },
+    semanticParentResultDigests: {
+      materialization: readEvidenceNode(context.runtime, materializationNodeId)
+        .resultDigest,
+    },
+    provenanceParentNodeIds: { materialization: materializationNodeId },
+    outputSchema: 'workflow.plan-review-authorization-output.v1',
+    output: {
+      subject: planning.subject,
+      assignment,
+      author: recordedAuthor,
+      grantAuthorization,
+    },
+    runtimeMetadata: {},
+  });
+  writeEvidenceNode(context.runtime, reviewAuthorization);
+  const invocationId = createRuntimeId('invocation');
+  const manifest: PlanReviewManifest = {
+    schemaVersion: 1,
+    kind: 'plan-review-manifest',
+    changeId: status.changeId,
+    repositoryId: context.config.repositoryName,
+    baseCommit: status.baseline.head,
+    baseTree: status.baseline.tree,
+    subject: planning.subject,
+    capabilityProfile: 'repository-read-only',
+  };
+  const request = createProviderInvocationRequest({
+    invocationId,
+    nonce: `plan-review-${crypto.randomUUID()}`,
+    purpose: 'plan-review',
+    providerId: assignment.providerId,
+    roleAssignment: assignment,
+    capabilityProfile: 'repository-read-only',
+    repositoryId: context.config.repositoryName,
+    baseCommit: status.baseline.head,
+    baseTree: status.baseline.tree,
+    targetDigest: planning.subject.subjectDigest,
+    inputManifestDigest: providerInvocationManifestDigest(manifest),
+    authorizationNodeId: reviewAuthorization.nodeId,
+    writeAllowedPaths: [],
+    outputSchema: PLAN_REVIEW_OUTPUT_SCHEMA,
+    evaluatorVersion: 'plan-review.v2',
+    policyDigest: policy.digest,
+    limits: {
+      timeoutMs: policy.policy.limits.timeoutMs,
+      aggregateOutputBytes: policy.policy.limits.aggregateOutputBytes,
+    },
+  });
+  const reservationNode = createEvidenceNode({
+    type: 'plan-review-request-reservation',
+    nodeSchema: 'workflow.plan-review-request-reservation.v1',
+    evaluator: 'workflow-propose.v1',
+    policyDigest: PROPOSE_POLICY_DIGEST,
+    exactInputDigests: {
+      request: request.requestDigest,
+      manifest: request.inputManifestDigest,
+      subject: planning.subject.subjectDigest,
+    },
+    semanticParentResultDigests: {
+      authorization: reviewAuthorization.resultDigest,
+    },
+    provenanceParentNodeIds: { authorization: reviewAuthorization.nodeId },
+    outputSchema: 'workflow.plan-review-request-reservation-output.v1',
+    output: {
+      investigationId: status.investigationId,
+      changeId: status.changeId,
+      planning,
+      subject: planning.subject,
+      assignment,
+      author: recordedAuthor,
+      manifest,
+      request,
+      grantAuthorization,
+    },
+    runtimeMetadata: {},
+  });
+  writeEvidenceNode(context.runtime, reservationNode);
+  compareAndSwapEvidenceRef(context.runtime, {
+    changeId: status.changeId,
+    refName: PLAN_REVIEW_REQUEST_REF,
+    expectedNodeId: expectedReservationNodeId,
+    nextNodeId: reservationNode.nodeId,
+  });
+  const reservation = {
+    planning,
+    subject: planning.subject,
+    assignment,
+    author: recordedAuthor,
+    manifest,
+    request,
+    grantAuthorization,
+  };
+  ensurePlanReviewInvocation(context.runtime, status, reservation);
+  return reservation;
+}
+
+function persistPlanReviewGrantRequirement(
+  paths: ReturnType<typeof loadInvestigationRuntimeContext>['runtime'],
+  status: ProposeLifecycleStatus,
+  requirement: PlanReviewGrantRequirement,
+): void {
+  const node = createEvidenceNode({
+    type: 'plan-review-grant-requirement',
+    nodeSchema: 'workflow.plan-review-grant-requirement.v1',
+    evaluator: 'workflow-propose.v1',
+    policyDigest: PROPOSE_POLICY_DIGEST,
+    exactInputDigests: {
+      subject: requirement.subject.subjectDigest,
+      author: sha256(canonicalJson(requirement.author)),
+      grantRequest: sha256(canonicalJson(requirement.grantRequest)),
+    },
+    semanticParentResultDigests: {},
+    provenanceParentNodeIds: {},
+    outputSchema: 'workflow.plan-review-grant-requirement-output.v1',
+    output: {
+      investigationId: status.investigationId,
+      changeId: status.changeId,
+      ...requirement,
+    },
+    runtimeMetadata: {},
+  });
+  writeEvidenceNode(paths, node);
+  const current =
+    readEvidenceRefs(paths, status.changeId)[
+      PLAN_REVIEW_GRANT_REQUIREMENT_REF
+    ] ?? null;
+  if (current === node.nodeId) {
+    return;
+  }
+  compareAndSwapEvidenceRef(paths, {
+    changeId: status.changeId,
+    refName: PLAN_REVIEW_GRANT_REQUIREMENT_REF,
+    expectedNodeId: current,
+    nextNodeId: node.nodeId,
+  });
+}
+
+function readPlanReviewGrantRequirement(
+  paths: ReturnType<typeof loadInvestigationRuntimeContext>['runtime'],
+  status: ProposeLifecycleStatus,
+): PlanReviewGrantRequirement | null {
+  const nodeId = readEvidenceRefs(paths, status.changeId)[
+    PLAN_REVIEW_GRANT_REQUIREMENT_REF
+  ];
+  if (!nodeId) {
+    return null;
+  }
+  const node = readEvidenceNode(paths, nodeId);
+  const output = node.output;
+  if (
+    node.type !== 'plan-review-grant-requirement' ||
+    node.nodeSchema !== 'workflow.plan-review-grant-requirement.v1' ||
+    node.evaluator !== 'workflow-propose.v1' ||
+    node.policyDigest !== PROPOSE_POLICY_DIGEST ||
+    !isRecord(output) ||
+    !hasExactKeys(output, [
+      'investigationId',
+      'changeId',
+      'subject',
+      'author',
+      'grantRequest',
+    ]) ||
+    output.investigationId !== status.investigationId ||
+    output.changeId !== status.changeId ||
+    !isRecord(output.author)
+  ) {
+    throw workflowError(
+      'PLAN_REVIEW_GRANT_REQUIREMENT_STALE',
+      'The durable exact-plan collaboration requirement is malformed.',
+      ExitCode.staleState,
+    );
+  }
+  const subject = assertPlanReviewSubject(output.subject);
+  const author = output.author as RecordedRoleParticipant;
+  const grantRequest =
+    output.grantRequest === null
+      ? null
+      : (output.grantRequest as CollaborationGrantRequest);
+  if (
+    subject.subjectDigest !== node.exactInputDigests.subject ||
+    sha256(canonicalJson(author)) !== node.exactInputDigests.author ||
+    sha256(canonicalJson(grantRequest)) !== node.exactInputDigests.grantRequest
+  ) {
+    throw workflowError(
+      'PLAN_REVIEW_GRANT_REQUIREMENT_STALE',
+      'The durable exact-plan collaboration requirement no longer matches its evidence node.',
+      ExitCode.staleState,
+    );
+  }
+  return { subject, author, grantRequest };
+}
+
+function planAuthor(
+  paths: ReturnType<typeof loadInvestigationRuntimeContext>['runtime'],
+  status: ProposeLifecycleStatus,
+): RoleParticipant {
+  if (status.state === 'investigation-exempt') {
+    return {
+      providerId: status.actor.providerId,
+      sessionId: `plan-author-${status.investigationId}`,
+      principalId: undefined,
+      identityAssurance: status.actor.assurance,
+      engineSpawned: false,
+    };
+  }
+  const blindRequest = readProviderInvocationRequest(
+    paths,
+    status.providerInvocationId,
+  );
+  const authorization = readProposeAuthorization(paths, blindRequest);
+  return {
+    providerId: authorization.actor.providerId,
+    sessionId: `plan-author-${status.investigationId}`,
+    principalId: undefined,
+    identityAssurance: authorization.actor.assurance,
+    engineSpawned: false,
+  };
+}
+
+function ensurePlanReviewInvocation(
+  paths: ReturnType<typeof loadInvestigationRuntimeContext>['runtime'],
+  status: ProposeLifecycleStatus,
+  reservation: PlanReviewReservation,
+): void {
+  if (providerInvocationExists(paths, reservation.request.invocationId)) {
+    const durable = readProviderInvocationRequest(
+      paths,
+      reservation.request.invocationId,
+    );
+    if (canonicalJson(durable) !== canonicalJson(reservation.request)) {
+      throw workflowError(
+        'PLAN_REVIEW_REQUEST_CONFLICT',
+        'The durable plan-review request differs from its reservation.',
+        ExitCode.conflict,
+      );
+    }
+    return;
+  }
+  createProviderInvocation(paths, {
+    investigationId: status.investigationId,
+    changeId: status.changeId,
+    attempt: 1,
+    manifest: reservation.manifest,
+    request: reservation.request,
+  });
+}
+
+function readPlanReviewReservation(
+  paths: ReturnType<typeof loadInvestigationRuntimeContext>['runtime'],
+  status: ProposeLifecycleStatus,
+  expectedSubject?: PlanReviewSubject,
+): PlanReviewReservation | null {
+  const nodeId = readEvidenceRefs(paths, status.changeId)[
+    PLAN_REVIEW_REQUEST_REF
+  ];
+  if (!nodeId) {
+    return null;
+  }
+  const node = readEvidenceNode(paths, nodeId);
+  const output = node.output;
+  if (
+    node.type !== 'plan-review-request-reservation' ||
+    node.nodeSchema !== 'workflow.plan-review-request-reservation.v1' ||
+    node.evaluator !== 'workflow-propose.v1' ||
+    node.policyDigest !== PROPOSE_POLICY_DIGEST ||
+    !isRecord(output) ||
+    !hasExactKeys(output, [
+      'investigationId',
+      'changeId',
+      'planning',
+      'subject',
+      'assignment',
+      'author',
+      'manifest',
+      'request',
+      'grantAuthorization',
+    ]) ||
+    output.investigationId !== status.investigationId ||
+    output.changeId !== status.changeId
+  ) {
+    throw workflowError(
+      'PLAN_REVIEW_REQUEST_STALE',
+      'Durable plan-review request reservation is invalid.',
+      ExitCode.staleState,
+    );
+  }
+  const subject = assertPlanReviewSubject(output.subject);
+  const planning = output.planning as InvestigationFirstPlanningSubject;
+  const request = output.request as ProviderInvocationRequest;
+  const manifest = output.manifest as PlanReviewManifest;
+  const assignment = output.assignment as ProviderRoleAssignment;
+  const author = output.author as RecordedRoleParticipant;
+  const grantAuthorization = assertPlanReviewGrantAuthorization(
+    output.grantAuthorization,
+    author,
+    request,
+  );
+  if (
+    (expectedSubject &&
+      canonicalJson(subject) !== canonicalJson(expectedSubject)) ||
+    !isRecord(planning) ||
+    canonicalJson(planning.subject) !== canonicalJson(subject) ||
+    request.requestDigest !== node.exactInputDigests.request ||
+    request.inputManifestDigest !== node.exactInputDigests.manifest ||
+    subject.subjectDigest !== node.exactInputDigests.subject ||
+    canonicalJson(request.roleAssignment) !== canonicalJson(assignment) ||
+    request.authorizationNodeId !==
+      node.provenanceParentNodeIds.authorization ||
+    providerInvocationManifestDigest(manifest) !== request.inputManifestDigest
+  ) {
+    throw workflowError(
+      'PLAN_REVIEW_REQUEST_STALE',
+      'Durable plan-review request no longer matches the planning subject.',
+      ExitCode.staleState,
+    );
+  }
+  return {
+    subject,
+    planning,
+    assignment,
+    author,
+    manifest,
+    request,
+    grantAuthorization,
+  };
+}
+
+function assertPlanReviewGrantAuthorization(
+  value: unknown,
+  author: RecordedRoleParticipant,
+  request: ProviderInvocationRequest,
+): ProposeGrantAuthorization | null {
+  if (!('grantId' in request.roleAssignment)) {
+    if (
+      value !== null ||
+      author.providerId === null ||
+      request.providerId === author.providerId ||
+      request.roleAssignment.achievedIndependence !== 'provider-independent'
+    ) {
+      throw workflowError(
+        'PLAN_REVIEW_REQUEST_STALE',
+        'Ordinary plan-review authorization is not provider-independent.',
+        ExitCode.staleState,
+      );
+    }
+    return null;
+  }
+  if (
+    !isRecord(value) ||
+    !hasExactKeys(value, ['grantId', 'transitionDigest', 'expectedBinding']) ||
+    value.grantId !== request.roleAssignment.grantId ||
+    typeof value.transitionDigest !== 'string' ||
+    !DIGEST.test(value.transitionDigest) ||
+    !isRecord(value.expectedBinding)
+  ) {
+    throw workflowError(
+      'PLAN_REVIEW_REQUEST_STALE',
+      'Granted plan-review authorization is malformed.',
+      ExitCode.staleState,
+    );
+  }
+  const expectedBinding =
+    value.expectedBinding as CollaborationGrantExpectedBinding;
+  if (
+    author.providerId === null ||
+    request.providerId !== author.providerId ||
+    request.roleAssignment.providerId !== author.providerId ||
+    request.roleAssignment.achievedIndependence !== 'session-independent' ||
+    expectedBinding.collaborationPolicyDigest !==
+      COLLABORATION_GRANT_POLICY_DIGEST ||
+    expectedBinding.baselineCommit !== request.baseCommit ||
+    expectedBinding.baselineTree !== request.baseTree ||
+    expectedBinding.targetDigest !== request.targetDigest ||
+    expectedBinding.lifecyclePhase !== 'plan-review' ||
+    canonicalJson(expectedBinding.rolePair) !==
+      canonicalJson({
+        authorRole: 'plan-author',
+        conflictingRole: 'plan-reviewer',
+      }) ||
+    canonicalJson(expectedBinding.availableActor) !==
+      canonicalJson({
+        kind: 'provider',
+        providerId: author.providerId,
+        assurance: author.identityAssurance,
+      }) ||
+    expectedBinding.degradedForm !== 'same-provider-fresh-session' ||
+    expectedBinding.reason !== PLAN_REVIEW_GRANT_REASON ||
+    collaborationTransitionDigest(expectedBinding) !== value.transitionDigest
+  ) {
+    throw workflowError(
+      'PLAN_REVIEW_REQUEST_STALE',
+      'Granted plan-review authorization no longer matches the exact subject.',
+      ExitCode.staleState,
+    );
+  }
+  return {
+    grantId: String(value.grantId),
+    transitionDigest: value.transitionDigest,
+    expectedBinding,
+  };
 }
 
 function readPlanningMaterializationReceipt(
@@ -1797,6 +4987,63 @@ function readPlanningMaterializationReceipt(
   return output.artifacts as Record<string, string>;
 }
 
+function readExemptionPlanningMaterializationReceipt(
+  paths: ReturnType<typeof loadInvestigationRuntimeContext>['runtime'],
+  session: ProposeExemptionSession,
+): Record<string, string> | null {
+  const nodeId = readEvidenceRefs(paths, session.changeId)[
+    PLANNING_MATERIALIZATION_REF
+  ];
+  if (nodeId === undefined) {
+    return null;
+  }
+  const node = readEvidenceNode(paths, nodeId);
+  const output = node.output;
+  if (
+    node.type !== 'propose-exemption-planning-materialization' ||
+    node.nodeSchema !==
+      'workflow.propose-exemption-planning-materialization.v1' ||
+    node.evaluator !== 'workflow-propose.v1' ||
+    node.policyDigest !== PROPOSE_POLICY_DIGEST ||
+    node.outputSchema !==
+      'workflow.propose-exemption-planning-materialization-output.v1' ||
+    !isRecord(output) ||
+    !hasExactKeys(output, [
+      'investigationId',
+      'changeId',
+      'revision',
+      'baseline',
+      'artifacts',
+      'applicabilityNodeId',
+      'applicabilityResultDigest',
+    ]) ||
+    output.investigationId !== session.investigationId ||
+    output.changeId !== session.changeId ||
+    output.revision !== session.revision ||
+    canonicalJson(output.baseline) !== canonicalJson(session.baseline) ||
+    output.applicabilityNodeId !== session.applicabilityNode.nodeId ||
+    output.applicabilityResultDigest !==
+      session.applicabilityNode.resultDigest ||
+    !isDigestRecord(output.artifacts) ||
+    node.exactInputDigests.artifacts !==
+      sha256(canonicalJson(output.artifacts)) ||
+    node.exactInputDigests.baseline !==
+      sha256(canonicalJson(session.baseline)) ||
+    node.exactInputDigests.applicability !== session.applicabilityNode.nodeId ||
+    node.provenanceParentNodeIds.applicability !==
+      session.applicabilityNode.nodeId ||
+    node.semanticParentResultDigests.applicability !==
+      session.applicabilityNode.resultDigest
+  ) {
+    throw workflowError(
+      'PLANNING_MATERIALIZATION_STALE',
+      'Durable exemption planning materialization evidence is invalid or stale.',
+      ExitCode.staleState,
+    );
+  }
+  return output.artifacts as Record<string, string>;
+}
+
 function readMaterializedPlanningArtifacts(
   cwd: string,
   status: InvestigationStatus,
@@ -1838,17 +5085,16 @@ function readMaterializedPlanningArtifacts(
       'A required planning artifact is missing from the durable materialization.',
     );
   }
-  if (fs.existsSync(path.join(scaffold.changeDirectory, 'plan-review.json'))) {
-    throw planningMaterializationStale(
-      'Task 5.2 cannot reinterpret a later PlanReview transition.',
-    );
-  }
+  const hasPlanReview = fs.existsSync(
+    path.join(scaffold.changeDirectory, 'plan-review.json'),
+  );
   const adapter = createOpenSpecAdapter(context.git.repositoryRoot);
   const openspecStatus = adapter.status(status.changeId, 'expense-app-v2');
   if (
-    openspecStatus.isComplete ||
+    (hasPlanReview && !openspecStatus.isComplete) ||
+    (!hasPlanReview && openspecStatus.isComplete) ||
     openspecStatus.artifacts.find(({ id }) => id === 'plan-review')?.status !==
-      'ready'
+      (hasPlanReview ? 'done' : 'ready')
   ) {
     throw planningMaterializationStale(
       'OpenSpec no longer observes the receipt-bound review-pending graph.',
@@ -1870,11 +5116,93 @@ function readMaterializedPlanningArtifacts(
       fs.readFileSync(path.join(scaffold.changeDirectory, specPath), 'utf8'),
     );
   }
-  assertPlanningTargetsCompatible(scaffold.changeDirectory, entries, false);
+  assertPlanningTargetsCompatible(
+    scaffold.changeDirectory,
+    entries,
+    false,
+    false,
+    true,
+  );
   const observed = artifactDigests(entries);
   if (canonicalJson(observed) !== canonicalJson(receipt)) {
     throw planningMaterializationStale(
       'Current planning bytes differ from durable materialization evidence.',
+    );
+  }
+  return observed;
+}
+
+function readMaterializedExemptionPlanningArtifacts(
+  cwd: string,
+  session: ProposeExemptionSession,
+  changeDirectory: string,
+): Record<string, string> {
+  const context = loadInvestigationRuntimeContext(cwd);
+  const receipt = readExemptionPlanningMaterializationReceipt(
+    context.runtime,
+    session,
+  );
+  if (receipt === null) {
+    throw planningMaterializationStale(
+      'Structured exemption planning has no durable materialization receipt.',
+    );
+  }
+  const required = [
+    '.openspec.yaml',
+    'investigation.json',
+    'proposal.md',
+    'design.md',
+    'tasks.md',
+    'guard.json',
+    'execution.json',
+  ];
+  if (
+    required.some(
+      (relativePath) =>
+        !fs
+          .statSync(path.join(changeDirectory, relativePath), {
+            throwIfNoEntry: false,
+          })
+          ?.isFile(),
+    )
+  ) {
+    throw planningMaterializationStale(
+      'A required exemption planning artifact is missing from the durable materialization.',
+    );
+  }
+  const hasPlanReview = fs.existsSync(
+    path.join(changeDirectory, 'plan-review.json'),
+  );
+  const adapter = createOpenSpecAdapter(context.git.repositoryRoot);
+  const openspecStatus = adapter.status(session.changeId, 'expense-app-v2');
+  if (
+    (hasPlanReview && !openspecStatus.isComplete) ||
+    (!hasPlanReview && openspecStatus.isComplete) ||
+    openspecStatus.artifacts.find(({ id }) => id === 'plan-review')?.status !==
+      (hasPlanReview ? 'done' : 'ready')
+  ) {
+    throw planningMaterializationStale(
+      'OpenSpec no longer observes the receipt-bound exemption review graph.',
+    );
+  }
+  const entries = new Map<string, string>();
+  for (const relativePath of required) {
+    entries.set(
+      relativePath,
+      fs.readFileSync(path.join(changeDirectory, relativePath), 'utf8'),
+    );
+  }
+  for (const specPath of listSpecFiles(changeDirectory)) {
+    entries.set(
+      specPath,
+      fs.readFileSync(path.join(changeDirectory, specPath), 'utf8'),
+    );
+  }
+  assertPlanningTargetsCompatible(changeDirectory, entries, false, false, true);
+  const observed = artifactDigests(entries);
+  if (canonicalJson(observed) !== canonicalJson(receipt)) {
+    throw planningMaterializationStale(
+      'Current exemption planning bytes differ from durable materialization evidence.',
     );
   }
   return observed;
@@ -1885,12 +5213,16 @@ function assertPlanningTargetsCompatible(
   entries: Map<string, string>,
   scaffoldOnly: boolean,
   allowAuthoredExisting = false,
+  allowManagedPlanReview = false,
 ): void {
   const allowedExisting = new Set(entries.keys());
   const existing = listChangeFiles(changeDirectory);
   for (const relativePath of existing) {
     if (!allowedExisting.has(relativePath)) {
       if (scaffoldOnly) {
+        if (relativePath === 'plan-review.json' && allowManagedPlanReview) {
+          continue;
+        }
         if (
           allowAuthoredExisting &&
           ([
@@ -1912,6 +5244,9 @@ function assertPlanningTargetsCompatible(
         );
       }
       if (relativePath === 'plan-review.json') {
+        if (allowManagedPlanReview) {
+          continue;
+        }
         throw workflowError(
           'PLAN_REVIEW_ALREADY_PRESENT',
           'Task 5.2 cannot adopt or replace a plan review.',
@@ -2020,6 +5355,32 @@ function planningContributionSchema(
   };
 }
 
+function exemptionPlanningContributionSchema(
+  status: ProposeExemptionSession,
+): Record<string, unknown> {
+  return {
+    schemaVersion: 1,
+    kind: 'exemption-planning-contribution',
+    binding: {
+      investigationId: status.investigationId,
+      changeId: status.changeId,
+      expectedRevision: status.revision,
+      baseline: status.baseline,
+      intentDigest: status.intentDigest,
+      applicabilityDigest: status.applicability.applicabilityDigest,
+    },
+    payloadFields: [
+      'proposal',
+      'design',
+      'specs',
+      'tasks',
+      'guard',
+      'executionTasks',
+    ],
+    engineOwnedFieldsRejected: ['investigation', 'planReview'],
+  };
+}
+
 function assertProposeInput(value: unknown): ProposeInput {
   if (!isRecord(value) || typeof value.kind !== 'string') {
     throw proposeInputInvalid();
@@ -2027,10 +5388,122 @@ function assertProposeInput(value: unknown): ProposeInput {
   if (value.kind === 'planning-contribution') {
     return assertPlanningContributionEnvelope(value);
   }
+  if (value.kind === 'exemption-planning-contribution') {
+    return assertExemptionPlanningContributionEnvelope(value);
+  }
   if (value.kind === 'provider-progress') {
     return assertProviderProgressEnvelope(value);
   }
+  if (value.kind === 'plan-review-progress') {
+    return assertPlanReviewProgressEnvelope(value);
+  }
+  if (value.kind === 'plan-review-dispositions') {
+    return assertPlanReviewDispositionsEnvelope(value);
+  }
   return assertInvestigationCheckpointEnvelope(value);
+}
+
+function assertExemptionPlanningContributionEnvelope(
+  value: unknown,
+): ExemptionPlanningContributionEnvelope {
+  if (
+    !isRecord(value) ||
+    !hasExactKeys(value, [
+      'schemaVersion',
+      'kind',
+      'investigationId',
+      'changeId',
+      'expectedRevision',
+      'baseline',
+      'intentDigest',
+      'applicabilityDigest',
+      'payload',
+    ]) ||
+    value.schemaVersion !== 1 ||
+    value.kind !== 'exemption-planning-contribution' ||
+    typeof value.investigationId !== 'string' ||
+    typeof value.changeId !== 'string' ||
+    value.expectedRevision !== 0 ||
+    !isBaseline(value.baseline) ||
+    typeof value.intentDigest !== 'string' ||
+    !DIGEST.test(value.intentDigest) ||
+    typeof value.applicabilityDigest !== 'string' ||
+    !DIGEST.test(value.applicabilityDigest)
+  ) {
+    throw proposeInputInvalid();
+  }
+  return {
+    schemaVersion: 1,
+    kind: 'exemption-planning-contribution',
+    investigationId: value.investigationId,
+    changeId: assertChangeId(value.changeId),
+    expectedRevision: 0,
+    baseline: value.baseline,
+    intentDigest: value.intentDigest,
+    applicabilityDigest: value.applicabilityDigest,
+    payload: assertPlanningPayload(value.payload),
+  };
+}
+
+function assertPlanReviewProgressEnvelope(
+  value: unknown,
+): PlanReviewProgressEnvelope {
+  if (
+    !isRecord(value) ||
+    !hasExactKeys(value, [
+      'schemaVersion',
+      'kind',
+      'investigationId',
+      'changeId',
+      'subjectDigest',
+      'invocationId',
+      'requestDigest',
+    ]) ||
+    value.schemaVersion !== 1 ||
+    value.kind !== 'plan-review-progress' ||
+    typeof value.investigationId !== 'string' ||
+    typeof value.changeId !== 'string' ||
+    typeof value.subjectDigest !== 'string' ||
+    !DIGEST.test(value.subjectDigest) ||
+    typeof value.invocationId !== 'string' ||
+    typeof value.requestDigest !== 'string' ||
+    !DIGEST.test(value.requestDigest)
+  ) {
+    throw proposeInputInvalid();
+  }
+  return value as PlanReviewProgressEnvelope;
+}
+
+function assertPlanReviewDispositionsEnvelope(
+  value: unknown,
+): PlanReviewDispositionsEnvelope {
+  if (
+    !isRecord(value) ||
+    !hasExactKeys(value, [
+      'schemaVersion',
+      'kind',
+      'investigationId',
+      'changeId',
+      'subjectDigest',
+      'reviewNodeId',
+      'reviewResultDigest',
+      'dispositions',
+    ]) ||
+    value.schemaVersion !== 1 ||
+    value.kind !== 'plan-review-dispositions' ||
+    typeof value.investigationId !== 'string' ||
+    typeof value.changeId !== 'string' ||
+    typeof value.subjectDigest !== 'string' ||
+    !DIGEST.test(value.subjectDigest) ||
+    typeof value.reviewNodeId !== 'string' ||
+    !DIGEST.test(value.reviewNodeId) ||
+    typeof value.reviewResultDigest !== 'string' ||
+    !DIGEST.test(value.reviewResultDigest) ||
+    !Array.isArray(value.dispositions)
+  ) {
+    throw proposeInputInvalid();
+  }
+  return value as PlanReviewDispositionsEnvelope;
 }
 
 function assertPlanningContributionEnvelope(
@@ -2344,6 +5817,54 @@ function assertNormalizedIntent(value: unknown): NormalizedChangeIntent {
   return intent;
 }
 
+function assertProposeStartInput(value: unknown): ProposeStartInput {
+  if (isRecord(value) && value.kind === 'investigation-exemption-request') {
+    if (
+      !hasExactKeys(value, ['schemaVersion', 'kind', 'intent', 'exemption']) ||
+      value.schemaVersion !== 1 ||
+      !isRecord(value.exemption) ||
+      !hasExactKeys(value.exemption, [
+        'category',
+        'declaredPaths',
+        'declaredChangeClasses',
+        'rationale',
+        'semanticAuthor',
+        'nonTrivialBehaviorReliance',
+        'researchBudgetMinutes',
+      ]) ||
+      typeof value.exemption.category !== 'string' ||
+      !isStringArray(value.exemption.declaredPaths) ||
+      !isStringArray(value.exemption.declaredChangeClasses) ||
+      typeof value.exemption.rationale !== 'string' ||
+      !isRecord(value.exemption.semanticAuthor) ||
+      value.exemption.nonTrivialBehaviorReliance !== 'none-declared' ||
+      (value.exemption.researchBudgetMinutes !== null &&
+        !Number.isInteger(value.exemption.researchBudgetMinutes))
+    ) {
+      throw proposeInputInvalid();
+    }
+    return {
+      schemaVersion: 1,
+      kind: 'investigation-exemption-request',
+      intent: assertNormalizedIntent(value.intent),
+      exemption: structuredClone(
+        value.exemption,
+      ) as InvestigationExemptionRequest['exemption'],
+    };
+  }
+  return assertNormalizedIntent(value);
+}
+
+function isInvestigationExemptionRequest(
+  value: ProposeStartInput,
+): value is InvestigationExemptionRequest {
+  return (
+    isRecord(value) &&
+    'kind' in value &&
+    value.kind === 'investigation-exemption-request'
+  );
+}
+
 function readProposeAuthorization(
   paths: ReturnType<typeof loadInvestigationRuntimeContext>['runtime'],
   request: ProviderInvocationRequest,
@@ -2357,6 +5878,7 @@ function readProposeAuthorization(
     ref: string;
     commit: string;
   };
+  grantAuthorization: ProposeGrantAuthorization | null;
 } {
   const node = readEvidenceNode(paths, request.authorizationNodeId);
   const output = node.output;
@@ -2371,6 +5893,7 @@ function readProposeAuthorization(
       'actor',
       'signals',
       'assignment',
+      'grantAuthorization',
       'intent',
       'baseline',
       'protectedBase',
@@ -2388,17 +5911,13 @@ function readProposeAuthorization(
     typeof output.protectedBase.ref !== 'string' ||
     output.protectedBase.ref.length === 0 ||
     typeof output.protectedBase.commit !== 'string' ||
-    !/^[0-9a-f]{40}$/.test(output.protectedBase.commit) ||
+    !/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(output.protectedBase.commit) ||
     canonicalJson(output.baseline) !==
       canonicalJson({
         head: request.baseCommit,
         tree: request.baseTree,
       }) ||
-    canonicalJson(output.assignment) !==
-      canonicalJson(request.roleAssignment) ||
-    request.providerId === output.actor.providerId ||
-    request.roleAssignment.requiredIndependence !== 'provider-independent' ||
-    request.roleAssignment.achievedIndependence !== 'provider-independent'
+    canonicalJson(output.assignment) !== canonicalJson(request.roleAssignment)
   ) {
     throw proposeAuthorizationInvalid();
   }
@@ -2421,11 +5940,18 @@ function readProposeAuthorization(
     return signal as ActorSignal;
   });
   const intent = assertNormalizedIntent(output.intent);
+  const grantAuthorization = assertProposeGrantAuthorization(
+    output.grantAuthorization,
+    actor,
+    request,
+  );
   if (
     node.exactInputDigests.actorResolution !==
       sha256(canonicalJson({ actor, signals })) ||
     node.exactInputDigests.assignment !==
       sha256(canonicalJson(request.roleAssignment)) ||
+    node.exactInputDigests.grantAuthorization !==
+      sha256(canonicalJson(grantAuthorization)) ||
     node.exactInputDigests.baseline !==
       sha256(canonicalJson(output.baseline)) ||
     node.exactInputDigests.intent !== sha256(canonicalJson(intent)) ||
@@ -2437,10 +5963,78 @@ function readProposeAuthorization(
   return {
     actor,
     signals,
+    grantAuthorization,
     protectedBase: output.protectedBase as {
       ref: string;
       commit: string;
     },
+  };
+}
+
+function assertProposeGrantAuthorization(
+  value: unknown,
+  actor: {
+    providerId: 'codex' | 'claude';
+    assurance: 'self-declared' | 'runtime-hint' | 'adapter-assigned';
+  },
+  request: ProviderInvocationRequest,
+): ProposeGrantAuthorization | null {
+  if (!('grantId' in request.roleAssignment)) {
+    if (
+      value !== null ||
+      request.providerId === actor.providerId ||
+      request.roleAssignment.requiredIndependence !== 'provider-independent' ||
+      request.roleAssignment.achievedIndependence !== 'provider-independent'
+    ) {
+      throw proposeAuthorizationInvalid();
+    }
+    return null;
+  }
+  if (
+    !isRecord(value) ||
+    !hasExactKeys(value, ['grantId', 'transitionDigest', 'expectedBinding']) ||
+    typeof value.grantId !== 'string' ||
+    value.grantId !== request.roleAssignment.grantId ||
+    typeof value.transitionDigest !== 'string' ||
+    !DIGEST.test(value.transitionDigest) ||
+    !isRecord(value.expectedBinding)
+  ) {
+    throw proposeAuthorizationInvalid();
+  }
+  const expectedBinding =
+    value.expectedBinding as CollaborationGrantExpectedBinding;
+  if (
+    request.providerId !== actor.providerId ||
+    request.roleAssignment.providerId !== actor.providerId ||
+    request.roleAssignment.requiredIndependence !== 'provider-independent' ||
+    request.roleAssignment.achievedIndependence !== 'session-independent' ||
+    expectedBinding.collaborationPolicyDigest !==
+      COLLABORATION_GRANT_POLICY_DIGEST ||
+    expectedBinding.baselineCommit !== request.baseCommit ||
+    expectedBinding.baselineTree !== request.baseTree ||
+    expectedBinding.targetDigest !== request.targetDigest ||
+    expectedBinding.lifecyclePhase !== 'blind-survey' ||
+    canonicalJson(expectedBinding.rolePair) !==
+      canonicalJson({
+        authorRole: 'investigation-author',
+        conflictingRole: 'blind-surveyor',
+      }) ||
+    canonicalJson(expectedBinding.availableActor) !==
+      canonicalJson({
+        kind: 'provider',
+        providerId: actor.providerId,
+        assurance: actor.assurance,
+      }) ||
+    expectedBinding.degradedForm !== 'same-provider-fresh-session' ||
+    expectedBinding.reason !== BLIND_SURVEY_GRANT_REASON ||
+    collaborationTransitionDigest(expectedBinding) !== value.transitionDigest
+  ) {
+    throw proposeAuthorizationInvalid();
+  }
+  return {
+    grantId: value.grantId,
+    transitionDigest: value.transitionDigest,
+    expectedBinding,
   };
 }
 
@@ -2669,9 +6263,9 @@ function isBaseline(value: unknown): value is {
     isRecord(value) &&
     hasExactKeys(value, ['head', 'tree']) &&
     typeof value.head === 'string' &&
-    /^[0-9a-f]{40}$/.test(value.head) &&
+    /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(value.head) &&
     typeof value.tree === 'string' &&
-    /^[0-9a-f]{40}$/.test(value.tree)
+    /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(value.tree)
   );
 }
 

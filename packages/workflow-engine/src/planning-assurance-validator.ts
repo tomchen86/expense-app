@@ -88,7 +88,7 @@ export function deriveInvestigationFirstPlanningSubject(
   repositoryRoot: string,
   contract: ChangeContract,
 ): InvestigationFirstPlanningSubject {
-  assertV2Contract(contract);
+  assertV2SubjectContract(contract);
   const investigation = contract.investigation!;
   const applicability = assertInvestigationApplicability(
     investigation.applicability,
@@ -114,23 +114,24 @@ export function deriveInvestigationFirstPlanningSubject(
             resultDigest: applicabilityNode.resultDigest,
           },
         ];
+  const policies = planningPoliciesFor(applicability);
   const target = createPlanningTarget(
     repositoryRoot,
     contract,
     applicability,
     applicabilityNode,
+    policies,
   );
   const generation = createPlanningGeneration({
     schemaVersion: 1,
     target,
     investigationBaseline: applicability.baseline,
     investigationDependencies: dependencies,
-    policies: INVESTIGATION_FIRST_PLANNING_POLICIES,
+    policies,
   });
   const subject = createPlanReviewSubject({
     generation,
-    reviewPolicyDigest:
-      INVESTIGATION_FIRST_PLANNING_POLICIES.reviewPolicyDigest,
+    reviewPolicyDigest: policies.reviewPolicyDigest,
     requiredIndependence: 'provider-independent',
   });
   return {
@@ -139,7 +140,7 @@ export function deriveInvestigationFirstPlanningSubject(
     target,
     generation,
     subject,
-    policies: INVESTIGATION_FIRST_PLANNING_POLICIES,
+    policies,
   };
 }
 
@@ -153,6 +154,7 @@ export function validateInvestigationFirstPlanningReadiness(
   repositoryRoot: string,
   contract: ChangeContract,
 ): InvestigationFirstPlanningReadiness {
+  assertV2Contract(contract);
   const context = deriveInvestigationFirstPlanningSubject(
     repositoryRoot,
     contract,
@@ -190,7 +192,7 @@ export function validateInvestigationFirstPlanningReadiness(
       kind: 'admitted-role-result',
       roleResult,
     },
-    repositoryEvidence: resolveRepositoryEvidence(
+    repositoryEvidence: resolvePlanReviewRepositoryEvidence(
       repositoryRoot,
       context.generation.investigationBaseline.tree,
       reviewNode,
@@ -364,6 +366,25 @@ function assertV2Contract(
   }
 }
 
+function assertV2SubjectContract(
+  contract: ChangeContract,
+): asserts contract is ChangeContract & {
+  schemaName: 'expense-app-v2';
+  investigation: NonNullable<ChangeContract['investigation']>;
+  execution: NonNullable<ChangeContract['execution']>;
+} {
+  if (
+    contract.schemaName !== 'expense-app-v2' ||
+    !contract.investigation ||
+    !contract.execution ||
+    !contract.investigation.applicability
+  ) {
+    throw planningNotReady(
+      'Investigation-first draft artifacts are incomplete.',
+    );
+  }
+}
+
 function requireNode(
   nodes: EvidenceNode[],
   nodeId: string | undefined,
@@ -444,6 +465,7 @@ function createPlanningTarget(
   },
   applicability: InvestigationApplicability,
   applicabilityNode: EvidenceNode,
+  policies: PlanningPolicyDigests,
 ): PlanTarget {
   const changeRoot = relative(repositoryRoot, contract.changeDirectory);
   const read = (name: string) =>
@@ -454,6 +476,7 @@ function createPlanningTarget(
     contract.investigation.nodes,
     applicability,
     applicabilityNode,
+    policies.rendererPolicyDigest,
   );
   const specPaths = contract.artifactPaths
     .map((filePath) => relative(repositoryRoot, filePath))
@@ -542,6 +565,16 @@ function createPlanningTarget(
       });
     }
   }
+  const rendererPolicy =
+    applicability.kind === 'investigation-exemption'
+      ? {
+          path: 'workflow/investigation-exemption-no-ledger.v1',
+          name: 'investigation-exemption-no-ledger',
+        }
+      : {
+          path: 'workflow/investigation-ledger-renderer.v1',
+          name: 'investigation-ledger-renderer',
+        };
   components.push(
     policyComponent(
       'workflow/planning-policy.v1',
@@ -554,9 +587,9 @@ function createPlanningTarget(
       INVESTIGATION_FIRST_PLANNING_POLICIES.canonicalizerPolicyDigest,
     ),
     policyComponent(
-      'workflow/investigation-ledger-renderer.v1',
-      'investigation-ledger-renderer',
-      INVESTIGATION_FIRST_PLANNING_POLICIES.rendererPolicyDigest,
+      rendererPolicy.path,
+      rendererPolicy.name,
+      policies.rendererPolicyDigest,
     ),
     policyComponent(
       'workflow/plan-review-policy.v2',
@@ -578,6 +611,7 @@ function designComponentProjection(
   investigationNodes: EvidenceNode[],
   applicability: InvestigationApplicability,
   applicabilityNode: EvidenceNode,
+  rendererPolicyDigest: string,
 ): Pick<
   Extract<PlanTargetComponentInput, { kind: 'mixed-markdown' }>,
   'authoredRegions' | 'managedProjection'
@@ -587,8 +621,7 @@ function designComponentProjection(
       authoredRegions: [design],
       managedProjection: {
         renderer: 'investigation-exemption-no-ledger.v1',
-        rendererDigest:
-          INVESTIGATION_FIRST_PLANNING_POLICIES.rendererPolicyDigest,
+        rendererDigest: rendererPolicyDigest,
         sourceNodes: [
           {
             nodeId: applicabilityNode.nodeId,
@@ -619,14 +652,25 @@ function designComponentProjection(
     ],
     managedProjection: {
       renderer: 'investigation-ledger-renderer.v1',
-      rendererDigest:
-        INVESTIGATION_FIRST_PLANNING_POLICIES.rendererPolicyDigest,
+      rendererDigest: rendererPolicyDigest,
       sourceNodes: whyNodes.map(({ nodeId, resultDigest }) => ({
         nodeId,
         resultDigest,
       })),
     },
   };
+}
+
+function planningPoliciesFor(
+  applicability: InvestigationApplicability,
+): PlanningPolicyDigests {
+  if (applicability.kind === 'sealed-investigation') {
+    return INVESTIGATION_FIRST_PLANNING_POLICIES;
+  }
+  return Object.freeze({
+    ...INVESTIGATION_FIRST_PLANNING_POLICIES,
+    rendererPolicyDigest: policyDigest('investigation-exemption-no-ledger.v1'),
+  });
 }
 
 function requirementClauses(content: string): Array<{
@@ -769,7 +813,7 @@ function requireCurrentPlanReviewRoleResult(
   return replayed;
 }
 
-function resolveRepositoryEvidence(
+export function resolvePlanReviewRepositoryEvidence(
   repositoryRoot: string,
   tree: string,
   reviewNode: EvidenceNode,

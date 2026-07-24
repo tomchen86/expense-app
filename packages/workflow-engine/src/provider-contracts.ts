@@ -146,6 +146,37 @@ export type ProviderProcessResult = {
   providerId: ProviderId;
   output: unknown;
   outputDigest: string;
+  runtimeObservation: ProviderRuntimeObservation | null;
+};
+
+/**
+ * The durable, honestly limited observation produced only by the fixed
+ * lifecycle-owned provider runner. Fake-process evaluation retains `null` so a
+ * deterministic test seam can never be mistaken for an observed real launch.
+ */
+export type ProviderRuntimeObservation = {
+  assurance: 'unchanged-governed-projection';
+  projection: {
+    unchanged: true;
+    changedCategories: [];
+    beforeDigest: string;
+    afterDigest: string;
+  };
+  sameUserProcessConfined: false;
+  residuals: string[];
+  executable: {
+    candidatePath: string;
+    realPath: string;
+    device: string;
+    inode: string;
+    mode: number;
+    uid: number;
+    gid: number;
+    size: number;
+    mtimeNs: string;
+    sha256: string;
+  };
+  elapsedMs: number;
 };
 
 const REQUEST_INPUT_KEYS = [
@@ -250,7 +281,7 @@ export function createProviderInvocationRequest(
     !HEX64.test(input.policyDigest) ||
     !isNonEmptyString(input.evaluatorVersion) ||
     !isOutputSchema(input.outputSchema) ||
-    !isFullRoleAssignment(input.roleAssignment) ||
+    !isProviderRoleAssignment(input.roleAssignment) ||
     !isWriteAllowedPaths(input.writeAllowedPaths) ||
     !isBoundedLimits(input.limits)
   ) {
@@ -452,6 +483,7 @@ export function evaluateProviderProcess(
     providerId: request.providerId,
     output,
     outputDigest,
+    runtimeObservation: null,
   });
 }
 
@@ -509,7 +541,9 @@ function isOutputSchema(value: unknown): value is ProviderOutputSchema {
   );
 }
 
-function isFullRoleAssignment(value: unknown): value is ProviderRoleAssignment {
+export function isProviderRoleAssignment(
+  value: unknown,
+): value is ProviderRoleAssignment {
   // An ordinary role assignment used by an invocation request is valid only
   // when both independence fields are provider-independent; a forged assignment
   // that weakens either field is rejected.

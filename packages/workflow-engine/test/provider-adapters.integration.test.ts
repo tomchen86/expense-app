@@ -1582,8 +1582,10 @@ function createRunnerFixture(
 ) {
   const repository = createFixtureRepository();
   const policyContent = writeAdapterPolicy(repository, true, maxConcurrent);
-  git(repository, ['add', 'workflow/ai-adapter-policy.json']);
-  git(repository, ['commit', '-m', 'Add adapter policy']);
+  if (git(repository, ['status', '--porcelain']).trim() !== '') {
+    git(repository, ['add', 'workflow/ai-adapter-policy.json']);
+    git(repository, ['commit', '-m', 'Add adapter policy']);
+  }
   const invocationId = 'invocation-adapter-test';
   const manifest = { kind: 'test-manifest', invocationId };
   const manifestDigest = sha256(canonicalJson(manifest));

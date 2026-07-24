@@ -411,6 +411,23 @@ function isAdmittedRoleResultShape(
 ): value is AdmittedRoleResult {
   return (
     isPlainRecord(value) &&
+    hasExactKeys(value, [
+      'schemaVersion',
+      'form',
+      'role',
+      'targetDigest',
+      'assignment',
+      'author',
+      'participant',
+      'orchestration',
+      'requiredIndependence',
+      'achievedIndependence',
+      'content',
+      'providerInvocation',
+      'grantUse',
+      'directHumanReviewAttestation',
+      'resultDigest',
+    ]) &&
     value.schemaVersion === 1 &&
     value.role === 'plan-reviewer' &&
     typeof value.targetDigest === 'string' &&
@@ -424,7 +441,18 @@ function isAdmittedRoleResultShape(
       'granted-caller-supplied',
       'direct-human-attestation',
     ].includes(value.form) &&
-    typeof value.orchestration === 'string' &&
+    [
+      'engine-spawned-provider',
+      'caller-supplied',
+      'direct-human-review',
+    ].includes(String(value.orchestration)) &&
+    value.requiredIndependence === 'provider-independent' &&
+    [
+      'provider-independent',
+      'principal-independent',
+      'session-independent',
+      'none',
+    ].includes(String(value.achievedIndependence)) &&
     isPlainRecord(value.assignment) &&
     isPlainRecord(value.content) &&
     typeof value.content.nodeId === 'string' &&

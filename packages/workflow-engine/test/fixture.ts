@@ -31,11 +31,18 @@ export const sourceRepositoryRoot = path.resolve(
 
 let openSpecAssetTemplateRoot: string | undefined;
 
-export function createFixtureRepository(): string {
+export function createFixtureRepository(
+  options: { objectFormat?: 'sha1' | 'sha256' } = {},
+): string {
   const repository = fs.mkdtempSync(
     path.join(os.tmpdir(), 'workflow-session-repo-'),
   );
-  git(repository, ['init', '-b', 'main']);
+  git(repository, [
+    'init',
+    '-b',
+    'main',
+    `--object-format=${options.objectFormat ?? 'sha1'}`,
+  ]);
   git(repository, ['config', 'user.email', 'workflow@example.test']);
   git(repository, ['config', 'user.name', 'Workflow Test']);
 
@@ -64,6 +71,10 @@ export function createFixtureRepository(): string {
       },
     },
   });
+  fs.copyFileSync(
+    path.join(sourceRepositoryRoot, 'workflow/ai-adapter-policy.json'),
+    path.join(repository, 'workflow/ai-adapter-policy.json'),
+  );
   writeJson(path.join(repository, 'workflow/document-policy.json'), {
     schemaVersion: 1,
     enforcementMode: 'enforced',

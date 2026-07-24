@@ -65,6 +65,10 @@ import {
   resumeProposeFromFile,
   startProposeFromFile,
 } from './propose-orchestrator.ts';
+import {
+  dispatchProviderWorker,
+  runProviderWorker,
+} from './provider-worker.ts';
 import { runRegisteredCheck } from './registered-check.ts';
 import { loadStableValidatedChangeContract } from './validated-contract-context.ts';
 
@@ -126,36 +130,73 @@ function dispatch(args: string[], cwd: string): CommandResult {
         result: commitPlanningTransition(cwd, rest[0]),
       };
     case 'propose': {
+      const providerDispatcher =
+        process.env.WORKFLOW_TEST_DISABLE_PROVIDER_DISPATCH === '1'
+          ? undefined
+          : dispatchProviderWorker;
       const changeId = rest[0];
-      if (
-        changeId &&
-        rest.length === 4 &&
-        rest[1] === '--resume' &&
-        rest[2] === '--input'
-      ) {
+      if (changeId && rest[1] === '--resume') {
+        const options = parseProposeOptions(rest.slice(2), [
+          '--input',
+          '--grant',
+        ]);
+        const input = options.get('--input');
+        if (!input) {
+          throw proposeUsage();
+        }
         return {
           command,
           ok: true,
-          result: resumeProposeFromFile(cwd, changeId, rest[3]!),
+          result: resumeProposeFromFile(cwd, changeId, input, {
+            ...(providerDispatcher ? { providerDispatcher } : {}),
+            ...(options.get('--grant') === undefined
+              ? {}
+              : {
+                  collaborationGrant: {
+                    grantId: options.get('--grant')!,
+                  },
+                }),
+          }),
         };
       }
-      if (
-        changeId &&
-        (rest.length === 3 || rest.length === 5) &&
-        rest[1] === '--intent' &&
-        (rest.length === 3 || rest[3] === '--actor')
-      ) {
+      if (changeId) {
+        const options = parseProposeOptions(rest.slice(1), [
+          '--intent',
+          '--actor',
+          '--grant',
+        ]);
+        const intent = options.get('--intent');
+        if (!intent) {
+          throw proposeUsage();
+        }
         return {
           command,
           ok: true,
-          result: startProposeFromFile(cwd, changeId, rest[2]!, {
-            ...(rest[4] === undefined ? {} : { explicitActor: rest[4] }),
+          result: startProposeFromFile(cwd, changeId, intent, {
+            ...(options.get('--actor') === undefined
+              ? {}
+              : { explicitActor: options.get('--actor') }),
             environment: process.env,
+            ...(providerDispatcher ? { providerDispatcher } : {}),
+            ...(options.get('--grant') === undefined
+              ? {}
+              : {
+                  collaborationGrant: {
+                    grantId: options.get('--grant')!,
+                  },
+                }),
           }),
         };
       }
       throw proposeUsage();
     }
+    case 'provider-worker':
+      requireArgumentCount(command, rest, 1, 1);
+      return {
+        command,
+        ok: true,
+        result: runProviderWorker(cwd, rest[0]!),
+      };
     case 'archive':
       requireArgumentCount(command, rest, 1, 1);
       return {
@@ -591,6 +632,26 @@ function optionValue(args: string[], name: string): string | undefined {
   return index === -1 ? undefined : args[index + 1];
 }
 
+function parseProposeOptions(
+  args: string[],
+  allowedOptions: string[],
+): Map<string, string> {
+  if (args.length === 0 || args.length % 2 !== 0) {
+    throw proposeUsage();
+  }
+  const allowed = new Set(allowedOptions);
+  const parsed = new Map<string, string>();
+  for (let index = 0; index < args.length; index += 2) {
+    const option = args[index];
+    const value = args[index + 1];
+    if (!option || !value || !allowed.has(option) || parsed.has(option)) {
+      throw proposeUsage();
+    }
+    parsed.set(option, value);
+  }
+  return parsed;
+}
+
 function parseMaintainerGrantArguments(args: string[]): MaintainerGrantRequest {
   if (args[0] !== 'grant') {
     throw maintainerGrantUsage();
@@ -724,7 +785,7 @@ function maintainerUsage(): WorkflowError {
 
 function proposeUsage(): WorkflowError {
   return usage(
-    'Usage: pnpm workflow propose <change-id> --intent <intent.json> [--actor <id>] [--json]\n       pnpm workflow propose <change-id> --resume --input <envelope.json> [--json]',
+    'Usage: pnpm workflow propose <change-id> --intent <intent.json> [--actor <id>] [--grant <grant-id>] [--json]\n       pnpm workflow propose <change-id> --resume --input <envelope.json> [--grant <grant-id>] [--json]',
   );
 }
 
@@ -748,8 +809,8 @@ function usageText(): string {
     'Usage:',
     '  pnpm workflow doctor [--json]',
     '  pnpm workflow validate-change <change-id> [--json]',
-    '  pnpm workflow propose <change-id> --intent <intent.json> [--actor <id>] [--json]',
-    '  pnpm workflow propose <change-id> --resume --input <envelope.json> [--json]',
+    '  pnpm workflow propose <change-id> --intent <intent.json> [--actor <id>] [--grant <grant-id>] [--json]',
+    '  pnpm workflow propose <change-id> --resume --input <envelope.json> [--grant <grant-id>] [--json]',
     '  pnpm workflow plan-commit <change-id> [--json]',
     '  pnpm workflow archive <change-id> [--json]',
     '  pnpm workflow openspec-assets <generate|check|install-prompts --codex-home <path>> [--json]',

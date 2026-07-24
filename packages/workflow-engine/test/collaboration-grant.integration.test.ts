@@ -6,6 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
+import { canonicalJson } from '../src/canonical-json.ts';
 import {
   COLLABORATION_GRANT_AUTHORIZED_EFFECT,
   COLLABORATION_GRANT_POLICY_DIGEST,
@@ -38,8 +39,31 @@ import {
   validateCollaborationGrantUseSet,
   validateCollaborationGrantUseProjection,
 } from '../src/collaboration-grant-store.ts';
+import { createInvestigationCheckpointEnvelope } from '../src/investigation-session.ts';
 import type { MaintainerPolicy } from '../src/maintainer-policy.ts';
 import type { MaintainerSignerProvider } from '../src/maintainer-signer.ts';
+import { investigationRuntimePaths } from '../src/paths.ts';
+import { PLAN_REVIEW_COVERAGE } from '../src/plan-review.ts';
+import {
+  createPlanningContributionEnvelope,
+  createPlanReviewProgressEnvelope,
+  resumePropose,
+  startPropose,
+} from '../src/propose-orchestrator.ts';
+import type {
+  ProviderInvocationRequest,
+  ProviderProcessOutcome,
+} from '../src/provider-contracts.ts';
+import {
+  PROVIDER_RUNNER_RESIDUALS,
+  type ProviderRunnerReport,
+} from '../src/provider-runner.ts';
+import { runProviderWorker } from '../src/provider-worker.ts';
+import {
+  claimProviderInvocation,
+  completeProviderInvocation,
+  readProviderInvocationRequest,
+} from '../src/provider-invocation-store.ts';
 import {
   admitRoleResult,
   authorizeGrantedOrdinaryRole,
@@ -90,6 +114,369 @@ const POLICY: MaintainerPolicy = {
     },
   ],
 };
+
+test('propose pauses for an exact grant and admits a same-provider fresh-session survey', () => {
+  const repository = collaborationFixture();
+  const changeId = 'granted-propose';
+  const signer = fixtureSigner();
+  try {
+    const adapterPolicyPath = path.join(
+      repository,
+      'workflow/ai-adapter-policy.json',
+    );
+    const adapterPolicy = JSON.parse(
+      fs.readFileSync(adapterPolicyPath, 'utf8'),
+    ) as { providers: { claude: { enabled: boolean } } };
+    adapterPolicy.providers.claude.enabled = false;
+    fs.writeFileSync(
+      adapterPolicyPath,
+      `${JSON.stringify(adapterPolicy, null, 2)}\n`,
+    );
+    fs.writeFileSync(
+      path.join(repository, 'src/granted-survey-target.ts'),
+      'export const GrantedSurveyNeedle = true;\n',
+    );
+    git(repository, [
+      'add',
+      'workflow/ai-adapter-policy.json',
+      'src/granted-survey-target.ts',
+    ]);
+    git(repository, ['commit', '-m', 'Prepare granted propose fixture']);
+    git(repository, ['checkout', '-b', `work/${changeId}`]);
+
+    const intent = {
+      schemaVersion: 1 as const,
+      summary: 'Extend the granted survey target.',
+      explicitPaths: ['src/granted-survey-target.ts'],
+      explicitSymbols: ['GrantedSurveyNeedle'],
+      explicitConfigKeys: [],
+      renamePairs: [],
+    };
+    const paused = startPropose(repository, changeId, intent, {
+      explicitActor: 'codex',
+      environment: {},
+    });
+    assert.equal(paused.state, 'human-action-required');
+    assert.equal(paused.nextAction, 'human-action');
+    assert.equal(paused.investigation, null);
+    assert.equal(paused.inputSchema?.kind, 'collaboration-grant-selection');
+    const request = paused.inputSchema
+      ?.grantRequest as CollaborationGrantRequest;
+    assert.deepEqual(request, {
+      changeId,
+      taskId: null,
+      baselineCommit: git(repository, ['rev-parse', 'HEAD']).trim(),
+      baselineTree: git(repository, ['rev-parse', 'HEAD^{tree}']).trim(),
+      targetDigest: sha256(canonicalJson(intent)),
+      lifecyclePhase: 'blind-survey',
+      rolePair: {
+        authorRole: 'investigation-author',
+        conflictingRole: 'blind-surveyor',
+      },
+      availableActor: {
+        kind: 'provider',
+        providerId: 'codex',
+        assurance: 'self-declared',
+      },
+      degradedForm: 'same-provider-fresh-session',
+      reason:
+        'No provider-independent blind surveyor is callable for this exact investigation.',
+      ttlMinutes: 30,
+      maxUses: 1,
+    });
+
+    const issued = issueCollaborationGrant(repository, request, {
+      now: NOW,
+      grantId: 'abababab-abab-4bab-8bab-abababababab',
+      signer,
+    });
+    const started = startPropose(repository, changeId, intent, {
+      explicitActor: 'codex',
+      environment: {},
+      collaborationGrant: {
+        grantId: issued.grantId,
+        now: new Date(NOW.getTime() + 60_000),
+        verifier: signer,
+      },
+    });
+    assert.equal(started.state, 'awaiting-main-terms');
+    assert.equal(started.investigation?.provider.providerId, 'codex');
+    const runtime = investigationRuntimePaths(
+      fs.realpathSync(path.join(repository, '.git')),
+      'workflow-engine',
+    );
+    const providerRequest = readProviderInvocationRequest(
+      runtime,
+      started.investigation!.providerInvocationId,
+    );
+    assert.equal(providerRequest.roleAssignment.providerId, 'codex');
+    assert.equal(
+      providerRequest.roleAssignment.achievedIndependence,
+      'session-independent',
+    );
+    assert.equal('grantId' in providerRequest.roleAssignment, true);
+    assert.notEqual(providerRequest.roleAssignment.sessionId, 'author-codex');
+
+    completeFixtureProviderInvocation(providerRequest, repository);
+    const afterMain = resumePropose(
+      repository,
+      changeId,
+      createInvestigationCheckpointEnvelope(started.investigation!, {
+        reference: 'main-granted-survey',
+        terms: [
+          {
+            kind: 'symbol',
+            value: 'GrantedSurveyNeedle',
+            rationale: 'The target symbol is part of the requested change.',
+            expectedRelationship: 'Existing consumers may depend on it.',
+          },
+        ],
+      }),
+      {
+        collaborationGrantValidation: {
+          now: new Date(NOW.getTime() + 120_000),
+          verifier: signer,
+        },
+      },
+    );
+    assert.equal(afterMain.state, 'awaiting-group-dispositions');
+    const inspected = inspectCollaborationGrants(
+      fs.realpathSync(path.join(repository, '.git')),
+      issued.grantId,
+    );
+    assert.equal(inspected[0]?.state, 'consumed');
+    assert.equal(
+      inspected[0]?.use?.assignment.achievedIndependence,
+      'session-independent',
+    );
+    assert.equal(
+      inspected[0]?.use?.assignment.orchestration,
+      'engine-spawned-provider',
+    );
+  } finally {
+    fs.rmSync(repository, { recursive: true, force: true });
+  }
+});
+
+test('exact PlanReview preserves materialized planning while waiting for a same-provider grant', () => {
+  const repository = collaborationFixture();
+  const changeId = 'granted-plan-review';
+  const signer = fixtureSigner();
+  try {
+    const adapterPolicyPath = path.join(
+      repository,
+      'workflow/ai-adapter-policy.json',
+    );
+    const adapterPolicy = JSON.parse(
+      fs.readFileSync(adapterPolicyPath, 'utf8'),
+    ) as { providers: { claude: { enabled: boolean } } };
+    adapterPolicy.providers.claude.enabled = false;
+    fs.writeFileSync(
+      adapterPolicyPath,
+      `${JSON.stringify(adapterPolicy, null, 2)}\n`,
+    );
+    fs.mkdirSync(path.join(repository, 'docs'), { recursive: true });
+    fs.writeFileSync(
+      path.join(repository, 'docs/granted-review.md'),
+      '# Granted review\n',
+    );
+    git(repository, [
+      'add',
+      'workflow/ai-adapter-policy.json',
+      'docs/granted-review.md',
+    ]);
+    git(repository, ['commit', '-m', 'Prepare granted review fixture']);
+    git(repository, ['checkout', '-b', `work/${changeId}`]);
+
+    const started = startPropose(
+      repository,
+      changeId,
+      {
+        schemaVersion: 1,
+        kind: 'investigation-exemption-request',
+        intent: {
+          schemaVersion: 1,
+          summary: 'Clarify granted review documentation.',
+          explicitPaths: ['docs/granted-review.md'],
+          explicitSymbols: [],
+          explicitConfigKeys: [],
+          renamePairs: [],
+        },
+        exemption: {
+          category: 'documentation-only',
+          declaredPaths: ['docs/granted-review.md'],
+          declaredChangeClasses: ['documentation-only'],
+          rationale: 'The change is limited to tracked documentation wording.',
+          semanticAuthor: {
+            id: 'codex',
+            provenance: 'runtime-hint:codex',
+          },
+          nonTrivialBehaviorReliance: 'none-declared',
+          researchBudgetMinutes: null,
+        },
+      },
+      { explicitActor: 'codex', environment: {} },
+    );
+    const planning = createPlanningContributionEnvelope(started, {
+      proposal: '# Proposal\n\nClarify granted review documentation.\n',
+      design: '# Design\n\nUpdate documentation wording only.\n',
+      specs: [
+        {
+          path: 'specs/demo/spec.md',
+          content: [
+            '# Delta',
+            '',
+            '## ADDED Requirements',
+            '',
+            '### Requirement: Granted review wording',
+            '',
+            'The guide SHALL remain clear.',
+            '',
+            '#### Scenario: Reader opens the guide',
+            '',
+            '- **WHEN** the guide is read',
+            '- **THEN** the wording is clear',
+            '',
+          ].join('\n'),
+        },
+      ],
+      tasks: '# Tasks\n\n- [ ] 1.1 Clarify granted review documentation\n',
+      guard: {
+        schemaVersion: 1,
+        changeId,
+        tasks: {
+          '1.1': {
+            allowedPaths: ['docs/granted-review.md'],
+            requiredChecks: ['fixture'],
+          },
+        },
+      },
+      executionTasks: {
+        '1.1': {
+          strategy: 'direct-reviewed',
+          enforcement: 'available',
+          allowedPaths: ['docs/granted-review.md'],
+          requiredChecks: ['fixture'],
+          diffReview: 'policy-required',
+          exemptionKind: 'documentation-only',
+          exemptionReason: 'The task edits documentation only.',
+          legacyBootstrap: null,
+        },
+      },
+    });
+    const paused = resumePropose(repository, changeId, planning);
+    assert.equal(paused.state, 'human-action-required');
+    assert.equal(paused.inputSchema?.kind, 'collaboration-grant-selection');
+    assert.equal(paused.inputSchema?.lifecyclePhase, 'plan-review');
+    const request = paused.inputSchema
+      ?.grantRequest as CollaborationGrantRequest;
+    assert.equal(request.targetDigest, paused.inputSchema?.subjectDigest);
+    assert.equal(request.availableActor.kind, 'provider');
+    assert.equal(
+      fs.existsSync(
+        path.join(repository, 'openspec/changes', changeId, 'proposal.md'),
+      ),
+      true,
+    );
+
+    const issued = issueCollaborationGrant(repository, request, {
+      now: NOW,
+      grantId: 'cdcdcdcd-cdcd-4dcd-8dcd-cdcdcdcdcdcd',
+      signer,
+    });
+    const waiting = resumePropose(repository, changeId, planning, {
+      collaborationGrant: {
+        grantId: issued.grantId,
+        now: new Date(NOW.getTime() + 60_000),
+        verifier: signer,
+      },
+    });
+    assert.equal(waiting.state, 'waiting-for-plan-review');
+    assert.equal(waiting.planReview?.providerId, 'codex');
+    const paths = investigationRuntimePaths(
+      fs.realpathSync(path.join(repository, '.git')),
+      'workflow-engine',
+    );
+    const providerRequest = readProviderInvocationRequest(
+      paths,
+      waiting.planReview!.invocationId,
+    );
+    assert.equal(providerRequest.roleAssignment.providerId, 'codex');
+    assert.equal(
+      providerRequest.roleAssignment.achievedIndependence,
+      'session-independent',
+    );
+    assert.equal('grantId' in providerRequest.roleAssignment, true);
+    assert.equal(
+      inspectCollaborationGrants(
+        fs.realpathSync(path.join(repository, '.git')),
+        issued.grantId,
+      )[0]?.state,
+      'reserved',
+    );
+
+    runProviderWorker(repository, waiting.planReview!.invocationId, {
+      runner(input): ProviderRunnerReport {
+        return fakeProviderRunnerReport(input.request, {
+          schemaVersion: 2,
+          verdict: 'advisory-approve',
+          coverage: [...PLAN_REVIEW_COVERAGE],
+          scopeAssessment: { kind: 'challenges' },
+          findings: [
+            {
+              kind: 'challenge',
+              severity: 'low',
+              category: 'missing-scope',
+              currentChangeImpact: 'required',
+              summary: 'Confirm the exact documentation scope.',
+              evidence: [
+                {
+                  kind: 'repository-location',
+                  path: 'docs/granted-review.md',
+                  line: 1,
+                  observation:
+                    'The exact planning target is limited to the declared guide.',
+                },
+              ],
+            },
+          ],
+          proposedTerms: [],
+          suggestions: [],
+          residualRisk: 'Documentation meaning remains advisory.',
+          uncertainty: 'No additional scope challenge was identified.',
+        });
+      },
+    });
+    const completed = resumePropose(
+      repository,
+      changeId,
+      createPlanReviewProgressEnvelope(
+        resumePropose(repository, changeId, planning, {
+          collaborationGrantValidation: {
+            now: new Date(NOW.getTime() + 120_000),
+            verifier: signer,
+          },
+        }),
+      ),
+      {
+        collaborationGrantValidation: {
+          now: new Date(NOW.getTime() + 120_000),
+          verifier: signer,
+        },
+      },
+    );
+    assert.equal(completed.state, 'awaiting-challenge-dispositions');
+    assert.equal(
+      inspectCollaborationGrants(
+        fs.realpathSync(path.join(repository, '.git')),
+        issued.grantId,
+      )[0]?.state,
+      'consumed',
+    );
+  } finally {
+    fs.rmSync(repository, { recursive: true, force: true });
+  }
+});
 
 test('collaboration issuance is canonical, domain-separated, and has no authority side effects', () => {
   const repository = collaborationFixture();
@@ -1266,6 +1653,101 @@ function fixtureSignature(payload: string, namespace: string): string {
     '-----END SSH SIGNATURE-----',
     '',
   ].join('\n');
+}
+
+function completeFixtureProviderInvocation(
+  request: ProviderInvocationRequest,
+  repository: string,
+): void {
+  const paths = investigationRuntimePaths(
+    fs.realpathSync(path.join(repository, '.git')),
+    'workflow-engine',
+  );
+  const claim = claimProviderInvocation(paths, request.invocationId, {
+    workerId: 'granted-propose-worker',
+    leaseDurationMs: 60_000,
+  });
+  const output = {
+    reference: request.invocationId,
+    terms: [{ kind: 'symbol', value: 'GrantedSurveyNeedle' }],
+  };
+  const wireResult = {
+    schemaVersion: 1,
+    requestDigest: request.requestDigest,
+    invocationId: request.invocationId,
+    nonce: request.nonce,
+    purpose: request.purpose,
+    providerId: request.providerId,
+    roleAssignmentDigest: request.roleAssignmentDigest,
+    capabilityProfile: request.capabilityProfile,
+    repositoryId: request.repositoryId,
+    baseCommit: request.baseCommit,
+    baseTree: request.baseTree,
+    targetDigest: request.targetDigest,
+    inputManifestDigest: request.inputManifestDigest,
+    authorizationNodeId: request.authorizationNodeId,
+    outputSchema: request.outputSchema,
+    evaluatorVersion: request.evaluatorVersion,
+    policyDigest: request.policyDigest,
+    limits: request.limits,
+    observedTouchedPaths: [],
+    output,
+  };
+  const outcome: ProviderProcessOutcome = {
+    exitCode: 0,
+    signal: null,
+    timedOut: false,
+    spawnErrorCode: null,
+    elapsedMs: 1,
+    stdout: JSON.stringify(wireResult),
+    stderr: '',
+  };
+  completeProviderInvocation(paths, request.invocationId, {
+    expectedRevision: claim.record.revision,
+    leaseGeneration: claim.record.leaseGeneration,
+    leaseToken: claim.leaseToken,
+    outcome,
+  });
+}
+
+function fakeProviderRunnerReport(
+  request: ProviderInvocationRequest,
+  semanticOutput: unknown,
+): ProviderRunnerReport {
+  return {
+    invocationId: request.invocationId,
+    providerId: request.providerId,
+    purpose: request.purpose,
+    requestDigest: request.requestDigest,
+    semanticOutput,
+    semanticOutputDigest: sha256(canonicalJson(semanticOutput)),
+    assurance: 'unchanged-governed-projection',
+    projection: {
+      unchanged: true,
+      changedCategories: [],
+      beforeDigest: 'a'.repeat(64),
+      afterDigest: 'a'.repeat(64),
+    },
+    sameUserProcessConfined: false,
+    residuals: [...PROVIDER_RUNNER_RESIDUALS],
+    executable: {
+      candidatePath: '/opt/homebrew/bin/codex',
+      realPath: '/opt/homebrew/bin/codex',
+      device: '1',
+      inode: '2',
+      mode: 0o100755,
+      uid: 501,
+      gid: 20,
+      size: 1024,
+      mtimeNs: '123456789',
+      sha256: 'b'.repeat(64),
+    },
+    elapsedMs: 5,
+  };
+}
+
+function sha256(value: string): string {
+  return crypto.createHash('sha256').update(value).digest('hex');
 }
 
 function participant(

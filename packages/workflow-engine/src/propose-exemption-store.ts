@@ -1,0 +1,498 @@
+import crypto from 'node:crypto';
+import path from 'node:path';
+
+import type { ActorSignal } from './actor-identity.ts';
+import { canonicalJson } from './canonical-json.ts';
+import {
+  readContentRecord,
+  writeContentRecord,
+  type ContentRecord,
+} from './content-record-store.ts';
+import {
+  compareAndSwapEvidenceRef,
+  readEvidenceNode,
+  readEvidenceRefs,
+  writeEvidenceNode,
+} from './evidence-object-store.ts';
+import {
+  assertStoredEvidenceNode,
+  createEvidenceNode,
+  type EvidenceNode,
+} from './evidence-node.ts';
+import { ExitCode, workflowError } from './errors.ts';
+import {
+  assertInvestigationApplicability,
+  type InvestigationExemption,
+} from './investigation-applicability.ts';
+import type { NormalizedChangeIntent } from './provider-invocation-store.ts';
+import { assertChangeId, type InvestigationRuntimePaths } from './paths.ts';
+
+const DIGEST = /^[0-9a-f]{64}$/;
+const GIT_OBJECT_ID = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
+const SESSION_PREFIX = 'investigation-exemption-';
+const CURRENT_REF = 'propose/exemption-session';
+const STORE_POLICY_DIGEST = sha256(
+  canonicalJson({ schema: 'workflow-propose-exemption-session-store.v1' }),
+);
+
+export type ProposeExemptionActor = {
+  providerId: 'codex' | 'claude';
+  assurance: 'self-declared' | 'runtime-hint' | 'adapter-assigned';
+};
+
+export type ProposeExemptionSession = {
+  schemaVersion: 1;
+  kind: 'propose-exemption-session';
+  investigationId: string;
+  revision: 0;
+  state: 'investigation-exempt';
+  changeId: string;
+  repositoryRoot: string;
+  gitCommonDirectory: string;
+  branch: string | null;
+  baseline: { head: string; tree: string };
+  intentDigest: string;
+  intent: NormalizedChangeIntent;
+  applicability: InvestigationExemption;
+  applicabilityNode: EvidenceNode;
+  actor: ProposeExemptionActor;
+  signals: ActorSignal[];
+  createdAt: string;
+};
+
+type StoredProposeExemptionSession = ContentRecord & {
+  kind: 'propose-exemption-session';
+  changeId: string;
+  repositoryRoot: string;
+  gitCommonDirectory: string;
+  branch: string | null;
+  baseline: { head: string; tree: string };
+  intentDigest: string;
+  intent: NormalizedChangeIntent;
+  applicability: InvestigationExemption;
+  applicabilityNodeId: string;
+  actor: ProposeExemptionActor;
+  signals: ActorSignal[];
+};
+
+export type CreateProposeExemptionSessionInput = {
+  changeId: string;
+  repositoryRoot: string;
+  gitCommonDirectory: string;
+  branch: string | null;
+  baseline: { head: string; tree: string };
+  intentDigest: string;
+  intent: NormalizedChangeIntent;
+  applicability: InvestigationExemption;
+  applicabilityNode: EvidenceNode;
+  actor: ProposeExemptionActor;
+  signals: ActorSignal[];
+  createdAt?: string;
+};
+
+export function createProposeExemptionSession(
+  paths: InvestigationRuntimePaths,
+  input: CreateProposeExemptionSessionInput,
+): ProposeExemptionSession {
+  const changeId = assertChangeId(input.changeId);
+  const requestDigest = sessionRequestDigest(input);
+  const current = readCurrentProposeExemptionSession(paths, changeId);
+  if (current !== null) {
+    if (sessionRequestDigest(current) !== requestDigest) {
+      throw sessionConflict();
+    }
+    return current;
+  }
+
+  const applicability = assertInvestigationApplicability(input.applicability);
+  if (applicability.kind !== 'investigation-exemption') {
+    throw sessionInvalid();
+  }
+  const applicabilityNode = assertStoredEvidenceNode(
+    input.applicabilityNode,
+    sessionInvalid,
+  );
+  assertApplicabilityNode(applicability, applicabilityNode);
+  writeEvidenceNode(paths, applicabilityNode);
+
+  const record: StoredProposeExemptionSession = {
+    schemaVersion: 1,
+    kind: 'propose-exemption-session',
+    createdAt: canonicalIsoDate(input.createdAt ?? new Date().toISOString()),
+    changeId,
+    repositoryRoot: nonEmptyString(input.repositoryRoot),
+    gitCommonDirectory: nonEmptyString(input.gitCommonDirectory),
+    branch: nullableNonEmptyString(input.branch),
+    baseline: assertBaseline(input.baseline),
+    intentDigest: assertDigest(input.intentDigest),
+    intent: structuredClone(input.intent),
+    applicability,
+    applicabilityNodeId: applicabilityNode.nodeId,
+    actor: assertActor(input.actor),
+    signals: assertSignals(input.signals, input.actor.providerId),
+  };
+  if (record.intentDigest !== sha256(canonicalJson(record.intent))) {
+    throw sessionInvalid();
+  }
+  const recordsDirectory = exemptionRecordsDirectory(paths);
+  const recordId = writeContentRecord(recordsDirectory, record);
+  const investigationId = `${SESSION_PREFIX}${recordId}`;
+  const reservation = createEvidenceNode({
+    type: 'propose-exemption-session-reservation',
+    nodeSchema: 'workflow.propose-exemption-session-reservation.v1',
+    evaluator: 'workflow-propose.v1',
+    policyDigest: STORE_POLICY_DIGEST,
+    exactInputDigests: {
+      record: recordId,
+      request: requestDigest,
+    },
+    semanticParentResultDigests: {
+      applicability: applicabilityNode.resultDigest,
+    },
+    provenanceParentNodeIds: {
+      applicability: applicabilityNode.nodeId,
+    },
+    outputSchema: 'workflow.propose-exemption-session-reservation-output.v1',
+    output: {
+      changeId,
+      investigationId,
+      recordId,
+      requestDigest,
+    },
+    runtimeMetadata: {},
+  });
+  writeEvidenceNode(paths, reservation);
+  try {
+    compareAndSwapEvidenceRef(paths, {
+      changeId,
+      refName: CURRENT_REF,
+      expectedNodeId: null,
+      nextNodeId: reservation.nodeId,
+    });
+  } catch (error) {
+    const converged = readCurrentProposeExemptionSession(paths, changeId);
+    if (
+      converged !== null &&
+      sessionRequestDigest(converged) === requestDigest
+    ) {
+      return converged;
+    }
+    throw error;
+  }
+  return readProposeExemptionSession(paths, investigationId);
+}
+
+export function readCurrentProposeExemptionSession(
+  paths: InvestigationRuntimePaths,
+  requestedChangeId: string,
+): ProposeExemptionSession | null {
+  const changeId = assertChangeId(requestedChangeId);
+  const reservationNodeId = readEvidenceRefs(paths, changeId)[CURRENT_REF];
+  if (!reservationNodeId) {
+    return null;
+  }
+  const reservation = readEvidenceNode(paths, reservationNodeId);
+  const output = reservation.output;
+  if (
+    reservation.type !== 'propose-exemption-session-reservation' ||
+    reservation.nodeSchema !==
+      'workflow.propose-exemption-session-reservation.v1' ||
+    reservation.evaluator !== 'workflow-propose.v1' ||
+    reservation.policyDigest !== STORE_POLICY_DIGEST ||
+    reservation.outputSchema !==
+      'workflow.propose-exemption-session-reservation-output.v1' ||
+    !isRecord(output) ||
+    !hasExactKeys(output, [
+      'changeId',
+      'investigationId',
+      'recordId',
+      'requestDigest',
+    ]) ||
+    output.changeId !== changeId ||
+    typeof output.investigationId !== 'string' ||
+    typeof output.recordId !== 'string' ||
+    !DIGEST.test(output.recordId) ||
+    output.investigationId !== `${SESSION_PREFIX}${output.recordId}` ||
+    reservation.exactInputDigests.record !== output.recordId ||
+    reservation.exactInputDigests.request !== output.requestDigest
+  ) {
+    throw sessionStale();
+  }
+  const session = readProposeExemptionSession(paths, output.investigationId);
+  if (
+    session.changeId !== changeId ||
+    sessionRequestDigest(session) !== output.requestDigest ||
+    reservation.provenanceParentNodeIds.applicability !==
+      session.applicabilityNode.nodeId ||
+    reservation.semanticParentResultDigests.applicability !==
+      session.applicabilityNode.resultDigest
+  ) {
+    throw sessionStale();
+  }
+  return session;
+}
+
+export function readProposeExemptionSession(
+  paths: InvestigationRuntimePaths,
+  requestedInvestigationId: string,
+): ProposeExemptionSession {
+  const recordId = exemptionRecordId(requestedInvestigationId);
+  const record = assertStoredSession(
+    readContentRecord(exemptionRecordsDirectory(paths), recordId),
+  );
+  const applicabilityNode = readEvidenceNode(paths, record.applicabilityNodeId);
+  assertApplicabilityNode(record.applicability, applicabilityNode);
+  return deepFreeze({
+    schemaVersion: 1,
+    kind: 'propose-exemption-session',
+    investigationId: `${SESSION_PREFIX}${recordId}`,
+    revision: 0,
+    state: 'investigation-exempt',
+    changeId: record.changeId,
+    repositoryRoot: record.repositoryRoot,
+    gitCommonDirectory: record.gitCommonDirectory,
+    branch: record.branch,
+    baseline: record.baseline,
+    intentDigest: record.intentDigest,
+    intent: record.intent,
+    applicability: record.applicability,
+    applicabilityNode,
+    actor: record.actor,
+    signals: record.signals,
+    createdAt: record.createdAt,
+  });
+}
+
+export function isProposeExemptionInvestigationId(value: string): boolean {
+  return new RegExp(`^${SESSION_PREFIX}[0-9a-f]{64}$`).test(value);
+}
+
+function assertStoredSession(value: unknown): StoredProposeExemptionSession {
+  if (
+    !isRecord(value) ||
+    !hasExactKeys(value, [
+      'schemaVersion',
+      'kind',
+      'createdAt',
+      'changeId',
+      'repositoryRoot',
+      'gitCommonDirectory',
+      'branch',
+      'baseline',
+      'intentDigest',
+      'intent',
+      'applicability',
+      'applicabilityNodeId',
+      'actor',
+      'signals',
+    ]) ||
+    value.schemaVersion !== 1 ||
+    value.kind !== 'propose-exemption-session'
+  ) {
+    throw sessionInvalid();
+  }
+  const applicability = assertInvestigationApplicability(value.applicability);
+  if (applicability.kind !== 'investigation-exemption') {
+    throw sessionInvalid();
+  }
+  const record: StoredProposeExemptionSession = {
+    schemaVersion: 1,
+    kind: 'propose-exemption-session',
+    createdAt: canonicalIsoDate(value.createdAt),
+    changeId: assertChangeId(String(value.changeId)),
+    repositoryRoot: nonEmptyString(value.repositoryRoot),
+    gitCommonDirectory: nonEmptyString(value.gitCommonDirectory),
+    branch: nullableNonEmptyString(value.branch),
+    baseline: assertBaseline(value.baseline),
+    intentDigest: assertDigest(value.intentDigest),
+    intent: structuredClone(value.intent as NormalizedChangeIntent),
+    applicability,
+    applicabilityNodeId: assertDigest(value.applicabilityNodeId),
+    actor: assertActor(value.actor),
+    signals: assertSignals(value.signals, assertActor(value.actor).providerId),
+  };
+  if (
+    record.intentDigest !== sha256(canonicalJson(record.intent)) ||
+    record.applicability.intentDigest !== record.intentDigest ||
+    canonicalJson(record.applicability.baseline) !==
+      canonicalJson(record.baseline)
+  ) {
+    throw sessionInvalid();
+  }
+  return record;
+}
+
+function assertApplicabilityNode(
+  applicability: InvestigationExemption,
+  node: EvidenceNode,
+): void {
+  if (
+    node.type !== 'investigation-applicability' ||
+    node.nodeSchema !== 'investigation.applicability.v1' ||
+    node.evaluator !== 'investigation-applicability.v1' ||
+    node.policyDigest !== applicability.policyDigest ||
+    node.outputSchema !== 'investigation.applicability-output.v1' ||
+    node.exactInputDigests.applicability !==
+      applicability.applicabilityDigest ||
+    canonicalJson(node.output) !== canonicalJson(applicability)
+  ) {
+    throw sessionInvalid();
+  }
+}
+
+function sessionRequestDigest(
+  value: CreateProposeExemptionSessionInput | ProposeExemptionSession,
+): string {
+  return sha256(
+    canonicalJson({
+      schema: 'workflow-propose-exemption-session-request.v1',
+      changeId: value.changeId,
+      repositoryRoot: value.repositoryRoot,
+      gitCommonDirectory: value.gitCommonDirectory,
+      branch: value.branch,
+      baseline: value.baseline,
+      intentDigest: value.intentDigest,
+      intent: value.intent,
+      applicability: value.applicability,
+      actor: value.actor,
+      signals: value.signals,
+    }),
+  );
+}
+
+function exemptionRecordsDirectory(paths: InvestigationRuntimePaths): string {
+  return path.join(paths.root, 'propose-exemption-sessions');
+}
+
+function exemptionRecordId(investigationId: string): string {
+  if (!isProposeExemptionInvestigationId(investigationId)) {
+    throw sessionInvalid();
+  }
+  return investigationId.slice(SESSION_PREFIX.length);
+}
+
+function assertBaseline(value: unknown): { head: string; tree: string } {
+  if (
+    !isRecord(value) ||
+    !hasExactKeys(value, ['head', 'tree']) ||
+    typeof value.head !== 'string' ||
+    typeof value.tree !== 'string' ||
+    !GIT_OBJECT_ID.test(value.head) ||
+    !GIT_OBJECT_ID.test(value.tree) ||
+    value.head.length !== value.tree.length
+  ) {
+    throw sessionInvalid();
+  }
+  return { head: value.head, tree: value.tree };
+}
+
+function assertActor(value: unknown): ProposeExemptionActor {
+  if (
+    !isRecord(value) ||
+    !hasExactKeys(value, ['providerId', 'assurance']) ||
+    !['codex', 'claude'].includes(String(value.providerId)) ||
+    !['self-declared', 'runtime-hint', 'adapter-assigned'].includes(
+      String(value.assurance),
+    )
+  ) {
+    throw sessionInvalid();
+  }
+  return value as ProposeExemptionActor;
+}
+
+function assertSignals(value: unknown, providerId: string): ActorSignal[] {
+  if (!Array.isArray(value)) {
+    throw sessionInvalid();
+  }
+  return value.map((signal) => {
+    if (
+      !isRecord(signal) ||
+      !hasExactKeys(signal, ['source', 'name', 'providerId', 'assurance']) ||
+      !['explicit', 'runtime-hint'].includes(String(signal.source)) ||
+      typeof signal.name !== 'string' ||
+      signal.name.length === 0 ||
+      signal.providerId !== providerId ||
+      !['self-declared', 'runtime-hint'].includes(String(signal.assurance))
+    ) {
+      throw sessionInvalid();
+    }
+    return signal as ActorSignal;
+  });
+}
+
+function assertDigest(value: unknown): string {
+  if (typeof value !== 'string' || !DIGEST.test(value)) {
+    throw sessionInvalid();
+  }
+  return value;
+}
+
+function nonEmptyString(value: unknown): string {
+  if (typeof value !== 'string' || value.length === 0) {
+    throw sessionInvalid();
+  }
+  return value;
+}
+
+function nullableNonEmptyString(value: unknown): string | null {
+  return value === null ? null : nonEmptyString(value);
+}
+
+function canonicalIsoDate(value: unknown): string {
+  if (
+    typeof value !== 'string' ||
+    Number.isNaN(Date.parse(value)) ||
+    new Date(Date.parse(value)).toISOString() !== value
+  ) {
+    throw sessionInvalid();
+  }
+  return value;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function hasExactKeys(value: Record<string, unknown>, keys: string[]): boolean {
+  return (
+    canonicalJson(Object.keys(value).sort()) === canonicalJson(keys.sort())
+  );
+}
+
+function deepFreeze<Value>(value: Value): Value {
+  if (value !== null && typeof value === 'object') {
+    for (const nested of Object.values(value)) {
+      deepFreeze(nested);
+    }
+    Object.freeze(value);
+  }
+  return value;
+}
+
+function sha256(value: string): string {
+  return crypto.createHash('sha256').update(value).digest('hex');
+}
+
+function sessionInvalid() {
+  return workflowError(
+    'PROPOSE_EXEMPTION_SESSION_INVALID',
+    'Durable structured investigation-exemption state is invalid.',
+    ExitCode.staleState,
+  );
+}
+
+function sessionStale() {
+  return workflowError(
+    'PROPOSE_EXEMPTION_SESSION_STALE',
+    'Durable structured investigation-exemption state is stale.',
+    ExitCode.staleState,
+  );
+}
+
+function sessionConflict() {
+  return workflowError(
+    'CURRENT_INVESTIGATION_EXEMPTION_CONFLICT',
+    'The current structured investigation exemption differs from this request.',
+    ExitCode.conflict,
+  );
+}

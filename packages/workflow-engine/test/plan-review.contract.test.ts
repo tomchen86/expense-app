@@ -29,7 +29,7 @@ import {
   createPlanningGeneration,
   type PlanningGeneration,
 } from '../src/planning-generation.ts';
-import type { RoleAssignment } from '../src/role-scheduler.ts';
+import { admitRoleResult, type RoleAssignment } from '../src/role-scheduler.ts';
 
 const DIGESTS = {
   schema: '1'.repeat(64),
@@ -67,6 +67,80 @@ test('plan review v2 requires finding severity, residual risk, and explicit unce
     PLAN_REVIEW_OUTPUT_VALIDATOR.validate(challengeSubmission()),
     true,
   );
+});
+
+test('plan review rejects structurally incomplete or invented admitted-result assurance', () => {
+  const context = reviewContext();
+  const reviewNode = createPlanReviewNode({
+    subject: context.subject,
+    assignment: context.assignment,
+    providerResultNode: context.providerResult,
+    submission: challengeSubmission(),
+  });
+  const admitted = admitRoleResult({
+    assignment: context.assignment,
+    author: {
+      providerId: 'codex',
+      sessionId: 'author-session',
+      principalId: null,
+      identityAssurance: 'runtime-hint',
+      engineSpawned: false,
+    },
+    participant: {
+      providerId: context.assignment.providerId,
+      sessionId: context.assignment.sessionId,
+      principalId: null,
+      identityAssurance: 'adapter-assigned',
+      engineSpawned: true,
+    },
+    content: {
+      kind: 'plan-review',
+      nodeId: reviewNode.nodeId,
+      resultDigest: reviewNode.resultDigest,
+      outputSchema: PLAN_REVIEW_OUTPUT_SCHEMA,
+      evaluator: reviewNode.evaluator,
+      policyDigest: reviewNode.policyDigest,
+      contentDigest: reviewNode.resultDigest,
+      current: true,
+    },
+    providerInvocation: {
+      invocationId: 'plan-review-invocation',
+      requestDigest: 'c'.repeat(64),
+      outputDigest: 'd'.repeat(64),
+      providerId: context.assignment.providerId,
+      sessionId: context.assignment.sessionId,
+      targetDigest: context.assignment.targetDigest,
+      engineSpawned: true,
+    },
+    grantUse: null,
+    grantValidation: null,
+  });
+
+  for (const mutate of [
+    (value: Record<string, unknown>) => delete value.achievedIndependence,
+    (value: Record<string, unknown>) => {
+      value.orchestration = 'model-claimed';
+      return true;
+    },
+  ]) {
+    const malformed = structuredClone(admitted) as unknown as Record<
+      string,
+      unknown
+    >;
+    mutate(malformed);
+    const input = currentValidationInput(context, reviewNode) as unknown as {
+      independenceAuthorization: unknown;
+    };
+    input.independenceAuthorization = {
+      kind: 'admitted-role-result',
+      roleResult: malformed,
+    };
+    assert.throws(
+      () => validatePlanReview(input as never),
+      (error) =>
+        error instanceof WorkflowError && error.code === 'PLAN_REVIEW_INVALID',
+    );
+  }
 });
 
 test('plan target canonicalizes only enumerated component semantics', () => {

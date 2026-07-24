@@ -19,11 +19,22 @@ import {
 } from '../src/investigation-session.ts';
 import {
   createPlanningContributionEnvelope,
+  createPlanReviewDispositionsEnvelope,
+  createPlanReviewProgressEnvelope,
   getProposeStatus,
   resumePropose,
   startPropose,
   startProposeFromFile,
 } from '../src/propose-orchestrator.ts';
+import {
+  PLAN_REVIEW_COVERAGE,
+  readPlanReviewNode,
+} from '../src/plan-review.ts';
+import {
+  PROVIDER_RUNNER_RESIDUALS,
+  type ProviderRunnerReport,
+} from '../src/provider-runner.ts';
+import { runProviderWorker } from '../src/provider-worker.ts';
 import {
   checkpointContributionDigest,
   compareAndSwapInvestigationSession,
@@ -62,6 +73,303 @@ const FIRST_INSTANT = '2026-07-24T00:00:00.000Z';
 const DURING_COMPLETION_GRACE = '2026-07-24T00:00:01.100Z';
 const BEFORE_EXPIRY = '2026-07-24T00:00:30.999Z';
 const AT_EXPIRY = '2026-07-24T00:00:31.000Z';
+
+test('structured investigation exemption starts a durable planning branch without manufactured survey evidence', () => {
+  const repository = createFixtureRepository();
+  const changeId = 'documentation-exemption';
+  try {
+    fs.mkdirSync(path.join(repository, 'docs'), { recursive: true });
+    fs.writeFileSync(
+      path.join(repository, 'docs/WORKFLOW.md'),
+      '# Workflow\n\nUse the managed workflow.\n',
+    );
+    git(repository, ['add', 'docs/WORKFLOW.md']);
+    git(repository, ['commit', '-m', 'Add workflow documentation']);
+    git(repository, ['checkout', '-b', `work/${changeId}`]);
+    let providerRuns = 0;
+    const started = startPropose(
+      repository,
+      changeId,
+      {
+        schemaVersion: 1,
+        kind: 'investigation-exemption-request',
+        intent: {
+          schemaVersion: 1,
+          summary: 'Clarify the workflow documentation wording.',
+          explicitPaths: ['docs/WORKFLOW.md'],
+          explicitSymbols: [],
+          explicitConfigKeys: [],
+          renamePairs: [],
+        },
+        exemption: {
+          category: 'documentation-only',
+          declaredPaths: ['docs/WORKFLOW.md'],
+          declaredChangeClasses: ['documentation-only'],
+          rationale:
+            'The change edits documentation wording and does not rely on runtime behavior.',
+          semanticAuthor: {
+            id: 'codex',
+            provenance: 'runtime-hint:codex',
+          },
+          nonTrivialBehaviorReliance: 'none-declared',
+          researchBudgetMinutes: null,
+        },
+      },
+      {
+        explicitActor: 'codex',
+        environment: {},
+        providerDriver: () => {
+          providerRuns += 1;
+        },
+      },
+    );
+
+    assert.equal(started.state, 'awaiting-planning-contribution');
+    assert.equal(started.nextAction, 'submit-planning-contribution');
+    assert.equal(started.investigation?.state, 'investigation-exempt');
+    assert.match(
+      started.investigation?.investigationId ?? '',
+      /^investigation-exemption-[0-9a-f]{64}$/,
+    );
+    assert.equal(providerRuns, 0);
+    assert.deepEqual(started.work, {
+      termSources: { engine: 0, main: 0, reviewer: 0, survey: 0 },
+      groups: [],
+      fullBlobManifest: [],
+      authoredInstructions: started.work?.authoredInstructions,
+    });
+    assert.equal(
+      fs.existsSync(
+        path.join(runtimeRoot(repository), 'investigations/invocations'),
+      ),
+      false,
+    );
+
+    const investigation = JSON.parse(
+      fs.readFileSync(
+        path.join(
+          repository,
+          'openspec/changes',
+          changeId,
+          'investigation.json',
+        ),
+        'utf8',
+      ),
+    ) as {
+      applicability: { kind: string; category: string };
+      nodes: Array<{ type: string }>;
+      currentRefs: Record<string, string>;
+      roleResults?: unknown[];
+    };
+    assert.equal(investigation.applicability.kind, 'investigation-exemption');
+    assert.equal(investigation.applicability.category, 'documentation-only');
+    assert.deepEqual(
+      investigation.nodes.map(({ type }) => type),
+      ['investigation-applicability'],
+    );
+    assert.deepEqual(Object.keys(investigation.currentRefs), [
+      'investigationApplicability',
+    ]);
+    assert.equal(Object.hasOwn(investigation, 'roleResults'), false);
+    assert.equal(
+      investigation.nodes.some(({ type }) =>
+        /term|scan|hit|disposition|why|sealed/.test(type),
+      ),
+      false,
+    );
+
+    const replayed = startPropose(
+      repository,
+      changeId,
+      {
+        schemaVersion: 1,
+        kind: 'investigation-exemption-request',
+        intent: {
+          schemaVersion: 1,
+          summary: 'Clarify the workflow documentation wording.',
+          explicitPaths: ['docs/WORKFLOW.md'],
+          explicitSymbols: [],
+          explicitConfigKeys: [],
+          renamePairs: [],
+        },
+        exemption: {
+          category: 'documentation-only',
+          declaredPaths: ['docs/WORKFLOW.md'],
+          declaredChangeClasses: ['documentation-only'],
+          rationale:
+            'The change edits documentation wording and does not rely on runtime behavior.',
+          semanticAuthor: {
+            id: 'codex',
+            provenance: 'runtime-hint:codex',
+          },
+          nonTrivialBehaviorReliance: 'none-declared',
+          researchBudgetMinutes: null,
+        },
+      },
+      { explicitActor: 'codex', environment: {} },
+    );
+    assert.equal(
+      replayed.investigation?.investigationId,
+      started.investigation?.investigationId,
+    );
+
+    const planningInput = createPlanningContributionEnvelope(started, {
+      proposal: '# Proposal\n\nClarify workflow documentation.\n',
+      design: '# Design\n\nThis change updates documentation wording only.\n',
+      specs: [
+        {
+          path: 'specs/demo/spec.md',
+          content: [
+            '# Delta',
+            '',
+            '## ADDED Requirements',
+            '',
+            '### Requirement: Workflow wording',
+            '',
+            'The documentation SHALL describe the managed workflow clearly.',
+            '',
+            '#### Scenario: Maintainer reads the workflow',
+            '',
+            '- **WHEN** the maintainer opens the workflow guide',
+            '- **THEN** the managed transition wording is explicit',
+            '',
+          ].join('\n'),
+        },
+      ],
+      tasks: '# Tasks\n\n- [ ] 1.1 Clarify workflow documentation\n',
+      guard: {
+        schemaVersion: 1,
+        changeId,
+        tasks: {
+          '1.1': {
+            allowedPaths: ['docs/WORKFLOW.md'],
+            requiredChecks: ['fixture'],
+          },
+        },
+      },
+      executionTasks: {
+        '1.1': {
+          strategy: 'direct-reviewed',
+          enforcement: 'available',
+          allowedPaths: ['docs/WORKFLOW.md'],
+          requiredChecks: ['fixture'],
+          diffReview: 'policy-required',
+          exemptionKind: 'documentation-only',
+          exemptionReason:
+            'The task edits documentation only and changes no runtime behavior.',
+          legacyBootstrap: null,
+        },
+      },
+    });
+    assert.equal(planningInput.kind, 'exemption-planning-contribution');
+    assert.equal(Object.hasOwn(planningInput, 'blindManifestDigest'), false);
+    const materialized = resumePropose(repository, changeId, planningInput);
+    assert.equal(materialized.state, 'waiting-for-plan-review');
+    assert.equal(materialized.planReview?.providerId, 'claude');
+    assert.equal(
+      fs
+        .readFileSync(
+          path.join(repository, 'openspec/changes', changeId, 'design.md'),
+          'utf8',
+        )
+        .includes('workflow:investigation-ledger'),
+      false,
+    );
+
+    const reviewOutput = getProposeStatus(
+      repository,
+      materialized.investigation!.investigationId,
+    );
+    runProviderWorker(repository, reviewOutput.planReview!.invocationId, {
+      runner(input): ProviderRunnerReport {
+        return fakeRunnerReport(input.request, {
+          schemaVersion: 2,
+          verdict: 'advisory-approve',
+          coverage: [...PLAN_REVIEW_COVERAGE],
+          scopeAssessment: { kind: 'challenges' },
+          findings: [
+            {
+              kind: 'challenge',
+              severity: 'medium',
+              category: 'missing-scope',
+              currentChangeImpact: 'required',
+              summary:
+                'Confirm the declared documentation scope has no runtime behavior dependency.',
+              evidence: [
+                {
+                  kind: 'repository-location',
+                  path: 'docs/WORKFLOW.md',
+                  line: 1,
+                  observation:
+                    'The declared target is a tracked Markdown workflow guide.',
+                },
+              ],
+            },
+          ],
+          proposedTerms: [],
+          suggestions: [],
+          residualRisk:
+            'The reviewer cannot prove that prose has no indirect behavioral consequence.',
+          uncertainty:
+            'Eligibility remains an advisory semantic judgment over exact tracked scope.',
+        });
+      },
+    });
+    const awaitingDisposition = resumePropose(
+      repository,
+      changeId,
+      createPlanReviewProgressEnvelope(
+        getProposeStatus(
+          repository,
+          materialized.investigation!.investigationId,
+        ),
+      ),
+    );
+    assert.equal(
+      awaitingDisposition.state,
+      'awaiting-challenge-dispositions',
+      JSON.stringify(awaitingDisposition.planReview?.failure),
+    );
+    const trackedPlanReview = JSON.parse(
+      fs.readFileSync(
+        path.join(repository, 'openspec/changes', changeId, 'plan-review.json'),
+        'utf8',
+      ),
+    );
+    const reviewNode = trackedPlanReview.nodes.find(
+      (node: { type: string }) => node.type === 'plan-review',
+    );
+    const challengeId = readPlanReviewNode(reviewNode).findings[0]!.findingId;
+    const completed = resumePropose(
+      repository,
+      changeId,
+      createPlanReviewDispositionsEnvelope(awaitingDisposition, [
+        {
+          challengeId,
+          decision: 'mitigated',
+          rationale:
+            'The task scope and execution exemption are limited to the tracked workflow guide.',
+          author: 'codex',
+        },
+      ]),
+    );
+    assert.equal(completed.state, 'planning-complete');
+    assert.equal(
+      completed.planningTransition?.planningAssurance?.applicabilityKind,
+      'investigation-exemption',
+    );
+    assert.equal(
+      git(repository, [
+        'log',
+        '-1',
+        '--format=%(trailers:key=Transition,valueonly)',
+      ]).trim(),
+      'plan',
+    );
+  } finally {
+    fs.rmSync(repository, { recursive: true, force: true });
+  }
+});
 
 test('fake-backed propose composes breadth and depth before materializing an uncommitted planning draft', () => {
   const repository = createFixtureRepository();
@@ -117,6 +425,7 @@ test('fake-backed propose composes breadth and depth before materializing an unc
         'export const EngineFloorNeedle = true;',
         'export const MainSurveyNeedle = true;',
         'export const BlindSurveyNeedle = true;',
+        'export const ReviewOnlyNeedle = true;',
         '',
       ].join('\n'),
     );
@@ -225,6 +534,9 @@ test('fake-backed propose composes breadth and depth before materializing an unc
       survey: 1,
     });
     assert.ok((afterMain.work?.groups.length ?? 0) > 0);
+    const initialGroupIds = new Set(
+      afterMain.work!.groups.map(({ groupId }) => groupId),
+    );
     assert.ok(
       afterMain.work?.groups.some((group) =>
         group.paths.includes('src/investigation-target.ts'),
@@ -277,6 +589,11 @@ test('fake-backed propose composes breadth and depth before materializing an unc
     );
     assert.equal(afterDispositions.state, 'awaiting-ledger-answers');
     assert.ok((afterDispositions.work?.fullBlobManifest.length ?? 0) > 0);
+    const initialManifestEntryIds = new Set(
+      afterDispositions.work!.fullBlobManifest.map(
+        ({ manifestEntryId }) => manifestEntryId,
+      ),
+    );
     assert.ok(
       afterDispositions.work?.fullBlobManifest.some((entry) =>
         Buffer.from(entry.contentBase64, 'base64')
@@ -415,6 +732,17 @@ test('fake-backed propose composes breadth and depth before materializing an unc
           node.type === 'investigation-provider-result',
       ),
     );
+    assert.equal(trackedInvestigation.roleResults.length, 1);
+    assert.equal(trackedInvestigation.roleResults[0].role, 'blind-surveyor');
+    assert.equal(trackedInvestigation.roleResults[0].form, 'ordinary-provider');
+    assert.equal(
+      trackedInvestigation.roleResults[0].orchestration,
+      'engine-spawned-provider',
+    );
+    assert.equal(
+      trackedInvestigation.roleResults[0].achievedIndependence,
+      'provider-independent',
+    );
     assert.ok(
       trackedInvestigation.nodes.some(
         (node: { type: string }) => node.type === 'investigation-term-union',
@@ -508,13 +836,13 @@ test('fake-backed propose composes breadth and depth before materializing an unc
     fs.rmSync(unmanagedPath);
 
     const materialized = resumePropose(repository, changeId, planningInput);
-    assert.equal(materialized.state, 'plan-review-required');
-    assert.equal(materialized.nextAction, 'obtain-plan-review');
+    assert.equal(materialized.state, 'waiting-for-plan-review');
+    assert.equal(materialized.nextAction, 'wait-for-plan-review');
     const durableWrapperStatus = getProposeStatus(
       repository,
       materialized.investigation!.investigationId,
     );
-    assert.equal(durableWrapperStatus.state, 'plan-review-required');
+    assert.equal(durableWrapperStatus.state, 'waiting-for-plan-review');
     assert.deepEqual(
       durableWrapperStatus.materializedArtifacts,
       materialized.materializedArtifacts,
@@ -552,7 +880,7 @@ test('fake-backed propose composes breadth and depth before materializing an unc
         providerRuns += 1;
       },
     });
-    assert.equal(replayedCompletedStart.state, 'plan-review-required');
+    assert.equal(replayedCompletedStart.state, 'waiting-for-plan-review');
     assert.deepEqual(
       replayedCompletedStart.materializedArtifacts,
       materialized.materializedArtifacts,
@@ -563,7 +891,7 @@ test('fake-backed propose composes breadth and depth before materializing an unc
       changeId,
       mainTermsInput,
     );
-    assert.equal(replayedCompletedCheckpoint.state, 'plan-review-required');
+    assert.equal(replayedCompletedCheckpoint.state, 'waiting-for-plan-review');
     assert.deepEqual(
       replayedCompletedCheckpoint.materializedArtifacts,
       materialized.materializedArtifacts,
@@ -612,9 +940,215 @@ test('fake-backed propose composes breadth and depth before materializing an unc
     assert.equal(fs.existsSync(executionPath), false);
     assert.equal(
       resumePropose(repository, changeId, planningInput).state,
-      'plan-review-required',
+      'waiting-for-plan-review',
     );
     assert.equal(fs.readFileSync(executionPath, 'utf8'), executionBytes);
+
+    const reviewOutput = getProposeStatus(
+      repository,
+      materialized.investigation!.investigationId,
+    );
+    const surveyEvidence = trackedInvestigation.nodes.find(
+      (node: { type: string }) => node.type === 'investigation-provider-result',
+    );
+    assert.ok(surveyEvidence);
+    runProviderWorker(repository, reviewOutput.planReview!.invocationId, {
+      runner(input): ProviderRunnerReport {
+        const semanticOutput = {
+          schemaVersion: 2 as const,
+          verdict: 'advisory-approve' as const,
+          coverage: [...PLAN_REVIEW_COVERAGE],
+          scopeAssessment: {
+            kind: 'no-challenge' as const,
+            evidence: [
+              {
+                kind: 'survey-record' as const,
+                nodeId: surveyEvidence.nodeId,
+                resultDigest: surveyEvidence.resultDigest,
+              },
+            ],
+          },
+          findings: [],
+          proposedTerms: [
+            { kind: 'symbol' as const, value: 'ReviewOnlyNeedle' },
+          ],
+          suggestions: [],
+          residualRisk:
+            'The exact review cannot prove semantic breadth completeness.',
+          uncertainty:
+            'The provider is observed read-only but not same-user confined.',
+        };
+        return fakeRunnerReport(input.request, semanticOutput);
+      },
+    });
+    const reopened = resumePropose(
+      repository,
+      changeId,
+      createPlanReviewProgressEnvelope(
+        getProposeStatus(
+          repository,
+          materialized.investigation!.investigationId,
+        ),
+      ),
+    );
+    assert.equal(reopened.state, 'awaiting-group-dispositions');
+    assert.equal(reopened.work?.termSources.reviewer, 1);
+    assert.ok((reopened.work?.groups.length ?? 0) > 0);
+    assert.equal(
+      reopened.work?.groups.some(({ groupId }) => initialGroupIds.has(groupId)),
+      false,
+    );
+    assert.ok(
+      reopened.work?.groups.some((group) =>
+        group.paths.includes('src/investigation-target.ts'),
+      ),
+    );
+    const reviewerDispositions = resumePropose(
+      repository,
+      changeId,
+      createInvestigationCheckpointEnvelope(
+        getInvestigationStatus(
+          repository,
+          reopened.investigation!.investigationId,
+        ),
+        {
+          dispositions: reopened.work!.groups.map((group) => ({
+            groupId: group.groupId,
+            classification: 'load-bearing' as const,
+            rationale: 'The reviewer-expanded group remains load-bearing.',
+            author: 'codex',
+          })),
+        },
+      ),
+    );
+    assert.equal(reviewerDispositions.state, 'awaiting-ledger-answers');
+    assert.ok((reviewerDispositions.work?.fullBlobManifest.length ?? 0) > 0);
+    assert.equal(
+      reviewerDispositions.work?.fullBlobManifest.some(({ manifestEntryId }) =>
+        initialManifestEntryIds.has(manifestEntryId),
+      ),
+      false,
+    );
+    const replanned = resumePropose(
+      repository,
+      changeId,
+      createInvestigationCheckpointEnvelope(
+        reviewerDispositions.investigation!,
+        {
+          answers: reviewerDispositions.work!.fullBlobManifest.map((entry) =>
+            whyAnswer(entry.manifestEntryId),
+          ),
+        },
+      ),
+    );
+    assert.equal(replanned.state, 'waiting-for-plan-review');
+    assert.notEqual(
+      replanned.planReview?.subjectDigest,
+      reviewOutput.planReview?.subjectDigest,
+    );
+    const revisedInvestigation = JSON.parse(
+      fs.readFileSync(path.join(changeDirectory, 'investigation.json'), 'utf8'),
+    );
+    assert.ok(
+      revisedInvestigation.nodes.some(
+        (node: { type: string; output?: { source?: string } }) =>
+          node.type === 'investigation-term-contribution' &&
+          node.output?.source === 'reviewer',
+      ),
+    );
+
+    runProviderWorker(repository, replanned.planReview!.invocationId, {
+      runner(input): ProviderRunnerReport {
+        return fakeRunnerReport(input.request, {
+          schemaVersion: 2 as const,
+          verdict: 'advisory-approve' as const,
+          coverage: [...PLAN_REVIEW_COVERAGE],
+          scopeAssessment: { kind: 'challenges' as const },
+          findings: [
+            {
+              kind: 'challenge' as const,
+              severity: 'medium' as const,
+              category: 'missing-scope',
+              currentChangeImpact: 'required' as const,
+              summary: 'Confirm the adjacent provider worker remains covered.',
+              evidence: [
+                {
+                  kind: 'repository-location' as const,
+                  path: 'src/investigation-target.ts',
+                  line: 4,
+                  observation:
+                    'The reviewer-only term is now represented in the tracked target.',
+                },
+              ],
+            },
+          ],
+          proposedTerms: [],
+          suggestions: [],
+          residualRisk:
+            'The exact review cannot prove semantic breadth completeness.',
+          uncertainty:
+            'The provider is observed read-only but not same-user confined.',
+        });
+      },
+    });
+    const awaitingDisposition = resumePropose(
+      repository,
+      changeId,
+      createPlanReviewProgressEnvelope(
+        getProposeStatus(repository, replanned.investigation!.investigationId),
+      ),
+    );
+    assert.equal(awaitingDisposition.state, 'awaiting-challenge-dispositions');
+    const trackedPlanReview = JSON.parse(
+      fs.readFileSync(path.join(changeDirectory, 'plan-review.json'), 'utf8'),
+    );
+    const trackedReviewProviderResult = trackedPlanReview.nodes.find(
+      (node: { type: string }) => node.type === 'plan-review-provider-result',
+    );
+    assert.equal(
+      trackedReviewProviderResult.output.runtimeAssurance.assurance,
+      'unchanged-governed-projection',
+    );
+    assert.equal(
+      trackedReviewProviderResult.output.runtimeAssurance
+        .sameUserProcessConfined,
+      false,
+    );
+    assert.match(
+      trackedReviewProviderResult.output.runtimeAssurance.executableSha256,
+      /^[0-9a-f]{64}$/,
+    );
+    assert.deepEqual(
+      trackedReviewProviderResult.output.runtimeAssurance.residuals,
+      PROVIDER_RUNNER_RESIDUALS,
+    );
+    const reviewNode = trackedPlanReview.nodes.find(
+      (node: { type: string }) => node.type === 'plan-review',
+    );
+    const challengeId = readPlanReviewNode(reviewNode).findings[0]!.findingId;
+    const completedPlanning = resumePropose(
+      repository,
+      changeId,
+      createPlanReviewDispositionsEnvelope(awaitingDisposition, [
+        {
+          challengeId,
+          decision: 'mitigated',
+          rationale:
+            'The exact provider worker path and its registered test are in the plan.',
+          author: 'codex',
+        },
+      ]),
+    );
+    assert.equal(completedPlanning.state, 'planning-complete');
+    assert.equal(completedPlanning.planningTransition?.changeId, changeId);
+    assert.equal(
+      git(repository, [
+        'log',
+        '-1',
+        '--format=%(trailers:key=Transition,valueonly)',
+      ]).trim(),
+      'plan',
+    );
   } finally {
     fs.rmSync(repository, { recursive: true, force: true });
   }
@@ -644,7 +1178,7 @@ test('propose CLI persists a fake-backed wait for read-only status in a fresh pr
     const started = runWorkflowCli(
       repository,
       ['propose', changeId, '--intent', intentPath, '--actor', 'codex'],
-      {},
+      { WORKFLOW_TEST_DISABLE_PROVIDER_DISPATCH: '1' },
     );
     assert.equal(started.status, 0, started.stderr);
     const startedPayload = JSON.parse(started.stdout);
@@ -703,7 +1237,7 @@ test('propose CLI persists a fake-backed wait for read-only status in a fresh pr
     const resumed = runWorkflowCli(
       repository,
       ['propose', changeId, '--resume', '--input', mainTermsPath],
-      {},
+      { WORKFLOW_TEST_DISABLE_PROVIDER_DISPATCH: '1' },
     );
     assert.equal(resumed.status, 0, resumed.stderr);
     const resumedPayload = JSON.parse(resumed.stdout);
@@ -732,9 +1266,19 @@ test('propose CLI persists a fake-backed wait for read-only status in a fresh pr
       resumedPayload.result.investigation,
     );
 
+    const reorderedReplay = runWorkflowCli(
+      repository,
+      ['propose', changeId, '--actor', 'codex', '--intent', intentPath],
+      { WORKFLOW_TEST_DISABLE_PROVIDER_DISPATCH: '1' },
+    );
+    assert.equal(reorderedReplay.status, 0, reorderedReplay.stderr);
+    assert.equal(
+      JSON.parse(reorderedReplay.stdout).result.investigation.investigationId,
+      investigationId,
+    );
+
     for (const args of [
       ['propose', changeId, '--resume', '--input'],
-      ['propose', changeId, '--actor', 'codex', '--intent', intentPath],
       ['propose', changeId, '--intent', intentPath, '--actor'],
     ]) {
       const rejected = runWorkflowCli(repository, args, {});
@@ -2082,6 +2626,42 @@ function investigationFixture(invocationId: string): InvestigationFixture {
     request: createProviderInvocationRequest(
       providerRequestInput(fixture, invocationId),
     ),
+  };
+}
+
+function fakeRunnerReport(
+  request: ProviderInvocationRequest,
+  semanticOutput: unknown,
+): ProviderRunnerReport {
+  return {
+    invocationId: request.invocationId,
+    providerId: request.providerId,
+    purpose: request.purpose,
+    requestDigest: request.requestDigest,
+    semanticOutput,
+    semanticOutputDigest: sha256(canonicalJson(semanticOutput)),
+    assurance: 'unchanged-governed-projection',
+    projection: {
+      unchanged: true,
+      changedCategories: [],
+      beforeDigest: 'a'.repeat(64),
+      afterDigest: 'a'.repeat(64),
+    },
+    sameUserProcessConfined: false,
+    residuals: [...PROVIDER_RUNNER_RESIDUALS],
+    executable: {
+      candidatePath: '/opt/homebrew/bin/claude',
+      realPath: '/opt/homebrew/bin/claude',
+      device: '1',
+      inode: '2',
+      mode: 0o100755,
+      uid: 501,
+      gid: 20,
+      size: 1024,
+      mtimeNs: '123456789',
+      sha256: 'b'.repeat(64),
+    },
+    elapsedMs: 5,
   };
 }
 

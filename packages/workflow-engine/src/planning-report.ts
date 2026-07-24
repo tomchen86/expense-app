@@ -53,9 +53,23 @@ export function readPlanningTransitionReport(
   directory: string,
   reportId: string,
 ): PlanningTransitionReport {
-  const report = readContentRecord(directory, reportId);
+  const report = normalizeLegacyPlanningTransitionReport(
+    readContentRecord(directory, reportId),
+  );
   assertPlanningTransitionReport(report);
   return report;
+}
+
+function normalizeLegacyPlanningTransitionReport(value: unknown): unknown {
+  if (
+    isRecord(value) &&
+    value.schemaVersion === 1 &&
+    value.kind === 'planning-transition' &&
+    !Object.hasOwn(value, 'planningAssurance')
+  ) {
+    return { ...value, planningAssurance: null };
+  }
+  return value;
 }
 
 function assertPlanningTransitionReport(

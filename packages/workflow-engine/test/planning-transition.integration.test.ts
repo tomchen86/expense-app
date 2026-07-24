@@ -6,8 +6,14 @@ import path from 'node:path';
 import test from 'node:test';
 
 import { canonicalJson } from '../src/canonical-json.ts';
-import { readContentRecord } from '../src/content-record-store.ts';
+import {
+  readContentRecord,
+  writeContentRecord,
+} from '../src/content-record-store.ts';
+import { loadChangeContract } from '../src/contracts.ts';
 import { commitFacts } from '../src/git-transitions.ts';
+import { deriveInvestigationFirstPlanningSubject } from '../src/planning-assurance-validator.ts';
+import { readPlanningTransitionReport } from '../src/planning-report.ts';
 import {
   commitPlanningTransition,
   type PlanningTransitionTestHooks,
@@ -99,6 +105,33 @@ test('plan-commit introduces an unchecked change through one exact managed commi
   }
 });
 
+test('planning reports written before planning assurance remain readable as legacy v1 records', () => {
+  const repository = createPlanningRepository('legacy-report-change');
+  try {
+    writeChange(repository, 'legacy-report-change', [
+      { id: '1.1', completed: false, title: 'First task' },
+    ]);
+    const result = commitPlanningTransition(repository, 'legacy-report-change');
+    const reportsDirectory = path.join(
+      runtimeRoot(repository),
+      'planning-reports',
+    );
+    const legacyReport = readContentRecord(reportsDirectory, result.reportId);
+    delete legacyReport.planningAssurance;
+    const legacyReportId = writeContentRecord(reportsDirectory, legacyReport);
+
+    assert.deepEqual(
+      readPlanningTransitionReport(reportsDirectory, legacyReportId),
+      {
+        ...legacyReport,
+        planningAssurance: null,
+      },
+    );
+  } finally {
+    fs.rmSync(repository, { recursive: true, force: true });
+  }
+});
+
 test('planning inspection selects the explicit v2 grammar before semantic activation', () => {
   const repository = createPlanningRepository('v2-change');
   try {
@@ -170,6 +203,21 @@ test('plan-commit authorizes an exact reviewed v2 investigation exemption and bi
   try {
     git(repository, ['checkout', '-b', 'work/demo-change']);
     const ready = writeReadyV2ExemptChange(repository);
+    const subject = deriveInvestigationFirstPlanningSubject(
+      repository,
+      loadChangeContract(repository, 'demo-change'),
+    );
+    assert.equal(
+      subject.policies.rendererPolicyDigest,
+      crypto
+        .createHash('sha256')
+        .update(
+          canonicalJson({
+            policy: 'investigation-exemption-no-ledger.v1',
+          }),
+        )
+        .digest('hex'),
+    );
 
     const result = commitPlanningTransition(repository, 'demo-change');
     const report = readContentRecord(

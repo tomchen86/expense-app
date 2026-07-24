@@ -16,7 +16,12 @@ import {
   type ProviderInvocationRequest,
   type ProviderProcessOutcome,
   type ProviderProcessResult,
+  type ProviderRuntimeObservation,
 } from './provider-contracts.ts';
+import {
+  PROVIDER_RUNNER_RESIDUALS,
+  type ProviderRunnerReport,
+} from './provider-runner.ts';
 import {
   INVESTIGATION_LIMITS,
   normalizeInvestigationTerm,
@@ -29,6 +34,12 @@ import {
   type InvestigationRuntimePaths,
 } from './paths.ts';
 import type { ProviderId } from './provider-registry.ts';
+import {
+  PLAN_REVIEW_OUTPUT_SCHEMA,
+  PLAN_REVIEW_OUTPUT_VALIDATOR,
+  assertPlanReviewSubject,
+  type PlanReviewSubject,
+} from './plan-review.ts';
 
 const DIGEST = /^[0-9a-f]{64}$/;
 const GIT_OBJECT_ID = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
@@ -38,16 +49,35 @@ const MAX_INTENT_FACT_BYTES = 512;
 const MAX_INTENT_FACTS_PER_KIND = 256;
 const MAX_ARCHITECTURE_QUESTION_BYTES = 16_384;
 export const PROVIDER_COMPLETION_GRACE_MS = 30_000;
-const BLIND_SURVEY_OUTPUT_SCHEMA_DESCRIPTOR = {
-  schemaVersion: 1,
-  kind: 'blind-survey-output',
+export const BLIND_SURVEY_PROVIDER_OUTPUT_SCHEMA = Object.freeze({
+  $schema: 'https://json-schema.org/draft/2020-12/schema',
+  type: 'object',
+  additionalProperties: false,
   required: ['reference', 'terms'],
-  termKinds: ['literal-content', 'literal-path', 'symbol', 'config-key'],
-} as const;
+  properties: {
+    reference: { type: 'string', minLength: 1 },
+    terms: {
+      type: 'array',
+      minItems: 1,
+      maxItems: INVESTIGATION_LIMITS.maxSurveyTerms,
+      items: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['kind', 'value'],
+        properties: {
+          kind: {
+            enum: ['literal-content', 'literal-path', 'symbol', 'config-key'],
+          },
+          value: { type: 'string', minLength: 1 },
+        },
+      },
+    },
+  },
+});
 export const BLIND_SURVEY_OUTPUT_SCHEMA = Object.freeze({
   id: 'expense-app.workflow.blind-survey-output',
   version: 1,
-  digest: sha256(canonicalJson(BLIND_SURVEY_OUTPUT_SCHEMA_DESCRIPTOR)),
+  digest: sha256(canonicalJson(BLIND_SURVEY_PROVIDER_OUTPUT_SCHEMA)),
 });
 
 export type NormalizedChangeIntent = {
@@ -73,6 +103,20 @@ export type BlindSurveyManifest = {
   architectureQuestion: string;
   capabilityProfile: 'repository-read-only';
 };
+
+export type PlanReviewManifest = {
+  schemaVersion: 1;
+  kind: 'plan-review-manifest';
+  changeId: string;
+  repositoryId: string;
+  baseCommit: string;
+  baseTree: string;
+  subject: PlanReviewSubject;
+  capabilityProfile: 'repository-read-only';
+};
+
+export type ProviderInvocationManifest =
+  BlindSurveyManifest | PlanReviewManifest;
 
 export type InvestigationStartReservation = {
   schemaVersion: 1;
@@ -146,7 +190,7 @@ export type CreateProviderInvocationInput = {
   investigationId: string;
   changeId: string;
   attempt: number;
-  manifest: BlindSurveyManifest;
+  manifest: ProviderInvocationManifest;
   request: ProviderInvocationRequest;
   createdAt?: string;
 };
@@ -160,6 +204,12 @@ export function blindSurveyManifestDigest(
   manifest: BlindSurveyManifest,
 ): string {
   return sha256(canonicalJson(assertBlindSurveyManifest(manifest)));
+}
+
+export function providerInvocationManifestDigest(
+  manifest: ProviderInvocationManifest,
+): string {
+  return sha256(canonicalJson(assertProviderInvocationManifest(manifest)));
 }
 
 export function blindSurveyIntentDigest(manifest: BlindSurveyManifest): string {
@@ -330,11 +380,11 @@ export function createProviderInvocation(
   if (!Number.isSafeInteger(input.attempt) || input.attempt < 1) {
     throw invocationInvalid();
   }
-  const manifest = assertBlindSurveyManifest(input.manifest);
+  const manifest = assertProviderInvocationManifest(input.manifest);
   const request = assertProviderRequest(input.request);
   const invocationId = assertInvocationId(request.invocationId);
-  const manifestDigest = blindSurveyManifestDigest(manifest);
-  assertBlindInvocationBinding(changeId, manifest, manifestDigest, request);
+  const manifestDigest = providerInvocationManifestDigest(manifest);
+  assertProviderInvocationBinding(changeId, manifest, manifestDigest, request);
   const now = input.createdAt ?? new Date().toISOString();
   if (!isTimestamp(now)) {
     throw invocationInvalid();
@@ -413,16 +463,16 @@ export function readProviderInvocation(
     throw invocationInvalid();
   }
   const request = readProviderInvocationRequest(paths, invocationId);
-  const manifest = readBlindSurveyManifest(paths, invocationId);
-  assertBlindInvocationBinding(
+  const manifest = readProviderInvocationManifest(paths, invocationId);
+  assertProviderInvocationBinding(
     record.changeId,
     manifest,
-    blindSurveyManifestDigest(manifest),
+    providerInvocationManifestDigest(manifest),
     request,
   );
   if (
     request.requestDigest !== record.requestDigest ||
-    blindSurveyManifestDigest(manifest) !== record.manifestDigest ||
+    providerInvocationManifestDigest(manifest) !== record.manifestDigest ||
     request.providerId !== record.providerId ||
     request.purpose !== record.purpose ||
     (record.result !== null &&
@@ -456,6 +506,18 @@ export function readBlindSurveyManifest(
   requestedInvocationId: string,
 ): BlindSurveyManifest {
   const invocationId = assertInvocationId(requestedInvocationId);
+  const manifest = readProviderInvocationManifest(paths, invocationId);
+  if (manifest.kind !== 'blind-survey-manifest') {
+    throw invocationInvalid();
+  }
+  return manifest;
+}
+
+export function readProviderInvocationManifest(
+  paths: InvestigationRuntimePaths,
+  requestedInvocationId: string,
+): ProviderInvocationManifest {
+  const invocationId = assertInvocationId(requestedInvocationId);
   const value = readPrivateCanonicalJson(
     paths,
     path.join(
@@ -464,7 +526,7 @@ export function readBlindSurveyManifest(
     ),
     invocationUnsafe,
   );
-  return assertBlindSurveyManifest(value);
+  return assertProviderInvocationManifest(value);
 }
 
 export function providerInvocationExists(
@@ -611,8 +673,47 @@ export function completeProviderInvocation(
   const result = evaluateProviderProcess(
     request,
     input.outcome,
-    blindSurveyOutputValidator(request),
+    providerOutputValidator(request),
   );
+  const now = parseNow(input.now);
+  return updateProviderInvocation(
+    paths,
+    invocationId,
+    input.expectedRevision,
+    (current) => {
+      assertCurrentLease(current, input.leaseGeneration, input.leaseToken, now);
+      return {
+        ...current,
+        revision: current.revision + 1,
+        state: 'succeeded',
+        lease: null,
+        result,
+        failure: null,
+        updatedAt: new Date(now).toISOString(),
+      };
+    },
+  );
+}
+
+/**
+ * Complete one leased invocation directly from the fixed runner report. The
+ * semantic output and runtime observation are revalidated independently; a
+ * real report is never reconstructed through the fake stdout evaluator.
+ */
+export function completeProviderInvocationFromRunner(
+  paths: InvestigationRuntimePaths,
+  requestedInvocationId: string,
+  input: {
+    expectedRevision: number;
+    leaseGeneration: number;
+    leaseToken: string;
+    report: ProviderRunnerReport;
+    now?: string;
+  },
+): ProviderInvocationRecord {
+  const invocationId = assertInvocationId(requestedInvocationId);
+  const request = readProviderInvocationRequest(paths, invocationId);
+  const result = providerResultFromRunnerReport(request, input.report);
   const now = parseNow(input.now);
   return updateProviderInvocation(
     paths,
@@ -736,6 +837,62 @@ function assertBlindSurveyManifest(value: unknown): BlindSurveyManifest {
     throw blindManifestInvalid();
   }
   return deepFreeze(structuredClone(value)) as BlindSurveyManifest;
+}
+
+function assertProviderInvocationManifest(
+  value: unknown,
+): ProviderInvocationManifest {
+  if (isRecord(value) && value.kind === 'blind-survey-manifest') {
+    return assertBlindSurveyManifest(value);
+  }
+  if (
+    !isRecord(value) ||
+    !hasExactKeys(value, [
+      'schemaVersion',
+      'kind',
+      'changeId',
+      'repositoryId',
+      'baseCommit',
+      'baseTree',
+      'subject',
+      'capabilityProfile',
+    ]) ||
+    value.schemaVersion !== 1 ||
+    value.kind !== 'plan-review-manifest' ||
+    typeof value.changeId !== 'string' ||
+    !isBoundedBlindText(value.repositoryId, 512) ||
+    typeof value.baseCommit !== 'string' ||
+    !GIT_OBJECT_ID.test(value.baseCommit) ||
+    typeof value.baseTree !== 'string' ||
+    !GIT_OBJECT_ID.test(value.baseTree) ||
+    value.capabilityProfile !== 'repository-read-only'
+  ) {
+    throw invocationInvalid();
+  }
+  assertChangeId(value.changeId);
+  let subject: PlanReviewSubject;
+  try {
+    subject = assertPlanReviewSubject(value.subject);
+  } catch {
+    throw invocationInvalid();
+  }
+  const manifest: PlanReviewManifest = {
+    schemaVersion: 1,
+    kind: 'plan-review-manifest',
+    changeId: value.changeId,
+    repositoryId: value.repositoryId,
+    baseCommit: value.baseCommit,
+    baseTree: value.baseTree,
+    subject,
+    capabilityProfile: 'repository-read-only',
+  };
+  if (
+    Buffer.byteLength(canonicalJson(manifest), 'utf8') >
+    MAX_BLIND_MANIFEST_BYTES
+  ) {
+    throw invocationInvalid();
+  }
+  return deepFreeze(manifest);
 }
 
 function assertNormalizedChangeIntent(value: unknown): NormalizedChangeIntent {
@@ -992,6 +1149,32 @@ function assertBlindInvocationBinding(
   }
 }
 
+function assertProviderInvocationBinding(
+  changeId: string,
+  manifest: ProviderInvocationManifest,
+  manifestDigest: string,
+  request: ProviderInvocationRequest,
+): void {
+  if (manifest.kind === 'blind-survey-manifest') {
+    assertBlindInvocationBinding(changeId, manifest, manifestDigest, request);
+    return;
+  }
+  if (
+    manifest.changeId !== changeId ||
+    manifest.repositoryId !== request.repositoryId ||
+    manifest.baseCommit !== request.baseCommit ||
+    manifest.baseTree !== request.baseTree ||
+    request.purpose !== 'plan-review' ||
+    request.roleAssignment.role !== 'plan-reviewer' ||
+    request.capabilityProfile !== 'repository-read-only' ||
+    request.targetDigest !== manifest.subject.subjectDigest ||
+    request.inputManifestDigest !== manifestDigest ||
+    request.roleAssignment.targetDigest !== request.targetDigest
+  ) {
+    throw invocationInvalid();
+  }
+}
+
 function assertProviderInvocationRecord(
   value: unknown,
 ): ProviderInvocationRecord {
@@ -1124,7 +1307,7 @@ function assertCurrentLease(
   }
 }
 
-function blindSurveyOutputValidator(request: ProviderInvocationRequest) {
+export function blindSurveyOutputValidator(request: ProviderInvocationRequest) {
   if (
     request.purpose !== 'survey' ||
     canonicalJson(request.outputSchema) !==
@@ -1190,6 +1373,7 @@ function assertProviderResult(
       'providerId',
       'output',
       'outputDigest',
+      'runtimeObservation',
     ]) ||
     value.requestDigest !== request.requestDigest ||
     value.invocationId !== request.invocationId ||
@@ -1199,7 +1383,7 @@ function assertProviderResult(
   ) {
     throw resultInvalid();
   }
-  const validator = blindSurveyOutputValidator(request);
+  const validator = providerOutputValidator(request);
   const output = deepFreeze(structuredClone(value.output));
   let outputAccepted: boolean;
   try {
@@ -1220,9 +1404,162 @@ function assertProviderResult(
   if (value.outputDigest !== outputDigest) {
     throw resultInvalid();
   }
+  const runtimeObservation = assertRuntimeObservation(
+    value.runtimeObservation,
+    request,
+  );
   return deepFreeze(
-    structuredClone({ ...value, output }),
+    structuredClone({ ...value, output, runtimeObservation }),
   ) as ProviderProcessResult;
+}
+
+function providerResultFromRunnerReport(
+  request: ProviderInvocationRequest,
+  report: ProviderRunnerReport,
+): ProviderProcessResult {
+  if (
+    !isRecord(report) ||
+    report.invocationId !== request.invocationId ||
+    report.providerId !== request.providerId ||
+    report.purpose !== request.purpose ||
+    report.requestDigest !== request.requestDigest ||
+    report.semanticOutputDigest !== sha256(canonicalJson(report.semanticOutput))
+  ) {
+    throw resultInvalid();
+  }
+  const validator = providerOutputValidator(request);
+  let accepted: boolean;
+  try {
+    accepted = validator.validate(report.semanticOutput) === true;
+  } catch {
+    throw resultInvalid();
+  }
+  if (!accepted) {
+    throw resultInvalid();
+  }
+  const output = deepFreeze(structuredClone(report.semanticOutput));
+  const runtimeObservation = assertRuntimeObservation(
+    {
+      assurance: report.assurance,
+      projection: report.projection,
+      sameUserProcessConfined: report.sameUserProcessConfined,
+      residuals: report.residuals,
+      executable: report.executable,
+      elapsedMs: report.elapsedMs,
+    },
+    request,
+  );
+  return deepFreeze({
+    requestDigest: request.requestDigest,
+    invocationId: request.invocationId,
+    purpose: request.purpose,
+    providerId: request.providerId,
+    output,
+    outputDigest: sha256(
+      canonicalJson({
+        id: request.outputSchema.id,
+        version: request.outputSchema.version,
+        output,
+      }),
+    ),
+    runtimeObservation,
+  });
+}
+
+function providerOutputValidator(request: ProviderInvocationRequest) {
+  if (request.purpose === 'survey') {
+    return blindSurveyOutputValidator(request);
+  }
+  if (
+    request.purpose === 'plan-review' &&
+    canonicalJson(request.outputSchema) ===
+      canonicalJson(PLAN_REVIEW_OUTPUT_SCHEMA)
+  ) {
+    return PLAN_REVIEW_OUTPUT_VALIDATOR;
+  }
+  throw workflowError(
+    'PROVIDER_OUTPUT_SCHEMA_UNSUPPORTED',
+    'Provider invocation does not reference a code-owned output schema.',
+    ExitCode.verification,
+  );
+}
+
+function assertRuntimeObservation(
+  value: unknown,
+  request: ProviderInvocationRequest,
+): ProviderRuntimeObservation | null {
+  if (value === null) {
+    return null;
+  }
+  if (
+    !isRecord(value) ||
+    !hasExactKeys(value, [
+      'assurance',
+      'projection',
+      'sameUserProcessConfined',
+      'residuals',
+      'executable',
+      'elapsedMs',
+    ]) ||
+    value.assurance !== 'unchanged-governed-projection' ||
+    value.sameUserProcessConfined !== false ||
+    !isRecord(value.projection) ||
+    !hasExactKeys(value.projection, [
+      'unchanged',
+      'changedCategories',
+      'beforeDigest',
+      'afterDigest',
+    ]) ||
+    value.projection.unchanged !== true ||
+    !Array.isArray(value.projection.changedCategories) ||
+    value.projection.changedCategories.length !== 0 ||
+    !isDigest(value.projection.beforeDigest) ||
+    value.projection.beforeDigest !== value.projection.afterDigest ||
+    !Array.isArray(value.residuals) ||
+    canonicalJson(value.residuals) !==
+      canonicalJson(PROVIDER_RUNNER_RESIDUALS) ||
+    !isExecutableIdentity(value.executable) ||
+    !Number.isSafeInteger(value.elapsedMs) ||
+    (value.elapsedMs as number) < 0 ||
+    (value.elapsedMs as number) > request.limits.timeoutMs
+  ) {
+    throw resultInvalid();
+  }
+  return deepFreeze(structuredClone(value)) as ProviderRuntimeObservation;
+}
+
+function isExecutableIdentity(value: unknown): boolean {
+  return (
+    isRecord(value) &&
+    hasExactKeys(value, [
+      'candidatePath',
+      'realPath',
+      'device',
+      'inode',
+      'mode',
+      'uid',
+      'gid',
+      'size',
+      'mtimeNs',
+      'sha256',
+    ]) &&
+    typeof value.candidatePath === 'string' &&
+    value.candidatePath.length > 0 &&
+    typeof value.realPath === 'string' &&
+    value.realPath.length > 0 &&
+    typeof value.device === 'string' &&
+    value.device.length > 0 &&
+    typeof value.inode === 'string' &&
+    value.inode.length > 0 &&
+    Number.isSafeInteger(value.mode) &&
+    Number.isSafeInteger(value.uid) &&
+    Number.isSafeInteger(value.gid) &&
+    Number.isSafeInteger(value.size) &&
+    (value.size as number) >= 0 &&
+    typeof value.mtimeNs === 'string' &&
+    value.mtimeNs.length > 0 &&
+    isDigest(value.sha256)
+  );
 }
 
 function assertProviderFailure(value: unknown): ProviderInvocationFailure {
@@ -1276,6 +1613,7 @@ function isStoredResult(value: unknown): value is ProviderProcessResult | null {
         'providerId',
         'output',
         'outputDigest',
+        'runtimeObservation',
       ]) &&
       isDigest(value.requestDigest) &&
       typeof value.invocationId === 'string' &&

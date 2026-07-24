@@ -13,9 +13,10 @@ import {
 } from './investigation-terms.ts';
 import { normalizeExactRepositoryPath } from './paths.ts';
 import { isProviderId } from './provider-registry.ts';
+import { isProviderRoleAssignment } from './provider-contracts.ts';
 import type {
   IndependenceDimension,
-  RoleAssignment,
+  ProviderRoleAssignment,
 } from './role-scheduler.ts';
 import {
   assertPlanningGeneration,
@@ -155,6 +156,7 @@ const PROVIDER_RESULT_OUTPUT_KEYS = [
   'subjectDigest',
   'assignment',
   'submission',
+  'runtimeAssurance',
 ] as const;
 
 const ROLE_ASSIGNMENT_KEYS = [
@@ -244,7 +246,7 @@ export type PlanReviewReport = {
   subjectDigest: string;
   planningGenerationId: string;
   planTargetDigest: string;
-  assignment: RoleAssignment;
+  assignment: ProviderRoleAssignment;
   providerResultNodeId: string;
   providerResultResultDigest: string;
   verdict: PlanReviewVerdict;
@@ -305,16 +307,25 @@ export type PlanReviewDispositionRecord = {
 
 export type PlanReviewNodeInput = {
   subject: PlanReviewSubject;
-  assignment: RoleAssignment;
+  assignment: ProviderRoleAssignment;
   providerResultNode: EvidenceNode;
   submission: PlanReviewSubmission;
 };
 
 export type PlanReviewProviderResultNodeInput = {
   subject: PlanReviewSubject;
-  assignment: RoleAssignment;
+  assignment: ProviderRoleAssignment;
   submission: PlanReviewSubmission;
   providerPolicyDigest: string;
+  runtimeAssurance?: PlanReviewRuntimeAssurance;
+};
+
+export type PlanReviewRuntimeAssurance = {
+  assurance: 'unchanged-governed-projection';
+  projectionDigest: string;
+  sameUserProcessConfined: false;
+  residuals: string[];
+  executableSha256: string;
 };
 
 type NormalizedFinding = {
@@ -444,8 +455,156 @@ const PLAN_REVIEW_SCHEMA_GRAMMAR = {
   limits: PLAN_REVIEW_LIMITS,
 } as const;
 
-const PLAN_REVIEW_OUTPUT_DIGEST = sha256(
+const PLAN_REVIEW_GRAMMAR_DIGEST = sha256(
   canonicalJson(PLAN_REVIEW_SCHEMA_GRAMMAR),
+);
+
+/**
+ * The provider-facing JSON Schema. Its comment binds the stricter code-owned
+ * semantic grammar (coverage completeness, finding/category pairings, sorted
+ * uniqueness, and evidence rules) that JSON Schema alone cannot express.
+ */
+export const PLAN_REVIEW_PROVIDER_OUTPUT_SCHEMA = Object.freeze({
+  $schema: 'https://json-schema.org/draft/2020-12/schema',
+  $comment: `workflow-semantic-grammar-sha256:${PLAN_REVIEW_GRAMMAR_DIGEST}`,
+  type: 'object',
+  additionalProperties: false,
+  required: [...SUBMISSION_KEYS],
+  properties: {
+    schemaVersion: { const: 2 },
+    verdict: { enum: [...VERDICTS] },
+    coverage: {
+      type: 'array',
+      minItems: PLAN_REVIEW_COVERAGE.length,
+      maxItems: PLAN_REVIEW_COVERAGE.length,
+      uniqueItems: true,
+      items: { enum: [...PLAN_REVIEW_COVERAGE] },
+    },
+    scopeAssessment: {
+      oneOf: [
+        {
+          type: 'object',
+          additionalProperties: false,
+          required: ['kind'],
+          properties: { kind: { const: 'challenges' } },
+        },
+        {
+          type: 'object',
+          additionalProperties: false,
+          required: ['kind', 'evidence'],
+          properties: {
+            kind: { const: 'no-challenge' },
+            evidence: {
+              type: 'array',
+              minItems: 1,
+              items: { $ref: '#/$defs/evidence' },
+            },
+          },
+        },
+      ],
+    },
+    findings: {
+      type: 'array',
+      maxItems: PLAN_REVIEW_LIMITS.maxFindings,
+      items: { $ref: '#/$defs/finding' },
+    },
+    proposedTerms: {
+      type: 'array',
+      maxItems: PLAN_REVIEW_LIMITS.maxProposedTerms,
+      items: { $ref: '#/$defs/term' },
+    },
+    suggestions: {
+      type: 'array',
+      maxItems: PLAN_REVIEW_LIMITS.maxSuggestions,
+      items: { $ref: '#/$defs/suggestion' },
+    },
+    residualRisk: { type: 'string', minLength: 1 },
+    uncertainty: { type: 'string', minLength: 1 },
+  },
+  $defs: {
+    evidence: {
+      oneOf: [
+        {
+          type: 'object',
+          additionalProperties: false,
+          required: ['kind', 'path', 'line', 'observation'],
+          properties: {
+            kind: { const: 'repository-location' },
+            path: { type: 'string', minLength: 1 },
+            line: { type: 'integer', minimum: 1 },
+            observation: { type: 'string', minLength: 1 },
+          },
+        },
+        {
+          type: 'object',
+          additionalProperties: false,
+          required: ['kind', 'nodeId', 'resultDigest'],
+          properties: {
+            kind: { enum: ['investigation-node', 'survey-record'] },
+            nodeId: { type: 'string', pattern: '^[0-9a-f]{64}$' },
+            resultDigest: { type: 'string', pattern: '^[0-9a-f]{64}$' },
+          },
+        },
+      ],
+    },
+    finding: {
+      type: 'object',
+      additionalProperties: false,
+      required: [
+        'kind',
+        'severity',
+        'category',
+        'currentChangeImpact',
+        'summary',
+        'evidence',
+      ],
+      properties: {
+        kind: { const: 'challenge' },
+        severity: { enum: [...SEVERITIES] },
+        category: { enum: [...PLAN_REVIEW_COVERAGE] },
+        currentChangeImpact: { const: 'required' },
+        summary: { type: 'string', minLength: 1 },
+        evidence: {
+          type: 'array',
+          minItems: 1,
+          items: { $ref: '#/$defs/evidence' },
+        },
+      },
+    },
+    suggestion: {
+      type: 'object',
+      additionalProperties: false,
+      required: [
+        'kind',
+        'severity',
+        'category',
+        'currentChangeImpact',
+        'summary',
+        'evidence',
+      ],
+      properties: {
+        kind: { const: 'suggestion' },
+        severity: { enum: [...SEVERITIES] },
+        category: { const: 'follow-up' },
+        currentChangeImpact: { const: 'independent-follow-up' },
+        summary: { type: 'string', minLength: 1 },
+        evidence: { type: 'array', items: { $ref: '#/$defs/evidence' } },
+      },
+    },
+    term: {
+      type: 'object',
+      additionalProperties: false,
+      required: ['kind', 'value'],
+      properties: {
+        kind: { enum: [...TERM_KINDS] },
+        value: { type: 'string', minLength: 1 },
+      },
+    },
+  },
+});
+
+const PLAN_REVIEW_OUTPUT_DIGEST = sha256(
+  canonicalJson(PLAN_REVIEW_PROVIDER_OUTPUT_SCHEMA),
 );
 
 /**
@@ -634,6 +793,9 @@ export function createPlanReviewProviderResultNode(
       'assignment',
       'submission',
       'providerPolicyDigest',
+      ...(Object.hasOwn(input, 'runtimeAssurance')
+        ? ['runtimeAssurance' as const]
+        : []),
     ])
   ) {
     throw planReviewInvalid('Plan review provider result input is malformed.');
@@ -646,6 +808,9 @@ export function createPlanReviewProviderResultNode(
   const normalized = assertPlanReviewSubmission(input.submission);
   assertSubmissionEvidenceBindings(normalized, subject);
   const submission = canonicalSubmission(normalized);
+  const runtimeAssurance = assertPlanReviewRuntimeAssurance(
+    input.runtimeAssurance ?? null,
+  );
   const assignmentDigest = planReviewAssignmentDigest(assignment);
   const submissionDigest = planReviewSubmissionDigest(submission);
 
@@ -667,12 +832,15 @@ export function createPlanReviewProviderResultNode(
       subjectDigest: subject.subjectDigest,
       assignment,
       submission,
+      runtimeAssurance,
     },
     runtimeMetadata: {},
   });
 }
 
-export function planReviewAssignmentDigest(assignment: RoleAssignment): string {
+export function planReviewAssignmentDigest(
+  assignment: ProviderRoleAssignment,
+): string {
   return sha256(
     canonicalJson({
       schema: 'plan-review-assignment.v1',
@@ -869,8 +1037,7 @@ export function readPlanReviewNode(node: EvidenceNode): PlanReviewReport {
   if (
     output.requiredIndependence !== assignment.requiredIndependence ||
     output.achievedIndependence !== assignment.achievedIndependence ||
-    assignment.requiredIndependence !== 'provider-independent' ||
-    assignment.achievedIndependence !== 'provider-independent'
+    assignment.requiredIndependence !== 'provider-independent'
   ) {
     throw planReviewInvalid('Plan review independence labels are unexpected.');
   }
@@ -1098,47 +1265,38 @@ function planReviewDispositionDigest(
 function assertAssignment(
   value: unknown,
   subject: PlanReviewSubject,
-): RoleAssignment {
+): ProviderRoleAssignment {
   return assertAssignmentForSubjectDigest(value, subject.subjectDigest);
 }
 
 function assertAssignmentForSubjectDigest(
   value: unknown,
   subjectDigest: string,
-): RoleAssignment {
-  if (!isRecord(value) || !hasExactKeys(value, ROLE_ASSIGNMENT_KEYS)) {
+): ProviderRoleAssignment {
+  if (!isProviderRoleAssignment(value)) {
     throw planReviewInvalid('Plan reviewer assignment shape is malformed.');
   }
-  const providerId = value.providerId;
-  const sessionId = value.sessionId;
   if (
     value.role !== 'plan-reviewer' ||
-    !isProviderId(providerId) ||
-    typeof sessionId !== 'string' ||
-    sessionId.trim().length === 0 ||
-    Buffer.byteLength(sessionId, 'utf8') > PLAN_REVIEW_LIMITS.maxAuthorBytes ||
+    !isProviderId(value.providerId) ||
+    typeof value.sessionId !== 'string' ||
+    value.sessionId.trim().length === 0 ||
+    Buffer.byteLength(value.sessionId, 'utf8') >
+      PLAN_REVIEW_LIMITS.maxAuthorBytes ||
     value.targetDigest !== subjectDigest ||
-    value.requiredIndependence !== 'provider-independent' ||
-    value.achievedIndependence !== 'provider-independent'
+    value.requiredIndependence !== 'provider-independent'
   ) {
     throw planReviewInvalid(
       'Plan reviewer assignment does not bind the subject.',
     );
   }
-  return {
-    role: 'plan-reviewer',
-    providerId,
-    sessionId,
-    targetDigest: subjectDigest,
-    requiredIndependence: 'provider-independent',
-    achievedIndependence: 'provider-independent',
-  };
+  return structuredClone(value);
 }
 
 function assertProviderResult(
   value: unknown,
   subject: PlanReviewSubject,
-  assignment: RoleAssignment,
+  assignment: ProviderRoleAssignment,
   expectedSubmission: PlanReviewSubmission,
 ): EvidenceNode {
   const node = assertStoredEvidenceNode(value, () =>
@@ -1191,6 +1349,7 @@ function assertProviderResult(
     );
   }
   const normalizedSubmission = assertPlanReviewSubmission(output.submission);
+  assertPlanReviewRuntimeAssurance(output.runtimeAssurance);
   assertSubmissionEvidenceBindings(normalizedSubmission, subject);
   const submission = canonicalSubmission(normalizedSubmission);
   if (
@@ -1202,6 +1361,37 @@ function assertProviderResult(
     );
   }
   return node;
+}
+
+function assertPlanReviewRuntimeAssurance(
+  value: unknown,
+): PlanReviewRuntimeAssurance | null {
+  if (value === null) {
+    return null;
+  }
+  if (
+    !isRecord(value) ||
+    !hasExactKeys(value, [
+      'assurance',
+      'projectionDigest',
+      'sameUserProcessConfined',
+      'residuals',
+      'executableSha256',
+    ]) ||
+    value.assurance !== 'unchanged-governed-projection' ||
+    !isDigest(value.projectionDigest) ||
+    value.sameUserProcessConfined !== false ||
+    !Array.isArray(value.residuals) ||
+    value.residuals.length === 0 ||
+    value.residuals.some(
+      (residual) => typeof residual !== 'string' || residual.length === 0,
+    ) ||
+    new Set(value.residuals).size !== value.residuals.length ||
+    !isDigest(value.executableSha256)
+  ) {
+    throw planReviewInvalid('Provider runtime assurance is malformed.');
+  }
+  return deepFreeze(structuredClone(value)) as PlanReviewRuntimeAssurance;
 }
 
 function assertPlanReviewSubmission(value: unknown): NormalizedSubmission {

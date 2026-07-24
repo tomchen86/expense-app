@@ -341,6 +341,7 @@ test(
       );
       const policyPath = adapterPolicyPath(repository);
       fs.mkdirSync(path.dirname(policyPath), { recursive: true });
+      fs.rmSync(policyPath, { force: true });
       fs.symlinkSync('../external-policy.json', policyPath);
 
       assert.throws(

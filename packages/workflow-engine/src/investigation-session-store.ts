@@ -114,6 +114,7 @@ export type InvestigationSession = {
   milestones: {
     mainTerms: StoredInvestigationCheckpoint | null;
     blindResult: BlindResultReference | null;
+    reviewerTermSourceNodeId: string | null;
     groupDispositions: StoredInvestigationCheckpoint | null;
     whyAnswers: StoredInvestigationCheckpoint | null;
   };
@@ -152,6 +153,8 @@ export function investigationCheckpointId(
             mainTermsDigest:
               session.milestones.mainTerms?.contributionDigest ?? null,
             blindResult: session.milestones.blindResult,
+            reviewerTermSourceNodeId:
+              session.milestones.reviewerTermSourceNodeId,
           }
         : {
             groupDispositionsDigest:
@@ -707,15 +710,35 @@ function assertMonotonicSessionTransition(
   ) {
     throw sessionTransitionInvalid();
   }
-  for (const key of [
-    'mainTerms',
-    'blindResult',
-    'groupDispositions',
-    'whyAnswers',
-  ] as const) {
+  const reviewerReopen =
+    current.milestones.reviewerTermSourceNodeId === null &&
+    next.milestones.reviewerTermSourceNodeId !== null;
+  if (
+    (!reviewerReopen &&
+      next.milestones.reviewerTermSourceNodeId !==
+        current.milestones.reviewerTermSourceNodeId) ||
+    (reviewerReopen &&
+      (!isDigest(next.milestones.reviewerTermSourceNodeId) ||
+        next.milestones.groupDispositions !== null ||
+        next.milestones.whyAnswers !== null))
+  ) {
+    throw sessionTransitionInvalid();
+  }
+  for (const key of ['mainTerms', 'blindResult'] as const) {
     const before = current.milestones[key];
     const after = next.milestones[key];
     if (before !== null && canonicalJson(before) !== canonicalJson(after)) {
+      throw sessionTransitionInvalid();
+    }
+  }
+  for (const key of ['groupDispositions', 'whyAnswers'] as const) {
+    const before = current.milestones[key];
+    const after = next.milestones[key];
+    if (
+      before !== null &&
+      canonicalJson(before) !== canonicalJson(after) &&
+      !(reviewerReopen && after === null)
+    ) {
       throw sessionTransitionInvalid();
     }
   }
@@ -729,11 +752,14 @@ function isMilestones(
     !hasExactKeys(value, [
       'mainTerms',
       'blindResult',
+      'reviewerTermSourceNodeId',
       'groupDispositions',
       'whyAnswers',
     ]) ||
     !isStoredCheckpoint(value.mainTerms, 'main-terms') ||
     !isBlindResult(value.blindResult) ||
+    (value.reviewerTermSourceNodeId !== null &&
+      !isDigest(value.reviewerTermSourceNodeId)) ||
     !isStoredCheckpoint(value.groupDispositions, 'group-dispositions') ||
     !isStoredCheckpoint(value.whyAnswers, 'why-answers')
   ) {
