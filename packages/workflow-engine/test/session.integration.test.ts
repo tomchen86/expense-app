@@ -10,8 +10,19 @@ import './archive-transition.integration.test.ts';
 import './ci-archive.integration.test.ts';
 
 import { WorkflowError } from '../src/errors.ts';
+import { commitSession, completeTask, finalizeTask } from '../src/lifecycle.ts';
+import { commitPlanningTransition } from '../src/planning-transition.ts';
 import { runRegisteredCheck } from '../src/registered-check.ts';
-import { abortSession, checkSession, startSession } from '../src/session.ts';
+import {
+  readImmutableReport,
+  writeImmutableReport,
+} from '../src/report-store.ts';
+import {
+  abortSession,
+  checkSession,
+  getSession,
+  startSession,
+} from '../src/session.ts';
 import './atomic-text.test.ts';
 import './completion.integration.test.ts';
 import './collaboration-grant.integration.test.ts';
@@ -44,7 +55,119 @@ import {
   git,
   isWorkflowError,
   runtimeRoot,
+  writeReadyV2ExemptChange,
 } from './fixture.ts';
+
+test('v2 sessions and every task report pin the exact planning assurance', () => {
+  const repository = createFixtureRepository();
+  try {
+    git(repository, ['checkout', '-b', 'work/demo-change']);
+    const ready = writeReadyV2ExemptChange(repository);
+    commitPlanningTransition(repository, 'demo-change');
+    const expectedBinding = {
+      ...ready.planningAssurance,
+      reviewGrantId: null,
+      reviewGrantEnvelopeDigest: null,
+      reviewGrantUseDigest: null,
+      reviewGrantTransitionDigest: null,
+      directHumanReviewAttestationDigest: null,
+    };
+
+    const started = startSession(repository, 'demo-change', '1.1');
+    assert.deepEqual(
+      (started as typeof started & { planningAssurance: unknown })
+        .planningAssurance,
+      expectedBinding,
+    );
+
+    fs.writeFileSync(path.join(repository, 'src/feature.ts'), 'export {};\n');
+    finalizeTask(repository, started.sessionId);
+    commitSession(repository, started.sessionId, 'Bind planning assurance');
+
+    const committed = getSession(repository, started.sessionId);
+    const reportsRoot = path.join(runtimeRoot(repository), 'reports');
+    for (const reportId of [
+      committed.latestCheckReportId,
+      committed.completionReportId,
+      committed.finishReportId,
+      committed.commitReportId,
+    ]) {
+      assert.match(reportId ?? '', /^[0-9a-f]{64}$/);
+      const report = readImmutableReport(
+        reportsRoot,
+        started.sessionId,
+        reportId!,
+      );
+      assert.deepEqual(report.planningAssurance, expectedBinding);
+    }
+  } finally {
+    fs.rmSync(repository, { recursive: true, force: true });
+  }
+});
+
+test('task transitions reject a session whose planning assurance is stale', () => {
+  const repository = createFixtureRepository();
+  try {
+    git(repository, ['checkout', '-b', 'work/demo-change']);
+    writeReadyV2ExemptChange(repository);
+    commitPlanningTransition(repository, 'demo-change');
+    const started = startSession(repository, 'demo-change', '1.1');
+    const sessionPath = path.join(
+      runtimeRoot(repository),
+      'sessions',
+      `${started.sessionId}.json`,
+    );
+    const stored = JSON.parse(fs.readFileSync(sessionPath, 'utf8')) as {
+      planningAssurance: { planningGenerationId: string };
+    };
+    stored.planningAssurance.planningGenerationId = 'f'.repeat(64);
+    fs.writeFileSync(sessionPath, `${JSON.stringify(stored, null, 2)}\n`);
+
+    assert.throws(
+      () => checkSession(repository, started.sessionId),
+      (error) => isWorkflowError(error, 'SESSION_PLANNING_ASSURANCE_STALE'),
+    );
+  } finally {
+    fs.rmSync(repository, { recursive: true, force: true });
+  }
+});
+
+test('completion rejects a check report with mismatched planning assurance', () => {
+  const repository = createFixtureRepository();
+  try {
+    git(repository, ['checkout', '-b', 'work/demo-change']);
+    writeReadyV2ExemptChange(repository);
+    commitPlanningTransition(repository, 'demo-change');
+    const started = startSession(repository, 'demo-change', '1.1');
+    fs.writeFileSync(path.join(repository, 'src/feature.ts'), 'export {};\n');
+    const checked = checkSession(repository, started.sessionId);
+    const reportsRoot = path.join(runtimeRoot(repository), 'reports');
+    const forged = structuredClone(
+      readImmutableReport(reportsRoot, started.sessionId, checked.reportId),
+    );
+    (
+      forged.planningAssurance as { planningGenerationId: string }
+    ).planningGenerationId = 'f'.repeat(64);
+    const forgedId = writeImmutableReport(reportsRoot, forged);
+    const sessionPath = path.join(
+      runtimeRoot(repository),
+      'sessions',
+      `${started.sessionId}.json`,
+    );
+    const stored = JSON.parse(fs.readFileSync(sessionPath, 'utf8')) as {
+      latestCheckReportId: string;
+    };
+    stored.latestCheckReportId = forgedId;
+    fs.writeFileSync(sessionPath, `${JSON.stringify(stored, null, 2)}\n`);
+
+    assert.throws(
+      () => completeTask(repository, started.sessionId),
+      (error) => isWorkflowError(error, 'CHECK_REPORT_STALE'),
+    );
+  } finally {
+    fs.rmSync(repository, { recursive: true, force: true });
+  }
+});
 
 test('registered check execution returns pinned non-destructive evidence', () => {
   const repository = createFixtureRepository();

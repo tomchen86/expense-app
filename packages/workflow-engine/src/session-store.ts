@@ -2,6 +2,10 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 
+import {
+  isPlanningAssuranceBinding,
+  type PlanningAssuranceBinding,
+} from './contracts.ts';
 import { ExitCode, workflowError } from './errors.ts';
 import { ensurePlainDirectory } from './filesystem-safety.ts';
 
@@ -25,6 +29,8 @@ export type WorkflowSession = {
   allowedPaths: string[];
   requiredChecks: string[];
   requiredCheckDigests?: Record<string, string>;
+  /** Optional only for sessions created before this binding was introduced. */
+  planningAssurance?: PlanningAssuranceBinding | null;
   createdAt: string;
   latestCheckReportId?: string;
   completionReportId?: string;
@@ -387,6 +393,7 @@ function isWorkflowSession(value: unknown): value is WorkflowSession {
     'allowedPaths',
     'requiredChecks',
     'requiredCheckDigests',
+    'planningAssurance',
     'createdAt',
     'latestCheckReportId',
     'completionReportId',
@@ -433,6 +440,13 @@ function isWorkflowSession(value: unknown): value is WorkflowSession {
   if (
     value.requiredCheckDigests !== undefined &&
     !isStringRecord(value.requiredCheckDigests)
+  ) {
+    return false;
+  }
+  if (
+    value.planningAssurance !== undefined &&
+    value.planningAssurance !== null &&
+    !isPlanningAssuranceBinding(value.planningAssurance)
   ) {
     return false;
   }

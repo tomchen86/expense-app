@@ -8,6 +8,7 @@ import { ensurePlainDirectory } from './filesystem-safety.ts';
 import { discoverRepository } from './git.ts';
 import type { ValidatedChangeContract } from './managed-change-contract.ts';
 import { assertChangeId, assertSessionId, assertTaskId } from './paths.ts';
+import { createTaskPlanningAssuranceBinding } from './planning-assurance-validator.ts';
 import {
   createSessionId,
   readSessionFile,
@@ -184,6 +185,10 @@ function persistSessionStart(
     requiredCheckDigests: digestRequiredCheckDefinitions(
       contract.checks,
       policy.requiredChecks,
+    ),
+    planningAssurance: createTaskPlanningAssuranceBinding(
+      contract,
+      contract.planningAssurance,
     ),
     createdAt: new Date().toISOString(),
   };

@@ -30,6 +30,7 @@ import {
 } from './git.ts';
 import { type ValidatedChangeContract } from './managed-change-contract.ts';
 import { assertSessionId, matchesAllowedPath } from './paths.ts';
+import { createTaskPlanningAssuranceBinding } from './planning-assurance-validator.ts';
 import { writeImmutableReport, type WorkflowReport } from './report-store.ts';
 import {
   assertOwnedLock,
@@ -179,6 +180,18 @@ export function inspectSession(
     discovered,
     session.changeId,
   );
+  if (
+    JSON.stringify(session.planningAssurance ?? null) !==
+    JSON.stringify(
+      createTaskPlanningAssuranceBinding(contract, contract.planningAssurance),
+    )
+  ) {
+    throw workflowError(
+      'SESSION_PLANNING_ASSURANCE_STALE',
+      'Session planning assurance no longer matches the live validated change contract.',
+      ExitCode.staleState,
+    );
+  }
   const policy = contract.guard.tasks[session.taskId];
   if (!policy) {
     throw workflowError(
@@ -383,12 +396,24 @@ export function writeSessionReport(
   inspection: SessionInspection,
   report: WorkflowReport,
 ): string {
+  const planningAssurance = inspection.session.planningAssurance ?? null;
+  if (
+    report.planningAssurance !== undefined &&
+    JSON.stringify(report.planningAssurance) !==
+      JSON.stringify(planningAssurance)
+  ) {
+    throw workflowError(
+      'REPORT_PLANNING_ASSURANCE_MISMATCH',
+      'Task report planning assurance does not match its governing session.',
+      ExitCode.staleState,
+    );
+  }
   return writeImmutableReport(
     runtimePaths(
       inspection.git.gitCommonDirectory,
       inspection.contract.config.runtimeDirectory,
     ).reports,
-    report,
+    { ...report, planningAssurance },
   );
 }
 

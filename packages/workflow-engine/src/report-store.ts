@@ -2,6 +2,10 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 
+import {
+  isPlanningAssuranceBinding,
+  type PlanningAssuranceBinding,
+} from './contracts.ts';
 import { ExitCode, workflowError } from './errors.ts';
 import { assertSessionId } from './paths.ts';
 
@@ -13,6 +17,7 @@ export type WorkflowReport = {
   taskId: string;
   createdAt: string;
   parentReportId?: string;
+  planningAssurance?: PlanningAssuranceBinding | null;
   [key: string]: unknown;
 };
 
@@ -111,6 +116,9 @@ export function readImmutableReport(
     typeof value.taskId !== 'string' ||
     typeof value.createdAt !== 'string' ||
     Number.isNaN(Date.parse(value.createdAt)) ||
+    (value.planningAssurance !== undefined &&
+      value.planningAssurance !== null &&
+      !isPlanningAssuranceBinding(value.planningAssurance)) ||
     (value.parentReportId !== undefined && !isDigest(value.parentReportId))
   ) {
     throw invalidReport('REPORT_INVALID', 'Workflow report is invalid.');

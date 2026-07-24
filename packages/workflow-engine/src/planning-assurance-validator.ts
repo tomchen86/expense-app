@@ -6,9 +6,15 @@ import { canonicalJson } from './canonical-json.ts';
 import {
   bindingFromPayload,
   canonicalCollaborationGrantEnvelope,
+  directHumanReviewAttestationDigest,
   parseCollaborationGrantEnvelope,
 } from './collaboration-grant.ts';
-import type { ChangeContract } from './contracts.ts';
+import type {
+  ChangeContract,
+  PlanningAssuranceBinding,
+  PlanningAssuranceSummary,
+} from './contracts.ts';
+import { isPlanningAssuranceBinding } from './contracts.ts';
 import { ExitCode, workflowError } from './errors.ts';
 import {
   assertStoredEvidenceNode,
@@ -64,24 +70,8 @@ export type InvestigationFirstPlanningSubject = {
   policies: PlanningPolicyDigests;
 };
 
-export type InvestigationFirstPlanningAssuranceSummary = {
-  applicabilityKind: InvestigationApplicability['kind'];
-  applicabilityDigest: string;
-  applicabilityNodeId: string;
-  investigationBaseline: { head: string; tree: string };
-  planningGenerationId: string;
-  planTargetDigest: string;
-  reviewNodeId: string;
-  reviewResultDigest: string;
-  reviewDispositionNodeId: string | null;
-  reviewRoleResultDigest: string;
-  reviewRoleResultForm: AdmittedRoleResult['form'];
-  reviewOrchestration: AdmittedRoleResult['orchestration'];
-  requiredIndependence: 'provider-independent';
-  achievedIndependence: AdmittedRoleResult['achievedIndependence'];
-  degradationAuthorized: boolean;
-  advisoryVerdict: 'advisory-approve' | 'advisory-reject';
-};
+export type InvestigationFirstPlanningAssuranceSummary =
+  PlanningAssuranceSummary;
 
 export type InvestigationFirstPlanningReadiness =
   InvestigationFirstPlanningSubject & {
@@ -238,6 +228,45 @@ export function validateInvestigationFirstPlanningReadiness(
     advisoryVerdict: validation.advisoryVerdict,
   };
   return { ...context, roleResult, summary };
+}
+
+export function createTaskPlanningAssuranceBinding(
+  contract: ChangeContract,
+  summary: InvestigationFirstPlanningAssuranceSummary | null,
+): PlanningAssuranceBinding | null {
+  if (summary === null) return null;
+  const matches = (contract.planReview?.roleResults ?? []).filter(
+    (candidate) =>
+      isPlainRecord(candidate) &&
+      candidate.resultDigest === summary.reviewRoleResultDigest,
+  );
+  if (matches.length !== 1) {
+    throw planningNotReady(
+      'Task lifecycle cannot resolve the exact admitted PlanReview role result.',
+    );
+  }
+  const roleResult = matches[0] as unknown as AdmittedRoleResult;
+  const binding: PlanningAssuranceBinding = {
+    ...summary,
+    reviewGrantId: roleResult.grantUse?.grantId ?? null,
+    reviewGrantEnvelopeDigest:
+      roleResult.grantUse?.signedEnvelopeDigest ?? null,
+    reviewGrantUseDigest: roleResult.grantUse
+      ? sha256(canonicalJson(roleResult.grantUse))
+      : null,
+    reviewGrantTransitionDigest: roleResult.grantUse?.transitionDigest ?? null,
+    directHumanReviewAttestationDigest: roleResult.directHumanReviewAttestation
+      ? directHumanReviewAttestationDigest(
+          roleResult.directHumanReviewAttestation,
+        )
+      : null,
+  };
+  if (!isPlanningAssuranceBinding(binding)) {
+    throw planningNotReady(
+      'Task lifecycle planning assurance references are inconsistent.',
+    );
+  }
+  return binding;
 }
 
 /**

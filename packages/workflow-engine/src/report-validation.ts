@@ -31,6 +31,10 @@ export function assertInspectionReport(
     report.sessionId !== inspection.session.sessionId ||
     report.changeId !== inspection.session.changeId ||
     report.taskId !== inspection.session.taskId ||
+    !same(
+      report.planningAssurance,
+      inspection.session.planningAssurance ?? null,
+    ) ||
     !same(report.baseline, inspection.session.baseline) ||
     report.branch !== inspection.session.branch ||
     !same(report.artifactDigests, inspection.artifactDigests) ||

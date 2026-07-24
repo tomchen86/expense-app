@@ -33,6 +33,7 @@
         "changeId": { "type": "string" },
         "taskId": { "type": "string" },
         "createdAt": { "type": "string", "format": "date-time" },
+        "planningAssurance": { "$ref": "#/$defs/planningAssurance" },
         "parentReportId": { "$ref": "#/$defs/digest" }
       }
     },
@@ -49,7 +50,8 @@
             "requiredChecks",
             "requiredCheckDigests",
             "changedPaths",
-            "fingerprint"
+            "fingerprint",
+            "planningAssurance"
           ],
           "properties": {
             "baseline": { "type": "object" },
@@ -123,7 +125,8 @@
             "completedTaskIds",
             "projectionSourceDigest",
             "transitionPaths",
-            "message"
+            "message",
+            "planningAssurance"
           ]
         }
       ]
@@ -170,6 +173,106 @@
             "checks",
             "fingerprint"
           ]
+        }
+      ]
+    },
+    "nullableDigest": {
+      "anyOf": [{ "$ref": "#/$defs/digest" }, { "type": "null" }]
+    },
+    "planningAssurance": {
+      "anyOf": [
+        { "type": "null" },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "applicabilityKind",
+            "applicabilityDigest",
+            "applicabilityNodeId",
+            "investigationBaseline",
+            "planningGenerationId",
+            "planTargetDigest",
+            "reviewNodeId",
+            "reviewResultDigest",
+            "reviewDispositionNodeId",
+            "reviewRoleResultDigest",
+            "reviewRoleResultForm",
+            "reviewOrchestration",
+            "reviewGrantId",
+            "reviewGrantEnvelopeDigest",
+            "reviewGrantUseDigest",
+            "reviewGrantTransitionDigest",
+            "directHumanReviewAttestationDigest",
+            "requiredIndependence",
+            "achievedIndependence",
+            "degradationAuthorized",
+            "advisoryVerdict"
+          ],
+          "properties": {
+            "applicabilityKind": {
+              "enum": ["sealed-investigation", "investigation-exemption"]
+            },
+            "applicabilityDigest": { "$ref": "#/$defs/digest" },
+            "applicabilityNodeId": { "$ref": "#/$defs/digest" },
+            "investigationBaseline": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["head", "tree"],
+              "properties": {
+                "head": { "$ref": "#/$defs/commitHash" },
+                "tree": { "$ref": "#/$defs/commitHash" }
+              }
+            },
+            "planningGenerationId": { "$ref": "#/$defs/digest" },
+            "planTargetDigest": { "$ref": "#/$defs/digest" },
+            "reviewNodeId": { "$ref": "#/$defs/digest" },
+            "reviewResultDigest": { "$ref": "#/$defs/digest" },
+            "reviewDispositionNodeId": { "$ref": "#/$defs/nullableDigest" },
+            "reviewRoleResultDigest": { "$ref": "#/$defs/digest" },
+            "reviewRoleResultForm": {
+              "enum": [
+                "ordinary-provider",
+                "granted-same-provider",
+                "granted-caller-supplied",
+                "direct-human-attestation"
+              ]
+            },
+            "reviewOrchestration": {
+              "enum": [
+                "engine-spawned-provider",
+                "caller-supplied",
+                "direct-human-review"
+              ]
+            },
+            "reviewGrantId": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+                },
+                { "type": "null" }
+              ]
+            },
+            "reviewGrantEnvelopeDigest": { "$ref": "#/$defs/nullableDigest" },
+            "reviewGrantUseDigest": { "$ref": "#/$defs/nullableDigest" },
+            "reviewGrantTransitionDigest": { "$ref": "#/$defs/nullableDigest" },
+            "directHumanReviewAttestationDigest": {
+              "$ref": "#/$defs/nullableDigest"
+            },
+            "requiredIndependence": { "const": "provider-independent" },
+            "achievedIndependence": {
+              "enum": [
+                "provider-independent",
+                "principal-independent",
+                "session-independent",
+                "none"
+              ]
+            },
+            "degradationAuthorized": { "type": "boolean" },
+            "advisoryVerdict": {
+              "enum": ["advisory-approve", "advisory-reject"]
+            }
+          }
         }
       ]
     }
