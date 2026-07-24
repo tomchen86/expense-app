@@ -41,6 +41,7 @@ import './ci-attestation.integration.test.ts';
 import './evidence-node.contract.test.ts';
 import './evidence-currentness.contract.test.ts';
 import './investigation-groups.contract.test.ts';
+import './plan-review.contract.test.ts';
 import './provider-orchestration.contract.test.ts';
 import { createFixtureRepository, writeV2ChangeArtifacts } from './fixture.ts';
 

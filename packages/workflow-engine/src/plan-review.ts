@@ -1,0 +1,1851 @@
+import crypto from 'node:crypto';
+
+import { canonicalJson } from './canonical-json.ts';
+import { ExitCode, workflowError, type WorkflowError } from './errors.ts';
+import {
+  assertStoredEvidenceNode,
+  createEvidenceNode,
+  type EvidenceNode,
+} from './evidence-node.ts';
+import {
+  normalizeInvestigationTerm,
+  type InvestigationTermKind,
+} from './investigation-terms.ts';
+import { normalizeExactRepositoryPath } from './paths.ts';
+import { isProviderId } from './provider-registry.ts';
+import type {
+  IndependenceDimension,
+  RoleAssignment,
+} from './role-scheduler.ts';
+import {
+  assertPlanningGeneration,
+  type PlanningGeneration,
+} from './planning-generation.ts';
+
+const PLAN_REVIEW_TYPE = 'plan-review';
+const PLAN_REVIEW_SCHEMA = 'plan-review.v1';
+const PLAN_REVIEW_EVALUATOR = 'plan-review.v1';
+const PLAN_REVIEW_OUTPUT_SCHEMA_ID = 'plan-review-output.v1';
+const PLAN_REVIEW_NODE_OUTPUT_SCHEMA_ID = 'plan-review-node-output.v1';
+
+const PROVIDER_RESULT_TYPE = 'plan-review-provider-result';
+const PROVIDER_RESULT_SCHEMA = 'plan-review-provider-result.v1';
+const PROVIDER_RESULT_EVALUATOR = 'plan-review-provider-result.v1';
+const PROVIDER_RESULT_OUTPUT_SCHEMA = 'plan-review-provider-result-output.v1';
+
+const DISPOSITION_TYPE = 'plan-review-disposition';
+const DISPOSITION_SCHEMA = 'plan-review-disposition.v1';
+const DISPOSITION_EVALUATOR = 'plan-review-disposition.v1';
+const DISPOSITION_OUTPUT_SCHEMA = 'plan-review-disposition-output.v1';
+
+const DIGEST_PATTERN = /^[0-9a-f]{64}$/;
+const GIT_OBJECT_ID_PATTERN = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
+
+export const PLAN_REVIEW_MAX_PROPOSED_TERMS = 256;
+
+const PLAN_REVIEW_LIMITS = Object.freeze({
+  maxFindings: 128,
+  maxSuggestions: 128,
+  maxProposedTerms: PLAN_REVIEW_MAX_PROPOSED_TERMS,
+  maxEvidencePerEntry: 64,
+  maxInvestigationDependencies: 4096,
+  maxSummaryBytes: 16 * 1024,
+  maxObservationBytes: 16 * 1024,
+  maxDispositionRationaleBytes: 16 * 1024,
+  maxAuthorBytes: 1024,
+  maxRepositoryPathBytes: 4096,
+});
+
+/**
+ * The fixed scope-and-depth challenge surface a single exact-plan review must
+ * cover. A submission attests the complete set; a missing area is incomplete
+ * coverage and fails closed. It doubles as the allowed challenge category set.
+ */
+export const PLAN_REVIEW_COVERAGE = Object.freeze([
+  'missing-scope',
+  'missing-consumers',
+  'weak-why',
+  'unsupported-invariants',
+  'contradictory-artifacts',
+  'task-strategy-risks',
+  'additional-search-terms',
+] as const);
+
+const COVERAGE_SET: ReadonlySet<string> = new Set<string>(PLAN_REVIEW_COVERAGE);
+const FOLLOWUP_CATEGORIES: ReadonlySet<string> = new Set(['follow-up']);
+const VERDICTS: ReadonlySet<string> = new Set([
+  'advisory-approve',
+  'advisory-reject',
+]);
+const TERM_KINDS: ReadonlySet<string> = new Set([
+  'literal-content',
+  'literal-path',
+  'symbol',
+  'config-key',
+]);
+const EVIDENCE_KINDS = [
+  'repository-location',
+  'investigation-node',
+  'survey-record',
+] as const;
+const DISPOSITION_DECISIONS: ReadonlySet<string> = new Set([
+  'mitigated',
+  'rejected',
+  'accepted',
+]);
+const INDEPENDENCE_DIMENSIONS: ReadonlySet<string> = new Set([
+  'provider-independent',
+  'principal-independent',
+  'session-independent',
+  'none',
+]);
+
+const SUBMISSION_KEYS = [
+  'schemaVersion',
+  'verdict',
+  'coverage',
+  'scopeAssessment',
+  'findings',
+  'proposedTerms',
+  'suggestions',
+] as const;
+
+const OUTPUT_KEYS = [
+  'schemaVersion',
+  'planningGenerationId',
+  'planTargetDigest',
+  'subjectDigest',
+  'assignment',
+  'verdict',
+  'coverage',
+  'scopeAssessment',
+  'findings',
+  'suggestions',
+  'proposedTerms',
+  'requiredIndependence',
+  'achievedIndependence',
+] as const;
+
+const SUBJECT_KEYS = [
+  'schemaVersion',
+  'subjectDigest',
+  'planningGenerationId',
+  'planTargetDigest',
+  'reviewPolicyDigest',
+  'requiredIndependence',
+  'investigationBaseline',
+  'investigationDependencies',
+] as const;
+
+const PROVIDER_RESULT_OUTPUT_KEYS = [
+  'schemaVersion',
+  'subjectDigest',
+  'assignment',
+  'submission',
+] as const;
+
+const ROLE_ASSIGNMENT_KEYS = [
+  'role',
+  'providerId',
+  'sessionId',
+  'targetDigest',
+  'requiredIndependence',
+  'achievedIndependence',
+] as const;
+
+export type PlanReviewVerdict = 'advisory-approve' | 'advisory-reject';
+
+export type PlanReviewEvidence =
+  | {
+      kind: 'repository-location';
+      path: string;
+      line: number;
+      observation: string;
+    }
+  | { kind: 'investigation-node'; nodeId: string; resultDigest: string }
+  | { kind: 'survey-record'; nodeId: string; resultDigest: string };
+
+export type PlanReviewProposedTerm = {
+  kind: InvestigationTermKind;
+  value: string;
+};
+
+/**
+ * A submitted finding. Challenges are current-change required and demand
+ * disposition; suggestions are independent follow-ups. The `kind` and
+ * `currentChangeImpact` fields are deliberately wide so a malformed pairing is
+ * rejected at validation rather than swallowed by the type.
+ */
+export type PlanReviewFinding = {
+  kind: 'challenge' | 'suggestion';
+  category: string;
+  currentChangeImpact: 'required' | 'independent-follow-up';
+  summary: string;
+  evidence: PlanReviewEvidence[];
+};
+
+export type PlanReviewScopeAssessment =
+  | { kind: 'challenges' }
+  | { kind: 'no-challenge'; evidence: PlanReviewEvidence[] };
+
+export type PlanReviewSubmission = {
+  schemaVersion: 1;
+  verdict: PlanReviewVerdict;
+  coverage: string[];
+  scopeAssessment: PlanReviewScopeAssessment;
+  findings: PlanReviewFinding[];
+  proposedTerms: PlanReviewProposedTerm[];
+  suggestions: PlanReviewFinding[];
+};
+
+export type PlanReviewChallenge = {
+  findingId: string;
+  kind: 'challenge';
+  category: string;
+  currentChangeImpact: 'required';
+  summary: string;
+  evidence: PlanReviewEvidence[];
+};
+
+export type PlanReviewSuggestion = {
+  suggestionId: string;
+  kind: 'suggestion';
+  category: string;
+  currentChangeImpact: 'independent-follow-up';
+  summary: string;
+  evidence: PlanReviewEvidence[];
+};
+
+export type PlanReviewReport = {
+  schemaVersion: 1;
+  nodeId: string;
+  resultDigest: string;
+  policyDigest: string;
+  subjectDigest: string;
+  planningGenerationId: string;
+  planTargetDigest: string;
+  assignment: RoleAssignment;
+  providerResultNodeId: string;
+  providerResultResultDigest: string;
+  verdict: PlanReviewVerdict;
+  coverage: readonly string[];
+  scopeAssessment: PlanReviewScopeAssessment;
+  findings: PlanReviewChallenge[];
+  suggestions: PlanReviewSuggestion[];
+  proposedTerms: PlanReviewProposedTerm[];
+  requiredIndependence: IndependenceDimension;
+  achievedIndependence: IndependenceDimension;
+};
+
+export type PlanReviewSubjectInput = {
+  generation: PlanningGeneration;
+  reviewPolicyDigest: string;
+  requiredIndependence: IndependenceDimension;
+};
+
+export type PlanReviewSubject = {
+  schemaVersion: 1;
+  subjectDigest: string;
+  planningGenerationId: string;
+  planTargetDigest: string;
+  reviewPolicyDigest: string;
+  requiredIndependence: IndependenceDimension;
+  investigationBaseline: { head: string; tree: string };
+  investigationDependencies: Array<{
+    role: string;
+    nodeId: string;
+    resultDigest: string;
+  }>;
+};
+
+export type PlanReviewDispositionDecision =
+  'mitigated' | 'rejected' | 'accepted';
+
+export type PlanReviewDispositionEntry = {
+  challengeId: string;
+  decision: PlanReviewDispositionDecision;
+  rationale: string;
+  author: string;
+};
+
+export type PlanReviewDispositionInput = {
+  reviewNode: EvidenceNode;
+  policyDigest: string;
+  dispositions: PlanReviewDispositionEntry[];
+};
+
+export type PlanReviewDispositionRecord = {
+  reviewNodeId: string;
+  reviewResultDigest: string;
+  policyDigest: string;
+  dispositions: PlanReviewDispositionEntry[];
+};
+
+export type PlanReviewNodeInput = {
+  subject: PlanReviewSubject;
+  assignment: RoleAssignment;
+  providerResultNode: EvidenceNode;
+  submission: PlanReviewSubmission;
+};
+
+export type PlanReviewProviderResultNodeInput = {
+  subject: PlanReviewSubject;
+  assignment: RoleAssignment;
+  submission: PlanReviewSubmission;
+  providerPolicyDigest: string;
+};
+
+type NormalizedFinding = {
+  findingId: string;
+  kind: 'challenge';
+  category: string;
+  currentChangeImpact: 'required';
+  summary: string;
+  evidence: PlanReviewEvidence[];
+};
+
+type NormalizedSuggestion = {
+  suggestionId: string;
+  kind: 'suggestion';
+  category: string;
+  currentChangeImpact: 'independent-follow-up';
+  summary: string;
+  evidence: PlanReviewEvidence[];
+};
+
+type NormalizedSubmission = {
+  verdict: PlanReviewVerdict;
+  coverage: string[];
+  scopeAssessment: PlanReviewScopeAssessment;
+  findings: NormalizedFinding[];
+  suggestions: NormalizedSuggestion[];
+  proposedTerms: PlanReviewProposedTerm[];
+};
+
+const PLAN_REVIEW_SCHEMA_GRAMMAR = {
+  schema: 'plan-review-output-grammar.v1',
+  id: PLAN_REVIEW_OUTPUT_SCHEMA_ID,
+  version: 1,
+  submissionKeys: [...SUBMISSION_KEYS],
+  storedOutputKeys: [...OUTPUT_KEYS],
+  subjectKeys: [...SUBJECT_KEYS],
+  roleAssignmentKeys: [...ROLE_ASSIGNMENT_KEYS],
+  providerResult: {
+    type: PROVIDER_RESULT_TYPE,
+    nodeSchema: PROVIDER_RESULT_SCHEMA,
+    evaluator: PROVIDER_RESULT_EVALUATOR,
+    outputSchema: PROVIDER_RESULT_OUTPUT_SCHEMA,
+    outputKeys: [...PROVIDER_RESULT_OUTPUT_KEYS],
+    exactInputRoles: ['assignment', 'subject', 'submission'],
+    semanticParentRoles: [],
+    provenanceParentRoles: [],
+  },
+  reviewNode: {
+    type: PLAN_REVIEW_TYPE,
+    nodeSchema: PLAN_REVIEW_SCHEMA,
+    evaluator: PLAN_REVIEW_EVALUATOR,
+    outputSchema: PLAN_REVIEW_NODE_OUTPUT_SCHEMA_ID,
+    exactInputRoles: ['assignment', 'subject', 'submission'],
+    semanticParentRoles: ['providerResult'],
+    provenanceParentRoles: ['providerResult'],
+  },
+  coverage: [...PLAN_REVIEW_COVERAGE],
+  verdicts: [...VERDICTS],
+  challenge: {
+    submissionKeys: [
+      'kind',
+      'category',
+      'currentChangeImpact',
+      'summary',
+      'evidence',
+    ],
+    storedKeys: [
+      'findingId',
+      'kind',
+      'category',
+      'currentChangeImpact',
+      'summary',
+      'evidence',
+    ],
+    categories: [...PLAN_REVIEW_COVERAGE],
+    impact: 'required',
+  },
+  suggestion: {
+    submissionKeys: [
+      'kind',
+      'category',
+      'currentChangeImpact',
+      'summary',
+      'evidence',
+    ],
+    storedKeys: [
+      'suggestionId',
+      'kind',
+      'category',
+      'currentChangeImpact',
+      'summary',
+      'evidence',
+    ],
+    categories: [...FOLLOWUP_CATEGORIES],
+    impact: 'independent-follow-up',
+  },
+  scopeAssessment: {
+    challengesKeys: ['kind'],
+    noChallengeKeys: ['kind', 'evidence'],
+    requiredScopeChallengeCategories: ['missing-consumers', 'missing-scope'],
+  },
+  evidence: {
+    kinds: [...EVIDENCE_KINDS],
+    repositoryLocationKeys: ['kind', 'line', 'observation', 'path'],
+    graphKeys: ['kind', 'nodeId', 'resultDigest'],
+  },
+  proposedTermKeys: ['kind', 'value'],
+  termKinds: [...TERM_KINDS],
+  disposition: {
+    entryKeys: ['author', 'challengeId', 'decision', 'rationale'],
+    decisions: [...DISPOSITION_DECISIONS],
+    outputKeys: ['schemaVersion', 'dispositions'],
+    exactInputRoles: ['dispositions'],
+    semanticParentRoles: ['review'],
+    provenanceParentRoles: ['review'],
+  },
+  independenceDimensions: [...INDEPENDENCE_DIMENSIONS],
+  limits: PLAN_REVIEW_LIMITS,
+} as const;
+
+const PLAN_REVIEW_OUTPUT_DIGEST = sha256(
+  canonicalJson(PLAN_REVIEW_SCHEMA_GRAMMAR),
+);
+
+/**
+ * The code-owned schema identity for a plan-review provider submission. The
+ * digest binds the fixed coverage set, verdict values, evidence kinds, and term
+ * kinds so the accepted output grammar is reviewed and replayed rather than
+ * driven by an external policy file.
+ */
+export const PLAN_REVIEW_OUTPUT_SCHEMA = Object.freeze({
+  id: PLAN_REVIEW_OUTPUT_SCHEMA_ID,
+  version: 1,
+  digest: PLAN_REVIEW_OUTPUT_DIGEST,
+});
+
+/**
+ * The bound validator for a plan-review submission. It accepts only a strictly
+ * shaped submission — exact keys, complete coverage, evidence-bound findings,
+ * and enumerated terms — and returns a literal boolean so a generic semantic
+ * action (an unknown proposal key) is rejected rather than admitted.
+ */
+export const PLAN_REVIEW_OUTPUT_VALIDATOR = Object.freeze({
+  id: PLAN_REVIEW_OUTPUT_SCHEMA_ID,
+  version: 1,
+  digest: PLAN_REVIEW_OUTPUT_DIGEST,
+  validate(value: unknown): boolean {
+    try {
+      assertPlanReviewSubmission(value);
+      return true;
+    } catch {
+      return false;
+    }
+  },
+});
+
+/**
+ * Bind a planning generation into an immutable review subject. The subject
+ * digest fixes the governing generation, exact plan target, investigation
+ * baseline and dependencies, review policy, and required independence. The
+ * review policy must match the generation's own review policy so a subject
+ * cannot bind an inconsistent policy.
+ */
+export function createPlanReviewSubject(
+  input: PlanReviewSubjectInput,
+): PlanReviewSubject {
+  if (
+    !isRecord(input) ||
+    !hasExactKeys(input, [
+      'generation',
+      'reviewPolicyDigest',
+      'requiredIndependence',
+    ])
+  ) {
+    throw planReviewInvalid('Plan review subject input shape is malformed.');
+  }
+  let generation: PlanningGeneration;
+  try {
+    generation = assertPlanningGeneration(input.generation);
+  } catch {
+    throw planReviewInvalid('Plan review subject generation is malformed.');
+  }
+  const reviewPolicyDigest = input.reviewPolicyDigest;
+  const requiredIndependence = input.requiredIndependence;
+  const generationPolicy = generation.policies.reviewPolicyDigest;
+  if (
+    !isDigest(generation.planningGenerationId) ||
+    !isDigest(generation.targetDigest) ||
+    !isDigest(generationPolicy) ||
+    !isDigest(reviewPolicyDigest) ||
+    reviewPolicyDigest !== generationPolicy
+  ) {
+    throw planReviewInvalid(
+      'Plan review policy digest must match the planning generation.',
+    );
+  }
+  if (requiredIndependence !== 'provider-independent') {
+    throw planReviewInvalid(
+      'Plan review requires provider-independent separation.',
+    );
+  }
+  const baseline = assertBaseline(generation.investigationBaseline);
+  const dependencies = assertDependencies(generation.investigationDependencies);
+
+  const fields = {
+    planningGenerationId: generation.planningGenerationId,
+    planTargetDigest: generation.targetDigest,
+    reviewPolicyDigest,
+    requiredIndependence,
+    investigationBaseline: baseline,
+    investigationDependencies: dependencies,
+  };
+
+  const subject: PlanReviewSubject = {
+    schemaVersion: 1,
+    subjectDigest: planReviewSubjectDigest(fields),
+    planningGenerationId: fields.planningGenerationId,
+    planTargetDigest: fields.planTargetDigest,
+    reviewPolicyDigest: fields.reviewPolicyDigest,
+    requiredIndependence: fields.requiredIndependence,
+    investigationBaseline: fields.investigationBaseline,
+    investigationDependencies: fields.investigationDependencies,
+  };
+  return assertPlanReviewSubject(subject);
+}
+
+/**
+ * Strictly replay a serialized PlanReview subject. The subject is a closed
+ * schema, carries canonical investigation dependencies, and must reproduce its
+ * own digest. Construction separately validates the complete planning generation
+ * so a caller cannot manufacture a subject from a trusted-looking generation ID.
+ */
+export function assertPlanReviewSubject(value: unknown): PlanReviewSubject {
+  const record = assertExactKeys(value, SUBJECT_KEYS);
+  if (
+    record.schemaVersion !== 1 ||
+    !isDigest(record.subjectDigest) ||
+    !isDigest(record.planningGenerationId) ||
+    !isDigest(record.planTargetDigest) ||
+    !isDigest(record.reviewPolicyDigest) ||
+    record.requiredIndependence !== 'provider-independent'
+  ) {
+    throw planReviewInvalid('Plan review subject binding is malformed.');
+  }
+  const investigationBaseline = assertBaseline(record.investigationBaseline);
+  const investigationDependencies = assertDependencies(
+    record.investigationDependencies,
+  );
+  const subject: PlanReviewSubject = {
+    schemaVersion: 1,
+    subjectDigest: record.subjectDigest,
+    planningGenerationId: record.planningGenerationId,
+    planTargetDigest: record.planTargetDigest,
+    reviewPolicyDigest: record.reviewPolicyDigest,
+    requiredIndependence: 'provider-independent',
+    investigationBaseline,
+    investigationDependencies,
+  };
+  if (planReviewSubjectDigest(subject) !== subject.subjectDigest) {
+    throw planReviewInvalid('Plan review subject digest does not match.');
+  }
+  return deepFreeze(subject);
+}
+
+/**
+ * Recompute the canonical subject digest from its governing fields. Live
+ * construction and replay validation share this so a tampered subject whose
+ * stored digest no longer matches its fields is detectable.
+ */
+export function planReviewSubjectDigest(fields: {
+  planningGenerationId: string;
+  planTargetDigest: string;
+  reviewPolicyDigest: string;
+  requiredIndependence: IndependenceDimension;
+  investigationBaseline: { head: string; tree: string };
+  investigationDependencies: Array<{
+    role: string;
+    nodeId: string;
+    resultDigest: string;
+  }>;
+}): string {
+  return sha256(
+    canonicalJson({
+      schema: 'plan-review-subject.v1',
+      planningGenerationId: fields.planningGenerationId,
+      planTargetDigest: fields.planTargetDigest,
+      reviewPolicyDigest: fields.reviewPolicyDigest,
+      requiredIndependence: fields.requiredIndependence,
+      investigationBaseline: fields.investigationBaseline,
+      investigationDependencies: fields.investigationDependencies,
+    }),
+  );
+}
+
+/**
+ * Wrap one already-validated provider semantic result in the exact evidence
+ * shape consumed by PlanReview construction. Task 6.5 may bridge a real bounded
+ * adapter result into this helper; the wrapper itself deliberately carries no
+ * runtime-only launch metadata.
+ */
+export function createPlanReviewProviderResultNode(
+  input: PlanReviewProviderResultNodeInput,
+): EvidenceNode {
+  if (
+    !isRecord(input) ||
+    !hasExactKeys(input, [
+      'subject',
+      'assignment',
+      'submission',
+      'providerPolicyDigest',
+    ])
+  ) {
+    throw planReviewInvalid('Plan review provider result input is malformed.');
+  }
+  const subject = assertPlanReviewSubject(input.subject);
+  const assignment = assertAssignment(input.assignment, subject);
+  if (!isDigest(input.providerPolicyDigest)) {
+    throw planReviewInvalid('Plan review provider policy digest is malformed.');
+  }
+  const normalized = assertPlanReviewSubmission(input.submission);
+  assertSubmissionEvidenceBindings(normalized, subject);
+  const submission = canonicalSubmission(normalized);
+  const assignmentDigest = planReviewAssignmentDigest(assignment);
+  const submissionDigest = planReviewSubmissionDigest(submission);
+
+  return createEvidenceNode({
+    type: PROVIDER_RESULT_TYPE,
+    nodeSchema: PROVIDER_RESULT_SCHEMA,
+    evaluator: PROVIDER_RESULT_EVALUATOR,
+    policyDigest: input.providerPolicyDigest,
+    exactInputDigests: {
+      assignment: assignmentDigest,
+      subject: subject.subjectDigest,
+      submission: submissionDigest,
+    },
+    semanticParentResultDigests: {},
+    provenanceParentNodeIds: {},
+    outputSchema: PROVIDER_RESULT_OUTPUT_SCHEMA,
+    output: {
+      schemaVersion: 1,
+      subjectDigest: subject.subjectDigest,
+      assignment,
+      submission,
+    },
+    runtimeMetadata: {},
+  });
+}
+
+export function planReviewAssignmentDigest(assignment: RoleAssignment): string {
+  return sha256(
+    canonicalJson({
+      schema: 'plan-review-assignment.v1',
+      assignment,
+    }),
+  );
+}
+
+export function planReviewSubmissionDigest(
+  submission: PlanReviewSubmission,
+): string {
+  return sha256(
+    canonicalJson({
+      schema: 'plan-review-submission.v1',
+      submission,
+    }),
+  );
+}
+
+/**
+ * Construct an immutable exact-plan review evidence node from a strict
+ * submission. The submission must carry complete coverage and an evidence-bound
+ * challenge or structured no-challenge conclusion; the reviewer assignment must
+ * bind this subject with achieved provider independence; and the provider result
+ * must have observed the same subject. The node binds the subject, assignment,
+ * and submission digests and derives its identity from that canonical content.
+ */
+export function createPlanReviewNode(input: PlanReviewNodeInput): EvidenceNode {
+  if (
+    !isRecord(input) ||
+    !hasExactKeys(input, [
+      'subject',
+      'assignment',
+      'providerResultNode',
+      'submission',
+    ])
+  ) {
+    throw planReviewInvalid('Plan review node input shape is malformed.');
+  }
+  const subject = assertPlanReviewSubject(input.subject);
+  const assignment = assertAssignment(input.assignment, subject);
+  const normalized = assertPlanReviewSubmission(input.submission);
+  assertSubmissionEvidenceBindings(normalized, subject);
+  const submission = canonicalSubmission(normalized);
+  const providerResult = assertProviderResult(
+    input.providerResultNode,
+    subject,
+    assignment,
+    submission,
+  );
+
+  const output = {
+    schemaVersion: 1,
+    planningGenerationId: subject.planningGenerationId,
+    planTargetDigest: subject.planTargetDigest,
+    subjectDigest: subject.subjectDigest,
+    assignment,
+    verdict: normalized.verdict,
+    coverage: normalized.coverage,
+    scopeAssessment: normalized.scopeAssessment,
+    findings: normalized.findings,
+    suggestions: normalized.suggestions,
+    proposedTerms: normalized.proposedTerms,
+    requiredIndependence: subject.requiredIndependence,
+    achievedIndependence: assignment.achievedIndependence,
+  };
+
+  const submissionDigest = planReviewSubmissionDigest(submission);
+  const assignmentDigest = planReviewAssignmentDigest(assignment);
+
+  return createEvidenceNode({
+    type: PLAN_REVIEW_TYPE,
+    nodeSchema: PLAN_REVIEW_SCHEMA,
+    evaluator: PLAN_REVIEW_EVALUATOR,
+    policyDigest: subject.reviewPolicyDigest,
+    exactInputDigests: {
+      subject: subject.subjectDigest,
+      assignment: assignmentDigest,
+      submission: submissionDigest,
+    },
+    semanticParentResultDigests: {
+      providerResult: providerResult.resultDigest,
+    },
+    provenanceParentNodeIds: { providerResult: providerResult.nodeId },
+    outputSchema: PLAN_REVIEW_NODE_OUTPUT_SCHEMA_ID,
+    output,
+    runtimeMetadata: {},
+  });
+}
+
+/**
+ * Read a stored plan-review node back into a deeply frozen typed report. The
+ * node identity, complete coverage, evidence-bound findings, recomputed finding
+ * identities, scope conclusion, terms, and independence are all revalidated so a
+ * tampered stored node fails closed.
+ */
+export function readPlanReviewNode(node: EvidenceNode): PlanReviewReport {
+  const validated = assertStoredEvidenceNode(node, () =>
+    planReviewInvalid('Plan review node envelope is malformed.'),
+  );
+  if (
+    validated.type !== PLAN_REVIEW_TYPE ||
+    validated.nodeSchema !== PLAN_REVIEW_SCHEMA ||
+    validated.evaluator !== PLAN_REVIEW_EVALUATOR ||
+    validated.outputSchema !== PLAN_REVIEW_NODE_OUTPUT_SCHEMA_ID
+  ) {
+    throw planReviewInvalid('Plan review node identity is unexpected.');
+  }
+  assertExactDigestRoles(
+    validated.exactInputDigests,
+    ['assignment', 'subject', 'submission'],
+    'Plan review exact-input roles are unexpected.',
+  );
+  assertExactDigestRoles(
+    validated.semanticParentResultDigests,
+    ['providerResult'],
+    'Plan review semantic-parent roles are unexpected.',
+  );
+  assertExactDigestRoles(
+    validated.provenanceParentNodeIds,
+    ['providerResult'],
+    'Plan review provenance-parent roles are unexpected.',
+  );
+  if (Object.keys(validated.runtimeMetadata).length !== 0) {
+    throw planReviewInvalid('Plan review runtime metadata must be empty.');
+  }
+  const subjectDigest = validated.exactInputDigests.subject;
+  if (!isDigest(subjectDigest)) {
+    throw planReviewInvalid('Plan review node is not bound to a subject.');
+  }
+
+  const output = assertExactKeys(validated.output, OUTPUT_KEYS);
+  if (output.schemaVersion !== 1) {
+    throw planReviewInvalid('Plan review output schema version must be 1.');
+  }
+  if (
+    !isDigest(output.planningGenerationId) ||
+    !isDigest(output.planTargetDigest) ||
+    output.subjectDigest !== subjectDigest
+  ) {
+    throw planReviewInvalid('Plan review governing identities are malformed.');
+  }
+  const assignment = assertAssignmentForSubjectDigest(
+    output.assignment,
+    subjectDigest,
+  );
+  if (
+    validated.exactInputDigests.assignment !==
+    planReviewAssignmentDigest(assignment)
+  ) {
+    throw planReviewInvalid('Plan review assignment digest does not match.');
+  }
+  if (typeof output.verdict !== 'string' || !VERDICTS.has(output.verdict)) {
+    throw planReviewInvalid('Plan review verdict is unexpected.');
+  }
+  const coverage = assertCoverage(output.coverage);
+  const findings = assertBoundedArray(
+    output.findings,
+    PLAN_REVIEW_LIMITS.maxFindings,
+    'Plan review contains too many stored findings.',
+  ).map((entry) => assertStoredChallenge(entry));
+  assertUniqueChallengeIds(findings.map((finding) => finding.findingId));
+  assertCanonicalIdentityOrder(
+    findings.map((finding) => finding.findingId),
+    'Plan review challenges are not canonically sorted.',
+  );
+  const suggestions = assertBoundedArray(
+    output.suggestions,
+    PLAN_REVIEW_LIMITS.maxSuggestions,
+    'Plan review contains too many stored suggestions.',
+  ).map((entry) => assertStoredSuggestion(entry));
+  assertCanonicalIdentityOrder(
+    suggestions.map((suggestion) => suggestion.suggestionId),
+    'Plan review suggestions are not canonically sorted.',
+    true,
+  );
+  const proposedTerms = assertProposedTerms(output.proposedTerms);
+  const scopeAssessment = assertScopeAssessment(
+    output.scopeAssessment,
+    findings,
+  );
+  if (
+    output.requiredIndependence !== assignment.requiredIndependence ||
+    output.achievedIndependence !== assignment.achievedIndependence ||
+    assignment.requiredIndependence !== 'provider-independent' ||
+    assignment.achievedIndependence !== 'provider-independent'
+  ) {
+    throw planReviewInvalid('Plan review independence labels are unexpected.');
+  }
+  const normalizedSubmission = assertPlanReviewSubmission({
+    schemaVersion: 1,
+    verdict: output.verdict,
+    coverage,
+    scopeAssessment,
+    findings: findings.map(stripChallengeIdentity),
+    proposedTerms,
+    suggestions: suggestions.map(stripSuggestionIdentity),
+  });
+  const submission = canonicalSubmission(normalizedSubmission);
+  const storedSubmission = {
+    schemaVersion: 1,
+    verdict: output.verdict,
+    coverage: output.coverage,
+    scopeAssessment: output.scopeAssessment,
+    findings: findings.map(stripChallengeIdentity),
+    proposedTerms: output.proposedTerms,
+    suggestions: suggestions.map(stripSuggestionIdentity),
+  };
+  if (canonicalJson(storedSubmission) !== canonicalJson(submission)) {
+    throw planReviewInvalid(
+      'Plan review output is not canonically normalized.',
+    );
+  }
+  if (
+    validated.exactInputDigests.submission !==
+    planReviewSubmissionDigest(submission)
+  ) {
+    throw planReviewInvalid('Plan review submission digest does not match.');
+  }
+
+  const report: PlanReviewReport = {
+    schemaVersion: 1,
+    nodeId: validated.nodeId,
+    resultDigest: validated.resultDigest,
+    policyDigest: validated.policyDigest,
+    subjectDigest,
+    planningGenerationId: output.planningGenerationId,
+    planTargetDigest: output.planTargetDigest,
+    assignment,
+    providerResultNodeId: validated.provenanceParentNodeIds.providerResult,
+    providerResultResultDigest:
+      validated.semanticParentResultDigests.providerResult,
+    verdict: output.verdict as PlanReviewVerdict,
+    coverage,
+    scopeAssessment,
+    findings,
+    suggestions,
+    proposedTerms,
+    requiredIndependence: assignment.requiredIndependence,
+    achievedIndependence: assignment.achievedIndependence,
+  };
+  return deepFreeze(report);
+}
+
+/**
+ * Bind a disposition for every named challenge into an immutable node that
+ * descends from the exact review. Each disposition must name a real challenge in
+ * the review with an allowed decision and rationale; an unknown or duplicated
+ * challenge fails closed.
+ */
+export function createPlanReviewDispositionNode(
+  input: PlanReviewDispositionInput,
+): EvidenceNode {
+  if (
+    !isRecord(input) ||
+    !hasExactKeys(input, ['reviewNode', 'policyDigest', 'dispositions'])
+  ) {
+    throw planReviewInvalid('Plan review disposition input is malformed.');
+  }
+  const review = readPlanReviewNode(input.reviewNode);
+  if (!isDigest(input.policyDigest)) {
+    throw planReviewInvalid(
+      'Plan review disposition policy digest is invalid.',
+    );
+  }
+  const challengeIds = new Set(
+    review.findings.map((finding) => finding.findingId),
+  );
+  const dispositions = assertBoundedArray(
+    input.dispositions,
+    PLAN_REVIEW_LIMITS.maxFindings,
+    'Plan review contains too many dispositions.',
+  ).map((entry) => assertDisposition(entry));
+  if (dispositions.length === 0) {
+    throw planReviewInvalid('Plan review disposition set must not be empty.');
+  }
+  const seen = new Set<string>();
+  for (const disposition of dispositions) {
+    if (!challengeIds.has(disposition.challengeId)) {
+      throw planReviewInvalid('Disposition names an unknown challenge.');
+    }
+    if (seen.has(disposition.challengeId)) {
+      throw planReviewInvalid('Disposition duplicates a challenge.');
+    }
+    seen.add(disposition.challengeId);
+  }
+  const sorted = [...dispositions].sort((left, right) =>
+    left.challengeId < right.challengeId ? -1 : 1,
+  );
+
+  return createEvidenceNode({
+    type: DISPOSITION_TYPE,
+    nodeSchema: DISPOSITION_SCHEMA,
+    evaluator: DISPOSITION_EVALUATOR,
+    policyDigest: input.policyDigest,
+    exactInputDigests: {
+      dispositions: planReviewDispositionDigest(sorted),
+    },
+    semanticParentResultDigests: { review: input.reviewNode.resultDigest },
+    provenanceParentNodeIds: { review: input.reviewNode.nodeId },
+    outputSchema: DISPOSITION_OUTPUT_SCHEMA,
+    output: { schemaVersion: 1, dispositions: sorted },
+    runtimeMetadata: {},
+  });
+}
+
+/**
+ * Read a stored disposition node back into its typed record, revalidating the
+ * bound review provenance, allowed decisions, and canonical ordering.
+ */
+export function readPlanReviewDispositionNode(
+  node: EvidenceNode,
+): PlanReviewDispositionRecord {
+  const validated = assertStoredEvidenceNode(node, () =>
+    planReviewInvalid('Plan review disposition envelope is malformed.'),
+  );
+  if (
+    validated.type !== DISPOSITION_TYPE ||
+    validated.nodeSchema !== DISPOSITION_SCHEMA ||
+    validated.evaluator !== DISPOSITION_EVALUATOR ||
+    validated.outputSchema !== DISPOSITION_OUTPUT_SCHEMA
+  ) {
+    throw planReviewInvalid('Plan review disposition identity is unexpected.');
+  }
+  assertExactDigestRoles(
+    validated.exactInputDigests,
+    ['dispositions'],
+    'Plan review disposition exact-input roles are unexpected.',
+  );
+  assertExactDigestRoles(
+    validated.semanticParentResultDigests,
+    ['review'],
+    'Plan review disposition semantic-parent roles are unexpected.',
+  );
+  assertExactDigestRoles(
+    validated.provenanceParentNodeIds,
+    ['review'],
+    'Plan review disposition provenance-parent roles are unexpected.',
+  );
+  if (Object.keys(validated.runtimeMetadata).length !== 0) {
+    throw planReviewInvalid(
+      'Plan review disposition runtime metadata must be empty.',
+    );
+  }
+  const reviewNodeId = validated.provenanceParentNodeIds.review;
+  const reviewResultDigest = validated.semanticParentResultDigests.review;
+  if (!isDigest(reviewNodeId) || !isDigest(reviewResultDigest)) {
+    throw planReviewInvalid('Disposition is not bound to a review.');
+  }
+  const output = assertExactKeys(validated.output, [
+    'schemaVersion',
+    'dispositions',
+  ]);
+  if (output.schemaVersion !== 1) {
+    throw planReviewInvalid('Disposition output schema version must be 1.');
+  }
+  const dispositions = assertBoundedArray(
+    output.dispositions,
+    PLAN_REVIEW_LIMITS.maxFindings,
+    'Plan review contains too many dispositions.',
+  ).map((entry) => assertDisposition(entry));
+  if (dispositions.length === 0) {
+    throw planReviewInvalid('Plan review disposition set must not be empty.');
+  }
+  const seen = new Set<string>();
+  let previous: string | null = null;
+  for (const disposition of dispositions) {
+    if (seen.has(disposition.challengeId)) {
+      throw planReviewInvalid('Disposition duplicates a challenge.');
+    }
+    if (previous !== null && disposition.challengeId <= previous) {
+      throw planReviewInvalid('Dispositions are not canonically sorted.');
+    }
+    seen.add(disposition.challengeId);
+    previous = disposition.challengeId;
+  }
+  if (
+    validated.exactInputDigests.dispositions !==
+    planReviewDispositionDigest(dispositions)
+  ) {
+    throw planReviewInvalid(
+      'Plan review disposition input digest does not match.',
+    );
+  }
+  const record: PlanReviewDispositionRecord = {
+    reviewNodeId,
+    reviewResultDigest,
+    policyDigest: validated.policyDigest,
+    dispositions,
+  };
+  return deepFreeze(record);
+}
+
+function planReviewDispositionDigest(
+  dispositions: PlanReviewDispositionEntry[],
+): string {
+  return sha256(
+    canonicalJson({
+      schema: 'plan-review-disposition-input.v1',
+      dispositions,
+    }),
+  );
+}
+
+function assertAssignment(
+  value: unknown,
+  subject: PlanReviewSubject,
+): RoleAssignment {
+  return assertAssignmentForSubjectDigest(value, subject.subjectDigest);
+}
+
+function assertAssignmentForSubjectDigest(
+  value: unknown,
+  subjectDigest: string,
+): RoleAssignment {
+  if (!isRecord(value) || !hasExactKeys(value, ROLE_ASSIGNMENT_KEYS)) {
+    throw planReviewInvalid('Plan reviewer assignment shape is malformed.');
+  }
+  const providerId = value.providerId;
+  const sessionId = value.sessionId;
+  if (
+    value.role !== 'plan-reviewer' ||
+    !isProviderId(providerId) ||
+    typeof sessionId !== 'string' ||
+    sessionId.trim().length === 0 ||
+    Buffer.byteLength(sessionId, 'utf8') > PLAN_REVIEW_LIMITS.maxAuthorBytes ||
+    value.targetDigest !== subjectDigest ||
+    value.requiredIndependence !== 'provider-independent' ||
+    value.achievedIndependence !== 'provider-independent'
+  ) {
+    throw planReviewInvalid(
+      'Plan reviewer assignment does not bind the subject.',
+    );
+  }
+  return {
+    role: 'plan-reviewer',
+    providerId,
+    sessionId,
+    targetDigest: subjectDigest,
+    requiredIndependence: 'provider-independent',
+    achievedIndependence: 'provider-independent',
+  };
+}
+
+function assertProviderResult(
+  value: unknown,
+  subject: PlanReviewSubject,
+  assignment: RoleAssignment,
+  expectedSubmission: PlanReviewSubmission,
+): EvidenceNode {
+  const node = assertStoredEvidenceNode(value, () =>
+    planReviewInvalid('Provider result node is malformed.'),
+  );
+  if (
+    node.type !== PROVIDER_RESULT_TYPE ||
+    node.nodeSchema !== PROVIDER_RESULT_SCHEMA ||
+    node.evaluator !== PROVIDER_RESULT_EVALUATOR ||
+    node.outputSchema !== PROVIDER_RESULT_OUTPUT_SCHEMA
+  ) {
+    throw planReviewInvalid('Provider result node identity is unexpected.');
+  }
+  assertExactDigestRoles(
+    node.exactInputDigests,
+    ['assignment', 'subject', 'submission'],
+    'Provider result exact-input roles are unexpected.',
+  );
+  assertExactDigestRoles(
+    node.semanticParentResultDigests,
+    [],
+    'Provider result semantic-parent roles are unexpected.',
+  );
+  assertExactDigestRoles(
+    node.provenanceParentNodeIds,
+    [],
+    'Provider result provenance-parent roles are unexpected.',
+  );
+  if (Object.keys(node.runtimeMetadata).length !== 0) {
+    throw planReviewInvalid('Provider result runtime metadata must be empty.');
+  }
+  const output = assertExactKeys(node.output, PROVIDER_RESULT_OUTPUT_KEYS);
+  if (
+    output.schemaVersion !== 1 ||
+    output.subjectDigest !== subject.subjectDigest ||
+    node.exactInputDigests.subject !== subject.subjectDigest
+  ) {
+    throw planReviewInvalid(
+      'Provider result did not observe the review subject.',
+    );
+  }
+  const storedAssignment = assertAssignment(output.assignment, subject);
+  if (
+    canonicalJson(storedAssignment) !== canonicalJson(assignment) ||
+    node.exactInputDigests.assignment !==
+      planReviewAssignmentDigest(storedAssignment)
+  ) {
+    throw planReviewInvalid(
+      'Provider result did not use the reviewer assignment.',
+    );
+  }
+  const normalizedSubmission = assertPlanReviewSubmission(output.submission);
+  assertSubmissionEvidenceBindings(normalizedSubmission, subject);
+  const submission = canonicalSubmission(normalizedSubmission);
+  if (
+    canonicalJson(submission) !== canonicalJson(expectedSubmission) ||
+    node.exactInputDigests.submission !== planReviewSubmissionDigest(submission)
+  ) {
+    throw planReviewInvalid(
+      'Provider result semantic output differs from the review submission.',
+    );
+  }
+  return node;
+}
+
+function assertPlanReviewSubmission(value: unknown): NormalizedSubmission {
+  if (!isRecord(value) || !hasExactKeys(value, SUBMISSION_KEYS)) {
+    throw planReviewInvalid('Plan review submission shape is malformed.');
+  }
+  if (value.schemaVersion !== 1) {
+    throw planReviewInvalid('Plan review submission schema version must be 1.');
+  }
+  if (typeof value.verdict !== 'string' || !VERDICTS.has(value.verdict)) {
+    throw planReviewInvalid('Plan review verdict is unexpected.');
+  }
+  const coverage = assertCoverage(value.coverage);
+  const findings = assertBoundedArray(
+    value.findings,
+    PLAN_REVIEW_LIMITS.maxFindings,
+    'Plan review contains too many findings.',
+  )
+    .map((entry) => assertSubmissionChallenge(entry))
+    .sort((left, right) =>
+      left.findingId < right.findingId
+        ? -1
+        : left.findingId > right.findingId
+          ? 1
+          : 0,
+    );
+  assertUniqueChallengeIds(findings.map((finding) => finding.findingId));
+  const suggestions = assertBoundedArray(
+    value.suggestions,
+    PLAN_REVIEW_LIMITS.maxSuggestions,
+    'Plan review contains too many suggestions.',
+  )
+    .map((entry) => assertSubmissionSuggestion(entry))
+    .sort((left, right) =>
+      left.suggestionId < right.suggestionId
+        ? -1
+        : left.suggestionId > right.suggestionId
+          ? 1
+          : 0,
+    );
+  const proposedTerms = assertProposedTerms(value.proposedTerms);
+  const scopeAssessment = assertScopeAssessment(
+    value.scopeAssessment,
+    findings,
+  );
+  return {
+    verdict: value.verdict as PlanReviewVerdict,
+    coverage,
+    scopeAssessment,
+    findings,
+    suggestions,
+    proposedTerms,
+  };
+}
+
+function canonicalSubmission(
+  submission: NormalizedSubmission,
+): PlanReviewSubmission {
+  return {
+    schemaVersion: 1,
+    verdict: submission.verdict,
+    coverage: [...submission.coverage],
+    scopeAssessment:
+      submission.scopeAssessment.kind === 'challenges'
+        ? { kind: 'challenges' }
+        : {
+            kind: 'no-challenge',
+            evidence: submission.scopeAssessment.evidence.map((entry) => ({
+              ...entry,
+            })),
+          },
+    findings: submission.findings.map(stripChallengeIdentity),
+    proposedTerms: submission.proposedTerms.map((term) => ({ ...term })),
+    suggestions: submission.suggestions.map(stripSuggestionIdentity),
+  };
+}
+
+function stripChallengeIdentity(finding: NormalizedFinding): PlanReviewFinding {
+  return {
+    kind: 'challenge',
+    category: finding.category,
+    currentChangeImpact: 'required',
+    summary: finding.summary,
+    evidence: finding.evidence.map((entry) => ({ ...entry })),
+  };
+}
+
+function stripSuggestionIdentity(
+  suggestion: NormalizedSuggestion,
+): PlanReviewFinding {
+  return {
+    kind: 'suggestion',
+    category: suggestion.category,
+    currentChangeImpact: 'independent-follow-up',
+    summary: suggestion.summary,
+    evidence: suggestion.evidence.map((entry) => ({ ...entry })),
+  };
+}
+
+function assertSubmissionEvidenceBindings(
+  submission: NormalizedSubmission,
+  subject: PlanReviewSubject,
+): void {
+  const allowedGraphEvidence = new Set(
+    subject.investigationDependencies.map(
+      ({ nodeId, resultDigest }) => `${nodeId}\u0000${resultDigest}`,
+    ),
+  );
+  const evidence = [
+    ...submission.findings.flatMap((finding) => finding.evidence),
+    ...submission.suggestions.flatMap((suggestion) => suggestion.evidence),
+    ...(submission.scopeAssessment.kind === 'no-challenge'
+      ? submission.scopeAssessment.evidence
+      : []),
+  ];
+  for (const citation of evidence) {
+    if (
+      (citation.kind === 'investigation-node' ||
+        citation.kind === 'survey-record') &&
+      !allowedGraphEvidence.has(
+        `${citation.nodeId}\u0000${citation.resultDigest}`,
+      )
+    ) {
+      throw planReviewInvalid(
+        'Plan review graph evidence is not bound to the investigation subject.',
+      );
+    }
+  }
+}
+
+function assertSubmissionChallenge(value: unknown): NormalizedFinding {
+  const record = assertExactKeys(value, [
+    'kind',
+    'category',
+    'currentChangeImpact',
+    'summary',
+    'evidence',
+  ]);
+  return normalizeChallenge(record);
+}
+
+function assertStoredChallenge(value: unknown): NormalizedFinding {
+  const record = assertExactKeys(value, [
+    'findingId',
+    'kind',
+    'category',
+    'currentChangeImpact',
+    'summary',
+    'evidence',
+  ]);
+  const normalized = normalizeChallenge(record);
+  if (record.findingId !== normalized.findingId) {
+    throw planReviewInvalid('Plan review challenge identity does not match.');
+  }
+  if (
+    canonicalJson(record) !==
+    canonicalJson({
+      findingId: normalized.findingId,
+      ...stripChallengeIdentity(normalized),
+    })
+  ) {
+    throw planReviewInvalid('Plan review challenge is not canonical.');
+  }
+  return normalized;
+}
+
+function normalizeChallenge(
+  record: Record<string, unknown>,
+): NormalizedFinding {
+  if (record.kind !== 'challenge') {
+    throw planReviewInvalid('A required finding must be a challenge.');
+  }
+  if (record.currentChangeImpact !== 'required') {
+    throw planReviewInvalid('A challenge must be current-change required.');
+  }
+  const category = record.category;
+  if (typeof category !== 'string' || !COVERAGE_SET.has(category)) {
+    throw planReviewInvalid('Plan review challenge category is unexpected.');
+  }
+  const summary = assertSummary(record.summary);
+  const evidence = assertEvidenceArray(record.evidence);
+  return {
+    findingId: findingDigest(
+      'challenge',
+      category,
+      'required',
+      summary,
+      evidence,
+    ),
+    kind: 'challenge',
+    category,
+    currentChangeImpact: 'required',
+    summary,
+    evidence,
+  };
+}
+
+function assertSubmissionSuggestion(value: unknown): NormalizedSuggestion {
+  const record = assertExactKeys(value, [
+    'kind',
+    'category',
+    'currentChangeImpact',
+    'summary',
+    'evidence',
+  ]);
+  return normalizeSuggestion(record);
+}
+
+function assertStoredSuggestion(value: unknown): NormalizedSuggestion {
+  const record = assertExactKeys(value, [
+    'suggestionId',
+    'kind',
+    'category',
+    'currentChangeImpact',
+    'summary',
+    'evidence',
+  ]);
+  const normalized = normalizeSuggestion(record);
+  if (record.suggestionId !== normalized.suggestionId) {
+    throw planReviewInvalid('Plan review suggestion identity does not match.');
+  }
+  if (
+    canonicalJson(record) !==
+    canonicalJson({
+      suggestionId: normalized.suggestionId,
+      ...stripSuggestionIdentity(normalized),
+    })
+  ) {
+    throw planReviewInvalid('Plan review suggestion is not canonical.');
+  }
+  return normalized;
+}
+
+function normalizeSuggestion(
+  record: Record<string, unknown>,
+): NormalizedSuggestion {
+  if (record.kind !== 'suggestion') {
+    throw planReviewInvalid('An independent finding must be a suggestion.');
+  }
+  if (record.currentChangeImpact !== 'independent-follow-up') {
+    throw planReviewInvalid('A suggestion must be an independent follow-up.');
+  }
+  const category = record.category;
+  if (typeof category !== 'string' || !FOLLOWUP_CATEGORIES.has(category)) {
+    throw planReviewInvalid('Plan review suggestion category is unexpected.');
+  }
+  const summary = assertSummary(record.summary);
+  const evidence = assertEvidenceArray(record.evidence);
+  return {
+    suggestionId: findingDigest(
+      'suggestion',
+      category,
+      'independent-follow-up',
+      summary,
+      evidence,
+    ),
+    kind: 'suggestion',
+    category,
+    currentChangeImpact: 'independent-follow-up',
+    summary,
+    evidence,
+  };
+}
+
+function assertScopeAssessment(
+  value: unknown,
+  findings: NormalizedFinding[],
+): PlanReviewScopeAssessment {
+  if (!isRecord(value)) {
+    throw planReviewInvalid('Plan review scope assessment is malformed.');
+  }
+  if (value.kind === 'challenges') {
+    assertExactKeys(value, ['kind']);
+    if (
+      !findings.some(
+        ({ category }) =>
+          category === 'missing-scope' || category === 'missing-consumers',
+      )
+    ) {
+      throw planReviewInvalid(
+        'A challenges scope assessment requires an explicit scope challenge.',
+      );
+    }
+    return { kind: 'challenges' };
+  }
+  if (value.kind === 'no-challenge') {
+    assertExactKeys(value, ['kind', 'evidence']);
+    const evidence = assertEvidenceArray(value.evidence);
+    if (
+      findings.some(
+        ({ category }) =>
+          category === 'missing-scope' || category === 'missing-consumers',
+      )
+    ) {
+      throw planReviewInvalid(
+        'A no-challenge scope assessment cannot carry a scope challenge.',
+      );
+    }
+    return { kind: 'no-challenge', evidence };
+  }
+  throw planReviewInvalid('Plan review scope assessment kind is unexpected.');
+}
+
+function assertCoverage(value: unknown): string[] {
+  if (!isDenseArray(value) || value.length !== PLAN_REVIEW_COVERAGE.length) {
+    throw planReviewInvalid('Plan review coverage is incomplete.');
+  }
+  const seen = new Set<string>();
+  for (const area of value) {
+    if (typeof area !== 'string' || !COVERAGE_SET.has(area) || seen.has(area)) {
+      throw planReviewInvalid('Plan review coverage is malformed.');
+    }
+    seen.add(area);
+  }
+  for (const area of PLAN_REVIEW_COVERAGE) {
+    if (!seen.has(area)) {
+      throw planReviewInvalid('Plan review coverage is incomplete.');
+    }
+  }
+  return [...PLAN_REVIEW_COVERAGE];
+}
+
+function assertProposedTerms(value: unknown): PlanReviewProposedTerm[] {
+  const terms = assertBoundedArray(
+    value,
+    PLAN_REVIEW_LIMITS.maxProposedTerms,
+    'Plan review contains too many proposed terms.',
+  ).map((entry) => {
+    const record = assertExactKeys(entry, ['kind', 'value']);
+    const kind = record.kind;
+    const termValue = record.value;
+    if (typeof kind !== 'string' || !TERM_KINDS.has(kind)) {
+      throw planReviewInvalid('Proposed term kind is unexpected.');
+    }
+    if (typeof termValue !== 'string') {
+      throw planReviewInvalid('Proposed term value is malformed.');
+    }
+    let normalized;
+    try {
+      normalized = normalizeInvestigationTerm({
+        kind: kind as InvestigationTermKind,
+        value: termValue,
+      });
+    } catch {
+      throw planReviewInvalid('Proposed term value is malformed.');
+    }
+    return {
+      kind: normalized.kind,
+      value: normalized.value,
+      termId: normalized.termId,
+    };
+  });
+  const unique = new Map<string, PlanReviewProposedTerm & { termId: string }>();
+  for (const term of terms) {
+    unique.set(term.termId, term);
+  }
+  return [...unique.values()]
+    .sort((left, right) =>
+      left.termId < right.termId ? -1 : left.termId > right.termId ? 1 : 0,
+    )
+    .map(({ kind, value: termValue }) => ({ kind, value: termValue }));
+}
+
+function assertEvidenceArray(value: unknown): PlanReviewEvidence[] {
+  const array = assertBoundedArray(
+    value,
+    PLAN_REVIEW_LIMITS.maxEvidencePerEntry,
+    'Plan review contains too many evidence citations.',
+  );
+  if (array.length === 0) {
+    throw planReviewInvalid('At least one evidence citation is required.');
+  }
+  const unique = new Map<string, PlanReviewEvidence>();
+  for (const entry of array.map((candidate) => assertEvidence(candidate))) {
+    unique.set(canonicalJson(entry), entry);
+  }
+  return [...unique.entries()]
+    .sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0))
+    .map(([, evidence]) => evidence);
+}
+
+function assertEvidence(value: unknown): PlanReviewEvidence {
+  if (!isRecord(value)) {
+    throw planReviewInvalid('Plan review evidence is malformed.');
+  }
+  const kind = value.kind;
+  if (kind === 'repository-location') {
+    assertExactKeys(value, ['kind', 'path', 'line', 'observation']);
+    const path = value.path;
+    const line = value.line;
+    const observation = value.observation;
+    if (
+      typeof path !== 'string' ||
+      Buffer.byteLength(path, 'utf8') >
+        PLAN_REVIEW_LIMITS.maxRepositoryPathBytes ||
+      !Number.isInteger(line) ||
+      (line as number) < 1 ||
+      (line as number) > Number.MAX_SAFE_INTEGER ||
+      !isBoundedNonBlankText(
+        observation,
+        PLAN_REVIEW_LIMITS.maxObservationBytes,
+      )
+    ) {
+      throw planReviewInvalid('Repository-location evidence is malformed.');
+    }
+    let normalizedPath: string;
+    try {
+      normalizedPath = normalizeExactRepositoryPath(path);
+    } catch {
+      throw planReviewInvalid('Repository-location evidence is malformed.');
+    }
+    return {
+      kind: 'repository-location',
+      path: normalizedPath,
+      line: line as number,
+      observation: observation as string,
+    };
+  }
+  if (kind === 'investigation-node' || kind === 'survey-record') {
+    assertExactKeys(value, ['kind', 'nodeId', 'resultDigest']);
+    const nodeId = value.nodeId;
+    const resultDigest = value.resultDigest;
+    if (!isDigest(nodeId) || !isDigest(resultDigest)) {
+      throw planReviewInvalid('Graph evidence digests are malformed.');
+    }
+    return kind === 'investigation-node'
+      ? { kind: 'investigation-node', nodeId, resultDigest }
+      : { kind: 'survey-record', nodeId, resultDigest };
+  }
+  throw planReviewInvalid('Plan review evidence kind is unexpected.');
+}
+
+function assertDisposition(value: unknown): PlanReviewDispositionEntry {
+  const record = assertExactKeys(value, [
+    'challengeId',
+    'decision',
+    'rationale',
+    'author',
+  ]);
+  const challengeId = record.challengeId;
+  const decision = record.decision;
+  const rationale = record.rationale;
+  const author = record.author;
+  if (!isDigest(challengeId)) {
+    throw planReviewInvalid('Disposition challenge identity is malformed.');
+  }
+  if (typeof decision !== 'string' || !DISPOSITION_DECISIONS.has(decision)) {
+    throw planReviewInvalid('Disposition decision is unexpected.');
+  }
+  if (
+    !isBoundedNonBlankText(
+      rationale,
+      PLAN_REVIEW_LIMITS.maxDispositionRationaleBytes,
+    )
+  ) {
+    throw planReviewInvalid('Disposition rationale is required.');
+  }
+  if (!isBoundedNonBlankText(author, PLAN_REVIEW_LIMITS.maxAuthorBytes)) {
+    throw planReviewInvalid('Disposition author is required.');
+  }
+  return {
+    challengeId,
+    decision: decision as PlanReviewDispositionDecision,
+    rationale: rationale as string,
+    author: author as string,
+  };
+}
+
+function assertBaseline(value: unknown): { head: string; tree: string } {
+  if (!isRecord(value) || !hasExactKeys(value, ['head', 'tree'])) {
+    throw planReviewInvalid('Investigation baseline is malformed.');
+  }
+  const head = value.head;
+  const tree = value.tree;
+  if (
+    typeof head !== 'string' ||
+    !GIT_OBJECT_ID_PATTERN.test(head) ||
+    typeof tree !== 'string' ||
+    !GIT_OBJECT_ID_PATTERN.test(tree)
+  ) {
+    throw planReviewInvalid('Investigation baseline is malformed.');
+  }
+  return { head, tree };
+}
+
+function assertDependencies(value: unknown): Array<{
+  role: string;
+  nodeId: string;
+  resultDigest: string;
+}> {
+  const dependencies = assertBoundedArray(
+    value,
+    PLAN_REVIEW_LIMITS.maxInvestigationDependencies,
+    'Plan review subject has too many investigation dependencies.',
+  ).map((entry) => {
+    if (
+      !isRecord(entry) ||
+      !hasExactKeys(entry, ['role', 'nodeId', 'resultDigest'])
+    ) {
+      throw planReviewInvalid('Investigation dependency is malformed.');
+    }
+    const role = entry.role;
+    const nodeId = entry.nodeId;
+    const resultDigest = entry.resultDigest;
+    if (
+      !isBoundedNonBlankText(role, PLAN_REVIEW_LIMITS.maxAuthorBytes) ||
+      !isDigest(nodeId) ||
+      !isDigest(resultDigest)
+    ) {
+      throw planReviewInvalid('Investigation dependency is malformed.');
+    }
+    return { role: role as string, nodeId, resultDigest };
+  });
+  const sorted = [...dependencies].sort((left, right) => {
+    const leftKey = `${left.role}\u0000${left.nodeId}\u0000${left.resultDigest}`;
+    const rightKey = `${right.role}\u0000${right.nodeId}\u0000${right.resultDigest}`;
+    return leftKey < rightKey ? -1 : leftKey > rightKey ? 1 : 0;
+  });
+  const identities = new Set<string>();
+  for (const dependency of sorted) {
+    const identity = `${dependency.role}\u0000${dependency.nodeId}`;
+    if (identities.has(identity)) {
+      throw planReviewInvalid('Investigation dependency is duplicated.');
+    }
+    identities.add(identity);
+  }
+  if (canonicalJson(dependencies) !== canonicalJson(sorted)) {
+    throw planReviewInvalid(
+      'Investigation dependencies are not canonically sorted.',
+    );
+  }
+  return sorted;
+}
+
+function assertSummary(value: unknown): string {
+  if (!isBoundedNonBlankText(value, PLAN_REVIEW_LIMITS.maxSummaryBytes)) {
+    throw planReviewInvalid('Plan review summary is required.');
+  }
+  return value as string;
+}
+
+function assertUniqueChallengeIds(ids: string[]): void {
+  if (new Set(ids).size !== ids.length) {
+    throw planReviewInvalid('Plan review contains duplicate challenges.');
+  }
+}
+
+function findingDigest(
+  kind: 'challenge' | 'suggestion',
+  category: string,
+  currentChangeImpact: string,
+  summary: string,
+  evidence: PlanReviewEvidence[],
+): string {
+  return sha256(
+    canonicalJson({
+      schema: 'plan-review-finding.v1',
+      kind,
+      category,
+      currentChangeImpact,
+      summary,
+      evidence,
+    }),
+  );
+}
+
+function assertBoundedArray(
+  value: unknown,
+  maximum: number,
+  message: string,
+): unknown[] {
+  const array = assertArray(value);
+  if (array.length > maximum) {
+    throw planReviewInvalid(message);
+  }
+  return array;
+}
+
+function assertArray(value: unknown): unknown[] {
+  if (!isDenseArray(value)) {
+    throw planReviewInvalid('Expected a plan review array value.');
+  }
+  return value;
+}
+
+function assertExactDigestRoles(
+  value: Record<string, string>,
+  roles: readonly string[],
+  message: string,
+): void {
+  const actual = Object.keys(value).sort();
+  const expected = [...roles].sort();
+  if (canonicalJson(actual) !== canonicalJson(expected)) {
+    throw planReviewInvalid(message);
+  }
+}
+
+function assertCanonicalIdentityOrder(
+  ids: string[],
+  message: string,
+  allowEqual = false,
+): void {
+  for (let index = 1; index < ids.length; index += 1) {
+    if (
+      ids[index - 1]! > ids[index]! ||
+      (!allowEqual && ids[index - 1] === ids[index])
+    ) {
+      throw planReviewInvalid(message);
+    }
+  }
+}
+
+function isBoundedNonBlankText(
+  value: unknown,
+  maximumBytes: number,
+): value is string {
+  return (
+    typeof value === 'string' &&
+    value.trim().length > 0 &&
+    Buffer.byteLength(value, 'utf8') <= maximumBytes
+  );
+}
+
+function assertExactKeys(
+  value: unknown,
+  keys: readonly string[],
+): Record<string, unknown> {
+  if (!isRecord(value) || !hasExactKeys(value, keys)) {
+    throw planReviewInvalid('Plan review value has unexpected keys.');
+  }
+  return value;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    return false;
+  }
+  const prototype = Object.getPrototypeOf(value);
+  return prototype === Object.prototype || prototype === null;
+}
+
+function isDigest(value: unknown): value is string {
+  return typeof value === 'string' && DIGEST_PATTERN.test(value);
+}
+
+function hasExactKeys(
+  value: Record<string, unknown>,
+  keys: readonly string[],
+): boolean {
+  const own = Reflect.ownKeys(value);
+  return (
+    own.length === keys.length &&
+    own.every((key) => typeof key === 'string') &&
+    keys.every((key) => {
+      const descriptor = Object.getOwnPropertyDescriptor(value, key);
+      return Boolean(
+        descriptor && descriptor.enumerable && 'value' in descriptor,
+      );
+    })
+  );
+}
+
+function isDenseArray(value: unknown): value is unknown[] {
+  if (!Array.isArray(value)) {
+    return false;
+  }
+  const keys = Reflect.ownKeys(value);
+  if (keys.length !== value.length + 1 || !keys.includes('length')) {
+    return false;
+  }
+  for (let index = 0; index < value.length; index += 1) {
+    const descriptor = Object.getOwnPropertyDescriptor(value, String(index));
+    if (!descriptor || !descriptor.enumerable || !('value' in descriptor)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function deepFreeze<Value>(value: Value): Value {
+  if (value !== null && typeof value === 'object') {
+    for (const nested of Object.values(value)) {
+      deepFreeze(nested);
+    }
+    Object.freeze(value);
+  }
+  return value;
+}
+
+function sha256(value: string): string {
+  return crypto.createHash('sha256').update(value).digest('hex');
+}
+
+function planReviewInvalid(message: string): WorkflowError {
+  return workflowError('PLAN_REVIEW_INVALID', message, ExitCode.usage);
+}

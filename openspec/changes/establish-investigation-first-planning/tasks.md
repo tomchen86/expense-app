@@ -28,7 +28,7 @@
 
 ## 6. Exact Plan Challenge, Degraded Continuation, and Cutover
 
-- [ ] 6.1 Follow RED -> GREEN -> REFACTOR to add component-typed plan targets, conservative authored/mixed/structured canonicalization, immutable planning generations, exact PlanReview with evidence-bound scope/depth challenge, advisory verdict semantics, direct bounded `proposedTerms` projection, challenge dispositions, and non-blocking intake candidates.
+- [x] 6.1 Follow RED -> GREEN -> REFACTOR to add component-typed plan targets, conservative authored/mixed/structured canonicalization, immutable planning generations, exact PlanReview with evidence-bound scope/depth challenge, advisory verdict semantics, direct bounded `proposedTerms` projection, challenge dispositions, and non-blocking intake candidates.
 - [ ] 6.2 Follow RED -> GREEN -> REFACTOR to add the separate controlling-TTY collaboration-grant namespace, canonical signed one-use envelopes, atomic reserve/consume/revoke/inspect state, same-provider fresh-session and no-callable-adapter degraded forms, and downstream assurance that cannot suppress investigation or review content.
 - [ ] 6.3 Follow RED -> GREEN -> REFACTOR to integrate sealed investigation, managed projection, execution strategy, immutable planning generation, exact PlanReview, challenge disposition, and collaboration-grant validation into live readiness and `plan-commit` while preserving legacy governing plans.
 - [ ] 6.4 Follow RED -> GREEN -> REFACTOR to bind task start and every check/completion/finish/commit report to the governing `planningGenerationId` and exact PlanReview node/digest, with schema-backed persistence and stale/mismatch rejection.
