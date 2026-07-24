@@ -32,6 +32,7 @@ import {
 } from './planning-report.ts';
 import { runtimePaths } from './session-store.ts';
 import { withPlanningAuthority } from './planning-lock.ts';
+import type { InvestigationFirstPlanningAssuranceSummary } from './planning-assurance-validator.ts';
 
 export type PlanningTransitionResult = {
   changeId: string;
@@ -43,6 +44,7 @@ export type PlanningTransitionResult = {
   tree: string;
   commitHash: string;
   reportId: string;
+  planningAssurance: InvestigationFirstPlanningAssuranceSummary | null;
 };
 
 export type PlanningTransitionTestHooks = {
@@ -160,11 +162,24 @@ function commitPlanningTransitionLocked(
     changedPaths,
     deletedPaths,
   );
-  const openspec = validateOpenSpecPlanning(
+  const planningValidation = validateOpenSpecPlanning(
     initial.repositoryRoot,
     changeId,
     inspection.schemaName,
   );
+  if (
+    planningValidation.planningAssurance !== null &&
+    (planningValidation.planningAssurance.investigationBaseline.head !==
+      initial.head ||
+      planningValidation.planningAssurance.investigationBaseline.tree !==
+        initial.tree)
+  ) {
+    throw workflowError(
+      'OPENSPEC_CHANGE_NOT_READY',
+      'Investigation-first planning must be based on the exact plan-commit parent.',
+      ExitCode.verification,
+    );
+  }
 
   assertUnstagedPlanningState(
     initial,
@@ -263,7 +278,8 @@ function commitPlanningTransitionLocked(
           : null,
         after: taskStates(inspection.contract.tasks),
       },
-      openspec,
+      openspec: planningValidation.openspec,
+      planningAssurance: planningValidation.planningAssurance,
     };
     const reportsDirectory = path.join(
       initial.gitCommonDirectory,
@@ -333,6 +349,7 @@ function commitPlanningTransitionLocked(
       tree: staged.tree,
       commitHash,
       reportId,
+      planningAssurance: planningValidation.planningAssurance,
     };
   } catch (error) {
     if (stagedTree && !refUpdated) {

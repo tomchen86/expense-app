@@ -16,7 +16,10 @@ import {
 } from './plan-review.ts';
 import { normalizeExactRepositoryPath } from './paths.ts';
 import { isProviderId, type ProviderId } from './provider-registry.ts';
-import type { IndependenceDimension } from './role-scheduler.ts';
+import type {
+  AdmittedRoleResult,
+  IndependenceDimension,
+} from './role-scheduler.ts';
 
 const DIGEST_PATTERN = /^[0-9a-f]{64}$/;
 const GIT_OBJECT_ID_PATTERN = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
@@ -25,6 +28,11 @@ const MAX_RESOLVED_REPOSITORY_LOCATIONS = 16_384;
 export type PlanReviewOrdinaryIndependenceAuthorization = {
   kind: 'ordinary-provider-independent';
   planAuthorProviderId: ProviderId;
+};
+
+export type PlanReviewAdmittedRoleAuthorization = {
+  kind: 'admitted-role-result';
+  roleResult: AdmittedRoleResult;
 };
 
 export type PlanReviewResolvedRepositoryLocation = {
@@ -58,7 +66,9 @@ export type ValidatePlanReviewInput = {
   target: PlanTarget;
   expectedReviewPolicyDigest: string;
   requiredIndependence: IndependenceDimension;
-  independenceAuthorization: PlanReviewOrdinaryIndependenceAuthorization;
+  independenceAuthorization:
+    | PlanReviewOrdinaryIndependenceAuthorization
+    | PlanReviewAdmittedRoleAuthorization;
   repositoryEvidence: PlanReviewRepositoryEvidence;
 };
 
@@ -86,6 +96,10 @@ export type PlanReviewValidation = {
   reviewPolicyDigest: string;
   requiredIndependence: IndependenceDimension;
   achievedIndependence: IndependenceDimension;
+  roleResultForm: AdmittedRoleResult['form'] | 'ordinary-provider-legacy';
+  orchestration:
+    AdmittedRoleResult['orchestration'] | 'legacy-caller-authorization';
+  degradationAuthorized: boolean;
 };
 
 /**
@@ -181,11 +195,43 @@ export function validatePlanReview(
     staleReasons.add('REPOSITORY_EVIDENCE_MISMATCH');
   }
 
-  const achievedIndependence: IndependenceDimension =
-    review.assignment.providerId !==
-    independenceAuthorization.planAuthorProviderId
+  const admittedRoleResult =
+    independenceAuthorization.kind === 'admitted-role-result'
+      ? independenceAuthorization.roleResult
+      : null;
+  const legacyPlanAuthorProviderId =
+    independenceAuthorization.kind === 'ordinary-provider-independent'
+      ? independenceAuthorization.planAuthorProviderId
+      : null;
+  const achievedIndependence: IndependenceDimension = admittedRoleResult
+    ? admittedRoleResult.achievedIndependence
+    : review.assignment.providerId !== legacyPlanAuthorProviderId
       ? 'provider-independent'
       : 'none';
+  const roleResultForm = admittedRoleResult
+    ? admittedRoleResult.form
+    : ('ordinary-provider-legacy' as const);
+  const orchestration = admittedRoleResult
+    ? admittedRoleResult.orchestration
+    : ('legacy-caller-authorization' as const);
+  const degradationAuthorized =
+    admittedRoleResult !== null &&
+    admittedRoleResult.form !== 'ordinary-provider';
+  if (
+    admittedRoleResult &&
+    (admittedRoleResult.role !== 'plan-reviewer' ||
+      admittedRoleResult.targetDigest !== subject.subjectDigest ||
+      admittedRoleResult.content.nodeId !== review.nodeId ||
+      admittedRoleResult.content.resultDigest !== review.resultDigest ||
+      admittedRoleResult.content.policyDigest !== review.policyDigest ||
+      admittedRoleResult.assignment.providerId !==
+        review.assignment.providerId ||
+      admittedRoleResult.assignment.sessionId !== review.assignment.sessionId ||
+      admittedRoleResult.assignment.targetDigest !==
+        review.assignment.targetDigest)
+  ) {
+    staleReasons.add('REVIEW_ROLE_RESULT_MISMATCH');
+  }
   if (
     review.achievedIndependence !== achievedIndependence ||
     review.assignment.achievedIndependence !== achievedIndependence
@@ -215,8 +261,9 @@ export function validatePlanReview(
 
   const current = staleReasons.size === 0;
   const independenceSatisfied =
-    achievedIndependence === review.requiredIndependence &&
-    review.requiredIndependence === input.requiredIndependence;
+    review.requiredIndependence === input.requiredIndependence &&
+    (achievedIndependence === review.requiredIndependence ||
+      degradationAuthorized);
 
   const eligible =
     current &&
@@ -240,6 +287,9 @@ export function validatePlanReview(
     reviewPolicyDigest: review.policyDigest,
     requiredIndependence: input.requiredIndependence,
     achievedIndependence,
+    roleResultForm,
+    orchestration,
+    degradationAuthorized,
   };
   return deepFreeze(validation);
 }
@@ -326,7 +376,20 @@ function repositoryLocationsExactlyCoverCitations(
 
 function assertIndependenceAuthorization(
   value: unknown,
-): PlanReviewOrdinaryIndependenceAuthorization {
+):
+  | PlanReviewOrdinaryIndependenceAuthorization
+  | PlanReviewAdmittedRoleAuthorization {
+  if (
+    isPlainRecord(value) &&
+    hasExactKeys(value, ['kind', 'roleResult']) &&
+    value.kind === 'admitted-role-result' &&
+    isAdmittedRoleResultShape(value.roleResult)
+  ) {
+    return {
+      kind: 'admitted-role-result',
+      roleResult: structuredClone(value.roleResult),
+    };
+  }
   if (
     !isPlainRecord(value) ||
     !hasExactKeys(value, ['kind', 'planAuthorProviderId']) ||
@@ -341,6 +404,36 @@ function assertIndependenceAuthorization(
     kind: 'ordinary-provider-independent',
     planAuthorProviderId: value.planAuthorProviderId,
   };
+}
+
+function isAdmittedRoleResultShape(
+  value: unknown,
+): value is AdmittedRoleResult {
+  return (
+    isPlainRecord(value) &&
+    value.schemaVersion === 1 &&
+    value.role === 'plan-reviewer' &&
+    typeof value.targetDigest === 'string' &&
+    DIGEST_PATTERN.test(value.targetDigest) &&
+    typeof value.resultDigest === 'string' &&
+    DIGEST_PATTERN.test(value.resultDigest) &&
+    typeof value.form === 'string' &&
+    [
+      'ordinary-provider',
+      'granted-same-provider',
+      'granted-caller-supplied',
+      'direct-human-attestation',
+    ].includes(value.form) &&
+    typeof value.orchestration === 'string' &&
+    isPlainRecord(value.assignment) &&
+    isPlainRecord(value.content) &&
+    typeof value.content.nodeId === 'string' &&
+    DIGEST_PATTERN.test(value.content.nodeId) &&
+    typeof value.content.resultDigest === 'string' &&
+    DIGEST_PATTERN.test(value.content.resultDigest) &&
+    typeof value.content.policyDigest === 'string' &&
+    DIGEST_PATTERN.test(value.content.policyDigest)
+  );
 }
 
 function assertRepositoryEvidence(

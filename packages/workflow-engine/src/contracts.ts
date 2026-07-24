@@ -4,6 +4,10 @@ import path from 'node:path';
 
 import { canonicalJson } from './canonical-json.ts';
 import { ExitCode, workflowError } from './errors.ts';
+import {
+  assertInvestigationApplicability,
+  type InvestigationApplicability,
+} from './investigation-applicability.ts';
 import { workflowContractArtifactPaths } from './contract-artifacts.ts';
 import { isRecord, isStringArray } from './contract-values.ts';
 import {
@@ -91,10 +95,13 @@ export type EvidenceArtifactBundle = {
 export type InvestigationArtifact = EvidenceArtifactBundle & {
   kind: 'investigation-artifact';
   legacyMigration: boolean;
+  applicability?: InvestigationApplicability;
+  roleResults?: unknown[];
 };
 
 export type PlanReviewArtifact = EvidenceArtifactBundle & {
   kind: 'plan-review-artifact';
+  roleResults?: unknown[];
 };
 
 type ExecutionCommon = {
@@ -616,6 +623,10 @@ export function parseInvestigationArtifact(
   value: unknown,
   expectedChangeId: string,
 ): InvestigationArtifact {
+  const optionalKeys = optionalArtifactKeys(value, [
+    'applicability',
+    'roleResults',
+  ]);
   const artifact = parseEvidenceArtifactBundle(
     value,
     expectedChangeId,
@@ -628,6 +639,7 @@ export function parseInvestigationArtifact(
       'legacyMigration',
       'nodes',
       'schemaVersion',
+      ...optionalKeys,
     ],
   );
   if (
@@ -641,10 +653,17 @@ export function parseInvestigationArtifact(
       'investigation.json does not match schema version 1.',
     );
   }
+  const applicability =
+    isRecord(value) && Object.hasOwn(value, 'applicability')
+      ? assertInvestigationApplicability(value.applicability)
+      : undefined;
+  const roleResults = parseOptionalRoleResults(value);
   return {
     ...artifact,
     kind: 'investigation-artifact',
     legacyMigration: value.legacyMigration,
+    ...(applicability ? { applicability } : {}),
+    ...(roleResults ? { roleResults } : {}),
   };
 }
 
@@ -652,14 +671,52 @@ export function parsePlanReviewArtifact(
   value: unknown,
   expectedChangeId: string,
 ): PlanReviewArtifact {
+  const optionalKeys = optionalArtifactKeys(value, ['roleResults']);
   const artifact = parseEvidenceArtifactBundle(
     value,
     expectedChangeId,
     'plan-review-artifact',
     'INVALID_PLAN_REVIEW_ARTIFACT',
-    ['changeId', 'currentRefs', 'kind', 'nodes', 'schemaVersion'],
+    [
+      'changeId',
+      'currentRefs',
+      'kind',
+      'nodes',
+      'schemaVersion',
+      ...optionalKeys,
+    ],
   );
-  return { ...artifact, kind: 'plan-review-artifact' };
+  const roleResults = parseOptionalRoleResults(value);
+  return {
+    ...artifact,
+    kind: 'plan-review-artifact',
+    ...(roleResults ? { roleResults } : {}),
+  };
+}
+
+function optionalArtifactKeys(
+  value: unknown,
+  allowed: readonly string[],
+): string[] {
+  if (!isRecord(value)) {
+    return [];
+  }
+  return allowed.filter((key) => Object.hasOwn(value, key));
+}
+
+function parseOptionalRoleResults(value: unknown): unknown[] | undefined {
+  if (!isRecord(value) || !Object.hasOwn(value, 'roleResults')) {
+    return undefined;
+  }
+  if (!Array.isArray(value.roleResults) || value.roleResults.length === 0) {
+    throw artifactInvalid(
+      value.kind === 'investigation-artifact'
+        ? 'INVALID_INVESTIGATION_ARTIFACT'
+        : 'INVALID_PLAN_REVIEW_ARTIFACT',
+      'Tracked role results must be a non-empty array when present.',
+    );
+  }
+  return structuredClone(value.roleResults);
 }
 
 export function parseExecutionArtifact(

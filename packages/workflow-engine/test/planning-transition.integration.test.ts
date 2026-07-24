@@ -5,6 +5,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
 
+import { canonicalJson } from '../src/canonical-json.ts';
 import { readContentRecord } from '../src/content-record-store.ts';
 import { commitFacts } from '../src/git-transitions.ts';
 import {
@@ -19,6 +20,7 @@ import {
   isWorkflowError,
   runtimeRoot,
   sourceRepositoryRoot,
+  writeReadyV2ExemptChange,
   writeV2ChangeArtifacts,
 } from './fixture.ts';
 
@@ -105,8 +107,6 @@ test('planning inspection selects the explicit v2 grammar before semantic activa
       { id: '1.1', completed: false, title: 'First task' },
     ]);
     writeV2ChangeArtifacts(repository, 'v2-change');
-    git(repository, ['add', '--', 'workflow/schemas']);
-    git(repository, ['commit', '-m', 'Install v2 workflow schemas']);
     const baselineHead = git(repository, ['rev-parse', 'HEAD']).trim();
     const expectedPaths = planningPaths('v2-change', 'expense-app-v2');
 
@@ -162,6 +162,71 @@ test('planning inspection selects the explicit v2 grammar before semantic activa
     assert.equal(git(repository, ['diff', '--cached', '--name-only']), '');
   } finally {
     fs.rmSync(repository, { recursive: true, force: true });
+  }
+});
+
+test('plan-commit authorizes an exact reviewed v2 investigation exemption and binds its generation', () => {
+  const repository = createFixtureRepository();
+  try {
+    git(repository, ['checkout', '-b', 'work/demo-change']);
+    const ready = writeReadyV2ExemptChange(repository);
+
+    const result = commitPlanningTransition(repository, 'demo-change');
+    const report = readContentRecord(
+      path.join(runtimeRoot(repository), 'planning-reports'),
+      result.reportId,
+    ) as Record<string, unknown>;
+
+    assert.equal(result.kind, 'revision');
+    assert.deepEqual(result.planningAssurance, ready.planningAssurance);
+    assert.deepEqual(report.planningAssurance, ready.planningAssurance);
+    assert.equal(
+      (result.planningAssurance as { applicabilityKind: string })
+        .applicabilityKind,
+      'investigation-exemption',
+    );
+    assert.equal(git(repository, ['status', '--porcelain']), '');
+  } finally {
+    fs.rmSync(repository, { recursive: true, force: true });
+  }
+});
+
+test('plan-commit rejects a stale v2 target and a same-provider ordinary review', () => {
+  for (const variant of ['stale-target', 'same-provider-review'] as const) {
+    const repository = createFixtureRepository();
+    try {
+      git(repository, ['checkout', '-b', 'work/demo-change']);
+      const baselineHead = git(repository, ['rev-parse', 'HEAD']).trim();
+      writeReadyV2ExemptChange(repository);
+      if (variant === 'stale-target') {
+        fs.appendFileSync(
+          path.join(repository, 'openspec/changes/demo-change/proposal.md'),
+          '\nUnreviewed target change.\n',
+        );
+      } else {
+        const reviewPath = path.join(
+          repository,
+          'openspec/changes/demo-change/plan-review.json',
+        );
+        const review = JSON.parse(fs.readFileSync(reviewPath, 'utf8')) as {
+          roleResults: Array<{
+            author: { providerId: string | null };
+          }>;
+        };
+        review.roleResults[0]!.author.providerId = 'claude';
+        fs.writeFileSync(reviewPath, `${canonicalJson(review)}\n`);
+      }
+
+      assert.throws(
+        () => commitPlanningTransition(repository, 'demo-change'),
+        (error) => isWorkflowError(error, 'OPENSPEC_CHANGE_NOT_READY'),
+        variant,
+      );
+      assert.equal(git(repository, ['rev-parse', 'HEAD']).trim(), baselineHead);
+      assert.equal(git(repository, ['diff', '--cached', '--name-only']), '');
+    } finally {
+      fs.rmSync(repository, { recursive: true, force: true });
+    }
   }
 });
 

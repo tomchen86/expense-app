@@ -4,9 +4,25 @@ import os from 'node:os';
 import path from 'node:path';
 
 import { canonicalJson } from '../src/canonical-json.ts';
+import { loadChangeContract } from '../src/contracts.ts';
 import { createEvidenceNode } from '../src/evidence-node.ts';
 import { WorkflowError } from '../src/errors.ts';
+import {
+  createInvestigationApplicability,
+  INVESTIGATION_APPLICABILITY_POLICY_DIGEST,
+} from '../src/investigation-applicability.ts';
 import { generateOpenSpecPlanningAssets } from '../src/openspec-planning-assets.ts';
+import {
+  createPlanReviewNode,
+  createPlanReviewProviderResultNode,
+  PLAN_REVIEW_COVERAGE,
+  PLAN_REVIEW_OUTPUT_SCHEMA,
+} from '../src/plan-review.ts';
+import {
+  deriveInvestigationFirstPlanningSubject,
+  validateInvestigationFirstPlanningReadiness,
+} from '../src/planning-assurance-validator.ts';
+import { admitRoleResult } from '../src/role-scheduler.ts';
 
 export const sourceRepositoryRoot = path.resolve(
   import.meta.dirname,
@@ -62,6 +78,20 @@ export function createFixtureRepository(): string {
       },
     },
   });
+  fs.mkdirSync(path.join(repository, 'workflow/schemas'), {
+    recursive: true,
+  });
+  for (const schemaName of [
+    'guard.schema.json',
+    'execution-artifact.schema.json',
+    'investigation-artifact.schema.json',
+    'plan-review-artifact.schema.json',
+  ]) {
+    fs.copyFileSync(
+      path.join(sourceRepositoryRoot, 'workflow/schemas', schemaName),
+      path.join(repository, 'workflow/schemas', schemaName),
+    );
+  }
 
   const changeDirectory = path.join(repository, 'openspec/changes/demo-change');
   fs.mkdirSync(path.join(changeDirectory, 'specs/demo'), { recursive: true });
@@ -203,6 +233,205 @@ export function writeV2ChangeArtifacts(
     );
   }
   return { investigation, execution, planReview };
+}
+
+export function writeReadyV2ExemptChange(
+  repository: string,
+  changeId = 'demo-change',
+) {
+  const changeDirectory = path.join(repository, 'openspec/changes', changeId);
+  const baseline = {
+    head: git(repository, ['rev-parse', 'HEAD']).trim(),
+    tree: git(repository, ['rev-parse', 'HEAD^{tree}']).trim(),
+  };
+  fs.writeFileSync(
+    path.join(changeDirectory, '.openspec.yaml'),
+    'schema: expense-app-v2\ncreated: 2026-07-15\n',
+  );
+  const applicability = createInvestigationApplicability({
+    kind: 'investigation-exemption',
+    category: 'documentation-only',
+    baseline,
+    intentDigest: '2'.repeat(64),
+    declaredPaths: ['src/documentation.md'],
+    declaredChangeClasses: ['documentation-only'],
+    rationale: 'The fixture change is documentation-only.',
+    semanticAuthor: { id: 'codex', provenance: 'fixture-main-agent' },
+    nonTrivialBehaviorReliance: 'none-declared',
+    researchBudgetMinutes: null,
+  });
+  const applicabilityNode = createEvidenceNode({
+    type: 'investigation-applicability',
+    nodeSchema: 'investigation.applicability.v1',
+    evaluator: 'investigation-applicability.v1',
+    policyDigest: INVESTIGATION_APPLICABILITY_POLICY_DIGEST,
+    exactInputDigests: {
+      applicability: applicability.applicabilityDigest,
+    },
+    semanticParentResultDigests: {},
+    provenanceParentNodeIds: {},
+    outputSchema: 'investigation.applicability-output.v1',
+    output: applicability,
+    runtimeMetadata: {},
+  });
+  const investigation = {
+    schemaVersion: 1 as const,
+    kind: 'investigation-artifact' as const,
+    changeId,
+    legacyMigration: false,
+    nodes: [applicabilityNode],
+    currentRefs: { investigationApplicability: applicabilityNode.nodeId },
+    applicability,
+  };
+  const guard = JSON.parse(
+    fs.readFileSync(path.join(changeDirectory, 'guard.json'), 'utf8'),
+  ) as {
+    tasks: Record<string, { allowedPaths: string[]; requiredChecks: string[] }>;
+  };
+  const execution = {
+    schemaVersion: 1 as const,
+    kind: 'execution-artifact' as const,
+    changeId,
+    tasks: Object.fromEntries(
+      Object.entries(guard.tasks).map(([taskId, policy]) => [
+        taskId,
+        {
+          strategy: 'direct-reviewed' as const,
+          enforcement: 'available' as const,
+          allowedPaths: policy.allowedPaths,
+          requiredChecks: policy.requiredChecks,
+          diffReview: 'policy-required' as const,
+          exemptionKind: 'documentation-only' as const,
+          exemptionReason: 'Fixture documentation-only task.',
+          legacyBootstrap: null,
+        },
+      ]),
+    ),
+  };
+  const placeholder = createEvidenceNode({
+    type: 'pending-plan-review',
+    nodeSchema: 'fixture.pending-plan-review.v1',
+    evaluator: 'fixture.pending-plan-review.v1',
+    policyDigest: '3'.repeat(64),
+    exactInputDigests: { applicability: applicability.applicabilityDigest },
+    semanticParentResultDigests: {},
+    provenanceParentNodeIds: {},
+    outputSchema: 'fixture.pending-plan-review-output.v1',
+    output: { pending: true },
+    runtimeMetadata: {},
+  });
+  writeCanonicalJson(
+    path.join(changeDirectory, 'investigation.json'),
+    investigation,
+  );
+  writeCanonicalJson(path.join(changeDirectory, 'execution.json'), execution);
+  writeCanonicalJson(path.join(changeDirectory, 'plan-review.json'), {
+    schemaVersion: 1,
+    kind: 'plan-review-artifact',
+    changeId,
+    nodes: [placeholder],
+    currentRefs: { planReview: placeholder.nodeId },
+  });
+
+  const subjectContext = deriveInvestigationFirstPlanningSubject(
+    repository,
+    loadChangeContract(repository, changeId),
+  );
+  const assignment = {
+    role: 'plan-reviewer' as const,
+    providerId: 'claude' as const,
+    sessionId: 'fixture-plan-review-session',
+    targetDigest: subjectContext.subject.subjectDigest,
+    requiredIndependence: 'provider-independent' as const,
+    achievedIndependence: 'provider-independent' as const,
+  };
+  const submission = {
+    schemaVersion: 2 as const,
+    verdict: 'advisory-approve' as const,
+    coverage: [...PLAN_REVIEW_COVERAGE],
+    scopeAssessment: {
+      kind: 'no-challenge' as const,
+      evidence: [
+        {
+          kind: 'investigation-node' as const,
+          nodeId: applicabilityNode.nodeId,
+          resultDigest: applicabilityNode.resultDigest,
+        },
+      ],
+    },
+    findings: [],
+    proposedTerms: [],
+    suggestions: [],
+    residualRisk:
+      'The structured exemption does not prove semantic completeness.',
+    uncertainty: 'The fixture relies only on the declared low-risk exemption.',
+  };
+  const providerResultNode = createPlanReviewProviderResultNode({
+    subject: subjectContext.subject,
+    assignment,
+    submission,
+    providerPolicyDigest: subjectContext.policies.reviewPolicyDigest,
+  });
+  const reviewNode = createPlanReviewNode({
+    subject: subjectContext.subject,
+    assignment,
+    providerResultNode,
+    submission,
+  });
+  const roleResult = admitRoleResult({
+    assignment,
+    author: {
+      providerId: 'codex',
+      sessionId: 'fixture-plan-author-session',
+      principalId: undefined,
+      identityAssurance: 'runtime-hint',
+      engineSpawned: false,
+    },
+    participant: {
+      providerId: 'claude',
+      sessionId: assignment.sessionId,
+      principalId: undefined,
+      identityAssurance: 'adapter-assigned',
+      engineSpawned: true,
+    },
+    content: {
+      kind: 'plan-review',
+      nodeId: reviewNode.nodeId,
+      resultDigest: reviewNode.resultDigest,
+      outputSchema: PLAN_REVIEW_OUTPUT_SCHEMA,
+      evaluator: reviewNode.evaluator,
+      policyDigest: reviewNode.policyDigest,
+      contentDigest: reviewNode.resultDigest,
+      current: true,
+    },
+    providerInvocation: {
+      invocationId: 'fixture-plan-review-invocation',
+      requestDigest: '4'.repeat(64),
+      outputDigest: '5'.repeat(64),
+      providerId: assignment.providerId,
+      sessionId: assignment.sessionId,
+      targetDigest: assignment.targetDigest,
+      engineSpawned: true,
+    },
+    grantUse: null,
+    grantValidation: null,
+  });
+  writeCanonicalJson(path.join(changeDirectory, 'plan-review.json'), {
+    schemaVersion: 1,
+    kind: 'plan-review-artifact',
+    changeId,
+    nodes: [providerResultNode, reviewNode].sort((left, right) =>
+      left.nodeId.localeCompare(right.nodeId),
+    ),
+    currentRefs: { planReview: reviewNode.nodeId },
+    roleResults: [roleResult],
+  });
+
+  const planningAssurance = validateInvestigationFirstPlanningReadiness(
+    repository,
+    loadChangeContract(repository, changeId),
+  ).summary;
+  return { applicability, applicabilityNode, planningAssurance };
 }
 
 /**
@@ -803,4 +1032,9 @@ export function isWorkflowError(error: unknown, code: string): boolean {
 function writeJson(filePath: string, value: unknown): void {
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
   fs.writeFileSync(filePath, `${JSON.stringify(value, null, 2)}\n`);
+}
+
+function writeCanonicalJson(filePath: string, value: unknown): void {
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  fs.writeFileSync(filePath, `${canonicalJson(value)}\n`);
 }

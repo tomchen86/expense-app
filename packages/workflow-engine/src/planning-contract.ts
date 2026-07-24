@@ -107,7 +107,7 @@ export function validateOpenSpecPlanning(
   repositoryRoot: string,
   changeId: string,
   schemaName: ManagedSchemaName,
-): PlanningTransitionReport['openspec'] {
+): Pick<PlanningTransitionReport, 'openspec' | 'planningAssurance'> {
   const validated = loadStableValidatedChangeContract(
     discoverRepository(repositoryRoot),
     changeId,
@@ -119,7 +119,10 @@ export function validateOpenSpecPlanning(
       ExitCode.staleState,
     );
   }
-  return validated.openspec;
+  return {
+    openspec: validated.openspec,
+    planningAssurance: validated.planningAssurance,
+  };
 }
 
 export function assertPlanningTaskHistory(

@@ -59,7 +59,7 @@ test('validated managed contract binds OpenSpec readiness to a full mode-aware s
   );
 });
 
-test('v2 artifacts are structurally loadable but remain ineligible for workflow readiness', () => {
+test('v2 artifacts remain ineligible without a structured applicability decision', () => {
   const repository = createFixtureRepository();
   try {
     const legacy = loadValidatedChangeContract(repository, 'demo-change');
@@ -78,7 +78,7 @@ test('v2 artifacts are structurally loadable but remain ineligible for workflow 
         assert.ok(error instanceof WorkflowError);
         assert.equal(error.code, 'OPENSPEC_CHANGE_NOT_READY');
         assert.deepEqual(error.details, {
-          reason: 'investigation-first-semantic-readiness-unavailable',
+          reason: 'investigation-applicability-required',
         });
         return true;
       },

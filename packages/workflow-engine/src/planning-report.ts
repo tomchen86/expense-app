@@ -3,6 +3,7 @@ import {
   writeContentRecord,
 } from './content-record-store.ts';
 import { ExitCode, workflowError } from './errors.ts';
+import type { InvestigationFirstPlanningAssuranceSummary } from './planning-assurance-validator.ts';
 
 export type PlanningTaskState = {
   id: string;
@@ -37,6 +38,7 @@ export type PlanningTransitionReport = {
     statusComplete: true;
     validationValid: true;
   };
+  planningAssurance: InvestigationFirstPlanningAssuranceSummary | null;
 };
 
 export function writePlanningTransitionReport(
@@ -75,6 +77,7 @@ function assertPlanningTransitionReport(
     'message',
     'openspec',
     'parent',
+    'planningAssurance',
     'schemaVersion',
     'subject',
     'tasks',
@@ -107,10 +110,77 @@ function assertPlanningTransitionReport(
     !isDigestRecord(value.artifactDigests) ||
     !isParent(value.parent) ||
     !isTaskProjection(value.tasks) ||
-    !isOpenSpecEvidence(value.openspec)
+    !isOpenSpecEvidence(value.openspec) ||
+    !isPlanningAssurance(value.planningAssurance)
   ) {
     throw invalidPlanningReport();
   }
+}
+
+function isPlanningAssurance(
+  value: unknown,
+): value is InvestigationFirstPlanningAssuranceSummary | null {
+  if (value === null) return true;
+  if (
+    !isRecord(value) ||
+    !hasExactKeys(value, [
+      'achievedIndependence',
+      'advisoryVerdict',
+      'applicabilityDigest',
+      'applicabilityKind',
+      'applicabilityNodeId',
+      'degradationAuthorized',
+      'investigationBaseline',
+      'planningGenerationId',
+      'planTargetDigest',
+      'requiredIndependence',
+      'reviewDispositionNodeId',
+      'reviewNodeId',
+      'reviewOrchestration',
+      'reviewResultDigest',
+      'reviewRoleResultDigest',
+      'reviewRoleResultForm',
+    ])
+  ) {
+    return false;
+  }
+  return (
+    ['sealed-investigation', 'investigation-exemption'].includes(
+      String(value.applicabilityKind),
+    ) &&
+    isDigest(value.applicabilityDigest) &&
+    isDigest(value.applicabilityNodeId) &&
+    isParent(value.investigationBaseline) &&
+    isDigest(value.planningGenerationId) &&
+    isDigest(value.planTargetDigest) &&
+    isDigest(value.reviewNodeId) &&
+    isDigest(value.reviewResultDigest) &&
+    (value.reviewDispositionNodeId === null ||
+      isDigest(value.reviewDispositionNodeId)) &&
+    isDigest(value.reviewRoleResultDigest) &&
+    [
+      'ordinary-provider',
+      'granted-same-provider',
+      'granted-caller-supplied',
+      'direct-human-attestation',
+    ].includes(String(value.reviewRoleResultForm)) &&
+    [
+      'engine-spawned-provider',
+      'caller-supplied',
+      'direct-human-review',
+    ].includes(String(value.reviewOrchestration)) &&
+    value.requiredIndependence === 'provider-independent' &&
+    [
+      'provider-independent',
+      'principal-independent',
+      'session-independent',
+      'none',
+    ].includes(String(value.achievedIndependence)) &&
+    typeof value.degradationAuthorized === 'boolean' &&
+    ['advisory-approve', 'advisory-reject'].includes(
+      String(value.advisoryVerdict),
+    )
+  );
 }
 
 function isParent(value: unknown): value is { head: string; tree: string } {

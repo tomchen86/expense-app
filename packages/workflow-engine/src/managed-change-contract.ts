@@ -23,6 +23,10 @@ import {
 import { collectInstalledPackageClosure } from './package-closure.ts';
 import { assertChangeId, normalizeChangedPath } from './paths.ts';
 import { assertPlanningPaths } from './planning-paths.ts';
+import {
+  validateInvestigationFirstPlanningReadiness,
+  type InvestigationFirstPlanningAssuranceSummary,
+} from './planning-assurance-validator.ts';
 
 export type ManagedChangeDiagnostic = {
   level: 'ERROR' | 'WARNING' | 'INFO';
@@ -43,6 +47,7 @@ export type ValidatedChangeContract = ChangeContract & {
   diagnostics: ManagedChangeDiagnostic[];
   artifactModes: Record<string, '100644' | '100755'>;
   contractDigest: string;
+  planningAssurance: InvestigationFirstPlanningAssuranceSummary | null;
 };
 
 type ContractSnapshot = {
@@ -61,15 +66,16 @@ export function loadValidatedChangeContract(
 ): ValidatedChangeContract {
   const root = canonicalRepositoryRoot(repositoryRoot);
   const before = inspectSnapshot(root, requestedChangeId);
-  if (before.schemaName === 'expense-app-v2') {
+  if (
+    before.schemaName === 'expense-app-v2' &&
+    !before.contract.investigation?.applicability
+  ) {
     throw workflowError(
       'OPENSPEC_CHANGE_NOT_READY',
-      'Investigation-first semantic readiness is not available yet.',
+      'Investigation-first planning requires a structured applicability decision.',
       ExitCode.verification,
       {
-        details: {
-          reason: 'investigation-first-semantic-readiness-unavailable',
-        },
+        details: { reason: 'investigation-applicability-required' },
       },
     );
   }
@@ -119,6 +125,12 @@ export function loadValidatedChangeContract(
     );
   }
 
+  const planningAssurance =
+    after.schemaName === 'expense-app-v2'
+      ? validateInvestigationFirstPlanningReadiness(root, after.contract)
+          .summary
+      : null;
+
   return {
     ...after.contract,
     artifactPaths: after.artifactPaths,
@@ -133,6 +145,7 @@ export function loadValidatedChangeContract(
     diagnostics,
     artifactModes: after.artifactModes,
     contractDigest: after.digest,
+    planningAssurance,
   };
 }
 
