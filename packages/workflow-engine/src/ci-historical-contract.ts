@@ -6,6 +6,10 @@ import {
   type ParsedTask,
 } from './contracts.ts';
 import { ExitCode, workflowError } from './errors.ts';
+import {
+  assertInvestigationPlanningActivation,
+  INVESTIGATION_PLANNING_ACTIVATION_MARKER,
+} from './openspec-schema-contract.ts';
 import { assertChangeId, assertTaskId, normalizePolicyPath } from './paths.ts';
 
 export type HistoricalTaskAuthority = {
@@ -33,6 +37,22 @@ export function loadHistoricalTaskAuthority(
 ): HistoricalTaskAuthority {
   const changeId = assertChangeId(requestedChangeId);
   const taskId = assertTaskId(requestedTaskId);
+  // Task replay reads activation from the replayed lineage alone, never from
+  // the protected base a later branch grew: a task authorized by a governing
+  // generation that predates the anchor stays replayable forever. Once the
+  // lineage does reach the anchor, the reviewed marker must still be in the
+  // parent tree, so deleting or renaming it fails closed instead of quietly
+  // returning the change to the legacy contract.
+  assertInvestigationPlanningActivation({
+    repositoryRoot,
+    baselines: [commit],
+    readMarker: () =>
+      readFileAtCommit(
+        repositoryRoot,
+        commit,
+        INVESTIGATION_PLANNING_ACTIVATION_MARKER,
+      ),
+  });
   const tasksPath = `${changeRoot}/${changeId}/tasks.md`;
   const tasksContent = requiredFile(repositoryRoot, commit, tasksPath);
   const tasks = parseTasks(tasksContent);

@@ -4,7 +4,9 @@ import path from 'node:path';
 import test from 'node:test';
 
 import { verifyPullRequest } from '../src/ci.ts';
+import { INVESTIGATION_PLANNING_ACTIVATION_MARKER } from '../src/openspec-schema-contract.ts';
 import {
+  activateInvestigationPlanning,
   configureChecks,
   createFixtureRepository,
   git,
@@ -36,6 +38,42 @@ test('CI recomputes task, scope, trailers, and checks without runtime reports', 
     ]);
   } finally {
     fs.rmSync(repository, { recursive: true, force: true });
+  }
+});
+
+test('CI replays task authority under an active anchor and fails closed without it', () => {
+  for (const marker of ['present', 'deleted'] as const) {
+    const repository = createFixtureRepository();
+    try {
+      git(repository, ['checkout', '-b', 'work/demo-change']);
+      activateInvestigationPlanning(repository);
+      if (marker === 'deleted') {
+        git(repository, [
+          'rm',
+          '--quiet',
+          '--',
+          INVESTIGATION_PLANNING_ACTIVATION_MARKER,
+        ]);
+        git(repository, ['commit', '-m', 'Delete the activation marker']);
+      }
+      const base = git(repository, ['rev-parse', 'HEAD']).trim();
+      const head = commitCompletedTask(repository);
+
+      if (marker === 'present') {
+        assert.deepEqual(
+          verifyPullRequest(repository, base, head).completedTasks,
+          [{ changeId: 'demo-change', taskId: '1.1' }],
+        );
+      } else {
+        assert.throws(
+          () => verifyPullRequest(repository, base, head),
+          (error) =>
+            isWorkflowError(error, 'INVESTIGATION_ACTIVATION_MARKER_INVALID'),
+        );
+      }
+    } finally {
+      fs.rmSync(repository, { recursive: true, force: true });
+    }
   }
 });
 

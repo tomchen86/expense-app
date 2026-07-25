@@ -16,11 +16,16 @@ import {
   EXPENSE_APP_CONFIG_DIGEST,
   EXPENSE_APP_GUARD_TEMPLATE_DIGEST,
   EXPENSE_APP_SCHEMA_DIGEST,
+  INVESTIGATION_PLANNING_ACTIVATION_DIGEST,
+  INVESTIGATION_PLANNING_ACTIVATION_MARKER,
   SPEC_DRIVEN_SCHEMA_GRAPH,
+  assertInvestigationPlanningActivation,
   inspectOpenSpecSchemaContract,
+  protectedActivationBaselines,
+  resolveInvestigationPlanningActivation,
 } from '../src/openspec-schema-contract.ts';
 import { parseInstructions, parseStatus } from '../src/openspec-payloads.ts';
-import { isWorkflowError, sourceRepositoryRoot } from './fixture.ts';
+import { git, isWorkflowError, sourceRepositoryRoot } from './fixture.ts';
 
 test('schema contract pins package provenance and the project graph', () => {
   const contract = inspectOpenSpecSchemaContract(sourceRepositoryRoot);
@@ -162,17 +167,22 @@ test('v2 schema has the exact investigation-first graph and route-back engine te
   );
   assert.deepEqual(
     config.split('\n').filter((line) => line.startsWith('schema:')),
-    ['schema: expense-app'],
+    ['schema: expense-app-v2'],
   );
-  assert.doesNotMatch(config, /schema: expense-app-v2/);
   assert.equal(
-    fs.existsSync(
-      path.join(
-        sourceRepositoryRoot,
-        'workflow/schemas/investigation-planning-v1.schema.json',
+    INVESTIGATION_PLANNING_ACTIVATION_MARKER,
+    'workflow/schemas/investigation-planning-v1.schema.json',
+  );
+  assert.equal(
+    cryptoDigest(
+      fs.readFileSync(
+        path.join(
+          sourceRepositoryRoot,
+          INVESTIGATION_PLANNING_ACTIVATION_MARKER,
+        ),
       ),
     ),
-    false,
+    INVESTIGATION_PLANNING_ACTIVATION_DIGEST,
   );
 });
 
@@ -564,6 +574,164 @@ test('instruction payload recomputes dependency readiness and rejects C1 paths',
     fs.rmSync(repository, { recursive: true, force: true });
   }
 });
+
+test('activation is derived monotonically from ancestry, not current file presence', () => {
+  const repository = createActivationRepository();
+  try {
+    const before = git(repository, ['rev-parse', 'HEAD']).trim();
+    const anchor = commitActivationMarker(repository);
+    write(repository, 'src/after.ts', 'export const after = 1;\n');
+    const afterAnchor = commitAll(repository, 'Work after activation');
+    git(repository, [
+      'rm',
+      '--quiet',
+      INVESTIGATION_PLANNING_ACTIVATION_MARKER,
+    ]);
+    const deleted = commitAll(repository, 'Delete the activation marker');
+    git(repository, ['checkout', '--quiet', '-b', 'stale', before]);
+    write(repository, 'src/stale.ts', 'export const stale = 1;\n');
+    const stale = commitAll(
+      repository,
+      'Work on a stale pre-activation branch',
+    );
+
+    assert.deepEqual(
+      resolveInvestigationPlanningActivation(repository, [before]),
+      { activated: false, anchor: null },
+    );
+    assert.deepEqual(
+      resolveInvestigationPlanningActivation(repository, [stale]),
+      { activated: false, anchor: null },
+    );
+    assert.deepEqual(
+      resolveInvestigationPlanningActivation(repository, [anchor]),
+      { activated: true, anchor },
+    );
+    assert.deepEqual(
+      resolveInvestigationPlanningActivation(repository, [afterAnchor]),
+      { activated: true, anchor },
+    );
+    // Deleting the marker is a later commit on the same lineage; it can never
+    // walk activation back to the legacy grammar.
+    assert.deepEqual(
+      resolveInvestigationPlanningActivation(repository, [deleted]),
+      { activated: true, anchor },
+    );
+    // A stale branch that never saw the marker is still activated once the
+    // configured protected base carries the anchor.
+    assert.deepEqual(
+      resolveInvestigationPlanningActivation(repository, [stale, afterAnchor]),
+      { activated: true, anchor },
+    );
+  } finally {
+    fs.rmSync(repository, { recursive: true, force: true });
+  }
+});
+
+test('activation requires the exact marker and rejects a legacy downgrade', () => {
+  const repository = createActivationRepository();
+  try {
+    const before = git(repository, ['rev-parse', 'HEAD']).trim();
+    const anchor = commitActivationMarker(repository);
+    const markerPath = path.join(
+      repository,
+      INVESTIGATION_PLANNING_ACTIVATION_MARKER,
+    );
+    const markerBytes = fs.readFileSync(markerPath);
+    const readMarker = () => fs.readFileSync(markerPath);
+
+    // Pre-activation baselines leave the legacy grammar untouched and require
+    // no marker at all.
+    assert.deepEqual(
+      assertInvestigationPlanningActivation({
+        repositoryRoot: repository,
+        baselines: [before],
+        readMarker: () => undefined,
+        declaredSchemaName: 'expense-app',
+      }),
+      { activated: false, anchor: null },
+    );
+    assert.deepEqual(
+      assertInvestigationPlanningActivation({
+        repositoryRoot: repository,
+        baselines: [anchor],
+        readMarker,
+        declaredSchemaName: 'expense-app-v2',
+      }),
+      { activated: true, anchor },
+    );
+    assert.throws(
+      () =>
+        assertInvestigationPlanningActivation({
+          repositoryRoot: repository,
+          baselines: [anchor],
+          readMarker,
+          declaredSchemaName: 'expense-app',
+        }),
+      (error) => isWorkflowError(error, 'PLANNING_SCHEMA_DOWNGRADE'),
+    );
+    for (const absent of [
+      () => undefined,
+      () => Buffer.concat([markerBytes, Buffer.from('\n')]),
+    ]) {
+      assert.throws(
+        () =>
+          assertInvestigationPlanningActivation({
+            repositoryRoot: repository,
+            baselines: [anchor],
+            readMarker: absent,
+            declaredSchemaName: 'expense-app-v2',
+          }),
+        (error) =>
+          isWorkflowError(error, 'INVESTIGATION_ACTIVATION_MARKER_INVALID'),
+      );
+    }
+    assert.throws(
+      () =>
+        resolveInvestigationPlanningActivation(repository, ['0'.repeat(40)]),
+      (error) => isWorkflowError(error, 'INVESTIGATION_ACTIVATION_UNRESOLVED'),
+    );
+    assert.deepEqual(protectedActivationBaselines(repository), []);
+  } finally {
+    fs.rmSync(repository, { recursive: true, force: true });
+  }
+});
+
+function createActivationRepository(): string {
+  const repository = fs.mkdtempSync(
+    path.join(os.tmpdir(), 'workflow-activation-'),
+  );
+  git(repository, ['init', '-b', 'main']);
+  git(repository, ['config', 'user.email', 'workflow@example.test']);
+  git(repository, ['config', 'user.name', 'Workflow Test']);
+  write(repository, 'README.md', '# Activation fixture\n');
+  commitAll(repository, 'Create activation fixture');
+  return repository;
+}
+
+function commitActivationMarker(repository: string): string {
+  write(
+    repository,
+    INVESTIGATION_PLANNING_ACTIVATION_MARKER,
+    fs.readFileSync(
+      path.join(sourceRepositoryRoot, INVESTIGATION_PLANNING_ACTIVATION_MARKER),
+      'utf8',
+    ),
+  );
+  return commitAll(repository, 'Activate investigation-first planning');
+}
+
+function commitAll(repository: string, subject: string): string {
+  git(repository, ['add', '-A']);
+  git(repository, ['commit', '-m', subject]);
+  return git(repository, ['rev-parse', 'HEAD']).trim();
+}
+
+function write(repository: string, relativePath: string, content: string) {
+  const target = path.join(repository, relativePath);
+  fs.mkdirSync(path.dirname(target), { recursive: true });
+  fs.writeFileSync(target, content);
+}
 
 function completeStatusPayload(repository: string, changeRoot: string) {
   const outputs = {

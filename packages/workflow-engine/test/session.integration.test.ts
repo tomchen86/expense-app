@@ -10,8 +10,15 @@ import './archive-transition.integration.test.ts';
 import './ci-archive.integration.test.ts';
 
 import { validateCiPlanningCommit } from '../src/ci-planning.ts';
+import { verifyPullRequest } from '../src/ci.ts';
 import { WorkflowError } from '../src/errors.ts';
-import { commitSession, completeTask, finalizeTask } from '../src/lifecycle.ts';
+import {
+  commitSession,
+  completeTask,
+  finalizeTask,
+  finishSession,
+} from '../src/lifecycle.ts';
+import { INVESTIGATION_PLANNING_ACTIVATION_MARKER } from '../src/openspec-schema-contract.ts';
 import { commitPlanningTransition } from '../src/planning-transition.ts';
 import { runRegisteredCheck } from '../src/registered-check.ts';
 import {
@@ -52,14 +59,95 @@ import './managed-change-contract.integration.test.ts';
 import './managed-change-lifecycle.integration.test.ts';
 import './runner.integration.test.ts';
 import {
+  activateInvestigationPlanning,
   addFixtureScripts,
   configureChecks,
   createFixtureRepository,
   git,
   isWorkflowError,
   runtimeRoot,
+  sourceRepositoryRoot,
   writeReadyV2ExemptChange,
 } from './fixture.ts';
+
+test('the activation task finishes under its own pinned legacy session', () => {
+  const repository = createFixtureRepository();
+  try {
+    git(repository, ['checkout', '-b', 'work/demo-change']);
+    widenTaskScope(repository, ['src/**', 'workflow/schemas/**']);
+    const base = git(repository, ['rev-parse', 'HEAD']).trim();
+    const session = startSession(repository, 'demo-change', '1.1');
+
+    // The task that introduces the anchor is pinned to a baseline that
+    // predates it, so its own session must remain executable.
+    fs.copyFileSync(
+      path.join(sourceRepositoryRoot, INVESTIGATION_PLANNING_ACTIVATION_MARKER),
+      path.join(repository, INVESTIGATION_PLANNING_ACTIVATION_MARKER),
+    );
+    assert.equal(checkSession(repository, session.sessionId).passed, true);
+    completeTask(repository, session.sessionId);
+    assert.deepEqual(finishSession(repository, session.sessionId).stagedPaths, [
+      'openspec/changes/demo-change/tasks.md',
+      INVESTIGATION_PLANNING_ACTIVATION_MARKER,
+    ]);
+    const committed = commitSession(
+      repository,
+      session.sessionId,
+      'Activate investigation-first planning',
+    );
+
+    assert.equal(committed.session.state, 'committed');
+    // The change keeps the legacy grammar its governing generation was
+    // reviewed under; activation governs later planning, not this task.
+    assert.equal(
+      fs.readFileSync(
+        path.join(repository, 'openspec/changes/demo-change/.openspec.yaml'),
+        'utf8',
+      ),
+      'schema: expense-app\ncreated: 2026-07-15\n',
+    );
+    assert.deepEqual(
+      verifyPullRequest(repository, base, committed.commitHash).completedTasks,
+      [{ changeId: 'demo-change', taskId: '1.1' }],
+    );
+  } finally {
+    fs.rmSync(repository, { recursive: true, force: true });
+  }
+});
+
+test('a legacy task session survives activation but fails closed without the marker', () => {
+  const repository = createFixtureRepository();
+  try {
+    git(repository, ['checkout', '-b', 'work/demo-change']);
+    activateInvestigationPlanning(repository);
+    const session = startSession(repository, 'demo-change', '1.1');
+
+    assert.equal(checkSession(repository, session.sessionId).passed, true);
+
+    fs.rmSync(path.join(repository, INVESTIGATION_PLANNING_ACTIVATION_MARKER));
+    assert.throws(
+      () => checkSession(repository, session.sessionId),
+      (error) =>
+        isWorkflowError(error, 'INVESTIGATION_ACTIVATION_MARKER_INVALID'),
+    );
+  } finally {
+    fs.rmSync(repository, { recursive: true, force: true });
+  }
+});
+
+function widenTaskScope(repository: string, allowedPaths: string[]): void {
+  const guardPath = path.join(
+    repository,
+    'openspec/changes/demo-change/guard.json',
+  );
+  const guard = JSON.parse(fs.readFileSync(guardPath, 'utf8')) as {
+    tasks: Record<string, { allowedPaths: string[] }>;
+  };
+  guard.tasks['1.1']!.allowedPaths = allowedPaths;
+  fs.writeFileSync(guardPath, `${JSON.stringify(guard, null, 2)}\n`);
+  git(repository, ['add', '--', 'openspec/changes/demo-change/guard.json']);
+  git(repository, ['commit', '-m', 'Widen the fixture task scope']);
+}
 
 test('v2 sessions and every task report pin the exact planning assurance', () => {
   const repository = createFixtureRepository();

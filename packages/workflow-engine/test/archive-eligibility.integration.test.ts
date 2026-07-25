@@ -5,8 +5,10 @@ import path from 'node:path';
 import test from 'node:test';
 
 import { withArchiveEligibility } from '../src/archive-eligibility.ts';
+import { INVESTIGATION_PLANNING_ACTIVATION_MARKER } from '../src/openspec-schema-contract.ts';
 import { startSession } from '../src/session.ts';
 import {
+  activateInvestigationPlanning,
   createFixtureRepository,
   git,
   isWorkflowError,
@@ -332,6 +334,41 @@ test('archive eligibility fails closed when the remote-tracking base is unresolv
 function configuredFixture(): string {
   return createFixtureRepository();
 }
+
+test('archive eligibility fails closed when an activated repository drops the marker', () => {
+  const repository = completedFixture();
+  try {
+    activateInvestigationPlanning(repository);
+    assert.equal(
+      withArchiveEligibility(
+        repository,
+        'demo-change',
+        (eligibility) => eligibility.schemaName,
+      ),
+      'expense-app',
+    );
+
+    git(repository, [
+      'rm',
+      '--quiet',
+      '--',
+      INVESTIGATION_PLANNING_ACTIVATION_MARKER,
+    ]);
+    git(repository, ['commit', '-m', 'Delete the activation marker']);
+    assert.throws(
+      () =>
+        withArchiveEligibility(
+          repository,
+          'demo-change',
+          (eligibility) => eligibility,
+        ),
+      (error) =>
+        isWorkflowError(error, 'INVESTIGATION_ACTIVATION_MARKER_INVALID'),
+    );
+  } finally {
+    fs.rmSync(repository, { recursive: true, force: true });
+  }
+});
 
 function completedFixture(): string {
   const repository = configuredFixture();

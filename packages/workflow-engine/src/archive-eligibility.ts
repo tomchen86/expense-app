@@ -4,6 +4,10 @@ import path from 'node:path';
 import { assertUniqueCollaborationGrantUses } from './collaboration-grant.ts';
 import { loadWorkflowConfig, type ManagedSchemaName } from './contracts.ts';
 import { ExitCode, workflowError } from './errors.ts';
+import {
+  assertInvestigationPlanningActivation,
+  readActivationMarkerFile,
+} from './openspec-schema-contract.ts';
 import { validateInvestigationFirstPlanningReadiness } from './planning-assurance-validator.ts';
 import {
   discoverRepository,
@@ -109,6 +113,15 @@ function inspectEligibility(
     'ARCHIVE_BASE_NOT_ANCESTOR',
     'The configured archive base must be an ancestor of HEAD.',
   );
+
+  // Archiving replays an immutable generation, so an activated repository may
+  // still archive a legacy change; what it may not do is archive out of a
+  // checkout that has dropped the reviewed marker.
+  assertInvestigationPlanningActivation({
+    repositoryRoot: initial.repositoryRoot,
+    baselines: [initial.head],
+    readMarker: () => readActivationMarkerFile(initial.repositoryRoot),
+  });
 
   const stable = loadStableValidatedChangeContract(initial, requestedChangeId);
   const { contract, git } = stable;

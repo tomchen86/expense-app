@@ -6,7 +6,8 @@ import path from 'node:path';
 import test from 'node:test';
 
 import { validateCiPlanningCommit } from '../src/ci-planning.ts';
-import { git, isWorkflowError } from './fixture.ts';
+import { INVESTIGATION_PLANNING_ACTIVATION_MARKER as ACTIVATION_MARKER } from '../src/openspec-schema-contract.ts';
+import { git, isWorkflowError, sourceRepositoryRoot } from './fixture.ts';
 
 const CHANGE_ID = 'planned-change';
 
@@ -250,6 +251,73 @@ test('CI rejects a merge commit even when it uses the plan message', () => {
     fs.rmSync(repository, { recursive: true, force: true });
   }
 });
+
+test('CI replays a pre-activation legacy plan after the anchor lands later', () => {
+  const repository = createRepository();
+  try {
+    writePlanningTree(repository);
+    const plan = commitPlan(repository);
+    // The anchor is introduced after the governing generation, exactly as the
+    // cutover commit does on a branch that already carries legacy plans.
+    activate(repository);
+
+    assert.equal(
+      validateCiPlanningCommit(repository, plan, CHANGE_ID).schemaName,
+      'expense-app',
+    );
+  } finally {
+    fs.rmSync(repository, { recursive: true, force: true });
+  }
+});
+
+test('CI rejects a legacy plan introduced after the activation anchor', () => {
+  const repository = createRepository();
+  try {
+    activate(repository);
+    writePlanningTree(repository);
+    const plan = commitPlan(repository);
+
+    assert.throws(
+      () => validateCiPlanningCommit(repository, plan, CHANGE_ID),
+      (error) => isWorkflowError(error, 'PLANNING_SCHEMA_DOWNGRADE'),
+    );
+  } finally {
+    fs.rmSync(repository, { recursive: true, force: true });
+  }
+});
+
+test('CI fails closed when a post-activation plan tree drops the anchor marker', () => {
+  const repository = createRepository();
+  try {
+    activate(repository);
+    git(repository, ['rm', '--quiet', '--', ACTIVATION_MARKER]);
+    commit(repository, 'Delete the activation marker');
+    writePlanningTree(repository);
+    write(
+      repository,
+      `openspec/changes/${CHANGE_ID}/.openspec.yaml`,
+      'schema: expense-app-v2\ncreated: 2026-07-15\n',
+    );
+    const plan = commitPlan(repository);
+
+    assert.throws(
+      () => validateCiPlanningCommit(repository, plan, CHANGE_ID),
+      (error) =>
+        isWorkflowError(error, 'INVESTIGATION_ACTIVATION_MARKER_INVALID'),
+    );
+  } finally {
+    fs.rmSync(repository, { recursive: true, force: true });
+  }
+});
+
+function activate(repository: string): string {
+  write(
+    repository,
+    ACTIVATION_MARKER,
+    fs.readFileSync(path.join(sourceRepositoryRoot, ACTIVATION_MARKER), 'utf8'),
+  );
+  return commit(repository, 'Activate investigation-first planning');
+}
 
 function createRepository(): string {
   const repository = fs.mkdtempSync(

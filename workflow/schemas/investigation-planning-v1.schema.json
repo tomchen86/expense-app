@@ -1,0 +1,48 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://expense-app.local/workflow/investigation-planning-v1.schema.json",
+  "title": "Investigation-first planning activation v1",
+  "description": "Reviewed activation marker for investigation-first planning. The first commit that introduces this file is the activation anchor. Every planning introduction or revision whose candidate parent or configured protected base reaches that anchor MUST declare expense-app-v2 and satisfy every v2 gate. Activation is derived from commit ancestry, not from current file presence, so deleting or renaming this file fails validation closed instead of restoring legacy eligibility. Replacing this contract requires a successor marker that defines monotonic predecessor rules.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "activation"],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "activation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "marker",
+        "legacySchema",
+        "activatedSchema",
+        "monotonic",
+        "baselines",
+        "requiredArtifacts"
+      ],
+      "properties": {
+        "marker": {
+          "const": "workflow/schemas/investigation-planning-v1.schema.json"
+        },
+        "legacySchema": { "const": "expense-app" },
+        "activatedSchema": { "const": "expense-app-v2" },
+        "monotonic": { "const": true },
+        "baselines": {
+          "type": "array",
+          "uniqueItems": true,
+          "minItems": 1,
+          "items": {
+            "enum": ["candidate-parent", "configured-protected-base"]
+          }
+        },
+        "requiredArtifacts": {
+          "type": "array",
+          "uniqueItems": true,
+          "minItems": 1,
+          "items": {
+            "enum": ["investigation.json", "execution.json", "plan-review.json"]
+          }
+        }
+      }
+    }
+  }
+}

@@ -20,12 +20,15 @@ import {
 } from '../src/planning-transition.ts';
 import { inspectPlanningTransition } from '../src/planning-contract.ts';
 import { abortSession, startSession } from '../src/session.ts';
+import { INVESTIGATION_PLANNING_ACTIVATION_MARKER } from '../src/openspec-schema-contract.ts';
 import {
+  activateInvestigationPlanning,
   createFixtureRepository,
   git,
   isWorkflowError,
   runtimeRoot,
   sourceRepositoryRoot,
+  syncOriginMain,
   writeReadyV2ExemptChange,
   writeV2ChangeArtifacts,
 } from './fixture.ts';
@@ -193,6 +196,85 @@ test('planning inspection selects the explicit v2 grammar before semantic activa
     );
     assert.equal(git(repository, ['rev-parse', 'HEAD']).trim(), baselineHead);
     assert.equal(git(repository, ['diff', '--cached', '--name-only']), '');
+  } finally {
+    fs.rmSync(repository, { recursive: true, force: true });
+  }
+});
+
+test('plan-commit refuses a legacy selection once activation is reachable', () => {
+  for (const activation of ['candidate-parent', 'protected-base'] as const) {
+    const repository = createPlanningRepository('planned-change');
+    try {
+      if (activation === 'candidate-parent') {
+        activateInvestigationPlanning(repository);
+      } else {
+        // A stale branch that never saw the marker still cannot select legacy
+        // once the configured protected base carries the anchor.
+        git(repository, ['checkout', '--quiet', 'main']);
+        activateInvestigationPlanning(repository);
+        syncOriginMain(repository);
+        git(repository, ['checkout', '--quiet', 'work/planned-change']);
+      }
+      const baselineHead = git(repository, ['rev-parse', 'HEAD']).trim();
+      writeChange(repository, 'planned-change', [
+        { id: '1.1', completed: false, title: 'First task' },
+      ]);
+
+      assert.throws(
+        () => commitPlanningTransition(repository, 'planned-change'),
+        (error) => isWorkflowError(error, 'PLANNING_SCHEMA_DOWNGRADE'),
+      );
+      assert.equal(git(repository, ['rev-parse', 'HEAD']).trim(), baselineHead);
+      assert.equal(git(repository, ['diff', '--cached', '--name-only']), '');
+    } finally {
+      fs.rmSync(repository, { recursive: true, force: true });
+    }
+  }
+});
+
+test('plan-commit fails closed when an activated repository drops the marker', () => {
+  const repository = createFixtureRepository();
+  try {
+    git(repository, ['checkout', '-b', 'work/demo-change']);
+    activateInvestigationPlanning(repository);
+    git(repository, [
+      'rm',
+      '--quiet',
+      '--',
+      INVESTIGATION_PLANNING_ACTIVATION_MARKER,
+    ]);
+    git(repository, ['commit', '-m', 'Delete the activation marker']);
+    const baselineHead = git(repository, ['rev-parse', 'HEAD']).trim();
+    writeReadyV2ExemptChange(repository);
+
+    assert.throws(
+      () => commitPlanningTransition(repository, 'demo-change'),
+      (error) =>
+        isWorkflowError(error, 'INVESTIGATION_ACTIVATION_MARKER_INVALID'),
+    );
+    assert.equal(git(repository, ['rev-parse', 'HEAD']).trim(), baselineHead);
+    assert.equal(git(repository, ['diff', '--cached', '--name-only']), '');
+  } finally {
+    fs.rmSync(repository, { recursive: true, force: true });
+  }
+});
+
+test('plan-commit authorizes an exact reviewed v2 revision under an active anchor', () => {
+  const repository = createFixtureRepository();
+  try {
+    git(repository, ['checkout', '-b', 'work/demo-change']);
+    const anchor = activateInvestigationPlanning(repository);
+    const ready = writeReadyV2ExemptChange(repository);
+
+    const result = commitPlanningTransition(repository, 'demo-change');
+
+    assert.equal(result.kind, 'revision');
+    assert.deepEqual(result.planningAssurance, ready.planningAssurance);
+    assert.equal(
+      git(repository, ['merge-base', '--is-ancestor', anchor, 'HEAD']),
+      '',
+    );
+    assert.equal(git(repository, ['status', '--porcelain']), '');
   } finally {
     fs.rmSync(repository, { recursive: true, force: true });
   }

@@ -21,6 +21,11 @@ import {
 } from './git-transitions.ts';
 import { runGit } from './git.ts';
 import {
+  assertInvestigationPlanningActivation,
+  readActivationMarkerFile,
+  protectedActivationBaselines,
+} from './openspec-schema-contract.ts';
+import {
   validateInvestigationFirstPlanningReadiness,
   type InvestigationFirstPlanningAssuranceSummary,
 } from './planning-assurance-validator.ts';
@@ -211,6 +216,12 @@ function replayPlanningTree(
 ): PlanningTreeReplay {
   return withPlanningWorktree(repositoryRoot, commit, (worktree) => {
     const schemaName = resolveReplayedSchemaName(worktree, changeId);
+    assertInvestigationPlanningActivation({
+      repositoryRoot,
+      baselines: planningActivationBaselines(repositoryRoot, commit),
+      readMarker: () => readActivationMarkerFile(worktree),
+      declaredSchemaName: schemaName,
+    });
     if (schemaName !== 'expense-app-v2') {
       return {
         schemaName,
@@ -242,14 +253,40 @@ function replayPlanningSchema(
 }
 
 /**
- * Select the artifact grammar a replayed tree was committed under. Only an
- * explicit `expense-app-v2` marker opts into the investigation-first gates;
- * every other declaration, including a pre-managed or unreadable one, keeps the
- * exact legacy grammar CI applied before those gates existed.
- *
- * This is not a hole for a v2 plan to hide in: a tree carrying v2 artifacts
- * without the marker is rejected by legacy planning-path validation, so the
- * conservative default still fails closed on the mismatch it would create.
+ * The baselines that decide activation for one immutable planning commit. Its
+ * own parent is always applicable, which is what keeps a governing generation
+ * created before the anchor replayable forever. The configured protected base
+ * is added only while the commit is not yet contained in it: an unmerged
+ * candidate cannot escape activation by branching from stale history, and a
+ * commit that is already part of the protected lineage is replayed as the
+ * history it is rather than re-judged against a base that grew past it.
+ */
+function planningActivationBaselines(
+  repositoryRoot: string,
+  commit: string,
+): string[] {
+  const facts = commitFacts(repositoryRoot, commit);
+  const baselines = facts.parents.slice(0, 1);
+  for (const base of protectedActivationBaselines(repositoryRoot)) {
+    const mergeBase = runGit(
+      repositoryRoot,
+      ['merge-base', facts.hash, base],
+      true,
+    ).trim();
+    if (mergeBase !== facts.hash) {
+      baselines.push(base);
+    }
+  }
+  return baselines;
+}
+
+/**
+ * Select the artifact grammar a replayed tree declared. Only an explicit
+ * `expense-app-v2` marker opts into the investigation-first gates; every other
+ * declaration, including a pre-managed or unreadable one, reads as the legacy
+ * grammar. That default is only ever reached for a generation whose lineage
+ * carries no activation anchor, because the caller decides activation first
+ * and rejects a legacy declaration made after one.
  */
 function resolveReplayedSchemaName(
   worktree: string,

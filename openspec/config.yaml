@@ -1,4 +1,4 @@
-schema: expense-app
+schema: expense-app-v2
 
 context: |
   Monorepo: NestJS API, React Native mobile, Next.js web, TypeScript.

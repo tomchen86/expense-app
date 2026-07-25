@@ -12,6 +12,7 @@ import {
   INVESTIGATION_APPLICABILITY_POLICY_DIGEST,
 } from '../src/investigation-applicability.ts';
 import { generateOpenSpecPlanningAssets } from '../src/openspec-planning-assets.ts';
+import { INVESTIGATION_PLANNING_ACTIVATION_MARKER } from '../src/openspec-schema-contract.ts';
 import {
   createPlanReviewNode,
   createPlanReviewProviderResultNode,
@@ -506,6 +507,27 @@ export function writeReadyV2ExemptChange(
 export function syncOriginMain(repository: string): void {
   const tip = git(repository, ['rev-parse', 'main']).trim();
   git(repository, ['update-ref', 'refs/remotes/origin/main', tip]);
+}
+
+/**
+ * Introduce the reviewed investigation-planning activation marker exactly as
+ * the cutover commit does. The returned commit is the activation anchor for
+ * every lineage that reaches it; fixtures that omit this call reproduce a
+ * pre-activation repository, where legacy selection is still eligible.
+ */
+export function activateInvestigationPlanning(repository: string): string {
+  const target = path.join(
+    repository,
+    INVESTIGATION_PLANNING_ACTIVATION_MARKER,
+  );
+  fs.mkdirSync(path.dirname(target), { recursive: true });
+  fs.copyFileSync(
+    path.join(sourceRepositoryRoot, INVESTIGATION_PLANNING_ACTIVATION_MARKER),
+    target,
+  );
+  git(repository, ['add', '--', INVESTIGATION_PLANNING_ACTIVATION_MARKER]);
+  git(repository, ['commit', '-m', 'Activate investigation-first planning']);
+  return git(repository, ['rev-parse', 'HEAD']).trim();
 }
 
 export function addFixtureScripts(repository: string): void {

@@ -8,15 +8,15 @@ This generated handoff contains semantic project state only. Its sources are tra
 
 ## Current Task
 
-`6.8` — Follow RED -> GREEN -> REFACTOR to introduce the monotonic `investigation-planning-v1` activation anchor, reject deletion and stale-branch downgrade through ancestry plus protected-base selection, switch the project default to `expense-app-v2`, and prove the activation task finishes under its pinned legacy session while historical replay selects the correct schema on both sides of the anchor.
+`7.1` — Update the governed OpenSpec propose assets, executable workflow guidance, and Roadmap ownership note for the investigation-first wrapper and pulled-forward projected single-pass substrate; document the stable claim-ID/hardness registry and distinguish investigation exemption from task-execution exemption; keep exact-diff AI review, crash-safe finalize recovery, and commit transaction assigned to T2.3; run fake-backed registered checks plus a healthy Codex/Claude read-only local pilot when both adapters are available; exercise only human-authorized degraded paths if actually required; refresh the semantic handoff; and verify no documentation or UI overclaims breadth, depth, identity, containment, verdict correctness, semantic closure, degraded independence, availability, or finalize atomicity.
 
 ## Next Task
 
-`7.1` — Update the governed OpenSpec propose assets, executable workflow guidance, and Roadmap ownership note for the investigation-first wrapper and pulled-forward projected single-pass substrate; document the stable claim-ID/hardness registry and distinguish investigation exemption from task-execution exemption; keep exact-diff AI review, crash-safe finalize recovery, and commit transaction assigned to T2.3; run fake-backed registered checks plus a healthy Codex/Claude read-only local pilot when both adapters are available; exercise only human-authorized degraded paths if actually required; refresh the semantic handoff; and verify no documentation or UI overclaims breadth, depth, identity, containment, verdict correctness, semantic closure, degraded independence, availability, or finalize atomicity.
+None.
 
 ## Current Focus
 
-Follow RED -> GREEN -> REFACTOR to introduce the monotonic `investigation-planning-v1` activation anchor, reject deletion and stale-branch downgrade through ancestry plus protected-base selection, switch the project default to `expense-app-v2`, and prove the activation task finishes under its pinned legacy session while historical replay selects the correct schema on both sides of the anchor.
+Update the governed OpenSpec propose assets, executable workflow guidance, and Roadmap ownership note for the investigation-first wrapper and pulled-forward projected single-pass substrate; document the stable claim-ID/hardness registry and distinguish investigation exemption from task-execution exemption; keep exact-diff AI review, crash-safe finalize recovery, and commit transaction assigned to T2.3; run fake-backed registered checks plus a healthy Codex/Claude read-only local pilot when both adapters are available; exercise only human-authorized degraded paths if actually required; refresh the semantic handoff; and verify no documentation or UI overclaims breadth, depth, identity, containment, verdict correctness, semantic closure, degraded independence, availability, or finalize atomicity.
 
 ## Known Blockers
 

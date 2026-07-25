@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 import { ExitCode, workflowError } from './errors.ts';
+import { protectedBranchRef, runGit } from './git.ts';
 import {
   PINNED_OPENSPEC_VERSION,
   resolveOpenSpecInstallation,
@@ -83,7 +84,17 @@ export const EXPENSE_APP_SCHEMA_DIGEST =
 export const EXPENSE_APP_GUARD_TEMPLATE_DIGEST =
   'f1c44b8e477fa42dcf7d42de603e374b27073dd36e06a3f0027ab35fd16aec5a';
 export const EXPENSE_APP_CONFIG_DIGEST =
-  '160beaf2d52aaebd61aeec9e1808f5425acd146c4a51e0642008540ba6097c64';
+  '74c82a62f2623c7fcb776ab9813b2f9741aff356d1542f5edb2cc49a101cb17a';
+
+/**
+ * The reviewed activation marker for investigation-first planning. The first
+ * commit that introduces this exact file is the activation anchor.
+ */
+export const INVESTIGATION_PLANNING_ACTIVATION_MARKER =
+  'workflow/schemas/investigation-planning-v1.schema.json';
+
+export const INVESTIGATION_PLANNING_ACTIVATION_DIGEST =
+  'adf4c3e3d28db1b208792e3b5acb0a8e792b010931d377cd70bbb52df37681c7';
 
 const EXPENSE_APP_V2_FILE_DIGESTS: Record<
   (typeof PROJECT_V2_FILES)[number],
@@ -231,6 +242,196 @@ export function schemaGraphFor(name: string): OpenSpecSchemaGraph {
     return EXPENSE_APP_V2_SCHEMA_GRAPH;
   }
   throw invalidSchemaContract('Unsupported managed OpenSpec schema.');
+}
+
+export type InvestigationPlanningActivation = {
+  activated: boolean;
+  anchor: string | null;
+};
+
+/**
+ * Decide whether investigation-first planning is active for a candidate by
+ * commit ancestry alone. Activation is monotonic: the anchor is the first
+ * commit that introduced the reviewed marker anywhere in the applicable
+ * lineage, so a later commit that deletes or renames the file cannot walk the
+ * repository back to the legacy grammar. Callers pass every applicable
+ * baseline — the candidate parent for a planning transition, the replayed
+ * governing lineage for historical validation, and the configured protected
+ * base when the candidate is not already contained in it — and activation
+ * holds if any one of them reaches an anchor.
+ */
+export function resolveInvestigationPlanningActivation(
+  repositoryRoot: string,
+  baselines: readonly string[],
+): InvestigationPlanningActivation {
+  for (const baseline of baselines) {
+    const anchor = firstActivationAnchor(repositoryRoot, baseline);
+    if (anchor !== null) {
+      return { activated: true, anchor };
+    }
+  }
+  return { activated: false, anchor: null };
+}
+
+/**
+ * The configured protected-base lineage, resolved through the same
+ * remote-tracking spelling archive eligibility and maintainer attestation use.
+ * A repository with no workflow policy, or with no protected ref that
+ * resolves, contributes no additional baseline: the candidate's own lineage
+ * still decides activation, so an absent protected base can never restore
+ * legacy eligibility to a candidate whose parent already reaches an anchor.
+ */
+export function protectedActivationBaselines(repositoryRoot: string): string[] {
+  let branches: string[];
+  try {
+    const parsed: unknown = JSON.parse(
+      fs.readFileSync(
+        path.join(repositoryRoot, 'workflow/config.json'),
+        'utf8',
+      ),
+    );
+    const protectedBranches =
+      typeof parsed === 'object' && parsed !== null
+        ? (parsed as Record<string, unknown>).protectedBranches
+        : undefined;
+    branches = Array.isArray(protectedBranches)
+      ? protectedBranches.filter((branch) => typeof branch === 'string')
+      : [];
+  } catch {
+    return [];
+  }
+  const baselines: string[] = [];
+  for (const branch of branches) {
+    const resolved = resolveCommit(
+      repositoryRoot,
+      `${protectedBranchRef(branch)}^{commit}`,
+    );
+    if (resolved !== null && !baselines.includes(resolved)) {
+      baselines.push(resolved);
+    }
+  }
+  return baselines;
+}
+
+/**
+ * Enforce the activated selection for one candidate. Once activation is
+ * reachable the exact reviewed marker must still be present in the validated
+ * tree, and any legacy declaration is a downgrade attempt rather than a
+ * pre-activation generation.
+ */
+export function assertInvestigationPlanningActivation(request: {
+  repositoryRoot: string;
+  baselines: readonly string[];
+  readMarker: () => Buffer | string | undefined;
+  declaredSchemaName?: 'expense-app' | 'expense-app-v2';
+}): InvestigationPlanningActivation {
+  const activation = resolveInvestigationPlanningActivation(
+    request.repositoryRoot,
+    request.baselines,
+  );
+  if (!activation.activated) {
+    return activation;
+  }
+  // A legacy declaration is reported as the downgrade it is even when the
+  // candidate tree also omits the marker, which is exactly the shape of a
+  // stale pre-activation branch proposed after the protected base activated.
+  if (
+    request.declaredSchemaName !== undefined &&
+    request.declaredSchemaName !== 'expense-app-v2'
+  ) {
+    throw workflowError(
+      'PLANNING_SCHEMA_DOWNGRADE',
+      'Investigation-first planning is active; this generation must declare expense-app-v2.',
+      ExitCode.guard,
+      {
+        details: {
+          anchor: activation.anchor,
+          declaredSchemaName: request.declaredSchemaName,
+        },
+      },
+    );
+  }
+  const marker = request.readMarker();
+  const digest =
+    marker === undefined
+      ? null
+      : crypto
+          .createHash('sha256')
+          .update(typeof marker === 'string' ? Buffer.from(marker) : marker)
+          .digest('hex');
+  if (digest !== INVESTIGATION_PLANNING_ACTIVATION_DIGEST) {
+    throw workflowError(
+      'INVESTIGATION_ACTIVATION_MARKER_INVALID',
+      'The reviewed investigation-planning activation marker is missing or altered.',
+      ExitCode.verification,
+      {
+        details: {
+          marker: INVESTIGATION_PLANNING_ACTIVATION_MARKER,
+          anchor: activation.anchor,
+        },
+      },
+    );
+  }
+  return activation;
+}
+
+/**
+ * The activation marker as it exists in one checkout or materialized tree. A
+ * symlink or non-regular entry reads as absent so a replaced marker can never
+ * satisfy the digest through a redirect.
+ */
+export function readActivationMarkerFile(treeRoot: string): Buffer | undefined {
+  const markerPath = path.join(
+    treeRoot,
+    INVESTIGATION_PLANNING_ACTIVATION_MARKER,
+  );
+  const stats = fs.lstatSync(markerPath, { throwIfNoEntry: false });
+  return stats?.isFile() && !stats.isSymbolicLink()
+    ? fs.readFileSync(markerPath)
+    : undefined;
+}
+
+function firstActivationAnchor(
+  repositoryRoot: string,
+  baseline: string,
+): string | null {
+  const commit = resolveCommit(repositoryRoot, `${baseline}^{commit}`);
+  if (commit === null) {
+    throw workflowError(
+      'INVESTIGATION_ACTIVATION_UNRESOLVED',
+      'An investigation-planning activation baseline does not resolve to a commit.',
+      ExitCode.verification,
+      { details: { baseline } },
+    );
+  }
+  // `--full-history` keeps every side of a merge, so activation introduced on
+  // a merged branch is never simplified away; `--topo-order --reverse` makes
+  // the oldest introduction the deterministic first entry.
+  const anchors = runGit(repositoryRoot, [
+    'rev-list',
+    '--full-history',
+    '--topo-order',
+    '--reverse',
+    commit,
+    '--',
+    INVESTIGATION_PLANNING_ACTIVATION_MARKER,
+  ])
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean);
+  return anchors[0] ?? null;
+}
+
+function resolveCommit(
+  repositoryRoot: string,
+  revision: string,
+): string | null {
+  const resolved = runGit(
+    repositoryRoot,
+    ['rev-parse', '--verify', '--quiet', revision],
+    true,
+  ).trim();
+  return /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(resolved) ? resolved : null;
 }
 
 export function inspectOpenSpecSchemaContract(
@@ -473,10 +674,10 @@ function inspectProjectConfig(repositoryRoot: string): string {
     .filter((line) => /^schema:/.test(line));
   if (
     rootSchemaLines.length !== 1 ||
-    rootSchemaLines[0] !== 'schema: expense-app'
+    rootSchemaLines[0] !== 'schema: expense-app-v2'
   ) {
     throw invalidSchemaContract(
-      'The OpenSpec project configuration must select expense-app exactly once.',
+      'The OpenSpec project configuration must select expense-app-v2 exactly once.',
     );
   }
   return configPath;
