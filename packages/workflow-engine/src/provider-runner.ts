@@ -685,6 +685,13 @@ const PROVIDER_PURPOSE_INSTRUCTIONS: Readonly<
     'Independently survey the repository for load-bearing consumers, sibling mechanisms, configuration keys, literal paths, symbols, and architecture invariants relevant to the bound manifest.',
     'Use only the reviewed read/search capability surface.',
     'Return only output that conforms to the bound output schema.',
+    // The bound survey validator enforces three constraints the provider-visible
+    // JSON schema cannot express: the reference identity, the per-term byte and
+    // character bounds, and term uniqueness. They are stated here because a
+    // provider that satisfies only the published schema is otherwise rejected
+    // with no way to learn why.
+    'Set the output "reference" field to exactly the invocationId carried in this prompt request block; any other value is rejected.',
+    'Each term value must be at most 256 UTF-8 bytes with no control characters or lone surrogates, and the terms must be unique by their exact kind and value pair.',
   ]),
   'plan-review': Object.freeze([
     'Independently review the complete bound planning target for missing scope, weak WHY rationale, unsupported invariants, contradictions, and testability gaps.',
