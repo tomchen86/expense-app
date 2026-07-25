@@ -136,11 +136,11 @@ function dispatch(args: string[], cwd: string): CommandResult {
           : dispatchProviderWorker;
       const changeId = rest[0];
       if (changeId && rest[1] === '--resume') {
-        const options = parseProposeOptions(rest.slice(2), [
+        const { values } = parseProposeOptions(rest.slice(2), [
           '--input',
           '--grant',
         ]);
-        const input = options.get('--input');
+        const input = values.get('--input');
         if (!input) {
           throw proposeUsage();
         }
@@ -149,23 +149,23 @@ function dispatch(args: string[], cwd: string): CommandResult {
           ok: true,
           result: resumeProposeFromFile(cwd, changeId, input, {
             ...(providerDispatcher ? { providerDispatcher } : {}),
-            ...(options.get('--grant') === undefined
+            ...(values.get('--grant') === undefined
               ? {}
               : {
                   collaborationGrant: {
-                    grantId: options.get('--grant')!,
+                    grantId: values.get('--grant')!,
                   },
                 }),
           }),
         };
       }
       if (changeId) {
-        const options = parseProposeOptions(rest.slice(1), [
-          '--intent',
-          '--actor',
-          '--grant',
-        ]);
-        const intent = options.get('--intent');
+        const { values, flags } = parseProposeOptions(
+          rest.slice(1),
+          ['--intent', '--actor', '--grant'],
+          ['--migrate-legacy'],
+        );
+        const intent = values.get('--intent');
         if (!intent) {
           throw proposeUsage();
         }
@@ -173,16 +173,17 @@ function dispatch(args: string[], cwd: string): CommandResult {
           command,
           ok: true,
           result: startProposeFromFile(cwd, changeId, intent, {
-            ...(options.get('--actor') === undefined
+            ...(values.get('--actor') === undefined
               ? {}
-              : { explicitActor: options.get('--actor') }),
+              : { explicitActor: values.get('--actor') }),
             environment: process.env,
+            ...(flags.has('--migrate-legacy') ? { migrateLegacy: true } : {}),
             ...(providerDispatcher ? { providerDispatcher } : {}),
-            ...(options.get('--grant') === undefined
+            ...(values.get('--grant') === undefined
               ? {}
               : {
                   collaborationGrant: {
-                    grantId: options.get('--grant')!,
+                    grantId: values.get('--grant')!,
                   },
                 }),
           }),
@@ -635,21 +636,34 @@ function optionValue(args: string[], name: string): string | undefined {
 function parseProposeOptions(
   args: string[],
   allowedOptions: string[],
-): Map<string, string> {
-  if (args.length === 0 || args.length % 2 !== 0) {
+  allowedFlags: string[] = [],
+): { values: Map<string, string>; flags: Set<string> } {
+  const flags = new Set<string>();
+  const pairs: string[] = [];
+  for (const argument of args) {
+    if (allowedFlags.includes(argument)) {
+      if (flags.has(argument)) {
+        throw proposeUsage();
+      }
+      flags.add(argument);
+      continue;
+    }
+    pairs.push(argument);
+  }
+  if (pairs.length === 0 || pairs.length % 2 !== 0) {
     throw proposeUsage();
   }
   const allowed = new Set(allowedOptions);
-  const parsed = new Map<string, string>();
-  for (let index = 0; index < args.length; index += 2) {
-    const option = args[index];
-    const value = args[index + 1];
-    if (!option || !value || !allowed.has(option) || parsed.has(option)) {
+  const values = new Map<string, string>();
+  for (let index = 0; index < pairs.length; index += 2) {
+    const option = pairs[index];
+    const value = pairs[index + 1];
+    if (!option || !value || !allowed.has(option) || values.has(option)) {
       throw proposeUsage();
     }
-    parsed.set(option, value);
+    values.set(option, value);
   }
-  return parsed;
+  return { values, flags };
 }
 
 function parseMaintainerGrantArguments(args: string[]): MaintainerGrantRequest {
@@ -785,7 +799,7 @@ function maintainerUsage(): WorkflowError {
 
 function proposeUsage(): WorkflowError {
   return usage(
-    'Usage: pnpm workflow propose <change-id> --intent <intent.json> [--actor <id>] [--grant <grant-id>] [--json]\n       pnpm workflow propose <change-id> --resume --input <envelope.json> [--grant <grant-id>] [--json]',
+    'Usage: pnpm workflow propose <change-id> --intent <intent.json> [--actor <id>] [--grant <grant-id>] [--migrate-legacy] [--json]\n       pnpm workflow propose <change-id> --resume --input <envelope.json> [--grant <grant-id>] [--json]',
   );
 }
 
@@ -809,7 +823,7 @@ function usageText(): string {
     'Usage:',
     '  pnpm workflow doctor [--json]',
     '  pnpm workflow validate-change <change-id> [--json]',
-    '  pnpm workflow propose <change-id> --intent <intent.json> [--actor <id>] [--grant <grant-id>] [--json]',
+    '  pnpm workflow propose <change-id> --intent <intent.json> [--actor <id>] [--grant <grant-id>] [--migrate-legacy] [--json]',
     '  pnpm workflow propose <change-id> --resume --input <envelope.json> [--grant <grant-id>] [--json]',
     '  pnpm workflow plan-commit <change-id> [--json]',
     '  pnpm workflow archive <change-id> [--json]',

@@ -156,6 +156,58 @@ export function createFixtureRepository(
   return repository;
 }
 
+/**
+ * Reproduce the immutable legacy history a pre-activation change actually has:
+ * a governing `Transition: plan` generation with every task unchecked, then a
+ * task commit that checks exactly one box. The legacy-migration transition must
+ * preserve that projection instead of re-authoring it.
+ */
+export function writeLegacyGoverningPlan(
+  repository: string,
+  changeId: string,
+): { created: string; governingCommit: string; taskContent: string } {
+  git(repository, ['checkout', '-b', `work/${changeId}`]);
+  git(repository, [
+    'mv',
+    'openspec/changes/demo-change',
+    `openspec/changes/${changeId}`,
+  ]);
+  const changeDirectory = path.join(repository, 'openspec/changes', changeId);
+  const guardPath = path.join(changeDirectory, 'guard.json');
+  const guard = JSON.parse(fs.readFileSync(guardPath, 'utf8')) as {
+    changeId: string;
+    tasks: Record<string, unknown>;
+  };
+  guard.changeId = changeId;
+  guard.tasks['1.2'] = {
+    allowedPaths: ['src/**'],
+    requiredChecks: ['fixture'],
+  };
+  writeJson(guardPath, guard);
+  fs.writeFileSync(
+    path.join(changeDirectory, 'tasks.md'),
+    '# Tasks\n\n- [ ] 1.1 Demo task\n- [ ] 1.2 Follow-up task\n',
+  );
+  git(repository, ['add', '-A']);
+  git(repository, [
+    'commit',
+    '-m',
+    `Plan ${changeId}\n\nChange: ${changeId}\nTransition: plan`,
+  ]);
+  const governingCommit = git(repository, ['rev-parse', 'HEAD']).trim();
+
+  const taskContent =
+    '# Tasks\n\n- [x] 1.1 Demo task\n- [ ] 1.2 Follow-up task\n';
+  fs.writeFileSync(path.join(changeDirectory, 'tasks.md'), taskContent);
+  git(repository, ['add', '-A']);
+  git(repository, [
+    'commit',
+    '-m',
+    `Complete the demo task\n\nChange: ${changeId}\nTask: 1.1`,
+  ]);
+  return { created: '2026-07-15', governingCommit, taskContent };
+}
+
 export function writeV2ChangeArtifacts(
   repository: string,
   changeId = 'demo-change',

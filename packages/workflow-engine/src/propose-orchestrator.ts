@@ -89,6 +89,14 @@ import {
   type InvestigationExemptionCategory,
   type InvestigationSemanticAuthor,
 } from './investigation-applicability.ts';
+import {
+  assertLegacyPlanMigrationSubject,
+  assertPreservedLegacyProjection,
+  deriveLegacyPlanMigrationSubject,
+  isReplaceableLegacyArtifact,
+  legacyMigrationMetadataBytes,
+  type LegacyPlanMigrationSubject,
+} from './legacy-plan-migration.ts';
 import { loadInvestigationRuntimeContext } from './lifecycle-context.ts';
 import { parseMaintainerPolicy } from './maintainer-policy.ts';
 import {
@@ -172,9 +180,11 @@ import {
 const MAX_CALLER_JSON_BYTES = 4 * 1024 * 1024;
 const DIGEST = /^[0-9a-f]{64}$/;
 const PROPOSE_POLICY_DIGEST = sha256(
-  canonicalJson({ schema: 'workflow-propose-policy.v1' }),
+  canonicalJson({ schema: 'workflow-propose-policy.v2' }),
 );
-const PROPOSE_AUTHORIZATION_SCHEMA = 'workflow-propose-authorization.v1';
+const PROPOSE_AUTHORIZATION_SCHEMA = 'workflow-propose-authorization.v2';
+const PROPOSE_AUTHORIZATION_OUTPUT_SCHEMA =
+  'workflow-propose-authorization-output.v2';
 const PLANNING_MATERIALIZATION_REF = 'propose/planning-materialization';
 const PLAN_REVIEW_REQUEST_REF = 'propose/plan-review-request';
 const PLAN_REVIEW_GRANT_REQUIREMENT_REF =
@@ -193,6 +203,7 @@ export type ProposeProviderDispatcher = (
 export type ProposeOptions = {
   explicitActor?: string;
   environment?: Record<string, string | undefined>;
+  migrateLegacy?: boolean;
   providerDriver?: ProposeProviderDriver;
   providerDispatcher?: ProposeProviderDispatcher;
   collaborationGrant?: {
@@ -413,6 +424,7 @@ type RebuiltInvestigation = {
   floor: ReturnType<typeof deriveEngineFloor>;
   termSources: InvestigationTermRawCounts;
   authorizationNode: EvidenceNode;
+  legacyMigration: LegacyPlanMigrationSubject | null;
   providerResultNode: EvidenceNode | null;
   providerRoleResult: AdmittedRoleResult | null;
   reviewerTermSourceNode: EvidenceNode | null;
@@ -689,6 +701,13 @@ export function startPropose(
   }
 
   if (isInvestigationExemptionRequest(startInput)) {
+    if (options.migrateLegacy) {
+      throw workflowError(
+        'LEGACY_MIGRATION_NOT_ELIGIBLE',
+        'A legacy plan migration requires the ordinary sealed investigation path.',
+        ExitCode.guard,
+      );
+    }
     return startExemptionPropose(cwd, changeId, startInput, actorResolution);
   }
 
@@ -817,6 +836,15 @@ export function startPropose(
     );
   }
 
+  const legacyMigration = options.migrateLegacy
+    ? deriveLegacyPlanMigrationSubject({
+        repositoryRoot: context.git.repositoryRoot,
+        changeRoot: context.config.changeRoot,
+        changeId,
+        baseline: { head: context.git.head, tree: context.git.tree },
+      })
+    : null;
+
   const manifest: BlindSurveyManifest = {
     schemaVersion: 1,
     kind: 'blind-survey-manifest',
@@ -849,6 +877,7 @@ export function startPropose(
         canonicalJson({ head: context.git.head, tree: context.git.tree }),
       ),
       intent: intentDigest,
+      legacyMigration: sha256(canonicalJson(legacyMigration)),
       protectedBase: sha256(
         canonicalJson({
           ref: protectedBaseRef,
@@ -858,13 +887,14 @@ export function startPropose(
     },
     semanticParentResultDigests: {},
     provenanceParentNodeIds: {},
-    outputSchema: 'workflow-propose-authorization-output.v1',
+    outputSchema: PROPOSE_AUTHORIZATION_OUTPUT_SCHEMA,
     output: {
       actor: actorResolution.actor,
       signals: actorResolution.signals,
       assignment,
       grantAuthorization,
       intent,
+      legacyMigration,
       baseline: { head: context.git.head, tree: context.git.tree },
       protectedBase: {
         ref: protectedBaseRef,
@@ -1093,7 +1123,7 @@ function prepareExemptionPlanningScaffold(
     allowAuthoredExisting,
     allowManagedPlanReview,
   );
-  writeMissingEntries(changeDirectory, scaffoldEntries);
+  writeManagedEntries(changeDirectory, scaffoldEntries);
   const adapter = createOpenSpecAdapter(context.git.repositoryRoot);
   const proposalInstruction = adapter.instructions(
     session.changeId,
@@ -2469,7 +2499,14 @@ function rebuildInvestigation(
     session.milestones.mainTerms === null ||
     session.milestones.blindResult === null
   ) {
-    return emptyRebuilt(session, intent, floor, emptyCounts, authorizationNode);
+    return emptyRebuilt(
+      session,
+      intent,
+      floor,
+      emptyCounts,
+      authorizationNode,
+      authorization.legacyMigration,
+    );
   }
   const snapshot = readPinnedTrackedTree({
     repositoryRoot: context.git.repositoryRoot,
@@ -2651,6 +2688,7 @@ function rebuildInvestigation(
     floor,
     termSources: preview.rawCounts,
     authorizationNode,
+    legacyMigration: authorization.legacyMigration,
     providerResultNode,
     providerRoleResult,
     reviewerTermSourceNode: reviewerSource?.sourceNode ?? null,
@@ -2679,6 +2717,7 @@ function emptyRebuilt(
   floor: ReturnType<typeof deriveEngineFloor>,
   termSources: InvestigationTermRawCounts,
   authorizationNode: EvidenceNode,
+  legacyMigration: LegacyPlanMigrationSubject | null,
 ): RebuiltInvestigation {
   return {
     session,
@@ -2686,6 +2725,7 @@ function emptyRebuilt(
     floor,
     termSources,
     authorizationNode,
+    legacyMigration,
     providerResultNode: null,
     providerRoleResult: null,
     reviewerTermSourceNode: null,
@@ -3528,7 +3568,11 @@ function preparePlanningScaffold(
     context.config.changeRoot,
     status.changeId,
   );
-  const metadataBytes = `schema: expense-app-v2\ncreated: ${createdDate}\n`;
+  const migration = rebuilt.legacyMigration;
+  const metadataBytes =
+    migration === null
+      ? `schema: expense-app-v2\ncreated: ${createdDate}\n`
+      : legacyMigrationMetadataBytes(migration);
   const sealNode = createInvestigationSealNode(rebuilt);
   const applicability = createInvestigationApplicability({
     kind: 'sealed-investigation',
@@ -3567,7 +3611,7 @@ function preparePlanningScaffold(
       schemaVersion: 1,
       kind: 'investigation-artifact',
       changeId: status.changeId,
-      legacyMigration: false,
+      legacyMigration: migration !== null,
       nodes,
       currentRefs: {
         coverage: rebuilt.coverageNode.nodeId,
@@ -3594,9 +3638,11 @@ function preparePlanningScaffold(
       changeDirectory,
       scaffoldEntries,
       true,
-      allowAuthoredExisting,
+      allowAuthoredExisting || migration !== null,
+      false,
+      migration,
     );
-    writeMissingEntries(changeDirectory, scaffoldEntries);
+    writeManagedEntries(changeDirectory, scaffoldEntries, migration);
   }
 
   const adapter = createOpenSpecAdapter(context.git.repositoryRoot);
@@ -3942,8 +3988,12 @@ function materializePlanningContribution(
     true,
   );
   const context = loadInvestigationRuntimeContext(cwd);
+  const migration = rebuilt.legacyMigration;
   const tasks = parseTasks(payload.tasks);
-  if (tasks.length === 0 || tasks.some(({ completed }) => completed)) {
+  if (
+    tasks.length === 0 ||
+    (migration === null && tasks.some(({ completed }) => completed))
+  ) {
     throw planningContributionInvalid(
       'Planning tasks must be non-empty and unchecked.',
     );
@@ -3975,7 +4025,9 @@ function materializePlanningContribution(
   const entries = new Map<string, string>([
     [
       '.openspec.yaml',
-      `schema: expense-app-v2\ncreated: ${rebuilt.session.createdAt.slice(0, 10)}\n`,
+      migration === null
+        ? `schema: expense-app-v2\ncreated: ${rebuilt.session.createdAt.slice(0, 10)}\n`
+        : legacyMigrationMetadataBytes(migration),
     ],
     ['investigation.json', scaffold.investigationBytes],
     ['proposal.md', assertAuthoredMarkdown(payload.proposal, 'proposal')],
@@ -3986,6 +4038,14 @@ function materializePlanningContribution(
   ]);
   for (const spec of assertSpecContributions(payload.specs)) {
     entries.set(spec.path, spec.content);
+  }
+  if (migration !== null) {
+    assertPreservedLegacyProjection({
+      subject: migration,
+      tasks,
+      guard,
+      entries,
+    });
   }
 
   const digests = artifactDigests(entries);
@@ -4005,17 +4065,32 @@ function materializePlanningContribution(
       ExitCode.conflict,
     );
   }
-  assertPlanningTargetsCompatible(scaffold.changeDirectory, entries, false);
+  assertPlanningTargetsCompatible(
+    scaffold.changeDirectory,
+    entries,
+    false,
+    false,
+    false,
+    migration,
+  );
   const createdPaths: string[] = [];
+  const replacedBytes = new Map<string, string>();
   try {
     for (const [relativePath, content] of entries) {
       const target = path.join(scaffold.changeDirectory, relativePath);
       if (fs.existsSync(target)) {
         const stats = fs.lstatSync(target);
+        const existing =
+          stats.isFile() && !stats.isSymbolicLink()
+            ? fs.readFileSync(target, 'utf8')
+            : null;
+        if (existing === content) {
+          continue;
+        }
         if (
-          !stats.isFile() ||
-          stats.isSymbolicLink() ||
-          fs.readFileSync(target, 'utf8') !== content
+          existing === null ||
+          migration === null ||
+          !isReplaceableLegacyArtifact(migration, relativePath, existing)
         ) {
           throw workflowError(
             'UNMANAGED_PLANNING_CONFLICT',
@@ -4023,6 +4098,8 @@ function materializePlanningContribution(
             ExitCode.conflict,
           );
         }
+        replaceTextAtomic(target, content, { defaultMode: 0o644 });
+        replacedBytes.set(target, existing);
         continue;
       }
       replaceTextAtomic(target, content, {
@@ -4095,6 +4172,9 @@ function materializePlanningContribution(
   } catch (error) {
     for (const target of createdPaths.reverse()) {
       fs.rmSync(target, { force: true });
+    }
+    for (const [target, previous] of replacedBytes) {
+      replaceTextAtomic(target, previous, { defaultMode: 0o644 });
     }
     throw error;
   }
@@ -5214,6 +5294,7 @@ function assertPlanningTargetsCompatible(
   scaffoldOnly: boolean,
   allowAuthoredExisting = false,
   allowManagedPlanReview = false,
+  legacyMigration: LegacyPlanMigrationSubject | null = null,
 ): void {
   const allowedExisting = new Set(entries.keys());
   const existing = listChangeFiles(changeDirectory);
@@ -5268,10 +5349,20 @@ function assertPlanningTargetsCompatible(
     if (!stats) {
       continue;
     }
+    if (!stats.isFile() || stats.isSymbolicLink()) {
+      throw workflowError(
+        'UNMANAGED_PLANNING_CONFLICT',
+        'Existing planning bytes differ from the managed projection.',
+        ExitCode.conflict,
+      );
+    }
+    const existing = fs.readFileSync(target, 'utf8');
     if (
-      !stats.isFile() ||
-      stats.isSymbolicLink() ||
-      fs.readFileSync(target, 'utf8') !== expected
+      existing !== expected &&
+      !(
+        legacyMigration !== null &&
+        isReplaceableLegacyArtifact(legacyMigration, relativePath, existing)
+      )
     ) {
       throw workflowError(
         'UNMANAGED_PLANNING_CONFLICT',
@@ -5282,9 +5373,15 @@ function assertPlanningTargetsCompatible(
   }
 }
 
-function writeMissingEntries(
+/**
+ * Create the entries that do not exist yet, and — only under an authorized
+ * legacy migration — regenerate the exact governed legacy bytes the migration
+ * replaces. Every other existing byte is left untouched.
+ */
+function writeManagedEntries(
   changeDirectory: string,
   entries: Map<string, string>,
+  legacyMigration: LegacyPlanMigrationSubject | null = null,
 ): void {
   for (const [relativePath, content] of entries) {
     const target = path.join(changeDirectory, relativePath);
@@ -5293,6 +5390,17 @@ function writeMissingEntries(
         allowCreate: true,
         defaultMode: 0o644,
       });
+      continue;
+    }
+    if (
+      legacyMigration !== null &&
+      isReplaceableLegacyArtifact(
+        legacyMigration,
+        relativePath,
+        fs.readFileSync(target, 'utf8'),
+      )
+    ) {
+      replaceTextAtomic(target, content, { defaultMode: 0o644 });
     }
   }
 }
@@ -5879,6 +5987,7 @@ function readProposeAuthorization(
     commit: string;
   };
   grantAuthorization: ProposeGrantAuthorization | null;
+  legacyMigration: LegacyPlanMigrationSubject | null;
 } {
   const node = readEvidenceNode(paths, request.authorizationNodeId);
   const output = node.output;
@@ -5887,7 +5996,7 @@ function readProposeAuthorization(
     node.nodeSchema !== PROPOSE_AUTHORIZATION_SCHEMA ||
     node.evaluator !== 'workflow-propose.v1' ||
     node.policyDigest !== PROPOSE_POLICY_DIGEST ||
-    node.outputSchema !== 'workflow-propose-authorization-output.v1' ||
+    node.outputSchema !== PROPOSE_AUTHORIZATION_OUTPUT_SCHEMA ||
     !isRecord(output) ||
     !hasExactKeys(output, [
       'actor',
@@ -5895,6 +6004,7 @@ function readProposeAuthorization(
       'assignment',
       'grantAuthorization',
       'intent',
+      'legacyMigration',
       'baseline',
       'protectedBase',
     ]) ||
@@ -5945,6 +6055,10 @@ function readProposeAuthorization(
     actor,
     request,
   );
+  const legacyMigration =
+    output.legacyMigration === null
+      ? null
+      : assertLegacyPlanMigrationSubject(output.legacyMigration);
   if (
     node.exactInputDigests.actorResolution !==
       sha256(canonicalJson({ actor, signals })) ||
@@ -5955,8 +6069,17 @@ function readProposeAuthorization(
     node.exactInputDigests.baseline !==
       sha256(canonicalJson(output.baseline)) ||
     node.exactInputDigests.intent !== sha256(canonicalJson(intent)) ||
+    node.exactInputDigests.legacyMigration !==
+      sha256(canonicalJson(legacyMigration)) ||
     node.exactInputDigests.protectedBase !==
       sha256(canonicalJson(output.protectedBase))
+  ) {
+    throw proposeAuthorizationInvalid();
+  }
+  if (
+    legacyMigration !== null &&
+    canonicalJson(legacyMigration.baseline) !==
+      canonicalJson({ head: request.baseCommit, tree: request.baseTree })
   ) {
     throw proposeAuthorizationInvalid();
   }
@@ -5964,6 +6087,7 @@ function readProposeAuthorization(
     actor,
     signals,
     grantAuthorization,
+    legacyMigration,
     protectedBase: output.protectedBase as {
       ref: string;
       commit: string;

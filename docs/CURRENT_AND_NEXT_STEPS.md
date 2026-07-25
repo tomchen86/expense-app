@@ -8,15 +8,15 @@ This generated handoff contains semantic project state only. Its sources are tra
 
 ## Current Task
 
-`6.7` — Follow RED -> GREEN -> REFACTOR to add the exact pre-activation legacy-migration transition for this change, preserving completed checkbox projections while generating v2 investigation, execution, managed ledger, and PlanReview artifacts under normal planning authority.
+`6.8` — Follow RED -> GREEN -> REFACTOR to introduce the monotonic `investigation-planning-v1` activation anchor, reject deletion and stale-branch downgrade through ancestry plus protected-base selection, switch the project default to `expense-app-v2`, and prove the activation task finishes under its pinned legacy session while historical replay selects the correct schema on both sides of the anchor.
 
 ## Next Task
 
-`6.8` — Follow RED -> GREEN -> REFACTOR to introduce the monotonic `investigation-planning-v1` activation anchor, reject deletion and stale-branch downgrade through ancestry plus protected-base selection, switch the project default to `expense-app-v2`, and prove the activation task finishes under its pinned legacy session while historical replay selects the correct schema on both sides of the anchor.
+`7.1` — Update the governed OpenSpec propose assets, executable workflow guidance, and Roadmap ownership note for the investigation-first wrapper and pulled-forward projected single-pass substrate; document the stable claim-ID/hardness registry and distinguish investigation exemption from task-execution exemption; keep exact-diff AI review, crash-safe finalize recovery, and commit transaction assigned to T2.3; run fake-backed registered checks plus a healthy Codex/Claude read-only local pilot when both adapters are available; exercise only human-authorized degraded paths if actually required; refresh the semantic handoff; and verify no documentation or UI overclaims breadth, depth, identity, containment, verdict correctness, semantic closure, degraded independence, availability, or finalize atomicity.
 
 ## Current Focus
 
-Follow RED -> GREEN -> REFACTOR to add the exact pre-activation legacy-migration transition for this change, preserving completed checkbox projections while generating v2 investigation, execution, managed ledger, and PlanReview artifacts under normal planning authority.
+Follow RED -> GREEN -> REFACTOR to introduce the monotonic `investigation-planning-v1` activation anchor, reject deletion and stale-branch downgrade through ancestry plus protected-base selection, switch the project default to `expense-app-v2`, and prove the activation task finishes under its pinned legacy session while historical replay selects the correct schema on both sides of the anchor.
 
 ## Known Blockers
 
