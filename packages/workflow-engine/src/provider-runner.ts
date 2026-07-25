@@ -818,7 +818,16 @@ function indicatesAuthenticated(
       return false;
     }
   }
-  return /^logged in(?:\s+using\b.*)?$/i.test(text);
+  // `codex login status` writes its human-readable confirmation to stderr
+  // whenever stdout is not a TTY, which it never is under the engine's
+  // sanitized non-interactive probe environment. Reading stdout alone
+  // therefore misclassified an authenticated Codex as `unauthenticated` and
+  // made the provider-independent role path unreachable. Accept the exact
+  // confirmation from either stream; a zero exit is still required, and no
+  // other output shape is admitted.
+  return [text, outcome.stderr.trim()].some((line) =>
+    /^logged in(?:\s+using\b.*)?$/i.test(line),
+  );
 }
 
 function probeSucceeded(outcome: ProviderProcessOutcome): boolean {
