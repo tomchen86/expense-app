@@ -1,8 +1,10 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
+import { assertUniqueCollaborationGrantUses } from './collaboration-grant.ts';
 import { loadWorkflowConfig, type ManagedSchemaName } from './contracts.ts';
 import { ExitCode, workflowError } from './errors.ts';
+import { validateInvestigationFirstPlanningReadiness } from './planning-assurance-validator.ts';
 import {
   discoverRepository,
   fingerprintRepositoryWorktree,
@@ -147,6 +149,28 @@ function inspectEligibility(
       'Archive eligibility requires the complete schema-selected planning manifest.',
     );
   }
+  if (contract.schemaName === 'expense-app-v2') {
+    // The contract loader already replayed semantic readiness with the shared
+    // validator. Archive additionally decides one-use grant uniqueness over the
+    // whole change, using only tracked evidence so a local reservation record
+    // can neither authorize nor excuse a duplicate claim.
+    const { grantUse } = validateInvestigationFirstPlanningReadiness(
+      initial.repositoryRoot,
+      contract,
+    ).roleResult;
+    assertUniqueCollaborationGrantUses(
+      grantUse === null
+        ? []
+        : [
+            {
+              grantId: grantUse.grantId,
+              signedEnvelopeDigest: grantUse.signedEnvelopeDigest,
+              transitionDigest: grantUse.transitionDigest,
+            },
+          ],
+    );
+  }
+
   const incomplete = contract.tasks
     .filter(({ completed }) => !completed)
     .map(({ id }) => id);

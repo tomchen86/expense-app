@@ -1,4 +1,18 @@
-import { parseTasks, type ParsedTask } from './contracts.ts';
+import fs from 'node:fs';
+import path from 'node:path';
+
+import {
+  assertUniqueCollaborationGrantUses,
+  type CollaborationGrantUseIdentity,
+} from './collaboration-grant.ts';
+import {
+  loadChangeContract,
+  parseTasks,
+  readChangeSchemaName,
+  type ManagedSchemaName,
+  type ParsedTask,
+} from './contracts.ts';
+import { createTrustedExecutionEnvironment } from './execution-environment.ts';
 import { ExitCode, workflowError } from './errors.ts';
 import {
   commitChangedPaths,
@@ -7,10 +21,15 @@ import {
 } from './git-transitions.ts';
 import { runGit } from './git.ts';
 import {
+  validateInvestigationFirstPlanningReadiness,
+  type InvestigationFirstPlanningAssuranceSummary,
+} from './planning-assurance-validator.ts';
+import {
   assertPlanningPaths,
   assertPlanningTaskHistory,
   taskStates,
 } from './planning-contract.ts';
+import { requiredPlanningArtifactPaths } from './planning-paths.ts';
 import type { PlanningTaskState } from './planning-report.ts';
 import { normalizeChangedPath } from './paths.ts';
 
@@ -20,7 +39,19 @@ export type CiPlanningCommitValidation = {
   beforeTasks: PlanningTaskState[] | undefined;
   afterTasks: PlanningTaskState[];
   changedPaths: string[];
+  schemaName: ManagedSchemaName;
+  planningAssurance: InvestigationFirstPlanningAssuranceSummary | null;
+  collaborationGrantUses: readonly CiCollaborationGrantUse[];
 };
+
+/**
+ * One grant use projected out of an immutable planning commit. CI collects
+ * these across the replayed range so aggregate one-use uniqueness is decided
+ * over the complete subject rather than one commit at a time.
+ */
+export type CiCollaborationGrantUse = CollaborationGrantUseIdentity;
+
+export { assertUniqueCollaborationGrantUses };
 
 type TreeEntry = {
   mode: string;
@@ -84,13 +115,25 @@ export function validateCiPlanningCommit(
       (beforePath) =>
         !afterPaths.has(beforePath) && changedPaths.includes(beforePath),
     );
+  // The governing schema is a fact of the immutable commit, not of the
+  // checkout CI happens to run in, so it is resolved from the replayed tree
+  // before any schema-sensitive path or artifact rule is applied.
+  const replay = replayPlanningTree(repositoryRoot, facts.hash, changeId);
   assertPlanningPaths(
     normalizedChangeRoot,
     changeId,
     changedPaths,
     deletedPaths,
+    replay.schemaName,
   );
-  assertCompletePlanningTree(normalizedChangeRoot, changeId, afterEntries);
+  assertCompletePlanningTree(
+    normalizedChangeRoot,
+    changeId,
+    afterEntries,
+    [],
+    [],
+    replay.schemaName,
+  );
 
   let beforeTasks: ParsedTask[] | undefined;
   let kind: CiPlanningCommitValidation['kind'];
@@ -111,6 +154,7 @@ export function validateCiPlanningCommit(
     const repairedPaths = requiredArtifactPaths(
       normalizedChangeRoot,
       changeId,
+      replay.schemaName,
     ).filter(
       (requiredPath) =>
         !beforePaths.has(requiredPath) &&
@@ -123,6 +167,9 @@ export function validateCiPlanningCommit(
       beforeEntries,
       deletedPaths,
       repairedPaths,
+      // The parent tree carries the schema it was committed under, which is
+      // deliberately allowed to precede a legacy-to-v2 migration commit.
+      replayPlanningSchema(repositoryRoot, facts.parents[0], changeId),
     );
     beforeTasks = parseTasks(
       readRequiredFile(repositoryRoot, facts.parents[0], `${prefix}/tasks.md`),
@@ -139,18 +186,146 @@ export function validateCiPlanningCommit(
     beforeTasks: beforeTasks ? taskStates(beforeTasks) : undefined,
     afterTasks: taskStates(afterTasks),
     changedPaths,
+    schemaName: replay.schemaName,
+    planningAssurance: replay.planningAssurance,
+    collaborationGrantUses: replay.collaborationGrantUses,
   };
 }
 
-function requiredArtifactPaths(changeRoot: string, changeId: string): string[] {
-  const prefix = `${changeRoot}/${changeId}`;
-  return [
+type PlanningTreeReplay = {
+  schemaName: ManagedSchemaName;
+  planningAssurance: InvestigationFirstPlanningAssuranceSummary | null;
+  collaborationGrantUses: readonly CiCollaborationGrantUse[];
+};
+
+/**
+ * Materialize one immutable planning tree and replay its semantic assurance
+ * with the exact validator the live transition used. CI owns a different
+ * loader, never a second set of rules, and it consults no mutable local
+ * reservation state: every fact comes from the detached tree.
+ */
+function replayPlanningTree(
+  repositoryRoot: string,
+  commit: string,
+  changeId: string,
+): PlanningTreeReplay {
+  return withPlanningWorktree(repositoryRoot, commit, (worktree) => {
+    const schemaName = resolveReplayedSchemaName(worktree, changeId);
+    if (schemaName !== 'expense-app-v2') {
+      return {
+        schemaName,
+        planningAssurance: null,
+        collaborationGrantUses: [],
+      };
+    }
+    const contract = loadChangeContract(worktree, changeId, schemaName);
+    const readiness = validateInvestigationFirstPlanningReadiness(
+      worktree,
+      contract,
+    );
+    return {
+      schemaName,
+      planningAssurance: readiness.summary,
+      collaborationGrantUses: collectGrantUses(readiness),
+    };
+  });
+}
+
+function replayPlanningSchema(
+  repositoryRoot: string,
+  commit: string,
+  changeId: string,
+): ManagedSchemaName {
+  return withPlanningWorktree(repositoryRoot, commit, (worktree) =>
+    resolveReplayedSchemaName(worktree, changeId),
+  );
+}
+
+/**
+ * Select the artifact grammar a replayed tree was committed under. Only an
+ * explicit `expense-app-v2` marker opts into the investigation-first gates;
+ * every other declaration, including a pre-managed or unreadable one, keeps the
+ * exact legacy grammar CI applied before those gates existed.
+ *
+ * This is not a hole for a v2 plan to hide in: a tree carrying v2 artifacts
+ * without the marker is rejected by legacy planning-path validation, so the
+ * conservative default still fails closed on the mismatch it would create.
+ */
+function resolveReplayedSchemaName(
+  worktree: string,
+  changeId: string,
+): ManagedSchemaName {
+  const metadataPath = path.join(
+    worktree,
+    'openspec/changes',
+    changeId,
     '.openspec.yaml',
-    'proposal.md',
-    'design.md',
-    'tasks.md',
-    'guard.json',
-  ].map((relativePath) => `${prefix}/${relativePath}`);
+  );
+  try {
+    return readChangeSchemaName(worktree, metadataPath) === 'expense-app-v2'
+      ? 'expense-app-v2'
+      : 'expense-app';
+  } catch {
+    return 'expense-app';
+  }
+}
+
+/**
+ * Project the grant use out of the role result the shared validator actually
+ * admitted, rather than re-reading raw artifact JSON. Uniqueness across the
+ * complete replayed subject is decided later by the aggregate validator.
+ */
+function collectGrantUses(
+  readiness: ReturnType<typeof validateInvestigationFirstPlanningReadiness>,
+): readonly CiCollaborationGrantUse[] {
+  const { grantUse } = readiness.roleResult;
+  if (grantUse === null) {
+    return Object.freeze([]);
+  }
+  return Object.freeze([
+    {
+      grantId: grantUse.grantId,
+      signedEnvelopeDigest: grantUse.signedEnvelopeDigest,
+      transitionDigest: grantUse.transitionDigest,
+    },
+  ]);
+}
+
+function withPlanningWorktree<T>(
+  repositoryRoot: string,
+  commit: string,
+  operation: (worktree: string) => T,
+): T {
+  const temporaryBase = createTrustedExecutionEnvironment().TMPDIR;
+  if (!temporaryBase) {
+    throw ciPlanningError(
+      'CI_PLANNING_TEMPORARY_DIRECTORY_UNAVAILABLE',
+      'Planning replay requires a trusted temporary directory.',
+    );
+  }
+  const temporaryRoot = fs.mkdtempSync(
+    path.join(fs.realpathSync(temporaryBase), 'workflow-ci-planning-'),
+  );
+  const worktree = path.join(temporaryRoot, 'worktree');
+  let worktreeAdded = false;
+  try {
+    runGit(repositoryRoot, ['worktree', 'add', '--detach', worktree, commit]);
+    worktreeAdded = true;
+    return operation(worktree);
+  } finally {
+    if (worktreeAdded) {
+      runGit(repositoryRoot, ['worktree', 'remove', '--force', worktree]);
+    }
+    fs.rmSync(temporaryRoot, { recursive: true, force: true });
+  }
+}
+
+function requiredArtifactPaths(
+  changeRoot: string,
+  changeId: string,
+  schemaName: ManagedSchemaName = 'expense-app',
+): string[] {
+  return [...requiredPlanningArtifactPaths(changeRoot, changeId, schemaName)];
 }
 
 /**
@@ -163,11 +338,18 @@ function assertCompletePlanningTree(
   entries: TreeEntry[],
   toleratedDeletedPaths: readonly string[] = [],
   toleratedMissingPaths: readonly string[] = [],
+  schemaName: ManagedSchemaName = 'expense-app',
 ): void {
   const paths = entries.map(({ path }) => path);
-  assertPlanningPaths(changeRoot, changeId, paths, toleratedDeletedPaths);
+  assertPlanningPaths(
+    changeRoot,
+    changeId,
+    paths,
+    toleratedDeletedPaths,
+    schemaName,
+  );
   const prefix = `${changeRoot}/${changeId}`;
-  const required = requiredArtifactPaths(changeRoot, changeId);
+  const required = requiredArtifactPaths(changeRoot, changeId, schemaName);
   if (
     required.some(
       (requiredPath) =>

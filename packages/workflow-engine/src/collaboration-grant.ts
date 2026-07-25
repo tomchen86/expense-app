@@ -810,6 +810,46 @@ export function validateCollaborationGrantPayload(
   }
 }
 
+/**
+ * The identity of one claimed grant use, reduced to the facts that are
+ * reconstructable from immutable evidence alone. Local reservation state is
+ * deliberately excluded so a replaying caller and a live caller decide
+ * uniqueness from the same inputs.
+ */
+export type CollaborationGrantUseIdentity = {
+  grantId: string;
+  signedEnvelopeDigest: string;
+  transitionDigest: string;
+};
+
+/**
+ * Reject a grant or signed envelope claimed more than once across a complete
+ * subject. Every collaboration grant is issued with `maxUses: 1`, so a repeated
+ * identity is a duplicate claim even when each use validated in isolation.
+ * Live transitions and CI replay share this rule; neither consults the mutable
+ * common-directory reservation store to apply it.
+ */
+export function assertUniqueCollaborationGrantUses(
+  uses: readonly CollaborationGrantUseIdentity[],
+): void {
+  const grantIds = new Set<string>();
+  const envelopeDigests = new Set<string>();
+  for (const use of uses) {
+    if (
+      grantIds.has(use.grantId) ||
+      envelopeDigests.has(use.signedEnvelopeDigest)
+    ) {
+      throw workflowError(
+        'COLLABORATION_GRANT_USE_DUPLICATE',
+        'A collaboration grant use is claimed more than once in this subject.',
+        ExitCode.staleState,
+      );
+    }
+    grantIds.add(use.grantId);
+    envelopeDigests.add(use.signedEnvelopeDigest);
+  }
+}
+
 export function bindingFromPayload(
   payload: CollaborationGrantPayload,
 ): CollaborationGrantExpectedBinding {

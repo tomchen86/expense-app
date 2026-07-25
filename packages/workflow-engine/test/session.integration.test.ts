@@ -9,6 +9,7 @@ import './archive-transformation.integration.test.ts';
 import './archive-transition.integration.test.ts';
 import './ci-archive.integration.test.ts';
 
+import { validateCiPlanningCommit } from '../src/ci-planning.ts';
 import { WorkflowError } from '../src/errors.ts';
 import { commitSession, completeTask, finalizeTask } from '../src/lifecycle.ts';
 import { commitPlanningTransition } from '../src/planning-transition.ts';
@@ -101,6 +102,66 @@ test('v2 sessions and every task report pin the exact planning assurance', () =>
       );
       assert.deepEqual(report.planningAssurance, expectedBinding);
     }
+  } finally {
+    fs.rmSync(repository, { recursive: true, force: true });
+  }
+});
+
+test('CI replays v2 planning assurance from Git with the live validator', () => {
+  const repository = createFixtureRepository();
+  try {
+    git(repository, ['checkout', '-b', 'work/demo-change']);
+    const ready = writeReadyV2ExemptChange(repository);
+    commitPlanningTransition(repository, 'demo-change');
+    const planCommit = git(repository, ['rev-parse', 'HEAD']).trim();
+
+    const validation = validateCiPlanningCommit(
+      repository,
+      planCommit,
+      'demo-change',
+    );
+
+    // The CI loader reads only immutable Git objects, but must reach the exact
+    // semantic result the live transition recorded.
+    assert.equal(validation.schemaName, 'expense-app-v2');
+    assert.deepEqual(validation.planningAssurance, ready.planningAssurance);
+    // An exempt plan consumes no collaboration grant, so its aggregate use set
+    // is empty rather than absent.
+    assert.deepEqual(validation.collaborationGrantUses, []);
+  } finally {
+    fs.rmSync(repository, { recursive: true, force: true });
+  }
+});
+
+test('CI fails closed when a v2 plan omits tracked semantic evidence', () => {
+  const repository = createFixtureRepository();
+  try {
+    git(repository, ['checkout', '-b', 'work/demo-change']);
+    writeReadyV2ExemptChange(repository);
+    commitPlanningTransition(repository, 'demo-change');
+
+    // The managed transition refuses to drop a required v2 artifact, so the
+    // only way this tree reaches history is a hand-authored commit that never
+    // passed the engine. CI must reject it from Git facts alone.
+    git(repository, [
+      'rm',
+      '--quiet',
+      'openspec/changes/demo-change/plan-review.json',
+    ]);
+    git(repository, [
+      'commit',
+      '--quiet',
+      '-m',
+      ['Plan demo-change', '', 'Change: demo-change', 'Transition: plan'].join(
+        '\n',
+      ),
+    ]);
+    const tampered = git(repository, ['rev-parse', 'HEAD']).trim();
+
+    assert.throws(
+      () => validateCiPlanningCommit(repository, tampered, 'demo-change'),
+      (error) => error instanceof WorkflowError,
+    );
   } finally {
     fs.rmSync(repository, { recursive: true, force: true });
   }

@@ -22,6 +22,11 @@ test('CI accepts an exact planning introduction reconstructed from Git', () => {
       beforeTasks: undefined,
       afterTasks: [{ id: '1.1', completed: false }],
       changedPaths: planningPaths(CHANGE_ID),
+      // A legacy plan declares no investigation-first evidence, so replay
+      // reports the legacy grammar and no semantic assurance.
+      schemaName: 'expense-app',
+      planningAssurance: null,
+      collaborationGrantUses: [],
     });
   } finally {
     fs.rmSync(repository, { recursive: true, force: true });
@@ -83,6 +88,9 @@ test('CI accepts a revision that reorders and removes unfinished tasks', () => {
           `openspec/changes/${CHANGE_ID}/design.md`,
           `openspec/changes/${CHANGE_ID}/tasks.md`,
         ],
+        schemaName: 'expense-app',
+        planningAssurance: null,
+        collaborationGrantUses: [],
       },
     );
   } finally {

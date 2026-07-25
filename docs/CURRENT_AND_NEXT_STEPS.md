@@ -8,15 +8,15 @@ This generated handoff contains semantic project state only. Its sources are tra
 
 ## Current Task
 
-`6.6` — Follow RED -> GREEN -> REFACTOR to make CI and local archive call the same pure validators, including aggregate collaboration-grant use-set uniqueness and investigation-exemption eligibility; resolve immutable governing generations from managed Git history; preserve actual orchestration and achieved independence without consulting local reservation state or upgrading soft claims; and replay legacy plus non-default v2 plans without runtime objects or provider credentials.
+`6.7` — Follow RED -> GREEN -> REFACTOR to add the exact pre-activation legacy-migration transition for this change, preserving completed checkbox projections while generating v2 investigation, execution, managed ledger, and PlanReview artifacts under normal planning authority.
 
 ## Next Task
 
-`6.7` — Follow RED -> GREEN -> REFACTOR to add the exact pre-activation legacy-migration transition for this change, preserving completed checkbox projections while generating v2 investigation, execution, managed ledger, and PlanReview artifacts under normal planning authority.
+`6.8` — Follow RED -> GREEN -> REFACTOR to introduce the monotonic `investigation-planning-v1` activation anchor, reject deletion and stale-branch downgrade through ancestry plus protected-base selection, switch the project default to `expense-app-v2`, and prove the activation task finishes under its pinned legacy session while historical replay selects the correct schema on both sides of the anchor.
 
 ## Current Focus
 
-Follow RED -> GREEN -> REFACTOR to make CI and local archive call the same pure validators, including aggregate collaboration-grant use-set uniqueness and investigation-exemption eligibility; resolve immutable governing generations from managed Git history; preserve actual orchestration and achieved independence without consulting local reservation state or upgrading soft claims; and replay legacy plus non-default v2 plans without runtime objects or provider credentials.
+Follow RED -> GREEN -> REFACTOR to add the exact pre-activation legacy-migration transition for this change, preserving completed checkbox projections while generating v2 investigation, execution, managed ledger, and PlanReview artifacts under normal planning authority.
 
 ## Known Blockers
 

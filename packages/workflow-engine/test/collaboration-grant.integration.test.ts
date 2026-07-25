@@ -21,6 +21,7 @@ import {
   directHumanReviewAttestationDigest,
   issueCollaborationGrant,
   parseCollaborationGrantEnvelope,
+  assertUniqueCollaborationGrantUses,
   validateCollaborationGrantEnvelope,
   type CollaborationGrantEnvelope,
   type CollaborationGrantExpectedBinding,
@@ -1319,6 +1320,42 @@ test('no-callable degraded forms record no provider invocation or independence',
       fixture.cleanup();
     }
   }
+});
+
+test('aggregate grant uses reject a duplicate claim across one subject', () => {
+  const first = {
+    grantId: 'grant-aaaaaaaaaaaaaaaa',
+    signedEnvelopeDigest: 'a'.repeat(64),
+    transitionDigest: 'b'.repeat(64),
+  };
+  const second = {
+    grantId: 'grant-bbbbbbbbbbbbbbbb',
+    signedEnvelopeDigest: 'c'.repeat(64),
+    transitionDigest: 'd'.repeat(64),
+  };
+
+  assertUniqueCollaborationGrantUses([]);
+  assertUniqueCollaborationGrantUses([first, second]);
+
+  // Every grant is issued with maxUses: 1, so the same grant replayed at a
+  // second transition is a duplicate claim even though each use is well formed.
+  assert.throws(
+    () =>
+      assertUniqueCollaborationGrantUses([
+        first,
+        { ...first, transitionDigest: 'e'.repeat(64) },
+      ]),
+    (error) => isWorkflowError(error, 'COLLABORATION_GRANT_USE_DUPLICATE'),
+  );
+  // A re-signed envelope replayed under a fresh grant ID is equally rejected.
+  assert.throws(
+    () =>
+      assertUniqueCollaborationGrantUses([
+        first,
+        { ...second, signedEnvelopeDigest: first.signedEnvelopeDigest },
+      ]),
+    (error) => isWorkflowError(error, 'COLLABORATION_GRANT_USE_DUPLICATE'),
+  );
 });
 
 test('invalid content admission terminally fails a reserved grant', () => {

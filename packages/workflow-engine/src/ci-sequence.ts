@@ -10,7 +10,11 @@ import {
   readFileAtCommit,
   type RangeCommit,
 } from './ci-git.ts';
-import { validateCiPlanningCommit } from './ci-planning.ts';
+import {
+  assertUniqueCollaborationGrantUses,
+  validateCiPlanningCommit,
+  type CiCollaborationGrantUse,
+} from './ci-planning.ts';
 import type {
   BootstrapCompatibilityCommit,
   BootstrapException,
@@ -33,6 +37,7 @@ export type CommitSequenceResult = {
   archivedChanges: string[];
   authorityGrants: string[];
   requiredCheckDefinitions: Record<string, string>;
+  collaborationGrantUses: readonly CiCollaborationGrantUse[];
 };
 
 export function replayCommitSequence(
@@ -48,6 +53,7 @@ export function replayCommitSequence(
   const archivedChanges = new Set<string>();
   const authorityGrants = new Set<string>();
   const requiredCheckDefinitions = new Map<string, string>();
+  const collaborationGrantUses: CiCollaborationGrantUse[] = [];
   const completionPaths = completionDocumentPaths(repositoryRoot);
   const expectedCompatibility = legacyExceptions.flatMap((exception) =>
     exception.compatibilityCommits.map((definition) => ({
@@ -134,11 +140,15 @@ export function replayCommitSequence(
     }
 
     if (commit.trailers.kind === 'plan') {
-      validateCiPlanningCommit(
+      const planning = validateCiPlanningCommit(
         repositoryRoot,
         commit.hash,
         commit.trailers.changeId,
       );
+      // Collect rather than decide here: one-use uniqueness is a property of
+      // the complete replayed subject, so a grant reused across two otherwise
+      // valid planning commits is only visible once the range is known.
+      collaborationGrantUses.push(...planning.collaborationGrantUses);
       continue;
     }
     if (commit.trailers.kind === 'archive') {
@@ -212,6 +222,8 @@ export function replayCommitSequence(
     );
   }
 
+  assertUniqueCollaborationGrantUses(collaborationGrantUses);
+
   return {
     completedTasks: [...completedTasks.values()].sort(compareTasks),
     archivedChanges: [...archivedChanges].sort(),
@@ -221,6 +233,7 @@ export function replayCommitSequence(
         left.localeCompare(right),
       ),
     ),
+    collaborationGrantUses,
   };
 }
 
