@@ -685,6 +685,12 @@ const PROVIDER_PURPOSE_INSTRUCTIONS: Readonly<
     'Independently survey the repository for load-bearing consumers, sibling mechanisms, configuration keys, literal paths, symbols, and architecture invariants relevant to the bound manifest.',
     'Use only the reviewed read/search capability surface.',
     'Return only output that conforms to the bound output schema.',
+    // Advisory only: the engine scans every proposed term across the whole
+    // pinned tree under a fixed per-term hit ceiling, and a term that exceeds
+    // it currently has no recovery exit. A provider cannot count hits, so this
+    // states the strategy it can actually act on rather than the limit it
+    // cannot measure.
+    'For every proposed search term, prefer a verified, repository-specific exact literal that preserves the relevant relationship. When a concept has a commonly used name, use a longer literal containing repository-specific context, a fully qualified symbol, or a literal path rather than the unqualified identifier. Confirm that each literal exists in the pinned repository; use multiple specific terms when necessary to preserve coverage rather than inventing a broader token.',
     // The bound survey validator enforces three constraints the provider-visible
     // JSON schema cannot express: the reference identity, the per-term byte and
     // character bounds, and term uniqueness. They are stated here because a
@@ -697,6 +703,12 @@ const PROVIDER_PURPOSE_INSTRUCTIONS: Readonly<
     'Independently review the complete bound planning target for missing scope, weak WHY rationale, unsupported invariants, contradictions, and testability gaps.',
     'Use only the reviewed read/search capability surface.',
     'Return only output that conforms to the bound output schema.',
+    // Advisory only: the engine scans every proposed term across the whole
+    // pinned tree under a fixed per-term hit ceiling, and a term that exceeds
+    // it currently has no recovery exit. A provider cannot count hits, so this
+    // states the strategy it can actually act on rather than the limit it
+    // cannot measure.
+    'For every proposed search term, prefer a verified, repository-specific exact literal that preserves the relevant relationship. When a concept has a commonly used name, use a longer literal containing repository-specific context, a fully qualified symbol, or a literal path rather than the unqualified identifier. Confirm that each literal exists in the pinned repository; use multiple specific terms when necessary to preserve coverage rather than inventing a broader token.',
   ]),
 });
 
