@@ -703,6 +703,11 @@ const PROVIDER_PURPOSE_INSTRUCTIONS: Readonly<
     'Independently review the complete bound planning target for missing scope, weak WHY rationale, unsupported invariants, contradictions, and testability gaps.',
     'Use only the reviewed read/search capability surface.',
     'Return only output that conforms to the bound output schema.',
+    // The bound schema cannot express coverage uniqueness: a structured-output
+    // endpoint rejects `uniqueItems`, so the constraint lives only in
+    // `assertCoverage`. A duplicated area is rejected after the provider has
+    // already succeeded, and plan-review has no retry, so it is stated here.
+    'The output "coverage" array must list every one of the seven coverage areas exactly once; a repeated area is rejected.',
     // Advisory only: the engine scans every proposed term across the whole
     // pinned tree under a fixed per-term hit ceiling, and a term that exceeds
     // it currently has no recovery exit. A provider cannot count hits, so this

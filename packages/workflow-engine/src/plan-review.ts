@@ -463,6 +463,12 @@ const PLAN_REVIEW_GRAMMAR_DIGEST = sha256(
  * The provider-facing JSON Schema. Its comment binds the stricter code-owned
  * semantic grammar (coverage completeness, finding/category pairings, sorted
  * uniqueness, and evidence rules) that JSON Schema alone cannot express.
+ *
+ * The shape is additionally constrained by what a structured-output endpoint
+ * accepts: `oneOf` is rejected outright, a `const` must carry a sibling `type`,
+ * and `uniqueItems` is not permitted. Both unions here are discriminated by an
+ * exclusive `kind`, so `anyOf` is equivalent, and coverage uniqueness is
+ * enforced by `assertCoverage` rather than by the wire schema.
  */
 export const PLAN_REVIEW_PROVIDER_OUTPUT_SCHEMA = Object.freeze({
   $schema: 'https://json-schema.org/draft/2020-12/schema',
@@ -471,29 +477,28 @@ export const PLAN_REVIEW_PROVIDER_OUTPUT_SCHEMA = Object.freeze({
   additionalProperties: false,
   required: [...SUBMISSION_KEYS],
   properties: {
-    schemaVersion: { const: 2 },
+    schemaVersion: { type: 'integer', const: 2 },
     verdict: { enum: [...VERDICTS] },
     coverage: {
       type: 'array',
       minItems: PLAN_REVIEW_COVERAGE.length,
       maxItems: PLAN_REVIEW_COVERAGE.length,
-      uniqueItems: true,
       items: { enum: [...PLAN_REVIEW_COVERAGE] },
     },
     scopeAssessment: {
-      oneOf: [
+      anyOf: [
         {
           type: 'object',
           additionalProperties: false,
           required: ['kind'],
-          properties: { kind: { const: 'challenges' } },
+          properties: { kind: { type: 'string', const: 'challenges' } },
         },
         {
           type: 'object',
           additionalProperties: false,
           required: ['kind', 'evidence'],
           properties: {
-            kind: { const: 'no-challenge' },
+            kind: { type: 'string', const: 'no-challenge' },
             evidence: {
               type: 'array',
               minItems: 1,
@@ -523,13 +528,13 @@ export const PLAN_REVIEW_PROVIDER_OUTPUT_SCHEMA = Object.freeze({
   },
   $defs: {
     evidence: {
-      oneOf: [
+      anyOf: [
         {
           type: 'object',
           additionalProperties: false,
           required: ['kind', 'path', 'line', 'observation'],
           properties: {
-            kind: { const: 'repository-location' },
+            kind: { type: 'string', const: 'repository-location' },
             path: { type: 'string', minLength: 1 },
             line: { type: 'integer', minimum: 1 },
             observation: { type: 'string', minLength: 1 },
@@ -559,10 +564,10 @@ export const PLAN_REVIEW_PROVIDER_OUTPUT_SCHEMA = Object.freeze({
         'evidence',
       ],
       properties: {
-        kind: { const: 'challenge' },
+        kind: { type: 'string', const: 'challenge' },
         severity: { enum: [...SEVERITIES] },
         category: { enum: [...PLAN_REVIEW_COVERAGE] },
-        currentChangeImpact: { const: 'required' },
+        currentChangeImpact: { type: 'string', const: 'required' },
         summary: { type: 'string', minLength: 1 },
         evidence: {
           type: 'array',
@@ -583,10 +588,13 @@ export const PLAN_REVIEW_PROVIDER_OUTPUT_SCHEMA = Object.freeze({
         'evidence',
       ],
       properties: {
-        kind: { const: 'suggestion' },
+        kind: { type: 'string', const: 'suggestion' },
         severity: { enum: [...SEVERITIES] },
-        category: { const: 'follow-up' },
-        currentChangeImpact: { const: 'independent-follow-up' },
+        category: { type: 'string', const: 'follow-up' },
+        currentChangeImpact: {
+          type: 'string',
+          const: 'independent-follow-up',
+        },
         summary: { type: 'string', minLength: 1 },
         evidence: { type: 'array', items: { $ref: '#/$defs/evidence' } },
       },
