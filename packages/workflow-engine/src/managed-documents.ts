@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { pathToFileURL } from 'node:url';
 
 import { ExitCode, workflowError } from './errors.ts';
 import { renderHandoff, validateHandoff } from './handoff.ts';
@@ -146,4 +147,17 @@ function invalidPolicy() {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+if (
+  process.argv[1] !== undefined &&
+  pathToFileURL(fs.realpathSync(process.argv[1])).href === import.meta.url
+) {
+  process.stdout.write(
+    `${JSON.stringify({
+      command: 'documents',
+      ok: true,
+      validated: validateManagedDocuments(process.cwd()),
+    })}\n`,
+  );
 }

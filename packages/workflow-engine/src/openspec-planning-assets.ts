@@ -2,6 +2,7 @@ import { spawnSync } from 'node:child_process';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
+import { pathToFileURL } from 'node:url';
 
 import { replaceTextAtomic } from './atomic-text.ts';
 import {
@@ -467,4 +468,17 @@ function decodeProcessOutput(
   } catch {
     throw openSpecAssetError(code, message);
   }
+}
+
+if (
+  process.argv[1] !== undefined &&
+  pathToFileURL(fs.realpathSync(process.argv[1])).href === import.meta.url
+) {
+  process.stdout.write(
+    `${JSON.stringify({
+      command: 'openspec-assets',
+      ok: true,
+      result: checkOpenSpecPlanningAssets(process.cwd()),
+    })}\n`,
+  );
 }

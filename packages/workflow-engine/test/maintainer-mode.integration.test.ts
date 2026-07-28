@@ -65,6 +65,7 @@ import { validateCiAuthorityCommit } from '../src/ci-authority.ts';
 import { listRangeCommits } from '../src/ci-git.ts';
 import { replayCommitSequence } from '../src/ci-sequence.ts';
 import { canonicalCheckDefinition } from '../src/ci-historical-contract.ts';
+import { resolveCheckRunner } from '../src/runner-resolution.ts';
 
 const POLICY: MaintainerPolicy = {
   schemaVersion: 1,
@@ -680,7 +681,11 @@ test('authority session pins normal checks and terminally revokes failed scope',
     assert.equal(session.pinnedChecks[0]?.runner.digest.length, 64);
 
     const checksPath = path.join(repository, 'workflow/checks.json');
-    fs.writeFileSync(checksPath, ` ${fs.readFileSync(checksPath, 'utf8')}`);
+    const futureChecks = JSON.parse(fs.readFileSync(checksPath, 'utf8')) as {
+      checks: { fixture: { command: string[] } };
+    };
+    futureChecks.checks.fixture.command.push('--future-definition');
+    fs.writeFileSync(checksPath, `${JSON.stringify(futureChecks, null, 2)}\n`);
     const checked = checkAuthoritySession(repository, session.sessionId, {
       now: new Date('2026-07-16T12:02:00.000Z'),
       signer: fixtureSigner(),
@@ -720,6 +725,125 @@ test('authority session pins normal checks and terminally revokes failed scope',
     );
   } finally {
     fs.rmSync(repository, { recursive: true, force: true });
+  }
+});
+
+test('repository authority check entrypoints remain pinned across workflow CLI edits', () => {
+  const definitions = (
+    JSON.parse(
+      fs.readFileSync(
+        path.join(sourceRepositoryRoot, 'workflow/checks.json'),
+        'utf8',
+      ),
+    ) as {
+      checks: Record<
+        string,
+        { command: string[]; destructiveDatabase: boolean }
+      >;
+    }
+  ).checks;
+  const expectedChecks = {
+    'managed-documents': {
+      command: 'documents',
+      entrypoint: 'packages/workflow-engine/src/managed-documents.ts',
+    },
+    'openspec-assets': {
+      command: 'openspec-assets',
+      entrypoint: 'packages/workflow-engine/src/openspec-planning-assets.ts',
+    },
+  } as const;
+  const scratch = fs.mkdtempSync(
+    path.join(os.tmpdir(), 'workflow-authority-runner-'),
+  );
+  try {
+    for (const [checkId, expected] of Object.entries(expectedChecks)) {
+      const definition = definitions[checkId];
+      assert.ok(definition);
+      assert.deepEqual(definition.command, ['node', expected.entrypoint]);
+
+      const resolved = resolveCheckRunner(
+        sourceRepositoryRoot,
+        checkId,
+        definition,
+      );
+      const executed = spawnSync(resolved.executable, resolved.args, {
+        cwd: sourceRepositoryRoot,
+        encoding: 'utf8',
+      });
+      assert.equal(executed.status, 0, executed.stderr);
+      assert.deepEqual(JSON.parse(executed.stdout), {
+        command: expected.command,
+        ok: true,
+        ...(checkId === 'managed-documents'
+          ? {
+              validated: [
+                'docs/CURRENT_AND_NEXT_STEPS.md',
+                'docs/ISSUE_LOG.md',
+              ],
+            }
+          : {
+              result: {
+                valid: true,
+                assetPaths: [
+                  '.codex/skills/openspec-explore/SKILL.md',
+                  '.codex/skills/openspec-propose/SKILL.md',
+                  '.claude/skills/openspec-explore/SKILL.md',
+                  '.claude/skills/openspec-propose/SKILL.md',
+                  '.agents/skills/openspec-explore/SKILL.md',
+                  '.agents/skills/openspec-propose/SKILL.md',
+                  'workflow/openspec-assets/prompts/opsx-explore.md',
+                  'workflow/openspec-assets/prompts/opsx-propose.md',
+                ],
+              },
+            }),
+      });
+
+      const scratchEntrypoint = path.join(scratch, expected.entrypoint);
+      fs.mkdirSync(path.dirname(scratchEntrypoint), { recursive: true });
+      fs.copyFileSync(
+        path.join(sourceRepositoryRoot, expected.entrypoint),
+        scratchEntrypoint,
+      );
+    }
+
+    const scratchCli = path.join(
+      scratch,
+      'packages/workflow-engine/src/cli.ts',
+    );
+    fs.copyFileSync(
+      path.join(sourceRepositoryRoot, 'packages/workflow-engine/src/cli.ts'),
+      scratchCli,
+    );
+    const before = Object.fromEntries(
+      Object.keys(expectedChecks).map((checkId) => [
+        checkId,
+        resolveCheckRunner(scratch, checkId, definitions[checkId]!).digest,
+      ]),
+    );
+    for (const runnerDigest of Object.values(before)) {
+      assert.match(runnerDigest, /^[0-9a-f]{64}$/);
+    }
+    fs.appendFileSync(scratchCli, '\n// authorized CLI self-update\n');
+    const after = Object.fromEntries(
+      Object.keys(expectedChecks).map((checkId) => [
+        checkId,
+        resolveCheckRunner(scratch, checkId, definitions[checkId]!).digest,
+      ]),
+    );
+    assert.deepEqual(after, before);
+
+    for (const [checkId, expected] of Object.entries(expectedChecks)) {
+      fs.appendFileSync(
+        path.join(scratch, expected.entrypoint),
+        '\n// changed check entrypoint\n',
+      );
+      assert.notEqual(
+        resolveCheckRunner(scratch, checkId, definitions[checkId]!).digest,
+        before[checkId],
+      );
+    }
+  } finally {
+    fs.rmSync(scratch, { recursive: true, force: true });
   }
 });
 
