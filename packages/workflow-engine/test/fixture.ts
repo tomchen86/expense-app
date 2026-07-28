@@ -1,4 +1,5 @@
 import { execFileSync } from 'node:child_process';
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -16,6 +17,7 @@ import { INVESTIGATION_PLANNING_ACTIVATION_MARKER } from '../src/openspec-schema
 import {
   createPlanReviewNode,
   createPlanReviewProviderResultNode,
+  createPlanReviewTargetSnapshotNode,
   PLAN_REVIEW_COVERAGE,
   PLAN_REVIEW_OUTPUT_SCHEMA,
 } from '../src/plan-review.ts';
@@ -409,6 +411,50 @@ export function writeReadyV2ExemptChange(
     requiredIndependence: 'provider-independent' as const,
     achievedIndependence: 'provider-independent' as const,
   };
+  const snapshotRelativePaths = [
+    '.openspec.yaml',
+    'design.md',
+    'execution.json',
+    'guard.json',
+    'investigation.json',
+    'proposal.md',
+    'specs/demo/spec.md',
+    'tasks.md',
+  ];
+  const snapshotContents = new Map(
+    snapshotRelativePaths.map((relativePath) => [
+      relativePath,
+      fs.readFileSync(path.join(changeDirectory, relativePath)),
+    ]),
+  );
+  const materializationNode = createEvidenceNode({
+    type: 'propose-exemption-planning-materialization',
+    nodeSchema: 'fixture.propose-exemption-planning-materialization.v1',
+    evaluator: 'fixture.propose-exemption-planning-materialization.v1',
+    policyDigest: subjectContext.policies.reviewPolicyDigest,
+    exactInputDigests: {},
+    semanticParentResultDigests: {},
+    provenanceParentNodeIds: {},
+    outputSchema:
+      'fixture.propose-exemption-planning-materialization-output.v1',
+    output: {
+      artifacts: Object.fromEntries(
+        [...snapshotContents].map(([relativePath, content]) => [
+          relativePath,
+          crypto.createHash('sha256').update(content).digest('hex'),
+        ]),
+      ),
+    },
+    runtimeMetadata: {},
+  });
+  const targetSnapshotNode = createPlanReviewTargetSnapshotNode({
+    changeId,
+    changePrefix: `openspec/changes/${changeId}`,
+    subject: subjectContext.subject,
+    materializationNode,
+    artifacts: snapshotContents,
+    legacyMigration: null,
+  });
   const submission = {
     schemaVersion: 2 as const,
     verdict: 'advisory-approve' as const,
@@ -435,6 +481,7 @@ export function writeReadyV2ExemptChange(
     assignment,
     submission,
     providerPolicyDigest: subjectContext.policies.reviewPolicyDigest,
+    targetSnapshotNode,
   });
   const reviewNode = createPlanReviewNode({
     subject: subjectContext.subject,
@@ -484,8 +531,8 @@ export function writeReadyV2ExemptChange(
     schemaVersion: 1,
     kind: 'plan-review-artifact',
     changeId,
-    nodes: [providerResultNode, reviewNode].sort((left, right) =>
-      left.nodeId.localeCompare(right.nodeId),
+    nodes: [targetSnapshotNode, providerResultNode, reviewNode].sort(
+      (left, right) => left.nodeId.localeCompare(right.nodeId),
     ),
     currentRefs: { planReview: reviewNode.nodeId },
     roleResults: [roleResult],

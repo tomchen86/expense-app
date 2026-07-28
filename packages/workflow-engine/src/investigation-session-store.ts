@@ -396,6 +396,14 @@ export function ensurePrivateInvestigationDirectory(
   walkPrivateDirectory(paths, directory, makeError, true);
 }
 
+export function assertPrivateInvestigationDirectory(
+  paths: InvestigationRuntimePaths,
+  directory: string,
+  makeError: () => WorkflowError,
+): void {
+  walkPrivateDirectory(paths, directory, makeError, false);
+}
+
 export function readPrivateCanonicalJson(
   paths: InvestigationRuntimePaths,
   filePath: string,

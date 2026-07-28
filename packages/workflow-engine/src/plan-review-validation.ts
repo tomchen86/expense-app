@@ -7,9 +7,11 @@ import {
 } from './planning-generation.ts';
 import {
   assertPlanReviewSubject,
+  assertPlanReviewTargetSnapshot,
   readPlanReviewDispositionNode,
   readPlanReviewNode,
   type PlanReviewEvidence,
+  type PlanReviewTargetSnapshot,
   type PlanReviewSubject,
   type PlanReviewSuggestion,
   type PlanReviewVerdict,
@@ -20,10 +22,10 @@ import type {
   AdmittedRoleResult,
   IndependenceDimension,
 } from './role-scheduler.ts';
-
 const DIGEST_PATTERN = /^[0-9a-f]{64}$/;
 const GIT_OBJECT_ID_PATTERN = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
 const MAX_RESOLVED_REPOSITORY_LOCATIONS = 16_384;
+const MAX_RESOLVED_PLANNING_LOCATIONS = 4_096;
 
 export type PlanReviewOrdinaryIndependenceAuthorization = {
   kind: 'ordinary-provider-independent';
@@ -51,6 +53,18 @@ export type PlanReviewRepositoryEvidence = {
   locations: PlanReviewResolvedRepositoryLocation[];
 };
 
+export type PlanReviewResolvedPlanningLocation = {
+  path: string;
+  sha256: string;
+  byteLength: number;
+  lineCount: number;
+};
+
+export type PlanReviewPlanningEvidence = {
+  snapshotDigest: string;
+  locations: PlanReviewResolvedPlanningLocation[];
+};
+
 /**
  * Inputs to the content-pure PlanReview validator. The authorization and
  * repository-evidence projections are facts, not authorities: live and CI
@@ -70,6 +84,8 @@ export type ValidatePlanReviewInput = {
     | PlanReviewOrdinaryIndependenceAuthorization
     | PlanReviewAdmittedRoleAuthorization;
   repositoryEvidence: PlanReviewRepositoryEvidence;
+  planningTarget?: PlanReviewTargetSnapshot;
+  planningEvidence?: PlanReviewPlanningEvidence;
 };
 
 /**
@@ -125,6 +141,12 @@ export function validatePlanReview(
       'requiredIndependence',
       'independenceAuthorization',
       'repositoryEvidence',
+      ...(Object.hasOwn(input, 'planningTarget')
+        ? ['planningTarget' as const]
+        : []),
+      ...(Object.hasOwn(input, 'planningEvidence')
+        ? ['planningEvidence' as const]
+        : []),
     ]) ||
     !DIGEST_PATTERN.test(input.expectedReviewPolicyDigest)
   ) {
@@ -139,6 +161,14 @@ export function validatePlanReview(
     input.independenceAuthorization,
   );
   const repositoryEvidence = assertRepositoryEvidence(input.repositoryEvidence);
+  const planningTarget =
+    input.planningTarget === undefined
+      ? null
+      : assertPlanReviewTargetSnapshot(input.planningTarget);
+  const planningEvidence =
+    input.planningEvidence === undefined
+      ? null
+      : assertPlanningEvidence(input.planningEvidence);
 
   const staleReasons = new Set<string>();
   if (review.subjectDigest !== subject.subjectDigest) {
@@ -156,6 +186,14 @@ export function validatePlanReview(
     review.planningGenerationId !== generation.planningGenerationId
   ) {
     staleReasons.add('PLANNING_GENERATION_MISMATCH');
+  }
+  if (
+    planningTarget !== null &&
+    (planningTarget.subjectDigest !== subject.subjectDigest ||
+      planningTarget.planningGenerationId !== generation.planningGenerationId ||
+      planningTarget.planTargetDigest !== target.targetDigest)
+  ) {
+    staleReasons.add('PLAN_TARGET_MISMATCH');
   }
   if (
     review.policyDigest !== input.expectedReviewPolicyDigest ||
@@ -191,7 +229,15 @@ export function validatePlanReview(
   ) {
     staleReasons.add('INVESTIGATION_DEPENDENCY_MISMATCH');
   }
-  if (!reviewEvidenceIsBound(review, generation, repositoryEvidence)) {
+  if (
+    !reviewEvidenceIsBound(
+      review,
+      generation,
+      repositoryEvidence,
+      planningTarget,
+      planningEvidence,
+    )
+  ) {
     staleReasons.add('REPOSITORY_EVIDENCE_MISMATCH');
   }
 
@@ -321,6 +367,8 @@ function reviewEvidenceIsBound(
   review: ReturnType<typeof readPlanReviewNode>,
   generation: PlanningGeneration,
   repositoryEvidence: PlanReviewRepositoryEvidence,
+  planningTarget: PlanReviewTargetSnapshot | null,
+  planningEvidence: PlanReviewPlanningEvidence | null,
 ): boolean {
   const dependencies = new Set(
     generation.investigationDependencies.map(
@@ -336,16 +384,35 @@ function reviewEvidenceIsBound(
   ];
   if (
     repositoryEvidence.tree !== generation.investigationBaseline.tree ||
-    !repositoryLocationsExactlyCoverCitations(repositoryEvidence, citations)
+    !repositoryLocationsExactlyCoverCitations(
+      repositoryEvidence,
+      planningTarget,
+      citations,
+    ) ||
+    !planningLocationsExactlyCoverCitations(
+      planningTarget,
+      planningEvidence,
+      citations,
+    )
   ) {
     return false;
   }
   const locations = new Map(
     repositoryEvidence.locations.map((location) => [location.path, location]),
   );
+  const planningLocations = new Map(
+    (planningEvidence?.locations ?? []).map((location) => [
+      location.path,
+      location,
+    ]),
+  );
   return citations.every((citation) => {
     if (citation.kind === 'repository-location') {
       const location = locations.get(citation.path);
+      return location !== undefined && citation.line <= location.lineCount;
+    }
+    if (citation.kind === 'planning-location') {
+      const location = planningLocations.get(citation.path);
       return location !== undefined && citation.line <= location.lineCount;
     }
     return dependencies.has(`${citation.nodeId}\0${citation.resultDigest}`);
@@ -354,6 +421,7 @@ function reviewEvidenceIsBound(
 
 function repositoryLocationsExactlyCoverCitations(
   repositoryEvidence: PlanReviewRepositoryEvidence,
+  planningTarget: PlanReviewTargetSnapshot | null,
   citations: PlanReviewEvidence[],
 ): boolean {
   const citedPaths = new Set(
@@ -368,9 +436,54 @@ function repositoryLocationsExactlyCoverCitations(
       )
       .map(({ path }) => path),
   );
+  const planningPaths = new Set(
+    planningTarget?.artifacts.map(({ path }) => path) ?? [],
+  );
   return (
     citedPaths.size === repositoryEvidence.locations.length &&
-    repositoryEvidence.locations.every(({ path }) => citedPaths.has(path))
+    repositoryEvidence.locations.every(
+      ({ path }) => citedPaths.has(path) && !planningPaths.has(path),
+    )
+  );
+}
+
+function planningLocationsExactlyCoverCitations(
+  planningTarget: PlanReviewTargetSnapshot | null,
+  planningEvidence: PlanReviewPlanningEvidence | null,
+  citations: PlanReviewEvidence[],
+): boolean {
+  const citedPaths = new Set(
+    citations
+      .filter(
+        (
+          citation,
+        ): citation is Extract<
+          PlanReviewEvidence,
+          { kind: 'planning-location' }
+        > => citation.kind === 'planning-location',
+      )
+      .map(({ path }) => path),
+  );
+  const locations = planningEvidence?.locations ?? [];
+  const artifacts = new Map(
+    planningTarget?.artifacts.map((artifact) => [artifact.path, artifact]) ??
+      [],
+  );
+  return (
+    (planningEvidence === null ||
+      (planningTarget !== null &&
+        planningEvidence.snapshotDigest === planningTarget.snapshotDigest)) &&
+    citedPaths.size === locations.length &&
+    locations.every((location) => {
+      const artifact = artifacts.get(location.path);
+      return (
+        citedPaths.has(location.path) &&
+        artifact !== undefined &&
+        artifact.sha256 === location.sha256 &&
+        artifact.byteLength === location.byteLength &&
+        artifact.lineCount === location.lineCount
+      );
+    })
   );
 }
 
@@ -515,6 +628,57 @@ function assertRepositoryEvidence(
     }
   }
   return { tree: value.tree, locations };
+}
+
+function assertPlanningEvidence(value: unknown): PlanReviewPlanningEvidence {
+  if (
+    !isPlainRecord(value) ||
+    !hasExactKeys(value, ['snapshotDigest', 'locations']) ||
+    typeof value.snapshotDigest !== 'string' ||
+    !DIGEST_PATTERN.test(value.snapshotDigest) ||
+    !isDenseArray(value.locations) ||
+    value.locations.length > MAX_RESOLVED_PLANNING_LOCATIONS
+  ) {
+    throw planReviewInvalid('Resolved planning evidence is malformed.');
+  }
+  const locations = value.locations.map((entry) => {
+    if (
+      !isPlainRecord(entry) ||
+      !hasExactKeys(entry, ['path', 'sha256', 'byteLength', 'lineCount']) ||
+      typeof entry.path !== 'string' ||
+      typeof entry.sha256 !== 'string' ||
+      !DIGEST_PATTERN.test(entry.sha256) ||
+      typeof entry.byteLength !== 'number' ||
+      !Number.isSafeInteger(entry.byteLength) ||
+      entry.byteLength < 0 ||
+      typeof entry.lineCount !== 'number' ||
+      !Number.isSafeInteger(entry.lineCount) ||
+      entry.lineCount < 0
+    ) {
+      throw planReviewInvalid('Resolved planning location is malformed.');
+    }
+    let path: string;
+    try {
+      path = normalizeExactRepositoryPath(entry.path);
+    } catch {
+      throw planReviewInvalid('Resolved planning path is malformed.');
+    }
+    if (path !== entry.path) {
+      throw planReviewInvalid('Resolved planning path is not canonical.');
+    }
+    return {
+      path,
+      sha256: entry.sha256,
+      byteLength: entry.byteLength,
+      lineCount: entry.lineCount,
+    };
+  });
+  for (let index = 1; index < locations.length; index += 1) {
+    if (compareUtf8(locations[index - 1]!.path, locations[index]!.path) >= 0) {
+      throw planReviewInvalid('Resolved planning locations are not canonical.');
+    }
+  }
+  return { snapshotDigest: value.snapshotDigest, locations };
 }
 
 function sameInvestigationDependencies(

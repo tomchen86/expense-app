@@ -124,6 +124,7 @@ export type ProviderRunInput = {
   semanticOutputSchema: unknown;
   outputValidator: ProviderOutputValidator;
   governedRuntimeInputs: GovernedRuntimeInput[];
+  reviewSnapshotRoot?: string | null;
   sourceEnvironment: NodeJS.ProcessEnv;
 };
 
@@ -171,6 +172,7 @@ export const PROVIDER_RUNNER_RESIDUALS = Object.freeze([
   'TRANSIENT_EXECUTABLE_SUBSTITUTION_NOT_DETECTABLE',
   'UNREACHABLE_OBJECT_WRITES_NOT_OBSERVABLE',
   'GLOBAL_FILESYSTEM_IMMUTABILITY_NOT_PROVEN',
+  'PROVIDER_INPUT_CONSUMPTION_NOT_OBSERVABLE',
   'STALE_CONCURRENCY_SLOT_PID_REUSE_NOT_DETECTABLE',
 ]);
 
@@ -444,9 +446,29 @@ function createProviderRunner(host: ProviderRunnerHost): ProviderRunner {
     ) {
       throw inputManifestMismatch();
     }
+    const expectedReviewSnapshotRoot = path.join(
+      expectedDirectory,
+      'review-root',
+    );
+    const reviewSnapshotRoot = input.reviewSnapshotRoot ?? null;
+    const manifestHasPlanningTarget =
+      isRecord(manifestValue) &&
+      manifestValue.kind === 'plan-review-manifest' &&
+      isRecord(manifestValue.planningTarget);
+    if (
+      (input.request.purpose === 'plan-review' &&
+        manifestHasPlanningTarget &&
+        (reviewSnapshotRoot === null ||
+          canonicalDirectoryOrThrow(reviewSnapshotRoot) !==
+            expectedReviewSnapshotRoot)) ||
+      (input.request.purpose === 'survey' && reviewSnapshotRoot !== null)
+    ) {
+      throw inputManifestMismatch();
+    }
     const managedPrompt = renderManagedProviderPrompt(
       input.request,
       manifestValue,
+      reviewSnapshotRoot,
     );
 
     // 3. Bind the enabled/requested provider, the current HEAD/tree baseline, the
@@ -714,20 +736,75 @@ const PROVIDER_PURPOSE_INSTRUCTIONS: Readonly<
     // states the strategy it can actually act on rather than the limit it
     // cannot measure.
     'For every proposed search term, prefer a verified, repository-specific exact literal that preserves the relevant relationship. When a concept has a commonly used name, use a longer literal containing repository-specific context, a fully qualified symbol, or a literal path rather than the unqualified identifier. Confirm that each literal exists in the pinned repository; use multiple specific terms when necessary to preserve coverage rather than inventing a broader token.',
+    'Read every planning artifact only from the immutable planningSnapshot artifact readPath supplied in this prompt. Never substitute the worktree path or the baseline-tree copy for a planning artifact.',
+    'Cite a planningSnapshot member with kind "planning-location" and its logical path. Cite any other repository file with kind "repository-location"; repository-location lines are validated against the pinned baseline tree. The two namespaces are disjoint and a citation in the wrong namespace is rejected.',
+    'Treat planningSnapshot.migration as a binding remediation constraint: preserved-byte-identical artifacts cannot be proposed as editable in this generation, replaceable-on-replanning artifacts may change only through a new planning generation, and engine-managed artifacts are not author-editable.',
   ]),
 });
 
 function renderManagedProviderPrompt(
   request: ProviderInvocationRequest,
   manifest: unknown,
+  reviewSnapshotRoot: string | null,
 ): string {
   return canonicalJson({
     schemaVersion: 1,
     kind: 'managed-provider-prompt',
     request,
     manifest,
+    planningSnapshot: renderPlanningSnapshotPrompt(
+      request,
+      manifest,
+      reviewSnapshotRoot,
+    ),
     instructions: PROVIDER_PURPOSE_INSTRUCTIONS[request.purpose],
   });
+}
+
+function renderPlanningSnapshotPrompt(
+  request: ProviderInvocationRequest,
+  manifest: unknown,
+  reviewSnapshotRoot: string | null,
+): unknown {
+  if (request.purpose !== 'plan-review') return null;
+  if (!isRecord(manifest) || manifest.kind !== 'plan-review-manifest') {
+    throw inputManifestMismatch();
+  }
+  if (manifest.planningTarget === undefined) return null;
+  if (
+    reviewSnapshotRoot === null ||
+    !isRecord(manifest.planningTarget) ||
+    !Array.isArray(manifest.planningTarget.artifacts)
+  ) {
+    throw inputManifestMismatch();
+  }
+  return {
+    snapshotDigest: manifest.planningTarget.snapshotDigest,
+    migration: manifest.planningTarget.migration,
+    citationContract: {
+      planning: {
+        kind: 'planning-location',
+        lineSource: 'immutable-planning-snapshot',
+      },
+      repository: {
+        kind: 'repository-location',
+        lineSource: 'pinned-investigation-baseline-tree',
+      },
+    },
+    artifacts: manifest.planningTarget.artifacts.map((value) => {
+      if (
+        !isRecord(value) ||
+        typeof value.path !== 'string' ||
+        typeof value.snapshotFile !== 'string'
+      ) {
+        throw inputManifestMismatch();
+      }
+      return {
+        ...value,
+        readPath: path.join(reviewSnapshotRoot, value.snapshotFile),
+      };
+    }),
+  };
 }
 
 function fileDigestAtBaseline(

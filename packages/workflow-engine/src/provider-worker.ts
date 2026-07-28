@@ -15,6 +15,7 @@ import {
   claimProviderInvocation,
   completeProviderInvocationFromRunner,
   failProviderInvocation,
+  readPlanReviewSnapshotRuntime,
   readProviderInvocation,
   readProviderInvocationRequest,
 } from './provider-invocation-store.ts';
@@ -107,6 +108,10 @@ export function runProviderWorker(
     initial.invocationId,
   );
   const semantic = semanticContract(request);
+  const reviewSnapshot = readPlanReviewSnapshotRuntime(
+    context.runtime,
+    initial.invocationId,
+  );
   const claim = claimProviderInvocation(context.runtime, initial.invocationId, {
     workerId:
       options.workerId ??
@@ -127,7 +132,12 @@ export function runProviderWorker(
         request,
         semanticOutputSchema: semantic.schema,
         outputValidator: semantic.validator,
-        governedRuntimeInputs: [],
+        governedRuntimeInputs:
+          reviewSnapshot?.files.map(({ id, path: filePath }) => ({
+            id,
+            path: filePath,
+          })) ?? [],
+        reviewSnapshotRoot: reviewSnapshot?.root ?? null,
         sourceEnvironment: options.environment ?? process.env,
       },
       { platform: options.platform ?? process.platform },

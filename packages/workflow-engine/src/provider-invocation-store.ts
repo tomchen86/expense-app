@@ -1,10 +1,13 @@
 import crypto from 'node:crypto';
+import fs from 'node:fs';
 import path from 'node:path';
 
 import { canonicalJson } from './canonical-json.ts';
 import { ExitCode, workflowError } from './errors.ts';
 import {
+  assertPrivateInvestigationDirectory,
   createPrivateCanonicalJson,
+  ensurePrivateInvestigationDirectory,
   privatePathExists,
   readPrivateCanonicalJson,
   withPrivateRuntimeLock,
@@ -37,7 +40,10 @@ import type { ProviderId } from './provider-registry.ts';
 import {
   PLAN_REVIEW_OUTPUT_SCHEMA,
   PLAN_REVIEW_OUTPUT_VALIDATOR,
+  assertPlanReviewTargetSnapshot,
   assertPlanReviewSubject,
+  planReviewSnapshotLineCount,
+  type PlanReviewTargetSnapshot,
   type PlanReviewSubject,
 } from './plan-review.ts';
 
@@ -112,6 +118,7 @@ export type PlanReviewManifest = {
   baseCommit: string;
   baseTree: string;
   subject: PlanReviewSubject;
+  planningTarget?: PlanReviewTargetSnapshot;
   capabilityProfile: 'repository-read-only';
 };
 
@@ -192,7 +199,16 @@ export type CreateProviderInvocationInput = {
   attempt: number;
   manifest: ProviderInvocationManifest;
   request: ProviderInvocationRequest;
+  planReviewSnapshotFiles?: Array<{
+    snapshotFile: string;
+    content: Buffer;
+  }>;
   createdAt?: string;
+};
+
+export type PlanReviewSnapshotRuntime = {
+  root: string;
+  files: Array<{ id: string; path: string }>;
 };
 
 export type ProviderLeaseClaim = {
@@ -418,6 +434,12 @@ export function createProviderInvocation(
     paths,
     path.join(paths.locks, `${invocationId}.lock`),
     () => {
+      createPlanReviewSnapshotFiles(
+        paths,
+        directory,
+        manifest,
+        input.planReviewSnapshotFiles,
+      );
       // The provider-neutral blind manifest is always made durable before the
       // provider-specific request and mutable prepared state.
       createPrivateCanonicalJson(
@@ -464,6 +486,7 @@ export function readProviderInvocation(
   }
   const request = readProviderInvocationRequest(paths, invocationId);
   const manifest = readProviderInvocationManifest(paths, invocationId);
+  assertPlanReviewSnapshotFiles(paths, invocationId, manifest);
   assertProviderInvocationBinding(
     record.changeId,
     manifest,
@@ -482,6 +505,32 @@ export function readProviderInvocation(
     throw invocationInvalid();
   }
   return deepFreeze(structuredClone(record));
+}
+
+export function readPlanReviewSnapshotRuntime(
+  paths: InvestigationRuntimePaths,
+  requestedInvocationId: string,
+): PlanReviewSnapshotRuntime | null {
+  const invocationId = assertInvocationId(requestedInvocationId);
+  const manifest = readProviderInvocationManifest(paths, invocationId);
+  if (
+    manifest.kind !== 'plan-review-manifest' ||
+    manifest.planningTarget === undefined
+  ) {
+    return null;
+  }
+  assertPlanReviewSnapshotFiles(paths, invocationId, manifest);
+  const root = path.join(
+    providerInvocationDirectory(paths, invocationId),
+    'review-root',
+  );
+  return {
+    root,
+    files: manifest.planningTarget.artifacts.map((artifact) => ({
+      id: `planning-snapshot:${artifact.path}`,
+      path: path.join(root, artifact.snapshotFile),
+    })),
+  };
 }
 
 export function readProviderInvocationRequest(
@@ -855,6 +904,9 @@ function assertProviderInvocationManifest(
       'baseCommit',
       'baseTree',
       'subject',
+      ...(Object.hasOwn(value, 'planningTarget')
+        ? ['planningTarget' as const]
+        : []),
       'capabilityProfile',
     ]) ||
     value.schemaVersion !== 1 ||
@@ -871,9 +923,23 @@ function assertProviderInvocationManifest(
   }
   assertChangeId(value.changeId);
   let subject: PlanReviewSubject;
+  let planningTarget: PlanReviewTargetSnapshot | undefined;
   try {
     subject = assertPlanReviewSubject(value.subject);
+    planningTarget =
+      value.planningTarget === undefined
+        ? undefined
+        : assertPlanReviewTargetSnapshot(value.planningTarget);
   } catch {
+    throw invocationInvalid();
+  }
+  if (
+    planningTarget !== undefined &&
+    (planningTarget.changeId !== value.changeId ||
+      planningTarget.subjectDigest !== subject.subjectDigest ||
+      planningTarget.planningGenerationId !== subject.planningGenerationId ||
+      planningTarget.planTargetDigest !== subject.planTargetDigest)
+  ) {
     throw invocationInvalid();
   }
   const manifest: PlanReviewManifest = {
@@ -884,6 +950,7 @@ function assertProviderInvocationManifest(
     baseCommit: value.baseCommit,
     baseTree: value.baseTree,
     subject,
+    ...(planningTarget ? { planningTarget } : {}),
     capabilityProfile: 'repository-read-only',
   };
   if (
@@ -1173,6 +1240,197 @@ function assertProviderInvocationBinding(
   ) {
     throw invocationInvalid();
   }
+}
+
+function createPlanReviewSnapshotFiles(
+  paths: InvestigationRuntimePaths,
+  invocationDirectory: string,
+  manifest: ProviderInvocationManifest,
+  files: CreateProviderInvocationInput['planReviewSnapshotFiles'],
+): void {
+  if (manifest.kind !== 'plan-review-manifest') {
+    if (files !== undefined) throw invocationInvalid();
+    return;
+  }
+  if (manifest.planningTarget === undefined) {
+    if (files !== undefined) throw invocationInvalid();
+    return;
+  }
+  if (!Array.isArray(files)) throw invocationInvalid();
+  const expected = manifest.planningTarget.artifacts;
+  if (files.length !== expected.length) throw invocationInvalid();
+  const byName = new Map(files.map((entry) => [entry.snapshotFile, entry]));
+  if (byName.size !== files.length) throw invocationInvalid();
+  const root = path.join(invocationDirectory, 'review-root');
+  ensurePrivateInvestigationDirectory(paths, root, invocationUnsafe);
+  for (const artifact of expected) {
+    const supplied = byName.get(artifact.snapshotFile);
+    if (
+      !supplied ||
+      !Buffer.isBuffer(supplied.content) ||
+      supplied.content.byteLength !== artifact.byteLength ||
+      sha256Buffer(supplied.content) !== artifact.sha256 ||
+      planReviewSnapshotLineCount(supplied.content) !== artifact.lineCount
+    ) {
+      throw invocationInvalid();
+    }
+    createPrivateSnapshotFile(
+      path.join(root, artifact.snapshotFile),
+      supplied.content,
+    );
+  }
+  assertPlanReviewSnapshotFiles(
+    paths,
+    path.basename(invocationDirectory),
+    manifest,
+    invocationDirectory,
+  );
+}
+
+function assertPlanReviewSnapshotFiles(
+  paths: InvestigationRuntimePaths,
+  requestedInvocationId: string,
+  manifest: ProviderInvocationManifest,
+  knownDirectory?: string,
+): void {
+  if (
+    manifest.kind !== 'plan-review-manifest' ||
+    manifest.planningTarget === undefined
+  ) {
+    return;
+  }
+  const directory =
+    knownDirectory ??
+    providerInvocationDirectory(
+      paths,
+      assertInvocationId(requestedInvocationId),
+    );
+  const root = path.join(directory, 'review-root');
+  assertPrivateInvestigationDirectory(paths, root, invocationUnsafe);
+  const names = fs.readdirSync(root).sort();
+  const expectedNames = manifest.planningTarget.artifacts
+    .map(({ snapshotFile }) => snapshotFile)
+    .sort();
+  if (canonicalJson(names) !== canonicalJson(expectedNames)) {
+    throw invocationInvalid();
+  }
+  for (const artifact of manifest.planningTarget.artifacts) {
+    const content = readPrivateSnapshotFile(
+      path.join(root, artifact.snapshotFile),
+    );
+    if (
+      content.byteLength !== artifact.byteLength ||
+      sha256Buffer(content) !== artifact.sha256 ||
+      planReviewSnapshotLineCount(content) !== artifact.lineCount
+    ) {
+      throw invocationInvalid();
+    }
+  }
+}
+
+function createPrivateSnapshotFile(filePath: string, content: Buffer): void {
+  const pendingPath = path.join(
+    path.dirname(filePath),
+    `.${path.basename(filePath)}.pending`,
+  );
+  const existing = fs.lstatSync(filePath, { throwIfNoEntry: false });
+  if (existing) {
+    if (!readPrivateSnapshotFile(filePath).equals(content)) {
+      throw invocationInvalid();
+    }
+    const pending = fs.lstatSync(pendingPath, { throwIfNoEntry: false });
+    if (pending) {
+      if (!readPrivateSnapshotFile(pendingPath).equals(content)) {
+        throw invocationInvalid();
+      }
+      fs.unlinkSync(pendingPath);
+      fsyncDirectory(path.dirname(filePath));
+    }
+    return;
+  }
+  const pending = fs.lstatSync(pendingPath, { throwIfNoEntry: false });
+  if (pending) {
+    if (!readPrivateSnapshotFile(pendingPath).equals(content)) {
+      throw invocationInvalid();
+    }
+  } else {
+    createPendingSnapshotFile(pendingPath, content);
+  }
+  if (fs.lstatSync(filePath, { throwIfNoEntry: false })) {
+    throw invocationInvalid();
+  }
+  fs.renameSync(pendingPath, filePath);
+  fsyncDirectory(path.dirname(filePath));
+  if (!readPrivateSnapshotFile(filePath).equals(content)) {
+    throw invocationInvalid();
+  }
+}
+
+function createPendingSnapshotFile(filePath: string, content: Buffer): void {
+  const flags =
+    fs.constants.O_WRONLY |
+    fs.constants.O_CREAT |
+    fs.constants.O_EXCL |
+    (process.platform === 'win32' ? 0 : fs.constants.O_NOFOLLOW);
+  let descriptor: number;
+  try {
+    descriptor = fs.openSync(filePath, flags, 0o600);
+  } catch {
+    throw invocationInvalid();
+  }
+  try {
+    fs.fchmodSync(descriptor, 0o600);
+    fs.writeFileSync(descriptor, content);
+    fs.fsyncSync(descriptor);
+    const stats = fs.fstatSync(descriptor);
+    if (
+      !stats.isFile() ||
+      stats.nlink !== 1 ||
+      (stats.mode & 0o777) !== 0o600
+    ) {
+      throw invocationInvalid();
+    }
+  } finally {
+    fs.closeSync(descriptor);
+  }
+}
+
+function readPrivateSnapshotFile(filePath: string): Buffer {
+  const flags =
+    fs.constants.O_RDONLY |
+    (process.platform === 'win32' ? 0 : fs.constants.O_NOFOLLOW);
+  let descriptor: number;
+  try {
+    descriptor = fs.openSync(filePath, flags);
+  } catch {
+    throw invocationInvalid();
+  }
+  try {
+    const stats = fs.fstatSync(descriptor);
+    if (
+      !stats.isFile() ||
+      stats.nlink !== 1 ||
+      (stats.mode & 0o777) !== 0o600
+    ) {
+      throw invocationInvalid();
+    }
+    return fs.readFileSync(descriptor);
+  } finally {
+    fs.closeSync(descriptor);
+  }
+}
+
+function fsyncDirectory(directory: string): void {
+  const descriptor = fs.openSync(directory, fs.constants.O_RDONLY);
+  try {
+    fs.fsyncSync(descriptor);
+  } finally {
+    fs.closeSync(descriptor);
+  }
+}
+
+function sha256Buffer(value: Buffer): string {
+  return crypto.createHash('sha256').update(value).digest('hex');
 }
 
 function assertProviderInvocationRecord(

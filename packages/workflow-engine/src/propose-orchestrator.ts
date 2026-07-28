@@ -34,7 +34,11 @@ import {
   readEvidenceRefs,
   writeEvidenceNode,
 } from './evidence-object-store.ts';
-import { createEvidenceNode, type EvidenceNode } from './evidence-node.ts';
+import {
+  assertStoredEvidenceNode,
+  createEvidenceNode,
+  type EvidenceNode,
+} from './evidence-node.ts';
 import { ExitCode, workflowError } from './errors.ts';
 import { protectedBranchRef, runGit } from './git.ts';
 import {
@@ -113,7 +117,11 @@ import {
   OPENSPEC_ASSET_DEFINITIONS,
   OPENSPEC_ASSET_MANIFEST_PATH,
 } from './openspec-planning-asset-contract.ts';
-import { assertChangeId, normalizePolicyPath } from './paths.ts';
+import {
+  assertChangeId,
+  normalizeExactRepositoryPath,
+  normalizePolicyPath,
+} from './paths.ts';
 import { withInvestigationTransitionAuthority } from './planning-lock.ts';
 import {
   commitPlanningTransition,
@@ -123,16 +131,20 @@ import {
   createPlanReviewDispositionNode,
   createPlanReviewNode,
   createPlanReviewProviderResultNode,
+  createPlanReviewTargetSnapshotNode,
   assertPlanReviewSubject,
   readPlanReviewNode,
   readPlanReviewDispositionNode,
+  readPlanReviewTargetSnapshotNode,
   PLAN_REVIEW_OUTPUT_SCHEMA,
   type PlanReviewDispositionEntry,
   type PlanReviewSubmission,
   type PlanReviewSubject,
+  type PlanReviewTargetSnapshot,
 } from './plan-review.ts';
 import {
   deriveInvestigationFirstPlanningSubject,
+  resolvePlanReviewPlanningEvidence,
   resolvePlanReviewRepositoryEvidence,
   type InvestigationFirstPlanningSubject,
 } from './planning-assurance-validator.ts';
@@ -430,6 +442,7 @@ type RebuiltInvestigation = {
   reviewerTermSourceNode: EvidenceNode | null;
   reviewerPlanReviewNode: EvidenceNode | null;
   reviewerProviderResultNode: EvidenceNode | null;
+  reviewerTargetSnapshotNode: EvidenceNode | null;
   reviewerRoleResult: AdmittedRoleResult | null;
   reviewerPriorGroupDispositions: StoredInvestigationCheckpoint | null;
   reviewerPriorWhyAnswers: StoredInvestigationCheckpoint | null;
@@ -1666,6 +1679,7 @@ function materializePlanReviewResult(
     assignment: reservation.assignment,
     submission,
     providerPolicyDigest: reservation.request.policyDigest,
+    targetSnapshotNode: reservation.targetSnapshotNode,
     runtimeAssurance: {
       assurance: result.runtimeObservation.assurance,
       projectionDigest: result.runtimeObservation.projection.beforeDigest,
@@ -1806,6 +1820,13 @@ function materializePlanReviewResult(
           context.git.repositoryRoot,
           reservation.planning.generation.investigationBaseline.tree,
           reviewNode,
+          reservation.manifest.planningTarget,
+        ),
+        planningTarget: reservation.manifest.planningTarget,
+        planningEvidence: resolvePlanReviewPlanningEvidence(
+          context.git.repositoryRoot,
+          reservation.manifest.planningTarget,
+          reviewNode,
         ),
       },
       existingContributions,
@@ -1842,13 +1863,13 @@ function materializePlanReviewResult(
     };
   }
   const tracked = {
-    nodes: [providerResultNode, reviewNode],
+    nodes: [reservation.targetSnapshotNode, providerResultNode, reviewNode],
     reviewNode,
     dispositionNode: null,
     roleResult,
   };
   writeTrackedPlanReview(context.git.repositoryRoot, status.changeId, {
-    nodes: [providerResultNode, reviewNode],
+    nodes: tracked.nodes,
     roleResult,
     dispositionNode: null,
   });
@@ -2265,7 +2286,12 @@ function renderMaterializedProposeOutput(
       planningTransition: null,
     };
   }
-  ensurePlanReviewInvocation(context.runtime, status, reservation);
+  ensurePlanReviewInvocation(
+    context.git.repositoryRoot,
+    context.runtime,
+    status,
+    reservation,
+  );
   const invocation = readProviderInvocation(
     context.runtime,
     reservation.request.invocationId,
@@ -2694,6 +2720,7 @@ function rebuildInvestigation(
     reviewerTermSourceNode: reviewerSource?.sourceNode ?? null,
     reviewerPlanReviewNode: reviewerSource?.reviewNode ?? null,
     reviewerProviderResultNode: reviewerSource?.providerResultNode ?? null,
+    reviewerTargetSnapshotNode: reviewerSource?.targetSnapshotNode ?? null,
     reviewerRoleResult: reviewerSource?.roleResult ?? null,
     reviewerPriorGroupDispositions:
       reviewerSource?.priorGroupDispositions ?? null,
@@ -2731,6 +2758,7 @@ function emptyRebuilt(
     reviewerTermSourceNode: null,
     reviewerPlanReviewNode: null,
     reviewerProviderResultNode: null,
+    reviewerTargetSnapshotNode: null,
     reviewerRoleResult: null,
     reviewerPriorGroupDispositions: null,
     reviewerPriorWhyAnswers: null,
@@ -3218,6 +3246,7 @@ function readReviewerTermSource(
   sourceNode: EvidenceNode;
   providerResultNode: EvidenceNode;
   reviewNode: EvidenceNode;
+  targetSnapshotNode: EvidenceNode | null;
   roleResult: AdmittedRoleResult;
   priorGroupDispositions: StoredInvestigationCheckpoint;
   priorWhyAnswers: StoredInvestigationCheckpoint;
@@ -3272,6 +3301,26 @@ function readReviewerTermSource(
   }
   const providerResultNode = output.providerResultNode as EvidenceNode;
   const reviewNode = output.reviewNode as EvidenceNode;
+  const hasTargetSnapshot =
+    Object.hasOwn(
+      providerResultNode.provenanceParentNodeIds,
+      'targetSnapshot',
+    ) ||
+    Object.hasOwn(
+      providerResultNode.semanticParentResultDigests,
+      'targetSnapshot',
+    ) ||
+    Object.hasOwn(providerResultNode.exactInputDigests, 'targetSnapshot');
+  const targetSnapshotNodeId =
+    providerResultNode.provenanceParentNodeIds.targetSnapshot;
+  const targetSnapshotNode =
+    hasTargetSnapshot && typeof targetSnapshotNodeId === 'string'
+      ? readEvidenceNode(paths, targetSnapshotNodeId)
+      : null;
+  const targetSnapshot =
+    targetSnapshotNode === null
+      ? null
+      : readPlanReviewTargetSnapshotNode(targetSnapshotNode);
   const roleResult = output.roleResult as AdmittedRoleResult;
   const rawPriorGroupDispositions = output.priorGroupDispositions as Record<
     string,
@@ -3343,7 +3392,15 @@ function readReviewerTermSource(
     sourceNode.provenanceParentNodeIds.providerResult !==
       providerResultNode.nodeId ||
     sourceNode.semanticParentResultDigests.providerResult !==
-      providerResultNode.resultDigest
+      providerResultNode.resultDigest ||
+    (hasTargetSnapshot &&
+      (targetSnapshotNode === null ||
+        providerResultNode.exactInputDigests.targetSnapshot !==
+          targetSnapshotNode.nodeId ||
+        providerResultNode.semanticParentResultDigests.targetSnapshot !==
+          targetSnapshotNode.resultDigest ||
+        targetSnapshot?.subjectDigest !==
+          providerResultNode.exactInputDigests.subject))
   ) {
     throw workflowError(
       'INVESTIGATION_REVIEWER_TERM_SOURCE_INVALID',
@@ -3355,6 +3412,7 @@ function readReviewerTermSource(
     sourceNode,
     providerResultNode,
     reviewNode,
+    targetSnapshotNode,
     roleResult,
     terms,
     priorGroupDispositions,
@@ -3589,6 +3647,9 @@ function preparePlanningScaffold(
     ...(rebuilt.reviewerProviderResultNode === null
       ? []
       : [rebuilt.reviewerProviderResultNode]),
+    ...(rebuilt.reviewerTargetSnapshotNode === null
+      ? []
+      : [rebuilt.reviewerTargetSnapshotNode]),
     ...(rebuilt.reviewerPlanReviewNode === null
       ? []
       : [rebuilt.reviewerPlanReviewNode]),
@@ -4464,7 +4525,11 @@ type PlanReviewReservation = {
   subject: PlanReviewSubject;
   assignment: ProviderRoleAssignment;
   author: RecordedRoleParticipant;
-  manifest: PlanReviewManifest;
+  materializationNode: EvidenceNode;
+  targetSnapshotNode: EvidenceNode;
+  manifest: PlanReviewManifest & {
+    planningTarget: PlanReviewTargetSnapshot;
+  };
   request: ProviderInvocationRequest;
   grantAuthorization: ProposeGrantAuthorization | null;
 };
@@ -4488,7 +4553,12 @@ function preparePlanReviewInvocation(
     existing !== null &&
     canonicalJson(existing.subject) === canonicalJson(planning.subject)
   ) {
-    ensurePlanReviewInvocation(context.runtime, status, existing);
+    ensurePlanReviewInvocation(
+      context.git.repositoryRoot,
+      context.runtime,
+      status,
+      existing,
+    );
     return existing;
   }
   const expectedReservationNodeId =
@@ -4600,6 +4670,85 @@ function preparePlanReviewInvocation(
       ExitCode.staleState,
     );
   }
+  const materializationNode = readEvidenceNode(
+    context.runtime,
+    materializationNodeId,
+  );
+  const materializationOutput = materializationNode.output;
+  if (
+    !isRecord(materializationOutput) ||
+    !isDigestRecord(materializationOutput.artifacts)
+  ) {
+    throw workflowError(
+      'PLANNING_MATERIALIZATION_STALE',
+      'Plan review requires valid current planning materialization evidence.',
+      ExitCode.staleState,
+    );
+  }
+  const changePrefix = `${context.config.changeRoot}/${status.changeId}`;
+  const snapshotContents = new Map<string, Buffer>();
+  for (const [relativePath, expectedDigest] of Object.entries(
+    materializationOutput.artifacts,
+  ).sort(([left], [right]) => left.localeCompare(right))) {
+    let normalizedRelativePath: string;
+    try {
+      normalizedRelativePath = normalizeExactRepositoryPath(relativePath);
+    } catch {
+      throw workflowError(
+        'PLANNING_MATERIALIZATION_STALE',
+        'Plan review materialization contains an unsafe artifact path.',
+        ExitCode.staleState,
+      );
+    }
+    if (normalizedRelativePath !== relativePath) {
+      throw workflowError(
+        'PLANNING_MATERIALIZATION_STALE',
+        'Plan review materialization contains a non-canonical artifact path.',
+        ExitCode.staleState,
+      );
+    }
+    const target = path.join(
+      context.git.repositoryRoot,
+      changePrefix,
+      normalizedRelativePath,
+    );
+    const stats = fs.lstatSync(target, { throwIfNoEntry: false });
+    if (
+      !stats?.isFile() ||
+      stats.isSymbolicLink() ||
+      stats.nlink !== 1 ||
+      (stats.mode & 0o777) !== 0o644
+    ) {
+      throw workflowError(
+        'PLANNING_MATERIALIZATION_STALE',
+        'Plan review target contains an unsafe planning artifact.',
+        ExitCode.staleState,
+      );
+    }
+    const content = fs.readFileSync(target);
+    if (sha256(content) !== expectedDigest) {
+      throw workflowError(
+        'PLANNING_MATERIALIZATION_STALE',
+        'Plan review target bytes differ from materialization evidence.',
+        ExitCode.staleState,
+      );
+    }
+    snapshotContents.set(normalizedRelativePath, content);
+  }
+  const legacyMigration =
+    status.state === 'investigation-exempt'
+      ? null
+      : rebuildInvestigation(cwd, status.investigationId).legacyMigration;
+  const targetSnapshotNode = createPlanReviewTargetSnapshotNode({
+    changeId: status.changeId,
+    changePrefix,
+    subject: planning.subject,
+    materializationNode,
+    artifacts: snapshotContents,
+    legacyMigration,
+  });
+  writeEvidenceNode(context.runtime, targetSnapshotNode);
+  const planningTarget = readPlanReviewTargetSnapshotNode(targetSnapshotNode);
   const reviewAuthorization = createEvidenceNode({
     type: 'plan-review-authorization',
     nodeSchema: 'workflow.plan-review-authorization.v1',
@@ -4610,12 +4759,16 @@ function preparePlanReviewInvocation(
       generation: planning.generation.planningGenerationId,
       assignment: sha256(canonicalJson(assignment)),
       grantAuthorization: sha256(canonicalJson(grantAuthorization)),
+      targetSnapshot: targetSnapshotNode.nodeId,
     },
     semanticParentResultDigests: {
-      materialization: readEvidenceNode(context.runtime, materializationNodeId)
-        .resultDigest,
+      materialization: materializationNode.resultDigest,
+      targetSnapshot: targetSnapshotNode.resultDigest,
     },
-    provenanceParentNodeIds: { materialization: materializationNodeId },
+    provenanceParentNodeIds: {
+      materialization: materializationNodeId,
+      targetSnapshot: targetSnapshotNode.nodeId,
+    },
     outputSchema: 'workflow.plan-review-authorization-output.v1',
     output: {
       subject: planning.subject,
@@ -4627,7 +4780,9 @@ function preparePlanReviewInvocation(
   });
   writeEvidenceNode(context.runtime, reviewAuthorization);
   const invocationId = createRuntimeId('invocation');
-  const manifest: PlanReviewManifest = {
+  const manifest: PlanReviewManifest & {
+    planningTarget: PlanReviewTargetSnapshot;
+  } = {
     schemaVersion: 1,
     kind: 'plan-review-manifest',
     changeId: status.changeId,
@@ -4635,6 +4790,7 @@ function preparePlanReviewInvocation(
     baseCommit: status.baseline.head,
     baseTree: status.baseline.tree,
     subject: planning.subject,
+    planningTarget,
     capabilityProfile: 'repository-read-only',
   };
   const request = createProviderInvocationRequest({
@@ -4668,6 +4824,7 @@ function preparePlanReviewInvocation(
       request: request.requestDigest,
       manifest: request.inputManifestDigest,
       subject: planning.subject.subjectDigest,
+      targetSnapshot: targetSnapshotNode.nodeId,
     },
     semanticParentResultDigests: {
       authorization: reviewAuthorization.resultDigest,
@@ -4681,6 +4838,8 @@ function preparePlanReviewInvocation(
       subject: planning.subject,
       assignment,
       author: recordedAuthor,
+      materializationNode,
+      targetSnapshotNode,
       manifest,
       request,
       grantAuthorization,
@@ -4699,11 +4858,18 @@ function preparePlanReviewInvocation(
     subject: planning.subject,
     assignment,
     author: recordedAuthor,
+    materializationNode,
+    targetSnapshotNode,
     manifest,
     request,
     grantAuthorization,
   };
-  ensurePlanReviewInvocation(context.runtime, status, reservation);
+  ensurePlanReviewInvocation(
+    context.git.repositoryRoot,
+    context.runtime,
+    status,
+    reservation,
+  );
   return reservation;
 }
 
@@ -4831,6 +4997,7 @@ function planAuthor(
 }
 
 function ensurePlanReviewInvocation(
+  repositoryRoot: string,
   paths: ReturnType<typeof loadInvestigationRuntimeContext>['runtime'],
   status: ProposeLifecycleStatus,
   reservation: PlanReviewReservation,
@@ -4855,6 +5022,39 @@ function ensurePlanReviewInvocation(
     attempt: 1,
     manifest: reservation.manifest,
     request: reservation.request,
+    planReviewSnapshotFiles: reservation.manifest.planningTarget.artifacts.map(
+      (artifact) => {
+        const target = path.join(repositoryRoot, artifact.path);
+        const stats = fs.lstatSync(target, { throwIfNoEntry: false });
+        if (
+          !stats?.isFile() ||
+          stats.isSymbolicLink() ||
+          stats.nlink !== 1 ||
+          (stats.mode & 0o777) !== 0o644
+        ) {
+          throw workflowError(
+            'PLAN_REVIEW_TARGET_SNAPSHOT_INVALID',
+            'Current planning target contains an unsafe artifact.',
+            ExitCode.staleState,
+          );
+        }
+        const content = fs.readFileSync(target);
+        if (
+          content.byteLength !== artifact.byteLength ||
+          sha256(content) !== artifact.sha256
+        ) {
+          throw workflowError(
+            'PLAN_REVIEW_TARGET_SNAPSHOT_INVALID',
+            'Current planning bytes differ from the reserved target snapshot.',
+            ExitCode.staleState,
+          );
+        }
+        return {
+          snapshotFile: artifact.snapshotFile,
+          content,
+        };
+      },
+    ),
   });
 }
 
@@ -4884,12 +5084,16 @@ function readPlanReviewReservation(
       'subject',
       'assignment',
       'author',
+      'materializationNode',
+      'targetSnapshotNode',
       'manifest',
       'request',
       'grantAuthorization',
     ]) ||
     output.investigationId !== status.investigationId ||
-    output.changeId !== status.changeId
+    output.changeId !== status.changeId ||
+    !isRecord(output.materializationNode) ||
+    !isRecord(output.targetSnapshotNode)
   ) {
     throw workflowError(
       'PLAN_REVIEW_REQUEST_STALE',
@@ -4900,9 +5104,44 @@ function readPlanReviewReservation(
   const subject = assertPlanReviewSubject(output.subject);
   const planning = output.planning as InvestigationFirstPlanningSubject;
   const request = output.request as ProviderInvocationRequest;
-  const manifest = output.manifest as PlanReviewManifest;
+  const manifest = output.manifest as PlanReviewManifest & {
+    planningTarget: PlanReviewTargetSnapshot;
+  };
   const assignment = output.assignment as ProviderRoleAssignment;
   const author = output.author as RecordedRoleParticipant;
+  const materializationNode = assertStoredEvidenceNode(
+    output.materializationNode,
+    () =>
+      workflowError(
+        'PLAN_REVIEW_REQUEST_STALE',
+        'Durable plan-review materialization evidence is malformed.',
+        ExitCode.staleState,
+      ),
+  );
+  const targetSnapshotNode = assertStoredEvidenceNode(
+    output.targetSnapshotNode,
+    () =>
+      workflowError(
+        'PLAN_REVIEW_REQUEST_STALE',
+        'Durable plan-review target snapshot evidence is malformed.',
+        ExitCode.staleState,
+      ),
+  );
+  const storedMaterializationNode = readEvidenceNode(
+    paths,
+    materializationNode.nodeId,
+  );
+  const storedTargetSnapshotNode = readEvidenceNode(
+    paths,
+    targetSnapshotNode.nodeId,
+  );
+  const targetSnapshot = readPlanReviewTargetSnapshotNode(
+    storedTargetSnapshotNode,
+  );
+  const authorizationNode = readEvidenceNode(
+    paths,
+    request.authorizationNodeId,
+  );
   const grantAuthorization = assertPlanReviewGrantAuthorization(
     output.grantAuthorization,
     author,
@@ -4912,13 +5151,39 @@ function readPlanReviewReservation(
     (expectedSubject &&
       canonicalJson(subject) !== canonicalJson(expectedSubject)) ||
     !isRecord(planning) ||
+    manifest.planningTarget === undefined ||
+    canonicalJson(materializationNode) !==
+      canonicalJson(storedMaterializationNode) ||
+    canonicalJson(targetSnapshotNode) !==
+      canonicalJson(storedTargetSnapshotNode) ||
     canonicalJson(planning.subject) !== canonicalJson(subject) ||
     request.requestDigest !== node.exactInputDigests.request ||
     request.inputManifestDigest !== node.exactInputDigests.manifest ||
     subject.subjectDigest !== node.exactInputDigests.subject ||
+    targetSnapshotNode.nodeId !== node.exactInputDigests.targetSnapshot ||
+    targetSnapshot.snapshotDigest !== manifest.planningTarget.snapshotDigest ||
+    targetSnapshot.materializationNodeId !== materializationNode.nodeId ||
+    targetSnapshot.materializationResultDigest !==
+      materializationNode.resultDigest ||
+    authorizationNode.type !== 'plan-review-authorization' ||
+    authorizationNode.nodeSchema !== 'workflow.plan-review-authorization.v1' ||
+    authorizationNode.evaluator !== 'workflow-propose.v1' ||
+    authorizationNode.policyDigest !== PROPOSE_POLICY_DIGEST ||
+    authorizationNode.exactInputDigests.targetSnapshot !==
+      targetSnapshotNode.nodeId ||
+    authorizationNode.provenanceParentNodeIds.targetSnapshot !==
+      targetSnapshotNode.nodeId ||
+    authorizationNode.semanticParentResultDigests.targetSnapshot !==
+      targetSnapshotNode.resultDigest ||
+    authorizationNode.provenanceParentNodeIds.materialization !==
+      materializationNode.nodeId ||
+    authorizationNode.semanticParentResultDigests.materialization !==
+      materializationNode.resultDigest ||
     canonicalJson(request.roleAssignment) !== canonicalJson(assignment) ||
     request.authorizationNodeId !==
       node.provenanceParentNodeIds.authorization ||
+    node.semanticParentResultDigests.authorization !==
+      authorizationNode.resultDigest ||
     providerInvocationManifestDigest(manifest) !== request.inputManifestDigest
   ) {
     throw workflowError(
@@ -4932,6 +5197,8 @@ function readPlanReviewReservation(
     planning,
     assignment,
     author,
+    materializationNode,
+    targetSnapshotNode,
     manifest,
     request,
     grantAuthorization,
@@ -6422,7 +6689,7 @@ function hasExactKeys(value: Record<string, unknown>, keys: string[]): boolean {
   );
 }
 
-function sha256(value: string): string {
+function sha256(value: string | Buffer): string {
   return crypto.createHash('sha256').update(value).digest('hex');
 }
 

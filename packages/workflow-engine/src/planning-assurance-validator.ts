@@ -25,17 +25,20 @@ import {
   type InvestigationApplicability,
 } from './investigation-applicability.ts';
 import { validateInvestigationLedgerProjection } from './investigation-design-projection.ts';
-import { runGit } from './git.ts';
+import { runGit, runGitBuffer } from './git.ts';
 import { loadMaintainerPolicy } from './maintainer-policy.ts';
 import { createInteractiveSshSigner } from './maintainer-signer.ts';
 import {
   createPlanReviewSubject,
   PLAN_REVIEW_OUTPUT_SCHEMA,
+  readPlanReviewTargetSnapshotNode,
   readPlanReviewNode,
+  type PlanReviewTargetSnapshot,
   type PlanReviewSubject,
 } from './plan-review.ts';
 import {
   validatePlanReview,
+  type PlanReviewPlanningEvidence,
   type PlanReviewRepositoryEvidence,
 } from './plan-review-validation.ts';
 import {
@@ -166,6 +169,32 @@ export function validateInvestigationFirstPlanningReadiness(
     'plan review',
   );
   const review = readPlanReviewNode(reviewNode);
+  const providerResultNode = requireNode(
+    planReview.nodes,
+    reviewNode.provenanceParentNodeIds.providerResult,
+    'plan review provider result',
+  );
+  const snapshotNode = requireNode(
+    planReview.nodes,
+    providerResultNode.provenanceParentNodeIds.targetSnapshot,
+    'plan review target snapshot',
+  );
+  const planningSnapshot = readPlanReviewTargetSnapshotNode(snapshotNode);
+  if (
+    providerResultNode.exactInputDigests.targetSnapshot !==
+      snapshotNode.nodeId ||
+    providerResultNode.semanticParentResultDigests.targetSnapshot !==
+      snapshotNode.resultDigest ||
+    planningSnapshot.changeId !== contract.changeId ||
+    planningSnapshot.subjectDigest !== context.subject.subjectDigest ||
+    planningSnapshot.planningGenerationId !==
+      context.generation.planningGenerationId ||
+    planningSnapshot.planTargetDigest !== context.target.targetDigest
+  ) {
+    throw planningNotReady(
+      'PlanReview target snapshot does not match the current planning subject.',
+    );
+  }
   const dispositionNodeId = planReview.currentRefs.planReviewDisposition;
   const dispositionNode = dispositionNodeId
     ? requireNode(
@@ -195,6 +224,13 @@ export function validateInvestigationFirstPlanningReadiness(
     repositoryEvidence: resolvePlanReviewRepositoryEvidence(
       repositoryRoot,
       context.generation.investigationBaseline.tree,
+      reviewNode,
+      planningSnapshot,
+    ),
+    planningTarget: planningSnapshot,
+    planningEvidence: resolvePlanReviewPlanningEvidence(
+      repositoryRoot,
+      planningSnapshot,
       reviewNode,
     ),
   });
@@ -817,6 +853,7 @@ export function resolvePlanReviewRepositoryEvidence(
   repositoryRoot: string,
   tree: string,
   reviewNode: EvidenceNode,
+  planningSnapshot?: PlanReviewTargetSnapshot,
 ): PlanReviewRepositoryEvidence {
   const review = readPlanReviewNode(reviewNode);
   const citations = [
@@ -840,9 +877,17 @@ export function resolvePlanReviewRepositoryEvidence(
         .map((citation) => citation.path),
     ),
   ].sort();
+  const planningPaths = new Set(
+    planningSnapshot?.artifacts.map(({ path }) => path) ?? [],
+  );
   return {
     tree,
     locations: paths.map((repositoryPath) => {
+      if (planningPaths.has(repositoryPath)) {
+        throw planningNotReady(
+          'PlanReview cites a planning snapshot path through the repository namespace.',
+        );
+      }
       const listing = runGit(repositoryRoot, [
         'ls-tree',
         '-z',
@@ -872,6 +917,206 @@ export function resolvePlanReviewRepositoryEvidence(
       };
     }),
   };
+}
+
+export function resolvePlanReviewPlanningEvidence(
+  repositoryRoot: string,
+  snapshot: PlanReviewTargetSnapshot,
+  reviewNode: EvidenceNode,
+): PlanReviewPlanningEvidence {
+  const review = readPlanReviewNode(reviewNode);
+  const citedPaths = [
+    ...review.findings.flatMap((finding) => finding.evidence),
+    ...review.suggestions.flatMap((suggestion) => suggestion.evidence),
+    ...(review.scopeAssessment.kind === 'no-challenge'
+      ? review.scopeAssessment.evidence
+      : []),
+  ]
+    .filter(
+      (
+        citation,
+      ): citation is Extract<
+        (typeof review.findings)[number]['evidence'][number],
+        { kind: 'planning-location' }
+      > => citation.kind === 'planning-location',
+    )
+    .map(({ path: planningPath }) => planningPath);
+  const uniquePaths = [...new Set(citedPaths)].sort();
+  const artifacts = new Map(
+    snapshot.artifacts.map((artifact) => [artifact.path, artifact]),
+  );
+  const resolved = new Map<
+    string,
+    PlanReviewPlanningEvidence['locations'][number]
+  >();
+  const snapshotCommit = resolvePlanReviewSnapshotCommit(
+    repositoryRoot,
+    snapshot,
+  );
+  for (const artifact of snapshot.artifacts) {
+    const content =
+      snapshotCommit === null
+        ? readCurrentPlanningTarget(repositoryRoot, artifact.path)
+        : readCommittedPlanningTarget(
+            repositoryRoot,
+            snapshotCommit,
+            artifact.path,
+          );
+    const digest = crypto.createHash('sha256').update(content).digest('hex');
+    const lineCount =
+      content.length === 0
+        ? 0
+        : content.at(-1) === 0x0a
+          ? content.toString('utf8').slice(0, -1).split('\n').length
+          : content.toString('utf8').split('\n').length;
+    if (
+      digest !== artifact.sha256 ||
+      content.byteLength !== artifact.byteLength ||
+      lineCount !== artifact.lineCount
+    ) {
+      throw planningNotReady(
+        'Current planning bytes differ from the reviewed target snapshot.',
+      );
+    }
+    resolved.set(artifact.path, {
+      path: artifact.path,
+      sha256: digest,
+      byteLength: content.byteLength,
+      lineCount,
+    });
+  }
+  const locations = uniquePaths.map((planningPath) => {
+    const location = resolved.get(planningPath);
+    if (!location || !artifacts.has(planningPath)) {
+      throw planningNotReady(
+        'PlanReview cites a path absent from its planning target snapshot.',
+      );
+    }
+    return location;
+  });
+  return {
+    snapshotDigest: snapshot.snapshotDigest,
+    locations,
+  };
+}
+
+function resolvePlanReviewSnapshotCommit(
+  repositoryRoot: string,
+  snapshot: PlanReviewTargetSnapshot,
+): string | null {
+  const metadataPaths = snapshot.artifacts
+    .map(({ path: artifactPath }) => artifactPath)
+    .filter((artifactPath) => artifactPath.endsWith('/.openspec.yaml'));
+  if (metadataPaths.length !== 1) {
+    throw planningNotReady(
+      'PlanReview target snapshot does not identify one planning root.',
+    );
+  }
+  const changePrefix = path.posix.dirname(metadataPaths[0]!);
+  if (
+    snapshot.artifacts.some(
+      ({ path: artifactPath }) =>
+        artifactPath !== changePrefix &&
+        !artifactPath.startsWith(`${changePrefix}/`),
+    )
+  ) {
+    throw planningNotReady(
+      'PlanReview target snapshot crosses planning roots.',
+    );
+  }
+  const planReviewPath = `${changePrefix}/plan-review.json`;
+  const listing = runGit(repositoryRoot, [
+    'ls-tree',
+    '-z',
+    'HEAD',
+    '--',
+    `:(literal)${planReviewPath}`,
+  ]);
+  const match = /^(100644) blob [0-9a-f]{40,64}\t([^\0]+)\0$/.exec(listing);
+  if (!match || match[2] !== planReviewPath) return null;
+
+  const absolutePath = path.join(repositoryRoot, planReviewPath);
+  const stats = fs.lstatSync(absolutePath, { throwIfNoEntry: false });
+  if (
+    !stats?.isFile() ||
+    stats.isSymbolicLink() ||
+    stats.nlink !== 1 ||
+    (stats.mode & 0o777) !== 0o644
+  ) {
+    throw planningNotReady(
+      'PlanReview artifact is not a regular mode-0644 file.',
+    );
+  }
+  const current = fs.readFileSync(absolutePath);
+  const committed = runGitBuffer(repositoryRoot, [
+    'show',
+    `HEAD:${planReviewPath}`,
+  ]);
+  if (!current.equals(committed)) return null;
+
+  const commit = runGit(repositoryRoot, [
+    'log',
+    '-1',
+    '--format=%H',
+    'HEAD',
+    '--',
+    `:(literal)${planReviewPath}`,
+  ]).trim();
+  if (!/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(commit)) {
+    throw planningNotReady(
+      'Committed PlanReview target snapshot origin is not resolvable.',
+    );
+  }
+  const origin = runGitBuffer(repositoryRoot, [
+    'show',
+    `${commit}:${planReviewPath}`,
+  ]);
+  if (!origin.equals(committed)) {
+    throw planningNotReady(
+      'Committed PlanReview target snapshot origin is ambiguous.',
+    );
+  }
+  return commit;
+}
+
+function readCurrentPlanningTarget(
+  repositoryRoot: string,
+  artifactPath: string,
+): Buffer {
+  const absolutePath = path.join(repositoryRoot, artifactPath);
+  const stats = fs.lstatSync(absolutePath, { throwIfNoEntry: false });
+  if (
+    !stats?.isFile() ||
+    stats.isSymbolicLink() ||
+    stats.nlink !== 1 ||
+    (stats.mode & 0o777) !== 0o644
+  ) {
+    throw planningNotReady(
+      'PlanReview planning evidence is not a regular mode-0644 file.',
+    );
+  }
+  return fs.readFileSync(absolutePath);
+}
+
+function readCommittedPlanningTarget(
+  repositoryRoot: string,
+  commit: string,
+  artifactPath: string,
+): Buffer {
+  const listing = runGit(repositoryRoot, [
+    'ls-tree',
+    '-z',
+    commit,
+    '--',
+    `:(literal)${artifactPath}`,
+  ]);
+  const match = /^(100644) blob [0-9a-f]{40,64}\t([^\0]+)\0$/.exec(listing);
+  if (!match || match[2] !== artifactPath) {
+    throw planningNotReady(
+      'Committed PlanReview planning evidence is not an exact mode-100644 blob.',
+    );
+  }
+  return runGitBuffer(repositoryRoot, ['show', `${commit}:${artifactPath}`]);
 }
 
 function digestFile(repositoryRoot: string, filePath: string): string {

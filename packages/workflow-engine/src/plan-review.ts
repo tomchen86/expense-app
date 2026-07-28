@@ -11,6 +11,7 @@ import {
   normalizeInvestigationTerm,
   type InvestigationTermKind,
 } from './investigation-terms.ts';
+import type { LegacyPlanMigrationSubject } from './legacy-plan-migration.ts';
 import { normalizeExactRepositoryPath } from './paths.ts';
 import { isProviderId } from './provider-registry.ts';
 import { isProviderRoleAssignment } from './provider-contracts.ts';
@@ -41,6 +42,55 @@ const DISPOSITION_OUTPUT_SCHEMA = 'plan-review-disposition-output.v1';
 
 const DIGEST_PATTERN = /^[0-9a-f]{64}$/;
 const GIT_OBJECT_ID_PATTERN = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
+const TARGET_SNAPSHOT_TYPE = 'plan-review-target-snapshot';
+const TARGET_SNAPSHOT_SCHEMA = 'workflow.plan-review-target-snapshot.v1';
+const TARGET_SNAPSHOT_OUTPUT_SCHEMA =
+  'workflow.plan-review-target-snapshot-output.v1';
+const TARGET_SNAPSHOT_FILE = /^\d{4}\.artifact$/;
+const MAX_TARGET_SNAPSHOT_ARTIFACTS = 4_096;
+
+export type PlanningArtifactMutability =
+  'preserved-byte-identical' | 'replaceable-on-replanning' | 'engine-managed';
+
+export type PlanReviewTargetSnapshotArtifact = {
+  path: string;
+  sha256: string;
+  byteLength: number;
+  lineCount: number;
+  mode: '100644';
+  snapshotFile: string;
+  mutability: PlanningArtifactMutability;
+};
+
+export type PlanReviewMigrationContract = {
+  legacyMigration: boolean;
+  preservedPaths: string[];
+  replaceablePaths: string[];
+  engineManagedPaths: string[];
+  guardSemanticDigest: string | null;
+};
+
+export type PlanReviewTargetSnapshot = {
+  schemaVersion: 1;
+  snapshotDigest: string;
+  changeId: string;
+  subjectDigest: string;
+  planningGenerationId: string;
+  planTargetDigest: string;
+  materializationNodeId: string;
+  materializationResultDigest: string;
+  artifacts: PlanReviewTargetSnapshotArtifact[];
+  migration: PlanReviewMigrationContract;
+};
+
+export type CreatePlanReviewTargetSnapshotInput = {
+  changeId: string;
+  changePrefix: string;
+  subject: PlanReviewSubject;
+  materializationNode: EvidenceNode;
+  artifacts: Map<string, Buffer>;
+  legacyMigration: LegacyPlanMigrationSubject | null;
+};
 
 export const PLAN_REVIEW_MAX_PROPOSED_TERMS = 256;
 
@@ -94,6 +144,7 @@ const TERM_KINDS: ReadonlySet<string> = new Set([
   'config-key',
 ]);
 const EVIDENCE_KINDS = [
+  'planning-location',
   'repository-location',
   'investigation-node',
   'survey-record',
@@ -173,6 +224,12 @@ export type PlanReviewSeverity =
   'critical' | 'high' | 'medium' | 'low' | 'informational';
 
 export type PlanReviewEvidence =
+  | {
+      kind: 'planning-location';
+      path: string;
+      line: number;
+      observation: string;
+    }
   | {
       kind: 'repository-location';
       path: string;
@@ -317,6 +374,7 @@ export type PlanReviewProviderResultNodeInput = {
   assignment: ProviderRoleAssignment;
   submission: PlanReviewSubmission;
   providerPolicyDigest: string;
+  targetSnapshotNode?: EvidenceNode;
   runtimeAssurance?: PlanReviewRuntimeAssurance;
 };
 
@@ -534,7 +592,9 @@ export const PLAN_REVIEW_PROVIDER_OUTPUT_SCHEMA = Object.freeze({
           additionalProperties: false,
           required: ['kind', 'path', 'line', 'observation'],
           properties: {
-            kind: { type: 'string', const: 'repository-location' },
+            kind: {
+              enum: ['planning-location', 'repository-location'],
+            },
             path: { type: 'string', minLength: 1 },
             line: { type: 'integer', minimum: 1 },
             observation: { type: 'string', minLength: 1 },
@@ -801,6 +861,9 @@ export function createPlanReviewProviderResultNode(
       'assignment',
       'submission',
       'providerPolicyDigest',
+      ...(Object.hasOwn(input, 'targetSnapshotNode')
+        ? ['targetSnapshotNode' as const]
+        : []),
       ...(Object.hasOwn(input, 'runtimeAssurance')
         ? ['runtimeAssurance' as const]
         : []),
@@ -819,6 +882,10 @@ export function createPlanReviewProviderResultNode(
   const runtimeAssurance = assertPlanReviewRuntimeAssurance(
     input.runtimeAssurance ?? null,
   );
+  const targetSnapshot =
+    input.targetSnapshotNode === undefined
+      ? null
+      : assertProviderTargetSnapshot(input.targetSnapshotNode, subject);
   const assignmentDigest = planReviewAssignmentDigest(assignment);
   const submissionDigest = planReviewSubmissionDigest(submission);
 
@@ -831,9 +898,14 @@ export function createPlanReviewProviderResultNode(
       assignment: assignmentDigest,
       subject: subject.subjectDigest,
       submission: submissionDigest,
+      ...(targetSnapshot ? { targetSnapshot: targetSnapshot.nodeId } : {}),
     },
-    semanticParentResultDigests: {},
-    provenanceParentNodeIds: {},
+    semanticParentResultDigests: targetSnapshot
+      ? { targetSnapshot: targetSnapshot.resultDigest }
+      : {},
+    provenanceParentNodeIds: targetSnapshot
+      ? { targetSnapshot: targetSnapshot.nodeId }
+      : {},
     outputSchema: PROVIDER_RESULT_OUTPUT_SCHEMA,
     output: {
       schemaVersion: 2,
@@ -1318,23 +1390,42 @@ function assertProviderResult(
   ) {
     throw planReviewInvalid('Provider result node identity is unexpected.');
   }
+  const hasTargetSnapshot =
+    Object.hasOwn(node.provenanceParentNodeIds, 'targetSnapshot') ||
+    Object.hasOwn(node.semanticParentResultDigests, 'targetSnapshot') ||
+    Object.hasOwn(node.exactInputDigests, 'targetSnapshot');
   assertExactDigestRoles(
     node.exactInputDigests,
-    ['assignment', 'subject', 'submission'],
+    [
+      'assignment',
+      'subject',
+      'submission',
+      ...(hasTargetSnapshot ? ['targetSnapshot'] : []),
+    ],
     'Provider result exact-input roles are unexpected.',
   );
   assertExactDigestRoles(
     node.semanticParentResultDigests,
-    [],
+    hasTargetSnapshot ? ['targetSnapshot'] : [],
     'Provider result semantic-parent roles are unexpected.',
   );
   assertExactDigestRoles(
     node.provenanceParentNodeIds,
-    [],
+    hasTargetSnapshot ? ['targetSnapshot'] : [],
     'Provider result provenance-parent roles are unexpected.',
   );
   if (Object.keys(node.runtimeMetadata).length !== 0) {
     throw planReviewInvalid('Provider result runtime metadata must be empty.');
+  }
+  if (
+    hasTargetSnapshot &&
+    (node.exactInputDigests.targetSnapshot !==
+      node.provenanceParentNodeIds.targetSnapshot ||
+      !isDigest(node.semanticParentResultDigests.targetSnapshot))
+  ) {
+    throw planReviewInvalid(
+      'Provider result target snapshot binding is malformed.',
+    );
   }
   const output = assertExactKeys(node.output, PROVIDER_RESULT_OUTPUT_KEYS);
   if (
@@ -1366,6 +1457,25 @@ function assertProviderResult(
   ) {
     throw planReviewInvalid(
       'Provider result semantic output differs from the review submission.',
+    );
+  }
+  return node;
+}
+
+function assertProviderTargetSnapshot(
+  value: unknown,
+  subject: PlanReviewSubject,
+): EvidenceNode {
+  const node = assertStoredEvidenceNode(value, () =>
+    planReviewInvalid('Provider target snapshot node is malformed.'),
+  );
+  if (
+    node.type !== 'plan-review-target-snapshot' ||
+    node.exactInputDigests.subject !== subject.subjectDigest ||
+    Object.keys(node.runtimeMetadata).length !== 0
+  ) {
+    throw planReviewInvalid(
+      'Provider target snapshot does not bind the review subject.',
     );
   }
   return node;
@@ -1812,7 +1922,7 @@ function assertEvidence(value: unknown): PlanReviewEvidence {
     throw planReviewInvalid('Plan review evidence is malformed.');
   }
   const kind = value.kind;
-  if (kind === 'repository-location') {
+  if (kind === 'planning-location' || kind === 'repository-location') {
     assertExactKeys(value, ['kind', 'path', 'line', 'observation']);
     const path = value.path;
     const line = value.line;
@@ -1838,7 +1948,7 @@ function assertEvidence(value: unknown): PlanReviewEvidence {
       throw planReviewInvalid('Repository-location evidence is malformed.');
     }
     return {
-      kind: 'repository-location',
+      kind,
       path: normalizedPath,
       line: line as number,
       observation: observation as string,
@@ -2080,6 +2190,355 @@ function assertExactKeys(
   return value;
 }
 
+export function createPlanReviewTargetSnapshotNode(
+  input: CreatePlanReviewTargetSnapshotInput,
+): EvidenceNode {
+  const subject = assertPlanReviewSubject(input.subject);
+  const materializationNode = assertStoredEvidenceNode(
+    input.materializationNode,
+    targetSnapshotInvalid,
+  );
+  if (
+    materializationNode.type !== 'propose-planning-materialization' &&
+    materializationNode.type !== 'propose-exemption-planning-materialization'
+  ) {
+    throw targetSnapshotInvalid();
+  }
+  const relativePaths = [...input.artifacts.keys()].sort(compareUtf8);
+  if (
+    relativePaths.length === 0 ||
+    relativePaths.length > MAX_TARGET_SNAPSHOT_ARTIFACTS ||
+    new Set(relativePaths).size !== relativePaths.length
+  ) {
+    throw targetSnapshotInvalid();
+  }
+  const artifacts = relativePaths.map((relativePath, index) => {
+    const content = input.artifacts.get(relativePath);
+    if (!content) throw targetSnapshotInvalid();
+    const path = normalizeExactRepositoryPath(
+      `${input.changePrefix}/${relativePath}`,
+    );
+    return {
+      path,
+      sha256: sha256(content),
+      byteLength: content.byteLength,
+      lineCount: targetSnapshotLineCount(content),
+      mode: '100644' as const,
+      snapshotFile: `${String(index).padStart(4, '0')}.artifact`,
+      mutability: targetSnapshotMutabilityFor(
+        relativePath,
+        input.legacyMigration,
+      ),
+    };
+  });
+  const migration = createTargetSnapshotMigrationContract(
+    artifacts,
+    input.legacyMigration,
+  );
+  const fields = {
+    changeId: input.changeId,
+    subjectDigest: subject.subjectDigest,
+    planningGenerationId: subject.planningGenerationId,
+    planTargetDigest: subject.planTargetDigest,
+    materializationNodeId: materializationNode.nodeId,
+    materializationResultDigest: materializationNode.resultDigest,
+    artifacts,
+    migration,
+  };
+  const snapshot: PlanReviewTargetSnapshot = {
+    schemaVersion: 1,
+    snapshotDigest: createTargetSnapshotDigest(fields),
+    ...fields,
+  };
+  return createEvidenceNode({
+    type: TARGET_SNAPSHOT_TYPE,
+    nodeSchema: TARGET_SNAPSHOT_SCHEMA,
+    evaluator: TARGET_SNAPSHOT_SCHEMA,
+    policyDigest: subject.reviewPolicyDigest,
+    exactInputDigests: {
+      subject: subject.subjectDigest,
+      artifacts: sha256(canonicalJson(artifacts)),
+      migration: sha256(canonicalJson(migration)),
+      materialization: materializationNode.nodeId,
+      materializationResult: materializationNode.resultDigest,
+    },
+    semanticParentResultDigests: {},
+    provenanceParentNodeIds: {},
+    outputSchema: TARGET_SNAPSHOT_OUTPUT_SCHEMA,
+    output: snapshot,
+    runtimeMetadata: {},
+  });
+}
+
+export function readPlanReviewTargetSnapshotNode(
+  node: EvidenceNode,
+): PlanReviewTargetSnapshot {
+  const stored = assertStoredEvidenceNode(node, targetSnapshotInvalid);
+  if (
+    stored.type !== TARGET_SNAPSHOT_TYPE ||
+    stored.nodeSchema !== TARGET_SNAPSHOT_SCHEMA ||
+    stored.evaluator !== TARGET_SNAPSHOT_SCHEMA ||
+    stored.outputSchema !== TARGET_SNAPSHOT_OUTPUT_SCHEMA ||
+    Object.keys(stored.runtimeMetadata).length !== 0
+  ) {
+    throw targetSnapshotInvalid();
+  }
+  const snapshot = assertPlanReviewTargetSnapshot(stored.output);
+  if (
+    stored.exactInputDigests.subject !== snapshot.subjectDigest ||
+    stored.exactInputDigests.artifacts !==
+      sha256(canonicalJson(snapshot.artifacts)) ||
+    stored.exactInputDigests.migration !==
+      sha256(canonicalJson(snapshot.migration)) ||
+    stored.exactInputDigests.materialization !==
+      snapshot.materializationNodeId ||
+    stored.exactInputDigests.materializationResult !==
+      snapshot.materializationResultDigest ||
+    Object.keys(stored.semanticParentResultDigests).length !== 0 ||
+    Object.keys(stored.provenanceParentNodeIds).length !== 0
+  ) {
+    throw targetSnapshotInvalid();
+  }
+  return snapshot;
+}
+
+export function assertPlanReviewTargetSnapshot(
+  value: unknown,
+): PlanReviewTargetSnapshot {
+  if (
+    !isRecord(value) ||
+    !hasExactKeys(value, [
+      'schemaVersion',
+      'snapshotDigest',
+      'changeId',
+      'subjectDigest',
+      'planningGenerationId',
+      'planTargetDigest',
+      'materializationNodeId',
+      'materializationResultDigest',
+      'artifacts',
+      'migration',
+    ]) ||
+    value.schemaVersion !== 1 ||
+    typeof value.changeId !== 'string' ||
+    !isDigest(value.snapshotDigest) ||
+    !isDigest(value.subjectDigest) ||
+    !isDigest(value.planningGenerationId) ||
+    !isDigest(value.planTargetDigest) ||
+    !isDigest(value.materializationNodeId) ||
+    !isDigest(value.materializationResultDigest) ||
+    !Array.isArray(value.artifacts) ||
+    value.artifacts.length === 0 ||
+    value.artifacts.length > MAX_TARGET_SNAPSHOT_ARTIFACTS
+  ) {
+    throw targetSnapshotInvalid();
+  }
+  const artifacts = value.artifacts.map(assertTargetSnapshotArtifact);
+  for (let index = 0; index < artifacts.length; index += 1) {
+    if (
+      artifacts[index]!.snapshotFile !==
+        `${String(index).padStart(4, '0')}.artifact` ||
+      (index > 0 &&
+        compareUtf8(artifacts[index - 1]!.path, artifacts[index]!.path) >= 0)
+    ) {
+      throw targetSnapshotInvalid();
+    }
+  }
+  const migration = assertTargetSnapshotMigrationContract(
+    value.migration,
+    artifacts,
+  );
+  const fields = {
+    changeId: value.changeId,
+    subjectDigest: value.subjectDigest,
+    planningGenerationId: value.planningGenerationId,
+    planTargetDigest: value.planTargetDigest,
+    materializationNodeId: value.materializationNodeId,
+    materializationResultDigest: value.materializationResultDigest,
+    artifacts,
+    migration,
+  };
+  if (createTargetSnapshotDigest(fields) !== value.snapshotDigest) {
+    throw targetSnapshotInvalid();
+  }
+  return deepFreeze({
+    schemaVersion: 1,
+    snapshotDigest: value.snapshotDigest,
+    ...fields,
+  }) as PlanReviewTargetSnapshot;
+}
+
+function assertTargetSnapshotArtifact(
+  value: unknown,
+): PlanReviewTargetSnapshotArtifact {
+  if (
+    !isRecord(value) ||
+    !hasExactKeys(value, [
+      'path',
+      'sha256',
+      'byteLength',
+      'lineCount',
+      'mode',
+      'snapshotFile',
+      'mutability',
+    ]) ||
+    typeof value.path !== 'string' ||
+    normalizeExactRepositoryPath(value.path) !== value.path ||
+    !isDigest(value.sha256) ||
+    !Number.isSafeInteger(value.byteLength) ||
+    Number(value.byteLength) < 0 ||
+    !Number.isSafeInteger(value.lineCount) ||
+    Number(value.lineCount) < 0 ||
+    value.mode !== '100644' ||
+    typeof value.snapshotFile !== 'string' ||
+    !TARGET_SNAPSHOT_FILE.test(value.snapshotFile) ||
+    ![
+      'preserved-byte-identical',
+      'replaceable-on-replanning',
+      'engine-managed',
+    ].includes(String(value.mutability))
+  ) {
+    throw targetSnapshotInvalid();
+  }
+  return {
+    path: value.path,
+    sha256: value.sha256,
+    byteLength: value.byteLength as number,
+    lineCount: value.lineCount as number,
+    mode: '100644',
+    snapshotFile: value.snapshotFile,
+    mutability: value.mutability as PlanningArtifactMutability,
+  };
+}
+
+function createTargetSnapshotMigrationContract(
+  artifacts: PlanReviewTargetSnapshotArtifact[],
+  migration: LegacyPlanMigrationSubject | null,
+): PlanReviewMigrationContract {
+  const byMutability = (kind: PlanningArtifactMutability) =>
+    artifacts
+      .filter(({ mutability }) => mutability === kind)
+      .map(({ path }) => path);
+  return {
+    legacyMigration: migration !== null,
+    preservedPaths: byMutability('preserved-byte-identical'),
+    replaceablePaths: byMutability('replaceable-on-replanning'),
+    engineManagedPaths: byMutability('engine-managed'),
+    guardSemanticDigest: migration?.guardDigest ?? null,
+  };
+}
+
+function assertTargetSnapshotMigrationContract(
+  value: unknown,
+  artifacts: PlanReviewTargetSnapshotArtifact[],
+): PlanReviewMigrationContract {
+  if (
+    !isRecord(value) ||
+    !hasExactKeys(value, [
+      'legacyMigration',
+      'preservedPaths',
+      'replaceablePaths',
+      'engineManagedPaths',
+      'guardSemanticDigest',
+    ]) ||
+    typeof value.legacyMigration !== 'boolean' ||
+    (value.guardSemanticDigest !== null && !isDigest(value.guardSemanticDigest))
+  ) {
+    throw targetSnapshotInvalid();
+  }
+  const expected = {
+    legacyMigration: value.legacyMigration,
+    preservedPaths: artifacts
+      .filter(({ mutability }) => mutability === 'preserved-byte-identical')
+      .map(({ path }) => path),
+    replaceablePaths: artifacts
+      .filter(({ mutability }) => mutability === 'replaceable-on-replanning')
+      .map(({ path }) => path),
+    engineManagedPaths: artifacts
+      .filter(({ mutability }) => mutability === 'engine-managed')
+      .map(({ path }) => path),
+    guardSemanticDigest: value.guardSemanticDigest as string | null,
+  };
+  if (
+    canonicalJson(value.preservedPaths) !==
+      canonicalJson(expected.preservedPaths) ||
+    canonicalJson(value.replaceablePaths) !==
+      canonicalJson(expected.replaceablePaths) ||
+    canonicalJson(value.engineManagedPaths) !==
+      canonicalJson(expected.engineManagedPaths) ||
+    (!value.legacyMigration &&
+      (expected.preservedPaths.length > 0 ||
+        expected.guardSemanticDigest !== null))
+  ) {
+    throw targetSnapshotInvalid();
+  }
+  return expected;
+}
+
+function targetSnapshotMutabilityFor(
+  relativePath: string,
+  migration: LegacyPlanMigrationSubject | null,
+): PlanningArtifactMutability {
+  if (
+    relativePath === '.openspec.yaml' ||
+    relativePath === 'investigation.json'
+  ) {
+    return 'engine-managed';
+  }
+  if (migration === null) {
+    return 'replaceable-on-replanning';
+  }
+  if (relativePath === 'execution.json') {
+    return 'engine-managed';
+  }
+  if (Object.hasOwn(migration.preservedArtifactDigests, relativePath)) {
+    return 'preserved-byte-identical';
+  }
+  if (
+    Object.hasOwn(migration.replacedArtifactDigests, relativePath) ||
+    ['design.md', 'guard.json'].includes(relativePath)
+  ) {
+    return 'replaceable-on-replanning';
+  }
+  throw targetSnapshotInvalid();
+}
+
+function createTargetSnapshotDigest(
+  fields: Omit<PlanReviewTargetSnapshot, 'schemaVersion' | 'snapshotDigest'>,
+): string {
+  return sha256(
+    canonicalJson({
+      schema: TARGET_SNAPSHOT_SCHEMA,
+      ...fields,
+    }),
+  );
+}
+
+export function planReviewSnapshotLineCount(content: Buffer): number {
+  return targetSnapshotLineCount(content);
+}
+
+function targetSnapshotLineCount(content: Buffer): number {
+  if (content.byteLength === 0) return 0;
+  let count = 1;
+  for (const byte of content) {
+    if (byte === 0x0a) count += 1;
+  }
+  return content.at(-1) === 0x0a ? count - 1 : count;
+}
+
+function compareUtf8(left: string, right: string): number {
+  return Buffer.compare(Buffer.from(left), Buffer.from(right));
+}
+
+function targetSnapshotInvalid(): WorkflowError {
+  return workflowError(
+    'PLAN_REVIEW_TARGET_SNAPSHOT_INVALID',
+    'PlanReview target snapshot is malformed or no longer bound.',
+    ExitCode.verification,
+  );
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) {
     return false;
@@ -2136,7 +2595,7 @@ function deepFreeze<Value>(value: Value): Value {
   return value;
 }
 
-function sha256(value: string): string {
+function sha256(value: string | Buffer): string {
   return crypto.createHash('sha256').update(value).digest('hex');
 }
 

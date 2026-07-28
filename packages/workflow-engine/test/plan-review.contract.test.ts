@@ -1,4 +1,8 @@
 import assert from 'node:assert/strict';
+import crypto from 'node:crypto';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import test from 'node:test';
 
 import { createEvidenceNode, type EvidenceNode } from '../src/evidence-node.ts';
@@ -11,15 +15,21 @@ import {
   createPlanReviewDispositionNode,
   createPlanReviewNode,
   createPlanReviewProviderResultNode,
+  createPlanReviewTargetSnapshotNode,
   createPlanReviewSubject,
   PLAN_REVIEW_COVERAGE,
   PLAN_REVIEW_OUTPUT_SCHEMA,
   PLAN_REVIEW_OUTPUT_VALIDATOR,
+  readPlanReviewTargetSnapshotNode,
   readPlanReviewDispositionNode,
   readPlanReviewNode,
   type PlanReviewSubmission,
 } from '../src/plan-review.ts';
 import { validatePlanReview } from '../src/plan-review-validation.ts';
+import {
+  resolvePlanReviewPlanningEvidence,
+  resolvePlanReviewRepositoryEvidence,
+} from '../src/planning-assurance-validator.ts';
 import {
   createPlanTarget,
   type PlanTarget,
@@ -1437,6 +1447,218 @@ function repositoryEvidenceFor(reviewNode: EvidenceNode, tree: string) {
       ),
   };
 }
+
+test('planning citation namespace is exact and rejects absent or out-of-range snapshot locations', () => {
+  const context = reviewContext();
+  const planningPath = 'openspec/changes/demo-change/proposal.md';
+  const planningTarget = planningTargetFor(
+    context,
+    'proposal.md',
+    '# Proposal\n\nPreserve the behavior.\n',
+  );
+  const planningArtifact = planningTarget.artifacts[0]!;
+  const submission = challengeSubmission({
+    findings: [
+      {
+        kind: 'challenge',
+        severity: 'high',
+        category: 'missing-scope',
+        currentChangeImpact: 'required',
+        summary: 'The exact planning proposal requires review.',
+        evidence: [
+          {
+            kind: 'planning-location',
+            path: planningPath,
+            line: planningArtifact.lineCount,
+            observation:
+              'The immutable planning snapshot carries this requirement.',
+          },
+        ],
+      },
+    ],
+  });
+  const reviewNode = createPlanReviewNode({
+    subject: context.subject,
+    assignment: context.assignment,
+    providerResultNode: providerResultFor(context, submission),
+    submission,
+  });
+  const input = currentValidationInput(context, reviewNode);
+  const valid = validatePlanReview({
+    ...input,
+    planningTarget,
+    planningEvidence: {
+      snapshotDigest: planningTarget.snapshotDigest,
+      locations: [
+        {
+          path: planningPath,
+          sha256: planningArtifact.sha256,
+          byteLength: planningArtifact.byteLength,
+          lineCount: planningArtifact.lineCount,
+        },
+      ],
+    },
+  });
+  assert.equal(valid.current, true);
+  assert.equal(valid.eligible, true);
+
+  for (const locations of [
+    [],
+    [
+      {
+        path: planningPath,
+        sha256: 'f'.repeat(64),
+        byteLength: 110,
+        lineCount: 11,
+      },
+    ],
+  ]) {
+    const rejected = validatePlanReview({
+      ...input,
+      planningTarget,
+      planningEvidence: {
+        snapshotDigest: planningTarget.snapshotDigest,
+        locations,
+      },
+    });
+    assert.equal(rejected.current, false);
+    assert.equal(rejected.eligible, false);
+    assert.ok(rejected.staleReasons.includes('REPOSITORY_EVIDENCE_MISMATCH'));
+  }
+});
+
+function planningTargetFor(
+  context: ReturnType<typeof reviewContext>,
+  relativePath: string,
+  content: string,
+) {
+  const materializationNode = createEvidenceNode({
+    type: 'propose-planning-materialization',
+    nodeSchema: 'test.materialization.v1',
+    evaluator: 'test.materialization.v1',
+    policyDigest: DIGESTS.reviewPolicy,
+    exactInputDigests: {},
+    semanticParentResultDigests: {},
+    provenanceParentNodeIds: {},
+    outputSchema: 'test.materialization-output.v1',
+    output: { testOnly: true },
+    runtimeMetadata: {},
+  });
+  return readPlanReviewTargetSnapshotNode(
+    createPlanReviewTargetSnapshotNode({
+      changeId: 'demo-change',
+      changePrefix: 'openspec/changes/demo-change',
+      subject: context.subject,
+      materializationNode,
+      artifacts: new Map([[relativePath, Buffer.from(content, 'utf8')]]),
+      legacyMigration: null,
+    }),
+  );
+}
+
+test('repository-location cannot cite a planning snapshot member', () => {
+  const context = reviewContext();
+  const planningPath = 'openspec/changes/demo-change/proposal.md';
+  const submission = challengeSubmission({
+    findings: [
+      {
+        kind: 'challenge',
+        severity: 'high',
+        category: 'missing-scope',
+        currentChangeImpact: 'required',
+        summary: 'The exact planning proposal requires review.',
+        evidence: [
+          {
+            kind: 'repository-location',
+            path: planningPath,
+            line: 1,
+            observation: 'This deliberately uses the wrong namespace.',
+          },
+        ],
+      },
+    ],
+  });
+  const reviewNode = createPlanReviewNode({
+    subject: context.subject,
+    assignment: context.assignment,
+    providerResultNode: providerResultFor(context, submission),
+    submission,
+  });
+  assert.throws(
+    () =>
+      resolvePlanReviewRepositoryEvidence(
+        '/unused',
+        'a'.repeat(40),
+        reviewNode,
+        {
+          artifacts: [{ path: planningPath }],
+        } as never,
+      ),
+    (error) => isWorkflowError(error, 'OPENSPEC_CHANGE_NOT_READY'),
+  );
+});
+
+test('planning-location cannot cite a nonmember repository path', () => {
+  const repositoryRoot = fs.mkdtempSync(
+    path.join(os.tmpdir(), 'plan-review-namespace-'),
+  );
+  const planningPath = 'openspec/changes/demo-change/proposal.md';
+  const planningBytes = Buffer.from('# Proposal\n');
+  const absolutePlanningPath = path.join(repositoryRoot, planningPath);
+  fs.mkdirSync(path.dirname(absolutePlanningPath), { recursive: true });
+  fs.writeFileSync(absolutePlanningPath, planningBytes, { mode: 0o644 });
+  try {
+    const context = reviewContext();
+    const submission = challengeSubmission({
+      findings: [
+        {
+          kind: 'challenge',
+          severity: 'high',
+          category: 'missing-scope',
+          currentChangeImpact: 'required',
+          summary: 'A repository file is mislabeled as planning evidence.',
+          evidence: [
+            {
+              kind: 'planning-location',
+              path: 'docs/WORKFLOW.md',
+              line: 1,
+              observation: 'This deliberately uses the wrong namespace.',
+            },
+          ],
+        },
+      ],
+    });
+    const reviewNode = createPlanReviewNode({
+      subject: context.subject,
+      assignment: context.assignment,
+      providerResultNode: providerResultFor(context, submission),
+      submission,
+    });
+    assert.throws(
+      () =>
+        resolvePlanReviewPlanningEvidence(
+          repositoryRoot,
+          {
+            artifacts: [
+              {
+                path: planningPath,
+                sha256: crypto
+                  .createHash('sha256')
+                  .update(planningBytes)
+                  .digest('hex'),
+                byteLength: planningBytes.byteLength,
+                lineCount: 1,
+              },
+            ],
+          } as never,
+          reviewNode,
+        ),
+      (error) => isWorkflowError(error, 'OPENSPEC_CHANGE_NOT_READY'),
+    );
+  } finally {
+    fs.rmSync(repositoryRoot, { recursive: true, force: true });
+  }
+});
 
 function authoredComponent(
   input: PlanTargetInput,
