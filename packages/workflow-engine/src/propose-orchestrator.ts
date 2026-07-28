@@ -57,23 +57,33 @@ import {
 } from './investigation-groups.ts';
 import { scanInvestigationTree } from './investigation-scanner.ts';
 import {
+  acknowledgeReviewerTermInputClosure,
+  blockInvestigationForReviewerTerms,
+  decideReviewerTermReopen,
   getInvestigationStatus,
+  inspectReviewerTermResolutionAuthorization,
   reopenInvestigationForReviewerTerms,
   resumeInvestigationSession,
   startInvestigationSession,
   type InvestigationStatus,
 } from './investigation-session.ts';
-import { projectPlanReviewTerms } from './investigation-term-projection.ts';
+import {
+  assertStoredReviewerTermDelta,
+  deriveReviewerTermDelta,
+  projectPlanReviewTerms,
+} from './investigation-term-projection.ts';
 import {
   assertInvestigationCheckpointEnvelope,
   checkpointContributionDigest,
   readCurrentInvestigationRef,
+  readHumanResolutionNode,
   readInvestigationSession,
   type InvestigationCheckpointEnvelope,
   type InvestigationSession,
   type StoredInvestigationCheckpoint,
 } from './investigation-session-store.ts';
 import {
+  normalizeInvestigationTerm,
   previewInvestigationTermUnion,
   type InvestigationTermContribution,
   type InvestigationTermRawCounts,
@@ -440,6 +450,9 @@ type RebuiltInvestigation = {
   providerResultNode: EvidenceNode | null;
   providerRoleResult: AdmittedRoleResult | null;
   reviewerTermSourceNode: EvidenceNode | null;
+  reviewerTermSourceNodeIds: string[];
+  reviewerTermReopenCount: number;
+  reviewerTerms: ReviewerTermSourceRecord['terms'];
   reviewerPlanReviewNode: EvidenceNode | null;
   reviewerProviderResultNode: EvidenceNode | null;
   reviewerTargetSnapshotNode: EvidenceNode | null;
@@ -1635,6 +1648,14 @@ function resumePlanReview(
       options.collaborationGrantValidation,
     );
   }
+  if ('blockedInvestigation' in tracked) {
+    return renderProposeOutputWithPlanningAuthority(
+      cwd,
+      tracked.blockedInvestigation,
+      null,
+      options.collaborationGrantValidation,
+    );
+  }
   const review = readPlanReviewNode(tracked.reviewNode);
   if (review.findings.length > 0) {
     return getProposeStatus(cwd, status.investigationId);
@@ -1657,6 +1678,9 @@ function materializePlanReviewResult(
     }
   | {
       reopenedInvestigation: InvestigationStatus;
+    }
+  | {
+      blockedInvestigation: InvestigationStatus;
     } {
   const context = loadInvestigationRuntimeContext(cwd);
   const existing = readTrackedPlanReview(
@@ -1696,6 +1720,57 @@ function materializePlanReviewResult(
     submission,
   });
   const review = readPlanReviewNode(reviewNode);
+  let reviewerRebuild: RebuiltInvestigation | null = null;
+  let reviewerResolution: ReturnType<
+    typeof inspectReviewerTermResolutionAuthorization
+  > = { outcome: 'none', resolutionNodeId: null };
+  let novelReviewerTerms = review.proposedTerms;
+  let reviewerReopenPolicy: ReturnType<typeof decideReviewerTermReopen> =
+    review.proposedTerms.length === 0 ? 'no-novel-terms' : 'automatic-reopen';
+  if (
+    review.proposedTerms.length > 0 &&
+    status.state !== 'investigation-exempt'
+  ) {
+    reviewerRebuild = rebuildInvestigation(
+      cwd,
+      status.investigationId,
+      grantValidation,
+    );
+    const admittedContributions = reviewerRebuild.contributionNodes.map(
+      (node) => structuredClone(node.output),
+    ) as InvestigationTermContribution[];
+    novelReviewerTerms = deriveReviewerTermDelta({
+      existingContributions: admittedContributions,
+      proposedTerms: review.proposedTerms,
+      engineOwnedReviewerReferences: reviewerRebuild.reviewerTermSourceNodeIds,
+    }).novelTerms;
+    if (reviewerRebuild.reviewerTermReopenCount >= 2) {
+      reviewerResolution = inspectReviewerTermResolutionAuthorization(
+        cwd,
+        status.investigationId,
+        reviewNode.resultDigest,
+      );
+    }
+    reviewerReopenPolicy = decideReviewerTermReopen({
+      usedReopens: reviewerRebuild.reviewerTermReopenCount,
+      novelTermCount: novelReviewerTerms.length,
+      humanResolution: reviewerResolution,
+    });
+    if (reviewerReopenPolicy === 'human-action-required') {
+      return {
+        blockedInvestigation: blockInvestigationForReviewerTerms(
+          cwd,
+          status.investigationId,
+          {
+            expectedRevision: status.revision,
+            pendingReviewDigest: reviewNode.resultDigest,
+            usedReopens: reviewerRebuild.reviewerTermReopenCount,
+            proposedTermCount: novelReviewerTerms.length,
+          },
+        ),
+      };
+    }
+  }
   const content = {
     kind: 'plan-review' as const,
     nodeId: reviewNode.nodeId,
@@ -1786,7 +1861,11 @@ function materializePlanReviewResult(
     grantUse,
     grantValidation: grantAdmission,
   });
-  if (review.proposedTerms.length > 0) {
+  if (
+    review.proposedTerms.length > 0 &&
+    novelReviewerTerms.length > 0 &&
+    reviewerReopenPolicy !== 'human-close-input'
+  ) {
     if (status.state === 'investigation-exempt') {
       throw workflowError(
         'INVESTIGATION_EXEMPTION_REVIEWER_TERMS_REQUIRED',
@@ -1794,11 +1873,9 @@ function materializePlanReviewResult(
         ExitCode.guard,
       );
     }
-    const rebuilt = rebuildInvestigation(
-      cwd,
-      status.investigationId,
-      grantValidation,
-    );
+    const rebuilt =
+      reviewerRebuild ??
+      rebuildInvestigation(cwd, status.investigationId, grantValidation);
     const existingContributions = rebuilt.contributionNodes.map((node) =>
       structuredClone(node.output),
     ) as InvestigationTermContribution[];
@@ -1830,6 +1907,7 @@ function materializePlanReviewResult(
         ),
       },
       existingContributions,
+      engineOwnedReviewerReferences: rebuilt.reviewerTermSourceNodeIds,
     });
     if (projection.preview.outcome !== 'ready') {
       throw workflowError(
@@ -1844,9 +1922,14 @@ function materializePlanReviewResult(
       providerResultNode,
       reviewNode,
       roleResult,
-      terms: review.proposedTerms,
+      terms: novelReviewerTerms,
       priorGroupDispositions: rebuilt.session.milestones.groupDispositions!,
       priorWhyAnswers: rebuilt.session.milestones.whyAnswers!,
+      previousReviewerTermSourceNode: rebuilt.reviewerTermSourceNode,
+      authorizationResolutionNodeId:
+        reviewerResolution.outcome === 'resume'
+          ? reviewerResolution.resolutionNodeId
+          : null,
     });
     for (const node of [providerResultNode, reviewNode, sourceNode]) {
       writeEvidenceNode(context.runtime, node);
@@ -1858,9 +1941,25 @@ function materializePlanReviewResult(
         {
           expectedRevision: status.revision,
           sourceNodeId: sourceNode.nodeId,
+          usedReopens: rebuilt.reviewerTermReopenCount,
+          pendingReviewDigest: reviewNode.resultDigest,
+          authorizationResolutionNodeId:
+            reviewerResolution.outcome === 'resume'
+              ? reviewerResolution.resolutionNodeId
+              : null,
         },
       ),
     };
+  }
+  if (
+    reviewerReopenPolicy === 'human-close-input' &&
+    reviewerResolution.outcome === 'close-input'
+  ) {
+    acknowledgeReviewerTermInputClosure(cwd, status.investigationId, {
+      expectedRevision: status.revision,
+      pendingReviewDigest: reviewNode.resultDigest,
+      authorizationResolutionNodeId: reviewerResolution.resolutionNodeId,
+    });
   }
   const tracked = {
     nodes: [reservation.targetSnapshotNode, providerResultNode, reviewNode],
@@ -2590,7 +2689,7 @@ function rebuildInvestigation(
       : [
           {
             source: 'reviewer' as const,
-            reference: reviewerSource.reviewNode.nodeId,
+            reference: reviewerSource.sourceNode.nodeId,
             terms: reviewerSource.terms,
           },
         ]),
@@ -2718,6 +2817,9 @@ function rebuildInvestigation(
     providerResultNode,
     providerRoleResult,
     reviewerTermSourceNode: reviewerSource?.sourceNode ?? null,
+    reviewerTermSourceNodeIds: reviewerSource?.sourceNodeIds ?? [],
+    reviewerTermReopenCount: reviewerSource?.reopenCount ?? 0,
+    reviewerTerms: reviewerSource?.terms ?? [],
     reviewerPlanReviewNode: reviewerSource?.reviewNode ?? null,
     reviewerProviderResultNode: reviewerSource?.providerResultNode ?? null,
     reviewerTargetSnapshotNode: reviewerSource?.targetSnapshotNode ?? null,
@@ -2756,6 +2858,9 @@ function emptyRebuilt(
     providerResultNode: null,
     providerRoleResult: null,
     reviewerTermSourceNode: null,
+    reviewerTermSourceNodeIds: [],
+    reviewerTermReopenCount: 0,
+    reviewerTerms: [],
     reviewerPlanReviewNode: null,
     reviewerProviderResultNode: null,
     reviewerTargetSnapshotNode: null,
@@ -3202,11 +3307,13 @@ function createReviewerTermSourceNode(input: {
   }>;
   priorGroupDispositions: StoredInvestigationCheckpoint;
   priorWhyAnswers: StoredInvestigationCheckpoint;
+  previousReviewerTermSourceNode: EvidenceNode | null;
+  authorizationResolutionNodeId: string | null;
 }): EvidenceNode {
   return createEvidenceNode({
     type: 'investigation-reviewer-term-source',
-    nodeSchema: 'investigation.reviewer-term-source.v2',
-    evaluator: 'workflow-propose.reviewer-term-source.v2',
+    nodeSchema: 'investigation.reviewer-term-source.v3',
+    evaluator: 'workflow-propose.reviewer-term-source.v3',
     policyDigest: PROPOSE_POLICY_DIGEST,
     exactInputDigests: {
       baseline: sha256(canonicalJson(input.status.baseline)),
@@ -3214,16 +3321,37 @@ function createReviewerTermSourceNode(input: {
       roleResult: input.roleResult.resultDigest,
       priorGroupDispositions: input.priorGroupDispositions.envelopeDigest,
       priorWhyAnswers: input.priorWhyAnswers.envelopeDigest,
+      ...(input.previousReviewerTermSourceNode === null
+        ? {}
+        : {
+            previousReviewerTerms: input.previousReviewerTermSourceNode.nodeId,
+          }),
+      ...(input.authorizationResolutionNodeId === null
+        ? {}
+        : {
+            humanResolution: input.authorizationResolutionNodeId,
+          }),
     },
     semanticParentResultDigests: {
       review: input.reviewNode.resultDigest,
       providerResult: input.providerResultNode.resultDigest,
+      ...(input.previousReviewerTermSourceNode === null
+        ? {}
+        : {
+            previousReviewerTerms:
+              input.previousReviewerTermSourceNode.resultDigest,
+          }),
     },
     provenanceParentNodeIds: {
       review: input.reviewNode.nodeId,
       providerResult: input.providerResultNode.nodeId,
+      ...(input.previousReviewerTermSourceNode === null
+        ? {}
+        : {
+            previousReviewerTerms: input.previousReviewerTermSourceNode.nodeId,
+          }),
     },
-    outputSchema: 'investigation.reviewer-term-source-output.v2',
+    outputSchema: 'investigation.reviewer-term-source-output.v3',
     output: {
       investigationId: input.status.investigationId,
       baseline: input.status.baseline,
@@ -3233,16 +3361,15 @@ function createReviewerTermSourceNode(input: {
       terms: input.terms,
       priorGroupDispositions: input.priorGroupDispositions,
       priorWhyAnswers: input.priorWhyAnswers,
+      previousReviewerTermSourceNodeId:
+        input.previousReviewerTermSourceNode?.nodeId ?? null,
+      authorizationResolutionNodeId: input.authorizationResolutionNodeId,
     },
     runtimeMetadata: {},
   });
 }
 
-function readReviewerTermSource(
-  paths: ReturnType<typeof loadInvestigationRuntimeContext>['runtime'],
-  nodeId: string | null,
-  session: InvestigationSession,
-): {
+type ReviewerTermSourceRecord = {
   sourceNode: EvidenceNode;
   providerResultNode: EvidenceNode;
   reviewNode: EvidenceNode;
@@ -3250,15 +3377,29 @@ function readReviewerTermSource(
   roleResult: AdmittedRoleResult;
   priorGroupDispositions: StoredInvestigationCheckpoint;
   priorWhyAnswers: StoredInvestigationCheckpoint;
+  sourceNodeIds: string[];
+  reopenCount: number;
   terms: Array<{
     kind: 'literal-content' | 'literal-path' | 'symbol' | 'config-key';
     value: string;
   }>;
-} | null {
+};
+
+function readReviewerTermSource(
+  paths: ReturnType<typeof loadInvestigationRuntimeContext>['runtime'],
+  nodeId: string | null,
+  session: InvestigationSession,
+): ReviewerTermSourceRecord | null {
   if (nodeId === null) {
     return null;
   }
   const sourceNode = readEvidenceNode(paths, nodeId);
+  if (
+    sourceNode.nodeSchema === 'investigation.reviewer-term-source.v3' ||
+    sourceNode.evaluator === 'workflow-propose.reviewer-term-source.v3'
+  ) {
+    return readReviewerTermSourceV3(paths, sourceNode, session);
+  }
   const output = sourceNode.output;
   if (
     sourceNode.type !== 'investigation-reviewer-term-source' ||
@@ -3417,7 +3558,219 @@ function readReviewerTermSource(
     terms,
     priorGroupDispositions,
     priorWhyAnswers,
+    sourceNodeIds: [sourceNode.nodeId],
+    reopenCount: 1,
   };
+}
+
+function readReviewerTermSourceV3(
+  paths: ReturnType<typeof loadInvestigationRuntimeContext>['runtime'],
+  sourceNode: EvidenceNode,
+  session: InvestigationSession,
+): ReviewerTermSourceRecord {
+  const output = sourceNode.output;
+  if (
+    sourceNode.type !== 'investigation-reviewer-term-source' ||
+    sourceNode.nodeSchema !== 'investigation.reviewer-term-source.v3' ||
+    sourceNode.evaluator !== 'workflow-propose.reviewer-term-source.v3' ||
+    sourceNode.outputSchema !==
+      'investigation.reviewer-term-source-output.v3' ||
+    sourceNode.policyDigest !== PROPOSE_POLICY_DIGEST ||
+    !isRecord(output) ||
+    !hasExactKeys(output, [
+      'investigationId',
+      'baseline',
+      'providerResultNode',
+      'reviewNode',
+      'roleResult',
+      'terms',
+      'priorGroupDispositions',
+      'priorWhyAnswers',
+      'previousReviewerTermSourceNodeId',
+      'authorizationResolutionNodeId',
+    ]) ||
+    !isRecord(output.providerResultNode) ||
+    !isRecord(output.reviewNode) ||
+    !isRecord(output.roleResult) ||
+    !isRecord(output.priorGroupDispositions) ||
+    !isRecord(output.priorWhyAnswers) ||
+    !Array.isArray(output.terms) ||
+    (output.previousReviewerTermSourceNodeId !== null &&
+      typeof output.previousReviewerTermSourceNodeId !== 'string') ||
+    (output.authorizationResolutionNodeId !== null &&
+      typeof output.authorizationResolutionNodeId !== 'string')
+  ) {
+    throw invalidReviewerTermSource();
+  }
+  const previous = readReviewerTermSource(
+    paths,
+    output.previousReviewerTermSourceNodeId,
+    session,
+  );
+  const providerResultNode = output.providerResultNode as EvidenceNode;
+  const reviewNode = output.reviewNode as EvidenceNode;
+  const review = readPlanReviewNode(reviewNode);
+  const roleResult = output.roleResult as AdmittedRoleResult;
+  const rawPriorGroupDispositions = output.priorGroupDispositions as Record<
+    string,
+    unknown
+  >;
+  const rawPriorWhyAnswers = output.priorWhyAnswers as Record<string, unknown>;
+  if (
+    !hasExactKeys(rawPriorGroupDispositions, [
+      'envelopeDigest',
+      'contributionDigest',
+      'envelope',
+    ]) ||
+    !hasExactKeys(rawPriorWhyAnswers, [
+      'envelopeDigest',
+      'contributionDigest',
+      'envelope',
+    ])
+  ) {
+    throw invalidReviewerTermSource();
+  }
+  const priorGroupEnvelope = assertInvestigationCheckpointEnvelope(
+    rawPriorGroupDispositions.envelope,
+  );
+  const priorWhyEnvelope = assertInvestigationCheckpointEnvelope(
+    rawPriorWhyAnswers.envelope,
+  );
+  const priorGroupDispositions: StoredInvestigationCheckpoint = {
+    envelopeDigest: String(rawPriorGroupDispositions.envelopeDigest),
+    contributionDigest: String(rawPriorGroupDispositions.contributionDigest),
+    envelope: priorGroupEnvelope,
+  };
+  const priorWhyAnswers: StoredInvestigationCheckpoint = {
+    envelopeDigest: String(rawPriorWhyAnswers.envelopeDigest),
+    contributionDigest: String(rawPriorWhyAnswers.contributionDigest),
+    envelope: priorWhyEnvelope,
+  };
+  let terms: ReviewerTermSourceRecord['terms'];
+  try {
+    terms = assertStoredReviewerTermDelta({
+      proposedTerms: review.proposedTerms,
+      priorReviewerTerms: previous?.terms ?? [],
+      storedTerms: output.terms as ReviewerTermSourceRecord['terms'],
+    });
+  } catch {
+    throw invalidReviewerTermSource();
+  }
+  const previousNodeId = output.previousReviewerTermSourceNodeId as
+    string | null;
+  const authorizationNodeId = output.authorizationResolutionNodeId as
+    string | null;
+  const exactRoles = [
+    'baseline',
+    'terms',
+    'roleResult',
+    'priorGroupDispositions',
+    'priorWhyAnswers',
+    ...(previousNodeId === null ? [] : ['previousReviewerTerms']),
+    ...(authorizationNodeId === null ? [] : ['humanResolution']),
+  ];
+  const parentRoles = [
+    'review',
+    'providerResult',
+    ...(previousNodeId === null ? [] : ['previousReviewerTerms']),
+  ];
+  const targetSnapshotNodeId =
+    providerResultNode.provenanceParentNodeIds.targetSnapshot;
+  const targetSnapshotNode =
+    typeof targetSnapshotNodeId === 'string'
+      ? readEvidenceNode(paths, targetSnapshotNodeId)
+      : null;
+  if (targetSnapshotNode !== null) {
+    readPlanReviewTargetSnapshotNode(targetSnapshotNode);
+  }
+  if (
+    output.investigationId !== session.investigationId ||
+    !isBaseline(output.baseline) ||
+    canonicalJson(output.baseline) !== canonicalJson(session.baseline) ||
+    providerResultNode.nodeId !== review.providerResultNodeId ||
+    providerResultNode.resultDigest !== review.providerResultResultDigest ||
+    roleResult.content.nodeId !== reviewNode.nodeId ||
+    roleResult.content.resultDigest !== reviewNode.resultDigest ||
+    !hasExactKeys(sourceNode.exactInputDigests, exactRoles) ||
+    !hasExactKeys(sourceNode.semanticParentResultDigests, parentRoles) ||
+    !hasExactKeys(sourceNode.provenanceParentNodeIds, parentRoles) ||
+    sourceNode.exactInputDigests.baseline !==
+      sha256(canonicalJson(output.baseline)) ||
+    sourceNode.exactInputDigests.terms !== sha256(canonicalJson(terms)) ||
+    sourceNode.exactInputDigests.roleResult !== roleResult.resultDigest ||
+    sourceNode.exactInputDigests.priorGroupDispositions !==
+      priorGroupDispositions.envelopeDigest ||
+    sourceNode.exactInputDigests.priorWhyAnswers !==
+      priorWhyAnswers.envelopeDigest ||
+    sourceNode.provenanceParentNodeIds.review !== reviewNode.nodeId ||
+    sourceNode.semanticParentResultDigests.review !== reviewNode.resultDigest ||
+    sourceNode.provenanceParentNodeIds.providerResult !==
+      providerResultNode.nodeId ||
+    sourceNode.semanticParentResultDigests.providerResult !==
+      providerResultNode.resultDigest ||
+    priorGroupDispositions.envelopeDigest !==
+      sha256(canonicalJson(priorGroupEnvelope)) ||
+    priorWhyAnswers.envelopeDigest !==
+      sha256(canonicalJson(priorWhyEnvelope)) ||
+    priorGroupDispositions.contributionDigest !==
+      checkpointContributionDigest(priorGroupEnvelope) ||
+    priorWhyAnswers.contributionDigest !==
+      checkpointContributionDigest(priorWhyEnvelope) ||
+    priorGroupEnvelope.kind !== 'group-dispositions' ||
+    priorWhyEnvelope.kind !== 'why-answers' ||
+    priorGroupEnvelope.investigationId !== session.investigationId ||
+    priorWhyEnvelope.investigationId !== session.investigationId ||
+    priorGroupEnvelope.changeId !== session.changeId ||
+    priorWhyEnvelope.changeId !== session.changeId ||
+    previousNodeId !== (previous?.sourceNode.nodeId ?? null) ||
+    (previous !== null &&
+      (sourceNode.exactInputDigests.previousReviewerTerms !==
+        previous.sourceNode.nodeId ||
+        sourceNode.provenanceParentNodeIds.previousReviewerTerms !==
+          previous.sourceNode.nodeId ||
+        sourceNode.semanticParentResultDigests.previousReviewerTerms !==
+          previous.sourceNode.resultDigest))
+  ) {
+    throw invalidReviewerTermSource();
+  }
+  if (authorizationNodeId !== null) {
+    const authorization = readHumanResolutionNode(paths, authorizationNodeId);
+    if (
+      authorization.target.workflowId !== session.investigationId ||
+      authorization.target.changeId !== session.changeId ||
+      authorization.decision.kind !== 'resume-with-capability' ||
+      sourceNode.exactInputDigests.humanResolution !== authorization.nodeId
+    ) {
+      throw invalidReviewerTermSource();
+    }
+  }
+  const cumulative = new Map<
+    string,
+    ReviewerTermSourceRecord['terms'][number]
+  >();
+  for (const term of [...(previous?.terms ?? []), ...terms]) {
+    cumulative.set(normalizeInvestigationTerm(term).termId, term);
+  }
+  return {
+    sourceNode,
+    providerResultNode,
+    reviewNode,
+    targetSnapshotNode,
+    roleResult,
+    priorGroupDispositions,
+    priorWhyAnswers,
+    sourceNodeIds: [...(previous?.sourceNodeIds ?? []), sourceNode.nodeId],
+    reopenCount: (previous?.reopenCount ?? 0) + 1,
+    terms: [...cumulative.values()],
+  };
+}
+
+function invalidReviewerTermSource() {
+  return workflowError(
+    'INVESTIGATION_REVIEWER_TERM_SOURCE_INVALID',
+    'Reviewer-term source evidence is malformed or no longer bound.',
+    ExitCode.staleState,
+  );
 }
 
 function createTermUnionNode(

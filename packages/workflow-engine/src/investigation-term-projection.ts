@@ -40,7 +40,8 @@ const MAX_EXISTING_CONTRIBUTIONS = INVESTIGATION_LIMITS.maxEffectiveTerms;
 const MAX_EXISTING_RAW_TERMS =
   INVESTIGATION_LIMITS.maxEffectiveTerms +
   INVESTIGATION_LIMITS.maxMainTerms +
-  INVESTIGATION_LIMITS.maxSurveyTerms;
+  INVESTIGATION_LIMITS.maxSurveyTerms +
+  INVESTIGATION_LIMITS.maxReviewerTerms;
 const MAX_PREVIEW_RAW_TERMS =
   MAX_EXISTING_RAW_TERMS + PLAN_REVIEW_MAX_PROPOSED_TERMS;
 const MAX_REVIEWER_INPUT_TERMS = PLAN_REVIEW_MAX_PROPOSED_TERMS;
@@ -50,6 +51,7 @@ const MAX_MAIN_TERM_SEMANTIC_BYTES = 4096;
 export type ProjectPlanReviewTermsInput = {
   validationInput: ValidatePlanReviewInput;
   existingContributions: InvestigationTermContribution[];
+  engineOwnedReviewerReferences?: string[];
 };
 
 export type PlanReviewTermProjection = {
@@ -60,6 +62,11 @@ export type PlanReviewTermProjection = {
   planTargetDigest: string;
   reviewPolicyDigest: string;
   preview: InvestigationTermUnionPreview;
+};
+
+export type ReviewerTermDelta = {
+  existingTermIds: string[];
+  novelTerms: InvestigationTermInput[];
 };
 
 /**
@@ -75,7 +82,13 @@ export function projectPlanReviewTerms(
 ): PlanReviewTermProjection {
   if (
     !isPlainRecord(input) ||
-    !hasExactKeys(input, ['validationInput', 'existingContributions'])
+    !hasExactKeys(input, [
+      'validationInput',
+      'existingContributions',
+      ...(Object.hasOwn(input, 'engineOwnedReviewerReferences')
+        ? ['engineOwnedReviewerReferences']
+        : []),
+    ])
   ) {
     throw projectionInvalid('Plan review term projection input is malformed.');
   }
@@ -101,12 +114,23 @@ export function projectPlanReviewTerms(
   } catch {
     throw projectionInvalid('Plan review report is malformed or unbound.');
   }
-  const existing = assertExistingContributions(input.existingContributions);
+  const engineOwnedReviewerReferences = assertEngineOwnedReviewerReferences(
+    input.engineOwnedReviewerReferences ?? [],
+  );
+  const existing = assertExistingContributions(
+    input.existingContributions,
+    engineOwnedReviewerReferences,
+  );
   const reviewerTerms = assertTerms(
     review.proposedTerms,
     MAX_REVIEWER_INPUT_TERMS,
     'Plan review proposed terms exceed the bounded projection input.',
   );
+  deriveReviewerTermDelta({
+    existingContributions: existing,
+    proposedTerms: reviewerTerms,
+    engineOwnedReviewerReferences: [...engineOwnedReviewerReferences],
+  });
   const existingTermCount = existing.reduce(
     (total, contribution) => total + contribution.terms.length,
     0,
@@ -138,8 +162,99 @@ export function projectPlanReviewTerms(
   });
 }
 
+export function deriveReviewerTermDelta(input: {
+  existingContributions: InvestigationTermContribution[];
+  proposedTerms: InvestigationTermInput[];
+  engineOwnedReviewerReferences?: string[];
+}): ReviewerTermDelta {
+  if (
+    !isPlainRecord(input) ||
+    !hasExactKeys(input, [
+      'existingContributions',
+      'proposedTerms',
+      ...(Object.hasOwn(input, 'engineOwnedReviewerReferences')
+        ? ['engineOwnedReviewerReferences']
+        : []),
+    ])
+  ) {
+    throw projectionInvalid('Reviewer term delta input is malformed.');
+  }
+  const references = assertEngineOwnedReviewerReferences(
+    input.engineOwnedReviewerReferences ?? [],
+  );
+  const existing = assertExistingContributions(
+    input.existingContributions,
+    references,
+  );
+  const proposed = assertTerms(
+    input.proposedTerms,
+    MAX_REVIEWER_INPUT_TERMS,
+    'Plan review proposed terms exceed the bounded projection input.',
+  );
+  const existingTermIds = new Set(
+    existing.flatMap(({ terms }) =>
+      terms.map((term) => normalizeInvestigationTerm(term).termId),
+    ),
+  );
+  const novelTerms = proposed.filter(
+    (term) => !existingTermIds.has(normalizeInvestigationTerm(term).termId),
+  );
+  return deepFreeze({
+    existingTermIds: [...existingTermIds].sort(),
+    novelTerms,
+  });
+}
+
+export function assertStoredReviewerTermDelta(input: {
+  proposedTerms: InvestigationTermInput[];
+  priorReviewerTerms: InvestigationTermInput[];
+  storedTerms: InvestigationTermInput[];
+}): InvestigationTermInput[] {
+  if (
+    !isPlainRecord(input) ||
+    !hasExactKeys(input, ['proposedTerms', 'priorReviewerTerms', 'storedTerms'])
+  ) {
+    throw projectionInvalid('Stored reviewer term delta input is malformed.');
+  }
+  const proposed = assertTerms(
+    input.proposedTerms,
+    MAX_REVIEWER_INPUT_TERMS,
+    'Plan review proposed terms exceed the bounded projection input.',
+  );
+  const prior = assertTerms(
+    input.priorReviewerTerms,
+    INVESTIGATION_LIMITS.maxReviewerTerms,
+    'Prior reviewer terms exceed the bounded stored input.',
+  );
+  const stored = assertTerms(
+    input.storedTerms,
+    INVESTIGATION_LIMITS.maxReviewerTerms,
+    'Stored reviewer terms exceed the bounded delta input.',
+  );
+  const proposedIds = new Set(
+    proposed.map((term) => normalizeInvestigationTerm(term).termId),
+  );
+  const priorIds = new Set(
+    prior.map((term) => normalizeInvestigationTerm(term).termId),
+  );
+  const storedIds = stored.map(
+    (term) => normalizeInvestigationTerm(term).termId,
+  );
+  if (
+    stored.length === 0 ||
+    new Set(storedIds).size !== storedIds.length ||
+    storedIds.some((termId) => !proposedIds.has(termId) || priorIds.has(termId))
+  ) {
+    throw projectionInvalid(
+      'Stored reviewer terms are not a unique novel subset of the bound review.',
+    );
+  }
+  return deepFreeze(stored);
+}
+
 function assertExistingContributions(
   value: unknown,
+  engineOwnedReviewerReferences: ReadonlySet<string>,
 ): InvestigationTermContribution[] {
   if (
     !Array.isArray(value) ||
@@ -162,7 +277,15 @@ function assertExistingContributions(
     const source = entry.source;
     const reference = entry.reference;
     const terms = entry.terms;
-    if (typeof source !== 'string' || !ALLOWED_EXISTING_SOURCES.has(source)) {
+    if (
+      typeof source !== 'string' ||
+      (!ALLOWED_EXISTING_SOURCES.has(source) &&
+        !(
+          source === 'reviewer' &&
+          typeof reference === 'string' &&
+          engineOwnedReviewerReferences.has(reference)
+        ))
+    ) {
       throw projectionInvalid(
         'Reviewer term provenance is engine-owned and cannot be caller-supplied.',
       );
@@ -203,6 +326,26 @@ function assertExistingContributions(
       ),
     } as InvestigationTermContribution;
   });
+}
+
+function assertEngineOwnedReviewerReferences(
+  value: unknown,
+): ReadonlySet<string> {
+  if (
+    !Array.isArray(value) ||
+    !isDenseArray(value) ||
+    value.length > INVESTIGATION_LIMITS.maxReviewerTerms ||
+    value.some(
+      (entry) => typeof entry !== 'string' || !/^[0-9a-f]{64}$/.test(entry),
+    )
+  ) {
+    throw projectionInvalid('Engine-owned reviewer references are malformed.');
+  }
+  const unique = new Set(value);
+  if (unique.size !== value.length) {
+    throw projectionInvalid('Engine-owned reviewer references are duplicated.');
+  }
+  return unique;
 }
 
 function assertTerms(
