@@ -13,6 +13,7 @@
     ".github/workflows/workflow-assurance.yml",
     "packages/workflow-engine/src/**",
     "packages/workflow-engine/test/fixture.ts",
+    "packages/workflow-engine/test/maintainer-mode.integration.test.ts",
     "packages/workflow-engine/test/plan-review.contract.test.ts",
     "workflow/ai-adapter-policy.json",
     "workflow/checks.json",
