@@ -807,6 +807,41 @@ test('runner wraps provider-native output only after unchanged governed projecti
   }
 });
 
+test('managed prompt exposes the scope-assessment category contract only to plan review', () => {
+  const scopeAssessmentInstruction =
+    'The output "scopeAssessment" is scope-only: set kind "challenges" if and only if at least one "findings" entry has category "missing-scope" or "missing-consumers"; otherwise set kind "no-challenge" with at least one evidence item, even when "findings" contains challenges in other categories.';
+  for (const purpose of ['survey', 'plan-review'] as const) {
+    const fixture = createRunnerFixture('claude', 1_048_576, 2, purpose);
+    let executeCount = 0;
+    try {
+      const host = claudeRunnerHost((input) => {
+        executeCount += 1;
+        assert.ok(Buffer.isBuffer(input.stdinContent));
+        const prompt = JSON.parse(input.stdinContent.toString('utf8')) as {
+          instructions: string[];
+        };
+        assert.equal(
+          prompt.instructions.includes(scopeAssessmentInstruction),
+          purpose === 'plan-review',
+        );
+        return successfulProbe(
+          JSON.stringify({
+            type: 'result',
+            subtype: 'success',
+            structured_output: semanticOutput(fixture.request),
+          }),
+        );
+      });
+      createProviderRunnerForTesting(host).run(fixture.input, {
+        platform: 'darwin',
+      });
+      assert.equal(executeCount, 1);
+    } finally {
+      fixture.cleanup();
+    }
+  }
+});
+
 test('runner rejects persistent files outside the exact runtime closure', () => {
   const fixture = createRunnerFixture();
   try {
@@ -1579,6 +1614,7 @@ function createRunnerFixture(
   providerId: 'claude' | 'codex' = 'claude',
   aggregateOutputBytes = 1_048_576,
   maxConcurrent = 2,
+  purpose: ProviderInvocationRequest['purpose'] = 'survey',
 ) {
   const repository = createFixtureRepository();
   const policyContent = writeAdapterPolicy(repository, true, maxConcurrent);
@@ -1587,7 +1623,10 @@ function createRunnerFixture(
     git(repository, ['commit', '-m', 'Add adapter policy']);
   }
   const invocationId = 'invocation-adapter-test';
-  const manifest = { kind: 'test-manifest', invocationId };
+  const manifest = {
+    kind: purpose === 'plan-review' ? 'plan-review-manifest' : 'test-manifest',
+    invocationId,
+  };
   const manifestDigest = sha256(canonicalJson(manifest));
   const request = providerRequest(
     sha256(policyContent),
@@ -1596,6 +1635,7 @@ function createRunnerFixture(
     aggregateOutputBytes,
     invocationId,
     manifestDigest,
+    purpose,
   );
   const invocationDirectoryPath = path.join(
     repository,
@@ -1645,6 +1685,7 @@ function providerRequest(
   aggregateOutputBytes = 1_048_576,
   invocationId = 'invocation-adapter-test',
   inputManifestDigest = 'd'.repeat(64),
+  purpose: ProviderInvocationRequest['purpose'] = 'survey',
 ): ProviderInvocationRequest {
   return createProviderInvocationRequest(
     providerRequestInput(
@@ -1654,6 +1695,7 @@ function providerRequest(
       aggregateOutputBytes,
       invocationId,
       inputManifestDigest,
+      purpose,
     ),
   );
 }
@@ -1665,6 +1707,7 @@ function providerRequestInput(
   aggregateOutputBytes = 1_048_576,
   invocationId = 'invocation-adapter-test',
   inputManifestDigest = 'd'.repeat(64),
+  purpose: ProviderInvocationRequest['purpose'] = 'survey',
 ): ProviderInvocationRequestInput {
   const outputSchemaDigest = crypto
     .createHash('sha256')
@@ -1673,10 +1716,10 @@ function providerRequestInput(
   return {
     invocationId,
     nonce: 'adapter-test-nonce-000000000000',
-    purpose: 'survey',
+    purpose,
     providerId,
     roleAssignment: {
-      role: 'blind-surveyor',
+      role: purpose === 'plan-review' ? 'plan-reviewer' : 'blind-surveyor',
       providerId,
       sessionId: 'provider-session-test',
       targetDigest: 'b'.repeat(64),
@@ -1696,7 +1739,10 @@ function providerRequestInput(
       version: 1,
       digest: outputSchemaDigest,
     },
-    evaluatorVersion: 'blind-survey-evaluator.v1',
+    evaluatorVersion:
+      purpose === 'plan-review'
+        ? 'plan-review.v2'
+        : 'blind-survey-evaluator.v1',
     policyDigest,
     limits: {
       timeoutMs: 300_000,

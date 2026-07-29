@@ -623,6 +623,59 @@ test('PlanReview requires complete coverage and evidence-bound challenge or no-c
   }
 });
 
+test('PlanReview scope assessment tracks only scope-category findings', () => {
+  const noScopeEvidence = [
+    {
+      kind: 'investigation-node' as const,
+      nodeId: DIGESTS.investigationNode,
+      resultDigest: DIGESTS.investigationResult,
+    },
+  ];
+  const contradictoryOnly = challengeSubmission();
+  contradictoryOnly.findings[0] = {
+    ...contradictoryOnly.findings[0]!,
+    category: 'contradictory-artifacts',
+    summary: 'Two planning artifacts assign incompatible completion work.',
+  };
+  assert.equal(PLAN_REVIEW_OUTPUT_VALIDATOR.validate(contradictoryOnly), false);
+
+  const contradictoryWithNoScopeChallenge = structuredClone(contradictoryOnly);
+  contradictoryWithNoScopeChallenge.scopeAssessment = {
+    kind: 'no-challenge',
+    evidence: noScopeEvidence,
+  };
+  assert.equal(
+    PLAN_REVIEW_OUTPUT_VALIDATOR.validate(contradictoryWithNoScopeChallenge),
+    true,
+  );
+
+  assert.equal(
+    PLAN_REVIEW_OUTPUT_VALIDATOR.validate(challengeSubmission()),
+    true,
+  );
+
+  const missingConsumer = challengeSubmission();
+  missingConsumer.findings[0] = {
+    ...missingConsumer.findings[0]!,
+    category: 'missing-consumers',
+  };
+  assert.equal(PLAN_REVIEW_OUTPUT_VALIDATOR.validate(missingConsumer), true);
+
+  const mixed = challengeSubmission();
+  mixed.findings.push(contradictoryOnly.findings[0]!);
+  assert.equal(PLAN_REVIEW_OUTPUT_VALIDATOR.validate(mixed), true);
+
+  const missingScopeWithNoScopeChallenge = challengeSubmission();
+  missingScopeWithNoScopeChallenge.scopeAssessment = {
+    kind: 'no-challenge',
+    evidence: noScopeEvidence,
+  };
+  assert.equal(
+    PLAN_REVIEW_OUTPUT_VALIDATOR.validate(missingScopeWithNoScopeChallenge),
+    false,
+  );
+});
+
 test('advisory verdict never replaces hard currentness and disposition gates', () => {
   const context = reviewContext();
   const submission = challengeSubmission({

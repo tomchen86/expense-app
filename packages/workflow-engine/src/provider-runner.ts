@@ -730,6 +730,7 @@ const PROVIDER_PURPOSE_INSTRUCTIONS: Readonly<
     // `assertCoverage`. A duplicated area is rejected after the provider has
     // already succeeded, and plan-review has no retry, so it is stated here.
     'The output "coverage" array must list every one of the seven coverage areas exactly once; a repeated area is rejected.',
+    'The output "scopeAssessment" is scope-only: set kind "challenges" if and only if at least one "findings" entry has category "missing-scope" or "missing-consumers"; otherwise set kind "no-challenge" with at least one evidence item, even when "findings" contains challenges in other categories.',
     // Advisory only: the engine scans every proposed term across the whole
     // pinned tree under a fixed per-term hit ceiling, and a term that exceeds
     // it currently has no recovery exit. A provider cannot count hits, so this
