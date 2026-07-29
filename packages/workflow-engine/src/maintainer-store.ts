@@ -75,15 +75,30 @@ export function storeAvailableMaintainerGrant(
   envelope: MaintainerGrantEnvelope,
 ): string {
   const paths = maintainerGrantStorePaths(gitCommonDirectory);
+  return withRepositoryLifecycleOperation(paths.runtime, (assertOwned) =>
+    storeAvailableMaintainerGrantUnderLifecycleLock(
+      gitCommonDirectory,
+      envelope,
+      assertOwned,
+    ),
+  );
+}
+
+export function storeAvailableMaintainerGrantUnderLifecycleLock(
+  gitCommonDirectory: string,
+  envelope: MaintainerGrantEnvelope,
+  assertOwned: () => void,
+): string {
+  const paths = maintainerGrantStorePaths(gitCommonDirectory);
   const grantId = assertMaintainerGrantId(envelope.payload.grantId);
-  return withRepositoryLifecycleOperation(paths.runtime, (assertOwned) => {
-    ensureStoreDirectories(paths);
-    assertOwned();
-    assertNoGrantState(paths, grantId);
-    const target = grantPath(paths.available, grantId);
-    createPrivateFileAtomic(target, canonicalGrantEnvelope(envelope));
-    return target;
-  });
+  assertOwned();
+  ensureStoreDirectories(paths);
+  assertOwned();
+  assertNoGrantState(paths, grantId);
+  const target = grantPath(paths.available, grantId);
+  createPrivateFileAtomic(target, canonicalGrantEnvelope(envelope));
+  assertOwned();
+  return target;
 }
 
 export function reserveMaintainerGrant(

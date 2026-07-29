@@ -3,7 +3,19 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 import { canonicalJson } from './canonical-json.ts';
+import {
+  exactUnsafePathObservationDigest,
+  readEvidenceNode,
+  readInvestigationEvidenceRefsClosure,
+  observeInvestigationEvidenceRefsAmbiguities,
+  resolvePlanReviewInvocationOwner,
+  type InvestigationEvidenceRefsClosure,
+} from './evidence-object-store.ts';
 import { ExitCode, type WorkflowError, workflowError } from './errors.ts';
+import {
+  publishPreparedExclusiveLock,
+  reclaimDeadPreparedLock,
+} from './filesystem-safety.ts';
 import type { InvestigationDispositionInput } from './investigation-groups.ts';
 import type { InvestigationWhyAnswer } from './investigation-why.ts';
 import {
@@ -12,6 +24,15 @@ import {
   type InvestigationMainTermInput,
   type InvestigationTermKind,
 } from './investigation-terms.ts';
+import {
+  recreateProviderInvocationRequest,
+  type ProviderInvocationRequest,
+} from './provider-contracts.ts';
+import {
+  isProposeExemptionInvestigationId,
+  readProposeExemptionSession,
+  type ProposeExemptionSession,
+} from './propose-exemption-store.ts';
 import {
   assertChangeId,
   assertInvestigationId,
@@ -22,9 +43,26 @@ import {
 const DIGEST = /^[0-9a-f]{64}$/;
 const GIT_OBJECT_ID = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
 const CHECKPOINT_ID = /^checkpoint-[0-9a-f]{64}$/;
+const ACTIVE_HUMAN_RESOLUTION_JOURNAL = /^([a-z0-9]+(?:-[a-z0-9]+)*)\.json$/;
+const ACTIVE_HUMAN_RESOLUTION_JOURNAL_TEMPORARY =
+  /^[a-z0-9]+(?:-[a-z0-9]+)*\.json\.[1-9][0-9]*\.[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\.tmp$/;
+const HUMAN_RESOLUTION_GRANT_FILE =
+  /^([0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})\.json$/;
+const HUMAN_RESOLUTION_GRANT_TEMPORARY =
+  /^([0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})\.json\.[1-9][0-9]*\.[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\.tmp$/;
 const MAX_CHECKPOINT_BYTES = 1_048_576;
 const MAX_HUMAN_RESOLUTION_BYTES = 1_048_576;
-const HUMAN_RESOLUTION_SCHEMA = 'investigation-human-resolution.v1';
+const BLIND_PROVIDER_ROOT_FILES = [
+  'manifest.json',
+  'request.json',
+  'state.json',
+] as const;
+const BLIND_PROVIDER_RUNTIME_FILES = [
+  'prompt.json',
+  'schema.json',
+  'semantic-output.json',
+] as const;
+const HUMAN_RESOLUTION_SCHEMA = 'investigation-human-resolution.v2';
 const HUMAN_RESOLUTION_DECISION_SCHEMAS = Object.freeze({
   'resume-with-capability': {
     schemaVersion: 1,
@@ -142,7 +180,7 @@ export type InvestigationHumanActionBlocker = {
 };
 
 export type InvestigationResolutionStateEnvelope = {
-  schemaVersion: 1;
+  schemaVersion: 2;
   workflowKind: 'investigation';
   repositoryId: string;
   changeId: string;
@@ -150,15 +188,65 @@ export type InvestigationResolutionStateEnvelope = {
   sessionDigest: string;
   sessionRevision: number;
   currentRefDigest: string | null;
+  startReservationDigest: string | null;
   resolutionHeadNodeId: string | null;
   providerInvocationDigests: Array<{
     invocationId: string;
     files: Array<{ name: string; digest: string }>;
   }>;
+  providerRetryReservations: Array<{
+    attempt: number;
+    previousInvocationId: string;
+    invocationId: string;
+    reservationDigest: string;
+    status: 'committed' | 'pending';
+  }>;
+  repositoryProviderLeases: Array<{
+    invocationId: string;
+    investigationId: string;
+    changeId: string;
+    revision: number;
+    leaseGeneration: number;
+    leaseDigest: string;
+  }>;
+  evidenceRefs: Record<string, string> | null;
   evidenceRefsDigest: string | null;
+  evidenceRefsClosureDigest: string | null;
   blockerDigest: string | null;
   ambiguityDigest: string | null;
 };
+
+export type ProviderInvocationLifecycleProjection = Readonly<{
+  invocationId: string;
+  investigationId: string;
+  ownerInvestigationId: string;
+  changeId: string;
+  purpose: 'survey' | 'plan-review';
+  attempt: number;
+  revision: number;
+  state: 'prepared' | 'leased' | 'succeeded' | 'failed';
+  requestDigest: string;
+  manifestDigest: string;
+  nonce: string;
+  failureKind: 'retryable' | 'repository-reconciliation-required' | null;
+  leaseGeneration: number;
+  lease: Readonly<{
+    generation: number;
+    workerId: string;
+    tokenDigest: string;
+    acquiredAt: string;
+    expiresAt: string;
+  }> | null;
+}>;
+
+export type ProviderInvocationLifecycleScan = Readonly<{
+  projections: readonly ProviderInvocationLifecycleProjection[];
+  unsafeInvocations: readonly Readonly<{
+    invocationId: string;
+    ownerInvestigationId: string | null;
+    observationDigest: string;
+  }>[];
+}>;
 
 export type InvestigationResolutionState = {
   envelope: InvestigationResolutionStateEnvelope;
@@ -207,20 +295,46 @@ export type HumanResolutionNode = {
 };
 
 export type HumanResolutionJournal = {
-  schemaVersion: 1;
+  schemaVersion: 2;
   kind: 'human-resolution-journal';
   journalId: string;
-  phase: 'prepared' | 'state-published' | 'receipt-written' | 'consumed';
+  phase:
+    | 'prepared'
+    | 'evidence-refs-published'
+    | 'start-reservation-published'
+    | 'current-ref-published'
+    | 'state-published'
+    | 'receipt-written'
+    | 'grant-consumed';
   grantId: string;
   grantDigest: string;
   target: HumanResolutionTarget;
   beforeStateDigest: string;
   afterStateDigest: string;
   beforeResolutionRef: string | null;
+  resolutionRefMode: 'preserve' | 'quarantine-whole';
   plannedResolutionNodeId: string;
   plannedCurrentWorkflowRef: {
     expectedInvestigationId: string | null;
+    expectedDigest: string | null;
     nextInvestigationId: string | null;
+    nextDigest: string | null;
+  };
+  plannedStartReservation: {
+    mode: 'preserve' | 'retire' | 'quarantine-whole';
+    expectedDigest: string | null;
+    nextDigest: string | null;
+    archiveDigest: string | null;
+  };
+  plannedEvidenceRefs: {
+    mode: 'preserve' | 'partition' | 'quarantine-whole';
+    expectedDigest: string | null;
+    nextDigest: string | null;
+    expectedClosureDigest: string | null;
+    nextClosureDigest: string | null;
+    retiredRefs: Record<string, string>;
+    retainedRefs: Record<string, string>;
+    archiveDigest: string | null;
   };
   evidenceArchiveDigest: string;
   receiptDigest: string;
@@ -233,6 +347,50 @@ export type HumanResolutionGrantStoreEntry = {
   envelopeBytes: string;
   terminalReason: string | null;
   recordedAt: string | null;
+};
+
+export type HumanResolutionGrantPublicationTemporary = {
+  temporaryName: string;
+  rawSha256: string;
+  unsafeObservationDigest: string;
+  byteLength: number;
+  parsedEnvelopeGrantId: string | null;
+};
+
+export type HumanResolutionGrantPublicationStoreState = {
+  grantId: string;
+  temporaries: HumanResolutionGrantPublicationTemporary[];
+  durable: {
+    availableDigest: string | null;
+    reservedDigest: string | null;
+    terminalDigest: string | null;
+  };
+  sameGrantJournalDigest: string | null;
+  sameGrantActiveJournalDigest: string | null;
+  sameGrantReceiptDigest: string | null;
+};
+
+export type HumanResolutionGrantPublicationAuditTag = {
+  status: 'absent' | 'present';
+  tagRef: string | null;
+  refObjectOid: string | null;
+  objectType: string | null;
+};
+
+export type HumanResolutionGrantPublicationStateBinding = {
+  auditTag: HumanResolutionGrantPublicationAuditTag;
+  publicationStateDigest: string;
+};
+
+export type HumanResolutionGrantPublicationStoreInspection = {
+  storeState: HumanResolutionGrantPublicationStoreState;
+  preparedBinding: HumanResolutionGrantPublicationStateBinding | null;
+};
+
+export type QuarantinedHumanResolutionGrantPublication = {
+  action: 'quarantined';
+  grantId: string;
+  publicationStateDigest: string;
 };
 
 export type InvestigationCheckpointKind =
@@ -638,6 +796,126 @@ export function quarantineUnsafeCurrentInvestigationRef(
   );
 }
 
+export function archiveHumanResolutionSingleton(
+  paths: InvestigationRuntimePaths,
+  kind: 'start-reservation' | 'evidence-refs',
+  expectedDigest: string,
+  content: string,
+  newlineRequired: boolean,
+): string {
+  if (!isDigest(expectedDigest)) {
+    throw humanResolutionRecoveryAmbiguous();
+  }
+  const targetDirectory = path.join(
+    humanResolutionPaths(paths).retiredRefs,
+    kind,
+  );
+  const target = path.join(targetDirectory, `${expectedDigest}.artifact`);
+  if (
+    sha256(content) !== expectedDigest ||
+    !canonicalPrivateContent(content, newlineRequired)
+  ) {
+    throw humanResolutionRecoveryAmbiguous();
+  }
+  ensurePrivateInvestigationDirectory(
+    paths,
+    targetDirectory,
+    humanResolutionArchiveUnsafe,
+  );
+  const targetStats = fs.lstatSync(target, { throwIfNoEntry: false });
+  if (targetStats) {
+    const targetContent = readPrivateFile(target, humanResolutionArchiveUnsafe);
+    if (
+      sha256(targetContent) !== expectedDigest ||
+      !canonicalPrivateContent(targetContent, newlineRequired) ||
+      targetContent !== content
+    ) {
+      throw humanResolutionRecoveryAmbiguous();
+    }
+    return expectedDigest;
+  }
+  createPrivateRawFile(paths, target, content, humanResolutionArchiveUnsafe);
+  return expectedDigest;
+}
+
+export function quarantineUnsafeInvestigationStartReservation(
+  paths: InvestigationRuntimePaths,
+  requestedChangeId: string,
+  expectedObservationDigest: string,
+): string {
+  const changeId = assertChangeId(requestedChangeId);
+  if (!isDigest(expectedObservationDigest)) {
+    throw humanResolutionRecoveryAmbiguous();
+  }
+  const object = 'start-reservation';
+  const source = investigationStartReservationPath(paths, changeId);
+  const sourceDirectory = path.dirname(source);
+  const quarantineDirectory = humanResolutionPaths(paths).quarantine;
+  const target = path.join(
+    quarantineDirectory,
+    `${changeId}.${expectedObservationDigest}.start-reservation.artifact`,
+  );
+  const lockPath = path.join(
+    paths.locks,
+    `${changeId}.investigation-start.lock`,
+  );
+  const makeError = startReservationUnsafe;
+  return withPrivateRuntimeLock(
+    paths,
+    lockPath,
+    () => {
+      if (!walkPrivateDirectory(paths, sourceDirectory, makeError, false)) {
+        throw humanResolutionRecoveryAmbiguous();
+      }
+      const sourceStats = fs.lstatSync(source, { throwIfNoEntry: false });
+      if (!sourceStats) {
+        const targetStats = fs.lstatSync(target, { throwIfNoEntry: false });
+        if (
+          targetStats &&
+          observeUnsafePath(target, object, []) === expectedObservationDigest
+        ) {
+          return target;
+        }
+        throw humanResolutionRecoveryAmbiguous();
+      }
+      if (observeUnsafePath(source, object, []) !== expectedObservationDigest) {
+        throw humanResolutionRecoveryAmbiguous();
+      }
+      ensurePrivateInvestigationDirectory(
+        paths,
+        quarantineDirectory,
+        humanResolutionArchiveUnsafe,
+      );
+      if (fs.lstatSync(target, { throwIfNoEntry: false })) {
+        throw humanResolutionRecoveryAmbiguous();
+      }
+      fs.renameSync(source, target);
+      fsyncDirectory(sourceDirectory);
+      fsyncDirectory(quarantineDirectory);
+      if (observeUnsafePath(target, object, []) !== expectedObservationDigest) {
+        throw humanResolutionRecoveryAmbiguous();
+      }
+      return target;
+    },
+    'HUMAN_RESOLUTION_SINGLETON_OPERATION_CONFLICT',
+    makeError,
+  );
+}
+
+function canonicalPrivateContent(
+  content: string,
+  newlineRequired: boolean,
+): boolean {
+  let value: unknown;
+  try {
+    value = JSON.parse(content);
+  } catch {
+    return false;
+  }
+  const canonical = canonicalJson(value);
+  return content === (newlineRequired ? `${canonical}\n` : canonical);
+}
+
 export function humanResolutionDecisionSchemaDigest(
   kind: HumanResolutionDecision['kind'],
 ): string {
@@ -748,6 +1026,261 @@ export function assertHumanResolutionConsequences(
   return deepFreeze(structuredClone(value)) as HumanResolutionConsequences;
 }
 
+export function listProviderInvocationLifecycleProjections(
+  paths: InvestigationRuntimePaths,
+): ProviderInvocationLifecycleProjection[] {
+  const scan = scanProviderInvocationLifecycles(paths);
+  if (scan.unsafeInvocations.length > 0) {
+    throw providerInvocationUnsafe();
+  }
+  return [...scan.projections];
+}
+
+export function scanProviderInvocationLifecycles(
+  paths: InvestigationRuntimePaths,
+): ProviderInvocationLifecycleScan {
+  const stats = fs.lstatSync(paths.invocations, { throwIfNoEntry: false });
+  if (!stats) {
+    return deepFreeze({ projections: [], unsafeInvocations: [] });
+  }
+  if (
+    !stats.isDirectory() ||
+    stats.isSymbolicLink() ||
+    !walkPrivateDirectory(
+      paths,
+      paths.invocations,
+      providerInvocationUnsafe,
+      false,
+    )
+  ) {
+    throw providerInvocationUnsafe();
+  }
+  const projections: ProviderInvocationLifecycleProjection[] = [];
+  const unsafeInvocations: Array<{
+    invocationId: string;
+    ownerInvestigationId: string | null;
+    observationDigest: string;
+  }> = [];
+  for (const entry of fs
+    .readdirSync(paths.invocations, { withFileTypes: true })
+    .sort((left, right) => left.name.localeCompare(right.name))) {
+    if (!entry.isDirectory() || entry.isSymbolicLink()) {
+      throw providerInvocationUnsafe();
+    }
+    const invocationId = assertInvocationId(entry.name);
+    try {
+      projections.push(
+        readProviderInvocationLifecycleProjection(paths, invocationId),
+      );
+    } catch {
+      unsafeInvocations.push({
+        invocationId,
+        ownerInvestigationId: tryReadPlanReviewInvocationOwnerHint(
+          paths,
+          invocationId,
+        ),
+        observationDigest: exactUnsafePathObservationDigest(
+          path.join(paths.invocations, invocationId),
+          `provider-invocation:${invocationId}`,
+        ),
+      });
+    }
+  }
+  return deepFreeze({
+    projections,
+    unsafeInvocations,
+  });
+}
+
+function tryReadPlanReviewInvocationOwnerHint(
+  paths: InvestigationRuntimePaths,
+  invocationId: string,
+): string | null {
+  try {
+    const directory = path.join(paths.invocations, invocationId);
+    const request = recreateProviderInvocationRequest(
+      readPrivateCanonicalJson(
+        paths,
+        path.join(directory, 'request.json'),
+        providerInvocationUnsafe,
+      ),
+    );
+    const manifest = readPrivateCanonicalJson(
+      paths,
+      path.join(directory, 'manifest.json'),
+      providerInvocationUnsafe,
+    );
+    if (
+      request.purpose !== 'plan-review' ||
+      !isRecord(manifest) ||
+      manifest.kind !== 'plan-review-manifest' ||
+      typeof manifest.changeId !== 'string'
+    ) {
+      return null;
+    }
+    return resolvePlanReviewInvocationOwner(paths, {
+      changeId: String(manifest.changeId),
+      subject: manifest.subject,
+      assignment: request.roleAssignment,
+      authorizationNodeId: request.authorizationNodeId,
+    });
+  } catch {
+    return null;
+  }
+}
+
+export function readProviderInvocationLifecycleProjection(
+  paths: InvestigationRuntimePaths,
+  requestedInvocationId: string,
+): ProviderInvocationLifecycleProjection {
+  const invocationId = assertInvocationId(requestedInvocationId);
+  const directory = path.join(paths.invocations, invocationId);
+  const value = readPrivateCanonicalJson(
+    paths,
+    path.join(directory, 'state.json'),
+    providerInvocationUnsafe,
+  );
+  const requestValue = readPrivateCanonicalJson(
+    paths,
+    path.join(directory, 'request.json'),
+    providerInvocationUnsafe,
+  );
+  const manifest = readPrivateCanonicalJson(
+    paths,
+    path.join(directory, 'manifest.json'),
+    providerInvocationUnsafe,
+  );
+  let request: ProviderInvocationRequest;
+  try {
+    request = recreateProviderInvocationRequest(requestValue);
+  } catch {
+    throw providerInvocationUnsafe();
+  }
+  if (
+    !isRecord(value) ||
+    !hasExactKeys(value, [
+      'schemaVersion',
+      'invocationId',
+      'investigationId',
+      'changeId',
+      'attempt',
+      'revision',
+      'state',
+      'providerId',
+      'purpose',
+      'requestDigest',
+      'manifestDigest',
+      'leaseGeneration',
+      'lease',
+      'result',
+      'failure',
+      'createdAt',
+      'updatedAt',
+    ]) ||
+    value.schemaVersion !== 1 ||
+    value.invocationId !== invocationId ||
+    typeof value.investigationId !== 'string' ||
+    typeof value.changeId !== 'string' ||
+    !Number.isSafeInteger(value.attempt) ||
+    (value.attempt as number) < 1 ||
+    !Number.isSafeInteger(value.revision) ||
+    (value.revision as number) < 0 ||
+    !['prepared', 'leased', 'succeeded', 'failed'].includes(
+      String(value.state),
+    ) ||
+    (value.providerId !== 'codex' && value.providerId !== 'claude') ||
+    (value.purpose !== 'survey' && value.purpose !== 'plan-review') ||
+    !isDigest(value.requestDigest) ||
+    !isDigest(value.manifestDigest) ||
+    !isProviderInvocationFailureShape(value.failure) ||
+    !Number.isSafeInteger(value.leaseGeneration) ||
+    (value.leaseGeneration as number) < 0 ||
+    !isProviderInvocationLifecycleLease(value.lease) ||
+    !isTimestamp(value.createdAt) ||
+    !isTimestamp(value.updatedAt) ||
+    !isRecord(manifest) ||
+    manifest.schemaVersion !== 1 ||
+    !['blind-survey-manifest', 'plan-review-manifest'].includes(
+      String(manifest.kind),
+    ) ||
+    manifest.changeId !== value.changeId ||
+    manifest.repositoryId !== request.repositoryId ||
+    manifest.baseCommit !== request.baseCommit ||
+    manifest.baseTree !== request.baseTree ||
+    manifest.capabilityProfile !== request.capabilityProfile ||
+    request.invocationId !== invocationId ||
+    request.requestDigest !== value.requestDigest ||
+    request.providerId !== value.providerId ||
+    request.purpose !== value.purpose ||
+    sha256(canonicalJson(manifest)) !== value.manifestDigest ||
+    (value.purpose === 'survey' && manifest.kind !== 'blind-survey-manifest') ||
+    (value.purpose === 'plan-review' &&
+      manifest.kind !== 'plan-review-manifest')
+  ) {
+    throw providerInvocationUnsafe();
+  }
+  assertInvestigationId(value.investigationId);
+  assertChangeId(value.changeId);
+  if (
+    (value.state === 'prepared' &&
+      (value.lease !== null ||
+        value.result !== null ||
+        value.failure !== null)) ||
+    (value.state === 'leased' &&
+      (value.lease === null ||
+        value.result !== null ||
+        value.failure !== null)) ||
+    (value.state === 'succeeded' &&
+      (value.lease !== null ||
+        value.result === null ||
+        value.failure !== null)) ||
+    (value.state === 'failed' &&
+      (value.lease !== null ||
+        value.result !== null ||
+        value.failure === null)) ||
+    (value.lease !== null && value.lease.generation !== value.leaseGeneration)
+  ) {
+    throw providerInvocationUnsafe();
+  }
+  const ownerInvestigationId =
+    value.purpose === 'plan-review'
+      ? resolvePlanReviewInvocationOwner(paths, {
+          changeId: value.changeId,
+          subject: manifest.subject,
+          assignment: request.roleAssignment,
+          authorizationNodeId: request.authorizationNodeId,
+        })
+      : value.investigationId;
+  if (ownerInvestigationId !== value.investigationId) {
+    throw providerInvocationUnsafe();
+  }
+  return deepFreeze({
+    invocationId,
+    investigationId: value.investigationId,
+    ownerInvestigationId,
+    changeId: value.changeId,
+    purpose: value.purpose,
+    attempt: value.attempt,
+    revision: value.revision,
+    state: value.state,
+    requestDigest: value.requestDigest,
+    manifestDigest: value.manifestDigest,
+    nonce: request.nonce,
+    failureKind: value.failure === null ? null : value.failure.kind,
+    leaseGeneration: value.leaseGeneration,
+    lease:
+      value.lease === null
+        ? null
+        : {
+            generation: value.lease.generation,
+            workerId: value.lease.workerId,
+            tokenDigest: value.lease.tokenDigest,
+            acquiredAt: value.lease.acquiredAt,
+            expiresAt: value.lease.expiresAt,
+          },
+  } as ProviderInvocationLifecycleProjection);
+}
+
 export function inspectInvestigationResolutionState(
   paths: InvestigationRuntimePaths,
   requestedInvestigationId: string,
@@ -761,6 +1294,11 @@ export function inspectInvestigationResolutionState(
   const currentRef = readCurrentInvestigationRef(paths, session.changeId);
   const currentRefDigest =
     currentRef === null ? null : sha256(`${canonicalJson(currentRef)}\n`);
+  const startReservationDigest = digestBoundStartReservation(
+    paths,
+    session,
+    startReservationUnsafe,
+  );
   const resolutionHeadNodeId = readHumanResolutionHead(paths, investigationId);
   const resolutionNode =
     resolutionHeadNodeId === null
@@ -773,26 +1311,31 @@ export function inspectInvestigationResolutionState(
   ) {
     throw humanResolutionStateInvalid();
   }
-  const providerInvocationDigests = session.blindInvocationIds.map(
-    (invocationId) => ({
-      invocationId,
-      files: digestPrivateDirectoryEntries(
-        paths,
-        path.join(paths.invocations, invocationId),
-        providerInvocationUnsafe,
-      ),
-    }),
-  );
-  const evidenceRefsDigest = digestOptionalCanonicalPrivateFile(
+  const retryState = bindProviderRetryReservationResolutionState(
     paths,
-    path.join(paths.refs, `${session.changeId}.json`),
-    false,
-    evidenceRefsUnsafe,
+    session,
+    providerInvocationUnsafe,
   );
+  const providerState = bindProviderInvocationResolutionState(
+    paths,
+    session,
+    retryState.bindings,
+  );
+  const evidenceClosure = readInvestigationEvidenceRefsClosure(
+    paths,
+    session.changeId,
+  );
+  assertEvidenceClosureTargetBinding(paths, session, evidenceClosure);
+  const evidenceRefsDigest = evidenceClosure.snapshot.digest;
+  const evidenceRefs =
+    evidenceClosure.snapshot.refs === null
+      ? null
+      : { ...evidenceClosure.snapshot.refs };
+  const evidenceRefsClosureDigest = evidenceClosure.closureDigest;
   const blockerDigest =
     session.blocker === null ? null : sha256(canonicalJson(session.blocker));
   const envelope: InvestigationResolutionStateEnvelope = {
-    schemaVersion: 1,
+    schemaVersion: 2,
     workflowKind: 'investigation',
     repositoryId,
     changeId: session.changeId,
@@ -800,9 +1343,14 @@ export function inspectInvestigationResolutionState(
     sessionDigest: sha256(`${canonicalJson(session)}\n`),
     sessionRevision: session.revision,
     currentRefDigest,
+    startReservationDigest,
     resolutionHeadNodeId,
-    providerInvocationDigests,
+    providerInvocationDigests: providerState.providerInvocationDigests,
+    providerRetryReservations: retryState.reservations,
+    repositoryProviderLeases: providerState.repositoryProviderLeases,
+    evidenceRefs,
     evidenceRefsDigest,
+    evidenceRefsClosureDigest,
     blockerDigest,
     ambiguityDigest: null,
   };
@@ -888,9 +1436,38 @@ export function inspectInvestigationQuarantineState(
       ambiguities,
     );
   }
-  let resolutionHeadNodeId: string | null;
+  let startReservationDigest: string | null;
   try {
-    resolutionHeadNodeId = readHumanResolutionHead(paths, investigationId);
+    startReservationDigest = digestBoundStartReservation(
+      paths,
+      session,
+      startReservationUnsafe,
+    );
+  } catch {
+    startReservationDigest = observeUnsafePath(
+      investigationStartReservationPath(paths, session.changeId),
+      'start-reservation',
+      ambiguities,
+    );
+  }
+  let resolutionHeadNodeId: string | null;
+  let resolutionNode: HumanResolutionNode | null = null;
+  try {
+    resolutionHeadNodeId = readHumanResolutionHeadReference(
+      paths,
+      investigationId,
+    );
+    if (resolutionHeadNodeId !== null) {
+      try {
+        resolutionNode = readHumanResolutionNode(paths, resolutionHeadNodeId);
+      } catch {
+        observeUnsafePath(
+          humanResolutionNodePath(paths, resolutionHeadNodeId),
+          `resolution-node:${resolutionHeadNodeId}`,
+          ambiguities,
+        );
+      }
+    }
   } catch {
     observeUnsafePath(
       humanResolutionRefPath(paths, investigationId),
@@ -899,58 +1476,99 @@ export function inspectInvestigationQuarantineState(
     );
     resolutionHeadNodeId = null;
   }
-  const providerInvocationDigests = session.blindInvocationIds.map(
-    (invocationId) => {
-      try {
-        return {
-          invocationId,
-          files: digestPrivateDirectoryEntries(
-            paths,
-            path.join(paths.invocations, invocationId),
-            providerInvocationUnsafe,
-          ),
-        };
-      } catch {
-        const digestValue = observeUnsafePath(
-          path.join(paths.invocations, invocationId),
-          `provider-invocation:${invocationId}`,
-          ambiguities,
-        );
-        return {
-          invocationId,
-          files: [{ name: 'unsafe-observation', digest: digestValue }],
-        };
-      }
-    },
-  );
-  let evidenceRefsDigest: string | null;
+  let providerRetryReservations: InvestigationResolutionStateEnvelope['providerRetryReservations'];
+  let providerRetryBindings: BoundProviderRetryReservation[] = [];
   try {
-    evidenceRefsDigest = digestOptionalCanonicalPrivateFile(
+    const retryState = bindProviderRetryReservationResolutionState(
       paths,
-      path.join(paths.refs, `${session.changeId}.json`),
-      false,
-      evidenceRefsUnsafe,
+      session,
+      providerInvocationUnsafe,
     );
+    providerRetryReservations = retryState.reservations;
+    providerRetryBindings = retryState.bindings;
   } catch {
-    evidenceRefsDigest = observeUnsafePath(
-      path.join(paths.refs, `${session.changeId}.json`),
-      'evidence-refs',
-      ambiguities,
+    providerRetryReservations = [];
+    observeProviderRetryReservationAmbiguities(paths, session, ambiguities);
+  }
+  let providerInvocationDigests: InvestigationResolutionStateEnvelope['providerInvocationDigests'];
+  let repositoryProviderLeases: InvestigationResolutionStateEnvelope['repositoryProviderLeases'];
+  try {
+    const providerState = bindProviderInvocationResolutionState(
+      paths,
+      session,
+      providerRetryBindings,
     );
+    providerInvocationDigests = providerState.providerInvocationDigests;
+    repositoryProviderLeases = providerState.repositoryProviderLeases;
+  } catch {
+    providerInvocationDigests = session.blindInvocationIds.map(
+      (invocationId) => {
+        try {
+          return {
+            invocationId,
+            files: digestPrivateDirectoryEntries(
+              paths,
+              path.join(paths.invocations, invocationId),
+              providerInvocationUnsafe,
+            ),
+          };
+        } catch {
+          const digestValue = observeUnsafePath(
+            path.join(paths.invocations, invocationId),
+            `provider-invocation:${invocationId}`,
+            ambiguities,
+          );
+          return {
+            invocationId,
+            files: [{ name: 'unsafe-observation', digest: digestValue }],
+          };
+        }
+      },
+    );
+    repositoryProviderLeases = [];
+    observeUnsafePath(paths.invocations, 'provider-invocations', ambiguities);
+  }
+  let evidenceRefs: Record<string, string> | null;
+  let evidenceRefsDigest: string | null;
+  let evidenceRefsClosureDigest: string | null;
+  try {
+    const evidenceClosure = readInvestigationEvidenceRefsClosure(
+      paths,
+      session.changeId,
+    );
+    assertEvidenceClosureTargetBinding(paths, session, evidenceClosure);
+    evidenceRefsDigest = evidenceClosure.snapshot.digest;
+    evidenceRefs =
+      evidenceClosure.snapshot.refs === null
+        ? null
+        : { ...evidenceClosure.snapshot.refs };
+    evidenceRefsClosureDigest = evidenceClosure.closureDigest;
+  } catch {
+    evidenceRefs = null;
+    evidenceRefsClosureDigest = null;
+    const observations = observeInvestigationEvidenceRefsAmbiguities(
+      paths,
+      session.changeId,
+    );
+    ambiguities.push(...observations);
+    evidenceRefsDigest =
+      observations.find(({ object }) => object === 'evidence-refs')
+        ?.observationDigest ?? null;
   }
   if (ambiguities.length === 0) {
     throw humanResolutionStateInvalid();
   }
+  const normalizedAmbiguities = normalizeAmbiguityObservations(ambiguities);
   const ambiguityDigest = sha256(
     canonicalJson({
       schema: 'investigation-quarantine-observation.v1',
-      ambiguities,
+      ambiguities: normalizedAmbiguities,
     }),
   );
   const blockerDigest =
     session.blocker === null ? null : sha256(canonicalJson(session.blocker));
   const envelope: InvestigationResolutionStateEnvelope = {
-    schemaVersion: 1,
+    schemaVersion: 2,
     workflowKind: 'investigation',
     repositoryId,
     changeId: session.changeId,
@@ -958,16 +1576,17 @@ export function inspectInvestigationQuarantineState(
     sessionDigest: sha256(`${canonicalJson(session)}\n`),
     sessionRevision: session.revision,
     currentRefDigest,
+    startReservationDigest,
     resolutionHeadNodeId,
     providerInvocationDigests,
+    providerRetryReservations,
+    repositoryProviderLeases,
+    evidenceRefs,
     evidenceRefsDigest,
+    evidenceRefsClosureDigest,
     blockerDigest,
     ambiguityDigest,
   };
-  const resolutionNode =
-    resolutionHeadNodeId === null
-      ? null
-      : readHumanResolutionNode(paths, resolutionHeadNodeId);
   const effectiveState =
     resolutionNode === null
       ? ('human-action-required' as const)
@@ -1024,7 +1643,6 @@ export function advertisedHumanResolutions(
   const kinds: HumanResolutionDecision['kind'][] = [
     'abort',
     'quarantine',
-    'repair',
     'supersede',
   ];
   if (
@@ -1249,19 +1867,22 @@ export function withPrivateRuntimeLock<T>(
     path.dirname(lockPath),
     invalidLock,
   );
+  const ownerToken = crypto.randomUUID();
   const marker = `${canonicalJson({
     schemaVersion: 1,
-    ownerToken: crypto.randomUUID(),
+    ownerToken,
     pid: process.pid,
     createdAt: new Date().toISOString(),
   })}\n`;
   let descriptor: number | undefined;
   for (let attempt = 0; attempt < 2; attempt += 1) {
     try {
-      descriptor = fs.openSync(lockPath, NO_FOLLOW_CREATE, 0o600);
-      fs.fchmodSync(descriptor, 0o600);
-      fs.writeFileSync(descriptor, marker, 'utf8');
-      fs.fsyncSync(descriptor);
+      descriptor = publishPreparedExclusiveLock(
+        lockPath,
+        marker,
+        ownerToken,
+        invalidLock,
+      );
       break;
     } catch (error) {
       if (descriptor !== undefined) {
@@ -1403,7 +2024,7 @@ export function createHumanResolutionJournal(
   input: Omit<HumanResolutionJournal, 'schemaVersion' | 'kind' | 'journalId'>,
 ): HumanResolutionJournal {
   const semantic = {
-    schemaVersion: 1 as const,
+    schemaVersion: 2 as const,
     kind: 'human-resolution-journal' as const,
     phase: input.phase,
     grantId: input.grantId,
@@ -1412,8 +2033,11 @@ export function createHumanResolutionJournal(
     beforeStateDigest: input.beforeStateDigest,
     afterStateDigest: input.afterStateDigest,
     beforeResolutionRef: input.beforeResolutionRef,
+    resolutionRefMode: input.resolutionRefMode,
     plannedResolutionNodeId: input.plannedResolutionNodeId,
     plannedCurrentWorkflowRef: input.plannedCurrentWorkflowRef,
+    plannedStartReservation: input.plannedStartReservation,
+    plannedEvidenceRefs: input.plannedEvidenceRefs,
     evidenceArchiveDigest: input.evidenceArchiveDigest,
     receiptDigest: input.receiptDigest,
     createdAt: input.createdAt,
@@ -1422,7 +2046,7 @@ export function createHumanResolutionJournal(
     ...semantic,
     journalId: sha256(
       canonicalJson({
-        schema: 'human-resolution-journal.v1',
+        schema: 'human-resolution-journal.v2',
         journal: humanResolutionJournalIdentity(semantic),
       }),
     ),
@@ -1468,6 +2092,20 @@ export function readHumanResolutionHead(
   paths: InvestigationRuntimePaths,
   requestedInvestigationId: string,
 ): string | null {
+  const nodeId = readHumanResolutionHeadReference(
+    paths,
+    requestedInvestigationId,
+  );
+  if (nodeId !== null) {
+    readHumanResolutionNode(paths, nodeId);
+  }
+  return nodeId;
+}
+
+function readHumanResolutionHeadReference(
+  paths: InvestigationRuntimePaths,
+  requestedInvestigationId: string,
+): string | null {
   const investigationId = assertInvestigationId(requestedInvestigationId);
   const refPath = humanResolutionRefPath(paths, investigationId);
   if (!privatePathExists(paths, refPath, humanResolutionRefUnsafe)) {
@@ -1487,7 +2125,6 @@ export function readHumanResolutionHead(
   ) {
     throw humanResolutionRefUnsafe();
   }
-  readHumanResolutionNode(paths, value.nodeId);
   return value.nodeId;
 }
 
@@ -1649,10 +2286,20 @@ export function storeAvailableHumanResolutionGrant(
   const grantId = assertHumanResolutionGrantId(requestedGrantId);
   assertCanonicalResolutionEnvelopeBytes(canonicalEnvelope);
   const stores = humanResolutionPaths(paths);
-  return withPrivateRuntimeLock(
+  return withHumanResolutionGrantStoreLock(
     paths,
-    path.join(stores.locks, 'grant-store.lock'),
+    stores,
     () => {
+      if (
+        readHumanResolutionGrantPublicationRecovery(paths, stores, grantId) !==
+        null
+      ) {
+        throw workflowError(
+          'HUMAN_RESOLUTION_GRANT_EXISTS',
+          `Human resolution grant ${grantId} already has publication recovery history.`,
+          ExitCode.conflict,
+        );
+      }
       for (const directory of [
         stores.available,
         stores.reserved,
@@ -1676,8 +2323,40 @@ export function storeAvailableHumanResolutionGrant(
       );
       return target;
     },
-    'HUMAN_RESOLUTION_GRANT_STORE_CONFLICT',
-    humanResolutionGrantUnsafe,
+    {
+      allowPreparedPublicationRecovery: true,
+      targetGrantId: grantId,
+    },
+  );
+}
+
+export function rollbackAvailableHumanResolutionGrant(
+  paths: InvestigationRuntimePaths,
+  requestedGrantId: string,
+  canonicalEnvelope: string,
+): 'absent' | 'different' | 'removed' {
+  const grantId = assertHumanResolutionGrantId(requestedGrantId);
+  assertCanonicalResolutionEnvelopeBytes(canonicalEnvelope);
+  const stores = humanResolutionPaths(paths);
+  return withHumanResolutionGrantStoreLock(
+    paths,
+    stores,
+    () => {
+      const target = path.join(stores.available, `${grantId}.json`);
+      if (!privatePathExists(paths, target, humanResolutionGrantUnsafe)) {
+        return 'absent';
+      }
+      if (
+        readPrivateFile(target, humanResolutionGrantUnsafe) !==
+        canonicalEnvelope
+      ) {
+        return 'different';
+      }
+      fs.unlinkSync(target);
+      fsyncDirectory(stores.available);
+      return 'removed';
+    },
+    { targetGrantId: grantId },
   );
 }
 
@@ -1685,12 +2364,18 @@ export function withHumanResolutionGrantExecution<T>(
   paths: InvestigationRuntimePaths,
   requestedGrantId: string,
   operation: () => T,
+  options: { allowPublicationRecovery?: boolean } = {},
 ): T {
   const grantId = assertHumanResolutionGrantId(requestedGrantId);
   return withPrivateRuntimeLock(
     paths,
     path.join(humanResolutionPaths(paths).locks, `${grantId}.execution.lock`),
-    operation,
+    () => {
+      if (!options.allowPublicationRecovery) {
+        assertNoPreparedHumanResolutionGrantPublicationRecovery(paths, grantId);
+      }
+      return operation();
+    },
     'HUMAN_RESOLUTION_OPERATION_CONFLICT',
     humanResolutionGrantUnsafe,
   );
@@ -1723,6 +2408,251 @@ export function inspectStoredHumanResolutionGrants(
   return entries;
 }
 
+export function inspectInterruptedHumanResolutionGrantPublications(
+  paths: InvestigationRuntimePaths,
+  requestedGrantId?: string,
+): HumanResolutionGrantPublicationStoreInspection[] {
+  const grantId =
+    requestedGrantId === undefined
+      ? undefined
+      : assertHumanResolutionGrantId(requestedGrantId);
+  const stores = humanResolutionPaths(paths);
+  return withHumanResolutionGrantStoreLock(
+    paths,
+    stores,
+    () => {
+      listHumanResolutionGrantIds(paths, stores.available);
+      const temporaryGrantIds = walkPrivateDirectory(
+        paths,
+        stores.available,
+        humanResolutionGrantUnsafe,
+        false,
+      )
+        ? fs.readdirSync(stores.available).flatMap((temporaryName) => {
+            const match = HUMAN_RESOLUTION_GRANT_TEMPORARY.exec(temporaryName);
+            if (!match?.[1]) {
+              return [];
+            }
+            const observedGrantId = assertHumanResolutionGrantId(match[1]);
+            return grantId === undefined || observedGrantId === grantId
+              ? [observedGrantId]
+              : [];
+          })
+        : [];
+      const recoveryGrantIds =
+        grantId === undefined
+          ? listHumanResolutionGrantPublicationRecoveryIds(paths, stores)
+          : privatePathExists(
+                paths,
+                humanResolutionGrantPublicationRecoveryPath(stores, grantId),
+                humanResolutionGrantUnsafe,
+              )
+            ? [grantId]
+            : [];
+      const preparedReceiptGrantIds = recoveryGrantIds.filter(
+        (observedGrantId) =>
+          readHumanResolutionGrantPublicationRecovery(
+            paths,
+            stores,
+            observedGrantId,
+          )?.phase === 'prepared',
+      );
+      const grantIds = [
+        ...new Set([...temporaryGrantIds, ...preparedReceiptGrantIds]),
+      ].sort();
+      return grantIds.map((observedGrantId) => {
+        const receipt = readHumanResolutionGrantPublicationRecovery(
+          paths,
+          stores,
+          observedGrantId,
+        );
+        if (receipt?.phase === 'prepared') {
+          assertHumanResolutionGrantPublicationQuarantineReplayState(
+            paths,
+            stores,
+            receipt,
+          );
+          return {
+            storeState: receipt.publicationStoreState,
+            preparedBinding: {
+              auditTag: receipt.auditTag,
+              publicationStateDigest: receipt.publicationStateDigest,
+            },
+          };
+        }
+        return {
+          storeState: observeHumanResolutionGrantPublicationStoreState(
+            paths,
+            stores,
+            observedGrantId,
+          ),
+          preparedBinding: null,
+        };
+      });
+    },
+    {
+      allowInterruptedAvailablePublication: true,
+      allowPreparedPublicationRecovery: true,
+      targetGrantId: grantId,
+    },
+  );
+}
+
+export function quarantineInterruptedHumanResolutionGrantPublication(
+  paths: InvestigationRuntimePaths,
+  requestedGrantId: string,
+  expectedPublicationStateDigest: string,
+  reason: string,
+  bindPublicationState: (
+    storeState: HumanResolutionGrantPublicationStoreState,
+  ) => HumanResolutionGrantPublicationStateBinding,
+  now: Date = new Date(),
+): QuarantinedHumanResolutionGrantPublication {
+  const grantId = assertHumanResolutionGrantId(requestedGrantId);
+  if (
+    !isDigest(expectedPublicationStateDigest) ||
+    !isBoundedResolutionText(reason, 1024) ||
+    !Number.isFinite(now.getTime())
+  ) {
+    throw humanResolutionGrantPublicationRecoveryInvalid();
+  }
+  const stores = humanResolutionPaths(paths);
+  const recoveryId = sha256(
+    canonicalJson({
+      schema: 'human-resolution-grant-publication-quarantine.v1',
+      grantId,
+      publicationStateDigest: expectedPublicationStateDigest,
+    }),
+  );
+  const receiptPath = humanResolutionGrantPublicationRecoveryPath(
+    stores,
+    grantId,
+  );
+  const result = {
+    action: 'quarantined' as const,
+    grantId,
+    publicationStateDigest: expectedPublicationStateDigest,
+  };
+  return withHumanResolutionGrantStoreLock(
+    paths,
+    stores,
+    () => {
+      const existingReceipt = privatePathExists(
+        paths,
+        receiptPath,
+        humanResolutionGrantUnsafe,
+      )
+        ? readPrivateCanonicalJson(
+            paths,
+            receiptPath,
+            humanResolutionGrantUnsafe,
+          )
+        : null;
+      if (existingReceipt !== null) {
+        const receipt = assertHumanResolutionGrantPublicationQuarantineReceipt(
+          existingReceipt,
+          grantId,
+        );
+        if (
+          receipt.recoveryId !== recoveryId ||
+          receipt.publicationStateDigest !== expectedPublicationStateDigest ||
+          receipt.reason !== reason
+        ) {
+          throw humanResolutionGrantPublicationRecoveryStale();
+        }
+        assertHumanResolutionGrantPublicationQuarantineReplayState(
+          paths,
+          stores,
+          receipt,
+        );
+        completeHumanResolutionGrantPublicationQuarantine(
+          paths,
+          stores,
+          receipt,
+        );
+        finalizeHumanResolutionGrantPublicationQuarantineReceipt(
+          paths,
+          receiptPath,
+          receipt,
+        );
+        return result;
+      }
+      const observed = observeHumanResolutionGrantPublicationStoreState(
+        paths,
+        stores,
+        grantId,
+      );
+      const binding = bindPublicationState(observed);
+      const observedStateDigest = binding.publicationStateDigest;
+      if (
+        !isDigest(observedStateDigest) ||
+        observedStateDigest !== expectedPublicationStateDigest
+      ) {
+        throw humanResolutionGrantPublicationRecoveryStale();
+      }
+      if (observed.temporaries.length === 0) {
+        throw humanResolutionGrantPublicationRecoveryAmbiguous();
+      }
+      ensurePrivateInvestigationDirectory(
+        paths,
+        stores.quarantine,
+        humanResolutionGrantUnsafe,
+      );
+      const receipt = {
+        schemaVersion: 1 as const,
+        kind: 'human-resolution-grant-publication-recovery' as const,
+        recoveryId,
+        action: 'quarantined' as const,
+        phase: 'prepared' as const,
+        grantId,
+        publicationStateDigest: expectedPublicationStateDigest,
+        auditTag: binding.auditTag,
+        publicationStoreState: observed,
+        artifacts: observed.temporaries.map((temporary, index) => ({
+          temporaryName: temporary.temporaryName,
+          rawSha256: temporary.rawSha256,
+          unsafeObservationDigest: temporary.unsafeObservationDigest,
+          byteLength: temporary.byteLength,
+          quarantineArtifact: `${recoveryId}.${index + 1}.grant-publication.artifact`,
+        })),
+        reason,
+        recordedAt: now.toISOString(),
+      };
+      createPrivateRawFile(
+        paths,
+        receiptPath,
+        `${canonicalJson(receipt)}\n`,
+        humanResolutionGrantUnsafe,
+      );
+      const validatedReceipt =
+        assertHumanResolutionGrantPublicationQuarantineReceipt(
+          readPrivateCanonicalJson(
+            paths,
+            receiptPath,
+            humanResolutionGrantUnsafe,
+          ),
+          grantId,
+        );
+      completeHumanResolutionGrantPublicationQuarantine(
+        paths,
+        stores,
+        validatedReceipt,
+      );
+      finalizeHumanResolutionGrantPublicationQuarantineReceipt(
+        paths,
+        receiptPath,
+        validatedReceipt,
+      );
+      return result;
+    },
+    {
+      allowInterruptedAvailablePublication: true,
+      allowPreparedPublicationRecovery: true,
+      targetGrantId: grantId,
+    },
+  );
+}
+
 export function revokeStoredHumanResolutionGrant(
   paths: InvestigationRuntimePaths,
   requestedGrantId: string,
@@ -1730,10 +2660,28 @@ export function revokeStoredHumanResolutionGrant(
 ): HumanResolutionGrantStoreEntry {
   const grantId = assertHumanResolutionGrantId(requestedGrantId);
   const stores = humanResolutionPaths(paths);
-  return withPrivateRuntimeLock(
+  return withHumanResolutionGrantStoreLock(
     paths,
-    path.join(stores.locks, 'grant-store.lock'),
+    stores,
     () => {
+      const terminalPath = path.join(stores.terminal, `${grantId}.json`);
+      if (privatePathExists(paths, terminalPath, humanResolutionGrantUnsafe)) {
+        const terminal = readPrivateCanonicalJson(
+          paths,
+          terminalPath,
+          humanResolutionGrantUnsafe,
+        );
+        reconcileTerminalHumanResolutionGrantResidual(
+          paths,
+          stores,
+          grantId,
+          terminal,
+        );
+        return inspectStoredHumanResolutionGrant(
+          paths,
+          grantId,
+        ) as HumanResolutionGrantStoreEntry;
+      }
       const terminalEntry = inspectStoredHumanResolutionGrant(paths, grantId);
       if (
         terminalEntry?.state === 'revoked' ||
@@ -1759,7 +2707,6 @@ export function revokeStoredHumanResolutionGrant(
           ? stores.available
           : stores.reserved;
       const sourcePath = path.join(sourceDirectory, `${grantId}.json`);
-      const terminalPath = path.join(stores.terminal, `${grantId}.json`);
       const envelope = JSON.parse(terminalEntry.envelopeBytes) as unknown;
       const record = {
         schemaVersion: 1,
@@ -1783,8 +2730,7 @@ export function revokeStoredHumanResolutionGrant(
         grantId,
       ) as HumanResolutionGrantStoreEntry;
     },
-    'HUMAN_RESOLUTION_GRANT_STORE_CONFLICT',
-    humanResolutionGrantUnsafe,
+    { targetGrantId: grantId },
   );
 }
 
@@ -1794,9 +2740,9 @@ export function reserveHumanResolutionGrant(
 ): string {
   const grantId = assertHumanResolutionGrantId(requestedGrantId);
   const stores = humanResolutionPaths(paths);
-  return withPrivateRuntimeLock(
+  return withHumanResolutionGrantStoreLock(
     paths,
-    path.join(stores.locks, 'grant-store.lock'),
+    stores,
     () => {
       const available = path.join(stores.available, `${grantId}.json`);
       const reserved = path.join(stores.reserved, `${grantId}.json`);
@@ -1822,8 +2768,35 @@ export function reserveHumanResolutionGrant(
       fsyncDirectory(path.dirname(reserved));
       return envelope;
     },
-    'HUMAN_RESOLUTION_GRANT_STORE_CONFLICT',
-    humanResolutionGrantUnsafe,
+    { targetGrantId: grantId },
+  );
+}
+
+export function readAvailableHumanResolutionGrant(
+  paths: InvestigationRuntimePaths,
+  requestedGrantId: string,
+): string {
+  const grantId = assertHumanResolutionGrantId(requestedGrantId);
+  const stores = humanResolutionPaths(paths);
+  return withHumanResolutionGrantStoreLock(
+    paths,
+    stores,
+    () => {
+      const available = path.join(stores.available, `${grantId}.json`);
+      const reserved = path.join(stores.reserved, `${grantId}.json`);
+      const terminal = path.join(stores.terminal, `${grantId}.json`);
+      if (
+        privatePathExists(paths, reserved, humanResolutionGrantUnsafe) ||
+        privatePathExists(paths, terminal, humanResolutionGrantUnsafe) ||
+        !privatePathExists(paths, available, humanResolutionGrantUnsafe)
+      ) {
+        throw humanResolutionGrantUnavailable(grantId);
+      }
+      const envelope = readPrivateFile(available, humanResolutionGrantUnsafe);
+      assertCanonicalResolutionEnvelopeBytes(envelope);
+      return envelope;
+    },
+    { targetGrantId: grantId },
   );
 }
 
@@ -1832,13 +2805,18 @@ export function readReservedHumanResolutionGrant(
   requestedGrantId: string,
 ): string {
   const grantId = assertHumanResolutionGrantId(requestedGrantId);
-  const filePath = path.join(
-    humanResolutionPaths(paths).reserved,
-    `${grantId}.json`,
+  const stores = humanResolutionPaths(paths);
+  return withHumanResolutionGrantStoreLock(
+    paths,
+    stores,
+    () => {
+      const filePath = path.join(stores.reserved, `${grantId}.json`);
+      const envelope = readPrivateFile(filePath, humanResolutionGrantUnsafe);
+      assertCanonicalResolutionEnvelopeBytes(envelope);
+      return envelope;
+    },
+    { targetGrantId: grantId },
   );
-  const envelope = readPrivateFile(filePath, humanResolutionGrantUnsafe);
-  assertCanonicalResolutionEnvelopeBytes(envelope);
-  return envelope;
 }
 
 export function terminalizeHumanResolutionGrant(
@@ -1848,9 +2826,9 @@ export function terminalizeHumanResolutionGrant(
 ): void {
   const grantId = assertHumanResolutionGrantId(requestedGrantId);
   const stores = humanResolutionPaths(paths);
-  withPrivateRuntimeLock(
+  withHumanResolutionGrantStoreLock(
     paths,
-    path.join(stores.locks, 'grant-store.lock'),
+    stores,
     () => {
       const reserved = path.join(stores.reserved, `${grantId}.json`);
       const terminal = path.join(stores.terminal, `${grantId}.json`);
@@ -1863,6 +2841,12 @@ export function terminalizeHumanResolutionGrant(
         if (canonicalJson(existing) !== canonicalJson(record)) {
           throw humanResolutionGrantUnavailable(grantId);
         }
+        reconcileTerminalHumanResolutionGrantResidual(
+          paths,
+          stores,
+          grantId,
+          existing,
+        );
         return;
       }
       if (!privatePathExists(paths, reserved, humanResolutionGrantUnsafe)) {
@@ -1878,9 +2862,45 @@ export function terminalizeHumanResolutionGrant(
       fs.unlinkSync(reserved);
       fsyncDirectory(path.dirname(reserved));
     },
-    'HUMAN_RESOLUTION_GRANT_STORE_CONFLICT',
-    humanResolutionGrantUnsafe,
+    { targetGrantId: grantId },
   );
+}
+
+function reconcileTerminalHumanResolutionGrantResidual(
+  paths: InvestigationRuntimePaths,
+  stores: ReturnType<typeof humanResolutionPaths>,
+  grantId: string,
+  terminal: unknown,
+): void {
+  assertTerminalHumanResolutionGrant(terminal, grantId);
+  const residuals = [stores.available, stores.reserved]
+    .map((directory) => ({
+      directory,
+      state:
+        directory === stores.available
+          ? ('available' as const)
+          : ('reserved' as const),
+      filePath: path.join(directory, `${grantId}.json`),
+    }))
+    .filter(({ filePath }) =>
+      privatePathExists(paths, filePath, humanResolutionGrantUnsafe),
+    );
+  if (residuals.length > 1) {
+    throw humanResolutionGrantUnsafe();
+  }
+  const residual = residuals[0];
+  if (!residual) {
+    return;
+  }
+  assertTerminalHumanResolutionGrantResidual(
+    paths,
+    grantId,
+    terminal,
+    residual.state,
+    residual.filePath,
+  );
+  fs.unlinkSync(residual.filePath);
+  fsyncDirectory(residual.directory);
 }
 
 export function readTerminalHumanResolutionGrant(
@@ -1888,22 +2908,28 @@ export function readTerminalHumanResolutionGrant(
   requestedGrantId: string,
 ): Record<string, unknown> | null {
   const grantId = assertHumanResolutionGrantId(requestedGrantId);
-  const terminal = path.join(
-    humanResolutionPaths(paths).terminal,
-    `${grantId}.json`,
-  );
-  if (!privatePathExists(paths, terminal, humanResolutionGrantUnsafe)) {
-    return null;
-  }
-  const value = readPrivateCanonicalJson(
+  const stores = humanResolutionPaths(paths);
+  return withHumanResolutionGrantStoreLock(
     paths,
-    terminal,
-    humanResolutionGrantUnsafe,
+    stores,
+    () => {
+      const terminal = path.join(stores.terminal, `${grantId}.json`);
+      if (!privatePathExists(paths, terminal, humanResolutionGrantUnsafe)) {
+        return null;
+      }
+      const value = readPrivateCanonicalJson(
+        paths,
+        terminal,
+        humanResolutionGrantUnsafe,
+      );
+      if (!isRecord(value)) {
+        throw humanResolutionGrantUnsafe();
+      }
+      assertTerminalHumanResolutionGrant(value, grantId);
+      return deepFreeze(value);
+    },
+    { targetGrantId: grantId },
   );
-  if (!isRecord(value)) {
-    throw humanResolutionGrantUnsafe();
-  }
-  return deepFreeze(value);
 }
 
 function inspectStoredHumanResolutionGrant(
@@ -1925,15 +2951,44 @@ function inspectStoredHumanResolutionGrant(
   if (candidates.length === 0) {
     return null;
   }
+  const terminalCandidate = candidates.find(
+    ({ state }) => state === 'terminal',
+  );
+  if (terminalCandidate) {
+    const terminal = readPrivateCanonicalJson(
+      paths,
+      path.join(terminalCandidate.directory, `${grantId}.json`),
+      humanResolutionGrantUnsafe,
+    );
+    const terminalEntry = assertTerminalHumanResolutionGrant(terminal, grantId);
+    const residuals = candidates.filter(({ state }) => state !== 'terminal');
+    if (residuals.length > 1) {
+      throw humanResolutionGrantUnsafe();
+    }
+    const residual = residuals[0];
+    if (residual) {
+      if (residual.state === 'terminal') {
+        throw humanResolutionGrantUnsafe();
+      }
+      assertTerminalHumanResolutionGrantResidual(
+        paths,
+        grantId,
+        terminal,
+        residual.state,
+        path.join(residual.directory, `${grantId}.json`),
+      );
+    }
+    return terminalEntry;
+  }
   if (candidates.length !== 1) {
     throw humanResolutionGrantUnsafe();
   }
   const candidate = candidates[0];
-  if (!candidate) {
+  if (!candidate || candidate.state === 'terminal') {
     throw humanResolutionGrantUnsafe();
   }
   const filePath = path.join(candidate.directory, `${grantId}.json`);
-  if (candidate.state !== 'terminal') {
+  {
     const envelopeBytes = readPrivateFile(filePath, humanResolutionGrantUnsafe);
     assertCanonicalResolutionEnvelopeBytes(envelopeBytes);
     return deepFreeze({
@@ -1944,35 +2999,81 @@ function inspectStoredHumanResolutionGrant(
       recordedAt: null,
     });
   }
-  const terminal = readPrivateCanonicalJson(
-    paths,
-    filePath,
-    humanResolutionGrantUnsafe,
-  );
+}
+
+function assertTerminalHumanResolutionGrant(
+  terminal: unknown,
+  grantId: string,
+): HumanResolutionGrantStoreEntry {
+  const terminalState =
+    isRecord(terminal) &&
+    (terminal.state === 'revoked' || terminal.state === 'consumed')
+      ? terminal.state
+      : null;
+  const expectedKeys =
+    terminalState === 'revoked'
+      ? [
+          'schemaVersion',
+          'state',
+          'grantId',
+          'reason',
+          'recordedAt',
+          'envelope',
+        ]
+      : [
+          'schemaVersion',
+          'state',
+          'grantId',
+          'resolutionNodeId',
+          'receiptDigest',
+          'recordedAt',
+          'envelope',
+        ];
   if (
     !isRecord(terminal) ||
+    !hasExactKeys(terminal, expectedKeys) ||
     terminal.schemaVersion !== 1 ||
-    (terminal.state !== 'revoked' && terminal.state !== 'consumed') ||
+    terminalState === null ||
     terminal.grantId !== grantId ||
-    typeof terminal.recordedAt !== 'string' ||
+    !isTimestamp(terminal.recordedAt) ||
     !isRecord(terminal.envelope) ||
-    (terminal.state === 'revoked' && typeof terminal.reason !== 'string') ||
-    (terminal.state === 'consumed' &&
-      (typeof terminal.resolutionNodeId !== 'string' ||
-        typeof terminal.receiptDigest !== 'string'))
+    (terminalState === 'revoked' &&
+      !isBoundedResolutionText(terminal.reason, 1024)) ||
+    (terminalState === 'consumed' &&
+      (!isDigest(terminal.resolutionNodeId) ||
+        !isDigest(terminal.receiptDigest)))
   ) {
     throw humanResolutionGrantUnsafe();
   }
-  const envelopeBytes = `${JSON.stringify(terminal.envelope)}\n`;
+  const envelopeBytes = `${canonicalJson(terminal.envelope)}\n`;
   assertCanonicalResolutionEnvelopeBytes(envelopeBytes);
   return deepFreeze({
     grantId,
-    state: terminal.state,
+    state: terminalState,
     envelopeBytes,
     terminalReason:
-      terminal.state === 'revoked' ? String(terminal.reason) : null,
-    recordedAt: terminal.recordedAt,
+      terminalState === 'revoked' ? String(terminal.reason) : null,
+    recordedAt: terminal.recordedAt as string,
   });
+}
+
+function assertTerminalHumanResolutionGrantResidual(
+  paths: InvestigationRuntimePaths,
+  grantId: string,
+  terminal: unknown,
+  residualState: 'available' | 'reserved',
+  residualPath: string,
+): void {
+  const terminalEntry = assertTerminalHumanResolutionGrant(terminal, grantId);
+  if (terminalEntry.state === 'consumed' && residualState !== 'reserved') {
+    throw humanResolutionGrantUnsafe();
+  }
+  if (
+    readPrivateFile(residualPath, humanResolutionGrantUnsafe) !==
+    terminalEntry.envelopeBytes
+  ) {
+    throw humanResolutionGrantUnsafe();
+  }
 }
 
 export function writeHumanResolutionJournal(
@@ -1980,12 +3081,97 @@ export function writeHumanResolutionJournal(
   journal: HumanResolutionJournal,
 ): void {
   const validated = assertHumanResolutionJournal(journal);
+  const activePath = activeHumanResolutionJournalPath(
+    paths,
+    validated.target.changeId,
+  );
+  const historicalPath = humanResolutionJournalPath(paths, validated.grantId);
+  if (validated.phase === 'grant-consumed') {
+    const active = readActiveHumanResolutionJournal(
+      paths,
+      validated.target.changeId,
+    );
+    if (
+      active === null ||
+      active.journalId !== validated.journalId ||
+      active.grantId !== validated.grantId
+    ) {
+      const historical = readHistoricalHumanResolutionJournal(
+        paths,
+        validated.grantId,
+      );
+      if (
+        historical?.phase === 'grant-consumed' &&
+        historical.journalId === validated.journalId
+      ) {
+        return;
+      }
+      throw humanResolutionRecoveryAmbiguous();
+    }
+    createPrivateCanonicalJson(
+      paths,
+      historicalPath,
+      validated,
+      humanResolutionJournalUnsafe,
+      'HUMAN_RESOLUTION_JOURNAL_COLLISION',
+    );
+    fs.unlinkSync(activePath);
+    fsyncDirectory(path.dirname(activePath));
+    return;
+  }
+  const active = readActiveHumanResolutionJournal(
+    paths,
+    validated.target.changeId,
+  );
+  if (active === null) {
+    if (validated.phase !== 'prepared') {
+      throw humanResolutionRecoveryAmbiguous();
+    }
+    createPrivateCanonicalJson(
+      paths,
+      activePath,
+      validated,
+      humanResolutionJournalUnsafe,
+      'HUMAN_RESOLUTION_ACTIVE_CONFLICT',
+    );
+    return;
+  }
+  if (
+    active.journalId !== validated.journalId ||
+    active.grantId !== validated.grantId
+  ) {
+    throw workflowError(
+      'HUMAN_RESOLUTION_RECOVERY_REQUIRED',
+      'Another human-resolution transaction must be recovered first.',
+      ExitCode.conflict,
+    );
+  }
+  if (
+    humanResolutionJournalPhaseIndex(validated.phase) <
+    humanResolutionJournalPhaseIndex(active.phase)
+  ) {
+    throw humanResolutionRecoveryAmbiguous();
+  }
   writePrivateCanonicalJsonAtomic(
     paths,
-    humanResolutionJournalPath(paths, journal.grantId),
+    activePath,
     validated,
     humanResolutionJournalUnsafe,
   );
+}
+
+function humanResolutionJournalPhaseIndex(
+  phase: HumanResolutionJournal['phase'],
+): number {
+  return [
+    'prepared',
+    'evidence-refs-published',
+    'start-reservation-published',
+    'current-ref-published',
+    'state-published',
+    'receipt-written',
+    'grant-consumed',
+  ].indexOf(phase);
 }
 
 export function readHumanResolutionJournal(
@@ -1993,13 +3179,204 @@ export function readHumanResolutionJournal(
   requestedGrantId: string,
 ): HumanResolutionJournal | null {
   const grantId = assertHumanResolutionGrantId(requestedGrantId);
+  const historical = readHistoricalHumanResolutionJournal(paths, grantId);
+  if (historical !== null) {
+    return historical;
+  }
+  const active = scanActiveHumanResolutionJournalDirectory(paths);
+  if (active === null) {
+    return null;
+  }
+  let match: HumanResolutionJournal | null = null;
+  for (const name of active.journalNames) {
+    const changeId = ACTIVE_HUMAN_RESOLUTION_JOURNAL.exec(name)?.[1];
+    if (!changeId) throw humanResolutionJournalUnsafe();
+    const candidate = readActiveHumanResolutionJournal(paths, changeId);
+    if (candidate?.grantId !== grantId) {
+      continue;
+    }
+    if (match !== null) {
+      throw humanResolutionJournalUnsafe();
+    }
+    match = candidate;
+  }
+  return match;
+}
+
+export function readActiveHumanResolutionJournal(
+  paths: InvestigationRuntimePaths,
+  requestedChangeId: string,
+): HumanResolutionJournal | null {
+  const changeId = assertChangeId(requestedChangeId);
+  const journalPath = activeHumanResolutionJournalPath(paths, changeId);
+  if (!privatePathExists(paths, journalPath, humanResolutionJournalUnsafe)) {
+    return null;
+  }
+  const journal = assertHumanResolutionJournal(
+    readPrivateCanonicalJson(paths, journalPath, humanResolutionJournalUnsafe),
+  );
+  if (journal.target.changeId !== changeId) {
+    throw humanResolutionJournalUnsafe();
+  }
+  return journal;
+}
+
+function readHistoricalHumanResolutionJournal(
+  paths: InvestigationRuntimePaths,
+  grantId: string,
+): HumanResolutionJournal | null {
   const journalPath = humanResolutionJournalPath(paths, grantId);
   if (!privatePathExists(paths, journalPath, humanResolutionJournalUnsafe)) {
     return null;
   }
-  return assertHumanResolutionJournal(
+  const journal = assertHumanResolutionJournal(
     readPrivateCanonicalJson(paths, journalPath, humanResolutionJournalUnsafe),
   );
+  if (journal.grantId !== grantId || journal.phase !== 'grant-consumed') {
+    throw humanResolutionJournalUnsafe();
+  }
+  return journal;
+}
+
+export function assertHumanResolutionLifecycleBarrier(
+  runtimeRoot: string,
+  allowedGrantId: string | null = null,
+  allowedChangeId: string | null = null,
+): void {
+  if ((allowedGrantId === null) !== (allowedChangeId === null)) {
+    throw humanResolutionJournalUnsafe();
+  }
+  const paths = investigationPathsFromLifecycleRoot(runtimeRoot);
+  if (paths === null) {
+    return;
+  }
+  const scanned = scanActiveHumanResolutionJournalDirectory(paths);
+  if (scanned === null) {
+    return;
+  }
+  const active = scanned.journalNames.map((name) => {
+    const match = ACTIVE_HUMAN_RESOLUTION_JOURNAL.exec(name);
+    if (!match?.[1]) {
+      throw humanResolutionJournalUnsafe();
+    }
+    const changeId = assertChangeId(match[1]);
+    const journal = readActiveHumanResolutionJournal(paths, changeId);
+    if (journal === null || journal.target.changeId !== changeId) {
+      throw humanResolutionJournalUnsafe();
+    }
+    return journal;
+  });
+  if (
+    active.length === 0 ||
+    (allowedGrantId !== null &&
+      allowedChangeId !== null &&
+      active.length === 1 &&
+      active[0]?.grantId === allowedGrantId &&
+      active[0]?.target.changeId === allowedChangeId)
+  ) {
+    return;
+  }
+  throw workflowError(
+    'HUMAN_RESOLUTION_RECOVERY_REQUIRED',
+    'An active human-resolution transaction blocks repository lifecycle changes.',
+    ExitCode.conflict,
+  );
+}
+
+export function reclaimHumanResolutionJournalTemporaries(
+  runtimeRoot: string,
+  assertRepositoryLifecycleOwned: () => void,
+): void {
+  assertRepositoryLifecycleOwned();
+  const paths = investigationPathsFromLifecycleRoot(runtimeRoot);
+  if (paths === null) {
+    return;
+  }
+  const scanned = scanActiveHumanResolutionJournalDirectory(paths);
+  if (scanned === null || scanned.temporaryPaths.length === 0) {
+    return;
+  }
+  let removed = false;
+  for (const temporaryPath of scanned.temporaryPaths) {
+    assertRepositoryLifecycleOwned();
+    const stats = fs.lstatSync(temporaryPath, { throwIfNoEntry: false });
+    if (!stats) {
+      continue;
+    }
+    assertPrivateFile(stats, humanResolutionJournalUnsafe);
+    fs.unlinkSync(temporaryPath);
+    removed = true;
+  }
+  if (removed) {
+    fsyncDirectory(scanned.activeDirectory);
+  }
+  assertRepositoryLifecycleOwned();
+}
+
+function investigationPathsFromLifecycleRoot(
+  runtimeRoot: string,
+): InvestigationRuntimePaths | null {
+  const resolvedRoot = path.resolve(runtimeRoot);
+  const runtimeStats = fs.lstatSync(resolvedRoot, { throwIfNoEntry: false });
+  if (!runtimeStats) {
+    return null;
+  }
+  if (!runtimeStats.isDirectory() || runtimeStats.isSymbolicLink()) {
+    throw humanResolutionJournalUnsafe();
+  }
+  const base = fs.realpathSync(resolvedRoot);
+  const root = path.join(base, 'investigations');
+  return {
+    base,
+    root,
+    objects: path.join(root, 'objects', 'sha256'),
+    refs: path.join(root, 'refs'),
+    sessions: path.join(root, 'sessions'),
+    invocations: path.join(root, 'invocations'),
+    locks: path.join(root, 'locks'),
+  };
+}
+
+function scanActiveHumanResolutionJournalDirectory(
+  paths: InvestigationRuntimePaths,
+): {
+  activeDirectory: string;
+  journalNames: string[];
+  temporaryPaths: string[];
+} | null {
+  const activeDirectory = humanResolutionPaths(paths).active;
+  if (
+    !walkPrivateDirectory(
+      paths,
+      activeDirectory,
+      humanResolutionJournalUnsafe,
+      false,
+    )
+  ) {
+    return null;
+  }
+  const journalNames: string[] = [];
+  const temporaryPaths: string[] = [];
+  for (const name of fs.readdirSync(activeDirectory).sort()) {
+    if (ACTIVE_HUMAN_RESOLUTION_JOURNAL.test(name)) {
+      journalNames.push(name);
+      continue;
+    }
+    if (!ACTIVE_HUMAN_RESOLUTION_JOURNAL_TEMPORARY.test(name)) {
+      throw humanResolutionJournalUnsafe();
+    }
+    const temporaryPath = path.join(activeDirectory, name);
+    const stats = fs.lstatSync(temporaryPath, { throwIfNoEntry: false });
+    if (!stats) {
+      continue;
+    }
+    assertPrivateFile(stats, humanResolutionJournalUnsafe);
+    temporaryPaths.push(temporaryPath);
+  }
+  if (journalNames.length > 4096) {
+    throw humanResolutionJournalUnsafe();
+  }
+  return { activeDirectory, journalNames, temporaryPaths };
 }
 
 export function writeHumanResolutionArchive(
@@ -2586,6 +3963,13 @@ function readPrivateFile(
   filePath: string,
   makeError: () => WorkflowError,
 ): string {
+  return readPrivateBuffer(filePath, makeError).toString('utf8');
+}
+
+function readPrivateBuffer(
+  filePath: string,
+  makeError: () => WorkflowError,
+): Buffer {
   const before = fs.lstatSync(filePath, { throwIfNoEntry: false });
   if (!before) {
     throw makeError();
@@ -2606,7 +3990,7 @@ function readPrivateFile(
     if (opened.dev !== before.dev || opened.ino !== before.ino) {
       throw makeError();
     }
-    return fs.readFileSync(descriptor, 'utf8');
+    return fs.readFileSync(descriptor);
   } finally {
     fs.closeSync(descriptor);
   }
@@ -2668,8 +4052,13 @@ function releasePrivateRuntimeLock(
   }
   fs.closeSync(descriptor);
   if (
+    !owned.isFile() ||
+    owned.nlink !== 1 ||
+    (owned.mode & 0o777) !== 0o600 ||
     !observed?.isFile() ||
     observed.isSymbolicLink() ||
+    observed.nlink !== 1 ||
+    (observed.mode & 0o777) !== 0o600 ||
     observed.dev !== owned.dev ||
     observed.ino !== owned.ino ||
     content !== marker
@@ -2684,32 +4073,12 @@ function reclaimDeadPrivateRuntimeLock(
   lockPath: string,
   invalidLock: () => WorkflowError,
 ): boolean {
-  const before = fs.lstatSync(lockPath, { throwIfNoEntry: false });
-  if (!before) {
-    return true;
-  }
-  assertPrivateFile(before, invalidLock);
-  let descriptor: number | undefined;
-  try {
-    descriptor = fs.openSync(
-      lockPath,
-      fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW,
-    );
-  } catch {
-    throw invalidLock();
-  }
-  try {
-    const opened = fs.fstatSync(descriptor);
-    assertPrivateFile(opened, invalidLock);
-    if (opened.dev !== before.dev || opened.ino !== before.ino) {
-      throw invalidLock();
-    }
-    const content = fs.readFileSync(descriptor, 'utf8');
+  const result = reclaimDeadPreparedLock(lockPath, (content) => {
     let value: unknown;
     try {
       value = JSON.parse(content);
     } catch {
-      throw invalidLock();
+      return null;
     }
     if (
       !isRecord(value) ||
@@ -2721,40 +4090,22 @@ function reclaimDeadPrivateRuntimeLock(
       ]) ||
       value.schemaVersion !== 1 ||
       typeof value.ownerToken !== 'string' ||
-      value.ownerToken.length === 0 ||
       !Number.isSafeInteger(value.pid) ||
       (value.pid as number) < 1 ||
       !isTimestamp(value.createdAt) ||
       `${canonicalJson(value)}\n` !== content
     ) {
-      throw invalidLock();
+      return null;
     }
-    if (isProcessAlive(value.pid as number)) {
-      return false;
-    }
-    const observed = fs.lstatSync(lockPath, { throwIfNoEntry: false });
-    if (
-      !observed ||
-      observed.dev !== opened.dev ||
-      observed.ino !== opened.ino
-    ) {
-      return true;
-    }
-    fs.unlinkSync(lockPath);
-    fsyncDirectory(path.dirname(lockPath));
-    return true;
-  } finally {
-    fs.closeSync(descriptor);
+    return {
+      pid: value.pid as number,
+      ownerToken: value.ownerToken,
+    };
+  });
+  if (result === 'unsafe') {
+    throw invalidLock();
   }
-}
-
-function isProcessAlive(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error) {
-    return !(isNodeError(error) && error.code === 'ESRCH');
-  }
+  return result === 'absent' || result === 'reclaimed';
 }
 
 function assertPrivateFile(
@@ -2785,6 +4136,13 @@ function currentInvestigationRefPath(
   return path.join(paths.refs, `${changeId}.investigation-session.json`);
 }
 
+function investigationStartReservationPath(
+  paths: InvestigationRuntimePaths,
+  changeId: string,
+): string {
+  return path.join(paths.refs, `${changeId}.investigation-start.json`);
+}
+
 function humanResolutionPaths(paths: InvestigationRuntimePaths) {
   const root = path.join(paths.root, 'human-resolutions');
   return {
@@ -2794,12 +4152,150 @@ function humanResolutionPaths(paths: InvestigationRuntimePaths) {
     available: path.join(root, 'grants', 'available'),
     reserved: path.join(root, 'grants', 'reserved'),
     terminal: path.join(root, 'grants', 'terminal'),
+    publicationRecoveries: path.join(root, 'grants', 'publication-recoveries'),
+    active: path.join(root, 'active'),
     journals: path.join(root, 'journals'),
     receipts: path.join(root, 'receipts'),
     archives: path.join(root, 'archives'),
+    retiredRefs: path.join(root, 'retired-refs'),
     quarantine: path.join(root, 'quarantine'),
     locks: path.join(root, 'locks'),
   };
+}
+
+function humanResolutionGrantPublicationRecoveryPath(
+  stores: ReturnType<typeof humanResolutionPaths>,
+  grantId: string,
+): string {
+  return path.join(stores.publicationRecoveries, `${grantId}.json`);
+}
+
+function readHumanResolutionGrantPublicationRecovery(
+  paths: InvestigationRuntimePaths,
+  stores: ReturnType<typeof humanResolutionPaths>,
+  grantId: string,
+): HumanResolutionGrantPublicationQuarantineReceipt | null {
+  const receiptPath = humanResolutionGrantPublicationRecoveryPath(
+    stores,
+    grantId,
+  );
+  if (!privatePathExists(paths, receiptPath, humanResolutionGrantUnsafe)) {
+    return null;
+  }
+  return assertHumanResolutionGrantPublicationQuarantineReceipt(
+    readPrivateCanonicalJson(paths, receiptPath, humanResolutionGrantUnsafe),
+    grantId,
+  );
+}
+
+function assertNoPreparedHumanResolutionGrantPublicationRecovery(
+  paths: InvestigationRuntimePaths,
+  grantId: string,
+): void {
+  const stores = humanResolutionPaths(paths);
+  withHumanResolutionGrantStoreLock(
+    paths,
+    stores,
+    () => {
+      const receipt = readHumanResolutionGrantPublicationRecovery(
+        paths,
+        stores,
+        grantId,
+      );
+      if (receipt?.phase === 'prepared') {
+        throw humanResolutionGrantPublicationRecoveryRequired();
+      }
+    },
+    {
+      allowInterruptedAvailablePublication: true,
+      targetGrantId: grantId,
+    },
+  );
+}
+
+function withHumanResolutionGrantStoreLock<T>(
+  paths: InvestigationRuntimePaths,
+  stores: ReturnType<typeof humanResolutionPaths>,
+  operation: () => T,
+  options: {
+    allowInterruptedAvailablePublication?: boolean;
+    allowPreparedPublicationRecovery?: boolean;
+    targetGrantId?: string;
+  } = {},
+): T {
+  return withPrivateRuntimeLock(
+    paths,
+    path.join(stores.locks, 'grant-store.lock'),
+    () => {
+      reclaimHumanResolutionGrantTemporaries(
+        paths,
+        stores,
+        options.allowInterruptedAvailablePublication ?? false,
+        options.targetGrantId,
+      );
+      if (
+        options.targetGrantId !== undefined &&
+        !options.allowPreparedPublicationRecovery &&
+        readHumanResolutionGrantPublicationRecovery(
+          paths,
+          stores,
+          options.targetGrantId,
+        )?.phase === 'prepared'
+      ) {
+        throw humanResolutionGrantPublicationRecoveryRequired();
+      }
+      return operation();
+    },
+    'HUMAN_RESOLUTION_GRANT_STORE_CONFLICT',
+    humanResolutionGrantUnsafe,
+  );
+}
+
+function reclaimHumanResolutionGrantTemporaries(
+  paths: InvestigationRuntimePaths,
+  stores: ReturnType<typeof humanResolutionPaths>,
+  allowInterruptedAvailablePublication: boolean,
+  targetGrantId: string | undefined,
+): void {
+  for (const directory of [
+    stores.available,
+    stores.terminal,
+    stores.publicationRecoveries,
+  ]) {
+    if (
+      !walkPrivateDirectory(paths, directory, humanResolutionGrantUnsafe, false)
+    ) {
+      continue;
+    }
+    let removed = false;
+    for (const name of fs.readdirSync(directory)) {
+      const temporaryMatch = HUMAN_RESOLUTION_GRANT_TEMPORARY.exec(name);
+      if (!temporaryMatch?.[1]) {
+        continue;
+      }
+      const temporaryGrantId = assertHumanResolutionGrantId(temporaryMatch[1]);
+      const temporaryPath = path.join(directory, name);
+      const stats = fs.lstatSync(temporaryPath, { throwIfNoEntry: false });
+      if (!stats) {
+        continue;
+      }
+      assertPrivateFile(stats, humanResolutionGrantUnsafe);
+      if (directory === stores.available) {
+        if (
+          allowInterruptedAvailablePublication ||
+          (targetGrantId !== undefined && temporaryGrantId !== targetGrantId)
+        ) {
+          continue;
+        }
+        throw humanResolutionGrantPublicationRecoveryRequired();
+      }
+      fs.unlinkSync(temporaryPath);
+      removed = true;
+    }
+    if (removed) {
+      fsyncDirectory(directory);
+    }
+  }
 }
 
 function listHumanResolutionGrantIds(
@@ -2815,16 +4311,650 @@ function listHumanResolutionGrantIds(
   if (names.length > 4096) {
     throw humanResolutionGrantUnsafe();
   }
-  return names.map((name) => {
-    const match =
-      /^([0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})\.json$/.exec(
-        name,
-      );
-    if (!match?.[1]) {
+  const grantIds: string[] = [];
+  for (const name of names) {
+    const match = HUMAN_RESOLUTION_GRANT_FILE.exec(name);
+    if (match?.[1]) {
+      grantIds.push(assertHumanResolutionGrantId(match[1]));
+      continue;
+    }
+    if (HUMAN_RESOLUTION_GRANT_TEMPORARY.test(name)) {
+      const stats = fs.lstatSync(path.join(directory, name), {
+        throwIfNoEntry: false,
+      });
+      if (!stats) {
+        continue;
+      }
+      assertPrivateFile(stats, humanResolutionGrantUnsafe);
+      continue;
+    }
+    {
       throw humanResolutionGrantUnsafe();
     }
-    return assertHumanResolutionGrantId(match[1]);
+  }
+  return grantIds;
+}
+
+function listHumanResolutionGrantPublicationRecoveryIds(
+  paths: InvestigationRuntimePaths,
+  stores: ReturnType<typeof humanResolutionPaths>,
+): string[] {
+  if (
+    !walkPrivateDirectory(
+      paths,
+      stores.publicationRecoveries,
+      humanResolutionGrantUnsafe,
+      false,
+    )
+  ) {
+    return [];
+  }
+  const names = fs.readdirSync(stores.publicationRecoveries).sort();
+  if (names.length > 4096) {
+    throw humanResolutionGrantUnsafe();
+  }
+  return names.map((name) => {
+    const grantId = HUMAN_RESOLUTION_GRANT_FILE.exec(name)?.[1];
+    if (!grantId) {
+      throw humanResolutionGrantUnsafe();
+    }
+    const validatedGrantId = assertHumanResolutionGrantId(grantId);
+    readHumanResolutionGrantPublicationRecovery(
+      paths,
+      stores,
+      validatedGrantId,
+    );
+    return validatedGrantId;
   });
+}
+
+function humanResolutionGrantPublicationRecoveryRequired() {
+  return workflowError(
+    'HUMAN_RESOLUTION_GRANT_PUBLICATION_RECOVERY_REQUIRED',
+    'An interrupted human resolution grant publication requires explicit reconciliation through maintainer resolution-inspect and resolution-publication-discard.',
+    ExitCode.unsafeEnvironment,
+  );
+}
+
+type HumanResolutionGrantPublicationQuarantineArtifact = {
+  temporaryName: string;
+  rawSha256: string;
+  unsafeObservationDigest: string;
+  byteLength: number;
+  quarantineArtifact: string;
+};
+
+type HumanResolutionGrantPublicationQuarantineReceipt = {
+  schemaVersion: 1;
+  kind: 'human-resolution-grant-publication-recovery';
+  recoveryId: string;
+  action: 'quarantined';
+  phase: 'prepared' | 'quarantined';
+  grantId: string;
+  publicationStateDigest: string;
+  auditTag: HumanResolutionGrantPublicationAuditTag;
+  publicationStoreState: HumanResolutionGrantPublicationStoreState;
+  artifacts: HumanResolutionGrantPublicationQuarantineArtifact[];
+  reason: string;
+  recordedAt: string;
+};
+
+function observeHumanResolutionGrantPublicationStoreState(
+  paths: InvestigationRuntimePaths,
+  stores: ReturnType<typeof humanResolutionPaths>,
+  grantId: string,
+): HumanResolutionGrantPublicationStoreState {
+  for (const directory of [
+    stores.available,
+    stores.reserved,
+    stores.terminal,
+  ]) {
+    listHumanResolutionGrantIds(paths, directory);
+  }
+  const temporaries = walkPrivateDirectory(
+    paths,
+    stores.available,
+    humanResolutionGrantUnsafe,
+    false,
+  )
+    ? fs
+        .readdirSync(stores.available)
+        .flatMap((temporaryName) => {
+          const match = HUMAN_RESOLUTION_GRANT_TEMPORARY.exec(temporaryName);
+          if (
+            !match?.[1] ||
+            assertHumanResolutionGrantId(match[1]) !== grantId
+          ) {
+            return [];
+          }
+          const { content, ...observed } = observePrivateGrantPublicationFile(
+            path.join(stores.available, temporaryName),
+          );
+          return [
+            {
+              temporaryName,
+              ...observed,
+              parsedEnvelopeGrantId:
+                parseInterruptedHumanResolutionGrantEnvelopeId(content),
+            },
+          ];
+        })
+        .sort((left, right) =>
+          left.temporaryName.localeCompare(right.temporaryName),
+        )
+    : [];
+  const digestIfPresent = (filePath: string): string | null =>
+    privatePathExists(paths, filePath, humanResolutionGrantUnsafe)
+      ? observePrivateGrantPublicationFile(filePath).rawSha256
+      : null;
+  return {
+    grantId,
+    temporaries,
+    durable: {
+      availableDigest: digestIfPresent(
+        path.join(stores.available, `${grantId}.json`),
+      ),
+      reservedDigest: digestIfPresent(
+        path.join(stores.reserved, `${grantId}.json`),
+      ),
+      terminalDigest: digestIfPresent(
+        path.join(stores.terminal, `${grantId}.json`),
+      ),
+    },
+    sameGrantJournalDigest: digestIfPresent(
+      humanResolutionJournalPath(paths, grantId),
+    ),
+    sameGrantActiveJournalDigest: observeSameGrantActiveJournalDigest(
+      paths,
+      grantId,
+    ),
+    sameGrantReceiptDigest: digestIfPresent(
+      path.join(stores.receipts, `${grantId}.json`),
+    ),
+  };
+}
+
+function observeSameGrantActiveJournalDigest(
+  paths: InvestigationRuntimePaths,
+  grantId: string,
+): string | null {
+  const scanned = scanActiveHumanResolutionJournalDirectory(paths);
+  if (scanned === null) {
+    return null;
+  }
+  let match: string | null = null;
+  for (const name of scanned.journalNames) {
+    const changeId = ACTIVE_HUMAN_RESOLUTION_JOURNAL.exec(name)?.[1];
+    if (!changeId) {
+      throw humanResolutionJournalUnsafe();
+    }
+    const journal = readActiveHumanResolutionJournal(paths, changeId);
+    if (journal?.grantId !== grantId) {
+      continue;
+    }
+    if (match !== null) {
+      throw humanResolutionJournalUnsafe();
+    }
+    match = observePrivateGrantPublicationFile(
+      path.join(scanned.activeDirectory, name),
+    ).rawSha256;
+  }
+  return match;
+}
+
+function observePrivateGrantPublicationFile(filePath: string): {
+  rawSha256: string;
+  unsafeObservationDigest: string;
+  byteLength: number;
+  content: Buffer;
+} {
+  const before = fs.lstatSync(filePath, { throwIfNoEntry: false });
+  if (!before) {
+    throw humanResolutionGrantUnsafe();
+  }
+  assertPrivateFile(before, humanResolutionGrantUnsafe);
+  const content = readPrivateBuffer(filePath, humanResolutionGrantUnsafe);
+  const after = fs.lstatSync(filePath, { throwIfNoEntry: false });
+  if (
+    !after ||
+    after.dev !== before.dev ||
+    after.ino !== before.ino ||
+    after.size !== before.size ||
+    after.mode !== before.mode ||
+    after.nlink !== before.nlink
+  ) {
+    throw humanResolutionGrantUnsafe();
+  }
+  const rawSha256 = sha256(content);
+  return {
+    rawSha256,
+    unsafeObservationDigest: sha256(
+      canonicalJson({
+        schema: 'human-resolution-grant-publication-file.v1',
+        device: before.dev,
+        inode: before.ino,
+        mode: before.mode & 0o777,
+        nlink: before.nlink,
+        byteLength: content.byteLength,
+        rawSha256,
+      }),
+    ),
+    byteLength: content.byteLength,
+    content,
+  };
+}
+
+function parseInterruptedHumanResolutionGrantEnvelopeId(
+  content: Buffer,
+): string | null {
+  try {
+    const value = JSON.parse(content.toString('utf8')) as unknown;
+    if (
+      isRecord(value) &&
+      isRecord(value.payload) &&
+      typeof value.payload.grantId === 'string' &&
+      HUMAN_RESOLUTION_GRANT_FILE.test(`${value.payload.grantId}.json`)
+    ) {
+      return value.payload.grantId;
+    }
+  } catch {
+    return null;
+  }
+  return null;
+}
+
+function completeHumanResolutionGrantPublicationQuarantine(
+  paths: InvestigationRuntimePaths,
+  stores: ReturnType<typeof humanResolutionPaths>,
+  receipt: HumanResolutionGrantPublicationQuarantineReceipt,
+): void {
+  assertHumanResolutionGrantPublicationQuarantineReplayState(
+    paths,
+    stores,
+    receipt,
+  );
+  for (const artifact of receipt.artifacts) {
+    const temporaryPath = path.join(stores.available, artifact.temporaryName);
+    const quarantinePath = path.join(
+      stores.quarantine,
+      artifact.quarantineArtifact,
+    );
+    if (!privatePathExists(paths, temporaryPath, humanResolutionGrantUnsafe)) {
+      continue;
+    }
+    if (receipt.phase === 'quarantined') {
+      throw humanResolutionGrantPublicationRecoveryStale();
+    }
+    fs.renameSync(temporaryPath, quarantinePath);
+    fsyncDirectory(stores.available);
+    fsyncDirectory(stores.quarantine);
+  }
+  assertHumanResolutionGrantPublicationQuarantineReplayState(
+    paths,
+    stores,
+    receipt,
+  );
+}
+
+function finalizeHumanResolutionGrantPublicationQuarantineReceipt(
+  paths: InvestigationRuntimePaths,
+  receiptPath: string,
+  receipt: HumanResolutionGrantPublicationQuarantineReceipt,
+): void {
+  if (receipt.phase === 'quarantined') {
+    return;
+  }
+  writePrivateCanonicalJsonAtomic(
+    paths,
+    receiptPath,
+    {
+      ...receipt,
+      phase: 'quarantined',
+    },
+    humanResolutionGrantUnsafe,
+  );
+}
+
+function assertHumanResolutionGrantPublicationQuarantineReceipt(
+  value: unknown,
+  grantId: string,
+): HumanResolutionGrantPublicationQuarantineReceipt {
+  if (
+    !isRecord(value) ||
+    !hasExactKeys(value, [
+      'schemaVersion',
+      'kind',
+      'recoveryId',
+      'action',
+      'phase',
+      'grantId',
+      'publicationStateDigest',
+      'auditTag',
+      'publicationStoreState',
+      'artifacts',
+      'reason',
+      'recordedAt',
+    ]) ||
+    value.schemaVersion !== 1 ||
+    value.kind !== 'human-resolution-grant-publication-recovery' ||
+    !isDigest(value.recoveryId) ||
+    value.action !== 'quarantined' ||
+    !['prepared', 'quarantined'].includes(String(value.phase)) ||
+    value.grantId !== grantId ||
+    !isDigest(value.publicationStateDigest) ||
+    !isBoundedResolutionText(value.reason, 1024) ||
+    !isTimestamp(value.recordedAt)
+  ) {
+    throw humanResolutionGrantPublicationRecoveryStale();
+  }
+  const recoveryId = value.recoveryId as string;
+  const publicationStateDigest = value.publicationStateDigest as string;
+  if (
+    recoveryId !==
+    sha256(
+      canonicalJson({
+        schema: 'human-resolution-grant-publication-quarantine.v1',
+        grantId,
+        publicationStateDigest,
+      }),
+    )
+  ) {
+    throw humanResolutionGrantPublicationRecoveryStale();
+  }
+  const publicationStoreState = assertHumanResolutionGrantPublicationStoreState(
+    value.publicationStoreState,
+    grantId,
+  );
+  const auditTag = assertHumanResolutionGrantPublicationAuditTag(
+    value.auditTag,
+    grantId,
+  );
+  if (
+    sha256(
+      canonicalJson({
+        schemaVersion: 1,
+        kind: 'human-resolution-grant-publication-state',
+        ...publicationStoreState,
+        auditTag,
+      }),
+    ) !== publicationStateDigest
+  ) {
+    throw humanResolutionGrantPublicationRecoveryStale();
+  }
+  if (
+    !Array.isArray(value.artifacts) ||
+    value.artifacts.length === 0 ||
+    value.artifacts.length !== publicationStoreState.temporaries.length
+  ) {
+    throw humanResolutionGrantPublicationRecoveryStale();
+  }
+  const artifacts = value.artifacts.map((artifact, index) =>
+    assertHumanResolutionGrantPublicationQuarantineArtifact(
+      artifact,
+      grantId,
+      recoveryId,
+      index,
+      publicationStoreState.temporaries[index],
+    ),
+  );
+  if (
+    artifacts.some(
+      (artifact, index) =>
+        index > 0 &&
+        artifact.temporaryName <= artifacts[index - 1]!.temporaryName,
+    )
+  ) {
+    throw humanResolutionGrantPublicationRecoveryStale();
+  }
+  return value as HumanResolutionGrantPublicationQuarantineReceipt;
+}
+
+function assertHumanResolutionGrantPublicationAuditTag(
+  value: unknown,
+  grantId: string,
+): HumanResolutionGrantPublicationAuditTag {
+  if (
+    !isRecord(value) ||
+    !hasExactKeys(value, ['status', 'tagRef', 'refObjectOid', 'objectType']) ||
+    !['absent', 'present'].includes(String(value.status)) ||
+    (value.tagRef !== null && typeof value.tagRef !== 'string') ||
+    (value.refObjectOid !== null &&
+      (typeof value.refObjectOid !== 'string' ||
+        !GIT_OBJECT_ID.test(value.refObjectOid))) ||
+    (value.objectType !== null && typeof value.objectType !== 'string') ||
+    (value.status === 'absent' &&
+      (value.tagRef !== null ||
+        value.refObjectOid !== null ||
+        value.objectType !== null)) ||
+    (value.status === 'present' &&
+      (value.tagRef === null ||
+        value.refObjectOid === null ||
+        value.objectType !== 'tag' ||
+        !value.tagRef.endsWith(`/resolution-${grantId}`)))
+  ) {
+    throw humanResolutionGrantPublicationRecoveryStale();
+  }
+  return value as HumanResolutionGrantPublicationAuditTag;
+}
+
+function assertHumanResolutionGrantPublicationQuarantineArtifact(
+  value: unknown,
+  grantId: string,
+  recoveryId: string,
+  index: number,
+  temporary: HumanResolutionGrantPublicationTemporary | undefined,
+): HumanResolutionGrantPublicationQuarantineArtifact {
+  if (
+    !temporary ||
+    !isRecord(value) ||
+    !hasExactKeys(value, [
+      'temporaryName',
+      'rawSha256',
+      'unsafeObservationDigest',
+      'byteLength',
+      'quarantineArtifact',
+    ]) ||
+    typeof value.temporaryName !== 'string' ||
+    HUMAN_RESOLUTION_GRANT_TEMPORARY.exec(value.temporaryName)?.[1] !==
+      grantId ||
+    value.temporaryName !== temporary.temporaryName ||
+    value.rawSha256 !== temporary.rawSha256 ||
+    value.unsafeObservationDigest !== temporary.unsafeObservationDigest ||
+    value.byteLength !== temporary.byteLength ||
+    value.quarantineArtifact !==
+      `${recoveryId}.${index + 1}.grant-publication.artifact`
+  ) {
+    throw humanResolutionGrantPublicationRecoveryStale();
+  }
+  return value as HumanResolutionGrantPublicationQuarantineArtifact;
+}
+
+function assertHumanResolutionGrantPublicationStoreState(
+  value: unknown,
+  grantId: string,
+): HumanResolutionGrantPublicationStoreState {
+  if (
+    !isRecord(value) ||
+    !hasExactKeys(value, [
+      'grantId',
+      'temporaries',
+      'durable',
+      'sameGrantJournalDigest',
+      'sameGrantActiveJournalDigest',
+      'sameGrantReceiptDigest',
+    ]) ||
+    value.grantId !== grantId ||
+    !Array.isArray(value.temporaries) ||
+    !isRecord(value.durable) ||
+    !hasExactKeys(value.durable, [
+      'availableDigest',
+      'reservedDigest',
+      'terminalDigest',
+    ]) ||
+    ![
+      value.durable.availableDigest,
+      value.durable.reservedDigest,
+      value.durable.terminalDigest,
+      value.sameGrantJournalDigest,
+      value.sameGrantActiveJournalDigest,
+      value.sameGrantReceiptDigest,
+    ].every((candidate) => candidate === null || isDigest(candidate))
+  ) {
+    throw humanResolutionGrantPublicationRecoveryStale();
+  }
+  const temporaries = value.temporaries.map((temporary) =>
+    assertHumanResolutionGrantPublicationTemporary(temporary, grantId),
+  );
+  if (
+    temporaries.length === 0 ||
+    temporaries.some(
+      (temporary, index) =>
+        index > 0 &&
+        temporary.temporaryName <= temporaries[index - 1]!.temporaryName,
+    )
+  ) {
+    throw humanResolutionGrantPublicationRecoveryStale();
+  }
+  return value as HumanResolutionGrantPublicationStoreState;
+}
+
+function assertHumanResolutionGrantPublicationTemporary(
+  value: unknown,
+  grantId: string,
+): HumanResolutionGrantPublicationTemporary {
+  if (
+    !isRecord(value) ||
+    !hasExactKeys(value, [
+      'temporaryName',
+      'rawSha256',
+      'unsafeObservationDigest',
+      'byteLength',
+      'parsedEnvelopeGrantId',
+    ]) ||
+    typeof value.temporaryName !== 'string' ||
+    HUMAN_RESOLUTION_GRANT_TEMPORARY.exec(value.temporaryName)?.[1] !==
+      grantId ||
+    !isDigest(value.rawSha256) ||
+    !isDigest(value.unsafeObservationDigest) ||
+    !Number.isSafeInteger(value.byteLength) ||
+    (value.byteLength as number) < 0 ||
+    (value.parsedEnvelopeGrantId !== null &&
+      (typeof value.parsedEnvelopeGrantId !== 'string' ||
+        HUMAN_RESOLUTION_GRANT_FILE.exec(
+          `${value.parsedEnvelopeGrantId}.json`,
+        )?.[1] !== value.parsedEnvelopeGrantId))
+  ) {
+    throw humanResolutionGrantPublicationRecoveryStale();
+  }
+  return value as HumanResolutionGrantPublicationTemporary;
+}
+
+function assertHumanResolutionGrantPublicationQuarantineReplayState(
+  paths: InvestigationRuntimePaths,
+  stores: ReturnType<typeof humanResolutionPaths>,
+  receipt: HumanResolutionGrantPublicationQuarantineReceipt,
+): void {
+  const observed = observeHumanResolutionGrantPublicationStoreState(
+    paths,
+    stores,
+    receipt.grantId,
+  );
+  if (
+    canonicalJson({
+      durable: observed.durable,
+      sameGrantJournalDigest: observed.sameGrantJournalDigest,
+      sameGrantActiveJournalDigest: observed.sameGrantActiveJournalDigest,
+      sameGrantReceiptDigest: observed.sameGrantReceiptDigest,
+    }) !==
+    canonicalJson({
+      durable: receipt.publicationStoreState.durable,
+      sameGrantJournalDigest:
+        receipt.publicationStoreState.sameGrantJournalDigest,
+      sameGrantActiveJournalDigest:
+        receipt.publicationStoreState.sameGrantActiveJournalDigest,
+      sameGrantReceiptDigest:
+        receipt.publicationStoreState.sameGrantReceiptDigest,
+    })
+  ) {
+    throw humanResolutionGrantPublicationRecoveryStale();
+  }
+  const remainingTemporaries = new Map(
+    observed.temporaries.map((temporary) => [
+      temporary.temporaryName,
+      temporary,
+    ]),
+  );
+  for (const artifact of receipt.artifacts) {
+    const temporaryPath = path.join(stores.available, artifact.temporaryName);
+    const quarantinePath = path.join(
+      stores.quarantine,
+      artifact.quarantineArtifact,
+    );
+    const temporaryExists = privatePathExists(
+      paths,
+      temporaryPath,
+      humanResolutionGrantUnsafe,
+    );
+    const quarantineExists = privatePathExists(
+      paths,
+      quarantinePath,
+      humanResolutionGrantUnsafe,
+    );
+    if (temporaryExists === quarantineExists) {
+      throw humanResolutionGrantPublicationRecoveryStale();
+    }
+    const observedArtifact = observePrivateGrantPublicationFile(
+      temporaryExists ? temporaryPath : quarantinePath,
+    );
+    if (
+      observedArtifact.rawSha256 !== artifact.rawSha256 ||
+      observedArtifact.unsafeObservationDigest !==
+        artifact.unsafeObservationDigest ||
+      observedArtifact.byteLength !== artifact.byteLength
+    ) {
+      throw humanResolutionGrantPublicationRecoveryStale();
+    }
+    if (temporaryExists) {
+      const remaining = remainingTemporaries.get(artifact.temporaryName);
+      if (
+        !remaining ||
+        remaining.rawSha256 !== artifact.rawSha256 ||
+        remaining.unsafeObservationDigest !==
+          artifact.unsafeObservationDigest ||
+        remaining.byteLength !== artifact.byteLength
+      ) {
+        throw humanResolutionGrantPublicationRecoveryStale();
+      }
+      remainingTemporaries.delete(artifact.temporaryName);
+    }
+  }
+  if (remainingTemporaries.size !== 0) {
+    throw humanResolutionGrantPublicationRecoveryStale();
+  }
+}
+
+function humanResolutionGrantPublicationRecoveryInvalid() {
+  return workflowError(
+    'HUMAN_RESOLUTION_GRANT_PUBLICATION_RECOVERY_INVALID',
+    'Interrupted human resolution grant publication recovery input is malformed.',
+    ExitCode.guard,
+  );
+}
+
+function humanResolutionGrantPublicationRecoveryStale() {
+  return workflowError(
+    'HUMAN_RESOLUTION_GRANT_PUBLICATION_RECOVERY_STALE',
+    'Interrupted human resolution grant publication no longer matches the inspected bytes.',
+    ExitCode.staleState,
+  );
+}
+
+function humanResolutionGrantPublicationRecoveryAmbiguous() {
+  return workflowError(
+    'HUMAN_RESOLUTION_GRANT_PUBLICATION_RECOVERY_AMBIGUOUS',
+    'Interrupted human resolution grant publication state is not a unique temp-only prefix.',
+    ExitCode.unsafeEnvironment,
+  );
 }
 
 function humanResolutionNodePath(
@@ -2846,6 +4976,13 @@ function humanResolutionJournalPath(
   grantId: string,
 ): string {
   return path.join(humanResolutionPaths(paths).journals, `${grantId}.json`);
+}
+
+function activeHumanResolutionJournalPath(
+  paths: InvestigationRuntimePaths,
+  changeId: string,
+): string {
+  return path.join(humanResolutionPaths(paths).active, `${changeId}.json`);
 }
 
 function assertHumanResolutionTarget(value: unknown): HumanResolutionTarget {
@@ -2946,29 +5083,43 @@ function assertHumanResolutionJournal(value: unknown): HumanResolutionJournal {
       'beforeStateDigest',
       'afterStateDigest',
       'beforeResolutionRef',
+      'resolutionRefMode',
       'plannedResolutionNodeId',
       'plannedCurrentWorkflowRef',
+      'plannedStartReservation',
+      'plannedEvidenceRefs',
       'evidenceArchiveDigest',
       'receiptDigest',
       'createdAt',
     ]) ||
-    value.schemaVersion !== 1 ||
+    value.schemaVersion !== 2 ||
     value.kind !== 'human-resolution-journal' ||
     !isDigest(value.journalId) ||
-    !['prepared', 'state-published', 'receipt-written', 'consumed'].includes(
-      String(value.phase),
-    ) ||
+    ![
+      'prepared',
+      'evidence-refs-published',
+      'start-reservation-published',
+      'current-ref-published',
+      'state-published',
+      'receipt-written',
+      'grant-consumed',
+    ].includes(String(value.phase)) ||
     typeof value.grantId !== 'string' ||
     !isDigest(value.grantDigest) ||
     !isDigest(value.beforeStateDigest) ||
     !isDigest(value.afterStateDigest) ||
     (value.beforeResolutionRef !== null &&
       !isDigest(value.beforeResolutionRef)) ||
+    !['preserve', 'quarantine-whole'].includes(
+      String(value.resolutionRefMode),
+    ) ||
     !isDigest(value.plannedResolutionNodeId) ||
     !isRecord(value.plannedCurrentWorkflowRef) ||
     !hasExactKeys(value.plannedCurrentWorkflowRef, [
       'expectedInvestigationId',
+      'expectedDigest',
       'nextInvestigationId',
+      'nextDigest',
     ]) ||
     (value.plannedCurrentWorkflowRef.expectedInvestigationId !== null &&
       typeof value.plannedCurrentWorkflowRef.expectedInvestigationId !==
@@ -2976,6 +5127,10 @@ function assertHumanResolutionJournal(value: unknown): HumanResolutionJournal {
     (value.plannedCurrentWorkflowRef.nextInvestigationId !== null &&
       typeof value.plannedCurrentWorkflowRef.nextInvestigationId !==
         'string') ||
+    !isNullableDigest(value.plannedCurrentWorkflowRef.expectedDigest) ||
+    !isNullableDigest(value.plannedCurrentWorkflowRef.nextDigest) ||
+    !isPlannedStartReservation(value.plannedStartReservation) ||
+    !isPlannedEvidenceRefs(value.plannedEvidenceRefs) ||
     !isDigest(value.evidenceArchiveDigest) ||
     !isDigest(value.receiptDigest) ||
     !isTimestamp(value.createdAt)
@@ -2992,8 +5147,34 @@ function assertHumanResolutionJournal(value: unknown): HumanResolutionJournal {
       assertInvestigationId(candidate);
     }
   }
+  if (
+    value.plannedCurrentWorkflowRef.expectedDigest !==
+      investigationCurrentRefDigest(
+        value.plannedCurrentWorkflowRef.expectedInvestigationId === null
+          ? null
+          : {
+              changeId: target.changeId,
+              investigationId:
+                value.plannedCurrentWorkflowRef.expectedInvestigationId,
+            },
+      ) ||
+    value.plannedCurrentWorkflowRef.nextDigest !==
+      investigationCurrentRefDigest(
+        value.plannedCurrentWorkflowRef.nextInvestigationId === null
+          ? null
+          : {
+              changeId: target.changeId,
+              investigationId:
+                value.plannedCurrentWorkflowRef.nextInvestigationId,
+            },
+      ) ||
+    !validPlannedStartReservation(value.plannedStartReservation) ||
+    !validPlannedEvidenceRefs(target.changeId, value.plannedEvidenceRefs)
+  ) {
+    throw humanResolutionJournalUnsafe();
+  }
   const semantic = {
-    schemaVersion: 1 as const,
+    schemaVersion: 2 as const,
     kind: 'human-resolution-journal' as const,
     phase: value.phase as HumanResolutionJournal['phase'],
     grantId: value.grantId,
@@ -3002,16 +5183,22 @@ function assertHumanResolutionJournal(value: unknown): HumanResolutionJournal {
     beforeStateDigest: value.beforeStateDigest,
     afterStateDigest: value.afterStateDigest,
     beforeResolutionRef: value.beforeResolutionRef,
+    resolutionRefMode:
+      value.resolutionRefMode as HumanResolutionJournal['resolutionRefMode'],
     plannedResolutionNodeId: value.plannedResolutionNodeId,
     plannedCurrentWorkflowRef:
       value.plannedCurrentWorkflowRef as HumanResolutionJournal['plannedCurrentWorkflowRef'],
+    plannedStartReservation:
+      value.plannedStartReservation as HumanResolutionJournal['plannedStartReservation'],
+    plannedEvidenceRefs:
+      value.plannedEvidenceRefs as HumanResolutionJournal['plannedEvidenceRefs'],
     evidenceArchiveDigest: value.evidenceArchiveDigest,
     receiptDigest: value.receiptDigest,
     createdAt: value.createdAt,
   };
   const journalId = sha256(
     canonicalJson({
-      schema: 'human-resolution-journal.v1',
+      schema: 'human-resolution-journal.v2',
       journal: humanResolutionJournalIdentity(semantic),
     }),
   );
@@ -3019,6 +5206,131 @@ function assertHumanResolutionJournal(value: unknown): HumanResolutionJournal {
     throw humanResolutionJournalUnsafe();
   }
   return deepFreeze(structuredClone(value)) as HumanResolutionJournal;
+}
+
+function isNullableDigest(value: unknown): value is string | null {
+  return value === null || isDigest(value);
+}
+
+function isEvidenceRefMap(value: unknown): value is Record<string, string> {
+  return (
+    isRecord(value) &&
+    Object.entries(value).every(
+      ([name, nodeId]) =>
+        /^[a-z0-9]+(?:-[a-z0-9]+)*(?:\/[a-z0-9]+(?:-[a-z0-9]+)*)*$/.test(
+          name,
+        ) && isDigest(nodeId),
+    )
+  );
+}
+
+function isPlannedStartReservation(
+  value: unknown,
+): value is HumanResolutionJournal['plannedStartReservation'] {
+  return (
+    isRecord(value) &&
+    hasExactKeys(value, [
+      'mode',
+      'expectedDigest',
+      'nextDigest',
+      'archiveDigest',
+    ]) &&
+    (value.mode === 'preserve' ||
+      value.mode === 'retire' ||
+      value.mode === 'quarantine-whole') &&
+    isNullableDigest(value.expectedDigest) &&
+    isNullableDigest(value.nextDigest) &&
+    isNullableDigest(value.archiveDigest)
+  );
+}
+
+function validPlannedStartReservation(
+  value: HumanResolutionJournal['plannedStartReservation'],
+): boolean {
+  return value.mode === 'preserve'
+    ? value.nextDigest === value.expectedDigest && value.archiveDigest === null
+    : value.expectedDigest !== null &&
+        value.nextDigest === null &&
+        value.archiveDigest === value.expectedDigest;
+}
+
+function isPlannedEvidenceRefs(
+  value: unknown,
+): value is HumanResolutionJournal['plannedEvidenceRefs'] {
+  return (
+    isRecord(value) &&
+    hasExactKeys(value, [
+      'mode',
+      'expectedDigest',
+      'nextDigest',
+      'expectedClosureDigest',
+      'nextClosureDigest',
+      'retiredRefs',
+      'retainedRefs',
+      'archiveDigest',
+    ]) &&
+    (value.mode === 'preserve' ||
+      value.mode === 'partition' ||
+      value.mode === 'quarantine-whole') &&
+    isNullableDigest(value.expectedDigest) &&
+    isNullableDigest(value.nextDigest) &&
+    isNullableDigest(value.expectedClosureDigest) &&
+    isNullableDigest(value.nextClosureDigest) &&
+    isEvidenceRefMap(value.retiredRefs) &&
+    isEvidenceRefMap(value.retainedRefs) &&
+    isNullableDigest(value.archiveDigest)
+  );
+}
+
+function validPlannedEvidenceRefs(
+  changeId: string,
+  value: HumanResolutionJournal['plannedEvidenceRefs'],
+): boolean {
+  if (
+    Object.keys(value.retiredRefs).some((name) =>
+      Object.hasOwn(value.retainedRefs, name),
+    )
+  ) {
+    return false;
+  }
+  if (value.mode === 'preserve') {
+    return (
+      value.nextDigest === value.expectedDigest &&
+      value.nextClosureDigest === value.expectedClosureDigest &&
+      Object.keys(value.retiredRefs).length === 0 &&
+      value.archiveDigest === null
+    );
+  }
+  if (value.mode === 'quarantine-whole') {
+    return (
+      value.expectedDigest !== null &&
+      value.nextDigest === null &&
+      value.nextClosureDigest === null &&
+      Object.keys(value.retiredRefs).length === 0 &&
+      Object.keys(value.retainedRefs).length === 0 &&
+      value.archiveDigest === value.expectedDigest
+    );
+  }
+  const nextDigest =
+    Object.keys(value.retainedRefs).length === 0
+      ? null
+      : sha256(
+          canonicalJson({
+            schemaVersion: 1,
+            changeId,
+            refs: value.retainedRefs,
+          }),
+        );
+  return (
+    value.expectedDigest !== null &&
+    Object.keys(value.retiredRefs).length > 0 &&
+    value.nextDigest === nextDigest &&
+    isDigest(value.expectedClosureDigest) &&
+    (value.nextDigest === null
+      ? value.nextClosureDigest === null
+      : isDigest(value.nextClosureDigest)) &&
+    value.archiveDigest === value.expectedDigest
+  );
 }
 
 function humanResolutionJournalIdentity(
@@ -3090,6 +5402,407 @@ function terminalHumanResolutionState(
   );
 }
 
+type BoundProviderRetryReservation = {
+  attempt: number;
+  previousInvocationId: string;
+  invocationId: string;
+  requestDigest: string;
+  manifestDigest: string;
+  nonce: string;
+  reservationDigest: string;
+  status: 'committed' | 'pending';
+};
+
+function bindProviderRetryReservationResolutionState(
+  paths: InvestigationRuntimePaths,
+  session: InvestigationSession,
+  makeError: () => WorkflowError,
+): {
+  reservations: InvestigationResolutionStateEnvelope['providerRetryReservations'];
+  bindings: BoundProviderRetryReservation[];
+} {
+  assertPrivateInvestigationDirectory(paths, paths.refs, makeError);
+  const prefix = `${session.investigationId}.provider-retry-`;
+  const byAttempt = new Map<number, BoundProviderRetryReservation>();
+  for (const name of fs.readdirSync(paths.refs).sort()) {
+    if (!name.startsWith(prefix)) {
+      continue;
+    }
+    const suffix = name.slice(prefix.length);
+    const match = /^([0-9]+)\.json$/.exec(suffix);
+    if (!match) {
+      throw makeError();
+    }
+    const attempt = Number(match[1]);
+    if (
+      !Number.isSafeInteger(attempt) ||
+      attempt < 2 ||
+      String(attempt) !== match[1] ||
+      byAttempt.has(attempt)
+    ) {
+      throw makeError();
+    }
+    const status =
+      attempt <= session.blindInvocationIds.length
+        ? ('committed' as const)
+        : ('pending' as const);
+    if (attempt > session.blindInvocationIds.length + 1) {
+      throw makeError();
+    }
+    byAttempt.set(
+      attempt,
+      readBoundProviderRetryReservation(
+        paths,
+        path.join(paths.refs, name),
+        session,
+        attempt,
+        status,
+        makeError,
+      ),
+    );
+  }
+  for (
+    let attempt = 2;
+    attempt <= session.blindInvocationIds.length;
+    attempt += 1
+  ) {
+    if (!byAttempt.has(attempt)) {
+      throw makeError();
+    }
+  }
+  const bindings = [...byAttempt.values()].sort(
+    (left, right) => left.attempt - right.attempt,
+  );
+  return {
+    reservations: bindings.map(
+      ({
+        attempt,
+        previousInvocationId,
+        invocationId,
+        reservationDigest,
+        status,
+      }) => ({
+        attempt,
+        previousInvocationId,
+        invocationId,
+        reservationDigest,
+        status,
+      }),
+    ),
+    bindings,
+  };
+}
+
+function readBoundProviderRetryReservation(
+  paths: InvestigationRuntimePaths,
+  filePath: string,
+  session: InvestigationSession,
+  expectedAttempt: number,
+  status: BoundProviderRetryReservation['status'],
+  makeError: () => WorkflowError,
+): BoundProviderRetryReservation {
+  walkPrivateDirectory(paths, path.dirname(filePath), makeError, false);
+  const content = readPrivateFile(filePath, makeError);
+  if (Buffer.byteLength(content, 'utf8') > MAX_HUMAN_RESOLUTION_BYTES) {
+    throw makeError();
+  }
+  let value: unknown;
+  try {
+    value = JSON.parse(content);
+  } catch {
+    throw makeError();
+  }
+  if (
+    content !== `${canonicalJson(value)}\n` ||
+    !isRecord(value) ||
+    !hasExactKeys(value, [
+      'schemaVersion',
+      'kind',
+      'investigationId',
+      'changeId',
+      'attempt',
+      'previousInvocationId',
+      'invocationId',
+      'manifestDigest',
+      'requestDigest',
+      'request',
+      'createdAt',
+    ]) ||
+    value.schemaVersion !== 1 ||
+    value.kind !== 'provider-retry-reservation' ||
+    value.investigationId !== session.investigationId ||
+    value.changeId !== session.changeId ||
+    value.attempt !== expectedAttempt ||
+    typeof value.previousInvocationId !== 'string' ||
+    typeof value.invocationId !== 'string' ||
+    !isDigest(value.manifestDigest) ||
+    !isDigest(value.requestDigest) ||
+    !isTimestamp(value.createdAt)
+  ) {
+    throw makeError();
+  }
+  let previousInvocationId: string;
+  let invocationId: string;
+  try {
+    previousInvocationId = assertInvocationId(value.previousInvocationId);
+    invocationId = assertInvocationId(value.invocationId);
+  } catch {
+    throw makeError();
+  }
+  const expectedPrevious =
+    session.blindInvocationIds[expectedAttempt - 2] ?? null;
+  const expectedCommitted =
+    status === 'committed'
+      ? (session.blindInvocationIds[expectedAttempt - 1] ?? null)
+      : null;
+  if (
+    expectedPrevious === null ||
+    previousInvocationId !== expectedPrevious ||
+    (status === 'committed' && invocationId !== expectedCommitted) ||
+    (status === 'pending' &&
+      session.blindInvocationIds.includes(invocationId)) ||
+    invocationId === previousInvocationId ||
+    value.manifestDigest !== session.blindManifestDigest
+  ) {
+    throw makeError();
+  }
+  let request: ProviderInvocationRequest;
+  try {
+    request = recreateProviderInvocationRequest(value.request);
+  } catch {
+    throw makeError();
+  }
+  if (
+    request.invocationId !== invocationId ||
+    request.requestDigest !== value.requestDigest ||
+    request.purpose !== 'survey' ||
+    request.inputManifestDigest !== value.manifestDigest ||
+    request.baseCommit !== session.baseline.head ||
+    request.baseTree !== session.baseline.tree
+  ) {
+    throw makeError();
+  }
+  return {
+    attempt: expectedAttempt,
+    previousInvocationId,
+    invocationId,
+    requestDigest: request.requestDigest,
+    manifestDigest: value.manifestDigest,
+    nonce: request.nonce,
+    reservationDigest: sha256(content),
+    status,
+  };
+}
+
+function observeProviderRetryReservationAmbiguities(
+  paths: InvestigationRuntimePaths,
+  session: InvestigationSession,
+  observations: Array<{
+    object: string;
+    observationDigest: string;
+  }>,
+): void {
+  const prefix = `${session.investigationId}.provider-retry-`;
+  let names: string[];
+  try {
+    assertPrivateInvestigationDirectory(
+      paths,
+      paths.refs,
+      providerInvocationUnsafe,
+    );
+    names = fs
+      .readdirSync(paths.refs)
+      .filter((name) => name.startsWith(prefix));
+  } catch {
+    observeUnsafePath(
+      paths.refs,
+      `provider-retry-reservations:${session.investigationId}`,
+      observations,
+    );
+    return;
+  }
+  const targets = new Set<string>(
+    names.map((name) => path.join(paths.refs, name)),
+  );
+  for (
+    let attempt = 2;
+    attempt <= session.blindInvocationIds.length;
+    attempt += 1
+  ) {
+    targets.add(path.join(paths.refs, `${prefix}${attempt}.json`));
+  }
+  for (const target of [...targets].sort()) {
+    observeUnsafePath(
+      target,
+      `provider-retry-reservation:${path.basename(target)}`,
+      observations,
+    );
+  }
+}
+
+function bindProviderInvocationResolutionState(
+  paths: InvestigationRuntimePaths,
+  session: InvestigationSession,
+  retryBindings: BoundProviderRetryReservation[],
+): Pick<
+  InvestigationResolutionStateEnvelope,
+  'providerInvocationDigests' | 'repositoryProviderLeases'
+> {
+  const scan = scanProviderInvocationLifecycles(paths);
+  const projections = [...scan.projections];
+  const pendingRetry =
+    retryBindings.find(({ status }) => status === 'pending') ?? null;
+  const target = projections.filter(
+    (projection) =>
+      projection.ownerInvestigationId === session.investigationId &&
+      projection.changeId === session.changeId,
+  );
+  if (
+    scan.unsafeInvocations.some(
+      ({ invocationId, ownerInvestigationId }) =>
+        ownerInvestigationId === session.investigationId ||
+        invocationId === pendingRetry?.invocationId,
+    )
+  ) {
+    throw providerInvocationUnsafe();
+  }
+  const globalPendingProjection =
+    pendingRetry === null
+      ? undefined
+      : projections.find(
+          ({ invocationId }) => invocationId === pendingRetry.invocationId,
+        );
+  if (
+    globalPendingProjection !== undefined &&
+    (globalPendingProjection.ownerInvestigationId !== session.investigationId ||
+      globalPendingProjection.changeId !== session.changeId ||
+      globalPendingProjection.purpose !== 'survey')
+  ) {
+    throw providerInvocationUnsafe();
+  }
+  const targetSurveys = target.filter(
+    (projection) => projection.purpose === 'survey',
+  );
+  const targetSurveyIds = targetSurveys
+    .map((projection) => projection.invocationId)
+    .sort();
+  const expectedSurveyIds = [...session.blindInvocationIds];
+  if (
+    pendingRetry !== null &&
+    targetSurveyIds.includes(pendingRetry.invocationId)
+  ) {
+    expectedSurveyIds.push(pendingRetry.invocationId);
+  }
+  if (
+    canonicalJson(targetSurveyIds) !== canonicalJson(expectedSurveyIds.sort())
+  ) {
+    throw providerInvocationUnsafe();
+  }
+  const boundNonces = session.blindInvocationIds.map((invocationId) => {
+    const projection = targetSurveys.find(
+      (candidate) => candidate.invocationId === invocationId,
+    );
+    if (projection === undefined) {
+      throw providerInvocationUnsafe();
+    }
+    return projection.nonce;
+  });
+  if (pendingRetry !== null) {
+    boundNonces.push(pendingRetry.nonce);
+  }
+  if (new Set(boundNonces).size !== boundNonces.length) {
+    throw providerInvocationUnsafe();
+  }
+  const retryByAttempt = new Map(
+    retryBindings.map((binding) => [binding.attempt, binding]),
+  );
+  for (const [index, invocationId] of session.blindInvocationIds.entries()) {
+    const attempt = index + 1;
+    const projection = targetSurveys.find(
+      (candidate) => candidate.invocationId === invocationId,
+    );
+    if (
+      projection === undefined ||
+      projection.attempt !== attempt ||
+      projection.manifestDigest !== session.blindManifestDigest
+    ) {
+      throw providerInvocationUnsafe();
+    }
+    if (attempt === 1) {
+      continue;
+    }
+    const retry = retryByAttempt.get(attempt);
+    const previous = targetSurveys.find(
+      (candidate) =>
+        candidate.invocationId === session.blindInvocationIds[index - 1],
+    );
+    if (
+      retry === undefined ||
+      retry.status !== 'committed' ||
+      retry.invocationId !== projection.invocationId ||
+      retry.requestDigest !== projection.requestDigest ||
+      retry.manifestDigest !== projection.manifestDigest ||
+      previous?.state !== 'failed' ||
+      previous.failureKind !== 'retryable'
+    ) {
+      throw providerInvocationUnsafe();
+    }
+  }
+  if (pendingRetry !== null) {
+    const previous = targetSurveys.find(
+      (candidate) =>
+        candidate.invocationId === pendingRetry.previousInvocationId,
+    );
+    const pendingProjection = targetSurveys.find(
+      (candidate) => candidate.invocationId === pendingRetry.invocationId,
+    );
+    if (
+      previous?.state !== 'failed' ||
+      previous.failureKind !== 'retryable' ||
+      (pendingProjection !== undefined &&
+        (pendingProjection.attempt !== pendingRetry.attempt ||
+          pendingProjection.requestDigest !== pendingRetry.requestDigest ||
+          pendingProjection.manifestDigest !== pendingRetry.manifestDigest))
+    ) {
+      throw providerInvocationUnsafe();
+    }
+  }
+  return {
+    providerInvocationDigests: [
+      ...target.map(({ invocationId }) => ({
+        invocationId,
+        files: digestPrivateDirectoryEntries(
+          paths,
+          path.join(paths.invocations, invocationId),
+          providerInvocationUnsafe,
+        ),
+      })),
+      ...scan.unsafeInvocations.map(({ invocationId, observationDigest }) => ({
+        invocationId,
+        files: [{ name: 'unsafe-observation', digest: observationDigest }],
+      })),
+    ].sort((left, right) =>
+      left.invocationId.localeCompare(right.invocationId),
+    ),
+    repositoryProviderLeases: projections
+      .filter(
+        (
+          projection,
+        ): projection is ProviderInvocationLifecycleProjection & {
+          lease: NonNullable<ProviderInvocationLifecycleProjection['lease']>;
+        } => projection.state === 'leased' && projection.lease !== null,
+      )
+      .map((projection) => ({
+        invocationId: projection.invocationId,
+        investigationId: projection.ownerInvestigationId,
+        changeId: projection.changeId,
+        revision: projection.revision,
+        leaseGeneration: projection.leaseGeneration,
+        leaseDigest: sha256(canonicalJson(projection.lease)),
+      })),
+  };
+}
+
 function digestPrivateDirectoryEntries(
   paths: InvestigationRuntimePaths,
   directory: string,
@@ -3098,53 +5811,363 @@ function digestPrivateDirectoryEntries(
   if (!walkPrivateDirectory(paths, directory, makeError, false)) {
     throw makeError();
   }
-  const names = fs.readdirSync(directory).sort();
-  if (names.length === 0 || names.length > 64) {
+  const manifestContent = readPrivateFile(
+    path.join(directory, 'manifest.json'),
+    makeError,
+  );
+  let manifest: unknown;
+  try {
+    manifest = JSON.parse(manifestContent);
+  } catch {
     throw makeError();
   }
-  return names.map((name) => {
-    if (!/^[a-z0-9]+(?:-[a-z0-9]+)*(?:\.[a-z0-9-]+)?$/.test(name)) {
+  const snapshotArtifacts =
+    isRecord(manifest) &&
+    manifest.kind === 'plan-review-manifest' &&
+    manifest.planningTarget !== undefined
+      ? planReviewSnapshotArtifacts(manifest.planningTarget, makeError)
+      : null;
+  const rootNames = fs.readdirSync(directory).sort();
+  const runtimePath = path.join(directory, 'runtime');
+  const runtimeStats = fs.lstatSync(runtimePath, { throwIfNoEntry: false });
+  const reviewRootPath = path.join(directory, 'review-root');
+  const expectedRootNames = [
+    ...BLIND_PROVIDER_ROOT_FILES,
+    ...(runtimeStats ? ['runtime'] : []),
+    ...(snapshotArtifacts === null ? [] : ['review-root']),
+  ].sort();
+  if (canonicalJson(rootNames) !== canonicalJson(expectedRootNames)) {
+    throw makeError();
+  }
+
+  const files: Array<{ name: string; digest: string }> =
+    BLIND_PROVIDER_ROOT_FILES.map((name) => {
+      const content = readPrivateFile(path.join(directory, name), makeError);
+      if (Buffer.byteLength(content, 'utf8') > MAX_HUMAN_RESOLUTION_BYTES) {
+        throw makeError();
+      }
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(content);
+      } catch {
+        throw makeError();
+      }
+      if (`${canonicalJson(parsed)}\n` !== content) {
+        throw makeError();
+      }
+      return { name, digest: sha256(content) };
+    });
+
+  const stateContent = readPrivateFile(
+    path.join(directory, 'state.json'),
+    makeError,
+  );
+  const state = JSON.parse(stateContent) as unknown;
+  const runtimeRequired =
+    isRecord(state) &&
+    isRecord(state.result) &&
+    state.result.runtimeObservation !== null;
+  if (!runtimeStats) {
+    if (runtimeRequired) {
       throw makeError();
     }
-    const filePath = path.join(directory, name);
-    const content = readPrivateFile(filePath, makeError);
-    if (Buffer.byteLength(content, 'utf8') > MAX_HUMAN_RESOLUTION_BYTES) {
-      throw makeError();
-    }
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(content);
-    } catch {
-      throw makeError();
-    }
+  } else {
     if (
-      content !== canonicalJson(parsed) &&
-      content !== `${canonicalJson(parsed)}\n`
+      runtimeStats.isSymbolicLink() ||
+      !runtimeStats.isDirectory() ||
+      !walkPrivateDirectory(paths, runtimePath, makeError, false)
     ) {
       throw makeError();
     }
-    return { name, digest: sha256(content) };
-  });
+    const runtimeNames = fs.readdirSync(runtimePath).sort();
+    if (
+      canonicalJson(runtimeNames) !==
+      canonicalJson([...BLIND_PROVIDER_RUNTIME_FILES].sort())
+    ) {
+      throw makeError();
+    }
+    for (const name of BLIND_PROVIDER_RUNTIME_FILES) {
+      const content = readPrivateBuffer(
+        path.join(runtimePath, name),
+        makeError,
+      );
+      if (content.byteLength > MAX_HUMAN_RESOLUTION_BYTES) {
+        throw makeError();
+      }
+      files.push({
+        name: `runtime/${name}`,
+        digest: sha256(content),
+      });
+    }
+  }
+  if (snapshotArtifacts !== null) {
+    const reviewRootStats = fs.lstatSync(reviewRootPath, {
+      throwIfNoEntry: false,
+    });
+    if (
+      !reviewRootStats?.isDirectory() ||
+      reviewRootStats.isSymbolicLink() ||
+      !walkPrivateDirectory(paths, reviewRootPath, makeError, false)
+    ) {
+      throw makeError();
+    }
+    const expectedFiles = snapshotArtifacts
+      .map(({ snapshotFile }) => snapshotFile)
+      .sort();
+    if (
+      canonicalJson(fs.readdirSync(reviewRootPath).sort()) !==
+      canonicalJson(expectedFiles)
+    ) {
+      throw makeError();
+    }
+    for (const artifact of snapshotArtifacts) {
+      const content = readPrivateBuffer(
+        path.join(reviewRootPath, artifact.snapshotFile),
+        makeError,
+      );
+      if (
+        content.byteLength !== artifact.byteLength ||
+        sha256(content) !== artifact.sha256 ||
+        snapshotLineCount(content) !== artifact.lineCount
+      ) {
+        throw makeError();
+      }
+      files.push({
+        name: `review-root/${artifact.snapshotFile}`,
+        digest: artifact.sha256,
+      });
+    }
+  }
+  return files.sort((left, right) => left.name.localeCompare(right.name));
 }
 
-function digestOptionalCanonicalPrivateFile(
+function planReviewSnapshotArtifacts(
+  value: unknown,
+  makeError: () => WorkflowError,
+): Array<{
+  snapshotFile: string;
+  sha256: string;
+  byteLength: number;
+  lineCount: number;
+}> {
+  if (!isRecord(value) || !Array.isArray(value.artifacts)) {
+    throw makeError();
+  }
+  const artifacts = value.artifacts.map((entry) => {
+    if (
+      !isRecord(entry) ||
+      typeof entry.snapshotFile !== 'string' ||
+      !/^\d{4}\.artifact$/.test(entry.snapshotFile) ||
+      !isDigest(entry.sha256) ||
+      !Number.isSafeInteger(entry.byteLength) ||
+      (entry.byteLength as number) < 0 ||
+      !Number.isSafeInteger(entry.lineCount) ||
+      (entry.lineCount as number) < 0
+    ) {
+      throw makeError();
+    }
+    return {
+      snapshotFile: entry.snapshotFile,
+      sha256: entry.sha256,
+      byteLength: entry.byteLength as number,
+      lineCount: entry.lineCount as number,
+    };
+  });
+  if (
+    new Set(artifacts.map(({ snapshotFile }) => snapshotFile)).size !==
+    artifacts.length
+  ) {
+    throw makeError();
+  }
+  return artifacts;
+}
+
+function snapshotLineCount(content: Buffer): number {
+  if (content.byteLength === 0) return 0;
+  let count = 1;
+  for (const byte of content) {
+    if (byte === 0x0a) count += 1;
+  }
+  return content.at(-1) === 0x0a ? count - 1 : count;
+}
+
+function assertEvidenceClosureTargetBinding(
   paths: InvestigationRuntimePaths,
-  filePath: string,
-  newlineRequired: boolean,
+  targetSession: InvestigationSession,
+  closure: InvestigationEvidenceRefsClosure,
+): void {
+  for (const entry of closure.entries) {
+    const owner = isProposeExemptionInvestigationId(entry.ownerInvestigationId)
+      ? readProposeExemptionSession(paths, entry.ownerInvestigationId)
+      : readInvestigationSession(paths, entry.ownerInvestigationId);
+    if (owner.changeId !== targetSession.changeId) {
+      throw humanResolutionStateInvalid();
+    }
+    if (entry.refName === 'propose/exemption-session') {
+      if (
+        !('kind' in owner) ||
+        owner.kind !== 'propose-exemption-session' ||
+        owner.investigationId !== entry.ownerInvestigationId
+      ) {
+        throw humanResolutionStateInvalid();
+      }
+      continue;
+    }
+    if (entry.refName === 'propose/planning-materialization') {
+      assertMaterializationMatchesOwnerSession(
+        readEvidenceNode(paths, entry.nodeId),
+        owner,
+      );
+      continue;
+    }
+    if (entry.refName === 'propose/plan-review-request') {
+      const materialization = entry.dependencies.find(
+        (dependency) => dependency.role === 'materialization',
+      );
+      if (!materialization) {
+        throw humanResolutionStateInvalid();
+      }
+      assertMaterializationMatchesOwnerSession(
+        readEvidenceNode(paths, materialization.nodeId),
+        owner,
+      );
+      continue;
+    }
+    if (entry.refName === 'propose/plan-review-grant-requirement') {
+      const node = readEvidenceNode(paths, entry.nodeId);
+      const output = node.output;
+      if (
+        !isRecord(output) ||
+        !isRecord(output.subject) ||
+        !isRecord(output.subject.investigationBaseline) ||
+        canonicalJson(output.subject.investigationBaseline) !==
+          canonicalJson(owner.baseline)
+      ) {
+        throw humanResolutionStateInvalid();
+      }
+      continue;
+    }
+    throw humanResolutionStateInvalid();
+  }
+}
+
+function assertMaterializationMatchesOwnerSession(
+  node: ReturnType<typeof readEvidenceNode>,
+  session: InvestigationSession | ProposeExemptionSession,
+): void {
+  const output = node.output;
+  const exemption =
+    'kind' in session && session.kind === 'propose-exemption-session';
+  const expectedType = exemption
+    ? 'propose-exemption-planning-materialization'
+    : 'propose-planning-materialization';
+  if (
+    node.type !== expectedType ||
+    !isRecord(output) ||
+    output.investigationId !== session.investigationId ||
+    output.changeId !== session.changeId ||
+    output.revision !== session.revision ||
+    !isRecord(output.baseline) ||
+    canonicalJson(output.baseline) !== canonicalJson(session.baseline) ||
+    (exemption &&
+      (output.applicabilityNodeId !== session.applicabilityNode.nodeId ||
+        output.applicabilityResultDigest !==
+          session.applicabilityNode.resultDigest))
+  ) {
+    throw humanResolutionStateInvalid();
+  }
+}
+
+function digestBoundStartReservation(
+  paths: InvestigationRuntimePaths,
+  session: InvestigationSession,
   makeError: () => WorkflowError,
 ): string | null {
+  const filePath = investigationStartReservationPath(paths, session.changeId);
   if (!privatePathExists(paths, filePath, makeError)) {
     return null;
   }
   const content = readPrivateFile(filePath, makeError);
-  let parsed: unknown;
+  if (Buffer.byteLength(content, 'utf8') > MAX_HUMAN_RESOLUTION_BYTES) {
+    throw makeError();
+  }
+  let value: unknown;
   try {
-    parsed = JSON.parse(content);
+    value = JSON.parse(content);
   } catch {
     throw makeError();
   }
-  const canonical = canonicalJson(parsed);
-  if (content !== (newlineRequired ? `${canonical}\n` : canonical)) {
+  if (
+    content !== `${canonicalJson(value)}\n` ||
+    !isRecord(value) ||
+    !hasExactKeys(value, [
+      'schemaVersion',
+      'kind',
+      'changeId',
+      'investigationId',
+      'invocationId',
+      'repositoryRoot',
+      'gitCommonDirectory',
+      'branch',
+      'baseline',
+      'manifestDigest',
+      'requestDigest',
+      'manifest',
+      'request',
+      'createdAt',
+    ]) ||
+    value.schemaVersion !== 1 ||
+    value.kind !== 'investigation-start-reservation' ||
+    value.changeId !== session.changeId ||
+    value.investigationId !== session.investigationId ||
+    value.invocationId !== session.blindInvocationIds[0] ||
+    value.repositoryRoot !== session.repositoryRoot ||
+    value.gitCommonDirectory !== session.gitCommonDirectory ||
+    value.branch !== session.branch ||
+    !isRecord(value.baseline) ||
+    canonicalJson(value.baseline) !== canonicalJson(session.baseline) ||
+    value.manifestDigest !== session.blindManifestDigest ||
+    !isTimestamp(value.createdAt)
+  ) {
+    throw makeError();
+  }
+  if (
+    !isRecord(value.manifest) ||
+    sha256(canonicalJson(value.manifest)) !== value.manifestDigest
+  ) {
+    throw makeError();
+  }
+  let request: ProviderInvocationRequest;
+  let firstInvocationRequest: ProviderInvocationRequest;
+  try {
+    request = recreateProviderInvocationRequest(value.request);
+    firstInvocationRequest = recreateProviderInvocationRequest(
+      readPrivateCanonicalJson(
+        paths,
+        path.join(
+          paths.invocations,
+          session.blindInvocationIds[0] as string,
+          'request.json',
+        ),
+        makeError,
+      ),
+    );
+  } catch {
+    throw makeError();
+  }
+  if (
+    request.requestDigest !== value.requestDigest ||
+    firstInvocationRequest.requestDigest !== request.requestDigest ||
+    firstInvocationRequest.invocationId !== request.invocationId ||
+    request.invocationId !== value.invocationId ||
+    request.purpose !== 'survey' ||
+    request.inputManifestDigest !== value.manifestDigest ||
+    request.baseCommit !== value.baseline.head ||
+    request.baseTree !== value.baseline.tree ||
+    value.manifest.changeId !== value.changeId ||
+    value.manifest.baseCommit !== value.baseline.head ||
+    value.manifest.baseTree !== value.baseline.tree
+  ) {
     throw makeError();
   }
   return sha256(content);
@@ -3158,52 +6181,33 @@ function observeUnsafePath(
     observationDigest: string;
   }>,
 ): string {
-  const stats = fs.lstatSync(filePath, { throwIfNoEntry: false });
-  const observation: Record<string, unknown> = {
-    schemaVersion: 1,
-    object,
-    exists: stats !== undefined,
-  };
-  if (stats) {
-    observation.kind = stats.isSymbolicLink()
-      ? 'symlink'
-      : stats.isDirectory()
-        ? 'directory'
-        : stats.isFile()
-          ? 'file'
-          : 'other';
-    observation.mode = stats.mode & 0o777;
-    observation.nlink = stats.nlink;
-    observation.size = stats.size;
-    if (stats.isSymbolicLink()) {
-      observation.linkTarget = fs.readlinkSync(filePath);
-    } else if (stats.isDirectory()) {
-      observation.entries = fs.readdirSync(filePath).sort().slice(0, 256);
-    } else if (stats.isFile() && stats.size <= MAX_HUMAN_RESOLUTION_BYTES) {
-      let descriptor: number | undefined;
-      try {
-        descriptor = fs.openSync(
-          filePath,
-          fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW,
-        );
-        const opened = fs.fstatSync(descriptor);
-        if (opened.dev === stats.dev && opened.ino === stats.ino) {
-          observation.contentDigest = sha256(
-            fs.readFileSync(descriptor, 'utf8'),
-          );
-        }
-      } catch {
-        observation.contentDigest = null;
-      } finally {
-        if (descriptor !== undefined) {
-          fs.closeSync(descriptor);
-        }
-      }
-    }
+  let observationDigest: string;
+  try {
+    observationDigest = exactUnsafePathObservationDigest(filePath, object);
+  } catch {
+    throw humanResolutionStateInvalid();
   }
-  const observationDigest = sha256(canonicalJson(observation));
   observations.push({ object, observationDigest });
   return observationDigest;
+}
+
+function normalizeAmbiguityObservations(
+  observations: Array<{
+    object: string;
+    observationDigest: string;
+  }>,
+): Array<{ object: string; observationDigest: string }> {
+  const normalized = new Map<string, string>();
+  for (const { object, observationDigest } of observations) {
+    const existing = normalized.get(object);
+    if (existing !== undefined && existing !== observationDigest) {
+      throw humanResolutionStateInvalid();
+    }
+    normalized.set(object, observationDigest);
+  }
+  return [...normalized]
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([object, observationDigest]) => ({ object, observationDigest }));
 }
 
 function createPrivateRawFile(
@@ -3338,6 +6342,49 @@ function isTimestamp(value: unknown): value is string {
   return typeof value === 'string' && !Number.isNaN(Date.parse(value));
 }
 
+function isProviderInvocationFailureShape(value: unknown): value is {
+  kind: 'retryable' | 'repository-reconciliation-required';
+  code: string;
+  message: string;
+} | null {
+  return (
+    value === null ||
+    (isRecord(value) &&
+      hasExactKeys(value, ['kind', 'code', 'message']) &&
+      (value.kind === 'retryable' ||
+        value.kind === 'repository-reconciliation-required') &&
+      typeof value.code === 'string' &&
+      value.code.length > 0 &&
+      typeof value.message === 'string' &&
+      value.message.length > 0 &&
+      Buffer.byteLength(canonicalJson(value), 'utf8') <= 16_384)
+  );
+}
+
+function isProviderInvocationLifecycleLease(
+  value: unknown,
+): value is NonNullable<ProviderInvocationLifecycleProjection['lease']> | null {
+  return (
+    value === null ||
+    (isRecord(value) &&
+      hasExactKeys(value, [
+        'generation',
+        'workerId',
+        'tokenDigest',
+        'acquiredAt',
+        'expiresAt',
+      ]) &&
+      Number.isSafeInteger(value.generation) &&
+      (value.generation as number) > 0 &&
+      typeof value.workerId === 'string' &&
+      value.workerId.length > 0 &&
+      isDigest(value.tokenDigest) &&
+      isTimestamp(value.acquiredAt) &&
+      isTimestamp(value.expiresAt) &&
+      Date.parse(value.expiresAt) > Date.parse(value.acquiredAt))
+  );
+}
+
 function isStringArray(value: unknown): value is string[] {
   return (
     Array.isArray(value) && value.every((entry) => typeof entry === 'string')
@@ -3359,7 +6406,7 @@ function hasExactKeys(
   );
 }
 
-function sha256(value: string): string {
+function sha256(value: string | Buffer): string {
   return crypto.createHash('sha256').update(value).digest('hex');
 }
 
@@ -3434,6 +6481,14 @@ function humanResolutionStateInvalid() {
   );
 }
 
+function humanResolutionRecoveryAmbiguous() {
+  return workflowError(
+    'HUMAN_RESOLUTION_RECOVERY_AMBIGUOUS',
+    'Human resolution recovery observed state outside the exact journal.',
+    ExitCode.staleState,
+  );
+}
+
 function providerInvocationUnsafe() {
   return workflowError(
     'HUMAN_RESOLUTION_PROVIDER_STATE_UNSAFE',
@@ -3442,10 +6497,10 @@ function providerInvocationUnsafe() {
   );
 }
 
-function evidenceRefsUnsafe() {
+function startReservationUnsafe() {
   return workflowError(
-    'HUMAN_RESOLUTION_EVIDENCE_REFS_UNSAFE',
-    'Referenced evidence refs are unsafe or non-canonical.',
+    'HUMAN_RESOLUTION_START_RESERVATION_UNSAFE',
+    'Referenced investigation start reservation is unsafe or non-canonical.',
     ExitCode.unsafeEnvironment,
   );
 }

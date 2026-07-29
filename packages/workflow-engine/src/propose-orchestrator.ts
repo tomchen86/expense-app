@@ -13,7 +13,8 @@ import {
 } from './collaboration-grant.ts';
 import {
   consumeCollaborationGrant,
-  reserveCollaborationGrant,
+  consumeCollaborationGrantUnderLifecycleLock,
+  readExactConsumedCollaborationGrantUse,
   reserveCollaborationGrantUnderLifecycleLock,
   type CollaborationGrantUseProjection,
 } from './collaboration-grant-store.ts';
@@ -57,14 +58,14 @@ import {
 } from './investigation-groups.ts';
 import { scanInvestigationTree } from './investigation-scanner.ts';
 import {
-  acknowledgeReviewerTermInputClosure,
-  blockInvestigationForReviewerTerms,
+  acknowledgeReviewerTermInputClosureUnderAuthority,
+  blockInvestigationForReviewerTermsUnderAuthority,
   decideReviewerTermReopen,
   getInvestigationStatus,
   inspectReviewerTermResolutionAuthorization,
-  reopenInvestigationForReviewerTerms,
+  reopenInvestigationForReviewerTermsUnderAuthority,
   resumeInvestigationSession,
-  startInvestigationSession,
+  startInvestigationSessionUnderLifecycleLock,
   type InvestigationStatus,
 } from './investigation-session.ts';
 import {
@@ -132,9 +133,12 @@ import {
   normalizeExactRepositoryPath,
   normalizePolicyPath,
 } from './paths.ts';
-import { withInvestigationTransitionAuthority } from './planning-lock.ts';
 import {
-  commitPlanningTransition,
+  type HeldChangeTransitionAuthority,
+  withInvestigationTransitionAuthority,
+} from './planning-lock.ts';
+import {
+  commitPlanningTransitionUnderAuthority,
   type PlanningTransitionResult,
 } from './planning-transition.ts';
 import {
@@ -160,6 +164,7 @@ import {
 } from './planning-assurance-validator.ts';
 import {
   createProviderInvocationRequest,
+  PROPOSE_POLICY_DIGEST,
   type ProviderInvocationRequest,
   type ProviderProcessResult,
 } from './provider-contracts.ts';
@@ -168,6 +173,7 @@ import {
   isProposeExemptionInvestigationId,
   readCurrentProposeExemptionSession,
   readProposeExemptionSession,
+  retireCurrentProposeExemptionSession,
   type ProposeExemptionSession,
 } from './propose-exemption-store.ts';
 import {
@@ -201,9 +207,6 @@ import {
 
 const MAX_CALLER_JSON_BYTES = 4 * 1024 * 1024;
 const DIGEST = /^[0-9a-f]{64}$/;
-const PROPOSE_POLICY_DIGEST = sha256(
-  canonicalJson({ schema: 'workflow-propose-policy.v2' }),
-);
 const PROPOSE_AUTHORIZATION_SCHEMA = 'workflow-propose-authorization.v2';
 const PROPOSE_AUTHORIZATION_OUTPUT_SCHEMA =
   'workflow-propose-authorization-output.v2';
@@ -668,6 +671,63 @@ function collaborationTransitionDigest(
   );
 }
 
+function assertProposeStartContextStable(
+  before: ReturnType<typeof loadInvestigationRuntimeContext>,
+  after: ReturnType<typeof loadInvestigationRuntimeContext>,
+): void {
+  if (
+    before.git.repositoryRealPath !== after.git.repositoryRealPath ||
+    before.git.gitCommonDirectory !== after.git.gitCommonDirectory ||
+    before.config.runtimeDirectory !== after.config.runtimeDirectory ||
+    before.git.branch !== after.git.branch ||
+    before.git.head !== after.git.head ||
+    before.git.tree !== after.git.tree
+  ) {
+    throw workflowError(
+      'INVESTIGATION_START_STALE',
+      'Repository identity, branch, or pinned baseline changed during propose start.',
+      ExitCode.staleState,
+    );
+  }
+}
+
+function assertCurrentExemptionContext(
+  context: ReturnType<typeof loadInvestigationRuntimeContext>,
+  session: ProposeExemptionSession,
+): void {
+  const current = readCurrentProposeExemptionSession(
+    context.runtime,
+    session.changeId,
+  );
+  if (!currentExemptionContextMatches(context, session, current)) {
+    throw workflowError(
+      'PROPOSE_INPUT_STALE',
+      'The structured investigation exemption is no longer current for this repository context.',
+      ExitCode.staleState,
+    );
+  }
+}
+
+function currentExemptionContextMatches(
+  context: ReturnType<typeof loadInvestigationRuntimeContext>,
+  session: ProposeExemptionSession,
+  current: ProposeExemptionSession | null,
+): boolean {
+  return (
+    context.git.repositoryRealPath === session.repositoryRoot &&
+    context.git.gitCommonDirectory === session.gitCommonDirectory &&
+    context.git.branch === session.branch &&
+    context.git.head === session.baseline.head &&
+    context.git.tree === session.baseline.tree &&
+    current !== null &&
+    current.investigationId === session.investigationId &&
+    current.revision === session.revision &&
+    current.intentDigest === session.intentDigest &&
+    current.applicability.applicabilityDigest ===
+      session.applicability.applicabilityDigest
+  );
+}
+
 export function startPropose(
   cwd: string,
   requestedChangeId: string,
@@ -738,7 +798,14 @@ export function startPropose(
   }
 
   const context = loadInvestigationRuntimeContext(cwd);
-  if (readCurrentProposeExemptionSession(context.runtime, changeId) !== null) {
+  const initialExemption = readCurrentProposeExemptionSession(
+    context.runtime,
+    changeId,
+  );
+  if (
+    initialExemption !== null &&
+    currentExemptionContextMatches(context, initialExemption, initialExemption)
+  ) {
     throw workflowError(
       'CURRENT_INVESTIGATION_EXEMPTION_CONFLICT',
       'The current change already has a structured investigation-exemption branch.',
@@ -781,11 +848,7 @@ export function startPropose(
     author,
     callableProviderIds,
   });
-  let assignment: ProviderRoleAssignment;
-  let grantAuthorization: ProposeGrantAuthorization | null = null;
-  if (scheduled.outcome === 'assigned') {
-    assignment = scheduled.assignment;
-  } else if (!options.collaborationGrant) {
+  if (scheduled.outcome !== 'assigned' && !options.collaborationGrant) {
     return collaborationGrantRequiredOutput({
       changeId,
       actorResolution,
@@ -793,52 +856,13 @@ export function startPropose(
       lifecyclePhase: 'blind-survey',
       conflictingRole: 'blind-surveyor',
     });
-  } else {
-    if (grantRequest === null) {
-      throw workflowError(
-        'COLLABORATION_GRANT_FORM_REQUIRED',
-        'No provider is callable; submit an explicitly typed caller-supplied survey grant.',
-        ExitCode.guard,
-      );
-    }
-    const expectedBinding = deriveCollaborationGrantBinding(
-      context.git.repositoryRoot,
-      grantRequest,
+  }
+  if (scheduled.outcome !== 'assigned' && grantRequest === null) {
+    throw workflowError(
+      'COLLABORATION_GRANT_FORM_REQUIRED',
+      'No provider is callable; submit an explicitly typed caller-supplied survey grant.',
+      ExitCode.guard,
     );
-    const transitionDigest = collaborationTransitionDigest(expectedBinding);
-    const reservation = reserveCollaborationGrant(
-      context.git.repositoryRoot,
-      options.collaborationGrant.grantId,
-      {
-        transitionDigest,
-        expected: expectedBinding,
-        ...(options.collaborationGrant.now === undefined
-          ? {}
-          : { now: options.collaborationGrant.now }),
-        ...(options.collaborationGrant.verifier === undefined
-          ? {}
-          : { verifier: options.collaborationGrant.verifier }),
-      },
-    );
-    assignment = authorizeGrantedOrdinaryRole({
-      role: 'blind-surveyor',
-      author,
-      targetDigest: intentDigest,
-      reservation,
-      actualParticipant: {
-        providerId: actorResolution.actor.providerId,
-        sessionId: providerSessionId,
-        principalId: undefined,
-        identityAssurance: actorResolution.actor.assurance,
-        engineSpawned: true,
-      },
-      callableProviderIds,
-    }) as GrantedSameProviderRoleAssignment;
-    grantAuthorization = {
-      grantId: reservation.grantId,
-      transitionDigest,
-      expectedBinding,
-    };
   }
   const protectedBranch = context.config.protectedBranches[0];
   if (!protectedBranch) {
@@ -885,99 +909,253 @@ export function startPropose(
     capabilityProfile: 'repository-read-only',
   };
   const manifestDigest = blindSurveyManifestDigest(manifest);
-  const authorizationNode = createEvidenceNode({
-    type: 'propose-authorization',
-    nodeSchema: PROPOSE_AUTHORIZATION_SCHEMA,
-    evaluator: 'workflow-propose.v1',
-    policyDigest: PROPOSE_POLICY_DIGEST,
-    exactInputDigests: {
-      actorResolution: sha256(
-        canonicalJson({
+  const collaborationGrant = options.collaborationGrant;
+  const status = withInvestigationTransitionAuthority(
+    context.lifecycleRuntime,
+    changeId,
+    (assertOwned) => {
+      assertOwned();
+      const lockedContext = loadInvestigationRuntimeContext(cwd);
+      assertProposeStartContextStable(context, lockedContext);
+      const lockedExemption = readCurrentProposeExemptionSession(
+        lockedContext.runtime,
+        changeId,
+      );
+      if (lockedExemption !== null) {
+        if (
+          currentExemptionContextMatches(
+            lockedContext,
+            lockedExemption,
+            lockedExemption,
+          )
+        ) {
+          throw workflowError(
+            'CURRENT_INVESTIGATION_EXEMPTION_CONFLICT',
+            'The current change already has a structured investigation-exemption branch.',
+            ExitCode.conflict,
+          );
+        }
+        retireCurrentProposeExemptionSession(
+          lockedContext.runtime,
+          lockedExemption,
+          assertOwned,
+        );
+      }
+      const readDurableStart = (startedStatus: InvestigationStatus) => {
+        const durableInvocation = readProviderInvocation(
+          lockedContext.runtime,
+          startedStatus.providerInvocationId,
+        );
+        const durableRequest = readProviderInvocationRequest(
+          lockedContext.runtime,
+          startedStatus.providerInvocationId,
+        );
+        const durableAuthorization = readProposeAuthorization(
+          lockedContext.runtime,
+          durableRequest,
+        );
+        if (
+          durableAuthorization.actor.providerId !==
+          actorResolution.actor.providerId
+        ) {
+          throw workflowError(
+            'CURRENT_INVESTIGATION_ACTOR_CONFLICT',
+            'The current investigation is pinned to a different actor.',
+            ExitCode.conflict,
+          );
+        }
+        assertOwned();
+        return {
+          status: startedStatus,
+          durableInvocation,
+          durableRequest,
+          durableAuthorization,
+        };
+      };
+      const currentRef = readCurrentInvestigationRef(
+        lockedContext.runtime,
+        changeId,
+      );
+      if (currentRef !== null) {
+        const current = readInvestigationSession(
+          lockedContext.runtime,
+          currentRef.investigationId,
+        );
+        if (current.blindManifestDigest !== manifestDigest) {
+          throw workflowError(
+            'CURRENT_INVESTIGATION_CONFLICT',
+            `Change ${changeId} already has a different current investigation.`,
+            ExitCode.conflict,
+          );
+        }
+        const durableRequest = readProviderInvocationRequest(
+          lockedContext.runtime,
+          current.currentBlindInvocationId,
+        );
+        const durableManifest = readBlindSurveyManifest(
+          lockedContext.runtime,
+          current.currentBlindInvocationId,
+        );
+        return readDurableStart(
+          startInvestigationSessionUnderLifecycleLock(
+            cwd,
+            {
+              changeId,
+              blindManifest: durableManifest,
+              blindRequest: durableRequest,
+            },
+            lockedContext,
+            assertOwned,
+          ),
+        );
+      }
+      let assignment: ProviderRoleAssignment;
+      let grantAuthorization: ProposeGrantAuthorization | null = null;
+      if (scheduled.outcome === 'assigned') {
+        assignment = scheduled.assignment;
+      } else {
+        if (!collaborationGrant || grantRequest === null) {
+          throw workflowError(
+            'COLLABORATION_GRANT_FORM_REQUIRED',
+            'No provider is callable; submit an explicitly typed caller-supplied survey grant.',
+            ExitCode.guard,
+          );
+        }
+        const expectedBinding = deriveCollaborationGrantBinding(
+          lockedContext.git.repositoryRoot,
+          grantRequest,
+        );
+        const transitionDigest = collaborationTransitionDigest(expectedBinding);
+        const reservation = reserveCollaborationGrantUnderLifecycleLock(
+          lockedContext.git.repositoryRoot,
+          collaborationGrant.grantId,
+          {
+            transitionDigest,
+            expected: expectedBinding,
+            ...(collaborationGrant.now === undefined
+              ? {}
+              : { now: collaborationGrant.now }),
+            ...(collaborationGrant.verifier === undefined
+              ? {}
+              : { verifier: collaborationGrant.verifier }),
+          },
+          assertOwned,
+        );
+        assignment = authorizeGrantedOrdinaryRole({
+          role: 'blind-surveyor',
+          author,
+          targetDigest: intentDigest,
+          reservation,
+          actualParticipant: {
+            providerId: actorResolution.actor.providerId,
+            sessionId: providerSessionId,
+            principalId: undefined,
+            identityAssurance: actorResolution.actor.assurance,
+            engineSpawned: true,
+          },
+          callableProviderIds,
+        }) as GrantedSameProviderRoleAssignment;
+        grantAuthorization = {
+          grantId: reservation.grantId,
+          transitionDigest,
+          expectedBinding,
+        };
+      }
+      const authorizationNode = createEvidenceNode({
+        type: 'propose-authorization',
+        nodeSchema: PROPOSE_AUTHORIZATION_SCHEMA,
+        evaluator: 'workflow-propose.v1',
+        policyDigest: PROPOSE_POLICY_DIGEST,
+        exactInputDigests: {
+          actorResolution: sha256(
+            canonicalJson({
+              actor: actorResolution.actor,
+              signals: actorResolution.signals,
+            }),
+          ),
+          assignment: sha256(canonicalJson(assignment)),
+          grantAuthorization: sha256(canonicalJson(grantAuthorization)),
+          baseline: sha256(
+            canonicalJson({
+              head: lockedContext.git.head,
+              tree: lockedContext.git.tree,
+            }),
+          ),
+          intent: intentDigest,
+          legacyMigration: sha256(canonicalJson(legacyMigration)),
+          protectedBase: sha256(
+            canonicalJson({
+              ref: protectedBaseRef,
+              commit: protectedBaseCommit,
+            }),
+          ),
+        },
+        semanticParentResultDigests: {},
+        provenanceParentNodeIds: {},
+        outputSchema: PROPOSE_AUTHORIZATION_OUTPUT_SCHEMA,
+        output: {
           actor: actorResolution.actor,
           signals: actorResolution.signals,
-        }),
-      ),
-      assignment: sha256(canonicalJson(assignment)),
-      grantAuthorization: sha256(canonicalJson(grantAuthorization)),
-      baseline: sha256(
-        canonicalJson({ head: context.git.head, tree: context.git.tree }),
-      ),
-      intent: intentDigest,
-      legacyMigration: sha256(canonicalJson(legacyMigration)),
-      protectedBase: sha256(
-        canonicalJson({
-          ref: protectedBaseRef,
-          commit: protectedBaseCommit,
-        }),
-      ),
+          assignment,
+          grantAuthorization,
+          intent,
+          legacyMigration,
+          baseline: {
+            head: lockedContext.git.head,
+            tree: lockedContext.git.tree,
+          },
+          protectedBase: {
+            ref: protectedBaseRef,
+            commit: protectedBaseCommit,
+          },
+        },
+        runtimeMetadata: {},
+      });
+      const request = createProviderInvocationRequest({
+        invocationId,
+        nonce: `propose-${crypto.randomUUID()}`,
+        purpose: 'survey',
+        providerId: assignment.providerId,
+        roleAssignment: assignment,
+        capabilityProfile: 'repository-read-only',
+        repositoryId: lockedContext.config.repositoryName,
+        baseCommit: lockedContext.git.head,
+        baseTree: lockedContext.git.tree,
+        targetDigest: intentDigest,
+        inputManifestDigest: manifestDigest,
+        authorizationNodeId: authorizationNode.nodeId,
+        writeAllowedPaths: [],
+        outputSchema: BLIND_SURVEY_OUTPUT_SCHEMA,
+        evaluatorVersion: 'blind-survey-evaluator.v1',
+        policyDigest: adapterPolicy.digest,
+        limits: {
+          timeoutMs: adapterPolicy.policy.limits.timeoutMs,
+          aggregateOutputBytes:
+            adapterPolicy.policy.limits.aggregateOutputBytes,
+        },
+      });
+      writeEvidenceNode(lockedContext.runtime, authorizationNode);
+      assertOwned();
+      return readDurableStart(
+        startInvestigationSessionUnderLifecycleLock(
+          cwd,
+          {
+            changeId,
+            blindManifest: manifest,
+            blindRequest: request,
+          },
+          lockedContext,
+          assertOwned,
+        ),
+      );
     },
-    semanticParentResultDigests: {},
-    provenanceParentNodeIds: {},
-    outputSchema: PROPOSE_AUTHORIZATION_OUTPUT_SCHEMA,
-    output: {
-      actor: actorResolution.actor,
-      signals: actorResolution.signals,
-      assignment,
-      grantAuthorization,
-      intent,
-      legacyMigration,
-      baseline: { head: context.git.head, tree: context.git.tree },
-      protectedBase: {
-        ref: protectedBaseRef,
-        commit: protectedBaseCommit,
-      },
-    },
-    runtimeMetadata: {},
-  });
-  writeEvidenceNode(context.runtime, authorizationNode);
-  const request = createProviderInvocationRequest({
-    invocationId,
-    nonce: `propose-${crypto.randomUUID()}`,
-    purpose: 'survey',
-    providerId: assignment.providerId,
-    roleAssignment: assignment,
-    capabilityProfile: 'repository-read-only',
-    repositoryId: context.config.repositoryName,
-    baseCommit: context.git.head,
-    baseTree: context.git.tree,
-    targetDigest: intentDigest,
-    inputManifestDigest: manifestDigest,
-    authorizationNodeId: authorizationNode.nodeId,
-    writeAllowedPaths: [],
-    outputSchema: BLIND_SURVEY_OUTPUT_SCHEMA,
-    evaluatorVersion: 'blind-survey-evaluator.v1',
-    policyDigest: adapterPolicy.digest,
-    limits: {
-      timeoutMs: adapterPolicy.policy.limits.timeoutMs,
-      aggregateOutputBytes: adapterPolicy.policy.limits.aggregateOutputBytes,
-    },
-  });
-  const status = startInvestigationSession(cwd, {
-    changeId,
-    blindManifest: manifest,
-    blindRequest: request,
-  });
-  const durableInvocation = readProviderInvocation(
-    context.runtime,
-    status.providerInvocationId,
   );
-  const durableRequest = readProviderInvocationRequest(
-    context.runtime,
-    status.providerInvocationId,
-  );
-  const durableAuthorization = readProposeAuthorization(
-    context.runtime,
+  const {
+    status: durableStatus,
+    durableInvocation,
     durableRequest,
-  );
-  if (
-    durableAuthorization.actor.providerId !== actorResolution.actor.providerId
-  ) {
-    throw workflowError(
-      'CURRENT_INVESTIGATION_ACTOR_CONFLICT',
-      'The current investigation is pinned to a different actor.',
-      ExitCode.conflict,
-    );
-  }
+    durableAuthorization,
+  } = status;
   if (durableInvocation.state === 'prepared') {
     if (options.providerDriver) {
       options.providerDriver({
@@ -991,7 +1169,7 @@ export function startPropose(
 
   return renderProposeOutputWithPlanningAuthority(
     cwd,
-    status,
+    durableStatus,
     {
       outcome: 'resolved',
       providerId: durableAuthorization.actor.providerId,
@@ -1012,67 +1190,106 @@ function startExemptionPropose(
   >,
 ): ProposeOutput {
   const context = loadInvestigationRuntimeContext(cwd);
-  const ordinary = readCurrentInvestigationRef(context.runtime, changeId);
-  if (ordinary !== null) {
-    throw workflowError(
-      'CURRENT_INVESTIGATION_CONFLICT',
-      'The current change already has an ordinary investigation session.',
-      ExitCode.conflict,
-    );
-  }
-  const intentDigest = sha256(canonicalJson(request.intent));
-  const applicability = createInvestigationApplicability({
-    kind: 'investigation-exemption',
-    ...request.exemption,
-    baseline: { head: context.git.head, tree: context.git.tree },
-    intentDigest,
-  });
-  if (applicability.kind !== 'investigation-exemption') {
-    throw workflowError(
-      'INVESTIGATION_EXEMPTION_INVALID',
-      'The structured investigation exemption did not produce its exact branch.',
-      ExitCode.staleState,
-    );
-  }
-  const applicabilityNode = createEvidenceNode({
-    type: 'investigation-applicability',
-    nodeSchema: 'investigation.applicability.v1',
-    evaluator: 'investigation-applicability.v1',
-    policyDigest: INVESTIGATION_APPLICABILITY_POLICY_DIGEST,
-    exactInputDigests: {
-      applicability: applicability.applicabilityDigest,
-    },
-    semanticParentResultDigests: {},
-    provenanceParentNodeIds: {},
-    outputSchema: 'investigation.applicability-output.v1',
-    output: applicability,
-    runtimeMetadata: {},
-  });
-  const session = createProposeExemptionSession(context.runtime, {
+  return withInvestigationTransitionAuthority(
+    context.lifecycleRuntime,
     changeId,
-    repositoryRoot: context.git.repositoryRealPath,
-    gitCommonDirectory: context.git.gitCommonDirectory,
-    branch: context.git.branch,
-    baseline: { head: context.git.head, tree: context.git.tree },
-    intentDigest,
-    intent: request.intent,
-    applicability,
-    applicabilityNode,
-    actor: actorResolution.actor,
-    signals: actorResolution.signals,
-  });
-  if (
-    session.actor.providerId !== actorResolution.actor.providerId ||
-    session.actor.assurance !== actorResolution.actor.assurance
-  ) {
-    throw workflowError(
-      'CURRENT_INVESTIGATION_ACTOR_CONFLICT',
-      'The current structured investigation exemption is pinned to a different actor.',
-      ExitCode.conflict,
-    );
-  }
-  const scaffold = prepareExemptionPlanningScaffold(cwd, session);
-  return renderExemptionProposeOutput(cwd, session, scaffold);
+    (assertOwned) => {
+      assertOwned();
+      const lockedContext = loadInvestigationRuntimeContext(cwd);
+      assertProposeStartContextStable(context, lockedContext);
+      const ordinary = readCurrentInvestigationRef(
+        lockedContext.runtime,
+        changeId,
+      );
+      if (ordinary !== null) {
+        throw workflowError(
+          'CURRENT_INVESTIGATION_CONFLICT',
+          'The current change already has an ordinary investigation session.',
+          ExitCode.conflict,
+        );
+      }
+      const currentExemption = readCurrentProposeExemptionSession(
+        lockedContext.runtime,
+        changeId,
+      );
+      if (
+        currentExemption !== null &&
+        !currentExemptionContextMatches(
+          lockedContext,
+          currentExemption,
+          currentExemption,
+        )
+      ) {
+        retireCurrentProposeExemptionSession(
+          lockedContext.runtime,
+          currentExemption,
+          assertOwned,
+        );
+      }
+      const intentDigest = sha256(canonicalJson(request.intent));
+      const applicability = createInvestigationApplicability({
+        kind: 'investigation-exemption',
+        ...request.exemption,
+        baseline: {
+          head: lockedContext.git.head,
+          tree: lockedContext.git.tree,
+        },
+        intentDigest,
+      });
+      if (applicability.kind !== 'investigation-exemption') {
+        throw workflowError(
+          'INVESTIGATION_EXEMPTION_INVALID',
+          'The structured investigation exemption did not produce its exact branch.',
+          ExitCode.staleState,
+        );
+      }
+      const applicabilityNode = createEvidenceNode({
+        type: 'investigation-applicability',
+        nodeSchema: 'investigation.applicability.v1',
+        evaluator: 'investigation-applicability.v1',
+        policyDigest: INVESTIGATION_APPLICABILITY_POLICY_DIGEST,
+        exactInputDigests: {
+          applicability: applicability.applicabilityDigest,
+        },
+        semanticParentResultDigests: {},
+        provenanceParentNodeIds: {},
+        outputSchema: 'investigation.applicability-output.v1',
+        output: applicability,
+        runtimeMetadata: {},
+      });
+      const session = createProposeExemptionSession(lockedContext.runtime, {
+        changeId,
+        repositoryRoot: lockedContext.git.repositoryRealPath,
+        gitCommonDirectory: lockedContext.git.gitCommonDirectory,
+        branch: lockedContext.git.branch,
+        baseline: {
+          head: lockedContext.git.head,
+          tree: lockedContext.git.tree,
+        },
+        intentDigest,
+        intent: request.intent,
+        applicability,
+        applicabilityNode,
+        actor: actorResolution.actor,
+        signals: actorResolution.signals,
+      });
+      if (
+        session.actor.providerId !== actorResolution.actor.providerId ||
+        session.actor.assurance !== actorResolution.actor.assurance
+      ) {
+        throw workflowError(
+          'CURRENT_INVESTIGATION_ACTOR_CONFLICT',
+          'The current structured investigation exemption is pinned to a different actor.',
+          ExitCode.conflict,
+        );
+      }
+      assertCurrentExemptionContext(lockedContext, session);
+      const scaffold = prepareExemptionPlanningScaffold(cwd, session);
+      const output = renderExemptionProposeOutput(cwd, session, scaffold);
+      assertOwned();
+      return output;
+    },
+  );
 }
 
 function exemptionAwaitingPlanningOutput(
@@ -1111,6 +1328,7 @@ function prepareExemptionPlanningScaffold(
   session: ProposeExemptionSession,
   allowAuthoredExisting = false,
   allowManagedPlanReview = false,
+  materializeScaffold = true,
 ): {
   changeDirectory: string;
   investigationBytes: string;
@@ -1149,7 +1367,9 @@ function prepareExemptionPlanningScaffold(
     allowAuthoredExisting,
     allowManagedPlanReview,
   );
-  writeManagedEntries(changeDirectory, scaffoldEntries);
+  if (materializeScaffold) {
+    writeManagedEntries(changeDirectory, scaffoldEntries);
+  }
   const adapter = createOpenSpecAdapter(context.git.repositoryRoot);
   const proposalInstruction = adapter.instructions(
     session.changeId,
@@ -1181,10 +1401,13 @@ function resumeExemptionPlanningContribution(
     input.changeId,
     (assertOwned) => {
       assertOwned();
+      const lockedContext = loadInvestigationRuntimeContext(cwd);
+      assertProposeStartContextStable(initialContext, lockedContext);
       const session = readProposeExemptionSession(
-        initialContext.runtime,
+        lockedContext.runtime,
         input.investigationId,
       );
+      assertCurrentExemptionContext(lockedContext, session);
       assertExemptionPlanningBinding(session, input);
       const materializedArtifacts = materializeExemptionPlanningContribution(
         cwd,
@@ -1194,6 +1417,10 @@ function resumeExemptionPlanningContribution(
         assertOwned,
       );
       assertOwned();
+      assertCurrentExemptionContext(
+        loadInvestigationRuntimeContext(cwd),
+        session,
+      );
       return renderExemptionProposeOutput(
         cwd,
         session,
@@ -1290,7 +1517,9 @@ export function resumePropose(
         const rebuilt = rebuildInvestigation(
           cwd,
           status.investigationId,
+          'consume',
           options.collaborationGrantValidation,
+          assertOwned,
         );
         assertOwned();
         const materializedArtifacts = materializePlanningContribution(
@@ -1307,9 +1536,11 @@ export function resumePropose(
         return renderProposeOutput(
           cwd,
           current,
+          'consume',
           null,
           materializedArtifacts,
           options.collaborationGrantValidation,
+          assertOwned,
         );
       },
     );
@@ -1328,15 +1559,22 @@ export function resumePropose(
   if (input.kind === 'provider-progress') {
     const current = getInvestigationStatus(cwd, input.investigationId);
     assertProgressBinding(current, input);
-    if (current.revision !== input.expectedRevision) {
+    let resumed: InvestigationStatus;
+    if (current.revision === input.expectedRevision) {
+      dispatchPreparedInvocation(cwd, current, options.providerDispatcher);
+      resumed = resumeInvestigationSession(cwd, input.investigationId);
+    } else if (
+      current.revision === input.expectedRevision + 1 &&
+      isExactPublishedProviderProgressReplay(cwd, current)
+    ) {
+      resumed = current;
+    } else {
       throw workflowError(
         'INVESTIGATION_CAS_MISMATCH',
         'Investigation session changed during provider progress.',
         ExitCode.conflict,
       );
     }
-    dispatchPreparedInvocation(cwd, current, options.providerDispatcher);
-    const resumed = resumeInvestigationSession(cwd, input.investigationId);
     return renderProposeOutputWithPlanningAuthority(
       cwd,
       resumed,
@@ -1356,6 +1594,7 @@ export function resumePropose(
     const rebuilt = rebuildInvestigation(
       cwd,
       before.investigationId,
+      'consume',
       options.collaborationGrantValidation,
     );
     const effectiveCheckpoint = mergeReviewerReopenCheckpoint(
@@ -1374,6 +1613,7 @@ export function resumePropose(
     const rebuilt = rebuildInvestigation(
       cwd,
       before.investigationId,
+      'consume',
       options.collaborationGrantValidation,
     );
     const effectiveCheckpoint = mergeReviewerReopenCheckpoint(
@@ -1633,34 +1873,106 @@ function resumePlanReview(
   if (invocation.state !== 'succeeded' || invocation.result === null) {
     return getProposeStatus(cwd, status.investigationId);
   }
-  const tracked = materializePlanReviewResult(
-    cwd,
-    status,
-    reservation,
-    invocation.result,
-    options.collaborationGrantValidation,
+  const admitted = withInvestigationTransitionAuthority(
+    context.lifecycleRuntime,
+    status.changeId,
+    (assertOwned) => {
+      assertOwned();
+      const lockedStatus = getProposeLifecycleStatus(
+        cwd,
+        input.investigationId,
+      );
+      const lockedContext = loadInvestigationRuntimeContext(cwd);
+      if (lockedStatus.state === 'investigation-exempt') {
+        assertCurrentExemptionContext(lockedContext, lockedStatus);
+      }
+      const lockedReservation = readPlanReviewReservation(
+        lockedContext.runtime,
+        lockedStatus,
+      );
+      if (
+        lockedStatus.changeId !== input.changeId ||
+        lockedReservation === null ||
+        lockedReservation.subject.subjectDigest !== input.subjectDigest ||
+        lockedReservation.request.invocationId !== input.invocationId ||
+        lockedReservation.request.requestDigest !== input.requestDigest
+      ) {
+        throw workflowError(
+          'PROPOSE_INPUT_STALE',
+          'PlanReview progress changed before admission.',
+          ExitCode.staleState,
+        );
+      }
+      const lockedInvocation = readProviderInvocation(
+        lockedContext.runtime,
+        lockedReservation.request.invocationId,
+      );
+      if (
+        lockedInvocation.state !== 'succeeded' ||
+        lockedInvocation.result === null
+      ) {
+        return { outcome: 'pending' as const };
+      }
+      const tracked = materializePlanReviewResult(
+        cwd,
+        lockedStatus,
+        lockedReservation,
+        lockedInvocation.result,
+        assertOwned,
+        options.collaborationGrantValidation,
+      );
+      if ('reopenedInvestigation' in tracked) {
+        return {
+          outcome: 'reopened' as const,
+          status: tracked.reopenedInvestigation,
+        };
+      }
+      if ('blockedInvestigation' in tracked) {
+        return {
+          outcome: 'blocked' as const,
+          status: tracked.blockedInvestigation,
+        };
+      }
+      const review = readPlanReviewNode(tracked.reviewNode);
+      if (review.findings.length > 0) {
+        return {
+          outcome: 'findings' as const,
+          investigationId: lockedStatus.investigationId,
+        };
+      }
+      return {
+        outcome: 'complete' as const,
+        output: commitCompletedPlanningUnderAuthority(
+          cwd,
+          lockedStatus,
+          assertOwned,
+        ),
+      };
+    },
   );
-  if ('reopenedInvestigation' in tracked) {
-    return renderProposeOutputWithPlanningAuthority(
-      cwd,
-      tracked.reopenedInvestigation,
-      null,
-      options.collaborationGrantValidation,
-    );
-  }
-  if ('blockedInvestigation' in tracked) {
-    return renderProposeOutputWithPlanningAuthority(
-      cwd,
-      tracked.blockedInvestigation,
-      null,
-      options.collaborationGrantValidation,
-    );
-  }
-  const review = readPlanReviewNode(tracked.reviewNode);
-  if (review.findings.length > 0) {
+  if (admitted.outcome === 'pending') {
     return getProposeStatus(cwd, status.investigationId);
   }
-  return commitCompletedPlanning(cwd, status);
+  if (admitted.outcome === 'reopened') {
+    return renderProposeOutputWithPlanningAuthority(
+      cwd,
+      admitted.status,
+      null,
+      options.collaborationGrantValidation,
+    );
+  }
+  if (admitted.outcome === 'blocked') {
+    return renderProposeOutputWithPlanningAuthority(
+      cwd,
+      admitted.status,
+      null,
+      options.collaborationGrantValidation,
+    );
+  }
+  if (admitted.outcome === 'findings') {
+    return getProposeStatus(cwd, admitted.investigationId);
+  }
+  return admitted.output;
 }
 
 function materializePlanReviewResult(
@@ -1668,6 +1980,7 @@ function materializePlanReviewResult(
   status: ProposeLifecycleStatus,
   reservation: PlanReviewReservation,
   result: ProviderProcessResult,
+  assertOwned: HeldChangeTransitionAuthority,
   grantValidation?: ProposeResumeOptions['collaborationGrantValidation'],
 ):
   | {
@@ -1734,7 +2047,9 @@ function materializePlanReviewResult(
     reviewerRebuild = rebuildInvestigation(
       cwd,
       status.investigationId,
+      'consume',
       grantValidation,
+      assertOwned,
     );
     const admittedContributions = reviewerRebuild.contributionNodes.map(
       (node) => structuredClone(node.output),
@@ -1758,8 +2073,9 @@ function materializePlanReviewResult(
     });
     if (reviewerReopenPolicy === 'human-action-required') {
       return {
-        blockedInvestigation: blockInvestigationForReviewerTerms(
+        blockedInvestigation: blockInvestigationForReviewerTermsUnderAuthority(
           cwd,
+          status.changeId,
           status.investigationId,
           {
             expectedRevision: status.revision,
@@ -1767,6 +2083,7 @@ function materializePlanReviewResult(
             usedReopens: reviewerRebuild.reviewerTermReopenCount,
             proposedTermCount: novelReviewerTerms.length,
           },
+          assertOwned,
         ),
       };
     }
@@ -1804,7 +2121,7 @@ function materializePlanReviewResult(
       grantValidation?.verifier ??
       createInteractiveSshSigner(context.git.repositoryRoot, policy);
     const now = grantValidation?.now ?? new Date();
-    const consumed = consumeCollaborationGrant(
+    const consumed = consumeCollaborationGrantUnderLifecycleLock(
       context.git.gitCommonDirectory,
       reservation.grantAuthorization.grantId,
       {
@@ -1818,6 +2135,7 @@ function materializePlanReviewResult(
         },
         now,
       },
+      assertOwned,
     );
     if (!consumed.use) {
       throw workflowError(
@@ -1867,6 +2185,11 @@ function materializePlanReviewResult(
     reviewerReopenPolicy !== 'human-close-input'
   ) {
     if (status.state === 'investigation-exempt') {
+      retireCurrentProposeExemptionSession(
+        loadInvestigationRuntimeContext(cwd).runtime,
+        status,
+        assertOwned,
+      );
       throw workflowError(
         'INVESTIGATION_EXEMPTION_REVIEWER_TERMS_REQUIRED',
         'Reviewer terms invalidate the zero-scan exemption and require an ordinary investigation revision.',
@@ -1875,7 +2198,13 @@ function materializePlanReviewResult(
     }
     const rebuilt =
       reviewerRebuild ??
-      rebuildInvestigation(cwd, status.investigationId, grantValidation);
+      rebuildInvestigation(
+        cwd,
+        status.investigationId,
+        'consume',
+        grantValidation,
+        assertOwned,
+      );
     const existingContributions = rebuilt.contributionNodes.map((node) =>
       structuredClone(node.output),
     ) as InvestigationTermContribution[];
@@ -1935,8 +2264,9 @@ function materializePlanReviewResult(
       writeEvidenceNode(context.runtime, node);
     }
     return {
-      reopenedInvestigation: reopenInvestigationForReviewerTerms(
+      reopenedInvestigation: reopenInvestigationForReviewerTermsUnderAuthority(
         cwd,
+        status.changeId,
         status.investigationId,
         {
           expectedRevision: status.revision,
@@ -1948,6 +2278,7 @@ function materializePlanReviewResult(
               ? reviewerResolution.resolutionNodeId
               : null,
         },
+        assertOwned,
       ),
     };
   }
@@ -1955,11 +2286,17 @@ function materializePlanReviewResult(
     reviewerReopenPolicy === 'human-close-input' &&
     reviewerResolution.outcome === 'close-input'
   ) {
-    acknowledgeReviewerTermInputClosure(cwd, status.investigationId, {
-      expectedRevision: status.revision,
-      pendingReviewDigest: reviewNode.resultDigest,
-      authorizationResolutionNodeId: reviewerResolution.resolutionNodeId,
-    });
+    acknowledgeReviewerTermInputClosureUnderAuthority(
+      cwd,
+      status.changeId,
+      status.investigationId,
+      {
+        expectedRevision: status.revision,
+        pendingReviewDigest: reviewNode.resultDigest,
+        authorizationResolutionNodeId: reviewerResolution.resolutionNodeId,
+      },
+      assertOwned,
+    );
   }
   const tracked = {
     nodes: [reservation.targetSnapshotNode, providerResultNode, reviewNode],
@@ -1967,11 +2304,15 @@ function materializePlanReviewResult(
     dispositionNode: null,
     roleResult,
   };
+  if (status.state === 'investigation-exempt') {
+    assertCurrentExemptionContext(loadInvestigationRuntimeContext(cwd), status);
+  }
   writeTrackedPlanReview(context.git.repositoryRoot, status.changeId, {
     nodes: tracked.nodes,
     roleResult,
     dispositionNode: null,
   });
+  assertOwned();
   return tracked;
 }
 
@@ -1979,39 +2320,57 @@ function completePlanReviewDispositions(
   cwd: string,
   input: PlanReviewDispositionsEnvelope,
 ): ProposeOutput {
-  const status = getProposeLifecycleStatus(cwd, input.investigationId);
-  const context = loadInvestigationRuntimeContext(cwd);
-  const reservation = readPlanReviewReservation(context.runtime, status);
-  const tracked = readTrackedPlanReview(
-    context.git.repositoryRoot,
-    status.changeId,
+  const initialContext = loadInvestigationRuntimeContext(cwd);
+  return withInvestigationTransitionAuthority(
+    initialContext.lifecycleRuntime,
+    input.changeId,
+    (assertOwned) => {
+      assertOwned();
+      const status = getProposeLifecycleStatus(cwd, input.investigationId);
+      const context = loadInvestigationRuntimeContext(cwd);
+      if (status.state === 'investigation-exempt') {
+        assertCurrentExemptionContext(context, status);
+      }
+      const reservation = readPlanReviewReservation(context.runtime, status);
+      const tracked = readTrackedPlanReview(
+        context.git.repositoryRoot,
+        status.changeId,
+      );
+      if (
+        status.changeId !== input.changeId ||
+        reservation === null ||
+        reservation.subject.subjectDigest !== input.subjectDigest ||
+        tracked === null ||
+        tracked.reviewNode.nodeId !== input.reviewNodeId ||
+        tracked.reviewNode.resultDigest !== input.reviewResultDigest ||
+        tracked.dispositionNode !== null
+      ) {
+        throw workflowError(
+          'PROPOSE_INPUT_STALE',
+          'PlanReview dispositions are not bound to the current review.',
+          ExitCode.staleState,
+        );
+      }
+      const dispositionNode = createPlanReviewDispositionNode({
+        reviewNode: tracked.reviewNode,
+        policyDigest: reservation.subject.reviewPolicyDigest,
+        dispositions: input.dispositions,
+      });
+      if (status.state === 'investigation-exempt') {
+        assertCurrentExemptionContext(
+          loadInvestigationRuntimeContext(cwd),
+          status,
+        );
+      }
+      writeTrackedPlanReview(context.git.repositoryRoot, status.changeId, {
+        nodes: tracked.nodes,
+        roleResult: tracked.roleResult,
+        dispositionNode,
+      });
+      assertOwned();
+      return commitCompletedPlanningUnderAuthority(cwd, status, assertOwned);
+    },
   );
-  if (
-    status.changeId !== input.changeId ||
-    reservation === null ||
-    reservation.subject.subjectDigest !== input.subjectDigest ||
-    tracked === null ||
-    tracked.reviewNode.nodeId !== input.reviewNodeId ||
-    tracked.reviewNode.resultDigest !== input.reviewResultDigest ||
-    tracked.dispositionNode !== null
-  ) {
-    throw workflowError(
-      'PROPOSE_INPUT_STALE',
-      'PlanReview dispositions are not bound to the current review.',
-      ExitCode.staleState,
-    );
-  }
-  const dispositionNode = createPlanReviewDispositionNode({
-    reviewNode: tracked.reviewNode,
-    policyDigest: reservation.subject.reviewPolicyDigest,
-    dispositions: input.dispositions,
-  });
-  writeTrackedPlanReview(context.git.repositoryRoot, status.changeId, {
-    nodes: tracked.nodes,
-    roleResult: tracked.roleResult,
-    dispositionNode,
-  });
-  return commitCompletedPlanning(cwd, status);
 }
 
 function writeTrackedPlanReview(
@@ -2069,12 +2428,28 @@ function writeTrackedPlanReview(
   replaceTextAtomic(target, bytes, { allowCreate: true, defaultMode: 0o644 });
 }
 
-function commitCompletedPlanning(
+function commitCompletedPlanningUnderAuthority(
   cwd: string,
   status: ProposeLifecycleStatus,
+  assertOwned: HeldChangeTransitionAuthority,
 ): ProposeOutput {
-  const before = getProposeStatus(cwd, status.investigationId);
-  const planningTransition = commitPlanningTransition(cwd, status.changeId);
+  assertOwned();
+  const before = getProposeStatusInternal(
+    cwd,
+    status.investigationId,
+    undefined,
+    assertOwned,
+  );
+  if (status.state === 'investigation-exempt') {
+    const context = loadInvestigationRuntimeContext(cwd);
+    assertCurrentExemptionContext(context, status);
+    retireCurrentProposeExemptionSession(context.runtime, status, assertOwned);
+  }
+  const planningTransition = commitPlanningTransitionUnderAuthority(
+    cwd,
+    status.changeId,
+    assertOwned,
+  );
   return {
     ...before,
     state: 'planning-complete',
@@ -2101,7 +2476,12 @@ function getExemptionProposeStatus(
 ): ExemptionProposeOutput {
   const context = loadInvestigationRuntimeContext(cwd);
   const session = readProposeExemptionSession(context.runtime, investigationId);
-  return renderExemptionProposeOutput(cwd, session);
+  assertCurrentExemptionContext(context, session);
+  return renderExemptionProposeOutput(
+    cwd,
+    session,
+    prepareExemptionPlanningScaffold(cwd, session, true, true, false),
+  );
 }
 
 function renderExemptionProposeOutput(
@@ -2153,12 +2533,33 @@ function renderExemptionProposeOutput(
 export function getProposeStatus(
   cwd: string,
   requestedInvestigationId: string,
+  grantValidation?: ProposeResumeOptions['collaborationGrantValidation'],
+): ProposeOutput {
+  return getProposeStatusInternal(
+    cwd,
+    requestedInvestigationId,
+    grantValidation,
+  );
+}
+
+function getProposeStatusInternal(
+  cwd: string,
+  requestedInvestigationId: string,
+  grantValidation?: ProposeResumeOptions['collaborationGrantValidation'],
+  assertOwned?: () => void,
 ): ProposeOutput {
   if (isProposeExemptionInvestigationId(requestedInvestigationId)) {
     return getExemptionProposeStatus(cwd, requestedInvestigationId);
   }
   const status = getInvestigationStatus(cwd, requestedInvestigationId);
-  const rebuilt = rebuildInvestigation(cwd, status.investigationId);
+  assertOwned?.();
+  const rebuilt = rebuildInvestigation(
+    cwd,
+    status.investigationId,
+    'replay-consumed',
+    grantValidation,
+    assertOwned,
+  );
   const context = loadInvestigationRuntimeContext(cwd);
   const request = readProviderInvocationRequest(
     context.runtime,
@@ -2172,7 +2573,15 @@ export function getProposeStatus(
     signals: authorization.signals,
   };
   if (status.state !== 'investigation-sealed') {
-    return renderProposeOutput(cwd, status, actorResolution);
+    return renderProposeOutput(
+      cwd,
+      status,
+      'replay-consumed',
+      actorResolution,
+      undefined,
+      grantValidation,
+      assertOwned,
+    );
   }
 
   const scaffold = {
@@ -2227,6 +2636,7 @@ function renderProposeOutputWithPlanningAuthority(
     return renderProposeOutput(
       cwd,
       status,
+      'consume',
       actorResolution,
       undefined,
       grantValidation,
@@ -2253,9 +2663,11 @@ function renderProposeOutputWithPlanningAuthority(
       const result = renderProposeOutput(
         cwd,
         current,
+        'consume',
         actorResolution,
         undefined,
         grantValidation,
+        assertOwned,
       );
       assertOwned();
       return result;
@@ -2266,14 +2678,18 @@ function renderProposeOutputWithPlanningAuthority(
 function renderProposeOutput(
   cwd: string,
   status: InvestigationStatus,
+  grantAccess: CollaborationGrantAccessMode,
   actorResolution: ProposeOutput['actorResolution'] = null,
   knownMaterializedArtifacts?: Record<string, string>,
   grantValidation?: ProposeResumeOptions['collaborationGrantValidation'],
+  assertOwned?: () => void,
 ): ProposeOutput {
   const rebuilt = rebuildInvestigation(
     cwd,
     status.investigationId,
+    grantAccess,
     grantValidation,
+    assertOwned,
   );
   const createdDate = rebuilt.session.createdAt.slice(0, 10);
   if (status.state === 'investigation-sealed') {
@@ -2385,12 +2801,15 @@ function renderMaterializedProposeOutput(
       planningTransition: null,
     };
   }
-  ensurePlanReviewInvocation(
-    context.git.repositoryRoot,
-    context.runtime,
-    status,
-    reservation,
-  );
+  if (
+    !providerInvocationExists(context.runtime, reservation.request.invocationId)
+  ) {
+    throw workflowError(
+      'PLAN_REVIEW_INVOCATION_MISSING',
+      'Plan-review status cannot repair a missing provider invocation.',
+      ExitCode.staleState,
+    );
+  }
   const invocation = readProviderInvocation(
     context.runtime,
     reservation.request.invocationId,
@@ -2564,10 +2983,14 @@ function planReviewDispositionSchema(
   };
 }
 
+type CollaborationGrantAccessMode = 'consume' | 'replay-consumed';
+
 function rebuildInvestigation(
   cwd: string,
   investigationId: string,
+  grantAccess: CollaborationGrantAccessMode,
   grantValidation?: ProposeResumeOptions['collaborationGrantValidation'],
+  assertOwned?: () => void,
 ): RebuiltInvestigation {
   const context = loadInvestigationRuntimeContext(cwd);
   const session = readInvestigationSession(context.runtime, investigationId);
@@ -2730,7 +3153,9 @@ function rebuildInvestigation(
     providerRequest,
     invocation.result,
     providerResultNode,
+    grantAccess,
     grantValidation,
+    assertOwned,
   );
   const scan = scanInvestigationTree({
     repositoryRoot: context.git.repositoryRoot,
@@ -3838,7 +4263,9 @@ function createBlindSurveyRoleResult(
   request: ProviderInvocationRequest,
   result: ProviderProcessResult,
   providerResultNode: EvidenceNode,
+  grantAccess: CollaborationGrantAccessMode,
   validation?: ProposeResumeOptions['collaborationGrantValidation'],
+  assertOwned?: () => void,
 ): AdmittedRoleResult {
   const grantAuthorization = authorization.grantAuthorization;
   const content = {
@@ -3891,29 +4318,47 @@ function createBlindSurveyRoleResult(
       validation?.verifier ??
       createInteractiveSshSigner(context.git.repositoryRoot, policy);
     const now = validation?.now ?? new Date();
-    const consumed = consumeCollaborationGrant(
-      context.git.gitCommonDirectory,
-      grantAuthorization.grantId,
-      {
-        transitionDigest: grantAuthorization.transitionDigest,
-        assignment: request.roleAssignment,
-        contentAdmission: {
-          kind: content.kind,
-          nodeId: content.nodeId,
-          resultDigest: content.resultDigest,
-          current: true,
-        },
-        now,
+    const consumption = {
+      transitionDigest: grantAuthorization.transitionDigest,
+      assignment: request.roleAssignment,
+      contentAdmission: {
+        kind: content.kind,
+        nodeId: content.nodeId,
+        resultDigest: content.resultDigest,
+        current: true as const,
       },
-    );
-    if (!consumed.use) {
+      now,
+    };
+    const use =
+      grantAccess === 'replay-consumed'
+        ? readExactConsumedCollaborationGrantUse(
+            context.git.gitCommonDirectory,
+            grantAuthorization.grantId,
+            consumption,
+          )
+        : (assertOwned === undefined
+            ? consumeCollaborationGrant(
+                context.git.gitCommonDirectory,
+                grantAuthorization.grantId,
+                consumption,
+              )
+            : consumeCollaborationGrantUnderLifecycleLock(
+                context.git.gitCommonDirectory,
+                grantAuthorization.grantId,
+                consumption,
+                assertOwned,
+              )
+          ).use;
+    if (!use) {
       throw workflowError(
         'COLLABORATION_GRANT_ADMISSION_REQUIRED',
-        'The exact collaboration grant use was not durably consumed.',
+        grantAccess === 'replay-consumed'
+          ? 'Status cannot admit a reserved collaboration grant; retry the exact mutating propose input.'
+          : 'The exact collaboration grant use was not durably consumed.',
         ExitCode.staleState,
       );
     }
-    grantUse = consumed.use;
+    grantUse = use;
     grantAdmission = {
       now,
       expectedBinding: grantAuthorization.expectedBinding,
@@ -4175,7 +4620,9 @@ function reconcileReviewerTermPlanningRevision(
       const rebuilt = rebuildInvestigation(
         cwd,
         current.investigationId,
+        'consume',
         options.collaborationGrantValidation,
+        assertOwned,
       );
       if (rebuilt.reviewerTermSourceNode === null) {
         throw workflowError(
@@ -4897,8 +5344,8 @@ function preparePlanReviewInvocation(
   cwd: string,
   status: ProposeLifecycleStatus,
   planning: InvestigationFirstPlanningSubject,
-  collaborationGrant?: ProposeResumeOptions['collaborationGrant'],
-  assertOwned: () => void = () => {},
+  collaborationGrant: ProposeResumeOptions['collaborationGrant'] | undefined,
+  assertOwned: () => void,
 ): PlanReviewReservation | null {
   const context = loadInvestigationRuntimeContext(cwd);
   const existing = readPlanReviewReservation(context.runtime, status);
@@ -5091,7 +5538,13 @@ function preparePlanReviewInvocation(
   const legacyMigration =
     status.state === 'investigation-exempt'
       ? null
-      : rebuildInvestigation(cwd, status.investigationId).legacyMigration;
+      : rebuildInvestigation(
+          cwd,
+          status.investigationId,
+          'consume',
+          undefined,
+          assertOwned,
+        ).legacyMigration;
   const targetSnapshotNode = createPlanReviewTargetSnapshotNode({
     changeId: status.changeId,
     changePrefix,
@@ -6346,6 +6799,27 @@ function assertProgressBinding(
       ExitCode.staleState,
     );
   }
+}
+
+function isExactPublishedProviderProgressReplay(
+  cwd: string,
+  status: InvestigationStatus,
+): boolean {
+  const context = loadInvestigationRuntimeContext(cwd);
+  const session = readInvestigationSession(
+    context.runtime,
+    status.investigationId,
+  );
+  const published = session.milestones.blindResult;
+  return (
+    session.revision === status.revision &&
+    session.currentBlindInvocationId === status.providerInvocationId &&
+    published !== null &&
+    published.invocationId === status.providerInvocationId &&
+    published.requestDigest === session.blindRequestDigest &&
+    published.outputDigest === status.provider.resultDigest &&
+    status.provider.state === 'succeeded'
+  );
 }
 
 function assertPlanningPayload(value: unknown): PlanningContributionPayload {

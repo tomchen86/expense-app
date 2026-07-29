@@ -282,7 +282,12 @@ export function reserveCollaborationGrantUnderLifecycleLock(
   const terminalPath = statePath(paths.terminal, grantId);
   if (fs.existsSync(terminalPath)) {
     const terminal = readTerminal(terminalPath, grantId);
-    cleanupNonterminal(paths, grantId, terminal.envelope);
+    cleanupNonterminal(
+      paths,
+      grantId,
+      terminal.envelope,
+      terminal.transitionDigest,
+    );
     throw unavailableGrant(grantId);
   }
   assertNonterminalUnambiguous(paths, grantId);
@@ -319,7 +324,7 @@ export function reserveCollaborationGrantUnderLifecycleLock(
       };
       assertOwned();
       createPrivateFileAtomic(terminalPath, serialize(terminal));
-      cleanupNonterminal(paths, grantId, envelope);
+      cleanupNonterminal(paths, grantId, envelope, transitionDigest);
     }
     throw error;
   }
@@ -369,7 +374,12 @@ export function readReservedCollaborationGrantUnderLifecycleLock(
   const terminalPath = statePath(paths.terminal, grantId);
   if (fs.existsSync(terminalPath)) {
     const terminal = readTerminal(terminalPath, grantId);
-    cleanupNonterminal(paths, grantId, terminal.envelope);
+    cleanupNonterminal(
+      paths,
+      grantId,
+      terminal.envelope,
+      terminal.transitionDigest,
+    );
     throw unavailableGrant(grantId);
   }
   assertNonterminalUnambiguous(paths, grantId);
@@ -422,7 +432,12 @@ export function consumeCollaborationGrantUnderLifecycleLock(
     ) {
       throw unavailableGrant(grantId);
     }
-    cleanupNonterminal(paths, grantId, terminal.envelope);
+    cleanupNonterminal(
+      paths,
+      grantId,
+      terminal.envelope,
+      terminal.transitionDigest,
+    );
     return inspectTerminal(terminal);
   }
   assertNonterminalUnambiguous(paths, grantId);
@@ -471,7 +486,7 @@ export function consumeCollaborationGrantUnderLifecycleLock(
     };
     assertOwned();
     createPrivateFileAtomic(terminalPath, serialize(failed));
-    cleanupNonterminal(paths, grantId, reservation.envelope);
+    cleanupNonterminal(paths, grantId, reservation.envelope, transitionDigest);
     assertOwned();
     throw error;
   }
@@ -509,9 +524,74 @@ export function consumeCollaborationGrantUnderLifecycleLock(
   };
   assertOwned();
   createPrivateFileAtomic(terminalPath, serialize(terminal));
-  cleanupNonterminal(paths, grantId, reservation.envelope);
+  cleanupNonterminal(paths, grantId, reservation.envelope, transitionDigest);
   assertOwned();
   return inspectTerminal(terminal);
+}
+
+export function readExactConsumedCollaborationGrantUse(
+  gitCommonDirectory: string,
+  requestedGrantId: string,
+  request: CollaborationConsumptionRequest,
+): CollaborationGrantUseProjection | null {
+  const grantId = assertCollaborationGrantId(requestedGrantId);
+  const transitionDigest = exactDigest(
+    request.transitionDigest,
+    'transition digest',
+  );
+  const paths = collaborationGrantStorePaths(gitCommonDirectory);
+  existingStateDirectories(paths);
+  const terminalPath = statePath(paths.terminal, grantId);
+  if (fs.existsSync(terminalPath)) {
+    const terminal = readTerminal(terminalPath, grantId);
+    assertResidualCopiesMatch(
+      paths,
+      grantId,
+      terminal.envelope,
+      terminal.transitionDigest,
+    );
+    if (
+      terminal.state !== 'consumed' ||
+      terminal.use === null ||
+      !consumptionMatches(terminal.use, request, transitionDigest)
+    ) {
+      throw unavailableGrant(grantId);
+    }
+    return terminal.use;
+  }
+  assertNonterminalUnambiguous(paths, grantId);
+  const reservedPath = statePath(paths.reserved, grantId);
+  if (fs.existsSync(reservedPath)) {
+    const reservation = readReservation(reservedPath, grantId);
+    if (reservation.transitionDigest !== transitionDigest) {
+      throw unavailableGrant(grantId);
+    }
+    const assignment = assertGrantedAssignment(
+      request.assignment,
+      reservation.envelope,
+    );
+    const contentAdmission = assertContentAdmission(
+      request.contentAdmission,
+      reservation.envelope.payload.lifecyclePhase,
+    );
+    assertDirectHumanAttestationReference(
+      request.directHumanReviewAttestation ?? null,
+      assignment,
+      reservation.envelope,
+      transitionDigest,
+      {
+        kind: contentAdmission.kind,
+        nodeId: contentAdmission.nodeId,
+        resultDigest: contentAdmission.resultDigest,
+      },
+    );
+    return null;
+  }
+  const availablePath = statePath(paths.available, grantId);
+  if (fs.existsSync(availablePath)) {
+    readAvailable(availablePath, grantId);
+  }
+  return null;
 }
 
 /**
@@ -682,7 +762,12 @@ export function failCollaborationReservationUnderLifecycleLock(
     ) {
       throw unavailableGrant(grantId);
     }
-    cleanupNonterminal(paths, grantId, terminal.envelope);
+    cleanupNonterminal(
+      paths,
+      grantId,
+      terminal.envelope,
+      terminal.transitionDigest,
+    );
     return inspectTerminal(terminal);
   }
   assertNonterminalUnambiguous(paths, grantId);
@@ -705,7 +790,7 @@ export function failCollaborationReservationUnderLifecycleLock(
   };
   assertOwned();
   createPrivateFileAtomic(terminalPath, serialize(terminal));
-  cleanupNonterminal(paths, grantId, reservation.envelope);
+  cleanupNonterminal(paths, grantId, reservation.envelope, transitionDigest);
   assertOwned();
   return inspectTerminal(terminal);
 }
@@ -740,7 +825,12 @@ export function revokeCollaborationGrantUnderLifecycleLock(
   const terminalPath = statePath(paths.terminal, grantId);
   if (fs.existsSync(terminalPath)) {
     const terminal = readTerminal(terminalPath, grantId);
-    cleanupNonterminal(paths, grantId, terminal.envelope);
+    cleanupNonterminal(
+      paths,
+      grantId,
+      terminal.envelope,
+      terminal.transitionDigest,
+    );
     return inspectTerminal(terminal);
   }
   assertNonterminalUnambiguous(paths, grantId);
@@ -777,7 +867,7 @@ export function revokeCollaborationGrantUnderLifecycleLock(
   };
   assertOwned();
   createPrivateFileAtomic(terminalPath, serialize(terminal));
-  cleanupNonterminal(paths, grantId, envelope);
+  cleanupNonterminal(paths, grantId, envelope, terminal.transitionDigest);
   assertOwned();
   return inspectTerminal(terminal);
 }
@@ -836,7 +926,12 @@ function inspectOne(
   const terminalPath = statePath(paths.terminal, grantId);
   if (fs.existsSync(terminalPath)) {
     const terminal = readTerminal(terminalPath, grantId);
-    assertResidualCopiesMatch(paths, grantId, terminal.envelope);
+    assertResidualCopiesMatch(
+      paths,
+      grantId,
+      terminal.envelope,
+      terminal.transitionDigest,
+    );
     return inspectTerminal(terminal);
   }
   assertNonterminalUnambiguous(paths, grantId);
@@ -947,7 +1042,11 @@ function readReservationOrInterrupted(
   try {
     return readReservation(filePath, grantId);
   } catch {
-    return { envelope: readAvailable(filePath, grantId) };
+    try {
+      return { envelope: readAvailable(filePath, grantId) };
+    } catch {
+      throw ambiguousGrant(grantId);
+    }
   }
 }
 
@@ -1404,19 +1503,25 @@ function cleanupNonterminal(
   paths: ReturnType<typeof collaborationGrantStorePaths>,
   grantId: string,
   expected: CollaborationGrantEnvelope,
+  expectedTransitionDigest: string | null,
 ): void {
   for (const directory of [paths.available, paths.reserved]) {
     const target = statePath(directory, grantId);
     if (!fs.existsSync(target)) {
       continue;
     }
-    const observed =
+    const residual =
       directory === paths.available
-        ? readAvailable(target, grantId)
-        : readReservationOrInterrupted(target, grantId).envelope;
+        ? { envelope: readAvailable(target, grantId) }
+        : readReservationOrInterrupted(target, grantId);
+    const observed = residual.envelope;
     if (
       canonicalCollaborationGrantEnvelope(observed) !==
-      canonicalCollaborationGrantEnvelope(expected)
+        canonicalCollaborationGrantEnvelope(expected) ||
+      (directory === paths.reserved &&
+        (residual.transitionDigest === undefined
+          ? expectedTransitionDigest !== null
+          : residual.transitionDigest !== expectedTransitionDigest))
     ) {
       throw ambiguousGrant(grantId);
     }
@@ -1429,19 +1534,25 @@ function assertResidualCopiesMatch(
   paths: ReturnType<typeof collaborationGrantStorePaths>,
   grantId: string,
   expected: CollaborationGrantEnvelope,
+  expectedTransitionDigest: string | null,
 ): void {
   for (const directory of [paths.available, paths.reserved]) {
     const target = statePath(directory, grantId);
     if (!fs.existsSync(target)) {
       continue;
     }
-    const observed =
+    const residual =
       directory === paths.available
-        ? readAvailable(target, grantId)
-        : readReservationOrInterrupted(target, grantId).envelope;
+        ? { envelope: readAvailable(target, grantId) }
+        : readReservationOrInterrupted(target, grantId);
+    const observed = residual.envelope;
     if (
       canonicalCollaborationGrantEnvelope(observed) !==
-      canonicalCollaborationGrantEnvelope(expected)
+        canonicalCollaborationGrantEnvelope(expected) ||
+      (directory === paths.reserved &&
+        (residual.transitionDigest === undefined
+          ? expectedTransitionDigest !== null
+          : residual.transitionDigest !== expectedTransitionDigest))
     ) {
       throw ambiguousGrant(grantId);
     }

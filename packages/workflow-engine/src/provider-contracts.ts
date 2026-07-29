@@ -21,6 +21,14 @@ const GIT_OBJECT_ID = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
 const REQUEST_SCHEMA_VERSION = 1;
 const RESULT_SCHEMA_VERSION = 1;
 
+export const PROPOSE_POLICY_DIGEST = sha256(
+  canonicalJson({ schema: 'workflow-propose-policy.v2' }),
+);
+
+export const PROPOSE_EXEMPTION_SESSION_STORE_POLICY_DIGEST = sha256(
+  canonicalJson({ schema: 'workflow-propose-exemption-session-store.v1' }),
+);
+
 /**
  * The code-owned positive maxima for a single provider invocation. Repository
  * policy may lower these but never raise them, and a request may only bind
@@ -372,6 +380,45 @@ export function createProviderInvocationRequest(
     requestDigest,
   };
   return deepFreeze(request) as ProviderInvocationRequest;
+}
+
+export function recreateProviderInvocationRequest(
+  value: unknown,
+): ProviderInvocationRequest {
+  if (
+    !isRecord(value) ||
+    !hasExactKeys(value, [
+      'schemaVersion',
+      ...REQUEST_INPUT_KEYS,
+      'roleAssignmentDigest',
+      'requestDigest',
+    ])
+  ) {
+    throw requestInvalid();
+  }
+  const request = createProviderInvocationRequest({
+    invocationId: value.invocationId,
+    nonce: value.nonce,
+    purpose: value.purpose,
+    providerId: value.providerId,
+    roleAssignment: value.roleAssignment,
+    capabilityProfile: value.capabilityProfile,
+    repositoryId: value.repositoryId,
+    baseCommit: value.baseCommit,
+    baseTree: value.baseTree,
+    targetDigest: value.targetDigest,
+    inputManifestDigest: value.inputManifestDigest,
+    authorizationNodeId: value.authorizationNodeId,
+    writeAllowedPaths: value.writeAllowedPaths,
+    outputSchema: value.outputSchema,
+    evaluatorVersion: value.evaluatorVersion,
+    policyDigest: value.policyDigest,
+    limits: value.limits,
+  } as ProviderInvocationRequestInput);
+  if (canonicalJson(request) !== canonicalJson(value)) {
+    throw requestInvalid();
+  }
+  return request;
 }
 
 /**

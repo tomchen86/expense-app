@@ -33,14 +33,19 @@ import {
   consumeCollaborationGrantUnderLifecycleLock,
   failCollaborationReservationUnderLifecycleLock,
   inspectCollaborationGrants,
+  readExactConsumedCollaborationGrantUse,
   readReservedCollaborationGrantUnderLifecycleLock,
   reserveCollaborationGrant,
   reserveCollaborationGrantUnderLifecycleLock,
   revokeCollaborationGrant,
   validateCollaborationGrantUseSet,
   validateCollaborationGrantUseProjection,
+  type CollaborationConsumptionRequest,
 } from '../src/collaboration-grant-store.ts';
-import { createInvestigationCheckpointEnvelope } from '../src/investigation-session.ts';
+import {
+  createInvestigationCheckpointEnvelope,
+  resumeInvestigationSession,
+} from '../src/investigation-session.ts';
 import type { MaintainerPolicy } from '../src/maintainer-policy.ts';
 import type { MaintainerSignerProvider } from '../src/maintainer-signer.ts';
 import { investigationRuntimePaths } from '../src/paths.ts';
@@ -48,6 +53,8 @@ import { PLAN_REVIEW_COVERAGE } from '../src/plan-review.ts';
 import {
   createPlanningContributionEnvelope,
   createPlanReviewProgressEnvelope,
+  createProviderProgressEnvelope,
+  getProposeStatus,
   resumePropose,
   startPropose,
 } from '../src/propose-orchestrator.ts';
@@ -218,11 +225,9 @@ test('propose pauses for an exact grant and admits a same-provider fresh-session
     assert.equal('grantId' in providerRequest.roleAssignment, true);
     assert.notEqual(providerRequest.roleAssignment.sessionId, 'author-codex');
 
-    completeFixtureProviderInvocation(providerRequest, repository);
-    const afterMain = resumePropose(
-      repository,
-      changeId,
-      createInvestigationCheckpointEnvelope(started.investigation!, {
+    const mainTerms = createInvestigationCheckpointEnvelope(
+      started.investigation!,
+      {
         reference: 'main-granted-survey',
         terms: [
           {
@@ -232,7 +237,37 @@ test('propose pauses for an exact grant and admits a same-provider fresh-session
             expectedRelationship: 'Existing consumers may depend on it.',
           },
         ],
-      }),
+      },
+    );
+    const waiting = resumeInvestigationSession(
+      repository,
+      started.investigation!.investigationId,
+      mainTerms,
+    );
+    completeFixtureProviderInvocation(providerRequest, repository);
+    const providerProgress = createProviderProgressEnvelope(waiting);
+    resumeInvestigationSession(
+      repository,
+      started.investigation!.investigationId,
+    );
+    const grantStore = collaborationGrantStorePaths(
+      fs.realpathSync(path.join(repository, '.git')),
+    );
+    const beforeStatus = snapshotGrantStore(grantStore.root);
+    assert.throws(
+      () =>
+        getProposeStatus(repository, started.investigation!.investigationId, {
+          now: new Date(NOW.getTime() + 120_000),
+          verifier: signer,
+        }),
+      (error) =>
+        isWorkflowError(error, 'COLLABORATION_GRANT_ADMISSION_REQUIRED'),
+    );
+    assert.deepEqual(snapshotGrantStore(grantStore.root), beforeStatus);
+    const afterProviderProgress = resumePropose(
+      repository,
+      changeId,
+      providerProgress,
       {
         collaborationGrantValidation: {
           now: new Date(NOW.getTime() + 120_000),
@@ -240,7 +275,7 @@ test('propose pauses for an exact grant and admits a same-provider fresh-session
         },
       },
     );
-    assert.equal(afterMain.state, 'awaiting-group-dispositions');
+    assert.equal(afterProviderProgress.state, 'awaiting-group-dispositions');
     const inspected = inspectCollaborationGrants(
       fs.realpathSync(path.join(repository, '.git')),
       issued.grantId,
@@ -254,6 +289,35 @@ test('propose pauses for an exact grant and admits a same-provider fresh-session
       inspected[0]?.use?.assignment.orchestration,
       'engine-spawned-provider',
     );
+    const consumedSnapshot = snapshotGrantStore(grantStore.root);
+    const firstStatus = getProposeStatus(
+      repository,
+      started.investigation!.investigationId,
+      {
+        now: new Date(NOW.getTime() + 120_000),
+        verifier: signer,
+      },
+    );
+    const secondStatus = getProposeStatus(
+      repository,
+      started.investigation!.investigationId,
+      {
+        now: new Date(NOW.getTime() + 120_000),
+        verifier: signer,
+      },
+    );
+    assert.deepEqual(secondStatus, firstStatus);
+    assert.deepEqual(snapshotGrantStore(grantStore.root), consumedSnapshot);
+    const heldStatus = withRepositoryLifecycleOperation(
+      grantStore.runtime,
+      () =>
+        getProposeStatus(repository, started.investigation!.investigationId, {
+          now: new Date(NOW.getTime() + 120_000),
+          verifier: signer,
+        }),
+    );
+    assert.deepEqual(heldStatus, firstStatus);
+    assert.deepEqual(snapshotGrantStore(grantStore.root), consumedSnapshot);
   } finally {
     fs.rmSync(repository, { recursive: true, force: true });
   }
@@ -749,7 +813,7 @@ test('collaboration store reserves once across worktrees and rejects replay', ()
       actualParticipant: participant('codex', 'fresh-session'),
       callableProviderIds: ['codex'],
     });
-    const consumed = consumeCollaborationGrant(common, GRANT_ID, {
+    const consumption: CollaborationConsumptionRequest = {
       transitionDigest: TRANSITION_DIGEST,
       assignment,
       contentAdmission: {
@@ -759,7 +823,8 @@ test('collaboration store reserves once across worktrees and rejects replay', ()
         current: true,
       },
       now: new Date(NOW.getTime() + 120_000),
-    });
+    };
+    const consumed = consumeCollaborationGrant(common, GRANT_ID, consumption);
     assert.equal(consumed.state, 'consumed');
     assert.equal(consumed.use?.grantId, GRANT_ID);
     assert.equal(
@@ -814,15 +879,60 @@ test('collaboration store reserves once across worktrees and rejects replay', ()
     assert.equal(admitted.form, 'granted-same-provider');
     assert.equal(admitted.achievedIndependence, 'session-independent');
 
+    const paths = collaborationGrantStorePaths(common);
+    const reservedResidual = path.join(paths.reserved, `${GRANT_ID}.json`);
+    fs.writeFileSync(reservedResidual, `${JSON.stringify(reservation)}\n`, {
+      mode: 0o600,
+    });
+    const exactResidual = fs.readFileSync(reservedResidual, 'utf8');
+    assert.deepEqual(
+      readExactConsumedCollaborationGrantUse(common, GRANT_ID, consumption),
+      consumed.use,
+    );
+    assert.equal(fs.readFileSync(reservedResidual, 'utf8'), exactResidual);
+
+    const mismatchedResidual = JSON.parse(exactResidual);
+    mismatchedResidual.transitionDigest = '5'.repeat(64);
+    fs.writeFileSync(
+      reservedResidual,
+      `${JSON.stringify(mismatchedResidual)}\n`,
+      { mode: 0o600 },
+    );
+    assert.throws(
+      () =>
+        readExactConsumedCollaborationGrantUse(common, GRANT_ID, consumption),
+      (error) => isWorkflowError(error, 'COLLABORATION_GRANT_STATE_AMBIGUOUS'),
+    );
+    const mismatchedTransitionBytes = fs.readFileSync(reservedResidual, 'utf8');
+    assert.throws(
+      () =>
+        consumeCollaborationGrant(common, GRANT_ID, {
+          ...consumption,
+          now: new Date(NOW.getTime() + 180_000),
+        }),
+      (error) => isWorkflowError(error, 'COLLABORATION_GRANT_STATE_AMBIGUOUS'),
+    );
+    assert.equal(
+      fs.readFileSync(reservedResidual, 'utf8'),
+      mismatchedTransitionBytes,
+    );
+    mismatchedResidual.transitionDigest = TRANSITION_DIGEST;
+    mismatchedResidual.envelope.payload.reason =
+      'Mismatching interrupted reservation';
+    fs.writeFileSync(
+      reservedResidual,
+      `${JSON.stringify(mismatchedResidual)}\n`,
+      { mode: 0o600 },
+    );
+    assert.throws(
+      () =>
+        readExactConsumedCollaborationGrantUse(common, GRANT_ID, consumption),
+      (error) => isWorkflowError(error, 'COLLABORATION_GRANT_STATE_AMBIGUOUS'),
+    );
+    fs.writeFileSync(reservedResidual, exactResidual, { mode: 0o600 });
+
     const repeated = consumeCollaborationGrant(common, GRANT_ID, {
-      transitionDigest: TRANSITION_DIGEST,
-      assignment,
-      contentAdmission: {
-        kind: 'blind-survey',
-        nodeId: CONTENT_NODE_ID,
-        resultDigest: CONTENT_RESULT_DIGEST,
-        current: true,
-      },
+      ...consumption,
       now: new Date(NOW.getTime() + 180_000),
     });
     assert.deepEqual(repeated, consumed);
@@ -1904,4 +2014,33 @@ function collaborationCliArguments(
     '1',
     '--json',
   ];
+}
+
+function snapshotGrantStore(root: string): Array<{
+  path: string;
+  mode: number;
+  content: string;
+}> {
+  if (!fs.existsSync(root)) {
+    return [];
+  }
+  const files: string[] = [];
+  const visit = (directory: string): void => {
+    for (const entry of fs
+      .readdirSync(directory, { withFileTypes: true })
+      .sort((left, right) => left.name.localeCompare(right.name))) {
+      const absolute = path.join(directory, entry.name);
+      if (entry.isDirectory()) {
+        visit(absolute);
+      } else {
+        files.push(absolute);
+      }
+    }
+  };
+  visit(root);
+  return files.map((absolute) => ({
+    path: path.relative(root, absolute),
+    mode: fs.lstatSync(absolute).mode & 0o777,
+    content: fs.readFileSync(absolute, 'utf8'),
+  }));
 }

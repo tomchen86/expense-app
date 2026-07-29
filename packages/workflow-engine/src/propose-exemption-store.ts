@@ -9,7 +9,9 @@ import {
   type ContentRecord,
 } from './content-record-store.ts';
 import {
+  compareAndSwapEvidenceRefsDocument,
   compareAndSwapEvidenceRef,
+  readInvestigationEvidenceRefsClosure,
   readEvidenceNode,
   readEvidenceRefs,
   writeEvidenceNode,
@@ -26,14 +28,16 @@ import {
 } from './investigation-applicability.ts';
 import type { NormalizedChangeIntent } from './provider-invocation-store.ts';
 import { assertChangeId, type InvestigationRuntimePaths } from './paths.ts';
+import {
+  assertHeldChangeTransitionAuthority,
+  type HeldChangeTransitionAuthority,
+} from './planning-lock.ts';
+import { PROPOSE_EXEMPTION_SESSION_STORE_POLICY_DIGEST } from './provider-contracts.ts';
 
 const DIGEST = /^[0-9a-f]{64}$/;
 const GIT_OBJECT_ID = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
 const SESSION_PREFIX = 'investigation-exemption-';
 const CURRENT_REF = 'propose/exemption-session';
-const STORE_POLICY_DIGEST = sha256(
-  canonicalJson({ schema: 'workflow-propose-exemption-session-store.v1' }),
-);
 
 export type ProposeExemptionActor = {
   providerId: 'codex' | 'claude';
@@ -141,7 +145,7 @@ export function createProposeExemptionSession(
     type: 'propose-exemption-session-reservation',
     nodeSchema: 'workflow.propose-exemption-session-reservation.v1',
     evaluator: 'workflow-propose.v1',
-    policyDigest: STORE_POLICY_DIGEST,
+    policyDigest: PROPOSE_EXEMPTION_SESSION_STORE_POLICY_DIGEST,
     exactInputDigests: {
       record: recordId,
       request: requestDigest,
@@ -198,7 +202,8 @@ export function readCurrentProposeExemptionSession(
     reservation.nodeSchema !==
       'workflow.propose-exemption-session-reservation.v1' ||
     reservation.evaluator !== 'workflow-propose.v1' ||
-    reservation.policyDigest !== STORE_POLICY_DIGEST ||
+    reservation.policyDigest !==
+      PROPOSE_EXEMPTION_SESSION_STORE_POLICY_DIGEST ||
     reservation.outputSchema !==
       'workflow.propose-exemption-session-reservation-output.v1' ||
     !isRecord(output) ||
@@ -261,6 +266,52 @@ export function readProposeExemptionSession(
     signals: record.signals,
     createdAt: record.createdAt,
   });
+}
+
+export function retireCurrentProposeExemptionSession(
+  paths: InvestigationRuntimePaths,
+  session: ProposeExemptionSession,
+  authority: HeldChangeTransitionAuthority,
+): void {
+  const assertOwned = assertHeldChangeTransitionAuthority(
+    authority,
+    session.changeId,
+  );
+  const current = readCurrentProposeExemptionSession(paths, session.changeId);
+  if (
+    current === null ||
+    current.investigationId !== session.investigationId ||
+    current.intentDigest !== session.intentDigest ||
+    current.applicability.applicabilityDigest !==
+      session.applicability.applicabilityDigest
+  ) {
+    throw sessionStale();
+  }
+  const closure = readInvestigationEvidenceRefsClosure(paths, session.changeId);
+  if (
+    closure.snapshot.digest === null ||
+    closure.snapshot.refs === null ||
+    closure.owners[CURRENT_REF] !== session.investigationId
+  ) {
+    throw sessionStale();
+  }
+  const retainedRefs = Object.fromEntries(
+    Object.entries(closure.snapshot.refs)
+      .filter(
+        ([refName]) => closure.owners[refName] !== session.investigationId,
+      )
+      .sort(([left], [right]) => left.localeCompare(right)),
+  );
+  assertOwned();
+  compareAndSwapEvidenceRefsDocument(paths, {
+    changeId: session.changeId,
+    expectedDigest: closure.snapshot.digest,
+    nextRefs: Object.keys(retainedRefs).length === 0 ? null : retainedRefs,
+  });
+  assertOwned();
+  if (readCurrentProposeExemptionSession(paths, session.changeId) !== null) {
+    throw sessionStale();
+  }
 }
 
 export function isProposeExemptionInvestigationId(value: string): boolean {

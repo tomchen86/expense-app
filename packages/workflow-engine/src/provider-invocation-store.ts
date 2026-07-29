@@ -3,12 +3,15 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 import { canonicalJson } from './canonical-json.ts';
+import { resolvePlanReviewInvocationOwner } from './evidence-object-store.ts';
 import { ExitCode, workflowError } from './errors.ts';
 import {
   assertPrivateInvestigationDirectory,
   createPrivateCanonicalJson,
   ensurePrivateInvestigationDirectory,
   privatePathExists,
+  readHumanResolutionHead,
+  readHumanResolutionNode,
   readPrivateCanonicalJson,
   withPrivateRuntimeLock,
   writePrivateCanonicalJsonAtomic,
@@ -46,6 +49,10 @@ import {
   type PlanReviewTargetSnapshot,
   type PlanReviewSubject,
 } from './plan-review.ts';
+import {
+  runtimePaths,
+  withRepositoryLifecycleOperation,
+} from './session-store.ts';
 
 const DIGEST = /^[0-9a-f]{64}$/;
 const GIT_OBJECT_ID = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
@@ -145,6 +152,12 @@ export type InvestigationStartReservation = {
   createdAt: string;
 };
 
+export type InvestigationStartReservationSnapshot = Readonly<{
+  rawDocument: string | null;
+  digest: string | null;
+  reservation: InvestigationStartReservation | null;
+}>;
+
 export type ProviderRetryReservation = {
   schemaVersion: 1;
   kind: 'provider-retry-reservation';
@@ -216,6 +229,10 @@ export type ProviderLeaseClaim = {
   leaseToken: string;
 };
 
+export type ProviderWorkerLeaseClaim = ProviderLeaseClaim & {
+  workerFenceToken: string;
+};
+
 export function blindSurveyManifestDigest(
   manifest: BlindSurveyManifest,
 ): string {
@@ -277,17 +294,25 @@ export function createInvestigationStartReservation(
     request,
     createdAt,
   });
-  createPrivateCanonicalJson(
+  return withPrivateRuntimeLock(
     paths,
-    investigationStartReservationPath(paths, changeId),
-    reservation,
-    invocationUnsafe,
-    'INVESTIGATION_START_RESERVATION_CONFLICT',
+    path.join(paths.locks, `${changeId}.investigation-start.lock`),
+    () => {
+      createPrivateCanonicalJson(
+        paths,
+        investigationStartReservationPath(paths, changeId),
+        reservation,
+        invocationUnsafe,
+        'INVESTIGATION_START_RESERVATION_CONFLICT',
+      );
+      return readInvestigationStartReservation(
+        paths,
+        changeId,
+      ) as InvestigationStartReservation;
+    },
+    'INVESTIGATION_START_RESERVATION_OPERATION_CONFLICT',
+    startReservationLockInvalid,
   );
-  return readInvestigationStartReservation(
-    paths,
-    changeId,
-  ) as InvestigationStartReservation;
 }
 
 export function readInvestigationStartReservation(
@@ -306,6 +331,81 @@ export function readInvestigationStartReservation(
     throw invocationInvalid();
   }
   return deepFreeze(structuredClone(reservation));
+}
+
+export function readInvestigationStartReservationSnapshot(
+  paths: InvestigationRuntimePaths,
+  requestedChangeId: string,
+): InvestigationStartReservationSnapshot {
+  const changeId = assertChangeId(requestedChangeId);
+  const reservationPath = investigationStartReservationPath(paths, changeId);
+  if (!privatePathExists(paths, reservationPath, invocationUnsafe)) {
+    return absentInvestigationStartReservationSnapshot();
+  }
+  const rawDocument = readPrivateCanonicalDocument(
+    paths,
+    reservationPath,
+    invocationUnsafe,
+  );
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(rawDocument);
+  } catch {
+    throw invocationInvalid();
+  }
+  const reservation = assertInvestigationStartReservation(parsed);
+  if (
+    reservation.changeId !== changeId ||
+    rawDocument !== `${canonicalJson(parsed)}\n`
+  ) {
+    throw invocationInvalid();
+  }
+  return Object.freeze({
+    rawDocument,
+    digest: sha256(rawDocument),
+    reservation,
+  });
+}
+
+export function retireInvestigationStartReservation(
+  paths: InvestigationRuntimePaths,
+  input: {
+    changeId: string;
+    expectedDigest: string | null;
+  },
+): InvestigationStartReservationSnapshot {
+  const changeId = assertChangeId(input.changeId);
+  if (input.expectedDigest !== null && !DIGEST.test(input.expectedDigest)) {
+    throw invocationInvalid();
+  }
+  return withPrivateRuntimeLock(
+    paths,
+    path.join(paths.locks, `${changeId}.investigation-start.lock`),
+    () => {
+      const current = readInvestigationStartReservationSnapshot(
+        paths,
+        changeId,
+      );
+      if (current.digest === null) {
+        return current;
+      }
+      if (current.digest !== input.expectedDigest) {
+        throw startReservationCasMismatch(input.expectedDigest, current.digest);
+      }
+      fs.unlinkSync(investigationStartReservationPath(paths, changeId));
+      fsyncDirectory(paths.refs);
+      const retired = readInvestigationStartReservationSnapshot(
+        paths,
+        changeId,
+      );
+      if (retired.digest !== null) {
+        throw invocationInvalid();
+      }
+      return retired;
+    },
+    'INVESTIGATION_START_RESERVATION_OPERATION_CONFLICT',
+    startReservationLockInvalid,
+  );
 }
 
 export function createProviderRetryReservation(
@@ -504,6 +604,17 @@ export function readProviderInvocation(
   ) {
     throw invocationInvalid();
   }
+  if (
+    manifest.kind === 'plan-review-manifest' &&
+    resolvePlanReviewInvocationOwner(paths, {
+      changeId: record.changeId,
+      subject: manifest.subject,
+      assignment: request.roleAssignment,
+      authorizationNodeId: request.authorizationNodeId,
+    }) !== record.investigationId
+  ) {
+    throw invocationInvalid();
+  }
   return deepFreeze(structuredClone(record));
 }
 
@@ -613,12 +724,64 @@ export function claimProviderInvocation(
     throw leaseInvalid();
   }
   const now = parseNow(input.now);
+  return withProviderWorkerLifecycle(paths, () =>
+    claimProviderInvocationUnderLifecycleLock(paths, invocationId, input, now),
+  );
+}
+
+export function claimProviderInvocationForWorker(
+  paths: InvestigationRuntimePaths,
+  requestedInvocationId: string,
+  input: {
+    workerId: string;
+    leaseDurationMs: number;
+    expectedRevision?: number;
+    now?: string;
+  },
+): ProviderWorkerLeaseClaim {
+  const invocationId = assertInvocationId(requestedInvocationId);
+  const request = readProviderInvocationRequest(paths, invocationId);
+  if (
+    typeof input.workerId !== 'string' ||
+    input.workerId.trim().length === 0 ||
+    Buffer.byteLength(input.workerId, 'utf8') > 256 ||
+    !Number.isSafeInteger(input.leaseDurationMs) ||
+    input.leaseDurationMs < 1 ||
+    input.leaseDurationMs > request.limits.timeoutMs
+  ) {
+    throw leaseInvalid();
+  }
+  const now = parseNow(input.now);
+  return withProviderWorkerLifecycle(paths, () => {
+    const claim = claimProviderInvocationUnderLifecycleLock(
+      paths,
+      invocationId,
+      input,
+      now,
+    );
+    const workerFenceToken = crypto.randomUUID();
+    createProviderWorkerFence(paths, claim.record, workerFenceToken);
+    return { ...claim, workerFenceToken };
+  });
+}
+
+function claimProviderInvocationUnderLifecycleLock(
+  paths: InvestigationRuntimePaths,
+  invocationId: string,
+  input: {
+    workerId: string;
+    leaseDurationMs: number;
+    expectedRevision?: number;
+  },
+  now: number,
+): ProviderLeaseClaim {
   const leaseToken = crypto.randomBytes(32).toString('hex');
   const record = updateProviderInvocation(
     paths,
     invocationId,
     input.expectedRevision,
     (current) => {
+      assertProviderInvocationNotTerminallyResolved(paths, current);
       if (
         current.state === 'leased' &&
         current.lease !== null &&
@@ -638,7 +801,7 @@ export function claimProviderInvocation(
         );
       }
       const generation = current.leaseGeneration + 1;
-      const next: ProviderInvocationRecord = {
+      return {
         ...current,
         revision: current.revision + 1,
         state: 'leased',
@@ -656,10 +819,238 @@ export function claimProviderInvocation(
         failure: null,
         updatedAt: new Date(now).toISOString(),
       };
-      return next;
     },
   );
   return { record, leaseToken };
+}
+
+function assertProviderInvocationNotTerminallyResolved(
+  paths: InvestigationRuntimePaths,
+  invocation: ProviderInvocationRecord,
+): void {
+  const resolutionNodeId = readHumanResolutionHead(
+    paths,
+    invocation.investigationId,
+  );
+  if (resolutionNodeId === null) {
+    return;
+  }
+  const resolution = readHumanResolutionNode(paths, resolutionNodeId);
+  if (
+    resolution.target.workflowId !== invocation.investigationId ||
+    resolution.target.changeId !== invocation.changeId
+  ) {
+    throw invocationInvalid();
+  }
+  if (
+    ['abort', 'supersede', 'quarantine', 'repair'].includes(
+      resolution.decision.kind,
+    )
+  ) {
+    throw workflowError(
+      'PROVIDER_INVOCATION_TERMINALLY_RESOLVED',
+      'Provider invocation belongs to a terminally resolved investigation.',
+      ExitCode.guard,
+    );
+  }
+}
+
+type ProviderWorkerFence = {
+  schemaVersion: 1;
+  kind: 'provider-worker-fence';
+  invocationId: string;
+  leaseGeneration: number;
+  workerId: string;
+  leaseTokenDigest: string;
+  ownerToken: string;
+  pid: number;
+  acquiredAt: string;
+};
+
+function createProviderWorkerFence(
+  paths: InvestigationRuntimePaths,
+  record: ProviderInvocationRecord,
+  ownerToken: string,
+): void {
+  if (record.state !== 'leased' || record.lease === null) {
+    throw providerWorkerFenceUnsafe();
+  }
+  const fence: ProviderWorkerFence = {
+    schemaVersion: 1,
+    kind: 'provider-worker-fence',
+    invocationId: record.invocationId,
+    leaseGeneration: record.leaseGeneration,
+    workerId: record.lease.workerId,
+    leaseTokenDigest: record.lease.tokenDigest,
+    ownerToken,
+    pid: process.pid,
+    acquiredAt: record.lease.acquiredAt,
+  };
+  createPrivateCanonicalJson(
+    paths,
+    providerWorkerFencePath(paths, record.invocationId),
+    fence,
+    providerWorkerFenceUnsafe,
+    'PROVIDER_INVOCATION_WORKER_FENCE_CONFLICT',
+  );
+}
+
+export function releaseProviderInvocationWorkerFence(
+  paths: InvestigationRuntimePaths,
+  requestedInvocationId: string,
+  ownerToken: string,
+): void {
+  const invocationId = assertInvocationId(requestedInvocationId);
+  withProviderWorkerLifecycle(paths, () => {
+    const fence = readProviderWorkerFence(paths, invocationId);
+    if (
+      fence === null ||
+      fence.ownerToken !== ownerToken ||
+      fence.pid !== process.pid
+    ) {
+      throw providerWorkerFenceUnsafe();
+    }
+    fs.unlinkSync(providerWorkerFencePath(paths, invocationId));
+    fsyncDirectory(paths.locks);
+  });
+}
+
+export function assertProviderWorkersQuiescentUnderLifecycleLock(
+  paths: InvestigationRuntimePaths,
+): void {
+  const stats = fs.lstatSync(paths.locks, { throwIfNoEntry: false });
+  if (!stats) {
+    return;
+  }
+  if (
+    !stats.isDirectory() ||
+    stats.isSymbolicLink() ||
+    (stats.mode & 0o777) !== 0o700
+  ) {
+    throw providerWorkerFenceUnsafe();
+  }
+  const suffix = '.worker-active';
+  for (const entry of fs
+    .readdirSync(paths.locks, { withFileTypes: true })
+    .filter(({ name }) => name.endsWith(suffix))
+    .sort((left, right) => left.name.localeCompare(right.name))) {
+    if (!entry.isFile() || entry.isSymbolicLink()) {
+      throw providerWorkerFenceUnsafe();
+    }
+    const invocationId = assertInvocationId(
+      entry.name.slice(0, -suffix.length),
+    );
+    assertProviderInvocationWorkerQuiescentUnderLifecycleLock(
+      paths,
+      invocationId,
+    );
+  }
+}
+
+function assertProviderInvocationWorkerQuiescentUnderLifecycleLock(
+  paths: InvestigationRuntimePaths,
+  invocationId: string,
+  options: {
+    allowDeadLeasedFence?: boolean;
+  } = {},
+): void {
+  const fence = readProviderWorkerFence(paths, invocationId);
+  if (fence === null) {
+    return;
+  }
+  const invocation = readProviderInvocation(paths, invocationId);
+  if (
+    invocation.leaseGeneration !== fence.leaseGeneration ||
+    invocation.state === 'prepared' ||
+    (invocation.state === 'leased' &&
+      (invocation.lease === null ||
+        invocation.lease.workerId !== fence.workerId ||
+        invocation.lease.tokenDigest !== fence.leaseTokenDigest))
+  ) {
+    throw providerWorkerFenceUnsafe();
+  }
+  if (isProcessAlive(fence.pid)) {
+    throw workflowError(
+      'PROVIDER_INVOCATION_WORKER_ACTIVE',
+      'Provider invocation still has a live worker activity fence.',
+      ExitCode.conflict,
+      { details: { invocationId, pid: fence.pid } },
+    );
+  }
+  if (invocation.state === 'leased') {
+    if (options.allowDeadLeasedFence === true) {
+      return;
+    }
+    throw workflowError(
+      'PROVIDER_INVOCATION_WORKER_RECOVERY_REQUIRED',
+      'A dead provider worker still owns a leased invocation and requires explicit recovery.',
+      ExitCode.conflict,
+      { details: { invocationId, pid: fence.pid } },
+    );
+  }
+  fs.unlinkSync(providerWorkerFencePath(paths, invocationId));
+  fsyncDirectory(paths.locks);
+}
+
+function readProviderWorkerFence(
+  paths: InvestigationRuntimePaths,
+  invocationId: string,
+): ProviderWorkerFence | null {
+  const filePath = providerWorkerFencePath(paths, invocationId);
+  if (!privatePathExists(paths, filePath, providerWorkerFenceUnsafe)) {
+    return null;
+  }
+  const value = readPrivateCanonicalJson(
+    paths,
+    filePath,
+    providerWorkerFenceUnsafe,
+  );
+  if (
+    !isRecord(value) ||
+    !hasExactKeys(value, [
+      'schemaVersion',
+      'kind',
+      'invocationId',
+      'leaseGeneration',
+      'workerId',
+      'leaseTokenDigest',
+      'ownerToken',
+      'pid',
+      'acquiredAt',
+    ]) ||
+    value.schemaVersion !== 1 ||
+    value.kind !== 'provider-worker-fence' ||
+    value.invocationId !== invocationId ||
+    !Number.isSafeInteger(value.leaseGeneration) ||
+    (value.leaseGeneration as number) < 1 ||
+    typeof value.workerId !== 'string' ||
+    value.workerId.length === 0 ||
+    !isDigest(value.leaseTokenDigest) ||
+    typeof value.ownerToken !== 'string' ||
+    value.ownerToken.length === 0 ||
+    !Number.isSafeInteger(value.pid) ||
+    (value.pid as number) < 1 ||
+    !isTimestamp(value.acquiredAt)
+  ) {
+    throw providerWorkerFenceUnsafe();
+  }
+  return value as ProviderWorkerFence;
+}
+
+function providerWorkerFencePath(
+  paths: InvestigationRuntimePaths,
+  invocationId: string,
+): string {
+  return path.join(paths.locks, `${invocationId}.worker-active`);
+}
+
+function isProcessAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return error instanceof Error && 'code' in error && error.code === 'EPERM';
+  }
 }
 
 export function expireProviderInvocationLease(
@@ -670,9 +1061,34 @@ export function expireProviderInvocationLease(
     now?: string;
   },
 ): ProviderInvocationRecord {
+  return withProviderWorkerLifecycle(paths, (assertOwned) =>
+    expireProviderInvocationLeaseUnderLifecycleLock(
+      paths,
+      requestedInvocationId,
+      input,
+      assertOwned,
+    ),
+  );
+}
+
+export function expireProviderInvocationLeaseUnderLifecycleLock(
+  paths: InvestigationRuntimePaths,
+  requestedInvocationId: string,
+  input: {
+    expectedRevision: number;
+    now?: string;
+  },
+  assertOwned: () => void,
+): ProviderInvocationRecord {
   const invocationId = assertInvocationId(requestedInvocationId);
   const now = parseNow(input.now);
-  return updateProviderInvocation(
+  assertOwned();
+  assertProviderInvocationWorkerQuiescentUnderLifecycleLock(
+    paths,
+    invocationId,
+    { allowDeadLeasedFence: true },
+  );
+  const expired = updateProviderInvocation(
     paths,
     invocationId,
     input.expectedRevision,
@@ -704,6 +1120,12 @@ export function expireProviderInvocationLease(
       };
     },
   );
+  assertOwned();
+  assertProviderInvocationWorkerQuiescentUnderLifecycleLock(
+    paths,
+    invocationId,
+  );
+  return expired;
 }
 
 export function completeProviderInvocation(
@@ -725,22 +1147,29 @@ export function completeProviderInvocation(
     providerOutputValidator(request),
   );
   const now = parseNow(input.now);
-  return updateProviderInvocation(
-    paths,
-    invocationId,
-    input.expectedRevision,
-    (current) => {
-      assertCurrentLease(current, input.leaseGeneration, input.leaseToken, now);
-      return {
-        ...current,
-        revision: current.revision + 1,
-        state: 'succeeded',
-        lease: null,
-        result,
-        failure: null,
-        updatedAt: new Date(now).toISOString(),
-      };
-    },
+  return withProviderWorkerLifecycle(paths, () =>
+    updateProviderInvocation(
+      paths,
+      invocationId,
+      input.expectedRevision,
+      (current) => {
+        assertCurrentLease(
+          current,
+          input.leaseGeneration,
+          input.leaseToken,
+          now,
+        );
+        return {
+          ...current,
+          revision: current.revision + 1,
+          state: 'succeeded',
+          lease: null,
+          result,
+          failure: null,
+          updatedAt: new Date(now).toISOString(),
+        };
+      },
+    ),
   );
 }
 
@@ -764,22 +1193,29 @@ export function completeProviderInvocationFromRunner(
   const request = readProviderInvocationRequest(paths, invocationId);
   const result = providerResultFromRunnerReport(request, input.report);
   const now = parseNow(input.now);
-  return updateProviderInvocation(
-    paths,
-    invocationId,
-    input.expectedRevision,
-    (current) => {
-      assertCurrentLease(current, input.leaseGeneration, input.leaseToken, now);
-      return {
-        ...current,
-        revision: current.revision + 1,
-        state: 'succeeded',
-        lease: null,
-        result,
-        failure: null,
-        updatedAt: new Date(now).toISOString(),
-      };
-    },
+  return withProviderWorkerLifecycle(paths, () =>
+    updateProviderInvocation(
+      paths,
+      invocationId,
+      input.expectedRevision,
+      (current) => {
+        assertCurrentLease(
+          current,
+          input.leaseGeneration,
+          input.leaseToken,
+          now,
+        );
+        return {
+          ...current,
+          revision: current.revision + 1,
+          state: 'succeeded',
+          lease: null,
+          result,
+          failure: null,
+          updatedAt: new Date(now).toISOString(),
+        };
+      },
+    ),
   );
 }
 
@@ -797,22 +1233,40 @@ export function failProviderInvocation(
   const invocationId = assertInvocationId(requestedInvocationId);
   const now = parseNow(input.now);
   const failure = assertProviderFailure(input.failure);
-  return updateProviderInvocation(
-    paths,
-    invocationId,
-    input.expectedRevision,
-    (current) => {
-      assertCurrentLease(current, input.leaseGeneration, input.leaseToken, now);
-      return {
-        ...current,
-        revision: current.revision + 1,
-        state: 'failed',
-        lease: null,
-        result: null,
-        failure,
-        updatedAt: new Date(now).toISOString(),
-      };
-    },
+  return withProviderWorkerLifecycle(paths, () =>
+    updateProviderInvocation(
+      paths,
+      invocationId,
+      input.expectedRevision,
+      (current) => {
+        assertCurrentLease(
+          current,
+          input.leaseGeneration,
+          input.leaseToken,
+          now,
+        );
+        return {
+          ...current,
+          revision: current.revision + 1,
+          state: 'failed',
+          lease: null,
+          result: null,
+          failure,
+          updatedAt: new Date(now).toISOString(),
+        };
+      },
+    ),
+  );
+}
+
+function withProviderWorkerLifecycle<T>(
+  paths: InvestigationRuntimePaths,
+  operation: (assertOwned: () => void) => T,
+): T {
+  const runtimeRoot = path.dirname(paths.root);
+  return withRepositoryLifecycleOperation(
+    runtimePaths(path.dirname(runtimeRoot), path.basename(runtimeRoot)),
+    operation,
   );
 }
 
@@ -1415,6 +1869,48 @@ function readPrivateSnapshotFile(filePath: string): Buffer {
       throw invocationInvalid();
     }
     return fs.readFileSync(descriptor);
+  } finally {
+    fs.closeSync(descriptor);
+  }
+}
+
+function readPrivateCanonicalDocument(
+  paths: InvestigationRuntimePaths,
+  filePath: string,
+  makeError: () => ReturnType<typeof workflowError>,
+): string {
+  assertPrivateInvestigationDirectory(paths, path.dirname(filePath), makeError);
+  const before = fs.lstatSync(filePath, { throwIfNoEntry: false });
+  if (
+    !before ||
+    !before.isFile() ||
+    before.isSymbolicLink() ||
+    before.nlink !== 1 ||
+    (before.mode & 0o777) !== 0o600
+  ) {
+    throw makeError();
+  }
+  const flags =
+    fs.constants.O_RDONLY |
+    (process.platform === 'win32' ? 0 : fs.constants.O_NOFOLLOW);
+  let descriptor: number;
+  try {
+    descriptor = fs.openSync(filePath, flags);
+  } catch {
+    throw makeError();
+  }
+  try {
+    const opened = fs.fstatSync(descriptor);
+    if (
+      !opened.isFile() ||
+      opened.nlink !== 1 ||
+      (opened.mode & 0o777) !== 0o600 ||
+      opened.dev !== before.dev ||
+      opened.ino !== before.ino
+    ) {
+      throw makeError();
+    }
+    return fs.readFileSync(descriptor, 'utf8');
   } finally {
     fs.closeSync(descriptor);
   }
@@ -2045,10 +2541,46 @@ function providerCasMismatch(expected: number, observed: number) {
   );
 }
 
+function startReservationCasMismatch(
+  expectedDigest: string | null,
+  observedDigest: string | null,
+) {
+  return workflowError(
+    'INVESTIGATION_START_RESERVATION_CAS_MISMATCH',
+    'Investigation start reservation changed during compare-and-swap.',
+    ExitCode.conflict,
+    { details: { expectedDigest, observedDigest } },
+  );
+}
+
+function startReservationLockInvalid() {
+  return workflowError(
+    'INVESTIGATION_START_RESERVATION_LOCK_INVALID',
+    'Investigation start reservation lock ownership changed during retirement.',
+    ExitCode.staleState,
+  );
+}
+
 function invocationLockInvalid() {
   return workflowError(
     'PROVIDER_INVOCATION_LOCK_INVALID',
     'Provider invocation lock ownership changed during the transition.',
     ExitCode.staleState,
   );
+}
+
+function providerWorkerFenceUnsafe() {
+  return workflowError(
+    'PROVIDER_INVOCATION_WORKER_FENCE_UNSAFE',
+    'Provider worker activity fence is unsafe or malformed.',
+    ExitCode.unsafeEnvironment,
+  );
+}
+
+function absentInvestigationStartReservationSnapshot(): InvestigationStartReservationSnapshot {
+  return Object.freeze({
+    rawDocument: null,
+    digest: null,
+    reservation: null,
+  });
 }

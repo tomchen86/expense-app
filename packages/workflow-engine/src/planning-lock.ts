@@ -3,19 +3,36 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 import { ExitCode, workflowError } from './errors.ts';
-import { ensurePlainDirectory } from './filesystem-safety.ts';
+import {
+  ensurePlainDirectory,
+  publishPreparedExclusiveLock,
+  reclaimDeadPreparedLock,
+} from './filesystem-safety.ts';
+import { assertHumanResolutionLifecycleBarrier } from './investigation-session-store.ts';
 import {
   listActiveWorkflowSessionIds,
+  readSessionFile,
+  releaseOwnedLock,
   type runtimePaths,
   withRepositoryLifecycleOperation,
 } from './session-store.ts';
 
 type RuntimePaths = ReturnType<typeof runtimePaths>;
+const HELD_CHANGE_TRANSITION_AUTHORITY = Symbol(
+  'held-change-transition-authority',
+);
+
+export type HeldChangeTransitionAuthority = (() => void) &
+  Readonly<{
+    changeId: string;
+    assertOwned: () => void;
+    [HELD_CHANGE_TRANSITION_AUTHORITY]: true;
+  }>;
 
 export function withPlanningAuthority<T>(
   runtime: RuntimePaths,
   changeId: string,
-  operation: (assertOwned: () => void) => T,
+  operation: (authority: HeldChangeTransitionAuthority) => T,
 ): T {
   return withChangeTransitionAuthority(runtime, changeId, 'plan', operation);
 }
@@ -29,22 +46,67 @@ export function withPlanningAuthority<T>(
 export function withInvestigationTransitionAuthority<T>(
   runtime: RuntimePaths,
   changeId: string,
-  operation: (assertOwned: () => void) => T,
+  operation: (authority: HeldChangeTransitionAuthority) => T,
 ): T {
-  reclaimDeadInvestigationTransitionLocks(runtime, changeId);
-  return withRepositoryLifecycleOperation(runtime, (assertRepositoryLock) =>
-    withChangeTransitionLock(
+  assertHumanResolutionLifecycleBarrier(runtime.root, null);
+  return withRepositoryLifecycleOperation(runtime, (assertRepositoryLock) => {
+    reclaimDeadChangeTransitionLock(runtime, changeId, assertRepositoryLock);
+    return withChangeTransitionLock(
       runtime,
       changeId,
       'investigation',
       (assertChangeLock) => {
         assertNoActiveSessions(runtime);
-        return operation(() => {
-          assertRepositoryLock();
-          assertChangeLock();
-        });
+        assertHumanResolutionBarrier(runtime, changeId, null);
+        return operation(
+          heldChangeTransitionAuthority(changeId, () => {
+            assertRepositoryLock();
+            assertChangeLock();
+            assertHumanResolutionBarrier(runtime, changeId, null);
+          }),
+        );
       },
-    ),
+    );
+  });
+}
+
+export function withHumanResolutionTransitionAuthority<T>(
+  runtime: RuntimePaths,
+  changeId: string,
+  activeGrantId: string | null,
+  operation: (authority: HeldChangeTransitionAuthority) => T,
+): T {
+  assertHumanResolutionLifecycleBarrier(
+    runtime.root,
+    activeGrantId,
+    activeGrantId === null ? null : changeId,
+  );
+  return withRepositoryLifecycleOperation(
+    runtime,
+    (assertRepositoryLock) => {
+      reclaimDeadChangeTransitionLock(runtime, changeId, assertRepositoryLock);
+      return withChangeTransitionLock(
+        runtime,
+        changeId,
+        'human-resolution',
+        (assertChangeLock) => {
+          assertNoActiveSessions(runtime);
+          assertHumanResolutionBarrier(runtime, changeId, activeGrantId);
+          return operation(
+            heldChangeTransitionAuthority(changeId, () => {
+              assertRepositoryLock();
+              assertChangeLock();
+              assertHumanResolutionBarrier(runtime, changeId, activeGrantId);
+            }),
+          );
+        },
+      );
+    },
+    {
+      allowHumanResolutionGrantId: activeGrantId ?? undefined,
+      allowHumanResolutionChangeId:
+        activeGrantId === null ? undefined : changeId,
+    },
   );
 }
 
@@ -52,35 +114,76 @@ export function withChangeTransitionAuthority<T>(
   runtime: RuntimePaths,
   changeId: string,
   transition: 'plan' | 'archive',
-  operation: (assertOwned: () => void) => T,
+  operation: (authority: HeldChangeTransitionAuthority) => T,
 ): T {
-  return withRepositoryLifecycleOperation(runtime, (assertRepositoryLock) =>
-    withChangeTransitionLock(
+  assertHumanResolutionLifecycleBarrier(runtime.root, null);
+  return withRepositoryLifecycleOperation(runtime, (assertRepositoryLock) => {
+    reclaimDeadChangeTransitionLock(runtime, changeId, assertRepositoryLock);
+    return withChangeTransitionLock(
       runtime,
       changeId,
       transition,
       (assertChangeLock) => {
         assertNoActiveSessions(runtime);
-        return operation(() => {
-          assertRepositoryLock();
-          assertChangeLock();
-        });
+        assertHumanResolutionBarrier(runtime, changeId, null);
+        return operation(
+          heldChangeTransitionAuthority(changeId, () => {
+            assertRepositoryLock();
+            assertChangeLock();
+            assertHumanResolutionBarrier(runtime, changeId, null);
+          }),
+        );
       },
-    ),
-  );
+    );
+  });
+}
+
+export function assertHeldChangeTransitionAuthority(
+  authority: HeldChangeTransitionAuthority,
+  changeId: string,
+): () => void {
+  if (
+    typeof authority !== 'function' ||
+    authority[HELD_CHANGE_TRANSITION_AUTHORITY] !== true ||
+    authority.changeId !== changeId ||
+    typeof authority.assertOwned !== 'function'
+  ) {
+    throw workflowError(
+      'INVESTIGATION_TRANSITION_UNBOUND',
+      'Held transition authority belongs to another change.',
+      ExitCode.guard,
+    );
+  }
+  authority.assertOwned();
+  return authority.assertOwned;
+}
+
+function heldChangeTransitionAuthority(
+  changeId: string,
+  assertOwned: () => void,
+): HeldChangeTransitionAuthority {
+  const authority = (() => assertOwned()) as HeldChangeTransitionAuthority;
+  Object.defineProperties(authority, {
+    changeId: { value: changeId, enumerable: true },
+    assertOwned: { value: authority, enumerable: true },
+    [HELD_CHANGE_TRANSITION_AUTHORITY]: { value: true },
+  });
+  return Object.freeze(authority);
 }
 
 function withChangeTransitionLock<T>(
   runtime: RuntimePaths,
   changeId: string,
-  transition: 'plan' | 'archive' | 'investigation',
+  transition: 'plan' | 'archive' | 'investigation' | 'human-resolution',
   operation: (assertOwned: () => void) => T,
 ): T {
   ensurePlainDirectory(runtime.locks);
   const lockPath = path.join(runtime.locks, `${changeId}.lock`);
-  const operationId = `${transition}-${crypto.randomUUID()}`;
+  const ownerToken = crypto.randomUUID();
+  const operationId = `${transition}-${ownerToken}`;
   const content = `${JSON.stringify({
     operationId,
+    ownerToken,
     changeId,
     transition,
     pid: process.pid,
@@ -99,8 +202,13 @@ function withChangeTransitionLock<T>(
       observed = undefined;
     }
     if (
+      !owned.isFile() ||
+      owned.nlink !== 1 ||
+      (owned.mode & 0o777) !== 0o600 ||
       !stats?.isFile() ||
       stats.isSymbolicLink() ||
+      stats.nlink !== 1 ||
+      (stats.mode & 0o777) !== 0o600 ||
       stats.dev !== owned.dev ||
       stats.ino !== owned.ino ||
       observed !== content
@@ -109,9 +217,12 @@ function withChangeTransitionLock<T>(
     }
   };
   try {
-    descriptor = fs.openSync(lockPath, 'wx', 0o600);
-    fs.writeFileSync(descriptor, content, 'utf8');
-    fs.fsyncSync(descriptor);
+    descriptor = publishPreparedExclusiveLock(
+      lockPath,
+      content,
+      ownerToken,
+      staleLock,
+    );
   } catch (error) {
     if (descriptor !== undefined) {
       fs.closeSync(descriptor);
@@ -138,6 +249,7 @@ function withChangeTransitionLock<T>(
     fs.closeSync(descriptor);
     descriptor = undefined;
     fs.unlinkSync(lockPath);
+    fsyncDirectory(path.dirname(lockPath));
   };
 
   let result: T;
@@ -151,105 +263,188 @@ function withChangeTransitionLock<T>(
   return result;
 }
 
-function reclaimDeadInvestigationTransitionLocks(
+export function reclaimDeadChangeTransitionLock(
   runtime: RuntimePaths,
   changeId: string,
+  assertRepositoryLifecycleOwned: () => void,
 ): void {
-  ensurePlainDirectory(runtime.operations);
+  assertRepositoryLifecycleOwned();
   ensurePlainDirectory(runtime.locks);
-  reclaimDeadTransitionLock(
-    path.join(runtime.operations, 'repository-lifecycle.lock'),
-    (value) =>
+  const lockPath = path.join(runtime.locks, `${changeId}.lock`);
+  if (reclaimTerminalSessionLock(runtime, lockPath, changeId)) {
+    assertRepositoryLifecycleOwned();
+    return;
+  }
+  reclaimDeadTransitionLock(lockPath, (value, content) => {
+    if (
       isRecord(value) &&
-      hasExactKeys(value, ['kind', 'ownerToken', 'pid']) &&
-      value.kind === 'repository-lifecycle' &&
-      typeof value.ownerToken === 'string' &&
-      value.ownerToken.length > 0 &&
-      Number.isSafeInteger(value.pid)
-        ? (value.pid as number)
-        : null,
-  );
-  reclaimDeadTransitionLock(
-    path.join(runtime.locks, `${changeId}.lock`),
-    (value) =>
-      isRecord(value) &&
-      hasExactKeys(value, ['operationId', 'changeId', 'transition', 'pid']) &&
+      hasExactKeys(value, [
+        'operationId',
+        'ownerToken',
+        'changeId',
+        'transition',
+        'pid',
+      ]) &&
       typeof value.operationId === 'string' &&
+      typeof value.ownerToken === 'string' &&
+      value.operationId === `${value.transition}-${value.ownerToken}` &&
       value.changeId === changeId &&
-      value.transition === 'investigation' &&
-      Number.isSafeInteger(value.pid)
-        ? (value.pid as number)
-        : null,
-  );
+      (value.transition === 'plan' ||
+        value.transition === 'archive' ||
+        value.transition === 'investigation' ||
+        value.transition === 'human-resolution') &&
+      Number.isSafeInteger(value.pid) &&
+      `${JSON.stringify(value)}\n` === content
+    ) {
+      return {
+        pid: value.pid as number,
+        ownerToken: value.ownerToken,
+      };
+    }
+    if (
+      isRecord(value) &&
+      hasExactKeys(value, [
+        'sessionId',
+        'ownerToken',
+        'changeId',
+        'taskId',
+        'pid',
+      ]) &&
+      typeof value.sessionId === 'string' &&
+      typeof value.ownerToken === 'string' &&
+      value.changeId === changeId &&
+      typeof value.taskId === 'string' &&
+      Number.isSafeInteger(value.pid) &&
+      `${JSON.stringify(value)}\n` === content &&
+      sessionLockMayBeReclaimed(
+        runtime,
+        value.sessionId,
+        changeId,
+        value.taskId,
+      )
+    ) {
+      return {
+        pid: value.pid as number,
+        ownerToken: value.ownerToken,
+      };
+    }
+    return null;
+  });
+  assertRepositoryLifecycleOwned();
+}
+
+function reclaimTerminalSessionLock(
+  runtime: RuntimePaths,
+  lockPath: string,
+  changeId: string,
+): boolean {
+  const stats = fs.lstatSync(lockPath, { throwIfNoEntry: false });
+  if (
+    !stats?.isFile() ||
+    stats.isSymbolicLink() ||
+    stats.nlink !== 1 ||
+    (stats.mode & 0o777) !== 0o600
+  ) {
+    return false;
+  }
+  let value: unknown;
+  let content: string;
+  try {
+    content = fs.readFileSync(lockPath, 'utf8');
+    value = JSON.parse(content);
+  } catch {
+    return false;
+  }
+  if (
+    !isRecord(value) ||
+    typeof value.sessionId !== 'string' ||
+    value.changeId !== changeId ||
+    typeof value.taskId !== 'string' ||
+    `${JSON.stringify(value)}\n` !== content
+  ) {
+    return false;
+  }
+  const legacyMarker = hasExactKeys(value, ['sessionId', 'changeId', 'taskId']);
+  const preparedMarker =
+    hasExactKeys(value, [
+      'sessionId',
+      'ownerToken',
+      'changeId',
+      'taskId',
+      'pid',
+    ]) &&
+    typeof value.ownerToken === 'string' &&
+    Number.isSafeInteger(value.pid) &&
+    (value.pid as number) >= 1;
+  if (
+    (!legacyMarker && !preparedMarker) ||
+    !terminalSessionMatches(runtime, value.sessionId, changeId, value.taskId)
+  ) {
+    return false;
+  }
+  releaseOwnedLock(lockPath, value.sessionId);
+  return true;
+}
+
+function sessionLockMayBeReclaimed(
+  runtime: RuntimePaths,
+  sessionId: string,
+  changeId: string,
+  taskId: string,
+): boolean {
+  const sessionPath = path.join(runtime.sessions, `${sessionId}.json`);
+  const stats = fs.lstatSync(sessionPath, { throwIfNoEntry: false });
+  if (!stats) {
+    return true;
+  }
+  return terminalSessionMatches(runtime, sessionId, changeId, taskId);
+}
+
+function terminalSessionMatches(
+  runtime: RuntimePaths,
+  sessionId: string,
+  changeId: string,
+  taskId: string,
+): boolean {
+  const sessionPath = path.join(runtime.sessions, `${sessionId}.json`);
+  const stats = fs.lstatSync(sessionPath, { throwIfNoEntry: false });
+  if (
+    !stats?.isFile() ||
+    stats.isSymbolicLink() ||
+    stats.nlink !== 1 ||
+    (stats.mode & 0o777) !== 0o600
+  ) {
+    return false;
+  }
+  try {
+    const session = readSessionFile(sessionPath);
+    return (
+      session.sessionId === sessionId &&
+      session.changeId === changeId &&
+      session.taskId === taskId &&
+      (session.state === 'aborted' || session.state === 'committed')
+    );
+  } catch {
+    return false;
+  }
 }
 
 function reclaimDeadTransitionLock(
   lockPath: string,
-  readOwnerPid: (value: unknown) => number | null,
+  readOwner: (
+    value: unknown,
+    content: string,
+  ) => { pid: number; ownerToken: string } | null,
 ): void {
-  const before = fs.lstatSync(lockPath, { throwIfNoEntry: false });
-  if (!before) {
-    return;
-  }
-  if (
-    !before.isFile() ||
-    before.isSymbolicLink() ||
-    before.nlink !== 1 ||
-    (before.mode & 0o777) !== 0o600
-  ) {
-    return;
-  }
-  let descriptor: number | undefined;
-  try {
-    descriptor = fs.openSync(
-      lockPath,
-      fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW,
-    );
-    const opened = fs.fstatSync(descriptor);
-    if (
-      opened.dev !== before.dev ||
-      opened.ino !== before.ino ||
-      !opened.isFile() ||
-      opened.nlink !== 1 ||
-      (opened.mode & 0o777) !== 0o600
-    ) {
-      return;
-    }
-    const content = fs.readFileSync(descriptor, 'utf8');
+  reclaimDeadPreparedLock(lockPath, (content) => {
     let value: unknown;
     try {
       value = JSON.parse(content);
     } catch {
-      return;
+      return null;
     }
-    const pid = readOwnerPid(value);
-    if (pid === null || pid < 1 || isProcessAlive(pid)) {
-      return;
-    }
-    const observed = fs.lstatSync(lockPath, { throwIfNoEntry: false });
-    if (
-      !observed ||
-      observed.dev !== opened.dev ||
-      observed.ino !== opened.ino
-    ) {
-      return;
-    }
-    fs.unlinkSync(lockPath);
-    fsyncDirectory(path.dirname(lockPath));
-  } finally {
-    if (descriptor !== undefined) {
-      fs.closeSync(descriptor);
-    }
-  }
-}
-
-function isProcessAlive(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error) {
-    return !(isNodeError(error) && error.code === 'ESRCH');
-  }
+    return readOwner(value, content);
+  });
 }
 
 function fsyncDirectory(directory: string): void {
@@ -288,9 +483,85 @@ function assertNoActiveSessions(runtime: RuntimePaths): void {
   }
 }
 
+function assertHumanResolutionBarrier(
+  runtime: RuntimePaths,
+  changeId: string,
+  allowedGrantId: string | null,
+): void {
+  const activePath = path.join(
+    runtime.root,
+    'investigations',
+    'human-resolutions',
+    'active',
+    `${changeId}.json`,
+  );
+  if (!fs.lstatSync(activePath, { throwIfNoEntry: false })) {
+    return;
+  }
+  if (
+    allowedGrantId !== null &&
+    activeJournalBindsGrant(activePath, changeId, allowedGrantId)
+  ) {
+    return;
+  }
+  throw workflowError(
+    'HUMAN_RESOLUTION_RECOVERY_REQUIRED',
+    'An active human-resolution transaction must be recovered first.',
+    ExitCode.conflict,
+  );
+}
+
+function activeJournalBindsGrant(
+  filePath: string,
+  changeId: string,
+  grantId: string,
+): boolean {
+  const before = fs.lstatSync(filePath, { throwIfNoEntry: false });
+  if (
+    !before?.isFile() ||
+    before.isSymbolicLink() ||
+    before.nlink !== 1 ||
+    (before.mode & 0o777) !== 0o600
+  ) {
+    return false;
+  }
+  let descriptor: number | undefined;
+  try {
+    descriptor = fs.openSync(
+      filePath,
+      fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW,
+    );
+    const opened = fs.fstatSync(descriptor);
+    if (
+      opened.dev !== before.dev ||
+      opened.ino !== before.ino ||
+      !opened.isFile() ||
+      opened.nlink !== 1 ||
+      (opened.mode & 0o777) !== 0o600
+    ) {
+      return false;
+    }
+    const value = JSON.parse(fs.readFileSync(descriptor, 'utf8')) as unknown;
+    return (
+      isRecord(value) &&
+      value.schemaVersion === 2 &&
+      value.kind === 'human-resolution-journal' &&
+      value.grantId === grantId &&
+      isRecord(value.target) &&
+      value.target.changeId === changeId
+    );
+  } catch {
+    return false;
+  } finally {
+    if (descriptor !== undefined) {
+      fs.closeSync(descriptor);
+    }
+  }
+}
+
 function existingChangeLockError(
   lockPath: string,
-  transition: 'plan' | 'archive' | 'investigation',
+  transition: 'plan' | 'archive' | 'investigation' | 'human-resolution',
 ) {
   try {
     const value = JSON.parse(fs.readFileSync(lockPath, 'utf8')) as unknown;
@@ -314,7 +585,9 @@ function existingChangeLockError(
       ? 'ARCHIVE_TRANSITION_CONFLICT'
       : transition === 'investigation'
         ? 'INVESTIGATION_TRANSITION_CONFLICT'
-        : 'PLANNING_TRANSITION_CONFLICT',
+        : transition === 'human-resolution'
+          ? 'HUMAN_RESOLUTION_TRANSITION_CONFLICT'
+          : 'PLANNING_TRANSITION_CONFLICT',
     `Change already has a ${transition} transition in progress.`,
     ExitCode.conflict,
   );

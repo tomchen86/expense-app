@@ -5,11 +5,32 @@ import path from 'node:path';
 import { canonicalJson } from './canonical-json.ts';
 import { ExitCode, workflowError } from './errors.ts';
 import {
+  publishPreparedExclusiveLock,
+  reclaimDeadPreparedLock,
+} from './filesystem-safety.ts';
+import {
   assertStoredEvidenceNode,
   canonicalEvidenceNodeEnvelope,
   type EvidenceNode,
 } from './evidence-node.ts';
-import { assertChangeId, type InvestigationRuntimePaths } from './paths.ts';
+import {
+  assertInvestigationApplicability,
+  INVESTIGATION_APPLICABILITY_POLICY_DIGEST,
+} from './investigation-applicability.ts';
+import {
+  assertPlanReviewSubject,
+  readPlanReviewTargetSnapshotNode,
+} from './plan-review.ts';
+import {
+  assertChangeId,
+  assertInvestigationId,
+  type InvestigationRuntimePaths,
+} from './paths.ts';
+import {
+  PROPOSE_EXEMPTION_SESSION_STORE_POLICY_DIGEST,
+  PROPOSE_POLICY_DIGEST,
+  recreateProviderInvocationRequest,
+} from './provider-contracts.ts';
 
 const DIGEST_PATTERN = /^[0-9a-f]{64}$/;
 const REF_NAME_PATTERN =
@@ -21,12 +42,72 @@ const NO_FOLLOW_CREATE =
   fs.constants.O_EXCL |
   fs.constants.O_NOFOLLOW;
 
+type UnsafeObservationBytePath = string | Buffer;
+
+type UnsafeObservationStableStats = {
+  dev: number;
+  ino: number;
+  mode: number;
+  nlink: number;
+  size: number;
+  mtimeMs: number;
+  ctimeMs: number;
+};
+
 export type CompareAndSwapEvidenceRefParams = {
   changeId: string;
   refName: string;
   expectedNodeId: string | null;
   nextNodeId: string;
 };
+
+export type EvidenceRefsSnapshot = Readonly<{
+  rawDocument: string | null;
+  digest: string | null;
+  refs: Readonly<Record<string, string>> | null;
+}>;
+
+export type CompareAndSwapEvidenceRefsDocumentParams = {
+  changeId: string;
+  expectedDigest: string | null;
+  nextRefs: Record<string, string> | null;
+};
+
+export type InvestigationEvidenceRefsClosure = Readonly<{
+  snapshot: EvidenceRefsSnapshot;
+  closureDigest: string | null;
+  owners: Readonly<Record<string, string>>;
+  entries: readonly InvestigationEvidenceRefClosureEntry[];
+}>;
+
+export type InvestigationEvidenceRefClosureEntry = Readonly<{
+  refName: string;
+  nodeId: string;
+  resultDigest: string;
+  envelopeDigest: string;
+  ownerInvestigationId: string;
+  dependencies: readonly InvestigationEvidenceDependencyClosureEntry[];
+}>;
+
+export type InvestigationEvidenceDependencyClosureEntry = Readonly<{
+  role: string;
+  nodeId: string;
+  resultDigest: string;
+  envelopeDigest: string;
+}>;
+
+export function exactUnsafePathObservationDigest(
+  filePath: string,
+  object: string,
+): string {
+  return sha256(
+    canonicalJson({
+      schemaVersion: 2,
+      object,
+      node: observeUnsafeNode(Buffer.from(filePath)),
+    }),
+  );
+}
 
 export function writeEvidenceNode(
   paths: InvestigationRuntimePaths,
@@ -100,6 +181,71 @@ export function readEvidenceNode(
   return node;
 }
 
+export function resolvePlanReviewInvocationOwner(
+  paths: InvestigationRuntimePaths,
+  input: {
+    changeId: string;
+    subject: unknown;
+    assignment: unknown;
+    authorizationNodeId: string;
+  },
+): string {
+  const changeId = assertChangeId(input.changeId);
+  const subject = assertPlanReviewSubject(input.subject);
+  if (!DIGEST_PATTERN.test(input.authorizationNodeId)) {
+    throw refInvalid();
+  }
+  const authorization = readEvidenceNode(paths, input.authorizationNodeId);
+  const output = authorization.output;
+  const materializationId =
+    authorization.provenanceParentNodeIds.materialization;
+  if (
+    authorization.type !== 'plan-review-authorization' ||
+    authorization.nodeSchema !== 'workflow.plan-review-authorization.v1' ||
+    authorization.evaluator !== 'workflow-propose.v1' ||
+    authorization.policyDigest !== PROPOSE_POLICY_DIGEST ||
+    authorization.outputSchema !==
+      'workflow.plan-review-authorization-output.v1' ||
+    !isPlainRecord(output) ||
+    !(
+      output.grantAuthorization === null ||
+      isPlainRecord(output.grantAuthorization)
+    ) ||
+    canonicalJson(output.subject) !== canonicalJson(subject) ||
+    canonicalJson(output.assignment) !== canonicalJson(input.assignment) ||
+    authorization.exactInputDigests.subject !== subject.subjectDigest ||
+    authorization.exactInputDigests.assignment !==
+      sha256(canonicalJson(input.assignment)) ||
+    authorization.exactInputDigests.generation !==
+      subject.planningGenerationId ||
+    authorization.exactInputDigests.grantAuthorization !==
+      sha256(canonicalJson(output.grantAuthorization)) ||
+    !DIGEST_PATTERN.test(materializationId ?? '') ||
+    !DIGEST_PATTERN.test(
+      authorization.semanticParentResultDigests.materialization ?? '',
+    )
+  ) {
+    throw refInvalid();
+  }
+  const materialization = readEvidenceNode(paths, materializationId);
+  const ownership = assertPlanningMaterializationOwnership(
+    paths,
+    materialization,
+    changeId,
+  );
+  if (
+    materialization.resultDigest !==
+      authorization.semanticParentResultDigests.materialization ||
+    !isPlainRecord(materialization.output) ||
+    !isPlainRecord(materialization.output.baseline) ||
+    canonicalJson(materialization.output.baseline) !==
+      canonicalJson(subject.investigationBaseline)
+  ) {
+    throw refInvalid();
+  }
+  return ownership.ownerInvestigationId;
+}
+
 export function readEvidenceRefs(
   paths: InvestigationRuntimePaths,
   changeId: string,
@@ -115,6 +261,298 @@ export function readEvidenceRefs(
   }
   const content = readNoFollow(refPath, refUnsafe);
   return parseRefDocument(content, changeId);
+}
+
+export function readEvidenceRefsSnapshot(
+  paths: InvestigationRuntimePaths,
+  requestedChangeId: string,
+): EvidenceRefsSnapshot {
+  const changeId = assertChangeId(requestedChangeId);
+  const refPath = evidenceRefPath(paths, changeId);
+  if (!assertNoFollowDirectory(paths.base, paths.root, paths.refs, refUnsafe)) {
+    return absentEvidenceRefsSnapshot();
+  }
+  const stats = fs.lstatSync(refPath, { throwIfNoEntry: false });
+  if (!stats) {
+    return absentEvidenceRefsSnapshot();
+  }
+  const rawDocument = readNoFollow(refPath, refUnsafe);
+  const refs = parseRefDocument(rawDocument, changeId);
+  return Object.freeze({
+    rawDocument,
+    digest: sha256(rawDocument),
+    refs: Object.freeze({ ...refs }),
+  });
+}
+
+export function readInvestigationEvidenceRefsClosure(
+  paths: InvestigationRuntimePaths,
+  requestedChangeId: string,
+): InvestigationEvidenceRefsClosure {
+  const changeId = assertChangeId(requestedChangeId);
+  const snapshot = readEvidenceRefsSnapshot(paths, changeId);
+  if (snapshot.refs === null) {
+    return Object.freeze({
+      snapshot,
+      closureDigest: null,
+      owners: Object.freeze({}),
+      entries: Object.freeze([]),
+    });
+  }
+  const closure = computeInvestigationEvidenceRefsClosure(
+    paths,
+    changeId,
+    snapshot.refs,
+  );
+  return Object.freeze({
+    snapshot,
+    ...closure,
+  });
+}
+
+export function observeInvestigationEvidenceRefsAmbiguities(
+  paths: InvestigationRuntimePaths,
+  requestedChangeId: string,
+): Array<{ object: string; observationDigest: string }> {
+  const changeId = assertChangeId(requestedChangeId);
+  const observations = new Map<string, string>();
+  const observe = (object: string, filePath: string) => {
+    observations.set(
+      object,
+      exactUnsafePathObservationDigest(filePath, object),
+    );
+  };
+  const refPath = evidenceRefPath(paths, changeId);
+  observe('evidence-refs', refPath);
+  let snapshot: EvidenceRefsSnapshot;
+  try {
+    snapshot = readEvidenceRefsSnapshot(paths, changeId);
+  } catch {
+    return sortedAmbiguityObservations(observations);
+  }
+  if (snapshot.refs === null) {
+    return sortedAmbiguityObservations(observations);
+  }
+  const pending = Object.values(snapshot.refs).sort();
+  const visited = new Set<string>();
+  while (pending.length > 0) {
+    const nodeId = pending.shift();
+    if (!nodeId || visited.has(nodeId)) {
+      continue;
+    }
+    if (visited.size >= 4096) {
+      throw refUnsafe();
+    }
+    visited.add(nodeId);
+    observe(`evidence-node:${nodeId}`, evidenceObjectPath(paths, nodeId));
+    try {
+      const node = readEvidenceNode(paths, nodeId);
+      pending.push(
+        ...Object.values(node.provenanceParentNodeIds)
+          .filter((parentId) => !visited.has(parentId))
+          .sort(),
+      );
+    } catch {
+      // The exact missing or malformed causal object is already observed.
+    }
+  }
+  return sortedAmbiguityObservations(observations);
+}
+
+function sortedAmbiguityObservations(
+  observations: ReadonlyMap<string, string>,
+): Array<{ object: string; observationDigest: string }> {
+  return [...observations]
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([object, observationDigest]) => ({ object, observationDigest }));
+}
+
+export function computeInvestigationEvidenceRefsClosure(
+  paths: InvestigationRuntimePaths,
+  requestedChangeId: string,
+  refs: Readonly<Record<string, string>>,
+): Pick<
+  InvestigationEvidenceRefsClosure,
+  'closureDigest' | 'owners' | 'entries'
+> {
+  const changeId = assertChangeId(requestedChangeId);
+  const owners: Record<string, string> = {};
+  const entries: InvestigationEvidenceRefClosureEntry[] = Object.entries(refs)
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([refName, nodeId]) => {
+      const node = readEvidenceNode(paths, nodeId);
+      const ownership = assertInvestigationEvidenceRefOwner(
+        paths,
+        refs,
+        refName,
+        node,
+        changeId,
+      );
+      owners[refName] = ownership.ownerInvestigationId;
+      return Object.freeze({
+        refName,
+        nodeId,
+        resultDigest: node.resultDigest,
+        envelopeDigest: sha256(canonicalEvidenceNodeEnvelope(node)),
+        ownerInvestigationId: ownership.ownerInvestigationId,
+        dependencies: ownership.dependencies,
+      });
+    });
+  return Object.freeze({
+    closureDigest: investigationEvidenceRefsClosureDigest(changeId, entries),
+    owners: Object.freeze(owners),
+    entries: Object.freeze(entries),
+  });
+}
+
+export function investigationEvidenceRefsClosureDigest(
+  requestedChangeId: string,
+  entries: readonly InvestigationEvidenceRefClosureEntry[],
+): string {
+  const changeId = assertChangeId(requestedChangeId);
+  const sorted = [...entries].sort((left, right) =>
+    left.refName.localeCompare(right.refName),
+  );
+  if (
+    sorted.some(
+      (entry, index) =>
+        entry.refName !== entries[index]?.refName ||
+        !REF_NAME_PATTERN.test(entry.refName) ||
+        !DIGEST_PATTERN.test(entry.nodeId) ||
+        !DIGEST_PATTERN.test(entry.resultDigest) ||
+        !DIGEST_PATTERN.test(entry.envelopeDigest) ||
+        assertInvestigationId(entry.ownerInvestigationId) !==
+          entry.ownerInvestigationId ||
+        !Array.isArray(entry.dependencies) ||
+        entry.dependencies.some(
+          (dependency, dependencyIndex) =>
+            dependency.role.length === 0 ||
+            dependency.role !==
+              [...entry.dependencies].sort((left, right) =>
+                left.role.localeCompare(right.role),
+              )[dependencyIndex]?.role ||
+            !DIGEST_PATTERN.test(dependency.nodeId) ||
+            !DIGEST_PATTERN.test(dependency.resultDigest) ||
+            !DIGEST_PATTERN.test(dependency.envelopeDigest),
+        ),
+    )
+  ) {
+    throw refInvalid();
+  }
+  return sha256(
+    canonicalJson({
+      schemaVersion: 1,
+      changeId,
+      entries,
+    }),
+  );
+}
+
+export function quarantineUnsafeEvidenceRefsDocument(
+  paths: InvestigationRuntimePaths,
+  requestedChangeId: string,
+  expectedObservationDigest: string,
+): string {
+  const changeId = assertChangeId(requestedChangeId);
+  if (!DIGEST_PATTERN.test(expectedObservationDigest)) {
+    throw refInvalid();
+  }
+  const source = evidenceRefPath(paths, changeId);
+  const quarantineDirectory = path.join(
+    paths.root,
+    'human-resolutions',
+    'quarantine',
+  );
+  const target = path.join(
+    quarantineDirectory,
+    `${changeId}.${expectedObservationDigest}.evidence-refs.artifact`,
+  );
+  return withRefLock(paths, changeId, () => {
+    ensureNoFollowDirectory(
+      paths.base,
+      paths.root,
+      quarantineDirectory,
+      refUnsafe,
+    );
+    const sourceStats = fs.lstatSync(source, { throwIfNoEntry: false });
+    if (!sourceStats) {
+      if (
+        fs.lstatSync(target, { throwIfNoEntry: false }) &&
+        exactUnsafePathObservationDigest(target, 'evidence-refs') ===
+          expectedObservationDigest
+      ) {
+        return target;
+      }
+      throw refsDocumentCasMismatch(expectedObservationDigest, null, null);
+    }
+    if (
+      exactUnsafePathObservationDigest(source, 'evidence-refs') !==
+      expectedObservationDigest
+    ) {
+      throw refsDocumentCasMismatch(
+        expectedObservationDigest,
+        exactUnsafePathObservationDigest(source, 'evidence-refs'),
+        null,
+      );
+    }
+    if (fs.lstatSync(target, { throwIfNoEntry: false })) {
+      throw refInvalid();
+    }
+    fs.renameSync(source, target);
+    fsyncDirectory(paths.refs);
+    fsyncDirectory(quarantineDirectory);
+    if (
+      exactUnsafePathObservationDigest(target, 'evidence-refs') !==
+      expectedObservationDigest
+    ) {
+      throw refInvalid();
+    }
+    return target;
+  });
+}
+
+export function compareAndSwapEvidenceRefsDocument(
+  paths: InvestigationRuntimePaths,
+  params: CompareAndSwapEvidenceRefsDocumentParams,
+): EvidenceRefsSnapshot {
+  const changeId = assertChangeId(params.changeId);
+  if (
+    params.expectedDigest !== null &&
+    !DIGEST_PATTERN.test(params.expectedDigest)
+  ) {
+    throw refInvalid();
+  }
+  const nextRefs =
+    params.nextRefs === null
+      ? null
+      : validateEvidenceRefsForPublication(paths, params.nextRefs);
+  const nextDigest =
+    nextRefs === null ? null : sha256(canonicalRefDocument(changeId, nextRefs));
+
+  return withRefLock(paths, changeId, () => {
+    const current = readEvidenceRefsSnapshot(paths, changeId);
+    if (current.digest === nextDigest) {
+      return current;
+    }
+    if (current.digest !== params.expectedDigest) {
+      throw refsDocumentCasMismatch(
+        params.expectedDigest,
+        current.digest,
+        nextDigest,
+      );
+    }
+    if (nextRefs === null) {
+      fs.unlinkSync(evidenceRefPath(paths, changeId));
+      fsyncDirectory(paths.refs);
+    } else {
+      writeRefDocument(paths, changeId, nextRefs);
+    }
+    const published = readEvidenceRefsSnapshot(paths, changeId);
+    if (published.digest !== nextDigest) {
+      throw refInvalid();
+    }
+    return published;
+  });
 }
 
 export function compareAndSwapEvidenceRef(
@@ -193,7 +631,7 @@ function writeRefDocument(
   refs: Record<string, string>,
 ): void {
   const refPath = evidenceRefPath(paths, changeId);
-  const content = canonicalJson({ schemaVersion: 1, changeId, refs });
+  const content = canonicalRefDocument(changeId, refs);
   ensureNoFollowDirectory(paths.base, paths.root, paths.refs, refUnsafe);
   const existing = fs.lstatSync(refPath, { throwIfNoEntry: false });
   if (existing) {
@@ -224,6 +662,38 @@ function writeRefDocument(
   }
 }
 
+function validateEvidenceRefsForPublication(
+  paths: InvestigationRuntimePaths,
+  refs: Record<string, string>,
+): Record<string, string> {
+  if (!isPlainRecord(refs)) {
+    throw refInvalid();
+  }
+  const validated: Record<string, string> = {};
+  for (const [name, nodeId] of Object.entries(refs)) {
+    assertRefName(name);
+    assertNodeId(nodeId);
+    readEvidenceNode(paths, nodeId);
+    validated[name] = nodeId;
+  }
+  return validated;
+}
+
+function canonicalRefDocument(
+  changeId: string,
+  refs: Record<string, string>,
+): string {
+  return canonicalJson({ schemaVersion: 1, changeId, refs });
+}
+
+function absentEvidenceRefsSnapshot(): EvidenceRefsSnapshot {
+  return Object.freeze({
+    rawDocument: null,
+    digest: null,
+    refs: null,
+  });
+}
+
 function withRefLock<T>(
   paths: InvestigationRuntimePaths,
   changeId: string,
@@ -231,27 +701,644 @@ function withRefLock<T>(
 ): T {
   ensureNoFollowDirectory(paths.base, paths.root, paths.refs, refUnsafe);
   const lockPath = path.join(paths.refs, `${changeId}.lock`);
-  const marker = `${process.pid}:${crypto.randomUUID()}\n`;
+  const ownerToken = crypto.randomUUID();
+  const marker = `${canonicalJson({
+    schemaVersion: 1,
+    ownerToken,
+    pid: process.pid,
+    createdAt: new Date().toISOString(),
+  })}\n`;
   let descriptor: number | undefined;
-  try {
-    descriptor = fs.openSync(lockPath, NO_FOLLOW_CREATE, 0o600);
-    fs.fchmodSync(descriptor, 0o600);
-    fs.writeFileSync(descriptor, marker, 'utf8');
-    fs.fsyncSync(descriptor);
-  } catch (error) {
-    if (descriptor !== undefined) {
-      fs.closeSync(descriptor);
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      descriptor = publishPreparedExclusiveLock(
+        lockPath,
+        marker,
+        ownerToken,
+        refLockInvalid,
+      );
+      break;
+    } catch (error) {
+      if (descriptor !== undefined) {
+        fs.closeSync(descriptor);
+        descriptor = undefined;
+      }
+      if (
+        isNodeError(error) &&
+        error.code === 'EEXIST' &&
+        attempt === 0 &&
+        reclaimDeadRefLock(lockPath)
+      ) {
+        continue;
+      }
+      if (isNodeError(error) && error.code === 'EEXIST') {
+        throw refLocked(changeId);
+      }
+      throw error;
     }
-    if (isNodeError(error) && error.code === 'EEXIST') {
-      throw refLocked(changeId);
-    }
-    throw error;
+  }
+  if (descriptor === undefined) {
+    throw refInvalid();
   }
   const owned = fs.fstatSync(descriptor);
   try {
     return operation();
   } finally {
     releaseRefLock(lockPath, descriptor, owned, marker);
+  }
+}
+
+function reclaimDeadRefLock(lockPath: string): boolean {
+  try {
+    const result = reclaimDeadPreparedLock(lockPath, (content) => {
+      let value: unknown;
+      try {
+        value = JSON.parse(content);
+      } catch {
+        return null;
+      }
+      if (
+        !isPlainRecord(value) ||
+        !hasExactKeys(value, [
+          'schemaVersion',
+          'ownerToken',
+          'pid',
+          'createdAt',
+        ]) ||
+        value.schemaVersion !== 1 ||
+        typeof value.ownerToken !== 'string' ||
+        !Number.isSafeInteger(value.pid) ||
+        (value.pid as number) < 1 ||
+        typeof value.createdAt !== 'string' ||
+        !Number.isFinite(Date.parse(value.createdAt)) ||
+        `${canonicalJson(value)}\n` !== content
+      ) {
+        return null;
+      }
+      return {
+        pid: value.pid as number,
+        ownerToken: value.ownerToken,
+      };
+    });
+    return result === 'absent' || result === 'reclaimed';
+  } catch {
+    return false;
+  }
+}
+
+type InvestigationEvidenceOwnership = Readonly<{
+  ownerInvestigationId: string;
+  dependencies: readonly InvestigationEvidenceDependencyClosureEntry[];
+}>;
+
+function assertInvestigationEvidenceRefOwner(
+  paths: InvestigationRuntimePaths,
+  refs: Readonly<Record<string, string>>,
+  refName: string,
+  node: EvidenceNode,
+  expectedChangeId: string,
+): InvestigationEvidenceOwnership {
+  try {
+    switch (refName) {
+      case 'propose/planning-materialization':
+        return assertPlanningMaterializationOwnership(
+          paths,
+          node,
+          expectedChangeId,
+        );
+      case 'propose/plan-review-request':
+        return assertPlanReviewRequestOwnership(
+          paths,
+          refs,
+          node,
+          expectedChangeId,
+        );
+      case 'propose/plan-review-grant-requirement':
+        return assertPlanReviewGrantRequirementOwnership(
+          node,
+          expectedChangeId,
+        );
+      case 'propose/exemption-session':
+        return assertExemptionSessionOwnership(paths, node, expectedChangeId);
+      default:
+        throw refInvalid();
+    }
+  } catch {
+    throw refInvalid();
+  }
+}
+
+function assertPlanningMaterializationOwnership(
+  paths: InvestigationRuntimePaths,
+  node: EvidenceNode,
+  expectedChangeId: string,
+): InvestigationEvidenceOwnership {
+  const output = node.output;
+  if (!isPlainRecord(output)) {
+    throw refInvalid();
+  }
+  if (node.type === 'propose-planning-materialization') {
+    assertProposeEvidenceNode(node, {
+      type: 'propose-planning-materialization',
+      nodeSchema: 'workflow.propose-planning-materialization.v1',
+      outputSchema: 'workflow.propose-planning-materialization-output.v1',
+      exactInputKeys: ['artifacts', 'baseline', 'seal'],
+      provenanceKeys: ['seal'],
+      semanticKeys: ['seal'],
+    });
+    if (
+      !hasExactKeys(output, [
+        'investigationId',
+        'changeId',
+        'revision',
+        'baseline',
+        'artifacts',
+        'sealNodeId',
+        'sealResultDigest',
+      ]) ||
+      output.changeId !== expectedChangeId ||
+      !isInvestigationOwner(output.investigationId) ||
+      !Number.isSafeInteger(output.revision) ||
+      (output.revision as number) < 0 ||
+      !isBaseline(output.baseline) ||
+      !isDigestRecord(output.artifacts) ||
+      !isDigest(output.sealNodeId) ||
+      !isDigest(output.sealResultDigest) ||
+      node.exactInputDigests.artifacts !==
+        sha256(canonicalJson(output.artifacts)) ||
+      node.exactInputDigests.baseline !==
+        sha256(canonicalJson(output.baseline)) ||
+      node.exactInputDigests.seal !== output.sealNodeId ||
+      node.provenanceParentNodeIds.seal !== output.sealNodeId ||
+      node.semanticParentResultDigests.seal !== output.sealResultDigest
+    ) {
+      throw refInvalid();
+    }
+    return Object.freeze({
+      ownerInvestigationId: output.investigationId,
+      // The seal is deterministically reconstructed from the investigation
+      // session graph and is intentionally not stored in the evidence CAS.
+      dependencies: Object.freeze([]),
+    });
+  }
+
+  assertProposeEvidenceNode(node, {
+    type: 'propose-exemption-planning-materialization',
+    nodeSchema: 'workflow.propose-exemption-planning-materialization.v1',
+    outputSchema:
+      'workflow.propose-exemption-planning-materialization-output.v1',
+    exactInputKeys: ['applicability', 'artifacts', 'baseline'],
+    provenanceKeys: ['applicability'],
+    semanticKeys: ['applicability'],
+  });
+  if (
+    !hasExactKeys(output, [
+      'investigationId',
+      'changeId',
+      'revision',
+      'baseline',
+      'artifacts',
+      'applicabilityNodeId',
+      'applicabilityResultDigest',
+    ]) ||
+    output.changeId !== expectedChangeId ||
+    !isInvestigationOwner(output.investigationId) ||
+    !Number.isSafeInteger(output.revision) ||
+    (output.revision as number) < 0 ||
+    !isBaseline(output.baseline) ||
+    !isDigestRecord(output.artifacts) ||
+    !isDigest(output.applicabilityNodeId) ||
+    !isDigest(output.applicabilityResultDigest) ||
+    node.exactInputDigests.artifacts !==
+      sha256(canonicalJson(output.artifacts)) ||
+    node.exactInputDigests.baseline !==
+      sha256(canonicalJson(output.baseline)) ||
+    node.exactInputDigests.applicability !== output.applicabilityNodeId ||
+    node.provenanceParentNodeIds.applicability !== output.applicabilityNodeId ||
+    node.semanticParentResultDigests.applicability !==
+      output.applicabilityResultDigest
+  ) {
+    throw refInvalid();
+  }
+  const applicability = readApplicabilityDependency(
+    paths,
+    output.applicabilityNodeId,
+    output.applicabilityResultDigest,
+  );
+  return Object.freeze({
+    ownerInvestigationId: output.investigationId,
+    dependencies: Object.freeze([applicability]),
+  });
+}
+
+function assertPlanReviewRequestOwnership(
+  paths: InvestigationRuntimePaths,
+  refs: Readonly<Record<string, string>>,
+  node: EvidenceNode,
+  expectedChangeId: string,
+): InvestigationEvidenceOwnership {
+  const output = node.output;
+  if (
+    !isPlainRecord(output) ||
+    node.type !== 'plan-review-request-reservation' ||
+    node.nodeSchema !== 'workflow.plan-review-request-reservation.v1' ||
+    node.evaluator !== 'workflow-propose.v1' ||
+    node.policyDigest !== PROPOSE_POLICY_DIGEST ||
+    node.outputSchema !==
+      'workflow.plan-review-request-reservation-output.v1' ||
+    output.changeId !== expectedChangeId ||
+    !isInvestigationOwner(output.investigationId)
+  ) {
+    throw refInvalid();
+  }
+  const currentShape = Object.hasOwn(output, 'materializationNode');
+  const outputKeys = currentShape
+    ? [
+        'investigationId',
+        'changeId',
+        'planning',
+        'subject',
+        'assignment',
+        'author',
+        'materializationNode',
+        'targetSnapshotNode',
+        'manifest',
+        'request',
+        'grantAuthorization',
+      ]
+    : [
+        'investigationId',
+        'changeId',
+        'planning',
+        'subject',
+        'assignment',
+        'author',
+        'manifest',
+        'request',
+        'grantAuthorization',
+      ];
+  if (
+    !hasExactKeys(output, outputKeys) ||
+    !hasExactKeys(node.exactInputDigests, [
+      'manifest',
+      'request',
+      'subject',
+      ...(currentShape ? ['targetSnapshot'] : []),
+    ]) ||
+    !hasExactKeys(node.provenanceParentNodeIds, ['authorization']) ||
+    !hasExactKeys(node.semanticParentResultDigests, ['authorization']) ||
+    !isPlainRecord(output.planning) ||
+    !isPlainRecord(output.manifest)
+  ) {
+    throw refInvalid();
+  }
+  const subject = assertPlanReviewSubject(output.subject);
+  if (
+    !isPlainRecord(output.planning.subject) ||
+    canonicalJson(output.planning.subject) !== canonicalJson(subject)
+  ) {
+    throw refInvalid();
+  }
+  const request = recreateProviderInvocationRequest(output.request);
+  const manifest = output.manifest;
+  if (
+    request.purpose !== 'plan-review' ||
+    request.authorizationNodeId !==
+      node.provenanceParentNodeIds.authorization ||
+    request.requestDigest !== node.exactInputDigests.request ||
+    request.inputManifestDigest !== node.exactInputDigests.manifest ||
+    request.inputManifestDigest !== sha256(canonicalJson(manifest)) ||
+    request.targetDigest !== subject.subjectDigest ||
+    subject.subjectDigest !== node.exactInputDigests.subject ||
+    canonicalJson(request.roleAssignment) !==
+      canonicalJson(output.assignment) ||
+    manifest.schemaVersion !== 1 ||
+    manifest.kind !== 'plan-review-manifest' ||
+    manifest.changeId !== expectedChangeId ||
+    manifest.baseCommit !== request.baseCommit ||
+    manifest.baseTree !== request.baseTree ||
+    canonicalJson(manifest.subject) !== canonicalJson(subject) ||
+    manifest.capabilityProfile !== 'repository-read-only'
+  ) {
+    throw refInvalid();
+  }
+  const authorization = readEvidenceNode(
+    paths,
+    node.provenanceParentNodeIds.authorization,
+  );
+  const authorizationOutput = authorization.output;
+  const authorizationCurrentShape = Object.hasOwn(
+    authorization.exactInputDigests,
+    'targetSnapshot',
+  );
+  if (
+    authorization.type !== 'plan-review-authorization' ||
+    authorization.nodeSchema !== 'workflow.plan-review-authorization.v1' ||
+    authorization.evaluator !== 'workflow-propose.v1' ||
+    authorization.policyDigest !== PROPOSE_POLICY_DIGEST ||
+    authorization.outputSchema !==
+      'workflow.plan-review-authorization-output.v1' ||
+    !isPlainRecord(authorizationOutput) ||
+    !hasExactKeys(authorizationOutput, [
+      'subject',
+      'assignment',
+      'author',
+      'grantAuthorization',
+    ]) ||
+    !hasExactKeys(authorization.exactInputDigests, [
+      'assignment',
+      'generation',
+      'grantAuthorization',
+      'subject',
+      ...(authorizationCurrentShape ? ['targetSnapshot'] : []),
+    ]) ||
+    !hasExactKeys(authorization.provenanceParentNodeIds, [
+      'materialization',
+      ...(authorizationCurrentShape ? ['targetSnapshot'] : []),
+    ]) ||
+    !hasExactKeys(authorization.semanticParentResultDigests, [
+      'materialization',
+      ...(authorizationCurrentShape ? ['targetSnapshot'] : []),
+    ]) ||
+    authorization.resultDigest !==
+      node.semanticParentResultDigests.authorization ||
+    canonicalJson(authorizationOutput.subject) !== canonicalJson(subject) ||
+    canonicalJson(authorizationOutput.assignment) !==
+      canonicalJson(output.assignment) ||
+    canonicalJson(authorizationOutput.author) !==
+      canonicalJson(output.author) ||
+    canonicalJson(authorizationOutput.grantAuthorization) !==
+      canonicalJson(output.grantAuthorization) ||
+    authorization.exactInputDigests.subject !== subject.subjectDigest ||
+    authorization.exactInputDigests.assignment !==
+      sha256(canonicalJson(output.assignment)) ||
+    authorization.exactInputDigests.grantAuthorization !==
+      sha256(canonicalJson(output.grantAuthorization)) ||
+    !isPlainRecord(output.planning.generation) ||
+    authorization.exactInputDigests.generation !==
+      output.planning.generation.planningGenerationId
+  ) {
+    throw refInvalid();
+  }
+
+  const materializationId =
+    authorization.provenanceParentNodeIds.materialization;
+  const materialization = readEvidenceNode(paths, materializationId);
+  const materializationOwnership = assertPlanningMaterializationOwnership(
+    paths,
+    materialization,
+    expectedChangeId,
+  );
+  if (
+    materialization.resultDigest !==
+      authorization.semanticParentResultDigests.materialization ||
+    (refs['propose/planning-materialization'] !== undefined &&
+      refs['propose/planning-materialization'] !== materialization.nodeId) ||
+    output.investigationId !== materializationOwnership.ownerInvestigationId
+  ) {
+    throw refInvalid();
+  }
+
+  const dependencies: InvestigationEvidenceDependencyClosureEntry[] = [
+    dependencyClosureEntry('authorization', authorization),
+    dependencyClosureEntry('materialization', materialization),
+    ...materializationOwnership.dependencies.map((dependency) =>
+      Object.freeze({
+        ...dependency,
+        role: `materialization/${dependency.role}`,
+      }),
+    ),
+  ];
+  if (currentShape !== authorizationCurrentShape) {
+    throw refInvalid();
+  }
+  if (currentShape) {
+    if (
+      !isPlainRecord(output.materializationNode) ||
+      !isPlainRecord(output.targetSnapshotNode)
+    ) {
+      throw refInvalid();
+    }
+    const embeddedMaterialization = assertStoredEvidenceNode(
+      output.materializationNode,
+      refInvalid,
+    );
+    const embeddedTargetSnapshot = assertStoredEvidenceNode(
+      output.targetSnapshotNode,
+      refInvalid,
+    );
+    const storedTargetSnapshot = readEvidenceNode(
+      paths,
+      embeddedTargetSnapshot.nodeId,
+    );
+    const target = readPlanReviewTargetSnapshotNode(storedTargetSnapshot);
+    if (
+      canonicalJson(embeddedMaterialization) !==
+        canonicalJson(materialization) ||
+      canonicalJson(embeddedTargetSnapshot) !==
+        canonicalJson(storedTargetSnapshot) ||
+      authorization.provenanceParentNodeIds.targetSnapshot !==
+        storedTargetSnapshot.nodeId ||
+      authorization.semanticParentResultDigests.targetSnapshot !==
+        storedTargetSnapshot.resultDigest ||
+      authorization.exactInputDigests.targetSnapshot !==
+        storedTargetSnapshot.nodeId ||
+      node.exactInputDigests.targetSnapshot !== storedTargetSnapshot.nodeId ||
+      target.changeId !== expectedChangeId ||
+      target.subjectDigest !== subject.subjectDigest ||
+      target.materializationNodeId !== materialization.nodeId ||
+      target.materializationResultDigest !== materialization.resultDigest ||
+      canonicalJson(manifest.planningTarget) !== canonicalJson(target)
+    ) {
+      throw refInvalid();
+    }
+    dependencies.push(
+      dependencyClosureEntry('target-snapshot', storedTargetSnapshot),
+    );
+  } else if (Object.hasOwn(manifest, 'planningTarget')) {
+    throw refInvalid();
+  }
+  return Object.freeze({
+    ownerInvestigationId: materializationOwnership.ownerInvestigationId,
+    dependencies: Object.freeze(
+      dependencies.sort((left, right) => left.role.localeCompare(right.role)),
+    ),
+  });
+}
+
+function assertPlanReviewGrantRequirementOwnership(
+  node: EvidenceNode,
+  expectedChangeId: string,
+): InvestigationEvidenceOwnership {
+  const output = node.output;
+  assertProposeEvidenceNode(node, {
+    type: 'plan-review-grant-requirement',
+    nodeSchema: 'workflow.plan-review-grant-requirement.v1',
+    outputSchema: 'workflow.plan-review-grant-requirement-output.v1',
+    exactInputKeys: ['author', 'grantRequest', 'subject'],
+    provenanceKeys: [],
+    semanticKeys: [],
+  });
+  if (
+    !isPlainRecord(output) ||
+    !hasExactKeys(output, [
+      'investigationId',
+      'changeId',
+      'subject',
+      'author',
+      'grantRequest',
+    ]) ||
+    output.changeId !== expectedChangeId ||
+    !isInvestigationOwner(output.investigationId) ||
+    !isPlainRecord(output.author)
+  ) {
+    throw refInvalid();
+  }
+  const subject = assertPlanReviewSubject(output.subject);
+  if (
+    node.exactInputDigests.subject !== subject.subjectDigest ||
+    node.exactInputDigests.author !== sha256(canonicalJson(output.author)) ||
+    node.exactInputDigests.grantRequest !==
+      sha256(canonicalJson(output.grantRequest))
+  ) {
+    throw refInvalid();
+  }
+  return Object.freeze({
+    ownerInvestigationId: output.investigationId,
+    dependencies: Object.freeze([]),
+  });
+}
+
+function assertExemptionSessionOwnership(
+  paths: InvestigationRuntimePaths,
+  node: EvidenceNode,
+  expectedChangeId: string,
+): InvestigationEvidenceOwnership {
+  const output = node.output;
+  if (
+    node.type !== 'propose-exemption-session-reservation' ||
+    node.nodeSchema !== 'workflow.propose-exemption-session-reservation.v1' ||
+    node.evaluator !== 'workflow-propose.v1' ||
+    node.policyDigest !== PROPOSE_EXEMPTION_SESSION_STORE_POLICY_DIGEST ||
+    node.outputSchema !==
+      'workflow.propose-exemption-session-reservation-output.v1' ||
+    !hasExactKeys(node.exactInputDigests, ['record', 'request']) ||
+    !hasExactKeys(node.provenanceParentNodeIds, ['applicability']) ||
+    !hasExactKeys(node.semanticParentResultDigests, ['applicability']) ||
+    !isPlainRecord(output) ||
+    !hasExactKeys(output, [
+      'changeId',
+      'investigationId',
+      'recordId',
+      'requestDigest',
+    ]) ||
+    output.changeId !== expectedChangeId ||
+    !isDigest(output.recordId) ||
+    !isDigest(output.requestDigest) ||
+    output.investigationId !== `investigation-exemption-${output.recordId}` ||
+    node.exactInputDigests.record !== output.recordId ||
+    node.exactInputDigests.request !== output.requestDigest
+  ) {
+    throw refInvalid();
+  }
+  const applicability = readApplicabilityDependency(
+    paths,
+    node.provenanceParentNodeIds.applicability,
+    node.semanticParentResultDigests.applicability,
+  );
+  return Object.freeze({
+    ownerInvestigationId: output.investigationId,
+    dependencies: Object.freeze([applicability]),
+  });
+}
+
+function assertProposeEvidenceNode(
+  node: EvidenceNode,
+  expected: {
+    type: string;
+    nodeSchema: string;
+    outputSchema: string;
+    exactInputKeys: string[];
+    provenanceKeys: string[];
+    semanticKeys: string[];
+  },
+): void {
+  if (
+    node.type !== expected.type ||
+    node.nodeSchema !== expected.nodeSchema ||
+    node.evaluator !== 'workflow-propose.v1' ||
+    node.policyDigest !== PROPOSE_POLICY_DIGEST ||
+    node.outputSchema !== expected.outputSchema ||
+    !hasExactKeys(node.exactInputDigests, expected.exactInputKeys) ||
+    !hasExactKeys(node.provenanceParentNodeIds, expected.provenanceKeys) ||
+    !hasExactKeys(node.semanticParentResultDigests, expected.semanticKeys)
+  ) {
+    throw refInvalid();
+  }
+}
+
+function readApplicabilityDependency(
+  paths: InvestigationRuntimePaths,
+  nodeId: string,
+  resultDigest: string,
+): InvestigationEvidenceDependencyClosureEntry {
+  const node = readEvidenceNode(paths, nodeId);
+  const applicability = assertInvestigationApplicability(node.output);
+  if (
+    applicability.kind !== 'investigation-exemption' ||
+    node.type !== 'investigation-applicability' ||
+    node.nodeSchema !== 'investigation.applicability.v1' ||
+    node.evaluator !== 'investigation-applicability.v1' ||
+    node.policyDigest !== INVESTIGATION_APPLICABILITY_POLICY_DIGEST ||
+    node.outputSchema !== 'investigation.applicability-output.v1' ||
+    node.resultDigest !== resultDigest
+  ) {
+    throw refInvalid();
+  }
+  return dependencyClosureEntry('applicability', node);
+}
+
+function dependencyClosureEntry(
+  role: string,
+  node: EvidenceNode,
+): InvestigationEvidenceDependencyClosureEntry {
+  return Object.freeze({
+    role,
+    nodeId: node.nodeId,
+    resultDigest: node.resultDigest,
+    envelopeDigest: sha256(canonicalEvidenceNodeEnvelope(node)),
+  });
+}
+
+function isBaseline(value: unknown): value is { head: string; tree: string } {
+  return (
+    isPlainRecord(value) &&
+    hasExactKeys(value, ['head', 'tree']) &&
+    typeof value.head === 'string' &&
+    /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(value.head) &&
+    typeof value.tree === 'string' &&
+    /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(value.tree)
+  );
+}
+
+function isDigestRecord(value: unknown): value is Record<string, string> {
+  return (
+    isPlainRecord(value) &&
+    Object.entries(value).every(
+      ([name, digest]) =>
+        name.length > 0 && typeof digest === 'string' && isDigest(digest),
+    )
+  );
+}
+
+function isInvestigationOwner(value: unknown): value is string {
+  if (typeof value !== 'string') {
+    return false;
+  }
+  try {
+    return assertInvestigationId(value) === value;
+  } catch {
+    return false;
   }
 }
 
@@ -274,8 +1361,13 @@ function releaseRefLock(
   // Only remove a lock that is still the exact file we created; ownership that
   // changed under us must not be unlinked.
   if (
+    owned.isFile() &&
+    owned.nlink === 1 &&
+    (owned.mode & 0o777) === 0o600 &&
     stats?.isFile() &&
     !stats.isSymbolicLink() &&
+    stats.nlink === 1 &&
+    (stats.mode & 0o777) === 0o600 &&
     stats.dev === owned.dev &&
     stats.ino === owned.ino &&
     observed === marker
@@ -512,6 +1604,19 @@ function refCasMismatch(
   );
 }
 
+function refsDocumentCasMismatch(
+  expectedDigest: string | null,
+  observedDigest: string | null,
+  nextDigest: string | null,
+) {
+  return workflowError(
+    'EVIDENCE_REFS_CAS_MISMATCH',
+    'Evidence ref document changed during compare-and-swap.',
+    ExitCode.conflict,
+    { details: { expectedDigest, observedDigest, nextDigest } },
+  );
+}
+
 function refLocked(changeId: string) {
   return workflowError(
     'EVIDENCE_REF_LOCKED',
@@ -554,4 +1659,157 @@ function hasExactKeys(
 
 function isNodeError(error: unknown): error is NodeJS.ErrnoException {
   return error instanceof Error && 'code' in error;
+}
+
+function observeUnsafeNode(
+  filePath: UnsafeObservationBytePath,
+): Record<string, unknown> {
+  const before = fs.lstatSync(filePath, { throwIfNoEntry: false });
+  if (!before) {
+    return { exists: false };
+  }
+  const stableBefore = unsafeObservationStableStats(before);
+  const common = {
+    exists: true,
+    mode: before.mode & 0o777,
+    nlink: before.nlink,
+    size: before.size,
+  };
+  let observation: Record<string, unknown>;
+  if (before.isSymbolicLink()) {
+    const linkTarget = fs.readlinkSync(filePath, {
+      encoding: 'buffer',
+    }) as Buffer;
+    observation = {
+      ...common,
+      kind: 'symlink',
+      linkTargetBase64: linkTarget.toString('base64'),
+    };
+  } else if (before.isDirectory()) {
+    const names = (
+      fs.readdirSync(filePath, { encoding: 'buffer' }) as Buffer[]
+    ).sort(Buffer.compare);
+    observation = {
+      ...common,
+      kind: 'directory',
+      entries: names.map((name) => ({
+        nameBase64: name.toString('base64'),
+        node: observeUnsafeNode(unsafeObservationChildPath(filePath, name)),
+      })),
+    };
+  } else if (before.isFile()) {
+    observation = {
+      ...common,
+      kind: 'file',
+      contentDigest: digestUnsafeRegularFile(filePath, stableBefore),
+    };
+  } else {
+    observation = {
+      ...common,
+      kind: 'other',
+      rdev: before.rdev,
+    };
+  }
+  const after = fs.lstatSync(filePath, { throwIfNoEntry: false });
+  if (
+    !after ||
+    !sameUnsafeObservationStableStats(
+      stableBefore,
+      unsafeObservationStableStats(after),
+    )
+  ) {
+    throw new Error('Unsafe path changed while it was being observed.');
+  }
+  return observation;
+}
+
+function digestUnsafeRegularFile(
+  filePath: UnsafeObservationBytePath,
+  expected: UnsafeObservationStableStats,
+): string {
+  const descriptor = fs.openSync(
+    filePath,
+    fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW,
+  );
+  try {
+    const opened = fs.fstatSync(descriptor);
+    if (
+      !sameUnsafeObservationStableStats(
+        expected,
+        unsafeObservationStableStats(opened),
+      )
+    ) {
+      throw new Error('Unsafe file changed before it was read.');
+    }
+    const hash = crypto.createHash('sha256');
+    const buffer = Buffer.allocUnsafe(64 * 1024);
+    let position = 0;
+    for (;;) {
+      const bytesRead = fs.readSync(
+        descriptor,
+        buffer,
+        0,
+        buffer.byteLength,
+        position,
+      );
+      if (bytesRead === 0) {
+        break;
+      }
+      hash.update(buffer.subarray(0, bytesRead));
+      position += bytesRead;
+    }
+    const closedOver = fs.fstatSync(descriptor);
+    if (
+      !sameUnsafeObservationStableStats(
+        expected,
+        unsafeObservationStableStats(closedOver),
+      )
+    ) {
+      throw new Error('Unsafe file changed while it was being read.');
+    }
+    return hash.digest('hex');
+  } finally {
+    fs.closeSync(descriptor);
+  }
+}
+
+function unsafeObservationChildPath(
+  parent: UnsafeObservationBytePath,
+  name: Buffer,
+): Buffer {
+  const parentBytes = Buffer.isBuffer(parent) ? parent : Buffer.from(parent);
+  return Buffer.concat([parentBytes, Buffer.from(path.sep), name]);
+}
+
+function unsafeObservationStableStats(
+  stats: fs.Stats,
+): UnsafeObservationStableStats {
+  return {
+    dev: stats.dev,
+    ino: stats.ino,
+    mode: stats.mode,
+    nlink: stats.nlink,
+    size: stats.size,
+    mtimeMs: stats.mtimeMs,
+    ctimeMs: stats.ctimeMs,
+  };
+}
+
+function sameUnsafeObservationStableStats(
+  left: UnsafeObservationStableStats,
+  right: UnsafeObservationStableStats,
+): boolean {
+  return (
+    left.dev === right.dev &&
+    left.ino === right.ino &&
+    left.mode === right.mode &&
+    left.nlink === right.nlink &&
+    left.size === right.size &&
+    left.mtimeMs === right.mtimeMs &&
+    left.ctimeMs === right.ctimeMs
+  );
+}
+
+function sha256(value: string): string {
+  return crypto.createHash('sha256').update(value, 'utf8').digest('hex');
 }

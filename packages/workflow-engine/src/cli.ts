@@ -37,6 +37,7 @@ import {
   inspectMaintainerGrants,
   revokeMaintainerGrant,
 } from './maintainer-store.ts';
+import { assertInteractiveSignerContext } from './maintainer-signer.ts';
 import { commitAuthoritySession } from './maintainer-commit.ts';
 import { recoverAuthorityCommit } from './maintainer-recovery.ts';
 import {
@@ -46,7 +47,9 @@ import {
 } from './maintainer-session.ts';
 import { parseMaintainerPolicy } from './maintainer-policy.ts';
 import {
+  discardHumanResolutionGrantPublication,
   executeHumanResolutionGrant,
+  inspectHumanResolutionGrantPublicationRecoveries,
   inspectHumanResolutionGrants,
   recoverHumanResolutionGrant,
   revokeHumanResolutionGrant,
@@ -384,11 +387,46 @@ function dispatch(args: string[], cwd: string): CommandResult {
         };
       }
       if (rest[0] === 'resolution-inspect' && rest.length <= 2) {
+        const publicationRecoveries =
+          inspectHumanResolutionGrantPublicationRecoveries(cwd, rest[1]);
+        let grants: ReturnType<typeof inspectHumanResolutionGrants>;
+        try {
+          grants = inspectHumanResolutionGrants(cwd, rest[1]);
+        } catch (error) {
+          if (
+            publicationRecoveries.length === 0 ||
+            !(error instanceof WorkflowError) ||
+            error.code !== 'HUMAN_RESOLUTION_GRANT_NOT_FOUND'
+          ) {
+            throw error;
+          }
+          grants = [];
+        }
         return {
           command,
           action: 'resolution-inspect',
           ok: true,
-          grants: inspectHumanResolutionGrants(cwd, rest[1]),
+          grants,
+          publicationRecoveries,
+        };
+      }
+      if (rest[0] === 'resolution-publication-discard') {
+        const request = parseHumanResolutionPublicationDiscardArguments(rest);
+        assertInteractiveSignerContext({
+          stdinIsTty: process.stdin.isTTY === true,
+          stdoutIsTty: process.stdout.isTTY === true,
+          stderrIsTty: process.stderr.isTTY === true,
+        });
+        return {
+          command,
+          action: 'resolution-publication-discard',
+          ok: true,
+          recovery: discardHumanResolutionGrantPublication(
+            cwd,
+            request.grantId,
+            request.expectedPublicationStateDigest,
+            request.reason,
+          ),
         };
       }
       if (rest[0] === 'resolution-revoke' && rest.length === 2) {
@@ -919,18 +957,6 @@ function parseHumanResolutionGrantArguments(
       };
       break;
     }
-    case 'repair-current-ref': {
-      const successor = scalar.get('--successor');
-      if (!successor || successor === 'none') {
-        throw humanResolutionGrantUsage();
-      }
-      decision = {
-        kind: 'repair',
-        operation: 'replace-current-investigation-ref',
-        parameters: { successorInvestigationId: successor },
-      };
-      break;
-    }
     case 'waive-reviewer-term-incorporation':
       decision = {
         kind: 'waive-assurance',
@@ -960,7 +986,56 @@ function parseHumanResolutionGrantArguments(
 
 function humanResolutionGrantUsage(): WorkflowError {
   return usage(
-    'Usage: pnpm workflow maintainer resolution-grant --investigation <id> --decision <resume-reviewer-terms|close-reviewer-terms|abort|supersede|quarantine|repair-current-ref|waive-reviewer-term-incorporation> --continuity <preserved|broken|not-applicable> --assurance <unchanged|human-waived|degraded> --rationale <text> [--successor <investigation-id|none>] [--resolution-reason <text>] [--waive <claim> ...] [--ttl <minutes>m] [--json]',
+    'Usage: pnpm workflow maintainer resolution-grant --investigation <id> --decision <resume-reviewer-terms|close-reviewer-terms|abort|supersede|quarantine|waive-reviewer-term-incorporation> --continuity <preserved|broken|not-applicable> --assurance <unchanged|human-waived|degraded> --rationale <text> [--successor <investigation-id|none>] [--resolution-reason <text>] [--waive <claim> ...] [--ttl <minutes>m] [--json]',
+  );
+}
+
+function parseHumanResolutionPublicationDiscardArguments(args: string[]): {
+  grantId: string;
+  expectedPublicationStateDigest: string;
+  reason: string;
+} {
+  if (
+    args[0] !== 'resolution-publication-discard' ||
+    typeof args[1] !== 'string'
+  ) {
+    throw humanResolutionPublicationDiscardUsage();
+  }
+  const options = new Map<string, string>();
+  for (let index = 2; index < args.length; index += 2) {
+    const key = args[index];
+    const value = args[index + 1];
+    if (
+      typeof key !== 'string' ||
+      typeof value !== 'string' ||
+      !['--expected-publication-state', '--reason'].includes(key) ||
+      options.has(key)
+    ) {
+      throw humanResolutionPublicationDiscardUsage();
+    }
+    options.set(key, value);
+  }
+  const expectedPublicationStateDigest = options.get(
+    '--expected-publication-state',
+  );
+  const reason = options.get('--reason');
+  if (
+    args.length !== 6 ||
+    expectedPublicationStateDigest === undefined ||
+    reason === undefined
+  ) {
+    throw humanResolutionPublicationDiscardUsage();
+  }
+  return {
+    grantId: args[1],
+    expectedPublicationStateDigest,
+    reason,
+  };
+}
+
+function humanResolutionPublicationDiscardUsage(): WorkflowError {
+  return usage(
+    'Usage: pnpm workflow maintainer resolution-publication-discard <grant-id> --expected-publication-state <digest> --reason <text> [--json]',
   );
 }
 
@@ -1023,7 +1098,7 @@ function maintainerAttestUsage(): WorkflowError {
 
 function maintainerUsage(): WorkflowError {
   return usage(
-    'Usage: pnpm workflow maintainer <grant ...|resolution-grant ...|resolution-inspect [grant-id]|resolution-revoke <grant-id>|attest ...|inspect [grant-id]|revoke <grant-id>|collaboration-grant ...|collaboration-inspect [grant-id]|collaboration-revoke <grant-id>> [--json]',
+    'Usage: pnpm workflow maintainer <grant ...|resolution-grant ...|resolution-inspect [grant-id]|resolution-publication-discard <grant-id> ...|resolution-revoke <grant-id>|attest ...|inspect [grant-id]|revoke <grant-id>|collaboration-grant ...|collaboration-inspect [grant-id]|collaboration-revoke <grant-id>> [--json]',
   );
 }
 
@@ -1068,6 +1143,7 @@ function usageText(): string {
     '  pnpm workflow maintainer grant --change <change-id> --paths <exact-path> [--paths <exact-path> ...] --reason <text> [--ttl <minutes>m] [--uses 1] [--json]',
     '  pnpm workflow maintainer resolution-grant --investigation <id> --decision <kind> --continuity <mode> --assurance <mode> --rationale <text> [--json]',
     '  pnpm workflow maintainer resolution-inspect [grant-id] [--json]',
+    '  pnpm workflow maintainer resolution-publication-discard <grant-id> --expected-publication-state <digest> --reason <text> [--json]',
     '  pnpm workflow maintainer resolution-revoke <grant-id> [--json]',
     '  pnpm workflow maintainer attest --original <commit> --main <commit> [--base <original>=<main> ...] [--json]',
     '  pnpm workflow maintainer inspect [grant-id] [--json]',

@@ -7,10 +7,21 @@ import {
   type PlanningAssuranceBinding,
 } from './contracts.ts';
 import { ExitCode, workflowError } from './errors.ts';
-import { ensurePlainDirectory } from './filesystem-safety.ts';
+import {
+  ensurePlainDirectory,
+  publishPreparedExclusiveLock,
+  reclaimDeadPreparedLock,
+  withPreparedLockCleanupClaim,
+} from './filesystem-safety.ts';
+import {
+  assertHumanResolutionLifecycleBarrier,
+  reclaimHumanResolutionJournalTemporaries,
+} from './investigation-session-store.ts';
 
 const MAINTAINER_GRANT_STATE_FILE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\.json$/;
+const SESSION_LOCK_OWNER_TOKEN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 
 export type WorkflowSession = {
   schemaVersion: 1;
@@ -63,43 +74,136 @@ export function withSessionOperation<T>(
 ): T {
   ensurePlainDirectory(runtime.operations);
   const lockPath = path.join(runtime.operations, `${sessionId}.lock`);
+  const ownerToken = crypto.randomUUID();
+  const content = `${JSON.stringify({
+    sessionId,
+    ownerToken,
+    pid: process.pid,
+  })}\n`;
   let descriptor: number | undefined;
-  try {
-    descriptor = fs.openSync(lockPath, 'wx', 0o600);
-    fs.writeFileSync(
-      descriptor,
-      `${JSON.stringify({ sessionId, pid: process.pid })}\n`,
-      'utf8',
-    );
-    fs.fsyncSync(descriptor);
-    fs.closeSync(descriptor);
-    descriptor = undefined;
-  } catch (error) {
-    if (descriptor !== undefined) {
-      fs.closeSync(descriptor);
-    }
-    if (isNodeError(error) && error.code === 'EEXIST') {
-      throw workflowError(
-        'SESSION_OPERATION_CONFLICT',
-        `Session ${sessionId} already has an operation in progress.`,
-        ExitCode.conflict,
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      descriptor = publishPreparedExclusiveLock(
+        lockPath,
+        content,
+        ownerToken,
+        invalidSessionLock,
       );
+      break;
+    } catch (error) {
+      if (descriptor !== undefined) {
+        fs.closeSync(descriptor);
+        descriptor = undefined;
+      }
+      if (
+        isNodeError(error) &&
+        error.code === 'EEXIST' &&
+        attempt === 0 &&
+        reclaimDeadSessionOperationLock(lockPath, sessionId)
+      ) {
+        continue;
+      }
+      if (isNodeError(error) && error.code === 'EEXIST') {
+        throw workflowError(
+          'SESSION_OPERATION_CONFLICT',
+          `Session ${sessionId} already has an operation in progress.`,
+          ExitCode.conflict,
+        );
+      }
+      throw error;
     }
-    throw error;
   }
 
   try {
     return operation();
   } finally {
-    fs.rmSync(lockPath, { force: true });
+    releaseSessionOperationLock(lockPath, descriptor, content);
   }
+}
+
+function releaseSessionOperationLock(
+  lockPath: string,
+  descriptor: number | undefined,
+  content: string,
+): void {
+  if (descriptor === undefined) {
+    throw invalidSessionLock();
+  }
+  try {
+    const owned = fs.fstatSync(descriptor);
+    const observed = fs.lstatSync(lockPath, { throwIfNoEntry: false });
+    let observedContent: string | undefined;
+    try {
+      observedContent = fs.readFileSync(lockPath, 'utf8');
+    } catch {
+      observedContent = undefined;
+    }
+    if (
+      !owned.isFile() ||
+      owned.nlink !== 1 ||
+      (owned.mode & 0o777) !== 0o600 ||
+      !observed?.isFile() ||
+      observed.isSymbolicLink() ||
+      observed.nlink !== 1 ||
+      (observed.mode & 0o777) !== 0o600 ||
+      observed.dev !== owned.dev ||
+      observed.ino !== owned.ino ||
+      observedContent !== content ||
+      readDescriptorContent(descriptor, Buffer.byteLength(content)) !== content
+    ) {
+      throw invalidSessionLock();
+    }
+    fs.unlinkSync(lockPath);
+    fsyncDirectory(path.dirname(lockPath));
+  } finally {
+    fs.closeSync(descriptor);
+  }
+}
+
+function reclaimDeadSessionOperationLock(
+  lockPath: string,
+  expectedSessionId: string,
+): boolean {
+  const result = reclaimDeadPreparedLock(lockPath, (content) => {
+    let value: unknown;
+    try {
+      value = JSON.parse(content);
+    } catch {
+      return null;
+    }
+    if (
+      !isRecord(value) ||
+      Object.keys(value).length !== 3 ||
+      value.sessionId !== expectedSessionId ||
+      typeof value.ownerToken !== 'string' ||
+      !Number.isSafeInteger(value.pid) ||
+      (value.pid as number) < 1 ||
+      `${JSON.stringify(value)}\n` !== content
+    ) {
+      return null;
+    }
+    return {
+      pid: value.pid as number,
+      ownerToken: value.ownerToken,
+    };
+  });
+  return result === 'absent' || result === 'reclaimed';
 }
 
 export function withRepositoryLifecycleOperation<T>(
   runtime: ReturnType<typeof runtimePaths>,
   operation: (assertOwned: () => void) => T,
-  options: { allowMaintainerGrantId?: string } = {},
+  options: {
+    allowMaintainerGrantId?: string;
+    allowHumanResolutionGrantId?: string;
+    allowHumanResolutionChangeId?: string;
+  } = {},
 ): T {
+  assertHumanResolutionLifecycleBarrier(
+    runtime.root,
+    options.allowHumanResolutionGrantId ?? null,
+    options.allowHumanResolutionChangeId ?? null,
+  );
   ensurePlainDirectory(runtime.operations);
   const lockPath = path.join(runtime.operations, 'repository-lifecycle.lock');
   const ownerToken = crypto.randomUUID();
@@ -124,34 +228,58 @@ export function withRepositoryLifecycleOperation<T>(
       observedContent = undefined;
     }
     if (
+      !owned.isFile() ||
+      owned.nlink !== 1 ||
+      (owned.mode & 0o777) !== 0o600 ||
       !observed?.isFile() ||
       observed.isSymbolicLink() ||
+      observed.nlink !== 1 ||
+      (observed.mode & 0o777) !== 0o600 ||
       observed.dev !== owned.dev ||
       observed.ino !== owned.ino ||
-      observedContent !== content
+      observedContent !== content ||
+      readDescriptorContent(descriptor, Buffer.byteLength(content)) !== content
     ) {
       throw invalidRepositoryLifecycleLock(
         'Repository lifecycle lock ownership changed during the transition.',
       );
     }
   };
-  try {
-    descriptor = fs.openSync(lockPath, 'wx', 0o600);
-    fs.writeFileSync(descriptor, content, 'utf8');
-    fs.fsyncSync(descriptor);
-  } catch (error) {
-    if (descriptor !== undefined) {
-      fs.closeSync(descriptor);
-      descriptor = undefined;
-    }
-    if (isNodeError(error) && error.code === 'EEXIST') {
-      throw workflowError(
-        'REPOSITORY_LIFECYCLE_CONFLICT',
-        'Another repository lifecycle transition is in progress.',
-        ExitCode.conflict,
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      descriptor = publishPreparedExclusiveLock(
+        lockPath,
+        content,
+        ownerToken,
+        () =>
+          invalidRepositoryLifecycleLock(
+            'Repository lifecycle reclaim state is unsafe.',
+          ),
       );
+      break;
+    } catch (error) {
+      if (
+        isNodeError(error) &&
+        error.code === 'EEXIST' &&
+        attempt === 0 &&
+        reclaimDeadRepositoryLifecycleLock(lockPath)
+      ) {
+        continue;
+      }
+      if (isNodeError(error) && error.code === 'EEXIST') {
+        throw workflowError(
+          'REPOSITORY_LIFECYCLE_CONFLICT',
+          'Another repository lifecycle transition is in progress.',
+          ExitCode.conflict,
+        );
+      }
+      throw error;
     }
-    throw error;
+  }
+  if (descriptor === undefined) {
+    throw invalidRepositoryLifecycleLock(
+      'Repository lifecycle lock could not be acquired.',
+    );
   }
 
   const release = () => {
@@ -172,21 +300,69 @@ export function withRepositoryLifecycleOperation<T>(
     fs.closeSync(descriptor);
     descriptor = undefined;
     fs.unlinkSync(lockPath);
+    fsyncDirectory(path.dirname(lockPath));
   };
 
   let result: T;
   try {
+    reclaimHumanResolutionJournalTemporaries(runtime.root, assertOwned);
+    const assertLifecycleOwned = () => {
+      assertOwned();
+      assertHumanResolutionLifecycleBarrier(
+        runtime.root,
+        options.allowHumanResolutionGrantId ?? null,
+        options.allowHumanResolutionChangeId ?? null,
+      );
+    };
+    assertHumanResolutionLifecycleBarrier(
+      runtime.root,
+      options.allowHumanResolutionGrantId ?? null,
+      options.allowHumanResolutionChangeId ?? null,
+    );
     assertMaintainerReservationCompatibility(
       runtime,
       options.allowMaintainerGrantId,
     );
-    result = operation(assertOwned);
+    result = operation(assertLifecycleOwned);
   } catch (error) {
     release();
     throw error;
   }
   release();
   return result;
+}
+
+function reclaimDeadRepositoryLifecycleLock(lockPath: string): boolean {
+  const result = reclaimDeadPreparedLock(lockPath, (content) => {
+    let value: unknown;
+    try {
+      value = JSON.parse(content);
+    } catch {
+      return null;
+    }
+    if (
+      !isRecord(value) ||
+      Object.keys(value).length !== 3 ||
+      value.kind !== 'repository-lifecycle' ||
+      typeof value.ownerToken !== 'string' ||
+      !Number.isSafeInteger(value.pid) ||
+      (value.pid as number) < 1 ||
+      `${JSON.stringify(value)}\n` !== content
+    ) {
+      return null;
+    }
+    return {
+      pid: value.pid as number,
+      ownerToken: value.ownerToken,
+    };
+  });
+  return result === 'absent' || result === 'reclaimed';
+}
+
+function readDescriptorContent(descriptor: number, byteLength: number): string {
+  const bytes = Buffer.alloc(byteLength);
+  const count = fs.readSync(descriptor, bytes, 0, byteLength, 0);
+  return bytes.subarray(0, count).toString('utf8');
 }
 
 export function listActiveWorkflowSessionIds(
@@ -321,6 +497,7 @@ export function writeJsonAtomic(filePath: string, value: unknown): void {
     fs.closeSync(descriptor);
     descriptor = undefined;
     fs.renameSync(temporaryPath, filePath);
+    fsyncDirectory(path.dirname(filePath));
   } catch (error) {
     if (descriptor !== undefined) {
       fs.closeSync(descriptor);
@@ -331,20 +508,56 @@ export function writeJsonAtomic(filePath: string, value: unknown): void {
 }
 
 export function releaseOwnedLock(lockPath: string, sessionId: string): void {
-  let value: unknown;
-  try {
-    value = JSON.parse(fs.readFileSync(lockPath, 'utf8'));
-  } catch {
-    return;
-  }
-  if (
-    typeof value === 'object' &&
-    value !== null &&
-    'sessionId' in value &&
-    value.sessionId === sessionId
-  ) {
-    fs.rmSync(lockPath, { force: true });
-  }
+  withPreparedLockCleanupClaim(lockPath, () => {
+    let descriptor: number | undefined;
+    try {
+      try {
+        descriptor = fs.openSync(
+          lockPath,
+          fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW,
+        );
+      } catch (error) {
+        if (isNodeError(error) && error.code === 'ENOENT') {
+          return;
+        }
+        throw error;
+      }
+      const opened = fs.fstatSync(descriptor);
+      const content = fs.readFileSync(descriptor, 'utf8');
+      const value = parseManagedSessionLock(content);
+      if (
+        !opened.isFile() ||
+        opened.nlink !== 1 ||
+        (opened.mode & 0o777) !== 0o600 ||
+        value === null
+      ) {
+        throw invalidSessionLock();
+      }
+      if (value.sessionId !== sessionId) {
+        return;
+      }
+      const observed = fs.lstatSync(lockPath, { throwIfNoEntry: false });
+      if (
+        !observed ||
+        observed.dev !== opened.dev ||
+        observed.ino !== opened.ino
+      ) {
+        return;
+      }
+      try {
+        fs.unlinkSync(lockPath);
+      } catch (error) {
+        if (!isNodeError(error) || error.code !== 'ENOENT') {
+          throw error;
+        }
+      }
+      fsyncDirectory(path.dirname(lockPath));
+    } finally {
+      if (descriptor !== undefined) {
+        fs.closeSync(descriptor);
+      }
+    }
+  });
 }
 
 export function assertOwnedLock(
@@ -353,21 +566,65 @@ export function assertOwnedLock(
   changeId: string,
   taskId: string,
 ): void {
-  let value: unknown;
+  let value: ReturnType<typeof parseManagedSessionLock>;
   try {
-    value = JSON.parse(fs.readFileSync(lockPath, 'utf8'));
+    value = parseManagedSessionLock(fs.readFileSync(lockPath, 'utf8'));
   } catch {
     throw invalidSessionLock();
   }
 
   if (
-    !isRecord(value) ||
-    value.sessionId !== sessionId ||
+    value?.sessionId !== sessionId ||
     value.changeId !== changeId ||
     value.taskId !== taskId
   ) {
     throw invalidSessionLock();
   }
+}
+
+function parseManagedSessionLock(content: string): {
+  sessionId: string;
+  changeId: string;
+  taskId: string;
+} | null {
+  let value: unknown;
+  try {
+    value = JSON.parse(content);
+  } catch {
+    return null;
+  }
+  if (
+    !isRecord(value) ||
+    typeof value.sessionId !== 'string' ||
+    typeof value.changeId !== 'string' ||
+    typeof value.taskId !== 'string' ||
+    `${JSON.stringify(value)}\n` !== content
+  ) {
+    return null;
+  }
+  const keys = Object.keys(value).sort();
+  if (keys.join('\0') === ['changeId', 'sessionId', 'taskId'].join('\0')) {
+    return value as {
+      sessionId: string;
+      changeId: string;
+      taskId: string;
+    };
+  }
+  if (
+    keys.join('\0') !==
+      ['changeId', 'ownerToken', 'pid', 'sessionId', 'taskId'].join('\0') ||
+    typeof value.ownerToken !== 'string' ||
+    !SESSION_LOCK_OWNER_TOKEN.test(value.ownerToken) ||
+    !Number.isSafeInteger(value.pid) ||
+    (value.pid as number) < 1
+  ) {
+    return null;
+  }
+  return value as {
+    sessionId: string;
+    changeId: string;
+    taskId: string;
+  };
 }
 
 export function createSessionId(): string {
@@ -520,6 +777,15 @@ function invalidSessionLock() {
     'The active session lock is missing or does not match the session.',
     ExitCode.staleState,
   );
+}
+
+function fsyncDirectory(directory: string): void {
+  const descriptor = fs.openSync(directory, fs.constants.O_RDONLY);
+  try {
+    fs.fsyncSync(descriptor);
+  } finally {
+    fs.closeSync(descriptor);
+  }
 }
 
 function isNodeError(error: unknown): error is NodeJS.ErrnoException {

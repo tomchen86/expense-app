@@ -8,6 +8,8 @@ import { loadAiAdapterPolicy } from '../src/ai-adapter-policy.ts';
 import { canonicalJson } from '../src/canonical-json.ts';
 import { loadChangeContract } from '../src/contracts.ts';
 import { ExitCode, workflowError } from '../src/errors.ts';
+import { createEvidenceNode } from '../src/evidence-node.ts';
+import { writeEvidenceNode } from '../src/evidence-object-store.ts';
 import { discoverRepository } from '../src/git.ts';
 import { investigationRuntimePaths } from '../src/paths.ts';
 import {
@@ -15,7 +17,10 @@ import {
   PLAN_REVIEW_OUTPUT_SCHEMA,
 } from '../src/plan-review.ts';
 import { deriveInvestigationFirstPlanningSubject } from '../src/planning-assurance-validator.ts';
-import { createProviderInvocationRequest } from '../src/provider-contracts.ts';
+import {
+  createProviderInvocationRequest,
+  PROPOSE_POLICY_DIGEST,
+} from '../src/provider-contracts.ts';
 import {
   createProviderInvocation,
   providerInvocationManifestDigest,
@@ -248,6 +253,7 @@ test('provider worker selects the code-owned exact PlanReview contract', () => {
       'workflow-engine',
     );
     const invocationId = 'invocation-plan-review-worker';
+    const investigationId = 'investigation-plan-review-worker';
     const assignment = {
       role: 'plan-reviewer' as const,
       providerId: 'claude' as const,
@@ -256,6 +262,61 @@ test('provider worker selects the code-owned exact PlanReview contract', () => {
       requiredIndependence: 'provider-independent' as const,
       achievedIndependence: 'provider-independent' as const,
     };
+    const artifacts = {};
+    const sealNodeId = sha256('plan-review-worker-seal-node');
+    const sealResultDigest = sha256('plan-review-worker-seal-result');
+    const materialization = createEvidenceNode({
+      type: 'propose-planning-materialization',
+      nodeSchema: 'workflow.propose-planning-materialization.v1',
+      evaluator: 'workflow-propose.v1',
+      policyDigest: PROPOSE_POLICY_DIGEST,
+      exactInputDigests: {
+        artifacts: sha256(canonicalJson(artifacts)),
+        baseline: sha256(canonicalJson(context.subject.investigationBaseline)),
+        seal: sealNodeId,
+      },
+      semanticParentResultDigests: { seal: sealResultDigest },
+      provenanceParentNodeIds: { seal: sealNodeId },
+      outputSchema: 'workflow.propose-planning-materialization-output.v1',
+      output: {
+        investigationId,
+        changeId: 'demo-change',
+        revision: 0,
+        baseline: context.subject.investigationBaseline,
+        artifacts,
+        sealNodeId,
+        sealResultDigest,
+      },
+      runtimeMetadata: {},
+    });
+    writeEvidenceNode(runtime, materialization);
+    const authorization = createEvidenceNode({
+      type: 'plan-review-authorization',
+      nodeSchema: 'workflow.plan-review-authorization.v1',
+      evaluator: 'workflow-propose.v1',
+      policyDigest: PROPOSE_POLICY_DIGEST,
+      exactInputDigests: {
+        assignment: sha256(canonicalJson(assignment)),
+        generation: context.subject.planningGenerationId,
+        grantAuthorization: sha256(canonicalJson(null)),
+        subject: context.subject.subjectDigest,
+      },
+      semanticParentResultDigests: {
+        materialization: materialization.resultDigest,
+      },
+      provenanceParentNodeIds: {
+        materialization: materialization.nodeId,
+      },
+      outputSchema: 'workflow.plan-review-authorization-output.v1',
+      output: {
+        subject: context.subject,
+        assignment,
+        author: { id: 'fixture-author' },
+        grantAuthorization: null,
+      },
+      runtimeMetadata: {},
+    });
+    writeEvidenceNode(runtime, authorization);
     const manifest: PlanReviewManifest = {
       schemaVersion: 1,
       kind: 'plan-review-manifest',
@@ -278,7 +339,7 @@ test('provider worker selects the code-owned exact PlanReview contract', () => {
       baseTree: locator.tree,
       targetDigest: context.subject.subjectDigest,
       inputManifestDigest: providerInvocationManifestDigest(manifest),
-      authorizationNodeId: 'c'.repeat(64),
+      authorizationNodeId: authorization.nodeId,
       writeAllowedPaths: [],
       outputSchema: PLAN_REVIEW_OUTPUT_SCHEMA,
       evaluatorVersion: 'plan-review.v2',
@@ -289,7 +350,7 @@ test('provider worker selects the code-owned exact PlanReview contract', () => {
       },
     });
     createProviderInvocation(runtime, {
-      investigationId: 'investigation-plan-review-worker',
+      investigationId,
       changeId: 'demo-change',
       attempt: 1,
       manifest,

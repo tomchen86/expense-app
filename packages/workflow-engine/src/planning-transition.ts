@@ -31,7 +31,11 @@ import {
   type PlanningTransitionReport,
 } from './planning-report.ts';
 import { runtimePaths } from './session-store.ts';
-import { withPlanningAuthority } from './planning-lock.ts';
+import {
+  assertHeldChangeTransitionAuthority,
+  type HeldChangeTransitionAuthority,
+  withPlanningAuthority,
+} from './planning-lock.ts';
 import type { InvestigationFirstPlanningAssuranceSummary } from './planning-assurance-validator.ts';
 
 export type PlanningTransitionResult = {
@@ -86,6 +90,27 @@ export function commitPlanningTransition(
       testHooks,
       assertLocksOwned,
     ),
+  );
+}
+
+export function commitPlanningTransitionUnderAuthority(
+  cwd: string,
+  requestedChangeId: string,
+  authority: HeldChangeTransitionAuthority,
+  environment: NodeJS.ProcessEnv = process.env,
+  testHooks: PlanningTransitionTestHooks = {},
+): PlanningTransitionResult {
+  const changeId = assertChangeId(requestedChangeId);
+  const assertLocksOwned = assertHeldChangeTransitionAuthority(
+    authority,
+    changeId,
+  );
+  return commitPlanningTransitionLocked(
+    cwd,
+    changeId,
+    environment,
+    testHooks,
+    assertLocksOwned,
   );
 }
 

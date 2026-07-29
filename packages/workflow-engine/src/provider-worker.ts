@@ -12,9 +12,10 @@ import {
   BLIND_SURVEY_OUTPUT_SCHEMA,
   BLIND_SURVEY_PROVIDER_OUTPUT_SCHEMA,
   blindSurveyOutputValidator,
-  claimProviderInvocation,
+  claimProviderInvocationForWorker,
   completeProviderInvocationFromRunner,
   failProviderInvocation,
+  releaseProviderInvocationWorkerFence,
   readPlanReviewSnapshotRuntime,
   readProviderInvocation,
   readProviderInvocationRequest,
@@ -112,13 +113,17 @@ export function runProviderWorker(
     context.runtime,
     initial.invocationId,
   );
-  const claim = claimProviderInvocation(context.runtime, initial.invocationId, {
-    workerId:
-      options.workerId ??
-      `provider-worker-${process.pid}-${initial.invocationId}`,
-    leaseDurationMs: request.limits.timeoutMs,
-    expectedRevision: initial.revision,
-  });
+  const claim = claimProviderInvocationForWorker(
+    context.runtime,
+    initial.invocationId,
+    {
+      workerId:
+        options.workerId ??
+        `provider-worker-${process.pid}-${initial.invocationId}`,
+      leaseDurationMs: request.limits.timeoutMs,
+      expectedRevision: initial.revision,
+    },
+  );
   const runner = options.runner ?? runBuiltInProvider;
   try {
     const report = runner(
@@ -166,6 +171,12 @@ export function runProviderWorker(
       },
     );
     return renderWorkerResult(failed, true);
+  } finally {
+    releaseProviderInvocationWorkerFence(
+      context.runtime,
+      request.invocationId,
+      claim.workerFenceToken,
+    );
   }
 }
 

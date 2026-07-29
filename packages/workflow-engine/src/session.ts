@@ -1,14 +1,19 @@
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 
 import { loadWorkflowConfig } from './contracts.ts';
 import { digestRequiredCheckDefinitions } from './contract-digests.ts';
 import { ExitCode, workflowError } from './errors.ts';
-import { ensurePlainDirectory } from './filesystem-safety.ts';
+import {
+  ensurePlainDirectory,
+  publishPreparedExclusiveLock,
+} from './filesystem-safety.ts';
 import { discoverRepository } from './git.ts';
 import type { ValidatedChangeContract } from './managed-change-contract.ts';
 import { assertChangeId, assertSessionId, assertTaskId } from './paths.ts';
 import { createTaskPlanningAssuranceBinding } from './planning-assurance-validator.ts';
+import { reclaimDeadChangeTransitionLock } from './planning-lock.ts';
 import {
   createSessionId,
   readSessionFile,
@@ -36,11 +41,16 @@ export function startSession(
     initial.git.gitCommonDirectory,
     initial.contract.config.runtimeDirectory,
   );
-  return withRepositoryLifecycleOperation(runtime, () =>
-    persistSessionStart(
+  return withRepositoryLifecycleOperation(runtime, (assertRepositoryLock) => {
+    reclaimDeadChangeTransitionLock(
+      runtime,
+      initial.changeId,
+      assertRepositoryLock,
+    );
+    return persistSessionStart(
       inspectSessionStart(cwd, requestedChangeId, requestedTaskId),
-    ),
-  );
+    );
+  });
 }
 
 function inspectSessionStart(
@@ -138,17 +148,21 @@ function persistSessionStart(
   ensurePlainDirectory(runtime.locks);
 
   const lockPath = path.join(runtime.locks, `${changeId}.lock`);
+  const ownerToken = crypto.randomUUID();
   let lockDescriptor: number | undefined;
-  let createdLock = false;
   try {
-    lockDescriptor = fs.openSync(lockPath, 'wx', 0o600);
-    createdLock = true;
-    fs.writeFileSync(
-      lockDescriptor,
-      `${JSON.stringify({ sessionId, changeId, taskId })}\n`,
-      'utf8',
+    lockDescriptor = publishPreparedExclusiveLock(
+      lockPath,
+      `${JSON.stringify({
+        sessionId,
+        ownerToken,
+        changeId,
+        taskId,
+        pid: process.pid,
+      })}\n`,
+      ownerToken,
+      sessionLockInvalid,
     );
-    fs.fsyncSync(lockDescriptor);
     fs.closeSync(lockDescriptor);
     lockDescriptor = undefined;
   } catch (error) {
@@ -162,9 +176,6 @@ function persistSessionStart(
         ExitCode.conflict,
         { details: { lockPath } },
       );
-    }
-    if (createdLock) {
-      fs.rmSync(lockPath, { force: true });
     }
     throw error;
   }
@@ -211,6 +222,14 @@ function persistSessionStart(
   }
 
   return session;
+}
+
+function sessionLockInvalid() {
+  return workflowError(
+    'SESSION_LOCK_INVALID',
+    'The active session lock publication is unsafe.',
+    ExitCode.staleState,
+  );
 }
 
 export function abortSession(

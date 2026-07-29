@@ -1,7 +1,13 @@
 import crypto from 'node:crypto';
 
 import { canonicalJson } from './canonical-json.ts';
-import { ExitCode, workflowError } from './errors.ts';
+import {
+  compareAndSwapEvidenceRefsDocument,
+  investigationEvidenceRefsClosureDigest,
+  quarantineUnsafeEvidenceRefsDocument,
+  readInvestigationEvidenceRefsClosure,
+} from './evidence-object-store.ts';
+import { ExitCode, WorkflowError, workflowError } from './errors.ts';
 import { runGit } from './git.ts';
 import {
   assertInvestigationCheckpointEnvelope,
@@ -19,13 +25,18 @@ import {
   deriveInvestigationSessionState,
   inspectInvestigationResolutionState,
   inspectInvestigationQuarantineState,
+  inspectInterruptedHumanResolutionGrantPublications,
   investigationCurrentRefDigest,
   investigationCheckpointId,
   investigationResolutionStateDigest,
   investigationSessionExists,
   inspectStoredHumanResolutionGrants,
+  scanProviderInvocationLifecycles,
   quarantineUnsafeCurrentInvestigationRef,
+  quarantineUnsafeInvestigationStartReservation,
+  quarantineInterruptedHumanResolutionGrantPublication,
   quarantineUnsafeHumanResolutionRef,
+  readAvailableHumanResolutionGrant,
   readCurrentInvestigationRef,
   readHumanResolutionArchive,
   readHumanResolutionHead,
@@ -35,6 +46,7 @@ import {
   readReservedHumanResolutionGrant,
   readTerminalHumanResolutionGrant,
   reserveHumanResolutionGrant,
+  archiveHumanResolutionSingleton,
   revokeStoredHumanResolutionGrant,
   terminalizeHumanResolutionGrant,
   withHumanResolutionGrantExecution,
@@ -43,6 +55,10 @@ import {
   writeHumanResolutionNode,
   writeHumanResolutionReceipt,
   type GroupDispositionsPayload,
+  type HumanResolutionGrantPublicationAuditTag,
+  type HumanResolutionGrantPublicationStateBinding,
+  type HumanResolutionGrantPublicationStoreState,
+  type QuarantinedHumanResolutionGrantPublication,
   type HumanResolutionJournal,
   type HumanResolutionGrantStoreEntry,
   type HumanResolutionNode,
@@ -67,21 +83,29 @@ import {
 } from './maintainer-grant.ts';
 import type { MaintainerSignerProvider } from './maintainer-signer.ts';
 import { assertChangeId, assertInvestigationId } from './paths.ts';
-import { withInvestigationTransitionAuthority } from './planning-lock.ts';
+import {
+  assertHeldChangeTransitionAuthority,
+  type HeldChangeTransitionAuthority,
+  withHumanResolutionTransitionAuthority,
+  withInvestigationTransitionAuthority,
+} from './planning-lock.ts';
 import type { ProviderInvocationRequest } from './provider-contracts.ts';
 import {
+  assertProviderWorkersQuiescentUnderLifecycleLock,
   blindSurveyIntentDigest,
   blindSurveyManifestDigest,
   createInvestigationStartReservation,
   createProviderInvocation,
   createProviderRetryReservation,
-  expireProviderInvocationLease,
+  expireProviderInvocationLeaseUnderLifecycleLock,
   providerInvocationExists,
   readBlindSurveyManifest,
   readInvestigationStartReservation,
+  readInvestigationStartReservationSnapshot,
   readProviderInvocation,
   readProviderInvocationRequest,
   readProviderRetryReservation,
+  retireInvestigationStartReservation,
   type BlindSurveyManifest,
   type InvestigationStartReservation,
   type ProviderInvocationFailure,
@@ -146,6 +170,8 @@ export type HumanResolutionExecutionOptions = {
   verifier?: MaintainerSignerProvider;
   simulateCrashAfter?:
     | 'prepared'
+    | 'evidence-refs'
+    | 'start-reservation'
     | 'current-ref'
     | 'state-published'
     | 'receipt-written'
@@ -191,6 +217,12 @@ export type HumanResolutionGrantInspection = {
   recordedAt: string | null;
 };
 
+export type HumanResolutionGrantPublicationRecoveryInspection =
+  HumanResolutionGrantPublicationStoreState & {
+    auditTag: HumanResolutionGrantPublicationAuditTag;
+    publicationStateDigest: string;
+  };
+
 export function inspectHumanResolutionGrants(
   cwd: string,
   requestedGrantId?: string,
@@ -202,6 +234,134 @@ export function inspectHumanResolutionGrants(
   ).map(inspectHumanResolutionGrant);
 }
 
+export function inspectHumanResolutionGrantPublicationRecoveries(
+  cwd: string,
+  requestedGrantId?: string,
+): HumanResolutionGrantPublicationRecoveryInspection[] {
+  const context = loadInvestigationRuntimeContext(cwd);
+  return inspectInterruptedHumanResolutionGrantPublications(
+    context.runtime,
+    requestedGrantId,
+  ).map(({ storeState, preparedBinding }) =>
+    inspectHumanResolutionGrantPublicationRecovery(
+      context,
+      storeState,
+      preparedBinding,
+    ),
+  );
+}
+
+export function discardHumanResolutionGrantPublication(
+  cwd: string,
+  requestedGrantId: string,
+  expectedPublicationStateDigest: string,
+  reason: string,
+  now: Date = new Date(),
+): QuarantinedHumanResolutionGrantPublication {
+  const context = loadInvestigationRuntimeContext(cwd);
+  return withHumanResolutionGrantExecution(
+    context.runtime,
+    requestedGrantId,
+    () =>
+      quarantineInterruptedHumanResolutionGrantPublication(
+        context.runtime,
+        requestedGrantId,
+        expectedPublicationStateDigest,
+        reason,
+        (storeState) => {
+          const { auditTag, publicationStateDigest } =
+            inspectHumanResolutionGrantPublicationRecovery(
+              context,
+              storeState,
+              null,
+            );
+          return { auditTag, publicationStateDigest };
+        },
+        now,
+      ),
+    { allowPublicationRecovery: true },
+  );
+}
+
+function inspectHumanResolutionGrantPublicationRecovery(
+  context: ReturnType<typeof loadInvestigationRuntimeContext>,
+  storeState: HumanResolutionGrantPublicationStoreState,
+  preparedBinding: HumanResolutionGrantPublicationStateBinding | null,
+): HumanResolutionGrantPublicationRecoveryInspection {
+  if (preparedBinding !== null) {
+    const publicationStateDigest = digest(
+      canonicalJson({
+        schemaVersion: 1,
+        kind: 'human-resolution-grant-publication-state',
+        ...storeState,
+        auditTag: preparedBinding.auditTag,
+      }),
+    );
+    if (publicationStateDigest !== preparedBinding.publicationStateDigest) {
+      throw workflowError(
+        'HUMAN_RESOLUTION_GRANT_PUBLICATION_RECOVERY_STALE',
+        'Prepared publication recovery no longer matches its bound state.',
+        ExitCode.staleState,
+      );
+    }
+    return {
+      ...storeState,
+      auditTag: preparedBinding.auditTag,
+      publicationStateDigest,
+    };
+  }
+  const tagSuffix = `/resolution-${storeState.grantId}`;
+  const matchingTags = runGit(context.git.repositoryRoot, [
+    'for-each-ref',
+    '--format=%(refname)%09%(objectname)%09%(objecttype)',
+    'refs/tags',
+  ])
+    .split('\n')
+    .filter(Boolean)
+    .map((line) => line.split('\t'))
+    .filter(([ref]) => ref?.endsWith(tagSuffix));
+  if (matchingTags.length > 1) {
+    throw workflowError(
+      'HUMAN_RESOLUTION_GRANT_PUBLICATION_RECOVERY_AMBIGUOUS',
+      'Multiple local audit tags could belong to the interrupted grant publication.',
+      ExitCode.unsafeEnvironment,
+    );
+  }
+  const [tagRef = null, refObjectOid = null, objectType = null] =
+    matchingTags[0] ?? [];
+  if (
+    refObjectOid !== null &&
+    (tagRef === null ||
+      objectType !== 'tag' ||
+      !/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(refObjectOid))
+  ) {
+    throw workflowError(
+      'HUMAN_RESOLUTION_GRANT_PUBLICATION_RECOVERY_AMBIGUOUS',
+      'The local audit ref is not an exact annotated tag.',
+      ExitCode.unsafeEnvironment,
+    );
+  }
+  const auditTag = {
+    status: refObjectOid ? ('present' as const) : ('absent' as const),
+    tagRef,
+    refObjectOid,
+    objectType,
+  };
+  const publicationStateDigest = digest(
+    canonicalJson({
+      schemaVersion: 1,
+      kind: 'human-resolution-grant-publication-state',
+      ...storeState,
+      auditTag,
+    }),
+  );
+  return {
+    ...storeState,
+    auditTag,
+    publicationStateDigest,
+  };
+}
+
 export function revokeHumanResolutionGrant(
   cwd: string,
   requestedGrantId: string,
@@ -211,14 +371,41 @@ export function revokeHumanResolutionGrant(
   return withHumanResolutionGrantExecution(
     context.runtime,
     requestedGrantId,
-    () =>
-      inspectHumanResolutionGrant(
-        revokeStoredHumanResolutionGrant(
+    () => {
+      if (
+        readTerminalHumanResolutionGrant(context.runtime, requestedGrantId) !==
+        null
+      ) {
+        return inspectHumanResolutionGrant(
+          revokeStoredHumanResolutionGrant(
+            context.runtime,
+            requestedGrantId,
+            now,
+          ),
+        );
+      }
+      const current = inspectHumanResolutionGrant(
+        inspectStoredHumanResolutionGrants(
           context.runtime,
           requestedGrantId,
-          now,
-        ),
-      ),
+        )[0]!,
+      );
+      return withHumanResolutionTransitionAuthority(
+        context.lifecycleRuntime,
+        current.changeId,
+        requestedGrantId,
+        (assertOwned) => {
+          assertOwned();
+          const revoked = revokeStoredHumanResolutionGrant(
+            context.runtime,
+            requestedGrantId,
+            now,
+          );
+          assertOwned();
+          return inspectHumanResolutionGrant(revoked);
+        },
+      );
+    },
   );
 }
 
@@ -274,46 +461,70 @@ function executeHumanResolutionGrantLocked(
   requestedGrantId: string,
   options: HumanResolutionExecutionOptions,
 ): HumanResolutionExecutionResult {
-  const envelopeBytes = reserveHumanResolutionGrant(
+  const availableEnvelopeBytes = readAvailableHumanResolutionGrant(
     context.runtime,
     requestedGrantId,
   );
-  const envelope = parseHumanResolutionGrantEnvelope(envelopeBytes);
-  try {
-    const prepared = prepareHumanResolutionExecution(
-      cwd,
-      context,
-      envelope,
-      options,
-    );
-    return publishHumanResolutionExecution(
-      cwd,
-      context,
-      envelope,
-      prepared,
-      options,
-      false,
-    );
-  } catch (error) {
-    if (
-      readHumanResolutionJournal(context.runtime, requestedGrantId) === null
-    ) {
-      terminalizeHumanResolutionGrant(context.runtime, requestedGrantId, {
-        schemaVersion: 1,
-        state: 'revoked',
-        grantId: requestedGrantId,
-        reason:
-          error && typeof error === 'object' && 'code' in error
-            ? String(error.code)
-            : 'HUMAN_RESOLUTION_PREPARATION_FAILED',
-        recordedAt: exactHumanResolutionDate(
-          options.now ?? new Date(),
-        ).toISOString(),
-        envelope,
-      });
-    }
-    throw error;
-  }
+  const envelope = parseHumanResolutionGrantEnvelope(availableEnvelopeBytes);
+  return withHumanResolutionTransitionAuthority(
+    context.lifecycleRuntime,
+    envelope.payload.target.changeId,
+    requestedGrantId,
+    (assertOwned) => {
+      let reserved = false;
+      try {
+        const reservedEnvelopeBytes = reserveHumanResolutionGrant(
+          context.runtime,
+          requestedGrantId,
+        );
+        reserved = true;
+        if (reservedEnvelopeBytes !== availableEnvelopeBytes) {
+          throw workflowError(
+            'HUMAN_RESOLUTION_GRANT_UNSAFE',
+            'Human resolution grant bytes changed before reservation.',
+            ExitCode.unsafeEnvironment,
+          );
+        }
+        const prepared = prepareHumanResolutionExecution(
+          cwd,
+          context,
+          envelope,
+          options,
+        );
+        assertOwned();
+        const result = publishHumanResolutionExecution(
+          cwd,
+          context,
+          envelope,
+          prepared,
+          options,
+          false,
+        );
+        assertOwned();
+        return result;
+      } catch (error) {
+        if (
+          reserved &&
+          readHumanResolutionJournal(context.runtime, requestedGrantId) === null
+        ) {
+          terminalizeHumanResolutionGrant(context.runtime, requestedGrantId, {
+            schemaVersion: 1,
+            state: 'revoked',
+            grantId: requestedGrantId,
+            reason:
+              error && typeof error === 'object' && 'code' in error
+                ? String(error.code)
+                : 'HUMAN_RESOLUTION_PREPARATION_FAILED',
+            recordedAt: exactHumanResolutionDate(
+              options.now ?? new Date(),
+            ).toISOString(),
+            envelope,
+          });
+        }
+        throw error;
+      }
+    },
+  );
 }
 
 export function recoverHumanResolutionGrant(
@@ -349,77 +560,87 @@ function recoverHumanResolutionGrantLocked(
       ExitCode.staleState,
     );
   }
-  const terminal = readTerminalHumanResolutionGrant(
-    context.runtime,
+  return withHumanResolutionTransitionAuthority(
+    context.lifecycleRuntime,
+    journal.target.changeId,
     requestedGrantId,
-  );
-  let envelope: HumanResolutionGrantEnvelope;
-  if (terminal !== null) {
-    if (
-      terminal.state !== 'consumed' ||
-      !terminal.envelope ||
-      typeof terminal.envelope !== 'object'
-    ) {
-      throw workflowError(
-        'HUMAN_RESOLUTION_RECOVERY_AMBIGUOUS',
-        'Terminal human-resolution grant state is not recoverable.',
-        ExitCode.staleState,
+    (assertOwned) => {
+      const terminal = readTerminalHumanResolutionGrant(
+        context.runtime,
+        requestedGrantId,
       );
-    }
-    envelope = parseHumanResolutionGrantEnvelope(
-      canonicalHumanResolutionGrantEnvelope(
-        terminal.envelope as HumanResolutionGrantEnvelope,
-      ),
-    );
-  } else {
-    envelope = parseHumanResolutionGrantEnvelope(
-      readReservedHumanResolutionGrant(context.runtime, requestedGrantId),
-    );
-  }
-  if (
-    envelope.payload.grantId !== journal.grantId ||
-    digest(canonicalHumanResolutionGrantEnvelope(envelope)) !==
-      journal.grantDigest
-  ) {
-    throw workflowError(
-      'HUMAN_RESOLUTION_RECOVERY_AMBIGUOUS',
-      'Human resolution journal and grant do not match.',
-      ExitCode.staleState,
-      {
-        details: {
-          envelopeGrantId: envelope.payload.grantId,
-          journalGrantId: journal.grantId,
-          envelopeDigest: digest(
-            canonicalHumanResolutionGrantEnvelope(envelope),
+      let envelope: HumanResolutionGrantEnvelope;
+      if (terminal !== null) {
+        if (
+          terminal.state !== 'consumed' ||
+          !terminal.envelope ||
+          typeof terminal.envelope !== 'object'
+        ) {
+          throw workflowError(
+            'HUMAN_RESOLUTION_RECOVERY_AMBIGUOUS',
+            'Terminal human-resolution grant state is not recoverable.',
+            ExitCode.staleState,
+          );
+        }
+        envelope = parseHumanResolutionGrantEnvelope(
+          canonicalHumanResolutionGrantEnvelope(
+            terminal.envelope as HumanResolutionGrantEnvelope,
           ),
-          journalGrantDigest: journal.grantDigest,
-        },
-      },
-    );
-  }
-  const node = readHumanResolutionNodeForRecovery(context.runtime, journal);
-  const beforeState = readHumanResolutionArchive(
-    context.runtime,
-    journal.evidenceArchiveDigest,
-  );
-  const prepared: PreparedHumanResolutionExecution = {
-    node,
-    journal,
-    receipt: buildHumanResolutionReceipt(
-      envelope,
-      journal,
-      node,
-      journal.afterStateDigest,
-    ),
-    beforeState,
-  };
-  return publishHumanResolutionExecution(
-    cwd,
-    context,
-    envelope,
-    prepared,
-    options,
-    true,
+        );
+      } else {
+        envelope = parseHumanResolutionGrantEnvelope(
+          readReservedHumanResolutionGrant(context.runtime, requestedGrantId),
+        );
+      }
+      if (
+        envelope.payload.grantId !== journal.grantId ||
+        digest(canonicalHumanResolutionGrantEnvelope(envelope)) !==
+          journal.grantDigest
+      ) {
+        throw workflowError(
+          'HUMAN_RESOLUTION_RECOVERY_AMBIGUOUS',
+          'Human resolution journal and grant do not match.',
+          ExitCode.staleState,
+          {
+            details: {
+              envelopeGrantId: envelope.payload.grantId,
+              journalGrantId: journal.grantId,
+              envelopeDigest: digest(
+                canonicalHumanResolutionGrantEnvelope(envelope),
+              ),
+              journalGrantDigest: journal.grantDigest,
+            },
+          },
+        );
+      }
+      const node = readHumanResolutionNodeForRecovery(context.runtime, journal);
+      const beforeState = readHumanResolutionArchive(
+        context.runtime,
+        journal.evidenceArchiveDigest,
+      );
+      const prepared: PreparedHumanResolutionExecution = {
+        node,
+        journal,
+        receipt: buildHumanResolutionReceipt(
+          envelope,
+          journal,
+          node,
+          journal.afterStateDigest,
+        ),
+        beforeState,
+      };
+      assertOwned();
+      const result = publishHumanResolutionExecution(
+        cwd,
+        context,
+        envelope,
+        prepared,
+        options,
+        true,
+      );
+      assertOwned();
+      return result;
+    },
   );
 }
 
@@ -456,18 +677,35 @@ function prepareHumanResolutionExecution(
       ExitCode.guard,
     );
   }
-  const state =
-    envelope.payload.decision.kind === 'quarantine'
-      ? inspectInvestigationQuarantineState(
-          context.runtime,
-          envelope.payload.target.workflowId,
-          policy.repository.id,
-        )
-      : inspectInvestigationResolutionState(
-          context.runtime,
-          envelope.payload.target.workflowId,
-          policy.repository.id,
-        );
+  let state: InvestigationResolutionState;
+  try {
+    state =
+      envelope.payload.decision.kind === 'quarantine'
+        ? inspectInvestigationQuarantineState(
+            context.runtime,
+            envelope.payload.target.workflowId,
+            policy.repository.id,
+          )
+        : inspectInvestigationResolutionState(
+            context.runtime,
+            envelope.payload.target.workflowId,
+            policy.repository.id,
+          );
+  } catch (error) {
+    if (
+      envelope.payload.decision.kind !== 'quarantine' &&
+      error instanceof WorkflowError &&
+      error.exitCode === ExitCode.unsafeEnvironment
+    ) {
+      throw workflowError(
+        'HUMAN_RESOLUTION_GRANT_STALE',
+        'Human resolution state became unsafe after the grant was issued.',
+        ExitCode.staleState,
+        { details: { observedCode: error.code } },
+      );
+    }
+    throw error;
+  }
   validateHumanResolutionGrantPayload(envelope.payload, policy, {
     now,
     expectedTrustBase: envelope.payload.trustBaseCommit,
@@ -481,6 +719,10 @@ function prepareHumanResolutionExecution(
     options.verifier,
   );
   assertHumanResolutionAuditTag(context.git.repositoryRoot, envelope, policy);
+  assertHumanResolutionProviderQuiescence(
+    context,
+    envelope.payload.target.workflowId,
+  );
   const grantDigest = digest(canonicalHumanResolutionGrantEnvelope(envelope));
   let currentRef: ReturnType<typeof readCurrentInvestigationRef>;
   try {
@@ -502,7 +744,19 @@ function prepareHumanResolutionExecution(
     envelope,
     currentRef?.investigationId ?? null,
   );
+  const plannedStartReservation = planHumanResolutionStartReservation(
+    context,
+    envelope,
+    state,
+  );
+  const plannedEvidenceRefs = planHumanResolutionEvidenceRefs(
+    context,
+    envelope,
+    state,
+  );
   let previousResolutionNodeId: string | null;
+  let resolutionRefMode: HumanResolutionJournal['resolutionRefMode'] =
+    'preserve';
   try {
     previousResolutionNodeId = readHumanResolutionHead(
       context.runtime,
@@ -511,12 +765,12 @@ function prepareHumanResolutionExecution(
   } catch (error) {
     if (
       envelope.payload.decision.kind !== 'quarantine' ||
-      state.envelope.ambiguityDigest === null ||
-      state.envelope.resolutionHeadNodeId !== null
+      state.envelope.ambiguityDigest === null
     ) {
       throw error;
     }
-    previousResolutionNodeId = null;
+    previousResolutionNodeId = state.envelope.resolutionHeadNodeId;
+    resolutionRefMode = 'quarantine-whole';
   }
   if (previousResolutionNodeId !== state.envelope.resolutionHeadNodeId) {
     throw workflowError(
@@ -541,16 +795,16 @@ function prepareHumanResolutionExecution(
     state,
   );
   writeHumanResolutionNode(context.runtime, node);
-  const nextCurrentRefDigest =
-    plannedCurrentWorkflowRef.nextInvestigationId === null
-      ? null
-      : investigationCurrentRefDigest({
-          changeId: envelope.payload.target.changeId,
-          investigationId: plannedCurrentWorkflowRef.nextInvestigationId,
-        });
   const afterEnvelope = {
     ...state.envelope,
-    currentRefDigest: nextCurrentRefDigest,
+    currentRefDigest: plannedCurrentWorkflowRef.nextDigest,
+    startReservationDigest: plannedStartReservation.nextDigest,
+    evidenceRefs:
+      plannedEvidenceRefs.nextDigest === null
+        ? null
+        : plannedEvidenceRefs.retainedRefs,
+    evidenceRefsDigest: plannedEvidenceRefs.nextDigest,
+    evidenceRefsClosureDigest: plannedEvidenceRefs.nextClosureDigest,
     resolutionHeadNodeId: node.nodeId,
   };
   const afterStateDigest = investigationResolutionStateDigest(afterEnvelope);
@@ -562,8 +816,11 @@ function prepareHumanResolutionExecution(
     beforeStateDigest: state.currentStateDigest,
     afterStateDigest,
     beforeResolutionRef: previousResolutionNodeId,
+    resolutionRefMode,
     plannedResolutionNodeId: node.nodeId,
     plannedCurrentWorkflowRef,
+    plannedStartReservation,
+    plannedEvidenceRefs,
     evidenceArchiveDigest,
     receiptDigest: '0'.repeat(64),
     createdAt: now.toISOString(),
@@ -601,12 +858,6 @@ function publishHumanResolutionExecution(
   ) {
     throw humanResolutionRecoveryAmbiguous();
   }
-  assertRecoverableStateShape(
-    context,
-    beforeState,
-    journal,
-    envelope.payload.repositoryId,
-  );
   quarantineUnsafeResolutionRefIfNeeded(
     context,
     journal,
@@ -614,17 +865,42 @@ function publishHumanResolutionExecution(
     beforeState,
     envelope.payload.repositoryId,
   );
+  assertRecoverableStateShape(
+    context,
+    beforeState,
+    journal,
+    envelope.payload.repositoryId,
+  );
+  publishPlannedEvidenceRefs(context, journal);
+  publishHumanResolutionJournalPhase(
+    context,
+    journal,
+    'evidence-refs-published',
+  );
+  maybeSimulateHumanResolutionCrash(options, 'evidence-refs');
+  publishPlannedStartReservation(context, journal);
+  publishHumanResolutionJournalPhase(
+    context,
+    journal,
+    'start-reservation-published',
+  );
+  maybeSimulateHumanResolutionCrash(options, 'start-reservation');
   publishPlannedCurrentInvestigationRef(context, journal, node, beforeState);
+  publishHumanResolutionJournalPhase(context, journal, 'current-ref-published');
   maybeSimulateHumanResolutionCrash(options, 'current-ref');
   const observedHead = readHumanResolutionHead(
     context.runtime,
     journal.target.workflowId,
   );
-  if (observedHead === journal.beforeResolutionRef) {
+  const expectedHead =
+    journal.resolutionRefMode === 'quarantine-whole'
+      ? null
+      : journal.beforeResolutionRef;
+  if (observedHead === expectedHead) {
     compareAndSwapHumanResolutionHead(
       context.runtime,
       journal.target.workflowId,
-      journal.beforeResolutionRef,
+      expectedHead,
       journal.plannedResolutionNodeId,
     );
   } else if (observedHead !== journal.plannedResolutionNodeId) {
@@ -645,11 +921,7 @@ function publishHumanResolutionExecution(
   if (afterState.currentStateDigest !== journal.afterStateDigest) {
     throw humanResolutionRecoveryAmbiguous();
   }
-  const statePublished = updateHumanResolutionJournalPhase(
-    journal,
-    'state-published',
-  );
-  writeHumanResolutionJournal(context.runtime, statePublished);
+  publishHumanResolutionJournalPhase(context, journal, 'state-published');
   maybeSimulateHumanResolutionCrash(options, 'state-published');
   const receiptDigest = writeHumanResolutionReceipt(
     context.runtime,
@@ -659,11 +931,7 @@ function publishHumanResolutionExecution(
   if (receiptDigest !== journal.receiptDigest) {
     throw humanResolutionRecoveryAmbiguous();
   }
-  const receiptWritten = updateHumanResolutionJournalPhase(
-    journal,
-    'receipt-written',
-  );
-  writeHumanResolutionJournal(context.runtime, receiptWritten);
+  publishHumanResolutionJournalPhase(context, journal, 'receipt-written');
   maybeSimulateHumanResolutionCrash(options, 'receipt-written');
   const terminal = {
     schemaVersion: 1,
@@ -678,19 +946,21 @@ function publishHumanResolutionExecution(
     context.runtime,
     envelope.payload.grantId,
   );
-  if (existingTerminal === null) {
-    terminalizeHumanResolutionGrant(
-      context.runtime,
-      envelope.payload.grantId,
-      terminal,
-    );
-  } else if (canonicalJson(existingTerminal) !== canonicalJson(terminal)) {
+  if (
+    existingTerminal !== null &&
+    canonicalJson(existingTerminal) !== canonicalJson(terminal)
+  ) {
     throw humanResolutionRecoveryAmbiguous();
   }
+  terminalizeHumanResolutionGrant(
+    context.runtime,
+    envelope.payload.grantId,
+    terminal,
+  );
   maybeSimulateHumanResolutionCrash(options, 'grant-consumed');
   writeHumanResolutionJournal(
     context.runtime,
-    updateHumanResolutionJournalPhase(journal, 'consumed'),
+    updateHumanResolutionJournalPhase(journal, 'grant-consumed'),
   );
   return {
     grantId: envelope.payload.grantId,
@@ -713,19 +983,60 @@ function quarantineUnsafeResolutionRefIfNeeded(
 ): void {
   if (
     node.decision.kind !== 'quarantine' ||
-    beforeState.envelope.ambiguityDigest === null
+    beforeState.envelope.ambiguityDigest === null ||
+    journal.resolutionRefMode !== 'quarantine-whole'
   ) {
     return;
   }
+  quarantineUnsafeHumanResolutionRef(
+    context.runtime,
+    journal.target.workflowId,
+    repositoryId,
+    beforeState.currentStateDigest,
+  );
+}
+
+function assertHumanResolutionProviderQuiescence(
+  context: ReturnType<typeof loadInvestigationRuntimeContext>,
+  investigationId: string,
+): void {
+  readInvestigationSession(context.runtime, investigationId);
   try {
-    readHumanResolutionHead(context.runtime, journal.target.workflowId);
+    assertProviderWorkersQuiescentUnderLifecycleLock(context.runtime);
   } catch {
-    quarantineUnsafeHumanResolutionRef(
-      context.runtime,
-      journal.target.workflowId,
-      repositoryId,
-      beforeState.currentStateDigest,
+    throw workflowError(
+      'HUMAN_RESOLUTION_PROVIDER_NOT_QUIESCENT',
+      'Human resolution requires every repository provider worker to be durably quiescent.',
+      ExitCode.guard,
     );
+  }
+  let projections: ReturnType<
+    typeof scanProviderInvocationLifecycles
+  >['projections'];
+  try {
+    projections = scanProviderInvocationLifecycles(context.runtime).projections;
+  } catch {
+    throw workflowError(
+      'HUMAN_RESOLUTION_PROVIDER_NOT_QUIESCENT',
+      'Human resolution requires every repository provider invocation to have a safe, unleased lifecycle state.',
+      ExitCode.guard,
+    );
+  }
+  for (const invocation of projections) {
+    if (invocation.state === 'leased' || invocation.lease !== null) {
+      throw workflowError(
+        'HUMAN_RESOLUTION_PROVIDER_NOT_QUIESCENT',
+        'Human resolution requires every repository provider invocation to be unleased and quiescent.',
+        ExitCode.guard,
+        {
+          details: {
+            invocationId: invocation.invocationId,
+            investigationId: invocation.investigationId,
+            state: invocation.state,
+          },
+        },
+      );
+    }
   }
 }
 
@@ -773,8 +1084,304 @@ function planHumanResolutionCurrentRef(
   }
   return {
     expectedInvestigationId: observedInvestigationId,
+    expectedDigest: investigationCurrentRefDigest(
+      observedInvestigationId === null
+        ? null
+        : {
+            changeId: envelope.payload.target.changeId,
+            investigationId: observedInvestigationId,
+          },
+    ),
     nextInvestigationId,
+    nextDigest: investigationCurrentRefDigest(
+      nextInvestigationId === null
+        ? null
+        : {
+            changeId: envelope.payload.target.changeId,
+            investigationId: nextInvestigationId,
+          },
+    ),
   };
+}
+
+function releasesGenerationNamespace(
+  decision: HumanResolutionNode['decision'],
+): boolean {
+  return (
+    decision.kind === 'abort' ||
+    decision.kind === 'quarantine' ||
+    (decision.kind === 'supersede' &&
+      decision.parameters.successorInvestigationId === null)
+  );
+}
+
+function planHumanResolutionStartReservation(
+  context: ReturnType<typeof loadInvestigationRuntimeContext>,
+  envelope: HumanResolutionGrantEnvelope,
+  state: InvestigationResolutionState,
+): HumanResolutionJournal['plannedStartReservation'] {
+  const decision = envelope.payload.decision;
+  if (
+    (decision.kind === 'repair' ||
+      (decision.kind === 'supersede' &&
+        decision.parameters.successorInvestigationId !== null)) &&
+    decision.parameters.successorInvestigationId !== null
+  ) {
+    throw workflowError(
+      'HUMAN_RESOLUTION_SUCCESSOR_BINDING_MISSING',
+      'A successor resolution requires a complete versioned start and evidence binding.',
+      ExitCode.guard,
+    );
+  }
+  let snapshot: ReturnType<typeof readInvestigationStartReservationSnapshot>;
+  try {
+    snapshot = readInvestigationStartReservationSnapshot(
+      context.runtime,
+      envelope.payload.target.changeId,
+    );
+  } catch (error) {
+    if (
+      decision.kind !== 'quarantine' ||
+      state.envelope.ambiguityDigest === null ||
+      state.envelope.startReservationDigest === null
+    ) {
+      throw error;
+    }
+    return {
+      mode: 'quarantine-whole',
+      expectedDigest: state.envelope.startReservationDigest,
+      nextDigest: null,
+      archiveDigest: state.envelope.startReservationDigest,
+    };
+  }
+  if (snapshot.digest !== state.envelope.startReservationDigest) {
+    throw workflowError(
+      'HUMAN_RESOLUTION_GRANT_STALE',
+      'Investigation start reservation changed after grant issuance.',
+      ExitCode.staleState,
+    );
+  }
+  if (!releasesGenerationNamespace(decision) || snapshot.digest === null) {
+    return {
+      mode: 'preserve',
+      expectedDigest: snapshot.digest,
+      nextDigest: snapshot.digest,
+      archiveDigest: null,
+    };
+  }
+  if (
+    snapshot.reservation?.changeId !== envelope.payload.target.changeId ||
+    snapshot.reservation.investigationId !==
+      envelope.payload.target.workflowId ||
+    snapshot.rawDocument === null
+  ) {
+    throw humanResolutionRecoveryAmbiguous();
+  }
+  archiveHumanResolutionSingleton(
+    context.runtime,
+    'start-reservation',
+    snapshot.digest,
+    snapshot.rawDocument,
+    true,
+  );
+  return {
+    mode: 'retire',
+    expectedDigest: snapshot.digest,
+    nextDigest: null,
+    archiveDigest: snapshot.digest,
+  };
+}
+
+function planHumanResolutionEvidenceRefs(
+  context: ReturnType<typeof loadInvestigationRuntimeContext>,
+  envelope: HumanResolutionGrantEnvelope,
+  state: InvestigationResolutionState,
+): HumanResolutionJournal['plannedEvidenceRefs'] {
+  let closure: ReturnType<typeof readInvestigationEvidenceRefsClosure>;
+  try {
+    closure = readInvestigationEvidenceRefsClosure(
+      context.runtime,
+      envelope.payload.target.changeId,
+    );
+  } catch (error) {
+    if (
+      envelope.payload.decision.kind !== 'quarantine' ||
+      state.envelope.ambiguityDigest === null ||
+      state.envelope.evidenceRefsDigest === null
+    ) {
+      throw error;
+    }
+    return {
+      mode: 'quarantine-whole',
+      expectedDigest: state.envelope.evidenceRefsDigest,
+      nextDigest: null,
+      expectedClosureDigest: state.envelope.evidenceRefsClosureDigest,
+      nextClosureDigest: null,
+      retiredRefs: {},
+      retainedRefs: {},
+      archiveDigest: state.envelope.evidenceRefsDigest,
+    };
+  }
+  const snapshot = closure.snapshot;
+  if (
+    snapshot.digest !== state.envelope.evidenceRefsDigest ||
+    canonicalJson(snapshot.refs) !==
+      canonicalJson(state.envelope.evidenceRefs) ||
+    closure.closureDigest !== state.envelope.evidenceRefsClosureDigest
+  ) {
+    throw workflowError(
+      'HUMAN_RESOLUTION_GRANT_STALE',
+      'Investigation evidence refs changed after grant issuance.',
+      ExitCode.staleState,
+    );
+  }
+  const currentRefs = { ...(snapshot.refs ?? {}) };
+  if (!releasesGenerationNamespace(envelope.payload.decision)) {
+    return {
+      mode: 'preserve',
+      expectedDigest: snapshot.digest,
+      nextDigest: snapshot.digest,
+      expectedClosureDigest: closure.closureDigest,
+      nextClosureDigest: closure.closureDigest,
+      retiredRefs: {},
+      retainedRefs: currentRefs,
+      archiveDigest: null,
+    };
+  }
+  const retiredRefs: Record<string, string> = {};
+  const retainedRefs: Record<string, string> = {};
+  for (const [refName, nodeId] of Object.entries(currentRefs)) {
+    const owner = closure.owners[refName];
+    if (owner === undefined) {
+      throw humanResolutionRecoveryAmbiguous();
+    }
+    if (owner === envelope.payload.target.workflowId) {
+      retiredRefs[refName] = nodeId;
+    } else {
+      retainedRefs[refName] = nodeId;
+    }
+  }
+  if (Object.keys(retiredRefs).length === 0) {
+    return {
+      mode: 'preserve',
+      expectedDigest: snapshot.digest,
+      nextDigest: snapshot.digest,
+      expectedClosureDigest: closure.closureDigest,
+      nextClosureDigest: closure.closureDigest,
+      retiredRefs: {},
+      retainedRefs,
+      archiveDigest: null,
+    };
+  }
+  if (snapshot.digest === null || snapshot.rawDocument === null) {
+    throw humanResolutionRecoveryAmbiguous();
+  }
+  archiveHumanResolutionSingleton(
+    context.runtime,
+    'evidence-refs',
+    snapshot.digest,
+    snapshot.rawDocument,
+    false,
+  );
+  const nextDigest =
+    Object.keys(retainedRefs).length === 0
+      ? null
+      : digest(
+          canonicalJson({
+            schemaVersion: 1,
+            changeId: envelope.payload.target.changeId,
+            refs: retainedRefs,
+          }),
+        );
+  const nextClosureDigest =
+    Object.keys(retainedRefs).length === 0
+      ? null
+      : investigationEvidenceRefsClosureDigest(
+          envelope.payload.target.changeId,
+          closure.entries.filter((entry) =>
+            Object.hasOwn(retainedRefs, entry.refName),
+          ),
+        );
+  return {
+    mode: 'partition',
+    expectedDigest: snapshot.digest,
+    nextDigest,
+    expectedClosureDigest: closure.closureDigest,
+    nextClosureDigest,
+    retiredRefs,
+    retainedRefs,
+    archiveDigest: snapshot.digest,
+  };
+}
+
+function publishPlannedEvidenceRefs(
+  context: ReturnType<typeof loadInvestigationRuntimeContext>,
+  journal: HumanResolutionJournal,
+): void {
+  const planned = journal.plannedEvidenceRefs;
+  if (planned.mode === 'quarantine-whole') {
+    quarantineUnsafeEvidenceRefsDocument(
+      context.runtime,
+      journal.target.changeId,
+      planned.expectedDigest as string,
+    );
+    return;
+  }
+  const nextRefs = planned.nextDigest === null ? null : planned.retainedRefs;
+  const published = compareAndSwapEvidenceRefsDocument(context.runtime, {
+    changeId: journal.target.changeId,
+    expectedDigest: planned.expectedDigest,
+    nextRefs,
+  });
+  if (published.digest !== planned.nextDigest) {
+    throw humanResolutionRecoveryAmbiguous();
+  }
+  const closure = readInvestigationEvidenceRefsClosure(
+    context.runtime,
+    journal.target.changeId,
+  );
+  if (
+    closure.snapshot.digest !== planned.nextDigest ||
+    closure.closureDigest !== planned.nextClosureDigest ||
+    canonicalJson(closure.snapshot.refs) !== canonicalJson(nextRefs)
+  ) {
+    throw humanResolutionRecoveryAmbiguous();
+  }
+}
+
+function publishPlannedStartReservation(
+  context: ReturnType<typeof loadInvestigationRuntimeContext>,
+  journal: HumanResolutionJournal,
+): void {
+  const planned = journal.plannedStartReservation;
+  if (planned.mode === 'quarantine-whole') {
+    quarantineUnsafeInvestigationStartReservation(
+      context.runtime,
+      journal.target.changeId,
+      planned.expectedDigest as string,
+    );
+    return;
+  }
+  if (planned.mode === 'retire') {
+    const published = retireInvestigationStartReservation(context.runtime, {
+      changeId: journal.target.changeId,
+      expectedDigest: planned.expectedDigest,
+    });
+    if (published.digest !== planned.nextDigest) {
+      throw humanResolutionRecoveryAmbiguous();
+    }
+    return;
+  }
+  const observed = readInvestigationStartReservationSnapshot(
+    context.runtime,
+    journal.target.changeId,
+  );
+  if (
+    observed.digest !== planned.expectedDigest ||
+    observed.digest !== planned.nextDigest
+  ) {
+    throw humanResolutionRecoveryAmbiguous();
+  }
 }
 
 function publishPlannedCurrentInvestigationRef(
@@ -843,25 +1450,13 @@ function assertRecoverableStateShape(
           journal.target.workflowId,
           repositoryId,
         );
-  const nextRef =
-    journal.plannedCurrentWorkflowRef.nextInvestigationId === null
-      ? null
-      : investigationCurrentRefDigest({
-          changeId: journal.target.changeId,
-          investigationId:
-            journal.plannedCurrentWorkflowRef.nextInvestigationId,
-        });
-  const expectedRef =
-    journal.plannedCurrentWorkflowRef.expectedInvestigationId === null
-      ? null
-      : investigationCurrentRefDigest({
-          changeId: journal.target.changeId,
-          investigationId:
-            journal.plannedCurrentWorkflowRef.expectedInvestigationId,
-        });
   const stableObserved = {
     ...observed.envelope,
     currentRefDigest: before.envelope.currentRefDigest,
+    startReservationDigest: before.envelope.startReservationDigest,
+    evidenceRefs: before.envelope.evidenceRefs,
+    evidenceRefsDigest: before.envelope.evidenceRefsDigest,
+    evidenceRefsClosureDigest: before.envelope.evidenceRefsClosureDigest,
     resolutionHeadNodeId: before.envelope.resolutionHeadNodeId,
     ambiguityDigest:
       node.decision.kind === 'quarantine'
@@ -870,14 +1465,56 @@ function assertRecoverableStateShape(
   };
   const allowedObservedRefDigests =
     node.decision.kind === 'quarantine'
-      ? [before.envelope.currentRefDigest, nextRef]
-      : [expectedRef, nextRef];
+      ? [
+          before.envelope.currentRefDigest,
+          journal.plannedCurrentWorkflowRef.nextDigest,
+        ]
+      : [
+          journal.plannedCurrentWorkflowRef.expectedDigest,
+          journal.plannedCurrentWorkflowRef.nextDigest,
+        ];
+  const allowedStartReservationDigests = [
+    journal.plannedStartReservation.expectedDigest,
+    journal.plannedStartReservation.nextDigest,
+  ];
+  const allowedEvidenceRefsDigests = [
+    journal.plannedEvidenceRefs.expectedDigest,
+    journal.plannedEvidenceRefs.nextDigest,
+  ];
+  const allowedEvidenceRefsClosureDigests = [
+    journal.plannedEvidenceRefs.expectedClosureDigest,
+    journal.plannedEvidenceRefs.nextClosureDigest,
+  ];
+  const expectedEvidenceRefs =
+    observed.envelope.evidenceRefsDigest ===
+    journal.plannedEvidenceRefs.expectedDigest
+      ? before.envelope.evidenceRefs
+      : observed.envelope.evidenceRefsDigest ===
+          journal.plannedEvidenceRefs.nextDigest
+        ? journal.plannedEvidenceRefs.nextDigest === null
+          ? null
+          : journal.plannedEvidenceRefs.retainedRefs
+        : undefined;
   if (
     canonicalJson(stableObserved) !== canonicalJson(before.envelope) ||
     !allowedObservedRefDigests.includes(observed.currentRefDigest) ||
-    ![journal.beforeResolutionRef, journal.plannedResolutionNodeId].includes(
-      observed.envelope.resolutionHeadNodeId,
-    )
+    !allowedStartReservationDigests.includes(
+      observed.envelope.startReservationDigest,
+    ) ||
+    !allowedEvidenceRefsDigests.includes(
+      observed.envelope.evidenceRefsDigest,
+    ) ||
+    !allowedEvidenceRefsClosureDigests.includes(
+      observed.envelope.evidenceRefsClosureDigest,
+    ) ||
+    expectedEvidenceRefs === undefined ||
+    canonicalJson(observed.envelope.evidenceRefs) !==
+      canonicalJson(expectedEvidenceRefs) ||
+    ![
+      journal.beforeResolutionRef,
+      ...(journal.resolutionRefMode === 'quarantine-whole' ? [null] : []),
+      journal.plannedResolutionNodeId,
+    ].includes(observed.envelope.resolutionHeadNodeId)
   ) {
     throw humanResolutionRecoveryAmbiguous();
   }
@@ -898,10 +1535,13 @@ function buildHumanResolutionReceipt(
     beforeStateDigest: journal.beforeStateDigest,
     afterStateDigest,
     resolutionNodeId: node.nodeId,
+    resolutionRefMode: journal.resolutionRefMode,
     evidenceArchiveDigest: journal.evidenceArchiveDigest,
     decision: node.decision,
     consequences: node.consequences,
     plannedCurrentWorkflowRef: journal.plannedCurrentWorkflowRef,
+    plannedStartReservation: journal.plannedStartReservation,
+    plannedEvidenceRefs: journal.plannedEvidenceRefs,
     recordedAt: journal.createdAt,
   };
 }
@@ -918,13 +1558,43 @@ function updateHumanResolutionJournalPhase(
     beforeStateDigest: journal.beforeStateDigest,
     afterStateDigest: journal.afterStateDigest,
     beforeResolutionRef: journal.beforeResolutionRef,
+    resolutionRefMode: journal.resolutionRefMode,
     plannedResolutionNodeId: journal.plannedResolutionNodeId,
     plannedCurrentWorkflowRef: journal.plannedCurrentWorkflowRef,
+    plannedStartReservation: journal.plannedStartReservation,
+    plannedEvidenceRefs: journal.plannedEvidenceRefs,
     evidenceArchiveDigest: journal.evidenceArchiveDigest,
     receiptDigest: journal.receiptDigest,
     createdAt: journal.createdAt,
   });
 }
+
+function publishHumanResolutionJournalPhase(
+  context: ReturnType<typeof loadInvestigationRuntimeContext>,
+  journal: HumanResolutionJournal,
+  phase: HumanResolutionJournal['phase'],
+): void {
+  if (
+    HUMAN_RESOLUTION_JOURNAL_PHASES.indexOf(journal.phase) >=
+    HUMAN_RESOLUTION_JOURNAL_PHASES.indexOf(phase)
+  ) {
+    return;
+  }
+  writeHumanResolutionJournal(
+    context.runtime,
+    updateHumanResolutionJournalPhase(journal, phase),
+  );
+}
+
+const HUMAN_RESOLUTION_JOURNAL_PHASES = [
+  'prepared',
+  'evidence-refs-published',
+  'start-reservation-published',
+  'current-ref-published',
+  'state-published',
+  'receipt-written',
+  'grant-consumed',
+] as const satisfies readonly HumanResolutionJournal['phase'][];
 
 function readHumanResolutionNodeForRecovery(
   paths: ReturnType<typeof loadInvestigationRuntimeContext>['runtime'],
@@ -989,209 +1659,218 @@ export function startInvestigationSession(
   return withInvestigationTransitionAuthority(
     context.lifecycleRuntime,
     changeId,
-    (assertOwned) => {
-      const lockedContext = loadInvestigationRuntimeContext(cwd);
-      assertStableStartContext(context, lockedContext);
-      assertStartBinding(
-        lockedContext,
-        changeId,
+    (assertOwned) =>
+      startInvestigationSessionUnderLifecycleLock(
+        cwd,
         input,
-        manifestDigest,
-        intentDigest,
-      );
-      const currentRef = readCurrentInvestigationRef(
-        lockedContext.runtime,
-        changeId,
-      );
-      if (currentRef !== null) {
-        const current = readInvestigationSession(
-          lockedContext.runtime,
-          currentRef.investigationId,
-        );
-        if (current.blindManifestDigest === manifestDigest) {
-          assertCurrentInvestigationContext(lockedContext, current);
-          const reservation = readInvestigationStartReservation(
-            lockedContext.runtime,
-            changeId,
-          );
-          if (reservation === null) {
-            throw workflowError(
-              'INVESTIGATION_START_RESERVATION_MISSING',
-              'Current investigation has no durable start reservation.',
-              ExitCode.staleState,
-            );
-          }
-          assertStartReservationSessionBinding(
-            lockedContext,
-            reservation,
-            current,
-          );
-          return statusFromSession(lockedContext, current);
-        }
-        throw workflowError(
-          'CURRENT_INVESTIGATION_CONFLICT',
-          `Change ${changeId} already has a different current investigation.`,
-          ExitCode.conflict,
-        );
-      }
-
-      const existingReservation = readInvestigationStartReservation(
-        lockedContext.runtime,
-        changeId,
-      );
-      if (
-        existingReservation !== null &&
-        existingReservation.manifestDigest !== manifestDigest
-      ) {
-        throw workflowError(
-          'INVESTIGATION_START_RESERVATION_CONFLICT',
-          'Change already has a durable start reservation for different intent.',
-          ExitCode.conflict,
-        );
-      }
-      const reservation =
-        existingReservation ??
-        createInvestigationStartReservation(lockedContext.runtime, {
-          changeId,
-          investigationId: createInvestigationId(),
-          repositoryRoot: lockedContext.git.repositoryRealPath,
-          gitCommonDirectory: lockedContext.git.gitCommonDirectory,
-          branch: lockedContext.git.branch,
-          baseline: {
-            head: lockedContext.git.head,
-            tree: lockedContext.git.tree,
-          },
-          manifest: input.blindManifest,
-          request: input.blindRequest,
-        });
-      assertStartReservationContext(lockedContext, reservation);
-      const reservedInput: StartInvestigationSessionInput = {
-        changeId,
-        blindManifest: reservation.manifest,
-        blindRequest: reservation.request,
-      };
-      const reservedIntentDigest = blindSurveyIntentDigest(
-        reservation.manifest,
-      );
-      assertStartBinding(
-        lockedContext,
-        changeId,
-        reservedInput,
-        reservation.manifestDigest,
-        reservedIntentDigest,
-      );
-      const existingPrepared = providerInvocationExists(
-        lockedContext.runtime,
-        reservation.invocationId,
-      )
-        ? readProviderInvocation(
-            lockedContext.runtime,
-            reservation.invocationId,
-          )
-        : null;
-      if (
-        existingPrepared !== null &&
-        (existingPrepared.changeId !== changeId ||
-          existingPrepared.investigationId !== reservation.investigationId ||
-          existingPrepared.attempt !== 1 ||
-          existingPrepared.requestDigest !== reservation.requestDigest ||
-          existingPrepared.manifestDigest !== reservation.manifestDigest)
-      ) {
-        throw workflowError(
-          'PROVIDER_INVOCATION_COLLISION',
-          'The requested blind invocation ID belongs to different durable work.',
-          ExitCode.conflict,
-        );
-      }
-      const investigationId = reservation.investigationId;
-      if (existingPrepared === null) {
-        createProviderInvocation(lockedContext.runtime, {
-          investigationId,
-          changeId,
-          attempt: 1,
-          manifest: reservation.manifest,
-          request: reservation.request,
-        });
-      }
-      assertOwned();
-      const now = new Date().toISOString();
-      const session: InvestigationSession = {
-        schemaVersion: 1,
-        investigationId,
-        revision: 0,
-        state: 'awaiting-main-terms',
-        changeId,
-        repositoryRoot: lockedContext.git.repositoryRealPath,
-        gitCommonDirectory: lockedContext.git.gitCommonDirectory,
-        branch: lockedContext.git.branch,
-        baseline: {
-          head: lockedContext.git.head,
-          tree: lockedContext.git.tree,
-        },
-        intentDigest: reservedIntentDigest,
-        blindManifestDigest: reservation.manifestDigest,
-        blindRequestDigest: reservation.requestDigest,
-        blindInvocationIds: [reservation.invocationId],
-        currentBlindInvocationId: reservation.invocationId,
-        milestones: {
-          mainTerms: null,
-          blindResult: null,
-          reviewerTermSourceNodeId: null,
-          groupDispositions: null,
-          whyAnswers: null,
-        },
-        blocker: null,
-        createdAt: now,
-        updatedAt: now,
-      };
-      const persistedSession = investigationSessionExists(
-        lockedContext.runtime,
-        investigationId,
-      )
-        ? readInvestigationSession(lockedContext.runtime, investigationId)
-        : createInvestigationSessionRecord(lockedContext.runtime, session);
-      if (
-        persistedSession.changeId !== changeId ||
-        persistedSession.investigationId !== reservation.investigationId ||
-        persistedSession.repositoryRoot !== reservation.repositoryRoot ||
-        persistedSession.gitCommonDirectory !==
-          reservation.gitCommonDirectory ||
-        persistedSession.branch !== reservation.branch ||
-        canonicalJson(persistedSession.baseline) !==
-          canonicalJson(reservation.baseline) ||
-        persistedSession.intentDigest !== reservedIntentDigest ||
-        persistedSession.blindManifestDigest !== reservation.manifestDigest ||
-        persistedSession.blindRequestDigest !== reservation.requestDigest ||
-        persistedSession.currentBlindInvocationId !==
-          reservation.invocationId ||
-        canonicalJson(persistedSession.blindInvocationIds) !==
-          canonicalJson([reservation.invocationId])
-      ) {
-        throw workflowError(
-          'INVESTIGATION_SESSION_COLLISION',
-          'Recovered investigation state belongs to different blind work.',
-          ExitCode.conflict,
-        );
-      }
-      assertOwned();
-      const finalContext = loadInvestigationRuntimeContext(cwd);
-      assertStableStartContext(lockedContext, finalContext);
-      assertStartBinding(
-        finalContext,
-        changeId,
-        reservedInput,
-        reservation.manifestDigest,
-        reservedIntentDigest,
-      );
-      createCurrentInvestigationRef(
-        finalContext.runtime,
-        changeId,
-        investigationId,
-      );
-      assertOwned();
-      return statusFromSession(finalContext, persistedSession);
-    },
+        context,
+        assertOwned,
+      ),
   );
+}
+
+export function startInvestigationSessionUnderLifecycleLock(
+  cwd: string,
+  input: StartInvestigationSessionInput,
+  context: ReturnType<typeof loadInvestigationRuntimeContext>,
+  authority: HeldChangeTransitionAuthority,
+): InvestigationStatus {
+  assertExactStartInput(input);
+  const changeId = assertChangeId(input.changeId);
+  const assertOwned = assertHeldChangeTransitionAuthority(authority, changeId);
+  const manifestDigest = blindSurveyManifestDigest(input.blindManifest);
+  const intentDigest = blindSurveyIntentDigest(input.blindManifest);
+  assertStartBinding(context, changeId, input, manifestDigest, intentDigest);
+  assertOwned();
+  const lockedContext = loadInvestigationRuntimeContext(cwd);
+  assertStableStartContext(context, lockedContext);
+  assertStartBinding(
+    lockedContext,
+    changeId,
+    input,
+    manifestDigest,
+    intentDigest,
+  );
+  const currentRef = readCurrentInvestigationRef(
+    lockedContext.runtime,
+    changeId,
+  );
+  if (currentRef !== null) {
+    const current = readInvestigationSession(
+      lockedContext.runtime,
+      currentRef.investigationId,
+    );
+    if (current.blindManifestDigest === manifestDigest) {
+      assertCurrentInvestigationContext(lockedContext, current);
+      const reservation = readInvestigationStartReservation(
+        lockedContext.runtime,
+        changeId,
+      );
+      if (reservation === null) {
+        throw workflowError(
+          'INVESTIGATION_START_RESERVATION_MISSING',
+          'Current investigation has no durable start reservation.',
+          ExitCode.staleState,
+        );
+      }
+      assertStartReservationSessionBinding(lockedContext, reservation, current);
+      return statusFromSession(lockedContext, current);
+    }
+    throw workflowError(
+      'CURRENT_INVESTIGATION_CONFLICT',
+      `Change ${changeId} already has a different current investigation.`,
+      ExitCode.conflict,
+    );
+  }
+
+  const existingReservation = readInvestigationStartReservation(
+    lockedContext.runtime,
+    changeId,
+  );
+  if (
+    existingReservation !== null &&
+    existingReservation.manifestDigest !== manifestDigest
+  ) {
+    throw workflowError(
+      'INVESTIGATION_START_RESERVATION_CONFLICT',
+      'Change already has a durable start reservation for different intent.',
+      ExitCode.conflict,
+    );
+  }
+  const reservation =
+    existingReservation ??
+    createInvestigationStartReservation(lockedContext.runtime, {
+      changeId,
+      investigationId: createInvestigationId(),
+      repositoryRoot: lockedContext.git.repositoryRealPath,
+      gitCommonDirectory: lockedContext.git.gitCommonDirectory,
+      branch: lockedContext.git.branch,
+      baseline: {
+        head: lockedContext.git.head,
+        tree: lockedContext.git.tree,
+      },
+      manifest: input.blindManifest,
+      request: input.blindRequest,
+    });
+  assertStartReservationContext(lockedContext, reservation);
+  const reservedInput: StartInvestigationSessionInput = {
+    changeId,
+    blindManifest: reservation.manifest,
+    blindRequest: reservation.request,
+  };
+  const reservedIntentDigest = blindSurveyIntentDigest(reservation.manifest);
+  assertStartBinding(
+    lockedContext,
+    changeId,
+    reservedInput,
+    reservation.manifestDigest,
+    reservedIntentDigest,
+  );
+  const existingPrepared = providerInvocationExists(
+    lockedContext.runtime,
+    reservation.invocationId,
+  )
+    ? readProviderInvocation(lockedContext.runtime, reservation.invocationId)
+    : null;
+  if (
+    existingPrepared !== null &&
+    (existingPrepared.changeId !== changeId ||
+      existingPrepared.investigationId !== reservation.investigationId ||
+      existingPrepared.attempt !== 1 ||
+      existingPrepared.requestDigest !== reservation.requestDigest ||
+      existingPrepared.manifestDigest !== reservation.manifestDigest)
+  ) {
+    throw workflowError(
+      'PROVIDER_INVOCATION_COLLISION',
+      'The requested blind invocation ID belongs to different durable work.',
+      ExitCode.conflict,
+    );
+  }
+  const investigationId = reservation.investigationId;
+  if (existingPrepared === null) {
+    createProviderInvocation(lockedContext.runtime, {
+      investigationId,
+      changeId,
+      attempt: 1,
+      manifest: reservation.manifest,
+      request: reservation.request,
+    });
+  }
+  assertOwned();
+  const now = new Date().toISOString();
+  const session: InvestigationSession = {
+    schemaVersion: 1,
+    investigationId,
+    revision: 0,
+    state: 'awaiting-main-terms',
+    changeId,
+    repositoryRoot: lockedContext.git.repositoryRealPath,
+    gitCommonDirectory: lockedContext.git.gitCommonDirectory,
+    branch: lockedContext.git.branch,
+    baseline: {
+      head: lockedContext.git.head,
+      tree: lockedContext.git.tree,
+    },
+    intentDigest: reservedIntentDigest,
+    blindManifestDigest: reservation.manifestDigest,
+    blindRequestDigest: reservation.requestDigest,
+    blindInvocationIds: [reservation.invocationId],
+    currentBlindInvocationId: reservation.invocationId,
+    milestones: {
+      mainTerms: null,
+      blindResult: null,
+      reviewerTermSourceNodeId: null,
+      groupDispositions: null,
+      whyAnswers: null,
+    },
+    blocker: null,
+    createdAt: now,
+    updatedAt: now,
+  };
+  const persistedSession = investigationSessionExists(
+    lockedContext.runtime,
+    investigationId,
+  )
+    ? readInvestigationSession(lockedContext.runtime, investigationId)
+    : createInvestigationSessionRecord(lockedContext.runtime, session);
+  if (
+    persistedSession.changeId !== changeId ||
+    persistedSession.investigationId !== reservation.investigationId ||
+    persistedSession.repositoryRoot !== reservation.repositoryRoot ||
+    persistedSession.gitCommonDirectory !== reservation.gitCommonDirectory ||
+    persistedSession.branch !== reservation.branch ||
+    canonicalJson(persistedSession.baseline) !==
+      canonicalJson(reservation.baseline) ||
+    persistedSession.intentDigest !== reservedIntentDigest ||
+    persistedSession.blindManifestDigest !== reservation.manifestDigest ||
+    persistedSession.blindRequestDigest !== reservation.requestDigest ||
+    persistedSession.currentBlindInvocationId !== reservation.invocationId ||
+    canonicalJson(persistedSession.blindInvocationIds) !==
+      canonicalJson([reservation.invocationId])
+  ) {
+    throw workflowError(
+      'INVESTIGATION_SESSION_COLLISION',
+      'Recovered investigation state belongs to different blind work.',
+      ExitCode.conflict,
+    );
+  }
+  assertOwned();
+  const finalContext = loadInvestigationRuntimeContext(cwd);
+  assertStableStartContext(lockedContext, finalContext);
+  assertStartBinding(
+    finalContext,
+    changeId,
+    reservedInput,
+    reservation.manifestDigest,
+    reservedIntentDigest,
+  );
+  createCurrentInvestigationRef(
+    finalContext.runtime,
+    changeId,
+    investigationId,
+  );
+  assertOwned();
+  return statusFromSession(finalContext, persistedSession);
 }
 
 export function getInvestigationStatus(
@@ -1361,16 +2040,51 @@ export function publishProviderResultToInvestigation(
   );
 }
 
+type ReopenInvestigationForReviewerTermsInput = {
+  expectedRevision: number;
+  sourceNodeId: string;
+  usedReopens: number;
+  pendingReviewDigest: string;
+  authorizationResolutionNodeId: string | null;
+};
+
+type HeldInvestigationAuthority = {
+  changeId: string;
+  assertOwned: () => void;
+};
+
 export function reopenInvestigationForReviewerTerms(
   cwd: string,
   requestedInvestigationId: string,
-  input: {
-    expectedRevision: number;
-    sourceNodeId: string;
-    usedReopens: number;
-    pendingReviewDigest: string;
-    authorizationResolutionNodeId: string | null;
-  },
+  input: ReopenInvestigationForReviewerTermsInput,
+): InvestigationStatus {
+  return reopenInvestigationForReviewerTermsInternal(
+    cwd,
+    requestedInvestigationId,
+    input,
+  );
+}
+
+export function reopenInvestigationForReviewerTermsUnderAuthority(
+  cwd: string,
+  changeId: string,
+  requestedInvestigationId: string,
+  input: ReopenInvestigationForReviewerTermsInput,
+  assertOwned: () => void,
+): InvestigationStatus {
+  return reopenInvestigationForReviewerTermsInternal(
+    cwd,
+    requestedInvestigationId,
+    input,
+    { changeId: assertChangeId(changeId), assertOwned },
+  );
+}
+
+function reopenInvestigationForReviewerTermsInternal(
+  cwd: string,
+  requestedInvestigationId: string,
+  input: ReopenInvestigationForReviewerTermsInput,
+  authority?: HeldInvestigationAuthority,
 ): InvestigationStatus {
   return withInvestigationMutation(
     cwd,
@@ -1446,6 +2160,7 @@ export function reopenInvestigationForReviewerTerms(
       );
       return statusFromSession(context, next);
     },
+    authority,
   );
 }
 
@@ -1491,11 +2206,16 @@ function humanResolutionNodeBindsCurrentState(
     context.git.repositoryRoot,
     context.git.head,
   ).policy.repository.id;
-  const observed = inspectInvestigationResolutionState(
-    context.runtime,
-    node.target.workflowId,
-    repositoryId,
-  );
+  let observed: InvestigationResolutionState;
+  try {
+    observed = inspectInvestigationResolutionState(
+      context.runtime,
+      node.target.workflowId,
+      repositoryId,
+    );
+  } catch {
+    return false;
+  }
   if (observed.envelope.resolutionHeadNodeId !== node.nodeId) {
     return false;
   }
@@ -1622,15 +2342,45 @@ export function inspectReviewerTermResolutionAuthorization(
   };
 }
 
+type BlockInvestigationForReviewerTermsInput = {
+  expectedRevision: number;
+  pendingReviewDigest: string;
+  usedReopens: number;
+  proposedTermCount: number;
+};
+
 export function blockInvestigationForReviewerTerms(
   cwd: string,
   requestedInvestigationId: string,
-  input: {
-    expectedRevision: number;
-    pendingReviewDigest: string;
-    usedReopens: number;
-    proposedTermCount: number;
-  },
+  input: BlockInvestigationForReviewerTermsInput,
+): InvestigationStatus {
+  return blockInvestigationForReviewerTermsInternal(
+    cwd,
+    requestedInvestigationId,
+    input,
+  );
+}
+
+export function blockInvestigationForReviewerTermsUnderAuthority(
+  cwd: string,
+  changeId: string,
+  requestedInvestigationId: string,
+  input: BlockInvestigationForReviewerTermsInput,
+  assertOwned: () => void,
+): InvestigationStatus {
+  return blockInvestigationForReviewerTermsInternal(
+    cwd,
+    requestedInvestigationId,
+    input,
+    { changeId: assertChangeId(changeId), assertOwned },
+  );
+}
+
+function blockInvestigationForReviewerTermsInternal(
+  cwd: string,
+  requestedInvestigationId: string,
+  input: BlockInvestigationForReviewerTermsInput,
+  authority?: HeldInvestigationAuthority,
 ): InvestigationStatus {
   return withInvestigationMutation(
     cwd,
@@ -1687,17 +2437,48 @@ export function blockInvestigationForReviewerTerms(
       );
       return statusFromSession(context, next);
     },
+    authority,
   );
 }
+
+type AcknowledgeReviewerTermInputClosureInput = {
+  expectedRevision: number;
+  pendingReviewDigest: string;
+  authorizationResolutionNodeId: string;
+};
 
 export function acknowledgeReviewerTermInputClosure(
   cwd: string,
   requestedInvestigationId: string,
-  input: {
-    expectedRevision: number;
-    pendingReviewDigest: string;
-    authorizationResolutionNodeId: string;
-  },
+  input: AcknowledgeReviewerTermInputClosureInput,
+): InvestigationStatus {
+  return acknowledgeReviewerTermInputClosureInternal(
+    cwd,
+    requestedInvestigationId,
+    input,
+  );
+}
+
+export function acknowledgeReviewerTermInputClosureUnderAuthority(
+  cwd: string,
+  changeId: string,
+  requestedInvestigationId: string,
+  input: AcknowledgeReviewerTermInputClosureInput,
+  assertOwned: () => void,
+): InvestigationStatus {
+  return acknowledgeReviewerTermInputClosureInternal(
+    cwd,
+    requestedInvestigationId,
+    input,
+    { changeId: assertChangeId(changeId), assertOwned },
+  );
+}
+
+function acknowledgeReviewerTermInputClosureInternal(
+  cwd: string,
+  requestedInvestigationId: string,
+  input: AcknowledgeReviewerTermInputClosureInput,
+  authority?: HeldInvestigationAuthority,
 ): InvestigationStatus {
   return withInvestigationMutation(
     cwd,
@@ -1736,6 +2517,7 @@ export function acknowledgeReviewerTermInputClosure(
       );
       return statusFromSession(context, next);
     },
+    authority,
   );
 }
 
@@ -1823,20 +2605,21 @@ export function expireInvestigationProviderLease(
   return withInvestigationMutation(
     cwd,
     requestedInvestigationId,
-    (context, current) => {
+    (context, current, assertOwned) => {
       if (current.revision !== input.expectedSessionRevision) {
         throw investigationCasMismatch(
           input.expectedSessionRevision,
           current.revision,
         );
       }
-      expireProviderInvocationLease(
+      expireProviderInvocationLeaseUnderLifecycleLock(
         context.runtime,
         current.currentBlindInvocationId,
         {
           expectedRevision: input.expectedInvocationRevision,
           now: input.now,
         },
+        assertOwned,
       );
       return statusFromSession(context, current);
     },
@@ -1989,7 +2772,9 @@ function withInvestigationMutation(
   operation: (
     context: ReturnType<typeof loadInvestigationRuntimeContext>,
     current: InvestigationSession,
+    assertOwned: () => void,
   ) => InvestigationStatus,
+  authority?: HeldInvestigationAuthority,
 ): InvestigationStatus {
   const initialContext = loadInvestigationRuntimeContext(cwd);
   const investigationId = assertInvestigationId(requestedInvestigationId);
@@ -1997,6 +2782,21 @@ function withInvestigationMutation(
     initialContext.runtime,
     investigationId,
   );
+  if (authority !== undefined) {
+    authority.assertOwned();
+    if (initial.changeId !== authority.changeId) {
+      throw workflowError(
+        'INVESTIGATION_TRANSITION_UNBOUND',
+        'Held investigation authority belongs to another change.',
+        ExitCode.guard,
+      );
+    }
+    assertCurrentInvestigationContext(initialContext, initial);
+    assertInvestigationProviderHistory(initialContext, initial);
+    const result = operation(initialContext, initial, authority.assertOwned);
+    authority.assertOwned();
+    return result;
+  }
   return withInvestigationTransitionAuthority(
     initialContext.lifecycleRuntime,
     initial.changeId,
@@ -2009,7 +2809,7 @@ function withInvestigationMutation(
       );
       assertCurrentInvestigationContext(context, current);
       assertInvestigationProviderHistory(context, current);
-      const result = operation(context, current);
+      const result = operation(context, current, assertOwned);
       assertOwned();
       return result;
     },
@@ -2155,6 +2955,28 @@ function assertCurrentInvestigationContext(
     context.runtime,
     session.changeId,
   );
+  const resolutionNodeId = readHumanResolutionHead(
+    context.runtime,
+    session.investigationId,
+  );
+  if (resolutionNodeId !== null) {
+    const resolution = readHumanResolutionNode(
+      context.runtime,
+      resolutionNodeId,
+    );
+    if (
+      resolution.decision.kind === 'abort' ||
+      resolution.decision.kind === 'quarantine' ||
+      resolution.decision.kind === 'supersede' ||
+      resolution.decision.kind === 'repair'
+    ) {
+      throw workflowError(
+        'INVESTIGATION_TERMINALLY_RESOLVED',
+        'A terminal human resolution prevents this investigation from being revived.',
+        ExitCode.staleState,
+      );
+    }
+  }
   if (
     current?.investigationId !== session.investigationId ||
     context.git.repositoryRealPath !== session.repositoryRoot ||

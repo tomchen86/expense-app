@@ -5,13 +5,22 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
+import { pathToFileURL } from 'node:url';
 
 import { canonicalJson } from '../src/canonical-json.ts';
+import { compareAndSwapEvidenceRefsDocument } from '../src/evidence-object-store.ts';
+import {
+  preparedLockTemporaryPath,
+  publishPreparedExclusiveLock,
+  reclaimDeadPreparedLock,
+} from '../src/filesystem-safety.ts';
 import { discoverRepository } from '../src/git.ts';
 import { readInvestigationGroupNode } from '../src/investigation-groups.ts';
 import {
   createInvestigationCheckpointEnvelope,
+  discardHumanResolutionGrantPublication,
   getInvestigationStatus,
+  inspectHumanResolutionGrantPublicationRecoveries,
   publishProviderResultToInvestigation,
   resumeInvestigationSession,
   retryInvestigationProvider,
@@ -26,6 +35,7 @@ import {
   startPropose,
   startProposeFromFile,
 } from '../src/propose-orchestrator.ts';
+import { readCurrentProposeExemptionSession } from '../src/propose-exemption-store.ts';
 import {
   PLAN_REVIEW_COVERAGE,
   readPlanReviewNode,
@@ -38,8 +48,20 @@ import { runProviderWorker } from '../src/provider-worker.ts';
 import {
   checkpointContributionDigest,
   compareAndSwapInvestigationSession,
+  createHumanResolutionJournal,
+  inspectInvestigationQuarantineState,
+  inspectInvestigationResolutionState,
+  inspectStoredHumanResolutionGrants,
+  readHumanResolutionJournal,
+  storeAvailableHumanResolutionGrant,
+  withHumanResolutionGrantExecution,
+  writeHumanResolutionJournal,
 } from '../src/investigation-session-store.ts';
 import { investigationRuntimePaths } from '../src/paths.ts';
+import {
+  withChangeTransitionAuthority,
+  withHumanResolutionTransitionAuthority,
+} from '../src/planning-lock.ts';
 import {
   createProviderInvocationRequest,
   type ProviderInvocationRequest,
@@ -61,6 +83,7 @@ import {
   readProviderRetryReservation,
   type BlindSurveyManifest,
 } from '../src/provider-invocation-store.ts';
+import { startSession } from '../src/session.ts';
 import {
   createFixtureRepository,
   git,
@@ -68,11 +91,33 @@ import {
   runtimeRoot,
   sourceRepositoryRoot,
 } from './fixture.ts';
+import {
+  releaseOwnedLock,
+  runtimePaths as workflowRuntimePaths,
+  withRepositoryLifecycleOperation,
+  withSessionOperation,
+} from '../src/session-store.ts';
 
 const FIRST_INSTANT = '2026-07-24T00:00:00.000Z';
 const DURING_COMPLETION_GRACE = '2026-07-24T00:00:01.100Z';
 const BEFORE_EXPIRY = '2026-07-24T00:00:30.999Z';
 const AT_EXPIRY = '2026-07-24T00:00:31.000Z';
+const SESSION_STORE_MODULE_URL = workflowSourceModuleUrl('session-store.ts');
+const PLANNING_LOCK_MODULE_URL = workflowSourceModuleUrl('planning-lock.ts');
+const INVESTIGATION_STORE_MODULE_URL = workflowSourceModuleUrl(
+  'investigation-session-store.ts',
+);
+const INVESTIGATION_SESSION_MODULE_URL = workflowSourceModuleUrl(
+  'investigation-session.ts',
+);
+const EVIDENCE_STORE_MODULE_URL = workflowSourceModuleUrl(
+  'evidence-object-store.ts',
+);
+const FILESYSTEM_SAFETY_MODULE_URL = workflowSourceModuleUrl(
+  'filesystem-safety.ts',
+);
+const PATHS_MODULE_URL = workflowSourceModuleUrl('paths.ts');
+const SESSION_MODULE_URL = workflowSourceModuleUrl('session.ts');
 
 test('structured investigation exemption starts a durable planning branch without manufactured survey evidence', () => {
   const repository = createFixtureRepository();
@@ -365,6 +410,16 @@ test('structured investigation exemption starts a durable planning branch withou
         '--format=%(trailers:key=Transition,valueonly)',
       ]).trim(),
       'plan',
+    );
+    assert.equal(
+      readCurrentProposeExemptionSession(
+        investigationRuntimePaths(
+          discoverRepository(repository).gitCommonDirectory,
+          'workflow-engine',
+        ),
+        changeId,
+      ),
+      null,
     );
   } finally {
     fs.rmSync(repository, { recursive: true, force: true });
@@ -2005,7 +2060,7 @@ test('dead private locks are reclaimed but live owners remain fenced', () => {
       repositoryLockPath,
       `${JSON.stringify({
         kind: 'repository-lifecycle',
-        ownerToken: 'dead-repository-owner',
+        ownerToken: '11111111-1111-4111-8111-111111111111',
         pid: 2_147_483_647,
       })}\n`,
       { encoding: 'utf8', flag: 'wx', mode: 0o600 },
@@ -2013,7 +2068,8 @@ test('dead private locks are reclaimed but live owners remain fenced', () => {
     fs.writeFileSync(
       changeLockPath,
       `${JSON.stringify({
-        operationId: 'investigation-dead-owner',
+        operationId: 'investigation-22222222-2222-4222-8222-222222222222',
+        ownerToken: '22222222-2222-4222-8222-222222222222',
         changeId: 'demo-change',
         transition: 'investigation',
         pid: 2_147_483_647,
@@ -2035,7 +2091,7 @@ test('dead private locks are reclaimed but live owners remain fenced', () => {
       lockPath,
       `${canonicalJson({
         schemaVersion: 1,
-        ownerToken: 'dead-owner',
+        ownerToken: '33333333-3333-4333-8333-333333333333',
         pid: 2_147_483_647,
         createdAt: FIRST_INSTANT,
       })}\n`,
@@ -2054,7 +2110,7 @@ test('dead private locks are reclaimed but live owners remain fenced', () => {
       lockPath,
       `${canonicalJson({
         schemaVersion: 1,
-        ownerToken: 'live-owner',
+        ownerToken: '44444444-4444-4444-8444-444444444444',
         pid: process.pid,
         createdAt: FIRST_INSTANT,
       })}\n`,
@@ -2108,6 +2164,2084 @@ test('transition-lock recovery rejects symlinked parents without unlinking targe
   } finally {
     fs.rmSync(fixture.repository, { recursive: true, force: true });
     fs.rmSync(external, { recursive: true, force: true });
+  }
+});
+
+test('repository lifecycle reclaims an orphaned active-journal temp after a writer crash', () => {
+  const repository = createFixtureRepository();
+  try {
+    const repositoryState = discoverRepository(repository);
+    const runtime = workflowRuntimePaths(
+      repositoryState.gitCommonDirectory,
+      'workflow-engine',
+    );
+    const activeDirectory = path.join(
+      runtime.root,
+      'investigations',
+      'human-resolutions',
+      'active',
+    );
+    fs.mkdirSync(activeDirectory, { recursive: true, mode: 0o700 });
+    fs.chmodSync(activeDirectory, 0o700);
+    const orphanedTemporary = path.join(
+      activeDirectory,
+      'demo-change.json.99999999.11111111-1111-4111-8111-111111111111.tmp',
+    );
+    fs.writeFileSync(orphanedTemporary, '{"partial":true}\n', {
+      mode: 0o600,
+    });
+    fs.chmodSync(orphanedTemporary, 0o600);
+    const investigationPaths = investigationRuntimePaths(
+      repositoryState.gitCommonDirectory,
+      'workflow-engine',
+    );
+    assert.equal(
+      readHumanResolutionJournal(
+        investigationPaths,
+        '11111111-1111-4111-8111-111111111111',
+      ),
+      null,
+    );
+    assert.equal(fs.existsSync(orphanedTemporary), true);
+
+    withRepositoryLifecycleOperation(runtime, (assertOwned) => {
+      assertOwned();
+      assert.equal(fs.existsSync(orphanedTemporary), false);
+    });
+
+    fs.writeFileSync(path.join(activeDirectory, 'unexpected.tmp'), '', {
+      mode: 0o600,
+    });
+    assert.throws(
+      () => withRepositoryLifecycleOperation(runtime, () => {}),
+      (error: unknown) =>
+        isWorkflowError(error, 'HUMAN_RESOLUTION_JOURNAL_UNSAFE'),
+    );
+  } finally {
+    fs.rmSync(repository, { recursive: true, force: true });
+  }
+});
+
+test('lock publishers recover before-link and post-link process crashes', () => {
+  const repository = createFixtureRepository();
+  const changeId = 'atomic-lock-publication';
+  const grantId = '55555555-5555-4555-8555-555555555555';
+  try {
+    git(repository, ['checkout', '-b', `work/${changeId}`]);
+    const repositoryState = discoverRepository(repository);
+    const runtime = workflowRuntimePaths(
+      repositoryState.gitCommonDirectory,
+      'workflow-engine',
+    );
+    const investigationPaths = investigationRuntimePaths(
+      repositoryState.gitCommonDirectory,
+      'workflow-engine',
+    );
+    const cases: Array<{
+      fragment: string;
+      finalLock: string;
+      operation: string;
+      retry: () => void;
+    }> = [
+      {
+        fragment: 'repository-lifecycle.lock.',
+        finalLock: path.join(runtime.operations, 'repository-lifecycle.lock'),
+        operation: `
+          const { runtimePaths, withRepositoryLifecycleOperation } =
+            await import(${JSON.stringify(SESSION_STORE_MODULE_URL)});
+          const runtime = runtimePaths(
+            ${JSON.stringify(repositoryState.gitCommonDirectory)},
+            'workflow-engine',
+          );
+          withRepositoryLifecycleOperation(runtime, () => {});
+        `,
+        retry: () => withRepositoryLifecycleOperation(runtime, () => {}),
+      },
+      {
+        fragment: 'atomic-session-operation.lock.',
+        finalLock: path.join(
+          runtime.operations,
+          'atomic-session-operation.lock',
+        ),
+        operation: `
+          const { runtimePaths, withSessionOperation } =
+            await import(${JSON.stringify(SESSION_STORE_MODULE_URL)});
+          const runtime = runtimePaths(
+            ${JSON.stringify(repositoryState.gitCommonDirectory)},
+            'workflow-engine',
+          );
+          withSessionOperation(runtime, 'atomic-session-operation', () => {});
+        `,
+        retry: () =>
+          withSessionOperation(runtime, 'atomic-session-operation', () => {}),
+      },
+      {
+        fragment: `${changeId}.lock.`,
+        finalLock: path.join(runtime.locks, `${changeId}.lock`),
+        operation: `
+          const { runtimePaths } =
+            await import(${JSON.stringify(SESSION_STORE_MODULE_URL)});
+          const { withHumanResolutionTransitionAuthority } =
+            await import(${JSON.stringify(PLANNING_LOCK_MODULE_URL)});
+          const runtime = runtimePaths(
+            ${JSON.stringify(repositoryState.gitCommonDirectory)},
+            'workflow-engine',
+          );
+          withHumanResolutionTransitionAuthority(
+            runtime,
+            ${JSON.stringify(changeId)},
+            null,
+            () => {},
+          );
+        `,
+        retry: () =>
+          withHumanResolutionTransitionAuthority(
+            runtime,
+            changeId,
+            null,
+            () => {},
+          ),
+      },
+      {
+        fragment: `${grantId}.execution.lock.`,
+        finalLock: path.join(
+          investigationPaths.root,
+          'human-resolutions',
+          'locks',
+          `${grantId}.execution.lock`,
+        ),
+        operation: `
+          const { investigationRuntimePaths } =
+            await import(${JSON.stringify(PATHS_MODULE_URL)});
+          const { withHumanResolutionGrantExecution } =
+            await import(${JSON.stringify(INVESTIGATION_STORE_MODULE_URL)});
+          const paths = investigationRuntimePaths(
+            ${JSON.stringify(repositoryState.gitCommonDirectory)},
+            'workflow-engine',
+          );
+          withHumanResolutionGrantExecution(
+            paths,
+            ${JSON.stringify(grantId)},
+            () => {},
+          );
+        `,
+        retry: () =>
+          withHumanResolutionGrantExecution(
+            investigationPaths,
+            grantId,
+            () => {},
+          ),
+      },
+      {
+        fragment: `${changeId}.lock.`,
+        finalLock: path.join(investigationPaths.refs, `${changeId}.lock`),
+        operation: `
+          const { investigationRuntimePaths } =
+            await import(${JSON.stringify(PATHS_MODULE_URL)});
+          const { compareAndSwapEvidenceRefsDocument } =
+            await import(${JSON.stringify(EVIDENCE_STORE_MODULE_URL)});
+          const paths = investigationRuntimePaths(
+            ${JSON.stringify(repositoryState.gitCommonDirectory)},
+            'workflow-engine',
+          );
+          compareAndSwapEvidenceRefsDocument(paths, {
+            changeId: ${JSON.stringify(changeId)},
+            expectedDigest: null,
+            nextRefs: null,
+          });
+        `,
+        retry: () =>
+          compareAndSwapEvidenceRefsDocument(investigationPaths, {
+            changeId,
+            expectedDigest: null,
+            nextRefs: null,
+          }),
+      },
+    ];
+
+    for (const candidate of cases) {
+      const beforeLink = runLockCrashChild(
+        repository,
+        candidate.operation,
+        'write',
+        candidate.fragment,
+      );
+      assert.equal(beforeLink.signal, 'SIGKILL');
+      assert.equal(fs.existsSync(candidate.finalLock), false);
+      candidate.retry();
+
+      const postLink = runLockCrashChild(
+        repository,
+        candidate.operation,
+        'unlink',
+        candidate.fragment,
+      );
+      assert.equal(postLink.signal, 'SIGKILL');
+      const temporary = assertLinkedLockPair(candidate.finalLock);
+      candidate.retry();
+      assert.equal(fs.existsSync(candidate.finalLock), false);
+      assert.equal(fs.existsSync(temporary), false);
+    }
+  } finally {
+    fs.rmSync(repository, { recursive: true, force: true });
+  }
+});
+
+test('session operations reclaim a dead owner after callback entry', () => {
+  const repository = createFixtureRepository();
+  const sessionId = 'dead-session-operation-owner';
+  try {
+    const repositoryState = discoverRepository(repository);
+    const runtime = workflowRuntimePaths(
+      repositoryState.gitCommonDirectory,
+      'workflow-engine',
+    );
+    const child = spawnSync(
+      process.execPath,
+      [
+        '--experimental-strip-types',
+        '--input-type=module',
+        '--eval',
+        `
+          const { runtimePaths, withSessionOperation } =
+            await import(${JSON.stringify(SESSION_STORE_MODULE_URL)});
+          const runtime = runtimePaths(
+            ${JSON.stringify(repositoryState.gitCommonDirectory)},
+            'workflow-engine',
+          );
+          withSessionOperation(
+            runtime,
+            ${JSON.stringify(sessionId)},
+            () => process.kill(process.pid, 'SIGKILL'),
+          );
+        `,
+      ],
+      { cwd: repository, encoding: 'utf8' },
+    );
+    assert.equal(child.signal, 'SIGKILL');
+    const lockPath = path.join(runtime.operations, `${sessionId}.lock`);
+    assert.equal(fs.lstatSync(lockPath).nlink, 1);
+
+    let executions = 0;
+    withSessionOperation(runtime, sessionId, () => {
+      executions += 1;
+    });
+    assert.equal(executions, 1);
+    assert.equal(fs.existsSync(lockPath), false);
+  } finally {
+    fs.rmSync(repository, { recursive: true, force: true });
+  }
+});
+
+test('repository and plan/archive transitions reclaim dead callback owners', () => {
+  const candidates: Array<{
+    name: string;
+    operation: (gitCommonDirectory: string) => string;
+    retry: (
+      runtime: ReturnType<typeof workflowRuntimePaths>,
+      changeId: string,
+      record: () => void,
+    ) => void;
+  }> = [
+    {
+      name: 'repository',
+      operation: (gitCommonDirectory) => `
+        const { runtimePaths, withRepositoryLifecycleOperation } =
+          await import(${JSON.stringify(SESSION_STORE_MODULE_URL)});
+        const runtime = runtimePaths(
+          ${JSON.stringify(gitCommonDirectory)},
+          'workflow-engine',
+        );
+        withRepositoryLifecycleOperation(
+          runtime,
+          () => process.kill(process.pid, 'SIGKILL'),
+        );
+      `,
+      retry: (runtime, _changeId, record) =>
+        withRepositoryLifecycleOperation(runtime, record),
+    },
+    ...(['plan', 'archive'] as const).map((transition) => ({
+      name: transition,
+      operation: (gitCommonDirectory: string) => `
+        const { runtimePaths } =
+          await import(${JSON.stringify(SESSION_STORE_MODULE_URL)});
+        const { withChangeTransitionAuthority } =
+          await import(${JSON.stringify(PLANNING_LOCK_MODULE_URL)});
+        const runtime = runtimePaths(
+          ${JSON.stringify(gitCommonDirectory)},
+          'workflow-engine',
+        );
+        withChangeTransitionAuthority(
+          runtime,
+          'dead-transition-owner',
+          ${JSON.stringify(transition)},
+          () => process.kill(process.pid, 'SIGKILL'),
+        );
+      `,
+      retry: (
+        runtime: ReturnType<typeof workflowRuntimePaths>,
+        changeId: string,
+        record: () => void,
+      ) => withChangeTransitionAuthority(runtime, changeId, transition, record),
+    })),
+  ];
+
+  for (const candidate of candidates) {
+    const repository = createFixtureRepository();
+    const changeId = 'dead-transition-owner';
+    try {
+      const repositoryState = discoverRepository(repository);
+      const runtime = workflowRuntimePaths(
+        repositoryState.gitCommonDirectory,
+        'workflow-engine',
+      );
+      const child = spawnSync(
+        process.execPath,
+        [
+          '--experimental-strip-types',
+          '--input-type=module',
+          '--eval',
+          candidate.operation(repositoryState.gitCommonDirectory),
+        ],
+        { cwd: repository, encoding: 'utf8' },
+      );
+      assert.equal(child.signal, 'SIGKILL', candidate.name);
+      const repositoryLock = path.join(
+        runtime.operations,
+        'repository-lifecycle.lock',
+      );
+      assert.equal(fs.lstatSync(repositoryLock).nlink, 1, candidate.name);
+      if (candidate.name !== 'repository') {
+        assert.equal(
+          fs.lstatSync(path.join(runtime.locks, `${changeId}.lock`)).nlink,
+          1,
+          candidate.name,
+        );
+      }
+
+      let executions = 0;
+      candidate.retry(runtime, changeId, () => {
+        executions += 1;
+      });
+      assert.equal(executions, 1, candidate.name);
+      assert.equal(fs.existsSync(repositoryLock), false, candidate.name);
+      assert.equal(
+        fs.existsSync(path.join(runtime.locks, `${changeId}.lock`)),
+        false,
+        candidate.name,
+      );
+    } finally {
+      fs.rmSync(repository, { recursive: true, force: true });
+    }
+  }
+});
+
+test('evidence ref operations reclaim a dead owner after final unlink begins', () => {
+  const repository = createFixtureRepository();
+  const changeId = 'dead-evidence-ref-owner';
+  try {
+    const repositoryState = discoverRepository(repository);
+    const paths = investigationRuntimePaths(
+      repositoryState.gitCommonDirectory,
+      'workflow-engine',
+    );
+    const lockPath = path.join(paths.refs, `${changeId}.lock`);
+    const child = spawnSync(
+      process.execPath,
+      [
+        '--experimental-strip-types',
+        '--input-type=module',
+        '--eval',
+        `
+          const fs = (await import('node:fs')).default;
+          const { compareAndSwapEvidenceRefsDocument } =
+            await import(${JSON.stringify(EVIDENCE_STORE_MODULE_URL)});
+          const { investigationRuntimePaths } =
+            await import(${JSON.stringify(PATHS_MODULE_URL)});
+          const paths = investigationRuntimePaths(
+            ${JSON.stringify(repositoryState.gitCommonDirectory)},
+            'workflow-engine',
+          );
+          const lockPath = ${JSON.stringify(lockPath)};
+          const originalUnlink = fs.unlinkSync.bind(fs);
+          fs.unlinkSync = (target, ...args) => {
+            if (target === lockPath) {
+              process.kill(process.pid, 'SIGKILL');
+            }
+            return originalUnlink(target, ...args);
+          };
+          compareAndSwapEvidenceRefsDocument(paths, {
+            changeId: ${JSON.stringify(changeId)},
+            expectedDigest: null,
+            nextRefs: null,
+          });
+        `,
+      ],
+      { cwd: repository, encoding: 'utf8' },
+    );
+    assert.equal(child.signal, 'SIGKILL');
+    assert.equal(fs.lstatSync(lockPath).nlink, 1);
+
+    compareAndSwapEvidenceRefsDocument(paths, {
+      changeId,
+      expectedDigest: null,
+      nextRefs: null,
+    });
+    assert.equal(fs.existsSync(lockPath), false);
+  } finally {
+    fs.rmSync(repository, { recursive: true, force: true });
+  }
+});
+
+test('managed task start recovers its shared change lock crash windows', () => {
+  for (const phase of ['write', 'unlink'] as const) {
+    const repository = createFixtureRepository();
+    try {
+      git(repository, ['checkout', '-b', 'work/demo-change']);
+      const repositoryState = discoverRepository(repository);
+      const runtime = workflowRuntimePaths(
+        repositoryState.gitCommonDirectory,
+        'workflow-engine',
+      );
+      const lockPath = path.join(runtime.locks, 'demo-change.lock');
+      const child = runLockCrashChild(
+        repository,
+        `
+          const { startSession } =
+            await import(${JSON.stringify(SESSION_MODULE_URL)});
+          startSession(
+            ${JSON.stringify(repository)},
+            'demo-change',
+            '1.1',
+          );
+        `,
+        phase,
+        'demo-change.lock.',
+      );
+      assert.equal(child.signal, 'SIGKILL');
+      const temporary =
+        phase === 'unlink' ? assertLinkedLockPair(lockPath) : null;
+      if (phase === 'write') {
+        assert.equal(fs.existsSync(lockPath), false);
+      }
+      const started = startSession(repository, 'demo-change', '1.1');
+      assert.equal(started.changeId, 'demo-change');
+      assert.equal(fs.lstatSync(lockPath).nlink, 1);
+      if (temporary !== null) {
+        assert.equal(fs.existsSync(temporary), false);
+      }
+    } finally {
+      fs.rmSync(repository, { recursive: true, force: true });
+    }
+  }
+});
+
+test('managed task start reclaims dead locks bound to terminal sessions', () => {
+  for (const candidate of [
+    { state: 'aborted', legacyMarker: false },
+    { state: 'committed', legacyMarker: false },
+    { state: 'aborted', legacyMarker: true },
+  ] as const) {
+    const { state, legacyMarker } = candidate;
+    const repository = createFixtureRepository();
+    try {
+      git(repository, ['checkout', '-b', 'work/demo-change']);
+      const started = startSession(repository, 'demo-change', '1.1');
+      const repositoryState = discoverRepository(repository);
+      const runtime = workflowRuntimePaths(
+        repositoryState.gitCommonDirectory,
+        'workflow-engine',
+      );
+      const sessionPath = path.join(
+        runtime.sessions,
+        `${started.sessionId}.json`,
+      );
+      const terminal =
+        state === 'aborted'
+          ? {
+              ...started,
+              state,
+              abortedAt: FIRST_INSTANT,
+              abortReason: 'Simulate a crash after terminal persistence.',
+            }
+          : {
+              ...started,
+              state,
+              latestCheckReportId: 'a'.repeat(64),
+              completionReportId: 'b'.repeat(64),
+              finishReportId: 'c'.repeat(64),
+              commitReportId: 'd'.repeat(64),
+              commitHash: 'e'.repeat(40),
+              committedAt: FIRST_INSTANT,
+            };
+      fs.writeFileSync(
+        sessionPath,
+        `${JSON.stringify(terminal, null, 2)}\n`,
+        'utf8',
+      );
+      const lockPath = path.join(runtime.locks, 'demo-change.lock');
+      const marker = JSON.parse(fs.readFileSync(lockPath, 'utf8')) as Record<
+        string,
+        unknown
+      >;
+      fs.writeFileSync(
+        lockPath,
+        `${
+          legacyMarker
+            ? JSON.stringify({
+                sessionId: marker.sessionId,
+                changeId: marker.changeId,
+                taskId: marker.taskId,
+              })
+            : JSON.stringify({
+                ...marker,
+                pid: state === 'aborted' ? process.pid : 2_147_483_647,
+              })
+        }\n`,
+        'utf8',
+      );
+
+      const successor = startSession(repository, 'demo-change', '1.1');
+      assert.notEqual(
+        successor.sessionId,
+        started.sessionId,
+        `${state}:${legacyMarker}`,
+      );
+      assert.equal(successor.state, 'active', `${state}:${legacyMarker}`);
+      const successorMarker = fs.readFileSync(lockPath, 'utf8');
+      releaseOwnedLock(lockPath, started.sessionId);
+      assert.equal(
+        fs.readFileSync(lockPath, 'utf8'),
+        successorMarker,
+        `${state}:${legacyMarker}`,
+      );
+    } finally {
+      fs.rmSync(repository, { recursive: true, force: true });
+    }
+  }
+});
+
+test('managed lock release claim fences a concurrent successor start', () => {
+  const repository = createFixtureRepository();
+  try {
+    git(repository, ['checkout', '-b', 'work/demo-change']);
+    const started = startSession(repository, 'demo-change', '1.1');
+    const repositoryState = discoverRepository(repository);
+    const runtime = workflowRuntimePaths(
+      repositoryState.gitCommonDirectory,
+      'workflow-engine',
+    );
+    const sessionPath = path.join(
+      runtime.sessions,
+      `${started.sessionId}.json`,
+    );
+    fs.writeFileSync(
+      sessionPath,
+      `${JSON.stringify(
+        {
+          ...started,
+          state: 'aborted',
+          abortedAt: FIRST_INSTANT,
+          abortReason: 'Simulate terminal persistence before lock release.',
+        },
+        null,
+        2,
+      )}\n`,
+      'utf8',
+    );
+    const lockPath = path.join(runtime.locks, 'demo-change.lock');
+    const marker = JSON.parse(fs.readFileSync(lockPath, 'utf8')) as Record<
+      string,
+      unknown
+    >;
+    fs.writeFileSync(
+      lockPath,
+      `${JSON.stringify({ ...marker, pid: 2_147_483_647 })}\n`,
+      'utf8',
+    );
+
+    const child = spawnSync(
+      process.execPath,
+      [
+        '--experimental-strip-types',
+        '--input-type=module',
+        '--eval',
+        `
+          const fs = (await import('node:fs')).default;
+          const { startSession } =
+            await import(${JSON.stringify(SESSION_MODULE_URL)});
+          const { releaseOwnedLock } =
+            await import(${JSON.stringify(SESSION_STORE_MODULE_URL)});
+          const originalRead = fs.readFileSync.bind(fs);
+          let interleaved = false;
+          let successor = 'not-run';
+          fs.readFileSync = (target, ...args) => {
+            const result = originalRead(target, ...args);
+            if (typeof target === 'number' && !interleaved) {
+              interleaved = true;
+              try {
+                startSession(
+                  ${JSON.stringify(repository)},
+                  'demo-change',
+                  '1.1',
+                );
+                successor = 'started';
+              } catch (error) {
+                successor =
+                  error && typeof error === 'object' && 'code' in error
+                    ? String(error.code)
+                    : String(error);
+              }
+            }
+            return result;
+          };
+          releaseOwnedLock(
+            ${JSON.stringify(lockPath)},
+            ${JSON.stringify(started.sessionId)},
+          );
+          process.stdout.write(successor);
+        `,
+      ],
+      { cwd: repository, encoding: 'utf8' },
+    );
+    assert.equal(child.status, 0);
+    assert.equal(child.stdout, 'ACTIVE_SESSION_CONFLICT');
+    assert.equal(fs.existsSync(lockPath), false);
+
+    const successor = startSession(repository, 'demo-change', '1.1');
+    assert.notEqual(successor.sessionId, started.sessionId);
+    assert.equal(fs.existsSync(lockPath), true);
+  } finally {
+    fs.rmSync(repository, { recursive: true, force: true });
+  }
+});
+
+test('managed lock release treats a winning reclaimer as already released', () => {
+  const repository = createFixtureRepository();
+  try {
+    git(repository, ['checkout', '-b', 'work/demo-change']);
+    const started = startSession(repository, 'demo-change', '1.1');
+    const repositoryState = discoverRepository(repository);
+    const runtime = workflowRuntimePaths(
+      repositoryState.gitCommonDirectory,
+      'workflow-engine',
+    );
+    const lockPath = path.join(runtime.locks, 'demo-change.lock');
+    const child = spawnSync(
+      process.execPath,
+      [
+        '--experimental-strip-types',
+        '--input-type=module',
+        '--eval',
+        `
+          const fs = (await import('node:fs')).default;
+          const { releaseOwnedLock } =
+            await import(${JSON.stringify(SESSION_STORE_MODULE_URL)});
+          const lockPath = ${JSON.stringify(lockPath)};
+          const originalOpen = fs.openSync.bind(fs);
+          const originalUnlink = fs.unlinkSync.bind(fs);
+          let simulated = false;
+          fs.openSync = (target, ...args) => {
+            if (target === lockPath && !simulated) {
+              simulated = true;
+              originalUnlink(lockPath);
+            }
+            return originalOpen(target, ...args);
+          };
+          releaseOwnedLock(
+            lockPath,
+            ${JSON.stringify(started.sessionId)},
+          );
+          process.stdout.write('released');
+        `,
+      ],
+      { cwd: repository, encoding: 'utf8' },
+    );
+    assert.equal(child.status, 0);
+    assert.equal(child.stdout, 'released');
+    assert.equal(fs.existsSync(lockPath), false);
+    assert.deepEqual(
+      fs
+        .readdirSync(runtime.locks)
+        .filter((name) => name.startsWith('demo-change.lock.reclaim.')),
+      [],
+    );
+  } finally {
+    fs.rmSync(repository, { recursive: true, force: true });
+  }
+});
+
+test('legacy managed lock with an active session remains fenced', () => {
+  const repository = createFixtureRepository();
+  try {
+    git(repository, ['checkout', '-b', 'work/demo-change']);
+    const started = startSession(repository, 'demo-change', '1.1');
+    const repositoryState = discoverRepository(repository);
+    const runtime = workflowRuntimePaths(
+      repositoryState.gitCommonDirectory,
+      'workflow-engine',
+    );
+    const lockPath = path.join(runtime.locks, 'demo-change.lock');
+    const legacyMarker = `${JSON.stringify({
+      sessionId: started.sessionId,
+      changeId: started.changeId,
+      taskId: started.taskId,
+    })}\n`;
+    fs.writeFileSync(lockPath, legacyMarker, 'utf8');
+    const before = fs.lstatSync(lockPath);
+
+    assert.throws(
+      () => startSession(repository, 'demo-change', '1.1'),
+      (error: unknown) => isWorkflowError(error, 'ACTIVE_SESSION_CONFLICT'),
+    );
+    const after = fs.lstatSync(lockPath);
+    assert.equal(after.dev, before.dev);
+    assert.equal(after.ino, before.ino);
+    assert.equal(fs.readFileSync(lockPath, 'utf8'), legacyMarker);
+  } finally {
+    fs.rmSync(repository, { recursive: true, force: true });
+  }
+});
+
+test('prepared lock reclaim claims fence publishers and competing reclaimers', () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'prepared-lock-'));
+  const lockPath = path.join(directory, 'operation.lock');
+  const deadPid = 2_147_483_647;
+  const deadOwnerToken = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+  const publisherToken = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+  const marker = `${JSON.stringify({
+    pid: deadPid,
+    ownerToken: deadOwnerToken,
+  })}\n`;
+  const readOwner = (content: string) =>
+    content === marker ? { pid: deadPid, ownerToken: deadOwnerToken } : null;
+  try {
+    fs.writeFileSync(lockPath, marker, { flag: 'wx', mode: 0o600 });
+    const liveClaim = `${lockPath}.reclaim.${process.pid}.cccccccc-cccc-4ccc-8ccc-cccccccccccc`;
+    fs.mkdirSync(liveClaim, { mode: 0o700 });
+    fs.chmodSync(liveClaim, 0o700);
+
+    assert.equal(reclaimDeadPreparedLock(lockPath, readOwner), 'occupied');
+    assert.equal(fs.readFileSync(lockPath, 'utf8'), marker);
+    assert.throws(
+      () =>
+        publishPreparedExclusiveLock(
+          lockPath,
+          marker,
+          publisherToken,
+          () => new Error('unsafe prepared lock claim'),
+        ),
+      (error: unknown) =>
+        error instanceof Error && 'code' in error && error.code === 'EEXIST',
+    );
+    assert.equal(fs.existsSync(lockPath), true);
+    assert.equal(
+      fs.existsSync(
+        preparedLockTemporaryPath(lockPath, process.pid, publisherToken),
+      ),
+      false,
+    );
+    fs.unlinkSync(lockPath);
+    assert.throws(
+      () =>
+        publishPreparedExclusiveLock(
+          lockPath,
+          marker,
+          publisherToken,
+          () => new Error('unsafe prepared lock claim'),
+        ),
+      (error: unknown) =>
+        error instanceof Error && 'code' in error && error.code === 'EEXIST',
+    );
+    assert.equal(fs.existsSync(lockPath), false);
+    assert.equal(fs.existsSync(liveClaim), true);
+
+    fs.rmdirSync(liveClaim);
+    const deadClaim = `${lockPath}.reclaim.${deadPid}.dddddddd-dddd-4ddd-8ddd-dddddddddddd`;
+    fs.mkdirSync(deadClaim, { mode: 0o700 });
+    fs.chmodSync(deadClaim, 0o700);
+    const descriptor = publishPreparedExclusiveLock(
+      lockPath,
+      marker,
+      publisherToken,
+      () => new Error('unsafe prepared lock claim'),
+    );
+    fs.closeSync(descriptor);
+    assert.equal(fs.readFileSync(lockPath, 'utf8'), marker);
+    assert.equal(fs.existsSync(deadClaim), false);
+    fs.unlinkSync(lockPath);
+
+    const malformedClaim = `${lockPath}.reclaim.invalid`;
+    fs.mkdirSync(malformedClaim, { mode: 0o700 });
+    assert.throws(
+      () =>
+        publishPreparedExclusiveLock(
+          lockPath,
+          marker,
+          publisherToken,
+          () => new Error('unsafe prepared lock claim'),
+        ),
+      /unsafe prepared lock claim/,
+    );
+    assert.equal(fs.existsSync(malformedClaim), true);
+    assert.equal(fs.existsSync(lockPath), false);
+    fs.rmdirSync(malformedClaim);
+
+    const malformedExactClaim = `${lockPath}.reclaim.${process.pid}.78787878-7878-4878-8878-787878787878`;
+    fs.writeFileSync(malformedExactClaim, '', { mode: 0o600 });
+    assert.throws(
+      () =>
+        publishPreparedExclusiveLock(
+          lockPath,
+          marker,
+          publisherToken,
+          () => new Error('unsafe prepared lock claim'),
+        ),
+      /unsafe prepared lock claim/,
+    );
+    assert.equal(fs.existsSync(malformedExactClaim), true);
+    assert.equal(fs.existsSync(lockPath), false);
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('publisher detects a reclaimer claim created between scan and link', () => {
+  const directory = fs.mkdtempSync(
+    path.join(os.tmpdir(), 'prepared-lock-race-'),
+  );
+  const lockPath = path.join(directory, 'operation.lock');
+  const deadPid = 2_147_483_647;
+  const deadOwnerToken = '12121212-1212-4212-8212-121212121212';
+  const publisherToken = '34343434-3434-4434-8434-343434343434';
+  const claimToken = '56565656-5656-4656-8656-565656565656';
+  const marker = `${JSON.stringify({
+    pid: deadPid,
+    ownerToken: deadOwnerToken,
+  })}\n`;
+  try {
+    fs.writeFileSync(lockPath, marker, { flag: 'wx', mode: 0o600 });
+    const child = spawnSync(
+      process.execPath,
+      [
+        '--experimental-strip-types',
+        '--input-type=module',
+        '--eval',
+        `
+          const fs = (await import('node:fs')).default;
+          const { publishPreparedExclusiveLock } =
+            await import(${JSON.stringify(FILESYSTEM_SAFETY_MODULE_URL)});
+          const lockPath = ${JSON.stringify(lockPath)};
+          const originalLink = fs.linkSync.bind(fs);
+          fs.linkSync = (source, target) => {
+            fs.mkdirSync(
+              \`\${target}.reclaim.\${process.pid}.${claimToken}\`,
+              { mode: 0o700 },
+            );
+            fs.unlinkSync(target);
+            return originalLink(source, target);
+          };
+          try {
+            const descriptor = publishPreparedExclusiveLock(
+              lockPath,
+              ${JSON.stringify(marker)},
+              ${JSON.stringify(publisherToken)},
+            );
+            fs.closeSync(descriptor);
+            process.stdout.write('acquired');
+          } catch (error) {
+            process.stdout.write(
+              error && typeof error === 'object' && 'code' in error
+                ? String(error.code)
+                : String(error),
+            );
+          }
+        `,
+      ],
+      { cwd: directory, encoding: 'utf8' },
+    );
+    assert.equal(child.status, 0);
+    assert.equal(child.stdout, 'EEXIST');
+    assert.equal(fs.existsSync(lockPath), false);
+    assert.equal(
+      fs.existsSync(
+        preparedLockTemporaryPath(lockPath, child.pid!, publisherToken),
+      ),
+      false,
+    );
+    assert.equal(
+      fs.existsSync(`${lockPath}.reclaim.${child.pid}.${claimToken}`),
+      true,
+    );
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('publisher cleanup claim fences a successor during error cleanup', () => {
+  const directory = fs.mkdtempSync(
+    path.join(os.tmpdir(), 'prepared-lock-cleanup-race-'),
+  );
+  const lockPath = path.join(directory, 'operation.lock');
+  const deadPid = 2_147_483_647;
+  const oldOwnerToken = '90909090-9090-4090-8090-909090909090';
+  const publisherToken = '91919191-9191-4191-8191-919191919191';
+  const successorToken = '92929292-9292-4292-8292-929292929292';
+  const reclaimerToken = '93939393-9393-4393-8393-939393939393';
+  const marker = `${JSON.stringify({
+    pid: deadPid,
+    ownerToken: oldOwnerToken,
+  })}\n`;
+  try {
+    fs.writeFileSync(lockPath, marker, { flag: 'wx', mode: 0o600 });
+    const child = spawnSync(
+      process.execPath,
+      [
+        '--experimental-strip-types',
+        '--input-type=module',
+        '--eval',
+        `
+          const fs = (await import('node:fs')).default;
+          const { publishPreparedExclusiveLock } =
+            await import(${JSON.stringify(FILESYSTEM_SAFETY_MODULE_URL)});
+          const lockPath = ${JSON.stringify(lockPath)};
+          const marker = ${JSON.stringify(marker)};
+          const originalLink = fs.linkSync.bind(fs);
+          const originalUnlink = fs.unlinkSync.bind(fs);
+          let publication = 0;
+          let reclaimerClaim;
+          let cleanupIntercepted = false;
+          let successor = 'not-run';
+          fs.linkSync = (source, target) => {
+            publication += 1;
+            if (publication === 1) {
+              reclaimerClaim =
+                \`\${target}.reclaim.\${process.pid}.${reclaimerToken}\`;
+              fs.mkdirSync(reclaimerClaim, { mode: 0o700 });
+              originalUnlink(target);
+            }
+            return originalLink(source, target);
+          };
+          fs.unlinkSync = (target, ...args) => {
+            if (target === lockPath && !cleanupIntercepted) {
+              cleanupIntercepted = true;
+              originalUnlink(target);
+              fs.rmdirSync(reclaimerClaim);
+              try {
+                const descriptor = publishPreparedExclusiveLock(
+                  lockPath,
+                  marker,
+                  ${JSON.stringify(successorToken)},
+                );
+                fs.closeSync(descriptor);
+                successor = 'acquired';
+              } catch (error) {
+                successor =
+                  error && typeof error === 'object' && 'code' in error
+                    ? String(error.code)
+                    : String(error);
+              }
+              return originalUnlink(target, ...args);
+            }
+            return originalUnlink(target, ...args);
+          };
+          let publisher;
+          try {
+            const descriptor = publishPreparedExclusiveLock(
+              lockPath,
+              marker,
+              ${JSON.stringify(publisherToken)},
+            );
+            fs.closeSync(descriptor);
+            publisher = 'acquired';
+          } catch (error) {
+            publisher =
+              error && typeof error === 'object' && 'code' in error
+                ? String(error.code)
+                : String(error);
+          }
+          process.stdout.write(JSON.stringify({ publisher, successor }));
+        `,
+      ],
+      { cwd: directory, encoding: 'utf8' },
+    );
+    assert.equal(child.status, 0);
+    assert.deepEqual(JSON.parse(child.stdout), {
+      publisher: 'EEXIST',
+      successor: 'EEXIST',
+    });
+    assert.equal(fs.existsSync(lockPath), false);
+    assert.deepEqual(fs.readdirSync(directory), []);
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('prepared lock reclaim is idempotent when a competing reaper wins', () => {
+  const directory = fs.mkdtempSync(
+    path.join(os.tmpdir(), 'prepared-lock-reaper-race-'),
+  );
+  const lockPath = path.join(directory, 'operation.lock');
+  const deadPid = 2_147_483_647;
+  const ownerToken = '94949494-9494-4494-8494-949494949494';
+  const marker = `${JSON.stringify({ pid: deadPid, ownerToken })}\n`;
+  try {
+    fs.writeFileSync(lockPath, marker, { flag: 'wx', mode: 0o600 });
+    const child = spawnSync(
+      process.execPath,
+      [
+        '--experimental-strip-types',
+        '--input-type=module',
+        '--eval',
+        `
+          const fs = (await import('node:fs')).default;
+          const { reclaimDeadPreparedLock } =
+            await import(${JSON.stringify(FILESYSTEM_SAFETY_MODULE_URL)});
+          const lockPath = ${JSON.stringify(lockPath)};
+          const marker = ${JSON.stringify(marker)};
+          const originalUnlink = fs.unlinkSync.bind(fs);
+          let simulated = false;
+          fs.unlinkSync = (target, ...args) => {
+            if (target === lockPath && !simulated) {
+              simulated = true;
+              originalUnlink(target);
+            }
+            return originalUnlink(target, ...args);
+          };
+          const result = reclaimDeadPreparedLock(
+            lockPath,
+            (content) =>
+              content === marker
+                ? {
+                    pid: ${deadPid},
+                    ownerToken: ${JSON.stringify(ownerToken)},
+                  }
+                : null,
+          );
+          process.stdout.write(result);
+        `,
+      ],
+      { cwd: directory, encoding: 'utf8' },
+    );
+    assert.equal(child.status, 0);
+    assert.equal(child.stdout, 'reclaimed');
+    assert.deepEqual(fs.readdirSync(directory), []);
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('prepared lock reclaimer preserves forged hard-link pairs', () => {
+  const directory = fs.mkdtempSync(
+    path.join(os.tmpdir(), 'prepared-lock-pair-'),
+  );
+  const lockPath = path.join(directory, 'operation.lock');
+  const deadPid = 2_147_483_647;
+  const ownerToken = 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee';
+  const marker = `${JSON.stringify({ pid: deadPid, ownerToken })}\n`;
+  const exactTemporary = preparedLockTemporaryPath(
+    lockPath,
+    deadPid,
+    ownerToken,
+  );
+  const readOwner = (content: string) =>
+    content === marker ? { pid: deadPid, ownerToken } : null;
+  try {
+    fs.writeFileSync(lockPath, marker, { flag: 'wx', mode: 0o600 });
+    const unexpectedAlias = path.join(directory, 'unexpected-alias');
+    fs.linkSync(lockPath, unexpectedAlias);
+    fs.writeFileSync(exactTemporary, marker, { flag: 'wx', mode: 0o600 });
+
+    assert.equal(reclaimDeadPreparedLock(lockPath, readOwner), 'unsafe');
+    assert.equal(fs.existsSync(lockPath), true);
+    assert.equal(fs.existsSync(unexpectedAlias), true);
+    assert.equal(fs.existsSync(exactTemporary), true);
+
+    fs.unlinkSync(exactTemporary);
+    fs.unlinkSync(unexpectedAlias);
+    fs.linkSync(lockPath, exactTemporary);
+    const thirdAlias = path.join(directory, 'third-alias');
+    fs.linkSync(lockPath, thirdAlias);
+
+    assert.equal(reclaimDeadPreparedLock(lockPath, readOwner), 'unsafe');
+    assert.equal(fs.lstatSync(lockPath).nlink, 3);
+    assert.equal(fs.existsSync(exactTemporary), true);
+    assert.equal(fs.existsSync(thirdAlias), true);
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('grant store preserves interrupted available publication and reclaims terminal temps', () => {
+  const repository = createFixtureRepository();
+  const firstGrantId = '66666666-6666-4666-8666-666666666666';
+  const secondGrantId = '77777777-7777-4777-8777-777777777777';
+  try {
+    const repositoryState = discoverRepository(repository);
+    const paths = investigationRuntimePaths(
+      repositoryState.gitCommonDirectory,
+      'workflow-engine',
+    );
+    storeAvailableHumanResolutionGrant(
+      paths,
+      firstGrantId,
+      `${JSON.stringify({ grantId: firstGrantId })}\n`,
+    );
+    const grantRoot = path.join(paths.root, 'human-resolutions', 'grants');
+    const available = path.join(grantRoot, 'available');
+    const terminal = path.join(grantRoot, 'terminal');
+    fs.mkdirSync(terminal, { recursive: true, mode: 0o700 });
+    fs.chmodSync(terminal, 0o700);
+    const terminalTemporary = path.join(
+      terminal,
+      '99999999-9999-4999-8999-999999999999.json.99999999.22222222-2222-4222-8222-222222222222.tmp',
+    );
+    fs.writeFileSync(terminalTemporary, '{"partial":true}\n', { mode: 0o600 });
+    fs.chmodSync(terminalTemporary, 0o600);
+
+    assert.deepEqual(
+      inspectStoredHumanResolutionGrants(paths).map(({ grantId }) => grantId),
+      [firstGrantId],
+    );
+    assert.equal(fs.existsSync(terminalTemporary), true);
+
+    storeAvailableHumanResolutionGrant(
+      paths,
+      secondGrantId,
+      `${JSON.stringify({ grantId: secondGrantId })}\n`,
+    );
+    assert.equal(fs.existsSync(terminalTemporary), false);
+
+    const availableTemporary = path.join(
+      available,
+      '88888888-8888-4888-8888-888888888888.json.99999999.11111111-1111-4111-8111-111111111111.tmp',
+    );
+    fs.writeFileSync(availableTemporary, '{"partial":true}\n', {
+      mode: 0o600,
+    });
+    fs.chmodSync(availableTemporary, 0o600);
+    const temporaryContent = '{"partial":true}\n';
+    const temporaryDigest = crypto
+      .createHash('sha256')
+      .update(temporaryContent)
+      .digest('hex');
+    assert.deepEqual(
+      inspectStoredHumanResolutionGrants(paths).map(({ grantId }) => grantId),
+      [firstGrantId, secondGrantId],
+    );
+    assert.doesNotThrow(() =>
+      storeAvailableHumanResolutionGrant(
+        paths,
+        'abababab-abab-4aba-8aba-abababababab',
+        `${JSON.stringify({
+          grantId: 'abababab-abab-4aba-8aba-abababababab',
+        })}\n`,
+      ),
+    );
+    assert.equal(fs.existsSync(availableTemporary), true);
+
+    const inspection = runWorkflowCli(
+      repository,
+      [
+        'maintainer',
+        'resolution-inspect',
+        '88888888-8888-4888-8888-888888888888',
+      ],
+      {},
+    );
+    assert.equal(inspection.status, 0, inspection.stderr);
+    const inspected = JSON.parse(inspection.stdout) as {
+      grants: Array<{ grantId: string }>;
+      publicationRecoveries: Array<{
+        grantId: string;
+        temporaries: Array<{
+          temporaryName: string;
+          rawSha256: string;
+          unsafeObservationDigest: string;
+          byteLength: number;
+          parsedEnvelopeGrantId: string | null;
+        }>;
+        publicationStateDigest: string;
+        auditTag: {
+          status: string;
+          tagRef: string | null;
+          refObjectOid: string | null;
+          objectType: string | null;
+        };
+      }>;
+    };
+    assert.deepEqual(inspected.grants, []);
+    assert.equal(inspected.publicationRecoveries.length, 1);
+    const publicationRecovery = inspected.publicationRecoveries[0]!;
+    assert.equal(
+      publicationRecovery.grantId,
+      '88888888-8888-4888-8888-888888888888',
+    );
+    assert.deepEqual(publicationRecovery.temporaries, [
+      {
+        temporaryName: path.basename(availableTemporary),
+        rawSha256: temporaryDigest,
+        unsafeObservationDigest:
+          publicationRecovery.temporaries[0]!.unsafeObservationDigest,
+        byteLength: Buffer.byteLength(temporaryContent),
+        parsedEnvelopeGrantId: null,
+      },
+    ]);
+    assert.match(
+      publicationRecovery.temporaries[0]!.unsafeObservationDigest,
+      /^[0-9a-f]{64}$/,
+    );
+    assert.match(publicationRecovery.publicationStateDigest, /^[0-9a-f]{64}$/);
+    assert.deepEqual(publicationRecovery.auditTag, {
+      status: 'absent',
+      tagRef: null,
+      refObjectOid: null,
+      objectType: null,
+    });
+
+    const unattendedDiscard = runWorkflowCli(
+      repository,
+      [
+        'maintainer',
+        'resolution-publication-discard',
+        '88888888-8888-4888-8888-888888888888',
+        '--expected-publication-state',
+        publicationRecovery.publicationStateDigest,
+        '--reason',
+        'Discard an interrupted grant publication after exact inspection.',
+      ],
+      {},
+    );
+    assert.equal(unattendedDiscard.status, 12, unattendedDiscard.stderr);
+    assert.equal(
+      JSON.parse(unattendedDiscard.stderr).error.code,
+      'MAINTAINER_INTERACTIVE_REQUIRED',
+    );
+    assert.equal(fs.existsSync(availableTemporary), true);
+
+    const recovery = discardHumanResolutionGrantPublication(
+      repository,
+      '88888888-8888-4888-8888-888888888888',
+      publicationRecovery.publicationStateDigest,
+      'Discard an interrupted grant publication after exact inspection.',
+    );
+    assert.deepEqual(recovery, {
+      action: 'quarantined',
+      grantId: '88888888-8888-4888-8888-888888888888',
+      publicationStateDigest: publicationRecovery.publicationStateDigest,
+    });
+    assert.equal(fs.existsSync(availableTemporary), false);
+    assert.doesNotThrow(() =>
+      storeAvailableHumanResolutionGrant(
+        paths,
+        'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+        `${JSON.stringify({
+          grantId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+        })}\n`,
+      ),
+    );
+
+    fs.writeFileSync(path.join(available, 'unexpected.tmp'), '', {
+      mode: 0o600,
+    });
+    assert.throws(
+      () => inspectStoredHumanResolutionGrants(paths),
+      (error: unknown) =>
+        isWorkflowError(error, 'HUMAN_RESOLUTION_GRANT_UNSAFE'),
+    );
+  } finally {
+    fs.rmSync(repository, { recursive: true, force: true });
+  }
+});
+
+test('publication recovery is aggregate-CAS bound and quarantines every exact unpublished artifact', () => {
+  const repository = createFixtureRepository();
+  try {
+    const repositoryState = discoverRepository(repository);
+    const paths = investigationRuntimePaths(
+      repositoryState.gitCommonDirectory,
+      'workflow-engine',
+    );
+    const grantRoot = path.join(paths.root, 'human-resolutions', 'grants');
+    const available = path.join(grantRoot, 'available');
+    fs.mkdirSync(available, { recursive: true, mode: 0o700 });
+    fs.chmodSync(available, 0o700);
+    const createTemporary = (
+      grantId: string,
+      ownerToken: string,
+      content: string,
+    ) => {
+      const temporary = path.join(
+        available,
+        `${grantId}.json.99999999.${ownerToken}.tmp`,
+      );
+      fs.writeFileSync(temporary, content, { mode: 0o600 });
+      fs.chmodSync(temporary, 0o600);
+      return temporary;
+    };
+
+    const staleGrantId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1';
+    const staleTemporary = createTemporary(
+      staleGrantId,
+      '11111111-1111-4111-8111-111111111111',
+      '{"partial":"before"}\n',
+    );
+    const staleInspection = inspectHumanResolutionGrantPublicationRecoveries(
+      repository,
+      staleGrantId,
+    )[0]!;
+    fs.writeFileSync(staleTemporary, '{"partial":"after"}\n', {
+      mode: 0o600,
+    });
+    assert.throws(
+      () =>
+        discardHumanResolutionGrantPublication(
+          repository,
+          staleGrantId,
+          staleInspection.publicationStateDigest,
+          'Quarantine an exactly inspected interrupted publication.',
+        ),
+      (error: unknown) =>
+        isWorkflowError(
+          error,
+          'HUMAN_RESOLUTION_GRANT_PUBLICATION_RECOVERY_STALE',
+        ),
+    );
+    assert.equal(fs.existsSync(staleTemporary), true);
+    const refreshed = inspectHumanResolutionGrantPublicationRecoveries(
+      repository,
+      staleGrantId,
+    )[0]!;
+    discardHumanResolutionGrantPublication(
+      repository,
+      staleGrantId,
+      refreshed.publicationStateDigest,
+      'Quarantine an exactly inspected interrupted publication.',
+    );
+
+    const multipleGrantId = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb2';
+    const firstMultipleTemporary = createTemporary(
+      multipleGrantId,
+      '22222222-2222-4222-8222-222222222222',
+      '{"partial":1}\n',
+    );
+    const secondMultipleTemporary = createTemporary(
+      multipleGrantId,
+      '33333333-3333-4333-8333-333333333333',
+      '{"partial":2}\n',
+    );
+    const multiple = inspectHumanResolutionGrantPublicationRecoveries(
+      repository,
+      multipleGrantId,
+    )[0]!;
+    assert.equal(multiple.temporaries.length, 2);
+    assert.doesNotThrow(() =>
+      discardHumanResolutionGrantPublication(
+        repository,
+        multipleGrantId,
+        multiple.publicationStateDigest,
+        'Quarantine every exactly inspected publication artifact.',
+      ),
+    );
+    assert.equal(fs.existsSync(firstMultipleTemporary), false);
+    assert.equal(fs.existsSync(secondMultipleTemporary), false);
+
+    const durableGrantId = 'cccccccc-cccc-4ccc-8ccc-ccccccccccc3';
+    const durableTemporary = createTemporary(
+      durableGrantId,
+      '44444444-4444-4444-8444-444444444444',
+      '{"partial":true}\n',
+    );
+    fs.writeFileSync(
+      path.join(available, `${durableGrantId}.json`),
+      `${JSON.stringify({ grantId: durableGrantId })}\n`,
+      { mode: 0o600 },
+    );
+    const durable = inspectHumanResolutionGrantPublicationRecoveries(
+      repository,
+      durableGrantId,
+    )[0]!;
+    assert.match(durable.durable.availableDigest ?? '', /^[0-9a-f]{64}$/);
+    assert.doesNotThrow(() =>
+      discardHumanResolutionGrantPublication(
+        repository,
+        durableGrantId,
+        durable.publicationStateDigest,
+        'Quarantine only the unpublished residue without changing durable state.',
+      ),
+    );
+    assert.equal(fs.existsSync(durableTemporary), false);
+    assert.equal(
+      inspectStoredHumanResolutionGrants(paths, durableGrantId)[0]?.state,
+      'available',
+    );
+
+    const journalGrantId = 'dddddddd-dddd-4ddd-8ddd-ddddddddddd4';
+    const journalTemporary = createTemporary(
+      journalGrantId,
+      '55555555-5555-4555-8555-555555555555',
+      '{"partial":true}\n',
+    );
+    const receipts = path.join(paths.root, 'human-resolutions', 'receipts');
+    fs.mkdirSync(receipts, { recursive: true, mode: 0o700 });
+    fs.chmodSync(receipts, 0o700);
+    fs.writeFileSync(
+      path.join(receipts, `${journalGrantId}.json`),
+      '{"result":"recorded"}\n',
+      { mode: 0o600 },
+    );
+    const beforeActiveJournal =
+      inspectHumanResolutionGrantPublicationRecoveries(
+        repository,
+        journalGrantId,
+      )[0]!;
+    const activeJournal = createHumanResolutionJournal({
+      phase: 'prepared',
+      grantId: journalGrantId,
+      grantDigest: '1'.repeat(64),
+      target: {
+        workflowKind: 'investigation',
+        changeId: 'active-journal-publication-test',
+        workflowId: 'investigation-active-journal-publication-test',
+      },
+      beforeStateDigest: '2'.repeat(64),
+      afterStateDigest: '3'.repeat(64),
+      beforeResolutionRef: null,
+      resolutionRefMode: 'preserve',
+      plannedResolutionNodeId: '4'.repeat(64),
+      plannedCurrentWorkflowRef: {
+        expectedInvestigationId: null,
+        expectedDigest: null,
+        nextInvestigationId: null,
+        nextDigest: null,
+      },
+      plannedStartReservation: {
+        mode: 'preserve',
+        expectedDigest: null,
+        nextDigest: null,
+        archiveDigest: null,
+      },
+      plannedEvidenceRefs: {
+        mode: 'preserve',
+        expectedDigest: null,
+        nextDigest: null,
+        expectedClosureDigest: null,
+        nextClosureDigest: null,
+        retiredRefs: {},
+        retainedRefs: {},
+        archiveDigest: null,
+      },
+      evidenceArchiveDigest: '5'.repeat(64),
+      receiptDigest: '6'.repeat(64),
+      createdAt: FIRST_INSTANT,
+    });
+    writeHumanResolutionJournal(paths, activeJournal);
+    const journal = inspectHumanResolutionGrantPublicationRecoveries(
+      repository,
+      journalGrantId,
+    )[0]!;
+    assert.equal(journal.sameGrantJournalDigest, null);
+    assert.match(journal.sameGrantActiveJournalDigest ?? '', /^[0-9a-f]{64}$/);
+    assert.match(journal.sameGrantReceiptDigest ?? '', /^[0-9a-f]{64}$/);
+    assert.notEqual(
+      journal.publicationStateDigest,
+      beforeActiveJournal.publicationStateDigest,
+    );
+    assert.throws(
+      () =>
+        discardHumanResolutionGrantPublication(
+          repository,
+          journalGrantId,
+          beforeActiveJournal.publicationStateDigest,
+          'Reject a stale aggregate that omitted the active journal.',
+        ),
+      (error: unknown) =>
+        isWorkflowError(
+          error,
+          'HUMAN_RESOLUTION_GRANT_PUBLICATION_RECOVERY_STALE',
+        ),
+    );
+    assert.doesNotThrow(() =>
+      discardHumanResolutionGrantPublication(
+        repository,
+        journalGrantId,
+        journal.publicationStateDigest,
+        'Quarantine only the exact unpublished residue while preserving transaction state.',
+      ),
+    );
+    assert.equal(fs.existsSync(journalTemporary), false);
+    assert.equal(
+      fs.existsSync(
+        path.join(
+          paths.root,
+          'human-resolutions',
+          'active',
+          'active-journal-publication-test.json',
+        ),
+      ),
+      true,
+    );
+    assert.equal(
+      fs.existsSync(path.join(receipts, `${journalGrantId}.json`)),
+      true,
+    );
+
+    const mismatchedGrantId = 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeee5';
+    const envelopeGrantId = 'ffffffff-ffff-4fff-8fff-fffffffffff6';
+    const mismatchedTemporary = createTemporary(
+      mismatchedGrantId,
+      '66666666-6666-4666-8666-666666666666',
+      `${JSON.stringify({ payload: { grantId: envelopeGrantId } })}\n`,
+    );
+    const mismatched = inspectHumanResolutionGrantPublicationRecoveries(
+      repository,
+      mismatchedGrantId,
+    )[0]!;
+    assert.equal(
+      mismatched.temporaries[0]?.parsedEnvelopeGrantId,
+      envelopeGrantId,
+    );
+    assert.doesNotThrow(() =>
+      discardHumanResolutionGrantPublication(
+        repository,
+        mismatchedGrantId,
+        mismatched.publicationStateDigest,
+        'Quarantine the exact unpublished bytes without interpreting them as authority.',
+      ),
+    );
+    assert.equal(fs.existsSync(mismatchedTemporary), false);
+  } finally {
+    fs.rmSync(repository, { recursive: true, force: true });
+  }
+});
+
+test('publication recovery is per-grant, preserves audit tags and quarantines raw bytes', () => {
+  const repository = createFixtureRepository();
+  const firstGrantId = '12121212-1212-4212-8212-121212121212';
+  const secondGrantId = '34343434-3434-4434-8434-343434343434';
+  const firstContent = '{"partial":"first"}\n';
+  const secondContent = '{"partial":"second"}\n';
+  try {
+    const repositoryState = discoverRepository(repository);
+    const paths = investigationRuntimePaths(
+      repositoryState.gitCommonDirectory,
+      'workflow-engine',
+    );
+    const available = path.join(
+      paths.root,
+      'human-resolutions',
+      'grants',
+      'available',
+    );
+    fs.mkdirSync(available, { recursive: true, mode: 0o700 });
+    fs.chmodSync(available, 0o700);
+    const firstTemporary = path.join(
+      available,
+      `${firstGrantId}.json.99999999.77777777-7777-4777-8777-777777777777.tmp`,
+    );
+    const secondTemporary = path.join(
+      available,
+      `${secondGrantId}.json.99999999.88888888-8888-4888-8888-888888888888.tmp`,
+    );
+    fs.writeFileSync(firstTemporary, firstContent, { mode: 0o600 });
+    fs.writeFileSync(secondTemporary, secondContent, { mode: 0o600 });
+    const tagRef = `refs/tags/workflow-grant/resolution-${firstGrantId}`;
+    git(repository, [
+      'tag',
+      '-a',
+      tagRef.slice('refs/tags/'.length),
+      '-m',
+      'Interrupted publication audit evidence',
+    ]);
+    const tagObject = git(repository, ['rev-parse', tagRef]).trim();
+
+    const inspections =
+      inspectHumanResolutionGrantPublicationRecoveries(repository);
+    assert.deepEqual(
+      inspections.map(({ grantId }) => grantId),
+      [firstGrantId, secondGrantId],
+    );
+    const first = inspections[0]!;
+    assert.deepEqual(first.auditTag, {
+      status: 'present',
+      tagRef,
+      refObjectOid: tagObject,
+      objectType: 'tag',
+    });
+    const publicationRecoveries = path.join(
+      paths.root,
+      'human-resolutions',
+      'grants',
+      'publication-recoveries',
+    );
+    fs.mkdirSync(publicationRecoveries, { recursive: true, mode: 0o700 });
+    fs.writeFileSync(
+      path.join(
+        publicationRecoveries,
+        '67676767-6767-4767-8767-676767676767.json',
+      ),
+      '{"malformed":"unrelated-recovery"}\n',
+      { mode: 0o600 },
+    );
+    assert.equal(
+      inspectHumanResolutionGrantPublicationRecoveries(
+        repository,
+        secondGrantId,
+      ).length,
+      1,
+    );
+    writeHumanResolutionJournal(
+      paths,
+      createHumanResolutionJournal({
+        phase: 'prepared',
+        grantId: '45454545-4545-4545-8545-454545454545',
+        grantDigest: '1'.repeat(64),
+        target: {
+          workflowKind: 'investigation',
+          changeId: 'unrelated-change',
+          workflowId: 'investigation-unrelated-change',
+        },
+        beforeStateDigest: '2'.repeat(64),
+        afterStateDigest: '3'.repeat(64),
+        beforeResolutionRef: null,
+        resolutionRefMode: 'preserve',
+        plannedResolutionNodeId: '4'.repeat(64),
+        plannedCurrentWorkflowRef: {
+          expectedInvestigationId: null,
+          expectedDigest: null,
+          nextInvestigationId: null,
+          nextDigest: null,
+        },
+        plannedStartReservation: {
+          mode: 'preserve',
+          expectedDigest: null,
+          nextDigest: null,
+          archiveDigest: null,
+        },
+        plannedEvidenceRefs: {
+          mode: 'preserve',
+          expectedDigest: null,
+          nextDigest: null,
+          expectedClosureDigest: null,
+          nextClosureDigest: null,
+          retiredRefs: {},
+          retainedRefs: {},
+          archiveDigest: null,
+        },
+        evidenceArchiveDigest: '5'.repeat(64),
+        receiptDigest: '6'.repeat(64),
+        createdAt: FIRST_INSTANT,
+      }),
+    );
+    discardHumanResolutionGrantPublication(
+      repository,
+      firstGrantId,
+      first.publicationStateDigest,
+      'Quarantine only this interrupted publication and preserve its tag.',
+    );
+    assert.equal(fs.existsSync(firstTemporary), false);
+    assert.equal(fs.existsSync(secondTemporary), true);
+    assert.equal(git(repository, ['rev-parse', tagRef]).trim(), tagObject);
+
+    const second = inspectHumanResolutionGrantPublicationRecoveries(
+      repository,
+      secondGrantId,
+    )[0]!;
+    discardHumanResolutionGrantPublication(
+      repository,
+      secondGrantId,
+      second.publicationStateDigest,
+      'Quarantine the second independently inspected publication.',
+    );
+    assert.equal(fs.existsSync(secondTemporary), false);
+    const quarantine = path.join(paths.root, 'human-resolutions', 'quarantine');
+    assert.deepEqual(
+      fs
+        .readdirSync(quarantine)
+        .map((name) => fs.readFileSync(path.join(quarantine, name), 'utf8'))
+        .sort(),
+      [firstContent, secondContent].sort(),
+    );
+    const recoveryReceipts = path.join(
+      paths.root,
+      'human-resolutions',
+      'grants',
+      'publication-recoveries',
+    );
+    for (const name of [`${firstGrantId}.json`, `${secondGrantId}.json`]) {
+      assert.equal(
+        JSON.parse(fs.readFileSync(path.join(recoveryReceipts, name), 'utf8'))
+          .phase,
+        'quarantined',
+      );
+    }
+    assert.doesNotThrow(() =>
+      storeAvailableHumanResolutionGrant(
+        paths,
+        '56565656-5656-4656-8656-565656565656',
+        `${JSON.stringify({
+          grantId: '56565656-5656-4656-8656-565656565656',
+        })}\n`,
+      ),
+    );
+  } finally {
+    fs.rmSync(repository, { recursive: true, force: true });
+  }
+});
+
+test('publication recovery resumes after a prepared receipt crash', () => {
+  const repository = createFixtureRepository();
+  const grantId = '78787878-7878-4878-8878-787878787878';
+  const reason =
+    'Resume exact interrupted publication quarantine after process death.';
+  try {
+    const repositoryState = discoverRepository(repository);
+    const paths = investigationRuntimePaths(
+      repositoryState.gitCommonDirectory,
+      'workflow-engine',
+    );
+    const available = path.join(
+      paths.root,
+      'human-resolutions',
+      'grants',
+      'available',
+    );
+    fs.mkdirSync(available, { recursive: true, mode: 0o700 });
+    fs.chmodSync(available, 0o700);
+    const temporary = path.join(
+      available,
+      `${grantId}.json.99999999.99999999-9999-4999-8999-999999999999.tmp`,
+    );
+    fs.writeFileSync(temporary, '{"partial":"crash"}\n', { mode: 0o600 });
+    const inspection = inspectHumanResolutionGrantPublicationRecoveries(
+      repository,
+      grantId,
+    )[0]!;
+    const child = spawnSync(
+      process.execPath,
+      [
+        '--experimental-strip-types',
+        '--input-type=module',
+        '--eval',
+        `
+          const fs = (await import('node:fs')).default;
+          const originalRename = fs.renameSync.bind(fs);
+          fs.renameSync = (source, target) => {
+            if (
+              String(source).includes(${JSON.stringify(grantId)}) &&
+              String(target).endsWith('.grant-publication.artifact')
+            ) {
+              process.kill(process.pid, 'SIGKILL');
+            }
+            return originalRename(source, target);
+          };
+          const { discardHumanResolutionGrantPublication } =
+            await import(${JSON.stringify(INVESTIGATION_SESSION_MODULE_URL)});
+          discardHumanResolutionGrantPublication(
+            ${JSON.stringify(repository)},
+            ${JSON.stringify(grantId)},
+            ${JSON.stringify(inspection.publicationStateDigest)},
+            ${JSON.stringify(reason)},
+          );
+        `,
+      ],
+      { cwd: repository, encoding: 'utf8' },
+    );
+    assert.equal(child.signal, 'SIGKILL');
+    assert.equal(fs.existsSync(temporary), true);
+    const recoveryReceipts = path.join(
+      paths.root,
+      'human-resolutions',
+      'grants',
+      'publication-recoveries',
+    );
+    const receiptName = fs.readdirSync(recoveryReceipts)[0]!;
+    assert.equal(
+      JSON.parse(
+        fs.readFileSync(path.join(recoveryReceipts, receiptName), 'utf8'),
+      ).phase,
+      'prepared',
+    );
+
+    assert.deepEqual(
+      discardHumanResolutionGrantPublication(
+        repository,
+        grantId,
+        inspection.publicationStateDigest,
+        reason,
+      ),
+      {
+        action: 'quarantined',
+        grantId,
+        publicationStateDigest: inspection.publicationStateDigest,
+      },
+    );
+    assert.equal(fs.existsSync(temporary), false);
+    assert.equal(
+      JSON.parse(
+        fs.readFileSync(path.join(recoveryReceipts, receiptName), 'utf8'),
+      ).phase,
+      'quarantined',
+    );
+  } finally {
+    fs.rmSync(repository, { recursive: true, force: true });
+  }
+});
+
+test('publication recovery remains visible after rename and terminally reserves the discarded grant ID', () => {
+  const repository = createFixtureRepository();
+  const grantId = '89898989-8989-4989-8989-898989898989';
+  const otherGrantId = '90909090-9090-4090-8090-909090909090';
+  const reason =
+    'Resume an exact publication quarantine after the artifact rename became durable.';
+  try {
+    const repositoryState = discoverRepository(repository);
+    const paths = investigationRuntimePaths(
+      repositoryState.gitCommonDirectory,
+      'workflow-engine',
+    );
+    const available = path.join(
+      paths.root,
+      'human-resolutions',
+      'grants',
+      'available',
+    );
+    fs.mkdirSync(available, { recursive: true, mode: 0o700 });
+    fs.chmodSync(available, 0o700);
+    const temporary = path.join(
+      available,
+      `${grantId}.json.99999999.10101010-1010-4010-8010-101010101010.tmp`,
+    );
+    fs.writeFileSync(temporary, '{"partial":"post-rename-crash"}\n', {
+      mode: 0o600,
+    });
+    const tagRef = `refs/tags/workflow-grant/resolution-${grantId}`;
+    git(repository, [
+      'tag',
+      '-a',
+      tagRef.slice('refs/tags/'.length),
+      '-m',
+      'Bind the publication recovery preimage',
+    ]);
+    const tagObject = git(repository, ['rev-parse', tagRef]).trim();
+    const inspection = inspectHumanResolutionGrantPublicationRecoveries(
+      repository,
+      grantId,
+    )[0]!;
+    const child = spawnSync(
+      process.execPath,
+      [
+        '--experimental-strip-types',
+        '--input-type=module',
+        '--eval',
+        `
+          const fs = (await import('node:fs')).default;
+          const originalRename = fs.renameSync.bind(fs);
+          fs.renameSync = (source, target) => {
+            const result = originalRename(source, target);
+            if (
+              String(source).includes(${JSON.stringify(grantId)}) &&
+              String(target).endsWith('.grant-publication.artifact')
+            ) {
+              process.kill(process.pid, 'SIGKILL');
+            }
+            return result;
+          };
+          const { discardHumanResolutionGrantPublication } =
+            await import(${JSON.stringify(INVESTIGATION_SESSION_MODULE_URL)});
+          discardHumanResolutionGrantPublication(
+            ${JSON.stringify(repository)},
+            ${JSON.stringify(grantId)},
+            ${JSON.stringify(inspection.publicationStateDigest)},
+            ${JSON.stringify(reason)},
+          );
+        `,
+      ],
+      { cwd: repository, encoding: 'utf8' },
+    );
+    assert.equal(child.signal, 'SIGKILL');
+    assert.equal(fs.existsSync(temporary), false);
+    git(repository, ['tag', '-d', tagRef.slice('refs/tags/'.length)]);
+
+    const visibleAfterRename = inspectHumanResolutionGrantPublicationRecoveries(
+      repository,
+      grantId,
+    );
+    assert.equal(visibleAfterRename.length, 1);
+    assert.equal(
+      visibleAfterRename[0]?.publicationStateDigest,
+      inspection.publicationStateDigest,
+    );
+    assert.deepEqual(
+      visibleAfterRename[0]?.temporaries.map(
+        ({ temporaryName }) => temporaryName,
+      ),
+      [path.basename(temporary)],
+    );
+    assert.deepEqual(visibleAfterRename[0]?.auditTag, {
+      status: 'present',
+      tagRef,
+      refObjectOid: tagObject,
+      objectType: 'tag',
+    });
+
+    assert.throws(
+      () =>
+        storeAvailableHumanResolutionGrant(
+          paths,
+          grantId,
+          `${JSON.stringify({ grantId })}\n`,
+        ),
+      (error: unknown) =>
+        isWorkflowError(error, 'HUMAN_RESOLUTION_GRANT_EXISTS'),
+    );
+    assert.deepEqual(
+      discardHumanResolutionGrantPublication(
+        repository,
+        grantId,
+        inspection.publicationStateDigest,
+        reason,
+      ),
+      {
+        action: 'quarantined',
+        grantId,
+        publicationStateDigest: inspection.publicationStateDigest,
+      },
+    );
+    assert.throws(
+      () =>
+        storeAvailableHumanResolutionGrant(
+          paths,
+          grantId,
+          `${JSON.stringify({ grantId })}\n`,
+        ),
+      (error: unknown) =>
+        isWorkflowError(error, 'HUMAN_RESOLUTION_GRANT_EXISTS'),
+    );
+    assert.doesNotThrow(() =>
+      storeAvailableHumanResolutionGrant(
+        paths,
+        otherGrantId,
+        `${JSON.stringify({ grantId: otherGrantId })}\n`,
+      ),
+    );
+  } finally {
+    fs.rmSync(repository, { recursive: true, force: true });
+  }
+});
+
+test('publication recovery reclaims receipt publication temps before and after artifact quarantine', () => {
+  for (const killOnReceiptRename of [1, 2]) {
+    const repository = createFixtureRepository();
+    const grantId =
+      killOnReceiptRename === 1
+        ? '91919191-9191-4191-8191-919191919191'
+        : '92929292-9292-4292-8292-929292929292';
+    const reason =
+      'Recover an interrupted publication-recovery receipt write exactly.';
+    try {
+      const repositoryState = discoverRepository(repository);
+      const paths = investigationRuntimePaths(
+        repositoryState.gitCommonDirectory,
+        'workflow-engine',
+      );
+      const available = path.join(
+        paths.root,
+        'human-resolutions',
+        'grants',
+        'available',
+      );
+      const recoveryDirectory = path.join(
+        paths.root,
+        'human-resolutions',
+        'grants',
+        'publication-recoveries',
+      );
+      const receiptPath = path.join(recoveryDirectory, `${grantId}.json`);
+      fs.mkdirSync(available, { recursive: true, mode: 0o700 });
+      fs.chmodSync(available, 0o700);
+      const temporary = path.join(
+        available,
+        `${grantId}.json.99999999.20202020-2020-4020-8020-202020202020.tmp`,
+      );
+      fs.writeFileSync(
+        temporary,
+        `{"partial":"receipt-rename-${killOnReceiptRename}"}\n`,
+        { mode: 0o600 },
+      );
+      const inspection = inspectHumanResolutionGrantPublicationRecoveries(
+        repository,
+        grantId,
+      )[0]!;
+      const child = spawnSync(
+        process.execPath,
+        [
+          '--experimental-strip-types',
+          '--input-type=module',
+          '--eval',
+          `
+            const fs = (await import('node:fs')).default;
+            const originalRename = fs.renameSync.bind(fs);
+            let receiptRenames = 0;
+            fs.renameSync = (source, target) => {
+              if (String(target) === ${JSON.stringify(receiptPath)}) {
+                receiptRenames += 1;
+                if (receiptRenames === ${killOnReceiptRename}) {
+                  process.kill(process.pid, 'SIGKILL');
+                }
+              }
+              return originalRename(source, target);
+            };
+            const { discardHumanResolutionGrantPublication } =
+              await import(${JSON.stringify(INVESTIGATION_SESSION_MODULE_URL)});
+            discardHumanResolutionGrantPublication(
+              ${JSON.stringify(repository)},
+              ${JSON.stringify(grantId)},
+              ${JSON.stringify(inspection.publicationStateDigest)},
+              ${JSON.stringify(reason)},
+            );
+          `,
+        ],
+        { cwd: repository, encoding: 'utf8' },
+      );
+      assert.equal(child.signal, 'SIGKILL');
+      assert.equal(
+        fs
+          .readdirSync(recoveryDirectory)
+          .filter((name) => name.endsWith('.tmp')).length,
+        1,
+      );
+
+      const visible = inspectHumanResolutionGrantPublicationRecoveries(
+        repository,
+        grantId,
+      );
+      assert.equal(visible.length, 1);
+      assert.equal(
+        visible[0]?.publicationStateDigest,
+        inspection.publicationStateDigest,
+      );
+      assert.equal(
+        fs
+          .readdirSync(recoveryDirectory)
+          .filter((name) => name.endsWith('.tmp')).length,
+        0,
+      );
+      assert.doesNotThrow(() =>
+        discardHumanResolutionGrantPublication(
+          repository,
+          grantId,
+          inspection.publicationStateDigest,
+          reason,
+        ),
+      );
+      assert.equal(
+        JSON.parse(fs.readFileSync(receiptPath, 'utf8')).phase,
+        'quarantined',
+      );
+    } finally {
+      fs.rmSync(repository, { recursive: true, force: true });
+    }
   }
 });
 
@@ -2522,6 +4656,89 @@ test('failed provider work can retry without discarding completed main input', (
       manifest: fixture.blindManifest,
       request: replacement,
     });
+    const retryReservationPath = path.join(
+      fixture.paths.refs,
+      `${waiting.investigationId}.provider-retry-2.json`,
+    );
+    const retryReservationDigest = sha256(
+      fs.readFileSync(retryReservationPath, 'utf8'),
+    );
+    const pendingResolutionState = inspectInvestigationResolutionState(
+      fixture.paths,
+      waiting.investigationId,
+      fixture.blindManifest.repositoryId,
+    );
+    assert.deepEqual(
+      (
+        pendingResolutionState.envelope as unknown as {
+          providerRetryReservations: unknown;
+        }
+      ).providerRetryReservations,
+      [
+        {
+          attempt: 2,
+          previousInvocationId: waiting.providerInvocationId,
+          invocationId: replacement.invocationId,
+          reservationDigest: retryReservationDigest,
+          status: 'pending',
+        },
+      ],
+    );
+    createProviderInvocation(fixture.paths, {
+      investigationId: 'investigation-other-owner',
+      changeId: waiting.changeId,
+      attempt: 2,
+      manifest: fixture.blindManifest,
+      request: replacement,
+    });
+    assert.throws(
+      () =>
+        inspectInvestigationResolutionState(
+          fixture.paths,
+          waiting.investigationId,
+          fixture.blindManifest.repositoryId,
+        ),
+      (error) =>
+        isWorkflowError(error, 'HUMAN_RESOLUTION_PROVIDER_STATE_UNSAFE'),
+    );
+    fs.rmSync(path.join(fixture.paths.invocations, replacement.invocationId), {
+      recursive: true,
+    });
+    createProviderInvocation(fixture.paths, {
+      investigationId: waiting.investigationId,
+      changeId: waiting.changeId,
+      attempt: 2,
+      manifest: fixture.blindManifest,
+      request: replacement,
+    });
+    const pendingInvocationResolutionState =
+      inspectInvestigationResolutionState(
+        fixture.paths,
+        waiting.investigationId,
+        fixture.blindManifest.repositoryId,
+      );
+    assert.notEqual(
+      pendingInvocationResolutionState.currentStateDigest,
+      pendingResolutionState.currentStateDigest,
+    );
+    assert.equal(
+      pendingInvocationResolutionState.envelope.providerInvocationDigests.some(
+        ({ invocationId }) => invocationId === replacement.invocationId,
+      ),
+      true,
+    );
+    assert.deepEqual(
+      (
+        pendingInvocationResolutionState.envelope as unknown as {
+          providerRetryReservations: unknown;
+        }
+      ).providerRetryReservations,
+      (
+        pendingResolutionState.envelope as unknown as {
+          providerRetryReservations: unknown;
+        }
+      ).providerRetryReservations,
+    );
     const regeneratedReplacement = createProviderInvocationRequest(
       providerRequestInput(fixture, 'invocation-regenerated-second-attempt', {
         nonce: 'regenerated-retry-nonce-at-least-16-bytes',
@@ -2555,6 +4772,31 @@ test('failed provider work can retry without discarding completed main input', (
       readProviderRetryReservation(fixture.paths, waiting.investigationId, 2),
       retryReservation,
     );
+    const committedResolutionState = inspectInvestigationResolutionState(
+      fixture.paths,
+      waiting.investigationId,
+      fixture.blindManifest.repositoryId,
+    );
+    assert.notEqual(
+      committedResolutionState.currentStateDigest,
+      pendingResolutionState.currentStateDigest,
+    );
+    assert.deepEqual(
+      (
+        committedResolutionState.envelope as unknown as {
+          providerRetryReservations: unknown;
+        }
+      ).providerRetryReservations,
+      [
+        {
+          attempt: 2,
+          previousInvocationId: waiting.providerInvocationId,
+          invocationId: replacement.invocationId,
+          reservationDigest: retryReservationDigest,
+          status: 'committed',
+        },
+      ],
+    );
 
     completeBlindInvocation(
       { ...fixture, request: replacement },
@@ -2570,6 +4812,105 @@ test('failed provider work can retry without discarding completed main input', (
     );
     assert.equal(joined.state, 'awaiting-group-dispositions');
     assert.equal(joined.checkpoint?.kind, 'group-dispositions');
+
+    const stableResolutionState = inspectInvestigationResolutionState(
+      fixture.paths,
+      joined.investigationId,
+      fixture.blindManifest.repositoryId,
+    );
+    const unrelatedRequest = createProviderInvocationRequest(
+      providerRequestInput(fixture, 'invocation-unrelated-retry', {
+        nonce: 'unrelated-retry-nonce-at-least-16-bytes',
+      }),
+    );
+    createProviderRetryReservation(fixture.paths, {
+      investigationId: 'investigation-unrelated-retry',
+      changeId: waiting.changeId,
+      attempt: 2,
+      previousInvocationId: 'invocation-unrelated-previous',
+      manifest: fixture.blindManifest,
+      request: unrelatedRequest,
+    });
+    assert.equal(
+      inspectInvestigationResolutionState(
+        fixture.paths,
+        joined.investigationId,
+        fixture.blindManifest.repositoryId,
+      ).currentStateDigest,
+      stableResolutionState.currentStateDigest,
+    );
+
+    const extraRequest = createProviderInvocationRequest(
+      providerRequestInput(fixture, 'invocation-extra-retry', {
+        nonce: 'extra-retry-nonce-at-least-16-bytes',
+      }),
+    );
+    createProviderRetryReservation(fixture.paths, {
+      investigationId: joined.investigationId,
+      changeId: waiting.changeId,
+      attempt: 4,
+      previousInvocationId: replacement.invocationId,
+      manifest: fixture.blindManifest,
+      request: extraRequest,
+    });
+    assert.throws(
+      () =>
+        inspectInvestigationResolutionState(
+          fixture.paths,
+          joined.investigationId,
+          fixture.blindManifest.repositoryId,
+        ),
+      (error) =>
+        isWorkflowError(error, 'HUMAN_RESOLUTION_PROVIDER_STATE_UNSAFE'),
+    );
+    assert.notEqual(
+      inspectInvestigationQuarantineState(
+        fixture.paths,
+        joined.investigationId,
+        fixture.blindManifest.repositoryId,
+      ).envelope.ambiguityDigest,
+      null,
+    );
+    fs.unlinkSync(
+      path.join(
+        fixture.paths.refs,
+        `${joined.investigationId}.provider-retry-4.json`,
+      ),
+    );
+
+    const exactRetryReservation = fs.readFileSync(retryReservationPath, 'utf8');
+    fs.writeFileSync(retryReservationPath, '{"broken":true}\n');
+    assert.throws(
+      () =>
+        inspectInvestigationResolutionState(
+          fixture.paths,
+          joined.investigationId,
+          fixture.blindManifest.repositoryId,
+        ),
+      (error) =>
+        isWorkflowError(error, 'HUMAN_RESOLUTION_PROVIDER_STATE_UNSAFE'),
+    );
+    const firstMalformedDigest = inspectInvestigationQuarantineState(
+      fixture.paths,
+      joined.investigationId,
+      fixture.blindManifest.repositoryId,
+    ).envelope.ambiguityDigest;
+    fs.writeFileSync(retryReservationPath, '{"broken":false}\n');
+    const secondMalformedDigest = inspectInvestigationQuarantineState(
+      fixture.paths,
+      joined.investigationId,
+      fixture.blindManifest.repositoryId,
+    ).envelope.ambiguityDigest;
+    assert.notEqual(firstMalformedDigest, secondMalformedDigest);
+    fs.writeFileSync(retryReservationPath, exactRetryReservation);
+    assert.equal(
+      inspectInvestigationResolutionState(
+        fixture.paths,
+        joined.investigationId,
+        fixture.blindManifest.repositoryId,
+      ).currentStateDigest,
+      stableResolutionState.currentStateDigest,
+    );
   } finally {
     fs.rmSync(fixture.repository, { recursive: true, force: true });
   }
@@ -2790,6 +5131,92 @@ function providerOutcome(
     stderr: '',
     ...override,
   };
+}
+
+function workflowSourceModuleUrl(fileName: string): string {
+  return pathToFileURL(
+    path.join(sourceRepositoryRoot, 'packages/workflow-engine/src', fileName),
+  ).href;
+}
+
+function runLockCrashChild(
+  cwd: string,
+  operation: string,
+  phase: 'write' | 'unlink',
+  targetFragment: string,
+): ReturnType<typeof spawnSync> {
+  const script = `
+    const fs = (await import('node:fs')).default;
+    const descriptorPaths = new Map();
+    const originalOpen = fs.openSync.bind(fs);
+    fs.openSync = (target, ...args) => {
+      const descriptor = originalOpen(target, ...args);
+      descriptorPaths.set(descriptor, String(target));
+      return descriptor;
+    };
+    if (${JSON.stringify(phase)} === 'write') {
+      const originalWrite = fs.writeFileSync.bind(fs);
+      fs.writeFileSync = (target, ...args) => {
+        const observed =
+          typeof target === 'number' ? descriptorPaths.get(target) : String(target);
+        if (
+          typeof observed === 'string' &&
+          observed.includes(${JSON.stringify(targetFragment)}) &&
+          observed.endsWith('.tmp')
+        ) {
+          process.kill(process.pid, 'SIGKILL');
+        }
+        return originalWrite(target, ...args);
+      };
+    } else {
+      const originalUnlink = fs.unlinkSync.bind(fs);
+      fs.unlinkSync = (target, ...args) => {
+        if (
+          typeof target === 'string' &&
+          target.includes(${JSON.stringify(targetFragment)}) &&
+          target.endsWith('.tmp')
+        ) {
+          process.kill(process.pid, 'SIGKILL');
+        }
+        return originalUnlink(target, ...args);
+      };
+    }
+    ${operation}
+  `;
+  return spawnSync(
+    process.execPath,
+    ['--experimental-strip-types', '--input-type=module', '--eval', script],
+    { cwd, encoding: 'utf8' },
+  );
+}
+
+function assertLinkedLockPair(finalLock: string): string {
+  const finalStats = fs.lstatSync(finalLock);
+  const temporaries = fs
+    .readdirSync(path.dirname(finalLock))
+    .filter(
+      (entry) =>
+        entry.startsWith(`${path.basename(finalLock)}.`) &&
+        entry.endsWith('.tmp'),
+    )
+    .map((entry) => path.join(path.dirname(finalLock), entry))
+    .filter((temporary) => {
+      const stats = fs.lstatSync(temporary);
+      return stats.dev === finalStats.dev && stats.ino === finalStats.ino;
+    });
+  assert.equal(temporaries.length, 1);
+  const temporary = temporaries[0]!;
+  const temporaryStats = fs.lstatSync(temporary);
+  assert.equal(finalStats.isFile(), true);
+  assert.equal(temporaryStats.isFile(), true);
+  assert.equal(finalStats.mode & 0o777, 0o600);
+  assert.equal(temporaryStats.mode & 0o777, 0o600);
+  assert.equal(finalStats.dev, temporaryStats.dev);
+  assert.equal(finalStats.ino, temporaryStats.ino);
+  assert.equal(finalStats.nlink, 2);
+  assert.equal(temporaryStats.nlink, 2);
+  assert.doesNotThrow(() => JSON.parse(fs.readFileSync(finalLock, 'utf8')));
+  return temporary;
 }
 
 function runWorkflowCli(

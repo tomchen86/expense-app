@@ -18,10 +18,13 @@ import {
 import {
   assertHumanResolutionConsequences,
   assertHumanResolutionDecision,
+  assertHumanResolutionLifecycleBarrier,
   humanResolutionDecisionSchemaDigest,
   inspectInvestigationResolutionState,
   inspectInvestigationQuarantineState,
+  readActiveHumanResolutionJournal,
   readInvestigationSession,
+  rollbackAvailableHumanResolutionGrant,
   storeAvailableHumanResolutionGrant,
   type HumanResolutionConsequences,
   type HumanResolutionDecision,
@@ -32,13 +35,14 @@ import {
 import { loadInvestigationRuntimeContext } from './lifecycle-context.ts';
 import {
   maintainerGrantStorePaths,
-  storeAvailableMaintainerGrant,
+  storeAvailableMaintainerGrantUnderLifecycleLock,
 } from './maintainer-store.ts';
 import {
   assertChangeId,
   assertPolicyPathInsideRepository,
   normalizeExactRepositoryPath,
 } from './paths.ts';
+import { withRepositoryLifecycleOperation } from './session-store.ts';
 
 const COMMIT_OID = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
 const GRANT_ID =
@@ -466,19 +470,31 @@ export function issueMaintainerGrant(
   const envelope = { payload, signature };
   const canonicalEnvelope = canonicalGrantEnvelope(envelope);
 
-  const tagObject = createAuditTag(
-    repository.repositoryRoot,
-    repository.head,
-    tagRef,
-    canonicalEnvelope,
-    signerIdentity,
-  );
-  try {
-    storeAvailableMaintainerGrant(repository.gitCommonDirectory, envelope);
-  } catch (error) {
-    runGit(repository.repositoryRoot, ['update-ref', '-d', tagRef, tagObject]);
-    throw error;
-  }
+  withRepositoryLifecycleOperation(storePaths.runtime, (assertOwned) => {
+    assertOwned();
+    const tagObject = createAuditTag(
+      repository.repositoryRoot,
+      repository.head,
+      tagRef,
+      canonicalEnvelope,
+      signerIdentity,
+    );
+    try {
+      storeAvailableMaintainerGrantUnderLifecycleLock(
+        repository.gitCommonDirectory,
+        envelope,
+        assertOwned,
+      );
+    } catch (error) {
+      runGit(repository.repositoryRoot, [
+        'update-ref',
+        '-d',
+        tagRef,
+        tagObject,
+      ]);
+      throw error;
+    }
+  });
 
   return {
     grantId,
@@ -509,6 +525,20 @@ export function issueHumanResolutionGrant(
     );
   }
   const context = loadInvestigationRuntimeContext(repository.repositoryRoot);
+  assertHumanResolutionLifecycleBarrier(context.lifecycleRuntime.root);
+  const session = readInvestigationSession(
+    context.runtime,
+    request.investigationId,
+  );
+  if (
+    readActiveHumanResolutionJournal(context.runtime, session.changeId) !== null
+  ) {
+    throw workflowError(
+      'HUMAN_RESOLUTION_RECOVERY_REQUIRED',
+      'An active human-resolution transaction must be recovered before another grant is issued.',
+      ExitCode.conflict,
+    );
+  }
   const decision = assertHumanResolutionDecision(request.decision);
   const state =
     decision.kind === 'quarantine'
@@ -615,24 +645,91 @@ export function issueHumanResolutionGrant(
   );
   const envelope = { payload, signature };
   const canonicalEnvelope = canonicalHumanResolutionGrantEnvelope(envelope);
-  const tagObject = createAuditTag(
-    repository.repositoryRoot,
-    repository.head,
-    tagRef,
-    canonicalEnvelope,
-    signerIdentity,
+  const { availableTokenPath } = withRepositoryLifecycleOperation(
+    context.lifecycleRuntime,
+    (assertOwned) => {
+      const currentRepository = discoverRepository(repository.repositoryRoot);
+      if (
+        currentRepository.head !== repository.head ||
+        currentRepository.tree !== repository.tree
+      ) {
+        throw humanResolutionGrantInvalid(
+          'Repository baseline changed before human resolution grant publication.',
+        );
+      }
+      const currentState =
+        decision.kind === 'quarantine'
+          ? inspectInvestigationQuarantineState(
+              context.runtime,
+              request.investigationId,
+              policy.repository.id,
+            )
+          : inspectInvestigationResolutionState(
+              context.runtime,
+              request.investigationId,
+              policy.repository.id,
+            );
+      if (currentState.currentStateDigest !== state.currentStateDigest) {
+        throw humanResolutionGrantInvalid(
+          'Investigation state changed before human resolution grant publication.',
+        );
+      }
+      assertOwned();
+      const stored = storeAvailableHumanResolutionGrant(
+        context.runtime,
+        grantId,
+        canonicalEnvelope,
+      );
+      let tagObject: string | undefined;
+      try {
+        assertOwned();
+        tagObject = createAuditTag(
+          repository.repositoryRoot,
+          repository.head,
+          tagRef,
+          canonicalEnvelope,
+          signerIdentity,
+        );
+        assertOwned();
+        return { availableTokenPath: stored };
+      } catch (error) {
+        if (tagObject !== undefined) {
+          try {
+            runGit(repository.repositoryRoot, [
+              'update-ref',
+              '-d',
+              tagRef,
+              tagObject,
+            ]);
+          } catch {
+            throw humanResolutionGrantPublicationRecoveryRequired();
+          }
+        } else if (
+          runGit(
+            repository.repositoryRoot,
+            ['rev-parse', '--verify', tagRef],
+            true,
+          ).trim()
+        ) {
+          throw humanResolutionGrantPublicationRecoveryRequired();
+        }
+        let rollback: ReturnType<typeof rollbackAvailableHumanResolutionGrant>;
+        try {
+          rollback = rollbackAvailableHumanResolutionGrant(
+            context.runtime,
+            grantId,
+            canonicalEnvelope,
+          );
+        } catch {
+          throw humanResolutionGrantPublicationRecoveryRequired();
+        }
+        if (rollback !== 'removed') {
+          throw humanResolutionGrantPublicationRecoveryRequired();
+        }
+        throw error;
+      }
+    },
   );
-  let availableTokenPath: string;
-  try {
-    availableTokenPath = storeAvailableHumanResolutionGrant(
-      context.runtime,
-      grantId,
-      canonicalEnvelope,
-    );
-  } catch (error) {
-    runGit(repository.repositoryRoot, ['update-ref', '-d', tagRef, tagObject]);
-    throw error;
-  }
   return {
     grantId,
     tagRef,
@@ -641,6 +738,14 @@ export function issueHumanResolutionGrant(
     envelope,
     state,
   };
+}
+
+function humanResolutionGrantPublicationRecoveryRequired() {
+  return workflowError(
+    'HUMAN_RESOLUTION_GRANT_PUBLICATION_RECOVERY_REQUIRED',
+    'Human resolution grant publication could not safely reconcile its audit tag and local token.',
+    ExitCode.unsafeEnvironment,
+  );
 }
 
 export function validateHumanResolutionGrantPayload(
