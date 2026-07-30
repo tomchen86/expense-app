@@ -35,7 +35,7 @@ export const PROPOSE_EXEMPTION_SESSION_STORE_POLICY_DIGEST = sha256(
  * limits within these bounds.
  */
 export const MAX_PROVIDER_LIMITS = Object.freeze({
-  timeoutMs: 300_000,
+  timeoutMs: 600_000,
   aggregateOutputBytes: 1_048_576,
 });
 

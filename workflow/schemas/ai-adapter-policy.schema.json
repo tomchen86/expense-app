@@ -49,7 +49,7 @@
         "timeoutMs": {
           "type": "integer",
           "minimum": 1,
-          "maximum": 300000
+          "maximum": 600000
         },
         "aggregateOutputBytes": {
           "type": "integer",
