@@ -43,6 +43,7 @@ import {
   createPlanningContributionEnvelope,
   createPlanReviewDispositionsEnvelope,
   createPlanReviewProgressEnvelope,
+  createProviderRetryEnvelope,
   getProposeStatus,
   resumePropose,
   startPropose,
@@ -5903,6 +5904,283 @@ test('failed provider work can retry without discarding completed main input', (
     );
   } finally {
     fs.rmSync(fixture.repository, { recursive: true, force: true });
+  }
+});
+
+test('propose retry envelope authorizes one idempotent replacement survey', () => {
+  const repository = createFixtureRepository();
+  const inputDirectory = fs.mkdtempSync(
+    path.join(os.tmpdir(), 'workflow-provider-retry-input-'),
+  );
+  const changeId = 'retry-provider-survey';
+  try {
+    git(repository, ['checkout', '-b', `work/${changeId}`]);
+    const started = startPropose(
+      repository,
+      changeId,
+      {
+        schemaVersion: 1,
+        summary: 'Exercise the explicit provider retry transition.',
+        explicitPaths: ['packages/workflow-engine/src/provider-worker.ts'],
+        explicitSymbols: ['runProviderWorker'],
+        explicitConfigKeys: [],
+        renamePairs: [],
+      },
+      {
+        explicitActor: 'codex',
+        environment: {},
+      },
+    );
+    const investigationId = started.investigation!.investigationId;
+    const afterMain = resumePropose(
+      repository,
+      changeId,
+      createInvestigationCheckpointEnvelope(started.investigation!, {
+        reference: 'provider-retry-main-terms',
+        terms: [
+          {
+            kind: 'symbol',
+            value: 'runProviderWorker',
+            rationale:
+              'The provider worker owns durable launch and failure handling.',
+            expectedRelationship:
+              'Retry must preserve the failed invocation before replacement.',
+          },
+        ],
+      }),
+    );
+    const paths = investigationRuntimePaths(
+      discoverRepository(repository).gitCommonDirectory,
+      'workflow-engine',
+    );
+    const firstInvocationId = afterMain.investigation!.providerInvocationId;
+    const firstRequest = readProviderInvocationRequest(
+      paths,
+      firstInvocationId,
+    );
+    const firstClaim = claimProviderInvocation(paths, firstInvocationId, {
+      workerId: 'worker-first-retryable-failure',
+      leaseDurationMs: 1_000,
+    });
+    failProviderInvocation(paths, firstInvocationId, {
+      expectedRevision: firstClaim.record.revision,
+      leaseGeneration: firstClaim.record.leaseGeneration,
+      leaseToken: firstClaim.leaseToken,
+      failure: {
+        kind: 'retryable',
+        code: 'PROVIDER_PROCESS_FAILED',
+        message: 'Provider exited non-zero.',
+      },
+    });
+    const firstFailureBytes = fs.readFileSync(
+      path.join(paths.invocations, firstInvocationId, 'state.json'),
+      'utf8',
+    );
+    const failed = getProposeStatus(repository, investigationId);
+    assert.equal(failed.nextAction, 'retry-provider');
+    if (failed.investigation?.kind !== 'investigation') {
+      assert.fail('Expected an ordinary investigation retry status.');
+    }
+    const failedInvestigation = failed.investigation;
+    assert.deepEqual(failed.inputSchema, {
+      schemaVersion: 1,
+      kind: 'provider-retry',
+      binding: {
+        investigationId,
+        changeId,
+        expectedRevision: failedInvestigation.revision,
+        baseline: failedInvestigation.baseline,
+        intentDigest: failedInvestigation.intentDigest,
+        blindManifestDigest: failedInvestigation.blindManifestDigest,
+        failedInvocation: {
+          invocationId: firstInvocationId,
+          attempt: failedInvestigation.provider.attempt,
+          revision: failedInvestigation.provider.revision,
+          requestDigest: firstRequest.requestDigest,
+          failureDigest: sha256(
+            canonicalJson(failedInvestigation.provider.failure),
+          ),
+        },
+      },
+      requiredAcknowledgement: {
+        acknowledgeProviderCost: true,
+      },
+    });
+    assert.throws(
+      () =>
+        resumePropose(repository, changeId, {
+          ...createProviderRetryEnvelope(repository, failed, {
+            acknowledgeProviderCost: true,
+          }),
+          acknowledgeProviderCost: false,
+        } as never),
+      (error) => isWorkflowError(error, 'PROPOSE_INPUT_INVALID'),
+    );
+
+    const retryEnvelope = createProviderRetryEnvelope(repository, failed, {
+      acknowledgeProviderCost: true,
+    });
+    assert.throws(
+      () =>
+        resumePropose(repository, changeId, {
+          ...retryEnvelope,
+          failedInvocation: {
+            ...retryEnvelope.failedInvocation,
+            failureDigest: 'f'.repeat(64),
+          },
+        }),
+      (error) => isWorkflowError(error, 'PROVIDER_RETRY_INPUT_STALE'),
+    );
+    assert.equal(readProviderRetryReservation(paths, investigationId, 2), null);
+    assert.equal(
+      fs
+        .readdirSync(paths.invocations)
+        .filter((entry) => entry.startsWith('invocation-')).length,
+      1,
+    );
+    const mainTermsBeforeRetry = structuredClone(
+      readInvestigationSession(paths, investigationId).milestones.mainTerms,
+    );
+    const driven: string[] = [];
+    const dispatched: string[] = [];
+    const retried = resumePropose(repository, changeId, retryEnvelope, {
+      providerDriver({ request }) {
+        driven.push(request.invocationId);
+      },
+      providerDispatcher(_cwd, invocationId) {
+        dispatched.push(invocationId);
+      },
+    });
+    const secondInvocationId = retried.investigation!.providerInvocationId;
+    assert.notEqual(secondInvocationId, firstInvocationId);
+    assert.equal(retried.investigation!.provider.attempt, 2);
+    assert.equal(
+      retried.investigation!.revision,
+      failed.investigation!.revision + 1,
+    );
+    assert.deepEqual(driven, [secondInvocationId]);
+    assert.equal(dispatched.length, 0);
+    const secondRequest = readProviderInvocationRequest(
+      paths,
+      secondInvocationId,
+    );
+    const {
+      invocationId: _firstInvocationId,
+      nonce: _firstNonce,
+      requestDigest: _firstRequestDigest,
+      ...firstBinding
+    } = firstRequest;
+    const {
+      invocationId: _secondInvocationId,
+      nonce: _secondNonce,
+      requestDigest: _secondRequestDigest,
+      ...secondBinding
+    } = secondRequest;
+    assert.deepEqual(secondBinding, firstBinding);
+    assert.notEqual(secondRequest.nonce, firstRequest.nonce);
+    assert.notEqual(secondRequest.requestDigest, firstRequest.requestDigest);
+    assert.equal(
+      fs.readFileSync(
+        path.join(paths.invocations, firstInvocationId, 'state.json'),
+        'utf8',
+      ),
+      firstFailureBytes,
+    );
+    const retryReservation = readProviderRetryReservation(
+      paths,
+      investigationId,
+      2,
+    );
+    assert.equal(retryReservation?.previousInvocationId, firstInvocationId);
+    assert.equal(retryReservation?.invocationId, secondInvocationId);
+    assert.deepEqual(
+      readInvestigationSession(paths, investigationId).milestones.mainTerms,
+      mainTermsBeforeRetry,
+    );
+
+    const replayedPrepared = resumePropose(
+      repository,
+      changeId,
+      retryEnvelope,
+      {
+        providerDispatcher(_cwd, invocationId) {
+          dispatched.push(invocationId);
+        },
+      },
+    );
+    assert.equal(
+      replayedPrepared.investigation!.providerInvocationId,
+      secondInvocationId,
+    );
+    assert.equal(
+      replayedPrepared.investigation!.revision,
+      retried.investigation!.revision,
+    );
+    assert.deepEqual(driven, [secondInvocationId]);
+    assert.deepEqual(dispatched, [secondInvocationId]);
+
+    const secondClaim = claimProviderInvocation(paths, secondInvocationId, {
+      workerId: 'worker-second-retryable-failure',
+      leaseDurationMs: 1_000,
+    });
+    failProviderInvocation(paths, secondInvocationId, {
+      expectedRevision: secondClaim.record.revision,
+      leaseGeneration: secondClaim.record.leaseGeneration,
+      leaseToken: secondClaim.leaseToken,
+      failure: {
+        kind: 'retryable',
+        code: 'PROVIDER_PROCESS_FAILED',
+        message: 'Replacement provider also exited non-zero.',
+      },
+    });
+    const replayedFailed = resumePropose(repository, changeId, retryEnvelope);
+    assert.equal(
+      replayedFailed.investigation!.providerInvocationId,
+      secondInvocationId,
+    );
+    assert.equal(replayedFailed.investigation!.provider.attempt, 2);
+    assert.equal(readProviderRetryReservation(paths, investigationId, 3), null);
+    assert.equal(
+      fs
+        .readdirSync(paths.invocations)
+        .filter((entry) => entry.startsWith('invocation-')).length,
+      2,
+    );
+    const retryPath = path.join(inputDirectory, 'provider-retry.json');
+    fs.writeFileSync(retryPath, `${canonicalJson(retryEnvelope)}\n`, 'utf8');
+    const cliReplay = runWorkflowCli(
+      repository,
+      ['propose', changeId, '--resume', '--input', retryPath],
+      { WORKFLOW_TEST_DISABLE_PROVIDER_DISPATCH: '1' },
+    );
+    assert.equal(cliReplay.status, 0, cliReplay.stderr);
+    const cliReplayOutput = JSON.parse(cliReplay.stdout) as {
+      result: {
+        investigation: {
+          providerInvocationId: string;
+          provider: { attempt: number };
+        };
+      };
+    };
+    assert.equal(
+      cliReplayOutput.result.investigation.providerInvocationId,
+      secondInvocationId,
+    );
+    assert.equal(cliReplayOutput.result.investigation.provider.attempt, 2);
+    assert.equal(
+      fs
+        .readdirSync(paths.invocations)
+        .filter((entry) => entry.startsWith('invocation-')).length,
+      2,
+    );
+    const nextRetry = createProviderRetryEnvelope(repository, replayedFailed, {
+      acknowledgeProviderCost: true,
+    });
+    assert.equal(nextRetry.failedInvocation.invocationId, secondInvocationId);
+    assert.equal(nextRetry.expectedRevision, retried.investigation!.revision);
+  } finally {
+    fs.rmSync(repository, { recursive: true, force: true });
+    fs.rmSync(inputDirectory, { recursive: true, force: true });
   }
 });
 

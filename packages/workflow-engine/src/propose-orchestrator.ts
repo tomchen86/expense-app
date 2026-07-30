@@ -40,7 +40,7 @@ import {
   createEvidenceNode,
   type EvidenceNode,
 } from './evidence-node.ts';
-import { ExitCode, workflowError } from './errors.ts';
+import { ExitCode, WorkflowError, workflowError } from './errors.ts';
 import { protectedBranchRef, runGit } from './git.ts';
 import {
   deriveEngineFloor,
@@ -65,6 +65,7 @@ import {
   inspectReviewerTermResolutionAuthorization,
   reopenInvestigationForReviewerTermsUnderAuthority,
   resumeInvestigationSession,
+  retryInvestigationProvider,
   startInvestigationSessionUnderLifecycleLock,
   type InvestigationStatus,
 } from './investigation-session.ts';
@@ -188,6 +189,7 @@ import {
   readProviderInvocation,
   readProviderInvocationManifest,
   readProviderInvocationRequest,
+  readProviderRetryReservation,
   type BlindSurveyManifest,
   type NormalizedChangeIntent,
   type PlanReviewManifest,
@@ -348,11 +350,34 @@ export type ProviderProgressEnvelope = {
   blindManifestDigest: string;
 };
 
+export type ProviderRetryEnvelope = {
+  schemaVersion: 1;
+  kind: 'provider-retry';
+  investigationId: string;
+  changeId: string;
+  expectedRevision: number;
+  baseline: {
+    head: string;
+    tree: string;
+  };
+  intentDigest: string;
+  blindManifestDigest: string;
+  failedInvocation: {
+    invocationId: string;
+    attempt: number;
+    revision: number;
+    requestDigest: string;
+    failureDigest: string;
+  };
+  acknowledgeProviderCost: true;
+};
+
 export type ProposeInput =
   | InvestigationCheckpointEnvelope
   | PlanningContributionEnvelope
   | ExemptionPlanningContributionEnvelope
   | ProviderProgressEnvelope
+  | ProviderRetryEnvelope
   | PlanReviewProgressEnvelope
   | PlanReviewDispositionsEnvelope;
 
@@ -1461,7 +1486,8 @@ export function resumePropose(
   inputValue:
     | InvestigationCheckpointEnvelope
     | PlanningContributionEnvelope
-    | ProviderProgressEnvelope,
+    | ProviderProgressEnvelope
+    | ProviderRetryEnvelope,
   options?: ProposeResumeOptions,
 ): OrdinaryProposeOutput;
 export function resumePropose(
@@ -1556,6 +1582,10 @@ export function resumePropose(
 
   if (input.kind === 'plan-review-dispositions') {
     return completePlanReviewDispositions(cwd, input);
+  }
+
+  if (input.kind === 'provider-retry') {
+    return resumeProviderRetry(cwd, input, options);
   }
 
   if (input.kind === 'provider-progress') {
@@ -1729,6 +1759,62 @@ export function createProviderProgressEnvelope(
   };
 }
 
+export function createProviderRetryEnvelope(
+  cwd: string,
+  output: ProposeOutput,
+  acknowledgement: { acknowledgeProviderCost: true },
+): ProviderRetryEnvelope {
+  const status = output.investigation;
+  if (
+    output.nextAction !== 'retry-provider' ||
+    status === null ||
+    status.state === 'investigation-exempt' ||
+    status.provider.state !== 'failed' ||
+    status.provider.failure?.kind !== 'retryable' ||
+    acknowledgement.acknowledgeProviderCost !== true
+  ) {
+    throw workflowError(
+      'PROVIDER_RETRY_NOT_AVAILABLE',
+      'The propose wrapper has no retryable failed blind-survey invocation.',
+      ExitCode.guard,
+    );
+  }
+  const context = loadInvestigationRuntimeContext(cwd);
+  const request = readProviderInvocationRequest(
+    context.runtime,
+    status.providerInvocationId,
+  );
+  const session = readInvestigationSession(
+    context.runtime,
+    status.investigationId,
+  );
+  if (request.requestDigest !== session.blindRequestDigest) {
+    throw workflowError(
+      'PROVIDER_RETRY_BINDING_INVALID',
+      'The failed provider request no longer matches the investigation.',
+      ExitCode.staleState,
+    );
+  }
+  return {
+    schemaVersion: 1,
+    kind: 'provider-retry',
+    investigationId: status.investigationId,
+    changeId: status.changeId,
+    expectedRevision: status.revision,
+    baseline: { ...status.baseline },
+    intentDigest: status.intentDigest,
+    blindManifestDigest: status.blindManifestDigest,
+    failedInvocation: {
+      invocationId: status.providerInvocationId,
+      attempt: status.provider.attempt,
+      revision: status.provider.revision,
+      requestDigest: request.requestDigest,
+      failureDigest: sha256(canonicalJson(status.provider.failure)),
+    },
+    acknowledgeProviderCost: true,
+  };
+}
+
 export function createPlanReviewProgressEnvelope(
   output: ProposeOutput,
 ): PlanReviewProgressEnvelope {
@@ -1805,6 +1891,186 @@ function dispatchPreparedInvocation(
     return;
   }
   dispatcher(cwd, status.providerInvocationId);
+}
+
+function resumeProviderRetry(
+  cwd: string,
+  input: ProviderRetryEnvelope,
+  options: ProposeResumeOptions,
+): ProposeOutput {
+  const current = getInvestigationStatus(cwd, input.investigationId);
+  assertProviderRetrySessionBinding(current, input);
+  const context = loadInvestigationRuntimeContext(cwd);
+  const failed = readProviderInvocation(
+    context.runtime,
+    input.failedInvocation.invocationId,
+  );
+  const failedRequest = readProviderInvocationRequest(
+    context.runtime,
+    failed.invocationId,
+  );
+  assertProviderRetryFailureBinding(input, failed, failedRequest);
+
+  let retried: InvestigationStatus;
+  if (current.revision === input.expectedRevision) {
+    if (current.providerInvocationId !== failed.invocationId) {
+      throw providerRetryInputStale();
+    }
+    try {
+      retried = retryInvestigationProvider(cwd, current.investigationId, {
+        expectedRevision: input.expectedRevision,
+        replacementRequest: createProviderInvocationRequest({
+          invocationId: createRuntimeId('invocation'),
+          nonce: `provider-retry-${crypto.randomUUID()}`,
+          purpose: failedRequest.purpose,
+          providerId: failedRequest.providerId,
+          roleAssignment: failedRequest.roleAssignment,
+          capabilityProfile: failedRequest.capabilityProfile,
+          repositoryId: failedRequest.repositoryId,
+          baseCommit: failedRequest.baseCommit,
+          baseTree: failedRequest.baseTree,
+          targetDigest: failedRequest.targetDigest,
+          inputManifestDigest: failedRequest.inputManifestDigest,
+          authorizationNodeId: failedRequest.authorizationNodeId,
+          writeAllowedPaths: [],
+          outputSchema: failedRequest.outputSchema,
+          evaluatorVersion: failedRequest.evaluatorVersion,
+          policyDigest: failedRequest.policyDigest,
+          limits: failedRequest.limits,
+        }),
+      });
+    } catch (error) {
+      if (
+        !(error instanceof WorkflowError) ||
+        error.code !== 'INVESTIGATION_CAS_MISMATCH'
+      ) {
+        throw error;
+      }
+      try {
+        retried = readExactProviderRetryReplay(cwd, input, failed);
+      } catch (replayError) {
+        if (
+          replayError instanceof WorkflowError &&
+          replayError.code === 'PROVIDER_RETRY_INPUT_STALE'
+        ) {
+          throw error;
+        }
+        throw replayError;
+      }
+    }
+  } else {
+    retried = readExactProviderRetryReplay(cwd, input, failed, current);
+  }
+
+  dispatchPreparedRetryInvocation(cwd, retried, options);
+  return getProposeStatus(
+    cwd,
+    retried.investigationId,
+    options.collaborationGrantValidation,
+  );
+}
+
+function readExactProviderRetryReplay(
+  cwd: string,
+  input: ProviderRetryEnvelope,
+  failed: ReturnType<typeof readProviderInvocation>,
+  observed?: InvestigationStatus,
+): InvestigationStatus {
+  const current =
+    observed ?? getInvestigationStatus(cwd, input.investigationId);
+  assertProviderRetrySessionBinding(current, input);
+  if (current.revision !== input.expectedRevision + 1) {
+    throw providerRetryInputStale();
+  }
+  const context = loadInvestigationRuntimeContext(cwd);
+  const reservation = readProviderRetryReservation(
+    context.runtime,
+    current.investigationId,
+    failed.attempt + 1,
+  );
+  const session = readInvestigationSession(
+    context.runtime,
+    current.investigationId,
+  );
+  if (
+    reservation === null ||
+    reservation.previousInvocationId !== failed.invocationId ||
+    reservation.invocationId !== current.providerInvocationId ||
+    current.provider.attempt !== failed.attempt + 1 ||
+    session.blindInvocationIds.at(-2) !== failed.invocationId ||
+    session.blindInvocationIds.at(-1) !== reservation.invocationId
+  ) {
+    throw providerRetryInputStale();
+  }
+  return current;
+}
+
+function dispatchPreparedRetryInvocation(
+  cwd: string,
+  status: InvestigationStatus,
+  options: ProposeResumeOptions,
+): void {
+  if (status.provider.state !== 'prepared') {
+    return;
+  }
+  if (options.providerDriver) {
+    const context = loadInvestigationRuntimeContext(cwd);
+    options.providerDriver({
+      paths: context.runtime,
+      request: readProviderInvocationRequest(
+        context.runtime,
+        status.providerInvocationId,
+      ),
+    });
+  } else if (options.providerDispatcher) {
+    options.providerDispatcher(cwd, status.providerInvocationId);
+  }
+}
+
+function assertProviderRetrySessionBinding(
+  current: InvestigationStatus,
+  input: ProviderRetryEnvelope,
+): void {
+  if (
+    input.investigationId !== current.investigationId ||
+    input.changeId !== current.changeId ||
+    canonicalJson(input.baseline) !== canonicalJson(current.baseline) ||
+    input.intentDigest !== current.intentDigest ||
+    input.blindManifestDigest !== current.blindManifestDigest
+  ) {
+    throw providerRetryInputStale();
+  }
+}
+
+function assertProviderRetryFailureBinding(
+  input: ProviderRetryEnvelope,
+  failed: ReturnType<typeof readProviderInvocation>,
+  request: ProviderInvocationRequest,
+): void {
+  if (
+    failed.investigationId !== input.investigationId ||
+    failed.changeId !== input.changeId ||
+    failed.invocationId !== input.failedInvocation.invocationId ||
+    failed.attempt !== input.failedInvocation.attempt ||
+    failed.revision !== input.failedInvocation.revision ||
+    failed.requestDigest !== input.failedInvocation.requestDigest ||
+    request.requestDigest !== input.failedInvocation.requestDigest ||
+    failed.state !== 'failed' ||
+    failed.failure === null ||
+    failed.failure.kind !== 'retryable' ||
+    sha256(canonicalJson(failed.failure)) !==
+      input.failedInvocation.failureDigest
+  ) {
+    throw providerRetryInputStale();
+  }
+}
+
+function providerRetryInputStale() {
+  return workflowError(
+    'PROVIDER_RETRY_INPUT_STALE',
+    'Provider retry input is not bound to the exact failed survey attempt.',
+    ExitCode.staleState,
+  );
 }
 
 function dispatchPreparedPlanReview(
@@ -2745,7 +3011,7 @@ function renderProposeOutput(
     investigation: status,
     createdDate,
     actorResolution,
-    inputSchema: inputSchemaForStatus(status),
+    inputSchema: inputSchemaForStatus(cwd, status),
     work: workFromRebuilt(rebuilt, []),
     materializedArtifacts: null,
     planReview: null,
@@ -6926,6 +7192,7 @@ function writeManagedEntries(
 }
 
 function inputSchemaForStatus(
+  cwd: string,
   status: InvestigationStatus,
 ): Record<string, unknown> | null {
   if (status.checkpoint !== null) {
@@ -6952,6 +7219,39 @@ function inputSchemaForStatus(
       schemaVersion: 1,
       kind: 'provider-progress',
       binding: createProviderProgressEnvelope(status),
+    };
+  }
+  if (
+    status.nextAction === 'retry-provider' &&
+    status.provider.state === 'failed' &&
+    status.provider.failure?.kind === 'retryable'
+  ) {
+    const context = loadInvestigationRuntimeContext(cwd);
+    const request = readProviderInvocationRequest(
+      context.runtime,
+      status.providerInvocationId,
+    );
+    return {
+      schemaVersion: 1,
+      kind: 'provider-retry',
+      binding: {
+        investigationId: status.investigationId,
+        changeId: status.changeId,
+        expectedRevision: status.revision,
+        baseline: status.baseline,
+        intentDigest: status.intentDigest,
+        blindManifestDigest: status.blindManifestDigest,
+        failedInvocation: {
+          invocationId: status.providerInvocationId,
+          attempt: status.provider.attempt,
+          revision: status.provider.revision,
+          requestDigest: request.requestDigest,
+          failureDigest: sha256(canonicalJson(status.provider.failure)),
+        },
+      },
+      requiredAcknowledgement: {
+        acknowledgeProviderCost: true,
+      },
     };
   }
   return null;
@@ -7021,6 +7321,9 @@ function assertProposeInput(value: unknown): ProposeInput {
   }
   if (value.kind === 'provider-progress') {
     return assertProviderProgressEnvelope(value);
+  }
+  if (value.kind === 'provider-retry') {
+    return assertProviderRetryEnvelope(value);
   }
   if (value.kind === 'plan-review-progress') {
     return assertPlanReviewProgressEnvelope(value);
@@ -7207,6 +7510,56 @@ function assertProviderProgressEnvelope(
     throw proposeInputInvalid();
   }
   return value as ProviderProgressEnvelope;
+}
+
+function assertProviderRetryEnvelope(value: unknown): ProviderRetryEnvelope {
+  if (
+    !isRecord(value) ||
+    !hasExactKeys(value, [
+      'schemaVersion',
+      'kind',
+      'investigationId',
+      'changeId',
+      'expectedRevision',
+      'baseline',
+      'intentDigest',
+      'blindManifestDigest',
+      'failedInvocation',
+      'acknowledgeProviderCost',
+    ]) ||
+    value.schemaVersion !== 1 ||
+    value.kind !== 'provider-retry' ||
+    typeof value.investigationId !== 'string' ||
+    typeof value.changeId !== 'string' ||
+    !Number.isInteger(value.expectedRevision) ||
+    (value.expectedRevision as number) < 0 ||
+    !isBaseline(value.baseline) ||
+    typeof value.intentDigest !== 'string' ||
+    !DIGEST.test(value.intentDigest) ||
+    typeof value.blindManifestDigest !== 'string' ||
+    !DIGEST.test(value.blindManifestDigest) ||
+    !isRecord(value.failedInvocation) ||
+    !hasExactKeys(value.failedInvocation, [
+      'invocationId',
+      'attempt',
+      'revision',
+      'requestDigest',
+      'failureDigest',
+    ]) ||
+    typeof value.failedInvocation.invocationId !== 'string' ||
+    !Number.isInteger(value.failedInvocation.attempt) ||
+    (value.failedInvocation.attempt as number) < 1 ||
+    !Number.isInteger(value.failedInvocation.revision) ||
+    (value.failedInvocation.revision as number) < 0 ||
+    typeof value.failedInvocation.requestDigest !== 'string' ||
+    !DIGEST.test(value.failedInvocation.requestDigest) ||
+    typeof value.failedInvocation.failureDigest !== 'string' ||
+    !DIGEST.test(value.failedInvocation.failureDigest) ||
+    value.acknowledgeProviderCost !== true
+  ) {
+    throw proposeInputInvalid();
+  }
+  return value as ProviderRetryEnvelope;
 }
 
 function assertPlanningBinding(
