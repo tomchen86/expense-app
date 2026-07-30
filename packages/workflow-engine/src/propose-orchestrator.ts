@@ -184,7 +184,9 @@ import {
   providerInvocationExists,
   providerInvocationManifestDigest,
   readBlindSurveyManifest,
+  readPlanReviewSnapshotRuntime,
   readProviderInvocation,
+  readProviderInvocationManifest,
   readProviderInvocationRequest,
   type BlindSurveyManifest,
   type NormalizedChangeIntent,
@@ -207,6 +209,8 @@ import {
 
 const MAX_CALLER_JSON_BYTES = 4 * 1024 * 1024;
 const DIGEST = /^[0-9a-f]{64}$/;
+const ATOMIC_TEXT_TEMP_SUFFIX =
+  /^([1-9][0-9]*)\.([0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})\.tmp$/;
 const PROPOSE_AUTHORIZATION_SCHEMA = 'workflow-propose-authorization.v2';
 const PROPOSE_AUTHORIZATION_OUTPUT_SCHEMA =
   'workflow-propose-authorization-output.v2';
@@ -454,11 +458,9 @@ type RebuiltInvestigation = {
   providerRoleResult: AdmittedRoleResult | null;
   reviewerTermSourceNode: EvidenceNode | null;
   reviewerTermSourceNodeIds: string[];
+  reviewerTermEvidenceNodes: EvidenceNode[];
   reviewerTermReopenCount: number;
   reviewerTerms: ReviewerTermSourceRecord['terms'];
-  reviewerPlanReviewNode: EvidenceNode | null;
-  reviewerProviderResultNode: EvidenceNode | null;
-  reviewerTargetSnapshotNode: EvidenceNode | null;
   reviewerRoleResult: AdmittedRoleResult | null;
   reviewerPriorGroupDispositions: StoredInvestigationCheckpoint | null;
   reviewerPriorWhyAnswers: StoredInvestigationCheckpoint | null;
@@ -3243,11 +3245,9 @@ function rebuildInvestigation(
     providerRoleResult,
     reviewerTermSourceNode: reviewerSource?.sourceNode ?? null,
     reviewerTermSourceNodeIds: reviewerSource?.sourceNodeIds ?? [],
+    reviewerTermEvidenceNodes: reviewerSource?.evidenceNodes ?? [],
     reviewerTermReopenCount: reviewerSource?.reopenCount ?? 0,
     reviewerTerms: reviewerSource?.terms ?? [],
-    reviewerPlanReviewNode: reviewerSource?.reviewNode ?? null,
-    reviewerProviderResultNode: reviewerSource?.providerResultNode ?? null,
-    reviewerTargetSnapshotNode: reviewerSource?.targetSnapshotNode ?? null,
     reviewerRoleResult: reviewerSource?.roleResult ?? null,
     reviewerPriorGroupDispositions:
       reviewerSource?.priorGroupDispositions ?? null,
@@ -3284,11 +3284,9 @@ function emptyRebuilt(
     providerRoleResult: null,
     reviewerTermSourceNode: null,
     reviewerTermSourceNodeIds: [],
+    reviewerTermEvidenceNodes: [],
     reviewerTermReopenCount: 0,
     reviewerTerms: [],
-    reviewerPlanReviewNode: null,
-    reviewerProviderResultNode: null,
-    reviewerTargetSnapshotNode: null,
     reviewerRoleResult: null,
     reviewerPriorGroupDispositions: null,
     reviewerPriorWhyAnswers: null,
@@ -3799,6 +3797,7 @@ type ReviewerTermSourceRecord = {
   providerResultNode: EvidenceNode;
   reviewNode: EvidenceNode;
   targetSnapshotNode: EvidenceNode | null;
+  evidenceNodes: EvidenceNode[];
   roleResult: AdmittedRoleResult;
   priorGroupDispositions: StoredInvestigationCheckpoint;
   priorWhyAnswers: StoredInvestigationCheckpoint;
@@ -3979,6 +3978,12 @@ function readReviewerTermSource(
     providerResultNode,
     reviewNode,
     targetSnapshotNode,
+    evidenceNodes: [
+      ...(targetSnapshotNode === null ? [] : [targetSnapshotNode]),
+      providerResultNode,
+      reviewNode,
+      sourceNode,
+    ],
     roleResult,
     terms,
     priorGroupDispositions,
@@ -4099,15 +4104,26 @@ function readReviewerTermSourceV3(
     'providerResult',
     ...(previousNodeId === null ? [] : ['previousReviewerTerms']),
   ];
+  const hasTargetSnapshot =
+    Object.hasOwn(
+      providerResultNode.provenanceParentNodeIds,
+      'targetSnapshot',
+    ) ||
+    Object.hasOwn(
+      providerResultNode.semanticParentResultDigests,
+      'targetSnapshot',
+    ) ||
+    Object.hasOwn(providerResultNode.exactInputDigests, 'targetSnapshot');
   const targetSnapshotNodeId =
     providerResultNode.provenanceParentNodeIds.targetSnapshot;
   const targetSnapshotNode =
-    typeof targetSnapshotNodeId === 'string'
+    hasTargetSnapshot && typeof targetSnapshotNodeId === 'string'
       ? readEvidenceNode(paths, targetSnapshotNodeId)
       : null;
-  if (targetSnapshotNode !== null) {
-    readPlanReviewTargetSnapshotNode(targetSnapshotNode);
-  }
+  const targetSnapshot =
+    targetSnapshotNode === null
+      ? null
+      : readPlanReviewTargetSnapshotNode(targetSnapshotNode);
   if (
     output.investigationId !== session.investigationId ||
     !isBaseline(output.baseline) ||
@@ -4147,6 +4163,14 @@ function readReviewerTermSourceV3(
     priorWhyEnvelope.investigationId !== session.investigationId ||
     priorGroupEnvelope.changeId !== session.changeId ||
     priorWhyEnvelope.changeId !== session.changeId ||
+    priorGroupEnvelope.intentDigest !== session.intentDigest ||
+    priorWhyEnvelope.intentDigest !== session.intentDigest ||
+    priorGroupEnvelope.blindManifestDigest !== session.blindManifestDigest ||
+    priorWhyEnvelope.blindManifestDigest !== session.blindManifestDigest ||
+    canonicalJson(priorGroupEnvelope.baseline) !==
+      canonicalJson(output.baseline) ||
+    canonicalJson(priorWhyEnvelope.baseline) !==
+      canonicalJson(output.baseline) ||
     previousNodeId !== (previous?.sourceNode.nodeId ?? null) ||
     (previous !== null &&
       (sourceNode.exactInputDigests.previousReviewerTerms !==
@@ -4154,7 +4178,15 @@ function readReviewerTermSourceV3(
         sourceNode.provenanceParentNodeIds.previousReviewerTerms !==
           previous.sourceNode.nodeId ||
         sourceNode.semanticParentResultDigests.previousReviewerTerms !==
-          previous.sourceNode.resultDigest))
+          previous.sourceNode.resultDigest)) ||
+    (hasTargetSnapshot &&
+      (targetSnapshotNode === null ||
+        providerResultNode.exactInputDigests.targetSnapshot !==
+          targetSnapshotNode.nodeId ||
+        providerResultNode.semanticParentResultDigests.targetSnapshot !==
+          targetSnapshotNode.resultDigest ||
+        targetSnapshot?.subjectDigest !==
+          providerResultNode.exactInputDigests.subject))
   ) {
     throw invalidReviewerTermSource();
   }
@@ -4181,6 +4213,13 @@ function readReviewerTermSourceV3(
     providerResultNode,
     reviewNode,
     targetSnapshotNode,
+    evidenceNodes: [
+      ...(previous?.evidenceNodes ?? []),
+      ...(targetSnapshotNode === null ? [] : [targetSnapshotNode]),
+      providerResultNode,
+      reviewNode,
+      sourceNode,
+    ],
     roleResult,
     priorGroupDispositions,
     priorWhyAnswers,
@@ -4442,18 +4481,7 @@ function preparePlanningScaffold(
     ...(rebuilt.providerResultNode === null
       ? []
       : [rebuilt.providerResultNode]),
-    ...(rebuilt.reviewerProviderResultNode === null
-      ? []
-      : [rebuilt.reviewerProviderResultNode]),
-    ...(rebuilt.reviewerTargetSnapshotNode === null
-      ? []
-      : [rebuilt.reviewerTargetSnapshotNode]),
-    ...(rebuilt.reviewerPlanReviewNode === null
-      ? []
-      : [rebuilt.reviewerPlanReviewNode]),
-    ...(rebuilt.reviewerTermSourceNode === null
-      ? []
-      : [rebuilt.reviewerTermSourceNode]),
+    ...rebuilt.reviewerTermEvidenceNodes,
     ...rebuilt.contributionNodes,
     ...(rebuilt.termUnionNode === null ? [] : [rebuilt.termUnionNode]),
     rebuilt.inventoryNode,
@@ -4631,54 +4659,15 @@ function reconcileReviewerTermPlanningRevision(
           ExitCode.staleState,
         );
       }
-      const receiptNodeId = readEvidenceRefs(context.runtime, current.changeId)[
-        PLANNING_MATERIALIZATION_REF
-      ];
-      if (!receiptNodeId) {
-        throw workflowError(
-          'PLANNING_MATERIALIZATION_STALE',
-          'Reviewer-term reconciliation has no prior planning materialization.',
-          ExitCode.staleState,
-        );
-      }
-      const receiptNode = readEvidenceNode(context.runtime, receiptNodeId);
-      const receiptOutput = receiptNode.output;
-      if (
-        receiptNode.type !== 'propose-planning-materialization' ||
-        !isRecord(receiptOutput) ||
-        receiptOutput.investigationId !== current.investigationId ||
-        receiptOutput.changeId !== current.changeId ||
-        !isDigestRecord(receiptOutput.artifacts)
-      ) {
-        throw workflowError(
-          'PLANNING_MATERIALIZATION_STALE',
-          'Prior planning materialization cannot authorize reviewer-term reconciliation.',
-          ExitCode.staleState,
-        );
-      }
-      const previousArtifacts = receiptOutput.artifacts as Record<
-        string,
-        string
-      >;
+      const receipt = readReviewerReconciliationMaterializationReceipt(
+        context.runtime,
+        current,
+      );
       const changeDirectory = path.join(
         context.git.repositoryRoot,
         context.config.changeRoot,
         current.changeId,
       );
-      for (const [relativePath, digest] of Object.entries(previousArtifacts)) {
-        const target = path.join(
-          changeDirectory,
-          normalizePolicyPath(relativePath),
-        );
-        if (
-          !fs.existsSync(target) ||
-          sha256(fs.readFileSync(target, 'utf8')) !== digest
-        ) {
-          throw planningMaterializationStale(
-            'Planning bytes changed before reviewer-term reconciliation.',
-          );
-        }
-      }
       const scaffold = preparePlanningScaffold(
         cwd,
         current,
@@ -4687,66 +4676,139 @@ function reconcileReviewerTermPlanningRevision(
         true,
         false,
       );
-      const investigationPath = path.join(
-        changeDirectory,
-        'investigation.json',
-      );
-      const designPath = path.join(changeDirectory, 'design.md');
-      const previousInvestigation = fs.readFileSync(investigationPath, 'utf8');
-      const previousDesign = fs.readFileSync(designPath, 'utf8');
-      const nextDesign = projectInvestigationLedger(
-        previousDesign,
-        rebuilt.whyNodes,
-      );
-      let receiptAdvanced = false;
-      try {
-        replaceTextAtomic(investigationPath, scaffold.investigationBytes, {
-          allowCreate: false,
-        });
-        replaceTextAtomic(designPath, nextDesign, { allowCreate: false });
-        const nextArtifacts = Object.fromEntries(
-          Object.keys(previousArtifacts)
-            .sort()
-            .map((relativePath) => [
-              relativePath,
-              sha256(
-                fs.readFileSync(
-                  path.join(changeDirectory, normalizePolicyPath(relativePath)),
-                  'utf8',
-                ),
-              ),
-            ]),
+      // The prior PlanReview reservation/review-root authenticates old bytes,
+      // the sealed session projection derives exact next bytes, and the
+      // materialization-ref CAS is the commit point. Before that CAS only old
+      // or next bytes may exist; after it, retries require exact next bytes and
+      // never roll live files back after a downstream error.
+      let currentArtifacts: Record<string, string>;
+      if (receipt.revision === current.revision) {
+        const sealedArtifacts = readPlanningMaterializationReceipt(
+          context.runtime,
+          current,
+          createInvestigationSealNode(rebuilt),
         );
-        const sealNode = createInvestigationSealNode(rebuilt);
+        if (sealedArtifacts === null) {
+          throw planningMaterializationStale(
+            'Reviewer-term reconciliation lost its current materialization.',
+          );
+        }
+        assertOwned();
+        const sealedLiveArtifacts = assertReviewerReconciliationLiveArtifacts(
+          changeDirectory,
+          sealedArtifacts,
+          sealedArtifacts,
+        );
+        const sealedBytes = new Map(
+          [...sealedLiveArtifacts.entries()].map(([relativePath, artifact]) => [
+            relativePath,
+            artifact.text,
+          ]),
+        );
+        reclaimReviewerReconciliationTemporaries(
+          changeDirectory,
+          sealedBytes,
+          sealedBytes,
+        );
+        assertOwned();
+        assertReviewerReconciliationLiveArtifacts(
+          changeDirectory,
+          sealedArtifacts,
+          sealedArtifacts,
+        );
+        if (
+          sealedArtifacts['investigation.json'] !==
+          sha256(scaffold.investigationBytes)
+        ) {
+          throw planningMaterializationStale(
+            'Current reviewer-term materialization does not match the resealed investigation.',
+          );
+        }
+        currentArtifacts = sealedArtifacts;
+      } else {
+        const previousArtifacts = readReviewerReconciliationSnapshotArtifacts(
+          context.runtime,
+          context.config.changeRoot,
+          current,
+          receipt,
+        );
+        const previousDesign = previousArtifacts.get('design.md');
+        if (
+          previousDesign === undefined ||
+          !previousArtifacts.has('investigation.json')
+        ) {
+          throw planningMaterializationStale(
+            'Reviewer-term reconciliation snapshot is missing a managed target.',
+          );
+        }
+        const nextDesign = projectInvestigationLedger(
+          previousDesign,
+          rebuilt.whyNodes,
+        );
+        const nextBytes = new Map(previousArtifacts);
+        nextBytes.set('investigation.json', scaffold.investigationBytes);
+        nextBytes.set('design.md', nextDesign);
+        const nextArtifacts = Object.fromEntries(
+          [...nextBytes.entries()]
+            .sort(([left], [right]) => left.localeCompare(right))
+            .map(([relativePath, content]) => [relativePath, sha256(content)]),
+        );
+        assertOwned();
+        reclaimReviewerReconciliationTemporaries(
+          changeDirectory,
+          previousArtifacts,
+          nextBytes,
+        );
+        assertOwned();
+        const liveArtifacts = assertReviewerReconciliationLiveArtifacts(
+          changeDirectory,
+          receipt.artifacts,
+          nextArtifacts,
+        );
+        for (const relativePath of ['investigation.json', 'design.md']) {
+          const nextContent = nextBytes.get(relativePath);
+          const live = liveArtifacts.get(relativePath);
+          if (nextContent === undefined || live === undefined) {
+            throw planningMaterializationStale(
+              'Reviewer-term reconciliation lost a managed target.',
+            );
+          }
+          if (live.digest !== nextArtifacts[relativePath]) {
+            replaceTextAtomic(
+              path.join(changeDirectory, relativePath),
+              nextContent,
+              { allowCreate: false },
+            );
+          }
+        }
+        assertReviewerReconciliationLiveArtifacts(
+          changeDirectory,
+          nextArtifacts,
+          nextArtifacts,
+        );
+        fsyncReviewerReconciliationDirectory(changeDirectory);
         persistPlanningMaterializationReceipt(
           context.runtime,
           current,
-          sealNode,
+          createInvestigationSealNode(rebuilt),
           nextArtifacts,
+          receipt.nodeId,
         );
-        receiptAdvanced = true;
-        const planning = derivePlanningSubjectFromCurrentDraft(
-          cwd,
-          current,
-          scaffold.investigationBytes,
-          nextArtifacts,
-        );
-        preparePlanReviewInvocation(
-          cwd,
-          current,
-          planning,
-          options.collaborationGrant,
-          assertOwned,
-        );
-      } catch (error) {
-        if (!receiptAdvanced) {
-          replaceTextAtomic(investigationPath, previousInvestigation, {
-            allowCreate: false,
-          });
-          replaceTextAtomic(designPath, previousDesign, { allowCreate: false });
-        }
-        throw error;
+        currentArtifacts = nextArtifacts;
       }
+      const planning = derivePlanningSubjectFromCurrentDraft(
+        cwd,
+        current,
+        scaffold.investigationBytes,
+        currentArtifacts,
+      );
+      preparePlanReviewInvocation(
+        cwd,
+        current,
+        planning,
+        options.collaborationGrant,
+        assertOwned,
+      );
       assertOwned();
     },
   );
@@ -4754,6 +4816,382 @@ function reconcileReviewerTermPlanningRevision(
   dispatchPreparedPlanReview(cwd, output, options);
   output = getProposeStatus(cwd, status.investigationId);
   return output;
+}
+
+type ReviewerReconciliationMaterializationReceipt = {
+  nodeId: string;
+  node: EvidenceNode;
+  revision: number;
+  artifacts: Record<string, string>;
+};
+
+function readReviewerReconciliationMaterializationReceipt(
+  paths: ReturnType<typeof loadInvestigationRuntimeContext>['runtime'],
+  status: InvestigationStatus,
+): ReviewerReconciliationMaterializationReceipt {
+  const nodeId = readEvidenceRefs(paths, status.changeId)[
+    PLANNING_MATERIALIZATION_REF
+  ];
+  if (!nodeId) {
+    throw planningMaterializationStale(
+      'Reviewer-term reconciliation has no planning materialization.',
+    );
+  }
+  const node = readEvidenceNode(paths, nodeId);
+  const output = node.output;
+  if (
+    node.type !== 'propose-planning-materialization' ||
+    node.nodeSchema !== 'workflow.propose-planning-materialization.v1' ||
+    node.evaluator !== 'workflow-propose.v1' ||
+    node.policyDigest !== PROPOSE_POLICY_DIGEST ||
+    node.outputSchema !==
+      'workflow.propose-planning-materialization-output.v1' ||
+    !isRecord(output) ||
+    !hasExactKeys(output, [
+      'investigationId',
+      'changeId',
+      'revision',
+      'baseline',
+      'artifacts',
+      'sealNodeId',
+      'sealResultDigest',
+    ]) ||
+    output.investigationId !== status.investigationId ||
+    output.changeId !== status.changeId ||
+    !Number.isSafeInteger(output.revision) ||
+    Number(output.revision) < 0 ||
+    Number(output.revision) > status.revision ||
+    canonicalJson(output.baseline) !== canonicalJson(status.baseline) ||
+    !isDigestRecord(output.artifacts) ||
+    typeof output.sealNodeId !== 'string' ||
+    !DIGEST.test(output.sealNodeId) ||
+    typeof output.sealResultDigest !== 'string' ||
+    !DIGEST.test(output.sealResultDigest) ||
+    !hasExactKeys(node.exactInputDigests, ['artifacts', 'baseline', 'seal']) ||
+    !hasExactKeys(node.provenanceParentNodeIds, ['seal']) ||
+    !hasExactKeys(node.semanticParentResultDigests, ['seal']) ||
+    node.exactInputDigests.artifacts !==
+      sha256(canonicalJson(output.artifacts)) ||
+    node.exactInputDigests.baseline !==
+      sha256(canonicalJson(status.baseline)) ||
+    node.exactInputDigests.seal !== output.sealNodeId ||
+    node.provenanceParentNodeIds.seal !== output.sealNodeId ||
+    node.semanticParentResultDigests.seal !== output.sealResultDigest
+  ) {
+    throw planningMaterializationStale(
+      'Reviewer-term reconciliation materialization is invalid or stale.',
+    );
+  }
+  return {
+    nodeId,
+    node,
+    revision: Number(output.revision),
+    artifacts: output.artifacts as Record<string, string>,
+  };
+}
+
+function readReviewerReconciliationSnapshotArtifacts(
+  paths: ReturnType<typeof loadInvestigationRuntimeContext>['runtime'],
+  changeRoot: string,
+  status: InvestigationStatus,
+  receipt: ReviewerReconciliationMaterializationReceipt,
+): Map<string, string> {
+  const reservation = readPlanReviewReservation(paths, status);
+  if (
+    reservation === null ||
+    reservation.materializationNode.nodeId !== receipt.nodeId ||
+    canonicalJson(reservation.materializationNode) !==
+      canonicalJson(receipt.node)
+  ) {
+    throw planningMaterializationStale(
+      'Prior PlanReview does not bind the current old materialization.',
+    );
+  }
+  const durableManifest = readProviderInvocationManifest(
+    paths,
+    reservation.request.invocationId,
+  );
+  const durableRequest = readProviderInvocationRequest(
+    paths,
+    reservation.request.invocationId,
+  );
+  const snapshotRuntime = readPlanReviewSnapshotRuntime(
+    paths,
+    reservation.request.invocationId,
+  );
+  if (
+    snapshotRuntime === null ||
+    canonicalJson(durableManifest) !== canonicalJson(reservation.manifest) ||
+    canonicalJson(durableRequest) !== canonicalJson(reservation.request) ||
+    canonicalJson(reservation.manifest.planningTarget) !==
+      canonicalJson(
+        readPlanReviewTargetSnapshotNode(reservation.targetSnapshotNode),
+      )
+  ) {
+    throw planningMaterializationStale(
+      'Prior PlanReview snapshot binding is missing or stale.',
+    );
+  }
+  const changePrefix = `${changeRoot}/${status.changeId}/`;
+  const artifacts = new Map<string, string>();
+  for (const artifact of reservation.manifest.planningTarget.artifacts) {
+    if (!artifact.path.startsWith(changePrefix)) {
+      throw planningMaterializationStale(
+        'Prior PlanReview snapshot contains an unrelated planning path.',
+      );
+    }
+    const relativePath = artifact.path.slice(changePrefix.length);
+    if (
+      normalizeExactRepositoryPath(relativePath) !== relativePath ||
+      artifacts.has(relativePath) ||
+      receipt.artifacts[relativePath] !== artifact.sha256
+    ) {
+      throw planningMaterializationStale(
+        'Prior PlanReview snapshot does not exactly cover the old materialization.',
+      );
+    }
+    const content = fs.readFileSync(
+      path.join(snapshotRuntime.root, artifact.snapshotFile),
+    );
+    const text = content.toString('utf8');
+    if (
+      !Buffer.from(text, 'utf8').equals(content) ||
+      content.byteLength !== artifact.byteLength ||
+      sha256(content) !== artifact.sha256
+    ) {
+      throw planningMaterializationStale(
+        'Prior PlanReview snapshot bytes are invalid or stale.',
+      );
+    }
+    artifacts.set(relativePath, text);
+  }
+  if (
+    canonicalJson([...artifacts.keys()].sort()) !==
+    canonicalJson(Object.keys(receipt.artifacts).sort())
+  ) {
+    throw planningMaterializationStale(
+      'Prior PlanReview snapshot membership differs from the old materialization.',
+    );
+  }
+  return artifacts;
+}
+
+function reclaimReviewerReconciliationTemporaries(
+  changeDirectory: string,
+  oldArtifacts: Map<string, string>,
+  nextArtifacts: Map<string, string>,
+): void {
+  const reclaimable: Array<{
+    path: string;
+    stats: fs.Stats;
+    ownerPid: number;
+  }> = [];
+  for (const basename of ['design.md', 'investigation.json']) {
+    const oldContent = oldArtifacts.get(basename);
+    const nextContent = nextArtifacts.get(basename);
+    if (oldContent === undefined || nextContent === undefined) {
+      throw planningMaterializationStale(
+        'Reviewer-term reconciliation lost authenticated temporary content.',
+      );
+    }
+    const oldBytes = Buffer.from(oldContent, 'utf8');
+    const nextBytes = Buffer.from(nextContent, 'utf8');
+    const prefix = `${basename}.`;
+    for (const name of fs.readdirSync(changeDirectory).sort()) {
+      if (!name.startsWith(prefix)) {
+        continue;
+      }
+      const match = ATOMIC_TEXT_TEMP_SUFFIX.exec(name.slice(prefix.length));
+      if (!match) {
+        continue;
+      }
+      const ownerPid = Number(match[1]);
+      if (!Number.isSafeInteger(ownerPid) || ownerPid < 1) {
+        throw planningMaterializationStale(
+          'Reviewer-term reconciliation found an unsafe atomic replacement temporary.',
+        );
+      }
+      const temporaryPath = path.join(changeDirectory, name);
+      const before = fs.lstatSync(temporaryPath, {
+        throwIfNoEntry: false,
+      });
+      if (
+        !before ||
+        !before.isFile() ||
+        before.isSymbolicLink() ||
+        before.nlink !== 1 ||
+        (before.mode & 0o777) !== 0o644
+      ) {
+        throw planningMaterializationStale(
+          'Reviewer-term reconciliation found an unsafe atomic replacement temporary.',
+        );
+      }
+      let descriptor: number | undefined;
+      try {
+        descriptor = fs.openSync(
+          temporaryPath,
+          fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW,
+        );
+        const opened = fs.fstatSync(descriptor);
+        const content = fs.readFileSync(descriptor);
+        const after = fs.lstatSync(temporaryPath, {
+          throwIfNoEntry: false,
+        });
+        if (
+          !after ||
+          !after.isFile() ||
+          after.isSymbolicLink() ||
+          opened.dev !== before.dev ||
+          opened.ino !== before.ino ||
+          after.dev !== before.dev ||
+          after.ino !== before.ino ||
+          opened.nlink !== 1 ||
+          after.nlink !== 1 ||
+          (opened.mode & 0o777) !== 0o644 ||
+          (after.mode & 0o777) !== 0o644 ||
+          opened.size !== before.size ||
+          after.size !== before.size ||
+          opened.mtimeMs !== before.mtimeMs ||
+          after.mtimeMs !== before.mtimeMs ||
+          opened.ctimeMs !== before.ctimeMs ||
+          after.ctimeMs !== before.ctimeMs ||
+          content.byteLength !== before.size ||
+          reviewerReconciliationTemporaryOwnerIsAlive(ownerPid) ||
+          !isReviewerReconciliationTemporaryPrefix(content, oldBytes, nextBytes)
+        ) {
+          throw planningMaterializationStale(
+            'Reviewer-term reconciliation found an unsafe atomic replacement temporary.',
+          );
+        }
+      } catch (error) {
+        if (
+          isRecord(error) &&
+          error.code === 'PLANNING_MATERIALIZATION_STALE'
+        ) {
+          throw error;
+        }
+        throw planningMaterializationStale(
+          'Reviewer-term reconciliation could not inspect an atomic replacement temporary.',
+        );
+      } finally {
+        if (descriptor !== undefined) {
+          fs.closeSync(descriptor);
+        }
+      }
+      reclaimable.push({ path: temporaryPath, stats: before, ownerPid });
+    }
+  }
+  let removed = false;
+  for (const entry of reclaimable) {
+    const current = fs.lstatSync(entry.path, { throwIfNoEntry: false });
+    if (!current) {
+      continue;
+    }
+    if (
+      !current.isFile() ||
+      current.isSymbolicLink() ||
+      current.nlink !== 1 ||
+      (current.mode & 0o777) !== 0o644 ||
+      current.dev !== entry.stats.dev ||
+      current.ino !== entry.stats.ino ||
+      reviewerReconciliationTemporaryOwnerIsAlive(entry.ownerPid)
+    ) {
+      throw planningMaterializationStale(
+        'Reviewer-term reconciliation atomic replacement temporary changed before reclamation.',
+      );
+    }
+    fs.unlinkSync(entry.path);
+    removed = true;
+  }
+  if (removed) {
+    fsyncReviewerReconciliationDirectory(changeDirectory);
+  }
+}
+
+function isReviewerReconciliationTemporaryPrefix(
+  content: Buffer,
+  oldContent: Buffer,
+  nextContent: Buffer,
+): boolean {
+  return (
+    (content.byteLength <= oldContent.byteLength &&
+      oldContent.subarray(0, content.byteLength).equals(content)) ||
+    (content.byteLength <= nextContent.byteLength &&
+      nextContent.subarray(0, content.byteLength).equals(content))
+  );
+}
+
+function reviewerReconciliationTemporaryOwnerIsAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return !isRecord(error) || error.code !== 'ESRCH';
+  }
+}
+
+function fsyncReviewerReconciliationDirectory(directory: string): void {
+  const descriptor = fs.openSync(directory, fs.constants.O_RDONLY);
+  try {
+    if (!fs.fstatSync(descriptor).isDirectory()) {
+      throw planningMaterializationStale(
+        'Reviewer-term reconciliation change directory is unsafe.',
+      );
+    }
+    fs.fsyncSync(descriptor);
+  } finally {
+    fs.closeSync(descriptor);
+  }
+}
+
+function assertReviewerReconciliationLiveArtifacts(
+  changeDirectory: string,
+  oldArtifacts: Record<string, string>,
+  nextArtifacts: Record<string, string>,
+): Map<string, { digest: string; text: string }> {
+  if (
+    canonicalJson(Object.keys(oldArtifacts).sort()) !==
+    canonicalJson(Object.keys(nextArtifacts).sort())
+  ) {
+    throw planningMaterializationStale(
+      'Reviewer-term reconciliation artifact membership changed.',
+    );
+  }
+  const observed = new Map<string, { digest: string; text: string }>();
+  for (const relativePath of Object.keys(oldArtifacts).sort()) {
+    const normalized = normalizePolicyPath(relativePath);
+    if (normalized !== relativePath) {
+      throw planningMaterializationStale(
+        'Reviewer-term reconciliation found a non-canonical artifact path.',
+      );
+    }
+    const target = path.join(changeDirectory, normalized);
+    const stats = fs.lstatSync(target, { throwIfNoEntry: false });
+    if (
+      !stats?.isFile() ||
+      stats.isSymbolicLink() ||
+      stats.nlink !== 1 ||
+      (stats.mode & 0o777) !== 0o644
+    ) {
+      throw planningMaterializationStale(
+        'Reviewer-term reconciliation found an unsafe planning artifact.',
+      );
+    }
+    const content = fs.readFileSync(target);
+    const text = content.toString('utf8');
+    const digest = sha256(content);
+    if (
+      !Buffer.from(text, 'utf8').equals(content) ||
+      (digest !== oldArtifacts[relativePath] &&
+        digest !== nextArtifacts[relativePath])
+    ) {
+      throw planningMaterializationStale(
+        'Planning bytes contain neither the authenticated old nor exact next materialization.',
+      );
+    }
+    observed.set(relativePath, { digest, text });
+  }
+  return observed;
 }
 
 function derivePlanningSubjectFromCurrentDraft(
@@ -5209,6 +5647,7 @@ function persistPlanningMaterializationReceipt(
   status: InvestigationStatus,
   sealNode: EvidenceNode,
   artifacts: Record<string, string>,
+  expectedCurrentNodeId?: string,
 ): void {
   const node = createEvidenceNode({
     type: 'propose-planning-materialization',
@@ -5245,6 +5684,14 @@ function persistPlanningMaterializationReceipt(
   if (current === node.nodeId) {
     return;
   }
+  if (
+    expectedCurrentNodeId !== undefined &&
+    current !== expectedCurrentNodeId
+  ) {
+    throw planningMaterializationStale(
+      'Reviewer-term reconciliation materialization changed before receipt advancement.',
+    );
+  }
   const reviewerRevision =
     readInvestigationSession(paths, status.investigationId).milestones
       .reviewerTermSourceNodeId !== null;
@@ -5258,7 +5705,7 @@ function persistPlanningMaterializationReceipt(
   compareAndSwapEvidenceRef(paths, {
     changeId: status.changeId,
     refName: PLANNING_MATERIALIZATION_REF,
-    expectedNodeId: current,
+    expectedNodeId: expectedCurrentNodeId ?? current,
     nextNodeId: node.nodeId,
   });
 }

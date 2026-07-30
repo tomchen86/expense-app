@@ -41,6 +41,8 @@ const NO_FOLLOW_CREATE =
   fs.constants.O_CREAT |
   fs.constants.O_EXCL |
   fs.constants.O_NOFOLLOW;
+const EVIDENCE_PUBLICATION_TEMP_SUFFIX =
+  /^([1-9][0-9]*)\.([0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})\.publish\.tmp$/;
 
 type UnsafeObservationBytePath = string | Buffer;
 
@@ -115,37 +117,75 @@ export function writeEvidenceNode(
 ): string {
   assertStoredEvidenceNode(node, objectInvalid);
   const content = canonicalEvidenceNodeEnvelope(node);
+  const contentBytes = Buffer.from(content, 'utf8');
   const objectPath = evidenceObjectPath(paths, node.nodeId);
+  const objectDirectory = path.dirname(objectPath);
   ensureNoFollowDirectory(
     paths.base,
     paths.root,
-    path.dirname(objectPath),
+    objectDirectory,
     objectUnsafe,
   );
 
+  let existing = inspectEvidenceObjectFinal(objectPath, contentBytes);
+  if (existing === 'exact') {
+    reclaimEvidencePublicationAliases(objectPath, contentBytes);
+    assertExactEvidenceObjectFinal(objectPath, contentBytes);
+    return node.nodeId;
+  }
+  reclaimEvidencePublicationAliases(objectPath, contentBytes);
+  existing = inspectEvidenceObjectFinal(objectPath, contentBytes);
+  if (existing === 'exact') {
+    reclaimEvidencePublicationAliases(objectPath, contentBytes);
+    assertExactEvidenceObjectFinal(objectPath, contentBytes);
+    return node.nodeId;
+  }
+
+  const publishAlias = evidencePublicationAlias(objectPath);
   let descriptor: number | undefined;
-  let created = false;
+  let publishAliasOwnedStats: fs.Stats | undefined;
   try {
-    descriptor = fs.openSync(objectPath, NO_FOLLOW_CREATE, 0o600);
-    created = true;
+    descriptor = fs.openSync(publishAlias, NO_FOLLOW_CREATE, 0o600);
     fs.fchmodSync(descriptor, 0o600);
-    fs.writeFileSync(descriptor, content, 'utf8');
+    publishAliasOwnedStats = fs.fstatSync(descriptor);
+    fs.writeFileSync(descriptor, contentBytes);
     fs.fsyncSync(descriptor);
+    const publishAliasStats = fs.fstatSync(descriptor);
     fs.closeSync(descriptor);
     descriptor = undefined;
-    fsyncDirectory(path.dirname(objectPath));
+    assertExactEvidencePublicationAlias(
+      publishAlias,
+      publishAliasStats,
+      contentBytes,
+      1,
+    );
+    fsyncDirectory(objectDirectory);
+
+    existing = inspectEvidenceObjectFinal(objectPath, contentBytes);
+    if (existing === 'legacy-prefix') {
+      publishLegacyEvidenceRepairClaim(objectPath, publishAlias, contentBytes);
+    } else if (existing === 'absent') {
+      try {
+        fs.linkSync(publishAlias, objectPath);
+      } catch (error) {
+        if (!isNodeError(error) || error.code !== 'EEXIST') {
+          throw error;
+        }
+      }
+    }
+    fsyncDirectory(objectDirectory);
+    reclaimEvidencePublicationAliases(objectPath, contentBytes);
+    assertExactEvidenceObjectFinal(objectPath, contentBytes);
   } catch (error) {
     if (descriptor !== undefined) {
       fs.closeSync(descriptor);
     }
-    if (isNodeError(error) && error.code === 'EEXIST') {
-      if (readNoFollow(objectPath, objectUnsafe) === content) {
-        return node.nodeId;
-      }
-      throw objectCollision(node.nodeId);
-    }
-    if (created) {
-      fs.rmSync(objectPath, { force: true });
+    if (publishAliasOwnedStats !== undefined) {
+      unlinkOwnedEvidencePublicationAlias(
+        publishAlias,
+        publishAliasOwnedStats,
+        objectDirectory,
+      );
     }
     throw error;
   }
@@ -1454,6 +1494,520 @@ function evidenceObjectPath(
   nodeId: string,
 ): string {
   return path.join(paths.objects, nodeId.slice(0, 2), `${nodeId}.json`);
+}
+
+type EvidenceObjectFinalState = 'absent' | 'exact' | 'legacy-prefix';
+
+type EvidencePublicationAlias = {
+  aliasPath: string;
+  kind: 'publish';
+  pid: number;
+};
+
+function evidencePublicationAlias(objectPath: string): string {
+  return `${objectPath}.${process.pid}.${crypto.randomUUID()}.publish.tmp`;
+}
+
+function inspectEvidenceObjectFinal(
+  objectPath: string,
+  exactContent: Buffer,
+): EvidenceObjectFinalState {
+  recoverLegacyEvidenceRepairClaim(objectPath, exactContent);
+  const stats = fs.lstatSync(objectPath, { throwIfNoEntry: false });
+  if (!stats) {
+    return 'absent';
+  }
+  if (stats.nlink === 2) {
+    resolveLinkedEvidenceObjectFinal(objectPath, exactContent);
+    return inspectEvidenceObjectFinal(objectPath, exactContent);
+  }
+  if (stats.nlink !== 1) {
+    throw objectUnsafe();
+  }
+  const observed = readStablePrivateFile(objectPath, [1], objectUnsafe);
+  if (observed.bytes.equals(exactContent)) {
+    return 'exact';
+  }
+  if (isStrictBufferPrefix(observed.bytes, exactContent)) {
+    return 'legacy-prefix';
+  }
+  throw objectCollision(path.basename(objectPath, '.json'));
+}
+
+function publishLegacyEvidenceRepairClaim(
+  objectPath: string,
+  publishAlias: string,
+  exactContent: Buffer,
+): void {
+  const claimPath = `${objectPath}.legacy-prefix-repair`;
+  try {
+    fs.linkSync(publishAlias, claimPath);
+    fsyncDirectory(path.dirname(objectPath));
+  } catch (error) {
+    if (!isNodeError(error) || error.code !== 'EEXIST') {
+      throw error;
+    }
+  }
+  const claimStats = fs.lstatSync(claimPath, { throwIfNoEntry: false });
+  if (!claimStats) {
+    throw objectUnsafe();
+  }
+  const claim = readStablePrivateFile(
+    claimPath,
+    [claimStats.nlink],
+    objectUnsafe,
+  );
+  if (!claim.bytes.equals(exactContent)) {
+    throw objectCollision(path.basename(objectPath, '.json'));
+  }
+  recoverLegacyEvidenceRepairClaim(objectPath, exactContent);
+}
+
+function recoverLegacyEvidenceRepairClaim(
+  objectPath: string,
+  exactContent: Buffer,
+): void {
+  const claimPath = `${objectPath}.legacy-prefix-repair`;
+  let claimStats = fs.lstatSync(claimPath, { throwIfNoEntry: false });
+  if (!claimStats) {
+    return;
+  }
+  let claim = readStablePrivateFile(
+    claimPath,
+    [claimStats.nlink],
+    objectUnsafe,
+  );
+  if (!claim.bytes.equals(exactContent)) {
+    throw objectCollision(path.basename(objectPath, '.json'));
+  }
+  if (claim.stats.nlink === 2) {
+    const finalStats = fs.lstatSync(objectPath, {
+      throwIfNoEntry: false,
+    });
+    if (
+      finalStats?.dev === claim.stats.dev &&
+      finalStats.ino === claim.stats.ino
+    ) {
+      const final = readStablePrivateFile(objectPath, [2], objectUnsafe);
+      if (!final.bytes.equals(exactContent)) {
+        throw objectUnsafe();
+      }
+      fs.unlinkSync(claimPath);
+      fsyncDirectory(path.dirname(objectPath));
+      return;
+    }
+    const linkedAliases = listEvidencePublicationAliases(objectPath).filter(
+      (alias) => {
+        const stats = fs.lstatSync(alias.aliasPath, {
+          throwIfNoEntry: false,
+        });
+        return stats?.dev === claim.stats.dev && stats.ino === claim.stats.ino;
+      },
+    );
+    if (linkedAliases.length !== 1) {
+      throw objectUnsafe();
+    }
+    const linkedAlias = readStablePrivateFile(
+      linkedAliases[0]!.aliasPath,
+      [2],
+      objectUnsafe,
+    );
+    if (!linkedAlias.bytes.equals(exactContent)) {
+      throw objectUnsafe();
+    }
+    fs.unlinkSync(linkedAliases[0]!.aliasPath);
+    fsyncDirectory(path.dirname(objectPath));
+    claimStats = fs.lstatSync(claimPath);
+    claim = readStablePrivateFile(claimPath, [1], objectUnsafe);
+  }
+  if (claim.stats.nlink !== 1 || claimStats.nlink !== 1) {
+    throw objectUnsafe();
+  }
+
+  const finalStats = fs.lstatSync(objectPath, { throwIfNoEntry: false });
+  if (finalStats) {
+    const final = readStablePrivateFile(
+      objectPath,
+      [finalStats.nlink],
+      objectUnsafe,
+    );
+    if (final.bytes.equals(exactContent)) {
+      fs.unlinkSync(claimPath);
+      fsyncDirectory(path.dirname(objectPath));
+      return;
+    }
+    if (
+      final.stats.nlink !== 1 ||
+      !isStrictBufferPrefix(final.bytes, exactContent)
+    ) {
+      throw objectCollision(path.basename(objectPath, '.json'));
+    }
+    try {
+      fs.unlinkSync(objectPath);
+      fsyncDirectory(path.dirname(objectPath));
+    } catch (error) {
+      if (!isNodeError(error) || error.code !== 'ENOENT') {
+        throw error;
+      }
+    }
+  }
+  try {
+    fs.linkSync(claimPath, objectPath);
+  } catch (error) {
+    if (!isNodeError(error) || error.code !== 'EEXIST') {
+      throw error;
+    }
+  }
+  fsyncDirectory(path.dirname(objectPath));
+  const currentClaimStats = fs.lstatSync(claimPath, {
+    throwIfNoEntry: false,
+  });
+  if (!currentClaimStats) {
+    assertExactEvidenceObjectFinal(objectPath, exactContent);
+    return;
+  }
+  const published = readStablePrivateFile(objectPath, [2], objectUnsafe);
+  const currentClaim = readStablePrivateFile(claimPath, [2], objectUnsafe);
+  if (
+    !published.bytes.equals(exactContent) ||
+    !currentClaim.bytes.equals(exactContent) ||
+    published.stats.dev !== currentClaim.stats.dev ||
+    published.stats.ino !== currentClaim.stats.ino
+  ) {
+    throw objectUnsafe();
+  }
+  try {
+    fs.unlinkSync(claimPath);
+    fsyncDirectory(path.dirname(objectPath));
+  } catch (error) {
+    if (!isNodeError(error) || error.code !== 'ENOENT') {
+      throw error;
+    }
+    assertExactEvidenceObjectFinal(objectPath, exactContent);
+  }
+}
+
+function resolveLinkedEvidenceObjectFinal(
+  objectPath: string,
+  exactContent: Buffer,
+): void {
+  const initial = fs.lstatSync(objectPath, { throwIfNoEntry: false });
+  if (!initial || initial.nlink === 1) {
+    return;
+  }
+  const final = readStablePrivateFile(
+    objectPath,
+    [initial.nlink],
+    objectUnsafe,
+  );
+  const linkedAliases: Array<{
+    alias: EvidencePublicationAlias;
+    stats: fs.Stats;
+    bytes: Buffer;
+  }> = [];
+  for (const alias of listEvidencePublicationAliases(objectPath)) {
+    const stats = fs.lstatSync(alias.aliasPath, {
+      throwIfNoEntry: false,
+    });
+    if (
+      !stats ||
+      stats.dev !== final.stats.dev ||
+      stats.ino !== final.stats.ino
+    ) {
+      continue;
+    }
+    const observed = readStablePrivateFile(
+      alias.aliasPath,
+      [initial.nlink],
+      objectUnsafe,
+    );
+    linkedAliases.push({
+      alias,
+      stats: observed.stats,
+      bytes: observed.bytes,
+    });
+  }
+  if (
+    initial.nlink !== 2 ||
+    linkedAliases.length !== 1 ||
+    !final.bytes.equals(exactContent)
+  ) {
+    throw objectUnsafe();
+  }
+  if (
+    linkedAliases[0]!.alias.kind !== 'publish' ||
+    !linkedAliases[0]!.bytes.equals(exactContent)
+  ) {
+    throw objectUnsafe();
+  }
+  unlinkValidatedEvidenceAliases(
+    linkedAliases.map(({ alias, stats }) => ({ alias, stats })),
+    path.dirname(objectPath),
+  );
+}
+
+function reclaimEvidencePublicationAliases(
+  objectPath: string,
+  exactContent: Buffer,
+): void {
+  const objectDirectory = path.dirname(objectPath);
+  const finalStats = fs.lstatSync(objectPath, { throwIfNoEntry: false });
+  const finalIsExact =
+    finalStats !== undefined &&
+    readStablePrivateFile(
+      objectPath,
+      [finalStats.nlink],
+      objectUnsafe,
+    ).bytes.equals(exactContent);
+  const aliases = listEvidencePublicationAliases(objectPath);
+  const observedAliases: Array<{
+    alias: EvidencePublicationAlias;
+    stats: fs.Stats;
+    bytes: Buffer;
+    liveOtherOwner: boolean;
+  }> = [];
+  for (const alias of aliases) {
+    const aliasStats = fs.lstatSync(alias.aliasPath, {
+      throwIfNoEntry: false,
+    });
+    if (!aliasStats) {
+      continue;
+    }
+    const observed = readStablePrivateFile(
+      alias.aliasPath,
+      [aliasStats.nlink],
+      objectUnsafe,
+    );
+    if (
+      !observed.bytes.equals(exactContent) &&
+      !(
+        observed.stats.nlink === 1 &&
+        isStrictBufferPrefix(observed.bytes, exactContent)
+      )
+    ) {
+      throw objectUnsafe();
+    }
+    if (
+      observed.stats.nlink > 1 &&
+      (!finalStats ||
+        !finalIsExact ||
+        finalStats.dev !== observed.stats.dev ||
+        finalStats.ino !== observed.stats.ino ||
+        finalStats.nlink !== observed.stats.nlink)
+    ) {
+      throw objectUnsafe();
+    }
+    observedAliases.push({
+      alias,
+      stats: observed.stats,
+      bytes: observed.bytes,
+      liveOtherOwner: alias.pid !== process.pid && isProcessAlive(alias.pid),
+    });
+  }
+
+  const reclaimable: Array<{
+    alias: EvidencePublicationAlias;
+    stats: fs.Stats;
+  }> = [];
+  for (const observed of observedAliases) {
+    if (observed.stats.nlink > 1 || !observed.liveOtherOwner) {
+      reclaimable.push(observed);
+    }
+  }
+  unlinkValidatedEvidenceAliases(reclaimable, objectDirectory);
+}
+
+function unlinkValidatedEvidenceAliases(
+  reclaimable: Array<{
+    alias: EvidencePublicationAlias;
+    stats: fs.Stats;
+  }>,
+  objectDirectory: string,
+): void {
+  let removed = false;
+  for (const { alias, stats } of reclaimable) {
+    const current = fs.lstatSync(alias.aliasPath, {
+      throwIfNoEntry: false,
+    });
+    if (!current) {
+      continue;
+    }
+    if (
+      current.dev !== stats.dev ||
+      current.ino !== stats.ino ||
+      current.nlink !== stats.nlink ||
+      (current.mode & 0o777) !== 0o600 ||
+      !current.isFile() ||
+      current.isSymbolicLink()
+    ) {
+      throw objectUnsafe();
+    }
+    fs.unlinkSync(alias.aliasPath);
+    removed = true;
+  }
+  if (removed) {
+    fsyncDirectory(objectDirectory);
+  }
+}
+
+function listEvidencePublicationAliases(
+  objectPath: string,
+): EvidencePublicationAlias[] {
+  const objectDirectory = path.dirname(objectPath);
+  const prefix = `${path.basename(objectPath)}.`;
+  return fs
+    .readdirSync(objectDirectory)
+    .sort()
+    .flatMap((name): EvidencePublicationAlias[] => {
+      if (!name.startsWith(prefix)) {
+        return [];
+      }
+      const match = EVIDENCE_PUBLICATION_TEMP_SUFFIX.exec(
+        name.slice(prefix.length),
+      );
+      if (!match) {
+        return [];
+      }
+      return [
+        {
+          aliasPath: path.join(objectDirectory, name),
+          pid: Number(match[1]),
+          kind: 'publish',
+        },
+      ];
+    });
+}
+
+function assertExactEvidenceObjectFinal(
+  objectPath: string,
+  exactContent: Buffer,
+): void {
+  const observed = readStablePrivateFile(objectPath, [1], objectUnsafe);
+  if (!observed.bytes.equals(exactContent)) {
+    throw objectCollision(path.basename(objectPath, '.json'));
+  }
+}
+
+function assertExactEvidencePublicationAlias(
+  aliasPath: string,
+  expected: fs.Stats,
+  exactContent: Buffer,
+  expectedLinkCount: number,
+): void {
+  const observed = readStablePrivateFile(
+    aliasPath,
+    [expectedLinkCount],
+    objectUnsafe,
+  );
+  if (
+    observed.stats.dev !== expected.dev ||
+    observed.stats.ino !== expected.ino ||
+    !observed.bytes.equals(exactContent)
+  ) {
+    throw objectUnsafe();
+  }
+}
+
+function unlinkOwnedEvidencePublicationAlias(
+  aliasPath: string,
+  expected: fs.Stats,
+  objectDirectory: string,
+): void {
+  const current = fs.lstatSync(aliasPath, { throwIfNoEntry: false });
+  if (!current) {
+    return;
+  }
+  if (
+    !current.isFile() ||
+    current.isSymbolicLink() ||
+    (current.mode & 0o777) !== 0o600 ||
+    current.dev !== expected.dev ||
+    current.ino !== expected.ino
+  ) {
+    throw objectUnsafe();
+  }
+  fs.unlinkSync(aliasPath);
+  fsyncDirectory(objectDirectory);
+}
+
+function readStablePrivateFile(
+  filePath: string,
+  allowedLinkCounts: number[],
+  makeError: () => ReturnType<typeof workflowError>,
+): { bytes: Buffer; stats: fs.Stats } {
+  const before = fs.lstatSync(filePath, { throwIfNoEntry: false });
+  if (
+    !before ||
+    !before.isFile() ||
+    before.isSymbolicLink() ||
+    !allowedLinkCounts.includes(before.nlink) ||
+    (before.mode & 0o777) !== 0o600
+  ) {
+    throw makeError();
+  }
+  let descriptor: number | undefined;
+  try {
+    descriptor = fs.openSync(
+      filePath,
+      fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW,
+    );
+    const opened = fs.fstatSync(descriptor);
+    const bytes = fs.readFileSync(descriptor);
+    const after = fs.lstatSync(filePath, { throwIfNoEntry: false });
+    if (
+      !after ||
+      !after.isFile() ||
+      after.isSymbolicLink() ||
+      !allowedLinkCounts.includes(opened.nlink) ||
+      !allowedLinkCounts.includes(after.nlink) ||
+      (opened.mode & 0o777) !== 0o600 ||
+      (after.mode & 0o777) !== 0o600 ||
+      opened.dev !== before.dev ||
+      opened.ino !== before.ino ||
+      after.dev !== before.dev ||
+      after.ino !== before.ino ||
+      opened.size !== before.size ||
+      after.size !== before.size ||
+      opened.mtimeMs !== before.mtimeMs ||
+      after.mtimeMs !== before.mtimeMs ||
+      opened.ctimeMs !== before.ctimeMs ||
+      after.ctimeMs !== before.ctimeMs ||
+      bytes.byteLength !== before.size
+    ) {
+      throw makeError();
+    }
+    return { bytes, stats: after };
+  } catch (error) {
+    if (
+      typeof error === 'object' &&
+      error !== null &&
+      'code' in error &&
+      (error as { code?: unknown }).code === 'EVIDENCE_OBJECT_UNSAFE'
+    ) {
+      throw error;
+    }
+    throw makeError();
+  } finally {
+    if (descriptor !== undefined) {
+      fs.closeSync(descriptor);
+    }
+  }
+}
+
+function isStrictBufferPrefix(prefix: Buffer, exact: Buffer): boolean {
+  return (
+    prefix.byteLength < exact.byteLength &&
+    exact.subarray(0, prefix.byteLength).equals(prefix)
+  );
+}
+
+function isProcessAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return !(isNodeError(error) && error.code === 'ESRCH');
+  }
 }
 
 function evidenceRefPath(

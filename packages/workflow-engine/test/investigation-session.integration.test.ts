@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -8,7 +8,17 @@ import test from 'node:test';
 import { pathToFileURL } from 'node:url';
 
 import { canonicalJson } from '../src/canonical-json.ts';
-import { compareAndSwapEvidenceRefsDocument } from '../src/evidence-object-store.ts';
+import {
+  compareAndSwapEvidenceRefsDocument,
+  readEvidenceNode,
+  readInvestigationEvidenceRefsClosure,
+  writeEvidenceNode,
+} from '../src/evidence-object-store.ts';
+import {
+  canonicalEvidenceNodeEnvelope,
+  createEvidenceNode,
+  type EvidenceNode,
+} from '../src/evidence-node.ts';
 import {
   preparedLockTemporaryPath,
   publishPreparedExclusiveLock,
@@ -19,11 +29,14 @@ import { readInvestigationGroupNode } from '../src/investigation-groups.ts';
 import {
   createInvestigationCheckpointEnvelope,
   discardHumanResolutionGrantPublication,
+  executeHumanResolutionGrant,
   getInvestigationStatus,
   inspectHumanResolutionGrantPublicationRecoveries,
   publishProviderResultToInvestigation,
+  recoverHumanResolutionGrant,
   resumeInvestigationSession,
   retryInvestigationProvider,
+  SimulatedHumanResolutionCrash,
   startInvestigationSession,
 } from '../src/investigation-session.ts';
 import {
@@ -53,10 +66,13 @@ import {
   inspectInvestigationResolutionState,
   inspectStoredHumanResolutionGrants,
   readHumanResolutionJournal,
+  readInvestigationSession,
   storeAvailableHumanResolutionGrant,
   withHumanResolutionGrantExecution,
   writeHumanResolutionJournal,
 } from '../src/investigation-session-store.ts';
+import { issueHumanResolutionGrant } from '../src/maintainer-grant.ts';
+import type { MaintainerSignerProvider } from '../src/maintainer-signer.ts';
 import { investigationRuntimePaths } from '../src/paths.ts';
 import {
   withChangeTransitionAuthority,
@@ -64,6 +80,7 @@ import {
 } from '../src/planning-lock.ts';
 import {
   createProviderInvocationRequest,
+  PROPOSE_POLICY_DIGEST,
   type ProviderInvocationRequest,
   type ProviderProcessOutcome,
 } from '../src/provider-contracts.ts';
@@ -110,6 +127,9 @@ const INVESTIGATION_STORE_MODULE_URL = workflowSourceModuleUrl(
 const INVESTIGATION_SESSION_MODULE_URL = workflowSourceModuleUrl(
   'investigation-session.ts',
 );
+const PROPOSE_ORCHESTRATOR_MODULE_URL = workflowSourceModuleUrl(
+  'propose-orchestrator.ts',
+);
 const EVIDENCE_STORE_MODULE_URL = workflowSourceModuleUrl(
   'evidence-object-store.ts',
 );
@@ -118,6 +138,276 @@ const FILESYSTEM_SAFETY_MODULE_URL = workflowSourceModuleUrl(
 );
 const PATHS_MODULE_URL = workflowSourceModuleUrl('paths.ts');
 const SESSION_MODULE_URL = workflowSourceModuleUrl('session.ts');
+
+test('evidence object publication recovers exact crash aliases without exposing partial finals', () => {
+  const repository = createFixtureRepository();
+  try {
+    const repositoryState = discoverRepository(repository);
+    const paths = investigationRuntimePaths(
+      repositoryState.gitCommonDirectory,
+      'workflow-engine',
+    );
+    for (const phase of [
+      'during-temp-write',
+      'before-link',
+      'after-link',
+    ] as const) {
+      const node = createCrashPublicationEvidenceNode(phase);
+      const objectPath = path.join(
+        paths.objects,
+        node.nodeId.slice(0, 2),
+        `${node.nodeId}.json`,
+      );
+      const child = runEvidenceObjectCrashChild(
+        repository,
+        repositoryState.gitCommonDirectory,
+        node,
+        objectPath,
+        phase,
+      );
+      assert.equal(
+        child.signal,
+        'SIGKILL',
+        String(child.stderr || child.stdout),
+      );
+      const aliases = listEvidenceObjectCrashAliases(objectPath);
+      assert.equal(aliases.length, 1);
+      if (phase !== 'after-link') {
+        assert.equal(fs.existsSync(objectPath), false);
+        assert.equal(fs.lstatSync(aliases[0]!).nlink, 1);
+      } else {
+        assert.equal(
+          fs.readFileSync(objectPath, 'utf8'),
+          canonicalEvidenceNodeEnvelope(node),
+        );
+        assert.equal(fs.lstatSync(objectPath).nlink, 2);
+        assert.equal(fs.lstatSync(aliases[0]!).nlink, 2);
+      }
+
+      assert.equal(writeEvidenceNode(paths, node), node.nodeId);
+      assert.deepEqual(readEvidenceNode(paths, node.nodeId), node);
+      assert.equal(fs.lstatSync(objectPath).nlink, 1);
+      assert.deepEqual(listEvidenceObjectCrashAliases(objectPath), []);
+    }
+
+    for (const phase of [
+      'after-legacy-prefix-claim',
+      'after-legacy-final-unlink',
+      'after-legacy-final-link',
+    ] as const) {
+      const legacyNode = createCrashPublicationEvidenceNode(phase);
+      const legacyContent = canonicalEvidenceNodeEnvelope(legacyNode);
+      const legacyPath = path.join(
+        paths.objects,
+        legacyNode.nodeId.slice(0, 2),
+        `${legacyNode.nodeId}.json`,
+      );
+      fs.mkdirSync(path.dirname(legacyPath), {
+        recursive: true,
+        mode: 0o700,
+      });
+      fs.chmodSync(path.dirname(legacyPath), 0o700);
+      fs.writeFileSync(
+        legacyPath,
+        legacyContent.slice(0, Math.floor(legacyContent.length / 2)),
+        { mode: 0o600 },
+      );
+      const legacyCrash = runEvidenceObjectCrashChild(
+        repository,
+        repositoryState.gitCommonDirectory,
+        legacyNode,
+        legacyPath,
+        phase,
+      );
+      assert.equal(
+        legacyCrash.signal,
+        'SIGKILL',
+        String(legacyCrash.stderr || legacyCrash.stdout),
+      );
+      if (phase === 'after-legacy-prefix-claim') {
+        assert.equal(fs.lstatSync(legacyPath).nlink, 1);
+        assert.equal(
+          fs.readFileSync(legacyPath, 'utf8').length < legacyContent.length,
+          true,
+        );
+        assert.equal(listEvidenceObjectCrashAliases(legacyPath).length, 2);
+      } else if (phase === 'after-legacy-final-unlink') {
+        assert.equal(fs.existsSync(legacyPath), false);
+        assert.equal(listEvidenceObjectCrashAliases(legacyPath).length, 1);
+      } else {
+        assert.equal(fs.readFileSync(legacyPath, 'utf8'), legacyContent);
+        assert.equal(fs.lstatSync(legacyPath).nlink, 2);
+        assert.equal(listEvidenceObjectCrashAliases(legacyPath).length, 1);
+      }
+      assert.equal(writeEvidenceNode(paths, legacyNode), legacyNode.nodeId);
+      assert.deepEqual(readEvidenceNode(paths, legacyNode.nodeId), legacyNode);
+      assert.deepEqual(listEvidenceObjectCrashAliases(legacyPath), []);
+    }
+
+    const competingExactInput = sha256('competing-legacy-repair');
+    const claimWinner = createEvidenceNode({
+      type: 'crash-publication-test',
+      nodeSchema: 'workflow.crash-publication-test.v1',
+      evaluator: 'workflow-test.v1',
+      policyDigest: '1'.repeat(64),
+      exactInputDigests: { input: competingExactInput },
+      semanticParentResultDigests: {},
+      provenanceParentNodeIds: {},
+      outputSchema: 'workflow.crash-publication-test-output.v1',
+      output: { label: 'claim-winner' },
+      runtimeMetadata: {},
+    });
+    const claimLoser = createEvidenceNode({
+      type: 'crash-publication-test',
+      nodeSchema: 'workflow.crash-publication-test.v1',
+      evaluator: 'workflow-test.v1',
+      policyDigest: '1'.repeat(64),
+      exactInputDigests: { input: competingExactInput },
+      semanticParentResultDigests: {},
+      provenanceParentNodeIds: {},
+      outputSchema: 'workflow.crash-publication-test-output.v1',
+      output: { label: 'claim-loser' },
+      runtimeMetadata: {},
+    });
+    assert.equal(claimWinner.nodeId, claimLoser.nodeId);
+    assert.notEqual(claimWinner.resultDigest, claimLoser.resultDigest);
+    const winnerContent = canonicalEvidenceNodeEnvelope(claimWinner);
+    const loserContent = canonicalEvidenceNodeEnvelope(claimLoser);
+    let commonPrefixLength = 0;
+    while (
+      commonPrefixLength < winnerContent.length &&
+      commonPrefixLength < loserContent.length &&
+      winnerContent[commonPrefixLength] === loserContent[commonPrefixLength]
+    ) {
+      commonPrefixLength += 1;
+    }
+    assert.ok(commonPrefixLength > 0);
+    const competingPath = path.join(
+      paths.objects,
+      claimWinner.nodeId.slice(0, 2),
+      `${claimWinner.nodeId}.json`,
+    );
+    fs.mkdirSync(path.dirname(competingPath), {
+      recursive: true,
+      mode: 0o700,
+    });
+    fs.chmodSync(path.dirname(competingPath), 0o700);
+    fs.writeFileSync(
+      competingPath,
+      winnerContent.slice(0, commonPrefixLength),
+      { mode: 0o600 },
+    );
+    const winnerClaimCrash = runEvidenceObjectCrashChild(
+      repository,
+      repositoryState.gitCommonDirectory,
+      claimWinner,
+      competingPath,
+      'after-legacy-prefix-claim',
+    );
+    assert.equal(
+      winnerClaimCrash.signal,
+      'SIGKILL',
+      String(winnerClaimCrash.stderr || winnerClaimCrash.stdout),
+    );
+    const competingClaimPath = `${competingPath}.legacy-prefix-repair`;
+    const prefixBeforeCollision = fs.readFileSync(competingPath);
+    const claimBeforeCollision = fs.readFileSync(competingClaimPath);
+    const aliasesBeforeCollision =
+      listEvidenceObjectCrashAliases(competingPath);
+    assert.equal(aliasesBeforeCollision.length, 2);
+    assert.throws(
+      () => writeEvidenceNode(paths, claimLoser),
+      (error: unknown) => isWorkflowError(error, 'EVIDENCE_OBJECT_COLLISION'),
+    );
+    assert.deepEqual(fs.readFileSync(competingPath), prefixBeforeCollision);
+    assert.deepEqual(fs.readFileSync(competingClaimPath), claimBeforeCollision);
+    assert.deepEqual(
+      listEvidenceObjectCrashAliases(competingPath),
+      aliasesBeforeCollision,
+    );
+    assert.equal(writeEvidenceNode(paths, claimWinner), claimWinner.nodeId);
+    assert.deepEqual(readEvidenceNode(paths, claimWinner.nodeId), claimWinner);
+    assert.equal(fs.lstatSync(competingPath).nlink, 1);
+    assert.deepEqual(listEvidenceObjectCrashAliases(competingPath), []);
+
+    const divergentNode = createCrashPublicationEvidenceNode('divergent');
+    const divergentPath = path.join(
+      paths.objects,
+      divergentNode.nodeId.slice(0, 2),
+      `${divergentNode.nodeId}.json`,
+    );
+    fs.mkdirSync(path.dirname(divergentPath), {
+      recursive: true,
+      mode: 0o700,
+    });
+    fs.chmodSync(path.dirname(divergentPath), 0o700);
+    fs.writeFileSync(divergentPath, '{"divergent":true}', { mode: 0o600 });
+    assert.throws(
+      () => writeEvidenceNode(paths, divergentNode),
+      (error: unknown) => isWorkflowError(error, 'EVIDENCE_OBJECT_COLLISION'),
+    );
+    assert.equal(fs.readFileSync(divergentPath, 'utf8'), '{"divergent":true}');
+  } finally {
+    fs.rmSync(repository, { recursive: true, force: true });
+  }
+});
+
+test('concurrent legacy-prefix repair converges through a fixed exact-output claim', async () => {
+  const repository = createFixtureRepository();
+  const barrierDirectory = fs.mkdtempSync(
+    path.join(os.tmpdir(), 'evidence-legacy-barrier-'),
+  );
+  try {
+    const repositoryState = discoverRepository(repository);
+    const paths = investigationRuntimePaths(
+      repositoryState.gitCommonDirectory,
+      'workflow-engine',
+    );
+    const node = createCrashPublicationEvidenceNode('two-writer-barrier');
+    const content = canonicalEvidenceNodeEnvelope(node);
+    const objectPath = path.join(
+      paths.objects,
+      node.nodeId.slice(0, 2),
+      `${node.nodeId}.json`,
+    );
+    fs.mkdirSync(path.dirname(objectPath), { recursive: true, mode: 0o700 });
+    fs.chmodSync(path.dirname(objectPath), 0o700);
+    fs.writeFileSync(
+      objectPath,
+      content.slice(0, Math.floor(content.length / 2)),
+      { mode: 0o600 },
+    );
+    const children = [0, 1].map(() =>
+      runConcurrentLegacyRepairChild(
+        repository,
+        repositoryState.gitCommonDirectory,
+        node,
+        objectPath,
+        barrierDirectory,
+      ),
+    );
+    await waitForFileCount(barrierDirectory, 'pre-ready-', 2);
+    fs.writeFileSync(path.join(barrierDirectory, 'pre-release'), '');
+    await waitForFileCount(barrierDirectory, 'post-ready-', 2);
+    assert.equal(fs.lstatSync(objectPath).nlink, 1);
+    assert.equal(fs.lstatSync(`${objectPath}.legacy-prefix-repair`).nlink, 2);
+    assert.equal(listEvidenceObjectCrashAliases(objectPath).length, 3);
+    fs.writeFileSync(path.join(barrierDirectory, 'release'), '');
+    const results = await Promise.all(children.map(waitForChild));
+    assert.equal(
+      results.some(({ code }) => code === 0),
+      true,
+      results.map(({ stderr }) => stderr).join('\n'),
+    );
+    assert.equal(writeEvidenceNode(paths, node), node.nodeId);
+    assert.deepEqual(readEvidenceNode(paths, node.nodeId), node);
+    assert.equal(fs.lstatSync(objectPath).nlink, 1);
+    assert.deepEqual(listEvidenceObjectCrashAliases(objectPath), []);
+  } finally {
+    fs.rmSync(barrierDirectory, { recursive: true, force: true });
+    fs.rmSync(repository, { recursive: true, force: true });
+  }
+});
 
 test('structured investigation exemption starts a durable planning branch without manufactured survey evidence', () => {
   const repository = createFixtureRepository();
@@ -481,6 +771,7 @@ test('fake-backed propose composes breadth and depth before materializing an unc
         'export const MainSurveyNeedle = true;',
         'export const BlindSurveyNeedle = true;',
         'export const ReviewOnlyNeedle = true;',
+        'export const SecondReviewNeedle = true;',
         '',
       ].join('\n'),
     );
@@ -1137,6 +1428,433 @@ test('fake-backed propose composes breadth and depth before materializing an unc
               ],
             },
           ],
+          proposedTerms: [
+            { kind: 'symbol' as const, value: 'SecondReviewNeedle' },
+          ],
+          suggestions: [],
+          residualRisk:
+            'The exact review cannot prove semantic breadth completeness.',
+          uncertainty:
+            'The provider is observed read-only but not same-user confined.',
+        });
+      },
+    });
+    const secondReopened = resumePropose(
+      repository,
+      changeId,
+      createPlanReviewProgressEnvelope(
+        getProposeStatus(repository, replanned.investigation!.investigationId),
+      ),
+    );
+    assert.equal(secondReopened.state, 'awaiting-group-dispositions');
+    assert.equal(secondReopened.work?.termSources.reviewer, 2);
+    const reviewerRuntime = investigationRuntimePaths(
+      discoverRepository(repository).gitCommonDirectory,
+      'workflow-engine',
+    );
+    const secondReopenedSession = readInvestigationSession(
+      reviewerRuntime,
+      secondReopened.investigation!.investigationId,
+    );
+    const secondReviewerSourceNodeId =
+      secondReopenedSession.milestones.reviewerTermSourceNodeId;
+    assert.notEqual(secondReviewerSourceNodeId, null);
+    const secondReviewerSource = readEvidenceNode(
+      reviewerRuntime,
+      secondReviewerSourceNodeId!,
+    );
+    assert.equal(
+      secondReviewerSource.nodeSchema,
+      'investigation.reviewer-term-source.v3',
+    );
+    const exactReviewerSourceOutput = secondReviewerSource.output as {
+      providerResultNode: EvidenceNode;
+    };
+    assert.equal(
+      typeof exactReviewerSourceOutput.providerResultNode.exactInputDigests
+        .targetSnapshot,
+      'string',
+    );
+    assert.equal(
+      typeof exactReviewerSourceOutput.providerResultNode
+        .semanticParentResultDigests.targetSnapshot,
+      'string',
+    );
+    assert.equal(
+      typeof exactReviewerSourceOutput.providerResultNode
+        .provenanceParentNodeIds.targetSnapshot,
+      'string',
+    );
+    assert.equal(
+      typeof exactReviewerSourceOutput.providerResultNode.exactInputDigests
+        .subject,
+      'string',
+    );
+    const secondReviewerSourcePath = path.join(
+      reviewerRuntime.objects,
+      secondReviewerSource.nodeId.slice(0, 2),
+      `${secondReviewerSource.nodeId}.json`,
+    );
+    const exactSecondReviewerSource = fs.readFileSync(secondReviewerSourcePath);
+    const reviewerSourceMutations: Array<(node: EvidenceNode) => void> = [
+      (node) => {
+        delete node.semanticParentResultDigests.targetSnapshot;
+      },
+      (node) => {
+        node.exactInputDigests.targetSnapshot = 'f'.repeat(64);
+      },
+      (node) => {
+        node.semanticParentResultDigests.targetSnapshot = 'f'.repeat(64);
+      },
+      (node) => {
+        node.exactInputDigests.subject = 'f'.repeat(64);
+      },
+    ];
+    for (const mutateProviderResultNode of reviewerSourceMutations) {
+      const forgedReviewerSourceOutput = structuredClone(
+        secondReviewerSource.output,
+      ) as {
+        providerResultNode: EvidenceNode;
+      };
+      mutateProviderResultNode(forgedReviewerSourceOutput.providerResultNode);
+      const forgedReviewerSource = createEvidenceNode({
+        type: secondReviewerSource.type,
+        nodeSchema: secondReviewerSource.nodeSchema,
+        evaluator: secondReviewerSource.evaluator,
+        policyDigest: secondReviewerSource.policyDigest,
+        exactInputDigests: secondReviewerSource.exactInputDigests,
+        semanticParentResultDigests:
+          secondReviewerSource.semanticParentResultDigests,
+        provenanceParentNodeIds: secondReviewerSource.provenanceParentNodeIds,
+        outputSchema: secondReviewerSource.outputSchema,
+        output: forgedReviewerSourceOutput,
+        runtimeMetadata: secondReviewerSource.runtimeMetadata,
+      });
+      assert.equal(forgedReviewerSource.nodeId, secondReviewerSource.nodeId);
+      assert.notEqual(
+        forgedReviewerSource.resultDigest,
+        secondReviewerSource.resultDigest,
+      );
+      try {
+        fs.writeFileSync(
+          secondReviewerSourcePath,
+          canonicalEvidenceNodeEnvelope(forgedReviewerSource),
+        );
+        assert.throws(
+          () =>
+            getProposeStatus(
+              repository,
+              secondReopened.investigation!.investigationId,
+            ),
+          (error: unknown) =>
+            isWorkflowError(
+              error,
+              'INVESTIGATION_REVIEWER_TERM_SOURCE_INVALID',
+            ),
+        );
+      } finally {
+        fs.writeFileSync(secondReviewerSourcePath, exactSecondReviewerSource);
+      }
+    }
+    const secondReviewerDispositions = resumePropose(
+      repository,
+      changeId,
+      createInvestigationCheckpointEnvelope(
+        getInvestigationStatus(
+          repository,
+          secondReopened.investigation!.investigationId,
+        ),
+        {
+          dispositions: secondReopened.work!.groups.map((group) => ({
+            groupId: group.groupId,
+            classification: 'load-bearing' as const,
+            rationale:
+              'The second reviewer-expanded group remains load-bearing.',
+            author: 'codex',
+          })),
+        },
+      ),
+    );
+    assert.equal(secondReviewerDispositions.state, 'awaiting-ledger-answers');
+    const secondWhyEnvelope = createInvestigationCheckpointEnvelope(
+      getInvestigationStatus(
+        repository,
+        secondReviewerDispositions.investigation!.investigationId,
+      ),
+      {
+        answers: secondReviewerDispositions.work!.fullBlobManifest.map(
+          (entry) => whyAnswer(entry.manifestEntryId),
+        ),
+      },
+    );
+    const investigationPath = path.join(changeDirectory, 'investigation.json');
+    const designPath = path.join(changeDirectory, 'design.md');
+    const previousInvestigation = fs.readFileSync(investigationPath, 'utf8');
+    const previousDesign = fs.readFileSync(designPath, 'utf8');
+    const afterInvestigationTruncate = runReviewerReconciliationCrashChild(
+      repository,
+      changeId,
+      secondWhyEnvelope,
+      fs.realpathSync(investigationPath),
+      'after-truncate',
+    );
+    assert.equal(
+      afterInvestigationTruncate.signal,
+      'SIGKILL',
+      String(
+        afterInvestigationTruncate.stderr || afterInvestigationTruncate.stdout,
+      ),
+    );
+    assert.equal(
+      fs.readFileSync(investigationPath, 'utf8'),
+      previousInvestigation,
+    );
+    assert.equal(fs.readFileSync(designPath, 'utf8'), previousDesign);
+    const duringInvestigationWrite = runReviewerReconciliationCrashChild(
+      repository,
+      changeId,
+      secondWhyEnvelope,
+      fs.realpathSync(investigationPath),
+      'during-write',
+    );
+    assert.equal(
+      duringInvestigationWrite.signal,
+      'SIGKILL',
+      String(
+        duringInvestigationWrite.stderr || duringInvestigationWrite.stdout,
+      ),
+    );
+    assert.equal(
+      fs.readFileSync(investigationPath, 'utf8'),
+      previousInvestigation,
+    );
+    assert.equal(fs.readFileSync(designPath, 'utf8'), previousDesign);
+    const beforeInvestigationRename = runReviewerReconciliationCrashChild(
+      repository,
+      changeId,
+      secondWhyEnvelope,
+      fs.realpathSync(investigationPath),
+      'before-rename',
+    );
+    assert.equal(
+      beforeInvestigationRename.signal,
+      'SIGKILL',
+      String(
+        beforeInvestigationRename.stderr || beforeInvestigationRename.stdout,
+      ),
+    );
+    assert.equal(
+      fs.readFileSync(investigationPath, 'utf8'),
+      previousInvestigation,
+    );
+    assert.equal(fs.readFileSync(designPath, 'utf8'), previousDesign);
+    const orphanedInvestigationTemporaries =
+      listReviewerReconciliationTemporaries(
+        changeDirectory,
+        'investigation.json',
+      );
+    assert.equal(orphanedInvestigationTemporaries.length, 1);
+    const crashedInvestigationTemporary = orphanedInvestigationTemporaries[0]!;
+    const orphanedInvestigationTemporary = path.join(
+      changeDirectory,
+      path
+        .basename(crashedInvestigationTemporary)
+        .replace(/\.[1-9][0-9]*\./, `.${process.pid}.`),
+    );
+    fs.renameSync(
+      crashedInvestigationTemporary,
+      orphanedInvestigationTemporary,
+    );
+    const orphanedInvestigationBytes = fs.readFileSync(
+      orphanedInvestigationTemporary,
+    );
+    fs.chmodSync(orphanedInvestigationTemporary, 0o600);
+    assert.throws(
+      () => resumePropose(repository, changeId, secondWhyEnvelope),
+      (error: unknown) =>
+        isWorkflowError(error, 'PLANNING_MATERIALIZATION_STALE'),
+    );
+    fs.chmodSync(orphanedInvestigationTemporary, 0o644);
+    assert.deepEqual(
+      fs.readFileSync(orphanedInvestigationTemporary),
+      orphanedInvestigationBytes,
+    );
+    assert.throws(
+      () => resumePropose(repository, changeId, secondWhyEnvelope),
+      (error: unknown) =>
+        isWorkflowError(error, 'PLANNING_MATERIALIZATION_STALE'),
+    );
+    assert.deepEqual(
+      fs.readFileSync(orphanedInvestigationTemporary),
+      orphanedInvestigationBytes,
+    );
+    fs.renameSync(
+      orphanedInvestigationTemporary,
+      crashedInvestigationTemporary,
+    );
+    const divergentTemporaryBytes = Buffer.from(
+      'divergent-reviewer-reconciliation-temporary\n',
+    );
+    fs.writeFileSync(crashedInvestigationTemporary, divergentTemporaryBytes);
+    assert.throws(
+      () => resumePropose(repository, changeId, secondWhyEnvelope),
+      (error: unknown) =>
+        isWorkflowError(error, 'PLANNING_MATERIALIZATION_STALE'),
+    );
+    assert.deepEqual(
+      fs.readFileSync(crashedInvestigationTemporary),
+      divergentTemporaryBytes,
+    );
+    fs.writeFileSync(crashedInvestigationTemporary, orphanedInvestigationBytes);
+    const afterInvestigationRename = runReviewerReconciliationCrashChild(
+      repository,
+      changeId,
+      secondWhyEnvelope,
+      fs.realpathSync(investigationPath),
+    );
+    assert.equal(
+      afterInvestigationRename.signal,
+      'SIGKILL',
+      String(
+        afterInvestigationRename.stderr || afterInvestigationRename.stdout,
+      ),
+    );
+    assert.notEqual(
+      fs.readFileSync(investigationPath, 'utf8'),
+      previousInvestigation,
+    );
+    assert.equal(fs.readFileSync(designPath, 'utf8'), previousDesign);
+    assert.deepEqual(
+      listReviewerReconciliationTemporaries(
+        changeDirectory,
+        'investigation.json',
+      ),
+      [],
+    );
+    fs.writeFileSync(
+      designPath,
+      `${previousDesign}\nunauthenticated-third-state\n`,
+    );
+    assert.throws(
+      () => resumePropose(repository, changeId, secondWhyEnvelope),
+      (error: unknown) =>
+        isWorkflowError(error, 'PLANNING_MATERIALIZATION_STALE'),
+    );
+    fs.writeFileSync(designPath, previousDesign);
+    const afterDesignRename = runReviewerReconciliationCrashChild(
+      repository,
+      changeId,
+      secondWhyEnvelope,
+      fs.realpathSync(designPath),
+    );
+    assert.equal(
+      afterDesignRename.signal,
+      'SIGKILL',
+      String(afterDesignRename.stderr || afterDesignRename.stdout),
+    );
+    assert.notEqual(fs.readFileSync(designPath, 'utf8'), previousDesign);
+    const repositoryState = discoverRepository(repository);
+    const evidenceRefsPath = path.join(
+      investigationRuntimePaths(
+        repositoryState.gitCommonDirectory,
+        'workflow-engine',
+      ).refs,
+      `${changeId}.json`,
+    );
+    const afterReceiptAdvance = runReviewerReconciliationCrashChild(
+      repository,
+      changeId,
+      secondWhyEnvelope,
+      fs.realpathSync(evidenceRefsPath),
+    );
+    assert.equal(
+      afterReceiptAdvance.signal,
+      'SIGKILL',
+      String(afterReceiptAdvance.stderr || afterReceiptAdvance.stdout),
+    );
+    const currentReceiptTemporary = `${investigationPath}.${process.pid}.${crypto.randomUUID()}.tmp`;
+    fs.copyFileSync(investigationPath, currentReceiptTemporary);
+    fs.chmodSync(currentReceiptTemporary, 0o644);
+    assert.deepEqual(
+      listReviewerReconciliationTemporaries(
+        changeDirectory,
+        'investigation.json',
+      ),
+      [currentReceiptTemporary],
+    );
+    assert.throws(
+      () => resumePropose(repository, changeId, secondWhyEnvelope),
+      (error: unknown) =>
+        isWorkflowError(error, 'PLANNING_MATERIALIZATION_STALE'),
+    );
+    assert.equal(fs.existsSync(currentReceiptTemporary), true);
+    assert.equal(typeof afterReceiptAdvance.pid, 'number');
+    const deadCurrentReceiptTemporary = currentReceiptTemporary.replace(
+      `.${process.pid}.`,
+      `.${afterReceiptAdvance.pid}.`,
+    );
+    fs.renameSync(currentReceiptTemporary, deadCurrentReceiptTemporary);
+    const twiceReplanned = resumePropose(
+      repository,
+      changeId,
+      secondWhyEnvelope,
+    );
+    assert.equal(twiceReplanned.state, 'waiting-for-plan-review');
+    assert.deepEqual(
+      listReviewerReconciliationTemporaries(
+        changeDirectory,
+        'investigation.json',
+      ),
+      [],
+    );
+    const twiceRevisedInvestigation = JSON.parse(
+      fs.readFileSync(investigationPath, 'utf8'),
+    );
+    const reviewerTermSources = twiceRevisedInvestigation.nodes.filter(
+      (node: { type: string }) =>
+        node.type === 'investigation-reviewer-term-source',
+    );
+    assert.equal(reviewerTermSources.length, 2);
+    const twiceRevisedNodeIds = new Set(
+      twiceRevisedInvestigation.nodes.map(
+        (node: { nodeId: string }) => node.nodeId,
+      ),
+    );
+    assert.equal(
+      twiceRevisedInvestigation.nodes.every(
+        (node: { provenanceParentNodeIds: Record<string, string> }) =>
+          Object.values(node.provenanceParentNodeIds).every((parentNodeId) =>
+            twiceRevisedNodeIds.has(parentNodeId),
+          ),
+      ),
+      true,
+    );
+
+    runProviderWorker(repository, twiceReplanned.planReview!.invocationId, {
+      runner(input): ProviderRunnerReport {
+        return fakeRunnerReport(input.request, {
+          schemaVersion: 2 as const,
+          verdict: 'advisory-approve' as const,
+          coverage: [...PLAN_REVIEW_COVERAGE],
+          scopeAssessment: { kind: 'challenges' as const },
+          findings: [
+            {
+              kind: 'challenge' as const,
+              severity: 'medium' as const,
+              category: 'missing-scope',
+              currentChangeImpact: 'required' as const,
+              summary: 'Confirm the adjacent provider worker remains covered.',
+              evidence: [
+                {
+                  kind: 'repository-location' as const,
+                  path: 'src/investigation-target.ts',
+                  line: 4,
+                  observation:
+                    'The reviewer-only term is now represented in the tracked target.',
+                },
+              ],
+            },
+          ],
           proposedTerms: [],
           suggestions: [],
           residualRisk:
@@ -1150,7 +1868,10 @@ test('fake-backed propose composes breadth and depth before materializing an unc
       repository,
       changeId,
       createPlanReviewProgressEnvelope(
-        getProposeStatus(repository, replanned.investigation!.investigationId),
+        getProposeStatus(
+          repository,
+          twiceReplanned.investigation!.investigationId,
+        ),
       ),
     );
     assert.equal(awaitingDisposition.state, 'awaiting-challenge-dispositions');
@@ -4245,6 +4966,275 @@ test('publication recovery reclaims receipt publication temps before and after a
   }
 });
 
+test('quarantine retires parseable evidence refs whose materialization no longer matches the session revision', () => {
+  const fixture = investigationFixture(
+    'invocation-quarantine-stale-materialization',
+  );
+  const now = new Date('2026-07-29T22:00:00.000Z');
+  const signer: MaintainerSignerProvider = {
+    assertHumanPresent() {},
+    identity() {
+      return 'fixture-maintainer';
+    },
+    sign() {
+      return [
+        '-----BEGIN SSH SIGNATURE-----',
+        'AAAA',
+        '-----END SSH SIGNATURE-----',
+        '',
+      ].join('\n');
+    },
+    verify() {},
+  };
+  try {
+    const started = startFixture(fixture);
+    const artifacts = {};
+    const sealNodeId = sha256('quarantine-stale-materialization-seal');
+    const sealResultDigest = sha256(
+      'quarantine-stale-materialization-seal-result',
+    );
+    const materialization = createEvidenceNode({
+      type: 'propose-planning-materialization',
+      nodeSchema: 'workflow.propose-planning-materialization.v1',
+      evaluator: 'workflow-propose.v1',
+      policyDigest: PROPOSE_POLICY_DIGEST,
+      exactInputDigests: {
+        artifacts: sha256(canonicalJson(artifacts)),
+        baseline: sha256(canonicalJson(started.baseline)),
+        seal: sealNodeId,
+      },
+      semanticParentResultDigests: { seal: sealResultDigest },
+      provenanceParentNodeIds: { seal: sealNodeId },
+      outputSchema: 'workflow.propose-planning-materialization-output.v1',
+      output: {
+        changeId: started.changeId,
+        investigationId: started.investigationId,
+        revision: started.revision,
+        baseline: started.baseline,
+        artifacts,
+        sealNodeId,
+        sealResultDigest,
+      },
+      runtimeMetadata: {},
+    });
+    writeEvidenceNode(fixture.paths, materialization);
+    const evidencePath = path.join(
+      fixture.paths.refs,
+      `${started.changeId}.json`,
+    );
+    fs.writeFileSync(
+      evidencePath,
+      canonicalJson({
+        schemaVersion: 1,
+        changeId: started.changeId,
+        refs: {
+          'propose/planning-materialization': materialization.nodeId,
+        },
+      }),
+      { mode: 0o600 },
+    );
+    const advanced = compareAndSwapInvestigationSession(
+      fixture.paths,
+      started.investigationId,
+      started.revision,
+      (current) => ({
+        ...current,
+        revision: current.revision + 1,
+        updatedAt: new Date(
+          Date.parse(current.updatedAt) + 1_000,
+        ).toISOString(),
+      }),
+    );
+    const structuralClosure = readInvestigationEvidenceRefsClosure(
+      fixture.paths,
+      started.changeId,
+    );
+    assert.equal(structuralClosure.entries.length, 1);
+    assert.equal(
+      structuralClosure.owners['propose/planning-materialization'],
+      started.investigationId,
+    );
+    assert.equal(
+      (
+        readEvidenceNode(fixture.paths, materialization.nodeId).output as {
+          revision: number;
+        }
+      ).revision,
+      started.revision,
+    );
+    assert.equal(advanced.revision, started.revision + 1);
+
+    const origin = 'https://github.com/example/fixture.git';
+    git(fixture.repository, ['remote', 'add', 'origin', origin]);
+    fs.writeFileSync(
+      path.join(fixture.repository, 'workflow/maintainer-policy.json'),
+      `${JSON.stringify(
+        {
+          schemaVersion: 1,
+          repository: {
+            id: 'github:R_fixture',
+            origin,
+          },
+          phase: 'bootstrap',
+          auditTagPrefix: 'refs/tags/workflow-grant/',
+          signatureNamespace: 'expense-app.workflow.maintainer-grant.v1',
+          maxTtlMinutes: 30,
+          maxUses: 1,
+          bootstrapEligiblePaths: ['packages/workflow-engine/src/**'],
+          sealedImmutablePaths: [],
+          requiredChecks: ['fixture'],
+          trustedSigners: [
+            {
+              identity: 'fixture-maintainer',
+              publicKey:
+                'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIJL6dVljsgm9EAbjCiOhA/tKsgApOhKmcB/NRewL1uns',
+              fingerprint: 'SHA256:7UB1aHADtIMUJBFt3sjo9RwoBDgCKc1B1GlEucUDL4U',
+            },
+          ],
+        },
+        null,
+        2,
+      )}\n`,
+    );
+    git(fixture.repository, ['add', '--', 'workflow/maintainer-policy.json']);
+    git(fixture.repository, ['commit', '-m', 'Add maintainer policy']);
+
+    const observed = inspectInvestigationQuarantineState(
+      fixture.paths,
+      started.investigationId,
+      'github:R_fixture',
+    );
+    assert.equal(observed.envelope.evidenceRefs, null);
+    assert.equal(observed.envelope.evidenceRefsClosureDigest, null);
+    assert.notEqual(observed.envelope.evidenceRefsDigest, null);
+    assert.notEqual(observed.envelope.ambiguityDigest, null);
+
+    const issueQuarantine = (grantId: string) =>
+      issueHumanResolutionGrant(
+        fixture.repository,
+        {
+          investigationId: started.investigationId,
+          decision: {
+            kind: 'quarantine',
+            parameters: {
+              reason:
+                'The persisted materialization no longer matches the durable session revision.',
+            },
+          },
+          consequences: {
+            continuity: 'not-applicable',
+            assurance: 'degraded',
+            claimsWaived: [],
+          },
+          rationale:
+            'Quarantine the exact observed evidence-ref document without inventing a repaired interpretation.',
+        },
+        {
+          now,
+          grantId,
+          signer,
+        },
+      );
+    const exactEvidence = fs.readFileSync(evidencePath);
+    const quarantineDirectory = path.join(
+      fixture.paths.root,
+      'human-resolutions',
+      'quarantine',
+    );
+    const quarantineArtifacts = () =>
+      fs.existsSync(quarantineDirectory)
+        ? fs.readdirSync(quarantineDirectory).sort()
+        : [];
+    const currentRefPath = path.join(
+      fixture.paths.refs,
+      `${started.changeId}.investigation-session.json`,
+    );
+    const startReservationPath = path.join(
+      fixture.paths.refs,
+      `${started.changeId}.investigation-start.json`,
+    );
+    const exactCurrentRef = fs.readFileSync(currentRefPath);
+    const exactStartReservation = fs.readFileSync(startReservationPath);
+    const staleGrant = issueQuarantine('d1111111-1111-4111-8111-111111111111');
+    const mutatedEvidence = Buffer.concat([exactEvidence, Buffer.from(' ')]);
+    fs.writeFileSync(evidencePath, mutatedEvidence);
+    assert.throws(
+      () =>
+        executeHumanResolutionGrant(fixture.repository, staleGrant.grantId, {
+          now: new Date(now.getTime() + 1_000),
+          verifier: signer,
+        }),
+      (error) => isWorkflowError(error, 'HUMAN_RESOLUTION_GRANT_STALE'),
+    );
+    assert.equal(
+      readHumanResolutionJournal(fixture.paths, staleGrant.grantId),
+      null,
+    );
+    assert.deepEqual(fs.readFileSync(evidencePath), mutatedEvidence);
+    assert.deepEqual(fs.readFileSync(currentRefPath), exactCurrentRef);
+    assert.deepEqual(
+      fs.readFileSync(startReservationPath),
+      exactStartReservation,
+    );
+    assert.deepEqual(quarantineArtifacts(), []);
+    fs.writeFileSync(evidencePath, exactEvidence);
+
+    const issued = issueQuarantine('d2111111-1111-4111-8111-111111111111');
+    assert.throws(
+      () =>
+        executeHumanResolutionGrant(fixture.repository, issued.grantId, {
+          now: new Date(now.getTime() + 1_000),
+          verifier: signer,
+          simulateCrashAfter: 'evidence-refs',
+        }),
+      (error) =>
+        error instanceof SimulatedHumanResolutionCrash &&
+        error.phase === 'evidence-refs',
+    );
+    assert.equal(
+      readHumanResolutionJournal(fixture.paths, issued.grantId)?.phase,
+      'evidence-refs-published',
+    );
+    assert.equal(fs.existsSync(evidencePath), false);
+    const evidenceArtifacts = quarantineArtifacts().filter((name) =>
+      name.endsWith('.evidence-refs.artifact'),
+    );
+    assert.equal(evidenceArtifacts.length, 1);
+    const quarantinedEvidencePath = path.join(
+      quarantineDirectory,
+      evidenceArtifacts[0] as string,
+    );
+    assert.deepEqual(fs.readFileSync(quarantinedEvidencePath), exactEvidence);
+    assert.equal(fs.statSync(quarantinedEvidencePath).mode & 0o777, 0o600);
+    const result = recoverHumanResolutionGrant(
+      fixture.repository,
+      issued.grantId,
+      {
+        now: new Date(now.getTime() + 2_000),
+        verifier: signer,
+      },
+    );
+    assert.equal(result.recovered, true);
+    assert.equal(result.decision.kind, 'quarantine');
+    assert.equal(fs.existsSync(currentRefPath), false);
+    assert.equal(fs.existsSync(startReservationPath), false);
+    assert.deepEqual(fs.readFileSync(quarantinedEvidencePath), exactEvidence);
+    const terminal = inspectInvestigationQuarantineState(
+      fixture.paths,
+      started.investigationId,
+      'github:R_fixture',
+    );
+    assert.equal(terminal.effectiveState, 'quarantined-by-human-resolution');
+    assert.equal(terminal.currentRefDigest, null);
+    assert.equal(terminal.envelope.startReservationDigest, null);
+    assert.equal(terminal.envelope.evidenceRefsDigest, null);
+    assert.deepEqual(terminal.availableResolutions, []);
+    assert.equal(result.afterStateDigest, terminal.currentStateDigest);
+  } finally {
+    fs.rmSync(fixture.repository, { recursive: true, force: true });
+  }
+});
+
 test('session loading rejects a checkpoint copied from another investigation', () => {
   const donor = investigationFixture('invocation-checkpoint-donor');
   const victim = investigationFixture('invocation-checkpoint-victim');
@@ -5188,6 +6178,337 @@ function runLockCrashChild(
     ['--experimental-strip-types', '--input-type=module', '--eval', script],
     { cwd, encoding: 'utf8' },
   );
+}
+
+function runReviewerReconciliationCrashChild(
+  repository: string,
+  changeId: string,
+  envelope: ReturnType<typeof createInvestigationCheckpointEnvelope>,
+  targetPath: string,
+  phase:
+    | 'after-truncate'
+    | 'during-write'
+    | 'before-rename'
+    | 'after-rename' = 'after-rename',
+): ReturnType<typeof spawnSync> {
+  const script = `
+    const fs = (await import('node:fs')).default;
+    const targetPath = ${JSON.stringify(targetPath)};
+    const phase = ${JSON.stringify(phase)};
+    const descriptorPaths = new Map();
+    const originalOpen = fs.openSync.bind(fs);
+    fs.openSync = (target, ...args) => {
+      const descriptor = originalOpen(target, ...args);
+      descriptorPaths.set(descriptor, String(target));
+      return descriptor;
+    };
+    const originalTruncate = fs.ftruncateSync.bind(fs);
+    fs.ftruncateSync = (descriptor, ...args) => {
+      const result = originalTruncate(descriptor, ...args);
+      const observed = descriptorPaths.get(descriptor);
+      if (
+        phase === 'after-truncate' &&
+        typeof observed === 'string' &&
+        observed.startsWith(targetPath + '.') &&
+        observed.endsWith('.tmp')
+      ) {
+        process.kill(process.pid, 'SIGKILL');
+      }
+      return result;
+    };
+    const originalWrite = fs.writeFileSync.bind(fs);
+    fs.writeFileSync = (target, data, ...args) => {
+      const observed =
+        typeof target === 'number' ? descriptorPaths.get(target) : String(target);
+      if (
+        phase === 'during-write' &&
+        typeof target === 'number' &&
+        typeof observed === 'string' &&
+        observed.startsWith(targetPath + '.') &&
+        observed.endsWith('.tmp')
+      ) {
+        const bytes = Buffer.isBuffer(data)
+          ? data
+          : Buffer.from(String(data), 'utf8');
+        fs.writeSync(
+          target,
+          bytes.subarray(0, Math.max(1, Math.floor(bytes.length / 2))),
+        );
+        process.kill(process.pid, 'SIGKILL');
+      }
+      return originalWrite(target, data, ...args);
+    };
+    const originalRename = fs.renameSync.bind(fs);
+    fs.renameSync = (source, target) => {
+      if (
+        String(target) === targetPath &&
+        phase === 'before-rename'
+      ) {
+        process.kill(process.pid, 'SIGKILL');
+      }
+      const result = originalRename(source, target);
+      if (
+        String(target) === targetPath &&
+        phase === 'after-rename'
+      ) {
+        process.kill(process.pid, 'SIGKILL');
+      }
+      return result;
+    };
+    const { resumePropose } =
+      await import(${JSON.stringify(PROPOSE_ORCHESTRATOR_MODULE_URL)});
+    resumePropose(
+      ${JSON.stringify(repository)},
+      ${JSON.stringify(changeId)},
+      ${JSON.stringify(envelope)},
+    );
+  `;
+  return spawnSync(
+    process.execPath,
+    ['--experimental-strip-types', '--input-type=module', '--eval', script],
+    { cwd: repository, encoding: 'utf8' },
+  );
+}
+
+function createCrashPublicationEvidenceNode(label: string): EvidenceNode {
+  return createEvidenceNode({
+    type: 'crash-publication-test',
+    nodeSchema: 'workflow.crash-publication-test.v1',
+    evaluator: 'workflow-test.v1',
+    policyDigest: '1'.repeat(64),
+    exactInputDigests: {
+      input: sha256(label),
+    },
+    semanticParentResultDigests: {},
+    provenanceParentNodeIds: {},
+    outputSchema: 'workflow.crash-publication-test-output.v1',
+    output: { label },
+    runtimeMetadata: {},
+  });
+}
+
+function runEvidenceObjectCrashChild(
+  repository: string,
+  gitCommonDirectory: string,
+  node: EvidenceNode,
+  objectPath: string,
+  phase:
+    | 'during-temp-write'
+    | 'before-link'
+    | 'after-link'
+    | 'after-legacy-prefix-claim'
+    | 'after-legacy-final-unlink'
+    | 'after-legacy-final-link',
+): ReturnType<typeof spawnSync> {
+  const script = `
+    const fs = (await import('node:fs')).default;
+    const objectPath = ${JSON.stringify(objectPath)};
+    const phase = ${JSON.stringify(phase)};
+    const originalWriteFile = fs.writeFileSync.bind(fs);
+    fs.writeFileSync = (target, data, ...args) => {
+      if (
+        phase === 'during-temp-write' &&
+        typeof target === 'number'
+      ) {
+        const bytes = Buffer.isBuffer(data)
+          ? data
+          : Buffer.from(String(data), 'utf8');
+        fs.writeSync(
+          target,
+          bytes.subarray(0, Math.max(1, Math.floor(bytes.length / 2))),
+        );
+        process.kill(process.pid, 'SIGKILL');
+      }
+      return originalWriteFile(target, data, ...args);
+    };
+    const originalLink = fs.linkSync.bind(fs);
+    fs.linkSync = (source, target) => {
+      if (String(target) === objectPath && phase === 'before-link') {
+        process.kill(process.pid, 'SIGKILL');
+      }
+      const result = originalLink(source, target);
+      if (
+        (String(target) === objectPath && phase === 'after-link') ||
+        (String(target).endsWith('.legacy-prefix-repair') &&
+          phase === 'after-legacy-prefix-claim') ||
+        (String(target) === objectPath &&
+          String(source).endsWith('.legacy-prefix-repair') &&
+          phase === 'after-legacy-final-link')
+      ) {
+        process.kill(process.pid, 'SIGKILL');
+      }
+      return result;
+    };
+    const originalUnlink = fs.unlinkSync.bind(fs);
+    fs.unlinkSync = (target, ...args) => {
+      const result = originalUnlink(target, ...args);
+      if (
+        String(target) === objectPath &&
+        phase === 'after-legacy-final-unlink'
+      ) {
+        process.kill(process.pid, 'SIGKILL');
+      }
+      return result;
+    };
+    const { writeEvidenceNode } =
+      await import(${JSON.stringify(EVIDENCE_STORE_MODULE_URL)});
+    const { investigationRuntimePaths } =
+      await import(${JSON.stringify(PATHS_MODULE_URL)});
+    writeEvidenceNode(
+      investigationRuntimePaths(
+        ${JSON.stringify(gitCommonDirectory)},
+        'workflow-engine',
+      ),
+      ${JSON.stringify(node)},
+    );
+  `;
+  return spawnSync(
+    process.execPath,
+    ['--experimental-strip-types', '--input-type=module', '--eval', script],
+    { cwd: repository, encoding: 'utf8' },
+  );
+}
+
+function runConcurrentLegacyRepairChild(
+  repository: string,
+  gitCommonDirectory: string,
+  node: EvidenceNode,
+  objectPath: string,
+  barrierDirectory: string,
+): ChildProcess {
+  const script = `
+    const fs = (await import('node:fs')).default;
+    const claimPath = ${JSON.stringify(`${objectPath}.legacy-prefix-repair`)};
+    const barrierDirectory = ${JSON.stringify(barrierDirectory)};
+    const preReleasePath = barrierDirectory + '/pre-release';
+    const releasePath = barrierDirectory + '/release';
+    const originalLink = fs.linkSync.bind(fs);
+    fs.linkSync = (source, target) => {
+      if (String(target) !== claimPath) {
+        return originalLink(source, target);
+      }
+      fs.writeFileSync(
+        barrierDirectory + '/pre-ready-' + process.pid,
+        String(process.pid),
+      );
+      const preDeadline = Date.now() + 20_000;
+      while (!fs.existsSync(preReleasePath)) {
+        if (Date.now() >= preDeadline) {
+          throw new Error('legacy repair pre-link barrier timed out');
+        }
+        Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 10);
+      }
+      let result;
+      let failure;
+      try {
+        result = originalLink(source, target);
+      } catch (error) {
+        failure = error;
+      }
+      fs.writeFileSync(
+        barrierDirectory + '/post-ready-' + process.pid,
+        String(process.pid),
+      );
+      const deadline = Date.now() + 20_000;
+      while (!fs.existsSync(releasePath)) {
+        if (Date.now() >= deadline) {
+          throw new Error('legacy repair barrier timed out');
+        }
+        Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 10);
+      }
+      if (failure) {
+        throw failure;
+      }
+      return result;
+    };
+    const { writeEvidenceNode } =
+      await import(${JSON.stringify(EVIDENCE_STORE_MODULE_URL)});
+    const { investigationRuntimePaths } =
+      await import(${JSON.stringify(PATHS_MODULE_URL)});
+    writeEvidenceNode(
+      investigationRuntimePaths(
+        ${JSON.stringify(gitCommonDirectory)},
+        'workflow-engine',
+      ),
+      ${JSON.stringify(node)},
+    );
+  `;
+  return spawn(
+    process.execPath,
+    ['--experimental-strip-types', '--input-type=module', '--eval', script],
+    {
+      cwd: repository,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    },
+  );
+}
+
+async function waitForFileCount(
+  directory: string,
+  prefix: string,
+  expected: number,
+): Promise<void> {
+  const deadline = Date.now() + 20_000;
+  while (
+    fs.readdirSync(directory).filter((name) => name.startsWith(prefix)).length <
+    expected
+  ) {
+    if (Date.now() >= deadline) {
+      throw new Error('timed out waiting for crash-test barrier');
+    }
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+}
+
+function waitForChild(child: ChildProcess): Promise<{
+  code: number | null;
+  signal: NodeJS.Signals | null;
+  stderr: string;
+}> {
+  return new Promise((resolve, reject) => {
+    let stderr = '';
+    child.stderr?.setEncoding('utf8');
+    child.stderr?.on('data', (chunk: string) => {
+      stderr += chunk;
+    });
+    child.once('error', reject);
+    child.once('close', (code, signal) => {
+      resolve({ code, signal, stderr });
+    });
+  });
+}
+
+function listEvidenceObjectCrashAliases(objectPath: string): string[] {
+  const directory = path.dirname(objectPath);
+  const basename = path.basename(objectPath);
+  return fs.existsSync(directory)
+    ? fs
+        .readdirSync(directory)
+        .filter(
+          (name) =>
+            name.startsWith(`${basename}.`) &&
+            (name.endsWith('.publish.tmp') ||
+              name.endsWith('.legacy-prefix-repair')),
+        )
+        .sort()
+        .map((name) => path.join(directory, name))
+    : [];
+}
+
+function listReviewerReconciliationTemporaries(
+  changeDirectory: string,
+  basename: 'investigation.json' | 'design.md',
+): string[] {
+  const pattern = new RegExp(
+    `^${basename.replace('.', '\\.')}\\.[1-9][0-9]*\\.` +
+      '[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-' +
+      '[89ab][0-9a-f]{3}-[0-9a-f]{12}\\.tmp$',
+  );
+  return fs
+    .readdirSync(changeDirectory)
+    .filter((name) => pattern.test(name))
+    .sort()
+    .map((name) => path.join(changeDirectory, name));
 }
 
 function assertLinkedLockPair(finalLock: string): string {

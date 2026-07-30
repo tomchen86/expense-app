@@ -1197,6 +1197,26 @@ function planHumanResolutionEvidenceRefs(
   envelope: HumanResolutionGrantEnvelope,
   state: InvestigationResolutionState,
 ): HumanResolutionJournal['plannedEvidenceRefs'] {
+  const quarantineWhole =
+    (): HumanResolutionJournal['plannedEvidenceRefs'] => ({
+      mode: 'quarantine-whole',
+      expectedDigest: state.envelope.evidenceRefsDigest,
+      nextDigest: null,
+      expectedClosureDigest: state.envelope.evidenceRefsClosureDigest,
+      nextClosureDigest: null,
+      retiredRefs: {},
+      retainedRefs: {},
+      archiveDigest: state.envelope.evidenceRefsDigest,
+    });
+  if (
+    envelope.payload.decision.kind === 'quarantine' &&
+    state.envelope.ambiguityDigest !== null &&
+    state.envelope.evidenceRefs === null &&
+    state.envelope.evidenceRefsDigest !== null &&
+    state.envelope.evidenceRefsClosureDigest === null
+  ) {
+    return quarantineWhole();
+  }
   let closure: ReturnType<typeof readInvestigationEvidenceRefsClosure>;
   try {
     closure = readInvestigationEvidenceRefsClosure(
@@ -1211,16 +1231,7 @@ function planHumanResolutionEvidenceRefs(
     ) {
       throw error;
     }
-    return {
-      mode: 'quarantine-whole',
-      expectedDigest: state.envelope.evidenceRefsDigest,
-      nextDigest: null,
-      expectedClosureDigest: state.envelope.evidenceRefsClosureDigest,
-      nextClosureDigest: null,
-      retiredRefs: {},
-      retainedRefs: {},
-      archiveDigest: state.envelope.evidenceRefsDigest,
-    };
+    return quarantineWhole();
   }
   const snapshot = closure.snapshot;
   if (
