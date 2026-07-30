@@ -27,6 +27,14 @@ import {
   type ProviderInvocationRequestInput,
 } from '../src/provider-contracts.ts';
 import {
+  BLIND_SURVEY_OUTPUT_SCHEMA,
+  BLIND_SURVEY_PROVIDER_OUTPUT_SCHEMA,
+} from '../src/provider-invocation-store.ts';
+import {
+  PLAN_REVIEW_OUTPUT_SCHEMA,
+  PLAN_REVIEW_PROVIDER_OUTPUT_SCHEMA,
+} from '../src/plan-review.ts';
+import {
   createProviderRunnerForTesting,
   preflightBuiltInProvider,
   type ProviderExecutableIdentity,
@@ -159,6 +167,37 @@ test('built-in adapters publish fixed candidates and capability-specific argv', 
   );
   assert.ok(CLAUDE_REQUIRED_HELP_FLAGS.includes('--allowedTools'));
   assert.ok(CLAUDE_REQUIRED_HELP_FLAGS.includes('--effort'));
+});
+
+test('code-owned provider schemas omit unsupported external meta-schema identifiers', () => {
+  for (const [schema, identity] of [
+    [BLIND_SURVEY_PROVIDER_OUTPUT_SCHEMA, BLIND_SURVEY_OUTPUT_SCHEMA],
+    [PLAN_REVIEW_PROVIDER_OUTPUT_SCHEMA, PLAN_REVIEW_OUTPUT_SCHEMA],
+  ] as const) {
+    assert.equal(Object.hasOwn(schema, '$schema'), false);
+
+    const claude = buildClaudeProviderInvocation({
+      executable: '/real/claude',
+      repositoryRoot: '/repo',
+      promptPath: '/runtime/prompt.json',
+      schemaPath: '/runtime/schema.json',
+      semanticOutputPath: '/runtime/semantic-output.json',
+      semanticOutputSchema: schema,
+    });
+    const schemaFlagIndex = claude.args.indexOf('--json-schema');
+    assert.notEqual(schemaFlagIndex, -1);
+    const transmitted = claude.args[schemaFlagIndex + 1]!;
+    assert.deepEqual(JSON.parse(transmitted), schema);
+    assert.equal(sha256(transmitted), identity.digest);
+  }
+  assert.equal(
+    Object.hasOwn(PLAN_REVIEW_PROVIDER_OUTPUT_SCHEMA, '$comment'),
+    true,
+  );
+  assert.equal(
+    Object.hasOwn(PLAN_REVIEW_PROVIDER_OUTPUT_SCHEMA, '$defs'),
+    true,
+  );
 });
 
 test('provider requests accept Git SHA-256 object identities', () => {

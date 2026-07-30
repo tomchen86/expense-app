@@ -527,9 +527,13 @@ const PLAN_REVIEW_GRAMMAR_DIGEST = sha256(
  * and `uniqueItems` is not permitted. Both unions here are discriminated by an
  * exclusive `kind`, so `anyOf` is equivalent, and coverage uniqueness is
  * enforced by `assertCoverage` rather than by the wire schema.
+ *
+ * Provider CLIs infer their supported dialect. The canonical schema therefore
+ * omits an external `$schema` URI so request identity, runtime bytes, provider
+ * input, and native validation remain exact while avoiding a pre-launch resolver
+ * failure.
  */
 export const PLAN_REVIEW_PROVIDER_OUTPUT_SCHEMA = Object.freeze({
-  $schema: 'https://json-schema.org/draft/2020-12/schema',
   $comment: `workflow-semantic-grammar-sha256:${PLAN_REVIEW_GRAMMAR_DIGEST}`,
   type: 'object',
   additionalProperties: false,

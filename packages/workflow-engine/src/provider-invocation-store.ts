@@ -62,8 +62,11 @@ const MAX_INTENT_FACT_BYTES = 512;
 const MAX_INTENT_FACTS_PER_KIND = 256;
 const MAX_ARCHITECTURE_QUESTION_BYTES = 16_384;
 export const PROVIDER_COMPLETION_GRACE_MS = 30_000;
+// Keep this canonical schema self-contained: provider CLIs infer their supported
+// dialect, while an external `$schema` URI can be rejected before model launch.
+// The request digest, runtime schema, provider argv, and native validator must
+// continue to bind these exact bytes.
 export const BLIND_SURVEY_PROVIDER_OUTPUT_SCHEMA = Object.freeze({
-  $schema: 'https://json-schema.org/draft/2020-12/schema',
   type: 'object',
   additionalProperties: false,
   required: ['reference', 'terms'],
