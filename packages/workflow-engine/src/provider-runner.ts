@@ -728,7 +728,8 @@ const PROVIDER_PURPOSE_INSTRUCTIONS: Readonly<
     // The bound schema cannot express coverage uniqueness: a structured-output
     // endpoint rejects `uniqueItems`, so the constraint lives only in
     // `assertCoverage`. A duplicated area is rejected after the provider has
-    // already succeeded, and plan-review has no retry, so it is stated here.
+    // already spent an attempt; retry preserves that failure and requires a
+    // fresh, explicitly cost-acknowledged replacement, so prevent it here.
     'The output "coverage" array must list every one of the seven coverage areas exactly once; a repeated area is rejected.',
     'The output "scopeAssessment" is scope-only: set kind "challenges" if and only if at least one "findings" entry has category "missing-scope" or "missing-consumers"; otherwise set kind "no-challenge" with at least one evidence item, even when "findings" contains challenges in other categories.',
     // Advisory only: the engine scans every proposed term across the whole

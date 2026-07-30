@@ -31,6 +31,7 @@ import {
 } from './contracts.ts';
 import {
   compareAndSwapEvidenceRef,
+  computeInvestigationEvidenceRefsClosure,
   readEvidenceNode,
   readEvidenceRefs,
   writeEvidenceNode,
@@ -148,6 +149,7 @@ import {
   createPlanReviewProviderResultNode,
   createPlanReviewTargetSnapshotNode,
   assertPlanReviewSubject,
+  planReviewSnapshotLineCount,
   readPlanReviewNode,
   readPlanReviewDispositionNode,
   readPlanReviewTargetSnapshotNode,
@@ -268,6 +270,29 @@ export type PlanReviewProgressEnvelope = {
   requestDigest: string;
 };
 
+export type PlanReviewRetryEnvelope = {
+  schemaVersion: 1;
+  kind: 'plan-review-retry';
+  investigationId: string;
+  changeId: string;
+  expectedRevision: number;
+  baseline: {
+    head: string;
+    tree: string;
+  };
+  subjectDigest: string;
+  planningGenerationId: string;
+  expectedReservationNodeId: string;
+  failedInvocation: {
+    invocationId: string;
+    attempt: number;
+    revision: number;
+    requestDigest: string;
+    failureDigest: string;
+  };
+  acknowledgeProviderCost: true;
+};
+
 export type PlanReviewDispositionsEnvelope = {
   schemaVersion: 1;
   kind: 'plan-review-dispositions';
@@ -378,6 +403,7 @@ export type ProposeInput =
   | ExemptionPlanningContributionEnvelope
   | ProviderProgressEnvelope
   | ProviderRetryEnvelope
+  | PlanReviewRetryEnvelope
   | PlanReviewProgressEnvelope
   | PlanReviewDispositionsEnvelope;
 
@@ -438,6 +464,7 @@ export type ProposeOutput = {
     | 'submit-planning-contribution'
     | 'obtain-plan-review'
     | 'wait-for-plan-review'
+    | 'retry-plan-review'
     | 'resume-plan-review'
     | 'submit-challenge-dispositions'
     | 'planning-complete'
@@ -1499,7 +1526,10 @@ export function resumePropose(
 export function resumePropose(
   cwd: string,
   requestedChangeId: string,
-  inputValue: PlanReviewProgressEnvelope | PlanReviewDispositionsEnvelope,
+  inputValue:
+    | PlanReviewRetryEnvelope
+    | PlanReviewProgressEnvelope
+    | PlanReviewDispositionsEnvelope,
   options?: ProposeResumeOptions,
 ): ProposeOutput;
 export function resumePropose(
@@ -1586,6 +1616,10 @@ export function resumePropose(
 
   if (input.kind === 'provider-retry') {
     return resumeProviderRetry(cwd, input, options);
+  }
+
+  if (input.kind === 'plan-review-retry') {
+    return resumePlanReviewRetry(cwd, input, options);
   }
 
   if (input.kind === 'provider-progress') {
@@ -1836,6 +1870,71 @@ export function createPlanReviewProgressEnvelope(
   };
 }
 
+export function createPlanReviewRetryEnvelope(
+  cwd: string,
+  output: ProposeOutput,
+  acknowledgement: { acknowledgeProviderCost: true },
+): PlanReviewRetryEnvelope {
+  if (
+    output.nextAction !== 'retry-plan-review' ||
+    output.investigation === null ||
+    output.planReview === null ||
+    output.planReview.state !== 'failed' ||
+    output.planReview.failure?.kind !== 'retryable' ||
+    acknowledgement.acknowledgeProviderCost !== true
+  ) {
+    throw workflowError(
+      'PLAN_REVIEW_RETRY_NOT_AVAILABLE',
+      'The propose wrapper has no retryable failed PlanReview invocation.',
+      ExitCode.guard,
+    );
+  }
+  const status = getProposeLifecycleStatus(
+    cwd,
+    output.investigation.investigationId,
+  );
+  const context = loadInvestigationRuntimeContext(cwd);
+  const reservation = readPlanReviewReservation(context.runtime, status);
+  if (
+    reservation === null ||
+    reservation.subject.subjectDigest !== output.planReview.subjectDigest ||
+    reservation.request.invocationId !== output.planReview.invocationId ||
+    reservation.request.requestDigest !== output.planReview.requestDigest
+  ) {
+    throw planReviewRetryInputStale();
+  }
+  const failed = readProviderInvocation(
+    context.runtime,
+    reservation.request.invocationId,
+  );
+  if (
+    failed.state !== 'failed' ||
+    failed.failure === null ||
+    failed.failure.kind !== 'retryable'
+  ) {
+    throw planReviewRetryInputStale();
+  }
+  return {
+    schemaVersion: 1,
+    kind: 'plan-review-retry',
+    investigationId: status.investigationId,
+    changeId: status.changeId,
+    expectedRevision: status.revision,
+    baseline: { ...status.baseline },
+    subjectDigest: reservation.subject.subjectDigest,
+    planningGenerationId: reservation.subject.planningGenerationId,
+    expectedReservationNodeId: reservation.reservationNode.nodeId,
+    failedInvocation: {
+      invocationId: failed.invocationId,
+      attempt: failed.attempt,
+      revision: failed.revision,
+      requestDigest: failed.requestDigest,
+      failureDigest: sha256(canonicalJson(failed.failure)),
+    },
+    acknowledgeProviderCost: true,
+  };
+}
+
 export function createPlanReviewDispositionsEnvelope(
   output: ProposeOutput,
   dispositions: PlanReviewDispositionEntry[],
@@ -2069,6 +2168,313 @@ function providerRetryInputStale() {
   return workflowError(
     'PROVIDER_RETRY_INPUT_STALE',
     'Provider retry input is not bound to the exact failed survey attempt.',
+    ExitCode.staleState,
+  );
+}
+
+function resumePlanReviewRetry(
+  cwd: string,
+  input: PlanReviewRetryEnvelope,
+  options: ProposeResumeOptions,
+): ProposeOutput {
+  const initialContext = loadInvestigationRuntimeContext(cwd);
+  const retried = withInvestigationTransitionAuthority(
+    initialContext.lifecycleRuntime,
+    input.changeId,
+    (assertOwned) => {
+      assertOwned();
+      const status = getProposeLifecycleStatus(cwd, input.investigationId);
+      assertPlanReviewRetryStatusBinding(status, input);
+      const context = loadInvestigationRuntimeContext(cwd);
+      if (status.state === 'investigation-exempt') {
+        assertCurrentExemptionContext(context, status);
+      }
+      if (
+        readTrackedPlanReview(context.git.repositoryRoot, status.changeId) !==
+        null
+      ) {
+        throw planReviewRetryInputStale();
+      }
+      const reservation = readPlanReviewReservation(context.runtime, status);
+      if (reservation === null) {
+        throw planReviewRetryInputStale();
+      }
+      if (
+        reservation.reservationNode.nodeId !== input.expectedReservationNodeId
+      ) {
+        assertExactPlanReviewRetryReplay(context.runtime, reservation, input);
+        ensurePlanReviewInvocation(
+          context.git.repositoryRoot,
+          context.runtime,
+          status,
+          reservation,
+        );
+        return reservation;
+      }
+      assertPlanReviewRetryFailureBinding(context.runtime, reservation, input);
+      const failed = readProviderInvocation(
+        context.runtime,
+        input.failedInvocation.invocationId,
+      );
+      const failedRequest = readProviderInvocationRequest(
+        context.runtime,
+        failed.invocationId,
+      );
+      const replacementRequest = createPlanReviewReplacementRequest(
+        input,
+        failedRequest,
+      );
+      const replacementSnapshotFiles = readPriorPlanReviewSnapshotFiles(
+        context.runtime,
+        reservation.manifest,
+        failed.invocationId,
+      );
+      const replacementNode = createPlanReviewReplacementReservationNode(
+        reservation,
+        reservation.reservationNode,
+        input,
+        replacementRequest,
+        failed.attempt + 1,
+      );
+      writeEvidenceNode(context.runtime, replacementNode);
+      compareAndSwapEvidenceRef(context.runtime, {
+        changeId: status.changeId,
+        refName: PLAN_REVIEW_REQUEST_REF,
+        expectedNodeId: reservation.reservationNode.nodeId,
+        nextNodeId: replacementNode.nodeId,
+      });
+      const replacement = readPlanReviewReservation(
+        context.runtime,
+        status,
+        reservation.subject,
+      );
+      if (replacement === null) {
+        throw planReviewRetryInputStale();
+      }
+      ensurePlanReviewInvocation(
+        context.git.repositoryRoot,
+        context.runtime,
+        status,
+        replacement,
+        replacementSnapshotFiles,
+      );
+      assertOwned();
+      return replacement;
+    },
+  );
+  const output = getProposeStatus(cwd, input.investigationId);
+  if (output.planReview?.invocationId !== retried.request.invocationId) {
+    throw planReviewRetryInputStale();
+  }
+  dispatchPreparedPlanReview(cwd, output, options);
+  return getProposeStatus(
+    cwd,
+    input.investigationId,
+    options.collaborationGrantValidation,
+  );
+}
+
+function assertPlanReviewRetryStatusBinding(
+  status: ProposeLifecycleStatus,
+  input: PlanReviewRetryEnvelope,
+): void {
+  if (
+    status.investigationId !== input.investigationId ||
+    status.changeId !== input.changeId ||
+    status.revision !== input.expectedRevision ||
+    canonicalJson(status.baseline) !== canonicalJson(input.baseline)
+  ) {
+    throw planReviewRetryInputStale();
+  }
+}
+
+function assertPlanReviewRetryFailureBinding(
+  paths: ReturnType<typeof loadInvestigationRuntimeContext>['runtime'],
+  reservation: PlanReviewReservation,
+  input: PlanReviewRetryEnvelope,
+): void {
+  const failed = readProviderInvocation(
+    paths,
+    input.failedInvocation.invocationId,
+  );
+  const request = readProviderInvocationRequest(paths, failed.invocationId);
+  if (
+    reservation.subject.subjectDigest !== input.subjectDigest ||
+    reservation.subject.planningGenerationId !== input.planningGenerationId ||
+    reservation.request.invocationId !== failed.invocationId ||
+    reservation.request.requestDigest !== request.requestDigest ||
+    failed.investigationId !== input.investigationId ||
+    failed.changeId !== input.changeId ||
+    failed.attempt !== (reservation.retry?.attempt ?? 1) ||
+    failed.attempt !== input.failedInvocation.attempt ||
+    failed.revision !== input.failedInvocation.revision ||
+    failed.requestDigest !== input.failedInvocation.requestDigest ||
+    failed.state !== 'failed' ||
+    failed.failure === null ||
+    failed.failure.kind !== 'retryable' ||
+    sha256(canonicalJson(failed.failure)) !==
+      input.failedInvocation.failureDigest
+  ) {
+    throw planReviewRetryInputStale();
+  }
+}
+
+function planReviewRetryBindingDigest(input: PlanReviewRetryEnvelope): string {
+  return sha256(
+    canonicalJson({
+      schemaVersion: input.schemaVersion,
+      kind: input.kind,
+      investigationId: input.investigationId,
+      changeId: input.changeId,
+      expectedRevision: input.expectedRevision,
+      baseline: input.baseline,
+      subjectDigest: input.subjectDigest,
+      planningGenerationId: input.planningGenerationId,
+      expectedReservationNodeId: input.expectedReservationNodeId,
+      failedInvocation: input.failedInvocation,
+      acknowledgeProviderCost: input.acknowledgeProviderCost,
+    }),
+  );
+}
+
+function createPlanReviewReplacementRequest(
+  input: PlanReviewRetryEnvelope,
+  failedRequest: ProviderInvocationRequest,
+): ProviderInvocationRequest {
+  const bindingDigest = planReviewRetryBindingDigest(input);
+  return createProviderInvocationRequest({
+    invocationId: `invocation-plan-review-retry-${bindingDigest}`,
+    nonce: `plan-review-retry-${bindingDigest}`,
+    purpose: failedRequest.purpose,
+    providerId: failedRequest.providerId,
+    roleAssignment: failedRequest.roleAssignment,
+    capabilityProfile: failedRequest.capabilityProfile,
+    repositoryId: failedRequest.repositoryId,
+    baseCommit: failedRequest.baseCommit,
+    baseTree: failedRequest.baseTree,
+    targetDigest: failedRequest.targetDigest,
+    inputManifestDigest: failedRequest.inputManifestDigest,
+    authorizationNodeId: failedRequest.authorizationNodeId,
+    writeAllowedPaths: [...failedRequest.writeAllowedPaths],
+    outputSchema: failedRequest.outputSchema,
+    evaluatorVersion: failedRequest.evaluatorVersion,
+    policyDigest: failedRequest.policyDigest,
+    limits: failedRequest.limits,
+  });
+}
+
+function createPlanReviewReplacementReservationNode(
+  reservation: PlanReviewReservation,
+  previousReservationNode: EvidenceNode,
+  input: PlanReviewRetryEnvelope,
+  replacementRequest: ProviderInvocationRequest,
+  attempt: number,
+): EvidenceNode {
+  return createEvidenceNode({
+    type: 'plan-review-request-reservation',
+    nodeSchema: 'workflow.plan-review-request-reservation.v2',
+    evaluator: 'workflow-propose.v1',
+    policyDigest: PROPOSE_POLICY_DIGEST,
+    exactInputDigests: {
+      request: replacementRequest.requestDigest,
+      manifest: replacementRequest.inputManifestDigest,
+      subject: reservation.subject.subjectDigest,
+      targetSnapshot: reservation.targetSnapshotNode.nodeId,
+      previousRequest: previousReservationNode.nodeId,
+      failure: input.failedInvocation.failureDigest,
+    },
+    semanticParentResultDigests: {
+      authorization:
+        previousReservationNode.semanticParentResultDigests.authorization,
+      previousRequest: previousReservationNode.resultDigest,
+    },
+    provenanceParentNodeIds: {
+      authorization:
+        previousReservationNode.provenanceParentNodeIds.authorization,
+      previousRequest: previousReservationNode.nodeId,
+    },
+    outputSchema: 'workflow.plan-review-request-reservation-output.v2',
+    output: {
+      investigationId: input.investigationId,
+      changeId: input.changeId,
+      planning: reservation.planning,
+      subject: reservation.subject,
+      assignment: reservation.assignment,
+      author: reservation.author,
+      materializationNode: reservation.materializationNode,
+      targetSnapshotNode: reservation.targetSnapshotNode,
+      manifest: reservation.manifest,
+      request: replacementRequest,
+      grantAuthorization: reservation.grantAuthorization,
+      retry: {
+        attempt,
+        previousReservationNodeId: previousReservationNode.nodeId,
+        failedInvocation: input.failedInvocation,
+      },
+    },
+    runtimeMetadata: {},
+  });
+}
+
+function assertExactPlanReviewRetryReplay(
+  paths: ReturnType<typeof loadInvestigationRuntimeContext>['runtime'],
+  reservation: PlanReviewReservation,
+  input: PlanReviewRetryEnvelope,
+): void {
+  const failed = readProviderInvocation(
+    paths,
+    input.failedInvocation.invocationId,
+  );
+  const failedRequest = readProviderInvocationRequest(
+    paths,
+    input.failedInvocation.invocationId,
+  );
+  const previousReservationNode = readEvidenceNode(
+    paths,
+    input.expectedReservationNodeId,
+  );
+  const expectedRequest = createPlanReviewReplacementRequest(
+    input,
+    failedRequest,
+  );
+  const expectedReservationNode = createPlanReviewReplacementReservationNode(
+    reservation,
+    previousReservationNode,
+    input,
+    expectedRequest,
+    input.failedInvocation.attempt + 1,
+  );
+  if (
+    reservation.retry === null ||
+    reservation.subject.subjectDigest !== input.subjectDigest ||
+    reservation.subject.planningGenerationId !== input.planningGenerationId ||
+    reservation.retry.previousReservationNodeId !==
+      input.expectedReservationNodeId ||
+    canonicalJson(reservation.retry.failedInvocation) !==
+      canonicalJson(input.failedInvocation) ||
+    failed.investigationId !== input.investigationId ||
+    failed.changeId !== input.changeId ||
+    failed.state !== 'failed' ||
+    failed.failure === null ||
+    failed.failure.kind !== 'retryable' ||
+    failed.attempt !== input.failedInvocation.attempt ||
+    failed.revision !== input.failedInvocation.revision ||
+    failed.requestDigest !== input.failedInvocation.requestDigest ||
+    failedRequest.requestDigest !== input.failedInvocation.requestDigest ||
+    sha256(canonicalJson(failed.failure)) !==
+      input.failedInvocation.failureDigest ||
+    canonicalJson(reservation.request) !== canonicalJson(expectedRequest) ||
+    canonicalJson(reservation.reservationNode) !==
+      canonicalJson(expectedReservationNode)
+  ) {
+    throw planReviewRetryInputStale();
+  }
+}
+
+function planReviewRetryInputStale() {
+  return workflowError(
+    'PLAN_REVIEW_RETRY_INPUT_STALE',
+    'PlanReview retry input is not bound to the exact failed review attempt.',
     ExitCode.staleState,
   );
 }
@@ -3098,16 +3504,41 @@ function renderMaterializedProposeOutput(
     reviewResultDigest: trackedReview?.reviewNode.resultDigest ?? null,
   };
   if (invocation.state === 'failed') {
+    const retryable = invocation.failure?.kind === 'retryable';
     return {
       schemaVersion: 1,
       kind: 'workflow-propose',
       changeId: status.changeId,
-      state: 'human-action-required',
-      nextAction: 'human-action',
+      state: retryable ? 'waiting-for-plan-review' : 'human-action-required',
+      nextAction: retryable ? 'retry-plan-review' : 'human-action',
       investigation: status,
       createdDate,
       actorResolution,
-      inputSchema: null,
+      inputSchema: retryable
+        ? {
+            schemaVersion: 1,
+            kind: 'plan-review-retry',
+            binding: {
+              investigationId: status.investigationId,
+              changeId: status.changeId,
+              expectedRevision: status.revision,
+              baseline: status.baseline,
+              subjectDigest: reservation.subject.subjectDigest,
+              planningGenerationId: reservation.subject.planningGenerationId,
+              expectedReservationNodeId: reservation.reservationNode.nodeId,
+              failedInvocation: {
+                invocationId: invocation.invocationId,
+                attempt: invocation.attempt,
+                revision: invocation.revision,
+                requestDigest: invocation.requestDigest,
+                failureDigest: sha256(canonicalJson(invocation.failure)),
+              },
+            },
+            requiredAcknowledgement: {
+              acknowledgeProviderCost: true,
+            },
+          }
+        : null,
       work,
       materializedArtifacts,
       planReview,
@@ -6034,6 +6465,7 @@ function persistExemptionPlanningMaterializationReceipt(
 }
 
 type PlanReviewReservation = {
+  reservationNode: EvidenceNode;
   planning: InvestigationFirstPlanningSubject;
   subject: PlanReviewSubject;
   assignment: ProviderRoleAssignment;
@@ -6045,6 +6477,11 @@ type PlanReviewReservation = {
   };
   request: ProviderInvocationRequest;
   grantAuthorization: ProposeGrantAuthorization | null;
+  retry: {
+    attempt: number;
+    previousReservationNodeId: string;
+    failedInvocation: PlanReviewRetryEnvelope['failedInvocation'];
+  } | null;
 };
 
 type PlanReviewGrantRequirement = {
@@ -6061,10 +6498,18 @@ function preparePlanReviewInvocation(
   assertOwned: () => void,
 ): PlanReviewReservation | null {
   const context = loadInvestigationRuntimeContext(cwd);
-  const existing = readPlanReviewReservation(context.runtime, status);
+  const currentRefs = readEvidenceRefs(context.runtime, status.changeId);
+  const existing = readPlanReviewReservation(
+    context.runtime,
+    status,
+    undefined,
+    true,
+  );
   if (
     existing !== null &&
-    canonicalJson(existing.subject) === canonicalJson(planning.subject)
+    canonicalJson(existing.subject) === canonicalJson(planning.subject) &&
+    existing.materializationNode.nodeId ===
+      currentRefs[PLANNING_MATERIALIZATION_REF]
   ) {
     ensurePlanReviewInvocation(
       context.git.repositoryRoot,
@@ -6075,9 +6520,7 @@ function preparePlanReviewInvocation(
     return existing;
   }
   const expectedReservationNodeId =
-    readEvidenceRefs(context.runtime, status.changeId)[
-      PLAN_REVIEW_REQUEST_REF
-    ] ?? null;
+    currentRefs[PLAN_REVIEW_REQUEST_REF] ?? null;
 
   const author = planAuthor(context.runtime, status);
   const recordedAuthor: RecordedRoleParticipant = {
@@ -6172,10 +6615,7 @@ function preparePlanReviewInvocation(
       expectedBinding,
     };
   }
-  const materializationNodeId = readEvidenceRefs(
-    context.runtime,
-    status.changeId,
-  )[PLANNING_MATERIALIZATION_REF];
+  const materializationNodeId = currentRefs[PLANNING_MATERIALIZATION_REF];
   if (!materializationNodeId) {
     throw workflowError(
       'PLANNING_MATERIALIZATION_STALE',
@@ -6373,6 +6813,7 @@ function preparePlanReviewInvocation(
     nextNodeId: reservationNode.nodeId,
   });
   const reservation = {
+    reservationNode,
     planning,
     subject: planning.subject,
     assignment,
@@ -6382,6 +6823,7 @@ function preparePlanReviewInvocation(
     manifest,
     request,
     grantAuthorization,
+    retry: null,
   };
   ensurePlanReviewInvocation(
     context.git.repositoryRoot,
@@ -6520,13 +6962,27 @@ function ensurePlanReviewInvocation(
   paths: ReturnType<typeof loadInvestigationRuntimeContext>['runtime'],
   status: ProposeLifecycleStatus,
   reservation: PlanReviewReservation,
+  prevalidatedSnapshotFiles?: Array<{
+    snapshotFile: string;
+    content: Buffer;
+  }>,
 ): void {
   if (providerInvocationExists(paths, reservation.request.invocationId)) {
+    const record = readProviderInvocation(
+      paths,
+      reservation.request.invocationId,
+    );
     const durable = readProviderInvocationRequest(
       paths,
       reservation.request.invocationId,
     );
-    if (canonicalJson(durable) !== canonicalJson(reservation.request)) {
+    if (
+      record.investigationId !== status.investigationId ||
+      record.changeId !== status.changeId ||
+      record.attempt !== (reservation.retry?.attempt ?? 1) ||
+      record.requestDigest !== reservation.request.requestDigest ||
+      canonicalJson(durable) !== canonicalJson(reservation.request)
+    ) {
       throw workflowError(
         'PLAN_REVIEW_REQUEST_CONFLICT',
         'The durable plan-review request differs from its reservation.',
@@ -6535,45 +6991,109 @@ function ensurePlanReviewInvocation(
     }
     return;
   }
+  const planReviewSnapshotFiles =
+    prevalidatedSnapshotFiles ??
+    (reservation.retry === null
+      ? reservation.manifest.planningTarget.artifacts.map((artifact) => {
+          const target = path.join(repositoryRoot, artifact.path);
+          const stats = fs.lstatSync(target, { throwIfNoEntry: false });
+          if (
+            !stats?.isFile() ||
+            stats.isSymbolicLink() ||
+            stats.nlink !== 1 ||
+            (stats.mode & 0o777) !== 0o644
+          ) {
+            throw workflowError(
+              'PLAN_REVIEW_TARGET_SNAPSHOT_INVALID',
+              'Current planning target contains an unsafe artifact.',
+              ExitCode.staleState,
+            );
+          }
+          const content = fs.readFileSync(target);
+          if (
+            content.byteLength !== artifact.byteLength ||
+            sha256(content) !== artifact.sha256
+          ) {
+            throw workflowError(
+              'PLAN_REVIEW_TARGET_SNAPSHOT_INVALID',
+              'Current planning bytes differ from the reserved target snapshot.',
+              ExitCode.staleState,
+            );
+          }
+          return {
+            snapshotFile: artifact.snapshotFile,
+            content,
+          };
+        })
+      : copyPriorPlanReviewSnapshot(paths, reservation));
   createProviderInvocation(paths, {
     investigationId: status.investigationId,
     changeId: status.changeId,
-    attempt: 1,
+    attempt: reservation.retry?.attempt ?? 1,
     manifest: reservation.manifest,
     request: reservation.request,
-    planReviewSnapshotFiles: reservation.manifest.planningTarget.artifacts.map(
-      (artifact) => {
-        const target = path.join(repositoryRoot, artifact.path);
-        const stats = fs.lstatSync(target, { throwIfNoEntry: false });
-        if (
-          !stats?.isFile() ||
-          stats.isSymbolicLink() ||
-          stats.nlink !== 1 ||
-          (stats.mode & 0o777) !== 0o644
-        ) {
-          throw workflowError(
-            'PLAN_REVIEW_TARGET_SNAPSHOT_INVALID',
-            'Current planning target contains an unsafe artifact.',
-            ExitCode.staleState,
-          );
-        }
-        const content = fs.readFileSync(target);
-        if (
-          content.byteLength !== artifact.byteLength ||
-          sha256(content) !== artifact.sha256
-        ) {
-          throw workflowError(
-            'PLAN_REVIEW_TARGET_SNAPSHOT_INVALID',
-            'Current planning bytes differ from the reserved target snapshot.',
-            ExitCode.staleState,
-          );
-        }
-        return {
-          snapshotFile: artifact.snapshotFile,
-          content,
-        };
-      },
-    ),
+    planReviewSnapshotFiles,
+  });
+}
+
+function copyPriorPlanReviewSnapshot(
+  paths: ReturnType<typeof loadInvestigationRuntimeContext>['runtime'],
+  reservation: PlanReviewReservation,
+): Array<{ snapshotFile: string; content: Buffer }> {
+  if (reservation.retry === null) {
+    throw planReviewRequestStale();
+  }
+  return readPriorPlanReviewSnapshotFiles(
+    paths,
+    reservation.manifest,
+    reservation.retry.failedInvocation.invocationId,
+  );
+}
+
+function readPriorPlanReviewSnapshotFiles(
+  paths: ReturnType<typeof loadInvestigationRuntimeContext>['runtime'],
+  manifest: PlanReviewReservation['manifest'],
+  failedInvocationId: string,
+): Array<{ snapshotFile: string; content: Buffer }> {
+  const snapshot = readPlanReviewSnapshotRuntime(paths, failedInvocationId);
+  if (snapshot === null) {
+    throw workflowError(
+      'PLAN_REVIEW_TARGET_SNAPSHOT_INVALID',
+      'Failed PlanReview invocation has no immutable target snapshot.',
+      ExitCode.staleState,
+    );
+  }
+  return manifest.planningTarget.artifacts.map((artifact) => {
+    const snapshotPath = path.join(snapshot.root, artifact.snapshotFile);
+    const stats = fs.lstatSync(snapshotPath, { throwIfNoEntry: false });
+    if (
+      !stats?.isFile() ||
+      stats.isSymbolicLink() ||
+      stats.nlink !== 1 ||
+      (stats.mode & 0o777) !== 0o600
+    ) {
+      throw workflowError(
+        'PLAN_REVIEW_TARGET_SNAPSHOT_INVALID',
+        'Failed PlanReview invocation has an unsafe target snapshot.',
+        ExitCode.staleState,
+      );
+    }
+    const content = fs.readFileSync(snapshotPath);
+    if (
+      content.byteLength !== artifact.byteLength ||
+      sha256(content) !== artifact.sha256 ||
+      planReviewSnapshotLineCount(content) !== artifact.lineCount
+    ) {
+      throw workflowError(
+        'PLAN_REVIEW_TARGET_SNAPSHOT_INVALID',
+        'Failed PlanReview invocation target snapshot no longer matches its manifest.',
+        ExitCode.staleState,
+      );
+    }
+    return {
+      snapshotFile: artifact.snapshotFile,
+      content,
+    };
   });
 }
 
@@ -6581,20 +7101,59 @@ function readPlanReviewReservation(
   paths: ReturnType<typeof loadInvestigationRuntimeContext>['runtime'],
   status: ProposeLifecycleStatus,
   expectedSubject?: PlanReviewSubject,
+  allowNoncurrentMaterialization = false,
 ): PlanReviewReservation | null {
-  const nodeId = readEvidenceRefs(paths, status.changeId)[
-    PLAN_REVIEW_REQUEST_REF
-  ];
-  if (!nodeId) {
+  const refs = readEvidenceRefs(paths, status.changeId);
+  const nodeId = refs[PLAN_REVIEW_REQUEST_REF];
+  if (nodeId === undefined) {
     return null;
+  }
+  const currentMaterializationNodeId = refs[PLANNING_MATERIALIZATION_REF];
+  if (
+    !allowNoncurrentMaterialization &&
+    currentMaterializationNodeId === undefined
+  ) {
+    throw planReviewRequestStale();
+  }
+  let closure: ReturnType<typeof computeInvestigationEvidenceRefsClosure>;
+  try {
+    closure = computeInvestigationEvidenceRefsClosure(
+      paths,
+      status.changeId,
+      allowNoncurrentMaterialization
+        ? { [PLAN_REVIEW_REQUEST_REF]: nodeId }
+        : {
+            [PLAN_REVIEW_REQUEST_REF]: nodeId,
+            [PLANNING_MATERIALIZATION_REF]: currentMaterializationNodeId!,
+          },
+    );
+  } catch {
+    throw planReviewRequestStale();
+  }
+  const closureEntries = closure.entries.filter(
+    (entry) => entry.refName === PLAN_REVIEW_REQUEST_REF,
+  );
+  if (
+    closureEntries.length !== 1 ||
+    closureEntries[0]?.nodeId !== nodeId ||
+    closureEntries[0]?.ownerInvestigationId !== status.investigationId
+  ) {
+    throw planReviewRequestStale();
   }
   const node = readEvidenceNode(paths, nodeId);
   const output = node.output;
+  const retryShape =
+    node.nodeSchema === 'workflow.plan-review-request-reservation.v2';
   if (
     node.type !== 'plan-review-request-reservation' ||
-    node.nodeSchema !== 'workflow.plan-review-request-reservation.v1' ||
+    (!retryShape &&
+      node.nodeSchema !== 'workflow.plan-review-request-reservation.v1') ||
     node.evaluator !== 'workflow-propose.v1' ||
     node.policyDigest !== PROPOSE_POLICY_DIGEST ||
+    node.outputSchema !==
+      (retryShape
+        ? 'workflow.plan-review-request-reservation-output.v2'
+        : 'workflow.plan-review-request-reservation-output.v1') ||
     !isRecord(output) ||
     !hasExactKeys(output, [
       'investigationId',
@@ -6608,6 +7167,22 @@ function readPlanReviewReservation(
       'manifest',
       'request',
       'grantAuthorization',
+      ...(retryShape ? ['retry'] : []),
+    ]) ||
+    !hasExactKeys(node.exactInputDigests, [
+      'request',
+      'manifest',
+      'subject',
+      'targetSnapshot',
+      ...(retryShape ? ['previousRequest', 'failure'] : []),
+    ]) ||
+    !hasExactKeys(node.provenanceParentNodeIds, [
+      'authorization',
+      ...(retryShape ? ['previousRequest'] : []),
+    ]) ||
+    !hasExactKeys(node.semanticParentResultDigests, [
+      'authorization',
+      ...(retryShape ? ['previousRequest'] : []),
     ]) ||
     output.investigationId !== status.investigationId ||
     output.changeId !== status.changeId ||
@@ -6666,6 +7241,15 @@ function readPlanReviewReservation(
     author,
     request,
   );
+  const retry = retryShape
+    ? assertPlanReviewRetryReservation(
+        paths,
+        node,
+        output.retry,
+        output,
+        request,
+      )
+    : null;
   if (
     (expectedSubject &&
       canonicalJson(subject) !== canonicalJson(expectedSubject)) ||
@@ -6712,6 +7296,7 @@ function readPlanReviewReservation(
     );
   }
   return {
+    reservationNode: node,
     subject,
     planning,
     assignment,
@@ -6721,7 +7306,145 @@ function readPlanReviewReservation(
     manifest,
     request,
     grantAuthorization,
+    retry,
   };
+}
+
+function assertPlanReviewRetryReservation(
+  paths: ReturnType<typeof loadInvestigationRuntimeContext>['runtime'],
+  node: EvidenceNode,
+  value: unknown,
+  output: Record<string, unknown>,
+  request: ProviderInvocationRequest,
+): NonNullable<PlanReviewReservation['retry']> {
+  if (
+    !isRecord(value) ||
+    !hasExactKeys(value, [
+      'attempt',
+      'previousReservationNodeId',
+      'failedInvocation',
+    ]) ||
+    !Number.isInteger(value.attempt) ||
+    (value.attempt as number) < 2 ||
+    typeof value.previousReservationNodeId !== 'string' ||
+    !DIGEST.test(value.previousReservationNodeId) ||
+    !isRecord(value.failedInvocation) ||
+    !hasExactKeys(value.failedInvocation, [
+      'invocationId',
+      'attempt',
+      'revision',
+      'requestDigest',
+      'failureDigest',
+    ]) ||
+    typeof value.failedInvocation.invocationId !== 'string' ||
+    !Number.isInteger(value.failedInvocation.attempt) ||
+    (value.failedInvocation.attempt as number) < 1 ||
+    !Number.isInteger(value.failedInvocation.revision) ||
+    (value.failedInvocation.revision as number) < 0 ||
+    typeof value.failedInvocation.requestDigest !== 'string' ||
+    !DIGEST.test(value.failedInvocation.requestDigest) ||
+    typeof value.failedInvocation.failureDigest !== 'string' ||
+    !DIGEST.test(value.failedInvocation.failureDigest)
+  ) {
+    throw planReviewRequestStale();
+  }
+  const previousReservationNodeId = value.previousReservationNodeId;
+  const failedInvocation =
+    value.failedInvocation as PlanReviewRetryEnvelope['failedInvocation'];
+  const previousNode = readEvidenceNode(paths, previousReservationNodeId);
+  const previousOutput = previousNode.output;
+  const previousRetryShape =
+    previousNode.nodeSchema === 'workflow.plan-review-request-reservation.v2';
+  const previousAttempt =
+    previousRetryShape &&
+    isRecord(previousOutput) &&
+    isRecord(previousOutput.retry) &&
+    Number.isInteger(previousOutput.retry.attempt) &&
+    (previousOutput.retry.attempt as number) >= 2
+      ? (previousOutput.retry.attempt as number)
+      : previousRetryShape
+        ? 0
+        : 1;
+  const failed = readProviderInvocation(paths, failedInvocation.invocationId);
+  const failedRequest = readProviderInvocationRequest(
+    paths,
+    failedInvocation.invocationId,
+  );
+  const {
+    invocationId: _failedInvocationId,
+    nonce: _failedNonce,
+    requestDigest: _failedRequestDigest,
+    ...failedRequestBinding
+  } = failedRequest;
+  const {
+    invocationId: _replacementInvocationId,
+    nonce: _replacementNonce,
+    requestDigest: _replacementRequestDigest,
+    ...replacementRequestBinding
+  } = request;
+  if (
+    previousNode.type !== 'plan-review-request-reservation' ||
+    (!previousRetryShape &&
+      previousNode.nodeSchema !==
+        'workflow.plan-review-request-reservation.v1') ||
+    previousNode.evaluator !== 'workflow-propose.v1' ||
+    previousNode.policyDigest !== PROPOSE_POLICY_DIGEST ||
+    previousNode.outputSchema !==
+      (previousRetryShape
+        ? 'workflow.plan-review-request-reservation-output.v2'
+        : 'workflow.plan-review-request-reservation-output.v1') ||
+    !isRecord(previousOutput) ||
+    previousNode.nodeId !== node.exactInputDigests.previousRequest ||
+    previousNode.nodeId !== node.provenanceParentNodeIds.previousRequest ||
+    previousNode.resultDigest !==
+      node.semanticParentResultDigests.previousRequest ||
+    failedInvocation.failureDigest !== node.exactInputDigests.failure ||
+    previousAttempt === 0 ||
+    failed.attempt !== previousAttempt ||
+    value.attempt !== failed.attempt + 1 ||
+    failed.state !== 'failed' ||
+    failed.failure === null ||
+    failed.failure.kind !== 'retryable' ||
+    failed.invocationId !== failedInvocation.invocationId ||
+    failed.attempt !== failedInvocation.attempt ||
+    failed.revision !== failedInvocation.revision ||
+    failed.requestDigest !== failedInvocation.requestDigest ||
+    failedRequest.requestDigest !== failedInvocation.requestDigest ||
+    sha256(canonicalJson(failed.failure)) !== failedInvocation.failureDigest ||
+    canonicalJson(previousOutput.request) !== canonicalJson(failedRequest) ||
+    canonicalJson(previousOutput.subject) !== canonicalJson(output.subject) ||
+    canonicalJson(previousOutput.planning) !== canonicalJson(output.planning) ||
+    canonicalJson(previousOutput.assignment) !==
+      canonicalJson(output.assignment) ||
+    canonicalJson(previousOutput.author) !== canonicalJson(output.author) ||
+    canonicalJson(previousOutput.materializationNode) !==
+      canonicalJson(output.materializationNode) ||
+    canonicalJson(previousOutput.targetSnapshotNode) !==
+      canonicalJson(output.targetSnapshotNode) ||
+    canonicalJson(previousOutput.manifest) !== canonicalJson(output.manifest) ||
+    canonicalJson(previousOutput.grantAuthorization) !==
+      canonicalJson(output.grantAuthorization) ||
+    request.requestDigest === failedRequest.requestDigest ||
+    request.invocationId === failedRequest.invocationId ||
+    request.nonce === failedRequest.nonce ||
+    canonicalJson(replacementRequestBinding) !==
+      canonicalJson(failedRequestBinding)
+  ) {
+    throw planReviewRequestStale();
+  }
+  return {
+    attempt: value.attempt as number,
+    previousReservationNodeId,
+    failedInvocation,
+  };
+}
+
+function planReviewRequestStale() {
+  return workflowError(
+    'PLAN_REVIEW_REQUEST_STALE',
+    'Durable plan-review request reservation is invalid.',
+    ExitCode.staleState,
+  );
 }
 
 function assertPlanReviewGrantAuthorization(
@@ -7325,6 +8048,9 @@ function assertProposeInput(value: unknown): ProposeInput {
   if (value.kind === 'provider-retry') {
     return assertProviderRetryEnvelope(value);
   }
+  if (value.kind === 'plan-review-retry') {
+    return assertPlanReviewRetryEnvelope(value);
+  }
   if (value.kind === 'plan-review-progress') {
     return assertPlanReviewProgressEnvelope(value);
   }
@@ -7560,6 +8286,61 @@ function assertProviderRetryEnvelope(value: unknown): ProviderRetryEnvelope {
     throw proposeInputInvalid();
   }
   return value as ProviderRetryEnvelope;
+}
+
+function assertPlanReviewRetryEnvelope(
+  value: unknown,
+): PlanReviewRetryEnvelope {
+  if (
+    !isRecord(value) ||
+    !hasExactKeys(value, [
+      'schemaVersion',
+      'kind',
+      'investigationId',
+      'changeId',
+      'expectedRevision',
+      'baseline',
+      'subjectDigest',
+      'planningGenerationId',
+      'expectedReservationNodeId',
+      'failedInvocation',
+      'acknowledgeProviderCost',
+    ]) ||
+    value.schemaVersion !== 1 ||
+    value.kind !== 'plan-review-retry' ||
+    typeof value.investigationId !== 'string' ||
+    typeof value.changeId !== 'string' ||
+    !Number.isInteger(value.expectedRevision) ||
+    (value.expectedRevision as number) < 0 ||
+    !isBaseline(value.baseline) ||
+    typeof value.subjectDigest !== 'string' ||
+    !DIGEST.test(value.subjectDigest) ||
+    typeof value.planningGenerationId !== 'string' ||
+    !DIGEST.test(value.planningGenerationId) ||
+    typeof value.expectedReservationNodeId !== 'string' ||
+    !DIGEST.test(value.expectedReservationNodeId) ||
+    !isRecord(value.failedInvocation) ||
+    !hasExactKeys(value.failedInvocation, [
+      'invocationId',
+      'attempt',
+      'revision',
+      'requestDigest',
+      'failureDigest',
+    ]) ||
+    typeof value.failedInvocation.invocationId !== 'string' ||
+    !Number.isInteger(value.failedInvocation.attempt) ||
+    (value.failedInvocation.attempt as number) < 1 ||
+    !Number.isInteger(value.failedInvocation.revision) ||
+    (value.failedInvocation.revision as number) < 0 ||
+    typeof value.failedInvocation.requestDigest !== 'string' ||
+    !DIGEST.test(value.failedInvocation.requestDigest) ||
+    typeof value.failedInvocation.failureDigest !== 'string' ||
+    !DIGEST.test(value.failedInvocation.failureDigest) ||
+    value.acknowledgeProviderCost !== true
+  ) {
+    throw proposeInputInvalid();
+  }
+  return value as PlanReviewRetryEnvelope;
 }
 
 function assertPlanningBinding(

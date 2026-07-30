@@ -978,20 +978,27 @@ function assertPlanReviewRequestOwnership(
   expectedChangeId: string,
 ): InvestigationEvidenceOwnership {
   const output = node.output;
+  const retryShape =
+    node.nodeSchema === 'workflow.plan-review-request-reservation.v2' &&
+    node.outputSchema === 'workflow.plan-review-request-reservation-output.v2';
+  const initialShape =
+    node.nodeSchema === 'workflow.plan-review-request-reservation.v1' &&
+    node.outputSchema === 'workflow.plan-review-request-reservation-output.v1';
   if (
     !isPlainRecord(output) ||
     node.type !== 'plan-review-request-reservation' ||
-    node.nodeSchema !== 'workflow.plan-review-request-reservation.v1' ||
+    (!initialShape && !retryShape) ||
     node.evaluator !== 'workflow-propose.v1' ||
     node.policyDigest !== PROPOSE_POLICY_DIGEST ||
-    node.outputSchema !==
-      'workflow.plan-review-request-reservation-output.v1' ||
     output.changeId !== expectedChangeId ||
     !isInvestigationOwner(output.investigationId)
   ) {
     throw refInvalid();
   }
   const currentShape = Object.hasOwn(output, 'materializationNode');
+  if (retryShape && !currentShape) {
+    throw refInvalid();
+  }
   const outputKeys = currentShape
     ? [
         'investigationId',
@@ -1005,6 +1012,7 @@ function assertPlanReviewRequestOwnership(
         'manifest',
         'request',
         'grantAuthorization',
+        ...(retryShape ? ['retry'] : []),
       ]
     : [
         'investigationId',
@@ -1024,9 +1032,16 @@ function assertPlanReviewRequestOwnership(
       'request',
       'subject',
       ...(currentShape ? ['targetSnapshot'] : []),
+      ...(retryShape ? ['previousRequest', 'failure'] : []),
     ]) ||
-    !hasExactKeys(node.provenanceParentNodeIds, ['authorization']) ||
-    !hasExactKeys(node.semanticParentResultDigests, ['authorization']) ||
+    !hasExactKeys(node.provenanceParentNodeIds, [
+      'authorization',
+      ...(retryShape ? ['previousRequest'] : []),
+    ]) ||
+    !hasExactKeys(node.semanticParentResultDigests, [
+      'authorization',
+      ...(retryShape ? ['previousRequest'] : []),
+    ]) ||
     !isPlainRecord(output.planning) ||
     !isPlainRecord(output.manifest)
   ) {
@@ -1198,12 +1213,155 @@ function assertPlanReviewRequestOwnership(
   } else if (Object.hasOwn(manifest, 'planningTarget')) {
     throw refInvalid();
   }
+  if (retryShape) {
+    const retry = assertPlanReviewRetryOwnership(
+      paths,
+      refs,
+      node,
+      output,
+      request,
+      expectedChangeId,
+    );
+    if (
+      retry.previousOwnership.ownerInvestigationId !==
+      materializationOwnership.ownerInvestigationId
+    ) {
+      throw refInvalid();
+    }
+    dependencies.push(
+      dependencyClosureEntry('previous-request', retry.previousNode),
+      ...retry.previousOwnership.dependencies.map((dependency) =>
+        Object.freeze({
+          ...dependency,
+          role: `previous-request/${dependency.role}`,
+        }),
+      ),
+    );
+  }
   return Object.freeze({
     ownerInvestigationId: materializationOwnership.ownerInvestigationId,
     dependencies: Object.freeze(
       dependencies.sort((left, right) => left.role.localeCompare(right.role)),
     ),
   });
+}
+
+function assertPlanReviewRetryOwnership(
+  paths: InvestigationRuntimePaths,
+  refs: Readonly<Record<string, string>>,
+  node: EvidenceNode,
+  output: Record<string, unknown>,
+  request: ReturnType<typeof recreateProviderInvocationRequest>,
+  expectedChangeId: string,
+): {
+  previousNode: EvidenceNode;
+  previousOwnership: InvestigationEvidenceOwnership;
+} {
+  const retry = output.retry;
+  if (
+    !isPlainRecord(retry) ||
+    !hasExactKeys(retry, [
+      'attempt',
+      'previousReservationNodeId',
+      'failedInvocation',
+    ]) ||
+    !Number.isSafeInteger(retry.attempt) ||
+    (retry.attempt as number) < 2 ||
+    !isDigest(retry.previousReservationNodeId) ||
+    !isPlainRecord(retry.failedInvocation) ||
+    !hasExactKeys(retry.failedInvocation, [
+      'invocationId',
+      'attempt',
+      'revision',
+      'requestDigest',
+      'failureDigest',
+    ]) ||
+    typeof retry.failedInvocation.invocationId !== 'string' ||
+    retry.failedInvocation.invocationId.length === 0 ||
+    !Number.isSafeInteger(retry.failedInvocation.attempt) ||
+    (retry.failedInvocation.attempt as number) < 1 ||
+    !Number.isSafeInteger(retry.failedInvocation.revision) ||
+    (retry.failedInvocation.revision as number) < 0 ||
+    !isDigest(retry.failedInvocation.requestDigest) ||
+    !isDigest(retry.failedInvocation.failureDigest) ||
+    node.exactInputDigests.failure !== retry.failedInvocation.failureDigest ||
+    node.exactInputDigests.previousRequest !==
+      retry.previousReservationNodeId ||
+    node.provenanceParentNodeIds.previousRequest !==
+      retry.previousReservationNodeId
+  ) {
+    throw refInvalid();
+  }
+  const previousNode = readEvidenceNode(paths, retry.previousReservationNodeId);
+  if (
+    previousNode.resultDigest !==
+    node.semanticParentResultDigests.previousRequest
+  ) {
+    throw refInvalid();
+  }
+  const previousOwnership = assertPlanReviewRequestOwnership(
+    paths,
+    refs,
+    previousNode,
+    expectedChangeId,
+  );
+  if (!isPlainRecord(previousNode.output)) {
+    throw refInvalid();
+  }
+  const previousOutput = previousNode.output;
+  const previousRequest = recreateProviderInvocationRequest(
+    previousOutput.request,
+  );
+  const previousRetry = previousOutput.retry;
+  const previousAttempt =
+    previousNode.nodeSchema === 'workflow.plan-review-request-reservation.v1'
+      ? 1
+      : isPlainRecord(previousRetry) &&
+          Number.isSafeInteger(previousRetry.attempt) &&
+          (previousRetry.attempt as number) >= 2
+        ? (previousRetry.attempt as number)
+        : 0;
+  const {
+    invocationId: _previousInvocationId,
+    nonce: _previousNonce,
+    requestDigest: _previousRequestDigest,
+    ...previousRequestBinding
+  } = previousRequest;
+  const {
+    invocationId: _replacementInvocationId,
+    nonce: _replacementNonce,
+    requestDigest: _replacementRequestDigest,
+    ...replacementRequestBinding
+  } = request;
+  if (
+    previousAttempt === 0 ||
+    retry.attempt !== previousAttempt + 1 ||
+    retry.failedInvocation.attempt !== previousAttempt ||
+    retry.failedInvocation.invocationId !== previousRequest.invocationId ||
+    retry.failedInvocation.requestDigest !== previousRequest.requestDigest ||
+    request.invocationId === previousRequest.invocationId ||
+    request.nonce === previousRequest.nonce ||
+    request.requestDigest === previousRequest.requestDigest ||
+    canonicalJson(replacementRequestBinding) !==
+      canonicalJson(previousRequestBinding)
+  ) {
+    throw refInvalid();
+  }
+  for (const field of [
+    'planning',
+    'subject',
+    'assignment',
+    'author',
+    'materializationNode',
+    'targetSnapshotNode',
+    'manifest',
+    'grantAuthorization',
+  ]) {
+    if (canonicalJson(previousOutput[field]) !== canonicalJson(output[field])) {
+      throw refInvalid();
+    }
+  }
+  return { previousNode, previousOwnership };
 }
 
 function assertPlanReviewGrantRequirementOwnership(
