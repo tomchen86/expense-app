@@ -5996,6 +5996,10 @@ function assertEvidenceClosureTargetBinding(
   targetSession: InvestigationSession,
   closure: InvestigationEvidenceRefsClosure,
 ): void {
+  const reviewerReopenLimitBinding = reviewerReopenLimitMaterializationBinding(
+    targetSession,
+    closure,
+  );
   for (const entry of closure.entries) {
     const owner = isProposeExemptionInvestigationId(entry.ownerInvestigationId)
       ? readProposeExemptionSession(paths, entry.ownerInvestigationId)
@@ -6017,6 +6021,7 @@ function assertEvidenceClosureTargetBinding(
       assertMaterializationMatchesOwnerSession(
         readEvidenceNode(paths, entry.nodeId),
         owner,
+        reviewerReopenLimitBinding,
       );
       continue;
     }
@@ -6030,6 +6035,7 @@ function assertEvidenceClosureTargetBinding(
       assertMaterializationMatchesOwnerSession(
         readEvidenceNode(paths, materialization.nodeId),
         owner,
+        reviewerReopenLimitBinding,
       );
       continue;
     }
@@ -6051,9 +6057,70 @@ function assertEvidenceClosureTargetBinding(
   }
 }
 
+type ReviewerReopenLimitMaterializationBinding = Readonly<{
+  ownerInvestigationId: string;
+  nodeId: string;
+  resultDigest: string;
+  envelopeDigest: string;
+}>;
+
+function reviewerReopenLimitMaterializationBinding(
+  session: InvestigationSession,
+  closure: InvestigationEvidenceRefsClosure,
+): ReviewerReopenLimitMaterializationBinding | null {
+  const blocker = session.blocker;
+  if (
+    session.state !== 'human-action-required' ||
+    blocker === null ||
+    'code' in blocker ||
+    blocker.schemaVersion !== 2 ||
+    blocker.state !== 'human-action-required' ||
+    blocker.reasonCode !== 'INVESTIGATION_REVIEWER_REOPEN_LIMIT_REACHED' ||
+    blocker.blockedTransition !== 'admit-plan-review' ||
+    !isDigest(blocker.facts.pendingReviewDigest)
+  ) {
+    return null;
+  }
+  const materializations = closure.entries.filter(
+    ({ refName }) => refName === 'propose/planning-materialization',
+  );
+  const reviewRequests = closure.entries.filter(
+    ({ refName }) => refName === 'propose/plan-review-request',
+  );
+  if (
+    materializations.length !== 1 ||
+    reviewRequests.length !== 1 ||
+    materializations[0]!.ownerInvestigationId !== session.investigationId ||
+    reviewRequests[0]!.ownerInvestigationId !== session.investigationId
+  ) {
+    return null;
+  }
+  const materialization = materializations[0]!;
+  const materializationDependencies = reviewRequests[0]!.dependencies.filter(
+    ({ role }) => role === 'materialization',
+  );
+  if (
+    materializationDependencies.length !== 1 ||
+    materializationDependencies[0]!.nodeId !== materialization.nodeId ||
+    materializationDependencies[0]!.resultDigest !==
+      materialization.resultDigest ||
+    materializationDependencies[0]!.envelopeDigest !==
+      materialization.envelopeDigest
+  ) {
+    return null;
+  }
+  return {
+    ownerInvestigationId: materialization.ownerInvestigationId,
+    nodeId: materialization.nodeId,
+    resultDigest: materialization.resultDigest,
+    envelopeDigest: materialization.envelopeDigest,
+  };
+}
+
 function assertMaterializationMatchesOwnerSession(
   node: ReturnType<typeof readEvidenceNode>,
   session: InvestigationSession | ProposeExemptionSession,
+  reviewerReopenLimitBinding: ReviewerReopenLimitMaterializationBinding | null,
 ): void {
   const output = node.output;
   const exemption =
@@ -6061,12 +6128,29 @@ function assertMaterializationMatchesOwnerSession(
   const expectedType = exemption
     ? 'propose-exemption-planning-materialization'
     : 'propose-planning-materialization';
+  const revisionMatches =
+    isRecord(output) &&
+    (output.revision === session.revision ||
+      (!exemption &&
+        reviewerReopenLimitBinding !== null &&
+        reviewerReopenLimitBinding.ownerInvestigationId ===
+          session.investigationId &&
+        reviewerReopenLimitBinding.nodeId === node.nodeId &&
+        reviewerReopenLimitBinding.resultDigest === node.resultDigest &&
+        session.state === 'human-action-required' &&
+        session.blocker !== null &&
+        !('code' in session.blocker) &&
+        session.blocker.reasonCode ===
+          'INVESTIGATION_REVIEWER_REOPEN_LIMIT_REACHED' &&
+        session.blocker.blockedTransition === 'admit-plan-review' &&
+        Number.isSafeInteger(output.revision) &&
+        session.revision === (output.revision as number) + 1));
   if (
     node.type !== expectedType ||
     !isRecord(output) ||
     output.investigationId !== session.investigationId ||
     output.changeId !== session.changeId ||
-    output.revision !== session.revision ||
+    !revisionMatches ||
     !isRecord(output.baseline) ||
     canonicalJson(output.baseline) !== canonicalJson(session.baseline) ||
     (exemption &&

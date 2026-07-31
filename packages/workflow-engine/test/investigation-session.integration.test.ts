@@ -32,6 +32,7 @@ import {
   executeHumanResolutionGrant,
   getInvestigationStatus,
   inspectHumanResolutionGrantPublicationRecoveries,
+  inspectReviewerTermResolutionAuthorization,
   publishProviderResultToInvestigation,
   recoverHumanResolutionGrant,
   resumeInvestigationSession,
@@ -2618,6 +2619,555 @@ test('fake-backed propose composes breadth and depth before materializing an unc
         '--format=%(trailers:key=Transition,valueonly)',
       ]).trim(),
       'plan',
+    );
+  } finally {
+    fs.rmSync(repository, { recursive: true, force: true });
+  }
+});
+
+test('reviewer reopen limit preserves exact materialization evidence for human resolution', () => {
+  const repository = createFixtureRepository();
+  const changeId = 'reviewer-reopen-limit';
+  try {
+    installFixtureMaintainerPolicy(repository);
+    fs.writeFileSync(
+      path.join(repository, 'src/reviewer-reopen-target.ts'),
+      [
+        'export const ReviewerReopenBaseNeedle = true;',
+        'export const BlindReviewerNeedle = true;',
+        'export const FirstReviewerNeedle = true;',
+        'export const SecondReviewerNeedle = true;',
+        'export const ThirdReviewerNeedle = true;',
+        'export const FourthReviewerNeedle = true;',
+        '',
+      ].join('\n'),
+    );
+    git(repository, [
+      'add',
+      '--',
+      'src/reviewer-reopen-target.ts',
+      'workflow/maintainer-policy.json',
+    ]);
+    git(repository, ['commit', '-m', 'Add reviewer reopen fixture']);
+    git(repository, ['checkout', '-b', `work/${changeId}`]);
+
+    const intent = {
+      schemaVersion: 1 as const,
+      summary:
+        'Exercise bounded reviewer-term reopening without changing planning evidence.',
+      explicitPaths: [],
+      explicitSymbols: ['ReviewerReopenBaseNeedle'],
+      explicitConfigKeys: [],
+      renamePairs: [],
+    };
+    const started = startPropose(repository, changeId, intent, {
+      explicitActor: 'codex',
+      environment: {},
+      providerDriver: ({ paths, request }) => {
+        const claim = claimProviderInvocation(paths, request.invocationId, {
+          workerId: 'reviewer-reopen-fixture-worker',
+          leaseDurationMs: 60_000,
+        });
+        completeProviderInvocation(paths, request.invocationId, {
+          expectedRevision: claim.record.revision,
+          leaseGeneration: claim.record.leaseGeneration,
+          leaseToken: claim.leaseToken,
+          outcome: {
+            exitCode: 0,
+            signal: null,
+            timedOut: false,
+            spawnErrorCode: null,
+            elapsedMs: 1,
+            stdout: JSON.stringify(
+              providerWireResult(request, {
+                reference: request.invocationId,
+                terms: [{ kind: 'symbol', value: 'BlindReviewerNeedle' }],
+              }),
+            ),
+            stderr: '',
+          },
+        });
+      },
+    });
+    const afterMain = resumePropose(
+      repository,
+      changeId,
+      createInvestigationCheckpointEnvelope(started.investigation!, {
+        reference: 'reviewer-reopen-main-survey',
+        terms: [mainTerm('ReviewerReopenBaseNeedle')],
+      }),
+    );
+    const afterDispositions = resumePropose(
+      repository,
+      changeId,
+      createInvestigationCheckpointEnvelope(afterMain.investigation!, {
+        dispositions: afterMain.work!.groups.map((group) => ({
+          groupId: group.groupId,
+          classification: 'load-bearing' as const,
+          rationale: 'The fixture group is required by the exact review path.',
+          author: 'codex',
+        })),
+      }),
+    );
+    const sealed = resumePropose(
+      repository,
+      changeId,
+      createInvestigationCheckpointEnvelope(afterDispositions.investigation!, {
+        answers: afterDispositions.work!.fullBlobManifest.map((entry) =>
+          whyAnswer(entry.manifestEntryId),
+        ),
+      }),
+    );
+    const planningInput = createPlanningContributionEnvelope(sealed, {
+      proposal: '# Proposal\n\nExercise reviewer reopen inspection.\n',
+      design: [
+        '# Design',
+        '',
+        'Authored prefix.',
+        '',
+        '## Investigation Ledger',
+        '',
+        '<!-- workflow:investigation-ledger:start v1 -->',
+        '',
+        '<!-- workflow:investigation-ledger:end v1 -->',
+        '',
+        'Authored suffix.',
+        '',
+      ].join('\n'),
+      specs: [
+        {
+          path: 'specs/demo/spec.md',
+          content: [
+            '# Delta',
+            '',
+            '## ADDED Requirements',
+            '',
+            '### Requirement: Reviewer reopen inspection',
+            '',
+            'The system SHALL preserve exact materialization evidence at the reopen limit.',
+            '',
+            '#### Scenario: A third reviewer term reaches the limit',
+            '',
+            '- **WHEN** reviewer-term automatic allowance is exhausted',
+            '- **THEN** exact human resolutions remain available',
+            '',
+          ].join('\n'),
+        },
+      ],
+      tasks: '# Tasks\n\n- [ ] 1.1 Preserve reviewer evidence\n',
+      guard: {
+        schemaVersion: 1,
+        changeId,
+        tasks: {
+          '1.1': {
+            allowedPaths: ['src/**'],
+            requiredChecks: ['fixture'],
+          },
+        },
+      },
+      executionTasks: {
+        '1.1': {
+          strategy: 'direct-reviewed',
+          enforcement: 'available',
+          allowedPaths: ['src/**'],
+          requiredChecks: ['fixture'],
+          diffReview: 'policy-required',
+          exemptionKind: 'narrowly-scoped-non-behavioral',
+          exemptionReason:
+            'The fixture exercises workflow orchestration without product behavior.',
+          legacyBootstrap: null,
+        },
+      },
+    });
+    let reviewStatus = resumePropose(repository, changeId, planningInput);
+    const runtime = investigationRuntimePaths(
+      discoverRepository(repository).gitCommonDirectory,
+      'workflow-engine',
+    );
+    const firstReviewClosure = readInvestigationEvidenceRefsClosure(
+      runtime,
+      changeId,
+    );
+    const investigationId = reviewStatus.investigation!.investigationId;
+    let pendingReviewProgress: ReturnType<
+      typeof createPlanReviewProgressEnvelope
+    > | null = null;
+    const runReviewWithNovelTerm = (term: string) => {
+      const invocationId = reviewStatus.planReview!.invocationId;
+      const semanticOutput = {
+        schemaVersion: 2 as const,
+        verdict: 'advisory-approve' as const,
+        coverage: [...PLAN_REVIEW_COVERAGE],
+        scopeAssessment: { kind: 'challenges' as const },
+        findings: [
+          {
+            kind: 'challenge' as const,
+            severity: 'medium' as const,
+            category: 'missing-scope',
+            currentChangeImpact: 'required' as const,
+            summary: 'Keep the reviewer reopen target in scope.',
+            evidence: [
+              {
+                kind: 'repository-location' as const,
+                path: 'src/reviewer-reopen-target.ts',
+                line: 1,
+                observation:
+                  'The fixture target exposes the reviewer-term symbols.',
+              },
+            ],
+          },
+        ],
+        proposedTerms: [{ kind: 'symbol' as const, value: term }],
+        suggestions: [],
+        residualRisk:
+          'The fixture intentionally exercises another reviewer term.',
+        uncertainty: 'No uncertainty beyond the bounded fixture.',
+      };
+      runProviderWorker(repository, invocationId, {
+        runner(input): ProviderRunnerReport {
+          writeFixtureProviderRuntime(runtime, invocationId, semanticOutput);
+          return fakeRunnerReport(input.request, semanticOutput);
+        },
+      });
+      pendingReviewProgress = createPlanReviewProgressEnvelope(
+        getProposeStatus(repository, investigationId),
+      );
+      return resumePropose(repository, changeId, pendingReviewProgress);
+    };
+    const incorporateReviewerTerm = (
+      reopened: ReturnType<typeof resumePropose>,
+    ) => {
+      const dispositions = resumePropose(
+        repository,
+        changeId,
+        createInvestigationCheckpointEnvelope(
+          getInvestigationStatus(repository, investigationId),
+          {
+            dispositions: reopened.work!.groups.map((group) => ({
+              groupId: group.groupId,
+              classification: 'load-bearing' as const,
+              rationale: 'The reviewer-expanded fixture group is load-bearing.',
+              author: 'codex',
+            })),
+          },
+        ),
+      );
+      return resumePropose(
+        repository,
+        changeId,
+        createInvestigationCheckpointEnvelope(
+          getInvestigationStatus(repository, investigationId),
+          {
+            answers: dispositions.work!.fullBlobManifest.map((entry) =>
+              whyAnswer(entry.manifestEntryId),
+            ),
+          },
+        ),
+      );
+    };
+
+    const firstReopened = runReviewWithNovelTerm('FirstReviewerNeedle');
+    assert.equal(firstReopened.state, 'awaiting-group-dispositions');
+    reviewStatus = incorporateReviewerTerm(firstReopened);
+    const secondReopened = runReviewWithNovelTerm('SecondReviewerNeedle');
+    assert.equal(secondReopened.state, 'awaiting-group-dispositions');
+    reviewStatus = incorporateReviewerTerm(secondReopened);
+    const blocked = runReviewWithNovelTerm('ThirdReviewerNeedle');
+    assert.equal(blocked.state, 'human-action-required');
+
+    const blockedSession = readInvestigationSession(runtime, investigationId);
+    const blockedClosure = readInvestigationEvidenceRefsClosure(
+      runtime,
+      changeId,
+    );
+    const blockedMaterialization = blockedClosure.entries.find(
+      ({ refName }) => refName === 'propose/planning-materialization',
+    );
+    const blockedRequest = blockedClosure.entries.find(
+      ({ refName }) => refName === 'propose/plan-review-request',
+    );
+    assert.ok(blockedMaterialization);
+    assert.ok(blockedRequest);
+    const materializationOutput = readEvidenceNode(
+      runtime,
+      blockedMaterialization.nodeId,
+    ).output as { revision: number };
+    assert.equal(blockedSession.revision, materializationOutput.revision + 1);
+    assert.ok(
+      blockedSession.blocker !== null && 'reasonCode' in blockedSession.blocker,
+    );
+    assert.equal(
+      blockedSession.blocker.reasonCode,
+      'INVESTIGATION_REVIEWER_REOPEN_LIMIT_REACHED',
+    );
+    assert.equal(blockedSession.blocker.blockedTransition, 'admit-plan-review');
+    assert.equal(blockedSession.blocker.facts.usedReopens, 2);
+    assert.equal(blockedSession.blocker.facts.proposedTermCount, 1);
+    assert.deepEqual(
+      blockedRequest.dependencies.filter(
+        ({ role }) => role === 'materialization',
+      ),
+      [
+        {
+          role: 'materialization',
+          nodeId: blockedMaterialization.nodeId,
+          resultDigest: blockedMaterialization.resultDigest,
+          envelopeDigest: blockedMaterialization.envelopeDigest,
+        },
+      ],
+    );
+    const strictInspection = inspectInvestigationResolutionState(
+      runtime,
+      investigationId,
+      'github:R_fixture',
+    );
+    const inspection = inspectInvestigationQuarantineState(
+      runtime,
+      investigationId,
+      'github:R_fixture',
+    );
+    assert.equal(
+      inspection.currentStateDigest,
+      strictInspection.currentStateDigest,
+    );
+    assert.equal(inspection.envelope.ambiguityDigest, null);
+    assert.notEqual(inspection.envelope.evidenceRefs, null);
+    assert.notEqual(inspection.envelope.evidenceRefsClosureDigest, null);
+    assert.deepEqual(
+      inspection.availableResolutions.map(({ kind }) => kind),
+      [
+        'resume-with-capability',
+        'close-input',
+        'waive-assurance',
+        'abort',
+        'quarantine',
+        'supersede',
+      ],
+    );
+
+    const exactBlockedRefs = blockedClosure.snapshot.refs!;
+    const priorMaterialization =
+      firstReviewClosure.snapshot.refs?.['propose/planning-materialization'];
+    const priorRequest =
+      firstReviewClosure.snapshot.refs?.['propose/plan-review-request'];
+    assert.ok(priorMaterialization);
+    assert.ok(priorRequest);
+    assert.notEqual(
+      priorMaterialization,
+      exactBlockedRefs['propose/planning-materialization'],
+    );
+    assert.notEqual(
+      priorRequest,
+      exactBlockedRefs['propose/plan-review-request'],
+    );
+    const wrongMaterialization = compareAndSwapEvidenceRefsDocument(runtime, {
+      changeId,
+      expectedDigest: blockedClosure.snapshot.digest!,
+      nextRefs: {
+        ...exactBlockedRefs,
+        'propose/planning-materialization': priorMaterialization,
+      },
+    });
+    assert.deepEqual(
+      inspectInvestigationQuarantineState(
+        runtime,
+        investigationId,
+        'github:R_fixture',
+      ).availableResolutions.map(({ kind }) => kind),
+      ['quarantine'],
+    );
+    compareAndSwapEvidenceRefsDocument(runtime, {
+      changeId,
+      expectedDigest: wrongMaterialization.digest,
+      nextRefs: { ...exactBlockedRefs },
+    });
+    const wrongRequest = compareAndSwapEvidenceRefsDocument(runtime, {
+      changeId,
+      expectedDigest: blockedClosure.snapshot.digest!,
+      nextRefs: {
+        ...exactBlockedRefs,
+        'propose/plan-review-request': priorRequest,
+      },
+    });
+    assert.deepEqual(
+      inspectInvestigationQuarantineState(
+        runtime,
+        investigationId,
+        'github:R_fixture',
+      ).availableResolutions.map(({ kind }) => kind),
+      ['quarantine'],
+    );
+    compareAndSwapEvidenceRefsDocument(runtime, {
+      changeId,
+      expectedDigest: wrongRequest.digest,
+      nextRefs: { ...exactBlockedRefs },
+    });
+
+    const signer = fixtureMaintainerSigner();
+    const resumeAt = new Date('2026-07-30T10:00:00.000Z');
+    const resumeGrant = issueHumanResolutionGrant(
+      repository,
+      {
+        investigationId,
+        decision: {
+          kind: 'resume-with-capability',
+          capability: 'reviewer-term-reopen',
+          parameters: { additionalUses: 1 },
+        },
+        consequences: {
+          continuity: 'preserved',
+          assurance: 'unchanged',
+          claimsWaived: [],
+        },
+        rationale:
+          'Permit one exact additional reviewer-term reopen in the fixture.',
+      },
+      {
+        now: resumeAt,
+        grantId: 'a3111111-1111-4111-8111-111111111111',
+        signer,
+      },
+    );
+    const resumedResolution = executeHumanResolutionGrant(
+      repository,
+      resumeGrant.grantId,
+      {
+        now: new Date(resumeAt.getTime() + 1_000),
+        verifier: signer,
+      },
+    );
+    const thirdReopened = resumePropose(
+      repository,
+      changeId,
+      pendingReviewProgress!,
+    );
+    assert.equal(thirdReopened.state, 'awaiting-group-dispositions');
+    assert.equal(thirdReopened.work?.termSources.reviewer, 3);
+    reviewStatus = incorporateReviewerTerm(thirdReopened);
+
+    const fourthBlocked = runReviewWithNovelTerm('FourthReviewerNeedle');
+    assert.equal(fourthBlocked.state, 'human-action-required');
+    assert.equal(fourthBlocked.work?.termSources.reviewer, 3);
+    const fourthInspection = inspectInvestigationResolutionState(
+      runtime,
+      investigationId,
+      'github:R_fixture',
+    );
+    assert.notEqual(
+      fourthInspection.currentStateDigest,
+      strictInspection.currentStateDigest,
+    );
+    const closeAt = new Date('2026-07-30T10:05:00.000Z');
+    const closeGrant = issueHumanResolutionGrant(
+      repository,
+      {
+        investigationId,
+        decision: {
+          kind: 'close-input',
+          input: 'reviewer-terms',
+          parameters: {},
+        },
+        consequences: {
+          continuity: 'preserved',
+          assurance: 'degraded',
+          claimsWaived: ['reviewer-term-incorporation'],
+        },
+        rationale:
+          'Close reviewer-term input while admitting the exact retained review.',
+      },
+      {
+        now: closeAt,
+        grantId: 'a4111111-1111-4111-8111-111111111111',
+        signer,
+      },
+    );
+    const closedResolution = executeHumanResolutionGrant(
+      repository,
+      closeGrant.grantId,
+      {
+        now: new Date(closeAt.getTime() + 1_000),
+        verifier: signer,
+      },
+    );
+    assert.notEqual(
+      closedResolution.resolutionNodeId,
+      resumedResolution.resolutionNodeId,
+    );
+    const fourthSession = readInvestigationSession(runtime, investigationId);
+    assert.ok(
+      fourthSession.blocker !== null && 'reasonCode' in fourthSession.blocker,
+    );
+    const closeAuthorization = inspectReviewerTermResolutionAuthorization(
+      repository,
+      investigationId,
+      String(fourthSession.blocker.facts.pendingReviewDigest),
+    );
+    assert.deepEqual(closeAuthorization, {
+      outcome: 'close-input',
+      resolutionNodeId: closedResolution.resolutionNodeId,
+      assurance: 'degraded',
+    });
+    const stillBlocked = readInvestigationSession(runtime, investigationId);
+    assert.equal(stillBlocked.state, 'human-action-required');
+    assert.equal(stillBlocked.revision, fourthSession.revision);
+    assert.deepEqual(stillBlocked.blocker, fourthSession.blocker);
+    const fourthClosure = readInvestigationEvidenceRefsClosure(
+      runtime,
+      changeId,
+    );
+    const fourthMaterialization = fourthClosure.entries.find(
+      ({ refName }) => refName === 'propose/planning-materialization',
+    );
+    assert.ok(fourthMaterialization);
+    assert.equal(
+      stillBlocked.revision,
+      (
+        readEvidenceNode(runtime, fourthMaterialization.nodeId).output as {
+          revision: number;
+        }
+      ).revision + 1,
+    );
+    assert.equal(
+      inspectInvestigationResolutionState(
+        runtime,
+        investigationId,
+        'github:R_fixture',
+      ).envelope.ambiguityDigest,
+      null,
+    );
+    assert.equal(
+      fs.existsSync(
+        path.join(repository, 'openspec/changes', changeId, 'plan-review.json'),
+      ),
+      false,
+    );
+    const drifted = compareAndSwapInvestigationSession(
+      runtime,
+      investigationId,
+      stillBlocked.revision,
+      (current) => ({
+        ...current,
+        revision: current.revision + 1,
+        updatedAt: new Date(
+          Date.parse(current.updatedAt) + 1_000,
+        ).toISOString(),
+      }),
+    );
+    assert.equal(
+      drifted.revision,
+      (
+        readEvidenceNode(runtime, fourthMaterialization.nodeId).output as {
+          revision: number;
+        }
+      ).revision + 2,
+    );
+    assert.deepEqual(
+      inspectInvestigationQuarantineState(
+        runtime,
+        investigationId,
+        'github:R_fixture',
+      ).availableResolutions.map(({ kind }) => kind),
+      ['quarantine'],
     );
   } finally {
     fs.rmSync(repository, { recursive: true, force: true });
@@ -5802,6 +6352,10 @@ test('quarantine retires parseable evidence refs whose materialization no longer
     assert.equal(observed.envelope.evidenceRefsClosureDigest, null);
     assert.notEqual(observed.envelope.evidenceRefsDigest, null);
     assert.notEqual(observed.envelope.ambiguityDigest, null);
+    assert.deepEqual(
+      observed.availableResolutions.map(({ kind }) => kind),
+      ['quarantine'],
+    );
 
     const issueQuarantine = (grantId: string) =>
       issueHumanResolutionGrant(
@@ -6885,6 +7439,69 @@ type InvestigationFixture = {
   intentDigest: string;
   request: ProviderInvocationRequest;
 };
+
+function writeFixtureProviderRuntime(
+  paths: ReturnType<typeof investigationRuntimePaths>,
+  invocationId: string,
+  semanticOutput: unknown,
+): void {
+  const runtime = path.join(paths.invocations, invocationId, 'runtime');
+  fs.mkdirSync(runtime, { mode: 0o700 });
+  for (const [name, content] of [
+    ['prompt.json', '{}\n'],
+    ['schema.json', '{}\n'],
+    ['semantic-output.json', `${canonicalJson(semanticOutput)}\n`],
+  ] as const) {
+    fs.writeFileSync(path.join(runtime, name), content, { mode: 0o600 });
+  }
+}
+
+function installFixtureMaintainerPolicy(repository: string): void {
+  const origin = 'https://github.com/example/fixture.git';
+  git(repository, ['remote', 'add', 'origin', origin]);
+  fs.writeFileSync(
+    path.join(repository, 'workflow/maintainer-policy.json'),
+    `${JSON.stringify(
+      {
+        schemaVersion: 1,
+        repository: { id: 'github:R_fixture', origin },
+        phase: 'bootstrap',
+        auditTagPrefix: 'refs/tags/workflow-grant/',
+        signatureNamespace: 'expense-app.workflow.maintainer-grant.v1',
+        maxTtlMinutes: 30,
+        maxUses: 1,
+        bootstrapEligiblePaths: ['packages/workflow-engine/src/**'],
+        sealedImmutablePaths: [],
+        requiredChecks: ['fixture'],
+        trustedSigners: [
+          {
+            identity: 'fixture-maintainer',
+            publicKey:
+              'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIJL6dVljsgm9EAbjCiOhA/tKsgApOhKmcB/NRewL1uns',
+            fingerprint: 'SHA256:7UB1aHADtIMUJBFt3sjo9RwoBDgCKc1B1GlEucUDL4U',
+          },
+        ],
+      },
+      null,
+      2,
+    )}\n`,
+  );
+}
+
+function fixtureMaintainerSigner(): MaintainerSignerProvider {
+  return {
+    assertHumanPresent() {},
+    identity: () => 'fixture-maintainer',
+    sign: () =>
+      [
+        '-----BEGIN SSH SIGNATURE-----',
+        'AAAA',
+        '-----END SSH SIGNATURE-----',
+        '',
+      ].join('\n'),
+    verify() {},
+  };
+}
 
 function investigationFixture(invocationId: string): InvestigationFixture {
   const repository = createFixtureRepository();
