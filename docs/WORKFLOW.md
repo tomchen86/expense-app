@@ -1,6 +1,6 @@
 # Repository Workflow
 
-_Last reviewed: July 17, 2026_
+_Last reviewed: July 31, 2026_
 
 This repository plans changes with OpenSpec and executes them with the
 repository-owned `pnpm workflow` engine. Spectra is retained only for
@@ -80,32 +80,116 @@ prove that `workflow-assurance` is required for merge.
 
 ## Planning Lifecycle
 
-OpenSpec owns proposal, design, delta-spec, task, and artifact-graph creation.
-It does not authorize implementation or Git transitions. Create or revise the
-artifacts on the exact `work/<change-id>` branch, keep every task unchecked,
-then submit the planning-only diff with:
+OpenSpec supplies authored-artifact instructions, while the repository-owned
+wrapper owns investigation applicability, evidence, execution declaration,
+PlanReview, managed-ledger projection, and the eventual planning transition.
+Routine new and revised plans start on a clean `work/<change-id>` branch with a
+normalized intent file:
 
 ```bash
-pnpm workflow validate-change <change-id> --json
-pnpm workflow plan-commit <change-id> --json
+pnpm workflow propose <change-id> --intent <intent.json> [--actor <id>] --json
+pnpm workflow propose <change-id> --resume --input <envelope.json> --json
+pnpm workflow status <investigation-or-task-id> --json
 ```
 
-`plan-commit` rejects implementation files, normative base specs, archives,
-task-checkbox changes, an active session, wrong branches, and unrelated
-planning paths. It validates the pinned OpenSpec graph and repository contract,
-records current evidence, stages the exact planning paths, and creates the plan
-form from the transition matrix. A later planning revision uses the same
-command and invalidates stale task evidence.
+The normalized intent JSON has exactly the top-level keys `schemaVersion`,
+`summary`, `explicitPaths`, `explicitSymbols`, `explicitConfigKeys`, and
+`renamePairs`, with no extras. Set `schemaVersion` to `1`, use a non-empty
+string for `summary`, use string arrays for `explicitPaths`, `explicitSymbols`,
+and `explicitConfigKeys`, and give each rename pair exactly the string keys
+`from` and `to`. Empty arrays are valid. Keep that input and later envelopes in
+a temporary scratch location rather than tracked planning artifacts.
+
+The first call seals the blind request before accepting main-agent terms and
+returns a durable `state`, `nextAction`, and exact `inputSchema`. Preserve every
+returned binding value and fill only the caller-owned work that schema asks
+for. Later checkpoints can request main terms, grouping dispositions, WHY
+answers, authored planning contributions, or reviewer challenge dispositions.
+If term scan budgets require narrowing without a returned typed input schema,
+stop: the current wrapper has no caller-owned narrowing checkpoint. Use
+`work.authoredInstructions` for the authored OpenSpec graph; never
+prompt-author or overwrite engine-owned
+`investigation.json`, `execution.json`, `plan-review.json`, or managed-ledger
+fields.
+
+Resume only with the latest typed envelope. Do not replay completed provider
+work, transcribe reviewer terms, manufacture collaboration evidence, or bypass
+`human-action-required`. When provider work is pending, `status` is read-only
+and a later resume advances from the durable result. A planning change is ready
+only when the wrapper returns `state: planning-complete` and its managed
+planning transition.
+
+The wrapper invokes the existing `plan-commit` authority after assembling and
+validating its prerequisites. `plan-commit` still rejects implementation files,
+normative base specs, archives, task-checkbox changes, active task sessions,
+wrong branches, and unrelated planning paths; it is not the routine shortcut
+around investigation-first planning. A later planning generation invalidates
+stale task evidence.
 
 Repository planning assets are limited to the exact exposed skill names
 `openspec-explore` and `openspec-propose` across Codex, Claude Code, and the
 `.agents` mirror, with reviewed Codex prompt copies and a schema-v2 digest
 manifest under `workflow/openspec-assets/`. Use `openspec-explore` for
 read-only investigation and requirement clarification. Use `openspec-propose`
-to create a complete proposal, design, delta specs, tasks, and `guard.json`.
-Do not infer a slash command or alias from an internal prompt filename. If a
-running tool does not expose the skills, use the pinned OpenSpec planning CLI
-directly and record the discovery result in the post-merge pilot.
+to drive the typed wrapper through managed planning. Do not infer a slash
+command or alias from an internal prompt filename.
+
+The governed propose skills and prompt carry this wrapper contract. The three
+separately governed explore skills still have a reviewed scope gap in this
+generation and are not claimed adopted; successor managed planning must
+authorize and regenerate those consumers with the complete asset closure.
+
+### Investigation applicability is not task-execution exemption
+
+A structured investigation exemption is a planning-applicability branch for
+an exact reviewed scope. Its closed categories are documentation-only,
+formatting-only, deterministic-generated-projection, and time-boxed-research,
+and eligibility also requires `nonTrivialBehaviorReliance: none-declared`. It
+omits the sealed scan, hit disposition, and WHY graph instead of manufacturing
+empty evidence. `C-TERM-SCAN`, `C-WHY-BINDING`, and breadth/depth assurance are
+inapplicable, not passed.
+
+An investigation exemption does not waive PlanReview, task scope, execution
+strategy, registered checks, CI replay, or managed Git transitions. A
+task-execution exemption changes only the implementation strategy or TDD fact;
+it does not create an investigation exemption or waive planning evidence.
+`legacyBootstrap` is one named migration qualifier, not a reusable exemption
+family or fourth execution strategy.
+
+### Stable assurance claim registry
+
+These IDs and hardness levels are the sole T1.5 vocabulary for documentation,
+CLI summaries, tracked artifacts, and CI output. A surface may omit an
+irrelevant claim, but it must preserve the registered hardness and owner and
+must not invent a stronger synonym.
+
+| Claim ID                  | Claim                                                                                                                               | Hardness                                                                        | Delivery / owner                                                 |
+| ------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------- | ---------------------------------------------------------------- |
+| `C-TERM-SCAN`             | Every currently effective sealed term was scanned under the governed scan policy                                                    | Hard                                                                            | T1.5 sealed-investigation branch                                 |
+| `C-TERM-SUPERSESSION`     | Engine-floor terms cannot be removed; an agent term leaves the effective set only by reviewed, reasoned, audit-visible supersession | Hard engine floor; audit-monotone but correctable agent contribution            | T1.5                                                             |
+| `C-TERM-COMPLETENESS`     | The effective term set is semantically complete                                                                                     | Soft and not provable                                                           | Residual, never delivered as hard                                |
+| `C-REVIEW-CURRENT`        | A review artifact exists, is immutable, and is current for its exact target                                                         | Hard                                                                            | T1.5                                                             |
+| `C-REVIEW-JUDGMENT`       | The reviewer judgment is correct                                                                                                    | Soft                                                                            | Human/agent judgment                                             |
+| `C-WHY-BINDING`           | Every required WHY field exists and is bound to exact source blobs                                                                  | Hard structure                                                                  | T1.5 sealed-investigation branch                                 |
+| `C-WHY-TRUTH`             | The WHY explanation is true or proves understanding                                                                                 | Soft                                                                            | Human/agent judgment                                             |
+| `C-ARTIFACT-ORDER`        | Authoritative design materialization follows sealed investigation inputs                                                            | Hard artifact order; cognition order is not proved                              | T1.5 when investigation applies; exemption is separately labeled |
+| `C-SEMANTIC-INJECTION`    | `proposedTerms` is the only review-to-lifecycle semantic cost injection path and stays within aggregate budgets                     | Hard structural choke point and budgets; semantic usefulness is soft            | T1.5                                                             |
+| `C-EXACT-CLOSURE`         | Exact declared bytes are absent from the governed live closure scope                                                                | Hard                                                                            | Future T2.4 mechanical closure; not delivered by T1.5            |
+| `C-GRAPH-COMPLETENESS`    | All semantic consumers and dependency edges have been found                                                                         | Soft and not proved by grep or declared DAG structure                           | Residual, never delivered as hard                                |
+| `C-CANONICALIZATION`      | Canonical subjects preserve every assurance-relevant distinction                                                                    | Tested and fail-closed; residual implementation risk remains                    | T1.5 for planning subjects; later owners extend their subjects   |
+| `C-COVERAGE-COMPOSITION`  | Composed review manifests cover exactly the claimed subject                                                                         | Hard algorithm over declared facts; semantic adequacy is soft                   | Future T2.3; not delivered by T1.5                               |
+| `C-CONVERGENCE`           | A reused descendant has a complete valid proof path to the current generation                                                       | Hard validator over declared graph; proof/canonicalizer defects remain residual | T1.5                                                             |
+| `C-PROVIDER-IDENTITY`     | Local provider identity from runtime hints or adapter assignment                                                                    | Soft                                                                            | T1.5 records assurance only                                      |
+| `C-CONTAINMENT`           | A local provider is confined against the same OS user                                                                               | Soft without stronger isolation                                                 | Not delivered as hard                                            |
+| `C-DEGRADED-INDEPENDENCE` | A collaboration grant recreates missing provider independence                                                                       | False; grant authorizes only visible degradation                                | T1.5                                                             |
+| `C-AVAILABILITY`          | The ordinary two-provider path meets wait, grant, latency, and cost budgets                                                         | Empirical pilot claim                                                           | T1.5 pilot, never structural proof                               |
+
+The registry separates hard presence/currentness from semantic judgment:
+semantic completeness and WHY truth remain soft; provider identity and
+same-user containment remain soft; reviewer judgment is advisory rather than
+proved correct. Semantic closure is not delivered until T2.4. Degraded
+authorization does not recreate independence, and availability remains
+empirical and not structural.
 
 ## Managed Task Lifecycle
 
@@ -152,9 +236,10 @@ fingerprint, policy, artifact, required-check and runner digests, and passing
 outcomes; each report is itself content-addressed. Any later content change
 makes earlier evidence stale, so run `check` again after a correction.
 
-### 4. Let the engine complete, stage, and commit
+### 4. Complete, stage, and commit
 
-Run these transitions in order:
+The legacy `check` → `complete-task` → `finish` path remains supported, with
+`commit` as its separate final transition:
 
 ```bash
 pnpm workflow complete-task <session-id> --json
@@ -168,6 +253,29 @@ pnpm workflow commit <session-id> --message "Imperative subject" --json
   stages the exact authorized tree.
 - `commit` rejects index drift and creates the commit with exact
   `Change: <change-id>` and `Task: <task-id>` trailers.
+
+The optional projected single-pass path replaces `check`/`complete-task`/`finish`
+with one finalization transition after implementation:
+
+```bash
+pnpm workflow finalize-task <session-id> --json
+pnpm workflow commit <session-id> --message "Imperative subject" --json
+```
+
+`finalize-task` executes each current-task required check exactly once against
+the implementation + checkbox + handoff prospective tree. Independently
+required immediate-predecessor checks remain separate. It rejects check-view
+mutation and post-check drift, stages only a tree identical to the checked
+tree, and emits a schema-compatible check/completion/finish evidence chain.
+
+Before final application, a caught ordinary failure restores exact projection
+bytes and modes while leaving the real index and report pointers unchanged.
+This projected single-pass substrate is not crash-safe or fully atomic:
+external process death, machine loss, and uncooperative writes outside the
+governed projection have no durable recovery guarantee. `workflow commit`
+remains separate and must not rerun required checks; there is no automatic
+commit or commit transaction. Exact-diff AI review, durable crash recovery,
+coverage composition, and a commit transaction remain T2.3 work.
 
 The commit subject must be one trimmed line without control characters or
 trailers. If commit ref advancement is interrupted after the commit object is
@@ -579,21 +687,49 @@ Every OpenSpec upgrade is a separate reviewed change. In that change:
 
 ## Maintainer-Owned Post-Merge Pilot
 
+Registered fake-backed checks are the executable regression evidence for
+provider orchestration. A credential-safe local observation may also exercise
+ordinary Codex and Claude read-only adapters when both are callable, but that
+observation is not a structural availability proof and does not make provider
+text workflow authority.
+
+Record each attempted provider, role, invocation identity, terminal state,
+mutation observation, and achieved independence without credentials or raw
+secrets. Distinguish healthy two-provider success from adapter unavailability.
+Use a degraded path only after an exact human collaboration grant, and retain
+the lower achieved independence; human authorization does not recreate the
+missing perspective.
+
+The current Task 7.1 plan does not provide a durable result schema, verifier,
+acceptance decision, or credential-safe tracked record for that local
+observation. Therefore neither a manual success nor an unavailable adapter may
+close `C-AVAILABILITY`. Success, unavailable, fake-backed, and
+human-authorized-degraded outcomes require successor managed work before the
+availability pilot can be claimed complete.
+
 The disposable repository rehearsal proves the implementation path but is not
-the real pilot. Support remains undeclared until a maintainer performs this
-gate after the integration is merged and reachable from the configured base:
+the workflow-adoption pilot. The gate below is the post-merge
+workflow-adoption pilot; it does not close the separate two-provider
+`C-AVAILABILITY` pilot described above. Workflow-adoption support remains
+undeclared until a maintainer performs this gate after the integration is
+merged and reachable from the configured base:
 
 1. Update the configured base locally and create a new small, non-database
    OpenSpec change with one task and a harmless, tightly scoped repository
-   change. Use a new `work/<pilot-change-id>` branch. Create planning artifacts
-   with the pinned OpenSpec interface; use a Codex skill only if that running UI
-   visibly exposes it.
-2. Validate its complete planning tree and create the plan commit:
+   change. Use a new `work/<pilot-change-id>` branch and a normalized intent
+   file. Use a governed propose skill only if that running UI visibly exposes
+   it.
+2. Drive the investigation-first wrapper through its exact returned
+   checkpoints until it reports `planning-complete`:
 
    ```bash
-   pnpm workflow validate-change <pilot-change-id> --json
-   pnpm workflow plan-commit <pilot-change-id> --json
+   pnpm workflow propose <pilot-change-id> --intent <intent.json> --json
+   pnpm workflow propose <pilot-change-id> --resume --input <envelope.json> --json
    ```
+
+   Preserve the returned `state`, `nextAction`, `inputSchema`, provider
+   identities, achieved independence, and terminal planning transition. Do not
+   substitute a hand-authored plan commit.
 
 3. Execute its one task with the full managed sequence:
 
@@ -628,12 +764,14 @@ gate after the integration is merged and reachable from the configured base:
    ```
 
 6. Verify that CI succeeds without developer runtime reports and that only the
-   UTC date prefix varies if the replay crosses a day. Declare support only
-   after all results are recorded and the required remote rule is confirmed.
+   UTC date prefix varies if the replay crosses a day. Declare
+   workflow-adoption support only after all results are recorded and the
+   required remote rule is confirmed; this declaration does not close
+   `C-AVAILABILITY`.
 
-Do not perform this pilot inside the integration branch, describe the
-disposable rehearsal as the pilot, or invent a Codex invocation the UI did not
-surface.
+Do not perform the post-merge pilot inside the integration branch, describe the
+disposable rehearsal or Task 7.1 local observation as the completed pilot, or
+invent a provider invocation the engine did not surface.
 
 ## Archived Legacy Material
 

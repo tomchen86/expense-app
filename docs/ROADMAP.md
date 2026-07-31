@@ -1,6 +1,6 @@
 # Roadmap
 
-_Last verified: July 17, 2026_
+_Last verified: July 31, 2026_
 
 This document owns project priority. Detailed implementation tasks belong only
 in the linked OpenSpec change.
@@ -9,6 +9,22 @@ in the linked OpenSpec change.
 
 ### Finish repository workflow adoption
 
+- Treat the investigation-first wrapper, governed propose surfaces, stable
+  assurance-claim registry, and projected single-pass finalization substrate as
+  the T1.5 delivery boundary. The three governed explore-skill consumers remain
+  an explicit successor scope gap, so current documentation must not claim
+  complete user-facing adoption.
+- Keep T2.3 as the owner of exact-diff AI review, coverage composition,
+  crash-safe durable finalize recovery, and the commit transaction. Keep T2.4
+  as the owner of exact-byte mechanical closure. The pulled-forward
+  `finalize-task` path provides one checked prospective tree and caught
+  ordinary-failure rollback only; it is not crash-safe, fully atomic, or an
+  automatic commit.
+- Treat a healthy Codex/Claude read-only run as an empirical observation, not
+  structural provider availability. Task 7.1 has no durable verifier for
+  success, unavailable, fake-backed, or human-authorized degraded outcomes, so
+  successor managed work must define that decision contract before
+  `C-AVAILABILITY` can be closed.
 - Preserve the completed break-glass implementation and real bootstrap-pilot
   evidence from PRs #51 and #54. PR #54 passed all normal checks plus the
   base-owned `workflow-assurance` check without a ruleset exception.

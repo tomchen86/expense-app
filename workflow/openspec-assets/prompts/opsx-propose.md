@@ -1,117 +1,57 @@
 ---
-description: Propose a new change - create it and generate all artifacts in one step
+description: Drive a new change through the repository-owned investigation-first planning checkpoints and produce governed proposal, design, spec, task, and guard artifacts.
 argument-hint: command arguments
 ---
 
-Propose a new change - create the change and generate all artifacts in one step.
+Propose a new change through the repository-owned investigation-first planning wrapper.
 
-I'll create a change with artifacts:
+The wrapper gathers evidence, obtains exact PlanReview, materializes the governed planning graph, and invokes the existing managed plan transition. `plan-commit` remains the underlying authority and is not a caller shortcut from this interface.
 
-- proposal.md (what & why)
-- design.md (how)
-- tasks.md (implementation steps)
-
-When ready to implement, run pnpm workflow start <change-id> --task <task-id>
-
----
-
-**Input**: The argument after `openspec-propose` is the change name (kebab-case), OR a description of what the user wants to build.
+**Input**: The user request should include a kebab-case change name or enough detail to derive one.
 
 **Steps**
 
-1. **If no input provided, ask what they want to build**
+1. If the request is unclear, ask one open-ended question before starting. Derive a stable change ID. Before creating durable state, verify a clean exact `work/<change-id>` branch and stop otherwise. Create a temporary normalized intent JSON file outside tracked planning artifacts. Its exact top-level keys are `schemaVersion`, `summary`, `explicitPaths`, `explicitSymbols`, `explicitConfigKeys`, and `renamePairs`, with no extras. Set `schemaVersion` to `1`. Use a non-empty string for `summary`. Use string arrays for `explicitPaths`, `explicitSymbols`, and `explicitConfigKeys`. Encode each rename pair with exactly the string keys `from` and `to`. Empty arrays are valid.
 
-   Use an open-ended question (open-ended, no preset options) to ask:
-
-   > "What change do you want to work on? Describe what you want to build or fix."
-
-   From their description, derive a kebab-case name (e.g., "add user authentication" → `add-user-auth`).
-
-   **IMPORTANT**: Do NOT proceed without understanding what the user wants to build.
-
-2. **Create the change directory**
+2. Start the durable wrapper:
 
    ```bash
-   pnpm exec openspec new change "<name>"
+   pnpm workflow propose <change-id> --intent <intent.json> [--actor <id>] --json
    ```
 
-   This creates a scaffolded change in the planning home resolved by the CLI with `.openspec.yaml`.
+3. Read the returned `state`, `nextAction`, and `inputSchema` exactly. Preserve every returned binding value. Fill only the caller-owned contribution requested by that schema, using `work` and any `authoredInstructions` as constraints. Do not directly create or overwrite engine-owned `investigation.json`, `execution.json`, `plan-review.json`, or managed ledger fields.
 
-3. **Get the artifact build order**
+4. Submit each typed checkpoint from a temporary envelope file:
 
    ```bash
-   pnpm exec openspec status --change "<name>" --json
+   pnpm workflow propose <change-id> --resume --input <envelope.json> --json
    ```
 
-   Parse the JSON to get:
-   - `applyRequires`: array of artifact IDs needed before implementation (e.g., `["tasks"]`)
-   - `artifacts`: list of all artifacts with their status and dependencies
-   - `planningHome`, `changeRoot`, `artifactPaths`, and `actionContext`: path and scope context. Use these instead of assuming repo-local paths.
+   Repeat only for the newly returned checkpoint. Do not replay completed provider work, invent grant evidence, or bypass `human-action-required`. Inspect durable progress without mutation when needed:
 
-4. **Create artifacts in sequence until apply-ready**
-
-   Use a task list to track progress through the artifacts.
-
-   Loop through artifacts in dependency order (artifacts with no pending dependencies first):
-
-   a. **For each artifact that is `ready` (dependencies satisfied)**:
-   - Get instructions:
-     ```bash
-     pnpm exec openspec instructions <artifact-id> --change "<name>" --json
-     ```
-   - The instructions JSON includes:
-     - `context`: Project background (constraints for you - do NOT include in output)
-     - `rules`: Artifact-specific rules (constraints for you - do NOT include in output)
-     - `template`: The structure to use for your output file
-     - `instruction`: Schema-specific guidance for this artifact type
-     - `resolvedOutputPath`: Resolved path or pattern to write the artifact
-     - `dependencies`: Completed artifacts to read for context
-   - Read any completed dependency files for context
-   - Create the artifact file using `template` as the structure and write it to `resolvedOutputPath`
-   - Apply `context` and `rules` as constraints - but do NOT copy them into the file
-   - Show brief progress: "Created <artifact-id>"
-
-   b. **Continue until all `applyRequires` artifacts are complete**
-   - After creating each artifact, re-run `pnpm exec openspec status --change "<name>" --json`
-   - Check if every artifact ID in `applyRequires` has `status: "done"` in the artifacts array
-   - Stop when all `applyRequires` artifacts are done
-
-   c. **If an artifact requires user input** (unclear context):
-   - Use an open-ended question to clarify
-   - Then continue with creation
-
-5. **Show final status**
    ```bash
-   pnpm exec openspec status --change "<name>"
+   pnpm workflow status <investigation-or-task-id> --json
    ```
 
-**Output**
+5. Planning is ready only when the wrapper returns `state: planning-complete` with its managed planning transition. Then start the selected task:
 
-After completing all artifacts, summarize:
+   ```bash
+   pnpm workflow start <change-id> --task <task-id> --json
+   ```
 
-- Change name and location
-- List of artifacts created with brief descriptions
-- What's ready: "All artifacts created! Ready for implementation."
-- Prompt: "Run `pnpm workflow start <change-id> --task <task-id>` to start implementing."
+6. During implementation, the optional projected single-pass path is:
 
-**Artifact Creation Guidelines**
+   ```bash
+   pnpm workflow finalize-task <session-id> --json
+   pnpm workflow commit <session-id> --message "Imperative subject" --json
+   ```
 
-- Follow the `instruction` field from `pnpm exec openspec instructions` for each artifact type
-- The schema defines what each artifact should contain - follow it
-- Read dependency artifacts for context before creating new ones
-- Use `template` as the structure for your output file - fill in its sections
-- **IMPORTANT**: `context` and `rules` are constraints for YOU, not content for the file
-  - Do NOT copy `<context>`, `<rules>`, `<project_context>` blocks into the artifact
-  - These guide what you write, but should never appear in the output
+   It checks the implementation + checkbox + handoff prospective tree once and stages only that identical checked tree. Only a caught ordinary failure receives exact projection rollback. Commit remains separate and must not rerun required checks. The legacy `check` → `complete-task` → `finish` → `commit` sequence remains supported.
 
-**Guardrails**
+## Applicability and assurance boundaries
 
-- Create ALL artifacts needed for implementation (as defined by schema's `apply.requires`)
-- Always read dependency artifacts before creating a new one
-- If context is critically unclear, ask the user - but prefer making reasonable decisions to keep momentum
-- If a change with that name already exists, ask if user wants to continue it or create a new one
-- Verify each artifact file exists after writing before proceeding to next
+An investigation exemption changes planning applicability only: omitted scan and WHY claims become inapplicable, while PlanReview, task scope, checks, CI, and managed Git transitions remain. A task-execution exemption or strategy is separate and does not create an investigation exemption.
 
-## Repository workflow boundary
+This interface does not prove semantic completeness, provider identity, same-user containment, reviewer judgment, or provider availability. It does not claim crash-safe or fully atomic finalization. A collaboration grant records an authorized degradation and does not recreate missing independence.
 
-This interface is planning-only. Use `pnpm exec openspec` for the reviewed planning commands above, submit planning changes with `pnpm workflow plan-commit <change-id>`, and begin implementation only with `pnpm workflow start <change-id> --task <task-id>`. OpenSpec lifecycle operations and external planning stores are outside this interface.
+The governed propose surfaces use this wrapper. The separately governed explore-skill handoff remains outside this task and must not be described as adopted until successor managed work updates it.

@@ -43,7 +43,9 @@ commit, or archive. Use the workflow commands below for those operations.
 | ----------------------------------------------------------- | --------------------------------------------------------------- |
 | `pnpm workflow doctor --json`                               | Diagnosing repository, dependency, hook, asset, or policy drift |
 | `pnpm workflow validate-change <id> --json`                 | Validating tracked artifacts before a plan, task, or archive    |
-| `pnpm workflow plan-commit <id> --json`                     | Committing a new or revised planning-only change                |
+| `pnpm workflow propose <id> --intent <intent.json> [--actor <id>] --json` | Starting the investigation-first planning wrapper |
+| `pnpm workflow propose <id> --resume --input <envelope.json> --json` | Submitting the exact typed checkpoint returned by the wrapper |
+| `pnpm workflow plan-commit <id> --json`                     | Underlying managed planning authority; routine proposals reach it through `propose` |
 | `pnpm workflow ci --base <sha> --head <sha> --json`         | Recomputing PR assurance from exact Git commits                 |
 | `pnpm workflow run-check <check-id> --json`                 | Running one registered non-destructive check on clean HEAD for evidence only |
 | `pnpm workflow adapter evaluate --input <path> --json`      | Evaluating a supported AI adapter request under repository policy |
@@ -60,6 +62,18 @@ archive, or merge; use the managed task lifecycle for those transitions.
 | `pnpm workflow openspec-assets check --json`                               | Checking tracked planning assets and their digest manifest             |
 | `pnpm workflow openspec-assets install-prompts --codex-home <path> --json` | Installing reviewed prompt copies into an explicit local Codex target  |
 
+Routine `openspec-propose` work must follow the returned `state`,
+`nextAction`, and `inputSchema`; prompts must not author engine-owned
+investigation, execution, PlanReview, or managed-ledger fields. The stable
+claim-ID/hardness registry in `docs/WORKFLOW.md` governs assurance wording.
+Preserve each registered hardness and owner, label future claims as
+undelivered, and do not invent a stronger synonym.
+
+A structured investigation exemption changes planning applicability only. It
+does not waive PlanReview, task scope, execution strategy, checks, CI, or Git
+transitions. A documentation or other task-execution exemption is a separate
+execution fact and never creates an investigation exemption.
+
 ### Managed task lifecycle
 
 | Command                                                        | Use when                                                       |
@@ -69,13 +83,17 @@ archive, or merge; use the managed task lifecycle for those transitions.
 | `pnpm workflow check <session-id> --json`                      | Producing fresh scoped check evidence for the current diff     |
 | `pnpm workflow complete-task <session-id> --json`              | Applying the task checkbox and generated-document projection   |
 | `pnpm workflow finish <session-id> --json`                     | Rechecking and staging the exact authorized task tree          |
+| `pnpm workflow finalize-task <session-id> --json`              | Checking and staging one exact projected task tree with ordinary-failure rollback |
 | `pnpm workflow commit <session-id> --message "Subject" --json` | Creating the managed task commit with engine-owned trailers  |
 | `pnpm workflow rollback-completion <session-id> --json`        | Reverting an uncommitted completion projection through the engine |
 | `pnpm workflow abort <session-id> --reason "Reason" --json`   | Abandoning a pre-completion session without discarding files   |
 
-Run `start` → implement → `check` → `complete-task` → `finish` →
-`commit`. If content changes after `check`, run `check` again. Never stage,
-edit checkboxes, or commit managed task work by hand.
+After `start` and implementation, use either the compatible
+`check` → `complete-task` → `finish` → `commit` sequence or the projected
+single-pass `finalize-task` → `commit` sequence. `finalize-task` promises
+rollback only for caught ordinary failures; it is not crash-safe, fully
+atomic, or an automatic commit. Never stage, edit checkboxes, or commit managed
+task work by hand.
 
 ### Archive transition
 

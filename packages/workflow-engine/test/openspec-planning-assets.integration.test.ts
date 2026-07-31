@@ -6,6 +6,7 @@ import path from 'node:path';
 import test from 'node:test';
 
 import {
+  OPENSPEC_ASSET_DEFINITIONS,
   OPENSPEC_ASSET_MANIFEST_PATH,
   applyOpenSpecPlanningAssetOverlay,
   verifyOpenSpecPlanningAssetContent,
@@ -33,6 +34,12 @@ const EXPECTED_ASSET_PATHS = [
   '.agents/skills/openspec-explore/SKILL.md',
   '.agents/skills/openspec-propose/SKILL.md',
   'workflow/openspec-assets/prompts/opsx-explore.md',
+  'workflow/openspec-assets/prompts/opsx-propose.md',
+];
+const PROPOSE_ASSET_PATHS = [
+  '.codex/skills/openspec-propose/SKILL.md',
+  '.claude/skills/openspec-propose/SKILL.md',
+  '.agents/skills/openspec-propose/SKILL.md',
   'workflow/openspec-assets/prompts/opsx-propose.md',
 ];
 const EXPECTED_ASSET_METADATA = [
@@ -234,7 +241,7 @@ test('tool-plural generation is isolated, three-stage pinned, and byte determini
         files: ['prompts/opsx-explore.md', 'prompts/opsx-propose.md'],
       },
     ]);
-    assert.equal(manifest.overlay.version, 2);
+    assert.equal(manifest.overlay.version, 3);
     assert.match(manifest.overlay.policyDigest, /^[0-9a-f]{64}$/);
     assert.equal(
       manifest.formatter.runner,
@@ -260,7 +267,6 @@ test('tool-plural generation is isolated, three-stage pinned, and byte determini
       assert.match(entry.overlayDigest, /^[0-9a-f]{64}$/);
       assert.match(entry.finalDigest, /^[0-9a-f]{64}$/);
       assert.notEqual(entry.sourceDigest, entry.overlayDigest);
-      assert.notEqual(entry.overlayDigest, entry.finalDigest);
       assert.equal(
         entry.finalDigest,
         digest(fs.readFileSync(path.join(repository, entry.destinationPath))),
@@ -298,15 +304,111 @@ test('tool-plural generation is isolated, three-stage pinned, and byte determini
       const rawSource = captures[0]!.sources[captureKey];
       assert.notEqual(rawSource, undefined, captureKey);
       assert.equal(entry.sourceDigest, digest(rawSource!));
+      const definition = OPENSPEC_ASSET_DEFINITIONS.find(
+        (candidate) => candidate.destinationPath === entry.destinationPath,
+      );
+      assert.notEqual(definition, undefined, entry.destinationPath);
       assert.equal(
         entry.overlayDigest,
-        digest(applyOpenSpecPlanningAssetOverlay(rawSource!)),
+        digest(
+          applyOpenSpecPlanningAssetOverlay(rawSource!, definition!.workflow),
+        ),
       );
     }
   } finally {
     fs.rmSync(repository, { recursive: true, force: true });
     fs.rmSync(callerHome, { recursive: true, force: true });
     fs.rmSync(captureRoot, { recursive: true, force: true });
+  }
+});
+
+test('governed propose assets use the investigation-first checkpoint wrapper without stronger assurance claims', () => {
+  const repository = temporaryRepository();
+  try {
+    generateOpenSpecPlanningAssets(repository, fixtureOptions(repository));
+
+    for (const assetPath of PROPOSE_ASSET_PATHS) {
+      const content = fs.readFileSync(path.join(repository, assetPath), 'utf8');
+      assertInvestigationFirstProposeContract(content, assetPath);
+      verifyOpenSpecPlanningAssetContent(content, 'propose');
+    }
+
+    const codex = fs.readFileSync(
+      path.join(repository, PROPOSE_ASSET_PATHS[0]!),
+      'utf8',
+    );
+    assert.equal(
+      fs.readFileSync(path.join(repository, PROPOSE_ASSET_PATHS[1]!), 'utf8'),
+      codex,
+    );
+    assert.equal(
+      fs.readFileSync(path.join(repository, PROPOSE_ASSET_PATHS[2]!), 'utf8'),
+      codex,
+    );
+    for (const required of [
+      'pnpm workflow propose <change-id> --intent <intent.json>',
+      'pnpm workflow propose <change-id> --resume --input <envelope.json>',
+      'pnpm workflow finalize-task',
+      '`state`',
+      '`nextAction`',
+      '`inputSchema`',
+      '`schemaVersion`',
+      '`explicitPaths`',
+      '`explicitSymbols`',
+      '`explicitConfigKeys`',
+      '`renamePairs`',
+    ]) {
+      assert.throws(
+        () =>
+          verifyOpenSpecPlanningAssetContent(
+            codex.replaceAll(required, 'reviewed placeholder'),
+            'propose',
+          ),
+        (error) => isWorkflowError(error, 'OPENSPEC_ASSET_FORBIDDEN_AUTHORITY'),
+        required,
+      );
+    }
+    for (const forbidden of [
+      'pnpm exec openspec new demo',
+      'pnpm exec openspec status demo',
+      'pnpm exec openspec instructions demo',
+      'pnpm workflow plan-commit demo',
+      'Generate all artifacts in one step.',
+    ]) {
+      assert.throws(
+        () =>
+          verifyOpenSpecPlanningAssetContent(
+            `${codex.trimEnd()}\n\n${forbidden}\n`,
+            'propose',
+          ),
+        (error) => isWorkflowError(error, 'OPENSPEC_ASSET_FORBIDDEN_AUTHORITY'),
+        forbidden,
+      );
+    }
+    const initial = 'pnpm workflow propose <change-id> --intent <intent.json>';
+    assert.throws(
+      () =>
+        verifyOpenSpecPlanningAssetContent(
+          `${codex.replace(initial, 'reviewed placeholder').trimEnd()}\n\n${initial}\n`,
+          'propose',
+        ),
+      (error) => isWorkflowError(error, 'OPENSPEC_ASSET_FORBIDDEN_AUTHORITY'),
+      'initial propose must precede resume and implementation handoff',
+    );
+    const branchPrecondition = 'clean exact `work/<change-id>` branch';
+    assert.throws(
+      () =>
+        verifyOpenSpecPlanningAssetContent(
+          `${codex
+            .replace(branchPrecondition, 'reviewed placeholder')
+            .trimEnd()}\n\n${branchPrecondition}\n`,
+          'propose',
+        ),
+      (error) => isWorkflowError(error, 'OPENSPEC_ASSET_FORBIDDEN_AUTHORITY'),
+      'clean work branch precondition must precede initial propose',
+    );
+  } finally {
+    fs.rmSync(repository, { recursive: true, force: true });
   }
 });
 
@@ -1470,6 +1572,117 @@ function temporaryRepository(): string {
   );
   writeControl(repository, {});
   return repository;
+}
+
+function assertInvestigationFirstProposeContract(
+  content: string,
+  assetPath: string,
+): void {
+  const message = (expectation: string) => `${assetPath}: ${expectation}`;
+  assert.match(
+    content,
+    /pnpm workflow propose <change-id> --intent <intent\.json>/,
+    message('missing initial propose wrapper'),
+  );
+  assert.match(
+    content,
+    /clean exact `work\/<change-id>` branch/i,
+    message('missing clean work branch precondition'),
+  );
+  assert.match(
+    content,
+    /pnpm workflow propose <change-id> --resume --input <envelope\.json>/,
+    message('missing typed resume wrapper'),
+  );
+  for (const field of ['state', 'nextAction', 'inputSchema']) {
+    assert.match(
+      content,
+      new RegExp(`\\\`${field}\\\``),
+      message(`missing returned ${field} handling`),
+    );
+  }
+  for (const field of [
+    'schemaVersion',
+    'summary',
+    'explicitPaths',
+    'explicitSymbols',
+    'explicitConfigKeys',
+    'renamePairs',
+    'from',
+    'to',
+  ]) {
+    assert.match(
+      content,
+      new RegExp(`\\\`${field}\\\``),
+      message(`missing exact intent field ${field}`),
+    );
+  }
+  assert.doesNotMatch(
+    content,
+    /(?:all artifacts generated|generate all artifacts in one step)/i,
+    message('retains misleading one-step metadata'),
+  );
+  for (const command of [
+    'pnpm workflow status',
+    'pnpm workflow start',
+    'pnpm workflow finalize-task',
+    'pnpm workflow commit',
+  ]) {
+    assert.match(
+      content,
+      new RegExp(command.replaceAll(' ', '\\s+')),
+      message(`missing ${command} handoff`),
+    );
+  }
+  assert.match(content, /projected single-pass/i, message('missing assurance'));
+  assert.match(
+    content,
+    /caught ordinary failure/i,
+    message('missing rollback boundary'),
+  );
+  assert.match(
+    content,
+    /investigation exemption/i,
+    message('missing investigation applicability boundary'),
+  );
+  assert.match(
+    content,
+    /task-execution (?:strategy|exemption)/i,
+    message('missing execution-strategy boundary'),
+  );
+  assert.match(
+    content,
+    /task-execution (?:strategy|exemption)[^.]*does not create an investigation exemption/i,
+    message('missing exemption non-implication'),
+  );
+  for (const unproved of [
+    'semantic completeness',
+    'provider identity',
+    'same-user containment',
+    'reviewer judgment',
+    'provider availability',
+    'crash-safe',
+    'fully atomic',
+  ]) {
+    assert.match(
+      content,
+      new RegExp(
+        `(?:does not|not) (?:prove|claim|provide)[^.]*${unproved}`,
+        'i',
+      ),
+      message(`missing no-overclaim boundary for ${unproved}`),
+    );
+  }
+  assert.doesNotMatch(
+    content,
+    /pnpm exec openspec (?:new|status|instructions)\b/,
+    message('still prompt-authors the planning graph'),
+  );
+  assert.doesNotMatch(
+    content,
+    /pnpm workflow plan-commit\b/,
+    message('still bypasses the investigation wrapper'),
+  );
 }
 
 function fixtureOptions(repository: string) {

@@ -13,12 +13,17 @@ import { PINNED_OPENSPEC_VERSION } from './openspec-executor.ts';
 export const OPENSPEC_ASSET_MANIFEST_PATH =
   'workflow/openspec-assets/manifest.json';
 
-const OVERLAY_VERSION = 2;
+const OVERLAY_VERSION = 3;
 const FORMATTER_RUNNER = 'node-package-bin:.:prettier/prettier' as const;
 const OVERLAY_POLICY = [
   'planning-only',
   'pnpm-exec-openspec',
+  'investigation-first-propose',
+  'typed-checkpoint-resume',
+  'engine-owned-planning-evidence',
   'workflow-implementation-handoff',
+  'projected-single-pass-handoff',
+  'assurance-claim-boundaries',
   'no-external-stores',
   'no-lifecycle-entrypoints',
   'no-tool-wide-openspec-permission',
@@ -215,7 +220,7 @@ export type OpenSpecAssetManifest = {
     }>;
   };
   overlay: {
-    version: 2;
+    version: 3;
     policyDigest: string;
   };
   formatter: OpenSpecFormatterMetadata;
@@ -248,8 +253,11 @@ export function materializeOpenSpecReviewedEntries(
         { sourceKey: asset.sourceKey },
       );
     }
-    const overlayContent = applyOpenSpecPlanningAssetOverlay(source);
-    verifyOpenSpecPlanningAssetContent(overlayContent);
+    const overlayContent = applyOpenSpecPlanningAssetOverlay(
+      source,
+      asset.workflow,
+    );
+    verifyOpenSpecPlanningAssetContent(overlayContent, asset.workflow);
     reviewedByDestination.set(asset.destinationPath, {
       ...asset,
       sourceDigest: digestOpenSpecAssetContent(source),
@@ -303,7 +311,7 @@ export function materializeOpenSpecFinalEntries(
       continue;
     }
     const content = formatMarkdown(entry.overlayContent);
-    verifyOpenSpecPlanningAssetContent(content);
+    verifyOpenSpecPlanningAssetContent(content, entry.workflow);
     finalByDestination.set(entry.destinationPath, {
       ...entry,
       finalDigest: digestOpenSpecAssetContent(content),
@@ -400,7 +408,10 @@ export function verifyOpenSpecManifestReviewedEntries(
   }
 }
 
-export function applyOpenSpecPlanningAssetOverlay(source: string): string {
+export function applyOpenSpecPlanningAssetOverlay(
+  source: string,
+  workflow: OpenSpecAssetWorkflow = 'explore',
+): string {
   const normalized = source.replaceAll('\r\n', '\n');
   const withoutStore = normalized.replace(
     /^\*\*Store selection:\*\*[^\n]*(?:\n\n|\n)?/m,
@@ -426,10 +437,88 @@ export function applyOpenSpecPlanningAssetOverlay(source: string): string {
       /\bopenspec (?=(?:list|status|instructions|new|validate|show|doctor|context)\b)/g,
       'pnpm exec openspec ',
     );
+  if (workflow === 'propose') {
+    return investigationFirstProposeAsset(adapted);
+  }
   return `${adapted.trimEnd()}\n\n## Repository workflow boundary\n\nThis interface is planning-only. Use \`pnpm exec openspec\` for the reviewed planning commands above, submit planning changes with \`pnpm workflow plan-commit <change-id>\`, and begin implementation only with \`pnpm workflow start <change-id> --task <task-id>\`. OpenSpec lifecycle operations and external planning stores are outside this interface.\n`;
 }
 
-export function verifyOpenSpecPlanningAssetContent(content: string): void {
+function investigationFirstProposeAsset(source: string): string {
+  const rewritten = source.replace(
+    /^description:.*$/m,
+    'description: Drive a new change through the repository-owned investigation-first planning checkpoints and produce governed proposal, design, spec, task, and guard artifacts.',
+  );
+  const separator = rewritten.indexOf('\n---\n', 4);
+  if (!rewritten.startsWith('---\n') || separator < 0) {
+    throw openSpecAssetError(
+      'OPENSPEC_ASSET_SOURCE_INVALID',
+      'A generated propose asset has no reviewable frontmatter boundary.',
+    );
+  }
+  const frontmatter = rewritten.slice(0, separator + 5).trimEnd();
+  return [
+    frontmatter,
+    '',
+    'Propose a new change through the repository-owned investigation-first planning wrapper.',
+    '',
+    'The wrapper gathers evidence, obtains exact PlanReview, materializes the governed planning graph, and invokes the existing managed plan transition. `plan-commit` remains the underlying authority and is not a caller shortcut from this interface.',
+    '',
+    '**Input**: The user request should include a kebab-case change name or enough detail to derive one.',
+    '',
+    '**Steps**',
+    '',
+    '1. If the request is unclear, ask one open-ended question before starting. Derive a stable change ID. Before creating durable state, verify a clean exact `work/<change-id>` branch and stop otherwise. Create a temporary normalized intent JSON file outside tracked planning artifacts. Its exact top-level keys are `schemaVersion`, `summary`, `explicitPaths`, `explicitSymbols`, `explicitConfigKeys`, and `renamePairs`, with no extras. Set `schemaVersion` to `1`. Use a non-empty string for `summary`. Use string arrays for `explicitPaths`, `explicitSymbols`, and `explicitConfigKeys`. Encode each rename pair with exactly the string keys `from` and `to`. Empty arrays are valid.',
+    '',
+    '2. Start the durable wrapper:',
+    '',
+    '   ```bash',
+    '   pnpm workflow propose <change-id> --intent <intent.json> [--actor <id>] --json',
+    '   ```',
+    '',
+    '3. Read the returned `state`, `nextAction`, and `inputSchema` exactly. Preserve every returned binding value. Fill only the caller-owned contribution requested by that schema, using `work` and any `authoredInstructions` as constraints. Do not directly create or overwrite engine-owned `investigation.json`, `execution.json`, `plan-review.json`, or managed ledger fields.',
+    '',
+    '4. Submit each typed checkpoint from a temporary envelope file:',
+    '',
+    '   ```bash',
+    '   pnpm workflow propose <change-id> --resume --input <envelope.json> --json',
+    '   ```',
+    '',
+    '   Repeat only for the newly returned checkpoint. Do not replay completed provider work, invent grant evidence, or bypass `human-action-required`. Inspect durable progress without mutation when needed:',
+    '',
+    '   ```bash',
+    '   pnpm workflow status <investigation-or-task-id> --json',
+    '   ```',
+    '',
+    '5. Planning is ready only when the wrapper returns `state: planning-complete` with its managed planning transition. Then start the selected task:',
+    '',
+    '   ```bash',
+    '   pnpm workflow start <change-id> --task <task-id> --json',
+    '   ```',
+    '',
+    '6. During implementation, the optional projected single-pass path is:',
+    '',
+    '   ```bash',
+    '   pnpm workflow finalize-task <session-id> --json',
+    '   pnpm workflow commit <session-id> --message "Imperative subject" --json',
+    '   ```',
+    '',
+    '   It checks the implementation + checkbox + handoff prospective tree once and stages only that identical checked tree. Only a caught ordinary failure receives exact projection rollback. Commit remains separate and must not rerun required checks. The legacy `check` → `complete-task` → `finish` → `commit` sequence remains supported.',
+    '',
+    '## Applicability and assurance boundaries',
+    '',
+    'An investigation exemption changes planning applicability only: omitted scan and WHY claims become inapplicable, while PlanReview, task scope, checks, CI, and managed Git transitions remain. A task-execution exemption or strategy is separate and does not create an investigation exemption.',
+    '',
+    'This interface does not prove semantic completeness, provider identity, same-user containment, reviewer judgment, or provider availability. It does not claim crash-safe or fully atomic finalization. A collaboration grant records an authorized degradation and does not recreate missing independence.',
+    '',
+    'The governed propose surfaces use this wrapper. The separately governed explore-skill handoff remains outside this task and must not be described as adopted until successor managed work updates it.',
+    '',
+  ].join('\n');
+}
+
+export function verifyOpenSpecPlanningAssetContent(
+  content: string,
+  workflow: OpenSpecAssetWorkflow = 'explore',
+): void {
   const fixedForbidden: Array<[string, RegExp]> = [
     [
       'lifecycle-command',
@@ -487,12 +576,41 @@ export function verifyOpenSpecPlanningAssetContent(content: string): void {
   const commandAdaptation =
     findProtectedShellGlob(content) ||
     hasCommandAdaptationSurface(commandSurface);
+  const proposeCommands = [
+    'clean exact `work/<change-id>` branch',
+    'pnpm workflow propose <change-id> --intent <intent.json>',
+    'pnpm workflow propose <change-id> --resume --input <envelope.json>',
+    'pnpm workflow status',
+    'pnpm workflow start',
+    'pnpm workflow finalize-task',
+    'pnpm workflow commit',
+  ];
+  const requiredSurface =
+    workflow === 'propose'
+      ? appearsInOrder(content, proposeCommands) &&
+        content.includes('`state`') &&
+        content.includes('`nextAction`') &&
+        content.includes('`inputSchema`') &&
+        content.includes('`schemaVersion`') &&
+        content.includes('`summary`') &&
+        content.includes('`explicitPaths`') &&
+        content.includes('`explicitSymbols`') &&
+        content.includes('`explicitConfigKeys`') &&
+        content.includes('`renamePairs`') &&
+        content.includes('`from`') &&
+        content.includes('`to`') &&
+        !/(?:all artifacts generated|generate all artifacts in one step|generated? in one step)/i.test(
+          content,
+        ) &&
+        !/\bpnpm exec openspec (?:new|status|instructions)\b/.test(content) &&
+        !content.includes('pnpm workflow plan-commit')
+      : content.includes('pnpm exec openspec') &&
+        content.includes('pnpm workflow plan-commit') &&
+        content.includes('pnpm workflow start');
   if (
     !content.endsWith('\n') ||
     content.includes('\r') ||
-    !content.includes('pnpm exec openspec') ||
-    !content.includes('pnpm workflow plan-commit') ||
-    !content.includes('pnpm workflow start') ||
+    !requiredSurface ||
     matched ||
     unreviewedOpenSpecToken ||
     commandLikeSpectraToken ||
@@ -514,6 +632,34 @@ export function verifyOpenSpecPlanningAssetContent(content: string): void {
       },
     );
   }
+}
+
+function appearsInOrder(content: string, tokens: readonly string[]): boolean {
+  let offset = 0;
+  for (const token of tokens) {
+    const index = content.indexOf(token, offset);
+    if (index < 0) {
+      return false;
+    }
+    offset = index + token.length;
+  }
+  return true;
+}
+
+function openSpecAssetWorkflowForDestination(
+  destinationPath: string,
+): OpenSpecAssetWorkflow {
+  const definition = OPENSPEC_ASSET_DEFINITIONS.find(
+    (entry) => entry.destinationPath === destinationPath,
+  );
+  if (!definition) {
+    throw openSpecAssetError(
+      'OPENSPEC_ASSET_MANIFEST_INVALID',
+      'An OpenSpec planning asset destination has no governed workflow.',
+      { destinationPath },
+    );
+  }
+  return definition.workflow;
 }
 
 export function readOpenSpecAssetManifest(
@@ -559,7 +705,10 @@ export function verifyOpenSpecRepositoryAssets(
     const content = readOpenSpecAssetFile(
       path.join(root, asset.destinationPath),
     );
-    verifyOpenSpecPlanningAssetContent(content);
+    verifyOpenSpecPlanningAssetContent(
+      content,
+      openSpecAssetWorkflowForDestination(asset.destinationPath),
+    );
     if (digestOpenSpecAssetContent(content) !== asset.finalDigest) {
       throw openSpecAssetError(
         'OPENSPEC_ASSET_REPOSITORY_DRIFT',
@@ -926,7 +1075,7 @@ function assertReviewedEntries(
         { destinationPath: expected.destinationPath },
       );
     }
-    verifyOpenSpecPlanningAssetContent(entry.overlayContent);
+    verifyOpenSpecPlanningAssetContent(entry.overlayContent, entry.workflow);
   }
 }
 
@@ -944,7 +1093,7 @@ function assertFinalEntries(entries: readonly OpenSpecFinalAssetEntry[]): void {
         { destinationPath: expected.destinationPath },
       );
     }
-    verifyOpenSpecPlanningAssetContent(entry.content);
+    verifyOpenSpecPlanningAssetContent(entry.content, entry.workflow);
   }
   assertFinalToolParity(entries);
 }

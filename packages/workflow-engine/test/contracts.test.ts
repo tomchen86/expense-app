@@ -296,6 +296,209 @@ test('agent guide documents the complete public workflow surface and source-size
   assert.doesNotMatch(agents, /keep files under 500 LOC/i);
 });
 
+test('public guidance exposes the investigation-first and projected single-pass boundaries', () => {
+  const repositoryRoot = path.resolve(import.meta.dirname, '../../..');
+  const agents = fs.readFileSync(
+    path.join(repositoryRoot, 'AGENTS.md'),
+    'utf8',
+  );
+  const workflow = fs.readFileSync(
+    path.join(repositoryRoot, 'docs/WORKFLOW.md'),
+    'utf8',
+  );
+  const roadmap = fs.readFileSync(
+    path.join(repositoryRoot, 'docs/ROADMAP.md'),
+    'utf8',
+  );
+
+  for (const surface of [agents, workflow]) {
+    assert.match(surface, /pnpm workflow propose/);
+    assert.match(surface, /pnpm workflow finalize-task/);
+  }
+  assert.match(workflow, /implementation \+ checkbox \+ handoff/i);
+  assert.match(
+    workflow,
+    /(?:checked\s+tree[\s\S]{0,160}staged\s+tree|stages only[\s\S]{0,160}checked\s+tree)/i,
+  );
+  assert.match(workflow, /caught ordinary failure/i);
+  assert.match(
+    workflow,
+    /legacy[\s\S]{0,240}check[\s\S]{0,120}complete-task[\s\S]{0,120}finish/i,
+  );
+  assert.match(workflow, /commit[\s\S]{0,120}separate/i);
+  assert.match(workflow, /must not rerun required checks/i);
+  assert.match(roadmap, /T2\.3[\s\S]{0,160}exact-diff AI review/i);
+  assert.match(roadmap, /T2\.3[\s\S]{0,240}crash-safe[\s\S]{0,80}finalize/i);
+  assert.match(roadmap, /T2\.3[\s\S]{0,240}commit transaction/i);
+  assert.match(roadmap, /T2\.4[\s\S]{0,120}exact-byte[\s\S]{0,80}closure/i);
+});
+
+test('public guidance preserves the assurance registry and keeps exemptions distinct', () => {
+  const repositoryRoot = path.resolve(import.meta.dirname, '../../..');
+  const agents = fs.readFileSync(
+    path.join(repositoryRoot, 'AGENTS.md'),
+    'utf8',
+  );
+  const workflow = fs.readFileSync(
+    path.join(repositoryRoot, 'docs/WORKFLOW.md'),
+    'utf8',
+  );
+  const expectedClaims = [
+    [
+      '`C-TERM-SCAN`',
+      'Every currently effective sealed term was scanned under the governed scan policy',
+      'Hard',
+      'T1.5 sealed-investigation branch',
+    ],
+    [
+      '`C-TERM-SUPERSESSION`',
+      'Engine-floor terms cannot be removed; an agent term leaves the effective set only by reviewed, reasoned, audit-visible supersession',
+      'Hard engine floor; audit-monotone but correctable agent contribution',
+      'T1.5',
+    ],
+    [
+      '`C-TERM-COMPLETENESS`',
+      'The effective term set is semantically complete',
+      'Soft and not provable',
+      'Residual, never delivered as hard',
+    ],
+    [
+      '`C-REVIEW-CURRENT`',
+      'A review artifact exists, is immutable, and is current for its exact target',
+      'Hard',
+      'T1.5',
+    ],
+    [
+      '`C-REVIEW-JUDGMENT`',
+      'The reviewer judgment is correct',
+      'Soft',
+      'Human/agent judgment',
+    ],
+    [
+      '`C-WHY-BINDING`',
+      'Every required WHY field exists and is bound to exact source blobs',
+      'Hard structure',
+      'T1.5 sealed-investigation branch',
+    ],
+    [
+      '`C-WHY-TRUTH`',
+      'The WHY explanation is true or proves understanding',
+      'Soft',
+      'Human/agent judgment',
+    ],
+    [
+      '`C-ARTIFACT-ORDER`',
+      'Authoritative design materialization follows sealed investigation inputs',
+      'Hard artifact order; cognition order is not proved',
+      'T1.5 when investigation applies; exemption is separately labeled',
+    ],
+    [
+      '`C-SEMANTIC-INJECTION`',
+      '`proposedTerms` is the only review-to-lifecycle semantic cost injection path and stays within aggregate budgets',
+      'Hard structural choke point and budgets; semantic usefulness is soft',
+      'T1.5',
+    ],
+    [
+      '`C-EXACT-CLOSURE`',
+      'Exact declared bytes are absent from the governed live closure scope',
+      'Hard',
+      'Future T2.4 mechanical closure; not delivered by T1.5',
+    ],
+    [
+      '`C-GRAPH-COMPLETENESS`',
+      'All semantic consumers and dependency edges have been found',
+      'Soft and not proved by grep or declared DAG structure',
+      'Residual, never delivered as hard',
+    ],
+    [
+      '`C-CANONICALIZATION`',
+      'Canonical subjects preserve every assurance-relevant distinction',
+      'Tested and fail-closed; residual implementation risk remains',
+      'T1.5 for planning subjects; later owners extend their subjects',
+    ],
+    [
+      '`C-COVERAGE-COMPOSITION`',
+      'Composed review manifests cover exactly the claimed subject',
+      'Hard algorithm over declared facts; semantic adequacy is soft',
+      'Future T2.3; not delivered by T1.5',
+    ],
+    [
+      '`C-CONVERGENCE`',
+      'A reused descendant has a complete valid proof path to the current generation',
+      'Hard validator over declared graph; proof/canonicalizer defects remain residual',
+      'T1.5',
+    ],
+    [
+      '`C-PROVIDER-IDENTITY`',
+      'Local provider identity from runtime hints or adapter assignment',
+      'Soft',
+      'T1.5 records assurance only',
+    ],
+    [
+      '`C-CONTAINMENT`',
+      'A local provider is confined against the same OS user',
+      'Soft without stronger isolation',
+      'Not delivered as hard',
+    ],
+    [
+      '`C-DEGRADED-INDEPENDENCE`',
+      'A collaboration grant recreates missing provider independence',
+      'False; grant authorizes only visible degradation',
+      'T1.5',
+    ],
+    [
+      '`C-AVAILABILITY`',
+      'The ordinary two-provider path meets wait, grant, latency, and cost budgets',
+      'Empirical pilot claim',
+      'T1.5 pilot, never structural proof',
+    ],
+  ];
+
+  const registry = workflow.match(
+    /### Stable assurance claim registry\n([\s\S]*?)\n## Managed Task Lifecycle/,
+  );
+  assert.notEqual(registry, null);
+  const actualClaims = registry![1]!
+    .split('\n')
+    .filter((line) => /^\|\s*`C-[A-Z-]+`\s*\|/.test(line))
+    .map((line) =>
+      line
+        .split('|')
+        .slice(1, -1)
+        .map((cell) => cell.trim()),
+    );
+  assert.deepEqual(actualClaims, expectedClaims);
+  assert.match(agents, /stable\s+claim-ID\/hardness registry/i);
+  assert.match(agents, /do not invent a stronger synonym/i);
+  assert.match(workflow, /investigation exemption/i);
+  assert.match(workflow, /task-execution exemption/i);
+  assert.match(
+    workflow,
+    /C-TERM-SCAN[\s\S]{0,120}C-WHY-BINDING[\s\S]{0,120}inapplicable/i,
+  );
+  assert.match(
+    workflow,
+    /task-execution exemption[\s\S]{0,160}does not[\s\S]{0,120}investigation exemption/i,
+  );
+  assert.match(
+    workflow,
+    /investigation exemption[\s\S]{0,180}PlanReview[\s\S]{0,120}checks[\s\S]{0,120}Git/i,
+  );
+  for (const boundary of [
+    /semantic completeness[\s\S]{0,120}(?:soft|not proved)/i,
+    /WHY truth[\s\S]{0,120}(?:soft|not proved)/i,
+    /provider identity[\s\S]{0,120}(?:soft|not cryptographic)/i,
+    /same-user containment[\s\S]{0,120}(?:soft|not proved)/i,
+    /reviewer judgment[\s\S]{0,120}(?:soft|not proved)/i,
+    /semantic closure[\s\S]{0,120}(?:not delivered|T2\.4)/i,
+    /degraded[\s\S]{0,160}does not recreate[\s\S]{0,80}independence/i,
+    /availability[\s\S]{0,160}empirical[\s\S]{0,120}not structural/i,
+    /projected single-pass[\s\S]{0,500}(?:not crash-safe|not fully atomic)/i,
+  ]) {
+    assert.match(workflow, boundary);
+  }
+});
+
 test('the public asset CLI exposes only the tool-plural command', () => {
   const repositoryRoot = path.resolve(import.meta.dirname, '../../..');
   const cliPath = path.join(
