@@ -11,12 +11,7 @@
   "maxUses": 1,
   "bootstrapEligiblePaths": [
     ".github/workflows/workflow-assurance.yml",
-    "docs/WORKFLOW.md",
-    "openspec/specs/authority-tree-attestation/spec.md",
-    "openspec/specs/break-glass-maintainer-mode/spec.md",
     "packages/workflow-engine/src/**",
-    "packages/workflow-engine/test/ci-attestation.integration.test.ts",
-    "packages/workflow-engine/test/maintainer-mode.integration.test.ts",
     "workflow/ai-adapter-policy.json",
     "workflow/checks.json",
     "workflow/ci-policy.json",
