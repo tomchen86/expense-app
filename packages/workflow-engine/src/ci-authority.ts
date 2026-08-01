@@ -85,6 +85,7 @@ export function validateCiAuthorityCommit(
     now: evaluationDate,
     expectedBase: parent,
     expectedPolicyBlob: policyBlob,
+    allowExpired: true,
   });
   assertGrantValidAtCommit(repositoryRoot, commit.hash, envelope);
   assertGrantPathsAtParent(

@@ -1,8 +1,11 @@
 # authority-tree-attestation Specification
 
 ## Purpose
+
 TBD - created by archiving change add-authority-tree-attestation. Update Purpose after archive.
+
 ## Requirements
+
 ### Requirement: Canonical human-present authority attestation
 
 The workflow engine SHALL create a versioned canonical authority attestation
@@ -86,14 +89,21 @@ IDs all resolve to exact protected audit tags bound to that original base.
 ### Requirement: Base-owned historical replay gates sealing
 
 The base-owned workflow verifier MUST scan protected-main first-parent history
-for authority transitions and fail closed unless every transition has one valid
-attestation and every referenced historical grant base has a valid explicit
-mapping. Sealed enforcement SHALL NOT be declared while migration, protected
-tag control, environment binding, or trusted signer lineage remains unproven.
+for authority transitions and fail closed unless every transition either
+retains a directly valid signed authority commit or has one valid attestation,
+and every historical grant base referenced by a rewritten transition has a
+valid explicit mapping. Sealed enforcement SHALL NOT be declared while
+migration, protected tag control, environment binding, or trusted signer
+lineage remains unproven.
+
+#### Scenario: Protected history retains the signed authority commit
+
+- **WHEN** a protected-main authority transition is the exact human-signed commit and its parent policy, protected grant tag, signature, paths, unique claim, and commit-time grant lifetime all validate
+- **THEN** historical replay accepts the transition directly without requiring an authority attestation
 
 #### Scenario: Complete historical lineage is replayable
 
-- **WHEN** every protected-main authority commit and referenced original grant base resolves through unique valid protected attestations under the trusted signer lineage
+- **WHEN** every protected-main authority commit either validates directly as the retained signed original or resolves through a unique valid protected attestation, and every referenced original grant base has the required explicit mapping under the trusted signer lineage
 - **THEN** base-owned replay succeeds and reports the covered authority grants and mappings
 
 #### Scenario: Historical lineage is incomplete
@@ -105,4 +115,3 @@ tag control, environment binding, or trusted signer lineage remains unproven.
 
 - **WHEN** the sealed trust root would remove a signer required to validate an original authority commit or its attestation without an old-key-authorized cross-signing rule
 - **THEN** the sealing transition is rejected because historical provenance would become unverifiable
-

@@ -6,6 +6,7 @@ import path from 'node:path';
 import test from 'node:test';
 
 import { verifyBaseAuthorityAttestations } from '../src/ci-attestation.ts';
+import { WorkflowError } from '../src/errors.ts';
 import {
   canonicalHumanResolutionGrantEnvelope,
   canonicalHumanResolutionGrantPayload,
@@ -64,6 +65,7 @@ type ScannerFixture = {
   rebasedBase: string;
   originalCommit: string;
   mainCommit: string;
+  grantEnvelope: MaintainerGrantEnvelope;
 };
 
 function sh(
@@ -399,7 +401,7 @@ function prepareScannerFixture(): ScannerFixture {
   sh(repository, ['update-ref', 'refs/remotes/origin/main', mainCommit]);
 
   const now = new Date();
-  writeGrantTag(
+  const grantEnvelope = writeGrantTag(
     repository,
     key.privateKey,
     policy,
@@ -419,6 +421,7 @@ function prepareScannerFixture(): ScannerFixture {
     rebasedBase,
     originalCommit,
     mainCommit,
+    grantEnvelope,
   };
 }
 
@@ -466,6 +469,35 @@ test('base replay accepts a fully attested authority lineage', () => {
         changeId: 'demo-change',
         originalCommit: fixture.originalCommit,
         mainCommit: fixture.mainCommit,
+      },
+    ]);
+    assert.deepEqual(result.directAuthorities, []);
+  } finally {
+    cleanup(fixture);
+  }
+});
+
+test('base replay accepts an original signed authority commit without an attestation after grant expiry', () => {
+  const fixture = prepareScannerFixture();
+  try {
+    sh(fixture.repository, [
+      'update-ref',
+      'refs/remotes/origin/main',
+      fixture.originalCommit,
+    ]);
+
+    const result = verifyBaseAuthorityAttestations(
+      fixture.repository,
+      fixture.originalCommit,
+      new Date(Date.parse(fixture.grantEnvelope.payload.expiresAt) + 1),
+    );
+
+    assert.deepEqual(result.attestedAuthorities, []);
+    assert.deepEqual(result.directAuthorities, [
+      {
+        grantId: PRIMARY_GRANT,
+        changeId: 'demo-change',
+        commit: fixture.originalCommit,
       },
     ]);
   } finally {
@@ -652,6 +684,76 @@ test('base replay fails closed when the attestation tag is missing', () => {
   }
 });
 
+test('base replay rejects an unsigned same-parent rewrite without an attestation', () => {
+  const fixture = prepareScannerFixture();
+  try {
+    const unsignedCommit = rewriteCommit(
+      fixture.repository,
+      fixture.originalCommit,
+      fixture.originalBase,
+      {
+        GIT_COMMITTER_NAME: 'GitHub',
+        GIT_COMMITTER_EMAIL: 'noreply@github.com',
+        GIT_COMMITTER_DATE: fixture.now.toISOString(),
+      },
+    );
+    assert.notEqual(unsignedCommit, fixture.originalCommit);
+    sh(fixture.repository, [
+      'update-ref',
+      'refs/remotes/origin/main',
+      unsignedCommit,
+    ]);
+
+    assert.throws(
+      () =>
+        verifyBaseAuthorityAttestations(
+          fixture.repository,
+          unsignedCommit,
+          fixture.now,
+        ),
+      (error) =>
+        error instanceof WorkflowError &&
+        error.code === 'CI_ATTESTATION_MISSING' &&
+        error.details?.directValidationCode ===
+          'CI_AUTHORITY_COMMIT_SIGNATURE_INVALID',
+    );
+  } finally {
+    cleanup(fixture);
+  }
+});
+
+test('base replay does not replace a malformed attestation with direct validation', () => {
+  const fixture = prepareScannerFixture();
+  try {
+    sh(fixture.repository, [
+      'update-ref',
+      'refs/remotes/origin/main',
+      fixture.originalCommit,
+    ]);
+    git(fixture.repository, [
+      'tag',
+      '--annotate',
+      '--cleanup=verbatim',
+      '--message',
+      'malformed',
+      `workflow-attestation/${PRIMARY_GRANT}`,
+      fixture.originalCommit,
+    ]);
+
+    assert.throws(
+      () =>
+        verifyBaseAuthorityAttestations(
+          fixture.repository,
+          fixture.originalCommit,
+          fixture.now,
+        ),
+      (error) => isWorkflowError(error, 'CI_ATTESTATION_TAG_INVALID'),
+    );
+  } finally {
+    cleanup(fixture);
+  }
+});
+
 test('base replay rejects an attestation bound to a different main commit', () => {
   const fixture = prepareScannerFixture();
   try {
@@ -707,6 +809,62 @@ test('base replay rejects an incomplete grant-base mapping', () => {
   }
 });
 
+test('base replay reports mixed direct and attested authority lineage', () => {
+  const fixture = prepareScannerFixture();
+  try {
+    writeGrantTag(
+      fixture.repository,
+      fixture.privateKey,
+      fixture.policy,
+      SECOND_GRANT,
+      fixture.mainCommit,
+      fixture.now,
+    );
+    git(fixture.repository, ['switch', '--detach', fixture.mainCommit]);
+    const checksPath = path.join(fixture.repository, 'workflow/checks.json');
+    fs.writeFileSync(checksPath, ` ${fs.readFileSync(checksPath, 'utf8')}`);
+    git(fixture.repository, ['add', 'workflow/checks.json']);
+    git(fixture.repository, [
+      'commit',
+      '-S',
+      '-m',
+      'Repair workflow authority again\n\nChange: demo-change\nTransition: authority-maintenance\n' +
+        `Grant: ${SECOND_GRANT}`,
+    ]);
+    const directCommit = sh(fixture.repository, ['rev-parse', 'HEAD']).trim();
+    sh(fixture.repository, [
+      'update-ref',
+      'refs/remotes/origin/main',
+      directCommit,
+    ]);
+    issueFixtureAttestation(fixture);
+
+    const result = verifyBaseAuthorityAttestations(
+      fixture.repository,
+      directCommit,
+      fixture.now,
+    );
+
+    assert.deepEqual(result.attestedAuthorities, [
+      {
+        grantId: PRIMARY_GRANT,
+        changeId: 'demo-change',
+        originalCommit: fixture.originalCommit,
+        mainCommit: fixture.mainCommit,
+      },
+    ]);
+    assert.deepEqual(result.directAuthorities, [
+      {
+        grantId: SECOND_GRANT,
+        changeId: 'demo-change',
+        commit: directCommit,
+      },
+    ]);
+  } finally {
+    cleanup(fixture);
+  }
+});
+
 test('base replay ignores histories without authority transitions', () => {
   const repository = createFixtureRepository();
   try {
@@ -716,6 +874,7 @@ test('base replay ignores histories without authority transitions', () => {
     const head = sh(repository, ['rev-parse', 'HEAD']).trim();
     const result = verifyBaseAuthorityAttestations(repository, head);
     assert.deepEqual(result.attestedAuthorities, []);
+    assert.deepEqual(result.directAuthorities, []);
   } finally {
     fs.rmSync(repository, { recursive: true, force: true });
   }

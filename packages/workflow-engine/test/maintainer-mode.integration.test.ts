@@ -10,6 +10,7 @@ import {
   canonicalGrantEnvelope,
   canonicalGrantPayload,
   issueMaintainerGrant,
+  parseMaintainerGrantEnvelope,
   validateGrantPayload,
   type MaintainerGrantEnvelope,
   type MaintainerGrantPayload,
@@ -1455,7 +1456,7 @@ test('CI rejects a candidate key that attempts to trust its own grant', () => {
   }
 });
 
-test('CI rejects an authority grant that expires while the PR is evaluated', () => {
+test('CI accepts an expired historical grant when the authority commit was timely', () => {
   const fixture = prepareAuthorityCommitFixture(
     '14141414-1414-4414-8414-141414141414',
   );
@@ -1476,6 +1477,71 @@ test('CI rejects an authority grant that expires while the PR is evaluated', () 
     );
     assert.ok(commit);
 
+    const verified = validateCiAuthorityCommit(
+      fixture.repository,
+      commit,
+      fixtureTime(fixture, 30 * 60 + 1),
+    );
+    assert.equal(verified.grantId, fixture.grantId);
+  } finally {
+    cleanupAuthorityCommitFixture(fixture);
+  }
+});
+
+test('CI rejects an authority commit created outside its signed grant lifetime', () => {
+  const fixture = prepareAuthorityCommitFixture(
+    '16161616-1616-4616-8616-161616161616',
+  );
+  try {
+    const committed = commitAuthoritySession(
+      fixture.repository,
+      fixture.sessionId,
+      'Repair exact authority',
+      {
+        now: fixtureTime(fixture, 30),
+        signer: fixtureSigner(),
+      },
+    );
+    const [commit] = listRangeCommits(
+      fixture.repository,
+      fixture.baseCommit,
+      committed.commitHash,
+    );
+    assert.ok(commit);
+
+    const tagRef = `workflow-grant/${fixture.grantId}`;
+    const rawTag = git(fixture.repository, ['cat-file', 'tag', tagRef]);
+    const separator = rawTag.indexOf('\n\n');
+    assert.notEqual(separator, -1);
+    const original = parseMaintainerGrantEnvelope(rawTag.slice(separator + 2));
+    const committedAt = Date.parse(
+      git(fixture.repository, [
+        'show',
+        '-s',
+        '--format=%cI',
+        committed.commitHash,
+      ]).trim(),
+    );
+    assert.ok(Number.isFinite(committedAt));
+    const payload: MaintainerGrantPayload = {
+      ...original.payload,
+      issuedAt: new Date(committedAt - 120_000).toISOString(),
+      expiresAt: new Date(committedAt - 60_000).toISOString(),
+    };
+    const envelope: MaintainerGrantEnvelope = {
+      payload,
+      signature: fixtureSshSigner(fixture.privateKey, fixture.policy).sign(
+        canonicalGrantPayload(payload),
+      ),
+    };
+    git(fixture.repository, ['tag', '--delete', tagRef]);
+    writeFixtureAuditTag(
+      fixture.repository,
+      fixture.baseCommit,
+      fixture.grantId,
+      envelope,
+    );
+
     assert.throws(
       () =>
         validateCiAuthorityCommit(
@@ -1483,7 +1549,7 @@ test('CI rejects an authority grant that expires while the PR is evaluated', () 
           commit,
           fixtureTime(fixture, 30 * 60 + 1),
         ),
-      (error) => isWorkflowError(error, 'MAINTAINER_GRANT_EXPIRED'),
+      (error) => isWorkflowError(error, 'CI_AUTHORITY_GRANT_TIME_INVALID'),
     );
   } finally {
     cleanupAuthorityCommitFixture(fixture);

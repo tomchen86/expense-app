@@ -120,6 +120,7 @@ export function verifyPullRequest(
     archivedChanges: replay.archivedChanges,
     authorityGrants: replay.authorityGrants,
     attestedAuthorities: attestations.attestedAuthorities,
+    directAuthorities: attestations.directAuthorities,
     changedPaths,
     checks,
     managedDocuments: validated.documents,

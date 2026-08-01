@@ -418,8 +418,10 @@ git push origin refs/tags/workflow-grant/<grant-id>:refs/tags/workflow-grant/<gr
 
 Do not delete or replace the tag after revocation, failure, expiry, or
 consumption. The envelope is non-secret audit evidence, and CI requires the
-exact protected tag. Do not extend, copy, or reuse an expired grant; issue a
-new grant from the new exact base.
+exact protected tag. Do not extend, copy, or reuse an expired grant for a new
+authority operation; issue a new grant from the new exact base. Historical CI
+replay may read an expired grant only when the signed authority commit itself
+was created within that grant's original lifetime.
 
 ### Authority execution sequence
 
@@ -440,10 +442,11 @@ pnpm workflow maintainer inspect <grant-id> --json
 
 Push the branch, open a PR, and require the base-owned
 `workflow-assurance` result. CI verifies the grant and commit signatures, audit
-tag, parent/base, policy blob, repository identity, expiry both at commit time
-and PR evaluation time, exact diff, single claim across the PR range, phase
-transition, and every normal check. If CI queues past expiry, issue a new grant
-and new isolated authority commit; never amend, replay, or relax the old one.
+tag, parent/base, policy blob, repository identity, the commit timestamp against
+the signed grant lifetime, exact diff, single claim across the PR range, phase
+transition, and every normal check. A grant that expires after its signed commit
+was created remains historical evidence, but it cannot authorize another
+operation.
 
 Any failure after reservation closes the session and terminally revokes that
 use. `authority-abort` is for an active session that has not started commit
@@ -458,12 +461,14 @@ or AI-accessible override.
 
 ### Authority tree attestation
 
-GitHub's required rebase merge rewrites every authority commit, so the
-human-signed original is never the object reachable from the protected branch.
-An authority attestation binds the rewritten protected-main commit back to its
-retained signed original by transition identity, not commit identity: equal
-result trees, equal single-parent trees, byte-identical canonical managed
-messages, the exact grant, and a valid original commit signature.
+When a protected-branch merge retains the exact human-signed authority commit,
+historical replay validates that commit directly against its parent policy and
+grant; no attestation is needed. A rebase merge instead rewrites the commit OID
+and signature. In that case, an authority attestation binds the rewritten
+protected-main commit back to its retained signed original by transition
+identity, not commit identity: equal result trees, equal single-parent trees,
+byte-identical canonical managed messages, the exact grant, and a valid original
+commit signature.
 
 Trust is split across three boundaries. The protected branch decides which
 rewritten commit is authoritative; retained Git objects and protected tags
@@ -490,13 +495,14 @@ the signed original so it stays reachable. Run the exact returned
 `publishCommand` immediately, exactly like a grant tag.
 
 Base-owned `workflow-assurance` replays protected first-parent history before
-candidate commits are evaluated: every authority commit on the base must
-resolve to exactly one valid protected attestation, and every referenced
-historical grant base must have a complete explicit mapping. Missing,
-conflicting, duplicated, malformed, or candidate-supplied evidence fails
-closed. This is an intentional migration gate: after the verifier merges, the
-next pull request stays red until the historical pilot attestation tag is
-protected, published, and replayable. Never re-disable the required check to
+candidate commits are evaluated: every authority commit on the base must either
+remain the directly valid signed original or resolve to exactly one valid
+protected attestation, and every historical grant base referenced by a rewritten
+commit must have a complete explicit mapping. Missing, conflicting, duplicated,
+malformed, or candidate-supplied evidence fails closed. This is an intentional
+migration gate: after the verifier merges, the next pull request stays red until
+each historical authority commit is directly replayable or its attestation tag
+is protected, published, and replayable. Never re-disable the required check to
 step around it.
 
 Recovery is maintainer-controlled tag publication, not rewriting. A missing or

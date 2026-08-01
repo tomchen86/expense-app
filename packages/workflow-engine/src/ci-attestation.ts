@@ -8,7 +8,8 @@ import {
   type AttestedCommitFacts,
   type AuthorityAttestationEnvelope,
 } from './authority-attestation.ts';
-import { readFileAtCommit } from './ci-git.ts';
+import { validateCiAuthorityCommit } from './ci-authority.ts';
+import { readFileAtCommit, type RangeCommit } from './ci-git.ts';
 import {
   verifySshDataSignature,
   verifyTrustedCommitSignature,
@@ -48,8 +49,15 @@ export type AttestedAuthority = {
   mainCommit: string;
 };
 
+export type DirectAuthority = {
+  grantId: string;
+  changeId: string;
+  commit: string;
+};
+
 export type CiAttestationResult = {
   attestedAuthorities: AttestedAuthority[];
+  directAuthorities: DirectAuthority[];
 };
 
 type GrantTagRecord = {
@@ -73,17 +81,20 @@ export function verifyBaseAuthorityAttestations(
     .filter(Boolean);
   const firstParentSet = new Set(firstParentHashes);
 
-  const authorityCommits: Array<{
-    hash: string;
-    trailers: AuthorityManagedTrailers;
-  }> = [];
+  const authorityCommits: Array<
+    RangeCommit & { trailers: AuthorityManagedTrailers }
+  > = [];
   for (const hash of firstParentHashes) {
     try {
-      const trailers = parseManagedTrailers(
-        commitFacts(repositoryRoot, hash).message,
-      );
+      const facts = commitFacts(repositoryRoot, hash);
+      const trailers = parseManagedTrailers(facts.message);
       if (trailers?.kind === 'authority') {
-        authorityCommits.push({ hash, trailers });
+        authorityCommits.push({
+          hash: facts.hash,
+          subject: facts.message.split('\n', 1)[0],
+          parents: facts.parents,
+          trailers,
+        });
       }
     } catch (error) {
       if (error instanceof ManagedTrailerSyntaxError) continue;
@@ -91,18 +102,53 @@ export function verifyBaseAuthorityAttestations(
     }
   }
   if (authorityCommits.length === 0) {
-    return { attestedAuthorities: [] };
+    return { attestedAuthorities: [], directAuthorities: [] };
   }
 
   const policy = loadBasePolicy(repositoryRoot, base);
   const protectedBranches = loadProtectedBranches(repositoryRoot, base);
   const grantTags = listGrantTags(repositoryRoot, policy);
+  const attestationRefs = new Set(
+    runGit(repositoryRoot, [
+      'for-each-ref',
+      '--format=%(refname)',
+      AUTHORITY_ATTESTATION_TAG_PREFIX,
+    ])
+      .split('\n')
+      .filter(Boolean),
+  );
   const usedOriginals = new Set<string>();
   const usedMains = new Set<string>();
   const baseMappings = new Map<string, string>();
   const attested: AttestedAuthority[] = [];
+  const direct: DirectAuthority[] = [];
 
   for (const commit of authorityCommits.reverse()) {
+    const attestationRef = `${AUTHORITY_ATTESTATION_TAG_PREFIX}${commit.trailers.grantId}`;
+    if (!attestationRefs.has(attestationRef)) {
+      try {
+        const validated = validateCiAuthorityCommit(
+          repositoryRoot,
+          commit,
+          evaluatedAt,
+        );
+        direct.push({
+          grantId: validated.grantId,
+          changeId: validated.changeId,
+          commit: commit.hash,
+        });
+      } catch (error) {
+        if (error instanceof WorkflowError) {
+          throw attestationError(
+            'CI_ATTESTATION_MISSING',
+            `Protected-main authority commit has no attestation tag for ${commit.trailers.grantId} and is not directly replayable.`,
+            { directValidationCode: error.code },
+          );
+        }
+        throw error;
+      }
+      continue;
+    }
     const envelope = readAttestationEnvelope(
       repositoryRoot,
       commit.trailers.grantId,
@@ -260,6 +306,9 @@ export function verifyBaseAuthorityAttestations(
     attestedAuthorities: attested.sort((left, right) =>
       left.grantId.localeCompare(right.grantId),
     ),
+    directAuthorities: direct.sort((left, right) =>
+      left.grantId.localeCompare(right.grantId),
+    ),
   };
 }
 
@@ -272,10 +321,7 @@ function readAttestationEnvelope(
   try {
     raw = runGit(repositoryRoot, ['cat-file', 'tag', tagRef]);
   } catch {
-    throw attestationError(
-      'CI_ATTESTATION_MISSING',
-      `Protected-main authority commit has no attestation tag for ${grantId}.`,
-    );
+    throw invalidAttestationTag(grantId);
   }
   const separator = raw.indexOf('\n\n');
   if (separator === -1) {
