@@ -12,6 +12,8 @@
   "bootstrapEligiblePaths": [
     ".github/workflows/workflow-assurance.yml",
     "packages/workflow-engine/src/**",
+    "packages/workflow-engine/test/ci-attestation.integration.test.ts",
+    "packages/workflow-engine/test/maintainer-attestation.integration.test.ts",
     "workflow/ai-adapter-policy.json",
     "workflow/checks.json",
     "workflow/ci-policy.json",
