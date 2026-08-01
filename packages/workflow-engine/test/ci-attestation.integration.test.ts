@@ -7,8 +7,12 @@ import test from 'node:test';
 
 import { verifyBaseAuthorityAttestations } from '../src/ci-attestation.ts';
 import {
+  canonicalHumanResolutionGrantEnvelope,
+  canonicalHumanResolutionGrantPayload,
   canonicalGrantEnvelope,
   canonicalGrantPayload,
+  type HumanResolutionGrantEnvelope,
+  type HumanResolutionGrantPayload,
   type MaintainerGrantEnvelope,
   type MaintainerGrantPayload,
 } from '../src/maintainer-grant.ts';
@@ -19,7 +23,10 @@ import { createFixtureRepository, git, isWorkflowError } from './fixture.ts';
 
 const PRIMARY_GRANT = '33333333-3333-4333-8333-333333333333';
 const SECOND_GRANT = '44444444-4444-4444-8444-444444444444';
+const RESOLUTION_GRANT = '55555555-5555-4555-8555-555555555555';
+const SECOND_RESOLUTION_GRANT = '66666666-6666-4666-8666-666666666666';
 const GRANT_NAMESPACE = 'expense-app.workflow.maintainer-grant.v1';
+const RESOLUTION_NAMESPACE = 'expense-app.workflow.human-resolution-grant.v1';
 
 const POLICY_TEMPLATE: Omit<MaintainerPolicy, 'trustedSigners'> = {
   schemaVersion: 1,
@@ -251,6 +258,95 @@ function writeGrantTag(
   return envelope;
 }
 
+function writeResolutionTag(
+  repository: string,
+  privateKey: string,
+  policy: MaintainerPolicy,
+  trustBaseCommit: string,
+  now: Date,
+  options: {
+    refGrantId?: string;
+    payloadGrantId?: string;
+    targetCommit?: string;
+    policyBlob?: string;
+    consequences?: HumanResolutionGrantPayload['consequences'];
+    messageTransform?: (message: string) => string;
+    signatureNamespace?: string;
+  } = {},
+): HumanResolutionGrantEnvelope {
+  const refGrantId = options.refGrantId ?? RESOLUTION_GRANT;
+  const payloadGrantId = options.payloadGrantId ?? refGrantId;
+  const policyBlob = sh(repository, [
+    'rev-parse',
+    `${trustBaseCommit}:workflow/maintainer-policy.json`,
+  ]).trim();
+  const payload: HumanResolutionGrantPayload = {
+    version: 1,
+    grantId: payloadGrantId,
+    repositoryId: policy.repository.id,
+    repositoryOrigin: policy.repository.origin,
+    trustBaseCommit,
+    policyBlob: options.policyBlob ?? policyBlob,
+    target: {
+      workflowKind: 'investigation',
+      changeId: 'demo-change',
+      workflowId: 'investigation-fixture',
+    },
+    expected: {
+      reasonCode: 'HUMAN_ROOT_DECISION_REQUESTED',
+      blockedTransition: 'workflow-state',
+      stateDigest: 'a'.repeat(64),
+      currentRefDigest: null,
+    },
+    decision: {
+      kind: 'quarantine',
+      parameters: { reason: 'Preserve fixture evidence' },
+    },
+    consequences: options.consequences ?? {
+      continuity: 'not-applicable',
+      assurance: 'degraded',
+      claimsWaived: [],
+    },
+    rationale: 'Preserve fixture evidence',
+    issuedAt: new Date(now.getTime() - 300_000).toISOString(),
+    expiresAt: new Date(now.getTime() + 300_000).toISOString(),
+    maxUses: 1,
+    signer: 'fixture-maintainer',
+  };
+  const envelope: HumanResolutionGrantEnvelope = {
+    payload,
+    signature: signWithNamespace(
+      privateKey,
+      canonicalHumanResolutionGrantPayload(payload),
+      options.signatureNamespace ?? RESOLUTION_NAMESPACE,
+    ),
+  };
+  const directory = fs.mkdtempSync(
+    path.join(os.tmpdir(), 'workflow-ci-resolution-tag-'),
+  );
+  const messagePath = path.join(directory, 'message');
+  try {
+    const message = canonicalHumanResolutionGrantEnvelope(envelope);
+    fs.writeFileSync(
+      messagePath,
+      options.messageTransform?.(message) ?? message,
+      { mode: 0o600 },
+    );
+    git(repository, [
+      'tag',
+      '--annotate',
+      '--cleanup=verbatim',
+      '--file',
+      messagePath,
+      `workflow-grant/resolution-${refGrantId}`,
+      options.targetCommit ?? trustBaseCommit,
+    ]);
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+  return envelope;
+}
+
 function prepareScannerFixture(): ScannerFixture {
   const repository = createFixtureRepository();
   const signingDirectory = fs.mkdtempSync(
@@ -352,6 +448,13 @@ test('base replay accepts a fully attested authority lineage', () => {
   const fixture = prepareScannerFixture();
   try {
     issueFixtureAttestation(fixture);
+    writeResolutionTag(
+      fixture.repository,
+      fixture.privateKey,
+      fixture.policy,
+      fixture.originalBase,
+      fixture.now,
+    );
     const result = verifyBaseAuthorityAttestations(
       fixture.repository,
       fixture.mainCommit,
@@ -365,6 +468,168 @@ test('base replay accepts a fully attested authority lineage', () => {
         mainCommit: fixture.mainCommit,
       },
     ]);
+  } finally {
+    cleanup(fixture);
+  }
+});
+
+test('base replay rejects a noncanonical human-resolution tag', () => {
+  const fixture = prepareScannerFixture();
+  try {
+    issueFixtureAttestation(fixture);
+    writeResolutionTag(
+      fixture.repository,
+      fixture.privateKey,
+      fixture.policy,
+      fixture.originalBase,
+      fixture.now,
+      { messageTransform: (message) => `${message}\n` },
+    );
+    assert.throws(
+      () =>
+        verifyBaseAuthorityAttestations(
+          fixture.repository,
+          fixture.mainCommit,
+          fixture.now,
+        ),
+      (error) => isWorkflowError(error, 'CI_ATTESTATION_GRANT_INVALID'),
+    );
+  } finally {
+    cleanup(fixture);
+  }
+});
+
+test('base replay rejects a human-resolution tag whose ref and payload IDs differ', () => {
+  const fixture = prepareScannerFixture();
+  try {
+    issueFixtureAttestation(fixture);
+    writeResolutionTag(
+      fixture.repository,
+      fixture.privateKey,
+      fixture.policy,
+      fixture.originalBase,
+      fixture.now,
+      { payloadGrantId: SECOND_RESOLUTION_GRANT },
+    );
+    assert.throws(
+      () =>
+        verifyBaseAuthorityAttestations(
+          fixture.repository,
+          fixture.mainCommit,
+          fixture.now,
+        ),
+      (error) => isWorkflowError(error, 'CI_ATTESTATION_GRANT_INVALID'),
+    );
+  } finally {
+    cleanup(fixture);
+  }
+});
+
+test('base replay rejects a human-resolution tag targeting another commit', () => {
+  const fixture = prepareScannerFixture();
+  try {
+    issueFixtureAttestation(fixture);
+    writeResolutionTag(
+      fixture.repository,
+      fixture.privateKey,
+      fixture.policy,
+      fixture.originalBase,
+      fixture.now,
+      { targetCommit: fixture.baseCommit },
+    );
+    assert.throws(
+      () =>
+        verifyBaseAuthorityAttestations(
+          fixture.repository,
+          fixture.mainCommit,
+          fixture.now,
+        ),
+      (error) => isWorkflowError(error, 'CI_ATTESTATION_GRANT_INVALID'),
+    );
+  } finally {
+    cleanup(fixture);
+  }
+});
+
+test('base replay rejects a signed human-resolution tag bound to another policy blob', () => {
+  const fixture = prepareScannerFixture();
+  try {
+    issueFixtureAttestation(fixture);
+    writeResolutionTag(
+      fixture.repository,
+      fixture.privateKey,
+      fixture.policy,
+      fixture.originalBase,
+      fixture.now,
+      { policyBlob: 'f'.repeat(40) },
+    );
+    assert.throws(
+      () =>
+        verifyBaseAuthorityAttestations(
+          fixture.repository,
+          fixture.mainCommit,
+          fixture.now,
+        ),
+      (error) => isWorkflowError(error, 'CI_ATTESTATION_GRANT_INVALID'),
+    );
+  } finally {
+    cleanup(fixture);
+  }
+});
+
+test('base replay rejects a signed human-resolution tag with incompatible consequences', () => {
+  const fixture = prepareScannerFixture();
+  try {
+    issueFixtureAttestation(fixture);
+    writeResolutionTag(
+      fixture.repository,
+      fixture.privateKey,
+      fixture.policy,
+      fixture.originalBase,
+      fixture.now,
+      {
+        consequences: {
+          continuity: 'preserved',
+          assurance: 'unchanged',
+          claimsWaived: [],
+        },
+      },
+    );
+    assert.throws(
+      () =>
+        verifyBaseAuthorityAttestations(
+          fixture.repository,
+          fixture.mainCommit,
+          fixture.now,
+        ),
+      (error) => isWorkflowError(error, 'CI_ATTESTATION_GRANT_INVALID'),
+    );
+  } finally {
+    cleanup(fixture);
+  }
+});
+
+test('base replay rejects a human-resolution tag signed in another namespace', () => {
+  const fixture = prepareScannerFixture();
+  try {
+    issueFixtureAttestation(fixture);
+    writeResolutionTag(
+      fixture.repository,
+      fixture.privateKey,
+      fixture.policy,
+      fixture.originalBase,
+      fixture.now,
+      { signatureNamespace: GRANT_NAMESPACE },
+    );
+    assert.throws(
+      () =>
+        verifyBaseAuthorityAttestations(
+          fixture.repository,
+          fixture.mainCommit,
+          fixture.now,
+        ),
+      (error) => isWorkflowError(error, 'CI_ATTESTATION_GRANT_INVALID'),
+    );
   } finally {
     cleanup(fixture);
   }

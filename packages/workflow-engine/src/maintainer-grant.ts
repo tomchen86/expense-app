@@ -39,12 +39,14 @@ import {
 } from './maintainer-store.ts';
 import {
   assertChangeId,
+  assertInvestigationId,
   assertPolicyPathInsideRepository,
   normalizeExactRepositoryPath,
 } from './paths.ts';
 import { withRepositoryLifecycleOperation } from './session-store.ts';
 
 const COMMIT_OID = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
+const DIGEST = /^[0-9a-f]{64}$/;
 const GRANT_ID =
   /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const PAYLOAD_KEYS = [
@@ -62,7 +64,7 @@ const PAYLOAD_KEYS = [
   'reason',
   'signer',
 ];
-const HUMAN_RESOLUTION_SIGNATURE_NAMESPACE =
+export const HUMAN_RESOLUTION_SIGNATURE_NAMESPACE =
   'expense-app.workflow.human-resolution-grant.v1';
 const HUMAN_RESOLUTION_PAYLOAD_KEYS = [
   'version',
@@ -300,6 +302,68 @@ export function parseHumanResolutionGrantEnvelope(
     }
     throw humanResolutionGrantInvalid(
       'Human resolution grant envelope is invalid.',
+    );
+  }
+}
+
+export function readHumanResolutionAuditTag(
+  repositoryRoot: string,
+  policy: MaintainerPolicy,
+  observedRef: string,
+): HumanResolutionGrantEnvelope | null {
+  const resolutionPrefix = `${policy.auditTagPrefix}resolution-`;
+  if (!observedRef.startsWith(resolutionPrefix)) {
+    return null;
+  }
+
+  try {
+    const observedGrantId = observedRef.slice(resolutionPrefix.length);
+    assertMaintainerGrantId(observedGrantId);
+    const raw = runGit(repositoryRoot, ['cat-file', 'tag', observedRef]);
+    const separator = raw.indexOf('\n\n');
+    if (separator === -1) {
+      throw new Error('missing tag message');
+    }
+    const headers = raw.slice(0, separator).split('\n');
+    const objectHeaders = headers.filter((line) => line.startsWith('object '));
+    const typeHeaders = headers.filter((line) => line.startsWith('type '));
+    const tagHeaders = headers.filter((line) => line.startsWith('tag '));
+    const message = raw.slice(separator + 2);
+    const envelope = parseHumanResolutionGrantEnvelope(message);
+    const payload = envelope.payload;
+    if (
+      payload.grantId !== observedGrantId ||
+      objectHeaders.length !== 1 ||
+      objectHeaders[0] !== `object ${payload.trustBaseCommit}` ||
+      typeHeaders.length !== 1 ||
+      typeHeaders[0] !== 'type commit' ||
+      tagHeaders.length !== 1 ||
+      tagHeaders[0] !== `tag ${observedRef.slice('refs/tags/'.length)}` ||
+      canonicalHumanResolutionGrantEnvelope(envelope) !== message ||
+      runGit(repositoryRoot, [
+        'rev-parse',
+        `${observedRef}^{commit}`,
+      ]).trim() !== payload.trustBaseCommit
+    ) {
+      throw new Error('tag binding mismatch');
+    }
+
+    const trustBase = loadMaintainerPolicyForResolution(
+      repositoryRoot,
+      payload.trustBaseCommit,
+    );
+    assertHumanResolutionAuditPayload(
+      payload,
+      policy,
+      trustBase.policy,
+      trustBase.policyBlob,
+    );
+    return envelope;
+  } catch {
+    throw workflowError(
+      'HUMAN_RESOLUTION_AUDIT_TAG_INVALID',
+      `Human-resolution audit tag ${observedRef} is malformed or noncanonical.`,
+      ExitCode.guard,
     );
   }
 }
@@ -836,6 +900,103 @@ export function validateHumanResolutionGrantPayload(
   }
 }
 
+function assertHumanResolutionAuditPayload(
+  payload: HumanResolutionGrantPayload,
+  policy: MaintainerPolicy,
+  trustBasePolicy: MaintainerPolicy,
+  expectedPolicyBlob: string,
+): void {
+  const target = payload.target as unknown as Record<string, unknown>;
+  const expected = payload.expected as unknown as Record<string, unknown>;
+  const pinnedSigner = policy.trustedSigners.find(
+    ({ identity }) => identity === payload.signer,
+  );
+  const trustBaseSigner = trustBasePolicy.trustedSigners.find(
+    ({ identity }) => identity === payload.signer,
+  );
+  if (
+    typeof payload !== 'object' ||
+    payload === null ||
+    Array.isArray(payload) ||
+    !hasExactKeys(
+      payload as unknown as Record<string, unknown>,
+      HUMAN_RESOLUTION_PAYLOAD_KEYS,
+    ) ||
+    payload.version !== 1 ||
+    !GRANT_ID.test(payload.grantId) ||
+    payload.repositoryId !== policy.repository.id ||
+    payload.repositoryOrigin !== policy.repository.origin ||
+    trustBasePolicy.repository.id !== policy.repository.id ||
+    trustBasePolicy.repository.origin !== policy.repository.origin ||
+    trustBasePolicy.auditTagPrefix !== policy.auditTagPrefix ||
+    !COMMIT_OID.test(payload.trustBaseCommit) ||
+    !COMMIT_OID.test(payload.policyBlob) ||
+    payload.policyBlob !== expectedPolicyBlob ||
+    payload.maxUses !== 1 ||
+    !validReason(payload.rationale) ||
+    !pinnedSigner ||
+    !trustBaseSigner ||
+    pinnedSigner.publicKey !== trustBaseSigner.publicKey ||
+    pinnedSigner.fingerprint !== trustBaseSigner.fingerprint ||
+    typeof target !== 'object' ||
+    target === null ||
+    Array.isArray(target) ||
+    !hasExactKeys(target, ['workflowKind', 'changeId', 'workflowId']) ||
+    target.workflowKind !== 'investigation' ||
+    typeof target.changeId !== 'string' ||
+    typeof target.workflowId !== 'string' ||
+    typeof expected !== 'object' ||
+    expected === null ||
+    Array.isArray(expected) ||
+    !hasExactKeys(expected, [
+      'reasonCode',
+      'blockedTransition',
+      'stateDigest',
+      'currentRefDigest',
+    ]) ||
+    !validBoundedText(expected.reasonCode, 256) ||
+    !validBoundedText(expected.blockedTransition, 256) ||
+    typeof expected.stateDigest !== 'string' ||
+    !DIGEST.test(expected.stateDigest) ||
+    (expected.currentRefDigest !== null &&
+      (typeof expected.currentRefDigest !== 'string' ||
+        !DIGEST.test(expected.currentRefDigest)))
+  ) {
+    throw humanResolutionGrantInvalid(
+      'Human resolution audit grant does not match its trusted binding.',
+    );
+  }
+
+  try {
+    assertChangeId(target.changeId);
+    assertInvestigationId(target.workflowId);
+    const decision = assertHumanResolutionDecision(payload.decision);
+    const consequences = assertHumanResolutionConsequences(
+      payload.consequences,
+    );
+    assertResolutionConsequences(decision, consequences);
+  } catch {
+    throw humanResolutionGrantInvalid(
+      'Human resolution audit grant carries an invalid decision.',
+    );
+  }
+
+  const issuedAt = exactTimestamp(payload.issuedAt);
+  const expiresAt = exactTimestamp(payload.expiresAt);
+  const maximumTtl =
+    Math.min(policy.maxTtlMinutes, trustBasePolicy.maxTtlMinutes) * 60_000;
+  if (
+    issuedAt === undefined ||
+    expiresAt === undefined ||
+    issuedAt > expiresAt ||
+    expiresAt - issuedAt > maximumTtl
+  ) {
+    throw humanResolutionGrantInvalid(
+      'Human resolution audit grant has invalid time bounds.',
+    );
+  }
+}
+
 export function verifyHumanResolutionGrantEnvelope(
   repositoryRoot: string,
   envelope: HumanResolutionGrantEnvelope,
@@ -858,18 +1019,14 @@ export function assertHumanResolutionAuditTag(
 ): void {
   const tagRef = `${policy.auditTagPrefix}resolution-${envelope.payload.grantId}`;
   try {
-    const raw = runGit(repositoryRoot, ['cat-file', 'tag', tagRef]);
-    const separator = raw.indexOf('\n\n');
-    const headers = raw.slice(0, separator).split('\n');
-    const object = headers.find((line) => line.startsWith('object '))?.slice(7);
-    const type = headers.find((line) => line.startsWith('type '))?.slice(5);
-    const tag = headers.find((line) => line.startsWith('tag '))?.slice(4);
+    const observed = readHumanResolutionAuditTag(
+      repositoryRoot,
+      policy,
+      tagRef,
+    );
     if (
-      separator === -1 ||
-      object !== envelope.payload.trustBaseCommit ||
-      type !== 'commit' ||
-      tag !== tagRef.slice('refs/tags/'.length) ||
-      raw.slice(separator + 2) !==
+      observed === null ||
+      canonicalHumanResolutionGrantEnvelope(observed) !==
         canonicalHumanResolutionGrantEnvelope(envelope)
     ) {
       throw new Error('audit mismatch');
@@ -1134,6 +1291,19 @@ function validReason(value: string): boolean {
     value.length >= 12 &&
     value.length <= 500 &&
     value.trim() === value &&
+    ![...value].some((character) => {
+      const code = character.codePointAt(0) ?? 0;
+      return code <= 31 || (code >= 127 && code <= 159);
+    })
+  );
+}
+
+function validBoundedText(value: unknown, maxBytes: number): boolean {
+  return (
+    typeof value === 'string' &&
+    value.length > 0 &&
+    value.trim() === value &&
+    Buffer.byteLength(value, 'utf8') <= maxBytes &&
     ![...value].some((character) => {
       const code = character.codePointAt(0) ?? 0;
       return code <= 31 || (code >= 127 && code <= 159);

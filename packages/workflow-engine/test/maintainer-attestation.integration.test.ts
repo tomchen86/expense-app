@@ -10,8 +10,12 @@ import {
   canonicalAttestationEnvelope,
 } from '../src/authority-attestation.ts';
 import {
+  canonicalHumanResolutionGrantEnvelope,
+  canonicalHumanResolutionGrantPayload,
   canonicalGrantEnvelope,
   canonicalGrantPayload,
+  type HumanResolutionGrantEnvelope,
+  type HumanResolutionGrantPayload,
   type MaintainerGrantEnvelope,
   type MaintainerGrantPayload,
 } from '../src/maintainer-grant.ts';
@@ -25,7 +29,10 @@ import { createFixtureRepository, git, isWorkflowError } from './fixture.ts';
 
 const PRIMARY_GRANT = '11111111-1111-4111-8111-111111111111';
 const UNSIGNED_GRANT = '22222222-2222-4222-8222-222222222222';
+const RESOLUTION_GRANT = '55555555-5555-4555-8555-555555555555';
+const SECOND_RESOLUTION_GRANT = '66666666-6666-4666-8666-666666666666';
 const GRANT_NAMESPACE = 'expense-app.workflow.maintainer-grant.v1';
+const RESOLUTION_NAMESPACE = 'expense-app.workflow.human-resolution-grant.v1';
 
 const POLICY_TEMPLATE: Omit<MaintainerPolicy, 'trustedSigners'> = {
   schemaVersion: 1,
@@ -307,6 +314,93 @@ function writeGrantTag(
   return envelope;
 }
 
+function writeResolutionTag(
+  repository: string,
+  privateKey: string,
+  policy: MaintainerPolicy,
+  trustBaseCommit: string,
+  now: Date,
+  options: {
+    refGrantId?: string;
+    payloadGrantId?: string;
+    targetCommit?: string;
+    messageTransform?: (message: string) => string;
+    signatureNamespace?: string;
+  } = {},
+): HumanResolutionGrantEnvelope {
+  const refGrantId = options.refGrantId ?? RESOLUTION_GRANT;
+  const payloadGrantId = options.payloadGrantId ?? refGrantId;
+  const policyBlob = sh(repository, [
+    'rev-parse',
+    `${trustBaseCommit}:workflow/maintainer-policy.json`,
+  ]).trim();
+  const payload: HumanResolutionGrantPayload = {
+    version: 1,
+    grantId: payloadGrantId,
+    repositoryId: policy.repository.id,
+    repositoryOrigin: policy.repository.origin,
+    trustBaseCommit,
+    policyBlob,
+    target: {
+      workflowKind: 'investigation',
+      changeId: 'demo-change',
+      workflowId: 'investigation-fixture',
+    },
+    expected: {
+      reasonCode: 'HUMAN_ROOT_DECISION_REQUESTED',
+      blockedTransition: 'workflow-state',
+      stateDigest: 'a'.repeat(64),
+      currentRefDigest: null,
+    },
+    decision: {
+      kind: 'quarantine',
+      parameters: { reason: 'Preserve fixture evidence' },
+    },
+    consequences: {
+      continuity: 'not-applicable',
+      assurance: 'degraded',
+      claimsWaived: [],
+    },
+    rationale: 'Preserve fixture evidence',
+    issuedAt: new Date(now.getTime() - 300_000).toISOString(),
+    expiresAt: new Date(now.getTime() + 300_000).toISOString(),
+    maxUses: 1,
+    signer: 'fixture-maintainer',
+  };
+  const envelope: HumanResolutionGrantEnvelope = {
+    payload,
+    signature: signWithNamespace(
+      privateKey,
+      canonicalHumanResolutionGrantPayload(payload),
+      options.signatureNamespace ?? RESOLUTION_NAMESPACE,
+    ),
+  };
+  const directory = fs.mkdtempSync(
+    path.join(os.tmpdir(), 'workflow-attest-resolution-tag-'),
+  );
+  const messagePath = path.join(directory, 'message');
+  try {
+    const message = canonicalHumanResolutionGrantEnvelope(envelope);
+    fs.writeFileSync(
+      messagePath,
+      options.messageTransform?.(message) ?? message,
+      { mode: 0o600 },
+    );
+    git(repository, [
+      'tag',
+      '--annotate',
+      '--cleanup=verbatim',
+      '--file',
+      messagePath,
+      `workflow-grant/resolution-${refGrantId}`,
+      options.targetCommit ?? trustBaseCommit,
+    ]);
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+  return envelope;
+}
+
 function prepareAttestationFixture(): AttestationFixture {
   const repository = createFixtureRepository();
   const signingDirectory = fs.mkdtempSync(
@@ -423,6 +517,13 @@ test('maintainer attest creates one canonical protected attestation tag', () => 
   const fixture = prepareAttestationFixture();
   const namespaces: string[] = [];
   try {
+    writeResolutionTag(
+      fixture.repository,
+      fixture.privateKey,
+      fixture.policy,
+      fixture.originalBase,
+      fixture.now,
+    );
     const result = issue(fixture, { namespaces });
 
     assert.equal(result.grantId, PRIMARY_GRANT);
@@ -488,6 +589,86 @@ test('maintainer attest creates one canonical protected attestation tag', () => 
         GRANT_NAMESPACE,
       ),
       false,
+    );
+  } finally {
+    cleanup(fixture);
+  }
+});
+
+test('maintainer attest rejects a noncanonical human-resolution tag', () => {
+  const fixture = prepareAttestationFixture();
+  try {
+    writeResolutionTag(
+      fixture.repository,
+      fixture.privateKey,
+      fixture.policy,
+      fixture.originalBase,
+      fixture.now,
+      { messageTransform: (message) => `${message}\n` },
+    );
+    assert.throws(
+      () => issue(fixture),
+      (error) => isWorkflowError(error, 'AUTHORITY_ATTESTATION_GRANT_INVALID'),
+    );
+  } finally {
+    cleanup(fixture);
+  }
+});
+
+test('maintainer attest rejects a human-resolution tag whose ref and payload IDs differ', () => {
+  const fixture = prepareAttestationFixture();
+  try {
+    writeResolutionTag(
+      fixture.repository,
+      fixture.privateKey,
+      fixture.policy,
+      fixture.originalBase,
+      fixture.now,
+      { payloadGrantId: SECOND_RESOLUTION_GRANT },
+    );
+    assert.throws(
+      () => issue(fixture),
+      (error) => isWorkflowError(error, 'AUTHORITY_ATTESTATION_GRANT_INVALID'),
+    );
+  } finally {
+    cleanup(fixture);
+  }
+});
+
+test('maintainer attest rejects a human-resolution tag targeting another commit', () => {
+  const fixture = prepareAttestationFixture();
+  try {
+    writeResolutionTag(
+      fixture.repository,
+      fixture.privateKey,
+      fixture.policy,
+      fixture.originalBase,
+      fixture.now,
+      { targetCommit: fixture.baseCommit },
+    );
+    assert.throws(
+      () => issue(fixture),
+      (error) => isWorkflowError(error, 'AUTHORITY_ATTESTATION_GRANT_INVALID'),
+    );
+  } finally {
+    cleanup(fixture);
+  }
+});
+
+test('maintainer attest rejects a human-resolution tag signed in another namespace', () => {
+  const fixture = prepareAttestationFixture();
+  try {
+    writeResolutionTag(
+      fixture.repository,
+      fixture.privateKey,
+      fixture.policy,
+      fixture.originalBase,
+      fixture.now,
+      { signatureNamespace: GRANT_NAMESPACE },
+    );
+    assert.throws(
+      () => issue(fixture),
+      (error) => isWorkflowError(error, 'AUTHORITY_ATTESTATION_GRANT_INVALID'),
     );
   } finally {
     cleanup(fixture);

@@ -17,9 +17,12 @@ import { ExitCode, WorkflowError, workflowError } from './errors.ts';
 import { commitFacts } from './git-transitions.ts';
 import { runGit } from './git.ts';
 import {
+  HUMAN_RESOLUTION_SIGNATURE_NAMESPACE,
+  canonicalHumanResolutionGrantPayload,
   canonicalGrantEnvelope,
   canonicalGrantPayload,
   parseMaintainerGrantEnvelope,
+  readHumanResolutionAuditTag,
   validateGrantPayload,
   type MaintainerGrantEnvelope,
 } from './maintainer-grant.ts';
@@ -386,6 +389,25 @@ function listGrantTags(
   const records = new Map<string, GrantTagRecord>();
   for (const ref of refs) {
     const grantId = ref.slice(prefix.length);
+    try {
+      const resolution = readHumanResolutionAuditTag(
+        repositoryRoot,
+        policy,
+        ref,
+      );
+      if (resolution !== null) {
+        verifySshDataSignature(
+          canonicalHumanResolutionGrantPayload(resolution.payload),
+          resolution.signature,
+          trustedSigner(policy, resolution.payload.signer),
+          HUMAN_RESOLUTION_SIGNATURE_NAMESPACE,
+          'CI_ATTESTATION_GRANT_INVALID',
+        );
+        continue;
+      }
+    } catch {
+      throw invalidGrantTag(grantId);
+    }
     let raw: string;
     try {
       raw = runGit(repositoryRoot, ['cat-file', 'tag', ref]);

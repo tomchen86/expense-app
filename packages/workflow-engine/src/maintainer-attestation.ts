@@ -26,7 +26,9 @@ import {
 import {
   canonicalGrantPayload,
   parseMaintainerGrantEnvelope,
+  readHumanResolutionAuditTag,
   validateGrantPayload,
+  verifyHumanResolutionGrantEnvelope,
   type MaintainerGrantEnvelope,
 } from './maintainer-grant.ts';
 import {
@@ -293,14 +295,32 @@ function listGrantTagIds(
   policy: MaintainerPolicy,
 ): string[] {
   const prefix = policy.auditTagPrefix;
-  return runGit(repositoryRoot, [
+  const refs = runGit(repositoryRoot, [
     'for-each-ref',
     '--format=%(refname)',
     prefix.endsWith('/') ? prefix.slice(0, -1) : prefix,
   ])
     .split('\n')
-    .filter(Boolean)
-    .map((ref) => ref.slice(prefix.length));
+    .filter(Boolean);
+  const grantIds: string[] = [];
+  for (const ref of refs) {
+    const grantId = ref.slice(prefix.length);
+    try {
+      const resolution = readHumanResolutionAuditTag(
+        repositoryRoot,
+        policy,
+        ref,
+      );
+      if (resolution !== null) {
+        verifyHumanResolutionGrantEnvelope(repositoryRoot, resolution, policy);
+        continue;
+      }
+    } catch {
+      throw grantInvalid(grantId);
+    }
+    grantIds.push(grantId);
+  }
+  return grantIds;
 }
 
 function attestedFacts(
