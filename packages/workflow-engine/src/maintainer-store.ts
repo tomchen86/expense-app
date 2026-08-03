@@ -285,6 +285,45 @@ export function terminallyRevokeMaintainerReservation(
   );
 }
 
+/**
+ * Returns a reserved grant to the available store. Used when a session fails
+ * on a recoverable precondition before any durable session or repository
+ * mutation exists; the grant keeps its original envelope, signature, and
+ * expiry, so the maintainer does not need to re-sign it.
+ */
+export function releaseMaintainerReservation(
+  gitCommonDirectory: string,
+  requestedGrantId: string,
+  requestedSessionId: string,
+): void {
+  const grantId = assertMaintainerGrantId(requestedGrantId);
+  const sessionId = nonEmpty(requestedSessionId, 'reservation session ID');
+  const paths = maintainerGrantStorePaths(gitCommonDirectory);
+  withRepositoryLifecycleOperation(
+    paths.runtime,
+    (assertOwned) => {
+      ensureStoreDirectories(paths);
+      assertOwned();
+      if (fs.existsSync(grantPath(paths.terminal, grantId))) {
+        throw unavailableGrant(grantId);
+      }
+      const reservedPath = grantPath(paths.reserved, grantId);
+      const reservation = readReservation(reservedPath, grantId);
+      if (reservation.sessionId !== sessionId) {
+        throw unavailableGrant(grantId);
+      }
+      createPrivateFileAtomic(
+        grantPath(paths.available, grantId),
+        canonicalGrantEnvelope(reservation.envelope),
+      );
+      fs.rmSync(reservedPath, { force: true });
+      fsyncDirectory(paths.available);
+      fsyncDirectory(paths.reserved);
+    },
+    { allowMaintainerGrantId: grantId },
+  );
+}
+
 export function consumeMaintainerReservation(
   gitCommonDirectory: string,
   requestedGrantId: string,

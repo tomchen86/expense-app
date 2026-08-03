@@ -879,10 +879,206 @@ test('authority start failure after reservation never returns the grant to avail
     const commonDirectory = fs.realpathSync(path.join(repository, '.git'));
     assert.equal(
       inspectMaintainerGrants(commonDirectory, grantId)[0]?.state,
-      'revoked',
+      'available',
     );
   } finally {
     fs.rmSync(repository, { recursive: true, force: true });
+  }
+});
+
+test('authority start precondition failure releases the grant for reuse', () => {
+  const repository = createFixtureRepository();
+  const grantId = 'aaaa1111-2222-4333-8444-555566667777';
+  try {
+    installFixtureMaintainerPolicy(repository);
+    issueMaintainerGrant(
+      repository,
+      {
+        changeId: 'demo-change',
+        paths: ['workflow/checks.json'],
+        reason: 'Repair exact workflow authority',
+      },
+      {
+        now: new Date('2026-07-16T12:00:00.000Z'),
+        grantId,
+        signer: fixtureSigner(),
+      },
+    );
+    const commonDirectory = fs.realpathSync(path.join(repository, '.git'));
+    assert.throws(
+      () =>
+        startAuthoritySession(repository, 'demo-change', grantId, {
+          now: new Date('2026-07-16T12:01:00.000Z'),
+          signer: fixtureSigner(),
+        }),
+      (error) => isWorkflowError(error, 'AUTHORITY_BRANCH_INVALID'),
+    );
+    assert.equal(
+      inspectMaintainerGrants(commonDirectory, grantId)[0]?.state,
+      'available',
+    );
+    git(repository, ['switch', '-c', 'work/demo-change']);
+    const session = startAuthoritySession(repository, 'demo-change', grantId, {
+      now: new Date('2026-07-16T12:02:00.000Z'),
+      signer: fixtureSigner(),
+    });
+    assert.equal(session.state, 'active');
+    assert.equal(
+      inspectMaintainerGrants(commonDirectory, grantId)[0]?.state,
+      'reserved',
+    );
+  } finally {
+    fs.rmSync(repository, { recursive: true, force: true });
+  }
+});
+
+test('authority check failure keeps the session active for a repaired retry', () => {
+  const repository = createFixtureRepository();
+  const grantId = 'bbbb1111-2222-4333-8444-555566667777';
+  const flagDirectory = fs.mkdtempSync(
+    path.join(os.tmpdir(), 'workflow-flaky-check-'),
+  );
+  const flagPath = path.join(flagDirectory, 'pass');
+  try {
+    fs.writeFileSync(
+      path.join(repository, 'scripts/pass.mjs'),
+      [
+        "import fs from 'node:fs';",
+        `process.exit(fs.existsSync(${JSON.stringify(flagPath)}) ? 0 : 1);`,
+        '',
+      ].join('\n'),
+    );
+    git(repository, ['add', 'scripts/pass.mjs']);
+    git(repository, ['commit', '-m', 'Make fixture check gated on a flag']);
+    installFixtureMaintainerPolicy(repository);
+    issueMaintainerGrant(
+      repository,
+      {
+        changeId: 'demo-change',
+        paths: ['workflow/checks.json'],
+        reason: 'Repair exact workflow authority',
+      },
+      {
+        now: new Date('2026-07-16T12:00:00.000Z'),
+        grantId,
+        signer: fixtureSigner(),
+      },
+    );
+    git(repository, ['switch', '-c', 'work/demo-change']);
+    const session = startAuthoritySession(repository, 'demo-change', grantId, {
+      now: new Date('2026-07-16T12:01:00.000Z'),
+      signer: fixtureSigner(),
+    });
+    const targetPath = path.join(repository, 'workflow/checks.json');
+    fs.writeFileSync(targetPath, ` ${fs.readFileSync(targetPath, 'utf8')}`);
+    assert.throws(
+      () =>
+        checkAuthoritySession(repository, session.sessionId, {
+          now: new Date('2026-07-16T12:02:00.000Z'),
+          signer: fixtureSigner(),
+        }),
+      (error) => isWorkflowError(error, 'CHECK_FAILED'),
+    );
+    assert.equal(
+      readAuthoritySession(repository, session.sessionId).state,
+      'active',
+    );
+    assert.equal(
+      inspectMaintainerGrants(session.gitCommonDirectory, grantId)[0]?.state,
+      'reserved',
+    );
+    fs.writeFileSync(flagPath, 'pass\n');
+    const repaired = checkAuthoritySession(repository, session.sessionId, {
+      now: new Date('2026-07-16T12:03:00.000Z'),
+      signer: fixtureSigner(),
+    });
+    assert.equal(repaired.passed, true);
+  } finally {
+    fs.rmSync(repository, { recursive: true, force: true });
+    fs.rmSync(flagDirectory, { recursive: true, force: true });
+  }
+});
+
+test('authority commit environment preconditions keep the session recoverable', () => {
+  const fixture = prepareAuthorityCommitFixture(
+    'cccc1111-2222-4333-8444-555566667777',
+  );
+  try {
+    const interactiveFailure = Object.assign(
+      new Error(
+        'Maintainer grant signing requires controlling input, output, and error terminals.',
+      ),
+      { code: 'MAINTAINER_INTERACTIVE_REQUIRED' },
+    );
+    assert.throws(
+      () =>
+        commitAuthoritySession(
+          fixture.repository,
+          fixture.sessionId,
+          'Repair exact authority',
+          {
+            now: fixtureTime(fixture, 30),
+            signer: {
+              ...fixtureSigner(),
+              assertHumanPresent() {
+                throw interactiveFailure;
+              },
+            },
+          },
+        ),
+      (error) => error === interactiveFailure,
+    );
+    assert.equal(
+      readAuthoritySession(fixture.repository, fixture.sessionId).state,
+      'active',
+    );
+    assert.equal(
+      inspectMaintainerGrants(fixture.commonDirectory, fixture.grantId)[0]
+        ?.state,
+      'reserved',
+    );
+
+    git(fixture.repository, ['config', '--unset', 'user.name']);
+    assert.throws(
+      () =>
+        commitAuthoritySession(
+          fixture.repository,
+          fixture.sessionId,
+          'Repair exact authority',
+          {
+            now: fixtureTime(fixture, 40),
+            signer: fixtureSigner(),
+          },
+        ),
+      (error) => isWorkflowError(error, 'COMMIT_IDENTITY_REQUIRED'),
+    );
+    assert.equal(
+      readAuthoritySession(fixture.repository, fixture.sessionId).state,
+      'active',
+    );
+    git(fixture.repository, ['config', 'user.name', 'Fixture Maintainer']);
+
+    const result = commitAuthoritySession(
+      fixture.repository,
+      fixture.sessionId,
+      'Repair exact authority',
+      {
+        now: fixtureTime(fixture, 50),
+        signer: fixtureSigner(),
+      },
+    );
+    assert.match(result.commitHash, /^[0-9a-f]{40}$/);
+    assert.equal(
+      readAuthoritySession(fixture.repository, fixture.sessionId).state,
+      'committed',
+    );
+    assert.equal(
+      inspectMaintainerGrants(fixture.commonDirectory, fixture.grantId)[0]
+        ?.state,
+      'consumed',
+    );
+  } finally {
+    cleanupAuthorityCommitFixture(fixture);
   }
 });
 

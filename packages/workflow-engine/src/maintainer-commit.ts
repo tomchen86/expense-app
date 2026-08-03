@@ -4,6 +4,7 @@ import path from 'node:path';
 import { ExitCode, workflowError } from './errors.ts';
 import {
   createSignedAuthorityCommitObject,
+  resolveCommitIdentity,
   stageExactPaths,
   updateManagedRef,
 } from './git-transitions.ts';
@@ -76,6 +77,13 @@ export function commitAuthoritySession(
       );
     }
     assertGitSigningConfiguration(inspection.git.repositoryRoot);
+    // Preflight the commit identity before any journal or index mutation so
+    // a missing local user.name/user.email fails while the session is still
+    // fully recoverable instead of surfacing later as an opaque rollback.
+    resolveCommitIdentity(
+      inspection.git.repositoryRoot,
+      options.environment ?? process.env,
+    );
 
     const result = withRepositoryLifecycleOperation(
       store.runtime,
@@ -181,11 +189,42 @@ export function commitAuthoritySession(
       throw error;
     }
     if (journalCreated) {
-      return recoverAuthorityCommit(cwd, requestedSessionId, options.now);
+      try {
+        return recoverAuthorityCommit(cwd, requestedSessionId, options.now);
+      } catch {
+        // Recovery rolled the transaction back (or refused); the actionable
+        // root cause is the original commit failure, not the recovery
+        // wrapper, so surface the original error.
+        throw error;
+      }
+    }
+    // Failures before the journal exists left the repository untouched.
+    // Environment preconditions (terminal, signing config, identity) and
+    // retryable staging preconditions (scope, changed session, stale check
+    // report) keep the session active so the maintainer can repair the
+    // environment and retry without re-signing.
+    if (isRecoverableCommitPrecondition(error)) {
+      throw error;
     }
     failAuthoritySession(inspection.session, error, options.now);
     throw error;
   }
+}
+
+const RECOVERABLE_COMMIT_PRECONDITIONS = new Set([
+  'MAINTAINER_INTERACTIVE_REQUIRED',
+  'AUTHORITY_GIT_SIGNING_REQUIRED',
+  'COMMIT_IDENTITY_REQUIRED',
+  'AUTHORITY_COMMIT_SCOPE_INVALID',
+  'AUTHORITY_SESSION_CHANGED',
+]);
+
+function isRecoverableCommitPrecondition(error: unknown): boolean {
+  const code =
+    error && typeof error === 'object' && 'code' in error
+      ? (error as { code: unknown }).code
+      : undefined;
+  return typeof code === 'string' && RECOVERABLE_COMMIT_PRECONDITIONS.has(code);
 }
 
 function assertGitSigningConfiguration(repositoryRoot: string): void {

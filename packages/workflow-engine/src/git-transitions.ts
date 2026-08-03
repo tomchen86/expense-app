@@ -485,7 +485,7 @@ function validateCommitSubject(subject: string): void {
   }
 }
 
-function resolveCommitIdentity(
+export function resolveCommitIdentity(
   repositoryRoot: string,
   environment: NodeJS.ProcessEnv,
 ): NodeJS.ProcessEnv {

@@ -39,6 +39,7 @@ import { writeAuthorityCheckReport } from './maintainer-report.ts';
 import {
   maintainerGrantStorePaths,
   readReservedMaintainerGrant,
+  releaseMaintainerReservation,
   reserveMaintainerGrant,
   terminallyRevokeMaintainerReservation,
 } from './maintainer-store.ts';
@@ -210,13 +211,25 @@ export function startAuthoritySession(
     writeAuthoritySession(session, true);
     return session;
   } catch (error) {
-    terminallyRevokeMaintainerReservation(
-      initial.gitCommonDirectory,
-      reservation.grantId,
-      sessionId,
-      failureReason(error),
-      options.now,
-    );
+    // Everything before the durable session write is read-only, so a start
+    // failure is a recoverable precondition: return the grant to the
+    // available store instead of burning the one-shot signature. Fall back
+    // to terminal revocation only if the release itself cannot complete.
+    try {
+      releaseMaintainerReservation(
+        initial.gitCommonDirectory,
+        reservation.grantId,
+        sessionId,
+      );
+    } catch {
+      terminallyRevokeMaintainerReservation(
+        initial.gitCommonDirectory,
+        reservation.grantId,
+        sessionId,
+        failureReason(error),
+        options.now,
+      );
+    }
     throw error;
   }
 }
@@ -328,9 +341,25 @@ export function checkAuthoritySession(
       passed: true,
     };
   } catch (error) {
+    // A required check exiting non-zero is a recoverable outcome (often an
+    // environmental one: load, battery throttling, transient tooling); the
+    // checkout is verified unmutated after every check, so the session stays
+    // active and the check run may simply be repeated. Scope violations,
+    // mutated worktrees, and session-integrity failures remain terminal.
+    if (isRecoverableCheckOutcome(error)) {
+      throw error;
+    }
     failAuthoritySession(initialSession, error, options.now);
     throw error;
   }
+}
+
+function isRecoverableCheckOutcome(error: unknown): boolean {
+  const code =
+    error && typeof error === 'object' && 'code' in error
+      ? (error as { code: unknown }).code
+      : undefined;
+  return code === 'CHECK_FAILED' || code === 'CHECK_TERMINATED';
 }
 
 export function abortAuthoritySession(
