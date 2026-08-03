@@ -21,7 +21,7 @@ export const REQUIRED_AI_ADAPTER_CONTROLS = [
  * policy may lower these but never raise them.
  */
 export const MAX_AI_ADAPTER_LIMITS = Object.freeze({
-  timeoutMs: 600_000,
+  timeoutMs: 3_600_000,
   aggregateOutputBytes: 1_048_576,
   maxConcurrent: 2,
 });

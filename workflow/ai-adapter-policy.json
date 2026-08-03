@@ -17,7 +17,7 @@
     "claude": { "enabled": true }
   },
   "limits": {
-    "timeoutMs": 600000,
+    "timeoutMs": 3600000,
     "aggregateOutputBytes": 1048576,
     "maxConcurrent": 2
   }

@@ -45,7 +45,7 @@ test('AI adapter evaluation denies launch on every platform without side effects
       assert.equal(result.sameUserProcessConfined, false);
       assert.equal(result.platform, platform);
       assert.deepEqual(result.limits, {
-        timeoutMs: 600_000,
+        timeoutMs: 3_600_000,
         aggregateOutputBytes: 1_048_576,
         maxConcurrent: 2,
       });
@@ -194,7 +194,7 @@ test('AI adapter policy changes fail closed instead of enabling a launcher', () 
         ...validPolicy(),
         limits: {
           ...limitsPolicy(),
-          timeoutMs: 600_001,
+          timeoutMs: 3_600_001,
         },
       },
       {
@@ -418,7 +418,7 @@ function providersPolicy() {
 
 function limitsPolicy() {
   return {
-    timeoutMs: 600_000,
+    timeoutMs: 3_600_000,
     aggregateOutputBytes: 1_048_576,
     maxConcurrent: 2,
   };

@@ -449,7 +449,7 @@ test('ordinary role scheduling selects an alternate or requires a grant', () => 
 });
 
 test('typed provider request is immutable, bounded, and assignment-bound', () => {
-  assert.equal(MAX_PROVIDER_LIMITS.timeoutMs, 600_000);
+  assert.equal(MAX_PROVIDER_LIMITS.timeoutMs, 3_600_000);
   const assignment = surveyAssignment();
   const source = requestInput(assignment);
   const request = createProviderInvocationRequest(source);
@@ -458,7 +458,7 @@ test('typed provider request is immutable, bounded, and assignment-bound', () =>
   source.limits.timeoutMs = 1;
   assert.equal(request.schemaVersion, 1);
   assert.equal(request.targetDigest, DIGESTS.target);
-  assert.equal(request.limits.timeoutMs, 600_000);
+  assert.equal(request.limits.timeoutMs, 3_600_000);
   assert.equal(Object.isFrozen(request), true);
   assert.equal(Object.isFrozen(request.roleAssignment), true);
   assert.equal(Object.isFrozen(request.limits), true);
@@ -932,7 +932,7 @@ function requestInput(assignment: ProviderRoleAssignment) {
     evaluatorVersion: 'survey-evaluator.v1',
     policyDigest: DIGESTS.policy,
     limits: {
-      timeoutMs: 600_000,
+      timeoutMs: 3_600_000,
       aggregateOutputBytes: 1_048_576,
     },
   };
