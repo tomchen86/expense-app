@@ -13,7 +13,7 @@ import {
   type AuthorityRefusalAuditBinding,
 } from '../src/authority-refusal-audit.ts';
 import { verifyAuthorityAuditEvents } from '../src/authority-audit-service.ts';
-import { ExitCode, workflowError } from '../src/errors.ts';
+import { ExitCode, WorkflowError, workflowError } from '../src/errors.ts';
 
 function fixture(): {
   root: string;
@@ -89,7 +89,12 @@ test('trusted authority refusals retain the stable error code and exact durable 
             throw refusal;
           },
         ),
-      /simulated-audit-projection-crash/,
+      (error) =>
+        error === refusal &&
+        error instanceof WorkflowError &&
+        error.code === 'TASK_MANDATE_EFFECT_NOT_ALLOWED' &&
+        error.cause instanceof Error &&
+        error.cause.message === 'simulated-audit-projection-crash',
     );
 
     const recovered = recordAuthorityRefusal(value.binding, refusal, {

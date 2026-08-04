@@ -91,7 +91,7 @@
     {
       "path": "src/authority-refusal-audit.ts",
       "mode": "100644",
-      "digest": "sha256:218f43a0198525326a9f16d70e5b9d1efe39ad37c6f62e358d8e13011a2ee741"
+      "digest": "sha256:358c3a2a3a570958b9da0c3d3f43bc27593ce72a678874e643ebc3155c3de207"
     },
     {
       "path": "src/bootstrap-task-exemption.ts",

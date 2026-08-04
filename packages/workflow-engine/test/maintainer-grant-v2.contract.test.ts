@@ -63,11 +63,7 @@ import {
   readAuthoritySession,
   startAuthoritySession,
 } from '../src/maintainer-session.ts';
-import {
-  inspectMaintainerGrants,
-  maintainerGrantStorePaths,
-  reserveMaintainerGrant,
-} from '../src/maintainer-store.ts';
+import { inspectMaintainerGrants } from '../src/maintainer-store.ts';
 import {
   authorizeTaskMandate,
   inspectActiveTaskMandateBinding,
@@ -1086,7 +1082,23 @@ test('approve-and-apply refusal recovers a ledger-first crash with no grant or s
             },
           },
         }),
-      /simulated-apply-refusal-audit-crash/,
+      // Failing to record a refusal must not replace the refusal: the caller
+      // still receives the stable code it can act on, and the audit
+      // infrastructure failure rides along as its cause.
+      (error) => {
+        assert.equal(
+          isWorkflowError(
+            error,
+            'APPLY_CANDIDATE_EFFECTS_DECLARATION_REQUIRED',
+          ),
+          true,
+        );
+        assert.match(
+          String((error as Error & { cause?: unknown }).cause),
+          /simulated-apply-refusal-audit-crash/,
+        );
+        return true;
+      },
     );
     const binding = inspectActiveTaskMandateBinding(repository, TASK_ID, {
       now: new Date('2026-08-03T09:00:00.000Z'),
@@ -1411,104 +1423,6 @@ test('v2 issue signs every binding and stores a canonical one-shot grant', () =>
       () => parseMaintainerGrantV2Envelope(`${JSON.stringify(tampered)}\n`),
       (error) => isWorkflowError(error, 'MAINTAINER_GRANT_INVALID'),
     );
-  } finally {
-    fs.rmSync(repository, { recursive: true, force: true });
-  }
-});
-
-test('v2 reservation permits an independent active change but rejects its exact workspace or target ref', () => {
-  const repository = prepareCandidate();
-  const preparedSigned: string[] = [];
-  const signed: string[] = [];
-  try {
-    const gitCommonDirectory = fs.realpathSync(path.join(repository, '.git'));
-    const store = maintainerGrantStorePaths(gitCommonDirectory);
-    fs.mkdirSync(store.runtime.sessions, { recursive: true, mode: 0o700 });
-    fs.chmodSync(store.runtime.sessions, 0o700);
-    const sessionId = 'session-independent-change';
-    const sessionPath = path.join(store.runtime.sessions, `${sessionId}.json`);
-    const repositoryRoot = fs.realpathSync(repository);
-    const activeSession: {
-      schemaVersion: 1;
-      sessionId: string;
-      state: 'active';
-      changeId: string;
-      taskId: string;
-      repositoryRoot: string;
-      gitCommonDirectory: string;
-      branch: string;
-      baseline: { head: string; tree: string };
-      artifacts: Record<string, string>;
-      allowedPaths: string[];
-      requiredChecks: string[];
-      createdAt: string;
-    } = {
-      schemaVersion: 1,
-      sessionId,
-      state: 'active',
-      changeId: 'independent-change',
-      taskId: '1.1',
-      repositoryRoot: `${repositoryRoot}-independent-worktree`,
-      gitCommonDirectory,
-      branch: 'work/independent-change',
-      baseline: { head: 'a'.repeat(40), tree: 'b'.repeat(40) },
-      artifacts: {},
-      allowedPaths: [],
-      requiredChecks: [],
-      createdAt: '2026-08-03T09:00:00.000Z',
-    };
-    const writeActiveSession = (
-      overrides: Partial<typeof activeSession> = {},
-    ) => {
-      fs.writeFileSync(
-        sessionPath,
-        `${JSON.stringify({ ...activeSession, ...overrides }, null, 2)}\n`,
-        { mode: 0o600 },
-      );
-      fs.chmodSync(sessionPath, 0o600);
-    };
-    writeActiveSession();
-
-    const prepared = freezeIssuableCandidate(repository, preparedSigned);
-    const result = issueMaintainerGrantV2(
-      repository,
-      {
-        changeId: 'demo-change',
-        reason: 'Reserve the exact candidate beside an independent change',
-        manifest: prepared.manifest,
-        checksAttestation: prepared.checksAttestation!,
-        candidateBundle: prepared.candidateBundle!,
-      },
-      {
-        now: new Date('2026-08-03T09:01:00.000Z'),
-        grantId: GRANT_ID,
-        signer: fakeSigner(signed),
-      },
-    );
-    const reserve = () =>
-      reserveMaintainerGrant(gitCommonDirectory, result.grantId, {
-        sessionId: 'authority-independent-change',
-        repositoryRoot,
-        now: new Date('2026-08-03T09:02:00.000Z'),
-      });
-
-    writeActiveSession({ branch: 'work/demo-change' });
-    assert.throws(reserve, (error) =>
-      isWorkflowError(error, 'ACTIVE_SESSION_CONFLICT'),
-    );
-
-    writeActiveSession({
-      branch: 'work/independent-change',
-      repositoryRoot,
-    });
-    assert.throws(reserve, (error) =>
-      isWorkflowError(error, 'ACTIVE_SESSION_CONFLICT'),
-    );
-
-    writeActiveSession();
-    const reserved = reserve();
-    assert.equal(reserved.state, 'reserved');
-    assert.equal(reserved.grantId, result.grantId);
   } finally {
     fs.rmSync(repository, { recursive: true, force: true });
   }

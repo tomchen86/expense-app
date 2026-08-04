@@ -74,8 +74,31 @@ export function withAuthorityRefusalAudit(binding, options, operation) {
             error.code.startsWith('AUTHORITY_AUDIT_')) {
             throw error;
         }
-        recordAuthorityRefusal(binding, error, options);
+        try {
+            recordAuthorityRefusal(binding, error, options);
+        }
+        catch (auditError) {
+            attachAuthorityAuditFailure(error, auditError);
+        }
         throw error;
+    }
+}
+function attachAuthorityAuditFailure(refusal, auditError) {
+    try {
+        const currentCause = refusal.cause;
+        const cause = currentCause === undefined
+            ? auditError
+            : new AggregateError([currentCause, auditError], 'Authority refusal audit also failed.');
+        Object.defineProperty(refusal, 'cause', {
+            configurable: true,
+            enumerable: false,
+            value: cause,
+            writable: false,
+        });
+    }
+    catch {
+        // The stable, verified refusal remains authoritative even when a frozen
+        // error object cannot carry the secondary audit infrastructure failure.
     }
 }
 export function authorityRefusalDigest(value) {
