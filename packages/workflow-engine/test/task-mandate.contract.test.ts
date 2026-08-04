@@ -784,6 +784,7 @@ test('true propose CLI charges the durable Survey reservation once and revoked r
     ];
     const environment = {
       ...process.env,
+      CLAUDECODE: undefined,
       WORKFLOW_TEST_DISABLE_PROVIDER_DISPATCH: '1',
     };
     const missingMandate = spawnSync(

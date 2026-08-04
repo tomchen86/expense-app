@@ -476,6 +476,7 @@ test('authority audit failure blocks reservation and dispatch', () => {
     assert.equal(
       inspectExternalEffectGrant(fixture.repository, GRANT_ID, {
         signer: fixture.signer,
+        now: new Date('2026-08-04T01:00:20.000Z'),
       }).state,
       'available',
     );

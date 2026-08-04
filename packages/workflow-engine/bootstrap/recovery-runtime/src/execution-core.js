@@ -368,11 +368,17 @@ export function acceptAttemptResult(input) {
             retention: 'debug',
             updatedAt: completedAt,
         });
-        const staleJob = assertJobRecord({
-            ...job,
-            status: 'stale',
-            updatedAt: completedAt,
-        });
+        // Only the Attempt goes stale. A Job that already accepted a result stays
+        // succeeded: marking it stale while it still names an accepted Attempt
+        // contradicts the record invariant, and a late output must be classified
+        // and dropped rather than crash the acceptance path.
+        const staleJob = job.acceptedAttemptId === null
+            ? assertJobRecord({
+                ...job,
+                status: 'stale',
+                updatedAt: completedAt,
+            })
+            : job;
         return deepFreeze({
             accepted: false,
             job: staleJob,
@@ -631,6 +637,14 @@ export function decideRetry(input) {
     if (job.acceptedAttemptId !== null) {
         return noRetry('JOB_RESULT_ALREADY_ACCEPTED');
     }
+    // Terminal failures resolve before the fingerprint ladder. The ladder exists
+    // to converge repeated *retryable* failures onto a changed strategy; letting
+    // a terminal failure reach it would turn its second occurrence into an
+    // automatic retry and let an attempt proceed while the job is projected as
+    // waiting on human input.
+    if (failure.retryClass === 'terminal') {
+        return noRetry(failure.code);
+    }
     const grant = input.boundedGrantRequest === undefined
         ? undefined
         : assertExecutionBudgetGrantRequest(input.boundedGrantRequest, job);
@@ -662,9 +676,6 @@ export function decideRetry(input) {
         return grant === undefined
             ? noRetry('REPEATED_FAILURE')
             : grantDecision(grant, 'REPEATED_FAILURE_GRANT_REQUIRED');
-    }
-    if (failure.retryClass === 'terminal') {
-        return noRetry(failure.code);
     }
     if (withinBudget) {
         const retryMode = inferRetryMode(failure, attempt, input.currentExecutionPolicy);

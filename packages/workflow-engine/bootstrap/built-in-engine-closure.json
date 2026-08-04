@@ -296,7 +296,7 @@
     {
       "path": "src/execution-core.ts",
       "mode": "100644",
-      "digest": "sha256:a3f3edc6f5dca63f26b160dfeb01aaff7bfc6cfb30f9ba2b7860311bbb4831aa"
+      "digest": "sha256:b662407b71456b6349a33dd63b252df9f3bc02349c047ad9a4bd9ab82fa0ad52"
     },
     {
       "path": "src/execution-environment.ts",

@@ -64,6 +64,7 @@ import './intervention-control.contract.test.ts';
 import './maintainer-candidate-artifacts.contract.test.ts';
 import './maintainer-candidate.contract.test.ts';
 import './maintainer-grant-v2.contract.test.ts';
+import './maintainer-manifest.contract.test.ts';
 import './plan-review.contract.test.ts';
 import './provider-orchestration.contract.test.ts';
 import './provider-retry-accounting.contract.test.ts';

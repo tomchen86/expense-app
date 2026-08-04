@@ -8,7 +8,7 @@
     {
       "path": "bootstrap/recovery-runtime/bootstrap/built-in-engine-closure-pin.js",
       "mode": "100644",
-      "digest": "sha256:a56c992a2a05fa7f20c8645a50a9ae64aad4a8190793655fca0982e177675590"
+      "digest": "sha256:0619077ad11c90ac55e66158c838622a987ed2f7e5ec986e7dae6fbe8baf28d7"
     },
     {
       "path": "bootstrap/recovery-runtime/src/actor-identity.js",
@@ -108,7 +108,7 @@
     {
       "path": "bootstrap/recovery-runtime/src/execution-core.js",
       "mode": "100644",
-      "digest": "sha256:dd788a83b6213736e8e0fbefef247e7dda24866f4144906adf34b2a2c111b2a9"
+      "digest": "sha256:2a00cf00d049b08ea5aa74d99a0b2909c05c0b817519cabe78348e3e1e894b91"
     },
     {
       "path": "bootstrap/recovery-runtime/src/execution-environment.js",
