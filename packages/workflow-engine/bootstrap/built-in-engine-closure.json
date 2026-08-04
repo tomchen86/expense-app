@@ -659,6 +659,11 @@
       "digest": "sha256:7c1fe9f8bbf71fbe06b470e052db4ba2f2cce035d9065a4fce0dcc854c428b3d"
     },
     {
+      "path": "src/path-role-registry.ts",
+      "mode": "100644",
+      "digest": "sha256:e5e07082963ada5c01c206e6ed49ccace646be730403530c6e103c010ff4fa58"
+    },
+    {
       "path": "src/paths.ts",
       "mode": "100644",
       "digest": "sha256:d356ec189a49f3e703279dd2678009ca93b8d29883ce4a6fbeffb6b81230de82"

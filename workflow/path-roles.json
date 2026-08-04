@@ -1,0 +1,58 @@
+{
+  "schemaVersion": 1,
+  "kind": "path-role-registry",
+  "roles": {
+    "control-plane": [
+      "packages/workflow-engine/bootstrap/**",
+      "packages/workflow-engine/src/control-plane-grant.ts",
+      "packages/workflow-engine/src/harness-bootstrap.ts",
+      "workflow/maintainer-profiles.json",
+      "workflow/maintainer-policy.json"
+    ],
+    "grant": [
+      "packages/workflow-engine/src/authority-audit-ledger.ts",
+      "packages/workflow-engine/src/authority-audit-service.ts",
+      "packages/workflow-engine/src/authority-refusal-audit.ts",
+      "packages/workflow-engine/src/collaboration-grant.ts",
+      "packages/workflow-engine/src/collaboration-grant-cli.ts",
+      "packages/workflow-engine/src/external-effect-grant.ts",
+      "packages/workflow-engine/src/human-resolution.ts",
+      "packages/workflow-engine/src/maintainer-approve.ts",
+      "packages/workflow-engine/src/maintainer-candidate.ts",
+      "packages/workflow-engine/src/maintainer-commit.ts",
+      "packages/workflow-engine/src/maintainer-manifest.ts",
+      "packages/workflow-engine/src/maintainer-policy.ts",
+      "packages/workflow-engine/src/maintainer-signer.ts",
+      "packages/workflow-engine/src/task-mandate.ts"
+    ],
+    "lifecycle": [
+      "packages/workflow-engine/src/archive-eligibility.ts",
+      "packages/workflow-engine/src/archive-transformation.ts",
+      "packages/workflow-engine/src/archive-transition.ts",
+      "packages/workflow-engine/src/execution-core.ts",
+      "packages/workflow-engine/src/execution-store.ts",
+      "packages/workflow-engine/src/intervention-control.ts",
+      "packages/workflow-engine/src/lifecycle.ts",
+      "packages/workflow-engine/src/planning-lock.ts",
+      "packages/workflow-engine/src/planning-transition.ts",
+      "packages/workflow-engine/src/session-store.ts"
+    ],
+    "policy": ["workflow/**"],
+    "verification-infrastructure": [
+      "packages/workflow-engine/test/**",
+      "packages/workflow-engine/bench/**",
+      ".husky/**"
+    ],
+    "contract-surface": [
+      "openspec/specs/**",
+      "packages/workflow-engine/src/contracts.ts",
+      "packages/workflow-engine/src/openspec-payloads.ts",
+      "packages/workflow-engine/src/openspec-payload-primitives.ts",
+      "packages/workflow-engine/src/openspec-schema-contract.ts",
+      "packages/workflow-engine/src/plan-review.ts",
+      "packages/workflow-engine/src/planning-generation.ts",
+      "packages/workflow-engine/src/planning-paths.ts"
+    ],
+    "ordinary": ["apps/**", "docs/**", "packages/workflow-engine/src/**"]
+  }
+}
