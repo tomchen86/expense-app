@@ -9,9 +9,10 @@
     "prepare": "husky",
     "format": "prettier --write .",
     "format:check": "pnpm workflow run-check workflow-format --json",
+    "harness-bootstrap": "node --experimental-strip-types packages/workflow-engine/bootstrap/harness-bootstrap-launcher.ts",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
-    "workflow": "node --experimental-strip-types packages/workflow-engine/src/cli.ts",
+    "workflow": "node --experimental-strip-types packages/workflow-engine/bootstrap/workflow-launcher.ts",
     "workflow:test": "node --experimental-strip-types --test packages/workflow-engine/test/contracts.test.ts packages/workflow-engine/test/session.integration.test.ts",
     "workflow:typecheck": "tsc -p packages/workflow-engine/tsconfig.json"
   },
