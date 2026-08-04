@@ -36,7 +36,7 @@
     {
       "path": "src/archive-eligibility.ts",
       "mode": "100644",
-      "digest": "sha256:c27cc417562cabd89eb7333d623353eb3c8d966c6c7a8d1d6b8756a25d42a26b"
+      "digest": "sha256:49fd10ece3258d14966e9e988a0e8fee1345162f5703bf26b9f901d34f99a8aa"
     },
     {
       "path": "src/archive-output-safety.ts",
@@ -116,7 +116,7 @@
     {
       "path": "src/ci-archive.ts",
       "mode": "100644",
-      "digest": "sha256:e6919281717b1fc0f64c00ed8e6ac8541563e296ebe391d49a30edd2269e1d85"
+      "digest": "sha256:d3e9d465608e4297d6be236e680b85e81926d0daae9f4ed1d4b8ae9af0d8e40d"
     },
     {
       "path": "src/ci-attestation.ts",
@@ -156,7 +156,7 @@
     {
       "path": "src/ci-planning.ts",
       "mode": "100644",
-      "digest": "sha256:084d68433694e012c84a384826583fcf95f5cd6ae627e3b68e0a56cd68692c0c"
+      "digest": "sha256:304d3ef5c103b4d4cda0e0678e2290efa14f8570c0691e549ad8f2d3fea10f10"
     },
     {
       "path": "src/ci-policy.ts",
@@ -166,7 +166,7 @@
     {
       "path": "src/ci-sequence.ts",
       "mode": "100644",
-      "digest": "sha256:e6ed30d24e4490bf4fdaf39d0fab24739b476da27fbae563f222874b19b1ff09"
+      "digest": "sha256:f1046d23f5b1e2723bdff1ae32fee575a9269db0d2b9db8a330c636bff4e36b9"
     },
     {
       "path": "src/ci-signature.ts",
@@ -181,7 +181,7 @@
     {
       "path": "src/ci.ts",
       "mode": "100644",
-      "digest": "sha256:8daffc5da69ae3fcfe3ec25b3b380f33d03570ab9fab8296479d3377553afec9"
+      "digest": "sha256:965a416c6ef162c6a1cd5f9f4c91f2815b2d4437bfa363d890e52db8902f65e9"
     },
     {
       "path": "src/claude-provider-adapter.ts",
@@ -191,7 +191,7 @@
     {
       "path": "src/cli.ts",
       "mode": "100644",
-      "digest": "sha256:1e115fc679f5630f268c1f67f15625c9cac665129601e5413a8b406441a0a693"
+      "digest": "sha256:223b5765ca10bdaa84e212363109150aedc9ed5fd2150464d53fd7e557a59d2a"
     },
     {
       "path": "src/codex-provider-adapter.ts",
@@ -201,7 +201,7 @@
     {
       "path": "src/collaboration-grant-cli.ts",
       "mode": "100644",
-      "digest": "sha256:eed3751234184523bbc3d2bc76b1ffddbe046de1c781fe763dd46b79dba7f3fc"
+      "digest": "sha256:c73ecc4b77f69da4a1f43b124df8ec514632c434be59a183712af62e3348f863"
     },
     {
       "path": "src/collaboration-grant-store.ts",
@@ -356,7 +356,7 @@
     {
       "path": "src/git.ts",
       "mode": "100644",
-      "digest": "sha256:95514ae9bff5b5b106ae801755504cf8eb382db1b2bcfab316624dada5aaa6d6"
+      "digest": "sha256:0d567a8fa5aa959185438401abcf22ca039f19f0466b6245159550ed9ea6247d"
     },
     {
       "path": "src/handoff.ts",
@@ -671,7 +671,7 @@
     {
       "path": "src/plan-review.ts",
       "mode": "100644",
-      "digest": "sha256:821218cf856ed09c8bec48ed8f03e572f5226261b1a1d2c7128e376ae1d24eab"
+      "digest": "sha256:16a5b9719cbdecab27cde3fea3654218d79ed3e938156ef3d53ed1b42cb1dd11"
     },
     {
       "path": "src/plan-target.ts",
@@ -681,7 +681,7 @@
     {
       "path": "src/planning-assurance-validator.ts",
       "mode": "100644",
-      "digest": "sha256:10c3881095ad28dc4cf949d3811e231a5231409fb89b70508cf6c7da66607f13"
+      "digest": "sha256:bb8aa69853af26066725f7687e5cb65ca4a9b93aa3cb71d69b95f610cabade7b"
     },
     {
       "path": "src/planning-contract.ts",
@@ -691,12 +691,12 @@
     {
       "path": "src/planning-generation.ts",
       "mode": "100644",
-      "digest": "sha256:afeacc1be95c32ee9f43701ad62f9ab83db70c6ef4774d53203c5c3aa51384f8"
+      "digest": "sha256:b67802e609dd3f8f8e11bc033044880525dbf734bc7c66dd3dd36e3cea8a0c7a"
     },
     {
       "path": "src/planning-lock.ts",
       "mode": "100644",
-      "digest": "sha256:2e9a520c48712cee1393f20e0f5b8cb8aa94c3df4e5c8bf9a71e2e98b7c02880"
+      "digest": "sha256:232231608457f38a7f0a55d14e491e86b7315f4812e9f12e78d5b62a81207e0c"
     },
     {
       "path": "src/planning-paths.ts",
@@ -731,7 +731,7 @@
     {
       "path": "src/propose-orchestrator.ts",
       "mode": "100644",
-      "digest": "sha256:596f75a98c416d9f540911fe4d05b108a8a852c87070a02d3024b20e62e79eb7"
+      "digest": "sha256:2bc0edde097ba66a49cb8ecdb86e899b8e303e1169916c5526425fe0d12541bf"
     },
     {
       "path": "src/protected-capabilities.ts",
@@ -831,12 +831,12 @@
     {
       "path": "src/report-store.ts",
       "mode": "100644",
-      "digest": "sha256:33d8eefbbe60d9fe22e534fbe9454a92db592144238dd0d4311d379c9012dae2"
+      "digest": "sha256:fe9f5e7648a7139f9ba6645b0f02ec47a4348e7aaf5a1bd7fb71a250f5451302"
     },
     {
       "path": "src/report-validation.ts",
       "mode": "100644",
-      "digest": "sha256:3c9714dc3d12f27eb01e9efdc5ff619cc59e4bdfd4aaa074fa18edf1241e96e0"
+      "digest": "sha256:b8d54003fc85fff03f4a8ab2fd93d1df827da78d03d9944c3b06739ce1f1f072"
     },
     {
       "path": "src/repository-validation.ts",
@@ -861,7 +861,7 @@
     {
       "path": "src/session-store.ts",
       "mode": "100644",
-      "digest": "sha256:83a676a3a8a51c7aa0a57ac655d8966e683645ddc306dea9bc825554c86bd49b"
+      "digest": "sha256:1ef989b94903cb9f55dbc7077309f9df99184bde01527b599cff8ca200249418"
     },
     {
       "path": "src/session.ts",

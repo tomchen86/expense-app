@@ -8,6 +8,7 @@ import './archive-eligibility.integration.test.ts';
 import './archive-transformation.integration.test.ts';
 import './archive-transition.integration.test.ts';
 import './ci-archive.integration.test.ts';
+import './ci-planning.integration.test.ts';
 
 import { validateCiPlanningCommit } from '../src/ci-planning.ts';
 import { verifyPullRequest } from '../src/ci.ts';

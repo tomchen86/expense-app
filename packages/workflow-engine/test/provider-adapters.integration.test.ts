@@ -760,6 +760,33 @@ test('governed Git control rejects symlinked control roots', () => {
   }
 });
 
+test('governed runtime directory policy rejects the bare parent segment', () => {
+  const repository = createFixtureRepository();
+  const runtimeDirectory = fs.mkdtempSync(
+    path.join(os.tmpdir(), 'provider-runtime-policy-'),
+  );
+  try {
+    for (const mutableContentPaths of [[], ['..']]) {
+      assert.throws(
+        () =>
+          captureGovernedProviderProjection(repository, [
+            {
+              id: 'semantic-output',
+              path: runtimeDirectory,
+              kind: 'directory-closure',
+              expectedFiles: ['..'],
+              mutableContentPaths,
+            },
+          ]),
+        (error) => isWorkflowError(error, 'GOVERNED_PROJECTION_FAILED'),
+      );
+    }
+  } finally {
+    fs.rmSync(runtimeDirectory, { recursive: true, force: true });
+    fs.rmSync(repository, { recursive: true, force: true });
+  }
+});
+
 test('governed Git control binds common-dir rerere state from a linked worktree', () => {
   const repository = createFixtureRepository();
   const linkedParent = fs.mkdtempSync(

@@ -801,6 +801,7 @@ function digestGovernedRuntimeInputs(inputs, budget) {
             if (expectedFiles.size !== input.expectedFiles.length ||
                 mutableContentPaths.size !== input.mutableContentPaths.length ||
                 [...expectedFiles, ...mutableContentPaths].some((relativePath) => relativePath === '' ||
+                    relativePath === '..' ||
                     path.isAbsolute(relativePath) ||
                     path.posix.normalize(relativePath) !== relativePath ||
                     relativePath.startsWith('../') ||

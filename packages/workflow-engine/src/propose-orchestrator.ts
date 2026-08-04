@@ -4970,28 +4970,8 @@ function readReviewerTermSource(
       ExitCode.staleState,
     );
   }
-  const providerResultNode = output.providerResultNode as EvidenceNode;
+  const embeddedProviderResultNode = output.providerResultNode as EvidenceNode;
   const reviewNode = output.reviewNode as EvidenceNode;
-  const hasTargetSnapshot =
-    Object.hasOwn(
-      providerResultNode.provenanceParentNodeIds,
-      'targetSnapshot',
-    ) ||
-    Object.hasOwn(
-      providerResultNode.semanticParentResultDigests,
-      'targetSnapshot',
-    ) ||
-    Object.hasOwn(providerResultNode.exactInputDigests, 'targetSnapshot');
-  const targetSnapshotNodeId =
-    providerResultNode.provenanceParentNodeIds.targetSnapshot;
-  const targetSnapshotNode =
-    hasTargetSnapshot && typeof targetSnapshotNodeId === 'string'
-      ? readEvidenceNode(paths, targetSnapshotNodeId)
-      : null;
-  const targetSnapshot =
-    targetSnapshotNode === null
-      ? null
-      : readPlanReviewTargetSnapshotNode(targetSnapshotNode);
   const roleResult = output.roleResult as AdmittedRoleResult;
   const rawPriorGroupDispositions = output.priorGroupDispositions as Record<
     string,
@@ -5015,6 +4995,8 @@ function readReviewerTermSource(
     envelope: priorWhyEnvelope,
   };
   const review = readPlanReviewNode(reviewNode);
+  const { providerResultNode, targetSnapshotNode } =
+    readReviewerTermProviderResult(paths, embeddedProviderResultNode, review);
   const terms = output.terms as Array<{
     kind: 'literal-content' | 'literal-path' | 'symbol' | 'config-key';
     value: string;
@@ -5064,14 +5046,10 @@ function readReviewerTermSource(
       providerResultNode.nodeId ||
     sourceNode.semanticParentResultDigests.providerResult !==
       providerResultNode.resultDigest ||
-    (hasTargetSnapshot &&
-      (targetSnapshotNode === null ||
-        providerResultNode.exactInputDigests.targetSnapshot !==
-          targetSnapshotNode.nodeId ||
-        providerResultNode.semanticParentResultDigests.targetSnapshot !==
-          targetSnapshotNode.resultDigest ||
-        targetSnapshot?.subjectDigest !==
-          providerResultNode.exactInputDigests.subject))
+    providerResultNode.exactInputDigests.targetSnapshot !==
+      targetSnapshotNode.nodeId ||
+    providerResultNode.semanticParentResultDigests.targetSnapshot !==
+      targetSnapshotNode.resultDigest
   ) {
     throw workflowError(
       'INVESTIGATION_REVIEWER_TERM_SOURCE_INVALID',
@@ -5143,9 +5121,11 @@ function readReviewerTermSourceV3(
     output.previousReviewerTermSourceNodeId,
     session,
   );
-  const providerResultNode = output.providerResultNode as EvidenceNode;
+  const embeddedProviderResultNode = output.providerResultNode as EvidenceNode;
   const reviewNode = output.reviewNode as EvidenceNode;
   const review = readPlanReviewNode(reviewNode);
+  const { providerResultNode, targetSnapshotNode } =
+    readReviewerTermProviderResult(paths, embeddedProviderResultNode, review);
   const roleResult = output.roleResult as AdmittedRoleResult;
   const rawPriorGroupDispositions = output.priorGroupDispositions as Record<
     string,
@@ -5210,26 +5190,6 @@ function readReviewerTermSourceV3(
     'providerResult',
     ...(previousNodeId === null ? [] : ['previousReviewerTerms']),
   ];
-  const hasTargetSnapshot =
-    Object.hasOwn(
-      providerResultNode.provenanceParentNodeIds,
-      'targetSnapshot',
-    ) ||
-    Object.hasOwn(
-      providerResultNode.semanticParentResultDigests,
-      'targetSnapshot',
-    ) ||
-    Object.hasOwn(providerResultNode.exactInputDigests, 'targetSnapshot');
-  const targetSnapshotNodeId =
-    providerResultNode.provenanceParentNodeIds.targetSnapshot;
-  const targetSnapshotNode =
-    hasTargetSnapshot && typeof targetSnapshotNodeId === 'string'
-      ? readEvidenceNode(paths, targetSnapshotNodeId)
-      : null;
-  const targetSnapshot =
-    targetSnapshotNode === null
-      ? null
-      : readPlanReviewTargetSnapshotNode(targetSnapshotNode);
   if (
     output.investigationId !== session.investigationId ||
     !isBaseline(output.baseline) ||
@@ -5285,14 +5245,10 @@ function readReviewerTermSourceV3(
           previous.sourceNode.nodeId ||
         sourceNode.semanticParentResultDigests.previousReviewerTerms !==
           previous.sourceNode.resultDigest)) ||
-    (hasTargetSnapshot &&
-      (targetSnapshotNode === null ||
-        providerResultNode.exactInputDigests.targetSnapshot !==
-          targetSnapshotNode.nodeId ||
-        providerResultNode.semanticParentResultDigests.targetSnapshot !==
-          targetSnapshotNode.resultDigest ||
-        targetSnapshot?.subjectDigest !==
-          providerResultNode.exactInputDigests.subject))
+    providerResultNode.exactInputDigests.targetSnapshot !==
+      targetSnapshotNode.nodeId ||
+    providerResultNode.semanticParentResultDigests.targetSnapshot !==
+      targetSnapshotNode.resultDigest
   ) {
     throw invalidReviewerTermSource();
   }
@@ -5333,6 +5289,62 @@ function readReviewerTermSourceV3(
     reopenCount: (previous?.reopenCount ?? 0) + 1,
     terms: [...cumulative.values()],
   };
+}
+
+function readReviewerTermProviderResult(
+  paths: ReturnType<typeof loadInvestigationRuntimeContext>['runtime'],
+  value: EvidenceNode,
+  review: ReturnType<typeof readPlanReviewNode>,
+): { providerResultNode: EvidenceNode; targetSnapshotNode: EvidenceNode } {
+  try {
+    const providerResultNode = assertStoredEvidenceNode(
+      value,
+      invalidReviewerTermSource,
+    );
+    if (
+      providerResultNode.type !== 'plan-review-provider-result' ||
+      providerResultNode.nodeSchema !== 'plan-review-provider-result.v2' ||
+      providerResultNode.evaluator !== 'plan-review-provider-result.v2' ||
+      providerResultNode.outputSchema !==
+        'plan-review-provider-result-output.v2' ||
+      !hasExactKeys(providerResultNode.exactInputDigests, [
+        'assignment',
+        'subject',
+        'submission',
+        'targetSnapshot',
+      ]) ||
+      !hasExactKeys(providerResultNode.semanticParentResultDigests, [
+        'targetSnapshot',
+      ]) ||
+      !hasExactKeys(providerResultNode.provenanceParentNodeIds, [
+        'targetSnapshot',
+      ]) ||
+      Object.keys(providerResultNode.runtimeMetadata).length !== 0 ||
+      providerResultNode.exactInputDigests.subject !== review.subjectDigest
+    ) {
+      throw invalidReviewerTermSource();
+    }
+    const targetSnapshotNode = readEvidenceNode(
+      paths,
+      providerResultNode.provenanceParentNodeIds.targetSnapshot!,
+    );
+    const targetSnapshot = readPlanReviewTargetSnapshotNode(targetSnapshotNode);
+    if (
+      providerResultNode.exactInputDigests.targetSnapshot !==
+        targetSnapshotNode.nodeId ||
+      providerResultNode.semanticParentResultDigests.targetSnapshot !==
+        targetSnapshotNode.resultDigest ||
+      targetSnapshotNode.policyDigest !== review.policyDigest ||
+      targetSnapshot.subjectDigest !== review.subjectDigest ||
+      targetSnapshot.planningGenerationId !== review.planningGenerationId ||
+      targetSnapshot.planTargetDigest !== review.planTargetDigest
+    ) {
+      throw invalidReviewerTermSource();
+    }
+    return { providerResultNode, targetSnapshotNode };
+  } catch {
+    throw invalidReviewerTermSource();
+  }
 }
 
 function invalidReviewerTermSource() {

@@ -550,9 +550,7 @@ export function createPlanReviewProviderResultNode(input) {
             'assignment',
             'submission',
             'providerPolicyDigest',
-            ...(Object.hasOwn(input, 'targetSnapshotNode')
-                ? ['targetSnapshotNode']
-                : []),
+            'targetSnapshotNode',
             ...(Object.hasOwn(input, 'runtimeAssurance')
                 ? ['runtimeAssurance']
                 : []),
@@ -568,9 +566,7 @@ export function createPlanReviewProviderResultNode(input) {
     assertSubmissionEvidenceBindings(normalized, subject);
     const submission = canonicalSubmission(normalized);
     const runtimeAssurance = assertPlanReviewRuntimeAssurance(input.runtimeAssurance ?? null);
-    const targetSnapshot = input.targetSnapshotNode === undefined
-        ? null
-        : assertProviderTargetSnapshot(input.targetSnapshotNode, subject);
+    const targetSnapshot = assertProviderTargetSnapshot(input.targetSnapshotNode, subject);
     const assignmentDigest = planReviewAssignmentDigest(assignment);
     const submissionDigest = planReviewSubmissionDigest(submission);
     return createEvidenceNode({
@@ -582,14 +578,12 @@ export function createPlanReviewProviderResultNode(input) {
             assignment: assignmentDigest,
             subject: subject.subjectDigest,
             submission: submissionDigest,
-            ...(targetSnapshot ? { targetSnapshot: targetSnapshot.nodeId } : {}),
+            targetSnapshot: targetSnapshot.nodeId,
         },
-        semanticParentResultDigests: targetSnapshot
-            ? { targetSnapshot: targetSnapshot.resultDigest }
-            : {},
-        provenanceParentNodeIds: targetSnapshot
-            ? { targetSnapshot: targetSnapshot.nodeId }
-            : {},
+        semanticParentResultDigests: {
+            targetSnapshot: targetSnapshot.resultDigest,
+        },
+        provenanceParentNodeIds: { targetSnapshot: targetSnapshot.nodeId },
         outputSchema: PROVIDER_RESULT_OUTPUT_SCHEMA,
         output: {
             schemaVersion: 2,
@@ -922,24 +916,15 @@ function assertProviderResult(value, subject, assignment, expectedSubmission) {
         node.outputSchema !== PROVIDER_RESULT_OUTPUT_SCHEMA) {
         throw planReviewInvalid('Provider result node identity is unexpected.');
     }
-    const hasTargetSnapshot = Object.hasOwn(node.provenanceParentNodeIds, 'targetSnapshot') ||
-        Object.hasOwn(node.semanticParentResultDigests, 'targetSnapshot') ||
-        Object.hasOwn(node.exactInputDigests, 'targetSnapshot');
-    assertExactDigestRoles(node.exactInputDigests, [
-        'assignment',
-        'subject',
-        'submission',
-        ...(hasTargetSnapshot ? ['targetSnapshot'] : []),
-    ], 'Provider result exact-input roles are unexpected.');
-    assertExactDigestRoles(node.semanticParentResultDigests, hasTargetSnapshot ? ['targetSnapshot'] : [], 'Provider result semantic-parent roles are unexpected.');
-    assertExactDigestRoles(node.provenanceParentNodeIds, hasTargetSnapshot ? ['targetSnapshot'] : [], 'Provider result provenance-parent roles are unexpected.');
+    assertExactDigestRoles(node.exactInputDigests, ['assignment', 'subject', 'submission', 'targetSnapshot'], 'Provider result exact-input roles are unexpected.');
+    assertExactDigestRoles(node.semanticParentResultDigests, ['targetSnapshot'], 'Provider result semantic-parent roles are unexpected.');
+    assertExactDigestRoles(node.provenanceParentNodeIds, ['targetSnapshot'], 'Provider result provenance-parent roles are unexpected.');
     if (Object.keys(node.runtimeMetadata).length !== 0) {
         throw planReviewInvalid('Provider result runtime metadata must be empty.');
     }
-    if (hasTargetSnapshot &&
-        (node.exactInputDigests.targetSnapshot !==
-            node.provenanceParentNodeIds.targetSnapshot ||
-            !isDigest(node.semanticParentResultDigests.targetSnapshot))) {
+    if (node.exactInputDigests.targetSnapshot !==
+        node.provenanceParentNodeIds.targetSnapshot ||
+        !isDigest(node.semanticParentResultDigests.targetSnapshot)) {
         throw planReviewInvalid('Provider result target snapshot binding is malformed.');
     }
     const output = assertExactKeys(node.output, PROVIDER_RESULT_OUTPUT_KEYS);
@@ -966,9 +951,17 @@ function assertProviderResult(value, subject, assignment, expectedSubmission) {
 }
 function assertProviderTargetSnapshot(value, subject) {
     const node = assertStoredEvidenceNode(value, () => planReviewInvalid('Provider target snapshot node is malformed.'));
-    if (node.type !== 'plan-review-target-snapshot' ||
-        node.exactInputDigests.subject !== subject.subjectDigest ||
-        Object.keys(node.runtimeMetadata).length !== 0) {
+    let snapshot;
+    try {
+        snapshot = readPlanReviewTargetSnapshotNode(node);
+    }
+    catch {
+        throw planReviewInvalid('Provider target snapshot node is malformed.');
+    }
+    if (snapshot.subjectDigest !== subject.subjectDigest ||
+        snapshot.planningGenerationId !== subject.planningGenerationId ||
+        snapshot.planTargetDigest !== subject.planTargetDigest ||
+        node.policyDigest !== subject.reviewPolicyDigest) {
         throw planReviewInvalid('Provider target snapshot does not bind the review subject.');
     }
     return node;
@@ -1383,7 +1376,8 @@ function assertBaseline(value) {
     if (typeof head !== 'string' ||
         !GIT_OBJECT_ID_PATTERN.test(head) ||
         typeof tree !== 'string' ||
-        !GIT_OBJECT_ID_PATTERN.test(tree)) {
+        !GIT_OBJECT_ID_PATTERN.test(tree) ||
+        head.length !== tree.length) {
         throw planReviewInvalid('Investigation baseline is malformed.');
     }
     return { head, tree };

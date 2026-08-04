@@ -335,9 +335,17 @@ export function withRepositoryLifecycleOperation<T>(
       options.allowMaintainerGrantId,
     );
     result = operation(assertLifecycleOwned);
-  } catch (error) {
-    release();
-    throw error;
+  } catch (operationError) {
+    try {
+      release();
+    } catch (releaseError) {
+      throw new AggregateError(
+        [operationError, releaseError],
+        'Repository lifecycle operation and lock release both failed.',
+        { cause: releaseError },
+      );
+    }
+    throw operationError;
   }
   release();
   return result;

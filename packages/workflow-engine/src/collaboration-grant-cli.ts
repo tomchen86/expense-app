@@ -16,6 +16,7 @@ import { discoverRepository, runGit } from './git.ts';
 import { isProviderId } from './provider-registry.ts';
 
 type CollaborationGrantCommandResult = Record<string, unknown>;
+const GIT_OBJECT_ID_PATTERN = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
 
 export function isCollaborationGrantCommand(args: string[]): boolean {
   return (
@@ -129,6 +130,7 @@ export function parseCollaborationGrantArguments(
   if (
     !changeId ||
     !baselineCommit ||
+    !GIT_OBJECT_ID_PATTERN.test(baselineCommit) ||
     !targetDigest ||
     !isLifecyclePhase(lifecyclePhase) ||
     !isRolePair(lifecyclePhase, authorRole, conflictingRole) ||

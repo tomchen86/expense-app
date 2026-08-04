@@ -44,6 +44,7 @@ import './authority-audit-ledger.contract.test.ts';
 import './authority-audit-profile.contract.test.ts';
 import './authority-audit-service.contract.test.ts';
 import './authority-refusal-audit.contract.test.ts';
+import './boundary-hardening.contract.test.ts';
 import './maintainer-attestation.integration.test.ts';
 import './ci-attestation.integration.test.ts';
 import './evidence-node.contract.test.ts';

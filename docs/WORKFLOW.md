@@ -698,9 +698,11 @@ Every OpenSpec upgrade is a separate reviewed change. In that change:
    matching integrity-pinned `pnpm-lock.yaml` resolution. Keep
    `allowBuilds['@fission-ai/openspec']` explicitly `false`.
 2. Inspect the installed public CLI and packaged `schemas/spec-driven` source.
-   Review and update the `expense-app` schema fork and
-   `openspec/schemas/expense-app/provenance.json`; do not deep-import internals
-   or copy the archive merge implementation.
+   Review and update the active `expense-app-v2` schema fork and
+   `openspec/schemas/expense-app-v2/provenance.json`. If the compatibility-only
+   `expense-app` v1 fork remains supported, review its provenance separately;
+   do not substitute it for the active v2 contract, deep-import internals, or
+   copy the archive merge implementation.
 3. Regenerate and compare the planning-only tool-plural OpenSpec assets:
 
    ```bash

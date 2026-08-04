@@ -47,13 +47,16 @@ export function replayCommitSequence(
   legacyExceptions: BootstrapException[],
   planningBootstrapPolicies: PlanningBootstrapException[],
   evaluatedAt: Date = new Date(),
+  priorCollaborationGrantUses: readonly CiCollaborationGrantUse[] = [],
 ): CommitSequenceResult {
   const priorTaskTrailers = new Set<string>();
   const completedTasks = new Map<string, CompletedTask>();
   const archivedChanges = new Set<string>();
   const authorityGrants = new Set<string>();
   const requiredCheckDefinitions = new Map<string, string>();
-  const collaborationGrantUses: CiCollaborationGrantUse[] = [];
+  const collaborationGrantUses: CiCollaborationGrantUse[] = [
+    ...priorCollaborationGrantUses,
+  ];
   const completionPaths = completionDocumentPaths(repositoryRoot);
   const expectedCompatibility = legacyExceptions.flatMap((exception) =>
     exception.compatibilityCommits.map((definition) => ({

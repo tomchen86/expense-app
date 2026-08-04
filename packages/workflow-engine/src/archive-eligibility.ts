@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 import { assertUniqueCollaborationGrantUses } from './collaboration-grant.ts';
+import { collectHistoricalCollaborationGrantUses } from './ci-planning.ts';
 import { loadWorkflowConfig, type ManagedSchemaName } from './contracts.ts';
 import { ExitCode, workflowError } from './errors.ts';
 import {
@@ -163,25 +164,35 @@ function inspectEligibility(
     );
   }
   if (contract.schemaName === 'expense-app-v2') {
-    // The contract loader already replayed semantic readiness with the shared
-    // validator. Archive additionally decides one-use grant uniqueness over the
-    // whole change, using only tracked evidence so a local reservation record
-    // can neither authorize nor excuse a duplicate claim.
+    // The contract loader already replayed current semantic readiness with the
+    // shared validator. Archive additionally decides one-use grant uniqueness
+    // over every exact planning transition in this change's immutable history;
+    // a singleton current role result cannot reveal an earlier reuse.
     const { grantUse } = validateInvestigationFirstPlanningReadiness(
       initial.repositoryRoot,
       contract,
     ).roleResult;
-    assertUniqueCollaborationGrantUses(
-      grantUse === null
-        ? []
-        : [
-            {
-              grantId: grantUse.grantId,
-              signedEnvelopeDigest: grantUse.signedEnvelopeDigest,
-              transitionDigest: grantUse.transitionDigest,
-            },
-          ],
+    const historicalUses = collectHistoricalCollaborationGrantUses(
+      git.repositoryRoot,
+      git.head,
+      contract.changeId,
+      config.changeRoot,
     );
+    assertUniqueCollaborationGrantUses(historicalUses);
+    if (
+      grantUse !== null &&
+      !historicalUses.some(
+        (use) =>
+          use.grantId === grantUse.grantId &&
+          use.signedEnvelopeDigest === grantUse.signedEnvelopeDigest &&
+          use.transitionDigest === grantUse.transitionDigest,
+      )
+    ) {
+      throw archiveError(
+        'ARCHIVE_COLLABORATION_GRANT_HISTORY_MISMATCH',
+        'The current collaboration grant use is absent from managed planning history.',
+      );
+    }
   }
 
   const incomplete = contract.tasks

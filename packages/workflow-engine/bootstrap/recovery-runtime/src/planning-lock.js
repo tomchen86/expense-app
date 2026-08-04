@@ -157,9 +157,14 @@ function withChangeTransitionLock(runtime, changeId, transition, operation) {
     try {
         result = operation(assertOwned);
     }
-    catch (error) {
-        release();
-        throw error;
+    catch (operationError) {
+        try {
+            release();
+        }
+        catch (releaseError) {
+            throw new AggregateError([operationError, releaseError], 'Planning operation and change-lock release both failed.', { cause: releaseError });
+        }
+        throw operationError;
     }
     release();
     return result;

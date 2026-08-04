@@ -3,7 +3,9 @@ import path from 'node:path';
 
 import { verifyArchiveDeltaOutcomes } from './archive-delta-verifier.ts';
 import { preEpochCompletedTaskIds } from './bootstrap-task-exemption.ts';
+import { assertUniqueCollaborationGrantUses } from './collaboration-grant.ts';
 import { canonicalCheckDefinition } from './ci-historical-contract.ts';
+import { collectHistoricalCollaborationGrantUses } from './ci-planning.ts';
 import {
   assertArchiveReplayContent,
   inspectArchiveCommitTree,
@@ -69,6 +71,14 @@ export function validateCiArchiveCommit(
   const parent = facts.parents[0];
   const changedPaths = commitChangedPaths(repositoryRoot, commitHash);
   const config = loadWorkflowConfig(repositoryRoot);
+  assertUniqueCollaborationGrantUses(
+    collectHistoricalCollaborationGrantUses(
+      repositoryRoot,
+      parent,
+      changeId,
+      config.changeRoot,
+    ),
+  );
   const archivePath = inspectArchiveCommitTree(
     repositoryRoot,
     parent,

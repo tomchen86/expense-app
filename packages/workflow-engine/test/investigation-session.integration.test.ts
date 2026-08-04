@@ -2233,6 +2233,11 @@ test('fake-backed propose composes breadth and depth before materializing an unc
     const exactSecondReviewerSource = fs.readFileSync(secondReviewerSourcePath);
     const reviewerSourceMutations: Array<(node: EvidenceNode) => void> = [
       (node) => {
+        delete node.exactInputDigests.targetSnapshot;
+        delete node.semanticParentResultDigests.targetSnapshot;
+        delete node.provenanceParentNodeIds.targetSnapshot;
+      },
+      (node) => {
         delete node.semanticParentResultDigests.targetSnapshot;
       },
       (node) => {

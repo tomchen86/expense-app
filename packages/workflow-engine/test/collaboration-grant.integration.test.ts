@@ -7,6 +7,7 @@ import path from 'node:path';
 import test from 'node:test';
 
 import { canonicalJson } from '../src/canonical-json.ts';
+import { parseCollaborationGrantArguments } from '../src/collaboration-grant-cli.ts';
 import {
   COLLABORATION_GRANT_AUTHORIZED_EFFECT,
   COLLABORATION_GRANT_POLICY_DIGEST,
@@ -659,6 +660,27 @@ test('collaboration grant CLI requires a controlling TTY and has no unattended e
     );
     assert.equal(unattended.status, 2, unattended.stderr);
     assert.equal(JSON.parse(unattended.stderr).error.code, 'INVALID_USAGE');
+  } finally {
+    fs.rmSync(repository, { recursive: true, force: true });
+  }
+});
+
+test('collaboration grant CLI validates the base object ID before invoking Git', () => {
+  const repository = collaborationFixture();
+  try {
+    const request = sameProviderRequest(repository);
+    const cli = path.join(
+      sourceRepositoryRoot,
+      'packages/workflow-engine/src/cli.ts',
+    );
+    const args = collaborationCliArguments(cli, request).slice(3, -1);
+    const baselineIndex = args.indexOf('--base') + 1;
+    args[baselineIndex] = '--not-an-object-id';
+
+    assert.throws(
+      () => parseCollaborationGrantArguments(args, repository),
+      (error) => isWorkflowError(error, 'INVALID_USAGE'),
+    );
   } finally {
     fs.rmSync(repository, { recursive: true, force: true });
   }

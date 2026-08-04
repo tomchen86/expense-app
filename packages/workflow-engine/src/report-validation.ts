@@ -105,6 +105,9 @@ export function assertCompletionTaskIds(
   const currentIndex = baselineTasks.findIndex(
     ({ id }) => id === inspection.session.taskId,
   );
+  if (currentIndex < 0) {
+    throw staleReport(errorCode);
+  }
   const earlier = baselineTasks.slice(0, currentIndex);
   const incomplete = earlier.filter(({ completed }) => !completed);
   const allowed = [[inspection.session.taskId]];

@@ -180,10 +180,20 @@ import {
 } from './task-mandate.ts';
 
 type CommandResult = Record<string, unknown>;
+const STANDALONE_COMMAND_FLAGS = new Set(['--migrate-legacy', '--resume']);
+const OPTION_SHAPED_TEXT_VALUE_OPTIONS = new Set([
+  '--message',
+  '--rationale',
+  '--reason',
+  '--replacement',
+  '--resolution-reason',
+  '--reviewer',
+  '--section',
+]);
 
 export function runCli(argv: string[], cwd = process.cwd()): number {
-  const json = argv.includes('--json');
-  const args = argv.filter((argument) => argument !== '--json');
+  const json = hasTerminalJsonOutputFlag(argv);
+  const args = json ? argv.slice(0, -1) : [...argv];
 
   try {
     const result = dispatch(args, cwd);
@@ -201,6 +211,26 @@ export function runCli(argv: string[], cwd = process.cwd()): number {
     printFailure(workflowFailure, json);
     return workflowFailure.exitCode;
   }
+}
+
+function hasTerminalJsonOutputFlag(argv: string[]): boolean {
+  if (argv.at(-1) !== '--json') return false;
+  const previousArgument = argv.at(-2);
+  if (
+    previousArgument === undefined ||
+    !previousArgument.startsWith('--') ||
+    STANDALONE_COMMAND_FLAGS.has(previousArgument)
+  ) {
+    return true;
+  }
+  const valueOption = argv.at(-3);
+  if (previousArgument === '--json') {
+    return (
+      valueOption !== undefined &&
+      OPTION_SHAPED_TEXT_VALUE_OPTIONS.has(valueOption)
+    );
+  }
+  return !OPTION_SHAPED_TEXT_VALUE_OPTIONS.has(previousArgument);
 }
 
 function dispatch(args: string[], cwd: string): CommandResult {

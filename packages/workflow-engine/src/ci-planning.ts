@@ -1,12 +1,18 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
+import { canonicalJson } from './canonical-json.ts';
 import {
+  assertCollaborationGrantId,
   assertUniqueCollaborationGrantUses,
   type CollaborationGrantUseIdentity,
 } from './collaboration-grant.ts';
+import { readFileAtCommit } from './ci-git.ts';
+import { isRecord } from './contract-values.ts';
 import {
   loadChangeContract,
+  parseInvestigationArtifact,
+  parsePlanReviewArtifact,
   parseTasks,
   readChangeSchemaName,
   type ManagedSchemaName,
@@ -57,6 +63,125 @@ export type CiPlanningCommitValidation = {
 export type CiCollaborationGrantUse = CollaborationGrantUseIdentity;
 
 export { assertUniqueCollaborationGrantUses };
+
+/**
+ * Reconstruct every collaboration-grant claim made by exact planning
+ * transitions for one change through the requested immutable Git tip.
+ * Non-plan commits are deliberately ignored even when they touch the artifact:
+ * maxUses applies to the managed transition that claimed the review, while the
+ * ordinary CI path separately rejects unmanaged planning mutations.
+ */
+export function collectHistoricalCollaborationGrantUses(
+  repositoryRoot: string,
+  head: string,
+  changeId: string,
+  changeRoot = 'openspec/changes',
+): readonly CiCollaborationGrantUse[] {
+  assertChangeId(changeId);
+  const normalizedChangeRoot = normalizeChangedPath(changeRoot);
+  if (normalizedChangeRoot !== changeRoot || changeRoot.endsWith('/')) {
+    throw ciPlanningError(
+      'CI_PLANNING_ROOT_INVALID',
+      'CI planning validation requires one canonical change root.',
+    );
+  }
+  const artifactPaths = [
+    `${normalizedChangeRoot}/${changeId}/investigation.json`,
+    `${normalizedChangeRoot}/${changeId}/plan-review.json`,
+  ] as const;
+  const commits = runGit(repositoryRoot, [
+    'rev-list',
+    '--full-history',
+    '--reverse',
+    head,
+    '--',
+    ...artifactPaths.map((artifactPath) => `:(literal)${artifactPath}`),
+  ])
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean);
+  const expectedMessage = `${planningCommitMessage(changeId)}\n`;
+  return commits.flatMap((commit) => {
+    const facts = commitFacts(repositoryRoot, commit);
+    if (facts.parents.length !== 1 || facts.message !== expectedMessage) {
+      return [];
+    }
+    return artifactPaths.flatMap((artifactPath) => {
+      const raw = readFileAtCommit(repositoryRoot, commit, artifactPath);
+      if (raw === undefined) {
+        return [];
+      }
+      return grantUsesFromPlanningArtifact(
+        raw,
+        changeId,
+        artifactPath.endsWith('/investigation.json')
+          ? 'investigation'
+          : 'plan-review',
+      );
+    });
+  });
+}
+
+function grantUsesFromPlanningArtifact(
+  raw: string,
+  changeId: string,
+  artifactKind: 'investigation' | 'plan-review',
+): CiCollaborationGrantUse[] {
+  let roleResults: unknown[] | undefined;
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (raw !== `${canonicalJson(parsed)}\n`) {
+      throw new Error('noncanonical artifact');
+    }
+    roleResults =
+      artifactKind === 'investigation'
+        ? parseInvestigationArtifact(parsed, changeId).roleResults
+        : parsePlanReviewArtifact(parsed, changeId).roleResults;
+  } catch {
+    throw ciPlanningError(
+      'CI_PLANNING_GRANT_HISTORY_INVALID',
+      'Historical planning grant claims are malformed.',
+    );
+  }
+  return grantUsesFromRoleResults(roleResults ?? []);
+}
+
+function grantUsesFromRoleResults(
+  roleResults: readonly unknown[],
+): CiCollaborationGrantUse[] {
+  return roleResults.flatMap((roleResult) => {
+    if (!isRecord(roleResult)) {
+      throw ciPlanningError(
+        'CI_PLANNING_GRANT_HISTORY_INVALID',
+        'Historical planning grant claims are malformed.',
+      );
+    }
+    if (roleResult.grantUse === null) {
+      return [];
+    }
+    const use = roleResult.grantUse;
+    if (
+      !isRecord(use) ||
+      typeof use.grantId !== 'string' ||
+      typeof use.signedEnvelopeDigest !== 'string' ||
+      typeof use.transitionDigest !== 'string' ||
+      !/^[0-9a-f]{64}$/.test(use.signedEnvelopeDigest) ||
+      !/^[0-9a-f]{64}$/.test(use.transitionDigest)
+    ) {
+      throw ciPlanningError(
+        'CI_PLANNING_GRANT_HISTORY_INVALID',
+        'Historical planning grant claims are malformed.',
+      );
+    }
+    return [
+      {
+        grantId: assertCollaborationGrantId(use.grantId),
+        signedEnvelopeDigest: use.signedEnvelopeDigest,
+        transitionDigest: use.transitionDigest,
+      },
+    ];
+  });
+}
 
 type TreeEntry = {
   mode: string;
@@ -237,7 +362,7 @@ function replayPlanningTree(
     return {
       schemaName,
       planningAssurance: readiness.summary,
-      collaborationGrantUses: collectGrantUses(readiness),
+      collaborationGrantUses: collectGrantUses(contract),
     };
   });
 }
@@ -308,23 +433,18 @@ function resolveReplayedSchemaName(
 }
 
 /**
- * Project the grant use out of the role result the shared validator actually
- * admitted, rather than re-reading raw artifact JSON. Uniqueness across the
- * complete replayed subject is decided later by the aggregate validator.
+ * Project every grant identity carried by the parsed planning artifacts. The
+ * shared readiness validator has already admitted the current semantic plan;
+ * collection deliberately reads each artifact once so investigation and
+ * PlanReview claims enter aggregate uniqueness without duplicating the current
+ * PlanReview result through a second projection path.
  */
 function collectGrantUses(
-  readiness: ReturnType<typeof validateInvestigationFirstPlanningReadiness>,
+  contract: ReturnType<typeof loadChangeContract>,
 ): readonly CiCollaborationGrantUse[] {
-  const { grantUse } = readiness.roleResult;
-  if (grantUse === null) {
-    return Object.freeze([]);
-  }
   return Object.freeze([
-    {
-      grantId: grantUse.grantId,
-      signedEnvelopeDigest: grantUse.signedEnvelopeDigest,
-      transitionDigest: grantUse.transitionDigest,
-    },
+    ...grantUsesFromRoleResults(contract.investigation?.roleResults ?? []),
+    ...grantUsesFromRoleResults(contract.planReview?.roleResults ?? []),
   ]);
 }
 
