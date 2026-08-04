@@ -54,6 +54,7 @@ import {
   executeChecks,
   inspectSession,
   persistSession,
+  reconcileSessionChecksAfterLocalEngineAdoption,
   writeSessionReport,
 } from './verification.ts';
 import {
@@ -368,6 +369,9 @@ function completeTaskUnlocked(
   requestedSessionId: string,
   environment: NodeJS.ProcessEnv,
 ): CompleteTaskResult {
+  reconcileSessionChecksAfterLocalEngineAdoption(cwd, requestedSessionId, {
+    environment,
+  });
   const initial = inspectSession(cwd, requestedSessionId);
   if (initial.session.completionReportId) {
     throw workflowError(

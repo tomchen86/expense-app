@@ -767,11 +767,16 @@ test('provider process and output failures never become successful results', () 
   });
   const result = providerResult(request, { terms: [] });
   const failures: Array<[Partial<ProviderProcessOutcome>, string]> = [
-    [{ timedOut: true }, 'PROVIDER_PROCESS_FAILED'],
-    [{ elapsedMs: 101 }, 'PROVIDER_PROCESS_FAILED'],
-    [{ signal: 'SIGTERM' }, 'PROVIDER_PROCESS_FAILED'],
-    [{ spawnErrorCode: 'ENOENT' }, 'PROVIDER_PROCESS_FAILED'],
-    [{ exitCode: 1 }, 'PROVIDER_PROCESS_FAILED'],
+    [{ timedOut: true }, 'PROVIDER_TIMEOUT'],
+    [{ elapsedMs: 101 }, 'PROVIDER_TIMEOUT'],
+    [{ signal: 'SIGTERM' }, 'PROVIDER_PROCESS_CRASH'],
+    [{ spawnErrorCode: 'ENETUNREACH' }, 'NETWORK_TRANSIENT'],
+    [{ spawnErrorCode: 'ENOENT' }, 'PROVIDER_TOOL_UNAVAILABLE'],
+    [
+      { exitCode: 1, stderr: 'HTTP 429 rate limit; retry later' },
+      'PROVIDER_RATE_LIMIT',
+    ],
+    [{ exitCode: 1 }, 'PROVIDER_PROCESS_NONZERO'],
     [{ stdout: '{not-json' }, 'PROVIDER_RESULT_INVALID'],
     [
       { stdout: `${JSON.stringify(result)}\n${JSON.stringify(result)}` },
@@ -792,6 +797,21 @@ test('provider process and output failures never become successful results', () 
       code,
     );
   }
+  assert.throws(
+    () =>
+      evaluateProviderProcess(
+        request,
+        processOutcome(result, {
+          exitCode: 1,
+          stderr: 'HTTP 429 rate limit\nRetry-After: 23',
+        }),
+        outputValidator(request),
+      ),
+    (error) =>
+      error instanceof WorkflowError &&
+      isWorkflowError(error, 'PROVIDER_RATE_LIMIT') &&
+      error.details?.retryAfterMs === 23_000,
+  );
   assert.throws(
     () =>
       evaluateProviderProcess(request, processOutcome(result), {

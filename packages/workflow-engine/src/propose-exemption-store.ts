@@ -33,6 +33,7 @@ import {
   type HeldChangeTransitionAuthority,
 } from './planning-lock.ts';
 import { PROPOSE_EXEMPTION_SESSION_STORE_POLICY_DIGEST } from './provider-contracts.ts';
+import type { TaskMandateBinding } from './task-mandate.ts';
 
 const DIGEST = /^[0-9a-f]{64}$/;
 const GIT_OBJECT_ID = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
@@ -51,6 +52,7 @@ export type ProposeExemptionSession = {
   revision: 0;
   state: 'investigation-exempt';
   changeId: string;
+  mandateBinding?: TaskMandateBinding;
   repositoryRoot: string;
   gitCommonDirectory: string;
   branch: string | null;
@@ -67,6 +69,7 @@ export type ProposeExemptionSession = {
 type StoredProposeExemptionSession = ContentRecord & {
   kind: 'propose-exemption-session';
   changeId: string;
+  mandateBinding?: TaskMandateBinding;
   repositoryRoot: string;
   gitCommonDirectory: string;
   branch: string | null;
@@ -81,6 +84,7 @@ type StoredProposeExemptionSession = ContentRecord & {
 
 export type CreateProposeExemptionSessionInput = {
   changeId: string;
+  mandateBinding?: TaskMandateBinding;
   repositoryRoot: string;
   gitCommonDirectory: string;
   branch: string | null;
@@ -124,6 +128,7 @@ export function createProposeExemptionSession(
     kind: 'propose-exemption-session',
     createdAt: canonicalIsoDate(input.createdAt ?? new Date().toISOString()),
     changeId,
+    ...(input.mandateBinding ? { mandateBinding: input.mandateBinding } : {}),
     repositoryRoot: nonEmptyString(input.repositoryRoot),
     gitCommonDirectory: nonEmptyString(input.gitCommonDirectory),
     branch: nullableNonEmptyString(input.branch),
@@ -254,6 +259,7 @@ export function readProposeExemptionSession(
     revision: 0,
     state: 'investigation-exempt',
     changeId: record.changeId,
+    ...(record.mandateBinding ? { mandateBinding: record.mandateBinding } : {}),
     repositoryRoot: record.repositoryRoot,
     gitCommonDirectory: record.gitCommonDirectory,
     branch: record.branch,
@@ -326,6 +332,9 @@ function assertStoredSession(value: unknown): StoredProposeExemptionSession {
       'kind',
       'createdAt',
       'changeId',
+      ...(Object.prototype.hasOwnProperty.call(value, 'mandateBinding')
+        ? ['mandateBinding']
+        : []),
       'repositoryRoot',
       'gitCommonDirectory',
       'branch',
@@ -351,6 +360,14 @@ function assertStoredSession(value: unknown): StoredProposeExemptionSession {
     kind: 'propose-exemption-session',
     createdAt: canonicalIsoDate(value.createdAt),
     changeId: assertChangeId(String(value.changeId)),
+    ...(Object.prototype.hasOwnProperty.call(value, 'mandateBinding')
+      ? {
+          mandateBinding: assertTaskMandateBinding(
+            value.mandateBinding,
+            String(value.changeId),
+          ),
+        }
+      : {}),
     repositoryRoot: nonEmptyString(value.repositoryRoot),
     gitCommonDirectory: nonEmptyString(value.gitCommonDirectory),
     branch: nullableNonEmptyString(value.branch),
@@ -398,6 +415,7 @@ function sessionRequestDigest(
     canonicalJson({
       schema: 'workflow-propose-exemption-session-request.v1',
       changeId: value.changeId,
+      mandateBinding: value.mandateBinding ?? null,
       repositoryRoot: value.repositoryRoot,
       gitCommonDirectory: value.gitCommonDirectory,
       branch: value.branch,
@@ -420,6 +438,39 @@ function exemptionRecordId(investigationId: string): string {
     throw sessionInvalid();
   }
   return investigationId.slice(SESSION_PREFIX.length);
+}
+
+function assertTaskMandateBinding(
+  value: unknown,
+  changeId: string,
+): TaskMandateBinding {
+  if (
+    !isRecord(value) ||
+    !hasExactKeys(value, [
+      'schemaVersion',
+      'mandateTaskId',
+      'mandateId',
+      'mandateDigest',
+      'changeId',
+      'externalAuditRoot',
+    ]) ||
+    value.schemaVersion !== 1 ||
+    value.changeId !== changeId ||
+    typeof value.mandateTaskId !== 'string' ||
+    !/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(value.mandateTaskId) ||
+    typeof value.mandateId !== 'string' ||
+    !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(
+      value.mandateId,
+    ) ||
+    typeof value.mandateDigest !== 'string' ||
+    !DIGEST.test(value.mandateDigest) ||
+    typeof value.externalAuditRoot !== 'string' ||
+    !path.isAbsolute(value.externalAuditRoot) ||
+    path.normalize(value.externalAuditRoot) !== value.externalAuditRoot
+  ) {
+    throw sessionInvalid();
+  }
+  return structuredClone(value) as TaskMandateBinding;
 }
 
 function assertBaseline(value: unknown): { head: string; tree: string } {

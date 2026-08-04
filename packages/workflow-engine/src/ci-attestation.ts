@@ -8,6 +8,7 @@ import {
   type AttestedCommitFacts,
   type AuthorityAttestationEnvelope,
 } from './authority-attestation.ts';
+import { authorityApplicationReceiptTagPrefix } from './authority-application-receipt.ts';
 import { validateCiAuthorityCommit } from './ci-authority.ts';
 import { readFileAtCommit, type RangeCommit } from './ci-git.ts';
 import {
@@ -28,6 +29,11 @@ import {
   type MaintainerGrantEnvelope,
 } from './maintainer-grant.ts';
 import {
+  MAINTAINER_GRANT_V2_SIGNATURE_NAMESPACE,
+  canonicalMaintainerGrantV2Payload,
+  parseMaintainerGrantV2Envelope,
+} from './maintainer-grant-v2.ts';
+import {
   parseMaintainerPolicy,
   type MaintainerPolicy,
   type TrustedMaintainerSigner,
@@ -36,6 +42,7 @@ import { AUTHORITY_ATTESTATION_SIGNATURE_NAMESPACE } from './maintainer-attestat
 import {
   ManagedTrailerSyntaxError,
   parseManagedTrailers,
+  type AuthorityCandidateManagedTrailers,
   type AuthorityManagedTrailers,
 } from './managed-trailers.ts';
 
@@ -82,13 +89,18 @@ export function verifyBaseAuthorityAttestations(
   const firstParentSet = new Set(firstParentHashes);
 
   const authorityCommits: Array<
-    RangeCommit & { trailers: AuthorityManagedTrailers }
+    RangeCommit & {
+      trailers: AuthorityManagedTrailers | AuthorityCandidateManagedTrailers;
+    }
   > = [];
   for (const hash of firstParentHashes) {
     try {
       const facts = commitFacts(repositoryRoot, hash);
       const trailers = parseManagedTrailers(facts.message);
-      if (trailers?.kind === 'authority') {
+      if (
+        trailers?.kind === 'authority' ||
+        trailers?.kind === 'authority-candidate'
+      ) {
         authorityCommits.push({
           hash: facts.hash,
           subject: facts.message.split('\n', 1)[0],
@@ -124,6 +136,19 @@ export function verifyBaseAuthorityAttestations(
   const direct: DirectAuthority[] = [];
 
   for (const commit of authorityCommits.reverse()) {
+    if (commit.trailers.kind === 'authority-candidate') {
+      const validated = validateCiAuthorityCommit(
+        repositoryRoot,
+        commit,
+        evaluatedAt,
+      );
+      direct.push({
+        grantId: validated.grantId,
+        changeId: validated.changeId,
+        commit: commit.hash,
+      });
+      continue;
+    }
     const attestationRef = `${AUTHORITY_ATTESTATION_TAG_PREFIX}${commit.trailers.grantId}`;
     if (!attestationRefs.has(attestationRef)) {
       try {
@@ -434,6 +459,9 @@ function listGrantTags(
     .filter(Boolean);
   const records = new Map<string, GrantTagRecord>();
   for (const ref of refs) {
+    if (ref.startsWith(authorityApplicationReceiptTagPrefix(policy))) {
+      continue;
+    }
     const grantId = ref.slice(prefix.length);
     try {
       const resolution = readHumanResolutionAuditTag(
@@ -468,7 +496,29 @@ function listGrantTags(
     try {
       envelope = parseMaintainerGrantEnvelope(raw.slice(separator + 2));
     } catch {
-      throw invalidGrantTag(grantId);
+      try {
+        const v2 = parseMaintainerGrantV2Envelope(raw.slice(separator + 2));
+        const target = runGit(repositoryRoot, [
+          'rev-parse',
+          `${ref}^{commit}`,
+        ]).trim();
+        if (
+          v2.payload.grantId !== grantId ||
+          target !== v2.payload.baseCommit
+        ) {
+          throw new Error('v2 grant binding differs');
+        }
+        verifySshDataSignature(
+          canonicalMaintainerGrantV2Payload(v2.payload),
+          v2.signature,
+          trustedSigner(policy, v2.payload.signer),
+          MAINTAINER_GRANT_V2_SIGNATURE_NAMESPACE,
+          'CI_ATTESTATION_GRANT_INVALID',
+        );
+        continue;
+      } catch {
+        throw invalidGrantTag(grantId);
+      }
     }
     if (
       envelope.payload.grantId !== grantId ||

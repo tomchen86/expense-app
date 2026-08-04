@@ -35,11 +35,16 @@ test('hook validation is read-only and blocks ordinary commits during a session'
   const repository = createFixtureRepository();
   try {
     const before = git(repository, ['status', '--porcelain=v1']);
-    const result = runRepositoryHook(repository, 'pre-push', [
-      'origin',
-      'ssh://example.test/repository;touch-pwned',
-    ]);
+    const result = runRepositoryHook(repository, 'pre-commit', []);
     assert.deepEqual(result.changes, ['demo-change']);
+    assert.throws(
+      () =>
+        runRepositoryHook(repository, 'pre-push', [
+          'origin',
+          'ssh://example.test/repository;touch-pwned',
+        ]),
+      (error) => isWorkflowError(error, 'PUBLISH_TRANSACTION_REQUIRED'),
+    );
     assert.equal(git(repository, ['status', '--porcelain=v1']), before);
     assert.equal(fs.existsSync(path.join(repository, 'touch-pwned')), false);
 
@@ -195,7 +200,7 @@ test('hooks fail closed when the OpenSpec asset manifest is missing or renamed',
 test('hooks reject reviewed planning asset drift and forbidden lifecycle authority', () => {
   const repository = createFixtureRepository();
   try {
-    runRepositoryHook(repository, 'pre-push', []);
+    runRepositoryHook(repository, 'pre-commit', []);
 
     fs.appendFileSync(
       path.join(repository, '.claude/skills/openspec-explore/SKILL.md'),

@@ -74,6 +74,26 @@ does not waive PlanReview, task scope, execution strategy, checks, CI, or Git
 transitions. A documentation or other task-execution exemption is a separate
 execution fact and never creates an investigation exemption.
 
+### Execution recovery, metrics, and evidence retention
+
+| Command                                                        | Use when                                                               |
+| -------------------------------------------------------------- | ---------------------------------------------------------------------- |
+| `pnpm workflow job list --json`                                | Listing durable execution jobs                                         |
+| `pnpm workflow job status <job-id> --json`                     | Inspecting one job, its Attempt lineage, blocker, and accepted result   |
+| `pnpm workflow job retry-request <job-id> --timeout <ms> --json` | Creating a scoped execution-budget grant request                        |
+| `pnpm workflow job retry <job-id> --grant <grant-id> --json`   | Starting the exact human-approved replacement Attempt                   |
+| `pnpm workflow job retry-pump --limit <count> --json`          | Processing a bounded set of due automatic replacement or probe schedules |
+| `pnpm workflow job retry-schedules --json`                     | Inspecting durable automatic retry schedules                            |
+| `pnpm workflow job retry-receipts [schedule-id] --json`        | Inspecting immutable retry/probe processing receipts                    |
+| `pnpm workflow metrics show --json`                            | Reading production resilience, speed, governance, and storage metrics   |
+| `pnpm workflow retention inspect --json`                       | Inspecting active, expiring, pinned, and pending-deletion evidence      |
+| `pnpm workflow retention sweep --limit <count> --json`         | Running one bounded TTL pruning pass                                    |
+| `pnpm workflow retention pin <workflow-id> <evidence-id> --reason <text> --json` | Human-only exact-evidence pin with a durable reason          |
+
+Automatic retry processing is finite: each CLI or worker pass has an explicit
+limit and persists its schedule/receipt state. It is not a daemon. Evidence is
+never promoted to `pinned` automatically.
+
 ### Managed task lifecycle
 
 | Command                                                        | Use when                                                       |
@@ -115,7 +135,7 @@ procedure.
 | ------- | -------- |
 | `pnpm workflow maintainer grant ... --json` | A human maintainer is issuing one short-lived, single-use grant for sorted exact eligible authority paths |
 | `pnpm workflow maintainer inspect [grant-id] --json` | Reading redacted local grant, reservation, or terminal state |
-| `pnpm workflow maintainer revoke <grant-id> --json` | Terminally revoking an unused, reserved, or already-terminal grant; repeated use is cleanup-safe |
+| `pnpm workflow maintainer revoke <grant-id> --reason <text> --json` | Human-only terminal revocation of an unused, reserved, or already-terminal grant with a durable reason; repeated use is cleanup-safe |
 | `pnpm workflow authority-start <id> --grant <grant-id> --json` | Reserving the published grant on the exact clean `work/<id>` branch and base |
 | `pnpm workflow authority-check <session-id> --json` | Running all base-pinned normal checks against an exact-path authority diff |
 | `pnpm workflow authority-commit <session-id> --message "Subject" --json` | Creating the signed authority-maintenance commit and consuming the grant from current evidence |

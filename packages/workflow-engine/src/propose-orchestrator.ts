@@ -42,6 +42,15 @@ import {
   type EvidenceNode,
 } from './evidence-node.ts';
 import { ExitCode, WorkflowError, workflowError } from './errors.ts';
+import {
+  createReplacementAttempt,
+  providerExecutionEnvironmentDigest,
+  providerExecutionPolicySnapshot,
+} from './execution-core.ts';
+import {
+  loadProviderExecutionRepairContext,
+  preflightProviderRepairRetry,
+} from './provider-execution-governance.ts';
 import { protectedBranchRef, runGit } from './git.ts';
 import {
   deriveEngineFloor,
@@ -136,6 +145,15 @@ import {
   normalizePolicyPath,
 } from './paths.ts';
 import {
+  assertActiveTaskMandateBindingUnderLifecycleLock,
+  authorizeTaskMandateOperation,
+  authorizeTaskMandateProviderReservationUnderLifecycleLock,
+  recordTaskMandateProviderInvocationUnderLifecycleLock,
+  withActiveTaskMandateBinding,
+  type TaskMandateBinding,
+  type TaskMandateOptions,
+} from './task-mandate.ts';
+import {
   type HeldChangeTransitionAuthority,
   withInvestigationTransitionAuthority,
 } from './planning-lock.ts';
@@ -183,7 +201,10 @@ import {
   BLIND_SURVEY_OUTPUT_SCHEMA,
   blindSurveyIntentDigest,
   blindSurveyManifestDigest,
+  createProviderExecutionPolicySnapshot,
   createProviderInvocation,
+  ensureProviderExecutionPolicySnapshot,
+  ensureProviderExecutionPolicySnapshotFromSnapshot,
   providerInvocationExists,
   providerInvocationManifestDigest,
   readBlindSurveyManifest,
@@ -192,10 +213,19 @@ import {
   readProviderInvocationManifest,
   readProviderInvocationRequest,
   readProviderRetryReservation,
+  storeProviderExecutionPolicySnapshot,
+  validateProviderExecutionPolicySnapshot,
   type BlindSurveyManifest,
   type NormalizedChangeIntent,
   type PlanReviewManifest,
+  type ProviderRetryDecisionBinding,
+  type ProviderExecutionPolicySnapshotV2,
 } from './provider-invocation-store.ts';
+import {
+  assertProviderExecutionGrantAuthorization,
+  authorizeAutomaticProviderRetry,
+  type ProviderExecutionGrantAuthorization,
+} from './provider-retry-decision.ts';
 import {
   admitRoleResult,
   authorizeGrantedOrdinaryRole,
@@ -239,6 +269,8 @@ export type ProposeOptions = {
   migrateLegacy?: boolean;
   providerDriver?: ProposeProviderDriver;
   providerDispatcher?: ProposeProviderDispatcher;
+  taskMandateId?: string;
+  taskMandateValidation?: TaskMandateOptions;
   collaborationGrant?: {
     grantId: string;
     now?: Date;
@@ -257,6 +289,9 @@ export type ProposeResumeOptions = {
   collaborationGrantValidation?: {
     now?: Date;
     verifier?: MaintainerSignerProvider;
+  };
+  executionGrantAuthorization?: ProviderExecutionGrantAuthorization & {
+    replacementRequest: ProviderInvocationRequest;
   };
 };
 
@@ -840,6 +875,18 @@ export function startPropose(
     };
   }
 
+  const mandateAuthorization = options.taskMandateId
+    ? authorizeTaskMandateOperation(
+        cwd,
+        options.taskMandateId,
+        { kind: 'candidate-or-design-artifact' },
+        {
+          ...options.taskMandateValidation,
+          changeId,
+        },
+      )
+    : null;
+
   if (isInvestigationExemptionRequest(startInput)) {
     if (options.migrateLegacy) {
       throw workflowError(
@@ -848,7 +895,13 @@ export function startPropose(
         ExitCode.guard,
       );
     }
-    return startExemptionPropose(cwd, changeId, startInput, actorResolution);
+    return startExemptionPropose(
+      cwd,
+      changeId,
+      startInput,
+      actorResolution,
+      mandateAuthorization?.binding,
+    );
   }
 
   const context = loadInvestigationRuntimeContext(cwd);
@@ -1197,6 +1250,9 @@ export function startPropose(
             changeId,
             blindManifest: manifest,
             blindRequest: request,
+            ...(mandateAuthorization
+              ? { mandateBinding: mandateAuthorization.binding }
+              : {}),
           },
           lockedContext,
           assertOwned,
@@ -1210,15 +1266,21 @@ export function startPropose(
     durableRequest,
     durableAuthorization,
   } = status;
-  if (durableInvocation.state === 'prepared') {
-    if (options.providerDriver) {
-      options.providerDriver({
-        paths: context.runtime,
-        request: durableRequest,
-      });
-    } else if (options.providerDispatcher) {
-      options.providerDispatcher(cwd, durableRequest.invocationId);
-    }
+  if (
+    durableInvocation.state === 'prepared' &&
+    (options.providerDriver || options.providerDispatcher)
+  ) {
+    dispatchMandatedProviderInvocation(
+      cwd,
+      durableRequest.invocationId,
+      (runtime, request) => {
+        if (options.providerDriver) {
+          options.providerDriver({ paths: runtime, request });
+        } else if (options.providerDispatcher) {
+          options.providerDispatcher(cwd, request.invocationId);
+        }
+      },
+    );
   }
 
   return renderProposeOutputWithPlanningAuthority(
@@ -1242,6 +1304,7 @@ function startExemptionPropose(
     ReturnType<typeof resolveActorIdentity>,
     { outcome: 'resolved' }
   >,
+  mandateBinding?: TaskMandateBinding,
 ): ProposeOutput {
   const context = loadInvestigationRuntimeContext(cwd);
   return withInvestigationTransitionAuthority(
@@ -1251,6 +1314,13 @@ function startExemptionPropose(
       assertOwned();
       const lockedContext = loadInvestigationRuntimeContext(cwd);
       assertProposeStartContextStable(context, lockedContext);
+      if (mandateBinding) {
+        assertActiveTaskMandateBindingUnderLifecycleLock(
+          cwd,
+          mandateBinding,
+          assertOwned,
+        );
+      }
       const ordinary = readCurrentInvestigationRef(
         lockedContext.runtime,
         changeId,
@@ -1313,6 +1383,7 @@ function startExemptionPropose(
       });
       const session = createProposeExemptionSession(lockedContext.runtime, {
         changeId,
+        ...(mandateBinding ? { mandateBinding } : {}),
         repositoryRoot: lockedContext.git.repositoryRealPath,
         gitCommonDirectory: lockedContext.git.gitCommonDirectory,
         branch: lockedContext.git.branch,
@@ -1981,6 +2052,110 @@ export function resumeProposeFromFile(
   return resumePropose(cwd, changeId, readCallerJson(cwd, inputPath), options);
 }
 
+function dispatchMandatedProviderInvocation(
+  cwd: string,
+  invocationId: string,
+  dispatch: (
+    runtime: ReturnType<typeof loadInvestigationRuntimeContext>['runtime'],
+    request: ProviderInvocationRequest,
+  ) => void,
+): void {
+  const initialContext = loadInvestigationRuntimeContext(cwd);
+  const initial = readProviderInvocation(initialContext.runtime, invocationId);
+  const ownerBinding = durableProviderOwnerMandateBinding(
+    initialContext,
+    initial.investigationId,
+    initial.changeId,
+  );
+  if (
+    canonicalJson(initial.mandateBinding ?? null) !==
+    canonicalJson(ownerBinding ?? null)
+  ) {
+    throw workflowError(
+      'TASK_MANDATE_BINDING_STALE',
+      'Provider invocation does not match its durable owner mandate binding.',
+      ExitCode.staleState,
+    );
+  }
+  if (ownerBinding === undefined) {
+    dispatch(
+      initialContext.runtime,
+      readProviderInvocationRequest(initialContext.runtime, invocationId),
+    );
+    return;
+  }
+  withActiveTaskMandateBinding(
+    cwd,
+    ownerBinding.mandateTaskId,
+    {},
+    (activeBinding, assertOwned) => {
+      if (canonicalJson(activeBinding) !== canonicalJson(ownerBinding)) {
+        throw workflowError(
+          'TASK_MANDATE_BINDING_STALE',
+          'Provider dispatch no longer matches the active Task Mandate.',
+          ExitCode.staleState,
+        );
+      }
+      const context = loadInvestigationRuntimeContext(cwd);
+      const invocation = readProviderInvocation(context.runtime, invocationId);
+      const durableOwnerBinding = durableProviderOwnerMandateBinding(
+        context,
+        invocation.investigationId,
+        invocation.changeId,
+      );
+      if (
+        invocation.state !== 'prepared' ||
+        canonicalJson(invocation.mandateBinding ?? null) !==
+          canonicalJson(activeBinding) ||
+        canonicalJson(durableOwnerBinding ?? null) !==
+          canonicalJson(activeBinding)
+      ) {
+        throw workflowError(
+          'TASK_MANDATE_BINDING_STALE',
+          'Provider dispatch lost its exact durable Task Mandate binding.',
+          ExitCode.staleState,
+        );
+      }
+      const request = readProviderInvocationRequest(
+        context.runtime,
+        invocationId,
+      );
+      recordTaskMandateProviderInvocationUnderLifecycleLock(
+        cwd,
+        activeBinding,
+        {
+          providerId: request.providerId,
+          invocationId,
+          requestDigest: request.requestDigest,
+          occurredAt: invocation.createdAt,
+        },
+        assertOwned,
+      );
+      assertOwned();
+      dispatch(context.runtime, request);
+      assertOwned();
+    },
+  );
+}
+
+function durableProviderOwnerMandateBinding(
+  context: ReturnType<typeof loadInvestigationRuntimeContext>,
+  investigationId: string,
+  changeId: string,
+): TaskMandateBinding | undefined {
+  const owner = isProposeExemptionInvestigationId(investigationId)
+    ? readProposeExemptionSession(context.runtime, investigationId)
+    : readInvestigationSession(context.runtime, investigationId);
+  if (owner.changeId !== changeId) {
+    throw workflowError(
+      'TASK_MANDATE_BINDING_STALE',
+      'Provider invocation belongs to another durable change owner.',
+      ExitCode.staleState,
+    );
+  }
+  return owner.mandateBinding;
+}
+
 function dispatchPreparedInvocation(
   cwd: string,
   status: InvestigationStatus,
@@ -1989,7 +2164,11 @@ function dispatchPreparedInvocation(
   if (!dispatcher || status.provider.state !== 'prepared') {
     return;
   }
-  dispatcher(cwd, status.providerInvocationId);
+  dispatchMandatedProviderInvocation(
+    cwd,
+    status.providerInvocationId,
+    (_runtime, request) => dispatcher(cwd, request.invocationId),
+  );
 }
 
 function resumeProviderRetry(
@@ -2008,6 +2187,9 @@ function resumeProviderRetry(
     context.runtime,
     failed.invocationId,
   );
+  const currentExecutionPolicy = loadAiAdapterPolicy(
+    context.git.repositoryRoot,
+  );
   assertProviderRetryFailureBinding(input, failed, failedRequest);
 
   let retried: InvestigationStatus;
@@ -2018,25 +2200,32 @@ function resumeProviderRetry(
     try {
       retried = retryInvestigationProvider(cwd, current.investigationId, {
         expectedRevision: input.expectedRevision,
-        replacementRequest: createProviderInvocationRequest({
-          invocationId: createRuntimeId('invocation'),
-          nonce: `provider-retry-${crypto.randomUUID()}`,
-          purpose: failedRequest.purpose,
-          providerId: failedRequest.providerId,
-          roleAssignment: failedRequest.roleAssignment,
-          capabilityProfile: failedRequest.capabilityProfile,
-          repositoryId: failedRequest.repositoryId,
-          baseCommit: failedRequest.baseCommit,
-          baseTree: failedRequest.baseTree,
-          targetDigest: failedRequest.targetDigest,
-          inputManifestDigest: failedRequest.inputManifestDigest,
-          authorizationNodeId: failedRequest.authorizationNodeId,
-          writeAllowedPaths: [],
-          outputSchema: failedRequest.outputSchema,
-          evaluatorVersion: failedRequest.evaluatorVersion,
-          policyDigest: failedRequest.policyDigest,
-          limits: failedRequest.limits,
-        }),
+        replacementRequest:
+          options.executionGrantAuthorization?.replacementRequest ??
+          createProviderInvocationRequest({
+            invocationId: createRuntimeId('invocation'),
+            nonce: `provider-retry-${crypto.randomUUID()}`,
+            purpose: failedRequest.purpose,
+            providerId: failedRequest.providerId,
+            roleAssignment: failedRequest.roleAssignment,
+            capabilityProfile: failedRequest.capabilityProfile,
+            repositoryId: failedRequest.repositoryId,
+            baseCommit: failedRequest.baseCommit,
+            baseTree: failedRequest.baseTree,
+            targetDigest: failedRequest.targetDigest,
+            inputManifestDigest: failedRequest.inputManifestDigest,
+            authorizationNodeId: failedRequest.authorizationNodeId,
+            writeAllowedPaths: [],
+            outputSchema: failedRequest.outputSchema,
+            evaluatorVersion: failedRequest.evaluatorVersion,
+            policyDigest: currentExecutionPolicy.digest,
+            limits: {
+              timeoutMs: currentExecutionPolicy.policy.limits.timeoutMs,
+              aggregateOutputBytes:
+                currentExecutionPolicy.policy.limits.aggregateOutputBytes,
+            },
+          }),
+        executionGrantAuthorization: options.executionGrantAuthorization,
       });
     } catch (error) {
       if (
@@ -2109,21 +2298,23 @@ function dispatchPreparedRetryInvocation(
   status: InvestigationStatus,
   options: ProposeResumeOptions,
 ): void {
-  if (status.provider.state !== 'prepared') {
+  if (
+    status.provider.state !== 'prepared' ||
+    (!options.providerDriver && !options.providerDispatcher)
+  ) {
     return;
   }
-  if (options.providerDriver) {
-    const context = loadInvestigationRuntimeContext(cwd);
-    options.providerDriver({
-      paths: context.runtime,
-      request: readProviderInvocationRequest(
-        context.runtime,
-        status.providerInvocationId,
-      ),
-    });
-  } else if (options.providerDispatcher) {
-    options.providerDispatcher(cwd, status.providerInvocationId);
-  }
+  dispatchMandatedProviderInvocation(
+    cwd,
+    status.providerInvocationId,
+    (runtime, request) => {
+      if (options.providerDriver) {
+        options.providerDriver({ paths: runtime, request });
+      } else if (options.providerDispatcher) {
+        options.providerDispatcher(cwd, request.invocationId);
+      }
+    },
+  );
 }
 
 function assertProviderRetrySessionBinding(
@@ -2189,13 +2380,32 @@ function resumePlanReviewRetry(
       if (status.state === 'investigation-exempt') {
         assertCurrentExemptionContext(context, status);
       }
+      const mandateBinding = durablePlanReviewMandateBinding(context, status);
+      if (mandateBinding) {
+        assertActiveTaskMandateBindingUnderLifecycleLock(
+          cwd,
+          mandateBinding,
+          assertOwned,
+        );
+      }
       if (
         readTrackedPlanReview(context.git.repositoryRoot, status.changeId) !==
         null
       ) {
         throw planReviewRetryInputStale();
       }
-      const reservation = readPlanReviewReservation(context.runtime, status);
+      let reservation: PlanReviewReservation | null;
+      try {
+        reservation = readPlanReviewReservation(context.runtime, status);
+      } catch (error) {
+        if (
+          error instanceof WorkflowError &&
+          error.code === 'PLAN_REVIEW_REQUEST_STALE'
+        ) {
+          throw planReviewRetryInputStale();
+        }
+        throw error;
+      }
       if (reservation === null) {
         throw planReviewRetryInputStale();
       }
@@ -2203,11 +2413,18 @@ function resumePlanReviewRetry(
         reservation.reservationNode.nodeId !== input.expectedReservationNodeId
       ) {
         assertExactPlanReviewRetryReplay(context.runtime, reservation, input);
+        authorizePlanReviewReservationMandate(
+          cwd,
+          mandateBinding,
+          reservation,
+          assertOwned,
+        );
         ensurePlanReviewInvocation(
           context.git.repositoryRoot,
           context.runtime,
           status,
           reservation,
+          mandateBinding,
         );
         return reservation;
       }
@@ -2220,21 +2437,45 @@ function resumePlanReviewRetry(
         context.runtime,
         failed.invocationId,
       );
-      const replacementRequest = createPlanReviewReplacementRequest(
-        input,
+      const currentExecutionPolicy = loadAiAdapterPolicy(
+        context.git.repositoryRoot,
+      );
+      const replacementRequest =
+        options.executionGrantAuthorization?.replacementRequest ??
+        createPlanReviewReplacementRequest(input, failedRequest, {
+          policyDigest: currentExecutionPolicy.digest,
+          limits: {
+            timeoutMs: currentExecutionPolicy.policy.limits.timeoutMs,
+            aggregateOutputBytes:
+              currentExecutionPolicy.policy.limits.aggregateOutputBytes,
+          },
+        });
+      const retryAuthorization = assertPlanReviewRetryExecutionDecision(
+        context.runtime,
+        failed,
         failedRequest,
+        replacementRequest,
+        currentExecutionPolicy,
+        options.executionGrantAuthorization,
       );
       const replacementSnapshotFiles = readPriorPlanReviewSnapshotFiles(
         context.runtime,
         reservation.manifest,
         failed.invocationId,
       );
+      const replacementExecutionPolicySnapshot =
+        createProviderExecutionPolicySnapshot(
+          replacementRequest,
+          currentExecutionPolicy,
+        );
       const replacementNode = createPlanReviewReplacementReservationNode(
         reservation,
         reservation.reservationNode,
         input,
         replacementRequest,
         failed.attempt + 1,
+        providerRetryDecisionBinding(retryAuthorization),
+        replacementExecutionPolicySnapshot,
       );
       writeEvidenceNode(context.runtime, replacementNode);
       compareAndSwapEvidenceRef(context.runtime, {
@@ -2251,11 +2492,18 @@ function resumePlanReviewRetry(
       if (replacement === null) {
         throw planReviewRetryInputStale();
       }
+      authorizePlanReviewReservationMandate(
+        cwd,
+        mandateBinding,
+        replacement,
+        assertOwned,
+      );
       ensurePlanReviewInvocation(
         context.git.repositoryRoot,
         context.runtime,
         status,
         replacement,
+        mandateBinding,
         replacementSnapshotFiles,
       );
       assertOwned();
@@ -2340,6 +2588,7 @@ function planReviewRetryBindingDigest(input: PlanReviewRetryEnvelope): string {
 function createPlanReviewReplacementRequest(
   input: PlanReviewRetryEnvelope,
   failedRequest: ProviderInvocationRequest,
+  executionPolicy: Pick<ProviderInvocationRequest, 'policyDigest' | 'limits'>,
 ): ProviderInvocationRequest {
   const bindingDigest = planReviewRetryBindingDigest(input);
   return createProviderInvocationRequest({
@@ -2358,9 +2607,135 @@ function createPlanReviewReplacementRequest(
     writeAllowedPaths: [...failedRequest.writeAllowedPaths],
     outputSchema: failedRequest.outputSchema,
     evaluatorVersion: failedRequest.evaluatorVersion,
-    policyDigest: failedRequest.policyDigest,
-    limits: failedRequest.limits,
+    policyDigest: executionPolicy.policyDigest,
+    limits: executionPolicy.limits,
   });
+}
+
+function assertPlanReviewRetryExecutionDecision(
+  paths: ReturnType<typeof loadInvestigationRuntimeContext>['runtime'],
+  failed: ReturnType<typeof readProviderInvocation>,
+  failedRequest: ProviderInvocationRequest,
+  replacementRequest: ProviderInvocationRequest,
+  replacementExecutionPolicy: ReturnType<typeof loadAiAdapterPolicy>,
+  executionGrantAuthorization?: ProviderExecutionGrantAuthorization,
+): ReturnType<typeof authorizeAutomaticProviderRetry> {
+  const authorization = authorizeAutomaticProviderRetry(paths, {
+    failed,
+    failedRequest,
+    replacementRequest,
+    replacementExecutionPolicy,
+    boundedGrantRequest: executionGrantAuthorization?.grantRequest,
+  });
+  const prior = authorization;
+  const replacementPolicy = providerExecutionPolicySnapshot(replacementRequest);
+  const now = authorization.evaluatedAt;
+  const decision = authorization.decision;
+  const replacementAttemptId = `attempt-legacy-${replacementRequest.invocationId}`;
+  if (executionGrantAuthorization !== undefined) {
+    assertProviderExecutionGrantAuthorization(
+      authorization,
+      executionGrantAuthorization,
+      replacementAttemptId,
+    );
+  } else if (!decision.retryable || !decision.automatic) {
+    throw workflowError(
+      decision.requiredGrant === undefined
+        ? 'PLAN_REVIEW_RETRY_DECISION_DENIED'
+        : 'PLAN_REVIEW_RETRY_GRANT_REQUIRED',
+      'The execution RetryDecision does not authorize this PlanReview replacement Attempt.',
+      ExitCode.guard,
+      {
+        details: {
+          reasonCode: decision.reasonCode,
+          attemptCount: prior.job.attemptCount,
+          providerAttemptCount: authorization.providerAttemptCount,
+          nextRuntimeMs: authorization.nextReservation.runtimeMs,
+          nextProviderCostMicros:
+            authorization.nextReservation.providerCostMicros,
+          nextProviderTokens: authorization.nextReservation.providerTokens,
+          retryPolicy: prior.job.retryPolicy,
+          evaluatedAt: now,
+        },
+      },
+    );
+  }
+  if (
+    executionGrantAuthorization === undefined &&
+    (decision.retryMode === 'new-context' ||
+      decision.retryMode === 'none' ||
+      decision.retryMode === 'strategy-change')
+  ) {
+    throw workflowError(
+      'PLAN_REVIEW_RETRY_STRATEGY_CHANGE_REQUIRED',
+      'PlanReview retry requires a separately declared strategy change.',
+      ExitCode.guard,
+      { details: { reasonCode: decision.reasonCode } },
+    );
+  }
+  const policyChanged =
+    canonicalJson(prior.attempt.policySnapshot) !==
+    canonicalJson(replacementPolicy);
+  const retryMode: 'same-input' | 'execution-policy-change' | 'repair' =
+    executionGrantAuthorization === undefined
+      ? (decision.retryMode as
+          'same-input' | 'execution-policy-change' | 'repair')
+      : prior.attempt.failure?.retryClass === 'repairable'
+        ? 'repair'
+        : policyChanged
+          ? 'execution-policy-change'
+          : 'same-input';
+  if (retryMode === 'repair') {
+    preflightProviderRepairRetry(paths, {
+      history: authorization.sourceInvocationIds.map((invocationId) => ({
+        record: readProviderInvocation(paths, invocationId),
+        request: readProviderInvocationRequest(paths, invocationId),
+      })),
+      failedRecord: failed,
+      failedRequest,
+    });
+  }
+  const replacement = createReplacementAttempt({
+    workflow: prior.workflow,
+    job: prior.job,
+    previousAttempt: prior.attempt,
+    attemptId: replacementAttemptId,
+    retryMode,
+    currentExecutionPolicy: replacementPolicy,
+    repairContext:
+      retryMode === 'repair'
+        ? loadProviderExecutionRepairContext(paths, failed, failedRequest)
+        : undefined,
+    grantId: executionGrantAuthorization?.grantId,
+    environmentDigest: providerExecutionEnvironmentDigest(replacementRequest),
+    createdAt: now,
+  });
+  if (
+    replacement.job.jobId !== prior.job.jobId ||
+    replacement.job.contextDigest !== prior.job.contextDigest ||
+    replacement.attempt.attemptNumber !== failed.attempt + 1
+  ) {
+    throw workflowError(
+      'PLAN_REVIEW_RETRY_EXECUTION_LINEAGE_INVALID',
+      'PlanReview replacement changed stable semantic Job identity.',
+      ExitCode.staleState,
+    );
+  }
+  return authorization;
+}
+
+function providerRetryDecisionBinding(
+  authorization: ReturnType<typeof authorizeAutomaticProviderRetry>,
+): ProviderRetryDecisionBinding {
+  return {
+    schemaVersion: 1,
+    kind: 'provider-retry-decision-binding',
+    executionJobId: authorization.job.jobId,
+    executionRevision: authorization.executionRevision,
+    failedAttemptId: authorization.attempt.attemptId,
+    evidenceDigest: authorization.evidenceDigest,
+    evaluatedAt: authorization.evaluatedAt,
+  };
 }
 
 function createPlanReviewReplacementReservationNode(
@@ -2369,10 +2744,12 @@ function createPlanReviewReplacementReservationNode(
   input: PlanReviewRetryEnvelope,
   replacementRequest: ProviderInvocationRequest,
   attempt: number,
+  retryDecision: ProviderRetryDecisionBinding,
+  executionPolicySnapshot: ProviderExecutionPolicySnapshotV2,
 ): EvidenceNode {
   return createEvidenceNode({
     type: 'plan-review-request-reservation',
-    nodeSchema: 'workflow.plan-review-request-reservation.v2',
+    nodeSchema: 'workflow.plan-review-request-reservation.v3',
     evaluator: 'workflow-propose.v1',
     policyDigest: PROPOSE_POLICY_DIGEST,
     exactInputDigests: {
@@ -2382,6 +2759,8 @@ function createPlanReviewReplacementReservationNode(
       targetSnapshot: reservation.targetSnapshotNode.nodeId,
       previousRequest: previousReservationNode.nodeId,
       failure: input.failedInvocation.failureDigest,
+      retryDecision: retryDecision.evidenceDigest,
+      executionPolicySnapshot: sha256(canonicalJson(executionPolicySnapshot)),
     },
     semanticParentResultDigests: {
       authorization:
@@ -2393,7 +2772,7 @@ function createPlanReviewReplacementReservationNode(
         previousReservationNode.provenanceParentNodeIds.authorization,
       previousRequest: previousReservationNode.nodeId,
     },
-    outputSchema: 'workflow.plan-review-request-reservation-output.v2',
+    outputSchema: 'workflow.plan-review-request-reservation-output.v3',
     output: {
       investigationId: input.investigationId,
       changeId: input.changeId,
@@ -2410,6 +2789,8 @@ function createPlanReviewReplacementReservationNode(
         attempt,
         previousReservationNodeId: previousReservationNode.nodeId,
         failedInvocation: input.failedInvocation,
+        retryDecision,
+        executionPolicySnapshot,
       },
     },
     runtimeMetadata: {},
@@ -2421,6 +2802,17 @@ function assertExactPlanReviewRetryReplay(
   reservation: PlanReviewReservation,
   input: PlanReviewRetryEnvelope,
 ): void {
+  if (
+    reservation.retry === null ||
+    reservation.retry.retryDecision === null ||
+    reservation.retry.executionPolicySnapshot === null
+  ) {
+    throw workflowError(
+      'PLAN_REVIEW_RETRY_DECISION_EVIDENCE_REQUIRED',
+      'A historical PlanReview retry reservation without decision evidence cannot authorize provider work.',
+      ExitCode.guard,
+    );
+  }
   const failed = readProviderInvocation(
     paths,
     input.failedInvocation.invocationId,
@@ -2436,6 +2828,10 @@ function assertExactPlanReviewRetryReplay(
   const expectedRequest = createPlanReviewReplacementRequest(
     input,
     failedRequest,
+    {
+      policyDigest: reservation.request.policyDigest,
+      limits: reservation.request.limits,
+    },
   );
   const expectedReservationNode = createPlanReviewReplacementReservationNode(
     reservation,
@@ -2443,6 +2839,8 @@ function assertExactPlanReviewRetryReplay(
     input,
     expectedRequest,
     input.failedInvocation.attempt + 1,
+    reservation.retry.retryDecision,
+    reservation.retry.executionPolicySnapshot,
   );
   if (
     reservation.retry === null ||
@@ -2484,19 +2882,23 @@ function dispatchPreparedPlanReview(
   output: ProposeOutput,
   options: ProposeResumeOptions,
 ): void {
-  if (output.planReview?.state !== 'prepared') {
+  if (
+    output.planReview?.state !== 'prepared' ||
+    (!options.providerDriver && !options.providerDispatcher)
+  ) {
     return;
   }
-  const context = loadInvestigationRuntimeContext(cwd);
-  const request = readProviderInvocationRequest(
-    context.runtime,
+  dispatchMandatedProviderInvocation(
+    cwd,
     output.planReview.invocationId,
+    (runtime, request) => {
+      if (options.providerDriver) {
+        options.providerDriver({ paths: runtime, request });
+      } else if (options.providerDispatcher) {
+        options.providerDispatcher(cwd, request.invocationId);
+      }
+    },
   );
-  if (options.providerDriver) {
-    options.providerDriver({ paths: context.runtime, request });
-  } else if (options.providerDispatcher) {
-    options.providerDispatcher(cwd, request.invocationId);
-  }
 }
 
 function resumePlanReview(
@@ -2531,13 +2933,18 @@ function resumePlanReview(
     reservation.request.invocationId,
   );
   if (invocation.state === 'prepared') {
-    if (options.providerDriver) {
-      options.providerDriver({
-        paths: context.runtime,
-        request: reservation.request,
-      });
-    } else if (options.providerDispatcher) {
-      options.providerDispatcher(cwd, reservation.request.invocationId);
+    if (options.providerDriver || options.providerDispatcher) {
+      dispatchMandatedProviderInvocation(
+        cwd,
+        reservation.request.invocationId,
+        (runtime, request) => {
+          if (options.providerDriver) {
+            options.providerDriver({ paths: runtime, request });
+          } else if (options.providerDispatcher) {
+            options.providerDispatcher(cwd, request.invocationId);
+          }
+        },
+      );
     }
     invocation = readProviderInvocation(
       context.runtime,
@@ -5379,7 +5786,7 @@ function reconcileReviewerTermPlanningRevision(
       // or next bytes may exist; after it, retries require exact next bytes and
       // never roll live files back after a downstream error.
       let currentArtifacts: Record<string, string>;
-      if (receipt.revision === current.revision) {
+      if (receipt.matchesCurrentSession) {
         const sealedArtifacts = readPlanningMaterializationReceipt(
           context.runtime,
           current,
@@ -5518,7 +5925,7 @@ function reconcileReviewerTermPlanningRevision(
 type ReviewerReconciliationMaterializationReceipt = {
   nodeId: string;
   node: EvidenceNode;
-  revision: number;
+  matchesCurrentSession: boolean;
   artifacts: Record<string, string>;
 };
 
@@ -5536,18 +5943,28 @@ function readReviewerReconciliationMaterializationReceipt(
   }
   const node = readEvidenceNode(paths, nodeId);
   const output = node.output;
+  const semanticReceipt =
+    node.nodeSchema === 'workflow.propose-planning-materialization.v2' &&
+    node.outputSchema === 'workflow.propose-planning-materialization-output.v2';
+  const legacyReceipt =
+    node.nodeSchema === 'workflow.propose-planning-materialization.v1' &&
+    node.outputSchema === 'workflow.propose-planning-materialization-output.v1';
+  const boundRevision =
+    isRecord(output) && semanticReceipt
+      ? output.semanticRevision
+      : isRecord(output) && legacyReceipt
+        ? output.revision
+        : null;
   if (
     node.type !== 'propose-planning-materialization' ||
-    node.nodeSchema !== 'workflow.propose-planning-materialization.v1' ||
+    (!semanticReceipt && !legacyReceipt) ||
     node.evaluator !== 'workflow-propose.v1' ||
     node.policyDigest !== PROPOSE_POLICY_DIGEST ||
-    node.outputSchema !==
-      'workflow.propose-planning-materialization-output.v1' ||
     !isRecord(output) ||
     !hasExactKeys(output, [
       'investigationId',
       'changeId',
-      'revision',
+      semanticReceipt ? 'semanticRevision' : 'revision',
       'baseline',
       'artifacts',
       'sealNodeId',
@@ -5555,9 +5972,10 @@ function readReviewerReconciliationMaterializationReceipt(
     ]) ||
     output.investigationId !== status.investigationId ||
     output.changeId !== status.changeId ||
-    !Number.isSafeInteger(output.revision) ||
-    Number(output.revision) < 0 ||
-    Number(output.revision) > status.revision ||
+    !Number.isSafeInteger(boundRevision) ||
+    Number(boundRevision) < 0 ||
+    Number(boundRevision) >
+      (semanticReceipt ? status.semanticRevision : status.revision) ||
     canonicalJson(output.baseline) !== canonicalJson(status.baseline) ||
     !isDigestRecord(output.artifacts) ||
     typeof output.sealNodeId !== 'string' ||
@@ -5582,7 +6000,9 @@ function readReviewerReconciliationMaterializationReceipt(
   return {
     nodeId,
     node,
-    revision: Number(output.revision),
+    matchesCurrentSession:
+      Number(boundRevision) ===
+      (semanticReceipt ? status.semanticRevision : status.revision),
     artifacts: output.artifacts as Record<string, string>,
   };
 }
@@ -6348,7 +6768,7 @@ function persistPlanningMaterializationReceipt(
 ): void {
   const node = createEvidenceNode({
     type: 'propose-planning-materialization',
-    nodeSchema: 'workflow.propose-planning-materialization.v1',
+    nodeSchema: 'workflow.propose-planning-materialization.v2',
     evaluator: 'workflow-propose.v1',
     policyDigest: PROPOSE_POLICY_DIGEST,
     exactInputDigests: {
@@ -6362,11 +6782,11 @@ function persistPlanningMaterializationReceipt(
     provenanceParentNodeIds: {
       seal: sealNode.nodeId,
     },
-    outputSchema: 'workflow.propose-planning-materialization-output.v1',
+    outputSchema: 'workflow.propose-planning-materialization-output.v2',
     output: {
       investigationId: status.investigationId,
       changeId: status.changeId,
-      revision: status.revision,
+      semanticRevision: status.semanticRevision,
       baseline: status.baseline,
       artifacts,
       sealNodeId: sealNode.nodeId,
@@ -6481,6 +6901,8 @@ type PlanReviewReservation = {
     attempt: number;
     previousReservationNodeId: string;
     failedInvocation: PlanReviewRetryEnvelope['failedInvocation'];
+    retryDecision: ProviderRetryDecisionBinding | null;
+    executionPolicySnapshot: ProviderExecutionPolicySnapshotV2 | null;
   } | null;
 };
 
@@ -6490,6 +6912,68 @@ type PlanReviewGrantRequirement = {
   grantRequest: CollaborationGrantRequest | null;
 };
 
+function durablePlanReviewMandateBinding(
+  context: ReturnType<typeof loadInvestigationRuntimeContext>,
+  status: ProposeLifecycleStatus,
+): TaskMandateBinding | undefined {
+  if (status.state === 'investigation-exempt') {
+    const session = readProposeExemptionSession(
+      context.runtime,
+      status.investigationId,
+    );
+    if (
+      session.changeId !== status.changeId ||
+      canonicalJson(session.baseline) !== canonicalJson(status.baseline)
+    ) {
+      throw workflowError(
+        'TASK_MANDATE_BINDING_STALE',
+        'The exempt PlanReview owner no longer matches the durable planning context.',
+        ExitCode.staleState,
+      );
+    }
+    return session.mandateBinding;
+  }
+  const session = readInvestigationSession(
+    context.runtime,
+    status.investigationId,
+  );
+  if (
+    session.changeId !== status.changeId ||
+    canonicalJson(session.baseline) !== canonicalJson(status.baseline)
+  ) {
+    throw workflowError(
+      'TASK_MANDATE_BINDING_STALE',
+      'The PlanReview owner session no longer matches the durable planning context.',
+      ExitCode.staleState,
+    );
+  }
+  return session.mandateBinding;
+}
+
+function authorizePlanReviewReservationMandate(
+  cwd: string,
+  binding: TaskMandateBinding | undefined,
+  reservation: PlanReviewReservation,
+  assertOwned: () => void,
+): void {
+  if (binding === undefined) return;
+  authorizeTaskMandateProviderReservationUnderLifecycleLock(
+    cwd,
+    binding,
+    reservation.request.invocationId,
+    {
+      providerId: reservation.request.providerId,
+      dataTypes: ['diff', 'repository-metadata', 'source-code', 'test-output'],
+      sourceCode: true,
+      secrets: false,
+      retry: reservation.retry !== null,
+      budget: null,
+      requestDigest: reservation.request.requestDigest,
+    },
+    assertOwned,
+  );
+}
+
 function preparePlanReviewInvocation(
   cwd: string,
   status: ProposeLifecycleStatus,
@@ -6498,6 +6982,14 @@ function preparePlanReviewInvocation(
   assertOwned: () => void,
 ): PlanReviewReservation | null {
   const context = loadInvestigationRuntimeContext(cwd);
+  const mandateBinding = durablePlanReviewMandateBinding(context, status);
+  if (mandateBinding) {
+    assertActiveTaskMandateBindingUnderLifecycleLock(
+      cwd,
+      mandateBinding,
+      assertOwned,
+    );
+  }
   const currentRefs = readEvidenceRefs(context.runtime, status.changeId);
   const existing = readPlanReviewReservation(
     context.runtime,
@@ -6511,11 +7003,18 @@ function preparePlanReviewInvocation(
     existing.materializationNode.nodeId ===
       currentRefs[PLANNING_MATERIALIZATION_REF]
   ) {
+    authorizePlanReviewReservationMandate(
+      cwd,
+      mandateBinding,
+      existing,
+      assertOwned,
+    );
     ensurePlanReviewInvocation(
       context.git.repositoryRoot,
       context.runtime,
       status,
       existing,
+      mandateBinding,
     );
     return existing;
   }
@@ -6805,6 +7304,7 @@ function preparePlanReviewInvocation(
     },
     runtimeMetadata: {},
   });
+  storeProviderExecutionPolicySnapshot(context.runtime, request, policy);
   writeEvidenceNode(context.runtime, reservationNode);
   compareAndSwapEvidenceRef(context.runtime, {
     changeId: status.changeId,
@@ -6825,11 +7325,18 @@ function preparePlanReviewInvocation(
     grantAuthorization,
     retry: null,
   };
+  authorizePlanReviewReservationMandate(
+    cwd,
+    mandateBinding,
+    reservation,
+    assertOwned,
+  );
   ensurePlanReviewInvocation(
     context.git.repositoryRoot,
     context.runtime,
     status,
     reservation,
+    mandateBinding,
   );
   return reservation;
 }
@@ -6962,11 +7469,31 @@ function ensurePlanReviewInvocation(
   paths: ReturnType<typeof loadInvestigationRuntimeContext>['runtime'],
   status: ProposeLifecycleStatus,
   reservation: PlanReviewReservation,
+  mandateBinding: TaskMandateBinding | undefined,
   prevalidatedSnapshotFiles?: Array<{
     snapshotFile: string;
     content: Buffer;
   }>,
 ): void {
+  if (reservation.retry === null) {
+    ensureProviderExecutionPolicySnapshot(
+      paths,
+      reservation.request,
+      loadAiAdapterPolicy(repositoryRoot),
+    );
+  } else if (reservation.retry.executionPolicySnapshot === null) {
+    throw workflowError(
+      'PLAN_REVIEW_RETRY_POLICY_SNAPSHOT_REQUIRED',
+      'A historical PlanReview retry reservation without a recoverable policy snapshot cannot authorize provider work.',
+      ExitCode.guard,
+    );
+  } else {
+    ensureProviderExecutionPolicySnapshotFromSnapshot(
+      paths,
+      reservation.request,
+      reservation.retry.executionPolicySnapshot,
+    );
+  }
   if (providerInvocationExists(paths, reservation.request.invocationId)) {
     const record = readProviderInvocation(
       paths,
@@ -6979,6 +7506,8 @@ function ensurePlanReviewInvocation(
     if (
       record.investigationId !== status.investigationId ||
       record.changeId !== status.changeId ||
+      canonicalJson(record.mandateBinding ?? null) !==
+        canonicalJson(mandateBinding ?? null) ||
       record.attempt !== (reservation.retry?.attempt ?? 1) ||
       record.requestDigest !== reservation.request.requestDigest ||
       canonicalJson(durable) !== canonicalJson(reservation.request)
@@ -7029,6 +7558,7 @@ function ensurePlanReviewInvocation(
   createProviderInvocation(paths, {
     investigationId: status.investigationId,
     changeId: status.changeId,
+    ...(mandateBinding ? { mandateBinding } : {}),
     attempt: reservation.retry?.attempt ?? 1,
     manifest: reservation.manifest,
     request: reservation.request,
@@ -7142,7 +7672,10 @@ function readPlanReviewReservation(
   }
   const node = readEvidenceNode(paths, nodeId);
   const output = node.output;
+  const retryDecisionShape =
+    node.nodeSchema === 'workflow.plan-review-request-reservation.v3';
   const retryShape =
+    retryDecisionShape ||
     node.nodeSchema === 'workflow.plan-review-request-reservation.v2';
   if (
     node.type !== 'plan-review-request-reservation' ||
@@ -7151,9 +7684,11 @@ function readPlanReviewReservation(
     node.evaluator !== 'workflow-propose.v1' ||
     node.policyDigest !== PROPOSE_POLICY_DIGEST ||
     node.outputSchema !==
-      (retryShape
-        ? 'workflow.plan-review-request-reservation-output.v2'
-        : 'workflow.plan-review-request-reservation-output.v1') ||
+      (retryDecisionShape
+        ? 'workflow.plan-review-request-reservation-output.v3'
+        : retryShape
+          ? 'workflow.plan-review-request-reservation-output.v2'
+          : 'workflow.plan-review-request-reservation-output.v1') ||
     !isRecord(output) ||
     !hasExactKeys(output, [
       'investigationId',
@@ -7175,6 +7710,9 @@ function readPlanReviewReservation(
       'subject',
       'targetSnapshot',
       ...(retryShape ? ['previousRequest', 'failure'] : []),
+      ...(retryDecisionShape
+        ? ['executionPolicySnapshot', 'retryDecision']
+        : []),
     ]) ||
     !hasExactKeys(node.provenanceParentNodeIds, [
       'authorization',
@@ -7317,12 +7855,17 @@ function assertPlanReviewRetryReservation(
   output: Record<string, unknown>,
   request: ProviderInvocationRequest,
 ): NonNullable<PlanReviewReservation['retry']> {
+  const retryDecisionShape =
+    node.nodeSchema === 'workflow.plan-review-request-reservation.v3';
   if (
     !isRecord(value) ||
     !hasExactKeys(value, [
       'attempt',
       'previousReservationNodeId',
       'failedInvocation',
+      ...(retryDecisionShape
+        ? ['executionPolicySnapshot', 'retryDecision']
+        : []),
     ]) ||
     !Number.isInteger(value.attempt) ||
     (value.attempt as number) < 2 ||
@@ -7351,9 +7894,26 @@ function assertPlanReviewRetryReservation(
   const previousReservationNodeId = value.previousReservationNodeId;
   const failedInvocation =
     value.failedInvocation as PlanReviewRetryEnvelope['failedInvocation'];
+  const retryDecision = retryDecisionShape
+    ? assertPlanReviewRetryDecisionBinding(value.retryDecision)
+    : null;
+  let executionPolicySnapshot: ProviderExecutionPolicySnapshotV2 | null = null;
+  if (retryDecisionShape) {
+    try {
+      executionPolicySnapshot = validateProviderExecutionPolicySnapshot(
+        request,
+        value.executionPolicySnapshot,
+      );
+    } catch {
+      throw planReviewRequestStale();
+    }
+  }
   const previousNode = readEvidenceNode(paths, previousReservationNodeId);
   const previousOutput = previousNode.output;
+  const previousRetryDecisionShape =
+    previousNode.nodeSchema === 'workflow.plan-review-request-reservation.v3';
   const previousRetryShape =
+    previousRetryDecisionShape ||
     previousNode.nodeSchema === 'workflow.plan-review-request-reservation.v2';
   const previousAttempt =
     previousRetryShape &&
@@ -7374,12 +7934,16 @@ function assertPlanReviewRetryReservation(
     invocationId: _failedInvocationId,
     nonce: _failedNonce,
     requestDigest: _failedRequestDigest,
+    policyDigest: _failedPolicyDigest,
+    limits: _failedLimits,
     ...failedRequestBinding
   } = failedRequest;
   const {
     invocationId: _replacementInvocationId,
     nonce: _replacementNonce,
     requestDigest: _replacementRequestDigest,
+    policyDigest: _replacementPolicyDigest,
+    limits: _replacementLimits,
     ...replacementRequestBinding
   } = request;
   if (
@@ -7390,15 +7954,24 @@ function assertPlanReviewRetryReservation(
     previousNode.evaluator !== 'workflow-propose.v1' ||
     previousNode.policyDigest !== PROPOSE_POLICY_DIGEST ||
     previousNode.outputSchema !==
-      (previousRetryShape
-        ? 'workflow.plan-review-request-reservation-output.v2'
-        : 'workflow.plan-review-request-reservation-output.v1') ||
+      (previousRetryDecisionShape
+        ? 'workflow.plan-review-request-reservation-output.v3'
+        : previousRetryShape
+          ? 'workflow.plan-review-request-reservation-output.v2'
+          : 'workflow.plan-review-request-reservation-output.v1') ||
     !isRecord(previousOutput) ||
     previousNode.nodeId !== node.exactInputDigests.previousRequest ||
     previousNode.nodeId !== node.provenanceParentNodeIds.previousRequest ||
     previousNode.resultDigest !==
       node.semanticParentResultDigests.previousRequest ||
     failedInvocation.failureDigest !== node.exactInputDigests.failure ||
+    (retryDecision !== null &&
+      (retryDecision.evidenceDigest !== node.exactInputDigests.retryDecision ||
+        retryDecision.failedAttemptId !==
+          `attempt-legacy-${failedInvocation.invocationId}`)) ||
+    (executionPolicySnapshot !== null &&
+      sha256(canonicalJson(executionPolicySnapshot)) !==
+        node.exactInputDigests.executionPolicySnapshot) ||
     previousAttempt === 0 ||
     failed.attempt !== previousAttempt ||
     value.attempt !== failed.attempt + 1 ||
@@ -7436,7 +8009,41 @@ function assertPlanReviewRetryReservation(
     attempt: value.attempt as number,
     previousReservationNodeId,
     failedInvocation,
+    retryDecision,
+    executionPolicySnapshot,
   };
+}
+
+function assertPlanReviewRetryDecisionBinding(
+  value: unknown,
+): ProviderRetryDecisionBinding {
+  if (
+    !isRecord(value) ||
+    !hasExactKeys(value, [
+      'evaluatedAt',
+      'evidenceDigest',
+      'executionJobId',
+      'executionRevision',
+      'failedAttemptId',
+      'kind',
+      'schemaVersion',
+    ]) ||
+    value.schemaVersion !== 1 ||
+    value.kind !== 'provider-retry-decision-binding' ||
+    typeof value.executionJobId !== 'string' ||
+    !/^[a-z0-9][a-z0-9._:-]{0,255}$/.test(value.executionJobId) ||
+    !Number.isSafeInteger(value.executionRevision) ||
+    (value.executionRevision as number) < 0 ||
+    typeof value.failedAttemptId !== 'string' ||
+    !/^[a-z0-9][a-z0-9._:-]{0,255}$/.test(value.failedAttemptId) ||
+    typeof value.evidenceDigest !== 'string' ||
+    !DIGEST.test(value.evidenceDigest) ||
+    typeof value.evaluatedAt !== 'string' ||
+    Number.isNaN(Date.parse(value.evaluatedAt))
+  ) {
+    throw planReviewRequestStale();
+  }
+  return value as ProviderRetryDecisionBinding;
 }
 
 function planReviewRequestStale() {
@@ -7535,18 +8142,22 @@ function readPlanningMaterializationReceipt(
   }
   const node = readEvidenceNode(paths, nodeId);
   const output = node.output;
+  const semanticReceipt =
+    node.nodeSchema === 'workflow.propose-planning-materialization.v2' &&
+    node.outputSchema === 'workflow.propose-planning-materialization-output.v2';
+  const legacyReceipt =
+    node.nodeSchema === 'workflow.propose-planning-materialization.v1' &&
+    node.outputSchema === 'workflow.propose-planning-materialization-output.v1';
   if (
     node.type !== 'propose-planning-materialization' ||
-    node.nodeSchema !== 'workflow.propose-planning-materialization.v1' ||
+    (!semanticReceipt && !legacyReceipt) ||
     node.evaluator !== 'workflow-propose.v1' ||
     node.policyDigest !== PROPOSE_POLICY_DIGEST ||
-    node.outputSchema !==
-      'workflow.propose-planning-materialization-output.v1' ||
     !isRecord(output) ||
     !hasExactKeys(output, [
       'investigationId',
       'changeId',
-      'revision',
+      semanticReceipt ? 'semanticRevision' : 'revision',
       'baseline',
       'artifacts',
       'sealNodeId',
@@ -7554,7 +8165,9 @@ function readPlanningMaterializationReceipt(
     ]) ||
     output.investigationId !== status.investigationId ||
     output.changeId !== status.changeId ||
-    output.revision !== status.revision ||
+    (semanticReceipt
+      ? output.semanticRevision !== status.semanticRevision
+      : output.revision !== status.revision) ||
     canonicalJson(output.baseline) !== canonicalJson(status.baseline) ||
     output.sealNodeId !== sealNode.nodeId ||
     output.sealResultDigest !== sealNode.resultDigest ||

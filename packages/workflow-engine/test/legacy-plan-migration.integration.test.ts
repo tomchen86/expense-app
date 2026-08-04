@@ -39,6 +39,7 @@ import {
   sourceRepositoryRoot,
   writeLegacyGoverningPlan,
 } from './fixture.ts';
+import { prepareExecutionMandate } from './execution-mandate-fixture.ts';
 
 const MIGRATION_CHANGE_ID = 'establish-investigation-first-planning';
 
@@ -254,8 +255,10 @@ test('propose CLI accepts the legacy migration flag', () => {
   const inputDirectory = fs.mkdtempSync(
     path.join(os.tmpdir(), 'workflow-legacy-migration-cli-'),
   );
+  let mandate: ReturnType<typeof prepareExecutionMandate> | undefined;
   try {
     prepareLegacyRepository(repository);
+    mandate = prepareExecutionMandate(repository, MIGRATION_CHANGE_ID);
     const intentPath = path.join(inputDirectory, 'intent.json');
     fs.writeFileSync(intentPath, JSON.stringify(migrationIntent()));
     const started = spawnSync(
@@ -267,6 +270,8 @@ test('propose CLI accepts the legacy migration flag', () => {
         MIGRATION_CHANGE_ID,
         '--intent',
         intentPath,
+        '--mandate',
+        mandate.taskId,
         '--actor',
         'codex',
         '--migrate-legacy',
@@ -292,6 +297,7 @@ test('propose CLI accepts the legacy migration flag', () => {
       'awaiting-main-terms',
     );
   } finally {
+    mandate?.dispose();
     fs.rmSync(inputDirectory, { recursive: true, force: true });
     fs.rmSync(repository, { recursive: true, force: true });
   }

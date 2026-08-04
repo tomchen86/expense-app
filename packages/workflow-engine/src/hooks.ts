@@ -7,6 +7,8 @@ import { discoverRepository, runGit } from './git.ts';
 import { listStagedPaths } from './git-transitions.ts';
 import { validateWorkflowIntegrationAssets } from './integration-assets.ts';
 import { hasManagedTrailerLine } from './managed-trailers.ts';
+import { assertActivePublishTransaction } from './external-effect-grant.ts';
+import type { MaintainerSignerProvider } from './maintainer-signer.ts';
 import { validateRepositoryState } from './repository-validation.ts';
 import { listSessions } from './session.ts';
 
@@ -20,6 +22,10 @@ export function runRepositoryHook(
   cwd: string,
   requestedHook: string,
   args: string[],
+  options: {
+    environment?: NodeJS.ProcessEnv;
+    externalEffectSigner?: MaintainerSignerProvider;
+  } = {},
 ): HookResult {
   assertHookArguments(requestedHook, args);
   if (requestedHook === 'commit-msg') {
@@ -54,6 +60,14 @@ export function runRepositoryHook(
         { details: { stagedPaths: stagedLifecyclePaths } },
       );
     }
+  }
+  if (requestedHook === 'pre-push') {
+    assertActivePublishTransaction(
+      cwd,
+      args,
+      options.environment,
+      options.externalEffectSigner,
+    );
   }
   return {
     hook: requestedHook,

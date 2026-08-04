@@ -10,6 +10,7 @@ import {
   canonicalCollaborationGrantEnvelope,
   collaborationGrantEnvelopeDigest,
   directHumanReviewAttestationDigest,
+  bindingFromPayload,
   parseCollaborationGrantEnvelope,
   parseDirectHumanReviewAttestation,
   validateCollaborationGrantEnvelope,
@@ -20,6 +21,7 @@ import {
   type CollaborationLifecyclePhase,
   type DirectHumanReviewAttestation,
 } from './collaboration-grant.ts';
+import { deriveAuthorityAuditRepositoryId } from './authority-audit-ledger.ts';
 import { ExitCode, workflowError } from './errors.ts';
 import { ensurePlainDirectory } from './filesystem-safety.ts';
 import { discoverRepository, runGit } from './git.ts';
@@ -35,6 +37,15 @@ import {
   runtimePaths,
   withRepositoryLifecycleOperation,
 } from './session-store.ts';
+import {
+  assertHumanRevocationAuthorization,
+  authorizeHumanRevocation,
+  canonicalHumanRevocationAuthorization,
+  digestHumanRevocationSubject,
+  type HumanRevocationAuthorization,
+  type HumanRevocationOptions,
+} from './human-revocation.ts';
+import { inspectTaskMandate } from './task-mandate.ts';
 
 const DIGEST = /^[0-9a-f]{64}$/;
 const STATE_FILE =
@@ -115,6 +126,7 @@ export type CollaborationTerminalRecord = {
   recordedAt: string;
   envelope: CollaborationGrantEnvelope;
   use: CollaborationGrantUseProjection | null;
+  revocationAuthorization?: HumanRevocationAuthorization;
 };
 
 export type CollaborationGrantInspection = {
@@ -177,6 +189,7 @@ export function collaborationGrantStorePaths(gitCommonDirectory: string) {
     available: path.join(root, 'available'),
     reserved: path.join(root, 'reserved'),
     terminal: path.join(root, 'terminal'),
+    revocationAuthorizations: path.join(root, 'revocation-authorizations'),
   };
 }
 
@@ -796,42 +809,114 @@ export function failCollaborationReservationUnderLifecycleLock(
 }
 
 export function revokeCollaborationGrant(
-  gitCommonDirectory: string,
+  cwd: string,
   requestedGrantId: string,
-  now: Date = new Date(),
+  options: HumanRevocationOptions,
 ): CollaborationGrantInspection {
-  const paths = collaborationGrantStorePaths(gitCommonDirectory);
-  return withRepositoryLifecycleOperation(paths.runtime, (assertOwned) =>
-    revokeCollaborationGrantUnderLifecycleLock(
-      gitCommonDirectory,
-      requestedGrantId,
-      now,
+  const repository = discoverRepository(cwd);
+  const grantId = assertCollaborationGrantId(requestedGrantId);
+  const paths = collaborationGrantStorePaths(repository.gitCommonDirectory);
+  return withRepositoryLifecycleOperation(paths.runtime, (assertOwned) => {
+    assertOwned();
+    const target = readCollaborationRevocationTarget(
+      paths,
+      grantId,
       assertOwned,
-    ),
-  );
+    );
+    const payload = target.envelope.payload;
+    const historicalPolicy = loadPolicyAtCommit(
+      repository.repositoryRoot,
+      payload.baselineCommit,
+    );
+    const historicalVerifier =
+      options.verifier ??
+      createInteractiveSshSigner(repository.repositoryRoot, historicalPolicy);
+    validateCollaborationGrantEnvelope(target.envelope, historicalPolicy, {
+      now: exactDate(options.now ?? new Date()),
+      expected: bindingFromPayload(payload),
+      verifier: historicalVerifier,
+      allowExpired: true,
+    });
+    let audit: {
+      externalAuditRoot: string;
+      repositoryId: ReturnType<typeof deriveAuthorityAuditRepositoryId>;
+    } | null = null;
+    if (payload.taskId !== null) {
+      const mandate = inspectTaskMandate(
+        repository.repositoryRoot,
+        payload.taskId,
+        {
+          now: options.now,
+          signer: options.verifier ?? options.signer,
+        },
+      );
+      if (
+        mandate.legacyReadOnly ||
+        mandate.changeId !== payload.changeId ||
+        mandate.externalAuditRoot === undefined
+      ) {
+        throw workflowError(
+          'HUMAN_REVOCATION_BINDING_INVALID',
+          'Collaboration revocation task mandate binding is unavailable or different.',
+          ExitCode.guard,
+        );
+      }
+      audit = {
+        externalAuditRoot: mandate.externalAuditRoot,
+        repositoryId: deriveAuthorityAuditRepositoryId(payload.repositoryId),
+      };
+    }
+    const authorization = authorizeHumanRevocation(
+      repository.repositoryRoot,
+      {
+        subjectKind: 'collaboration-grant',
+        grantId,
+        grantDigest: digestHumanRevocationSubject(
+          canonicalCollaborationGrantEnvelope(target.envelope),
+        ),
+        repositoryId: payload.repositoryId,
+        repositoryOrigin: payload.repositoryOrigin,
+        changeId: payload.changeId,
+        taskId: payload.taskId,
+        workflowId: null,
+        audit,
+      },
+      options,
+      path.join(paths.revocationAuthorizations, `${grantId}.json`),
+      target.authorization,
+    );
+    return terminallyRevokeCollaborationGrant(
+      paths,
+      target,
+      authorization,
+      assertOwned,
+    );
+  });
 }
 
-export function revokeCollaborationGrantUnderLifecycleLock(
-  gitCommonDirectory: string,
-  requestedGrantId: string,
-  now: Date,
+function readCollaborationRevocationTarget(
+  paths: ReturnType<typeof collaborationGrantStorePaths>,
+  grantId: string,
   assertOwned: () => void,
-): CollaborationGrantInspection {
-  assertOwned();
-  const grantId = assertCollaborationGrantId(requestedGrantId);
-  const paths = collaborationGrantStorePaths(gitCommonDirectory);
+): {
+  state: CollaborationGrantInspection['state'];
+  envelope: CollaborationGrantEnvelope;
+  transitionDigest: string | null;
+  reason: string | null;
+  authorization: HumanRevocationAuthorization | null;
+} {
   ensureStoreDirectories(paths);
   assertOwned();
   const terminalPath = statePath(paths.terminal, grantId);
   if (fs.existsSync(terminalPath)) {
     const terminal = readTerminal(terminalPath, grantId);
-    cleanupNonterminal(
-      paths,
-      grantId,
-      terminal.envelope,
-      terminal.transitionDigest,
-    );
-    return inspectTerminal(terminal);
+    return {
+      state: terminal.state,
+      envelope: terminal.envelope,
+      transitionDigest: terminal.transitionDigest,
+      reason: terminal.reason,
+      authorization: terminal.revocationAuthorization ?? null,
+    };
   }
   assertNonterminalUnambiguous(paths, grantId);
   const availablePath = statePath(paths.available, grantId);
@@ -842,9 +927,7 @@ export function revokeCollaborationGrantUnderLifecycleLock(
   const reservation = fs.existsSync(reservedPath)
     ? readReservationOrInterrupted(reservedPath, grantId)
     : undefined;
-  if (!available && !reservation) {
-    throw grantNotFound(grantId);
-  }
+  if (!available && !reservation) throw grantNotFound(grantId);
   const envelope = available ?? reservation?.envelope;
   if (
     !envelope ||
@@ -855,19 +938,74 @@ export function revokeCollaborationGrantUnderLifecycleLock(
   ) {
     throw ambiguousGrant(grantId);
   }
+  return {
+    state: reservation ? 'reserved' : 'available',
+    envelope,
+    transitionDigest: reservation?.transitionDigest ?? null,
+    reason: null,
+    authorization: null,
+  };
+}
+
+function terminallyRevokeCollaborationGrant(
+  paths: ReturnType<typeof collaborationGrantStorePaths>,
+  target: ReturnType<typeof readCollaborationRevocationTarget>,
+  rawAuthorization: HumanRevocationAuthorization,
+  assertOwned: () => void,
+): CollaborationGrantInspection {
+  const authorization = assertHumanRevocationAuthorization(rawAuthorization);
+  const grantId = target.envelope.payload.grantId;
+  if (
+    authorization.payload.subjectKind !== 'collaboration-grant' ||
+    authorization.payload.grantId !== grantId
+  ) {
+    throw workflowError(
+      'HUMAN_REVOCATION_CONFLICT',
+      'Collaboration revocation authorization is bound elsewhere.',
+      ExitCode.conflict,
+    );
+  }
+  if (target.state === 'revoked') {
+    if (
+      target.reason !== authorization.payload.reason ||
+      target.authorization === null ||
+      canonicalHumanRevocationAuthorization(target.authorization) !==
+        canonicalHumanRevocationAuthorization(authorization)
+    ) {
+      throw workflowError(
+        'HUMAN_REVOCATION_CONFLICT',
+        'Collaboration grant already has a different revocation tombstone.',
+        ExitCode.conflict,
+      );
+    }
+    return inspectTerminal(
+      readTerminal(statePath(paths.terminal, grantId), grantId),
+    );
+  }
+  if (target.state !== 'available' && target.state !== 'reserved') {
+    throw workflowError(
+      'HUMAN_REVOCATION_STATE_INVALID',
+      'Only active collaboration authority can be revoked.',
+      ExitCode.guard,
+    );
+  }
   const terminal: CollaborationTerminalRecord = {
     schemaVersion: 1,
     state: 'revoked',
     grantId,
-    transitionDigest: reservation?.transitionDigest ?? null,
-    reason: 'Explicit maintainer revocation',
-    recordedAt: exactDate(now).toISOString(),
-    envelope,
+    transitionDigest: target.transitionDigest,
+    reason: authorization.payload.reason,
+    recordedAt: authorization.payload.revokedAt,
+    envelope: target.envelope,
     use: null,
+    revocationAuthorization: authorization,
   };
   assertOwned();
-  createPrivateFileAtomic(terminalPath, serialize(terminal));
-  cleanupNonterminal(paths, grantId, envelope, terminal.transitionDigest);
+  createPrivateFileAtomic(
+    statePath(paths.terminal, grantId),
+    serialize(terminal),
+  );
+  cleanupNonterminal(paths, grantId, target.envelope, target.transitionDigest);
   assertOwned();
   return inspectTerminal(terminal);
 }
@@ -1055,6 +1193,10 @@ function readTerminal(
   grantId: string,
 ): CollaborationTerminalRecord {
   const value = parseRecord(readPrivateFile(filePath));
+  const hasAuthorization = Object.prototype.hasOwnProperty.call(
+    value,
+    'revocationAuthorization',
+  );
   if (
     !hasExactKeys(value, [
       'schemaVersion',
@@ -1065,6 +1207,7 @@ function readTerminal(
       'recordedAt',
       'envelope',
       'use',
+      ...(hasAuthorization ? ['revocationAuthorization'] : []),
     ]) ||
     value.schemaVersion !== 1 ||
     !['revoked', 'consumed', 'failed', 'expired'].includes(
@@ -1093,10 +1236,26 @@ function readTerminal(
   } else if (value.use !== null) {
     throw ambiguousGrant(grantId);
   }
+  let revocationAuthorization: HumanRevocationAuthorization | undefined;
+  if (hasAuthorization) {
+    revocationAuthorization = assertHumanRevocationAuthorization(
+      value.revocationAuthorization,
+    );
+    if (
+      value.state !== 'revoked' ||
+      revocationAuthorization.payload.subjectKind !== 'collaboration-grant' ||
+      revocationAuthorization.payload.grantId !== grantId ||
+      revocationAuthorization.payload.reason !== value.reason ||
+      revocationAuthorization.payload.revokedAt !== value.recordedAt
+    ) {
+      throw ambiguousGrant(grantId);
+    }
+  }
   return deepFreeze({
     ...value,
     envelope,
     use,
+    ...(revocationAuthorization ? { revocationAuthorization } : {}),
   } as CollaborationTerminalRecord);
 }
 
@@ -1567,6 +1726,7 @@ function ensureStoreDirectories(
     paths.available,
     paths.reserved,
     paths.terminal,
+    paths.revocationAuthorizations,
   ]) {
     const existed = fs.existsSync(directory);
     ensurePlainDirectory(directory);

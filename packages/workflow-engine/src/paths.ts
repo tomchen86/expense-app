@@ -120,6 +120,7 @@ export function normalizePolicyPath(value: string): string {
 
   if (
     !candidate ||
+    candidate.normalize('NFC') !== candidate ||
     path.posix.isAbsolute(candidate) ||
     WINDOWS_ABSOLUTE_PATTERN.test(candidate) ||
     candidate.startsWith('./') ||
@@ -176,7 +177,10 @@ export function normalizeChangedPath(value: string): string {
 
 export function normalizeExactRepositoryPath(value: string): string {
   const normalized = normalizeChangedPath(value);
-  if (UNSUPPORTED_GLOB_PATTERN.test(normalized)) {
+  if (
+    UNSUPPORTED_GLOB_PATTERN.test(normalized) ||
+    normalized.normalize('NFC') !== normalized
+  ) {
     throw invalidRepositoryPath(value);
   }
   return normalized;

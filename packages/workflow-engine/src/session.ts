@@ -25,6 +25,11 @@ import {
   writeJsonAtomic,
 } from './session-store.ts';
 import { loadStableValidatedChangeContract } from './validated-contract-context.ts';
+import {
+  authorizeTaskMandateOperation,
+  type TaskMandateBinding,
+  type TaskMandateOptions,
+} from './task-mandate.ts';
 
 export type { WorkflowSession } from './session-store.ts';
 
@@ -49,6 +54,37 @@ export function startSession(
     );
     return persistSessionStart(
       inspectSessionStart(cwd, requestedChangeId, requestedTaskId),
+    );
+  });
+}
+
+export function startMandatedSession(
+  cwd: string,
+  requestedChangeId: string,
+  requestedTaskId: string,
+  requestedMandateTaskId: string,
+  options: TaskMandateOptions = {},
+): WorkflowSession {
+  const initial = inspectSessionStart(cwd, requestedChangeId, requestedTaskId);
+  const authorization = authorizeTaskMandateOperation(
+    cwd,
+    requestedMandateTaskId,
+    { kind: 'isolated-repository-write' },
+    { ...options, changeId: initial.changeId },
+  );
+  const runtime = runtimePaths(
+    initial.git.gitCommonDirectory,
+    initial.contract.config.runtimeDirectory,
+  );
+  return withRepositoryLifecycleOperation(runtime, (assertRepositoryLock) => {
+    reclaimDeadChangeTransitionLock(
+      runtime,
+      initial.changeId,
+      assertRepositoryLock,
+    );
+    return persistSessionStart(
+      inspectSessionStart(cwd, requestedChangeId, requestedTaskId),
+      authorization.binding,
     );
   });
 }
@@ -136,6 +172,7 @@ function inspectSessionStart(
 
 function persistSessionStart(
   inspection: ReturnType<typeof inspectSessionStart>,
+  mandateBinding?: TaskMandateBinding,
 ): WorkflowSession {
   const { changeId, taskId, git, contract, branch } = inspection;
   const policy = contract.guard.tasks[taskId];
@@ -186,6 +223,7 @@ function persistSessionStart(
     state: 'active',
     changeId,
     taskId,
+    ...(mandateBinding ? { mandateBinding } : {}),
     repositoryRoot: git.repositoryRealPath,
     gitCommonDirectory: git.gitCommonDirectory,
     branch,

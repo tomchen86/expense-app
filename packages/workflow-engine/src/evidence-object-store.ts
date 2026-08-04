@@ -878,10 +878,21 @@ function assertPlanningMaterializationOwnership(
     throw refInvalid();
   }
   if (node.type === 'propose-planning-materialization') {
+    const semanticReceipt =
+      node.nodeSchema === 'workflow.propose-planning-materialization.v2' &&
+      node.outputSchema ===
+        'workflow.propose-planning-materialization-output.v2';
+    const legacyReceipt =
+      node.nodeSchema === 'workflow.propose-planning-materialization.v1' &&
+      node.outputSchema ===
+        'workflow.propose-planning-materialization-output.v1';
+    if (!semanticReceipt && !legacyReceipt) {
+      throw refInvalid();
+    }
     assertProposeEvidenceNode(node, {
       type: 'propose-planning-materialization',
-      nodeSchema: 'workflow.propose-planning-materialization.v1',
-      outputSchema: 'workflow.propose-planning-materialization-output.v1',
+      nodeSchema: node.nodeSchema,
+      outputSchema: node.outputSchema,
       exactInputKeys: ['artifacts', 'baseline', 'seal'],
       provenanceKeys: ['seal'],
       semanticKeys: ['seal'],
@@ -890,7 +901,7 @@ function assertPlanningMaterializationOwnership(
       !hasExactKeys(output, [
         'investigationId',
         'changeId',
-        'revision',
+        semanticReceipt ? 'semanticRevision' : 'revision',
         'baseline',
         'artifacts',
         'sealNodeId',
@@ -898,8 +909,10 @@ function assertPlanningMaterializationOwnership(
       ]) ||
       output.changeId !== expectedChangeId ||
       !isInvestigationOwner(output.investigationId) ||
-      !Number.isSafeInteger(output.revision) ||
-      (output.revision as number) < 0 ||
+      !Number.isSafeInteger(
+        semanticReceipt ? output.semanticRevision : output.revision,
+      ) ||
+      Number(semanticReceipt ? output.semanticRevision : output.revision) < 0 ||
       !isBaseline(output.baseline) ||
       !isDigestRecord(output.artifacts) ||
       !isDigest(output.sealNodeId) ||
@@ -978,9 +991,14 @@ function assertPlanReviewRequestOwnership(
   expectedChangeId: string,
 ): InvestigationEvidenceOwnership {
   const output = node.output;
+  const retryDecisionShape =
+    node.nodeSchema === 'workflow.plan-review-request-reservation.v3' &&
+    node.outputSchema === 'workflow.plan-review-request-reservation-output.v3';
   const retryShape =
-    node.nodeSchema === 'workflow.plan-review-request-reservation.v2' &&
-    node.outputSchema === 'workflow.plan-review-request-reservation-output.v2';
+    retryDecisionShape ||
+    (node.nodeSchema === 'workflow.plan-review-request-reservation.v2' &&
+      node.outputSchema ===
+        'workflow.plan-review-request-reservation-output.v2');
   const initialShape =
     node.nodeSchema === 'workflow.plan-review-request-reservation.v1' &&
     node.outputSchema === 'workflow.plan-review-request-reservation-output.v1';
@@ -1033,6 +1051,9 @@ function assertPlanReviewRequestOwnership(
       'subject',
       ...(currentShape ? ['targetSnapshot'] : []),
       ...(retryShape ? ['previousRequest', 'failure'] : []),
+      ...(retryDecisionShape
+        ? ['executionPolicySnapshot', 'retryDecision']
+        : []),
     ]) ||
     !hasExactKeys(node.provenanceParentNodeIds, [
       'authorization',
@@ -1258,12 +1279,17 @@ function assertPlanReviewRetryOwnership(
   previousOwnership: InvestigationEvidenceOwnership;
 } {
   const retry = output.retry;
+  const retryDecisionShape =
+    node.nodeSchema === 'workflow.plan-review-request-reservation.v3';
   if (
     !isPlainRecord(retry) ||
     !hasExactKeys(retry, [
       'attempt',
       'previousReservationNodeId',
       'failedInvocation',
+      ...(retryDecisionShape
+        ? ['executionPolicySnapshot', 'retryDecision']
+        : []),
     ]) ||
     !Number.isSafeInteger(retry.attempt) ||
     (retry.attempt as number) < 2 ||
@@ -1284,6 +1310,57 @@ function assertPlanReviewRetryOwnership(
     (retry.failedInvocation.revision as number) < 0 ||
     !isDigest(retry.failedInvocation.requestDigest) ||
     !isDigest(retry.failedInvocation.failureDigest) ||
+    (retryDecisionShape &&
+      (!isPlainRecord(retry.retryDecision) ||
+        !hasExactKeys(retry.retryDecision, [
+          'evaluatedAt',
+          'evidenceDigest',
+          'executionJobId',
+          'executionRevision',
+          'failedAttemptId',
+          'kind',
+          'schemaVersion',
+        ]) ||
+        retry.retryDecision.schemaVersion !== 1 ||
+        retry.retryDecision.kind !== 'provider-retry-decision-binding' ||
+        typeof retry.retryDecision.executionJobId !== 'string' ||
+        !/^[a-z0-9][a-z0-9._:-]{0,255}$/.test(
+          retry.retryDecision.executionJobId,
+        ) ||
+        !Number.isSafeInteger(retry.retryDecision.executionRevision) ||
+        (retry.retryDecision.executionRevision as number) < 0 ||
+        retry.retryDecision.failedAttemptId !==
+          `attempt-legacy-${retry.failedInvocation.invocationId}` ||
+        !isDigest(retry.retryDecision.evidenceDigest) ||
+        typeof retry.retryDecision.evaluatedAt !== 'string' ||
+        Number.isNaN(Date.parse(retry.retryDecision.evaluatedAt)) ||
+        node.exactInputDigests.retryDecision !==
+          retry.retryDecision.evidenceDigest)) ||
+    (retryDecisionShape &&
+      (!isPlainRecord(retry.executionPolicySnapshot) ||
+        !hasExactKeys(retry.executionPolicySnapshot, [
+          'accountingDigest',
+          'attemptReservation',
+          'invocationId',
+          'kind',
+          'policyDigest',
+          'policyDocument',
+          'requestDigest',
+          'retryAccounting',
+          'schemaVersion',
+        ]) ||
+        retry.executionPolicySnapshot.schemaVersion !== 2 ||
+        retry.executionPolicySnapshot.kind !==
+          'provider-execution-policy-snapshot' ||
+        retry.executionPolicySnapshot.invocationId !== request.invocationId ||
+        retry.executionPolicySnapshot.requestDigest !== request.requestDigest ||
+        retry.executionPolicySnapshot.policyDigest !== request.policyDigest ||
+        typeof retry.executionPolicySnapshot.policyDocument !== 'string' ||
+        !isPlainRecord(retry.executionPolicySnapshot.retryAccounting) ||
+        !isPlainRecord(retry.executionPolicySnapshot.attemptReservation) ||
+        !isDigest(retry.executionPolicySnapshot.accountingDigest) ||
+        node.exactInputDigests.executionPolicySnapshot !==
+          sha256(canonicalJson(retry.executionPolicySnapshot)))) ||
     node.exactInputDigests.failure !== retry.failedInvocation.failureDigest ||
     node.exactInputDigests.previousRequest !==
       retry.previousReservationNodeId ||
@@ -1325,12 +1402,16 @@ function assertPlanReviewRetryOwnership(
     invocationId: _previousInvocationId,
     nonce: _previousNonce,
     requestDigest: _previousRequestDigest,
+    policyDigest: _previousPolicyDigest,
+    limits: _previousLimits,
     ...previousRequestBinding
   } = previousRequest;
   const {
     invocationId: _replacementInvocationId,
     nonce: _replacementNonce,
     requestDigest: _replacementRequestDigest,
+    policyDigest: _replacementPolicyDigest,
+    limits: _replacementLimits,
     ...replacementRequestBinding
   } = request;
   if (

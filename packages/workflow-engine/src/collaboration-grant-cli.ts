@@ -61,17 +61,15 @@ export function dispatchCollaborationGrantCommand(
       };
     }
     case 'collaboration-revoke': {
-      if (args.length !== 2) {
+      if (args.length !== 4 || args[2] !== '--reason' || !args[3]?.trim()) {
         throw collaborationUsage();
       }
-      const repository = discoverRepository(cwd);
       return {
         action: 'collaboration-revoke',
         ok: true,
-        grant: revokeCollaborationGrant(
-          repository.gitCommonDirectory,
-          args[1]!,
-        ),
+        grant: revokeCollaborationGrant(cwd, args[1]!, {
+          reason: args[3],
+        }),
       };
     }
     default:
@@ -265,7 +263,7 @@ export function collaborationUsage() {
       'Usage:',
       '  pnpm workflow maintainer collaboration-grant --change <id> [--task <task-id>] --base <commit> --target <digest> --phase <blind-survey|plan-review> --author-role <role> --conflicting-role <role> (--provider <codex|claude> --actor-assurance <grade>|--caller <id> --actor-assurance <grade>|--direct-human true) --degraded <same-provider-fresh-session|caller-supplied|direct-human-review> --reason <text> [--ttl <minutes>m] [--uses 1] [--json]',
       '  pnpm workflow maintainer collaboration-inspect [grant-id] [--json]',
-      '  pnpm workflow maintainer collaboration-revoke <grant-id> [--json]',
+      '  pnpm workflow maintainer collaboration-revoke <grant-id> --reason <text> [--json]',
     ].join('\n'),
     ExitCode.usage,
   );

@@ -401,7 +401,7 @@ ordinary reviewed OpenSpec change plus planning commit on the exact
 | `pnpm workflow maintainer grant --change <id> --paths <exact-path> [--paths <exact-path> ...] --reason <text> [--ttl <minutes>m] [--uses 1] --json` | Interactively sign one grant bound to the current full base commit, base policy blob, repository, change, sorted exact eligible paths, reason, signer, expiry, and one use. The default and maximum TTL are 30 minutes.                             |
 | `pnpm workflow maintainer attest --original <commit> --main <commit> [--base <original>=<main> ...] --json`                                         | Interactively sign one canonical authority attestation binding a rebase-rewritten protected-main authority commit to its retained signed original, then create the immutable `workflow-attestation/<grant-id>` tag targeting the original.          |
 | `pnpm workflow maintainer inspect [grant-id] --json`                                                                                                | Read redacted available, reserved, consumed, or revoked local state. It grants no authority and exposes no private signing material.                                                                                                                |
-| `pnpm workflow maintainer revoke <grant-id> --json`                                                                                                 | Terminally revoke an available or reserved grant. Repeating it is cleanup-safe; a consumed or revoked grant never becomes available again.                                                                                                          |
+| `pnpm workflow maintainer revoke <grant-id> --reason <text> --json`                                                                                 | Human-only terminal revocation of an available or reserved grant with a durable reason. Repeating it is cleanup-safe; a consumed or revoked grant never becomes available again.                                                                    |
 | `pnpm workflow authority-start <change-id> --grant <grant-id> --json`                                                                               | Atomically reserve the grant on its exact clean base and `work/<change-id>` branch, then pin policy, contract, signer, exact paths, and the complete normal check set.                                                                              |
 | `pnpm workflow authority-check <session-id> --json`                                                                                                 | Require at least one changed granted path, reject every ungranted path, run all base-pinned normal checks, and record current content-addressed evidence. Any later edit makes it stale.                                                            |
 | `pnpm workflow authority-commit <session-id> --message "Imperative subject" --json`                                                                 | Revalidate human presence and the same signer, stage only the exact diff, create one SSH-signed authority-maintenance commit with engine-owned trailers, advance the ref, and consume the grant. There is no authority `complete-task` or `finish`. |
@@ -574,6 +574,30 @@ CI and package-script adapters must delegate to this command instead of copying
 a registered command or maintaining another path scope. In particular,
 formatting verification resolves `workflow-format`; the registry entry remains
 the sole authority for its Prettier paths.
+
+## Execution Recovery, Metrics, and Evidence Retention
+
+The V2 execution core keeps provider failures inside one durable Job and
+records every replacement as a distinct Attempt. Operators can inspect that
+state and process due automatic work without creating an unbounded daemon:
+
+| Command                                                                          | Purpose                                                                               |
+| -------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------- |
+| `pnpm workflow job list --json`                                                  | List durable execution jobs.                                                          |
+| `pnpm workflow job status <job-id> --json`                                       | Show Attempt lineage, blockers, and the accepted result.                              |
+| `pnpm workflow job retry-request <job-id> --timeout <ms> --json`                 | Create a scoped execution-budget grant request.                                       |
+| `pnpm workflow job retry <job-id> --grant <grant-id> --json`                     | Start the exact approved replacement Attempt.                                         |
+| `pnpm workflow job retry-pump --limit <count> --json`                            | Process at most the requested number of due replacement or read-only probe schedules. |
+| `pnpm workflow job retry-schedules --json`                                       | Inspect durable retry schedules.                                                      |
+| `pnpm workflow job retry-receipts [schedule-id] --json`                          | Inspect immutable retry/probe processing receipts.                                    |
+| `pnpm workflow metrics show --json`                                              | Read production resilience, speed, governance, and storage metrics.                   |
+| `pnpm workflow retention inspect --json`                                         | Inspect evidence retention state.                                                     |
+| `pnpm workflow retention sweep --limit <count> --json`                           | Run one bounded TTL pruning pass.                                                     |
+| `pnpm workflow retention pin <workflow-id> <evidence-id> --reason <text> --json` | Human-only exact-evidence pin with a durable reason.                                  |
+
+The production worker performs only a bounded retry and pruning sweep per
+terminal invocation. Automatic maintenance never pins evidence, and pruning
+must preserve evidence referenced by the current manifest or an active result.
 
 ## Controlled Issues and Documents
 

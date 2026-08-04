@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
+import { DEFAULT_AI_ADAPTER_RETRY_ACCOUNTING } from '../src/ai-adapter-policy.ts';
 import { evaluateAiAdapter } from '../src/ai-adapter-evaluation.ts';
 import {
   createFixtureRepository,
@@ -290,7 +291,7 @@ test('AI adapter policy may only disable built-ins and lower positive limits', (
   }
 });
 
-test('tracked adapter policy and schema publish the same strict v3 bounds', () => {
+test('tracked adapter policy and schema publish the same strict v4 bounds', () => {
   const result = evaluateAiAdapter(sourceRepositoryRoot, 'linux');
   assert.equal(result.schemaVersion, 3);
   assert.deepEqual(result.limits, limitsPolicy());
@@ -312,7 +313,7 @@ test('tracked adapter policy and schema publish the same strict v3 bounds', () =
     ),
   );
   assert.equal(schema.additionalProperties, false);
-  assert.equal(schema.properties.schemaVersion.const, 3);
+  assert.equal(schema.properties.schemaVersion.const, 4);
   assert.deepEqual(schema.properties.providers.required, ['codex', 'claude']);
   assert.equal(schema.properties.providers.additionalProperties, false);
   assert.deepEqual(
@@ -400,12 +401,13 @@ test('AI adapter CLI exposes evaluation only and ignores fake sandbox tools', ()
 
 function validPolicy(): Record<string, unknown> {
   return {
-    schemaVersion: 3,
+    schemaVersion: 4,
     mode: 'managed-read-only',
     launchPolicy: 'lifecycle-only',
     requiredControls: [...REQUIRED_CONTROLS],
     providers: providersPolicy(),
     limits: limitsPolicy(),
+    retryAccounting: structuredClone(DEFAULT_AI_ADAPTER_RETRY_ACCOUNTING),
   };
 }
 

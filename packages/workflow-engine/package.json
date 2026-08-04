@@ -6,7 +6,8 @@
     "node": ">=22.22.1"
   },
   "scripts": {
-    "workflow": "node --experimental-strip-types src/cli.ts",
+    "harness-bootstrap": "node --experimental-strip-types bootstrap/harness-bootstrap-launcher.ts",
+    "workflow": "node --experimental-strip-types bootstrap/workflow-launcher.ts",
     "test": "node --experimental-strip-types --test test/contracts.test.ts test/session.integration.test.ts",
     "typecheck": "tsc -p tsconfig.json"
   },

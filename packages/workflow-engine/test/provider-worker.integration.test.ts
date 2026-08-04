@@ -10,6 +10,15 @@ import { loadChangeContract } from '../src/contracts.ts';
 import { ExitCode, workflowError } from '../src/errors.ts';
 import { createEvidenceNode } from '../src/evidence-node.ts';
 import { writeEvidenceNode } from '../src/evidence-object-store.ts';
+import { projectProviderInvocationExecution } from '../src/execution-core.ts';
+import {
+  buildContextManifest,
+  rolloverDurableEpochContextStore,
+} from '../src/execution-governance.ts';
+import {
+  executionJobStatePath,
+  readExecutionJobState,
+} from '../src/execution-store.ts';
 import { discoverRepository } from '../src/git.ts';
 import { investigationRuntimePaths } from '../src/paths.ts';
 import {
@@ -20,14 +29,25 @@ import { deriveInvestigationFirstPlanningSubject } from '../src/planning-assuran
 import {
   createProviderInvocationRequest,
   PROPOSE_POLICY_DIGEST,
+  type ProviderInvocationRequest,
 } from '../src/provider-contracts.ts';
 import {
+  claimProviderInvocationForWorker,
+  completeProviderInvocationFromRunner,
   createProviderInvocation,
+  prepareProviderInvocationAcceptanceBinding,
   providerInvocationManifestDigest,
+  releaseProviderInvocationWorkerFence,
   readProviderInvocation,
+  readProviderInvocationManifest,
   readProviderInvocationRequest,
+  storeProviderExecutionPolicySnapshot,
   type PlanReviewManifest,
 } from '../src/provider-invocation-store.ts';
+import {
+  ensureProviderPromptContext,
+  providerPromptContextStoreRoot,
+} from '../src/provider-execution-governance.ts';
 import { startPropose } from '../src/propose-orchestrator.ts';
 import { PROVIDER_RUNNER_RESIDUALS } from '../src/provider-runner.ts';
 import {
@@ -174,6 +194,223 @@ test('provider worker records launch and admission failure durably', () => {
     assert.equal(replayed.launched, false);
     assert.equal(launches, 1);
   } finally {
+    fs.rmSync(repository, { recursive: true, force: true });
+  }
+});
+
+test('provider worker rejects output when current context rolls during execution', () => {
+  const repository = createFixtureRepository();
+  const changeId = 'worker-context-rollover';
+  try {
+    git(repository, ['checkout', '-b', `work/${changeId}`]);
+    const started = startPropose(repository, changeId, intent(), {
+      explicitActor: 'codex',
+      environment: {},
+    });
+    const invocationId = started.investigation!.providerInvocationId;
+    const locator = discoverRepository(repository);
+    const runtime = investigationRuntimePaths(
+      locator.gitCommonDirectory,
+      'workflow-engine',
+    );
+    const request = readProviderInvocationRequest(runtime, invocationId);
+    const owner = readProviderInvocation(runtime, invocationId).investigationId;
+    const manifest = readProviderInvocationManifest(runtime, invocationId);
+
+    const result = runProviderWorker(repository, invocationId, {
+      workerId: 'worker-context-rollover',
+      runner() {
+        const storeRoot = providerPromptContextStoreRoot(
+          path.join(runtime.invocations, invocationId),
+        );
+        const binding = ensureProviderPromptContext(
+          storeRoot,
+          request,
+          manifest,
+          owner,
+        );
+        const nextContent = canonicalJson({
+          kind: 'rolled-provider-context',
+          owner,
+        });
+        const next = buildContextManifest({
+          workflowId: binding.workflowId,
+          epoch: binding.epoch + 1,
+          contractVersion: binding.manifest.contractVersion,
+          baselineDigest: binding.manifest.baselineDigest,
+          intentDigest: binding.manifest.intentDigest,
+          termSetDigest: binding.manifest.termSetDigest,
+          planningSnapshotDigest: binding.manifest.planningSnapshotDigest,
+          items: [
+            { identity: 'provider-input-manifest', content: nextContent },
+          ],
+        });
+        rolloverDurableEpochContextStore(storeRoot, {
+          workflowId: binding.workflowId,
+          expectedGeneration: binding.generation,
+          expectedEpoch: binding.epoch,
+          expectedContextDigest: binding.contextDigest,
+          nextManifest: next,
+          items: [
+            { identity: 'provider-input-manifest', content: nextContent },
+          ],
+          reason: 'Exercise provider completion freshness.',
+          restartFrom: request.purpose,
+          carriedForward: [],
+          invalidated: ['provider-input-manifest'],
+          verification: null,
+          createdAt: new Date('2026-08-03T20:00:00.000Z'),
+        });
+        return successfulWorkerReport(request, invocationId);
+      },
+    });
+
+    assert.equal(result.state, 'failed');
+    assert.equal(result.failure?.kind, 'repository-reconciliation-required');
+    assert.equal(result.failure?.code, 'PROVIDER_CONTEXT_STALE_OR_WRONG');
+    assert.equal(readProviderInvocation(runtime, invocationId).result, null);
+  } finally {
+    fs.rmSync(repository, { recursive: true, force: true });
+  }
+});
+
+test('provider worker rejects execution Job authority drift after launch', () => {
+  const repository = createFixtureRepository();
+  const changeId = 'worker-execution-authority-drift';
+  try {
+    git(repository, ['checkout', '-b', `work/${changeId}`]);
+    const started = startPropose(repository, changeId, intent(), {
+      explicitActor: 'codex',
+      environment: {},
+    });
+    const invocationId = started.investigation!.providerInvocationId;
+    const locator = discoverRepository(repository);
+    const runtime = investigationRuntimePaths(
+      locator.gitCommonDirectory,
+      'workflow-engine',
+    );
+    const request = readProviderInvocationRequest(runtime, invocationId);
+
+    const result = runProviderWorker(repository, invocationId, {
+      workerId: 'worker-execution-authority-drift',
+      runner() {
+        const record = readProviderInvocation(runtime, invocationId);
+        const projection = projectProviderInvocationExecution({
+          record,
+          request,
+        });
+        const execution = readExecutionJobState(runtime, projection.job.jobId);
+        assert.ok(execution);
+        fs.writeFileSync(
+          executionJobStatePath(runtime, projection.job.jobId),
+          `${canonicalJson({ ...execution, revision: execution.revision + 1 })}\n`,
+          { mode: 0o600 },
+        );
+        return successfulWorkerReport(request, invocationId);
+      },
+    });
+
+    assert.equal(result.state, 'failed');
+    assert.equal(result.failure?.kind, 'repository-reconciliation-required');
+    assert.equal(result.failure?.code, 'PROVIDER_ACCEPTANCE_BINDING_STALE');
+    assert.equal(readProviderInvocation(runtime, invocationId).result, null);
+  } finally {
+    fs.rmSync(repository, { recursive: true, force: true });
+  }
+});
+
+test('completion guard rejects rollover after runner return and before acceptance', () => {
+  const repository = createFixtureRepository();
+  const changeId = 'worker-completion-context-race';
+  let fence: { invocationId: string; token: string } | null = null;
+  try {
+    git(repository, ['checkout', '-b', `work/${changeId}`]);
+    const started = startPropose(repository, changeId, intent(), {
+      explicitActor: 'codex',
+      environment: {},
+    });
+    const invocationId = started.investigation!.providerInvocationId;
+    const locator = discoverRepository(repository);
+    const runtime = investigationRuntimePaths(
+      locator.gitCommonDirectory,
+      'workflow-engine',
+    );
+    const request = readProviderInvocationRequest(runtime, invocationId);
+    const claim = claimProviderInvocationForWorker(runtime, invocationId, {
+      workerId: 'worker-completion-context-race',
+      leaseDurationMs: request.limits.timeoutMs,
+    });
+    fence = { invocationId, token: claim.workerFenceToken };
+    const acceptanceBinding = prepareProviderInvocationAcceptanceBinding(
+      runtime,
+      invocationId,
+    );
+    const nextContent = canonicalJson({
+      kind: 'rolled-between-runner-and-completion',
+      invocationId,
+    });
+    const next = buildContextManifest({
+      workflowId: acceptanceBinding.context.workflowId,
+      epoch: acceptanceBinding.context.epoch + 1,
+      contractVersion: acceptanceBinding.context.manifest.contractVersion,
+      baselineDigest: acceptanceBinding.context.manifest.baselineDigest,
+      intentDigest: acceptanceBinding.context.manifest.intentDigest,
+      termSetDigest: acceptanceBinding.context.manifest.termSetDigest,
+      planningSnapshotDigest:
+        acceptanceBinding.context.manifest.planningSnapshotDigest,
+      items: [{ identity: 'provider-input-manifest', content: nextContent }],
+    });
+    rolloverDurableEpochContextStore(runtime.root, {
+      workflowId: acceptanceBinding.context.workflowId,
+      expectedGeneration: acceptanceBinding.context.generation,
+      expectedEpoch: acceptanceBinding.context.epoch,
+      expectedContextDigest: acceptanceBinding.context.contextDigest,
+      nextManifest: next,
+      items: [{ identity: 'provider-input-manifest', content: nextContent }],
+      reason: 'Exercise completion-time freshness.',
+      restartFrom: request.purpose,
+      carriedForward: [],
+      invalidated: ['provider-input-manifest'],
+      verification: null,
+      createdAt: new Date('2026-08-03T20:01:00.000Z'),
+    });
+
+    assert.throws(
+      () =>
+        completeProviderInvocationFromRunner(runtime, invocationId, {
+          expectedRevision: claim.record.revision,
+          leaseGeneration: claim.record.leaseGeneration,
+          leaseToken: claim.leaseToken,
+          report: successfulWorkerReport(request, invocationId),
+          acceptanceBinding,
+        }),
+      (error) =>
+        error instanceof Error &&
+        'code' in error &&
+        error.code === 'PROVIDER_CONTEXT_STALE_OR_WRONG',
+    );
+    assert.equal(readProviderInvocation(runtime, invocationId).state, 'leased');
+    const projection = projectProviderInvocationExecution({
+      record: claim.record,
+      request,
+    });
+    assert.equal(
+      readExecutionJobState(runtime, projection.job.jobId)?.job
+        .acceptedAttemptId,
+      null,
+    );
+  } finally {
+    if (fence !== null) {
+      const locator = discoverRepository(repository);
+      releaseProviderInvocationWorkerFence(
+        investigationRuntimePaths(
+          locator.gitCommonDirectory,
+          'workflow-engine',
+        ),
+        fence.invocationId,
+        fence.token,
+      );
+    }
     fs.rmSync(repository, { recursive: true, force: true });
   }
 });
@@ -349,6 +586,11 @@ test('provider worker selects the code-owned exact PlanReview contract', () => {
         aggregateOutputBytes: 1_048_576,
       },
     });
+    storeProviderExecutionPolicySnapshot(
+      runtime,
+      request,
+      loadAiAdapterPolicy(repository),
+    );
     createProviderInvocation(runtime, {
       investigationId,
       changeId: 'demo-change',
@@ -436,6 +678,35 @@ function lowerAdapterLimits(repository: string): void {
   policy.limits.timeoutMs = 12_345;
   policy.limits.aggregateOutputBytes = 54_321;
   fs.writeFileSync(policyPath, `${JSON.stringify(policy, null, 2)}\n`);
+}
+
+function successfulWorkerReport(
+  request: ProviderInvocationRequest,
+  invocationId: string,
+) {
+  const semanticOutput = {
+    reference: invocationId,
+    terms: [{ kind: 'symbol', value: 'ProviderWorker' }],
+  };
+  return {
+    invocationId,
+    providerId: request.providerId,
+    purpose: request.purpose,
+    requestDigest: request.requestDigest,
+    semanticOutput,
+    semanticOutputDigest: sha256(canonicalJson(semanticOutput)),
+    assurance: 'unchanged-governed-projection' as const,
+    projection: {
+      unchanged: true as const,
+      changedCategories: [],
+      beforeDigest: 'a'.repeat(64),
+      afterDigest: 'a'.repeat(64),
+    },
+    sameUserProcessConfined: false as const,
+    residuals: [...PROVIDER_RUNNER_RESIDUALS],
+    executable: executableIdentity(),
+    elapsedMs: 7,
+  };
 }
 
 function executableIdentity() {

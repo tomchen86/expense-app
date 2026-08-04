@@ -15,6 +15,15 @@ export type CheckEvidence = {
   runnerDigest: string;
   destructiveDatabase: boolean;
   databaseIdentity?: string;
+  completedAt?: string;
+  externalSnapshotDigest?: string;
+  maxAgeMs?: number;
+};
+
+export type CheckEvidenceMetadata = {
+  completedAt: () => Date;
+  externalSnapshotDigest?: string;
+  maxAgeMs?: number;
 };
 
 export type PinnedCheckRunner = Readonly<ResolvedCheckRunner>;
@@ -34,6 +43,7 @@ export function runCheck(
   pinnedRunner: PinnedCheckRunner,
   environment: NodeJS.ProcessEnv,
   databaseIdentity?: string,
+  evidenceMetadata?: CheckEvidenceMetadata,
 ): CheckEvidence {
   const resolved = resolveCheckRunner(repositoryRoot, checkId, definition);
   assertRunnerUnchanged(checkId, pinnedRunner, resolved);
@@ -74,6 +84,26 @@ export function runCheck(
 
   const resolvedAfter = resolveCheckRunner(repositoryRoot, checkId, definition);
   assertRunnerUnchanged(checkId, pinnedRunner, resolvedAfter);
+  const completedAt = evidenceMetadata?.completedAt();
+  if (
+    evidenceMetadata &&
+    (!(completedAt instanceof Date) ||
+      !Number.isFinite(completedAt.getTime()) ||
+      (evidenceMetadata.externalSnapshotDigest !== undefined &&
+        !/^[0-9a-f]{64}$/.test(evidenceMetadata.externalSnapshotDigest)) ||
+      (evidenceMetadata.maxAgeMs !== undefined &&
+        (!Number.isSafeInteger(evidenceMetadata.maxAgeMs) ||
+          evidenceMetadata.maxAgeMs < 1)) ||
+      (evidenceMetadata.externalSnapshotDigest === undefined) !==
+        (evidenceMetadata.maxAgeMs === undefined))
+  ) {
+    throw workflowError(
+      'CHECK_EVIDENCE_METADATA_INVALID',
+      `Required check ${checkId} has invalid evidence metadata.`,
+      ExitCode.staleState,
+      { details: { checkId } },
+    );
+  }
 
   return {
     checkId,
@@ -84,6 +114,13 @@ export function runCheck(
     destructiveDatabase: definition.destructiveDatabase,
     ...(definition.destructiveDatabase && databaseIdentity
       ? { databaseIdentity }
+      : {}),
+    ...(evidenceMetadata ? { completedAt: completedAt!.toISOString() } : {}),
+    ...(evidenceMetadata?.externalSnapshotDigest
+      ? {
+          externalSnapshotDigest: evidenceMetadata.externalSnapshotDigest,
+          maxAgeMs: evidenceMetadata.maxAgeMs!,
+        }
       : {}),
   };
 }

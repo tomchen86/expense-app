@@ -23,16 +23,24 @@ export type AuthorityManagedTrailers = {
   grantId: string;
 };
 
+export type AuthorityCandidateManagedTrailers = {
+  kind: 'authority-candidate';
+  changeId: string;
+  transition: 'authority-candidate';
+};
+
 export type ManagedTrailers =
   | TaskManagedTrailers
   | PlanManagedTrailers
   | ArchiveManagedTrailers
-  | AuthorityManagedTrailers;
+  | AuthorityManagedTrailers
+  | AuthorityCandidateManagedTrailers;
 
 const RESERVED_TRAILER_LINE = /^[\t ]*(?:change|task|transition|grant)[\t ]*:/i;
 const CHANGE_TRAILER = /^Change: ([a-z0-9]+(?:-[a-z0-9]+)*)$/;
 const TASK_TRAILER = /^Task: (\d+(?:\.\d+)+)$/;
-const TRANSITION_TRAILER = /^Transition: (plan|archive|authority-maintenance)$/;
+const TRANSITION_TRAILER =
+  /^Transition: (plan|archive|authority-maintenance|authority-candidate)$/;
 const GRANT_TRAILER =
   /^Grant: ([0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$/;
 
@@ -100,6 +108,13 @@ export function parseManagedTrailers(
       changeId: change[1],
       transition: 'authority-maintenance',
       grantId: authority[1],
+    };
+  }
+  if (transition?.[1] === 'authority-candidate') {
+    return {
+      kind: 'authority-candidate',
+      changeId: change[1],
+      transition: 'authority-candidate',
     };
   }
   if (transition?.[1] === 'plan') {

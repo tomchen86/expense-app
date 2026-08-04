@@ -161,8 +161,14 @@ export function replayCommitSequence(
       archivedChanges.add(archive.changeId);
       continue;
     }
-    if (commit.trailers.kind === 'authority') {
-      if (authorityGrants.has(commit.trailers.grantId)) {
+    if (
+      commit.trailers.kind === 'authority' ||
+      commit.trailers.kind === 'authority-candidate'
+    ) {
+      if (
+        commit.trailers.kind === 'authority' &&
+        authorityGrants.has(commit.trailers.grantId)
+      ) {
         throw ciError(
           'CI_AUTHORITY_GRANT_DUPLICATE',
           'A pull-request range may claim each authority grant only once.',
@@ -178,6 +184,12 @@ export function replayCommitSequence(
         authority.requiredCheckDefinitions,
         true,
       );
+      if (authorityGrants.has(authority.grantId)) {
+        throw ciError(
+          'CI_AUTHORITY_GRANT_DUPLICATE',
+          'A pull-request range may claim each authority grant only once.',
+        );
+      }
       authorityGrants.add(authority.grantId);
       continue;
     }
