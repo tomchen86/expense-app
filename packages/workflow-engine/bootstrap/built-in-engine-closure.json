@@ -31,7 +31,7 @@
     {
       "path": "src/archive-delta-verifier.ts",
       "mode": "100644",
-      "digest": "sha256:ee6034ad80c4f094daffa96a3b2cafce78e0bdc432be18092433201c70741406"
+      "digest": "sha256:3acceb30c99b9716f2b2f7aa250b7911541a58367f5e15f1f532a9cb7437387c"
     },
     {
       "path": "src/archive-eligibility.ts",
@@ -372,6 +372,11 @@
       "path": "src/filesystem-safety.ts",
       "mode": "100644",
       "digest": "sha256:53c50ab8c3191658552c0237b4a6f5cf7f0001ee6e9c58c5c85f4ebb97100445"
+    },
+    {
+      "path": "src/floor-overflow-pruning.ts",
+      "mode": "100644",
+      "digest": "sha256:0c3ed61a9c65c378d180aca98c7e2d82394f69f4bdd0d6dc816136d3895a9968"
     },
     {
       "path": "src/git-transitions.ts",
@@ -741,12 +746,12 @@
     {
       "path": "src/planning-report.ts",
       "mode": "100644",
-      "digest": "sha256:c4fe5c2c7631821b7576c3ca838e01888f5936a4dcef5bed222933879c9a3cf4"
+      "digest": "sha256:54da4acfb0602b524e9926b0fa314c1b3247337c75fbfb5fb74a5302a8951a34"
     },
     {
       "path": "src/planning-transition.ts",
       "mode": "100644",
-      "digest": "sha256:2f74063bfa6788c2445b5ad631a3f445427e9d65b35e81ecd41bec308116b87e"
+      "digest": "sha256:616b989c4730cf074fd4200b61ad34e2e285c4bf3fc5cbfd5f6f6b0308a08f95"
     },
     {
       "path": "src/predecessor-reconciliation.ts",
@@ -889,6 +894,16 @@
       "digest": "sha256:4a62dfefe55dd04e32bd8539aeb0b297e552bbc4deff120306513fddd85d14f3"
     },
     {
+      "path": "src/review-challenge.ts",
+      "mode": "100644",
+      "digest": "sha256:655003a1b2d20b43d5a79c979bd5ce03ec7021f4fb0e6f3a94af6ed29e4cb404"
+    },
+    {
+      "path": "src/review-coverage.ts",
+      "mode": "100644",
+      "digest": "sha256:8f536a6cfa1a799ccc7656cf8dbf052128d78d021d5c7c37ecd8ed1413bee148"
+    },
+    {
       "path": "src/role-scheduler.ts",
       "mode": "100644",
       "digest": "sha256:b30ce96d4f7a02ff54fa1c3129ba1f8d2f02fbbb872f35c5d2854c2404f437a3"
@@ -897,6 +912,31 @@
       "path": "src/runner-resolution.ts",
       "mode": "100644",
       "digest": "sha256:e83bd90394703ea92b5d3d1db6c4f31ea7b20cba226910686949ae71d5e6492d"
+    },
+    {
+      "path": "src/semantic-freshness.ts",
+      "mode": "100644",
+      "digest": "sha256:a24376ba979391bead12590e131287454f2e4b76acaeb253de17652ed4d2915e"
+    },
+    {
+      "path": "src/semantic-ledger-store.ts",
+      "mode": "100644",
+      "digest": "sha256:7f08a1d3d2a37dcaf4fbccebedb0bf9771ca147bb82892fc3c36658d40531cdc"
+    },
+    {
+      "path": "src/semantic-ledger.ts",
+      "mode": "100644",
+      "digest": "sha256:2dd5a5b0f6e0b6cb7d68354b2d2e0eaf810bb5417c7a0c6872b91b69d757a056"
+    },
+    {
+      "path": "src/semantic-reconciliation.ts",
+      "mode": "100644",
+      "digest": "sha256:7ce0ef77567ac918a84bb4fb17f17ff2b6a18ffb6c61aad2f68a8b9b6a846f16"
+    },
+    {
+      "path": "src/semantic-reuse.ts",
+      "mode": "100644",
+      "digest": "sha256:e6f509e1ad94ec9bd2cfa9782306846ce8216ab61d1ebe77a6e2631f83a22b1a"
     },
     {
       "path": "src/session-store.ts",

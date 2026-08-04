@@ -186,10 +186,7 @@ test('protected audit CLI uses only the pinned backend and public key for anchor
           { stdinIsTTY: false, stdoutIsTTY: true },
         ),
       (error) =>
-        isWorkflowError(
-          error,
-          'AUTHORITY_AUDIT_CONTROLLING_TERMINAL_REQUIRED',
-        ),
+        isWorkflowError(error, 'AUTHORITY_AUDIT_CONTROLLING_TERMINAL_REQUIRED'),
     );
     dispatchAuthorityAuditCommand(
       [
@@ -293,15 +290,11 @@ test('protected audit CLI uses only the pinned backend and public key for anchor
         .toString('base64'),
     };
     const grantFile = path.join(value.root, 'destruction-grant.json');
-    fs.writeFileSync(grantFile, `${canonicalJson(envelope)}\n`, { mode: 0o600 });
+    fs.writeFileSync(grantFile, `${canonicalJson(envelope)}\n`, {
+      mode: 0o600,
+    });
     const destroyed = dispatchAuthorityAuditCommand(
-      [
-        'destroy',
-        '--grant-file',
-        grantFile,
-        '--audit-root',
-        value.auditRoot,
-      ],
+      ['destroy', '--grant-file', grantFile, '--audit-root', value.auditRoot],
       value.repository,
       {
         stdinIsTTY: false,

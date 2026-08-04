@@ -100,9 +100,7 @@ function appendEvent(
       outcomeDigest: digest(`event-outcome:${sequence}`),
       errorCode: null,
     },
-    trustedNow === undefined
-      ? {}
-      : { now: () => new Date(trustedNow) },
+    trustedNow === undefined ? {} : { now: () => new Date(trustedNow) },
   );
 }
 

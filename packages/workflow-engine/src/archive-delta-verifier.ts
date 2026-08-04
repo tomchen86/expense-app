@@ -183,7 +183,9 @@ export function assertSpecDeltaScenarioPreservation(
   changeRoot: string,
   changeId: string,
   deltaSpecPaths: readonly string[],
-): void {
+  now: Date = new Date(),
+): SpecDeltaPreflightRecord {
+  const validatedBaseSpecDigests: Record<string, string> = {};
   for (const deltaPath of deltaSpecPaths) {
     const capability = deltaPath.split('/').at(-2);
     if (capability === undefined) continue;
@@ -202,6 +204,9 @@ export function assertSpecDeltaScenarioPreservation(
     // blocks it lands preserve their scenarios: an inapplicable MODIFIED is
     // not a preservation problem, it is a delta describing a base that is not
     // there.
+    validatedBaseSpecDigests[`openspec/specs/${capability}/spec.md`] =
+      digest(before);
+
     const faults = findDeltaApplicabilityFaults(before, delta);
     if (faults.length > 0) throw deltaNotApplicable(capability, faults);
 
@@ -216,7 +221,26 @@ export function assertSpecDeltaScenarioPreservation(
       if (missing.length > 0) throw scenarioPreservationFailed(name, missing);
     }
   }
+  // Naming the base this passed over lets a later archive failure be read as
+  // drift rather than as a plan that was never applicable.
+  return {
+    status: 'passed',
+    validatedAt: now.toISOString(),
+    validatedBaseCommit: head,
+    validatedBaseSpecDigests,
+    validatorVersion: SPEC_DELTA_VALIDATOR_VERSION,
+  };
 }
+
+export const SPEC_DELTA_VALIDATOR_VERSION = 'spec-delta-preflight-v1';
+
+export type SpecDeltaPreflightRecord = Readonly<{
+  status: 'passed';
+  validatedAt: string;
+  validatedBaseCommit: string;
+  validatedBaseSpecDigests: Record<string, string>;
+  validatorVersion: string;
+}>;
 
 function deltaNotApplicable(
   capability: string,

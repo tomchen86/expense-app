@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 import { assertSpecDeltaScenarioPreservation } from './archive-delta-verifier.ts';
+import type { ArchiveApplicabilityRecord } from './planning-report.ts';
 import { loadWorkflowConfig } from './contracts.ts';
 import { ExitCode, WorkflowError, workflowError } from './errors.ts';
 import {
@@ -50,6 +51,7 @@ export type PlanningTransitionResult = {
   commitHash: string;
   reportId: string;
   planningAssurance: InvestigationFirstPlanningAssuranceSummary | null;
+  archiveApplicability: ArchiveApplicabilityRecord;
 };
 
 export type PlanningTransitionTestHooks = {
@@ -209,7 +211,7 @@ function commitPlanningTransitionLocked(
 
   // Archive applies delta specs onto the base specs; a delta that cannot apply
   // is not discoverable until then, which is a whole execution too late.
-  assertSpecDeltaScenarioPreservation(
+  const archiveApplicability = assertSpecDeltaScenarioPreservation(
     initial.repositoryRoot,
     initial.head,
     config.changeRoot,
@@ -316,6 +318,7 @@ function commitPlanningTransitionLocked(
       },
       openspec: planningValidation.openspec,
       planningAssurance: planningValidation.planningAssurance,
+      archiveApplicability,
     };
     const reportsDirectory = path.join(
       initial.gitCommonDirectory,
@@ -386,6 +389,7 @@ function commitPlanningTransitionLocked(
       commitHash,
       reportId,
       planningAssurance: planningValidation.planningAssurance,
+      archiveApplicability,
     };
   } catch (error) {
     if (stagedTree && !refUpdated) {

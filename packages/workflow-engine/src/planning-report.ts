@@ -39,15 +39,45 @@ export type PlanningTransitionReport = {
     validationValid: true;
   };
   planningAssurance: InvestigationFirstPlanningAssuranceSummary | null;
+  archiveApplicability: ArchiveApplicabilityRecord;
 };
+
+/**
+ * What the plan-time archive preflight was checked against.
+ *
+ * Archive re-validates against whatever the base is when it runs; this record
+ * says which base the plan was accepted over, so a later failure can be read
+ * as drift rather than as a plan that was always wrong. A generation written
+ * before the preflight existed reports `not-recorded` rather than a
+ * reassuring `passed` it never earned.
+ */
+export type ArchiveApplicabilityRecord =
+  | Readonly<{ status: 'not-recorded' }>
+  | Readonly<{
+      status: 'passed';
+      validatedAt: string;
+      validatedBaseCommit: string;
+      validatedBaseSpecDigests: Record<string, string>;
+      validatorVersion: string;
+    }>;
 
 export function writePlanningTransitionReport(
   directory: string,
-  report: PlanningTransitionReport,
+  report: PlanningTransitionInput,
 ): string {
-  assertPlanningTransitionReport(report);
-  return writeContentRecord(directory, report);
+  // Normalized on the way in as well as out: a caller that predates a field
+  // should not have to know it exists to write a valid record.
+  const normalized = normalizeLegacyPlanningTransitionReport(report);
+  assertPlanningTransitionReport(normalized);
+  return writeContentRecord(directory, normalized);
 }
+
+/** What a caller must supply; engine-defaulted fields may be omitted. */
+export type PlanningTransitionInput = Omit<
+  PlanningTransitionReport,
+  'archiveApplicability'
+> &
+  Partial<Pick<PlanningTransitionReport, 'archiveApplicability'>>;
 
 export function readPlanningTransitionReport(
   directory: string,
@@ -62,14 +92,23 @@ export function readPlanningTransitionReport(
 
 function normalizeLegacyPlanningTransitionReport(value: unknown): unknown {
   if (
-    isRecord(value) &&
-    value.schemaVersion === 1 &&
-    value.kind === 'planning-transition' &&
-    !Object.hasOwn(value, 'planningAssurance')
+    !isRecord(value) ||
+    value.schemaVersion !== 1 ||
+    value.kind !== 'planning-transition'
   ) {
-    return { ...value, planningAssurance: null };
+    return value;
   }
-  return value;
+  // Each field is defaulted only when it is genuinely absent. Filling a field
+  // that is already present would rewrite a real record with a placeholder,
+  // which is worse than the missing field it was meant to cover.
+  const normalized: Record<string, unknown> = { ...value };
+  if (!Object.hasOwn(value, 'planningAssurance')) {
+    normalized.planningAssurance = null;
+  }
+  if (!Object.hasOwn(value, 'archiveApplicability')) {
+    normalized.archiveApplicability = { status: 'not-recorded' };
+  }
+  return normalized;
 }
 
 function assertPlanningTransitionReport(
@@ -79,6 +118,7 @@ function assertPlanningTransitionReport(
     throw invalidPlanningReport();
   }
   const exactKeys = [
+    'archiveApplicability',
     'artifactDigests',
     'branch',
     'changeId',
@@ -125,10 +165,35 @@ function assertPlanningTransitionReport(
     !isParent(value.parent) ||
     !isTaskProjection(value.tasks) ||
     !isOpenSpecEvidence(value.openspec) ||
-    !isPlanningAssurance(value.planningAssurance)
+    !isPlanningAssurance(value.planningAssurance) ||
+    !isArchiveApplicability(value.archiveApplicability)
   ) {
     throw invalidPlanningReport();
   }
+}
+
+function isArchiveApplicability(
+  value: unknown,
+): value is ArchiveApplicabilityRecord {
+  if (!isRecord(value)) return false;
+  if (value.status === 'not-recorded') {
+    return hasExactKeys(value, ['status']);
+  }
+  return (
+    value.status === 'passed' &&
+    hasExactKeys(value, [
+      'status',
+      'validatedAt',
+      'validatedBaseCommit',
+      'validatedBaseSpecDigests',
+      'validatorVersion',
+    ]) &&
+    isIsoDate(value.validatedAt) &&
+    isGitObject(value.validatedBaseCommit) &&
+    isPossiblyEmptyDigestRecord(value.validatedBaseSpecDigests) &&
+    typeof value.validatorVersion === 'string' &&
+    value.validatorVersion !== ''
+  );
 }
 
 function isPlanningAssurance(
@@ -256,6 +321,16 @@ function isSortedUniqueStrings(value: unknown): value is string[] {
     value.length > 0 &&
     JSON.stringify(value) === JSON.stringify([...new Set(value)].sort())
   );
+}
+
+/**
+ * A plan that changes no delta spec validated no base spec, and an empty map
+ * is the accurate record of that rather than a missing one.
+ */
+function isPossiblyEmptyDigestRecord(
+  value: unknown,
+): value is Record<string, string> {
+  return isRecord(value) && Object.values(value).every(isDigest);
 }
 
 function isDigestRecord(value: unknown): value is Record<string, string> {
