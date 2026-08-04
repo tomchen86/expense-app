@@ -160,6 +160,13 @@ export type ReadyScanResult = {
   outcome: 'ready';
   nodes: EvidenceNode[];
   inventory: ScanInventory;
+  /**
+   * Terms whose hits were truncated at their ceiling. Present only when the
+   * caller accepted saturation; their semantic domain may not be compressed
+   * into a class disposition, because a truncated term cannot show that the
+   * members it did find are all of them.
+   */
+  saturatedTermIds?: string[];
 };
 
 export type NarrowingScanResult = {
@@ -189,8 +196,20 @@ export function scanInvestigationTree(request: {
   treeOid: string;
   terms: ScanInvestigationTerm[];
   limits?: InvestigationLimits;
+  /**
+   * Accept a term that hit its own ceiling instead of refusing the scan.
+   *
+   * Off by default, because a truncated term is a search that cannot claim to
+   * be complete and silently proceeding would let that claim be made anyway.
+   * A caller that opts in is told which terms saturated, and the class
+   * compression that would have relied on their completeness is refused for
+   * exactly those terms — which is what makes carrying on honest rather than
+   * merely convenient.
+   */
+  allowSaturatedTerms?: boolean;
 }): InvestigationScanResult {
   const { repositoryRoot, treeOid, terms } = request;
+  const allowSaturatedTerms = request.allowSaturatedTerms === true;
   const limits = assertInvestigationLimits(
     request.limits ?? { ...INVESTIGATION_LIMITS },
   );
@@ -267,7 +286,20 @@ export function scanInvestigationTree(request: {
     scanCpuStart,
     limits.maxScanCpuMillis,
   );
-  if (violations.length > 0) {
+  // A term that hit its own ceiling is the one violation a caller can carry,
+  // because the hits it did collect remain true — only their completeness is
+  // lost. Every other violation means the scan itself is not sound, so none of
+  // them are eligible for this exit.
+  const saturatedTermIds = violations
+    .filter(({ code }) => code === 'TERM_HIT_LIMIT_EXCEEDED')
+    .map(({ termId }) => termId)
+    .filter((termId): termId is string => termId !== undefined)
+    .sort();
+  const onlySaturation =
+    saturatedTermIds.length > 0 &&
+    violations.every(({ code }) => code === 'TERM_HIT_LIMIT_EXCEEDED');
+
+  if (violations.length > 0 && !(allowSaturatedTerms && onlySaturation)) {
     violations.sort(compareViolations);
     return {
       outcome: 'requires-narrowing',
@@ -278,6 +310,7 @@ export function scanInvestigationTree(request: {
     };
   }
 
+  const saturated = allowSaturatedTerms ? saturatedTermIds : [];
   const nodes = terms
     .map((term, index) =>
       buildScanNode(
@@ -291,7 +324,12 @@ export function scanInvestigationTree(request: {
       scanNodeTermId(left) < scanNodeTermId(right) ? -1 : 1,
     );
 
-  return { outcome: 'ready', nodes, inventory };
+  return {
+    outcome: 'ready',
+    nodes,
+    inventory,
+    ...(saturated.length === 0 ? {} : { saturatedTermIds: saturated }),
+  };
 }
 
 function assertScanTerms(terms: ScanInvestigationTerm[]): void {

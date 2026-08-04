@@ -66,7 +66,7 @@
     {
       "path": "src/assurance-inspection.ts",
       "mode": "100644",
-      "digest": "sha256:72beb9c000a3ed641479c74de1e42834d0e294a9f4e77ac6f93ca4908feeb5f7"
+      "digest": "sha256:a7a79d6f38173e1feec5689f8c78a9ff5817ba6cc9e4369a3609e4f9daebdf15"
     },
     {
       "path": "src/atomic-text.ts",
@@ -481,7 +481,7 @@
     {
       "path": "src/investigation-scanner.ts",
       "mode": "100644",
-      "digest": "sha256:429f341aab5e72f3167ad72f0a7eaffcbd8d03841cd6ecc34753b2a69f9cda15"
+      "digest": "sha256:6dc5f3a4e7925bd7b8631b07761545dc7bd24bd8465cd31750d76f0d66a7e77f"
     },
     {
       "path": "src/investigation-session-store.ts",

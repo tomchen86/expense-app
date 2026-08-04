@@ -18,6 +18,10 @@ import { loadWorkflowConfig } from './contracts.ts';
 import { ExitCode, workflowError } from './errors.ts';
 import { discoverRepository } from './git.ts';
 import { parsePathRoleRegistry } from './path-role-registry.ts';
+import { readLedgerIndex, readLedgerEntry } from './semantic-ledger-store.ts';
+import { planSemanticReuse, type ReusePlan } from './semantic-reuse.ts';
+import type { FreshnessObservation } from './semantic-freshness.ts';
+import type { LedgerEntry } from './semantic-ledger.ts';
 
 export type AssuranceInspection = Readonly<{
   schemaVersion: 1;
@@ -30,6 +34,12 @@ export type AssuranceInspection = Readonly<{
   escalated: boolean;
   reasons: readonly string[];
   chain: AssuranceAssessmentChain;
+  /**
+   * What the ledger already explains and what this change still owes. Present
+   * only once a ledger exists; a repository without one owes everything, which
+   * is the state every repository starts in.
+   */
+  semanticReuse: ReusePlan | null;
 }>;
 
 /**
@@ -103,6 +113,7 @@ export function inspectChangeAssurance(
   });
 
   return Object.freeze({
+    semanticReuse: inspectSemanticReuse(repository.repositoryRoot, hitPaths),
     schemaVersion: 1,
     kind: 'assurance-inspection',
     changeId,
@@ -116,6 +127,58 @@ export function inspectChangeAssurance(
     ),
     chain,
   });
+}
+
+/**
+ * Resolves each touched path against the ledger. A path with no recorded
+ * understanding is not skipped — it is charged, which is why a fresh
+ * repository sees a reuse rate of zero rather than a reassuring silence.
+ */
+function inspectSemanticReuse(
+  repositoryRoot: string,
+  hitPaths: readonly string[],
+): ReusePlan | null {
+  const index = readLedgerIndex(repositoryRoot);
+  const subjectIds = Object.keys(index.subjects);
+  if (subjectIds.length === 0) return null;
+
+  const entries = new Map<string, LedgerEntry>();
+  for (const subjectId of subjectIds) {
+    try {
+      entries.set(
+        subjectId,
+        readLedgerEntry(
+          repositoryRoot,
+          index.subjects[subjectId].currentEntryId,
+        ),
+      );
+    } catch {
+      // A named entry that cannot be read is a missing entry, not a fresh one.
+    }
+  }
+  const touched = new Set(hitPaths);
+  const observations = new Map<string, FreshnessObservation>();
+  for (const [subjectId, entry] of entries) {
+    // A subject the scan never reached is not evidence of anything changing,
+    // so its recorded understanding stands.
+    if (!touched.has(entry.subject.path)) {
+      observations.set(subjectId, {
+        present: true,
+        sourceDigest: entry.binding.sourceDigest,
+        semanticDigest: entry.binding.semanticDigest,
+        currentDependencyEntryIds: Object.fromEntries(
+          entry.semanticDependencies.map(({ subjectId: id, entryId }) => [
+            id,
+            entryId,
+          ]),
+        ),
+        currentPolicyDigest: entry.policyDigest,
+      });
+    }
+    // A touched subject is left unobserved on purpose: the engine cannot see
+    // its current meaning from here, and unobserved resolves to regenerate.
+  }
+  return planSemanticReuse([...entries.keys()].sort(), entries, observations);
 }
 
 function declaredClasses(investigation: unknown): InvestigationChangeClass[] {

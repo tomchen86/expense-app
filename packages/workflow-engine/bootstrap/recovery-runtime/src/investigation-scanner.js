@@ -67,6 +67,7 @@ export function hitContextWindow(haystack, byteOffset, byteLength) {
  */
 export function scanInvestigationTree(request) {
     const { repositoryRoot, treeOid, terms } = request;
+    const allowSaturatedTerms = request.allowSaturatedTerms === true;
     const limits = assertInvestigationLimits(request.limits ?? { ...INVESTIGATION_LIMITS });
     assertScanTerms(terms);
     if (terms.length > limits.maxEffectiveTerms) {
@@ -119,7 +120,18 @@ export function scanInvestigationTree(request) {
         violations.push({ code: 'HIT_DISPOSITION_WORK_LIMIT_EXCEEDED' });
     }
     assertOperationalScanBudget(operationalDeadline, scanCpuStart, limits.maxScanCpuMillis);
-    if (violations.length > 0) {
+    // A term that hit its own ceiling is the one violation a caller can carry,
+    // because the hits it did collect remain true — only their completeness is
+    // lost. Every other violation means the scan itself is not sound, so none of
+    // them are eligible for this exit.
+    const saturatedTermIds = violations
+        .filter(({ code }) => code === 'TERM_HIT_LIMIT_EXCEEDED')
+        .map(({ termId }) => termId)
+        .filter((termId) => termId !== undefined)
+        .sort();
+    const onlySaturation = saturatedTermIds.length > 0 &&
+        violations.every(({ code }) => code === 'TERM_HIT_LIMIT_EXCEEDED');
+    if (violations.length > 0 && !(allowSaturatedTerms && onlySaturation)) {
         violations.sort(compareViolations);
         return {
             outcome: 'requires-narrowing',
@@ -129,10 +141,16 @@ export function scanInvestigationTree(request) {
             terms,
         };
     }
+    const saturated = allowSaturatedTerms ? saturatedTermIds : [];
     const nodes = terms
         .map((term, index) => buildScanNode(term, perTermHits[index], snapshot.treeDigest, policyDigest))
         .sort((left, right) => scanNodeTermId(left) < scanNodeTermId(right) ? -1 : 1);
-    return { outcome: 'ready', nodes, inventory };
+    return {
+        outcome: 'ready',
+        nodes,
+        inventory,
+        ...(saturated.length === 0 ? {} : { saturatedTermIds: saturated }),
+    };
 }
 function assertScanTerms(terms) {
     const seen = new Set();
