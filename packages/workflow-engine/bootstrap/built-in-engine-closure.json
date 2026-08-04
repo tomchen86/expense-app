@@ -451,12 +451,12 @@
     {
       "path": "src/investigation-groups.ts",
       "mode": "100644",
-      "digest": "sha256:97fa3ff7fbbde55347e8fb53e445cbe14f13f488e73c17340db9f6a3fb2d7c77"
+      "digest": "sha256:3f86a636c906df6c8b13f0a828b0bc1c3ec7561174559ea69692c607b7cf0895"
     },
     {
       "path": "src/investigation-scanner.ts",
       "mode": "100644",
-      "digest": "sha256:303ef6e5d04cb9c85eea9067e8587caab896b0a6c24d5b48f0cf8614d5d35ee5"
+      "digest": "sha256:429f341aab5e72f3167ad72f0a7eaffcbd8d03841cd6ecc34753b2a69f9cda15"
     },
     {
       "path": "src/investigation-session-store.ts",

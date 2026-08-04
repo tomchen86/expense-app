@@ -1,5 +1,9 @@
 import crypto from 'node:crypto';
 
+import {
+  SCAN_HIT_MAX_CONTEXT_BYTES,
+  type ScanHitContextWindow,
+} from './investigation-scanner.ts';
 import { canonicalJson } from './canonical-json.ts';
 import { ExitCode, WorkflowError, workflowError } from './errors.ts';
 import {
@@ -119,13 +123,66 @@ type SourceObject = {
   skipReason: string | null;
 };
 
+const HIT_KEYS = [
+  'path',
+  'sourceObject',
+  'surface',
+  'byteOffset',
+  'byteLength',
+] as const;
+const HIT_KEYS_WITH_CONTEXT = [...HIT_KEYS, 'contextWindow'] as const;
+const CONTEXT_WINDOW_KEYS = [
+  'rawBase64',
+  'utf8',
+  'byteOffset',
+  'byteLength',
+  'truncated',
+] as const;
+
 type ParsedHit = {
   path: PathIdentity;
   sourceObject: SourceObject;
   surface: 'path' | 'content';
   byteOffset: number;
   byteLength: number;
+  contextWindow?: ScanHitContextWindow;
 };
+
+function hasOnlyKeys(value: unknown, keys: readonly string[]): boolean {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    return false;
+  }
+  const present = Object.keys(value);
+  return (
+    present.length === keys.length && present.every((key) => keys.includes(key))
+  );
+}
+
+function assertContextWindow(
+  value: unknown,
+  invalid: ErrorFactory,
+): ScanHitContextWindow {
+  const window = assertExactKeys(value, [...CONTEXT_WINDOW_KEYS], invalid);
+  if (
+    typeof window.rawBase64 !== 'string' ||
+    (window.utf8 !== null && typeof window.utf8 !== 'string') ||
+    !Number.isSafeInteger(window.byteOffset) ||
+    (window.byteOffset as number) < 0 ||
+    !Number.isSafeInteger(window.byteLength) ||
+    (window.byteLength as number) <= 0 ||
+    (window.byteLength as number) > SCAN_HIT_MAX_CONTEXT_BYTES ||
+    typeof window.truncated !== 'boolean'
+  ) {
+    throw invalid('Scan hit context window is malformed.');
+  }
+  return {
+    rawBase64: window.rawBase64,
+    utf8: window.utf8 as string | null,
+    byteOffset: window.byteOffset as number,
+    byteLength: window.byteLength as number,
+    truncated: window.truncated,
+  };
+}
 
 type ParsedScan = {
   node: EvidenceNode;
@@ -1383,12 +1440,17 @@ function assertInventoryNode(node: EvidenceNode): EvidenceNode {
   return validated;
 }
 
+/** Exposed so the two accepted hit shapes can be pinned by contract tests. */
+export function parseHitForTest(value: unknown): ParsedHit {
+  return parseHit(value, investigationDagInvalid);
+}
+
 function parseHit(value: unknown, invalid: ErrorFactory): ParsedHit {
-  const hit = assertExactKeys(
-    value,
-    ['path', 'sourceObject', 'surface', 'byteOffset', 'byteLength'],
-    invalid,
-  );
+  // Two accepted shapes: scans recorded before context windows existed carry
+  // five keys, and must keep validating exactly as they did.
+  const hit = hasOnlyKeys(value, HIT_KEYS_WITH_CONTEXT)
+    ? assertExactKeys(value, [...HIT_KEYS_WITH_CONTEXT], invalid)
+    : assertExactKeys(value, [...HIT_KEYS], invalid);
   const path = assertFilePathIdentity(hit.path, invalid);
   const sourceObject = assertSourceObject(hit.sourceObject, invalid);
   if (
@@ -1407,6 +1469,9 @@ function parseHit(value: unknown, invalid: ErrorFactory): ParsedHit {
     surface: hit.surface,
     byteOffset: hit.byteOffset as number,
     byteLength: hit.byteLength as number,
+    ...(hit.contextWindow === undefined
+      ? {}
+      : { contextWindow: assertContextWindow(hit.contextWindow, invalid) }),
   };
 }
 

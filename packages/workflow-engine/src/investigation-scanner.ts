@@ -56,13 +56,80 @@ export type ScanHitSourceObject = {
   skipReason: TrackedTreeSkipReason | null;
 };
 
+/**
+ * The bytes surrounding a content hit, so a class predicate can be replayed
+ * later as a pure recomputation over stored evidence rather than by reopening
+ * the repository. Bounded on purpose: a minified bundle is one enormous line,
+ * and storing it whole would put the file back into the evidence this exists
+ * to avoid.
+ */
+export type ScanHitContextWindow = {
+  rawBase64: string;
+  utf8: string | null;
+  byteOffset: number;
+  byteLength: number;
+  truncated: boolean;
+};
+
 export type ScanHit = {
   path: TrackedTreePathIdentity;
   sourceObject: ScanHitSourceObject;
   surface: 'path' | 'content';
   byteOffset: number;
   byteLength: number;
+  /**
+   * Present for content hits only. A path-surface hit has no content to quote,
+   * so it can never satisfy a predicate and can never join a class.
+   */
+  contextWindow?: ScanHitContextWindow;
 };
+
+export const SCAN_HIT_MAX_CONTEXT_BYTES = 512;
+
+export function hitContextWindow(
+  haystack: Buffer,
+  byteOffset: number,
+  byteLength: number,
+): ScanHitContextWindow | null {
+  if (
+    !Number.isSafeInteger(byteOffset) ||
+    !Number.isSafeInteger(byteLength) ||
+    byteOffset < 0 ||
+    byteLength <= 0 ||
+    byteOffset + byteLength > haystack.length
+  ) {
+    return null;
+  }
+  const lineStart = haystack.lastIndexOf(0x0a, byteOffset) + 1;
+  let lineEnd = haystack.indexOf(0x0a, byteOffset + byteLength - 1);
+  if (lineEnd === -1) lineEnd = haystack.length;
+  if (lineEnd > lineStart && haystack[lineEnd - 1] === 0x0d) lineEnd -= 1;
+
+  let start = lineStart;
+  let end = lineEnd;
+  let truncated = false;
+  if (end - start > SCAN_HIT_MAX_CONTEXT_BYTES) {
+    // Keep the hit itself centred; a window that dropped the match would prove
+    // nothing about the match.
+    truncated = true;
+    const slack =
+      SCAN_HIT_MAX_CONTEXT_BYTES -
+      Math.min(byteLength, SCAN_HIT_MAX_CONTEXT_BYTES);
+    const before = Math.floor(slack / 2);
+    start = Math.max(lineStart, byteOffset - before);
+    end = Math.min(lineEnd, start + SCAN_HIT_MAX_CONTEXT_BYTES);
+    start = Math.max(lineStart, end - SCAN_HIT_MAX_CONTEXT_BYTES);
+  }
+  const bytes = haystack.subarray(start, end);
+  const utf8 = bytes.toString('utf8');
+  return {
+    rawBase64: bytes.toString('base64'),
+    utf8: Buffer.compare(Buffer.from(utf8, 'utf8'), bytes) === 0 ? utf8 : null,
+    byteOffset: start,
+    byteLength: bytes.length,
+    truncated,
+  };
+}
 
 export type ScanSkippedObject = {
   path: { rawBase64: string; utf8: string | null };
@@ -314,7 +381,16 @@ function collectTermHits(
         scanCpuStart,
         maxScanCpuMillis,
       )) {
-        hits.push(makeHit(entry.path, sourceObject, 'content', offset, needle));
+        hits.push(
+          makeHit(
+            entry.path,
+            sourceObject,
+            'content',
+            offset,
+            needle,
+            entry.content,
+          ),
+        );
         if (hits.length >= cap) {
           return {
             hits: sortHits(hits),
@@ -350,13 +426,19 @@ function makeHit(
   surface: 'path' | 'content',
   byteOffset: number,
   needle: Buffer,
+  haystack?: Buffer,
 ): ScanHit {
+  const contextWindow =
+    surface === 'content' && haystack !== undefined
+      ? hitContextWindow(haystack, byteOffset, needle.length)
+      : null;
   return {
     path: { rawBase64: path.rawBase64, utf8: path.utf8 },
     sourceObject,
     surface,
     byteOffset,
     byteLength: needle.length,
+    ...(contextWindow === null ? {} : { contextWindow }),
   };
 }
 
