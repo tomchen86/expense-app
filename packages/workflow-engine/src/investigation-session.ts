@@ -1,5 +1,6 @@
 import crypto from 'node:crypto';
 
+import { loadAiAdapterPolicy } from './ai-adapter-policy.ts';
 import { canonicalJson } from './canonical-json.ts';
 import {
   compareAndSwapEvidenceRefsDocument,
@@ -8,8 +9,19 @@ import {
   readInvestigationEvidenceRefsClosure,
 } from './evidence-object-store.ts';
 import { ExitCode, WorkflowError, workflowError } from './errors.ts';
+import {
+  createReplacementAttempt,
+  providerExecutionEnvironmentDigest,
+  providerExecutionPolicySnapshot,
+  type RetryMode,
+} from './execution-core.ts';
+import {
+  loadProviderExecutionRepairContext,
+  preflightProviderRepairRetry,
+} from './provider-execution-governance.ts';
 import { runGit } from './git.ts';
 import {
+  assertHumanResolutionDecision,
   assertInvestigationCheckpointEnvelope,
   compareAndSwapCurrentInvestigationRef,
   compareAndSwapHumanResolutionHead,
@@ -79,9 +91,11 @@ import {
   parseHumanResolutionGrantEnvelope,
   validateHumanResolutionGrantPayload,
   verifyHumanResolutionGrantEnvelope,
+  verifyHumanResolutionGrantForRevocation,
   type HumanResolutionGrantEnvelope,
 } from './maintainer-grant.ts';
 import type { MaintainerSignerProvider } from './maintainer-signer.ts';
+import type { HumanRevocationOptions } from './human-revocation.ts';
 import { assertChangeId, assertInvestigationId } from './paths.ts';
 import {
   assertHeldChangeTransitionAuthority,
@@ -97,6 +111,8 @@ import {
   createInvestigationStartReservation,
   createProviderInvocation,
   createProviderRetryReservation,
+  ensureProviderExecutionPolicySnapshot,
+  ensureProviderExecutionPolicySnapshotFromSnapshot,
   expireProviderInvocationLeaseUnderLifecycleLock,
   providerInvocationExists,
   readBlindSurveyManifest,
@@ -111,12 +127,24 @@ import {
   type ProviderInvocationFailure,
   type ProviderInvocationRecord,
 } from './provider-invocation-store.ts';
+import {
+  assertProviderExecutionGrantAuthorization,
+  authorizeAutomaticProviderRetry,
+  type ProviderExecutionGrantAuthorization,
+} from './provider-retry-decision.ts';
+import {
+  assertActiveTaskMandateBindingUnderLifecycleLock,
+  authorizeTaskMandateProviderReservationUnderLifecycleLock,
+  type TaskMandateBinding,
+} from './task-mandate.ts';
 
 export type InvestigationStatus = {
   kind: 'investigation';
   investigationId: string;
   changeId: string;
   revision: number;
+  semanticRevision: number;
+  lifecycleRevision: number;
   state: InvestigationSessionState;
   baseline: {
     head: string;
@@ -158,11 +186,13 @@ export type StartInvestigationSessionInput = {
   changeId: string;
   blindManifest: BlindSurveyManifest;
   blindRequest: ProviderInvocationRequest;
+  mandateBinding?: TaskMandateBinding;
 };
 
 export type RetryInvestigationProviderInput = {
   expectedRevision: number;
   replacementRequest: ProviderInvocationRequest;
+  executionGrantAuthorization?: ProviderExecutionGrantAuthorization;
 };
 
 export type HumanResolutionExecutionOptions = {
@@ -365,31 +395,48 @@ function inspectHumanResolutionGrantPublicationRecovery(
 export function revokeHumanResolutionGrant(
   cwd: string,
   requestedGrantId: string,
-  now: Date = new Date(),
+  options?: HumanRevocationOptions,
 ): HumanResolutionGrantInspection {
+  if (options === undefined) {
+    throw workflowError(
+      'HUMAN_REVOCATION_API_REQUIRED',
+      'Human-resolution revocation requires an exact reason and current-human authorization.',
+      ExitCode.guard,
+    );
+  }
   const context = loadInvestigationRuntimeContext(cwd);
   return withHumanResolutionGrantExecution(
     context.runtime,
     requestedGrantId,
     () => {
-      if (
-        readTerminalHumanResolutionGrant(context.runtime, requestedGrantId) !==
-        null
-      ) {
+      const stored = inspectStoredHumanResolutionGrants(
+        context.runtime,
+        requestedGrantId,
+      )[0]!;
+      const envelope = parseHumanResolutionGrantEnvelope(stored.envelopeBytes);
+      verifyHumanResolutionGrantForRevocation(
+        context.git.repositoryRoot,
+        envelope,
+        options.verifier,
+      );
+      if (stored.state === 'revoked') {
         return inspectHumanResolutionGrant(
           revokeStoredHumanResolutionGrant(
             context.runtime,
+            context.git.repositoryRoot,
             requestedGrantId,
-            now,
+            options,
           ),
         );
       }
-      const current = inspectHumanResolutionGrant(
-        inspectStoredHumanResolutionGrants(
-          context.runtime,
-          requestedGrantId,
-        )[0]!,
-      );
+      if (stored.state === 'consumed') {
+        throw workflowError(
+          'HUMAN_REVOCATION_STATE_INVALID',
+          'Consumed human-resolution authority cannot be revoked.',
+          ExitCode.guard,
+        );
+      }
+      const current = inspectHumanResolutionGrant(stored);
       return withHumanResolutionTransitionAuthority(
         context.lifecycleRuntime,
         current.changeId,
@@ -398,8 +445,9 @@ export function revokeHumanResolutionGrant(
           assertOwned();
           const revoked = revokeStoredHumanResolutionGrant(
             context.runtime,
+            context.git.repositoryRoot,
             requestedGrantId,
-            now,
+            options,
           );
           assertOwned();
           return inspectHumanResolutionGrant(revoked);
@@ -658,6 +706,10 @@ function prepareHumanResolutionExecution(
   options: HumanResolutionExecutionOptions,
 ): PreparedHumanResolutionExecution {
   const now = exactHumanResolutionDate(options.now ?? new Date());
+  // Grant parsing is intentionally structural so historical bytes remain
+  // inspectable. Executable transitions must always re-admit the current,
+  // reason-bearing decision shape before any state planning or publication.
+  assertHumanResolutionDecision(envelope.payload.decision);
   const { policy, policyBlob } = loadMaintainerPolicyForResolution(
     context.git.repositoryRoot,
     envelope.payload.trustBaseCommit,
@@ -1702,6 +1754,13 @@ export function startInvestigationSessionUnderLifecycleLock(
     manifestDigest,
     intentDigest,
   );
+  if (input.mandateBinding) {
+    assertActiveTaskMandateBindingUnderLifecycleLock(
+      cwd,
+      input.mandateBinding,
+      assertOwned,
+    );
+  }
   const currentRef = readCurrentInvestigationRef(
     lockedContext.runtime,
     changeId,
@@ -1725,6 +1784,7 @@ export function startInvestigationSessionUnderLifecycleLock(
         );
       }
       assertStartReservationSessionBinding(lockedContext, reservation, current);
+      authorizeSurveyReservationMandate(cwd, reservation, assertOwned, false);
       return statusFromSession(lockedContext, current);
     }
     throw workflowError(
@@ -1762,12 +1822,20 @@ export function startInvestigationSessionUnderLifecycleLock(
       },
       manifest: input.blindManifest,
       request: input.blindRequest,
+      ...(input.mandateBinding ? { mandateBinding: input.mandateBinding } : {}),
+      executionPolicy: loadAiAdapterPolicy(
+        lockedContext.git.repositoryRealPath,
+      ),
     });
   assertStartReservationContext(lockedContext, reservation);
+  authorizeSurveyReservationMandate(cwd, reservation, assertOwned, false);
   const reservedInput: StartInvestigationSessionInput = {
     changeId,
     blindManifest: reservation.manifest,
     blindRequest: reservation.request,
+    ...(reservation.mandateBinding
+      ? { mandateBinding: reservation.mandateBinding }
+      : {}),
   };
   const reservedIntentDigest = blindSurveyIntentDigest(reservation.manifest);
   assertStartBinding(
@@ -1786,6 +1854,8 @@ export function startInvestigationSessionUnderLifecycleLock(
   if (
     existingPrepared !== null &&
     (existingPrepared.changeId !== changeId ||
+      canonicalJson(existingPrepared.mandateBinding ?? null) !==
+        canonicalJson(reservation.mandateBinding ?? null) ||
       existingPrepared.investigationId !== reservation.investigationId ||
       existingPrepared.attempt !== 1 ||
       existingPrepared.requestDigest !== reservation.requestDigest ||
@@ -1798,10 +1868,18 @@ export function startInvestigationSessionUnderLifecycleLock(
     );
   }
   const investigationId = reservation.investigationId;
+  ensureProviderExecutionPolicySnapshot(
+    lockedContext.runtime,
+    reservation.request,
+    loadAiAdapterPolicy(lockedContext.git.repositoryRealPath),
+  );
   if (existingPrepared === null) {
     createProviderInvocation(lockedContext.runtime, {
       investigationId,
       changeId,
+      ...(reservation.mandateBinding
+        ? { mandateBinding: reservation.mandateBinding }
+        : {}),
       attempt: 1,
       manifest: reservation.manifest,
       request: reservation.request,
@@ -1813,8 +1891,13 @@ export function startInvestigationSessionUnderLifecycleLock(
     schemaVersion: 1,
     investigationId,
     revision: 0,
+    semanticRevision: 0,
+    lifecycleRevision: 0,
     state: 'awaiting-main-terms',
     changeId,
+    ...(reservation.mandateBinding
+      ? { mandateBinding: reservation.mandateBinding }
+      : {}),
     repositoryRoot: lockedContext.git.repositoryRealPath,
     gitCommonDirectory: lockedContext.git.gitCommonDirectory,
     branch: lockedContext.git.branch,
@@ -1846,6 +1929,8 @@ export function startInvestigationSessionUnderLifecycleLock(
     : createInvestigationSessionRecord(lockedContext.runtime, session);
   if (
     persistedSession.changeId !== changeId ||
+    canonicalJson(persistedSession.mandateBinding ?? null) !==
+      canonicalJson(reservation.mandateBinding ?? null) ||
     persistedSession.investigationId !== reservation.investigationId ||
     persistedSession.repositoryRoot !== reservation.repositoryRoot ||
     persistedSession.gitCommonDirectory !== reservation.gitCommonDirectory ||
@@ -2599,8 +2684,8 @@ export function retryInvestigationProvider(
   return withInvestigationMutation(
     cwd,
     requestedInvestigationId,
-    (context, current) =>
-      retryInvestigationProviderUnlocked(context, current, input),
+    (context, current, assertOwned) =>
+      retryInvestigationProviderUnlocked(context, current, input, assertOwned),
   );
 }
 
@@ -2641,6 +2726,7 @@ function retryInvestigationProviderUnlocked(
   context: ReturnType<typeof loadInvestigationRuntimeContext>,
   current: InvestigationSession,
   input: RetryInvestigationProviderInput,
+  assertOwned: () => void,
 ): InvestigationStatus {
   const investigationId = current.investigationId;
   if (current.revision !== input.expectedRevision) {
@@ -2648,6 +2734,13 @@ function retryInvestigationProviderUnlocked(
       'INVESTIGATION_CAS_MISMATCH',
       'Investigation session changed before provider retry.',
       ExitCode.conflict,
+    );
+  }
+  if (current.mandateBinding) {
+    assertActiveTaskMandateBindingUnderLifecycleLock(
+      context.git.repositoryRealPath,
+      current.mandateBinding,
+      assertOwned,
     );
   }
   const previous = readProviderInvocation(
@@ -2680,12 +2773,40 @@ function retryInvestigationProviderUnlocked(
     investigationId,
     attempt,
   );
+  const currentExecutionPolicy = loadAiAdapterPolicy(
+    context.git.repositoryRealPath,
+  );
+  let retryAuthorization: ReturnType<
+    typeof authorizeAutomaticProviderRetry
+  > | null = null;
   if (existingReservation === null) {
     assertFreshProviderRetry(current, priorRequests, input.replacementRequest);
     assertReplacementRequestBinding(
       current,
       input.replacementRequest,
       manifest,
+    );
+    retryAuthorization = assertProviderRetryExecutionDecision(
+      context.runtime,
+      previous,
+      input.replacementRequest,
+      currentExecutionPolicy,
+      input.executionGrantAuthorization,
+    );
+  } else if (existingReservation.schemaVersion !== 2) {
+    throw workflowError(
+      'PROVIDER_RETRY_DECISION_EVIDENCE_REQUIRED',
+      'A historical retry reservation without decision evidence cannot authorize new provider work.',
+      ExitCode.guard,
+    );
+  } else if (
+    existingReservation.retryDecision.failedAttemptId !==
+    `attempt-legacy-${previous.invocationId}`
+  ) {
+    throw workflowError(
+      'PROVIDER_RETRY_DECISION_EVIDENCE_STALE',
+      'The durable retry decision does not bind the failed provider Attempt.',
+      ExitCode.staleState,
     );
   }
   const reservation =
@@ -2697,7 +2818,28 @@ function retryInvestigationProviderUnlocked(
       previousInvocationId: previous.invocationId,
       manifest,
       request: input.replacementRequest,
+      executionPolicy: currentExecutionPolicy,
+      retryDecision: {
+        schemaVersion: 1,
+        kind: 'provider-retry-decision-binding',
+        executionJobId: retryAuthorization!.job.jobId,
+        executionRevision: retryAuthorization!.executionRevision,
+        failedAttemptId: retryAuthorization!.attempt.attemptId,
+        evidenceDigest: retryAuthorization!.evidenceDigest,
+        evaluatedAt: retryAuthorization!.evaluatedAt,
+      },
+      ...(current.mandateBinding
+        ? { mandateBinding: current.mandateBinding }
+        : {}),
     });
+  if (reservation.schemaVersion === 2) {
+    authorizeSurveyRetryReservationMandate(
+      context,
+      current,
+      reservation,
+      assertOwned,
+    );
+  }
   if (
     reservation.changeId !== current.changeId ||
     reservation.previousInvocationId !== previous.invocationId ||
@@ -2711,6 +2853,21 @@ function retryInvestigationProviderUnlocked(
   }
   assertFreshProviderRetry(current, priorRequests, reservation.request);
   assertReplacementRequestBinding(current, reservation.request, manifest);
+  if (reservation.schemaVersion === 2) {
+    ensureProviderExecutionPolicySnapshotFromSnapshot(
+      context.runtime,
+      reservation.request,
+      reservation.executionPolicySnapshot,
+    );
+  } else {
+    // The v1 branch is retained only for exhaustive typing; replay rejected it
+    // above before any provider-side write.
+    ensureProviderExecutionPolicySnapshot(
+      context.runtime,
+      reservation.request,
+      currentExecutionPolicy,
+    );
+  }
   const replacement = providerInvocationExists(
     context.runtime,
     reservation.invocationId,
@@ -2719,6 +2876,9 @@ function retryInvestigationProviderUnlocked(
     : createProviderInvocation(context.runtime, {
         investigationId,
         changeId: current.changeId,
+        ...(reservation.schemaVersion === 2 && reservation.mandateBinding
+          ? { mandateBinding: reservation.mandateBinding }
+          : {}),
         attempt,
         manifest,
         request: reservation.request,
@@ -2726,6 +2886,12 @@ function retryInvestigationProviderUnlocked(
   if (
     replacement.investigationId !== investigationId ||
     replacement.changeId !== current.changeId ||
+    canonicalJson(replacement.mandateBinding ?? null) !==
+      canonicalJson(
+        reservation.schemaVersion === 2
+          ? (reservation.mandateBinding ?? null)
+          : null,
+      ) ||
     replacement.attempt !== attempt ||
     replacement.requestDigest !== reservation.requestDigest ||
     replacement.manifestDigest !== current.blindManifestDigest
@@ -2758,6 +2924,123 @@ function retryInvestigationProviderUnlocked(
     },
   );
   return statusFromSession(context, next);
+}
+
+function assertProviderRetryExecutionDecision(
+  paths: ReturnType<typeof loadInvestigationRuntimeContext>['runtime'],
+  previous: ProviderInvocationRecord,
+  replacementRequest: ProviderInvocationRequest,
+  replacementExecutionPolicy: ReturnType<typeof loadAiAdapterPolicy>,
+  executionGrantAuthorization?: ProviderExecutionGrantAuthorization,
+): ReturnType<typeof authorizeAutomaticProviderRetry> {
+  const previousRequest = readProviderInvocationRequest(
+    paths,
+    previous.invocationId,
+  );
+  const authorization = authorizeAutomaticProviderRetry(paths, {
+    failed: previous,
+    failedRequest: previousRequest,
+    replacementRequest,
+    replacementExecutionPolicy,
+    boundedGrantRequest: executionGrantAuthorization?.grantRequest,
+  });
+  const prior = authorization;
+  const replacementPolicy = providerExecutionPolicySnapshot(replacementRequest);
+  const now = authorization.evaluatedAt;
+  const decision = authorization.decision;
+  const replacementAttemptId = `attempt-legacy-${replacementRequest.invocationId}`;
+  if (executionGrantAuthorization !== undefined) {
+    assertProviderExecutionGrantAuthorization(
+      authorization,
+      executionGrantAuthorization,
+      replacementAttemptId,
+    );
+  } else if (!decision.retryable || !decision.automatic) {
+    throw workflowError(
+      decision.requiredGrant === undefined
+        ? 'PROVIDER_RETRY_DECISION_DENIED'
+        : 'PROVIDER_RETRY_GRANT_REQUIRED',
+      'The execution RetryDecision does not authorize an automatic replacement Attempt.',
+      ExitCode.guard,
+      { details: { reasonCode: decision.reasonCode } },
+    );
+  }
+  if (
+    executionGrantAuthorization === undefined &&
+    (decision.retryMode === 'new-context' || decision.retryMode === 'none')
+  ) {
+    throw workflowError(
+      'PROVIDER_RETRY_DECISION_INVALID',
+      'The execution RetryDecision returned an invalid replacement mode.',
+      ExitCode.guard,
+    );
+  }
+  const policyChanged =
+    canonicalJson(prior.attempt.policySnapshot) !==
+    canonicalJson(replacementPolicy);
+  const retryMode: Exclude<RetryMode, 'new-context' | 'none'> =
+    executionGrantAuthorization === undefined
+      ? (decision.retryMode as Exclude<RetryMode, 'new-context' | 'none'>)
+      : prior.attempt.failure?.retryClass === 'repairable'
+        ? 'repair'
+        : policyChanged
+          ? 'execution-policy-change'
+          : 'same-input';
+  if (retryMode === 'repair') {
+    preflightProviderRepairRetry(paths, {
+      history: authorization.sourceInvocationIds.map((invocationId) => ({
+        record: readProviderInvocation(paths, invocationId),
+        request: readProviderInvocationRequest(paths, invocationId),
+      })),
+      failedRecord: previous,
+      failedRequest: previousRequest,
+    });
+  }
+  if (retryMode === 'strategy-change' && !policyChanged) {
+    throw workflowError(
+      'PROVIDER_RETRY_STRATEGY_CHANGE_REQUIRED',
+      'The repeated failure fingerprint requires a changed provider execution strategy.',
+      ExitCode.guard,
+      { details: { failureFingerprint: prior.attempt.failureFingerprint } },
+    );
+  }
+  const replacement = createReplacementAttempt({
+    workflow: prior.workflow,
+    job: prior.job,
+    previousAttempt: prior.attempt,
+    attemptId: replacementAttemptId,
+    retryMode,
+    currentExecutionPolicy: replacementPolicy,
+    repairContext:
+      retryMode === 'repair'
+        ? loadProviderExecutionRepairContext(
+            paths,
+            previous,
+            readProviderInvocationRequest(paths, previous.invocationId),
+          )
+        : undefined,
+    strategyChanges:
+      retryMode === 'strategy-change'
+        ? ['provider-execution-policy-changed']
+        : undefined,
+    grantId: executionGrantAuthorization?.grantId,
+    environmentDigest: providerExecutionEnvironmentDigest(replacementRequest),
+    createdAt: now,
+  });
+  if (
+    replacement.job.jobId !== prior.job.jobId ||
+    replacement.job.workflowId !== prior.job.workflowId ||
+    replacement.job.epoch !== prior.job.epoch ||
+    replacement.job.contextDigest !== prior.job.contextDigest ||
+    replacement.attempt.attemptNumber !== previous.attempt + 1
+  ) {
+    throw workflowError(
+      'PROVIDER_RETRY_EXECUTION_LINEAGE_INVALID',
+      'Replacement provider work changed stable semantic Job identity.',
+      ExitCode.staleState,
+    );
+  }
+  return authorization;
 }
 
 function assertFreshProviderRetry(
@@ -2851,6 +3134,8 @@ function statusFromSession(
     investigationId: session.investigationId,
     changeId: session.changeId,
     revision: session.revision,
+    semanticRevision: session.semanticRevision,
+    lifecycleRevision: session.lifecycleRevision,
     state: session.state,
     baseline: { ...session.baseline },
     intentDigest: session.intentDigest,
@@ -3190,6 +3475,67 @@ function assertStableStartContext(
   }
 }
 
+function authorizeSurveyReservationMandate(
+  cwd: string,
+  reservation: InvestigationStartReservation,
+  assertOwned: () => void,
+  retry: boolean,
+): void {
+  if (reservation.mandateBinding === undefined) return;
+  authorizeTaskMandateProviderReservationUnderLifecycleLock(
+    cwd,
+    reservation.mandateBinding,
+    reservation.invocationId,
+    {
+      providerId: reservation.request.providerId,
+      dataTypes: ['repository-metadata', 'source-code', 'task-intent'],
+      sourceCode: true,
+      secrets: false,
+      retry,
+      budget: null,
+      requestDigest: reservation.request.requestDigest,
+    },
+    assertOwned,
+  );
+}
+
+function authorizeSurveyRetryReservationMandate(
+  context: ReturnType<typeof loadInvestigationRuntimeContext>,
+  session: InvestigationSession,
+  reservation: Extract<
+    ReturnType<typeof readProviderRetryReservation>,
+    { schemaVersion: 2 }
+  >,
+  assertOwned: () => void,
+): void {
+  if (
+    canonicalJson(session.mandateBinding ?? null) !==
+    canonicalJson(reservation.mandateBinding ?? null)
+  ) {
+    throw workflowError(
+      'TASK_MANDATE_BINDING_STALE',
+      'The provider retry reservation does not match its durable task mandate binding.',
+      ExitCode.staleState,
+    );
+  }
+  if (reservation.mandateBinding === undefined) return;
+  authorizeTaskMandateProviderReservationUnderLifecycleLock(
+    context.git.repositoryRealPath,
+    reservation.mandateBinding,
+    reservation.invocationId,
+    {
+      providerId: reservation.request.providerId,
+      dataTypes: ['repository-metadata', 'source-code', 'task-intent'],
+      sourceCode: true,
+      secrets: false,
+      retry: true,
+      budget: null,
+      requestDigest: reservation.request.requestDigest,
+    },
+    assertOwned,
+  );
+}
+
 function assertStartReservationContext(
   context: ReturnType<typeof loadInvestigationRuntimeContext>,
   reservation: {
@@ -3230,6 +3576,8 @@ function assertStartReservationSessionBinding(
   if (
     session.investigationId !== reservation.investigationId ||
     session.changeId !== reservation.changeId ||
+    canonicalJson(session.mandateBinding ?? null) !==
+      canonicalJson(reservation.mandateBinding ?? null) ||
     session.repositoryRoot !== reservation.repositoryRoot ||
     session.gitCommonDirectory !== reservation.gitCommonDirectory ||
     session.branch !== reservation.branch ||
@@ -3281,14 +3629,16 @@ function assertExactStartInput(
     typeof value !== 'object' ||
     value === null ||
     Array.isArray(value) ||
-    Object.keys(value).length !== 3 ||
+    (Object.keys(value).length !== 3 && Object.keys(value).length !== 4) ||
     !Object.prototype.hasOwnProperty.call(value, 'changeId') ||
     !Object.prototype.hasOwnProperty.call(value, 'blindManifest') ||
-    !Object.prototype.hasOwnProperty.call(value, 'blindRequest')
+    !Object.prototype.hasOwnProperty.call(value, 'blindRequest') ||
+    (Object.keys(value).length === 4 &&
+      !Object.prototype.hasOwnProperty.call(value, 'mandateBinding'))
   ) {
     throw workflowError(
       'INVESTIGATION_START_INPUT_INVALID',
-      'Investigation start accepts only changeId and sealed blind inputs.',
+      'Investigation start accepts only changeId, sealed blind inputs, and an optional exact mandate binding.',
       ExitCode.usage,
     );
   }

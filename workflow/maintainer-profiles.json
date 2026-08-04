@@ -1,0 +1,158 @@
+{
+  "schemaVersion": 1,
+  "profiles": {
+    "workflow-engine-bootstrap": {
+      "id": "workflow-engine-bootstrap",
+      "version": 1,
+      "authorityClass": "ordinary",
+      "implementationPaths": ["packages/workflow-engine/src/**"],
+      "evidencePaths": ["packages/workflow-engine/test/**"],
+      "policyPaths": [
+        "workflow/maintainer-policy.json",
+        "workflow/maintainer-profiles.json",
+        "workflow/protected-capabilities.json",
+        "workflow/schemas/**"
+      ],
+      "verificationInfrastructurePaths": [
+        ".github/workflows/**",
+        "workflow/checks.json"
+      ],
+      "forbiddenPaths": [
+        "packages/workflow-engine/src/canonical-json.ts",
+        "packages/workflow-engine/src/check-runner.ts",
+        "packages/workflow-engine/src/ci-attestation.ts",
+        "packages/workflow-engine/src/ci-authority.ts",
+        "packages/workflow-engine/src/cli.ts",
+        "packages/workflow-engine/src/database-policy.ts",
+        "packages/workflow-engine/src/filesystem-safety.ts",
+        "packages/workflow-engine/src/git-transitions.ts",
+        "packages/workflow-engine/src/maintainer-approve.ts",
+        "packages/workflow-engine/src/maintainer-attestation.ts",
+        "packages/workflow-engine/src/maintainer-commit.ts",
+        "packages/workflow-engine/src/maintainer-grant-v2.ts",
+        "packages/workflow-engine/src/maintainer-grant.ts",
+        "packages/workflow-engine/src/maintainer-manifest.ts",
+        "packages/workflow-engine/src/maintainer-policy.ts",
+        "packages/workflow-engine/src/maintainer-recovery.ts",
+        "packages/workflow-engine/src/maintainer-report.ts",
+        "packages/workflow-engine/src/maintainer-session.ts",
+        "packages/workflow-engine/src/maintainer-signer.ts",
+        "packages/workflow-engine/src/maintainer-store.ts",
+        "packages/workflow-engine/src/protected-capabilities.ts",
+        "packages/workflow-engine/src/provider-registry.ts",
+        "packages/workflow-engine/src/runner-resolution.ts",
+        "packages/workflow-engine/src/session-store.ts",
+        "packages/workflow-engine/src/task-mandate.ts"
+      ],
+      "constraints": {
+        "evidenceOnlyGrantForbidden": true,
+        "samePackageRequired": true,
+        "evidenceAdditionsAllowed": true,
+        "maximumFiles": 12
+      },
+      "requiredChecks": [
+        "managed-documents",
+        "workflow-format",
+        "workflow-lint",
+        "workflow-tests",
+        "workflow-typecheck"
+      ],
+      "checkDependencies": {
+        "managed-documents": [
+          "harness-engine",
+          "policy",
+          "runner",
+          "source-tree"
+        ],
+        "workflow-format": ["runner", "source-tree"],
+        "workflow-lint": ["runner", "source-tree"],
+        "workflow-tests": [
+          "base-commit",
+          "harness-engine",
+          "policy",
+          "runner",
+          "source-tree"
+        ],
+        "workflow-typecheck": ["runner", "source-tree"]
+      }
+    },
+    "workflow-engine-root-one-shot": {
+      "id": "workflow-engine-root-one-shot",
+      "version": 1,
+      "authorityClass": "root-one-shot",
+      "implementationPaths": ["apps/**", "docs/**", "packages/**"],
+      "evidencePaths": [
+        "apps/api/src/__tests__/**",
+        "packages/workflow-engine/test/**"
+      ],
+      "policyPaths": [
+        "workflow/maintainer-policy.json",
+        "workflow/maintainer-profiles.json",
+        "workflow/protected-capabilities.json",
+        "workflow/schemas/**"
+      ],
+      "verificationInfrastructurePaths": [
+        ".github/workflows/**",
+        "workflow/checks.json"
+      ],
+      "forbiddenPaths": [
+        "packages/workflow-engine/src/canonical-json.ts",
+        "packages/workflow-engine/src/check-runner.ts",
+        "packages/workflow-engine/src/ci-attestation.ts",
+        "packages/workflow-engine/src/ci-authority.ts",
+        "packages/workflow-engine/src/cli.ts",
+        "packages/workflow-engine/src/database-policy.ts",
+        "packages/workflow-engine/src/filesystem-safety.ts",
+        "packages/workflow-engine/src/git-transitions.ts",
+        "packages/workflow-engine/src/maintainer-approve.ts",
+        "packages/workflow-engine/src/maintainer-attestation.ts",
+        "packages/workflow-engine/src/maintainer-commit.ts",
+        "packages/workflow-engine/src/maintainer-grant-v2.ts",
+        "packages/workflow-engine/src/maintainer-grant.ts",
+        "packages/workflow-engine/src/maintainer-manifest.ts",
+        "packages/workflow-engine/src/maintainer-policy.ts",
+        "packages/workflow-engine/src/maintainer-recovery.ts",
+        "packages/workflow-engine/src/maintainer-report.ts",
+        "packages/workflow-engine/src/maintainer-session.ts",
+        "packages/workflow-engine/src/maintainer-signer.ts",
+        "packages/workflow-engine/src/maintainer-store.ts",
+        "packages/workflow-engine/src/protected-capabilities.ts",
+        "packages/workflow-engine/src/provider-registry.ts",
+        "packages/workflow-engine/src/runner-resolution.ts",
+        "packages/workflow-engine/src/session-store.ts",
+        "packages/workflow-engine/src/task-mandate.ts"
+      ],
+      "constraints": {
+        "evidenceOnlyGrantForbidden": true,
+        "samePackageRequired": true,
+        "evidenceAdditionsAllowed": true,
+        "maximumFiles": 100
+      },
+      "requiredChecks": [
+        "managed-documents",
+        "workflow-format",
+        "workflow-lint",
+        "workflow-tests",
+        "workflow-typecheck"
+      ],
+      "checkDependencies": {
+        "managed-documents": [
+          "harness-engine",
+          "policy",
+          "runner",
+          "source-tree"
+        ],
+        "workflow-format": ["runner", "source-tree"],
+        "workflow-lint": ["runner", "source-tree"],
+        "workflow-tests": [
+          "base-commit",
+          "harness-engine",
+          "policy",
+          "runner",
+          "source-tree"
+        ],
+        "workflow-typecheck": ["runner", "source-tree"]
+      }
+    }
+  }
+}
