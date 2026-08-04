@@ -196,7 +196,7 @@
     {
       "path": "src/class-disposition.ts",
       "mode": "100644",
-      "digest": "sha256:ec9fd2881af243fdd630874b245de7a9e5032c86107e55031274718edc8a3c4f"
+      "digest": "sha256:d2d95cda5285006c62fc5d0f7f15c6831a3436dd9280b7efb3b21763f1d0b11d"
     },
     {
       "path": "src/class-sample-audit.ts",
@@ -272,6 +272,11 @@
       "path": "src/database-policy.ts",
       "mode": "100644",
       "digest": "sha256:7e51754df2f1b2e31d43f8fa96be836c145deb766f55459383bd64d59fa066e1"
+    },
+    {
+      "path": "src/declared-path-symbols.ts",
+      "mode": "100644",
+      "digest": "sha256:872728a9cbb28657e20475e3972cf7aa20888145bd5455ea8aaf635fb45c8acd"
     },
     {
       "path": "src/document-refresh-cli.ts",

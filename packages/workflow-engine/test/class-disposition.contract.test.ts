@@ -220,3 +220,26 @@ test('a malformed class artifact is refused before anything is expanded', () => 
     );
   }
 });
+
+test('a saturated term cannot contribute a class', () => {
+  // A term that hit its ceiling reported a truncated view of where it occurs.
+  // A class drawn from it might be complete or might be missing exactly the
+  // members that would have disproved it, and nothing distinguishes the two.
+  const groups = GROUPS.map((group) =>
+    group.groupId === 'g-caller-1' ? { ...group, termId: 't-timeout' } : group,
+  );
+  assert.throws(
+    () =>
+      expandClassDispositions([classArtifact()], groups, REGISTRY, {
+        saturatedTermIds: ['t-timeout'],
+      }),
+    (error) => isWorkflowError(error, 'CLASS_DISPOSITION_INVALID'),
+  );
+  // An unsaturated term is unaffected.
+  assert.equal(
+    expandClassDispositions([classArtifact()], groups, REGISTRY, {
+      saturatedTermIds: ['t-other'],
+    }).dispositions.length,
+    2,
+  );
+});

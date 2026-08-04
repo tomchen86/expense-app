@@ -53,6 +53,8 @@ export type ClassGroupHit = HitPredicateSubject & Readonly<{ path: string }>;
 export type ClassGroup = Readonly<{
   groupId: string;
   hits: readonly ClassGroupHit[];
+  /** The term that produced these hits, when the caller can name it. */
+  termId?: string;
 }>;
 
 export type ExpandedDisposition = Readonly<{
@@ -130,7 +132,9 @@ export function expandClassDispositions(
   classes: readonly ClassDisposition[],
   groups: readonly ClassGroup[],
   registry: PathRoleRegistry,
+  options: { saturatedTermIds?: readonly string[] } = {},
 ): ClassExpansion {
+  const saturated = new Set(options.saturatedTermIds ?? []);
   const groupsById = new Map(groups.map((group) => [group.groupId, group]));
   const claimed = new Map<string, string>();
   const dispositions: ExpandedDisposition[] = [];
@@ -155,6 +159,14 @@ export function expandClassDispositions(
     }
 
     for (const group of members) {
+      // A term that hit its ceiling returned a truncated view of where it
+      // occurs, so nothing drawn from it can be shown to be complete. Its
+      // groups are judged one at a time until the search itself is sound.
+      if (group.termId !== undefined && saturated.has(group.termId)) {
+        throw classInvalid(
+          `Group ${group.groupId} comes from saturated term ${group.termId}, whose hits are known to be incomplete.`,
+        );
+      }
       for (const groupHit of group.hits) {
         const resolution = resolvePathRole(registry, groupHit.path);
         if (!compressionEligible(resolution)) {
