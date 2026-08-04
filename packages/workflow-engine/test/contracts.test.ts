@@ -38,6 +38,7 @@ import './openspec-planning-assets.integration.test.ts';
 import './authority-attestation.contract.test.ts';
 import './authority-audit-cli.contract.test.ts';
 import './authority-audit-ledger.contract.test.ts';
+import './authority-audit-profile.contract.test.ts';
 import './authority-audit-service.contract.test.ts';
 import './authority-refusal-audit.contract.test.ts';
 import './maintainer-attestation.integration.test.ts';

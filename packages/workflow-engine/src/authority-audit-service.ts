@@ -10,6 +10,7 @@ import {
   type AuthorityAuditLedgerEntry,
   type AuthorityAuditLedgerScope,
   type AuthorityAuditAppendInput,
+  type AuthorityAuditProfile,
   type AuthorityAuditResult,
   type Sha256Digest,
 } from './authority-audit-ledger.ts';
@@ -120,6 +121,7 @@ export type AuthorityAuditRecordedEvent = Readonly<{
 
 export type AuthorityAuditVerification = Readonly<{
   repositoryId: Sha256Digest;
+  profile: AuthorityAuditProfile;
   ok: boolean;
   recordCount: number;
   projectedEventCount: number;
@@ -132,6 +134,8 @@ export type AuthorityAuditVerification = Readonly<{
 export type AuthorityAuditServiceHooks = Readonly<{
   testAfterLedgerAppend?: () => void;
   testAfterEventPreparation?: () => void;
+  /** Injectable engine clock; production callers omit it. */
+  now?: () => Date;
 }>;
 
 export function recordAuthorityAuditEvent(
@@ -146,6 +150,7 @@ export function recordAuthorityAuditEvent(
   const ledger = appendAuthorityAuditRecord(
     scope,
     authorityAuditAppendInputForEvent(event),
+    hooks.now === undefined ? {} : { now: hooks.now },
   );
   hooks.testAfterLedgerAppend?.();
   const eventPath = publishEventObject(scope, eventDigest, bytes, hooks);
@@ -187,6 +192,7 @@ export function verifyAuthorityAuditEvents(
   }
   return deepFreeze({
     repositoryId: scan.repositoryId,
+    profile: scan.profile,
     ok: legacyUnprojectedCount === 0,
     recordCount: scan.recordCount,
     projectedEventCount: events.length,

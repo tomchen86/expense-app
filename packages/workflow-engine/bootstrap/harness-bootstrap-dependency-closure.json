@@ -8,7 +8,7 @@
     {
       "path": "bootstrap/recovery-runtime/bootstrap/built-in-engine-closure-pin.js",
       "mode": "100644",
-      "digest": "sha256:98c942136689d99a07e08d92acbcf82c94162d546edbdf9c2a1bff64cddaf9c6"
+      "digest": "sha256:247a5265967da3229e01f521c43f7dc02b569ec904df1ff1a77e1271ebc2fb80"
     },
     {
       "path": "bootstrap/recovery-runtime/src/actor-identity.js",
@@ -23,12 +23,12 @@
     {
       "path": "bootstrap/recovery-runtime/src/authority-audit-ledger.js",
       "mode": "100644",
-      "digest": "sha256:8e437d587112f5a59174c20bba09be91949528e36069cc1b7f35472c750894b9"
+      "digest": "sha256:cd74c7c23fe5a3f9a72065884841e31082ef7df44e6ec1491d791da050603c84"
     },
     {
       "path": "bootstrap/recovery-runtime/src/authority-audit-service.js",
       "mode": "100644",
-      "digest": "sha256:73447a67550cf7771af9047d7c8ce1f0885f2659f17d56daee1f47e0312b6534"
+      "digest": "sha256:de95940b9e39174ae27074bb6d4f5a6407899c409443d71245bc0a2885559f78"
     },
     {
       "path": "bootstrap/recovery-runtime/src/authority-refusal-audit.js",

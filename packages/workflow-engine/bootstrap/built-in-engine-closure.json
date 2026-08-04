@@ -76,17 +76,17 @@
     {
       "path": "src/authority-audit-cli.ts",
       "mode": "100644",
-      "digest": "sha256:f05471e750a97dd7458d9de045451e9320b0e9f7aedf22b0827b2f1127babb8c"
+      "digest": "sha256:2456b03611d8194c7ec88ce8c01226ed995c6a2d92e48611c27e74d573f9b821"
     },
     {
       "path": "src/authority-audit-ledger.ts",
       "mode": "100644",
-      "digest": "sha256:26428521d896180454f997a12e028af810a9a2bc8c8e2e6107cfb3c7707aef7d"
+      "digest": "sha256:720e0ce500d37990361d45638276212920efa154fc0ccc09f24fb73307825b6d"
     },
     {
       "path": "src/authority-audit-service.ts",
       "mode": "100644",
-      "digest": "sha256:4de4e47d226174074416920d0198d917824da12da6820132b6769d7cb05b446a"
+      "digest": "sha256:427f22606fb27e61e8846f07ef6009164721d416d7e1ff6bb3a652c40482c7ff"
     },
     {
       "path": "src/authority-refusal-audit.ts",

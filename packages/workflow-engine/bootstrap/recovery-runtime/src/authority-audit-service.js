@@ -37,7 +37,7 @@ export function recordAuthorityAuditEvent(scope, rawInput, hooks = {}) {
     const event = buildAuthorityAuditEvent(scope.repositoryId, input);
     const bytes = canonicalAuthorityAuditEvent(event);
     const eventDigest = digest(bytes);
-    const ledger = appendAuthorityAuditRecord(scope, authorityAuditAppendInputForEvent(event));
+    const ledger = appendAuthorityAuditRecord(scope, authorityAuditAppendInputForEvent(event), hooks.now === undefined ? {} : { now: hooks.now });
     hooks.testAfterLedgerAppend?.();
     const eventPath = publishEventObject(scope, eventDigest, bytes, hooks);
     return deepFreeze({ eventDigest, eventPath, event, ledger });
@@ -68,6 +68,7 @@ export function verifyAuthorityAuditEvents(scope) {
     }
     return deepFreeze({
         repositoryId: scan.repositoryId,
+        profile: scan.profile,
         ok: legacyUnprojectedCount === 0,
         recordCount: scan.recordCount,
         projectedEventCount: events.length,
