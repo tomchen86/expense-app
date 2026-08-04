@@ -194,6 +194,11 @@
       "digest": "sha256:965a416c6ef162c6a1cd5f9f4c91f2815b2d4437bfa363d890e52db8902f65e9"
     },
     {
+      "path": "src/class-disposition.ts",
+      "mode": "100644",
+      "digest": "sha256:ec9fd2881af243fdd630874b245de7a9e5032c86107e55031274718edc8a3c4f"
+    },
+    {
       "path": "src/claude-provider-adapter.ts",
       "mode": "100644",
       "digest": "sha256:42bcbfed731268e1b8895418034f61ba256ab84d03e036cb17fe666786f021d3"

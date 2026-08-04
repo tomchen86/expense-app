@@ -32,6 +32,7 @@ import { workflowContractArtifactPaths } from '../src/contract-artifacts.ts';
 import './archive-diagnostic-preservation.contract.test.ts';
 import './apply-journal-terminal-states.contract.test.ts';
 import './assurance-assessment-chain.contract.test.ts';
+import './class-disposition.contract.test.ts';
 import './hit-predicate.contract.test.ts';
 import './predicate-discrimination.contract.test.ts';
 import './scan-hit-context-window.contract.test.ts';
