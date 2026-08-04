@@ -51,7 +51,7 @@
     {
       "path": "src/archive-transformation.ts",
       "mode": "100644",
-      "digest": "sha256:1c347af3fcd5572d2f710fcb14c2e862ec6033819bfeed62c0abb82a202dfca9"
+      "digest": "sha256:c5887a664bfc495778f5810bbc0e893e5512af13ea249a8dc95936d44e54f761"
     },
     {
       "path": "src/archive-transition.ts",
