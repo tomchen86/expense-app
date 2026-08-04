@@ -441,6 +441,27 @@ test('protected capability closure classifies dependency and manifest changes as
   );
 });
 
+test('control-plane exact diffs use canonical code-unit ordering for case-sensitive paths', () => {
+  const changes: ExactControlPlaneChange[] = [
+    {
+      path: 'docs/readme.md',
+      beforeDigest: digest('lower-before'),
+      afterDigest: digest('lower-after'),
+    },
+    {
+      path: 'docs/Readme.md',
+      beforeDigest: digest('upper-before'),
+      afterDigest: digest('upper-after'),
+    },
+  ];
+
+  assert.doesNotThrow(() => controlPlaneCandidateDigest(changes));
+  assert.equal(
+    controlPlaneCandidateDigest(changes),
+    controlPlaneCandidateDigest([...changes].reverse()),
+  );
+});
+
 function exactControlPlaneChanges(
   manifest: ReturnType<typeof createProtectedCapabilityManifest>,
 ): ExactControlPlaneChange[] {

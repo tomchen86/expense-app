@@ -1,6 +1,6 @@
 import crypto from 'node:crypto';
 import path from 'node:path';
-import { canonicalJson } from './canonical-json.js';
+import { canonicalJson, compareCanonicalStrings } from './canonical-json.js';
 import { ExitCode, workflowError } from './errors.js';
 export const HARNESS_MAINTENANCE_SIGNATURE_NAMESPACE = 'expense-app.harness-maintenance-grant.v1';
 export const CONTROL_PLANE_SIGNATURE_NAMESPACE = 'expense-app.control-plane-grant.v1';
@@ -39,7 +39,7 @@ function assertIsoTimestamp(value, code) {
     }
 }
 function assertSortedUnique(values, code) {
-    const expected = [...new Set(values)].sort();
+    const expected = [...new Set(values)].sort(compareCanonicalStrings);
     if (canonicalJson(values) !== canonicalJson(expected)) {
         throw workflowError(code, 'Values must be sorted and unique.', ExitCode.usage);
     }
@@ -562,7 +562,7 @@ export function createProtectedCapabilityManifest(input) {
             closureDigest: entry.closureDigest,
         };
     })
-        .sort((left, right) => left.capability.localeCompare(right.capability));
+        .sort((left, right) => compareCanonicalStrings(left.capability, right.capability));
     assertSortedUnique(entries.map((entry) => entry.capability), 'PROTECTED_CAPABILITY_MANIFEST_INVALID');
     const missing = REQUIRED_PROTECTED_CAPABILITIES.filter((capability) => !entries.some((entry) => entry.capability === capability));
     if (missing.length > 0) {
@@ -601,7 +601,7 @@ function normalizedExactChanges(changes) {
         }
         return { ...change };
     })
-        .sort((left, right) => left.path.localeCompare(right.path));
+        .sort((left, right) => compareCanonicalStrings(left.path, right.path));
     assertSortedUnique(normalized.map((change) => change.path), 'CONTROL_PLANE_EXACT_DIFF_INVALID');
     return normalized;
 }
@@ -633,9 +633,7 @@ export function classifyProtectedCandidateImpact(input) {
             capabilities.add(capability);
         }
     }
-    const affectedCapabilities = [
-        ...capabilities,
-    ].sort();
+    const affectedCapabilities = [...capabilities].sort(compareCanonicalStrings);
     const controlPlane = manifestChanged || affectedCapabilities.length > 0;
     return freezeDeep(controlPlane
         ? {

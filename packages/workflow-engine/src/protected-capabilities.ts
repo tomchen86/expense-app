@@ -2,7 +2,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 
-import { canonicalJson } from './canonical-json.ts';
+import { canonicalJson, compareCanonicalStrings } from './canonical-json.ts';
 import { isRecord, isStringArray } from './contract-values.ts';
 import { ExitCode, workflowError } from './errors.ts';
 import { runGit, runGitBuffer } from './git.ts';
@@ -240,7 +240,7 @@ export function classifyProtectedCapabilityPaths(
     trustBaseCommit,
   );
   const paths = requestedPaths.map(normalizeExactRepositoryPath);
-  const unique = [...new Set(paths)].sort();
+  const unique = [...new Set(paths)].sort(compareCanonicalStrings);
   assertNoCaseFoldAliases(paths);
   if (unique.length !== paths.length) {
     throw protectedManifestInvalid(
@@ -334,7 +334,7 @@ function validatePolicyPaths(
       );
     }
   });
-  const sorted = [...new Set(normalized)].sort();
+  const sorted = [...new Set(normalized)].sort(compareCanonicalStrings);
   if (
     sorted.length !== normalized.length ||
     normalized.some((entry, index) => entry !== sorted[index])
@@ -509,7 +509,7 @@ function resolveClosureIdentities(
     }
   }
   const resolved = [...identities.values()].sort((left, right) =>
-    left.path.localeCompare(right.path),
+    compareCanonicalStrings(left.path, right.path),
   );
   assertNoCaseFoldAliases(resolved.map(({ path: filePath }) => filePath));
   return resolved;
@@ -523,8 +523,8 @@ function hasExactKeys(
   value: Record<string, unknown>,
   expected: string[],
 ): boolean {
-  const keys = Object.keys(value).sort();
-  const sortedExpected = [...expected].sort();
+  const keys = Object.keys(value).sort(compareCanonicalStrings);
+  const sortedExpected = [...expected].sort(compareCanonicalStrings);
   return (
     keys.length === sortedExpected.length &&
     keys.every((entry, index) => entry === sortedExpected[index])

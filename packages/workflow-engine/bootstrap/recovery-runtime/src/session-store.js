@@ -242,6 +242,23 @@ function readDescriptorContent(descriptor, byteLength) {
     return bytes.subarray(0, count).toString('utf8');
 }
 export function listActiveWorkflowSessionIds(runtime) {
+    return listActiveWorkflowSessions(runtime).map((session) => session.sessionId);
+}
+export function listConflictingActiveWorkflowSessionIds(runtime, scope) {
+    const repositoryRoot = scope.repositoryRoot === undefined
+        ? undefined
+        : path.resolve(scope.repositoryRoot);
+    const targetBranch = scope.targetRef?.startsWith('refs/heads/')
+        ? scope.targetRef.slice('refs/heads/'.length)
+        : undefined;
+    return listActiveWorkflowSessions(runtime)
+        .filter((session) => session.changeId === scope.changeId ||
+        (repositoryRoot !== undefined &&
+            path.resolve(session.repositoryRoot) === repositoryRoot) ||
+        (targetBranch !== undefined && session.branch === targetBranch))
+        .map((session) => session.sessionId);
+}
+function listActiveWorkflowSessions(runtime) {
     const stats = fs.lstatSync(runtime.sessions, { throwIfNoEntry: false });
     if (!stats) {
         return [];
@@ -254,10 +271,15 @@ export function listActiveWorkflowSessionIds(runtime) {
         .filter((entry) => entry.endsWith('.json'))
         .map((entry) => readSessionFile(path.join(runtime.sessions, entry)))
         .filter((session) => session.state === 'active')
-        .map((session) => session.sessionId)
-        .sort();
+        .sort((left, right) => left.sessionId < right.sessionId
+        ? -1
+        : left.sessionId > right.sessionId
+            ? 1
+            : 0);
 }
 function assertMaintainerReservationCompatibility(runtime, allowedGrantId) {
+    // Maintainer authority remains a repository-wide human-only fence. The
+    // change-scoped relaxation applies only to ordinary active sessions.
     const reservedDirectory = path.join(runtime.root, 'maintainer-grants', 'reserved');
     const stats = fs.lstatSync(reservedDirectory, { throwIfNoEntry: false });
     if (!stats) {

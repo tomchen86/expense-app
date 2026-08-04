@@ -4,7 +4,7 @@ import path from 'node:path';
 import { ExitCode, workflowError } from './errors.js';
 import { ensurePlainDirectory, publishPreparedExclusiveLock, reclaimDeadPreparedLock, } from './filesystem-safety.js';
 import { assertHumanResolutionLifecycleBarrier } from './investigation-session-store.js';
-import { listActiveWorkflowSessionIds, readSessionFile, releaseOwnedLock, withRepositoryLifecycleOperation, } from './session-store.js';
+import { listConflictingActiveWorkflowSessionIds, readSessionFile, releaseOwnedLock, withRepositoryLifecycleOperation, } from './session-store.js';
 const HELD_CHANGE_TRANSITION_AUTHORITY = Symbol('held-change-transition-authority');
 export function withPlanningAuthority(runtime, changeId, operation) {
     return withChangeTransitionAuthority(runtime, changeId, 'plan', operation);
@@ -20,7 +20,7 @@ export function withInvestigationTransitionAuthority(runtime, changeId, operatio
     return withRepositoryLifecycleOperation(runtime, (assertRepositoryLock) => {
         reclaimDeadChangeTransitionLock(runtime, changeId, assertRepositoryLock);
         return withChangeTransitionLock(runtime, changeId, 'investigation', (assertChangeLock) => {
-            assertNoActiveSessions(runtime);
+            assertNoActiveSessionsForChange(runtime, changeId);
             assertHumanResolutionBarrier(runtime, changeId, null);
             return operation(heldChangeTransitionAuthority(changeId, () => {
                 assertRepositoryLock();
@@ -35,7 +35,7 @@ export function withHumanResolutionTransitionAuthority(runtime, changeId, active
     return withRepositoryLifecycleOperation(runtime, (assertRepositoryLock) => {
         reclaimDeadChangeTransitionLock(runtime, changeId, assertRepositoryLock);
         return withChangeTransitionLock(runtime, changeId, 'human-resolution', (assertChangeLock) => {
-            assertNoActiveSessions(runtime);
+            assertNoActiveSessionsForChange(runtime, changeId);
             assertHumanResolutionBarrier(runtime, changeId, activeGrantId);
             return operation(heldChangeTransitionAuthority(changeId, () => {
                 assertRepositoryLock();
@@ -53,7 +53,7 @@ export function withChangeTransitionAuthority(runtime, changeId, transition, ope
     return withRepositoryLifecycleOperation(runtime, (assertRepositoryLock) => {
         reclaimDeadChangeTransitionLock(runtime, changeId, assertRepositoryLock);
         return withChangeTransitionLock(runtime, changeId, transition, (assertChangeLock) => {
-            assertNoActiveSessions(runtime);
+            assertNoActiveSessionsForChange(runtime, changeId);
             assertHumanResolutionBarrier(runtime, changeId, null);
             return operation(heldChangeTransitionAuthority(changeId, () => {
                 assertRepositoryLock();
@@ -319,10 +319,15 @@ function hasExactKeys(value, keys) {
     return (actual.length === keys.length &&
         keys.every((key) => Object.prototype.hasOwnProperty.call(value, key)));
 }
-function assertNoActiveSessions(runtime) {
-    const active = listActiveWorkflowSessionIds(runtime);
+function assertNoActiveSessionsForChange(runtime, changeId) {
+    // Plan/archive and managed task branches are derived from the required
+    // {changeId} template; investigation and human-resolution state is likewise
+    // keyed by changeId. The change identity therefore owns each exact target.
+    const active = listConflictingActiveWorkflowSessionIds(runtime, {
+        changeId,
+    });
     if (active.length > 0) {
-        throw workflowError('ACTIVE_SESSION_CONFLICT', 'Planning transitions require no active workflow session.', ExitCode.conflict, { details: { activeSessionIds: active } });
+        throw workflowError('ACTIVE_SESSION_CONFLICT', `Change ${changeId} already has an active workflow session.`, ExitCode.conflict, { details: { activeSessionIds: active } });
     }
 }
 function assertHumanResolutionBarrier(runtime, changeId, allowedGrantId) {

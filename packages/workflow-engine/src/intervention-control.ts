@@ -1,7 +1,7 @@
 import crypto from 'node:crypto';
 import path from 'node:path';
 
-import { canonicalJson } from './canonical-json.ts';
+import { canonicalJson, compareCanonicalStrings } from './canonical-json.ts';
 import { ExitCode, workflowError } from './errors.ts';
 
 export type Sha256Digest = `sha256:${string}`;
@@ -91,7 +91,7 @@ function assertIsoTimestamp(
 }
 
 function assertSortedUnique(values: readonly string[], code: string): void {
-  const expected = [...new Set(values)].sort();
+  const expected = [...new Set(values)].sort(compareCanonicalStrings);
   if (canonicalJson(values) !== canonicalJson(expected)) {
     throw workflowError(
       code,
@@ -1156,7 +1156,9 @@ export function createProtectedCapabilityManifest(input: {
         closureDigest: entry.closureDigest,
       };
     })
-    .sort((left, right) => left.capability.localeCompare(right.capability));
+    .sort((left, right) =>
+      compareCanonicalStrings(left.capability, right.capability),
+    );
   assertSortedUnique(
     entries.map((entry) => entry.capability),
     'PROTECTED_CAPABILITY_MANIFEST_INVALID',
@@ -1228,7 +1230,7 @@ function normalizedExactChanges(
       }
       return { ...change };
     })
-    .sort((left, right) => left.path.localeCompare(right.path));
+    .sort((left, right) => compareCanonicalStrings(left.path, right.path));
   assertSortedUnique(
     normalized.map((change) => change.path),
     'CONTROL_PLANE_EXACT_DIFF_INVALID',
@@ -1285,9 +1287,9 @@ export function classifyProtectedCandidateImpact(input: {
       capabilities.add(capability);
     }
   }
-  const affectedCapabilities = [
-    ...capabilities,
-  ].sort() as ProtectedCapability[];
+  const affectedCapabilities = [...capabilities].sort(
+    compareCanonicalStrings,
+  ) as ProtectedCapability[];
   const controlPlane = manifestChanged || affectedCapabilities.length > 0;
   return freezeDeep(
     controlPlane

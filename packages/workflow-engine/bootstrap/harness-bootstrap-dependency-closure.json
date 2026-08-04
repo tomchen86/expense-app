@@ -8,7 +8,7 @@
     {
       "path": "bootstrap/recovery-runtime/bootstrap/built-in-engine-closure-pin.js",
       "mode": "100644",
-      "digest": "sha256:0619077ad11c90ac55e66158c838622a987ed2f7e5ec986e7dae6fbe8baf28d7"
+      "digest": "sha256:5356bdd3c2d8fc57733c43564139ce9e7f5af3e93ff1a08ef878c6affd6a6888"
     },
     {
       "path": "bootstrap/recovery-runtime/src/actor-identity.js",
@@ -38,7 +38,7 @@
     {
       "path": "bootstrap/recovery-runtime/src/canonical-json.js",
       "mode": "100644",
-      "digest": "sha256:3d772d008edaa05564090315ccdfe92dc3a075d4737951cabe54efaef6df6a53"
+      "digest": "sha256:71eaffbe54dbcf5294f04c39f0bf0eff8a8f30323c43f313f01888f9162df19c"
     },
     {
       "path": "bootstrap/recovery-runtime/src/claude-provider-adapter.js",
@@ -173,7 +173,7 @@
     {
       "path": "bootstrap/recovery-runtime/src/intervention-control.js",
       "mode": "100644",
-      "digest": "sha256:ff1304b7602d408351c1a5f42ac397a37ebe6aa1c46b70a7f22e883601317ce2"
+      "digest": "sha256:e0f9be2e9d7991cb15b4a6dbc92a610d6cbb04e4f037e847f45685bd371ac091"
     },
     {
       "path": "bootstrap/recovery-runtime/src/intervention-maintenance.js",
@@ -253,7 +253,7 @@
     {
       "path": "bootstrap/recovery-runtime/src/planning-lock.js",
       "mode": "100644",
-      "digest": "sha256:883450f94f1c06a035d00d1e21575055be4895294f9b38364a85226dea52762e"
+      "digest": "sha256:19449d877c4be9cf8eece94804e47145dd18070513c2cefbb484ccebc9b3b090"
     },
     {
       "path": "bootstrap/recovery-runtime/src/propose-exemption-store.js",
@@ -303,7 +303,7 @@
     {
       "path": "bootstrap/recovery-runtime/src/session-store.js",
       "mode": "100644",
-      "digest": "sha256:ea444a5e2772221b3a7efae2b70971eb46c92c2541ba34395eeebfedafabd7d7"
+      "digest": "sha256:3542e74459bb7c4f0dc3b52fe4d8c13e2411403a2dddd8ae5a9d8c2ffca84166"
     },
     {
       "path": "bootstrap/recovery-runtime/src/task-mandate.js",

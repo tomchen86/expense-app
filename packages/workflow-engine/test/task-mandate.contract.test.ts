@@ -782,9 +782,16 @@ test('true propose CLI charges the durable Survey reservation once and revoked r
       TASK_ID,
       '--json',
     ];
+    // Every runtime actor hint has to be scrubbed, not just one: the explicit
+    // --actor below would otherwise conflict with whichever agent runtime
+    // happens to be running the suite, and the engine would correctly refuse
+    // to guess between them.
     const environment = {
       ...process.env,
+      AGENT: undefined,
       CLAUDECODE: undefined,
+      CLAUDE_CODE_ENTRYPOINT: undefined,
+      CODEX_SANDBOX: undefined,
       WORKFLOW_TEST_DISABLE_PROVIDER_DISPATCH: '1',
     };
     const missingMandate = spawnSync(

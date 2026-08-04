@@ -379,6 +379,40 @@ function readDescriptorContent(descriptor: number, byteLength: number): string {
 export function listActiveWorkflowSessionIds(
   runtime: ReturnType<typeof runtimePaths>,
 ): string[] {
+  return listActiveWorkflowSessions(runtime).map(
+    (session) => session.sessionId,
+  );
+}
+
+export function listConflictingActiveWorkflowSessionIds(
+  runtime: ReturnType<typeof runtimePaths>,
+  scope: {
+    changeId: string;
+    repositoryRoot?: string;
+    targetRef?: string;
+  },
+): string[] {
+  const repositoryRoot =
+    scope.repositoryRoot === undefined
+      ? undefined
+      : path.resolve(scope.repositoryRoot);
+  const targetBranch = scope.targetRef?.startsWith('refs/heads/')
+    ? scope.targetRef.slice('refs/heads/'.length)
+    : undefined;
+  return listActiveWorkflowSessions(runtime)
+    .filter(
+      (session) =>
+        session.changeId === scope.changeId ||
+        (repositoryRoot !== undefined &&
+          path.resolve(session.repositoryRoot) === repositoryRoot) ||
+        (targetBranch !== undefined && session.branch === targetBranch),
+    )
+    .map((session) => session.sessionId);
+}
+
+function listActiveWorkflowSessions(
+  runtime: ReturnType<typeof runtimePaths>,
+): WorkflowSession[] {
   const stats = fs.lstatSync(runtime.sessions, { throwIfNoEntry: false });
   if (!stats) {
     return [];
@@ -395,14 +429,21 @@ export function listActiveWorkflowSessionIds(
     .filter((entry) => entry.endsWith('.json'))
     .map((entry) => readSessionFile(path.join(runtime.sessions, entry)))
     .filter((session) => session.state === 'active')
-    .map((session) => session.sessionId)
-    .sort();
+    .sort((left, right) =>
+      left.sessionId < right.sessionId
+        ? -1
+        : left.sessionId > right.sessionId
+          ? 1
+          : 0,
+    );
 }
 
 function assertMaintainerReservationCompatibility(
   runtime: ReturnType<typeof runtimePaths>,
   allowedGrantId: string | undefined,
 ): void {
+  // Maintainer authority remains a repository-wide human-only fence. The
+  // change-scoped relaxation applies only to ordinary active sessions.
   const reservedDirectory = path.join(
     runtime.root,
     'maintainer-grants',

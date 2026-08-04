@@ -86,6 +86,7 @@ import { investigationRuntimePaths } from '../src/paths.ts';
 import {
   withChangeTransitionAuthority,
   withHumanResolutionTransitionAuthority,
+  withInvestigationTransitionAuthority,
 } from '../src/planning-lock.ts';
 import {
   createProviderInvocationRequest,
@@ -112,7 +113,7 @@ import {
   storeProviderExecutionPolicySnapshot,
   type BlindSurveyManifest,
 } from '../src/provider-invocation-store.ts';
-import { startSession } from '../src/session.ts';
+import { abortSession, startSession } from '../src/session.ts';
 import {
   createFixtureRepository,
   git,
@@ -4132,6 +4133,130 @@ test('status is read-only and short transition locks do not survive a call', () 
     );
   } finally {
     fs.rmSync(fixture.repository, { recursive: true, force: true });
+  }
+});
+
+test('an active change does not hold investigation, human-resolution, plan, or archive for another change', () => {
+  const repository = createFixtureRepository();
+  try {
+    git(repository, ['checkout', '-b', 'work/demo-change']);
+    const active = startSession(repository, 'demo-change', '1.1');
+    const discovered = discoverRepository(repository);
+    const runtime = workflowRuntimePaths(
+      discovered.gitCommonDirectory,
+      'workflow-engine',
+    );
+    const reached: string[] = [];
+
+    withInvestigationTransitionAuthority(runtime, 'other-change', () => {
+      reached.push('investigation');
+    });
+    withHumanResolutionTransitionAuthority(
+      runtime,
+      'other-change',
+      null,
+      () => {
+        reached.push('human-resolution');
+      },
+    );
+    withChangeTransitionAuthority(runtime, 'other-change', 'plan', () => {
+      reached.push('plan');
+    });
+    withChangeTransitionAuthority(runtime, 'other-change', 'archive', () => {
+      reached.push('archive');
+    });
+
+    assert.deepEqual(reached, [
+      'investigation',
+      'human-resolution',
+      'plan',
+      'archive',
+    ]);
+    abortSession(repository, active.sessionId, 'fixture cleanup');
+  } finally {
+    fs.rmSync(repository, { recursive: true, force: true });
+  }
+});
+
+test('every transition entrance remains fail-closed for the active change', () => {
+  const repository = createFixtureRepository();
+  try {
+    git(repository, ['checkout', '-b', 'work/demo-change']);
+    const active = startSession(repository, 'demo-change', '1.1');
+    const discovered = discoverRepository(repository);
+    const runtime = workflowRuntimePaths(
+      discovered.gitCommonDirectory,
+      'workflow-engine',
+    );
+    const operations = [
+      () =>
+        withInvestigationTransitionAuthority(
+          runtime,
+          'demo-change',
+          () => undefined,
+        ),
+      () =>
+        withHumanResolutionTransitionAuthority(
+          runtime,
+          'demo-change',
+          null,
+          () => undefined,
+        ),
+      () =>
+        withChangeTransitionAuthority(
+          runtime,
+          'demo-change',
+          'plan',
+          () => undefined,
+        ),
+      () =>
+        withChangeTransitionAuthority(
+          runtime,
+          'demo-change',
+          'archive',
+          () => undefined,
+        ),
+    ];
+
+    for (const operation of operations) {
+      assert.throws(operation, (error) =>
+        isWorkflowError(error, 'ACTIVE_SESSION_CONFLICT'),
+      );
+    }
+    abortSession(repository, active.sessionId, 'fixture cleanup');
+  } finally {
+    fs.rmSync(repository, { recursive: true, force: true });
+  }
+});
+
+test('a reserved maintainer authority still fences repository lifecycle globally', () => {
+  const repository = createFixtureRepository();
+  try {
+    const discovered = discoverRepository(repository);
+    const runtime = workflowRuntimePaths(
+      discovered.gitCommonDirectory,
+      'workflow-engine',
+    );
+    const reserved = path.join(runtime.root, 'maintainer-grants', 'reserved');
+    fs.mkdirSync(reserved, { recursive: true, mode: 0o700 });
+    fs.chmodSync(reserved, 0o700);
+    fs.writeFileSync(
+      path.join(reserved, '11111111-1111-4111-8111-111111111111.json'),
+      '{}\n',
+      { mode: 0o600 },
+    );
+
+    assert.throws(
+      () =>
+        withInvestigationTransitionAuthority(
+          runtime,
+          'independent-change',
+          () => undefined,
+        ),
+      (error) => isWorkflowError(error, 'ACTIVE_AUTHORITY_CONFLICT'),
+    );
+  } finally {
+    fs.rmSync(repository, { recursive: true, force: true });
   }
 });
 

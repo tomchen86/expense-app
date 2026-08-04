@@ -1,8 +1,10 @@
 import assert from 'node:assert/strict';
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
 
+import { canonicalJson } from '../src/canonical-json.ts';
 import {
   REQUIRED_PROTECTED_CAPABILITIES,
   classifyProtectedCapabilityPaths,
@@ -172,6 +174,51 @@ test('worktree closure identity matches the committed trust-base identity and de
       computeProtectedCapabilityEntryDigestsFromWorktree(repository, paths),
       committed,
     );
+  } finally {
+    fs.rmSync(repository, { recursive: true, force: true });
+  }
+});
+
+test('protected closure content uses canonical code-unit order for non-ASCII paths', () => {
+  const repository = createFixtureRepository();
+  const entrypoints = ['protected/Zeta.ts', 'protected/éclair.ts'];
+  try {
+    for (const filePath of entrypoints) {
+      const absolute = path.join(repository, filePath);
+      fs.mkdirSync(path.dirname(absolute), { recursive: true });
+      fs.writeFileSync(
+        absolute,
+        `export const path = ${JSON.stringify(filePath)};\n`,
+      );
+    }
+
+    const result = computeProtectedCapabilityEntryDigestsFromWorktree(
+      repository,
+      { entrypoints, dependencies: [] },
+    );
+    const files = entrypoints.map((filePath) => {
+      const content = fs.readFileSync(path.join(repository, filePath));
+      return {
+        path: filePath,
+        mode: '100644',
+        objectId: crypto
+          .createHash('sha1')
+          .update(Buffer.from(`blob ${content.length}\0`))
+          .update(content)
+          .digest('hex'),
+      };
+    });
+    const expectedContentDigest = `sha256:${crypto
+      .createHash('sha256')
+      .update(
+        canonicalJson({
+          kind: 'protected-capability-content.v1',
+          files,
+        }),
+      )
+      .digest('hex')}`;
+
+    assert.equal(result.contentDigest, expectedContentDigest);
   } finally {
     fs.rmSync(repository, { recursive: true, force: true });
   }

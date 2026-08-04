@@ -79,7 +79,7 @@ import { listProviderInvocationLifecycleProjections } from './investigation-sess
 import { loadInvestigationRuntimeContext } from './lifecycle-context.ts';
 import { readProviderInvocation } from './provider-invocation-store.ts';
 import {
-  listActiveWorkflowSessionIds,
+  listConflictingActiveWorkflowSessionIds,
   withRepositoryLifecycleOperation,
 } from './session-store.ts';
 import {
@@ -1263,13 +1263,18 @@ function assertApproveAndApplyPreconditions(
       ExitCode.staleState,
     );
   }
-  const activeSessions = listActiveWorkflowSessionIds(
+  const activeSessions = listConflictingActiveWorkflowSessionIds(
     maintainerGrantStorePaths(repository.gitCommonDirectory).runtime,
+    {
+      changeId: request.changeId,
+      repositoryRoot: repository.repositoryRealPath,
+      targetRef: `refs/heads/${repository.branch}`,
+    },
   );
   if (activeSessions.length > 0) {
     throw workflowError(
       'ACTIVE_SESSION_CONFLICT',
-      'Maintainer approve-and-apply requires no active ordinary workflow session.',
+      'Maintainer approve-and-apply conflicts with an active change, workspace, or target ref.',
       ExitCode.conflict,
       { details: { activeSessionIds: activeSessions } },
     );

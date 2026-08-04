@@ -22,7 +22,7 @@ import {
   type MaintainerGrantV2Envelope,
 } from './maintainer-grant-v2.ts';
 import {
-  listActiveWorkflowSessionIds,
+  listConflictingActiveWorkflowSessionIds,
   runtimePaths,
   withRepositoryLifecycleOperation,
 } from './session-store.ts';
@@ -212,11 +212,26 @@ export function reserveMaintainerGrant(
     }
     const envelope = readAvailableGrant(availablePath, grantId);
     assertExecutableGrantVersion(envelope);
-    const activeSessions = listActiveWorkflowSessionIds(paths.runtime);
+    if (envelope.payload.candidateBundle === null) {
+      throw workflowError(
+        'MAINTAINER_GRANT_INVALID',
+        'Executable maintainer authority has no exact target ref.',
+        ExitCode.guard,
+      );
+    }
+    const repositoryRoot = canonicalRoot(request.repositoryRoot);
+    const activeSessions = listConflictingActiveWorkflowSessionIds(
+      paths.runtime,
+      {
+        changeId: envelope.payload.changeId,
+        repositoryRoot,
+        targetRef: envelope.payload.candidateBundle.targetRef,
+      },
+    );
     if (activeSessions.length > 0) {
       throw workflowError(
         'ACTIVE_SESSION_CONFLICT',
-        'Maintainer authority requires no active ordinary workflow session.',
+        'Maintainer authority conflicts with an active change, workspace, or target ref.',
         ExitCode.conflict,
         { details: { activeSessionIds: activeSessions } },
       );
@@ -227,7 +242,7 @@ export function reserveMaintainerGrant(
       state: 'reserved',
       grantId,
       sessionId: nonEmpty(request.sessionId, 'reservation session ID'),
-      repositoryRoot: canonicalRoot(request.repositoryRoot),
+      repositoryRoot,
       reservedAt: now.toISOString(),
       envelope,
     };

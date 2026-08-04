@@ -101,7 +101,7 @@
     {
       "path": "src/canonical-json.ts",
       "mode": "100644",
-      "digest": "sha256:050a91c0cdf7b89cc7338a1898c5592fda0978df578fe763c44617eb0115d036"
+      "digest": "sha256:c91766df018606249d972ad243fdf12514b787d46e4ed9bced771da8976d5cf5"
     },
     {
       "path": "src/check-runner.ts",
@@ -416,7 +416,7 @@
     {
       "path": "src/intervention-control.ts",
       "mode": "100644",
-      "digest": "sha256:cb9ec01d5f7eea7da51cdb104085f4bf81b854f4e5ad50dd8c89e8d83993b1f3"
+      "digest": "sha256:b1f745492578010fdc753a68b264aa54bfebef8384c91e2f047d79e2cdc2b9b7"
     },
     {
       "path": "src/intervention-maintenance.ts",
@@ -506,7 +506,7 @@
     {
       "path": "src/maintainer-approve.ts",
       "mode": "100644",
-      "digest": "sha256:86c52dc4a428d89197385efc2765a4688f83eecca115c53b600387c4bb5d05ba"
+      "digest": "sha256:083edf1e35eaf9a4af645a0fa1d2042422756e15267ab60c90f1624e97d59cbf"
     },
     {
       "path": "src/maintainer-attestation.ts",
@@ -576,7 +576,7 @@
     {
       "path": "src/maintainer-store.ts",
       "mode": "100644",
-      "digest": "sha256:3ceb6bd64fbbab4e0b89a77c329576ada6dab958df09adf4a101259304058bcd"
+      "digest": "sha256:8206b8dd252d795ea153b0b0a5151298d4da991954887f02d3c69ede01057443"
     },
     {
       "path": "src/managed-change-contract.ts",
@@ -696,7 +696,7 @@
     {
       "path": "src/planning-lock.ts",
       "mode": "100644",
-      "digest": "sha256:8048d6ed0a904c859f81ebcd1e11e312cf11e8fe6ea24c1e6f5da935e6c3f55e"
+      "digest": "sha256:2e9a520c48712cee1393f20e0f5b8cb8aa94c3df4e5c8bf9a71e2e98b7c02880"
     },
     {
       "path": "src/planning-paths.ts",
@@ -736,7 +736,7 @@
     {
       "path": "src/protected-capabilities.ts",
       "mode": "100644",
-      "digest": "sha256:7067c3900357f1556a5d139d502cce8b7e55b962a6c8dceb29725d3b998809c3"
+      "digest": "sha256:d28ed1b4f5442651c33a89137e28a8fd289f36e78c6cfb853e341a5fa2aa0730"
     },
     {
       "path": "src/provider-contracts.ts",
@@ -846,7 +846,7 @@
     {
       "path": "src/session-store.ts",
       "mode": "100644",
-      "digest": "sha256:5e517bdc5ad19d8170f7e1817270a1d9e81b58dd89dcbdab2b6f9d353e8159a0"
+      "digest": "sha256:83a676a3a8a51c7aa0a57ac655d8966e683645ddc306dea9bc825554c86bd49b"
     },
     {
       "path": "src/session.ts",
