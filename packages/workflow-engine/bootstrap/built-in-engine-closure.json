@@ -379,6 +379,11 @@
       "digest": "sha256:be0af84821ac5315f2a82a420dfb6d0cf258691b1c71fbea2c67e409b682fc09"
     },
     {
+      "path": "src/hit-predicate.ts",
+      "mode": "100644",
+      "digest": "sha256:e722250f992e6142d7c5e2236d22a6ea0b33e584ee1ed33be6057b133ed88d2c"
+    },
+    {
       "path": "src/hooks.ts",
       "mode": "100644",
       "digest": "sha256:3b7f91f9fd5feb6b4ced1b75c9059193c12cc3dd06e27f825e21bfc6ad0e0f37"
