@@ -12,6 +12,8 @@ import { publishPreparedExclusiveLock, reclaimDeadPreparedLock, } from './filesy
 import { INVESTIGATION_LIMITS, previewInvestigationTermUnion, } from './investigation-terms.js';
 import { WORKFLOW_SUPERSEDE_REASONS, validateWorkflowSupersedeReason, } from './intervention-control.js';
 import { recreateProviderInvocationRequest, } from './provider-contracts.js';
+import { inspectProviderInvocationSupersessionRelations } from './provider-invocation-supersession-schema.js';
+import { assertDurableProviderExecutionBudgetAuthority, validateProviderExecutionBudgetAuthority, } from './provider-execution-policy-authority.js';
 import { providerRetentionArtifact, providerRetentionReviewRootArtifact, readCompleteProviderRetentionReceipt, readProviderRetentionReceipt, } from './provider-retention-receipt.js';
 import { isProposeExemptionInvestigationId, readProposeExemptionSession, } from './propose-exemption-store.js';
 import { assertChangeId, assertInvestigationId, assertInvocationId, } from './paths.js';
@@ -518,7 +520,7 @@ export function readProviderInvocationLifecycleProjection(paths, requestedInvoca
     catch {
         throw providerInvocationUnsafe();
     }
-    assertProviderExecutionPolicySnapshot(readPrivateCanonicalJson(paths, path.join(directory, 'execution-policy.json'), providerInvocationUnsafe), request);
+    assertProviderExecutionPolicySnapshot(paths, readPrivateCanonicalJson(paths, path.join(directory, 'execution-policy.json'), providerInvocationUnsafe), request);
     if (!isRecord(value) ||
         !hasExactKeys(value, [
             'schemaVersion',
@@ -611,6 +613,32 @@ export function readProviderInvocationLifecycleProjection(paths, requestedInvoca
         })
         : value.investigationId;
     if (ownerInvestigationId !== value.investigationId) {
+        throw providerInvocationUnsafe();
+    }
+    const supersession = inspectProviderInvocationSupersessionRelations(paths, invocationId, {
+        exists: (filePath) => privatePathExists(paths, filePath, providerInvocationUnsafe),
+        read: (filePath) => readPrivateCanonicalJson(paths, filePath, providerInvocationUnsafe),
+    });
+    const replacementSnapshot = supersession.replacementOf?.supersededBy;
+    const supersededSnapshot = supersession.supersededBy?.replacementOf;
+    for (const snapshot of [replacementSnapshot, supersededSnapshot]) {
+        if (snapshot !== undefined &&
+            (snapshot.invocationId !== invocationId ||
+                snapshot.attempt !== value.attempt ||
+                snapshot.requestDigest !== request.requestDigest ||
+                snapshot.manifestDigest !== value.manifestDigest ||
+                snapshot.subjectDigest !== request.targetDigest ||
+                snapshot.createdAt !== value.createdAt)) {
+            throw providerInvocationUnsafe();
+        }
+    }
+    if (supersededSnapshot !== undefined &&
+        (value.state !== 'failed' ||
+            supersededSnapshot.terminalStatus !== 'failed' ||
+            supersededSnapshot.terminalAt !== value.updatedAt ||
+            supersededSnapshot.failureCode !==
+                (isRecord(value.failure) ? value.failure.code : null) ||
+            supersededSnapshot.legacyRevision !== value.revision)) {
         throw providerInvocationUnsafe();
     }
     // Validate the exact private invocation closure here as well as when a
@@ -3669,7 +3697,7 @@ function readBoundProviderRetryReservation(paths, filePath, session, expectedAtt
             throw makeError();
         }
         try {
-            assertProviderExecutionPolicySnapshot(value.executionPolicySnapshot, request);
+            assertProviderExecutionPolicySnapshot(paths, value.executionPolicySnapshot, request);
         }
         catch {
             throw makeError();
@@ -3838,7 +3866,7 @@ function assertPendingProviderExecutionPolicySnapshot(paths, pending) {
         throw providerInvocationUnsafe();
     }
     const snapshot = readPrivateCanonicalJson(paths, path.join(directory, 'execution-policy.json'), providerInvocationUnsafe);
-    assertProviderExecutionPolicySnapshot(snapshot, pending.request);
+    assertProviderExecutionPolicySnapshot(paths, snapshot, pending.request);
     if (pending.executionPolicySnapshot !== null &&
         canonicalJson(snapshot) !== canonicalJson(pending.executionPolicySnapshot)) {
         throw providerInvocationUnsafe();
@@ -3916,9 +3944,9 @@ function isDurablyReservedProviderExecutionPolicySnapshot(paths, invocationId) {
                 continue;
             }
             const storedSnapshot = readPrivateCanonicalJson(paths, path.join(directory, 'execution-policy.json'), providerInvocationUnsafe);
-            assertProviderExecutionPolicySnapshot(storedSnapshot, request);
+            assertProviderExecutionPolicySnapshot(paths, storedSnapshot, request);
             if (retryV2) {
-                assertProviderExecutionPolicySnapshot(value.executionPolicySnapshot, request);
+                assertProviderExecutionPolicySnapshot(paths, value.executionPolicySnapshot, request);
                 if (canonicalJson(storedSnapshot) !==
                     canonicalJson(value.executionPolicySnapshot)) {
                     continue;
@@ -3956,8 +3984,8 @@ function isDurablyReservedProviderExecutionPolicySnapshot(paths, invocationId) {
             if (request.invocationId !== invocationId)
                 continue;
             const storedSnapshot = readPrivateCanonicalJson(paths, path.join(directory, 'execution-policy.json'), providerInvocationUnsafe);
-            assertProviderExecutionPolicySnapshot(storedSnapshot, request);
-            assertProviderExecutionPolicySnapshot(node.output.retry.executionPolicySnapshot, request);
+            assertProviderExecutionPolicySnapshot(paths, storedSnapshot, request);
+            assertProviderExecutionPolicySnapshot(paths, node.output.retry.executionPolicySnapshot, request);
             if (canonicalJson(storedSnapshot) !==
                 canonicalJson(node.output.retry.executionPolicySnapshot)) {
                 continue;
@@ -4588,7 +4616,7 @@ const PROVIDER_EXECUTION_FAILURE_KINDS = new Set([
     'state-corruption',
     'unknown-side-effect',
 ]);
-function assertProviderExecutionPolicySnapshot(value, request) {
+function assertProviderExecutionPolicySnapshot(paths, value, request) {
     if (!isRecord(value) ||
         value.kind !== 'provider-execution-policy-snapshot' ||
         value.invocationId !== request.invocationId ||
@@ -4604,10 +4632,11 @@ function assertProviderExecutionPolicySnapshot(value, request) {
                 'requestDigest',
                 'schemaVersion',
             ])
-            : value.schemaVersion !== 2 ||
+            : ![2, 3].includes(value.schemaVersion) ||
                 !hasExactKeys(value, [
                     'accountingDigest',
                     'attemptReservation',
+                    ...(value.schemaVersion === 3 ? ['authority'] : []),
                     'invocationId',
                     'kind',
                     'policyDigest',
@@ -4629,12 +4658,21 @@ function assertProviderExecutionPolicySnapshot(value, request) {
             loaded = parseLegacyAiAdapterPolicyDocument(value.policyDocument);
         }
         if (loaded.digest !== value.policyDigest ||
-            request.limits.timeoutMs > loaded.policy.limits.timeoutMs ||
             request.limits.aggregateOutputBytes >
                 loaded.policy.limits.aggregateOutputBytes) {
             throw providerInvocationUnsafe();
         }
-        if (value.schemaVersion === 2) {
+        if (value.schemaVersion === 3) {
+            if (loaded.policy.schemaVersion !== 4) {
+                throw providerInvocationUnsafe();
+            }
+            const authority = validateProviderExecutionBudgetAuthority(request, loaded, value.authority);
+            assertDurableProviderExecutionBudgetAuthority(paths.root, authority);
+        }
+        else if (request.limits.timeoutMs > loaded.policy.limits.timeoutMs) {
+            throw providerInvocationUnsafe();
+        }
+        if (value.schemaVersion === 2 || value.schemaVersion === 3) {
             if (loaded.policy.schemaVersion !== 4 ||
                 !isRecord(value.attemptReservation)) {
                 throw providerInvocationUnsafe();

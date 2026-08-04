@@ -38,6 +38,13 @@ import {
   writePrivateCanonicalJsonAtomic,
 } from './investigation-session-store.ts';
 import {
+  assertDurableProviderExecutionBudgetAuthority as assertStoredProviderExecutionBudgetAuthority,
+  createProviderExecutionBudgetAuthority,
+  validateProviderExecutionBudgetAuthority,
+  type ProviderExecutionBudgetAuthority,
+  type ProviderExecutionGrantAuthorityInput,
+} from './provider-execution-policy-authority.ts';
+import {
   createProviderInvocationRequest,
   evaluateProviderProcess,
   type ProviderInvocationRequest,
@@ -81,6 +88,16 @@ import {
   type ProviderRepairAuthorityBinding,
   type ProviderRepairFailureInput,
 } from './provider-execution-governance.ts';
+import {
+  assertProviderInvocationSupersessionEndpointCurrent,
+  finalizeProviderInvocationSupersession,
+  prepareProviderInvocationSupersession,
+  readProviderInvocationEvidenceRecord,
+  recoverProviderInvocationSupersessionTransaction,
+  resumePreparedProviderInvocationSupersession,
+  type ProviderInvocationEvidence,
+  type ProviderInvocationSupersessionCrashPhase,
+} from './provider-invocation-supersession.ts';
 import {
   PLAN_REVIEW_OUTPUT_SCHEMA,
   PLAN_REVIEW_OUTPUT_VALIDATOR,
@@ -234,7 +251,7 @@ export type ProviderRetryReservationV2 = Omit<
   schemaVersion: 2;
   mandateBinding?: TaskMandateBinding;
   retryDecision: ProviderRetryDecisionBinding;
-  executionPolicySnapshot: ProviderExecutionPolicySnapshotV2;
+  executionPolicySnapshot: ProviderExecutionPolicySnapshotCurrent;
 };
 
 export type ProviderRetryReservation =
@@ -311,8 +328,24 @@ export type ProviderExecutionPolicySnapshotV2 = Readonly<{
   accountingDigest: string;
 }>;
 
+export type ProviderExecutionPolicySnapshotV3 = Readonly<{
+  schemaVersion: 3;
+  kind: 'provider-execution-policy-snapshot';
+  invocationId: string;
+  requestDigest: string;
+  policyDigest: string;
+  policyDocument: string;
+  retryAccounting: AiAdapterRetryAccounting;
+  attemptReservation: ProviderAttemptBudgetReservation;
+  accountingDigest: string;
+  authority: ProviderExecutionBudgetAuthority;
+}>;
+
+export type ProviderExecutionPolicySnapshotCurrent =
+  ProviderExecutionPolicySnapshotV2 | ProviderExecutionPolicySnapshotV3;
+
 export type ProviderExecutionPolicySnapshot =
-  ProviderExecutionPolicySnapshotV1 | ProviderExecutionPolicySnapshotV2;
+  ProviderExecutionPolicySnapshotV1 | ProviderExecutionPolicySnapshotCurrent;
 
 export type ProviderInvocationAcceptanceBinding = Readonly<{
   schemaVersion: 1;
@@ -356,6 +389,7 @@ export type CreateProviderInvocationInput = {
     content: Buffer;
   }>;
   createdAt?: string;
+  simulateSupersessionCrashAfter?: ProviderInvocationSupersessionCrashPhase;
 };
 
 export type PlanReviewSnapshotRuntime = {
@@ -565,6 +599,7 @@ export function createProviderRetryReservation(
     manifest: BlindSurveyManifest;
     request: ProviderInvocationRequest;
     executionPolicy: LoadedAiAdapterPolicy;
+    executionGrantAuthorization?: ProviderExecutionGrantAuthorityInput;
     retryDecision?: ProviderRetryDecisionBinding;
     mandateBinding?: TaskMandateBinding;
     createdAt?: string;
@@ -589,6 +624,7 @@ export function createProviderRetryReservation(
   const executionPolicySnapshot = createProviderExecutionPolicySnapshot(
     request,
     input.executionPolicy,
+    input.executionGrantAuthorization,
   );
   const manifestDigest = blindSurveyManifestDigest(manifest);
   assertBlindInvocationBinding(changeId, manifest, manifestDigest, request);
@@ -672,7 +708,14 @@ export function createProviderInvocation(
   const invocationId = assertInvocationId(request.invocationId);
   const manifestDigest = providerInvocationManifestDigest(manifest);
   assertProviderInvocationBinding(changeId, manifest, manifestDigest, request);
-  readProviderExecutionPolicySnapshot(paths, request);
+  const executionPolicy = readProviderExecutionPolicySnapshot(paths, request);
+  if (
+    executionPolicy.snapshot.schemaVersion === 3 &&
+    canonicalJson(executionPolicy.snapshot.authority.receipt.mandateBinding) !==
+      canonicalJson(input.mandateBinding ?? null)
+  ) {
+    throw providerExecutionPolicySnapshotMismatch();
+  }
   const now = input.createdAt ?? new Date().toISOString();
   if (!isTimestamp(now)) {
     throw invocationInvalid();
@@ -712,13 +755,34 @@ export function createProviderInvocation(
         statePath,
         invocationUnsafe,
       );
-      const executionHistory = providerExecutionHistory(
+      let supersession = resumePreparedProviderInvocationSupersession(
         paths,
-        record.investigationId,
-        record.purpose,
-        record.attempt,
+        record,
         request,
       );
+      let effectiveNow = now;
+      let effectiveRecord = record;
+      if (supersession !== null) {
+        effectiveNow = supersession.edge.createdAt;
+        if (input.createdAt !== undefined && input.createdAt !== effectiveNow) {
+          throw invocationInvalid();
+        }
+        effectiveRecord = {
+          ...record,
+          createdAt: effectiveNow,
+          updatedAt: effectiveNow,
+        };
+      }
+      const executionHistory =
+        supersession === null
+          ? providerExecutionHistory(
+              paths,
+              effectiveRecord.investigationId,
+              effectiveRecord.purpose,
+              effectiveRecord.attempt,
+              request,
+            )
+          : null;
       createPlanReviewSnapshotFiles(
         paths,
         directory,
@@ -741,28 +805,51 @@ export function createProviderInvocation(
         invocationUnsafe,
         'PROVIDER_REQUEST_COLLISION',
       );
-      createProviderRepairLineage(paths, {
-        history: executionHistory,
-        replacementRecord: record,
-        replacementRequest: request,
-      });
+      if (executionHistory !== null) {
+        const repairLineage = createProviderRepairLineage(paths, {
+          history: executionHistory,
+          replacementRecord: effectiveRecord,
+          replacementRequest: request,
+        });
+        supersession = prepareProviderInvocationSupersession(paths, {
+          history: executionHistory,
+          successorRecord: effectiveRecord,
+          successorRequest: request,
+          replacementMode: repairLineage === null ? 'retry' : 'repair',
+          simulateCrashAfter: input.simulateSupersessionCrashAfter,
+        });
+      }
       if (!invocationAlreadyExists) {
         prepareProviderPromptContextForInvocation(
           paths.root,
           request,
           manifest,
           investigationId,
-          new Date(now),
+          new Date(effectiveNow),
         );
       }
-      registerProviderRetentionInvocation(paths, invocationId, now);
+      registerProviderRetentionInvocation(paths, invocationId, effectiveNow);
       createPrivateCanonicalJson(
         paths,
         statePath,
-        record,
+        effectiveRecord,
         invocationUnsafe,
         'PROVIDER_INVOCATION_COLLISION',
       );
+      if (supersession !== null) {
+        finalizeProviderInvocationSupersession(
+          paths,
+          supersession,
+          (relatedInvocationId) => ({
+            record: readProviderInvocationCore(paths, relatedInvocationId),
+            request: readProviderInvocationRequest(paths, relatedInvocationId),
+          }),
+          {
+            publishedAt: effectiveNow,
+            simulateCrashAfter: input.simulateSupersessionCrashAfter,
+          },
+        );
+      }
       const created = readProviderInvocation(paths, invocationId);
       materializeProviderExecutionState(paths, created, request);
       return created;
@@ -773,6 +860,24 @@ export function createProviderInvocation(
 }
 
 export function readProviderInvocation(
+  paths: InvestigationRuntimePaths,
+  requestedInvocationId: string,
+): ProviderInvocationRecord {
+  const record = readProviderInvocationCore(paths, requestedInvocationId);
+  const request = readProviderInvocationRequest(paths, record.invocationId);
+  assertProviderInvocationSupersessionEndpointCurrent(
+    paths,
+    record,
+    request,
+    (relatedInvocationId) => ({
+      record: readProviderInvocationCore(paths, relatedInvocationId),
+      request: readProviderInvocationRequest(paths, relatedInvocationId),
+    }),
+  );
+  return record;
+}
+
+function readProviderInvocationCore(
   paths: InvestigationRuntimePaths,
   requestedInvocationId: string,
 ): ProviderInvocationRecord {
@@ -824,6 +929,39 @@ export function readProviderInvocation(
     throw invocationInvalid();
   }
   return deepFreeze(structuredClone(record));
+}
+
+export function readProviderInvocationEvidence(
+  paths: InvestigationRuntimePaths,
+  requestedInvocationId: string,
+): ProviderInvocationEvidence {
+  const record = readProviderInvocationCore(paths, requestedInvocationId);
+  const request = readProviderInvocationRequest(paths, record.invocationId);
+  return readProviderInvocationEvidenceRecord(
+    paths,
+    record,
+    request,
+    (relatedInvocationId) => ({
+      record: readProviderInvocationCore(paths, relatedInvocationId),
+      request: readProviderInvocationRequest(paths, relatedInvocationId),
+    }),
+  );
+}
+
+export function recoverProviderInvocationSupersession(
+  paths: InvestigationRuntimePaths,
+  requestedSuccessorInvocationId: string,
+  input: { recoveredAt?: string } = {},
+) {
+  return recoverProviderInvocationSupersessionTransaction(
+    paths,
+    requestedSuccessorInvocationId,
+    (relatedInvocationId) => ({
+      record: readProviderInvocationCore(paths, relatedInvocationId),
+      request: readProviderInvocationRequest(paths, relatedInvocationId),
+    }),
+    { recoveredAt: input.recoveredAt ?? new Date().toISOString() },
+  );
 }
 
 export function readPlanReviewSnapshotRuntime(
@@ -878,10 +1016,12 @@ export function storeProviderExecutionPolicySnapshot(
   paths: InvestigationRuntimePaths,
   requestInput: ProviderInvocationRequest,
   loadedInput: LoadedAiAdapterPolicy,
+  executionGrantAuthorization?: ProviderExecutionGrantAuthorityInput,
 ): ProviderExecutionPolicySnapshot {
   const snapshot = createProviderExecutionPolicySnapshot(
     requestInput,
     loadedInput,
+    executionGrantAuthorization,
   );
   return ensureProviderExecutionPolicySnapshotFromSnapshot(
     paths,
@@ -893,7 +1033,8 @@ export function storeProviderExecutionPolicySnapshot(
 export function createProviderExecutionPolicySnapshot(
   requestInput: ProviderInvocationRequest,
   loadedInput: LoadedAiAdapterPolicy,
-): ProviderExecutionPolicySnapshotV2 {
+  executionGrantAuthorization?: ProviderExecutionGrantAuthorityInput,
+): ProviderExecutionPolicySnapshotCurrent {
   const request = assertProviderRequest(requestInput);
   let loaded: LoadedAiAdapterPolicy;
   try {
@@ -905,12 +1046,19 @@ export function createProviderExecutionPolicySnapshot(
     loaded.digest !== loadedInput.digest ||
     canonicalJson(loaded.policy) !== canonicalJson(loadedInput.policy) ||
     request.policyDigest !== loaded.digest ||
-    request.limits.timeoutMs > loaded.policy.limits.timeoutMs ||
     request.limits.aggregateOutputBytes >
       loaded.policy.limits.aggregateOutputBytes
   ) {
     throw providerExecutionPolicySnapshotMismatch();
   }
+  const authority =
+    request.limits.timeoutMs > loaded.policy.limits.timeoutMs
+      ? createProviderExecutionBudgetAuthority(
+          request,
+          loaded,
+          executionGrantAuthorization ?? missingExecutionGrantAuthority(),
+        )
+      : null;
   const retryAccounting = structuredClone(loaded.policy.retryAccounting);
   const attemptReservation: ProviderAttemptBudgetReservation = Object.freeze({
     runtimeMs: request.limits.timeoutMs,
@@ -926,8 +1074,7 @@ export function createProviderExecutionPolicySnapshot(
     retryAccounting,
     attemptReservation,
   });
-  return deepFreeze({
-    schemaVersion: 2,
+  const common = {
     kind: 'provider-execution-policy-snapshot',
     invocationId: request.invocationId,
     requestDigest: request.requestDigest,
@@ -936,19 +1083,27 @@ export function createProviderExecutionPolicySnapshot(
     retryAccounting,
     attemptReservation,
     accountingDigest,
-  });
+  } as const;
+  return deepFreeze(
+    authority === null
+      ? { schemaVersion: 2 as const, ...common }
+      : { schemaVersion: 3 as const, ...common, authority },
+  );
 }
 
 export function ensureProviderExecutionPolicySnapshotFromSnapshot(
   paths: InvestigationRuntimePaths,
   requestInput: ProviderInvocationRequest,
-  snapshotInput: ProviderExecutionPolicySnapshotV2,
+  snapshotInput: ProviderExecutionPolicySnapshotCurrent,
 ): ProviderExecutionPolicySnapshot {
   const request = assertProviderRequest(requestInput);
   const expected = validateProviderExecutionPolicySnapshot(
     request,
     snapshotInput,
   );
+  if (expected.schemaVersion === 3) {
+    assertDurableProviderExecutionBudgetAuthority(paths, expected.authority);
+  }
   const snapshotPath = providerExecutionPolicySnapshotPath(
     paths,
     request.invocationId,
@@ -982,11 +1137,11 @@ export function ensureProviderExecutionPolicySnapshotFromSnapshot(
 export function validateProviderExecutionPolicySnapshot(
   requestInput: ProviderInvocationRequest,
   snapshotInput: unknown,
-): ProviderExecutionPolicySnapshotV2 {
+): ProviderExecutionPolicySnapshotCurrent {
   const request = assertProviderRequest(requestInput);
   if (
     !isRecord(snapshotInput) ||
-    snapshotInput.schemaVersion !== 2 ||
+    ![2, 3].includes(snapshotInput.schemaVersion as number) ||
     !isProviderExecutionPolicySnapshotShape(snapshotInput)
   ) {
     throw providerExecutionPolicySnapshotUnsafe();
@@ -997,7 +1152,17 @@ export function validateProviderExecutionPolicySnapshot(
   } catch {
     throw providerExecutionPolicySnapshotUnsafe();
   }
-  const expected = createProviderExecutionPolicySnapshot(request, loaded);
+  const expected = createProviderExecutionPolicySnapshot(
+    request,
+    loaded,
+    snapshotInput.schemaVersion === 3
+      ? validateProviderExecutionBudgetAuthority(
+          request,
+          loaded,
+          snapshotInput.authority,
+        )
+      : undefined,
+  );
   if (canonicalJson(expected) !== canonicalJson(snapshotInput)) {
     throw providerExecutionPolicySnapshotMismatch();
   }
@@ -1078,14 +1243,22 @@ export function readProviderExecutionPolicySnapshot(
     value.requestDigest !== request.requestDigest ||
     value.policyDigest !== request.policyDigest ||
     value.policyDigest !== loaded.digest ||
-    request.limits.timeoutMs > loaded.policy.limits.timeoutMs ||
     request.limits.aggregateOutputBytes >
       loaded.policy.limits.aggregateOutputBytes
   ) {
     throw providerExecutionPolicySnapshotMismatch();
   }
+  const validated =
+    value.schemaVersion === 1
+      ? null
+      : validateProviderExecutionPolicySnapshot(request, value);
+  if (validated?.schemaVersion === 3) {
+    assertDurableProviderExecutionBudgetAuthority(paths, validated.authority);
+  } else if (request.limits.timeoutMs > loaded.policy.limits.timeoutMs) {
+    throw providerExecutionPolicySnapshotMismatch();
+  }
   let accounting: ProviderRetryAccountingSnapshot | null = null;
-  if (value.schemaVersion === 2) {
+  if (value.schemaVersion === 2 || value.schemaVersion === 3) {
     if (loaded.policy.schemaVersion !== 4) {
       throw providerExecutionPolicySnapshotUnsafe();
     }
@@ -1149,24 +1322,42 @@ function isProviderExecutionPolicySnapshotShape(
       'schemaVersion',
     ]);
   }
+  const expectedKeys = [
+    'accountingDigest',
+    'attemptReservation',
+    ...(value.schemaVersion === 3 ? ['authority'] : []),
+    'invocationId',
+    'kind',
+    'policyDigest',
+    'policyDocument',
+    'requestDigest',
+    'retryAccounting',
+    'schemaVersion',
+  ];
   return (
-    value.schemaVersion === 2 &&
-    hasExactKeys(value, [
-      'accountingDigest',
-      'attemptReservation',
-      'invocationId',
-      'kind',
-      'policyDigest',
-      'policyDocument',
-      'requestDigest',
-      'retryAccounting',
-      'schemaVersion',
-    ]) &&
+    (value.schemaVersion === 2 || value.schemaVersion === 3) &&
+    hasExactKeys(value, expectedKeys) &&
+    (value.schemaVersion !== 3 || isRecord(value.authority)) &&
     isRecord(value.retryAccounting) &&
     isProviderAttemptBudgetReservation(value.attemptReservation) &&
     typeof value.accountingDigest === 'string' &&
     DIGEST.test(value.accountingDigest)
   );
+}
+
+function assertDurableProviderExecutionBudgetAuthority(
+  paths: InvestigationRuntimePaths,
+  authority: ProviderExecutionBudgetAuthority,
+): void {
+  try {
+    assertStoredProviderExecutionBudgetAuthority(paths.root, authority);
+  } catch {
+    throw providerExecutionPolicySnapshotMismatch();
+  }
+}
+
+function missingExecutionGrantAuthority(): never {
+  throw providerExecutionPolicySnapshotMismatch();
 }
 
 function isProviderAttemptBudgetReservation(
@@ -2844,7 +3035,7 @@ function assertProviderRetryReservation(
 function assertEmbeddedProviderExecutionPolicySnapshot(
   value: unknown,
   request: ProviderInvocationRequest,
-): ProviderExecutionPolicySnapshotV2 {
+): ProviderExecutionPolicySnapshotCurrent {
   try {
     return validateProviderExecutionPolicySnapshot(request, value);
   } catch {

@@ -48,6 +48,11 @@ import {
   recreateProviderInvocationRequest,
   type ProviderInvocationRequest,
 } from './provider-contracts.ts';
+import { inspectProviderInvocationSupersessionRelations } from './provider-invocation-supersession-schema.ts';
+import {
+  assertDurableProviderExecutionBudgetAuthority,
+  validateProviderExecutionBudgetAuthority,
+} from './provider-execution-policy-authority.ts';
 import {
   providerRetentionArtifact,
   providerRetentionReviewRootArtifact,
@@ -1261,6 +1266,7 @@ export function readProviderInvocationLifecycleProjection(
     throw providerInvocationUnsafe();
   }
   assertProviderExecutionPolicySnapshot(
+    paths,
     readPrivateCanonicalJson(
       paths,
       path.join(directory, 'execution-policy.json'),
@@ -1369,6 +1375,42 @@ export function readProviderInvocationLifecycleProjection(
         })
       : value.investigationId;
   if (ownerInvestigationId !== value.investigationId) {
+    throw providerInvocationUnsafe();
+  }
+  const supersession = inspectProviderInvocationSupersessionRelations(
+    paths,
+    invocationId,
+    {
+      exists: (filePath) =>
+        privatePathExists(paths, filePath, providerInvocationUnsafe),
+      read: (filePath) =>
+        readPrivateCanonicalJson(paths, filePath, providerInvocationUnsafe),
+    },
+  );
+  const replacementSnapshot = supersession.replacementOf?.supersededBy;
+  const supersededSnapshot = supersession.supersededBy?.replacementOf;
+  for (const snapshot of [replacementSnapshot, supersededSnapshot]) {
+    if (
+      snapshot !== undefined &&
+      (snapshot.invocationId !== invocationId ||
+        snapshot.attempt !== value.attempt ||
+        snapshot.requestDigest !== request.requestDigest ||
+        snapshot.manifestDigest !== value.manifestDigest ||
+        snapshot.subjectDigest !== request.targetDigest ||
+        snapshot.createdAt !== value.createdAt)
+    ) {
+      throw providerInvocationUnsafe();
+    }
+  }
+  if (
+    supersededSnapshot !== undefined &&
+    (value.state !== 'failed' ||
+      supersededSnapshot.terminalStatus !== 'failed' ||
+      supersededSnapshot.terminalAt !== value.updatedAt ||
+      supersededSnapshot.failureCode !==
+        (isRecord(value.failure) ? value.failure.code : null) ||
+      supersededSnapshot.legacyRevision !== value.revision)
+  ) {
     throw providerInvocationUnsafe();
   }
   // Validate the exact private invocation closure here as well as when a
@@ -5913,6 +5955,7 @@ function readBoundProviderRetryReservation(
     }
     try {
       assertProviderExecutionPolicySnapshot(
+        paths,
         value.executionPolicySnapshot,
         request,
       );
@@ -6181,7 +6224,7 @@ function assertPendingProviderExecutionPolicySnapshot(
     path.join(directory, 'execution-policy.json'),
     providerInvocationUnsafe,
   );
-  assertProviderExecutionPolicySnapshot(snapshot, pending.request);
+  assertProviderExecutionPolicySnapshot(paths, snapshot, pending.request);
   if (
     pending.executionPolicySnapshot !== null &&
     canonicalJson(snapshot) !== canonicalJson(pending.executionPolicySnapshot)
@@ -6286,9 +6329,10 @@ function isDurablyReservedProviderExecutionPolicySnapshot(
         path.join(directory, 'execution-policy.json'),
         providerInvocationUnsafe,
       );
-      assertProviderExecutionPolicySnapshot(storedSnapshot, request);
+      assertProviderExecutionPolicySnapshot(paths, storedSnapshot, request);
       if (retryV2) {
         assertProviderExecutionPolicySnapshot(
+          paths,
           value.executionPolicySnapshot,
           request,
         );
@@ -6333,8 +6377,9 @@ function isDurablyReservedProviderExecutionPolicySnapshot(
         path.join(directory, 'execution-policy.json'),
         providerInvocationUnsafe,
       );
-      assertProviderExecutionPolicySnapshot(storedSnapshot, request);
+      assertProviderExecutionPolicySnapshot(paths, storedSnapshot, request);
       assertProviderExecutionPolicySnapshot(
+        paths,
         node.output.retry.executionPolicySnapshot,
         request,
       );
@@ -7158,6 +7203,7 @@ const PROVIDER_EXECUTION_FAILURE_KINDS = new Set([
 ]);
 
 function assertProviderExecutionPolicySnapshot(
+  paths: InvestigationRuntimePaths,
   value: unknown,
   request: ProviderInvocationRequest,
 ): void {
@@ -7177,10 +7223,11 @@ function assertProviderExecutionPolicySnapshot(
           'requestDigest',
           'schemaVersion',
         ])
-      : value.schemaVersion !== 2 ||
+      : ![2, 3].includes(value.schemaVersion as number) ||
         !hasExactKeys(value, [
           'accountingDigest',
           'attemptReservation',
+          ...(value.schemaVersion === 3 ? ['authority'] : []),
           'invocationId',
           'kind',
           'policyDigest',
@@ -7202,13 +7249,25 @@ function assertProviderExecutionPolicySnapshot(
     }
     if (
       loaded.digest !== value.policyDigest ||
-      request.limits.timeoutMs > loaded.policy.limits.timeoutMs ||
       request.limits.aggregateOutputBytes >
         loaded.policy.limits.aggregateOutputBytes
     ) {
       throw providerInvocationUnsafe();
     }
-    if (value.schemaVersion === 2) {
+    if (value.schemaVersion === 3) {
+      if (loaded.policy.schemaVersion !== 4) {
+        throw providerInvocationUnsafe();
+      }
+      const authority = validateProviderExecutionBudgetAuthority(
+        request,
+        loaded as ReturnType<typeof parseAiAdapterPolicyDocument>,
+        value.authority,
+      );
+      assertDurableProviderExecutionBudgetAuthority(paths.root, authority);
+    } else if (request.limits.timeoutMs > loaded.policy.limits.timeoutMs) {
+      throw providerInvocationUnsafe();
+    }
+    if (value.schemaVersion === 2 || value.schemaVersion === 3) {
       if (
         loaded.policy.schemaVersion !== 4 ||
         !isRecord(value.attemptReservation)

@@ -38,6 +38,7 @@ import {
   resumePropose,
 } from './propose-orchestrator.ts';
 import {
+  MAX_PROVIDER_LIMITS,
   createProviderInvocationRequest,
   recreateProviderInvocationRequest,
 } from './provider-contracts.ts';
@@ -48,8 +49,6 @@ import {
 } from './provider-invocation-store.ts';
 import { withRepositoryLifecycleOperation } from './session-store.ts';
 import { assertActiveTaskMandateBindingUnderLifecycleLock } from './task-mandate.ts';
-
-const MAX_PROVIDER_TIMEOUT_MS = 3_600_000;
 
 export type ExecutionRetryRequestResult = Readonly<{
   schemaVersion: 1;
@@ -204,14 +203,18 @@ export function requestExecutionReplacement(
         now: previous.updatedAt,
       });
       const providerPolicy = loadAiAdapterPolicy(context.git.repositoryRoot);
-      if (input.timeoutMs > providerPolicy.policy.limits.timeoutMs) {
-        throw grantMismatch(
-          'Requested timeout exceeds the current executable provider policy.',
-        );
-      }
       const changes = mergeExactChanges([
         ...grantBase.requestedChanges,
         ...preview.changedFields,
+        ...(input.timeoutMs > providerPolicy.policy.limits.timeoutMs
+          ? [
+              {
+                path: '/providerPolicy/limits/timeoutMs',
+                from: providerPolicy.policy.limits.timeoutMs,
+                to: input.timeoutMs,
+              },
+            ]
+          : []),
         ...(source.request.policyDigest === providerPolicy.digest
           ? []
           : [
@@ -247,6 +250,7 @@ export function requestExecutionReplacement(
         inspection.job.retryPolicy.maxAttempts,
         previous.policySnapshot.timeoutMs,
         input.timeoutMs,
+        providerPolicy.policy.limits.timeoutMs,
       );
       const requestDigest = digestText(
         canonicalExecutionBudgetGrantRequest(request),
@@ -449,20 +453,20 @@ export function executeGrantedReplacement(
           'Grant does not match the durable provider invocation Task Mandate binding.',
         );
       }
+      const policy = loadAiAdapterPolicy(context.git.repositoryRoot);
       const expected = requestExecutionReplacementBytes(
         inspection,
         timeoutMs,
         source.request.policyDigest,
         requestBinding.providerPolicyDigest,
+        policy.policy.limits.timeoutMs,
       );
       if (expected !== canonicalExecutionBudgetGrantRequest(request)) {
         throw grantMismatch(
           'Persisted request is not the exact complete delta for the current failed Attempt.',
         );
       }
-      const policy = loadAiAdapterPolicy(context.git.repositoryRoot);
       if (
-        timeoutMs > policy.policy.limits.timeoutMs ||
         policy.digest !== requestBinding.providerPolicyDigest ||
         digestText(policy.document) !==
           requestBinding.providerPolicyDocumentDigest
@@ -782,6 +786,7 @@ function requestExecutionReplacementBytes(
   timeoutMs: number,
   previousProviderPolicyDigest: string,
   providerPolicyDigest: string,
+  providerPolicyTimeoutCeilingMs: number,
 ): string {
   const previous = inspection.attempts.at(-1);
   const base = inspection.latestFailure?.decision.requiredGrant;
@@ -802,6 +807,15 @@ function requestExecutionReplacementBytes(
   const changes = mergeExactChanges([
     ...base.requestedChanges,
     ...previewChanges,
+    ...(timeoutMs > providerPolicyTimeoutCeilingMs
+      ? [
+          {
+            path: '/providerPolicy/limits/timeoutMs',
+            from: providerPolicyTimeoutCeilingMs,
+            to: timeoutMs,
+          },
+        ]
+      : []),
     ...(previousProviderPolicyDigest === providerPolicyDigest
       ? []
       : [
@@ -833,6 +847,7 @@ function requestExecutionReplacementBytes(
     inspection.job.retryPolicy.maxAttempts,
     previous.policySnapshot.timeoutMs,
     timeoutMs,
+    providerPolicyTimeoutCeilingMs,
   );
   return canonicalExecutionBudgetGrantRequest(request);
 }
@@ -926,12 +941,16 @@ function assertCompleteReplacementDelta(
   maxAttempts: number,
   oldTimeoutMs: number,
   timeoutMs: number,
+  providerPolicyTimeoutCeilingMs: number,
 ): void {
   const maxAttemptsChange = request.requestedChanges.find(
     ({ path }) => path === '/retryPolicy/maxAttempts',
   );
   const timeoutChange = request.requestedChanges.find(
     ({ path }) => path === '/timeoutMs',
+  );
+  const ceilingChange = request.requestedChanges.find(
+    ({ path }) => path === '/providerPolicy/limits/timeoutMs',
   );
   if (
     maxAttemptsChange === undefined ||
@@ -943,7 +962,19 @@ function assertCompleteReplacementDelta(
         to: maxAttempts + 1,
       }) ||
     canonicalJson(timeoutChange) !==
-      canonicalJson({ path: '/timeoutMs', from: oldTimeoutMs, to: timeoutMs })
+      canonicalJson({
+        path: '/timeoutMs',
+        from: oldTimeoutMs,
+        to: timeoutMs,
+      }) ||
+    (timeoutMs > providerPolicyTimeoutCeilingMs
+      ? canonicalJson(ceilingChange) !==
+        canonicalJson({
+          path: '/providerPolicy/limits/timeoutMs',
+          from: providerPolicyTimeoutCeilingMs,
+          to: timeoutMs,
+        })
+      : ceilingChange !== undefined)
   ) {
     throw grantMismatch(
       'GrantRequest must contain exactly one maxAttempts increment and the timeout delta.',
@@ -1410,7 +1441,7 @@ function assertTimeout(value: number): void {
   if (
     !Number.isSafeInteger(value) ||
     value < 1 ||
-    value > MAX_PROVIDER_TIMEOUT_MS
+    value > MAX_PROVIDER_LIMITS.timeoutMs
   ) {
     throw workflowError(
       'EXECUTION_REPLACEMENT_TIMEOUT_INVALID',

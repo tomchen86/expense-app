@@ -1808,18 +1808,14 @@ test('fake-backed propose composes breadth and depth before materializing an unc
         attempt: driftedReplacementState.attempt + 1,
       })}\n`,
     );
-    const driftedFailure = getProposeStatus(
-      repository,
-      materialized.investigation!.investigationId,
-    );
-    const driftedRetryEnvelope = createPlanReviewRetryEnvelope(
-      repository,
-      driftedFailure,
-      { acknowledgeProviderCost: true },
-    );
     assert.throws(
-      () => resumePropose(repository, changeId, driftedRetryEnvelope),
-      (error) => isWorkflowError(error, 'PLAN_REVIEW_RETRY_INPUT_STALE'),
+      () =>
+        getProposeStatus(
+          repository,
+          materialized.investigation!.investigationId,
+        ),
+      (error) =>
+        isWorkflowError(error, 'PROVIDER_INVOCATION_SUPERSESSION_UNSAFE'),
     );
     fs.writeFileSync(replacementStatePath, replacementFailedBytes);
     const secondFailure = getProposeStatus(

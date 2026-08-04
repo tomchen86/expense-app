@@ -1,10 +1,12 @@
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
 
 import { canonicalJson } from '../src/canonical-json.ts';
+import { loadAiAdapterPolicy } from '../src/ai-adapter-policy.ts';
 import {
   readEvidenceNode,
   readInvestigationEvidenceRefsClosure,
@@ -19,10 +21,12 @@ import {
   createExecutionBudgetGrantRequest,
   inspectExecutionBudgetGrant,
   storeExecutionBudgetGrant,
+  type ExecutionBudgetConsumeReceipt,
 } from '../src/execution-governance.ts';
 import { issueExecutionBudgetGrant } from '../src/execution-grant-cli.ts';
 import { listExecutionJobs } from '../src/execution-runtime.ts';
 import { discoverRepository } from '../src/git.ts';
+import { listProviderInvocationLifecycleProjections } from '../src/investigation-session-store.ts';
 import { createInvestigationCheckpointEnvelope } from '../src/investigation-session.ts';
 import { loadInvestigationRuntimeContext } from '../src/lifecycle-context.ts';
 import { investigationRuntimePaths } from '../src/paths.ts';
@@ -42,6 +46,10 @@ import {
   readProviderInvocation,
   readProviderInvocationRequest,
   readProviderRetryReservation,
+  readProviderExecutionPolicySnapshot,
+  createProviderExecutionPolicySnapshot,
+  providerExecutionPolicySnapshotPath,
+  validateProviderExecutionPolicySnapshot,
 } from '../src/provider-invocation-store.ts';
 import {
   createFixtureRepository,
@@ -51,7 +59,7 @@ import {
 } from './fixture.ts';
 import { prepareExecutionMandate } from './execution-mandate-fixture.ts';
 
-test('granted Survey retry consumes once, publishes attempt five, and dispatches once', async () => {
+test('granted Survey retries raise a 300s policy ceiling through 600s to the 3600s hard cap', async () => {
   const repository = createFixtureRepository();
   const changeId = 'execution-granted-survey';
   let mandate: ReturnType<typeof prepareExecutionMandate> | undefined;
@@ -136,7 +144,19 @@ test('granted Survey retry consumes once, publishes attempt five, and dispatches
       repository,
       failedInvocationId,
     );
-    setFixtureProviderTimeout(repository, 600_000);
+    assert.equal(
+      fixtureProviderTimeout(repository),
+      300_000,
+      'the tracked policy remains the fail-closed automatic ceiling',
+    );
+    assert.throws(
+      () =>
+        requestExecutionReplacement(repository, jobId, {
+          timeoutMs: 3_600_001,
+        }),
+      (error) =>
+        isWorkflowError(error, 'EXECUTION_REPLACEMENT_TIMEOUT_INVALID'),
+    );
     const cliRequest = runWorkflowCli(repository, [
       'job',
       'retry-request',
@@ -155,21 +175,18 @@ test('granted Survey retry consumes once, publishes attempt five, and dispatches
     );
     assert.deepEqual(
       grantRequest.request.requestedChanges.map(({ path }) => path),
-      ['/providerPolicyDigest', '/retryPolicy/maxAttempts', '/timeoutMs'],
+      [
+        '/providerPolicy/limits/timeoutMs',
+        '/retryPolicy/maxAttempts',
+        '/timeoutMs',
+      ],
     );
-    assert.match(
-      grantRequest.request.requestedChanges[0]!.from as string,
-      /^[0-9a-f]{64}$/,
-    );
-    assert.match(
-      grantRequest.request.requestedChanges[0]!.to as string,
-      /^[0-9a-f]{64}$/,
-    );
-    assert.notEqual(
-      grantRequest.request.requestedChanges[0]!.from,
-      grantRequest.request.requestedChanges[0]!.to,
-    );
-    assert.deepEqual(grantRequest.request.requestedChanges.slice(1), [
+    assert.deepEqual(grantRequest.request.requestedChanges, [
+      {
+        path: '/providerPolicy/limits/timeoutMs',
+        from: 300_000,
+        to: 600_000,
+      },
       { path: '/retryPolicy/maxAttempts', from: 4, to: 5 },
       { path: '/timeoutMs', from: 300_000, to: 600_000 },
     ]);
@@ -253,12 +270,12 @@ test('granted Survey retry consumes once, publishes attempt five, and dispatches
       );
     }
 
-    setFixtureProviderTimeout(repository, 700_000);
+    setFixtureProviderTimeout(repository, 350_000);
     assert.throws(
       () => executeGrantedReplacement(repository, jobId, grantId),
       (error) => isWorkflowError(error, 'EXECUTION_REPLACEMENT_GRANT_MISMATCH'),
     );
-    setFixtureProviderTimeout(repository, 600_000);
+    setFixtureProviderTimeout(repository, 300_000);
     assert.deepEqual(
       inspectExecutionBudgetGrant(runtime.lifecycleRuntime.root, grantId),
       { state: 'active', remainingUses: 1, receipts: [] },
@@ -363,6 +380,162 @@ test('granted Survey retry consumes once, publishes attempt five, and dispatches
         receipts: [completed.receipt],
       },
     );
+    const basePolicy = loadAiAdapterPolicy(repository);
+    const grantedRequest = readProviderInvocationRequest(
+      paths,
+      completed.replacementInvocationId,
+    );
+    assert.equal(grantedRequest.policyDigest, basePolicy.digest);
+    assert.equal(basePolicy.policy.limits.timeoutMs, 300_000);
+    const grantedSnapshot = readProviderExecutionPolicySnapshot(
+      paths,
+      grantedRequest,
+    ).snapshot;
+    assert.equal(grantedSnapshot.schemaVersion, 3);
+    if (grantedSnapshot.schemaVersion !== 3 || completed.receipt === null) {
+      assert.fail('Expected a grant-authorized execution-policy snapshot.');
+    }
+    assert.deepEqual(
+      grantedSnapshot.authority.grantRequest,
+      grantRequest.request,
+    );
+    assert.deepEqual(grantedSnapshot.authority.receipt, completed.receipt);
+
+    const missingReceiptSnapshot = structuredClone(grantedSnapshot) as Record<
+      string,
+      unknown
+    >;
+    delete missingReceiptSnapshot.authority;
+    missingReceiptSnapshot.schemaVersion = 2;
+    assert.throws(
+      () =>
+        validateProviderExecutionPolicySnapshot(
+          grantedRequest,
+          missingReceiptSnapshot,
+        ),
+      (error) =>
+        isWorkflowError(error, 'PROVIDER_EXECUTION_POLICY_SNAPSHOT_MISMATCH'),
+    );
+    const wrongReceipt = withReceiptId({
+      ...completed.receipt,
+      attemptId: 'attempt-legacy-invocation-wrong-receipt',
+    });
+    assert.throws(
+      () =>
+        createProviderExecutionPolicySnapshot(grantedRequest, basePolicy, {
+          grantId,
+          grantRequest: grantRequest.request,
+          receipt: wrongReceipt,
+        }),
+      (error) =>
+        isWorkflowError(error, 'PROVIDER_EXECUTION_BUDGET_AUTHORITY_INVALID'),
+    );
+    const multiUseReceipt = withReceiptId({
+      ...completed.receipt,
+      remainingUses: 1,
+    });
+    assert.throws(
+      () =>
+        createProviderExecutionPolicySnapshot(grantedRequest, basePolicy, {
+          grantId,
+          grantRequest: grantRequest.request,
+          receipt: multiUseReceipt,
+        }),
+      (error) =>
+        isWorkflowError(error, 'PROVIDER_EXECUTION_BUDGET_AUTHORITY_INVALID'),
+    );
+    const wrongMandateReceipt = withReceiptId({
+      ...completed.receipt,
+      mandateBinding: {
+        ...completed.receipt.mandateBinding,
+        changeId: 'wrong-timeout-grant-change',
+      },
+    });
+    assert.throws(
+      () =>
+        createProviderExecutionPolicySnapshot(grantedRequest, basePolicy, {
+          grantId,
+          grantRequest: grantRequest.request,
+          receipt: wrongMandateReceipt,
+        }),
+      (error) =>
+        isWorkflowError(error, 'PROVIDER_EXECUTION_BUDGET_AUTHORITY_INVALID'),
+    );
+    const snapshotPath = providerExecutionPolicySnapshotPath(
+      paths,
+      grantedRequest.invocationId,
+    );
+    const originalSnapshotBytes = fs.readFileSync(snapshotPath, 'utf8');
+    const { authorityDigest: _authorityDigest, ...wrongAuthorityCore } =
+      grantedSnapshot.authority;
+    const wrongAuthority = {
+      ...wrongAuthorityCore,
+      receipt: wrongReceipt,
+      authorityDigest: digestCanonical({
+        ...wrongAuthorityCore,
+        receipt: wrongReceipt,
+      }),
+    };
+    try {
+      fs.writeFileSync(
+        snapshotPath,
+        `${canonicalJson(missingReceiptSnapshot)}\n`,
+        'utf8',
+      );
+      assert.throws(
+        () => readProviderExecutionPolicySnapshot(paths, grantedRequest),
+        (error) =>
+          isWorkflowError(error, 'PROVIDER_EXECUTION_POLICY_SNAPSHOT_MISMATCH'),
+      );
+      fs.writeFileSync(
+        snapshotPath,
+        `${canonicalJson({ ...grantedSnapshot, authority: wrongAuthority })}\n`,
+        'utf8',
+      );
+      assert.throws(
+        () => readProviderExecutionPolicySnapshot(paths, grantedRequest),
+        (error) =>
+          isWorkflowError(error, 'PROVIDER_EXECUTION_POLICY_SNAPSHOT_UNSAFE') ||
+          isWorkflowError(
+            error,
+            'PROVIDER_EXECUTION_POLICY_SNAPSHOT_MISMATCH',
+          ) ||
+          isWorkflowError(error, 'PROVIDER_EXECUTION_BUDGET_AUTHORITY_INVALID'),
+      );
+    } finally {
+      fs.writeFileSync(snapshotPath, originalSnapshotBytes, 'utf8');
+    }
+    assert.equal(
+      readProviderExecutionPolicySnapshot(paths, grantedRequest).snapshot
+        .schemaVersion,
+      3,
+    );
+
+    const grantRecordPath = path.join(
+      runtime.lifecycleRuntime.root,
+      'execution-budget-grants',
+      `${grantId}.json`,
+    );
+    const displacedGrantRecordPath = path.join(
+      runtime.lifecycleRuntime.root,
+      `${grantId}.missing`,
+    );
+    fs.renameSync(grantRecordPath, displacedGrantRecordPath);
+    try {
+      assert.throws(
+        () => listProviderInvocationLifecycleProjections(paths),
+        (error) =>
+          isWorkflowError(error, 'HUMAN_RESOLUTION_PROVIDER_STATE_UNSAFE'),
+      );
+    } finally {
+      fs.renameSync(displacedGrantRecordPath, grantRecordPath);
+    }
+    assert.ok(
+      listProviderInvocationLifecycleProjections(paths).some(
+        ({ invocationId }) =>
+          invocationId === completed.replacementInvocationId,
+      ),
+    );
 
     const replay = executeGrantedReplacement(repository, jobId, grantId, {
       providerDispatcher(_cwd, invocationId) {
@@ -437,6 +610,82 @@ test('granted Survey retry consumes once, publishes attempt five, and dispatches
         (sum, attempt) => sum + attempt.providerTokens,
         0,
       ),
+    );
+
+    const capClaim = claimProviderInvocation(
+      paths,
+      completed.replacementInvocationId,
+      {
+        workerId: 'worker-grant-timeout-cap',
+        leaseDurationMs: 1_000,
+      },
+    );
+    failProviderInvocation(paths, completed.replacementInvocationId, {
+      expectedRevision: capClaim.record.revision,
+      leaseGeneration: capClaim.record.leaseGeneration,
+      leaseToken: capClaim.leaseToken,
+      failure: {
+        kind: 'retryable',
+        code: 'PROVIDER_TIMEOUT_AT_600_SECONDS',
+        message: 'Provider timed out at the first grant-scoped ceiling.',
+      },
+    });
+    const capRequest = requestExecutionReplacement(repository, jobId, {
+      timeoutMs: 3_600_000,
+    });
+    assert.equal(fixtureProviderTimeout(repository), 300_000);
+    assert.deepEqual(capRequest.request.requestedChanges, [
+      {
+        path: '/providerPolicy/limits/timeoutMs',
+        from: 300_000,
+        to: 3_600_000,
+      },
+      { path: '/retryPolicy/maxAttempts', from: 4, to: 5 },
+      { path: '/timeoutMs', from: 600_000, to: 3_600_000 },
+    ]);
+    const capGrantId = '99999999-9999-4999-8999-999999999999';
+    issueExecutionBudgetGrant(repository, capRequest.request, {
+      grantId: capGrantId,
+      maxUses: 1,
+      signer: mandate.signer,
+    });
+    const capCompleted = executeGrantedReplacement(
+      repository,
+      jobId,
+      capGrantId,
+      { providerDispatcher() {} },
+    );
+    assert.equal(capCompleted.phase, 'complete');
+    assert.equal(
+      readProviderInvocationRequest(paths, capCompleted.replacementInvocationId)
+        .limits.timeoutMs,
+      3_600_000,
+    );
+    assert.equal(
+      readProviderInvocationRequest(paths, capCompleted.replacementInvocationId)
+        .policyDigest,
+      basePolicy.digest,
+    );
+    const capSnapshot = readProviderExecutionPolicySnapshot(
+      paths,
+      readProviderInvocationRequest(
+        paths,
+        capCompleted.replacementInvocationId,
+      ),
+    ).snapshot;
+    assert.equal(capSnapshot.schemaVersion, 3);
+    if (capSnapshot.schemaVersion !== 3) {
+      assert.fail('Expected the hard-cap Attempt to retain grant authority.');
+    }
+    assert.equal(capSnapshot.authority.grantId, capGrantId);
+    assert.deepEqual(capSnapshot.authority.receipt, capCompleted.receipt);
+    assert.deepEqual(
+      inspectExecutionBudgetGrant(runtime.lifecycleRuntime.root, capGrantId),
+      {
+        state: 'consumed',
+        remainingUses: 0,
+        receipts: [capCompleted.receipt],
+      },
     );
   } finally {
     mandate?.dispose();
@@ -627,7 +876,6 @@ test('granted PlanReview retry publishes one v3 reservation ref before dispatch'
       repository,
       failedInvocationId,
     );
-    setFixtureProviderTimeout(repository, 600_000);
     const requested = requestExecutionReplacement(repository, jobId, {
       timeoutMs: 600_000,
     });
@@ -833,6 +1081,31 @@ function setFixtureProviderTimeout(
   };
   policy.limits.timeoutMs = timeoutMs;
   fs.writeFileSync(policyPath, `${canonicalJson(policy)}\n`, 'utf8');
+}
+
+function fixtureProviderTimeout(repository: string): number {
+  const policyPath = path.join(repository, 'workflow/ai-adapter-policy.json');
+  const policy = JSON.parse(fs.readFileSync(policyPath, 'utf8')) as {
+    limits: { timeoutMs: number };
+  };
+  return policy.limits.timeoutMs;
+}
+
+function withReceiptId(
+  input: ExecutionBudgetConsumeReceipt,
+): ExecutionBudgetConsumeReceipt {
+  const { receiptId: _receiptId, ...core } = input;
+  return {
+    ...core,
+    receiptId: digestCanonical(core),
+  };
+}
+
+function digestCanonical(value: unknown): string {
+  return `sha256:${crypto
+    .createHash('sha256')
+    .update(canonicalJson(value))
+    .digest('hex')}`;
 }
 
 function runWorkflowCli(repository: string, args: string[]) {

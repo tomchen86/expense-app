@@ -246,7 +246,7 @@ function createProviderRunner(host) {
             input.request.baseTree !== git.tree) {
             throw baselineMismatch();
         }
-        const { loaded } = readProviderExecutionPolicySnapshot(paths, input.request);
+        const { loaded, snapshot } = readProviderExecutionPolicySnapshot(paths, input.request);
         if (input.request.policyDigest !== loaded.digest) {
             throw policyMismatch();
         }
@@ -254,7 +254,8 @@ function createProviderRunner(host) {
         if (!providerPolicy || !providerPolicy.enabled) {
             throw providerDisabled(input.providerId);
         }
-        if (input.request.limits.timeoutMs > loaded.policy.limits.timeoutMs ||
+        if ((input.request.limits.timeoutMs > loaded.policy.limits.timeoutMs &&
+            snapshot.schemaVersion !== 3) ||
             input.request.limits.aggregateOutputBytes >
                 loaded.policy.limits.aggregateOutputBytes) {
             throw policyMismatch();

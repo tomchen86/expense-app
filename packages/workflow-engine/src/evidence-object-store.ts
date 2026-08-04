@@ -1341,6 +1341,9 @@ function assertPlanReviewRetryOwnership(
         !hasExactKeys(retry.executionPolicySnapshot, [
           'accountingDigest',
           'attemptReservation',
+          ...(retry.executionPolicySnapshot.schemaVersion === 3
+            ? ['authority']
+            : []),
           'invocationId',
           'kind',
           'policyDigest',
@@ -1349,7 +1352,11 @@ function assertPlanReviewRetryOwnership(
           'retryAccounting',
           'schemaVersion',
         ]) ||
-        retry.executionPolicySnapshot.schemaVersion !== 2 ||
+        ![2, 3].includes(
+          retry.executionPolicySnapshot.schemaVersion as number,
+        ) ||
+        (retry.executionPolicySnapshot.schemaVersion === 3 &&
+          !isPlainRecord(retry.executionPolicySnapshot.authority)) ||
         retry.executionPolicySnapshot.kind !==
           'provider-execution-policy-snapshot' ||
         retry.executionPolicySnapshot.invocationId !== request.invocationId ||

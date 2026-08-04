@@ -32,6 +32,7 @@ import {
   type ProviderAttemptBudgetReservation,
   type ProviderInvocationRecord,
 } from './provider-invocation-store.ts';
+import { createProviderExecutionBudgetAuthority } from './provider-execution-policy-authority.ts';
 
 export type AuthorizedProviderRetry = Readonly<{
   workflow: WorkflowRecord;
@@ -95,6 +96,7 @@ export function authorizeAutomaticProviderRetry(
     replacementRequest: ProviderInvocationRequest;
     replacementExecutionPolicy: LoadedAiAdapterPolicy;
     boundedGrantRequest?: GrantRequest;
+    executionGrantAuthorization?: ProviderExecutionGrantAuthorization;
     now?: string;
   },
 ): AuthorizedProviderRetry {
@@ -253,6 +255,11 @@ export function authorizeAutomaticProviderRetry(
     providerAttemptCount,
     nextReservation,
     boundedGrantRequest: input.boundedGrantRequest ?? null,
+    ...(input.executionGrantAuthorization === undefined
+      ? {}
+      : {
+          executionGrantAuthorization: input.executionGrantAuthorization,
+        }),
     evaluatedAt,
     decision,
   });
@@ -276,6 +283,7 @@ export function authorizeAutomaticProviderRetry(
 function validateReplacementPolicy(input: {
   replacementRequest: ProviderInvocationRequest;
   replacementExecutionPolicy: LoadedAiAdapterPolicy;
+  executionGrantAuthorization?: ProviderExecutionGrantAuthorization;
 }): LoadedAiAdapterPolicy {
   let loaded: LoadedAiAdapterPolicy;
   try {
@@ -291,12 +299,21 @@ function validateReplacementPolicy(input: {
     canonicalJson(loaded.policy) !==
       canonicalJson(input.replacementExecutionPolicy.policy) ||
     request.policyDigest !== loaded.digest ||
-    request.limits.timeoutMs > loaded.policy.limits.timeoutMs ||
     request.limits.aggregateOutputBytes >
       loaded.policy.limits.aggregateOutputBytes ||
     !loaded.policy.providers[request.providerId].enabled
   ) {
     throw retryAccountingStale();
+  }
+  if (request.limits.timeoutMs > loaded.policy.limits.timeoutMs) {
+    if (input.executionGrantAuthorization === undefined) {
+      throw retryAccountingStale();
+    }
+    createProviderExecutionBudgetAuthority(
+      request,
+      loaded,
+      input.executionGrantAuthorization,
+    );
   }
   return loaded;
 }

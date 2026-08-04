@@ -219,7 +219,7 @@ import {
   type NormalizedChangeIntent,
   type PlanReviewManifest,
   type ProviderRetryDecisionBinding,
-  type ProviderExecutionPolicySnapshotV2,
+  type ProviderExecutionPolicySnapshotCurrent,
 } from './provider-invocation-store.ts';
 import {
   assertProviderExecutionGrantAuthorization,
@@ -2467,6 +2467,7 @@ function resumePlanReviewRetry(
         createProviderExecutionPolicySnapshot(
           replacementRequest,
           currentExecutionPolicy,
+          options.executionGrantAuthorization,
         );
       const replacementNode = createPlanReviewReplacementReservationNode(
         reservation,
@@ -2626,6 +2627,7 @@ function assertPlanReviewRetryExecutionDecision(
     replacementRequest,
     replacementExecutionPolicy,
     boundedGrantRequest: executionGrantAuthorization?.grantRequest,
+    executionGrantAuthorization,
   });
   const prior = authorization;
   const replacementPolicy = providerExecutionPolicySnapshot(replacementRequest);
@@ -2745,7 +2747,7 @@ function createPlanReviewReplacementReservationNode(
   replacementRequest: ProviderInvocationRequest,
   attempt: number,
   retryDecision: ProviderRetryDecisionBinding,
-  executionPolicySnapshot: ProviderExecutionPolicySnapshotV2,
+  executionPolicySnapshot: ProviderExecutionPolicySnapshotCurrent,
 ): EvidenceNode {
   return createEvidenceNode({
     type: 'plan-review-request-reservation',
@@ -6902,7 +6904,7 @@ type PlanReviewReservation = {
     previousReservationNodeId: string;
     failedInvocation: PlanReviewRetryEnvelope['failedInvocation'];
     retryDecision: ProviderRetryDecisionBinding | null;
-    executionPolicySnapshot: ProviderExecutionPolicySnapshotV2 | null;
+    executionPolicySnapshot: ProviderExecutionPolicySnapshotCurrent | null;
   } | null;
 };
 
@@ -7897,7 +7899,8 @@ function assertPlanReviewRetryReservation(
   const retryDecision = retryDecisionShape
     ? assertPlanReviewRetryDecisionBinding(value.retryDecision)
     : null;
-  let executionPolicySnapshot: ProviderExecutionPolicySnapshotV2 | null = null;
+  let executionPolicySnapshot: ProviderExecutionPolicySnapshotCurrent | null =
+    null;
   if (retryDecisionShape) {
     try {
       executionPolicySnapshot = validateProviderExecutionPolicySnapshot(

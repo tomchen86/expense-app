@@ -8,7 +8,7 @@
     {
       "path": "bootstrap/recovery-runtime/bootstrap/built-in-engine-closure-pin.js",
       "mode": "100644",
-      "digest": "sha256:247a5265967da3229e01f521c43f7dc02b569ec904df1ff1a77e1271ebc2fb80"
+      "digest": "sha256:3df33f7dc94b1aebe54c42b19e44ad2ae6cb485341c87c351e1fdef87d9e7d9e"
     },
     {
       "path": "bootstrap/recovery-runtime/src/actor-identity.js",
@@ -103,7 +103,7 @@
     {
       "path": "bootstrap/recovery-runtime/src/evidence-object-store.js",
       "mode": "100644",
-      "digest": "sha256:f8c9f0b03db13bd2837314cba179180b566cfc95092f57809b8ac7c51c165bf8"
+      "digest": "sha256:c8cbb47cefeb905a64a6168a92e2959c5b4e60da76868ee4e630510013003aea"
     },
     {
       "path": "bootstrap/recovery-runtime/src/execution-core.js",
@@ -193,7 +193,7 @@
     {
       "path": "bootstrap/recovery-runtime/src/investigation-session-store.js",
       "mode": "100644",
-      "digest": "sha256:a611072d55d9c3950eb6d26a90ba233f0362c867774de4e2495fa50184558298"
+      "digest": "sha256:0b849d462cd8dcc4b9f214812139cbd14c6d7e3a21917891e83006a9da1439f7"
     },
     {
       "path": "bootstrap/recovery-runtime/src/investigation-terms.js",
@@ -271,9 +271,24 @@
       "digest": "sha256:1e3d84beb2559980f3a567164dcd340c5d06a2afb8656e33bf9e97be854d649c"
     },
     {
+      "path": "bootstrap/recovery-runtime/src/provider-execution-policy-authority.js",
+      "mode": "100644",
+      "digest": "sha256:af80f9dab3738b7c4b32c60b0163126df25f87754a0e7dd91abec6b57c67f559"
+    },
+    {
       "path": "bootstrap/recovery-runtime/src/provider-invocation-store.js",
       "mode": "100644",
-      "digest": "sha256:a4e14d793471dafe63018169b4275036584f2145b69387e2ea881b0e6a3ac381"
+      "digest": "sha256:f686da059aa46890dda5d43083080093a0eb7ae07747a546d4605a0926c925c5"
+    },
+    {
+      "path": "bootstrap/recovery-runtime/src/provider-invocation-supersession-schema.js",
+      "mode": "100644",
+      "digest": "sha256:c58119d85f791d7bea2106b5adf69c9944f7bae237a91544e63a47f420527738"
+    },
+    {
+      "path": "bootstrap/recovery-runtime/src/provider-invocation-supersession.js",
+      "mode": "100644",
+      "digest": "sha256:18b7d41982687045af7c66ebeab2236820e2118050b238ae0777427ecb30d7e7"
     },
     {
       "path": "bootstrap/recovery-runtime/src/provider-registry.js",
@@ -293,7 +308,7 @@
     {
       "path": "bootstrap/recovery-runtime/src/provider-runner.js",
       "mode": "100644",
-      "digest": "sha256:b6d1ad13e57855c67a9f6edea615413d7e1b8a6f1e6529eb2cb4f6478938fe7e"
+      "digest": "sha256:bb698c355280b9c91dabca410f30ad01b14b75279caf43e0c49e8eacbf5c0f83"
     },
     {
       "path": "bootstrap/recovery-runtime/src/role-scheduler.js",

@@ -526,7 +526,7 @@ function createProviderRunner(host: ProviderRunnerHost): ProviderRunner {
     ) {
       throw baselineMismatch();
     }
-    const { loaded } = readProviderExecutionPolicySnapshot(
+    const { loaded, snapshot } = readProviderExecutionPolicySnapshot(
       paths,
       input.request,
     );
@@ -538,7 +538,8 @@ function createProviderRunner(host: ProviderRunnerHost): ProviderRunner {
       throw providerDisabled(input.providerId);
     }
     if (
-      input.request.limits.timeoutMs > loaded.policy.limits.timeoutMs ||
+      (input.request.limits.timeoutMs > loaded.policy.limits.timeoutMs &&
+        snapshot.schemaVersion !== 3) ||
       input.request.limits.aggregateOutputBytes >
         loaded.policy.limits.aggregateOutputBytes
     ) {

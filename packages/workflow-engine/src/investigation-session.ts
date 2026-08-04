@@ -2819,6 +2819,7 @@ function retryInvestigationProviderUnlocked(
       manifest,
       request: input.replacementRequest,
       executionPolicy: currentExecutionPolicy,
+      executionGrantAuthorization: input.executionGrantAuthorization,
       retryDecision: {
         schemaVersion: 1,
         kind: 'provider-retry-decision-binding',
@@ -2943,6 +2944,7 @@ function assertProviderRetryExecutionDecision(
     replacementRequest,
     replacementExecutionPolicy,
     boundedGrantRequest: executionGrantAuthorization?.grantRequest,
+    executionGrantAuthorization,
   });
   const prior = authorization;
   const replacementPolicy = providerExecutionPolicySnapshot(replacementRequest);
