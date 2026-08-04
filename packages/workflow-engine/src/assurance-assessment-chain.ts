@@ -1,4 +1,5 @@
 import { ExitCode, workflowError } from './errors.ts';
+import { INVESTIGATION_CHANGE_CLASSES } from './investigation-applicability.ts';
 import {
   compressionEligible,
   resolvePathRole,
@@ -218,6 +219,112 @@ export function floorsForHitPaths(
         : Object.freeze({ ...BASE_FLOORS, planning: 'individual-only' }),
     reasons: Object.freeze(reasons),
   });
+}
+
+export type InvestigationChangeClass =
+  (typeof INVESTIGATION_CHANGE_CLASSES)[number];
+
+/**
+ * The single risk tax table: what a change owes on the strength of what its
+ * author says it is. Each entry raises only the policies its own failure mode
+ * threatens, so a change with unknown consumers buys complete review without
+ * also buying full-blob reading it has no use for.
+ */
+const CLASS_FLOORS: Readonly<
+  Record<InvestigationChangeClass, Partial<AssuranceFloors>>
+> = Object.freeze({
+  'documentation-only': {},
+  'formatting-only': {},
+  'deterministic-generated-projection': {},
+  'time-boxed-research': {},
+  // A rename reads as a deletion to anything that matches on identity, so the
+  // hits must be judged one at a time; this is the shape of defect that lets a
+  // live scenario vanish from a specification.
+  'rename-removal': { planning: 'individual-only' },
+  // Migration rewrites state that cannot simply be read again afterwards.
+  migration: {
+    planning: 'individual-only',
+    evidence: 'full-blob-required',
+    review: 'target-complete',
+  },
+  // Unknown consumers are exactly what a sample cannot cover.
+  'shared-contract': {
+    planning: 'class-restricted',
+    review: 'target-complete',
+  },
+  'public-api': { planning: 'class-restricted', review: 'target-complete' },
+  security: {
+    planning: 'class-restricted',
+    evidence: 'full-blob-required',
+    review: 'core-complete',
+  },
+  behavioral: { review: 'core-complete' },
+});
+
+export function floorsForChangeClass(
+  changeClass: InvestigationChangeClass,
+): Readonly<{ floors: AssuranceFloors; reasons: readonly string[] }> {
+  const raised = CLASS_FLOORS[changeClass];
+  if (raised === undefined) {
+    throw assessmentInvalid(`Unknown change class ${changeClass}.`);
+  }
+  return Object.freeze({
+    floors: Object.freeze({ ...BASE_FLOORS, ...raised }),
+    reasons: Object.freeze([`declared-class:${changeClass}`]),
+  });
+}
+
+/**
+ * Checks a declaration against where the scan actually landed. Declaring a
+ * change documentation-only is cheap; the check is whether the hits agree. When
+ * they do not, the floor rises to what the evidence supports and the record
+ * names both sides, so the escalation can be argued with rather than merely
+ * suffered.
+ *
+ * This escalates; it never accuses. A declaration can be wrong by accident, and
+ * the remedy is the same either way.
+ */
+export function reconcileDeclaredClass(
+  changeClass: InvestigationChangeClass,
+  registry: PathRoleRegistry,
+  hitPaths: readonly string[],
+): Readonly<{
+  floors: AssuranceFloors;
+  reasons: readonly string[];
+  escalated: boolean;
+}> {
+  const declared = floorsForChangeClass(changeClass);
+  const observed = floorsForHitPaths(registry, hitPaths);
+  const floors = highestOf(declared.floors, observed.floors);
+  const escalated =
+    ORDER.planning.indexOf(observed.floors.planning) >
+    ORDER.planning.indexOf(declared.floors.planning);
+  return Object.freeze({
+    floors,
+    reasons: Object.freeze([
+      ...declared.reasons,
+      ...(escalated ? observed.reasons : []),
+    ]),
+    escalated,
+  });
+}
+
+function highestOf(
+  left: AssuranceFloors,
+  right: AssuranceFloors,
+): AssuranceFloors {
+  const policies = Object.keys(ORDER) as Array<keyof AssuranceFloors>;
+  return Object.freeze(
+    Object.fromEntries(
+      policies.map((policy) => [
+        policy,
+        ORDER[policy].indexOf(right[policy]) >
+        ORDER[policy].indexOf(left[policy])
+          ? right[policy]
+          : left[policy],
+      ]),
+    ),
+  ) as AssuranceFloors;
 }
 
 function frozenAssessment(assessment: {

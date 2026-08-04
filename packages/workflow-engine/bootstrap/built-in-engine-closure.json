@@ -61,7 +61,7 @@
     {
       "path": "src/assurance-assessment-chain.ts",
       "mode": "100644",
-      "digest": "sha256:0e2fcb3d1e41c1e335d5477662ce0a75b41f172a903ca5f04ec098e90f188554"
+      "digest": "sha256:c1ceb52e17a25c2829af1166841c4ca46758687eff6887752cbf847c1c6af467"
     },
     {
       "path": "src/atomic-text.ts",
