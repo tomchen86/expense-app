@@ -31,7 +31,7 @@
     {
       "path": "src/archive-delta-verifier.ts",
       "mode": "100644",
-      "digest": "sha256:5f21a3021cbc7301f456fea280885ad0cf0ce4eab830c270af37a4752d1b4312"
+      "digest": "sha256:2cfc2c742970f614a88eb2f4cc773a9a3cc2f32139b4ba101b9df94422ad6162"
     },
     {
       "path": "src/archive-eligibility.ts",
@@ -711,7 +711,7 @@
     {
       "path": "src/planning-transition.ts",
       "mode": "100644",
-      "digest": "sha256:5daa1ae976f247a3a1627caa24d9adb2a68d3d98385dbadc8c7ebf04bde2eeda"
+      "digest": "sha256:2f74063bfa6788c2445b5ad631a3f445427e9d65b35e81ecd41bec308116b87e"
     },
     {
       "path": "src/predecessor-reconciliation.ts",

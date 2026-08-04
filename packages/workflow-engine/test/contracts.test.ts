@@ -30,6 +30,7 @@ import {
 } from '../src/paths.ts';
 import { workflowContractArtifactPaths } from '../src/contract-artifacts.ts';
 import './apply-journal-terminal-states.contract.test.ts';
+import './spec-scenario-preservation.contract.test.ts';
 import './git-security.test.ts';
 import './openspec-adapter.integration.test.ts';
 import './openspec-doctor.integration.test.ts';

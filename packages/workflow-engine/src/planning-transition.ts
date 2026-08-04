@@ -2,6 +2,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 
+import { assertSpecDeltaScenarioPreservation } from './archive-delta-verifier.ts';
 import { loadWorkflowConfig } from './contracts.ts';
 import { ExitCode, WorkflowError, workflowError } from './errors.ts';
 import {
@@ -205,6 +206,16 @@ function commitPlanningTransitionLocked(
       ExitCode.verification,
     );
   }
+
+  // Archive applies delta specs onto the base specs; a delta that cannot apply
+  // is not discoverable until then, which is a whole execution too late.
+  assertSpecDeltaScenarioPreservation(
+    initial.repositoryRoot,
+    initial.head,
+    config.changeRoot,
+    changeId,
+    changedPaths.filter((candidate) => candidate.endsWith('/spec.md')),
+  );
 
   assertUnstagedPlanningState(
     initial,
