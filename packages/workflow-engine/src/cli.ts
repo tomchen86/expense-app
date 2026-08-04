@@ -720,7 +720,8 @@ function dispatch(args: string[], cwd: string): CommandResult {
       if (
         (command === 'change' &&
           ['intervene', 'revoke-intervention'].includes(rest[0] ?? '')) ||
-        (command === 'engine' && rest[0] === 'adopt')
+        (command === 'engine' &&
+          ['adopt', 'build-artifact'].includes(rest[0] ?? ''))
       ) {
         return {
           command,
@@ -2051,6 +2052,7 @@ function usageText(): string {
     '  pnpm workflow task revoke <task-id> --reason <text> [--json]',
     '  pnpm workflow change intervene <parent-change-id> --reason <text> --audit-root <absolute-external-path> [--json]',
     '  pnpm workflow change revoke-intervention <parent-change-id> --reason <text> [--json]',
+    '  pnpm workflow engine build-artifact <absolute-executable-path> --for <parent-change-id> --protocol-version <positive-integer> --policy-schema-version <positive-integer> --audit-root <absolute-path> [--json]',
     '  pnpm workflow engine adopt <artifact-id> --into <parent-change-id> --audit-root <absolute-external-path> [--json]',
     '  pnpm workflow intervention status <parent-change-id> [--tx <tx-id>] [--json]',
     '  pnpm workflow intervention checkpoint <parent-change-id> --request <manifest.json> [--json]',

@@ -316,10 +316,20 @@ export function preparePersistedEngineAdoption(
         ExitCode.conflict,
       );
     }
-    const durablePriorAdoptions = countGrantAdoptions(
+    const adoptionHistory = inspectAdoptionHistory(
       storageRoot,
+      input.parentChangeId,
       input.maintenanceGrantEnvelope.payload.grantId,
     );
+    if (adoptionHistory.inFlightTxIds.length > 0) {
+      throw workflowError(
+        'INTERVENTION_ADOPTION_ALREADY_ACTIVE',
+        'Another engine adoption transaction for this parent still requires recovery.',
+        ExitCode.conflict,
+        { details: { txIds: adoptionHistory.inFlightTxIds } },
+      );
+    }
+    const durablePriorAdoptions = adoptionHistory.successfulCount;
     if (input.priorLocalAdoptions !== durablePriorAdoptions) {
       throw workflowError(
         'INTERVENTION_ADOPTION_COUNT_MISMATCH',
@@ -952,12 +962,17 @@ function assertUniqueChildWorkspaceReservation(
   }
 }
 
-function countGrantAdoptions(storageRoot: string, grantId: string): number {
+function inspectAdoptionHistory(
+  storageRoot: string,
+  parentChangeId: string,
+  grantId: string,
+): { successfulCount: number; inFlightTxIds: string[] } {
   const paths = interventionControlPersistencePaths(storageRoot);
   if (!fs.existsSync(paths.adoptions)) {
-    return 0;
+    return { successfulCount: 0, inFlightTxIds: [] };
   }
-  let count = 0;
+  let successfulCount = 0;
+  const inFlightTxIds: string[] = [];
   for (const name of fs.readdirSync(paths.adoptions).sort()) {
     if (!/^[0-9a-f]{64}\.json$/.test(name)) {
       throw workflowError(
@@ -983,11 +998,22 @@ function countGrantAdoptions(storageRoot: string, grantId: string): number {
       throw adoptionRecordCorrupt();
     }
     const record = readPersistedEngineAdoption(storageRoot, value.journal.txId);
-    if (record.maintenanceGrantEnvelope.payload.grantId === grantId) {
-      count += 1;
+    if (
+      record.journal.parentChangeId === parentChangeId &&
+      !['COMMITTED', 'ENGINE_BINDING_ROLLED_BACK'].includes(
+        record.journal.state,
+      )
+    ) {
+      inFlightTxIds.push(record.journal.txId);
+    }
+    if (
+      record.maintenanceGrantEnvelope.payload.grantId === grantId &&
+      record.journal.state === 'COMMITTED'
+    ) {
+      successfulCount += 1;
     }
   }
-  return count;
+  return { successfulCount, inFlightTxIds };
 }
 
 function assertUniqueControlTransactionId(

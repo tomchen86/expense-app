@@ -481,6 +481,7 @@ export function authorizeTaskMandate(
   const audit = appendTaskMandateAuthorizationAudit(
     context.repository.repositoryRoot,
     record,
+    exactDate(options.now ?? new Date()),
   );
   return { mandateId, recordPath, envelope, audit };
 }
@@ -532,8 +533,13 @@ export function withActiveTaskMandateBinding<T>(
       options.signer,
     );
     assertProductionTaskMandateRecord(record);
-    assertRecordActive(record, exactDate(options.now ?? new Date()));
-    appendTaskMandateAuthorizationAudit(repository.repositoryRoot, record);
+    const auditNow = exactDate(options.now ?? new Date());
+    assertRecordActive(record, auditNow);
+    appendTaskMandateAuthorizationAudit(
+      repository.repositoryRoot,
+      record,
+      auditNow,
+    );
     assertOwned();
     return operation(taskMandateBinding(record), assertOwned);
   });
@@ -575,7 +581,11 @@ export function authorizeTaskMandateOperation(
     return withAuthorityRefusalAudit(refusalBinding, { now }, () => {
       assertRecordActive(record, now);
       assertTaskMandateChange(record, changeId);
-      appendTaskMandateAuthorizationAudit(repository.repositoryRoot, record);
+      appendTaskMandateAuthorizationAudit(
+        repository.repositoryRoot,
+        record,
+        now,
+      );
       assertOwned();
       if (!isPreparationOperation(operation.kind)) {
         throw workflowError(
@@ -665,9 +675,14 @@ export function assertActiveTaskMandateBindingUnderLifecycleLock(
     options.signer,
   );
   assertProductionTaskMandateRecord(record);
-  assertRecordActive(record, exactDate(options.now ?? new Date()));
+  const bindingNow = exactDate(options.now ?? new Date());
+  assertRecordActive(record, bindingNow);
   assertExactTaskMandateBinding(record, exactBinding);
-  appendTaskMandateAuthorizationAudit(repository.repositoryRoot, record);
+  appendTaskMandateAuthorizationAudit(
+    repository.repositoryRoot,
+    record,
+    bindingNow,
+  );
   assertOwned();
   return exactBinding;
 }
@@ -730,9 +745,10 @@ function recordTaskMandateProviderInvocationLocked(
     options.signer,
   );
   assertProductionTaskMandateRecord(record);
-  assertRecordActive(record, exactDate(options.now ?? new Date()));
+  const invocationNow = exactDate(options.now ?? new Date());
+  assertRecordActive(record, invocationNow);
   assertExactTaskMandateBinding(record, exactBinding);
-  appendTaskMandateAuthorizationAudit(repositoryRoot, record);
+  appendTaskMandateAuthorizationAudit(repositoryRoot, record, invocationNow);
   const reservation = findTaskMandateProviderReservation(
     record,
     input.invocationId,
@@ -777,7 +793,7 @@ function authorizeTaskMandateProviderReservationLocked(
   const now = exactDate(options.now ?? new Date());
   assertRecordActive(record, now);
   assertExactTaskMandateBinding(record, exactBinding);
-  appendTaskMandateAuthorizationAudit(repositoryRoot, record);
+  appendTaskMandateAuthorizationAudit(repositoryRoot, record, now);
   const checkedOperation = assertProviderReservationOperation(operation);
   const operationDigest = taskMandateProviderOperationDigest(checkedOperation);
   const existing = findTaskMandateProviderReservation(record, reservationId);
@@ -867,8 +883,13 @@ export function revokeTaskMandate(
         appendTaskMandateAuthorizationAudit(
           repository.repositoryRoot,
           terminal,
+          exactDate(options.now ?? new Date()),
         );
-        appendTaskMandateRevocationAudit(repository.repositoryRoot, terminal);
+        appendTaskMandateRevocationAudit(
+          repository.repositoryRoot,
+          terminal,
+          exactDate(options.now ?? new Date()),
+        );
       }
       return inspectRecord(terminal, exactDate(options.now ?? new Date()));
     }
@@ -887,7 +908,11 @@ export function revokeTaskMandate(
       { reasonDigest: authorityRefusalDigest(reason) },
     );
     return withAuthorityRefusalAudit(refusalBinding, { now }, () => {
-      appendTaskMandateAuthorizationAudit(repository.repositoryRoot, record);
+      appendTaskMandateAuthorizationAudit(
+        repository.repositoryRoot,
+        record,
+        now,
+      );
       const signer = options.signer ?? currentSigner(repository.repositoryRoot);
       signer.assertHumanPresent();
       const currentPolicy = loadPolicyAt(
@@ -916,7 +941,7 @@ export function revokeTaskMandate(
         canonicalTaskMandateRecord(record),
       );
       assertOwned();
-      appendTaskMandateRevocationAudit(repository.repositoryRoot, record);
+      appendTaskMandateRevocationAudit(repository.repositoryRoot, record, now);
       assertOwned();
       return inspectRecord(record, now);
     });
@@ -1789,6 +1814,7 @@ function taskMandateRefusalBinding(
 function appendTaskMandateAuthorizationAudit(
   repositoryRoot: string,
   record: TaskMandateRecord,
+  now?: Date,
 ): AuthorityAuditRecordedEvent {
   const binding = taskMandateBinding(record);
   const grantDigest = prefixedDigest(binding.mandateDigest);
@@ -1832,12 +1858,20 @@ function appendTaskMandateAuthorizationAudit(
       }),
       errorCode: null,
     },
+    now === undefined ? {} : { now: () => now },
   );
 }
 
+/**
+ * The ledger rejects an event stamped far ahead of its own clock. The event
+ * time here comes from the caller's clock, so the append has to read the same
+ * one — otherwise any operation running on an injected clock records a time
+ * the ledger then refuses.
+ */
 function appendTaskMandateRevocationAudit(
   repositoryRoot: string,
   record: TaskMandateRecord,
+  now?: Date,
 ): AuthorityAuditRecordedEvent {
   if (
     record.state !== 'revoked' ||
@@ -1893,6 +1927,7 @@ function appendTaskMandateRevocationAudit(
       }),
       errorCode: null,
     },
+    now === undefined ? {} : { now: () => now },
   );
 }
 

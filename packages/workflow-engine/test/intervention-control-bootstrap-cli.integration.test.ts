@@ -17,8 +17,11 @@ import {
 } from '../src/intervention-control.ts';
 import {
   persistInterventionEngineArtifact,
+  readInterventionEngineArtifact,
+  readMaintenanceGrantRecord,
   readMaintenanceGrantForParent,
 } from '../src/intervention-maintenance.ts';
+import { readPersistedIntervention } from '../src/intervention-control-persistence.ts';
 import {
   deriveAuthorityAuditRepositoryId,
   scanAuthorityAuditLedger,
@@ -149,6 +152,8 @@ function humanDependencies(
     signatureValid?: boolean;
     afterMaintenanceGrantPersisted?: () => void;
     afterAdoptionStep?: () => void;
+    afterBindingUpdatedBeforeJournal?: () => void;
+    afterAbandonmentIntentPersisted?: () => void;
   } = {},
 ) {
   const observed = {
@@ -216,6 +221,9 @@ function humanDependencies(
     testHooks: {
       afterMaintenanceGrantPersisted: options.afterMaintenanceGrantPersisted,
       afterAdoptionStep: options.afterAdoptionStep,
+      afterBindingUpdatedBeforeJournal:
+        options.afterBindingUpdatedBeforeJournal,
+      afterAbandonmentIntentPersisted: options.afterAbandonmentIntentPersisted,
     },
   };
   return { dependencies, observed };
@@ -481,7 +489,7 @@ test('invalid durable parent preflight fails before touching the human signer', 
   }
 });
 
-test('persisted maintenance grant expiry and revocation reject replay before worktree mutation', () => {
+test('expired maintenance authority can be renewed and revocation abandons before a fresh intervention', () => {
   for (const mode of ['expired', 'revoked'] as const) {
     const fixture = fixtureRepository();
     try {
@@ -560,66 +568,53 @@ test('persisted maintenance grant expiry and revocation reject replay before wor
             ),
           hasCode('HUMAN_REVOCATION_CONFLICT'),
         );
-        assert.throws(
-          () => intervene(fixture, humanDependencies(fixture).dependencies),
-          hasCode('MAINTENANCE_GRANT_REVOKED'),
-        );
-        assert.throws(
-          () => intervene(fixture, humanDependencies(fixture).dependencies),
-          hasCode('MAINTENANCE_GRANT_REVOKED'),
-        );
-        const terminal = readMaintenanceGrantForParent(
+        const terminal = readMaintenanceGrantRecord(
           fixture.stateRoot,
-          'parent-A',
+          persisted.envelope.payload.grantId,
         );
         assert.equal(terminal.state, 'revoked');
-        const audit = scanAuthorityAuditLedger(fixture.auditScope);
-        assert.equal(audit.recordCount, 3);
-        assert.equal(audit.records.at(-1)?.record.eventType, 'error');
-        assert.equal(audit.records.at(-1)?.record.result, 'failed');
-        assert.equal(
-          verifyAuthorityAuditEvents(fixture.auditScope).events.at(-1)?.event
-            .errorCode,
-          'MAINTENANCE_GRANT_REVOKED',
+        const restartedHuman = humanDependencies(fixture);
+        const restarted = intervene(fixture, restartedHuman.dependencies);
+        assert.equal(restarted.action, 'intervene');
+        assert.equal(restarted.effectsPerformed, true);
+        assert.notEqual(
+          restarted.intervention?.relationship.interventionChangeId,
+          persisted.interventionChangeId,
         );
+        assert.equal(restartedHuman.observed.signatures.length, 1);
       } else {
-        const expiredDependencies = humanDependencies(fixture, {
+        const renewal = humanDependencies(fixture, {
           now: new Date('2026-08-03T10:31:00.000Z'),
-        }).dependencies;
-        assert.throws(
-          () => intervene(fixture, expiredDependencies),
-          hasCode('MAINTENANCE_GRANT_EXPIRED'),
-        );
-        const terminal = readMaintenanceGrantForParent(
+        });
+        const renewed = intervene(fixture, renewal.dependencies);
+        assert.equal(renewed.action, 'intervene');
+        assert.equal(renewed.effectsPerformed, true);
+        const terminal = readMaintenanceGrantRecord(
           fixture.stateRoot,
-          'parent-A',
+          persisted.envelope.payload.grantId,
         );
         assert.equal(terminal.state, 'expired');
         assert.equal(terminal.expiredAt, terminal.envelope.payload.expiresAt);
-        assert.throws(
-          () => intervene(fixture, expiredDependencies),
-          hasCode('MAINTENANCE_GRANT_EXPIRED'),
+        const active = readMaintenanceGrantForParent(
+          fixture.stateRoot,
+          'parent-A',
         );
-        assert.deepEqual(
-          readMaintenanceGrantForParent(fixture.stateRoot, 'parent-A'),
-          terminal,
+        assert.equal(active.state, 'available');
+        assert.notEqual(
+          active.envelope.payload.grantId,
+          terminal.envelope.payload.grantId,
         );
-        const audit = scanAuthorityAuditLedger(fixture.auditScope);
-        assert.equal(audit.recordCount, 2);
-        assert.equal(audit.records.at(-1)?.record.eventType, 'error');
-        assert.equal(audit.records.at(-1)?.record.result, 'failed');
-        assert.equal(
-          verifyAuthorityAuditEvents(fixture.auditScope).events.at(-1)?.event
-            .errorCode,
-          'MAINTENANCE_GRANT_EXPIRED',
-        );
+        assert.equal(renewal.observed.signatures.length, 1);
+        const replay = intervene(fixture, renewal.dependencies);
+        assert.equal(replay.effectsPerformed, false);
+        assert.equal(renewal.observed.signatures.length, 1);
       }
       const child = path.join(
         path.dirname(fixture.repositoryRoot),
         `${path.basename(fixture.repositoryRoot)}-${persisted.interventionChangeId}`,
       );
       assert.equal(intervention.checkpointId, persisted.checkpointId);
-      assert.equal(fs.existsSync(child), false);
+      assert.equal(fs.existsSync(child), mode === 'expired');
     } finally {
       fixture.cleanup();
     }
@@ -980,3 +975,319 @@ test('caller-supplied signed JSON routes and global promotion fail before any mu
     fixture.cleanup();
   }
 });
+
+test('production build-artifact persists a derived candidate and E2 reloads the checkpoint before health', () => {
+  const fixture = fixtureRepository();
+  try {
+    createParentWip(fixture);
+    const human = humanDependencies(fixture);
+    const intervention = intervene(fixture, human.dependencies).intervention!;
+    const engineDirectory = path.join(
+      intervention.childWorkspace.childWorkspacePath,
+      'packages/workflow-engine',
+    );
+    fs.mkdirSync(engineDirectory, { recursive: true });
+    const executable = writeEngineExecutable(
+      engineDirectory,
+      true,
+      'engine-E2',
+    );
+    const built = dispatchBootstrapInterventionCommand(
+      [
+        'engine',
+        'build-artifact',
+        executable.executablePath,
+        '--for',
+        'parent-A',
+        '--protocol-version',
+        '3',
+        '--policy-schema-version',
+        '2',
+        '--audit-root',
+        fixture.externalAuditRoot,
+      ],
+      fixture.repositoryRoot,
+      human.dependencies,
+    );
+    assert.equal(built.action, 'engine-build-artifact');
+    assert.equal(built.engineArtifact?.parentChangeId, 'parent-A');
+    const artifactId = built.engineArtifact!.artifact.artifactId;
+    assert.deepEqual(
+      readInterventionEngineArtifact(fixture.stateRoot, artifactId),
+      built.engineArtifact,
+    );
+
+    // A may be clean after E1 stopped. E2 adoption must restore the exact P1
+    // tracked, untracked, and durable session bytes before probing/health.
+    git(fixture.repositoryRoot, ['reset', '--hard', 'HEAD']);
+    fs.rmSync(path.join(fixture.repositoryRoot, 'note.bin'));
+    fs.writeFileSync(fixture.sessionSnapshotPath, '{"checkpoint":"lost"}\n', {
+      mode: 0o600,
+    });
+    const adopted = dispatchBootstrapInterventionCommand(
+      [
+        'engine',
+        'adopt',
+        artifactId,
+        '--into',
+        'parent-A',
+        '--audit-root',
+        fixture.externalAuditRoot,
+      ],
+      fixture.repositoryRoot,
+      human.dependencies,
+    );
+    assert.equal(adopted.adoptionState, 'COMMITTED');
+    assert.equal(
+      fs.readFileSync(path.join(fixture.repositoryRoot, 'tracked.txt'), 'utf8'),
+      'wip\n',
+    );
+    assert.deepEqual(
+      fs.readFileSync(path.join(fixture.repositoryRoot, 'note.bin')),
+      Buffer.from([0, 1, 2, 255]),
+    );
+    assert.equal(
+      fs.readFileSync(fixture.sessionSnapshotPath, 'utf8'),
+      '{"checkpoint":"plan-review"}\n',
+    );
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+test('rolled-back adoption does not consume the local success limit and a repaired artifact can retry', () => {
+  const fixture = fixtureRepository();
+  try {
+    createParentWip(fixture);
+    const human = humanDependencies(fixture);
+    const intervention = intervene(fixture, human.dependencies).intervention!;
+    const unhealthy = persistArtifact(
+      fixture,
+      intervention.childWorkspace.childWorkspacePath,
+      false,
+      'engine-unhealthy-first',
+    );
+    const first = dispatchBootstrapInterventionCommand(
+      [
+        'engine',
+        'adopt',
+        unhealthy.artifact.artifactId,
+        '--into',
+        'parent-A',
+        '--audit-root',
+        fixture.externalAuditRoot,
+      ],
+      fixture.repositoryRoot,
+      human.dependencies,
+    );
+    assert.equal(first.adoptionState, 'ENGINE_BINDING_ROLLED_BACK');
+    const expiredGrant = readMaintenanceGrantForParent(
+      fixture.stateRoot,
+      'parent-A',
+    );
+    const renewedHuman = humanDependencies(fixture, {
+      now: new Date('2026-08-03T10:31:00.000Z'),
+    });
+    const renewedIntervention = intervene(fixture, renewedHuman.dependencies);
+    assert.equal(renewedIntervention.effectsPerformed, false);
+    const renewedGrant = readMaintenanceGrantForParent(
+      fixture.stateRoot,
+      'parent-A',
+    );
+    assert.equal(renewedGrant.state, 'available');
+    assert.notEqual(
+      renewedGrant.envelope.payload.grantId,
+      expiredGrant.envelope.payload.grantId,
+    );
+
+    const repaired = persistArtifact(
+      fixture,
+      intervention.childWorkspace.childWorkspacePath,
+      true,
+      'engine-healthy-second',
+    );
+    const second = dispatchBootstrapInterventionCommand(
+      [
+        'engine',
+        'adopt',
+        repaired.artifact.artifactId,
+        '--into',
+        'parent-A',
+        '--audit-root',
+        fixture.externalAuditRoot,
+      ],
+      fixture.repositoryRoot,
+      renewedHuman.dependencies,
+    );
+    assert.equal(second.adoptionState, 'COMMITTED');
+    assert.equal(second.parentSession?.engineDigest, repaired.executableDigest);
+    assert.equal(second.parentSession?.blocker, null);
+    assert.equal(second.parentSession?.interventionState, 'adopted');
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+test('recover accepts binding-updated journal-behind crash and adoption resumes deterministically', () => {
+  const fixture = fixtureRepository();
+  try {
+    createParentWip(fixture);
+    const initial = humanDependencies(fixture);
+    const intervention = intervene(fixture, initial.dependencies).intervention!;
+    const persisted = persistArtifact(
+      fixture,
+      intervention.childWorkspace.childWorkspacePath,
+      true,
+      'engine-binding-cas-crash',
+    );
+    const crashing = humanDependencies(fixture, {
+      afterBindingUpdatedBeforeJournal() {
+        throw new Error('simulated binding CAS crash');
+      },
+    });
+    assert.throws(
+      () =>
+        dispatchBootstrapInterventionCommand(
+          [
+            'engine',
+            'adopt',
+            persisted.artifact.artifactId,
+            '--into',
+            'parent-A',
+            '--audit-root',
+            fixture.externalAuditRoot,
+          ],
+          fixture.repositoryRoot,
+          crashing.dependencies,
+        ),
+      /simulated binding CAS crash/,
+    );
+    const adoptions = fs.readdirSync(path.join(fixture.stateRoot, 'adoptions'));
+    assert.equal(adoptions.length, 1);
+    const txId = adoptionTransactionIdForTest(
+      'parent-A',
+      persisted.artifact.artifactId,
+    );
+    const recovered = dispatchBootstrapInterventionCommand(
+      ['recover', txId],
+      fixture.repositoryRoot,
+      humanDependencies(fixture).dependencies,
+    );
+    assert.equal(recovered.adoptionState, 'PARENT_CHECKPOINTED');
+    assert.equal(recovered.decision?.action, 'update-engine-binding');
+    assert.equal(
+      recovered.parentSession?.engineDigest,
+      persisted.executableDigest,
+    );
+    const resumed = dispatchBootstrapInterventionCommand(
+      [
+        'engine',
+        'adopt',
+        persisted.artifact.artifactId,
+        '--into',
+        'parent-A',
+        '--audit-root',
+        fixture.externalAuditRoot,
+      ],
+      fixture.repositoryRoot,
+      humanDependencies(fixture).dependencies,
+    );
+    assert.equal(resumed.adoptionState, 'COMMITTED');
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+test('human revoke durably abandons a rolled-back intervention and clears the active projection', () => {
+  const fixture = fixtureRepository();
+  try {
+    createParentWip(fixture);
+    const human = humanDependencies(fixture);
+    const intervention = intervene(fixture, human.dependencies).intervention!;
+    const unhealthy = persistArtifact(
+      fixture,
+      intervention.childWorkspace.childWorkspacePath,
+      false,
+      'engine-abandoned',
+    );
+    const rolledBack = dispatchBootstrapInterventionCommand(
+      [
+        'engine',
+        'adopt',
+        unhealthy.artifact.artifactId,
+        '--into',
+        'parent-A',
+        '--audit-root',
+        fixture.externalAuditRoot,
+      ],
+      fixture.repositoryRoot,
+      human.dependencies,
+    );
+    assert.equal(rolledBack.adoptionState, 'ENGINE_BINDING_ROLLED_BACK');
+    assert.equal(fs.existsSync(rolledBack.bindingPath!), true);
+
+    const revokeArgs = [
+      'change',
+      'revoke-intervention',
+      'parent-A',
+      '--reason',
+      'Maintainer abandoned the failed repair.',
+    ];
+    assert.throws(
+      () =>
+        dispatchBootstrapInterventionCommand(
+          revokeArgs,
+          fixture.repositoryRoot,
+          humanDependencies(fixture, {
+            afterAbandonmentIntentPersisted() {
+              throw new Error('simulated abandonment crash');
+            },
+          }).dependencies,
+        ),
+      /simulated abandonment crash/,
+    );
+    assert.equal(fs.existsSync(rolledBack.bindingPath!), true);
+    assert.equal(
+      readPersistedIntervention(fixture.stateRoot, 'parent-A').parent.blocker
+        ?.kind,
+      'harness-intervention',
+    );
+    assert.equal(
+      readMaintenanceGrantForParent(fixture.stateRoot, 'parent-A').state,
+      'revoked',
+    );
+    const revoked = dispatchBootstrapInterventionCommand(
+      revokeArgs,
+      fixture.repositoryRoot,
+      human.dependencies,
+    );
+    assert.equal(revoked.effectsPerformed, true);
+    assert.equal(fs.existsSync(rolledBack.bindingPath!), false);
+    assert.throws(
+      () => readPersistedIntervention(fixture.stateRoot, 'parent-A'),
+      hasCode('INTERVENTION_PERSISTENCE_NOT_FOUND'),
+    );
+    assert.equal(
+      readMaintenanceGrantForParent(fixture.stateRoot, 'parent-A').state,
+      'revoked',
+    );
+    const replay = dispatchBootstrapInterventionCommand(
+      revokeArgs,
+      fixture.repositoryRoot,
+      human.dependencies,
+    );
+    assert.equal(replay.effectsPerformed, false);
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+function adoptionTransactionIdForTest(
+  parentChangeId: string,
+  artifactId: `sha256:${string}`,
+): string {
+  return `adoption-${crypto
+    .createHash('sha256')
+    .update(`local-engine-adoption\0${parentChangeId}\0${artifactId}`)
+    .digest('hex')}`;
+}

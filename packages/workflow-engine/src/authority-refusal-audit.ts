@@ -107,7 +107,12 @@ export function recordAuthorityRefusal(
       outcomeDigest,
       errorCode: error.code,
     },
-    options.serviceHooks,
+    // The refusal is stamped with the caller's clock, so the ledger has to
+    // judge it against the same one; reading a different clock would make it
+    // reject the record as implausibly dated and lose the refusal evidence.
+    options.serviceHooks?.now !== undefined || options.now === undefined
+      ? options.serviceHooks
+      : { ...options.serviceHooks, now: () => exactDate(options.now!) },
   );
   options.onRecord?.(entry);
   return entry;

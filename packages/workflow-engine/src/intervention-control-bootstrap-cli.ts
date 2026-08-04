@@ -16,6 +16,8 @@ import {
   type AuthorityAuditResult,
 } from './authority-audit-ledger.ts';
 import {
+  abandonPersistedIntervention,
+  assertPersistedInterventionAbandonable,
   capturePersistedWipIntervention,
   discoverBootstrapUntrackedAllowlist,
   executePersistedAdoptionStep,
@@ -23,6 +25,7 @@ import {
   localEngineArtifactPath,
   materializeInterventionChildWorktree,
   readLocalEngineBinding,
+  rebindLocalEngineAfterRolledBackAdoption,
   type BootstrapDependencies,
   type LocalEngineBinding,
 } from './intervention-control-bootstrap.ts';
@@ -45,6 +48,7 @@ import {
   type Sha256Digest,
 } from './intervention-control.ts';
 import {
+  buildAndPersistInterventionEngineArtifact,
   maintenanceApprovalSummary,
   maintenanceGrantId,
   persistMaintenanceGrantRecord,
@@ -53,6 +57,7 @@ import {
   revokeMaintenanceGrantForParent,
   terminalizeExpiredMaintenanceGrantForParent,
   type MaintenanceApprovalSummary,
+  type PersistedInterventionEngineArtifact,
   type PersistedMaintenanceGrantRecord,
 } from './intervention-maintenance.ts';
 import type { MaintainerSignerProvider } from './maintainer-signer.ts';
@@ -64,6 +69,7 @@ export type BootstrapInterventionCliAction =
   | 'intervene'
   | 'revoke-intervention'
   | 'engine-adopt'
+  | 'engine-build-artifact'
   | 'status'
   | 'checkpoint'
   | 'worktree'
@@ -91,6 +97,8 @@ export interface BootstrapInterventionCliDependencies extends BootstrapDependenc
     afterMaintenanceGrantPersisted?: () => void;
     afterAdoptionStep?: () => void;
     afterAuthorityAuditRecorded?: () => void;
+    afterBindingUpdatedBeforeJournal?: () => void;
+    afterAbandonmentIntentPersisted?: () => void;
   };
 }
 
@@ -109,6 +117,7 @@ export interface BootstrapInterventionCliResult {
   adoption: PersistedEngineAdoptionRecord | null;
   parentSession: LocalEngineBinding | null;
   decision: EngineAdoptionRecoveryDecision | null;
+  engineArtifact: PersistedInterventionEngineArtifact | null;
   effectsPerformed: boolean;
 }
 
@@ -244,6 +253,11 @@ export function dispatchBootstrapInterventionCommand(
         ExitCode.unsafeEnvironment,
       );
     }
+    const bindingPath = parentBindingPath(stateRoot, argv[2]);
+    assertPersistedInterventionAbandonable(stateRoot, bindingPath, {
+      parentChangeId: argv[2],
+      grantId: before.envelope.payload.grantId,
+    });
     const revoked = revokeMaintenanceGrantForParent(
       repository.repositoryRoot,
       stateRoot,
@@ -256,14 +270,55 @@ export function dispatchBootstrapInterventionCommand(
         testAfterAudit: dependencies.testHooks?.afterAuthorityAuditRecorded,
       },
     );
+    const abandoned = abandonPersistedIntervention(stateRoot, bindingPath, {
+      parentChangeId: argv[2],
+      grantId: revoked.envelope.payload.grantId,
+      grantRecordDigest: revoked.recordDigest,
+      reason: revoked.revocationReason!,
+      at: revoked.revokedAt!,
+      testAfterIntentPersisted:
+        dependencies.testHooks?.afterAbandonmentIntentPersisted,
+    });
     return result({
       action: 'revoke-intervention',
       stateRoot,
-      bindingPath: parentBindingPath(stateRoot, argv[2]),
+      bindingPath,
       parentChangeId: argv[2],
       checkpointId: revoked.checkpointId,
-      effectsPerformed: before.state !== 'revoked',
+      effectsPerformed:
+        before.state !== 'revoked' || abandoned.effectsPerformed,
     });
+  }
+
+  if (
+    argv[0] === 'engine' &&
+    argv[1] === 'build-artifact' &&
+    argv.length === 11 &&
+    isNonEmpty(argv[2]) &&
+    argv[3] === '--for' &&
+    isNonEmpty(argv[4]) &&
+    argv[5] === '--protocol-version' &&
+    isPositiveInteger(argv[6]) &&
+    argv[7] === '--policy-schema-version' &&
+    isPositiveInteger(argv[8]) &&
+    argv[9] === '--audit-root' &&
+    isNonEmpty(argv[10])
+  ) {
+    const auditScope = maintenanceAuditScope(
+      repository.repositoryRoot,
+      repository.gitCommonDirectory,
+      argv[10],
+    );
+    return dispatchPersistedEngineArtifactBuild(
+      argv[2],
+      argv[4],
+      Number.parseInt(argv[6], 10),
+      Number.parseInt(argv[8], 10),
+      stateRoot,
+      auditScope,
+      dependencies,
+      argv,
+    );
   }
 
   if (
@@ -607,12 +662,115 @@ export function bootstrapInterventionUsage(): string {
     'Usage:',
     '  pnpm workflow change intervene <parent-change-id> --reason <text> --audit-root <absolute-path> [--json]',
     '  pnpm workflow change revoke-intervention <parent-change-id> --reason <text> [--json]',
+    '  pnpm workflow engine build-artifact <absolute-executable-path> --for <parent-change-id> --protocol-version <positive-integer> --policy-schema-version <positive-integer> --audit-root <absolute-path> [--json]',
     '  pnpm workflow engine adopt <artifact-id> --into <parent-change-id> --audit-root <absolute-path> [--json]',
     '  pnpm workflow intervention status <parent-change-id> [--tx <tx-id>] [--json]',
     '  pnpm workflow intervention recover <tx-id> [--json]',
     'Caller-supplied maintenance envelopes and adoption manifests are disabled.',
     'Global engine promotion is intentionally unavailable from this command.',
   ].join('\n');
+}
+
+function dispatchPersistedEngineArtifactBuild(
+  executablePath: string,
+  parentChangeId: string,
+  protocolVersion: number,
+  policySchemaVersion: number,
+  stateRoot: string,
+  auditScope: AuthorityAuditLedgerScope,
+  dependencies: BootstrapInterventionCliDependencies,
+  argv: readonly string[],
+): BootstrapInterventionCliResult {
+  const intervention = readPersistedIntervention(stateRoot, parentChangeId);
+  let grant = readMaintenanceGrantForParent(stateRoot, parentChangeId);
+  assertMaintenanceAuditBinding(
+    grant,
+    auditScope,
+    auditScope.repositoryRoot,
+    dependencies,
+    argv,
+  );
+  grant = terminalizeExpiredMaintenanceGrantForParent(
+    stateRoot,
+    parentChangeId,
+    cliNow(dependencies),
+  );
+  if (grant.state !== 'available') {
+    refuseMaintenanceCommand(
+      dependencies,
+      auditScope.repositoryRoot,
+      argv,
+      grant,
+      workflowError(
+        grant.state === 'expired'
+          ? 'MAINTENANCE_GRANT_EXPIRED'
+          : 'MAINTENANCE_GRANT_REVOKED',
+        'Only active maintenance authority can build an engine artifact.',
+        grant.state === 'expired' ? ExitCode.staleState : ExitCode.conflict,
+      ),
+    );
+  }
+  try {
+    verifyHarnessMaintenanceGrant(grant.envelope, {
+      now: cliNow(dependencies),
+      parent: intervention.parent,
+      relationship: intervention.relationship,
+      checkpoint: intervention.checkpoint,
+      verifyHumanSignature: requireMaintenanceVerifier(dependencies),
+    });
+    if (
+      !grant.envelope.payload.scope.operations.includes('build-engine-artifact')
+    ) {
+      throw workflowError(
+        'MAINTENANCE_GRANT_BUILD_NOT_AUTHORIZED',
+        'Maintenance authority does not permit engine artifact builds.',
+        ExitCode.guard,
+      );
+    }
+    const engineArtifact = buildAndPersistInterventionEngineArtifact(
+      stateRoot,
+      {
+        parentChangeId,
+        executablePath,
+        protocolVersion,
+        policySchemaVersion,
+        now: cliNow(dependencies),
+      },
+    );
+    recordMaintenanceAudit(dependencies, {
+      scope: auditScope,
+      actorIdentity: grant.envelope.payload.humanSigner,
+      argv,
+      at: engineArtifact.createdAt,
+      parentChangeId,
+      grantDigest: digestCanonical(grant.envelope),
+      checkpointId: intervention.checkpoint.checkpointId,
+      result: 'succeeded',
+      outcomeDigest: engineArtifact.recordDigest,
+    });
+    return result({
+      action: 'engine-build-artifact',
+      stateRoot,
+      bindingPath: parentBindingPath(stateRoot, parentChangeId),
+      parentChangeId,
+      checkpointId: intervention.checkpoint.checkpointId,
+      workspaceId: intervention.childWorkspace.workspaceId,
+      intervention,
+      engineArtifact,
+      effectsPerformed: true,
+    });
+  } catch (error) {
+    if (error instanceof WorkflowError) {
+      refuseMaintenanceCommand(
+        dependencies,
+        auditScope.repositoryRoot,
+        argv,
+        grant,
+        error,
+      );
+    }
+    throw error;
+  }
 }
 
 function dispatchHumanIntervention(
@@ -624,8 +782,10 @@ function dispatchHumanIntervention(
   dependencies: BootstrapInterventionCliDependencies,
   argv: readonly string[],
 ): BootstrapInterventionCliResult {
-  const interventionChangeId = interventionId(parentChangeId, reason);
   let intervention = readOptionalIntervention(stateRoot, parentChangeId);
+  const interventionChangeId =
+    intervention?.relationship.interventionChangeId ??
+    interventionId(parentChangeId, reason);
   let grant =
     intervention === null
       ? null
@@ -698,19 +858,22 @@ function dispatchHumanIntervention(
       cliNow(dependencies),
     );
     if (grant.state === 'expired') {
-      refuseMaintenanceCommand(
-        dependencies,
-        repositoryRoot,
-        argv,
-        grant,
-        workflowError(
-          'MAINTENANCE_GRANT_EXPIRED',
-          'Maintenance grant has expired.',
-          ExitCode.staleState,
-        ),
-      );
+      if (grant.summary.reason !== reason) {
+        refuseMaintenanceCommand(
+          dependencies,
+          repositoryRoot,
+          argv,
+          grant,
+          workflowError(
+            'INTERVENTION_REASON_BINDING_MISMATCH',
+            'Expired maintenance authority was issued for a different intervention reason.',
+            ExitCode.conflict,
+          ),
+        );
+      }
+      grant = null;
     }
-    if (grant.state === 'revoked') {
+    if (grant?.state === 'revoked') {
       refuseMaintenanceCommand(
         dependencies,
         repositoryRoot,
@@ -724,22 +887,17 @@ function dispatchHumanIntervention(
       );
     }
   }
-  if (intervention.relationship.interventionChangeId !== interventionChangeId) {
-    const error = workflowError(
-      'INTERVENTION_REASON_BINDING_MISMATCH',
-      'An existing intervention was authorized for a different reason.',
-      ExitCode.conflict,
-    );
-    if (grant !== null) {
-      refuseMaintenanceCommand(
-        dependencies,
-        repositoryRoot,
-        argv,
-        grant,
-        error,
+  if (grant === null && signer === null) {
+    signer = dependencies.maintenanceSigner ?? null;
+    presentSummary = dependencies.presentMaintenanceSummary ?? null;
+    if (!signer || !presentSummary || !dependencies.verifyHumanSignature) {
+      throw workflowError(
+        'INTERVENTION_MAINTENANCE_APPROVAL_UI_REQUIRED',
+        'Maintenance renewal requires a controlling-terminal signer, summary presenter, and trusted verifier.',
+        ExitCode.unsafeEnvironment,
       );
     }
-    throw error;
+    verifyAuthorityAuditEvents(auditScope);
   }
   const summary = maintenanceApprovalSummary({
     parentChangeId,
@@ -776,6 +934,8 @@ function dispatchHumanIntervention(
       grantId: maintenanceGrantId(
         parentChangeId,
         intervention.checkpoint.checkpointId,
+        now.toISOString(),
+        interventionChangeId,
       ),
       parentChangeId,
       interventionChangeId,
@@ -1077,7 +1237,9 @@ function interventionId(parentChangeId: string, reason: string): string {
   }
   return `intervention-${crypto
     .createHash('sha256')
-    .update(`harness-intervention\0${parentChangeId}\0${reason}`)
+    .update(
+      `harness-intervention\0${parentChangeId}\0${reason}\0${crypto.randomUUID()}`,
+    )
     .digest('hex')
     .slice(0, 24)}`;
 }
@@ -1282,6 +1444,7 @@ function recordMaintenanceAudit(
     idempotencyKey: digestCanonical({
       kind: 'maintenance-command-audit-identity.v1',
       argv: [...input.argv],
+      grantDigest: input.grantDigest,
       result: input.result,
       outcomeDigest: input.outcomeDigest,
     }),
@@ -1342,6 +1505,7 @@ function result(
     adoption: null,
     parentSession: null,
     decision: null,
+    engineArtifact: null,
     ...input,
   };
 }
@@ -1397,6 +1561,29 @@ function initializeOrVerifyParentSession(
     existing.sessionSchema !== intervention.parent.sessionSchema ||
     existing.interventionState !== 'active'
   ) {
+    const previous = recoverPersistedEngineAdoption(stateRoot, existing.txId);
+    if (
+      previous.record.journal.state === 'ENGINE_BINDING_ROLLED_BACK' &&
+      previous.record.journal.parentChangeId === intervention.parent.changeId &&
+      previous.record.journal.interventionChangeId ===
+        intervention.relationship.interventionChangeId &&
+      previous.record.journal.checkpointId ===
+        intervention.checkpoint.checkpointId &&
+      existing.engineDigest === intervention.parent.engineBinding &&
+      existing.interventionState === 'active'
+    ) {
+      return rebindLocalEngineAfterRolledBackAdoption(stateRoot, bindingPath, {
+        parentChangeId: intervention.parent.changeId,
+        interventionChangeId: intervention.relationship.interventionChangeId,
+        txId: adoption.journal.txId,
+        checkpointId: intervention.checkpoint.checkpointId,
+        engineDigest: intervention.parent.engineBinding,
+        artifactId: artifact.artifactId,
+        executableDigest: artifact.executableDigest,
+        sessionSchema: intervention.parent.sessionSchema,
+        now,
+      });
+    }
     throw workflowError(
       'INTERVENTION_BOOTSTRAP_PARENT_SESSION_CONFLICT',
       'Existing parent session metadata does not match the intervention checkpoint.',
@@ -1446,22 +1633,36 @@ function assertRecoveryParentSession(
   decision: EngineAdoptionRecoveryDecision,
   parentSession: LocalEngineBinding,
 ): void {
-  const expectedEngineDigest = [
-    'PREPARED',
-    'PARENT_CHECKPOINTED',
-    'ENGINE_BINDING_ROLLED_BACK',
-  ].includes(adoption.journal.state)
-    ? adoption.journal.fromEngineDigest
-    : adoption.journal.toEngineDigest;
-  const expectedAdopted = adoption.journal.state === 'COMMITTED';
+  const allowedEngineDigests =
+    adoption.journal.state === 'PARENT_CHECKPOINTED' ||
+    adoption.journal.state === 'ROLLBACK_REQUIRED'
+      ? new Set([
+          adoption.journal.fromEngineDigest,
+          adoption.journal.toEngineDigest,
+        ])
+      : new Set([
+          ['PREPARED', 'ENGINE_BINDING_ROLLED_BACK'].includes(
+            adoption.journal.state,
+          )
+            ? adoption.journal.fromEngineDigest
+            : adoption.journal.toEngineDigest,
+        ]);
+  const bindingMayAlreadyBeFinalized =
+    adoption.journal.state === 'HEALTHY' ||
+    adoption.journal.state === 'COMMITTED';
+  const bindingIsAdopted =
+    parentSession.interventionState === 'adopted' &&
+    parentSession.blocker === null;
   if (
     parentSession.parentChangeId !== adoption.journal.parentChangeId ||
     parentSession.interventionChangeId !==
       adoption.journal.interventionChangeId ||
     parentSession.checkpointId !== adoption.journal.checkpointId ||
-    parentSession.engineDigest !== expectedEngineDigest ||
-    (parentSession.interventionState === 'adopted') !== expectedAdopted ||
-    (parentSession.blocker === null) !== expectedAdopted ||
+    !allowedEngineDigests.has(parentSession.engineDigest) ||
+    (bindingIsAdopted && !bindingMayAlreadyBeFinalized) ||
+    (!bindingIsAdopted && adoption.journal.state === 'COMMITTED') ||
+    (parentSession.interventionState === 'adopted') !==
+      (parentSession.blocker === null) ||
     (decision.blockerCleared &&
       (parentSession.blocker !== null ||
         parentSession.interventionState !== 'adopted' ||
@@ -1642,6 +1843,23 @@ function isNonEmpty(value: unknown): value is string {
   return (
     typeof value === 'string' && value.trim() === value && value.length > 0
   );
+}
+
+function isPositiveInteger(value: unknown): value is string {
+  return typeof value === 'string' && /^[1-9][0-9]*$/.test(value);
+}
+
+function requireMaintenanceVerifier(
+  dependencies: BootstrapInterventionCliDependencies,
+): NonNullable<BootstrapInterventionCliDependencies['verifyHumanSignature']> {
+  if (!dependencies.verifyHumanSignature) {
+    throw workflowError(
+      'INTERVENTION_MAINTENANCE_VERIFIER_REQUIRED',
+      'Maintenance artifact build requires a trusted signature verifier.',
+      ExitCode.unsafeEnvironment,
+    );
+  }
+  return dependencies.verifyHumanSignature;
 }
 
 function invalidRequest(): WorkflowError {

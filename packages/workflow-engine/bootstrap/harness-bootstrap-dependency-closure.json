@@ -8,7 +8,7 @@
     {
       "path": "bootstrap/recovery-runtime/bootstrap/built-in-engine-closure-pin.js",
       "mode": "100644",
-      "digest": "sha256:3df33f7dc94b1aebe54c42b19e44ad2ae6cb485341c87c351e1fdef87d9e7d9e"
+      "digest": "sha256:1b29a9dc6f6a55b7b5dda8b13b743669e3a961bb1f253568b1a68f512d2711d4"
     },
     {
       "path": "bootstrap/recovery-runtime/src/actor-identity.js",
@@ -33,7 +33,7 @@
     {
       "path": "bootstrap/recovery-runtime/src/authority-refusal-audit.js",
       "mode": "100644",
-      "digest": "sha256:b075a4b6deaaaa4da753d0ccf7c851777533df68de4ab54d6acd9782b28c7719"
+      "digest": "sha256:81fdb434b0cf6f26474d549b2a553687e6b70bf13ecb89f4ee3a04fe8284826b"
     },
     {
       "path": "bootstrap/recovery-runtime/src/canonical-json.js",
@@ -153,17 +153,17 @@
     {
       "path": "bootstrap/recovery-runtime/src/intervention-control-bootstrap-cli.js",
       "mode": "100644",
-      "digest": "sha256:c5b52df01586245b343048319e02353649f06ad156d269dff84aa7bcc156ef11"
+      "digest": "sha256:806b60a62e5ace4d4930f53f3fafed24c6be8398a5c67949b3d30d4dce09e37e"
     },
     {
       "path": "bootstrap/recovery-runtime/src/intervention-control-bootstrap.js",
       "mode": "100644",
-      "digest": "sha256:69e18b82ed56b6426b1979344f92b1364155d8094ff5f140c714125b12ea82ff"
+      "digest": "sha256:a4139075f03702f4f1e5ad71beeacc46a1f6aeff316f60af2150d1d22dc3ebfe"
     },
     {
       "path": "bootstrap/recovery-runtime/src/intervention-control-persistence.js",
       "mode": "100644",
-      "digest": "sha256:a2f6daf671df59883d994c1d804f96e9dae646ba90215aecd2c9475d7fe5d2ea"
+      "digest": "sha256:df0b11d1b09b8bc218b39ba9a8c58caed617f9fb41f1e9374cdeb9edac503e85"
     },
     {
       "path": "bootstrap/recovery-runtime/src/intervention-control-updater.js",
@@ -178,7 +178,7 @@
     {
       "path": "bootstrap/recovery-runtime/src/intervention-maintenance.js",
       "mode": "100644",
-      "digest": "sha256:e19517aa9efa5b0bb8803655e4f63fd12a1cea49ddedfedf15a4d0e26d8c6b7f"
+      "digest": "sha256:169d448e81e816e2d15f2d54d5b09cc2fe6bf9c48e6074b3ed2a2321fe65fab3"
     },
     {
       "path": "bootstrap/recovery-runtime/src/investigation-applicability.js",
@@ -323,7 +323,7 @@
     {
       "path": "bootstrap/recovery-runtime/src/task-mandate.js",
       "mode": "100644",
-      "digest": "sha256:bc207f3745add8d87bc27bd242b4d5987c377be9e80452447ef2ab6592ef73eb"
+      "digest": "sha256:67a922830b5a5e434d9a21a5f9eded738e2682b9db8dbc518581c08c03508e09"
     },
     {
       "path": "bootstrap/recovery-runtime/src/tracked-tree-reader.js",

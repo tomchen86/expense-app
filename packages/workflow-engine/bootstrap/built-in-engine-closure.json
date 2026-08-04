@@ -91,7 +91,7 @@
     {
       "path": "src/authority-refusal-audit.ts",
       "mode": "100644",
-      "digest": "sha256:358c3a2a3a570958b9da0c3d3f43bc27593ce72a678874e643ebc3155c3de207"
+      "digest": "sha256:a6e594abc539c353a8581b02aa04a57a13ca81ba5ad6a06850438cbd8a605473"
     },
     {
       "path": "src/bootstrap-task-exemption.ts",
@@ -191,7 +191,7 @@
     {
       "path": "src/cli.ts",
       "mode": "100644",
-      "digest": "sha256:8d800a1de080f2a5b27f3523c5cabfe8f20cf07f49c00e74871dd6ac83d65877"
+      "digest": "sha256:1e115fc679f5630f268c1f67f15625c9cac665129601e5413a8b406441a0a693"
     },
     {
       "path": "src/codex-provider-adapter.ts",
@@ -386,12 +386,12 @@
     {
       "path": "src/intervention-control-bootstrap-cli.ts",
       "mode": "100644",
-      "digest": "sha256:2948d6b183a6907f4ec2992400288f6e616cdb169e5e97c3a11786f948aef0f3"
+      "digest": "sha256:3acb9324f50f4c65f5807a80e94a48e2bee4e2e7b544aacea5236db5a70f6dce"
     },
     {
       "path": "src/intervention-control-bootstrap.ts",
       "mode": "100644",
-      "digest": "sha256:c5911684ff35976a8b57ad0fad80196ff6eb40a7df9cdb3282bdc21ac90d550b"
+      "digest": "sha256:b91fef52e31138ea1962d89db4ad974d043e1abdeb76567e4409bf0b8e3131dd"
     },
     {
       "path": "src/intervention-control-cli.ts",
@@ -401,7 +401,7 @@
     {
       "path": "src/intervention-control-persistence.ts",
       "mode": "100644",
-      "digest": "sha256:04f21dc561b3cfc6e7036864993f34d602aef3681a7af24075c39abcd36ee73b"
+      "digest": "sha256:b2150045a43738855245def7fc16e798c2bda01c498548b74633eb0b46e9c55c"
     },
     {
       "path": "src/intervention-control-updater-cli.ts",
@@ -421,7 +421,7 @@
     {
       "path": "src/intervention-maintenance.ts",
       "mode": "100644",
-      "digest": "sha256:1b338f3625e7c36769a127f4c87d2c7fa284fb8b4e8ec9ff9a16db42a882629d"
+      "digest": "sha256:7acacf27caa31efbe57792baa762216a29807650731bb8760ea1fd3c9776e005"
     },
     {
       "path": "src/investigation-applicability.ts",
@@ -871,7 +871,7 @@
     {
       "path": "src/task-mandate.ts",
       "mode": "100644",
-      "digest": "sha256:433219d4bcd0993010a0b56d7e58e2cf4e6fe4ebe8dfe6c0f470ff70e68943a4"
+      "digest": "sha256:3f4ba9e59bc20e94438f024c1985ddf24dfd2dc0ea61634a337607e666660140"
     },
     {
       "path": "src/task-projection.ts",

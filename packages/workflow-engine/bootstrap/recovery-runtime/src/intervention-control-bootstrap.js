@@ -6,7 +6,7 @@ import { canonicalJson } from './canonical-json.js';
 import { ExitCode, workflowError } from './errors.js';
 import { ensurePlainDirectory } from './filesystem-safety.js';
 import { createWipCheckpoint, verifyHarnessMaintenanceGrant, } from './intervention-control.js';
-import { advancePersistedEngineAdoption, interventionControlPersistencePaths, persistInterventionPlan, readPersistedIntervention, recoverPersistedEngineAdoption, rollbackPersistedEngineAdoption, } from './intervention-control-persistence.js';
+import { advancePersistedEngineAdoption, interventionRecordPath, interventionControlPersistencePaths, persistInterventionPlan, readPersistedIntervention, recoverPersistedEngineAdoption, rollbackPersistedEngineAdoption, } from './intervention-control-persistence.js';
 const MAX_PATCH_BYTES = 16 * 1024 * 1024;
 const MAX_UNTRACKED_FILE_BYTES = 4 * 1024 * 1024;
 const MAX_UNTRACKED_TOTAL_BYTES = 16 * 1024 * 1024;
@@ -261,29 +261,40 @@ export function restorePersistedWipBundle(storageRoot, input, dependencies) {
     if (gitText(repositoryRoot, ['rev-parse', 'HEAD']).trim() !== bundle.baseOid) {
         throw workflowError('BOOTSTRAP_RESTORE_BASE_MISMATCH', 'Parent HEAD changed since checkpoint capture.', ExitCode.staleState);
     }
-    if (gitBuffer(repositoryRoot, [
-        'status',
-        '--porcelain=v1',
-        '-z',
-        '--untracked-files=all',
-    ]).length !== 0) {
+    const receiptPath = bootstrapReceiptPath(storageRoot, `restore-${bundle.checkpointId}`);
+    if (fs.existsSync(receiptPath)) {
+        const receipt = readBootstrapReceipt(receiptPath);
+        assertRestoreReceipt(receipt, input.parentChangeId, repositoryRoot, bundle);
+        verifyRestoredBundle(repositoryRoot, sessionPath, bundle);
+        return receipt;
+    }
+    const alreadyRestored = restoredBundleMatches(repositoryRoot, sessionPath, bundle);
+    if (!alreadyRestored &&
+        gitBuffer(repositoryRoot, [
+            'status',
+            '--porcelain=v1',
+            '-z',
+            '--untracked-files=all',
+        ]).length !== 0) {
         throw workflowError('BOOTSTRAP_RESTORE_WORKTREE_NOT_CLEAN', 'WIP restore requires the exact clean checkpoint base.', ExitCode.conflict);
     }
-    const priorSession = readOptionalPlainFile(sessionPath, MAX_SESSION_BYTES);
-    let restoreFailure;
-    try {
-        applyGitPatch(repositoryRoot, decodeCanonicalBase64(bundle.tracked.workingTreePatchBase64), false);
-        applyGitPatch(repositoryRoot, decodeCanonicalBase64(bundle.tracked.stagedPatchBase64), true);
-        restoreUntrackedFiles(repositoryRoot, bundle.untracked);
-        writePrivateFileAtomic(sessionPath, decodeCanonicalBase64(bundle.session.contentBase64));
-        verifyRestoredBundle(repositoryRoot, sessionPath, bundle);
-    }
-    catch (error) {
-        restoreFailure = error;
-    }
-    if (restoreFailure !== undefined) {
-        rollbackFailedRestore(repositoryRoot, bundle, sessionPath, priorSession);
-        throw restoreFailure;
+    if (!alreadyRestored) {
+        const priorSession = readOptionalPlainFile(sessionPath, MAX_SESSION_BYTES);
+        let restoreFailure;
+        try {
+            applyGitPatch(repositoryRoot, decodeCanonicalBase64(bundle.tracked.workingTreePatchBase64), false);
+            applyGitPatch(repositoryRoot, decodeCanonicalBase64(bundle.tracked.stagedPatchBase64), true);
+            restoreUntrackedFiles(repositoryRoot, bundle.untracked);
+            writePrivateFileAtomic(sessionPath, decodeCanonicalBase64(bundle.session.contentBase64));
+            verifyRestoredBundle(repositoryRoot, sessionPath, bundle);
+        }
+        catch (error) {
+            restoreFailure = error;
+        }
+        if (restoreFailure !== undefined) {
+            rollbackFailedRestore(repositoryRoot, bundle, sessionPath, priorSession);
+            throw restoreFailure;
+        }
     }
     const receiptPayload = {
         kind: 'harness-wip-restore-receipt.v1',
@@ -292,7 +303,7 @@ export function restorePersistedWipBundle(storageRoot, input, dependencies) {
         parentChangeId: input.parentChangeId,
         repositoryRoot,
         restoredAt: now.toISOString(),
-        effectsPerformed: true,
+        effectsPerformed: !alreadyRestored,
     };
     const receipt = {
         ...receiptPayload,
@@ -486,6 +497,97 @@ export function readLocalEngineBinding(bindingPath) {
     exactIso(binding.updatedAt, 'BOOTSTRAP_BINDING_CORRUPT');
     return binding;
 }
+export function assertPersistedInterventionAbandonable(storageRoot, bindingPath, input) {
+    const existingIntent = readOptionalAbandonmentIntent(storageRoot, input.parentChangeId, input.grantId);
+    if (existingIntent !== null)
+        return;
+    const intervention = readPersistedIntervention(storageRoot, input.parentChangeId);
+    const localBinding = readOptionalLocalEngineBinding(bindingPath);
+    assertAbandonableProjection(intervention, localBinding, storageRoot);
+}
+export function abandonPersistedIntervention(storageRoot, bindingPath, input) {
+    assertDigest(input.grantRecordDigest, 'INTERVENTION_ABANDONMENT_INVALID');
+    assertNonEmpty(input.reason, 'INTERVENTION_ABANDONMENT_INVALID');
+    exactIso(input.at, 'INTERVENTION_ABANDONMENT_INVALID');
+    const safeBindingPath = assertPersistenceOwnedPath(storageRoot, bindingPath, 'BOOTSTRAP_BINDING_OUTSIDE_STATE');
+    const paths = abandonmentPaths(storageRoot, input.parentChangeId, input.grantId);
+    const existingIntent = readOptionalAbandonmentIntent(storageRoot, input.parentChangeId, input.grantId);
+    let intent;
+    let effectsPerformed = false;
+    if (existingIntent === null) {
+        const intervention = readPersistedIntervention(storageRoot, input.parentChangeId);
+        const localBinding = readOptionalLocalEngineBinding(safeBindingPath);
+        assertAbandonableProjection(intervention, localBinding, storageRoot);
+        const payload = {
+            kind: 'intervention-abandonment-intent.v1',
+            parentChangeId: input.parentChangeId,
+            grantId: input.grantId,
+            grantRecordDigest: input.grantRecordDigest,
+            reason: input.reason,
+            abandonedAt: input.at,
+            intervention: structuredClone(intervention),
+            localBinding: localBinding === null ? null : structuredClone(localBinding),
+        };
+        intent = {
+            ...payload,
+            intentDigest: canonicalDigest(payload),
+        };
+        createPrivateFileExclusive(paths.intent, Buffer.from(`${canonicalJson(intent)}\n`));
+        effectsPerformed = true;
+        input.testAfterIntentPersisted?.();
+    }
+    else {
+        intent = existingIntent;
+        if (intent.grantRecordDigest !== input.grantRecordDigest ||
+            intent.reason !== input.reason ||
+            intent.abandonedAt !== input.at) {
+            throw workflowError('INTERVENTION_ABANDONMENT_CONFLICT', 'Intervention abandonment already has a different human authorization.', ExitCode.conflict);
+        }
+    }
+    if (fs.existsSync(paths.receipt)) {
+        const receipt = readAbandonmentReceipt(paths.receipt, intent);
+        return { intent, receipt, effectsPerformed: false };
+    }
+    if (intent.localBinding !== null) {
+        const observedBinding = readOptionalLocalEngineBinding(safeBindingPath);
+        if (observedBinding !== null) {
+            if (observedBinding.recordDigest !== intent.localBinding.recordDigest) {
+                throw workflowError('INTERVENTION_ABANDONMENT_BINDING_DRIFT', 'Parent engine binding changed after abandonment was authorized.', ExitCode.staleState);
+            }
+            fs.unlinkSync(safeBindingPath);
+            fsyncDirectory(path.dirname(safeBindingPath));
+            effectsPerformed = true;
+        }
+    }
+    else if (readOptionalLocalEngineBinding(safeBindingPath) !== null) {
+        throw workflowError('INTERVENTION_ABANDONMENT_BINDING_DRIFT', 'A parent engine binding appeared after abandonment was authorized.', ExitCode.staleState);
+    }
+    const activePath = interventionRecordPath(storageRoot, input.parentChangeId);
+    if (fs.existsSync(activePath)) {
+        const observed = readPersistedIntervention(storageRoot, input.parentChangeId);
+        if (observed.recordDigest !== intent.intervention.recordDigest) {
+            throw workflowError('INTERVENTION_ABANDONMENT_RECORD_DRIFT', 'Active intervention changed after abandonment was authorized.', ExitCode.staleState);
+        }
+        fs.unlinkSync(activePath);
+        fsyncDirectory(path.dirname(activePath));
+        effectsPerformed = true;
+    }
+    const receiptPayload = {
+        kind: 'intervention-abandonment-receipt.v1',
+        parentChangeId: input.parentChangeId,
+        grantId: input.grantId,
+        intentDigest: intent.intentDigest,
+        completedAt: input.at,
+        blockerCleared: true,
+        bindingCleared: intent.localBinding !== null,
+    };
+    const receipt = {
+        ...receiptPayload,
+        receiptDigest: canonicalDigest(receiptPayload),
+    };
+    createPrivateFileExclusive(paths.receipt, Buffer.from(`${canonicalJson(receipt)}\n`));
+    return { intent, receipt, effectsPerformed };
+}
 export function executePersistedAdoptionStep(storageRoot, input, dependencies) {
     const verifier = requireHumanVerifier(dependencies);
     const now = bootstrapNow(dependencies);
@@ -552,9 +654,16 @@ export function executePersistedAdoptionStep(storageRoot, input, dependencies) {
         case 'checkpoint-parent': {
             const bundle = readPersistedWipBundle(storageRoot, current.journal.checkpointId);
             assertCheckpointMatchesBundle(intervention, bundle);
+            const restore = restorePersistedWipBundle(storageRoot, {
+                parentChangeId: current.journal.parentChangeId,
+                repositoryRoot: intervention.childWorkspace.parentWorkspacePath,
+                sessionSnapshotPath: bundle.session.snapshotPath,
+                maintenanceGrantEnvelope: current.maintenanceGrantEnvelope,
+            }, dependencies);
             evidence = {
                 action: 'checkpoint-parent',
                 bundleDigest: bundle.bundleDigest,
+                restoreReceiptDigest: restore.receiptDigest,
             };
             next = advancePersistedEngineAdoption(storageRoot, {
                 txId: input.txId,
@@ -567,6 +676,7 @@ export function executePersistedAdoptionStep(storageRoot, input, dependencies) {
         case 'update-engine-binding': {
             const updated = ensureBindingEngine(bindingPath, binding, current.journal.fromEngineDigest, current.journal.toEngineDigest, input.at);
             effectsPerformed = updated.recordDigest !== binding.recordDigest;
+            dependencies.testHooks?.afterBindingUpdatedBeforeJournal?.();
             evidence = {
                 action: 'update-engine-binding',
                 beforeBindingDigest: binding.recordDigest,
@@ -681,6 +791,38 @@ export function executePersistedAdoptionStep(storageRoot, input, dependencies) {
     persistBootstrapReceipt(storageRoot, `adoption-${input.txId}-${beforeJournalDigest}-${recovered.decision.action}`, receipt);
     return { record: next, receipt };
 }
+export function rebindLocalEngineAfterRolledBackAdoption(storageRoot, bindingPath, input) {
+    const current = readLocalEngineBinding(bindingPath);
+    if (current.parentChangeId !== input.parentChangeId ||
+        current.interventionChangeId !== input.interventionChangeId ||
+        current.checkpointId !== input.checkpointId ||
+        current.engineDigest !== input.engineDigest ||
+        current.sessionSchema !== input.sessionSchema ||
+        current.interventionState !== 'active' ||
+        !isHarnessInterventionBlocker(current.blocker, input.checkpointId, input.interventionChangeId)) {
+        throw workflowError('BOOTSTRAP_PARENT_SESSION_RETRY_MISMATCH', 'A rolled-back parent session cannot be rebound to this repair attempt.', ExitCode.staleState);
+    }
+    const now = exactDate(input.now, 'BOOTSTRAP_CLOCK_INVALID');
+    const executablePath = localEngineArtifactPath(storageRoot, input.artifactId);
+    const { recordDigest: _recordDigest, ...payload } = current;
+    const nextPayload = {
+        ...payload,
+        txId: input.txId,
+        activeArtifact: {
+            artifactId: input.artifactId,
+            executableDigest: input.executableDigest,
+            executablePath,
+        },
+        generation: current.generation + 1,
+        updatedAt: now.toISOString(),
+    };
+    const next = {
+        ...nextPayload,
+        recordDigest: canonicalDigest(nextPayload),
+    };
+    replacePrivateFileAtomic(assertPersistenceOwnedPath(storageRoot, bindingPath, 'BOOTSTRAP_BINDING_OUTSIDE_STATE'), Buffer.from(`${canonicalJson(next)}\n`), current.recordDigest);
+    return next;
+}
 function assertCheckpointMatchesBundle(intervention, bundle) {
     const checkpoint = intervention.checkpoint;
     if (bundle.checkpointId !== checkpoint.checkpointId ||
@@ -728,6 +870,26 @@ function verifyRestoredBundle(repositoryRoot, sessionPath, bundle) {
             throw workflowError('BOOTSTRAP_RESTORE_VERIFICATION_FAILED', 'Restored untracked file digest mismatch.', ExitCode.verification);
         }
     }
+}
+function restoredBundleMatches(repositoryRoot, sessionPath, bundle) {
+    try {
+        verifyRestoredBundle(repositoryRoot, sessionPath, bundle);
+        return true;
+    }
+    catch {
+        return false;
+    }
+}
+function assertRestoreReceipt(receipt, parentChangeId, repositoryRoot, bundle) {
+    if (receipt.kind !== 'harness-wip-restore-receipt.v1' ||
+        receipt.checkpointId !== bundle.checkpointId ||
+        receipt.bundleDigest !== bundle.bundleDigest ||
+        receipt.parentChangeId !== parentChangeId ||
+        receipt.repositoryRoot !== repositoryRoot ||
+        typeof receipt.effectsPerformed !== 'boolean') {
+        throw workflowError('BOOTSTRAP_RECEIPT_CORRUPT', 'WIP restore receipt does not match the persisted checkpoint.', ExitCode.verification);
+    }
+    exactIso(receipt.restoredAt, 'BOOTSTRAP_RECEIPT_CORRUPT');
 }
 function rollbackFailedRestore(repositoryRoot, bundle, sessionPath, priorSession) {
     gitBufferNoThrow(repositoryRoot, ['reset', '--hard', bundle.baseOid]);
@@ -1050,6 +1212,122 @@ function isHarnessInterventionBlocker(value, checkpointId, interventionChangeId)
         value.kind === 'harness-intervention' &&
         value.checkpointId === checkpointId &&
         value.blockedBy === interventionChangeId);
+}
+function assertAbandonableProjection(intervention, localBinding, storageRoot) {
+    if (localBinding === null)
+        return;
+    if (localBinding.parentChangeId !== intervention.parent.changeId ||
+        localBinding.interventionChangeId !==
+            intervention.relationship.interventionChangeId ||
+        localBinding.checkpointId !== intervention.checkpoint.checkpointId ||
+        localBinding.engineDigest !== intervention.checkpoint.engineDigest ||
+        localBinding.interventionState !== 'active' ||
+        !isHarnessInterventionBlocker(localBinding.blocker, intervention.checkpoint.checkpointId, intervention.relationship.interventionChangeId)) {
+        throw workflowError('INTERVENTION_ABANDONMENT_PARENT_NOT_ROLLED_BACK', 'Intervention can be abandoned only while the parent is durably bound to its checkpoint engine and blocker.', ExitCode.guard);
+    }
+    const adoption = recoverPersistedEngineAdoption(storageRoot, localBinding.txId).record;
+    if (adoption.journal.state !== 'ENGINE_BINDING_ROLLED_BACK' ||
+        adoption.journal.parentChangeId !== intervention.parent.changeId ||
+        adoption.journal.interventionChangeId !==
+            intervention.relationship.interventionChangeId ||
+        adoption.journal.checkpointId !== intervention.checkpoint.checkpointId) {
+        throw workflowError('INTERVENTION_ABANDONMENT_ADOPTION_NOT_TERMINAL', 'An in-flight or committed adoption must be recovered before intervention abandonment.', ExitCode.guard);
+    }
+}
+function readOptionalLocalEngineBinding(bindingPath) {
+    if (!fs.existsSync(bindingPath))
+        return null;
+    return readLocalEngineBinding(bindingPath);
+}
+function abandonmentPaths(storageRoot, parentChangeId, grantId) {
+    assertNonEmpty(parentChangeId, 'INTERVENTION_ABANDONMENT_INVALID');
+    assertNonEmpty(grantId, 'INTERVENTION_ABANDONMENT_INVALID');
+    const identity = crypto
+        .createHash('sha256')
+        .update(`intervention-abandonment\0${parentChangeId}\0${grantId}`)
+        .digest('hex');
+    const directory = path.join(interventionControlPersistencePaths(storageRoot).root, 'intervention-abandonments');
+    return {
+        intent: path.join(directory, `${identity}.intent.json`),
+        receipt: path.join(directory, `${identity}.receipt.json`),
+    };
+}
+function readOptionalAbandonmentIntent(storageRoot, parentChangeId, grantId) {
+    const target = abandonmentPaths(storageRoot, parentChangeId, grantId).intent;
+    if (!fs.existsSync(target))
+        return null;
+    const value = readCanonicalPrivateJson(target, 'INTERVENTION_ABANDONMENT_NOT_FOUND', MAX_BUNDLE_BYTES);
+    if (!isRecord(value) ||
+        value.kind !== 'intervention-abandonment-intent.v1' ||
+        value.parentChangeId !== parentChangeId ||
+        value.grantId !== grantId ||
+        !hasExactKeys(value, [
+            'abandonedAt',
+            'grantId',
+            'grantRecordDigest',
+            'intentDigest',
+            'intervention',
+            'kind',
+            'localBinding',
+            'parentChangeId',
+            'reason',
+        ]) ||
+        !isDigest(value.intentDigest) ||
+        !isRecord(value.intervention)) {
+        throw corruptAbandonment();
+    }
+    const { intentDigest, ...payload } = value;
+    if (canonicalDigest(payload) !== intentDigest ||
+        !isDigest(value.grantRecordDigest) ||
+        typeof value.reason !== 'string' ||
+        value.reason.trim() !== value.reason ||
+        value.reason.length === 0 ||
+        !verifyEmbeddedRecordDigest(value.intervention) ||
+        (value.localBinding !== null &&
+            (!isRecord(value.localBinding) ||
+                !verifyEmbeddedRecordDigest(value.localBinding)))) {
+        throw corruptAbandonment();
+    }
+    exactIso(String(value.abandonedAt), 'INTERVENTION_ABANDONMENT_CORRUPT');
+    return value;
+}
+function readAbandonmentReceipt(receiptPath, intent) {
+    const value = readCanonicalPrivateJson(receiptPath, 'INTERVENTION_ABANDONMENT_RECEIPT_NOT_FOUND', 1024 * 1024);
+    if (!isRecord(value) ||
+        value.kind !== 'intervention-abandonment-receipt.v1' ||
+        value.parentChangeId !== intent.parentChangeId ||
+        value.grantId !== intent.grantId ||
+        value.intentDigest !== intent.intentDigest ||
+        value.blockerCleared !== true ||
+        value.bindingCleared !== (intent.localBinding !== null) ||
+        !hasExactKeys(value, [
+            'bindingCleared',
+            'blockerCleared',
+            'completedAt',
+            'grantId',
+            'intentDigest',
+            'kind',
+            'parentChangeId',
+            'receiptDigest',
+        ]) ||
+        !isDigest(value.receiptDigest)) {
+        throw corruptAbandonment();
+    }
+    const { receiptDigest, ...payload } = value;
+    if (canonicalDigest(payload) !== receiptDigest) {
+        throw corruptAbandonment();
+    }
+    exactIso(String(value.completedAt), 'INTERVENTION_ABANDONMENT_CORRUPT');
+    return value;
+}
+function verifyEmbeddedRecordDigest(value) {
+    if (!isDigest(value.recordDigest))
+        return false;
+    const { recordDigest, ...payload } = value;
+    return canonicalDigest(payload) === recordDigest;
+}
+function corruptAbandonment() {
+    return workflowError('INTERVENTION_ABANDONMENT_CORRUPT', 'Durable intervention abandonment evidence failed verification.', ExitCode.verification);
 }
 export function localEngineArtifactPath(storageRoot, artifactId) {
     assertDigest(artifactId, 'BOOTSTRAP_ENGINE_ARTIFACT_CORRUPT');

@@ -51,6 +51,45 @@ test('main CLI routes human intervention through the durable bootstrap surface',
   }
 });
 
+test('main CLI routes engine artifact builds through persisted intervention state', () => {
+  const repository = createFixtureRepository();
+  const auditRoot = fs.realpathSync(
+    fs.mkdtempSync(path.join(os.tmpdir(), 'unified-build-audit-')),
+  );
+  fs.chmodSync(auditRoot, 0o700);
+  try {
+    const result = spawnSync(
+      process.execPath,
+      [
+        '--experimental-strip-types',
+        path.join(sourceRepositoryRoot, 'packages/workflow-engine/src/cli.ts'),
+        'engine',
+        'build-artifact',
+        path.join(repository, 'packages/workflow-engine/dist/engine'),
+        '--for',
+        'demo-change',
+        '--protocol-version',
+        '3',
+        '--policy-schema-version',
+        '2',
+        '--audit-root',
+        auditRoot,
+        '--json',
+      ],
+      { cwd: repository, encoding: 'utf8' },
+    );
+
+    assert.equal(result.status, 11, result.stderr);
+    assert.equal(
+      (JSON.parse(result.stderr) as { error: { code: string } }).error.code,
+      'INTERVENTION_PERSISTENCE_NOT_FOUND',
+    );
+  } finally {
+    fs.rmSync(repository, { recursive: true, force: true });
+    fs.rmSync(auditRoot, { recursive: true, force: true });
+  }
+});
+
 test('main CLI accepts the family-neutral audited grant revoke surface', () => {
   const repository = createFixtureRepository();
   try {

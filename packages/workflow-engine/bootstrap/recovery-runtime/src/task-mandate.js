@@ -180,7 +180,7 @@ export function authorizeTaskMandate(cwd, requested, options = {}) {
         assertOwned();
         return active;
     });
-    const audit = appendTaskMandateAuthorizationAudit(context.repository.repositoryRoot, record);
+    const audit = appendTaskMandateAuthorizationAudit(context.repository.repositoryRoot, record, exactDate(options.now ?? new Date()));
     return { mandateId, recordPath, envelope, audit };
 }
 export function inspectTaskMandate(cwd, requestedTaskId, options = {}) {
@@ -202,8 +202,9 @@ export function withActiveTaskMandateBinding(cwd, requestedTaskId, options, oper
         const record = readTaskRecord(paths, taskId);
         validateTaskMandateEnvelopeForRepository(repository.repositoryRoot, record.envelope, options.signer);
         assertProductionTaskMandateRecord(record);
-        assertRecordActive(record, exactDate(options.now ?? new Date()));
-        appendTaskMandateAuthorizationAudit(repository.repositoryRoot, record);
+        const auditNow = exactDate(options.now ?? new Date());
+        assertRecordActive(record, auditNow);
+        appendTaskMandateAuthorizationAudit(repository.repositoryRoot, record, auditNow);
         assertOwned();
         return operation(taskMandateBinding(record), assertOwned);
     });
@@ -225,7 +226,7 @@ export function authorizeTaskMandateOperation(cwd, requestedTaskId, operation, o
         return withAuthorityRefusalAudit(refusalBinding, { now }, () => {
             assertRecordActive(record, now);
             assertTaskMandateChange(record, changeId);
-            appendTaskMandateAuthorizationAudit(repository.repositoryRoot, record);
+            appendTaskMandateAuthorizationAudit(repository.repositoryRoot, record, now);
             assertOwned();
             if (!isPreparationOperation(operation.kind)) {
                 throw workflowError('TASK_MANDATE_EFFECT_NOT_AUTHORIZED', `Task mandate does not authorize ${operation.kind}.`, ExitCode.guard);
@@ -265,9 +266,10 @@ export function assertActiveTaskMandateBindingUnderLifecycleLock(cwd, binding, a
     const record = readTaskRecord(paths, exactBinding.mandateTaskId);
     validateTaskMandateEnvelopeForRepository(repository.repositoryRoot, record.envelope, options.signer);
     assertProductionTaskMandateRecord(record);
-    assertRecordActive(record, exactDate(options.now ?? new Date()));
+    const bindingNow = exactDate(options.now ?? new Date());
+    assertRecordActive(record, bindingNow);
     assertExactTaskMandateBinding(record, exactBinding);
-    appendTaskMandateAuthorizationAudit(repository.repositoryRoot, record);
+    appendTaskMandateAuthorizationAudit(repository.repositoryRoot, record, bindingNow);
     assertOwned();
     return exactBinding;
 }
@@ -289,9 +291,10 @@ function recordTaskMandateProviderInvocationLocked(repositoryRoot, paths, exactB
     const record = readTaskRecord(paths, exactBinding.mandateTaskId);
     validateTaskMandateEnvelopeForRepository(repositoryRoot, record.envelope, options.signer);
     assertProductionTaskMandateRecord(record);
-    assertRecordActive(record, exactDate(options.now ?? new Date()));
+    const invocationNow = exactDate(options.now ?? new Date());
+    assertRecordActive(record, invocationNow);
     assertExactTaskMandateBinding(record, exactBinding);
-    appendTaskMandateAuthorizationAudit(repositoryRoot, record);
+    appendTaskMandateAuthorizationAudit(repositoryRoot, record, invocationNow);
     const reservation = findTaskMandateProviderReservation(record, input.invocationId);
     if (reservation === null ||
         reservation.providerId !== input.providerId ||
@@ -310,7 +313,7 @@ function authorizeTaskMandateProviderReservationLocked(repositoryRoot, paths, ex
     const now = exactDate(options.now ?? new Date());
     assertRecordActive(record, now);
     assertExactTaskMandateBinding(record, exactBinding);
-    appendTaskMandateAuthorizationAudit(repositoryRoot, record);
+    appendTaskMandateAuthorizationAudit(repositoryRoot, record, now);
     const checkedOperation = assertProviderReservationOperation(operation);
     const operationDigest = taskMandateProviderOperationDigest(checkedOperation);
     const existing = findTaskMandateProviderReservation(record, reservationId);
@@ -364,8 +367,8 @@ export function revokeTaskMandate(cwd, requestedTaskId, options) {
             const terminal = parseTaskMandateRecord(readPrivateFile(terminalPath));
             validateTaskMandateEnvelopeForRepository(repository.repositoryRoot, terminal.envelope, options.signer);
             if (terminal.schemaVersion === 2) {
-                appendTaskMandateAuthorizationAudit(repository.repositoryRoot, terminal);
-                appendTaskMandateRevocationAudit(repository.repositoryRoot, terminal);
+                appendTaskMandateAuthorizationAudit(repository.repositoryRoot, terminal, exactDate(options.now ?? new Date()));
+                appendTaskMandateRevocationAudit(repository.repositoryRoot, terminal, exactDate(options.now ?? new Date()));
             }
             return inspectRecord(terminal, exactDate(options.now ?? new Date()));
         }
@@ -375,7 +378,7 @@ export function revokeTaskMandate(cwd, requestedTaskId, options) {
         const now = exactDate(options.now ?? new Date());
         const refusalBinding = taskMandateRefusalBinding(repository.repositoryRoot, record, 'task-mandate.revoke', { reasonDigest: authorityRefusalDigest(reason) });
         return withAuthorityRefusalAudit(refusalBinding, { now }, () => {
-            appendTaskMandateAuthorizationAudit(repository.repositoryRoot, record);
+            appendTaskMandateAuthorizationAudit(repository.repositoryRoot, record, now);
             const signer = options.signer ?? currentSigner(repository.repositoryRoot);
             signer.assertHumanPresent();
             const currentPolicy = loadPolicyAt(repository.repositoryRoot, repository.head).policy;
@@ -390,7 +393,7 @@ export function revokeTaskMandate(cwd, requestedTaskId, options) {
             fs.renameSync(activePath, terminalPath);
             replacePrivateFileAtomic(terminalPath, canonicalTaskMandateRecord(record));
             assertOwned();
-            appendTaskMandateRevocationAudit(repository.repositoryRoot, record);
+            appendTaskMandateRevocationAudit(repository.repositoryRoot, record, now);
             assertOwned();
             return inspectRecord(record, now);
         });
@@ -1063,7 +1066,7 @@ function taskMandateRefusalBinding(repositoryRoot, record, operation, refusalIde
         },
     };
 }
-function appendTaskMandateAuthorizationAudit(repositoryRoot, record) {
+function appendTaskMandateAuthorizationAudit(repositoryRoot, record, now) {
     const binding = taskMandateBinding(record);
     const grantDigest = prefixedDigest(binding.mandateDigest);
     return recordAuthorityAuditEvent(taskMandateAuditScope(repositoryRoot, record.envelope.payload), {
@@ -1103,9 +1106,15 @@ function appendTaskMandateAuthorizationAudit(repositoryRoot, record) {
             binding,
         }),
         errorCode: null,
-    });
+    }, now === undefined ? {} : { now: () => now });
 }
-function appendTaskMandateRevocationAudit(repositoryRoot, record) {
+/**
+ * The ledger rejects an event stamped far ahead of its own clock. The event
+ * time here comes from the caller's clock, so the append has to read the same
+ * one — otherwise any operation running on an injected clock records a time
+ * the ledger then refuses.
+ */
+function appendTaskMandateRevocationAudit(repositoryRoot, record, now) {
     if (record.state !== 'revoked' ||
         record.revokedAt === null ||
         record.revocationReason === null) {
@@ -1155,7 +1164,7 @@ function appendTaskMandateRevocationAudit(repositoryRoot, record) {
             revokedAt: record.revokedAt,
         }),
         errorCode: null,
-    });
+    }, now === undefined ? {} : { now: () => now });
 }
 function appendTaskMandateProviderReservationAudit(repositoryRoot, record, providerId, reservation) {
     const grantDigest = prefixedDigest(taskMandateBinding(record).mandateDigest);

@@ -289,14 +289,14 @@ test('adoption journal persists CAS transitions and crash recovery through rollb
             maintenanceGrantEnvelope: maintenanceEnvelope(
               intervention.parent.engineBinding,
             ),
-            priorLocalAdoptions: 1,
+            priorLocalAdoptions: 0,
           },
           {
             now: () => NOW,
             verifyHumanSignature: () => true,
           },
         ),
-      hasCode('ENGINE_ADOPTION_LIMIT_EXHAUSTED'),
+      hasCode('INTERVENTION_ADOPTION_ALREADY_ACTIVE'),
     );
 
     const checkpointed = advancePersistedEngineAdoption(fixture.storeRoot, {

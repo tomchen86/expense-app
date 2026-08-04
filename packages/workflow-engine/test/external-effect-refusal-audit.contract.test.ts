@@ -186,7 +186,19 @@ test('external-effect refusal audit recovers a ledger-first crash without replay
             },
           },
         }),
-      /simulated-refusal-audit-crash/,
+      // The refusal survives a failed attempt to record it: the caller still
+      // learns reconciliation is required, with the audit crash as the cause.
+      (error) => {
+        assert.equal(
+          isWorkflowError(error, 'EXTERNAL_EFFECT_RECONCILIATION_REQUIRED'),
+          true,
+        );
+        assert.match(
+          String((error as Error & { cause?: unknown }).cause),
+          /simulated-refusal-audit-crash/,
+        );
+        return true;
+      },
     );
     assert.equal(verifyAuthorityAuditEvents(auditScope(fixture)).ok, false);
     assert.throws(

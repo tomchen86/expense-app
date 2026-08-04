@@ -1,4 +1,5 @@
 import crypto from 'node:crypto';
+import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -33,6 +34,8 @@ const PRIVATE_DIRECTORY_MODE = 0o700;
 const PRIVATE_FILE_MODE = 0o600;
 const MAX_RECORD_BYTES = 4 * 1024 * 1024;
 const MAX_EXECUTABLE_BYTES = 16 * 1024 * 1024;
+const MAX_SOURCE_SNAPSHOT_BYTES = 32 * 1024 * 1024;
+const ENGINE_PROBE_TIMEOUT_MS = 10_000;
 
 export const MAINTENANCE_SCOPE_PATHS = Object.freeze([
   'packages/harness-runtime/**',
@@ -119,15 +122,123 @@ export interface PersistedInterventionEngineArtifact {
   recordDigest: Sha256Digest;
 }
 
+export function buildAndPersistInterventionEngineArtifact(
+  storageRoot: string,
+  input: {
+    parentChangeId: string;
+    executablePath: string;
+    protocolVersion: number;
+    policySchemaVersion: number;
+    now: Date;
+  },
+): PersistedInterventionEngineArtifact {
+  const intervention = readPersistedIntervention(
+    storageRoot,
+    input.parentChangeId,
+  );
+  if (
+    !Number.isSafeInteger(input.protocolVersion) ||
+    input.protocolVersion < 1 ||
+    !Number.isSafeInteger(input.policySchemaVersion) ||
+    input.policySchemaVersion < 1
+  ) {
+    throw workflowError(
+      'INTERVENTION_ENGINE_BUILD_VERSION_INVALID',
+      'Engine artifact protocol and policy schema versions must be positive integers.',
+      ExitCode.usage,
+    );
+  }
+  const childWorkspacePath = intervention.childWorkspace.childWorkspacePath;
+  const childRepository = discoverRepository(childWorkspacePath);
+  if (
+    childRepository.repositoryRealPath !== childWorkspacePath ||
+    childRepository.branch !==
+      `work/${intervention.relationship.interventionChangeId}` ||
+    childRepository.head !== intervention.checkpoint.baseOid
+  ) {
+    throw workflowError(
+      'INTERVENTION_ENGINE_BUILD_WORKSPACE_MISMATCH',
+      'Engine artifact must be built from the exact reserved child worktree and checkpoint base.',
+      ExitCode.verification,
+    );
+  }
+  const executablePath = assertScopedChildArtifactPath(
+    childWorkspacePath,
+    input.executablePath,
+  );
+  const executableBytes = readBoundedArtifactSource(executablePath);
+  const executableDigest = digest(executableBytes);
+  const sourceDigestBeforeSmoke = interventionSourceDigest(childWorkspacePath);
+  const probe = runArtifactProbe(executablePath, '--bootstrap-probe');
+  const health = runArtifactProbe(executablePath, '--health-check');
+  const sourceDigest = interventionSourceDigest(childWorkspacePath);
+  if (sourceDigest !== sourceDigestBeforeSmoke) {
+    throw workflowError(
+      'INTERVENTION_ENGINE_BUILD_SOURCE_DRIFT',
+      'Engine source changed while the candidate smoke contract was running.',
+      ExitCode.staleState,
+    );
+  }
+  if (
+    probe.kind !== 'engine-bootstrap-probe.v1' ||
+    probe.started !== true ||
+    probe.sessionSchema !== intervention.parent.sessionSchema ||
+    health.kind !== 'engine-health.v1' ||
+    health.healthy !== true ||
+    health.sessionSchema !== intervention.parent.sessionSchema
+  ) {
+    throw workflowError(
+      'INTERVENTION_ENGINE_BUILD_SMOKE_FAILED',
+      'Candidate engine did not pass the bootstrap and health smoke contract.',
+      ExitCode.verification,
+    );
+  }
+  const smokeReportDigest = digest(
+    canonicalJson({
+      kind: 'intervention-engine-smoke-report.v1',
+      executableDigest,
+      sourceDigest,
+      probe,
+      health,
+    }),
+  );
+  const artifact = createEngineArtifact({
+    sourceChangeId: intervention.relationship.interventionChangeId,
+    sourceDigest,
+    executableDigest,
+    protocolVersion: input.protocolVersion,
+    canReadSessionSchemas: [intervention.parent.sessionSchema],
+    writesSessionSchema: intervention.parent.sessionSchema,
+    policySchemaVersion: input.policySchemaVersion,
+    smokeReportDigest,
+  });
+  return persistInterventionEngineArtifact(storageRoot, {
+    parentChangeId: input.parentChangeId,
+    artifact,
+    executablePath,
+    now: input.now,
+  });
+}
+
 export function maintenanceGrantId(
   parentChangeId: string,
   checkpointId: Sha256Digest,
+  issuedAt?: string,
+  interventionChangeId?: string,
 ): string {
   assertNonEmpty(parentChangeId, 'MAINTENANCE_GRANT_RECORD_INVALID');
   assertDigest(checkpointId, 'MAINTENANCE_GRANT_RECORD_INVALID');
+  if (issuedAt !== undefined) {
+    exactDate(new Date(issuedAt));
+    assertNonEmpty(interventionChangeId, 'MAINTENANCE_GRANT_RECORD_INVALID');
+  }
   return `maintenance-${crypto
     .createHash('sha256')
-    .update(`maintenance-grant\0${parentChangeId}\0${checkpointId}`)
+    .update(
+      issuedAt === undefined
+        ? `maintenance-grant\0${parentChangeId}\0${checkpointId}`
+        : `maintenance-grant.v2\0${parentChangeId}\0${checkpointId}\0${interventionChangeId}\0${issuedAt}`,
+    )
     .digest('hex')}`;
 }
 
@@ -191,12 +302,18 @@ export function persistMaintenanceGrantRecord(
   ensurePrivateDirectory(paths.grants);
   const payload = input.envelope.payload;
   assertAuditBinding(input.summary.authorityAudit);
-  const grantId = maintenanceGrantId(
+  const legacyGrantId = maintenanceGrantId(
     input.summary.parentChangeId,
     input.summary.checkpointId,
   );
+  const issuedGrantId = maintenanceGrantId(
+    input.summary.parentChangeId,
+    input.summary.checkpointId,
+    payload.issuedAt,
+    payload.interventionChangeId,
+  );
   if (
-    payload.grantId !== grantId ||
+    ![legacyGrantId, issuedGrantId].includes(payload.grantId) ||
     payload.parentChangeId !== input.summary.parentChangeId ||
     payload.interventionChangeId !== input.summary.interventionChangeId ||
     payload.engineFromDigest !== input.summary.engineFromDigest ||
@@ -226,9 +343,9 @@ export function persistMaintenanceGrantRecord(
     revokedAt: null,
     revocationReason: null,
   });
-  const target = maintenanceGrantRecordPath(storageRoot, grantId);
+  const target = maintenanceGrantRecordPath(storageRoot, payload.grantId);
   if (fs.existsSync(target)) {
-    const existing = readMaintenanceGrantRecord(storageRoot, grantId);
+    const existing = readMaintenanceGrantRecord(storageRoot, payload.grantId);
     if (canonicalJson(existing) !== canonicalJson(record)) {
       throw workflowError(
         'MAINTENANCE_GRANT_RECORD_CONFLICT',
@@ -325,11 +442,74 @@ export function readMaintenanceGrantForParent(
   storageRoot: string,
   parentChangeId: string,
 ): PersistedMaintenanceGrantRecord {
-  const intervention = readPersistedIntervention(storageRoot, parentChangeId);
-  return readMaintenanceGrantRecord(
-    storageRoot,
-    maintenanceGrantId(parentChangeId, intervention.checkpoint.checkpointId),
-  );
+  assertNonEmpty(parentChangeId, 'MAINTENANCE_GRANT_RECORD_INVALID');
+  const directory = maintenancePaths(storageRoot).grants;
+  if (!fs.existsSync(directory)) {
+    throw workflowError(
+      'MAINTENANCE_GRANT_RECORD_NOT_FOUND',
+      'Persisted maintenance record was not found.',
+      ExitCode.conflict,
+    );
+  }
+  const matches: PersistedMaintenanceGrantRecord[] = [];
+  for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+    if (entry.isDirectory() && entry.name === 'revocation-authorizations') {
+      continue;
+    }
+    if (!entry.isFile() || !/^[0-9a-f]{64}\.json$/.test(entry.name)) {
+      throw workflowError(
+        'INTERVENTION_MAINTENANCE_STORAGE_UNSAFE',
+        'Maintenance grant store contains an unexpected entry.',
+        ExitCode.unsafeEnvironment,
+      );
+    }
+    const value = readCanonicalPrivateFile(
+      path.join(directory, entry.name),
+      'MAINTENANCE_GRANT_RECORD_NOT_FOUND',
+    );
+    if (
+      !isRecord(value) ||
+      !isRecord(value.envelope) ||
+      !isRecord(value.envelope.payload) ||
+      typeof value.envelope.payload.grantId !== 'string'
+    ) {
+      throw maintenanceRecordCorrupt();
+    }
+    const grantId = value.envelope.payload.grantId;
+    if (
+      path.basename(maintenanceGrantRecordPath(storageRoot, grantId)) !==
+      entry.name
+    ) {
+      throw maintenanceRecordCorrupt();
+    }
+    const record = readMaintenanceGrantRecord(storageRoot, grantId);
+    if (record.parentChangeId === parentChangeId) matches.push(record);
+  }
+  if (matches.length === 0) {
+    throw workflowError(
+      'MAINTENANCE_GRANT_RECORD_NOT_FOUND',
+      'Persisted maintenance record was not found.',
+      ExitCode.conflict,
+    );
+  }
+  matches.sort((left, right) => {
+    const byTime =
+      left.createdAt < right.createdAt
+        ? -1
+        : left.createdAt > right.createdAt
+          ? 1
+          : 0;
+    if (byTime !== 0) return byTime;
+    const rank = { expired: 0, revoked: 1, available: 2 } as const;
+    const byState = rank[left.state] - rank[right.state];
+    if (byState !== 0) return byState;
+    return left.envelope.payload.grantId < right.envelope.payload.grantId
+      ? -1
+      : left.envelope.payload.grantId > right.envelope.payload.grantId
+        ? 1
+        : 0;
+  });
+  return matches.at(-1)!;
 }
 
 export function revokeMaintenanceGrantForParent(
@@ -348,19 +528,21 @@ export function revokeMaintenanceGrantForParent(
       ExitCode.guard,
     );
   }
-  const intervention = readPersistedIntervention(storageRoot, parentChangeId);
   const requestedNow = exactDate(options.now ?? new Date());
-  const expiresAt = Date.parse(current.envelope.payload.expiresAt);
-  const verificationNow = new Date(
-    Math.min(requestedNow.getTime(), expiresAt - 1),
-  );
-  verifyHarnessMaintenanceGrant(current.envelope, {
-    now: verificationNow,
-    parent: intervention.parent,
-    relationship: intervention.relationship,
-    checkpoint: intervention.checkpoint,
-    verifyHumanSignature: options.verifyHumanSignature,
-  });
+  if (current.state !== 'revoked') {
+    const intervention = readPersistedIntervention(storageRoot, parentChangeId);
+    const expiresAt = Date.parse(current.envelope.payload.expiresAt);
+    const verificationNow = new Date(
+      Math.min(requestedNow.getTime(), expiresAt - 1),
+    );
+    verifyHarnessMaintenanceGrant(current.envelope, {
+      now: verificationNow,
+      parent: intervention.parent,
+      relationship: intervention.relationship,
+      checkpoint: intervention.checkpoint,
+      verifyHumanSignature: options.verifyHumanSignature,
+    });
+  }
   const expectedAuditRepositoryId = deriveAuthorityAuditRepositoryId(
     `git-common:${repository.gitCommonDirectory}`,
   );
@@ -559,6 +741,197 @@ export function readInterventionEngineArtifact(
     artifact.executableDigest,
   );
   return deepFreeze(structuredClone({ ...record, artifact }));
+}
+
+function interventionSourceDigest(childWorkspacePath: string): Sha256Digest {
+  const changed = runGit(childWorkspacePath, [
+    'diff',
+    '--name-only',
+    '--no-renames',
+    '-z',
+    'HEAD',
+    '--',
+  ]);
+  const untracked = runGit(childWorkspacePath, [
+    'ls-files',
+    '--others',
+    '--exclude-standard',
+    '-z',
+  ]);
+  const paths = [
+    ...new Set([...splitNul(changed), ...splitNul(untracked)]),
+  ].sort();
+  let totalBytes = 0;
+  const entries = paths.map((relativePath) => {
+    assertMaintenanceScopedRelativePath(relativePath);
+    const target = path.join(childWorkspacePath, relativePath);
+    const stats = fs.lstatSync(target, { throwIfNoEntry: false });
+    if (!stats) {
+      return { path: relativePath, kind: 'deleted' as const };
+    }
+    if (
+      !stats.isFile() ||
+      stats.isSymbolicLink() ||
+      stats.nlink !== 1 ||
+      stats.size > MAX_EXECUTABLE_BYTES
+    ) {
+      throw workflowError(
+        'INTERVENTION_ENGINE_BUILD_SOURCE_UNSAFE',
+        `Engine source snapshot contains an unsafe entry: ${relativePath}`,
+        ExitCode.unsafeEnvironment,
+      );
+    }
+    totalBytes += stats.size;
+    if (totalBytes > MAX_SOURCE_SNAPSHOT_BYTES) {
+      throw workflowError(
+        'INTERVENTION_ENGINE_BUILD_SOURCE_TOO_LARGE',
+        'Engine source snapshot exceeds the bounded build limit.',
+        ExitCode.guard,
+      );
+    }
+    return {
+      path: relativePath,
+      kind: 'file' as const,
+      mode: (stats.mode & 0o111) === 0 ? '100644' : '100755',
+      contentDigest: digest(fs.readFileSync(target)),
+    };
+  });
+  const head = runGit(childWorkspacePath, ['rev-parse', 'HEAD']).trim();
+  return digest(
+    canonicalJson({
+      kind: 'intervention-engine-source-snapshot.v1',
+      head,
+      entries,
+    }),
+  );
+}
+
+function assertScopedChildArtifactPath(
+  childWorkspacePath: string,
+  requestedPath: string,
+): string {
+  if (
+    typeof requestedPath !== 'string' ||
+    !path.isAbsolute(requestedPath) ||
+    path.resolve(requestedPath) !== requestedPath
+  ) {
+    throw workflowError(
+      'INTERVENTION_ENGINE_BUILD_PATH_INVALID',
+      'Engine executable path must be exact, normalized, and absolute.',
+      ExitCode.usage,
+    );
+  }
+  const childRoot = fs.realpathSync(childWorkspacePath);
+  const relativePath = path.relative(childRoot, requestedPath);
+  if (
+    relativePath.length === 0 ||
+    relativePath.startsWith('..') ||
+    path.isAbsolute(relativePath)
+  ) {
+    throw workflowError(
+      'INTERVENTION_ENGINE_BUILD_PATH_OUTSIDE_SCOPE',
+      'Engine executable must stay inside the reserved child worktree.',
+      ExitCode.guard,
+    );
+  }
+  assertMaintenanceScopedRelativePath(relativePath);
+  return requestedPath;
+}
+
+function assertMaintenanceScopedRelativePath(relativePath: string): void {
+  const normalized = relativePath.split(path.sep).join('/');
+  if (
+    normalized !== relativePath ||
+    normalized.length === 0 ||
+    normalized.startsWith('/') ||
+    normalized.split('/').some((part) => part === '' || part === '..') ||
+    (!normalized.startsWith('packages/workflow-engine/') &&
+      !normalized.startsWith('packages/harness-runtime/'))
+  ) {
+    throw workflowError(
+      'INTERVENTION_ENGINE_BUILD_SCOPE_VIOLATION',
+      `Engine build changed a path outside the signed maintenance scope: ${relativePath}`,
+      ExitCode.guard,
+    );
+  }
+}
+
+function readBoundedArtifactSource(filePath: string): Buffer {
+  const stats = fs.lstatSync(filePath, { throwIfNoEntry: false });
+  if (
+    !stats?.isFile() ||
+    stats.isSymbolicLink() ||
+    stats.nlink !== 1 ||
+    stats.size < 1 ||
+    stats.size > MAX_EXECUTABLE_BYTES ||
+    fs.realpathSync(filePath) !== filePath
+  ) {
+    throw workflowError(
+      'INTERVENTION_ENGINE_BUILD_EXECUTABLE_UNSAFE',
+      'Candidate engine must be a bounded canonical single-link executable.',
+      ExitCode.unsafeEnvironment,
+    );
+  }
+  return fs.readFileSync(filePath);
+}
+
+function runArtifactProbe(
+  executablePath: string,
+  mode: '--bootstrap-probe' | '--health-check',
+): Record<string, unknown> {
+  const result = spawnSync(executablePath, [mode], {
+    cwd: path.dirname(executablePath),
+    encoding: 'utf8',
+    timeout: ENGINE_PROBE_TIMEOUT_MS,
+    maxBuffer: 1024 * 1024,
+    env: {
+      PATH: `${path.dirname(process.execPath)}:/usr/bin:/bin`,
+      LANG: 'C',
+      LC_ALL: 'C',
+      TMPDIR: path.dirname(executablePath),
+    },
+  });
+  if (
+    result.error ||
+    result.status !== 0 ||
+    typeof result.stdout !== 'string'
+  ) {
+    throw workflowError(
+      'INTERVENTION_ENGINE_BUILD_SMOKE_FAILED',
+      `Candidate engine ${mode} command failed.`,
+      ExitCode.verification,
+    );
+  }
+  let value: unknown;
+  try {
+    value = JSON.parse(result.stdout);
+  } catch {
+    throw workflowError(
+      'INTERVENTION_ENGINE_BUILD_SMOKE_INVALID',
+      `Candidate engine ${mode} output is not JSON.`,
+      ExitCode.verification,
+    );
+  }
+  if (!isRecord(value)) {
+    throw workflowError(
+      'INTERVENTION_ENGINE_BUILD_SMOKE_INVALID',
+      `Candidate engine ${mode} output must be an object.`,
+      ExitCode.verification,
+    );
+  }
+  return value;
+}
+
+function splitNul(value: string): string[] {
+  if (value.length === 0) return [];
+  if (!value.endsWith('\0')) {
+    throw workflowError(
+      'INTERVENTION_ENGINE_BUILD_GIT_OUTPUT_INVALID',
+      'Git source snapshot output was not NUL terminated.',
+      ExitCode.verification,
+    );
+  }
+  return value.slice(0, -1).split('\0');
 }
 
 function maintenancePaths(storageRoot: string) {
