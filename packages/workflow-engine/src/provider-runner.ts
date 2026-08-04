@@ -22,6 +22,7 @@ import {
 import { loadWorkflowConfig } from './contracts.ts';
 import { ExitCode, workflowError, WorkflowError } from './errors.ts';
 import { createProviderExecutionEnvironment } from './execution-environment.ts';
+import { executionJobStatePath } from './execution-store.ts';
 import {
   captureGovernedProviderProjection,
   compareGovernedProviderProjections,
@@ -40,13 +41,25 @@ import {
   investigationRuntimePaths,
   type InvestigationRuntimePaths,
 } from './paths.ts';
-import { readProviderInvocationRequest } from './provider-invocation-store.ts';
+import {
+  providerExecutionPolicySnapshotPath,
+  readProviderExecutionPolicySnapshot,
+  readProviderInvocationRequest,
+  type ProviderInvocationAcceptanceBinding,
+} from './provider-invocation-store.ts';
 import type { ProviderId } from './provider-registry.ts';
-import type {
-  ProviderInvocationPlan,
-  ProviderInvocationRequest,
-  ProviderOutputValidator,
-  ProviderProcessOutcome,
+import {
+  assembleProviderPromptManifest,
+  assertProviderPromptContextCurrent,
+  providerPromptContextStoreRoot,
+  readProviderRepairPrompt,
+} from './provider-execution-governance.ts';
+import {
+  assertProviderProcessSucceeded,
+  type ProviderInvocationPlan,
+  type ProviderInvocationRequest,
+  type ProviderOutputValidator,
+  type ProviderProcessOutcome,
 } from './provider-contracts.ts';
 
 /**
@@ -124,6 +137,7 @@ export type ProviderRunInput = {
   semanticOutputSchema: unknown;
   outputValidator: ProviderOutputValidator;
   governedRuntimeInputs: GovernedRuntimeInput[];
+  acceptanceBinding?: ProviderInvocationAcceptanceBinding;
   reviewSnapshotRoot?: string | null;
   sourceEnvironment: NodeJS.ProcessEnv;
 };
@@ -285,6 +299,9 @@ export function runBuiltInProvider(
   input: ProviderRunInput,
   options: ProviderRunOptions,
 ): ProviderRunnerReport {
+  if (input.acceptanceBinding === undefined) {
+    throw requestUnbound();
+  }
   return createProviderRunner(realProviderRunnerHost()).run(input, options);
 }
 
@@ -465,16 +482,54 @@ function createProviderRunner(host: ProviderRunnerHost): ProviderRunner {
     ) {
       throw inputManifestMismatch();
     }
-    const managedPrompt = renderManagedProviderPrompt(
+    const contextStoreRoot = providerPromptContextStoreRoot(expectedDirectory);
+    const ownerWorkflowId =
+      input.acceptanceBinding?.ownerWorkflowId ??
+      'investigation-provider-runner-test';
+    if (
+      input.acceptanceBinding !== undefined &&
+      (input.acceptanceBinding.invocationId !== invocationId ||
+        input.acceptanceBinding.requestDigest !== input.request.requestDigest)
+    ) {
+      throw requestUnbound();
+    }
+    const currentManifestValue = assembleProviderPromptManifest(
+      contextStoreRoot,
       input.request,
       manifestValue,
+      ownerWorkflowId,
+    );
+    const managedPrompt = renderManagedProviderPrompt(
+      input.request,
+      currentManifestValue,
       reviewSnapshotRoot,
+      readProviderRepairPrompt(paths, input.request),
     );
 
-    // 3. Bind the enabled/requested provider, the current HEAD/tree baseline, the
-    //    raw policy digest, the request limits (no greater than policy), the live
-    //    policy bytes at the pinned baseline, and the canonical semantic schema.
-    const loaded = loadAiAdapterPolicy(input.repositoryRoot);
+    // 3. Keep the tracked policy bytes pinned to the immutable semantic Git
+    //    baseline, then load the separately durable per-Attempt execution policy.
+    //    This lets a retry adopt newly authorized execution limits without
+    //    rebasing the repository content it is reviewing.
+    const baselinePolicy = loadAiAdapterPolicy(input.repositoryRoot);
+    if (
+      fileDigestAtBaseline(
+        input.repositoryRoot,
+        git.head,
+        'workflow/ai-adapter-policy.json',
+      ) !== baselinePolicy.digest
+    ) {
+      throw policyBaselineMismatch();
+    }
+    if (
+      input.request.baseCommit !== git.head ||
+      input.request.baseTree !== git.tree
+    ) {
+      throw baselineMismatch();
+    }
+    const { loaded } = readProviderExecutionPolicySnapshot(
+      paths,
+      input.request,
+    );
     if (input.request.policyDigest !== loaded.digest) {
       throw policyMismatch();
     }
@@ -488,21 +543,6 @@ function createProviderRunner(host: ProviderRunnerHost): ProviderRunner {
         loaded.policy.limits.aggregateOutputBytes
     ) {
       throw policyMismatch();
-    }
-    if (
-      input.request.baseCommit !== git.head ||
-      input.request.baseTree !== git.tree
-    ) {
-      throw baselineMismatch();
-    }
-    if (
-      fileDigestAtBaseline(
-        input.repositoryRoot,
-        git.head,
-        'workflow/ai-adapter-policy.json',
-      ) !== loaded.digest
-    ) {
-      throw policyBaselineMismatch();
     }
     if (
       sha256(canonicalJson(input.semanticOutputSchema)) !==
@@ -549,6 +589,12 @@ function createProviderRunner(host: ProviderRunnerHost): ProviderRunner {
       // as drift and can never yield a successful result.
       const governedRuntimeInputs: GovernedRuntimeInput[] = [
         ...input.governedRuntimeInputs,
+        ...(input.acceptanceBinding === undefined
+          ? []
+          : providerAcceptanceGovernedRuntimeInputs(
+              paths,
+              input.acceptanceBinding,
+            )),
         {
           id: 'engine-durable-manifest',
           path: path.join(expectedDirectory, 'manifest.json'),
@@ -556,6 +602,10 @@ function createProviderRunner(host: ProviderRunnerHost): ProviderRunner {
         {
           id: 'engine-durable-request',
           path: path.join(expectedDirectory, 'request.json'),
+        },
+        {
+          id: 'engine-durable-execution-policy',
+          path: providerExecutionPolicySnapshotPath(paths, invocationId),
         },
         {
           id: 'engine-durable-state',
@@ -626,6 +676,13 @@ function createProviderRunner(host: ProviderRunnerHost): ProviderRunner {
         maxOutputBytes: input.request.limits.aggregateOutputBytes,
       });
 
+      if (input.acceptanceBinding !== undefined) {
+        assertProviderPromptContextCurrent(
+          contextStoreRoot,
+          input.acceptanceBinding.context,
+        );
+      }
+
       // Re-check executable identity around the launch.
       const identityAfter = host.inspectCandidate(identityBefore.candidatePath);
       if (!identityAfter || !sameIdentity(identityBefore, identityAfter)) {
@@ -674,6 +731,33 @@ function createProviderRunner(host: ProviderRunnerHost): ProviderRunner {
   }
 
   return { preflight, run };
+}
+
+function providerAcceptanceGovernedRuntimeInputs(
+  paths: InvestigationRuntimePaths,
+  binding: ProviderInvocationAcceptanceBinding,
+): GovernedRuntimeInput[] {
+  const inputs: GovernedRuntimeInput[] = [
+    {
+      id: 'engine-durable-execution-job',
+      path: executionJobStatePath(paths, binding.executionJobId),
+    },
+    {
+      id: 'engine-provider-repair-lineage',
+      path: binding.repair.lineagePath,
+    },
+    {
+      id: 'engine-provider-repair-current-evidence',
+      path: binding.repair.currentEvidencePath,
+    },
+  ];
+  if (binding.repair.evidencePath !== null) {
+    inputs.push({
+      id: 'engine-provider-repair-predecessor-evidence',
+      path: binding.repair.evidencePath,
+    });
+  }
+  return inputs;
 }
 
 function buildInvocationPlan(
@@ -748,12 +832,14 @@ function renderManagedProviderPrompt(
   request: ProviderInvocationRequest,
   manifest: unknown,
   reviewSnapshotRoot: string | null,
+  repairContext: unknown,
 ): string {
   return canonicalJson({
     schemaVersion: 1,
     kind: 'managed-provider-prompt',
     request,
     manifest,
+    repairContext,
     planningSnapshot: renderPlanningSnapshotPrompt(
       request,
       manifest,
@@ -946,19 +1032,7 @@ function enforceProcessOutcome(
   outcome: ProviderProcessOutcome,
   timeoutMs: number,
 ): void {
-  if (
-    outcome.timedOut ||
-    outcome.elapsedMs > timeoutMs ||
-    outcome.signal !== null ||
-    outcome.spawnErrorCode !== null ||
-    outcome.exitCode !== 0
-  ) {
-    throw workflowError(
-      'PROVIDER_PROCESS_FAILED',
-      'Provider process timed out, was signaled, failed to spawn, or exited non-zero.',
-      ExitCode.verification,
-    );
-  }
+  assertProviderProcessSucceeded(outcome, timeoutMs);
 }
 
 function enforceRawOutputLimit(
@@ -1027,7 +1101,12 @@ function parseClaudeNativeOutput(stdout: string): unknown {
   try {
     parsed = JSON.parse(stdout);
   } catch {
-    throw nativeOutputInvalid();
+    throw nativeOutputInvalid(
+      nativeOutputRepair(
+        'NATIVE_JSON_PARSE_FAILED',
+        'Provider native output was not valid JSON; return one complete object matching the target schema.',
+      ),
+    );
   }
   if (
     !isRecord(parsed) ||
@@ -1035,7 +1114,12 @@ function parseClaudeNativeOutput(stdout: string): unknown {
     parsed.subtype !== 'success' ||
     !('structured_output' in parsed)
   ) {
-    throw nativeOutputInvalid();
+    throw nativeOutputInvalid(
+      nativeOutputRepair(
+        'NATIVE_WRAPPER_INVALID',
+        'Provider native output did not contain the required successful structured-output wrapper; return one complete object matching the target schema.',
+      ),
+    );
   }
   return parsed.structured_output;
 }
@@ -1086,7 +1170,12 @@ function parseJsonOrInvalid(content: string): unknown {
   try {
     return JSON.parse(content);
   } catch {
-    throw nativeOutputInvalid();
+    throw nativeOutputInvalid(
+      nativeOutputRepair(
+        'NATIVE_JSON_PARSE_FAILED',
+        'Provider native output was not valid JSON; return one complete object matching the target schema.',
+      ),
+    );
   }
 }
 
@@ -1107,8 +1196,173 @@ function validateSemanticOutput(input: ProviderRunInput, value: unknown): void {
     throw nativeOutputInvalid();
   }
   if (valid !== true) {
-    throw nativeOutputInvalid();
+    const validationErrors = collectSchemaValidationErrors(
+      input.semanticOutputSchema,
+      frozen,
+    );
+    throw nativeOutputInvalid({
+      repairKind: validationErrors.length === 0 ? 'semantic' : 'schema',
+      previousOutput: frozen,
+      validationErrors:
+        validationErrors.length === 0
+          ? [
+              {
+                path: '/',
+                code: 'SEMANTIC_VALIDATION_FAILED',
+                message:
+                  'Output matched the structural schema but failed the bound semantic validator.',
+              },
+            ]
+          : validationErrors,
+    });
   }
+}
+
+type ProviderValidationError = {
+  path: string;
+  code: string;
+  message: string;
+};
+
+function collectSchemaValidationErrors(
+  schema: unknown,
+  value: unknown,
+): ProviderValidationError[] {
+  const errors: ProviderValidationError[] = [];
+  const visit = (
+    candidate: unknown,
+    current: unknown,
+    pointer: string,
+  ): void => {
+    if (errors.length >= 64 || !isRecord(candidate)) return;
+    if (Array.isArray(candidate.enum)) {
+      const match = candidate.enum.some(
+        (allowed) => canonicalJson(allowed) === canonicalJson(current),
+      );
+      if (!match) {
+        errors.push({
+          path: pointer || '/',
+          code: 'ENUM_MISMATCH',
+          message: 'Value is not one of the schema enum alternatives.',
+        });
+        return;
+      }
+    }
+    if (candidate.type === 'object') {
+      if (!isRecord(current)) {
+        errors.push({
+          path: pointer || '/',
+          code: 'TYPE_OBJECT_REQUIRED',
+          message: 'Expected an object.',
+        });
+        return;
+      }
+      const properties = isRecord(candidate.properties)
+        ? candidate.properties
+        : {};
+      if (Array.isArray(candidate.required)) {
+        for (const name of candidate.required) {
+          if (typeof name === 'string' && !Object.hasOwn(current, name)) {
+            errors.push({
+              path: appendJsonPointer(pointer, name),
+              code: 'REQUIRED_FIELD_MISSING',
+              message: `Required field ${name} is missing.`,
+            });
+          }
+        }
+      }
+      for (const [name, child] of Object.entries(current)) {
+        if (Object.hasOwn(properties, name)) {
+          visit(properties[name], child, appendJsonPointer(pointer, name));
+        } else if (candidate.additionalProperties === false) {
+          errors.push({
+            path: appendJsonPointer(pointer, name),
+            code: 'ADDITIONAL_PROPERTY_FORBIDDEN',
+            message: `Property ${name} is not allowed.`,
+          });
+        }
+      }
+      return;
+    }
+    if (candidate.type === 'array') {
+      if (!Array.isArray(current)) {
+        errors.push({
+          path: pointer || '/',
+          code: 'TYPE_ARRAY_REQUIRED',
+          message: 'Expected an array.',
+        });
+        return;
+      }
+      if (
+        Number.isSafeInteger(candidate.minItems) &&
+        current.length < Number(candidate.minItems)
+      ) {
+        errors.push({
+          path: pointer || '/',
+          code: 'MIN_ITEMS',
+          message: `Expected at least ${String(candidate.minItems)} items.`,
+        });
+      }
+      if (
+        Number.isSafeInteger(candidate.maxItems) &&
+        current.length > Number(candidate.maxItems)
+      ) {
+        errors.push({
+          path: pointer || '/',
+          code: 'MAX_ITEMS',
+          message: `Expected at most ${String(candidate.maxItems)} items.`,
+        });
+      }
+      if (candidate.items !== undefined) {
+        current.forEach((child, index) =>
+          visit(
+            candidate.items,
+            child,
+            appendJsonPointer(pointer, String(index)),
+          ),
+        );
+      }
+      return;
+    }
+    if (candidate.type === 'string' && typeof current !== 'string') {
+      errors.push({
+        path: pointer || '/',
+        code: 'TYPE_STRING_REQUIRED',
+        message: 'Expected a string.',
+      });
+    } else if (candidate.type === 'number' && typeof current !== 'number') {
+      errors.push({
+        path: pointer || '/',
+        code: 'TYPE_NUMBER_REQUIRED',
+        message: 'Expected a number.',
+      });
+    } else if (candidate.type === 'integer' && !Number.isSafeInteger(current)) {
+      errors.push({
+        path: pointer || '/',
+        code: 'TYPE_INTEGER_REQUIRED',
+        message: 'Expected an integer.',
+      });
+    } else if (candidate.type === 'boolean' && typeof current !== 'boolean') {
+      errors.push({
+        path: pointer || '/',
+        code: 'TYPE_BOOLEAN_REQUIRED',
+        message: 'Expected a boolean.',
+      });
+    }
+  };
+  visit(schema, value, '');
+  return errors
+    .slice(0, 64)
+    .sort((left, right) =>
+      `${left.path}\0${left.code}`.localeCompare(
+        `${right.path}\0${right.code}`,
+      ),
+    );
+}
+
+function appendJsonPointer(pointer: string, segment: string): string {
+  const escaped = segment.replaceAll('~', '~0').replaceAll('/', '~1');
+  return `${pointer}/${escaped}`;
 }
 
 // --- Repository-wide concurrency slots ------------------------------------
@@ -1601,7 +1855,12 @@ function openNoFollowRead(filePath: string): number {
   try {
     return fs.openSync(filePath, fs.constants.O_RDONLY | noFollowFlag());
   } catch {
-    throw nativeOutputInvalid();
+    throw nativeOutputInvalid(
+      nativeOutputRepair(
+        'NATIVE_OUTPUT_FILE_MISSING_OR_UNSAFE',
+        'Provider native output file was missing or unsafe; return one complete object matching the target schema.',
+      ),
+    );
   }
 }
 
@@ -1798,10 +2057,39 @@ function outputLimitExceeded(): WorkflowError {
   );
 }
 
-function nativeOutputInvalid(): WorkflowError {
+type NativeOutputRepair = {
+  repairKind: 'schema' | 'semantic';
+  previousOutput: unknown;
+  validationErrors: ProviderValidationError[];
+};
+
+function nativeOutputRepair(
+  reasonCode: string,
+  message: string,
+): NativeOutputRepair {
+  return {
+    repairKind: 'schema',
+    // Native bytes may contain prompts, credentials, or other provider output
+    // that is not safe to persist. Repair lineage therefore records only this
+    // fixed diagnostic sentinel and never copies raw stdout/file content.
+    previousOutput: {
+      kind: 'provider-native-output-unavailable',
+      reasonCode,
+    },
+    validationErrors: [{ path: '/', code: reasonCode, message }],
+  };
+}
+
+function nativeOutputInvalid(
+  repair: NativeOutputRepair = nativeOutputRepair(
+    'NATIVE_OUTPUT_INVALID',
+    'Provider native output was malformed; return one complete object matching the target schema.',
+  ),
+): WorkflowError {
   return workflowError(
     'PROVIDER_NATIVE_OUTPUT_INVALID',
     'Provider native output was malformed or failed its bound output schema.',
     ExitCode.verification,
+    { details: { repair } },
   );
 }

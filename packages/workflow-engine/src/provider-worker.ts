@@ -1,7 +1,14 @@
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 
+import { canonicalJson } from './canonical-json.ts';
 import { ExitCode, WorkflowError, workflowError } from './errors.ts';
+import {
+  assertReadOnlyProbe,
+  type ExecutionFailureKind,
+  type ReadOnlyProbeRequest,
+} from './execution-core.ts';
+import { readInvestigationSession } from './investigation-session-store.ts';
 import { loadInvestigationRuntimeContext } from './lifecycle-context.ts';
 import {
   PLAN_REVIEW_OUTPUT_SCHEMA,
@@ -12,20 +19,46 @@ import {
   BLIND_SURVEY_OUTPUT_SCHEMA,
   BLIND_SURVEY_PROVIDER_OUTPUT_SCHEMA,
   blindSurveyOutputValidator,
+  assertProviderInvocationAcceptanceBindingCurrent,
   claimProviderInvocationForWorker,
+  claimProviderInvocationForWorkerUnderLifecycleLock,
   completeProviderInvocationFromRunner,
   failProviderInvocation,
+  prepareProviderInvocationAcceptanceBinding,
   releaseProviderInvocationWorkerFence,
   readPlanReviewSnapshotRuntime,
   readProviderInvocation,
   readProviderInvocationRequest,
+  type ProviderInvocationFailure,
+  type ProviderInvocationRecord,
 } from './provider-invocation-store.ts';
+import {
+  isProposeExemptionInvestigationId,
+  readProposeExemptionSession,
+} from './propose-exemption-store.ts';
 import {
   runBuiltInProvider,
   type ProviderRunInput,
   type ProviderRunOptions,
   type ProviderRunnerReport,
 } from './provider-runner.ts';
+import { extractProviderRepairFailure } from './provider-execution-governance.ts';
+import {
+  processProviderFailureRetry,
+  pumpProviderRetrySchedules,
+  type ProviderRetrySchedulePumpOptions,
+} from './provider-retry-scheduler.ts';
+import { runEvidenceRetentionMaintenance } from './retention-control.ts';
+import {
+  recordTaskMandateProviderInvocationUnderLifecycleLock,
+  withActiveTaskMandateBinding,
+} from './task-mandate.ts';
+import { recordProviderWorkerMaintenanceWarning } from './provider-worker-maintenance.ts';
+
+export {
+  listProviderWorkerMaintenanceWarnings,
+  type ProviderWorkerMaintenanceWarning,
+} from './provider-worker-maintenance.ts';
 
 export type ProviderWorkerResult = {
   schemaVersion: 1;
@@ -45,6 +78,17 @@ export type ProviderWorkerOptions = {
     input: ProviderRunInput,
     options: ProviderRunOptions,
   ) => ProviderRunnerReport;
+  automaticRetry?: {
+    enabled?: boolean;
+    now?: string;
+    dispatcher?: (cwd: string, invocationId: string) => unknown;
+  };
+  schedulePump?: Omit<ProviderRetrySchedulePumpOptions, 'limit'> & {
+    enabled?: boolean;
+    limit?: number;
+  };
+  retentionNow?: string;
+  retentionMaintenance?: typeof runEvidenceRetentionMaintenance;
 };
 
 export type ProviderDispatchResult = {
@@ -101,6 +145,9 @@ export function runProviderWorker(
     requestedInvocationId,
   );
   if (initial.state !== 'prepared') {
+    if (initial.state === 'succeeded' || initial.state === 'failed') {
+      runTerminalFollowups(cwd, initial, options);
+    }
     return renderWorkerResult(initial, false);
   }
 
@@ -113,19 +160,74 @@ export function runProviderWorker(
     context.runtime,
     initial.invocationId,
   );
-  const claim = claimProviderInvocationForWorker(
-    context.runtime,
-    initial.invocationId,
-    {
-      workerId:
-        options.workerId ??
-        `provider-worker-${process.pid}-${initial.invocationId}`,
-      leaseDurationMs: request.limits.timeoutMs,
-      expectedRevision: initial.revision,
-    },
-  );
+  const claimInput = {
+    workerId:
+      options.workerId ??
+      `provider-worker-${process.pid}-${initial.invocationId}`,
+    leaseDurationMs: request.limits.timeoutMs,
+    expectedRevision: initial.revision,
+  };
+  const claim = initial.mandateBinding
+    ? withActiveTaskMandateBinding(
+        cwd,
+        initial.mandateBinding.mandateTaskId,
+        {},
+        (activeBinding, assertOwned) => {
+          const owner = isProposeExemptionInvestigationId(
+            initial.investigationId,
+          )
+            ? readProposeExemptionSession(
+                context.runtime,
+                initial.investigationId,
+              )
+            : readInvestigationSession(
+                context.runtime,
+                initial.investigationId,
+              );
+          if (
+            owner.changeId !== initial.changeId ||
+            canonicalJson(owner.mandateBinding ?? null) !==
+              canonicalJson(activeBinding) ||
+            canonicalJson(initial.mandateBinding) !==
+              canonicalJson(activeBinding)
+          ) {
+            throw workflowError(
+              'TASK_MANDATE_BINDING_STALE',
+              'Provider worker invocation no longer matches its durable Task Mandate owner.',
+              ExitCode.staleState,
+            );
+          }
+          recordTaskMandateProviderInvocationUnderLifecycleLock(
+            cwd,
+            activeBinding,
+            {
+              providerId: request.providerId,
+              invocationId: initial.invocationId,
+              requestDigest: request.requestDigest,
+              occurredAt: initial.createdAt,
+            },
+            assertOwned,
+          );
+          return claimProviderInvocationForWorkerUnderLifecycleLock(
+            context.runtime,
+            initial.invocationId,
+            claimInput,
+            assertOwned,
+          );
+        },
+      )
+    : claimProviderInvocationForWorker(
+        context.runtime,
+        initial.invocationId,
+        claimInput,
+      );
   const runner = options.runner ?? runBuiltInProvider;
+  let terminal: ProviderInvocationRecord;
   try {
+    const acceptanceBinding = prepareProviderInvocationAcceptanceBinding(
+      context.runtime,
+      request.invocationId,
+    );
     const report = runner(
       {
         providerId: request.providerId,
@@ -142,12 +244,17 @@ export function runProviderWorker(
             id,
             path: filePath,
           })) ?? [],
+        acceptanceBinding,
         reviewSnapshotRoot: reviewSnapshot?.root ?? null,
         sourceEnvironment: options.environment ?? process.env,
       },
       { platform: options.platform ?? process.platform },
     );
-    const completed = completeProviderInvocationFromRunner(
+    assertProviderInvocationAcceptanceBindingCurrent(
+      context.runtime,
+      acceptanceBinding,
+    );
+    terminal = completeProviderInvocationFromRunner(
       context.runtime,
       request.invocationId,
       {
@@ -155,22 +262,19 @@ export function runProviderWorker(
         leaseGeneration: claim.record.leaseGeneration,
         leaseToken: claim.leaseToken,
         report,
+        acceptanceBinding,
       },
     );
-    return renderWorkerResult(completed, true);
   } catch (error) {
     const failure = classifyProviderFailure(error);
-    const failed = failProviderInvocation(
-      context.runtime,
-      request.invocationId,
-      {
-        expectedRevision: claim.record.revision,
-        leaseGeneration: claim.record.leaseGeneration,
-        leaseToken: claim.leaseToken,
-        failure,
-      },
-    );
-    return renderWorkerResult(failed, true);
+    const repair = extractProviderRepairFailure(error, semantic.schema);
+    terminal = failProviderInvocation(context.runtime, request.invocationId, {
+      expectedRevision: claim.record.revision,
+      leaseGeneration: claim.record.leaseGeneration,
+      leaseToken: claim.leaseToken,
+      failure,
+      ...(repair === null ? {} : { repair }),
+    });
   } finally {
     releaseProviderInvocationWorkerFence(
       context.runtime,
@@ -178,6 +282,8 @@ export function runProviderWorker(
       claim.workerFenceToken,
     );
   }
+  runTerminalFollowups(cwd, terminal, options);
+  return renderWorkerResult(terminal, true);
 }
 
 function createProviderWorkerDispatcher(host: ProviderDispatcherHost) {
@@ -270,16 +376,165 @@ function semanticContract(
   );
 }
 
-function classifyProviderFailure(error: unknown) {
+function classifyProviderFailure(error: unknown): ProviderInvocationFailure {
   const code =
     error instanceof WorkflowError
       ? error.code
       : 'PROVIDER_WORKER_UNEXPECTED_FAILURE';
+  const staleContext = new Set([
+    'PROVIDER_CONTEXT_STALE_OR_WRONG',
+    'PROVIDER_ACCEPTANCE_BINDING_STALE',
+    'PROVIDER_REPAIR_AUTHORITY_STALE',
+    'PROVIDER_INVOCATION_TERMINALLY_RESOLVED',
+    'EXECUTION_CONTEXT_CAS_MISMATCH',
+    'EXECUTION_CONTEXT_STALE_EPOCH',
+    'EXECUTION_CONTEXT_STALE_MANIFEST',
+  ]).has(code);
+  const probe = providerFailureProbe(error);
+  const executionKind = providerExecutionFailureKind(
+    code,
+    staleContext,
+    probe !== null,
+  );
+  const retryAfterMs = providerRetryAfterMs(error);
   return {
-    kind: 'retryable' as const,
+    kind: staleContext
+      ? ('repository-reconciliation-required' as const)
+      : ('retryable' as const),
     code,
     message: `Provider invocation failed durably (${code}).`,
+    ...(executionKind === null ? {} : { executionKind }),
+    ...(retryAfterMs === null ? {} : { retryAfterMs }),
+    ...(executionKind === 'probe-transient' && probe !== null ? { probe } : {}),
   };
+}
+
+function providerExecutionFailureKind(
+  code: string,
+  staleContext: boolean,
+  hasExactProbe: boolean,
+): ExecutionFailureKind | null {
+  if (staleContext) return 'unknown-side-effect';
+  if (code === 'ENVIRONMENT_PROBE_TRANSIENT' && !hasExactProbe) return null;
+  const exact = new Map<string, ExecutionFailureKind>([
+    ['PROVIDER_TIMEOUT', 'provider-timeout'],
+    ['NETWORK_TRANSIENT', 'network'],
+    ['PROVIDER_RATE_LIMIT', 'rate-limit'],
+    ['PROVIDER_PROCESS_CRASH', 'provider-process-crash'],
+    ['PROVIDER_UNAVAILABLE', 'provider-capacity'],
+    ['PROVIDER_CAPACITY', 'provider-capacity'],
+    ['PROVIDER_OUTPUT_LIMIT_EXCEEDED', 'stdout-truncated'],
+    ['PROVIDER_PROCESS_NONZERO', 'process-nonzero'],
+    ['PROVIDER_NATIVE_OUTPUT_INVALID', 'schema-mismatch'],
+    ['OUTPUT_JSON_PARSE_FAILED', 'json-parse'],
+    ['OUTPUT_SCHEMA_MISMATCH', 'schema-mismatch'],
+    ['OUTPUT_REQUIRED_FIELD_MISSING', 'missing-required-field'],
+    ['OUTPUT_CITATION_OUT_OF_RANGE', 'citation-out-of-range'],
+    ['ENVIRONMENT_PROBE_TRANSIENT', 'probe-transient'],
+    ['NEEDS_USER_DECISION', 'needs-user-decision'],
+    ['STATE_CORRUPTION', 'state-corruption'],
+    ['PROVIDER_WORKER_UNEXPECTED_FAILURE', 'worker-crash'],
+  ]);
+  return exact.get(code) ?? null;
+}
+
+function providerFailureProbe(
+  error: unknown,
+): Readonly<ReadOnlyProbeRequest> | null {
+  if (!(error instanceof WorkflowError) || error.details?.probe === undefined) {
+    return null;
+  }
+  try {
+    return assertReadOnlyProbe(error.details.probe);
+  } catch {
+    return null;
+  }
+}
+
+function providerRetryAfterMs(error: unknown): number | null {
+  const value =
+    error instanceof WorkflowError ? error.details?.retryAfterMs : null;
+  return Number.isSafeInteger(value) &&
+    (value as number) >= 0 &&
+    (value as number) <= 86_400_000
+    ? (value as number)
+    : null;
+}
+
+function runTerminalFollowups(
+  cwd: string,
+  terminal: ProviderInvocationRecord,
+  options: ProviderWorkerOptions,
+): void {
+  const retryEnabled =
+    terminal.state === 'failed' &&
+    (options.automaticRetry?.enabled ?? options.runner === undefined);
+  if (retryEnabled) {
+    try {
+      processProviderFailureRetry(cwd, terminal.invocationId, {
+        ...(options.automaticRetry?.now === undefined
+          ? {}
+          : { now: options.automaticRetry.now }),
+        dispatcher:
+          options.automaticRetry?.dispatcher ?? dispatchProviderWorker,
+      });
+    } catch (error) {
+      recordTerminalWarning(cwd, terminal, 'automatic-retry', error);
+    }
+  }
+  const pumpEnabled =
+    options.schedulePump?.enabled ?? options.runner === undefined;
+  if (pumpEnabled) {
+    try {
+      pumpProviderRetrySchedules(cwd, {
+        limit: options.schedulePump?.limit ?? 10,
+        ...(options.schedulePump?.now === undefined
+          ? {}
+          : { now: options.schedulePump.now }),
+        dispatcher: options.schedulePump?.dispatcher ?? dispatchProviderWorker,
+        ...(options.schedulePump?.probeExecutor === undefined
+          ? {}
+          : { probeExecutor: options.schedulePump.probeExecutor }),
+        ...(options.schedulePump?.faultInjector === undefined
+          ? {}
+          : { faultInjector: options.schedulePump.faultInjector }),
+      });
+    } catch (error) {
+      recordTerminalWarning(cwd, terminal, 'retry-schedule-pump', error);
+    }
+  }
+  try {
+    const maintain =
+      options.retentionMaintenance ?? runEvidenceRetentionMaintenance;
+    maintain(cwd, {
+      limit: 10,
+      ...(options.retentionNow === undefined
+        ? {}
+        : { now: options.retentionNow }),
+    });
+  } catch (error) {
+    recordTerminalWarning(cwd, terminal, 'retention-maintenance', error);
+  }
+}
+
+function recordTerminalWarning(
+  cwd: string,
+  terminal: ProviderInvocationRecord,
+  operation:
+    'automatic-retry' | 'retry-schedule-pump' | 'retention-maintenance',
+  error: unknown,
+): void {
+  try {
+    recordProviderWorkerMaintenanceWarning(cwd, terminal, operation, error);
+  } catch (warningError) {
+    process.emitWarning(
+      `Provider worker ${operation} failed after durable ${terminal.state}; its warning journal also failed (${warningError instanceof WorkflowError ? warningError.code : 'PROVIDER_WORKER_MAINTENANCE_WARNING_UNSAFE'}).`,
+      {
+        code: 'PROVIDER_WORKER_MAINTENANCE_WARNING_UNSAFE',
+        type: 'ProviderWorkerMaintenanceWarning',
+      },
+    );
+  }
 }
 
 function renderWorkerResult(
