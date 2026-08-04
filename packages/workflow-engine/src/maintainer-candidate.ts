@@ -1669,7 +1669,10 @@ export function createApplyJournal(input: {
 const JOURNAL_TRANSITIONS: Record<ApplyJournalState, ApplyJournalState[]> = {
   PREPARED: ['REF_UPDATED', 'FAILED'],
   REF_UPDATED: ['CONSUMED', 'ROLLED_BACK', 'FAILED'],
-  CONSUMED: ['COMPLETE', 'ROLLED_BACK', 'FAILED'],
+  // Rolling back after the grant is consumed would leave it both spent and
+  // undone, which is not one of the terminal states a grant may hold.
+  // Rollback belongs to the window before consumption.
+  CONSUMED: ['COMPLETE', 'FAILED'],
   COMPLETE: [],
   FAILED: [],
   ROLLED_BACK: [],
@@ -1737,6 +1740,13 @@ export function recoverApplyJournal(
     exactTimestamp(input.grantExpiresAt, 'apply grant expiry'),
   );
   if (journal.state === 'COMPLETE') return { action: 'already-complete' };
+  // A journal that already reached a terminal state cannot be finished, even
+  // if the ref happens to sit at the candidate: a rolled-back transaction
+  // observing its own candidate means something moved the ref back afterwards,
+  // which is exactly the replay the ref generation binding exists to catch.
+  if (journal.state === 'FAILED' || journal.state === 'ROLLED_BACK') {
+    return { action: 'manual-reconciliation' };
+  }
   if (input.observedRef === journal.candidateCommit) {
     return { action: 'complete-after-cas' };
   }
