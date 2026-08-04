@@ -2,6 +2,14 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 
+import { deriveAuthorityAuditRepositoryId } from './authority-audit-ledger.ts';
+import type { AuthorityAuditServiceHooks } from './authority-audit-service.ts';
+import {
+  authorityRefusalDigest,
+  withAuthorityRefusalAudit,
+  type AuthorityRefusalAuditBinding,
+} from './authority-refusal-audit.ts';
+import { canonicalJson } from './canonical-json.ts';
 import {
   pinCheckRunner,
   runCheck,
@@ -20,31 +28,44 @@ import {
   listChangedPaths,
   runGit,
 } from './git.ts';
+import { commitFacts, previewExactStaging } from './git-transitions.ts';
 import {
-  assertGrantPathsEligible,
-  canonicalGrantEnvelope,
-  canonicalGrantPayload,
-  validateGrantPayload,
-  type MaintainerGrantEnvelope,
-} from './maintainer-grant.ts';
+  acceptApplyPrestate,
+  assertCandidateChecksFresh,
+  readDurableRefGenerationLedger,
+} from './maintainer-candidate.ts';
+import {
+  isMaintainerGrantV2Envelope,
+  maintainerChecksEnvironmentDigest,
+  validateMaintainerGrantV2AuthorityBinding,
+  type MaintainerGrantV2Envelope,
+} from './maintainer-grant-v2.ts';
+import { verifyPatchManifestAgainstWorktree } from './maintainer-manifest.ts';
 import {
   parseMaintainerPolicy,
   type MaintainerPolicy,
 } from './maintainer-policy.ts';
-import {
-  createInteractiveSshSigner,
-  type MaintainerSignerProvider,
-} from './maintainer-signer.ts';
+import type { MaintainerSignerProvider } from './maintainer-signer.ts';
 import { writeAuthorityCheckReport } from './maintainer-report.ts';
 import {
+  canonicalAnyMaintainerGrantEnvelope,
+  inspectMaintainerGrants,
   maintainerGrantStorePaths,
   readReservedMaintainerGrant,
   releaseMaintainerReservation,
   reserveMaintainerGrant,
+  terminallyExpireMaintainerReservation,
+  terminallyInvalidateMaintainerReservation,
   terminallyRevokeMaintainerReservation,
+  type AnyMaintainerGrantEnvelope,
 } from './maintainer-store.ts';
 import { assertChangeId, assertSessionId } from './paths.ts';
-import { createSessionId } from './session-store.ts';
+import {
+  createSessionId,
+  runtimePaths,
+  withRepositoryLifecycleOperation,
+} from './session-store.ts';
+import type { TaskMandateBinding } from './task-mandate.ts';
 import { loadStableValidatedChangeContract } from './validated-contract-context.ts';
 
 export type AuthorityPinnedCheck = {
@@ -57,6 +78,7 @@ export type AuthoritySession = {
   schemaVersion: 1;
   sessionId: string;
   state: 'active' | 'failed' | 'aborted' | 'committed';
+  grantVersion: 1 | 2;
   grantId: string;
   changeId: string;
   repositoryRoot: string;
@@ -73,6 +95,11 @@ export type AuthoritySession = {
   allowedPaths: string[];
   requiredChecks: string[];
   pinnedChecks: AuthorityPinnedCheck[];
+  candidateCommit: string | null;
+  resultTree: string | null;
+  candidateBundleDigest: string | null;
+  mandateBinding: TaskMandateBinding | null;
+  expectedRefGeneration: number | null;
   createdAt: string;
   latestCheckReportId?: string;
   failedAt?: string;
@@ -87,7 +114,49 @@ export type AuthoritySessionOptions = {
   now?: Date;
   signer?: MaintainerSignerProvider;
   environment?: NodeJS.ProcessEnv;
+  allowSignedV2Candidate?: boolean;
+  lifecycleAssertOwned?: () => void;
+  testRefusalAuditServiceHooks?: AuthorityAuditServiceHooks;
 };
+
+/**
+ * Derive refusal authority only after the caller has validated this exact v2
+ * envelope against its repository trust base. Raw session or caller input is
+ * never sufficient to call this helper.
+ */
+export function verifiedV2AuthorityLifecycleRefusalBinding(
+  repositoryRoot: string,
+  envelope: MaintainerGrantV2Envelope,
+  input: Readonly<{
+    operation: string;
+    subjectId: string;
+    bindingEvidence: unknown;
+    refusalIdentity: Readonly<Record<string, unknown>>;
+  }>,
+): AuthorityRefusalAuditBinding {
+  const mandateBinding = envelope.payload.mandateBinding;
+  return {
+    scope: {
+      externalAuditRoot: mandateBinding.externalAuditRoot,
+      repositoryRoot,
+      repositoryId: deriveAuthorityAuditRepositoryId(
+        envelope.payload.repositoryId,
+      ),
+    },
+    family: 'authority-lifecycle',
+    operation: input.operation,
+    subjectId: input.subjectId,
+    actor: { kind: 'engine', identity: 'workflow-engine' },
+    taskId: mandateBinding.mandateTaskId,
+    changeId: mandateBinding.changeId,
+    workflowId: mandateBinding.mandateId,
+    grantDigest: authorityRefusalDigest(
+      canonicalAnyMaintainerGrantEnvelope(envelope),
+    ),
+    bindingDigest: authorityRefusalDigest(input.bindingEvidence),
+    refusalIdentity: input.refusalIdentity,
+  };
+}
 
 export function startAuthoritySession(
   cwd: string,
@@ -97,7 +166,10 @@ export function startAuthoritySession(
 ): AuthoritySession {
   const changeId = assertChangeId(requestedChangeId);
   const initial = discoverRepository(cwd);
-  if (initial.statusEntries.length > 0 || !initial.branch) {
+  if (
+    (!options.allowSignedV2Candidate && initial.statusEntries.length > 0) ||
+    !initial.branch
+  ) {
     throw authorityError(
       'AUTHORITY_START_DIRTY',
       'Authority start requires a clean named branch.',
@@ -115,6 +187,7 @@ export function startAuthoritySession(
   );
   try {
     const envelope = reservation.envelope;
+    assertExecutableAuthorityGrant(envelope);
     if (
       reservation.repositoryRoot !== initial.repositoryRealPath ||
       envelope.payload.changeId !== changeId ||
@@ -129,98 +202,268 @@ export function startAuthoritySession(
       initial.repositoryRoot,
       initial.head,
     );
-    validateGrantPayload(envelope.payload, policy, {
-      now: exactDate(options.now ?? new Date()),
-      expectedBase: initial.head,
-      expectedPolicyBlob: policyBlob,
-    });
-    verifyEnvelopeSignature(
+    validateReservedGrantAuthorityBinding(
       initial.repositoryRoot,
       envelope,
       policy,
-      options.signer,
+      {
+        now: exactDate(options.now ?? new Date()),
+        expectedBase: initial.head,
+        expectedPolicyBlob: policyBlob,
+        signer: options.signer,
+      },
+      initial.gitCommonDirectory,
+      envelope.payload.grantId,
     );
-    assertExactAuditTag(initial.repositoryRoot, envelope, policy);
-    assertGrantPathsEligible(
-      initial.repositoryRoot,
-      envelope.payload.allowedPaths,
-      policy,
+    const refusalBinding = verifiedV2AuthorityLifecycleRefusalBinding(
+      initial.repositoryRealPath,
+      envelope,
+      {
+        operation: 'authority.start',
+        subjectId: envelope.payload.grantId,
+        bindingEvidence: {
+          mandateBinding: envelope.payload.mandateBinding,
+          grantDigest: digest(canonicalAnyMaintainerGrantEnvelope(envelope)),
+        },
+        refusalIdentity: {
+          changeId,
+          grantId: envelope.payload.grantId,
+          branch: initial.branch,
+          head: initial.head,
+          allowSignedV2Candidate: options.allowSignedV2Candidate ?? false,
+        },
+      },
     );
-    const { git, contract } = loadStableValidatedChangeContract(
-      initial,
-      changeId,
-    );
-    const expectedBranch = contract.config.branchTemplate.replace(
-      '{changeId}',
-      changeId,
-    );
-    if (
-      git.branch !== expectedBranch ||
-      git.head !== envelope.payload.baseCommit
-    ) {
-      throw authorityError(
-        'AUTHORITY_BRANCH_INVALID',
-        `Authority start requires branch ${expectedBranch} at the exact grant base.`,
-      );
-    }
-    const requiredChecks = requiredAuthorityChecks(
-      policy,
-      contract.guard.tasks,
-    );
-    const pinnedChecks = requiredChecks.map((checkId) => {
-      const definition = contract.checks.checks[checkId];
-      if (!definition) {
-        throw authorityError(
-          'AUTHORITY_CHECK_UNKNOWN',
-          `Authority policy references unknown check ${checkId}.`,
+    return withAuthorityRefusalAudit(
+      refusalBinding,
+      {
+        now: options.now,
+        serviceHooks: options.testRefusalAuditServiceHooks,
+      },
+      () => {
+        if (initial.statusEntries.length > 0) {
+          if (!options.allowSignedV2Candidate) {
+            throw authorityError(
+              'AUTHORITY_START_DIRTY',
+              'A dirty v2 candidate requires the atomic approve-and-apply route.',
+            );
+          }
+          verifyPatchManifestAgainstWorktree(
+            initial.repositoryRoot,
+            envelope.payload.manifest,
+          );
+          const candidate = envelope.payload.candidateBundle;
+          const preview = previewExactStaging(
+            initial.repositoryRoot,
+            initial.head,
+            envelope.payload.allowedPaths,
+          );
+          const facts = candidate
+            ? commitFacts(initial.repositoryRoot, candidate.candidateCommit)
+            : null;
+          if (candidate) {
+            acceptApplyPrestate(
+              readDurableRefGenerationLedger(
+                initial.gitCommonDirectory,
+                candidate.targetRef,
+                true,
+              ),
+              candidate.expectedOldCommit,
+              candidate.expectedRefGeneration,
+            );
+          }
+          if (
+            candidate === null ||
+            candidate.targetRef !== `refs/heads/${initial.branch}` ||
+            candidate.expectedOldCommit !== initial.head ||
+            candidate.resultTree !== preview.tree ||
+            facts?.tree !== candidate.resultTree ||
+            JSON.stringify(facts.parents) !== JSON.stringify([initial.head]) ||
+            facts.message !== candidate.commitMessage
+          ) {
+            throw authorityError(
+              'AUTHORITY_CANDIDATE_BINDING_INVALID',
+              'Atomic approve-and-apply requires an exact immutable candidate commit and result tree.',
+            );
+          }
+          if (envelope.payload.checksAttestation === null) {
+            throw authorityError(
+              'AUTHORITY_CHECK_REPORT_REQUIRED',
+              'Atomic approve-and-apply requires signed pre-approval checks.',
+            );
+          }
+        }
+        assertExactAuditTag(initial.repositoryRoot, envelope, policy);
+        const { git, contract } = loadStableValidatedChangeContract(
+          initial,
+          changeId,
         );
-      }
-      return {
-        checkId,
-        definition,
-        runner: pinCheckRunner(git.repositoryRoot, checkId, definition),
-      };
-    });
-    const createdAt = exactDate(options.now ?? new Date()).toISOString();
-    const session: AuthoritySession = {
-      schemaVersion: 1,
-      sessionId,
-      state: 'active',
-      grantId: envelope.payload.grantId,
-      changeId,
-      repositoryRoot: git.repositoryRealPath,
-      gitCommonDirectory: git.gitCommonDirectory,
-      branch: git.branch,
-      baseCommit: git.head,
-      baselineTree: git.tree,
-      policyBlob,
-      policyDigest: digest(policyContent),
-      grantDigest: digest(canonicalGrantEnvelope(envelope)),
-      signer: envelope.payload.signer,
-      contractDigest: contract.contractDigest,
-      contractArtifacts: Object.fromEntries(
-        Object.entries(contract.artifactDigests).filter(
-          ([filePath]) => !envelope.payload.allowedPaths.includes(filePath),
-        ),
-      ),
-      allowedPaths: [...envelope.payload.allowedPaths],
-      requiredChecks,
-      pinnedChecks,
-      createdAt,
-    };
-    writeAuthoritySession(session, true);
-    return session;
+        const expectedBranch = contract.config.branchTemplate.replace(
+          '{changeId}',
+          changeId,
+        );
+        if (
+          git.branch !== expectedBranch ||
+          git.head !== envelope.payload.baseCommit
+        ) {
+          throw authorityError(
+            'AUTHORITY_BRANCH_INVALID',
+            `Authority start requires branch ${expectedBranch} at the exact grant base.`,
+          );
+        }
+        const requiredChecks = [...envelope.payload.requiredChecks];
+        const pinnedChecks = requiredChecks.map((checkId) => {
+          const definition = contract.checks.checks[checkId];
+          if (!definition) {
+            throw authorityError(
+              'AUTHORITY_CHECK_UNKNOWN',
+              `Authority policy references unknown check ${checkId}.`,
+            );
+          }
+          return {
+            checkId,
+            definition,
+            runner: pinCheckRunner(git.repositoryRoot, checkId, definition),
+          };
+        });
+        const createdAt = exactDate(options.now ?? new Date()).toISOString();
+        const session: AuthoritySession = {
+          schemaVersion: 1,
+          sessionId,
+          state: 'active',
+          grantVersion: envelope.payload.version,
+          grantId: envelope.payload.grantId,
+          changeId,
+          repositoryRoot: git.repositoryRealPath,
+          gitCommonDirectory: git.gitCommonDirectory,
+          branch: git.branch,
+          baseCommit: git.head,
+          baselineTree: git.tree,
+          policyBlob,
+          policyDigest: digest(policyContent),
+          grantDigest: digest(canonicalAnyMaintainerGrantEnvelope(envelope)),
+          signer: envelope.payload.signer,
+          contractDigest: contract.contractDigest,
+          contractArtifacts: Object.fromEntries(
+            Object.entries(contract.artifactDigests).filter(
+              ([filePath]) => !envelope.payload.allowedPaths.includes(filePath),
+            ),
+          ),
+          allowedPaths: [...envelope.payload.allowedPaths],
+          requiredChecks,
+          pinnedChecks,
+          candidateCommit:
+            envelope.payload.candidateBundle?.candidateCommit ?? null,
+          resultTree: envelope.payload.candidateBundle?.resultTree ?? null,
+          candidateBundleDigest: envelope.payload.candidateBundleDigest ?? null,
+          mandateBinding: envelope.payload.mandateBinding,
+          expectedRefGeneration:
+            envelope.payload.candidateBundle?.expectedRefGeneration ?? null,
+          createdAt,
+        };
+        if (envelope.payload.checksAttestation !== null) {
+          const fingerprint = fingerprintWorkingState(
+            git.repositoryRoot,
+            git.head,
+            git.statusEntries,
+          );
+          const environmentDigest = maintainerChecksEnvironmentDigest(
+            pinnedChecks.some(
+              ({ definition }) => definition.destructiveDatabase,
+            )
+              ? assertDisposableDatabase(options.environment ?? process.env)
+                  .identity
+              : null,
+          );
+          const checks = assertPreapprovalChecksCurrent(
+            envelope.payload.checksAttestation,
+            pinnedChecks,
+            fingerprint,
+            environmentDigest,
+          );
+          assertV2CandidateFresh(
+            envelope,
+            exactDate(options.now ?? new Date()),
+            environmentDigest,
+          );
+          const paths = maintainerGrantStorePaths(git.gitCommonDirectory);
+          session.latestCheckReportId = writeAuthorityCheckReport(
+            paths.runtime.reports,
+            {
+              sessionId,
+              changeId,
+              grantId: envelope.payload.grantId,
+              baseCommit: git.head,
+              policyBlob,
+              contractDigest: contract.contractDigest,
+              allowedPaths: session.allowedPaths,
+              changedPaths: session.allowedPaths,
+              requiredChecks,
+              checks,
+              fingerprint,
+              createdAt:
+                envelope.payload.checksAttestation.checks.at(-1)?.completedAt ??
+                createdAt,
+            },
+          );
+        }
+        withRepositoryLifecycleOperation(
+          runtimePaths(initial.gitCommonDirectory, 'workflow-engine'),
+          (assertOwned) => {
+            validateMaintainerGrantV2AuthorityBinding(
+              initial.repositoryRoot,
+              envelope,
+              policy,
+              {
+                now: exactDate(options.now ?? new Date()),
+                expectedBase: initial.head,
+                expectedPolicyBlob: policyBlob,
+                signer: options.signer,
+                assertLifecycleOwned: assertOwned,
+              },
+            );
+            const currentReservation = readReservedMaintainerGrant(
+              initial.gitCommonDirectory,
+              envelope.payload.grantId,
+            );
+            if (currentReservation.sessionId !== sessionId) {
+              throw authorityError(
+                'AUTHORITY_RESERVATION_MISMATCH',
+                'Authority reservation changed before durable session publication.',
+              );
+            }
+            writeAuthoritySession(session, true);
+          },
+          { allowMaintainerGrantId: envelope.payload.grantId },
+        );
+        return session;
+      },
+    );
   } catch (error) {
     // Everything before the durable session write is read-only, so a start
     // failure is a recoverable precondition: return the grant to the
     // available store instead of burning the one-shot signature. Fall back
     // to terminal revocation only if the release itself cannot complete.
     try {
-      releaseMaintainerReservation(
-        initial.gitCommonDirectory,
-        reservation.grantId,
-        sessionId,
-      );
+      const evaluatedAt = exactDate(options.now ?? new Date());
+      if (
+        Date.parse(reservation.envelope.payload.expiresAt) <
+        evaluatedAt.getTime()
+      ) {
+        terminallyExpireMaintainerReservation(
+          initial.gitCommonDirectory,
+          reservation.grantId,
+          sessionId,
+          failureReason(error),
+          evaluatedAt,
+        );
+      } else {
+        releaseMaintainerReservation(
+          initial.gitCommonDirectory,
+          reservation.grantId,
+          sessionId,
+        );
+      }
     } catch {
       terminallyRevokeMaintainerReservation(
         initial.gitCommonDirectory,
@@ -259,87 +502,120 @@ export function checkAuthoritySession(
       initialSession,
       options,
     );
-    const changedPaths = listChangedPaths(git.repositoryRoot, git.head);
-    const allowedPaths = envelope.payload.allowedPaths;
-    const unexpectedPaths = changedPaths.filter(
-      (filePath) => !allowedPaths.includes(filePath),
-    );
-    if (changedPaths.length === 0 || unexpectedPaths.length > 0) {
-      throw authorityError(
-        'AUTHORITY_SCOPE_INVALID',
-        'Authority check requires at least one change and only exact grant paths.',
-        { unexpectedPaths },
-      );
-    }
-    const database = initialSession.pinnedChecks.some(
-      ({ definition }) => definition.destructiveDatabase,
-    )
-      ? assertDisposableDatabase(options.environment ?? process.env)
-      : undefined;
-    const initialFingerprint = fingerprintWorkingState(
-      git.repositoryRoot,
-      git.head,
-      git.statusEntries,
-    );
-    const checks: CheckEvidence[] = [];
-    for (const pinned of initialSession.pinnedChecks) {
-      checks.push(
-        runCheck(
-          git.repositoryRoot,
-          pinned.checkId,
-          pinned.definition,
-          pinned.runner,
-          createCheckEnvironment(
-            options.environment ?? process.env,
-            pinned.definition.destructiveDatabase,
-          ),
-          pinned.definition.destructiveDatabase
-            ? database?.identity
-            : undefined,
-        ),
-      );
-      const current = discoverRepository(git.repositoryRoot);
-      if (
-        current.head !== git.head ||
-        fingerprintWorkingState(
-          current.repositoryRoot,
-          current.head,
-          current.statusEntries,
-        ) !== initialFingerprint
-      ) {
-        throw authorityError(
-          'AUTHORITY_CHECK_MUTATED_WORKTREE',
-          `Required check ${pinned.checkId} changed the authority checkout.`,
+    return withAuthorityRefusalAudit(
+      verifiedV2AuthorityLifecycleRefusalBinding(
+        git.repositoryRealPath,
+        envelope,
+        {
+          operation: 'authority.check',
+          subjectId: initialSession.sessionId,
+          bindingEvidence: {
+            mandateBinding: envelope.payload.mandateBinding,
+            session: initialSession,
+          },
+          refusalIdentity: {
+            sessionId: initialSession.sessionId,
+            workingStateDigest: authorityRefusalDigest({
+              head: git.head,
+              statusEntries: git.statusEntries,
+            }),
+          },
+        },
+      ),
+      {
+        now: options.now,
+        serviceHooks: options.testRefusalAuditServiceHooks,
+      },
+      () => {
+        const changedPaths = listChangedPaths(git.repositoryRoot, git.head);
+        const allowedPaths = envelope.payload.allowedPaths;
+        const unexpectedPaths = changedPaths.filter(
+          (filePath) => !allowedPaths.includes(filePath),
         );
-      }
-    }
-    const paths = maintainerGrantStorePaths(git.gitCommonDirectory);
-    const reportId = writeAuthorityCheckReport(paths.runtime.reports, {
-      sessionId: initialSession.sessionId,
-      changeId: initialSession.changeId,
-      grantId: initialSession.grantId,
-      baseCommit: initialSession.baseCommit,
-      policyBlob: initialSession.policyBlob,
-      contractDigest,
-      allowedPaths,
-      changedPaths,
-      requiredChecks: initialSession.requiredChecks,
-      checks,
-      fingerprint: initialFingerprint,
-      createdAt: exactDate(options.now ?? new Date()).toISOString(),
-    });
-    writeAuthoritySession(
-      { ...initialSession, latestCheckReportId: reportId },
-      false,
+        if (changedPaths.length === 0 || unexpectedPaths.length > 0) {
+          throw authorityError(
+            'AUTHORITY_SCOPE_INVALID',
+            'Authority check requires at least one change and only exact grant paths.',
+            { unexpectedPaths },
+          );
+        }
+        if (isMaintainerGrantV2Envelope(envelope)) {
+          verifyPatchManifestAgainstWorktree(
+            git.repositoryRoot,
+            envelope.payload.manifest,
+          );
+        }
+        const database = initialSession.pinnedChecks.some(
+          ({ definition }) => definition.destructiveDatabase,
+        )
+          ? assertDisposableDatabase(options.environment ?? process.env)
+          : undefined;
+        const initialFingerprint = fingerprintWorkingState(
+          git.repositoryRoot,
+          git.head,
+          git.statusEntries,
+        );
+        const checks: CheckEvidence[] = [];
+        for (const pinned of initialSession.pinnedChecks) {
+          checks.push(
+            runCheck(
+              git.repositoryRoot,
+              pinned.checkId,
+              pinned.definition,
+              pinned.runner,
+              createCheckEnvironment(
+                options.environment ?? process.env,
+                pinned.definition.destructiveDatabase,
+              ),
+              pinned.definition.destructiveDatabase
+                ? database?.identity
+                : undefined,
+            ),
+          );
+          const current = discoverRepository(git.repositoryRoot);
+          if (
+            current.head !== git.head ||
+            fingerprintWorkingState(
+              current.repositoryRoot,
+              current.head,
+              current.statusEntries,
+            ) !== initialFingerprint
+          ) {
+            throw authorityError(
+              'AUTHORITY_CHECK_MUTATED_WORKTREE',
+              `Required check ${pinned.checkId} changed the authority checkout.`,
+            );
+          }
+        }
+        const paths = maintainerGrantStorePaths(git.gitCommonDirectory);
+        const reportId = writeAuthorityCheckReport(paths.runtime.reports, {
+          sessionId: initialSession.sessionId,
+          changeId: initialSession.changeId,
+          grantId: initialSession.grantId,
+          baseCommit: initialSession.baseCommit,
+          policyBlob: initialSession.policyBlob,
+          contractDigest,
+          allowedPaths,
+          changedPaths,
+          requiredChecks: initialSession.requiredChecks,
+          checks,
+          fingerprint: initialFingerprint,
+          createdAt: exactDate(options.now ?? new Date()).toISOString(),
+        });
+        writeAuthoritySession(
+          { ...initialSession, latestCheckReportId: reportId },
+          false,
+        );
+        return {
+          sessionId: initialSession.sessionId,
+          grantId: envelope.payload.grantId,
+          changedPaths,
+          checks,
+          reportId,
+          passed: true,
+        };
+      },
     );
-    return {
-      sessionId: initialSession.sessionId,
-      grantId: envelope.payload.grantId,
-      changedPaths,
-      checks,
-      reportId,
-      passed: true,
-    };
   } catch (error) {
     // A required check exiting non-zero is a recoverable outcome (often an
     // environmental one: load, battery throttling, transient tooling); the
@@ -421,13 +697,21 @@ export function readAuthoritySession(
       value.sessionId !== sessionId ||
       !['active', 'failed', 'aborted', 'committed'].includes(value.state) ||
       value.gitCommonDirectory !== git.gitCommonDirectory ||
+      (value.grantVersion === 2 &&
+        (typeof value.mandateBinding !== 'object' ||
+          value.mandateBinding === null)) ||
+      (value.grantVersion === 1 &&
+        value.mandateBinding !== undefined &&
+        value.mandateBinding !== null) ||
       !Array.isArray(value.allowedPaths) ||
       !Array.isArray(value.requiredChecks) ||
       !Array.isArray(value.pinnedChecks)
     ) {
       throw new Error('invalid authority session');
     }
-    return value;
+    return value.mandateBinding === undefined
+      ? { ...value, mandateBinding: null }
+      : value;
   } catch {
     throw authorityError(
       'AUTHORITY_SESSION_INVALID',
@@ -502,10 +786,12 @@ function inspectAuthoritySession(
     git.gitCommonDirectory,
     session.grantId,
   );
+  assertExecutableAuthorityGrant(reservation.envelope);
   if (
     reservation.sessionId !== session.sessionId ||
     reservation.repositoryRoot !== session.repositoryRoot ||
-    digest(canonicalGrantEnvelope(reservation.envelope)) !== session.grantDigest
+    digest(canonicalAnyMaintainerGrantEnvelope(reservation.envelope)) !==
+      session.grantDigest
   ) {
     throw authorityError(
       'AUTHORITY_RESERVATION_MISMATCH',
@@ -525,21 +811,19 @@ function inspectAuthoritySession(
       'Pinned maintainer policy changed after authority start.',
     );
   }
-  validateGrantPayload(reservation.envelope.payload, policy, {
-    now: exactDate(options.now ?? new Date()),
-    expectedBase: session.baseCommit,
-    expectedPolicyBlob: session.policyBlob,
-  });
-  assertGrantPathsEligible(
-    git.repositoryRoot,
-    reservation.envelope.payload.allowedPaths,
-    policy,
-  );
-  verifyEnvelopeSignature(
+  validateReservedGrantAuthorityBinding(
     git.repositoryRoot,
     reservation.envelope,
     policy,
-    options.signer,
+    {
+      now: exactDate(options.now ?? new Date()),
+      expectedBase: session.baseCommit,
+      expectedPolicyBlob: session.policyBlob,
+      signer: options.signer,
+      assertLifecycleOwned: options.lifecycleAssertOwned,
+    },
+    git.gitCommonDirectory,
+    reservation.envelope.payload.grantId,
   );
   assertExactAuditTag(git.repositoryRoot, reservation.envelope, policy);
   const stable = loadStableValidatedChangeContract(git, session.changeId);
@@ -559,10 +843,9 @@ function inspectAuthoritySession(
     '{changeId}',
     session.changeId,
   );
-  const expectedRequiredChecks = requiredAuthorityChecks(
-    policy,
-    stable.contract.guard.tasks,
-  );
+  const expectedRequiredChecks = [
+    ...reservation.envelope.payload.requiredChecks,
+  ];
   const baseChecks = loadBaseCheckDefinitions(
     git.repositoryRoot,
     session.baseCommit,
@@ -590,13 +873,23 @@ function inspectAuthoritySession(
         return false;
       }
     });
+  const expectedCandidate = reservation.envelope.payload.candidateBundle;
   if (
     reservation.envelope.payload.changeId !== session.changeId ||
+    reservation.envelope.payload.version !== session.grantVersion ||
     reservation.envelope.payload.signer !== session.signer ||
     git.branch !== expectedBranch ||
     git.tree !== session.baselineTree ||
     !sameStringArray(session.allowedPaths, allowedPaths) ||
     !sameStringArray(session.requiredChecks, expectedRequiredChecks) ||
+    session.candidateCommit !== (expectedCandidate?.candidateCommit ?? null) ||
+    session.resultTree !== (expectedCandidate?.resultTree ?? null) ||
+    session.candidateBundleDigest !==
+      (expectedCandidate?.candidateBundleDigest ?? null) ||
+    canonicalJson(session.mandateBinding) !==
+      canonicalJson(reservation.envelope.payload.mandateBinding) ||
+    session.expectedRefGeneration !==
+      (expectedCandidate?.expectedRefGeneration ?? null) ||
     !pinnedChecksAreExact
   ) {
     throw authorityError(
@@ -604,6 +897,18 @@ function inspectAuthoritySession(
       'Authority session state differs from its signed and base-pinned inputs.',
     );
   }
+  const environmentDigest = maintainerChecksEnvironmentDigest(
+    session.pinnedChecks.some(
+      ({ definition }) => definition.destructiveDatabase,
+    )
+      ? assertDisposableDatabase(options.environment ?? process.env).identity
+      : null,
+  );
+  assertV2CandidateFresh(
+    reservation.envelope,
+    exactDate(options.now ?? new Date()),
+    environmentDigest,
+  );
   return {
     git: stable.git,
     envelope: reservation.envelope,
@@ -612,27 +917,118 @@ function inspectAuthoritySession(
   };
 }
 
+function assertExecutableAuthorityGrant(
+  envelope: AnyMaintainerGrantEnvelope,
+): asserts envelope is MaintainerGrantV2Envelope {
+  if (!isMaintainerGrantV2Envelope(envelope)) {
+    throw workflowError(
+      'LEGACY_GRANT_V1_READ_ONLY',
+      'Legacy V1 grants are historical read-only evidence and cannot create or continue authority sessions.',
+      ExitCode.guard,
+    );
+  }
+}
+
+function validateReservedGrantAuthorityBinding(
+  repositoryRoot: string,
+  envelope: MaintainerGrantV2Envelope,
+  policy: MaintainerPolicy,
+  options: Parameters<typeof validateMaintainerGrantV2AuthorityBinding>[3],
+  gitCommonDirectory: string,
+  grantId: string,
+): void {
+  if (options.assertLifecycleOwned) {
+    validateMaintainerGrantV2AuthorityBinding(
+      repositoryRoot,
+      envelope,
+      policy,
+      options,
+    );
+    return;
+  }
+  withRepositoryLifecycleOperation(
+    runtimePaths(gitCommonDirectory, 'workflow-engine'),
+    (assertOwned) =>
+      validateMaintainerGrantV2AuthorityBinding(
+        repositoryRoot,
+        envelope,
+        policy,
+        { ...options, assertLifecycleOwned: assertOwned },
+      ),
+    { allowMaintainerGrantId: grantId },
+  );
+}
+
+function assertV2CandidateFresh(
+  envelope: import('./maintainer-grant-v2.ts').MaintainerGrantV2Envelope,
+  now: Date,
+  environmentDigest: string,
+): void {
+  const candidate = envelope.payload.candidateBundle;
+  if (candidate === null) return;
+  assertCandidateChecksFresh(candidate.checksAttestation, {
+    now,
+    candidateTree: candidate.resultTree,
+    patchDigest: envelope.payload.patchDigest,
+    trustBaseCommit: envelope.payload.baseCommit,
+    requiredChecks: envelope.payload.requiredChecks,
+    environmentDigest,
+    changedDependencies: [],
+  });
+}
+
 export function failAuthoritySession(
   session: AuthoritySession,
   error: unknown,
   now = new Date(),
 ): void {
-  terminallyRevokeMaintainerReservation(
+  const evaluatedAt = exactDate(now);
+  const grant = inspectMaintainerGrants(
+    session.gitCommonDirectory,
+    session.grantId,
+  )[0];
+  const terminalize =
+    grant !== undefined && Date.parse(grant.expiresAt) <= evaluatedAt.getTime()
+      ? terminallyExpireMaintainerReservation
+      : isSemanticAuthorityInvalidation(error)
+        ? terminallyInvalidateMaintainerReservation
+        : terminallyRevokeMaintainerReservation;
+  terminalize(
     session.gitCommonDirectory,
     session.grantId,
     session.sessionId,
     failureReason(error),
-    now,
+    evaluatedAt,
   );
   writeAuthoritySession(
     {
       ...session,
       state: 'failed',
-      failedAt: exactDate(now).toISOString(),
+      failedAt: evaluatedAt.toISOString(),
       failureReason: failureReason(error),
     },
     false,
   );
+}
+
+const SEMANTIC_AUTHORITY_INVALIDATIONS = new Set([
+  'AUTHORITY_BASE_DRIFT',
+  'AUTHORITY_CANDIDATE_BINDING_INVALID',
+  'AUTHORITY_CANDIDATE_TREE_MISMATCH',
+  'AUTHORITY_CAS_OUTCOME_AMBIGUOUS',
+  'AUTHORITY_CONTRACT_DRIFT',
+  'AUTHORITY_POLICY_DRIFT',
+  'APPLY_REF_GENERATION_MISMATCH',
+  'APPLY_REF_PRESTATE_MISMATCH',
+  'MAINTAINER_PATCH_DRIFT',
+]);
+
+function isSemanticAuthorityInvalidation(error: unknown): boolean {
+  const code =
+    error && typeof error === 'object' && 'code' in error
+      ? (error as { code: unknown }).code
+      : undefined;
+  return typeof code === 'string' && SEMANTIC_AUTHORITY_INVALIDATIONS.has(code);
 }
 
 function loadBasePolicy(repositoryRoot: string, baseCommit: string) {
@@ -655,29 +1051,9 @@ function loadBasePolicy(repositoryRoot: string, baseCommit: string) {
   }
 }
 
-function verifyEnvelopeSignature(
-  repositoryRoot: string,
-  envelope: MaintainerGrantEnvelope,
-  policy: MaintainerPolicy,
-  signer = createInteractiveSshSigner(repositoryRoot, policy),
-): void {
-  try {
-    signer.verify(
-      canonicalGrantPayload(envelope.payload),
-      envelope.signature,
-      envelope.payload.signer,
-    );
-  } catch {
-    throw authorityError(
-      'AUTHORITY_SIGNATURE_INVALID',
-      'The maintainer grant signature is invalid.',
-    );
-  }
-}
-
 function assertExactAuditTag(
   repositoryRoot: string,
-  envelope: MaintainerGrantEnvelope,
+  envelope: AnyMaintainerGrantEnvelope,
   policy: MaintainerPolicy,
 ): void {
   const tagRef = `${policy.auditTagPrefix}${envelope.payload.grantId}`;
@@ -693,7 +1069,7 @@ function assertExactAuditTag(
       object !== envelope.payload.baseCommit ||
       type !== 'commit' ||
       tag !== tagRef.slice('refs/tags/'.length) ||
-      raw.slice(separator + 2) !== canonicalGrantEnvelope(envelope)
+      raw.slice(separator + 2) !== canonicalAnyMaintainerGrantEnvelope(envelope)
     ) {
       throw new Error('audit mismatch');
     }
@@ -745,16 +1121,39 @@ function writeAuthoritySession(
   }
 }
 
-function requiredAuthorityChecks(
-  policy: MaintainerPolicy,
-  tasks: Record<string, { requiredChecks: string[] }>,
-): string[] {
-  return [
-    ...new Set([
-      ...policy.requiredChecks,
-      ...Object.values(tasks).flatMap(({ requiredChecks }) => requiredChecks),
-    ]),
-  ].sort();
+function assertPreapprovalChecksCurrent(
+  attestation: NonNullable<
+    import('./maintainer-grant-v2.ts').MaintainerGrantV2Payload['checksAttestation']
+  >,
+  pinnedChecks: AuthorityPinnedCheck[],
+  fingerprint: string,
+  environmentDigest: string,
+): CheckEvidence[] {
+  const exact =
+    attestation.candidateStateDigest === fingerprint &&
+    attestation.environmentDigest === environmentDigest &&
+    attestation.checks.length === pinnedChecks.length &&
+    attestation.checks.every((entry, index) => {
+      const pinned = pinnedChecks[index];
+      return (
+        pinned !== undefined &&
+        entry.evidence.checkId === pinned.checkId &&
+        entry.evidence.outcome === 'passed' &&
+        entry.evidence.exitCode === 0 &&
+        entry.evidence.runner === pinned.runner.runner &&
+        entry.evidence.runnerDigest === pinned.runner.digest &&
+        entry.evidence.destructiveDatabase ===
+          pinned.definition.destructiveDatabase &&
+        entry.commandDigest === digest(canonicalJson(pinned.definition))
+      );
+    });
+  if (!exact) {
+    throw authorityError(
+      'AUTHORITY_CHECK_REPORT_STALE',
+      'Signed pre-approval checks do not match the immutable candidate.',
+    );
+  }
+  return attestation.checks.map(({ evidence }) => evidence);
 }
 
 function loadBaseCheckDefinitions(

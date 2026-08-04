@@ -6,7 +6,11 @@ import { canonicalJson } from './canonical-json.ts';
 import { isRecord, isStringArray } from './contract-values.ts';
 import { ExitCode, workflowError } from './errors.ts';
 import { listChangedPaths, runGit } from './git.ts';
-import { matchesAllowedPath, normalizeExactRepositoryPath } from './paths.ts';
+import {
+  matchesAllowedPath,
+  normalizeExactRepositoryPath,
+  normalizePolicyPath,
+} from './paths.ts';
 
 /**
  * Maintainer grant v2 binds authority to an exact patch rather than to a path
@@ -19,6 +23,59 @@ import { matchesAllowedPath, normalizeExactRepositoryPath } from './paths.ts';
 const MANIFEST_SCHEMA = 'maintainer-patch-manifest.v2';
 const PROFILE_ID = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 const GIT_MODES = new Set(['100644', '100755']);
+const COMMIT_OID = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
+const BLOB_OID = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
+const DIGEST = /^[0-9a-f]{64}$/;
+const CHECK_ID = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
+const CHECK_DEPENDENCIES = new Set([
+  'source-tree',
+  'base-commit',
+  'harness-engine',
+  'policy',
+  'runner',
+  'external-state',
+]);
+const PROFILE_KEYS = [
+  'id',
+  'version',
+  'authorityClass',
+  'implementationPaths',
+  'evidencePaths',
+  'policyPaths',
+  'verificationInfrastructurePaths',
+  'forbiddenPaths',
+  'constraints',
+  'requiredChecks',
+  'checkDependencies',
+];
+const PROFILE_KEYS_WITH_EXTERNAL_FRESHNESS = [
+  ...PROFILE_KEYS,
+  'externalStateFreshness',
+];
+const PROFILE_CONSTRAINT_KEYS = [
+  'evidenceOnlyGrantForbidden',
+  'samePackageRequired',
+  'evidenceAdditionsAllowed',
+  'maximumFiles',
+];
+const MANIFEST_KEYS = [
+  'schema',
+  'profile',
+  'profileVersion',
+  'trustBaseCommit',
+  'policyDigest',
+  'files',
+  'patchDigest',
+];
+const MANIFEST_FILE_KEYS = [
+  'path',
+  'role',
+  'operation',
+  'beforeBlobOid',
+  'afterSha256',
+  'beforeMode',
+  'afterMode',
+];
 
 export type FileRole =
   | 'implementation'
@@ -26,6 +83,17 @@ export type FileRole =
   | 'policy'
   | 'verification-infrastructure'
   | 'forbidden';
+
+export type CheckDependency =
+  | 'source-tree'
+  | 'base-commit'
+  | 'harness-engine'
+  | 'policy'
+  | 'runner'
+  | 'external-state';
+
+export type ProfileAuthorityClass =
+  'ordinary' | 'root-one-shot' | 'control-plane';
 
 export type PatchOperation = 'add' | 'modify' | 'delete';
 
@@ -39,6 +107,7 @@ export type CapabilityProfileConstraints = {
 export type CapabilityProfile = {
   id: string;
   version: number;
+  authorityClass: ProfileAuthorityClass;
   implementationPaths: string[];
   evidencePaths: string[];
   policyPaths: string[];
@@ -46,6 +115,8 @@ export type CapabilityProfile = {
   forbiddenPaths: string[];
   constraints: CapabilityProfileConstraints;
   requiredChecks: string[];
+  checkDependencies: Record<string, CheckDependency[]>;
+  externalStateFreshness?: Record<string, { maxAgeMs: number }>;
 };
 
 export type PatchManifestFile = {
@@ -99,20 +170,31 @@ export function loadCapabilityProfileFromTrustBase(
   }
   if (
     !isRecord(parsed) ||
+    !hasExactKeys(parsed, ['schemaVersion', 'profiles']) ||
     parsed.schemaVersion !== 1 ||
     !isRecord(parsed.profiles)
   ) {
     throw profileInvalid('Maintainer profiles file is malformed.');
   }
-  const raw = parsed.profiles[profileId];
-  if (raw === undefined) {
+  const profiles = Object.fromEntries(
+    Object.entries(parsed.profiles).map(([declaredId, raw]) => {
+      if (!PROFILE_ID.test(declaredId)) {
+        throw profileInvalid(
+          'Maintainer profiles file contains an invalid ID.',
+        );
+      }
+      const profile = parseCapabilityProfile(raw);
+      if (profile.id !== declaredId) {
+        throw profileInvalid(
+          `Profile ${declaredId} declares a mismatched id ${profile.id}.`,
+        );
+      }
+      return [declaredId, profile];
+    }),
+  );
+  const profile = profiles[profileId];
+  if (!profile) {
     throw profileInvalid(`Unknown capability profile ${profileId}.`);
-  }
-  const profile = parseCapabilityProfile(raw);
-  if (profile.id !== profileId) {
-    throw profileInvalid(
-      `Profile ${profileId} declares a mismatched id ${profile.id}.`,
-    );
   }
   return profile;
 }
@@ -120,11 +202,16 @@ export function loadCapabilityProfileFromTrustBase(
 export function parseCapabilityProfile(value: unknown): CapabilityProfile {
   if (
     !isRecord(value) ||
+    (!hasExactKeys(value, PROFILE_KEYS) &&
+      !hasExactKeys(value, PROFILE_KEYS_WITH_EXTERNAL_FRESHNESS)) ||
     typeof value.id !== 'string' ||
     !PROFILE_ID.test(value.id) ||
     typeof value.version !== 'number' ||
     !Number.isInteger(value.version) ||
     value.version < 1 ||
+    (value.authorityClass !== 'ordinary' &&
+      value.authorityClass !== 'root-one-shot' &&
+      value.authorityClass !== 'control-plane') ||
     !isStringArray(value.implementationPaths) ||
     value.implementationPaths.length === 0 ||
     !isStringArray(value.evidencePaths) ||
@@ -132,25 +219,108 @@ export function parseCapabilityProfile(value: unknown): CapabilityProfile {
     !isStringArray(value.verificationInfrastructurePaths) ||
     !isStringArray(value.forbiddenPaths) ||
     !isStringArray(value.requiredChecks) ||
+    value.requiredChecks.length === 0 ||
+    !isRecord(value.checkDependencies) ||
     !isRecord(value.constraints)
   ) {
     throw profileInvalid('Capability profile is malformed.');
   }
   const constraints = value.constraints;
   if (
+    !hasExactKeys(constraints, PROFILE_CONSTRAINT_KEYS) ||
     typeof constraints.evidenceOnlyGrantForbidden !== 'boolean' ||
     typeof constraints.samePackageRequired !== 'boolean' ||
     typeof constraints.evidenceAdditionsAllowed !== 'boolean' ||
     typeof constraints.maximumFiles !== 'number' ||
     !Number.isInteger(constraints.maximumFiles) ||
-    constraints.maximumFiles < 1
+    constraints.maximumFiles < 1 ||
+    constraints.maximumFiles > 1000
   ) {
     throw profileInvalid('Capability profile constraints are malformed.');
+  }
+
+  const requiredChecks = value.requiredChecks as string[];
+  const rawCheckDependencies = value.checkDependencies as Record<
+    string,
+    unknown
+  >;
+  assertSortedUniqueProfileValues(requiredChecks, 'requiredChecks', (entry) =>
+    CHECK_ID.test(entry),
+  );
+  const dependencyIds = Object.keys(rawCheckDependencies).sort();
+  if (
+    dependencyIds.length !== requiredChecks.length ||
+    dependencyIds.some((checkId, index) => checkId !== requiredChecks[index])
+  ) {
+    throw profileInvalid(
+      'Capability profile checkDependencies must exactly cover requiredChecks.',
+    );
+  }
+  const checkDependencies = Object.fromEntries(
+    requiredChecks.map((checkId) => {
+      const dependencies = rawCheckDependencies[checkId];
+      if (!isStringArray(dependencies) || dependencies.length === 0) {
+        throw profileInvalid(
+          `Capability profile check ${checkId} has no valid dependencies.`,
+        );
+      }
+      assertSortedUniqueProfileValues(
+        dependencies,
+        `checkDependencies.${checkId}`,
+        (entry) => CHECK_DEPENDENCIES.has(entry),
+      );
+      return [checkId, [...dependencies] as CheckDependency[]];
+    }),
+  );
+  const externalCheckIds = requiredChecks.filter((checkId) =>
+    checkDependencies[checkId]!.includes('external-state'),
+  );
+  let externalStateFreshness: Record<string, { maxAgeMs: number }> | undefined;
+  if (value.externalStateFreshness !== undefined) {
+    if (!isRecord(value.externalStateFreshness)) {
+      throw profileInvalid(
+        'Capability profile external-state freshness policy is malformed.',
+      );
+    }
+    const rawExternalStateFreshness = value.externalStateFreshness as Record<
+      string,
+      unknown
+    >;
+    const freshnessIds = Object.keys(rawExternalStateFreshness).sort();
+    if (
+      freshnessIds.length !== externalCheckIds.length ||
+      freshnessIds.some((checkId, index) => checkId !== externalCheckIds[index])
+    ) {
+      throw profileInvalid(
+        'Capability profile externalStateFreshness must exactly cover external-state checks.',
+      );
+    }
+    externalStateFreshness = Object.fromEntries(
+      freshnessIds.map((checkId) => {
+        const freshness = rawExternalStateFreshness[checkId];
+        if (
+          !isRecord(freshness) ||
+          !hasExactKeys(freshness, ['maxAgeMs']) ||
+          !Number.isSafeInteger(freshness.maxAgeMs) ||
+          Number(freshness.maxAgeMs) < 1
+        ) {
+          throw profileInvalid(
+            `Capability profile external-state freshness for ${checkId} is malformed.`,
+          );
+        }
+        return [checkId, { maxAgeMs: Number(freshness.maxAgeMs) }];
+      }),
+    );
+  } else if (externalCheckIds.length > 0) {
+    throw profileInvalid(
+      'Capability profile external-state checks require a freshness policy.',
+    );
   }
 
   const profile: CapabilityProfile = {
     id: value.id,
     version: value.version,
+    authorityClass: value.authorityClass,
     implementationPaths: [...value.implementationPaths],
     evidencePaths: [...value.evidencePaths],
     policyPaths: [...value.policyPaths],
@@ -162,9 +332,29 @@ export function parseCapabilityProfile(value: unknown): CapabilityProfile {
       evidenceAdditionsAllowed: constraints.evidenceAdditionsAllowed,
       maximumFiles: constraints.maximumFiles,
     },
-    requiredChecks: [...value.requiredChecks],
+    requiredChecks: [...requiredChecks],
+    checkDependencies,
+    ...(externalStateFreshness ? { externalStateFreshness } : {}),
   };
 
+  for (const [label, paths] of [
+    ['implementationPaths', profile.implementationPaths],
+    ['evidencePaths', profile.evidencePaths],
+    ['policyPaths', profile.policyPaths],
+    [
+      'verificationInfrastructurePaths',
+      profile.verificationInfrastructurePaths,
+    ],
+    ['forbiddenPaths', profile.forbiddenPaths],
+  ] as const) {
+    assertSortedUniqueProfileValues(paths, label, (entry) => {
+      try {
+        return normalizePolicyPath(entry) === entry;
+      } catch {
+        return false;
+      }
+    });
+  }
   // A root that is both allowed and forbidden is a contradiction: forbidden
   // always wins, so the allow entry could never take effect and the profile
   // would silently mean something other than it reads.
@@ -182,6 +372,24 @@ export function parseCapabilityProfile(value: unknown): CapabilityProfile {
     }
   }
   return profile;
+}
+
+function assertSortedUniqueProfileValues(
+  values: string[],
+  label: string,
+  valid: (value: string) => boolean,
+): void {
+  const sorted = [...new Set(values)].sort();
+  const caseFolded = new Set(values.map((value) => value.toLowerCase()));
+  if (
+    values.length !== sorted.length ||
+    values.length !== caseFolded.size ||
+    values.some((value, index) => value !== sorted[index] || !valid(value))
+  ) {
+    throw profileInvalid(
+      `Capability profile ${label} must be valid, sorted, and unique.`,
+    );
+  }
 }
 
 export function classifyFileRole(
@@ -269,6 +477,153 @@ export function canonicalPatchManifest(manifest: PatchManifest): string {
   })}\n`;
 }
 
+export function parsePatchManifest(value: string | unknown): PatchManifest {
+  let parsed: unknown = value;
+  try {
+    if (typeof value === 'string') {
+      if (value.length > 1_048_576) {
+        throw new Error('manifest is too large');
+      }
+      parsed = JSON.parse(value);
+    }
+  } catch {
+    throw manifestError(
+      'MAINTAINER_PATCH_INVALID',
+      'Maintainer patch manifest is not valid JSON.',
+    );
+  }
+  if (
+    !isRecord(parsed) ||
+    !hasExactKeys(parsed, MANIFEST_KEYS) ||
+    parsed.schema !== MANIFEST_SCHEMA ||
+    typeof parsed.profile !== 'string' ||
+    !PROFILE_ID.test(parsed.profile) ||
+    typeof parsed.profileVersion !== 'number' ||
+    !Number.isInteger(parsed.profileVersion) ||
+    parsed.profileVersion < 1 ||
+    typeof parsed.trustBaseCommit !== 'string' ||
+    !COMMIT_OID.test(parsed.trustBaseCommit) ||
+    typeof parsed.policyDigest !== 'string' ||
+    !DIGEST.test(parsed.policyDigest) ||
+    !Array.isArray(parsed.files) ||
+    parsed.files.length === 0 ||
+    typeof parsed.patchDigest !== 'string' ||
+    !DIGEST.test(parsed.patchDigest)
+  ) {
+    throw manifestError(
+      'MAINTAINER_PATCH_INVALID',
+      'Maintainer patch manifest is malformed.',
+    );
+  }
+
+  const files = parsed.files.map((raw): PatchManifestFile => {
+    if (
+      !isRecord(raw) ||
+      !hasExactKeys(raw, MANIFEST_FILE_KEYS) ||
+      typeof raw.path !== 'string' ||
+      (raw.role !== 'implementation' &&
+        raw.role !== 'evidence' &&
+        raw.role !== 'policy' &&
+        raw.role !== 'verification-infrastructure') ||
+      (raw.operation !== 'add' &&
+        raw.operation !== 'modify' &&
+        raw.operation !== 'delete') ||
+      (raw.beforeBlobOid !== null &&
+        (typeof raw.beforeBlobOid !== 'string' ||
+          !BLOB_OID.test(raw.beforeBlobOid))) ||
+      (raw.afterSha256 !== null &&
+        (typeof raw.afterSha256 !== 'string' ||
+          !DIGEST.test(raw.afterSha256))) ||
+      (raw.beforeMode !== null &&
+        (typeof raw.beforeMode !== 'string' ||
+          !GIT_MODES.has(raw.beforeMode))) ||
+      (raw.afterMode !== null &&
+        (typeof raw.afterMode !== 'string' || !GIT_MODES.has(raw.afterMode)))
+    ) {
+      throw manifestError(
+        'MAINTAINER_PATCH_INVALID',
+        'Maintainer patch manifest contains a malformed file entry.',
+      );
+    }
+    let normalized: string;
+    try {
+      normalized = normalizeExactRepositoryPath(raw.path);
+    } catch {
+      throw manifestError(
+        'MAINTAINER_PATCH_INVALID',
+        'Maintainer patch manifest contains an invalid exact path.',
+      );
+    }
+    if (
+      normalized !== raw.path ||
+      (raw.operation === 'add' &&
+        (raw.beforeBlobOid !== null ||
+          raw.beforeMode !== null ||
+          raw.afterSha256 === null ||
+          raw.afterMode === null)) ||
+      (raw.operation === 'modify' &&
+        (raw.beforeBlobOid === null ||
+          raw.beforeMode === null ||
+          raw.afterSha256 === null ||
+          raw.afterMode === null)) ||
+      (raw.operation === 'delete' &&
+        (raw.beforeBlobOid === null ||
+          raw.beforeMode === null ||
+          raw.afterSha256 !== null ||
+          raw.afterMode !== null))
+    ) {
+      throw manifestError(
+        'MAINTAINER_PATCH_INVALID',
+        'Maintainer patch manifest file identities do not match the operation.',
+      );
+    }
+    return {
+      path: raw.path,
+      role: raw.role,
+      operation: raw.operation,
+      beforeBlobOid: raw.beforeBlobOid,
+      afterSha256: raw.afterSha256,
+      beforeMode: raw.beforeMode,
+      afterMode: raw.afterMode,
+    };
+  });
+  if (
+    files.some(
+      (file, index) => index > 0 && file.path <= files[index - 1]!.path,
+    ) ||
+    new Set(files.map(({ path: filePath }) => filePath.toLowerCase())).size !==
+      files.length
+  ) {
+    throw manifestError(
+      'MAINTAINER_PATCH_INVALID',
+      'Maintainer patch manifest paths must be sorted, unique, and free of case aliases.',
+    );
+  }
+
+  const manifest: PatchManifest = {
+    schema: MANIFEST_SCHEMA,
+    profile: parsed.profile,
+    profileVersion: parsed.profileVersion,
+    trustBaseCommit: parsed.trustBaseCommit,
+    policyDigest: parsed.policyDigest,
+    files,
+    patchDigest: parsed.patchDigest,
+  };
+  if (manifest.patchDigest !== digestManifestBody(manifest)) {
+    throw manifestError(
+      'MAINTAINER_PATCH_INVALID',
+      'Maintainer patch manifest digest does not match its canonical content.',
+    );
+  }
+  if (typeof value === 'string' && canonicalPatchManifest(manifest) !== value) {
+    throw manifestError(
+      'MAINTAINER_PATCH_INVALID',
+      'Maintainer patch manifest is not canonical.',
+    );
+  }
+  return manifest;
+}
+
 /**
  * Re-derives every identity in the manifest from the working tree and rejects
  * any difference: an extra changed file, a missing one, altered content, or a
@@ -315,6 +670,64 @@ export function verifyPatchManifestAgainstWorktree(
   }
 }
 
+/**
+ * Revalidates the signed manifest against only trust-base facts. This is the
+ * admission check used by a clean authority worktree before the candidate is
+ * materialized there; after materialization, verifyPatchManifestAgainstWorktree
+ * additionally proves every after-byte and mode.
+ */
+export function validatePatchManifestAgainstProfile(
+  repositoryRoot: string,
+  manifest: PatchManifest,
+  profile: CapabilityProfile,
+): void {
+  if (
+    manifest.profile !== profile.id ||
+    manifest.profileVersion !== profile.version ||
+    manifest.files.length > profile.constraints.maximumFiles
+  ) {
+    throw manifestError(
+      'MAINTAINER_PATCH_INVALID',
+      'Maintainer patch manifest does not match its capability profile.',
+    );
+  }
+  for (const file of manifest.files) {
+    if (
+      file.role === 'evidence' &&
+      (file.beforeMode === '100755' || file.afterMode === '100755')
+    ) {
+      throw manifestError(
+        'MAINTAINER_PATH_UNSAFE',
+        `Evidence ${file.path} must never be executable.`,
+        { path: file.path },
+      );
+    }
+    if (classifyFileRole(profile, file.path) !== file.role) {
+      throw manifestError(
+        'MAINTAINER_PATCH_INVALID',
+        `File ${file.path} does not carry its trust-base role.`,
+        { path: file.path },
+      );
+    }
+    const before = readTrustBaseEntry(
+      repositoryRoot,
+      manifest.trustBaseCommit,
+      file.path,
+    );
+    if (
+      before?.oid !== (file.beforeBlobOid ?? undefined) ||
+      before?.mode !== (file.beforeMode ?? undefined)
+    ) {
+      throw manifestError(
+        'MAINTAINER_PATCH_INVALID',
+        `File ${file.path} no longer matches the trust base.`,
+        { path: file.path },
+      );
+    }
+  }
+  assertRoleRelationships(profile, manifest.files);
+}
+
 function describeFile(
   repositoryRoot: string,
   profile: CapabilityProfile | undefined,
@@ -335,6 +748,16 @@ function describeFile(
     throw manifestError(
       'MAINTAINER_PATCH_DRIFT',
       `File ${normalized} exists in neither the trust base nor the working tree.`,
+    );
+  }
+  if (
+    role === 'evidence' &&
+    (before?.mode === '100755' || after?.mode === '100755')
+  ) {
+    throw manifestError(
+      'MAINTAINER_PATH_UNSAFE',
+      `Evidence ${normalized} must never be executable.`,
+      { path: normalized },
     );
   }
   const operation: PatchOperation = !before
@@ -382,13 +805,16 @@ function classifyRoleForManifest(
 }
 
 function assertNoDuplicatePaths(files: PatchManifestFile[]): void {
-  for (let index = 1; index < files.length; index += 1) {
-    if (files[index]!.path === files[index - 1]!.path) {
+  const identities = new Set<string>();
+  for (const file of files) {
+    const identity = file.path.toLowerCase();
+    if (identities.has(identity)) {
       throw manifestError(
         'MAINTAINER_PATCH_DUPLICATE_PATH',
-        `File ${files[index]!.path} appears more than once.`,
+        `File ${file.path} appears more than once or aliases another path by case.`,
       );
     }
+    identities.add(identity);
   }
 }
 
@@ -510,6 +936,15 @@ function digestManifestBody(manifest: PatchManifest): string {
 
 function matchesAny(patterns: string[], filePath: string): boolean {
   return patterns.some((pattern) => matchesAllowedPath(filePath, pattern));
+}
+
+function hasExactKeys(value: Record<string, unknown>, keys: string[]): boolean {
+  const actual = Object.keys(value).sort();
+  const expected = [...keys].sort();
+  return (
+    actual.length === expected.length &&
+    actual.every((key, index) => key === expected[index])
+  );
 }
 
 function profileInvalid(message: string) {

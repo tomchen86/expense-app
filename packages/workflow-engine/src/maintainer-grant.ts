@@ -18,6 +18,7 @@ import {
 import {
   assertHumanResolutionConsequences,
   assertHumanResolutionDecision,
+  assertLegacySupersedeHumanResolutionDecisionReadOnly,
   assertHumanResolutionLifecycleBarrier,
   humanResolutionDecisionSchemaDigest,
   inspectInvestigationResolutionState,
@@ -33,10 +34,6 @@ import {
   type InvestigationResolutionState,
 } from './investigation-session-store.ts';
 import { loadInvestigationRuntimeContext } from './lifecycle-context.ts';
-import {
-  maintainerGrantStorePaths,
-  storeAvailableMaintainerGrantUnderLifecycleLock,
-} from './maintainer-store.ts';
 import {
   assertChangeId,
   assertInvestigationId,
@@ -431,142 +428,15 @@ export function parseMaintainerGrantEnvelope(
 }
 
 export function issueMaintainerGrant(
-  cwd: string,
-  request: MaintainerGrantRequest,
-  options: MaintainerGrantIssueOptions = {},
+  _cwd: string,
+  _request: MaintainerGrantRequest,
+  _options: MaintainerGrantIssueOptions = {},
 ): MaintainerGrantIssueResult {
-  const repository = discoverRepository(cwd);
-  if (repository.statusEntries.length > 0) {
-    throw workflowError(
-      'MAINTAINER_GRANT_DIRTY_WORKTREE',
-      'Maintainer grants can be issued only from a clean worktree.',
-      ExitCode.conflict,
-    );
-  }
-
-  const policy = loadBasePolicy(repository.repositoryRoot, repository.head);
-  const origin = runGit(repository.repositoryRoot, [
-    'remote',
-    'get-url',
-    'origin',
-  ]).trim();
-  if (origin !== policy.repository.origin) {
-    throw workflowError(
-      'MAINTAINER_REPOSITORY_MISMATCH',
-      'The repository origin does not match the trusted maintainer policy.',
-      ExitCode.guard,
-    );
-  }
-
-  const requestedPaths = normalizeRequestedPaths(request.paths);
-  const allowedPaths = assertGrantPathsEligible(
-    repository.repositoryRoot,
-    requestedPaths,
-    policy,
+  throw workflowError(
+    'LEGACY_GRANT_V1_NEW_SIGNING_DISABLED',
+    'New V1 grant signing is disabled; V1 records are historical read-only evidence.',
+    ExitCode.guard,
   );
-  const ttlMinutes = request.ttlMinutes ?? policy.maxTtlMinutes;
-  const maxUses = request.maxUses ?? policy.maxUses;
-  if (
-    !Number.isInteger(ttlMinutes) ||
-    ttlMinutes < 1 ||
-    ttlMinutes > policy.maxTtlMinutes ||
-    maxUses !== 1
-  ) {
-    throw invalidGrant('Maintainer grant bounds exceed trusted policy.');
-  }
-
-  const now = options.now ? new Date(options.now) : new Date();
-  if (!Number.isFinite(now.getTime())) {
-    throw invalidGrant('Maintainer grant issue time is invalid.');
-  }
-  const grantId = options.grantId ?? crypto.randomUUID();
-  if (!GRANT_ID.test(grantId)) {
-    throw invalidGrant('Maintainer grant ID is invalid.');
-  }
-  const tagRef = `${policy.auditTagPrefix}${grantId}`;
-  const storePaths = maintainerGrantStorePaths(repository.gitCommonDirectory);
-  const availableTokenPath = path.join(storePaths.available, `${grantId}.json`);
-  if (
-    fs.existsSync(availableTokenPath) ||
-    runGit(
-      repository.repositoryRoot,
-      ['rev-parse', '--verify', tagRef],
-      true,
-    ).trim()
-  ) {
-    throw grantExists(grantId);
-  }
-
-  const signer =
-    options.signer ??
-    createInteractiveSshSigner(repository.repositoryRoot, policy);
-  signer.assertHumanPresent();
-  const signerIdentity = signer.identity();
-  const policyBlob = runGit(repository.repositoryRoot, [
-    'rev-parse',
-    `${repository.head}:workflow/maintainer-policy.json`,
-  ]).trim();
-  const payload: MaintainerGrantPayload = {
-    version: 1,
-    grantId,
-    repositoryId: policy.repository.id,
-    repositoryOrigin: policy.repository.origin,
-    baseCommit: repository.head,
-    policyBlob,
-    changeId: request.changeId,
-    allowedPaths,
-    issuedAt: now.toISOString(),
-    expiresAt: new Date(now.getTime() + ttlMinutes * 60_000).toISOString(),
-    maxUses: 1,
-    reason: request.reason,
-    signer: signerIdentity,
-  };
-  validateGrantPayload(payload, policy, {
-    now,
-    expectedBase: repository.head,
-    expectedPolicyBlob: policyBlob,
-  });
-
-  const canonicalPayload = canonicalGrantPayload(payload);
-  const signature = signer.sign(canonicalPayload);
-  assertArmoredSshSignature(signature);
-  signer.verify(canonicalPayload, signature, signerIdentity);
-  const envelope = { payload, signature };
-  const canonicalEnvelope = canonicalGrantEnvelope(envelope);
-
-  withRepositoryLifecycleOperation(storePaths.runtime, (assertOwned) => {
-    assertOwned();
-    const tagObject = createAuditTag(
-      repository.repositoryRoot,
-      repository.head,
-      tagRef,
-      canonicalEnvelope,
-      signerIdentity,
-    );
-    try {
-      storeAvailableMaintainerGrantUnderLifecycleLock(
-        repository.gitCommonDirectory,
-        envelope,
-        assertOwned,
-      );
-    } catch (error) {
-      runGit(repository.repositoryRoot, [
-        'update-ref',
-        '-d',
-        tagRef,
-        tagObject,
-      ]);
-      throw error;
-    }
-  });
-
-  return {
-    grantId,
-    tagRef,
-    publishCommand: `git push origin ${tagRef}:${tagRef}`,
-    availableTokenPath,
-    envelope,
-  };
 }
 
 export function issueHumanResolutionGrant(
@@ -747,7 +617,7 @@ export function issueHumanResolutionGrant(
       let tagObject: string | undefined;
       try {
         assertOwned();
-        tagObject = createAuditTag(
+        tagObject = createMaintainerAuditTag(
           repository.repositoryRoot,
           repository.head,
           tagRef,
@@ -1003,6 +873,7 @@ export function verifyHumanResolutionGrantEnvelope(
   policy: MaintainerPolicy,
   verifier?: MaintainerSignerProvider,
 ): void {
+  assertHumanResolutionDecision(envelope.payload.decision);
   const signer = verifier ?? createInteractiveSshSigner(repositoryRoot, policy);
   signer.verify(
     canonicalHumanResolutionGrantPayload(envelope.payload),
@@ -1010,6 +881,59 @@ export function verifyHumanResolutionGrantEnvelope(
     envelope.payload.signer,
     HUMAN_RESOLUTION_SIGNATURE_NAMESPACE,
   );
+}
+
+export function verifyHumanResolutionGrantForRevocation(
+  repositoryRoot: string,
+  envelope: HumanResolutionGrantEnvelope,
+  verifier?: MaintainerSignerProvider,
+): void {
+  const trustBase = loadMaintainerPolicyForResolution(
+    repositoryRoot,
+    envelope.payload.trustBaseCommit,
+  );
+  assertHumanResolutionAuditPayload(
+    envelope.payload,
+    trustBase.policy,
+    trustBase.policy,
+    trustBase.policyBlob,
+  );
+  const signer =
+    verifier ?? createInteractiveSshSigner(repositoryRoot, trustBase.policy);
+  signer.verify(
+    canonicalHumanResolutionGrantPayload(envelope.payload),
+    envelope.signature,
+    envelope.payload.signer,
+    HUMAN_RESOLUTION_SIGNATURE_NAMESPACE,
+  );
+}
+
+export function verifyLegacyHumanResolutionGrantEnvelopeReadOnly(
+  repositoryRoot: string,
+  envelope: HumanResolutionGrantEnvelope,
+  policy: MaintainerPolicy,
+  verifier?: MaintainerSignerProvider,
+): {
+  grantId: string;
+  mode: 'historical-read-only';
+  signatureValid: true;
+} {
+  assertMaintainerGrantId(envelope.payload.grantId);
+  assertLegacySupersedeHumanResolutionDecisionReadOnly(
+    envelope.payload.decision,
+  );
+  const signer = verifier ?? createInteractiveSshSigner(repositoryRoot, policy);
+  signer.verify(
+    canonicalHumanResolutionGrantPayload(envelope.payload),
+    envelope.signature,
+    envelope.payload.signer,
+    HUMAN_RESOLUTION_SIGNATURE_NAMESPACE,
+  );
+  return {
+    grantId: envelope.payload.grantId,
+    mode: 'historical-read-only',
+    signatureValid: true,
+  };
 }
 
 export function assertHumanResolutionAuditTag(
@@ -1204,22 +1128,6 @@ function loadBasePolicy(
   }
 }
 
-function normalizeRequestedPaths(requestedPaths: string[]): string[] {
-  if (!Array.isArray(requestedPaths)) {
-    throw invalidGrantPath();
-  }
-  let normalized: string[];
-  try {
-    normalized = requestedPaths.map(normalizeExactRepositoryPath).sort();
-  } catch {
-    throw invalidGrantPath();
-  }
-  if (normalized.length !== new Set(normalized).size) {
-    throw invalidGrantPath();
-  }
-  return normalized;
-}
-
 function assertArmoredSshSignature(signature: string): void {
   if (
     typeof signature !== 'string' ||
@@ -1237,7 +1145,7 @@ function assertArmoredSshSignature(signature: string): void {
   }
 }
 
-function createAuditTag(
+export function createMaintainerAuditTag(
   repositoryRoot: string,
   baseCommit: string,
   tagRef: string,

@@ -23,8 +23,9 @@ import {
   inspectMaintainerGrants,
   maintainerGrantStorePaths,
   reserveMaintainerGrant,
-  revokeMaintainerGrant,
+  storeAvailableMaintainerGrant,
 } from '../src/maintainer-store.ts';
+import { revokeLegacyMaintainerGrant } from '../src/maintainer-revoke.ts';
 import {
   loadMaintainerPolicy,
   parseMaintainerPolicy,
@@ -100,6 +101,17 @@ const POLICY: MaintainerPolicy = {
     },
   ],
 };
+
+function retiredLegacyV1RuntimeScenario(
+  name: string,
+  scenario: () => void,
+): void {
+  test(`legacy v1 sunset blocks retired runtime scenario: ${name}`, () => {
+    assert.throws(scenario, (error) =>
+      isWorkflowError(error, 'LEGACY_GRANT_V1_NEW_SIGNING_DISABLED'),
+    );
+  });
+}
 
 function grant(
   overrides: Partial<MaintainerGrantPayload> = {},
@@ -275,7 +287,7 @@ test('grant signer requires controlling input and output terminals', () => {
   );
 });
 
-test('maintainer grant CLI rejects non-interactive and unattended issuance', () => {
+test('maintainer grant CLI disables all new legacy v1 issuance', () => {
   const repository = createFixtureRepository();
   const cli = path.join(
     sourceRepositoryRoot,
@@ -300,10 +312,10 @@ test('maintainer grant CLI rejects non-interactive and unattended issuance', () 
       cwd: repository,
       encoding: 'utf8',
     });
-    assert.equal(nonInteractive.status, 12);
+    assert.equal(nonInteractive.status, 10);
     assert.equal(
       JSON.parse(nonInteractive.stderr).error.code,
-      'MAINTAINER_INTERACTIVE_REQUIRED',
+      'LEGACY_GRANT_V1_NEW_SIGNING_DISABLED',
     );
 
     const unattended = spawnSync(
@@ -311,113 +323,294 @@ test('maintainer grant CLI rejects non-interactive and unattended issuance', () 
       [...validArguments.slice(0, -1), '--unattended', '--json'],
       { cwd: repository, encoding: 'utf8' },
     );
-    assert.equal(unattended.status, 2);
-    assert.equal(JSON.parse(unattended.stderr).error.code, 'INVALID_USAGE');
+    assert.equal(unattended.status, 10);
+    assert.equal(
+      JSON.parse(unattended.stderr).error.code,
+      'LEGACY_GRANT_V1_NEW_SIGNING_DISABLED',
+    );
   } finally {
     fs.rmSync(repository, { recursive: true, force: true });
   }
 });
 
-test('grant issuance signs canonical bytes and writes only common-dir state and an audit tag', () => {
-  const repository = createFixtureRepository();
-  const now = new Date('2026-07-16T12:00:00.000Z');
-  const grantId = '22222222-2222-4222-8222-222222222222';
-  const signedInputs: string[] = [];
-  const verified: MaintainerGrantEnvelope[] = [];
+test('production legacy v1 issuer rejects before repository or signer access', () => {
+  let signerTouched = false;
   const signer: MaintainerSignerProvider = {
-    assertHumanPresent() {},
+    assertHumanPresent() {
+      signerTouched = true;
+    },
     identity() {
+      signerTouched = true;
       return 'fixture-maintainer';
     },
-    sign(payload) {
-      signedInputs.push(payload);
-      return [
-        '-----BEGIN SSH SIGNATURE-----',
-        'ZmFrZQ==',
-        '-----END SSH SIGNATURE-----',
-        '',
-      ].join('\n');
+    sign() {
+      signerTouched = true;
+      return 'unused';
     },
-    verify(payload, signature, identity) {
-      verified.push({ payload: JSON.parse(payload), signature });
-      assert.equal(identity, 'fixture-maintainer');
+    verify() {
+      signerTouched = true;
     },
   };
 
+  assert.throws(
+    () =>
+      issueMaintainerGrant(
+        '/path/that/must/not/be-read',
+        {
+          changeId: 'demo-change',
+          paths: ['workflow/checks.json'],
+          reason: 'Legacy issuance must remain disabled',
+        },
+        { signer },
+      ),
+    (error) => isWorkflowError(error, 'LEGACY_GRANT_V1_NEW_SIGNING_DISABLED'),
+  );
+  assert.equal(signerTouched, false);
+});
+
+test('legacy v1 reservation and authority start are historical read-only', () => {
+  const repository = createFixtureRepository();
+  const reserveGrantId = '12121212-1212-4121-8121-121212121212';
+  const startGrantId = '34343434-3434-4343-8343-343434343434';
   try {
     installFixtureMaintainerPolicy(repository);
-    const result = issueMaintainerGrant(
-      repository,
-      {
-        changeId: 'demo-change',
-        paths: ['workflow/checks.json'],
-        reason: 'Repair exact workflow authority',
-      },
-      { now, grantId, signer },
-    );
-
-    assert.equal(result.grantId, grantId);
-    assert.equal(result.tagRef, `refs/tags/workflow-grant/${grantId}`);
-    assert.equal(
-      result.publishCommand,
-      `git push origin ${result.tagRef}:${result.tagRef}`,
-    );
-    assert.equal(signedInputs.length, 1);
-    assert.equal(verified.length, 1);
-    assert.equal(
-      signedInputs[0],
-      canonicalGrantPayload(result.envelope.payload),
-    );
-    assert.equal(
-      result.envelope.payload.baseCommit,
-      git(repository, ['rev-parse', 'HEAD']).trim(),
-    );
-    assert.equal(
-      result.envelope.payload.policyBlob,
-      git(repository, [
-        'rev-parse',
-        'HEAD:workflow/maintainer-policy.json',
-      ]).trim(),
-    );
-    assert.equal(result.envelope.payload.expiresAt, '2026-07-16T12:30:00.000Z');
-    assert.equal(result.envelope.payload.maxUses, 1);
-
-    const available = path.join(
-      repository,
-      '.git/workflow-engine/maintainer-grants/available',
-      `${grantId}.json`,
-    );
-    assert.equal(fs.statSync(available).mode & 0o777, 0o600);
-    assert.deepEqual(
-      JSON.parse(fs.readFileSync(available, 'utf8')),
-      result.envelope,
-    );
-    const rawTag = git(repository, ['cat-file', 'tag', result.tagRef]);
-    assert.equal(
-      rawTag.slice(rawTag.indexOf('\n\n') + 2),
-      `${JSON.stringify(result.envelope)}\n`,
-    );
-    assert.equal(git(repository, ['status', '--porcelain']).trim(), '');
+    const commonDirectory = fs.realpathSync(path.join(repository, '.git'));
+    storeLegacyMaintainerGrantFixture(repository, reserveGrantId);
 
     assert.throws(
       () =>
-        issueMaintainerGrant(
-          repository,
-          {
-            changeId: 'demo-change',
-            paths: ['workflow/checks.json'],
-            reason: 'Repair exact workflow authority',
-          },
-          { now, grantId, signer },
-        ),
-      (error) => isWorkflowError(error, 'MAINTAINER_GRANT_EXISTS'),
+        reserveMaintainerGrant(commonDirectory, reserveGrantId, {
+          sessionId: 'legacy-reservation-must-not-open',
+          repositoryRoot: fs.realpathSync(repository),
+        }),
+      (error) => isWorkflowError(error, 'LEGACY_GRANT_V1_READ_ONLY'),
+    );
+    const store = maintainerGrantStorePaths(commonDirectory);
+    assert.equal(
+      fs.existsSync(path.join(store.available, `${reserveGrantId}.json`)),
+      true,
+    );
+    assert.equal(
+      fs.existsSync(path.join(store.reserved, `${reserveGrantId}.json`)),
+      false,
+    );
+
+    storeLegacyMaintainerGrantFixture(repository, startGrantId);
+    git(repository, ['switch', '-c', 'work/demo-change']);
+    assert.throws(
+      () =>
+        startAuthoritySession(repository, 'demo-change', startGrantId, {
+          signer: fixtureSigner(),
+        }),
+      (error) => isWorkflowError(error, 'LEGACY_GRANT_V1_READ_ONLY'),
+    );
+    assert.equal(
+      fs.existsSync(path.join(store.available, `${startGrantId}.json`)),
+      true,
+    );
+    assert.equal(
+      fs.existsSync(path.join(store.reserved, `${startGrantId}.json`)),
+      false,
+    );
+    assert.deepEqual(fs.readdirSync(store.sessions, { encoding: 'utf8' }), []);
+  } finally {
+    fs.rmSync(repository, { recursive: true, force: true });
+  }
+});
+
+test('legacy v1 revocation requires a current trusted controlling human and is exact-replay safe', () => {
+  const repository = createFixtureRepository();
+  const grantId = '56565656-5656-4565-8565-565656565656';
+  try {
+    installFixtureMaintainerPolicy(repository);
+    storeLegacyMaintainerGrantFixture(repository, grantId);
+    const commonDirectory = fs.realpathSync(path.join(repository, '.git'));
+    const store = maintainerGrantStorePaths(commonDirectory);
+    const unattended = fixtureSigner();
+    unattended.assertHumanPresent = () => {
+      throw new Error('no controlling terminal');
+    };
+    assert.throws(() =>
+      revokeLegacyMaintainerGrant(repository, grantId, {
+        reason: 'Retire historical bearer authority',
+        now: new Date('2026-07-16T12:10:00.000Z'),
+        signer: unattended,
+        verifier: fixtureSigner(),
+      }),
+    );
+    assert.equal(
+      fs.existsSync(path.join(store.available, `${grantId}.json`)),
+      true,
+    );
+    assert.equal(
+      fs.existsSync(path.join(store.terminal, `${grantId}.json`)),
+      false,
+    );
+    const untrusted = fixtureSigner();
+    untrusted.identity = () => 'untrusted-maintainer';
+    assert.throws(
+      () =>
+        revokeLegacyMaintainerGrant(repository, grantId, {
+          reason: 'Retire historical bearer authority',
+          signer: untrusted,
+          verifier: fixtureSigner(),
+        }),
+      (error) => isWorkflowError(error, 'HUMAN_REVOCATION_SIGNER_UNTRUSTED'),
+    );
+    assert.equal(
+      fs.existsSync(path.join(store.available, `${grantId}.json`)),
+      true,
+    );
+    assert.equal(
+      fs.existsSync(path.join(store.terminal, `${grantId}.json`)),
+      false,
+    );
+
+    const revoked = revokeLegacyMaintainerGrant(repository, grantId, {
+      reason: 'Retire historical bearer authority',
+      now: new Date('2026-07-16T12:11:00.000Z'),
+      signer: fixtureSigner(),
+      verifier: fixtureSigner(),
+    });
+    assert.equal(revoked.state, 'revoked');
+    const terminalBytes = fs.readFileSync(
+      path.join(store.terminal, `${grantId}.json`),
+      'utf8',
+    );
+    assert.match(terminalBytes, /human-revocation-authorization\.v1/);
+    assert.deepEqual(
+      revokeLegacyMaintainerGrant(repository, grantId, {
+        reason: 'Retire historical bearer authority',
+        now: new Date('2026-07-16T12:12:00.000Z'),
+        signer: fixtureSigner(),
+        verifier: fixtureSigner(),
+      }),
+      revoked,
+    );
+    assert.equal(
+      fs.readFileSync(path.join(store.terminal, `${grantId}.json`), 'utf8'),
+      terminalBytes,
+    );
+    assert.throws(
+      () =>
+        revokeLegacyMaintainerGrant(repository, grantId, {
+          reason: 'A different reason must not overwrite the tombstone',
+          signer: fixtureSigner(),
+          verifier: fixtureSigner(),
+        }),
+      (error) => isWorkflowError(error, 'HUMAN_REVOCATION_CONFLICT'),
     );
   } finally {
     fs.rmSync(repository, { recursive: true, force: true });
   }
 });
 
-test('failed signature verification leaves no token or audit tag', () => {
+retiredLegacyV1RuntimeScenario(
+  'grant issuance signs canonical bytes and writes only common-dir state and an audit tag',
+  () => {
+    const repository = createFixtureRepository();
+    const now = new Date('2026-07-16T12:00:00.000Z');
+    const grantId = '22222222-2222-4222-8222-222222222222';
+    const signedInputs: string[] = [];
+    const verified: MaintainerGrantEnvelope[] = [];
+    const signer: MaintainerSignerProvider = {
+      assertHumanPresent() {},
+      identity() {
+        return 'fixture-maintainer';
+      },
+      sign(payload) {
+        signedInputs.push(payload);
+        return [
+          '-----BEGIN SSH SIGNATURE-----',
+          'ZmFrZQ==',
+          '-----END SSH SIGNATURE-----',
+          '',
+        ].join('\n');
+      },
+      verify(payload, signature, identity) {
+        verified.push({ payload: JSON.parse(payload), signature });
+        assert.equal(identity, 'fixture-maintainer');
+      },
+    };
+
+    try {
+      installFixtureMaintainerPolicy(repository);
+      const result = issueMaintainerGrant(
+        repository,
+        {
+          changeId: 'demo-change',
+          paths: ['workflow/checks.json'],
+          reason: 'Repair exact workflow authority',
+        },
+        { now, grantId, signer },
+      );
+
+      assert.equal(result.grantId, grantId);
+      assert.equal(result.tagRef, `refs/tags/workflow-grant/${grantId}`);
+      assert.equal(
+        result.publishCommand,
+        `git push origin ${result.tagRef}:${result.tagRef}`,
+      );
+      assert.equal(signedInputs.length, 1);
+      assert.equal(verified.length, 1);
+      assert.equal(
+        signedInputs[0],
+        canonicalGrantPayload(result.envelope.payload),
+      );
+      assert.equal(
+        result.envelope.payload.baseCommit,
+        git(repository, ['rev-parse', 'HEAD']).trim(),
+      );
+      assert.equal(
+        result.envelope.payload.policyBlob,
+        git(repository, [
+          'rev-parse',
+          'HEAD:workflow/maintainer-policy.json',
+        ]).trim(),
+      );
+      assert.equal(
+        result.envelope.payload.expiresAt,
+        '2026-07-16T12:30:00.000Z',
+      );
+      assert.equal(result.envelope.payload.maxUses, 1);
+
+      const available = path.join(
+        repository,
+        '.git/workflow-engine/maintainer-grants/available',
+        `${grantId}.json`,
+      );
+      assert.equal(fs.statSync(available).mode & 0o777, 0o600);
+      assert.deepEqual(
+        JSON.parse(fs.readFileSync(available, 'utf8')),
+        result.envelope,
+      );
+      const rawTag = git(repository, ['cat-file', 'tag', result.tagRef]);
+      assert.equal(
+        rawTag.slice(rawTag.indexOf('\n\n') + 2),
+        `${JSON.stringify(result.envelope)}\n`,
+      );
+      assert.equal(git(repository, ['status', '--porcelain']).trim(), '');
+
+      assert.throws(
+        () =>
+          issueMaintainerGrant(
+            repository,
+            {
+              changeId: 'demo-change',
+              paths: ['workflow/checks.json'],
+              reason: 'Repair exact workflow authority',
+            },
+            { now, grantId, signer },
+          ),
+        (error) => isWorkflowError(error, 'MAINTAINER_GRANT_EXISTS'),
+      );
+    } finally {
+      fs.rmSync(repository, { recursive: true, force: true });
+    }
+  },
+);
+
+test('legacy issuer rejection leaves no token or audit tag', () => {
   const repository = createFixtureRepository();
   const grantId = '33333333-3333-4333-8333-333333333333';
   const signer: MaintainerSignerProvider = {
@@ -440,20 +633,22 @@ test('failed signature verification leaves no token or audit tag', () => {
 
   try {
     installFixtureMaintainerPolicy(repository);
-    assert.throws(() =>
-      issueMaintainerGrant(
-        repository,
-        {
-          changeId: 'demo-change',
-          paths: ['workflow/checks.json'],
-          reason: 'Repair exact workflow authority',
-        },
-        {
-          now: new Date('2026-07-16T12:00:00.000Z'),
-          grantId,
-          signer,
-        },
-      ),
+    assert.throws(
+      () =>
+        issueMaintainerGrant(
+          repository,
+          {
+            changeId: 'demo-change',
+            paths: ['workflow/checks.json'],
+            reason: 'Repair exact workflow authority',
+          },
+          {
+            now: new Date('2026-07-16T12:00:00.000Z'),
+            grantId,
+            signer,
+          },
+        ),
+      (error) => isWorkflowError(error, 'LEGACY_GRANT_V1_NEW_SIGNING_DISABLED'),
     );
     assert.equal(
       fs.existsSync(
@@ -473,261 +668,280 @@ test('failed signature verification leaves no token or audit tag', () => {
   }
 });
 
-test('common-dir reservation is exclusive across worktrees and revocation is idempotent', () => {
-  const repository = createFixtureRepository();
-  const grantId = '44444444-4444-4444-8444-444444444444';
-  let linkedWorktree: string | undefined;
-  try {
-    installFixtureMaintainerPolicy(repository);
-    issueMaintainerGrant(
-      repository,
-      {
-        changeId: 'demo-change',
-        paths: ['workflow/checks.json'],
-        reason: 'Repair exact workflow authority',
-      },
-      {
-        now: new Date('2026-07-16T12:00:00.000Z'),
-        grantId,
-        signer: fixtureSigner(),
-      },
-    );
-    const commonDirectory = fs.realpathSync(path.join(repository, '.git'));
-    assert.deepEqual(inspectMaintainerGrants(commonDirectory, grantId), [
-      {
-        grantId,
-        state: 'available',
-        changeId: 'demo-change',
-        baseCommit: git(repository, ['rev-parse', 'HEAD']).trim(),
-        allowedPaths: ['workflow/checks.json'],
-        issuedAt: '2026-07-16T12:00:00.000Z',
-        expiresAt: '2026-07-16T12:30:00.000Z',
-        signer: 'fixture-maintainer',
-      },
-    ]);
-
-    git(repository, ['switch', '-c', 'work/demo-change']);
-    const ordinary = startSession(repository, 'demo-change', '1.1');
-    assert.throws(
-      () =>
-        reserveMaintainerGrant(commonDirectory, grantId, {
-          sessionId: 'authority-conflict',
-          repositoryRoot: fs.realpathSync(repository),
-        }),
-      (error) => isWorkflowError(error, 'ACTIVE_SESSION_CONFLICT'),
-    );
-    abortSession(repository, ordinary.sessionId, 'Fixture conflict complete');
-
-    linkedWorktree = fs.mkdtempSync(
-      path.join(path.dirname(repository), 'workflow-linked-'),
-    );
-    fs.rmdirSync(linkedWorktree);
-    git(repository, [
-      'worktree',
-      'add',
-      '-b',
-      'work/linked-authority',
-      linkedWorktree,
-      'HEAD',
-    ]);
-    const linkedCommon = fs.realpathSync(
-      git(linkedWorktree, ['rev-parse', '--git-common-dir']).trim(),
-    );
-    assert.equal(linkedCommon, commonDirectory);
-
-    const reservation = reserveMaintainerGrant(linkedCommon, grantId, {
-      sessionId: 'authority-session-fixture',
-      repositoryRoot: fs.realpathSync(linkedWorktree),
-      now: new Date('2026-07-16T12:05:00.000Z'),
-    });
-    assert.equal(reservation.state, 'reserved');
-    assert.equal(reservation.repositoryRoot, fs.realpathSync(linkedWorktree));
-    assert.throws(
-      () =>
-        reserveMaintainerGrant(commonDirectory, grantId, {
-          sessionId: 'authority-session-attacker',
-          repositoryRoot: fs.realpathSync(repository),
-        }),
-      (error) => isWorkflowError(error, 'ACTIVE_AUTHORITY_CONFLICT'),
-    );
-    assert.throws(
-      () =>
-        withRepositoryLifecycleOperation(
-          runtimePaths(commonDirectory, 'workflow-engine'),
-          () => undefined,
-        ),
-      (error) => isWorkflowError(error, 'ACTIVE_AUTHORITY_CONFLICT'),
-    );
-
-    const inspection = inspectMaintainerGrants(commonDirectory, grantId)[0];
-    assert.equal(inspection?.state, 'reserved');
-    assert.equal(inspection?.reservationSessionId, 'authority-session-fixture');
-    assert.equal(
-      JSON.stringify(inspection).includes(fs.realpathSync(linkedWorktree)),
-      false,
-    );
-    const store = maintainerGrantStorePaths(commonDirectory);
-    for (const directory of [
-      store.root,
-      store.available,
-      store.reserved,
-      store.terminal,
-      store.journals,
-    ]) {
-      assert.equal(fs.statSync(directory).mode & 0o777, 0o700);
-    }
-    assert.equal(
-      fs.statSync(path.join(store.reserved, `${grantId}.json`)).mode & 0o777,
-      0o600,
-    );
-    assert.equal(
-      fs.existsSync(path.join(linkedWorktree, 'workflow-engine')),
-      false,
-    );
-
-    const cli = path.join(
-      sourceRepositoryRoot,
-      'packages/workflow-engine/src/cli.ts',
-    );
-    const inspectedByCli = spawnSync(
-      process.execPath,
-      [
-        '--experimental-strip-types',
-        cli,
-        'maintainer',
-        'inspect',
-        grantId,
-        '--json',
-      ],
-      { cwd: linkedWorktree, encoding: 'utf8' },
-    );
-    assert.equal(inspectedByCli.status, 0);
-    assert.equal(inspectedByCli.stdout.includes(linkedWorktree), false);
-    assert.equal(JSON.parse(inspectedByCli.stdout).grants[0].state, 'reserved');
-
-    const revokedByCli = spawnSync(
-      process.execPath,
-      [
-        '--experimental-strip-types',
-        cli,
-        'maintainer',
-        'revoke',
-        grantId,
-        '--json',
-      ],
-      { cwd: linkedWorktree, encoding: 'utf8' },
-    );
-    assert.equal(revokedByCli.status, 0);
-    const revoked = JSON.parse(revokedByCli.stdout).grant;
-    const repeated = revokeMaintainerGrant(
-      linkedCommon,
-      grantId,
-      new Date('2026-07-16T12:07:00.000Z'),
-    );
-    assert.deepEqual(repeated, revoked);
-    assert.equal(revoked.state, 'revoked');
-    assert.equal(
-      fs.existsSync(path.join(store.reserved, `${grantId}.json`)),
-      false,
-    );
-    assert.equal(
-      fs.statSync(path.join(store.terminal, `${grantId}.json`)).mode & 0o777,
-      0o600,
-    );
-
-    const ambiguousReservation = path.join(store.reserved, 'attacker.tmp');
-    fs.writeFileSync(ambiguousReservation, 'untrusted', { mode: 0o600 });
-    assert.throws(
-      () =>
-        withRepositoryLifecycleOperation(
-          runtimePaths(commonDirectory, 'workflow-engine'),
-          () => undefined,
-        ),
-      (error) => isWorkflowError(error, 'MAINTAINER_GRANT_STORE_UNSAFE'),
-    );
-    fs.rmSync(ambiguousReservation);
-  } finally {
-    if (linkedWorktree && fs.existsSync(repository)) {
-      try {
-        git(repository, ['worktree', 'remove', '--force', linkedWorktree]);
-      } catch {
-        fs.rmSync(linkedWorktree, { recursive: true, force: true });
-      }
-    }
-    fs.rmSync(repository, { recursive: true, force: true });
-  }
-});
-
-test('authority session pins normal checks and terminally revokes failed scope', () => {
-  const repository = createFixtureRepository();
-  const grantId = '55555555-5555-4555-8555-555555555555';
-  const now = new Date('2026-07-16T12:00:00.000Z');
-  try {
-    installFixtureMaintainerPolicy(repository);
-    issueMaintainerGrant(
-      repository,
-      {
-        changeId: 'demo-change',
-        paths: ['workflow/checks.json'],
-        reason: 'Repair exact workflow authority',
-      },
-      { now, grantId, signer: fixtureSigner() },
-    );
-    git(repository, ['switch', '-c', 'work/demo-change']);
-    const session = startAuthoritySession(repository, 'demo-change', grantId, {
-      now: new Date('2026-07-16T12:01:00.000Z'),
-      signer: fixtureSigner(),
-    });
-    assert.deepEqual(session.requiredChecks, ['fixture']);
-    assert.equal(session.pinnedChecks[0]?.runner.digest.length, 64);
-
-    const checksPath = path.join(repository, 'workflow/checks.json');
-    const futureChecks = JSON.parse(fs.readFileSync(checksPath, 'utf8')) as {
-      checks: { fixture: { command: string[] } };
-    };
-    futureChecks.checks.fixture.command.push('--future-definition');
-    fs.writeFileSync(checksPath, `${JSON.stringify(futureChecks, null, 2)}\n`);
-    const checked = checkAuthoritySession(repository, session.sessionId, {
-      now: new Date('2026-07-16T12:02:00.000Z'),
-      signer: fixtureSigner(),
-    });
-    assert.equal(checked.passed, true);
-    assert.deepEqual(checked.changedPaths, ['workflow/checks.json']);
-    const commonDirectory = fs.realpathSync(path.join(repository, '.git'));
-    const store = maintainerGrantStorePaths(commonDirectory);
-    const report = readImmutableReport(
-      store.runtime.reports,
-      session.sessionId,
-      checked.reportId,
-    );
-    assert.equal(report.kind, 'authority-check');
-    assert.equal(report.grantId, grantId);
-    assert.equal(
-      readAuthoritySession(repository, session.sessionId).state,
-      'active',
-    );
-
-    fs.writeFileSync(path.join(repository, 'src/unexpected.ts'), 'unsafe\n');
-    assert.throws(
-      () =>
-        checkAuthoritySession(repository, session.sessionId, {
-          now: new Date('2026-07-16T12:03:00.000Z'),
+retiredLegacyV1RuntimeScenario(
+  'common-dir reservation is exclusive across worktrees and revocation is idempotent',
+  () => {
+    const repository = createFixtureRepository();
+    const grantId = '44444444-4444-4444-8444-444444444444';
+    let linkedWorktree: string | undefined;
+    try {
+      installFixtureMaintainerPolicy(repository);
+      issueMaintainerGrant(
+        repository,
+        {
+          changeId: 'demo-change',
+          paths: ['workflow/checks.json'],
+          reason: 'Repair exact workflow authority',
+        },
+        {
+          now: new Date('2026-07-16T12:00:00.000Z'),
+          grantId,
           signer: fixtureSigner(),
-        }),
-      (error) => isWorkflowError(error, 'AUTHORITY_SCOPE_INVALID'),
-    );
-    assert.equal(
-      readAuthoritySession(repository, session.sessionId).state,
-      'failed',
-    );
-    assert.equal(
-      inspectMaintainerGrants(commonDirectory, grantId)[0]?.state,
-      'revoked',
-    );
-  } finally {
-    fs.rmSync(repository, { recursive: true, force: true });
-  }
-});
+        },
+      );
+      const commonDirectory = fs.realpathSync(path.join(repository, '.git'));
+      assert.deepEqual(inspectMaintainerGrants(commonDirectory, grantId), [
+        {
+          grantId,
+          state: 'available',
+          changeId: 'demo-change',
+          baseCommit: git(repository, ['rev-parse', 'HEAD']).trim(),
+          allowedPaths: ['workflow/checks.json'],
+          issuedAt: '2026-07-16T12:00:00.000Z',
+          expiresAt: '2026-07-16T12:30:00.000Z',
+          signer: 'fixture-maintainer',
+        },
+      ]);
+
+      git(repository, ['switch', '-c', 'work/demo-change']);
+      const ordinary = startSession(repository, 'demo-change', '1.1');
+      assert.throws(
+        () =>
+          reserveMaintainerGrant(commonDirectory, grantId, {
+            sessionId: 'authority-conflict',
+            repositoryRoot: fs.realpathSync(repository),
+          }),
+        (error) => isWorkflowError(error, 'ACTIVE_SESSION_CONFLICT'),
+      );
+      abortSession(repository, ordinary.sessionId, 'Fixture conflict complete');
+
+      linkedWorktree = fs.mkdtempSync(
+        path.join(path.dirname(repository), 'workflow-linked-'),
+      );
+      fs.rmdirSync(linkedWorktree);
+      git(repository, [
+        'worktree',
+        'add',
+        '-b',
+        'work/linked-authority',
+        linkedWorktree,
+        'HEAD',
+      ]);
+      const linkedCommon = fs.realpathSync(
+        git(linkedWorktree, ['rev-parse', '--git-common-dir']).trim(),
+      );
+      assert.equal(linkedCommon, commonDirectory);
+
+      const reservation = reserveMaintainerGrant(linkedCommon, grantId, {
+        sessionId: 'authority-session-fixture',
+        repositoryRoot: fs.realpathSync(linkedWorktree),
+        now: new Date('2026-07-16T12:05:00.000Z'),
+      });
+      assert.equal(reservation.state, 'reserved');
+      assert.equal(reservation.repositoryRoot, fs.realpathSync(linkedWorktree));
+      assert.throws(
+        () =>
+          reserveMaintainerGrant(commonDirectory, grantId, {
+            sessionId: 'authority-session-attacker',
+            repositoryRoot: fs.realpathSync(repository),
+          }),
+        (error) => isWorkflowError(error, 'ACTIVE_AUTHORITY_CONFLICT'),
+      );
+      assert.throws(
+        () =>
+          withRepositoryLifecycleOperation(
+            runtimePaths(commonDirectory, 'workflow-engine'),
+            () => undefined,
+          ),
+        (error) => isWorkflowError(error, 'ACTIVE_AUTHORITY_CONFLICT'),
+      );
+
+      const inspection = inspectMaintainerGrants(commonDirectory, grantId)[0];
+      assert.equal(inspection?.state, 'reserved');
+      assert.equal(
+        inspection?.reservationSessionId,
+        'authority-session-fixture',
+      );
+      assert.equal(
+        JSON.stringify(inspection).includes(fs.realpathSync(linkedWorktree)),
+        false,
+      );
+      const store = maintainerGrantStorePaths(commonDirectory);
+      for (const directory of [
+        store.root,
+        store.available,
+        store.reserved,
+        store.terminal,
+        store.journals,
+      ]) {
+        assert.equal(fs.statSync(directory).mode & 0o777, 0o700);
+      }
+      assert.equal(
+        fs.statSync(path.join(store.reserved, `${grantId}.json`)).mode & 0o777,
+        0o600,
+      );
+      assert.equal(
+        fs.existsSync(path.join(linkedWorktree, 'workflow-engine')),
+        false,
+      );
+
+      const cli = path.join(
+        sourceRepositoryRoot,
+        'packages/workflow-engine/src/cli.ts',
+      );
+      const inspectedByCli = spawnSync(
+        process.execPath,
+        [
+          '--experimental-strip-types',
+          cli,
+          'maintainer',
+          'inspect',
+          grantId,
+          '--json',
+        ],
+        { cwd: linkedWorktree, encoding: 'utf8' },
+      );
+      assert.equal(inspectedByCli.status, 0);
+      assert.equal(inspectedByCli.stdout.includes(linkedWorktree), false);
+      assert.equal(
+        JSON.parse(inspectedByCli.stdout).grants[0].state,
+        'reserved',
+      );
+
+      const revocationReason =
+        'Retire the exact unused linked-worktree authority.';
+      const revocationOptions = {
+        reason: revocationReason,
+        now: new Date('2026-07-16T12:07:00.000Z'),
+        signer: fixtureSigner(),
+        verifier: fixtureSigner(),
+      };
+      const revoked = revokeLegacyMaintainerGrant(
+        linkedWorktree,
+        grantId,
+        revocationOptions,
+      );
+      const repeated = revokeLegacyMaintainerGrant(
+        linkedWorktree,
+        grantId,
+        revocationOptions,
+      );
+      assert.deepEqual(repeated, revoked);
+      assert.equal(revoked.state, 'revoked');
+      assert.equal(
+        fs.existsSync(path.join(store.reserved, `${grantId}.json`)),
+        false,
+      );
+      assert.equal(
+        fs.statSync(path.join(store.terminal, `${grantId}.json`)).mode & 0o777,
+        0o600,
+      );
+
+      const ambiguousReservation = path.join(store.reserved, 'attacker.tmp');
+      fs.writeFileSync(ambiguousReservation, 'untrusted', { mode: 0o600 });
+      assert.throws(
+        () =>
+          withRepositoryLifecycleOperation(
+            runtimePaths(commonDirectory, 'workflow-engine'),
+            () => undefined,
+          ),
+        (error) => isWorkflowError(error, 'MAINTAINER_GRANT_STORE_UNSAFE'),
+      );
+      fs.rmSync(ambiguousReservation);
+    } finally {
+      if (linkedWorktree && fs.existsSync(repository)) {
+        try {
+          git(repository, ['worktree', 'remove', '--force', linkedWorktree]);
+        } catch {
+          fs.rmSync(linkedWorktree, { recursive: true, force: true });
+        }
+      }
+      fs.rmSync(repository, { recursive: true, force: true });
+    }
+  },
+);
+
+retiredLegacyV1RuntimeScenario(
+  'authority session pins normal checks and terminally revokes failed scope',
+  () => {
+    const repository = createFixtureRepository();
+    const grantId = '55555555-5555-4555-8555-555555555555';
+    const now = new Date('2026-07-16T12:00:00.000Z');
+    try {
+      installFixtureMaintainerPolicy(repository);
+      issueMaintainerGrant(
+        repository,
+        {
+          changeId: 'demo-change',
+          paths: ['workflow/checks.json'],
+          reason: 'Repair exact workflow authority',
+        },
+        { now, grantId, signer: fixtureSigner() },
+      );
+      git(repository, ['switch', '-c', 'work/demo-change']);
+      const session = startAuthoritySession(
+        repository,
+        'demo-change',
+        grantId,
+        {
+          now: new Date('2026-07-16T12:01:00.000Z'),
+          signer: fixtureSigner(),
+        },
+      );
+      assert.deepEqual(session.requiredChecks, ['fixture']);
+      assert.equal(session.pinnedChecks[0]?.runner.digest.length, 64);
+
+      const checksPath = path.join(repository, 'workflow/checks.json');
+      const futureChecks = JSON.parse(fs.readFileSync(checksPath, 'utf8')) as {
+        checks: { fixture: { command: string[] } };
+      };
+      futureChecks.checks.fixture.command.push('--future-definition');
+      fs.writeFileSync(
+        checksPath,
+        `${JSON.stringify(futureChecks, null, 2)}\n`,
+      );
+      const checked = checkAuthoritySession(repository, session.sessionId, {
+        now: new Date('2026-07-16T12:02:00.000Z'),
+        signer: fixtureSigner(),
+      });
+      assert.equal(checked.passed, true);
+      assert.deepEqual(checked.changedPaths, ['workflow/checks.json']);
+      const commonDirectory = fs.realpathSync(path.join(repository, '.git'));
+      const store = maintainerGrantStorePaths(commonDirectory);
+      const report = readImmutableReport(
+        store.runtime.reports,
+        session.sessionId,
+        checked.reportId,
+      );
+      assert.equal(report.kind, 'authority-check');
+      assert.equal(report.grantId, grantId);
+      assert.equal(
+        readAuthoritySession(repository, session.sessionId).state,
+        'active',
+      );
+
+      fs.writeFileSync(path.join(repository, 'src/unexpected.ts'), 'unsafe\n');
+      assert.throws(
+        () =>
+          checkAuthoritySession(repository, session.sessionId, {
+            now: new Date('2026-07-16T12:03:00.000Z'),
+            signer: fixtureSigner(),
+          }),
+        (error) => isWorkflowError(error, 'AUTHORITY_SCOPE_INVALID'),
+      );
+      assert.equal(
+        readAuthoritySession(repository, session.sessionId).state,
+        'failed',
+      );
+      assert.equal(
+        inspectMaintainerGrants(commonDirectory, grantId)[0]?.state,
+        'revoked',
+      );
+    } finally {
+      fs.rmSync(repository, { recursive: true, force: true });
+    }
+  },
+);
 
 test('repository authority check entrypoints remain pinned across workflow CLI edits', () => {
   const definitions = (
@@ -848,524 +1062,776 @@ test('repository authority check entrypoints remain pinned across workflow CLI e
   }
 });
 
-test('authority start failure after reservation never returns the grant to available', () => {
-  const repository = createFixtureRepository();
-  const grantId = '66666666-6666-4666-8666-666666666666';
-  try {
-    installFixtureMaintainerPolicy(repository);
-    const issued = issueMaintainerGrant(
-      repository,
-      {
-        changeId: 'demo-change',
-        paths: ['workflow/checks.json'],
-        reason: 'Repair exact workflow authority',
-      },
-      {
-        now: new Date('2026-07-16T12:00:00.000Z'),
-        grantId,
-        signer: fixtureSigner(),
-      },
-    );
-    git(repository, ['update-ref', '-d', issued.tagRef]);
-    git(repository, ['switch', '-c', 'work/demo-change']);
-    assert.throws(
-      () =>
-        startAuthoritySession(repository, 'demo-change', grantId, {
-          now: new Date('2026-07-16T12:01:00.000Z'),
+retiredLegacyV1RuntimeScenario(
+  'authority start failure after reservation never returns the grant to available',
+  () => {
+    const repository = createFixtureRepository();
+    const grantId = '66666666-6666-4666-8666-666666666666';
+    try {
+      installFixtureMaintainerPolicy(repository);
+      const issued = issueMaintainerGrant(
+        repository,
+        {
+          changeId: 'demo-change',
+          paths: ['workflow/checks.json'],
+          reason: 'Repair exact workflow authority',
+        },
+        {
+          now: new Date('2026-07-16T12:00:00.000Z'),
+          grantId,
           signer: fixtureSigner(),
-        }),
-      (error) => isWorkflowError(error, 'AUTHORITY_AUDIT_TAG_INVALID'),
-    );
-    const commonDirectory = fs.realpathSync(path.join(repository, '.git'));
-    assert.equal(
-      inspectMaintainerGrants(commonDirectory, grantId)[0]?.state,
-      'available',
-    );
-  } finally {
-    fs.rmSync(repository, { recursive: true, force: true });
-  }
-});
+        },
+      );
+      git(repository, ['update-ref', '-d', issued.tagRef]);
+      git(repository, ['switch', '-c', 'work/demo-change']);
+      assert.throws(
+        () =>
+          startAuthoritySession(repository, 'demo-change', grantId, {
+            now: new Date('2026-07-16T12:01:00.000Z'),
+            signer: fixtureSigner(),
+          }),
+        (error) => isWorkflowError(error, 'AUTHORITY_AUDIT_TAG_INVALID'),
+      );
+      const commonDirectory = fs.realpathSync(path.join(repository, '.git'));
+      assert.equal(
+        inspectMaintainerGrants(commonDirectory, grantId)[0]?.state,
+        'available',
+      );
+    } finally {
+      fs.rmSync(repository, { recursive: true, force: true });
+    }
+  },
+);
 
-test('authority start precondition failure releases the grant for reuse', () => {
-  const repository = createFixtureRepository();
-  const grantId = 'aaaa1111-2222-4333-8444-555566667777';
-  try {
-    installFixtureMaintainerPolicy(repository);
-    issueMaintainerGrant(
-      repository,
-      {
-        changeId: 'demo-change',
-        paths: ['workflow/checks.json'],
-        reason: 'Repair exact workflow authority',
-      },
-      {
-        now: new Date('2026-07-16T12:00:00.000Z'),
-        grantId,
-        signer: fixtureSigner(),
-      },
-    );
-    const commonDirectory = fs.realpathSync(path.join(repository, '.git'));
-    assert.throws(
-      () =>
-        startAuthoritySession(repository, 'demo-change', grantId, {
-          now: new Date('2026-07-16T12:01:00.000Z'),
+retiredLegacyV1RuntimeScenario(
+  'authority start precondition failure releases the grant for reuse',
+  () => {
+    const repository = createFixtureRepository();
+    const grantId = 'aaaa1111-2222-4333-8444-555566667777';
+    try {
+      installFixtureMaintainerPolicy(repository);
+      issueMaintainerGrant(
+        repository,
+        {
+          changeId: 'demo-change',
+          paths: ['workflow/checks.json'],
+          reason: 'Repair exact workflow authority',
+        },
+        {
+          now: new Date('2026-07-16T12:00:00.000Z'),
+          grantId,
           signer: fixtureSigner(),
-        }),
-      (error) => isWorkflowError(error, 'AUTHORITY_BRANCH_INVALID'),
-    );
-    assert.equal(
-      inspectMaintainerGrants(commonDirectory, grantId)[0]?.state,
-      'available',
-    );
-    git(repository, ['switch', '-c', 'work/demo-change']);
-    const session = startAuthoritySession(repository, 'demo-change', grantId, {
-      now: new Date('2026-07-16T12:02:00.000Z'),
-      signer: fixtureSigner(),
-    });
-    assert.equal(session.state, 'active');
-    assert.equal(
-      inspectMaintainerGrants(commonDirectory, grantId)[0]?.state,
-      'reserved',
-    );
-  } finally {
-    fs.rmSync(repository, { recursive: true, force: true });
-  }
-});
-
-test('authority check failure keeps the session active for a repaired retry', () => {
-  const repository = createFixtureRepository();
-  const grantId = 'bbbb1111-2222-4333-8444-555566667777';
-  const flagDirectory = fs.mkdtempSync(
-    path.join(os.tmpdir(), 'workflow-flaky-check-'),
-  );
-  const flagPath = path.join(flagDirectory, 'pass');
-  try {
-    fs.writeFileSync(
-      path.join(repository, 'scripts/pass.mjs'),
-      [
-        "import fs from 'node:fs';",
-        `process.exit(fs.existsSync(${JSON.stringify(flagPath)}) ? 0 : 1);`,
-        '',
-      ].join('\n'),
-    );
-    git(repository, ['add', 'scripts/pass.mjs']);
-    git(repository, ['commit', '-m', 'Make fixture check gated on a flag']);
-    installFixtureMaintainerPolicy(repository);
-    issueMaintainerGrant(
-      repository,
-      {
-        changeId: 'demo-change',
-        paths: ['workflow/checks.json'],
-        reason: 'Repair exact workflow authority',
-      },
-      {
-        now: new Date('2026-07-16T12:00:00.000Z'),
+        },
+      );
+      const commonDirectory = fs.realpathSync(path.join(repository, '.git'));
+      assert.throws(
+        () =>
+          startAuthoritySession(repository, 'demo-change', grantId, {
+            now: new Date('2026-07-16T12:01:00.000Z'),
+            signer: fixtureSigner(),
+          }),
+        (error) => isWorkflowError(error, 'AUTHORITY_BRANCH_INVALID'),
+      );
+      assert.equal(
+        inspectMaintainerGrants(commonDirectory, grantId)[0]?.state,
+        'available',
+      );
+      git(repository, ['switch', '-c', 'work/demo-change']);
+      const session = startAuthoritySession(
+        repository,
+        'demo-change',
         grantId,
-        signer: fixtureSigner(),
-      },
-    );
-    git(repository, ['switch', '-c', 'work/demo-change']);
-    const session = startAuthoritySession(repository, 'demo-change', grantId, {
-      now: new Date('2026-07-16T12:01:00.000Z'),
-      signer: fixtureSigner(),
-    });
-    const targetPath = path.join(repository, 'workflow/checks.json');
-    fs.writeFileSync(targetPath, ` ${fs.readFileSync(targetPath, 'utf8')}`);
-    assert.throws(
-      () =>
-        checkAuthoritySession(repository, session.sessionId, {
+        {
           now: new Date('2026-07-16T12:02:00.000Z'),
           signer: fixtureSigner(),
-        }),
-      (error) => isWorkflowError(error, 'CHECK_FAILED'),
-    );
-    assert.equal(
-      readAuthoritySession(repository, session.sessionId).state,
-      'active',
-    );
-    assert.equal(
-      inspectMaintainerGrants(session.gitCommonDirectory, grantId)[0]?.state,
-      'reserved',
-    );
-    fs.writeFileSync(flagPath, 'pass\n');
-    const repaired = checkAuthoritySession(repository, session.sessionId, {
-      now: new Date('2026-07-16T12:03:00.000Z'),
-      signer: fixtureSigner(),
-    });
-    assert.equal(repaired.passed, true);
-  } finally {
-    fs.rmSync(repository, { recursive: true, force: true });
-    fs.rmSync(flagDirectory, { recursive: true, force: true });
-  }
-});
+        },
+      );
+      assert.equal(session.state, 'active');
+      assert.equal(
+        inspectMaintainerGrants(commonDirectory, grantId)[0]?.state,
+        'reserved',
+      );
+    } finally {
+      fs.rmSync(repository, { recursive: true, force: true });
+    }
+  },
+);
 
-test('authority commit environment preconditions keep the session recoverable', () => {
-  const fixture = prepareAuthorityCommitFixture(
-    'cccc1111-2222-4333-8444-555566667777',
-  );
-  try {
-    const interactiveFailure = Object.assign(
-      new Error(
-        'Maintainer grant signing requires controlling input, output, and error terminals.',
-      ),
-      { code: 'MAINTAINER_INTERACTIVE_REQUIRED' },
+retiredLegacyV1RuntimeScenario(
+  'authority check failure keeps the session active for a repaired retry',
+  () => {
+    const repository = createFixtureRepository();
+    const grantId = 'bbbb1111-2222-4333-8444-555566667777';
+    const flagDirectory = fs.mkdtempSync(
+      path.join(os.tmpdir(), 'workflow-flaky-check-'),
     );
-    assert.throws(
-      () =>
-        commitAuthoritySession(
-          fixture.repository,
-          fixture.sessionId,
-          'Repair exact authority',
-          {
-            now: fixtureTime(fixture, 30),
-            signer: {
-              ...fixtureSigner(),
-              assertHumanPresent() {
-                throw interactiveFailure;
+    const flagPath = path.join(flagDirectory, 'pass');
+    try {
+      fs.writeFileSync(
+        path.join(repository, 'scripts/pass.mjs'),
+        [
+          "import fs from 'node:fs';",
+          `process.exit(fs.existsSync(${JSON.stringify(flagPath)}) ? 0 : 1);`,
+          '',
+        ].join('\n'),
+      );
+      git(repository, ['add', 'scripts/pass.mjs']);
+      git(repository, ['commit', '-m', 'Make fixture check gated on a flag']);
+      installFixtureMaintainerPolicy(repository);
+      issueMaintainerGrant(
+        repository,
+        {
+          changeId: 'demo-change',
+          paths: ['workflow/checks.json'],
+          reason: 'Repair exact workflow authority',
+        },
+        {
+          now: new Date('2026-07-16T12:00:00.000Z'),
+          grantId,
+          signer: fixtureSigner(),
+        },
+      );
+      git(repository, ['switch', '-c', 'work/demo-change']);
+      const session = startAuthoritySession(
+        repository,
+        'demo-change',
+        grantId,
+        {
+          now: new Date('2026-07-16T12:01:00.000Z'),
+          signer: fixtureSigner(),
+        },
+      );
+      const targetPath = path.join(repository, 'workflow/checks.json');
+      fs.writeFileSync(targetPath, ` ${fs.readFileSync(targetPath, 'utf8')}`);
+      assert.throws(
+        () =>
+          checkAuthoritySession(repository, session.sessionId, {
+            now: new Date('2026-07-16T12:02:00.000Z'),
+            signer: fixtureSigner(),
+          }),
+        (error) => isWorkflowError(error, 'CHECK_FAILED'),
+      );
+      assert.equal(
+        readAuthoritySession(repository, session.sessionId).state,
+        'active',
+      );
+      assert.equal(
+        inspectMaintainerGrants(session.gitCommonDirectory, grantId)[0]?.state,
+        'reserved',
+      );
+      fs.writeFileSync(flagPath, 'pass\n');
+      const repaired = checkAuthoritySession(repository, session.sessionId, {
+        now: new Date('2026-07-16T12:03:00.000Z'),
+        signer: fixtureSigner(),
+      });
+      assert.equal(repaired.passed, true);
+    } finally {
+      fs.rmSync(repository, { recursive: true, force: true });
+      fs.rmSync(flagDirectory, { recursive: true, force: true });
+    }
+  },
+);
+
+retiredLegacyV1RuntimeScenario(
+  'authority commit environment preconditions keep the session recoverable',
+  () => {
+    const fixture = prepareAuthorityCommitFixture(
+      'cccc1111-2222-4333-8444-555566667777',
+    );
+    try {
+      const interactiveFailure = Object.assign(
+        new Error(
+          'Maintainer grant signing requires controlling input, output, and error terminals.',
+        ),
+        { code: 'MAINTAINER_INTERACTIVE_REQUIRED' },
+      );
+      assert.throws(
+        () =>
+          commitAuthoritySession(
+            fixture.repository,
+            fixture.sessionId,
+            'Repair exact authority',
+            {
+              now: fixtureTime(fixture, 30),
+              signer: {
+                ...fixtureSigner(),
+                assertHumanPresent() {
+                  throw interactiveFailure;
+                },
               },
             },
-          },
-        ),
-      (error) => error === interactiveFailure,
-    );
-    assert.equal(
-      readAuthoritySession(fixture.repository, fixture.sessionId).state,
-      'active',
-    );
-    assert.equal(
-      inspectMaintainerGrants(fixture.commonDirectory, fixture.grantId)[0]
-        ?.state,
-      'reserved',
-    );
+          ),
+        (error) => error === interactiveFailure,
+      );
+      assert.equal(
+        readAuthoritySession(fixture.repository, fixture.sessionId).state,
+        'active',
+      );
+      assert.equal(
+        inspectMaintainerGrants(fixture.commonDirectory, fixture.grantId)[0]
+          ?.state,
+        'reserved',
+      );
 
-    git(fixture.repository, ['config', '--unset', 'user.name']);
-    assert.throws(
-      () =>
-        commitAuthoritySession(
-          fixture.repository,
-          fixture.sessionId,
-          'Repair exact authority',
-          {
-            now: fixtureTime(fixture, 40),
-            signer: fixtureSigner(),
-          },
-        ),
-      (error) => isWorkflowError(error, 'COMMIT_IDENTITY_REQUIRED'),
-    );
-    assert.equal(
-      readAuthoritySession(fixture.repository, fixture.sessionId).state,
-      'active',
-    );
-    git(fixture.repository, ['config', 'user.name', 'Fixture Maintainer']);
+      git(fixture.repository, ['config', '--unset', 'user.name']);
+      assert.throws(
+        () =>
+          commitAuthoritySession(
+            fixture.repository,
+            fixture.sessionId,
+            'Repair exact authority',
+            {
+              now: fixtureTime(fixture, 40),
+              signer: fixtureSigner(),
+            },
+          ),
+        (error) => isWorkflowError(error, 'COMMIT_IDENTITY_REQUIRED'),
+      );
+      assert.equal(
+        readAuthoritySession(fixture.repository, fixture.sessionId).state,
+        'active',
+      );
+      git(fixture.repository, ['config', 'user.name', 'Fixture Maintainer']);
 
-    const result = commitAuthoritySession(
-      fixture.repository,
-      fixture.sessionId,
-      'Repair exact authority',
-      {
-        now: fixtureTime(fixture, 50),
-        signer: fixtureSigner(),
-      },
-    );
-    assert.match(result.commitHash, /^[0-9a-f]{40}$/);
-    assert.equal(
-      readAuthoritySession(fixture.repository, fixture.sessionId).state,
-      'committed',
-    );
-    assert.equal(
-      inspectMaintainerGrants(fixture.commonDirectory, fixture.grantId)[0]
-        ?.state,
-      'consumed',
-    );
-  } finally {
-    cleanupAuthorityCommitFixture(fixture);
-  }
-});
-
-test('authority session state cannot broaden signed paths or remove pinned checks', () => {
-  const repository = createFixtureRepository();
-  const grantId = '77777777-7777-4777-8777-777777777777';
-  try {
-    installFixtureMaintainerPolicy(repository);
-    issueMaintainerGrant(
-      repository,
-      {
-        changeId: 'demo-change',
-        paths: ['workflow/checks.json'],
-        reason: 'Repair exact workflow authority',
-      },
-      {
-        now: new Date('2026-07-16T12:00:00.000Z'),
-        grantId,
-        signer: fixtureSigner(),
-      },
-    );
-    git(repository, ['switch', '-c', 'work/demo-change']);
-    const session = startAuthoritySession(repository, 'demo-change', grantId, {
-      now: new Date('2026-07-16T12:01:00.000Z'),
-      signer: fixtureSigner(),
-    });
-    const sessionPath = path.join(
-      session.gitCommonDirectory,
-      'workflow-engine/maintainer-grants/sessions',
-      `${session.sessionId}.json`,
-    );
-    const altered = JSON.parse(fs.readFileSync(sessionPath, 'utf8'));
-    altered.allowedPaths.push('src/unexpected.ts');
-    altered.requiredChecks = [];
-    altered.pinnedChecks = [];
-    fs.writeFileSync(sessionPath, `${JSON.stringify(altered)}\n`, {
-      mode: 0o600,
-    });
-    fs.writeFileSync(
-      path.join(repository, 'workflow/checks.json'),
-      ` ${fs.readFileSync(path.join(repository, 'workflow/checks.json'), 'utf8')}`,
-    );
-    fs.writeFileSync(path.join(repository, 'src/unexpected.ts'), 'unsafe\n');
-
-    assert.throws(
-      () =>
-        checkAuthoritySession(repository, session.sessionId, {
-          now: new Date('2026-07-16T12:02:00.000Z'),
-          signer: fixtureSigner(),
-        }),
-      (error) => isWorkflowError(error, 'AUTHORITY_SESSION_MISMATCH'),
-    );
-    assert.equal(
-      inspectMaintainerGrants(session.gitCommonDirectory, grantId)[0]?.state,
-      'revoked',
-    );
-  } finally {
-    fs.rmSync(repository, { recursive: true, force: true });
-  }
-});
-
-test('authority commit signs the exact checked diff and consumes one grant', () => {
-  const fixture = prepareAuthorityCommitFixture(
-    '88888888-8888-4888-8888-888888888888',
-  );
-  try {
-    const result = commitAuthoritySession(
-      fixture.repository,
-      fixture.sessionId,
-      'Repair exact authority',
-      {
-        now: fixtureTime(fixture, 30),
-        signer: fixtureSigner(),
-      },
-    );
-    const facts = commitFacts(fixture.repository, result.commitHash);
-    assert.deepEqual(facts.parents, [fixture.baseCommit]);
-    assert.equal(
-      facts.message,
-      [
-        'Repair exact authority',
-        '',
-        'Change: demo-change',
-        'Transition: authority-maintenance',
-        `Grant: ${fixture.grantId}`,
-        '',
-      ].join('\n'),
-    );
-    assert.equal(git(fixture.repository, ['status', '--porcelain']).trim(), '');
-    assert.equal(
-      readAuthoritySession(fixture.repository, fixture.sessionId).state,
-      'committed',
-    );
-    assert.equal(
-      inspectMaintainerGrants(fixture.commonDirectory, fixture.grantId)[0]
-        ?.state,
-      'consumed',
-    );
-    assert.equal(
-      readAuthorityCommitJournal(fixture.commonDirectory, fixture.sessionId)
-        .state,
-      'consumed',
-    );
-    assert.match(
-      fs.readFileSync(
-        path.join(fixture.repository, 'openspec/changes/demo-change/tasks.md'),
-        'utf8',
-      ),
-      /- \[ \] 1\.1/,
-    );
-  } finally {
-    cleanupAuthorityCommitFixture(fixture);
-  }
-});
-
-test('authority recovery completes a crash after signed commit creation', () => {
-  const fixture = prepareAuthorityCommitFixture(
-    '99999999-9999-4999-8999-999999999999',
-  );
-  try {
-    assert.throws(
-      () =>
-        commitAuthoritySession(
-          fixture.repository,
-          fixture.sessionId,
-          'Repair exact authority',
-          {
-            now: fixtureTime(fixture, 30),
-            signer: fixtureSigner(),
-            testCrashAfter: 'commit-created',
-          },
-        ),
-      SimulatedAuthorityCrash,
-    );
-    assert.equal(
-      git(fixture.repository, ['rev-parse', 'HEAD']).trim(),
-      fixture.baseCommit,
-    );
-    assert.equal(
-      readAuthorityCommitJournal(fixture.commonDirectory, fixture.sessionId)
-        .state,
-      'commit-created',
-    );
-
-    const recovered = recoverAuthorityCommit(
-      fixture.repository,
-      fixture.sessionId,
-      fixtureTime(fixture, 40),
-    );
-    assert.equal(
-      git(fixture.repository, ['rev-parse', 'HEAD']).trim(),
-      recovered.commitHash,
-    );
-    assert.equal(recovered.journalState, 'consumed');
-    assert.equal(
-      recoverAuthorityCommit(
+      const result = commitAuthoritySession(
         fixture.repository,
         fixture.sessionId,
-        fixtureTime(fixture, 50),
-      ).commitHash,
-      recovered.commitHash,
-    );
-  } finally {
-    cleanupAuthorityCommitFixture(fixture);
-  }
-});
+        'Repair exact authority',
+        {
+          now: fixtureTime(fixture, 50),
+          signer: fixtureSigner(),
+        },
+      );
+      assert.match(result.commitHash, /^[0-9a-f]{40}$/);
+      assert.equal(
+        readAuthoritySession(fixture.repository, fixture.sessionId).state,
+        'committed',
+      );
+      assert.equal(
+        inspectMaintainerGrants(fixture.commonDirectory, fixture.grantId)[0]
+          ?.state,
+        'consumed',
+      );
+    } finally {
+      cleanupAuthorityCommitFixture(fixture);
+    }
+  },
+);
 
-test('authority recovery finalizes a crash after the ref update', () => {
-  const fixture = prepareAuthorityCommitFixture(
-    'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
-  );
-  try {
-    assert.throws(
-      () =>
-        commitAuthoritySession(
-          fixture.repository,
-          fixture.sessionId,
-          'Repair exact authority',
-          {
-            now: fixtureTime(fixture, 30),
+retiredLegacyV1RuntimeScenario(
+  'authority session state cannot broaden signed paths or remove pinned checks',
+  () => {
+    const repository = createFixtureRepository();
+    const grantId = '77777777-7777-4777-8777-777777777777';
+    try {
+      installFixtureMaintainerPolicy(repository);
+      issueMaintainerGrant(
+        repository,
+        {
+          changeId: 'demo-change',
+          paths: ['workflow/checks.json'],
+          reason: 'Repair exact workflow authority',
+        },
+        {
+          now: new Date('2026-07-16T12:00:00.000Z'),
+          grantId,
+          signer: fixtureSigner(),
+        },
+      );
+      git(repository, ['switch', '-c', 'work/demo-change']);
+      const session = startAuthoritySession(
+        repository,
+        'demo-change',
+        grantId,
+        {
+          now: new Date('2026-07-16T12:01:00.000Z'),
+          signer: fixtureSigner(),
+        },
+      );
+      const sessionPath = path.join(
+        session.gitCommonDirectory,
+        'workflow-engine/maintainer-grants/sessions',
+        `${session.sessionId}.json`,
+      );
+      const altered = JSON.parse(fs.readFileSync(sessionPath, 'utf8'));
+      altered.allowedPaths.push('src/unexpected.ts');
+      altered.requiredChecks = [];
+      altered.pinnedChecks = [];
+      fs.writeFileSync(sessionPath, `${JSON.stringify(altered)}\n`, {
+        mode: 0o600,
+      });
+      fs.writeFileSync(
+        path.join(repository, 'workflow/checks.json'),
+        ` ${fs.readFileSync(path.join(repository, 'workflow/checks.json'), 'utf8')}`,
+      );
+      fs.writeFileSync(path.join(repository, 'src/unexpected.ts'), 'unsafe\n');
+
+      assert.throws(
+        () =>
+          checkAuthoritySession(repository, session.sessionId, {
+            now: new Date('2026-07-16T12:02:00.000Z'),
             signer: fixtureSigner(),
-            testCrashAfter: 'ref-updated',
-          },
-        ),
-      SimulatedAuthorityCrash,
-    );
-    const journal = readAuthorityCommitJournal(
-      fixture.commonDirectory,
-      fixture.sessionId,
-    );
-    assert.equal(journal.state, 'ref-updated');
-    assert.equal(
-      git(fixture.repository, ['rev-parse', 'HEAD']).trim(),
-      journal.commitHash,
-    );
+          }),
+        (error) => isWorkflowError(error, 'AUTHORITY_SESSION_MISMATCH'),
+      );
+      assert.equal(
+        inspectMaintainerGrants(session.gitCommonDirectory, grantId)[0]?.state,
+        'revoked',
+      );
+    } finally {
+      fs.rmSync(repository, { recursive: true, force: true });
+    }
+  },
+);
 
-    const recovered = recoverAuthorityCommit(
-      fixture.repository,
-      fixture.sessionId,
-      fixtureTime(fixture, 40),
+retiredLegacyV1RuntimeScenario(
+  'authority commit signs the exact checked diff and consumes one grant',
+  () => {
+    const fixture = prepareAuthorityCommitFixture(
+      '88888888-8888-4888-8888-888888888888',
     );
-    assert.equal(recovered.commitHash, journal.commitHash);
-    assert.equal(
-      inspectMaintainerGrants(fixture.commonDirectory, fixture.grantId)[0]
-        ?.state,
-      'consumed',
-    );
-  } finally {
-    cleanupAuthorityCommitFixture(fixture);
-  }
-});
-
-test('ambiguous authority recovery revokes the use without a second commit', () => {
-  const fixture = prepareAuthorityCommitFixture(
-    'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
-  );
-  try {
-    assert.throws(
-      () =>
-        commitAuthoritySession(
-          fixture.repository,
-          fixture.sessionId,
+    try {
+      const result = commitAuthoritySession(
+        fixture.repository,
+        fixture.sessionId,
+        'Repair exact authority',
+        {
+          now: fixtureTime(fixture, 30),
+          signer: fixtureSigner(),
+        },
+      );
+      const facts = commitFacts(fixture.repository, result.commitHash);
+      assert.deepEqual(facts.parents, [fixture.baseCommit]);
+      assert.equal(
+        facts.message,
+        [
           'Repair exact authority',
-          {
-            now: fixtureTime(fixture, 30),
-            signer: fixtureSigner(),
-            testCrashAfter: 'commit-created',
-          },
+          '',
+          'Change: demo-change',
+          'Transition: authority-maintenance',
+          `Grant: ${fixture.grantId}`,
+          '',
+        ].join('\n'),
+      );
+      assert.equal(
+        git(fixture.repository, ['status', '--porcelain']).trim(),
+        '',
+      );
+      assert.equal(
+        readAuthoritySession(fixture.repository, fixture.sessionId).state,
+        'committed',
+      );
+      assert.equal(
+        inspectMaintainerGrants(fixture.commonDirectory, fixture.grantId)[0]
+          ?.state,
+        'consumed',
+      );
+      assert.equal(
+        readAuthorityCommitJournal(fixture.commonDirectory, fixture.sessionId)
+          .state,
+        'consumed',
+      );
+      assert.match(
+        fs.readFileSync(
+          path.join(
+            fixture.repository,
+            'openspec/changes/demo-change/tasks.md',
+          ),
+          'utf8',
         ),
-      SimulatedAuthorityCrash,
-    );
-    const journalPath = path.join(
-      fixture.commonDirectory,
-      'workflow-engine/maintainer-grants/journals',
-      `${fixture.sessionId}.json`,
-    );
-    const altered = JSON.parse(fs.readFileSync(journalPath, 'utf8'));
-    altered.commitHash = 'c'.repeat(40);
-    fs.writeFileSync(journalPath, `${JSON.stringify(altered)}\n`, {
-      mode: 0o600,
-    });
+        /- \[ \] 1\.1/,
+      );
+    } finally {
+      cleanupAuthorityCommitFixture(fixture);
+    }
+  },
+);
 
-    assert.throws(() =>
-      recoverAuthorityCommit(
+retiredLegacyV1RuntimeScenario(
+  'authority recovery completes a crash after signed commit creation',
+  () => {
+    const fixture = prepareAuthorityCommitFixture(
+      '99999999-9999-4999-8999-999999999999',
+    );
+    try {
+      assert.throws(
+        () =>
+          commitAuthoritySession(
+            fixture.repository,
+            fixture.sessionId,
+            'Repair exact authority',
+            {
+              now: fixtureTime(fixture, 30),
+              signer: fixtureSigner(),
+              testCrashAfter: 'commit-created',
+            },
+          ),
+        SimulatedAuthorityCrash,
+      );
+      assert.equal(
+        git(fixture.repository, ['rev-parse', 'HEAD']).trim(),
+        fixture.baseCommit,
+      );
+      assert.equal(
+        readAuthorityCommitJournal(fixture.commonDirectory, fixture.sessionId)
+          .state,
+        'commit-created',
+      );
+
+      const recovered = recoverAuthorityCommit(
         fixture.repository,
         fixture.sessionId,
         fixtureTime(fixture, 40),
-      ),
-    );
-    assert.equal(
-      git(fixture.repository, ['rev-parse', 'HEAD']).trim(),
-      fixture.baseCommit,
-    );
-    assert.equal(
-      inspectMaintainerGrants(fixture.commonDirectory, fixture.grantId)[0]
-        ?.state,
-      'revoked',
-    );
-    assert.equal(
-      readAuthoritySession(fixture.repository, fixture.sessionId).state,
-      'failed',
-    );
-    assert.equal(
-      readAuthorityCommitJournal(fixture.commonDirectory, fixture.sessionId)
-        .state,
-      'revoked',
-    );
-  } finally {
-    cleanupAuthorityCommitFixture(fixture);
-  }
-});
+      );
+      assert.equal(
+        git(fixture.repository, ['rev-parse', 'HEAD']).trim(),
+        recovered.commitHash,
+      );
+      assert.equal(recovered.journalState, 'consumed');
+      assert.equal(
+        recoverAuthorityCommit(
+          fixture.repository,
+          fixture.sessionId,
+          fixtureTime(fixture, 50),
+        ).commitHash,
+        recovered.commitHash,
+      );
+    } finally {
+      cleanupAuthorityCommitFixture(fixture);
+    }
+  },
+);
 
-test('untrusted commit signing key is rejected before the branch ref advances', () => {
-  const fixture = prepareAuthorityCommitFixture(
-    'cccccccc-cccc-4ccc-8ccc-cccccccccccc',
-  );
-  try {
-    const untrustedKey = path.join(fixture.signingDirectory, 'untrusted');
-    const generated = spawnSync(
-      '/usr/bin/ssh-keygen',
-      ['-q', '-t', 'ed25519', '-N', '', '-C', 'untrusted', '-f', untrustedKey],
-      { encoding: 'utf8' },
+retiredLegacyV1RuntimeScenario(
+  'legacy schema-1 v1 authority journal is normalized and remains recoverable',
+  () => {
+    const fixture = prepareAuthorityCommitFixture(
+      '21212121-2121-4121-8121-212121212121',
     );
-    assert.equal(generated.status, 0, generated.stderr);
-    git(fixture.repository, ['config', 'user.signingkey', untrustedKey]);
+    try {
+      assert.throws(
+        () =>
+          commitAuthoritySession(
+            fixture.repository,
+            fixture.sessionId,
+            'Repair exact authority',
+            {
+              now: fixtureTime(fixture, 30),
+              signer: fixtureSigner(),
+              testCrashAfter: 'commit-created',
+            },
+          ),
+        SimulatedAuthorityCrash,
+      );
+      const journalPath = path.join(
+        fixture.commonDirectory,
+        'workflow-engine/maintainer-grants/journals',
+        `${fixture.sessionId}.json`,
+      );
+      const legacy = JSON.parse(fs.readFileSync(journalPath, 'utf8')) as Record<
+        string,
+        unknown
+      >;
+      legacy.schemaVersion = 1;
+      for (const field of [
+        'externalAuditRoot',
+        'auditRepositoryId',
+        'casAuditRecordDigest',
+        'consumeAuditRecordDigest',
+        'poststateAuditRecordDigest',
+        'errorAuditRecordDigest',
+        'rollbackAuditRecordDigest',
+        'refUpdatedAt',
+        'consumedAt',
+        'poststateVerifiedAt',
+        'rollbackStartedAt',
+        'rolledBackAt',
+      ]) {
+        delete legacy[field];
+      }
+      fs.writeFileSync(journalPath, `${JSON.stringify(legacy)}\n`, {
+        mode: 0o600,
+      });
 
-    assert.throws(() =>
+      const normalized = readAuthorityCommitJournal(
+        fixture.commonDirectory,
+        fixture.sessionId,
+      );
+      assert.equal(Number(normalized.schemaVersion), 4);
+      assert.equal(normalized.externalAuditRoot, null);
+      assert.equal(normalized.casAuditRecordDigest, null);
+
+      const recovered = recoverAuthorityCommit(
+        fixture.repository,
+        fixture.sessionId,
+        fixtureTime(fixture, 40),
+      );
+      assert.equal(recovered.journalState, 'consumed');
+      assert.equal(
+        JSON.parse(fs.readFileSync(journalPath, 'utf8')).schemaVersion,
+        3,
+      );
+    } finally {
+      cleanupAuthorityCommitFixture(fixture);
+    }
+  },
+);
+
+retiredLegacyV1RuntimeScenario(
+  'authority recovery finalizes a crash after the ref update',
+  () => {
+    const fixture = prepareAuthorityCommitFixture(
+      'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+    );
+    try {
+      assert.throws(
+        () =>
+          commitAuthoritySession(
+            fixture.repository,
+            fixture.sessionId,
+            'Repair exact authority',
+            {
+              now: fixtureTime(fixture, 30),
+              signer: fixtureSigner(),
+              testCrashAfter: 'ref-updated',
+            },
+          ),
+        SimulatedAuthorityCrash,
+      );
+      const journal = readAuthorityCommitJournal(
+        fixture.commonDirectory,
+        fixture.sessionId,
+      );
+      assert.equal(journal.state, 'ref-updated');
+      assert.equal(
+        git(fixture.repository, ['rev-parse', 'HEAD']).trim(),
+        journal.commitHash,
+      );
+
+      const recovered = recoverAuthorityCommit(
+        fixture.repository,
+        fixture.sessionId,
+        fixtureTime(fixture, 40),
+      );
+      assert.equal(recovered.commitHash, journal.commitHash);
+      assert.equal(
+        inspectMaintainerGrants(fixture.commonDirectory, fixture.grantId)[0]
+          ?.state,
+        'consumed',
+      );
+    } finally {
+      cleanupAuthorityCommitFixture(fixture);
+    }
+  },
+);
+
+retiredLegacyV1RuntimeScenario(
+  'ambiguous authority recovery revokes the use without a second commit',
+  () => {
+    const fixture = prepareAuthorityCommitFixture(
+      'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+    );
+    try {
+      assert.throws(
+        () =>
+          commitAuthoritySession(
+            fixture.repository,
+            fixture.sessionId,
+            'Repair exact authority',
+            {
+              now: fixtureTime(fixture, 30),
+              signer: fixtureSigner(),
+              testCrashAfter: 'commit-created',
+            },
+          ),
+        SimulatedAuthorityCrash,
+      );
+      const journalPath = path.join(
+        fixture.commonDirectory,
+        'workflow-engine/maintainer-grants/journals',
+        `${fixture.sessionId}.json`,
+      );
+      const altered = JSON.parse(fs.readFileSync(journalPath, 'utf8'));
+      altered.commitHash = 'c'.repeat(40);
+      fs.writeFileSync(journalPath, `${JSON.stringify(altered)}\n`, {
+        mode: 0o600,
+      });
+
+      assert.throws(() =>
+        recoverAuthorityCommit(
+          fixture.repository,
+          fixture.sessionId,
+          fixtureTime(fixture, 40),
+        ),
+      );
+      assert.equal(
+        git(fixture.repository, ['rev-parse', 'HEAD']).trim(),
+        fixture.baseCommit,
+      );
+      assert.equal(
+        inspectMaintainerGrants(fixture.commonDirectory, fixture.grantId)[0]
+          ?.state,
+        'revoked',
+      );
+      assert.equal(
+        readAuthoritySession(fixture.repository, fixture.sessionId).state,
+        'failed',
+      );
+      assert.equal(
+        readAuthorityCommitJournal(fixture.commonDirectory, fixture.sessionId)
+          .state,
+        'revoked',
+      );
+    } finally {
+      cleanupAuthorityCommitFixture(fixture);
+    }
+  },
+);
+
+retiredLegacyV1RuntimeScenario(
+  'untrusted commit signing key is rejected before the branch ref advances',
+  () => {
+    const fixture = prepareAuthorityCommitFixture(
+      'cccccccc-cccc-4ccc-8ccc-cccccccccccc',
+    );
+    try {
+      const untrustedKey = path.join(fixture.signingDirectory, 'untrusted');
+      const generated = spawnSync(
+        '/usr/bin/ssh-keygen',
+        [
+          '-q',
+          '-t',
+          'ed25519',
+          '-N',
+          '',
+          '-C',
+          'untrusted',
+          '-f',
+          untrustedKey,
+        ],
+        { encoding: 'utf8' },
+      );
+      assert.equal(generated.status, 0, generated.stderr);
+      git(fixture.repository, ['config', 'user.signingkey', untrustedKey]);
+
+      assert.throws(() =>
+        commitAuthoritySession(
+          fixture.repository,
+          fixture.sessionId,
+          'Repair exact authority',
+          {
+            now: fixtureTime(fixture, 30),
+            signer: fixtureSigner(),
+          },
+        ),
+      );
+      assert.equal(
+        git(fixture.repository, ['rev-parse', 'HEAD']).trim(),
+        fixture.baseCommit,
+      );
+      assert.equal(
+        inspectMaintainerGrants(fixture.commonDirectory, fixture.grantId)[0]
+          ?.state,
+        'revoked',
+      );
+      assert.equal(
+        readAuthorityCommitJournal(fixture.commonDirectory, fixture.sessionId)
+          .state,
+        'revoked',
+      );
+    } finally {
+      cleanupAuthorityCommitFixture(fixture);
+    }
+  },
+);
+
+retiredLegacyV1RuntimeScenario(
+  'CI independently accepts one parent-policy authority claim',
+  () => {
+    const fixture = prepareAuthorityCommitFixture(
+      'dddddddd-dddd-4ddd-8ddd-dddddddddddd',
+    );
+    try {
+      const committed = commitAuthoritySession(
+        fixture.repository,
+        fixture.sessionId,
+        'Repair exact authority',
+        {
+          now: fixtureTime(fixture, 30),
+          signer: fixtureSigner(),
+        },
+      );
+      const [commit] = listRangeCommits(
+        fixture.repository,
+        fixture.baseCommit,
+        committed.commitHash,
+      );
+      assert.ok(commit);
+
+      const verified = validateCiAuthorityCommit(
+        fixture.repository,
+        commit,
+        fixtureTime(fixture, 40),
+      );
+      assert.equal(verified.grantId, fixture.grantId);
+      assert.equal(verified.changeId, 'demo-change');
+      assert.deepEqual(verified.allowedPaths, ['workflow/checks.json']);
+      assert.deepEqual(Object.keys(verified.requiredCheckDefinitions), [
+        'fixture',
+      ]);
+    } finally {
+      cleanupAuthorityCommitFixture(fixture);
+    }
+  },
+);
+
+retiredLegacyV1RuntimeScenario(
+  'CI rejects an authority claim without its exact protected audit tag',
+  () => {
+    const fixture = prepareAuthorityCommitFixture(
+      'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee',
+    );
+    try {
+      const committed = commitAuthoritySession(
+        fixture.repository,
+        fixture.sessionId,
+        'Repair exact authority',
+        {
+          now: fixtureTime(fixture, 30),
+          signer: fixtureSigner(),
+        },
+      );
+      const tagRef = `${fixture.policy.auditTagPrefix}${fixture.grantId}`;
+      git(fixture.repository, ['update-ref', '-d', tagRef]);
+      const [commit] = listRangeCommits(
+        fixture.repository,
+        fixture.baseCommit,
+        committed.commitHash,
+      );
+      assert.ok(commit);
+
+      assert.throws(
+        () =>
+          validateCiAuthorityCommit(
+            fixture.repository,
+            commit,
+            fixtureTime(fixture, 40),
+          ),
+        (error) => isWorkflowError(error, 'CI_AUTHORITY_AUDIT_TAG_INVALID'),
+      );
+    } finally {
+      cleanupAuthorityCommitFixture(fixture);
+    }
+  },
+);
+
+retiredLegacyV1RuntimeScenario(
+  'CI rejects a duplicate authority grant claim in one pull-request range',
+  () => {
+    const fixture = prepareAuthorityCommitFixture(
+      'ffffffff-ffff-4fff-8fff-ffffffffffff',
+    );
+    try {
       commitAuthoritySession(
         fixture.repository,
         fixture.sessionId,
@@ -1374,194 +1840,90 @@ test('untrusted commit signing key is rejected before the branch ref advances', 
           now: fixtureTime(fixture, 30),
           signer: fixtureSigner(),
         },
-      ),
-    );
-    assert.equal(
-      git(fixture.repository, ['rev-parse', 'HEAD']).trim(),
-      fixture.baseCommit,
-    );
-    assert.equal(
-      inspectMaintainerGrants(fixture.commonDirectory, fixture.grantId)[0]
-        ?.state,
-      'revoked',
-    );
-    assert.equal(
-      readAuthorityCommitJournal(fixture.commonDirectory, fixture.sessionId)
-        .state,
-      'revoked',
-    );
-  } finally {
-    cleanupAuthorityCommitFixture(fixture);
-  }
-});
+      );
+      const checksPath = path.join(fixture.repository, 'workflow/checks.json');
+      fs.writeFileSync(checksPath, ` ${fs.readFileSync(checksPath, 'utf8')}`);
+      git(fixture.repository, ['add', 'workflow/checks.json']);
+      git(fixture.repository, [
+        'commit',
+        '-S',
+        '-m',
+        'Replay exact authority',
+        '-m',
+        [
+          'Change: demo-change',
+          'Transition: authority-maintenance',
+          `Grant: ${fixture.grantId}`,
+        ].join('\n'),
+      ]);
+      const head = git(fixture.repository, ['rev-parse', 'HEAD']).trim();
 
-test('CI independently accepts one parent-policy authority claim', () => {
-  const fixture = prepareAuthorityCommitFixture(
-    'dddddddd-dddd-4ddd-8ddd-dddddddddddd',
-  );
-  try {
-    const committed = commitAuthoritySession(
-      fixture.repository,
-      fixture.sessionId,
-      'Repair exact authority',
+      assert.throws(
+        () =>
+          replayCommitSequence(
+            fixture.repository,
+            listRangeCommits(fixture.repository, fixture.baseCommit, head),
+            new Map(),
+            [],
+            [],
+            fixtureTime(fixture, 40),
+          ),
+        (error) => isWorkflowError(error, 'CI_AUTHORITY_GRANT_DUPLICATE'),
+      );
+    } finally {
+      cleanupAuthorityCommitFixture(fixture);
+    }
+  },
+);
+
+retiredLegacyV1RuntimeScenario(
+  'CI accepts an old-key-authorized trusted signer rotation',
+  () => {
+    const fixture = prepareAuthorityCommitFixture(
+      '12121212-1212-4212-8212-121212121212',
       {
-        now: fixtureTime(fixture, 30),
-        signer: fixtureSigner(),
+        allowedPath: 'workflow/maintainer-policy.json',
+        mutate(repository, policy) {
+          const rotated: MaintainerPolicy = {
+            ...policy,
+            trustedSigners: POLICY.trustedSigners,
+          };
+          fs.writeFileSync(
+            path.join(repository, 'workflow/maintainer-policy.json'),
+            `${JSON.stringify(rotated, null, 2)}\n`,
+          );
+        },
       },
     );
-    const [commit] = listRangeCommits(
-      fixture.repository,
-      fixture.baseCommit,
-      committed.commitHash,
-    );
-    assert.ok(commit);
+    try {
+      const committed = commitAuthoritySession(
+        fixture.repository,
+        fixture.sessionId,
+        'Rotate trusted maintainer key',
+        {
+          now: fixtureTime(fixture, 30),
+          signer: fixtureSigner(),
+        },
+      );
+      const [commit] = listRangeCommits(
+        fixture.repository,
+        fixture.baseCommit,
+        committed.commitHash,
+      );
+      assert.ok(commit);
 
-    const verified = validateCiAuthorityCommit(
-      fixture.repository,
-      commit,
-      fixtureTime(fixture, 40),
-    );
-    assert.equal(verified.grantId, fixture.grantId);
-    assert.equal(verified.changeId, 'demo-change');
-    assert.deepEqual(verified.allowedPaths, ['workflow/checks.json']);
-    assert.deepEqual(Object.keys(verified.requiredCheckDefinitions), [
-      'fixture',
-    ]);
-  } finally {
-    cleanupAuthorityCommitFixture(fixture);
-  }
-});
-
-test('CI rejects an authority claim without its exact protected audit tag', () => {
-  const fixture = prepareAuthorityCommitFixture(
-    'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee',
-  );
-  try {
-    const committed = commitAuthoritySession(
-      fixture.repository,
-      fixture.sessionId,
-      'Repair exact authority',
-      {
-        now: fixtureTime(fixture, 30),
-        signer: fixtureSigner(),
-      },
-    );
-    const tagRef = `${fixture.policy.auditTagPrefix}${fixture.grantId}`;
-    git(fixture.repository, ['update-ref', '-d', tagRef]);
-    const [commit] = listRangeCommits(
-      fixture.repository,
-      fixture.baseCommit,
-      committed.commitHash,
-    );
-    assert.ok(commit);
-
-    assert.throws(
-      () =>
+      assert.doesNotThrow(() =>
         validateCiAuthorityCommit(
           fixture.repository,
           commit,
           fixtureTime(fixture, 40),
         ),
-      (error) => isWorkflowError(error, 'CI_AUTHORITY_AUDIT_TAG_INVALID'),
-    );
-  } finally {
-    cleanupAuthorityCommitFixture(fixture);
-  }
-});
-
-test('CI rejects a duplicate authority grant claim in one pull-request range', () => {
-  const fixture = prepareAuthorityCommitFixture(
-    'ffffffff-ffff-4fff-8fff-ffffffffffff',
-  );
-  try {
-    commitAuthoritySession(
-      fixture.repository,
-      fixture.sessionId,
-      'Repair exact authority',
-      {
-        now: fixtureTime(fixture, 30),
-        signer: fixtureSigner(),
-      },
-    );
-    const checksPath = path.join(fixture.repository, 'workflow/checks.json');
-    fs.writeFileSync(checksPath, ` ${fs.readFileSync(checksPath, 'utf8')}`);
-    git(fixture.repository, ['add', 'workflow/checks.json']);
-    git(fixture.repository, [
-      'commit',
-      '-S',
-      '-m',
-      'Replay exact authority',
-      '-m',
-      [
-        'Change: demo-change',
-        'Transition: authority-maintenance',
-        `Grant: ${fixture.grantId}`,
-      ].join('\n'),
-    ]);
-    const head = git(fixture.repository, ['rev-parse', 'HEAD']).trim();
-
-    assert.throws(
-      () =>
-        replayCommitSequence(
-          fixture.repository,
-          listRangeCommits(fixture.repository, fixture.baseCommit, head),
-          new Map(),
-          [],
-          [],
-          fixtureTime(fixture, 40),
-        ),
-      (error) => isWorkflowError(error, 'CI_AUTHORITY_GRANT_DUPLICATE'),
-    );
-  } finally {
-    cleanupAuthorityCommitFixture(fixture);
-  }
-});
-
-test('CI accepts an old-key-authorized trusted signer rotation', () => {
-  const fixture = prepareAuthorityCommitFixture(
-    '12121212-1212-4212-8212-121212121212',
-    {
-      allowedPath: 'workflow/maintainer-policy.json',
-      mutate(repository, policy) {
-        const rotated: MaintainerPolicy = {
-          ...policy,
-          trustedSigners: POLICY.trustedSigners,
-        };
-        fs.writeFileSync(
-          path.join(repository, 'workflow/maintainer-policy.json'),
-          `${JSON.stringify(rotated, null, 2)}\n`,
-        );
-      },
-    },
-  );
-  try {
-    const committed = commitAuthoritySession(
-      fixture.repository,
-      fixture.sessionId,
-      'Rotate trusted maintainer key',
-      {
-        now: fixtureTime(fixture, 30),
-        signer: fixtureSigner(),
-      },
-    );
-    const [commit] = listRangeCommits(
-      fixture.repository,
-      fixture.baseCommit,
-      committed.commitHash,
-    );
-    assert.ok(commit);
-
-    assert.doesNotThrow(() =>
-      validateCiAuthorityCommit(
-        fixture.repository,
-        commit,
-        fixtureTime(fixture, 40),
-      ),
-    );
-  } finally {
-    cleanupAuthorityCommitFixture(fixture);
-  }
-});
+      );
+    } finally {
+      cleanupAuthorityCommitFixture(fixture);
+    }
+  },
+);
 
 test('CI rejects a candidate key that attempts to trust its own grant', () => {
   const repository = createFixtureRepository();
@@ -1652,105 +2014,113 @@ test('CI rejects a candidate key that attempts to trust its own grant', () => {
   }
 });
 
-test('CI accepts an expired historical grant when the authority commit was timely', () => {
-  const fixture = prepareAuthorityCommitFixture(
-    '14141414-1414-4414-8414-141414141414',
-  );
-  try {
-    const committed = commitAuthoritySession(
-      fixture.repository,
-      fixture.sessionId,
-      'Repair exact authority',
-      {
-        now: fixtureTime(fixture, 30),
-        signer: fixtureSigner(),
-      },
+retiredLegacyV1RuntimeScenario(
+  'CI accepts an expired historical grant when the authority commit was timely',
+  () => {
+    const fixture = prepareAuthorityCommitFixture(
+      '14141414-1414-4414-8414-141414141414',
     );
-    const [commit] = listRangeCommits(
-      fixture.repository,
-      fixture.baseCommit,
-      committed.commitHash,
-    );
-    assert.ok(commit);
-
-    const verified = validateCiAuthorityCommit(
-      fixture.repository,
-      commit,
-      fixtureTime(fixture, 30 * 60 + 1),
-    );
-    assert.equal(verified.grantId, fixture.grantId);
-  } finally {
-    cleanupAuthorityCommitFixture(fixture);
-  }
-});
-
-test('CI rejects an authority commit created outside its signed grant lifetime', () => {
-  const fixture = prepareAuthorityCommitFixture(
-    '16161616-1616-4616-8616-161616161616',
-  );
-  try {
-    const committed = commitAuthoritySession(
-      fixture.repository,
-      fixture.sessionId,
-      'Repair exact authority',
-      {
-        now: fixtureTime(fixture, 30),
-        signer: fixtureSigner(),
-      },
-    );
-    const [commit] = listRangeCommits(
-      fixture.repository,
-      fixture.baseCommit,
-      committed.commitHash,
-    );
-    assert.ok(commit);
-
-    const tagRef = `workflow-grant/${fixture.grantId}`;
-    const rawTag = git(fixture.repository, ['cat-file', 'tag', tagRef]);
-    const separator = rawTag.indexOf('\n\n');
-    assert.notEqual(separator, -1);
-    const original = parseMaintainerGrantEnvelope(rawTag.slice(separator + 2));
-    const committedAt = Date.parse(
-      git(fixture.repository, [
-        'show',
-        '-s',
-        '--format=%cI',
+    try {
+      const committed = commitAuthoritySession(
+        fixture.repository,
+        fixture.sessionId,
+        'Repair exact authority',
+        {
+          now: fixtureTime(fixture, 30),
+          signer: fixtureSigner(),
+        },
+      );
+      const [commit] = listRangeCommits(
+        fixture.repository,
+        fixture.baseCommit,
         committed.commitHash,
-      ]).trim(),
-    );
-    assert.ok(Number.isFinite(committedAt));
-    const payload: MaintainerGrantPayload = {
-      ...original.payload,
-      issuedAt: new Date(committedAt - 120_000).toISOString(),
-      expiresAt: new Date(committedAt - 60_000).toISOString(),
-    };
-    const envelope: MaintainerGrantEnvelope = {
-      payload,
-      signature: fixtureSshSigner(fixture.privateKey, fixture.policy).sign(
-        canonicalGrantPayload(payload),
-      ),
-    };
-    git(fixture.repository, ['tag', '--delete', tagRef]);
-    writeFixtureAuditTag(
-      fixture.repository,
-      fixture.baseCommit,
-      fixture.grantId,
-      envelope,
-    );
+      );
+      assert.ok(commit);
 
-    assert.throws(
-      () =>
-        validateCiAuthorityCommit(
-          fixture.repository,
-          commit,
-          fixtureTime(fixture, 30 * 60 + 1),
-        ),
-      (error) => isWorkflowError(error, 'CI_AUTHORITY_GRANT_TIME_INVALID'),
+      const verified = validateCiAuthorityCommit(
+        fixture.repository,
+        commit,
+        fixtureTime(fixture, 30 * 60 + 1),
+      );
+      assert.equal(verified.grantId, fixture.grantId);
+    } finally {
+      cleanupAuthorityCommitFixture(fixture);
+    }
+  },
+);
+
+retiredLegacyV1RuntimeScenario(
+  'CI rejects an authority commit created outside its signed grant lifetime',
+  () => {
+    const fixture = prepareAuthorityCommitFixture(
+      '16161616-1616-4616-8616-161616161616',
     );
-  } finally {
-    cleanupAuthorityCommitFixture(fixture);
-  }
-});
+    try {
+      const committed = commitAuthoritySession(
+        fixture.repository,
+        fixture.sessionId,
+        'Repair exact authority',
+        {
+          now: fixtureTime(fixture, 30),
+          signer: fixtureSigner(),
+        },
+      );
+      const [commit] = listRangeCommits(
+        fixture.repository,
+        fixture.baseCommit,
+        committed.commitHash,
+      );
+      assert.ok(commit);
+
+      const tagRef = `workflow-grant/${fixture.grantId}`;
+      const rawTag = git(fixture.repository, ['cat-file', 'tag', tagRef]);
+      const separator = rawTag.indexOf('\n\n');
+      assert.notEqual(separator, -1);
+      const original = parseMaintainerGrantEnvelope(
+        rawTag.slice(separator + 2),
+      );
+      const committedAt = Date.parse(
+        git(fixture.repository, [
+          'show',
+          '-s',
+          '--format=%cI',
+          committed.commitHash,
+        ]).trim(),
+      );
+      assert.ok(Number.isFinite(committedAt));
+      const payload: MaintainerGrantPayload = {
+        ...original.payload,
+        issuedAt: new Date(committedAt - 120_000).toISOString(),
+        expiresAt: new Date(committedAt - 60_000).toISOString(),
+      };
+      const envelope: MaintainerGrantEnvelope = {
+        payload,
+        signature: fixtureSshSigner(fixture.privateKey, fixture.policy).sign(
+          canonicalGrantPayload(payload),
+        ),
+      };
+      git(fixture.repository, ['tag', '--delete', tagRef]);
+      writeFixtureAuditTag(
+        fixture.repository,
+        fixture.baseCommit,
+        fixture.grantId,
+        envelope,
+      );
+
+      assert.throws(
+        () =>
+          validateCiAuthorityCommit(
+            fixture.repository,
+            commit,
+            fixtureTime(fixture, 30 * 60 + 1),
+          ),
+        (error) => isWorkflowError(error, 'CI_AUTHORITY_GRANT_TIME_INVALID'),
+      );
+    } finally {
+      cleanupAuthorityCommitFixture(fixture);
+    }
+  },
+);
 
 test('CI rejects a sealed-to-bootstrap phase rollback from parent policy', () => {
   const repository = createFixtureRepository();
@@ -1920,19 +2290,25 @@ function prepareAuthorityCommitFixture(
   git(repository, ['config', 'user.signingkey', privateKey]);
   const now = new Date(Date.now() - 60_000);
   const allowedPath = options.allowedPath ?? 'workflow/checks.json';
-  issueMaintainerGrant(
-    repository,
-    {
-      changeId: 'demo-change',
-      paths: [allowedPath],
-      reason: 'Repair exact workflow authority',
-    },
-    {
-      now,
-      grantId,
-      signer: fixtureSshSigner(privateKey, policy),
-    },
-  );
+  try {
+    issueMaintainerGrant(
+      repository,
+      {
+        changeId: 'demo-change',
+        paths: [allowedPath],
+        reason: 'Repair exact workflow authority',
+      },
+      {
+        now,
+        grantId,
+        signer: fixtureSshSigner(privateKey, policy),
+      },
+    );
+  } catch (error) {
+    fs.rmSync(repository, { recursive: true, force: true });
+    fs.rmSync(signingDirectory, { recursive: true, force: true });
+    throw error;
+  }
   git(repository, ['switch', '-c', 'work/demo-change']);
   const session = startAuthoritySession(repository, 'demo-change', grantId, {
     now: new Date(now.getTime() + 10_000),
@@ -1986,6 +2362,41 @@ function fixtureSigner(): MaintainerSignerProvider {
     },
     verify() {},
   };
+}
+
+function storeLegacyMaintainerGrantFixture(
+  repository: string,
+  grantId: string,
+): MaintainerGrantEnvelope {
+  const baseCommit = git(repository, ['rev-parse', 'HEAD']).trim();
+  const policyBlob = git(repository, [
+    'rev-parse',
+    `${baseCommit}:workflow/maintainer-policy.json`,
+  ]).trim();
+  const payload: MaintainerGrantPayload = {
+    version: 1,
+    grantId,
+    repositoryId: POLICY.repository.id,
+    repositoryOrigin: POLICY.repository.origin,
+    baseCommit,
+    policyBlob,
+    changeId: 'demo-change',
+    allowedPaths: ['workflow/checks.json'],
+    issuedAt: '2026-07-16T12:00:00.000Z',
+    expiresAt: '2026-07-16T12:30:00.000Z',
+    maxUses: 1,
+    reason: 'Historical legacy grant fixture',
+    signer: 'fixture-maintainer',
+  };
+  const envelope = {
+    payload,
+    signature: fixtureSigner().sign(canonicalGrantPayload(payload)),
+  };
+  storeAvailableMaintainerGrant(
+    fs.realpathSync(path.join(repository, '.git')),
+    envelope,
+  );
+  return envelope;
 }
 
 function generateFixtureSshKey(
@@ -2127,117 +2538,124 @@ function fixtureSshSigner(
   };
 }
 
-test('authority replay defers an unused added check until a later guard drives managed activation', () => {
-  const fixture = prepareAuthorityCommitFixture(
-    '21212121-2121-4121-8121-212121212121',
-    {
-      mutate(repository) {
-        const checksPath = path.join(repository, 'workflow/checks.json');
-        const checks = JSON.parse(fs.readFileSync(checksPath, 'utf8')) as {
-          checks: Record<
-            string,
-            { command: string[]; destructiveDatabase: boolean }
-          >;
-        };
-        checks.checks.fixture.command = [
-          'node',
-          'scripts/pass.mjs',
-          '--transitioned',
-        ];
-        checks.checks['asset-check'] = {
+retiredLegacyV1RuntimeScenario(
+  'authority replay defers an unused added check until a later guard drives managed activation',
+  () => {
+    const fixture = prepareAuthorityCommitFixture(
+      '21212121-2121-4121-8121-212121212121',
+      {
+        mutate(repository) {
+          const checksPath = path.join(repository, 'workflow/checks.json');
+          const checks = JSON.parse(fs.readFileSync(checksPath, 'utf8')) as {
+            checks: Record<
+              string,
+              { command: string[]; destructiveDatabase: boolean }
+            >;
+          };
+          checks.checks.fixture.command = [
+            'node',
+            'scripts/pass.mjs',
+            '--transitioned',
+          ];
+          checks.checks['asset-check'] = {
+            command: ['node', 'scripts/pass.mjs', '--asset-check'],
+            destructiveDatabase: false,
+          };
+          fs.writeFileSync(checksPath, `${JSON.stringify(checks, null, 2)}\n`);
+        },
+      },
+    );
+    try {
+      const committed = commitAuthoritySession(
+        fixture.repository,
+        fixture.sessionId,
+        'Transition fixture check definition',
+        {
+          now: fixtureTime(fixture, 30),
+          signer: fixtureSigner(),
+        },
+      );
+      const authorityOnly = replayCommitSequence(
+        fixture.repository,
+        listRangeCommits(
+          fixture.repository,
+          fixture.baseCommit,
+          committed.commitHash,
+        ),
+        new Map(),
+        [],
+        [],
+        fixtureTime(fixture, 40),
+      );
+      assert.equal(
+        authorityOnly.requiredCheckDefinitions.fixture,
+        canonicalCheckDefinition({
+          command: ['node', 'scripts/pass.mjs', '--transitioned'],
+          destructiveDatabase: false,
+        }),
+      );
+      assert.deepEqual(Object.keys(authorityOnly.requiredCheckDefinitions), [
+        'fixture',
+      ]);
+
+      const guardPath = path.join(
+        fixture.repository,
+        'openspec/changes/demo-change/guard.json',
+      );
+      const guard = JSON.parse(fs.readFileSync(guardPath, 'utf8')) as {
+        tasks: Record<string, { requiredChecks: string[] }>;
+      };
+      guard.tasks['1.1']!.requiredChecks = ['fixture', 'asset-check'];
+      fs.writeFileSync(guardPath, `${JSON.stringify(guard, null, 2)}\n`);
+      commitPlanningTransition(fixture.repository, 'demo-change');
+
+      const taskSession = startSession(
+        fixture.repository,
+        'demo-change',
+        '1.1',
+      );
+      fs.writeFileSync(
+        path.join(fixture.repository, 'src/asset-check-activation.ts'),
+        'export const assetCheckActivated = true;\n',
+      );
+      const checked = checkSession(fixture.repository, taskSession.sessionId);
+      assert.deepEqual(
+        checked.checks.map(({ checkId }) => checkId),
+        ['fixture', 'asset-check'],
+      );
+      completeTask(fixture.repository, taskSession.sessionId);
+      finishSession(fixture.repository, taskSession.sessionId);
+      const taskCommit = commitSession(
+        fixture.repository,
+        taskSession.sessionId,
+        'Activate fixture asset check',
+      );
+
+      const activated = replayCommitSequence(
+        fixture.repository,
+        listRangeCommits(
+          fixture.repository,
+          fixture.baseCommit,
+          taskCommit.commitHash,
+        ),
+        new Map(),
+        [],
+        [],
+        fixtureTime(fixture, 50),
+      );
+      assert.equal(
+        activated.requiredCheckDefinitions['asset-check'],
+        canonicalCheckDefinition({
           command: ['node', 'scripts/pass.mjs', '--asset-check'],
           destructiveDatabase: false,
-        };
-        fs.writeFileSync(checksPath, `${JSON.stringify(checks, null, 2)}\n`);
-      },
-    },
-  );
-  try {
-    const committed = commitAuthoritySession(
-      fixture.repository,
-      fixture.sessionId,
-      'Transition fixture check definition',
-      {
-        now: fixtureTime(fixture, 30),
-        signer: fixtureSigner(),
-      },
-    );
-    const authorityOnly = replayCommitSequence(
-      fixture.repository,
-      listRangeCommits(
-        fixture.repository,
-        fixture.baseCommit,
-        committed.commitHash,
-      ),
-      new Map(),
-      [],
-      [],
-      fixtureTime(fixture, 40),
-    );
-    assert.equal(
-      authorityOnly.requiredCheckDefinitions.fixture,
-      canonicalCheckDefinition({
-        command: ['node', 'scripts/pass.mjs', '--transitioned'],
-        destructiveDatabase: false,
-      }),
-    );
-    assert.deepEqual(Object.keys(authorityOnly.requiredCheckDefinitions), [
-      'fixture',
-    ]);
-
-    const guardPath = path.join(
-      fixture.repository,
-      'openspec/changes/demo-change/guard.json',
-    );
-    const guard = JSON.parse(fs.readFileSync(guardPath, 'utf8')) as {
-      tasks: Record<string, { requiredChecks: string[] }>;
-    };
-    guard.tasks['1.1']!.requiredChecks = ['fixture', 'asset-check'];
-    fs.writeFileSync(guardPath, `${JSON.stringify(guard, null, 2)}\n`);
-    commitPlanningTransition(fixture.repository, 'demo-change');
-
-    const taskSession = startSession(fixture.repository, 'demo-change', '1.1');
-    fs.writeFileSync(
-      path.join(fixture.repository, 'src/asset-check-activation.ts'),
-      'export const assetCheckActivated = true;\n',
-    );
-    const checked = checkSession(fixture.repository, taskSession.sessionId);
-    assert.deepEqual(
-      checked.checks.map(({ checkId }) => checkId),
-      ['fixture', 'asset-check'],
-    );
-    completeTask(fixture.repository, taskSession.sessionId);
-    finishSession(fixture.repository, taskSession.sessionId);
-    const taskCommit = commitSession(
-      fixture.repository,
-      taskSession.sessionId,
-      'Activate fixture asset check',
-    );
-
-    const activated = replayCommitSequence(
-      fixture.repository,
-      listRangeCommits(
-        fixture.repository,
-        fixture.baseCommit,
-        taskCommit.commitHash,
-      ),
-      new Map(),
-      [],
-      [],
-      fixtureTime(fixture, 50),
-    );
-    assert.equal(
-      activated.requiredCheckDefinitions['asset-check'],
-      canonicalCheckDefinition({
-        command: ['node', 'scripts/pass.mjs', '--asset-check'],
-        destructiveDatabase: false,
-      }),
-    );
-    assert.deepEqual(Object.keys(activated.requiredCheckDefinitions), [
-      'asset-check',
-      'fixture',
-    ]);
-  } finally {
-    cleanupAuthorityCommitFixture(fixture);
-  }
-});
+        }),
+      );
+      assert.deepEqual(Object.keys(activated.requiredCheckDefinitions), [
+        'asset-check',
+        'fixture',
+      ]);
+    } finally {
+      cleanupAuthorityCommitFixture(fixture);
+    }
+  },
+);
