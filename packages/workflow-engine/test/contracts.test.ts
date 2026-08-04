@@ -29,6 +29,7 @@ import {
   normalizePolicyPath,
 } from '../src/paths.ts';
 import { workflowContractArtifactPaths } from '../src/contract-artifacts.ts';
+import './apply-journal-terminal-states.contract.test.ts';
 import './git-security.test.ts';
 import './openspec-adapter.integration.test.ts';
 import './openspec-doctor.integration.test.ts';
@@ -72,6 +73,7 @@ import './provider-orchestration.contract.test.ts';
 import './provider-invocation-supersession.contract.test.ts';
 import './provider-retry-accounting.contract.test.ts';
 import './protected-capabilities.contract.test.ts';
+import './provider-retention-human-pin.contract.test.ts';
 import './provider-retention.contract.test.ts';
 import './retention-control.contract.test.ts';
 import './task-mandate.contract.test.ts';

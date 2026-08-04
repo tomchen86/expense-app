@@ -516,7 +516,7 @@
     {
       "path": "src/maintainer-candidate.ts",
       "mode": "100644",
-      "digest": "sha256:ae2766fe6cbb2731f3605fa90ac75fabda876b79efbb0708b6b693393c6ae0f1"
+      "digest": "sha256:1daa2718de533064c3cce1f3497013c1c74c35c69506d0be0cdca1175e4b08b1"
     },
     {
       "path": "src/maintainer-check-journal.ts",
@@ -791,7 +791,7 @@
     {
       "path": "src/provider-retention.ts",
       "mode": "100644",
-      "digest": "sha256:dbe57d6ee148e5350abb9925af55e6cb33eedac189f839dae81cdd387b0a9df2"
+      "digest": "sha256:e6ff815e92a962c14a2d07fa6e56497db6cdc8f21d610ecec01113722105b020"
     },
     {
       "path": "src/provider-retry-decision.ts",
@@ -846,7 +846,7 @@
     {
       "path": "src/retention-control.ts",
       "mode": "100644",
-      "digest": "sha256:8b476187bbdd6f5af545745346027c7c0a54492b48aab617d078f61f39342857"
+      "digest": "sha256:4a62dfefe55dd04e32bd8539aeb0b297e552bbc4deff120306513fddd85d14f3"
     },
     {
       "path": "src/role-scheduler.ts",

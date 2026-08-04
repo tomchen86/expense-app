@@ -12,6 +12,10 @@ import {
   type DurableExecutionJobState,
 } from './execution-store.ts';
 import {
+  inspectDurableRetentionCatalog,
+  type EvidenceRetentionRecord,
+} from './execution-governance.ts';
+import {
   inspectProviderPromptContextRetentionBinding,
   type ProviderPromptContextRetentionBinding,
 } from './provider-execution-governance.ts';
@@ -131,7 +135,26 @@ export type ProviderRetentionEligibilityInput = Readonly<{
   latestUnacceptedAttempt: boolean;
   terminalAt: string;
   cutoffAt: string;
+  /**
+   * A human pin recorded in the durable governance catalog. An Attempt's own
+   * retention is projected from its legacy invocation and never carries a pin,
+   * so the catalog is the only place a maintainer's decision can be read from.
+   */
+  humanPinned?: boolean;
 }>;
+
+/**
+ * Stable catalog identity for one Attempt's private provider runtime. A pin
+ * recorded against this identity is what keeps the raw prompt, schema, and
+ * semantic output from expiring on the ordinary schedule.
+ */
+export function providerRuntimeEvidenceId(attemptId: string): string {
+  return `provider-runtime-${crypto
+    .createHash('sha256')
+    .update(attemptId)
+    .digest('hex')
+    .slice(0, 32)}`;
+}
 
 export type ProviderRetentionMetrics = Readonly<{
   schemaVersion: 1;
@@ -151,6 +174,46 @@ export type ProviderRetentionMetrics = Readonly<{
   receiptCount: number;
 }>;
 
+/**
+ * Reads the human pins recorded for one workflow. A missing or unreadable
+ * catalog means no pin has been recorded, which leaves the ordinary schedule
+ * in charge rather than silently protecting or deleting anything.
+ */
+function readHumanPinnedEvidenceIds(
+  storeRoot: string,
+  workflowId: string,
+): ReadonlySet<string> {
+  let records: readonly EvidenceRetentionRecord[];
+  try {
+    records = inspectDurableRetentionCatalog(storeRoot, workflowId).records;
+  } catch {
+    return new Set();
+  }
+  return new Set(
+    records
+      .filter((record) => record.retention === 'pinned' && record.pin !== null)
+      .map(({ evidenceId }) => evidenceId),
+  );
+}
+
+/**
+ * Resolves human pins once per workflow within a single pass. The cache is
+ * per-pass on purpose: a pin recorded between passes has to be visible to the
+ * next one.
+ */
+function humanPinResolver(
+  storeRoot: string,
+): (workflowId: string) => ReadonlySet<string> {
+  const seen = new Map<string, ReadonlySet<string>>();
+  return (workflowId) => {
+    const cached = seen.get(workflowId);
+    if (cached !== undefined) return cached;
+    const pins = readHumanPinnedEvidenceIds(storeRoot, workflowId);
+    seen.set(workflowId, pins);
+    return pins;
+  };
+}
+
 /** Pure policy projection used by the physical pass and contract tests. */
 export function classifyProviderRetentionEligibility(
   input: ProviderRetentionEligibilityInput,
@@ -162,7 +225,9 @@ export function classifyProviderRetentionEligibility(
     return 'active-invocation';
   }
   if (!input.historyComplete) return 'schema-history-incomplete';
-  if (input.retention === 'pinned') return 'pinned';
+  if (input.retention === 'pinned' || input.humanPinned === true) {
+    return 'pinned';
+  }
   if (input.acceptedAttempt && input.attemptEpoch === input.currentEpoch) {
     return 'accepted-result-current';
   }
@@ -350,6 +415,7 @@ export function pruneProviderRuntime(
     (assertOwned) => {
       assertOwned();
       ensureRetentionDirectories(context.runtime);
+      const resolveHumanPins = humanPinResolver(context.lifecycleRuntime.root);
       const recovered: string[] = [];
       let remaining = limit;
 
@@ -397,6 +463,9 @@ export function pruneProviderRuntime(
           record,
           binding,
           cutoffAt,
+          binding === undefined
+            ? new Set<string>()
+            : resolveHumanPins(binding.state.workflow.workflowId),
         );
         if (decision.kind === 'deny') {
           recordDenied(decision.reason);
@@ -467,6 +536,7 @@ function decideCandidate(
   record: ProviderInvocationRecord,
   binding: InvocationBinding | undefined,
   cutoffAt: string,
+  humanPinnedEvidenceIds: ReadonlySet<string>,
 ): CandidateDecision {
   if (binding === undefined) {
     return deny(record.invocationId, 'schema-currentness-unknown');
@@ -489,6 +559,9 @@ function decideCandidate(
     attemptEpoch: context.epoch,
     currentEpoch: context.currentEpoch,
     retention: attempt.retention,
+    humanPinned: humanPinnedEvidenceIds.has(
+      providerRuntimeEvidenceId(attempt.attemptId),
+    ),
     acceptedAttempt: state.job.acceptedAttemptId === attempt.attemptId,
     latestUnacceptedAttempt:
       state.job.acceptedAttemptId === null &&
