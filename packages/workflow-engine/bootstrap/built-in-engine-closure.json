@@ -64,6 +64,11 @@
       "digest": "sha256:c1ceb52e17a25c2829af1166841c4ca46758687eff6887752cbf847c1c6af467"
     },
     {
+      "path": "src/assurance-inspection.ts",
+      "mode": "100644",
+      "digest": "sha256:72beb9c000a3ed641479c74de1e42834d0e294a9f4e77ac6f93ca4908feeb5f7"
+    },
+    {
       "path": "src/atomic-text.ts",
       "mode": "100644",
       "digest": "sha256:18bf57b040863b7494ff27e7f9649c76e0abf1576677466e380a5703a25c95c8"
@@ -196,7 +201,7 @@
     {
       "path": "src/cli.ts",
       "mode": "100644",
-      "digest": "sha256:223b5765ca10bdaa84e212363109150aedc9ed5fd2150464d53fd7e557a59d2a"
+      "digest": "sha256:7356399cf400c5cea24c0621dcf0518ca380fd5e62cf3d9b03e6dd2ee338304a"
     },
     {
       "path": "src/codex-provider-adapter.ts",

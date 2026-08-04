@@ -17,6 +17,7 @@ import {
   dispatchCollaborationGrantCommand,
   isCollaborationGrantCommand,
 } from './collaboration-grant-cli.ts';
+import { inspectChangeAssurance } from './assurance-inspection.ts';
 import { loadWorkflowConfig } from './contracts.ts';
 import {
   checkOpenSpecPlanningAssets,
@@ -671,6 +672,17 @@ function dispatch(args: string[], cwd: string): CommandResult {
         ok: true,
         result: collectEngineMetrics(cwd),
       };
+    case 'assurance': {
+      if (rest.length === 2 && rest[0] === 'inspect') {
+        return {
+          command,
+          action: 'inspect',
+          ok: true,
+          result: inspectChangeAssurance(cwd, rest[1]),
+        };
+      }
+      throw usage('workflow assurance inspect <change-id>');
+    }
     case 'retention': {
       if (rest.length === 1 && rest[0] === 'inspect') {
         return {
