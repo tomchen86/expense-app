@@ -739,6 +739,11 @@
       "digest": "sha256:e4f73db9b23562a993820cb500453135381168d3e6bbaefc91eec49743d96cb4"
     },
     {
+      "path": "src/predicate-discrimination.ts",
+      "mode": "100644",
+      "digest": "sha256:fd4780462e2af115cdfea98e63545fa6aaeb905d4a9a0b0c45e1c77d8aed802b"
+    },
+    {
       "path": "src/projected-finalization.ts",
       "mode": "100644",
       "digest": "sha256:13dd6095a6d39ac6545a4e1a25a34bcddbee367d1c491ec9a10ee6c957a51c9a"
