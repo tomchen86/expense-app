@@ -13,6 +13,7 @@ import {
 } from '../src/semantic-ledger-store.ts';
 import {
   applyLedgerToFullBlobManifest,
+  recordReuseCoverage,
   reviewTargetsFromManifestReuse,
 } from '../src/semantic-manifest-reuse.ts';
 import {
@@ -218,4 +219,138 @@ test('a carried entry is still shown to the reviewer, marked as carried', () => 
   const required = requiredReviewSet(manifest, 'a'.repeat(64), 'b'.repeat(64));
   // Critical reviews everything, carried entries included.
   assert.equal(required.length, 2);
+});
+
+function subjectEntry(
+  subjectId: string,
+  filePath: string,
+  content: string,
+  extra: Record<string, unknown> = {},
+) {
+  return createLedgerEntry({
+    schemaVersion: 1,
+    kind: 'semantic-ledger-entry',
+    subject: { subjectId, kind: 'symbol', path: filePath },
+    binding: {
+      baselineCommit: 'a'.repeat(40),
+      blobDigest: `sha256:${hex(content)}`,
+      sourceDigest: `sha256:${hex(content)}`,
+      semanticDigest: `sha256:${hex(content)}`,
+      extractorVersion: 'ts-adapter-v1',
+    },
+    why: {
+      responsibility: `What ${subjectId} is for.`,
+      protectedInvariants: ['It holds.'],
+      failureModes: [],
+      reviewerQuestions: [],
+    },
+    semanticDependencies: [],
+    policyDigest: POLICY,
+    provenance: { changeId: 'seed', createdAtCommit: 'b'.repeat(40) },
+    supersedes: null,
+    status: 'current',
+    ...extra,
+  } as never);
+}
+
+test('an odd number of subjects on one path is still never carried', () => {
+  // Toggling on each sighting means the third subject re-inserts the path and
+  // the whole file gets carried on one of several claims. Symbol-level
+  // extraction makes three-plus subjects per file ordinary, and large files
+  // are exactly what the ledger is for.
+  const root = repository();
+  const entries = ['one', 'two', 'three'].map((name) =>
+    subjectEntry(`seeded.${name}`, 'src/a.ts', 'alpha'),
+  );
+  entries.forEach((entry) => writeLedgerEntry(root, entry));
+  updateLedgerIndex(root, entries);
+
+  const reuse = applyLedgerToFullBlobManifest(root, [
+    manifestEntry('src/a.ts', 'alpha'),
+  ]);
+  assert.deepEqual(reuse.carried, []);
+  assert.equal(reuse.owed.length, 1);
+});
+
+test('a subject whose dependency moved is owed, whatever its own bytes say', () => {
+  // The freshness engine already answers this correctly; the carried decision
+  // must not reach a different conclusion from the same evidence.
+  const root = repository();
+  const dependency = subjectEntry('seeded.dep', 'src/b.ts', 'beta');
+  const consumer = subjectEntry('seeded.consumer', 'src/a.ts', 'alpha', {
+    semanticDependencies: [
+      {
+        relation: 'assumes-contract-of',
+        subjectId: 'seeded.dep',
+        entryId: `sha256:${'9'.repeat(64)}`,
+      },
+    ],
+  });
+  writeLedgerEntry(root, dependency);
+  writeLedgerEntry(root, consumer);
+  updateLedgerIndex(root, [consumer, dependency]);
+
+  const reuse = applyLedgerToFullBlobManifest(root, [
+    manifestEntry('src/a.ts', 'alpha'),
+  ]);
+  const resolution = reuse.plan?.resolutions.find(
+    ({ subjectId }) => subjectId === 'seeded.consumer',
+  );
+  assert.equal(resolution?.state, 'dependency-changed');
+  assert.deepEqual(reuse.carried, []);
+  assert.equal(reuse.owed.length, 1);
+});
+
+test('a raised policy makes an otherwise identical blob owed again', () => {
+  // Echoing the entry's own policy back as the current one made this state
+  // unreachable, so a policy change silently bought nothing.
+  const root = repository();
+  seed(root, 'src/a.ts', 'alpha');
+  const reuse = applyLedgerToFullBlobManifest(
+    root,
+    [manifestEntry('src/a.ts', 'alpha')],
+    { currentPolicyDigest: `sha256:${'c'.repeat(64)}` },
+  );
+  const resolution = reuse.plan?.resolutions[0];
+  assert.equal(resolution?.state, 'policy-stale');
+  assert.deepEqual(reuse.carried, []);
+  assert.equal(reuse.owed.length, 1);
+});
+
+test('the reuse decision is recorded, not merely acted on', () => {
+  // Reducing the WHY manifest is a claim. A claim nobody can inspect is the
+  // saving certifying itself.
+  const root = repository();
+  const entry = seed(root, 'src/a.ts', 'alpha');
+  const reuse = applyLedgerToFullBlobManifest(root, [
+    manifestEntry('src/a.ts', 'alpha'),
+    manifestEntry('src/b.ts', 'beta'),
+  ]);
+  const record = recordReuseCoverage(reuse);
+
+  assert.equal(record.owedCount, 1);
+  assert.equal(record.carriedCount, 1);
+  assert.deepEqual(record.carried[0], {
+    manifestEntryId: hex('src/a.ts:alpha'),
+    subjectId: entry.subject.subjectId,
+    ledgerEntryId: entry.entryId,
+  });
+  // Every subject's resolution is named, so a carried entry can be argued with.
+  assert.ok(
+    record.resolutions.some(({ resolution }) => resolution === 'reuse'),
+  );
+  // Both entries reach the reviewer; the carried one is marked as such.
+  assert.equal(record.reviewTargets.length, 2);
+  assert.equal(
+    record.reviewTargets.filter(({ reusedFromLedger }) => reusedFromLedger)
+      .length,
+    1,
+  );
+});
+
+test('an investigation that carried nothing says so rather than saying nothing', () => {
+  const record = recordReuseCoverage({ owed: [], carried: [], plan: null });
+  assert.equal(record.carriedCount, 0);
+  assert.deepEqual(record.resolutions, []);
+  assert.deepEqual(record.reviewTargets, []);
 });

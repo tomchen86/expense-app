@@ -52,7 +52,11 @@ import {
   preflightProviderRepairRetry,
 } from './provider-execution-governance.ts';
 import { protectedBranchRef, runGit } from './git.ts';
-import { applyLedgerToFullBlobManifest } from './semantic-manifest-reuse.ts';
+import {
+  applyLedgerToFullBlobManifest,
+  recordReuseCoverage,
+  type ReuseCoverageRecord,
+} from './semantic-manifest-reuse.ts';
 import {
   deriveEngineFloor,
   derivePinnedDiffPathFacts,
@@ -561,6 +565,11 @@ type RebuiltInvestigation = {
   dispositionNodes: EvidenceNode[];
   coverageNode: EvidenceNode | null;
   fullBlobManifest: InvestigationFullBlobManifestEntry[];
+  /**
+   * What the ledger carried and why. Present so the reduced WHY manifest is
+   * inspectable rather than merely smaller.
+   */
+  reuseCoverage: ReuseCoverageRecord;
   whyNodes: EvidenceNode[];
 };
 
@@ -4321,6 +4330,9 @@ function rebuildInvestigation(
   );
   const fullBlobManifest =
     manifestReuse.owed as InvestigationFullBlobManifestEntry[];
+  // Taking the saving and recording what it cost are the same act. Every
+  // carried entry stays in what a reviewer is shown, marked as carried.
+  const reuseCoverage = recordReuseCoverage(manifestReuse);
   let whyNodes: EvidenceNode[] = [];
   if (session.milestones.whyAnswers !== null) {
     const stored = session.milestones.whyAnswers.envelope;
@@ -4377,6 +4389,7 @@ function rebuildInvestigation(
     dispositionNodes,
     coverageNode,
     fullBlobManifest,
+    reuseCoverage,
     whyNodes,
   };
 }
@@ -4415,6 +4428,13 @@ function emptyRebuilt(
     dispositionNodes: [],
     coverageNode: null,
     fullBlobManifest: [],
+    // An investigation with nothing in it carried nothing, which is a real
+    // answer rather than an absent one.
+    reuseCoverage: recordReuseCoverage({
+      owed: [],
+      carried: [],
+      plan: null,
+    }),
     whyNodes: [],
   };
 }

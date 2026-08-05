@@ -41,6 +41,7 @@ export type ManifestReuse = Readonly<{
 export function applyLedgerToFullBlobManifest(
   repositoryRoot: string,
   manifest: readonly InvestigationFullBlobManifestEntry[],
+  options: { currentPolicyDigest?: string } = {},
 ): ManifestReuse {
   const index = readLedgerIndex(repositoryRoot);
   const subjectIds = Object.keys(index.subjects);
@@ -68,15 +69,21 @@ export function applyLedgerToFullBlobManifest(
     }
   }
 
+  // One subject per path: the manifest is blob-granular, so a file with several
+  // subjects cannot be carried on the strength of one of them. The contested
+  // paths are remembered rather than removed — deleting on the second sighting
+  // let a third re-insert the path and carry the whole file on one claim.
   const byPath = new Map<string, LedgerEntry>();
+  const contestedPaths = new Set<string>();
   for (const entry of entries.values()) {
-    // One subject per path here: the manifest is blob-granular, so a file with
-    // several subjects cannot be carried on the strength of one of them.
-    if (byPath.has(entry.subject.path)) {
-      byPath.delete(entry.subject.path);
+    const subjectPath = entry.subject.path;
+    if (contestedPaths.has(subjectPath)) continue;
+    if (byPath.has(subjectPath)) {
+      byPath.delete(subjectPath);
+      contestedPaths.add(subjectPath);
       continue;
     }
-    byPath.set(entry.subject.path, entry);
+    byPath.set(subjectPath, entry);
   }
 
   const observations = new Map<string, FreshnessObservation>();
@@ -86,6 +93,11 @@ export function applyLedgerToFullBlobManifest(
     ledgerEntryId: string;
   }> = [];
   const owed: InvestigationFullBlobManifestEntry[] = [];
+  const candidates: Array<{
+    manifestEntry: InvestigationFullBlobManifestEntry;
+    ledgerEntry: LedgerEntry;
+    unchanged: boolean;
+  }> = [];
 
   for (const manifestEntry of manifest) {
     const path = manifestEntry.path.utf8;
@@ -112,9 +124,29 @@ export function applyLedgerToFullBlobManifest(
           entries.get(subjectId)?.entryId ?? entryId,
         ]),
       ),
-      currentPolicyDigest: ledgerEntry.policyDigest,
+      currentPolicyDigest:
+        options.currentPolicyDigest ?? ledgerEntry.policyDigest,
     });
-    if (unchanged) {
+    candidates.push({ manifestEntry, ledgerEntry, unchanged });
+  }
+
+  // The freshness engine is the single authority on whether an entry still
+  // holds. Deciding `carried` from the blob digest alone would let this module
+  // reach a different conclusion from the same evidence — and it did: a
+  // consumer whose dependency had moved was carried while its own resolution
+  // said to revalidate.
+  const plan = planSemanticReuse(
+    [...entries.keys()].sort(),
+    entries,
+    observations,
+  );
+  const reusable = new Set(
+    plan.resolutions
+      .filter(({ resolution }) => resolution === 'reuse')
+      .map(({ subjectId }) => subjectId),
+  );
+  for (const { manifestEntry, ledgerEntry, unchanged } of candidates) {
+    if (unchanged && reusable.has(ledgerEntry.subject.subjectId)) {
       carried.push({
         manifestEntryId: manifestEntry.manifestEntryId,
         subjectId: ledgerEntry.subject.subjectId,
@@ -128,7 +160,7 @@ export function applyLedgerToFullBlobManifest(
   return Object.freeze({
     owed: Object.freeze(owed),
     carried: Object.freeze(carried),
-    plan: planSemanticReuse([...entries.keys()].sort(), entries, observations),
+    plan,
   });
 }
 
@@ -159,4 +191,52 @@ export function reviewTargetsFromManifestReuse(
       reusedFromLedger: true,
     })),
   ]);
+}
+
+/**
+ * The record that keeps the saving from certifying itself.
+ *
+ * Reducing the WHY manifest is a claim that some understanding did not need
+ * rewriting. That claim has to be inspectable by whoever reviews the change,
+ * or the entries nobody re-examined become precisely the entries nobody can
+ * examine. This names every carried entry, the ledger entry it leaned on, and
+ * the resolution each subject received — so the saving can be argued with
+ * rather than merely enjoyed.
+ */
+export type ReuseCoverageRecord = Readonly<{
+  schemaVersion: 1;
+  kind: 'semantic-reuse-coverage';
+  owedCount: number;
+  carriedCount: number;
+  carried: readonly Readonly<{
+    manifestEntryId: string;
+    subjectId: string;
+    ledgerEntryId: string;
+  }>[];
+  resolutions: readonly Readonly<{
+    subjectId: string;
+    resolution: string;
+    state: string;
+  }>[];
+  /** Everything in reach, carried entries included and marked. */
+  reviewTargets: readonly ReviewTarget[];
+}>;
+
+export function recordReuseCoverage(reuse: ManifestReuse): ReuseCoverageRecord {
+  return Object.freeze({
+    schemaVersion: 1,
+    kind: 'semantic-reuse-coverage',
+    owedCount: reuse.owed.length,
+    carriedCount: reuse.carried.length,
+    carried: reuse.carried,
+    resolutions: Object.freeze(
+      (reuse.plan?.resolutions ?? []).map(({ subjectId, resolution, state }) =>
+        Object.freeze({ subjectId, resolution, state }),
+      ),
+    ),
+    reviewTargets: reviewTargetsFromManifestReuse(
+      reuse,
+      () => 'production-consumer',
+    ),
+  });
 }
