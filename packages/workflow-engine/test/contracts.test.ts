@@ -38,6 +38,7 @@ import './class-disposition.contract.test.ts';
 import './review-enforcement.contract.test.ts';
 import './semantic-reuse.integration.test.ts';
 import './semantic-ledger.contract.test.ts';
+import './semantic-manifest-reuse.integration.test.ts';
 import './scan-saturation-exit.integration.test.ts';
 import './semantic-reconciliation.contract.test.ts';
 import './floor-overflow-pruning.contract.test.ts';

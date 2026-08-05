@@ -776,7 +776,7 @@
     {
       "path": "src/propose-orchestrator.ts",
       "mode": "100644",
-      "digest": "sha256:2bc0edde097ba66a49cb8ecdb86e899b8e303e1169916c5526425fe0d12541bf"
+      "digest": "sha256:00946a0be9bda984f26af482a5a6bf04c27385c603a1f393e6247b4085ed8771"
     },
     {
       "path": "src/protected-capabilities.ts",
@@ -927,6 +927,11 @@
       "path": "src/semantic-ledger.ts",
       "mode": "100644",
       "digest": "sha256:2dd5a5b0f6e0b6cb7d68354b2d2e0eaf810bb5417c7a0c6872b91b69d757a056"
+    },
+    {
+      "path": "src/semantic-manifest-reuse.ts",
+      "mode": "100644",
+      "digest": "sha256:724852679241395750256720e7a94e38edb0ff9d165389838e93c6be3c40b1de"
     },
     {
       "path": "src/semantic-reconciliation.ts",

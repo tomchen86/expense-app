@@ -52,6 +52,7 @@ import {
   preflightProviderRepairRetry,
 } from './provider-execution-governance.ts';
 import { protectedBranchRef, runGit } from './git.ts';
+import { applyLedgerToFullBlobManifest } from './semantic-manifest-reuse.ts';
 import {
   deriveEngineFloor,
   derivePinnedDiffPathFacts,
@@ -4302,7 +4303,7 @@ function rebuildInvestigation(
       dispositions: stored.payload.dispositions,
     });
   }
-  const fullBlobManifest =
+  const derivedFullBlobManifest =
     session.milestones.groupDispositions === null
       ? []
       : deriveInvestigationFullBlobManifest({
@@ -4311,6 +4312,15 @@ function rebuildInvestigation(
           groupNodes: grouped.groupNodes,
           dispositionNodes,
         });
+  // The ledger sets aside only what it already explains for these exact bytes.
+  // Everything it carries keeps its group and its disposition; what it loses is
+  // the obligation to be explained again by someone with nothing new to say.
+  const manifestReuse = applyLedgerToFullBlobManifest(
+    context.git.repositoryRoot,
+    derivedFullBlobManifest,
+  );
+  const fullBlobManifest =
+    manifestReuse.owed as InvestigationFullBlobManifestEntry[];
   let whyNodes: EvidenceNode[] = [];
   if (session.milestones.whyAnswers !== null) {
     const stored = session.milestones.whyAnswers.envelope;
