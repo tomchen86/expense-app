@@ -61,6 +61,7 @@ import {
   resolveSampleAudits,
 } from './class-sample-audit.ts';
 import { deriveDeclaredPathSymbols } from './declared-path-symbols.ts';
+import { pruneFloorToLimit } from './floor-overflow-pruning.ts';
 import { parsePathRoleRegistry } from './path-role-registry.ts';
 import {
   applyLedgerToFullBlobManifest,
@@ -112,9 +113,11 @@ import {
   type GroupDispositionsPayload,
 } from './investigation-session-store.ts';
 import {
+  INVESTIGATION_LIMITS,
   normalizeInvestigationTerm,
   previewInvestigationTermUnion,
   type InvestigationTermContribution,
+  type InvestigationTermKind,
   type InvestigationTermRawCounts,
   type PreviewInvestigationTerm,
 } from './investigation-terms.ts';
@@ -573,6 +576,12 @@ export type ProposeOutput = {
     sampled: string[];
     answered: string[];
   }>;
+  /**
+   * Floor terms the engine had to drop to stay within what a scan may carry,
+   * named rather than counted. A floor that had to be cut is exactly the
+   * situation a person should be told about, so this is never silent.
+   */
+  floorTrimming: { dropped: string[]; escalated: boolean };
 };
 
 export type OrdinaryProposeOutput = Omit<ProposeOutput, 'investigation'> & {
@@ -587,6 +596,7 @@ type RebuiltInvestigation = {
   session: InvestigationSession;
   intent: NormalizedChangeIntent;
   floor: ReturnType<typeof deriveEngineFloor>;
+  floorTrimming: { dropped: string[]; escalated: boolean };
   termSources: InvestigationTermRawCounts;
   authorizationNode: EvidenceNode;
   legacyMigration: LegacyPlanMigrationSubject | null;
@@ -746,6 +756,7 @@ function collaborationGrantRequiredOutput(input: {
     planningTransition: null,
     semanticReuse: null,
     classSampleAudits: [],
+    floorTrimming: { dropped: [], escalated: false },
   };
 }
 
@@ -930,6 +941,7 @@ export function startPropose(
       planningTransition: null,
       semanticReuse: null,
       classSampleAudits: [],
+      floorTrimming: { dropped: [], escalated: false },
     };
   }
 
@@ -1505,6 +1517,7 @@ function exemptionAwaitingPlanningOutput(
     planningTransition: null,
     semanticReuse: null,
     classSampleAudits: [],
+    floorTrimming: { dropped: [], escalated: false },
   };
 }
 
@@ -3855,6 +3868,7 @@ function getProposeStatusInternal(
       planningTransition: null,
       semanticReuse: rebuilt.reuseCoverage,
     classSampleAudits: classSampleAuditsFor(rebuilt),
+    floorTrimming: rebuilt.floorTrimming,
     };
   }
   return renderMaterializedProposeOutput(
@@ -3976,6 +3990,7 @@ function renderProposeOutput(
       planningTransition: null,
       semanticReuse: rebuilt.reuseCoverage,
     classSampleAudits: classSampleAuditsFor(rebuilt),
+    floorTrimming: rebuilt.floorTrimming,
     };
   }
 
@@ -3995,6 +4010,7 @@ function renderProposeOutput(
     planningTransition: null,
     semanticReuse: rebuilt.reuseCoverage,
     classSampleAudits: classSampleAuditsFor(rebuilt),
+    floorTrimming: rebuilt.floorTrimming,
   };
 }
 
@@ -4007,6 +4023,10 @@ function renderMaterializedProposeOutput(
   materializedArtifacts: Record<string, string>,
   semanticReuse: ReuseCoverageRecord | null = null,
   classSampleAudits: ProposeOutput['classSampleAudits'] = [],
+  floorTrimming: ProposeOutput['floorTrimming'] = {
+    dropped: [],
+    escalated: false,
+  },
 ): ProposeOutput {
   const context = loadInvestigationRuntimeContext(cwd);
   const reservation = readPlanReviewReservation(context.runtime, status);
@@ -4050,6 +4070,7 @@ function renderMaterializedProposeOutput(
       planningTransition: null,
       semanticReuse,
       classSampleAudits,
+      floorTrimming,
     };
   }
   if (
@@ -4122,6 +4143,7 @@ function renderMaterializedProposeOutput(
       planningTransition: null,
       semanticReuse,
       classSampleAudits,
+      floorTrimming,
     };
   }
   if (trackedReview !== null) {
@@ -4143,6 +4165,7 @@ function renderMaterializedProposeOutput(
         planningTransition: null,
         semanticReuse: null,
         classSampleAudits: [],
+        floorTrimming: { dropped: [], escalated: false },
       };
     }
   }
@@ -4165,6 +4188,7 @@ function renderMaterializedProposeOutput(
     planningTransition: null,
     semanticReuse: null,
     classSampleAudits: [],
+    floorTrimming: { dropped: [], escalated: false },
   };
 }
 
@@ -4304,7 +4328,7 @@ function rebuildInvestigation(
     changedPaths,
     reviewedRelationships,
   );
-  const floor = deriveEngineFloor({
+  let floor = deriveEngineFloor({
     explicitPaths: intent.explicitPaths,
     // The author's list and what those files actually publish. A declaration
     // that names fewer symbols than its own exports would otherwise shrink the
@@ -4331,6 +4355,7 @@ function rebuildInvestigation(
     changedPaths,
     reviewedCounterparts,
   });
+  const floorTrimming = { dropped: [] as string[], escalated: false };
   const emptyCounts: InvestigationTermRawCounts = {
     engine: floor.outcome === 'derived' ? floor.terms.length : 0,
     main: 0,
@@ -4348,6 +4373,7 @@ function rebuildInvestigation(
       emptyCounts,
       authorizationNode,
       authorization.legacyMigration,
+      floorTrimming,
     );
   }
   const snapshot = readPinnedTrackedTree({
@@ -4381,7 +4407,7 @@ function rebuildInvestigation(
       ExitCode.staleState,
     );
   }
-  const contributions: InvestigationTermContribution[] = [
+  let contributions: InvestigationTermContribution[] = [
     ...(floor.outcome === 'derived'
       ? [
           {
@@ -4420,14 +4446,44 @@ function rebuildInvestigation(
         : null,
     ),
   );
-  const preview = previewInvestigationTermUnion(contributions);
+  let preview = previewInvestigationTermUnion(contributions);
   if (preview.outcome !== 'ready') {
-    throw workflowError(
-      'INVESTIGATION_TERM_NARROWING_REQUIRED',
-      'The current term union exceeds the fixed investigation limits.',
-      ExitCode.guard,
-      { details: { violations: preview.violations } },
+    // The floor is the part of the search nobody may remove, so when the union
+    // is over the ceiling and the floor alone accounts for the overage, no
+    // author input can unjam the change. Cutting the floor is the exit, and it
+    // is not free: the concession order is fixed, every loss is named, and it
+    // always escalates.
+    const overage = preview.violations.find(
+      ({ code }) => code === 'EFFECTIVE_TERM_LIMIT_EXCEEDED',
     );
+    const trimmed =
+      overage === undefined || floor.outcome !== 'derived'
+        ? null
+        : trimFloorToCeiling(
+            floor,
+            Math.max(1, floor.terms.length - (overage.observed - overage.limit)),
+          );
+    if (trimmed === null || !trimmed.escalated) {
+      throw workflowError(
+        'INVESTIGATION_TERM_NARROWING_REQUIRED',
+        'The current term union exceeds the fixed investigation limits.',
+        ExitCode.guard,
+        { details: { violations: preview.violations } },
+      );
+    }
+    floor = trimmed.floor;
+    floorTrimming.dropped = trimmed.dropped;
+    floorTrimming.escalated = true;
+    contributions = withEngineFloorContribution(contributions, floor);
+    preview = previewInvestigationTermUnion(contributions);
+    if (preview.outcome !== 'ready') {
+      throw workflowError(
+        'INVESTIGATION_TERM_NARROWING_REQUIRED',
+        'The term union exceeds the fixed investigation limits even after the engine floor was cut to its ceiling.',
+        ExitCode.guard,
+        { details: { violations: preview.violations, floorTrimming } },
+      );
+    }
   }
   const termUnionNode = createTermUnionNode(
     session,
@@ -4554,6 +4610,7 @@ function rebuildInvestigation(
     session,
     intent,
     floor,
+    floorTrimming,
     termSources: preview.rawCounts,
     authorizationNode,
     legacyMigration: authorization.legacyMigration,
@@ -4589,11 +4646,16 @@ function emptyRebuilt(
   termSources: InvestigationTermRawCounts,
   authorizationNode: EvidenceNode,
   legacyMigration: LegacyPlanMigrationSubject | null,
+  floorTrimming: { dropped: string[]; escalated: boolean } = {
+    dropped: [],
+    escalated: false,
+  },
 ): RebuiltInvestigation {
   return {
     session,
     intent,
     floor,
+    floorTrimming,
     termSources,
     authorizationNode,
     legacyMigration,
@@ -4681,6 +4743,72 @@ function declaredPathSymbolsFromPinnedTree(
     }
   }
   return [...symbols].sort();
+}
+
+/**
+ * Trims an engine floor that on its own exceeds what a scan may carry.
+ *
+ * The floor is the part of the search nobody may remove, so when it alone is
+ * over the ceiling there is no author input that can unjam the change: every
+ * term is mandatory and there are too many. Trimming is the exit, and it is
+ * deliberately not free. The concession order is fixed — symbols are kept over
+ * literals, literals over variants — every dropped term is named rather than
+ * counted, and dropping anything escalates, because a floor that had to be cut
+ * is exactly the situation a person should be told about.
+ */
+/** Replaces the engine-floor contribution with the floor as it now stands. */
+function withEngineFloorContribution(
+  contributions: InvestigationTermContribution[],
+  floor: ReturnType<typeof deriveEngineFloor>,
+): InvestigationTermContribution[] {
+  return contributions.map((contribution) =>
+    contribution.source === 'engine'
+      ? {
+          ...contribution,
+          // Same projection the original contribution used: the union takes
+          // kind and value, not the floor's internal term records.
+          terms:
+            floor.outcome === 'derived'
+              ? floor.terms.map(({ kind, value }) => ({ kind, value }))
+              : [],
+        }
+      : contribution,
+  );
+}
+
+function trimFloorToCeiling(
+  floor: ReturnType<typeof deriveEngineFloor>,
+  ceiling: number,
+): {
+  floor: ReturnType<typeof deriveEngineFloor>;
+  dropped: string[];
+  escalated: boolean;
+} {
+  if (floor.outcome !== 'derived' || floor.terms.length <= ceiling) {
+    return { floor, dropped: [], escalated: false };
+  }
+  const candidateKind = (kind: InvestigationTermKind) =>
+    kind === 'symbol'
+      ? ('symbol' as const)
+      : kind === 'config-key'
+        ? ('variant' as const)
+        : ('literal' as const);
+  const pruning = pruneFloorToLimit(
+    floor.terms.map((term) => ({
+      value: term.value,
+      kind: candidateKind(term.kind),
+    })),
+    ceiling,
+  );
+  const kept = new Set(pruning.terms.map(({ value }) => value));
+  return {
+    floor: {
+      ...floor,
+      terms: floor.terms.filter((term) => kept.has(term.value)),
+    },
+    dropped: pruning.dropped.map(({ value }) => value),
+    escalated: pruning.escalated,
+  };
 }
 
 function deriveReviewedCounterpartFacts(
