@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { parseAiAdapterPolicyDocument, parseLegacyAiAdapterPolicyDocument, } from './ai-adapter-policy.js';
 import { canonicalJson } from './canonical-json.js';
+import { parseClassDisposition, } from './class-disposition.js';
 import { deriveAuthorityAuditRepositoryId } from './authority-audit-ledger.js';
 import { exactUnsafePathObservationDigest, readEvidenceNode, readEvidenceRefs, readInvestigationEvidenceRefsClosure, observeInvestigationEvidenceRefsAmbiguities, resolvePlanReviewInvocationOwner, } from './evidence-object-store.js';
 import { ExitCode, workflowError } from './errors.js';
@@ -2448,10 +2449,26 @@ function assertMainTermsPayload(value) {
 }
 function assertGroupDispositionsPayload(value) {
     if (!isRecord(value) ||
-        !hasExactKeys(value, ['dispositions']) ||
+        !(hasExactKeys(value, ['dispositions']) ||
+            hasExactKeys(value, ['classes', 'dispositions'])) ||
         !Array.isArray(value.dispositions) ||
         value.dispositions.length > INVESTIGATION_LIMITS.maxHitDispositionWorkItems) {
         throw checkpointInvalid();
+    }
+    if (value.classes !== undefined) {
+        if (!Array.isArray(value.classes) ||
+            value.classes.length > INVESTIGATION_LIMITS.maxHitDispositionWorkItems) {
+            throw checkpointInvalid();
+        }
+        const classIds = new Set();
+        for (const declared of value.classes) {
+            // Parsed by the class contract itself rather than re-validated here, so
+            // there is one definition of what a class is.
+            const parsed = parseClassDisposition(declared);
+            if (classIds.has(parsed.classId))
+                throw checkpointInvalid();
+            classIds.add(parsed.classId);
+        }
     }
     const seen = new Set();
     const classifications = new Set([

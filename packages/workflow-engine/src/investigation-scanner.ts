@@ -534,12 +534,19 @@ function buildScanNode(
 ): EvidenceNode {
   const output = {
     termId: term.termId,
+    // The window travels with the hit it describes. A class predicate is a
+    // claim about what the search found, and it can only be rechecked later if
+    // the evidence carries the text the claim was made against; keeping the
+    // window in memory alone left every such claim unverifiable.
     hits: hits.map((hit) => ({
       path: { rawBase64: hit.path.rawBase64, utf8: hit.path.utf8 },
       sourceObject: hit.sourceObject,
       surface: hit.surface,
       byteOffset: hit.byteOffset,
       byteLength: hit.byteLength,
+      ...(hit.contextWindow === undefined
+        ? {}
+        : { contextWindow: hit.contextWindow }),
     })),
   };
   return createEvidenceNode({

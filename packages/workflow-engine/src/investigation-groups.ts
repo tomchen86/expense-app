@@ -5,6 +5,7 @@ import {
   type ScanHitContextWindow,
 } from './investigation-scanner.ts';
 import { canonicalJson } from './canonical-json.ts';
+import type { ClassGroup } from './class-disposition.ts';
 import { ExitCode, WorkflowError, workflowError } from './errors.ts';
 import {
   assertStoredEvidenceNode,
@@ -1967,4 +1968,74 @@ function investigationDagInvalid(
     message,
     ExitCode.usage,
   );
+}
+
+/**
+ * Rejoins each group's hits with the context windows their scans recorded.
+ *
+ * A group node summarises its hits without their windows, and a hit node never
+ * carried one, so neither can answer whether a class predicate describes what
+ * the search actually found. The scans still hold that text, and the join is
+ * exact: a hit is the same hit when its term, path, and byte range agree.
+ *
+ * This is the only bridge between what the engine grouped and what a class may
+ * claim, which is why it recomputes rather than trusting anything an author
+ * sends. A hit whose scan carried no window arrives with a null window and can
+ * therefore satisfy no predicate: silence is not evidence of a match.
+ */
+export function deriveClassGroupsWithContext(input: {
+  scanNodes: EvidenceNode[];
+  groupNodes: EvidenceNode[];
+}): ClassGroup[] {
+  const windows = new Map<string, ScanHitContextWindow | null>();
+  for (const scanNode of input.scanNodes) {
+    const scan = readScanNode(scanNode, groupsInvalid);
+    for (const hit of scan.hits) {
+      windows.set(
+        scanHitJoinKey(
+          scan.termId,
+          hit.path.rawBase64,
+          hit.byteOffset,
+          hit.byteLength,
+        ),
+        hit.contextWindow ?? null,
+      );
+    }
+  }
+
+  return input.groupNodes.map((node) => {
+    const group = readInvestigationGroupNode(node);
+    return Object.freeze({
+      groupId: group.groupId,
+      termId: group.selector.termId,
+      hits: Object.freeze(
+        group.hits.map((hit) =>
+          Object.freeze({
+            path: hit.path.utf8 ?? `base64:${hit.path.rawBase64}`,
+            surface: hit.surface,
+            window:
+              windows.get(
+                scanHitJoinKey(
+                  hit.termId,
+                  hit.path.rawBase64,
+                  hit.byteOffset,
+                  hit.byteLength,
+                ),
+              ) ?? null,
+            matchOffset: hit.byteOffset,
+            matchLength: hit.byteLength,
+          }),
+        ),
+      ),
+    });
+  });
+}
+
+function scanHitJoinKey(
+  termId: string,
+  rawBase64: string,
+  byteOffset: number,
+  byteLength: number,
+): string {
+  return `${termId} ${rawBase64} ${byteOffset} ${byteLength}`;
 }

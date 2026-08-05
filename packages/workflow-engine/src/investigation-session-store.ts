@@ -7,6 +7,10 @@ import {
   parseLegacyAiAdapterPolicyDocument,
 } from './ai-adapter-policy.ts';
 import { canonicalJson } from './canonical-json.ts';
+import {
+  parseClassDisposition,
+  type ClassDisposition,
+} from './class-disposition.ts';
 import { deriveAuthorityAuditRepositoryId } from './authority-audit-ledger.ts';
 import {
   exactUnsafePathObservationDigest,
@@ -453,6 +457,12 @@ export type MainTermsPayload = {
 
 export type GroupDispositionsPayload = {
   dispositions: InvestigationDispositionInput[];
+  /**
+   * Rationales that cover a class of groups at once. The engine expands each
+   * into one disposition per member, so what the evidence records is unchanged;
+   * what changes is how much an author had to write to say the same thing.
+   */
+  classes?: ClassDisposition[];
 };
 
 export type WhyAnswersPayload = {
@@ -4130,11 +4140,30 @@ function assertGroupDispositionsPayload(
 ): asserts value is GroupDispositionsPayload {
   if (
     !isRecord(value) ||
-    !hasExactKeys(value, ['dispositions']) ||
+    !(
+      hasExactKeys(value, ['dispositions']) ||
+      hasExactKeys(value, ['classes', 'dispositions'])
+    ) ||
     !Array.isArray(value.dispositions) ||
     value.dispositions.length > INVESTIGATION_LIMITS.maxHitDispositionWorkItems
   ) {
     throw checkpointInvalid();
+  }
+  if (value.classes !== undefined) {
+    if (
+      !Array.isArray(value.classes) ||
+      value.classes.length > INVESTIGATION_LIMITS.maxHitDispositionWorkItems
+    ) {
+      throw checkpointInvalid();
+    }
+    const classIds = new Set<string>();
+    for (const declared of value.classes) {
+      // Parsed by the class contract itself rather than re-validated here, so
+      // there is one definition of what a class is.
+      const parsed = parseClassDisposition(declared);
+      if (classIds.has(parsed.classId)) throw checkpointInvalid();
+      classIds.add(parsed.classId);
+    }
   }
   const seen = new Set<string>();
   const classifications = new Set([

@@ -48,7 +48,12 @@ export type ClassDisposition = Readonly<{
   members: readonly string[];
 }>;
 
-export type ClassGroupHit = HitPredicateSubject & Readonly<{ path: string }>;
+export type ClassGroupHit = HitPredicateSubject &
+  Readonly<{
+    path: string;
+    /** A path-surface hit has no window and so can satisfy no predicate. */
+    surface?: 'path' | 'content';
+  }>;
 
 export type ClassGroup = Readonly<{
   groupId: string;
@@ -177,8 +182,16 @@ export function expandClassDispositions(
           );
         }
         if (!evaluateHitPredicate(declared.predicate, groupHit)) {
+          // Naming what the hit actually looks like: a class claim is about
+          // this text, so a refusal that withholds it cannot be acted on.
+          const seen =
+            groupHit.window === null
+              ? 'no stored window'
+              : `${JSON.stringify(
+                  (groupHit.window.utf8 ?? '').slice(0, 200),
+                )}${groupHit.window.truncated ? ' (truncated)' : ''}`;
           throw classInvalid(
-            `Group ${group.groupId} has a hit in ${groupHit.path} that the class predicate does not describe.`,
+            `Group ${group.groupId} has a hit in ${groupHit.path} that the class predicate does not describe: ${seen}.`,
           );
         }
       }

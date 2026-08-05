@@ -53,6 +53,11 @@ import {
 } from './provider-execution-governance.ts';
 import { protectedBranchRef, runGit } from './git.ts';
 import {
+  expandClassDispositions,
+  parseClassDisposition,
+} from './class-disposition.ts';
+import { parsePathRoleRegistry } from './path-role-registry.ts';
+import {
   applyLedgerToFullBlobManifest,
   recordReuseCoverage,
   type ReuseCoverageRecord,
@@ -66,6 +71,7 @@ import {
 import {
   createInvestigationCoverageNode,
   createInvestigationDispositionNodes,
+  deriveClassGroupsWithContext,
   deriveInvestigationGroups,
   readInvestigationGroupNode,
   type InvestigationDispositionInput,
@@ -98,6 +104,7 @@ import {
   type InvestigationCheckpointEnvelope,
   type InvestigationSession,
   type StoredInvestigationCheckpoint,
+  type GroupDispositionsPayload,
 } from './investigation-session-store.ts';
 import {
   normalizeInvestigationTerm,
@@ -464,6 +471,19 @@ export type ProposeGroupWork = {
   termId: string;
   paths: string[];
   hitIds: string[];
+  /**
+   * What each hit looks like where it landed. An author writing a class
+   * predicate is claiming something about this text, so withholding it would
+   * leave them guessing at the evidence their claim is checked against.
+   */
+  hits: Array<{
+    path: string;
+    surface: 'path' | 'content';
+    window: string | null;
+    windowTruncated: boolean;
+    matchOffset: number;
+    matchLength: number;
+  }>;
 };
 
 export type ProposeFullBlobWork = {
@@ -1764,7 +1784,14 @@ export function resumePropose(
     checkpoint = effectiveCheckpoint;
     createInvestigationDispositionNodes({
       groupNodes: rebuilt.groupNodes,
-      dispositions: effectiveCheckpoint.payload.dispositions,
+      dispositions: expandSubmittedDispositions(
+        loadInvestigationRuntimeContext(cwd).git.repositoryRoot,
+        {
+          scanNodes: rebuilt.scanNodes,
+          groupNodes: rebuilt.groupNodes,
+          payload: effectiveCheckpoint.payload,
+        },
+      ),
     });
   } else if (checkpoint.kind === 'why-answers') {
     const rebuilt = rebuildInvestigation(
@@ -4329,7 +4356,14 @@ function rebuildInvestigation(
     }
     dispositionNodes = createInvestigationDispositionNodes({
       groupNodes: grouped.groupNodes,
-      dispositions: stored.payload.dispositions,
+      dispositions: expandSubmittedDispositions(
+        context.git.repositoryRoot,
+        {
+          scanNodes: scan.nodes,
+          groupNodes: grouped.groupNodes,
+          payload: stored.payload,
+        },
+      ),
     });
   }
   const derivedFullBlobManifest =
@@ -4732,11 +4766,18 @@ function workFromRebuilt(
       ({ manifestEntryId }) => manifestEntryId,
     ),
   );
+  const classGroupsById = new Map(
+    deriveClassGroupsWithContext({
+      scanNodes: rebuilt.scanNodes,
+      groupNodes: rebuilt.groupNodes,
+    }).map((group) => [group.groupId, group]),
+  );
   return {
     termSources: rebuilt.termSources,
     groups: rebuilt.groupNodes
       .map((node) => {
         const group = readInvestigationGroupNode(node);
+        const withContext = classGroupsById.get(group.groupId);
         return {
           groupId: group.groupId,
           termId: group.selector.termId,
@@ -4748,6 +4789,16 @@ function workFromRebuilt(
             ),
           ].sort(),
           hitIds: group.hitIds,
+          hits: (withContext?.hits ?? []).map((hit) => ({
+            path: hit.path,
+            // A hit the join could not place is reported as a path hit, which
+            // is the reading that can claim the least.
+            surface: hit.surface ?? 'path',
+            window: hit.window?.utf8 ?? null,
+            windowTruncated: hit.window?.truncated ?? false,
+            matchOffset: hit.matchOffset,
+            matchLength: hit.matchLength,
+          })),
         };
       })
       .filter(({ groupId }) => !reusableGroupIds.has(groupId)),
@@ -4764,6 +4815,81 @@ function workFromRebuilt(
       })),
     authoredInstructions,
   };
+}
+
+/**
+ * Reads the registry that decides which paths may be folded into a class.
+ *
+ * A repository with no registry has classified nothing, and nothing
+ * unclassified is ever compressible, so the honest answer is a refusal naming
+ * the missing file rather than a crash or a permissive default.
+ */
+function readPathRoleRegistryForClasses(repositoryRoot: string) {
+  const registryPath = path.join(repositoryRoot, 'workflow/path-roles.json');
+  if (!fs.existsSync(registryPath)) {
+    throw workflowError(
+      'CLASS_DISPOSITION_INVALID',
+      `A class disposition needs ${'workflow/path-roles.json'} to say which paths may be folded; this repository has not classified any.`,
+      ExitCode.usage,
+    );
+  }
+  return parsePathRoleRegistry(
+    JSON.parse(fs.readFileSync(registryPath, 'utf8')),
+  );
+}
+
+/**
+ * Turns whatever an author wrote into the one disposition per group the
+ * evidence has always required.
+ *
+ * A class is an authoring shape, not a weaker claim: the engine expands it into
+ * exactly the per-group dispositions the author would otherwise have written by
+ * hand, and every downstream check — partition, coverage, DAG — runs unchanged
+ * on the result. What a class removes is the obligation to retype the same
+ * rationale for hits a machine can show are equivalent.
+ *
+ * The expansion recomputes admissibility from the scans rather than trusting
+ * the submission: membership is checked hit by hit against the class predicate,
+ * the predicate must discriminate members from every other hit the same scan
+ * produced, and a group whose term saturated is never foldable because its hits
+ * are known to be incomplete.
+ */
+function expandSubmittedDispositions(
+  repositoryRoot: string,
+  input: {
+    scanNodes: EvidenceNode[];
+    groupNodes: EvidenceNode[];
+    payload: GroupDispositionsPayload;
+    saturatedTermIds?: readonly string[];
+  },
+): InvestigationDispositionInput[] {
+  const classes = input.payload.classes ?? [];
+  if (classes.length === 0) return input.payload.dispositions;
+  const expansion = expandClassDispositions(
+    // Parsed here, not trusted as stored: the checkpoint keeps what the author
+    // wrote, and a predicate only means anything once it has been read by the
+    // contract that defines it.
+    classes.map((declared) => parseClassDisposition(declared)),
+    deriveClassGroupsWithContext({
+      scanNodes: input.scanNodes,
+      groupNodes: input.groupNodes,
+    }),
+    readPathRoleRegistryForClasses(repositoryRoot),
+    input.saturatedTermIds === undefined
+      ? {}
+      : { saturatedTermIds: input.saturatedTermIds },
+  );
+  return [
+    ...input.payload.dispositions,
+    ...expansion.dispositions.map(
+      ({ groupId, classification, rationale, author }) => ({
+        groupId,
+        classification,
+        rationale,
+        author,
+      }),
+    ),
+  ];
 }
 
 function reviewerReusableGroupDispositions(
@@ -4820,6 +4946,11 @@ function mergeReviewerReopenCheckpoint(
     return assertInvestigationCheckpointEnvelope({
       ...checkpoint,
       payload: {
+        // Classes survive the merge: dropping them here would silently turn a
+        // covered submission into an incomplete one.
+        ...(checkpoint.payload.classes === undefined
+          ? {}
+          : { classes: checkpoint.payload.classes }),
         dispositions: [...reusable, ...checkpoint.payload.dispositions].sort(
           (left, right) => left.groupId.localeCompare(right.groupId),
         ),

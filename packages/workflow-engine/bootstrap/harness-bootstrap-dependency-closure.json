@@ -8,7 +8,7 @@
     {
       "path": "bootstrap/recovery-runtime/bootstrap/built-in-engine-closure-pin.js",
       "mode": "100644",
-      "digest": "sha256:9664ea4942d711af286fd727dde6cbd762fcfb8c3b2dca55d0ee351fe795ff30"
+      "digest": "sha256:65e776be92a091b770e0f467a2cfd2a5e7f26908ecb974fabfa36147ad97e895"
     },
     {
       "path": "bootstrap/recovery-runtime/src/actor-identity.js",
@@ -39,6 +39,11 @@
       "path": "bootstrap/recovery-runtime/src/canonical-json.js",
       "mode": "100644",
       "digest": "sha256:71eaffbe54dbcf5294f04c39f0bf0eff8a8f30323c43f313f01888f9162df19c"
+    },
+    {
+      "path": "bootstrap/recovery-runtime/src/class-disposition.js",
+      "mode": "100644",
+      "digest": "sha256:e2ff1ad186132f8addcf75f39ba827474f062daf7bfc57635191367c67e7ffa9"
     },
     {
       "path": "bootstrap/recovery-runtime/src/claude-provider-adapter.js",
@@ -146,6 +151,11 @@
       "digest": "sha256:77ebd66b869be023a1e5430ae50b9ea474788573f66513289df2e46b54369153"
     },
     {
+      "path": "bootstrap/recovery-runtime/src/hit-predicate.js",
+      "mode": "100644",
+      "digest": "sha256:f3bec596e6976688d91e1eaa6e57ca4e9f46b1aa798d8aa6e02e1c96d0d48945"
+    },
+    {
       "path": "bootstrap/recovery-runtime/src/human-revocation.js",
       "mode": "100644",
       "digest": "sha256:3ae8d8158cb890dd9cba18ee4a847e9a4fb7f508a528f564af3ae2572e83ac0c"
@@ -188,17 +198,17 @@
     {
       "path": "bootstrap/recovery-runtime/src/investigation-groups.js",
       "mode": "100644",
-      "digest": "sha256:e529670d116ee24ea2153f526437dedb5c362e00d947dbeaad30ecd7eccd02c9"
+      "digest": "sha256:cc63c3517ff3007bc1a5eeb2d83d9438fd30157697c6b1de89b1c777b2d0d26e"
     },
     {
       "path": "bootstrap/recovery-runtime/src/investigation-scanner.js",
       "mode": "100644",
-      "digest": "sha256:2ae7b6a5d93da84bc753f7baf6ebb84b6b16a29c1cd0f134d20ea84edbecbdd9"
+      "digest": "sha256:e7952a7f92bbc0ef08d4cd0badf98e838f730672d1ed58f149f1a263258ea494"
     },
     {
       "path": "bootstrap/recovery-runtime/src/investigation-session-store.js",
       "mode": "100644",
-      "digest": "sha256:0b849d462cd8dcc4b9f214812139cbd14c6d7e3a21917891e83006a9da1439f7"
+      "digest": "sha256:f8aa26d17aa3359829431cf0febb873d0ab506f43d6ba88addba08165a37bed2"
     },
     {
       "path": "bootstrap/recovery-runtime/src/investigation-terms.js",
@@ -236,6 +246,11 @@
       "digest": "sha256:735d9ce1e125088510e4a218b6f80220ddece90f934844208f1aeb759a3bf4aa"
     },
     {
+      "path": "bootstrap/recovery-runtime/src/path-role-registry.js",
+      "mode": "100644",
+      "digest": "sha256:1092bba8b583b055db21944e60115bb165ae376342dcfddb1349e31f3f417c7b"
+    },
+    {
       "path": "bootstrap/recovery-runtime/src/paths.js",
       "mode": "100644",
       "digest": "sha256:aa694de6f98853e2a2158120bb0d84555d27e5fd673761ec09b91d50881b17ba"
@@ -259,6 +274,11 @@
       "path": "bootstrap/recovery-runtime/src/planning-lock.js",
       "mode": "100644",
       "digest": "sha256:d750cf315a9adc4ee9b1308d14320dc66f7fd5d31b40aff17a23b0af55ac0313"
+    },
+    {
+      "path": "bootstrap/recovery-runtime/src/predicate-discrimination.js",
+      "mode": "100644",
+      "digest": "sha256:83bee3bd7bc924afbb0f4d289c4279312f513dbda5feb66b3e82ac8635a9fe66"
     },
     {
       "path": "bootstrap/recovery-runtime/src/propose-exemption-store.js",
