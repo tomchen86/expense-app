@@ -8,7 +8,7 @@
     {
       "path": "bootstrap/recovery-runtime/bootstrap/built-in-engine-closure-pin.js",
       "mode": "100644",
-      "digest": "sha256:eb3267019faf56057d72df319115632af89f407fae24cbb65f52d402581ef3b3"
+      "digest": "sha256:9664ea4942d711af286fd727dde6cbd762fcfb8c3b2dca55d0ee351fe795ff30"
     },
     {
       "path": "bootstrap/recovery-runtime/src/actor-identity.js",
@@ -273,7 +273,7 @@
     {
       "path": "bootstrap/recovery-runtime/src/provider-execution-governance.js",
       "mode": "100644",
-      "digest": "sha256:1e3d84beb2559980f3a567164dcd340c5d06a2afb8656e33bf9e97be854d649c"
+      "digest": "sha256:4a43991e1091feb26fb4ff34c3967278279663a5eeef19a868e6730fa48e981d"
     },
     {
       "path": "bootstrap/recovery-runtime/src/provider-execution-policy-authority.js",
@@ -283,7 +283,7 @@
     {
       "path": "bootstrap/recovery-runtime/src/provider-invocation-store.js",
       "mode": "100644",
-      "digest": "sha256:f686da059aa46890dda5d43083080093a0eb7ae07747a546d4605a0926c925c5"
+      "digest": "sha256:a288622907b3a5d05c773b27145de2f1c8324e5dd65c4d21bf2f7b7776e06a47"
     },
     {
       "path": "bootstrap/recovery-runtime/src/provider-invocation-supersession-schema.js",

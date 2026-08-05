@@ -776,7 +776,7 @@
     {
       "path": "src/propose-orchestrator.ts",
       "mode": "100644",
-      "digest": "sha256:bb6e6003e5a45c8218b606676b19ec9b698742eda2a0ee952d920db5569bc3aa"
+      "digest": "sha256:fb267f7fdf3d761a43d524c5b2e2b896feeb071bc11cbe0cc0943ac485783cb8"
     },
     {
       "path": "src/protected-capabilities.ts",
@@ -791,7 +791,7 @@
     {
       "path": "src/provider-execution-governance.ts",
       "mode": "100644",
-      "digest": "sha256:6c29cf5568da9d66b158be9607a0b719f0d779ab3bbc0cf08e24ea6cccf83e89"
+      "digest": "sha256:f156a8fbddb1cab224b16ab06539011af792064ac5cdc5512ebe5ca9e98e0308"
     },
     {
       "path": "src/provider-execution-policy-authority.ts",
@@ -801,7 +801,7 @@
     {
       "path": "src/provider-invocation-store.ts",
       "mode": "100644",
-      "digest": "sha256:99f2be92d501d964d1656386703d147815418d90486c8b042d67c121d2e3e9c5"
+      "digest": "sha256:b91ede89298471d4612e6e2cb2561c3a57bc65a7dcee85b597fd6f4b12326431"
     },
     {
       "path": "src/provider-invocation-supersession-schema.ts",
@@ -836,7 +836,7 @@
     {
       "path": "src/provider-retention.ts",
       "mode": "100644",
-      "digest": "sha256:e6ff815e92a962c14a2d07fa6e56497db6cdc8f21d610ecec01113722105b020"
+      "digest": "sha256:20801b49947fdce42d5ba09d8ab4983591f3615aa02b94f72439a3c50a7a8082"
     },
     {
       "path": "src/provider-retry-decision.ts",
@@ -891,7 +891,7 @@
     {
       "path": "src/retention-control.ts",
       "mode": "100644",
-      "digest": "sha256:4a62dfefe55dd04e32bd8539aeb0b297e552bbc4deff120306513fddd85d14f3"
+      "digest": "sha256:064b844f18a30b864198d476528a357a28b27b8fb5b3fc5c30f7060c667f7257"
     },
     {
       "path": "src/review-challenge.ts",

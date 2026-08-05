@@ -83,6 +83,7 @@ import {
   persistProviderRepairEvidence,
   prepareProviderPromptContextForInvocation,
   readProviderRepairAuthorityBinding,
+  registerProviderRuntimeEvidence,
   withCurrentProviderPromptContext,
   type ProviderPromptContextBinding,
   type ProviderRepairAuthorityBinding,
@@ -820,13 +821,28 @@ export function createProviderInvocation(
         });
       }
       if (!invocationAlreadyExists) {
-        prepareProviderPromptContextForInvocation(
+        const promptContext = prepareProviderPromptContextForInvocation(
           paths.root,
           request,
           manifest,
           investigationId,
           new Date(effectiveNow),
         );
+        // The runtime this invocation produces is prunable evidence, so its
+        // catalog handle is written here, while the context is current and long
+        // before a TTL could make the bytes eligible for deletion. Without it a
+        // maintainer has no identity to pin and the pruning pass finds no
+        // decision to honour.
+        registerProviderRuntimeEvidence(paths.root, {
+          binding: promptContext,
+          attemptId: projectProviderInvocationExecution({
+            record: effectiveRecord,
+            request,
+          }).attempt.attemptId,
+          invocationId,
+          legacyRevision: effectiveRecord.revision,
+          now: new Date(effectiveNow),
+        });
       }
       registerProviderRetentionInvocation(paths, invocationId, effectiveNow);
       createPrivateCanonicalJson(

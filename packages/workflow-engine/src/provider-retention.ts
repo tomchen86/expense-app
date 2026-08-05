@@ -17,6 +17,7 @@ import {
 } from './execution-governance.ts';
 import {
   inspectProviderPromptContextRetentionBinding,
+  providerRuntimeEvidenceId,
   type ProviderPromptContextRetentionBinding,
 } from './provider-execution-governance.ts';
 import { ExitCode, WorkflowError, workflowError } from './errors.ts';
@@ -143,18 +144,7 @@ export type ProviderRetentionEligibilityInput = Readonly<{
   humanPinned?: boolean;
 }>;
 
-/**
- * Stable catalog identity for one Attempt's private provider runtime. A pin
- * recorded against this identity is what keeps the raw prompt, schema, and
- * semantic output from expiring on the ordinary schedule.
- */
-export function providerRuntimeEvidenceId(attemptId: string): string {
-  return `provider-runtime-${crypto
-    .createHash('sha256')
-    .update(attemptId)
-    .digest('hex')
-    .slice(0, 32)}`;
-}
+export { providerRuntimeEvidenceId };
 
 export type ProviderRetentionMetrics = Readonly<{
   schemaVersion: 1;
@@ -415,7 +405,10 @@ export function pruneProviderRuntime(
     (assertOwned) => {
       assertOwned();
       ensureRetentionDirectories(context.runtime);
-      const resolveHumanPins = humanPinResolver(context.lifecycleRuntime.root);
+      // Pins are resolved against the store the durable provider contexts are
+      // actually written to. Reading the lifecycle root instead looked at a
+      // different directory entirely, so no pin could ever be found here.
+      const resolveHumanPins = humanPinResolver(context.runtime.root);
       const recovered: string[] = [];
       let remaining = limit;
 
@@ -465,7 +458,12 @@ export function pruneProviderRuntime(
           cutoffAt,
           binding === undefined
             ? new Set<string>()
-            : resolveHumanPins(binding.state.workflow.workflowId),
+            : // Pins live in the provider prompt context's catalog, which is
+              // the durable store this invocation's evidence actually belongs
+              // to. Resolving them under the investigation's own identity read
+              // a catalog that never holds a record, so every pin was invisible
+              // here however carefully it had been recorded.
+              resolveHumanPins(binding.context.workflowId),
         );
         if (decision.kind === 'deny') {
           recordDenied(decision.reason);

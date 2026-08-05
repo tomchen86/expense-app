@@ -15,7 +15,7 @@ import { INVESTIGATION_LIMITS, normalizeInvestigationTerm, } from './investigati
 import { assertChangeId, assertInvestigationId, assertInvocationId, } from './paths.js';
 import { registerProviderRetentionInvocation } from './provider-retention-catalog.js';
 import { providerRetentionArtifact, providerRetentionReviewRootArtifact, readCompleteProviderRetentionReceipt, } from './provider-retention-receipt.js';
-import { assertProviderPromptContextCurrent, assertProviderRepairAuthorityCurrent, createProviderRepairLineage, ensureProviderPromptContext, persistProviderRepairEvidence, prepareProviderPromptContextForInvocation, readProviderRepairAuthorityBinding, withCurrentProviderPromptContext, } from './provider-execution-governance.js';
+import { assertProviderPromptContextCurrent, assertProviderRepairAuthorityCurrent, createProviderRepairLineage, ensureProviderPromptContext, persistProviderRepairEvidence, prepareProviderPromptContextForInvocation, readProviderRepairAuthorityBinding, registerProviderRuntimeEvidence, withCurrentProviderPromptContext, } from './provider-execution-governance.js';
 import { assertProviderInvocationSupersessionEndpointCurrent, finalizeProviderInvocationSupersession, prepareProviderInvocationSupersession, readProviderInvocationEvidenceRecord, recoverProviderInvocationSupersessionTransaction, resumePreparedProviderInvocationSupersession, } from './provider-invocation-supersession.js';
 import { PLAN_REVIEW_OUTPUT_SCHEMA, PLAN_REVIEW_OUTPUT_VALIDATOR, assertPlanReviewTargetSnapshot, assertPlanReviewSubject, planReviewSnapshotLineCount, } from './plan-review.js';
 import { runtimePaths, withRepositoryLifecycleOperation, } from './session-store.js';
@@ -300,7 +300,22 @@ export function createProviderInvocation(paths, input) {
             });
         }
         if (!invocationAlreadyExists) {
-            prepareProviderPromptContextForInvocation(paths.root, request, manifest, investigationId, new Date(effectiveNow));
+            const promptContext = prepareProviderPromptContextForInvocation(paths.root, request, manifest, investigationId, new Date(effectiveNow));
+            // The runtime this invocation produces is prunable evidence, so its
+            // catalog handle is written here, while the context is current and long
+            // before a TTL could make the bytes eligible for deletion. Without it a
+            // maintainer has no identity to pin and the pruning pass finds no
+            // decision to honour.
+            registerProviderRuntimeEvidence(paths.root, {
+                binding: promptContext,
+                attemptId: projectProviderInvocationExecution({
+                    record: effectiveRecord,
+                    request,
+                }).attempt.attemptId,
+                invocationId,
+                legacyRevision: effectiveRecord.revision,
+                now: new Date(effectiveNow),
+            });
         }
         registerProviderRetentionInvocation(paths, invocationId, effectiveNow);
         createPrivateCanonicalJson(paths, statePath, effectiveRecord, invocationUnsafe, 'PROVIDER_INVOCATION_COLLISION');

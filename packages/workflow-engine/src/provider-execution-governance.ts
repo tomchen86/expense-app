@@ -18,9 +18,11 @@ import {
   createRepairBudget,
   initializeDurableEpochContextStore,
   inspectDurableEpochContextStore,
+  inspectDurableRetentionCatalog,
   parseRepairBudget,
   parseRepairContext,
   rolloverDurableEpochContextStore,
+  storeDurableEvidence,
   consumeRepairBudget,
   withCurrentDurableEpochContextStore,
   type ContextManifest,
@@ -238,6 +240,89 @@ export function prepareProviderPromptContextForInvocation(
     requestedOwnerWorkflowId,
     { allowRollover: true, now },
   );
+}
+
+/**
+ * Stable catalog identity for one Attempt's private provider runtime. A pin
+ * recorded against this identity is what keeps the raw prompt, schema, and
+ * semantic output from expiring on the ordinary schedule.
+ *
+ * It lives beside the writer so that the module recording the handle and the
+ * pass consulting it share one derivation. Two copies of this formula would be
+ * two identities, and a pin recorded under one would be invisible to the other.
+ */
+export function providerRuntimeEvidenceId(attemptId: string): string {
+  return `provider-runtime-${crypto
+    .createHash('sha256')
+    .update(attemptId)
+    .digest('hex')
+    .slice(0, 32)}`;
+}
+
+/**
+ * Records the handle a maintainer pins to keep one Attempt's private provider
+ * runtime.
+ *
+ * The pruning pass has always honoured a pin and the pin ceremony has always
+ * been reachable, but nothing created the record the two meet on, so the
+ * ceremony protected no bytes at all. This is that record, written where the
+ * runtime comes into existence: the descriptor names the runtime rather than
+ * copying it, so the raw bytes stay where they are.
+ *
+ * It has to be written now rather than when deletion looms, for two reasons.
+ * Only the current epoch may publish active evidence, and a handle that first
+ * appears once the bytes are already eligible for deletion would arrive too
+ * late for anyone to act on.
+ */
+export function registerProviderRuntimeEvidence(
+  storeRoot: string,
+  input: {
+    binding: ProviderPromptContextBinding;
+    attemptId: string;
+    invocationId: string;
+    legacyRevision: number;
+    now: Date;
+  },
+): Readonly<{ evidenceId: string; created: boolean }> {
+  const evidenceId = providerRuntimeEvidenceId(input.attemptId);
+  const catalog = inspectDurableRetentionCatalog(
+    storeRoot,
+    input.binding.workflowId,
+  );
+  if (catalog.records.some((record) => record.evidenceId === evidenceId)) {
+    return { evidenceId, created: false };
+  }
+  const content = `${canonicalJson({
+    kind: 'provider-runtime-evidence.v1',
+    workflowId: input.binding.workflowId,
+    epoch: input.binding.epoch,
+    attemptId: input.attemptId,
+    invocationId: input.invocationId,
+    legacyRevision: input.legacyRevision,
+  })}\n`;
+  storeDurableEvidence(storeRoot, {
+    workflowId: input.binding.workflowId,
+    expectedCatalogGeneration: catalog.generation,
+    record: {
+      schemaVersion: 1,
+      kind: 'evidence-retention',
+      evidenceId,
+      itemIdentity: `attempt:${input.attemptId}`,
+      workflowId: input.binding.workflowId,
+      epoch: input.binding.epoch,
+      evidenceClass: 'raw',
+      digest: `sha256:${crypto
+        .createHash('sha256')
+        .update(content)
+        .digest('hex')}`,
+      retention: 'active',
+      createdAt: input.now.toISOString(),
+      expiresAt: null,
+      pin: null,
+    },
+    content,
+  });
+  return { evidenceId, created: true };
 }
 
 /**

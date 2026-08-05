@@ -529,6 +529,13 @@ export type ProposeOutput = {
   materializedArtifacts: Record<string, string> | null;
   planReview: ProposePlanReviewStatus | null;
   planningTransition: PlanningTransitionResult | null;
+  /**
+   * What the semantic ledger carried for this propose, and what a reviewer is
+   * owed as a result. Reported rather than enforced: the review policy decides
+   * nothing from it yet, but a saving nobody can see is a saving nobody can
+   * check, and this is the surface that makes it visible.
+   */
+  semanticReuse: ReuseCoverageRecord | null;
 };
 
 export type OrdinaryProposeOutput = Omit<ProposeOutput, 'investigation'> & {
@@ -700,6 +707,7 @@ function collaborationGrantRequiredOutput(input: {
     materializedArtifacts: null,
     planReview: null,
     planningTransition: null,
+    semanticReuse: null,
   };
 }
 
@@ -882,6 +890,7 @@ export function startPropose(
       materializedArtifacts: null,
       planReview: null,
       planningTransition: null,
+      semanticReuse: null,
     };
   }
 
@@ -1455,6 +1464,7 @@ function exemptionAwaitingPlanningOutput(
     materializedArtifacts: null,
     planReview: null,
     planningTransition: null,
+    semanticReuse: null,
   };
 }
 
@@ -3707,6 +3717,7 @@ function getProposeStatusInternal(
       materializedArtifacts: null,
       planReview: null,
       planningTransition: null,
+      semanticReuse: rebuilt.reuseCoverage,
     };
   }
   return renderMaterializedProposeOutput(
@@ -3716,6 +3727,7 @@ function getProposeStatusInternal(
     createdDate,
     workFromRebuilt(rebuilt, []),
     materialized,
+    rebuilt.reuseCoverage,
   );
 }
 
@@ -3807,6 +3819,7 @@ function renderProposeOutput(
         createdDate,
         workFromRebuilt(rebuilt, receiptLookup.instructions),
         materialized,
+        rebuilt.reuseCoverage,
       );
     }
     const scaffold = preparePlanningScaffold(cwd, status, rebuilt, createdDate);
@@ -3824,6 +3837,7 @@ function renderProposeOutput(
       materializedArtifacts: null,
       planReview: null,
       planningTransition: null,
+      semanticReuse: rebuilt.reuseCoverage,
     };
   }
 
@@ -3841,6 +3855,7 @@ function renderProposeOutput(
     materializedArtifacts: null,
     planReview: null,
     planningTransition: null,
+    semanticReuse: rebuilt.reuseCoverage,
   };
 }
 
@@ -3851,6 +3866,7 @@ function renderMaterializedProposeOutput(
   createdDate: string,
   work: ProposeWork,
   materializedArtifacts: Record<string, string>,
+  semanticReuse: ReuseCoverageRecord | null = null,
 ): ProposeOutput {
   const context = loadInvestigationRuntimeContext(cwd);
   const reservation = readPlanReviewReservation(context.runtime, status);
@@ -3892,6 +3908,7 @@ function renderMaterializedProposeOutput(
       materializedArtifacts,
       planReview: null,
       planningTransition: null,
+      semanticReuse,
     };
   }
   if (
@@ -3962,6 +3979,7 @@ function renderMaterializedProposeOutput(
       materializedArtifacts,
       planReview,
       planningTransition: null,
+      semanticReuse,
     };
   }
   if (trackedReview !== null) {
@@ -3981,6 +3999,7 @@ function renderMaterializedProposeOutput(
         materializedArtifacts,
         planReview,
         planningTransition: null,
+        semanticReuse: null,
       };
     }
   }
@@ -4001,6 +4020,7 @@ function renderMaterializedProposeOutput(
     materializedArtifacts,
     planReview,
     planningTransition: null,
+    semanticReuse: null,
   };
 }
 
@@ -4327,6 +4347,11 @@ function rebuildInvestigation(
   const manifestReuse = applyLedgerToFullBlobManifest(
     context.git.repositoryRoot,
     derivedFullBlobManifest,
+    // Naming the policy that judges this propose is what makes a raised policy
+    // able to invalidate an entry. Letting the call default here would echo
+    // each entry's own policy back as the current one, and every entry would
+    // agree with itself forever.
+    { currentPolicyDigest: PROPOSE_POLICY_DIGEST },
   );
   const fullBlobManifest =
     manifestReuse.owed as InvestigationFullBlobManifestEntry[];

@@ -88,7 +88,7 @@ export function runEvidenceRetentionMaintenance(
   const limit = assertLimit(input.limit);
   const now = exactTimestamp(input.now ?? new Date().toISOString());
   const provider = pruneProviderRuntime(cwd, { limit, now });
-  const storeRoot = loadInvestigationRuntimeContext(cwd).lifecycleRuntime.root;
+  const storeRoot = loadInvestigationRuntimeContext(cwd).runtime.root;
   const workflows = durableContextEntries(cwd).slice(0, limit);
   const pruned: Array<{
     workflowId: string;
@@ -153,7 +153,7 @@ export function inspectEvidenceRetention(
   input: { now?: string } = {},
 ): EvidenceRetentionInspection {
   const now = exactTimestamp(input.now ?? new Date().toISOString());
-  const storeRoot = loadInvestigationRuntimeContext(cwd).lifecycleRuntime.root;
+  const storeRoot = loadInvestigationRuntimeContext(cwd).runtime.root;
   const durableContexts = durableContextEntries(cwd).flatMap(
     ({ workflowId }) => {
       try {
@@ -189,83 +189,6 @@ export function inspectEvidenceRetention(
     provider: inspectProviderRetentionMetrics(cwd, { now }),
     durableContexts,
   });
-}
-
-/**
- * Registers one Attempt's private provider runtime in the durable catalog so a
- * maintainer has something to pin. An Attempt's own retention is projected from
- * its legacy invocation and can never carry a pin, so without a catalog entry
- * the human-presence ceremony would protect nothing. The stored descriptor
- * names the runtime rather than copying it: the raw bytes stay where they are,
- * and this record is the handle the pruning pass consults.
- */
-export function registerProviderRuntimeEvidence(
-  cwd: string,
-  request: { workflowId: string; attemptId: string },
-  options: { now?: Date } = {},
-): Readonly<{ workflowId: string; evidenceId: string; created: boolean }> {
-  const context = loadInvestigationRuntimeContext(cwd);
-  const storeRoot = context.lifecycleRuntime.root;
-  const evidenceId = providerRuntimeEvidenceId(request.attemptId);
-  const catalog = inspectDurableRetentionCatalog(storeRoot, request.workflowId);
-  if (catalog.records.some((record) => record.evidenceId === evidenceId)) {
-    return { workflowId: request.workflowId, evidenceId, created: false };
-  }
-
-  const state = listExecutionJobStates(context.runtime).find(
-    (candidate) =>
-      candidate.workflow.workflowId === request.workflowId &&
-      candidate.attempts.some(
-        ({ attemptId }) => attemptId === request.attemptId,
-      ),
-  );
-  const attempt = state?.attempts.find(
-    ({ attemptId }) => attemptId === request.attemptId,
-  );
-  if (state === undefined || attempt === undefined) {
-    throw workflowError(
-      'RETENTION_EVIDENCE_NOT_FOUND',
-      `Attempt ${request.attemptId} was not found in workflow ${request.workflowId}.`,
-      ExitCode.guard,
-    );
-  }
-  if (attempt.legacyInvocation === null) {
-    throw workflowError(
-      'RETENTION_EVIDENCE_NOT_FOUND',
-      `Attempt ${request.attemptId} has no provider runtime to retain.`,
-      ExitCode.guard,
-    );
-  }
-
-  const content = `${canonicalJson({
-    kind: 'provider-runtime-evidence.v1',
-    workflowId: state.workflow.workflowId,
-    epoch: attempt.epoch,
-    attemptId: attempt.attemptId,
-    invocationId: attempt.legacyInvocation.invocationId,
-    legacyRevision: attempt.legacyInvocation.legacyRevision,
-  })}\n`;
-  const now = options.now ?? new Date();
-  storeDurableEvidence(storeRoot, {
-    workflowId: state.workflow.workflowId,
-    expectedCatalogGeneration: catalog.generation,
-    record: {
-      schemaVersion: 1,
-      kind: 'evidence-retention',
-      evidenceId,
-      itemIdentity: `attempt:${attempt.attemptId}`,
-      workflowId: state.workflow.workflowId,
-      epoch: attempt.epoch,
-      evidenceClass: 'raw',
-      digest: crypto.createHash('sha256').update(content).digest('hex'),
-      retention: 'active',
-      createdAt: now.toISOString(),
-      expiresAt: null,
-      pin: null,
-    },
-    content,
-  });
-  return { workflowId: request.workflowId, evidenceId, created: true };
 }
 
 export function pinWorkflowEvidence(
@@ -304,7 +227,7 @@ export function pinWorkflowEvidence(
       ExitCode.staleState,
     );
   }
-  const storeRoot = loadInvestigationRuntimeContext(cwd).lifecycleRuntime.root;
+  const storeRoot = loadInvestigationRuntimeContext(cwd).runtime.root;
   const catalog = inspectDurableRetentionCatalog(storeRoot, request.workflowId);
   const current = catalog.records.find(
     ({ evidenceId }) => evidenceId === request.evidenceId,
