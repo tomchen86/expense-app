@@ -96,6 +96,7 @@ import './provider-invocation-supersession.contract.test.ts';
 import './provider-retry-accounting.contract.test.ts';
 import './protected-capabilities.contract.test.ts';
 import './class-disposition-mounting.integration.test.ts';
+import './class-sample-gating.integration.test.ts';
 import './provider-retention-human-pin.contract.test.ts';
 import './provider-retention.contract.test.ts';
 import './provider-runtime-registration.integration.test.ts';

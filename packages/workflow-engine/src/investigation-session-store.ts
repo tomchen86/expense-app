@@ -11,6 +11,14 @@ import {
   parseClassDisposition,
   type ClassDisposition,
 } from './class-disposition.ts';
+import type { SampleAudit } from './class-sample-audit.ts';
+
+const SAMPLE_AUDIT_OUTCOMES = new Set([
+  'passed',
+  'member-misclassified',
+  'rationale-wrong',
+  'type-wrong',
+]);
 import { deriveAuthorityAuditRepositoryId } from './authority-audit-ledger.ts';
 import {
   exactUnsafePathObservationDigest,
@@ -463,6 +471,12 @@ export type GroupDispositionsPayload = {
    * what changes is how much an author had to write to say the same thing.
    */
   classes?: ClassDisposition[];
+  /**
+   * The hand review of the sampled members of each class. Every mechanical
+   * guard checks the predicate; this is the part only a person can answer,
+   * which is whether the written rationale is true of what those hits do.
+   */
+  sampleAudits?: SampleAudit[];
 };
 
 export type WhyAnswersPayload = {
@@ -4142,7 +4156,8 @@ function assertGroupDispositionsPayload(
     !isRecord(value) ||
     !(
       hasExactKeys(value, ['dispositions']) ||
-      hasExactKeys(value, ['classes', 'dispositions'])
+      hasExactKeys(value, ['classes', 'dispositions']) ||
+      hasExactKeys(value, ['classes', 'dispositions', 'sampleAudits'])
     ) ||
     !Array.isArray(value.dispositions) ||
     value.dispositions.length > INVESTIGATION_LIMITS.maxHitDispositionWorkItems
@@ -4155,6 +4170,26 @@ function assertGroupDispositionsPayload(
       value.classes.length > INVESTIGATION_LIMITS.maxHitDispositionWorkItems
     ) {
       throw checkpointInvalid();
+    }
+    if (value.sampleAudits !== undefined) {
+      if (
+        !Array.isArray(value.sampleAudits) ||
+        value.sampleAudits.length >
+          INVESTIGATION_LIMITS.maxHitDispositionWorkItems
+      ) {
+        throw checkpointInvalid();
+      }
+      for (const audit of value.sampleAudits) {
+        if (
+          !isRecord(audit) ||
+          !hasExactKeys(audit, ['classId', 'groupId', 'outcome']) ||
+          typeof audit.classId !== 'string' ||
+          typeof audit.groupId !== 'string' ||
+          !SAMPLE_AUDIT_OUTCOMES.has(audit.outcome as string)
+        ) {
+          throw checkpointInvalid();
+        }
+      }
     }
     const classIds = new Set<string>();
     for (const declared of value.classes) {

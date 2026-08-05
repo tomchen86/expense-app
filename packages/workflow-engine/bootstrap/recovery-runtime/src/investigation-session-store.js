@@ -4,6 +4,12 @@ import path from 'node:path';
 import { parseAiAdapterPolicyDocument, parseLegacyAiAdapterPolicyDocument, } from './ai-adapter-policy.js';
 import { canonicalJson } from './canonical-json.js';
 import { parseClassDisposition, } from './class-disposition.js';
+const SAMPLE_AUDIT_OUTCOMES = new Set([
+    'passed',
+    'member-misclassified',
+    'rationale-wrong',
+    'type-wrong',
+]);
 import { deriveAuthorityAuditRepositoryId } from './authority-audit-ledger.js';
 import { exactUnsafePathObservationDigest, readEvidenceNode, readEvidenceRefs, readInvestigationEvidenceRefsClosure, observeInvestigationEvidenceRefsAmbiguities, resolvePlanReviewInvocationOwner, } from './evidence-object-store.js';
 import { ExitCode, workflowError } from './errors.js';
@@ -2450,7 +2456,8 @@ function assertMainTermsPayload(value) {
 function assertGroupDispositionsPayload(value) {
     if (!isRecord(value) ||
         !(hasExactKeys(value, ['dispositions']) ||
-            hasExactKeys(value, ['classes', 'dispositions'])) ||
+            hasExactKeys(value, ['classes', 'dispositions']) ||
+            hasExactKeys(value, ['classes', 'dispositions', 'sampleAudits'])) ||
         !Array.isArray(value.dispositions) ||
         value.dispositions.length > INVESTIGATION_LIMITS.maxHitDispositionWorkItems) {
         throw checkpointInvalid();
@@ -2459,6 +2466,22 @@ function assertGroupDispositionsPayload(value) {
         if (!Array.isArray(value.classes) ||
             value.classes.length > INVESTIGATION_LIMITS.maxHitDispositionWorkItems) {
             throw checkpointInvalid();
+        }
+        if (value.sampleAudits !== undefined) {
+            if (!Array.isArray(value.sampleAudits) ||
+                value.sampleAudits.length >
+                    INVESTIGATION_LIMITS.maxHitDispositionWorkItems) {
+                throw checkpointInvalid();
+            }
+            for (const audit of value.sampleAudits) {
+                if (!isRecord(audit) ||
+                    !hasExactKeys(audit, ['classId', 'groupId', 'outcome']) ||
+                    typeof audit.classId !== 'string' ||
+                    typeof audit.groupId !== 'string' ||
+                    !SAMPLE_AUDIT_OUTCOMES.has(audit.outcome)) {
+                    throw checkpointInvalid();
+                }
+            }
         }
         const classIds = new Set();
         for (const declared of value.classes) {

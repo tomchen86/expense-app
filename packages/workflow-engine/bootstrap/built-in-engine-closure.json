@@ -486,7 +486,7 @@
     {
       "path": "src/investigation-session-store.ts",
       "mode": "100644",
-      "digest": "sha256:54ab8d4e819443bf8493993abe5461e5f23a935315909ece0fd56e4fd1e3bb89"
+      "digest": "sha256:38f28105f600bbd83df5d528d8046ba51ba531d68ee22b13abe461c987d852c0"
     },
     {
       "path": "src/investigation-session.ts",
@@ -776,7 +776,7 @@
     {
       "path": "src/propose-orchestrator.ts",
       "mode": "100644",
-      "digest": "sha256:7a9252039646712bca4621b244f83c729cd6d899acbf628cb48b8fb28b25e946"
+      "digest": "sha256:c2e51f97701b1dcb92d461452c9692f4216aac5d9927418758f67dd6b317ff5e"
     },
     {
       "path": "src/protected-capabilities.ts",

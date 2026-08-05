@@ -56,6 +56,10 @@ import {
   expandClassDispositions,
   parseClassDisposition,
 } from './class-disposition.ts';
+import {
+  planClassSampleAudits,
+  resolveSampleAudits,
+} from './class-sample-audit.ts';
 import { parsePathRoleRegistry } from './path-role-registry.ts';
 import {
   applyLedgerToFullBlobManifest,
@@ -556,6 +560,18 @@ export type ProposeOutput = {
    * check, and this is the surface that makes it visible.
    */
   semanticReuse: ReuseCoverageRecord | null;
+  /**
+   * The members of each declared class that must be reviewed by hand before
+   * the plan may commit. An author cannot answer a sample they cannot see, and
+   * the draw is fixed before the classes exist, so showing it gives nothing
+   * away.
+   */
+  classSampleAudits: Array<{
+    classId: string;
+    memberCount: number;
+    sampled: string[];
+    answered: string[];
+  }>;
 };
 
 export type OrdinaryProposeOutput = Omit<ProposeOutput, 'investigation'> & {
@@ -728,6 +744,7 @@ function collaborationGrantRequiredOutput(input: {
     planReview: null,
     planningTransition: null,
     semanticReuse: null,
+    classSampleAudits: [],
   };
 }
 
@@ -911,6 +928,7 @@ export function startPropose(
       planReview: null,
       planningTransition: null,
       semanticReuse: null,
+      classSampleAudits: [],
     };
   }
 
@@ -1485,6 +1503,7 @@ function exemptionAwaitingPlanningOutput(
     planReview: null,
     planningTransition: null,
     semanticReuse: null,
+    classSampleAudits: [],
   };
 }
 
@@ -3558,6 +3577,91 @@ function writeTrackedPlanReview(
   replaceTextAtomic(target, bytes, { allowCreate: true, defaultMode: 0o644 });
 }
 
+/**
+ * The seed the class sample is drawn from.
+ *
+ * It has to be fixed before the classes exist and not be chosen by the author,
+ * or an author could see which members would be examined while deciding how
+ * carefully to draw them. The investigation identity satisfies both: the engine
+ * mints it at the start, nobody selects it, and deriving from it keeps the
+ * draw replayable from durable state alone rather than from a stored secret.
+ */
+/** What each declared class still owes a hand reviewer, and what it has. */
+function classSampleAuditsFor(
+  rebuilt: RebuiltInvestigation,
+): ProposeOutput['classSampleAudits'] {
+  const declared = storedDispositionClasses(rebuilt);
+  if (declared.classes.length === 0) return [];
+  return planClassSampleAudits(
+    classSampleSeed(rebuilt.session.investigationId),
+    declared.classes.map(({ classId, members }) => ({ classId, members })),
+  ).map(({ classId, memberCount, sampled }) => ({
+    classId,
+    memberCount,
+    sampled: [...sampled],
+    answered: declared.audits
+      .filter((audit) => audit.classId === classId)
+      .map(({ groupId }) => groupId),
+  }));
+}
+
+/** What the stored dispositions checkpoint declared, if it declared anything. */
+function storedDispositionClasses(rebuilt: RebuiltInvestigation): {
+  classes: readonly { classId: string; members: readonly string[] }[];
+  audits: readonly { classId: string; groupId: string }[];
+} {
+  const stored = rebuilt.session.milestones.groupDispositions?.envelope;
+  if (stored === undefined || stored.kind !== 'group-dispositions') {
+    return { classes: [], audits: [] };
+  }
+  return {
+    classes: stored.payload.classes ?? [],
+    audits: stored.payload.sampleAudits ?? [],
+  };
+}
+
+function classSampleSeed(investigationId: string): string {
+  return crypto.createHash('sha256').update(investigationId).digest('hex');
+}
+
+/**
+ * Refuses to commit a plan whose class equivalence judgements have not been
+ * checked by hand.
+ *
+ * Every other guard on a class is mechanical, and none of them can tell whether
+ * the rationale an author wrote is true of what those hits do. That is what the
+ * sample is for, so an unfinished sample is an unfinished plan. A class the
+ * audit rejected is not folded at all: it owes an individual disposition per
+ * member, and the plan cannot commit until it has one.
+ */
+function assertClassSamplesAudited(
+  cwd: string,
+  status: ProposeLifecycleStatus,
+): void {
+  const session = readInvestigationSession(
+    loadInvestigationRuntimeContext(cwd).runtime,
+    status.investigationId,
+  );
+  const stored = session.milestones.groupDispositions?.envelope;
+  if (stored === undefined || stored.kind !== 'group-dispositions') return;
+  const classes = stored.payload.classes ?? [];
+  if (classes.length === 0) return;
+
+  const plan = planClassSampleAudits(
+    classSampleSeed(status.investigationId),
+    classes.map(({ classId, members }) => ({ classId, members })),
+  );
+  const resolution = resolveSampleAudits(plan, stored.payload.sampleAudits ?? []);
+  if (resolution.expandIndividually.length > 0) {
+    throw workflowError(
+      'CLASS_SAMPLE_AUDIT_REJECTED',
+      `The hand review rejected ${resolution.expandIndividually.length} class(es); those groups owe individual dispositions: ${resolution.expandIndividually.join(', ')}.`,
+      ExitCode.verification,
+      { details: { classIds: resolution.expandIndividually } },
+    );
+  }
+}
+
 function commitCompletedPlanningUnderAuthority(
   cwd: string,
   status: ProposeLifecycleStatus,
@@ -3574,6 +3678,10 @@ function commitCompletedPlanningUnderAuthority(
     const context = loadInvestigationRuntimeContext(cwd);
     assertCurrentExemptionContext(context, status);
     retireCurrentProposeExemptionSession(context.runtime, status, assertOwned);
+  }
+  if (status.state !== 'investigation-exempt') {
+    // An exemption has no groups, so no class and nothing to have sampled.
+    assertClassSamplesAudited(cwd, status);
   }
   const planningTransition = commitPlanningTransitionUnderAuthority(
     cwd,
@@ -3745,6 +3853,7 @@ function getProposeStatusInternal(
       planReview: null,
       planningTransition: null,
       semanticReuse: rebuilt.reuseCoverage,
+    classSampleAudits: classSampleAuditsFor(rebuilt),
     };
   }
   return renderMaterializedProposeOutput(
@@ -3865,6 +3974,7 @@ function renderProposeOutput(
       planReview: null,
       planningTransition: null,
       semanticReuse: rebuilt.reuseCoverage,
+    classSampleAudits: classSampleAuditsFor(rebuilt),
     };
   }
 
@@ -3883,6 +3993,7 @@ function renderProposeOutput(
     planReview: null,
     planningTransition: null,
     semanticReuse: rebuilt.reuseCoverage,
+    classSampleAudits: classSampleAuditsFor(rebuilt),
   };
 }
 
@@ -3894,6 +4005,7 @@ function renderMaterializedProposeOutput(
   work: ProposeWork,
   materializedArtifacts: Record<string, string>,
   semanticReuse: ReuseCoverageRecord | null = null,
+  classSampleAudits: ProposeOutput['classSampleAudits'] = [],
 ): ProposeOutput {
   const context = loadInvestigationRuntimeContext(cwd);
   const reservation = readPlanReviewReservation(context.runtime, status);
@@ -3936,6 +4048,7 @@ function renderMaterializedProposeOutput(
       planReview: null,
       planningTransition: null,
       semanticReuse,
+      classSampleAudits,
     };
   }
   if (
@@ -4007,6 +4120,7 @@ function renderMaterializedProposeOutput(
       planReview,
       planningTransition: null,
       semanticReuse,
+      classSampleAudits,
     };
   }
   if (trackedReview !== null) {
@@ -4027,6 +4141,7 @@ function renderMaterializedProposeOutput(
         planReview,
         planningTransition: null,
         semanticReuse: null,
+        classSampleAudits: [],
       };
     }
   }
@@ -4048,6 +4163,7 @@ function renderMaterializedProposeOutput(
     planReview,
     planningTransition: null,
     semanticReuse: null,
+    classSampleAudits: [],
   };
 }
 
@@ -4946,11 +5062,14 @@ function mergeReviewerReopenCheckpoint(
     return assertInvestigationCheckpointEnvelope({
       ...checkpoint,
       payload: {
-        // Classes survive the merge: dropping them here would silently turn a
-        // covered submission into an incomplete one.
+        // Classes and their audits survive the merge: dropping either would
+        // silently turn a covered, reviewed submission into an incomplete one.
         ...(checkpoint.payload.classes === undefined
           ? {}
           : { classes: checkpoint.payload.classes }),
+        ...(checkpoint.payload.sampleAudits === undefined
+          ? {}
+          : { sampleAudits: checkpoint.payload.sampleAudits }),
         dispositions: [...reusable, ...checkpoint.payload.dispositions].sort(
           (left, right) => left.groupId.localeCompare(right.groupId),
         ),
