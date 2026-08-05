@@ -25,11 +25,27 @@ import { createFixtureRepository, git } from './fixture.ts';
  */
 export function driveProposeToDispositions(
   changeId: string,
-  options: { surveyTerm?: string; mainTerm?: string } = {},
+  options: {
+    surveyTerm?: string;
+    mainTerm?: string;
+    /** Committed into the baseline before the propose starts. */
+    files?: Record<string, string>;
+    explicitPaths?: string[];
+    explicitSymbols?: string[];
+  } = {},
 ) {
   const repository = createFixtureRepository();
   git(repository, ['checkout', '-b', `work/${changeId}`]);
   setFixtureProviderTimeout(repository, 300_000);
+  if (options.files !== undefined) {
+    for (const [relative, contents] of Object.entries(options.files)) {
+      const target = path.join(repository, relative);
+      fs.mkdirSync(path.dirname(target), { recursive: true });
+      fs.writeFileSync(target, contents, 'utf8');
+    }
+    git(repository, ['add', '--all']);
+    git(repository, ['commit', '-m', 'Add drive fixture sources']);
+  }
 
   const started = startPropose(
     repository,
@@ -37,11 +53,11 @@ export function driveProposeToDispositions(
     {
       schemaVersion: 1,
       summary: `Drive ${changeId} to its dispositions.`,
-      explicitPaths: [
+      explicitPaths: options.explicitPaths ?? [
         '.codex/skills/openspec-propose/SKILL.md',
         'workflow/openspec-assets/manifest.json',
       ],
-      explicitSymbols: ['EngineFloorNeedle'],
+      explicitSymbols: options.explicitSymbols ?? ['EngineFloorNeedle'],
       explicitConfigKeys: [],
       renamePairs: [],
     },

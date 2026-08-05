@@ -776,7 +776,7 @@
     {
       "path": "src/propose-orchestrator.ts",
       "mode": "100644",
-      "digest": "sha256:c2e51f97701b1dcb92d461452c9692f4216aac5d9927418758f67dd6b317ff5e"
+      "digest": "sha256:248a0b1f724291de365ef1982731dbd4dadaea3dfa1e0066d8e063a6fadcc896"
     },
     {
       "path": "src/protected-capabilities.ts",

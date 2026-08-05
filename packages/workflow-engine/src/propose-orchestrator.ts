@@ -60,6 +60,7 @@ import {
   planClassSampleAudits,
   resolveSampleAudits,
 } from './class-sample-audit.ts';
+import { deriveDeclaredPathSymbols } from './declared-path-symbols.ts';
 import { parsePathRoleRegistry } from './path-role-registry.ts';
 import {
   applyLedgerToFullBlobManifest,
@@ -4305,7 +4306,19 @@ function rebuildInvestigation(
   );
   const floor = deriveEngineFloor({
     explicitPaths: intent.explicitPaths,
-    symbols: intent.explicitSymbols,
+    // The author's list and what those files actually publish. A declaration
+    // that names fewer symbols than its own exports would otherwise shrink the
+    // search the change is judged by.
+    symbols: [
+      ...new Set([
+        ...intent.explicitSymbols,
+        ...declaredPathSymbolsFromPinnedTree(
+          context.git.repositoryRoot,
+          session.baseline.tree,
+          intent.explicitPaths,
+        ),
+      ]),
+    ].sort(),
     configKeys: intent.explicitConfigKeys,
     transformations: intent.renamePairs.flatMap((pair, index) => [
       {
@@ -4635,6 +4648,39 @@ function deriveReviewedAssetRelationships(): ReviewedPathRelationship[] {
     .sort((left, right) =>
       left.relationshipId.localeCompare(right.relationshipId),
     );
+}
+
+/**
+ * Reads the names a declared file publishes, from the pinned tree.
+ *
+ * The floor is meant to be what the engine can establish on its own, but its
+ * symbols came only from the author's own list, so a change could narrow its
+ * own search by declaring fewer names than the files it names actually export.
+ * Every exported name of a declared path now joins the floor whether or not
+ * anyone thought to write it down.
+ *
+ * A path the change is about to add does not exist in the pinned tree yet, and
+ * publishes nothing there; that is a fact about the baseline, not a failure.
+ */
+function declaredPathSymbolsFromPinnedTree(
+  repositoryRoot: string,
+  treeOid: string,
+  declaredPaths: readonly string[],
+): string[] {
+  const symbols = new Set<string>();
+  for (const declared of declaredPaths) {
+    if (!/\.(?:[cm]?[jt]sx?)$/.test(declared)) continue;
+    const shown = runGit(
+      repositoryRoot,
+      ['show', `${treeOid}:${declared}`],
+      true,
+    );
+    if (shown === '') continue;
+    for (const symbol of deriveDeclaredPathSymbols(shown)) {
+      symbols.add(symbol);
+    }
+  }
+  return [...symbols].sort();
 }
 
 function deriveReviewedCounterpartFacts(
