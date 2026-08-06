@@ -55,6 +55,7 @@ export type PlanningTransitionResult = {
   amendment?: {
     reason: string;
     executionImpact: 'none' | 'required';
+    reopenedTasks: string[];
     planningGeneration: string;
     amendsPlanningGeneration: string;
     planReview: string;
@@ -317,6 +318,7 @@ function commitPlanningTransitionLocked(
     initial.repositoryRoot,
     initial.head,
   );
+  const reopenAuthorized = amendment?.executionImpact === 'required';
   const inspection = inspectPlanningTransition(
     initial.repositoryRoot,
     initial.head,
@@ -324,6 +326,7 @@ function commitPlanningTransitionLocked(
     changeId,
     changedPaths,
     deletedPaths,
+    reopenAuthorized,
   );
   const planningValidation = validateOpenSpecPlanning(
     initial.repositoryRoot,
@@ -380,6 +383,27 @@ function commitPlanningTransitionLocked(
     }
   }
 
+  if (
+    reopenAuthorized &&
+    inspection.reopenedTasks.length === 0 &&
+    (inspection.beforeTasks ?? []).some(({ completed }) => completed)
+  ) {
+    // Declaring the work invalid and then leaving it marked done is the one
+    // combination that would leave the record saying two different things. A
+    // change with nothing completed yet may still declare the impact
+    // conservatively, and reopens nothing because there is nothing to reopen.
+    throw workflowError(
+      'AMENDMENT_EXECUTION_NOT_REOPENED',
+      'An amendment that says the work must be redone has to reopen it; completed tasks are still marked done.',
+      ExitCode.verification,
+    );
+  }
+  // A seam, deliberately not taken: when execution-side evidence lives in the
+  // durable catalog, an epoch rollover hooks onto this same amendment record.
+  // Nothing there today holds task completion — that lives in the committed
+  // tree and in the task commits, which this transition leaves untouched — so
+  // wiring one now would record a transition that never happened.
+
   // Archive applies delta specs onto the base specs; a delta that cannot apply
   // is not discoverable until then, which is a whole execution too late.
   const archiveApplicability = assertSpecDeltaScenarioPreservation(
@@ -402,12 +426,14 @@ function commitPlanningTransitionLocked(
     config.changeRoot,
     changeId,
     changedPaths,
-
     deletedPaths,
+    reopenAuthorized,
   );
   if (
     verified.transitionKind !== inspection.transitionKind ||
     verified.schemaName !== inspection.schemaName ||
+    JSON.stringify(verified.reopenedTasks) !==
+      JSON.stringify(inspection.reopenedTasks) ||
     JSON.stringify(verified.artifactDigests) !==
       JSON.stringify(inspection.artifactDigests)
   ) {
@@ -513,6 +539,9 @@ function commitPlanningTransitionLocked(
           ? taskStates(inspection.beforeTasks)
           : null,
         after: taskStates(inspection.contract.tasks),
+        // Named rather than counted: whoever reads this later needs to know
+        // exactly which work was sent back, not how much of it there was.
+        reopened: inspection.reopenedTasks,
       },
       openspec: planningValidation.openspec,
       planningAssurance: planningValidation.planningAssurance,
@@ -585,6 +614,7 @@ function commitPlanningTransitionLocked(
           amendment: {
             reason: amendment.reason,
             executionImpact: provenance.executionImpact,
+            reopenedTasks: inspection.reopenedTasks,
             planningGeneration: provenance.planningGeneration,
             amendsPlanningGeneration: provenance.amendsPlanningGeneration,
             planReview: provenance.planReview,

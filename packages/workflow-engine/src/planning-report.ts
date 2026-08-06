@@ -33,6 +33,8 @@ export type PlanningTransitionReport = {
   tasks: {
     before: PlanningTaskState[] | null;
     after: PlanningTaskState[];
+    /** Completed tasks an amendment sent back to be redone, named. */
+    reopened?: string[];
   };
   openspec: {
     version: '1.6.0';
@@ -312,9 +314,15 @@ function isTaskProjection(
 ): value is PlanningTransitionReport['tasks'] {
   return (
     isRecord(value) &&
-    hasExactKeys(value, ['after', 'before']) &&
+    // A record written before amendments existed carries two keys; one that
+    // reopened work carries the named list as well.
+    (hasExactKeys(value, ['after', 'before']) ||
+      hasExactKeys(value, ['after', 'before', 'reopened'])) &&
     (value.before === null || isTaskStates(value.before)) &&
-    isTaskStates(value.after)
+    isTaskStates(value.after) &&
+    (value.reopened === undefined ||
+      (Array.isArray(value.reopened) &&
+        value.reopened.every((id) => /^\d+(?:\.\d+)+$/.test(String(id)))))
   );
 }
 

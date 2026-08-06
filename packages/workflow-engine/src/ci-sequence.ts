@@ -288,7 +288,13 @@ function taskTransitionsForCommit(
     }
     const beforeTasks = beforeContent ? parseTasks(beforeContent) : [];
     const afterTasks = parseTasks(afterContent);
-    assertTaskHistory(changeId, beforeTasks, afterTasks);
+    assertTaskHistory(changeId, beforeTasks, afterTasks, {
+      // Read from the commit that used the permission, so replay reaches the
+      // same verdict from the same bytes.
+      reopenAuthorized:
+        commit.trailers?.kind === 'amend-plan' &&
+        commit.trailers.executionImpact === 'required',
+    });
     const beforeById = new Map(beforeTasks.map((task) => [task.id, task]));
     for (const task of afterTasks) {
       if (task.completed && !beforeById.get(task.id)?.completed) {

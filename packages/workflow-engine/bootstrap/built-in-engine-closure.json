@@ -151,7 +151,7 @@
     {
       "path": "src/ci-commit-validation.ts",
       "mode": "100644",
-      "digest": "sha256:77e3b421b0256c25094618cac9fe59cdf42a05b936b237cd15dcbc1bc22337bd"
+      "digest": "sha256:ff25ecc525ff659af92aa890206c10c6eeb9c6d2298773d077145148d00429fe"
     },
     {
       "path": "src/ci-git.ts",
@@ -166,7 +166,7 @@
     {
       "path": "src/ci-planning.ts",
       "mode": "100644",
-      "digest": "sha256:304d3ef5c103b4d4cda0e0678e2290efa14f8570c0691e549ad8f2d3fea10f10"
+      "digest": "sha256:9aab957a5bdffb2d895a625712988ee769e5dac7668323b9431b89769a77fd71"
     },
     {
       "path": "src/ci-policy.ts",
@@ -176,7 +176,7 @@
     {
       "path": "src/ci-sequence.ts",
       "mode": "100644",
-      "digest": "sha256:3b6bce95f923739f1e881b20b665262950a5cb1c3cf0456ebdeb54ac30106090"
+      "digest": "sha256:8dc5bf9a0c66be7d6e2b290a02071b7714b7f0040e1ff5b70c6f6c6df43b9504"
     },
     {
       "path": "src/ci-signature.ts",
@@ -186,7 +186,7 @@
     {
       "path": "src/ci-task-state.ts",
       "mode": "100644",
-      "digest": "sha256:00165e23a8f1c84f7ea9ce92e1bd1e564374cc35fad789aaa801d8ab05f0acbb"
+      "digest": "sha256:50f7407e5832a532e2b6d2600e2a40966bebdf3a61de1a1ef3d9f5c039722c57"
     },
     {
       "path": "src/ci.ts",
@@ -726,7 +726,7 @@
     {
       "path": "src/planning-contract.ts",
       "mode": "100644",
-      "digest": "sha256:ec40a99f70b7b389a1863d2ce9c1a2714731f189d877b03f631b53db82eae908"
+      "digest": "sha256:e1f0cb4249a1f4a7d1c79b71193a69ced6a52712333f95e80eb5b6afcab38f52"
     },
     {
       "path": "src/planning-generation.ts",
@@ -746,12 +746,12 @@
     {
       "path": "src/planning-report.ts",
       "mode": "100644",
-      "digest": "sha256:b346e81f120bd129122c4d62541bf473fe3057c36af5c7f461a44c91ca287914"
+      "digest": "sha256:af06f0cdd1b6cc300d53c185431d8a85d8631d9b470d0ae0fb1d69cb1f1f0fcb"
     },
     {
       "path": "src/planning-transition.ts",
       "mode": "100644",
-      "digest": "sha256:827fcb98ab141593f33a22ee39164566e1b2871a1d42cd5bd009160f88413b1f"
+      "digest": "sha256:fa934ec0b2de359191b99fcfdd73db8763c4c1ffe7e1c7ca94be8b870298c775"
     },
     {
       "path": "src/predecessor-reconciliation.ts",

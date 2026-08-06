@@ -9,6 +9,7 @@ import {
 } from './collaboration-grant.ts';
 import { readFileAtCommit } from './ci-git.ts';
 import { isRecord } from './contract-values.ts';
+import { parseManagedTrailers } from './managed-trailers.ts';
 import {
   loadChangeContract,
   parseInvestigationArtifact,
@@ -195,6 +196,35 @@ type TreeEntry = {
  * the `plan` transition. The single integration bootstrap is deliberately an
  * outer exception because its dependency diff is not an ordinary plan diff.
  */
+/**
+ * The amendment block a planning commit carries, if it is one.
+ *
+ * Reading it here rather than trusting a caller is what keeps replay honest:
+ * the permission to reopen completed work lives in the commit that used it, so
+ * a later reader reaches the same verdict from the same bytes.
+ */
+function readCommittedAmendment(
+  message: string,
+  changeId: string,
+): { executionImpact: 'none' | 'required' } | null {
+  let trailers;
+  try {
+    trailers = parseManagedTrailers(
+      message.endsWith('\n') ? message.slice(0, -1) : message,
+    );
+  } catch {
+    return null;
+  }
+  if (trailers?.kind !== 'amend-plan') return null;
+  if (trailers.changeId !== changeId) {
+    throw ciPlanningError(
+      'CI_PLANNING_AMENDMENT_CHANGE_MISMATCH',
+      'An amendment names the change it amends, and this one names another.',
+    );
+  }
+  return { executionImpact: trailers.executionImpact };
+}
+
 export function validateCiPlanningCommit(
   repositoryRoot: string,
   commitHash: string,
@@ -217,12 +247,20 @@ export function validateCiPlanningCommit(
       'Planning commits must have exactly one parent.',
     );
   }
-  if (facts.message !== `${planningCommitMessage(changeId)}\n`) {
+  // An amendment carries its own exact block, and the authorization to reopen
+  // completed work is read from that block rather than from anything outside
+  // the commit — replay sees precisely what the transition claimed.
+  const amendment = readCommittedAmendment(facts.message, changeId);
+  if (
+    amendment === null &&
+    facts.message !== `${planningCommitMessage(changeId)}\n`
+  ) {
     throw ciPlanningError(
       'CI_PLANNING_MESSAGE_INVALID',
       'Planning commits require the exact managed subject and trailer block.',
     );
   }
+  const reopenAuthorized = amendment?.executionImpact === 'required';
 
   const changedPaths = commitChangedPaths(repositoryRoot, facts.hash);
   if (changedPaths.length === 0) {
@@ -309,7 +347,15 @@ export function validateCiPlanningCommit(
   const afterTasks = parseTasks(
     readRequiredFile(repositoryRoot, facts.hash, `${prefix}/tasks.md`),
   );
-  assertPlanningTaskHistory(beforeTasks, afterTasks);
+  const reopenedTasks = assertPlanningTaskHistory(beforeTasks, afterTasks, {
+    reopenAuthorized,
+  });
+  if (reopenAuthorized && reopenedTasks.length === 0) {
+    throw ciPlanningError(
+      'CI_PLANNING_AMENDMENT_NOT_REOPENED',
+      'An amendment that says the work must be redone has to reopen it.',
+    );
+  }
   return {
     changeId,
     kind,
