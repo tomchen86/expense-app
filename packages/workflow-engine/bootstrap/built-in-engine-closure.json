@@ -176,7 +176,7 @@
     {
       "path": "src/ci-sequence.ts",
       "mode": "100644",
-      "digest": "sha256:f1046d23f5b1e2723bdff1ae32fee575a9269db0d2b9db8a330c636bff4e36b9"
+      "digest": "sha256:3b6bce95f923739f1e881b20b665262950a5cb1c3cf0456ebdeb54ac30106090"
     },
     {
       "path": "src/ci-signature.ts",
@@ -211,7 +211,7 @@
     {
       "path": "src/cli.ts",
       "mode": "100644",
-      "digest": "sha256:7356399cf400c5cea24c0621dcf0518ca380fd5e62cf3d9b03e6dd2ee338304a"
+      "digest": "sha256:bed0f66ab40ba354634d4c139d3a74412552fbe5b4beccbea98a509bdc742f6f"
     },
     {
       "path": "src/codex-provider-adapter.ts",
@@ -381,7 +381,7 @@
     {
       "path": "src/git-transitions.ts",
       "mode": "100644",
-      "digest": "sha256:41668682edf7d31ff035aecd324ad39af84b1eecdcd679b4788bb005a8f465a1"
+      "digest": "sha256:9c4238099ef2dcb5bc1749dadcee7140aa250c94c85bd3fd3451c959fe3fd172"
     },
     {
       "path": "src/git.ts",
@@ -626,7 +626,7 @@
     {
       "path": "src/managed-trailers.ts",
       "mode": "100644",
-      "digest": "sha256:7217f55b5b8d7bf001be0538bd5dfdf59eca72a606c0a4b02211a4d661c9d4b3"
+      "digest": "sha256:4aa681403d1339b20f137b0f4619fbfc7310c8891ea063783d26495353915e50"
     },
     {
       "path": "src/markdown-sections.ts",
@@ -746,12 +746,12 @@
     {
       "path": "src/planning-report.ts",
       "mode": "100644",
-      "digest": "sha256:54da4acfb0602b524e9926b0fa314c1b3247337c75fbfb5fb74a5302a8951a34"
+      "digest": "sha256:b346e81f120bd129122c4d62541bf473fe3057c36af5c7f461a44c91ca287914"
     },
     {
       "path": "src/planning-transition.ts",
       "mode": "100644",
-      "digest": "sha256:616b989c4730cf074fd4200b61ad34e2e285c4bf3fc5cbfd5f6f6b0308a08f95"
+      "digest": "sha256:827fcb98ab141593f33a22ee39164566e1b2871a1d42cd5bd009160f88413b1f"
     },
     {
       "path": "src/predecessor-reconciliation.ts",

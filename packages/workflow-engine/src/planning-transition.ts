@@ -7,6 +7,9 @@ import type { ArchiveApplicabilityRecord } from './planning-report.ts';
 import { loadWorkflowConfig } from './contracts.ts';
 import { ExitCode, WorkflowError, workflowError } from './errors.ts';
 import {
+  amendPlanCommitMessage,
+  amendPlanCommitTrailers,
+  createAmendPlanCommitObject,
   commitChangedPaths,
   commitFacts,
   createPlanningCommitObject,
@@ -40,9 +43,22 @@ import {
 } from './planning-lock.ts';
 import type { InvestigationFirstPlanningAssuranceSummary } from './planning-assurance-validator.ts';
 
+export type AmendmentRequest = {
+  reason: string;
+  executionImpact: 'none' | 'required';
+};
+
 export type PlanningTransitionResult = {
   changeId: string;
   kind: 'introduction' | 'revision';
+  /** Present when this transition was an amendment rather than a plan. */
+  amendment?: {
+    reason: string;
+    executionImpact: 'none' | 'required';
+    planningGeneration: string;
+    amendsPlanningGeneration: string;
+    planReview: string;
+  };
   subject: string;
   baselineHead: string;
   changedPaths: string[];
@@ -71,6 +87,65 @@ export {
   assertPlanningPaths,
   assertPlanningTaskHistory,
 } from './planning-contract.ts';
+
+/**
+ * Amends an already-committed plan.
+ *
+ * A change that finished its execution and then failed at archive has a
+ * corrected plan to commit and no legal way to commit it: an ordinary plan
+ * revision may not disturb completed work, and there is no other verb. This is
+ * that verb, and it is deliberately narrow — it records which generation it
+ * replaces, which review looked at the correction, and whether the work already
+ * done still stands. An amendment that has not decided the last of those is
+ * refused rather than assumed, because assuming it is how completed work
+ * silently becomes uncertain.
+ */
+export function commitPlanAmendment(
+  cwd: string,
+  requestedChangeId: string,
+  amendment: AmendmentRequest,
+  environment: NodeJS.ProcessEnv = process.env,
+  testHooks: PlanningTransitionTestHooks = {},
+): PlanningTransitionResult {
+  const changeId = assertChangeId(requestedChangeId);
+  assertAmendmentRequest(amendment);
+  const locator = discoverRepository(cwd);
+  const config = loadWorkflowConfig(locator.repositoryRoot);
+  const runtime = runtimePaths(
+    locator.gitCommonDirectory,
+    config.runtimeDirectory,
+  );
+  return withPlanningAuthority(runtime, changeId, (assertLocksOwned) =>
+    commitPlanningTransitionLocked(
+      cwd,
+      changeId,
+      environment,
+      testHooks,
+      assertLocksOwned,
+      amendment,
+    ),
+  );
+}
+
+function assertAmendmentRequest(amendment: AmendmentRequest): void {
+  if (
+    amendment.executionImpact !== 'none' &&
+    amendment.executionImpact !== 'required'
+  ) {
+    throw workflowError(
+      'AMENDMENT_EXECUTION_IMPACT_UNRESOLVED',
+      'An amendment must say whether the work already done still stands.',
+      ExitCode.usage,
+    );
+  }
+  if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(amendment.reason)) {
+    throw workflowError(
+      'AMENDMENT_REASON_REQUIRED',
+      'An amendment records why it was needed, as a stable reason code.',
+      ExitCode.usage,
+    );
+  }
+}
 
 export function commitPlanningTransition(
   cwd: string,
@@ -117,12 +192,72 @@ export function commitPlanningTransitionUnderAuthority(
   );
 }
 
+/**
+ * The planning generation this change last committed under, read from what was
+ * actually committed rather than from runtime state that may have been pruned.
+ *
+ * An amendment exists to replace a specific generation, so a change with none
+ * has nothing to amend and is told so rather than being handed a first plan
+ * through the amendment door. A committed review naming more than one
+ * generation refuses the amendment: one that cannot say precisely what it
+ * replaces records nothing worth reading later.
+ */
+function previousPlanningGeneration(
+  repositoryRoot: string,
+  parentCommit: string,
+  changeRoot: string,
+  changeId: string,
+): string | null {
+  const committed = runGit(
+    repositoryRoot,
+    ['show', `${parentCommit}:${changeRoot}/${changeId}/plan-review.json`],
+    true,
+  );
+  if (committed.trim() === '') return null;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(committed);
+  } catch {
+    return null;
+  }
+  const generations = new Set<string>();
+  collectPlanningGenerations(parsed, generations);
+  if (generations.size > 1) {
+    throw workflowError(
+      'AMENDMENT_GENERATION_AMBIGUOUS',
+      'The committed review names more than one planning generation, so an amendment cannot say which one it replaces.',
+      ExitCode.staleState,
+    );
+  }
+  return [...generations][0] ?? null;
+}
+
+function collectPlanningGenerations(value: unknown, into: Set<string>): void {
+  if (Array.isArray(value)) {
+    for (const item of value) collectPlanningGenerations(item, into);
+    return;
+  }
+  if (typeof value !== 'object' || value === null) return;
+  for (const [key, nested] of Object.entries(value)) {
+    if (
+      key === 'planningGenerationId' &&
+      typeof nested === 'string' &&
+      /^[0-9a-f]{64}$/.test(nested)
+    ) {
+      into.add(nested);
+      continue;
+    }
+    collectPlanningGenerations(nested, into);
+  }
+}
+
 function commitPlanningTransitionLocked(
   cwd: string,
   changeId: string,
   environment: NodeJS.ProcessEnv,
   testHooks: PlanningTransitionTestHooks,
   assertLocksOwned: () => void,
+  amendment?: AmendmentRequest,
 ): PlanningTransitionResult {
   const initial = discoverRepository(cwd);
   const config = loadWorkflowConfig(initial.repositoryRoot);
@@ -209,6 +344,42 @@ function commitPlanningTransitionLocked(
     );
   }
 
+  const priorGeneration =
+    amendment === undefined
+      ? null
+      : previousPlanningGeneration(
+          initial.repositoryRoot,
+          initial.head,
+          config.changeRoot,
+          changeId,
+        );
+  if (amendment !== undefined) {
+    if (priorGeneration === null) {
+      throw workflowError(
+        'AMENDMENT_WITHOUT_PLAN',
+        'An amendment replaces a planning generation; this change has none to replace.',
+        ExitCode.guard,
+      );
+    }
+    if (planningValidation.planningAssurance === null) {
+      throw workflowError(
+        'AMENDMENT_REVIEW_REQUIRED',
+        'An amendment is committed on a fresh review of the corrected plan.',
+        ExitCode.verification,
+      );
+    }
+    if (
+      planningValidation.planningAssurance.planningGenerationId ===
+      priorGeneration
+    ) {
+      throw workflowError(
+        'AMENDMENT_GENERATION_UNCHANGED',
+        'An amendment whose planning generation is the one it replaces has corrected nothing.',
+        ExitCode.verification,
+      );
+    }
+  }
+
   // Archive applies delta specs onto the base specs; a delta that cannot apply
   // is not discoverable until then, which is a whole execution too late.
   const archiveApplicability = assertSpecDeltaScenarioPreservation(
@@ -274,15 +445,39 @@ function commitPlanningTransitionLocked(
       inspection.artifactDigests,
     );
 
-    const subject = `Plan ${changeId}`;
-    const message = planningCommitMessage(changeId);
-    const commitHash = createPlanningCommitObject(
-      initial.repositoryRoot,
-      staged.tree,
-      initial.head,
-      changeId,
-      environment,
-    );
+    const provenance =
+      amendment === undefined || planningValidation.planningAssurance === null
+        ? null
+        : {
+            planningGeneration:
+              planningValidation.planningAssurance.planningGenerationId,
+            amendsPlanningGeneration: priorGeneration as string,
+            executionImpact: amendment.executionImpact,
+            planReview: planningValidation.planningAssurance.reviewNodeId,
+          };
+    const subject =
+      provenance === null ? `Plan ${changeId}` : `Amend plan ${changeId}`;
+    const message =
+      provenance === null
+        ? planningCommitMessage(changeId)
+        : amendPlanCommitMessage(changeId, provenance);
+    const commitHash =
+      provenance === null
+        ? createPlanningCommitObject(
+            initial.repositoryRoot,
+            staged.tree,
+            initial.head,
+            changeId,
+            environment,
+          )
+        : createAmendPlanCommitObject(
+            initial.repositoryRoot,
+            staged.tree,
+            initial.head,
+            changeId,
+            provenance,
+            environment,
+          );
     assertPlanningCommitObject(
       initial.repositoryRoot,
       commitHash,
@@ -297,11 +492,14 @@ function commitPlanningTransitionLocked(
       kind: 'planning-transition',
       createdAt: new Date().toISOString(),
       changeId,
-      transition: 'plan',
+      transition: provenance === null ? 'plan' : 'amend-plan',
       transitionKind: inspection.transitionKind,
       subject,
       message,
-      trailers: [`Change: ${changeId}`, 'Transition: plan'],
+      trailers:
+        provenance === null
+          ? [`Change: ${changeId}`, 'Transition: plan']
+          : amendPlanCommitTrailers(changeId, provenance).split('\n'),
       branch: requiredBranch,
       headRef,
       parent: { head: initial.head, tree: initial.tree },
@@ -381,6 +579,17 @@ function commitPlanningTransitionLocked(
     return {
       changeId,
       kind: inspection.transitionKind,
+    ...(provenance === null || amendment === undefined
+      ? {}
+      : {
+          amendment: {
+            reason: amendment.reason,
+            executionImpact: provenance.executionImpact,
+            planningGeneration: provenance.planningGeneration,
+            amendsPlanningGeneration: provenance.amendsPlanningGeneration,
+            planReview: provenance.planReview,
+          },
+        }),
       subject,
       baselineHead: initial.head,
       changedPaths,

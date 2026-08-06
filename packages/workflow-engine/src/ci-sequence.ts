@@ -142,7 +142,12 @@ export function replayCommitSequence(
       );
     }
 
-    if (commit.trailers.kind === 'plan') {
+    if (
+      commit.trailers.kind === 'plan' ||
+      // An amendment is a planning commit that also says what it replaces, so
+      // it is replayed by the same rules rather than by weaker ones.
+      commit.trailers.kind === 'amend-plan'
+    ) {
       const planning = validateCiPlanningCommit(
         repositoryRoot,
         commit.hash,

@@ -155,7 +155,10 @@ import {
 import { runtimePaths } from './session-store.ts';
 import { validateManagedDocuments } from './managed-documents.ts';
 import { diagnoseOpenSpec } from './openspec-doctor.ts';
-import { commitPlanningTransition } from './planning-transition.ts';
+import {
+  commitPlanAmendment,
+  commitPlanningTransition,
+} from './planning-transition.ts';
 import {
   getProposeStatus,
   resumeProposeFromFile,
@@ -267,6 +270,25 @@ function dispatch(args: string[], cwd: string): CommandResult {
         ok: true,
         result: commitPlanningTransition(cwd, rest[0]),
       };
+    case 'amend-plan': {
+      // Both arguments are mandatory: an amendment that has not said why it
+      // was needed, or whether the work already done still stands, has not
+      // answered the questions the transition exists to ask.
+      requireArgumentCount(command, rest, 5, 5);
+      if (rest[1] !== '--reason' || rest[3] !== '--execution-impact') {
+        throw usage(
+          'workflow amend-plan <change-id> --reason <code> --execution-impact <none|required>',
+        );
+      }
+      return {
+        command,
+        ok: true,
+        result: commitPlanAmendment(cwd, rest[0]!, {
+          reason: rest[2]!,
+          executionImpact: rest[4] as 'none' | 'required',
+        }),
+      };
+    }
     case 'propose': {
       const providerDispatcher =
         process.env.WORKFLOW_TEST_DISABLE_PROVIDER_DISPATCH === '1'

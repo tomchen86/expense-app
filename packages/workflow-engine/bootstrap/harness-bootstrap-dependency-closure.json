@@ -8,7 +8,7 @@
     {
       "path": "bootstrap/recovery-runtime/bootstrap/built-in-engine-closure-pin.js",
       "mode": "100644",
-      "digest": "sha256:3d64f0d155236985b663478aae9b1c6fbb6f240e62ab2034f55c92ea0a9b9796"
+      "digest": "sha256:4feecba6cc5815fa761bd3d785f9ec5ba4ca1b762b0f51fb60f5d50b8e1175d2"
     },
     {
       "path": "bootstrap/recovery-runtime/src/actor-identity.js",
@@ -143,7 +143,7 @@
     {
       "path": "bootstrap/recovery-runtime/src/git-transitions.js",
       "mode": "100644",
-      "digest": "sha256:6a60f3d5d1989b85c104960a6b3d65c50161efb344f86340734b9677cc1add45"
+      "digest": "sha256:9e4f05e6ba04e6739acdd6e78f97139957f6f12a62f20bfdecc8b4bc74dc9e1f"
     },
     {
       "path": "bootstrap/recovery-runtime/src/git.js",
@@ -243,7 +243,7 @@
     {
       "path": "bootstrap/recovery-runtime/src/managed-trailers.js",
       "mode": "100644",
-      "digest": "sha256:dee448d23ac9808a65e64e63fde311ba902bdd8cf016f2e5a49ac64ca0cc15c9"
+      "digest": "sha256:792e49211ed1c8104ce45482e64c6c01ad22354f95c97f0d900c57a365c033f8"
     },
     {
       "path": "bootstrap/recovery-runtime/src/mutation-class-policy.js",

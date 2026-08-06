@@ -470,6 +470,70 @@ export function planningCommitMessage(changeId: string): string {
   return [subject, '', `Change: ${changeId}`, 'Transition: plan'].join('\n');
 }
 
+export type AmendmentProvenance = {
+  planningGeneration: string;
+  amendsPlanningGeneration: string;
+  executionImpact: 'none' | 'required';
+  planReview: string;
+};
+
+/**
+ * The trailer block an amendment commits under.
+ *
+ * The order is fixed because the parser reads it positionally, which is what
+ * stops a commit from claiming an amendment by writing some of the lines and
+ * leaving the rest to be assumed.
+ */
+export function amendPlanCommitTrailers(
+  changeId: string,
+  provenance: AmendmentProvenance,
+): string {
+  return [
+    `Change: ${changeId}`,
+    'Transition: amend-plan',
+    `Planning-Generation: ${provenance.planningGeneration}`,
+    `Amends-Planning-Generation: ${provenance.amendsPlanningGeneration}`,
+    `Execution-Impact: ${provenance.executionImpact}`,
+    `Plan-Review: ${provenance.planReview}`,
+  ].join('\n');
+}
+
+export function amendPlanCommitMessage(
+  changeId: string,
+  provenance: AmendmentProvenance,
+): string {
+  const subject = `Amend plan ${changeId}`;
+  validateCommitSubject(subject);
+  return [subject, '', amendPlanCommitTrailers(changeId, provenance)].join('\n');
+}
+
+export function createAmendPlanCommitObject(
+  repositoryRoot: string,
+  tree: string,
+  parent: string,
+  changeId: string,
+  provenance: AmendmentProvenance,
+  environment: NodeJS.ProcessEnv = process.env,
+): string {
+  const subject = `Amend plan ${changeId}`;
+  validateCommitSubject(subject);
+  const identity = resolveCommitIdentity(repositoryRoot, environment);
+  return runGitWithEnvironment(
+    repositoryRoot,
+    [
+      'commit-tree',
+      tree,
+      '-p',
+      parent,
+      '-m',
+      subject,
+      '-m',
+      amendPlanCommitTrailers(changeId, provenance),
+    ],
+    identity,
+  ).trim();
+}
+
 export function archiveCommitMessage(changeId: string): string {
   const subject = `Archive ${changeId}`;
   validateCommitSubject(subject);

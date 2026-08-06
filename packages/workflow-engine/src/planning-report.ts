@@ -15,11 +15,13 @@ export type PlanningTransitionReport = {
   kind: 'planning-transition';
   createdAt: string;
   changeId: string;
-  transition: 'plan';
+  // An amendment is a planning transition that also records what it replaces,
+  // so its report is the same record with a wider trailer block.
+  transition: 'plan' | 'amend-plan';
   transitionKind: 'introduction' | 'revision';
   subject: string;
   message: string;
-  trailers: [string, string];
+  trailers: string[];
   branch: string;
   headRef: string;
   parent: { head: string; tree: string };
@@ -90,6 +92,39 @@ export function readPlanningTransitionReport(
   return report;
 }
 
+/**
+ * The trailer block a record of this transition must carry, exactly.
+ *
+ * Checking the block rather than a prefix of it is what keeps a report from
+ * describing an amendment while carrying a plan's provenance, which would make
+ * the record read as settled work that nobody had actually replaced.
+ */
+function isExactTrailerBlock(
+  value: Record<string, unknown>,
+  trailers: unknown[],
+): boolean {
+  if (!trailers.every((line): line is string => typeof line === 'string')) {
+    return false;
+  }
+  if (value.transition === 'plan') {
+    return (
+      trailers.length === 2 &&
+      trailers[0] === `Change: ${value.changeId}` &&
+      trailers[1] === 'Transition: plan'
+    );
+  }
+  return (
+    trailers.length === 6 &&
+    trailers[0] === `Change: ${value.changeId}` &&
+    trailers[1] === 'Transition: amend-plan' &&
+    /^Planning-Generation: [0-9a-f]{64}$/.test(trailers[2] ?? '') &&
+    /^Amends-Planning-Generation: [0-9a-f]{64}$/.test(trailers[3] ?? '') &&
+    /^Execution-Impact: (?:none|required)$/.test(trailers[4] ?? '') &&
+    /^Plan-Review: [0-9a-f]{64}$/.test(trailers[5] ?? '') &&
+    trailers[2] !== trailers[3].replace('Amends-Planning-Generation', 'Planning-Generation')
+  );
+}
+
 function normalizeLegacyPlanningTransitionReport(value: unknown): unknown {
   if (
     !isRecord(value) ||
@@ -144,17 +179,18 @@ function assertPlanningTransitionReport(
     !hasExactKeys(value, exactKeys) ||
     value.schemaVersion !== 1 ||
     value.kind !== 'planning-transition' ||
-    value.transition !== 'plan' ||
+    !['plan', 'amend-plan'].includes(String(value.transition)) ||
     !['introduction', 'revision'].includes(String(value.transitionKind)) ||
     !isIsoDate(value.createdAt) ||
     !isChangeId(value.changeId) ||
-    value.subject !== `Plan ${value.changeId}` ||
-    value.message !==
-      `${value.subject}\n\nChange: ${value.changeId}\nTransition: plan` ||
+    // The subject, message, and trailer block are checked against the exact
+    // transition the record claims, so an amendment cannot be recorded as a
+    // plan or the other way round.
+    value.subject !==
+      `${value.transition === 'plan' ? 'Plan' : 'Amend plan'} ${value.changeId}` ||
     !Array.isArray(value.trailers) ||
-    value.trailers.length !== 2 ||
-    value.trailers[0] !== `Change: ${value.changeId}` ||
-    value.trailers[1] !== 'Transition: plan' ||
+    !isExactTrailerBlock(value, value.trailers) ||
+    value.message !== `${value.subject}\n\n${value.trailers.join('\n')}` ||
     typeof value.branch !== 'string' ||
     value.headRef !== `refs/heads/${value.branch}` ||
     !isGitObject(value.tree) ||
