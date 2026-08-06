@@ -2,7 +2,10 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import { assertTaskHistory } from '../src/ci-task-state.ts';
-import { assertPlanningTaskHistory } from '../src/planning-contract.ts';
+import {
+  amendmentLeftWorkMarkedDone,
+  assertPlanningTaskHistory,
+} from '../src/planning-contract.ts';
 
 const DONE = [
   { id: '1.1', completed: true },
@@ -121,5 +124,64 @@ test('CI refuses a partial reopen for the same reason the plan does', () => {
       ),
     (error: unknown) =>
       (error as { code?: string }).code === 'CI_TASK_PARTIAL_REOPEN',
+  );
+});
+
+test('a change with nothing completed may declare the impact conservatively', () => {
+  // The edge both gates have to agree on. One condition, consulted by the
+  // transition and by CI replay, so the engine cannot mint a commit its own
+  // replay rejects — the divergence class this design exists to prevent.
+  const nothingDone = [
+    { id: '1.1', completed: false },
+    { id: '1.2', completed: false },
+  ];
+  assert.equal(
+    amendmentLeftWorkMarkedDone({
+      reopenAuthorized: true,
+      reopenedTasks: [],
+      beforeTasks: nothingDone as never,
+    }),
+    false,
+    'nothing was left marked done, because nothing was done',
+  );
+  assert.deepEqual(
+    assertPlanningTaskHistory(nothingDone as never, nothingDone as never, {
+      reopenAuthorized: true,
+    }),
+    [],
+  );
+  assert.doesNotThrow(() =>
+    assertTaskHistory('demo-change', nothingDone as never, nothingDone as never, {
+      reopenAuthorized: true,
+    }),
+  );
+});
+
+test('declaring the work invalid while leaving it marked done is the one refusal', () => {
+  assert.equal(
+    amendmentLeftWorkMarkedDone({
+      reopenAuthorized: true,
+      reopenedTasks: [],
+      beforeTasks: DONE as never,
+    }),
+    true,
+  );
+  // An amendment that did reopen its work, and any amendment that never
+  // claimed the work was invalid, both pass.
+  assert.equal(
+    amendmentLeftWorkMarkedDone({
+      reopenAuthorized: true,
+      reopenedTasks: ['1.1'],
+      beforeTasks: DONE as never,
+    }),
+    false,
+  );
+  assert.equal(
+    amendmentLeftWorkMarkedDone({
+      reopenAuthorized: false,
+      reopenedTasks: [],
+      beforeTasks: DONE as never,
+    }),
+    false,
   );
 });

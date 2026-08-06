@@ -26,6 +26,7 @@ import {
 } from './git.ts';
 import { assertChangeId, normalizeChangedPath } from './paths.ts';
 import {
+  amendmentLeftWorkMarkedDone,
   inspectPlanningTransition,
   taskStates,
   validateOpenSpecPlanning,
@@ -384,9 +385,11 @@ function commitPlanningTransitionLocked(
   }
 
   if (
-    reopenAuthorized &&
-    inspection.reopenedTasks.length === 0 &&
-    (inspection.beforeTasks ?? []).some(({ completed }) => completed)
+    amendmentLeftWorkMarkedDone({
+      reopenAuthorized,
+      reopenedTasks: inspection.reopenedTasks,
+      beforeTasks: inspection.beforeTasks,
+    })
   ) {
     // Declaring the work invalid and then leaving it marked done is the one
     // combination that would leave the record saying two different things. A

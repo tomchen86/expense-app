@@ -149,6 +149,26 @@ export function validateOpenSpecPlanning(
   };
 }
 
+/**
+ * Whether an amendment declared its execution invalid and then left it marked
+ * done.
+ *
+ * One definition, consulted by the transition and by CI replay alike. Two
+ * copies of this condition is how an engine mints a commit its own replay
+ * rejects, so the copies are gone: only the error each side raises differs.
+ */
+export function amendmentLeftWorkMarkedDone(input: {
+  reopenAuthorized: boolean;
+  reopenedTasks: readonly string[];
+  beforeTasks: readonly ParsedTask[] | undefined;
+}): boolean {
+  return (
+    input.reopenAuthorized &&
+    input.reopenedTasks.length === 0 &&
+    (input.beforeTasks ?? []).some(({ completed }) => completed)
+  );
+}
+
 export function assertPlanningTaskHistory(
   before: ParsedTask[] | undefined,
   after: ParsedTask[],

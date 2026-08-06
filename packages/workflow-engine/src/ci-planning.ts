@@ -37,6 +37,7 @@ import {
   type InvestigationFirstPlanningAssuranceSummary,
 } from './planning-assurance-validator.ts';
 import {
+  amendmentLeftWorkMarkedDone,
   assertPlanningPaths,
   assertPlanningTaskHistory,
   taskStates,
@@ -350,10 +351,12 @@ export function validateCiPlanningCommit(
   const reopenedTasks = assertPlanningTaskHistory(beforeTasks, afterTasks, {
     reopenAuthorized,
   });
-  if (reopenAuthorized && reopenedTasks.length === 0) {
+  if (
+    amendmentLeftWorkMarkedDone({ reopenAuthorized, reopenedTasks, beforeTasks })
+  ) {
     throw ciPlanningError(
       'CI_PLANNING_AMENDMENT_NOT_REOPENED',
-      'An amendment that says the work must be redone has to reopen it.',
+      'An amendment that says the work must be redone has to reopen it; completed tasks are still marked done.',
     );
   }
   return {
