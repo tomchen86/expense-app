@@ -8,7 +8,10 @@ import { listProviderInvocationLifecycleProjections } from '../src/investigation
 import { loadInvestigationRuntimeContext } from '../src/lifecycle-context.ts';
 import { startPropose } from '../src/propose-orchestrator.ts';
 import { inspectProviderPromptContextRetentionBinding } from '../src/provider-execution-governance.ts';
-import { providerRuntimeEvidenceId } from '../src/provider-retention.ts';
+import {
+  inspectProviderRetentionMetrics,
+  providerRuntimeEvidenceId,
+} from '../src/provider-retention.ts';
 import {
   readProviderInvocation,
   readProviderInvocationManifest,
@@ -87,6 +90,14 @@ test('a maintainer can pin the registered runtime through the production surface
     const [record] = runtimeRecords(fixture.storeRoot, fixture.workflowId);
     assert.equal(record?.retention, 'pinned');
     assert.equal(record?.pin?.actor, fixture.mandate.signer.identity());
+
+    // The metric reports the pins the schedule actually obeys. Counting only
+    // AttemptRecord.retention — which production never sets to 'pinned' — is
+    // what made this a structural zero.
+    // This fixture's provider never ran, so there are no raw bytes on disk to
+    // attribute; the count is the claim this test can honestly make.
+    const metrics = inspectProviderRetentionMetrics(fixture.repository);
+    assert.equal(metrics.pinnedCount >= 1, true);
   } finally {
     fixture.dispose();
   }

@@ -999,7 +999,7 @@ function verifyClosureManifest(value: unknown): BuiltInClosureManifest {
   }
   const paths = files.map((entry) => String(entry.path));
   const sorted = [...new Set(paths)].sort((left, right) =>
-    left.localeCompare(right),
+    left < right ? -1 : left > right ? 1 : 0,
   );
   if (
     canonicalJson(paths) !== canonicalJson(sorted) ||
@@ -1037,7 +1037,7 @@ function listPackageTypescriptFiles(
       files.push(relative.split(path.sep).join('/'));
     }
   }
-  return files.sort((left, right) => left.localeCompare(right));
+  return files.sort((left, right) => (left < right ? -1 : left > right ? 1 : 0));
 }
 
 function readClosureFile(filePath: string, expectedMode: number): Buffer {

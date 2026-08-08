@@ -24,7 +24,9 @@ const files = [
   ...listTypescriptFiles(path.join(PACKAGE_ROOT, 'src')),
 ]
   .map((relativePath) => manifestEntry(relativePath))
-  .sort((left, right) => left.path.localeCompare(right.path));
+  .sort((left, right) =>
+    left.path < right.path ? -1 : left.path > right.path ? 1 : 0,
+  );
 const manifest = {
   kind: 'built-in-engine-closure-manifest.v1' as const,
   entrypoint: 'src/cli.ts',

@@ -271,6 +271,11 @@ export function inspectProviderRetentionMetrics(
       let expiredPendingBytes = 0;
       let pinnedCount = 0;
       let receiptCount = 0;
+      // The pins the pruning pass obeys, so the number reported here is the
+      // number that actually withholds bytes. AttemptRecord.retention alone
+      // never says 'pinned' in production, which is what made this metric a
+      // structural zero.
+      const resolveHumanPins = humanPinResolver(context.runtime.root);
       for (const projection of listProviderInvocationLifecycleProjections(
         context.runtime,
       )) {
@@ -285,6 +290,9 @@ export function inspectProviderRetentionMetrics(
           context.runtime,
           record.invocationId,
         );
+        const humanPinned = resolveHumanPins(
+          binding.context.workflowId,
+        ).has(providerRuntimeEvidenceId(binding.attempt.attemptId));
         if (receipt !== null) {
           assertReceiptBinding(receipt, binding, record);
           if (receipt.state !== 'complete') throw receiptUnsafe();
@@ -297,8 +305,11 @@ export function inspectProviderRetentionMetrics(
           (total, artifact) => total + artifact.bytes,
           0,
         );
-        rawEvidenceBytesByRetentionClass[binding.attempt.retention] += bytes;
-        if (binding.attempt.retention === 'pinned') pinnedCount += 1;
+        const retentionClass = humanPinned
+          ? 'pinned'
+          : binding.attempt.retention;
+        rawEvidenceBytesByRetentionClass[retentionClass] += bytes;
+        if (retentionClass === 'pinned') pinnedCount += 1;
         if (
           privatePathExists(
             context.runtime,

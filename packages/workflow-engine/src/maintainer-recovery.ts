@@ -73,6 +73,17 @@ import {
   type TaskMandateBinding,
 } from './task-mandate.ts';
 
+/**
+ * The normative apply crash journal.
+ *
+ * Every production authority commit write-ahead-journals through this state
+ * machine: prepare, CAS, consume, audit, with rollback entered only from
+ * ref-updated or rollback-prepared. A parallel journal once lived in
+ * maintainer-candidate.ts with contract tests and no callers; its decision
+ * table diverged from this one on externally-moved refs, and a table proven
+ * on a module nothing runs proves nothing about recovery. This is the one
+ * implementation of the plan's apply-journal requirement.
+ */
 export type AuthorityCommitJournalState =
   | 'preparing'
   | 'commit-created'

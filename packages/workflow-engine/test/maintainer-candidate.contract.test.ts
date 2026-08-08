@@ -7,21 +7,17 @@ import test from 'node:test';
 
 import {
   acceptApplyPrestate,
-  advanceApplyJournal,
   assertCandidateChecksFresh,
   buildImmutableCandidateBundle,
   canonicalImmutableCandidateBundle,
-  createApplyJournal,
   createRefGenerationLedger,
   ensureDurableRefGenerationLedger,
   parseImmutableCandidateBundle,
   readStoredImmutableCandidateBundle,
   readDurableRefGenerationLedger,
   recordDurableRefGenerationTransitionUnderLifecycleLock,
-  recoverApplyJournal,
   recordRefGenerationTransition,
   storeImmutableCandidateBundle,
-  terminalizeApplyGrant,
   type CandidateChecksAttestation,
 } from '../src/maintainer-candidate.ts';
 import type { PatchManifest } from '../src/maintainer-manifest.ts';
@@ -281,82 +277,4 @@ test('ref generation ledger persists an atomic monotonic transition outside cand
   } finally {
     fs.rmSync(gitCommonDirectory, { recursive: true, force: true });
   }
-});
-
-test('apply journal recovery distinguishes pre-CAS expiry from post-CAS completion', () => {
-  const journal = createApplyJournal({
-    txId: 'tx-12345678',
-    grantId: '33333333-3333-4333-8333-333333333333',
-    targetRef: 'refs/heads/work/demo-change',
-    expectedOldCommit: OID_A,
-    expectedRefGeneration: 0,
-    candidateCommit: OID_B,
-    candidateBundleDigest: DIGEST,
-    createdAt: '2026-08-03T09:00:00.000Z',
-  });
-
-  assert.deepEqual(
-    recoverApplyJournal(journal, {
-      observedRef: OID_A,
-      now: new Date('2026-08-03T09:05:01.000Z'),
-      grantExpiresAt: '2026-08-03T09:05:00.000Z',
-    }),
-    { action: 'terminalize-expired' },
-  );
-  assert.deepEqual(
-    recoverApplyJournal(journal, {
-      observedRef: OID_B,
-      now: new Date('2026-08-03T09:05:01.000Z'),
-      grantExpiresAt: '2026-08-03T09:05:00.000Z',
-    }),
-    { action: 'complete-after-cas' },
-  );
-  assert.deepEqual(
-    recoverApplyJournal(journal, {
-      observedRef: 'f'.repeat(40),
-      now: new Date('2026-08-03T09:04:00.000Z'),
-      grantExpiresAt: '2026-08-03T09:05:00.000Z',
-    }),
-    { action: 'manual-reconciliation' },
-  );
-});
-
-test('grant terminalization releases reservation while retaining candidate and attestation', () => {
-  const terminal = terminalizeApplyGrant(
-    {
-      grantId: '33333333-3333-4333-8333-333333333333',
-      state: 'applying',
-      reservationId: 'tx-12345678',
-      candidateBundleDigest: DIGEST,
-      checksAttestationDigest: '9'.repeat(64),
-    },
-    'expired',
-  );
-  assert.equal(terminal.state, 'expired');
-  assert.equal(terminal.reservationId, null);
-  assert.equal(terminal.candidateBundleDigest, DIGEST);
-  assert.equal(terminal.checksAttestationDigest, '9'.repeat(64));
-
-  const journal = createApplyJournal({
-    txId: 'tx-12345678',
-    grantId: terminal.grantId,
-    targetRef: 'refs/heads/work/demo-change',
-    expectedOldCommit: OID_A,
-    expectedRefGeneration: 0,
-    candidateCommit: OID_B,
-    candidateBundleDigest: DIGEST,
-    createdAt: '2026-08-03T09:00:00.000Z',
-  });
-  const refUpdated = advanceApplyJournal(journal, 'REF_UPDATED', {
-    at: '2026-08-03T09:01:00.000Z',
-    observedRef: OID_B,
-  });
-  assert.equal(refUpdated.state, 'REF_UPDATED');
-  assert.throws(
-    () =>
-      advanceApplyJournal(journal, 'COMPLETE', {
-        at: '2026-08-03T09:01:00.000Z',
-      }),
-    (error) => isWorkflowError(error, 'APPLY_JOURNAL_TRANSITION_INVALID'),
-  );
 });

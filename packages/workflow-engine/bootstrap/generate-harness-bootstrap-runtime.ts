@@ -227,7 +227,7 @@ function listFiles(root: string): string[] {
     }
   };
   visit(root);
-  return files.sort((left, right) => left.localeCompare(right));
+  return files.sort((left, right) => (left < right ? -1 : left > right ? 1 : 0));
 }
 
 function pinSource(digest: `sha256:${string}`): string {

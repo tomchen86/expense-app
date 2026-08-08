@@ -151,7 +151,7 @@ function assertManifest(value: unknown): RuntimeClosureManifest {
       JSON.stringify(
         files
           .map(({ path: filePath }) => filePath)
-          .sort((left, right) => left.localeCompare(right)),
+          .sort((left, right) => (left < right ? -1 : left > right ? 1 : 0)),
       ) ||
     new Set(files.map(({ path: filePath }) => filePath)).size !== files.length
   ) {
@@ -202,7 +202,7 @@ function listRuntimeFiles(directory: string): string[] {
     }
   };
   visit(directory);
-  return files.sort((left, right) => left.localeCompare(right));
+  return files.sort((left, right) => (left < right ? -1 : left > right ? 1 : 0));
 }
 
 function readExactFile(
