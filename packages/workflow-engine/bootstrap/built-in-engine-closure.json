@@ -541,7 +541,7 @@
     {
       "path": "src/maintainer-approve.ts",
       "mode": "100644",
-      "digest": "sha256:083edf1e35eaf9a4af645a0fa1d2042422756e15267ab60c90f1624e97d59cbf"
+      "digest": "sha256:61e502a253dd5a0e43335543874158d83347c4ad184effcb51fb0c8f193a78f3"
     },
     {
       "path": "src/maintainer-attestation.ts",
@@ -566,7 +566,7 @@
     {
       "path": "src/maintainer-grant-v2.ts",
       "mode": "100644",
-      "digest": "sha256:2aee23eec595c5ac7a52b7bd0a8cf37b0ba49be178780a6a0a4bc69a31faa902"
+      "digest": "sha256:2e220255f9b3bfcd1e4744cf0cecf18bf95f07deffcac015a222aeb66081022d"
     },
     {
       "path": "src/maintainer-grant.ts",
