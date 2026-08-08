@@ -313,14 +313,17 @@ test('human intervene derives durable state, presents exact scope, signs once, a
     assert.equal(human.observed.signatures.length, 1);
     assert.equal(human.observed.summaries.length, 1);
     const summary = human.observed.summaries[0]!;
-    assert.deepEqual(summary.scope.paths, [
-      'packages/harness-runtime/**',
-      'packages/workflow-engine/**',
-    ]);
+    // What the maintainer is shown before signing. The scope names only a
+    // package this repository has, and the waivers are every one the grant type
+    // admits — a partial list would let a rule the design says is waivable stop
+    // the intervention with nothing in the record saying why.
+    assert.deepEqual(summary.scope.paths, ['packages/workflow-engine/**']);
     assert.deepEqual(summary.waivers, [
       'active-change-exclusivity',
       'clean-worktree-required',
       'engine-path-protection',
+      'parent-terminalization-required',
+      'selected-workflow-check',
     ]);
     assert.equal(summary.maxLocalAdoptions, 1);
     assert.match(

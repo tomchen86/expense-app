@@ -16,8 +16,10 @@ const MAX_RECORD_BYTES = 4 * 1024 * 1024;
 const MAX_EXECUTABLE_BYTES = 16 * 1024 * 1024;
 const MAX_SOURCE_SNAPSHOT_BYTES = 32 * 1024 * 1024;
 const ENGINE_PROBE_TIMEOUT_MS = 10_000;
+// Only paths this repository actually has. A scope naming a package that does
+// not exist reads as authority over something and grants nothing — the kind of
+// clause that looks like protection until someone relies on it.
 export const MAINTENANCE_SCOPE_PATHS = Object.freeze([
-    'packages/harness-runtime/**',
     'packages/workflow-engine/**',
 ]);
 export const MAINTENANCE_SCOPE_OPERATIONS = Object.freeze([
@@ -27,10 +29,16 @@ export const MAINTENANCE_SCOPE_OPERATIONS = Object.freeze([
     'modify-engine',
     'run-engine-tests',
 ]);
+// Every waiver the grant type admits. Issuing three of the five meant an
+// intervention could be stopped by a rule the design says a maintenance grant
+// may waive, with nothing in the signed record explaining why that rule was
+// treated differently from its siblings.
 export const MAINTENANCE_SCOPE_WAIVERS = Object.freeze([
     'active-change-exclusivity',
     'clean-worktree-required',
     'engine-path-protection',
+    'parent-terminalization-required',
+    'selected-workflow-check',
 ]);
 export function buildAndPersistInterventionEngineArtifact(storageRoot, input) {
     const intervention = readPersistedIntervention(storageRoot, input.parentChangeId);
