@@ -96,12 +96,16 @@ const HUMAN_RESOLUTION_GRANT_TEMPORARY =
   /^([0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})\.json\.[1-9][0-9]*\.[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\.tmp$/;
 const MAX_CHECKPOINT_BYTES = 1_048_576;
 const MAX_HUMAN_RESOLUTION_BYTES = 1_048_576;
-const BLIND_PROVIDER_ROOT_FILES = [
-  'execution-policy.json',
+const BLIND_PROVIDER_CORE_ROOT_FILES = [
   'manifest.json',
   'request.json',
   'state.json',
 ] as const;
+/**
+ * Made durable before the blind manifest, so a directory holding a manifest
+ * without it predates the snapshot rather than having lost it.
+ */
+const PROVIDER_POLICY_ROOT_FILE = 'execution-policy.json';
 const BLIND_PROVIDER_RUNTIME_FILES = [
   'prompt.json',
   'schema.json',
@@ -286,6 +290,12 @@ export type ProviderInvocationLifecycleProjection = Readonly<{
   attempt: number;
   revision: number;
   state: 'prepared' | 'leased' | 'succeeded' | 'failed';
+  /**
+   * `legacy-absent` marks a record written before execution policy snapshots
+   * existed. It is never inferred from an unreadable snapshot, only from one
+   * the current writer could not have omitted.
+   */
+  policySnapshot: 'recorded' | 'legacy-absent';
   requestDigest: string;
   manifestDigest: string;
   nonce: string;
@@ -1289,15 +1299,30 @@ export function readProviderInvocationLifecycleProjection(
   } catch {
     throw providerInvocationUnsafe();
   }
-  assertProviderExecutionPolicySnapshot(
+  // The current writer makes execution-policy.json durable before the blind
+  // manifest, so a directory holding a manifest without one is not something it
+  // could have produced: the record predates the snapshot. Absence is therefore
+  // projected as legacy rather than rejected — the scan is fail-closed for the
+  // whole store, so refusing one pre-snapshot record stops every later propose
+  // from creating an invocation at all. Anything present is still judged in
+  // full, so this keys on absence and never on unreadability.
+  const policySnapshotPath = path.join(directory, PROVIDER_POLICY_ROOT_FILE);
+  const policySnapshotRecorded = privatePathExists(
     paths,
-    readPrivateCanonicalJson(
-      paths,
-      path.join(directory, 'execution-policy.json'),
-      providerInvocationUnsafe,
-    ),
-    request,
+    policySnapshotPath,
+    providerInvocationUnsafe,
   );
+  if (policySnapshotRecorded) {
+    assertProviderExecutionPolicySnapshot(
+      paths,
+      readPrivateCanonicalJson(
+        paths,
+        policySnapshotPath,
+        providerInvocationUnsafe,
+      ),
+      request,
+    );
+  }
   if (
     !isRecord(value) ||
     !hasExactKeys(value, [
@@ -1451,6 +1476,7 @@ export function readProviderInvocationLifecycleProjection(
     attempt: value.attempt,
     revision: value.revision,
     state: value.state,
+    policySnapshot: policySnapshotRecorded ? 'recorded' : 'legacy-absent',
     requestDigest: value.requestDigest,
     manifestDigest: value.manifestDigest,
     nonce: request.nonce,
@@ -6494,8 +6520,14 @@ function digestPrivateDirectoryEntries(
   const optionalRootFiles = OPTIONAL_PROVIDER_ROOT_FILES.filter((name) =>
     rootNames.includes(name),
   );
+  const rootFiles = [
+    ...(rootNames.includes(PROVIDER_POLICY_ROOT_FILE)
+      ? [PROVIDER_POLICY_ROOT_FILE]
+      : []),
+    ...BLIND_PROVIDER_CORE_ROOT_FILES,
+  ];
   const expectedRootNames = [
-    ...BLIND_PROVIDER_ROOT_FILES,
+    ...rootFiles,
     ...optionalRootFiles,
     ...(runtimeStats ? ['runtime'] : []),
     ...(snapshotArtifacts === null ? [] : ['review-root']),
@@ -6504,8 +6536,8 @@ function digestPrivateDirectoryEntries(
     throw makeError();
   }
 
-  const files: Array<{ name: string; digest: string }> =
-    BLIND_PROVIDER_ROOT_FILES.map((name) => {
+  const files: Array<{ name: string; digest: string }> = rootFiles.map(
+    (name) => {
       const content = readPrivateFile(path.join(directory, name), makeError);
       if (Buffer.byteLength(content, 'utf8') > MAX_HUMAN_RESOLUTION_BYTES) {
         throw makeError();
@@ -6520,7 +6552,8 @@ function digestPrivateDirectoryEntries(
         throw makeError();
       }
       return { name, digest: sha256(content) };
-    });
+    },
+  );
 
   let request: ProviderInvocationRequest;
   try {

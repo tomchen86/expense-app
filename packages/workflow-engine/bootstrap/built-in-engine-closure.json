@@ -486,7 +486,7 @@
     {
       "path": "src/investigation-session-store.ts",
       "mode": "100644",
-      "digest": "sha256:38f28105f600bbd83df5d528d8046ba51ba531d68ee22b13abe461c987d852c0"
+      "digest": "sha256:b529df0c7c0df4521cc5b403d85d7df10966a9516843ad443511c461c8885222"
     },
     {
       "path": "src/investigation-session.ts",
@@ -801,7 +801,7 @@
     {
       "path": "src/provider-invocation-store.ts",
       "mode": "100644",
-      "digest": "sha256:b91ede89298471d4612e6e2cb2561c3a57bc65a7dcee85b597fd6f4b12326431"
+      "digest": "sha256:cedeea9dbd0fc7eaa83de2ff066e6550fc469dd00ff29257c4af5f0ddbce9038"
     },
     {
       "path": "src/provider-invocation-supersession-schema.ts",

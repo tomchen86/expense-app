@@ -100,6 +100,7 @@ import './class-disposition-mounting.integration.test.ts';
 import './class-sample-gating.integration.test.ts';
 import './declared-path-symbol-floor.integration.test.ts';
 import './floor-trimming.integration.test.ts';
+import './legacy-provider-invocation-projection.integration.test.ts';
 import './provider-retention-human-pin.contract.test.ts';
 import './provider-retention.contract.test.ts';
 import './provider-runtime-registration.integration.test.ts';
