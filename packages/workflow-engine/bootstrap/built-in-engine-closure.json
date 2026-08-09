@@ -551,7 +551,7 @@
     {
       "path": "src/maintainer-candidate.ts",
       "mode": "100644",
-      "digest": "sha256:12475b78d0c32f67f309e9852db2db8538053cee6b4cbe26eb492a2744075d5a"
+      "digest": "sha256:d7adb80ccd905cd433efa2300e4e1853c07191bd9f8839629c76983931124c75"
     },
     {
       "path": "src/maintainer-check-journal.ts",
@@ -776,7 +776,7 @@
     {
       "path": "src/propose-orchestrator.ts",
       "mode": "100644",
-      "digest": "sha256:002a8549901ba706eca15f637d7854ee7f1cdfd2a0a6a68101c7ece54ff730fb"
+      "digest": "sha256:2e1badf6b22d53b13c3ba8f0c9e4024b8b7c1996d83eaebf842b4311ccbe5fdb"
     },
     {
       "path": "src/protected-capabilities.ts",
@@ -891,7 +891,7 @@
     {
       "path": "src/retention-control.ts",
       "mode": "100644",
-      "digest": "sha256:064b844f18a30b864198d476528a357a28b27b8fb5b3fc5c30f7060c667f7257"
+      "digest": "sha256:e3f067302f15506947f48fbbfc29338dc83e0ff8b940903b7e5d40d1e4572124"
     },
     {
       "path": "src/review-challenge.ts",

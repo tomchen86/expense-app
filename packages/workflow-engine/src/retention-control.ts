@@ -1,13 +1,9 @@
-import crypto from 'node:crypto';
-
 import { canonicalJson } from './canonical-json.ts';
 import { projectProviderInvocationExecution } from './execution-core.ts';
-import { listExecutionJobStates } from './execution-store.ts';
 import {
   inspectDurableEpochContextStore,
   inspectDurableRetentionCatalog,
   pinDurableEvidence,
-  storeDurableEvidence,
   planEvidencePruning,
   pruneDurableEvidence,
   type DurablePruneReceipt,
@@ -30,7 +26,6 @@ import {
 } from './provider-invocation-store.ts';
 import {
   inspectProviderRetentionMetrics,
-  providerRuntimeEvidenceId,
   pruneProviderRuntime,
   type ProviderRetentionMetrics,
   type ProviderRetentionPassResult,

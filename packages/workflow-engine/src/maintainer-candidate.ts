@@ -21,7 +21,6 @@ const DIGEST = /^[0-9a-f]{64}$/;
 const OBJECT_ID = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
 const GRANT_ID =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-const TX_ID = /^tx-[a-z0-9][a-z0-9-]{7,127}$/;
 const CHECK_ID = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 const TARGET_REF = /^refs\/heads\/[A-Za-z0-9][A-Za-z0-9._/-]{0,254}$/;
 const CHANGE_ID = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;

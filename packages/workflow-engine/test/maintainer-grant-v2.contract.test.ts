@@ -54,6 +54,7 @@ import {
   readDurableRefGenerationLedger,
   readStoredImmutableCandidateBundle,
   storeImmutableCandidateBundle,
+  type CandidateChecksAttestation,
 } from '../src/maintainer-candidate.ts';
 import type { MaintainerSignerProvider } from '../src/maintainer-signer.ts';
 import { parseMaintainerPolicy } from '../src/maintainer-policy.ts';
@@ -312,6 +313,22 @@ function prepareCandidate(): string {
     'export const EXPECTED = 2;\n',
   );
   return repository;
+}
+
+/**
+ * An observation time just past the evidence's own validity window.
+ *
+ * Checks stamp `completedAt` from the wall clock that ran them, not from the
+ * caller's injected `now`, so a fixed calendar date drifts into the validity
+ * window as real time advances and silently stops testing staleness at all.
+ * Deriving the time from the attestation keeps the assertion about expiry.
+ */
+function afterEvidenceExpires(attestation: CandidateChecksAttestation): Date {
+  const expiries = attestation.checks.flatMap(({ completedAt, maxAgeMs }) =>
+    maxAgeMs === null ? [] : [Date.parse(completedAt) + maxAgeMs],
+  );
+  assert.ok(expiries.length > 0, 'evidence has no expiring check to observe');
+  return new Date(Math.max(...expiries) + 60_000);
 }
 
 function prepareTwoCheckCandidate(): string {
@@ -3160,7 +3177,9 @@ test('reissuing a stored candidate rejects stale evidence before signing', () =>
             candidateBundle: payload.candidateBundle!,
           },
           {
-            now: new Date('2026-08-10T09:00:00.000Z'),
+            now: afterEvidenceExpires(
+              payload.candidateBundle!.checksAttestation,
+            ),
             grantId: '55555555-5555-4555-8555-555555555555',
             signer: fakeSigner(secondSigned),
           },

@@ -113,7 +113,6 @@ import {
   type GroupDispositionsPayload,
 } from './investigation-session-store.ts';
 import {
-  INVESTIGATION_LIMITS,
   normalizeInvestigationTerm,
   previewInvestigationTermUnion,
   type InvestigationTermContribution,
