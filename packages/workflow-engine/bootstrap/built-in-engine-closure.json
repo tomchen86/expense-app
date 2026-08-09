@@ -776,7 +776,7 @@
     {
       "path": "src/propose-orchestrator.ts",
       "mode": "100644",
-      "digest": "sha256:96035691537de6a8d4f7eba2ec38a4bb6cb22f1f416faeead4352e5a95b669ad"
+      "digest": "sha256:ebc527b69f158e5bb43abff079da6e1e224a41bfa69b14f97f07669d96c5d18c"
     },
     {
       "path": "src/protected-capabilities.ts",
@@ -956,7 +956,7 @@
     {
       "path": "src/task-mandate.ts",
       "mode": "100644",
-      "digest": "sha256:3f4ba9e59bc20e94438f024c1985ddf24dfd2dc0ea61634a337607e666660140"
+      "digest": "sha256:934092f5fb544c4e94840bf3c8cb191c8a3ba238c7988ba4917e6927c6dcc942"
     },
     {
       "path": "src/task-projection.ts",

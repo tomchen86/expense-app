@@ -2501,6 +2501,9 @@ function resumePlanReviewRetry(
           mandateBinding,
           reservation,
           assertOwned,
+          options.executionGrantAuthorization === undefined
+            ? undefined
+            : { grantId: options.executionGrantAuthorization.grantId },
         );
         ensurePlanReviewInvocation(
           context.git.repositoryRoot,
@@ -2581,6 +2584,9 @@ function resumePlanReviewRetry(
         mandateBinding,
         replacement,
         assertOwned,
+        options.executionGrantAuthorization === undefined
+          ? undefined
+          : { grantId: options.executionGrantAuthorization.grantId },
       );
       ensurePlanReviewInvocation(
         context.git.repositoryRoot,
@@ -7520,6 +7526,7 @@ function authorizePlanReviewReservationMandate(
   binding: TaskMandateBinding | undefined,
   reservation: PlanReviewReservation,
   assertOwned: () => void,
+  executionGrant?: { grantId: string },
 ): void {
   if (binding === undefined) return;
   authorizeTaskMandateProviderReservationUnderLifecycleLock(
@@ -7534,6 +7541,7 @@ function authorizePlanReviewReservationMandate(
       retry: reservation.retry !== null,
       budget: null,
       requestDigest: reservation.request.requestDigest,
+      ...(executionGrant === undefined ? {} : { executionGrant }),
     },
     assertOwned,
   );

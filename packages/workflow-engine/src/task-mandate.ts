@@ -163,6 +163,7 @@ type StoredTaskMandateProviderUsage = TaskMandateProviderUsage & {
     authorizedAt: string;
     requestDigest: string;
     operationDigest: string;
+    executionGrantId?: string;
   }>;
 };
 
@@ -266,6 +267,14 @@ export type TaskMandateProviderReservationOperation = Omit<
   'kind'
 > & {
   requestDigest: string;
+  /**
+   * A signed execution-budget grant the caller has already validated and
+   * consumed for this exact replacement Attempt. The human signature it
+   * carries is the consent that lets this one reservation proceed past an
+   * exhausted declared budget; the ledger records the grant so the excess is
+   * attributed, never silent.
+   */
+  executionGrant?: { grantId: string };
 };
 
 export type TaskMandateProviderReservationAuthorization = {
@@ -830,7 +839,7 @@ function authorizeTaskMandateProviderReservationLocked(
   assertOwned();
   const providerUsage = authorizeProviderCall(
     record,
-    { kind: 'provider-call', ...checkedOperation },
+    checkedOperation,
     reservationId,
     now.toISOString(),
     operationDigest,
@@ -1219,9 +1228,7 @@ function validateTaskMandateEnvelopeForRepository(
 
 function authorizeProviderCall(
   record: TaskMandateRecord,
-  operation: Extract<TaskMandateOperation, { kind: 'provider-call' }> & {
-    requestDigest: string;
-  },
+  operation: TaskMandateProviderReservationOperation,
   reservationId: string,
   authorizedAt: string,
   operationDigest: string,
@@ -1274,8 +1281,15 @@ function authorizeProviderCall(
       ExitCode.guard,
     );
   }
+  // The declared budget bounds unsupervised spend. A caller holding a
+  // validated, consumed execution-budget grant carries a fresh human
+  // signature for exactly one bounded replacement, and that consent lifts the
+  // invocation ceiling by the one reservation it names. The monetary ceiling
+  // stays strict either way: granted entries record no per-call amount, so a
+  // metered excess could never be attributed.
   if (
-    usage.invocations >= declaration.maxInvocations ||
+    (usage.invocations >= declaration.maxInvocations &&
+      operation.executionGrant === undefined) ||
     (declaration.maxBudget !== null &&
       usage.budget + budget > declaration.maxBudget)
   ) {
@@ -1295,6 +1309,9 @@ function authorizeProviderCall(
         authorizedAt,
         requestDigest: operation.requestDigest,
         operationDigest,
+        ...(operation.executionGrant === undefined
+          ? {}
+          : { executionGrantId: operation.executionGrant.grantId }),
       },
     ].sort((left, right) =>
       left.reservationId.localeCompare(right.reservationId),
@@ -1643,11 +1660,17 @@ function parseTaskMandateRecord(raw: string): AnyTaskMandateRecord {
             providerId as ProviderId
           ];
         const usage = record.providerUsage[providerId as ProviderId];
+        // Reservations attributed to a signed execution grant legitimately
+        // exceed the declared invocation ceiling by exactly their count.
+        const grantedReservations =
+          usage?.reservations.filter(
+            ({ executionGrantId }) => executionGrantId !== undefined,
+          ).length ?? 0;
         return (
           !declaration ||
           !usage ||
           usage.invocations !== usage.reservations.length ||
-          usage.invocations > declaration.maxInvocations ||
+          usage.invocations > declaration.maxInvocations + grantedReservations ||
           (declaration.maxBudget !== null &&
             usage.budget > declaration.maxBudget)
         );
@@ -2282,15 +2305,27 @@ function assertProviderReservationOperation(
 ): TaskMandateProviderReservationOperation {
   if (
     !isRecord(value) ||
-    !hasExactKeys(value, [
-      'providerId',
-      'dataTypes',
-      'sourceCode',
-      'secrets',
-      'retry',
-      'budget',
-      'requestDigest',
-    ]) ||
+    !(
+      hasExactKeys(value, [
+        'providerId',
+        'dataTypes',
+        'sourceCode',
+        'secrets',
+        'retry',
+        'budget',
+        'requestDigest',
+      ]) ||
+      hasExactKeys(value, [
+        'providerId',
+        'dataTypes',
+        'sourceCode',
+        'secrets',
+        'retry',
+        'budget',
+        'requestDigest',
+        'executionGrant',
+      ])
+    ) ||
     !isProviderId(value.providerId) ||
     !Array.isArray(value.dataTypes) ||
     typeof value.sourceCode !== 'boolean' ||
@@ -2298,7 +2333,14 @@ function assertProviderReservationOperation(
     typeof value.retry !== 'boolean' ||
     (value.budget !== null && typeof value.budget !== 'number') ||
     typeof value.requestDigest !== 'string' ||
-    !/^[0-9a-f]{64}$/.test(value.requestDigest)
+    !/^[0-9a-f]{64}$/.test(value.requestDigest) ||
+    (value.executionGrant !== undefined &&
+      !(
+        isRecord(value.executionGrant) &&
+        hasExactKeys(value.executionGrant, ['grantId']) &&
+        typeof value.executionGrant.grantId === 'string' &&
+        /^[0-9a-f-]{36}$/.test(value.executionGrant.grantId)
+      ))
   ) {
     throw mandateInvalid('Provider reservation operation is malformed.');
   }
@@ -2310,18 +2352,29 @@ function assertProviderReservationOperation(
     retry: value.retry,
     budget: value.budget,
     requestDigest: value.requestDigest,
+    ...(value.executionGrant === undefined
+      ? {}
+      : {
+          executionGrant: {
+            grantId: (value.executionGrant as { grantId: string }).grantId,
+          },
+        }),
   };
 }
 
 function taskMandateProviderOperationDigest(
   operation: TaskMandateProviderReservationOperation,
 ): string {
+  // The grant is the authorization vehicle, not part of the operation's
+  // semantic identity: the same reservation replays identically whether or
+  // not its caller still holds the grant object.
+  const { executionGrant: _executionGrant, ...semantic } = operation;
   return crypto
     .createHash('sha256')
     .update(
       canonicalJson({
         kind: 'task-mandate-provider-reservation-operation.v1',
-        operation,
+        operation: semantic,
       }),
     )
     .digest('hex');
@@ -2385,12 +2438,19 @@ function isSortedUniqueProviderReservations(
     value.every(
       (reservation) =>
         isRecord(reservation) &&
-        hasExactKeys(reservation, [
+        (hasExactKeys(reservation, [
           'reservationId',
           'authorizedAt',
           'requestDigest',
           'operationDigest',
-        ]) &&
+        ]) ||
+          hasExactKeys(reservation, [
+            'reservationId',
+            'authorizedAt',
+            'requestDigest',
+            'operationDigest',
+            'executionGrantId',
+          ])) &&
         typeof reservation.reservationId === 'string' &&
         PROVIDER_RESERVATION_ID.test(reservation.reservationId) &&
         typeof reservation.authorizedAt === 'string' &&
@@ -2398,7 +2458,10 @@ function isSortedUniqueProviderReservations(
         typeof reservation.requestDigest === 'string' &&
         /^[0-9a-f]{64}$/.test(reservation.requestDigest) &&
         typeof reservation.operationDigest === 'string' &&
-        /^[0-9a-f]{64}$/.test(reservation.operationDigest),
+        /^[0-9a-f]{64}$/.test(reservation.operationDigest) &&
+        (reservation.executionGrantId === undefined ||
+          (typeof reservation.executionGrantId === 'string' &&
+            /^[0-9a-f-]{36}$/.test(reservation.executionGrantId))),
     ) &&
     new Set(value.map(({ reservationId }) => reservationId)).size ===
       value.length &&

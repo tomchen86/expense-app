@@ -8,7 +8,7 @@
     {
       "path": "bootstrap/recovery-runtime/bootstrap/built-in-engine-closure-pin.js",
       "mode": "100644",
-      "digest": "sha256:7fe560f52cbfb6c4b9527c82eddcb9429738f7237dd063870a222e5a2c9ff879"
+      "digest": "sha256:2cd123df75c355262353e3094262a4a8033d1bdca7c45914221e58671d06606d"
     },
     {
       "path": "bootstrap/recovery-runtime/src/actor-identity.js",
@@ -353,7 +353,7 @@
     {
       "path": "bootstrap/recovery-runtime/src/task-mandate.js",
       "mode": "100644",
-      "digest": "sha256:67a922830b5a5e434d9a21a5f9eded738e2682b9db8dbc518581c08c03508e09"
+      "digest": "sha256:98fd6dc800162f34011ab62157975da28c1e5b0c5f2a040080e661c24491d445"
     },
     {
       "path": "bootstrap/recovery-runtime/src/tracked-tree-reader.js",
