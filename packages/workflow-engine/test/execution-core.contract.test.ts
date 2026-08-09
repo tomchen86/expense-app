@@ -776,3 +776,63 @@ test('execution records round-trip only through strict canonical bytes', () => {
 function isWorkflowError(error: unknown, code: string): boolean {
   return error instanceof WorkflowError && error.code === code;
 }
+
+test('a bounded grant reaches the fingerprint boundary, not only past it', () => {
+  // At exactly maxSameFailureFingerprint the ladder demands a changed
+  // strategy, and no automatic executor exists for one. The bounded grant is
+  // the same manual lever the past-the-boundary branch already honors; a
+  // decision that ignores it here is executable by nobody.
+  const initial = createJob();
+  const crash = classifyExecutionFailure({
+    kind: 'provider-process-crash',
+    stage: 'plan-review',
+    inputDigest: initial.attempt.inputDigest,
+    environmentDigest: initial.attempt.environmentDigest,
+    observedAt: LATER,
+  });
+  const boundedGrantRequest: Parameters<typeof decideRetry>[0]['boundedGrantRequest'] = {
+    schemaVersion: 1,
+    kind: 'execution-budget-grant-request',
+    requestId: '123e4567-e89b-42d3-a456-426614174001',
+    workflowId: WORKFLOW.workflowId,
+    epoch: WORKFLOW.currentEpoch,
+    jobId: initial.job.jobId,
+    mandateBinding: MANDATE_BINDING,
+    requestedChanges: [
+      { path: '/retryPolicy/maxAttempts', from: 4, to: 5 },
+    ],
+    rationale: 'one bounded replacement attempt',
+    expiresAfterAttempts: 1,
+    createdAt: LATER,
+  };
+
+  const granted = decideRetry({
+    workflow: WORKFLOW,
+    job: initial.job,
+    attempt: initial.attempt,
+    failure: crash,
+    sameFingerprintCount: 2,
+    boundedGrantRequest,
+    now: LATER,
+  });
+  assert.equal(granted.retryable, true);
+  assert.equal(granted.automatic, false);
+  assert.equal(granted.reasonCode, 'REPEATED_FAILURE_GRANT_REQUIRED');
+  assert.equal(
+    granted.requiredGrant?.requestId,
+    '123e4567-e89b-42d3-a456-426614174001',
+  );
+
+  // Without the grant candidate the boundary still reports the changed-
+  // strategy requirement exactly as before.
+  const ungranted = decideRetry({
+    workflow: WORKFLOW,
+    job: initial.job,
+    attempt: initial.attempt,
+    failure: crash,
+    sameFingerprintCount: 2,
+    now: LATER,
+  });
+  assert.equal(ungranted.retryMode, 'strategy-change');
+  assert.equal(ungranted.changedStrategyRequired, true);
+});

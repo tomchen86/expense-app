@@ -110,9 +110,13 @@ export function decideLegacyExecutionFailure(input: {
     now: input.attempt.updatedAt,
   });
   if (
-    !['REPEATED_FAILURE', 'RETRY_BUDGET_EXHAUSTED'].includes(
-      decision.reasonCode,
-    ) ||
+    ![
+      'REPEATED_FAILURE',
+      // A changed strategy has no automatic executor, so the boundary is
+      // offered the same bounded-grant exit as an exhausted ladder.
+      'REPEATED_FAILURE_STRATEGY_CHANGE',
+      'RETRY_BUDGET_EXHAUSTED',
+    ].includes(decision.reasonCode) ||
     input.job.mandateBinding === undefined
   ) {
     return decision;

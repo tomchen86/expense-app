@@ -321,7 +321,7 @@
     {
       "path": "src/execution-core.ts",
       "mode": "100644",
-      "digest": "sha256:b662407b71456b6349a33dd63b252df9f3bc02349c047ad9a4bd9ab82fa0ad52"
+      "digest": "sha256:7e70bf7c71858d22fd256fe6e8495aaba5bdece320052e4ad3b9fe3cc1f28300"
     },
     {
       "path": "src/execution-environment.ts",
@@ -356,7 +356,7 @@
     {
       "path": "src/execution-store.ts",
       "mode": "100644",
-      "digest": "sha256:90dfe5915ffd726441163a236f68dc224858a5c1798c1871502c4b1ac3207d17"
+      "digest": "sha256:b916db935e550247247df0478722e6c7dfee8e41772ea71ca41ee21f6fc74dd3"
     },
     {
       "path": "src/external-effect-audit.ts",

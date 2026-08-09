@@ -1263,6 +1263,13 @@ export function decideRetry(input: {
       : grantDecision(grant, 'REPEATED_FAILURE_GRANT_REQUIRED');
   }
   if (input.sameFingerprintCount >= job.retryPolicy.maxSameFailureFingerprint) {
+    // The boundary honors the same manual lever as the branch above: no
+    // automatic executor exists for a changed strategy, so a caller holding a
+    // bounded grant candidate is offered the grant exit rather than a
+    // decision nobody can execute.
+    if (grant !== undefined) {
+      return grantDecision(grant, 'REPEATED_FAILURE_GRANT_REQUIRED');
+    }
     if (withinBudget) {
       return {
         retryable: true,
@@ -1272,9 +1279,7 @@ export function decideRetry(input: {
         reasonCode: 'REPEATED_FAILURE_STRATEGY_CHANGE',
       };
     }
-    return grant === undefined
-      ? noRetry('REPEATED_FAILURE')
-      : grantDecision(grant, 'REPEATED_FAILURE_GRANT_REQUIRED');
+    return noRetry('REPEATED_FAILURE');
   }
   if (withinBudget) {
     const retryMode = inferRetryMode(
