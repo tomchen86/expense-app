@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
@@ -7,7 +8,14 @@ import { canonicalJson } from '../src/canonical-json.ts';
 import type { ExecutionArtifact } from '../src/contracts.ts';
 import { createInvestigationCheckpointEnvelope } from '../src/investigation-session.ts';
 import {
+  PLAN_REVIEW_COVERAGE,
+  readPlanReviewNode,
+} from '../src/plan-review.ts';
+import {
   createPlanningContributionEnvelope,
+  createPlanReviewDispositionsEnvelope,
+  createPlanReviewProgressEnvelope,
+  getProposeStatus,
   resumePropose,
   startPropose,
 } from '../src/propose-orchestrator.ts';
@@ -16,6 +24,11 @@ import {
   claimProviderInvocation,
   completeProviderInvocation,
 } from '../src/provider-invocation-store.ts';
+import {
+  PROVIDER_RUNNER_RESIDUALS,
+  type ProviderRunnerReport,
+} from '../src/provider-runner.ts';
+import { runProviderWorker } from '../src/provider-worker.ts';
 import { createFixtureRepository, git, isWorkflowError } from './fixture.ts';
 
 const CHANGE_ID = 'amended-executed-change';
@@ -387,6 +400,103 @@ test('an amendment contribution replaces the executed prior generation without r
         .readFileSync(designPath, 'utf8')
         .includes('Protected invariant:'),
     );
+
+    // The fresh review's citations must resolve against the current amended
+    // bytes: the prior review is committed at HEAD but removed from the
+    // worktree, and that absence means "no committed review", not an unsafe
+    // artifact.
+    const investigationId = materialized.investigation!.investigationId;
+    runProviderWorker(
+      repository,
+      getProposeStatus(repository, investigationId).planReview!.invocationId,
+      {
+        runner: (input) =>
+          fakeRunnerReport(input.request, {
+            schemaVersion: 2 as const,
+            verdict: 'advisory-approve' as const,
+            coverage: [...PLAN_REVIEW_COVERAGE],
+            scopeAssessment: { kind: 'challenges' as const },
+            findings: [
+              {
+                kind: 'challenge' as const,
+                severity: 'medium' as const,
+                category: 'missing-scope',
+                currentChangeImpact: 'required' as const,
+                summary:
+                  'Confirm the restored scenario keeps its original body form.',
+                evidence: [
+                  {
+                    kind: 'planning-location' as const,
+                    path: `openspec/changes/${CHANGE_ID}/specs/demo/spec.md`,
+                    line: 1,
+                    observation:
+                      'The corrected delta restores the dropped identity.',
+                  },
+                ],
+              },
+            ],
+            proposedTerms: [],
+            suggestions: [],
+            residualRisk:
+              'The amendment cannot prove the executed work anticipated the restored scenario.',
+            uncertainty:
+              'Advisory review remains a semantic judgment over the exact subject.',
+          }),
+      },
+    );
+    const awaitingDisposition = resumePropose(
+      repository,
+      CHANGE_ID,
+      createPlanReviewProgressEnvelope(
+        getProposeStatus(repository, investigationId),
+      ),
+    );
+    assert.equal(
+      awaitingDisposition.state,
+      'awaiting-challenge-dispositions',
+      JSON.stringify(awaitingDisposition.planReview?.failure),
+    );
+    const trackedPlanReview = JSON.parse(
+      fs.readFileSync(path.join(changeDirectory, 'plan-review.json'), 'utf8'),
+    );
+    const reviewNode = trackedPlanReview.nodes.find(
+      (node: { type: string }) => node.type === 'plan-review',
+    );
+    const completed = resumePropose(
+      repository,
+      CHANGE_ID,
+      createPlanReviewDispositionsEnvelope(awaitingDisposition, [
+        {
+          challengeId: readPlanReviewNode(reviewNode).findings[0]!.findingId,
+          decision: 'mitigated',
+          rationale:
+            'The restoration reproduces the original scenario body verbatim.',
+          author: 'codex',
+        },
+      ]),
+    );
+    assert.equal(completed.state, 'planning-complete');
+    assert.equal(completed.planningTransition?.kind, 'revision');
+    assert.equal(
+      git(repository, [
+        'log',
+        '-1',
+        '--format=%(trailers:key=Transition,valueonly)',
+      ]).trim(),
+      'plan',
+    );
+    // The executed record survived the whole review round untouched.
+    assert.equal(
+      fs.readFileSync(path.join(changeDirectory, 'tasks.md'), 'utf8'),
+      EXECUTED_TASKS,
+    );
+    assert.equal(
+      git(repository, [
+        'show',
+        `HEAD:openspec/changes/${CHANGE_ID}/tasks.md`,
+      ]),
+      EXECUTED_TASKS,
+    );
   } finally {
     fs.rmSync(repository, { recursive: true, force: true });
   }
@@ -401,6 +511,262 @@ function whyAnswer(manifestEntryId: string) {
     answer: 'The manifest binds the complete exact source digest.',
     semanticAuthor: 'codex',
     readComplete: true as const,
+  };
+}
+
+test('novel reviewer terms reopen an amendment whose prior review is committed but withdrawn', () => {
+  const repository = createFixtureRepository();
+  try {
+    git(repository, ['checkout', '-b', `work/${CHANGE_ID}`]);
+    fs.writeFileSync(
+      path.join(repository, 'src/amended-target.ts'),
+      [
+        'export const AmendGateNeedle = true;',
+        'export const AmendMainNeedle = true;',
+        'export const AmendBlindNeedle = true;',
+        'export const AmendReviewerNeedle = true;',
+        '',
+      ].join('\n'),
+    );
+    const changeDirectory = path.join(
+      repository,
+      'openspec/changes',
+      CHANGE_ID,
+    );
+    fs.mkdirSync(path.join(changeDirectory, 'specs/demo'), {
+      recursive: true,
+    });
+    fs.writeFileSync(
+      path.join(changeDirectory, '.openspec.yaml'),
+      PRIOR_METADATA,
+    );
+    fs.writeFileSync(
+      path.join(changeDirectory, 'investigation.json'),
+      PRIOR_INVESTIGATION,
+    );
+    fs.writeFileSync(
+      path.join(changeDirectory, 'plan-review.json'),
+      PRIOR_PLAN_REVIEW,
+    );
+    fs.writeFileSync(path.join(changeDirectory, 'proposal.md'), PRIOR_PROPOSAL);
+    fs.writeFileSync(path.join(changeDirectory, 'design.md'), PRIOR_DESIGN);
+    fs.writeFileSync(path.join(changeDirectory, 'tasks.md'), EXECUTED_TASKS);
+    fs.writeFileSync(
+      path.join(changeDirectory, 'specs/demo/spec.md'),
+      PRIOR_SPEC,
+    );
+    fs.writeFileSync(
+      path.join(changeDirectory, 'guard.json'),
+      `${canonicalJson({
+        schemaVersion: 1 as const,
+        changeId: CHANGE_ID,
+        tasks: { '1.1': GUARD_TASK, '1.2': GUARD_TASK },
+      })}\n`,
+    );
+    fs.writeFileSync(
+      path.join(changeDirectory, 'execution.json'),
+      `${canonicalJson({
+        schemaVersion: 1,
+        kind: 'execution-artifact',
+        changeId: CHANGE_ID,
+        note: 'prior generation execution contract',
+      })}\n`,
+    );
+    git(repository, ['add', '.']);
+    git(repository, ['commit', '-m', 'Commit the executed prior generation']);
+
+    const started = startPropose(
+      repository,
+      CHANGE_ID,
+      {
+        schemaVersion: 1,
+        summary:
+          'Restore the dropped scenario identity in the executed change.',
+        explicitPaths: [],
+        explicitSymbols: ['AmendGateNeedle'],
+        explicitConfigKeys: [],
+        renamePairs: [],
+      },
+      {
+        explicitActor: 'codex',
+        environment: {},
+        providerDriver: ({ paths, request }) => {
+          const claim = claimProviderInvocation(paths, request.invocationId, {
+            workerId: 'fake-amendment-reopen-worker',
+            leaseDurationMs: 60_000,
+          });
+          completeProviderInvocation(paths, request.invocationId, {
+            expectedRevision: claim.record.revision,
+            leaseGeneration: claim.record.leaseGeneration,
+            leaseToken: claim.leaseToken,
+            outcome: {
+              exitCode: 0,
+              signal: null,
+              timedOut: false,
+              spawnErrorCode: null,
+              elapsedMs: 1,
+              stdout: JSON.stringify(
+                providerWireResult(request, {
+                  reference: request.invocationId,
+                  terms: [{ kind: 'symbol', value: 'AmendBlindNeedle' }],
+                }),
+              ),
+              stderr: '',
+            },
+          });
+        },
+      },
+    );
+    const afterMain = resumePropose(
+      repository,
+      CHANGE_ID,
+      createInvestigationCheckpointEnvelope(started.investigation!, {
+        reference: 'amendment-main-survey',
+        terms: [
+          {
+            kind: 'symbol',
+            value: 'AmendMainNeedle',
+            rationale: 'The main investigation identified the amended target.',
+            expectedRelationship: 'The amendment depends on this symbol.',
+          },
+        ],
+      }),
+    );
+    const afterDispositions = resumePropose(
+      repository,
+      CHANGE_ID,
+      createInvestigationCheckpointEnvelope(afterMain.investigation!, {
+        dispositions: afterMain.work!.groups.map((group) => ({
+          groupId: group.groupId,
+          classification: 'load-bearing' as const,
+          rationale: 'This tracked consumer is load-bearing for the amendment.',
+          author: 'codex',
+        })),
+      }),
+    );
+    const sealed = resumePropose(
+      repository,
+      CHANGE_ID,
+      createInvestigationCheckpointEnvelope(afterDispositions.investigation!, {
+        answers: afterDispositions.work!.fullBlobManifest.map((entry) =>
+          whyAnswer(entry.manifestEntryId),
+        ),
+      }),
+    );
+    const materialized = resumePropose(
+      repository,
+      CHANGE_ID,
+      createPlanningContributionEnvelope(sealed, {
+        proposal: PRIOR_PROPOSAL,
+        design: AUTHORED_DESIGN,
+        specs: [{ path: 'specs/demo/spec.md', content: CORRECTED_SPEC }],
+        tasks: EXECUTED_TASKS,
+        guard: {
+          schemaVersion: 1 as const,
+          changeId: CHANGE_ID,
+          tasks: { '1.1': GUARD_TASK, '1.2': GUARD_TASK },
+        },
+        executionTasks: { '1.1': EXECUTION_TASK, '1.2': EXECUTION_TASK },
+      }),
+    );
+    assert.equal(materialized.state, 'waiting-for-plan-review');
+
+    // A review proposing novel terms resolves its planning citations before
+    // any fresh review artifact exists on disk. The prior generation's review
+    // is committed at HEAD and withdrawn from the worktree; that absence means
+    // "no committed review", not an unsafe artifact.
+    const investigationId = materialized.investigation!.investigationId;
+    runProviderWorker(
+      repository,
+      getProposeStatus(repository, investigationId).planReview!.invocationId,
+      {
+        runner: (input) =>
+          fakeRunnerReport(input.request, {
+            schemaVersion: 2 as const,
+            verdict: 'advisory-approve' as const,
+            coverage: [...PLAN_REVIEW_COVERAGE],
+            scopeAssessment: { kind: 'challenges' as const },
+            findings: [
+              {
+                kind: 'challenge' as const,
+                severity: 'medium' as const,
+                category: 'missing-scope',
+                currentChangeImpact: 'required' as const,
+                summary:
+                  'Confirm the restored scenario keeps its original body form.',
+                evidence: [
+                  {
+                    kind: 'planning-location' as const,
+                    path: `openspec/changes/${CHANGE_ID}/specs/demo/spec.md`,
+                    line: 1,
+                    observation:
+                      'The corrected delta restores the dropped identity.',
+                  },
+                ],
+              },
+            ],
+            proposedTerms: [
+              { kind: 'symbol' as const, value: 'AmendReviewerNeedle' },
+            ],
+            suggestions: [],
+            residualRisk:
+              'The amendment cannot prove the executed work anticipated the restored scenario.',
+            uncertainty:
+              'Advisory review remains a semantic judgment over the exact subject.',
+          }),
+      },
+    );
+    const reopened = resumePropose(
+      repository,
+      CHANGE_ID,
+      createPlanReviewProgressEnvelope(
+        getProposeStatus(repository, investigationId),
+      ),
+    );
+    assert.equal(reopened.state, 'awaiting-group-dispositions');
+    assert.equal(reopened.work?.termSources.reviewer, 1);
+    assert.ok((reopened.work?.groups.length ?? 0) > 0);
+  } finally {
+    fs.rmSync(repository, { recursive: true, force: true });
+  }
+});
+
+function fakeRunnerReport(
+  request: ProviderInvocationRequest,
+  semanticOutput: unknown,
+): ProviderRunnerReport {
+  return {
+    invocationId: request.invocationId,
+    providerId: request.providerId,
+    purpose: request.purpose,
+    requestDigest: request.requestDigest,
+    semanticOutput,
+    semanticOutputDigest: crypto
+      .createHash('sha256')
+      .update(canonicalJson(semanticOutput))
+      .digest('hex'),
+    assurance: 'unchanged-governed-projection',
+    projection: {
+      unchanged: true,
+      changedCategories: [],
+      beforeDigest: 'a'.repeat(64),
+      afterDigest: 'a'.repeat(64),
+    },
+    sameUserProcessConfined: false,
+    residuals: [...PROVIDER_RUNNER_RESIDUALS],
+    executable: {
+      candidatePath: '/opt/homebrew/bin/claude',
+      realPath: '/opt/homebrew/bin/claude',
+      device: '1',
+      inode: '2',
+      mode: 0o100755,
+      uid: 501,
+      gid: 20,
+      size: 1024,
+      mtimeNs: '123456789',
+      sha256: 'b'.repeat(64),
+    },
+    elapsedMs: 5,
   };
 }
 
