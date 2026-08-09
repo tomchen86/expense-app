@@ -933,6 +933,7 @@ function readProviderInvocationCore(
           request,
           record.result,
           providerOutputSchemaGeneration(request),
+          'legacy-subset',
         ),
       ) !== canonicalJson(record.result))
   ) {
@@ -2459,6 +2460,7 @@ function readProviderCompletionCandidate(
     request,
     value.result,
     providerOutputSchemaGeneration(request),
+    'legacy-subset',
   );
   const payload = { ...value };
   delete payload.candidateDigest;
@@ -3691,10 +3693,80 @@ export function blindSurveyOutputValidator(request: ProviderInvocationRequest) {
   };
 }
 
+export type ProviderResidualsGeneration = Readonly<{
+  generation: 'current' | 'legacy-subset';
+  missing: readonly string[];
+}>;
+
+/**
+ * Whether a residuals list shorter than the current runner's may be read.
+ *
+ * The default keeps every caller strict, so a short list only survives from a
+ * call site that is reading state this engine already made durable.
+ */
+type ProviderResidualsAcceptance = 'current-only' | 'legacy-subset';
+
+/**
+ * Classify which generation of the runner's residuals list an observation
+ * carries.
+ *
+ * Every list this engine ever wrote spread one frozen constant, so the current
+ * writer cannot produce a list shorter than that constant: a shorter one is the
+ * record's own age, from a day when the constant itself was shorter. Age is
+ * reported rather than refused, and the codes the record does not carry are
+ * named so nothing silently claims fewer soft-containment caveats than today's
+ * runner would.
+ *
+ * The tolerance is exactly that shape and nothing else. Because the constant
+ * holds no duplicates, matching it as an order-preserving subsequence rejects a
+ * superset, an unknown code, a repeat, and a permutation alike -- none of which
+ * is evidence of age, because no writer of this engine ever emitted one.
+ */
+function classifyProviderResiduals(
+  value: unknown,
+): ProviderResidualsGeneration {
+  // Guarded here rather than only at the observation call site, because a value
+  // that has a length and matches nothing -- an empty string, say -- would
+  // otherwise read as the shortest legacy list instead of as the wrong type.
+  if (!Array.isArray(value)) {
+    throw resultInvalid();
+  }
+  const missing: string[] = [];
+  let matched = 0;
+  for (const code of PROVIDER_RUNNER_RESIDUALS) {
+    if (matched < value.length && value[matched] === code) {
+      matched += 1;
+    } else {
+      missing.push(code);
+    }
+  }
+  if (matched !== value.length) {
+    throw resultInvalid();
+  }
+  return deepFreeze({
+    generation: missing.length === 0 ? 'current' : 'legacy-subset',
+    missing,
+  }) as ProviderResidualsGeneration;
+}
+
+/**
+ * Report the residuals generation a durable record carries, or null when it
+ * holds no runtime observation to carry one. Classified from the record rather
+ * than from the request, because residuals are what the run observed and not
+ * what it was asked to do.
+ */
+export function providerResidualsGeneration(
+  record: ProviderInvocationRecord,
+): ProviderResidualsGeneration | null {
+  const residuals = record.result?.runtimeObservation?.residuals;
+  return residuals === undefined ? null : classifyProviderResiduals(residuals);
+}
+
 function assertProviderResult(
   request: ProviderInvocationRequest,
   value: unknown,
   outputSchema: ProviderOutputSchemaGeneration = 'code-owned',
+  residuals: ProviderResidualsAcceptance = 'current-only',
 ): ProviderProcessResult {
   if (
     !isRecord(value) ||
@@ -3749,6 +3821,7 @@ function assertProviderResult(
   const runtimeObservation = assertRuntimeObservation(
     value.runtimeObservation,
     request,
+    residuals,
   );
   return deepFreeze(
     structuredClone({ ...value, output, runtimeObservation }),
@@ -3824,6 +3897,7 @@ function providerOutputValidator(request: ProviderInvocationRequest) {
 function assertRuntimeObservation(
   value: unknown,
   request: ProviderInvocationRequest,
+  residuals: ProviderResidualsAcceptance = 'current-only',
 ): ProviderRuntimeObservation | null {
   if (value === null) {
     return null;
@@ -3853,12 +3927,22 @@ function assertRuntimeObservation(
     !isDigest(value.projection.beforeDigest) ||
     value.projection.beforeDigest !== value.projection.afterDigest ||
     !Array.isArray(value.residuals) ||
-    canonicalJson(value.residuals) !==
-      canonicalJson(PROVIDER_RUNNER_RESIDUALS) ||
     !isExecutableIdentity(value.executable) ||
     !Number.isSafeInteger(value.elapsedMs) ||
     (value.elapsedMs as number) < 0 ||
     (value.elapsedMs as number) > request.limits.timeoutMs
+  ) {
+    throw resultInvalid();
+  }
+  // A durable record written before a residual was named carries the list of
+  // its own day. Reading it means classifying that list rather than demanding
+  // today's, and classification still refuses every shape no writer of this
+  // engine produced. A live report has no age to plead, so it must equal the
+  // constant exactly.
+  if (residuals === 'legacy-subset') {
+    classifyProviderResiduals(value.residuals);
+  } else if (
+    canonicalJson(value.residuals) !== canonicalJson(PROVIDER_RUNNER_RESIDUALS)
   ) {
     throw resultInvalid();
   }

@@ -533,6 +533,7 @@ function inspection(
         acceptance: 'accepted',
         outputDigest: DIGEST,
         outputSchema: 'code-owned' as const,
+        residuals: null,
       },
       ...attempts
         .filter(({ status }) => status === 'late-duplicate')
@@ -542,6 +543,7 @@ function inspection(
           acceptance: 'late-duplicate' as const,
           outputDigest: DIGEST,
           outputSchema: 'code-owned' as const,
+          residuals: null,
         })),
     ],
     latestFailure: null,

@@ -31,10 +31,12 @@ import { listProviderInvocationLifecycleProjections } from './investigation-sess
 import { loadInvestigationRuntimeContext } from './lifecycle-context.ts';
 import {
   providerOutputSchemaGeneration,
+  providerResidualsGeneration,
   readProviderInvocation,
   readProviderInvocationRequest,
   type ProviderInvocationRecord,
   type ProviderOutputSchemaGeneration,
+  type ProviderResidualsGeneration,
 } from './provider-invocation-store.ts';
 import type { ProviderInvocationRequest } from './provider-contracts.ts';
 
@@ -57,6 +59,14 @@ export type ExecutionResultView = {
    * this engine does not own, only from an earlier generation of one it does.
    */
   outputSchema: ProviderOutputSchemaGeneration;
+  /**
+   * `legacy-subset` marks a result whose observation carries the residuals list
+   * of the day it was written, from before a caveat this runner now names.
+   * `missing` names every code it therefore does not carry, so a record
+   * claiming fewer soft-containment caveats than today's runner says so rather
+   * than passing as current. Null when the result holds no observation.
+   */
+  residuals: ProviderResidualsGeneration | null;
 };
 
 export type ExecutionFailureView = {
@@ -102,6 +112,7 @@ type LegacyProjectionEntry = {
   record: ProviderInvocationRecord;
   request: ProviderInvocationRequest;
   outputSchema: ProviderOutputSchemaGeneration;
+  residuals: ProviderResidualsGeneration | null;
   projection: ProviderInvocationProjection;
 };
 
@@ -291,6 +302,7 @@ function readLegacyProjectionEntries(cwd: string): LegacyProjectionEntry[] {
     record: ProviderInvocationRecord;
     request: ProviderInvocationRequest;
     outputSchema: ProviderOutputSchemaGeneration;
+    residuals: ProviderResidualsGeneration | null;
   }>;
   try {
     const projections = listProviderInvocationLifecycleProjections(
@@ -301,13 +313,15 @@ function readLegacyProjectionEntries(cwd: string): LegacyProjectionEntry[] {
         context.runtime,
         invocationId,
       );
+      const record = readProviderInvocation(context.runtime, invocationId);
       return {
-        record: readProviderInvocation(context.runtime, invocationId),
+        record,
         request,
-        // Classified here, with the rest of the store read, so a schema this
-        // engine never owned still fails the scan closed rather than reaching
-        // the projection as if it were merely old.
+        // Classified here, with the rest of the store read, so a shape no
+        // writer of this engine produced still fails the scan closed rather
+        // than reaching the projection as if it were merely old.
         outputSchema: providerOutputSchemaGeneration(request),
+        residuals: providerResidualsGeneration(record),
       };
     });
   } catch (error) {
@@ -318,7 +332,7 @@ function readLegacyProjectionEntries(cwd: string): LegacyProjectionEntry[] {
       { details: { cause: errorMessage(error) } },
     );
   }
-  return records.map(({ record, request, outputSchema }) => {
+  return records.map(({ record, request, outputSchema, residuals }) => {
     try {
       const executionPolicy = legacyExecutionPolicy(request);
       const projection = projectLegacyProviderInvocation({
@@ -335,7 +349,7 @@ function readLegacyProjectionEntries(cwd: string): LegacyProjectionEntry[] {
         semanticJobIdentityDigest: normalizeDigest(record.manifestDigest),
         retryPolicy: legacyRetryPolicy(request.providerId),
       });
-      return { record, request, outputSchema, projection };
+      return { record, request, outputSchema, residuals, projection };
     } catch (error) {
       throw workflowError(
         'EXECUTION_RUNTIME_PROJECTION_INVALID',
@@ -413,6 +427,7 @@ function aggregateDurableJob(
       acceptance: result.acceptance,
       outputDigest: result.outputDigest,
       outputSchema: entry.outputSchema,
+      residuals: entry.residuals,
     };
   });
   const latestFailedAttempt = [...state.attempts]
@@ -521,6 +536,7 @@ function aggregateLegacyJob(
             : 'late-duplicate',
         outputDigest: normalizeDigest(entry.record.result.outputDigest),
         outputSchema: entry.outputSchema,
+        residuals: entry.residuals,
       },
     ];
   });
