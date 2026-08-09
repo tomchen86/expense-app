@@ -532,6 +532,7 @@ function inspection(
         invocationId: `${acceptedAttemptId}-invocation`,
         acceptance: 'accepted',
         outputDigest: DIGEST,
+        outputSchema: 'code-owned' as const,
       },
       ...attempts
         .filter(({ status }) => status === 'late-duplicate')
@@ -540,6 +541,7 @@ function inspection(
           invocationId: `${value.attemptId}-invocation`,
           acceptance: 'late-duplicate' as const,
           outputDigest: DIGEST,
+          outputSchema: 'code-owned' as const,
         })),
     ],
     latestFailure: null,

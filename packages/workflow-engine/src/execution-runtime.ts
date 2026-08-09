@@ -30,9 +30,11 @@ import { ExitCode, workflowError } from './errors.ts';
 import { listProviderInvocationLifecycleProjections } from './investigation-session-store.ts';
 import { loadInvestigationRuntimeContext } from './lifecycle-context.ts';
 import {
+  providerOutputSchemaGeneration,
   readProviderInvocation,
   readProviderInvocationRequest,
   type ProviderInvocationRecord,
+  type ProviderOutputSchemaGeneration,
 } from './provider-invocation-store.ts';
 import type { ProviderInvocationRequest } from './provider-contracts.ts';
 
@@ -48,6 +50,13 @@ export type ExecutionResultView = {
   invocationId: string;
   acceptance: 'accepted' | 'late-duplicate';
   outputDigest: string;
+  /**
+   * `legacy-superseded` marks a result whose output schema body changed after
+   * the result was written, so its output kept its original binding instead of
+   * being re-judged by the current grammar. It is never inferred from a schema
+   * this engine does not own, only from an earlier generation of one it does.
+   */
+  outputSchema: ProviderOutputSchemaGeneration;
 };
 
 export type ExecutionFailureView = {
@@ -92,6 +101,7 @@ export type AuthorizedLegacyReplacement = {
 type LegacyProjectionEntry = {
   record: ProviderInvocationRecord;
   request: ProviderInvocationRequest;
+  outputSchema: ProviderOutputSchemaGeneration;
   projection: ProviderInvocationProjection;
 };
 
@@ -280,15 +290,26 @@ function readLegacyProjectionEntries(cwd: string): LegacyProjectionEntry[] {
   let records: Array<{
     record: ProviderInvocationRecord;
     request: ProviderInvocationRequest;
+    outputSchema: ProviderOutputSchemaGeneration;
   }>;
   try {
     const projections = listProviderInvocationLifecycleProjections(
       context.runtime,
     );
-    records = projections.map(({ invocationId }) => ({
-      record: readProviderInvocation(context.runtime, invocationId),
-      request: readProviderInvocationRequest(context.runtime, invocationId),
-    }));
+    records = projections.map(({ invocationId }) => {
+      const request = readProviderInvocationRequest(
+        context.runtime,
+        invocationId,
+      );
+      return {
+        record: readProviderInvocation(context.runtime, invocationId),
+        request,
+        // Classified here, with the rest of the store read, so a schema this
+        // engine never owned still fails the scan closed rather than reaching
+        // the projection as if it were merely old.
+        outputSchema: providerOutputSchemaGeneration(request),
+      };
+    });
   } catch (error) {
     throw workflowError(
       'EXECUTION_RUNTIME_STORE_UNSAFE',
@@ -297,7 +318,7 @@ function readLegacyProjectionEntries(cwd: string): LegacyProjectionEntry[] {
       { details: { cause: errorMessage(error) } },
     );
   }
-  return records.map(({ record, request }) => {
+  return records.map(({ record, request, outputSchema }) => {
     try {
       const executionPolicy = legacyExecutionPolicy(request);
       const projection = projectLegacyProviderInvocation({
@@ -314,7 +335,7 @@ function readLegacyProjectionEntries(cwd: string): LegacyProjectionEntry[] {
         semanticJobIdentityDigest: normalizeDigest(record.manifestDigest),
         retryPolicy: legacyRetryPolicy(request.providerId),
       });
-      return { record, request, projection };
+      return { record, request, outputSchema, projection };
     } catch (error) {
       throw workflowError(
         'EXECUTION_RUNTIME_PROJECTION_INVALID',
@@ -378,11 +399,20 @@ function aggregateDurableJob(
         'Durable provider result is not a compatible legacy result.',
       );
     }
+    const entry = entriesByInvocation.get(
+      attempt.legacyInvocation.invocationId,
+    );
+    if (entry === undefined) {
+      throw runtimeConflict(
+        'Durable provider result has no legacy invocation to classify.',
+      );
+    }
     return {
       attemptId: result.attemptId,
       invocationId: attempt.legacyInvocation.invocationId,
       acceptance: result.acceptance,
       outputDigest: result.outputDigest,
+      outputSchema: entry.outputSchema,
     };
   });
   const latestFailedAttempt = [...state.attempts]
@@ -490,6 +520,7 @@ function aggregateLegacyJob(
             ? 'accepted'
             : 'late-duplicate',
         outputDigest: normalizeDigest(entry.record.result.outputDigest),
+        outputSchema: entry.outputSchema,
       },
     ];
   });

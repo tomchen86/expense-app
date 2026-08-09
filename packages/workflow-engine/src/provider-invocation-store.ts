@@ -928,8 +928,13 @@ function readProviderInvocationCore(
     request.providerId !== record.providerId ||
     request.purpose !== record.purpose ||
     (record.result !== null &&
-      canonicalJson(assertProviderResult(request, record.result)) !==
-        canonicalJson(record.result))
+      canonicalJson(
+        assertProviderResult(
+          request,
+          record.result,
+          providerOutputSchemaGeneration(request),
+        ),
+      ) !== canonicalJson(record.result))
   ) {
     throw invocationInvalid();
   }
@@ -2450,7 +2455,11 @@ function readProviderCompletionCandidate(
   ) {
     throw invocationUnsafe();
   }
-  const result = assertProviderResult(request, value.result);
+  const result = assertProviderResult(
+    request,
+    value.result,
+    providerOutputSchemaGeneration(request),
+  );
   const payload = { ...value };
   delete payload.candidateDigest;
   if (sha256(canonicalJson(payload)) !== value.candidateDigest) {
@@ -3588,17 +3597,58 @@ function assertCurrentLease(
   }
 }
 
+export type ProviderOutputSchemaGeneration = 'code-owned' | 'legacy-superseded';
+
+function providerOutputSchemaUnsupported() {
+  return workflowError(
+    'PROVIDER_OUTPUT_SCHEMA_UNSUPPORTED',
+    'Provider invocation does not reference a code-owned output schema.',
+    ExitCode.verification,
+  );
+}
+
+function codeOwnedProviderOutputSchema(request: ProviderInvocationRequest) {
+  if (request.purpose === 'survey') {
+    return BLIND_SURVEY_OUTPUT_SCHEMA;
+  }
+  if (request.purpose === 'plan-review') {
+    return PLAN_REVIEW_OUTPUT_SCHEMA;
+  }
+  throw providerOutputSchemaUnsupported();
+}
+
+/**
+ * Classify which generation of a code-owned output schema a request binds.
+ *
+ * The current writer always binds the constant this module owns for the
+ * request's purpose, so a request carrying that constant's exact id and version
+ * with a different digest is a shape the writer cannot produce: the schema body
+ * was edited after the record was written. That is the record's own age, and it
+ * is reported rather than refused. An unrecognized id or version is not
+ * evidence of age — no writer of this engine ever emitted one — so it stays
+ * unsupported.
+ */
+export function providerOutputSchemaGeneration(
+  request: ProviderInvocationRequest,
+): ProviderOutputSchemaGeneration {
+  const codeOwned = codeOwnedProviderOutputSchema(request);
+  if (
+    request.outputSchema.id !== codeOwned.id ||
+    request.outputSchema.version !== codeOwned.version
+  ) {
+    throw providerOutputSchemaUnsupported();
+  }
+  return request.outputSchema.digest === codeOwned.digest
+    ? 'code-owned'
+    : 'legacy-superseded';
+}
+
 export function blindSurveyOutputValidator(request: ProviderInvocationRequest) {
   if (
     request.purpose !== 'survey' ||
-    canonicalJson(request.outputSchema) !==
-      canonicalJson(BLIND_SURVEY_OUTPUT_SCHEMA)
+    providerOutputSchemaGeneration(request) !== 'code-owned'
   ) {
-    throw workflowError(
-      'PROVIDER_OUTPUT_SCHEMA_UNSUPPORTED',
-      'Provider invocation does not reference a code-owned output schema.',
-      ExitCode.verification,
-    );
+    throw providerOutputSchemaUnsupported();
   }
   return {
     ...BLIND_SURVEY_OUTPUT_SCHEMA,
@@ -3644,6 +3694,7 @@ export function blindSurveyOutputValidator(request: ProviderInvocationRequest) {
 function assertProviderResult(
   request: ProviderInvocationRequest,
   value: unknown,
+  outputSchema: ProviderOutputSchemaGeneration = 'code-owned',
 ): ProviderProcessResult {
   if (
     !isRecord(value) ||
@@ -3664,16 +3715,26 @@ function assertProviderResult(
   ) {
     throw resultInvalid();
   }
-  const validator = providerOutputValidator(request);
   const output = deepFreeze(structuredClone(value.output));
-  let outputAccepted: boolean;
-  try {
-    outputAccepted = validator.validate(output) === true;
-  } catch {
-    throw resultInvalid();
-  }
-  if (!outputAccepted) {
-    throw resultInvalid();
+  // A durable result written against a superseded generation cannot be judged
+  // by today's grammar: that grammar is gone from the code, so the choice is to
+  // report the generation or to refuse a record this engine itself wrote. Only
+  // the vanished check is skipped. The request bindings above, the output
+  // digest below — which still fixes the exact output bytes under the schema id
+  // and version the record stored — and the runtime observation all stay
+  // strict. The default keeps every caller strict, so a generation only reaches
+  // this from a call site that classified already-durable state.
+  if (outputSchema === 'code-owned') {
+    const validator = providerOutputValidator(request);
+    let outputAccepted: boolean;
+    try {
+      outputAccepted = validator.validate(output) === true;
+    } catch {
+      throw resultInvalid();
+    }
+    if (!outputAccepted) {
+      throw resultInvalid();
+    }
   }
   const outputDigest = sha256(
     canonicalJson({
@@ -3748,21 +3809,16 @@ function providerResultFromRunnerReport(
 }
 
 function providerOutputValidator(request: ProviderInvocationRequest) {
+  if (providerOutputSchemaGeneration(request) !== 'code-owned') {
+    throw providerOutputSchemaUnsupported();
+  }
   if (request.purpose === 'survey') {
     return blindSurveyOutputValidator(request);
   }
-  if (
-    request.purpose === 'plan-review' &&
-    canonicalJson(request.outputSchema) ===
-      canonicalJson(PLAN_REVIEW_OUTPUT_SCHEMA)
-  ) {
+  if (request.purpose === 'plan-review') {
     return PLAN_REVIEW_OUTPUT_VALIDATOR;
   }
-  throw workflowError(
-    'PROVIDER_OUTPUT_SCHEMA_UNSUPPORTED',
-    'Provider invocation does not reference a code-owned output schema.',
-    ExitCode.verification,
-  );
+  throw providerOutputSchemaUnsupported();
 }
 
 function assertRuntimeObservation(
