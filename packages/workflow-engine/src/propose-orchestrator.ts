@@ -164,6 +164,10 @@ import {
   normalizePolicyPath,
 } from './paths.ts';
 import {
+  assertPlanningTaskHistory,
+  readFileAtCommit,
+} from './planning-contract.ts';
+import {
   assertActiveTaskMandateBindingUnderLifecycleLock,
   authorizeTaskMandateOperation,
   authorizeTaskMandateProviderReservationUnderLifecycleLock,
@@ -6037,6 +6041,8 @@ function preparePlanningScaffold(
 ): {
   changeDirectory: string;
   investigationBytes: string;
+  metadataBytes: string;
+  replaceablePriorGeneration: (relativePath: string, existing: string) => boolean;
   instructions: ProposeWork['authoredInstructions'];
 } {
   if (rebuilt.coverageNode === null) {
@@ -6060,10 +6066,34 @@ function preparePlanningScaffold(
     status.changeId,
   );
   const migration = rebuilt.legacyMigration;
+  const priorArtifactAtBaseline = (relativePath: string): string | undefined =>
+    readFileAtCommit(
+      context.git.repositoryRoot,
+      rebuilt.session.baseline.head,
+      `${context.config.changeRoot}/${status.changeId}/${relativePath}`,
+    );
+  // The authority to tolerate or replace an existing planning artifact: the
+  // prior generation is itself a managed one — the baseline commit carries v2
+  // metadata for this change — and the artifact's exact bytes are committed
+  // there. Legacy trees stay behind the migration authorization, and
+  // uncommitted bytes never qualify.
+  const committedMetadata = priorArtifactAtBaseline('.openspec.yaml');
+  const managedPriorGeneration =
+    committedMetadata !== undefined &&
+    committedMetadata.startsWith('schema: expense-app-v2\n');
+  const replaceablePriorGeneration = (
+    relativePath: string,
+    existing: string,
+  ): boolean =>
+    managedPriorGeneration && priorArtifactAtBaseline(relativePath) === existing;
+  // An amendment keeps the identity of the change it corrects: committed v2
+  // metadata carries over instead of restamping the creation date.
   const metadataBytes =
-    migration === null
-      ? `schema: expense-app-v2\ncreated: ${createdDate}\n`
-      : legacyMigrationMetadataBytes(migration);
+    migration !== null
+      ? legacyMigrationMetadataBytes(migration)
+      : managedPriorGeneration
+        ? committedMetadata
+        : `schema: expense-app-v2\ncreated: ${createdDate}\n`;
   const sealNode = createInvestigationSealNode(rebuilt);
   const applicability = createInvestigationApplicability({
     kind: 'sealed-investigation',
@@ -6124,6 +6154,7 @@ function preparePlanningScaffold(
       allowAuthoredExisting || migration !== null,
       false,
       migration,
+      replaceablePriorGeneration,
     );
     writeManagedEntries(changeDirectory, scaffoldEntries, migration);
   }
@@ -6142,7 +6173,13 @@ function preparePlanningScaffold(
       template: proposalInstruction.template,
     },
   ];
-  return { changeDirectory, investigationBytes, instructions };
+  return {
+    changeDirectory,
+    investigationBytes,
+    metadataBytes,
+    replaceablePriorGeneration,
+    instructions,
+  };
 }
 
 function createInvestigationSealNode(
@@ -6888,22 +6925,36 @@ function materializePlanningContribution(
   assertOwned: () => void = () => {},
 ): Record<string, string> {
   const payload = assertPlanningPayload(payloadInput);
+  // The full entries map below owns every scaffold byte with rollback, so the
+  // scaffold itself stays a pure projection here.
   const scaffold = preparePlanningScaffold(
     cwd,
     status,
     rebuilt,
     rebuilt.session.createdAt.slice(0, 10),
     true,
+    false,
   );
   const context = loadInvestigationRuntimeContext(cwd);
   const migration = rebuilt.legacyMigration;
   const tasks = parseTasks(payload.tasks);
-  if (
-    tasks.length === 0 ||
-    (migration === null && tasks.some(({ completed }) => completed))
-  ) {
-    throw planningContributionInvalid(
-      'Planning tasks must be non-empty and unchecked.',
+  if (tasks.length === 0) {
+    throw planningContributionInvalid('Planning tasks must be non-empty.');
+  }
+  if (migration === null) {
+    // One judgment for both gates: the transition's task-history rule, applied
+    // against the session baseline. A fresh change has no baseline tasks and
+    // must arrive unchecked; an amendment carries the executed record forward
+    // untouched, and may only send it back whole.
+    const baselineTasks = readFileAtCommit(
+      context.git.repositoryRoot,
+      rebuilt.session.baseline.head,
+      `${context.config.changeRoot}/${status.changeId}/tasks.md`,
+    );
+    assertPlanningTaskHistory(
+      baselineTasks === undefined ? undefined : parseTasks(baselineTasks),
+      tasks,
+      { reopenAuthorized: true },
     );
   }
   const guard = assertGuardContribution(
@@ -6931,12 +6982,7 @@ function materializePlanningContribution(
     rebuilt.whyNodes,
   );
   const entries = new Map<string, string>([
-    [
-      '.openspec.yaml',
-      migration === null
-        ? `schema: expense-app-v2\ncreated: ${rebuilt.session.createdAt.slice(0, 10)}\n`
-        : legacyMigrationMetadataBytes(migration),
-    ],
+    ['.openspec.yaml', scaffold.metadataBytes],
     ['investigation.json', scaffold.investigationBytes],
     ['proposal.md', assertAuthoredMarkdown(payload.proposal, 'proposal')],
     ['design.md', projectedDesign],
@@ -6980,10 +7026,29 @@ function materializePlanningContribution(
     false,
     false,
     migration,
+    scaffold.replaceablePriorGeneration,
   );
   const createdPaths: string[] = [];
   const replacedBytes = new Map<string, string>();
   try {
+    // The prior generation's review reviewed the plan this contribution
+    // replaces; removing it returns the graph to review-pending for the fresh
+    // review the amendment must earn. Only pristine committed bytes qualify —
+    // anything else was already refused above.
+    const priorReviewPath = path.join(
+      scaffold.changeDirectory,
+      'plan-review.json',
+    );
+    const priorReviewStats = fs.lstatSync(priorReviewPath, {
+      throwIfNoEntry: false,
+    });
+    if (priorReviewStats?.isFile() && !priorReviewStats.isSymbolicLink()) {
+      const priorReview = fs.readFileSync(priorReviewPath, 'utf8');
+      if (scaffold.replaceablePriorGeneration('plan-review.json', priorReview)) {
+        fs.rmSync(priorReviewPath);
+        replacedBytes.set(priorReviewPath, priorReview);
+      }
+    }
     for (const [relativePath, content] of entries) {
       const target = path.join(scaffold.changeDirectory, relativePath);
       if (fs.existsSync(target)) {
@@ -6997,8 +7062,11 @@ function materializePlanningContribution(
         }
         if (
           existing === null ||
-          migration === null ||
-          !isReplaceableLegacyArtifact(migration, relativePath, existing)
+          !(
+            (migration !== null &&
+              isReplaceableLegacyArtifact(migration, relativePath, existing)) ||
+            scaffold.replaceablePriorGeneration(relativePath, existing)
+          )
         ) {
           throw workflowError(
             'UNMANAGED_PLANNING_CONFLICT',
@@ -7082,7 +7150,12 @@ function materializePlanningContribution(
       fs.rmSync(target, { force: true });
     }
     for (const [target, previous] of replacedBytes) {
-      replaceTextAtomic(target, previous, { defaultMode: 0o644 });
+      // allowCreate restores the prior plan review, which was removed rather
+      // than replaced.
+      replaceTextAtomic(target, previous, {
+        allowCreate: true,
+        defaultMode: 0o644,
+      });
     }
     throw error;
   }
@@ -8910,13 +8983,29 @@ function assertPlanningTargetsCompatible(
   allowAuthoredExisting = false,
   allowManagedPlanReview = false,
   legacyMigration: LegacyPlanMigrationSubject | null = null,
+  baselineReplaceable: (relativePath: string, existing: string) => boolean = () =>
+    false,
 ): void {
+  // An amendment's prior generation is committed at the session baseline, so
+  // "these exact bytes exist at the baseline" is the authority to tolerate or
+  // replace them. Anything uncommitted stays a conflict.
+  const pristineAtBaseline = (relativePath: string): boolean => {
+    const target = path.join(changeDirectory, relativePath);
+    const stats = fs.lstatSync(target, { throwIfNoEntry: false });
+    if (!stats || !stats.isFile() || stats.isSymbolicLink()) {
+      return false;
+    }
+    return baselineReplaceable(relativePath, fs.readFileSync(target, 'utf8'));
+  };
   const allowedExisting = new Set(entries.keys());
   const existing = listChangeFiles(changeDirectory);
   for (const relativePath of existing) {
     if (!allowedExisting.has(relativePath)) {
       if (scaffoldOnly) {
         if (relativePath === 'plan-review.json' && allowManagedPlanReview) {
+          continue;
+        }
+        if (pristineAtBaseline(relativePath)) {
           continue;
         }
         if (
@@ -8940,7 +9029,7 @@ function assertPlanningTargetsCompatible(
         );
       }
       if (relativePath === 'plan-review.json') {
-        if (allowManagedPlanReview) {
+        if (allowManagedPlanReview || pristineAtBaseline(relativePath)) {
           continue;
         }
         throw workflowError(
@@ -8977,7 +9066,8 @@ function assertPlanningTargetsCompatible(
       !(
         legacyMigration !== null &&
         isReplaceableLegacyArtifact(legacyMigration, relativePath, existing)
-      )
+      ) &&
+      !baselineReplaceable(relativePath, existing)
     ) {
       throw workflowError(
         'UNMANAGED_PLANNING_CONFLICT',

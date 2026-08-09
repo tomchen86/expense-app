@@ -316,7 +316,7 @@ function listTreePaths(
     .sort();
 }
 
-function readFileAtCommit(
+export function readFileAtCommit(
   repositoryRoot: string,
   commit: string,
   filePath: string,

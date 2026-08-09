@@ -726,7 +726,7 @@
     {
       "path": "src/planning-contract.ts",
       "mode": "100644",
-      "digest": "sha256:910bba011f466b28ec2e73ec751ab925c11f52d6d751f5cc684a2afd50129b3d"
+      "digest": "sha256:93710ac631933fbb51227ed388b6ca19fc8f8575f10c93f608e0a281ec78c450"
     },
     {
       "path": "src/planning-generation.ts",
@@ -776,7 +776,7 @@
     {
       "path": "src/propose-orchestrator.ts",
       "mode": "100644",
-      "digest": "sha256:2e1badf6b22d53b13c3ba8f0c9e4024b8b7c1996d83eaebf842b4311ccbe5fdb"
+      "digest": "sha256:96035691537de6a8d4f7eba2ec38a4bb6cb22f1f416faeead4352e5a95b669ad"
     },
     {
       "path": "src/protected-capabilities.ts",
