@@ -526,6 +526,7 @@ function inspection(
     job,
     attempts,
     acceptedAttemptId,
+    attemptNumbering: 'recorded' as const,
     results: [
       {
         attemptId: acceptedAttemptId,

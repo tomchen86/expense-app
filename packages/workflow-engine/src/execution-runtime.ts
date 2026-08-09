@@ -79,6 +79,15 @@ export type ExecutionJobInspection = {
   schemaVersion: 1;
   workflow: WorkflowRecord;
   job: JobRecord;
+  /**
+   * `legacy-renumbered` marks a Job whose records do not carry the 1..N
+   * ordinals the current writer assigns -- a legacy retry opened a fresh
+   * invocation and left it numbered 1 -- so the ordinals below are the reader's,
+   * derived from the order the records were observed in. The observed order is
+   * still required to be monotonic, so this renames the attempts without
+   * reordering the history.
+   */
+  attemptNumbering: 'recorded' | 'legacy-renumbered';
   attempts: AttemptRecord[];
   acceptedAttemptId: string | null;
   results: ExecutionResultView[];
@@ -450,6 +459,9 @@ function aggregateDurableJob(
     schemaVersion: 1,
     workflow: state.workflow,
     job: state.job,
+    // Durable state carries the ordinals the writer assigned, so there is
+    // nothing for the reader to renumber.
+    attemptNumbering: 'recorded' as const,
     attempts: state.attempts,
     acceptedAttemptId: state.job.acceptedAttemptId,
     results,
@@ -466,7 +478,7 @@ function aggregateLegacyJob(
       left.record.invocationId.localeCompare(right.record.invocationId),
   );
   if (entries.length < 1) throw runtimeConflict('Legacy Job group is empty.');
-  assertCompatibleLegacyEntries(entries);
+  const attemptNumbering = classifyLegacyEntries(entries);
   const successful = entries.filter(
     ({ record }) => record.state === 'succeeded',
   );
@@ -560,6 +572,7 @@ function aggregateLegacyJob(
     schemaVersion: 1,
     workflow,
     job,
+    attemptNumbering,
     attempts,
     acceptedAttemptId,
     results,
@@ -567,13 +580,31 @@ function aggregateLegacyJob(
   });
 }
 
-function assertCompatibleLegacyEntries(entries: LegacyProjectionEntry[]): void {
+/**
+ * Check that a legacy group is one Job, and report how its attempts are
+ * numbered.
+ *
+ * The current writer refuses to open a second attempt 1 in a group, so a group
+ * that carries one cannot have been written by it: the ordinals predate that
+ * rule, from when a retry opened a fresh invocation and numbered it 1 again.
+ * That is the record's own age, so it is reported rather than refused.
+ *
+ * Nothing else relaxes. Every identity field must still agree, and the observed
+ * order must still be monotonic -- which is what makes renumbering sound at
+ * all, since the projected ordinals are that order and no other.
+ */
+function classifyLegacyEntries(
+  entries: LegacyProjectionEntry[],
+): 'recorded' | 'legacy-renumbered' {
   const first = entries[0]!.projection;
   let previousUpdatedAt = 0;
+  let numbering: 'recorded' | 'legacy-renumbered' = 'recorded';
   for (let index = 0; index < entries.length; index += 1) {
     const entry = entries[index]!;
+    if (entry.record.attempt !== index + 1) {
+      numbering = 'legacy-renumbered';
+    }
     if (
-      entry.record.attempt !== index + 1 ||
       entry.projection.job.jobId !== first.job.jobId ||
       entry.projection.workflow.workflowId !== first.workflow.workflowId ||
       entry.projection.workflow.currentEpoch !== first.workflow.currentEpoch ||
@@ -596,6 +627,7 @@ function assertCompatibleLegacyEntries(entries: LegacyProjectionEntry[]): void {
     }
     previousUpdatedAt = updatedAt;
   }
+  return numbering;
 }
 
 function retryDecisionForLegacyFailure(input: {
