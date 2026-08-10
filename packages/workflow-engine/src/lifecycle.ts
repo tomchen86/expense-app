@@ -11,6 +11,7 @@ import {
 } from './commit-recovery.ts';
 import { digestRequiredCheckDefinitions } from './contract-digests.ts';
 import { ExitCode, workflowError } from './errors.ts';
+import { classifyProjectionPaths } from './engine-projection-registry.ts';
 import {
   commitFacts,
   createManagedCommitObject,
@@ -38,6 +39,7 @@ import { readImmutableReport, type WorkflowReport } from './report-store.ts';
 import {
   assertCompletionTaskIds,
   assertInspectionReport,
+  assertProjectionPathClassification,
   assertReportChecks,
   readSessionReport,
   reportString,
@@ -195,6 +197,19 @@ function rollbackCompletionUnlocked(
   }
 
   const tasksPathRelative = `${context.config.changeRoot}/${session.changeId}/tasks.md`;
+  assertProjectionPathClassification(
+    completionReport,
+    classifyProjectionPaths(
+      reportStringArray(
+        completionReport,
+        'changedPaths',
+        'COMPLETION_REPORT_STALE',
+      ),
+      [tasksPathRelative],
+      transitionPaths,
+    ),
+    'COMPLETION_REPORT_STALE',
+  );
   const tasksPath = path.join(git.repositoryRoot, tasksPathRelative);
   const baselineTasks = readFileAtCommit(
     git.repositoryRoot,
@@ -420,6 +435,11 @@ function completeTaskUnlocked(
       projectionSourceDigest,
       authorizedTransitionPaths: transitionPaths,
     });
+    const pathClassification = classifyProjectionPaths(
+      projected.changedPaths,
+      [path.relative(projected.git.repositoryRoot, projected.tasksPath)],
+      transitionPaths,
+    );
     const report: WorkflowReport = {
       schemaVersion: 1,
       kind: 'completion',
@@ -437,7 +457,7 @@ function completeTaskUnlocked(
         projected.contract.checks,
         initial.session.requiredChecks,
       ),
-      changedPaths: projected.changedPaths,
+      ...pathClassification,
       fingerprint: projected.fingerprint,
       completedTaskIds,
       projectionSourceDigest,
@@ -523,6 +543,16 @@ function finishSessionUnlocked(
     projectionSourceDigest,
     authorizedTransitionPaths: transitionPaths,
   });
+  const pathClassification = classifyProjectionPaths(
+    unprojected.changedPaths,
+    [path.relative(unprojected.git.repositoryRoot, unprojected.tasksPath)],
+    transitionPaths,
+  );
+  assertProjectionPathClassification(
+    completionReport,
+    pathClassification,
+    'COMPLETION_REPORT_STALE',
+  );
   assertInspectionReport(
     completionReport,
     unprojected,
@@ -577,7 +607,11 @@ function finishSessionUnlocked(
         finished.contract.checks,
         session.requiredChecks,
       ),
-      changedPaths: finished.changedPaths,
+      ...classifyProjectionPaths(
+        finished.changedPaths,
+        pathClassification.taskProjectionPaths,
+        transitionPaths,
+      ),
       fingerprint: finished.fingerprint,
       completedTaskIds,
       projectionSourceDigest,
@@ -666,6 +700,11 @@ function commitSessionUnlocked(
     projectionSourceDigest,
     authorizedTransitionPaths: transitionPaths,
   });
+  const pathClassification = classifyProjectionPaths(
+    inspection.changedPaths,
+    [path.relative(inspection.git.repositoryRoot, inspection.tasksPath)],
+    transitionPaths,
+  );
   const finishReport = readSessionReport(
     inspection,
     initialSession.finishReportId,
@@ -686,6 +725,16 @@ function commitSessionUnlocked(
     completionReport,
     inspection,
     'COMPLETION_REPORT_STALE',
+  );
+  assertProjectionPathClassification(
+    completionReport,
+    pathClassification,
+    'COMPLETION_REPORT_STALE',
+  );
+  assertProjectionPathClassification(
+    finishReport,
+    pathClassification,
+    'FINISH_REPORT_STALE',
   );
   if (finishReport.parentReportId !== initialSession.completionReportId) {
     throw staleReport('FINISH_REPORT_STALE');
@@ -728,7 +777,7 @@ function commitSessionUnlocked(
     branch: initialSession.branch,
     commitHash,
     tree: facts.tree,
-    changedPaths: inspection.changedPaths,
+    ...pathClassification,
     completedTaskIds,
     projectionSourceDigest,
     transitionPaths,

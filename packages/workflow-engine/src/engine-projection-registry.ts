@@ -1,9 +1,18 @@
+import { ExitCode, workflowError } from './errors.ts';
+
 export type EngineProjectionTransition =
   'archive' | 'completion' | 'issue' | 'plan' | 'rollback-completion';
 
 export type EngineProjectionDefinition = {
   path: string;
   transitions: EngineProjectionTransition[];
+};
+
+export type ProjectionPathClassification = {
+  taskPaths: string[];
+  taskProjectionPaths: string[];
+  engineProjectionPaths: string[];
+  changedPaths: string[];
 };
 
 const REGISTRY: readonly Readonly<{
@@ -38,4 +47,44 @@ export function engineProjectionPathsForTransition(
   return REGISTRY.filter(({ transitions }) =>
     transitions.includes(transition),
   ).map(({ path }) => path);
+}
+
+export function classifyProjectionPaths(
+  changedPaths: string[],
+  taskProjectionPaths: string[],
+  engineProjectionPaths: string[],
+): ProjectionPathClassification {
+  const changed = sortedUnique(changedPaths);
+  const taskProjections = sortedUnique(taskProjectionPaths);
+  const engineProjections = sortedUnique(engineProjectionPaths);
+  if (
+    changed.length !== changedPaths.length ||
+    taskProjections.length !== taskProjectionPaths.length ||
+    engineProjections.length !== engineProjectionPaths.length ||
+    taskProjections.some(
+      (projectionPath) => !changed.includes(projectionPath),
+    ) ||
+    engineProjections.some(
+      (projectionPath) =>
+        !changed.includes(projectionPath) ||
+        taskProjections.includes(projectionPath),
+    )
+  ) {
+    throw workflowError(
+      'PROJECTION_PATH_CLASSIFICATION_INVALID',
+      'Projection path categories must be disjoint subsets of the exact changed paths.',
+      ExitCode.verification,
+    );
+  }
+  const projections = new Set([...taskProjections, ...engineProjections]);
+  return {
+    taskPaths: changed.filter((changedPath) => !projections.has(changedPath)),
+    taskProjectionPaths: taskProjections,
+    engineProjectionPaths: engineProjections,
+    changedPaths: changed,
+  };
+}
+
+function sortedUnique(values: string[]): string[] {
+  return [...new Set(values)].sort();
 }

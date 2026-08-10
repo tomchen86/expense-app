@@ -5,12 +5,23 @@ import path from 'node:path';
 import test from 'node:test';
 
 import {
+  classifyProjectionPaths,
   engineProjectionDefinitions,
   engineProjectionPathsForTransition,
 } from '../src/engine-projection-registry.ts';
-import { completeTask } from '../src/lifecycle.ts';
+import { renderHandoff } from '../src/handoff.ts';
+import { completeTask, finalizeTask, finishSession } from '../src/lifecycle.ts';
+import {
+  readImmutableReport,
+  type WorkflowReport,
+} from '../src/report-store.ts';
 import { checkSession, getSession, startSession } from '../src/session.ts';
-import { createFixtureRepository, git, isWorkflowError } from './fixture.ts';
+import {
+  createFixtureRepository,
+  git,
+  isWorkflowError,
+  runtimeRoot,
+} from './fixture.ts';
 
 test('the reviewed engine projection registry is fixed and transition-scoped', () => {
   assert.deepEqual(engineProjectionDefinitions(), [
@@ -23,6 +34,15 @@ test('the reviewed engine projection registry is fixed and transition-scoped', (
     'docs/CURRENT_AND_NEXT_STEPS.md',
   ]);
   assert.deepEqual(engineProjectionPathsForTransition('issue'), []);
+  assert.throws(
+    () =>
+      classifyProjectionPaths(
+        ['docs/CURRENT_AND_NEXT_STEPS.md'],
+        ['docs/CURRENT_AND_NEXT_STEPS.md'],
+        ['docs/CURRENT_AND_NEXT_STEPS.md'],
+      ),
+    (error) => isWorkflowError(error, 'PROJECTION_PATH_CLASSIFICATION_INVALID'),
+  );
 });
 
 test('document policy cannot invent an engine-owned completion projection', () => {
@@ -97,3 +117,94 @@ test('the public handoff command is read-only and refuses render', () => {
     fs.rmSync(repository, { recursive: true, force: true });
   }
 });
+
+test('completion and finish evidence classify the exact projection union', () => {
+  const repository = createFixtureRepository();
+  try {
+    enableCompletionProjection(repository);
+    git(repository, ['checkout', '-b', 'work/demo-change']);
+    const session = startSession(repository, 'demo-change', '1.1');
+    fs.writeFileSync(path.join(repository, 'src/feature.ts'), 'export {};\n');
+
+    const result = finalizeTask(repository, session.sessionId);
+    const reportsRoot = path.join(runtimeRoot(repository), 'reports');
+    const completion = readImmutableReport(
+      reportsRoot,
+      session.sessionId,
+      result.completionReportId,
+    );
+    const finish = readImmutableReport(
+      reportsRoot,
+      session.sessionId,
+      result.finishReportId,
+    );
+    assertReportCategories(completion);
+    assertReportCategories(finish);
+    assert.deepEqual(finish.stagedPaths, EXPECTED_CATEGORIES.changedPaths);
+  } finally {
+    fs.rmSync(repository, { recursive: true, force: true });
+  }
+});
+
+test('the compatible completion sequence records the same projection categories', () => {
+  const repository = createFixtureRepository();
+  try {
+    enableCompletionProjection(repository);
+    git(repository, ['checkout', '-b', 'work/demo-change']);
+    const session = startSession(repository, 'demo-change', '1.1');
+    fs.writeFileSync(path.join(repository, 'src/feature.ts'), 'export {};\n');
+
+    checkSession(repository, session.sessionId);
+    const completion = completeTask(repository, session.sessionId);
+    const finish = finishSession(repository, session.sessionId);
+    const reportsRoot = path.join(runtimeRoot(repository), 'reports');
+
+    assertReportCategories(
+      readImmutableReport(reportsRoot, session.sessionId, completion.reportId),
+    );
+    assertReportCategories(
+      readImmutableReport(reportsRoot, session.sessionId, finish.reportId),
+    );
+    assert.deepEqual(finish.stagedPaths, EXPECTED_CATEGORIES.changedPaths);
+  } finally {
+    fs.rmSync(repository, { recursive: true, force: true });
+  }
+});
+
+const EXPECTED_CATEGORIES = {
+  taskPaths: ['src/feature.ts'],
+  taskProjectionPaths: ['openspec/changes/demo-change/tasks.md'],
+  engineProjectionPaths: ['docs/CURRENT_AND_NEXT_STEPS.md'],
+  changedPaths: [
+    'docs/CURRENT_AND_NEXT_STEPS.md',
+    'openspec/changes/demo-change/tasks.md',
+    'src/feature.ts',
+  ],
+};
+
+function enableCompletionProjection(repository: string): void {
+  const policyPath = path.join(repository, 'workflow/document-policy.json');
+  const policy = JSON.parse(fs.readFileSync(policyPath, 'utf8'));
+  policy.documents['docs/CURRENT_AND_NEXT_STEPS.md'] = {
+    mode: 'generated',
+    enforcement: 'active',
+    transition: 'completion',
+  };
+  fs.writeFileSync(policyPath, `${JSON.stringify(policy, null, 2)}\n`);
+  fs.mkdirSync(path.join(repository, 'docs'), { recursive: true });
+  renderHandoff(repository);
+  git(repository, ['add', 'workflow/document-policy.json', 'docs']);
+  git(repository, ['commit', '-m', 'Enable completion projection']);
+}
+
+function assertReportCategories(report: WorkflowReport): void {
+  assert.deepEqual(
+    {
+      taskPaths: report.taskPaths,
+      taskProjectionPaths: report.taskProjectionPaths,
+      engineProjectionPaths: report.engineProjectionPaths,
+      changedPaths: report.changedPaths,
+    },
+    EXPECTED_CATEGORIES,
+  );
+}

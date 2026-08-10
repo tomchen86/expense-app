@@ -316,7 +316,7 @@
     {
       "path": "src/engine-projection-registry.ts",
       "mode": "100644",
-      "digest": "sha256:798f0537881ad0c38ebc3c855e96a864039fcff83f8fcb16f041fa6a7af105bb"
+      "digest": "sha256:6990a76ccd1d381fdc99ba396d749e16f4375726829749116e0589d3c7708606"
     },
     {
       "path": "src/errors.ts",
@@ -581,7 +581,7 @@
     {
       "path": "src/lifecycle.ts",
       "mode": "100644",
-      "digest": "sha256:f840566c520f14b51205e3a09bc21bc71467281aa11c43b7c77b7b3e5dd790a1"
+      "digest": "sha256:059d635549a85b781f2393248d0fa1e8884769ee403ac24f772cc7dc8863b671"
     },
     {
       "path": "src/maintainer-approve.ts",
@@ -841,7 +841,7 @@
     {
       "path": "src/projected-finalization.ts",
       "mode": "100644",
-      "digest": "sha256:860e20400712522f579ff844ffc6c4e4235677229660e04a9622d7f871f6e22e"
+      "digest": "sha256:f1738b6ac432b0ca31e63b97557a751bd2caef597f25bc6e563c0fda1ccf69c4"
     },
     {
       "path": "src/propose-exemption-store.ts",
@@ -971,7 +971,7 @@
     {
       "path": "src/report-validation.ts",
       "mode": "100644",
-      "digest": "sha256:b8d54003fc85fff03f4a8ab2fd93d1df827da78d03d9944c3b06739ce1f1f072"
+      "digest": "sha256:b654138fe9a63ba5d38cf2b47a7d9a9c7e4c19fe221fbf40c5ae8180a8c55119"
     },
     {
       "path": "src/repository-validation.ts",
