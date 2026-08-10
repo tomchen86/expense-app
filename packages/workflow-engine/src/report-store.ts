@@ -6,7 +6,11 @@ import {
   isPlanningAssuranceBinding,
   type PlanningAssuranceBinding,
 } from './contracts.ts';
-import { ExitCode, workflowError } from './errors.ts';
+import { ExitCode, WorkflowError, workflowError } from './errors.ts';
+import {
+  assertPlainDirectory as assertSafePlainDirectory,
+  ensurePlainDirectory,
+} from './filesystem-safety.ts';
 import { assertSessionId } from './paths.ts';
 
 export type WorkflowReport = {
@@ -39,9 +43,8 @@ export function writeImmutableReport(
   const reportId = digest(content);
   const directory = path.join(reportsRoot, report.sessionId);
   const reportPath = path.join(directory, `${reportId}.json`);
-  fs.mkdirSync(directory, { recursive: true });
-  assertPlainDirectory(reportsRoot);
-  assertPlainDirectory(directory);
+  ensureReportDirectory(reportsRoot);
+  ensureReportDirectory(directory);
 
   let descriptor: number | undefined;
   let created = false;
@@ -57,7 +60,7 @@ export function writeImmutableReport(
       fs.closeSync(descriptor);
     }
     if (isNodeError(error) && error.code === 'EEXIST') {
-      const existing = fs.readFileSync(reportPath, 'utf8');
+      const existing = readPlainReportFile(reportPath);
       if (existing === content) {
         return reportId;
       }
@@ -84,14 +87,9 @@ export function readImmutableReport(
     throw invalidReport('INVALID_REPORT_ID', 'Report ID is invalid.');
   }
   const reportPath = path.join(reportsRoot, sessionId, `${reportId}.json`);
-  assertPlainDirectory(reportsRoot);
-  assertPlainDirectory(path.join(reportsRoot, sessionId));
-  let content: string;
-  try {
-    content = fs.readFileSync(reportPath, 'utf8');
-  } catch {
-    throw invalidReport('REPORT_UNREADABLE', 'Workflow report is unavailable.');
-  }
+  assertReportDirectory(reportsRoot);
+  assertReportDirectory(path.join(reportsRoot, sessionId));
+  const content = readPlainReportFile(reportPath);
   if (digest(content) !== reportId) {
     throw invalidReport(
       'REPORT_DIGEST_MISMATCH',
@@ -126,14 +124,100 @@ export function readImmutableReport(
   return value as WorkflowReport;
 }
 
-function assertPlainDirectory(directory: string): void {
-  const stats = fs.lstatSync(directory, { throwIfNoEntry: false });
-  if (!stats?.isDirectory() || stats.isSymbolicLink()) {
+function ensureReportDirectory(directory: string): void {
+  try {
+    ensurePlainDirectory(directory);
+  } catch (error) {
+    translateUnsafeReportDirectory(error);
+  }
+}
+
+function assertReportDirectory(directory: string): void {
+  try {
+    assertSafePlainDirectory(directory);
+  } catch (error) {
+    translateUnsafeReportDirectory(error);
+  }
+}
+
+function translateUnsafeReportDirectory(error: unknown): never {
+  if (
+    error instanceof WorkflowError &&
+    error.code === 'RUNTIME_DIRECTORY_UNSAFE'
+  ) {
     throw invalidReport(
       'REPORT_DIRECTORY_UNSAFE',
       'Workflow report directory is missing or is not a plain directory.',
     );
   }
+  throw error;
+}
+
+function readPlainReportFile(reportPath: string): string {
+  const before = fs.lstatSync(reportPath, { throwIfNoEntry: false });
+  if (!before) {
+    throw invalidReport('REPORT_UNREADABLE', 'Workflow report is unavailable.');
+  }
+  if (!isPlainReportFile(before)) {
+    throw unsafeReportFile();
+  }
+
+  let descriptor: number | undefined;
+  try {
+    descriptor = fs.openSync(
+      reportPath,
+      fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW,
+    );
+    const opened = fs.fstatSync(descriptor);
+    if (
+      !isPlainReportFile(opened) ||
+      opened.dev !== before.dev ||
+      opened.ino !== before.ino
+    ) {
+      throw unsafeReportFile();
+    }
+    const content = fs.readFileSync(descriptor, 'utf8');
+    const afterDescriptor = fs.fstatSync(descriptor);
+    const afterPath = fs.lstatSync(reportPath, { throwIfNoEntry: false });
+    if (
+      !isPlainReportFile(afterDescriptor) ||
+      !afterPath ||
+      !isPlainReportFile(afterPath) ||
+      afterDescriptor.dev !== opened.dev ||
+      afterDescriptor.ino !== opened.ino ||
+      afterDescriptor.size !== opened.size ||
+      afterPath.dev !== opened.dev ||
+      afterPath.ino !== opened.ino
+    ) {
+      throw unsafeReportFile();
+    }
+    return content;
+  } catch (error) {
+    if (error instanceof WorkflowError) {
+      throw error;
+    }
+    throw invalidReport('REPORT_UNREADABLE', 'Workflow report is unavailable.');
+  } finally {
+    if (descriptor !== undefined) {
+      fs.closeSync(descriptor);
+    }
+  }
+}
+
+function isPlainReportFile(stats: fs.Stats): boolean {
+  return (
+    stats.isFile() &&
+    !stats.isSymbolicLink() &&
+    stats.nlink === 1 &&
+    (stats.mode & 0o777) === 0o600
+  );
+}
+
+function unsafeReportFile(): WorkflowError {
+  return invalidReport(
+    'REPORT_FILE_UNSAFE',
+    'Workflow report path is not a private plain file.',
+  );
 }
 
 function isDigest(value: unknown): value is string {

@@ -312,9 +312,15 @@ function validateRebuiltSpecs(
     expectedType: 'spec',
   });
   if (executed.status !== 0 || !validation.valid) {
+    // The rejected items name the requirement and scenario that failed. Losing
+    // them leaves a maintainer with a verdict and no repair instructions.
+    const rejected = validation.items
+      .filter(({ valid }) => !valid)
+      .map(({ id, issues }) => ({ spec: id, issues }));
     throw archiveError(
       'ARCHIVE_REBUILT_SPECS_INVALID',
       'Strict validation rejected rebuilt base specs.',
+      withinDiagnosticBudget(rejected) ? { rejectedSpecs: rejected } : {},
     );
   }
 }
@@ -475,16 +481,46 @@ function listTreeFiles(
     .sort();
 }
 
+const MAX_DIAGNOSTIC_BYTES = 8_192;
+
+/**
+ * Projects a failure cause into the bounded payload the archive error carries.
+ * The archive wrapper used to keep only the cause's code, which discarded the
+ * named requirements and scenarios that say what to repair. Everything here is
+ * already schema-validated before it reaches an error, but size is bounded
+ * again because diagnostics travel into logs and reports.
+ */
+export function boundedArchiveCauseDiagnostic(
+  error: unknown,
+): Record<string, unknown> {
+  if (!(error instanceof WorkflowError)) return {};
+  const diagnostic: Record<string, unknown> = { causeCode: error.code };
+  if (withinDiagnosticBudget(error.message)) {
+    diagnostic.causeMessage = error.message;
+  }
+  const details = error.details;
+  if (details !== undefined && withinDiagnosticBudget(details)) {
+    diagnostic.causeDetails = details;
+  }
+  return diagnostic;
+}
+
+function withinDiagnosticBudget(value: unknown): boolean {
+  try {
+    return (
+      Buffer.byteLength(JSON.stringify(value) ?? '') <= MAX_DIAGNOSTIC_BYTES
+    );
+  } catch {
+    return false;
+  }
+}
+
 function archiveFailure(error: unknown) {
   return workflowError(
     'OPENSPEC_ARCHIVE_FAILED',
     'Pinned OpenSpec archive execution failed inside the temporary worktree.',
     error instanceof WorkflowError ? error.exitCode : ExitCode.verification,
-    {
-      details: {
-        causeCode: error instanceof WorkflowError ? error.code : undefined,
-      },
-    },
+    { details: boundedArchiveCauseDiagnostic(error) },
   );
 }
 

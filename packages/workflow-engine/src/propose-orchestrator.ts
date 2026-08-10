@@ -42,7 +42,32 @@ import {
   type EvidenceNode,
 } from './evidence-node.ts';
 import { ExitCode, WorkflowError, workflowError } from './errors.ts';
+import {
+  createReplacementAttempt,
+  providerExecutionEnvironmentDigest,
+  providerExecutionPolicySnapshot,
+} from './execution-core.ts';
+import {
+  loadProviderExecutionRepairContext,
+  preflightProviderRepairRetry,
+} from './provider-execution-governance.ts';
 import { protectedBranchRef, runGit } from './git.ts';
+import {
+  expandClassDispositions,
+  parseClassDisposition,
+} from './class-disposition.ts';
+import {
+  planClassSampleAudits,
+  resolveSampleAudits,
+} from './class-sample-audit.ts';
+import { deriveDeclaredPathSymbols } from './declared-path-symbols.ts';
+import { pruneFloorToLimit } from './floor-overflow-pruning.ts';
+import { parsePathRoleRegistry } from './path-role-registry.ts';
+import {
+  applyLedgerToFullBlobManifest,
+  recordReuseCoverage,
+  type ReuseCoverageRecord,
+} from './semantic-manifest-reuse.ts';
 import {
   deriveEngineFloor,
   derivePinnedDiffPathFacts,
@@ -52,6 +77,7 @@ import {
 import {
   createInvestigationCoverageNode,
   createInvestigationDispositionNodes,
+  deriveClassGroupsWithContext,
   deriveInvestigationGroups,
   readInvestigationGroupNode,
   type InvestigationDispositionInput,
@@ -84,11 +110,13 @@ import {
   type InvestigationCheckpointEnvelope,
   type InvestigationSession,
   type StoredInvestigationCheckpoint,
+  type GroupDispositionsPayload,
 } from './investigation-session-store.ts';
 import {
   normalizeInvestigationTerm,
   previewInvestigationTermUnion,
   type InvestigationTermContribution,
+  type InvestigationTermKind,
   type InvestigationTermRawCounts,
   type PreviewInvestigationTerm,
 } from './investigation-terms.ts';
@@ -135,6 +163,19 @@ import {
   normalizeExactRepositoryPath,
   normalizePolicyPath,
 } from './paths.ts';
+import {
+  assertPlanningTaskHistory,
+  readFileAtCommit,
+} from './planning-contract.ts';
+import {
+  assertActiveTaskMandateBindingUnderLifecycleLock,
+  authorizeTaskMandateOperation,
+  authorizeTaskMandateProviderReservationUnderLifecycleLock,
+  recordTaskMandateProviderInvocationUnderLifecycleLock,
+  withActiveTaskMandateBinding,
+  type TaskMandateBinding,
+  type TaskMandateOptions,
+} from './task-mandate.ts';
 import {
   type HeldChangeTransitionAuthority,
   withInvestigationTransitionAuthority,
@@ -183,7 +224,10 @@ import {
   BLIND_SURVEY_OUTPUT_SCHEMA,
   blindSurveyIntentDigest,
   blindSurveyManifestDigest,
+  createProviderExecutionPolicySnapshot,
   createProviderInvocation,
+  ensureProviderExecutionPolicySnapshot,
+  ensureProviderExecutionPolicySnapshotFromSnapshot,
   providerInvocationExists,
   providerInvocationManifestDigest,
   readBlindSurveyManifest,
@@ -192,10 +236,19 @@ import {
   readProviderInvocationManifest,
   readProviderInvocationRequest,
   readProviderRetryReservation,
+  storeProviderExecutionPolicySnapshot,
+  validateProviderExecutionPolicySnapshot,
   type BlindSurveyManifest,
   type NormalizedChangeIntent,
   type PlanReviewManifest,
+  type ProviderRetryDecisionBinding,
+  type ProviderExecutionPolicySnapshotCurrent,
 } from './provider-invocation-store.ts';
+import {
+  assertProviderExecutionGrantAuthorization,
+  authorizeAutomaticProviderRetry,
+  type ProviderExecutionGrantAuthorization,
+} from './provider-retry-decision.ts';
 import {
   admitRoleResult,
   authorizeGrantedOrdinaryRole,
@@ -239,6 +292,8 @@ export type ProposeOptions = {
   migrateLegacy?: boolean;
   providerDriver?: ProposeProviderDriver;
   providerDispatcher?: ProposeProviderDispatcher;
+  taskMandateId?: string;
+  taskMandateValidation?: TaskMandateOptions;
   collaborationGrant?: {
     grantId: string;
     now?: Date;
@@ -258,6 +313,16 @@ export type ProposeResumeOptions = {
     now?: Date;
     verifier?: MaintainerSignerProvider;
   };
+  executionGrantAuthorization?: ProviderExecutionGrantAuthorization & {
+    replacementRequest: ProviderInvocationRequest;
+  };
+  /**
+   * Test-only crash injection: invoked immediately after a PlanReview retry
+   * publishes its replacement reservation and before the invocation record is
+   * created, which is the exact window the WAL republication must be able to
+   * traverse.
+   */
+  simulateCrashAfterPlanReviewReplacementReservation?: () => void;
 };
 
 export type PlanReviewProgressEnvelope = {
@@ -424,6 +489,19 @@ export type ProposeGroupWork = {
   termId: string;
   paths: string[];
   hitIds: string[];
+  /**
+   * What each hit looks like where it landed. An author writing a class
+   * predicate is claiming something about this text, so withholding it would
+   * leave them guessing at the evidence their claim is checked against.
+   */
+  hits: Array<{
+    path: string;
+    surface: 'path' | 'content';
+    window: string | null;
+    windowTruncated: boolean;
+    matchOffset: number;
+    matchLength: number;
+  }>;
 };
 
 export type ProposeFullBlobWork = {
@@ -489,6 +567,31 @@ export type ProposeOutput = {
   materializedArtifacts: Record<string, string> | null;
   planReview: ProposePlanReviewStatus | null;
   planningTransition: PlanningTransitionResult | null;
+  /**
+   * What the semantic ledger carried for this propose, and what a reviewer is
+   * owed as a result. Reported rather than enforced: the review policy decides
+   * nothing from it yet, but a saving nobody can see is a saving nobody can
+   * check, and this is the surface that makes it visible.
+   */
+  semanticReuse: ReuseCoverageRecord | null;
+  /**
+   * The members of each declared class that must be reviewed by hand before
+   * the plan may commit. An author cannot answer a sample they cannot see, and
+   * the draw is fixed before the classes exist, so showing it gives nothing
+   * away.
+   */
+  classSampleAudits: Array<{
+    classId: string;
+    memberCount: number;
+    sampled: string[];
+    answered: string[];
+  }>;
+  /**
+   * Floor terms the engine had to drop to stay within what a scan may carry,
+   * named rather than counted. A floor that had to be cut is exactly the
+   * situation a person should be told about, so this is never silent.
+   */
+  floorTrimming: { dropped: string[]; escalated: boolean };
 };
 
 export type OrdinaryProposeOutput = Omit<ProposeOutput, 'investigation'> & {
@@ -503,6 +606,7 @@ type RebuiltInvestigation = {
   session: InvestigationSession;
   intent: NormalizedChangeIntent;
   floor: ReturnType<typeof deriveEngineFloor>;
+  floorTrimming: { dropped: string[]; escalated: boolean };
   termSources: InvestigationTermRawCounts;
   authorizationNode: EvidenceNode;
   legacyMigration: LegacyPlanMigrationSubject | null;
@@ -525,6 +629,11 @@ type RebuiltInvestigation = {
   dispositionNodes: EvidenceNode[];
   coverageNode: EvidenceNode | null;
   fullBlobManifest: InvestigationFullBlobManifestEntry[];
+  /**
+   * What the ledger carried and why. Present so the reduced WHY manifest is
+   * inspectable rather than merely smaller.
+   */
+  reuseCoverage: ReuseCoverageRecord;
   whyNodes: EvidenceNode[];
 };
 
@@ -655,6 +764,9 @@ function collaborationGrantRequiredOutput(input: {
     materializedArtifacts: null,
     planReview: null,
     planningTransition: null,
+    semanticReuse: null,
+    classSampleAudits: [],
+    floorTrimming: { dropped: [], escalated: false },
   };
 }
 
@@ -837,8 +949,23 @@ export function startPropose(
       materializedArtifacts: null,
       planReview: null,
       planningTransition: null,
+      semanticReuse: null,
+      classSampleAudits: [],
+      floorTrimming: { dropped: [], escalated: false },
     };
   }
+
+  const mandateAuthorization = options.taskMandateId
+    ? authorizeTaskMandateOperation(
+        cwd,
+        options.taskMandateId,
+        { kind: 'candidate-or-design-artifact' },
+        {
+          ...options.taskMandateValidation,
+          changeId,
+        },
+      )
+    : null;
 
   if (isInvestigationExemptionRequest(startInput)) {
     if (options.migrateLegacy) {
@@ -848,7 +975,13 @@ export function startPropose(
         ExitCode.guard,
       );
     }
-    return startExemptionPropose(cwd, changeId, startInput, actorResolution);
+    return startExemptionPropose(
+      cwd,
+      changeId,
+      startInput,
+      actorResolution,
+      mandateAuthorization?.binding,
+    );
   }
 
   const context = loadInvestigationRuntimeContext(cwd);
@@ -1197,6 +1330,9 @@ export function startPropose(
             changeId,
             blindManifest: manifest,
             blindRequest: request,
+            ...(mandateAuthorization
+              ? { mandateBinding: mandateAuthorization.binding }
+              : {}),
           },
           lockedContext,
           assertOwned,
@@ -1210,15 +1346,21 @@ export function startPropose(
     durableRequest,
     durableAuthorization,
   } = status;
-  if (durableInvocation.state === 'prepared') {
-    if (options.providerDriver) {
-      options.providerDriver({
-        paths: context.runtime,
-        request: durableRequest,
-      });
-    } else if (options.providerDispatcher) {
-      options.providerDispatcher(cwd, durableRequest.invocationId);
-    }
+  if (
+    durableInvocation.state === 'prepared' &&
+    (options.providerDriver || options.providerDispatcher)
+  ) {
+    dispatchMandatedProviderInvocation(
+      cwd,
+      durableRequest.invocationId,
+      (runtime, request) => {
+        if (options.providerDriver) {
+          options.providerDriver({ paths: runtime, request });
+        } else if (options.providerDispatcher) {
+          options.providerDispatcher(cwd, request.invocationId);
+        }
+      },
+    );
   }
 
   return renderProposeOutputWithPlanningAuthority(
@@ -1242,6 +1384,7 @@ function startExemptionPropose(
     ReturnType<typeof resolveActorIdentity>,
     { outcome: 'resolved' }
   >,
+  mandateBinding?: TaskMandateBinding,
 ): ProposeOutput {
   const context = loadInvestigationRuntimeContext(cwd);
   return withInvestigationTransitionAuthority(
@@ -1251,6 +1394,13 @@ function startExemptionPropose(
       assertOwned();
       const lockedContext = loadInvestigationRuntimeContext(cwd);
       assertProposeStartContextStable(context, lockedContext);
+      if (mandateBinding) {
+        assertActiveTaskMandateBindingUnderLifecycleLock(
+          cwd,
+          mandateBinding,
+          assertOwned,
+        );
+      }
       const ordinary = readCurrentInvestigationRef(
         lockedContext.runtime,
         changeId,
@@ -1313,6 +1463,7 @@ function startExemptionPropose(
       });
       const session = createProposeExemptionSession(lockedContext.runtime, {
         changeId,
+        ...(mandateBinding ? { mandateBinding } : {}),
         repositoryRoot: lockedContext.git.repositoryRealPath,
         gitCommonDirectory: lockedContext.git.gitCommonDirectory,
         branch: lockedContext.git.branch,
@@ -1374,6 +1525,9 @@ function exemptionAwaitingPlanningOutput(
     materializedArtifacts: null,
     planReview: null,
     planningTransition: null,
+    semanticReuse: null,
+    classSampleAudits: [],
+    floorTrimming: { dropped: [], escalated: false },
   };
 }
 
@@ -1673,7 +1827,14 @@ export function resumePropose(
     checkpoint = effectiveCheckpoint;
     createInvestigationDispositionNodes({
       groupNodes: rebuilt.groupNodes,
-      dispositions: effectiveCheckpoint.payload.dispositions,
+      dispositions: expandSubmittedDispositions(
+        loadInvestigationRuntimeContext(cwd).git.repositoryRoot,
+        {
+          scanNodes: rebuilt.scanNodes,
+          groupNodes: rebuilt.groupNodes,
+          payload: effectiveCheckpoint.payload,
+        },
+      ),
     });
   } else if (checkpoint.kind === 'why-answers') {
     const rebuilt = rebuildInvestigation(
@@ -1963,6 +2124,85 @@ export function createPlanReviewDispositionsEnvelope(
   };
 }
 
+/**
+ * Traverse the PlanReview replacement crash window on behalf of the WAL: the
+ * replacement reservation was published (the evidence ref moved) but the
+ * process died before the invocation record existed, so the full status
+ * projection refuses to render and the ordinary retry surface cannot rebuild
+ * an envelope. The replacement transaction holds the exact request this
+ * reservation must match; when it does, the interrupted tail — mandate
+ * authorization under the already-consumed grant, then invocation creation
+ * from the failed attempt's immutable snapshot — runs to completion.
+ * Anything that does not match this exact window is left untouched.
+ */
+export function completeInterruptedPlanReviewReplacement(
+  cwd: string,
+  input: {
+    investigationId: string;
+    changeId: string;
+    replacementRequest: ProviderInvocationRequest;
+    failedInvocationId: string;
+    executionGrantId: string;
+  },
+): { published: boolean } {
+  const initialContext = loadInvestigationRuntimeContext(cwd);
+  return withInvestigationTransitionAuthority(
+    initialContext.lifecycleRuntime,
+    input.changeId,
+    (assertOwned) => {
+      assertOwned();
+      const status = getProposeLifecycleStatus(cwd, input.investigationId);
+      const context = loadInvestigationRuntimeContext(cwd);
+      const reservation = readPlanReviewReservation(context.runtime, status);
+      if (
+        reservation === null ||
+        reservation.retry === null ||
+        canonicalJson(reservation.request) !==
+          canonicalJson(input.replacementRequest)
+      ) {
+        return { published: false };
+      }
+      if (
+        providerInvocationExists(
+          context.runtime,
+          reservation.request.invocationId,
+        )
+      ) {
+        return { published: true };
+      }
+      const mandateBinding = durablePlanReviewMandateBinding(context, status);
+      if (mandateBinding) {
+        assertActiveTaskMandateBindingUnderLifecycleLock(
+          cwd,
+          mandateBinding,
+          assertOwned,
+        );
+      }
+      authorizePlanReviewReservationMandate(
+        cwd,
+        mandateBinding,
+        reservation,
+        assertOwned,
+        { grantId: input.executionGrantId },
+      );
+      ensurePlanReviewInvocation(
+        context.git.repositoryRoot,
+        context.runtime,
+        status,
+        reservation,
+        mandateBinding,
+        readPriorPlanReviewSnapshotFiles(
+          context.runtime,
+          reservation.manifest,
+          input.failedInvocationId,
+        ),
+      );
+      assertOwned();
+      return { published: true };
+    },
+  );
+}
+
 export function startProposeFromFile(
   cwd: string,
   changeId: string,
@@ -1981,6 +2221,110 @@ export function resumeProposeFromFile(
   return resumePropose(cwd, changeId, readCallerJson(cwd, inputPath), options);
 }
 
+function dispatchMandatedProviderInvocation(
+  cwd: string,
+  invocationId: string,
+  dispatch: (
+    runtime: ReturnType<typeof loadInvestigationRuntimeContext>['runtime'],
+    request: ProviderInvocationRequest,
+  ) => void,
+): void {
+  const initialContext = loadInvestigationRuntimeContext(cwd);
+  const initial = readProviderInvocation(initialContext.runtime, invocationId);
+  const ownerBinding = durableProviderOwnerMandateBinding(
+    initialContext,
+    initial.investigationId,
+    initial.changeId,
+  );
+  if (
+    canonicalJson(initial.mandateBinding ?? null) !==
+    canonicalJson(ownerBinding ?? null)
+  ) {
+    throw workflowError(
+      'TASK_MANDATE_BINDING_STALE',
+      'Provider invocation does not match its durable owner mandate binding.',
+      ExitCode.staleState,
+    );
+  }
+  if (ownerBinding === undefined) {
+    dispatch(
+      initialContext.runtime,
+      readProviderInvocationRequest(initialContext.runtime, invocationId),
+    );
+    return;
+  }
+  withActiveTaskMandateBinding(
+    cwd,
+    ownerBinding.mandateTaskId,
+    {},
+    (activeBinding, assertOwned) => {
+      if (canonicalJson(activeBinding) !== canonicalJson(ownerBinding)) {
+        throw workflowError(
+          'TASK_MANDATE_BINDING_STALE',
+          'Provider dispatch no longer matches the active Task Mandate.',
+          ExitCode.staleState,
+        );
+      }
+      const context = loadInvestigationRuntimeContext(cwd);
+      const invocation = readProviderInvocation(context.runtime, invocationId);
+      const durableOwnerBinding = durableProviderOwnerMandateBinding(
+        context,
+        invocation.investigationId,
+        invocation.changeId,
+      );
+      if (
+        invocation.state !== 'prepared' ||
+        canonicalJson(invocation.mandateBinding ?? null) !==
+          canonicalJson(activeBinding) ||
+        canonicalJson(durableOwnerBinding ?? null) !==
+          canonicalJson(activeBinding)
+      ) {
+        throw workflowError(
+          'TASK_MANDATE_BINDING_STALE',
+          'Provider dispatch lost its exact durable Task Mandate binding.',
+          ExitCode.staleState,
+        );
+      }
+      const request = readProviderInvocationRequest(
+        context.runtime,
+        invocationId,
+      );
+      recordTaskMandateProviderInvocationUnderLifecycleLock(
+        cwd,
+        activeBinding,
+        {
+          providerId: request.providerId,
+          invocationId,
+          requestDigest: request.requestDigest,
+          occurredAt: invocation.createdAt,
+        },
+        assertOwned,
+      );
+      assertOwned();
+      dispatch(context.runtime, request);
+      assertOwned();
+    },
+  );
+}
+
+function durableProviderOwnerMandateBinding(
+  context: ReturnType<typeof loadInvestigationRuntimeContext>,
+  investigationId: string,
+  changeId: string,
+): TaskMandateBinding | undefined {
+  const owner = isProposeExemptionInvestigationId(investigationId)
+    ? readProposeExemptionSession(context.runtime, investigationId)
+    : readInvestigationSession(context.runtime, investigationId);
+  if (owner.changeId !== changeId) {
+    throw workflowError(
+      'TASK_MANDATE_BINDING_STALE',
+      'Provider invocation belongs to another durable change owner.',
+      ExitCode.staleState,
+    );
+  }
+  return owner.mandateBinding;
+}
+
 function dispatchPreparedInvocation(
   cwd: string,
   status: InvestigationStatus,
@@ -1989,7 +2333,11 @@ function dispatchPreparedInvocation(
   if (!dispatcher || status.provider.state !== 'prepared') {
     return;
   }
-  dispatcher(cwd, status.providerInvocationId);
+  dispatchMandatedProviderInvocation(
+    cwd,
+    status.providerInvocationId,
+    (_runtime, request) => dispatcher(cwd, request.invocationId),
+  );
 }
 
 function resumeProviderRetry(
@@ -2008,6 +2356,9 @@ function resumeProviderRetry(
     context.runtime,
     failed.invocationId,
   );
+  const currentExecutionPolicy = loadAiAdapterPolicy(
+    context.git.repositoryRoot,
+  );
   assertProviderRetryFailureBinding(input, failed, failedRequest);
 
   let retried: InvestigationStatus;
@@ -2018,25 +2369,32 @@ function resumeProviderRetry(
     try {
       retried = retryInvestigationProvider(cwd, current.investigationId, {
         expectedRevision: input.expectedRevision,
-        replacementRequest: createProviderInvocationRequest({
-          invocationId: createRuntimeId('invocation'),
-          nonce: `provider-retry-${crypto.randomUUID()}`,
-          purpose: failedRequest.purpose,
-          providerId: failedRequest.providerId,
-          roleAssignment: failedRequest.roleAssignment,
-          capabilityProfile: failedRequest.capabilityProfile,
-          repositoryId: failedRequest.repositoryId,
-          baseCommit: failedRequest.baseCommit,
-          baseTree: failedRequest.baseTree,
-          targetDigest: failedRequest.targetDigest,
-          inputManifestDigest: failedRequest.inputManifestDigest,
-          authorizationNodeId: failedRequest.authorizationNodeId,
-          writeAllowedPaths: [],
-          outputSchema: failedRequest.outputSchema,
-          evaluatorVersion: failedRequest.evaluatorVersion,
-          policyDigest: failedRequest.policyDigest,
-          limits: failedRequest.limits,
-        }),
+        replacementRequest:
+          options.executionGrantAuthorization?.replacementRequest ??
+          createProviderInvocationRequest({
+            invocationId: createRuntimeId('invocation'),
+            nonce: `provider-retry-${crypto.randomUUID()}`,
+            purpose: failedRequest.purpose,
+            providerId: failedRequest.providerId,
+            roleAssignment: failedRequest.roleAssignment,
+            capabilityProfile: failedRequest.capabilityProfile,
+            repositoryId: failedRequest.repositoryId,
+            baseCommit: failedRequest.baseCommit,
+            baseTree: failedRequest.baseTree,
+            targetDigest: failedRequest.targetDigest,
+            inputManifestDigest: failedRequest.inputManifestDigest,
+            authorizationNodeId: failedRequest.authorizationNodeId,
+            writeAllowedPaths: [],
+            outputSchema: failedRequest.outputSchema,
+            evaluatorVersion: failedRequest.evaluatorVersion,
+            policyDigest: currentExecutionPolicy.digest,
+            limits: {
+              timeoutMs: currentExecutionPolicy.policy.limits.timeoutMs,
+              aggregateOutputBytes:
+                currentExecutionPolicy.policy.limits.aggregateOutputBytes,
+            },
+          }),
+        executionGrantAuthorization: options.executionGrantAuthorization,
       });
     } catch (error) {
       if (
@@ -2109,21 +2467,23 @@ function dispatchPreparedRetryInvocation(
   status: InvestigationStatus,
   options: ProposeResumeOptions,
 ): void {
-  if (status.provider.state !== 'prepared') {
+  if (
+    status.provider.state !== 'prepared' ||
+    (!options.providerDriver && !options.providerDispatcher)
+  ) {
     return;
   }
-  if (options.providerDriver) {
-    const context = loadInvestigationRuntimeContext(cwd);
-    options.providerDriver({
-      paths: context.runtime,
-      request: readProviderInvocationRequest(
-        context.runtime,
-        status.providerInvocationId,
-      ),
-    });
-  } else if (options.providerDispatcher) {
-    options.providerDispatcher(cwd, status.providerInvocationId);
-  }
+  dispatchMandatedProviderInvocation(
+    cwd,
+    status.providerInvocationId,
+    (runtime, request) => {
+      if (options.providerDriver) {
+        options.providerDriver({ paths: runtime, request });
+      } else if (options.providerDispatcher) {
+        options.providerDispatcher(cwd, request.invocationId);
+      }
+    },
+  );
 }
 
 function assertProviderRetrySessionBinding(
@@ -2189,13 +2549,32 @@ function resumePlanReviewRetry(
       if (status.state === 'investigation-exempt') {
         assertCurrentExemptionContext(context, status);
       }
+      const mandateBinding = durablePlanReviewMandateBinding(context, status);
+      if (mandateBinding) {
+        assertActiveTaskMandateBindingUnderLifecycleLock(
+          cwd,
+          mandateBinding,
+          assertOwned,
+        );
+      }
       if (
         readTrackedPlanReview(context.git.repositoryRoot, status.changeId) !==
         null
       ) {
         throw planReviewRetryInputStale();
       }
-      const reservation = readPlanReviewReservation(context.runtime, status);
+      let reservation: PlanReviewReservation | null;
+      try {
+        reservation = readPlanReviewReservation(context.runtime, status);
+      } catch (error) {
+        if (
+          error instanceof WorkflowError &&
+          error.code === 'PLAN_REVIEW_REQUEST_STALE'
+        ) {
+          throw planReviewRetryInputStale();
+        }
+        throw error;
+      }
       if (reservation === null) {
         throw planReviewRetryInputStale();
       }
@@ -2203,11 +2582,21 @@ function resumePlanReviewRetry(
         reservation.reservationNode.nodeId !== input.expectedReservationNodeId
       ) {
         assertExactPlanReviewRetryReplay(context.runtime, reservation, input);
+        authorizePlanReviewReservationMandate(
+          cwd,
+          mandateBinding,
+          reservation,
+          assertOwned,
+          options.executionGrantAuthorization === undefined
+            ? undefined
+            : { grantId: options.executionGrantAuthorization.grantId },
+        );
         ensurePlanReviewInvocation(
           context.git.repositoryRoot,
           context.runtime,
           status,
           reservation,
+          mandateBinding,
         );
         return reservation;
       }
@@ -2220,21 +2609,46 @@ function resumePlanReviewRetry(
         context.runtime,
         failed.invocationId,
       );
-      const replacementRequest = createPlanReviewReplacementRequest(
-        input,
+      const currentExecutionPolicy = loadAiAdapterPolicy(
+        context.git.repositoryRoot,
+      );
+      const replacementRequest =
+        options.executionGrantAuthorization?.replacementRequest ??
+        createPlanReviewReplacementRequest(input, failedRequest, {
+          policyDigest: currentExecutionPolicy.digest,
+          limits: {
+            timeoutMs: currentExecutionPolicy.policy.limits.timeoutMs,
+            aggregateOutputBytes:
+              currentExecutionPolicy.policy.limits.aggregateOutputBytes,
+          },
+        });
+      const retryAuthorization = assertPlanReviewRetryExecutionDecision(
+        context.runtime,
+        failed,
         failedRequest,
+        replacementRequest,
+        currentExecutionPolicy,
+        options.executionGrantAuthorization,
       );
       const replacementSnapshotFiles = readPriorPlanReviewSnapshotFiles(
         context.runtime,
         reservation.manifest,
         failed.invocationId,
       );
+      const replacementExecutionPolicySnapshot =
+        createProviderExecutionPolicySnapshot(
+          replacementRequest,
+          currentExecutionPolicy,
+          options.executionGrantAuthorization,
+        );
       const replacementNode = createPlanReviewReplacementReservationNode(
         reservation,
         reservation.reservationNode,
         input,
         replacementRequest,
         failed.attempt + 1,
+        providerRetryDecisionBinding(retryAuthorization),
+        replacementExecutionPolicySnapshot,
       );
       writeEvidenceNode(context.runtime, replacementNode);
       compareAndSwapEvidenceRef(context.runtime, {
@@ -2251,11 +2665,22 @@ function resumePlanReviewRetry(
       if (replacement === null) {
         throw planReviewRetryInputStale();
       }
+      options.simulateCrashAfterPlanReviewReplacementReservation?.();
+      authorizePlanReviewReservationMandate(
+        cwd,
+        mandateBinding,
+        replacement,
+        assertOwned,
+        options.executionGrantAuthorization === undefined
+          ? undefined
+          : { grantId: options.executionGrantAuthorization.grantId },
+      );
       ensurePlanReviewInvocation(
         context.git.repositoryRoot,
         context.runtime,
         status,
         replacement,
+        mandateBinding,
         replacementSnapshotFiles,
       );
       assertOwned();
@@ -2340,6 +2765,7 @@ function planReviewRetryBindingDigest(input: PlanReviewRetryEnvelope): string {
 function createPlanReviewReplacementRequest(
   input: PlanReviewRetryEnvelope,
   failedRequest: ProviderInvocationRequest,
+  executionPolicy: Pick<ProviderInvocationRequest, 'policyDigest' | 'limits'>,
 ): ProviderInvocationRequest {
   const bindingDigest = planReviewRetryBindingDigest(input);
   return createProviderInvocationRequest({
@@ -2358,9 +2784,136 @@ function createPlanReviewReplacementRequest(
     writeAllowedPaths: [...failedRequest.writeAllowedPaths],
     outputSchema: failedRequest.outputSchema,
     evaluatorVersion: failedRequest.evaluatorVersion,
-    policyDigest: failedRequest.policyDigest,
-    limits: failedRequest.limits,
+    policyDigest: executionPolicy.policyDigest,
+    limits: executionPolicy.limits,
   });
+}
+
+function assertPlanReviewRetryExecutionDecision(
+  paths: ReturnType<typeof loadInvestigationRuntimeContext>['runtime'],
+  failed: ReturnType<typeof readProviderInvocation>,
+  failedRequest: ProviderInvocationRequest,
+  replacementRequest: ProviderInvocationRequest,
+  replacementExecutionPolicy: ReturnType<typeof loadAiAdapterPolicy>,
+  executionGrantAuthorization?: ProviderExecutionGrantAuthorization,
+): ReturnType<typeof authorizeAutomaticProviderRetry> {
+  const authorization = authorizeAutomaticProviderRetry(paths, {
+    failed,
+    failedRequest,
+    replacementRequest,
+    replacementExecutionPolicy,
+    boundedGrantRequest: executionGrantAuthorization?.grantRequest,
+    executionGrantAuthorization,
+  });
+  const prior = authorization;
+  const replacementPolicy = providerExecutionPolicySnapshot(replacementRequest);
+  const now = authorization.evaluatedAt;
+  const decision = authorization.decision;
+  const replacementAttemptId = `attempt-legacy-${replacementRequest.invocationId}`;
+  if (executionGrantAuthorization !== undefined) {
+    assertProviderExecutionGrantAuthorization(
+      authorization,
+      executionGrantAuthorization,
+      replacementAttemptId,
+    );
+  } else if (!decision.retryable || !decision.automatic) {
+    throw workflowError(
+      decision.requiredGrant === undefined
+        ? 'PLAN_REVIEW_RETRY_DECISION_DENIED'
+        : 'PLAN_REVIEW_RETRY_GRANT_REQUIRED',
+      'The execution RetryDecision does not authorize this PlanReview replacement Attempt.',
+      ExitCode.guard,
+      {
+        details: {
+          reasonCode: decision.reasonCode,
+          attemptCount: prior.job.attemptCount,
+          providerAttemptCount: authorization.providerAttemptCount,
+          nextRuntimeMs: authorization.nextReservation.runtimeMs,
+          nextProviderCostMicros:
+            authorization.nextReservation.providerCostMicros,
+          nextProviderTokens: authorization.nextReservation.providerTokens,
+          retryPolicy: prior.job.retryPolicy,
+          evaluatedAt: now,
+        },
+      },
+    );
+  }
+  if (
+    executionGrantAuthorization === undefined &&
+    (decision.retryMode === 'new-context' ||
+      decision.retryMode === 'none' ||
+      decision.retryMode === 'strategy-change')
+  ) {
+    throw workflowError(
+      'PLAN_REVIEW_RETRY_STRATEGY_CHANGE_REQUIRED',
+      'PlanReview retry requires a separately declared strategy change.',
+      ExitCode.guard,
+      { details: { reasonCode: decision.reasonCode } },
+    );
+  }
+  const policyChanged =
+    canonicalJson(prior.attempt.policySnapshot) !==
+    canonicalJson(replacementPolicy);
+  const retryMode: 'same-input' | 'execution-policy-change' | 'repair' =
+    executionGrantAuthorization === undefined
+      ? (decision.retryMode as
+          'same-input' | 'execution-policy-change' | 'repair')
+      : prior.attempt.failure?.retryClass === 'repairable'
+        ? 'repair'
+        : policyChanged
+          ? 'execution-policy-change'
+          : 'same-input';
+  if (retryMode === 'repair') {
+    preflightProviderRepairRetry(paths, {
+      history: authorization.sourceInvocationIds.map((invocationId) => ({
+        record: readProviderInvocation(paths, invocationId),
+        request: readProviderInvocationRequest(paths, invocationId),
+      })),
+      failedRecord: failed,
+      failedRequest,
+    });
+  }
+  const replacement = createReplacementAttempt({
+    workflow: prior.workflow,
+    job: prior.job,
+    previousAttempt: prior.attempt,
+    attemptId: replacementAttemptId,
+    retryMode,
+    currentExecutionPolicy: replacementPolicy,
+    repairContext:
+      retryMode === 'repair'
+        ? loadProviderExecutionRepairContext(paths, failed, failedRequest)
+        : undefined,
+    grantId: executionGrantAuthorization?.grantId,
+    environmentDigest: providerExecutionEnvironmentDigest(replacementRequest),
+    createdAt: now,
+  });
+  if (
+    replacement.job.jobId !== prior.job.jobId ||
+    replacement.job.contextDigest !== prior.job.contextDigest ||
+    replacement.attempt.attemptNumber !== failed.attempt + 1
+  ) {
+    throw workflowError(
+      'PLAN_REVIEW_RETRY_EXECUTION_LINEAGE_INVALID',
+      'PlanReview replacement changed stable semantic Job identity.',
+      ExitCode.staleState,
+    );
+  }
+  return authorization;
+}
+
+function providerRetryDecisionBinding(
+  authorization: ReturnType<typeof authorizeAutomaticProviderRetry>,
+): ProviderRetryDecisionBinding {
+  return {
+    schemaVersion: 1,
+    kind: 'provider-retry-decision-binding',
+    executionJobId: authorization.job.jobId,
+    executionRevision: authorization.executionRevision,
+    failedAttemptId: authorization.attempt.attemptId,
+    evidenceDigest: authorization.evidenceDigest,
+    evaluatedAt: authorization.evaluatedAt,
+  };
 }
 
 function createPlanReviewReplacementReservationNode(
@@ -2369,10 +2922,12 @@ function createPlanReviewReplacementReservationNode(
   input: PlanReviewRetryEnvelope,
   replacementRequest: ProviderInvocationRequest,
   attempt: number,
+  retryDecision: ProviderRetryDecisionBinding,
+  executionPolicySnapshot: ProviderExecutionPolicySnapshotCurrent,
 ): EvidenceNode {
   return createEvidenceNode({
     type: 'plan-review-request-reservation',
-    nodeSchema: 'workflow.plan-review-request-reservation.v2',
+    nodeSchema: 'workflow.plan-review-request-reservation.v3',
     evaluator: 'workflow-propose.v1',
     policyDigest: PROPOSE_POLICY_DIGEST,
     exactInputDigests: {
@@ -2382,6 +2937,8 @@ function createPlanReviewReplacementReservationNode(
       targetSnapshot: reservation.targetSnapshotNode.nodeId,
       previousRequest: previousReservationNode.nodeId,
       failure: input.failedInvocation.failureDigest,
+      retryDecision: retryDecision.evidenceDigest,
+      executionPolicySnapshot: sha256(canonicalJson(executionPolicySnapshot)),
     },
     semanticParentResultDigests: {
       authorization:
@@ -2393,7 +2950,7 @@ function createPlanReviewReplacementReservationNode(
         previousReservationNode.provenanceParentNodeIds.authorization,
       previousRequest: previousReservationNode.nodeId,
     },
-    outputSchema: 'workflow.plan-review-request-reservation-output.v2',
+    outputSchema: 'workflow.plan-review-request-reservation-output.v3',
     output: {
       investigationId: input.investigationId,
       changeId: input.changeId,
@@ -2410,6 +2967,8 @@ function createPlanReviewReplacementReservationNode(
         attempt,
         previousReservationNodeId: previousReservationNode.nodeId,
         failedInvocation: input.failedInvocation,
+        retryDecision,
+        executionPolicySnapshot,
       },
     },
     runtimeMetadata: {},
@@ -2421,6 +2980,17 @@ function assertExactPlanReviewRetryReplay(
   reservation: PlanReviewReservation,
   input: PlanReviewRetryEnvelope,
 ): void {
+  if (
+    reservation.retry === null ||
+    reservation.retry.retryDecision === null ||
+    reservation.retry.executionPolicySnapshot === null
+  ) {
+    throw workflowError(
+      'PLAN_REVIEW_RETRY_DECISION_EVIDENCE_REQUIRED',
+      'A historical PlanReview retry reservation without decision evidence cannot authorize provider work.',
+      ExitCode.guard,
+    );
+  }
   const failed = readProviderInvocation(
     paths,
     input.failedInvocation.invocationId,
@@ -2436,6 +3006,10 @@ function assertExactPlanReviewRetryReplay(
   const expectedRequest = createPlanReviewReplacementRequest(
     input,
     failedRequest,
+    {
+      policyDigest: reservation.request.policyDigest,
+      limits: reservation.request.limits,
+    },
   );
   const expectedReservationNode = createPlanReviewReplacementReservationNode(
     reservation,
@@ -2443,6 +3017,8 @@ function assertExactPlanReviewRetryReplay(
     input,
     expectedRequest,
     input.failedInvocation.attempt + 1,
+    reservation.retry.retryDecision,
+    reservation.retry.executionPolicySnapshot,
   );
   if (
     reservation.retry === null ||
@@ -2484,19 +3060,23 @@ function dispatchPreparedPlanReview(
   output: ProposeOutput,
   options: ProposeResumeOptions,
 ): void {
-  if (output.planReview?.state !== 'prepared') {
+  if (
+    output.planReview?.state !== 'prepared' ||
+    (!options.providerDriver && !options.providerDispatcher)
+  ) {
     return;
   }
-  const context = loadInvestigationRuntimeContext(cwd);
-  const request = readProviderInvocationRequest(
-    context.runtime,
+  dispatchMandatedProviderInvocation(
+    cwd,
     output.planReview.invocationId,
+    (runtime, request) => {
+      if (options.providerDriver) {
+        options.providerDriver({ paths: runtime, request });
+      } else if (options.providerDispatcher) {
+        options.providerDispatcher(cwd, request.invocationId);
+      }
+    },
   );
-  if (options.providerDriver) {
-    options.providerDriver({ paths: context.runtime, request });
-  } else if (options.providerDispatcher) {
-    options.providerDispatcher(cwd, request.invocationId);
-  }
 }
 
 function resumePlanReview(
@@ -2531,13 +3111,18 @@ function resumePlanReview(
     reservation.request.invocationId,
   );
   if (invocation.state === 'prepared') {
-    if (options.providerDriver) {
-      options.providerDriver({
-        paths: context.runtime,
-        request: reservation.request,
-      });
-    } else if (options.providerDispatcher) {
-      options.providerDispatcher(cwd, reservation.request.invocationId);
+    if (options.providerDriver || options.providerDispatcher) {
+      dispatchMandatedProviderInvocation(
+        cwd,
+        reservation.request.invocationId,
+        (runtime, request) => {
+          if (options.providerDriver) {
+            options.providerDriver({ paths: runtime, request });
+          } else if (options.providerDispatcher) {
+            options.providerDispatcher(cwd, request.invocationId);
+          }
+        },
+      );
     }
     invocation = readProviderInvocation(
       context.runtime,
@@ -3102,6 +3687,91 @@ function writeTrackedPlanReview(
   replaceTextAtomic(target, bytes, { allowCreate: true, defaultMode: 0o644 });
 }
 
+/**
+ * The seed the class sample is drawn from.
+ *
+ * It has to be fixed before the classes exist and not be chosen by the author,
+ * or an author could see which members would be examined while deciding how
+ * carefully to draw them. The investigation identity satisfies both: the engine
+ * mints it at the start, nobody selects it, and deriving from it keeps the
+ * draw replayable from durable state alone rather than from a stored secret.
+ */
+/** What each declared class still owes a hand reviewer, and what it has. */
+function classSampleAuditsFor(
+  rebuilt: RebuiltInvestigation,
+): ProposeOutput['classSampleAudits'] {
+  const declared = storedDispositionClasses(rebuilt);
+  if (declared.classes.length === 0) return [];
+  return planClassSampleAudits(
+    classSampleSeed(rebuilt.session.investigationId),
+    declared.classes.map(({ classId, members }) => ({ classId, members })),
+  ).map(({ classId, memberCount, sampled }) => ({
+    classId,
+    memberCount,
+    sampled: [...sampled],
+    answered: declared.audits
+      .filter((audit) => audit.classId === classId)
+      .map(({ groupId }) => groupId),
+  }));
+}
+
+/** What the stored dispositions checkpoint declared, if it declared anything. */
+function storedDispositionClasses(rebuilt: RebuiltInvestigation): {
+  classes: readonly { classId: string; members: readonly string[] }[];
+  audits: readonly { classId: string; groupId: string }[];
+} {
+  const stored = rebuilt.session.milestones.groupDispositions?.envelope;
+  if (stored === undefined || stored.kind !== 'group-dispositions') {
+    return { classes: [], audits: [] };
+  }
+  return {
+    classes: stored.payload.classes ?? [],
+    audits: stored.payload.sampleAudits ?? [],
+  };
+}
+
+function classSampleSeed(investigationId: string): string {
+  return crypto.createHash('sha256').update(investigationId).digest('hex');
+}
+
+/**
+ * Refuses to commit a plan whose class equivalence judgements have not been
+ * checked by hand.
+ *
+ * Every other guard on a class is mechanical, and none of them can tell whether
+ * the rationale an author wrote is true of what those hits do. That is what the
+ * sample is for, so an unfinished sample is an unfinished plan. A class the
+ * audit rejected is not folded at all: it owes an individual disposition per
+ * member, and the plan cannot commit until it has one.
+ */
+function assertClassSamplesAudited(
+  cwd: string,
+  status: ProposeLifecycleStatus,
+): void {
+  const session = readInvestigationSession(
+    loadInvestigationRuntimeContext(cwd).runtime,
+    status.investigationId,
+  );
+  const stored = session.milestones.groupDispositions?.envelope;
+  if (stored === undefined || stored.kind !== 'group-dispositions') return;
+  const classes = stored.payload.classes ?? [];
+  if (classes.length === 0) return;
+
+  const plan = planClassSampleAudits(
+    classSampleSeed(status.investigationId),
+    classes.map(({ classId, members }) => ({ classId, members })),
+  );
+  const resolution = resolveSampleAudits(plan, stored.payload.sampleAudits ?? []);
+  if (resolution.expandIndividually.length > 0) {
+    throw workflowError(
+      'CLASS_SAMPLE_AUDIT_REJECTED',
+      `The hand review rejected ${resolution.expandIndividually.length} class(es); those groups owe individual dispositions: ${resolution.expandIndividually.join(', ')}.`,
+      ExitCode.verification,
+      { details: { classIds: resolution.expandIndividually } },
+    );
+  }
+}
+
 function commitCompletedPlanningUnderAuthority(
   cwd: string,
   status: ProposeLifecycleStatus,
@@ -3118,6 +3788,10 @@ function commitCompletedPlanningUnderAuthority(
     const context = loadInvestigationRuntimeContext(cwd);
     assertCurrentExemptionContext(context, status);
     retireCurrentProposeExemptionSession(context.runtime, status, assertOwned);
+  }
+  if (status.state !== 'investigation-exempt') {
+    // An exemption has no groups, so no class and nothing to have sampled.
+    assertClassSamplesAudited(cwd, status);
   }
   const planningTransition = commitPlanningTransitionUnderAuthority(
     cwd,
@@ -3288,6 +3962,9 @@ function getProposeStatusInternal(
       materializedArtifacts: null,
       planReview: null,
       planningTransition: null,
+      semanticReuse: rebuilt.reuseCoverage,
+    classSampleAudits: classSampleAuditsFor(rebuilt),
+    floorTrimming: rebuilt.floorTrimming,
     };
   }
   return renderMaterializedProposeOutput(
@@ -3297,6 +3974,7 @@ function getProposeStatusInternal(
     createdDate,
     workFromRebuilt(rebuilt, []),
     materialized,
+    rebuilt.reuseCoverage,
   );
 }
 
@@ -3388,6 +4066,7 @@ function renderProposeOutput(
         createdDate,
         workFromRebuilt(rebuilt, receiptLookup.instructions),
         materialized,
+        rebuilt.reuseCoverage,
       );
     }
     const scaffold = preparePlanningScaffold(cwd, status, rebuilt, createdDate);
@@ -3405,6 +4084,9 @@ function renderProposeOutput(
       materializedArtifacts: null,
       planReview: null,
       planningTransition: null,
+      semanticReuse: rebuilt.reuseCoverage,
+    classSampleAudits: classSampleAuditsFor(rebuilt),
+    floorTrimming: rebuilt.floorTrimming,
     };
   }
 
@@ -3422,6 +4104,9 @@ function renderProposeOutput(
     materializedArtifacts: null,
     planReview: null,
     planningTransition: null,
+    semanticReuse: rebuilt.reuseCoverage,
+    classSampleAudits: classSampleAuditsFor(rebuilt),
+    floorTrimming: rebuilt.floorTrimming,
   };
 }
 
@@ -3432,6 +4117,12 @@ function renderMaterializedProposeOutput(
   createdDate: string,
   work: ProposeWork,
   materializedArtifacts: Record<string, string>,
+  semanticReuse: ReuseCoverageRecord | null = null,
+  classSampleAudits: ProposeOutput['classSampleAudits'] = [],
+  floorTrimming: ProposeOutput['floorTrimming'] = {
+    dropped: [],
+    escalated: false,
+  },
 ): ProposeOutput {
   const context = loadInvestigationRuntimeContext(cwd);
   const reservation = readPlanReviewReservation(context.runtime, status);
@@ -3473,6 +4164,9 @@ function renderMaterializedProposeOutput(
       materializedArtifacts,
       planReview: null,
       planningTransition: null,
+      semanticReuse,
+      classSampleAudits,
+      floorTrimming,
     };
   }
   if (
@@ -3543,6 +4237,9 @@ function renderMaterializedProposeOutput(
       materializedArtifacts,
       planReview,
       planningTransition: null,
+      semanticReuse,
+      classSampleAudits,
+      floorTrimming,
     };
   }
   if (trackedReview !== null) {
@@ -3562,6 +4259,9 @@ function renderMaterializedProposeOutput(
         materializedArtifacts,
         planReview,
         planningTransition: null,
+        semanticReuse: null,
+        classSampleAudits: [],
+        floorTrimming: { dropped: [], escalated: false },
       };
     }
   }
@@ -3582,6 +4282,9 @@ function renderMaterializedProposeOutput(
     materializedArtifacts,
     planReview,
     planningTransition: null,
+    semanticReuse: null,
+    classSampleAudits: [],
+    floorTrimming: { dropped: [], escalated: false },
   };
 }
 
@@ -3721,9 +4424,21 @@ function rebuildInvestigation(
     changedPaths,
     reviewedRelationships,
   );
-  const floor = deriveEngineFloor({
+  let floor = deriveEngineFloor({
     explicitPaths: intent.explicitPaths,
-    symbols: intent.explicitSymbols,
+    // The author's list and what those files actually publish. A declaration
+    // that names fewer symbols than its own exports would otherwise shrink the
+    // search the change is judged by.
+    symbols: [
+      ...new Set([
+        ...intent.explicitSymbols,
+        ...declaredPathSymbolsFromPinnedTree(
+          context.git.repositoryRoot,
+          session.baseline.tree,
+          intent.explicitPaths,
+        ),
+      ]),
+    ].sort(),
     configKeys: intent.explicitConfigKeys,
     transformations: intent.renamePairs.flatMap((pair, index) => [
       {
@@ -3736,6 +4451,7 @@ function rebuildInvestigation(
     changedPaths,
     reviewedCounterparts,
   });
+  const floorTrimming = { dropped: [] as string[], escalated: false };
   const emptyCounts: InvestigationTermRawCounts = {
     engine: floor.outcome === 'derived' ? floor.terms.length : 0,
     main: 0,
@@ -3753,6 +4469,7 @@ function rebuildInvestigation(
       emptyCounts,
       authorizationNode,
       authorization.legacyMigration,
+      floorTrimming,
     );
   }
   const snapshot = readPinnedTrackedTree({
@@ -3786,7 +4503,7 @@ function rebuildInvestigation(
       ExitCode.staleState,
     );
   }
-  const contributions: InvestigationTermContribution[] = [
+  let contributions: InvestigationTermContribution[] = [
     ...(floor.outcome === 'derived'
       ? [
           {
@@ -3825,14 +4542,44 @@ function rebuildInvestigation(
         : null,
     ),
   );
-  const preview = previewInvestigationTermUnion(contributions);
+  let preview = previewInvestigationTermUnion(contributions);
   if (preview.outcome !== 'ready') {
-    throw workflowError(
-      'INVESTIGATION_TERM_NARROWING_REQUIRED',
-      'The current term union exceeds the fixed investigation limits.',
-      ExitCode.guard,
-      { details: { violations: preview.violations } },
+    // The floor is the part of the search nobody may remove, so when the union
+    // is over the ceiling and the floor alone accounts for the overage, no
+    // author input can unjam the change. Cutting the floor is the exit, and it
+    // is not free: the concession order is fixed, every loss is named, and it
+    // always escalates.
+    const overage = preview.violations.find(
+      ({ code }) => code === 'EFFECTIVE_TERM_LIMIT_EXCEEDED',
     );
+    const trimmed =
+      overage === undefined || floor.outcome !== 'derived'
+        ? null
+        : trimFloorToCeiling(
+            floor,
+            Math.max(1, floor.terms.length - (overage.observed - overage.limit)),
+          );
+    if (trimmed === null || !trimmed.escalated) {
+      throw workflowError(
+        'INVESTIGATION_TERM_NARROWING_REQUIRED',
+        'The current term union exceeds the fixed investigation limits.',
+        ExitCode.guard,
+        { details: { violations: preview.violations } },
+      );
+    }
+    floor = trimmed.floor;
+    floorTrimming.dropped = trimmed.dropped;
+    floorTrimming.escalated = true;
+    contributions = withEngineFloorContribution(contributions, floor);
+    preview = previewInvestigationTermUnion(contributions);
+    if (preview.outcome !== 'ready') {
+      throw workflowError(
+        'INVESTIGATION_TERM_NARROWING_REQUIRED',
+        'The term union exceeds the fixed investigation limits even after the engine floor was cut to its ceiling.',
+        ExitCode.guard,
+        { details: { violations: preview.violations, floorTrimming } },
+      );
+    }
   }
   const termUnionNode = createTermUnionNode(
     session,
@@ -3890,10 +4637,17 @@ function rebuildInvestigation(
     }
     dispositionNodes = createInvestigationDispositionNodes({
       groupNodes: grouped.groupNodes,
-      dispositions: stored.payload.dispositions,
+      dispositions: expandSubmittedDispositions(
+        context.git.repositoryRoot,
+        {
+          scanNodes: scan.nodes,
+          groupNodes: grouped.groupNodes,
+          payload: stored.payload,
+        },
+      ),
     });
   }
-  const fullBlobManifest =
+  const derivedFullBlobManifest =
     session.milestones.groupDispositions === null
       ? []
       : deriveInvestigationFullBlobManifest({
@@ -3902,6 +4656,23 @@ function rebuildInvestigation(
           groupNodes: grouped.groupNodes,
           dispositionNodes,
         });
+  // The ledger sets aside only what it already explains for these exact bytes.
+  // Everything it carries keeps its group and its disposition; what it loses is
+  // the obligation to be explained again by someone with nothing new to say.
+  const manifestReuse = applyLedgerToFullBlobManifest(
+    context.git.repositoryRoot,
+    derivedFullBlobManifest,
+    // Naming the policy that judges this propose is what makes a raised policy
+    // able to invalidate an entry. Letting the call default here would echo
+    // each entry's own policy back as the current one, and every entry would
+    // agree with itself forever.
+    { currentPolicyDigest: PROPOSE_POLICY_DIGEST },
+  );
+  const fullBlobManifest =
+    manifestReuse.owed as InvestigationFullBlobManifestEntry[];
+  // Taking the saving and recording what it cost are the same act. Every
+  // carried entry stays in what a reviewer is shown, marked as carried.
+  const reuseCoverage = recordReuseCoverage(manifestReuse);
   let whyNodes: EvidenceNode[] = [];
   if (session.milestones.whyAnswers !== null) {
     const stored = session.milestones.whyAnswers.envelope;
@@ -3935,6 +4706,7 @@ function rebuildInvestigation(
     session,
     intent,
     floor,
+    floorTrimming,
     termSources: preview.rawCounts,
     authorizationNode,
     legacyMigration: authorization.legacyMigration,
@@ -3958,6 +4730,7 @@ function rebuildInvestigation(
     dispositionNodes,
     coverageNode,
     fullBlobManifest,
+    reuseCoverage,
     whyNodes,
   };
 }
@@ -3969,11 +4742,16 @@ function emptyRebuilt(
   termSources: InvestigationTermRawCounts,
   authorizationNode: EvidenceNode,
   legacyMigration: LegacyPlanMigrationSubject | null,
+  floorTrimming: { dropped: string[]; escalated: boolean } = {
+    dropped: [],
+    escalated: false,
+  },
 ): RebuiltInvestigation {
   return {
     session,
     intent,
     floor,
+    floorTrimming,
     termSources,
     authorizationNode,
     legacyMigration,
@@ -3996,6 +4774,13 @@ function emptyRebuilt(
     dispositionNodes: [],
     coverageNode: null,
     fullBlobManifest: [],
+    // An investigation with nothing in it carried nothing, which is a real
+    // answer rather than an absent one.
+    reuseCoverage: recordReuseCoverage({
+      owed: [],
+      carried: [],
+      plan: null,
+    }),
     whyNodes: [],
   };
 }
@@ -4021,6 +4806,105 @@ function deriveReviewedAssetRelationships(): ReviewedPathRelationship[] {
     .sort((left, right) =>
       left.relationshipId.localeCompare(right.relationshipId),
     );
+}
+
+/**
+ * Reads the names a declared file publishes, from the pinned tree.
+ *
+ * The floor is meant to be what the engine can establish on its own, but its
+ * symbols came only from the author's own list, so a change could narrow its
+ * own search by declaring fewer names than the files it names actually export.
+ * Every exported name of a declared path now joins the floor whether or not
+ * anyone thought to write it down.
+ *
+ * A path the change is about to add does not exist in the pinned tree yet, and
+ * publishes nothing there; that is a fact about the baseline, not a failure.
+ */
+function declaredPathSymbolsFromPinnedTree(
+  repositoryRoot: string,
+  treeOid: string,
+  declaredPaths: readonly string[],
+): string[] {
+  const symbols = new Set<string>();
+  for (const declared of declaredPaths) {
+    if (!/\.(?:[cm]?[jt]sx?)$/.test(declared)) continue;
+    const shown = runGit(
+      repositoryRoot,
+      ['show', `${treeOid}:${declared}`],
+      true,
+    );
+    if (shown === '') continue;
+    for (const symbol of deriveDeclaredPathSymbols(shown)) {
+      symbols.add(symbol);
+    }
+  }
+  return [...symbols].sort();
+}
+
+/**
+ * Trims an engine floor that on its own exceeds what a scan may carry.
+ *
+ * The floor is the part of the search nobody may remove, so when it alone is
+ * over the ceiling there is no author input that can unjam the change: every
+ * term is mandatory and there are too many. Trimming is the exit, and it is
+ * deliberately not free. The concession order is fixed — symbols are kept over
+ * literals, literals over variants — every dropped term is named rather than
+ * counted, and dropping anything escalates, because a floor that had to be cut
+ * is exactly the situation a person should be told about.
+ */
+/** Replaces the engine-floor contribution with the floor as it now stands. */
+function withEngineFloorContribution(
+  contributions: InvestigationTermContribution[],
+  floor: ReturnType<typeof deriveEngineFloor>,
+): InvestigationTermContribution[] {
+  return contributions.map((contribution) =>
+    contribution.source === 'engine'
+      ? {
+          ...contribution,
+          // Same projection the original contribution used: the union takes
+          // kind and value, not the floor's internal term records.
+          terms:
+            floor.outcome === 'derived'
+              ? floor.terms.map(({ kind, value }) => ({ kind, value }))
+              : [],
+        }
+      : contribution,
+  );
+}
+
+function trimFloorToCeiling(
+  floor: ReturnType<typeof deriveEngineFloor>,
+  ceiling: number,
+): {
+  floor: ReturnType<typeof deriveEngineFloor>;
+  dropped: string[];
+  escalated: boolean;
+} {
+  if (floor.outcome !== 'derived' || floor.terms.length <= ceiling) {
+    return { floor, dropped: [], escalated: false };
+  }
+  const candidateKind = (kind: InvestigationTermKind) =>
+    kind === 'symbol'
+      ? ('symbol' as const)
+      : kind === 'config-key'
+        ? ('variant' as const)
+        : ('literal' as const);
+  const pruning = pruneFloorToLimit(
+    floor.terms.map((term) => ({
+      value: term.value,
+      kind: candidateKind(term.kind),
+    })),
+    ceiling,
+  );
+  const kept = new Set(pruning.terms.map(({ value }) => value));
+  return {
+    floor: {
+      ...floor,
+      terms: floor.terms.filter((term) => kept.has(term.value)),
+    },
+    dropped: pruning.dropped.map(({ value }) => value),
+    escalated: pruning.escalated,
+  };
 }
 
 function deriveReviewedCounterpartFacts(
@@ -4268,11 +5152,18 @@ function workFromRebuilt(
       ({ manifestEntryId }) => manifestEntryId,
     ),
   );
+  const classGroupsById = new Map(
+    deriveClassGroupsWithContext({
+      scanNodes: rebuilt.scanNodes,
+      groupNodes: rebuilt.groupNodes,
+    }).map((group) => [group.groupId, group]),
+  );
   return {
     termSources: rebuilt.termSources,
     groups: rebuilt.groupNodes
       .map((node) => {
         const group = readInvestigationGroupNode(node);
+        const withContext = classGroupsById.get(group.groupId);
         return {
           groupId: group.groupId,
           termId: group.selector.termId,
@@ -4284,6 +5175,16 @@ function workFromRebuilt(
             ),
           ].sort(),
           hitIds: group.hitIds,
+          hits: (withContext?.hits ?? []).map((hit) => ({
+            path: hit.path,
+            // A hit the join could not place is reported as a path hit, which
+            // is the reading that can claim the least.
+            surface: hit.surface ?? 'path',
+            window: hit.window?.utf8 ?? null,
+            windowTruncated: hit.window?.truncated ?? false,
+            matchOffset: hit.matchOffset,
+            matchLength: hit.matchLength,
+          })),
         };
       })
       .filter(({ groupId }) => !reusableGroupIds.has(groupId)),
@@ -4300,6 +5201,81 @@ function workFromRebuilt(
       })),
     authoredInstructions,
   };
+}
+
+/**
+ * Reads the registry that decides which paths may be folded into a class.
+ *
+ * A repository with no registry has classified nothing, and nothing
+ * unclassified is ever compressible, so the honest answer is a refusal naming
+ * the missing file rather than a crash or a permissive default.
+ */
+function readPathRoleRegistryForClasses(repositoryRoot: string) {
+  const registryPath = path.join(repositoryRoot, 'workflow/path-roles.json');
+  if (!fs.existsSync(registryPath)) {
+    throw workflowError(
+      'CLASS_DISPOSITION_INVALID',
+      `A class disposition needs ${'workflow/path-roles.json'} to say which paths may be folded; this repository has not classified any.`,
+      ExitCode.usage,
+    );
+  }
+  return parsePathRoleRegistry(
+    JSON.parse(fs.readFileSync(registryPath, 'utf8')),
+  );
+}
+
+/**
+ * Turns whatever an author wrote into the one disposition per group the
+ * evidence has always required.
+ *
+ * A class is an authoring shape, not a weaker claim: the engine expands it into
+ * exactly the per-group dispositions the author would otherwise have written by
+ * hand, and every downstream check — partition, coverage, DAG — runs unchanged
+ * on the result. What a class removes is the obligation to retype the same
+ * rationale for hits a machine can show are equivalent.
+ *
+ * The expansion recomputes admissibility from the scans rather than trusting
+ * the submission: membership is checked hit by hit against the class predicate,
+ * the predicate must discriminate members from every other hit the same scan
+ * produced, and a group whose term saturated is never foldable because its hits
+ * are known to be incomplete.
+ */
+function expandSubmittedDispositions(
+  repositoryRoot: string,
+  input: {
+    scanNodes: EvidenceNode[];
+    groupNodes: EvidenceNode[];
+    payload: GroupDispositionsPayload;
+    saturatedTermIds?: readonly string[];
+  },
+): InvestigationDispositionInput[] {
+  const classes = input.payload.classes ?? [];
+  if (classes.length === 0) return input.payload.dispositions;
+  const expansion = expandClassDispositions(
+    // Parsed here, not trusted as stored: the checkpoint keeps what the author
+    // wrote, and a predicate only means anything once it has been read by the
+    // contract that defines it.
+    classes.map((declared) => parseClassDisposition(declared)),
+    deriveClassGroupsWithContext({
+      scanNodes: input.scanNodes,
+      groupNodes: input.groupNodes,
+    }),
+    readPathRoleRegistryForClasses(repositoryRoot),
+    input.saturatedTermIds === undefined
+      ? {}
+      : { saturatedTermIds: input.saturatedTermIds },
+  );
+  return [
+    ...input.payload.dispositions,
+    ...expansion.dispositions.map(
+      ({ groupId, classification, rationale, author }) => ({
+        groupId,
+        classification,
+        rationale,
+        author,
+      }),
+    ),
+  ];
 }
 
 function reviewerReusableGroupDispositions(
@@ -4356,6 +5332,14 @@ function mergeReviewerReopenCheckpoint(
     return assertInvestigationCheckpointEnvelope({
       ...checkpoint,
       payload: {
+        // Classes and their audits survive the merge: dropping either would
+        // silently turn a covered, reviewed submission into an incomplete one.
+        ...(checkpoint.payload.classes === undefined
+          ? {}
+          : { classes: checkpoint.payload.classes }),
+        ...(checkpoint.payload.sampleAudits === undefined
+          ? {}
+          : { sampleAudits: checkpoint.payload.sampleAudits }),
         dispositions: [...reusable, ...checkpoint.payload.dispositions].sort(
           (left, right) => left.groupId.localeCompare(right.groupId),
         ),
@@ -4561,28 +5545,8 @@ function readReviewerTermSource(
       ExitCode.staleState,
     );
   }
-  const providerResultNode = output.providerResultNode as EvidenceNode;
+  const embeddedProviderResultNode = output.providerResultNode as EvidenceNode;
   const reviewNode = output.reviewNode as EvidenceNode;
-  const hasTargetSnapshot =
-    Object.hasOwn(
-      providerResultNode.provenanceParentNodeIds,
-      'targetSnapshot',
-    ) ||
-    Object.hasOwn(
-      providerResultNode.semanticParentResultDigests,
-      'targetSnapshot',
-    ) ||
-    Object.hasOwn(providerResultNode.exactInputDigests, 'targetSnapshot');
-  const targetSnapshotNodeId =
-    providerResultNode.provenanceParentNodeIds.targetSnapshot;
-  const targetSnapshotNode =
-    hasTargetSnapshot && typeof targetSnapshotNodeId === 'string'
-      ? readEvidenceNode(paths, targetSnapshotNodeId)
-      : null;
-  const targetSnapshot =
-    targetSnapshotNode === null
-      ? null
-      : readPlanReviewTargetSnapshotNode(targetSnapshotNode);
   const roleResult = output.roleResult as AdmittedRoleResult;
   const rawPriorGroupDispositions = output.priorGroupDispositions as Record<
     string,
@@ -4606,6 +5570,8 @@ function readReviewerTermSource(
     envelope: priorWhyEnvelope,
   };
   const review = readPlanReviewNode(reviewNode);
+  const { providerResultNode, targetSnapshotNode } =
+    readReviewerTermProviderResult(paths, embeddedProviderResultNode, review);
   const terms = output.terms as Array<{
     kind: 'literal-content' | 'literal-path' | 'symbol' | 'config-key';
     value: string;
@@ -4655,14 +5621,10 @@ function readReviewerTermSource(
       providerResultNode.nodeId ||
     sourceNode.semanticParentResultDigests.providerResult !==
       providerResultNode.resultDigest ||
-    (hasTargetSnapshot &&
-      (targetSnapshotNode === null ||
-        providerResultNode.exactInputDigests.targetSnapshot !==
-          targetSnapshotNode.nodeId ||
-        providerResultNode.semanticParentResultDigests.targetSnapshot !==
-          targetSnapshotNode.resultDigest ||
-        targetSnapshot?.subjectDigest !==
-          providerResultNode.exactInputDigests.subject))
+    providerResultNode.exactInputDigests.targetSnapshot !==
+      targetSnapshotNode.nodeId ||
+    providerResultNode.semanticParentResultDigests.targetSnapshot !==
+      targetSnapshotNode.resultDigest
   ) {
     throw workflowError(
       'INVESTIGATION_REVIEWER_TERM_SOURCE_INVALID',
@@ -4734,9 +5696,11 @@ function readReviewerTermSourceV3(
     output.previousReviewerTermSourceNodeId,
     session,
   );
-  const providerResultNode = output.providerResultNode as EvidenceNode;
+  const embeddedProviderResultNode = output.providerResultNode as EvidenceNode;
   const reviewNode = output.reviewNode as EvidenceNode;
   const review = readPlanReviewNode(reviewNode);
+  const { providerResultNode, targetSnapshotNode } =
+    readReviewerTermProviderResult(paths, embeddedProviderResultNode, review);
   const roleResult = output.roleResult as AdmittedRoleResult;
   const rawPriorGroupDispositions = output.priorGroupDispositions as Record<
     string,
@@ -4801,26 +5765,6 @@ function readReviewerTermSourceV3(
     'providerResult',
     ...(previousNodeId === null ? [] : ['previousReviewerTerms']),
   ];
-  const hasTargetSnapshot =
-    Object.hasOwn(
-      providerResultNode.provenanceParentNodeIds,
-      'targetSnapshot',
-    ) ||
-    Object.hasOwn(
-      providerResultNode.semanticParentResultDigests,
-      'targetSnapshot',
-    ) ||
-    Object.hasOwn(providerResultNode.exactInputDigests, 'targetSnapshot');
-  const targetSnapshotNodeId =
-    providerResultNode.provenanceParentNodeIds.targetSnapshot;
-  const targetSnapshotNode =
-    hasTargetSnapshot && typeof targetSnapshotNodeId === 'string'
-      ? readEvidenceNode(paths, targetSnapshotNodeId)
-      : null;
-  const targetSnapshot =
-    targetSnapshotNode === null
-      ? null
-      : readPlanReviewTargetSnapshotNode(targetSnapshotNode);
   if (
     output.investigationId !== session.investigationId ||
     !isBaseline(output.baseline) ||
@@ -4876,14 +5820,10 @@ function readReviewerTermSourceV3(
           previous.sourceNode.nodeId ||
         sourceNode.semanticParentResultDigests.previousReviewerTerms !==
           previous.sourceNode.resultDigest)) ||
-    (hasTargetSnapshot &&
-      (targetSnapshotNode === null ||
-        providerResultNode.exactInputDigests.targetSnapshot !==
-          targetSnapshotNode.nodeId ||
-        providerResultNode.semanticParentResultDigests.targetSnapshot !==
-          targetSnapshotNode.resultDigest ||
-        targetSnapshot?.subjectDigest !==
-          providerResultNode.exactInputDigests.subject))
+    providerResultNode.exactInputDigests.targetSnapshot !==
+      targetSnapshotNode.nodeId ||
+    providerResultNode.semanticParentResultDigests.targetSnapshot !==
+      targetSnapshotNode.resultDigest
   ) {
     throw invalidReviewerTermSource();
   }
@@ -4924,6 +5864,62 @@ function readReviewerTermSourceV3(
     reopenCount: (previous?.reopenCount ?? 0) + 1,
     terms: [...cumulative.values()],
   };
+}
+
+function readReviewerTermProviderResult(
+  paths: ReturnType<typeof loadInvestigationRuntimeContext>['runtime'],
+  value: EvidenceNode,
+  review: ReturnType<typeof readPlanReviewNode>,
+): { providerResultNode: EvidenceNode; targetSnapshotNode: EvidenceNode } {
+  try {
+    const providerResultNode = assertStoredEvidenceNode(
+      value,
+      invalidReviewerTermSource,
+    );
+    if (
+      providerResultNode.type !== 'plan-review-provider-result' ||
+      providerResultNode.nodeSchema !== 'plan-review-provider-result.v2' ||
+      providerResultNode.evaluator !== 'plan-review-provider-result.v2' ||
+      providerResultNode.outputSchema !==
+        'plan-review-provider-result-output.v2' ||
+      !hasExactKeys(providerResultNode.exactInputDigests, [
+        'assignment',
+        'subject',
+        'submission',
+        'targetSnapshot',
+      ]) ||
+      !hasExactKeys(providerResultNode.semanticParentResultDigests, [
+        'targetSnapshot',
+      ]) ||
+      !hasExactKeys(providerResultNode.provenanceParentNodeIds, [
+        'targetSnapshot',
+      ]) ||
+      Object.keys(providerResultNode.runtimeMetadata).length !== 0 ||
+      providerResultNode.exactInputDigests.subject !== review.subjectDigest
+    ) {
+      throw invalidReviewerTermSource();
+    }
+    const targetSnapshotNode = readEvidenceNode(
+      paths,
+      providerResultNode.provenanceParentNodeIds.targetSnapshot!,
+    );
+    const targetSnapshot = readPlanReviewTargetSnapshotNode(targetSnapshotNode);
+    if (
+      providerResultNode.exactInputDigests.targetSnapshot !==
+        targetSnapshotNode.nodeId ||
+      providerResultNode.semanticParentResultDigests.targetSnapshot !==
+        targetSnapshotNode.resultDigest ||
+      targetSnapshotNode.policyDigest !== review.policyDigest ||
+      targetSnapshot.subjectDigest !== review.subjectDigest ||
+      targetSnapshot.planningGenerationId !== review.planningGenerationId ||
+      targetSnapshot.planTargetDigest !== review.planTargetDigest
+    ) {
+      throw invalidReviewerTermSource();
+    }
+    return { providerResultNode, targetSnapshotNode };
+  } catch {
+    throw invalidReviewerTermSource();
+  }
 }
 
 function invalidReviewerTermSource() {
@@ -5138,6 +6134,8 @@ function preparePlanningScaffold(
 ): {
   changeDirectory: string;
   investigationBytes: string;
+  metadataBytes: string;
+  replaceablePriorGeneration: (relativePath: string, existing: string) => boolean;
   instructions: ProposeWork['authoredInstructions'];
 } {
   if (rebuilt.coverageNode === null) {
@@ -5161,10 +6159,34 @@ function preparePlanningScaffold(
     status.changeId,
   );
   const migration = rebuilt.legacyMigration;
+  const priorArtifactAtBaseline = (relativePath: string): string | undefined =>
+    readFileAtCommit(
+      context.git.repositoryRoot,
+      rebuilt.session.baseline.head,
+      `${context.config.changeRoot}/${status.changeId}/${relativePath}`,
+    );
+  // The authority to tolerate or replace an existing planning artifact: the
+  // prior generation is itself a managed one — the baseline commit carries v2
+  // metadata for this change — and the artifact's exact bytes are committed
+  // there. Legacy trees stay behind the migration authorization, and
+  // uncommitted bytes never qualify.
+  const committedMetadata = priorArtifactAtBaseline('.openspec.yaml');
+  const managedPriorGeneration =
+    committedMetadata !== undefined &&
+    committedMetadata.startsWith('schema: expense-app-v2\n');
+  const replaceablePriorGeneration = (
+    relativePath: string,
+    existing: string,
+  ): boolean =>
+    managedPriorGeneration && priorArtifactAtBaseline(relativePath) === existing;
+  // An amendment keeps the identity of the change it corrects: committed v2
+  // metadata carries over instead of restamping the creation date.
   const metadataBytes =
-    migration === null
-      ? `schema: expense-app-v2\ncreated: ${createdDate}\n`
-      : legacyMigrationMetadataBytes(migration);
+    migration !== null
+      ? legacyMigrationMetadataBytes(migration)
+      : managedPriorGeneration
+        ? committedMetadata
+        : `schema: expense-app-v2\ncreated: ${createdDate}\n`;
   const sealNode = createInvestigationSealNode(rebuilt);
   const applicability = createInvestigationApplicability({
     kind: 'sealed-investigation',
@@ -5225,6 +6247,7 @@ function preparePlanningScaffold(
       allowAuthoredExisting || migration !== null,
       false,
       migration,
+      replaceablePriorGeneration,
     );
     writeManagedEntries(changeDirectory, scaffoldEntries, migration);
   }
@@ -5243,7 +6266,13 @@ function preparePlanningScaffold(
       template: proposalInstruction.template,
     },
   ];
-  return { changeDirectory, investigationBytes, instructions };
+  return {
+    changeDirectory,
+    investigationBytes,
+    metadataBytes,
+    replaceablePriorGeneration,
+    instructions,
+  };
 }
 
 function createInvestigationSealNode(
@@ -5379,7 +6408,7 @@ function reconcileReviewerTermPlanningRevision(
       // or next bytes may exist; after it, retries require exact next bytes and
       // never roll live files back after a downstream error.
       let currentArtifacts: Record<string, string>;
-      if (receipt.revision === current.revision) {
+      if (receipt.matchesCurrentSession) {
         const sealedArtifacts = readPlanningMaterializationReceipt(
           context.runtime,
           current,
@@ -5518,7 +6547,7 @@ function reconcileReviewerTermPlanningRevision(
 type ReviewerReconciliationMaterializationReceipt = {
   nodeId: string;
   node: EvidenceNode;
-  revision: number;
+  matchesCurrentSession: boolean;
   artifacts: Record<string, string>;
 };
 
@@ -5536,18 +6565,28 @@ function readReviewerReconciliationMaterializationReceipt(
   }
   const node = readEvidenceNode(paths, nodeId);
   const output = node.output;
+  const semanticReceipt =
+    node.nodeSchema === 'workflow.propose-planning-materialization.v2' &&
+    node.outputSchema === 'workflow.propose-planning-materialization-output.v2';
+  const legacyReceipt =
+    node.nodeSchema === 'workflow.propose-planning-materialization.v1' &&
+    node.outputSchema === 'workflow.propose-planning-materialization-output.v1';
+  const boundRevision =
+    isRecord(output) && semanticReceipt
+      ? output.semanticRevision
+      : isRecord(output) && legacyReceipt
+        ? output.revision
+        : null;
   if (
     node.type !== 'propose-planning-materialization' ||
-    node.nodeSchema !== 'workflow.propose-planning-materialization.v1' ||
+    (!semanticReceipt && !legacyReceipt) ||
     node.evaluator !== 'workflow-propose.v1' ||
     node.policyDigest !== PROPOSE_POLICY_DIGEST ||
-    node.outputSchema !==
-      'workflow.propose-planning-materialization-output.v1' ||
     !isRecord(output) ||
     !hasExactKeys(output, [
       'investigationId',
       'changeId',
-      'revision',
+      semanticReceipt ? 'semanticRevision' : 'revision',
       'baseline',
       'artifacts',
       'sealNodeId',
@@ -5555,9 +6594,10 @@ function readReviewerReconciliationMaterializationReceipt(
     ]) ||
     output.investigationId !== status.investigationId ||
     output.changeId !== status.changeId ||
-    !Number.isSafeInteger(output.revision) ||
-    Number(output.revision) < 0 ||
-    Number(output.revision) > status.revision ||
+    !Number.isSafeInteger(boundRevision) ||
+    Number(boundRevision) < 0 ||
+    Number(boundRevision) >
+      (semanticReceipt ? status.semanticRevision : status.revision) ||
     canonicalJson(output.baseline) !== canonicalJson(status.baseline) ||
     !isDigestRecord(output.artifacts) ||
     typeof output.sealNodeId !== 'string' ||
@@ -5582,7 +6622,9 @@ function readReviewerReconciliationMaterializationReceipt(
   return {
     nodeId,
     node,
-    revision: Number(output.revision),
+    matchesCurrentSession:
+      Number(boundRevision) ===
+      (semanticReceipt ? status.semanticRevision : status.revision),
     artifacts: output.artifacts as Record<string, string>,
   };
 }
@@ -5976,22 +7018,36 @@ function materializePlanningContribution(
   assertOwned: () => void = () => {},
 ): Record<string, string> {
   const payload = assertPlanningPayload(payloadInput);
+  // The full entries map below owns every scaffold byte with rollback, so the
+  // scaffold itself stays a pure projection here.
   const scaffold = preparePlanningScaffold(
     cwd,
     status,
     rebuilt,
     rebuilt.session.createdAt.slice(0, 10),
     true,
+    false,
   );
   const context = loadInvestigationRuntimeContext(cwd);
   const migration = rebuilt.legacyMigration;
   const tasks = parseTasks(payload.tasks);
-  if (
-    tasks.length === 0 ||
-    (migration === null && tasks.some(({ completed }) => completed))
-  ) {
-    throw planningContributionInvalid(
-      'Planning tasks must be non-empty and unchecked.',
+  if (tasks.length === 0) {
+    throw planningContributionInvalid('Planning tasks must be non-empty.');
+  }
+  if (migration === null) {
+    // One judgment for both gates: the transition's task-history rule, applied
+    // against the session baseline. A fresh change has no baseline tasks and
+    // must arrive unchecked; an amendment carries the executed record forward
+    // untouched, and may only send it back whole.
+    const baselineTasks = readFileAtCommit(
+      context.git.repositoryRoot,
+      rebuilt.session.baseline.head,
+      `${context.config.changeRoot}/${status.changeId}/tasks.md`,
+    );
+    assertPlanningTaskHistory(
+      baselineTasks === undefined ? undefined : parseTasks(baselineTasks),
+      tasks,
+      { reopenAuthorized: true },
     );
   }
   const guard = assertGuardContribution(
@@ -6019,12 +7075,7 @@ function materializePlanningContribution(
     rebuilt.whyNodes,
   );
   const entries = new Map<string, string>([
-    [
-      '.openspec.yaml',
-      migration === null
-        ? `schema: expense-app-v2\ncreated: ${rebuilt.session.createdAt.slice(0, 10)}\n`
-        : legacyMigrationMetadataBytes(migration),
-    ],
+    ['.openspec.yaml', scaffold.metadataBytes],
     ['investigation.json', scaffold.investigationBytes],
     ['proposal.md', assertAuthoredMarkdown(payload.proposal, 'proposal')],
     ['design.md', projectedDesign],
@@ -6068,10 +7119,29 @@ function materializePlanningContribution(
     false,
     false,
     migration,
+    scaffold.replaceablePriorGeneration,
   );
   const createdPaths: string[] = [];
   const replacedBytes = new Map<string, string>();
   try {
+    // The prior generation's review reviewed the plan this contribution
+    // replaces; removing it returns the graph to review-pending for the fresh
+    // review the amendment must earn. Only pristine committed bytes qualify —
+    // anything else was already refused above.
+    const priorReviewPath = path.join(
+      scaffold.changeDirectory,
+      'plan-review.json',
+    );
+    const priorReviewStats = fs.lstatSync(priorReviewPath, {
+      throwIfNoEntry: false,
+    });
+    if (priorReviewStats?.isFile() && !priorReviewStats.isSymbolicLink()) {
+      const priorReview = fs.readFileSync(priorReviewPath, 'utf8');
+      if (scaffold.replaceablePriorGeneration('plan-review.json', priorReview)) {
+        fs.rmSync(priorReviewPath);
+        replacedBytes.set(priorReviewPath, priorReview);
+      }
+    }
     for (const [relativePath, content] of entries) {
       const target = path.join(scaffold.changeDirectory, relativePath);
       if (fs.existsSync(target)) {
@@ -6085,8 +7155,11 @@ function materializePlanningContribution(
         }
         if (
           existing === null ||
-          migration === null ||
-          !isReplaceableLegacyArtifact(migration, relativePath, existing)
+          !(
+            (migration !== null &&
+              isReplaceableLegacyArtifact(migration, relativePath, existing)) ||
+            scaffold.replaceablePriorGeneration(relativePath, existing)
+          )
         ) {
           throw workflowError(
             'UNMANAGED_PLANNING_CONFLICT',
@@ -6170,7 +7243,12 @@ function materializePlanningContribution(
       fs.rmSync(target, { force: true });
     }
     for (const [target, previous] of replacedBytes) {
-      replaceTextAtomic(target, previous, { defaultMode: 0o644 });
+      // allowCreate restores the prior plan review, which was removed rather
+      // than replaced.
+      replaceTextAtomic(target, previous, {
+        allowCreate: true,
+        defaultMode: 0o644,
+      });
     }
     throw error;
   }
@@ -6348,7 +7426,7 @@ function persistPlanningMaterializationReceipt(
 ): void {
   const node = createEvidenceNode({
     type: 'propose-planning-materialization',
-    nodeSchema: 'workflow.propose-planning-materialization.v1',
+    nodeSchema: 'workflow.propose-planning-materialization.v2',
     evaluator: 'workflow-propose.v1',
     policyDigest: PROPOSE_POLICY_DIGEST,
     exactInputDigests: {
@@ -6362,11 +7440,11 @@ function persistPlanningMaterializationReceipt(
     provenanceParentNodeIds: {
       seal: sealNode.nodeId,
     },
-    outputSchema: 'workflow.propose-planning-materialization-output.v1',
+    outputSchema: 'workflow.propose-planning-materialization-output.v2',
     output: {
       investigationId: status.investigationId,
       changeId: status.changeId,
-      revision: status.revision,
+      semanticRevision: status.semanticRevision,
       baseline: status.baseline,
       artifacts,
       sealNodeId: sealNode.nodeId,
@@ -6481,6 +7559,8 @@ type PlanReviewReservation = {
     attempt: number;
     previousReservationNodeId: string;
     failedInvocation: PlanReviewRetryEnvelope['failedInvocation'];
+    retryDecision: ProviderRetryDecisionBinding | null;
+    executionPolicySnapshot: ProviderExecutionPolicySnapshotCurrent | null;
   } | null;
 };
 
@@ -6490,6 +7570,70 @@ type PlanReviewGrantRequirement = {
   grantRequest: CollaborationGrantRequest | null;
 };
 
+function durablePlanReviewMandateBinding(
+  context: ReturnType<typeof loadInvestigationRuntimeContext>,
+  status: ProposeLifecycleStatus,
+): TaskMandateBinding | undefined {
+  if (status.state === 'investigation-exempt') {
+    const session = readProposeExemptionSession(
+      context.runtime,
+      status.investigationId,
+    );
+    if (
+      session.changeId !== status.changeId ||
+      canonicalJson(session.baseline) !== canonicalJson(status.baseline)
+    ) {
+      throw workflowError(
+        'TASK_MANDATE_BINDING_STALE',
+        'The exempt PlanReview owner no longer matches the durable planning context.',
+        ExitCode.staleState,
+      );
+    }
+    return session.mandateBinding;
+  }
+  const session = readInvestigationSession(
+    context.runtime,
+    status.investigationId,
+  );
+  if (
+    session.changeId !== status.changeId ||
+    canonicalJson(session.baseline) !== canonicalJson(status.baseline)
+  ) {
+    throw workflowError(
+      'TASK_MANDATE_BINDING_STALE',
+      'The PlanReview owner session no longer matches the durable planning context.',
+      ExitCode.staleState,
+    );
+  }
+  return session.mandateBinding;
+}
+
+function authorizePlanReviewReservationMandate(
+  cwd: string,
+  binding: TaskMandateBinding | undefined,
+  reservation: PlanReviewReservation,
+  assertOwned: () => void,
+  executionGrant?: { grantId: string },
+): void {
+  if (binding === undefined) return;
+  authorizeTaskMandateProviderReservationUnderLifecycleLock(
+    cwd,
+    binding,
+    reservation.request.invocationId,
+    {
+      providerId: reservation.request.providerId,
+      dataTypes: ['diff', 'repository-metadata', 'source-code', 'test-output'],
+      sourceCode: true,
+      secrets: false,
+      retry: reservation.retry !== null,
+      budget: null,
+      requestDigest: reservation.request.requestDigest,
+      ...(executionGrant === undefined ? {} : { executionGrant }),
+    },
+    assertOwned,
+  );
+}
+
 function preparePlanReviewInvocation(
   cwd: string,
   status: ProposeLifecycleStatus,
@@ -6498,6 +7642,14 @@ function preparePlanReviewInvocation(
   assertOwned: () => void,
 ): PlanReviewReservation | null {
   const context = loadInvestigationRuntimeContext(cwd);
+  const mandateBinding = durablePlanReviewMandateBinding(context, status);
+  if (mandateBinding) {
+    assertActiveTaskMandateBindingUnderLifecycleLock(
+      cwd,
+      mandateBinding,
+      assertOwned,
+    );
+  }
   const currentRefs = readEvidenceRefs(context.runtime, status.changeId);
   const existing = readPlanReviewReservation(
     context.runtime,
@@ -6511,11 +7663,18 @@ function preparePlanReviewInvocation(
     existing.materializationNode.nodeId ===
       currentRefs[PLANNING_MATERIALIZATION_REF]
   ) {
+    authorizePlanReviewReservationMandate(
+      cwd,
+      mandateBinding,
+      existing,
+      assertOwned,
+    );
     ensurePlanReviewInvocation(
       context.git.repositoryRoot,
       context.runtime,
       status,
       existing,
+      mandateBinding,
     );
     return existing;
   }
@@ -6805,6 +7964,7 @@ function preparePlanReviewInvocation(
     },
     runtimeMetadata: {},
   });
+  storeProviderExecutionPolicySnapshot(context.runtime, request, policy);
   writeEvidenceNode(context.runtime, reservationNode);
   compareAndSwapEvidenceRef(context.runtime, {
     changeId: status.changeId,
@@ -6825,11 +7985,18 @@ function preparePlanReviewInvocation(
     grantAuthorization,
     retry: null,
   };
+  authorizePlanReviewReservationMandate(
+    cwd,
+    mandateBinding,
+    reservation,
+    assertOwned,
+  );
   ensurePlanReviewInvocation(
     context.git.repositoryRoot,
     context.runtime,
     status,
     reservation,
+    mandateBinding,
   );
   return reservation;
 }
@@ -6962,11 +8129,31 @@ function ensurePlanReviewInvocation(
   paths: ReturnType<typeof loadInvestigationRuntimeContext>['runtime'],
   status: ProposeLifecycleStatus,
   reservation: PlanReviewReservation,
+  mandateBinding: TaskMandateBinding | undefined,
   prevalidatedSnapshotFiles?: Array<{
     snapshotFile: string;
     content: Buffer;
   }>,
 ): void {
+  if (reservation.retry === null) {
+    ensureProviderExecutionPolicySnapshot(
+      paths,
+      reservation.request,
+      loadAiAdapterPolicy(repositoryRoot),
+    );
+  } else if (reservation.retry.executionPolicySnapshot === null) {
+    throw workflowError(
+      'PLAN_REVIEW_RETRY_POLICY_SNAPSHOT_REQUIRED',
+      'A historical PlanReview retry reservation without a recoverable policy snapshot cannot authorize provider work.',
+      ExitCode.guard,
+    );
+  } else {
+    ensureProviderExecutionPolicySnapshotFromSnapshot(
+      paths,
+      reservation.request,
+      reservation.retry.executionPolicySnapshot,
+    );
+  }
   if (providerInvocationExists(paths, reservation.request.invocationId)) {
     const record = readProviderInvocation(
       paths,
@@ -6979,6 +8166,8 @@ function ensurePlanReviewInvocation(
     if (
       record.investigationId !== status.investigationId ||
       record.changeId !== status.changeId ||
+      canonicalJson(record.mandateBinding ?? null) !==
+        canonicalJson(mandateBinding ?? null) ||
       record.attempt !== (reservation.retry?.attempt ?? 1) ||
       record.requestDigest !== reservation.request.requestDigest ||
       canonicalJson(durable) !== canonicalJson(reservation.request)
@@ -7029,6 +8218,7 @@ function ensurePlanReviewInvocation(
   createProviderInvocation(paths, {
     investigationId: status.investigationId,
     changeId: status.changeId,
+    ...(mandateBinding ? { mandateBinding } : {}),
     attempt: reservation.retry?.attempt ?? 1,
     manifest: reservation.manifest,
     request: reservation.request,
@@ -7142,7 +8332,10 @@ function readPlanReviewReservation(
   }
   const node = readEvidenceNode(paths, nodeId);
   const output = node.output;
+  const retryDecisionShape =
+    node.nodeSchema === 'workflow.plan-review-request-reservation.v3';
   const retryShape =
+    retryDecisionShape ||
     node.nodeSchema === 'workflow.plan-review-request-reservation.v2';
   if (
     node.type !== 'plan-review-request-reservation' ||
@@ -7151,9 +8344,11 @@ function readPlanReviewReservation(
     node.evaluator !== 'workflow-propose.v1' ||
     node.policyDigest !== PROPOSE_POLICY_DIGEST ||
     node.outputSchema !==
-      (retryShape
-        ? 'workflow.plan-review-request-reservation-output.v2'
-        : 'workflow.plan-review-request-reservation-output.v1') ||
+      (retryDecisionShape
+        ? 'workflow.plan-review-request-reservation-output.v3'
+        : retryShape
+          ? 'workflow.plan-review-request-reservation-output.v2'
+          : 'workflow.plan-review-request-reservation-output.v1') ||
     !isRecord(output) ||
     !hasExactKeys(output, [
       'investigationId',
@@ -7175,6 +8370,9 @@ function readPlanReviewReservation(
       'subject',
       'targetSnapshot',
       ...(retryShape ? ['previousRequest', 'failure'] : []),
+      ...(retryDecisionShape
+        ? ['executionPolicySnapshot', 'retryDecision']
+        : []),
     ]) ||
     !hasExactKeys(node.provenanceParentNodeIds, [
       'authorization',
@@ -7317,12 +8515,17 @@ function assertPlanReviewRetryReservation(
   output: Record<string, unknown>,
   request: ProviderInvocationRequest,
 ): NonNullable<PlanReviewReservation['retry']> {
+  const retryDecisionShape =
+    node.nodeSchema === 'workflow.plan-review-request-reservation.v3';
   if (
     !isRecord(value) ||
     !hasExactKeys(value, [
       'attempt',
       'previousReservationNodeId',
       'failedInvocation',
+      ...(retryDecisionShape
+        ? ['executionPolicySnapshot', 'retryDecision']
+        : []),
     ]) ||
     !Number.isInteger(value.attempt) ||
     (value.attempt as number) < 2 ||
@@ -7351,9 +8554,27 @@ function assertPlanReviewRetryReservation(
   const previousReservationNodeId = value.previousReservationNodeId;
   const failedInvocation =
     value.failedInvocation as PlanReviewRetryEnvelope['failedInvocation'];
+  const retryDecision = retryDecisionShape
+    ? assertPlanReviewRetryDecisionBinding(value.retryDecision)
+    : null;
+  let executionPolicySnapshot: ProviderExecutionPolicySnapshotCurrent | null =
+    null;
+  if (retryDecisionShape) {
+    try {
+      executionPolicySnapshot = validateProviderExecutionPolicySnapshot(
+        request,
+        value.executionPolicySnapshot,
+      );
+    } catch {
+      throw planReviewRequestStale();
+    }
+  }
   const previousNode = readEvidenceNode(paths, previousReservationNodeId);
   const previousOutput = previousNode.output;
+  const previousRetryDecisionShape =
+    previousNode.nodeSchema === 'workflow.plan-review-request-reservation.v3';
   const previousRetryShape =
+    previousRetryDecisionShape ||
     previousNode.nodeSchema === 'workflow.plan-review-request-reservation.v2';
   const previousAttempt =
     previousRetryShape &&
@@ -7374,12 +8595,16 @@ function assertPlanReviewRetryReservation(
     invocationId: _failedInvocationId,
     nonce: _failedNonce,
     requestDigest: _failedRequestDigest,
+    policyDigest: _failedPolicyDigest,
+    limits: _failedLimits,
     ...failedRequestBinding
   } = failedRequest;
   const {
     invocationId: _replacementInvocationId,
     nonce: _replacementNonce,
     requestDigest: _replacementRequestDigest,
+    policyDigest: _replacementPolicyDigest,
+    limits: _replacementLimits,
     ...replacementRequestBinding
   } = request;
   if (
@@ -7390,15 +8615,24 @@ function assertPlanReviewRetryReservation(
     previousNode.evaluator !== 'workflow-propose.v1' ||
     previousNode.policyDigest !== PROPOSE_POLICY_DIGEST ||
     previousNode.outputSchema !==
-      (previousRetryShape
-        ? 'workflow.plan-review-request-reservation-output.v2'
-        : 'workflow.plan-review-request-reservation-output.v1') ||
+      (previousRetryDecisionShape
+        ? 'workflow.plan-review-request-reservation-output.v3'
+        : previousRetryShape
+          ? 'workflow.plan-review-request-reservation-output.v2'
+          : 'workflow.plan-review-request-reservation-output.v1') ||
     !isRecord(previousOutput) ||
     previousNode.nodeId !== node.exactInputDigests.previousRequest ||
     previousNode.nodeId !== node.provenanceParentNodeIds.previousRequest ||
     previousNode.resultDigest !==
       node.semanticParentResultDigests.previousRequest ||
     failedInvocation.failureDigest !== node.exactInputDigests.failure ||
+    (retryDecision !== null &&
+      (retryDecision.evidenceDigest !== node.exactInputDigests.retryDecision ||
+        retryDecision.failedAttemptId !==
+          `attempt-legacy-${failedInvocation.invocationId}`)) ||
+    (executionPolicySnapshot !== null &&
+      sha256(canonicalJson(executionPolicySnapshot)) !==
+        node.exactInputDigests.executionPolicySnapshot) ||
     previousAttempt === 0 ||
     failed.attempt !== previousAttempt ||
     value.attempt !== failed.attempt + 1 ||
@@ -7436,7 +8670,41 @@ function assertPlanReviewRetryReservation(
     attempt: value.attempt as number,
     previousReservationNodeId,
     failedInvocation,
+    retryDecision,
+    executionPolicySnapshot,
   };
+}
+
+function assertPlanReviewRetryDecisionBinding(
+  value: unknown,
+): ProviderRetryDecisionBinding {
+  if (
+    !isRecord(value) ||
+    !hasExactKeys(value, [
+      'evaluatedAt',
+      'evidenceDigest',
+      'executionJobId',
+      'executionRevision',
+      'failedAttemptId',
+      'kind',
+      'schemaVersion',
+    ]) ||
+    value.schemaVersion !== 1 ||
+    value.kind !== 'provider-retry-decision-binding' ||
+    typeof value.executionJobId !== 'string' ||
+    !/^[a-z0-9][a-z0-9._:-]{0,255}$/.test(value.executionJobId) ||
+    !Number.isSafeInteger(value.executionRevision) ||
+    (value.executionRevision as number) < 0 ||
+    typeof value.failedAttemptId !== 'string' ||
+    !/^[a-z0-9][a-z0-9._:-]{0,255}$/.test(value.failedAttemptId) ||
+    typeof value.evidenceDigest !== 'string' ||
+    !DIGEST.test(value.evidenceDigest) ||
+    typeof value.evaluatedAt !== 'string' ||
+    Number.isNaN(Date.parse(value.evaluatedAt))
+  ) {
+    throw planReviewRequestStale();
+  }
+  return value as ProviderRetryDecisionBinding;
 }
 
 function planReviewRequestStale() {
@@ -7535,18 +8803,22 @@ function readPlanningMaterializationReceipt(
   }
   const node = readEvidenceNode(paths, nodeId);
   const output = node.output;
+  const semanticReceipt =
+    node.nodeSchema === 'workflow.propose-planning-materialization.v2' &&
+    node.outputSchema === 'workflow.propose-planning-materialization-output.v2';
+  const legacyReceipt =
+    node.nodeSchema === 'workflow.propose-planning-materialization.v1' &&
+    node.outputSchema === 'workflow.propose-planning-materialization-output.v1';
   if (
     node.type !== 'propose-planning-materialization' ||
-    node.nodeSchema !== 'workflow.propose-planning-materialization.v1' ||
+    (!semanticReceipt && !legacyReceipt) ||
     node.evaluator !== 'workflow-propose.v1' ||
     node.policyDigest !== PROPOSE_POLICY_DIGEST ||
-    node.outputSchema !==
-      'workflow.propose-planning-materialization-output.v1' ||
     !isRecord(output) ||
     !hasExactKeys(output, [
       'investigationId',
       'changeId',
-      'revision',
+      semanticReceipt ? 'semanticRevision' : 'revision',
       'baseline',
       'artifacts',
       'sealNodeId',
@@ -7554,7 +8826,9 @@ function readPlanningMaterializationReceipt(
     ]) ||
     output.investigationId !== status.investigationId ||
     output.changeId !== status.changeId ||
-    output.revision !== status.revision ||
+    (semanticReceipt
+      ? output.semanticRevision !== status.semanticRevision
+      : output.revision !== status.revision) ||
     canonicalJson(output.baseline) !== canonicalJson(status.baseline) ||
     output.sealNodeId !== sealNode.nodeId ||
     output.sealResultDigest !== sealNode.resultDigest ||
@@ -7804,13 +9078,29 @@ function assertPlanningTargetsCompatible(
   allowAuthoredExisting = false,
   allowManagedPlanReview = false,
   legacyMigration: LegacyPlanMigrationSubject | null = null,
+  baselineReplaceable: (relativePath: string, existing: string) => boolean = () =>
+    false,
 ): void {
+  // An amendment's prior generation is committed at the session baseline, so
+  // "these exact bytes exist at the baseline" is the authority to tolerate or
+  // replace them. Anything uncommitted stays a conflict.
+  const pristineAtBaseline = (relativePath: string): boolean => {
+    const target = path.join(changeDirectory, relativePath);
+    const stats = fs.lstatSync(target, { throwIfNoEntry: false });
+    if (!stats || !stats.isFile() || stats.isSymbolicLink()) {
+      return false;
+    }
+    return baselineReplaceable(relativePath, fs.readFileSync(target, 'utf8'));
+  };
   const allowedExisting = new Set(entries.keys());
   const existing = listChangeFiles(changeDirectory);
   for (const relativePath of existing) {
     if (!allowedExisting.has(relativePath)) {
       if (scaffoldOnly) {
         if (relativePath === 'plan-review.json' && allowManagedPlanReview) {
+          continue;
+        }
+        if (pristineAtBaseline(relativePath)) {
           continue;
         }
         if (
@@ -7834,7 +9124,7 @@ function assertPlanningTargetsCompatible(
         );
       }
       if (relativePath === 'plan-review.json') {
-        if (allowManagedPlanReview) {
+        if (allowManagedPlanReview || pristineAtBaseline(relativePath)) {
           continue;
         }
         throw workflowError(
@@ -7871,7 +9161,8 @@ function assertPlanningTargetsCompatible(
       !(
         legacyMigration !== null &&
         isReplaceableLegacyArtifact(legacyMigration, relativePath, existing)
-      )
+      ) &&
+      !baselineReplaceable(relativePath, existing)
     ) {
       throw workflowError(
         'UNMANAGED_PLANNING_CONFLICT',

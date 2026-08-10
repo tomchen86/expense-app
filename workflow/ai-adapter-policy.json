@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 3,
+  "schemaVersion": 4,
   "mode": "managed-read-only",
   "launchPolicy": "lifecycle-only",
   "requiredControls": [
@@ -17,8 +17,31 @@
     "claude": { "enabled": true }
   },
   "limits": {
-    "timeoutMs": 600000,
+    "timeoutMs": 3600000,
     "aggregateOutputBytes": 1048576,
     "maxConcurrent": 2
+  },
+  "retryAccounting": {
+    "maxAttempts": 4,
+    "maxCumulativeRuntimeMs": 14400000,
+    "maxProviderCostMicros": 40000000,
+    "maxProviderTokens": 2000000,
+    "maxSameFailureFingerprint": 2,
+    "maxRepairAttempts": 2,
+    "deadlineMs": 1209600000,
+    "providerLimits": {
+      "codex": 4,
+      "claude": 4
+    },
+    "reservations": {
+      "codex": {
+        "providerCostMicros": 10000000,
+        "providerTokens": 500000
+      },
+      "claude": {
+        "providerCostMicros": 10000000,
+        "providerTokens": 500000
+      }
+    }
   }
 }

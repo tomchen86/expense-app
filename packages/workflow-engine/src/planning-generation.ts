@@ -170,7 +170,8 @@ function assertBaseline(value: unknown): InvestigationBaseline {
     typeof head !== 'string' ||
     !GIT_OBJECT_ID_PATTERN.test(head) ||
     typeof tree !== 'string' ||
-    !GIT_OBJECT_ID_PATTERN.test(tree)
+    !GIT_OBJECT_ID_PATTERN.test(tree) ||
+    head.length !== tree.length
   ) {
     throw generationInvalid('Investigation baseline object IDs are malformed.');
   }

@@ -12,6 +12,15 @@ export function canonicalJson(value: unknown): string {
   return serialize(value, new Set());
 }
 
+/**
+ * Compare strings by ECMAScript UTF-16 code units. Unlike locale-aware
+ * collation, this order is invariant across hosts and is the same order used
+ * by an argument-less Array.prototype.sort().
+ */
+export function compareCanonicalStrings(left: string, right: string): number {
+  return left < right ? -1 : left > right ? 1 : 0;
+}
+
 function serialize(value: unknown, ancestors: Set<object>): string {
   if (value === null) {
     return 'null';
@@ -66,7 +75,7 @@ function serializeObject(value: object, ancestors: Set<object>): string {
   }
   const record = value as Record<string, unknown>;
   const parts = Object.keys(record)
-    .sort()
+    .sort(compareCanonicalStrings)
     .map(
       (key) => `${JSON.stringify(key)}:${serialize(record[key], ancestors)}`,
     );

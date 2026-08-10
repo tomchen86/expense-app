@@ -74,6 +74,16 @@ export function assertReportChecks(
       evidence.exitCode !== 0 ||
       typeof evidence.runner !== 'string' ||
       !isDigest(evidence.runnerDigest) ||
+      (evidence.completedAt !== undefined &&
+        (typeof evidence.completedAt !== 'string' ||
+          !Number.isFinite(Date.parse(evidence.completedAt)))) ||
+      (evidence.externalSnapshotDigest === undefined) !==
+        (evidence.maxAgeMs === undefined) ||
+      (evidence.externalSnapshotDigest !== undefined &&
+        (!isDigest(evidence.externalSnapshotDigest) ||
+          !Number.isSafeInteger(evidence.maxAgeMs) ||
+          Number(evidence.maxAgeMs) < 1 ||
+          evidence.completedAt === undefined)) ||
       evidence.destructiveDatabase !== definition.destructiveDatabase ||
       (definition.destructiveDatabase
         ? typeof evidence.databaseIdentity !== 'string' ||
@@ -95,6 +105,9 @@ export function assertCompletionTaskIds(
   const currentIndex = baselineTasks.findIndex(
     ({ id }) => id === inspection.session.taskId,
   );
+  if (currentIndex < 0) {
+    throw staleReport(errorCode);
+  }
   const earlier = baselineTasks.slice(0, currentIndex);
   const incomplete = earlier.filter(({ completed }) => !completed);
   const allowed = [[inspection.session.taskId]];

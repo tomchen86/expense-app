@@ -47,13 +47,16 @@ export function replayCommitSequence(
   legacyExceptions: BootstrapException[],
   planningBootstrapPolicies: PlanningBootstrapException[],
   evaluatedAt: Date = new Date(),
+  priorCollaborationGrantUses: readonly CiCollaborationGrantUse[] = [],
 ): CommitSequenceResult {
   const priorTaskTrailers = new Set<string>();
   const completedTasks = new Map<string, CompletedTask>();
   const archivedChanges = new Set<string>();
   const authorityGrants = new Set<string>();
   const requiredCheckDefinitions = new Map<string, string>();
-  const collaborationGrantUses: CiCollaborationGrantUse[] = [];
+  const collaborationGrantUses: CiCollaborationGrantUse[] = [
+    ...priorCollaborationGrantUses,
+  ];
   const completionPaths = completionDocumentPaths(repositoryRoot);
   const expectedCompatibility = legacyExceptions.flatMap((exception) =>
     exception.compatibilityCommits.map((definition) => ({
@@ -139,7 +142,12 @@ export function replayCommitSequence(
       );
     }
 
-    if (commit.trailers.kind === 'plan') {
+    if (
+      commit.trailers.kind === 'plan' ||
+      // An amendment is a planning commit that also says what it replaces, so
+      // it is replayed by the same rules rather than by weaker ones.
+      commit.trailers.kind === 'amend-plan'
+    ) {
       const planning = validateCiPlanningCommit(
         repositoryRoot,
         commit.hash,
@@ -161,8 +169,14 @@ export function replayCommitSequence(
       archivedChanges.add(archive.changeId);
       continue;
     }
-    if (commit.trailers.kind === 'authority') {
-      if (authorityGrants.has(commit.trailers.grantId)) {
+    if (
+      commit.trailers.kind === 'authority' ||
+      commit.trailers.kind === 'authority-candidate'
+    ) {
+      if (
+        commit.trailers.kind === 'authority' &&
+        authorityGrants.has(commit.trailers.grantId)
+      ) {
         throw ciError(
           'CI_AUTHORITY_GRANT_DUPLICATE',
           'A pull-request range may claim each authority grant only once.',
@@ -178,6 +192,12 @@ export function replayCommitSequence(
         authority.requiredCheckDefinitions,
         true,
       );
+      if (authorityGrants.has(authority.grantId)) {
+        throw ciError(
+          'CI_AUTHORITY_GRANT_DUPLICATE',
+          'A pull-request range may claim each authority grant only once.',
+        );
+      }
       authorityGrants.add(authority.grantId);
       continue;
     }
@@ -268,7 +288,13 @@ function taskTransitionsForCommit(
     }
     const beforeTasks = beforeContent ? parseTasks(beforeContent) : [];
     const afterTasks = parseTasks(afterContent);
-    assertTaskHistory(changeId, beforeTasks, afterTasks);
+    assertTaskHistory(changeId, beforeTasks, afterTasks, {
+      // Read from the commit that used the permission, so replay reaches the
+      // same verdict from the same bytes.
+      reopenAuthorized:
+        commit.trailers?.kind === 'amend-plan' &&
+        commit.trailers.executionImpact === 'required',
+    });
     const beforeById = new Map(beforeTasks.map((task) => [task.id, task]));
     for (const task of afterTasks) {
       if (task.completed && !beforeById.get(task.id)?.completed) {

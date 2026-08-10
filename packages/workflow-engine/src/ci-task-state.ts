@@ -7,8 +7,10 @@ export function assertTaskHistory(
   changeId: string,
   baseTasks: ParsedTask[],
   headTasks: ParsedTask[],
+  options: { reopenAuthorized?: boolean } = {},
 ): void {
   const headById = new Map(headTasks.map((task) => [task.id, task]));
+  const reopened: string[] = [];
   for (const [index, baseTask] of baseTasks.entries()) {
     const headTask = headById.get(baseTask.id);
     if (!headTask) {
@@ -24,9 +26,27 @@ export function assertTaskHistory(
       );
     }
     if (baseTask.completed && !headTask.completed) {
+      // An amendment that declared its execution invalid is the one commit
+      // allowed to send completed work back, and it says so in its own trailer
+      // block. Every other commit that tries is reopening work nobody
+      // authorized reopening.
+      if (!options.reopenAuthorized) {
+        throw taskError(
+          'CI_TASK_REOPENED',
+          `Task ${changeId}/${baseTask.id} was reopened.`,
+        );
+      }
+      reopened.push(baseTask.id);
+    }
+  }
+  if (options.reopenAuthorized) {
+    const previouslyCompleted = baseTasks.filter(({ completed }) => completed);
+    if (reopened.length > 0 && reopened.length !== previouslyCompleted.length) {
+      // Reopening a subset claims the rest of the completed work survived the
+      // correction, which nothing here can establish.
       throw taskError(
-        'CI_TASK_REOPENED',
-        `Task ${changeId}/${baseTask.id} was reopened.`,
+        'CI_TASK_PARTIAL_REOPEN',
+        `Amending ${changeId} reopened ${reopened.length} of ${previouslyCompleted.length} completed tasks; an amendment reopens all of them or none.`,
       );
     }
   }

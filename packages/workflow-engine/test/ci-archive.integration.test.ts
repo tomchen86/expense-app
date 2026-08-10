@@ -1,10 +1,14 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
 import { commitArchiveTransition } from '../src/archive-transition.ts';
+import { canonicalJson } from '../src/canonical-json.ts';
+import { validateCiArchiveCommit } from '../src/ci-archive.ts';
 import { verifyPullRequest } from '../src/ci.ts';
+import { createEvidenceNode } from '../src/evidence-node.ts';
 import {
   createFixtureRepository,
   git,
@@ -12,6 +16,46 @@ import {
   runtimeRoot,
   syncOriginMain,
 } from './fixture.ts';
+
+test('CI archive validation rejects a duplicate grant in base planning history', () => {
+  const repository = createArchiveHistoryRepository();
+  try {
+    writeHistoricalPlanReviewGrant(repository, {
+      grantId: '99999999-9999-4999-8999-999999999999',
+      signedEnvelopeDigest: 'a'.repeat(64),
+      transitionDigest: 'b'.repeat(64),
+    });
+    commitPlanClaim(repository);
+    writeHistoricalPlanReviewGrant(repository, {
+      grantId: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc',
+      signedEnvelopeDigest: 'd'.repeat(64),
+      transitionDigest: 'e'.repeat(64),
+    });
+    commitHistory(repository, 'Record alternate planning evidence');
+    writeHistoricalPlanReviewGrant(repository, {
+      grantId: '99999999-9999-4999-8999-999999999999',
+      signedEnvelopeDigest: 'a'.repeat(64),
+      transitionDigest: 'b'.repeat(64),
+    });
+    commitPlanClaim(repository);
+    git(repository, [
+      'commit',
+      '--allow-empty',
+      '-m',
+      'Archive demo-change',
+      '-m',
+      'Change: demo-change\nTransition: archive',
+    ]);
+    const archiveCommit = git(repository, ['rev-parse', 'HEAD']).trim();
+
+    assert.throws(
+      () => validateCiArchiveCommit(repository, archiveCommit, 'demo-change'),
+      (error) => isWorkflowError(error, 'COLLABORATION_GRANT_USE_DUPLICATE'),
+    );
+  } finally {
+    fs.rmSync(repository, { recursive: true, force: true });
+  }
+});
 
 test('CI replays an archive from Git without trusting local runtime evidence', () => {
   const fixture = archivedFixture();
@@ -312,4 +356,81 @@ function amendArchive(repository: string): string {
   git(repository, ['add', '-A']);
   git(repository, ['commit', '--amend', '--no-edit']);
   return git(repository, ['rev-parse', 'HEAD']).trim();
+}
+
+function createArchiveHistoryRepository(): string {
+  const repository = fs.mkdtempSync(
+    path.join(os.tmpdir(), 'workflow-ci-archive-history-'),
+  );
+  git(repository, ['init', '-b', 'main']);
+  git(repository, ['config', 'user.email', 'workflow@example.test']);
+  git(repository, ['config', 'user.name', 'Workflow Test']);
+  fs.mkdirSync(path.join(repository, 'workflow'), { recursive: true });
+  fs.writeFileSync(
+    path.join(repository, 'workflow/config.json'),
+    `${canonicalJson({
+      schemaVersion: 1,
+      repositoryName: 'fixture',
+      changeRoot: 'openspec/changes',
+      runtimeDirectory: 'workflow-engine',
+      protectedBranches: ['main', 'master'],
+      branchTemplate: 'work/{changeId}',
+    })}\n`,
+  );
+  commitHistory(repository, 'Create archive history fixture');
+  return repository;
+}
+
+function writeHistoricalPlanReviewGrant(
+  repository: string,
+  grantUse: {
+    grantId: string;
+    signedEnvelopeDigest: string;
+    transitionDigest: string;
+  },
+): void {
+  const reviewNode = createEvidenceNode({
+    type: 'fixture-plan-review',
+    nodeSchema: 'fixture.plan-review.v1',
+    evaluator: 'fixture.plan-review.v1',
+    policyDigest: '1'.repeat(64),
+    exactInputDigests: { target: '2'.repeat(64) },
+    semanticParentResultDigests: {},
+    provenanceParentNodeIds: {},
+    outputSchema: 'fixture.plan-review-output.v1',
+    output: { verdict: 'advisory-approve' },
+    runtimeMetadata: {},
+  });
+  const artifactPath = path.join(
+    repository,
+    'openspec/changes/demo-change/plan-review.json',
+  );
+  fs.mkdirSync(path.dirname(artifactPath), { recursive: true });
+  fs.writeFileSync(
+    artifactPath,
+    `${canonicalJson({
+      schemaVersion: 1,
+      kind: 'plan-review-artifact',
+      changeId: 'demo-change',
+      nodes: [reviewNode],
+      currentRefs: { planReview: reviewNode.nodeId },
+      roleResults: [{ grantUse }],
+    })}\n`,
+  );
+}
+
+function commitPlanClaim(repository: string): void {
+  git(repository, ['add', '-A']);
+  git(repository, [
+    'commit',
+    '-m',
+    'Plan demo-change',
+    '-m',
+    'Change: demo-change\nTransition: plan',
+  ]);
+}
+
+function commitHistory(repository: string, message: string): void {
+  git(repository, ['add', '-A']);
+  git(repository, ['commit', '-m', message]);
 }

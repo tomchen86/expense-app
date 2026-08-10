@@ -1,4 +1,6 @@
 import crypto from 'node:crypto';
+import fs from 'node:fs';
+import path from 'node:path';
 
 import { readFileAtCommit } from './ci-git.ts';
 import { ExitCode, workflowError } from './errors.ts';
@@ -80,6 +82,11 @@ function verifyPlan(
     ) {
       throw invalidOutcome();
     }
+    // A MODIFIED block replaces the base requirement wholesale, so a scenario
+    // it omits is deleted from the specification even when the engine still
+    // implements that behaviour.
+    const missing = findMissingScenarioIdentities(before.get(name) ?? '', raw);
+    if (missing.length > 0) throw scenarioPreservationFailed(name, missing);
   }
   for (const name of plan.removed) {
     if (!before.has(name) || after.has(name)) throw invalidOutcome();
@@ -146,6 +153,236 @@ function splitSections(content: string): Map<string, string> {
   return result;
 }
 
+/**
+ * Scenario titles are exact identities when a delta is applied: a MODIFIED
+ * requirement replaces the base block wholesale, so a scenario missing from the
+ * rewritten block is deleted from the specification even though the behaviour
+ * it names may still be implemented. Returns the identities present before and
+ * absent after, in the order the base spec declares them.
+ */
+export function findMissingScenarioIdentities(
+  beforeBlock: string,
+  afterBlock: string,
+): string[] {
+  const after = new Set(scenarioIdentities(afterBlock));
+  return scenarioIdentities(beforeBlock).filter(
+    (identity) => !after.has(identity),
+  );
+}
+
+/**
+ * Plan-time half of the same rule archive enforces. A delta whose MODIFIED
+ * requirements drop live scenario identities cannot be archived, so refusing it
+ * here costs a re-plan instead of an entire execution. Reads only; the delta is
+ * taken from the worktree it is about to be committed from, the base from the
+ * commit that plan-commit will parent onto.
+ */
+export function assertSpecDeltaScenarioPreservation(
+  repositoryRoot: string,
+  head: string,
+  changeRoot: string,
+  changeId: string,
+  deltaSpecPaths: readonly string[],
+  now: Date = new Date(),
+): SpecDeltaPreflightRecord {
+  const validatedBaseSpecDigests: Record<string, string> = {};
+  for (const deltaPath of deltaSpecPaths) {
+    const capability = deltaPath.split('/').at(-2);
+    if (capability === undefined) continue;
+    const before = readFileAtCommit(
+      repositoryRoot,
+      head,
+      `openspec/specs/${capability}/spec.md`,
+    );
+    if (before === undefined) continue;
+    const delta = readWorktreeFile(
+      repositoryRoot,
+      `${changeRoot}/${changeId}/specs/${capability}/spec.md`,
+    );
+    if (delta === undefined) continue;
+    // Whether each declared operation can land at all, before whether the
+    // blocks it lands preserve their scenarios: an inapplicable MODIFIED is
+    // not a preservation problem, it is a delta describing a base that is not
+    // there.
+    validatedBaseSpecDigests[`openspec/specs/${capability}/spec.md`] =
+      digest(before);
+
+    const faults = findDeltaApplicabilityFaults(before, delta);
+    if (faults.length > 0) throw deltaNotApplicable(capability, faults);
+
+    const baseRequirements = parseRequirements(before);
+    const modified = requirementBlocks(
+      splitSections(delta).get('modified requirements') ?? '',
+    );
+    for (const { name, raw } of modified) {
+      const baseBlock = baseRequirements.get(name);
+      if (baseBlock === undefined) continue;
+      const missing = findMissingScenarioIdentities(baseBlock, raw);
+      if (missing.length > 0) throw scenarioPreservationFailed(name, missing);
+    }
+  }
+  // Naming the base this passed over lets a later archive failure be read as
+  // drift rather than as a plan that was never applicable.
+  return {
+    status: 'passed',
+    validatedAt: now.toISOString(),
+    validatedBaseCommit: head,
+    validatedBaseSpecDigests,
+    validatorVersion: SPEC_DELTA_VALIDATOR_VERSION,
+  };
+}
+
+export const SPEC_DELTA_VALIDATOR_VERSION = 'spec-delta-preflight-v1';
+
+export type SpecDeltaPreflightRecord = Readonly<{
+  status: 'passed';
+  validatedAt: string;
+  validatedBaseCommit: string;
+  validatedBaseSpecDigests: Record<string, string>;
+  validatorVersion: string;
+}>;
+
+function deltaNotApplicable(
+  capability: string,
+  faults: readonly DeltaApplicabilityFault[],
+) {
+  return workflowError(
+    'SPEC_DELTA_NOT_APPLICABLE',
+    `Delta for ${capability} declares operations the current base cannot accept: ${faults
+      .map(
+        ({ operation, requirement, reason }) =>
+          `${operation} "${requirement}" — ${reason}`,
+      )
+      .join(' ')}`,
+    ExitCode.verification,
+    { details: { capability, faults } },
+  );
+}
+
+function readWorktreeFile(
+  repositoryRoot: string,
+  relativePath: string,
+): string | undefined {
+  try {
+    return fs.readFileSync(path.join(repositoryRoot, relativePath), 'utf8');
+  } catch {
+    return undefined;
+  }
+}
+
+export type DeltaApplicabilityFault = {
+  operation: Operation;
+  requirement: string;
+  reason: string;
+};
+
+/**
+ * Whether the operations a delta declares can be applied to the base as it
+ * stands right now. Archive answers this by applying and inspecting the
+ * result; plan-commit cannot, but it can check the half that depends only on
+ * the delta and the current base — modifying something absent, adding
+ * something present, removing something absent, or renaming onto an occupied
+ * name are all decidable before an execution is spent.
+ *
+ * Reports every fault rather than the first, because a delta with three
+ * inapplicable operations should cost one repair round, not three.
+ */
+export function findDeltaApplicabilityFaults(
+  baseSpec: string,
+  deltaSpec: string,
+): DeltaApplicabilityFault[] {
+  const sections = splitSections(deltaSpec);
+  const base = parseRequirements(baseSpec);
+  const faults: DeltaApplicabilityFault[] = [];
+
+  for (const { name } of requirementBlocks(
+    sections.get('modified requirements') ?? '',
+  )) {
+    if (!base.has(name)) {
+      faults.push({
+        operation: 'modified',
+        requirement: name,
+        reason: 'Requirement is not present in the base specification.',
+      });
+    }
+  }
+  for (const { name } of requirementBlocks(
+    sections.get('added requirements') ?? '',
+  )) {
+    if (base.has(name)) {
+      faults.push({
+        operation: 'added',
+        requirement: name,
+        reason: 'Requirement is already present in the base specification.',
+      });
+    }
+  }
+  for (const name of requirementNames(
+    sections.get('removed requirements') ?? '',
+  )) {
+    if (!base.has(name)) {
+      faults.push({
+        operation: 'removed',
+        requirement: name,
+        reason: 'Requirement is not present in the base specification.',
+      });
+    }
+  }
+  for (const { from, to } of parseRenames(
+    sections.get('renamed requirements') ?? '',
+  )) {
+    if (!base.has(from)) {
+      faults.push({
+        operation: 'renamed',
+        requirement: from,
+        reason: 'Rename source is not present in the base specification.',
+      });
+    }
+    if (base.has(to)) {
+      faults.push({
+        operation: 'renamed',
+        requirement: to,
+        reason:
+          'Rename destination is already present in the base specification.',
+      });
+    }
+  }
+  return faults;
+}
+
+function parseRenames(content: string): Array<{ from: string; to: string }> {
+  const renames: Array<{ from: string; to: string }> = [];
+  let from: string | undefined;
+  for (const line of content.replace(/\r\n?/g, '\n').split('\n')) {
+    const fromMatch =
+      /^\s*-?\s*FROM:\s*`?###\s*Requirement:\s*(.+?)`?\s*$/i.exec(line);
+    const toMatch = /^\s*-?\s*TO:\s*`?###\s*Requirement:\s*(.+?)`?\s*$/i.exec(
+      line,
+    );
+    if (fromMatch) from = fromMatch[1].trim();
+    if (toMatch && from !== undefined) {
+      renames.push({ from, to: toMatch[1].trim() });
+      from = undefined;
+    }
+  }
+  return renames;
+}
+
+function scenarioIdentities(block: string): string[] {
+  const seen = new Set<string>();
+  return block
+    .replace(/\r\n?/g, '\n')
+    .split('\n')
+    .flatMap((line) => {
+      const match = /^####\s*Scenario:\s*(.+?)\s*$/i.exec(line);
+      if (!match) return [];
+      const identity = match[1].trim();
+      if (!identity || seen.has(identity)) return [];
+      seen.add(identity);
+      return [identity];
+    });
+}
+
 function requirementNames(content: string): string[] {
   return content.split('\n').flatMap((line) => {
     const match = /^###\s*Requirement:\s*(.+?)\s*$/i.exec(line);
@@ -207,5 +444,18 @@ function invalidOutcome() {
     'ARCHIVE_DELTA_OUTCOME_INVALID',
     'Archive base-spec output does not realize every declared delta operation.',
     ExitCode.verification,
+  );
+}
+
+function scenarioPreservationFailed(requirement: string, missing: string[]) {
+  return workflowError(
+    'SPEC_SCENARIO_PRESERVATION_FAILED',
+    `Requirement "${requirement}" drops existing scenario identities: ${missing
+      .map((identity) => `"${identity}"`)
+      .join(
+        ', ',
+      )}. A MODIFIED requirement must keep every current scenario title; titles are exact identities during apply, so a reworded title reads as a deletion.`,
+    ExitCode.verification,
+    { details: { requirement, missingScenarios: missing } },
   );
 }

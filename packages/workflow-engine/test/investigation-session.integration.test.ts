@@ -7,7 +7,10 @@ import path from 'node:path';
 import test from 'node:test';
 import { pathToFileURL } from 'node:url';
 
+import { loadAiAdapterPolicy } from '../src/ai-adapter-policy.ts';
 import { canonicalJson } from '../src/canonical-json.ts';
+import { projectProviderInvocationExecution } from '../src/execution-core.ts';
+import { readExecutionJobState } from '../src/execution-store.ts';
 import {
   compareAndSwapEvidenceRefsDocument,
   readEvidenceNode,
@@ -57,7 +60,10 @@ import {
   readPlanReviewNode,
 } from '../src/plan-review.ts';
 import {
+  createProviderRunnerForTesting,
   PROVIDER_RUNNER_RESIDUALS,
+  type ProviderExecutableIdentity,
+  type ProviderRunnerHost,
   type ProviderRunnerReport,
 } from '../src/provider-runner.ts';
 import { runProviderWorker } from '../src/provider-worker.ts';
@@ -80,6 +86,7 @@ import { investigationRuntimePaths } from '../src/paths.ts';
 import {
   withChangeTransitionAuthority,
   withHumanResolutionTransitionAuthority,
+  withInvestigationTransitionAuthority,
 } from '../src/planning-lock.ts';
 import {
   createProviderInvocationRequest,
@@ -87,6 +94,7 @@ import {
   type ProviderInvocationRequest,
   type ProviderProcessOutcome,
 } from '../src/provider-contracts.ts';
+import { authorizeAutomaticProviderRetry } from '../src/provider-retry-decision.ts';
 import {
   BLIND_SURVEY_OUTPUT_SCHEMA,
   claimProviderInvocation,
@@ -102,9 +110,10 @@ import {
   readProviderInvocation,
   readProviderInvocationRequest,
   readProviderRetryReservation,
+  storeProviderExecutionPolicySnapshot,
   type BlindSurveyManifest,
 } from '../src/provider-invocation-store.ts';
-import { startSession } from '../src/session.ts';
+import { abortSession, startSession } from '../src/session.ts';
 import {
   createFixtureRepository,
   git,
@@ -112,6 +121,7 @@ import {
   runtimeRoot,
   sourceRepositoryRoot,
 } from './fixture.ts';
+import { prepareExecutionMandate } from './execution-mandate-fixture.ts';
 import {
   releaseOwnedLock,
   runtimePaths as workflowRuntimePaths,
@@ -627,40 +637,44 @@ test('structured investigation exemption starts a durable planning branch withou
       reviewOutput.planReview!.invocationId;
     runProviderWorker(repository, initialExemptionReviewInvocationId, {
       runner(input): ProviderRunnerReport {
-        return fakeRunnerReport(input.request, {
-          schemaVersion: 2,
-          verdict: 'advisory-approve',
-          coverage: [
-            ...PLAN_REVIEW_COVERAGE.slice(0, -1),
-            PLAN_REVIEW_COVERAGE[0],
-          ],
-          scopeAssessment: { kind: 'challenges' },
-          findings: [
-            {
-              kind: 'challenge',
-              severity: 'medium',
-              category: 'missing-scope',
-              currentChangeImpact: 'required',
-              summary:
-                'Confirm the declared documentation scope has no runtime behavior dependency.',
-              evidence: [
-                {
-                  kind: 'repository-location',
-                  path: 'docs/WORKFLOW.md',
-                  line: 1,
-                  observation:
-                    'The declared target is a tracked Markdown workflow guide.',
-                },
-              ],
-            },
-          ],
-          proposedTerms: [],
-          suggestions: [],
-          residualRisk:
-            'The reviewer cannot prove that prose has no indirect behavioral consequence.',
-          uncertainty:
-            'This intentionally duplicates one coverage area to exercise native validator failure recovery.',
-        });
+        return fakeRunnerReport(
+          input.request,
+          {
+            schemaVersion: 2,
+            verdict: 'advisory-approve',
+            coverage: [
+              ...PLAN_REVIEW_COVERAGE.slice(0, -1),
+              PLAN_REVIEW_COVERAGE[0],
+            ],
+            scopeAssessment: { kind: 'challenges' },
+            findings: [
+              {
+                kind: 'challenge',
+                severity: 'medium',
+                category: 'missing-scope',
+                currentChangeImpact: 'required',
+                summary:
+                  'Confirm the declared documentation scope has no runtime behavior dependency.',
+                evidence: [
+                  {
+                    kind: 'repository-location',
+                    path: 'docs/WORKFLOW.md',
+                    line: 1,
+                    observation:
+                      'The declared target is a tracked Markdown workflow guide.',
+                  },
+                ],
+              },
+            ],
+            proposedTerms: [],
+            suggestions: [],
+            residualRisk:
+              'The reviewer cannot prove that prose has no indirect behavioral consequence.',
+            uncertainty:
+              'This intentionally duplicates one coverage area to exercise native validator failure recovery.',
+          },
+          input.invocationDirectory,
+        );
       },
     });
     const nativeValidationFailure = readProviderInvocation(
@@ -742,37 +756,41 @@ test('structured investigation exemption starts a durable planning branch withou
     );
     runProviderWorker(repository, reviewOutput.planReview!.invocationId, {
       runner(input): ProviderRunnerReport {
-        return fakeRunnerReport(input.request, {
-          schemaVersion: 2,
-          verdict: 'advisory-approve',
-          coverage: [...PLAN_REVIEW_COVERAGE],
-          scopeAssessment: { kind: 'challenges' },
-          findings: [
-            {
-              kind: 'challenge',
-              severity: 'medium',
-              category: 'missing-scope',
-              currentChangeImpact: 'required',
-              summary:
-                'Confirm the declared documentation scope has no runtime behavior dependency.',
-              evidence: [
-                {
-                  kind: 'repository-location',
-                  path: 'docs/WORKFLOW.md',
-                  line: 1,
-                  observation:
-                    'The declared target is a tracked Markdown workflow guide.',
-                },
-              ],
-            },
-          ],
-          proposedTerms: [],
-          suggestions: [],
-          residualRisk:
-            'The reviewer cannot prove that prose has no indirect behavioral consequence.',
-          uncertainty:
-            'Eligibility remains an advisory semantic judgment over exact tracked scope.',
-        });
+        return fakeRunnerReport(
+          input.request,
+          {
+            schemaVersion: 2,
+            verdict: 'advisory-approve',
+            coverage: [...PLAN_REVIEW_COVERAGE],
+            scopeAssessment: { kind: 'challenges' },
+            findings: [
+              {
+                kind: 'challenge',
+                severity: 'medium',
+                category: 'missing-scope',
+                currentChangeImpact: 'required',
+                summary:
+                  'Confirm the declared documentation scope has no runtime behavior dependency.',
+                evidence: [
+                  {
+                    kind: 'repository-location',
+                    path: 'docs/WORKFLOW.md',
+                    line: 1,
+                    observation:
+                      'The declared target is a tracked Markdown workflow guide.',
+                  },
+                ],
+              },
+            ],
+            proposedTerms: [],
+            suggestions: [],
+            residualRisk:
+              'The reviewer cannot prove that prose has no indirect behavioral consequence.',
+            uncertainty:
+              'Eligibility remains an advisory semantic judgment over exact tracked scope.',
+          },
+          input.invocationDirectory,
+        );
       },
     });
     const awaitingDisposition = resumePropose(
@@ -938,6 +956,12 @@ test('fake-backed propose composes breadth and depth before materializing an unc
     ]);
     git(repository, ['commit', '-m', 'Add investigation target']);
     git(repository, ['checkout', '-b', `work/${changeId}`]);
+    const adapterPolicyPath = path.join(
+      repository,
+      'workflow/ai-adapter-policy.json',
+    );
+    const adapterPolicyBytes = fs.readFileSync(adapterPolicyPath);
+    setFixtureProviderTimeout(repository, 300_000);
 
     let providerRuns = 0;
     const intent = {
@@ -1495,6 +1519,7 @@ test('fake-backed propose composes breadth and depth before materializing an unc
       failedPlanReview,
       { acknowledgeProviderCost: true },
     );
+    setFixtureProviderTimeout(repository, 600_000);
     const {
       schemaVersion: _retrySchemaVersion,
       kind: _retryKind,
@@ -1580,15 +1605,25 @@ test('fake-backed propose composes breadth and depth before materializing an unc
       invocationId: _priorInvocationId,
       nonce: _priorNonce,
       requestDigest: _priorRequestDigest,
+      policyDigest: _priorPolicyDigest,
+      limits: _priorLimits,
       ...priorRequestBinding
     } = planReviewRequest;
     const {
       invocationId: _replacementInvocationId,
       nonce: _replacementNonce,
       requestDigest: _replacementRequestDigest,
+      policyDigest: _replacementPolicyDigest,
+      limits: _replacementLimits,
       ...replacementRequestBinding
     } = replacementRequest;
     assert.deepEqual(replacementRequestBinding, priorRequestBinding);
+    assert.equal(planReviewRequest.limits.timeoutMs, 300_000);
+    assert.equal(replacementRequest.limits.timeoutMs, 600_000);
+    assert.notEqual(
+      replacementRequest.policyDigest,
+      planReviewRequest.policyDigest,
+    );
     assert.notEqual(replacementRequest.nonce, planReviewRequest.nonce);
     const priorSnapshot = readPlanReviewSnapshotRuntime(
       reviewerRuntime,
@@ -1773,18 +1808,14 @@ test('fake-backed propose composes breadth and depth before materializing an unc
         attempt: driftedReplacementState.attempt + 1,
       })}\n`,
     );
-    const driftedFailure = getProposeStatus(
-      repository,
-      materialized.investigation!.investigationId,
-    );
-    const driftedRetryEnvelope = createPlanReviewRetryEnvelope(
-      repository,
-      driftedFailure,
-      { acknowledgeProviderCost: true },
-    );
     assert.throws(
-      () => resumePropose(repository, changeId, driftedRetryEnvelope),
-      (error) => isWorkflowError(error, 'PLAN_REVIEW_RETRY_INPUT_STALE'),
+      () =>
+        getProposeStatus(
+          repository,
+          materialized.investigation!.investigationId,
+        ),
+      (error) =>
+        isWorkflowError(error, 'PROVIDER_INVOCATION_SUPERSESSION_UNSAFE'),
     );
     fs.writeFileSync(replacementStatePath, replacementFailedBytes);
     const secondFailure = getProposeStatus(
@@ -1961,7 +1992,11 @@ test('fake-backed propose composes breadth and depth before materializing an unc
           uncertainty:
             'The provider is observed read-only but not same-user confined.',
         };
-        return fakeRunnerReport(input.request, semanticOutput);
+        return fakeRunnerReport(
+          input.request,
+          semanticOutput,
+          input.invocationDirectory,
+        );
       },
     });
     const reopened = resumePropose(
@@ -2104,38 +2139,43 @@ test('fake-backed propose composes breadth and depth before materializing an unc
 
     runProviderWorker(repository, replanned.planReview!.invocationId, {
       runner(input): ProviderRunnerReport {
-        return fakeRunnerReport(input.request, {
-          schemaVersion: 2 as const,
-          verdict: 'advisory-approve' as const,
-          coverage: [...PLAN_REVIEW_COVERAGE],
-          scopeAssessment: { kind: 'challenges' as const },
-          findings: [
-            {
-              kind: 'challenge' as const,
-              severity: 'medium' as const,
-              category: 'missing-scope',
-              currentChangeImpact: 'required' as const,
-              summary: 'Confirm the adjacent provider worker remains covered.',
-              evidence: [
-                {
-                  kind: 'repository-location' as const,
-                  path: 'src/investigation-target.ts',
-                  line: 4,
-                  observation:
-                    'The reviewer-only term is now represented in the tracked target.',
-                },
-              ],
-            },
-          ],
-          proposedTerms: [
-            { kind: 'symbol' as const, value: 'SecondReviewNeedle' },
-          ],
-          suggestions: [],
-          residualRisk:
-            'The exact review cannot prove semantic breadth completeness.',
-          uncertainty:
-            'The provider is observed read-only but not same-user confined.',
-        });
+        return fakeRunnerReport(
+          input.request,
+          {
+            schemaVersion: 2 as const,
+            verdict: 'advisory-approve' as const,
+            coverage: [...PLAN_REVIEW_COVERAGE],
+            scopeAssessment: { kind: 'challenges' as const },
+            findings: [
+              {
+                kind: 'challenge' as const,
+                severity: 'medium' as const,
+                category: 'missing-scope',
+                currentChangeImpact: 'required' as const,
+                summary:
+                  'Confirm the adjacent provider worker remains covered.',
+                evidence: [
+                  {
+                    kind: 'repository-location' as const,
+                    path: 'src/investigation-target.ts',
+                    line: 4,
+                    observation:
+                      'The reviewer-only term is now represented in the tracked target.',
+                  },
+                ],
+              },
+            ],
+            proposedTerms: [
+              { kind: 'symbol' as const, value: 'SecondReviewNeedle' },
+            ],
+            suggestions: [],
+            residualRisk:
+              'The exact review cannot prove semantic breadth completeness.',
+            uncertainty:
+              'The provider is observed read-only but not same-user confined.',
+          },
+          input.invocationDirectory,
+        );
       },
     });
     const secondReopened = resumePropose(
@@ -2192,6 +2232,11 @@ test('fake-backed propose composes breadth and depth before materializing an unc
     );
     const exactSecondReviewerSource = fs.readFileSync(secondReviewerSourcePath);
     const reviewerSourceMutations: Array<(node: EvidenceNode) => void> = [
+      (node) => {
+        delete node.exactInputDigests.targetSnapshot;
+        delete node.semanticParentResultDigests.targetSnapshot;
+        delete node.provenanceParentNodeIds.targetSnapshot;
+      },
       (node) => {
         delete node.semanticParentResultDigests.targetSnapshot;
       },
@@ -2527,36 +2572,41 @@ test('fake-backed propose composes breadth and depth before materializing an unc
 
     runProviderWorker(repository, twiceReplanned.planReview!.invocationId, {
       runner(input): ProviderRunnerReport {
-        return fakeRunnerReport(input.request, {
-          schemaVersion: 2 as const,
-          verdict: 'advisory-approve' as const,
-          coverage: [...PLAN_REVIEW_COVERAGE],
-          scopeAssessment: { kind: 'challenges' as const },
-          findings: [
-            {
-              kind: 'challenge' as const,
-              severity: 'medium' as const,
-              category: 'missing-scope',
-              currentChangeImpact: 'required' as const,
-              summary: 'Confirm the adjacent provider worker remains covered.',
-              evidence: [
-                {
-                  kind: 'repository-location' as const,
-                  path: 'src/investigation-target.ts',
-                  line: 4,
-                  observation:
-                    'The reviewer-only term is now represented in the tracked target.',
-                },
-              ],
-            },
-          ],
-          proposedTerms: [],
-          suggestions: [],
-          residualRisk:
-            'The exact review cannot prove semantic breadth completeness.',
-          uncertainty:
-            'The provider is observed read-only but not same-user confined.',
-        });
+        return fakeRunnerReport(
+          input.request,
+          {
+            schemaVersion: 2 as const,
+            verdict: 'advisory-approve' as const,
+            coverage: [...PLAN_REVIEW_COVERAGE],
+            scopeAssessment: { kind: 'challenges' as const },
+            findings: [
+              {
+                kind: 'challenge' as const,
+                severity: 'medium' as const,
+                category: 'missing-scope',
+                currentChangeImpact: 'required' as const,
+                summary:
+                  'Confirm the adjacent provider worker remains covered.',
+                evidence: [
+                  {
+                    kind: 'repository-location' as const,
+                    path: 'src/investigation-target.ts',
+                    line: 4,
+                    observation:
+                      'The reviewer-only term is now represented in the tracked target.',
+                  },
+                ],
+              },
+            ],
+            proposedTerms: [],
+            suggestions: [],
+            residualRisk:
+              'The exact review cannot prove semantic breadth completeness.',
+            uncertainty:
+              'The provider is observed read-only but not same-user confined.',
+          },
+          input.invocationDirectory,
+        );
       },
     });
     const awaitingDisposition = resumePropose(
@@ -2597,6 +2647,7 @@ test('fake-backed propose composes breadth and depth before materializing an unc
       (node: { type: string }) => node.type === 'plan-review',
     );
     const challengeId = readPlanReviewNode(reviewNode).findings[0]!.findingId;
+    fs.writeFileSync(adapterPolicyPath, adapterPolicyBytes);
     const completedPlanning = resumePropose(
       repository,
       changeId,
@@ -2872,10 +2923,23 @@ test('reviewer reopen limit preserves exact materialization evidence for human r
     const secondReopened = runReviewWithNovelTerm('SecondReviewerNeedle');
     assert.equal(secondReopened.state, 'awaiting-group-dispositions');
     reviewStatus = incorporateReviewerTerm(secondReopened);
+    const beforeReviewerBlock = readInvestigationSession(
+      runtime,
+      investigationId,
+    );
     const blocked = runReviewWithNovelTerm('ThirdReviewerNeedle');
     assert.equal(blocked.state, 'human-action-required');
 
     const blockedSession = readInvestigationSession(runtime, investigationId);
+    assert.equal(
+      blockedSession.semanticRevision,
+      beforeReviewerBlock.semanticRevision,
+      'entering a human-action blocker is lifecycle-only',
+    );
+    assert.equal(
+      blockedSession.lifecycleRevision,
+      beforeReviewerBlock.lifecycleRevision + 1,
+    );
     const blockedClosure = readInvestigationEvidenceRefsClosure(
       runtime,
       changeId,
@@ -2891,8 +2955,11 @@ test('reviewer reopen limit preserves exact materialization evidence for human r
     const materializationOutput = readEvidenceNode(
       runtime,
       blockedMaterialization.nodeId,
-    ).output as { revision: number };
-    assert.equal(blockedSession.revision, materializationOutput.revision + 1);
+    ).output as { semanticRevision: number };
+    assert.equal(
+      blockedSession.semanticRevision,
+      materializationOutput.semanticRevision,
+    );
     assert.ok(
       blockedSession.blocker !== null && 'reasonCode' in blockedSession.blocker,
     );
@@ -3036,6 +3103,18 @@ test('reviewer reopen limit preserves exact materialization evidence for human r
         verifier: signer,
       },
     );
+    const authorizedButNotReopened = readInvestigationSession(
+      runtime,
+      investigationId,
+    );
+    assert.equal(
+      authorizedButNotReopened.semanticRevision,
+      blockedSession.semanticRevision,
+    );
+    assert.equal(
+      authorizedButNotReopened.lifecycleRevision,
+      blockedSession.lifecycleRevision,
+    );
     const thirdReopened = resumePropose(
       repository,
       changeId,
@@ -3043,6 +3122,20 @@ test('reviewer reopen limit preserves exact materialization evidence for human r
     );
     assert.equal(thirdReopened.state, 'awaiting-group-dispositions');
     assert.equal(thirdReopened.work?.termSources.reviewer, 3);
+    assert.equal(
+      readInvestigationSession(runtime, investigationId).revision,
+      blockedSession.revision + 1,
+      'the exact human-authorized semantic reopen advances one revision',
+    );
+    assert.equal(
+      readInvestigationSession(runtime, investigationId).semanticRevision,
+      blockedSession.semanticRevision + 1,
+      'incorporating the authorized reviewer term advances semantic revision once',
+    );
+    assert.equal(
+      readInvestigationSession(runtime, investigationId).lifecycleRevision,
+      blockedSession.lifecycleRevision + 1,
+    );
     reviewStatus = incorporateReviewerTerm(thirdReopened);
 
     const fourthBlocked = runReviewWithNovelTerm('FourthReviewerNeedle');
@@ -3120,12 +3213,12 @@ test('reviewer reopen limit preserves exact materialization evidence for human r
     );
     assert.ok(fourthMaterialization);
     assert.equal(
-      stillBlocked.revision,
+      stillBlocked.semanticRevision,
       (
         readEvidenceNode(runtime, fourthMaterialization.nodeId).output as {
-          revision: number;
+          semanticRevision: number;
         }
-      ).revision + 1,
+      ).semanticRevision,
     );
     assert.equal(
       inspectInvestigationResolutionState(
@@ -3154,20 +3247,20 @@ test('reviewer reopen limit preserves exact materialization evidence for human r
       }),
     );
     assert.equal(
-      drifted.revision,
+      drifted.semanticRevision,
       (
         readEvidenceNode(runtime, fourthMaterialization.nodeId).output as {
-          revision: number;
+          semanticRevision: number;
         }
-      ).revision + 2,
+      ).semanticRevision,
     );
-    assert.deepEqual(
-      inspectInvestigationQuarantineState(
+    assert.equal(drifted.lifecycleRevision, stillBlocked.lifecycleRevision + 1);
+    assert.doesNotThrow(() =>
+      inspectInvestigationResolutionState(
         runtime,
         investigationId,
         'github:R_fixture',
-      ).availableResolutions.map(({ kind }) => kind),
-      ['quarantine'],
+      ),
     );
   } finally {
     fs.rmSync(repository, { recursive: true, force: true });
@@ -3180,8 +3273,10 @@ test('propose CLI persists a fake-backed wait for read-only status in a fresh pr
     path.join(os.tmpdir(), 'workflow-propose-cli-'),
   );
   const changeId = 'cli-investigation';
+  let mandate: ReturnType<typeof prepareExecutionMandate> | undefined;
   try {
     git(repository, ['checkout', '-b', `work/${changeId}`]);
+    mandate = prepareExecutionMandate(repository, changeId);
     const intentPath = path.join(inputDirectory, 'intent.json');
     fs.writeFileSync(
       intentPath,
@@ -3197,7 +3292,16 @@ test('propose CLI persists a fake-backed wait for read-only status in a fresh pr
 
     const started = runWorkflowCli(
       repository,
-      ['propose', changeId, '--intent', intentPath, '--actor', 'codex'],
+      [
+        'propose',
+        changeId,
+        '--intent',
+        intentPath,
+        '--mandate',
+        mandate.taskId,
+        '--actor',
+        'codex',
+      ],
       { WORKFLOW_TEST_DISABLE_PROVIDER_DISPATCH: '1' },
     );
     assert.equal(started.status, 0, started.stderr);
@@ -3288,7 +3392,16 @@ test('propose CLI persists a fake-backed wait for read-only status in a fresh pr
 
     const reorderedReplay = runWorkflowCli(
       repository,
-      ['propose', changeId, '--actor', 'codex', '--intent', intentPath],
+      [
+        'propose',
+        changeId,
+        '--actor',
+        'codex',
+        '--mandate',
+        mandate.taskId,
+        '--intent',
+        intentPath,
+      ],
       { WORKFLOW_TEST_DISABLE_PROVIDER_DISPATCH: '1' },
     );
     assert.equal(reorderedReplay.status, 0, reorderedReplay.stderr);
@@ -3306,6 +3419,7 @@ test('propose CLI persists a fake-backed wait for read-only status in a fresh pr
       assert.equal(JSON.parse(rejected.stderr).error.code, 'INVALID_USAGE');
     }
   } finally {
+    mandate?.dispose();
     fs.rmSync(repository, { recursive: true, force: true });
     fs.rmSync(inputDirectory, { recursive: true, force: true });
   }
@@ -3519,6 +3633,7 @@ test('a durable start reservation recovers with its original IDs and nonce', () 
       },
       manifest: fixture.blindManifest,
       request: fixture.request,
+      executionPolicy: loadAiAdapterPolicy(fixture.repository),
       createdAt: FIRST_INSTANT,
     });
     assert.equal(
@@ -3824,6 +3939,11 @@ test('status rejects an unreserved provider attempt fabricated through raw store
         nonce: 'fabricated-attempt-nonce-0000',
       }),
     );
+    storeProviderExecutionPolicySnapshot(
+      fixture.paths,
+      fabricatedRequest,
+      loadAiAdapterPolicy(fixture.repository),
+    );
     createProviderInvocation(fixture.paths, {
       investigationId: started.investigationId,
       changeId: started.changeId,
@@ -3870,20 +3990,29 @@ test('status rejects a reserved retry that reuses a prior nonce', () => {
         leaseDurationMs: 1_000,
       },
     );
-    failProviderInvocation(fixture.paths, started.providerInvocationId, {
-      expectedRevision: claim.record.revision,
-      leaseGeneration: claim.record.leaseGeneration,
-      leaseToken: claim.leaseToken,
-      failure: {
-        kind: 'retryable',
-        code: 'PROVIDER_PROCESS_FAILED',
-        message: 'Fixture failure before a fabricated retry.',
+    const failed = failProviderInvocation(
+      fixture.paths,
+      started.providerInvocationId,
+      {
+        expectedRevision: claim.record.revision,
+        leaseGeneration: claim.record.leaseGeneration,
+        leaseToken: claim.leaseToken,
+        failure: {
+          kind: 'retryable',
+          code: 'PROVIDER_PROCESS_FAILED',
+          message: 'Fixture failure before a fabricated retry.',
+        },
       },
-    });
+    );
     const duplicateNonceRequest = createProviderInvocationRequest(
       providerRequestInput(fixture, 'invocation-duplicate-nonce', {
         nonce: fixture.request.nonce,
       }),
+    );
+    const retryAuthorization = authorizeProviderRetryFixture(
+      fixture,
+      failed,
+      duplicateNonceRequest,
     );
     createProviderRetryReservation(fixture.paths, {
       investigationId: started.investigationId,
@@ -3892,6 +4021,7 @@ test('status rejects a reserved retry that reuses a prior nonce', () => {
       previousInvocationId: started.providerInvocationId,
       manifest: fixture.blindManifest,
       request: duplicateNonceRequest,
+      ...retryAuthorization,
     });
     createProviderInvocation(fixture.paths, {
       investigationId: started.investigationId,
@@ -4004,6 +4134,130 @@ test('status is read-only and short transition locks do not survive a call', () 
     );
   } finally {
     fs.rmSync(fixture.repository, { recursive: true, force: true });
+  }
+});
+
+test('an active change does not hold investigation, human-resolution, plan, or archive for another change', () => {
+  const repository = createFixtureRepository();
+  try {
+    git(repository, ['checkout', '-b', 'work/demo-change']);
+    const active = startSession(repository, 'demo-change', '1.1');
+    const discovered = discoverRepository(repository);
+    const runtime = workflowRuntimePaths(
+      discovered.gitCommonDirectory,
+      'workflow-engine',
+    );
+    const reached: string[] = [];
+
+    withInvestigationTransitionAuthority(runtime, 'other-change', () => {
+      reached.push('investigation');
+    });
+    withHumanResolutionTransitionAuthority(
+      runtime,
+      'other-change',
+      null,
+      () => {
+        reached.push('human-resolution');
+      },
+    );
+    withChangeTransitionAuthority(runtime, 'other-change', 'plan', () => {
+      reached.push('plan');
+    });
+    withChangeTransitionAuthority(runtime, 'other-change', 'archive', () => {
+      reached.push('archive');
+    });
+
+    assert.deepEqual(reached, [
+      'investigation',
+      'human-resolution',
+      'plan',
+      'archive',
+    ]);
+    abortSession(repository, active.sessionId, 'fixture cleanup');
+  } finally {
+    fs.rmSync(repository, { recursive: true, force: true });
+  }
+});
+
+test('every transition entrance remains fail-closed for the active change', () => {
+  const repository = createFixtureRepository();
+  try {
+    git(repository, ['checkout', '-b', 'work/demo-change']);
+    const active = startSession(repository, 'demo-change', '1.1');
+    const discovered = discoverRepository(repository);
+    const runtime = workflowRuntimePaths(
+      discovered.gitCommonDirectory,
+      'workflow-engine',
+    );
+    const operations = [
+      () =>
+        withInvestigationTransitionAuthority(
+          runtime,
+          'demo-change',
+          () => undefined,
+        ),
+      () =>
+        withHumanResolutionTransitionAuthority(
+          runtime,
+          'demo-change',
+          null,
+          () => undefined,
+        ),
+      () =>
+        withChangeTransitionAuthority(
+          runtime,
+          'demo-change',
+          'plan',
+          () => undefined,
+        ),
+      () =>
+        withChangeTransitionAuthority(
+          runtime,
+          'demo-change',
+          'archive',
+          () => undefined,
+        ),
+    ];
+
+    for (const operation of operations) {
+      assert.throws(operation, (error) =>
+        isWorkflowError(error, 'ACTIVE_SESSION_CONFLICT'),
+      );
+    }
+    abortSession(repository, active.sessionId, 'fixture cleanup');
+  } finally {
+    fs.rmSync(repository, { recursive: true, force: true });
+  }
+});
+
+test('a reserved maintainer authority still fences repository lifecycle globally', () => {
+  const repository = createFixtureRepository();
+  try {
+    const discovered = discoverRepository(repository);
+    const runtime = workflowRuntimePaths(
+      discovered.gitCommonDirectory,
+      'workflow-engine',
+    );
+    const reserved = path.join(runtime.root, 'maintainer-grants', 'reserved');
+    fs.mkdirSync(reserved, { recursive: true, mode: 0o700 });
+    fs.chmodSync(reserved, 0o700);
+    fs.writeFileSync(
+      path.join(reserved, '11111111-1111-4111-8111-111111111111.json'),
+      '{}\n',
+      { mode: 0o600 },
+    );
+
+    assert.throws(
+      () =>
+        withInvestigationTransitionAuthority(
+          runtime,
+          'independent-change',
+          () => undefined,
+        ),
+      (error) => isWorkflowError(error, 'ACTIVE_AUTHORITY_CONFLICT'),
+    );
+  } finally {
+    fs.rmSync(repository, { recursive: true, force: true });
   }
 });
 
@@ -6210,7 +6464,127 @@ test('publication recovery reclaims receipt publication temps before and after a
   }
 });
 
-test('quarantine retires parseable evidence refs whose materialization no longer matches the session revision', () => {
+test('current materialization survives repeated lifecycle revisions but not a semantic milestone revision', () => {
+  const fixture = investigationFixture(
+    'invocation-semantic-materialization-revision',
+  );
+  try {
+    const started = startFixture(fixture);
+    const artifacts = {};
+    const sealNodeId = sha256('semantic-materialization-seal');
+    const sealResultDigest = sha256('semantic-materialization-seal-result');
+    const materialization = createEvidenceNode({
+      type: 'propose-planning-materialization',
+      nodeSchema: 'workflow.propose-planning-materialization.v2',
+      evaluator: 'workflow-propose.v1',
+      policyDigest: PROPOSE_POLICY_DIGEST,
+      exactInputDigests: {
+        artifacts: sha256(canonicalJson(artifacts)),
+        baseline: sha256(canonicalJson(started.baseline)),
+        seal: sealNodeId,
+      },
+      semanticParentResultDigests: { seal: sealResultDigest },
+      provenanceParentNodeIds: { seal: sealNodeId },
+      outputSchema: 'workflow.propose-planning-materialization-output.v2',
+      output: {
+        changeId: started.changeId,
+        investigationId: started.investigationId,
+        semanticRevision: started.semanticRevision,
+        baseline: started.baseline,
+        artifacts,
+        sealNodeId,
+        sealResultDigest,
+      },
+      runtimeMetadata: {},
+    });
+    writeEvidenceNode(fixture.paths, materialization);
+    fs.writeFileSync(
+      path.join(fixture.paths.refs, `${started.changeId}.json`),
+      canonicalJson({
+        schemaVersion: 1,
+        changeId: started.changeId,
+        refs: {
+          'propose/planning-materialization': materialization.nodeId,
+        },
+      }),
+      { mode: 0o600 },
+    );
+
+    const firstLifecycle = compareAndSwapInvestigationSession(
+      fixture.paths,
+      started.investigationId,
+      started.revision,
+      (current) => ({
+        ...current,
+        revision: current.revision + 1,
+        updatedAt: new Date(
+          Date.parse(current.updatedAt) + 1_000,
+        ).toISOString(),
+      }),
+    );
+    const secondLifecycle = compareAndSwapInvestigationSession(
+      fixture.paths,
+      started.investigationId,
+      firstLifecycle.revision,
+      (current) => ({
+        ...current,
+        revision: current.revision + 1,
+        updatedAt: new Date(
+          Date.parse(current.updatedAt) + 1_000,
+        ).toISOString(),
+      }),
+    );
+    assert.equal(secondLifecycle.semanticRevision, started.semanticRevision);
+    assert.equal(
+      secondLifecycle.lifecycleRevision,
+      started.lifecycleRevision + 2,
+    );
+    const valid = inspectInvestigationResolutionState(
+      fixture.paths,
+      started.investigationId,
+      'fixture',
+    );
+    assert.notEqual(valid.envelope.evidenceRefs, null);
+
+    const envelope = mainTermsEnvelope(started);
+    const semantic = compareAndSwapInvestigationSession(
+      fixture.paths,
+      started.investigationId,
+      secondLifecycle.revision,
+      (current) => ({
+        ...current,
+        revision: current.revision + 1,
+        state: 'waiting-for-provider',
+        milestones: {
+          ...current.milestones,
+          mainTerms: {
+            envelopeDigest: sha256(canonicalJson(envelope)),
+            contributionDigest: checkpointContributionDigest(envelope),
+            envelope,
+          },
+        },
+        updatedAt: new Date(
+          Date.parse(current.updatedAt) + 1_000,
+        ).toISOString(),
+      }),
+    );
+    assert.equal(
+      semantic.semanticRevision,
+      secondLifecycle.semanticRevision + 1,
+    );
+    const quarantined = inspectInvestigationQuarantineState(
+      fixture.paths,
+      started.investigationId,
+      'fixture',
+    );
+    assert.equal(quarantined.envelope.evidenceRefs, null);
+    assert.notEqual(quarantined.envelope.ambiguityDigest, null);
+  } finally {
+    fs.rmSync(fixture.repository, { recursive: true, force: true });
+  }
+});
+
+test('quarantine retires a legacy materialization whose monolithic session revision changed', () => {
   const fixture = investigationFixture(
     'invocation-quarantine-stale-materialization',
   );
@@ -6538,6 +6912,7 @@ test('baseline drift and unsafe durable files fail closed', () => {
   const driftFixture = investigationFixture('invocation-baseline-drift');
   const modeFixture = investigationFixture('invocation-session-mode');
   const symlinkFixture = investigationFixture('invocation-state-symlink');
+  const policyFixture = investigationFixture('invocation-policy-snapshot');
   try {
     const driftStarted = startFixture(driftFixture);
     fs.writeFileSync(
@@ -6590,16 +6965,70 @@ test('baseline drift and unsafe durable files fail closed', () => {
         ),
       (error) => isWorkflowError(error, 'PROVIDER_INVOCATION_STORE_UNSAFE'),
     );
+
+    const policyStarted = startFixture(policyFixture);
+    const invocationDirectory = path.join(
+      policyFixture.paths.invocations,
+      policyStarted.providerInvocationId,
+    );
+    const policySnapshotPath = path.join(
+      invocationDirectory,
+      'execution-policy.json',
+    );
+    const exactPolicySnapshot = fs.readFileSync(policySnapshotPath, 'utf8');
+    const policySnapshot = JSON.parse(exactPolicySnapshot) as Record<
+      string,
+      unknown
+    >;
+    fs.writeFileSync(
+      policySnapshotPath,
+      `${canonicalJson({ ...policySnapshot, requestDigest: '9'.repeat(64) })}\n`,
+    );
+    assert.throws(
+      () =>
+        inspectInvestigationResolutionState(
+          policyFixture.paths,
+          policyStarted.investigationId,
+          policyFixture.blindManifest.repositoryId,
+        ),
+      (error) =>
+        isWorkflowError(error, 'HUMAN_RESOLUTION_PROVIDER_STATE_UNSAFE'),
+    );
+
+    fs.writeFileSync(policySnapshotPath, exactPolicySnapshot);
+    fs.writeFileSync(
+      path.join(invocationDirectory, 'unexpected.json'),
+      '{}\n',
+      {
+        mode: 0o600,
+      },
+    );
+    assert.throws(
+      () =>
+        inspectInvestigationResolutionState(
+          policyFixture.paths,
+          policyStarted.investigationId,
+          policyFixture.blindManifest.repositoryId,
+        ),
+      (error) =>
+        isWorkflowError(error, 'HUMAN_RESOLUTION_PROVIDER_STATE_UNSAFE'),
+    );
   } finally {
     fs.rmSync(driftFixture.repository, { recursive: true, force: true });
     fs.rmSync(modeFixture.repository, { recursive: true, force: true });
     fs.rmSync(symlinkFixture.repository, { recursive: true, force: true });
+    fs.rmSync(policyFixture.repository, { recursive: true, force: true });
   }
 });
 
 test('provider leases expire, fence stale workers, and never persist raw tokens', () => {
   const fixture = investigationFixture('invocation-lease');
   try {
+    storeProviderExecutionPolicySnapshot(
+      fixture.paths,
+      fixture.request,
+      loadAiAdapterPolicy(fixture.repository),
+    );
     assert.throws(
       () =>
         createProviderInvocation(fixture.paths, {
@@ -6707,6 +7136,11 @@ test('provider leases expire, fence stale workers, and never persist raw tokens'
       providerRequestInput(fixture, 'invocation-lease-retry', {
         nonce: 'lease-retry-nonce-at-least-16-bytes',
       }),
+    );
+    storeProviderExecutionPolicySnapshot(
+      fixture.paths,
+      replacementRequest,
+      loadAiAdapterPolicy(fixture.repository),
     );
     createProviderInvocation(fixture.paths, {
       investigationId: 'investigation-manual-lease',
@@ -6886,6 +7320,11 @@ test('failed provider work can retry without discarding completed main input', (
         nonce: 'replacement-nonce-at-least-16-bytes',
       }),
     );
+    const replacementAuthorization = authorizeProviderRetryFixture(
+      fixture,
+      failed,
+      replacement,
+    );
     const retryReservation = createProviderRetryReservation(fixture.paths, {
       investigationId: waiting.investigationId,
       changeId: waiting.changeId,
@@ -6893,6 +7332,7 @@ test('failed provider work can retry without discarding completed main input', (
       previousInvocationId: waiting.providerInvocationId,
       manifest: fixture.blindManifest,
       request: replacement,
+      ...replacementAuthorization,
     });
     const retryReservationPath = path.join(
       fixture.paths.refs,
@@ -6942,6 +7382,11 @@ test('failed provider work can retry without discarding completed main input', (
     fs.rmSync(path.join(fixture.paths.invocations, replacement.invocationId), {
       recursive: true,
     });
+    storeProviderExecutionPolicySnapshot(
+      fixture.paths,
+      replacement,
+      loadAiAdapterPolicy(fixture.repository),
+    );
     createProviderInvocation(fixture.paths, {
       investigationId: waiting.investigationId,
       changeId: waiting.changeId,
@@ -7056,18 +7501,29 @@ test('failed provider work can retry without discarding completed main input', (
       joined.investigationId,
       fixture.blindManifest.repositoryId,
     );
+    const unrelatedFailed = createFailedProviderInvocationFixture(
+      fixture,
+      'investigation-unrelated-retry',
+      'invocation-unrelated-failed',
+    );
     const unrelatedRequest = createProviderInvocationRequest(
       providerRequestInput(fixture, 'invocation-unrelated-retry', {
         nonce: 'unrelated-retry-nonce-at-least-16-bytes',
       }),
     );
+    const unrelatedAuthorization = authorizeProviderRetryFixture(
+      fixture,
+      unrelatedFailed,
+      unrelatedRequest,
+    );
     createProviderRetryReservation(fixture.paths, {
       investigationId: 'investigation-unrelated-retry',
       changeId: waiting.changeId,
       attempt: 2,
-      previousInvocationId: 'invocation-unrelated-previous',
+      previousInvocationId: unrelatedFailed.invocationId,
       manifest: fixture.blindManifest,
       request: unrelatedRequest,
+      ...unrelatedAuthorization,
     });
     assert.equal(
       inspectInvestigationResolutionState(
@@ -7083,13 +7539,19 @@ test('failed provider work can retry without discarding completed main input', (
         nonce: 'extra-retry-nonce-at-least-16-bytes',
       }),
     );
+    const extraAuthorization = authorizeProviderRetryFixture(
+      fixture,
+      unrelatedFailed,
+      extraRequest,
+    );
     createProviderRetryReservation(fixture.paths, {
       investigationId: joined.investigationId,
       changeId: waiting.changeId,
       attempt: 4,
-      previousInvocationId: replacement.invocationId,
+      previousInvocationId: unrelatedFailed.invocationId,
       manifest: fixture.blindManifest,
       request: extraRequest,
+      ...extraAuthorization,
     });
     assert.throws(
       () =>
@@ -7115,6 +7577,9 @@ test('failed provider work can retry without discarding completed main input', (
         `${joined.investigationId}.provider-retry-4.json`,
       ),
     );
+    fs.rmSync(path.join(fixture.paths.invocations, extraRequest.invocationId), {
+      recursive: true,
+    });
 
     const exactRetryReservation = fs.readFileSync(retryReservationPath, 'utf8');
     fs.writeFileSync(retryReservationPath, '{"broken":true}\n');
@@ -7154,6 +7619,132 @@ test('failed provider work can retry without discarding completed main input', (
   }
 });
 
+test('malformed native output creates bounded durable repair evidence and replacement is fully revalidated', () => {
+  const fixture = investigationFixture('invocation-repair-first-attempt');
+  const policyDigest = sha256(
+    fs.readFileSync(
+      path.join(fixture.repository, 'workflow/ai-adapter-policy.json'),
+      'utf8',
+    ),
+  );
+  fixture.request = createProviderInvocationRequest(
+    providerRequestInput(fixture, fixture.request.invocationId, {
+      policyDigest,
+    }),
+  );
+  try {
+    const started = startFixture(fixture);
+    const waiting = resumeInvestigationSession(
+      fixture.repository,
+      started.investigationId,
+      mainTermsEnvelope(started),
+    );
+    const malformed = 'not-json secret-that-must-not-enter-repair-evidence';
+    const worker = runProviderWorker(
+      fixture.repository,
+      waiting.providerInvocationId,
+      {
+        platform: 'darwin',
+        runner(input) {
+          return createProviderRunnerForTesting(
+            malformedClaudeRunnerHost(malformed),
+          ).run(input, { platform: 'darwin' });
+        },
+      },
+    );
+    assert.equal(worker.state, 'failed');
+    assert.equal(worker.failure?.code, 'PROVIDER_NATIVE_OUTPUT_INVALID');
+    const failed = readProviderInvocation(
+      fixture.paths,
+      waiting.providerInvocationId,
+    );
+    assert.equal(failed.state, 'failed');
+    const repairEvidenceBytes = fs.readFileSync(
+      path.join(
+        fixture.paths.invocations,
+        waiting.providerInvocationId,
+        'repair-evidence.json',
+      ),
+      'utf8',
+    );
+    assert.ok(Buffer.byteLength(repairEvidenceBytes, 'utf8') < 300_000);
+    assert.equal(repairEvidenceBytes.includes(malformed), false);
+    assert.match(repairEvidenceBytes, /NATIVE_JSON_PARSE_FAILED/);
+
+    const replacementRequest = createProviderInvocationRequest(
+      providerRequestInput(fixture, 'invocation-repair-second-attempt', {
+        nonce: 'repair-replacement-nonce-at-least-16-bytes',
+        policyDigest,
+      }),
+    );
+    const retried = retryInvestigationProvider(
+      fixture.repository,
+      waiting.investigationId,
+      {
+        expectedRevision: waiting.revision,
+        replacementRequest,
+      },
+    );
+    const replacement = readProviderInvocation(
+      fixture.paths,
+      replacementRequest.invocationId,
+    );
+    const jobId = projectProviderInvocationExecution({
+      record: replacement,
+      request: replacementRequest,
+    }).job.jobId;
+    const durable = readExecutionJobState(fixture.paths, jobId);
+    assert.ok(durable);
+    assert.equal(durable.attempts[1]!.retryMode, 'repair');
+    assert.equal(durable.job.repairAttemptCount, 1);
+    assert.equal(retried.providerInvocationId, replacement.invocationId);
+
+    const replacementClaim = claimProviderInvocation(
+      fixture.paths,
+      replacement.invocationId,
+      {
+        workerId: 'worker-schema-repair',
+        leaseDurationMs: 1_000,
+      },
+    );
+    const invalidOutcome = providerOutcome(replacementRequest);
+    const invalidEnvelope = JSON.parse(invalidOutcome.stdout) as {
+      output: { terms: unknown[] };
+    };
+    invalidEnvelope.output.terms = [];
+    assert.throws(
+      () =>
+        completeProviderInvocation(fixture.paths, replacement.invocationId, {
+          expectedRevision: replacementClaim.record.revision,
+          leaseGeneration: replacementClaim.record.leaseGeneration,
+          leaseToken: replacementClaim.leaseToken,
+          outcome: {
+            ...invalidOutcome,
+            stdout: JSON.stringify(invalidEnvelope),
+          },
+        }),
+      (error) => isWorkflowError(error, 'PROVIDER_OUTPUT_INVALID'),
+    );
+    const completed = completeProviderInvocation(
+      fixture.paths,
+      replacement.invocationId,
+      {
+        expectedRevision: replacementClaim.record.revision,
+        leaseGeneration: replacementClaim.record.leaseGeneration,
+        leaseToken: replacementClaim.leaseToken,
+        outcome: providerOutcome(replacementRequest),
+      },
+    );
+    assert.equal(completed.state, 'succeeded');
+    assert.equal(
+      readExecutionJobState(fixture.paths, jobId)?.job.acceptedAttemptId,
+      durable.attempts[1]!.attemptId,
+    );
+  } finally {
+    fs.rmSync(fixture.repository, { recursive: true, force: true });
+  }
+});
+
 test('propose retry envelope authorizes one idempotent replacement survey', () => {
   const repository = createFixtureRepository();
   const inputDirectory = fs.mkdtempSync(
@@ -7162,6 +7753,7 @@ test('propose retry envelope authorizes one idempotent replacement survey', () =
   const changeId = 'retry-provider-survey';
   try {
     git(repository, ['checkout', '-b', `work/${changeId}`]);
+    setFixtureProviderTimeout(repository, 300_000);
     const started = startPropose(
       repository,
       changeId,
@@ -7267,6 +7859,7 @@ test('propose retry envelope authorizes one idempotent replacement survey', () =
     const retryEnvelope = createProviderRetryEnvelope(repository, failed, {
       acknowledgeProviderCost: true,
     });
+    setFixtureProviderTimeout(repository, 600_000);
     assert.throws(
       () =>
         resumePropose(repository, changeId, {
@@ -7315,15 +7908,22 @@ test('propose retry envelope authorizes one idempotent replacement survey', () =
       invocationId: _firstInvocationId,
       nonce: _firstNonce,
       requestDigest: _firstRequestDigest,
+      policyDigest: _firstPolicyDigest,
+      limits: _firstLimits,
       ...firstBinding
     } = firstRequest;
     const {
       invocationId: _secondInvocationId,
       nonce: _secondNonce,
       requestDigest: _secondRequestDigest,
+      policyDigest: _secondPolicyDigest,
+      limits: _secondLimits,
       ...secondBinding
     } = secondRequest;
     assert.deepEqual(secondBinding, firstBinding);
+    assert.equal(firstRequest.limits.timeoutMs, 300_000);
+    assert.equal(secondRequest.limits.timeoutMs, 600_000);
+    assert.notEqual(secondRequest.policyDigest, firstRequest.policyDigest);
     assert.notEqual(secondRequest.nonce, firstRequest.nonce);
     assert.notEqual(secondRequest.requestDigest, firstRequest.requestDigest);
     assert.equal(
@@ -7425,11 +8025,52 @@ test('propose retry envelope authorizes one idempotent replacement survey', () =
     });
     assert.equal(nextRetry.failedInvocation.invocationId, secondInvocationId);
     assert.equal(nextRetry.expectedRevision, retried.investigation!.revision);
+    const thirdAttempt = resumePropose(repository, changeId, nextRetry);
+    const thirdInvocationId = thirdAttempt.investigation!.providerInvocationId;
+    assert.equal(thirdAttempt.investigation!.provider.attempt, 3);
+    const thirdClaim = claimProviderInvocation(paths, thirdInvocationId, {
+      workerId: 'worker-third-repeated-failure',
+      leaseDurationMs: 1_000,
+    });
+    failProviderInvocation(paths, thirdInvocationId, {
+      expectedRevision: thirdClaim.record.revision,
+      leaseGeneration: thirdClaim.record.leaseGeneration,
+      leaseToken: thirdClaim.leaseToken,
+      failure: {
+        kind: 'retryable',
+        code: 'PROVIDER_PROCESS_FAILED',
+        message: 'Third provider attempt repeated the same failure.',
+      },
+    });
+    const repeatedFailure = getProposeStatus(repository, investigationId);
+    const strategyRequired = createProviderRetryEnvelope(
+      repository,
+      repeatedFailure,
+      { acknowledgeProviderCost: true },
+    );
+    assert.throws(
+      () => resumePropose(repository, changeId, strategyRequired),
+      (error) =>
+        isWorkflowError(error, 'PROVIDER_RETRY_STRATEGY_CHANGE_REQUIRED'),
+    );
+    assert.equal(readProviderRetryReservation(paths, investigationId, 4), null);
   } finally {
     fs.rmSync(repository, { recursive: true, force: true });
     fs.rmSync(inputDirectory, { recursive: true, force: true });
   }
 });
+
+function setFixtureProviderTimeout(
+  repository: string,
+  timeoutMs: number,
+): void {
+  const policyPath = path.join(repository, 'workflow/ai-adapter-policy.json');
+  const policy = JSON.parse(fs.readFileSync(policyPath, 'utf8')) as {
+    limits: { timeoutMs: number };
+  };
+  policy.limits.timeoutMs = timeoutMs;
+  fs.writeFileSync(policyPath, `${canonicalJson(policy)}\n`, 'utf8');
+}
 
 type InvestigationFixture = {
   repository: string;
@@ -7439,6 +8080,74 @@ type InvestigationFixture = {
   intentDigest: string;
   request: ProviderInvocationRequest;
 };
+
+function createFailedProviderInvocationFixture(
+  fixture: InvestigationFixture,
+  investigationId: string,
+  invocationId: string,
+): ReturnType<typeof failProviderInvocation> {
+  const request = createProviderInvocationRequest(
+    providerRequestInput(fixture, invocationId),
+  );
+  storeProviderExecutionPolicySnapshot(
+    fixture.paths,
+    request,
+    loadAiAdapterPolicy(fixture.repository),
+  );
+  const prepared = createProviderInvocation(fixture.paths, {
+    investigationId,
+    changeId: fixture.blindManifest.changeId,
+    attempt: 1,
+    manifest: fixture.blindManifest,
+    request,
+  });
+  const claim = claimProviderInvocation(fixture.paths, invocationId, {
+    expectedRevision: prepared.revision,
+    workerId: `${invocationId}-worker`,
+    leaseDurationMs: 1_000,
+  });
+  return failProviderInvocation(fixture.paths, invocationId, {
+    expectedRevision: claim.record.revision,
+    leaseGeneration: claim.record.leaseGeneration,
+    leaseToken: claim.leaseToken,
+    failure: {
+      kind: 'retryable',
+      code: 'PROVIDER_PROCESS_FAILED',
+      message: 'Independent fixture failure for a governed retry decision.',
+    },
+  });
+}
+
+function authorizeProviderRetryFixture(
+  fixture: InvestigationFixture,
+  failed: ReturnType<typeof failProviderInvocation>,
+  replacementRequest: ProviderInvocationRequest,
+) {
+  const executionPolicy = loadAiAdapterPolicy(fixture.repository);
+  const authorization = authorizeAutomaticProviderRetry(fixture.paths, {
+    failed,
+    failedRequest: readProviderInvocationRequest(
+      fixture.paths,
+      failed.invocationId,
+    ),
+    replacementRequest,
+    replacementExecutionPolicy: executionPolicy,
+  });
+  assert.equal(authorization.decision.retryable, true);
+  assert.equal(authorization.decision.automatic, true);
+  return {
+    executionPolicy,
+    retryDecision: {
+      schemaVersion: 1 as const,
+      kind: 'provider-retry-decision-binding' as const,
+      executionJobId: authorization.job.jobId,
+      executionRevision: authorization.executionRevision,
+      failedAttemptId: authorization.attempt.attemptId,
+      evidenceDigest: authorization.evidenceDigest,
+      evaluatedAt: authorization.evaluatedAt,
+    },
+  };
+}
 
 function writeFixtureProviderRuntime(
   paths: ReturnType<typeof investigationRuntimePaths>,
@@ -7551,7 +8260,19 @@ function investigationFixture(invocationId: string): InvestigationFixture {
 function fakeRunnerReport(
   request: ProviderInvocationRequest,
   semanticOutput: unknown,
+  invocationDirectory?: string,
 ): ProviderRunnerReport {
+  if (invocationDirectory !== undefined) {
+    const runtime = path.join(invocationDirectory, 'runtime');
+    fs.mkdirSync(runtime, { recursive: true, mode: 0o700 });
+    for (const [name, content] of [
+      ['prompt.json', '{}\n'],
+      ['schema.json', '{}\n'],
+      ['semantic-output.json', `${canonicalJson(semanticOutput)}\n`],
+    ] as const) {
+      fs.writeFileSync(path.join(runtime, name), content, { mode: 0o600 });
+    }
+  }
   return {
     invocationId: request.invocationId,
     providerId: request.providerId,
@@ -7584,10 +8305,69 @@ function fakeRunnerReport(
   };
 }
 
+function malformedClaudeRunnerHost(
+  malformedOutput: string,
+): ProviderRunnerHost {
+  const identity: ProviderExecutableIdentity = {
+    candidatePath: '/opt/homebrew/bin/claude',
+    realPath: '/opt/homebrew/Caskroom/claude-code/2.1.206/claude',
+    device: '1',
+    inode: '2',
+    mode: 0o100755,
+    uid: 501,
+    gid: 20,
+    size: 1024,
+    mtimeNs: '123456789',
+    sha256: 'b'.repeat(64),
+  };
+  const success = (stdout: string): ProviderProcessOutcome => ({
+    exitCode: 0,
+    signal: null,
+    timedOut: false,
+    spawnErrorCode: null,
+    elapsedMs: 1,
+    stdout,
+    stderr: '',
+  });
+  return {
+    inspectCandidate(candidatePath) {
+      return candidatePath === identity.candidatePath ? identity : null;
+    },
+    runProbe(input) {
+      if (input.args[0] === '--version') {
+        return success('2.1.206 (Claude Code)\n');
+      }
+      if (input.args[0] === 'auth') {
+        return success('{"loggedIn":true}\n');
+      }
+      return success(
+        [
+          '--print',
+          '--output-format',
+          '--no-session-persistence',
+          '--safe-mode',
+          '--disable-slash-commands',
+          '--no-chrome',
+          '--strict-mcp-config',
+          '--mcp-config',
+          '--permission-mode',
+          '--tools',
+          '--allowedTools',
+          '--effort',
+          '--json-schema',
+        ].join('\n'),
+      );
+    },
+    execute() {
+      return success(malformedOutput);
+    },
+  };
+}
+
 function providerRequestInput(
   fixture: Omit<InvestigationFixture, 'request'>,
   invocationId: string,
-  override: { nonce?: string } = {},
+  override: { nonce?: string; policyDigest?: string } = {},
 ) {
   return {
     invocationId,
@@ -7612,7 +8392,14 @@ function providerRequestInput(
     writeAllowedPaths: [] as string[],
     outputSchema: BLIND_SURVEY_OUTPUT_SCHEMA,
     evaluatorVersion: 'blind-survey-evaluator.v1',
-    policyDigest: '3'.repeat(64),
+    policyDigest:
+      override.policyDigest ??
+      sha256(
+        fs.readFileSync(
+          path.join(fixture.repository, 'workflow/ai-adapter-policy.json'),
+          'utf8',
+        ),
+      ),
     limits: {
       timeoutMs: 300_000,
       aggregateOutputBytes: 1_048_576,

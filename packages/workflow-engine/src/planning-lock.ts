@@ -10,7 +10,7 @@ import {
 } from './filesystem-safety.ts';
 import { assertHumanResolutionLifecycleBarrier } from './investigation-session-store.ts';
 import {
-  listActiveWorkflowSessionIds,
+  listConflictingActiveWorkflowSessionIds,
   readSessionFile,
   releaseOwnedLock,
   type runtimePaths,
@@ -56,7 +56,7 @@ export function withInvestigationTransitionAuthority<T>(
       changeId,
       'investigation',
       (assertChangeLock) => {
-        assertNoActiveSessions(runtime);
+        assertNoActiveSessionsForChange(runtime, changeId);
         assertHumanResolutionBarrier(runtime, changeId, null);
         return operation(
           heldChangeTransitionAuthority(changeId, () => {
@@ -90,7 +90,7 @@ export function withHumanResolutionTransitionAuthority<T>(
         changeId,
         'human-resolution',
         (assertChangeLock) => {
-          assertNoActiveSessions(runtime);
+          assertNoActiveSessionsForChange(runtime, changeId);
           assertHumanResolutionBarrier(runtime, changeId, activeGrantId);
           return operation(
             heldChangeTransitionAuthority(changeId, () => {
@@ -124,7 +124,7 @@ export function withChangeTransitionAuthority<T>(
       changeId,
       transition,
       (assertChangeLock) => {
-        assertNoActiveSessions(runtime);
+        assertNoActiveSessionsForChange(runtime, changeId);
         assertHumanResolutionBarrier(runtime, changeId, null);
         return operation(
           heldChangeTransitionAuthority(changeId, () => {
@@ -255,9 +255,17 @@ function withChangeTransitionLock<T>(
   let result: T;
   try {
     result = operation(assertOwned);
-  } catch (error) {
-    release();
-    throw error;
+  } catch (operationError) {
+    try {
+      release();
+    } catch (releaseError) {
+      throw new AggregateError(
+        [operationError, releaseError],
+        'Planning operation and change-lock release both failed.',
+        { cause: releaseError },
+      );
+    }
+    throw operationError;
   }
   release();
   return result;
@@ -471,12 +479,20 @@ function hasExactKeys(
   );
 }
 
-function assertNoActiveSessions(runtime: RuntimePaths): void {
-  const active = listActiveWorkflowSessionIds(runtime);
+function assertNoActiveSessionsForChange(
+  runtime: RuntimePaths,
+  changeId: string,
+): void {
+  // Plan/archive and managed task branches are derived from the required
+  // {changeId} template; investigation and human-resolution state is likewise
+  // keyed by changeId. The change identity therefore owns each exact target.
+  const active = listConflictingActiveWorkflowSessionIds(runtime, {
+    changeId,
+  });
   if (active.length > 0) {
     throw workflowError(
       'ACTIVE_SESSION_CONFLICT',
-      'Planning transitions require no active workflow session.',
+      `Change ${changeId} already has an active workflow session.`,
       ExitCode.conflict,
       { details: { activeSessionIds: active } },
     );

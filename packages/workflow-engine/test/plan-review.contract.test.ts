@@ -20,6 +20,7 @@ import {
   PLAN_REVIEW_COVERAGE,
   PLAN_REVIEW_OUTPUT_SCHEMA,
   PLAN_REVIEW_OUTPUT_VALIDATOR,
+  planReviewSubjectDigest,
   readPlanReviewTargetSnapshotNode,
   readPlanReviewDispositionNode,
   readPlanReviewNode,
@@ -40,6 +41,7 @@ import {
   type PlanningGeneration,
 } from '../src/planning-generation.ts';
 import { admitRoleResult, type RoleAssignment } from '../src/role-scheduler.ts';
+import { createFixtureRepository, git } from './fixture.ts';
 
 const DIGESTS = {
   schema: '1'.repeat(64),
@@ -461,6 +463,26 @@ test('planning generation and review subjects recompute rather than trust caller
     (error) => isWorkflowError(error, 'PLANNING_GENERATION_INVALID'),
   );
 
+  for (const [headLength, treeLength] of [
+    [40, 64],
+    [64, 40],
+  ] as const) {
+    const mixedBaseline = generationInput(target);
+    mixedBaseline.investigationBaseline.head = 'a'.repeat(headLength);
+    mixedBaseline.investigationBaseline.tree = 'b'.repeat(treeLength);
+    assert.throws(
+      () => createPlanningGeneration(mixedBaseline),
+      (error) => isWorkflowError(error, 'PLANNING_GENERATION_INVALID'),
+    );
+  }
+  const sha256Baseline = generationInput(target);
+  sha256Baseline.investigationBaseline.head = 'a'.repeat(64);
+  sha256Baseline.investigationBaseline.tree = 'b'.repeat(64);
+  assert.equal(
+    createPlanningGeneration(sha256Baseline).investigationBaseline.head.length,
+    64,
+  );
+
   const generation = createPlanningGeneration(generationInput(target));
   const forgedGeneration = structuredClone(generation);
   forgedGeneration.targetDigest = 'e'.repeat(64);
@@ -473,8 +495,50 @@ test('planning generation and review subjects recompute rather than trust caller
       }),
     (error) => isWorkflowError(error, 'PLAN_REVIEW_INVALID'),
   );
-
   const context = reviewContext();
+  const mixedSubject = structuredClone(context.subject);
+  mixedSubject.investigationBaseline.tree = 'f'.repeat(64);
+  mixedSubject.subjectDigest = planReviewSubjectDigest(mixedSubject);
+  const mixedMaterialization = createEvidenceNode({
+    type: 'propose-planning-materialization',
+    nodeSchema: 'test.mixed-baseline-materialization.v1',
+    evaluator: 'test.mixed-baseline-materialization.v1',
+    policyDigest: DIGESTS.reviewPolicy,
+    exactInputDigests: {},
+    semanticParentResultDigests: {},
+    provenanceParentNodeIds: {},
+    outputSchema: 'test.mixed-baseline-materialization-output.v1',
+    output: { testOnly: true },
+    runtimeMetadata: {},
+  });
+  assert.throws(
+    () =>
+      createPlanReviewTargetSnapshotNode({
+        changeId: 'demo-change',
+        changePrefix: 'openspec/changes/demo-change',
+        subject: mixedSubject,
+        materializationNode: mixedMaterialization,
+        artifacts: new Map([['proposal.md', Buffer.from('# Proposal\n')]]),
+        legacyMigration: null,
+      }),
+    (error) => isWorkflowError(error, 'PLAN_REVIEW_INVALID'),
+  );
+  const reverseMixedSubject = structuredClone(context.subject);
+  reverseMixedSubject.investigationBaseline.head = 'e'.repeat(64);
+  reverseMixedSubject.subjectDigest =
+    planReviewSubjectDigest(reverseMixedSubject);
+  assert.throws(
+    () =>
+      createPlanReviewTargetSnapshotNode({
+        changeId: 'demo-change',
+        changePrefix: 'openspec/changes/demo-change',
+        subject: reverseMixedSubject,
+        materializationNode: mixedMaterialization,
+        artifacts: new Map([['proposal.md', Buffer.from('# Proposal\n')]]),
+        legacyMigration: null,
+      }),
+    (error) => isWorkflowError(error, 'PLAN_REVIEW_INVALID'),
+  );
   const forgedSubject = structuredClone(context.subject);
   forgedSubject.planTargetDigest = 'd'.repeat(64);
   assert.throws(
@@ -930,6 +994,7 @@ test('review eligibility recomputes provider separation and resolves repository 
     assignment: sameProviderAssignment,
     submission,
     providerPolicyDigest: DIGESTS.reviewPolicy,
+    targetSnapshotNode: context.targetSnapshotNode,
   });
   const sameProviderReview = createPlanReviewNode({
     subject: context.subject,
@@ -1322,6 +1387,7 @@ function reviewContext(): {
   generation: PlanningGeneration;
   subject: ReturnType<typeof createPlanReviewSubject>;
   assignment: RoleAssignment;
+  targetSnapshotNode: EvidenceNode;
   providerResult: EvidenceNode;
 } {
   const target = createPlanTarget(planTargetInput());
@@ -1339,13 +1405,43 @@ function reviewContext(): {
     requiredIndependence: 'provider-independent',
     achievedIndependence: 'provider-independent',
   };
+  const materializationNode = createEvidenceNode({
+    type: 'propose-planning-materialization',
+    nodeSchema: 'test.review-context-materialization.v1',
+    evaluator: 'test.review-context-materialization.v1',
+    policyDigest: DIGESTS.reviewPolicy,
+    exactInputDigests: {},
+    semanticParentResultDigests: {},
+    provenanceParentNodeIds: {},
+    outputSchema: 'test.review-context-materialization-output.v1',
+    output: { testOnly: true },
+    runtimeMetadata: {},
+  });
+  const targetSnapshotNode = createPlanReviewTargetSnapshotNode({
+    changeId: 'demo-change',
+    changePrefix: 'openspec/changes/demo-change',
+    subject,
+    materializationNode,
+    artifacts: new Map([
+      ['proposal.md', Buffer.from('# Proposal\n\nPreserve the behavior.\n')],
+    ]),
+    legacyMigration: null,
+  });
   const providerResult = createPlanReviewProviderResultNode({
     subject,
     assignment,
     submission: challengeSubmission(),
     providerPolicyDigest: DIGESTS.reviewPolicy,
+    targetSnapshotNode,
   });
-  return { target, generation, subject, assignment, providerResult };
+  return {
+    target,
+    generation,
+    subject,
+    assignment,
+    targetSnapshotNode,
+    providerResult,
+  };
 }
 
 function providerResultFor(
@@ -1357,8 +1453,47 @@ function providerResultFor(
     assignment: context.assignment,
     submission,
     providerPolicyDigest: DIGESTS.reviewPolicy,
+    targetSnapshotNode: context.targetSnapshotNode,
   });
 }
+
+test('provider results require an immutable target snapshot binding', () => {
+  const context = reviewContext();
+  assert.throws(
+    () =>
+      createPlanReviewProviderResultNode({
+        subject: context.subject,
+        assignment: context.assignment,
+        submission: challengeSubmission(),
+        providerPolicyDigest: DIGESTS.reviewPolicy,
+      } as Parameters<typeof createPlanReviewProviderResultNode>[0]),
+    (error) => isWorkflowError(error, 'PLAN_REVIEW_INVALID'),
+  );
+
+  const fakeSnapshotNode = createEvidenceNode({
+    type: 'plan-review-target-snapshot',
+    nodeSchema: 'test.fake-target-snapshot.v1',
+    evaluator: 'test.fake-target-snapshot.v1',
+    policyDigest: DIGESTS.reviewPolicy,
+    exactInputDigests: { subject: context.subject.subjectDigest },
+    semanticParentResultDigests: {},
+    provenanceParentNodeIds: {},
+    outputSchema: 'test.fake-target-snapshot-output.v1',
+    output: { noArtifacts: true },
+    runtimeMetadata: {},
+  });
+  assert.throws(
+    () =>
+      createPlanReviewProviderResultNode({
+        subject: context.subject,
+        assignment: context.assignment,
+        submission: challengeSubmission(),
+        providerPolicyDigest: DIGESTS.reviewPolicy,
+        targetSnapshotNode: fakeSnapshotNode,
+      }),
+    (error) => isWorkflowError(error, 'PLAN_REVIEW_INVALID'),
+  );
+});
 
 function challengeSubmission(
   overrides: Partial<PlanReviewSubmission> = {},
@@ -1649,6 +1784,173 @@ test('repository-location cannot cite a planning snapshot member', () => {
       ),
     (error) => isWorkflowError(error, 'OPENSPEC_CHANGE_NOT_READY'),
   );
+});
+
+test('resolved review evidence uses canonical UTF-8 path ordering', () => {
+  const repository = createFixtureRepository();
+  const bmpPath = 'docs/\ue000.md';
+  const astralPath = 'docs/\u{10000}.md';
+  try {
+    fs.mkdirSync(path.join(repository, 'docs'), { recursive: true });
+    fs.writeFileSync(path.join(repository, bmpPath), 'BMP path\n');
+    fs.writeFileSync(path.join(repository, astralPath), 'Astral path\n');
+    git(repository, ['add', '--', bmpPath, astralPath]);
+    git(repository, ['commit', '-m', 'Add Unicode evidence paths']);
+    const tree = git(repository, ['rev-parse', 'HEAD^{tree}']).trim();
+    const context = reviewContext();
+    const submission = challengeSubmission({
+      findings: [
+        {
+          kind: 'challenge',
+          severity: 'high',
+          category: 'missing-scope',
+          currentChangeImpact: 'required',
+          summary: 'The BMP evidence path must remain canonical.',
+          evidence: [
+            {
+              kind: 'repository-location',
+              path: bmpPath,
+              line: 1,
+              observation: 'This path sorts first by UTF-8 bytes.',
+            },
+          ],
+        },
+        {
+          kind: 'challenge',
+          severity: 'high',
+          category: 'missing-consumers',
+          currentChangeImpact: 'required',
+          summary: 'The astral evidence path must remain canonical.',
+          evidence: [
+            {
+              kind: 'repository-location',
+              path: astralPath,
+              line: 1,
+              observation: 'This path sorts second by UTF-8 bytes.',
+            },
+          ],
+        },
+      ],
+    });
+    const reviewNode = createPlanReviewNode({
+      subject: context.subject,
+      assignment: context.assignment,
+      providerResultNode: providerResultFor(context, submission),
+      submission,
+    });
+
+    assert.deepEqual(
+      resolvePlanReviewRepositoryEvidence(
+        repository,
+        tree,
+        reviewNode,
+      ).locations.map(({ path: evidencePath }) => evidencePath),
+      [bmpPath, astralPath],
+    );
+  } finally {
+    fs.rmSync(repository, { recursive: true, force: true });
+  }
+});
+
+test('resolved planning evidence uses canonical UTF-8 path ordering', () => {
+  const repository = createFixtureRepository();
+  const bmpRelative = '\ue000.md';
+  const astralRelative = '\u{10000}.md';
+  const changePrefix = 'openspec/changes/demo-change';
+  const contents = new Map<string, Buffer>([
+    ['.openspec.yaml', Buffer.from('schema: expense-app-v2\n')],
+    [bmpRelative, Buffer.from('BMP path\n')],
+    [astralRelative, Buffer.from('Astral path\n')],
+  ]);
+  try {
+    const context = reviewContext();
+    const materializationNode = createEvidenceNode({
+      type: 'propose-planning-materialization',
+      nodeSchema: 'test.utf8-materialization.v1',
+      evaluator: 'test.utf8-materialization.v1',
+      policyDigest: DIGESTS.reviewPolicy,
+      exactInputDigests: {},
+      semanticParentResultDigests: {},
+      provenanceParentNodeIds: {},
+      outputSchema: 'test.utf8-materialization-output.v1',
+      output: { testOnly: true },
+      runtimeMetadata: {},
+    });
+    const targetSnapshotNode = createPlanReviewTargetSnapshotNode({
+      changeId: 'demo-change',
+      changePrefix,
+      subject: context.subject,
+      materializationNode,
+      artifacts: contents,
+      legacyMigration: null,
+    });
+    const targetSnapshot = readPlanReviewTargetSnapshotNode(targetSnapshotNode);
+    for (const [relativePath, content] of contents) {
+      const absolutePath = path.join(repository, changePrefix, relativePath);
+      fs.mkdirSync(path.dirname(absolutePath), { recursive: true });
+      fs.writeFileSync(absolutePath, content, { mode: 0o644 });
+    }
+    const bmpPath = `${changePrefix}/${bmpRelative}`;
+    const astralPath = `${changePrefix}/${astralRelative}`;
+    const submission = challengeSubmission({
+      findings: [
+        {
+          kind: 'challenge',
+          severity: 'high',
+          category: 'missing-scope',
+          currentChangeImpact: 'required',
+          summary: 'The BMP planning path must remain canonical.',
+          evidence: [
+            {
+              kind: 'planning-location',
+              path: bmpPath,
+              line: 1,
+              observation: 'This path sorts first by UTF-8 bytes.',
+            },
+          ],
+        },
+        {
+          kind: 'challenge',
+          severity: 'high',
+          category: 'missing-consumers',
+          currentChangeImpact: 'required',
+          summary: 'The astral planning path must remain canonical.',
+          evidence: [
+            {
+              kind: 'planning-location',
+              path: astralPath,
+              line: 1,
+              observation: 'This path sorts second by UTF-8 bytes.',
+            },
+          ],
+        },
+      ],
+    });
+    const providerResultNode = createPlanReviewProviderResultNode({
+      subject: context.subject,
+      assignment: context.assignment,
+      submission,
+      providerPolicyDigest: DIGESTS.reviewPolicy,
+      targetSnapshotNode,
+    });
+    const reviewNode = createPlanReviewNode({
+      subject: context.subject,
+      assignment: context.assignment,
+      providerResultNode,
+      submission,
+    });
+
+    assert.deepEqual(
+      resolvePlanReviewPlanningEvidence(
+        repository,
+        targetSnapshot,
+        reviewNode,
+      ).locations.map(({ path: evidencePath }) => evidencePath),
+      [bmpPath, astralPath],
+    );
+  } finally {
+    fs.rmSync(repository, { recursive: true, force: true });
+  }
 });
 
 test('planning-location cannot cite a nonmember repository path', () => {

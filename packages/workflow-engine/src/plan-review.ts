@@ -374,7 +374,7 @@ export type PlanReviewProviderResultNodeInput = {
   assignment: ProviderRoleAssignment;
   submission: PlanReviewSubmission;
   providerPolicyDigest: string;
-  targetSnapshotNode?: EvidenceNode;
+  targetSnapshotNode: EvidenceNode;
   runtimeAssurance?: PlanReviewRuntimeAssurance;
 };
 
@@ -865,9 +865,7 @@ export function createPlanReviewProviderResultNode(
       'assignment',
       'submission',
       'providerPolicyDigest',
-      ...(Object.hasOwn(input, 'targetSnapshotNode')
-        ? ['targetSnapshotNode' as const]
-        : []),
+      'targetSnapshotNode',
       ...(Object.hasOwn(input, 'runtimeAssurance')
         ? ['runtimeAssurance' as const]
         : []),
@@ -886,10 +884,10 @@ export function createPlanReviewProviderResultNode(
   const runtimeAssurance = assertPlanReviewRuntimeAssurance(
     input.runtimeAssurance ?? null,
   );
-  const targetSnapshot =
-    input.targetSnapshotNode === undefined
-      ? null
-      : assertProviderTargetSnapshot(input.targetSnapshotNode, subject);
+  const targetSnapshot = assertProviderTargetSnapshot(
+    input.targetSnapshotNode,
+    subject,
+  );
   const assignmentDigest = planReviewAssignmentDigest(assignment);
   const submissionDigest = planReviewSubmissionDigest(submission);
 
@@ -902,14 +900,12 @@ export function createPlanReviewProviderResultNode(
       assignment: assignmentDigest,
       subject: subject.subjectDigest,
       submission: submissionDigest,
-      ...(targetSnapshot ? { targetSnapshot: targetSnapshot.nodeId } : {}),
+      targetSnapshot: targetSnapshot.nodeId,
     },
-    semanticParentResultDigests: targetSnapshot
-      ? { targetSnapshot: targetSnapshot.resultDigest }
-      : {},
-    provenanceParentNodeIds: targetSnapshot
-      ? { targetSnapshot: targetSnapshot.nodeId }
-      : {},
+    semanticParentResultDigests: {
+      targetSnapshot: targetSnapshot.resultDigest,
+    },
+    provenanceParentNodeIds: { targetSnapshot: targetSnapshot.nodeId },
     outputSchema: PROVIDER_RESULT_OUTPUT_SCHEMA,
     output: {
       schemaVersion: 2,
@@ -1394,38 +1390,28 @@ function assertProviderResult(
   ) {
     throw planReviewInvalid('Provider result node identity is unexpected.');
   }
-  const hasTargetSnapshot =
-    Object.hasOwn(node.provenanceParentNodeIds, 'targetSnapshot') ||
-    Object.hasOwn(node.semanticParentResultDigests, 'targetSnapshot') ||
-    Object.hasOwn(node.exactInputDigests, 'targetSnapshot');
   assertExactDigestRoles(
     node.exactInputDigests,
-    [
-      'assignment',
-      'subject',
-      'submission',
-      ...(hasTargetSnapshot ? ['targetSnapshot'] : []),
-    ],
+    ['assignment', 'subject', 'submission', 'targetSnapshot'],
     'Provider result exact-input roles are unexpected.',
   );
   assertExactDigestRoles(
     node.semanticParentResultDigests,
-    hasTargetSnapshot ? ['targetSnapshot'] : [],
+    ['targetSnapshot'],
     'Provider result semantic-parent roles are unexpected.',
   );
   assertExactDigestRoles(
     node.provenanceParentNodeIds,
-    hasTargetSnapshot ? ['targetSnapshot'] : [],
+    ['targetSnapshot'],
     'Provider result provenance-parent roles are unexpected.',
   );
   if (Object.keys(node.runtimeMetadata).length !== 0) {
     throw planReviewInvalid('Provider result runtime metadata must be empty.');
   }
   if (
-    hasTargetSnapshot &&
-    (node.exactInputDigests.targetSnapshot !==
+    node.exactInputDigests.targetSnapshot !==
       node.provenanceParentNodeIds.targetSnapshot ||
-      !isDigest(node.semanticParentResultDigests.targetSnapshot))
+    !isDigest(node.semanticParentResultDigests.targetSnapshot)
   ) {
     throw planReviewInvalid(
       'Provider result target snapshot binding is malformed.',
@@ -1473,10 +1459,17 @@ function assertProviderTargetSnapshot(
   const node = assertStoredEvidenceNode(value, () =>
     planReviewInvalid('Provider target snapshot node is malformed.'),
   );
+  let snapshot: PlanReviewTargetSnapshot;
+  try {
+    snapshot = readPlanReviewTargetSnapshotNode(node);
+  } catch {
+    throw planReviewInvalid('Provider target snapshot node is malformed.');
+  }
   if (
-    node.type !== 'plan-review-target-snapshot' ||
-    node.exactInputDigests.subject !== subject.subjectDigest ||
-    Object.keys(node.runtimeMetadata).length !== 0
+    snapshot.subjectDigest !== subject.subjectDigest ||
+    snapshot.planningGenerationId !== subject.planningGenerationId ||
+    snapshot.planTargetDigest !== subject.planTargetDigest ||
+    node.policyDigest !== subject.reviewPolicyDigest
   ) {
     throw planReviewInvalid(
       'Provider target snapshot does not bind the review subject.',
@@ -2018,7 +2011,8 @@ function assertBaseline(value: unknown): { head: string; tree: string } {
     typeof head !== 'string' ||
     !GIT_OBJECT_ID_PATTERN.test(head) ||
     typeof tree !== 'string' ||
-    !GIT_OBJECT_ID_PATTERN.test(tree)
+    !GIT_OBJECT_ID_PATTERN.test(tree) ||
+    head.length !== tree.length
   ) {
     throw planReviewInvalid('Investigation baseline is malformed.');
   }

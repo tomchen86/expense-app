@@ -29,6 +29,15 @@ export type WorkflowSession = {
   state: 'active' | 'aborted' | 'committed';
   changeId: string;
   taskId: string;
+  /** Durable top-level task mandate authorization for production sessions. */
+  mandateBinding?: {
+    schemaVersion: 1;
+    mandateTaskId: string;
+    mandateId: string;
+    mandateDigest: string;
+    changeId: string;
+    externalAuditRoot: string;
+  } | null;
   repositoryRoot: string;
   gitCommonDirectory: string;
   branch: string;
@@ -40,6 +49,8 @@ export type WorkflowSession = {
   allowedPaths: string[];
   requiredChecks: string[];
   requiredCheckDigests?: Record<string, string>;
+  /** Engine identity against which the current durable check evidence ran. */
+  checkEvidenceEngineDigest?: `sha256:${string}`;
   /** Optional only for sessions created before this binding was introduced. */
   planningAssurance?: PlanningAssuranceBinding | null;
   createdAt: string;
@@ -324,9 +335,17 @@ export function withRepositoryLifecycleOperation<T>(
       options.allowMaintainerGrantId,
     );
     result = operation(assertLifecycleOwned);
-  } catch (error) {
-    release();
-    throw error;
+  } catch (operationError) {
+    try {
+      release();
+    } catch (releaseError) {
+      throw new AggregateError(
+        [operationError, releaseError],
+        'Repository lifecycle operation and lock release both failed.',
+        { cause: releaseError },
+      );
+    }
+    throw operationError;
   }
   release();
   return result;
@@ -368,6 +387,40 @@ function readDescriptorContent(descriptor: number, byteLength: number): string {
 export function listActiveWorkflowSessionIds(
   runtime: ReturnType<typeof runtimePaths>,
 ): string[] {
+  return listActiveWorkflowSessions(runtime).map(
+    (session) => session.sessionId,
+  );
+}
+
+export function listConflictingActiveWorkflowSessionIds(
+  runtime: ReturnType<typeof runtimePaths>,
+  scope: {
+    changeId: string;
+    repositoryRoot?: string;
+    targetRef?: string;
+  },
+): string[] {
+  const repositoryRoot =
+    scope.repositoryRoot === undefined
+      ? undefined
+      : path.resolve(scope.repositoryRoot);
+  const targetBranch = scope.targetRef?.startsWith('refs/heads/')
+    ? scope.targetRef.slice('refs/heads/'.length)
+    : undefined;
+  return listActiveWorkflowSessions(runtime)
+    .filter(
+      (session) =>
+        session.changeId === scope.changeId ||
+        (repositoryRoot !== undefined &&
+          path.resolve(session.repositoryRoot) === repositoryRoot) ||
+        (targetBranch !== undefined && session.branch === targetBranch),
+    )
+    .map((session) => session.sessionId);
+}
+
+function listActiveWorkflowSessions(
+  runtime: ReturnType<typeof runtimePaths>,
+): WorkflowSession[] {
   const stats = fs.lstatSync(runtime.sessions, { throwIfNoEntry: false });
   if (!stats) {
     return [];
@@ -384,14 +437,21 @@ export function listActiveWorkflowSessionIds(
     .filter((entry) => entry.endsWith('.json'))
     .map((entry) => readSessionFile(path.join(runtime.sessions, entry)))
     .filter((session) => session.state === 'active')
-    .map((session) => session.sessionId)
-    .sort();
+    .sort((left, right) =>
+      left.sessionId < right.sessionId
+        ? -1
+        : left.sessionId > right.sessionId
+          ? 1
+          : 0,
+    );
 }
 
 function assertMaintainerReservationCompatibility(
   runtime: ReturnType<typeof runtimePaths>,
   allowedGrantId: string | undefined,
 ): void {
+  // Maintainer authority remains a repository-wide human-only fence. The
+  // change-scoped relaxation applies only to ordinary active sessions.
   const reservedDirectory = path.join(
     runtime.root,
     'maintainer-grants',
@@ -642,6 +702,7 @@ function isWorkflowSession(value: unknown): value is WorkflowSession {
     'state',
     'changeId',
     'taskId',
+    'mandateBinding',
     'repositoryRoot',
     'gitCommonDirectory',
     'branch',
@@ -650,6 +711,7 @@ function isWorkflowSession(value: unknown): value is WorkflowSession {
     'allowedPaths',
     'requiredChecks',
     'requiredCheckDigests',
+    'checkEvidenceEngineDigest',
     'planningAssurance',
     'createdAt',
     'latestCheckReportId',
@@ -683,6 +745,13 @@ function isWorkflowSession(value: unknown): value is WorkflowSession {
   ) {
     return false;
   }
+  if (
+    value.mandateBinding !== undefined &&
+    value.mandateBinding !== null &&
+    !isTaskMandateBinding(value.mandateBinding, value.changeId)
+  ) {
+    return false;
+  }
   for (const field of [
     'latestCheckReportId',
     'completionReportId',
@@ -697,6 +766,12 @@ function isWorkflowSession(value: unknown): value is WorkflowSession {
   if (
     value.requiredCheckDigests !== undefined &&
     !isStringRecord(value.requiredCheckDigests)
+  ) {
+    return false;
+  }
+  if (
+    value.checkEvidenceEngineDigest !== undefined &&
+    !isSha256Digest(value.checkEvidenceEngineDigest)
   ) {
     return false;
   }
@@ -744,8 +819,46 @@ function isWorkflowSession(value: unknown): value is WorkflowSession {
   return true;
 }
 
+function isTaskMandateBinding(value: unknown, changeId: string): boolean {
+  if (!isRecord(value)) return false;
+  const keys = Object.keys(value).sort();
+  if (
+    keys.join('\0') !==
+    [
+      'changeId',
+      'externalAuditRoot',
+      'mandateDigest',
+      'mandateId',
+      'mandateTaskId',
+      'schemaVersion',
+    ]
+      .sort()
+      .join('\0')
+  ) {
+    return false;
+  }
+  return (
+    value.schemaVersion === 1 &&
+    value.changeId === changeId &&
+    typeof value.externalAuditRoot === 'string' &&
+    path.isAbsolute(value.externalAuditRoot) &&
+    path.normalize(value.externalAuditRoot) === value.externalAuditRoot &&
+    typeof value.mandateTaskId === 'string' &&
+    /^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(value.mandateTaskId) &&
+    typeof value.mandateId === 'string' &&
+    /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(
+      value.mandateId,
+    ) &&
+    isDigest(value.mandateDigest)
+  );
+}
+
 function isDigest(value: unknown): value is string {
   return typeof value === 'string' && /^[0-9a-f]{64}$/.test(value);
+}
+
+function isSha256Digest(value: unknown): value is `sha256:${string}` {
+  return typeof value === 'string' && /^sha256:[0-9a-f]{64}$/.test(value);
 }
 
 function isCommitHash(value: unknown): value is string {

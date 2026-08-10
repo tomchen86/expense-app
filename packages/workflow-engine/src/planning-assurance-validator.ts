@@ -876,7 +876,7 @@ export function resolvePlanReviewRepositoryEvidence(
         )
         .map((citation) => citation.path),
     ),
-  ].sort();
+  ].sort(compareUtf8);
   const planningPaths = new Set(
     planningSnapshot?.artifacts.map(({ path }) => path) ?? [],
   );
@@ -941,7 +941,7 @@ export function resolvePlanReviewPlanningEvidence(
       > => citation.kind === 'planning-location',
     )
     .map(({ path: planningPath }) => planningPath);
-  const uniquePaths = [...new Set(citedPaths)].sort();
+  const uniquePaths = [...new Set(citedPaths)].sort(compareUtf8);
   const artifacts = new Map(
     snapshot.artifacts.map((artifact) => [artifact.path, artifact]),
   );
@@ -1037,8 +1037,15 @@ function resolvePlanReviewSnapshotCommit(
 
   const absolutePath = path.join(repositoryRoot, planReviewPath);
   const stats = fs.lstatSync(absolutePath, { throwIfNoEntry: false });
+  if (!stats) {
+    // The committed review has been withdrawn from the worktree — an
+    // amendment returning the graph to review-pending. Absence is "no
+    // committed review applies", exactly like current bytes that differ; only
+    // a file that exists in an unsafe shape is refused.
+    return null;
+  }
   if (
-    !stats?.isFile() ||
+    !stats.isFile() ||
     stats.isSymbolicLink() ||
     stats.nlink !== 1 ||
     (stats.mode & 0o777) !== 0o644
@@ -1125,6 +1132,10 @@ function digestFile(repositoryRoot: string, filePath: string): string {
 
 function policyDigest(identity: string): string {
   return sha256(canonicalJson({ policy: identity }));
+}
+
+function compareUtf8(left: string, right: string): number {
+  return Buffer.compare(Buffer.from(left, 'utf8'), Buffer.from(right, 'utf8'));
 }
 
 function relative(repositoryRoot: string, filePath: string): string {

@@ -8,6 +8,7 @@ import './archive-eligibility.integration.test.ts';
 import './archive-transformation.integration.test.ts';
 import './archive-transition.integration.test.ts';
 import './ci-archive.integration.test.ts';
+import './ci-planning.integration.test.ts';
 
 import { validateCiPlanningCommit } from '../src/ci-planning.ts';
 import { verifyPullRequest } from '../src/ci.ts';
@@ -38,6 +39,13 @@ import './contract-artifact-digests.test.ts';
 import './issues.integration.test.ts';
 import './handoff.integration.test.ts';
 import './document-refresh.integration.test.ts';
+import './execution-governance-store.integration.test.ts';
+import './execution-runtime.integration.test.ts';
+import './harness-bootstrap-human-ux.integration.test.ts';
+import './intervention-control-updater.integration.test.ts';
+import './intervention-control-updater-cli.integration.test.ts';
+import './intervention-control-bootstrap-cli.integration.test.ts';
+import './intervention-local-adoption-launcher.integration.test.ts';
 import './guard-contract.integration.test.ts';
 import './hooks.integration.test.ts';
 import './managed-trailers.contract.test.ts';
@@ -46,7 +54,9 @@ import './ci.integration.test.ts';
 import './ci-bootstrap.integration.test.ts';
 import './ai-adapter-evaluation.integration.test.ts';
 import './provider-adapters.integration.test.ts';
+import './provider-automatic-retry.integration.test.ts';
 import './provider-worker.integration.test.ts';
+import './publish-executor.integration.test.ts';
 import './ignored-state.integration.test.ts';
 import './investigation-scanner.integration.test.ts';
 import './investigation-session.integration.test.ts';
@@ -58,6 +68,7 @@ import './workflow-rehearsal.integration.test.ts';
 import './managed-change-contract.integration.test.ts';
 import './managed-change-lifecycle.integration.test.ts';
 import './runner.integration.test.ts';
+import './session-check-invalidation.integration.test.ts';
 import {
   activateInvestigationPlanning,
   addFixtureScripts,

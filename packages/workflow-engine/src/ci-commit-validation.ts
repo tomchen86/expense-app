@@ -175,7 +175,11 @@ function taskTransitionsForCommit(
     }
     const beforeTasks = beforeContent ? parseTasks(beforeContent) : [];
     const afterTasks = parseTasks(afterContent);
-    assertTaskHistory(changeId, beforeTasks, afterTasks);
+    assertTaskHistory(changeId, beforeTasks, afterTasks, {
+      reopenAuthorized:
+        commit.trailers?.kind === 'amend-plan' &&
+        commit.trailers.executionImpact === 'required',
+    });
     const beforeById = new Map(beforeTasks.map((task) => [task.id, task]));
     for (const task of afterTasks) {
       if (task.completed && !beforeById.get(task.id)?.completed) {

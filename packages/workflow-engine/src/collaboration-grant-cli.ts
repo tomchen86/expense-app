@@ -16,6 +16,7 @@ import { discoverRepository, runGit } from './git.ts';
 import { isProviderId } from './provider-registry.ts';
 
 type CollaborationGrantCommandResult = Record<string, unknown>;
+const GIT_OBJECT_ID_PATTERN = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
 
 export function isCollaborationGrantCommand(args: string[]): boolean {
   return (
@@ -61,17 +62,15 @@ export function dispatchCollaborationGrantCommand(
       };
     }
     case 'collaboration-revoke': {
-      if (args.length !== 2) {
+      if (args.length !== 4 || args[2] !== '--reason' || !args[3]?.trim()) {
         throw collaborationUsage();
       }
-      const repository = discoverRepository(cwd);
       return {
         action: 'collaboration-revoke',
         ok: true,
-        grant: revokeCollaborationGrant(
-          repository.gitCommonDirectory,
-          args[1]!,
-        ),
+        grant: revokeCollaborationGrant(cwd, args[1]!, {
+          reason: args[3],
+        }),
       };
     }
     default:
@@ -131,6 +130,7 @@ export function parseCollaborationGrantArguments(
   if (
     !changeId ||
     !baselineCommit ||
+    !GIT_OBJECT_ID_PATTERN.test(baselineCommit) ||
     !targetDigest ||
     !isLifecyclePhase(lifecyclePhase) ||
     !isRolePair(lifecyclePhase, authorRole, conflictingRole) ||
@@ -265,7 +265,7 @@ export function collaborationUsage() {
       'Usage:',
       '  pnpm workflow maintainer collaboration-grant --change <id> [--task <task-id>] --base <commit> --target <digest> --phase <blind-survey|plan-review> --author-role <role> --conflicting-role <role> (--provider <codex|claude> --actor-assurance <grade>|--caller <id> --actor-assurance <grade>|--direct-human true) --degraded <same-provider-fresh-session|caller-supplied|direct-human-review> --reason <text> [--ttl <minutes>m] [--uses 1] [--json]',
       '  pnpm workflow maintainer collaboration-inspect [grant-id] [--json]',
-      '  pnpm workflow maintainer collaboration-revoke <grant-id> [--json]',
+      '  pnpm workflow maintainer collaboration-revoke <grant-id> --reason <text> [--json]',
     ].join('\n'),
     ExitCode.usage,
   );

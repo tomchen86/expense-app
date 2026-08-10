@@ -7,6 +7,7 @@ import path from 'node:path';
 import test from 'node:test';
 
 import { canonicalJson } from '../src/canonical-json.ts';
+import { parseCollaborationGrantArguments } from '../src/collaboration-grant-cli.ts';
 import {
   COLLABORATION_GRANT_AUTHORIZED_EFFECT,
   COLLABORATION_GRANT_POLICY_DIGEST,
@@ -664,6 +665,27 @@ test('collaboration grant CLI requires a controlling TTY and has no unattended e
   }
 });
 
+test('collaboration grant CLI validates the base object ID before invoking Git', () => {
+  const repository = collaborationFixture();
+  try {
+    const request = sameProviderRequest(repository);
+    const cli = path.join(
+      sourceRepositoryRoot,
+      'packages/workflow-engine/src/cli.ts',
+    );
+    const args = collaborationCliArguments(cli, request).slice(3, -1);
+    const baselineIndex = args.indexOf('--base') + 1;
+    args[baselineIndex] = '--not-an-object-id';
+
+    assert.throws(
+      () => parseCollaborationGrantArguments(args, repository),
+      (error) => isWorkflowError(error, 'INVALID_USAGE'),
+    );
+  } finally {
+    fs.rmSync(repository, { recursive: true, force: true });
+  }
+});
+
 test('signed collaboration binding rejects every substituted transition fact', () => {
   const repository = collaborationFixture();
   const signer = fixtureSigner();
@@ -1083,21 +1105,49 @@ test('expired and revoked collaboration grants never authorize a transition', ()
         { ...sameProviderRequest(repository), ttlMinutes: 1 },
         { now: NOW, grantId, signer },
       );
-      const common = fs.realpathSync(path.join(repository, '.git'));
       if (terminal === 'revoked') {
-        const revoked = revokeCollaborationGrant(
-          common,
-          grantId,
-          new Date(NOW.getTime() + 30_000),
+        const unattended = fixtureSigner();
+        unattended.assertHumanPresent = () => {
+          throw new Error('no controlling terminal');
+        };
+        assert.throws(() =>
+          revokeCollaborationGrant(repository, grantId, {
+            reason: 'Retire unused collaboration authority',
+            signer: unattended,
+            verifier: signer,
+          }),
         );
+        assert.equal(
+          inspectCollaborationGrants(
+            fs.realpathSync(path.join(repository, '.git')),
+            grantId,
+          )[0]?.state,
+          'available',
+        );
+        const revoked = revokeCollaborationGrant(repository, grantId, {
+          reason: 'Retire unused collaboration authority',
+          now: new Date(NOW.getTime() + 30_000),
+          signer,
+          verifier: signer,
+        });
         assert.equal(revoked.state, 'revoked');
         assert.deepEqual(
-          revokeCollaborationGrant(
-            common,
-            grantId,
-            new Date(NOW.getTime() + 40_000),
-          ),
+          revokeCollaborationGrant(repository, grantId, {
+            reason: 'Retire unused collaboration authority',
+            now: new Date(NOW.getTime() + 40_000),
+            signer,
+            verifier: signer,
+          }),
           revoked,
+        );
+        assert.throws(
+          () =>
+            revokeCollaborationGrant(repository, grantId, {
+              reason: 'A different reason must not replace the tombstone',
+              signer,
+              verifier: signer,
+            }),
+          (error) => isWorkflowError(error, 'HUMAN_REVOCATION_CONFLICT'),
         );
       }
       assert.throws(
@@ -1120,7 +1170,10 @@ test('expired and revoked collaboration grants never authorize a transition', ()
           ),
       );
       assert.equal(
-        inspectCollaborationGrants(common, grantId)[0]?.state,
+        inspectCollaborationGrants(
+          fs.realpathSync(path.join(repository, '.git')),
+          grantId,
+        )[0]?.state,
         terminal,
       );
     } finally {

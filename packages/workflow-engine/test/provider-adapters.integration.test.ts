@@ -15,7 +15,14 @@ import {
   CODEX_EXECUTABLE_CANDIDATES,
 } from '../src/codex-provider-adapter.ts';
 import { canonicalJson } from '../src/canonical-json.ts';
+import { DEFAULT_AI_ADAPTER_RETRY_ACCOUNTING } from '../src/ai-adapter-policy.ts';
 import { createProviderExecutionEnvironment } from '../src/execution-environment.ts';
+import {
+  buildContextManifest,
+  inspectDurableRetentionCatalog,
+  rolloverDurableEpochContextStore,
+  storeDurableEvidence,
+} from '../src/execution-governance.ts';
 import { WorkflowError } from '../src/errors.ts';
 import {
   captureGovernedProviderProjection,
@@ -29,11 +36,19 @@ import {
 import {
   BLIND_SURVEY_OUTPUT_SCHEMA,
   BLIND_SURVEY_PROVIDER_OUTPUT_SCHEMA,
+  type ProviderInvocationAcceptanceBinding,
 } from '../src/provider-invocation-store.ts';
 import {
   PLAN_REVIEW_OUTPUT_SCHEMA,
   PLAN_REVIEW_PROVIDER_OUTPUT_SCHEMA,
 } from '../src/plan-review.ts';
+import {
+  assembleProviderPromptManifest,
+  ensureProviderPromptContext,
+  extractProviderRepairFailure,
+  prepareProviderPromptContextForInvocation,
+  providerPromptContextStoreRoot,
+} from '../src/provider-execution-governance.ts';
 import {
   createProviderRunnerForTesting,
   preflightBuiltInProvider,
@@ -745,6 +760,33 @@ test('governed Git control rejects symlinked control roots', () => {
   }
 });
 
+test('governed runtime directory policy rejects the bare parent segment', () => {
+  const repository = createFixtureRepository();
+  const runtimeDirectory = fs.mkdtempSync(
+    path.join(os.tmpdir(), 'provider-runtime-policy-'),
+  );
+  try {
+    for (const mutableContentPaths of [[], ['..']]) {
+      assert.throws(
+        () =>
+          captureGovernedProviderProjection(repository, [
+            {
+              id: 'semantic-output',
+              path: runtimeDirectory,
+              kind: 'directory-closure',
+              expectedFiles: ['..'],
+              mutableContentPaths,
+            },
+          ]),
+        (error) => isWorkflowError(error, 'GOVERNED_PROJECTION_FAILED'),
+      );
+    }
+  } finally {
+    fs.rmSync(runtimeDirectory, { recursive: true, force: true });
+    fs.rmSync(repository, { recursive: true, force: true });
+  }
+});
+
 test('governed Git control binds common-dir rerere state from a linked worktree', () => {
   const repository = createFixtureRepository();
   const linkedParent = fs.mkdtempSync(
@@ -841,6 +883,243 @@ test('runner wraps provider-native output only after unchanged governed projecti
       assert.equal(stats.isSymbolicLink(), false);
       assert.equal(stats.mode & 0o777, 0o600);
     }
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+test('production prompt assembly reads only the exact current manifest and excludes unrelated durable evidence', () => {
+  const fixture = createRunnerFixture();
+  const manifest = JSON.parse(
+    fs.readFileSync(
+      path.join(fixture.input.invocationDirectory, 'manifest.json'),
+      'utf8',
+    ),
+  ) as unknown;
+  try {
+    const binding = ensureProviderPromptContext(
+      providerPromptContextStoreRoot(fixture.input.invocationDirectory),
+      fixture.request,
+      manifest,
+      'investigation-provider-runner-test',
+    );
+    const storeRoot = providerPromptContextStoreRoot(
+      fixture.input.invocationDirectory,
+    );
+    const catalog = inspectDurableRetentionCatalog(
+      storeRoot,
+      binding.workflowId,
+    );
+    const oldEvidence = 'OLD_EPOCH_EVIDENCE_MUST_NOT_ENTER_PROMPT';
+    storeDurableEvidence(storeRoot, {
+      workflowId: binding.workflowId,
+      expectedCatalogGeneration: catalog.generation,
+      record: {
+        schemaVersion: 1,
+        kind: 'evidence-retention',
+        evidenceId: 'unreferenced-old-provider-evidence',
+        itemIdentity: null,
+        workflowId: binding.workflowId,
+        epoch: binding.epoch,
+        evidenceClass: 'raw',
+        digest: `sha256:${sha256(oldEvidence)}`,
+        retention: 'active',
+        createdAt: '2026-08-03T14:00:00.000Z',
+        expiresAt: null,
+        pin: null,
+      },
+      content: oldEvidence,
+    });
+
+    let managedPrompt = '';
+    const host = claudeRunnerHost((input) => {
+      managedPrompt = input.stdinContent.toString('utf8');
+      return successfulProbe(
+        JSON.stringify({
+          type: 'result',
+          subtype: 'success',
+          structured_output: semanticOutput(fixture.request),
+        }),
+      );
+    });
+    createProviderRunnerForTesting(host).run(fixture.input, {
+      platform: 'darwin',
+    });
+    assert.equal(managedPrompt.includes(oldEvidence), false);
+    const parsed = JSON.parse(managedPrompt) as { manifest: unknown };
+    assert.deepEqual(parsed.manifest, manifest);
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+test('provider prompt context identity is isolated by the durable investigation owner', () => {
+  const fixture = createRunnerFixture();
+  const manifest = JSON.parse(
+    fs.readFileSync(
+      path.join(fixture.input.invocationDirectory, 'manifest.json'),
+      'utf8',
+    ),
+  ) as unknown;
+  try {
+    const storeRoot = providerPromptContextStoreRoot(
+      fixture.input.invocationDirectory,
+    );
+    const first = ensureProviderPromptContext(
+      storeRoot,
+      fixture.request,
+      manifest,
+      'investigation-context-owner-a',
+    );
+    const second = ensureProviderPromptContext(
+      storeRoot,
+      fixture.request,
+      manifest,
+      'investigation-context-owner-b',
+    );
+
+    assert.notEqual(first.workflowId, second.workflowId);
+    assert.equal(first.ownerWorkflowId, 'investigation-context-owner-a');
+    assert.equal(second.ownerWorkflowId, 'investigation-context-owner-b');
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+test('production prompt assembly rejects a stale request after durable context rollover', () => {
+  const fixture = createRunnerFixture();
+  const manifest = JSON.parse(
+    fs.readFileSync(
+      path.join(fixture.input.invocationDirectory, 'manifest.json'),
+      'utf8',
+    ),
+  ) as unknown;
+  try {
+    const storeRoot = providerPromptContextStoreRoot(
+      fixture.input.invocationDirectory,
+    );
+    const binding = ensureProviderPromptContext(
+      storeRoot,
+      fixture.request,
+      manifest,
+      'investigation-provider-runner-test',
+    );
+    const nextContent = canonicalJson({
+      kind: 'new-current-provider-context',
+      sentinel: 'CURRENT_ONLY',
+    });
+    const next = buildContextManifest({
+      workflowId: binding.workflowId,
+      epoch: 2,
+      contractVersion: binding.manifest.contractVersion,
+      baselineDigest: binding.manifest.baselineDigest,
+      intentDigest: binding.manifest.intentDigest,
+      termSetDigest: binding.manifest.termSetDigest,
+      planningSnapshotDigest: binding.manifest.planningSnapshotDigest,
+      items: [{ identity: 'provider-input-manifest', content: nextContent }],
+    });
+    rolloverDurableEpochContextStore(storeRoot, {
+      workflowId: binding.workflowId,
+      expectedGeneration: 1,
+      expectedEpoch: 1,
+      expectedContextDigest: binding.contextDigest,
+      nextManifest: next,
+      items: [{ identity: 'provider-input-manifest', content: nextContent }],
+      reason: 'Test a semantically changed provider context.',
+      restartFrom: 'survey',
+      carriedForward: [],
+      invalidated: ['provider-input-manifest'],
+      verification: null,
+      createdAt: new Date('2026-08-03T15:00:00.000Z'),
+    });
+    assert.throws(
+      () =>
+        assembleProviderPromptManifest(
+          storeRoot,
+          fixture.request,
+          manifest,
+          'investigation-provider-runner-test',
+        ),
+      (error) => isWorkflowError(error, 'PROVIDER_CONTEXT_STALE_OR_WRONG'),
+    );
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+test('lifecycle invocation selection rolls semantic provider context once and stale workers cannot roll it back', () => {
+  const fixture = createRunnerFixture();
+  const firstManifest = JSON.parse(
+    fs.readFileSync(
+      path.join(fixture.input.invocationDirectory, 'manifest.json'),
+      'utf8',
+    ),
+  ) as unknown;
+  try {
+    const storeRoot = providerPromptContextStoreRoot(
+      fixture.input.invocationDirectory,
+    );
+    const owner = 'investigation-provider-runner-test';
+    const first = prepareProviderPromptContextForInvocation(
+      storeRoot,
+      fixture.request,
+      firstManifest,
+      owner,
+      new Date('2026-08-03T15:00:00.000Z'),
+    );
+    const secondManifest = {
+      kind: 'test-manifest',
+      invocationId: 'invocation-adapter-test-next-semantic-input',
+    };
+    const secondRequest = providerRequest(
+      fixture.request.policyDigest,
+      fixture.repository,
+      fixture.request.providerId,
+      fixture.request.limits.aggregateOutputBytes,
+      secondManifest.invocationId,
+      sha256(canonicalJson(secondManifest)),
+      fixture.request.purpose,
+      fixture.request.limits.timeoutMs,
+    );
+    const second = prepareProviderPromptContextForInvocation(
+      storeRoot,
+      secondRequest,
+      secondManifest,
+      owner,
+      new Date('2026-08-03T15:05:00.000Z'),
+    );
+
+    assert.equal(second.workflowId, first.workflowId);
+    assert.equal(second.epoch, first.epoch + 1);
+    assert.equal(second.generation, first.generation + 1);
+    assert.equal(
+      ensureProviderPromptContext(
+        storeRoot,
+        secondRequest,
+        secondManifest,
+        owner,
+      ).contextDigest,
+      second.contextDigest,
+    );
+    assert.throws(
+      () =>
+        ensureProviderPromptContext(
+          storeRoot,
+          fixture.request,
+          firstManifest,
+          owner,
+        ),
+      (error) => isWorkflowError(error, 'PROVIDER_CONTEXT_STALE_OR_WRONG'),
+    );
+    assert.equal(
+      ensureProviderPromptContext(
+        storeRoot,
+        secondRequest,
+        secondManifest,
+        owner,
+      ).contextDigest,
+      second.contextDigest,
+    );
   } finally {
     fixture.cleanup();
   }
@@ -1089,6 +1368,11 @@ test('runner binds enabled policy, provider, baseline, and semantic schema befor
           path.join(fixture.input.invocationDirectory, 'request.json'),
           request,
         );
+        writeProviderExecutionPolicySnapshot(
+          fixture.input.invocationDirectory,
+          request,
+          policyContent,
+        );
       },
       'PROVIDER_DISABLED',
     ],
@@ -1109,7 +1393,7 @@ test('runner binds enabled policy, provider, baseline, and semantic schema befor
           request,
         );
       },
-      'PROVIDER_POLICY_MISMATCH',
+      'PROVIDER_EXECUTION_POLICY_SNAPSHOT_MISMATCH',
     ],
     [
       'provider mismatch',
@@ -1168,6 +1452,163 @@ test('runner binds enabled policy, provider, baseline, and semantic schema befor
         fixture.input.semanticOutputSchema = { type: 'string' };
       },
       'PROVIDER_OUTPUT_SCHEMA_UNBOUND',
+    ],
+  ] as const) {
+    const fixture = createRunnerFixture();
+    let launches = 0;
+    try {
+      mutate(fixture);
+      assert.throws(
+        () =>
+          createProviderRunnerForTesting(
+            claudeRunnerHost(() => {
+              launches += 1;
+              return successfulProbe('');
+            }),
+          ).run(fixture.input, { platform: 'darwin' }),
+        (error) => isWorkflowError(error, code),
+        name,
+      );
+      assert.equal(launches, 0, name);
+    } finally {
+      fixture.cleanup();
+    }
+  }
+});
+
+test('production runner executes Attempt 2 with a durable 600s policy snapshot and the immutable semantic base', () => {
+  const fixture = createRunnerFixture();
+  const baselinePolicyPath = path.join(
+    fixture.repository,
+    'workflow/ai-adapter-policy.json',
+  );
+  const baselinePolicy = fs.readFileSync(baselinePolicyPath, 'utf8');
+  try {
+    const retryPolicy = writeAdapterPolicy(
+      fixture.repository,
+      true,
+      2,
+      600_000,
+    );
+    const invocationId = 'invocation-adapter-retry-attempt-2';
+    const invocationDirectoryPath = path.join(
+      fixture.repository,
+      '.git',
+      'workflow-engine',
+      'investigations',
+      'invocations',
+      invocationId,
+    );
+    createPrivateDirectory(invocationDirectoryPath);
+    const invocationDirectory = fs.realpathSync(invocationDirectoryPath);
+    const manifest = JSON.parse(
+      fs.readFileSync(
+        path.join(fixture.input.invocationDirectory, 'manifest.json'),
+        'utf8',
+      ),
+    ) as unknown;
+    const manifestPath = path.join(invocationDirectory, 'manifest.json');
+    rewritePrivateJson(manifestPath, manifest);
+    const request = providerRequest(
+      sha256(retryPolicy),
+      fixture.repository,
+      'claude',
+      fixture.request.limits.aggregateOutputBytes,
+      invocationId,
+      fixture.request.inputManifestDigest,
+      fixture.request.purpose,
+      600_000,
+    );
+    assert.equal(request.baseCommit, fixture.request.baseCommit);
+    assert.equal(request.baseTree, fixture.request.baseTree);
+    assert.equal(request.limits.timeoutMs, 600_000);
+    rewritePrivateJson(path.join(invocationDirectory, 'request.json'), request);
+    rewritePrivateJson(path.join(invocationDirectory, 'state.json'), {
+      invocationId,
+      state: 'leased',
+    });
+    writeProviderExecutionPolicySnapshot(
+      invocationDirectory,
+      request,
+      retryPolicy,
+    );
+
+    // The live tracked policy returns to the immutable semantic baseline. The
+    // replacement Attempt executes only from its exact durable policy snapshot.
+    fs.writeFileSync(baselinePolicyPath, baselinePolicy, 'utf8');
+    let observedTimeoutMs = 0;
+    const report = createProviderRunnerForTesting(
+      claudeRunnerHost((input) => {
+        observedTimeoutMs = input.timeoutMs;
+        return successfulProbe(
+          JSON.stringify({
+            type: 'result',
+            subtype: 'success',
+            structured_output: semanticOutput(request),
+          }),
+        );
+      }),
+    ).run(
+      {
+        ...fixture.input,
+        invocationDirectory,
+        request,
+        outputValidator: outputValidatorFor(request),
+        governedRuntimeInputs: [{ id: 'manifest', path: manifestPath }],
+      },
+      { platform: 'darwin' },
+    );
+    assert.equal(observedTimeoutMs, 600_000);
+    assert.equal(report.requestDigest, request.requestDigest);
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+test('runner fails closed for a missing, mismatched, or malformed execution policy snapshot', () => {
+  for (const [name, mutate, code] of [
+    [
+      'missing snapshot',
+      (fixture: ReturnType<typeof createRunnerFixture>) => {
+        fs.unlinkSync(
+          path.join(fixture.input.invocationDirectory, 'execution-policy.json'),
+        );
+      },
+      'PROVIDER_EXECUTION_POLICY_SNAPSHOT_UNSAFE',
+    ],
+    [
+      'mismatched request binding',
+      (fixture: ReturnType<typeof createRunnerFixture>) => {
+        const snapshotPath = path.join(
+          fixture.input.invocationDirectory,
+          'execution-policy.json',
+        );
+        const snapshot = JSON.parse(fs.readFileSync(snapshotPath, 'utf8')) as {
+          requestDigest: string;
+        };
+        rewritePrivateJson(snapshotPath, {
+          ...snapshot,
+          requestDigest: '9'.repeat(64),
+        });
+      },
+      'PROVIDER_EXECUTION_POLICY_SNAPSHOT_MISMATCH',
+    ],
+    [
+      'malformed policy document',
+      (fixture: ReturnType<typeof createRunnerFixture>) => {
+        const snapshotPath = path.join(
+          fixture.input.invocationDirectory,
+          'execution-policy.json',
+        );
+        const snapshot = JSON.parse(fs.readFileSync(snapshotPath, 'utf8')) as {
+          policyDocument: string;
+        };
+        rewritePrivateJson(snapshotPath, {
+          ...snapshot,
+          policyDocument: '{}',
+        });
+      },
+      'PROVIDER_EXECUTION_POLICY_SNAPSHOT_UNSAFE',
     ],
   ] as const) {
     const fixture = createRunnerFixture();
@@ -1475,7 +1916,7 @@ test('runner enforces native output, aggregate limit, and executable identity', 
     [
       'non-zero process',
       () => ({ ...successfulProbe(''), exitCode: 7 }),
-      'PROVIDER_PROCESS_FAILED',
+      'PROVIDER_PROCESS_NONZERO',
     ],
     [
       'aggregate output',
@@ -1499,6 +1940,167 @@ test('runner enforces native output, aggregate limit, and executable identity', 
     } finally {
       fixture.cleanup();
     }
+  }
+});
+
+test('malformed native output yields bounded redacted repair feedback', () => {
+  const fixture = createRunnerFixture();
+  const malformed = 'not-json secret-that-must-not-enter-repair-evidence';
+  try {
+    assert.throws(
+      () =>
+        createProviderRunnerForTesting(
+          claudeRunnerHost(() => successfulProbe(malformed)),
+        ).run(fixture.input, { platform: 'darwin' }),
+      (error) => {
+        assert.ok(isWorkflowError(error, 'PROVIDER_NATIVE_OUTPUT_INVALID'));
+        const repair = extractProviderRepairFailure(error, PROVIDER_SCHEMA);
+        assert.ok(repair);
+        assert.equal(repair.repairKind, 'schema');
+        assert.deepEqual(repair.previousOutput, {
+          kind: 'provider-native-output-unavailable',
+          reasonCode: 'NATIVE_JSON_PARSE_FAILED',
+        });
+        assert.deepEqual(repair.validationErrors, [
+          {
+            path: '/',
+            code: 'NATIVE_JSON_PARSE_FAILED',
+            message:
+              'Provider native output was not valid JSON; return one complete object matching the target schema.',
+          },
+        ]);
+        const encoded = canonicalJson(repair);
+        assert.ok(Buffer.byteLength(encoded, 'utf8') < 300_000);
+        assert.equal(encoded.includes(malformed), false);
+        assert.equal(encoded.includes('secret-that-must-not-enter'), false);
+        return true;
+      },
+    );
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+test('missing Codex semantic payload yields the same bounded repair contract', () => {
+  const fixture = createRunnerFixture('codex');
+  try {
+    assert.throws(
+      () =>
+        createProviderRunnerForTesting(
+          codexRunnerHost(() => successfulProbe('{"type":"turn.completed"}\n')),
+        ).run(fixture.input, { platform: 'darwin' }),
+      (error) => {
+        assert.ok(isWorkflowError(error, 'PROVIDER_NATIVE_OUTPUT_INVALID'));
+        const repair = extractProviderRepairFailure(error, PROVIDER_SCHEMA);
+        assert.ok(repair);
+        assert.deepEqual(repair.previousOutput, {
+          kind: 'provider-native-output-unavailable',
+          reasonCode: 'NATIVE_JSON_PARSE_FAILED',
+        });
+        assert.deepEqual(
+          repair.validationErrors.map(({ path, code }) => ({ path, code })),
+          [{ path: '/', code: 'NATIVE_JSON_PARSE_FAILED' }],
+        );
+        assert.ok(Buffer.byteLength(canonicalJson(repair), 'utf8') < 300_000);
+        return true;
+      },
+    );
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+test('real runner returns bounded structured schema feedback for a repair Attempt', () => {
+  const fixture = createRunnerFixture();
+  try {
+    assert.throws(
+      () =>
+        createProviderRunnerForTesting(
+          claudeRunnerHost(() =>
+            successfulProbe(
+              JSON.stringify({
+                type: 'result',
+                subtype: 'success',
+                structured_output: {
+                  reference: 7,
+                  terms: [],
+                },
+              }),
+            ),
+          ),
+        ).run(
+          {
+            ...fixture.input,
+            outputValidator: {
+              ...fixture.input.outputValidator,
+              validate: () => false,
+            },
+          },
+          { platform: 'darwin' },
+        ),
+      (error) => {
+        assert.ok(isWorkflowError(error, 'PROVIDER_NATIVE_OUTPUT_INVALID'));
+        const repair = extractProviderRepairFailure(error, PROVIDER_SCHEMA);
+        assert.ok(repair);
+        assert.equal(repair.repairKind, 'schema');
+        assert.deepEqual(repair.previousOutput, {
+          reference: 7,
+          terms: [],
+        });
+        assert.deepEqual(
+          repair.validationErrors.map(({ path, code }) => ({ path, code })),
+          [{ path: '/reference', code: 'TYPE_STRING_REQUIRED' }],
+        );
+        return true;
+      },
+    );
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+test('real runner distinguishes semantic feedback after structural validation passes', () => {
+  const fixture = createRunnerFixture();
+  try {
+    assert.throws(
+      () =>
+        createProviderRunnerForTesting(
+          claudeRunnerHost(() =>
+            successfulProbe(
+              JSON.stringify({
+                type: 'result',
+                subtype: 'success',
+                structured_output: semanticOutput(fixture.request),
+              }),
+            ),
+          ),
+        ).run(
+          {
+            ...fixture.input,
+            outputValidator: {
+              ...fixture.input.outputValidator,
+              validate: () => false,
+            },
+          },
+          { platform: 'darwin' },
+        ),
+      (error) => {
+        const repair = extractProviderRepairFailure(error, PROVIDER_SCHEMA);
+        assert.ok(repair);
+        assert.equal(repair.repairKind, 'semantic');
+        assert.deepEqual(repair.validationErrors, [
+          {
+            path: '/',
+            code: 'SEMANTIC_VALIDATION_FAILED',
+            message:
+              'Output matched the structural schema but failed the bound semantic validator.',
+          },
+        ]);
+        return true;
+      },
+    );
+  } finally {
+    fixture.cleanup();
   }
 });
 
@@ -1531,8 +2133,18 @@ test('Codex semantic output file and normalized output count toward the aggregat
 
 test('provider concurrency is bounded repository-wide and slots release in finally', () => {
   const fixture = createRunnerFixture();
-  const second = siblingRunnerInput(fixture, 'invocation-adapter-second');
-  const third = siblingRunnerInput(fixture, 'invocation-adapter-third');
+  const outerInput = bindRunnerInputToInvestigationOwner(
+    fixture.input,
+    'investigation-provider-concurrency-outer',
+  );
+  const second = bindRunnerInputToInvestigationOwner(
+    siblingRunnerInput(fixture, 'invocation-adapter-second'),
+    'investigation-provider-concurrency-second',
+  );
+  const third = bindRunnerInputToInvestigationOwner(
+    siblingRunnerInput(fixture, 'invocation-adapter-third'),
+    'investigation-provider-concurrency-third',
+  );
   let thirdLaunches = 0;
   try {
     const thirdRunner = createProviderRunnerForTesting(
@@ -1576,7 +2188,7 @@ test('provider concurrency is bounded repository-wide and slots release in final
       }),
     );
 
-    const outer = outerRunner.run(fixture.input, { platform: 'darwin' });
+    const outer = outerRunner.run(outerInput, { platform: 'darwin' });
     assert.equal(outer.assurance, 'unchanged-governed-projection');
     assert.equal(thirdLaunches, 0);
 
@@ -1631,7 +2243,7 @@ test('tracked policy is managed-lifecycle-only and diagnostic remains non-launch
       'utf8',
     ),
   );
-  assert.equal(policy.schemaVersion, 3);
+  assert.equal(policy.schemaVersion, 4);
   assert.equal(policy.mode, 'managed-read-only');
   assert.equal(policy.launchPolicy, 'lifecycle-only');
 
@@ -1644,7 +2256,7 @@ test('tracked policy is managed-lifecycle-only and diagnostic remains non-launch
       'utf8',
     ),
   );
-  assert.equal(schema.properties.schemaVersion.const, 3);
+  assert.equal(schema.properties.schemaVersion.const, 4);
   assert.equal(schema.properties.mode.const, 'managed-read-only');
   assert.equal(schema.properties.launchPolicy.const, 'lifecycle-only');
 });
@@ -1693,6 +2305,11 @@ function createRunnerFixture(
     invocationId,
     state: 'leased',
   });
+  writeProviderExecutionPolicySnapshot(
+    invocationDirectory,
+    request,
+    policyContent,
+  );
   const input: ProviderRunInput = {
     providerId,
     repositoryRoot: repository,
@@ -1725,6 +2342,7 @@ function providerRequest(
   invocationId = 'invocation-adapter-test',
   inputManifestDigest = 'd'.repeat(64),
   purpose: ProviderInvocationRequest['purpose'] = 'survey',
+  timeoutMs = 300_000,
 ): ProviderInvocationRequest {
   return createProviderInvocationRequest(
     providerRequestInput(
@@ -1735,6 +2353,7 @@ function providerRequest(
       invocationId,
       inputManifestDigest,
       purpose,
+      timeoutMs,
     ),
   );
 }
@@ -1747,6 +2366,7 @@ function providerRequestInput(
   invocationId = 'invocation-adapter-test',
   inputManifestDigest = 'd'.repeat(64),
   purpose: ProviderInvocationRequest['purpose'] = 'survey',
+  timeoutMs = 300_000,
 ): ProviderInvocationRequestInput {
   const outputSchemaDigest = crypto
     .createHash('sha256')
@@ -1784,7 +2404,7 @@ function providerRequestInput(
         : 'blind-survey-evaluator.v1',
     policyDigest,
     limits: {
-      timeoutMs: 300_000,
+      timeoutMs,
       aggregateOutputBytes,
     },
   };
@@ -1843,6 +2463,14 @@ function siblingRunnerInput(
     invocationId,
     state: 'leased',
   });
+  writeProviderExecutionPolicySnapshot(
+    invocationDirectory,
+    request,
+    fs.readFileSync(
+      path.join(fixture.repository, 'workflow/ai-adapter-policy.json'),
+      'utf8',
+    ),
+  );
   return {
     ...fixture.input,
     invocationDirectory,
@@ -1850,6 +2478,51 @@ function siblingRunnerInput(
     outputValidator: outputValidatorFor(request),
     governedRuntimeInputs: [{ id: 'manifest', path: manifestPath }],
   };
+}
+
+function bindRunnerInputToInvestigationOwner(
+  input: ProviderRunInput,
+  ownerWorkflowId: string,
+): ProviderRunInput {
+  const manifest = JSON.parse(
+    fs.readFileSync(
+      path.join(input.invocationDirectory, 'manifest.json'),
+      'utf8',
+    ),
+  ) as unknown;
+  const context = ensureProviderPromptContext(
+    providerPromptContextStoreRoot(input.invocationDirectory),
+    input.request,
+    manifest,
+    ownerWorkflowId,
+  );
+  const acceptanceBinding: ProviderInvocationAcceptanceBinding = {
+    schemaVersion: 1,
+    kind: 'provider-invocation-acceptance-binding',
+    invocationId: input.request.invocationId,
+    requestDigest: input.request.requestDigest,
+    ownerWorkflowId,
+    legacyRevision: 1,
+    leaseGeneration: 1,
+    context,
+    executionJobId: `job-provider-concurrency-${input.request.invocationId}`,
+    executionAttemptId: `attempt-provider-concurrency-${input.request.invocationId}`,
+    executionRevision: 1,
+    executionStateDigest: '0'.repeat(64),
+    repair: {
+      invocationId: input.request.invocationId,
+      lineagePath: path.join(input.invocationDirectory, 'repair-lineage.json'),
+      lineageDigest: null,
+      currentEvidencePath: path.join(
+        input.invocationDirectory,
+        'repair-evidence.json',
+      ),
+      evidencePath: null,
+      evidenceDigest: null,
+    },
+    bindingDigest: '0'.repeat(64),
+  };
+  return { ...input, acceptanceBinding };
 }
 
 function executableIdentity(
@@ -1975,12 +2648,13 @@ function writeAdapterPolicy(
   repository: string,
   claudeEnabled = true,
   maxConcurrent = 2,
+  timeoutMs = 300_000,
 ): string {
   const policyPath = path.join(repository, 'workflow/ai-adapter-policy.json');
   fs.mkdirSync(path.dirname(policyPath), { recursive: true });
   const content = `${JSON.stringify(
     {
-      schemaVersion: 3,
+      schemaVersion: 4,
       mode: 'managed-read-only',
       launchPolicy: 'lifecycle-only',
       requiredControls: [
@@ -1998,16 +2672,32 @@ function writeAdapterPolicy(
         claude: { enabled: claudeEnabled },
       },
       limits: {
-        timeoutMs: 300_000,
+        timeoutMs,
         aggregateOutputBytes: 1_048_576,
         maxConcurrent,
       },
+      retryAccounting: structuredClone(DEFAULT_AI_ADAPTER_RETRY_ACCOUNTING),
     },
     null,
     2,
   )}\n`;
   fs.writeFileSync(policyPath, content);
   return content;
+}
+
+function writeProviderExecutionPolicySnapshot(
+  invocationDirectory: string,
+  request: ProviderInvocationRequest,
+  policyDocument: string,
+): void {
+  rewritePrivateJson(path.join(invocationDirectory, 'execution-policy.json'), {
+    schemaVersion: 1,
+    kind: 'provider-execution-policy-snapshot',
+    invocationId: request.invocationId,
+    requestDigest: request.requestDigest,
+    policyDigest: request.policyDigest,
+    policyDocument,
+  });
 }
 
 function createPrivateDirectory(directory: string): void {

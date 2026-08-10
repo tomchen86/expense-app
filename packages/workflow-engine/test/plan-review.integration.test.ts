@@ -1,11 +1,14 @@
 import assert from 'node:assert/strict';
+import { Buffer } from 'node:buffer';
 import test from 'node:test';
 
+import { createEvidenceNode } from '../src/evidence-node.ts';
 import { projectPlanReviewTerms } from '../src/investigation-term-projection.ts';
 import {
   createPlanReviewDispositionNode,
   createPlanReviewNode,
   createPlanReviewProviderResultNode,
+  createPlanReviewTargetSnapshotNode,
   createPlanReviewSubject,
   PLAN_REVIEW_COVERAGE,
   readPlanReviewNode,
@@ -105,6 +108,27 @@ test('exact PlanReview composes target, generation, challenge, terms, and adviso
     assignment,
     submission,
     providerPolicyDigest: 'a'.repeat(64),
+    targetSnapshotNode: createPlanReviewTargetSnapshotNode({
+      changeId: 'demo-change',
+      changePrefix: 'openspec/changes/demo-change',
+      subject,
+      materializationNode: createEvidenceNode({
+        type: 'propose-planning-materialization',
+        nodeSchema: 'test.integration-materialization.v1',
+        evaluator: 'test.integration-materialization.v1',
+        policyDigest: 'a'.repeat(64),
+        exactInputDigests: {},
+        semanticParentResultDigests: {},
+        provenanceParentNodeIds: {},
+        outputSchema: 'test.integration-materialization-output.v1',
+        output: { testOnly: true },
+        runtimeMetadata: {},
+      }),
+      artifacts: new Map([
+        ['proposal.md', Buffer.from('# Proposal\n\nPreserve the behavior.\n')],
+      ]),
+      legacyMigration: null,
+    }),
   });
   const reviewNode = createPlanReviewNode({
     subject,

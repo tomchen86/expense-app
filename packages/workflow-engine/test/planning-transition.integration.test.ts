@@ -640,6 +640,45 @@ test('plan-commit shares the change lock with active task sessions', () => {
   }
 });
 
+test('plan-commit proceeds in an independent change worktree while another change is active', () => {
+  const repository = createPlanningRepository('demo-change', true);
+  let linkedWorktree: string | undefined;
+  try {
+    const session = startSession(repository, 'demo-change', '1.1');
+    linkedWorktree = fs.mkdtempSync(
+      path.join(path.dirname(repository), 'planning-concurrent-change-'),
+    );
+    fs.rmdirSync(linkedWorktree);
+    git(repository, [
+      'worktree',
+      'add',
+      '-b',
+      'work/concurrent-change',
+      linkedWorktree,
+      'HEAD',
+    ]);
+    installFakeOpenSpec(linkedWorktree);
+    writeChange(linkedWorktree, 'concurrent-change', [
+      { id: '1.1', completed: false, title: 'Independent task' },
+    ]);
+
+    const result = commitPlanningTransition(
+      linkedWorktree,
+      'concurrent-change',
+    );
+    assert.equal(result.changeId, 'concurrent-change');
+    assert.equal(result.kind, 'introduction');
+    assert.equal(git(linkedWorktree, ['status', '--porcelain']), '');
+
+    abortSession(repository, session.sessionId, 'fixture cleanup');
+  } finally {
+    if (linkedWorktree !== undefined) {
+      fs.rmSync(linkedWorktree, { recursive: true, force: true });
+    }
+    fs.rmSync(repository, { recursive: true, force: true });
+  }
+});
+
 test('plan-commit restores the clean index when compare-and-swap loses the HEAD race', () => {
   const repository = createPlanningRepository('planned-change');
   try {

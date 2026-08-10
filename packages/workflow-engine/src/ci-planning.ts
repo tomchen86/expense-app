@@ -1,12 +1,19 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
+import { canonicalJson } from './canonical-json.ts';
 import {
+  assertCollaborationGrantId,
   assertUniqueCollaborationGrantUses,
   type CollaborationGrantUseIdentity,
 } from './collaboration-grant.ts';
+import { readFileAtCommit } from './ci-git.ts';
+import { isRecord } from './contract-values.ts';
+import { parseManagedTrailers } from './managed-trailers.ts';
 import {
   loadChangeContract,
+  parseInvestigationArtifact,
+  parsePlanReviewArtifact,
   parseTasks,
   readChangeSchemaName,
   type ManagedSchemaName,
@@ -30,6 +37,7 @@ import {
   type InvestigationFirstPlanningAssuranceSummary,
 } from './planning-assurance-validator.ts';
 import {
+  amendmentLeftWorkMarkedDone,
   assertPlanningPaths,
   assertPlanningTaskHistory,
   taskStates,
@@ -58,6 +66,125 @@ export type CiCollaborationGrantUse = CollaborationGrantUseIdentity;
 
 export { assertUniqueCollaborationGrantUses };
 
+/**
+ * Reconstruct every collaboration-grant claim made by exact planning
+ * transitions for one change through the requested immutable Git tip.
+ * Non-plan commits are deliberately ignored even when they touch the artifact:
+ * maxUses applies to the managed transition that claimed the review, while the
+ * ordinary CI path separately rejects unmanaged planning mutations.
+ */
+export function collectHistoricalCollaborationGrantUses(
+  repositoryRoot: string,
+  head: string,
+  changeId: string,
+  changeRoot = 'openspec/changes',
+): readonly CiCollaborationGrantUse[] {
+  assertChangeId(changeId);
+  const normalizedChangeRoot = normalizeChangedPath(changeRoot);
+  if (normalizedChangeRoot !== changeRoot || changeRoot.endsWith('/')) {
+    throw ciPlanningError(
+      'CI_PLANNING_ROOT_INVALID',
+      'CI planning validation requires one canonical change root.',
+    );
+  }
+  const artifactPaths = [
+    `${normalizedChangeRoot}/${changeId}/investigation.json`,
+    `${normalizedChangeRoot}/${changeId}/plan-review.json`,
+  ] as const;
+  const commits = runGit(repositoryRoot, [
+    'rev-list',
+    '--full-history',
+    '--reverse',
+    head,
+    '--',
+    ...artifactPaths.map((artifactPath) => `:(literal)${artifactPath}`),
+  ])
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean);
+  const expectedMessage = `${planningCommitMessage(changeId)}\n`;
+  return commits.flatMap((commit) => {
+    const facts = commitFacts(repositoryRoot, commit);
+    if (facts.parents.length !== 1 || facts.message !== expectedMessage) {
+      return [];
+    }
+    return artifactPaths.flatMap((artifactPath) => {
+      const raw = readFileAtCommit(repositoryRoot, commit, artifactPath);
+      if (raw === undefined) {
+        return [];
+      }
+      return grantUsesFromPlanningArtifact(
+        raw,
+        changeId,
+        artifactPath.endsWith('/investigation.json')
+          ? 'investigation'
+          : 'plan-review',
+      );
+    });
+  });
+}
+
+function grantUsesFromPlanningArtifact(
+  raw: string,
+  changeId: string,
+  artifactKind: 'investigation' | 'plan-review',
+): CiCollaborationGrantUse[] {
+  let roleResults: unknown[] | undefined;
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (raw !== `${canonicalJson(parsed)}\n`) {
+      throw new Error('noncanonical artifact');
+    }
+    roleResults =
+      artifactKind === 'investigation'
+        ? parseInvestigationArtifact(parsed, changeId).roleResults
+        : parsePlanReviewArtifact(parsed, changeId).roleResults;
+  } catch {
+    throw ciPlanningError(
+      'CI_PLANNING_GRANT_HISTORY_INVALID',
+      'Historical planning grant claims are malformed.',
+    );
+  }
+  return grantUsesFromRoleResults(roleResults ?? []);
+}
+
+function grantUsesFromRoleResults(
+  roleResults: readonly unknown[],
+): CiCollaborationGrantUse[] {
+  return roleResults.flatMap((roleResult) => {
+    if (!isRecord(roleResult)) {
+      throw ciPlanningError(
+        'CI_PLANNING_GRANT_HISTORY_INVALID',
+        'Historical planning grant claims are malformed.',
+      );
+    }
+    if (roleResult.grantUse === null) {
+      return [];
+    }
+    const use = roleResult.grantUse;
+    if (
+      !isRecord(use) ||
+      typeof use.grantId !== 'string' ||
+      typeof use.signedEnvelopeDigest !== 'string' ||
+      typeof use.transitionDigest !== 'string' ||
+      !/^[0-9a-f]{64}$/.test(use.signedEnvelopeDigest) ||
+      !/^[0-9a-f]{64}$/.test(use.transitionDigest)
+    ) {
+      throw ciPlanningError(
+        'CI_PLANNING_GRANT_HISTORY_INVALID',
+        'Historical planning grant claims are malformed.',
+      );
+    }
+    return [
+      {
+        grantId: assertCollaborationGrantId(use.grantId),
+        signedEnvelopeDigest: use.signedEnvelopeDigest,
+        transitionDigest: use.transitionDigest,
+      },
+    ];
+  });
+}
+
 type TreeEntry = {
   mode: string;
   type: string;
@@ -70,6 +197,35 @@ type TreeEntry = {
  * the `plan` transition. The single integration bootstrap is deliberately an
  * outer exception because its dependency diff is not an ordinary plan diff.
  */
+/**
+ * The amendment block a planning commit carries, if it is one.
+ *
+ * Reading it here rather than trusting a caller is what keeps replay honest:
+ * the permission to reopen completed work lives in the commit that used it, so
+ * a later reader reaches the same verdict from the same bytes.
+ */
+function readCommittedAmendment(
+  message: string,
+  changeId: string,
+): { executionImpact: 'none' | 'required' } | null {
+  let trailers;
+  try {
+    trailers = parseManagedTrailers(
+      message.endsWith('\n') ? message.slice(0, -1) : message,
+    );
+  } catch {
+    return null;
+  }
+  if (trailers?.kind !== 'amend-plan') return null;
+  if (trailers.changeId !== changeId) {
+    throw ciPlanningError(
+      'CI_PLANNING_AMENDMENT_CHANGE_MISMATCH',
+      'An amendment names the change it amends, and this one names another.',
+    );
+  }
+  return { executionImpact: trailers.executionImpact };
+}
+
 export function validateCiPlanningCommit(
   repositoryRoot: string,
   commitHash: string,
@@ -92,12 +248,20 @@ export function validateCiPlanningCommit(
       'Planning commits must have exactly one parent.',
     );
   }
-  if (facts.message !== `${planningCommitMessage(changeId)}\n`) {
+  // An amendment carries its own exact block, and the authorization to reopen
+  // completed work is read from that block rather than from anything outside
+  // the commit — replay sees precisely what the transition claimed.
+  const amendment = readCommittedAmendment(facts.message, changeId);
+  if (
+    amendment === null &&
+    facts.message !== `${planningCommitMessage(changeId)}\n`
+  ) {
     throw ciPlanningError(
       'CI_PLANNING_MESSAGE_INVALID',
       'Planning commits require the exact managed subject and trailer block.',
     );
   }
+  const reopenAuthorized = amendment?.executionImpact === 'required';
 
   const changedPaths = commitChangedPaths(repositoryRoot, facts.hash);
   if (changedPaths.length === 0) {
@@ -184,7 +348,17 @@ export function validateCiPlanningCommit(
   const afterTasks = parseTasks(
     readRequiredFile(repositoryRoot, facts.hash, `${prefix}/tasks.md`),
   );
-  assertPlanningTaskHistory(beforeTasks, afterTasks);
+  const reopenedTasks = assertPlanningTaskHistory(beforeTasks, afterTasks, {
+    reopenAuthorized,
+  });
+  if (
+    amendmentLeftWorkMarkedDone({ reopenAuthorized, reopenedTasks, beforeTasks })
+  ) {
+    throw ciPlanningError(
+      'CI_PLANNING_AMENDMENT_NOT_REOPENED',
+      'An amendment that says the work must be redone has to reopen it; completed tasks are still marked done.',
+    );
+  }
   return {
     changeId,
     kind,
@@ -237,7 +411,7 @@ function replayPlanningTree(
     return {
       schemaName,
       planningAssurance: readiness.summary,
-      collaborationGrantUses: collectGrantUses(readiness),
+      collaborationGrantUses: collectGrantUses(contract),
     };
   });
 }
@@ -308,23 +482,18 @@ function resolveReplayedSchemaName(
 }
 
 /**
- * Project the grant use out of the role result the shared validator actually
- * admitted, rather than re-reading raw artifact JSON. Uniqueness across the
- * complete replayed subject is decided later by the aggregate validator.
+ * Project every grant identity carried by the parsed planning artifacts. The
+ * shared readiness validator has already admitted the current semantic plan;
+ * collection deliberately reads each artifact once so investigation and
+ * PlanReview claims enter aggregate uniqueness without duplicating the current
+ * PlanReview result through a second projection path.
  */
 function collectGrantUses(
-  readiness: ReturnType<typeof validateInvestigationFirstPlanningReadiness>,
+  contract: ReturnType<typeof loadChangeContract>,
 ): readonly CiCollaborationGrantUse[] {
-  const { grantUse } = readiness.roleResult;
-  if (grantUse === null) {
-    return Object.freeze([]);
-  }
   return Object.freeze([
-    {
-      grantId: grantUse.grantId,
-      signedEnvelopeDigest: grantUse.signedEnvelopeDigest,
-      transitionDigest: grantUse.transitionDigest,
-    },
+    ...grantUsesFromRoleResults(contract.investigation?.roleResults ?? []),
+    ...grantUsesFromRoleResults(contract.planReview?.roleResults ?? []),
   ]);
 }
 

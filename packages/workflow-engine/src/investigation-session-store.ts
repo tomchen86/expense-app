@@ -2,16 +2,43 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 
+import {
+  parseAiAdapterPolicyDocument,
+  parseLegacyAiAdapterPolicyDocument,
+} from './ai-adapter-policy.ts';
 import { canonicalJson } from './canonical-json.ts';
+import {
+  parseClassDisposition,
+  type ClassDisposition,
+} from './class-disposition.ts';
+import type { SampleAudit } from './class-sample-audit.ts';
+
+const SAMPLE_AUDIT_OUTCOMES = new Set([
+  'passed',
+  'member-misclassified',
+  'rationale-wrong',
+  'type-wrong',
+]);
+import { deriveAuthorityAuditRepositoryId } from './authority-audit-ledger.ts';
 import {
   exactUnsafePathObservationDigest,
   readEvidenceNode,
+  readEvidenceRefs,
   readInvestigationEvidenceRefsClosure,
   observeInvestigationEvidenceRefsAmbiguities,
   resolvePlanReviewInvocationOwner,
   type InvestigationEvidenceRefsClosure,
 } from './evidence-object-store.ts';
 import { ExitCode, type WorkflowError, workflowError } from './errors.ts';
+import { assertReadOnlyProbe } from './execution-core.ts';
+import {
+  assertHumanRevocationAuthorization,
+  authorizeHumanRevocation,
+  canonicalHumanRevocationAuthorization,
+  digestHumanRevocationSubject,
+  type HumanRevocationAuthorization,
+  type HumanRevocationOptions,
+} from './human-revocation.ts';
 import {
   publishPreparedExclusiveLock,
   reclaimDeadPreparedLock,
@@ -25,9 +52,25 @@ import {
   type InvestigationTermKind,
 } from './investigation-terms.ts';
 import {
+  WORKFLOW_SUPERSEDE_REASONS,
+  validateWorkflowSupersedeReason,
+  type WorkflowSupersedeReason,
+} from './intervention-control.ts';
+import {
   recreateProviderInvocationRequest,
   type ProviderInvocationRequest,
 } from './provider-contracts.ts';
+import { inspectProviderInvocationSupersessionRelations } from './provider-invocation-supersession-schema.ts';
+import {
+  assertDurableProviderExecutionBudgetAuthority,
+  validateProviderExecutionBudgetAuthority,
+} from './provider-execution-policy-authority.ts';
+import {
+  providerRetentionArtifact,
+  providerRetentionReviewRootArtifact,
+  readCompleteProviderRetentionReceipt,
+  readProviderRetentionReceipt,
+} from './provider-retention-receipt.ts';
 import {
   isProposeExemptionInvestigationId,
   readProposeExemptionSession,
@@ -41,6 +84,7 @@ import {
 } from './paths.ts';
 
 const DIGEST = /^[0-9a-f]{64}$/;
+const PROVIDER_REPAIR_DIGEST = /^sha256:[0-9a-f]{64}$/;
 const GIT_OBJECT_ID = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
 const CHECKPOINT_ID = /^checkpoint-[0-9a-f]{64}$/;
 const ACTIVE_HUMAN_RESOLUTION_JOURNAL = /^([a-z0-9]+(?:-[a-z0-9]+)*)\.json$/;
@@ -52,15 +96,24 @@ const HUMAN_RESOLUTION_GRANT_TEMPORARY =
   /^([0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})\.json\.[1-9][0-9]*\.[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\.tmp$/;
 const MAX_CHECKPOINT_BYTES = 1_048_576;
 const MAX_HUMAN_RESOLUTION_BYTES = 1_048_576;
-const BLIND_PROVIDER_ROOT_FILES = [
+const BLIND_PROVIDER_CORE_ROOT_FILES = [
   'manifest.json',
   'request.json',
   'state.json',
 ] as const;
+/**
+ * Made durable before the blind manifest, so a directory holding a manifest
+ * without it predates the snapshot rather than having lost it.
+ */
+const PROVIDER_POLICY_ROOT_FILE = 'execution-policy.json';
 const BLIND_PROVIDER_RUNTIME_FILES = [
   'prompt.json',
   'schema.json',
   'semantic-output.json',
+] as const;
+const OPTIONAL_PROVIDER_ROOT_FILES = [
+  'repair-evidence.json',
+  'repair-lineage.json',
 ] as const;
 const HUMAN_RESOLUTION_SCHEMA = 'investigation-human-resolution.v2';
 const HUMAN_RESOLUTION_DECISION_SCHEMAS = Object.freeze({
@@ -82,11 +135,15 @@ const HUMAN_RESOLUTION_DECISION_SCHEMAS = Object.freeze({
     parameters: {},
   },
   supersede: {
-    schemaVersion: 1,
+    schemaVersion: 2,
     kind: 'supersede',
     parameters: {
       successorInvestigationId: {
         type: ['investigation-id', 'null'],
+      },
+      reason: {
+        type: 'enum',
+        values: [...WORKFLOW_SUPERSEDE_REASONS],
       },
     },
   },
@@ -141,7 +198,10 @@ export type HumanResolutionDecision =
   | { kind: 'abort'; parameters: Record<string, never> }
   | {
       kind: 'supersede';
-      parameters: { successorInvestigationId: string | null };
+      parameters: {
+        successorInvestigationId: string | null;
+        reason: WorkflowSupersedeReason;
+      };
     }
   | {
       kind: 'quarantine';
@@ -162,6 +222,11 @@ export type HumanResolutionConsequences = {
   continuity: 'preserved' | 'broken' | 'not-applicable';
   assurance: 'unchanged' | 'human-waived' | 'degraded';
   claimsWaived: string[];
+};
+
+export type LegacySupersedeHumanResolutionDecisionReadOnly = {
+  kind: 'supersede';
+  parameters: { successorInvestigationId: string | null };
 };
 
 export type HumanResolutionAvailability = {
@@ -225,6 +290,12 @@ export type ProviderInvocationLifecycleProjection = Readonly<{
   attempt: number;
   revision: number;
   state: 'prepared' | 'leased' | 'succeeded' | 'failed';
+  /**
+   * `legacy-absent` marks a record written before execution policy snapshots
+   * existed. It is never inferred from an unreadable snapshot, only from one
+   * the current writer could not have omitted.
+   */
+  policySnapshot: 'recorded' | 'legacy-absent';
   requestDigest: string;
   manifestDigest: string;
   nonce: string;
@@ -347,6 +418,7 @@ export type HumanResolutionGrantStoreEntry = {
   envelopeBytes: string;
   terminalReason: string | null;
   recordedAt: string | null;
+  revocationAuthorization?: HumanRevocationAuthorization;
 };
 
 export type HumanResolutionGrantPublicationTemporary = {
@@ -403,6 +475,18 @@ export type MainTermsPayload = {
 
 export type GroupDispositionsPayload = {
   dispositions: InvestigationDispositionInput[];
+  /**
+   * Rationales that cover a class of groups at once. The engine expands each
+   * into one disposition per member, so what the evidence records is unchanged;
+   * what changes is how much an author had to write to say the same thing.
+   */
+  classes?: ClassDisposition[];
+  /**
+   * The hand review of the sampled members of each class. Every mechanical
+   * guard checks the predicate; this is the part only a person can answer,
+   * which is whether the written rationale is true of what those hits do.
+   */
+  sampleAudits?: SampleAudit[];
 };
 
 export type WhyAnswersPayload = {
@@ -452,8 +536,20 @@ export type InvestigationSession = {
   schemaVersion: 1;
   investigationId: string;
   revision: number;
+  /** Semantic evidence/materialization version; lifecycle-only blockers do not advance it. */
+  semanticRevision: number;
+  /** Every durable session CAS advances this clock exactly once. */
+  lifecycleRevision: number;
   state: InvestigationSessionState;
   changeId: string;
+  mandateBinding?: {
+    schemaVersion: 1;
+    mandateTaskId: string;
+    mandateId: string;
+    mandateDigest: string;
+    changeId: string;
+    externalAuditRoot: string;
+  };
   repositoryRoot: string;
   gitCommonDirectory: string;
   branch: string | null;
@@ -596,9 +692,20 @@ export function compareAndSwapInvestigationSession(
       if (current.revision !== expectedRevision) {
         throw investigationCasMismatch(expectedRevision, current.revision);
       }
-      const next = assertInvestigationSession(
-        transition(deepFreeze(structuredClone(current))),
-      );
+      const proposed = transition(deepFreeze(structuredClone(current)));
+      if (
+        proposed.semanticRevision !== current.semanticRevision ||
+        proposed.lifecycleRevision !== current.lifecycleRevision
+      ) {
+        throw sessionTransitionInvalid();
+      }
+      const next = assertInvestigationSession({
+        ...proposed,
+        semanticRevision:
+          current.semanticRevision +
+          (semanticSessionContentChanged(current, proposed) ? 1 : 0),
+        lifecycleRevision: current.lifecycleRevision + 1,
+      });
       assertMonotonicSessionTransition(current, next);
       writePrivateCanonicalJsonAtomic(
         paths,
@@ -963,13 +1070,15 @@ export function assertHumanResolutionDecision(
     value.kind === 'supersede' &&
     hasExactKeys(value, ['kind', 'parameters']) &&
     isRecord(value.parameters) &&
-    hasExactKeys(value.parameters, ['successorInvestigationId']) &&
+    hasExactKeys(value.parameters, ['successorInvestigationId', 'reason']) &&
     (value.parameters.successorInvestigationId === null ||
-      typeof value.parameters.successorInvestigationId === 'string')
+      typeof value.parameters.successorInvestigationId === 'string') &&
+    typeof value.parameters.reason === 'string'
   ) {
     if (typeof value.parameters.successorInvestigationId === 'string') {
       assertInvestigationId(value.parameters.successorInvestigationId);
     }
+    validateWorkflowSupersedeReason(value.parameters.reason);
     return deepFreeze(structuredClone(value)) as HumanResolutionDecision;
   }
   if (
@@ -1003,6 +1112,36 @@ export function assertHumanResolutionDecision(
   throw humanResolutionInvalid('Human resolution decision is unsupported.');
 }
 
+/**
+ * Parses only the supersede shape signed before a canonical reason was
+ * required. The returned value is deliberately not a HumanResolutionDecision:
+ * callers may inspect or verify historical bytes, but cannot feed it into a
+ * current grant, node, or lifecycle transition.
+ */
+export function assertLegacySupersedeHumanResolutionDecisionReadOnly(
+  value: unknown,
+): LegacySupersedeHumanResolutionDecisionReadOnly {
+  if (
+    !isRecord(value) ||
+    value.kind !== 'supersede' ||
+    !hasExactKeys(value, ['kind', 'parameters']) ||
+    !isRecord(value.parameters) ||
+    !hasExactKeys(value.parameters, ['successorInvestigationId']) ||
+    (value.parameters.successorInvestigationId !== null &&
+      typeof value.parameters.successorInvestigationId !== 'string')
+  ) {
+    throw humanResolutionInvalid(
+      'Legacy supersede decision is not a read-only historical record.',
+    );
+  }
+  if (typeof value.parameters.successorInvestigationId === 'string') {
+    assertInvestigationId(value.parameters.successorInvestigationId);
+  }
+  return deepFreeze(
+    structuredClone(value),
+  ) as LegacySupersedeHumanResolutionDecisionReadOnly;
+}
+
 export function assertHumanResolutionConsequences(
   value: unknown,
 ): HumanResolutionConsequences {
@@ -1030,7 +1169,11 @@ export function listProviderInvocationLifecycleProjections(
   paths: InvestigationRuntimePaths,
 ): ProviderInvocationLifecycleProjection[] {
   const scan = scanProviderInvocationLifecycles(paths);
-  if (scan.unsafeInvocations.length > 0) {
+  const unsafeInvocations = scan.unsafeInvocations.filter(
+    ({ invocationId }) =>
+      !isDurablyReservedProviderExecutionPolicySnapshot(paths, invocationId),
+  );
+  if (unsafeInvocations.length > 0) {
     throw providerInvocationUnsafe();
   }
   return [...scan.projections];
@@ -1156,6 +1299,30 @@ export function readProviderInvocationLifecycleProjection(
   } catch {
     throw providerInvocationUnsafe();
   }
+  // The current writer makes execution-policy.json durable before the blind
+  // manifest, so a directory holding a manifest without one is not something it
+  // could have produced: the record predates the snapshot. Absence is therefore
+  // projected as legacy rather than rejected — the scan is fail-closed for the
+  // whole store, so refusing one pre-snapshot record stops every later propose
+  // from creating an invocation at all. Anything present is still judged in
+  // full, so this keys on absence and never on unreadability.
+  const policySnapshotPath = path.join(directory, PROVIDER_POLICY_ROOT_FILE);
+  const policySnapshotRecorded = privatePathExists(
+    paths,
+    policySnapshotPath,
+    providerInvocationUnsafe,
+  );
+  if (policySnapshotRecorded) {
+    assertProviderExecutionPolicySnapshot(
+      paths,
+      readPrivateCanonicalJson(
+        paths,
+        policySnapshotPath,
+        providerInvocationUnsafe,
+      ),
+      request,
+    );
+  }
   if (
     !isRecord(value) ||
     !hasExactKeys(value, [
@@ -1163,6 +1330,9 @@ export function readProviderInvocationLifecycleProjection(
       'invocationId',
       'investigationId',
       'changeId',
+      ...(Object.prototype.hasOwnProperty.call(value, 'mandateBinding')
+        ? ['mandateBinding']
+        : []),
       'attempt',
       'revision',
       'state',
@@ -1181,6 +1351,8 @@ export function readProviderInvocationLifecycleProjection(
     value.invocationId !== invocationId ||
     typeof value.investigationId !== 'string' ||
     typeof value.changeId !== 'string' ||
+    (Object.prototype.hasOwnProperty.call(value, 'mandateBinding') &&
+      !isTaskMandateBinding(value.mandateBinding, value.changeId)) ||
     !Number.isSafeInteger(value.attempt) ||
     (value.attempt as number) < 1 ||
     !Number.isSafeInteger(value.revision) ||
@@ -1254,6 +1426,47 @@ export function readProviderInvocationLifecycleProjection(
   if (ownerInvestigationId !== value.investigationId) {
     throw providerInvocationUnsafe();
   }
+  const supersession = inspectProviderInvocationSupersessionRelations(
+    paths,
+    invocationId,
+    {
+      exists: (filePath) =>
+        privatePathExists(paths, filePath, providerInvocationUnsafe),
+      read: (filePath) =>
+        readPrivateCanonicalJson(paths, filePath, providerInvocationUnsafe),
+    },
+  );
+  const replacementSnapshot = supersession.replacementOf?.supersededBy;
+  const supersededSnapshot = supersession.supersededBy?.replacementOf;
+  for (const snapshot of [replacementSnapshot, supersededSnapshot]) {
+    if (
+      snapshot !== undefined &&
+      (snapshot.invocationId !== invocationId ||
+        snapshot.attempt !== value.attempt ||
+        snapshot.requestDigest !== request.requestDigest ||
+        snapshot.manifestDigest !== value.manifestDigest ||
+        snapshot.subjectDigest !== request.targetDigest ||
+        snapshot.createdAt !== value.createdAt)
+    ) {
+      throw providerInvocationUnsafe();
+    }
+  }
+  if (
+    supersededSnapshot !== undefined &&
+    (value.state !== 'failed' ||
+      supersededSnapshot.terminalStatus !== 'failed' ||
+      supersededSnapshot.terminalAt !== value.updatedAt ||
+      supersededSnapshot.failureCode !==
+        (isRecord(value.failure) ? value.failure.code : null) ||
+      supersededSnapshot.legacyRevision !== value.revision)
+  ) {
+    throw providerInvocationUnsafe();
+  }
+  // Validate the exact private invocation closure here as well as when a
+  // human-resolution digest is projected. Callers that only enumerate
+  // lifecycle projections must not silently accept unknown or malformed
+  // authority files.
+  digestPrivateDirectoryEntries(paths, directory, providerInvocationUnsafe);
   return deepFreeze({
     invocationId,
     investigationId: value.investigationId,
@@ -1263,6 +1476,7 @@ export function readProviderInvocationLifecycleProjection(
     attempt: value.attempt,
     revision: value.revision,
     state: value.state,
+    policySnapshot: policySnapshotRecorded ? 'recorded' : 'legacy-absent',
     requestDigest: value.requestDigest,
     manifestDigest: value.manifestDigest,
     nonce: request.nonce,
@@ -2655,10 +2869,42 @@ export function quarantineInterruptedHumanResolutionGrantPublication(
 
 export function revokeStoredHumanResolutionGrant(
   paths: InvestigationRuntimePaths,
+  cwd: string,
   requestedGrantId: string,
-  now: Date = new Date(),
+  options: HumanRevocationOptions,
 ): HumanResolutionGrantStoreEntry {
   const grantId = assertHumanResolutionGrantId(requestedGrantId);
+  const current = inspectStoredHumanResolutionGrant(paths, grantId);
+  if (current === null) throw humanResolutionGrantNotFound(grantId);
+  if (current.state === 'consumed') {
+    throw workflowError(
+      'HUMAN_REVOCATION_STATE_INVALID',
+      'Consumed human-resolution authority cannot be revoked.',
+      ExitCode.guard,
+    );
+  }
+  if (
+    current.state === 'reserved' &&
+    readHumanResolutionJournal(paths, grantId) !== null
+  ) {
+    throw workflowError(
+      'HUMAN_RESOLUTION_RECOVERY_REQUIRED',
+      'A prepared human-resolution transaction must be recovered instead of revoked.',
+      ExitCode.conflict,
+    );
+  }
+  const binding = humanResolutionRevocationBinding(
+    paths,
+    current.envelopeBytes,
+    grantId,
+  );
+  const authorization = authorizeHumanRevocation(
+    cwd,
+    binding,
+    options,
+    humanResolutionRevocationAuthorizationPath(paths, grantId),
+    current.revocationAuthorization ?? null,
+  );
   const stores = humanResolutionPaths(paths);
   return withHumanResolutionGrantStoreLock(
     paths,
@@ -2677,20 +2923,39 @@ export function revokeStoredHumanResolutionGrant(
           grantId,
           terminal,
         );
-        return inspectStoredHumanResolutionGrant(
+        const existing = inspectStoredHumanResolutionGrant(
           paths,
           grantId,
         ) as HumanResolutionGrantStoreEntry;
+        if (
+          existing.state !== 'revoked' ||
+          existing.terminalReason !== authorization.payload.reason ||
+          existing.revocationAuthorization === undefined ||
+          canonicalHumanRevocationAuthorization(
+            existing.revocationAuthorization,
+          ) !== canonicalHumanRevocationAuthorization(authorization)
+        ) {
+          throw workflowError(
+            'HUMAN_REVOCATION_CONFLICT',
+            'Human-resolution grant already has a different terminal record.',
+            ExitCode.conflict,
+          );
+        }
+        return existing;
       }
       const terminalEntry = inspectStoredHumanResolutionGrant(paths, grantId);
-      if (
-        terminalEntry?.state === 'revoked' ||
-        terminalEntry?.state === 'consumed'
-      ) {
-        return terminalEntry;
-      }
       if (terminalEntry === null) {
         throw humanResolutionGrantNotFound(grantId);
+      }
+      if (
+        terminalEntry.state !== 'available' &&
+        terminalEntry.state !== 'reserved'
+      ) {
+        throw workflowError(
+          'HUMAN_REVOCATION_STATE_INVALID',
+          'Only active human-resolution authority can be revoked.',
+          ExitCode.guard,
+        );
       }
       if (
         terminalEntry.state === 'reserved' &&
@@ -2712,9 +2977,10 @@ export function revokeStoredHumanResolutionGrant(
         schemaVersion: 1,
         state: 'revoked',
         grantId,
-        reason: 'Explicit root-human revocation',
-        recordedAt: exactResolutionTimestamp(now),
+        reason: authorization.payload.reason,
+        recordedAt: authorization.payload.revokedAt,
         envelope,
+        revocationAuthorization: authorization,
       };
       createPrivateCanonicalJson(
         paths,
@@ -3005,6 +3271,9 @@ function assertTerminalHumanResolutionGrant(
   terminal: unknown,
   grantId: string,
 ): HumanResolutionGrantStoreEntry {
+  const hasRevocationAuthorization =
+    isRecord(terminal) &&
+    Object.prototype.hasOwnProperty.call(terminal, 'revocationAuthorization');
   const terminalState =
     isRecord(terminal) &&
     (terminal.state === 'revoked' || terminal.state === 'consumed')
@@ -3019,6 +3288,7 @@ function assertTerminalHumanResolutionGrant(
           'reason',
           'recordedAt',
           'envelope',
+          ...(hasRevocationAuthorization ? ['revocationAuthorization'] : []),
         ]
       : [
           'schemaVersion',
@@ -3047,6 +3317,21 @@ function assertTerminalHumanResolutionGrant(
   }
   const envelopeBytes = `${canonicalJson(terminal.envelope)}\n`;
   assertCanonicalResolutionEnvelopeBytes(envelopeBytes);
+  let revocationAuthorization: HumanRevocationAuthorization | null = null;
+  if (terminalState === 'revoked' && hasRevocationAuthorization) {
+    revocationAuthorization = assertHumanRevocationAuthorization(
+      terminal.revocationAuthorization,
+    );
+    if (
+      revocationAuthorization.payload.subjectKind !==
+        'human-resolution-grant' ||
+      revocationAuthorization.payload.grantId !== grantId ||
+      revocationAuthorization.payload.reason !== terminal.reason ||
+      revocationAuthorization.payload.revokedAt !== terminal.recordedAt
+    ) {
+      throw humanResolutionGrantUnsafe();
+    }
+  }
   return deepFreeze({
     grantId,
     state: terminalState,
@@ -3054,6 +3339,7 @@ function assertTerminalHumanResolutionGrant(
     terminalReason:
       terminalState === 'revoked' ? String(terminal.reason) : null,
     recordedAt: terminal.recordedAt as string,
+    ...(revocationAuthorization ? { revocationAuthorization } : {}),
   });
 }
 
@@ -3468,14 +3754,26 @@ export function writeHumanResolutionReceipt(
 }
 
 function assertInvestigationSession(value: unknown): InvestigationSession {
+  const hasSemanticRevision =
+    isRecord(value) &&
+    Object.prototype.hasOwnProperty.call(value, 'semanticRevision');
+  const hasLifecycleRevision =
+    isRecord(value) &&
+    Object.prototype.hasOwnProperty.call(value, 'lifecycleRevision');
   if (
     !isRecord(value) ||
     !hasExactKeys(value, [
       'schemaVersion',
       'investigationId',
       'revision',
+      ...(hasSemanticRevision && hasLifecycleRevision
+        ? ['semanticRevision', 'lifecycleRevision']
+        : []),
       'state',
       'changeId',
+      ...(Object.prototype.hasOwnProperty.call(value, 'mandateBinding')
+        ? ['mandateBinding']
+        : []),
       'repositoryRoot',
       'gitCommonDirectory',
       'branch',
@@ -3494,7 +3792,18 @@ function assertInvestigationSession(value: unknown): InvestigationSession {
     typeof value.investigationId !== 'string' ||
     !Number.isSafeInteger(value.revision) ||
     (value.revision as number) < 0 ||
+    hasSemanticRevision !== hasLifecycleRevision ||
+    (hasSemanticRevision &&
+      (!Number.isSafeInteger(value.semanticRevision) ||
+        (value.semanticRevision as number) < 0 ||
+        !Number.isSafeInteger(value.lifecycleRevision) ||
+        (value.lifecycleRevision as number) < 0 ||
+        (value.semanticRevision as number) >
+          (value.lifecycleRevision as number) ||
+        value.lifecycleRevision !== value.revision)) ||
     typeof value.changeId !== 'string' ||
+    (Object.prototype.hasOwnProperty.call(value, 'mandateBinding') &&
+      !isTaskMandateBinding(value.mandateBinding, value.changeId)) ||
     typeof value.repositoryRoot !== 'string' ||
     typeof value.gitCommonDirectory !== 'string' ||
     (value.branch !== null && typeof value.branch !== 'string') ||
@@ -3525,7 +3834,15 @@ function assertInvestigationSession(value: unknown): InvestigationSession {
   ) {
     throw sessionInvalid();
   }
-  const session = value as InvestigationSession;
+  const session = (
+    hasSemanticRevision
+      ? value
+      : {
+          ...value,
+          semanticRevision: value.revision,
+          lifecycleRevision: value.revision,
+        }
+  ) as InvestigationSession;
   if (
     session.state !== deriveInvestigationSessionState(session) ||
     !milestonesBelongToSession(session)
@@ -3574,6 +3891,7 @@ function assertMonotonicSessionTransition(
     'schemaVersion',
     'investigationId',
     'changeId',
+    'mandateBinding',
     'repositoryRoot',
     'gitCommonDirectory',
     'branch',
@@ -3582,7 +3900,9 @@ function assertMonotonicSessionTransition(
     'blindManifestDigest',
     'createdAt',
   ] as const) {
-    if (canonicalJson(current[key]) !== canonicalJson(next[key])) {
+    if (
+      canonicalJson(current[key] ?? null) !== canonicalJson(next[key] ?? null)
+    ) {
       throw sessionTransitionInvalid();
     }
   }
@@ -3597,6 +3917,10 @@ function assertMonotonicSessionTransition(
     next.blocker === null;
   if (
     next.revision !== current.revision + 1 ||
+    next.lifecycleRevision !== current.lifecycleRevision + 1 ||
+    next.semanticRevision !==
+      current.semanticRevision +
+        (semanticSessionContentChanged(current, next) ? 1 : 0) ||
     Date.parse(next.updatedAt) < Date.parse(current.updatedAt) ||
     (canonicalJson(next.blocker) !== canonicalJson(current.blocker) &&
       !blockerEntered &&
@@ -3662,6 +3986,13 @@ function assertMonotonicSessionTransition(
       throw sessionTransitionInvalid();
     }
   }
+}
+
+function semanticSessionContentChanged(
+  current: InvestigationSession,
+  next: InvestigationSession,
+): boolean {
+  return canonicalJson(current.milestones) !== canonicalJson(next.milestones);
 }
 
 function isMilestones(
@@ -3849,11 +4180,51 @@ function assertGroupDispositionsPayload(
 ): asserts value is GroupDispositionsPayload {
   if (
     !isRecord(value) ||
-    !hasExactKeys(value, ['dispositions']) ||
+    !(
+      hasExactKeys(value, ['dispositions']) ||
+      hasExactKeys(value, ['classes', 'dispositions']) ||
+      hasExactKeys(value, ['classes', 'dispositions', 'sampleAudits'])
+    ) ||
     !Array.isArray(value.dispositions) ||
     value.dispositions.length > INVESTIGATION_LIMITS.maxHitDispositionWorkItems
   ) {
     throw checkpointInvalid();
+  }
+  if (value.classes !== undefined) {
+    if (
+      !Array.isArray(value.classes) ||
+      value.classes.length > INVESTIGATION_LIMITS.maxHitDispositionWorkItems
+    ) {
+      throw checkpointInvalid();
+    }
+    if (value.sampleAudits !== undefined) {
+      if (
+        !Array.isArray(value.sampleAudits) ||
+        value.sampleAudits.length >
+          INVESTIGATION_LIMITS.maxHitDispositionWorkItems
+      ) {
+        throw checkpointInvalid();
+      }
+      for (const audit of value.sampleAudits) {
+        if (
+          !isRecord(audit) ||
+          !hasExactKeys(audit, ['classId', 'groupId', 'outcome']) ||
+          typeof audit.classId !== 'string' ||
+          typeof audit.groupId !== 'string' ||
+          !SAMPLE_AUDIT_OUTCOMES.has(audit.outcome as string)
+        ) {
+          throw checkpointInvalid();
+        }
+      }
+    }
+    const classIds = new Set<string>();
+    for (const declared of value.classes) {
+      // Parsed by the class contract itself rather than re-validated here, so
+      // there is one definition of what a class is.
+      const parsed = parseClassDisposition(declared);
+      if (classIds.has(parsed.classId)) throw checkpointInvalid();
+      classIds.add(parsed.classId);
+    }
   }
   const seen = new Set<string>();
   const classifications = new Set([
@@ -4160,6 +4531,74 @@ function humanResolutionPaths(paths: InvestigationRuntimePaths) {
     retiredRefs: path.join(root, 'retired-refs'),
     quarantine: path.join(root, 'quarantine'),
     locks: path.join(root, 'locks'),
+  };
+}
+
+function humanResolutionRevocationAuthorizationPath(
+  paths: InvestigationRuntimePaths,
+  requestedGrantId: string,
+): string {
+  const grantId = assertHumanResolutionGrantId(requestedGrantId);
+  return path.join(
+    humanResolutionPaths(paths).root,
+    'grants',
+    'revocation-authorizations',
+    `${grantId}.json`,
+  );
+}
+
+function humanResolutionRevocationBinding(
+  paths: InvestigationRuntimePaths,
+  envelopeBytes: string,
+  grantId: string,
+) {
+  let envelope: unknown;
+  try {
+    envelope = JSON.parse(envelopeBytes);
+  } catch {
+    throw humanResolutionGrantUnsafe();
+  }
+  if (!isRecord(envelope) || !isRecord(envelope.payload)) {
+    throw humanResolutionGrantUnsafe();
+  }
+  const payload = envelope.payload;
+  if (
+    payload.grantId !== grantId ||
+    typeof payload.repositoryId !== 'string' ||
+    typeof payload.repositoryOrigin !== 'string' ||
+    !isRecord(payload.target) ||
+    typeof payload.target.changeId !== 'string' ||
+    typeof payload.target.workflowId !== 'string'
+  ) {
+    throw humanResolutionGrantUnsafe();
+  }
+  const session = readInvestigationSession(paths, payload.target.workflowId);
+  if (
+    session.changeId !== payload.target.changeId ||
+    (session.mandateBinding !== undefined &&
+      session.mandateBinding.changeId !== payload.target.changeId)
+  ) {
+    throw workflowError(
+      'HUMAN_REVOCATION_BINDING_INVALID',
+      'Human-resolution revocation session binding is unavailable or different.',
+      ExitCode.guard,
+    );
+  }
+  return {
+    subjectKind: 'human-resolution-grant' as const,
+    grantId,
+    grantDigest: digestHumanRevocationSubject(envelopeBytes),
+    repositoryId: payload.repositoryId,
+    repositoryOrigin: payload.repositoryOrigin,
+    changeId: payload.target.changeId,
+    taskId: session.mandateBinding?.mandateTaskId ?? null,
+    workflowId: payload.target.workflowId,
+    audit: session.mandateBinding
+      ? {
+          externalAuditRoot: session.mandateBinding.externalAuditRoot,
+          repositoryId: deriveAuthorityAuditRepositoryId(payload.repositoryId),
+        }
+      : null,
   };
 }
 
@@ -5409,6 +5848,8 @@ type BoundProviderRetryReservation = {
   requestDigest: string;
   manifestDigest: string;
   nonce: string;
+  request: ProviderInvocationRequest;
+  executionPolicySnapshot: Record<string, unknown> | null;
   reservationDigest: string;
   status: 'committed' | 'pending';
 };
@@ -5512,6 +5953,7 @@ function readBoundProviderRetryReservation(
   } catch {
     throw makeError();
   }
+  const retryV2 = isRecord(value) && value.schemaVersion === 2;
   if (
     content !== `${canonicalJson(value)}\n` ||
     !isRecord(value) ||
@@ -5527,11 +5969,22 @@ function readBoundProviderRetryReservation(
       'requestDigest',
       'request',
       'createdAt',
+      ...(retryV2
+        ? [
+            'executionPolicySnapshot',
+            ...(Object.prototype.hasOwnProperty.call(value, 'mandateBinding')
+              ? ['mandateBinding']
+              : []),
+            'retryDecision',
+          ]
+        : []),
     ]) ||
-    value.schemaVersion !== 1 ||
+    (value.schemaVersion !== 1 && value.schemaVersion !== 2) ||
     value.kind !== 'provider-retry-reservation' ||
     value.investigationId !== session.investigationId ||
     value.changeId !== session.changeId ||
+    canonicalJson(value.mandateBinding ?? null) !==
+      canonicalJson(session.mandateBinding ?? null) ||
     value.attempt !== expectedAttempt ||
     typeof value.previousInvocationId !== 'string' ||
     typeof value.invocationId !== 'string' ||
@@ -5582,6 +6035,25 @@ function readBoundProviderRetryReservation(
   ) {
     throw makeError();
   }
+  let executionPolicySnapshot: Record<string, unknown> | null = null;
+  if (retryV2) {
+    if (
+      !isRecord(value.executionPolicySnapshot) ||
+      !isRecord(value.retryDecision)
+    ) {
+      throw makeError();
+    }
+    try {
+      assertProviderExecutionPolicySnapshot(
+        paths,
+        value.executionPolicySnapshot,
+        request,
+      );
+    } catch {
+      throw makeError();
+    }
+    executionPolicySnapshot = value.executionPolicySnapshot;
+  }
   return {
     attempt: expectedAttempt,
     previousInvocationId,
@@ -5589,6 +6061,8 @@ function readBoundProviderRetryReservation(
     requestDigest: request.requestDigest,
     manifestDigest: value.manifestDigest,
     nonce: request.nonce,
+    request,
+    executionPolicySnapshot,
     reservationDigest: sha256(content),
     status,
   };
@@ -5652,13 +6126,27 @@ function bindProviderInvocationResolutionState(
   const projections = [...scan.projections];
   const pendingRetry =
     retryBindings.find(({ status }) => status === 'pending') ?? null;
+  const allowedReservedSnapshotIds = new Set<string>();
+  for (const { invocationId } of scan.unsafeInvocations) {
+    if (pendingRetry?.invocationId === invocationId) {
+      assertPendingProviderExecutionPolicySnapshot(paths, pendingRetry);
+      allowedReservedSnapshotIds.add(invocationId);
+    } else if (
+      isDurablyReservedProviderExecutionPolicySnapshot(paths, invocationId)
+    ) {
+      allowedReservedSnapshotIds.add(invocationId);
+    }
+  }
+  const unsafeInvocations = scan.unsafeInvocations.filter(
+    ({ invocationId }) => !allowedReservedSnapshotIds.has(invocationId),
+  );
   const target = projections.filter(
     (projection) =>
       projection.ownerInvestigationId === session.investigationId &&
       projection.changeId === session.changeId,
   );
   if (
-    scan.unsafeInvocations.some(
+    unsafeInvocations.some(
       ({ invocationId, ownerInvestigationId }) =>
         ownerInvestigationId === session.investigationId ||
         invocationId === pendingRetry?.invocationId,
@@ -5777,7 +6265,7 @@ function bindProviderInvocationResolutionState(
           providerInvocationUnsafe,
         ),
       })),
-      ...scan.unsafeInvocations.map(({ invocationId, observationDigest }) => ({
+      ...unsafeInvocations.map(({ invocationId, observationDigest }) => ({
         invocationId,
         files: [{ name: 'unsafe-observation', digest: observationDigest }],
       })),
@@ -5801,6 +6289,204 @@ function bindProviderInvocationResolutionState(
         leaseDigest: sha256(canonicalJson(projection.lease)),
       })),
   };
+}
+
+function assertPendingProviderExecutionPolicySnapshot(
+  paths: InvestigationRuntimePaths,
+  pending: BoundProviderRetryReservation,
+): string | null {
+  const directory = path.join(paths.invocations, pending.invocationId);
+  const stats = fs.lstatSync(directory, { throwIfNoEntry: false });
+  if (!stats) {
+    return null;
+  }
+  if (
+    !stats.isDirectory() ||
+    stats.isSymbolicLink() ||
+    !walkPrivateDirectory(paths, directory, providerInvocationUnsafe, false) ||
+    canonicalJson(fs.readdirSync(directory).sort()) !==
+      canonicalJson(['execution-policy.json'])
+  ) {
+    throw providerInvocationUnsafe();
+  }
+  const snapshot = readPrivateCanonicalJson(
+    paths,
+    path.join(directory, 'execution-policy.json'),
+    providerInvocationUnsafe,
+  );
+  assertProviderExecutionPolicySnapshot(paths, snapshot, pending.request);
+  if (
+    pending.executionPolicySnapshot !== null &&
+    canonicalJson(snapshot) !== canonicalJson(pending.executionPolicySnapshot)
+  ) {
+    throw providerInvocationUnsafe();
+  }
+  return pending.invocationId;
+}
+
+function isDurablyReservedProviderExecutionPolicySnapshot(
+  paths: InvestigationRuntimePaths,
+  invocationId: string,
+): boolean {
+  const directory = path.join(paths.invocations, invocationId);
+  try {
+    if (
+      canonicalJson(fs.readdirSync(directory).sort()) !==
+      canonicalJson(['execution-policy.json'])
+    ) {
+      return false;
+    }
+    for (const name of fs.readdirSync(paths.refs).sort()) {
+      if (
+        !name.endsWith('.investigation-start.json') &&
+        !/\.provider-retry-[1-9][0-9]*\.json$/.test(name)
+      ) {
+        continue;
+      }
+      const value = readPrivateCanonicalJson(
+        paths,
+        path.join(paths.refs, name),
+        providerInvocationUnsafe,
+      );
+      if (!isRecord(value) || !isRecord(value.request)) {
+        continue;
+      }
+      const retryV2 =
+        value.kind === 'provider-retry-reservation' &&
+        value.schemaVersion === 2;
+      const expectedKeys =
+        value.kind === 'investigation-start-reservation'
+          ? [
+              'baseline',
+              'branch',
+              'changeId',
+              'createdAt',
+              'gitCommonDirectory',
+              'investigationId',
+              'invocationId',
+              'kind',
+              ...(Object.prototype.hasOwnProperty.call(value, 'mandateBinding')
+                ? ['mandateBinding']
+                : []),
+              'manifest',
+              'manifestDigest',
+              'repositoryRoot',
+              'request',
+              'requestDigest',
+              'schemaVersion',
+            ]
+          : value.kind === 'provider-retry-reservation'
+            ? [
+                'attempt',
+                'changeId',
+                'createdAt',
+                'investigationId',
+                'invocationId',
+                'kind',
+                'manifestDigest',
+                ...(Object.prototype.hasOwnProperty.call(
+                  value,
+                  'mandateBinding',
+                )
+                  ? ['mandateBinding']
+                  : []),
+                'previousInvocationId',
+                'request',
+                'requestDigest',
+                'schemaVersion',
+                ...(retryV2
+                  ? ['executionPolicySnapshot', 'retryDecision']
+                  : []),
+              ]
+            : null;
+      if (
+        expectedKeys === null ||
+        !hasExactKeys(value, expectedKeys) ||
+        (value.schemaVersion !== 1 && !retryV2) ||
+        value.invocationId !== invocationId
+      ) {
+        continue;
+      }
+      const request = recreateProviderInvocationRequest(value.request);
+      if (
+        request.invocationId !== invocationId ||
+        request.requestDigest !== value.requestDigest
+      ) {
+        continue;
+      }
+      const storedSnapshot = readPrivateCanonicalJson(
+        paths,
+        path.join(directory, 'execution-policy.json'),
+        providerInvocationUnsafe,
+      );
+      assertProviderExecutionPolicySnapshot(paths, storedSnapshot, request);
+      if (retryV2) {
+        assertProviderExecutionPolicySnapshot(
+          paths,
+          value.executionPolicySnapshot,
+          request,
+        );
+        if (
+          canonicalJson(storedSnapshot) !==
+          canonicalJson(value.executionPolicySnapshot)
+        ) {
+          continue;
+        }
+      }
+      return true;
+    }
+    for (const name of fs.readdirSync(paths.refs).sort()) {
+      if (!name.endsWith('.json')) continue;
+      const changeId = name.slice(0, -'.json'.length);
+      let refs: Record<string, string>;
+      try {
+        assertChangeId(changeId);
+        refs = readEvidenceRefs(paths, changeId);
+      } catch {
+        continue;
+      }
+      const nodeId = refs['propose/plan-review-request'];
+      if (nodeId === undefined) continue;
+      const node = readEvidenceNode(paths, nodeId);
+      if (
+        node.type !== 'plan-review-request-reservation' ||
+        node.nodeSchema !== 'workflow.plan-review-request-reservation.v3' ||
+        node.outputSchema !==
+          'workflow.plan-review-request-reservation-output.v3' ||
+        !isRecord(node.output) ||
+        !isRecord(node.output.retry) ||
+        !isRecord(node.output.retry.executionPolicySnapshot) ||
+        !isRecord(node.output.request)
+      ) {
+        continue;
+      }
+      const request = recreateProviderInvocationRequest(node.output.request);
+      if (request.invocationId !== invocationId) continue;
+      const storedSnapshot = readPrivateCanonicalJson(
+        paths,
+        path.join(directory, 'execution-policy.json'),
+        providerInvocationUnsafe,
+      );
+      assertProviderExecutionPolicySnapshot(paths, storedSnapshot, request);
+      assertProviderExecutionPolicySnapshot(
+        paths,
+        node.output.retry.executionPolicySnapshot,
+        request,
+      );
+      if (
+        canonicalJson(storedSnapshot) !==
+        canonicalJson(node.output.retry.executionPolicySnapshot)
+      ) {
+        continue;
+      }
+      // The ref parser plus node identity bind the recovery journal; the full
+      // closure is evaluated by status before the reservation is consumed.
+      return true;
+    }
+  } catch {
+    return false;
+  }
+  return false;
 }
 
 function digestPrivateDirectoryEntries(
@@ -5831,8 +6517,18 @@ function digestPrivateDirectoryEntries(
   const runtimePath = path.join(directory, 'runtime');
   const runtimeStats = fs.lstatSync(runtimePath, { throwIfNoEntry: false });
   const reviewRootPath = path.join(directory, 'review-root');
+  const optionalRootFiles = OPTIONAL_PROVIDER_ROOT_FILES.filter((name) =>
+    rootNames.includes(name),
+  );
+  const rootFiles = [
+    ...(rootNames.includes(PROVIDER_POLICY_ROOT_FILE)
+      ? [PROVIDER_POLICY_ROOT_FILE]
+      : []),
+    ...BLIND_PROVIDER_CORE_ROOT_FILES,
+  ];
   const expectedRootNames = [
-    ...BLIND_PROVIDER_ROOT_FILES,
+    ...rootFiles,
+    ...optionalRootFiles,
     ...(runtimeStats ? ['runtime'] : []),
     ...(snapshotArtifacts === null ? [] : ['review-root']),
   ].sort();
@@ -5840,8 +6536,8 @@ function digestPrivateDirectoryEntries(
     throw makeError();
   }
 
-  const files: Array<{ name: string; digest: string }> =
-    BLIND_PROVIDER_ROOT_FILES.map((name) => {
+  const files: Array<{ name: string; digest: string }> = rootFiles.map(
+    (name) => {
       const content = readPrivateFile(path.join(directory, name), makeError);
       if (Buffer.byteLength(content, 'utf8') > MAX_HUMAN_RESOLUTION_BYTES) {
         throw makeError();
@@ -5856,20 +6552,108 @@ function digestPrivateDirectoryEntries(
         throw makeError();
       }
       return { name, digest: sha256(content) };
-    });
+    },
+  );
+
+  let request: ProviderInvocationRequest;
+  try {
+    request = recreateProviderInvocationRequest(
+      JSON.parse(
+        readPrivateFile(path.join(directory, 'request.json'), makeError),
+      ),
+    );
+  } catch {
+    throw makeError();
+  }
+  for (const name of optionalRootFiles) {
+    const content = readPrivateFile(path.join(directory, name), makeError);
+    if (Buffer.byteLength(content, 'utf8') > MAX_HUMAN_RESOLUTION_BYTES) {
+      throw makeError();
+    }
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(content);
+    } catch {
+      throw makeError();
+    }
+    if (`${canonicalJson(parsed)}\n` !== content) {
+      throw makeError();
+    }
+    assertProviderRepairAuthorityArtifact(name, parsed, request, makeError);
+    files.push({ name, digest: sha256(content) });
+  }
 
   const stateContent = readPrivateFile(
     path.join(directory, 'state.json'),
     makeError,
   );
   const state = JSON.parse(stateContent) as unknown;
+  let retentionReceipt: ReturnType<
+    typeof readCompleteProviderRetentionReceipt
+  > = null;
+  try {
+    if (
+      isRecord(state) &&
+      Number.isSafeInteger(state.revision) &&
+      (state.revision as number) >= 0 &&
+      (state.state === 'succeeded' || state.state === 'failed') &&
+      typeof state.updatedAt === 'string' &&
+      isTimestamp(state.updatedAt) &&
+      isDigest(state.requestDigest) &&
+      isDigest(state.manifestDigest)
+    ) {
+      retentionReceipt = readCompleteProviderRetentionReceipt(
+        paths,
+        path.basename(directory),
+        {
+          requestDigest: state.requestDigest,
+          manifestDigest: state.manifestDigest,
+          legacyRevision: state.revision as number,
+          terminalState: state.state,
+          terminalAt: state.updatedAt,
+        },
+      );
+    } else if (
+      readProviderRetentionReceipt(paths, path.basename(directory)) !== null
+    ) {
+      throw makeError();
+    }
+  } catch {
+    throw makeError();
+  }
   const runtimeRequired =
     isRecord(state) &&
     isRecord(state.result) &&
     state.result.runtimeObservation !== null;
+  const retainedRuntimeArtifacts = BLIND_PROVIDER_RUNTIME_FILES.map((name) =>
+    retentionReceipt === null
+      ? null
+      : providerRetentionArtifact(retentionReceipt, `runtime/${name}`),
+  );
+  const receiptCarriesRuntime = retainedRuntimeArtifacts.every(
+    (artifact) => artifact !== null,
+  );
+  if (
+    retainedRuntimeArtifacts.some((artifact) => artifact !== null) &&
+    !receiptCarriesRuntime
+  ) {
+    throw makeError();
+  }
   if (!runtimeStats) {
-    if (runtimeRequired) {
+    if (runtimeRequired && !receiptCarriesRuntime) {
       throw makeError();
+    }
+    if (receiptCarriesRuntime) {
+      for (
+        let index = 0;
+        index < BLIND_PROVIDER_RUNTIME_FILES.length;
+        index += 1
+      ) {
+        files.push({
+          name: `runtime/${BLIND_PROVIDER_RUNTIME_FILES[index]!}`,
+          digest: retainedRuntimeArtifacts[index]!.digest,
+        });
+      }
     }
   } else {
     if (
@@ -5880,13 +6664,31 @@ function digestPrivateDirectoryEntries(
       throw makeError();
     }
     const runtimeNames = fs.readdirSync(runtimePath).sort();
+    const expectedRuntimeNames = [...BLIND_PROVIDER_RUNTIME_FILES].sort();
     if (
-      canonicalJson(runtimeNames) !==
-      canonicalJson([...BLIND_PROVIDER_RUNTIME_FILES].sort())
+      receiptCarriesRuntime
+        ? runtimeNames.some(
+            (name) =>
+              !expectedRuntimeNames.includes(
+                name as (typeof BLIND_PROVIDER_RUNTIME_FILES)[number],
+              ),
+          )
+        : canonicalJson(runtimeNames) !== canonicalJson(expectedRuntimeNames)
     ) {
       throw makeError();
     }
-    for (const name of BLIND_PROVIDER_RUNTIME_FILES) {
+    for (
+      let index = 0;
+      index < BLIND_PROVIDER_RUNTIME_FILES.length;
+      index += 1
+    ) {
+      const name = BLIND_PROVIDER_RUNTIME_FILES[index]!;
+      const retained = retainedRuntimeArtifacts[index];
+      if (!runtimeNames.includes(name)) {
+        if (retained === null) throw makeError();
+        files.push({ name: `runtime/${name}`, digest: retained.digest });
+        continue;
+      }
       const content = readPrivateBuffer(
         path.join(runtimePath, name),
         makeError,
@@ -5894,13 +6696,39 @@ function digestPrivateDirectoryEntries(
       if (content.byteLength > MAX_HUMAN_RESOLUTION_BYTES) {
         throw makeError();
       }
+      const contentDigest = sha256(content);
+      if (
+        retained !== null &&
+        (retained.digest !== contentDigest ||
+          retained.bytes !== content.byteLength)
+      ) {
+        throw makeError();
+      }
       files.push({
         name: `runtime/${name}`,
-        digest: sha256(content),
+        digest: retained?.digest ?? contentDigest,
       });
     }
   }
   if (snapshotArtifacts !== null) {
+    const retainedReviewRoot =
+      retentionReceipt === null
+        ? null
+        : providerRetentionArtifact(retentionReceipt, 'review-root');
+    const expectedRetainedReviewRoot = providerRetentionReviewRootArtifact(
+      snapshotArtifacts.map((artifact) => ({
+        name: `review-root/${artifact.snapshotFile}`,
+        digest: artifact.sha256,
+        bytes: artifact.byteLength,
+      })),
+    );
+    if (
+      retainedReviewRoot !== null &&
+      canonicalJson(retainedReviewRoot) !==
+        canonicalJson(expectedRetainedReviewRoot)
+    ) {
+      throw makeError();
+    }
     const reviewRootStats = fs.lstatSync(reviewRootPath, {
       throwIfNoEntry: false,
     });
@@ -5914,13 +6742,23 @@ function digestPrivateDirectoryEntries(
     const expectedFiles = snapshotArtifacts
       .map(({ snapshotFile }) => snapshotFile)
       .sort();
+    const observedFiles = fs.readdirSync(reviewRootPath).sort();
     if (
-      canonicalJson(fs.readdirSync(reviewRootPath).sort()) !==
-      canonicalJson(expectedFiles)
+      retainedReviewRoot === null
+        ? canonicalJson(observedFiles) !== canonicalJson(expectedFiles)
+        : observedFiles.some((name) => !expectedFiles.includes(name))
     ) {
       throw makeError();
     }
     for (const artifact of snapshotArtifacts) {
+      if (!observedFiles.includes(artifact.snapshotFile)) {
+        if (retainedReviewRoot === null) throw makeError();
+        files.push({
+          name: `review-root/${artifact.snapshotFile}`,
+          digest: artifact.sha256,
+        });
+        continue;
+      }
       const content = readPrivateBuffer(
         path.join(reviewRootPath, artifact.snapshotFile),
         makeError,
@@ -5996,10 +6834,6 @@ function assertEvidenceClosureTargetBinding(
   targetSession: InvestigationSession,
   closure: InvestigationEvidenceRefsClosure,
 ): void {
-  const reviewerReopenLimitBinding = reviewerReopenLimitMaterializationBinding(
-    targetSession,
-    closure,
-  );
   for (const entry of closure.entries) {
     const owner = isProposeExemptionInvestigationId(entry.ownerInvestigationId)
       ? readProposeExemptionSession(paths, entry.ownerInvestigationId)
@@ -6021,7 +6855,6 @@ function assertEvidenceClosureTargetBinding(
       assertMaterializationMatchesOwnerSession(
         readEvidenceNode(paths, entry.nodeId),
         owner,
-        reviewerReopenLimitBinding,
       );
       continue;
     }
@@ -6035,7 +6868,6 @@ function assertEvidenceClosureTargetBinding(
       assertMaterializationMatchesOwnerSession(
         readEvidenceNode(paths, materialization.nodeId),
         owner,
-        reviewerReopenLimitBinding,
       );
       continue;
     }
@@ -6057,70 +6889,9 @@ function assertEvidenceClosureTargetBinding(
   }
 }
 
-type ReviewerReopenLimitMaterializationBinding = Readonly<{
-  ownerInvestigationId: string;
-  nodeId: string;
-  resultDigest: string;
-  envelopeDigest: string;
-}>;
-
-function reviewerReopenLimitMaterializationBinding(
-  session: InvestigationSession,
-  closure: InvestigationEvidenceRefsClosure,
-): ReviewerReopenLimitMaterializationBinding | null {
-  const blocker = session.blocker;
-  if (
-    session.state !== 'human-action-required' ||
-    blocker === null ||
-    'code' in blocker ||
-    blocker.schemaVersion !== 2 ||
-    blocker.state !== 'human-action-required' ||
-    blocker.reasonCode !== 'INVESTIGATION_REVIEWER_REOPEN_LIMIT_REACHED' ||
-    blocker.blockedTransition !== 'admit-plan-review' ||
-    !isDigest(blocker.facts.pendingReviewDigest)
-  ) {
-    return null;
-  }
-  const materializations = closure.entries.filter(
-    ({ refName }) => refName === 'propose/planning-materialization',
-  );
-  const reviewRequests = closure.entries.filter(
-    ({ refName }) => refName === 'propose/plan-review-request',
-  );
-  if (
-    materializations.length !== 1 ||
-    reviewRequests.length !== 1 ||
-    materializations[0]!.ownerInvestigationId !== session.investigationId ||
-    reviewRequests[0]!.ownerInvestigationId !== session.investigationId
-  ) {
-    return null;
-  }
-  const materialization = materializations[0]!;
-  const materializationDependencies = reviewRequests[0]!.dependencies.filter(
-    ({ role }) => role === 'materialization',
-  );
-  if (
-    materializationDependencies.length !== 1 ||
-    materializationDependencies[0]!.nodeId !== materialization.nodeId ||
-    materializationDependencies[0]!.resultDigest !==
-      materialization.resultDigest ||
-    materializationDependencies[0]!.envelopeDigest !==
-      materialization.envelopeDigest
-  ) {
-    return null;
-  }
-  return {
-    ownerInvestigationId: materialization.ownerInvestigationId,
-    nodeId: materialization.nodeId,
-    resultDigest: materialization.resultDigest,
-    envelopeDigest: materialization.envelopeDigest,
-  };
-}
-
 function assertMaterializationMatchesOwnerSession(
   node: ReturnType<typeof readEvidenceNode>,
   session: InvestigationSession | ProposeExemptionSession,
-  reviewerReopenLimitBinding: ReviewerReopenLimitMaterializationBinding | null,
 ): void {
   const output = node.output;
   const exemption =
@@ -6128,25 +6899,25 @@ function assertMaterializationMatchesOwnerSession(
   const expectedType = exemption
     ? 'propose-exemption-planning-materialization'
     : 'propose-planning-materialization';
+  const semanticReceipt =
+    !exemption &&
+    node.nodeSchema === 'workflow.propose-planning-materialization.v2' &&
+    node.outputSchema === 'workflow.propose-planning-materialization-output.v2';
+  const legacyReceipt =
+    !exemption &&
+    node.nodeSchema === 'workflow.propose-planning-materialization.v1' &&
+    node.outputSchema === 'workflow.propose-planning-materialization-output.v1';
   const revisionMatches =
     isRecord(output) &&
-    (output.revision === session.revision ||
-      (!exemption &&
-        reviewerReopenLimitBinding !== null &&
-        reviewerReopenLimitBinding.ownerInvestigationId ===
-          session.investigationId &&
-        reviewerReopenLimitBinding.nodeId === node.nodeId &&
-        reviewerReopenLimitBinding.resultDigest === node.resultDigest &&
-        session.state === 'human-action-required' &&
-        session.blocker !== null &&
-        !('code' in session.blocker) &&
-        session.blocker.reasonCode ===
-          'INVESTIGATION_REVIEWER_REOPEN_LIMIT_REACHED' &&
-        session.blocker.blockedTransition === 'admit-plan-review' &&
-        Number.isSafeInteger(output.revision) &&
-        session.revision === (output.revision as number) + 1));
+    (exemption
+      ? output.revision === session.revision
+      : semanticReceipt
+        ? 'semanticRevision' in session &&
+          output.semanticRevision === session.semanticRevision
+        : legacyReceipt && output.revision === session.revision);
   if (
     node.type !== expectedType ||
+    (!exemption && !semanticReceipt && !legacyReceipt) ||
     !isRecord(output) ||
     output.investigationId !== session.investigationId ||
     output.changeId !== session.changeId ||
@@ -6188,6 +6959,9 @@ function digestBoundStartReservation(
       'schemaVersion',
       'kind',
       'changeId',
+      ...(Object.prototype.hasOwnProperty.call(value, 'mandateBinding')
+        ? ['mandateBinding']
+        : []),
       'investigationId',
       'invocationId',
       'repositoryRoot',
@@ -6203,6 +6977,8 @@ function digestBoundStartReservation(
     value.schemaVersion !== 1 ||
     value.kind !== 'investigation-start-reservation' ||
     value.changeId !== session.changeId ||
+    canonicalJson(value.mandateBinding ?? null) !==
+      canonicalJson(session.mandateBinding ?? null) ||
     value.investigationId !== session.investigationId ||
     value.invocationId !== session.blindInvocationIds[0] ||
     value.repositoryRoot !== session.repositoryRoot ||
@@ -6418,6 +7194,32 @@ function isBaseline(value: unknown): value is InvestigationSession['baseline'] {
   );
 }
 
+function isTaskMandateBinding(value: unknown, changeId: string): boolean {
+  return (
+    isRecord(value) &&
+    hasExactKeys(value, [
+      'schemaVersion',
+      'mandateTaskId',
+      'mandateId',
+      'mandateDigest',
+      'changeId',
+      'externalAuditRoot',
+    ]) &&
+    value.schemaVersion === 1 &&
+    value.changeId === changeId &&
+    typeof value.externalAuditRoot === 'string' &&
+    path.isAbsolute(value.externalAuditRoot) &&
+    path.normalize(value.externalAuditRoot) === value.externalAuditRoot &&
+    typeof value.mandateTaskId === 'string' &&
+    /^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(value.mandateTaskId) &&
+    typeof value.mandateId === 'string' &&
+    /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(
+      value.mandateId,
+    ) &&
+    isDigest(value.mandateDigest)
+  );
+}
+
 function isDigest(value: unknown): value is string {
   return typeof value === 'string' && DIGEST.test(value);
 }
@@ -6430,19 +7232,263 @@ function isProviderInvocationFailureShape(value: unknown): value is {
   kind: 'retryable' | 'repository-reconciliation-required';
   code: string;
   message: string;
+  executionKind?: string;
+  retryAfterMs?: number;
+  probe?: unknown;
 } | null {
+  const hasExecutionKind =
+    isRecord(value) && Object.hasOwn(value, 'executionKind');
+  const hasRetryAfter = isRecord(value) && Object.hasOwn(value, 'retryAfterMs');
+  const hasProbe = isRecord(value) && Object.hasOwn(value, 'probe');
   return (
     value === null ||
     (isRecord(value) &&
-      hasExactKeys(value, ['kind', 'code', 'message']) &&
+      hasExactKeys(value, [
+        'kind',
+        'code',
+        'message',
+        ...(hasExecutionKind ? ['executionKind'] : []),
+        ...(hasRetryAfter ? ['retryAfterMs'] : []),
+        ...(hasProbe ? ['probe'] : []),
+      ]) &&
       (value.kind === 'retryable' ||
         value.kind === 'repository-reconciliation-required') &&
       typeof value.code === 'string' &&
       value.code.length > 0 &&
       typeof value.message === 'string' &&
       value.message.length > 0 &&
+      (!hasExecutionKind ||
+        PROVIDER_EXECUTION_FAILURE_KINDS.has(String(value.executionKind))) &&
+      (!hasRetryAfter ||
+        (Number.isSafeInteger(value.retryAfterMs) &&
+          (value.retryAfterMs as number) >= 0 &&
+          (value.retryAfterMs as number) <= 86_400_000)) &&
+      (!hasProbe || isReadOnlyProbeShape(value.probe)) &&
+      hasProbe === (value.executionKind === 'probe-transient') &&
       Buffer.byteLength(canonicalJson(value), 'utf8') <= 16_384)
   );
+}
+
+function isReadOnlyProbeShape(value: unknown): boolean {
+  try {
+    assertReadOnlyProbe(value);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+const PROVIDER_EXECUTION_FAILURE_KINDS = new Set([
+  'provider-timeout',
+  'network',
+  'rate-limit',
+  'provider-process-crash',
+  'worker-crash',
+  'lease-expiry',
+  'temporary-file-lock',
+  'provider-capacity',
+  'stdout-truncated',
+  'process-nonzero',
+  'json-parse',
+  'schema-mismatch',
+  'missing-required-field',
+  'citation-out-of-range',
+  'probe-transient',
+  'needs-user-decision',
+  'state-corruption',
+  'unknown-side-effect',
+]);
+
+function assertProviderExecutionPolicySnapshot(
+  paths: InvestigationRuntimePaths,
+  value: unknown,
+  request: ProviderInvocationRequest,
+): void {
+  if (
+    !isRecord(value) ||
+    value.kind !== 'provider-execution-policy-snapshot' ||
+    value.invocationId !== request.invocationId ||
+    value.requestDigest !== request.requestDigest ||
+    value.policyDigest !== request.policyDigest ||
+    typeof value.policyDocument !== 'string' ||
+    (value.schemaVersion === 1
+      ? !hasExactKeys(value, [
+          'invocationId',
+          'kind',
+          'policyDigest',
+          'policyDocument',
+          'requestDigest',
+          'schemaVersion',
+        ])
+      : ![2, 3].includes(value.schemaVersion as number) ||
+        !hasExactKeys(value, [
+          'accountingDigest',
+          'attemptReservation',
+          ...(value.schemaVersion === 3 ? ['authority'] : []),
+          'invocationId',
+          'kind',
+          'policyDigest',
+          'policyDocument',
+          'requestDigest',
+          'retryAccounting',
+          'schemaVersion',
+        ]))
+  ) {
+    throw providerInvocationUnsafe();
+  }
+  try {
+    let loaded;
+    try {
+      loaded = parseAiAdapterPolicyDocument(value.policyDocument);
+    } catch {
+      if (value.schemaVersion !== 1) throw providerInvocationUnsafe();
+      loaded = parseLegacyAiAdapterPolicyDocument(value.policyDocument);
+    }
+    if (
+      loaded.digest !== value.policyDigest ||
+      request.limits.aggregateOutputBytes >
+        loaded.policy.limits.aggregateOutputBytes
+    ) {
+      throw providerInvocationUnsafe();
+    }
+    if (value.schemaVersion === 3) {
+      if (loaded.policy.schemaVersion !== 4) {
+        throw providerInvocationUnsafe();
+      }
+      const authority = validateProviderExecutionBudgetAuthority(
+        request,
+        loaded as ReturnType<typeof parseAiAdapterPolicyDocument>,
+        value.authority,
+      );
+      assertDurableProviderExecutionBudgetAuthority(paths.root, authority);
+    } else if (request.limits.timeoutMs > loaded.policy.limits.timeoutMs) {
+      throw providerInvocationUnsafe();
+    }
+    if (value.schemaVersion === 2 || value.schemaVersion === 3) {
+      if (
+        loaded.policy.schemaVersion !== 4 ||
+        !isRecord(value.attemptReservation)
+      ) {
+        throw providerInvocationUnsafe();
+      }
+      const attemptReservation = {
+        runtimeMs: request.limits.timeoutMs,
+        providerCostMicros:
+          loaded.policy.retryAccounting.reservations[request.providerId]
+            .providerCostMicros,
+        providerTokens:
+          loaded.policy.retryAccounting.reservations[request.providerId]
+            .providerTokens,
+      };
+      if (
+        canonicalJson(value.retryAccounting) !==
+          canonicalJson(loaded.policy.retryAccounting) ||
+        canonicalJson(value.attemptReservation) !==
+          canonicalJson(attemptReservation) ||
+        value.accountingDigest !==
+          sha256(
+            canonicalJson({
+              schemaVersion: 1,
+              kind: 'provider-retry-accounting-snapshot',
+              invocationId: request.invocationId,
+              requestDigest: request.requestDigest,
+              policyDigest: request.policyDigest,
+              retryAccounting: loaded.policy.retryAccounting,
+              attemptReservation,
+            }),
+          )
+      ) {
+        throw providerInvocationUnsafe();
+      }
+    }
+  } catch {
+    throw providerInvocationUnsafe();
+  }
+}
+
+function assertProviderRepairAuthorityArtifact(
+  name: (typeof OPTIONAL_PROVIDER_ROOT_FILES)[number],
+  value: unknown,
+  request: ProviderInvocationRequest,
+  makeError: () => WorkflowError,
+): void {
+  if (!isRecord(value)) {
+    throw makeError();
+  }
+  if (name === 'repair-evidence.json') {
+    if (
+      !hasExactKeys(value, [
+        'contextDigest',
+        'epoch',
+        'evidenceDigest',
+        'failedAttemptId',
+        'failedInvocationId',
+        'failureCode',
+        'failureFingerprint',
+        'jobId',
+        'kind',
+        'recordedAt',
+        'repairContext',
+        'schemaVersion',
+        'workflowId',
+      ]) ||
+      value.schemaVersion !== 1 ||
+      value.kind !== 'provider-repair-evidence' ||
+      value.failedInvocationId !== request.invocationId ||
+      !isTimestamp(value.recordedAt) ||
+      typeof value.evidenceDigest !== 'string' ||
+      !PROVIDER_REPAIR_DIGEST.test(value.evidenceDigest)
+    ) {
+      throw makeError();
+    }
+    const payload = { ...value };
+    delete payload.evidenceDigest;
+    if (`sha256:${sha256(canonicalJson(payload))}` !== value.evidenceDigest) {
+      throw makeError();
+    }
+    return;
+  }
+  if (
+    !hasExactKeys(value, [
+      'contextDigest',
+      'createdAt',
+      'epoch',
+      'failedAttemptId',
+      'failedInvocationId',
+      'failureFingerprint',
+      'jobId',
+      'kind',
+      'lineageDigest',
+      'repairBudget',
+      'repairContext',
+      'repairEvidenceDigest',
+      'repairKind',
+      'replacementAttemptId',
+      'replacementInvocationId',
+      'replacementRequestDigest',
+      'retryMode',
+      'schemaVersion',
+      'workflowId',
+    ]) ||
+    value.schemaVersion !== 1 ||
+    value.kind !== 'provider-repair-lineage' ||
+    value.retryMode !== 'repair' ||
+    (value.repairKind !== 'schema' && value.repairKind !== 'semantic') ||
+    value.replacementInvocationId !== request.invocationId ||
+    value.replacementRequestDigest !== request.requestDigest ||
+    !isTimestamp(value.createdAt) ||
+    typeof value.lineageDigest !== 'string' ||
+    !PROVIDER_REPAIR_DIGEST.test(value.lineageDigest) ||
+    typeof value.repairEvidenceDigest !== 'string' ||
+    !PROVIDER_REPAIR_DIGEST.test(value.repairEvidenceDigest)
+  ) {
+    throw makeError();
+  }
+  const payload = { ...value };
+  delete payload.lineageDigest;
+  if (`sha256:${sha256(canonicalJson(payload))}` !== value.lineageDigest) {
+    throw makeError();
+  }
 }
 
 function isProviderInvocationLifecycleLease(

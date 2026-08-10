@@ -2,6 +2,7 @@ node_modules
 dist
 build
 coverage
+packages/workflow-engine/bootstrap/recovery-runtime
 .next
 out
 *.min.js

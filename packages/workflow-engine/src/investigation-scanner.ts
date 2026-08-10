@@ -56,13 +56,80 @@ export type ScanHitSourceObject = {
   skipReason: TrackedTreeSkipReason | null;
 };
 
+/**
+ * The bytes surrounding a content hit, so a class predicate can be replayed
+ * later as a pure recomputation over stored evidence rather than by reopening
+ * the repository. Bounded on purpose: a minified bundle is one enormous line,
+ * and storing it whole would put the file back into the evidence this exists
+ * to avoid.
+ */
+export type ScanHitContextWindow = {
+  rawBase64: string;
+  utf8: string | null;
+  byteOffset: number;
+  byteLength: number;
+  truncated: boolean;
+};
+
 export type ScanHit = {
   path: TrackedTreePathIdentity;
   sourceObject: ScanHitSourceObject;
   surface: 'path' | 'content';
   byteOffset: number;
   byteLength: number;
+  /**
+   * Present for content hits only. A path-surface hit has no content to quote,
+   * so it can never satisfy a predicate and can never join a class.
+   */
+  contextWindow?: ScanHitContextWindow;
 };
+
+export const SCAN_HIT_MAX_CONTEXT_BYTES = 512;
+
+export function hitContextWindow(
+  haystack: Buffer,
+  byteOffset: number,
+  byteLength: number,
+): ScanHitContextWindow | null {
+  if (
+    !Number.isSafeInteger(byteOffset) ||
+    !Number.isSafeInteger(byteLength) ||
+    byteOffset < 0 ||
+    byteLength <= 0 ||
+    byteOffset + byteLength > haystack.length
+  ) {
+    return null;
+  }
+  const lineStart = haystack.lastIndexOf(0x0a, byteOffset) + 1;
+  let lineEnd = haystack.indexOf(0x0a, byteOffset + byteLength - 1);
+  if (lineEnd === -1) lineEnd = haystack.length;
+  if (lineEnd > lineStart && haystack[lineEnd - 1] === 0x0d) lineEnd -= 1;
+
+  let start = lineStart;
+  let end = lineEnd;
+  let truncated = false;
+  if (end - start > SCAN_HIT_MAX_CONTEXT_BYTES) {
+    // Keep the hit itself centred; a window that dropped the match would prove
+    // nothing about the match.
+    truncated = true;
+    const slack =
+      SCAN_HIT_MAX_CONTEXT_BYTES -
+      Math.min(byteLength, SCAN_HIT_MAX_CONTEXT_BYTES);
+    const before = Math.floor(slack / 2);
+    start = Math.max(lineStart, byteOffset - before);
+    end = Math.min(lineEnd, start + SCAN_HIT_MAX_CONTEXT_BYTES);
+    start = Math.max(lineStart, end - SCAN_HIT_MAX_CONTEXT_BYTES);
+  }
+  const bytes = haystack.subarray(start, end);
+  const utf8 = bytes.toString('utf8');
+  return {
+    rawBase64: bytes.toString('base64'),
+    utf8: Buffer.compare(Buffer.from(utf8, 'utf8'), bytes) === 0 ? utf8 : null,
+    byteOffset: start,
+    byteLength: bytes.length,
+    truncated,
+  };
+}
 
 export type ScanSkippedObject = {
   path: { rawBase64: string; utf8: string | null };
@@ -93,6 +160,13 @@ export type ReadyScanResult = {
   outcome: 'ready';
   nodes: EvidenceNode[];
   inventory: ScanInventory;
+  /**
+   * Terms whose hits were truncated at their ceiling. Present only when the
+   * caller accepted saturation; their semantic domain may not be compressed
+   * into a class disposition, because a truncated term cannot show that the
+   * members it did find are all of them.
+   */
+  saturatedTermIds?: string[];
 };
 
 export type NarrowingScanResult = {
@@ -122,8 +196,20 @@ export function scanInvestigationTree(request: {
   treeOid: string;
   terms: ScanInvestigationTerm[];
   limits?: InvestigationLimits;
+  /**
+   * Accept a term that hit its own ceiling instead of refusing the scan.
+   *
+   * Off by default, because a truncated term is a search that cannot claim to
+   * be complete and silently proceeding would let that claim be made anyway.
+   * A caller that opts in is told which terms saturated, and the class
+   * compression that would have relied on their completeness is refused for
+   * exactly those terms — which is what makes carrying on honest rather than
+   * merely convenient.
+   */
+  allowSaturatedTerms?: boolean;
 }): InvestigationScanResult {
   const { repositoryRoot, treeOid, terms } = request;
+  const allowSaturatedTerms = request.allowSaturatedTerms === true;
   const limits = assertInvestigationLimits(
     request.limits ?? { ...INVESTIGATION_LIMITS },
   );
@@ -200,7 +286,20 @@ export function scanInvestigationTree(request: {
     scanCpuStart,
     limits.maxScanCpuMillis,
   );
-  if (violations.length > 0) {
+  // A term that hit its own ceiling is the one violation a caller can carry,
+  // because the hits it did collect remain true — only their completeness is
+  // lost. Every other violation means the scan itself is not sound, so none of
+  // them are eligible for this exit.
+  const saturatedTermIds = violations
+    .filter(({ code }) => code === 'TERM_HIT_LIMIT_EXCEEDED')
+    .map(({ termId }) => termId)
+    .filter((termId): termId is string => termId !== undefined)
+    .sort();
+  const onlySaturation =
+    saturatedTermIds.length > 0 &&
+    violations.every(({ code }) => code === 'TERM_HIT_LIMIT_EXCEEDED');
+
+  if (violations.length > 0 && !(allowSaturatedTerms && onlySaturation)) {
     violations.sort(compareViolations);
     return {
       outcome: 'requires-narrowing',
@@ -211,6 +310,7 @@ export function scanInvestigationTree(request: {
     };
   }
 
+  const saturated = allowSaturatedTerms ? saturatedTermIds : [];
   const nodes = terms
     .map((term, index) =>
       buildScanNode(
@@ -224,7 +324,12 @@ export function scanInvestigationTree(request: {
       scanNodeTermId(left) < scanNodeTermId(right) ? -1 : 1,
     );
 
-  return { outcome: 'ready', nodes, inventory };
+  return {
+    outcome: 'ready',
+    nodes,
+    inventory,
+    ...(saturated.length === 0 ? {} : { saturatedTermIds: saturated }),
+  };
 }
 
 function assertScanTerms(terms: ScanInvestigationTerm[]): void {
@@ -314,7 +419,16 @@ function collectTermHits(
         scanCpuStart,
         maxScanCpuMillis,
       )) {
-        hits.push(makeHit(entry.path, sourceObject, 'content', offset, needle));
+        hits.push(
+          makeHit(
+            entry.path,
+            sourceObject,
+            'content',
+            offset,
+            needle,
+            entry.content,
+          ),
+        );
         if (hits.length >= cap) {
           return {
             hits: sortHits(hits),
@@ -350,13 +464,19 @@ function makeHit(
   surface: 'path' | 'content',
   byteOffset: number,
   needle: Buffer,
+  haystack?: Buffer,
 ): ScanHit {
+  const contextWindow =
+    surface === 'content' && haystack !== undefined
+      ? hitContextWindow(haystack, byteOffset, needle.length)
+      : null;
   return {
     path: { rawBase64: path.rawBase64, utf8: path.utf8 },
     sourceObject,
     surface,
     byteOffset,
     byteLength: needle.length,
+    ...(contextWindow === null ? {} : { contextWindow }),
   };
 }
 
@@ -414,12 +534,19 @@ function buildScanNode(
 ): EvidenceNode {
   const output = {
     termId: term.termId,
+    // The window travels with the hit it describes. A class predicate is a
+    // claim about what the search found, and it can only be rechecked later if
+    // the evidence carries the text the claim was made against; keeping the
+    // window in memory alone left every such claim unverifiable.
     hits: hits.map((hit) => ({
       path: { rawBase64: hit.path.rawBase64, utf8: hit.path.utf8 },
       sourceObject: hit.sourceObject,
       surface: hit.surface,
       byteOffset: hit.byteOffset,
       byteLength: hit.byteLength,
+      ...(hit.contextWindow === undefined
+        ? {}
+        : { contextWindow: hit.contextWindow }),
     })),
   };
   return createEvidenceNode({

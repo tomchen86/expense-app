@@ -1,15 +1,272 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import { validateCiPlanningCommit } from '../src/ci-planning.ts';
+import { canonicalJson } from '../src/canonical-json.ts';
+import { assertUniqueCollaborationGrantUses } from '../src/collaboration-grant.ts';
+import {
+  collectHistoricalCollaborationGrantUses,
+  validateCiPlanningCommit,
+} from '../src/ci-planning.ts';
+import { loadChangeContract } from '../src/contracts.ts';
+import { createEvidenceNode } from '../src/evidence-node.ts';
 import { INVESTIGATION_PLANNING_ACTIVATION_MARKER as ACTIVATION_MARKER } from '../src/openspec-schema-contract.ts';
-import { git, isWorkflowError, sourceRepositoryRoot } from './fixture.ts';
+import {
+  createPlanReviewNode,
+  createPlanReviewProviderResultNode,
+  createPlanReviewTargetSnapshotNode,
+  PLAN_REVIEW_COVERAGE,
+  PLAN_REVIEW_OUTPUT_SCHEMA,
+} from '../src/plan-review.ts';
+import { deriveInvestigationFirstPlanningSubject } from '../src/planning-assurance-validator.ts';
+import { commitPlanningTransition } from '../src/planning-transition.ts';
+import { admitRoleResult } from '../src/role-scheduler.ts';
+import {
+  createFixtureRepository,
+  git,
+  isWorkflowError,
+  sourceRepositoryRoot,
+  writeReadyV2ExemptChange,
+} from './fixture.ts';
 
 const CHANGE_ID = 'planned-change';
+
+test('CI collects a collaboration grant claimed by two historical plan transitions', () => {
+  const repository = createRepository();
+  try {
+    writeGrantClaim(repository, {
+      grantId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+      signedEnvelopeDigest: 'b'.repeat(64),
+      transitionDigest: 'c'.repeat(64),
+    });
+    commitPlan(repository);
+
+    writeGrantClaim(repository, {
+      grantId: 'dddddddd-dddd-4ddd-8ddd-dddddddddddd',
+      signedEnvelopeDigest: 'e'.repeat(64),
+      transitionDigest: 'f'.repeat(64),
+    });
+    commit(repository, 'Record an alternate review generation');
+
+    writeGrantClaim(repository, {
+      grantId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+      signedEnvelopeDigest: 'b'.repeat(64),
+      transitionDigest: 'c'.repeat(64),
+    });
+    commitPlan(repository);
+
+    const uses = collectHistoricalCollaborationGrantUses(
+      repository,
+      git(repository, ['rev-parse', 'HEAD']).trim(),
+      CHANGE_ID,
+    );
+    assert.equal(uses.length, 2);
+    assert.throws(
+      () => assertUniqueCollaborationGrantUses(uses),
+      (error) => isWorkflowError(error, 'COLLABORATION_GRANT_USE_DUPLICATE'),
+    );
+  } finally {
+    fs.rmSync(repository, { recursive: true, force: true });
+  }
+});
+
+test('CI collects a blind-survey grant claimed by two historical plan transitions', () => {
+  const repository = createRepository();
+  try {
+    writeSurveyGrantClaim(repository, {
+      grantId: '11111111-1111-4111-8111-111111111111',
+      signedEnvelopeDigest: '2'.repeat(64),
+      transitionDigest: '3'.repeat(64),
+    });
+    commitPlan(repository);
+
+    writeSurveyGrantClaim(repository, {
+      grantId: '44444444-4444-4444-8444-444444444444',
+      signedEnvelopeDigest: '5'.repeat(64),
+      transitionDigest: '6'.repeat(64),
+    });
+    commit(repository, 'Record an alternate survey generation');
+
+    writeSurveyGrantClaim(repository, {
+      grantId: '11111111-1111-4111-8111-111111111111',
+      signedEnvelopeDigest: '2'.repeat(64),
+      transitionDigest: '3'.repeat(64),
+    });
+    commitPlan(repository);
+
+    const uses = collectHistoricalCollaborationGrantUses(
+      repository,
+      git(repository, ['rev-parse', 'HEAD']).trim(),
+      CHANGE_ID,
+    );
+    assert.equal(uses.length, 2);
+    assert.throws(
+      () => assertUniqueCollaborationGrantUses(uses),
+      (error) => isWorkflowError(error, 'COLLABORATION_GRANT_USE_DUPLICATE'),
+    );
+  } finally {
+    fs.rmSync(repository, { recursive: true, force: true });
+  }
+});
+
+test('CI keeps a side-branch grant claim hidden by a TREESAME merge', () => {
+  const repository = createRepository();
+  try {
+    writePlanReviewWithoutRole(repository);
+    commit(repository, 'Record the common planning evidence');
+    const commonPlanReview = fs.readFileSync(
+      path.join(changeDirectory(repository), 'plan-review.json'),
+      'utf8',
+    );
+
+    git(repository, ['checkout', '-b', 'side-review']);
+    writeGrantClaim(repository, {
+      grantId: '77777777-7777-4777-8777-777777777777',
+      signedEnvelopeDigest: '8'.repeat(64),
+      transitionDigest: '9'.repeat(64),
+    });
+    commitPlan(repository);
+
+    git(repository, ['checkout', 'main']);
+    write(repository, 'main.txt', 'main divergence\n');
+    commit(repository, 'Diverge the main line');
+    git(repository, ['merge', '--no-ff', '--no-commit', 'side-review']);
+    fs.writeFileSync(
+      path.join(changeDirectory(repository), 'plan-review.json'),
+      commonPlanReview,
+    );
+    git(repository, ['add', '-A']);
+    git(repository, ['commit', '-m', 'Merge and restore planning evidence']);
+
+    writeGrantClaim(repository, {
+      grantId: '77777777-7777-4777-8777-777777777777',
+      signedEnvelopeDigest: '8'.repeat(64),
+      transitionDigest: '9'.repeat(64),
+    });
+    commitPlan(repository);
+
+    const uses = collectHistoricalCollaborationGrantUses(
+      repository,
+      git(repository, ['rev-parse', 'HEAD']).trim(),
+      CHANGE_ID,
+    );
+    assert.equal(uses.length, 2);
+    assert.throws(
+      () => assertUniqueCollaborationGrantUses(uses),
+      (error) => isWorkflowError(error, 'COLLABORATION_GRANT_USE_DUPLICATE'),
+    );
+  } finally {
+    fs.rmSync(repository, { recursive: true, force: true });
+  }
+});
+
+test('CI accepts distinct grants across managed planning transitions', () => {
+  const repository = createRepository();
+  try {
+    writeGrantClaim(repository, {
+      grantId: '12121212-1212-4121-8121-121212121212',
+      signedEnvelopeDigest: '3'.repeat(64),
+      transitionDigest: '4'.repeat(64),
+    });
+    commitPlan(repository);
+    writeGrantClaim(repository, {
+      grantId: '56565656-5656-4565-8565-565656565656',
+      signedEnvelopeDigest: '7'.repeat(64),
+      transitionDigest: '8'.repeat(64),
+    });
+    commitPlan(repository);
+
+    const uses = collectHistoricalCollaborationGrantUses(
+      repository,
+      git(repository, ['rev-parse', 'HEAD']).trim(),
+      CHANGE_ID,
+    );
+    assert.equal(uses.length, 2);
+    assert.doesNotThrow(() => assertUniqueCollaborationGrantUses(uses));
+  } finally {
+    fs.rmSync(repository, { recursive: true, force: true });
+  }
+});
+
+test('CI treats legacy and role-free planning history as zero grant claims', async (t) => {
+  await t.test('legacy plan without evidence artifacts', () => {
+    const repository = createRepository();
+    try {
+      writePlanningTree(repository);
+      commitPlan(repository);
+      assert.deepEqual(
+        collectHistoricalCollaborationGrantUses(
+          repository,
+          git(repository, ['rev-parse', 'HEAD']).trim(),
+          CHANGE_ID,
+        ),
+        [],
+      );
+    } finally {
+      fs.rmSync(repository, { recursive: true, force: true });
+    }
+  });
+
+  await t.test('tracked artifact without role results', () => {
+    const repository = createRepository();
+    try {
+      writePlanReviewWithoutRole(repository);
+      commitPlan(repository);
+      assert.deepEqual(
+        collectHistoricalCollaborationGrantUses(
+          repository,
+          git(repository, ['rev-parse', 'HEAD']).trim(),
+          CHANGE_ID,
+        ),
+        [],
+      );
+    } finally {
+      fs.rmSync(repository, { recursive: true, force: true });
+    }
+  });
+});
+
+test('CI collects investigation and PlanReview grants from the current plan transition once each', () => {
+  const repository = createFixtureRepository();
+  const surveyUse = {
+    grantId: '13131313-1313-4131-8131-131313131313',
+    signedEnvelopeDigest: '4'.repeat(64),
+    transitionDigest: '5'.repeat(64),
+  };
+  const reviewUse = {
+    grantId: '67676767-6767-4676-8676-676767676767',
+    signedEnvelopeDigest: '8'.repeat(64),
+    transitionDigest: '9'.repeat(64),
+  };
+  try {
+    git(repository, ['checkout', '-b', 'work/demo-change']);
+    writeReadyV2ExemptChange(repository);
+    appendSyntheticGrantRoleResult(
+      repository,
+      'investigation.json',
+      syntheticGrantedRoleResult('blind-surveyor', surveyUse, 'a'),
+    );
+    refreshFixturePlanReview(repository);
+    appendSyntheticGrantRoleResult(
+      repository,
+      'plan-review.json',
+      syntheticGrantedRoleResult('plan-reviewer', reviewUse, 'b'),
+    );
+    const plan = commitPlanningTransition(repository, 'demo-change');
+
+    assert.deepEqual(
+      validateCiPlanningCommit(repository, plan.commitHash, 'demo-change')
+        .collaborationGrantUses,
+      [surveyUse, reviewUse],
+    );
+  } finally {
+    fs.rmSync(repository, { recursive: true, force: true });
+  }
+});
 
 test('CI accepts an exact planning introduction reconstructed from Git', () => {
   const repository = createRepository();
@@ -356,6 +613,101 @@ function writeTasks(repository: string, tasks: string): void {
   );
 }
 
+function writeGrantClaim(
+  repository: string,
+  use: {
+    grantId: string;
+    signedEnvelopeDigest: string;
+    transitionDigest: string;
+  },
+): void {
+  const reviewNode = createEvidenceNode({
+    type: 'fixture-plan-review',
+    nodeSchema: 'fixture.plan-review.v1',
+    evaluator: 'fixture.plan-review.v1',
+    policyDigest: '1'.repeat(64),
+    exactInputDigests: { target: '2'.repeat(64) },
+    semanticParentResultDigests: {},
+    provenanceParentNodeIds: {},
+    outputSchema: 'fixture.plan-review-output.v1',
+    output: { verdict: 'advisory-approve' },
+    runtimeMetadata: {},
+  });
+  write(
+    repository,
+    `openspec/changes/${CHANGE_ID}/plan-review.json`,
+    `${canonicalJson({
+      schemaVersion: 1,
+      kind: 'plan-review-artifact',
+      changeId: CHANGE_ID,
+      nodes: [reviewNode],
+      currentRefs: { planReview: reviewNode.nodeId },
+      roleResults: [{ grantUse: use }],
+    })}\n`,
+  );
+}
+
+function writePlanReviewWithoutRole(repository: string): void {
+  const reviewNode = createEvidenceNode({
+    type: 'fixture-plan-review',
+    nodeSchema: 'fixture.plan-review.v1',
+    evaluator: 'fixture.plan-review.v1',
+    policyDigest: '1'.repeat(64),
+    exactInputDigests: { target: '2'.repeat(64) },
+    semanticParentResultDigests: {},
+    provenanceParentNodeIds: {},
+    outputSchema: 'fixture.plan-review-output.v1',
+    output: { verdict: 'advisory-approve' },
+    runtimeMetadata: {},
+  });
+  write(
+    repository,
+    `openspec/changes/${CHANGE_ID}/plan-review.json`,
+    `${canonicalJson({
+      schemaVersion: 1,
+      kind: 'plan-review-artifact',
+      changeId: CHANGE_ID,
+      nodes: [reviewNode],
+      currentRefs: { planReview: reviewNode.nodeId },
+    })}\n`,
+  );
+}
+
+function writeSurveyGrantClaim(
+  repository: string,
+  use: {
+    grantId: string;
+    signedEnvelopeDigest: string;
+    transitionDigest: string;
+  },
+): void {
+  const surveyNode = createEvidenceNode({
+    type: 'fixture-blind-survey',
+    nodeSchema: 'fixture.blind-survey.v1',
+    evaluator: 'fixture.blind-survey.v1',
+    policyDigest: '7'.repeat(64),
+    exactInputDigests: { target: '8'.repeat(64) },
+    semanticParentResultDigests: {},
+    provenanceParentNodeIds: {},
+    outputSchema: 'fixture.blind-survey-output.v1',
+    output: { complete: true },
+    runtimeMetadata: {},
+  });
+  write(
+    repository,
+    `openspec/changes/${CHANGE_ID}/investigation.json`,
+    `${canonicalJson({
+      schemaVersion: 1,
+      kind: 'investigation-artifact',
+      changeId: CHANGE_ID,
+      legacyMigration: false,
+      nodes: [surveyNode],
+      currentRefs: { blindSurvey: surveyNode.nodeId },
+      roleResults: [{ grantUse: use }],
+    })}\n`,
+  );
+}
+
 function mktree(repository: string, listing: string): string {
   return execFileSync('git', ['-C', repository, 'mktree'], {
     encoding: 'utf8',
@@ -423,6 +775,216 @@ function planningPaths(changeId: string): string[] {
     `${prefix}/specs/demo/spec.md`,
     `${prefix}/tasks.md`,
   ];
+}
+
+function appendSyntheticGrantRoleResult(
+  repository: string,
+  artifactName: 'investigation.json' | 'plan-review.json',
+  roleResult: unknown,
+): void {
+  const artifactPath = path.join(
+    repository,
+    'openspec/changes/demo-change',
+    artifactName,
+  );
+  const artifact = JSON.parse(fs.readFileSync(artifactPath, 'utf8')) as {
+    roleResults?: unknown[];
+  };
+  artifact.roleResults = [...(artifact.roleResults ?? []), roleResult];
+  fs.writeFileSync(artifactPath, `${canonicalJson(artifact)}\n`);
+}
+
+function syntheticGrantedRoleResult(
+  role: 'blind-surveyor' | 'plan-reviewer',
+  grantUse: {
+    grantId: string;
+    signedEnvelopeDigest: string;
+    transitionDigest: string;
+  },
+  digestDigit: string,
+): unknown {
+  const digest = digestDigit.repeat(64);
+  const contentKind =
+    role === 'blind-surveyor' ? 'blind-survey' : 'plan-review';
+  return {
+    schemaVersion: 1,
+    form: 'granted-caller-supplied',
+    role,
+    targetDigest: digest,
+    assignment: {},
+    author: {},
+    participant: {},
+    orchestration: 'caller-supplied',
+    requiredIndependence: 'provider-independent',
+    achievedIndependence: 'none',
+    content: {
+      kind: contentKind,
+      nodeId: digest,
+      resultDigest: digest,
+      outputSchema: {
+        id: `fixture.${contentKind}.v1`,
+        version: 1,
+        digest,
+      },
+      evaluator: `fixture.${contentKind}.v1`,
+      policyDigest: digest,
+      contentDigest: digest,
+      current: true,
+    },
+    providerInvocation: null,
+    grantUse,
+    directHumanReviewAttestation: null,
+    resultDigest: digest,
+  };
+}
+
+function refreshFixturePlanReview(repository: string): void {
+  const changeId = 'demo-change';
+  const changeRoot = path.join(repository, 'openspec/changes', changeId);
+  const contract = loadChangeContract(repository, changeId);
+  const investigation = contract.investigation!;
+  const applicabilityNode = investigation.nodes.find(
+    ({ nodeId }) =>
+      nodeId === investigation.currentRefs.investigationApplicability,
+  );
+  assert.ok(applicabilityNode);
+  const context = deriveInvestigationFirstPlanningSubject(repository, contract);
+  const assignment = {
+    role: 'plan-reviewer' as const,
+    providerId: 'claude' as const,
+    sessionId: 'fixture-current-plan-review-session',
+    targetDigest: context.subject.subjectDigest,
+    requiredIndependence: 'provider-independent' as const,
+    achievedIndependence: 'provider-independent' as const,
+  };
+  const snapshotRelativePaths = [
+    '.openspec.yaml',
+    'design.md',
+    'execution.json',
+    'guard.json',
+    'investigation.json',
+    'proposal.md',
+    'specs/demo/spec.md',
+    'tasks.md',
+  ];
+  const snapshotContents = new Map(
+    snapshotRelativePaths.map((relativePath) => [
+      relativePath,
+      fs.readFileSync(path.join(changeRoot, relativePath)),
+    ]),
+  );
+  const materializationNode = createEvidenceNode({
+    type: 'propose-exemption-planning-materialization',
+    nodeSchema: 'fixture.propose-exemption-planning-materialization.v1',
+    evaluator: 'fixture.propose-exemption-planning-materialization.v1',
+    policyDigest: context.policies.reviewPolicyDigest,
+    exactInputDigests: {},
+    semanticParentResultDigests: {},
+    provenanceParentNodeIds: {},
+    outputSchema:
+      'fixture.propose-exemption-planning-materialization-output.v1',
+    output: {
+      artifacts: Object.fromEntries(
+        [...snapshotContents].map(([relativePath, content]) => [
+          relativePath,
+          crypto.createHash('sha256').update(content).digest('hex'),
+        ]),
+      ),
+    },
+    runtimeMetadata: {},
+  });
+  const targetSnapshotNode = createPlanReviewTargetSnapshotNode({
+    changeId,
+    changePrefix: `openspec/changes/${changeId}`,
+    subject: context.subject,
+    materializationNode,
+    artifacts: snapshotContents,
+    legacyMigration: null,
+  });
+  const submission = {
+    schemaVersion: 2 as const,
+    verdict: 'advisory-approve' as const,
+    coverage: [...PLAN_REVIEW_COVERAGE],
+    scopeAssessment: {
+      kind: 'no-challenge' as const,
+      evidence: [
+        {
+          kind: 'investigation-node' as const,
+          nodeId: applicabilityNode.nodeId,
+          resultDigest: applicabilityNode.resultDigest,
+        },
+      ],
+    },
+    findings: [],
+    proposedTerms: [],
+    suggestions: [],
+    residualRisk: 'The fixture grant claims remain subject to aggregate CI.',
+    uncertainty: 'The fixture uses a structured planning exemption.',
+  };
+  const providerResultNode = createPlanReviewProviderResultNode({
+    subject: context.subject,
+    assignment,
+    submission,
+    providerPolicyDigest: context.policies.reviewPolicyDigest,
+    targetSnapshotNode,
+  });
+  const reviewNode = createPlanReviewNode({
+    subject: context.subject,
+    assignment,
+    providerResultNode,
+    submission,
+  });
+  const roleResult = admitRoleResult({
+    assignment,
+    author: {
+      providerId: 'codex',
+      sessionId: 'fixture-plan-author-session',
+      principalId: undefined,
+      identityAssurance: 'runtime-hint',
+      engineSpawned: false,
+    },
+    participant: {
+      providerId: 'claude',
+      sessionId: assignment.sessionId,
+      principalId: undefined,
+      identityAssurance: 'adapter-assigned',
+      engineSpawned: true,
+    },
+    content: {
+      kind: 'plan-review',
+      nodeId: reviewNode.nodeId,
+      resultDigest: reviewNode.resultDigest,
+      outputSchema: PLAN_REVIEW_OUTPUT_SCHEMA,
+      evaluator: reviewNode.evaluator,
+      policyDigest: reviewNode.policyDigest,
+      contentDigest: reviewNode.resultDigest,
+      current: true,
+    },
+    providerInvocation: {
+      invocationId: 'fixture-current-plan-review-invocation',
+      requestDigest: 'c'.repeat(64),
+      outputDigest: 'd'.repeat(64),
+      providerId: assignment.providerId,
+      sessionId: assignment.sessionId,
+      targetDigest: assignment.targetDigest,
+      engineSpawned: true,
+    },
+    grantUse: null,
+    grantValidation: null,
+  });
+  fs.writeFileSync(
+    path.join(changeRoot, 'plan-review.json'),
+    `${canonicalJson({
+      schemaVersion: 1,
+      kind: 'plan-review-artifact',
+      changeId,
+      nodes: [targetSnapshotNode, providerResultNode, reviewNode].sort(
+        (left, right) => left.nodeId.localeCompare(right.nodeId),
+      ),
+      currentRefs: { planReview: reviewNode.nodeId },
+      roleResults: [roleResult],
+    })}\n`,
+  );
 }
 
 test('CI accepts a revision that deletes non-canonical planning noise', () => {

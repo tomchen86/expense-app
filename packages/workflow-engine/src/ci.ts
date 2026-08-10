@@ -4,6 +4,7 @@ import path from 'node:path';
 import { verifyBaseAuthorityAttestations } from './ci-attestation.ts';
 import { runCiChecks } from './ci-checks.ts';
 import { canonicalCheckDefinition } from './ci-historical-contract.ts';
+import { collectHistoricalCollaborationGrantUses } from './ci-planning.ts';
 import { replayCommitSequence } from './ci-sequence.ts';
 import {
   assertCiCommit,
@@ -93,6 +94,21 @@ export function verifyPullRequest(
     contracts,
     commits,
   );
+  const plannedChangeIds = [
+    ...new Set(
+      commits.flatMap((commit) =>
+        commit.trailers?.kind === 'plan' ? [commit.trailers.changeId] : [],
+      ),
+    ),
+  ].sort();
+  const priorCollaborationGrantUses = plannedChangeIds.flatMap((changeId) =>
+    collectHistoricalCollaborationGrantUses(
+      git.repositoryRoot,
+      mergeBase,
+      changeId,
+      loadWorkflowConfig(git.repositoryRoot).changeRoot,
+    ),
+  );
   const replay = replayCommitSequence(
     git.repositoryRoot,
     commits,
@@ -100,6 +116,7 @@ export function verifyPullRequest(
     exceptions,
     loadPlanningBootstrapPolicy(git.repositoryRoot),
     evaluatedAt,
+    priorCollaborationGrantUses,
   );
   const completedTasks = replay.completedTasks;
   const changedPaths = listRangePaths(git.repositoryRoot, mergeBase, head);

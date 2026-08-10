@@ -1,6 +1,11 @@
 import crypto from 'node:crypto';
 
+import {
+  SCAN_HIT_MAX_CONTEXT_BYTES,
+  type ScanHitContextWindow,
+} from './investigation-scanner.ts';
 import { canonicalJson } from './canonical-json.ts';
+import type { ClassGroup } from './class-disposition.ts';
 import { ExitCode, WorkflowError, workflowError } from './errors.ts';
 import {
   assertStoredEvidenceNode,
@@ -119,13 +124,66 @@ type SourceObject = {
   skipReason: string | null;
 };
 
+const HIT_KEYS = [
+  'path',
+  'sourceObject',
+  'surface',
+  'byteOffset',
+  'byteLength',
+] as const;
+const HIT_KEYS_WITH_CONTEXT = [...HIT_KEYS, 'contextWindow'] as const;
+const CONTEXT_WINDOW_KEYS = [
+  'rawBase64',
+  'utf8',
+  'byteOffset',
+  'byteLength',
+  'truncated',
+] as const;
+
 type ParsedHit = {
   path: PathIdentity;
   sourceObject: SourceObject;
   surface: 'path' | 'content';
   byteOffset: number;
   byteLength: number;
+  contextWindow?: ScanHitContextWindow;
 };
+
+function hasOnlyKeys(value: unknown, keys: readonly string[]): boolean {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    return false;
+  }
+  const present = Object.keys(value);
+  return (
+    present.length === keys.length && present.every((key) => keys.includes(key))
+  );
+}
+
+function assertContextWindow(
+  value: unknown,
+  invalid: ErrorFactory,
+): ScanHitContextWindow {
+  const window = assertExactKeys(value, [...CONTEXT_WINDOW_KEYS], invalid);
+  if (
+    typeof window.rawBase64 !== 'string' ||
+    (window.utf8 !== null && typeof window.utf8 !== 'string') ||
+    !Number.isSafeInteger(window.byteOffset) ||
+    (window.byteOffset as number) < 0 ||
+    !Number.isSafeInteger(window.byteLength) ||
+    (window.byteLength as number) <= 0 ||
+    (window.byteLength as number) > SCAN_HIT_MAX_CONTEXT_BYTES ||
+    typeof window.truncated !== 'boolean'
+  ) {
+    throw invalid('Scan hit context window is malformed.');
+  }
+  return {
+    rawBase64: window.rawBase64,
+    utf8: window.utf8 as string | null,
+    byteOffset: window.byteOffset as number,
+    byteLength: window.byteLength as number,
+    truncated: window.truncated,
+  };
+}
 
 type ParsedScan = {
   node: EvidenceNode;
@@ -1383,12 +1441,17 @@ function assertInventoryNode(node: EvidenceNode): EvidenceNode {
   return validated;
 }
 
+/** Exposed so the two accepted hit shapes can be pinned by contract tests. */
+export function parseHitForTest(value: unknown): ParsedHit {
+  return parseHit(value, investigationDagInvalid);
+}
+
 function parseHit(value: unknown, invalid: ErrorFactory): ParsedHit {
-  const hit = assertExactKeys(
-    value,
-    ['path', 'sourceObject', 'surface', 'byteOffset', 'byteLength'],
-    invalid,
-  );
+  // Two accepted shapes: scans recorded before context windows existed carry
+  // five keys, and must keep validating exactly as they did.
+  const hit = hasOnlyKeys(value, HIT_KEYS_WITH_CONTEXT)
+    ? assertExactKeys(value, [...HIT_KEYS_WITH_CONTEXT], invalid)
+    : assertExactKeys(value, [...HIT_KEYS], invalid);
   const path = assertFilePathIdentity(hit.path, invalid);
   const sourceObject = assertSourceObject(hit.sourceObject, invalid);
   if (
@@ -1407,6 +1470,9 @@ function parseHit(value: unknown, invalid: ErrorFactory): ParsedHit {
     surface: hit.surface,
     byteOffset: hit.byteOffset as number,
     byteLength: hit.byteLength as number,
+    ...(hit.contextWindow === undefined
+      ? {}
+      : { contextWindow: assertContextWindow(hit.contextWindow, invalid) }),
   };
 }
 
@@ -1902,4 +1968,74 @@ function investigationDagInvalid(
     message,
     ExitCode.usage,
   );
+}
+
+/**
+ * Rejoins each group's hits with the context windows their scans recorded.
+ *
+ * A group node summarises its hits without their windows, and a hit node never
+ * carried one, so neither can answer whether a class predicate describes what
+ * the search actually found. The scans still hold that text, and the join is
+ * exact: a hit is the same hit when its term, path, and byte range agree.
+ *
+ * This is the only bridge between what the engine grouped and what a class may
+ * claim, which is why it recomputes rather than trusting anything an author
+ * sends. A hit whose scan carried no window arrives with a null window and can
+ * therefore satisfy no predicate: silence is not evidence of a match.
+ */
+export function deriveClassGroupsWithContext(input: {
+  scanNodes: EvidenceNode[];
+  groupNodes: EvidenceNode[];
+}): ClassGroup[] {
+  const windows = new Map<string, ScanHitContextWindow | null>();
+  for (const scanNode of input.scanNodes) {
+    const scan = readScanNode(scanNode, groupsInvalid);
+    for (const hit of scan.hits) {
+      windows.set(
+        scanHitJoinKey(
+          scan.termId,
+          hit.path.rawBase64,
+          hit.byteOffset,
+          hit.byteLength,
+        ),
+        hit.contextWindow ?? null,
+      );
+    }
+  }
+
+  return input.groupNodes.map((node) => {
+    const group = readInvestigationGroupNode(node);
+    return Object.freeze({
+      groupId: group.groupId,
+      termId: group.selector.termId,
+      hits: Object.freeze(
+        group.hits.map((hit) =>
+          Object.freeze({
+            path: hit.path.utf8 ?? `base64:${hit.path.rawBase64}`,
+            surface: hit.surface,
+            window:
+              windows.get(
+                scanHitJoinKey(
+                  hit.termId,
+                  hit.path.rawBase64,
+                  hit.byteOffset,
+                  hit.byteLength,
+                ),
+              ) ?? null,
+            matchOffset: hit.byteOffset,
+            matchLength: hit.byteLength,
+          }),
+        ),
+      ),
+    });
+  });
+}
+
+function scanHitJoinKey(
+  termId: string,
+  rawBase64: string,
+  byteOffset: number,
+  byteLength: number,
+): string {
+  return `${termId} ${rawBase64} ${byteOffset} ${byteLength}`;
 }

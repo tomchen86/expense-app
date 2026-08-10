@@ -15,11 +15,13 @@ export type PlanningTransitionReport = {
   kind: 'planning-transition';
   createdAt: string;
   changeId: string;
-  transition: 'plan';
+  // An amendment is a planning transition that also records what it replaces,
+  // so its report is the same record with a wider trailer block.
+  transition: 'plan' | 'amend-plan';
   transitionKind: 'introduction' | 'revision';
   subject: string;
   message: string;
-  trailers: [string, string];
+  trailers: string[];
   branch: string;
   headRef: string;
   parent: { head: string; tree: string };
@@ -31,6 +33,8 @@ export type PlanningTransitionReport = {
   tasks: {
     before: PlanningTaskState[] | null;
     after: PlanningTaskState[];
+    /** Completed tasks an amendment sent back to be redone, named. */
+    reopened?: string[];
   };
   openspec: {
     version: '1.6.0';
@@ -39,15 +43,45 @@ export type PlanningTransitionReport = {
     validationValid: true;
   };
   planningAssurance: InvestigationFirstPlanningAssuranceSummary | null;
+  archiveApplicability: ArchiveApplicabilityRecord;
 };
+
+/**
+ * What the plan-time archive preflight was checked against.
+ *
+ * Archive re-validates against whatever the base is when it runs; this record
+ * says which base the plan was accepted over, so a later failure can be read
+ * as drift rather than as a plan that was always wrong. A generation written
+ * before the preflight existed reports `not-recorded` rather than a
+ * reassuring `passed` it never earned.
+ */
+export type ArchiveApplicabilityRecord =
+  | Readonly<{ status: 'not-recorded' }>
+  | Readonly<{
+      status: 'passed';
+      validatedAt: string;
+      validatedBaseCommit: string;
+      validatedBaseSpecDigests: Record<string, string>;
+      validatorVersion: string;
+    }>;
 
 export function writePlanningTransitionReport(
   directory: string,
-  report: PlanningTransitionReport,
+  report: PlanningTransitionInput,
 ): string {
-  assertPlanningTransitionReport(report);
-  return writeContentRecord(directory, report);
+  // Normalized on the way in as well as out: a caller that predates a field
+  // should not have to know it exists to write a valid record.
+  const normalized = normalizeLegacyPlanningTransitionReport(report);
+  assertPlanningTransitionReport(normalized);
+  return writeContentRecord(directory, normalized);
 }
+
+/** What a caller must supply; engine-defaulted fields may be omitted. */
+export type PlanningTransitionInput = Omit<
+  PlanningTransitionReport,
+  'archiveApplicability'
+> &
+  Partial<Pick<PlanningTransitionReport, 'archiveApplicability'>>;
 
 export function readPlanningTransitionReport(
   directory: string,
@@ -60,16 +94,58 @@ export function readPlanningTransitionReport(
   return report;
 }
 
+/**
+ * The trailer block a record of this transition must carry, exactly.
+ *
+ * Checking the block rather than a prefix of it is what keeps a report from
+ * describing an amendment while carrying a plan's provenance, which would make
+ * the record read as settled work that nobody had actually replaced.
+ */
+function isExactTrailerBlock(
+  value: Record<string, unknown>,
+  trailers: unknown[],
+): boolean {
+  if (!trailers.every((line): line is string => typeof line === 'string')) {
+    return false;
+  }
+  if (value.transition === 'plan') {
+    return (
+      trailers.length === 2 &&
+      trailers[0] === `Change: ${value.changeId}` &&
+      trailers[1] === 'Transition: plan'
+    );
+  }
+  return (
+    trailers.length === 6 &&
+    trailers[0] === `Change: ${value.changeId}` &&
+    trailers[1] === 'Transition: amend-plan' &&
+    /^Planning-Generation: [0-9a-f]{64}$/.test(trailers[2] ?? '') &&
+    /^Amends-Planning-Generation: [0-9a-f]{64}$/.test(trailers[3] ?? '') &&
+    /^Execution-Impact: (?:none|required)$/.test(trailers[4] ?? '') &&
+    /^Plan-Review: [0-9a-f]{64}$/.test(trailers[5] ?? '') &&
+    trailers[2] !== trailers[3].replace('Amends-Planning-Generation', 'Planning-Generation')
+  );
+}
+
 function normalizeLegacyPlanningTransitionReport(value: unknown): unknown {
   if (
-    isRecord(value) &&
-    value.schemaVersion === 1 &&
-    value.kind === 'planning-transition' &&
-    !Object.hasOwn(value, 'planningAssurance')
+    !isRecord(value) ||
+    value.schemaVersion !== 1 ||
+    value.kind !== 'planning-transition'
   ) {
-    return { ...value, planningAssurance: null };
+    return value;
   }
-  return value;
+  // Each field is defaulted only when it is genuinely absent. Filling a field
+  // that is already present would rewrite a real record with a placeholder,
+  // which is worse than the missing field it was meant to cover.
+  const normalized: Record<string, unknown> = { ...value };
+  if (!Object.hasOwn(value, 'planningAssurance')) {
+    normalized.planningAssurance = null;
+  }
+  if (!Object.hasOwn(value, 'archiveApplicability')) {
+    normalized.archiveApplicability = { status: 'not-recorded' };
+  }
+  return normalized;
 }
 
 function assertPlanningTransitionReport(
@@ -79,6 +155,7 @@ function assertPlanningTransitionReport(
     throw invalidPlanningReport();
   }
   const exactKeys = [
+    'archiveApplicability',
     'artifactDigests',
     'branch',
     'changeId',
@@ -104,17 +181,18 @@ function assertPlanningTransitionReport(
     !hasExactKeys(value, exactKeys) ||
     value.schemaVersion !== 1 ||
     value.kind !== 'planning-transition' ||
-    value.transition !== 'plan' ||
+    !['plan', 'amend-plan'].includes(String(value.transition)) ||
     !['introduction', 'revision'].includes(String(value.transitionKind)) ||
     !isIsoDate(value.createdAt) ||
     !isChangeId(value.changeId) ||
-    value.subject !== `Plan ${value.changeId}` ||
-    value.message !==
-      `${value.subject}\n\nChange: ${value.changeId}\nTransition: plan` ||
+    // The subject, message, and trailer block are checked against the exact
+    // transition the record claims, so an amendment cannot be recorded as a
+    // plan or the other way round.
+    value.subject !==
+      `${value.transition === 'plan' ? 'Plan' : 'Amend plan'} ${value.changeId}` ||
     !Array.isArray(value.trailers) ||
-    value.trailers.length !== 2 ||
-    value.trailers[0] !== `Change: ${value.changeId}` ||
-    value.trailers[1] !== 'Transition: plan' ||
+    !isExactTrailerBlock(value, value.trailers) ||
+    value.message !== `${value.subject}\n\n${value.trailers.join('\n')}` ||
     typeof value.branch !== 'string' ||
     value.headRef !== `refs/heads/${value.branch}` ||
     !isGitObject(value.tree) ||
@@ -125,10 +203,35 @@ function assertPlanningTransitionReport(
     !isParent(value.parent) ||
     !isTaskProjection(value.tasks) ||
     !isOpenSpecEvidence(value.openspec) ||
-    !isPlanningAssurance(value.planningAssurance)
+    !isPlanningAssurance(value.planningAssurance) ||
+    !isArchiveApplicability(value.archiveApplicability)
   ) {
     throw invalidPlanningReport();
   }
+}
+
+function isArchiveApplicability(
+  value: unknown,
+): value is ArchiveApplicabilityRecord {
+  if (!isRecord(value)) return false;
+  if (value.status === 'not-recorded') {
+    return hasExactKeys(value, ['status']);
+  }
+  return (
+    value.status === 'passed' &&
+    hasExactKeys(value, [
+      'status',
+      'validatedAt',
+      'validatedBaseCommit',
+      'validatedBaseSpecDigests',
+      'validatorVersion',
+    ]) &&
+    isIsoDate(value.validatedAt) &&
+    isGitObject(value.validatedBaseCommit) &&
+    isPossiblyEmptyDigestRecord(value.validatedBaseSpecDigests) &&
+    typeof value.validatorVersion === 'string' &&
+    value.validatorVersion !== ''
+  );
 }
 
 function isPlanningAssurance(
@@ -211,9 +314,15 @@ function isTaskProjection(
 ): value is PlanningTransitionReport['tasks'] {
   return (
     isRecord(value) &&
-    hasExactKeys(value, ['after', 'before']) &&
+    // A record written before amendments existed carries two keys; one that
+    // reopened work carries the named list as well.
+    (hasExactKeys(value, ['after', 'before']) ||
+      hasExactKeys(value, ['after', 'before', 'reopened'])) &&
     (value.before === null || isTaskStates(value.before)) &&
-    isTaskStates(value.after)
+    isTaskStates(value.after) &&
+    (value.reopened === undefined ||
+      (Array.isArray(value.reopened) &&
+        value.reopened.every((id) => /^\d+(?:\.\d+)+$/.test(String(id)))))
   );
 }
 
@@ -256,6 +365,16 @@ function isSortedUniqueStrings(value: unknown): value is string[] {
     value.length > 0 &&
     JSON.stringify(value) === JSON.stringify([...new Set(value)].sort())
   );
+}
+
+/**
+ * A plan that changes no delta spec validated no base spec, and an empty map
+ * is the accurate record of that rather than a missing one.
+ */
+function isPossiblyEmptyDigestRecord(
+  value: unknown,
+): value is Record<string, string> {
+  return isRecord(value) && Object.values(value).every(isDigest);
 }
 
 function isDigestRecord(value: unknown): value is Record<string, string> {

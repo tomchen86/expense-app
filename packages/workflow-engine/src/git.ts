@@ -1272,6 +1272,7 @@ function digestGovernedRuntimeInputs(
         [...expectedFiles, ...mutableContentPaths].some(
           (relativePath) =>
             relativePath === '' ||
+            relativePath === '..' ||
             path.isAbsolute(relativePath) ||
             path.posix.normalize(relativePath) !== relativePath ||
             relativePath.startsWith('../') ||

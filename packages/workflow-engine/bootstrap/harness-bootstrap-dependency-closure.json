@@ -1,0 +1,364 @@
+{
+  "kind": "harness-bootstrap-dependency-closure.v1",
+  "entrypoint": "bootstrap/recovery-runtime/src/harness-bootstrap.js",
+  "boundary": "sealed-e1-independent-recovery-runtime",
+  "scope": "compiled-transitive-runtime",
+  "claim": "This sealed compiled recovery runtime is independent of the mutable E1 src tree and remains usable when E1 cannot load.",
+  "files": [
+    {
+      "path": "bootstrap/recovery-runtime/bootstrap/built-in-engine-closure-pin.js",
+      "mode": "100644",
+      "digest": "sha256:5e7d1f6e4b8db313352c47d40d242b22f4d001bb059dcc99ae1c2d0c7cf42680"
+    },
+    {
+      "path": "bootstrap/recovery-runtime/src/actor-identity.js",
+      "mode": "100644",
+      "digest": "sha256:9ecf315c7979c1b0a08dc3d35dea32accea16c19eea8a979b2076adf9661e717"
+    },
+    {
+      "path": "bootstrap/recovery-runtime/src/ai-adapter-policy.js",
+      "mode": "100644",
+      "digest": "sha256:9eea6cd361aecfd880d54ef4a890b6573afe7972c40b8615e631014fb7e408a1"
+    },
+    {
+      "path": "bootstrap/recovery-runtime/src/authority-audit-ledger.js",
+      "mode": "100644",
+      "digest": "sha256:cd74c7c23fe5a3f9a72065884841e31082ef7df44e6ec1491d791da050603c84"
+    },
+    {
+      "path": "bootstrap/recovery-runtime/src/authority-audit-service.js",
+      "mode": "100644",
+      "digest": "sha256:de95940b9e39174ae27074bb6d4f5a6407899c409443d71245bc0a2885559f78"
+    },
+    {
+      "path": "bootstrap/recovery-runtime/src/authority-refusal-audit.js",
+      "mode": "100644",
+      "digest": "sha256:81fdb434b0cf6f26474d549b2a553687e6b70bf13ecb89f4ee3a04fe8284826b"
+    },
+    {
+      "path": "bootstrap/recovery-runtime/src/canonical-json.js",
+      "mode": "100644",
+      "digest": "sha256:71eaffbe54dbcf5294f04c39f0bf0eff8a8f30323c43f313f01888f9162df19c"
+    },
+    {
+      "path": "bootstrap/recovery-runtime/src/class-disposition.js",
+      "mode": "100644",
+      "digest": "sha256:e2ff1ad186132f8addcf75f39ba827474f062daf7bfc57635191367c67e7ffa9"
+    },
+    {
+      "path": "bootstrap/recovery-runtime/src/class-sample-audit.js",
+      "mode": "100644",
+      "digest": "sha256:17aa628ae31caaa0c605cf4a5467eae9ea9f9d136bf6d1805cf0d5f2bb90cc85"
+    },
+    {
+      "path": "bootstrap/recovery-runtime/src/claude-provider-adapter.js",
+      "mode": "100644",
+      "digest": "sha256:21e1a1c02d226a7982f7b4c785f6a336af1108424753ec73530ff7b47fe9b57d"
+    },
+    {
+      "path": "bootstrap/recovery-runtime/src/codex-provider-adapter.js",
+      "mode": "100644",
+      "digest": "sha256:2c4980ae41d915c5232ee04c1aa45af5f506233f1fd5def34c9cad13d12af2ee"
+    },
+    {
+      "path": "bootstrap/recovery-runtime/src/collaboration-grant-store.js",
+      "mode": "100644",
+      "digest": "sha256:306d2d401a84d3c0e76562d14501bcff1ab03f4531858a33f1a5e2da018db811"
+    },
+    {
+      "path": "bootstrap/recovery-runtime/src/collaboration-grant.js",
+      "mode": "100644",
+      "digest": "sha256:1d973ffa84500b0784aea766bfa789531b1947837867a1649c7a38a3270a9501"
+    },
+    {
+      "path": "bootstrap/recovery-runtime/src/content-record-store.js",
+      "mode": "100644",
+      "digest": "sha256:2b68968c320e5b13b7d8d1f04824b2cae31a43ea2b2a29dde950e2f1417e4afd"
+    },
+    {
+      "path": "bootstrap/recovery-runtime/src/contract-artifacts.js",
+      "mode": "100644",
+      "digest": "sha256:9d8db2dd13a75c9b01d2e8c9bd3f84f567f6717ac21ee067bef537366fb83588"
+    },
+    {
+      "path": "bootstrap/recovery-runtime/src/contract-values.js",
+      "mode": "100644",
+      "digest": "sha256:c1987c0379947e443270d27af46f490dc2ba75b1616e0b93f34a1f52fcd40764"
+    },
+    {
+      "path": "bootstrap/recovery-runtime/src/contracts.js",
+      "mode": "100644",
+      "digest": "sha256:5c9c9a24f26409b15318f0b3cfed5042549e50c085bb0653d78cdca9a71efbb7"
+    },
+    {
+      "path": "bootstrap/recovery-runtime/src/errors.js",
+      "mode": "100644",
+      "digest": "sha256:ab21b9d3cdec61ea568fc942e6b54d92d46d6b7aa8cc5408ade18316e65cc394"
+    },
+    {
+      "path": "bootstrap/recovery-runtime/src/evidence-convergence.js",
+      "mode": "100644",
+      "digest": "sha256:1131ee79d4c292439a09e89a062e8385a5d5be4a7b09c7502effa3e186de283e"
+    },
+    {
+      "path": "bootstrap/recovery-runtime/src/evidence-currentness.js",
+      "mode": "100644",
+      "digest": "sha256:921566d8a4824e76caeedf1080965638bbe797c1cce007f0bc8e92d23f038a4e"
+    },
+    {
+      "path": "bootstrap/recovery-runtime/src/evidence-node.js",
+      "mode": "100644",
+      "digest": "sha256:55561531d5f86f2ad503903da15bca66316876004166a05f9415208b8cab6a19"
+    },
+    {
+      "path": "bootstrap/recovery-runtime/src/evidence-object-store.js",
+      "mode": "100644",
+      "digest": "sha256:c8cbb47cefeb905a64a6168a92e2959c5b4e60da76868ee4e630510013003aea"
+    },
+    {
+      "path": "bootstrap/recovery-runtime/src/execution-core.js",
+      "mode": "100644",
+      "digest": "sha256:a460c46737be255a8fb9ed079947ae6cbc5d8ea2fbda88f345d0cef02028a47d"
+    },
+    {
+      "path": "bootstrap/recovery-runtime/src/execution-environment.js",
+      "mode": "100644",
+      "digest": "sha256:0b47ea7b5425605b88d17aa846f5d48858d3fe3e666087cf9a7e583c1307dc99"
+    },
+    {
+      "path": "bootstrap/recovery-runtime/src/execution-governance.js",
+      "mode": "100644",
+      "digest": "sha256:c88d09f8b641c838e2def54b8edfb381024b9312dd4fd17939f6d63b4de3a958"
+    },
+    {
+      "path": "bootstrap/recovery-runtime/src/execution-store.js",
+      "mode": "100644",
+      "digest": "sha256:ca14a416cbe15fa77044d9e463594447a6caffbdf286c82e84e7d5f2d94104f8"
+    },
+    {
+      "path": "bootstrap/recovery-runtime/src/filesystem-safety.js",
+      "mode": "100644",
+      "digest": "sha256:2ba73ec78e12195907ea0c21037c9bd96dc5f9653481ddc815cbc6994ad7cadf"
+    },
+    {
+      "path": "bootstrap/recovery-runtime/src/git-transitions.js",
+      "mode": "100644",
+      "digest": "sha256:9e4f05e6ba04e6739acdd6e78f97139957f6f12a62f20bfdecc8b4bc74dc9e1f"
+    },
+    {
+      "path": "bootstrap/recovery-runtime/src/git.js",
+      "mode": "100644",
+      "digest": "sha256:e2c1e1b6a31782b112c3eafa5ee62acd2baeb27c33b5cc4948cf9199280c64c1"
+    },
+    {
+      "path": "bootstrap/recovery-runtime/src/harness-bootstrap.js",
+      "mode": "100755",
+      "digest": "sha256:77ebd66b869be023a1e5430ae50b9ea474788573f66513289df2e46b54369153"
+    },
+    {
+      "path": "bootstrap/recovery-runtime/src/hit-predicate.js",
+      "mode": "100644",
+      "digest": "sha256:f3bec596e6976688d91e1eaa6e57ca4e9f46b1aa798d8aa6e02e1c96d0d48945"
+    },
+    {
+      "path": "bootstrap/recovery-runtime/src/human-revocation.js",
+      "mode": "100644",
+      "digest": "sha256:3ae8d8158cb890dd9cba18ee4a847e9a4fb7f508a528f564af3ae2572e83ac0c"
+    },
+    {
+      "path": "bootstrap/recovery-runtime/src/intervention-control-bootstrap-cli.js",
+      "mode": "100644",
+      "digest": "sha256:806b60a62e5ace4d4930f53f3fafed24c6be8398a5c67949b3d30d4dce09e37e"
+    },
+    {
+      "path": "bootstrap/recovery-runtime/src/intervention-control-bootstrap.js",
+      "mode": "100644",
+      "digest": "sha256:a4139075f03702f4f1e5ad71beeacc46a1f6aeff316f60af2150d1d22dc3ebfe"
+    },
+    {
+      "path": "bootstrap/recovery-runtime/src/intervention-control-persistence.js",
+      "mode": "100644",
+      "digest": "sha256:df0b11d1b09b8bc218b39ba9a8c58caed617f9fb41f1e9374cdeb9edac503e85"
+    },
+    {
+      "path": "bootstrap/recovery-runtime/src/intervention-control-updater.js",
+      "mode": "100644",
+      "digest": "sha256:4fa80d8cb72dde5c06f9d9082efb16621637347c26e4168a8809bc9101a7d617"
+    },
+    {
+      "path": "bootstrap/recovery-runtime/src/intervention-control.js",
+      "mode": "100644",
+      "digest": "sha256:e0f9be2e9d7991cb15b4a6dbc92a610d6cbb04e4f037e847f45685bd371ac091"
+    },
+    {
+      "path": "bootstrap/recovery-runtime/src/intervention-maintenance.js",
+      "mode": "100644",
+      "digest": "sha256:8866d8291dd25372480bd04c7766c88fb41cbbe46b375863fa7f7758f4f63b82"
+    },
+    {
+      "path": "bootstrap/recovery-runtime/src/investigation-applicability.js",
+      "mode": "100644",
+      "digest": "sha256:7997f164c0a32dbc930c7254f7353f0365212a4f84e4db4aec64fabcb065a816"
+    },
+    {
+      "path": "bootstrap/recovery-runtime/src/investigation-groups.js",
+      "mode": "100644",
+      "digest": "sha256:cc63c3517ff3007bc1a5eeb2d83d9438fd30157697c6b1de89b1c777b2d0d26e"
+    },
+    {
+      "path": "bootstrap/recovery-runtime/src/investigation-scanner.js",
+      "mode": "100644",
+      "digest": "sha256:e7952a7f92bbc0ef08d4cd0badf98e838f730672d1ed58f149f1a263258ea494"
+    },
+    {
+      "path": "bootstrap/recovery-runtime/src/investigation-session-store.js",
+      "mode": "100644",
+      "digest": "sha256:8e277d41605e59f00ee2105f02633a0ca610471a7a46f55cf00a10280ec1fd89"
+    },
+    {
+      "path": "bootstrap/recovery-runtime/src/investigation-terms.js",
+      "mode": "100644",
+      "digest": "sha256:c2b80d3e825b030003373185202a48f9d9312ff34b09194589ae1b5f47dfbd5d"
+    },
+    {
+      "path": "bootstrap/recovery-runtime/src/investigation-why.js",
+      "mode": "100644",
+      "digest": "sha256:415bcc1169d618b60a84a46e089566b8c6dc96eb006129e4f3664da1e684a9e6"
+    },
+    {
+      "path": "bootstrap/recovery-runtime/src/legacy-plan-migration.js",
+      "mode": "100644",
+      "digest": "sha256:cc02889d41d8dd1c118511c2fc90484fb6de0891937b8922346afbbb50cd49a3"
+    },
+    {
+      "path": "bootstrap/recovery-runtime/src/maintainer-policy.js",
+      "mode": "100644",
+      "digest": "sha256:a5fbaa859da05df404a9620f5541846e41da61b131b488d8ef8ec183f4510117"
+    },
+    {
+      "path": "bootstrap/recovery-runtime/src/maintainer-signer.js",
+      "mode": "100644",
+      "digest": "sha256:cb813c5ae2a56e7de8971e85d3601cdc62d86f6fe6fe9a928cbeaf91043b2d1b"
+    },
+    {
+      "path": "bootstrap/recovery-runtime/src/managed-trailers.js",
+      "mode": "100644",
+      "digest": "sha256:792e49211ed1c8104ce45482e64c6c01ad22354f95c97f0d900c57a365c033f8"
+    },
+    {
+      "path": "bootstrap/recovery-runtime/src/mutation-class-policy.js",
+      "mode": "100644",
+      "digest": "sha256:735d9ce1e125088510e4a218b6f80220ddece90f934844208f1aeb759a3bf4aa"
+    },
+    {
+      "path": "bootstrap/recovery-runtime/src/path-role-registry.js",
+      "mode": "100644",
+      "digest": "sha256:1092bba8b583b055db21944e60115bb165ae376342dcfddb1349e31f3f417c7b"
+    },
+    {
+      "path": "bootstrap/recovery-runtime/src/paths.js",
+      "mode": "100644",
+      "digest": "sha256:aa694de6f98853e2a2158120bb0d84555d27e5fd673761ec09b91d50881b17ba"
+    },
+    {
+      "path": "bootstrap/recovery-runtime/src/plan-review.js",
+      "mode": "100644",
+      "digest": "sha256:d4129c5af30099dd46995d21a6843520eb1315c951b613510ae2f6237e56444f"
+    },
+    {
+      "path": "bootstrap/recovery-runtime/src/plan-target.js",
+      "mode": "100644",
+      "digest": "sha256:2d4671e8659de41a87f4534670d9c52a1e036958c40fa58f5d84902ea56086a9"
+    },
+    {
+      "path": "bootstrap/recovery-runtime/src/planning-generation.js",
+      "mode": "100644",
+      "digest": "sha256:b0e9a9adf0dbdc26d3e074fdc94a21f81032bfe651569a1a0295ba45a8a24f9b"
+    },
+    {
+      "path": "bootstrap/recovery-runtime/src/planning-lock.js",
+      "mode": "100644",
+      "digest": "sha256:d750cf315a9adc4ee9b1308d14320dc66f7fd5d31b40aff17a23b0af55ac0313"
+    },
+    {
+      "path": "bootstrap/recovery-runtime/src/predicate-discrimination.js",
+      "mode": "100644",
+      "digest": "sha256:83bee3bd7bc924afbb0f4d289c4279312f513dbda5feb66b3e82ac8635a9fe66"
+    },
+    {
+      "path": "bootstrap/recovery-runtime/src/propose-exemption-store.js",
+      "mode": "100644",
+      "digest": "sha256:bfa402779c5bbdb36eb03ba428c1e340b2a8f140432d27a68491a2871ed69c20"
+    },
+    {
+      "path": "bootstrap/recovery-runtime/src/provider-contracts.js",
+      "mode": "100644",
+      "digest": "sha256:edf905628816abe54728e3eedcd304b65a1b23a1c7bf0a8bcc14d4b1568a0583"
+    },
+    {
+      "path": "bootstrap/recovery-runtime/src/provider-execution-governance.js",
+      "mode": "100644",
+      "digest": "sha256:4a43991e1091feb26fb4ff34c3967278279663a5eeef19a868e6730fa48e981d"
+    },
+    {
+      "path": "bootstrap/recovery-runtime/src/provider-execution-policy-authority.js",
+      "mode": "100644",
+      "digest": "sha256:af80f9dab3738b7c4b32c60b0163126df25f87754a0e7dd91abec6b57c67f559"
+    },
+    {
+      "path": "bootstrap/recovery-runtime/src/provider-invocation-store.js",
+      "mode": "100644",
+      "digest": "sha256:e3f65edbb8e0279b0ad3ff48b0915c94a6ec865550d30707fa6e8195387928dc"
+    },
+    {
+      "path": "bootstrap/recovery-runtime/src/provider-invocation-supersession-schema.js",
+      "mode": "100644",
+      "digest": "sha256:c58119d85f791d7bea2106b5adf69c9944f7bae237a91544e63a47f420527738"
+    },
+    {
+      "path": "bootstrap/recovery-runtime/src/provider-invocation-supersession.js",
+      "mode": "100644",
+      "digest": "sha256:18b7d41982687045af7c66ebeab2236820e2118050b238ae0777427ecb30d7e7"
+    },
+    {
+      "path": "bootstrap/recovery-runtime/src/provider-registry.js",
+      "mode": "100644",
+      "digest": "sha256:919e3a4cbfb50c2308c14e1c9efa3449cba1dbbcc5197c4a0d05410f86a1bdea"
+    },
+    {
+      "path": "bootstrap/recovery-runtime/src/provider-retention-catalog.js",
+      "mode": "100644",
+      "digest": "sha256:769154d08fc00eb5e7cafafa8b786022465172c509171def311a3e7ee1fbb17d"
+    },
+    {
+      "path": "bootstrap/recovery-runtime/src/provider-retention-receipt.js",
+      "mode": "100644",
+      "digest": "sha256:8cd1818a2806508d009e47c48dc9bbbb8435ede16e9efdc90ac8797aa7dae90a"
+    },
+    {
+      "path": "bootstrap/recovery-runtime/src/provider-runner.js",
+      "mode": "100644",
+      "digest": "sha256:bb698c355280b9c91dabca410f30ad01b14b75279caf43e0c49e8eacbf5c0f83"
+    },
+    {
+      "path": "bootstrap/recovery-runtime/src/role-scheduler.js",
+      "mode": "100644",
+      "digest": "sha256:7bfe30ba3380e53d5d90489ba5b2a0417d286fb3f437a21bb8be81a37747541f"
+    },
+    {
+      "path": "bootstrap/recovery-runtime/src/session-store.js",
+      "mode": "100644",
+      "digest": "sha256:c92f6b11b34f7bb66e931643bee3a44947112c9f72838c30864537e6776bb195"
+    },
+    {
+      "path": "bootstrap/recovery-runtime/src/task-mandate.js",
+      "mode": "100644",
+      "digest": "sha256:98fd6dc800162f34011ab62157975da28c1e5b0c5f2a040080e661c24491d445"
+    },
+    {
+      "path": "bootstrap/recovery-runtime/src/tracked-tree-reader.js",
+      "mode": "100644",
+      "digest": "sha256:7b5b9f846c56e7ddff0e1e94c8438ccdc8033c456eee945904e240b0a061c0b3"
+    }
+  ]
+}

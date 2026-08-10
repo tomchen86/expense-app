@@ -35,7 +35,7 @@ export const PROPOSE_EXEMPTION_SESSION_STORE_POLICY_DIGEST = sha256(
  * limits within these bounds.
  */
 export const MAX_PROVIDER_LIMITS = Object.freeze({
-  timeoutMs: 600_000,
+  timeoutMs: 3_600_000,
   aggregateOutputBytes: 1_048_576,
 });
 
@@ -434,15 +434,7 @@ export function evaluateProviderProcess(
 ): ProviderProcessResult {
   // 1. Process-level failure — timeout (flag or elapsed), signal, spawn error,
   //    or non-zero exit — is never a success.
-  if (
-    outcome.timedOut ||
-    outcome.elapsedMs > request.limits.timeoutMs ||
-    outcome.signal !== null ||
-    outcome.spawnErrorCode !== null ||
-    outcome.exitCode !== 0
-  ) {
-    throw processFailed();
-  }
+  assertProviderProcessSucceeded(outcome, request.limits.timeoutMs);
 
   // 2. Exactly one JSON value on stdout.
   const parsed = parseSingleJson(outcome.stdout);
@@ -756,12 +748,99 @@ function resultUnbound(field: string): WorkflowError {
   );
 }
 
-function processFailed(): WorkflowError {
-  return workflowError(
-    'PROVIDER_PROCESS_FAILED',
-    'Provider process timed out, was signaled, failed to spawn, or exited non-zero.',
-    ExitCode.verification,
+export function assertProviderProcessSucceeded(
+  outcome: ProviderProcessOutcome,
+  timeoutMs: number,
+): void {
+  if (outcome.timedOut || outcome.elapsedMs > timeoutMs) {
+    throw workflowError(
+      'PROVIDER_TIMEOUT',
+      'Provider process exceeded its bound execution timeout.',
+      ExitCode.verification,
+    );
+  }
+  if (outcome.spawnErrorCode !== null) {
+    if (
+      [
+        'EAI_AGAIN',
+        'ECONNABORTED',
+        'ECONNREFUSED',
+        'ECONNRESET',
+        'ENETDOWN',
+        'ENETUNREACH',
+        'ETIMEDOUT',
+      ].includes(outcome.spawnErrorCode)
+    ) {
+      throw workflowError(
+        'NETWORK_TRANSIENT',
+        'Provider process could not start because of a transient network failure.',
+        ExitCode.verification,
+      );
+    }
+    if (outcome.spawnErrorCode === 'ENOENT') {
+      throw workflowError(
+        'PROVIDER_TOOL_UNAVAILABLE',
+        'The configured provider executable is unavailable.',
+        ExitCode.verification,
+      );
+    }
+    throw workflowError(
+      'PROVIDER_PROCESS_CRASH',
+      'Provider process failed during process creation.',
+      ExitCode.verification,
+    );
+  }
+  if (outcome.signal !== null) {
+    throw workflowError(
+      'PROVIDER_PROCESS_CRASH',
+      'Provider process terminated from an operating-system signal.',
+      ExitCode.verification,
+    );
+  }
+  if (
+    outcome.exitCode !== 0 &&
+    /(?:\b429\b|rate[\s_-]*limit|too many requests)/iu.test(
+      `${outcome.stdout}\n${outcome.stderr}`,
+    )
+  ) {
+    const retryAfterMs = extractProviderRetryAfterMs(
+      `${outcome.stdout}\n${outcome.stderr}`,
+    );
+    throw workflowError(
+      'PROVIDER_RATE_LIMIT',
+      'Provider process reported a rate limit.',
+      ExitCode.verification,
+      retryAfterMs === null ? {} : { details: { retryAfterMs } },
+    );
+  }
+  if (outcome.exitCode !== 0) {
+    throw workflowError(
+      'PROVIDER_PROCESS_NONZERO',
+      'Provider process exited with a non-zero status.',
+      ExitCode.verification,
+    );
+  }
+}
+
+/**
+ * Preserve only a bounded numeric Retry-After hint. HTTP dates are deliberately
+ * ignored because the provider process outcome has no trusted response clock.
+ */
+function extractProviderRetryAfterMs(output: string): number | null {
+  const millisecondMatch = output.match(
+    /(?:retry[-_ ]after[-_ ]ms|retry_after_ms)\s*[:=]\s*(\d{1,9})/iu,
   );
+  const secondMatch = output.match(
+    /(?:retry[-_ ]after|retry_after)\s*[:=]\s*(\d{1,7})(?:\s*(?:s|sec|seconds?))?/iu,
+  );
+  const value = millisecondMatch
+    ? Number(millisecondMatch[1])
+    : secondMatch
+      ? Number(secondMatch[1]) * 1_000
+      : null;
+  return value !== null && Number.isSafeInteger(value) && value <= 86_400_000
+    ? value
+    : null;
 }
 
 function outputLimitExceeded(): WorkflowError {
