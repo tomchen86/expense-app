@@ -19,15 +19,22 @@ import {
   produceControlPlaneApprovalCandidateV2,
   produceControlPlaneApprovalCandidateV3,
 } from '../src/control-plane-promotion-producer.ts';
-import { readControlPlaneSupervisorHistory } from '../src/control-plane-supervisor-history.ts';
+import {
+  readControlPlaneSupervisorHistory,
+  readControlPlaneSupervisorHistoryProgress,
+} from '../src/control-plane-supervisor-history.ts';
 import {
   persistControlPlaneApprovalCandidateV3,
   preflightControlPlaneApprovalCandidateV3,
+  readControlPlaneSupervisorState,
   readPersistedControlPlaneApprovalCandidateV3,
 } from '../src/intervention-control-updater.ts';
+import { readPersistedControlPlaneUpdate } from '../src/intervention-control-persistence.ts';
+import { dispatchProductionControlPlaneUpdaterCommand } from '../src/intervention-control-updater-cli.ts';
 import {
   CONTROL_PLANE_FIXTURE_GRANT_SIGNER,
   CONTROL_PLANE_FIXTURE_REVIEWER,
+  controlPlaneFixtureUpdaterDependencies,
   prepareSuccessorControlPlaneCandidate,
   setupControlPlaneProducerFixture,
   setupFinalizedControlPlanePromotionFixture,
@@ -316,6 +323,291 @@ test('production successor producer anchors an independently verified V2 termina
       produced.candidate.bundle.lineage.candidateTrustCommit,
       successor.frozen.candidateCommit,
     );
+    const promoted = dispatchProductionControlPlaneUpdaterCommand(
+      [
+        'approve-and-apply',
+        produced.candidate.candidateId,
+        '--task',
+        successor.frozen.mandateBinding.mandateTaskId,
+      ],
+      fixture.stateRoot,
+      controlPlaneFixtureUpdaterDependencies(
+        successor.frozen,
+        fixture.signing.signer(CONTROL_PLANE_FIXTURE_GRANT_SIGNER, {
+          human: 0,
+          sign: 0,
+        }),
+        fixture.signing.verifier,
+        [],
+        new Date('2026-08-10T10:09:00.000Z'),
+      ),
+      fs.realpathSync(fixture.repository),
+    );
+    assert.equal(promoted.record?.kind, 'persisted-control-plane-update.v3');
+    assert.equal(promoted.record.transaction.state, 'FINALIZED');
+    assert.equal(promoted.supervisor.generation, 3);
+    const terminalHistory = readControlPlaneSupervisorHistory(
+      fixture.stateRoot,
+    );
+    assert.equal(terminalHistory.generation, 3);
+    assert.equal(
+      terminalHistory.leaf.kind,
+      'control-plane-supervisor-history-terminal.v1',
+    );
+    const next = prepareSuccessorControlPlaneCandidate(
+      {
+        repository: fixture.repository,
+        stateRoot: fixture.stateRoot,
+        frozen: successor.frozen,
+      },
+      {
+        changeId: 'intervention-d',
+        parentChangeId: 'parent-c',
+        mandateId: '44444444-4444-4444-8444-444444444444',
+        content: 'fixture protected control-plane candidate v3 generation 4\n',
+        commitMessage: 'Promote another successor intervention engine',
+      },
+    );
+    try {
+      const producedAgain = produceControlPlaneApprovalCandidateV3(
+        fs.realpathSync(fixture.repository),
+        fixture.stateRoot,
+        next.frozen.candidateBundleDigest,
+        {
+          now: () => new Date('2026-08-10T10:10:00.000Z'),
+          reviewSigner: fixture.signing.signer(CONTROL_PLANE_FIXTURE_REVIEWER, {
+            human: 0,
+            sign: 0,
+          }),
+          verifyHumanSignature: fixture.signing.verifier,
+          presentReviewSummary() {},
+        },
+      );
+      assert.equal(
+        producedAgain.candidate.bundle.lineage.previousGeneration,
+        3,
+      );
+      assert.equal(
+        producedAgain.candidate.bundle.lineage.previousTerminalRecordDigest,
+        terminalHistory.leaf.recordDigest,
+      );
+      const promotedAgain = dispatchProductionControlPlaneUpdaterCommand(
+        [
+          'approve-and-apply',
+          producedAgain.candidate.candidateId,
+          '--task',
+          next.frozen.mandateBinding.mandateTaskId,
+        ],
+        fixture.stateRoot,
+        controlPlaneFixtureUpdaterDependencies(
+          next.frozen,
+          fixture.signing.signer(CONTROL_PLANE_FIXTURE_GRANT_SIGNER, {
+            human: 0,
+            sign: 0,
+          }),
+          fixture.signing.verifier,
+          [],
+          new Date('2026-08-10T10:11:00.000Z'),
+        ),
+        fs.realpathSync(fixture.repository),
+      );
+      assert.equal(
+        promotedAgain.record?.kind,
+        'persisted-control-plane-update.v3',
+      );
+      assert.equal(promotedAgain.record.transaction.state, 'FINALIZED');
+      assert.equal(promotedAgain.supervisor.generation, 4);
+      assert.equal(
+        readControlPlaneSupervisorHistory(fixture.stateRoot).generation,
+        4,
+      );
+    } finally {
+      next.cleanup();
+    }
+  } finally {
+    successor.cleanup();
+    fixture.cleanup();
+  }
+});
+
+test('successor recovery publishes an already durable history transition before continuing', async () => {
+  const fixture = await setupFinalizedControlPlanePromotionFixture();
+  const successor = prepareSuccessorControlPlaneCandidate(fixture);
+  try {
+    const produced = produceControlPlaneApprovalCandidateV3(
+      fs.realpathSync(fixture.repository),
+      fixture.stateRoot,
+      successor.frozen.candidateBundleDigest,
+      {
+        now: () => new Date('2026-08-10T10:12:00.000Z'),
+        reviewSigner: fixture.signing.signer(CONTROL_PLANE_FIXTURE_REVIEWER, {
+          human: 0,
+          sign: 0,
+        }),
+        verifyHumanSignature: fixture.signing.verifier,
+        presentReviewSummary() {},
+      },
+    );
+    const dependencies = controlPlaneFixtureUpdaterDependencies(
+      successor.frozen,
+      fixture.signing.signer(CONTROL_PLANE_FIXTURE_GRANT_SIGNER, {
+        human: 0,
+        sign: 0,
+      }),
+      fixture.signing.verifier,
+      [],
+      new Date('2026-08-10T10:13:00.000Z'),
+    );
+    Object.assign(dependencies, {
+      testHooks: {
+        afterSupervisorHistoryTransition() {
+          throw new Error('history-transition-crash');
+        },
+      },
+    });
+    assert.throws(
+      () =>
+        dispatchProductionControlPlaneUpdaterCommand(
+          [
+            'approve-and-apply',
+            produced.candidate.candidateId,
+            '--task',
+            successor.frozen.mandateBinding.mandateTaskId,
+          ],
+          fixture.stateRoot,
+          dependencies,
+          fs.realpathSync(fixture.repository),
+        ),
+      /history-transition-crash/,
+    );
+
+    const grantId = approvalGrantId(produced.candidate.candidateId);
+    assert.equal(
+      readPersistedControlPlaneUpdate(fixture.stateRoot, grantId).transaction
+        .state,
+      'RECOVERY_VERIFIED',
+    );
+    assert.equal(
+      readControlPlaneSupervisorState(fixture.stateRoot).recordDigest,
+      fixture.supervisor.recordDigest,
+    );
+    const interruptedHistory = readControlPlaneSupervisorHistoryProgress(
+      fixture.stateRoot,
+    );
+    assert.equal(
+      interruptedHistory.leaf.kind,
+      'control-plane-supervisor-history-transition.v1',
+    );
+
+    const recovered = dispatchProductionControlPlaneUpdaterCommand(
+      ['recover', grantId],
+      fixture.stateRoot,
+      controlPlaneFixtureUpdaterDependencies(
+        successor.frozen,
+        fixture.signing.signer(CONTROL_PLANE_FIXTURE_GRANT_SIGNER, {
+          human: 0,
+          sign: 0,
+        }),
+        fixture.signing.verifier,
+        [],
+        new Date('2026-08-10T10:14:00.000Z'),
+      ),
+      fs.realpathSync(fixture.repository),
+    );
+    assert.equal(recovered.record?.transaction.state, 'FINALIZED');
+    assert.equal(recovered.supervisor.generation, 3);
+    assert.equal(
+      readControlPlaneSupervisorHistoryProgress(fixture.stateRoot).leaf.kind,
+      'control-plane-supervisor-history-terminal.v1',
+    );
+  } finally {
+    successor.cleanup();
+    fixture.cleanup();
+  }
+});
+
+test('successor recovery seals an already terminal transaction exactly once', async () => {
+  const fixture = await setupFinalizedControlPlanePromotionFixture();
+  const successor = prepareSuccessorControlPlaneCandidate(fixture);
+  try {
+    const produced = produceControlPlaneApprovalCandidateV3(
+      fs.realpathSync(fixture.repository),
+      fixture.stateRoot,
+      successor.frozen.candidateBundleDigest,
+      {
+        now: () => new Date('2026-08-10T10:15:00.000Z'),
+        reviewSigner: fixture.signing.signer(CONTROL_PLANE_FIXTURE_REVIEWER, {
+          human: 0,
+          sign: 0,
+        }),
+        verifyHumanSignature: fixture.signing.verifier,
+        presentReviewSummary() {},
+      },
+    );
+    const dependencies = controlPlaneFixtureUpdaterDependencies(
+      successor.frozen,
+      fixture.signing.signer(CONTROL_PLANE_FIXTURE_GRANT_SIGNER, {
+        human: 0,
+        sign: 0,
+      }),
+      fixture.signing.verifier,
+      [],
+      new Date('2026-08-10T10:16:00.000Z'),
+    );
+    Object.assign(dependencies, {
+      testHooks: {
+        beforeTerminalHistorySeal() {
+          throw new Error('terminal-history-seal-crash');
+        },
+      },
+    });
+    assert.throws(
+      () =>
+        dispatchProductionControlPlaneUpdaterCommand(
+          [
+            'approve-and-apply',
+            produced.candidate.candidateId,
+            '--task',
+            successor.frozen.mandateBinding.mandateTaskId,
+          ],
+          fixture.stateRoot,
+          dependencies,
+          fs.realpathSync(fixture.repository),
+        ),
+      /terminal-history-seal-crash/,
+    );
+
+    const grantId = approvalGrantId(produced.candidate.candidateId);
+    assert.equal(
+      readPersistedControlPlaneUpdate(fixture.stateRoot, grantId).transaction
+        .state,
+      'FINALIZED',
+    );
+    assert.equal(
+      readControlPlaneSupervisorHistoryProgress(fixture.stateRoot).leaf.kind,
+      'control-plane-supervisor-history-transition.v1',
+    );
+
+    const recovered = dispatchProductionControlPlaneUpdaterCommand(
+      ['recover', grantId],
+      fixture.stateRoot,
+      controlPlaneFixtureUpdaterDependencies(
+        successor.frozen,
+        fixture.signing.signer(CONTROL_PLANE_FIXTURE_GRANT_SIGNER, {
+          human: 0,
+          sign: 0,
+        }),
+        fixture.signing.verifier,
+        [],
+        new Date('2026-08-10T10:17:00.000Z'),
+      ),
+      fs.realpathSync(fixture.repository),
+    );
+    assert.equal(recovered.record?.transaction.state, 'FINALIZED');
+    assert.equal(
+      readControlPlaneSupervisorHistory(fixture.stateRoot).leaf.kind,
+      'control-plane-supervisor-history-terminal.v1',
+    );
   } finally {
     successor.cleanup();
     fixture.cleanup();
@@ -324,6 +616,10 @@ test('production successor producer anchors an independently verified V2 termina
 
 function digest(label: string): `sha256:${string}` {
   return `sha256:${crypto.createHash('sha256').update(label).digest('hex')}`;
+}
+
+function approvalGrantId(candidateId: string): string {
+  return `control-plane-approval-${candidateId.slice('sha256:'.length)}`;
 }
 
 function commit(label: string): string {

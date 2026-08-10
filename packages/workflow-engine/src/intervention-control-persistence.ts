@@ -24,11 +24,14 @@ import {
   prepareMinimalUpdaterTransaction,
   verifyControlPlaneGrant,
   verifyControlPlaneGrantV2,
+  verifyControlPlaneGrantV3,
   verifyHarnessMaintenanceGrant,
   verifyWipCheckpoint,
   type ControlPlaneGrantEnvelope,
   type ControlPlaneGrantEnvelopeV2,
+  type ControlPlaneGrantEnvelopeV3,
   type ControlPlanePromotionBundleV2,
+  type ControlPlanePromotionBundleV3,
   type ControlPlaneRecoveryDecision,
   type EngineAdoptionJournal,
   type EngineAdoptionRecoveryDecision,
@@ -286,8 +289,16 @@ export interface PersistedControlPlaneUpdateRecordV2 extends PersistedControlPla
   changes: ExactControlPlaneChangeV2[];
 }
 
+export interface PersistedControlPlaneUpdateRecordV3 extends PersistedControlPlaneUpdateRecordFields {
+  kind: 'persisted-control-plane-update.v3';
+  envelope: ControlPlaneGrantEnvelopeV3;
+  changes: ExactControlPlaneChangeV2[];
+}
+
 export type PersistedControlPlaneUpdateRecord =
-  PersistedControlPlaneUpdateRecordV1 | PersistedControlPlaneUpdateRecordV2;
+  | PersistedControlPlaneUpdateRecordV1
+  | PersistedControlPlaneUpdateRecordV2
+  | PersistedControlPlaneUpdateRecordV3;
 
 export function interventionControlPersistencePaths(
   requestedRoot: string,
@@ -1866,6 +1877,76 @@ export function preparePersistedControlPlaneUpdateV2(
   );
 }
 
+export function preparePersistedControlPlaneUpdateV3(
+  storageRoot: string,
+  input: {
+    txId: string;
+    envelope: ControlPlaneGrantEnvelopeV3;
+    beforeManifest: ProtectedCapabilityManifest;
+    afterManifest: ProtectedCapabilityManifest;
+    bundle: ControlPlanePromotionBundleV3;
+  },
+  dependencies: PersistenceHumanDependencies & {
+    consumedGrantIds?: ReadonlySet<string>;
+  },
+): PersistedControlPlaneUpdateRecordV3 {
+  const verifyHumanSignature = requireHumanVerifier(dependencies);
+  if (dependencies.consumedGrantIds === undefined) {
+    throw workflowError(
+      'INTERVENTION_CONTROL_CONSUMPTION_STATE_REQUIRED',
+      'Minimal updater v3 preparation requires trusted grant consumption state.',
+      ExitCode.guard,
+    );
+  }
+  const consumedGrantIds = dependencies.consumedGrantIds;
+  const now = persistenceNow(dependencies);
+  const grantId = input.envelope.payload.grantId;
+  return withPersistenceOperation(
+    storageRoot,
+    'control-update-reservation',
+    () => {
+      ensurePersistenceDirectories(storageRoot);
+      const target = controlPlaneUpdateRecordPath(storageRoot, grantId);
+      if (fs.existsSync(target)) {
+        readPersistedControlPlaneUpdate(storageRoot, grantId);
+        throw workflowError(
+          'INTERVENTION_CONTROL_GRANT_ALREADY_RESERVED_OR_CONSUMED',
+          'Control-Plane Grant already has a durable transaction.',
+          ExitCode.conflict,
+        );
+      }
+      assertUniqueControlTransactionId(storageRoot, input.txId);
+      const grant = verifyControlPlaneGrantV3(input.envelope, {
+        now,
+        beforeManifest: input.beforeManifest,
+        afterManifest: input.afterManifest,
+        bundle: input.bundle,
+        consumedGrantIds,
+        verifyHumanSignature,
+      });
+      const transaction = prepareMinimalUpdaterTransaction(grant, {
+        txId: input.txId,
+        now,
+      });
+      const record = withRecordDigest({
+        kind: 'persisted-control-plane-update.v3' as const,
+        grantState: 'reserved' as const,
+        transaction,
+        envelope: input.envelope,
+        beforeManifest: input.beforeManifest,
+        afterManifest: input.afterManifest,
+        changes: input.bundle.material.exactChanges,
+        observations: [] as PersistedTransitionObservation[],
+        createdAt: now.toISOString(),
+        updatedAt: now.toISOString(),
+        effectsPerformed: false as const,
+      });
+      createPrivateFileExclusive(target, serializeRecord(record));
+      return record;
+    },
+  );
+}
+
 export function advancePersistedControlPlaneUpdate(
   storageRoot: string,
   input: {
@@ -1918,34 +1999,13 @@ export function advancePersistedControlPlaneUpdate(
         transaction.state === 'FINALIZED' || transaction.state === 'ROLLED_BACK'
           ? 'consumed'
           : 'reserved';
-      const next: PersistedControlPlaneUpdateRecord =
-        current.kind === 'persisted-control-plane-update.v1'
-          ? withRecordDigest({
-              kind: current.kind,
-              grantState,
-              transaction,
-              envelope: current.envelope,
-              beforeManifest: current.beforeManifest,
-              afterManifest: current.afterManifest,
-              changes: current.changes,
-              observations: [...current.observations, observation],
-              createdAt: current.createdAt,
-              updatedAt: input.event.at,
-              effectsPerformed: false as const,
-            })
-          : withRecordDigest({
-              kind: current.kind,
-              grantState,
-              transaction,
-              envelope: current.envelope,
-              beforeManifest: current.beforeManifest,
-              afterManifest: current.afterManifest,
-              changes: current.changes,
-              observations: [...current.observations, observation],
-              createdAt: current.createdAt,
-              updatedAt: input.event.at,
-              effectsPerformed: false as const,
-            });
+      const next = advanceControlPlaneUpdateRecord(
+        current,
+        transaction,
+        observation,
+        grantState,
+        input.event.at,
+      );
       replacePrivateFileAtomic(
         controlPlaneUpdateRecordPath(storageRoot, input.grantId),
         serializeRecord(next),
@@ -1953,6 +2013,48 @@ export function advancePersistedControlPlaneUpdate(
       return next;
     },
   );
+}
+
+function advanceControlPlaneUpdateRecord(
+  current: PersistedControlPlaneUpdateRecord,
+  transaction: MinimalUpdaterTransaction,
+  observation: PersistedTransitionObservation,
+  grantState: 'reserved' | 'consumed',
+  updatedAt: string,
+): PersistedControlPlaneUpdateRecord {
+  const common = {
+    grantState,
+    transaction,
+    beforeManifest: current.beforeManifest,
+    afterManifest: current.afterManifest,
+    observations: [...current.observations, observation],
+    createdAt: current.createdAt,
+    updatedAt,
+    effectsPerformed: false as const,
+  };
+  switch (current.kind) {
+    case 'persisted-control-plane-update.v1':
+      return withRecordDigest({
+        ...common,
+        kind: current.kind,
+        envelope: current.envelope,
+        changes: current.changes,
+      });
+    case 'persisted-control-plane-update.v2':
+      return withRecordDigest({
+        ...common,
+        kind: current.kind,
+        envelope: current.envelope,
+        changes: current.changes,
+      });
+    case 'persisted-control-plane-update.v3':
+      return withRecordDigest({
+        ...common,
+        kind: current.kind,
+        envelope: current.envelope,
+        changes: current.changes,
+      });
+  }
 }
 
 export function recoverPersistedControlPlaneUpdate(
@@ -1980,7 +2082,8 @@ export function readPersistedControlPlaneUpdate(
   if (
     !isRecord(value) ||
     (value.kind !== 'persisted-control-plane-update.v1' &&
-      value.kind !== 'persisted-control-plane-update.v2') ||
+      value.kind !== 'persisted-control-plane-update.v2' &&
+      value.kind !== 'persisted-control-plane-update.v3') ||
     !hasExactKeys(value, [
       'afterManifest',
       'beforeManifest',

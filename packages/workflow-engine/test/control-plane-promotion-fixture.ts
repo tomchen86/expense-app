@@ -21,6 +21,7 @@ import { dispatchProductionControlPlaneUpdaterCommand } from '../src/interventio
 import {
   readControlPlaneSupervisorState,
   type ControlPlaneApprovalSummaryV2,
+  type ControlPlaneApprovalSummaryV3,
 } from '../src/intervention-control-updater.ts';
 import { persistInterventionEngineArtifact } from '../src/intervention-maintenance.ts';
 import {
@@ -304,10 +305,21 @@ export async function setupFinalizedControlPlanePromotionFixture(
 }
 
 export function prepareSuccessorControlPlaneCandidate(
-  fixture: Awaited<
-    ReturnType<typeof setupFinalizedControlPlanePromotionFixture>
-  >,
+  fixture: {
+    repository: string;
+    stateRoot: string;
+    frozen: { candidateCommit: string };
+  },
+  options: {
+    changeId?: string;
+    parentChangeId?: string;
+    mandateId?: string;
+    content?: string;
+    commitMessage?: string;
+  } = {},
 ) {
+  const changeId = options.changeId ?? 'intervention-c';
+  const parentChangeId = options.parentChangeId ?? 'parent-b';
   const repository = fs.realpathSync(fixture.repository);
   git(repository, ['reset', '--hard', fixture.frozen.candidateCommit]);
   git(repository, [
@@ -316,10 +328,13 @@ export function prepareSuccessorControlPlaneCandidate(
     fixture.frozen.candidateCommit,
   ]);
   const frozen = freezeClassCCandidate(repository, {
-    changeId: 'intervention-c',
-    mandateId: '33333333-3333-4333-8333-333333333333',
-    content: 'fixture protected control-plane candidate v3 successor\n',
-    commitMessage: 'Promote successor intervention engine',
+    changeId,
+    mandateId: options.mandateId ?? '33333333-3333-4333-8333-333333333333',
+    content:
+      options.content ??
+      'fixture protected control-plane candidate v3 successor\n',
+    commitMessage:
+      options.commitMessage ?? 'Promote successor intervention engine',
   });
   const childWorkspace = fs.realpathSync(
     fs.mkdtempSync(path.join(os.tmpdir(), 'control-plane-successor-child-')),
@@ -329,7 +344,7 @@ export function prepareSuccessorControlPlaneCandidate(
   const supervisor = readControlPlaneSupervisorState(fixture.stateRoot);
   persistInterventionPlan(fixture.stateRoot, {
     parent: {
-      changeId: 'parent-b',
+      changeId: parentChangeId,
       status: 'active',
       engineBinding: supervisor.activeArtifact.executableDigest,
       sessionSchema: 'v4',
@@ -337,7 +352,7 @@ export function prepareSuccessorControlPlaneCandidate(
     },
     interventionChangeId: frozen.mandateBinding.changeId,
     checkpoint: {
-      parentChangeId: 'parent-b',
+      parentChangeId,
       baseOid: frozen.expectedOldCommit,
       worktreeFingerprint: controlPlaneFixtureDigest('successor-worktree'),
       trackedTreeDigest: controlPlaneFixtureDigest('successor-tracked-tree'),
@@ -375,7 +390,7 @@ export function prepareSuccessorControlPlaneCandidate(
     smokeReportDigest: controlPlaneFixtureDigest('successor-smoke'),
   });
   persistInterventionEngineArtifact(fixture.stateRoot, {
-    parentChangeId: 'parent-b',
+    parentChangeId,
     artifact: candidateArtifact,
     executablePath: candidateExecutable,
     now: new Date('2026-08-10T10:07:00.000Z'),
@@ -413,6 +428,7 @@ export function controlPlaneFixtureUpdaterDependencies(
     presentApprovalSummaryV2(summary: ControlPlaneApprovalSummaryV2) {
       summaries.push(summary);
     },
+    presentApprovalSummaryV3(_summary: ControlPlaneApprovalSummaryV3) {},
     resolveTaskMandateBinding() {
       return mandateBinding;
     },

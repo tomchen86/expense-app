@@ -52,6 +52,7 @@ import {
   findPersistedControlPlaneApprovalCandidateV3ByMaterialLineageAndReviewer,
   persistControlPlaneApprovalCandidateV2,
   persistControlPlaneApprovalCandidateV3,
+  readPersistedControlPlaneApprovalCandidateCurrent,
   readPersistedControlPlaneApprovalCandidateV2,
   readControlPlaneSupervisorState,
   type PersistedControlPlaneApprovalCandidateV2,
@@ -908,11 +909,14 @@ function ensureTerminalSupervisorHistory(
         restartArtifact: readBuiltInControlPlaneEngineArtifact(stateRoot),
       };
     }
-    throw producerError(
-      'CONTROL_PLANE_PRODUCER_HISTORY_ARTIFACT_UNAVAILABLE',
-      'A non-initial history leaf must resolve its active artifact through a terminal update record.',
-      ExitCode.staleState,
-    );
+    return {
+      history,
+      restartArtifact: resolveTerminalHistoryArtifact(
+        stateRoot,
+        supervisor,
+        history,
+      ),
+    };
   }
   if (supervisor.generation !== 1 || supervisor.transition !== null) {
     return createLegacyV2SupervisorHistoryAnchor(
@@ -953,6 +957,65 @@ function ensureTerminalSupervisorHistory(
     history: readControlPlaneSupervisorHistory(stateRoot),
     restartArtifact: readBuiltInControlPlaneEngineArtifact(stateRoot),
   };
+}
+
+function resolveTerminalHistoryArtifact(
+  stateRoot: string,
+  supervisor: ReturnType<typeof readControlPlaneSupervisorState>,
+  history: VerifiedControlPlaneSupervisorHistory,
+): ReturnType<typeof readBuiltInControlPlaneEngineArtifact> {
+  const leaf = history.leaf;
+  const grantId =
+    leaf.kind === 'control-plane-supervisor-history-anchor.v1'
+      ? leaf.authority.kind === 'legacy-v2-terminal-anchor.v1'
+        ? leaf.authority.grantId
+        : null
+      : leaf.grantId;
+  if (grantId === null) {
+    throw producerError(
+      'CONTROL_PLANE_PRODUCER_HISTORY_ARTIFACT_UNAVAILABLE',
+      'The terminal history leaf has no material-bound update authority.',
+      ExitCode.verification,
+    );
+  }
+  const record = readPersistedControlPlaneUpdate(stateRoot, grantId);
+  if (
+    record.kind === 'persisted-control-plane-update.v1' ||
+    record.grantState !== 'consumed' ||
+    (record.transaction.state !== 'FINALIZED' &&
+      record.transaction.state !== 'ROLLED_BACK')
+  ) {
+    throw producerError(
+      'CONTROL_PLANE_PRODUCER_HISTORY_MISMATCH',
+      'The terminal history record points to a non-terminal update.',
+      ExitCode.verification,
+    );
+  }
+  const candidate = readPersistedControlPlaneApprovalCandidateCurrent(
+    stateRoot,
+    record.envelope.payload.promotionBundleDigest,
+  );
+  const material = candidate.bundle.material;
+  const artifact =
+    record.transaction.state === 'FINALIZED'
+      ? material.candidateArtifact
+      : material.recoveryBundle.restartArtifact;
+  if (
+    artifact.artifactId !== supervisor.activeArtifact.artifactId ||
+    artifact.executableDigest !== supervisor.activeArtifact.executableDigest ||
+    history.supervisorRecordDigest !== supervisor.recordDigest ||
+    history.generation !== supervisor.generation ||
+    (leaf.kind === 'control-plane-supervisor-history-terminal.v1' &&
+      (leaf.updateRecordDigest !== record.recordDigest ||
+        leaf.transactionJournalDigest !== record.transaction.journalDigest))
+  ) {
+    throw producerError(
+      'CONTROL_PLANE_PRODUCER_HISTORY_MISMATCH',
+      'The terminal history artifact differs from the current supervisor or update record.',
+      ExitCode.verification,
+    );
+  }
+  return artifact;
 }
 
 function createLegacyV2SupervisorHistoryAnchor(
