@@ -396,24 +396,25 @@ ordinary reviewed OpenSpec change plus planning commit on the exact
 
 ### Maintainer command reference
 
-| Command                                                                                                                                             | Use and boundary                                                                                                                                                                                                                                    |
-| --------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `pnpm workflow maintainer grant --change <id> --paths <exact-path> [--paths <exact-path> ...] --reason <text> [--ttl <minutes>m] [--uses 1] --json` | Interactively sign one grant bound to the current full base commit, base policy blob, repository, change, sorted exact eligible paths, reason, signer, expiry, and one use. The default and maximum TTL are 30 minutes.                             |
-| `pnpm workflow maintainer attest --original <commit> --main <commit> [--base <original>=<main> ...] --json`                                         | Interactively sign one canonical authority attestation binding a rebase-rewritten protected-main authority commit to its retained signed original, then create the immutable `workflow-attestation/<grant-id>` tag targeting the original.          |
-| `pnpm workflow maintainer inspect [grant-id] --json`                                                                                                | Read redacted available, reserved, consumed, or revoked local state. It grants no authority and exposes no private signing material.                                                                                                                |
-| `pnpm workflow maintainer revoke <grant-id> --reason <text> --json`                                                                                 | Human-only terminal revocation of an available or reserved grant with a durable reason. Repeating it is cleanup-safe; a consumed or revoked grant never becomes available again.                                                                    |
-| `pnpm workflow authority-start <change-id> --grant <grant-id> --json`                                                                               | Atomically reserve the grant on its exact clean base and `work/<change-id>` branch, then pin policy, contract, signer, exact paths, and the complete normal check set.                                                                              |
-| `pnpm workflow authority-check <session-id> --json`                                                                                                 | Require at least one changed granted path, reject every ungranted path, run all base-pinned normal checks, and record current content-addressed evidence. Any later edit makes it stale.                                                            |
-| `pnpm workflow authority-commit <session-id> --message "Imperative subject" --json`                                                                 | Revalidate human presence and the same signer, stage only the exact diff, create one SSH-signed authority-maintenance commit with engine-owned trailers, advance the ref, and consume the grant. There is no authority `complete-task` or `finish`. |
-| `pnpm workflow authority-recover <session-id> --json`                                                                                               | Resume only a durable authority-commit journal. It may complete the exact pending old-OID ref update or idempotent consumption; ambiguity terminally revokes the use.                                                                               |
-| `pnpm workflow authority-abort <session-id> --reason "Concrete reason" --json`                                                                      | Cancel an active session before commit journaling and terminally revoke the reservation. It does not discard or reset worktree edits.                                                                                                               |
+| Command                                                                                                                                                                         | Use and boundary                                                                                                                                                                                                                                    |
+| ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `pnpm workflow maintainer grant approve-and-apply --change <id> --task <task-id> --profile <profile-id> --reason <text> --message <subject> --effects-file <json\|none> --json` | Check, interactively sign, and atomically apply one immutable candidate under a short-lived one-shot V2 grant. The result includes the exact audit-tag `publishCommand` and post-merge `attestationRelayCommand`.                                   |
+| `pnpm workflow maintainer attestation-relay --original <commit> --json`                                                                                                         | After a rebase merge, find the exact rewritten protected-main commit and any rewritten grant base, then emit the literal `maintainer attest` and SSH tag-publish commands. This command is read-only and never signs.                               |
+| `pnpm workflow maintainer attest --original <commit> --main <commit> [--base <original>=<main> ...] --json`                                                                     | Interactively sign one canonical authority attestation binding a rebase-rewritten protected-main authority commit to its retained signed original, then create the immutable `workflow-attestation/<grant-id>` tag targeting the original.          |
+| `pnpm workflow maintainer inspect [grant-id] --json`                                                                                                                            | Read redacted available, reserved, consumed, or revoked local state. It grants no authority and exposes no private signing material.                                                                                                                |
+| `pnpm workflow maintainer revoke <grant-id> --reason <text> --json`                                                                                                             | Human-only terminal revocation of an available or reserved grant with a durable reason. Repeating it is cleanup-safe; a consumed or revoked grant never becomes available again.                                                                    |
+| `pnpm workflow authority-start <change-id> --grant <grant-id> --json`                                                                                                           | Atomically reserve the grant on its exact clean base and `work/<change-id>` branch, then pin policy, contract, signer, exact paths, and the complete normal check set.                                                                              |
+| `pnpm workflow authority-check <session-id> --json`                                                                                                                             | Require at least one changed granted path, reject every ungranted path, run all base-pinned normal checks, and record current content-addressed evidence. Any later edit makes it stale.                                                            |
+| `pnpm workflow authority-commit <session-id> --message "Imperative subject" --json`                                                                                             | Revalidate human presence and the same signer, stage only the exact diff, create one SSH-signed authority-maintenance commit with engine-owned trailers, advance the ref, and consume the grant. There is no authority `complete-task` or `finish`. |
+| `pnpm workflow authority-recover <session-id> --json`                                                                                                                           | Resume only a durable authority-commit journal. It may complete the exact pending old-OID ref update or idempotent consumption; ambiguity terminally revokes the use.                                                                               |
+| `pnpm workflow authority-abort <session-id> --reason "Concrete reason" --json`                                                                                                  | Cancel an active session before commit journaling and terminally revoke the reservation. It does not discard or reset worktree edits.                                                                                                               |
 
 Grant issuance creates both the local single-use token and an annotated audit
 tag. Run the exact `publishCommand` returned by the command immediately; it has
 this form:
 
 ```bash
-git push origin refs/tags/workflow-grant/<grant-id>:refs/tags/workflow-grant/<grant-id>
+git push git@github.com:<owner>/<repository>.git refs/tags/workflow-grant/<grant-id>:refs/tags/workflow-grant/<grant-id>
 ```
 
 Do not delete or replace the tag after revocation, failure, expiry, or
@@ -425,18 +426,14 @@ was created within that grant's original lifetime.
 
 ### Authority execution sequence
 
-Use one grant for one authority commit:
+Use one atomic V2 approval for one exact authority candidate:
 
 ```bash
-pnpm workflow maintainer grant --change <change-id> \
-  --paths <exact-authority-path> --reason "Reviewed reason" --json
-git push origin refs/tags/workflow-grant/<grant-id>:refs/tags/workflow-grant/<grant-id>
-pnpm workflow maintainer inspect <grant-id> --json
-pnpm workflow authority-start <change-id> --grant <grant-id> --json
-# Edit at least one and only the exact granted paths.
-pnpm workflow authority-check <session-id> --json
-pnpm workflow authority-commit <session-id> \
-  --message "Imperative authority subject" --json
+pnpm workflow maintainer grant approve-and-apply \
+  --change <change-id> --task <task-id> --profile <profile-id> \
+  --reason "Reviewed reason" --message "Imperative authority subject" \
+  --effects-file none --json
+# Run the exact publishCommand returned above.
 pnpm workflow maintainer inspect <grant-id> --json
 ```
 
@@ -477,18 +474,21 @@ workflow code plus previously trusted signer material decide whether the
 mapping is acceptable. A candidate commit can never validate its own evidence
 or add its own trust.
 
-After the authority PR merges, create the attestation from an updated, clean,
-controlling worktree whose fetched protected branch contains every claimed
-main commit:
+After the authority PR merges, update the protected remote-tracking ref and run
+the exact `attestationRelayCommand` returned by approve-and-apply (or by a
+recovered low-level authority commit). The relay derives the rewritten main and
+base OIDs without shell substitution and returns one literal signing command:
 
 ```bash
-pnpm workflow maintainer attest --original <original-commit> \
-  --main <protected-main-commit> [--base <original-base>=<main-base> ...] --json
+pnpm workflow maintainer attestation-relay --original <literal-original-commit> --json
+# Run the exact attestCommand returned above at the controlling TTY.
+# Then run the exact SSH publishCommand returned by maintainer attest.
 ```
 
-The command derives the primary grant from the authority trailers, validates
-every mapping including the explicit grant-base pairs used by historical grant
-replay, signs one canonical envelope in the distinct
+The relay derives the primary grant from the legacy authority trailers or the
+current V2 application receipt. The signing command validates every mapping,
+including the explicit grant-base pairs used by historical grant replay, signs
+one canonical envelope in the distinct
 `expense-app.workflow.authority-attestation.v1` namespace, and creates the
 immutable annotated tag `refs/tags/workflow-attestation/<grant-id>` targeting
 the signed original so it stays reachable. Run the exact returned

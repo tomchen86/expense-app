@@ -26,6 +26,7 @@ import {
   signedGrantEnvelopeDigest,
 } from './authority-application-receipt.ts';
 import { canonicalJson } from './canonical-json.ts';
+import { authorityAttestationRelayProjectionCommand } from './authority-relay-command.ts';
 import { ExitCode, workflowError } from './errors.ts';
 import {
   authorityCandidateCommitMessage,
@@ -150,6 +151,7 @@ export type AuthorityCommitResult = {
   commitHash: string;
   changedPaths: string[];
   journalState: 'consumed' | 'audited';
+  attestationRelayCommand: string;
 };
 
 export type AuthorityRecoveryOptions = {
@@ -2388,6 +2390,8 @@ function result(
     commitHash,
     changedPaths: [...journal.allowedPaths],
     journalState: journal.state === 'audited' ? 'audited' : 'consumed',
+    attestationRelayCommand:
+      authorityAttestationRelayProjectionCommand(commitHash),
   };
 }
 

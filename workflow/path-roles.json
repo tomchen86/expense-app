@@ -7,6 +7,7 @@
       "packages/workflow-engine/src/ai-adapter-policy.ts",
       "packages/workflow-engine/src/authority-application-receipt.ts",
       "packages/workflow-engine/src/authority-attestation.ts",
+      "packages/workflow-engine/src/authority-relay-command.ts",
       "packages/workflow-engine/src/authority-audit-cli.ts",
       "packages/workflow-engine/src/canonical-json.ts",
       "packages/workflow-engine/src/check-runner.ts",

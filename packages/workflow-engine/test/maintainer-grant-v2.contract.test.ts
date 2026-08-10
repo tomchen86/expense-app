@@ -28,6 +28,10 @@ import {
   reissueAndApplyMaintainerGrantV2,
   revokeMaintainerGrantV2,
 } from '../src/maintainer-approve.ts';
+import {
+  issueAuthorityAttestation,
+  projectAuthorityAttestationRelay,
+} from '../src/maintainer-attestation.ts';
 import { validateCiAuthorityCommit } from '../src/ci-authority.ts';
 import { verifyBaseAuthorityAttestations } from '../src/ci-attestation.ts';
 import { listRangeCommits } from '../src/ci-git.ts';
@@ -2535,6 +2539,10 @@ test('approve-and-apply checks before signing and atomically consumes the exact 
     assert.equal(humanPresenceChecks, 1);
     assert.equal(result.applied, true);
     assert.equal(result.commitHash, result.candidateCommit);
+    assert.equal(
+      result.attestationRelayCommand,
+      `pnpm workflow maintainer attestation-relay --original ${result.commitHash} --json`,
+    );
     assert.match(result.candidateBundleDigest, /^[0-9a-f]{64}$/);
     const storedCandidate = readStoredImmutableCandidateBundle(
       fs.realpathSync(path.join(repository, '.git')),
@@ -2646,6 +2654,151 @@ test('approve-and-apply checks before signing and atomically consumes the exact 
     assert.equal(
       result.publishCommand,
       `git push git@github.com:example/fixture.git ${result.tagRef}:${result.tagRef}`,
+    );
+  } finally {
+    fs.rmSync(repository, { recursive: true, force: true });
+  }
+});
+
+test('maintainer attestation accepts the current signed v2 authority grant', () => {
+  const repository = prepareCandidate();
+  try {
+    git(repository, [
+      'commit',
+      '--allow-empty',
+      '-m',
+      'Plan demo-change\n\nChange: demo-change\nTransition: plan',
+    ]);
+    const signer = fixtureV2SshSigner(repository);
+    const applied = approveAndApplyMaintainerGrantV2(
+      repository,
+      {
+        changeId: 'demo-change',
+        taskId: TASK_ID,
+        externalEffects: [],
+        profileId: PROFILE_ID,
+        reason: 'Approve the exact candidate before attesting its rewrite',
+        message: 'Apply exact workflow candidate',
+      },
+      {
+        now: new Date('2026-08-03T09:00:00.000Z'),
+        signer,
+      },
+    );
+    const parent = git(repository, [
+      'rev-parse',
+      `${applied.commitHash}^`,
+    ]).trim();
+    const parentObject = git(repository, ['cat-file', 'commit', parent]);
+    const parentMessageBoundary = parentObject.indexOf('\n\n');
+    assert.notEqual(parentMessageBoundary, -1);
+    const parentMessage = parentObject.slice(parentMessageBoundary + 2);
+    const parentParents = git(repository, ['show', '-s', '--format=%P', parent])
+      .trim()
+      .split(' ')
+      .filter(Boolean);
+    assert.equal(parentParents.length, 1);
+    const rewrittenParent = spawnSync(
+      'git',
+      ['commit-tree', `${parent}^{tree}`, '-p', parentParents[0]!],
+      {
+        cwd: repository,
+        encoding: 'utf8',
+        input: parentMessage,
+        env: {
+          ...process.env,
+          GIT_AUTHOR_NAME: 'GitHub',
+          GIT_AUTHOR_EMAIL: 'noreply@github.com',
+          GIT_AUTHOR_DATE: '2026-08-03T09:04:00.000Z',
+          GIT_COMMITTER_NAME: 'GitHub',
+          GIT_COMMITTER_EMAIL: 'noreply@github.com',
+          GIT_COMMITTER_DATE: '2026-08-03T09:04:00.000Z',
+        },
+      },
+    );
+    assert.equal(rewrittenParent.status, 0, rewrittenParent.stderr);
+    const mainParent = rewrittenParent.stdout.trim();
+    const originalCommitObject = git(repository, [
+      'cat-file',
+      'commit',
+      applied.commitHash,
+    ]);
+    const messageBoundary = originalCommitObject.indexOf('\n\n');
+    assert.notEqual(messageBoundary, -1);
+    const message = originalCommitObject.slice(messageBoundary + 2);
+    const rewritten = spawnSync(
+      'git',
+      ['commit-tree', `${applied.commitHash}^{tree}`, '-p', mainParent],
+      {
+        cwd: repository,
+        encoding: 'utf8',
+        input: message,
+        env: {
+          ...process.env,
+          GIT_AUTHOR_NAME: 'GitHub',
+          GIT_AUTHOR_EMAIL: 'noreply@github.com',
+          GIT_AUTHOR_DATE: '2026-08-03T09:05:00.000Z',
+          GIT_COMMITTER_NAME: 'GitHub',
+          GIT_COMMITTER_EMAIL: 'noreply@github.com',
+          GIT_COMMITTER_DATE: '2026-08-03T09:05:00.000Z',
+        },
+      },
+    );
+    assert.equal(rewritten.status, 0, rewritten.stderr);
+    const mainCommit = rewritten.stdout.trim();
+    git(repository, ['update-ref', 'refs/remotes/origin/main', mainCommit]);
+
+    const relay = projectAuthorityAttestationRelay(
+      repository,
+      applied.commitHash,
+    );
+    assert.equal(relay.grantId, applied.grantId);
+    assert.equal(relay.mainCommit, mainCommit);
+    assert.deepEqual(relay.grantBasePairs, [
+      { originalBase: parent, mainBase: mainParent },
+    ]);
+    assert.equal(
+      relay.attestCommand,
+      `pnpm workflow maintainer attest --original ${applied.commitHash} ` +
+        `--main ${mainCommit} --base ${parent}=${mainParent} --json`,
+    );
+
+    const attestation = issueAuthorityAttestation(
+      repository,
+      {
+        originalCommit: applied.commitHash,
+        mainCommit,
+        grantBasePairs: relay.grantBasePairs,
+      },
+      {
+        now: new Date('2026-08-03T09:06:00.000Z'),
+        signer,
+      },
+    );
+
+    assert.equal(attestation.grantId, applied.grantId);
+    assert.equal(
+      attestation.envelope.payload.originalCommit,
+      applied.commitHash,
+    );
+    assert.equal(attestation.envelope.payload.mainCommit, mainCommit);
+    assert.deepEqual(
+      verifyBaseAuthorityAttestations(
+        repository,
+        mainCommit,
+        new Date('2026-08-03T09:07:00.000Z'),
+      ),
+      {
+        attestedAuthorities: [
+          {
+            grantId: applied.grantId,
+            changeId: 'demo-change',
+            originalCommit: applied.commitHash,
+            mainCommit,
+          },
+        ],
+        directAuthorities: [],
+      },
     );
   } finally {
     fs.rmSync(repository, { recursive: true, force: true });

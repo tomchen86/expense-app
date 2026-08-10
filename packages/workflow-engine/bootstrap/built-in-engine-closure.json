@@ -104,6 +104,11 @@
       "digest": "sha256:a6e594abc539c353a8581b02aa04a57a13ca81ba5ad6a06850438cbd8a605473"
     },
     {
+      "path": "src/authority-relay-command.ts",
+      "mode": "100644",
+      "digest": "sha256:67b59800a1df1affd79ad5a024987922d464ff9d649b00c3ac633293e634349f"
+    },
+    {
       "path": "src/bootstrap-task-exemption.ts",
       "mode": "100644",
       "digest": "sha256:4d84029350436addea48bc304e5807ed59a9f677e1202c94cffea515cdbd60ed"
@@ -131,7 +136,7 @@
     {
       "path": "src/ci-attestation.ts",
       "mode": "100644",
-      "digest": "sha256:0649daff6344b0ead9f276dbcb0093b0b0e83974ca58de3a5bcbe86ef30bf8ca"
+      "digest": "sha256:ebe9308e92c028a25e7f6c81f51598a1929b4f2cef86b2f6a496f794c885c232"
     },
     {
       "path": "src/ci-authority.ts",
@@ -211,7 +216,7 @@
     {
       "path": "src/cli.ts",
       "mode": "100644",
-      "digest": "sha256:452b37bceb346d4159df80275a58ef7277b85fcedaf528d1b670e1b956e5562b"
+      "digest": "sha256:e4137ef7dc13c655be6fbafb4f006ef30822bc92d0c884e27c5874997d7ce3cf"
     },
     {
       "path": "src/codex-provider-adapter.ts",
@@ -576,12 +581,12 @@
     {
       "path": "src/maintainer-approve.ts",
       "mode": "100644",
-      "digest": "sha256:3254ff6bbda8d831b682b3f1b550d1295d870cccff51c3646a9eb12f2a8af0fd"
+      "digest": "sha256:54d80e46ee23c370419eae2221f931d56387ef983bfcf09971cf0f266f06e10c"
     },
     {
       "path": "src/maintainer-attestation.ts",
       "mode": "100644",
-      "digest": "sha256:83968bee903682621c2d3e32ce1e4cbabc3d0da0a979089fbf670bb388174c0b"
+      "digest": "sha256:c4c936def15560cd111e11138f7437df23449d8ec622e364b7c9bb8ee7eef9a5"
     },
     {
       "path": "src/maintainer-candidate-dependencies.ts",
@@ -606,12 +611,12 @@
     {
       "path": "src/maintainer-grant-v2.ts",
       "mode": "100644",
-      "digest": "sha256:8936ea7a80418f09aaee73436f45fa935f38e68d7c99129502a0cb40f5b5967c"
+      "digest": "sha256:a788f1e129b1558fd2ea6f0ec17f96e6fd60aa802c62477b0f38841c914e9b08"
     },
     {
       "path": "src/maintainer-grant.ts",
       "mode": "100644",
-      "digest": "sha256:a740dce56c61c151d4e0f90c60761d2122d9e1d843c8df33ad4338a9a1e0bd77"
+      "digest": "sha256:f900b32f90bfd2f18d1844f8c798c7d77a79799efbca12357b8a9113212b3134"
     },
     {
       "path": "src/maintainer-manifest.ts",
@@ -626,7 +631,7 @@
     {
       "path": "src/maintainer-recovery.ts",
       "mode": "100644",
-      "digest": "sha256:69bf8eeee968369a80aecd7a34f30e26afd64c76621d61dad002f85a6fc3eca3"
+      "digest": "sha256:e69c7c02c434cba268664ff55391057aba87066c7de707bfd705fce7a1059856"
     },
     {
       "path": "src/maintainer-report.ts",

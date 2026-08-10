@@ -686,6 +686,7 @@ test('break-glass maintainer operator contract is complete and bootstrap-only', 
   for (const command of [
     'pnpm workflow maintainer grant',
     'pnpm workflow maintainer attest',
+    'pnpm workflow maintainer attestation-relay',
     'pnpm workflow maintainer inspect',
     'pnpm workflow maintainer revoke',
     'pnpm workflow authority-start',

@@ -689,6 +689,7 @@ function approveAndApplyMaintainerGrantV2WithBinding(
     grantId: grant.grantId,
     sessionId: session.sessionId,
     commitHash: committed.commitHash,
+    attestationRelayCommand: committed.attestationRelayCommand,
     tagRef: grant.tagRef,
     publishCommand: grant.publishCommand,
     applicationReceiptTagRef: authorityApplicationReceiptTagRef(
@@ -893,6 +894,7 @@ function reissueAndApplyMaintainerGrantV2WithDeadline(
         sessionId: session.sessionId,
         commitHash: committed.commitHash,
         journalState: committed.journalState,
+        attestationRelayCommand: committed.attestationRelayCommand,
         tagRef: grant.tagRef,
         publishCommand: grant.publishCommand,
         applicationReceiptTagRef: authorityApplicationReceiptTagRef(

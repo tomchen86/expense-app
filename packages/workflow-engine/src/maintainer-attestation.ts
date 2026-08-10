@@ -1,3 +1,4 @@
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -8,13 +9,21 @@ import {
   canonicalAttestationEnvelope,
   canonicalAttestationPayload,
   validateAttestedTransitionPair,
-  validateAuthorityTransitionIdentity,
   type AttestationGrantBaseMapping,
   type AttestedCommitFacts,
   type AuthorityAttestationEnvelope,
   type AuthorityAttestationPayload,
 } from './authority-attestation.ts';
-import { authorityTagPublishCommand } from './authority-relay-command.ts';
+import {
+  authorityApplicationReceiptTagPrefix,
+  listAuthorityApplicationReceiptTagRefs,
+  readAuthorityApplicationReceiptTag,
+  verifyAuthorityApplicationReceiptSignature,
+} from './authority-application-receipt.ts';
+import {
+  authorityAttestCommand,
+  authorityTagPublishCommand,
+} from './authority-relay-command.ts';
 import { loadWorkflowConfig } from './contracts.ts';
 import { ExitCode, workflowError } from './errors.ts';
 import { commitFacts } from './git-transitions.ts';
@@ -33,9 +42,16 @@ import {
   type MaintainerGrantEnvelope,
 } from './maintainer-grant.ts';
 import {
+  canonicalMaintainerGrantV2Payload,
+  MAINTAINER_GRANT_V2_SIGNATURE_NAMESPACE,
+  parseMaintainerGrantV2Envelope,
+  type MaintainerGrantV2Envelope,
+} from './maintainer-grant-v2.ts';
+import {
   parseMaintainerPolicy,
   type MaintainerPolicy,
 } from './maintainer-policy.ts';
+import { parseManagedTrailers } from './managed-trailers.ts';
 import {
   createInteractiveSshSigner,
   type MaintainerSignerProvider,
@@ -64,6 +80,136 @@ export type AuthorityAttestationIssueResult = {
   publishCommand: string;
   envelope: AuthorityAttestationEnvelope;
 };
+
+export type AuthorityAttestationRelayProjection = {
+  grantId: string;
+  originalCommit: string;
+  mainCommit: string;
+  grantBasePairs: Array<{ originalBase: string; mainBase: string }>;
+  attestCommand: string;
+  tagRef: string;
+  publishCommand: string;
+};
+
+type AttestedMaintainerGrantEnvelope =
+  MaintainerGrantEnvelope | MaintainerGrantV2Envelope;
+
+type AttestedTransitionIdentity = {
+  kind: 'authority' | 'authority-candidate';
+  changeId: string;
+  grantId: string;
+};
+
+export function projectAuthorityAttestationRelay(
+  cwd: string,
+  requestedOriginalCommit: string,
+): AuthorityAttestationRelayProjection {
+  const repository = discoverRepository(cwd);
+  const repositoryRoot = repository.repositoryRoot;
+  const policy = loadHeadPolicy(repositoryRoot);
+  const origin = runGit(repositoryRoot, ['remote', 'get-url', 'origin']).trim();
+  if (origin !== policy.repository.origin) {
+    throw workflowError(
+      'MAINTAINER_REPOSITORY_MISMATCH',
+      'The repository origin does not match the trusted maintainer policy.',
+      ExitCode.guard,
+    );
+  }
+  const original = attestedFacts(repositoryRoot, requestedOriginalCommit);
+  assertOriginalCommitSignature(repositoryRoot, policy, original.oid);
+  const originalTrailers = parseAttestableTrailers(original.message);
+  const originalIdentity = attestedTransitionIdentity(
+    repositoryRoot,
+    policy,
+    original,
+    originalTrailers,
+  );
+
+  const config = loadWorkflowConfig(repositoryRoot);
+  const protectedBranch = config.protectedBranches[0];
+  if (!protectedBranch) {
+    throw invalidRequest('No protected branch is configured.');
+  }
+  const protectedRef = protectedBranchRef(protectedBranch);
+  if (
+    !runGit(
+      repositoryRoot,
+      ['rev-parse', '--verify', protectedRef],
+      true,
+    ).trim()
+  ) {
+    throw mainUnreachable(protectedRef);
+  }
+  const candidateOids = runGit(repositoryRoot, [
+    'log',
+    '--first-parent',
+    '--format=%H',
+    '--fixed-strings',
+    `--grep=Transition: ${originalIdentity.kind}`,
+    protectedRef,
+  ])
+    .split('\n')
+    .filter((oid) => oid.length > 0 && oid !== original.oid);
+  const matches: AttestedCommitFacts[] = [];
+  for (const candidateOid of candidateOids) {
+    const candidate = attestedFacts(repositoryRoot, candidateOid);
+    try {
+      const candidateTrailers = validateAttestedTransitionPair(
+        original,
+        candidate,
+      );
+      if (
+        candidateTrailers.kind === originalIdentity.kind &&
+        candidateTrailers.changeId === originalIdentity.changeId &&
+        (candidateTrailers.kind !== 'authority' ||
+          candidateTrailers.grantId === originalIdentity.grantId)
+      ) {
+        matches.push(candidate);
+      }
+    } catch {
+      // A grep hit is only a candidate. Exact transition validation is the
+      // authority for whether it is the rewritten protected-main commit.
+    }
+  }
+  if (matches.length === 0) {
+    throw workflowError(
+      'AUTHORITY_ATTESTATION_RELAY_NOT_READY',
+      'The protected branch does not contain the exact rewritten authority commit.',
+      ExitCode.conflict,
+    );
+  }
+  if (matches.length !== 1) {
+    throw workflowError(
+      'AUTHORITY_ATTESTATION_RELAY_AMBIGUOUS',
+      'More than one protected-main commit matches the original authority transition.',
+      ExitCode.guard,
+    );
+  }
+  const main = matches[0];
+  const originalBase = original.parentOids[0];
+  const mainBase = main.parentOids[0];
+  if (!originalBase || !mainBase) {
+    throw invalidRelayOriginal();
+  }
+  const grantBasePairs =
+    originalBase === mainBase ? [] : [{ originalBase, mainBase }];
+  const tagRef = authorityAttestationTagRef(originalIdentity.grantId);
+  const commandBinding = {
+    originalCommit: original.oid,
+    mainCommit: main.oid,
+    grantBasePairs,
+  };
+  return {
+    grantId: originalIdentity.grantId,
+    ...commandBinding,
+    attestCommand: authorityAttestCommand(commandBinding),
+    tagRef,
+    publishCommand: authorityTagPublishCommand(
+      policy.repository.origin,
+      tagRef,
+    ),
+  };
+}
 
 export function issueAuthorityAttestation(
   cwd: string,
@@ -108,7 +254,13 @@ export function issueAuthorityAttestation(
 
   const original = attestedFacts(repositoryRoot, request.originalCommit);
   const main = attestedFacts(repositoryRoot, request.mainCommit);
-  const identity = validateAuthorityTransitionIdentity(original, main);
+  const transitionTrailers = validateAttestedTransitionPair(original, main);
+  const identity = attestedTransitionIdentity(
+    repositoryRoot,
+    policy,
+    original,
+    transitionTrailers,
+  );
   assertMainContained(repositoryRoot, protectedRef, main.oid);
   assertOriginalCommitSignature(repositoryRoot, policy, original.oid);
 
@@ -239,21 +391,105 @@ function resolveGrantBaseMapping(
   };
 }
 
+function parseAttestableTrailers(
+  message: string,
+): Exclude<ReturnType<typeof parseManagedTrailers>, undefined> {
+  let trailers: ReturnType<typeof parseManagedTrailers>;
+  try {
+    trailers = parseManagedTrailers(message);
+  } catch {
+    throw invalidRelayOriginal();
+  }
+  if (
+    trailers?.kind !== 'authority' &&
+    trailers?.kind !== 'authority-candidate'
+  ) {
+    throw invalidRelayOriginal();
+  }
+  return trailers;
+}
+
+function attestedTransitionIdentity(
+  repositoryRoot: string,
+  policy: MaintainerPolicy,
+  original: AttestedCommitFacts,
+  trailers: Exclude<ReturnType<typeof parseManagedTrailers>, undefined>,
+): AttestedTransitionIdentity {
+  if (trailers.kind === 'authority') {
+    return {
+      kind: trailers.kind,
+      changeId: trailers.changeId,
+      grantId: trailers.grantId,
+    };
+  }
+  if (trailers.kind !== 'authority-candidate') {
+    throw invalidRelayOriginal();
+  }
+  const matches = listAuthorityApplicationReceiptTagRefs(repositoryRoot, policy)
+    .map((ref) => readAuthorityApplicationReceiptTag(repositoryRoot, ref))
+    .filter(
+      ({ target, envelope }) =>
+        target === original.oid &&
+        envelope.payload.candidateCommit === original.oid &&
+        envelope.payload.changeId === trailers.changeId,
+    );
+  if (matches.length !== 1) {
+    throw workflowError(
+      'AUTHORITY_ATTESTATION_APPLICATION_RECEIPT_INVALID',
+      'A rewritten authority candidate requires one exact portable application receipt.',
+      ExitCode.guard,
+    );
+  }
+  verifyAuthorityApplicationReceiptSignature(matches[0].envelope, policy);
+  return {
+    kind: trailers.kind,
+    changeId: trailers.changeId,
+    grantId: matches[0].envelope.payload.grantId,
+  };
+}
+
 function validateBoundGrant(
   repositoryRoot: string,
   policy: MaintainerPolicy,
-  envelope: MaintainerGrantEnvelope,
+  envelope: AttestedMaintainerGrantEnvelope,
   now: Date,
   signer: MaintainerSignerProvider,
 ): void {
   const baseCommit = envelope.payload.baseCommit;
+  const policyContent = runGit(repositoryRoot, [
+    'show',
+    `${baseCommit}:${MAINTAINER_POLICY_PATH}`,
+  ]);
+  const policyBlob = runGit(repositoryRoot, [
+    'rev-parse',
+    `${baseCommit}:${MAINTAINER_POLICY_PATH}`,
+  ]).trim();
+  if (envelope.payload.version === 2) {
+    if (
+      envelope.payload.baseCommit !== baseCommit ||
+      envelope.payload.policyBlob !== policyBlob ||
+      envelope.payload.policyDigest !==
+        crypto.createHash('sha256').update(policyContent).digest('hex') ||
+      envelope.payload.repositoryId !== policy.repository.id ||
+      envelope.payload.repositoryOrigin !== policy.repository.origin ||
+      !policy.trustedSigners.some(
+        ({ identity }) => identity === envelope.payload.signer,
+      )
+    ) {
+      throw grantInvalid(envelope.payload.grantId);
+    }
+    signer.verify(
+      canonicalMaintainerGrantV2Payload(envelope.payload),
+      envelope.signature,
+      envelope.payload.signer,
+      MAINTAINER_GRANT_V2_SIGNATURE_NAMESPACE,
+    );
+    return;
+  }
   validateGrantPayload(envelope.payload, policy, {
     now,
     expectedBase: baseCommit,
-    expectedPolicyBlob: runGit(repositoryRoot, [
-      'rev-parse',
-      `${baseCommit}:${MAINTAINER_POLICY_PATH}`,
-    ]).trim(),
+    expectedPolicyBlob: policyBlob,
     allowExpired: true,
   });
   signer.verify(
@@ -267,7 +503,7 @@ function readGrantEnvelope(
   repositoryRoot: string,
   policy: MaintainerPolicy,
   grantId: string,
-): MaintainerGrantEnvelope {
+): AttestedMaintainerGrantEnvelope {
   const tagRef = `${policy.auditTagPrefix}${grantId}`;
   if (!runGit(repositoryRoot, ['rev-parse', '--verify', tagRef], true).trim()) {
     throw grantMissing(grantId);
@@ -280,7 +516,13 @@ function readGrantEnvelope(
   if (boundary === -1) {
     throw grantInvalid(grantId);
   }
-  const envelope = parseMaintainerGrantEnvelope(raw.slice(boundary + 2));
+  const rawEnvelope = raw.slice(boundary + 2);
+  let envelope: AttestedMaintainerGrantEnvelope;
+  try {
+    envelope = parseMaintainerGrantEnvelope(rawEnvelope);
+  } catch {
+    envelope = parseMaintainerGrantV2Envelope(rawEnvelope);
+  }
   const target = runGit(repositoryRoot, [
     'rev-parse',
     `${tagRef}^{commit}`,
@@ -308,6 +550,9 @@ function listGrantTagIds(
     .filter(Boolean);
   const grantIds: string[] = [];
   for (const ref of refs) {
+    if (ref.startsWith(authorityApplicationReceiptTagPrefix(policy))) {
+      continue;
+    }
     const grantId = ref.slice(prefix.length);
     try {
       const resolution = readHumanResolutionAuditTag(
@@ -487,6 +732,14 @@ function invalidRequest(message: string) {
   return workflowError(
     'AUTHORITY_ATTESTATION_INVALID',
     message,
+    ExitCode.guard,
+  );
+}
+
+function invalidRelayOriginal() {
+  return workflowError(
+    'AUTHORITY_ATTESTATION_RELAY_ORIGINAL_INVALID',
+    'The attestation relay requires one signed canonical authority-maintenance commit.',
     ExitCode.guard,
   );
 }

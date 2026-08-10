@@ -80,6 +80,7 @@ import {
 } from './maintainer-grant-v2.ts';
 import {
   issueAuthorityAttestation,
+  projectAuthorityAttestationRelay,
   type AuthorityAttestationRequest,
 } from './maintainer-attestation.ts';
 import {
@@ -1162,6 +1163,18 @@ function dispatch(args: string[], cwd: string): CommandResult {
           publishCommand: attestation.publishCommand,
         };
       }
+      if (
+        rest[0] === 'attestation-relay' &&
+        rest.length === 3 &&
+        rest[1] === '--original'
+      ) {
+        return {
+          command,
+          action: 'attestation-relay',
+          ok: true,
+          result: projectAuthorityAttestationRelay(cwd, rest[2]),
+        };
+      }
       const git = discoverRepository(cwd);
       if (rest[0] === 'inspect' && rest.length <= 2) {
         return {
@@ -1945,7 +1958,7 @@ function maintainerAttestUsage(): WorkflowError {
 
 function maintainerUsage(): WorkflowError {
   return usage(
-    'Usage: pnpm workflow maintainer <grant ...|resolution-grant ...|resolution-inspect [grant-id]|resolution-publication-discard <grant-id> ...|resolution-revoke <grant-id> --reason <text>|attest ...|inspect [grant-id]|revoke <grant-id> --reason <text>|collaboration-grant ...|collaboration-inspect [grant-id]|collaboration-revoke <grant-id> --reason <text>> [--json]',
+    'Usage: pnpm workflow maintainer <grant ...|resolution-grant ...|resolution-inspect [grant-id]|resolution-publication-discard <grant-id> ...|resolution-revoke <grant-id> --reason <text>|attest ...|attestation-relay --original <commit>|inspect [grant-id]|revoke <grant-id> --reason <text>|collaboration-grant ...|collaboration-inspect [grant-id]|collaboration-revoke <grant-id> --reason <text>> [--json]',
   );
 }
 
@@ -2348,6 +2361,7 @@ function usageText(): string {
     '  pnpm workflow maintainer resolution-publication-discard <grant-id> --expected-publication-state <digest> --reason <text> [--json]',
     '  pnpm workflow maintainer resolution-revoke <grant-id> --reason <text> [--json]',
     '  pnpm workflow maintainer attest --original <commit> --main <commit> [--base <original>=<main> ...] [--json]',
+    '  pnpm workflow maintainer attestation-relay --original <commit> [--json]',
     '  pnpm workflow maintainer inspect [grant-id] [--json]',
     '  pnpm workflow maintainer revoke <grant-id> --reason <text> [--json]',
     '  pnpm workflow maintainer collaboration-grant --change <id> [--task <task-id>] --base <commit> --target <digest> --phase <blind-survey|plan-review> --author-role <role> --conflicting-role <role> (--provider <codex|claude> --actor-assurance <grade>|--caller <id> --actor-assurance <grade>|--direct-human true) --degraded <same-provider-fresh-session|caller-supplied|direct-human-review> --reason <text> [--ttl <minutes>m] [--uses 1] [--json]',
