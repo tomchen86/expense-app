@@ -83,6 +83,13 @@ The v2 apply graph MUST require engine-owned `investigation.json`, authored prop
 - **WHEN** schema diagnostics or change validation runs
 - **THEN** the operation fails even if a same-named user schema is valid
 
+#### Scenario: Managed change contains all required artifacts
+
+- **GIVEN** a change declares `schema: expense-app`
+- **AND** its proposal, delta specs, design, tasks, and `guard.json` exist
+- **WHEN** OpenSpec computes artifact readiness
+- **THEN** the required planning graph is complete
+
 ### Requirement: Combined Change Readiness
 
 The workflow engine SHALL report an investigation-first change ready only when strict OpenSpec validation and repository investigation applicability, the selected sealed-investigation evidence and managed projection when applicable, exact-plan review, task, guard, execution strategy, check, path, metadata, content, and digest validation all succeed against the same planning generation.
@@ -117,6 +124,13 @@ Legacy generations SHALL retain their original readiness contract without being 
 - **WHEN** any semantic tracked change, schema, workflow policy, investigation dependency, role requirement, or check-registry input changes
 - **THEN** dependent validation and review become stale
 - **AND** the workflow requires current evidence for the resulting generation
+
+#### Scenario: OpenSpec reports an empty artifact as done
+
+- **GIVEN** OpenSpec readiness reports an artifact exists
+- **AND** repository semantic validation finds it empty or malformed
+- **WHEN** workflow change validation runs
+- **THEN** validation fails despite the OpenSpec status
 
 ### Requirement: Authorized Planning Transition
 
@@ -153,6 +167,14 @@ An investigation-first transition MUST also have a current sealed investigation 
 - **WHEN** an authorized planning revision changes the contract
 - **THEN** the revision requires no active task session under the current lifecycle
 - **AND** dependent task evidence is invalidated before another task can rely on the changed contract
+
+#### Scenario: New planning baseline is authorized
+
+- **GIVEN** a new OpenSpec change passes combined validation
+- **AND** all of its task checkboxes are unchecked
+- **WHEN** the planning transition is requested
+- **THEN** only its authorized planning paths are staged
+- **AND** the commit uses `Change: <change-id>` and `Transition: plan`
 
 ## ADDED Requirements
 
