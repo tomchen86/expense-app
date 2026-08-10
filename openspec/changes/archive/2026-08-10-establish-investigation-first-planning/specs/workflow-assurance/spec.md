@@ -46,6 +46,15 @@ The workflow engine SHALL refuse to create an active task session unless reposit
 - **WHEN** task start is requested
 - **THEN** session creation fails before acquiring durable execution authority
 
+#### Scenario: Valid baseline creates a pinned session
+
+- GIVEN a clean worktree on the exact change branch
+- AND proposal, design, delta specs, tasks, guard policy, and check IDs validate
+- WHEN session start is requested
+- THEN one exclusive change lock is acquired
+- AND an atomic session records repository, Git, artifact digest, task scope,
+  and required-check facts
+
 ### Requirement: Immutable Evidence Chain
 
 Each passing check, planning evidence node, PlanReview, completion projection, finish projection, and managed commit SHALL produce or reference content-addressed immutable evidence. A transition SHALL validate the applicable node/report digest, kind, direct semantic inputs, provenance parents, session or planning-generation identity, pinned contract, Git baseline/target, changed paths, working-state fingerprint, role assurance, and required check evidence before relying on it. Every task check, completion, finish, and commit report for an investigation-first session SHALL reference the session-pinned `planningGenerationId` and exact PlanReview node/digest; changing or omitting either identity makes the report unusable.
@@ -126,6 +135,21 @@ For a caught ordinary failure before successful final application, the single-pa
 - **WHEN** `check`, `complete-task`, and `finish` run under their existing preconditions
 - **THEN** the engine retains their existing report and recovery semantics
 - **AND** introduction of the single-pass path does not silently reinterpret legacy reports
+
+#### Scenario: Concurrent transition is requested
+
+- GIVEN one state-changing session operation holds the operation lock
+- WHEN another check, completion, finish, commit, or abort is requested
+- THEN the second operation fails with a conflict
+- AND it does not overwrite report pointers or projections
+
+#### Scenario: Existing manual staging is present
+
+- GIVEN a completion projection has current evidence
+- AND the index already contains manually staged paths
+- WHEN finish is requested
+- THEN finish rejects the index
+- AND only an engine-controlled finish may create the staging projection
 
 ## ADDED Requirements
 
