@@ -39,6 +39,7 @@ import './semantic-reuse.integration.test.ts';
 import './semantic-ledger.contract.test.ts';
 import './semantic-manifest-reuse.integration.test.ts';
 import './scan-saturation-exit.integration.test.ts';
+import './propose-scan-saturation-acceptance.integration.test.ts';
 import './semantic-reconciliation.contract.test.ts';
 import './implementation-reconciliation-finalization.integration.test.ts';
 import './floor-overflow-pruning.contract.test.ts';

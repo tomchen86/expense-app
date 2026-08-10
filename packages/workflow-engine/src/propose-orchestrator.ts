@@ -121,12 +121,16 @@ import {
   projectPlanReviewTerms,
 } from './investigation-term-projection.ts';
 import {
+  assertInvestigationScanSaturationAcceptanceEnvelope,
   assertInvestigationCheckpointEnvelope,
   checkpointContributionDigest,
+  compareAndSwapInvestigationSession,
   readCurrentInvestigationRef,
   readHumanResolutionNode,
   readInvestigationSession,
+  scanSaturationAcceptanceEnvelopeDigest,
   type InvestigationCheckpointEnvelope,
+  type InvestigationScanSaturationAcceptanceEnvelope,
   type InvestigationSession,
   type StoredInvestigationCheckpoint,
   type GroupDispositionsPayload,
@@ -501,6 +505,7 @@ export type ProviderRetryEnvelope = {
 
 export type ProposeInput =
   | InvestigationCheckpointEnvelope
+  | InvestigationScanSaturationAcceptanceEnvelope
   | PlanningContributionEnvelope
   | ExemptionPlanningContributionEnvelope
   | ProviderProgressEnvelope
@@ -576,6 +581,7 @@ export type ProposeOutput = {
     | InvestigationStatus['state']
     | 'actor-resolution-required'
     | 'awaiting-planning-contribution'
+    | 'scan-saturation-acceptance-required'
     | 'plan-review-required'
     | 'waiting-for-plan-review'
     | 'awaiting-challenge-dispositions'
@@ -584,6 +590,7 @@ export type ProposeOutput = {
   nextAction:
     | InvestigationStatus['nextAction']
     | 'submit-planning-contribution'
+    | 'accept-scan-saturation'
     | 'obtain-plan-review'
     | 'wait-for-plan-review'
     | 'retry-plan-review'
@@ -1717,6 +1724,7 @@ export function resumePropose(
   requestedChangeId: string,
   inputValue:
     | InvestigationCheckpointEnvelope
+    | InvestigationScanSaturationAcceptanceEnvelope
     | PlanningContributionEnvelope
     | ProviderProgressEnvelope
     | ProviderRetryEnvelope,
@@ -1760,6 +1768,9 @@ export function resumePropose(
   }
   if (input.kind === 'exemption-planning-contribution') {
     return resumeExemptionPlanningContribution(cwd, input, options);
+  }
+  if (input.kind === 'scan-saturation-acceptance') {
+    return resumeScanSaturationAcceptance(cwd, input, options);
   }
   if (input.kind === 'planning-contribution') {
     const initialContext = loadInvestigationRuntimeContext(cwd);
@@ -1938,6 +1949,151 @@ export function resumePropose(
     null,
     options.collaborationGrantValidation,
   );
+}
+
+function resumeScanSaturationAcceptance(
+  cwd: string,
+  input: InvestigationScanSaturationAcceptanceEnvelope,
+  options: ProposeResumeOptions,
+): ProposeOutput {
+  const initialContext = loadInvestigationRuntimeContext(cwd);
+  return withInvestigationTransitionAuthority(
+    initialContext.lifecycleRuntime,
+    input.changeId,
+    (assertOwned) => {
+      assertOwned();
+      const context = loadInvestigationRuntimeContext(cwd);
+      const current = readInvestigationSession(
+        context.runtime,
+        input.investigationId,
+      );
+      assertScanSaturationAcceptanceBinding(current, input);
+      const envelopeDigest = scanSaturationAcceptanceEnvelopeDigest(input);
+      if (current.scanSaturationAcceptance !== undefined) {
+        if (
+          current.scanSaturationAcceptance.envelopeDigest !== envelopeDigest
+        ) {
+          throw workflowError(
+            'INVESTIGATION_SCAN_SATURATION_ACCEPTANCE_MISMATCH',
+            'The investigation already records a different scan saturation acceptance.',
+            ExitCode.staleState,
+          );
+        }
+        return renderProposeOutput(
+          cwd,
+          getInvestigationStatus(cwd, current.investigationId),
+          'replay-consumed',
+          null,
+          undefined,
+          options.collaborationGrantValidation,
+          assertOwned,
+        );
+      }
+      if (current.revision !== input.expectedRevision) {
+        throw workflowError(
+          'PROPOSE_INPUT_STALE',
+          'Scan saturation acceptance is not bound to the current investigation revision.',
+          ExitCode.staleState,
+        );
+      }
+      const inspected = rebuildInvestigation(
+        cwd,
+        current.investigationId,
+        'replay-consumed',
+        options.collaborationGrantValidation,
+        assertOwned,
+        true,
+      );
+      if (
+        canonicalJson(inspected.saturatedTermIds) !==
+          canonicalJson(input.saturatedTermIds) ||
+        inspected.saturatedTermIds.length === 0
+      ) {
+        throw workflowError(
+          'INVESTIGATION_SCAN_SATURATION_ACCEPTANCE_MISMATCH',
+          'The acknowledged terms do not exactly match the current saturated scan terms.',
+          ExitCode.staleState,
+          {
+            details: {
+              expectedTermIds: inspected.saturatedTermIds,
+              suppliedTermIds: input.saturatedTermIds,
+            },
+          },
+        );
+      }
+      compareAndSwapInvestigationSession(
+        context.runtime,
+        current.investigationId,
+        current.revision,
+        (session) => ({
+          ...session,
+          revision: session.revision + 1,
+          scanSaturationAcceptance: {
+            envelopeDigest,
+            envelope: input,
+          },
+          updatedAt: new Date().toISOString(),
+        }),
+      );
+      assertOwned();
+      return renderProposeOutput(
+        cwd,
+        getInvestigationStatus(cwd, current.investigationId),
+        'replay-consumed',
+        null,
+        undefined,
+        options.collaborationGrantValidation,
+        assertOwned,
+      );
+    },
+  );
+}
+
+function assertScanSaturationAcceptanceBinding(
+  session: InvestigationSession,
+  input: InvestigationScanSaturationAcceptanceEnvelope,
+): void {
+  if (
+    session.investigationId !== input.investigationId ||
+    session.changeId !== input.changeId ||
+    canonicalJson(session.baseline) !== canonicalJson(input.baseline) ||
+    session.intentDigest !== input.intentDigest ||
+    session.blindManifestDigest !== input.blindManifestDigest ||
+    session.milestones.mainTerms === null ||
+    session.milestones.blindResult === null ||
+    session.milestones.groupDispositions !== null
+  ) {
+    throw workflowError(
+      'PROPOSE_INPUT_STALE',
+      'Scan saturation acceptance is not bound to the current investigation scan.',
+      ExitCode.staleState,
+    );
+  }
+}
+
+export function createScanSaturationAcceptanceEnvelope(
+  output: ProposeOutput,
+): InvestigationScanSaturationAcceptanceEnvelope {
+  if (
+    output.state !== 'scan-saturation-acceptance-required' ||
+    !isRecord(output.inputSchema) ||
+    output.inputSchema.kind !== 'scan-saturation-acceptance' ||
+    !isRecord(output.inputSchema.binding) ||
+    !Array.isArray(output.inputSchema.saturatedTermIds)
+  ) {
+    throw workflowError(
+      'INVESTIGATION_SCAN_SATURATION_ACCEPTANCE_NOT_AVAILABLE',
+      'The propose wrapper is not waiting for scan saturation acceptance.',
+      ExitCode.guard,
+    );
+  }
+  return assertInvestigationScanSaturationAcceptanceEnvelope({
+    schemaVersion: 1,
+    kind: 'scan-saturation-acceptance',
+    ...output.inputSchema.binding,
+    saturatedTermIds: output.inputSchema.saturatedTermIds,
+    acknowledgeIncompleteScan: true,
+  });
 }
 
 export function createPlanningContributionEnvelope(
@@ -4338,13 +4494,6 @@ function getProposeStatusInternal(
   }
   const status = getInvestigationStatus(cwd, requestedInvestigationId);
   assertOwned?.();
-  const rebuilt = rebuildInvestigation(
-    cwd,
-    status.investigationId,
-    'replay-consumed',
-    grantValidation,
-    assertOwned,
-  );
   const context = loadInvestigationRuntimeContext(cwd);
   const request = readProviderInvocationRequest(
     context.runtime,
@@ -4366,6 +4515,28 @@ function getProposeStatusInternal(
       undefined,
       grantValidation,
       assertOwned,
+    );
+  }
+
+  let rebuilt: RebuiltInvestigation;
+  try {
+    rebuilt = rebuildInvestigation(
+      cwd,
+      status.investigationId,
+      'replay-consumed',
+      grantValidation,
+      assertOwned,
+    );
+  } catch (error) {
+    const requirement = scanSaturationRequirement(error);
+    if (requirement === null) {
+      throw error;
+    }
+    return renderScanSaturationAcceptanceRequired(
+      context,
+      status,
+      actorResolution,
+      requirement,
     );
   }
 
@@ -4475,13 +4646,27 @@ function renderProposeOutput(
   grantValidation?: ProposeResumeOptions['collaborationGrantValidation'],
   assertOwned?: () => void,
 ): ProposeOutput {
-  const rebuilt = rebuildInvestigation(
-    cwd,
-    status.investigationId,
-    grantAccess,
-    grantValidation,
-    assertOwned,
-  );
+  let rebuilt: RebuiltInvestigation;
+  try {
+    rebuilt = rebuildInvestigation(
+      cwd,
+      status.investigationId,
+      grantAccess,
+      grantValidation,
+      assertOwned,
+    );
+  } catch (error) {
+    const requirement = scanSaturationRequirement(error);
+    if (requirement === null) {
+      throw error;
+    }
+    return renderScanSaturationAcceptanceRequired(
+      loadInvestigationRuntimeContext(cwd),
+      status,
+      actorResolution,
+      requirement,
+    );
+  }
   const createdDate = rebuilt.session.createdAt.slice(0, 10);
   if (status.state === 'investigation-sealed') {
     const context = loadInvestigationRuntimeContext(cwd);
@@ -4548,6 +4733,82 @@ function renderProposeOutput(
     semanticReuse: rebuilt.reuseCoverage,
     classSampleAudits: classSampleAuditsFor(rebuilt),
     floorTrimming: rebuilt.floorTrimming,
+  };
+}
+
+function scanSaturationRequirement(error: unknown): {
+  saturatedTermIds: string[];
+  floorTrimming: ProposeOutput['floorTrimming'];
+} | null {
+  if (
+    !(error instanceof WorkflowError) ||
+    error.code !== 'INVESTIGATION_SCAN_SATURATION_ACCEPTANCE_REQUIRED'
+  ) {
+    return null;
+  }
+  const saturatedTermIds = error.details?.saturatedTermIds;
+  const floorTrimming = error.details?.floorTrimming;
+  if (
+    !isStringArray(saturatedTermIds) ||
+    saturatedTermIds.length < 1 ||
+    !isRecord(floorTrimming) ||
+    !isStringArray(floorTrimming.dropped) ||
+    typeof floorTrimming.escalated !== 'boolean'
+  ) {
+    throw error;
+  }
+  return {
+    saturatedTermIds,
+    floorTrimming: {
+      dropped: floorTrimming.dropped,
+      escalated: floorTrimming.escalated,
+    },
+  };
+}
+
+function renderScanSaturationAcceptanceRequired(
+  context: ReturnType<typeof loadInvestigationRuntimeContext>,
+  status: InvestigationStatus,
+  actorResolution: ProposeOutput['actorResolution'],
+  requirement: {
+    saturatedTermIds: string[];
+    floorTrimming: ProposeOutput['floorTrimming'];
+  },
+): ProposeOutput {
+  const session = readInvestigationSession(
+    context.runtime,
+    status.investigationId,
+  );
+  return {
+    schemaVersion: 1,
+    kind: 'workflow-propose',
+    changeId: status.changeId,
+    state: 'scan-saturation-acceptance-required',
+    nextAction: 'accept-scan-saturation',
+    investigation: status,
+    createdDate: session.createdAt.slice(0, 10),
+    actorResolution,
+    inputSchema: {
+      schemaVersion: 1,
+      kind: 'scan-saturation-acceptance',
+      binding: {
+        investigationId: status.investigationId,
+        changeId: status.changeId,
+        expectedRevision: status.revision,
+        baseline: status.baseline,
+        intentDigest: status.intentDigest,
+        blindManifestDigest: status.blindManifestDigest,
+      },
+      saturatedTermIds: requirement.saturatedTermIds,
+      requiredAcknowledgement: { acknowledgeIncompleteScan: true },
+    },
+    work: null,
+    materializedArtifacts: null,
+    planReview: null,
+    planningTransition: null,
+    semanticReuse: null,
+    classSampleAudits: [],
+    floorTrimming: requirement.floorTrimming,
   };
 }
 
@@ -4834,6 +5095,7 @@ function rebuildInvestigation(
   grantAccess: CollaborationGrantAccessMode,
   grantValidation?: ProposeResumeOptions['collaborationGrantValidation'],
   assertOwned?: () => void,
+  inspectSaturationAcceptance = false,
 ): RebuiltInvestigation {
   const context = loadInvestigationRuntimeContext(cwd);
   const session = readInvestigationSession(context.runtime, investigationId);
@@ -5026,13 +5288,55 @@ function rebuildInvestigation(
     repositoryRoot: context.git.repositoryRoot,
     treeOid: session.baseline.tree,
     terms: preview.terms,
+    allowSaturatedTerms:
+      inspectSaturationAcceptance ||
+      session.scanSaturationAcceptance !== undefined,
   });
   if (scan.outcome !== 'ready') {
+    const acceptedScan = scanInvestigationTree({
+      repositoryRoot: context.git.repositoryRoot,
+      treeOid: session.baseline.tree,
+      terms: preview.terms,
+      allowSaturatedTerms: true,
+    });
+    if (
+      session.scanSaturationAcceptance === undefined &&
+      acceptedScan.outcome === 'ready' &&
+      acceptedScan.saturatedTermIds !== undefined &&
+      acceptedScan.saturatedTermIds.length > 0
+    ) {
+      throw workflowError(
+        'INVESTIGATION_SCAN_SATURATION_ACCEPTANCE_REQUIRED',
+        'The investigation scan reached per-term hit ceilings and requires an exact acknowledgement before incomplete evidence may continue.',
+        ExitCode.guard,
+        {
+          details: {
+            saturatedTermIds: acceptedScan.saturatedTermIds,
+            violations: scan.violations,
+            floorTrimming,
+          },
+        },
+      );
+    }
     throw workflowError(
       'INVESTIGATION_SCAN_NARROWING_REQUIRED',
       'The current scan exceeds fixed investigation limits.',
       ExitCode.guard,
       { details: { violations: scan.violations } },
+    );
+  }
+  const acceptedTermIds =
+    session.scanSaturationAcceptance?.envelope.saturatedTermIds ?? null;
+  if (
+    !inspectSaturationAcceptance &&
+    acceptedTermIds !== null &&
+    canonicalJson(scan.saturatedTermIds ?? []) !==
+      canonicalJson(acceptedTermIds)
+  ) {
+    throw workflowError(
+      'INVESTIGATION_SCAN_SATURATION_ACCEPTANCE_STALE',
+      'The durable scan saturation acceptance no longer matches the pinned scan.',
+      ExitCode.staleState,
     );
   }
   const grouped = deriveInvestigationGroups({
@@ -10079,6 +10383,9 @@ function assertProposeInput(value: unknown): ProposeInput {
   }
   if (value.kind === 'exemption-planning-contribution') {
     return assertExemptionPlanningContributionEnvelope(value);
+  }
+  if (value.kind === 'scan-saturation-acceptance') {
+    return assertInvestigationScanSaturationAcceptanceEnvelope(value);
   }
   if (value.kind === 'provider-progress') {
     return assertProviderProgressEnvelope(value);
