@@ -15,11 +15,22 @@ import {
   CONTROL_PLANE_REVIEW_SIGNATURE_NAMESPACE_V3,
   CONTROL_PLANE_SIGNATURE_NAMESPACE_V3,
 } from '../src/intervention-control.ts';
-import { produceControlPlaneApprovalCandidateV2 } from '../src/control-plane-promotion-producer.ts';
+import {
+  produceControlPlaneApprovalCandidateV2,
+  produceControlPlaneApprovalCandidateV3,
+} from '../src/control-plane-promotion-producer.ts';
+import { readControlPlaneSupervisorHistory } from '../src/control-plane-supervisor-history.ts';
+import {
+  persistControlPlaneApprovalCandidateV3,
+  preflightControlPlaneApprovalCandidateV3,
+  readPersistedControlPlaneApprovalCandidateV3,
+} from '../src/intervention-control-updater.ts';
 import {
   CONTROL_PLANE_FIXTURE_GRANT_SIGNER,
   CONTROL_PLANE_FIXTURE_REVIEWER,
+  prepareSuccessorControlPlaneCandidate,
   setupControlPlaneProducerFixture,
+  setupFinalizedControlPlanePromotionFixture,
 } from './control-plane-promotion-fixture.ts';
 
 // Substrate-only: no production producer, updater, persistence, or bootstrap
@@ -168,6 +179,42 @@ test('successor review and grant signatures bind the exact promotion lineage', a
       lineage.lineageDigest,
     );
 
+    const persisted = persistControlPlaneApprovalCandidateV3(
+      fixture.stateRoot,
+      {
+        txId: 'successor-transaction',
+        mandateBinding: material.mandateBinding,
+        beforeManifest: fixture.beforeManifest,
+        afterManifest: produced.candidate.afterManifest,
+        bundle,
+      },
+      new Date(reviewedAt),
+    );
+    assert.equal(
+      persisted.kind,
+      'persisted-control-plane-approval-candidate.v3',
+    );
+    assert.equal(
+      readPersistedControlPlaneApprovalCandidateV3(
+        fixture.stateRoot,
+        persisted.candidateId,
+      ).recordDigest,
+      persisted.recordDigest,
+    );
+    assert.equal(
+      preflightControlPlaneApprovalCandidateV3(
+        fixture.stateRoot,
+        persisted.candidateId,
+        {
+          grantId: grantPayload.grantId,
+          humanSigner: grantPayload.humanSigner,
+          issuedAt,
+          verifyHumanSignature: fixture.signing.verifier,
+        },
+      ).summary.promotionLineageDigest,
+      lineage.lineageDigest,
+    );
+
     assert.throws(() =>
       verifyControlPlaneGrantV3(
         {
@@ -188,6 +235,89 @@ test('successor review and grant signatures bind the exact promotion lineage', a
       ),
     );
   } finally {
+    fixture.cleanup();
+  }
+});
+
+test('production successor producer derives and persists the initial history anchor', async () => {
+  const fixture = await setupControlPlaneProducerFixture();
+  try {
+    const calls = { human: 0, sign: 0 };
+    const produced = produceControlPlaneApprovalCandidateV3(
+      fs.realpathSync(fixture.repository),
+      fixture.stateRoot,
+      fixture.frozen.candidateBundleDigest,
+      {
+        now: () => new Date('2026-08-10T10:03:00.000Z'),
+        reviewSigner: fixture.signing.signer(
+          CONTROL_PLANE_FIXTURE_REVIEWER,
+          calls,
+        ),
+        verifyHumanSignature: fixture.signing.verifier,
+        presentReviewSummary() {},
+      },
+    );
+    assert.equal(produced.replayed, false);
+    assert.equal(
+      produced.candidate.kind,
+      'persisted-control-plane-approval-candidate.v3',
+    );
+    const history = readControlPlaneSupervisorHistory(fixture.stateRoot);
+    assert.equal(history.generation, 1);
+    assert.equal(
+      produced.candidate.bundle.lineage.historyAnchorDigest,
+      history.anchor.recordDigest,
+    );
+    assert.equal(
+      produced.candidate.bundle.lineage.previousTerminalRecordDigest,
+      history.leaf.recordDigest,
+    );
+    assert.equal(
+      produced.candidate.bundle.lineage.previousSupervisorRecordDigest,
+      fixture.initialized.recordDigest,
+    );
+    assert.deepEqual(calls, { human: 1, sign: 1 });
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+test('production successor producer anchors an independently verified V2 terminal', async () => {
+  const fixture = await setupFinalizedControlPlanePromotionFixture();
+  const successor = prepareSuccessorControlPlaneCandidate(fixture);
+  try {
+    const produced = produceControlPlaneApprovalCandidateV3(
+      fs.realpathSync(fixture.repository),
+      fixture.stateRoot,
+      successor.frozen.candidateBundleDigest,
+      {
+        now: () => new Date('2026-08-10T10:08:00.000Z'),
+        reviewSigner: fixture.signing.signer(CONTROL_PLANE_FIXTURE_REVIEWER, {
+          human: 0,
+          sign: 0,
+        }),
+        verifyHumanSignature: fixture.signing.verifier,
+        presentReviewSummary() {},
+      },
+    );
+    const history = readControlPlaneSupervisorHistory(fixture.stateRoot);
+    assert.equal(history.anchor.authority.kind, 'legacy-v2-terminal-anchor.v1');
+    assert.equal(history.generation, 2);
+    assert.equal(produced.candidate.bundle.lineage.previousGeneration, 2);
+    assert.equal(
+      produced.candidate.bundle.lineage.previousSupervisorRecordDigest,
+      fixture.supervisor.recordDigest,
+    );
+    assert.equal(
+      produced.candidate.bundle.lineage.previousActiveTrustCommit,
+      fixture.frozen.candidateCommit,
+    );
+    assert.equal(
+      produced.candidate.bundle.lineage.candidateTrustCommit,
+      successor.frozen.candidateCommit,
+    );
+  } finally {
+    successor.cleanup();
     fixture.cleanup();
   }
 });

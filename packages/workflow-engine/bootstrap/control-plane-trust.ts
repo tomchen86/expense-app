@@ -218,6 +218,20 @@ interface InitialSupervisorBootstrapJournalProgress {
   pendingPhase: InitialSupervisorBootstrapPhase | null;
 }
 
+export interface InitialControlPlaneSupervisorAnchorEvidence {
+  repositoryId: string;
+  activeTrustCommit: string;
+  publishedRecordDigest: Sha256Digest;
+  supervisorRecordDigest: Sha256Digest;
+  generation: 1;
+  activeArtifact: {
+    artifactId: Sha256Digest;
+    executableDigest: Sha256Digest;
+    closureDigest: Sha256Digest;
+  };
+  recordedAt: string;
+}
+
 interface BootstrapProtectedTreeEntry {
   path: string;
   mode: string;
@@ -984,6 +998,42 @@ export function readBuiltInControlPlaneEngineArtifact(
     throw bootstrapArtifactMismatch();
   }
   return deepFreeze(structuredClone(artifact));
+}
+
+/**
+ * Return the immutable generation-one anchor only after independently
+ * replaying the complete three-phase bootstrap journal. Successor producers
+ * use this digest as the root of the append-only supervisor history; callers
+ * cannot nominate or synthesize an anchor.
+ */
+export function readInitialControlPlaneSupervisorAnchorEvidence(
+  storageRoot: string,
+  expectedRepositoryId: string,
+): InitialControlPlaneSupervisorAnchorEvidence {
+  const paths = bootstrapPaths(storageRoot);
+  const prepared = assertPromotionHasValidInitialBootstrapAnchor(
+    paths,
+    expectedRepositoryId,
+  );
+  const published = readInitialBootstrapJournalRecord(
+    path.join(
+      paths.initialBootstrapJournal,
+      INITIAL_BOOTSTRAP_PHASE_FILES.SUPERVISOR_PUBLISHED,
+    ),
+  );
+  return deepFreeze({
+    repositoryId: prepared.provenance.repositoryId,
+    activeTrustCommit: prepared.provenance.headOid,
+    publishedRecordDigest: published.recordDigest,
+    supervisorRecordDigest: prepared.supervisorRecordDigest,
+    generation: 1 as const,
+    activeArtifact: {
+      artifactId: prepared.activeArtifact.artifactId,
+      executableDigest: prepared.activeArtifact.executableDigest,
+      closureDigest: prepared.activeArtifact.closureDigest,
+    },
+    recordedAt: prepared.initializedAt,
+  });
 }
 
 /**
