@@ -216,7 +216,7 @@
     {
       "path": "src/cli.ts",
       "mode": "100644",
-      "digest": "sha256:e4137ef7dc13c655be6fbafb4f006ef30822bc92d0c884e27c5874997d7ce3cf"
+      "digest": "sha256:78359cb690646f1a01343183d7224cec9948e11a95bca48b72af0c0d2ea38b26"
     },
     {
       "path": "src/codex-provider-adapter.ts",
@@ -312,6 +312,11 @@
       "path": "src/engine-metrics.ts",
       "mode": "100644",
       "digest": "sha256:b53a04723397bd541003764774995fd99eb8785e45264df0c4e4c50d640ff490"
+    },
+    {
+      "path": "src/engine-projection-registry.ts",
+      "mode": "100644",
+      "digest": "sha256:798f0537881ad0c38ebc3c855e96a864039fcff83f8fcb16f041fa6a7af105bb"
     },
     {
       "path": "src/errors.ts",
@@ -666,7 +671,7 @@
     {
       "path": "src/managed-documents.ts",
       "mode": "100644",
-      "digest": "sha256:173882707ed33ae8d795ca44bbe8e039ddcfda11341d9a46e949d279a358e28e"
+      "digest": "sha256:3fd2ec91039f35c9ce503647872d836a3b0fa6d086b22783c4dca1e68e76dfe2"
     },
     {
       "path": "src/managed-trailers.ts",

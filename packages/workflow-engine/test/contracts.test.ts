@@ -72,6 +72,7 @@ import './evidence-node.contract.test.ts';
 import './evidence-currentness.contract.test.ts';
 import './execution-core.contract.test.ts';
 import './execution-core-terminal-failures.contract.test.ts';
+import './engine-projection-authority.integration.test.ts';
 import './engine-metrics.contract.test.ts';
 import './execution-governance.contract.test.ts';
 import './execution-grant-cli.contract.test.ts';
@@ -398,7 +399,6 @@ test('agent guide documents the complete public workflow surface and source-size
     'pnpm workflow document-refresh show',
     'pnpm workflow document-refresh review',
     'pnpm workflow document-refresh apply',
-    'pnpm workflow handoff render',
     'pnpm workflow handoff validate',
     'pnpm workflow hook pre-commit',
     'pnpm workflow hook commit-msg',
@@ -414,6 +414,7 @@ test('agent guide documents the complete public workflow surface and source-size
   for (const command of commands) {
     assert.match(agents, new RegExp(command.replaceAll(' ', '\\s+')));
   }
+  assert.doesNotMatch(agents, /pnpm workflow handoff render/);
   assert.match(
     agents,
     /Do not change, split, or refactor source\s+solely because it exceeds 500 lines\./,

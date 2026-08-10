@@ -3,6 +3,7 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 import { ExitCode, workflowError } from './errors.ts';
+import { engineProjectionPathsForTransition } from './engine-projection-registry.ts';
 import { renderHandoff, validateHandoff } from './handoff.ts';
 import { validateIssueLog } from './issues.ts';
 
@@ -63,8 +64,10 @@ export function refreshCompletionDocuments(
     return [];
   }
   const policy = loadDocumentPolicy(repositoryRoot);
+  const enabledPaths = completionDocumentPaths(repositoryRoot);
   const handoff = policy.documents['docs/CURRENT_AND_NEXT_STEPS.md'];
   if (
+    !enabledPaths.includes('docs/CURRENT_AND_NEXT_STEPS.md') ||
     !isRecord(handoff) ||
     handoff.enforcement !== 'active' ||
     handoff.transition !== 'completion'
@@ -87,7 +90,7 @@ export function completionDocumentPaths(repositoryRoot: string): string[] {
     return [];
   }
   const policy = loadDocumentPolicy(repositoryRoot);
-  return Object.entries(policy.documents)
+  const configuredPaths = Object.entries(policy.documents)
     .filter(
       ([, documentPolicy]) =>
         isRecord(documentPolicy) &&
@@ -96,6 +99,14 @@ export function completionDocumentPaths(repositoryRoot: string): string[] {
     )
     .map(([documentPath]) => documentPath)
     .sort();
+  const reviewedPaths = engineProjectionPathsForTransition('completion');
+  const unsupportedPath = configuredPaths.find(
+    (documentPath) => !reviewedPaths.includes(documentPath),
+  );
+  if (unsupportedPath !== undefined) {
+    throw unsupportedActiveDocumentPolicy(unsupportedPath);
+  }
+  return configuredPaths;
 }
 
 export function rollbackGeneratedDocuments(
@@ -142,6 +153,14 @@ function invalidPolicy() {
     'DOCUMENT_POLICY_INVALID',
     'workflow/document-policy.json is invalid.',
     ExitCode.guard,
+  );
+}
+
+function unsupportedActiveDocumentPolicy(documentPath: string) {
+  return workflowError(
+    'UNSUPPORTED_ACTIVE_DOCUMENT_POLICY',
+    `No engine projection is registered for active completion policy ${documentPath}.`,
+    ExitCode.verification,
   );
 }
 

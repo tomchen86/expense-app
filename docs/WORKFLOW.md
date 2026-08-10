@@ -637,7 +637,8 @@ pnpm workflow handoff validate --json
 ```
 
 The handoff is generated from controlled change and issue state. Use
-`pnpm workflow handoff render --json` only inside an authorized task scope.
+`pnpm workflow handoff validate --json` for read-only diagnostics. Write-capable
+rendering is internal to the lifecycle transition that owns the projection.
 
 Curated section refreshes under `docs/architecture/**` and `docs/features/**`
 use separate propose, inspect, review, and apply records:
