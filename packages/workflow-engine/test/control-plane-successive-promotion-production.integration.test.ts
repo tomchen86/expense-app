@@ -3,6 +3,8 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import test from 'node:test';
 
+import { resolveControlPlaneEngineSelection } from '../bootstrap/control-plane-trust.ts';
+import { canonicalJson } from '../src/canonical-json.ts';
 import {
   canonicalControlPlaneGrantPayloadV3,
   canonicalControlPlaneIndependentReviewAttestationPayloadV3,
@@ -284,6 +286,35 @@ test('production successor producer derives and persists the initial history anc
       fixture.initialized.recordDigest,
     );
     assert.deepEqual(calls, { human: 1, sign: 1 });
+    const promoted = dispatchProductionControlPlaneUpdaterCommand(
+      [
+        'approve-and-apply',
+        produced.candidate.candidateId,
+        '--task',
+        fixture.frozen.mandateBinding.mandateTaskId,
+      ],
+      fixture.stateRoot,
+      controlPlaneFixtureUpdaterDependencies(
+        fixture.frozen,
+        fixture.signing.signer(CONTROL_PLANE_FIXTURE_GRANT_SIGNER, {
+          human: 0,
+          sign: 0,
+        }),
+        fixture.signing.verifier,
+        [],
+        new Date('2026-08-10T10:04:00.000Z'),
+      ),
+      fs.realpathSync(fixture.repository),
+    );
+    assert.equal(promoted.record?.kind, 'persisted-control-plane-update.v3');
+    assert.equal(promoted.supervisor.generation, 2);
+    assert.equal(
+      resolveControlPlaneEngineSelection(
+        fixture.stateRoot,
+        promoted.supervisor.repositoryId,
+      )?.recordDigest,
+      promoted.supervisor.recordDigest,
+    );
   } finally {
     fixture.cleanup();
   }
@@ -346,6 +377,13 @@ test('production successor producer anchors an independently verified V2 termina
     assert.equal(promoted.record?.kind, 'persisted-control-plane-update.v3');
     assert.equal(promoted.record.transaction.state, 'FINALIZED');
     assert.equal(promoted.supervisor.generation, 3);
+    assert.equal(
+      resolveControlPlaneEngineSelection(
+        fixture.stateRoot,
+        promoted.supervisor.repositoryId,
+      )?.recordDigest,
+      promoted.supervisor.recordDigest,
+    );
     const terminalHistory = readControlPlaneSupervisorHistory(
       fixture.stateRoot,
     );
@@ -418,8 +456,29 @@ test('production successor producer anchors an independently verified V2 termina
       assert.equal(promotedAgain.record.transaction.state, 'FINALIZED');
       assert.equal(promotedAgain.supervisor.generation, 4);
       assert.equal(
+        resolveControlPlaneEngineSelection(
+          fixture.stateRoot,
+          promotedAgain.supervisor.repositoryId,
+        )?.recordDigest,
+        promotedAgain.supervisor.recordDigest,
+      );
+      assert.equal(
         readControlPlaneSupervisorHistory(fixture.stateRoot).generation,
         4,
+      );
+      const supervisorPath = `${fixture.stateRoot}/control-plane-supervisor.json`;
+      const redigestedSupervisor = withRecordDigest({
+        ...readCanonicalFixtureRecord(supervisorPath),
+        generation: 999,
+      });
+      writeCanonicalFixtureRecord(supervisorPath, redigestedSupervisor);
+      assert.throws(
+        () =>
+          resolveControlPlaneEngineSelection(
+            fixture.stateRoot,
+            promotedAgain.supervisor.repositoryId,
+          ),
+        /terminal promotion result/,
       );
     } finally {
       next.cleanup();
@@ -614,12 +673,264 @@ test('successor recovery seals an already terminal transaction exactly once', as
   }
 });
 
+test('successor switch crash seals the exact rollback lineage for bootstrap selection', async () => {
+  const fixture = await setupFinalizedControlPlanePromotionFixture();
+  const successor = prepareSuccessorControlPlaneCandidate(fixture);
+  try {
+    const produced = produceControlPlaneApprovalCandidateV3(
+      fs.realpathSync(fixture.repository),
+      fixture.stateRoot,
+      successor.frozen.candidateBundleDigest,
+      {
+        now: () => new Date('2026-08-10T10:18:00.000Z'),
+        reviewSigner: fixture.signing.signer(CONTROL_PLANE_FIXTURE_REVIEWER, {
+          human: 0,
+          sign: 0,
+        }),
+        verifyHumanSignature: fixture.signing.verifier,
+        presentReviewSummary() {},
+      },
+    );
+    const dependencies = controlPlaneFixtureUpdaterDependencies(
+      successor.frozen,
+      fixture.signing.signer(CONTROL_PLANE_FIXTURE_GRANT_SIGNER, {
+        human: 0,
+        sign: 0,
+      }),
+      fixture.signing.verifier,
+      [],
+      new Date('2026-08-10T10:19:00.000Z'),
+    );
+    Object.assign(dependencies, {
+      testHooks: {
+        afterAtomicSwitch() {
+          throw new Error('successor-switch-crash');
+        },
+      },
+    });
+    assert.throws(
+      () =>
+        dispatchProductionControlPlaneUpdaterCommand(
+          [
+            'approve-and-apply',
+            produced.candidate.candidateId,
+            '--task',
+            successor.frozen.mandateBinding.mandateTaskId,
+          ],
+          fixture.stateRoot,
+          dependencies,
+          fs.realpathSync(fixture.repository),
+        ),
+      /successor-switch-crash/,
+    );
+    const grantId = approvalGrantId(produced.candidate.candidateId);
+    const recovered = dispatchProductionControlPlaneUpdaterCommand(
+      ['recover', grantId],
+      fixture.stateRoot,
+      controlPlaneFixtureUpdaterDependencies(
+        successor.frozen,
+        fixture.signing.signer(CONTROL_PLANE_FIXTURE_GRANT_SIGNER, {
+          human: 0,
+          sign: 0,
+        }),
+        fixture.signing.verifier,
+        [],
+        new Date('2026-08-10T10:20:00.000Z'),
+      ),
+      fs.realpathSync(fixture.repository),
+    );
+    assert.equal(recovered.record?.transaction.state, 'ROLLED_BACK');
+    assert.equal(recovered.supervisor.generation, 4);
+    const terminal = readControlPlaneSupervisorHistory(fixture.stateRoot).leaf;
+    assert.equal(terminal.kind, 'control-plane-supervisor-history-terminal.v1');
+    assert.equal(
+      terminal.kind === 'control-plane-supervisor-history-terminal.v1'
+        ? terminal.terminalState
+        : null,
+      'ROLLED_BACK',
+    );
+    assert.equal(
+      resolveControlPlaneEngineSelection(
+        fixture.stateRoot,
+        recovered.supervisor.repositoryId,
+      )?.recordDigest,
+      recovered.supervisor.recordDigest,
+    );
+  } finally {
+    successor.cleanup();
+    fixture.cleanup();
+  }
+});
+
+test('sealed successor selection rejects a fully redigested signature substitution', async () => {
+  const fixture = await setupFinalizedControlPlanePromotionFixture();
+  const successor = prepareSuccessorControlPlaneCandidate(fixture);
+  try {
+    const produced = produceControlPlaneApprovalCandidateV3(
+      fs.realpathSync(fixture.repository),
+      fixture.stateRoot,
+      successor.frozen.candidateBundleDigest,
+      {
+        now: () => new Date('2026-08-10T10:18:00.000Z'),
+        reviewSigner: fixture.signing.signer(CONTROL_PLANE_FIXTURE_REVIEWER, {
+          human: 0,
+          sign: 0,
+        }),
+        verifyHumanSignature: fixture.signing.verifier,
+        presentReviewSummary() {},
+      },
+    );
+    const promoted = dispatchProductionControlPlaneUpdaterCommand(
+      [
+        'approve-and-apply',
+        produced.candidate.candidateId,
+        '--task',
+        successor.frozen.mandateBinding.mandateTaskId,
+      ],
+      fixture.stateRoot,
+      controlPlaneFixtureUpdaterDependencies(
+        successor.frozen,
+        fixture.signing.signer(CONTROL_PLANE_FIXTURE_GRANT_SIGNER, {
+          human: 0,
+          sign: 0,
+        }),
+        fixture.signing.verifier,
+        [],
+        new Date('2026-08-10T10:19:00.000Z'),
+      ),
+      fs.realpathSync(fixture.repository),
+    );
+    assert.equal(
+      resolveControlPlaneEngineSelection(
+        fixture.stateRoot,
+        promoted.supervisor.repositoryId,
+      )?.recordDigest,
+      promoted.supervisor.recordDigest,
+    );
+
+    const grantId = approvalGrantId(produced.candidate.candidateId);
+    const updateDirectory = `${fixture.stateRoot}/control-updates`;
+    const updatePath = fs
+      .readdirSync(updateDirectory)
+      .map((name) => `${updateDirectory}/${name}`)
+      .find(
+        (candidatePath) =>
+          readCanonicalFixtureRecord(candidatePath).kind ===
+            'persisted-control-plane-update.v3' &&
+          (
+            readCanonicalFixtureRecord(candidatePath).envelope as Record<
+              string,
+              unknown
+            >
+          ).payload !== undefined,
+      );
+    assert.ok(updatePath);
+    const update = readCanonicalFixtureRecord(updatePath);
+    const envelope = structuredClone(
+      update.envelope as Record<string, unknown>,
+    );
+    const payload = envelope.payload as Parameters<
+      typeof canonicalControlPlaneGrantPayloadV3
+    >[0];
+    envelope.signature = fixture.signing
+      .signer(CONTROL_PLANE_FIXTURE_REVIEWER, { human: 0, sign: 0 })
+      .sign(
+        canonicalControlPlaneGrantPayloadV3(payload),
+        CONTROL_PLANE_SIGNATURE_NAMESPACE_V3,
+      )
+      .trim();
+    const forgedUpdate = withRecordDigest({ ...update, envelope });
+    writeCanonicalFixtureRecord(updatePath, forgedUpdate);
+
+    const historyDirectory = `${fixture.stateRoot}/control-plane-supervisor-history`;
+    const history = fs.readdirSync(historyDirectory).map((name) => ({
+      path: `${historyDirectory}/${name}`,
+      record: readCanonicalFixtureRecord(`${historyDirectory}/${name}`),
+    }));
+    const transition = history.find(
+      ({ record }) =>
+        record.kind === 'control-plane-supervisor-history-transition.v1' &&
+        record.grantId === grantId,
+    );
+    const terminal = history.find(
+      ({ record }) =>
+        record.kind === 'control-plane-supervisor-history-terminal.v1' &&
+        record.grantId === grantId,
+    );
+    assert.ok(transition);
+    assert.ok(terminal);
+    const grantEnvelopeDigest = canonicalFixtureDigest(envelope);
+    const forgedTransition = withRecordDigest({
+      ...transition.record,
+      grantEnvelopeDigest,
+    });
+    const forgedTerminal = withRecordDigest({
+      ...terminal.record,
+      previousRecordDigest: forgedTransition.recordDigest,
+      grantEnvelopeDigest,
+      updateRecordDigest: forgedUpdate.recordDigest,
+    });
+    fs.unlinkSync(transition.path);
+    fs.unlinkSync(terminal.path);
+    writeCanonicalFixtureRecord(
+      `${historyDirectory}/${forgedTransition.recordDigest.slice('sha256:'.length)}.json`,
+      forgedTransition,
+    );
+    writeCanonicalFixtureRecord(
+      `${historyDirectory}/${forgedTerminal.recordDigest.slice('sha256:'.length)}.json`,
+      forgedTerminal,
+    );
+
+    assert.throws(
+      () =>
+        resolveControlPlaneEngineSelection(
+          fixture.stateRoot,
+          promoted.supervisor.repositoryId,
+        ),
+      /terminal promotion result/,
+    );
+  } finally {
+    successor.cleanup();
+    fixture.cleanup();
+  }
+});
+
 function digest(label: string): `sha256:${string}` {
   return `sha256:${crypto.createHash('sha256').update(label).digest('hex')}`;
 }
 
 function approvalGrantId(candidateId: string): string {
   return `control-plane-approval-${candidateId.slice('sha256:'.length)}`;
+}
+
+function canonicalFixtureDigest(value: unknown): `sha256:${string}` {
+  return `sha256:${crypto
+    .createHash('sha256')
+    .update(canonicalJson(value))
+    .digest('hex')}`;
+}
+
+function withRecordDigest(
+  value: Record<string, unknown>,
+): Record<string, unknown> & { recordDigest: `sha256:${string}` } {
+  const { recordDigest: _recordDigest, ...payload } = value;
+  return { ...payload, recordDigest: canonicalFixtureDigest(payload) };
+}
+
+function readCanonicalFixtureRecord(filePath: string): Record<string, unknown> {
+  const raw = fs.readFileSync(filePath, 'utf8');
+  const value = JSON.parse(raw) as unknown;
+  assert.equal(`${canonicalJson(value)}\n`, raw);
+  assert.ok(value && typeof value === 'object' && !Array.isArray(value));
+  return value as Record<string, unknown>;
+}
+
+function writeCanonicalFixtureRecord(
+  filePath: string,
+  value: Record<string, unknown>,
+): void {
+  fs.writeFileSync(filePath, `${canonicalJson(value)}\n`, { mode: 0o600 });
+  fs.chmodSync(filePath, 0o600);
 }
 
 function commit(label: string): string {
