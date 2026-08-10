@@ -365,6 +365,14 @@ function approveAndApplyMaintainerGrantV2WithBinding(
     preflight,
     options.environment ?? process.env,
   );
+  // Read from the trust base, never from the candidate: a check's definition
+  // is what the repository says it is, and a candidate that could restate its
+  // own definition would be grading its own paper.
+  const baseDefinitions = loadBaseCheckDefinitions(
+    frozenRepository.repositoryRoot,
+    preflight.trustBaseCommit,
+    preflight.requiredChecks,
+  );
   // The commit object's SSH signature is itself a human-authority ceremony.
   // Run every expensive candidate check first so a failing or ungrantable
   // candidate never asks the maintainer to unlock/sign a commit object.
@@ -401,7 +409,9 @@ function approveAndApplyMaintainerGrantV2WithBinding(
     trustBaseCommit: preflight.trustBaseCommit,
     checks: checksAttestation.checks.map((check) => ({
       checkId: check.evidence.checkId,
-      definitionDigest: check.commandDigest,
+      definitionDigest: digest(
+        canonicalJson(baseDefinitions[check.evidence.checkId]!),
+      ),
       commandDigest: check.commandDigest,
       runnerDigest: check.evidence.runnerDigest,
       environmentDigest: checksAttestation.environmentDigest,

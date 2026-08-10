@@ -967,6 +967,9 @@ function candidateChecksAreExact(
       return (
         grantCheck !== undefined &&
         candidateCheck.checkId === grantCheck.evidence.checkId &&
+        // Both bindings are checked here against what ran; that they agree is
+        // an invariant the check journal enforces separately, comparing the
+        // command that ran against the trust base's own definition digest.
         candidateCheck.definitionDigest === grantCheck.commandDigest &&
         candidateCheck.commandDigest === grantCheck.commandDigest &&
         candidateCheck.runnerDigest === grantCheck.evidence.runnerDigest &&
