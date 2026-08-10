@@ -5,7 +5,7 @@ import { canonicalJson } from './canonical-json.js';
 import { ExitCode, workflowError } from './errors.js';
 import { interventionEngineArtifactRecordPath, readStoredInterventionEngineArtifact, } from './intervention-engine-artifact-store.js';
 import { ensurePlainDirectory, publishPreparedExclusiveLock, reclaimDeadPreparedLock, } from './filesystem-safety.js';
-import { advanceEngineAdoption, advanceMinimalUpdaterTransaction, beginHarnessIntervention, createWipCheckpoint, decideControlPlaneRecovery, decideEngineAdoptionRecovery, prepareEngineAdoption, prepareMinimalUpdaterTransaction, verifyControlPlaneGrant, verifyControlPlaneGrantV2, verifyHarnessMaintenanceGrant, verifyWipCheckpoint, } from './intervention-control.js';
+import { advanceEngineAdoption, advanceMinimalUpdaterTransaction, beginHarnessIntervention, createWipCheckpoint, decideControlPlaneRecovery, decideEngineAdoptionRecovery, prepareEngineAdoption, prepareMinimalUpdaterTransaction, verifyControlPlaneGrant, verifyControlPlaneGrantV2, verifyControlPlaneGrantV3, verifyHarnessMaintenanceGrant, verifyWipCheckpoint, } from './intervention-control.js';
 const MAX_RECORD_BYTES = 4 * 1024 * 1024;
 const PRIVATE_FILE_MODE = 0o600;
 const PRIVATE_DIRECTORY_MODE = 0o700;
@@ -940,6 +940,51 @@ export function preparePersistedControlPlaneUpdateV2(storageRoot, input, depende
         return record;
     });
 }
+export function preparePersistedControlPlaneUpdateV3(storageRoot, input, dependencies) {
+    const verifyHumanSignature = requireHumanVerifier(dependencies);
+    if (dependencies.consumedGrantIds === undefined) {
+        throw workflowError('INTERVENTION_CONTROL_CONSUMPTION_STATE_REQUIRED', 'Minimal updater v3 preparation requires trusted grant consumption state.', ExitCode.guard);
+    }
+    const consumedGrantIds = dependencies.consumedGrantIds;
+    const now = persistenceNow(dependencies);
+    const grantId = input.envelope.payload.grantId;
+    return withPersistenceOperation(storageRoot, 'control-update-reservation', () => {
+        ensurePersistenceDirectories(storageRoot);
+        const target = controlPlaneUpdateRecordPath(storageRoot, grantId);
+        if (fs.existsSync(target)) {
+            readPersistedControlPlaneUpdate(storageRoot, grantId);
+            throw workflowError('INTERVENTION_CONTROL_GRANT_ALREADY_RESERVED_OR_CONSUMED', 'Control-Plane Grant already has a durable transaction.', ExitCode.conflict);
+        }
+        assertUniqueControlTransactionId(storageRoot, input.txId);
+        const grant = verifyControlPlaneGrantV3(input.envelope, {
+            now,
+            beforeManifest: input.beforeManifest,
+            afterManifest: input.afterManifest,
+            bundle: input.bundle,
+            consumedGrantIds,
+            verifyHumanSignature,
+        });
+        const transaction = prepareMinimalUpdaterTransaction(grant, {
+            txId: input.txId,
+            now,
+        });
+        const record = withRecordDigest({
+            kind: 'persisted-control-plane-update.v3',
+            grantState: 'reserved',
+            transaction,
+            envelope: input.envelope,
+            beforeManifest: input.beforeManifest,
+            afterManifest: input.afterManifest,
+            changes: input.bundle.material.exactChanges,
+            observations: [],
+            createdAt: now.toISOString(),
+            updatedAt: now.toISOString(),
+            effectsPerformed: false,
+        });
+        createPrivateFileExclusive(target, serializeRecord(record));
+        return record;
+    });
+}
 export function advancePersistedControlPlaneUpdate(storageRoot, input) {
     assertDigest(input.evidenceDigest, 'INTERVENTION_CONTROL_UPDATE_EVIDENCE_INVALID');
     return withPersistenceOperation(storageRoot, `control-update:${input.grantId}`, () => {
@@ -963,36 +1008,45 @@ export function advancePersistedControlPlaneUpdate(storageRoot, input) {
         const grantState = transaction.state === 'FINALIZED' || transaction.state === 'ROLLED_BACK'
             ? 'consumed'
             : 'reserved';
-        const next = current.kind === 'persisted-control-plane-update.v1'
-            ? withRecordDigest({
-                kind: current.kind,
-                grantState,
-                transaction,
-                envelope: current.envelope,
-                beforeManifest: current.beforeManifest,
-                afterManifest: current.afterManifest,
-                changes: current.changes,
-                observations: [...current.observations, observation],
-                createdAt: current.createdAt,
-                updatedAt: input.event.at,
-                effectsPerformed: false,
-            })
-            : withRecordDigest({
-                kind: current.kind,
-                grantState,
-                transaction,
-                envelope: current.envelope,
-                beforeManifest: current.beforeManifest,
-                afterManifest: current.afterManifest,
-                changes: current.changes,
-                observations: [...current.observations, observation],
-                createdAt: current.createdAt,
-                updatedAt: input.event.at,
-                effectsPerformed: false,
-            });
+        const next = advanceControlPlaneUpdateRecord(current, transaction, observation, grantState, input.event.at);
         replacePrivateFileAtomic(controlPlaneUpdateRecordPath(storageRoot, input.grantId), serializeRecord(next));
         return next;
     });
+}
+function advanceControlPlaneUpdateRecord(current, transaction, observation, grantState, updatedAt) {
+    const common = {
+        grantState,
+        transaction,
+        beforeManifest: current.beforeManifest,
+        afterManifest: current.afterManifest,
+        observations: [...current.observations, observation],
+        createdAt: current.createdAt,
+        updatedAt,
+        effectsPerformed: false,
+    };
+    switch (current.kind) {
+        case 'persisted-control-plane-update.v1':
+            return withRecordDigest({
+                ...common,
+                kind: current.kind,
+                envelope: current.envelope,
+                changes: current.changes,
+            });
+        case 'persisted-control-plane-update.v2':
+            return withRecordDigest({
+                ...common,
+                kind: current.kind,
+                envelope: current.envelope,
+                changes: current.changes,
+            });
+        case 'persisted-control-plane-update.v3':
+            return withRecordDigest({
+                ...common,
+                kind: current.kind,
+                envelope: current.envelope,
+                changes: current.changes,
+            });
+    }
 }
 export function recoverPersistedControlPlaneUpdate(storageRoot, grantId) {
     const record = readPersistedControlPlaneUpdate(storageRoot, grantId);
@@ -1005,7 +1059,8 @@ export function readPersistedControlPlaneUpdate(storageRoot, grantId) {
     const value = readCanonicalRecord(controlPlaneUpdateRecordPath(storageRoot, grantId), 'INTERVENTION_CONTROL_UPDATE_NOT_FOUND');
     if (!isRecord(value) ||
         (value.kind !== 'persisted-control-plane-update.v1' &&
-            value.kind !== 'persisted-control-plane-update.v2') ||
+            value.kind !== 'persisted-control-plane-update.v2' &&
+            value.kind !== 'persisted-control-plane-update.v3') ||
         !hasExactKeys(value, [
             'afterManifest',
             'beforeManifest',

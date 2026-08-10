@@ -2144,6 +2144,12 @@ function assertInvestigationSession(value) {
             'branch',
             'baseline',
             'intentDigest',
+            ...(Object.prototype.hasOwnProperty.call(value, 'implementationReconciliationPolicyDigest')
+                ? ['implementationReconciliationPolicyDigest']
+                : []),
+            ...(Object.prototype.hasOwnProperty.call(value, 'planReviewCoveragePolicyDigest')
+                ? ['planReviewCoveragePolicyDigest']
+                : []),
             'blindManifestDigest',
             'blindRequestDigest',
             'blindInvocationIds',
@@ -2174,6 +2180,10 @@ function assertInvestigationSession(value) {
         (value.branch !== null && typeof value.branch !== 'string') ||
         !isBaseline(value.baseline) ||
         !isDigest(value.intentDigest) ||
+        (Object.prototype.hasOwnProperty.call(value, 'implementationReconciliationPolicyDigest') &&
+            !isDigest(value.implementationReconciliationPolicyDigest)) ||
+        (Object.prototype.hasOwnProperty.call(value, 'planReviewCoveragePolicyDigest') &&
+            !isDigest(value.planReviewCoveragePolicyDigest)) ||
         !isDigest(value.blindManifestDigest) ||
         !isDigest(value.blindRequestDigest) ||
         !isStringArray(value.blindInvocationIds) ||
@@ -2246,6 +2256,8 @@ function assertMonotonicSessionTransition(current, next) {
         'branch',
         'baseline',
         'intentDigest',
+        'implementationReconciliationPolicyDigest',
+        'planReviewCoveragePolicyDigest',
         'blindManifestDigest',
         'createdAt',
     ]) {
