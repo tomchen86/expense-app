@@ -718,6 +718,9 @@ export function performEpochRollover(input) {
     const invalidated = sortedUniqueIdentities(input.invalidated, invalidEpochTransition, 'invalidated stage');
     const verification = validateEpochVerification(input.verification);
     const createdAt = exactDate(input.createdAt, 'EPOCH_TRANSITION_INVALID');
+    const carryForwardManifest = input.carryForwardManifest === undefined
+        ? null
+        : normalizeEpochCarryForwardManifest(input.carryForwardManifest, input.workflow, carriedForward);
     const workflow = {
         ...input.workflow,
         currentEpoch: input.nextManifest.epoch,
@@ -728,8 +731,7 @@ export function performEpochRollover(input) {
         status: 'active',
         blocker: null,
     };
-    const receipt = {
-        schemaVersion: 1,
+    const receiptCommon = {
         kind: 'epoch-transition',
         workflowId: workflow.workflowId,
         fromEpoch: input.workflow.currentEpoch,
@@ -745,6 +747,13 @@ export function performEpochRollover(input) {
         verification,
         createdAt,
     };
+    const receipt = carryForwardManifest === null
+        ? { schemaVersion: 1, ...receiptCommon }
+        : {
+            schemaVersion: 2,
+            ...receiptCommon,
+            carryForwardManifest,
+        };
     validateEpochTransitionReceipt(receipt);
     return { workflow, receipt };
 }
@@ -974,6 +983,65 @@ export function inspectDurableEpochContextStore(storeRoot, workflowId) {
     return structuredClone(state.context);
 }
 /**
+ * Applies transition-receipt TTL and count bounds without requiring another
+ * semantic epoch rollover. Receipt retention is operational maintenance: it
+ * may advance the durable context envelope generation, but it must not change
+ * the current epoch, manifest, workflow binding, or evidence catalog.
+ */
+export function compactDurableEpochTransitionReceipts(storeRoot, input) {
+    assertIdentity(input.workflowId, invalidDurableContext, 'workflow ID');
+    assertPositiveInteger(input.expectedContextGeneration, invalidDurableContext, 'expected context generation');
+    const updatedAt = exactDate(input.now, 'RETENTION_POLICY_INVALID');
+    const policy = input.policy ?? DEFAULT_RETENTION_POLICY;
+    validateRetentionPolicy(policy);
+    const paths = ensureDurableGovernanceStore(storeRoot);
+    return withDurableGovernanceLock(paths, input.workflowId, () => {
+        let state = readDurableGovernanceState(paths, input.workflowId);
+        recoverPreparedPruneReceipts(paths, input.workflowId, state);
+        state = readDurableGovernanceState(paths, input.workflowId);
+        if (state.context.generation !== input.expectedContextGeneration) {
+            throw workflowError('EXECUTION_CONTEXT_CAS_MISMATCH', 'Durable context changed before transition receipts were compacted.', ExitCode.staleState);
+        }
+        const fullReceiptsBefore = state.context.transitionReceipts.length;
+        const stubsBefore = state.context.transitionStubs.length;
+        const compacted = compactEpochTransitionReceipts(state.context.transitionReceipts, state.context.transitionStubs, { now: input.now, policy });
+        const changed = canonicalJson(compacted.full) !==
+            canonicalJson(state.context.transitionReceipts) ||
+            canonicalJson(compacted.stubs) !==
+                canonicalJson(state.context.transitionStubs);
+        if (!changed) {
+            return Object.freeze({
+                workflowId: input.workflowId,
+                changed: false,
+                contextGeneration: state.context.generation,
+                fullReceiptsBefore,
+                fullReceiptsAfter: fullReceiptsBefore,
+                stubsBefore,
+                stubsAfter: stubsBefore,
+                discarded: Object.freeze([...compacted.discarded]),
+            });
+        }
+        const context = {
+            ...state.context,
+            generation: state.context.generation + 1,
+            transitionReceipts: compacted.full,
+            transitionStubs: compacted.stubs,
+            updatedAt,
+        };
+        replacePrivateFileAtomic(durableStatePath(paths, input.workflowId), canonicalDurableGovernanceState({ ...state, context }));
+        return Object.freeze({
+            workflowId: input.workflowId,
+            changed: true,
+            contextGeneration: context.generation,
+            fullReceiptsBefore,
+            fullReceiptsAfter: context.transitionReceipts.length,
+            stubsBefore,
+            stubsAfter: context.transitionStubs.length,
+            discarded: Object.freeze([...compacted.discarded]),
+        });
+    });
+}
+/**
  * Revalidate one exact current context and execute a short synchronous
  * acceptance operation while holding the same per-workflow lock used by epoch
  * rollover. Callers receive no raw lock primitive and must not perform
@@ -1038,10 +1106,14 @@ export function rolloverDurableEpochContextStore(storeRoot, input) {
             reason: input.reason,
             restartFrom: input.restartFrom,
             carriedForward: input.carriedForward,
+            carryForwardManifest: input.carryForwardManifest,
             invalidated: input.invalidated,
             verification: input.verification,
             createdAt: input.createdAt,
         });
+        if (transition.receipt.schemaVersion === 2) {
+            assertEpochCarryForwardSourceMembership(transition.receipt.carryForwardManifest, state.context.currentManifest, input.nextManifest);
+        }
         persistManifestItems(paths, input.workflowId, input.nextManifest, input.items);
         const compacted = compactEpochTransitionReceipts([...state.context.transitionReceipts, transition.receipt], state.context.transitionStubs, { now: input.createdAt, policy });
         const context = {
@@ -2330,26 +2402,132 @@ function validateWorkflowContextState(value) {
         assertTimestamp(value.blocker.since, invalidEpochTransition, 'blocker since');
     }
 }
-function validateEpochTransitionReceipt(value) {
+function normalizeEpochCarryForwardManifest(value, workflow, carriedForwardSummary) {
+    if (!isRecord(value) ||
+        !hasExactKeys(value, [
+            'sourceWorkflow',
+            'sourceEpoch',
+            'carriedForward',
+            'excluded',
+        ])) {
+        throw invalidEpochTransition('Epoch carry-forward manifest has an invalid shape.');
+    }
+    const manifest = validateEpochCarryForwardManifest({
+        schemaVersion: 1,
+        kind: 'epoch-carry-forward-manifest',
+        ...value,
+    });
+    if (manifest.sourceWorkflow !== workflow.workflowId ||
+        manifest.sourceEpoch !== workflow.currentEpoch) {
+        throw invalidEpochTransition('Epoch carry-forward manifest does not identify the source workflow epoch.');
+    }
+    if (canonicalJson(manifest.carriedForward.map(({ identity }) => identity)) !==
+        canonicalJson(carriedForwardSummary)) {
+        throw invalidEpochTransition('Epoch carry-forward decisions must exactly match the receipt summary.');
+    }
+    return manifest;
+}
+function validateEpochCarryForwardManifest(value) {
     if (!isRecord(value) ||
         !hasExactKeys(value, [
             'schemaVersion',
             'kind',
-            'workflowId',
-            'fromEpoch',
-            'toEpoch',
-            'fromContractVersion',
-            'toContractVersion',
-            'reason',
-            'restartFrom',
+            'sourceWorkflow',
+            'sourceEpoch',
             'carriedForward',
-            'invalidated',
-            'previousContextDigest',
-            'newContextDigest',
-            'verification',
-            'createdAt',
+            'excluded',
         ]) ||
         value.schemaVersion !== 1 ||
+        value.kind !== 'epoch-carry-forward-manifest') {
+        throw invalidEpochTransition('Epoch carry-forward manifest has an invalid shape.');
+    }
+    assertIdentity(value.sourceWorkflow, invalidEpochTransition, 'carry-forward source workflow');
+    assertPositiveInteger(value.sourceEpoch, invalidEpochTransition, 'carry-forward source epoch');
+    const carriedForward = normalizeEpochCarryForwardDecisions(value.carriedForward, 'carried-forward');
+    const excluded = normalizeEpochCarryForwardDecisions(value.excluded, 'excluded');
+    const carriedIdentities = new Set(carriedForward.map(({ identity }) => identity));
+    if (excluded.some(({ identity }) => carriedIdentities.has(identity))) {
+        throw invalidEpochTransition('An epoch item cannot be both carried forward and excluded.');
+    }
+    return {
+        schemaVersion: 1,
+        kind: 'epoch-carry-forward-manifest',
+        sourceWorkflow: value.sourceWorkflow,
+        sourceEpoch: value.sourceEpoch,
+        carriedForward,
+        excluded,
+    };
+}
+function normalizeEpochCarryForwardDecisions(value, label) {
+    if (!Array.isArray(value)) {
+        throw invalidEpochTransition(`${label} decisions must be an array.`);
+    }
+    const decisions = value.map((decision) => {
+        if (!isRecord(decision) ||
+            !hasExactKeys(decision, ['identity', 'reason'])) {
+            throw invalidEpochTransition(`${label} decision is malformed.`);
+        }
+        assertIdentity(decision.identity, invalidEpochTransition, `${label} identity`);
+        assertReason(decision.reason, invalidEpochTransition, `${label} reason`);
+        return {
+            identity: decision.identity,
+            reason: decision.reason,
+        };
+    });
+    decisions.sort((left, right) => left.identity.localeCompare(right.identity));
+    if (decisions.some(({ identity }, index) => index > 0 && identity === decisions[index - 1].identity)) {
+        throw invalidEpochTransition(`${label} decisions contain duplicates.`);
+    }
+    return decisions;
+}
+function assertEpochCarryForwardSourceMembership(manifest, sourceManifest, nextManifest) {
+    if (manifest.sourceWorkflow !== sourceManifest.workflowId ||
+        manifest.sourceEpoch !== sourceManifest.epoch) {
+        throw invalidEpochTransition('Carry-forward decisions do not match the stored source manifest.');
+    }
+    const sourceIdentities = new Set(sourceManifest.items.map(({ identity }) => identity));
+    const decidedIdentities = [...manifest.carriedForward, ...manifest.excluded]
+        .map(({ identity }) => identity)
+        .sort();
+    if (decidedIdentities.some((identity) => !sourceIdentities.has(identity))) {
+        throw invalidEpochTransition('Every carry-forward decision must identify an item in the source manifest.');
+    }
+    if (canonicalJson(decidedIdentities) !==
+        canonicalJson([...sourceIdentities].sort())) {
+        throw invalidEpochTransition('Every source manifest item must have a carry-forward decision.');
+    }
+    const sourceDigests = new Map(sourceManifest.items.map(({ identity, digest }) => [identity, digest]));
+    const nextDigests = new Map(nextManifest.items.map(({ identity, digest }) => [identity, digest]));
+    if (manifest.carriedForward.some(({ identity }) => nextDigests.get(identity) !== sourceDigests.get(identity))) {
+        throw invalidEpochTransition('Every carried-forward item must retain its exact source digest in the next manifest.');
+    }
+    if (manifest.excluded.some(({ identity }) => nextDigests.get(identity) === sourceDigests.get(identity))) {
+        throw invalidEpochTransition('An excluded source item cannot remain unchanged in the next manifest.');
+    }
+}
+function validateEpochTransitionReceipt(value) {
+    const commonKeys = [
+        'schemaVersion',
+        'kind',
+        'workflowId',
+        'fromEpoch',
+        'toEpoch',
+        'fromContractVersion',
+        'toContractVersion',
+        'reason',
+        'restartFrom',
+        'carriedForward',
+        'invalidated',
+        'previousContextDigest',
+        'newContextDigest',
+        'verification',
+        'createdAt',
+    ];
+    if (!isRecord(value) ||
+        (value.schemaVersion !== 1 && value.schemaVersion !== 2) ||
+        !hasExactKeys(value, value.schemaVersion === 1
+            ? commonKeys
+            : [...commonKeys, 'carryForwardManifest']) ||
         value.kind !== 'epoch-transition') {
         throw invalidEpochTransition('Transition receipt has an invalid shape.');
     }
@@ -2363,6 +2541,15 @@ function validateEpochTransitionReceipt(value) {
     assertReason(value.reason, invalidEpochTransition, 'rollover reason');
     assertIdentity(value.restartFrom, invalidEpochTransition, 'restart checkpoint');
     sortedUniqueIdentities(value.carriedForward, invalidEpochTransition, 'carried-forward identity', true);
+    if (value.schemaVersion === 2) {
+        const manifest = validateEpochCarryForwardManifest(value.carryForwardManifest);
+        if (manifest.sourceWorkflow !== value.workflowId ||
+            manifest.sourceEpoch !== value.fromEpoch ||
+            canonicalJson(manifest.carriedForward.map(({ identity }) => identity)) !==
+                canonicalJson(value.carriedForward)) {
+            throw invalidEpochTransition('Transition carry-forward decisions do not match the receipt summary.');
+        }
+    }
     sortedUniqueIdentities(value.invalidated, invalidEpochTransition, 'invalidated stage', true);
     assertDigest(value.previousContextDigest, invalidEpochTransition, 'previous context digest');
     assertDigest(value.newContextDigest, invalidEpochTransition, 'new context digest');

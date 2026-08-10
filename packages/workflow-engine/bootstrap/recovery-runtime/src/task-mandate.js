@@ -8,7 +8,7 @@ import { canonicalJson } from './canonical-json.js';
 import { isRecord } from './contract-values.js';
 import { ExitCode, workflowError } from './errors.js';
 import { ensurePlainDirectory } from './filesystem-safety.js';
-import { discoverRepository, runGit } from './git.js';
+import { discoverRepository, isPostApprovalAdmissionFailure, runGit, } from './git.js';
 import { parseMaintainerPolicy } from './maintainer-policy.js';
 import { createInteractiveSshSigner, } from './maintainer-signer.js';
 import { isProviderId } from './provider-registry.js';
@@ -610,7 +610,9 @@ function validateTaskMandateEnvelopeForRepository(repositoryRoot, envelope, prov
             ? TASK_MANDATE_SIGNATURE_NAMESPACE_V2
             : TASK_MANDATE_SIGNATURE_NAMESPACE);
     }
-    catch {
+    catch (error) {
+        if (isPostApprovalAdmissionFailure(error))
+            throw error;
         throw workflowError('TASK_MANDATE_SIGNATURE_INVALID', 'Task mandate signature is invalid for its dedicated domain.', ExitCode.verification);
     }
 }
@@ -944,7 +946,8 @@ function parseTaskMandateRecord(raw) {
                 return (!declaration ||
                     !usage ||
                     usage.invocations !== usage.reservations.length ||
-                    usage.invocations > declaration.maxInvocations + grantedReservations ||
+                    usage.invocations >
+                        declaration.maxInvocations + grantedReservations ||
                     (declaration.maxBudget !== null &&
                         usage.budget > declaration.maxBudget));
             }) ||

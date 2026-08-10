@@ -384,10 +384,10 @@ export function commitChangedPaths(repositoryRoot, commitHash) {
         .map(normalizeChangedPath)
         .sort();
 }
-export function findExactTaskCommits(repositoryRoot, changeId, taskId) {
+export function findExactTaskCommits(repositoryRoot, changeId, taskId, tip = 'HEAD') {
     const values = runGit(repositoryRoot, [
         'log',
-        'HEAD',
+        tip,
         '--format=%H%x00%s%x00%B%x00',
     ]).split('\0');
     const commits = [];

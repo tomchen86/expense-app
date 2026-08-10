@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { createTrustedExecutionEnvironment } from './execution-environment.js';
 import { ExitCode, workflowError } from './errors.js';
-import { runGit } from './git.js';
+import { normalizePostApprovalSubprocessError, postApprovalSubprocessBudget, runGit, } from './git.js';
 export function assertInteractiveSignerContext(context) {
     if (!context.stdinIsTty || !context.stdoutIsTty || !context.stderrIsTty) {
         throw workflowError('MAINTAINER_INTERACTIVE_REQUIRED', 'Maintainer grant signing requires controlling input, output, and error terminals.', ExitCode.unsafeEnvironment, {
@@ -38,7 +38,7 @@ export function createInteractiveSshSigner(repositoryRoot, policy) {
             const signaturePath = `${payloadPath}.sig`;
             try {
                 writePrivateFile(payloadPath, payload);
-                const result = spawnSync(executable, [
+                const args = [
                     '-Y',
                     'sign',
                     '-f',
@@ -46,12 +46,19 @@ export function createInteractiveSshSigner(repositoryRoot, policy) {
                     '-n',
                     namespace ?? policy.signatureNamespace,
                     payloadPath,
-                ], {
+                ];
+                const budget = postApprovalSubprocessBudget('ssh-keygen', executable, args);
+                const result = spawnSync(executable, args, {
                     shell: false,
                     stdio: ['inherit', 'ignore', 'inherit'],
+                    timeout: budget?.processTimeoutMs,
                     env: signerEnvironment(executable),
                 });
-                if (result.error || result.status !== 0) {
+                if (result.error) {
+                    normalizePostApprovalSubprocessError(budget, result.error);
+                    throw workflowError('MAINTAINER_SIGNATURE_FAILED', 'The interactive SSH signer did not create a grant signature.', ExitCode.verification);
+                }
+                if (result.status !== 0) {
                     throw workflowError('MAINTAINER_SIGNATURE_FAILED', 'The interactive SSH signer did not create a grant signature.', ExitCode.verification);
                 }
                 const signature = fs.readFileSync(signaturePath, 'utf8');
@@ -69,6 +76,13 @@ export function createInteractiveSshSigner(repositoryRoot, policy) {
             verifySshSignature(executable, payload, signature, identity, signer.publicKey, namespace ?? policy.signatureNamespace);
         },
     };
+}
+/**
+ * Verify an externally produced SSH signature against one explicitly supplied
+ * public key. This path never discovers a signing key and cannot sign.
+ */
+export function verifySshSignatureWithPublicKey(payload, signature, identity, publicKey, namespace) {
+    verifySshSignature(resolveSshKeygenExecutable(), payload, signature, identity, publicKey, namespace);
 }
 function resolveSigningMaterial(repositoryRoot, policy, executable) {
     const configured = runGit(repositoryRoot, ['config', '--local', '--get', 'user.signingkey'], true).trim();
@@ -88,12 +102,19 @@ function resolveSigningMaterial(repositoryRoot, policy, executable) {
         throw unsafeSigningKey();
     }
     const keyPath = fs.realpathSync(expanded);
-    const fingerprintResult = spawnSync(executable, ['-l', '-E', 'sha256', '-f', keyPath], {
+    const fingerprintArgs = ['-l', '-E', 'sha256', '-f', keyPath];
+    const fingerprintBudget = postApprovalSubprocessBudget('ssh-keygen', executable, fingerprintArgs);
+    const fingerprintResult = spawnSync(executable, fingerprintArgs, {
         encoding: 'utf8',
         shell: false,
+        timeout: fingerprintBudget?.processTimeoutMs,
         env: signerEnvironment(executable),
     });
-    if (fingerprintResult.error || fingerprintResult.status !== 0) {
+    if (fingerprintResult.error) {
+        normalizePostApprovalSubprocessError(fingerprintBudget, fingerprintResult.error);
+        throw unsafeSigningKey();
+    }
+    if (fingerprintResult.status !== 0) {
         throw unsafeSigningKey();
     }
     const fingerprint = fingerprintResult.stdout.match(/SHA256:[A-Za-z0-9+/]+/)?.[0];
@@ -103,11 +124,18 @@ function resolveSigningMaterial(repositoryRoot, policy, executable) {
     }
     const hardwareKey = /\((?:ED25519|ECDSA)-SK\)\s*$/.test(fingerprintResult.stdout.trim());
     if (!hardwareKey) {
-        const emptyPassphraseProbe = spawnSync(executable, ['-y', '-P', '', '-f', keyPath], {
+        const probeArgs = ['-y', '-P', '', '-f', keyPath];
+        const probeBudget = postApprovalSubprocessBudget('ssh-keygen', executable, probeArgs);
+        const emptyPassphraseProbe = spawnSync(executable, probeArgs, {
             shell: false,
             stdio: 'ignore',
+            timeout: probeBudget?.processTimeoutMs,
             env: signerEnvironment(executable),
         });
+        if (emptyPassphraseProbe.error) {
+            normalizePostApprovalSubprocessError(probeBudget, emptyPassphraseProbe.error);
+            throw unsafeSigningKey();
+        }
         if (emptyPassphraseProbe.status === 0) {
             throw workflowError('MAINTAINER_UNENCRYPTED_KEY_REJECTED', 'An unencrypted software SSH key cannot issue maintainer grants.', ExitCode.unsafeEnvironment, {
                 recovery: 'Use a passphrase-encrypted SSH private key or a FIDO security key.',
@@ -126,7 +154,7 @@ function verifySshSignature(executable, payload, signature, identity, publicKey,
     try {
         writePrivateFile(allowedSignersPath, `${identity} ${publicKey}\n`);
         writePrivateFile(signaturePath, signature);
-        const result = spawnSync(executable, [
+        const args = [
             '-Y',
             'verify',
             '-f',
@@ -137,13 +165,20 @@ function verifySshSignature(executable, payload, signature, identity, publicKey,
             namespace,
             '-s',
             signaturePath,
-        ], {
+        ];
+        const budget = postApprovalSubprocessBudget('ssh-keygen', executable, args);
+        const result = spawnSync(executable, args, {
             encoding: 'utf8',
             shell: false,
             input: payload,
+            timeout: budget?.processTimeoutMs,
             env: signerEnvironment(executable),
         });
-        if (result.error || result.status !== 0) {
+        if (result.error) {
+            normalizePostApprovalSubprocessError(budget, result.error);
+            throw invalidSignature();
+        }
+        if (result.status !== 0) {
             throw invalidSignature();
         }
     }
