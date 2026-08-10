@@ -35,9 +35,10 @@ import {
 import { commitFacts, previewExactStaging } from './git-transitions.ts';
 import {
   acceptApplyPrestate,
-  assertCandidateChecksFresh,
+  assertCandidateV2ChecksFresh,
   readDurableRefGenerationLedger,
 } from './maintainer-candidate.ts';
+import { currentCandidateDependencySnapshot } from './maintainer-candidate-dependencies.ts';
 import {
   isMaintainerGrantV2Envelope,
   maintainerChecksEnvironmentDigest,
@@ -119,6 +120,8 @@ export type AuthoritySessionOptions = {
   now?: Date;
   signer?: MaintainerSignerProvider;
   environment?: NodeJS.ProcessEnv;
+  /** Trusted current snapshots for checks that declare external-state. */
+  externalStateDigests?: Readonly<Record<string, string>>;
   allowSignedV2Candidate?: boolean;
   lifecycleAssertOwned?: () => void;
   testRefusalAuditServiceHooks?: AuthorityAuditServiceHooks;
@@ -390,9 +393,12 @@ export function startAuthoritySession(
             environmentDigest,
           );
           assertV2CandidateFresh(
+            git.repositoryRoot,
             envelope,
             exactDate(options.now ?? new Date()),
             environmentDigest,
+            options.environment,
+            options.externalStateDigests,
           );
           const paths = maintainerGrantStorePaths(git.gitCommonDirectory);
           session.latestCheckReportId = writeAuthorityCheckReport(
@@ -926,9 +932,12 @@ function inspectAuthoritySession(
       : null,
   );
   assertV2CandidateFresh(
+    stable.git.repositoryRoot,
     reservation.envelope,
     exactDate(options.now ?? new Date()),
     environmentDigest,
+    options.environment,
+    options.externalStateDigests,
   );
   return {
     git: stable.git,
@@ -981,13 +990,23 @@ function validateReservedGrantAuthorityBinding(
 }
 
 function assertV2CandidateFresh(
+  repositoryRoot: string,
   envelope: import('./maintainer-grant-v2.ts').MaintainerGrantV2Envelope,
   now: Date,
   environmentDigest: string,
+  environment: NodeJS.ProcessEnv | undefined,
+  externalStateDigests: Readonly<Record<string, string>> | undefined,
 ): void {
   const candidate = envelope.payload.candidateBundle;
   if (candidate === null) return;
-  assertCandidateChecksFresh(candidate.checksAttestation, {
+  if (candidate.schemaVersion !== 2) {
+    throw workflowError(
+      'APPLY_CANDIDATE_LEGACY_READ_ONLY',
+      'Immutable candidate v1 is historical read-only evidence and cannot authorize repository mutation.',
+      ExitCode.guard,
+    );
+  }
+  assertCandidateV2ChecksFresh(candidate.checksAttestation, {
     now,
     candidateTree: candidate.resultTree,
     patchDigest: envelope.payload.patchDigest,
@@ -997,7 +1016,16 @@ function assertV2CandidateFresh(
       ({ checkId }) => checkId,
     ),
     environmentDigest,
-    changedDependencies: [],
+    currentDependencySnapshot: currentCandidateDependencySnapshot({
+      cwd: repositoryRoot,
+      repositoryId: envelope.payload.repositoryId,
+      candidateTree: candidate.resultTree,
+      baseCommit: envelope.payload.baseCommit,
+      policyDigest: envelope.payload.policyDigest,
+      checks: candidate.checksAttestation.checks,
+      environment,
+      externalStateDigests,
+    }),
   });
 }
 

@@ -8,6 +8,7 @@ import test from 'node:test';
 import {
   acceptApplyPrestate,
   assertCandidateChecksFresh,
+  assertCandidateV2ChecksFresh,
   buildImmutableCandidateBundle,
   canonicalImmutableCandidateBundle,
   createRefGenerationLedger,
@@ -19,6 +20,7 @@ import {
   recordRefGenerationTransition,
   storeImmutableCandidateBundle,
   type CandidateChecksAttestation,
+  type CandidateChecksAttestationV3,
 } from '../src/maintainer-candidate.ts';
 import type { PatchManifest } from '../src/maintainer-manifest.ts';
 import { canonicalPatchManifest } from '../src/maintainer-manifest.ts';
@@ -90,6 +92,25 @@ function checks(
         dependsOn: ['harness-engine', 'runner', 'source-tree'],
       },
     ],
+  };
+}
+
+function checksV3(): CandidateChecksAttestationV3 {
+  return {
+    schemaVersion: 3,
+    candidateTree: TREE,
+    patchDigest: manifest.patchDigest,
+    trustBaseCommit: OID_A,
+    dependencySnapshot: {
+      schemaVersion: 1,
+      sourceTree: TREE,
+      baseCommit: OID_A,
+      harnessEngineDigest: '6'.repeat(64),
+      policyDigest: DIGEST,
+      runnerDigests: { 'workflow-tests': '4'.repeat(64) },
+      externalStateDigests: { 'workflow-tests': null },
+    },
+    checks: checks().checks,
   };
 }
 
@@ -214,6 +235,37 @@ test('attestation freshness is anchored to original completion and selective dep
         requiredChecks: ['workflow-tests'],
         environmentDigest: ENVIRONMENT,
         changedDependencies: ['harness-engine'],
+      }),
+    (error) => isWorkflowError(error, 'APPLY_ATTESTATION_INVALIDATED'),
+  );
+});
+
+test('candidate v2 compares sealed dependency snapshots instead of caller change hints', () => {
+  const current = structuredClone(checksV3().dependencySnapshot);
+  assert.doesNotThrow(() =>
+    assertCandidateV2ChecksFresh(checksV3(), {
+      now: new Date('2026-08-03T09:01:00.000Z'),
+      candidateTree: TREE,
+      patchDigest: manifest.patchDigest,
+      trustBaseCommit: OID_A,
+      requiredChecks: ['workflow-tests'],
+      environmentDigest: ENVIRONMENT,
+      currentDependencySnapshot: { ...current, policyDigest: '9'.repeat(64) },
+    }),
+  );
+  assert.throws(
+    () =>
+      assertCandidateV2ChecksFresh(checksV3(), {
+        now: new Date('2026-08-03T09:01:00.000Z'),
+        candidateTree: TREE,
+        patchDigest: manifest.patchDigest,
+        trustBaseCommit: OID_A,
+        requiredChecks: ['workflow-tests'],
+        environmentDigest: ENVIRONMENT,
+        currentDependencySnapshot: {
+          ...current,
+          runnerDigests: { 'workflow-tests': '7'.repeat(64) },
+        },
       }),
     (error) => isWorkflowError(error, 'APPLY_ATTESTATION_INVALIDATED'),
   );

@@ -23,7 +23,7 @@ import {
   parseMaintainerGrantV2Envelope,
   type MaintainerEvidenceWaiver,
 } from '../src/maintainer-grant-v2.ts';
-import { assertCandidateChecksFresh } from '../src/maintainer-candidate.ts';
+import { assertCandidateV2ChecksFresh } from '../src/maintainer-candidate.ts';
 import { approveAndApplyMaintainerGrantV2 } from '../src/maintainer-approve.ts';
 import { parseMaintainerPolicy } from '../src/maintainer-policy.ts';
 import type { MaintainerSignerProvider } from '../src/maintainer-signer.ts';
@@ -139,6 +139,8 @@ test('CI rejects a trusted receipt whose waiver projection differs from its sign
 
     const candidate = parsedLegacyGrant.payload.candidateBundle;
     assert.ok(candidate);
+    assert.equal(candidate.schemaVersion, 2);
+    if (candidate.schemaVersion !== 2) assert.fail('expected candidate v2');
     const check = candidate.checksAttestation.checks[0];
     assert.ok(check);
     const maxAgeMs = check.maxAgeMs;
@@ -146,7 +148,7 @@ test('CI rejects a trusted receipt whose waiver projection differs from its sign
     if (maxAgeMs === null) assert.fail('fixture check must have a max age');
     assert.throws(
       () =>
-        assertCandidateChecksFresh(candidate.checksAttestation, {
+        assertCandidateV2ChecksFresh(candidate.checksAttestation, {
           now: new Date(Date.parse(check.completedAt) + maxAgeMs + 1),
           candidateTree: candidate.resultTree,
           patchDigest: parsedLegacyGrant.payload.patchDigest,
@@ -157,7 +159,8 @@ test('CI rejects a trusted receipt whose waiver projection differs from its sign
               ({ checkId }) => checkId,
             ) ?? [],
           environmentDigest: check.environmentDigest,
-          changedDependencies: [],
+          currentDependencySnapshot:
+            candidate.checksAttestation.dependencySnapshot,
         }),
       (error) => isWorkflowError(error, 'APPLY_ATTESTATION_STALE'),
     );
@@ -166,7 +169,7 @@ test('CI rejects a trusted receipt whose waiver projection differs from its sign
     (failedAttestation.checks[0] as { outcome: string }).outcome = 'failed';
     assert.throws(
       () =>
-        assertCandidateChecksFresh(failedAttestation, {
+        assertCandidateV2ChecksFresh(failedAttestation, {
           now: new Date(check.completedAt),
           candidateTree: candidate.resultTree,
           patchDigest: parsedLegacyGrant.payload.patchDigest,
@@ -174,7 +177,8 @@ test('CI rejects a trusted receipt whose waiver projection differs from its sign
           requiredChecks: parsedLegacyGrant.payload.requiredChecks,
           waivedFreshnessCheckIds: ['fixture'],
           environmentDigest: check.environmentDigest,
-          changedDependencies: [],
+          currentDependencySnapshot:
+            candidate.checksAttestation.dependencySnapshot,
         }),
       (error) => isWorkflowError(error, 'APPLY_ATTESTATION_INVALID'),
     );

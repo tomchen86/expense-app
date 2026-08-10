@@ -51,10 +51,13 @@ import {
 } from '../src/authority-audit-service.ts';
 import {
   buildImmutableCandidateBundle,
+  buildImmutableCandidateBundleV2,
   readDurableRefGenerationLedger,
+  readStoredCandidateHumanReadableSummary,
   readStoredImmutableCandidateBundle,
   storeImmutableCandidateBundle,
   type CandidateChecksAttestation,
+  type CandidateChecksAttestationV3,
 } from '../src/maintainer-candidate.ts';
 import type { MaintainerSignerProvider } from '../src/maintainer-signer.ts';
 import { parseMaintainerPolicy } from '../src/maintainer-policy.ts';
@@ -323,7 +326,9 @@ function prepareCandidate(): string {
  * window as real time advances and silently stops testing staleness at all.
  * Deriving the time from the attestation keeps the assertion about expiry.
  */
-function afterEvidenceExpires(attestation: CandidateChecksAttestation): Date {
+function afterEvidenceExpires(
+  attestation: CandidateChecksAttestation | CandidateChecksAttestationV3,
+): Date {
   const expiries = attestation.checks.flatMap(({ completedAt, maxAgeMs }) =>
     maxAgeMs === null ? [] : [Date.parse(completedAt) + maxAgeMs],
   );
@@ -476,8 +481,23 @@ test('preapproval checks durably resume after interruption without rerunning com
     assert.equal(journals.length, 1);
     const journal = JSON.parse(
       fs.readFileSync(path.join(journalDirectory, journals[0]!), 'utf8'),
-    ) as { state: string; finalAttestation: unknown; checks: unknown[] };
+    ) as {
+      state: string;
+      identity: { schemaVersion: number; harnessEngineDigest: string };
+      finalAttestation: {
+        schemaVersion: number;
+        harnessEngineDigest: string;
+      };
+      checks: unknown[];
+    };
     assert.equal(journal.state, 'completed');
+    assert.equal(journal.identity.schemaVersion, 2);
+    assert.match(journal.identity.harnessEngineDigest, /^[0-9a-f]{64}$/);
+    assert.equal(journal.finalAttestation.schemaVersion, 2);
+    assert.equal(
+      journal.finalAttestation.harnessEngineDigest,
+      journal.identity.harnessEngineDigest,
+    );
     assert.equal(journal.checks.length, 2);
     assert.deepEqual(journal.finalAttestation, resumed);
   });
@@ -1285,14 +1305,18 @@ test('candidate and supporting artifacts cannot be reused under another audit ro
   try {
     const prepared = freezeIssuableCandidate(repository, preparedSigned);
     const original = prepared.candidateBundle!;
+    assert.equal(original.schemaVersion, 2);
+    if (original.schemaVersion !== 2) assert.fail('expected candidate v2');
     const { candidateBundleDigest: _digest, ...candidateInput } = original;
-    const rebound = buildImmutableCandidateBundle({
-      ...candidateInput,
+    const { humanReadableSummaryDigest: _summaryDigest, ...candidateV2Input } =
+      candidateInput;
+    const rebound = buildImmutableCandidateBundleV2({
+      ...candidateV2Input,
       mandateBinding: {
         ...original.mandateBinding,
         externalAuditRoot: `${original.mandateBinding.externalAuditRoot}-other`,
       },
-    });
+    }).bundle;
     storeImmutableCandidateBundle(
       fs.realpathSync(path.join(repository, '.git')),
       rebound,
@@ -1599,6 +1623,63 @@ test('v2 issue rejects a candidate-less request before touching the signer', () 
       (error) => isWorkflowError(error, 'APPLY_CANDIDATE_REQUIRED'),
     );
     assert.equal(signerTouched, false);
+    assert.deepEqual(signed, []);
+  } finally {
+    fs.rmSync(repository, { recursive: true, force: true });
+  }
+});
+
+test('v2 issue keeps immutable candidate v1 historical and read-only', () => {
+  const repository = prepareCandidate();
+  const preparedSigned: string[] = [];
+  const signed: string[] = [];
+  try {
+    const prepared = freezeIssuableCandidate(repository, preparedSigned);
+    const current = prepared.candidateBundle!;
+    assert.equal(current.schemaVersion, 2);
+    if (current.schemaVersion !== 2) assert.fail('expected candidate v2');
+    const {
+      candidateBundleDigest: _candidateDigest,
+      humanReadableSummaryDigest: _summaryDigest,
+      checksAttestation,
+      ...common
+    } = current;
+    const legacyCandidate = buildImmutableCandidateBundle({
+      ...common,
+      checksAttestation: {
+        schemaVersion: 2,
+        candidateTree: checksAttestation.candidateTree,
+        patchDigest: checksAttestation.patchDigest,
+        trustBaseCommit: checksAttestation.trustBaseCommit,
+        checks: checksAttestation.checks,
+      },
+    });
+    assert.equal(
+      readStoredImmutableCandidateBundle(
+        fs.realpathSync(path.join(repository, '.git')),
+        current.candidateBundleDigest,
+      ).schemaVersion,
+      2,
+    );
+    assert.throws(
+      () =>
+        issueMaintainerGrantV2(
+          repository,
+          {
+            changeId: 'demo-change',
+            reason: 'Reject executable authority from historical candidate v1',
+            manifest: prepared.manifest,
+            checksAttestation: prepared.checksAttestation!,
+            candidateBundle: legacyCandidate,
+          },
+          {
+            now: new Date('2026-08-03T09:01:00.000Z'),
+            grantId: GRANT_ID,
+            signer: fakeSigner(signed),
+          },
+        ),
+      (error) => isWorkflowError(error, 'APPLY_CANDIDATE_LEGACY_READ_ONLY'),
+    );
     assert.deepEqual(signed, []);
   } finally {
     fs.rmSync(repository, { recursive: true, force: true });
@@ -2451,13 +2532,37 @@ test('approve-and-apply checks before signing and atomically consumes the exact 
     assert.equal(result.applied, true);
     assert.equal(result.commitHash, result.candidateCommit);
     assert.match(result.candidateBundleDigest, /^[0-9a-f]{64}$/);
-    assert.equal(
-      readStoredImmutableCandidateBundle(
-        fs.realpathSync(path.join(repository, '.git')),
-        result.candidateBundleDigest,
-      ).candidateCommit,
-      result.candidateCommit,
+    const storedCandidate = readStoredImmutableCandidateBundle(
+      fs.realpathSync(path.join(repository, '.git')),
+      result.candidateBundleDigest,
     );
+    assert.equal(storedCandidate.schemaVersion, 2);
+    if (storedCandidate.schemaVersion !== 2) {
+      assert.fail('Production approve-and-apply must emit candidate v2.');
+    }
+    assert.equal(storedCandidate.candidateCommit, result.candidateCommit);
+    assert.equal(storedCandidate.checksAttestation.schemaVersion, 3);
+    assert.equal(
+      storedCandidate.checksAttestation.dependencySnapshot.sourceTree,
+      result.resultTree,
+    );
+    assert.equal(
+      storedCandidate.checksAttestation.dependencySnapshot.baseCommit,
+      storedCandidate.expectedOldCommit,
+    );
+    assert.deepEqual(
+      Object.keys(
+        storedCandidate.checksAttestation.dependencySnapshot.runnerDigests,
+      ),
+      ['fixture'],
+    );
+    const summary = readStoredCandidateHumanReadableSummary(
+      fs.realpathSync(path.join(repository, '.git')),
+      storedCandidate.humanReadableSummaryDigest,
+    );
+    assert.match(summary, /^# Immutable Candidate Summary\n/u);
+    assert.match(summary, /Change: `demo-change`/u);
+    assert.match(summary, /Required checks: `fixture`/u);
     assert.equal(
       git(repository, [
         'show',

@@ -19,14 +19,16 @@ import {
 } from './maintainer-grant.ts';
 import {
   acceptApplyPrestate,
-  assertCandidateChecksFresh,
+  assertCandidateV2ChecksFresh,
   assertStoredCandidateSupportingArtifacts,
   canonicalImmutableCandidateBundle,
   parseImmutableCandidateBundle,
   readDurableRefGenerationLedger,
   readStoredImmutableCandidateBundle,
-  type ImmutableCandidateBundle,
+  type AnyImmutableCandidateBundle,
+  type ImmutableCandidateBundleV2,
 } from './maintainer-candidate.ts';
+import { currentCandidateDependencySnapshot } from './maintainer-candidate-dependencies.ts';
 import {
   buildMaintainerPatchManifest,
   canonicalPatchManifest,
@@ -118,8 +120,7 @@ export type MaintainerPreapprovalCheck = {
   completedAt: string;
 };
 
-export type MaintainerChecksAttestation = {
-  schemaVersion: 1;
+type MaintainerChecksAttestationCommon = {
   trustBaseCommit: string;
   policyDigest: string;
   patchDigest: string;
@@ -127,6 +128,20 @@ export type MaintainerChecksAttestation = {
   environmentDigest: string;
   checks: MaintainerPreapprovalCheck[];
 };
+
+export type MaintainerChecksAttestationV1 =
+  MaintainerChecksAttestationCommon & {
+    schemaVersion: 1;
+  };
+
+export type MaintainerChecksAttestationV2 =
+  MaintainerChecksAttestationCommon & {
+    schemaVersion: 2;
+    harnessEngineDigest: string;
+  };
+
+export type MaintainerChecksAttestation =
+  MaintainerChecksAttestationV1 | MaintainerChecksAttestationV2;
 
 export type MaintainerGrantV2Payload = {
   version: 2;
@@ -153,7 +168,7 @@ export type MaintainerGrantV2Payload = {
   checkDependencies: CapabilityProfile['checkDependencies'];
   checksAttestation: MaintainerChecksAttestation | null;
   checksAttestationDigest: string | null;
-  candidateBundle: ImmutableCandidateBundle | null;
+  candidateBundle: AnyImmutableCandidateBundle | null;
   candidateBundleDigest: string | null;
   effectsManifestDigest: string | null;
   issuedAt: string;
@@ -191,7 +206,7 @@ export type MaintainerGrantV2IssueRequest = {
   manifest: PatchManifest;
   ttlMinutes?: number;
   checksAttestation?: MaintainerChecksAttestation;
-  candidateBundle?: ImmutableCandidateBundle;
+  candidateBundle?: AnyImmutableCandidateBundle;
   evidenceWaivers?: MaintainerEvidenceWaiver[];
 };
 
@@ -200,6 +215,7 @@ export type MaintainerGrantV2IssueOptions = {
   grantId?: string;
   signer?: MaintainerSignerProvider;
   environment?: NodeJS.ProcessEnv;
+  externalStateDigests?: Readonly<Record<string, string>>;
   /** Production approve-and-apply uses this to durably audit the signed grant
    * before any tag or available token makes it executable. */
   beforeGrantPublication?: (envelope: MaintainerGrantV2Envelope) => void;
@@ -352,6 +368,13 @@ export function issueMaintainerGrantV2(
   const candidateBundle = parseImmutableCandidateBundle(
     canonicalImmutableCandidateBundle(request.candidateBundle),
   );
+  if (candidateBundle.schemaVersion !== 2) {
+    throw workflowError(
+      'APPLY_CANDIDATE_LEGACY_READ_ONLY',
+      'Immutable candidate v1 is historical read-only evidence and cannot issue a new Apply Grant.',
+      ExitCode.guard,
+    );
+  }
   if (candidateBundle.classification !== classification) {
     throw invalidGrant(
       'Apply Grant v2 requires the exact matching immutable candidate classification.',
@@ -363,7 +386,7 @@ export function issueMaintainerGrantV2(
       'The grant checks attestation differs from the immutable candidate checks.',
     );
   }
-  assertCandidateChecksFresh(candidateBundle.checksAttestation, {
+  assertCandidateV2ChecksFresh(candidateBundle.checksAttestation, {
     now,
     candidateTree: candidateBundle.resultTree,
     patchDigest: manifest.patchDigest,
@@ -374,7 +397,16 @@ export function issueMaintainerGrantV2(
       request.checksAttestation,
       options.environment ?? process.env,
     ),
-    changedDependencies: [],
+    currentDependencySnapshot: currentCandidateDependencySnapshot({
+      cwd,
+      repositoryId: context.policy.repository.id,
+      candidateTree: candidateBundle.resultTree,
+      baseCommit: manifest.trustBaseCommit,
+      policyDigest: context.policyDigest,
+      checks: candidateBundle.checksAttestation.checks,
+      environment: options.environment,
+      externalStateDigests: options.externalStateDigests,
+    }),
   });
   const storedCandidate = readStoredImmutableCandidateBundle(
     context.repository.gitCommonDirectory,
@@ -793,6 +825,13 @@ export function validateMaintainerGrantV2AuthorityBinding(
       'Maintainer grant v2 requires an immutable candidate at authority admission.',
     );
   }
+  if (candidate.schemaVersion !== 2) {
+    throw workflowError(
+      'APPLY_CANDIDATE_LEGACY_READ_ONLY',
+      'Immutable candidate v1 is historical read-only evidence and cannot authorize repository mutation.',
+      ExitCode.guard,
+    );
+  }
   assertStoredCandidateSupportingArtifacts(
     discoverRepository(repositoryRoot).gitCommonDirectory,
     envelope.payload.changeId,
@@ -972,7 +1011,7 @@ function parseMaintainerGrantV2Payload(
         ? null
         : parseImmutableCandidateBundle(
             canonicalImmutableCandidateBundle(
-              raw.candidateBundle as ImmutableCandidateBundle,
+              raw.candidateBundle as AnyImmutableCandidateBundle,
             ),
           ),
     candidateBundleDigest: raw.candidateBundleDigest,
@@ -1093,8 +1132,8 @@ function validateMaintainerGrantV2Payload(
 function assertApplyCandidateRequest(
   request: MaintainerGrantV2IssueRequest,
 ): asserts request is MaintainerGrantV2IssueRequest & {
-  checksAttestation: MaintainerChecksAttestation;
-  candidateBundle: ImmutableCandidateBundle;
+  checksAttestation: MaintainerChecksAttestationV2;
+  candidateBundle: ImmutableCandidateBundleV2;
 } {
   if (
     request.candidateBundle === undefined ||
@@ -1108,10 +1147,20 @@ function assertApplyCandidateRequest(
       ExitCode.guard,
     );
   }
+  if (
+    request.candidateBundle.schemaVersion !== 2 ||
+    request.checksAttestation.schemaVersion !== 2
+  ) {
+    throw workflowError(
+      'APPLY_CANDIDATE_LEGACY_READ_ONLY',
+      'Immutable candidate v1 and its legacy checks are historical read-only evidence.',
+      ExitCode.guard,
+    );
+  }
 }
 
 function candidateChecksAreExact(
-  candidate: ImmutableCandidateBundle,
+  candidate: AnyImmutableCandidateBundle,
   attestation: MaintainerChecksAttestation,
 ): boolean {
   const candidateChecks = candidate.checksAttestation.checks;
@@ -1135,24 +1184,31 @@ function candidateChecksAreExact(
         candidateCheck.startedAt === grantCheck.startedAt &&
         candidateCheck.completedAt === grantCheck.completedAt
       );
-    })
+    }) &&
+    (candidate.schemaVersion === 1 ||
+      (attestation.schemaVersion === 2 &&
+        candidate.checksAttestation.dependencySnapshot.harnessEngineDigest ===
+          attestation.harnessEngineDigest))
   );
 }
 
 function parseMaintainerChecksAttestation(
   raw: Record<string, unknown>,
 ): MaintainerChecksAttestation {
+  const schemaVersion = raw.schemaVersion;
+  const attestationKeys = [
+    'schemaVersion',
+    'trustBaseCommit',
+    'policyDigest',
+    'patchDigest',
+    'candidateStateDigest',
+    'environmentDigest',
+    'checks',
+    ...(schemaVersion === 2 ? ['harnessEngineDigest'] : []),
+  ];
   if (
-    !hasExactKeys(raw, [
-      'schemaVersion',
-      'trustBaseCommit',
-      'policyDigest',
-      'patchDigest',
-      'candidateStateDigest',
-      'environmentDigest',
-      'checks',
-    ]) ||
-    raw.schemaVersion !== 1 ||
+    !hasExactKeys(raw, attestationKeys) ||
+    (schemaVersion !== 1 && schemaVersion !== 2) ||
     typeof raw.trustBaseCommit !== 'string' ||
     !COMMIT_OID.test(raw.trustBaseCommit) ||
     typeof raw.policyDigest !== 'string' ||
@@ -1163,6 +1219,9 @@ function parseMaintainerChecksAttestation(
     !DIGEST.test(raw.candidateStateDigest) ||
     typeof raw.environmentDigest !== 'string' ||
     !DIGEST.test(raw.environmentDigest) ||
+    (schemaVersion === 2 &&
+      (typeof raw.harnessEngineDigest !== 'string' ||
+        !DIGEST.test(raw.harnessEngineDigest))) ||
     !Array.isArray(raw.checks) ||
     raw.checks.length === 0
   ) {
@@ -1189,24 +1248,16 @@ function parseMaintainerChecksAttestation(
       throw new Error('invalid preapproval check');
     }
     const evidence = entry.evidence;
-    const evidenceKeys = evidence.databaseIdentity
-      ? [
-          'checkId',
-          'outcome',
-          'exitCode',
-          'runner',
-          'runnerDigest',
-          'destructiveDatabase',
-          'databaseIdentity',
-        ]
-      : [
-          'checkId',
-          'outcome',
-          'exitCode',
-          'runner',
-          'runnerDigest',
-          'destructiveDatabase',
-        ];
+    const evidenceKeys = [
+      'checkId',
+      'outcome',
+      'exitCode',
+      'runner',
+      'runnerDigest',
+      'destructiveDatabase',
+      ...(evidence.databaseIdentity ? ['databaseIdentity'] : []),
+      ...(evidence.externalSnapshotDigest ? ['externalSnapshotDigest'] : []),
+    ];
     if (
       !hasExactKeys(evidence, evidenceKeys) ||
       typeof evidence.checkId !== 'string' ||
@@ -1215,6 +1266,9 @@ function parseMaintainerChecksAttestation(
       typeof evidence.runner !== 'string' ||
       typeof evidence.runnerDigest !== 'string' ||
       !DIGEST.test(evidence.runnerDigest) ||
+      (evidence.externalSnapshotDigest !== undefined &&
+        (typeof evidence.externalSnapshotDigest !== 'string' ||
+          !DIGEST.test(evidence.externalSnapshotDigest))) ||
       typeof evidence.destructiveDatabase !== 'boolean' ||
       (evidence.databaseIdentity !== undefined &&
         typeof evidence.databaseIdentity !== 'string')
@@ -1228,8 +1282,7 @@ function parseMaintainerChecksAttestation(
       completedAt: entry.completedAt,
     };
   });
-  return {
-    schemaVersion: 1,
+  const common = {
     trustBaseCommit: raw.trustBaseCommit,
     policyDigest: raw.policyDigest,
     patchDigest: raw.patchDigest,
@@ -1237,6 +1290,13 @@ function parseMaintainerChecksAttestation(
     environmentDigest: raw.environmentDigest,
     checks,
   };
+  return schemaVersion === 1
+    ? { schemaVersion: 1, ...common }
+    : {
+        schemaVersion: 2,
+        ...common,
+        harnessEngineDigest: raw.harnessEngineDigest as string,
+      };
 }
 
 function loadV2TrustContext(cwd: string, expectedBase?: string) {
@@ -1327,7 +1387,7 @@ function cloneCheckDependencies(
 }
 
 function assertCandidateDependencies(
-  candidate: ImmutableCandidateBundle | null,
+  candidate: AnyImmutableCandidateBundle | null,
   profile: CapabilityProfile,
 ): void {
   if (candidate === null) return;
@@ -1338,7 +1398,16 @@ function assertCandidateDependencies(
     ]),
   );
   if (
-    canonicalJson(observed) !== canonicalJson(cloneCheckDependencies(profile))
+    canonicalJson(observed) !==
+      canonicalJson(cloneCheckDependencies(profile)) ||
+    (candidate.schemaVersion === 2 &&
+      candidate.checksAttestation.checks.some((check) =>
+        check.dependsOn.includes('external-state')
+          ? check.reuseClass !== 'external-state' ||
+            check.maxAgeMs !==
+              profile.externalStateFreshness?.[check.checkId]?.maxAgeMs
+          : check.externalSnapshotDigest !== null,
+      ))
   ) {
     throw invalidGrant(
       'Candidate check dependencies differ from the trust-base profile.',

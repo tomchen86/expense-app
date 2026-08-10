@@ -271,7 +271,7 @@
     {
       "path": "src/control-plane-promotion-producer.ts",
       "mode": "100644",
-      "digest": "sha256:95841e5fb78ccab60e28fac1cf50c679f6edacb63259f715cbc57cfcd1838b9c"
+      "digest": "sha256:f6c492191bb517eebb0832ce6c375aa378fb6390cf3ee94784d75c3d78ec22fc"
     },
     {
       "path": "src/control-plane-recovery-grant.ts",
@@ -561,7 +561,7 @@
     {
       "path": "src/maintainer-approve.ts",
       "mode": "100644",
-      "digest": "sha256:51280bf5d5380da1c32feea8c1c82d289084d826f419838b32a8a1a708b589a2"
+      "digest": "sha256:3254ff6bbda8d831b682b3f1b550d1295d870cccff51c3646a9eb12f2a8af0fd"
     },
     {
       "path": "src/maintainer-attestation.ts",
@@ -569,14 +569,19 @@
       "digest": "sha256:83968bee903682621c2d3e32ce1e4cbabc3d0da0a979089fbf670bb388174c0b"
     },
     {
+      "path": "src/maintainer-candidate-dependencies.ts",
+      "mode": "100644",
+      "digest": "sha256:7dffa65379f0d8e3fe6dbcaf3a5fbf2e3773d43443a5c4a487a0f4f3828b6e1a"
+    },
+    {
       "path": "src/maintainer-candidate.ts",
       "mode": "100644",
-      "digest": "sha256:39880ab2e483a6cdca8cdfb0be382349be1d9035fc857c7a2390b28bd06f96f2"
+      "digest": "sha256:e0517c3f49278b82800eafc68063026dd13fd9afe5a5a86f9e2286e955206e34"
     },
     {
       "path": "src/maintainer-check-journal.ts",
       "mode": "100644",
-      "digest": "sha256:48117778a8409283f0714fd3efb18f1f6fba55daaebfc0d88c36977dac631aea"
+      "digest": "sha256:38f0f5803dfd994d2ab953c26c0c8290915bfca2a69bf46286c0afad1865f0e7"
     },
     {
       "path": "src/maintainer-commit.ts",
@@ -586,7 +591,7 @@
     {
       "path": "src/maintainer-grant-v2.ts",
       "mode": "100644",
-      "digest": "sha256:5bea60e632078da50ad90ff3aa1d231b2c736c109d1f523b0dacc6edc8670839"
+      "digest": "sha256:8936ea7a80418f09aaee73436f45fa935f38e68d7c99129502a0cb40f5b5967c"
     },
     {
       "path": "src/maintainer-grant.ts",
@@ -621,7 +626,7 @@
     {
       "path": "src/maintainer-session.ts",
       "mode": "100644",
-      "digest": "sha256:456c124b3e2292dc34035cc213ae68879f3e283c238ccd6823a3f7fc91678eb3"
+      "digest": "sha256:38a73b8cab79e3415ab55db4759fe960eb61cec21100ba3acc81c19b14f6359a"
     },
     {
       "path": "src/maintainer-signer.ts",

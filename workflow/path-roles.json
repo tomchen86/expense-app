@@ -110,6 +110,7 @@
       "packages/workflow-engine/src/human-resolution.ts",
       "packages/workflow-engine/src/maintainer-approve.ts",
       "packages/workflow-engine/src/maintainer-candidate.ts",
+      "packages/workflow-engine/src/maintainer-candidate-dependencies.ts",
       "packages/workflow-engine/src/maintainer-commit.ts",
       "packages/workflow-engine/src/maintainer-manifest.ts",
       "packages/workflow-engine/src/maintainer-policy.ts",

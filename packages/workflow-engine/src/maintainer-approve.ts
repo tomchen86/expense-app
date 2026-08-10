@@ -47,15 +47,20 @@ import {
 import {
   assertStoredCandidateSupportingArtifacts,
   buildCandidateExternalEffectsManifest,
-  buildImmutableCandidateBundle,
+  buildImmutableCandidateBundleV2,
   ensureDurableRefGenerationLedger,
+  storeCandidateHumanReadableSummary,
   storeCandidateSupportingArtifacts,
   storeImmutableCandidateBundle,
-  type CandidateChecksAttestation,
+  type AnyImmutableCandidateBundle,
+  type CandidateChecksAttestationV3,
   type CandidateExternalEffect,
   type CandidateProviderInvocation,
-  type ImmutableCandidateBundle,
 } from './maintainer-candidate.ts';
+import {
+  resolveCandidateHarnessEngineDigest,
+  sealedCandidateDependencySnapshot,
+} from './maintainer-candidate-dependencies.ts';
 import {
   appendMaintainerCheckEvidence,
   completeMaintainerCheckJournal,
@@ -73,10 +78,12 @@ import {
   preflightMaintainerGrantV2,
   validateMaintainerEvidenceWaivers,
   type MaintainerChecksAttestation,
+  type MaintainerChecksAttestationV2,
   type MaintainerEvidenceWaiver,
   type MaintainerGrantV2Envelope,
   type MaintainerGrantV2PreflightResult,
 } from './maintainer-grant-v2.ts';
+import { loadCapabilityProfileFromTrustBase } from './maintainer-manifest.ts';
 import { parseMaintainerPolicy } from './maintainer-policy.ts';
 import {
   createInteractiveSshSigner,
@@ -119,6 +126,8 @@ export type ApproveAndApplyMaintainerGrantV2Options = {
   now?: Date;
   signer?: MaintainerSignerProvider;
   environment?: NodeJS.ProcessEnv;
+  /** Trusted current snapshots for checks that declare external-state. */
+  externalStateDigests?: Readonly<Record<string, string>>;
   commitClock?: () => Date;
   testBeforeRefUpdate?: () => void;
   testPoststateVerification?: () => void;
@@ -164,6 +173,8 @@ export type RevokeMaintainerGrantV2Options = {
 
 export type PrepareMaintainerGrantV2ChecksOptions = {
   clock?: () => Date;
+  /** Trusted current snapshots for checks that declare external-state. */
+  externalStateDigests?: Readonly<Record<string, string>>;
   /** Test-only interruption point after one passed check is durably journaled. */
   testAfterCheckPersisted?: (checkId: string) => void;
 };
@@ -173,7 +184,7 @@ export function prepareMaintainerGrantV2Checks(
   preflight: MaintainerGrantV2PreflightResult,
   environment: NodeJS.ProcessEnv = process.env,
   options: PrepareMaintainerGrantV2ChecksOptions = {},
-): MaintainerChecksAttestation {
+): MaintainerChecksAttestationV2 {
   if (!preflight.grantable || preflight.classification === 'control-plane') {
     throw workflowError(
       'MAINTAINER_CONTROL_PLANE_GRANT_REQUIRED',
@@ -234,8 +245,18 @@ export function prepareMaintainerGrantV2Checks(
       ]),
     ),
   );
+  const profile = loadCapabilityProfileFromTrustBase(
+    initial.repositoryRoot,
+    preflight.trustBaseCommit,
+    preflight.manifest.profile,
+  );
+  const harnessEngineDigest = resolveCandidateHarnessEngineDigest(
+    initial,
+    basePolicy.repository.id,
+    environment,
+  );
   const identity: MaintainerCheckJournalIdentity = {
-    schemaVersion: 1,
+    schemaVersion: 2,
     repositoryId: basePolicy.repository.id,
     repositoryRealPath: initial.repositoryRealPath,
     trustBaseCommit: preflight.trustBaseCommit,
@@ -245,6 +266,7 @@ export function prepareMaintainerGrantV2Checks(
     patchDigest: preflight.patchDigest,
     candidateStateDigest: fingerprint,
     environmentDigest,
+    harnessEngineDigest,
     requiredChecks: pinned.map((entry) => ({
       checkId: entry.checkId,
       definitionDigest: digest(canonicalJson(entry.definition)),
@@ -254,6 +276,17 @@ export function prepareMaintainerGrantV2Checks(
       databaseIdentity: entry.definition.destructiveDatabase
         ? (database?.identity ?? null)
         : null,
+      dependsOn: [...preflight.checkDependencies[entry.checkId]!],
+      externalSnapshotDigest: externalStateSnapshot(
+        entry.checkId,
+        preflight.checkDependencies[entry.checkId]!,
+        options.externalStateDigests,
+      ),
+      externalMaxAgeMs: preflight.checkDependencies[entry.checkId]!.includes(
+        'external-state',
+      )
+        ? (profile.externalStateFreshness?.[entry.checkId]?.maxAgeMs ?? null)
+        : null,
     })),
   };
   const clock = options.clock ?? (() => new Date());
@@ -261,6 +294,12 @@ export function prepareMaintainerGrantV2Checks(
   return withRepositoryLifecycleOperation(storePaths.runtime, (assertOwned) => {
     assertOwned();
     assertCandidateUnchanged(initial.repositoryRoot, initial.head, fingerprint);
+    assertHarnessEngineUnchanged(
+      initial,
+      basePolicy.repository.id,
+      environment,
+      harnessEngineDigest,
+    );
     const opened = openMaintainerCheckJournal(
       initial.gitCommonDirectory,
       identity,
@@ -275,6 +314,10 @@ export function prepareMaintainerGrantV2Checks(
     }
     for (const entry of pinned.slice(journal.checks.length)) {
       const startedAt = clock().toISOString();
+      const expected = identity.requiredChecks.find(
+        ({ checkId }) => checkId === entry.checkId,
+      )!;
+      let evidenceCompletedAt: Date | undefined;
       const evidence = runCheck(
         initial.repositoryRoot,
         entry.checkId,
@@ -285,12 +328,28 @@ export function prepareMaintainerGrantV2Checks(
           entry.definition.destructiveDatabase,
         ),
         entry.definition.destructiveDatabase ? database?.identity : undefined,
+        expected.externalSnapshotDigest
+          ? {
+              completedAt: () => {
+                evidenceCompletedAt = clock();
+                return evidenceCompletedAt;
+              },
+              externalSnapshotDigest: expected.externalSnapshotDigest,
+              maxAgeMs: expected.externalMaxAgeMs!,
+            }
+          : undefined,
       );
-      const completedAt = clock().toISOString();
+      const completedAt = (evidenceCompletedAt ?? clock()).toISOString();
       assertCandidateUnchanged(
         initial.repositoryRoot,
         initial.head,
         fingerprint,
+      );
+      assertHarnessEngineUnchanged(
+        initial,
+        basePolicy.repository.id,
+        environment,
+        harnessEngineDigest,
       );
       assertOwned();
       journal = appendMaintainerCheckEvidence(
@@ -306,13 +365,14 @@ export function prepareMaintainerGrantV2Checks(
       );
       options.testAfterCheckPersisted?.(entry.checkId);
     }
-    const attestation: MaintainerChecksAttestation = {
-      schemaVersion: 1,
+    const attestation: MaintainerChecksAttestationV2 = {
+      schemaVersion: 2,
       trustBaseCommit: identity.trustBaseCommit,
       policyDigest: identity.policyDigest,
       patchDigest: identity.patchDigest,
       candidateStateDigest: identity.candidateStateDigest,
       environmentDigest: identity.environmentDigest,
+      harnessEngineDigest,
       checks: journal.checks,
     };
     journal = completeMaintainerCheckJournal(
@@ -321,7 +381,9 @@ export function prepareMaintainerGrantV2Checks(
       attestation,
       clock(),
     );
-    return journal.finalAttestation!;
+    const final = journal.finalAttestation!;
+    assertExactChecksAttestation(final, identity);
+    return final;
   });
 }
 
@@ -400,6 +462,7 @@ function approveAndApplyMaintainerGrantV2WithBinding(
     cwd,
     preflight,
     options.environment ?? process.env,
+    { externalStateDigests: options.externalStateDigests },
   );
   // Read from the trust base, never from the candidate: a check's definition
   // is what the repository says it is, and a candidate that could restate its
@@ -438,12 +501,12 @@ function approveAndApplyMaintainerGrantV2WithBinding(
     policy.repository.id,
     mandateBinding,
   );
-  const candidateChecksAttestation: CandidateChecksAttestation = {
-    schemaVersion: 2,
-    candidateTree: prospective.tree,
-    patchDigest: preflight.patchDigest,
-    trustBaseCommit: preflight.trustBaseCommit,
-    checks: checksAttestation.checks.map((check) => ({
+  const candidateChecks = checksAttestation.checks.map((check) => {
+    const dependencies = [
+      ...preflight.checkDependencies[check.evidence.checkId]!,
+    ];
+    const externalState = dependencies.includes('external-state');
+    return {
       checkId: check.evidence.checkId,
       definitionDigest: digest(
         canonicalJson(baseDefinitions[check.evidence.checkId]!),
@@ -455,11 +518,29 @@ function approveAndApplyMaintainerGrantV2WithBinding(
       outcome: 'passed' as const,
       startedAt: check.startedAt,
       completedAt: check.completedAt,
-      reuseClass: 'toolchain-dependent' as const,
-      maxAgeMs: 48 * 60 * 60 * 1_000,
-      externalSnapshotDigest: null,
-      dependsOn: [...preflight.checkDependencies[check.evidence.checkId]!],
-    })),
+      reuseClass: externalState
+        ? ('external-state' as const)
+        : ('toolchain-dependent' as const),
+      maxAgeMs: externalState
+        ? (check.evidence.maxAgeMs ?? null)
+        : 48 * 60 * 60 * 1_000,
+      externalSnapshotDigest: check.evidence.externalSnapshotDigest ?? null,
+      dependsOn: dependencies,
+    };
+  });
+  const candidateChecksAttestation: CandidateChecksAttestationV3 = {
+    schemaVersion: 3,
+    candidateTree: prospective.tree,
+    patchDigest: preflight.patchDigest,
+    trustBaseCommit: preflight.trustBaseCommit,
+    dependencySnapshot: sealedCandidateDependencySnapshot({
+      candidateTree: prospective.tree,
+      baseCommit: preflight.trustBaseCommit,
+      harnessEngineDigest: checksAttestation.harnessEngineDigest,
+      policyDigest: preflight.policyDigest,
+      checks: candidateChecks,
+    }),
+    checks: candidateChecks,
   };
   const providerInvocations = collectCandidateProviderInvocations(
     cwd,
@@ -489,26 +570,40 @@ function approveAndApplyMaintainerGrantV2WithBinding(
       },
     },
   );
-  const candidateBundle = buildImmutableCandidateBundle({
-    mandateBinding,
-    repositoryId: policy.repository.id,
-    targetRef,
-    expectedOldCommit: repository.head,
-    expectedRefGeneration: refLedger.generation,
-    candidateCommit,
-    resultTree: prospective.tree,
-    commitMessage: `${authorityCandidateCommitMessage(
-      request.message,
-      request.changeId,
-    )}\n`,
-    manifest: preflight.manifest,
-    checksAttestation: candidateChecksAttestation,
-    effectsManifestDigest: supportingArtifacts.effectsManifestDigest,
-    providerInvocationsDigest: supportingArtifacts.providerInvocationsDigest,
-    classification: preflight.classification,
-    recoveryPlanDigest: supportingArtifacts.recoveryPlanDigest,
-    createdAt: (options.now ?? new Date()).toISOString(),
-  });
+  const { bundle: candidateBundle, humanReadableSummary } =
+    buildImmutableCandidateBundleV2({
+      mandateBinding,
+      repositoryId: policy.repository.id,
+      targetRef,
+      expectedOldCommit: repository.head,
+      expectedRefGeneration: refLedger.generation,
+      candidateCommit,
+      resultTree: prospective.tree,
+      commitMessage: `${authorityCandidateCommitMessage(
+        request.message,
+        request.changeId,
+      )}\n`,
+      manifest: preflight.manifest,
+      checksAttestation: candidateChecksAttestation,
+      effectsManifestDigest: supportingArtifacts.effectsManifestDigest,
+      providerInvocationsDigest: supportingArtifacts.providerInvocationsDigest,
+      classification: preflight.classification,
+      recoveryPlanDigest: supportingArtifacts.recoveryPlanDigest,
+      createdAt: (options.now ?? new Date()).toISOString(),
+    });
+  const { humanReadableSummaryDigest } = storeCandidateHumanReadableSummary(
+    repository.gitCommonDirectory,
+    humanReadableSummary,
+  );
+  if (
+    humanReadableSummaryDigest !== candidateBundle.humanReadableSummaryDigest
+  ) {
+    throw workflowError(
+      'APPLY_CANDIDATE_STORE_INVALID',
+      'The candidate summary publication differs from its frozen digest.',
+      ExitCode.guard,
+    );
+  }
   assertStoredCandidateSupportingArtifacts(
     repository.gitCommonDirectory,
     request.changeId,
@@ -535,6 +630,7 @@ function approveAndApplyMaintainerGrantV2WithBinding(
       grantId,
       signer,
       environment: options.environment,
+      externalStateDigests: options.externalStateDigests,
       beforeGrantPublication: (envelope) => {
         armPostApprovalAdmissionDeadline(deadline);
         appendApplyGrantAudit(auditScope, envelope);
@@ -566,6 +662,7 @@ function approveAndApplyMaintainerGrantV2WithBinding(
         now: options.now,
         signer: confirmedSigner,
         environment: options.environment,
+        externalStateDigests: options.externalStateDigests,
         allowSignedV2Candidate: true,
         postApprovalDeadline: deadline,
       }),
@@ -578,6 +675,7 @@ function approveAndApplyMaintainerGrantV2WithBinding(
       now: options.now,
       signer: confirmedSigner,
       environment: options.environment,
+      externalStateDigests: options.externalStateDigests,
       clock: options.commitClock,
       testBeforeRefUpdate: options.testBeforeRefUpdate,
       testPoststateVerification: options.testPoststateVerification,
@@ -692,7 +790,12 @@ function reissueAndApplyMaintainerGrantV2WithDeadline(
           ? (payload.evidenceWaivers ?? [])
           : request.evidenceWaivers;
       const candidate = payload.candidateBundle;
-      if (candidate === null || payload.checksAttestation === null) {
+      if (
+        candidate === null ||
+        candidate.schemaVersion !== 2 ||
+        payload.checksAttestation === null ||
+        payload.checksAttestation.schemaVersion !== 2
+      ) {
         throw workflowError(
           'MAINTAINER_GRANT_REISSUE_INVALID',
           'The prior grant does not retain a complete immutable candidate and checks attestation.',
@@ -734,6 +837,7 @@ function reissueAndApplyMaintainerGrantV2WithDeadline(
           grantId: options.grantId,
           signer,
           environment: options.environment,
+          externalStateDigests: options.externalStateDigests,
           beforeGrantPublication: (issuedEnvelope) => {
             armPostApprovalAdmissionDeadline(deadline);
             appendApplyGrantAudit(trusted.auditScope, issuedEnvelope);
@@ -759,6 +863,7 @@ function reissueAndApplyMaintainerGrantV2WithDeadline(
             now: options.now,
             signer: confirmedSigner,
             environment: options.environment,
+            externalStateDigests: options.externalStateDigests,
             allowSignedV2Candidate: true,
             postApprovalDeadline: deadline,
           }),
@@ -771,6 +876,7 @@ function reissueAndApplyMaintainerGrantV2WithDeadline(
           now: options.now,
           signer: confirmedSigner,
           environment: options.environment,
+          externalStateDigests: options.externalStateDigests,
           clock: options.commitClock,
           testBeforeRefUpdate: options.testBeforeRefUpdate,
           testPoststateVerification: options.testPoststateVerification,
@@ -1177,7 +1283,7 @@ function assertApplyMandateChange(
 
 function appendCandidateBundleAudit(
   scope: AuthorityAuditLedgerScope,
-  candidate: ImmutableCandidateBundle,
+  candidate: AnyImmutableCandidateBundle,
   changeId: string,
 ): void {
   const candidateBundleDigest = prefixedDigest(candidate.candidateBundleDigest);
@@ -1494,17 +1600,57 @@ function assertCandidateUnchanged(
   }
 }
 
+function externalStateSnapshot(
+  checkId: string,
+  dependencies: readonly string[],
+  snapshots: Readonly<Record<string, string>> | undefined,
+): string | null {
+  if (!dependencies.includes('external-state')) return null;
+  const snapshot = snapshots?.[checkId];
+  if (typeof snapshot !== 'string' || !/^[0-9a-f]{64}$/.test(snapshot)) {
+    throw workflowError(
+      'APPLY_ATTESTATION_EXTERNAL_STATE_REQUIRED',
+      `Check ${checkId} requires a trusted current external-state snapshot.`,
+      ExitCode.staleState,
+    );
+  }
+  return snapshot;
+}
+
+function assertHarnessEngineUnchanged(
+  repository: ReturnType<typeof discoverRepository>,
+  repositoryId: string,
+  environment: NodeJS.ProcessEnv,
+  expectedDigest: string,
+): void {
+  if (
+    resolveCandidateHarnessEngineDigest(
+      repository,
+      repositoryId,
+      environment,
+    ) !== expectedDigest
+  ) {
+    throw workflowError(
+      'APPLY_ATTESTATION_INVALIDATED',
+      'The selected harness engine changed while candidate checks were running.',
+      ExitCode.staleState,
+    );
+  }
+}
+
 function assertExactChecksAttestation(
   attestation: MaintainerChecksAttestation,
   identity: MaintainerCheckJournalIdentity,
-): void {
+): asserts attestation is MaintainerChecksAttestationV2 {
   if (
-    attestation.schemaVersion !== 1 ||
+    identity.schemaVersion !== 2 ||
+    attestation.schemaVersion !== 2 ||
     attestation.trustBaseCommit !== identity.trustBaseCommit ||
     attestation.policyDigest !== identity.policyDigest ||
     attestation.patchDigest !== identity.patchDigest ||
     attestation.candidateStateDigest !== identity.candidateStateDigest ||
     attestation.environmentDigest !== identity.environmentDigest ||
+    attestation.harnessEngineDigest !== identity.harnessEngineDigest ||
     attestation.checks.length !== identity.requiredChecks.length ||
     attestation.checks.some((check, index) => {
       const expected = identity.requiredChecks[index];

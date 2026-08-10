@@ -41,7 +41,7 @@ import { readInterventionEngineArtifact } from './intervention-maintenance.ts';
 import {
   assertStoredCandidateSupportingArtifacts,
   readStoredImmutableCandidateBundle,
-  type ImmutableCandidateBundle,
+  type AnyImmutableCandidateBundle,
 } from './maintainer-candidate.ts';
 import type { MaintainerSignerProvider } from './maintainer-signer.ts';
 import { loadProtectedCapabilitiesFromTrustBase } from './protected-capabilities.ts';
@@ -448,7 +448,7 @@ export function produceControlPlaneApprovalCandidateV2(
 
 function assertFrozenCandidatePrestate(
   repository: ReturnType<typeof discoverRepository>,
-  candidate: ImmutableCandidateBundle,
+  candidate: AnyImmutableCandidateBundle,
 ): void {
   const expectedTargetRef =
     repository.branch === null ? null : `refs/heads/${repository.branch}`;
@@ -544,7 +544,7 @@ function readGitCommitMessage(
 
 function deriveFrozenCandidate(
   repositoryRoot: string,
-  candidate: ImmutableCandidateBundle,
+  candidate: AnyImmutableCandidateBundle,
 ): DerivedFrozenCandidate {
   const changedPaths = runGitBuffer(repositoryRoot, [
     'diff',
