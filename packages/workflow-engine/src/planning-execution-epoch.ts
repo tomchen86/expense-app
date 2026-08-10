@@ -580,7 +580,11 @@ function sourceTaskEvidenceForReport(
         commitHash: commits[0]!.hash,
       };
     }
-    if (commits.length === 0 && preEpoch.has(taskId)) {
+    if (
+      generation.boundary === null &&
+      commits.length === 0 &&
+      preEpoch.has(taskId)
+    ) {
       return {
         taskId,
         source: 'pre-epoch-exemption' as const,

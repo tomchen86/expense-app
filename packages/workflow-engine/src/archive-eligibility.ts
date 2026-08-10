@@ -338,7 +338,7 @@ function inspectEligibility(
   const taskCommits = contract.tasks.flatMap(({ id: taskId }) => {
     const commits = executionGeneration.commitsByTask[taskId] ?? [];
     if (commits.length !== 1) {
-      if (exemptTaskIds.has(taskId)) {
+      if (executionGeneration.boundary === null && exemptTaskIds.has(taskId)) {
         return [];
       }
       throw archiveError(

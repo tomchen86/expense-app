@@ -153,9 +153,18 @@ test('assurance inspection projects only durable planning facts and names every 
     assert.equal(metrics.planning.escalation.status, 'recorded');
     assert.equal(metrics.planning.escalation.value?.assessmentEscalated, false);
 
-    assert.equal(metrics.ledger.reuse.status, 'not-recorded');
-    assert.equal(metrics.ledger.reuse.value, null);
-    assert.equal(metrics.ledger.fullBlobBytesAvoided.status, 'not-recorded');
+    assert.deepEqual(metrics.ledger.reuse, {
+      status: 'recorded',
+      value: {
+        owedCount: 4,
+        carriedCount: 0,
+        reuseRate: 0,
+      },
+    });
+    assert.deepEqual(metrics.ledger.fullBlobBytesAvoided, {
+      status: 'recorded',
+      value: 0,
+    });
     assert.equal(metrics.ledger.freshness.status, 'not-recorded');
     assert.equal(metrics.review.challenges.status, 'not-recorded');
     assert.equal(metrics.review.requiredSetCoverage.status, 'not-recorded');

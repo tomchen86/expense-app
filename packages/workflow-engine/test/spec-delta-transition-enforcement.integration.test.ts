@@ -44,7 +44,7 @@ test('plan-commit refuses a modified requirement that drops exact scenario ident
 test('archive refuses the same scenario loss before applying or staging its transformation', () => {
   const repository = createScenarioFixture();
   try {
-    writeDroppingDelta(repository);
+    commitScenarioPlanRevision(repository);
     const tasksPath = path.join(
       repository,
       'openspec/changes/demo-change/tasks.md',
@@ -60,6 +60,15 @@ test('archive refuses the same scenario loss before applying or staging its tran
       'Complete scenario fixture',
       '-m',
       'Change: demo-change\nTask: 1.1',
+    ]);
+    writeDroppingDelta(repository);
+    git(repository, ['add', '-A']);
+    git(repository, [
+      'commit',
+      '-m',
+      'Record invalid scenario revision',
+      '-m',
+      'Change: demo-change\nTransition: plan',
     ]);
     syncOriginMain(repository);
     git(repository, ['checkout', '-b', 'work/archive-demo']);
@@ -85,6 +94,7 @@ test('archive refuses the same scenario loss before applying or staging its tran
 test('archive returns every rejected rebuilt-spec issue without mutating the real repository', () => {
   const repository = createScenarioFixture();
   try {
+    commitScenarioPlanRevision(repository);
     const tasksPath = path.join(
       repository,
       'openspec/changes/demo-change/tasks.md',
@@ -122,6 +132,22 @@ test('archive returns every rejected rebuilt-spec issue without mutating the rea
     fs.rmSync(repository, { recursive: true, force: true });
   }
 });
+
+function commitScenarioPlanRevision(repository: string): void {
+  fs.appendFileSync(
+    path.join(repository, 'openspec/changes/demo-change/design.md'),
+    '\nScenario-preservation review baseline.\n',
+  );
+  git(repository, ['add', '-A']);
+  git(repository, [
+    'commit',
+    '-m',
+    'Plan demo-change',
+    '-m',
+    'Change: demo-change\nTransition: plan',
+  ]);
+  syncOriginMain(repository);
+}
 
 function createScenarioFixture(): string {
   const repository = createFixtureRepository();
