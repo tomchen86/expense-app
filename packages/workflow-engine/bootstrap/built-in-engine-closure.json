@@ -346,7 +346,7 @@
     {
       "path": "src/execution-replacement.ts",
       "mode": "100644",
-      "digest": "sha256:25b68a1d7e4167744b9da808ba2d02fed3d0bd33540206a7dc43cad29a143edd"
+      "digest": "sha256:2454bd69de6d2b1f3bb00f095feefd730ba82078a6097f49bc99370bcfc827d0"
     },
     {
       "path": "src/execution-runtime.ts",
@@ -776,7 +776,7 @@
     {
       "path": "src/propose-orchestrator.ts",
       "mode": "100644",
-      "digest": "sha256:ebc527b69f158e5bb43abff079da6e1e224a41bfa69b14f97f07669d96c5d18c"
+      "digest": "sha256:e4165c64c430545ade2cbb7b6bc555a525db16540cd8b285e734cc24c6ded621"
     },
     {
       "path": "src/protected-capabilities.ts",

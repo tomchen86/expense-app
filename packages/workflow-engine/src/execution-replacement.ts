@@ -32,6 +32,7 @@ import { loadInvestigationRuntimeContext } from './lifecycle-context.ts';
 import { parseMaintainerPolicy } from './maintainer-policy.ts';
 import type { InvestigationRuntimePaths } from './paths.ts';
 import {
+  completeInterruptedPlanReviewReplacement,
   createPlanReviewRetryEnvelope,
   createProviderRetryEnvelope,
   getProposeStatus,
@@ -160,6 +161,7 @@ export type ExecuteGrantedReplacementOptions = {
     | 'prepared'
     | 'grant-consume-before-journal'
     | 'grant-consumed'
+    | 'plan-review-reservation-replaced'
     | 'invocation-published';
 };
 
@@ -548,7 +550,7 @@ export function executeGrantedReplacement(
   );
 
   if (transaction.phase === 'grant-consumed') {
-    publishReplacement(cwd, transaction);
+    publishReplacement(cwd, transaction, options);
     transaction = withRepositoryLifecycleOperation(
       context.lifecycleRuntime,
       () =>
@@ -686,6 +688,7 @@ function recoverReceipt(
 function publishReplacement(
   cwd: string,
   transaction: ExecutionReplacementTransaction,
+  options: ExecuteGrantedReplacementOptions = {},
 ): void {
   assertReceipt(transaction, transaction.receipt);
   const context = loadInvestigationRuntimeContext(cwd);
@@ -696,6 +699,23 @@ function publishReplacement(
     context.runtime,
     transaction.failedInvocationId,
   );
+  // A previous republication may have died after the replacement reservation
+  // was published but before its invocation record existed. That half-state
+  // cannot render a status projection, so the WAL finishes the interrupted
+  // tail directly from the transaction's own facts before consulting one.
+  if (
+    failed.purpose !== 'survey' &&
+    completeInterruptedPlanReviewReplacement(cwd, {
+      investigationId: failed.investigationId,
+      changeId: failed.changeId,
+      replacementRequest: transaction.replacementRequest,
+      failedInvocationId: transaction.failedInvocationId,
+      executionGrantId: transaction.grantId,
+    }).published
+  ) {
+    assertPublishedReplacement(cwd, transaction);
+    return;
+  }
   const output = getProposeStatus(cwd, failed.investigationId);
   const authorization = {
     grantId: transaction.grantId,
@@ -713,6 +733,15 @@ function publishReplacement(
         });
   resumePropose(cwd, failed.changeId, envelope, {
     executionGrantAuthorization: authorization,
+    ...(options.simulateCrashAfter === 'plan-review-reservation-replaced'
+      ? {
+          simulateCrashAfterPlanReviewReplacementReservation: () => {
+            throw new SimulatedExecutionReplacementCrash(
+              'plan-review-reservation-replaced',
+            );
+          },
+        }
+      : {}),
   });
   assertPublishedReplacement(cwd, transaction);
 }

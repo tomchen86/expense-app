@@ -316,6 +316,13 @@ export type ProposeResumeOptions = {
   executionGrantAuthorization?: ProviderExecutionGrantAuthorization & {
     replacementRequest: ProviderInvocationRequest;
   };
+  /**
+   * Test-only crash injection: invoked immediately after a PlanReview retry
+   * publishes its replacement reservation and before the invocation record is
+   * created, which is the exact window the WAL republication must be able to
+   * traverse.
+   */
+  simulateCrashAfterPlanReviewReplacementReservation?: () => void;
 };
 
 export type PlanReviewProgressEnvelope = {
@@ -2117,6 +2124,85 @@ export function createPlanReviewDispositionsEnvelope(
   };
 }
 
+/**
+ * Traverse the PlanReview replacement crash window on behalf of the WAL: the
+ * replacement reservation was published (the evidence ref moved) but the
+ * process died before the invocation record existed, so the full status
+ * projection refuses to render and the ordinary retry surface cannot rebuild
+ * an envelope. The replacement transaction holds the exact request this
+ * reservation must match; when it does, the interrupted tail — mandate
+ * authorization under the already-consumed grant, then invocation creation
+ * from the failed attempt's immutable snapshot — runs to completion.
+ * Anything that does not match this exact window is left untouched.
+ */
+export function completeInterruptedPlanReviewReplacement(
+  cwd: string,
+  input: {
+    investigationId: string;
+    changeId: string;
+    replacementRequest: ProviderInvocationRequest;
+    failedInvocationId: string;
+    executionGrantId: string;
+  },
+): { published: boolean } {
+  const initialContext = loadInvestigationRuntimeContext(cwd);
+  return withInvestigationTransitionAuthority(
+    initialContext.lifecycleRuntime,
+    input.changeId,
+    (assertOwned) => {
+      assertOwned();
+      const status = getProposeLifecycleStatus(cwd, input.investigationId);
+      const context = loadInvestigationRuntimeContext(cwd);
+      const reservation = readPlanReviewReservation(context.runtime, status);
+      if (
+        reservation === null ||
+        reservation.retry === null ||
+        canonicalJson(reservation.request) !==
+          canonicalJson(input.replacementRequest)
+      ) {
+        return { published: false };
+      }
+      if (
+        providerInvocationExists(
+          context.runtime,
+          reservation.request.invocationId,
+        )
+      ) {
+        return { published: true };
+      }
+      const mandateBinding = durablePlanReviewMandateBinding(context, status);
+      if (mandateBinding) {
+        assertActiveTaskMandateBindingUnderLifecycleLock(
+          cwd,
+          mandateBinding,
+          assertOwned,
+        );
+      }
+      authorizePlanReviewReservationMandate(
+        cwd,
+        mandateBinding,
+        reservation,
+        assertOwned,
+        { grantId: input.executionGrantId },
+      );
+      ensurePlanReviewInvocation(
+        context.git.repositoryRoot,
+        context.runtime,
+        status,
+        reservation,
+        mandateBinding,
+        readPriorPlanReviewSnapshotFiles(
+          context.runtime,
+          reservation.manifest,
+          input.failedInvocationId,
+        ),
+      );
+      assertOwned();
+      return { published: true };
+    },
+  );
+}
+
 export function startProposeFromFile(
   cwd: string,
   changeId: string,
@@ -2579,6 +2665,7 @@ function resumePlanReviewRetry(
       if (replacement === null) {
         throw planReviewRetryInputStale();
       }
+      options.simulateCrashAfterPlanReviewReplacementReservation?.();
       authorizePlanReviewReservationMandate(
         cwd,
         mandateBinding,
