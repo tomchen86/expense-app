@@ -26,9 +26,13 @@ import {
 } from './investigation-applicability.ts';
 import { validateInvestigationLedgerProjection } from './investigation-design-projection.ts';
 import { runGit, runGitBuffer } from './git.ts';
-import { loadMaintainerPolicy } from './maintainer-policy.ts';
+import {
+  loadMaintainerPolicy,
+  parseMaintainerPolicy,
+} from './maintainer-policy.ts';
 import { createInteractiveSshSigner } from './maintainer-signer.ts';
 import {
+  assertAuthorizedPlanReviewChallengeClosure,
   createPlanReviewSubject,
   PLAN_REVIEW_OUTPUT_SCHEMA,
   readPlanReviewTargetSnapshotNode,
@@ -36,7 +40,10 @@ import {
   type PlanReviewTargetSnapshot,
   type PlanReviewSubject,
 } from './plan-review.ts';
-import { assertPlanReviewCoverageRequirementSatisfied } from './plan-review-coverage.ts';
+import {
+  assertPlanReviewCoverageRequirementSatisfied,
+  readPlanReviewCoverageRequirementNode,
+} from './plan-review-coverage.ts';
 import {
   validatePlanReview,
   type PlanReviewPlanningEvidence,
@@ -210,6 +217,52 @@ export function validateInvestigationFirstPlanningReadiness(
     reviewNode,
     context.subject,
   );
+  const coverageRequirementNodes = contract.investigation!.nodes.filter(
+    ({ type }) => type === 'plan-review-coverage-requirement',
+  );
+  if (coverageRequirementNodes.length > 1) {
+    throw planningNotReady(
+      'Investigation contains more than one engine-owned PlanReview coverage requirement.',
+    );
+  }
+  const coverageRequirementNode = coverageRequirementNodes[0] ?? null;
+  const coverageRequirement =
+    coverageRequirementNode === null
+      ? null
+      : readPlanReviewCoverageRequirementNode(coverageRequirementNode);
+  if (coverageRequirement?.schemaVersion === 2 && review.findings.length > 0) {
+    if (dispositionNode === null) {
+      throw planningNotReady(
+        'Global review challenges require an authenticated closure.',
+      );
+    }
+    const authorId =
+      roleResult.author.principalId ?? roleResult.author.providerId;
+    if (authorId === null) {
+      throw planningNotReady(
+        'The reviewed plan has no authenticated author identity.',
+      );
+    }
+    const policy = loadMaintainerPolicyAtCommit(
+      repositoryRoot,
+      context.generation.investigationBaseline.head,
+    );
+    assertAuthorizedPlanReviewChallengeClosure({
+      dispositionNode,
+      reviewNode,
+      expected: {
+        repositoryId: policy.repository.id,
+        changeId: contract.changeId,
+        investigationId: coverageRequirement.investigationId,
+        baselineCommit: context.generation.investigationBaseline.head,
+        baselineTree: context.generation.investigationBaseline.tree,
+        subjectDigest: context.subject.subjectDigest,
+        planningGenerationId: context.generation.planningGenerationId,
+        authorId,
+      },
+      policy,
+    });
+  }
   const validation = validatePlanReview({
     reviewNode,
     dispositionNode,
@@ -248,15 +301,6 @@ export function validateInvestigationFirstPlanningReadiness(
       },
     );
   }
-  const coverageRequirementNodes = contract.investigation!.nodes.filter(
-    ({ type }) => type === 'plan-review-coverage-requirement',
-  );
-  if (coverageRequirementNodes.length > 1) {
-    throw planningNotReady(
-      'Investigation contains more than one engine-owned PlanReview coverage requirement.',
-    );
-  }
-  const coverageRequirementNode = coverageRequirementNodes[0] ?? null;
   if (coverageRequirementNode !== null) {
     if (
       context.applicability.kind !== 'sealed-investigation' ||
@@ -1155,6 +1199,28 @@ function readCommittedPlanningTarget(
     );
   }
   return runGitBuffer(repositoryRoot, ['show', `${commit}:${artifactPath}`]);
+}
+
+function loadMaintainerPolicyAtCommit(
+  repositoryRoot: string,
+  commit: string,
+): ReturnType<typeof parseMaintainerPolicy> {
+  let value: unknown;
+  try {
+    value = JSON.parse(
+      runGit(repositoryRoot, [
+        'show',
+        `${commit}:workflow/maintainer-policy.json`,
+      ]),
+    );
+  } catch (error) {
+    throw planningNotReady(
+      `The baseline maintainer policy cannot be read: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
+  }
+  return parseMaintainerPolicy(value);
 }
 
 function digestFile(repositoryRoot: string, filePath: string): string {

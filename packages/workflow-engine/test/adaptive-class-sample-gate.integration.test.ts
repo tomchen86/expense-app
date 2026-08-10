@@ -30,6 +30,7 @@ import {
   resumePropose,
   type OrdinaryProposeOutput,
 } from '../src/propose-orchestrator.ts';
+import { installPlanReviewAuthority } from './plan-review-authority-fixture.ts';
 import { driveProposeToDispositions } from './propose-drive-fixture.ts';
 
 const TERM = 'AdaptiveSampleNeedle';
@@ -101,11 +102,16 @@ function preparePlanCommit(
     | 'same-class-double-failure',
 ) {
   const changeId = `adaptive-sample-${mode}`;
+  let reviewAuthority: ReturnType<typeof installPlanReviewAuthority> | null =
+    null;
   const fixture = driveProposeToDispositions(changeId, {
     mainTerm: TERM,
     files: adaptiveFixtureFiles(),
     explicitPaths: ['sample/first-0.ts'],
     explicitSymbols: [],
+    prepareRepository(repository) {
+      reviewAuthority = installPlanReviewAuthority(repository);
+    },
   });
 
   const groups = fixture.output.work?.groups ?? [];
@@ -185,7 +191,7 @@ function preparePlanCommit(
     runner(input): ProviderRunnerReport {
       return fakePlanReviewRunnerReport(
         input.request,
-        planReviewOutput(),
+        planReviewOutput(requiredCoveragePaths(fixture.repository, changeId)),
         input.invocationDirectory,
       );
     },
@@ -226,15 +232,26 @@ function preparePlanCommit(
         createPlanReviewDispositionsEnvelope(awaitingChallenge, [
           {
             challengeId,
-            decision: 'mitigated',
+            decision: 'rebutted',
             rationale:
               'The exact adaptive sample policy is covered by the planned production-path test.',
-            author: 'codex',
+            author: reviewAuthority!.identity,
+            supersededBy: null,
           },
         ]),
+        {
+          challengeDispositionAuthority: {
+            now: new Date('2026-08-10T00:00:00.000Z'),
+            role: 'reviewer',
+            signer: reviewAuthority!.signer,
+          },
+        },
       );
     },
-    dispose: fixture.dispose,
+    dispose() {
+      fixture.dispose();
+      reviewAuthority?.dispose();
+    },
   };
 }
 
@@ -404,7 +421,7 @@ function planningPayload(changeId: string) {
   };
 }
 
-function planReviewOutput() {
+function planReviewOutput(requiredPaths: readonly string[]) {
   return {
     schemaVersion: 2,
     verdict: 'advisory-approve',
@@ -417,15 +434,13 @@ function planReviewOutput() {
         category: 'missing-scope',
         currentChangeImpact: 'required',
         summary: 'Confirm the adaptive sample reaches the commit gate.',
-        evidence: [
-          {
-            kind: 'repository-location',
-            path: 'sample/first-0.ts',
-            line: 1,
-            observation:
-              'The fixture class is part of the exact reviewed planning subject.',
-          },
-        ],
+        evidence: requiredPaths.map((targetPath) => ({
+          kind: 'repository-location',
+          path: targetPath,
+          line: 1,
+          observation:
+            'The fixture class is part of the exact reviewed planning subject.',
+        })),
       },
     ],
     proposedTerms: [],
@@ -435,6 +450,35 @@ function planReviewOutput() {
     uncertainty:
       'The provider cannot independently reproduce human semantic judgement.',
   };
+}
+
+function requiredCoveragePaths(repository: string, changeId: string): string[] {
+  const investigation = JSON.parse(
+    fs.readFileSync(
+      path.join(repository, 'openspec/changes', changeId, 'investigation.json'),
+      'utf8',
+    ),
+  ) as {
+    nodes: Array<{
+      type: string;
+      output?: {
+        requiredTargetIds?: string[];
+        targetBindings?: Array<{ targetId: string; path: string }>;
+      };
+    }>;
+  };
+  const output = investigation.nodes.find(
+    ({ type }) => type === 'plan-review-coverage-requirement',
+  )?.output;
+  assert.ok(output?.requiredTargetIds && output.targetBindings);
+  const required = new Set(output.requiredTargetIds);
+  return [
+    ...new Set(
+      output.targetBindings
+        .filter(({ targetId }) => required.has(targetId))
+        .map(({ path: targetPath }) => targetPath),
+    ),
+  ].sort();
 }
 
 function fakePlanReviewRunnerReport(

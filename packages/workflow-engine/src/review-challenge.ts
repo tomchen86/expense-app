@@ -92,6 +92,11 @@ function assertClosureAuthority(
   closure: ChallengeClosure,
   context: ClosureContext,
 ): void {
+  if (closure.closedBy === context.authorId) {
+    throw challengeInvalid(
+      'An author may not close a challenge raised against their own plan.',
+    );
+  }
   switch (closure.disposition) {
     case 'withdrawn':
       // Only the person who raised an objection can decide it was mistaken.
@@ -107,11 +112,6 @@ function assertClosureAuthority(
       if (!context.reviewerIds.includes(closure.closedBy)) {
         throw challengeInvalid(
           `Challenge ${challenge.challengeId} was closed as ${closure.disposition} by ${closure.closedBy}, who is not a reviewer.`,
-        );
-      }
-      if (closure.closedBy === context.authorId) {
-        throw challengeInvalid(
-          'An author may not close a challenge raised against their own plan.',
         );
       }
       return;

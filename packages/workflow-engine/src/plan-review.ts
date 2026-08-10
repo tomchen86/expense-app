@@ -12,6 +12,11 @@ import {
   type InvestigationTermKind,
 } from './investigation-terms.ts';
 import type { LegacyPlanMigrationSubject } from './legacy-plan-migration.ts';
+import type { MaintainerPolicy } from './maintainer-policy.ts';
+import {
+  verifySshSignatureWithPublicKey,
+  type MaintainerSignerProvider,
+} from './maintainer-signer.ts';
 import { normalizeExactRepositoryPath } from './paths.ts';
 import { isProviderId } from './provider-registry.ts';
 import { isProviderRoleAssignment } from './provider-contracts.ts';
@@ -23,6 +28,11 @@ import {
   assertPlanningGeneration,
   type PlanningGeneration,
 } from './planning-generation.ts';
+import {
+  assertChallengesClosed,
+  type Challenge,
+  type ChallengeClosure,
+} from './review-challenge.ts';
 
 const PLAN_REVIEW_TYPE = 'plan-review';
 const PLAN_REVIEW_SCHEMA = 'plan-review.v2';
@@ -39,6 +49,12 @@ const DISPOSITION_TYPE = 'plan-review-disposition';
 const DISPOSITION_SCHEMA = 'plan-review-disposition.v1';
 const DISPOSITION_EVALUATOR = 'plan-review-disposition.v1';
 const DISPOSITION_OUTPUT_SCHEMA = 'plan-review-disposition-output.v1';
+const AUTHORIZED_DISPOSITION_SCHEMA = 'plan-review-disposition.v2';
+const AUTHORIZED_DISPOSITION_EVALUATOR = 'plan-review-disposition.v2';
+const AUTHORIZED_DISPOSITION_OUTPUT_SCHEMA =
+  'plan-review-disposition-output.v2';
+export const PLAN_REVIEW_CHALLENGE_CLOSURE_NAMESPACE =
+  'expense-app.plan-review-challenge-closure.v1';
 
 const DIGEST_PATTERN = /^[0-9a-f]{64}$/;
 const GIT_OBJECT_ID_PATTERN = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
@@ -153,6 +169,13 @@ const DISPOSITION_DECISIONS: ReadonlySet<string> = new Set([
   'mitigated',
   'rejected',
   'accepted',
+]);
+const AUTHORIZED_DISPOSITION_DECISIONS: ReadonlySet<string> = new Set([
+  'accepted',
+  'rebutted',
+  'superseded',
+  'withdrawn',
+  'waived',
 ]);
 const INDEPENDENCE_DIMENSIONS: ReadonlySet<string> = new Set([
   'provider-independent',
@@ -349,18 +372,85 @@ export type PlanReviewDispositionEntry = {
   author: string;
 };
 
+export type AuthorizedPlanReviewDispositionDecision =
+  'accepted' | 'rebutted' | 'superseded' | 'withdrawn' | 'waived';
+
+export type AuthorizedPlanReviewDispositionEntry = {
+  challengeId: string;
+  decision: AuthorizedPlanReviewDispositionDecision;
+  rationale: string;
+  author: string;
+  supersededBy: string | null;
+};
+
+export type PlanReviewDispositionSubmission =
+  PlanReviewDispositionEntry | AuthorizedPlanReviewDispositionEntry;
+
 export type PlanReviewDispositionInput = {
   reviewNode: EvidenceNode;
   policyDigest: string;
   dispositions: PlanReviewDispositionEntry[];
 };
 
-export type PlanReviewDispositionRecord = {
+export type AuthorizedPlanReviewDispositionInput = {
+  reviewNode: EvidenceNode;
+  policyDigest: string;
+  dispositions: AuthorizedPlanReviewDispositionEntry[];
+  binding: {
+    repositoryId: string;
+    changeId: string;
+    investigationId: string;
+    baselineCommit: string;
+    baselineTree: string;
+    subjectDigest: string;
+    planningGenerationId: string;
+    authorId: string;
+  };
+  role: 'reviewer' | 'domain-owner';
+  issuedAt: Date;
+  signer: MaintainerSignerProvider;
+};
+
+export type LegacyPlanReviewDispositionRecord = {
+  schemaVersion: 1;
   reviewNodeId: string;
   reviewResultDigest: string;
   policyDigest: string;
   dispositions: PlanReviewDispositionEntry[];
 };
+
+export type PlanReviewChallengeClosureAuthority = {
+  schemaVersion: 1;
+  kind: 'plan-review-challenge-closure-authority';
+  namespace: typeof PLAN_REVIEW_CHALLENGE_CLOSURE_NAMESPACE;
+  repositoryId: string;
+  changeId: string;
+  investigationId: string;
+  baselineCommit: string;
+  baselineTree: string;
+  subjectDigest: string;
+  planningGenerationId: string;
+  reviewNodeId: string;
+  reviewResultDigest: string;
+  dispositionsDigest: string;
+  authorId: string;
+  role: 'reviewer' | 'domain-owner';
+  signer: string;
+  issuedAt: string;
+  signature: string;
+};
+
+export type AuthorizedPlanReviewDispositionRecord = {
+  schemaVersion: 2;
+  reviewNodeId: string;
+  reviewResultDigest: string;
+  policyDigest: string;
+  dispositions: AuthorizedPlanReviewDispositionEntry[];
+  authority: PlanReviewChallengeClosureAuthority;
+};
+
+export type PlanReviewDispositionRecord =
+  LegacyPlanReviewDispositionRecord | AuthorizedPlanReviewDispositionRecord;
 
 export type PlanReviewNodeInput = {
   subject: PlanReviewSubject;
@@ -1244,6 +1334,117 @@ export function createPlanReviewDispositionNode(
   });
 }
 
+export function createAuthorizedPlanReviewDispositionNode(
+  input: AuthorizedPlanReviewDispositionInput,
+): EvidenceNode {
+  const review = readPlanReviewNode(input.reviewNode);
+  if (!isDigest(input.policyDigest) || !isRecord(input.binding)) {
+    throw planReviewInvalid(
+      'Authorized plan review disposition input is malformed.',
+    );
+  }
+  const dispositions = assertBoundedArray(
+    input.dispositions,
+    PLAN_REVIEW_LIMITS.maxFindings,
+    'Plan review contains too many dispositions.',
+  ).map(assertAuthorizedDisposition);
+  assertDispositionChallengeSet(review, dispositions);
+  const sorted = [...dispositions].sort((left, right) =>
+    left.challengeId.localeCompare(right.challengeId),
+  );
+  if (
+    !['reviewer', 'domain-owner'].includes(input.role) ||
+    !Number.isFinite(input.issuedAt.getTime()) ||
+    input.binding.subjectDigest !== review.subjectDigest ||
+    input.binding.planningGenerationId !== review.planningGenerationId ||
+    !GIT_OBJECT_ID_PATTERN.test(input.binding.baselineCommit) ||
+    !GIT_OBJECT_ID_PATTERN.test(input.binding.baselineTree) ||
+    !isDigest(input.binding.subjectDigest) ||
+    !isDigest(input.binding.planningGenerationId) ||
+    !isBoundedNonBlankText(
+      input.binding.repositoryId,
+      PLAN_REVIEW_LIMITS.maxAuthorBytes,
+    ) ||
+    !isBoundedNonBlankText(
+      input.binding.changeId,
+      PLAN_REVIEW_LIMITS.maxAuthorBytes,
+    ) ||
+    !isBoundedNonBlankText(
+      input.binding.investigationId,
+      PLAN_REVIEW_LIMITS.maxAuthorBytes,
+    ) ||
+    !isBoundedNonBlankText(
+      input.binding.authorId,
+      PLAN_REVIEW_LIMITS.maxAuthorBytes,
+    )
+  ) {
+    throw planReviewInvalid(
+      'Authorized plan review disposition binding is malformed.',
+    );
+  }
+  input.signer.assertHumanPresent();
+  const signer = input.signer.identity();
+  if (
+    !isBoundedNonBlankText(signer, PLAN_REVIEW_LIMITS.maxAuthorBytes) ||
+    sorted.some(({ author }) => author !== signer) ||
+    signer === input.binding.authorId
+  ) {
+    throw planReviewInvalid(
+      'Challenge closure must be signed by an authenticated reviewer distinct from the plan author.',
+    );
+  }
+  const authorityPayload = {
+    schemaVersion: 1 as const,
+    kind: 'plan-review-challenge-closure-authority' as const,
+    namespace: PLAN_REVIEW_CHALLENGE_CLOSURE_NAMESPACE,
+    repositoryId: input.binding.repositoryId,
+    changeId: input.binding.changeId,
+    investigationId: input.binding.investigationId,
+    baselineCommit: input.binding.baselineCommit,
+    baselineTree: input.binding.baselineTree,
+    subjectDigest: input.binding.subjectDigest,
+    planningGenerationId: input.binding.planningGenerationId,
+    reviewNodeId: input.reviewNode.nodeId,
+    reviewResultDigest: input.reviewNode.resultDigest,
+    dispositionsDigest: authorizedDispositionDigest(sorted),
+    authorId: input.binding.authorId,
+    role: input.role,
+    signer,
+    issuedAt: input.issuedAt.toISOString(),
+  } as const;
+  const payload = `${canonicalJson(authorityPayload)}\n`;
+  const signature = input.signer.sign(
+    payload,
+    PLAN_REVIEW_CHALLENGE_CLOSURE_NAMESPACE,
+  );
+  input.signer.verify(
+    payload,
+    signature,
+    signer,
+    PLAN_REVIEW_CHALLENGE_CLOSURE_NAMESPACE,
+  );
+  const authority: PlanReviewChallengeClosureAuthority = Object.freeze({
+    ...authorityPayload,
+    signature,
+  });
+  return createEvidenceNode({
+    type: DISPOSITION_TYPE,
+    nodeSchema: AUTHORIZED_DISPOSITION_SCHEMA,
+    evaluator: AUTHORIZED_DISPOSITION_EVALUATOR,
+    policyDigest: input.policyDigest,
+    exactInputDigests: {
+      authority: sha256(payload),
+      dispositions: authority.dispositionsDigest,
+      signature: sha256(signature),
+    },
+    semanticParentResultDigests: { review: input.reviewNode.resultDigest },
+    provenanceParentNodeIds: { review: input.reviewNode.nodeId },
+    outputSchema: AUTHORIZED_DISPOSITION_OUTPUT_SCHEMA,
+    output: { schemaVersion: 2, dispositions: sorted, authority },
+    runtimeMetadata: {},
+  });
+}
+
 /**
  * Read a stored disposition node back into its typed record, revalidating the
  * bound review provenance, allowed decisions, and canonical ordering.
@@ -1254,6 +1455,9 @@ export function readPlanReviewDispositionNode(
   const validated = assertStoredEvidenceNode(node, () =>
     planReviewInvalid('Plan review disposition envelope is malformed.'),
   );
+  if (validated.nodeSchema === AUTHORIZED_DISPOSITION_SCHEMA) {
+    return readAuthorizedPlanReviewDispositionNode(validated);
+  }
   if (
     validated.type !== DISPOSITION_TYPE ||
     validated.nodeSchema !== DISPOSITION_SCHEMA ||
@@ -1322,13 +1526,181 @@ export function readPlanReviewDispositionNode(
       'Plan review disposition input digest does not match.',
     );
   }
-  const record: PlanReviewDispositionRecord = {
+  const record: LegacyPlanReviewDispositionRecord = {
+    schemaVersion: 1,
     reviewNodeId,
     reviewResultDigest,
     policyDigest: validated.policyDigest,
     dispositions,
   };
   return deepFreeze(record);
+}
+
+function readAuthorizedPlanReviewDispositionNode(
+  validated: EvidenceNode,
+): AuthorizedPlanReviewDispositionRecord {
+  if (
+    validated.type !== DISPOSITION_TYPE ||
+    validated.nodeSchema !== AUTHORIZED_DISPOSITION_SCHEMA ||
+    validated.evaluator !== AUTHORIZED_DISPOSITION_EVALUATOR ||
+    validated.outputSchema !== AUTHORIZED_DISPOSITION_OUTPUT_SCHEMA
+  ) {
+    throw planReviewInvalid(
+      'Authorized plan review disposition identity is unexpected.',
+    );
+  }
+  assertExactDigestRoles(
+    validated.exactInputDigests,
+    ['authority', 'dispositions', 'signature'],
+    'Authorized plan review disposition exact-input roles are unexpected.',
+  );
+  assertExactDigestRoles(
+    validated.semanticParentResultDigests,
+    ['review'],
+    'Authorized plan review disposition semantic-parent roles are unexpected.',
+  );
+  assertExactDigestRoles(
+    validated.provenanceParentNodeIds,
+    ['review'],
+    'Authorized plan review disposition provenance-parent roles are unexpected.',
+  );
+  if (Object.keys(validated.runtimeMetadata).length !== 0) {
+    throw planReviewInvalid(
+      'Authorized plan review disposition runtime metadata must be empty.',
+    );
+  }
+  const output = assertExactKeys(validated.output, [
+    'schemaVersion',
+    'dispositions',
+    'authority',
+  ]);
+  if (output.schemaVersion !== 2) {
+    throw planReviewInvalid(
+      'Authorized disposition output schema version must be 2.',
+    );
+  }
+  const dispositions = assertBoundedArray(
+    output.dispositions,
+    PLAN_REVIEW_LIMITS.maxFindings,
+    'Plan review contains too many dispositions.',
+  ).map(assertAuthorizedDisposition);
+  if (
+    dispositions.length === 0 ||
+    dispositions.some(
+      (entry, index) =>
+        index > 0 && entry.challengeId <= dispositions[index - 1]!.challengeId,
+    )
+  ) {
+    throw planReviewInvalid(
+      'Authorized dispositions are empty, duplicated, or unsorted.',
+    );
+  }
+  const authority = assertPlanReviewChallengeClosureAuthority(output.authority);
+  const payload = canonicalPlanReviewChallengeClosurePayload(authority);
+  if (
+    authority.reviewNodeId !== validated.provenanceParentNodeIds.review ||
+    authority.reviewResultDigest !==
+      validated.semanticParentResultDigests.review ||
+    authority.dispositionsDigest !==
+      authorizedDispositionDigest(dispositions) ||
+    validated.exactInputDigests.authority !== sha256(payload) ||
+    validated.exactInputDigests.dispositions !== authority.dispositionsDigest ||
+    validated.exactInputDigests.signature !== sha256(authority.signature) ||
+    dispositions.some(({ author }) => author !== authority.signer)
+  ) {
+    throw planReviewInvalid(
+      'Authorized disposition authority is not bound to its exact review and decisions.',
+    );
+  }
+  return deepFreeze({
+    schemaVersion: 2,
+    reviewNodeId: authority.reviewNodeId,
+    reviewResultDigest: authority.reviewResultDigest,
+    policyDigest: validated.policyDigest,
+    dispositions,
+    authority,
+  });
+}
+
+export function assertAuthorizedPlanReviewChallengeClosure(input: {
+  dispositionNode: EvidenceNode;
+  reviewNode: EvidenceNode;
+  expected: {
+    repositoryId: string;
+    changeId: string;
+    investigationId: string;
+    baselineCommit: string;
+    baselineTree: string;
+    subjectDigest: string;
+    planningGenerationId: string;
+    authorId: string;
+  };
+  policy: MaintainerPolicy;
+}): AuthorizedPlanReviewDispositionRecord {
+  const record = readPlanReviewDispositionNode(input.dispositionNode);
+  const review = readPlanReviewNode(input.reviewNode);
+  if (record.schemaVersion !== 2) {
+    throw planReviewInvalid(
+      'Global review challenges require an authenticated v2 disposition.',
+    );
+  }
+  const authority = record.authority;
+  const expected = input.expected;
+  if (
+    authority.repositoryId !== expected.repositoryId ||
+    authority.changeId !== expected.changeId ||
+    authority.investigationId !== expected.investigationId ||
+    authority.baselineCommit !== expected.baselineCommit ||
+    authority.baselineTree !== expected.baselineTree ||
+    authority.subjectDigest !== expected.subjectDigest ||
+    authority.planningGenerationId !== expected.planningGenerationId ||
+    authority.authorId !== expected.authorId ||
+    authority.reviewNodeId !== input.reviewNode.nodeId ||
+    authority.reviewResultDigest !== input.reviewNode.resultDigest ||
+    authority.subjectDigest !== review.subjectDigest ||
+    authority.planningGenerationId !== review.planningGenerationId ||
+    authority.repositoryId !== input.policy.repository.id ||
+    authority.signer === authority.authorId
+  ) {
+    throw planReviewInvalid(
+      'Authenticated challenge closure does not match the current planning authority.',
+    );
+  }
+  const signer = input.policy.trustedSigners.find(
+    ({ identity }) => identity === authority.signer,
+  );
+  if (signer === undefined) {
+    throw planReviewInvalid(
+      'Challenge closure signer is not trusted by the baseline policy.',
+    );
+  }
+  verifySshSignatureWithPublicKey(
+    canonicalPlanReviewChallengeClosurePayload(authority),
+    authority.signature,
+    authority.signer,
+    signer.publicKey,
+    PLAN_REVIEW_CHALLENGE_CLOSURE_NAMESPACE,
+  );
+  const challenges: Challenge[] = review.findings.map((finding) => ({
+    challengeId: finding.findingId,
+    raisedBy: review.assignment.providerId,
+    severity: finding.severity === 'critical' ? 'forbidden-floor' : 'ordinary',
+    targetId: finding.findingId,
+  }));
+  const closures: ChallengeClosure[] = record.dispositions.map((entry) => ({
+    challengeId: entry.challengeId,
+    disposition: entry.decision,
+    closedBy: authority.signer,
+    ...(entry.supersededBy === null
+      ? {}
+      : { supersededBy: entry.supersededBy }),
+  }));
+  assertChallengesClosed(challenges, closures, {
+    authorId: authority.authorId,
+    reviewerIds: [authority.signer],
+    domainOwnerIds: authority.role === 'domain-owner' ? [authority.signer] : [],
+  });
+  return record;
 }
 
 function planReviewDispositionDigest(
@@ -1999,6 +2371,148 @@ function assertDisposition(value: unknown): PlanReviewDispositionEntry {
     rationale: rationale as string,
     author: author as string,
   };
+}
+
+function assertAuthorizedDisposition(
+  value: unknown,
+): AuthorizedPlanReviewDispositionEntry {
+  const record = assertExactKeys(value, [
+    'challengeId',
+    'decision',
+    'rationale',
+    'author',
+    'supersededBy',
+  ]);
+  if (
+    !isDigest(record.challengeId) ||
+    typeof record.decision !== 'string' ||
+    !AUTHORIZED_DISPOSITION_DECISIONS.has(record.decision) ||
+    !isBoundedNonBlankText(
+      record.rationale,
+      PLAN_REVIEW_LIMITS.maxDispositionRationaleBytes,
+    ) ||
+    !isBoundedNonBlankText(record.author, PLAN_REVIEW_LIMITS.maxAuthorBytes) ||
+    (record.supersededBy !== null && !isDigest(record.supersededBy)) ||
+    (record.decision === 'superseded') !==
+      (typeof record.supersededBy === 'string')
+  ) {
+    throw planReviewInvalid(
+      'Authenticated plan review disposition is malformed.',
+    );
+  }
+  return {
+    challengeId: record.challengeId as string,
+    decision: record.decision as AuthorizedPlanReviewDispositionDecision,
+    rationale: record.rationale as string,
+    author: record.author as string,
+    supersededBy: record.supersededBy as string | null,
+  };
+}
+
+function assertDispositionChallengeSet(
+  review: PlanReviewReport,
+  dispositions: readonly { challengeId: string }[],
+): void {
+  if (dispositions.length === 0) {
+    throw planReviewInvalid('Plan review disposition set must not be empty.');
+  }
+  const challengeIds = new Set(
+    review.findings.map((finding) => finding.findingId),
+  );
+  const seen = new Set<string>();
+  for (const disposition of dispositions) {
+    if (!challengeIds.has(disposition.challengeId)) {
+      throw planReviewInvalid('Disposition names an unknown challenge.');
+    }
+    if (seen.has(disposition.challengeId)) {
+      throw planReviewInvalid('Disposition duplicates a challenge.');
+    }
+    seen.add(disposition.challengeId);
+  }
+}
+
+function assertPlanReviewChallengeClosureAuthority(
+  value: unknown,
+): PlanReviewChallengeClosureAuthority {
+  const record = assertExactKeys(value, [
+    'schemaVersion',
+    'kind',
+    'namespace',
+    'repositoryId',
+    'changeId',
+    'investigationId',
+    'baselineCommit',
+    'baselineTree',
+    'subjectDigest',
+    'planningGenerationId',
+    'reviewNodeId',
+    'reviewResultDigest',
+    'dispositionsDigest',
+    'authorId',
+    'role',
+    'signer',
+    'issuedAt',
+    'signature',
+  ]);
+  if (
+    record.schemaVersion !== 1 ||
+    record.kind !== 'plan-review-challenge-closure-authority' ||
+    record.namespace !== PLAN_REVIEW_CHALLENGE_CLOSURE_NAMESPACE ||
+    !isBoundedNonBlankText(
+      record.repositoryId,
+      PLAN_REVIEW_LIMITS.maxAuthorBytes,
+    ) ||
+    !isBoundedNonBlankText(
+      record.changeId,
+      PLAN_REVIEW_LIMITS.maxAuthorBytes,
+    ) ||
+    !isBoundedNonBlankText(
+      record.investigationId,
+      PLAN_REVIEW_LIMITS.maxAuthorBytes,
+    ) ||
+    typeof record.baselineCommit !== 'string' ||
+    !GIT_OBJECT_ID_PATTERN.test(record.baselineCommit) ||
+    typeof record.baselineTree !== 'string' ||
+    !GIT_OBJECT_ID_PATTERN.test(record.baselineTree) ||
+    !isDigest(record.subjectDigest) ||
+    !isDigest(record.planningGenerationId) ||
+    !isDigest(record.reviewNodeId) ||
+    !isDigest(record.reviewResultDigest) ||
+    !isDigest(record.dispositionsDigest) ||
+    !isBoundedNonBlankText(
+      record.authorId,
+      PLAN_REVIEW_LIMITS.maxAuthorBytes,
+    ) ||
+    (record.role !== 'reviewer' && record.role !== 'domain-owner') ||
+    !isBoundedNonBlankText(record.signer, PLAN_REVIEW_LIMITS.maxAuthorBytes) ||
+    typeof record.issuedAt !== 'string' ||
+    !Number.isFinite(Date.parse(record.issuedAt)) ||
+    new Date(record.issuedAt).toISOString() !== record.issuedAt ||
+    !isBoundedNonBlankText(record.signature, 64 * 1024)
+  ) {
+    throw planReviewInvalid(
+      'Plan review challenge closure authority is malformed.',
+    );
+  }
+  return record as PlanReviewChallengeClosureAuthority;
+}
+
+function authorizedDispositionDigest(
+  dispositions: readonly AuthorizedPlanReviewDispositionEntry[],
+): string {
+  return sha256(
+    canonicalJson({
+      schema: 'plan-review-disposition-input.v2',
+      dispositions,
+    }),
+  );
+}
+
+function canonicalPlanReviewChallengeClosurePayload(
+  authority: PlanReviewChallengeClosureAuthority,
+): string {
+  const { signature: _signature, ...payload } = authority;
+  return `${canonicalJson(payload)}\n`;
 }
 
 function assertBaseline(value: unknown): { head: string; tree: string } {

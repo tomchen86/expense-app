@@ -23,6 +23,7 @@ import {
 import { runProviderWorker } from '../src/provider-worker.ts';
 import {
   createPlanningContributionEnvelope,
+  createPlanReviewDispositionsEnvelope,
   createPlanReviewProgressEnvelope,
   getProposeStatus,
   resumePropose,
@@ -33,6 +34,7 @@ import {
 } from '../src/semantic-ledger-store.ts';
 import { createLedgerEntry } from '../src/semantic-ledger.ts';
 import { isWorkflowError } from './fixture.ts';
+import { installPlanReviewAuthority } from './plan-review-authority-fixture.ts';
 import { driveProposeToDispositions } from './propose-drive-fixture.ts';
 
 const TARGET = 'src/r6-covered-target.ts';
@@ -276,16 +278,150 @@ test('coverage replay detects a carried target digest change and requires delta 
   }
 });
 
+test('global review challenges require and replay an independent signed closure', () => {
+  const prepared = prepareCoverageReview('r6-challenge-authority');
+  try {
+    completeProviderReview(
+      prepared,
+      challengeSubmission(coverageTargetPaths(prepared), 'medium'),
+    );
+    const awaiting = resumePropose(
+      prepared.repository,
+      prepared.changeId,
+      createPlanReviewProgressEnvelope(
+        getProposeStatus(prepared.repository, prepared.investigationId),
+      ),
+    );
+    assert.equal(awaiting.state, 'awaiting-challenge-dispositions');
+    const reviewArtifact = JSON.parse(
+      fs.readFileSync(
+        path.join(
+          prepared.repository,
+          'openspec/changes',
+          prepared.changeId,
+          'plan-review.json',
+        ),
+        'utf8',
+      ),
+    ) as { nodes: EvidenceNode[] };
+    const reviewNode = reviewArtifact.nodes.find(
+      ({ type }) => type === 'plan-review',
+    );
+    assert.ok(reviewNode);
+    const challengeId = (
+      reviewNode.output as { findings: Array<{ findingId: string }> }
+    ).findings[0]!.findingId;
+    const envelope = createPlanReviewDispositionsEnvelope(awaiting, [
+      {
+        challengeId,
+        decision: 'rebutted',
+        rationale:
+          'The exact required-set evidence demonstrates that the concern is already covered.',
+        author: prepared.authority.identity,
+        supersededBy: null,
+      },
+    ]);
+    assert.throws(
+      () => resumePropose(prepared.repository, prepared.changeId, envelope),
+      (error) => isWorkflowError(error, 'MAINTAINER_INTERACTIVE_REQUIRED'),
+    );
+    const forgedAuthor = structuredClone(envelope);
+    forgedAuthor.dispositions[0]!.author = 'codex';
+    assert.throws(
+      () =>
+        resumePropose(prepared.repository, prepared.changeId, forgedAuthor, {
+          challengeDispositionAuthority: {
+            now: new Date('2026-08-10T00:00:00.000Z'),
+            role: 'reviewer',
+            signer: prepared.authority.signer,
+          },
+        }),
+      (error) => isWorkflowError(error, 'PLAN_REVIEW_INVALID'),
+    );
+    const completed = resumePropose(
+      prepared.repository,
+      prepared.changeId,
+      envelope,
+      {
+        challengeDispositionAuthority: {
+          now: new Date('2026-08-10T00:00:00.000Z'),
+          role: 'reviewer',
+          signer: prepared.authority.signer,
+        },
+      },
+    );
+    assert.equal(completed.state, 'planning-complete');
+  } finally {
+    prepared.dispose();
+  }
+});
+
+test('forbidden-floor challenges cannot be waived by a signed domain owner', () => {
+  const prepared = prepareCoverageReview('r6-forbidden-floor');
+  try {
+    completeProviderReview(
+      prepared,
+      challengeSubmission(coverageTargetPaths(prepared), 'critical'),
+    );
+    const awaiting = resumePropose(
+      prepared.repository,
+      prepared.changeId,
+      createPlanReviewProgressEnvelope(
+        getProposeStatus(prepared.repository, prepared.investigationId),
+      ),
+    );
+    const challengeId = currentChallengeId(prepared);
+    const envelope = createPlanReviewDispositionsEnvelope(awaiting, [
+      {
+        challengeId,
+        decision: 'waived',
+        rationale: 'A critical policy floor must reject this waiver.',
+        author: prepared.authority.identity,
+        supersededBy: null,
+      },
+    ]);
+    assert.throws(
+      () =>
+        resumePropose(prepared.repository, prepared.changeId, envelope, {
+          challengeDispositionAuthority: {
+            now: new Date('2026-08-10T00:00:00.000Z'),
+            role: 'domain-owner',
+            signer: prepared.authority.signer,
+          },
+        }),
+      (error) => isWorkflowError(error, 'REVIEW_CHALLENGE_INVALID'),
+    );
+    const artifact = JSON.parse(
+      fs.readFileSync(
+        path.join(
+          prepared.repository,
+          'openspec/changes',
+          prepared.changeId,
+          'plan-review.json',
+        ),
+        'utf8',
+      ),
+    ) as { currentRefs: { planReviewDisposition?: string } };
+    assert.equal(artifact.currentRefs.planReviewDisposition, undefined);
+  } finally {
+    prepared.dispose();
+  }
+});
+
 function prepareCoverageReview(
   changeId: string,
   options: { includeLedger?: boolean } = {},
 ) {
   const includeLedger = options.includeLedger ?? true;
+  let authority: ReturnType<typeof installPlanReviewAuthority> | null = null;
   const fixture = driveProposeToDispositions(changeId, {
     mainTerm: TERM,
     surveyTerm: TERM,
     explicitPaths: [TARGET],
     explicitSymbols: [],
+    prepareRepository(repository) {
+      authority = installPlanReviewAuthority(repository);
+    },
     files: {
       [TARGET]: TARGET_CONTENT,
       ...(includeLedger ? ledgerFiles(changeId) : {}),
@@ -331,6 +467,11 @@ function prepareCoverageReview(
   return {
     ...fixture,
     invocationId: materialized.planReview!.invocationId,
+    authority: authority!,
+    dispose() {
+      fixture.dispose();
+      authority?.dispose();
+    },
   };
 }
 
@@ -384,6 +525,57 @@ function noChallengeSubmission(
     residualRisk: 'The review remains advisory and cannot prove correctness.',
     uncertainty: 'Runtime behavior remains subject to task-level checks.',
   };
+}
+
+function challengeSubmission(
+  coveredPaths: readonly string[],
+  severity: 'critical' | 'medium',
+): PlanReviewSubmission {
+  return {
+    schemaVersion: 2,
+    verdict: 'advisory-reject',
+    coverage: [...PLAN_REVIEW_COVERAGE],
+    scopeAssessment: { kind: 'challenges' },
+    findings: [
+      {
+        kind: 'challenge',
+        severity,
+        category: 'missing-scope',
+        currentChangeImpact: 'required',
+        summary: 'Confirm every engine-required review target is covered.',
+        evidence: coveredPaths.map((targetPath) => ({
+          kind: 'repository-location' as const,
+          path: targetPath,
+          line: 1,
+          observation: 'The exact required target was reviewed.',
+        })),
+      },
+    ],
+    proposedTerms: [],
+    suggestions: [],
+    residualRisk: 'Challenge closure must remain independently authorized.',
+    uncertainty: 'No review can prove all future runtime behavior.',
+  };
+}
+
+function currentChallengeId(
+  prepared: ReturnType<typeof prepareCoverageReview>,
+): string {
+  const artifact = JSON.parse(
+    fs.readFileSync(
+      path.join(
+        prepared.repository,
+        'openspec/changes',
+        prepared.changeId,
+        'plan-review.json',
+      ),
+      'utf8',
+    ),
+  ) as { nodes: EvidenceNode[] };
+  const reviewNode = artifact.nodes.find(({ type }) => type === 'plan-review');
+  assert.ok(reviewNode);
+  return (reviewNode.output as { findings: Array<{ findingId: string }> })
+    .findings[0]!.findingId;
 }
 
 function coverageTargetPaths(

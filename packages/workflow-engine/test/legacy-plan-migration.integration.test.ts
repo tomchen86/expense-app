@@ -40,11 +40,16 @@ import {
   writeLegacyGoverningPlan,
 } from './fixture.ts';
 import { prepareExecutionMandate } from './execution-mandate-fixture.ts';
+import {
+  installPlanReviewAuthority,
+  type PlanReviewAuthorityFixture,
+} from './plan-review-authority-fixture.ts';
 
 const MIGRATION_CHANGE_ID = 'establish-investigation-first-planning';
 
 test('legacy migration preserves the committed checkbox projection while generating v2 artifacts', () => {
   const repository = createFixtureRepository();
+  const reviewAuthority = installPlanReviewAuthority(repository);
   try {
     const legacy = prepareLegacyRepository(repository);
     const changeDirectory = path.join(
@@ -149,7 +154,7 @@ test('legacy migration preserves the committed checkbox projection while generat
       true,
     );
 
-    completePlanReview(repository, materialized);
+    completePlanReview(repository, materialized, reviewAuthority);
 
     assert.equal(
       git(repository, [
@@ -175,6 +180,7 @@ test('legacy migration preserves the committed checkbox projection while generat
       `schema: expense-app-v2\ncreated: ${legacy.created}\n`,
     );
   } finally {
+    reviewAuthority.dispose();
     fs.rmSync(repository, { recursive: true, force: true });
   }
 });
@@ -318,7 +324,7 @@ function prepareLegacyRepository(repository: string): LegacyRepositoryFixture {
     path.join(repository, 'src/legacy-target.ts'),
     'export const LegacyMigrationNeedle = true;\n',
   );
-  git(repository, ['add', 'src/legacy-target.ts']);
+  git(repository, ['add', 'src/legacy-target.ts', 'workflow']);
   git(repository, ['commit', '-m', 'Add the legacy migration target']);
   git(repository, ['update-ref', 'refs/remotes/origin/main', 'main']);
   const legacy = writeLegacyGoverningPlan(repository, MIGRATION_CHANGE_ID);
@@ -483,8 +489,13 @@ function migrationPayload(
 function completePlanReview(
   repository: string,
   materialized: OrdinaryProposeOutput,
+  reviewAuthority: PlanReviewAuthorityFixture,
 ): void {
   const investigationId = materialized.investigation!.investigationId;
+  const requiredReviewPaths = requiredCoveragePaths(
+    repository,
+    MIGRATION_CHANGE_ID,
+  );
   runProviderWorker(
     repository,
     getProposeStatus(repository, investigationId).planReview!.invocationId,
@@ -503,15 +514,17 @@ function completePlanReview(
               currentChangeImpact: 'required' as const,
               summary:
                 'Confirm the migration does not claim investigation preceded the legacy plan.',
-              evidence: [
-                {
-                  kind: 'repository-location' as const,
-                  path: 'src/legacy-target.ts',
-                  line: 1,
-                  observation:
-                    'The governed legacy target remains the migration subject.',
-                },
-              ],
+              evidence: requiredReviewPaths.map((targetPath) => ({
+                kind: targetPath.startsWith(
+                  `openspec/changes/${MIGRATION_CHANGE_ID}/`,
+                )
+                  ? ('planning-location' as const)
+                  : ('repository-location' as const),
+                path: targetPath,
+                line: 1,
+                observation:
+                  'The exact migrated planning subject was examined during review.',
+              })),
             },
           ],
           proposedTerms: [],
@@ -556,15 +569,52 @@ function completePlanReview(
     createPlanReviewDispositionsEnvelope(awaitingDisposition, [
       {
         challengeId: readPlanReviewNode(reviewNode).findings[0]!.findingId,
-        decision: 'mitigated',
+        decision: 'rebutted',
         rationale:
           'The migration records legacyMigration so no investigation-first claim is made.',
-        author: 'codex',
+        author: reviewAuthority.identity,
+        supersededBy: null,
       },
     ]),
+    {
+      challengeDispositionAuthority: {
+        now: new Date('2026-08-10T00:00:00.000Z'),
+        role: 'reviewer',
+        signer: reviewAuthority.signer,
+      },
+    },
   );
   assert.equal(completed.state, 'planning-complete');
   assert.equal(completed.planningTransition?.kind, 'revision');
+}
+
+function requiredCoveragePaths(repository: string, changeId: string): string[] {
+  const investigation = JSON.parse(
+    fs.readFileSync(
+      path.join(repository, 'openspec/changes', changeId, 'investigation.json'),
+      'utf8',
+    ),
+  ) as {
+    nodes: Array<{
+      type: string;
+      output?: {
+        requiredTargetIds?: string[];
+        targetBindings?: Array<{ targetId: string; path: string }>;
+      };
+    }>;
+  };
+  const requirement = investigation.nodes.find(
+    ({ type }) => type === 'plan-review-coverage-requirement',
+  )?.output;
+  assert.ok(requirement?.requiredTargetIds && requirement.targetBindings);
+  const required = new Set(requirement.requiredTargetIds);
+  return [
+    ...new Set(
+      requirement.targetBindings
+        .filter(({ targetId }) => required.has(targetId))
+        .map(({ path: targetPath }) => targetPath),
+    ),
+  ].sort();
 }
 
 function providerWireResult(

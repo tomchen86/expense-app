@@ -205,6 +205,8 @@ import {
   type PlanningTransitionResult,
 } from './planning-transition.ts';
 import {
+  assertAuthorizedPlanReviewChallengeClosure,
+  createAuthorizedPlanReviewDispositionNode,
   createPlanReviewDispositionNode,
   createPlanReviewNode,
   createPlanReviewProviderResultNode,
@@ -215,7 +217,9 @@ import {
   readPlanReviewDispositionNode,
   readPlanReviewTargetSnapshotNode,
   PLAN_REVIEW_OUTPUT_SCHEMA,
+  type AuthorizedPlanReviewDispositionEntry,
   type PlanReviewDispositionEntry,
+  type PlanReviewDispositionSubmission,
   type PlanReviewSubmission,
   type PlanReviewSubject,
   type PlanReviewTargetSnapshot,
@@ -344,6 +348,11 @@ export type ProposeResumeOptions = {
   executionGrantAuthorization?: ProviderExecutionGrantAuthorization & {
     replacementRequest: ProviderInvocationRequest;
   };
+  challengeDispositionAuthority?: {
+    now?: Date;
+    role?: 'reviewer' | 'domain-owner';
+    signer?: MaintainerSignerProvider;
+  };
   /**
    * Test-only crash injection: invoked immediately after a PlanReview retry
    * publishes its replacement reservation and before the invocation record is
@@ -394,7 +403,7 @@ export type PlanReviewDispositionsEnvelope = {
   subjectDigest: string;
   reviewNodeId: string;
   reviewResultDigest: string;
-  dispositions: PlanReviewDispositionEntry[];
+  dispositions: PlanReviewDispositionSubmission[];
 };
 
 export type PlanningContributionPayload = {
@@ -1807,7 +1816,7 @@ export function resumePropose(
   }
 
   if (input.kind === 'plan-review-dispositions') {
-    return completePlanReviewDispositions(cwd, input);
+    return completePlanReviewDispositions(cwd, input, options);
   }
 
   if (input.kind === 'provider-retry') {
@@ -2143,7 +2152,7 @@ export function createPlanReviewRetryEnvelope(
 
 export function createPlanReviewDispositionsEnvelope(
   output: ProposeOutput,
-  dispositions: PlanReviewDispositionEntry[],
+  dispositions: PlanReviewDispositionSubmission[],
 ): PlanReviewDispositionsEnvelope {
   if (
     output.state !== 'awaiting-challenge-dispositions' ||
@@ -3623,6 +3632,7 @@ function materializePlanReviewResult(
 function completePlanReviewDispositions(
   cwd: string,
   input: PlanReviewDispositionsEnvelope,
+  options: ProposeResumeOptions,
 ): ProposeOutput {
   const initialContext = loadInvestigationRuntimeContext(cwd);
   return withInvestigationTransitionAuthority(
@@ -3655,11 +3665,71 @@ function completePlanReviewDispositions(
           ExitCode.staleState,
         );
       }
-      const dispositionNode = createPlanReviewDispositionNode({
-        reviewNode: tracked.reviewNode,
-        policyDigest: reservation.subject.reviewPolicyDigest,
-        dispositions: input.dispositions,
-      });
+      const session =
+        status.state === 'investigation-exempt'
+          ? null
+          : readInvestigationSession(context.runtime, input.investigationId);
+      const dispositionNode =
+        session?.planReviewCoveragePolicyDigest ===
+        GLOBAL_PLAN_REVIEW_COVERAGE_POLICY_DIGEST
+          ? (() => {
+              const policy = loadMaintainerPolicyAtCommit(
+                context.git.repositoryRoot,
+                reservation.subject.investigationBaseline.head,
+              );
+              const signer =
+                options.challengeDispositionAuthority?.signer ??
+                createInteractiveSshSigner(context.git.repositoryRoot, policy);
+              const authorId =
+                tracked.roleResult.author.principalId ??
+                tracked.roleResult.author.providerId;
+              if (authorId === null) {
+                throw workflowError(
+                  'PLAN_REVIEW_CHALLENGE_AUTHORITY_INVALID',
+                  'The reviewed plan has no authenticated author identity.',
+                  ExitCode.guard,
+                );
+              }
+              const binding = {
+                repositoryId: policy.repository.id,
+                changeId: status.changeId,
+                investigationId: status.investigationId,
+                baselineCommit: reservation.subject.investigationBaseline.head,
+                baselineTree: reservation.subject.investigationBaseline.tree,
+                subjectDigest: reservation.subject.subjectDigest,
+                planningGenerationId: reservation.subject.planningGenerationId,
+                authorId,
+              };
+              const node = createAuthorizedPlanReviewDispositionNode({
+                reviewNode: tracked.reviewNode,
+                policyDigest: reservation.subject.reviewPolicyDigest,
+                dispositions:
+                  input.dispositions as AuthorizedPlanReviewDispositionEntry[],
+                binding,
+                role:
+                  options.challengeDispositionAuthority?.role ??
+                  (input.dispositions.some(
+                    ({ decision }) => decision === 'waived',
+                  )
+                    ? 'domain-owner'
+                    : 'reviewer'),
+                issuedAt:
+                  options.challengeDispositionAuthority?.now ?? new Date(),
+                signer,
+              });
+              assertAuthorizedPlanReviewChallengeClosure({
+                dispositionNode: node,
+                reviewNode: tracked.reviewNode,
+                expected: binding,
+                policy,
+              });
+              return node;
+            })()
+          : createPlanReviewDispositionNode({
+              reviewNode: tracked.reviewNode,
+              policyDigest: reservation.subject.reviewPolicyDigest,
+              dispositions: input.dispositions as PlanReviewDispositionEntry[],
+            });
       if (status.state === 'investigation-exempt') {
         assertCurrentExemptionContext(
           loadInvestigationRuntimeContext(cwd),
@@ -5057,6 +5127,7 @@ function rebuildInvestigation(
     session.planReviewCoveragePolicyDigest ===
     GLOBAL_PLAN_REVIEW_COVERAGE_POLICY_DIGEST
       ? createGlobalPlanReviewCoverageRequirementNode({
+          investigationId: session.investigationId,
           changeId: session.changeId,
           baseline: session.baseline,
           coverageTier,

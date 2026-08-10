@@ -30,6 +30,7 @@ import {
 } from '../src/provider-runner.ts';
 import { runProviderWorker } from '../src/provider-worker.ts';
 import { createFixtureRepository, git, isWorkflowError } from './fixture.ts';
+import { installPlanReviewAuthority } from './plan-review-authority-fixture.ts';
 
 const CHANGE_ID = 'amended-executed-change';
 
@@ -127,6 +128,7 @@ const EXECUTION_TASK: ExecutionArtifact['tasks'][string] = {
 
 test('an amendment contribution replaces the executed prior generation without reopening its work', () => {
   const repository = createFixtureRepository();
+  const reviewAuthority = installPlanReviewAuthority(repository);
   try {
     git(repository, ['checkout', '-b', `work/${CHANGE_ID}`]);
     fs.writeFileSync(
@@ -401,6 +403,7 @@ test('an amendment contribution replaces the executed prior generation without r
     assert.ok(
       fs.readFileSync(designPath, 'utf8').includes('Protected invariant:'),
     );
+    const coverageEvidence = requiredCoverageEvidence(replacedInvestigation);
 
     // The fresh review's citations must resolve against the current amended
     // bytes: the prior review is committed at HEAD but removed from the
@@ -426,6 +429,7 @@ test('an amendment contribution replaces the executed prior generation without r
                 summary:
                   'Confirm the restored scenario keeps its original body form.',
                 evidence: [
+                  ...coverageEvidence,
                   {
                     kind: 'planning-location' as const,
                     path: `openspec/changes/${CHANGE_ID}/specs/demo/spec.md`,
@@ -469,12 +473,20 @@ test('an amendment contribution replaces the executed prior generation without r
       createPlanReviewDispositionsEnvelope(awaitingDisposition, [
         {
           challengeId: readPlanReviewNode(reviewNode).findings[0]!.findingId,
-          decision: 'mitigated',
+          decision: 'rebutted',
           rationale:
             'The restoration reproduces the original scenario body verbatim.',
-          author: 'codex',
+          author: reviewAuthority.identity,
+          supersededBy: null,
         },
       ]),
+      {
+        challengeDispositionAuthority: {
+          now: new Date('2026-08-10T00:00:00.000Z'),
+          role: 'reviewer',
+          signer: reviewAuthority.signer,
+        },
+      },
     );
     assert.equal(completed.state, 'planning-complete');
     assert.equal(completed.planningTransition?.kind, 'revision');
@@ -496,9 +508,40 @@ test('an amendment contribution replaces the executed prior generation without r
       EXECUTED_TASKS,
     );
   } finally {
+    reviewAuthority.dispose();
     fs.rmSync(repository, { recursive: true, force: true });
   }
 });
+
+function requiredCoverageEvidence(investigation: {
+  nodes: Array<{
+    type: string;
+    output?: {
+      requiredTargetIds?: string[];
+      targetBindings?: Array<{ targetId: string; path: string }>;
+    };
+  }>;
+}) {
+  const output = investigation.nodes.find(
+    ({ type }) => type === 'plan-review-coverage-requirement',
+  )?.output;
+  assert.ok(output?.requiredTargetIds && output.targetBindings);
+  const required = new Set(output.requiredTargetIds);
+  return [
+    ...new Set(
+      output.targetBindings
+        .filter(({ targetId }) => required.has(targetId))
+        .map(({ path: targetPath }) => targetPath),
+    ),
+  ]
+    .sort()
+    .map((targetPath) => ({
+      kind: 'repository-location' as const,
+      path: targetPath,
+      line: 1,
+      observation: 'The engine-required review target was examined.',
+    }));
+}
 
 function whyAnswer(manifestEntryId: string) {
   return {

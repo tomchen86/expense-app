@@ -32,11 +32,13 @@ export function driveProposeToDispositions(
     files?: Record<string, string>;
     explicitPaths?: string[];
     explicitSymbols?: string[];
+    prepareRepository?: (repository: string) => void;
   } = {},
 ) {
   const repository = createFixtureRepository();
   git(repository, ['checkout', '-b', `work/${changeId}`]);
   setFixtureProviderTimeout(repository, 300_000);
+  options.prepareRepository?.(repository);
   if (options.files !== undefined) {
     for (const [relative, contents] of Object.entries(options.files)) {
       const target = path.join(repository, relative);

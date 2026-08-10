@@ -50,7 +50,7 @@ export const GLOBAL_PLAN_REVIEW_COVERAGE_POLICY_DIGEST = sha256(
     kind: 'plan-review-coverage-policy',
     activation: 'global',
     sampling: 'review-coverage.v1',
-    evidence: 'exact-repository-location',
+    evidence: 'namespace-correct-exact-location',
     targetFields: [
       'invariants',
       'risk-factors',
@@ -122,13 +122,14 @@ export type GlobalPlanReviewCoverageTargetBinding =
   GlobalPlanReviewCoverageTargetInput &
     Readonly<{
       targetId: string;
-      evidenceKind: 'repository-location';
+      evidenceKind: 'planning-or-repository-location';
     }>;
 
 export type GlobalPlanReviewCoverageRequirement = Readonly<{
   schemaVersion: 2;
   kind: 'plan-review-coverage-requirement';
   activation: 'global';
+  investigationId: string;
   changeId: string;
   baselineCommit: string;
   baselineTree: string;
@@ -250,6 +251,7 @@ export function createPlanReviewCoverageRequirementNode(input: {
  * every cost/risk/freshness field before the provider receives its snapshot.
  */
 export function createGlobalPlanReviewCoverageRequirementNode(input: {
+  investigationId: string;
   changeId: string;
   baseline: { head: string; tree: string };
   coverageTier: CoverageTier;
@@ -283,6 +285,7 @@ export function createGlobalPlanReviewCoverageRequirementNode(input: {
     schemaVersion: 2,
     kind: 'plan-review-coverage-requirement',
     activation: 'global',
+    investigationId: input.investigationId,
     changeId: input.changeId,
     baselineCommit: input.baseline.head,
     baselineTree: input.baseline.tree,
@@ -303,6 +306,7 @@ export function createGlobalPlanReviewCoverageRequirementNode(input: {
     exactInputDigests: {
       baseline: sha256(canonicalJson(input.baseline)),
       coveragePopulation: sha256(canonicalJson(targetBindings)),
+      investigation: sha256(input.investigationId),
       sealedSamplingSeed: sha256(input.sealedSamplingSeed),
       semanticReuse: sha256(canonicalJson(input.semanticReuse)),
     },
@@ -451,6 +455,7 @@ function readGlobalPlanReviewCoverageRequirementNode(
     !hasExactKeys(node.exactInputDigests, [
       'baseline',
       'coveragePopulation',
+      'investigation',
       'sealedSamplingSeed',
       'semanticReuse',
     ]) ||
@@ -467,6 +472,7 @@ function readGlobalPlanReviewCoverageRequirementNode(
       'schemaVersion',
       'kind',
       'activation',
+      'investigationId',
       'changeId',
       'baselineCommit',
       'baselineTree',
@@ -482,6 +488,8 @@ function readGlobalPlanReviewCoverageRequirementNode(
     value.schemaVersion !== 2 ||
     value.kind !== 'plan-review-coverage-requirement' ||
     value.activation !== 'global' ||
+    typeof value.investigationId !== 'string' ||
+    value.investigationId.length === 0 ||
     typeof value.changeId !== 'string' ||
     value.changeId.length === 0 ||
     typeof value.baselineCommit !== 'string' ||
@@ -530,6 +538,7 @@ function readGlobalPlanReviewCoverageRequirementNode(
       ) ||
     node.exactInputDigests.coveragePopulation !==
       sha256(canonicalJson(targetBindings)) ||
+    node.exactInputDigests.investigation !== sha256(value.investigationId) ||
     node.exactInputDigests.sealedSamplingSeed !==
       sha256(value.sealedSamplingSeed) ||
     node.exactInputDigests.semanticReuse !==
@@ -541,6 +550,7 @@ function readGlobalPlanReviewCoverageRequirementNode(
     schemaVersion: 2,
     kind: 'plan-review-coverage-requirement',
     activation: 'global',
+    investigationId: value.investigationId,
     changeId: value.changeId,
     baselineCommit: value.baselineCommit,
     baselineTree: value.baselineTree,
@@ -586,7 +596,10 @@ export function assertPlanReviewCoverageRequirementSatisfied(input: {
     .filter(
       ({ targetId, evidenceKind, path: targetPath }) =>
         required.has(targetId) &&
-        evidenceKeys.has(`${evidenceKind}\0${targetPath}`),
+        (evidenceKind === 'planning-or-repository-location'
+          ? evidenceKeys.has(`planning-location\0${targetPath}`) ||
+            evidenceKeys.has(`repository-location\0${targetPath}`)
+          : evidenceKeys.has(`${evidenceKind}\0${targetPath}`)),
     )
     .map(({ targetId }) => targetId);
   assertReviewSetHonoured(requirement.requiredTargetIds, disposed);
@@ -648,9 +661,10 @@ function currentTargetDigest(
   }
 }
 
-function reviewEvidence(
-  review: PlanReviewReport,
-): Array<{ kind: 'repository-location'; path: string }> {
+function reviewEvidence(review: PlanReviewReport): Array<{
+  kind: 'planning-location' | 'repository-location';
+  path: string;
+}> {
   const evidence = [
     ...review.findings.flatMap(({ evidence }) => evidence),
     ...review.suggestions.flatMap(({ evidence }) => evidence),
@@ -659,8 +673,8 @@ function reviewEvidence(
       : []),
   ];
   return evidence.flatMap((entry) =>
-    entry.kind === 'repository-location'
-      ? [{ kind: 'repository-location' as const, path: entry.path }]
+    entry.kind === 'planning-location' || entry.kind === 'repository-location'
+      ? [{ kind: entry.kind, path: entry.path }]
       : [],
   );
 }
@@ -844,7 +858,7 @@ function normalizeGlobalTargetBinding(
       canonicalJson({ schema: 'plan-review-target-binding.v2', ...normalized }),
     )}`,
     ...normalized,
-    evidenceKind: 'repository-location',
+    evidenceKind: 'planning-or-repository-location',
   });
 }
 
@@ -871,7 +885,7 @@ function assertGlobalTargetBinding(
       'cost',
     ]) ||
     typeof value.targetId !== 'string' ||
-    value.evidenceKind !== 'repository-location' ||
+    value.evidenceKind !== 'planning-or-repository-location' ||
     !Array.isArray(value.invariants) ||
     !Array.isArray(value.riskFactors)
   ) {
@@ -925,6 +939,7 @@ function globalCostProfile(
 }
 
 function assertGlobalIdentityInputs(input: {
+  investigationId: string;
   changeId: string;
   baseline: { head: string; tree: string };
   coverageTier: CoverageTier;
@@ -934,6 +949,7 @@ function assertGlobalIdentityInputs(input: {
   semanticReuse: ReuseCoverageRecord;
 }): void {
   if (
+    input.investigationId.length === 0 ||
     input.changeId.length === 0 ||
     !GIT_OBJECT.test(input.baseline.head) ||
     !GIT_OBJECT.test(input.baseline.tree) ||
