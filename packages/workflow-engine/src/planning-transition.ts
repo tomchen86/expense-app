@@ -51,6 +51,7 @@ import {
   type PlanningAmendmentDecision,
 } from './planning-amendment-decision.ts';
 import { committedPlanningGeneration } from './planning-generation-history.ts';
+import { recordPlanningExecutionEpochTransition } from './planning-execution-epoch.ts';
 import { resolveTaskExecutionGenerationEvidence } from './task-execution-evidence.ts';
 
 export type AmendmentRequest = {
@@ -93,6 +94,11 @@ export type PlanningTransitionTestHooks = {
     expectedHead: string;
     expectedRef: string;
     commitHash: string;
+  }): void;
+  afterRefUpdateBeforeEpoch?(context: {
+    repositoryRoot: string;
+    commitHash: string;
+    reportId: string;
   }): void;
 };
 
@@ -705,6 +711,31 @@ function commitPlanningTransitionLocked(
         commitHash
     ) {
       throw planningStale('PLANNING_HEAD_CHANGED');
+    }
+
+    testHooks.afterRefUpdateBeforeEpoch?.({
+      repositoryRoot: initial.repositoryRoot,
+      commitHash,
+      reportId,
+    });
+
+    if (
+      provenance !== null &&
+      amendmentDecision !== null &&
+      amendmentExecutionEvidence !== null
+    ) {
+      recordPlanningExecutionEpochTransition(initial.repositoryRoot, {
+        changeId,
+        amendmentCommit: commitHash,
+        parentCommit: initial.head,
+        planningGeneration: provenance.planningGeneration,
+        amendsPlanningGeneration: provenance.amendsPlanningGeneration,
+        decisionDigest: planningAmendmentDecisionDigest(amendmentDecision),
+        reportId,
+        executionImpact: provenance.executionImpact,
+        taskEvidence: amendmentExecutionEvidence,
+        createdAt: report.createdAt,
+      });
     }
 
     return {

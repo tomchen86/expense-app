@@ -133,6 +133,7 @@
       "packages/workflow-engine/src/intervention-control.ts",
       "packages/workflow-engine/src/lifecycle.ts",
       "packages/workflow-engine/src/planning-amendment-decision.ts",
+      "packages/workflow-engine/src/planning-execution-epoch.ts",
       "packages/workflow-engine/src/planning-generation-history.ts",
       "packages/workflow-engine/src/planning-lock.ts",
       "packages/workflow-engine/src/planning-report.ts",
