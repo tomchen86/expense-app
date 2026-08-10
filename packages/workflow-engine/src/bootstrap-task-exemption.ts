@@ -1,6 +1,10 @@
 import { parseTasks } from './contracts.ts';
 import { commitFacts, planningCommitMessage } from './git-transitions.ts';
 import { runGit } from './git.ts';
+import {
+  protectedActivationBaselines,
+  resolveInvestigationPlanningActivation,
+} from './openspec-schema-contract.ts';
 
 /**
  * Task IDs already completed in the before tree of the change's earliest
@@ -46,6 +50,31 @@ export function preEpochCompletedTaskIds(
     ),
   );
   if (!earliest) {
+    return new Set();
+  }
+  const activations = [tip, ...protectedActivationBaselines(repositoryRoot)]
+    .filter((baseline, index, values) => values.indexOf(baseline) === index)
+    .map((baseline) =>
+      resolveInvestigationPlanningActivation(repositoryRoot, [baseline]),
+    )
+    .filter(({ activated }) => activated);
+  if (
+    activations.some(
+      ({ anchor }) =>
+        anchor === null ||
+        anchor === earliest ||
+        runGit(
+          repositoryRoot,
+          ['merge-base', earliest, anchor],
+          true,
+        ).trim() !== earliest,
+    )
+  ) {
+    // Once a reviewed cutover exists, compatibility is anchored to it rather
+    // than to a commit message an actor can mint later. A stale side branch
+    // created after the protected base activated likewise cannot manufacture
+    // a pre-epoch plan. Repositories that have not cut over yet retain their
+    // genuine legacy behavior.
     return new Set();
   }
   const facts = commitFacts(repositoryRoot, earliest);
