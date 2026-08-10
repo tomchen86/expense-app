@@ -17,12 +17,7 @@ function reservationOperation(
 ): TaskMandateProviderReservationOperation {
   return {
     providerId: 'claude' as const,
-    dataTypes: [
-      'diff',
-      'repository-metadata',
-      'source-code',
-      'test-output',
-    ],
+    dataTypes: ['diff', 'repository-metadata', 'source-code', 'test-output'],
     sourceCode: true,
     secrets: false,
     retry: false,

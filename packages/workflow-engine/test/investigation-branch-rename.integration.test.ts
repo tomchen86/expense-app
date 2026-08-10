@@ -106,8 +106,7 @@ test('an investigation follows a rename onto the canonical change branch and not
             })),
           }),
         ),
-      (error: unknown) =>
-        isWorkflowError(error, 'INVESTIGATION_CONTEXT_STALE'),
+      (error: unknown) => isWorkflowError(error, 'INVESTIGATION_CONTEXT_STALE'),
     );
   } finally {
     fs.rmSync(repository, { recursive: true, force: true });

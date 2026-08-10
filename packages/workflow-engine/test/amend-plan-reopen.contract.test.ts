@@ -151,9 +151,14 @@ test('a change with nothing completed may declare the impact conservatively', ()
     [],
   );
   assert.doesNotThrow(() =>
-    assertTaskHistory('demo-change', nothingDone as never, nothingDone as never, {
-      reopenAuthorized: true,
-    }),
+    assertTaskHistory(
+      'demo-change',
+      nothingDone as never,
+      nothingDone as never,
+      {
+        reopenAuthorized: true,
+      },
+    ),
   );
 });
 

@@ -146,7 +146,10 @@ test('an amendment contribution replaces the executed prior generation without r
     fs.mkdirSync(path.join(changeDirectory, 'specs/demo'), {
       recursive: true,
     });
-    fs.writeFileSync(path.join(changeDirectory, '.openspec.yaml'), PRIOR_METADATA);
+    fs.writeFileSync(
+      path.join(changeDirectory, '.openspec.yaml'),
+      PRIOR_METADATA,
+    );
     fs.writeFileSync(
       path.join(changeDirectory, 'investigation.json'),
       PRIOR_INVESTIGATION,
@@ -187,7 +190,8 @@ test('an amendment contribution replaces the executed prior generation without r
       CHANGE_ID,
       {
         schemaVersion: 1,
-        summary: 'Restore the dropped scenario identity in the executed change.',
+        summary:
+          'Restore the dropped scenario identity in the executed change.',
         explicitPaths: [],
         explicitSymbols: ['AmendGateNeedle'],
         explicitConfigKeys: [],
@@ -347,8 +351,7 @@ test('an amendment contribution replaces the executed prior generation without r
           CHANGE_ID,
           createPlanningContributionEnvelope(sealed, amendedPayload),
         ),
-      (error: unknown) =>
-        isWorkflowError(error, 'UNMANAGED_PLANNING_CONFLICT'),
+      (error: unknown) => isWorkflowError(error, 'UNMANAGED_PLANNING_CONFLICT'),
     );
     assert.equal(
       fs.readFileSync(path.join(changeDirectory, 'investigation.json'), 'utf8'),
@@ -396,9 +399,7 @@ test('an amendment contribution replaces the executed prior generation without r
       false,
     );
     assert.ok(
-      fs
-        .readFileSync(designPath, 'utf8')
-        .includes('Protected invariant:'),
+      fs.readFileSync(designPath, 'utf8').includes('Protected invariant:'),
     );
 
     // The fresh review's citations must resolve against the current amended
@@ -491,10 +492,7 @@ test('an amendment contribution replaces the executed prior generation without r
       EXECUTED_TASKS,
     );
     assert.equal(
-      git(repository, [
-        'show',
-        `HEAD:openspec/changes/${CHANGE_ID}/tasks.md`,
-      ]),
+      git(repository, ['show', `HEAD:openspec/changes/${CHANGE_ID}/tasks.md`]),
       EXECUTED_TASKS,
     );
   } finally {

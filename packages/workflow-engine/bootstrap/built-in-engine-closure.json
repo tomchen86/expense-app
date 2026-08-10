@@ -91,7 +91,7 @@
     {
       "path": "src/authority-audit-ledger.ts",
       "mode": "100644",
-      "digest": "sha256:720e0ce500d37990361d45638276212920efa154fc0ccc09f24fb73307825b6d"
+      "digest": "sha256:1211827aa9d4f7eabd2b25be4253b9dacb692e6ee6d66fb3334564b0c811e9cb"
     },
     {
       "path": "src/authority-audit-service.ts",
@@ -646,7 +646,7 @@
     {
       "path": "src/managed-trailers.ts",
       "mode": "100644",
-      "digest": "sha256:4aa681403d1339b20f137b0f4619fbfc7310c8891ea063783d26495353915e50"
+      "digest": "sha256:d82bb8cf0477e4d9aa1f9265dbfd931baeba1d4dc5b04caf29f279829547f563"
     },
     {
       "path": "src/markdown-sections.ts",
@@ -756,7 +756,7 @@
     {
       "path": "src/planning-contract.ts",
       "mode": "100644",
-      "digest": "sha256:93710ac631933fbb51227ed388b6ca19fc8f8575f10c93f608e0a281ec78c450"
+      "digest": "sha256:dc5554b3dc8d73be4491b93f5defb28e53272b09d7562df63af13a1618bc0b24"
     },
     {
       "path": "src/planning-generation-history.ts",

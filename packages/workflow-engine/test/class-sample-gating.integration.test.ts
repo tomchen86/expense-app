@@ -30,23 +30,20 @@ test('the sample a class owes is drawn before the class exists and is shown', ()
     assert.equal(plan.sampled.length > 0, true);
     // The draw is the one the engine will check against, recomputed from the
     // investigation identity rather than stored.
-    assert.deepEqual(
-      plan.sampled,
-      [
-        ...planClassSampleAudits(
-          crypto
-            .createHash('sha256')
-            .update(fixture.investigationId)
-            .digest('hex'),
-          [
-            {
-              classId: 'codex-skill-references',
-              members: members.map(({ groupId }) => groupId),
-            },
-          ],
-        )[0]!.sampled,
-      ],
-    );
+    assert.deepEqual(plan.sampled, [
+      ...planClassSampleAudits(
+        crypto
+          .createHash('sha256')
+          .update(fixture.investigationId)
+          .digest('hex'),
+        [
+          {
+            classId: 'codex-skill-references',
+            members: members.map(({ groupId }) => groupId),
+          },
+        ],
+      )[0]!.sampled,
+    ]);
   } finally {
     fixture.dispose();
   }

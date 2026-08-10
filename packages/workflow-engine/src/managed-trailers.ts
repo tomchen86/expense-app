@@ -104,7 +104,9 @@ function parseAmendmentTrailers(
   lines: readonly string[],
 ): AmendPlanManagedTrailers | undefined {
   const start = -AMEND_TRAILER_LINES;
-  if (TRANSITION_TRAILER.exec(lines.at(start + 1) ?? '')?.[1] !== 'amend-plan') {
+  if (
+    TRANSITION_TRAILER.exec(lines.at(start + 1) ?? '')?.[1] !== 'amend-plan'
+  ) {
     return undefined;
   }
   const change = CHANGE_TRAILER.exec(lines.at(start) ?? '');

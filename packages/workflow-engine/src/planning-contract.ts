@@ -107,11 +107,9 @@ export function inspectPlanningTransition(
     );
   }
   const contract = loadChangeContract(repositoryRoot, changeId, schemaName);
-  const reopenedTasks = assertPlanningTaskHistory(
-    beforeTasks,
-    contract.tasks,
-    { reopenAuthorized: reopenAuthorized === true },
-  );
+  const reopenedTasks = assertPlanningTaskHistory(beforeTasks, contract.tasks, {
+    reopenAuthorized: reopenAuthorized === true,
+  });
   const artifactDigests = digestArtifacts(repositoryRoot, [
     ...contract.artifactPaths,
     metadataPath,

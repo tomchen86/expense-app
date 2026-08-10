@@ -626,8 +626,7 @@ export function createPinnedAuthorityAuditAnchorBackend(
         const payloadDigest = assertDigest(raw.payloadDigest, anchorInvalid);
         if (
           payloadDigest !== sha256Digest(canonicalPayload) ||
-          raw.objectName !==
-            `${payloadDigest.slice('sha256:'.length)}.anchor`
+          raw.objectName !== `${payloadDigest.slice('sha256:'.length)}.anchor`
         ) {
           return false;
         }
@@ -649,7 +648,9 @@ export function createPinnedAuditDestructionSignatureVerifier(
   scope: AuthorityAuditLedgerScope,
 ): AuditDestructionSignatureVerifier {
   const configuration = readProtectedAuthorityAuditConfiguration(scope);
-  const publicKey = crypto.createPublicKey(configuration.destructionPublicKeyPem);
+  const publicKey = crypto.createPublicKey(
+    configuration.destructionPublicKeyPem,
+  );
   return (input) => {
     try {
       return crypto.verify(
@@ -681,10 +682,7 @@ function ledgerPathsForScope(
     appendLock: path.join(repository, 'locks', LOCK_NAME),
     metadata,
     profileState: path.join(metadata, PROFILE_STATE_NAME),
-    protectedConfiguration: path.join(
-      metadata,
-      PROTECTED_CONFIGURATION_NAME,
-    ),
+    protectedConfiguration: path.join(metadata, PROTECTED_CONFIGURATION_NAME),
     retentionCheckpoint: path.join(metadata, RETENTION_CHECKPOINT_NAME),
     retentionCheckpointNext: path.join(
       metadata,
@@ -1090,8 +1088,7 @@ export function destroyProtectedAuthorityAuditLedger(
     );
     const payload = envelope.payload;
     const priorGrantUse = readDestructionTombstones(prepared.paths).find(
-      ({ grantEnvelope }) =>
-        grantEnvelope.payload.grantId === payload.grantId,
+      ({ grantEnvelope }) => grantEnvelope.payload.grantId === payload.grantId,
     );
     if (priorGrantUse !== undefined) {
       throw destructionGrantConsumed();
@@ -1353,9 +1350,7 @@ function assertProfileArtifactBindings(
     throw profileMismatch();
   }
   const configuration =
-    configurationStats === undefined
-      ? null
-      : readProtectedConfiguration(paths);
+    configurationStats === undefined ? null : readProtectedConfiguration(paths);
   if (configuration !== null) {
     assertProtectedBackendRoot(configuration.backendRoot, scope);
   }
@@ -1365,7 +1360,9 @@ function assertProfileArtifactBindings(
         receipt.repositoryId !== repositoryId ||
         receipt.policyDigest !== authorityAuditPolicyDigest('protected'),
     ) ||
-    tombstones.some(({ repositoryId: observed }) => observed !== repositoryId) ||
+    tombstones.some(
+      ({ repositoryId: observed }) => observed !== repositoryId,
+    ) ||
     (configuration !== null && configuration.repositoryId !== repositoryId)
   ) {
     throw profileMismatch();
@@ -1464,10 +1461,7 @@ function parseProtectedConfiguration(
   const core = {
     schemaVersion: 1 as const,
     kind: 'authority-audit-protected-configuration.v1' as const,
-    repositoryId: assertDigest(
-      raw.repositoryId,
-      protectedConfigurationInvalid,
-    ),
+    repositoryId: assertDigest(raw.repositoryId, protectedConfigurationInvalid),
     backendId: 'filesystem-worm.v1' as const,
     backendRoot: assertProtectedConfigurationPath(raw.backendRoot),
     destructionPublicKeyPem,
@@ -1486,8 +1480,7 @@ function parseProtectedConfiguration(
   if (
     configuration.destructionPublicKeyDigest !==
       sha256Digest(configuration.destructionPublicKeyPem) ||
-    configuration.configurationDigest !==
-      sha256Digest(canonicalJson(core)) ||
+    configuration.configurationDigest !== sha256Digest(canonicalJson(core)) ||
     bytes !== canonicalProtectedConfiguration(configuration)
   ) {
     throw protectedConfigurationInvalid();
@@ -3142,13 +3135,17 @@ function writeExclusivePrivateFile(
     fsyncDirectory(directory);
   } catch (error) {
     if (!isNodeError(error) || error.code !== 'EEXIST') throw error;
-    if (readExactPrivateFile(filePath, MAX_METADATA_BYTES, makeError) !== content) {
+    if (
+      readExactPrivateFile(filePath, MAX_METADATA_BYTES, makeError) !== content
+    ) {
       throw makeError();
     }
   }
   fs.unlinkSync(preparationPath);
   fsyncDirectory(directory);
-  if (readExactPrivateFile(filePath, MAX_METADATA_BYTES, makeError) !== content) {
+  if (
+    readExactPrivateFile(filePath, MAX_METADATA_BYTES, makeError) !== content
+  ) {
     throw makeError();
   }
 }
@@ -3226,9 +3223,7 @@ function recoverPrivateFilePublications(
       [1, 2],
       makeError,
     );
-    if (
-      sha256Digest(content).slice('sha256:'.length) !== match[2]
-    ) {
+    if (sha256Digest(content).slice('sha256:'.length) !== match[2]) {
       if (stats.nlink !== 1) throw makeError();
       fs.unlinkSync(preparationPath);
       fsyncDirectory(directory);
