@@ -560,6 +560,8 @@ export type InvestigationSession = {
   intentDigest: string;
   /** Omitted for historical sessions whose sealed grammar predates R5. */
   implementationReconciliationPolicyDigest?: string;
+  /** Omitted for historical sessions whose review population predates R6. */
+  planReviewCoveragePolicyDigest?: string;
   blindManifestDigest: string;
   blindRequestDigest: string;
   blindInvocationIds: string[];
@@ -3787,6 +3789,12 @@ function assertInvestigationSession(value: unknown): InvestigationSession {
       )
         ? ['implementationReconciliationPolicyDigest']
         : []),
+      ...(Object.prototype.hasOwnProperty.call(
+        value,
+        'planReviewCoveragePolicyDigest',
+      )
+        ? ['planReviewCoveragePolicyDigest']
+        : []),
       'blindManifestDigest',
       'blindRequestDigest',
       'blindInvocationIds',
@@ -3822,6 +3830,11 @@ function assertInvestigationSession(value: unknown): InvestigationSession {
       'implementationReconciliationPolicyDigest',
     ) &&
       !isDigest(value.implementationReconciliationPolicyDigest)) ||
+    (Object.prototype.hasOwnProperty.call(
+      value,
+      'planReviewCoveragePolicyDigest',
+    ) &&
+      !isDigest(value.planReviewCoveragePolicyDigest)) ||
     !isDigest(value.blindManifestDigest) ||
     !isDigest(value.blindRequestDigest) ||
     !isStringArray(value.blindInvocationIds) ||
@@ -3911,6 +3924,7 @@ function assertMonotonicSessionTransition(
     'baseline',
     'intentDigest',
     'implementationReconciliationPolicyDigest',
+    'planReviewCoveragePolicyDigest',
     'blindManifestDigest',
     'createdAt',
   ] as const) {

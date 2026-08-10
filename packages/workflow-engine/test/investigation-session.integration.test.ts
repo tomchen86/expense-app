@@ -2569,6 +2569,9 @@ test('fake-backed propose composes breadth and depth before materializing an unc
       ),
       true,
     );
+    const requiredCoverageEvidence = planReviewCoverageEvidence(
+      twiceRevisedInvestigation,
+    );
 
     runProviderWorker(repository, twiceReplanned.planReview!.invocationId, {
       runner(input): ProviderRunnerReport {
@@ -2595,6 +2598,10 @@ test('fake-backed propose composes breadth and depth before materializing an unc
                     observation:
                       'The reviewer-only term is now represented in the tracked target.',
                   },
+                  ...requiredCoverageEvidence.filter(
+                    ({ path: targetPath }) =>
+                      targetPath !== 'src/investigation-target.ts',
+                  ),
                 ],
               },
             ],
@@ -2675,6 +2682,35 @@ test('fake-backed propose composes breadth and depth before materializing an unc
     fs.rmSync(repository, { recursive: true, force: true });
   }
 });
+
+function planReviewCoverageEvidence(investigation: {
+  nodes: Array<{ type: string; output: unknown }>;
+}) {
+  const output = investigation.nodes.find(
+    ({ type }) => type === 'plan-review-coverage-requirement',
+  )?.output as
+    | {
+        requiredTargetIds: string[];
+        targetBindings: Array<{ targetId: string; path: string }>;
+      }
+    | undefined;
+  assert.ok(output);
+  const required = new Set(output.requiredTargetIds);
+  return [
+    ...new Set(
+      output.targetBindings
+        .filter(({ targetId }) => required.has(targetId))
+        .map(({ path: targetPath }) => targetPath),
+    ),
+  ]
+    .sort()
+    .map((targetPath) => ({
+      kind: 'repository-location' as const,
+      path: targetPath,
+      line: 1,
+      observation: 'The engine-required review target was examined.',
+    }));
+}
 
 test('reviewer reopen limit preserves exact materialization evidence for human resolution', () => {
   const repository = createFixtureRepository();

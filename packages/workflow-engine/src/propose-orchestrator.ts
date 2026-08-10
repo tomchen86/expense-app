@@ -86,6 +86,7 @@ import {
   recordReuseCoverage,
   type ReuseCoverageRecord,
 } from './semantic-manifest-reuse.ts';
+import { readLedgerEntry } from './semantic-ledger-store.ts';
 import {
   deriveEngineFloor,
   derivePinnedDiffPathFacts,
@@ -141,6 +142,7 @@ import {
 import {
   createInvestigationWhyNodes,
   deriveInvestigationFullBlobManifest,
+  readInvestigationWhyNode,
   type InvestigationFullBlobManifestEntry,
   type InvestigationWhyAnswer,
 } from './investigation-why.ts';
@@ -219,8 +221,11 @@ import {
   type PlanReviewTargetSnapshot,
 } from './plan-review.ts';
 import {
+  createGlobalPlanReviewCoverageRequirementNode,
   createPlanReviewCoverageRequirementNode,
+  GLOBAL_PLAN_REVIEW_COVERAGE_POLICY_DIGEST,
   type CarriedLedgerCoverageInput,
+  type GlobalPlanReviewCoverageTargetInput,
   type PlannedMutationCoverageInput,
 } from './plan-review-coverage.ts';
 import {
@@ -3784,6 +3789,147 @@ function planReviewCoverageSeed(investigationId: string): string {
   );
 }
 
+function globalPlanReviewCoverageBindings(input: {
+  repositoryRoot: string;
+  snapshot: TrackedTreeSnapshot;
+  explicitPaths: readonly string[];
+  completeManifest: readonly InvestigationFullBlobManifestEntry[];
+  whyNodes: readonly EvidenceNode[];
+  carried: readonly Readonly<{
+    manifestEntryId: string;
+    subjectId: string;
+    ledgerEntryId: string;
+  }>[];
+  semanticReuse: ReuseCoverageRecord;
+}): GlobalPlanReviewCoverageTargetInput[] {
+  const explicitPaths = new Set(input.explicitPaths);
+  const carriedByManifest = new Map(
+    input.carried.map((entry) => [entry.manifestEntryId, entry]),
+  );
+  const resolutionBySubject = new Map(
+    input.semanticReuse.resolutions.map((entry) => [entry.subjectId, entry]),
+  );
+  const whyByManifest = new Map(
+    input.whyNodes.map((node) => {
+      const output = readInvestigationWhyNode(node);
+      return [output.manifestEntryId, output] as const;
+    }),
+  );
+  const bindings = new Map<string, GlobalPlanReviewCoverageTargetInput>();
+
+  for (const entry of input.completeManifest) {
+    const targetPath = entry.path.utf8;
+    if (targetPath === null) continue;
+    const carried = carriedByManifest.get(entry.manifestEntryId);
+    const why = whyByManifest.get(entry.manifestEntryId);
+    const ledger =
+      carried === undefined
+        ? null
+        : readLedgerEntry(input.repositoryRoot, carried.ledgerEntryId);
+    const plannedMutation = explicitPaths.has(targetPath);
+    const invariants = [
+      ...(why === undefined ? [] : [why.protectedInvariant]),
+      ...(ledger?.why.protectedInvariants ?? []),
+      ...(plannedMutation
+        ? ['Planned mutations must preserve their declared contract.']
+        : []),
+    ];
+    const riskFactors = [
+      ...(plannedMutation ? ['planned-mutation'] : []),
+      ...entry.relationshipsToChange.map(
+        ({ classification }) => `classification:${classification}`,
+      ),
+      ...entry.matchedTermIds.map((termId) => `matched-term:${termId}`),
+    ];
+    const degradedExtraction = isDegradedCoveragePath(targetPath);
+    bindings.set(targetPath, {
+      source: plannedMutation
+        ? 'planned-mutation'
+        : carried === undefined
+          ? 'investigation-target'
+          : 'carried-ledger-subject',
+      path: targetPath,
+      targetDigest: `sha256:${entry.blob.contentSha256}`,
+      stratum: plannedMutation
+        ? 'planned-mutation'
+        : degradedExtraction
+          ? 'degraded-extraction'
+          : 'production-consumer',
+      reusedFromLedger: carried !== undefined,
+      subjectId: carried?.subjectId ?? null,
+      ledgerEntryId: carried?.ledgerEntryId ?? null,
+      invariants:
+        invariants.length === 0
+          ? ['Investigation targets must preserve their reviewed behavior.']
+          : [...new Set(invariants)].sort(),
+      riskFactors:
+        riskFactors.length === 0
+          ? ['load-bearing-investigation-target']
+          : [...new Set(riskFactors)].sort(),
+      freshness:
+        carried === undefined
+          ? 'missing-ledger-entry'
+          : (resolutionBySubject.get(carried.subjectId)?.state ?? 'current'),
+      evidenceMode: carried === undefined ? 'full-blob' : 'bounded-context',
+      degradedExtraction,
+      cost: {
+        rawBytes: entry.blob.byteSize,
+        reviewUnits: Math.max(1, Math.ceil(entry.blob.byteSize / 1024)),
+      },
+    });
+  }
+
+  const snapshotByPath = new Map(
+    input.snapshot.entries.flatMap((entry) =>
+      entry.path.utf8 === null ? [] : [[entry.path.utf8, entry] as const],
+    ),
+  );
+  for (const explicitPath of [...explicitPaths].sort()) {
+    if (bindings.has(explicitPath)) continue;
+    const entry = snapshotByPath.get(explicitPath);
+    if (
+      entry === undefined ||
+      typeof entry.contentSha256 !== 'string' ||
+      entry.byteSize === null
+    ) {
+      throw workflowError(
+        'REVIEW_COVERAGE_REQUIREMENT_INVALID',
+        'Global review coverage requires every explicit planned mutation to resolve to a readable pinned blob.',
+        ExitCode.guard,
+        { details: { explicitPath } },
+      );
+    }
+    const degradedExtraction = isDegradedCoveragePath(explicitPath);
+    bindings.set(explicitPath, {
+      source: 'planned-mutation',
+      path: explicitPath,
+      targetDigest: `sha256:${entry.contentSha256}`,
+      stratum: 'planned-mutation',
+      reusedFromLedger: false,
+      subjectId: null,
+      ledgerEntryId: null,
+      invariants: ['Planned mutations must preserve their declared contract.'],
+      riskFactors: ['planned-mutation'],
+      freshness: 'missing-ledger-entry',
+      evidenceMode: 'full-blob',
+      degradedExtraction,
+      cost: {
+        rawBytes: entry.byteSize,
+        reviewUnits: Math.max(1, Math.ceil(entry.byteSize / 1024)),
+      },
+    });
+  }
+  return [...bindings.values()].sort((left, right) =>
+    left.path.localeCompare(right.path),
+  );
+}
+
+function isDegradedCoveragePath(targetPath: string): boolean {
+  return !/\.(?:c|cc|cpp|css|go|graphql|html|java|js|json|jsx|kt|md|mjs|py|rb|rs|sh|sql|ts|tsx|yaml|yml)$/i.test(
+    targetPath,
+  );
+}
+
 function plannedMutationCoverageBindings(
   snapshot: TrackedTreeSnapshot,
   explicitPaths: readonly string[],
@@ -4885,27 +5031,6 @@ function rebuildInvestigation(
   // Taking the saving and recording what it cost are the same act. Every
   // carried entry stays in what a reviewer is shown, marked as carried.
   const reuseCoverage = recordReuseCoverage(manifestReuse);
-  const reviewCoverageNode =
-    manifestReuse.carried.length === 0
-      ? null
-      : createPlanReviewCoverageRequirementNode({
-          changeId: session.changeId,
-          baseline: session.baseline,
-          coverageTier: reportProposeAssuranceAssessment(
-            assuranceAssessmentNode,
-          ).coverageTier,
-          sealedSamplingSeed: planReviewCoverageSeed(session.investigationId),
-          assessmentNode: assuranceAssessmentNode,
-          plannedMutations: plannedMutationCoverageBindings(
-            snapshot,
-            intent.explicitPaths,
-          ),
-          carriedSubjects: carriedLedgerCoverageBindings(
-            derivedFullBlobManifest,
-            manifestReuse.carried,
-          ),
-          semanticReuse: reuseCoverage,
-        });
   let whyNodes: EvidenceNode[] = [];
   if (session.milestones.whyAnswers !== null) {
     const stored = session.milestones.whyAnswers.envelope;
@@ -4925,6 +5050,47 @@ function rebuildInvestigation(
       answers: stored.payload.answers,
     });
   }
+  const coverageTier = reportProposeAssuranceAssessment(
+    assuranceAssessmentNode,
+  ).coverageTier;
+  const reviewCoverageNode =
+    session.planReviewCoveragePolicyDigest ===
+    GLOBAL_PLAN_REVIEW_COVERAGE_POLICY_DIGEST
+      ? createGlobalPlanReviewCoverageRequirementNode({
+          changeId: session.changeId,
+          baseline: session.baseline,
+          coverageTier,
+          sealedSamplingSeed: planReviewCoverageSeed(session.investigationId),
+          assessmentNode: assuranceAssessmentNode,
+          targets: globalPlanReviewCoverageBindings({
+            repositoryRoot: context.git.repositoryRoot,
+            snapshot,
+            explicitPaths: intent.explicitPaths,
+            completeManifest: derivedFullBlobManifest,
+            whyNodes,
+            carried: manifestReuse.carried,
+            semanticReuse: reuseCoverage,
+          }),
+          semanticReuse: reuseCoverage,
+        })
+      : manifestReuse.carried.length === 0
+        ? null
+        : createPlanReviewCoverageRequirementNode({
+            changeId: session.changeId,
+            baseline: session.baseline,
+            coverageTier,
+            sealedSamplingSeed: planReviewCoverageSeed(session.investigationId),
+            assessmentNode: assuranceAssessmentNode,
+            plannedMutations: plannedMutationCoverageBindings(
+              snapshot,
+              intent.explicitPaths,
+            ),
+            carriedSubjects: carriedLedgerCoverageBindings(
+              derivedFullBlobManifest,
+              manifestReuse.carried,
+            ),
+            semanticReuse: reuseCoverage,
+          });
   const coverageNode =
     session.milestones.groupDispositions === null
       ? null

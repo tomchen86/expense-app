@@ -97,6 +97,7 @@ import {
 import type { MaintainerSignerProvider } from './maintainer-signer.ts';
 import type { HumanRevocationOptions } from './human-revocation.ts';
 import { IMPLEMENTATION_RECONCILIATION_POLICY_DIGEST } from './implementation-reconciliation-policy.ts';
+import { GLOBAL_PLAN_REVIEW_COVERAGE_POLICY_DIGEST } from './plan-review-coverage.ts';
 import { assertChangeId, assertInvestigationId } from './paths.ts';
 import {
   assertHeldChangeTransitionAuthority,
@@ -1909,6 +1910,7 @@ export function startInvestigationSessionUnderLifecycleLock(
     intentDigest: reservedIntentDigest,
     implementationReconciliationPolicyDigest:
       IMPLEMENTATION_RECONCILIATION_POLICY_DIGEST,
+    planReviewCoveragePolicyDigest: GLOBAL_PLAN_REVIEW_COVERAGE_POLICY_DIGEST,
     blindManifestDigest: reservation.manifestDigest,
     blindRequestDigest: reservation.requestDigest,
     blindInvocationIds: [reservation.invocationId],
