@@ -39,19 +39,25 @@ import {
   controlPlaneCandidateDigestV2,
   controlPlaneIndependentReviewAttestationDigest,
   controlPlaneIndependentReviewAttestationDigestV2,
+  controlPlaneIndependentReviewAttestationDigestV3,
   controlPlanePromotionBundleDigestV2,
+  controlPlanePromotionBundleDigestV3,
   createEngineArtifact,
   normalizeControlPlaneTaskMandateBinding,
   verifyControlPlaneIndependentReviewAttestation,
   verifyControlPlaneIndependentReviewAttestationV2,
+  verifyControlPlaneIndependentReviewAttestationV3,
   verifyControlPlaneGrant,
   verifyControlPlaneGrantV2,
+  verifyControlPlaneGrantV3,
   type ControlPlaneGrantEnvelope,
   type ControlPlaneGrantEnvelopeV2,
+  type ControlPlaneGrantEnvelopeV3,
   type ControlPlaneIndependentReviewAttestationEnvelope,
   type ControlPlaneIndependentReviewAttestationEnvelopeV2,
   type ControlPlanePromotionMaterial,
   type ControlPlanePromotionBundleV2,
+  type ControlPlanePromotionBundleV3,
   type ControlPlaneTaskMandateBinding,
   type EngineArtifact,
   type ExactControlPlaneChange,
@@ -68,6 +74,7 @@ import {
   interventionControlPersistencePaths,
   preparePersistedControlPlaneUpdate,
   preparePersistedControlPlaneUpdateV2,
+  preparePersistedControlPlaneUpdateV3,
   readPersistedControlPlaneUpdate,
   readBootstrapSidecarPromotionPin,
   recordBootstrapSidecarPromotionIfPresent,
@@ -75,9 +82,18 @@ import {
   type PersistedControlPlaneUpdateRecord,
   type PersistenceHumanSignatureVerifier,
 } from './intervention-control-persistence.ts';
+import {
+  appendControlPlaneSupervisorHistoryRecord,
+  createControlPlaneSupervisorHistoryTerminal,
+  createControlPlaneSupervisorHistoryTransition,
+  readControlPlaneSupervisorHistory,
+  readControlPlaneSupervisorHistoryProgress,
+  type ControlPlaneSupervisorHistoryTransition,
+} from './control-plane-supervisor-history.ts';
 
 const SUPPORTED_UPDATER_VERSION = 1;
 const SUPPORTED_UPDATER_VERSION_V2 = 2;
+const SUPPORTED_UPDATER_VERSION_V3 = 3;
 const PRIVATE_DIRECTORY_MODE = 0o700;
 const PRIVATE_FILE_MODE = 0o600;
 const PRIVATE_EXECUTABLE_MODE = 0o500;
@@ -145,6 +161,18 @@ export interface PersistedControlPlaneApprovalCandidateV2 {
   recordDigest: Sha256Digest;
 }
 
+export interface PersistedControlPlaneApprovalCandidateV3 {
+  kind: 'persisted-control-plane-approval-candidate.v3';
+  mandateBinding: ControlPlaneTaskMandateBinding;
+  candidateId: Sha256Digest;
+  txId: string;
+  beforeManifest: ProtectedCapabilityManifest;
+  afterManifest: ProtectedCapabilityManifest;
+  bundle: ControlPlanePromotionBundleV3;
+  createdAt: string;
+  recordDigest: Sha256Digest;
+}
+
 export interface ControlPlaneApprovalSummary {
   kind: 'control-plane-approval-summary.v1';
   mandateBinding: ControlPlaneTaskMandateBinding;
@@ -205,6 +233,26 @@ export interface ControlPlaneApprovalSummaryV2 {
 export interface ControlPlaneApprovalPreflightV2 {
   candidate: PersistedControlPlaneApprovalCandidateV2;
   summary: ControlPlaneApprovalSummaryV2;
+  supervisor: ControlPlaneSupervisorState;
+}
+
+export interface ControlPlaneApprovalSummaryV3 extends Omit<
+  ControlPlaneApprovalSummaryV2,
+  'kind' | 'humanReadable'
+> {
+  kind: 'control-plane-approval-summary.v3';
+  promotionLineageDigest: Sha256Digest;
+  previousGeneration: number;
+  candidateGeneration: number;
+  rollbackGeneration: number;
+  previousSupervisorRecordDigest: Sha256Digest;
+  previousTerminalRecordDigest: Sha256Digest;
+  humanReadable: string;
+}
+
+export interface ControlPlaneApprovalPreflightV3 {
+  candidate: PersistedControlPlaneApprovalCandidateV3;
+  summary: ControlPlaneApprovalSummaryV3;
   supervisor: ControlPlaneSupervisorState;
 }
 
@@ -273,6 +321,10 @@ export interface ControlPlaneUpdaterDependencies {
   ) => void;
   testHooks?: {
     afterAtomicSwitch?: () => void;
+    /** Test-only hard-crash seam after the V3 transition is durable. */
+    afterSupervisorHistoryTransition?: () => void;
+    /** Test-only hard-crash seam after a terminal transaction, before its seal. */
+    beforeTerminalHistorySeal?: () => void;
   };
 }
 
@@ -360,10 +412,12 @@ interface ControlPlaneRecoveryContext {
 }
 
 type StoredControlPlanePromotionBundle =
-  ControlPlanePromotionBundle | ControlPlanePromotionBundleV2;
+  | ControlPlanePromotionBundle
+  | ControlPlanePromotionBundleV2
+  | ControlPlanePromotionBundleV3;
 
 interface RuntimeControlPlanePromotionBundle {
-  version: 1 | 2;
+  version: 1 | 2 | 3;
   storedBundle: StoredControlPlanePromotionBundle;
   mandateBinding: ControlPlaneTaskMandateBinding;
   repositoryId: string;
@@ -381,6 +435,7 @@ interface RuntimeControlPlanePromotionBundle {
     rollbackTestReportDigest: Sha256Digest;
   };
   bundleDigest: Sha256Digest;
+  promotionLineageDigest: Sha256Digest | null;
 }
 
 export function assertSameControlPlaneTaskMandateBinding(
@@ -688,6 +743,77 @@ export function persistControlPlaneApprovalCandidateV2(
   });
 }
 
+export function persistControlPlaneApprovalCandidateV3(
+  storageRoot: string,
+  input: {
+    txId: string;
+    mandateBinding: ControlPlaneTaskMandateBinding;
+    beforeManifest: ProtectedCapabilityManifest;
+    afterManifest: ProtectedCapabilityManifest;
+    bundle: ControlPlanePromotionBundleV3;
+  },
+  now = new Date(),
+): PersistedControlPlaneApprovalCandidateV3 {
+  controlPlanePromotionBundleDigestV3(input.bundle);
+  const mandateBinding = normalizeControlPlaneTaskMandateBinding(
+    input.mandateBinding,
+  );
+  assertSameControlPlaneTaskMandateBinding(
+    mandateBinding,
+    input.bundle.material.mandateBinding,
+  );
+  const impact = assertApprovalCandidateBindingsV3(
+    input.beforeManifest,
+    input.afterManifest,
+    input.bundle,
+  );
+  if (impact.class !== 'C') {
+    throw approvalCandidateCorrupt(
+      'Approval candidate v3 does not modify the protected control plane.',
+    );
+  }
+  assertNonEmpty(input.txId, 'CONTROL_PLANE_APPROVAL_CANDIDATE_CORRUPT');
+  const createdAt = exactDate(
+    now,
+    'CONTROL_PLANE_APPROVAL_CANDIDATE_CORRUPT',
+  ).toISOString();
+  const candidate = withRecordDigest({
+    kind: 'persisted-control-plane-approval-candidate.v3' as const,
+    mandateBinding,
+    candidateId: input.bundle.bundleDigest,
+    txId: input.txId,
+    beforeManifest: structuredClone(input.beforeManifest),
+    afterManifest: structuredClone(input.afterManifest),
+    bundle: structuredClone(input.bundle),
+    createdAt,
+  });
+  return withUpdaterLock(storageRoot, 'persist-approval-candidate', () => {
+    const paths = ensureUpdaterDirectories(storageRoot);
+    const target = controlPlaneApprovalCandidatePath(
+      storageRoot,
+      candidate.candidateId,
+    );
+    const content = serializeCanonical(candidate);
+    if (fs.existsSync(target)) {
+      const existing = readPersistedControlPlaneApprovalCandidateV3(
+        storageRoot,
+        candidate.candidateId,
+      );
+      if (canonicalJson(existing) !== canonicalJson(candidate)) {
+        throw workflowError(
+          'CONTROL_PLANE_APPROVAL_CANDIDATE_CONFLICT',
+          'Candidate id is already bound to different approval bytes.',
+          ExitCode.conflict,
+        );
+      }
+      return existing;
+    }
+    ensurePrivateDirectory(paths.approvalCandidates);
+    createPrivateFileExclusive(target, content);
+    return deepFreeze(structuredClone(candidate));
+  });
+}
+
 export function controlPlaneApprovalCandidatePath(
   storageRoot: string,
   candidateId: string,
@@ -853,6 +979,100 @@ export function readPersistedControlPlaneApprovalCandidateV2(
   }
 }
 
+export function readPersistedControlPlaneApprovalCandidateV3(
+  storageRoot: string,
+  candidateId: string,
+): PersistedControlPlaneApprovalCandidateV3 {
+  const value = readCanonicalPrivateRecord(
+    controlPlaneApprovalCandidatePath(storageRoot, candidateId),
+    'CONTROL_PLANE_APPROVAL_CANDIDATE_NOT_FOUND',
+  );
+  if (
+    !isRecord(value) ||
+    !hasExactKeys(value, [
+      'afterManifest',
+      'beforeManifest',
+      'bundle',
+      'candidateId',
+      'createdAt',
+      'kind',
+      'mandateBinding',
+      'recordDigest',
+      'txId',
+    ]) ||
+    value.kind !== 'persisted-control-plane-approval-candidate.v3' ||
+    value.candidateId !== candidateId ||
+    !verifyRecordDigest(value)
+  ) {
+    throw approvalCandidateCorrupt();
+  }
+  try {
+    const candidate =
+      value as unknown as PersistedControlPlaneApprovalCandidateV3;
+    const mandateBinding = normalizeControlPlaneTaskMandateBinding(
+      candidate.mandateBinding,
+    );
+    assertNonEmpty(candidate.txId, 'CONTROL_PLANE_APPROVAL_CANDIDATE_CORRUPT');
+    if (!isCanonicalIso(candidate.createdAt)) {
+      throw approvalCandidateCorrupt();
+    }
+    controlPlanePromotionBundleDigestV3(candidate.bundle);
+    assertSameControlPlaneTaskMandateBinding(
+      mandateBinding,
+      candidate.bundle.material.mandateBinding,
+    );
+    if (candidate.bundle.bundleDigest !== candidate.candidateId) {
+      throw approvalCandidateCorrupt(
+        'Candidate id does not match the exact reviewed successor bundle.',
+      );
+    }
+    const impact = assertApprovalCandidateBindingsV3(
+      candidate.beforeManifest,
+      candidate.afterManifest,
+      candidate.bundle,
+    );
+    if (impact.class !== 'C') {
+      throw approvalCandidateCorrupt(
+        'Persisted candidate v3 no longer classifies as control-plane.',
+      );
+    }
+    return deepFreeze(
+      structuredClone({ ...candidate, mandateBinding }),
+    ) as PersistedControlPlaneApprovalCandidateV3;
+  } catch (error) {
+    if (
+      error instanceof Error &&
+      'code' in error &&
+      error.code === 'CONTROL_PLANE_APPROVAL_CANDIDATE_CORRUPT'
+    ) {
+      throw error;
+    }
+    throw approvalCandidateCorrupt();
+  }
+}
+
+export function readPersistedControlPlaneApprovalCandidateCurrent(
+  storageRoot: string,
+  candidateId: string,
+):
+  | PersistedControlPlaneApprovalCandidateV2
+  | PersistedControlPlaneApprovalCandidateV3 {
+  const value = readCanonicalPrivateRecord(
+    controlPlaneApprovalCandidatePath(storageRoot, candidateId),
+    'CONTROL_PLANE_APPROVAL_CANDIDATE_NOT_FOUND',
+  );
+  if (
+    isRecord(value) &&
+    value.kind === 'persisted-control-plane-approval-candidate.v3'
+  ) {
+    return readPersistedControlPlaneApprovalCandidateV3(
+      storageRoot,
+      candidateId,
+    );
+  }
+  return readPersistedControlPlaneApprovalCandidateV2(storageRoot, candidateId);
+}
+
 export function findPersistedControlPlaneApprovalCandidateV2ByMaterialDigestAndReviewer(
   storageRoot: string,
   promotionMaterialDigest: Sha256Digest,
@@ -912,6 +1132,69 @@ export function findPersistedControlPlaneApprovalCandidateV2ByMaterialDigestAndR
   return matches[0] ?? null;
 }
 
+export function findPersistedControlPlaneApprovalCandidateV3ByMaterialLineageAndReviewer(
+  storageRoot: string,
+  promotionMaterialDigest: Sha256Digest,
+  promotionLineageDigest: Sha256Digest,
+  reviewer: string,
+): PersistedControlPlaneApprovalCandidateV3 | null {
+  assertDigest(
+    promotionMaterialDigest,
+    'CONTROL_PLANE_APPROVAL_CANDIDATE_INVALID',
+  );
+  assertDigest(
+    promotionLineageDigest,
+    'CONTROL_PLANE_APPROVAL_CANDIDATE_INVALID',
+  );
+  assertNonEmpty(reviewer, 'CONTROL_PLANE_APPROVAL_CANDIDATE_INVALID');
+  const directory = updaterPaths(storageRoot).approvalCandidates;
+  const stats = fs.lstatSync(directory, { throwIfNoEntry: false });
+  if (stats === undefined) return null;
+  if (!stats.isDirectory() || stats.isSymbolicLink()) {
+    throw approvalCandidateCorrupt(
+      'Approval candidate storage is not a private directory.',
+    );
+  }
+  const matches: PersistedControlPlaneApprovalCandidateV3[] = [];
+  for (const name of fs.readdirSync(directory).sort()) {
+    if (!/^[0-9a-f]{64}\.json$/.test(name)) {
+      throw approvalCandidateCorrupt(
+        'Approval candidate storage contains an unknown entry.',
+      );
+    }
+    const candidateId = `sha256:${name.slice(0, -'.json'.length)}`;
+    const raw = readCanonicalPrivateRecord(
+      path.join(directory, name),
+      'CONTROL_PLANE_APPROVAL_CANDIDATE_NOT_FOUND',
+    );
+    if (
+      isRecord(raw) &&
+      raw.kind === 'persisted-control-plane-approval-candidate.v3'
+    ) {
+      const candidate = readPersistedControlPlaneApprovalCandidateV3(
+        storageRoot,
+        candidateId,
+      );
+      if (
+        candidate.bundle.promotionMaterialDigest === promotionMaterialDigest &&
+        candidate.bundle.promotionLineageDigest === promotionLineageDigest &&
+        candidate.bundle.independentReviewAttestation.payload.reviewer ===
+          reviewer
+      ) {
+        matches.push(candidate);
+      }
+    }
+  }
+  if (matches.length > 1) {
+    throw workflowError(
+      'CONTROL_PLANE_APPROVAL_CANDIDATE_CONFLICT',
+      'Multiple signed approval candidates bind the same successor material, lineage, and reviewer.',
+      ExitCode.conflict,
+    );
+  }
+  return matches[0] ?? null;
+}
+
 export function preflightControlPlaneApprovalCandidateV2(
   storageRoot: string,
   candidateId: string,
@@ -959,6 +1242,72 @@ export function preflightControlPlaneApprovalCandidateV2(
   const supervisor = readControlPlaneSupervisorState(storageRoot);
   assertSupervisorMatchesOldClosureV2(supervisor, candidate.bundle.material);
   const summary = controlPlaneApprovalSummaryV2(
+    candidate,
+    impact,
+    attestationDigest,
+  );
+  return deepFreeze({ candidate, summary, supervisor });
+}
+
+export function preflightControlPlaneApprovalCandidateV3(
+  storageRoot: string,
+  candidateId: string,
+  context: {
+    grantId: string;
+    humanSigner: string;
+    issuedAt: string;
+    verifyHumanSignature: PersistenceHumanSignatureVerifier;
+  },
+): ControlPlaneApprovalPreflightV3 {
+  assertNonEmpty(context.grantId, 'CONTROL_PLANE_GRANT_INVALID');
+  assertNonEmpty(context.humanSigner, 'CONTROL_PLANE_GRANT_INVALID');
+  if (
+    fs.existsSync(controlPlaneUpdateRecordPath(storageRoot, context.grantId))
+  ) {
+    readPersistedControlPlaneUpdate(storageRoot, context.grantId);
+    throw workflowError(
+      'INTERVENTION_CONTROL_GRANT_ALREADY_RESERVED_OR_CONSUMED',
+      'Control-Plane Grant already has a durable transaction.',
+      ExitCode.conflict,
+    );
+  }
+  const candidate = readPersistedControlPlaneApprovalCandidateV3(
+    storageRoot,
+    candidateId,
+  );
+  const impact = assertApprovalCandidateBindingsV3(
+    candidate.beforeManifest,
+    candidate.afterManifest,
+    candidate.bundle,
+  );
+  const attestationDigest = controlPlaneIndependentReviewAttestationDigestV3(
+    candidate.bundle.independentReviewAttestation,
+  );
+  verifyControlPlaneIndependentReviewAttestationV3(
+    candidate.bundle.independentReviewAttestation,
+    {
+      material: candidate.bundle.material,
+      lineage: candidate.bundle.lineage,
+      expectedDigest: attestationDigest,
+      grantHumanSigner: context.humanSigner,
+      grantIssuedAt: context.issuedAt,
+      verifyHumanSignature: context.verifyHumanSignature,
+    },
+  );
+  const supervisor = readControlPlaneSupervisorState(storageRoot);
+  assertSupervisorMatchesOldClosureV2(supervisor, candidate.bundle.material);
+  if (
+    supervisor.generation !== candidate.bundle.lineage.previousGeneration ||
+    supervisor.recordDigest !==
+      candidate.bundle.lineage.previousSupervisorRecordDigest
+  ) {
+    throw workflowError(
+      'CONTROL_PLANE_PROMOTION_LINEAGE_STALE',
+      'The successor lineage does not extend the current supervisor generation.',
+      ExitCode.staleState,
+    );
+  }
+  const summary = controlPlaneApprovalSummaryV3(
     candidate,
     impact,
     attestationDigest,
@@ -1686,6 +2035,120 @@ export function prepareControlPlanePromotionV2(
   });
 }
 
+export function prepareControlPlanePromotionV3(
+  storageRoot: string,
+  input: {
+    txId: string;
+    envelope: ControlPlaneGrantEnvelopeV3;
+    beforeManifest: ProtectedCapabilityManifest;
+    afterManifest: ProtectedCapabilityManifest;
+    bundle: ControlPlanePromotionBundleV3;
+  },
+  dependencies: ControlPlaneUpdaterDependencies,
+): ControlPlanePromotionResult {
+  return withUpdaterLock(storageRoot, 'prepare-promotion-v3', () => {
+    requireUpdaterDependencies(dependencies);
+    const now = updaterNow(dependencies);
+    if (input.envelope?.payload?.kind !== 'control-plane-grant.v3') {
+      throw workflowError(
+        'CONTROL_PLANE_GRANT_INVALID',
+        'The successor updater accepts only a Control-Plane Grant v3.',
+        ExitCode.guard,
+      );
+    }
+    controlPlanePromotionBundleDigestV3(input.bundle);
+    assertApprovalCandidateBindingsV3(
+      input.beforeManifest,
+      input.afterManifest,
+      input.bundle,
+    );
+    if (
+      input.envelope.payload.updaterVersion !== SUPPORTED_UPDATER_VERSION_V3
+    ) {
+      throw workflowError(
+        'CONTROL_PLANE_UPDATER_VERSION_UNSUPPORTED',
+        'This updater cannot execute the requested successor version.',
+        ExitCode.guard,
+      );
+    }
+    if (
+      fs.existsSync(
+        controlPlaneUpdateRecordPath(
+          storageRoot,
+          input.envelope.payload.grantId,
+        ),
+      )
+    ) {
+      readPersistedControlPlaneUpdate(
+        storageRoot,
+        input.envelope.payload.grantId,
+      );
+      throw workflowError(
+        'INTERVENTION_CONTROL_GRANT_ALREADY_RESERVED_OR_CONSUMED',
+        'Control-Plane Grant already has a durable transaction.',
+        ExitCode.conflict,
+      );
+    }
+    verifyControlPlaneGrantV3(input.envelope, {
+      now,
+      beforeManifest: input.beforeManifest,
+      afterManifest: input.afterManifest,
+      bundle: input.bundle,
+      consumedGrantIds: dependencies.consumedGrantIds,
+      verifyHumanSignature: dependencies.verifyHumanSignature,
+    });
+    revalidateControlPlaneTaskMandate(
+      input.envelope.payload.mandateBinding,
+      dependencies,
+      'before-persistence',
+    );
+    const supervisor = readControlPlaneSupervisorState(storageRoot);
+    const history = readControlPlaneSupervisorHistory(storageRoot);
+    assertSupervisorMatchesOldClosureV2(supervisor, input.bundle.material);
+    if (
+      history.leaf.recordDigest !==
+        input.bundle.lineage.previousTerminalRecordDigest ||
+      history.anchor.recordDigest !==
+        input.bundle.lineage.historyAnchorDigest ||
+      history.generation !== input.bundle.lineage.previousGeneration ||
+      history.supervisorRecordDigest !==
+        input.bundle.lineage.previousSupervisorRecordDigest ||
+      history.activeTrustCommit !==
+        input.bundle.lineage.previousActiveTrustCommit ||
+      supervisor.generation !== input.bundle.lineage.previousGeneration ||
+      supervisor.recordDigest !==
+        input.bundle.lineage.previousSupervisorRecordDigest
+    ) {
+      throw workflowError(
+        'CONTROL_PLANE_PROMOTION_LINEAGE_STALE',
+        'The signed successor lineage does not extend the unique terminal history leaf.',
+        ExitCode.staleState,
+      );
+    }
+    const paths = ensureUpdaterDirectories(storageRoot);
+    persistPromotionBundle(paths, input.envelope.payload.grantId, input.bundle);
+    const runtimeBundle = runtimePromotionBundle(input.bundle);
+    materializeBundleExecutables(paths, runtimeBundle);
+    const record = preparePersistedControlPlaneUpdateV3(
+      storageRoot,
+      {
+        txId: input.txId,
+        envelope: input.envelope,
+        beforeManifest: input.beforeManifest,
+        afterManifest: input.afterManifest,
+        bundle: input.bundle,
+      },
+      {
+        now: () => now,
+        consumedGrantIds: dependencies.consumedGrantIds,
+        verifyHumanSignature: dependencies.verifyHumanSignature,
+      },
+    );
+    emitAuditHistory(record, runtimeBundle, dependencies);
+    return { record, supervisor };
+  });
+}
+
 export function executeControlPlanePromotion(
   storageRoot: string,
   grantId: string,
@@ -1819,21 +2282,27 @@ function driveControlPlanePromotion(
             bundle.candidateArtifact.artifactId &&
           supervisor.activeArtifact.closureDigest === bundle.afterClosureDigest
         ) {
+          assertV3SupervisorTransition(
+            storageRoot,
+            record,
+            bundle,
+            supervisor,
+            'candidate-selected',
+          );
           conservativeRollback = true;
         } else {
-          const promotionPin =
-            record.kind === 'persisted-control-plane-update.v2'
-              ? reserveBootstrapSidecarPromotion(storageRoot, {
-                  interventionChangeId: bundle.candidateArtifact.sourceChangeId,
-                  grantId,
-                  txId: record.transaction.txId,
-                  artifact: bundle.candidateArtifact,
-                  candidateExecutableProvenanceDigest:
-                    requiredV2CandidateExecutableProvenanceDigest(bundle),
-                  closureDigest: bundle.afterClosureDigest,
-                  at: record.updatedAt,
-                })
-              : null;
+          const promotionPin = isMaterialBoundControlPlaneUpdate(record)
+            ? reserveBootstrapSidecarPromotion(storageRoot, {
+                interventionChangeId: bundle.candidateArtifact.sourceChangeId,
+                grantId,
+                txId: record.transaction.txId,
+                artifact: bundle.candidateArtifact,
+                candidateExecutableProvenanceDigest:
+                  requiredV2CandidateExecutableProvenanceDigest(bundle),
+                closureDigest: bundle.afterClosureDigest,
+                at: record.updatedAt,
+              })
+            : null;
           requireV2SidecarAuthority(record, promotionPin, 'pre-switch pin');
           revalidateControlPlaneTaskMandate(
             record.envelope.payload.mandateBinding,
@@ -1842,14 +2311,16 @@ function driveControlPlanePromotion(
           );
           assertGrantLiveForForwardEffect(record, dependencies);
           assertSupervisorIsOldClosure(supervisor, record.envelope, bundle);
-          supervisor = selectSupervisorArtifact(
+          supervisor = selectV3SupervisorArtifactWithHistory(
             storageRoot,
             supervisor,
             bundle.candidateArtifact,
             bundle.afterClosureDigest,
             record,
+            bundle,
             'candidate-selected',
             updaterNow(dependencies),
+            dependencies.testHooks,
           );
           switchedInThisInvocation = true;
           dependencies.testHooks?.afterAtomicSwitch?.();
@@ -1909,15 +2380,14 @@ function driveControlPlanePromotion(
       case 'SELF_TESTED': {
         assertSupervisorIsCandidate(supervisor, bundle);
         const finalizedAt = nextTransitionTime(record, dependencies);
-        const commitIntent =
-          record.kind === 'persisted-control-plane-update.v2'
-            ? advanceBootstrapSidecarPromotionPin(storageRoot, {
-                txId: record.transaction.txId,
-                expectedState: 'reserved',
-                state: 'commit-intent',
-                at: finalizedAt,
-              })
-            : null;
+        const commitIntent = isMaterialBoundControlPlaneUpdate(record)
+          ? advanceBootstrapSidecarPromotionPin(storageRoot, {
+              txId: record.transaction.txId,
+              expectedState: 'reserved',
+              state: 'commit-intent',
+              at: finalizedAt,
+            })
+          : null;
         requireV2SidecarAuthority(record, commitIntent, 'commit-intent pin');
         record = advanceRecord(record, storageRoot, {
           kind: 'finalize',
@@ -1933,17 +2403,26 @@ function driveControlPlanePromotion(
           bundle.candidateArtifact.artifactId
         ) {
           assertSupervisorIsCandidate(supervisor, bundle);
-          supervisor = selectSupervisorArtifact(
+          supervisor = selectV3SupervisorArtifactWithHistory(
             storageRoot,
             supervisor,
             bundle.recoveryBundle.restartArtifact,
             bundle.beforeClosureDigest,
             record,
+            bundle,
             'rollback-restored',
             updaterNow(dependencies),
+            dependencies.testHooks,
           );
         } else {
           assertSupervisorIsOldClosure(supervisor, record.envelope, bundle);
+          assertV3SupervisorTransition(
+            storageRoot,
+            record,
+            bundle,
+            supervisor,
+            'rollback-restored',
+          );
         }
         const restartPath = materializedExecutablePath(
           paths,
@@ -1970,36 +2449,42 @@ function driveControlPlanePromotion(
       case 'FINALIZED':
         assertSupervisorIsCandidate(supervisor, bundle);
         emitAuditHistory(record, bundle, dependencies);
-        const projection =
-          record.kind === 'persisted-control-plane-update.v2'
-            ? recordBootstrapSidecarPromotionIfPresent(storageRoot, {
-                interventionChangeId: bundle.candidateArtifact.sourceChangeId,
-                grantId,
-                txId: record.transaction.txId,
-                artifact: bundle.candidateArtifact,
-                closureDigest: bundle.afterClosureDigest,
-                evidenceDigest: record.transaction.journalDigest,
-                at: record.updatedAt,
-              })
-            : null;
+        if (record.kind === 'persisted-control-plane-update.v3') {
+          dependencies.testHooks?.beforeTerminalHistorySeal?.();
+        }
+        sealV3SupervisorHistory(storageRoot, record, supervisor);
+        const projection = isMaterialBoundControlPlaneUpdate(record)
+          ? recordBootstrapSidecarPromotionIfPresent(storageRoot, {
+              interventionChangeId: bundle.candidateArtifact.sourceChangeId,
+              grantId,
+              txId: record.transaction.txId,
+              artifact: bundle.candidateArtifact,
+              closureDigest: bundle.afterClosureDigest,
+              evidenceDigest: record.transaction.journalDigest,
+              at: record.updatedAt,
+            })
+          : null;
         requireV2SidecarAuthority(record, projection, 'final projection');
-        const finalizedPin =
-          record.kind === 'persisted-control-plane-update.v2'
-            ? advanceBootstrapSidecarPromotionPin(storageRoot, {
-                txId: record.transaction.txId,
-                expectedState: 'commit-intent',
-                state: 'finalized',
-                at: record.updatedAt,
-              })
-            : null;
+        const finalizedPin = isMaterialBoundControlPlaneUpdate(record)
+          ? advanceBootstrapSidecarPromotionPin(storageRoot, {
+              txId: record.transaction.txId,
+              expectedState: 'commit-intent',
+              state: 'finalized',
+              at: record.updatedAt,
+            })
+          : null;
         requireV2SidecarAuthority(record, finalizedPin, 'finalized pin');
         return { record, supervisor };
       case 'ROLLED_BACK':
         assertSupervisorIsOldClosure(supervisor, record.envelope, bundle);
         emitAuditHistory(record, bundle, dependencies);
+        if (record.kind === 'persisted-control-plane-update.v3') {
+          dependencies.testHooks?.beforeTerminalHistorySeal?.();
+        }
+        sealV3SupervisorHistory(storageRoot, record, supervisor);
         let rolledBackPin = null;
         if (
-          record.kind === 'persisted-control-plane-update.v2' &&
+          isMaterialBoundControlPlaneUpdate(record) &&
           fs.existsSync(
             bootstrapSidecarPromotionPinPath(
               storageRoot,
@@ -2033,7 +2518,7 @@ function requiredV2CandidateExecutableProvenanceDigest(
   bundle: RuntimeControlPlanePromotionBundle,
 ): Sha256Digest {
   if (
-    bundle.version !== 2 ||
+    (bundle.version !== 2 && bundle.version !== 3) ||
     bundle.candidateExecutableProvenanceDigest === null
   ) {
     throw workflowError(
@@ -2050,7 +2535,7 @@ function requireV2SidecarAuthority<T>(
   value: T | null,
   phase: string,
 ): T | null {
-  if (record.kind === 'persisted-control-plane-update.v2' && value === null) {
+  if (isMaterialBoundControlPlaneUpdate(record) && value === null) {
     throw workflowError(
       'CONTROL_PLANE_V2_SIDECAR_AUTHORITY_REQUIRED',
       `Control-plane update v2 is missing its exact sidecar authority during ${phase}.`,
@@ -2058,6 +2543,15 @@ function requireV2SidecarAuthority<T>(
     );
   }
   return value;
+}
+
+function isMaterialBoundControlPlaneUpdate(
+  record: PersistedControlPlaneUpdateRecord,
+): boolean {
+  return (
+    record.kind === 'persisted-control-plane-update.v2' ||
+    record.kind === 'persisted-control-plane-update.v3'
+  );
 }
 
 function verifyPersistedPromotion(
@@ -2109,19 +2603,42 @@ function verifyPersistedPromotion(
     );
     return;
   }
+  if (record.kind === 'persisted-control-plane-update.v2') {
+    if (
+      bundle.version !== 2 ||
+      bundle.storedBundle.kind !== 'control-plane-promotion-bundle.v2' ||
+      record.transaction.updaterVersion !== SUPPORTED_UPDATER_VERSION_V2 ||
+      record.envelope.payload.updaterVersion !== SUPPORTED_UPDATER_VERSION_V2
+    ) {
+      throw workflowError(
+        'CONTROL_PLANE_UPDATER_VERSION_UNSUPPORTED',
+        'Persisted material-bound promotion requires updater v2.',
+        ExitCode.guard,
+      );
+    }
+    verifyControlPlaneGrantV2(record.envelope, {
+      now: new Date(record.envelope.payload.issuedAt),
+      beforeManifest: record.beforeManifest,
+      afterManifest: record.afterManifest,
+      bundle: bundle.storedBundle,
+      consumedGrantIds: new Set<string>(),
+      verifyHumanSignature: dependencies.verifyHumanSignature,
+    });
+    return;
+  }
   if (
-    bundle.version !== 2 ||
-    bundle.storedBundle.kind !== 'control-plane-promotion-bundle.v2' ||
-    record.transaction.updaterVersion !== SUPPORTED_UPDATER_VERSION_V2 ||
-    record.envelope.payload.updaterVersion !== SUPPORTED_UPDATER_VERSION_V2
+    bundle.version !== 3 ||
+    bundle.storedBundle.kind !== 'control-plane-promotion-bundle.v3' ||
+    record.transaction.updaterVersion !== SUPPORTED_UPDATER_VERSION_V3 ||
+    record.envelope.payload.updaterVersion !== SUPPORTED_UPDATER_VERSION_V3
   ) {
     throw workflowError(
       'CONTROL_PLANE_UPDATER_VERSION_UNSUPPORTED',
-      'Persisted material-bound promotion requires updater v2.',
+      'Persisted successor promotion requires updater v3.',
       ExitCode.guard,
     );
   }
-  verifyControlPlaneGrantV2(record.envelope, {
+  verifyControlPlaneGrantV3(record.envelope, {
     now: new Date(record.envelope.payload.issuedAt),
     beforeManifest: record.beforeManifest,
     afterManifest: record.afterManifest,
@@ -2463,6 +2980,31 @@ function assertApprovalCandidateBindingsV2(
   return impact;
 }
 
+function assertApprovalCandidateBindingsV3(
+  beforeManifest: ProtectedCapabilityManifest,
+  afterManifest: ProtectedCapabilityManifest,
+  bundle: ControlPlanePromotionBundleV3,
+): ProtectedCandidateImpact {
+  controlPlanePromotionBundleDigestV3(bundle);
+  const material = bundle.material;
+  const impact = classifyProtectedCandidateImpactV2({
+    beforeManifest,
+    afterManifest,
+    changes: material.exactChanges,
+  });
+  if (
+    material.beforeClosureDigest !== beforeManifest.manifestDigest ||
+    material.afterClosureDigest !== afterManifest.manifestDigest ||
+    material.candidateDigest !==
+      controlPlaneCandidateDigestV2(material.exactChanges)
+  ) {
+    throw approvalCandidateCorrupt(
+      'Persisted manifests do not match the exact successor promotion material.',
+    );
+  }
+  return impact;
+}
+
 function controlPlaneApprovalSummary(
   candidate: PersistedControlPlaneApprovalCandidate,
   impact: ProtectedCandidateImpact,
@@ -2601,6 +3143,58 @@ function controlPlaneApprovalSummaryV2(
   });
 }
 
+function controlPlaneApprovalSummaryV3(
+  candidate: PersistedControlPlaneApprovalCandidateV3,
+  impact: ProtectedCandidateImpact,
+  attestationDigest: Sha256Digest,
+): ControlPlaneApprovalSummaryV3 {
+  const v2 = controlPlaneApprovalSummaryV2(
+    {
+      ...candidate,
+      kind: 'persisted-control-plane-approval-candidate.v2',
+      bundle: {
+        kind: 'control-plane-promotion-bundle.v2',
+        material: candidate.bundle.material,
+        promotionMaterialDigest: candidate.bundle.promotionMaterialDigest,
+        independentReviewAttestation: {
+          payload: {
+            ...candidate.bundle.independentReviewAttestation.payload,
+            kind: 'control-plane-independent-review.v2',
+          },
+          signature: candidate.bundle.independentReviewAttestation.signature,
+        },
+        bundleDigest: candidate.bundle.bundleDigest,
+      },
+    },
+    impact,
+    attestationDigest,
+  );
+  const lineage = candidate.bundle.lineage;
+  const humanReadable = [
+    'Control-plane successor approval candidate v3',
+    `Candidate id: ${candidate.candidateId}`,
+    `Promotion lineage: ${lineage.lineageDigest}`,
+    `History anchor: ${lineage.historyAnchorDigest}`,
+    `Previous terminal: ${lineage.previousTerminalRecordDigest}`,
+    `Previous supervisor: ${lineage.previousSupervisorRecordDigest}`,
+    `Supervisor generation: ${lineage.previousGeneration} -> ${lineage.candidateGeneration}`,
+    `Rollback generation: ${lineage.rollbackGeneration}`,
+    `Trust commit: ${lineage.previousActiveTrustCommit} -> ${lineage.candidateTrustCommit}`,
+    ...v2.humanReadable.split('\n').slice(1),
+  ].join('\n');
+  return deepFreeze({
+    ...v2,
+    kind: 'control-plane-approval-summary.v3' as const,
+    promotionLineageDigest: lineage.lineageDigest,
+    previousGeneration: lineage.previousGeneration,
+    candidateGeneration: lineage.candidateGeneration,
+    rollbackGeneration: lineage.rollbackGeneration,
+    previousSupervisorRecordDigest: lineage.previousSupervisorRecordDigest,
+    previousTerminalRecordDigest: lineage.previousTerminalRecordDigest,
+    humanReadable,
+  });
+}
+
 function verifyPromotionBundle(
   value: ControlPlanePromotionBundle,
 ): ControlPlanePromotionBundle {
@@ -2685,12 +3279,17 @@ function runtimePromotionBundle(
           bundle.recoveryBundle.rollbackTestReportDigest,
       },
       bundleDigest: bundle.bundleDigest,
+      promotionLineageDigest: null,
     });
   }
-  controlPlanePromotionBundleDigestV2(value);
+  if (value.kind === 'control-plane-promotion-bundle.v2') {
+    controlPlanePromotionBundleDigestV2(value);
+  } else {
+    controlPlanePromotionBundleDigestV3(value);
+  }
   const { material } = value;
   return deepFreeze({
-    version: 2 as const,
+    version: value.kind === 'control-plane-promotion-bundle.v2' ? 2 : 3,
     storedBundle: structuredClone(value),
     mandateBinding: structuredClone(material.mandateBinding),
     repositoryId: material.repositoryId,
@@ -2710,6 +3309,10 @@ function runtimePromotionBundle(
         material.recoveryBundle.rollbackTestReportDigest,
     },
     bundleDigest: value.bundleDigest,
+    promotionLineageDigest:
+      value.kind === 'control-plane-promotion-bundle.v3'
+        ? value.promotionLineageDigest
+        : null,
   });
 }
 
@@ -2911,10 +3514,32 @@ function selectSupervisorArtifact(
   phase: 'candidate-selected' | 'rollback-restored',
   now: Date,
 ): ControlPlaneSupervisorState {
+  const next = buildSupervisorSelection(
+    storageRoot,
+    current,
+    artifact,
+    closureDigest,
+    record,
+    phase,
+    now,
+  );
+  publishSupervisorSelection(storageRoot, current, next);
+  return next;
+}
+
+function buildSupervisorSelection(
+  storageRoot: string,
+  current: ControlPlaneSupervisorState,
+  artifact: EngineArtifact,
+  closureDigest: Sha256Digest,
+  record: PersistedControlPlaneUpdateRecord,
+  phase: 'candidate-selected' | 'rollback-restored',
+  now: Date,
+): ControlPlaneSupervisorState {
   const paths = updaterPaths(storageRoot);
   const executablePath = materializedExecutablePath(paths, artifact);
   assertConfinedExecutable(paths, executablePath, artifact.executableDigest);
-  const next = withRecordDigest({
+  return withRecordDigest({
     kind: 'control-plane-supervisor-state.v1' as const,
     repositoryId: current.repositoryId,
     activeArtifact: {
@@ -2931,17 +3556,241 @@ function selectSupervisorArtifact(
     },
     updatedAt: exactDate(now, 'CONTROL_PLANE_SUPERVISOR_INVALID').toISOString(),
   });
+}
+
+function publishSupervisorSelection(
+  storageRoot: string,
+  current: ControlPlaneSupervisorState,
+  next: ControlPlaneSupervisorState,
+): void {
   replacePrivateFileAtomicCas(
-    paths.supervisor,
+    updaterPaths(storageRoot).supervisor,
     current.recordDigest,
     serializeCanonical(next),
   );
-  return next;
+}
+
+function selectV3SupervisorArtifactWithHistory(
+  storageRoot: string,
+  current: ControlPlaneSupervisorState,
+  artifact: EngineArtifact,
+  closureDigest: Sha256Digest,
+  record: PersistedControlPlaneUpdateRecord,
+  bundle: RuntimeControlPlanePromotionBundle,
+  phase: 'candidate-selected' | 'rollback-restored',
+  now: Date,
+  testHooks: ControlPlaneUpdaterDependencies['testHooks'],
+): ControlPlaneSupervisorState {
+  if (
+    record.kind !== 'persisted-control-plane-update.v3' ||
+    bundle.version !== 3 ||
+    bundle.storedBundle.kind !== 'control-plane-promotion-bundle.v3'
+  ) {
+    return selectSupervisorArtifact(
+      storageRoot,
+      current,
+      artifact,
+      closureDigest,
+      record,
+      phase,
+      now,
+    );
+  }
+  const lineage = bundle.storedBundle.lineage;
+  let progress = readControlPlaneSupervisorHistoryProgress(storageRoot);
+  let transition: ControlPlaneSupervisorHistoryTransition;
+  if (
+    progress.leaf.kind === 'control-plane-supervisor-history-transition.v1' &&
+    progress.leaf.phase === phase
+  ) {
+    transition = progress.leaf;
+    if (
+      transition.grantId !== record.envelope.payload.grantId ||
+      transition.txId !== record.transaction.txId ||
+      transition.sourceJournalDigest !== record.transaction.journalDigest
+    ) {
+      throw workflowError(
+        'CONTROL_PLANE_SUPERVISOR_HISTORY_FORK',
+        'The durable supervisor transition belongs to different authority bytes.',
+        ExitCode.conflict,
+      );
+    }
+  } else {
+    if (
+      (phase === 'candidate-selected' &&
+        progress.leaf.recordDigest !== lineage.previousTerminalRecordDigest) ||
+      (phase === 'rollback-restored' &&
+        (progress.leaf.kind !==
+          'control-plane-supervisor-history-transition.v1' ||
+          progress.leaf.phase !== 'candidate-selected' ||
+          progress.leaf.grantId !== record.envelope.payload.grantId ||
+          progress.leaf.txId !== record.transaction.txId ||
+          progress.leaf.promotionBundleDigest !== bundle.bundleDigest ||
+          progress.leaf.promotionLineageDigest !== lineage.lineageDigest))
+    ) {
+      throw workflowError(
+        'CONTROL_PLANE_PROMOTION_LINEAGE_STALE',
+        'The supervisor history leaf cannot accept this transition.',
+        ExitCode.staleState,
+      );
+    }
+    const selectedAt = exactDate(now, 'CONTROL_PLANE_SUPERVISOR_INVALID');
+    const next = buildSupervisorSelection(
+      storageRoot,
+      current,
+      artifact,
+      closureDigest,
+      record,
+      phase,
+      selectedAt,
+    );
+    transition = createControlPlaneSupervisorHistoryTransition({
+      previous: progress.leaf,
+      phase,
+      toSupervisorRecordDigest: next.recordDigest,
+      activeArtifact: {
+        artifactId: next.activeArtifact.artifactId,
+        executableDigest: next.activeArtifact.executableDigest,
+        closureDigest: next.activeArtifact.closureDigest,
+      },
+      activeTrustCommit:
+        phase === 'candidate-selected'
+          ? lineage.candidateTrustCommit
+          : lineage.previousActiveTrustCommit,
+      grantId: record.envelope.payload.grantId,
+      txId: record.transaction.txId,
+      grantEnvelopeDigest: canonicalDigest(record.envelope),
+      promotionBundleDigest: bundle.bundleDigest,
+      promotionLineageDigest: lineage.lineageDigest,
+      sourceTransactionState:
+        phase === 'candidate-selected'
+          ? 'RECOVERY_VERIFIED'
+          : 'ROLLBACK_REQUIRED',
+      sourceJournalDigest: record.transaction.journalDigest,
+      recordedAt: selectedAt.toISOString(),
+    });
+    appendControlPlaneSupervisorHistoryRecord(storageRoot, transition);
+    testHooks?.afterSupervisorHistoryTransition?.();
+    progress = readControlPlaneSupervisorHistoryProgress(storageRoot);
+    if (progress.leaf.recordDigest !== transition.recordDigest) {
+      throw workflowError(
+        'CONTROL_PLANE_SUPERVISOR_HISTORY_FORK',
+        'The published supervisor transition is not the unique history leaf.',
+        ExitCode.conflict,
+      );
+    }
+  }
+  const expected = buildSupervisorSelection(
+    storageRoot,
+    current,
+    artifact,
+    closureDigest,
+    record,
+    phase,
+    new Date(transition.recordedAt),
+  );
+  if (
+    expected.recordDigest !== transition.toSupervisorRecordDigest ||
+    expected.generation !== transition.toGeneration ||
+    expected.generation !==
+      (phase === 'candidate-selected'
+        ? lineage.candidateGeneration
+        : lineage.rollbackGeneration)
+  ) {
+    throw workflowError(
+      'CONTROL_PLANE_SUPERVISOR_HISTORY_TRANSITION_INVALID',
+      'The supervisor bytes do not match the durable history transition.',
+      ExitCode.verification,
+    );
+  }
+  publishSupervisorSelection(storageRoot, current, expected);
+  return expected;
+}
+
+function assertV3SupervisorTransition(
+  storageRoot: string,
+  record: PersistedControlPlaneUpdateRecord,
+  bundle: RuntimeControlPlanePromotionBundle,
+  supervisor: ControlPlaneSupervisorState,
+  phase: 'candidate-selected' | 'rollback-restored',
+): void {
+  if (record.kind !== 'persisted-control-plane-update.v3') return;
+  if (
+    bundle.storedBundle.kind !== 'control-plane-promotion-bundle.v3' ||
+    bundle.promotionLineageDigest === null
+  ) {
+    throw promotionBundleCorrupt('V3 history requires a lineage-bound bundle.');
+  }
+  const progress = readControlPlaneSupervisorHistoryProgress(storageRoot);
+  const leaf = progress.leaf;
+  if (
+    leaf.kind !== 'control-plane-supervisor-history-transition.v1' ||
+    leaf.phase !== phase ||
+    leaf.grantId !== record.envelope.payload.grantId ||
+    leaf.txId !== record.transaction.txId ||
+    leaf.promotionBundleDigest !== bundle.bundleDigest ||
+    leaf.promotionLineageDigest !== bundle.promotionLineageDigest ||
+    leaf.toSupervisorRecordDigest !== supervisor.recordDigest ||
+    leaf.toGeneration !== supervisor.generation
+  ) {
+    throw workflowError(
+      'CONTROL_PLANE_SUPERVISOR_HISTORY_TRANSITION_INVALID',
+      'The selected supervisor lacks its exact durable V3 history transition.',
+      ExitCode.verification,
+    );
+  }
+}
+
+function sealV3SupervisorHistory(
+  storageRoot: string,
+  record: PersistedControlPlaneUpdateRecord,
+  supervisor: ControlPlaneSupervisorState,
+): void {
+  if (record.kind !== 'persisted-control-plane-update.v3') return;
+  const progress = readControlPlaneSupervisorHistoryProgress(storageRoot);
+  if (progress.leaf.kind === 'control-plane-supervisor-history-terminal.v1') {
+    if (
+      progress.leaf.updateRecordDigest !== record.recordDigest ||
+      progress.leaf.transactionJournalDigest !==
+        record.transaction.journalDigest ||
+      progress.leaf.supervisorRecordDigest !== supervisor.recordDigest ||
+      progress.leaf.terminalState !== record.transaction.state
+    ) {
+      throw workflowError(
+        'CONTROL_PLANE_SUPERVISOR_HISTORY_FORK',
+        'The terminal history seal differs from the persisted V3 transaction.',
+        ExitCode.conflict,
+      );
+    }
+    return;
+  }
+  if (
+    progress.leaf.kind !== 'control-plane-supervisor-history-transition.v1' ||
+    (record.transaction.state !== 'FINALIZED' &&
+      record.transaction.state !== 'ROLLED_BACK')
+  ) {
+    throw workflowError(
+      'CONTROL_PLANE_SUPERVISOR_HISTORY_NOT_TERMINAL',
+      'A terminal V3 transaction must seal its exact supervisor transition.',
+      ExitCode.conflict,
+    );
+  }
+  const terminal = createControlPlaneSupervisorHistoryTerminal({
+    previous: progress.leaf,
+    terminalState: record.transaction.state,
+    updateRecordDigest: record.recordDigest,
+    transactionJournalDigest: record.transaction.journalDigest,
+    recordedAt: record.updatedAt,
+  });
+  appendControlPlaneSupervisorHistoryRecord(storageRoot, terminal);
 }
 
 function assertSupervisorIsOldClosure(
   supervisor: ControlPlaneSupervisorState,
-  envelope: ControlPlaneGrantEnvelope | ControlPlaneGrantEnvelopeV2,
+  envelope:
+    | ControlPlaneGrantEnvelope
+    | ControlPlaneGrantEnvelopeV2
+    | ControlPlaneGrantEnvelopeV3,
   bundle: RuntimeControlPlanePromotionBundle,
 ): void {
   if (
@@ -3323,6 +4172,11 @@ function readPromotionBundle(
   if (value.kind === 'control-plane-promotion-bundle.v2') {
     const bundle = value as unknown as ControlPlanePromotionBundleV2;
     controlPlanePromotionBundleDigestV2(bundle);
+    return runtimePromotionBundle(bundle);
+  }
+  if (value.kind === 'control-plane-promotion-bundle.v3') {
+    const bundle = value as unknown as ControlPlanePromotionBundleV3;
+    controlPlanePromotionBundleDigestV3(bundle);
     return runtimePromotionBundle(bundle);
   }
   throw promotionBundleCorrupt('Unknown promotion bundle schema.');

@@ -44,6 +44,11 @@ export function isSemanticSubjectId(value: unknown): value is string {
   return typeof value === 'string' && SUBJECT_ID.test(value);
 }
 
+/** Stable file-level fallback identity shared by planning and reconciliation. */
+export function semanticFileSubjectId(subjectPath: string): string {
+  return `file.${crypto.createHash('sha256').update(subjectPath).digest('hex')}`;
+}
+
 export type SemanticSubject = Readonly<{
   subjectId: string;
   kind: SemanticSubjectKind;

@@ -790,7 +790,9 @@ test('a bounded grant reaches the fingerprint boundary, not only past it', () =>
     environmentDigest: initial.attempt.environmentDigest,
     observedAt: LATER,
   });
-  const boundedGrantRequest: Parameters<typeof decideRetry>[0]['boundedGrantRequest'] = {
+  const boundedGrantRequest: Parameters<
+    typeof decideRetry
+  >[0]['boundedGrantRequest'] = {
     schemaVersion: 1,
     kind: 'execution-budget-grant-request',
     requestId: '123e4567-e89b-42d3-a456-426614174001',
@@ -798,9 +800,7 @@ test('a bounded grant reaches the fingerprint boundary, not only past it', () =>
     epoch: WORKFLOW.currentEpoch,
     jobId: initial.job.jobId,
     mandateBinding: MANDATE_BINDING,
-    requestedChanges: [
-      { path: '/retryPolicy/maxAttempts', from: 4, to: 5 },
-    ],
+    requestedChanges: [{ path: '/retryPolicy/maxAttempts', from: 4, to: 5 }],
     rationale: 'one bounded replacement attempt',
     expiresAfterAttempts: 1,
     createdAt: LATER,

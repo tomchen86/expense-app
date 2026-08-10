@@ -44,7 +44,7 @@ test('a proposal-only plan revision records provenance for every current delta s
     }
     assert.equal(
       result.archiveApplicability.validatorVersion,
-      'spec-delta-preflight-v2',
+      'spec-delta-preflight-v3-public-archive',
     );
 
     assert.match(
@@ -107,6 +107,29 @@ test('amend-plan replays an unchanged current delta instead of recording an empt
       (error: unknown) => isWorkflowError(error, 'SPEC_DELTA_NOT_APPLICABLE'),
     );
     assert.deepEqual(repositoryState(repository), before);
+  } finally {
+    fs.rmSync(repository, { recursive: true, force: true });
+  }
+});
+
+test('amend-plan executes the pinned public OpenSpec archive projection', () => {
+  const repository = createCurrentDeltaFixture();
+  try {
+    git(repository, ['checkout', '-b', 'work/demo-change']);
+    writeReadyV2ExemptChange(repository);
+    commitPlanningTransition(repository, 'demo-change');
+    completeTask(repository);
+    prepareReviewedCorrection(repository);
+    rejectPublicArchive(repository);
+
+    assert.throws(
+      () =>
+        commitPlanAmendment(repository, 'demo-change', {
+          reason: 'archive-applicability-failure',
+          executionImpact: 'none',
+        }),
+      (error: unknown) => isWorkflowError(error, 'OPENSPEC_ARCHIVE_FAILED'),
+    );
   } finally {
     fs.rmSync(repository, { recursive: true, force: true });
   }
@@ -206,6 +229,23 @@ function prepareReviewedCorrection(repository: string): void {
     ),
   );
   writeReadyV2ExemptChange(repository);
+}
+
+function rejectPublicArchive(repository: string): void {
+  const executable = path.join(
+    repository,
+    'node_modules/@fission-ai/openspec/bin/openspec.js',
+  );
+  const source = fs.readFileSync(executable, 'utf8');
+  const archiveBranch = "if (process.argv[2] === 'archive') {";
+  assert.equal(source.includes(archiveBranch), true);
+  fs.writeFileSync(
+    executable,
+    source.replace(
+      archiveBranch,
+      `${archiveBranch}\n  process.stderr.write('public amendment archive projection invoked');\n  process.exit(23);\n}\n${archiveBranch}`,
+    ),
+  );
 }
 
 function repositoryState(repository: string) {

@@ -64,7 +64,7 @@ import {
 } from './retention-control.ts';
 import { executePublishGrant } from './publish-executor.ts';
 import { discoverRepository, runGit } from './git.ts';
-import { renderHandoff, validateHandoff } from './handoff.ts';
+import { validateHandoff } from './handoff.ts';
 import { runRepositoryHook } from './hooks.ts';
 import { dispatchIssueCommand } from './issue-cli.ts';
 import {
@@ -80,6 +80,7 @@ import {
 } from './maintainer-grant-v2.ts';
 import {
   issueAuthorityAttestation,
+  projectAuthorityAttestationRelay,
   type AuthorityAttestationRequest,
 } from './maintainer-attestation.ts';
 import {
@@ -145,6 +146,10 @@ import {
   type HumanResolutionConsequences,
   type HumanResolutionDecision,
 } from './investigation-session-store.ts';
+import {
+  inspectImplementationReconciliation,
+  recordImplementationReconciliation,
+} from './implementation-reconciliation.ts';
 import { loadInvestigationRuntimeContext } from './lifecycle-context.ts';
 import {
   commitSession,
@@ -731,6 +736,46 @@ function dispatch(args: string[], cwd: string): CommandResult {
       }
       throw usage('workflow assurance inspect <change-id>');
     }
+    case 'semantic-ledger': {
+      if (
+        rest[0] === 'reconcile' &&
+        rest[1] === '--change' &&
+        rest.length === 3
+      ) {
+        return {
+          command,
+          action: 'reconcile-inspect',
+          ok: true,
+          result: inspectImplementationReconciliation(cwd, rest[2]!),
+        };
+      }
+      if (
+        rest[0] === 'reconcile' &&
+        rest[1] === '--change' &&
+        rest[3] === '--input' &&
+        rest.length === 5
+      ) {
+        let input: unknown;
+        try {
+          input = JSON.parse(
+            fs.readFileSync(path.resolve(cwd, rest[4]!), 'utf8'),
+          );
+        } catch {
+          throw usage(
+            'workflow semantic-ledger reconcile --change <change-id> --input <json>',
+          );
+        }
+        return {
+          command,
+          action: 'reconcile',
+          ok: true,
+          result: recordImplementationReconciliation(cwd, rest[2]!, input),
+        };
+      }
+      throw usage(
+        'workflow semantic-ledger reconcile --change <change-id> [--input <json>]',
+      );
+    }
     case 'retention': {
       if (rest.length === 1 && rest[0] === 'inspect') {
         return {
@@ -1118,6 +1163,18 @@ function dispatch(args: string[], cwd: string): CommandResult {
           publishCommand: attestation.publishCommand,
         };
       }
+      if (
+        rest[0] === 'attestation-relay' &&
+        rest.length === 3 &&
+        rest[1] === '--original'
+      ) {
+        return {
+          command,
+          action: 'attestation-relay',
+          ok: true,
+          result: projectAuthorityAttestationRelay(cwd, rest[2]),
+        };
+      }
       const git = discoverRepository(cwd);
       if (rest[0] === 'inspect' && rest.length <= 2) {
         return {
@@ -1259,15 +1316,11 @@ function dispatch(args: string[], cwd: string): CommandResult {
       };
     case 'handoff': {
       const repositoryRoot = discoverRepository(cwd).repositoryRoot;
-      if (rest.length !== 1 || !['render', 'validate'].includes(rest[0])) {
-        throw usage('Usage: pnpm workflow handoff <render|validate> [--json]');
+      if (rest.length !== 1 || rest[0] !== 'validate') {
+        throw usage('Usage: pnpm workflow handoff validate [--json]');
       }
-      if (rest[0] === 'render') {
-        renderHandoff(repositoryRoot);
-      } else {
-        validateHandoff(repositoryRoot);
-      }
-      return { command, ok: true, action: rest[0] };
+      validateHandoff(repositoryRoot);
+      return { command, ok: true, action: 'validate' };
     }
     case 'hook': {
       const [hook, ...hookArgs] = rest;
@@ -1901,7 +1954,7 @@ function maintainerAttestUsage(): WorkflowError {
 
 function maintainerUsage(): WorkflowError {
   return usage(
-    'Usage: pnpm workflow maintainer <grant ...|resolution-grant ...|resolution-inspect [grant-id]|resolution-publication-discard <grant-id> ...|resolution-revoke <grant-id> --reason <text>|attest ...|inspect [grant-id]|revoke <grant-id> --reason <text>|collaboration-grant ...|collaboration-inspect [grant-id]|collaboration-revoke <grant-id> --reason <text>> [--json]',
+    'Usage: pnpm workflow maintainer <grant ...|resolution-grant ...|resolution-inspect [grant-id]|resolution-publication-discard <grant-id> ...|resolution-revoke <grant-id> --reason <text>|attest ...|attestation-relay --original <commit>|inspect [grant-id]|revoke <grant-id> --reason <text>|collaboration-grant ...|collaboration-inspect [grant-id]|collaboration-revoke <grant-id> --reason <text>> [--json]',
   );
 }
 
@@ -2258,6 +2311,7 @@ function usageText(): string {
     '  pnpm workflow job retry <job-id> --grant <grant-id> [--json]',
     '  pnpm workflow job retry-preview <job-id> --timeout <milliseconds> [--json]',
     '  pnpm workflow metrics show [--json]',
+    '  pnpm workflow semantic-ledger reconcile --change <change-id> [--input <json>] [--json]',
     '  pnpm workflow retention inspect [--json]',
     '  pnpm workflow retention sweep --limit <count> [--json]',
     '  pnpm workflow retention pin <workflow-id> <evidence-id> --reason <text> [--json]',
@@ -2303,6 +2357,7 @@ function usageText(): string {
     '  pnpm workflow maintainer resolution-publication-discard <grant-id> --expected-publication-state <digest> --reason <text> [--json]',
     '  pnpm workflow maintainer resolution-revoke <grant-id> --reason <text> [--json]',
     '  pnpm workflow maintainer attest --original <commit> --main <commit> [--base <original>=<main> ...] [--json]',
+    '  pnpm workflow maintainer attestation-relay --original <commit> [--json]',
     '  pnpm workflow maintainer inspect [grant-id] [--json]',
     '  pnpm workflow maintainer revoke <grant-id> --reason <text> [--json]',
     '  pnpm workflow maintainer collaboration-grant --change <id> [--task <task-id>] --base <commit> --target <digest> --phase <blind-survey|plan-review> --author-role <role> --conflicting-role <role> (--provider <codex|claude> --actor-assurance <grade>|--caller <id> --actor-assurance <grade>|--direct-human true) --degraded <same-provider-fresh-session|caller-supplied|direct-human-review> --reason <text> [--ttl <minutes>m] [--uses 1] [--json]',
@@ -2318,7 +2373,7 @@ function usageText(): string {
     '  pnpm workflow human-resolution-recover <grant-id> [--json]',
     '  pnpm workflow documents validate [--json]',
     '  pnpm workflow document-refresh <propose|show|review|apply> ... [--json]',
-    '  pnpm workflow handoff <render|validate> [--json]',
+    '  pnpm workflow handoff validate [--json]',
     '  pnpm workflow hook <pre-commit|commit-msg|pre-push|post-merge> ... [--json]',
     '  pnpm workflow complete-task <session-id> [--json]',
     '  pnpm workflow finish <session-id> [--json]',

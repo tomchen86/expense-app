@@ -162,7 +162,7 @@ export function updateLedgerIndex(
   };
   for (const candidate of entries) {
     const entry = assertLedgerEntry(candidate);
-    if (entry.status !== 'current') {
+    if (entry.status === 'superseded') {
       throw ledgerStoreInvalid(
         `Entry ${entry.entryId} is ${entry.status} and cannot be the current authority.`,
       );
@@ -174,6 +174,23 @@ export function updateLedgerIndex(
       );
     }
     const existing = subjects[entry.subject.subjectId]?.currentEntryId;
+    if (entry.status === 'tombstone') {
+      if (existing === undefined) {
+        if (entry.supersedes !== null) {
+          throw ledgerStoreInvalid(
+            `Tombstone ${entry.entryId} names a missing current entry.`,
+          );
+        }
+        continue;
+      }
+      if (entry.supersedes !== existing) {
+        throw ledgerStoreInvalid(
+          `Tombstone ${entry.entryId} does not retire ${existing}.`,
+        );
+      }
+      delete subjects[entry.subject.subjectId];
+      continue;
+    }
     if (existing === entry.entryId) {
       // Object-first/index-second projection is replayable. Once the exact
       // entry is current, repeating the transaction is a no-op rather than a

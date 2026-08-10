@@ -18,7 +18,11 @@ import {
 } from '../src/intervention-control.ts';
 import { persistInterventionPlan } from '../src/intervention-control-persistence.ts';
 import { dispatchProductionControlPlaneUpdaterCommand } from '../src/intervention-control-updater-cli.ts';
-import type { ControlPlaneApprovalSummaryV2 } from '../src/intervention-control-updater.ts';
+import {
+  readControlPlaneSupervisorState,
+  type ControlPlaneApprovalSummaryV2,
+  type ControlPlaneApprovalSummaryV3,
+} from '../src/intervention-control-updater.ts';
 import { persistInterventionEngineArtifact } from '../src/intervention-maintenance.ts';
 import {
   buildImmutableCandidateBundle,
@@ -300,6 +304,107 @@ export async function setupFinalizedControlPlanePromotionFixture(
   }
 }
 
+export function prepareSuccessorControlPlaneCandidate(
+  fixture: {
+    repository: string;
+    stateRoot: string;
+    frozen: { candidateCommit: string };
+  },
+  options: {
+    changeId?: string;
+    parentChangeId?: string;
+    mandateId?: string;
+    content?: string;
+    commitMessage?: string;
+  } = {},
+) {
+  const changeId = options.changeId ?? 'intervention-c';
+  const parentChangeId = options.parentChangeId ?? 'parent-b';
+  const repository = fs.realpathSync(fixture.repository);
+  git(repository, ['reset', '--hard', fixture.frozen.candidateCommit]);
+  git(repository, [
+    'update-ref',
+    'refs/remotes/origin/main',
+    fixture.frozen.candidateCommit,
+  ]);
+  const frozen = freezeClassCCandidate(repository, {
+    changeId,
+    mandateId: options.mandateId ?? '33333333-3333-4333-8333-333333333333',
+    content:
+      options.content ??
+      'fixture protected control-plane candidate v3 successor\n',
+    commitMessage:
+      options.commitMessage ?? 'Promote successor intervention engine',
+  });
+  const childWorkspace = fs.realpathSync(
+    fs.mkdtempSync(path.join(os.tmpdir(), 'control-plane-successor-child-')),
+  );
+  fs.chmodSync(childWorkspace, 0o700);
+  fs.rmdirSync(childWorkspace);
+  const supervisor = readControlPlaneSupervisorState(fixture.stateRoot);
+  persistInterventionPlan(fixture.stateRoot, {
+    parent: {
+      changeId: parentChangeId,
+      status: 'active',
+      engineBinding: supervisor.activeArtifact.executableDigest,
+      sessionSchema: 'v4',
+      blocker: null,
+    },
+    interventionChangeId: frozen.mandateBinding.changeId,
+    checkpoint: {
+      parentChangeId,
+      baseOid: frozen.expectedOldCommit,
+      worktreeFingerprint: controlPlaneFixtureDigest('successor-worktree'),
+      trackedTreeDigest: controlPlaneFixtureDigest('successor-tracked-tree'),
+      untrackedBundleDigest: controlPlaneFixtureDigest('successor-untracked'),
+      sessionStateDigest: controlPlaneFixtureDigest('successor-session'),
+      pendingIntentDigest: controlPlaneFixtureDigest('successor-intent'),
+      engineDigest: supervisor.activeArtifact.executableDigest,
+      policyDigest: controlPlaneFixtureDigest('successor-policy'),
+      createdAt: '2026-08-10T10:06:00.000Z',
+    },
+    childWorkspace: {
+      parentWorkspacePath: repository,
+      childWorkspacePath: childWorkspace,
+      changeRef: `refs/heads/work/${frozen.mandateBinding.changeId}`,
+    },
+    now: new Date('2026-08-10T10:06:00.000Z'),
+  });
+  fs.mkdirSync(childWorkspace, { mode: 0o700 });
+  const candidateExecutable = path.join(childWorkspace, 'engine.mjs');
+  const candidateExecutableBytes = controlPlaneExecutable(
+    frozen.afterClosureDigest,
+  );
+  fs.writeFileSync(candidateExecutable, candidateExecutableBytes, {
+    mode: 0o755,
+  });
+  fs.chmodSync(candidateExecutable, 0o755);
+  const candidateArtifact = createEngineArtifact({
+    sourceChangeId: frozen.mandateBinding.changeId,
+    sourceDigest: frozenCandidateSourceDigest(frozen),
+    executableDigest: controlPlaneFixtureDigest(candidateExecutableBytes),
+    protocolVersion: 3,
+    canReadSessionSchemas: ['v4'],
+    writesSessionSchema: 'v4',
+    policySchemaVersion: 2,
+    smokeReportDigest: controlPlaneFixtureDigest('successor-smoke'),
+  });
+  persistInterventionEngineArtifact(fixture.stateRoot, {
+    parentChangeId,
+    artifact: candidateArtifact,
+    executablePath: candidateExecutable,
+    now: new Date('2026-08-10T10:07:00.000Z'),
+  });
+  return {
+    frozen,
+    candidateArtifact,
+    childWorkspace,
+    cleanup() {
+      fs.rmSync(childWorkspace, { recursive: true, force: true });
+    },
+  };
+}
+
 export function controlPlaneFixtureUpdaterDependencies(
   frozen: ReturnType<typeof freezeClassCCandidate>,
   approvalSigner: MaintainerSignerProvider,
@@ -323,6 +428,7 @@ export function controlPlaneFixtureUpdaterDependencies(
     presentApprovalSummaryV2(summary: ControlPlaneApprovalSummaryV2) {
       summaries.push(summary);
     },
+    presentApprovalSummaryV3(_summary: ControlPlaneApprovalSummaryV3) {},
     resolveTaskMandateBinding() {
       return mandateBinding;
     },
@@ -358,13 +464,22 @@ function frozenCandidateSourceDigest(
   );
 }
 
-function freezeClassCCandidate(repository: string) {
+function freezeClassCCandidate(
+  repository: string,
+  options: {
+    changeId?: string;
+    mandateId?: string;
+    content?: string;
+    commitMessage?: string;
+  } = {},
+) {
+  const changeId = options.changeId ?? CONTROL_PLANE_FIXTURE_CHANGE_ID;
   const expectedOldCommit = git(repository, ['rev-parse', 'HEAD']).trim();
   const branch = git(repository, ['branch', '--show-current']).trim();
   const changedPath = 'protected/control-plane.update/dependency.ts';
   fs.writeFileSync(
     path.join(repository, changedPath),
-    'fixture protected control-plane candidate v2\n',
+    options.content ?? 'fixture protected control-plane candidate v2\n',
   );
   const afterManifest = createFixtureProtectedManifest(repository);
   const { manifestDigest: afterClosureDigest, ...manifestPayload } =
@@ -411,37 +526,37 @@ function freezeClassCCandidate(repository: string) {
     '-p',
     expectedOldCommit,
     '-m',
-    'Promote intervention engine',
+    options.commitMessage ?? 'Promote intervention engine',
   ]).trim();
   const rawCommit = git(repository, ['cat-file', 'commit', candidateCommit]);
   const commitMessage = rawCommit.slice(rawCommit.indexOf('\n\n') + 2);
   const mandateBinding = {
     schemaVersion: 1 as const,
     mandateTaskId: 'control-plane-promotion',
-    mandateId: '22222222-2222-4222-8222-222222222222',
+    mandateId: options.mandateId ?? '22222222-2222-4222-8222-222222222222',
     mandateDigest: '2'.repeat(64),
-    changeId: CONTROL_PLANE_FIXTURE_CHANGE_ID,
+    changeId,
     externalAuditRoot: path.join(repository, 'external-audit'),
   };
   const artifacts: CandidateSupportingArtifactSet = {
     effectsManifest: {
       schemaVersion: 1,
       kind: 'candidate-external-effects.v1',
-      changeId: CONTROL_PLANE_FIXTURE_CHANGE_ID,
+      changeId,
       mandateBinding,
       effects: [],
     },
     providerInvocations: {
       schemaVersion: 1,
       kind: 'candidate-provider-invocations.v1',
-      changeId: CONTROL_PLANE_FIXTURE_CHANGE_ID,
+      changeId,
       mandateBinding,
       invocations: [],
     },
     recoveryPlan: {
       schemaVersion: 1,
       kind: 'candidate-recovery-plan.v1',
-      changeId: CONTROL_PLANE_FIXTURE_CHANGE_ID,
+      changeId,
       mandateBinding,
       targetRef: `refs/heads/${branch}`,
       expectedOldCommit,

@@ -39,7 +39,9 @@ import './semantic-reuse.integration.test.ts';
 import './semantic-ledger.contract.test.ts';
 import './semantic-manifest-reuse.integration.test.ts';
 import './scan-saturation-exit.integration.test.ts';
+import './propose-scan-saturation-acceptance.integration.test.ts';
 import './semantic-reconciliation.contract.test.ts';
+import './implementation-reconciliation-finalization.integration.test.ts';
 import './floor-overflow-pruning.contract.test.ts';
 import './class-sample-audit.contract.test.ts';
 import './hit-predicate.contract.test.ts';
@@ -57,6 +59,7 @@ import './openspec-schema-contract.integration.test.ts';
 import './planning-transition.contract.test.ts';
 import './openspec-planning-assets.integration.test.ts';
 import './authority-attestation.contract.test.ts';
+import './authority-relay-command.contract.test.ts';
 import './authority-audit-cli.contract.test.ts';
 import './authority-audit-ledger.contract.test.ts';
 import './authority-audit-profile.contract.test.ts';
@@ -69,6 +72,7 @@ import './evidence-node.contract.test.ts';
 import './evidence-currentness.contract.test.ts';
 import './execution-core.contract.test.ts';
 import './execution-core-terminal-failures.contract.test.ts';
+import './engine-projection-authority.integration.test.ts';
 import './engine-metrics.contract.test.ts';
 import './execution-governance.contract.test.ts';
 import './execution-grant-cli.contract.test.ts';
@@ -113,6 +117,8 @@ import './legacy-provider-invocation-projection.integration.test.ts';
 import './legacy-provider-output-schema-projection.integration.test.ts';
 import './legacy-provider-residuals-projection.integration.test.ts';
 import './plan-amendment-contribution.integration.test.ts';
+import './planning-execution-epoch-recovery.integration.test.ts';
+import './planning-workspace.integration.test.ts';
 import './provider-retention-human-pin.contract.test.ts';
 import './task-mandate-grant-budget.integration.test.ts';
 import './provider-retention.contract.test.ts';
@@ -126,6 +132,7 @@ import './adaptive-class-sample-gate.integration.test.ts';
 import './amend-plan-change-option.integration.test.ts';
 import './amend-plan-state-gate.integration.test.ts';
 import './archive-applicability-current-tree.integration.test.ts';
+import './archive-applicability-public-projection.integration.test.ts';
 import './archive-diagnostic-budget.integration.test.ts';
 import './archive-utc-midnight-rollover.integration.test.ts';
 import './assurance-floor-propose.integration.test.ts';
@@ -393,7 +400,6 @@ test('agent guide documents the complete public workflow surface and source-size
     'pnpm workflow document-refresh show',
     'pnpm workflow document-refresh review',
     'pnpm workflow document-refresh apply',
-    'pnpm workflow handoff render',
     'pnpm workflow handoff validate',
     'pnpm workflow hook pre-commit',
     'pnpm workflow hook commit-msg',
@@ -409,6 +415,7 @@ test('agent guide documents the complete public workflow surface and source-size
   for (const command of commands) {
     assert.match(agents, new RegExp(command.replaceAll(' ', '\\s+')));
   }
+  assert.doesNotMatch(agents, /pnpm workflow handoff render/);
   assert.match(
     agents,
     /Do not change, split, or refactor source\s+solely because it exceeds 500 lines\./,
@@ -681,6 +688,7 @@ test('break-glass maintainer operator contract is complete and bootstrap-only', 
   for (const command of [
     'pnpm workflow maintainer grant',
     'pnpm workflow maintainer attest',
+    'pnpm workflow maintainer attestation-relay',
     'pnpm workflow maintainer inspect',
     'pnpm workflow maintainer revoke',
     'pnpm workflow authority-start',

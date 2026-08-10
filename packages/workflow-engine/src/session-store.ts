@@ -53,6 +53,10 @@ export type WorkflowSession = {
   checkEvidenceEngineDigest?: `sha256:${string}`;
   /** Optional only for sessions created before this binding was introduced. */
   planningAssurance?: PlanningAssuranceBinding | null;
+  /** Immutable post-implementation semantic reconciliation authority. */
+  implementationReconciliationReportId?: string;
+  /** Exact engine-owned Git projection authorized by that reconciliation. */
+  implementationReconciliationPaths?: string[];
   createdAt: string;
   latestCheckReportId?: string;
   completionReportId?: string;
@@ -713,6 +717,8 @@ function isWorkflowSession(value: unknown): value is WorkflowSession {
     'requiredCheckDigests',
     'checkEvidenceEngineDigest',
     'planningAssurance',
+    'implementationReconciliationReportId',
+    'implementationReconciliationPaths',
     'createdAt',
     'latestCheckReportId',
     'completionReportId',
@@ -753,6 +759,7 @@ function isWorkflowSession(value: unknown): value is WorkflowSession {
     return false;
   }
   for (const field of [
+    'implementationReconciliationReportId',
     'latestCheckReportId',
     'completionReportId',
     'finishReportId',
@@ -766,6 +773,28 @@ function isWorkflowSession(value: unknown): value is WorkflowSession {
   if (
     value.requiredCheckDigests !== undefined &&
     !isStringRecord(value.requiredCheckDigests)
+  ) {
+    return false;
+  }
+  if (
+    value.implementationReconciliationPaths !== undefined &&
+    (!isStringArray(value.implementationReconciliationPaths) ||
+      value.implementationReconciliationPaths.length === 0 ||
+      new Set(value.implementationReconciliationPaths).size !==
+        value.implementationReconciliationPaths.length ||
+      JSON.stringify(value.implementationReconciliationPaths) !==
+        JSON.stringify([...value.implementationReconciliationPaths].sort()) ||
+      value.implementationReconciliationPaths.some(
+        (candidatePath) =>
+          !candidatePath.startsWith('workflow/semantic-ledger/') ||
+          candidatePath.includes('..'),
+      ))
+  ) {
+    return false;
+  }
+  if (
+    value.implementationReconciliationPaths !== undefined &&
+    value.implementationReconciliationReportId === undefined
   ) {
     return false;
   }

@@ -1,6 +1,7 @@
 import { replayCommitSequence } from './ci-sequence.ts';
 import { listRangeCommits, readFileAtCommit } from './ci-git.ts';
 import { validateCiPlanningCommit } from './ci-planning.ts';
+import { preEpochCompletedTaskIds } from './bootstrap-task-exemption.ts';
 import { parseTasks } from './contracts.ts';
 import { ExitCode, workflowError } from './errors.ts';
 import {
@@ -53,8 +54,17 @@ export function resolveTaskExecutionGenerationEvidence(
     changeId,
     tip,
   );
+  const preEpochExemptions =
+    boundary === null
+      ? preEpochCompletedTaskIds(repositoryRoot, changeRoot, changeId, tip)
+      : new Set<string>();
   const commitsByTask = Object.fromEntries(
     uniqueTaskIds.map((taskId) => {
+      // A task that was already complete before the repository's earliest
+      // canonical planning epoch has no managed task transition to replay.
+      // Ignore exact-looking legacy trailers entirely: accepting or rejecting
+      // them would let unauthoritative pre-epoch history decide compatibility.
+      if (preEpochExemptions.has(taskId)) return [taskId, []];
       const candidates = findExactTaskCommits(
         repositoryRoot,
         changeId,

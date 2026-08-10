@@ -4,6 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 
 import { canonicalJson } from './canonical-json.ts';
+import { authorityTagPublishCommand } from './authority-relay-command.ts';
 import { ExitCode, workflowError } from './errors.ts';
 import {
   discoverRepository,
@@ -672,7 +673,10 @@ export function issueHumanResolutionGrant(
   return {
     grantId,
     tagRef,
-    publishCommand: `git push origin ${tagRef}:${tagRef}`,
+    publishCommand: authorityTagPublishCommand(
+      policy.repository.origin,
+      tagRef,
+    ),
     availableTokenPath,
     envelope,
     state,

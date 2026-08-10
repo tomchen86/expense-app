@@ -118,9 +118,7 @@ test('the author is shown the text a class claim is checked against', () => {
   }
 });
 
-function splitGroups(
-  fixture: ReturnType<typeof driveProposeToDispositions>,
-) {
+function splitGroups(fixture: ReturnType<typeof driveProposeToDispositions>) {
   const groups = fixture.output.work?.groups ?? [];
   const members = groups.filter(
     (group) =>

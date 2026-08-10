@@ -56,11 +56,29 @@ export type CandidateChecksAttestation = {
   checks: CandidateCheckAttestation[];
 };
 
+export type CandidateDependencySnapshot = {
+  schemaVersion: 1;
+  sourceTree: string;
+  baseCommit: string;
+  harnessEngineDigest: string;
+  policyDigest: string;
+  runnerDigests: Record<string, string>;
+  externalStateDigests: Record<string, string | null>;
+};
+
+export type CandidateChecksAttestationV3 = {
+  schemaVersion: 3;
+  candidateTree: string;
+  patchDigest: string;
+  trustBaseCommit: string;
+  dependencySnapshot: CandidateDependencySnapshot;
+  checks: CandidateCheckAttestation[];
+};
+
 export type CandidateClassification =
   'ordinary' | 'root-one-shot' | 'control-plane';
 
-export type ImmutableCandidateBundle = {
-  schemaVersion: 1;
+type ImmutableCandidateBundleCommon = {
   mandateBinding: TaskMandateBinding;
   repositoryId: string;
   targetRef: string;
@@ -71,7 +89,6 @@ export type ImmutableCandidateBundle = {
   commitMessage: string;
   manifest: PatchManifest;
   manifestDigest: string;
-  checksAttestation: CandidateChecksAttestation;
   checksAttestationDigest: string;
   effectsManifestDigest: string;
   providerInvocationsDigest: string;
@@ -81,11 +98,36 @@ export type ImmutableCandidateBundle = {
   candidateBundleDigest: string;
 };
 
+export type ImmutableCandidateBundle = ImmutableCandidateBundleCommon & {
+  schemaVersion: 1;
+  checksAttestation: CandidateChecksAttestation;
+};
+
+export type ImmutableCandidateBundleV2 = ImmutableCandidateBundleCommon & {
+  schemaVersion: 2;
+  checksAttestation: CandidateChecksAttestationV3;
+  humanReadableSummaryDigest: string;
+};
+
+export type AnyImmutableCandidateBundle =
+  ImmutableCandidateBundle | ImmutableCandidateBundleV2;
+
 export type ImmutableCandidateBundleInput = Omit<
   ImmutableCandidateBundle,
   | 'schemaVersion'
   | 'manifestDigest'
   | 'checksAttestationDigest'
+  | 'candidateBundleDigest'
+> & {
+  candidateBundleDigest?: string;
+};
+
+export type ImmutableCandidateBundleV2Input = Omit<
+  ImmutableCandidateBundleV2,
+  | 'schemaVersion'
+  | 'manifestDigest'
+  | 'checksAttestationDigest'
+  | 'humanReadableSummaryDigest'
   | 'candidateBundleDigest'
 > & {
   candidateBundleDigest?: string;
@@ -259,7 +301,144 @@ export function buildImmutableCandidateBundle(
   return { ...bundleBody, candidateBundleDigest };
 }
 
-const CANDIDATE_KEYS = [
+export function buildImmutableCandidateBundleV2(
+  input: ImmutableCandidateBundleV2Input,
+): {
+  bundle: ImmutableCandidateBundleV2;
+  humanReadableSummary: string;
+} {
+  const mandateBinding = assertCandidateMandateBinding(input.mandateBinding);
+  const manifest = parsePatchManifest(canonicalPatchManifest(input.manifest));
+  const checksAttestation = assertCandidateChecksAttestationV3(
+    input.checksAttestation,
+  );
+  const createdAt = exactTimestamp(input.createdAt, 'candidate creation time');
+  if (
+    !/^github:[A-Za-z0-9_.:-]+$/.test(input.repositoryId) ||
+    !validRef(input.targetRef) ||
+    !OBJECT_ID.test(input.expectedOldCommit) ||
+    !Number.isSafeInteger(input.expectedRefGeneration) ||
+    input.expectedRefGeneration < 0 ||
+    !OBJECT_ID.test(input.candidateCommit) ||
+    input.candidateCommit === input.expectedOldCommit ||
+    !OBJECT_ID.test(input.resultTree) ||
+    !validCommitMessage(input.commitMessage) ||
+    !DIGEST.test(input.effectsManifestDigest) ||
+    !DIGEST.test(input.providerInvocationsDigest) ||
+    !['ordinary', 'root-one-shot', 'control-plane'].includes(
+      input.classification,
+    ) ||
+    !DIGEST.test(input.recoveryPlanDigest) ||
+    checksAttestation.candidateTree !== input.resultTree ||
+    checksAttestation.patchDigest !== manifest.patchDigest ||
+    checksAttestation.trustBaseCommit !== manifest.trustBaseCommit ||
+    checksAttestation.dependencySnapshot.sourceTree !== input.resultTree ||
+    checksAttestation.dependencySnapshot.baseCommit !==
+      input.expectedOldCommit ||
+    checksAttestation.dependencySnapshot.policyDigest !== manifest.policyDigest
+  ) {
+    throw candidateError(
+      'APPLY_CANDIDATE_INVALID',
+      'Immutable candidate v2 bindings are malformed or inconsistent.',
+    );
+  }
+  const summaryMaterial = {
+    schemaVersion: 2 as const,
+    mandateBinding,
+    repositoryId: input.repositoryId,
+    targetRef: input.targetRef,
+    expectedOldCommit: input.expectedOldCommit,
+    expectedRefGeneration: input.expectedRefGeneration,
+    candidateCommit: input.candidateCommit,
+    resultTree: input.resultTree,
+    commitMessage: input.commitMessage,
+    manifest,
+    manifestDigest: digest(canonicalPatchManifest(manifest)),
+    checksAttestation,
+    checksAttestationDigest: digest(canonicalJson(checksAttestation)),
+    effectsManifestDigest: input.effectsManifestDigest,
+    providerInvocationsDigest: input.providerInvocationsDigest,
+    classification: input.classification,
+    recoveryPlanDigest: input.recoveryPlanDigest,
+    createdAt,
+  };
+  const humanReadableSummary = candidateHumanReadableSummary(summaryMaterial);
+  const humanReadableSummaryDigest = digest(humanReadableSummary);
+  const bundleBody = { ...summaryMaterial, humanReadableSummaryDigest };
+  const candidateBundleDigest = digest(canonicalJson(bundleBody));
+  if (
+    input.candidateBundleDigest !== undefined &&
+    input.candidateBundleDigest !== candidateBundleDigest
+  ) {
+    throw candidateError(
+      'APPLY_CANDIDATE_DIGEST_MISMATCH',
+      'Candidate v2 bundle digest differs from its canonical content.',
+    );
+  }
+  return {
+    bundle: { ...bundleBody, candidateBundleDigest },
+    humanReadableSummary,
+  };
+}
+
+export function canonicalCandidateHumanReadableSummary(
+  candidate: ImmutableCandidateBundleV2,
+): string {
+  return candidateHumanReadableSummary(candidate);
+}
+
+function candidateHumanReadableSummary(
+  candidate: Omit<
+    ImmutableCandidateBundleV2,
+    'humanReadableSummaryDigest' | 'candidateBundleDigest'
+  >,
+): string {
+  const checks = candidate.checksAttestation.checks;
+  const requiredChecks = checks.map(({ checkId }) => checkId);
+  const changedPaths = candidate.manifest.files.map(
+    (entry) =>
+      `- ${JSON.stringify(entry.path)} — ${entry.operation}; ${entry.role}`,
+  );
+  const checkLines = checks.map(
+    (check) =>
+      `- ${JSON.stringify(check.checkId)} — completed ${check.completedAt}; depends on ${check.dependsOn.join(', ')}`,
+  );
+  return [
+    '# Immutable Candidate Summary',
+    '',
+    `Change: \`${candidate.mandateBinding.changeId}\``,
+    `Task: \`${candidate.mandateBinding.mandateTaskId}\``,
+    `Repository: \`${candidate.repositoryId}\``,
+    `Profile: \`${candidate.manifest.profile}@${candidate.manifest.profileVersion}\``,
+    `Classification: \`${candidate.classification}\``,
+    `Target ref: \`${candidate.targetRef}\``,
+    `Expected old commit: \`${candidate.expectedOldCommit}\``,
+    `Expected ref generation: \`${candidate.expectedRefGeneration}\``,
+    `Candidate commit: \`${candidate.candidateCommit}\``,
+    `Result tree: \`${candidate.resultTree}\``,
+    `Patch digest: \`${candidate.manifest.patchDigest}\``,
+    `Required checks: ${requiredChecks.map((value) => `\`${value}\``).join(', ')}`,
+    `Changed paths: \`${candidate.manifest.files.length}\``,
+    `Created at: \`${candidate.createdAt}\``,
+    '',
+    '## Changed paths',
+    '',
+    ...changedPaths,
+    '',
+    '## Checks',
+    '',
+    ...checkLines,
+    '',
+    '## Supporting artifacts',
+    '',
+    `- External effects: \`${candidate.effectsManifestDigest}\``,
+    `- Provider invocations: \`${candidate.providerInvocationsDigest}\``,
+    `- Recovery plan: \`${candidate.recoveryPlanDigest}\``,
+    '',
+  ].join('\n');
+}
+
+const CANDIDATE_V1_KEYS = [
   'schemaVersion',
   'mandateBinding',
   'repositoryId',
@@ -281,15 +460,17 @@ const CANDIDATE_KEYS = [
   'candidateBundleDigest',
 ];
 
+const CANDIDATE_V2_KEYS = [...CANDIDATE_V1_KEYS, 'humanReadableSummaryDigest'];
+
 export function canonicalImmutableCandidateBundle(
-  bundle: ImmutableCandidateBundle,
+  bundle: AnyImmutableCandidateBundle,
 ): string {
   return `${canonicalJson(bundle)}\n`;
 }
 
 export function parseImmutableCandidateBundle(
   raw: string,
-): ImmutableCandidateBundle {
+): AnyImmutableCandidateBundle {
   try {
     if (
       typeof raw !== 'string' ||
@@ -302,8 +483,11 @@ export function parseImmutableCandidateBundle(
     const value = JSON.parse(raw) as unknown;
     if (
       !isRecord(value) ||
-      !hasExactKeys(value, CANDIDATE_KEYS) ||
-      value.schemaVersion !== 1 ||
+      (value.schemaVersion !== 1 && value.schemaVersion !== 2) ||
+      !hasExactKeys(
+        value,
+        value.schemaVersion === 1 ? CANDIDATE_V1_KEYS : CANDIDATE_V2_KEYS,
+      ) ||
       !isRecord(value.mandateBinding) ||
       typeof value.repositoryId !== 'string' ||
       typeof value.targetRef !== 'string' ||
@@ -323,14 +507,14 @@ export function parseImmutableCandidateBundle(
         value.classification !== 'control-plane') ||
       typeof value.recoveryPlanDigest !== 'string' ||
       typeof value.createdAt !== 'string' ||
-      typeof value.candidateBundleDigest !== 'string'
+      typeof value.candidateBundleDigest !== 'string' ||
+      (value.schemaVersion === 2 &&
+        typeof value.humanReadableSummaryDigest !== 'string')
     ) {
       throw new Error('invalid candidate shape');
     }
     const manifest = parsePatchManifest(value.manifest);
-    const checksAttestation =
-      value.checksAttestation as CandidateChecksAttestation;
-    const bundle = buildImmutableCandidateBundle({
+    const common = {
       mandateBinding: value.mandateBinding as TaskMandateBinding,
       repositoryId: value.repositoryId,
       targetRef: value.targetRef,
@@ -340,17 +524,31 @@ export function parseImmutableCandidateBundle(
       resultTree: value.resultTree,
       commitMessage: value.commitMessage,
       manifest,
-      checksAttestation,
       effectsManifestDigest: value.effectsManifestDigest,
       providerInvocationsDigest: value.providerInvocationsDigest,
-      classification: value.classification,
+      classification: value.classification as CandidateClassification,
       recoveryPlanDigest: value.recoveryPlanDigest,
       createdAt: value.createdAt,
       candidateBundleDigest: value.candidateBundleDigest,
-    });
+    };
+    const bundle =
+      value.schemaVersion === 1
+        ? buildImmutableCandidateBundle({
+            ...common,
+            checksAttestation:
+              value.checksAttestation as CandidateChecksAttestation,
+          })
+        : buildImmutableCandidateBundleV2({
+            ...common,
+            checksAttestation:
+              value.checksAttestation as CandidateChecksAttestationV3,
+          }).bundle;
     if (
       value.manifestDigest !== bundle.manifestDigest ||
       value.checksAttestationDigest !== bundle.checksAttestationDigest ||
+      (bundle.schemaVersion === 2 &&
+        value.humanReadableSummaryDigest !==
+          bundle.humanReadableSummaryDigest) ||
       canonicalImmutableCandidateBundle(bundle) !== raw
     ) {
       throw new Error('candidate digest or canonical bytes differ');
@@ -509,10 +707,60 @@ export function readStoredCandidateSupportingArtifact(
   }
 }
 
+export function storeCandidateHumanReadableSummary(
+  gitCommonDirectory: string,
+  summary: string,
+): { humanReadableSummaryDigest: string; path: string } {
+  assertCandidateHumanReadableSummary(summary);
+  const humanReadableSummaryDigest = digest(summary);
+  const runtime = candidateRuntime(gitCommonDirectory);
+  return withRepositoryLifecycleOperation(runtime, (assertOwned) => {
+    assertOwned();
+    const directory = ensureCandidateArtifactStoreDirectory(runtime.root);
+    const target = path.join(directory, `${humanReadableSummaryDigest}.md`);
+    publishCandidateContentAddressedFile(
+      directory,
+      target,
+      summary,
+      assertOwned,
+    );
+    if (
+      readStoredCandidateHumanReadableSummary(
+        gitCommonDirectory,
+        humanReadableSummaryDigest,
+      ) !== summary
+    ) {
+      throw candidateStoreError(
+        'Stored candidate summary differs from its canonical bytes.',
+      );
+    }
+    return { humanReadableSummaryDigest, path: target };
+  });
+}
+
+export function readStoredCandidateHumanReadableSummary(
+  gitCommonDirectory: string,
+  requestedDigest: string,
+): string {
+  const digestValue = assertCandidateArtifactDigest(requestedDigest);
+  const runtime = candidateRuntime(gitCommonDirectory);
+  const directory = path.join(runtime.root, 'candidate-artifacts');
+  assertCandidateArtifactStoreDirectory(directory);
+  const target = path.join(directory, `${digestValue}.md`);
+  const summary = readPrivateCandidateArtifactFile(target);
+  assertCandidateHumanReadableSummary(summary);
+  if (digest(summary) !== digestValue) {
+    throw candidateStoreError(
+      'Stored candidate summary has different content from its identity.',
+    );
+  }
+  return summary;
+}
+
 export function assertStoredCandidateSupportingArtifacts(
   gitCommonDirectory: string,
   changeId: string,
-  candidate: ImmutableCandidateBundle,
+  candidate: AnyImmutableCandidateBundle,
 ): CandidateSupportingArtifactSet {
   if (!CHANGE_ID.test(changeId)) {
     throw candidateError(
@@ -557,12 +805,24 @@ export function assertStoredCandidateSupportingArtifacts(
       'Stored candidate supporting artifacts do not bind the immutable candidate.',
     );
   }
+  if (candidate.schemaVersion === 2) {
+    const summary = readStoredCandidateHumanReadableSummary(
+      gitCommonDirectory,
+      candidate.humanReadableSummaryDigest,
+    );
+    if (summary !== canonicalCandidateHumanReadableSummary(candidate)) {
+      throw candidateError(
+        'APPLY_CANDIDATE_ARTIFACT_BINDING_INVALID',
+        'Stored candidate summary does not describe the immutable candidate.',
+      );
+    }
+  }
   return { effectsManifest, providerInvocations, recoveryPlan };
 }
 
 export function storeImmutableCandidateBundle(
   gitCommonDirectory: string,
-  candidate: ImmutableCandidateBundle,
+  candidate: AnyImmutableCandidateBundle,
 ): string {
   const bundle = parseImmutableCandidateBundle(
     canonicalImmutableCandidateBundle(candidate),
@@ -621,7 +881,7 @@ export function storeImmutableCandidateBundle(
 export function readStoredImmutableCandidateBundle(
   gitCommonDirectory: string,
   requestedCandidateBundleDigest: string,
-): ImmutableCandidateBundle {
+): AnyImmutableCandidateBundle {
   const digestValue = assertCandidateBundleDigest(
     requestedCandidateBundleDigest,
   );
@@ -922,6 +1182,22 @@ function validArtifactLabel(value: unknown): value is string {
   );
 }
 
+function assertCandidateHumanReadableSummary(value: string): void {
+  if (
+    typeof value !== 'string' ||
+    !value.startsWith('# Immutable Candidate Summary\n') ||
+    !value.endsWith('\n') ||
+    value.includes('\0') ||
+    value.includes('\r') ||
+    Buffer.byteLength(value, 'utf8') > 1_048_576
+  ) {
+    throw candidateError(
+      'APPLY_CANDIDATE_ARTIFACT_INVALID',
+      'Candidate human-readable summary is malformed or noncanonical.',
+    );
+  }
+}
+
 function candidateArtifactInvalid() {
   return candidateError(
     'APPLY_CANDIDATE_ARTIFACT_INVALID',
@@ -1168,6 +1444,67 @@ export function assertCandidateChecksFresh(
   return attestation;
 }
 
+export type CandidateV2CheckFreshnessOptions = Omit<
+  CandidateCheckFreshnessOptions,
+  'changedDependencies'
+> & {
+  currentDependencySnapshot: CandidateDependencySnapshot;
+};
+
+export function assertCandidateV2ChecksFresh(
+  raw: CandidateChecksAttestationV3,
+  options: CandidateV2CheckFreshnessOptions,
+): CandidateChecksAttestationV3 {
+  const attestation = assertCandidateChecksAttestationV3(raw);
+  const current = assertCandidateDependencySnapshot(
+    options.currentDependencySnapshot,
+    attestation.checks,
+    false,
+  );
+  assertCandidateChecksFresh(
+    {
+      schemaVersion: 2,
+      candidateTree: attestation.candidateTree,
+      patchDigest: attestation.patchDigest,
+      trustBaseCommit: attestation.trustBaseCommit,
+      checks: attestation.checks,
+    },
+    { ...options, changedDependencies: [] },
+  );
+  const sealed = attestation.dependencySnapshot;
+  for (const check of attestation.checks) {
+    const invalidated = check.dependsOn.some((dependency) => {
+      switch (dependency) {
+        case 'source-tree':
+          return sealed.sourceTree !== current.sourceTree;
+        case 'base-commit':
+          return sealed.baseCommit !== current.baseCommit;
+        case 'harness-engine':
+          return sealed.harnessEngineDigest !== current.harnessEngineDigest;
+        case 'policy':
+          return sealed.policyDigest !== current.policyDigest;
+        case 'runner':
+          return (
+            sealed.runnerDigests[check.checkId] !==
+            current.runnerDigests[check.checkId]
+          );
+        case 'external-state':
+          return (
+            sealed.externalStateDigests[check.checkId] !==
+            current.externalStateDigests[check.checkId]
+          );
+      }
+    });
+    if (invalidated) {
+      throw candidateError(
+        'APPLY_ATTESTATION_INVALIDATED',
+        `Check ${check.checkId} depends on state that changed.`,
+      );
+    }
+  }
+  return attestation;
+}
+
 function assertCandidateChecksAttestation(
   value: CandidateChecksAttestation,
 ): CandidateChecksAttestation {
@@ -1266,6 +1603,138 @@ function assertCandidateChecksAttestation(
     patchDigest: value.patchDigest,
     trustBaseCommit: value.trustBaseCommit,
     checks,
+  };
+}
+
+function assertCandidateChecksAttestationV3(
+  value: CandidateChecksAttestationV3,
+): CandidateChecksAttestationV3 {
+  if (
+    !isRecord(value) ||
+    !hasExactKeys(value, [
+      'schemaVersion',
+      'candidateTree',
+      'patchDigest',
+      'trustBaseCommit',
+      'dependencySnapshot',
+      'checks',
+    ]) ||
+    value.schemaVersion !== 3 ||
+    !isRecord(value.dependencySnapshot)
+  ) {
+    throw candidateError(
+      'APPLY_ATTESTATION_INVALID',
+      'Candidate v2 checks attestation is malformed.',
+    );
+  }
+  const legacyShape = assertCandidateChecksAttestation({
+    schemaVersion: 2,
+    candidateTree: value.candidateTree,
+    patchDigest: value.patchDigest,
+    trustBaseCommit: value.trustBaseCommit,
+    checks: value.checks,
+  });
+  const dependencySnapshot = assertCandidateDependencySnapshot(
+    value.dependencySnapshot,
+    legacyShape.checks,
+  );
+  if (
+    dependencySnapshot.sourceTree !== legacyShape.candidateTree ||
+    dependencySnapshot.baseCommit !== legacyShape.trustBaseCommit
+  ) {
+    throw candidateError(
+      'APPLY_ATTESTATION_BINDING_MISMATCH',
+      'Candidate dependency snapshot differs from its candidate tree or trust base.',
+    );
+  }
+  return {
+    schemaVersion: 3,
+    candidateTree: legacyShape.candidateTree,
+    patchDigest: legacyShape.patchDigest,
+    trustBaseCommit: legacyShape.trustBaseCommit,
+    dependencySnapshot,
+    checks: legacyShape.checks,
+  };
+}
+
+function assertCandidateDependencySnapshot(
+  value: Record<string, unknown> | CandidateDependencySnapshot,
+  checks: CandidateCheckAttestation[],
+  bindToAttestation = true,
+): CandidateDependencySnapshot {
+  if (
+    !isRecord(value) ||
+    !hasExactKeys(value, [
+      'schemaVersion',
+      'sourceTree',
+      'baseCommit',
+      'harnessEngineDigest',
+      'policyDigest',
+      'runnerDigests',
+      'externalStateDigests',
+    ]) ||
+    value.schemaVersion !== 1 ||
+    typeof value.sourceTree !== 'string' ||
+    !OBJECT_ID.test(value.sourceTree) ||
+    typeof value.baseCommit !== 'string' ||
+    !OBJECT_ID.test(value.baseCommit) ||
+    typeof value.harnessEngineDigest !== 'string' ||
+    !DIGEST.test(value.harnessEngineDigest) ||
+    typeof value.policyDigest !== 'string' ||
+    !DIGEST.test(value.policyDigest) ||
+    !isRecord(value.runnerDigests) ||
+    !isRecord(value.externalStateDigests)
+  ) {
+    throw candidateError(
+      'APPLY_ATTESTATION_INVALID',
+      'Candidate dependency snapshot is malformed.',
+    );
+  }
+  const checkIds = checks.map(({ checkId }) => checkId);
+  if (
+    !sameStrings(Object.keys(value.runnerDigests).sort(), checkIds) ||
+    !sameStrings(Object.keys(value.externalStateDigests).sort(), checkIds)
+  ) {
+    throw candidateError(
+      'APPLY_ATTESTATION_INVALID',
+      'Candidate dependency snapshot must exactly cover every required check.',
+    );
+  }
+  const runnerDigests: Record<string, string> = {};
+  const externalStateDigests: Record<string, string | null> = {};
+  for (const check of checks) {
+    const runnerDigest = value.runnerDigests[check.checkId];
+    const externalStateDigest = value.externalStateDigests[check.checkId];
+    if (
+      typeof runnerDigest !== 'string' ||
+      !DIGEST.test(runnerDigest) ||
+      (bindToAttestation && runnerDigest !== check.runnerDigest) ||
+      (externalStateDigest !== null &&
+        (typeof externalStateDigest !== 'string' ||
+          !DIGEST.test(externalStateDigest))) ||
+      (check.dependsOn.includes('external-state') &&
+        (externalStateDigest === null ||
+          (bindToAttestation &&
+            externalStateDigest !== check.externalSnapshotDigest))) ||
+      (!check.dependsOn.includes('external-state') &&
+        externalStateDigest !== null)
+    ) {
+      throw candidateError(
+        'APPLY_ATTESTATION_INVALID',
+        `Candidate dependency snapshot for ${check.checkId} is malformed.`,
+      );
+    }
+    runnerDigests[check.checkId] = runnerDigest;
+    externalStateDigests[check.checkId] = externalStateDigest;
+  }
+  return {
+    schemaVersion: 1,
+    sourceTree: value.sourceTree,
+    baseCommit: value.baseCommit,
+    harnessEngineDigest: value.harnessEngineDigest,
+    policyDigest: value.policyDigest,
+    runnerDigests,
+    externalStateDigests,
   };
 }
 

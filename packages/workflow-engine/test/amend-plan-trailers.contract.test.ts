@@ -51,7 +51,10 @@ test('an unresolved execution impact is not a spelling the block accepts', () =>
   // Fail closed: an amendment that has not decided whether the work still
   // stands has not answered the question the transition exists to ask.
   assert.throws(
-    () => parseManagedTrailers(amendMessage({ impact: 'Execution-Impact: unknown' })),
+    () =>
+      parseManagedTrailers(
+        amendMessage({ impact: 'Execution-Impact: unknown' }),
+      ),
     ManagedTrailerSyntaxError,
   );
 });
@@ -90,7 +93,10 @@ test('an ordinary commit cannot fabricate an amendment by writing its lines', ()
     'Change: demo-change',
     'Transition: plan',
   ].join('\n');
-  assert.throws(() => parseManagedTrailers(smuggled), ManagedTrailerSyntaxError);
+  assert.throws(
+    () => parseManagedTrailers(smuggled),
+    ManagedTrailerSyntaxError,
+  );
 });
 
 test('a plan commit still parses exactly as it did', () => {

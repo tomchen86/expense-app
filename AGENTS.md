@@ -157,7 +157,6 @@ verified, describe the facility as bootstrap-only, not sealed enforcement.
 | `pnpm workflow issue render --json`              | Regenerating `docs/ISSUE_LOG.md` after issue-source changes     |
 | `pnpm workflow issue validate --json`            | Checking that issue source and generated view agree             |
 | `pnpm workflow documents validate --json`        | Validating all managed-document policies and generated views    |
-| `pnpm workflow handoff render --json`             | Regenerating the handoff inside an authorized task scope        |
 | `pnpm workflow handoff validate --json`           | Checking the handoff against controlled change and issue state  |
 
 ### Curated document refresh

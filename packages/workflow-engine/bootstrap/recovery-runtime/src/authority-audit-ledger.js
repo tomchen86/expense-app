@@ -322,8 +322,7 @@ export function createPinnedAuthorityAuditAnchorBackend(scope) {
                 }
                 const payloadDigest = assertDigest(raw.payloadDigest, anchorInvalid);
                 if (payloadDigest !== sha256Digest(canonicalPayload) ||
-                    raw.objectName !==
-                        `${payloadDigest.slice('sha256:'.length)}.anchor`) {
+                    raw.objectName !== `${payloadDigest.slice('sha256:'.length)}.anchor`) {
                     return false;
                 }
                 return (readExactPrivateFile(path.join(backendPaths.anchors, raw.objectName), MAX_METADATA_BYTES, anchorBackendInvalid) === canonicalPayload);
@@ -809,9 +808,7 @@ function assertProfileArtifactBindings(paths, scope, profile) {
             configurationStats !== undefined)) {
         throw profileMismatch();
     }
-    const configuration = configurationStats === undefined
-        ? null
-        : readProtectedConfiguration(paths);
+    const configuration = configurationStats === undefined ? null : readProtectedConfiguration(paths);
     if (configuration !== null) {
         assertProtectedBackendRoot(configuration.backendRoot, scope);
     }
@@ -904,8 +901,7 @@ function parseProtectedConfiguration(bytes) {
     });
     if (configuration.destructionPublicKeyDigest !==
         sha256Digest(configuration.destructionPublicKeyPem) ||
-        configuration.configurationDigest !==
-            sha256Digest(canonicalJson(core)) ||
+        configuration.configurationDigest !== sha256Digest(canonicalJson(core)) ||
         bytes !== canonicalProtectedConfiguration(configuration)) {
         throw protectedConfigurationInvalid();
     }

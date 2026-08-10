@@ -775,6 +775,7 @@ export function installFakeOpenSpec(repository: string): void {
   fs.writeFileSync(
     path.join(packageDirectory, 'bin/openspec.js'),
     `import './runtime-helper.js';
+import { applyFixtureArchiveSpecs } from './archive-helper.js';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -1013,12 +1014,6 @@ if (process.argv[2] === 'archive') {
     path.join(deltaRoot, 'demo/spec.md'),
     'utf8'
   );
-  const baseSpec = path.join(root, 'openspec/specs/demo/spec.md');
-  fs.mkdirSync(path.dirname(baseSpec), { recursive: true });
-  fs.writeFileSync(
-    baseSpec,
-    '# Demo Specification\\n\\n## Requirements\\n\\n### Requirement: Demo\\nThe system SHALL provide a demo.\\n'
-  );
   if (marker.includes('PARTIAL_FAILURE')) {
     process.stdout.write(JSON.stringify({
       archive: null,
@@ -1027,6 +1022,7 @@ if (process.argv[2] === 'archive') {
     }));
     process.exit(1);
   }
+  const applied = applyFixtureArchiveSpecs(root, changeId);
   const archiveName = new Date().toISOString().slice(0, 10) + '-' + changeId;
   const archivePath = path.join(root, 'openspec/changes/archive', archiveName);
   fs.mkdirSync(path.dirname(archivePath), { recursive: true });
@@ -1042,7 +1038,7 @@ if (process.argv[2] === 'archive') {
         ? path.join(root, '..', 'escape')
         : archivePath,
       specsUpdated: true,
-      totals: { added: 1, modified: 0, removed: 0, renamed: 0 }
+      totals: applied.totals
     },
     root: { path: root, source: 'nearest' }
   }));
@@ -1096,6 +1092,13 @@ process.exitCode = invalid ? 1 : 0;
   fs.writeFileSync(
     path.join(packageDirectory, 'bin/runtime-helper.js'),
     'export const fixtureRuntime = true;\n',
+  );
+  fs.copyFileSync(
+    path.join(
+      sourceRepositoryRoot,
+      'packages/workflow-engine/test/fixtures/fake-openspec-archive.mjs',
+    ),
+    path.join(packageDirectory, 'bin/archive-helper.js'),
   );
 }
 

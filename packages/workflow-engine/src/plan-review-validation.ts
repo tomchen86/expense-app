@@ -409,7 +409,14 @@ function reviewEvidenceIsBound(
   return citations.every((citation) => {
     if (citation.kind === 'repository-location') {
       const location = locations.get(citation.path);
-      return location !== undefined && citation.line <= location.lineCount;
+      // A path-surface target can legitimately be an empty tracked blob (for
+      // example a rename-only marker). Line 1 is its canonical citation point;
+      // there is no source line to count, but the exact path/blob identity is
+      // still resolved and bound above.
+      return (
+        location !== undefined &&
+        citation.line <= Math.max(1, location.lineCount)
+      );
     }
     if (citation.kind === 'planning-location') {
       const location = planningLocations.get(citation.path);

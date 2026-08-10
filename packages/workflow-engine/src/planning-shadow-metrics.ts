@@ -425,7 +425,7 @@ function avoidedBlobBytes(
   requirement: ReturnType<typeof readPlanReviewCoverageRequirementNode>,
 ): PlanningShadowMetrics['ledger']['fullBlobBytesAvoided'] {
   const carried = requirement.targetBindings.filter(
-    ({ source }) => source === 'carried-ledger-subject',
+    ({ reusedFromLedger }) => reusedFromLedger,
   );
   const paths = carried.map(({ path: targetPath }) => targetPath);
   if (new Set(paths).size !== paths.length) {

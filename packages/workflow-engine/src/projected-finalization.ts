@@ -1,4 +1,7 @@
+import path from 'node:path';
+
 import { digestRequiredCheckDefinitions } from './contract-digests.ts';
+import { classifyProjectionPaths } from './engine-projection-registry.ts';
 import { ExitCode, workflowError } from './errors.ts';
 import {
   previewExactStaging,
@@ -10,6 +13,7 @@ import {
   rollbackGeneratedDocuments,
   type GeneratedDocumentMutation,
 } from './managed-documents.ts';
+import { assertCurrentImplementationReconciliation } from './implementation-reconciliation.ts';
 import { reconcilePredecessor } from './predecessor-reconciliation.ts';
 import type { WorkflowReport } from './report-store.ts';
 import type { WorkflowSession } from './session-store.ts';
@@ -66,6 +70,7 @@ export function finalizeTaskUnlocked(
       ExitCode.staleState,
     );
   }
+  assertCurrentImplementationReconciliation(initial);
 
   const reconciliation = reconcilePredecessor(cwd, initial, environment);
   const completedTaskIds = [
@@ -85,6 +90,14 @@ export function finalizeTaskUnlocked(
       projectionSourceDigest,
       authorizedTransitionPaths: transitionPaths,
     });
+    const taskProjectionPaths = [
+      path.relative(projected.git.repositoryRoot, projected.tasksPath),
+    ];
+    const projectedPathClassification = classifyProjectionPaths(
+      projected.changedPaths,
+      taskProjectionPaths,
+      transitionPaths,
+    );
 
     // Pin the prospective checked tree before verification so that same-path
     // byte drift after the check cannot be silently staged.
@@ -142,7 +155,7 @@ export function finalizeTaskUnlocked(
         allowedPaths: session.allowedPaths,
         requiredChecks: session.requiredChecks,
         requiredCheckDigests,
-        changedPaths: inspection.changedPaths,
+        ...projectedPathClassification,
         fingerprint: inspection.fingerprint,
         checks: verified.checks,
       };
@@ -162,7 +175,7 @@ export function finalizeTaskUnlocked(
         allowedPaths: session.allowedPaths,
         requiredChecks: session.requiredChecks,
         requiredCheckDigests,
-        changedPaths: inspection.changedPaths,
+        ...projectedPathClassification,
         fingerprint: inspection.fingerprint,
         completedTaskIds,
         projectionSourceDigest,
@@ -191,7 +204,11 @@ export function finalizeTaskUnlocked(
           finalized.contract.checks,
           session.requiredChecks,
         ),
-        changedPaths: finalized.changedPaths,
+        ...classifyProjectionPaths(
+          finalized.changedPaths,
+          taskProjectionPaths,
+          transitionPaths,
+        ),
         fingerprint: finalized.fingerprint,
         completedTaskIds,
         projectionSourceDigest,

@@ -526,6 +526,27 @@ export type StoredInvestigationCheckpoint = {
   envelope: InvestigationCheckpointEnvelope;
 };
 
+export type InvestigationScanSaturationAcceptanceEnvelope = {
+  schemaVersion: 1;
+  kind: 'scan-saturation-acceptance';
+  investigationId: string;
+  changeId: string;
+  expectedRevision: number;
+  baseline: {
+    head: string;
+    tree: string;
+  };
+  intentDigest: string;
+  blindManifestDigest: string;
+  saturatedTermIds: string[];
+  acknowledgeIncompleteScan: true;
+};
+
+export type StoredInvestigationScanSaturationAcceptance = {
+  envelopeDigest: string;
+  envelope: InvestigationScanSaturationAcceptanceEnvelope;
+};
+
 export type BlindResultReference = {
   invocationId: string;
   requestDigest: string;
@@ -558,10 +579,20 @@ export type InvestigationSession = {
     tree: string;
   };
   intentDigest: string;
+  /** Omitted for historical sessions whose sealed grammar predates R5. */
+  implementationReconciliationPolicyDigest?: string;
+  /** Omitted for historical sessions whose review population predates R6. */
+  planReviewCoveragePolicyDigest?: string;
   blindManifestDigest: string;
   blindRequestDigest: string;
   blindInvocationIds: string[];
   currentBlindInvocationId: string;
+  /**
+   * A human-authored, baseline-bound acknowledgement that only the named
+   * per-term scans are incomplete. Omitted for non-saturated and historical
+   * investigations.
+   */
+  scanSaturationAcceptance?: StoredInvestigationScanSaturationAcceptance;
   milestones: {
     mainTerms: StoredInvestigationCheckpoint | null;
     blindResult: BlindResultReference | null;
@@ -609,6 +640,12 @@ export function investigationCheckpointId(
             blindResult: session.milestones.blindResult,
             reviewerTermSourceNodeId:
               session.milestones.reviewerTermSourceNodeId,
+            ...(session.scanSaturationAcceptance === undefined
+              ? {}
+              : {
+                  scanSaturationAcceptanceDigest:
+                    session.scanSaturationAcceptance.envelopeDigest,
+                }),
           }
         : {
             groupDispositionsDigest:
@@ -1940,6 +1977,60 @@ export function checkpointContributionDigest(
       blindManifestDigest: validated.blindManifestDigest,
       payload: validated.payload,
     }),
+  );
+}
+
+export function assertInvestigationScanSaturationAcceptanceEnvelope(
+  value: unknown,
+): InvestigationScanSaturationAcceptanceEnvelope {
+  if (
+    !isRecord(value) ||
+    !hasExactKeys(value, [
+      'schemaVersion',
+      'kind',
+      'investigationId',
+      'changeId',
+      'expectedRevision',
+      'baseline',
+      'intentDigest',
+      'blindManifestDigest',
+      'saturatedTermIds',
+      'acknowledgeIncompleteScan',
+    ]) ||
+    value.schemaVersion !== 1 ||
+    value.kind !== 'scan-saturation-acceptance' ||
+    typeof value.investigationId !== 'string' ||
+    typeof value.changeId !== 'string' ||
+    !Number.isSafeInteger(value.expectedRevision) ||
+    (value.expectedRevision as number) < 0 ||
+    !isBaseline(value.baseline) ||
+    !isDigest(value.intentDigest) ||
+    !isDigest(value.blindManifestDigest) ||
+    !isStringArray(value.saturatedTermIds) ||
+    value.saturatedTermIds.length < 1 ||
+    !isSortedUniqueStrings(value.saturatedTermIds) ||
+    value.saturatedTermIds.some((termId) => !isDigest(termId)) ||
+    value.acknowledgeIncompleteScan !== true
+  ) {
+    throw scanSaturationAcceptanceInvalid();
+  }
+  assertInvestigationId(value.investigationId);
+  assertChangeId(value.changeId);
+  if (Buffer.byteLength(canonicalJson(value), 'utf8') > MAX_CHECKPOINT_BYTES) {
+    throw scanSaturationAcceptanceInvalid();
+  }
+  return deepFreeze(
+    structuredClone(value),
+  ) as InvestigationScanSaturationAcceptanceEnvelope;
+}
+
+export function scanSaturationAcceptanceEnvelopeDigest(
+  envelope: InvestigationScanSaturationAcceptanceEnvelope,
+): string {
+  return sha256(
+    canonicalJson(
+      assertInvestigationScanSaturationAcceptanceEnvelope(envelope),
+    ),
   );
 }
 
@@ -3779,10 +3870,28 @@ function assertInvestigationSession(value: unknown): InvestigationSession {
       'branch',
       'baseline',
       'intentDigest',
+      ...(Object.prototype.hasOwnProperty.call(
+        value,
+        'implementationReconciliationPolicyDigest',
+      )
+        ? ['implementationReconciliationPolicyDigest']
+        : []),
+      ...(Object.prototype.hasOwnProperty.call(
+        value,
+        'planReviewCoveragePolicyDigest',
+      )
+        ? ['planReviewCoveragePolicyDigest']
+        : []),
       'blindManifestDigest',
       'blindRequestDigest',
       'blindInvocationIds',
       'currentBlindInvocationId',
+      ...(Object.prototype.hasOwnProperty.call(
+        value,
+        'scanSaturationAcceptance',
+      )
+        ? ['scanSaturationAcceptance']
+        : []),
       'milestones',
       'blocker',
       'createdAt',
@@ -3809,11 +3918,23 @@ function assertInvestigationSession(value: unknown): InvestigationSession {
     (value.branch !== null && typeof value.branch !== 'string') ||
     !isBaseline(value.baseline) ||
     !isDigest(value.intentDigest) ||
+    (Object.prototype.hasOwnProperty.call(
+      value,
+      'implementationReconciliationPolicyDigest',
+    ) &&
+      !isDigest(value.implementationReconciliationPolicyDigest)) ||
+    (Object.prototype.hasOwnProperty.call(
+      value,
+      'planReviewCoveragePolicyDigest',
+    ) &&
+      !isDigest(value.planReviewCoveragePolicyDigest)) ||
     !isDigest(value.blindManifestDigest) ||
     !isDigest(value.blindRequestDigest) ||
     !isStringArray(value.blindInvocationIds) ||
     value.blindInvocationIds.length < 1 ||
     typeof value.currentBlindInvocationId !== 'string' ||
+    (Object.prototype.hasOwnProperty.call(value, 'scanSaturationAcceptance') &&
+      !isStoredScanSaturationAcceptance(value.scanSaturationAcceptance)) ||
     !isMilestones(value.milestones) ||
     !isBlocker(value.blocker) ||
     !isTimestamp(value.createdAt) ||
@@ -3875,6 +3996,21 @@ function milestonesBelongToSession(session: InvestigationSession): boolean {
       return false;
     }
   }
+  const saturationAcceptance = session.scanSaturationAcceptance;
+  if (
+    saturationAcceptance !== undefined &&
+    (saturationAcceptance.envelope.investigationId !==
+      session.investigationId ||
+      saturationAcceptance.envelope.changeId !== session.changeId ||
+      saturationAcceptance.envelope.expectedRevision >= session.revision ||
+      canonicalJson(saturationAcceptance.envelope.baseline) !==
+        canonicalJson(session.baseline) ||
+      saturationAcceptance.envelope.intentDigest !== session.intentDigest ||
+      saturationAcceptance.envelope.blindManifestDigest !==
+        session.blindManifestDigest)
+  ) {
+    return false;
+  }
   const blindResult = session.milestones.blindResult;
   return (
     blindResult === null ||
@@ -3897,6 +4033,8 @@ function assertMonotonicSessionTransition(
     'branch',
     'baseline',
     'intentDigest',
+    'implementationReconciliationPolicyDigest',
+    'planReviewCoveragePolicyDigest',
     'blindManifestDigest',
     'createdAt',
   ] as const) {
@@ -3968,6 +4106,18 @@ function assertMonotonicSessionTransition(
   ) {
     throw sessionTransitionInvalid();
   }
+  const beforeSaturationAcceptance = current.scanSaturationAcceptance ?? null;
+  const afterSaturationAcceptance = next.scanSaturationAcceptance ?? null;
+  if (
+    (beforeSaturationAcceptance !== null &&
+      canonicalJson(beforeSaturationAcceptance) !==
+        canonicalJson(afterSaturationAcceptance)) ||
+    (beforeSaturationAcceptance === null &&
+      afterSaturationAcceptance !== null &&
+      afterSaturationAcceptance.envelope.expectedRevision !== current.revision)
+  ) {
+    throw sessionTransitionInvalid();
+  }
   for (const key of ['mainTerms', 'blindResult'] as const) {
     const before = current.milestones[key];
     const after = next.milestones[key];
@@ -3992,7 +4142,11 @@ function semanticSessionContentChanged(
   current: InvestigationSession,
   next: InvestigationSession,
 ): boolean {
-  return canonicalJson(current.milestones) !== canonicalJson(next.milestones);
+  return (
+    canonicalJson(current.milestones) !== canonicalJson(next.milestones) ||
+    canonicalJson(current.scanSaturationAcceptance ?? null) !==
+      canonicalJson(next.scanSaturationAcceptance ?? null)
+  );
 }
 
 function isMilestones(
@@ -4053,6 +4207,28 @@ function isStoredCheckpoint(
       envelope.kind === kind &&
       checkpointEnvelopeDigest(envelope) === value.envelopeDigest &&
       checkpointContributionDigest(envelope) === value.contributionDigest
+    );
+  } catch {
+    return false;
+  }
+}
+
+function isStoredScanSaturationAcceptance(
+  value: unknown,
+): value is StoredInvestigationScanSaturationAcceptance {
+  if (
+    !isRecord(value) ||
+    !hasExactKeys(value, ['envelopeDigest', 'envelope']) ||
+    !isDigest(value.envelopeDigest)
+  ) {
+    return false;
+  }
+  try {
+    const envelope = assertInvestigationScanSaturationAcceptanceEnvelope(
+      value.envelope,
+    );
+    return (
+      scanSaturationAcceptanceEnvelopeDigest(envelope) === value.envelopeDigest
     );
   } catch {
     return false;
@@ -7587,6 +7763,14 @@ function checkpointInvalid() {
   return workflowError(
     'INVESTIGATION_CHECKPOINT_INVALID',
     'Investigation caller checkpoint is malformed, unbounded, or unbound.',
+    ExitCode.usage,
+  );
+}
+
+function scanSaturationAcceptanceInvalid() {
+  return workflowError(
+    'INVESTIGATION_SCAN_SATURATION_ACCEPTANCE_INVALID',
+    'Investigation scan saturation acceptance is malformed or unbound.',
     ExitCode.usage,
   );
 }

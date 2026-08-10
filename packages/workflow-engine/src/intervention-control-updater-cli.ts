@@ -11,13 +11,19 @@ import {
   executeControlPlanePromotion,
   assertSameControlPlaneTaskMandateBinding,
   preflightControlPlaneApprovalCandidateV2,
+  preflightControlPlaneApprovalCandidateV3,
   prepareControlPlanePromotionV2,
+  prepareControlPlanePromotionV3,
+  readPersistedControlPlaneApprovalCandidateCurrent,
   readPersistedControlPlaneApprovalCandidateV2,
   readControlPlaneSupervisorState,
   recoverControlPlanePromotion,
   type ControlPlaneApprovalPreflightV2,
+  type ControlPlaneApprovalPreflightV3,
   type ControlPlaneApprovalSummary,
   type ControlPlaneApprovalSummaryV2,
+  type ControlPlaneApprovalSummaryV3,
+  type PersistedControlPlaneApprovalCandidateV3,
   type ControlPlaneSupervisorState,
   type ControlPlaneUpdaterDependencies,
 } from './intervention-control-updater.ts';
@@ -28,13 +34,18 @@ import {
 } from './intervention-control-persistence.ts';
 import type {
   ControlPlaneGrantEnvelopeV2,
+  ControlPlaneGrantEnvelopeV3,
   ControlPlaneGrantPayloadV2,
+  ControlPlaneGrantPayloadV3,
   ControlPlanePromotionBundleV2,
+  ControlPlanePromotionBundleV3,
   ControlPlaneTaskMandateBinding,
 } from './intervention-control.ts';
 import {
   canonicalControlPlaneGrantPayloadV2,
+  canonicalControlPlaneGrantPayloadV3,
   CONTROL_PLANE_SIGNATURE_NAMESPACE_V2,
+  CONTROL_PLANE_SIGNATURE_NAMESPACE_V3,
   normalizeControlPlaneTaskMandateBinding,
 } from './intervention-control.ts';
 import type { MaintainerSignerProvider } from './maintainer-signer.ts';
@@ -67,6 +78,7 @@ export interface ControlPlaneUpdaterCliDependencies extends ControlPlaneUpdaterD
   /** Legacy read-only presenter; new approval admission is v2-only. */
   presentApprovalSummary?: (summary: ControlPlaneApprovalSummary) => void;
   presentApprovalSummaryV2?: (summary: ControlPlaneApprovalSummaryV2) => void;
+  presentApprovalSummaryV3?: (summary: ControlPlaneApprovalSummaryV3) => void;
   resolveTaskMandateBinding?: (
     parentTaskId: string,
   ) => ControlPlaneTaskMandateBinding;
@@ -127,8 +139,7 @@ export function dispatchProductionControlPlaneUpdaterCommand(
     const candidateId = argv[1];
     const parentTaskId = argv[3];
     const signer = dependencies.approvalSigner;
-    const presentSummary = dependencies.presentApprovalSummaryV2;
-    if (!signer || !presentSummary) {
+    if (!signer) {
       throw workflowError(
         'CONTROL_PLANE_APPROVAL_UI_REQUIRED',
         'Approve-and-apply requires a controlling-terminal signer and summary presenter.',
@@ -137,7 +148,7 @@ export function dispatchProductionControlPlaneUpdaterCommand(
     }
     // Parse the immutable candidate before touching the signer so corrupt or
     // drifted candidate bytes can never be presented as approvable.
-    const candidate = readPersistedControlPlaneApprovalCandidateV2(
+    const candidate = readPersistedControlPlaneApprovalCandidateCurrent(
       stateRoot,
       candidateId,
     );
@@ -146,6 +157,25 @@ export function dispatchProductionControlPlaneUpdaterCommand(
         'CONTROL_PLANE_PARENT_TASK_MISMATCH',
         'Approval candidate belongs to a different parent task.',
         ExitCode.guard,
+      );
+    }
+    if (candidate.kind === 'persisted-control-plane-approval-candidate.v3') {
+      return approveAndApplyControlPlaneCandidateV3({
+        requestBaseDirectory,
+        stateRoot,
+        candidate,
+        candidateId,
+        parentTaskId,
+        signer,
+        dependencies,
+      });
+    }
+    const presentSummary = dependencies.presentApprovalSummaryV2;
+    if (!presentSummary) {
+      throw workflowError(
+        'CONTROL_PLANE_APPROVAL_UI_REQUIRED',
+        'Approve-and-apply requires a controlling-terminal signer and summary presenter.',
+        ExitCode.unsafeEnvironment,
       );
     }
     const resolveTaskMandateBinding = dependencies.resolveTaskMandateBinding;
@@ -321,6 +351,146 @@ export function dispatchProductionControlPlaneUpdaterCommand(
   );
 }
 
+function approveAndApplyControlPlaneCandidateV3(input: {
+  requestBaseDirectory: string;
+  stateRoot: string;
+  candidate: PersistedControlPlaneApprovalCandidateV3;
+  candidateId: string;
+  parentTaskId: string;
+  signer: MaintainerSignerProvider;
+  dependencies: ControlPlaneUpdaterCliDependencies;
+}): ControlPlaneUpdaterCliResult {
+  const {
+    requestBaseDirectory,
+    stateRoot,
+    candidate,
+    candidateId,
+    parentTaskId,
+    signer,
+    dependencies,
+  } = input;
+  const presentSummary = dependencies.presentApprovalSummaryV3;
+  const resolveTaskMandateBinding = dependencies.resolveTaskMandateBinding;
+  const revalidateTaskMandateBinding =
+    dependencies.revalidateTaskMandateBinding;
+  if (!presentSummary) {
+    throw workflowError(
+      'CONTROL_PLANE_APPROVAL_UI_REQUIRED',
+      'Successor approve-and-apply requires a V3 summary presenter.',
+      ExitCode.unsafeEnvironment,
+    );
+  }
+  if (!resolveTaskMandateBinding || !revalidateTaskMandateBinding) {
+    throw workflowError(
+      'CONTROL_PLANE_TASK_MANDATE_VALIDATOR_REQUIRED',
+      'Production successor approval requires an active Task Mandate resolver and revalidator.',
+      ExitCode.unsafeEnvironment,
+    );
+  }
+  const resolvedMandate = normalizeControlPlaneTaskMandateBinding(
+    resolveTaskMandateBinding(parentTaskId),
+  );
+  assertSameControlPlaneTaskMandateBinding(
+    candidate.mandateBinding,
+    resolvedMandate,
+  );
+  revalidateTaskMandateBinding(resolvedMandate, 'approval-preflight');
+  signer.assertHumanPresent();
+  const humanSigner = signer.identity();
+  const issuedAt = exactNow(dependencies).toISOString();
+  const grantId = controlPlaneApprovalGrantId(candidateId);
+  const preflight = preflightControlPlaneApprovalCandidateV3(
+    stateRoot,
+    candidateId,
+    {
+      grantId,
+      humanSigner,
+      issuedAt,
+      verifyHumanSignature: dependencies.verifyHumanSignature,
+    },
+  );
+  assertSameControlPlaneTaskMandateBinding(
+    resolvedMandate,
+    preflight.candidate.mandateBinding,
+  );
+  const approval = withAuthorityRefusalAudit(
+    controlPlaneApprovalRefusalBinding(
+      requestBaseDirectory,
+      preflight,
+      grantId,
+      humanSigner,
+    ),
+    { now: new Date(issuedAt) },
+    () => {
+      revalidateTaskMandateBinding(resolvedMandate, 'approval-preflight');
+      presentSummary(preflight.summary);
+      const payload = controlPlaneGrantPayloadV3(
+        grantId,
+        humanSigner,
+        issuedAt,
+        preflight.summary,
+        preflight.candidate.bundle,
+      );
+      const signature = signer
+        .sign(
+          canonicalControlPlaneGrantPayloadV3(payload),
+          CONTROL_PLANE_SIGNATURE_NAMESPACE_V3,
+        )
+        .trim();
+      const current = readPersistedControlPlaneApprovalCandidateCurrent(
+        stateRoot,
+        candidateId,
+      );
+      if (
+        current.kind !== 'persisted-control-plane-approval-candidate.v3' ||
+        current.recordDigest !== preflight.candidate.recordDigest
+      ) {
+        throw workflowError(
+          'CONTROL_PLANE_APPROVAL_CANDIDATE_DRIFT',
+          'Persisted successor candidate changed after the approval summary was presented.',
+          ExitCode.staleState,
+        );
+      }
+      assertSameControlPlaneTaskMandateBinding(
+        resolvedMandate,
+        current.mandateBinding,
+      );
+      revalidateTaskMandateBinding(resolvedMandate, 'before-persistence');
+      return {
+        current,
+        envelope: {
+          payload,
+          signature,
+        } satisfies ControlPlaneGrantEnvelopeV3,
+      };
+    },
+  );
+  prepareControlPlanePromotionV3(
+    stateRoot,
+    {
+      txId: approval.current.txId,
+      envelope: approval.envelope,
+      beforeManifest: approval.current.beforeManifest,
+      afterManifest: approval.current.afterManifest,
+      bundle: approval.current.bundle,
+    },
+    dependencies,
+  );
+  const completed = executeControlPlanePromotion(
+    stateRoot,
+    grantId,
+    dependencies,
+  );
+  return result({
+    action: 'approve-and-apply',
+    grantId,
+    stateRoot,
+    record: completed.record,
+    supervisor: completed.supervisor,
+    effectsPerformed: true,
+  });
+}
+
 /**
  * Legacy compatibility surface is read-only for new approval admission. It
  * can inspect or recover only a durable v1 transaction and never signs one.
@@ -417,7 +587,7 @@ function controlPlaneApprovalGrantId(candidateId: string): string {
 
 function controlPlaneApprovalRefusalBinding(
   requestBaseDirectory: string,
-  preflight: ControlPlaneApprovalPreflightV2,
+  preflight: ControlPlaneApprovalPreflightV2 | ControlPlaneApprovalPreflightV3,
   grantId: string,
   humanSigner: string,
 ): AuthorityRefusalAuditBinding {
@@ -499,6 +669,48 @@ function controlPlaneGrantPayloadV2(
     independentReviewAttestationDigest:
       summary.independentReview.attestationDigest,
     updaterVersion: 2,
+    oneShot: true,
+    issuedAt,
+    expiresAt: new Date(
+      Date.parse(issuedAt) + CONTROL_PLANE_GRANT_TTL_MS,
+    ).toISOString(),
+    humanSigner,
+  };
+}
+
+function controlPlaneGrantPayloadV3(
+  grantId: string,
+  humanSigner: string,
+  issuedAt: string,
+  summary: ControlPlaneApprovalSummaryV3,
+  bundle: ControlPlanePromotionBundleV3,
+): ControlPlaneGrantPayloadV3 {
+  return {
+    kind: 'control-plane-grant.v3',
+    grantId,
+    mandateBinding: structuredClone(summary.mandateBinding),
+    repositoryId: summary.repositoryId,
+    frozenCandidateBundleDigest: summary.frozenCandidateBundleDigest,
+    candidateDigest: summary.candidateDigest,
+    promotionMaterialDigest: summary.promotionMaterialDigest,
+    promotionLineageDigest: summary.promotionLineageDigest,
+    promotionBundleDigest: summary.promotionBundleDigest,
+    exactChanges: summary.exactChanges.map((change) => ({ ...change })),
+    beforeClosureDigest: summary.beforeClosureDigest,
+    afterClosureDigest: summary.afterClosureDigest,
+    affectedCapabilities: [...summary.affectedCapabilities],
+    behaviorChangeSummary: summary.behaviorChangeSummary,
+    recoveryBundle: {
+      bundleDigest: summary.recoveryBundleDigest,
+      previousClosureDigest:
+        bundle.material.recoveryBundle.previousClosureDigest,
+      restartArtifactDigest:
+        bundle.material.recoveryBundle.restartArtifact.executableDigest,
+      rollbackTestReportDigest: summary.rollbackTestReportDigest,
+    },
+    independentReviewAttestationDigest:
+      summary.independentReview.attestationDigest,
+    updaterVersion: 3,
     oneShot: true,
     issuedAt,
     expiresAt: new Date(

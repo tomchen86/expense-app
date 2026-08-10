@@ -1,6 +1,7 @@
 import { digestRequiredCheckDefinitions } from './contract-digests.ts';
 import { parseTasks } from './contracts.ts';
 import { ExitCode, workflowError } from './errors.ts';
+import type { ProjectionPathClassification } from './engine-projection-registry.ts';
 import { readImmutableReport, type WorkflowReport } from './report-store.ts';
 import { runtimePaths } from './session-store.ts';
 import type { SessionInspection } from './verification.ts';
@@ -92,6 +93,21 @@ export function assertReportChecks(
     ) {
       throw staleReport(errorCode);
     }
+  }
+}
+
+export function assertProjectionPathClassification(
+  report: WorkflowReport,
+  expected: ProjectionPathClassification,
+  errorCode: string,
+): void {
+  if (
+    !same(report.taskPaths, expected.taskPaths) ||
+    !same(report.taskProjectionPaths, expected.taskProjectionPaths) ||
+    !same(report.engineProjectionPaths, expected.engineProjectionPaths) ||
+    !same(report.changedPaths, expected.changedPaths)
+  ) {
+    throw staleReport(errorCode);
   }
 }
 

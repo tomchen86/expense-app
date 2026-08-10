@@ -18,7 +18,10 @@ import {
   runGit,
 } from './git.ts';
 import { preEpochCompletedTaskIds } from './bootstrap-task-exemption.ts';
-import { findExactTaskCommits, type TaskCommit } from './git-transitions.ts';
+import type { TaskCommit } from './git-transitions.ts';
+import { committedPlanningGeneration } from './planning-generation-history.ts';
+import { ensurePlanningExecutionEpochCompleteForArchive } from './planning-execution-epoch.ts';
+import { resolveTaskExecutionGenerationEvidence } from './task-execution-evidence.ts';
 import { withChangeTransitionAuthority } from './planning-lock.ts';
 import {
   assertPlanningPaths,
@@ -325,14 +328,17 @@ function inspectEligibility(
     contract.changeId,
     git.head,
   );
+  const executionGeneration = resolveTaskExecutionGenerationEvidence(
+    git.repositoryRoot,
+    config.changeRoot,
+    contract.changeId,
+    contract.tasks.map(({ id }) => id),
+    git.head,
+  );
   const taskCommits = contract.tasks.flatMap(({ id: taskId }) => {
-    const commits = findExactTaskCommits(
-      git.repositoryRoot,
-      contract.changeId,
-      taskId,
-    );
+    const commits = executionGeneration.commitsByTask[taskId] ?? [];
     if (commits.length !== 1) {
-      if (exemptTaskIds.has(taskId)) {
+      if (executionGeneration.boundary === null && exemptTaskIds.has(taskId)) {
         return [];
       }
       throw archiveError(
@@ -353,6 +359,33 @@ function inspectEligibility(
       { taskId, commitHash: commit.hash },
     );
     return [{ ...commit, taskId }];
+  });
+  ensurePlanningExecutionEpochCompleteForArchive(git.repositoryRoot, {
+    changeId: contract.changeId,
+    head: git.head,
+    planningGeneration: committedPlanningGeneration(
+      git.repositoryRoot,
+      git.head,
+      config.changeRoot,
+      contract.changeId,
+    ),
+    taskEvidence: contract.tasks.map(({ id: taskId }) => {
+      const commit = taskCommits.find(
+        ({ taskId: committedTaskId }) => committedTaskId === taskId,
+      );
+      return commit === undefined
+        ? {
+            taskId,
+            source: 'pre-epoch-exemption' as const,
+            commitHash: null,
+          }
+        : {
+            taskId,
+            source: 'managed-task-commit' as const,
+            commitHash: commit.hash,
+          };
+    }),
+    now,
   });
 
   const date = utcDate(now);

@@ -127,6 +127,11 @@ export function investigationCheckpointId(session, kind) {
                 mainTermsDigest: session.milestones.mainTerms?.contributionDigest ?? null,
                 blindResult: session.milestones.blindResult,
                 reviewerTermSourceNodeId: session.milestones.reviewerTermSourceNodeId,
+                ...(session.scanSaturationAcceptance === undefined
+                    ? {}
+                    : {
+                        scanSaturationAcceptanceDigest: session.scanSaturationAcceptance.envelopeDigest,
+                    }),
             }
             : {
                 groupDispositionsDigest: session.milestones.groupDispositions?.contributionDigest ?? null,
@@ -1026,6 +1031,46 @@ export function checkpointContributionDigest(envelope) {
         blindManifestDigest: validated.blindManifestDigest,
         payload: validated.payload,
     }));
+}
+export function assertInvestigationScanSaturationAcceptanceEnvelope(value) {
+    if (!isRecord(value) ||
+        !hasExactKeys(value, [
+            'schemaVersion',
+            'kind',
+            'investigationId',
+            'changeId',
+            'expectedRevision',
+            'baseline',
+            'intentDigest',
+            'blindManifestDigest',
+            'saturatedTermIds',
+            'acknowledgeIncompleteScan',
+        ]) ||
+        value.schemaVersion !== 1 ||
+        value.kind !== 'scan-saturation-acceptance' ||
+        typeof value.investigationId !== 'string' ||
+        typeof value.changeId !== 'string' ||
+        !Number.isSafeInteger(value.expectedRevision) ||
+        value.expectedRevision < 0 ||
+        !isBaseline(value.baseline) ||
+        !isDigest(value.intentDigest) ||
+        !isDigest(value.blindManifestDigest) ||
+        !isStringArray(value.saturatedTermIds) ||
+        value.saturatedTermIds.length < 1 ||
+        !isSortedUniqueStrings(value.saturatedTermIds) ||
+        value.saturatedTermIds.some((termId) => !isDigest(termId)) ||
+        value.acknowledgeIncompleteScan !== true) {
+        throw scanSaturationAcceptanceInvalid();
+    }
+    assertInvestigationId(value.investigationId);
+    assertChangeId(value.changeId);
+    if (Buffer.byteLength(canonicalJson(value), 'utf8') > MAX_CHECKPOINT_BYTES) {
+        throw scanSaturationAcceptanceInvalid();
+    }
+    return deepFreeze(structuredClone(value));
+}
+export function scanSaturationAcceptanceEnvelopeDigest(envelope) {
+    return sha256(canonicalJson(assertInvestigationScanSaturationAcceptanceEnvelope(envelope)));
 }
 export function deriveInvestigationSessionState(session) {
     if (session.blocker !== null) {
@@ -2144,10 +2189,19 @@ function assertInvestigationSession(value) {
             'branch',
             'baseline',
             'intentDigest',
+            ...(Object.prototype.hasOwnProperty.call(value, 'implementationReconciliationPolicyDigest')
+                ? ['implementationReconciliationPolicyDigest']
+                : []),
+            ...(Object.prototype.hasOwnProperty.call(value, 'planReviewCoveragePolicyDigest')
+                ? ['planReviewCoveragePolicyDigest']
+                : []),
             'blindManifestDigest',
             'blindRequestDigest',
             'blindInvocationIds',
             'currentBlindInvocationId',
+            ...(Object.prototype.hasOwnProperty.call(value, 'scanSaturationAcceptance')
+                ? ['scanSaturationAcceptance']
+                : []),
             'milestones',
             'blocker',
             'createdAt',
@@ -2174,11 +2228,17 @@ function assertInvestigationSession(value) {
         (value.branch !== null && typeof value.branch !== 'string') ||
         !isBaseline(value.baseline) ||
         !isDigest(value.intentDigest) ||
+        (Object.prototype.hasOwnProperty.call(value, 'implementationReconciliationPolicyDigest') &&
+            !isDigest(value.implementationReconciliationPolicyDigest)) ||
+        (Object.prototype.hasOwnProperty.call(value, 'planReviewCoveragePolicyDigest') &&
+            !isDigest(value.planReviewCoveragePolicyDigest)) ||
         !isDigest(value.blindManifestDigest) ||
         !isDigest(value.blindRequestDigest) ||
         !isStringArray(value.blindInvocationIds) ||
         value.blindInvocationIds.length < 1 ||
         typeof value.currentBlindInvocationId !== 'string' ||
+        (Object.prototype.hasOwnProperty.call(value, 'scanSaturationAcceptance') &&
+            !isStoredScanSaturationAcceptance(value.scanSaturationAcceptance)) ||
         !isMilestones(value.milestones) ||
         !isBlocker(value.blocker) ||
         !isTimestamp(value.createdAt) ||
@@ -2230,6 +2290,19 @@ function milestonesBelongToSession(session) {
             return false;
         }
     }
+    const saturationAcceptance = session.scanSaturationAcceptance;
+    if (saturationAcceptance !== undefined &&
+        (saturationAcceptance.envelope.investigationId !==
+            session.investigationId ||
+            saturationAcceptance.envelope.changeId !== session.changeId ||
+            saturationAcceptance.envelope.expectedRevision >= session.revision ||
+            canonicalJson(saturationAcceptance.envelope.baseline) !==
+                canonicalJson(session.baseline) ||
+            saturationAcceptance.envelope.intentDigest !== session.intentDigest ||
+            saturationAcceptance.envelope.blindManifestDigest !==
+                session.blindManifestDigest)) {
+        return false;
+    }
     const blindResult = session.milestones.blindResult;
     return (blindResult === null ||
         (blindResult.invocationId === session.currentBlindInvocationId &&
@@ -2246,6 +2319,8 @@ function assertMonotonicSessionTransition(current, next) {
         'branch',
         'baseline',
         'intentDigest',
+        'implementationReconciliationPolicyDigest',
+        'planReviewCoveragePolicyDigest',
         'blindManifestDigest',
         'createdAt',
     ]) {
@@ -2300,6 +2375,16 @@ function assertMonotonicSessionTransition(current, next) {
         canonicalJson(next.milestones) !== canonicalJson(current.milestones)) {
         throw sessionTransitionInvalid();
     }
+    const beforeSaturationAcceptance = current.scanSaturationAcceptance ?? null;
+    const afterSaturationAcceptance = next.scanSaturationAcceptance ?? null;
+    if ((beforeSaturationAcceptance !== null &&
+        canonicalJson(beforeSaturationAcceptance) !==
+            canonicalJson(afterSaturationAcceptance)) ||
+        (beforeSaturationAcceptance === null &&
+            afterSaturationAcceptance !== null &&
+            afterSaturationAcceptance.envelope.expectedRevision !== current.revision)) {
+        throw sessionTransitionInvalid();
+    }
     for (const key of ['mainTerms', 'blindResult']) {
         const before = current.milestones[key];
         const after = next.milestones[key];
@@ -2318,7 +2403,9 @@ function assertMonotonicSessionTransition(current, next) {
     }
 }
 function semanticSessionContentChanged(current, next) {
-    return canonicalJson(current.milestones) !== canonicalJson(next.milestones);
+    return (canonicalJson(current.milestones) !== canonicalJson(next.milestones) ||
+        canonicalJson(current.scanSaturationAcceptance ?? null) !==
+            canonicalJson(next.scanSaturationAcceptance ?? null));
 }
 function isMilestones(value) {
     if (!isRecord(value) ||
@@ -2365,6 +2452,20 @@ function isStoredCheckpoint(value, kind) {
         return (envelope.kind === kind &&
             checkpointEnvelopeDigest(envelope) === value.envelopeDigest &&
             checkpointContributionDigest(envelope) === value.contributionDigest);
+    }
+    catch {
+        return false;
+    }
+}
+function isStoredScanSaturationAcceptance(value) {
+    if (!isRecord(value) ||
+        !hasExactKeys(value, ['envelopeDigest', 'envelope']) ||
+        !isDigest(value.envelopeDigest)) {
+        return false;
+    }
+    try {
+        const envelope = assertInvestigationScanSaturationAcceptanceEnvelope(value.envelope);
+        return (scanSaturationAcceptanceEnvelopeDigest(envelope) === value.envelopeDigest);
     }
     catch {
         return false;
@@ -4899,6 +5000,9 @@ function investigationCasMismatch(expected, observed) {
 }
 function checkpointInvalid() {
     return workflowError('INVESTIGATION_CHECKPOINT_INVALID', 'Investigation caller checkpoint is malformed, unbounded, or unbound.', ExitCode.usage);
+}
+function scanSaturationAcceptanceInvalid() {
+    return workflowError('INVESTIGATION_SCAN_SATURATION_ACCEPTANCE_INVALID', 'Investigation scan saturation acceptance is malformed or unbound.', ExitCode.usage);
 }
 function refUnsafe() {
     return workflowError('CURRENT_INVESTIGATION_REF_UNSAFE', 'Current investigation reference is unsafe or malformed.', ExitCode.unsafeEnvironment);

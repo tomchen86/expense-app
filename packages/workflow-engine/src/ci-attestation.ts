@@ -1,3 +1,5 @@
+import crypto from 'node:crypto';
+
 import {
   AUTHORITY_ATTESTATION_TAG_PREFIX,
   canonicalAttestationEnvelope,
@@ -32,6 +34,7 @@ import {
   MAINTAINER_GRANT_V2_SIGNATURE_NAMESPACE,
   canonicalMaintainerGrantV2Payload,
   parseMaintainerGrantV2Envelope,
+  type MaintainerGrantV2Envelope,
 } from './maintainer-grant-v2.ts';
 import {
   parseMaintainerPolicy,
@@ -70,7 +73,7 @@ export type CiAttestationResult = {
 type GrantTagRecord = {
   grantId: string;
   target: string;
-  envelope: MaintainerGrantEnvelope;
+  envelope: MaintainerGrantEnvelope | MaintainerGrantV2Envelope;
 };
 
 export function verifyBaseAuthorityAttestations(
@@ -136,21 +139,9 @@ export function verifyBaseAuthorityAttestations(
   const direct: DirectAuthority[] = [];
 
   for (const commit of authorityCommits.reverse()) {
+    let attestationGrantId: string;
+    let envelope: AuthorityAttestationEnvelope;
     if (commit.trailers.kind === 'authority-candidate') {
-      const validated = validateCiAuthorityCommit(
-        repositoryRoot,
-        commit,
-        evaluatedAt,
-      );
-      direct.push({
-        grantId: validated.grantId,
-        changeId: validated.changeId,
-        commit: commit.hash,
-      });
-      continue;
-    }
-    const attestationRef = `${AUTHORITY_ATTESTATION_TAG_PREFIX}${commit.trailers.grantId}`;
-    if (!attestationRefs.has(attestationRef)) {
       try {
         const validated = validateCiAuthorityCommit(
           repositoryRoot,
@@ -162,25 +153,67 @@ export function verifyBaseAuthorityAttestations(
           changeId: validated.changeId,
           commit: commit.hash,
         });
-      } catch (error) {
-        if (error instanceof WorkflowError) {
+        continue;
+      } catch (directError) {
+        const candidates = [...attestationRefs]
+          .map((ref) =>
+            readAttestationEnvelope(
+              repositoryRoot,
+              ref.slice(AUTHORITY_ATTESTATION_TAG_PREFIX.length),
+            ),
+          )
+          .filter(({ payload }) => payload.mainCommit === commit.hash);
+        if (candidates.length === 0 && directError instanceof WorkflowError) {
+          throw directError;
+        }
+        if (candidates.length !== 1) {
           throw attestationError(
             'CI_ATTESTATION_MISSING',
-            `Protected-main authority commit has no attestation tag for ${commit.trailers.grantId} and is not directly replayable.`,
-            { directValidationCode: error.code },
+            'A rewritten v2 authority candidate requires one exact protected attestation.',
+            {
+              commit: commit.hash,
+              directValidationCode:
+                directError instanceof WorkflowError
+                  ? directError.code
+                  : 'UNKNOWN',
+            },
           );
         }
-        throw error;
+        envelope = candidates[0];
+        attestationGrantId = envelope.payload.grantId;
       }
-      continue;
+    } else {
+      attestationGrantId = commit.trailers.grantId;
+      const attestationRef = `${AUTHORITY_ATTESTATION_TAG_PREFIX}${attestationGrantId}`;
+      if (!attestationRefs.has(attestationRef)) {
+        try {
+          const validated = validateCiAuthorityCommit(
+            repositoryRoot,
+            commit,
+            evaluatedAt,
+          );
+          direct.push({
+            grantId: validated.grantId,
+            changeId: validated.changeId,
+            commit: commit.hash,
+          });
+        } catch (error) {
+          if (error instanceof WorkflowError) {
+            throw attestationError(
+              'CI_ATTESTATION_MISSING',
+              `Protected-main authority commit has no attestation tag for ${attestationGrantId} and is not directly replayable.`,
+              { directValidationCode: error.code },
+            );
+          }
+          throw error;
+        }
+        continue;
+      }
+      envelope = readAttestationEnvelope(repositoryRoot, attestationGrantId);
     }
-    const envelope = readAttestationEnvelope(
-      repositoryRoot,
-      commit.trailers.grantId,
-    );
     const payload = envelope.payload;
     if (
-      payload.grantId !== commit.trailers.grantId ||
+      payload.grantId !== attestationGrantId ||
       payload.mainCommit !== commit.hash ||
       payload.repositoryId !== policy.repository.id ||
       payload.repositoryOrigin !== policy.repository.origin ||
@@ -189,7 +222,7 @@ export function verifyBaseAuthorityAttestations(
       throw attestationError(
         'CI_ATTESTATION_MAPPING_INVALID',
         'The protected attestation does not bind this authority commit.',
-        { commit: commit.hash, grantId: commit.trailers.grantId },
+        { commit: commit.hash, grantId: attestationGrantId },
       );
     }
     const attestationSigner = trustedSigner(policy, payload.signer);
@@ -203,9 +236,33 @@ export function verifyBaseAuthorityAttestations(
 
     const original = attestedFacts(repositoryRoot, payload.originalCommit);
     const main = attestedFacts(repositoryRoot, payload.mainCommit);
-    const identity = wrapMapping(commit.hash, () =>
-      validateAuthorityTransitionIdentity(original, main),
+    const transitionTrailers = wrapMapping(commit.hash, () =>
+      validateAttestedTransitionPair(original, main),
     );
+    let identity: { grantId: string; changeId: string };
+    if (commit.trailers.kind === 'authority-candidate') {
+      if (transitionTrailers.kind !== 'authority-candidate') {
+        throw attestationError(
+          'CI_ATTESTATION_MAPPING_INVALID',
+          'The attested transition does not preserve authority-candidate trailers.',
+          { commit: commit.hash },
+        );
+      }
+      identity = validateCiAuthorityCommit(
+        repositoryRoot,
+        {
+          hash: original.oid,
+          subject: original.message.split('\n', 1)[0],
+          parents: [...original.parentOids],
+          trailers: transitionTrailers,
+        },
+        evaluatedAt,
+      );
+    } else {
+      identity = wrapMapping(commit.hash, () =>
+        validateAuthorityTransitionIdentity(original, main),
+      );
+    }
     if (
       identity.grantId !== payload.grantId ||
       identity.changeId !== commit.trailers.changeId
@@ -235,11 +292,13 @@ export function verifyBaseAuthorityAttestations(
       );
     }
     validateHistoricalGrant(repositoryRoot, policy, primaryGrant, evaluatedAt);
-    assertCommitInsideGrantLifetime(
-      repositoryRoot,
-      original.oid,
-      primaryGrant.envelope,
-    );
+    if (primaryGrant.envelope.payload.version === 1) {
+      assertCommitInsideGrantLifetime(
+        repositoryRoot,
+        original.oid,
+        primaryGrant.envelope,
+      );
+    }
     verifyTrustedCommitSignature(
       repositoryRoot,
       original.oid,
@@ -396,6 +455,33 @@ function validateHistoricalGrant(
       { grantId: record.grantId },
     );
   }
+  if (record.envelope.payload.version === 2) {
+    const policyContent = runGit(repositoryRoot, [
+      'show',
+      `${baseCommit}:${MAINTAINER_POLICY_PATH}`,
+    ]);
+    if (
+      record.envelope.payload.policyBlob !== policyBlob ||
+      record.envelope.payload.policyDigest !==
+        crypto.createHash('sha256').update(policyContent).digest('hex') ||
+      record.envelope.payload.repositoryId !== policy.repository.id ||
+      record.envelope.payload.repositoryOrigin !== policy.repository.origin
+    ) {
+      throw attestationError(
+        'CI_ATTESTATION_GRANT_INVALID',
+        'A mapped v2 grant envelope fails validation under base policy.',
+        { grantId: record.grantId },
+      );
+    }
+    verifySshDataSignature(
+      canonicalMaintainerGrantV2Payload(record.envelope.payload),
+      record.envelope.signature,
+      trustedSigner(policy, record.envelope.payload.signer),
+      MAINTAINER_GRANT_V2_SIGNATURE_NAMESPACE,
+      'CI_ATTESTATION_GRANT_SIGNATURE_INVALID',
+    );
+    return;
+  }
   try {
     validateGrantPayload(record.envelope.payload, policy, {
       now: evaluatedAt,
@@ -422,7 +508,7 @@ function validateHistoricalGrant(
 function assertCommitInsideGrantLifetime(
   repositoryRoot: string,
   commitHash: string,
-  envelope: MaintainerGrantEnvelope,
+  envelope: MaintainerGrantEnvelope | MaintainerGrantV2Envelope,
 ): void {
   const rawTimestamp = runGit(repositoryRoot, [
     'show',
@@ -515,6 +601,7 @@ function listGrantTags(
           MAINTAINER_GRANT_V2_SIGNATURE_NAMESPACE,
           'CI_ATTESTATION_GRANT_INVALID',
         );
+        records.set(grantId, { grantId, target, envelope: v2 });
         continue;
       } catch {
         throw invalidGrantTag(grantId);

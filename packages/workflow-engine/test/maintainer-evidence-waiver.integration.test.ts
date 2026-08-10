@@ -10,7 +10,7 @@ import { readAuthorityApplicationReceiptTag } from '../src/authority-application
 import { deriveAuthorityAuditRepositoryId } from '../src/authority-audit-ledger.ts';
 import { verifyAuthorityAuditEvents } from '../src/authority-audit-service.ts';
 import { canonicalJson } from '../src/canonical-json.ts';
-import { assertCandidateChecksFresh } from '../src/maintainer-candidate.ts';
+import { assertCandidateV2ChecksFresh } from '../src/maintainer-candidate.ts';
 import {
   canonicalMaintainerGrantV2Envelope,
   isMaintainerGrantV2Envelope,
@@ -184,6 +184,8 @@ test('a human-signed named waiver admits stale retained evidence without deletin
     );
     const candidate = terminal.envelope.payload.candidateBundle;
     assert.ok(candidate);
+    assert.equal(candidate.schemaVersion, 2);
+    if (candidate.schemaVersion !== 2) assert.fail('expected candidate v2');
     const candidateCheck = candidate.checksAttestation.checks[0];
     assert.ok(candidateCheck);
     const freshnessBinding = {
@@ -193,14 +195,13 @@ test('a human-signed named waiver admits stale retained evidence without deletin
       trustBaseCommit: terminal.envelope.payload.baseCommit,
       waivedFreshnessCheckIds: ['fixture'],
       environmentDigest: candidateCheck.environmentDigest,
-      changedDependencies: [] as const,
+      currentDependencySnapshot: candidate.checksAttestation.dependencySnapshot,
     };
     assert.throws(
       () =>
-        assertCandidateChecksFresh(candidate.checksAttestation, {
+        assertCandidateV2ChecksFresh(candidate.checksAttestation, {
           ...freshnessBinding,
           requiredChecks: ['fixture', 'fixture-two'],
-          changedDependencies: [],
         }),
       (error) => isWorkflowError(error, 'APPLY_ATTESTATION_BINDING_MISMATCH'),
     );
@@ -208,21 +209,26 @@ test('a human-signed named waiver admits stale retained evidence without deletin
     assert.notEqual(anotherEnvironment, candidateCheck.environmentDigest);
     assert.throws(
       () =>
-        assertCandidateChecksFresh(candidate.checksAttestation, {
+        assertCandidateV2ChecksFresh(candidate.checksAttestation, {
           ...freshnessBinding,
           requiredChecks: ['fixture'],
           environmentDigest: anotherEnvironment,
-          changedDependencies: [],
         }),
       (error) =>
         isWorkflowError(error, 'APPLY_ATTESTATION_ENVIRONMENT_MISMATCH'),
     );
     assert.throws(
       () =>
-        assertCandidateChecksFresh(candidate.checksAttestation, {
+        assertCandidateV2ChecksFresh(candidate.checksAttestation, {
           ...freshnessBinding,
           requiredChecks: ['fixture'],
-          changedDependencies: ['runner'],
+          currentDependencySnapshot: {
+            ...candidate.checksAttestation.dependencySnapshot,
+            runnerDigests: {
+              ...candidate.checksAttestation.dependencySnapshot.runnerDigests,
+              fixture: 'f'.repeat(64),
+            },
+          },
         }),
       (error) => isWorkflowError(error, 'APPLY_ATTESTATION_INVALIDATED'),
     );

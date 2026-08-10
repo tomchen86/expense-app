@@ -202,7 +202,9 @@ function listRuntimeFiles(directory: string): string[] {
     }
   };
   visit(directory);
-  return files.sort((left, right) => (left < right ? -1 : left > right ? 1 : 0));
+  return files.sort((left, right) =>
+    left < right ? -1 : left > right ? 1 : 0,
+  );
 }
 
 function readExactFile(

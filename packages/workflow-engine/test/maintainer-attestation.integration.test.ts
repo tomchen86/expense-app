@@ -22,6 +22,7 @@ import {
 import {
   AUTHORITY_ATTESTATION_SIGNATURE_NAMESPACE,
   issueAuthorityAttestation,
+  projectAuthorityAttestationRelay,
 } from '../src/maintainer-attestation.ts';
 import type { MaintainerSignerProvider } from '../src/maintainer-signer.ts';
 import type { MaintainerPolicy } from '../src/maintainer-policy.ts';
@@ -513,6 +514,77 @@ function issue(
   );
 }
 
+test('attestation relay derives the rewritten main and base commits', () => {
+  const fixture = prepareAttestationFixture();
+  try {
+    const result = projectAuthorityAttestationRelay(
+      fixture.repository,
+      fixture.originalCommit,
+    );
+
+    assert.deepEqual(result, {
+      grantId: PRIMARY_GRANT,
+      originalCommit: fixture.originalCommit,
+      mainCommit: fixture.mainCommit,
+      grantBasePairs: [
+        {
+          originalBase: fixture.originalBase,
+          mainBase: fixture.rebasedBase,
+        },
+      ],
+      attestCommand:
+        `pnpm workflow maintainer attest --original ${fixture.originalCommit} ` +
+        `--main ${fixture.mainCommit} --base ${fixture.originalBase}=${fixture.rebasedBase} --json`,
+      tagRef: `refs/tags/workflow-attestation/${PRIMARY_GRANT}`,
+      publishCommand:
+        `git push git@github.com:example/fixture.git refs/tags/workflow-attestation/${PRIMARY_GRANT}:` +
+        `refs/tags/workflow-attestation/${PRIMARY_GRANT}`,
+    });
+  } finally {
+    cleanup(fixture);
+  }
+});
+
+test('maintainer attestation-relay CLI emits the exact signing and publish commands', () => {
+  const fixture = prepareAttestationFixture();
+  try {
+    const cli = spawnSync(
+      process.execPath,
+      [
+        '--experimental-strip-types',
+        path.resolve(import.meta.dirname, '../src/cli.ts'),
+        'maintainer',
+        'attestation-relay',
+        '--original',
+        fixture.originalCommit,
+        '--json',
+      ],
+      {
+        cwd: fixture.repository,
+        encoding: 'utf8',
+      },
+    );
+    assert.equal(cli.status, 0, cli.stderr);
+    const response = JSON.parse(cli.stdout) as {
+      action: string;
+      result: { attestCommand: string; publishCommand: string };
+    };
+    assert.equal(response.action, 'attestation-relay');
+    assert.equal(
+      response.result.attestCommand,
+      `pnpm workflow maintainer attest --original ${fixture.originalCommit} ` +
+        `--main ${fixture.mainCommit} --base ${fixture.originalBase}=${fixture.rebasedBase} --json`,
+    );
+    assert.equal(
+      response.result.publishCommand,
+      `git push git@github.com:example/fixture.git refs/tags/workflow-attestation/${PRIMARY_GRANT}:` +
+        `refs/tags/workflow-attestation/${PRIMARY_GRANT}`,
+    );
+  } finally {
+    cleanup(fixture);
+  }
+});
+
 test('maintainer attest creates one canonical protected attestation tag', () => {
   const fixture = prepareAttestationFixture();
   const namespaces: string[] = [];
@@ -533,7 +605,7 @@ test('maintainer attest creates one canonical protected attestation tag', () => 
     );
     assert.equal(
       result.publishCommand,
-      `git push origin ${result.tagRef}:${result.tagRef}`,
+      `git push git@github.com:example/fixture.git ${result.tagRef}:${result.tagRef}`,
     );
     assert.deepEqual(namespaces, [AUTHORITY_ATTESTATION_SIGNATURE_NAMESPACE]);
 

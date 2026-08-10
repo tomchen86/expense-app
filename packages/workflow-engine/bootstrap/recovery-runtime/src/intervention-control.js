@@ -1767,6 +1767,274 @@ export function verifyControlPlaneGrantV2(envelope, context) {
         verification: 'human-signature-verified',
     });
 }
+function reviewPayloadV2Projection(payload) {
+    const { promotionLineageDigest: _promotionLineageDigest, ...rest } = payload;
+    return { ...rest, kind: 'control-plane-independent-review.v2' };
+}
+function validateControlPlaneIndependentReviewPayloadV3(value) {
+    if (!hasExactObjectKeys(value, [
+        'affectedCapabilities',
+        'afterClosureDigest',
+        'beforeClosureDigest',
+        'candidateDigest',
+        'frozenCandidateBundleDigest',
+        'kind',
+        'promotionLineageDigest',
+        'promotionMaterialDigest',
+        'recoveryBundleDigest',
+        'repositoryId',
+        'reviewSummary',
+        'reviewedAt',
+        'reviewer',
+        'verdict',
+    ]) ||
+        value.kind !== 'control-plane-independent-review.v3') {
+        throw workflowError('CONTROL_PLANE_REVIEW_ATTESTATION_INVALID', 'Independent review v3 has an unknown schema.', ExitCode.guard);
+    }
+    const payload = value;
+    assertDigest(payload.promotionLineageDigest, 'CONTROL_PLANE_REVIEW_ATTESTATION_INVALID');
+    validateControlPlaneIndependentReviewPayloadV2(reviewPayloadV2Projection(payload));
+}
+function validateControlPlaneIndependentReviewAttestationV3(value) {
+    if (!hasExactObjectKeys(value, ['payload', 'signature'])) {
+        throw workflowError('CONTROL_PLANE_REVIEW_ATTESTATION_INVALID', 'Independent review v3 envelope has an unknown schema.', ExitCode.guard);
+    }
+    const envelope = value;
+    validateControlPlaneIndependentReviewPayloadV3(envelope.payload);
+    assertNonEmpty(envelope.signature, 'CONTROL_PLANE_REVIEW_ATTESTATION_INVALID', 'Review signature');
+}
+export function canonicalControlPlaneIndependentReviewAttestationPayloadV3(payload) {
+    validateControlPlaneIndependentReviewPayloadV3(payload);
+    return `${canonicalJson(payload)}\n`;
+}
+export function controlPlaneIndependentReviewAttestationDigestV3(envelope) {
+    validateControlPlaneIndependentReviewAttestationV3(envelope);
+    return canonicalDigest(envelope);
+}
+export function verifyControlPlaneIndependentReviewAttestationV3(envelope, context) {
+    validateControlPlaneIndependentReviewAttestationV3(envelope);
+    const material = verifyControlPlanePromotionMaterial(context.material);
+    const lineage = verifyControlPlanePromotionLineage(context.lineage);
+    assertDigest(context.expectedDigest, 'CONTROL_PLANE_REVIEW_ATTESTATION_INVALID');
+    assertNonEmpty(context.grantHumanSigner, 'CONTROL_PLANE_REVIEW_ATTESTATION_INVALID', 'Grant signer');
+    assertIsoTimestamp(context.grantIssuedAt, 'CONTROL_PLANE_REVIEW_ATTESTATION_INVALID');
+    const attestationDigest = canonicalDigest(envelope);
+    const payload = envelope.payload;
+    if (attestationDigest !== context.expectedDigest) {
+        throw workflowError('CONTROL_PLANE_REVIEW_ATTESTATION_DIGEST_MISMATCH', 'Independent review v3 bytes do not match the grant-bound digest.', ExitCode.verification);
+    }
+    if (Date.parse(payload.reviewedAt) > Date.parse(context.grantIssuedAt)) {
+        throw workflowError('CONTROL_PLANE_REVIEW_TIMESTAMP_INVALID', 'Independent review must be completed before grant issuance.', ExitCode.guard);
+    }
+    if (payload.reviewer === context.grantHumanSigner) {
+        throw workflowError('CONTROL_PLANE_REVIEWER_NOT_INDEPENDENT', 'The independent reviewer must differ from the grant signer.', ExitCode.guard);
+    }
+    if (payload.promotionMaterialDigest !==
+        controlPlanePromotionMaterialDigest(material) ||
+        payload.promotionLineageDigest !== lineage.lineageDigest ||
+        payload.repositoryId !== material.repositoryId ||
+        payload.frozenCandidateBundleDigest !==
+            material.frozenCandidateBundleDigest ||
+        payload.candidateDigest !== material.candidateDigest ||
+        payload.beforeClosureDigest !== material.beforeClosureDigest ||
+        payload.afterClosureDigest !== material.afterClosureDigest ||
+        payload.recoveryBundleDigest !== material.recoveryBundle.bundleDigest ||
+        !sameJson(payload.affectedCapabilities, material.affectedCapabilities)) {
+        throw workflowError('CONTROL_PLANE_REVIEW_MATERIAL_MISMATCH', 'Independent review v3 does not bind the exact material and predecessor lineage.', ExitCode.verification);
+    }
+    if (!verifyHumanSignatureSafely(context.verifyHumanSignature, canonicalControlPlaneIndependentReviewAttestationPayloadV3(payload), envelope.signature, payload.reviewer, CONTROL_PLANE_REVIEW_SIGNATURE_NAMESPACE_V3)) {
+        throw workflowError('CONTROL_PLANE_REVIEW_SIGNATURE_INVALID', 'Independent review v3 signature could not be verified.', ExitCode.verification);
+    }
+    return freezeDeep({
+        payload: {
+            ...payload,
+            affectedCapabilities: [...payload.affectedCapabilities],
+        },
+        signature: envelope.signature,
+        attestationDigest,
+        verification: 'independent-human-signature-verified',
+    });
+}
+export function createControlPlanePromotionBundleV3(input) {
+    if (!hasExactObjectKeys(input, [
+        'independentReviewAttestation',
+        'lineage',
+        'material',
+    ])) {
+        throw workflowError('CONTROL_PLANE_PROMOTION_BUNDLE_INVALID', 'Promotion bundle v3 input has an unknown schema.', ExitCode.guard);
+    }
+    const material = verifyControlPlanePromotionMaterial(input.material);
+    const lineage = verifyControlPlanePromotionLineage(input.lineage);
+    validateControlPlaneIndependentReviewAttestationV3(input.independentReviewAttestation);
+    const promotionMaterialDigest = controlPlanePromotionMaterialDigest(material);
+    const review = input.independentReviewAttestation.payload;
+    if (review.promotionMaterialDigest !== promotionMaterialDigest ||
+        review.promotionLineageDigest !== lineage.lineageDigest ||
+        review.repositoryId !== material.repositoryId ||
+        review.frozenCandidateBundleDigest !==
+            material.frozenCandidateBundleDigest ||
+        review.candidateDigest !== material.candidateDigest ||
+        review.beforeClosureDigest !== material.beforeClosureDigest ||
+        review.afterClosureDigest !== material.afterClosureDigest ||
+        review.recoveryBundleDigest !== material.recoveryBundle.bundleDigest ||
+        !sameJson(review.affectedCapabilities, material.affectedCapabilities)) {
+        throw workflowError('CONTROL_PLANE_REVIEW_MATERIAL_MISMATCH', 'Signed review does not bind the exact v3 promotion material and lineage.', ExitCode.verification);
+    }
+    const payload = {
+        kind: 'control-plane-promotion-bundle.v3',
+        material,
+        promotionMaterialDigest,
+        lineage,
+        promotionLineageDigest: lineage.lineageDigest,
+        independentReviewAttestation: structuredClone(input.independentReviewAttestation),
+    };
+    return freezeDeep({ ...payload, bundleDigest: canonicalDigest(payload) });
+}
+export function verifyControlPlanePromotionBundleV3(value) {
+    if (!hasExactObjectKeys(value, [
+        'bundleDigest',
+        'independentReviewAttestation',
+        'kind',
+        'lineage',
+        'material',
+        'promotionLineageDigest',
+        'promotionMaterialDigest',
+    ]) ||
+        value.kind !== 'control-plane-promotion-bundle.v3') {
+        throw workflowError('CONTROL_PLANE_PROMOTION_BUNDLE_INVALID', 'Promotion bundle v3 has an unknown schema.', ExitCode.guard);
+    }
+    const bundle = value;
+    assertDigest(bundle.promotionMaterialDigest, 'CONTROL_PLANE_PROMOTION_BUNDLE_INVALID');
+    assertDigest(bundle.promotionLineageDigest, 'CONTROL_PLANE_PROMOTION_BUNDLE_INVALID');
+    assertDigest(bundle.bundleDigest, 'CONTROL_PLANE_PROMOTION_BUNDLE_INVALID');
+    const rebuilt = createControlPlanePromotionBundleV3({
+        material: bundle.material,
+        lineage: bundle.lineage,
+        independentReviewAttestation: bundle.independentReviewAttestation,
+    });
+    if (!sameJson(rebuilt, bundle)) {
+        throw workflowError('CONTROL_PLANE_PROMOTION_BUNDLE_MISMATCH', 'Promotion bundle v3 digest or canonical bytes mismatch.', ExitCode.verification);
+    }
+    return rebuilt;
+}
+export function controlPlanePromotionBundleDigestV3(bundle) {
+    return verifyControlPlanePromotionBundleV3(bundle).bundleDigest;
+}
+function grantPayloadV2Projection(payload, promotionBundleDigest, reviewDigest) {
+    const { promotionLineageDigest: _promotionLineageDigest, ...rest } = payload;
+    return {
+        ...rest,
+        kind: 'control-plane-grant.v2',
+        promotionBundleDigest,
+        independentReviewAttestationDigest: reviewDigest,
+        updaterVersion: 2,
+    };
+}
+function validateControlPlaneGrantPayloadV3(value) {
+    if (!hasExactObjectKeys(value, [
+        'affectedCapabilities',
+        'afterClosureDigest',
+        'beforeClosureDigest',
+        'behaviorChangeSummary',
+        'candidateDigest',
+        'exactChanges',
+        'expiresAt',
+        'frozenCandidateBundleDigest',
+        'grantId',
+        'humanSigner',
+        'independentReviewAttestationDigest',
+        'issuedAt',
+        'kind',
+        'mandateBinding',
+        'oneShot',
+        'promotionBundleDigest',
+        'promotionLineageDigest',
+        'promotionMaterialDigest',
+        'recoveryBundle',
+        'repositoryId',
+        'updaterVersion',
+    ]) ||
+        value.kind !== 'control-plane-grant.v3' ||
+        value.updaterVersion !== 3) {
+        throw workflowError('CONTROL_PLANE_GRANT_INVALID', 'Control-Plane Grant v3 has an unknown schema or updater version.', ExitCode.guard);
+    }
+    const payload = value;
+    assertDigest(payload.promotionLineageDigest, 'CONTROL_PLANE_GRANT_INVALID');
+    validateControlPlaneGrantPayloadV2(grantPayloadV2Projection(payload, payload.promotionBundleDigest, payload.independentReviewAttestationDigest));
+}
+function validateControlPlaneGrantEnvelopeV3(value) {
+    if (!hasExactObjectKeys(value, ['payload', 'signature'])) {
+        throw workflowError('CONTROL_PLANE_GRANT_INVALID', 'Control-Plane Grant v3 envelope has an unknown schema.', ExitCode.guard);
+    }
+    const envelope = value;
+    validateControlPlaneGrantPayloadV3(envelope.payload);
+    assertNonEmpty(envelope.signature, 'CONTROL_PLANE_GRANT_INVALID', 'Signature');
+}
+export function canonicalControlPlaneGrantPayloadV3(payload) {
+    validateControlPlaneGrantPayloadV3(payload);
+    return `${canonicalJson(payload)}\n`;
+}
+export function verifyControlPlaneGrantV3(envelope, context) {
+    validateControlPlaneGrantEnvelopeV3(envelope);
+    const payload = envelope.payload;
+    const bundle = verifyControlPlanePromotionBundleV3(context.bundle);
+    if (context.consumedGrantIds.has(payload.grantId)) {
+        throw workflowError('CONTROL_PLANE_GRANT_ALREADY_CONSUMED', 'One-shot Control-Plane Grant v3 has already been consumed.', ExitCode.conflict);
+    }
+    const reviewDigest = controlPlaneIndependentReviewAttestationDigestV3(bundle.independentReviewAttestation);
+    if (payload.promotionBundleDigest !== bundle.bundleDigest ||
+        payload.promotionMaterialDigest !== bundle.promotionMaterialDigest ||
+        payload.promotionLineageDigest !== bundle.promotionLineageDigest ||
+        payload.independentReviewAttestationDigest !== reviewDigest) {
+        throw workflowError('CONTROL_PLANE_PROMOTION_BUNDLE_MISMATCH', 'Control-Plane Grant v3 binds a different material, lineage, review, or bundle.', ExitCode.verification);
+    }
+    // Reuse the complete v2 material/classification/time validation with a
+    // structural projection. Authority is checked separately below against the
+    // actual v3 payloads and namespaces, so no v2 signature can authorize v3.
+    const projectedReview = {
+        payload: reviewPayloadV2Projection(bundle.independentReviewAttestation.payload),
+        signature: bundle.independentReviewAttestation.signature,
+    };
+    const projectedBundle = createControlPlanePromotionBundleV2({
+        material: bundle.material,
+        independentReviewAttestation: projectedReview,
+    });
+    const projectedGrant = {
+        payload: grantPayloadV2Projection(payload, projectedBundle.bundleDigest, controlPlaneIndependentReviewAttestationDigestV2(projectedReview)),
+        signature: envelope.signature,
+    };
+    verifyControlPlaneGrantV2(projectedGrant, {
+        now: context.now,
+        beforeManifest: context.beforeManifest,
+        afterManifest: context.afterManifest,
+        bundle: projectedBundle,
+        consumedGrantIds: context.consumedGrantIds,
+        verifyHumanSignature: () => true,
+    });
+    if (!verifyHumanSignatureSafely(context.verifyHumanSignature, canonicalControlPlaneGrantPayloadV3(payload), envelope.signature, payload.humanSigner, CONTROL_PLANE_SIGNATURE_NAMESPACE_V3)) {
+        throw workflowError('CONTROL_PLANE_GRANT_SIGNATURE_INVALID', 'Human Control-Plane Grant v3 signature could not be verified.', ExitCode.verification);
+    }
+    verifyControlPlaneIndependentReviewAttestationV3(bundle.independentReviewAttestation, {
+        material: bundle.material,
+        lineage: bundle.lineage,
+        expectedDigest: reviewDigest,
+        grantHumanSigner: payload.humanSigner,
+        grantIssuedAt: payload.issuedAt,
+        verifyHumanSignature: context.verifyHumanSignature,
+    });
+    return freezeDeep({
+        payload: {
+            ...payload,
+            mandateBinding: { ...payload.mandateBinding },
+            exactChanges: payload.exactChanges.map((change) => ({ ...change })),
+            affectedCapabilities: [...payload.affectedCapabilities],
+            recoveryBundle: { ...payload.recoveryBundle },
+        },
+        signature: envelope.signature,
+        verifiedAt: context.now.toISOString(),
+        verification: 'human-signature-verified',
+    });
+}
 function minimalUpdaterPayload(tx) {
     return { ...tx };
 }

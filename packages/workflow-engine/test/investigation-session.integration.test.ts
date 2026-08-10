@@ -122,6 +122,7 @@ import {
   sourceRepositoryRoot,
 } from './fixture.ts';
 import { prepareExecutionMandate } from './execution-mandate-fixture.ts';
+import { installPlanReviewAuthority } from './plan-review-authority-fixture.ts';
 import {
   releaseOwnedLock,
   runtimePaths as workflowRuntimePaths,
@@ -891,6 +892,7 @@ test('structured investigation exemption starts a durable planning branch withou
 
 test('fake-backed propose composes breadth and depth before materializing an uncommitted planning draft', () => {
   const repository = createFixtureRepository();
+  const reviewAuthority = installPlanReviewAuthority(repository);
   const changeId = 'fresh-investigation';
   try {
     fs.mkdirSync(path.join(repository, 'docs/archive'), { recursive: true });
@@ -953,6 +955,7 @@ test('fake-backed propose composes breadth and depth before materializing an unc
       'src/investigation-target.ts',
       'docs',
       'workflow/document-policy.json',
+      'workflow/maintainer-policy.json',
     ]);
     git(repository, ['commit', '-m', 'Add investigation target']);
     git(repository, ['checkout', '-b', `work/${changeId}`]);
@@ -2569,6 +2572,9 @@ test('fake-backed propose composes breadth and depth before materializing an unc
       ),
       true,
     );
+    const requiredCoverageEvidence = planReviewCoverageEvidence(
+      twiceRevisedInvestigation,
+    );
 
     runProviderWorker(repository, twiceReplanned.planReview!.invocationId, {
       runner(input): ProviderRunnerReport {
@@ -2595,6 +2601,10 @@ test('fake-backed propose composes breadth and depth before materializing an unc
                     observation:
                       'The reviewer-only term is now represented in the tracked target.',
                   },
+                  ...requiredCoverageEvidence.filter(
+                    ({ path: targetPath }) =>
+                      targetPath !== 'src/investigation-target.ts',
+                  ),
                 ],
               },
             ],
@@ -2654,12 +2664,20 @@ test('fake-backed propose composes breadth and depth before materializing an unc
       createPlanReviewDispositionsEnvelope(awaitingDisposition, [
         {
           challengeId,
-          decision: 'mitigated',
+          decision: 'rebutted',
           rationale:
             'The exact provider worker path and its registered test are in the plan.',
-          author: 'codex',
+          author: reviewAuthority.identity,
+          supersededBy: null,
         },
       ]),
+      {
+        challengeDispositionAuthority: {
+          now: new Date('2026-08-10T00:00:00.000Z'),
+          role: 'reviewer',
+          signer: reviewAuthority.signer,
+        },
+      },
     );
     assert.equal(completedPlanning.state, 'planning-complete');
     assert.equal(completedPlanning.planningTransition?.changeId, changeId);
@@ -2672,9 +2690,39 @@ test('fake-backed propose composes breadth and depth before materializing an unc
       'plan',
     );
   } finally {
+    reviewAuthority.dispose();
     fs.rmSync(repository, { recursive: true, force: true });
   }
 });
+
+function planReviewCoverageEvidence(investigation: {
+  nodes: Array<{ type: string; output: unknown }>;
+}) {
+  const output = investigation.nodes.find(
+    ({ type }) => type === 'plan-review-coverage-requirement',
+  )?.output as
+    | {
+        requiredTargetIds: string[];
+        targetBindings: Array<{ targetId: string; path: string }>;
+      }
+    | undefined;
+  assert.ok(output);
+  const required = new Set(output.requiredTargetIds);
+  return [
+    ...new Set(
+      output.targetBindings
+        .filter(({ targetId }) => required.has(targetId))
+        .map(({ path: targetPath }) => targetPath),
+    ),
+  ]
+    .sort()
+    .map((targetPath) => ({
+      kind: 'repository-location' as const,
+      path: targetPath,
+      line: 1,
+      observation: 'The engine-required review target was examined.',
+    }));
+}
 
 test('reviewer reopen limit preserves exact materialization evidence for human resolution', () => {
   const repository = createFixtureRepository();

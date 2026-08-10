@@ -18,6 +18,8 @@ import { readPlanningTransitionReport } from '../src/planning-report.ts';
 import { loadWorkflowConfig } from '../src/contracts.ts';
 import { discoverRepository } from '../src/git.ts';
 import { committedPlanningGeneration } from '../src/planning-generation-history.ts';
+import { inspectPlanningExecutionEpoch } from '../src/planning-execution-epoch.ts';
+import { withArchiveEligibility } from '../src/archive-eligibility.ts';
 import {
   createPlanningAmendmentDecision,
   readPlanningAmendmentDecision,
@@ -94,6 +96,31 @@ test('amend-plan admits a completed generation with exact task-commit evidence',
         ],
       },
     });
+    const epoch = inspectPlanningExecutionEpoch(repository, 'demo-change');
+    assert.equal(epoch.context.workflow.currentEpoch, 2);
+    assert.equal(epoch.context.workflow.checkpoint, 'execution-complete');
+    assert.deepEqual(
+      epoch.context.currentManifest.items.map(({ identity }) => identity),
+      ['task:1.1'],
+    );
+    assert.deepEqual(
+      epoch.context.transitionReceipts[0]?.schemaVersion === 2
+        ? epoch.context.transitionReceipts[0].carryForwardManifest
+            .carriedForward
+        : null,
+      [
+        {
+          identity: 'task:1.1',
+          reason:
+            'Exact managed task evidence remains valid under the reviewed no-impact amendment.',
+        },
+      ],
+    );
+    assert.ok(
+      epoch.retention.records
+        .filter(({ epoch: evidenceEpoch }) => evidenceEpoch === 1)
+        .every(({ retention }) => retention === 'expiring'),
+    );
     assert.equal(git(repository, ['status', '--porcelain']), '');
   } finally {
     fs.rmSync(repository, { recursive: true, force: true });
@@ -457,6 +484,21 @@ test('required-impact amendment may reopen every task only after the prior gener
       kind: 'reopened',
       taskIds: ['1.1'],
     });
+    const epoch = inspectPlanningExecutionEpoch(repository, 'demo-change');
+    assert.equal(epoch.context.workflow.currentEpoch, 2);
+    assert.equal(
+      epoch.context.workflow.checkpoint,
+      'execution-restart-required',
+    );
+    assert.deepEqual(epoch.context.currentManifest.items, []);
+    assert.deepEqual(epoch.context.transitionReceipts[0]?.invalidated, [
+      'task:1.1',
+    ]);
+    assert.ok(
+      epoch.retention.records
+        .filter(({ epoch: evidenceEpoch }) => evidenceEpoch === 1)
+        .every(({ retention }) => retention === 'expiring'),
+    );
     assert.match(fs.readFileSync(tasksPath, 'utf8'), /- \[ \] 1\.1/);
     assert.equal(git(repository, ['status', '--porcelain']), '');
   } finally {
@@ -497,6 +539,125 @@ test('a completed required-impact re-execution is the exact evidence for the nex
     assert.equal(result.amendment?.executionImpact, 'none');
     assert.deepEqual(result.amendment?.reopenedTasks, []);
     assert.equal(git(repository, ['status', '--porcelain']), '');
+  } finally {
+    fs.rmSync(repository, { recursive: true, force: true });
+  }
+});
+
+test('successive no-impact amendments advance one continuous execution epoch', () => {
+  const repository = plannedV2Fixture();
+  try {
+    completeTask(repository);
+    prepareReviewedCorrection(repository);
+    commitPlanAmendment(repository, 'demo-change', {
+      reason: 'archive-applicability-failure',
+      executionImpact: 'none',
+    });
+    prepareReviewedCorrection(repository);
+
+    commitPlanAmendment(repository, 'demo-change', {
+      reason: 'archive-applicability-failure',
+      executionImpact: 'none',
+    });
+
+    const epoch = inspectPlanningExecutionEpoch(repository, 'demo-change');
+    assert.equal(epoch.context.workflow.currentEpoch, 3);
+    assert.equal(epoch.context.transitionReceipts.length, 2);
+    assert.equal(epoch.context.workflow.checkpoint, 'execution-complete');
+    assert.deepEqual(
+      epoch.context.currentManifest.items.map(({ identity }) => identity),
+      ['task:1.1'],
+    );
+  } finally {
+    fs.rmSync(repository, { recursive: true, force: true });
+  }
+});
+
+test('archive admission projects completed required-impact execution into the current epoch', () => {
+  const repository = plannedV2Fixture();
+  try {
+    completeTask(repository);
+    const tasksPath = path.join(
+      repository,
+      'openspec/changes/demo-change/tasks.md',
+    );
+    fs.writeFileSync(
+      tasksPath,
+      fs.readFileSync(tasksPath, 'utf8').replace('- [x] 1.1', '- [ ] 1.1'),
+    );
+    prepareReviewedCorrection(repository, {
+      reason: 'execution-contract-changed',
+      executionImpact: 'required',
+      rationale:
+        'The execution contract changed, so the completed task must run again.',
+    });
+    commitPlanAmendment(repository, 'demo-change', {
+      reason: 'execution-contract-changed',
+      executionImpact: 'required',
+    });
+    completeTask(repository);
+    git(repository, ['update-ref', 'refs/heads/main', 'HEAD']);
+    syncOriginMain(repository);
+
+    withArchiveEligibility(
+      repository,
+      'demo-change',
+      (eligibility) => eligibility,
+    );
+
+    const epoch = inspectPlanningExecutionEpoch(repository, 'demo-change');
+    assert.equal(epoch.context.workflow.currentEpoch, 3);
+    assert.equal(epoch.context.workflow.checkpoint, 'execution-complete');
+    assert.deepEqual(
+      epoch.context.currentManifest.items.map(({ identity }) => identity),
+      ['task:1.1'],
+    );
+  } finally {
+    fs.rmSync(repository, { recursive: true, force: true });
+  }
+});
+
+test('archive admission recovers an amendment committed before its epoch publication', () => {
+  const repository = plannedV2Fixture();
+  try {
+    completeTask(repository);
+    prepareReviewedCorrection(repository);
+    assert.throws(
+      () =>
+        commitPlanAmendment(
+          repository,
+          'demo-change',
+          {
+            reason: 'archive-applicability-failure',
+            executionImpact: 'none',
+          },
+          process.env,
+          {
+            afterRefUpdateBeforeEpoch: () => {
+              throw new Error(
+                'simulated process crash before epoch publication',
+              );
+            },
+          },
+        ),
+      /simulated process crash/,
+    );
+    git(repository, ['update-ref', 'refs/heads/main', 'HEAD']);
+    syncOriginMain(repository);
+
+    withArchiveEligibility(
+      repository,
+      'demo-change',
+      (eligibility) => eligibility,
+    );
+
+    const epoch = inspectPlanningExecutionEpoch(repository, 'demo-change');
+    assert.equal(epoch.context.workflow.currentEpoch, 2);
+    assert.equal(epoch.context.workflow.checkpoint, 'execution-complete');
+    assert.deepEqual(
+      epoch.context.currentManifest.items.map(({ identity }) => identity),
+      ['task:1.1'],
+    );
   } finally {
     fs.rmSync(repository, { recursive: true, force: true });
   }
