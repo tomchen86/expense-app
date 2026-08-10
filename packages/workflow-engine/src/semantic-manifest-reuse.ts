@@ -156,9 +156,16 @@ export function applyLedgerToFullBlobManifest(
       owed.push(manifestEntry);
     }
   }
+  const owedIds = new Set(owed.map(({ manifestEntryId }) => manifestEntryId));
+  const canonicallyOrderedOwed = manifest.filter(({ manifestEntryId }) =>
+    owedIds.has(manifestEntryId),
+  );
 
   return Object.freeze({
-    owed: Object.freeze(owed),
+    // Reuse candidates are resolved after unindexed rows. Filtering the input
+    // manifest restores its raw-path order so a stale candidate cannot make a
+    // later WHY checkpoint structurally invalid merely by being reconsidered.
+    owed: Object.freeze(canonicallyOrderedOwed),
     carried: Object.freeze(carried),
     plan,
   });

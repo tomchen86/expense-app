@@ -36,6 +36,7 @@ import {
   type PlanReviewTargetSnapshot,
   type PlanReviewSubject,
 } from './plan-review.ts';
+import { assertPlanReviewCoverageRequirementSatisfied } from './plan-review-coverage.ts';
 import {
   validatePlanReview,
   type PlanReviewPlanningEvidence,
@@ -246,6 +247,36 @@ export function validateInvestigationFirstPlanningReadiness(
         },
       },
     );
+  }
+  const coverageRequirementNodes = contract.investigation!.nodes.filter(
+    ({ type }) => type === 'plan-review-coverage-requirement',
+  );
+  if (coverageRequirementNodes.length > 1) {
+    throw planningNotReady(
+      'Investigation contains more than one engine-owned PlanReview coverage requirement.',
+    );
+  }
+  const coverageRequirementNode = coverageRequirementNodes[0] ?? null;
+  if (coverageRequirementNode !== null) {
+    if (
+      context.applicability.kind !== 'sealed-investigation' ||
+      context.applicabilityNode.provenanceParentNodeIds['review-coverage'] !==
+        coverageRequirementNode.nodeId ||
+      context.applicabilityNode.semanticParentResultDigests[
+        'review-coverage'
+      ] !== coverageRequirementNode.resultDigest
+    ) {
+      throw planningNotReady(
+        'PlanReview coverage requirement is not a current sealed-investigation dependency.',
+      );
+    }
+    assertPlanReviewCoverageRequirementSatisfied({
+      repositoryRoot,
+      requirementNode: coverageRequirementNode,
+      review,
+      expectedChangeId: contract.changeId,
+      expectedBaseline: context.generation.investigationBaseline,
+    });
   }
   const summary: InvestigationFirstPlanningAssuranceSummary = {
     applicabilityKind: context.applicability.kind,

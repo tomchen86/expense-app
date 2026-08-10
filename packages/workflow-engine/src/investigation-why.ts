@@ -264,13 +264,41 @@ export function deriveInvestigationFullBlobManifest(input: {
  * pinned bytes never leave the runtime manifest.
  */
 export function createInvestigationWhyNodes(input: {
+  /**
+   * Rows that still owe a fresh WHY answer. A semantic-ledger carry may make
+   * this a strict subset of the load-bearing coverage manifest.
+   */
   manifest: InvestigationFullBlobManifestEntry[];
+  /**
+   * Complete engine-derived load-bearing coverage, including rows whose exact
+   * understanding was carried from the ledger. When omitted, `manifest`
+   * remains the complete coverage for historical callers.
+   */
+  coverageManifest?: InvestigationFullBlobManifestEntry[];
   hitNodes: EvidenceNode[];
   groupNodes: EvidenceNode[];
   dispositionNodes: EvidenceNode[];
   answers: InvestigationWhyAnswer[];
 }): EvidenceNode[] {
   const manifest = assertManifestEntries(input.manifest);
+  const coverageManifest =
+    input.coverageManifest === undefined
+      ? manifest
+      : assertManifestEntries(input.coverageManifest);
+  const coverageById = new Map(
+    coverageManifest.map((entry) => [entry.manifestEntryId, entry]),
+  );
+  for (const entry of manifest) {
+    const covered = coverageById.get(entry.manifestEntryId);
+    if (
+      covered === undefined ||
+      canonicalJson(covered) !== canonicalJson(entry)
+    ) {
+      throw whyInvalid(
+        'Fresh WHY rows must be an exact subset of complete load-bearing coverage.',
+      );
+    }
+  }
   const manifestById = new Map(
     manifest.map((entry): [string, InvestigationFullBlobManifestEntry] => [
       entry.manifestEntryId,
@@ -281,7 +309,7 @@ export function createInvestigationWhyNodes(input: {
   const groupRecords = indexGroupNodes(input.groupNodes);
   const dispositionRecords = indexDispositionNodes(input.dispositionNodes);
   validateManifestEvidenceBindings(
-    manifest,
+    coverageManifest,
     hitRecords,
     groupRecords,
     dispositionRecords,
