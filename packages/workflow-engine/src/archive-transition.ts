@@ -18,7 +18,7 @@ import {
   type ArchiveTransformation,
 } from './archive-transformation.ts';
 import { loadWorkflowConfig } from './contracts.ts';
-import { ExitCode, workflowError } from './errors.ts';
+import { ExitCode, WorkflowError, workflowError } from './errors.ts';
 import { ensurePlainDirectory } from './filesystem-safety.ts';
 import {
   archiveCommitMessage,
@@ -46,6 +46,7 @@ export type ArchiveTransitionResult = {
 };
 
 export type ArchiveTransitionTestHooks = {
+  now?(): Date;
   beforeApply?(context: { repositoryRoot: string }): void;
   beforeRefUpdate?(context: {
     repositoryRoot: string;
@@ -63,11 +64,35 @@ export function commitArchiveTransition(
 ): ArchiveTransitionResult {
   const existing = findExistingArchive(cwd, requestedChangeId);
   if (existing) return existing;
+  const now = testHooks.now ?? (() => new Date());
   return withArchiveEligibility(
     cwd,
     requestedChangeId,
-    (eligibility, assertOwned) =>
-      commitEligibleArchive(eligibility, environment, testHooks, assertOwned),
+    (eligibility, assertOwned, refreshEligibility) => {
+      try {
+        return commitEligibleArchive(
+          eligibility,
+          environment,
+          testHooks,
+          assertOwned,
+          now,
+        );
+      } catch (error) {
+        const rolloverDate = archiveRolloverDate(error);
+        if (rolloverDate === undefined) throw error;
+        const refreshed = refreshEligibility(
+          new Date(`${rolloverDate}T00:00:00.000Z`),
+        );
+        return commitEligibleArchive(
+          refreshed,
+          environment,
+          testHooks,
+          assertOwned,
+          now,
+        );
+      }
+    },
+    now(),
   );
 }
 
@@ -76,10 +101,10 @@ function commitEligibleArchive(
   environment: NodeJS.ProcessEnv,
   testHooks: ArchiveTransitionTestHooks,
   assertOwned: () => void,
+  now: () => Date,
 ): ArchiveTransitionResult {
-  const transformation = createArchiveTransformation(eligibility);
-  const delta = verifyArchiveDeltaOutcomes(
-    eligibility.repositoryRoot,
+  const transformation = createArchiveTransformation(eligibility, { now });
+  const delta = verifyArchiveDeltaOutcomesForTransition(
     eligibility,
     transformation,
   );
@@ -203,6 +228,66 @@ function commitEligibleArchive(
   } catch (error) {
     if (applied && !refUpdated) rollbackPatch(eligibility, patchPath);
     throw error;
+  }
+}
+
+function archiveRolloverDate(error: unknown): string | undefined {
+  if (
+    !(error instanceof WorkflowError) ||
+    error.code !== 'ARCHIVE_UTC_DATE_ROLLOVER'
+  ) {
+    return undefined;
+  }
+  const observedDate = error.details?.observedDate;
+  if (
+    typeof observedDate !== 'string' ||
+    !/^\d{4}-\d{2}-\d{2}$/.test(observedDate)
+  ) {
+    throw error;
+  }
+  const parsed = new Date(`${observedDate}T00:00:00.000Z`);
+  if (
+    !Number.isFinite(parsed.getTime()) ||
+    parsed.toISOString().slice(0, 10) !== observedDate
+  ) {
+    throw error;
+  }
+  return observedDate;
+}
+
+/**
+ * The shared verifier names an inapplicable declaration precisely for plan
+ * preflight callers. Archive's public transition predates that core and keeps
+ * its stable outer outcome code while retaining the structured inner fault.
+ */
+function verifyArchiveDeltaOutcomesForTransition(
+  eligibility: ArchiveEligibility,
+  transformation: ArchiveTransformation,
+) {
+  try {
+    return verifyArchiveDeltaOutcomes(
+      eligibility.repositoryRoot,
+      eligibility,
+      transformation,
+    );
+  } catch (error) {
+    if (
+      !(error instanceof WorkflowError) ||
+      error.code !== 'SPEC_DELTA_NOT_APPLICABLE'
+    ) {
+      throw error;
+    }
+    throw workflowError(
+      'ARCHIVE_DELTA_OUTCOME_INVALID',
+      'Archived base specifications do not match declared delta operations.',
+      ExitCode.verification,
+      {
+        details: {
+          causeCode: error.code,
+          ...(error.details ?? {}),
+        },
+      },
+    );
   }
 }
 
