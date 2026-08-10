@@ -35,6 +35,7 @@ import {
 } from './execution-grant-cli.ts';
 import { parseExecutionBudgetGrantRequest } from './execution-governance.ts';
 import {
+  EXTERNAL_EFFECT_MAX_TTL_SECONDS,
   externalEffectStorePaths,
   inspectExternalEffectGrant,
   issueExternalEffectGrant,
@@ -72,7 +73,9 @@ import {
   type HumanResolutionGrantRequest,
 } from './maintainer-grant.ts';
 import {
+  parseMaintainerEvidenceWaivers,
   preflightMaintainerGrantV2,
+  type MaintainerEvidenceWaiver,
   type MaintainerGrantV2PreflightRequest,
 } from './maintainer-grant-v2.ts';
 import {
@@ -99,8 +102,10 @@ import {
 import { parseMaintainerPolicy } from './maintainer-policy.ts';
 import {
   approveAndApplyMaintainerGrantV2,
+  reissueAndApplyMaintainerGrantV2,
   revokeMaintainerGrantV2,
   type ApproveAndApplyMaintainerGrantV2Request,
+  type ReissueAndApplyMaintainerGrantV2Request,
 } from './maintainer-approve.ts';
 import type { CandidateExternalEffect } from './maintainer-candidate.ts';
 import {
@@ -111,12 +116,16 @@ import { createHarnessBootstrapDependencies } from './harness-bootstrap.ts';
 import { dispatchInterventionControlCommand } from './intervention-control-cli.ts';
 import {
   controlPlaneTaskMandateBindingFromTaskMandate,
-  dispatchControlPlaneUpdaterCommand,
+  dispatchProductionControlPlaneUpdaterCommand,
 } from './intervention-control-updater-cli.ts';
+import {
+  produceControlPlaneApprovalCandidateV2,
+  type ControlPlanePromotionReviewSummaryV2,
+} from './control-plane-promotion-producer.ts';
 import {
   assertSameControlPlaneTaskMandateBinding,
   type ControlPlaneTaskMandateValidationPhase,
-  type ControlPlaneApprovalSummary,
+  type ControlPlaneApprovalSummaryV2,
   type ControlPlaneUpdaterAuditRecord,
 } from './intervention-control-updater.ts';
 import {
@@ -274,18 +283,29 @@ function dispatch(args: string[], cwd: string): CommandResult {
       // Both arguments are mandatory: an amendment that has not said why it
       // was needed, or whether the work already done still stands, has not
       // answered the questions the transition exists to ask.
-      requireArgumentCount(command, rest, 5, 5);
-      if (rest[1] !== '--reason' || rest[3] !== '--execution-impact') {
+      const usesChangeOption = rest[0] === '--change';
+      const changeIdOffset = usesChangeOption ? 1 : 0;
+      const expectedArgumentCount = usesChangeOption ? 6 : 5;
+      requireArgumentCount(
+        command,
+        rest,
+        expectedArgumentCount,
+        expectedArgumentCount,
+      );
+      if (
+        rest[changeIdOffset + 1] !== '--reason' ||
+        rest[changeIdOffset + 3] !== '--execution-impact'
+      ) {
         throw usage(
-          'workflow amend-plan <change-id> --reason <code> --execution-impact <none|required>',
+          'workflow amend-plan (--change <change-id>|<change-id>) --reason <code> --execution-impact <none|required>',
         );
       }
       return {
         command,
         ok: true,
-        result: commitPlanAmendment(cwd, rest[0]!, {
-          reason: rest[2]!,
-          executionImpact: rest[4] as 'none' | 'required',
+        result: commitPlanAmendment(cwd, rest[changeIdOffset]!, {
+          reason: rest[changeIdOffset + 2]!,
+          executionImpact: rest[changeIdOffset + 4] as 'none' | 'required',
         }),
       };
     }
@@ -471,11 +491,17 @@ function dispatch(args: string[], cwd: string): CommandResult {
         rest[15] === '--idempotency-key' &&
         (rest.length === 17 || rest[17] === '--ttl-seconds')
       ) {
+        const ttlToken = rest.length === 19 ? rest[18]! : undefined;
+        if (ttlToken !== undefined && !/^[1-9][0-9]*$/.test(ttlToken)) {
+          throw externalEffectUsage();
+        }
         const ttlSeconds =
-          rest.length === 19 ? Number.parseInt(rest[18]!, 10) : undefined;
+          ttlToken === undefined ? undefined : Number(ttlToken);
         if (
           ttlSeconds !== undefined &&
-          (!Number.isSafeInteger(ttlSeconds) || ttlSeconds < 1)
+          (!Number.isSafeInteger(ttlSeconds) ||
+            ttlSeconds < 1 ||
+            ttlSeconds > EXTERNAL_EFFECT_MAX_TTL_SECONDS)
         ) {
           throw externalEffectUsage();
         }
@@ -755,9 +781,13 @@ function dispatch(args: string[], cwd: string): CommandResult {
       };
     case 'control-plane':
       if (
-        ['approve-and-apply', 'promote', 'recover', 'status'].includes(
-          rest[0] ?? '',
-        )
+        [
+          'produce',
+          'approve-and-apply',
+          'promote',
+          'recover',
+          'status',
+        ].includes(rest[0] ?? '')
       ) {
         return {
           command,
@@ -985,6 +1015,15 @@ function dispatch(args: string[], cwd: string): CommandResult {
           action: 'grant-approve-and-apply',
           ok: true,
           result: approveAndApplyMaintainerGrantV2(cwd, request),
+        };
+      }
+      if (rest[0] === 'grant' && rest[1] === 'reissue-and-apply') {
+        const request = parseMaintainerReissueAndApplyArguments(rest, cwd);
+        return {
+          command,
+          action: 'grant-reissue-and-apply',
+          ok: true,
+          result: reissueAndApplyMaintainerGrantV2(cwd, request),
         };
       }
       if (rest[0] === 'grant') {
@@ -1453,6 +1492,7 @@ function parseMaintainerApproveAndApplyArguments(
         '--reason',
         '--message',
         '--effects-file',
+        '--waivers-file',
       ].includes(option) ||
       scalar.has(option)
     ) {
@@ -1466,6 +1506,7 @@ function parseMaintainerApproveAndApplyArguments(
   const reason = scalar.get('--reason');
   const message = scalar.get('--message');
   const effectsFile = scalar.get('--effects-file');
+  const waiversFile = scalar.get('--waivers-file');
   if (
     !changeId ||
     !taskId ||
@@ -1486,6 +1527,76 @@ function parseMaintainerApproveAndApplyArguments(
       effectsFile === 'none'
         ? []
         : readCandidateExternalEffectsDeclaration(effectsFile, cwd),
+    ...(waiversFile === undefined
+      ? {}
+      : {
+          evidenceWaivers:
+            waiversFile === 'none'
+              ? []
+              : readMaintainerEvidenceWaiversDeclaration(waiversFile, cwd),
+        }),
+  };
+}
+
+function parseMaintainerReissueAndApplyArguments(
+  args: string[],
+  cwd: string,
+): ReissueAndApplyMaintainerGrantV2Request {
+  if (args[0] !== 'grant' || args[1] !== 'reissue-and-apply') {
+    throw maintainerReissueAndApplyUsage();
+  }
+  const values = args.slice(2);
+  const scalar = new Map<string, string>();
+  for (let index = 0; index < values.length; index += 2) {
+    const option = values[index];
+    const value = values[index + 1];
+    if (
+      !option ||
+      !value ||
+      !['--grant', '--reason', '--ttl-minutes', '--waivers-file'].includes(
+        option,
+      ) ||
+      scalar.has(option)
+    ) {
+      throw maintainerReissueAndApplyUsage();
+    }
+    scalar.set(option, value);
+  }
+  const priorGrantId = scalar.get('--grant');
+  const reason = scalar.get('--reason');
+  const waiversFile = scalar.get('--waivers-file');
+  if (!priorGrantId || !reason) {
+    throw maintainerReissueAndApplyUsage();
+  }
+  const requestedTtlMinutes = scalar.get('--ttl-minutes');
+  if (
+    requestedTtlMinutes !== undefined &&
+    !/^[1-9][0-9]*$/.test(requestedTtlMinutes)
+  ) {
+    throw maintainerReissueAndApplyUsage();
+  }
+  const ttlMinutes =
+    requestedTtlMinutes === undefined
+      ? undefined
+      : Number.parseInt(requestedTtlMinutes, 10);
+  if (
+    ttlMinutes !== undefined &&
+    (!Number.isSafeInteger(ttlMinutes) || ttlMinutes < 1)
+  ) {
+    throw maintainerReissueAndApplyUsage();
+  }
+  return {
+    priorGrantId,
+    reason,
+    ...(ttlMinutes === undefined ? {} : { ttlMinutes }),
+    ...(waiversFile === undefined
+      ? {}
+      : {
+          evidenceWaivers:
+            waiversFile === 'none'
+              ? []
+              : readMaintainerEvidenceWaiversDeclaration(waiversFile, cwd),
+        }),
   };
 }
 
@@ -1508,6 +1619,25 @@ function readCandidateExternalEffectsDeclaration(
   }
 }
 
+function readMaintainerEvidenceWaiversDeclaration(
+  requestedPath: string,
+  cwd: string,
+): MaintainerEvidenceWaiver[] {
+  try {
+    return parseMaintainerEvidenceWaivers(
+      JSON.parse(
+        fs.readFileSync(path.resolve(cwd, requestedPath), 'utf8'),
+      ) as unknown,
+    );
+  } catch {
+    throw workflowError(
+      'MAINTAINER_EVIDENCE_WAIVER_DECLARATION_INVALID',
+      'Evidence waiver declaration must be a readable JSON array of sorted {checkId, reason} entries or explicit none.',
+      ExitCode.usage,
+    );
+  }
+}
+
 function maintainerGrantV2PreflightUsage(): WorkflowError {
   return usage(
     'Usage: pnpm workflow maintainer grant preflight --profile <profile-id> [--json]',
@@ -1516,7 +1646,13 @@ function maintainerGrantV2PreflightUsage(): WorkflowError {
 
 function maintainerApproveAndApplyUsage(): WorkflowError {
   return usage(
-    'Usage: pnpm workflow maintainer grant approve-and-apply --change <change-id> --task <mandate-task-id> --profile <profile-id> --reason <text> --message <subject> --effects-file <json|none> [--json]',
+    'Usage: pnpm workflow maintainer grant approve-and-apply --change <change-id> --task <mandate-task-id> --profile <profile-id> --reason <text> --message <subject> --effects-file <json|none> [--waivers-file <json|none>] [--json]',
+  );
+}
+
+function maintainerReissueAndApplyUsage(): WorkflowError {
+  return usage(
+    'Usage: pnpm workflow maintainer grant reissue-and-apply --grant <prior-grant-id> --reason <text> [--ttl-minutes <positive-integer>] [--waivers-file <json|none>] [--json]',
   );
 }
 
@@ -1930,10 +2066,28 @@ function dispatchProductionControlPlaneCommand(rest: string[], cwd: string) {
   const stateRoot = bootstrapInterventionStateRoot(
     repository.gitCommonDirectory,
   );
-  return dispatchControlPlaneUpdaterCommand(
+  const dependencies = controlPlaneUpdaterDependencies(cwd);
+  if (rest[0] === 'produce' && rest.length === 2) {
+    return produceControlPlaneApprovalCandidateV2(
+      repository.repositoryRealPath,
+      stateRoot,
+      rest[1]!,
+      {
+        now: dependencies.now,
+        // NEEDS-EXPLICIT-USER-AUTHORIZATION: the current real policy has one
+        // trusted identity, while V2 intentionally requires the later grant
+        // signer to differ from this reviewer. Production therefore produces
+        // review material but fails closed before same-key grant signing.
+        reviewSigner: dependencies.approvalSigner,
+        verifyHumanSignature: dependencies.verifyHumanSignature,
+        presentReviewSummary: dependencies.presentReviewSummary,
+      },
+    );
+  }
+  return dispatchProductionControlPlaneUpdaterCommand(
     rest,
     stateRoot,
-    controlPlaneUpdaterDependencies(cwd),
+    dependencies,
     cwd,
   );
 }
@@ -1991,7 +2145,10 @@ function controlPlaneUpdaterDependencies(cwd: string) {
       );
       assertSameControlPlaneTaskMandateBinding(binding, current);
     },
-    presentApprovalSummary(summary: ControlPlaneApprovalSummary): void {
+    presentApprovalSummaryV2(summary: ControlPlaneApprovalSummaryV2): void {
+      process.stderr.write(`\n${summary.humanReadable}\n\n`);
+    },
+    presentReviewSummary(summary: ControlPlanePromotionReviewSummaryV2): void {
       process.stderr.write(`\n${summary.humanReadable}\n\n`);
     },
     consumedGrantIds: new Set<string>(),
@@ -2088,6 +2245,7 @@ function usageText(): string {
     '  pnpm workflow propose <change-id> --intent <intent.json> --mandate <mandate-task-id> [--actor <id>] [--grant <grant-id>] [--migrate-legacy] [--json]',
     '  pnpm workflow propose <change-id> --resume --input <envelope.json> [--grant <grant-id>] [--json]',
     '  pnpm workflow plan-commit <change-id> [--json]',
+    '  pnpm workflow amend-plan --change <change-id> --reason <code> --execution-impact <none|required> [--json]',
     '  pnpm workflow archive <change-id> [--json]',
     '  pnpm workflow openspec-assets <generate|check|install-prompts --codex-home <path>> [--json]',
     '  pnpm workflow job list [--json]',
@@ -2124,6 +2282,7 @@ function usageText(): string {
     '  pnpm workflow intervention prepare-adoption <parent-change-id> --request <manifest.json> [--json]',
     '  pnpm workflow intervention adopt <tx-id> --request <manifest.json> [--json]',
     '  pnpm workflow intervention recover <tx-id> [--json]',
+    '  pnpm workflow control-plane produce <frozen-candidate-bundle-digest> [--json]',
     '  pnpm workflow control-plane approve-and-apply <candidate-id> --task <parent-task-id> [--json]',
     '  pnpm workflow control-plane recover <grant-id> [--json]',
     '  pnpm workflow control-plane status <grant-id> [--json]',
@@ -2137,7 +2296,8 @@ function usageText(): string {
     '  pnpm workflow adapter evaluate [--json]',
     '  pnpm workflow issue <add|update|close|render|validate> ... [--json]',
     '  pnpm workflow maintainer grant preflight --profile <profile-id> [--json]',
-    '  pnpm workflow maintainer grant approve-and-apply --change <change-id> --task <mandate-task-id> --profile <profile-id> --reason <text> --message <subject> --effects-file <json|none> [--json]',
+    '  pnpm workflow maintainer grant approve-and-apply --change <change-id> --task <mandate-task-id> --profile <profile-id> --reason <text> --message <subject> --effects-file <json|none> [--waivers-file <json|none>] [--json]',
+    '  pnpm workflow maintainer grant reissue-and-apply --grant <prior-grant-id> --reason <text> [--ttl-minutes <positive-integer>] [--waivers-file <json|none>] [--json]',
     '  pnpm workflow maintainer resolution-grant --investigation <id> --decision <kind> --continuity <mode> --assurance <mode> --rationale <text> [--json]',
     '  pnpm workflow maintainer resolution-inspect [grant-id] [--json]',
     '  pnpm workflow maintainer resolution-publication-discard <grant-id> --expected-publication-state <digest> --reason <text> [--json]',

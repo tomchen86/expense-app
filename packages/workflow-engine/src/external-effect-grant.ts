@@ -1704,8 +1704,9 @@ function createObservation(
 }
 
 function parseRequest(request: ExternalEffectGrantRequest) {
+  const hasOwnTtlSeconds = Object.hasOwn(request, 'ttlSeconds');
   if (
-    !isRecord(request) ||
+    !isPlainOwnDataRecord(request) ||
     !hasExactKeys(request, [
       'mandateBinding',
       'effectKind',
@@ -1713,7 +1714,7 @@ function parseRequest(request: ExternalEffectGrantRequest) {
       'artifactDigest',
       'prestateDigest',
       'rollbackPlan',
-      'ttlSeconds',
+      ...(hasOwnTtlSeconds ? ['ttlSeconds'] : []),
       'idempotencyKey',
     ]) ||
     !isRecord(request.mandateBinding) ||
@@ -1742,7 +1743,7 @@ function parseRequest(request: ExternalEffectGrantRequest) {
     !DIGEST.test(String(request.prestateDigest)) ||
     typeof request.idempotencyKey !== 'string' ||
     !IDEMPOTENCY_KEY.test(request.idempotencyKey) ||
-    (request.ttlSeconds !== undefined && typeof request.ttlSeconds !== 'number')
+    (hasOwnTtlSeconds && typeof request.ttlSeconds !== 'number')
   ) {
     throw invalidGrant();
   }
@@ -1772,9 +1773,32 @@ function parseRequest(request: ExternalEffectGrantRequest) {
     artifactDigest: request.artifactDigest as Sha256Digest,
     prestateDigest: request.prestateDigest as Sha256Digest,
     rollbackPlan: parseRollback(request.rollbackPlan),
-    ttlSeconds: request.ttlSeconds,
+    ttlSeconds: hasOwnTtlSeconds ? request.ttlSeconds : undefined,
     idempotencyKey: request.idempotencyKey,
   };
+}
+
+function isPlainOwnDataRecord(
+  value: unknown,
+): value is Record<string, unknown> {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    return false;
+  }
+  try {
+    const prototype = Object.getPrototypeOf(value);
+    if (prototype !== Object.prototype && prototype !== null) return false;
+    return Reflect.ownKeys(value).every((key) => {
+      if (typeof key !== 'string') return false;
+      const descriptor = Object.getOwnPropertyDescriptor(value, key);
+      return (
+        descriptor !== undefined &&
+        'value' in descriptor &&
+        descriptor.enumerable === true
+      );
+    });
+  } catch {
+    return false;
+  }
 }
 
 function parsePayload(value: unknown): ExternalEffectGrantPayload {
