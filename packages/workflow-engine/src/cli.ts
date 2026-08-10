@@ -145,6 +145,10 @@ import {
   type HumanResolutionConsequences,
   type HumanResolutionDecision,
 } from './investigation-session-store.ts';
+import {
+  inspectImplementationReconciliation,
+  recordImplementationReconciliation,
+} from './implementation-reconciliation.ts';
 import { loadInvestigationRuntimeContext } from './lifecycle-context.ts';
 import {
   commitSession,
@@ -730,6 +734,46 @@ function dispatch(args: string[], cwd: string): CommandResult {
         };
       }
       throw usage('workflow assurance inspect <change-id>');
+    }
+    case 'semantic-ledger': {
+      if (
+        rest[0] === 'reconcile' &&
+        rest[1] === '--change' &&
+        rest.length === 3
+      ) {
+        return {
+          command,
+          action: 'reconcile-inspect',
+          ok: true,
+          result: inspectImplementationReconciliation(cwd, rest[2]!),
+        };
+      }
+      if (
+        rest[0] === 'reconcile' &&
+        rest[1] === '--change' &&
+        rest[3] === '--input' &&
+        rest.length === 5
+      ) {
+        let input: unknown;
+        try {
+          input = JSON.parse(
+            fs.readFileSync(path.resolve(cwd, rest[4]!), 'utf8'),
+          );
+        } catch {
+          throw usage(
+            'workflow semantic-ledger reconcile --change <change-id> --input <json>',
+          );
+        }
+        return {
+          command,
+          action: 'reconcile',
+          ok: true,
+          result: recordImplementationReconciliation(cwd, rest[2]!, input),
+        };
+      }
+      throw usage(
+        'workflow semantic-ledger reconcile --change <change-id> [--input <json>]',
+      );
     }
     case 'retention': {
       if (rest.length === 1 && rest[0] === 'inspect') {
@@ -2258,6 +2302,7 @@ function usageText(): string {
     '  pnpm workflow job retry <job-id> --grant <grant-id> [--json]',
     '  pnpm workflow job retry-preview <job-id> --timeout <milliseconds> [--json]',
     '  pnpm workflow metrics show [--json]',
+    '  pnpm workflow semantic-ledger reconcile --change <change-id> [--input <json>] [--json]',
     '  pnpm workflow retention inspect [--json]',
     '  pnpm workflow retention sweep --limit <count> [--json]',
     '  pnpm workflow retention pin <workflow-id> <evidence-id> --reason <text> [--json]',

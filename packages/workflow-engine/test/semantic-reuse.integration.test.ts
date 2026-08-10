@@ -127,6 +127,38 @@ test('a superseded entry may not be made current', () => {
   );
 });
 
+test('a tombstone retires exactly the current entry without deleting history', () => {
+  const root = repository();
+  const current = entryFor('alpha');
+  writeLedgerEntry(root, current);
+  updateLedgerIndex(root, [current]);
+  const tombstone = entryFor('alpha', {
+    binding: {
+      ...current.binding,
+      sourceDigest: `sha256:${'8'.repeat(64)}`,
+      semanticDigest: `sha256:${'9'.repeat(64)}`,
+    },
+    supersedes: current.entryId,
+    status: 'tombstone',
+  });
+  writeLedgerEntry(root, tombstone);
+  updateLedgerIndex(root, [tombstone]);
+
+  assert.equal(readLedgerIndex(root).subjects.alpha, undefined);
+  assert.deepEqual(readLedgerEntry(root, current.entryId), current);
+  assert.deepEqual(readLedgerEntry(root, tombstone.entryId), tombstone);
+
+  const wrong = entryFor('alpha', {
+    supersedes: `sha256:${'f'.repeat(64)}`,
+    status: 'tombstone',
+  });
+  writeLedgerEntry(root, wrong);
+  assert.throws(
+    () => updateLedgerIndex(root, [wrong]),
+    (error) => isWorkflowError(error, 'SEMANTIC_LEDGER_STORE_INVALID'),
+  );
+});
+
 test('a change pays depth only for what stopped holding', () => {
   // The whole point: thirty-six subjects in reach, four that actually moved.
   const subjects = Array.from({ length: 36 }, (_, index) => `subject-${index}`);

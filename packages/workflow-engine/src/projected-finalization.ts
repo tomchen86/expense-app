@@ -10,6 +10,7 @@ import {
   rollbackGeneratedDocuments,
   type GeneratedDocumentMutation,
 } from './managed-documents.ts';
+import { assertCurrentImplementationReconciliation } from './implementation-reconciliation.ts';
 import { reconcilePredecessor } from './predecessor-reconciliation.ts';
 import type { WorkflowReport } from './report-store.ts';
 import type { WorkflowSession } from './session-store.ts';
@@ -66,6 +67,7 @@ export function finalizeTaskUnlocked(
       ExitCode.staleState,
     );
   }
+  assertCurrentImplementationReconciliation(initial);
 
   const reconciliation = reconcilePredecessor(cwd, initial, environment);
   const completedTaskIds = [

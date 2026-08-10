@@ -66,6 +66,10 @@ import {
   planClassSampleAudits,
   resolveSampleAudits,
 } from './class-sample-audit.ts';
+import {
+  createImplementationReconciliationRequirementNode,
+  IMPLEMENTATION_RECONCILIATION_POLICY_DIGEST,
+} from './implementation-reconciliation.ts';
 import { deriveDeclaredPathSymbols } from './declared-path-symbols.ts';
 import {
   FLOOR_OVERFLOW_MANDATORY_CONTRIBUTION_RESERVE,
@@ -6613,7 +6617,20 @@ function preparePlanningScaffold(
       : managedPriorGeneration
         ? committedMetadata
         : `schema: expense-app-v2\ncreated: ${createdDate}\n`;
-  const sealNode = createInvestigationSealNode(rebuilt);
+  const implementationReconciliationNode =
+    rebuilt.session.implementationReconciliationPolicyDigest ===
+    IMPLEMENTATION_RECONCILIATION_POLICY_DIGEST
+      ? createImplementationReconciliationRequirementNode({
+          changeId: status.changeId,
+          baseline: rebuilt.session.baseline,
+          intent: rebuilt.intent,
+          whyNodes: rebuilt.whyNodes,
+        })
+      : null;
+  const sealNode = createInvestigationSealNode(
+    rebuilt,
+    implementationReconciliationNode,
+  );
   const applicability = createInvestigationApplicability({
     kind: 'sealed-investigation',
     baseline: rebuilt.session.baseline,
@@ -6645,6 +6662,9 @@ function preparePlanningScaffold(
       ? []
       : [rebuilt.reviewCoverageNode]),
     ...rebuilt.whyNodes,
+    ...(implementationReconciliationNode === null
+      ? []
+      : [implementationReconciliationNode]),
     sealNode,
   ]);
   const investigation = parseInvestigationArtifact(
@@ -6656,6 +6676,12 @@ function preparePlanningScaffold(
       nodes,
       currentRefs: {
         coverage: rebuilt.coverageNode.nodeId,
+        ...(implementationReconciliationNode === null
+          ? {}
+          : {
+              implementationReconciliation:
+                implementationReconciliationNode.nodeId,
+            }),
         sealedInvestigation: sealNode.nodeId,
       },
       applicability,
@@ -6712,6 +6738,16 @@ function preparePlanningScaffold(
 
 function createInvestigationSealNode(
   rebuilt: RebuiltInvestigation,
+  implementationReconciliationNode: EvidenceNode | null = rebuilt.session
+    .implementationReconciliationPolicyDigest ===
+  IMPLEMENTATION_RECONCILIATION_POLICY_DIGEST
+    ? createImplementationReconciliationRequirementNode({
+        changeId: rebuilt.session.changeId,
+        baseline: rebuilt.session.baseline,
+        intent: rebuilt.intent,
+        whyNodes: rebuilt.whyNodes,
+      })
+    : null,
 ): EvidenceNode {
   const coverage = rebuilt.coverageNode;
   if (coverage === null) {
@@ -6727,6 +6763,12 @@ function createInvestigationSealNode(
   };
   provenance.authorization = rebuilt.authorizationNode.nodeId;
   semantic.authorization = rebuilt.authorizationNode.resultDigest;
+  if (implementationReconciliationNode !== null) {
+    provenance['implementation-reconciliation'] =
+      implementationReconciliationNode.nodeId;
+    semantic['implementation-reconciliation'] =
+      implementationReconciliationNode.resultDigest;
+  }
   if (rebuilt.assuranceAssessmentNode === null) {
     throw workflowError(
       'INVESTIGATION_NOT_SEALED',

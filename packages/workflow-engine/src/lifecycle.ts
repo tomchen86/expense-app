@@ -33,6 +33,7 @@ import {
   finalizeTaskUnlocked,
   type FinalizeTaskResult,
 } from './projected-finalization.ts';
+import { assertCurrentImplementationReconciliation } from './implementation-reconciliation.ts';
 import { readImmutableReport, type WorkflowReport } from './report-store.ts';
 import {
   assertCompletionTaskIds,
@@ -399,6 +400,7 @@ function completeTaskUnlocked(
   if (checkReport.parentReportId !== undefined) {
     throw staleReport('CHECK_REPORT_STALE');
   }
+  assertCurrentImplementationReconciliation(initial);
 
   const reconciliation = reconcilePredecessor(cwd, initial, environment);
   const completedTaskIds = [
@@ -535,6 +537,7 @@ function finishSessionUnlocked(
   if (completionReport.parentReportId !== session.latestCheckReportId) {
     throw staleReport('COMPLETION_REPORT_STALE');
   }
+  assertCurrentImplementationReconciliation(unprojected);
 
   const verified = executeChecks(
     cwd,
