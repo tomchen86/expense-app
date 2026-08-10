@@ -13,6 +13,7 @@ import {
 } from './execution-store.ts';
 import {
   inspectDurableRetentionCatalog,
+  readDurableEvidence,
   type EvidenceRetentionRecord,
 } from './execution-governance.ts';
 import {
@@ -290,14 +291,16 @@ export function inspectProviderRetentionMetrics(
           context.runtime,
           record.invocationId,
         );
-        const humanPinned = resolveHumanPins(
-          binding.context.workflowId,
-        ).has(providerRuntimeEvidenceId(binding.attempt.attemptId));
+        const humanPinned = resolveHumanPins(binding.context.workflowId).has(
+          providerRuntimeEvidenceId(binding.attempt.attemptId),
+        );
         if (receipt !== null) {
           assertReceiptBinding(receipt, binding, record);
           if (receipt.state !== 'complete') throw receiptUnsafe();
           receiptCount += 1;
-          if (receipt.attemptRetention === 'pinned') pinnedCount += 1;
+          if (humanPinned || receipt.attemptRetention === 'pinned') {
+            pinnedCount += 1;
+          }
           continue;
         }
         const artifacts = collectPhysicalArtifacts(context.runtime, binding);
@@ -341,6 +344,7 @@ export function inspectProviderRetentionMetrics(
               ),
           terminalAt: record.updatedAt,
           cutoffAt,
+          humanPinned,
         });
         if (denial === null && bytes > 0) {
           expiredPendingCount += 1;
@@ -392,6 +396,98 @@ type PhysicalArtifact = Readonly<{
   digest: string;
   bytes: number;
 }>;
+
+/**
+ * Rejects a provider-runtime pin once the physical pruning transaction has
+ * published a receipt. Callers must hold the repository lifecycle lock across
+ * this check and the subsequent catalog pin so a sweep cannot consume a cached
+ * no-pin decision between them.
+ */
+export function assertProviderRuntimeEvidencePinnableUnderLifecycleLock(
+  paths: InvestigationRuntimePaths,
+  record: EvidenceRetentionRecord,
+): void {
+  if (!record.evidenceId.startsWith('provider-runtime-')) return;
+
+  let descriptor: Record<string, unknown>;
+  try {
+    const value = JSON.parse(
+      readDurableEvidence(paths.root, record.workflowId, record.evidenceId)
+        .content,
+    ) as unknown;
+    if (
+      value === null ||
+      typeof value !== 'object' ||
+      Array.isArray(value) ||
+      canonicalJson(Object.keys(value).sort()) !==
+        canonicalJson(
+          [
+            'attemptId',
+            'epoch',
+            'invocationId',
+            'kind',
+            'legacyRevision',
+            'workflowId',
+          ].sort(),
+        )
+    ) {
+      throw runtimeUnsafe();
+    }
+    descriptor = value as Record<string, unknown>;
+  } catch (error) {
+    if (error instanceof WorkflowError) throw error;
+    throw runtimeUnsafe();
+  }
+
+  if (
+    descriptor.kind !== 'provider-runtime-evidence.v1' ||
+    typeof descriptor.workflowId !== 'string' ||
+    descriptor.workflowId !== record.workflowId ||
+    typeof descriptor.attemptId !== 'string' ||
+    typeof descriptor.invocationId !== 'string' ||
+    !Number.isSafeInteger(descriptor.epoch) ||
+    descriptor.epoch !== record.epoch ||
+    !Number.isSafeInteger(descriptor.legacyRevision) ||
+    (descriptor.legacyRevision as number) < 0 ||
+    record.itemIdentity !== `attempt:${descriptor.attemptId}` ||
+    record.evidenceId !== providerRuntimeEvidenceId(descriptor.attemptId)
+  ) {
+    throw runtimeUnsafe();
+  }
+
+  let providerRecord: ProviderInvocationRecord;
+  let binding: InvocationBinding | undefined;
+  try {
+    providerRecord = readProviderInvocation(
+      paths,
+      descriptor.invocationId as string,
+    );
+    binding = readInvocationBinding(paths, providerRecord);
+  } catch {
+    throw runtimeUnsafe();
+  }
+  if (
+    binding === undefined ||
+    binding.context.workflowId !== record.workflowId ||
+    binding.context.epoch !== record.epoch ||
+    binding.attempt.attemptId !== descriptor.attemptId ||
+    binding.attempt.legacyInvocation?.invocationId !== descriptor.invocationId
+  ) {
+    throw runtimeUnsafe();
+  }
+
+  const receipt = readProviderRetentionReceipt(
+    paths,
+    descriptor.invocationId as string,
+  );
+  if (receipt === null) return;
+  assertReceiptBinding(receipt, binding, providerRecord);
+  throw workflowError(
+    'RETENTION_EVIDENCE_ALREADY_PRUNED',
+    `Provider runtime evidence ${record.evidenceId} has already entered physical pruning and cannot be pinned.`,
+    ExitCode.guard,
+  );
+}
 
 /**
  * Run one bounded physical retention pass. Eligibility comes only from the

@@ -4,6 +4,11 @@ import path from 'node:path';
 
 import { resolveActorIdentity, type ActorSignal } from './actor-identity.ts';
 import { loadAiAdapterPolicy } from './ai-adapter-policy.ts';
+import {
+  assessAssurance,
+  ASSURANCE_ASSESSMENT_POLICY_DIGEST,
+  type AssuranceAssessmentReport,
+} from './assurance-assessment-chain.ts';
 import { replaceTextAtomic } from './atomic-text.ts';
 import { canonicalJson } from './canonical-json.ts';
 import {
@@ -57,12 +62,21 @@ import {
   parseClassDisposition,
 } from './class-disposition.ts';
 import {
+  classSampleSize,
   planClassSampleAudits,
   resolveSampleAudits,
 } from './class-sample-audit.ts';
 import { deriveDeclaredPathSymbols } from './declared-path-symbols.ts';
-import { pruneFloorToLimit } from './floor-overflow-pruning.ts';
-import { parsePathRoleRegistry } from './path-role-registry.ts';
+import {
+  FLOOR_OVERFLOW_MANDATORY_CONTRIBUTION_RESERVE,
+  FLOOR_OVERFLOW_POLICY_DIGEST,
+  resolveFloorOverflow,
+  type FloorOverflowDecision,
+} from './floor-overflow-pruning.ts';
+import {
+  parsePathRoleRegistry,
+  type PathRoleRegistry,
+} from './path-role-registry.ts';
 import {
   applyLedgerToFullBlobManifest,
   recordReuseCoverage,
@@ -113,10 +127,10 @@ import {
   type GroupDispositionsPayload,
 } from './investigation-session-store.ts';
 import {
+  INVESTIGATION_LIMITS,
   normalizeInvestigationTerm,
   previewInvestigationTermUnion,
   type InvestigationTermContribution,
-  type InvestigationTermKind,
   type InvestigationTermRawCounts,
   type PreviewInvestigationTerm,
 } from './investigation-terms.ts';
@@ -200,6 +214,11 @@ import {
   type PlanReviewSubject,
   type PlanReviewTargetSnapshot,
 } from './plan-review.ts';
+import {
+  createPlanReviewCoverageRequirementNode,
+  type CarriedLedgerCoverageInput,
+  type PlannedMutationCoverageInput,
+} from './plan-review-coverage.ts';
 import {
   deriveInvestigationFirstPlanningSubject,
   resolvePlanReviewPlanningEvidence,
@@ -512,8 +531,15 @@ export type ProposeFullBlobWork = {
   contentBase64: string;
 };
 
+export type ProposeAssuranceAssessment = AssuranceAssessmentReport & {
+  nodeId: string;
+  resultDigest: string;
+  policyDigest: string;
+};
+
 export type ProposeWork = {
   termSources: InvestigationTermRawCounts;
+  assuranceAssessment?: ProposeAssuranceAssessment | null;
   groups: ProposeGroupWork[];
   fullBlobManifest: ProposeFullBlobWork[];
   authoredInstructions: Array<{
@@ -607,6 +633,8 @@ type RebuiltInvestigation = {
   intent: NormalizedChangeIntent;
   floor: ReturnType<typeof deriveEngineFloor>;
   floorTrimming: { dropped: string[]; escalated: boolean };
+  floorOverflowDecision: FloorOverflowDecision | null;
+  floorOverflowDecisionNode: EvidenceNode | null;
   termSources: InvestigationTermRawCounts;
   authorizationNode: EvidenceNode;
   legacyMigration: LegacyPlanMigrationSubject | null;
@@ -623,11 +651,16 @@ type RebuiltInvestigation = {
   contributionNodes: EvidenceNode[];
   termUnionNode: EvidenceNode | null;
   scanNodes: EvidenceNode[];
+  saturatedTermIds: string[];
+  assuranceAssessmentNode: EvidenceNode | null;
   inventoryNode: EvidenceNode | null;
   hitNodes: EvidenceNode[];
   groupNodes: EvidenceNode[];
   dispositionNodes: EvidenceNode[];
   coverageNode: EvidenceNode | null;
+  reviewCoverageNode: EvidenceNode | null;
+  /** Every load-bearing row, including rows carried by the semantic ledger. */
+  completeFullBlobManifest: InvestigationFullBlobManifestEntry[];
   fullBlobManifest: InvestigationFullBlobManifestEntry[];
   /**
    * What the ledger carried and why. Present so the reduced WHY manifest is
@@ -1833,6 +1866,8 @@ export function resumePropose(
           scanNodes: rebuilt.scanNodes,
           groupNodes: rebuilt.groupNodes,
           payload: effectiveCheckpoint.payload,
+          saturatedTermIds: rebuilt.saturatedTermIds,
+          assuranceAssessmentNode: rebuilt.assuranceAssessmentNode,
         },
       ),
     });
@@ -1850,6 +1885,7 @@ export function resumePropose(
     checkpoint = effectiveCheckpoint;
     createInvestigationWhyNodes({
       manifest: rebuilt.fullBlobManifest,
+      coverageManifest: rebuilt.completeFullBlobManifest,
       hitNodes: rebuilt.hitNodes,
       groupNodes: rebuilt.groupNodes,
       dispositionNodes: rebuilt.dispositionNodes,
@@ -3734,6 +3770,114 @@ function classSampleSeed(investigationId: string): string {
   return crypto.createHash('sha256').update(investigationId).digest('hex');
 }
 
+/** Fixed when the investigation ID is created, before any review population. */
+function planReviewCoverageSeed(investigationId: string): string {
+  return sha256(
+    canonicalJson({
+      schema: 'workflow-plan-review-coverage-seed.v1',
+      investigationId,
+    }),
+  );
+}
+
+function plannedMutationCoverageBindings(
+  snapshot: TrackedTreeSnapshot,
+  explicitPaths: readonly string[],
+): PlannedMutationCoverageInput[] {
+  const byPath = new Map(
+    snapshot.entries
+      .filter(
+        (
+          entry,
+        ): entry is (typeof snapshot.entries)[number] & {
+          path: { rawBase64: string; utf8: string };
+          contentSha256: string;
+        } =>
+          entry.path.utf8 !== null && typeof entry.contentSha256 === 'string',
+      )
+      .map((entry) => [entry.path.utf8, entry]),
+  );
+  return [...explicitPaths]
+    .sort()
+    .map((explicitPath): PlannedMutationCoverageInput => {
+      const entry = byPath.get(explicitPath);
+      if (entry === undefined) {
+        throw workflowError(
+          'REVIEW_COVERAGE_REQUIREMENT_INVALID',
+          'Ledger-backed review coverage requires every explicit planned mutation to resolve to a readable pinned blob.',
+          ExitCode.guard,
+          { details: { explicitPath } },
+        );
+      }
+      return {
+        path: explicitPath,
+        targetDigest: `sha256:${entry.contentSha256}`,
+      };
+    });
+}
+
+function carriedLedgerCoverageBindings(
+  completeManifest: readonly InvestigationFullBlobManifestEntry[],
+  carried: readonly Readonly<{
+    manifestEntryId: string;
+    subjectId: string;
+    ledgerEntryId: string;
+  }>[],
+): CarriedLedgerCoverageInput[] {
+  const byId = new Map(
+    completeManifest.map((entry) => [entry.manifestEntryId, entry]),
+  );
+  return [...carried]
+    .sort((left, right) =>
+      left.manifestEntryId.localeCompare(right.manifestEntryId),
+    )
+    .map((claim): CarriedLedgerCoverageInput => {
+      const entry = byId.get(claim.manifestEntryId);
+      if (entry === undefined || entry.path.utf8 === null) {
+        throw workflowError(
+          'REVIEW_COVERAGE_REQUIREMENT_INVALID',
+          'A carried ledger subject has no exact UTF-8 load-bearing manifest row.',
+          ExitCode.guard,
+          { details: { manifestEntryId: claim.manifestEntryId } },
+        );
+      }
+      return {
+        path: entry.path.utf8,
+        targetDigest: `sha256:${entry.blob.contentSha256}`,
+        subjectId: claim.subjectId,
+        ledgerEntryId: claim.ledgerEntryId,
+      };
+    });
+}
+
+/** The next deterministic slice of the same sealed ranking, capped by size. */
+function planAdditionalClassSampleAudits(
+  sealedSeed: string,
+  classes: readonly { classId: string; members: readonly string[] }[],
+) {
+  // Reuse the contract's validation before deriving the next slice locally.
+  planClassSampleAudits(sealedSeed, classes);
+  return classes.map(({ classId, members }) => {
+    const sampleSize = classSampleSize(members.length);
+    const ranked = [...members].sort((left, right) => {
+      const rank = (groupId: string) =>
+        crypto
+          .createHash('sha256')
+          .update(`${sealedSeed}\0${classId}\0${groupId}`)
+          .digest('hex');
+      const order = rank(left).localeCompare(rank(right));
+      return order !== 0 ? order : left.localeCompare(right);
+    });
+    return {
+      classId,
+      memberCount: members.length,
+      sampled: ranked
+        .slice(sampleSize, Math.min(members.length, sampleSize * 2))
+        .sort(),
+    };
+  });
+}
+
 /**
  * Refuses to commit a plan whose class equivalence judgements have not been
  * checked by hand.
@@ -3761,15 +3905,88 @@ function assertClassSamplesAudited(
     classSampleSeed(status.investigationId),
     classes.map(({ classId, members }) => ({ classId, members })),
   );
-  const resolution = resolveSampleAudits(plan, stored.payload.sampleAudits ?? []);
-  if (resolution.expandIndividually.length > 0) {
-    throw workflowError(
-      'CLASS_SAMPLE_AUDIT_REJECTED',
-      `The hand review rejected ${resolution.expandIndividually.length} class(es); those groups owe individual dispositions: ${resolution.expandIndividually.join(', ')}.`,
-      ExitCode.verification,
-      { details: { classIds: resolution.expandIndividually } },
+  const audits = stored.payload.sampleAudits ?? [];
+  const initiallySampled = new Set(
+    plan.flatMap(({ classId, sampled }) =>
+      sampled.map((groupId) => sampleAuditKey(classId, groupId)),
+    ),
+  );
+  const initialResolution = resolveSampleAudits(
+    plan,
+    audits.filter(({ classId, groupId }) =>
+      initiallySampled.has(sampleAuditKey(classId, groupId)),
+    ),
+  );
+  if (initialResolution.expandIndividually.length === 0) {
+    // Re-run against the complete submission so an unsolicited answer outside
+    // the sealed first sample still fails closed rather than being ignored.
+    resolveSampleAudits(plan, audits);
+    return;
+  }
+
+  const initialFailureCount = initialResolution.classes.reduce(
+    (count, result) => count + result.failures.length,
+    0,
+  );
+  if (initialFailureCount >= 2) {
+    resolveSampleAudits(plan, audits);
+    throw rejectedClassSamples(
+      plan.map(({ classId }) => classId).sort(),
+      'A second failure in the initial sample ended class compression for this change',
     );
   }
+
+  const survivingClasses = classes.filter(
+    ({ classId }) => !initialResolution.expandIndividually.includes(classId),
+  );
+  const additionalPlan = planAdditionalClassSampleAudits(
+    classSampleSeed(status.investigationId),
+    survivingClasses.map(({ classId, members }) => ({ classId, members })),
+  );
+  const additionalByClass = new Map(
+    additionalPlan.map(({ classId, sampled }) => [classId, sampled]),
+  );
+  const doubledPlan = plan.map(({ classId, memberCount, sampled }) => ({
+    classId,
+    memberCount,
+    sampled: [...sampled, ...(additionalByClass.get(classId) ?? [])].sort(),
+  }));
+  const resolution = resolveSampleAudits(doubledPlan, audits);
+  const additionalSampleKeys = new Set(
+    additionalPlan.flatMap(({ classId, sampled }) =>
+      sampled.map((groupId) => sampleAuditKey(classId, groupId)),
+    ),
+  );
+  const secondSampleFailed = audits.some(
+    ({ classId, groupId, outcome }) =>
+      additionalSampleKeys.has(sampleAuditKey(classId, groupId)) &&
+      outcome !== 'passed',
+  );
+  if (secondSampleFailed) {
+    throw rejectedClassSamples(
+      plan.map(({ classId }) => classId).sort(),
+      'A failure in the deterministic second sample ended class compression for this change',
+    );
+  }
+  if (resolution.expandIndividually.length > 0) {
+    throw rejectedClassSamples(
+      resolution.expandIndividually,
+      `The hand review rejected ${resolution.expandIndividually.length} class(es); those groups owe individual dispositions`,
+    );
+  }
+}
+
+function sampleAuditKey(classId: string, groupId: string): string {
+  return `${classId}\0${groupId}`;
+}
+
+function rejectedClassSamples(classIds: readonly string[], reason: string) {
+  return workflowError(
+    'CLASS_SAMPLE_AUDIT_REJECTED',
+    `${reason}: ${classIds.join(', ')}.`,
+    ExitCode.verification,
+    { details: { classIds: [...classIds] } },
+  );
 }
 
 function commitCompletedPlanningUnderAuthority(
@@ -3963,8 +4180,8 @@ function getProposeStatusInternal(
       planReview: null,
       planningTransition: null,
       semanticReuse: rebuilt.reuseCoverage,
-    classSampleAudits: classSampleAuditsFor(rebuilt),
-    floorTrimming: rebuilt.floorTrimming,
+      classSampleAudits: classSampleAuditsFor(rebuilt),
+      floorTrimming: rebuilt.floorTrimming,
     };
   }
   return renderMaterializedProposeOutput(
@@ -3975,6 +4192,8 @@ function getProposeStatusInternal(
     workFromRebuilt(rebuilt, []),
     materialized,
     rebuilt.reuseCoverage,
+    classSampleAuditsFor(rebuilt),
+    rebuilt.floorTrimming,
   );
 }
 
@@ -4067,6 +4286,8 @@ function renderProposeOutput(
         workFromRebuilt(rebuilt, receiptLookup.instructions),
         materialized,
         rebuilt.reuseCoverage,
+        classSampleAuditsFor(rebuilt),
+        rebuilt.floorTrimming,
       );
     }
     const scaffold = preparePlanningScaffold(cwd, status, rebuilt, createdDate);
@@ -4085,8 +4306,8 @@ function renderProposeOutput(
       planReview: null,
       planningTransition: null,
       semanticReuse: rebuilt.reuseCoverage,
-    classSampleAudits: classSampleAuditsFor(rebuilt),
-    floorTrimming: rebuilt.floorTrimming,
+      classSampleAudits: classSampleAuditsFor(rebuilt),
+      floorTrimming: rebuilt.floorTrimming,
     };
   }
 
@@ -4261,7 +4482,7 @@ function renderMaterializedProposeOutput(
         planningTransition: null,
         semanticReuse: null,
         classSampleAudits: [],
-        floorTrimming: { dropped: [], escalated: false },
+        floorTrimming,
       };
     }
   }
@@ -4284,7 +4505,7 @@ function renderMaterializedProposeOutput(
     planningTransition: null,
     semanticReuse: null,
     classSampleAudits: [],
-    floorTrimming: { dropped: [], escalated: false },
+    floorTrimming,
   };
 }
 
@@ -4451,7 +4672,13 @@ function rebuildInvestigation(
     changedPaths,
     reviewedCounterparts,
   });
-  const floorTrimming = { dropped: [] as string[], escalated: false };
+  const floorOverflow = resolveEngineFloorOverflow(
+    session,
+    floor,
+    authorizationNode,
+  );
+  floor = floorOverflow.floor;
+  const floorTrimming = floorOverflow.trimming;
   const emptyCounts: InvestigationTermRawCounts = {
     engine: floor.outcome === 'derived' ? floor.terms.length : 0,
     main: 0,
@@ -4470,6 +4697,8 @@ function rebuildInvestigation(
       authorizationNode,
       authorization.legacyMigration,
       floorTrimming,
+      floorOverflow.decision,
+      floorOverflow.node,
     );
   }
   const snapshot = readPinnedTrackedTree({
@@ -4503,7 +4732,7 @@ function rebuildInvestigation(
       ExitCode.staleState,
     );
   }
-  let contributions: InvestigationTermContribution[] = [
+  const contributions: InvestigationTermContribution[] = [
     ...(floor.outcome === 'derived'
       ? [
           {
@@ -4542,44 +4771,14 @@ function rebuildInvestigation(
         : null,
     ),
   );
-  let preview = previewInvestigationTermUnion(contributions);
+  const preview = previewInvestigationTermUnion(contributions);
   if (preview.outcome !== 'ready') {
-    // The floor is the part of the search nobody may remove, so when the union
-    // is over the ceiling and the floor alone accounts for the overage, no
-    // author input can unjam the change. Cutting the floor is the exit, and it
-    // is not free: the concession order is fixed, every loss is named, and it
-    // always escalates.
-    const overage = preview.violations.find(
-      ({ code }) => code === 'EFFECTIVE_TERM_LIMIT_EXCEEDED',
+    throw workflowError(
+      'INVESTIGATION_TERM_NARROWING_REQUIRED',
+      'The current non-floor contributions make the term union exceed the fixed investigation limits; caller input may not evict an engine-floor term.',
+      ExitCode.guard,
+      { details: { violations: preview.violations, floorTrimming } },
     );
-    const trimmed =
-      overage === undefined || floor.outcome !== 'derived'
-        ? null
-        : trimFloorToCeiling(
-            floor,
-            Math.max(1, floor.terms.length - (overage.observed - overage.limit)),
-          );
-    if (trimmed === null || !trimmed.escalated) {
-      throw workflowError(
-        'INVESTIGATION_TERM_NARROWING_REQUIRED',
-        'The current term union exceeds the fixed investigation limits.',
-        ExitCode.guard,
-        { details: { violations: preview.violations } },
-      );
-    }
-    floor = trimmed.floor;
-    floorTrimming.dropped = trimmed.dropped;
-    floorTrimming.escalated = true;
-    contributions = withEngineFloorContribution(contributions, floor);
-    preview = previewInvestigationTermUnion(contributions);
-    if (preview.outcome !== 'ready') {
-      throw workflowError(
-        'INVESTIGATION_TERM_NARROWING_REQUIRED',
-        'The term union exceeds the fixed investigation limits even after the engine floor was cut to its ceiling.',
-        ExitCode.guard,
-        { details: { violations: preview.violations, floorTrimming } },
-      );
-    }
   }
   const termUnionNode = createTermUnionNode(
     session,
@@ -4625,6 +4824,14 @@ function rebuildInvestigation(
     reviewedRelationships,
     exceptions: [],
   });
+  const assuranceAssessmentNode = createProposeAssuranceAssessmentNode({
+    repositoryRoot: context.git.repositoryRoot,
+    session,
+    scanNodes: scan.nodes,
+    groupNodes: grouped.groupNodes,
+    floorOverflowDecision: floorOverflow.decision,
+    floorOverflowDecisionNode: floorOverflow.node,
+  });
   let dispositionNodes: EvidenceNode[] = [];
   if (session.milestones.groupDispositions !== null) {
     const stored = session.milestones.groupDispositions.envelope;
@@ -4637,14 +4844,13 @@ function rebuildInvestigation(
     }
     dispositionNodes = createInvestigationDispositionNodes({
       groupNodes: grouped.groupNodes,
-      dispositions: expandSubmittedDispositions(
-        context.git.repositoryRoot,
-        {
-          scanNodes: scan.nodes,
-          groupNodes: grouped.groupNodes,
-          payload: stored.payload,
-        },
-      ),
+      dispositions: expandSubmittedDispositions(context.git.repositoryRoot, {
+        scanNodes: scan.nodes,
+        groupNodes: grouped.groupNodes,
+        payload: stored.payload,
+        saturatedTermIds: scan.saturatedTermIds,
+        assuranceAssessmentNode,
+      }),
     });
   }
   const derivedFullBlobManifest =
@@ -4666,13 +4872,36 @@ function rebuildInvestigation(
     // able to invalidate an entry. Letting the call default here would echo
     // each entry's own policy back as the current one, and every entry would
     // agree with itself forever.
-    { currentPolicyDigest: PROPOSE_POLICY_DIGEST },
+    {
+      currentPolicyDigest: `sha256:${PROPOSE_POLICY_DIGEST}`,
+    },
   );
   const fullBlobManifest =
     manifestReuse.owed as InvestigationFullBlobManifestEntry[];
   // Taking the saving and recording what it cost are the same act. Every
   // carried entry stays in what a reviewer is shown, marked as carried.
   const reuseCoverage = recordReuseCoverage(manifestReuse);
+  const reviewCoverageNode =
+    manifestReuse.carried.length === 0
+      ? null
+      : createPlanReviewCoverageRequirementNode({
+          changeId: session.changeId,
+          baseline: session.baseline,
+          coverageTier: reportProposeAssuranceAssessment(
+            assuranceAssessmentNode,
+          ).coverageTier,
+          sealedSamplingSeed: planReviewCoverageSeed(session.investigationId),
+          assessmentNode: assuranceAssessmentNode,
+          plannedMutations: plannedMutationCoverageBindings(
+            snapshot,
+            intent.explicitPaths,
+          ),
+          carriedSubjects: carriedLedgerCoverageBindings(
+            derivedFullBlobManifest,
+            manifestReuse.carried,
+          ),
+          semanticReuse: reuseCoverage,
+        });
   let whyNodes: EvidenceNode[] = [];
   if (session.milestones.whyAnswers !== null) {
     const stored = session.milestones.whyAnswers.envelope;
@@ -4685,6 +4914,7 @@ function rebuildInvestigation(
     }
     whyNodes = createInvestigationWhyNodes({
       manifest: fullBlobManifest,
+      coverageManifest: derivedFullBlobManifest,
       hitNodes: grouped.hitNodes,
       groupNodes: grouped.groupNodes,
       dispositionNodes,
@@ -4707,6 +4937,8 @@ function rebuildInvestigation(
     intent,
     floor,
     floorTrimming,
+    floorOverflowDecision: floorOverflow.decision,
+    floorOverflowDecisionNode: floorOverflow.node,
     termSources: preview.rawCounts,
     authorizationNode,
     legacyMigration: authorization.legacyMigration,
@@ -4724,11 +4956,15 @@ function rebuildInvestigation(
     contributionNodes,
     termUnionNode,
     scanNodes: scan.nodes,
+    saturatedTermIds: [...(scan.saturatedTermIds ?? [])],
+    assuranceAssessmentNode,
     inventoryNode: scan.inventory.evidenceNode,
     hitNodes: grouped.hitNodes,
     groupNodes: grouped.groupNodes,
     dispositionNodes,
     coverageNode,
+    reviewCoverageNode,
+    completeFullBlobManifest: derivedFullBlobManifest,
     fullBlobManifest,
     reuseCoverage,
     whyNodes,
@@ -4746,12 +4982,16 @@ function emptyRebuilt(
     dropped: [],
     escalated: false,
   },
+  floorOverflowDecision: FloorOverflowDecision | null = null,
+  floorOverflowDecisionNode: EvidenceNode | null = null,
 ): RebuiltInvestigation {
   return {
     session,
     intent,
     floor,
     floorTrimming,
+    floorOverflowDecision,
+    floorOverflowDecisionNode,
     termSources,
     authorizationNode,
     legacyMigration,
@@ -4768,11 +5008,15 @@ function emptyRebuilt(
     contributionNodes: [],
     termUnionNode: null,
     scanNodes: [],
+    saturatedTermIds: [],
+    assuranceAssessmentNode: null,
     inventoryNode: null,
     hitNodes: [],
     groupNodes: [],
     dispositionNodes: [],
     coverageNode: null,
+    reviewCoverageNode: null,
+    completeFullBlobManifest: [],
     fullBlobManifest: [],
     // An investigation with nothing in it carried nothing, which is a real
     // answer rather than an absent one.
@@ -4841,69 +5085,83 @@ function declaredPathSymbolsFromPinnedTree(
   return [...symbols].sort();
 }
 
-/**
- * Trims an engine floor that on its own exceeds what a scan may carry.
- *
- * The floor is the part of the search nobody may remove, so when it alone is
- * over the ceiling there is no author input that can unjam the change: every
- * term is mandatory and there are too many. Trimming is the exit, and it is
- * deliberately not free. The concession order is fixed — symbols are kept over
- * literals, literals over variants — every dropped term is named rather than
- * counted, and dropping anything escalates, because a floor that had to be cut
- * is exactly the situation a person should be told about.
- */
-/** Replaces the engine-floor contribution with the floor as it now stands. */
-function withEngineFloorContribution(
-  contributions: InvestigationTermContribution[],
+function resolveEngineFloorOverflow(
+  session: InvestigationSession,
   floor: ReturnType<typeof deriveEngineFloor>,
-): InvestigationTermContribution[] {
-  return contributions.map((contribution) =>
-    contribution.source === 'engine'
-      ? {
-          ...contribution,
-          // Same projection the original contribution used: the union takes
-          // kind and value, not the floor's internal term records.
-          terms:
-            floor.outcome === 'derived'
-              ? floor.terms.map(({ kind, value }) => ({ kind, value }))
-              : [],
-        }
-      : contribution,
-  );
-}
-
-function trimFloorToCeiling(
-  floor: ReturnType<typeof deriveEngineFloor>,
-  ceiling: number,
+  authorizationNode: EvidenceNode,
 ): {
   floor: ReturnType<typeof deriveEngineFloor>;
-  dropped: string[];
-  escalated: boolean;
+  trimming: ProposeOutput['floorTrimming'];
+  decision: FloorOverflowDecision | null;
+  node: EvidenceNode | null;
 } {
-  if (floor.outcome !== 'derived' || floor.terms.length <= ceiling) {
-    return { floor, dropped: [], escalated: false };
+  if (floor.outcome !== 'derived') {
+    return {
+      floor,
+      trimming: { dropped: [], escalated: false },
+      decision: null,
+      node: null,
+    };
   }
-  const candidateKind = (kind: InvestigationTermKind) =>
-    kind === 'symbol'
-      ? ('symbol' as const)
-      : kind === 'config-key'
-        ? ('variant' as const)
-        : ('literal' as const);
-  const pruning = pruneFloorToLimit(
+  const resolution = resolveFloorOverflow(
     floor.terms.map((term) => ({
+      termId: term.termId,
       value: term.value,
-      kind: candidateKind(term.kind),
+      floorKind: term.kind,
+      kind:
+        term.kind === 'symbol'
+          ? ('symbol' as const)
+          : term.kind === 'config-key'
+            ? ('variant' as const)
+            : ('literal' as const),
     })),
-    ceiling,
+    INVESTIGATION_LIMITS.maxEffectiveTerms,
+    FLOOR_OVERFLOW_MANDATORY_CONTRIBUTION_RESERVE,
   );
-  const kept = new Set(pruning.terms.map(({ value }) => value));
+  if (!resolution.decision.escalated) {
+    return {
+      floor,
+      trimming: { dropped: [], escalated: false },
+      decision: null,
+      node: null,
+    };
+  }
+  const keptTermIds = new Set(resolution.terms.map(({ termId }) => termId));
+  const decisionNode = createEvidenceNode({
+    type: 'investigation-floor-overflow-decision',
+    nodeSchema: 'investigation.floor-overflow-decision.v1',
+    evaluator: 'workflow-propose.floor-overflow.v1',
+    policyDigest: FLOOR_OVERFLOW_POLICY_DIGEST,
+    exactInputDigests: {
+      baseline: sha256(canonicalJson(session.baseline)),
+      intent: session.intentDigest,
+      originalFloor: sha256(canonicalJson(floor)),
+      limit: sha256(canonicalJson(INVESTIGATION_LIMITS.maxEffectiveTerms)),
+    },
+    semanticParentResultDigests: {
+      authorization: authorizationNode.resultDigest,
+    },
+    provenanceParentNodeIds: {
+      authorization: authorizationNode.nodeId,
+    },
+    outputSchema: 'investigation.floor-overflow-decision-output.v1',
+    output: resolution.decision,
+    runtimeMetadata: {},
+  });
   return {
     floor: {
       ...floor,
-      terms: floor.terms.filter((term) => kept.has(term.value)),
+      terms: floor.terms.filter(({ termId }) => keptTermIds.has(termId)),
+      derivations: floor.derivations.filter(({ termId }) =>
+        keptTermIds.has(termId),
+      ),
     },
-    dropped: pruning.dropped.map(({ value }) => value),
-    escalated: pruning.escalated,
+    trimming: {
+      dropped: resolution.decision.dropped.map(({ value }) => value),
+      escalated: true,
+    },
+    decision: resolution.decision,
+    node: decisionNode,
   };
 }
 
@@ -5160,6 +5418,10 @@ function workFromRebuilt(
   );
   return {
     termSources: rebuilt.termSources,
+    assuranceAssessment:
+      rebuilt.assuranceAssessmentNode === null
+        ? null
+        : reportProposeAssuranceAssessment(rebuilt.assuranceAssessmentNode),
     groups: rebuilt.groupNodes
       .map((node) => {
         const group = readInvestigationGroupNode(node);
@@ -5224,6 +5486,159 @@ function readPathRoleRegistryForClasses(repositoryRoot: string) {
   );
 }
 
+function readPathRoleRegistryForAssessment(repositoryRoot: string): {
+  registry: PathRoleRegistry;
+  sourceDigest: string;
+} {
+  const registryPath = path.join(repositoryRoot, 'workflow/path-roles.json');
+  if (!fs.existsSync(registryPath)) {
+    // A missing registry means no path was judged ordinary. Propose may still
+    // proceed with individual dispositions, but the assessment must not
+    // silently grant compression while it waits for a class to be submitted.
+    return {
+      registry: Object.freeze({
+        schemaVersion: 1,
+        kind: 'path-role-registry',
+        rules: Object.freeze([]),
+      }),
+      sourceDigest: sha256(canonicalJson(null)),
+    };
+  }
+  const registry = parsePathRoleRegistry(
+    JSON.parse(fs.readFileSync(registryPath, 'utf8')),
+  );
+  return {
+    registry,
+    sourceDigest: sha256(canonicalJson(registry)),
+  };
+}
+
+function createProposeAssuranceAssessmentNode(input: {
+  repositoryRoot: string;
+  session: InvestigationSession;
+  scanNodes: EvidenceNode[];
+  groupNodes: EvidenceNode[];
+  floorOverflowDecision: FloorOverflowDecision | null;
+  floorOverflowDecisionNode: EvidenceNode | null;
+}): EvidenceNode {
+  const hitPaths = [
+    ...new Set(
+      deriveClassGroupsWithContext({
+        scanNodes: input.scanNodes,
+        groupNodes: input.groupNodes,
+      }).flatMap(({ hits }) => hits.map(({ path: hitPath }) => hitPath)),
+    ),
+  ].sort();
+  const pathRoles = readPathRoleRegistryForAssessment(input.repositoryRoot);
+  // The ordinary propose intent has no non-reserved declared-change-class
+  // field yet. Absence is assessed as behavioral by the shared contract; it is
+  // never interpreted as a cheaper class.
+  const declaredChangeClasses: InvestigationChangeClass[] = [];
+  const assessment = assessAssurance({
+    changeId: input.session.changeId,
+    declaredChangeClasses,
+    registry: pathRoles.registry,
+    hitPaths,
+    ...(input.floorOverflowDecision === null
+      ? {}
+      : {
+          floorOverflow: {
+            escalated: input.floorOverflowDecision.escalated,
+            reasons: input.floorOverflowDecision.reasons,
+          },
+        }),
+    at: input.session.createdAt,
+  });
+  const semanticParentResultDigests: Record<string, string> = {};
+  const provenanceParentNodeIds: Record<string, string> = {};
+  [...input.scanNodes]
+    .sort((left, right) => left.nodeId.localeCompare(right.nodeId))
+    .forEach((node, index) => {
+      semanticParentResultDigests[`scan-${index}`] = node.resultDigest;
+      provenanceParentNodeIds[`scan-${index}`] = node.nodeId;
+    });
+  if (input.floorOverflowDecisionNode !== null) {
+    semanticParentResultDigests['floor-overflow'] =
+      input.floorOverflowDecisionNode.resultDigest;
+    provenanceParentNodeIds['floor-overflow'] =
+      input.floorOverflowDecisionNode.nodeId;
+  }
+  return createEvidenceNode({
+    type: 'assurance-assessment',
+    nodeSchema: 'assurance.assessment.v1',
+    evaluator: 'workflow-propose.assurance-assessment.v1',
+    policyDigest: ASSURANCE_ASSESSMENT_POLICY_DIGEST,
+    exactInputDigests: {
+      baseline: sha256(canonicalJson(input.session.baseline)),
+      declaredChangeClasses: sha256(canonicalJson(declaredChangeClasses)),
+      hitPaths: sha256(canonicalJson(hitPaths)),
+      pathRoleRegistry: pathRoles.sourceDigest,
+      floorOverflowDecision:
+        input.floorOverflowDecisionNode?.resultDigest ??
+        sha256(canonicalJson(null)),
+    },
+    semanticParentResultDigests,
+    provenanceParentNodeIds,
+    outputSchema: 'assurance.assessment-output.v1',
+    output: assessment,
+    runtimeMetadata: {},
+  });
+}
+
+function reportProposeAssuranceAssessment(
+  node: EvidenceNode,
+): ProposeAssuranceAssessment {
+  const output = node.output;
+  if (
+    node.type !== 'assurance-assessment' ||
+    node.policyDigest !== ASSURANCE_ASSESSMENT_POLICY_DIGEST ||
+    !isRecord(output) ||
+    output.schemaVersion !== 1 ||
+    output.kind !== 'assurance-assessment' ||
+    typeof output.changeId !== 'string'
+  ) {
+    throw workflowError(
+      'ASSURANCE_ASSESSMENT_INVALID',
+      'The propose assurance assessment is malformed or uses another policy.',
+      ExitCode.staleState,
+    );
+  }
+  return Object.freeze({
+    ...(output as AssuranceAssessmentReport),
+    nodeId: node.nodeId,
+    resultDigest: node.resultDigest,
+    policyDigest: node.policyDigest,
+  });
+}
+
+function assertClassCompressionAllowed(
+  assessmentNode: EvidenceNode | null,
+): void {
+  if (assessmentNode === null) {
+    throw workflowError(
+      'ASSURANCE_ASSESSMENT_UNAVAILABLE',
+      'A class disposition requires a current production assurance assessment.',
+      ExitCode.guard,
+    );
+  }
+  const assessment = reportProposeAssuranceAssessment(assessmentNode);
+  if (assessment.floors.planning !== 'individual-only') return;
+  throw workflowError(
+    'ASSURANCE_PLANNING_FLOOR_VIOLATION',
+    'The current assessment requires individual dispositions; a declared class cannot lower that floor.',
+    ExitCode.verification,
+    {
+      details: {
+        assessmentNodeId: assessment.nodeId,
+        assessmentResultDigest: assessment.resultDigest,
+        assessmentPolicyDigest: assessment.policyDigest,
+        floors: assessment.floors,
+        reasons: assessment.reasons,
+      },
+    },
+  );
+}
+
 /**
  * Turns whatever an author wrote into the one disposition per group the
  * evidence has always required.
@@ -5247,20 +5662,27 @@ function expandSubmittedDispositions(
     groupNodes: EvidenceNode[];
     payload: GroupDispositionsPayload;
     saturatedTermIds?: readonly string[];
+    assuranceAssessmentNode: EvidenceNode | null;
   },
 ): InvestigationDispositionInput[] {
   const classes = input.payload.classes ?? [];
   if (classes.length === 0) return input.payload.dispositions;
+  const parsedClasses = classes.map((declared) =>
+    parseClassDisposition(declared),
+  );
+  const groups = deriveClassGroupsWithContext({
+    scanNodes: input.scanNodes,
+    groupNodes: input.groupNodes,
+  });
+  const registry = readPathRoleRegistryForClasses(repositoryRoot);
+  assertClassCompressionAllowed(input.assuranceAssessmentNode);
   const expansion = expandClassDispositions(
     // Parsed here, not trusted as stored: the checkpoint keeps what the author
     // wrote, and a predicate only means anything once it has been read by the
     // contract that defines it.
-    classes.map((declared) => parseClassDisposition(declared)),
-    deriveClassGroupsWithContext({
-      scanNodes: input.scanNodes,
-      groupNodes: input.groupNodes,
-    }),
-    readPathRoleRegistryForClasses(repositoryRoot),
+    parsedClasses,
+    groups,
+    registry,
     input.saturatedTermIds === undefined
       ? {}
       : { saturatedTermIds: input.saturatedTermIds },
@@ -6135,7 +6557,10 @@ function preparePlanningScaffold(
   changeDirectory: string;
   investigationBytes: string;
   metadataBytes: string;
-  replaceablePriorGeneration: (relativePath: string, existing: string) => boolean;
+  replaceablePriorGeneration: (
+    relativePath: string,
+    existing: string,
+  ) => boolean;
   instructions: ProposeWork['authoredInstructions'];
 } {
   if (rebuilt.coverageNode === null) {
@@ -6178,7 +6603,8 @@ function preparePlanningScaffold(
     relativePath: string,
     existing: string,
   ): boolean =>
-    managedPriorGeneration && priorArtifactAtBaseline(relativePath) === existing;
+    managedPriorGeneration &&
+    priorArtifactAtBaseline(relativePath) === existing;
   // An amendment keeps the identity of the change it corrects: committed v2
   // metadata carries over instead of restamping the creation date.
   const metadataBytes =
@@ -6203,12 +6629,21 @@ function preparePlanningScaffold(
     ...rebuilt.reviewerTermEvidenceNodes,
     ...rebuilt.contributionNodes,
     ...(rebuilt.termUnionNode === null ? [] : [rebuilt.termUnionNode]),
+    ...(rebuilt.floorOverflowDecisionNode === null
+      ? []
+      : [rebuilt.floorOverflowDecisionNode]),
+    ...(rebuilt.assuranceAssessmentNode === null
+      ? []
+      : [rebuilt.assuranceAssessmentNode]),
     rebuilt.inventoryNode,
     ...rebuilt.scanNodes,
     ...rebuilt.hitNodes,
     ...rebuilt.groupNodes,
     ...rebuilt.dispositionNodes,
     rebuilt.coverageNode,
+    ...(rebuilt.reviewCoverageNode === null
+      ? []
+      : [rebuilt.reviewCoverageNode]),
     ...rebuilt.whyNodes,
     sealNode,
   ]);
@@ -6292,6 +6727,33 @@ function createInvestigationSealNode(
   };
   provenance.authorization = rebuilt.authorizationNode.nodeId;
   semantic.authorization = rebuilt.authorizationNode.resultDigest;
+  if (rebuilt.assuranceAssessmentNode === null) {
+    throw workflowError(
+      'INVESTIGATION_NOT_SEALED',
+      'Investigation assurance assessment evidence is unavailable.',
+      ExitCode.guard,
+    );
+  }
+  provenance.assurance = rebuilt.assuranceAssessmentNode.nodeId;
+  semantic.assurance = rebuilt.assuranceAssessmentNode.resultDigest;
+  if (rebuilt.floorTrimming.escalated) {
+    if (
+      rebuilt.floorOverflowDecision === null ||
+      rebuilt.floorOverflowDecisionNode === null
+    ) {
+      throw workflowError(
+        'INVESTIGATION_NOT_SEALED',
+        'An escalated engine-floor overflow has no durable decision evidence.',
+        ExitCode.guard,
+      );
+    }
+    provenance['floor-overflow'] = rebuilt.floorOverflowDecisionNode.nodeId;
+    semantic['floor-overflow'] = rebuilt.floorOverflowDecisionNode.resultDigest;
+  }
+  if (rebuilt.reviewCoverageNode !== null) {
+    provenance['review-coverage'] = rebuilt.reviewCoverageNode.nodeId;
+    semantic['review-coverage'] = rebuilt.reviewCoverageNode.resultDigest;
+  }
   if (rebuilt.providerResultNode === null || rebuilt.termUnionNode === null) {
     throw workflowError(
       'INVESTIGATION_NOT_SEALED',
@@ -6345,6 +6807,8 @@ function createInvestigationSealNode(
       baseline: rebuilt.session.baseline,
       termSources: rebuilt.termSources,
       floor: rebuilt.floor,
+      floorTrimming: rebuilt.floorTrimming,
+      floorOverflowDecision: rebuilt.floorOverflowDecision,
       providerResult: rebuilt.session.milestones.blindResult,
     },
     runtimeMetadata: {},
@@ -7137,7 +7601,9 @@ function materializePlanningContribution(
     });
     if (priorReviewStats?.isFile() && !priorReviewStats.isSymbolicLink()) {
       const priorReview = fs.readFileSync(priorReviewPath, 'utf8');
-      if (scaffold.replaceablePriorGeneration('plan-review.json', priorReview)) {
+      if (
+        scaffold.replaceablePriorGeneration('plan-review.json', priorReview)
+      ) {
         fs.rmSync(priorReviewPath);
         replacedBytes.set(priorReviewPath, priorReview);
       }
@@ -9078,8 +9544,10 @@ function assertPlanningTargetsCompatible(
   allowAuthoredExisting = false,
   allowManagedPlanReview = false,
   legacyMigration: LegacyPlanMigrationSubject | null = null,
-  baselineReplaceable: (relativePath: string, existing: string) => boolean = () =>
-    false,
+  baselineReplaceable: (
+    relativePath: string,
+    existing: string,
+  ) => boolean = () => false,
 ): void {
   // An amendment's prior generation is committed at the session baseline, so
   // "these exact bytes exist at the baseline" is the authority to tolerate or

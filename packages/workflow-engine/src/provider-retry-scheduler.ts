@@ -208,6 +208,20 @@ export function processProviderFailureRetry(
       reasonCode: failed.failure?.code ?? 'PROVIDER_INVOCATION_NOT_RETRYABLE',
     });
   }
+  const strategyDecision = inspectExecutionJob(cwd, projection.job.jobId)
+    .latestFailure?.decision;
+  if (
+    strategyDecision?.retryable === true &&
+    strategyDecision.automatic === false &&
+    strategyDecision.retryMode === 'strategy-change' &&
+    strategyDecision.changedStrategyRequired === true
+  ) {
+    return deepFreeze({
+      kind: 'decision-denied' as const,
+      jobId: projection.job.jobId,
+      reasonCode: strategyDecision.reasonCode,
+    });
+  }
   const executionKind = providerExecutionFailureKind(failed.failure);
   if (executionKind === null || executionKind === 'unknown-side-effect') {
     return deepFreeze({
@@ -1128,6 +1142,7 @@ function providerExecutionFailureKind(
   if (code === 'NETWORK_TRANSIENT') return 'network';
   if (code === 'PROVIDER_RATE_LIMIT') return 'rate-limit';
   if (code === 'PROVIDER_PROCESS_CRASH') return 'provider-process-crash';
+  if (code === 'PROVIDER_INVOCATION_LEASE_EXPIRED') return 'lease-expiry';
   if (code === 'PROVIDER_NATIVE_OUTPUT_INVALID') return 'schema-mismatch';
   if (code === 'ENVIRONMENT_PROBE_TRANSIENT' && failure.probe !== undefined) {
     return 'probe-transient';

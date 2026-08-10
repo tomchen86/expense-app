@@ -2,22 +2,20 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 import {
-  appendAssuranceAssessment,
-  coverageTier,
-  effectiveFloors,
-  floorsForChangeClass,
-  floorsForHitPaths,
-  reconcileDeclaredClass,
-  startAssuranceChain,
+  assessAssurance,
   type AssuranceAssessmentChain,
   type AssuranceFloors,
   type CoverageTier,
   type InvestigationChangeClass,
 } from './assurance-assessment-chain.ts';
-import { loadWorkflowConfig } from './contracts.ts';
+import { loadWorkflowConfig, parseInvestigationArtifact } from './contracts.ts';
 import { ExitCode, workflowError } from './errors.ts';
 import { discoverRepository } from './git.ts';
 import { parsePathRoleRegistry } from './path-role-registry.ts';
+import {
+  inspectPlanningShadowMetrics,
+  type PlanningShadowMetrics,
+} from './planning-shadow-metrics.ts';
 import { readLedgerIndex, readLedgerEntry } from './semantic-ledger-store.ts';
 import { planSemanticReuse, type ReusePlan } from './semantic-reuse.ts';
 import type { FreshnessObservation } from './semantic-freshness.ts';
@@ -40,6 +38,8 @@ export type AssuranceInspection = Readonly<{
    * is the state every repository starts in.
    */
   semanticReuse: ReusePlan | null;
+  /** Metrics replayed from this investigation's durable planning evidence. */
+  shadowMetrics: PlanningShadowMetrics;
 }>;
 
 /**
@@ -61,71 +61,50 @@ export function inspectChangeAssurance(
       'Path role registry is unavailable.',
     ),
   );
-  const investigation = readJson(
-    path.join(
-      repository.repositoryRoot,
-      config.changeRoot,
-      changeId,
-      'investigation.json',
+  const investigation = parseInvestigationArtifact(
+    readJson(
+      path.join(
+        repository.repositoryRoot,
+        config.changeRoot,
+        changeId,
+        'investigation.json',
+      ),
+      `Change ${changeId} has no investigation to assess.`,
     ),
-    `Change ${changeId} has no investigation to assess.`,
+    changeId,
   );
 
   const declaredChangeClasses = declaredClasses(investigation);
   const hitPaths = scanHitPaths(investigation);
   const at = (options.now ?? new Date()).toISOString();
-
-  // The declared class is the request; the hits are the evidence. Where a
-  // change declares nothing, an unclassified declaration is not a light one —
-  // it is simply absent, and the hits carry the whole assessment.
-  const declared =
-    declaredChangeClasses.length === 0
-      ? null
-      : declaredChangeClasses
-          .map((changeClass) =>
-            reconcileDeclaredClass(changeClass, registry, hitPaths),
-          )
-          .reduce((strictest, candidate) =>
-            candidate.escalated && !strictest.escalated ? candidate : strictest,
-          );
-  const observed = floorsForHitPaths(registry, hitPaths);
-
-  let chain = startAssuranceChain({
+  const assessment = assessAssurance({
     changeId,
-    floors:
-      declaredChangeClasses.length === 0
-        ? floorsForChangeClass('behavioral').floors
-        : floorsForChangeClass(declaredChangeClasses[0]).floors,
-    reasons:
-      declaredChangeClasses.length === 0
-        ? ['no-declared-change-class']
-        : declaredChangeClasses.map((value) => `declared-class:${value}`),
-    at,
-  });
-  chain = appendAssuranceAssessment(chain, {
-    stage: 'scan-discovered',
-    floors: declared?.floors ?? observed.floors,
-    reasons:
-      observed.reasons.length === 0
-        ? [`scan-hit-paths-all-ordinary:${hitPaths.length}`]
-        : observed.reasons,
+    declaredChangeClasses,
+    registry,
+    hitPaths,
     at,
   });
 
   return Object.freeze({
     semanticReuse: inspectSemanticReuse(repository.repositoryRoot, hitPaths),
+    shadowMetrics: inspectPlanningShadowMetrics({
+      repositoryRoot: repository.repositoryRoot,
+      gitCommonDirectory: repository.gitCommonDirectory,
+      runtimeDirectory: config.runtimeDirectory,
+      changeRoot: config.changeRoot,
+      changeId,
+      investigation,
+    }),
     schemaVersion: 1,
     kind: 'assurance-inspection',
     changeId,
-    declaredChangeClasses: Object.freeze(declaredChangeClasses),
-    hitPathCount: hitPaths.length,
-    floors: effectiveFloors(chain),
-    coverageTier: coverageTier(chain),
-    escalated: declared?.escalated ?? observed.reasons.length > 0,
-    reasons: Object.freeze(
-      chain.assessments.flatMap((assessment) => [...assessment.reasons]),
-    ),
-    chain,
+    declaredChangeClasses: assessment.declaredChangeClasses,
+    hitPathCount: assessment.hitPathCount,
+    floors: assessment.floors,
+    coverageTier: assessment.coverageTier,
+    escalated: assessment.escalated,
+    reasons: assessment.reasons,
+    chain: assessment.chain,
   });
 }
 

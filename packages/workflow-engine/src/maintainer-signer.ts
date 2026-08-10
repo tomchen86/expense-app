@@ -5,7 +5,11 @@ import path from 'node:path';
 
 import { createTrustedExecutionEnvironment } from './execution-environment.ts';
 import { ExitCode, workflowError } from './errors.ts';
-import { runGit } from './git.ts';
+import {
+  normalizePostApprovalSubprocessError,
+  postApprovalSubprocessBudget,
+  runGit,
+} from './git.ts';
 import type { MaintainerPolicy } from './maintainer-policy.ts';
 
 export type InteractiveSignerContext = {
@@ -80,24 +84,35 @@ export function createInteractiveSshSigner(
       const signaturePath = `${payloadPath}.sig`;
       try {
         writePrivateFile(payloadPath, payload);
-        const result = spawnSync(
+        const args = [
+          '-Y',
+          'sign',
+          '-f',
+          selected.keyPath,
+          '-n',
+          namespace ?? policy.signatureNamespace,
+          payloadPath,
+        ];
+        const budget = postApprovalSubprocessBudget(
+          'ssh-keygen',
           executable,
-          [
-            '-Y',
-            'sign',
-            '-f',
-            selected.keyPath,
-            '-n',
-            namespace ?? policy.signatureNamespace,
-            payloadPath,
-          ],
-          {
-            shell: false,
-            stdio: ['inherit', 'ignore', 'inherit'],
-            env: signerEnvironment(executable),
-          },
+          args,
         );
-        if (result.error || result.status !== 0) {
+        const result = spawnSync(executable, args, {
+          shell: false,
+          stdio: ['inherit', 'ignore', 'inherit'],
+          timeout: budget?.processTimeoutMs,
+          env: signerEnvironment(executable),
+        });
+        if (result.error) {
+          normalizePostApprovalSubprocessError(budget, result.error);
+          throw workflowError(
+            'MAINTAINER_SIGNATURE_FAILED',
+            'The interactive SSH signer did not create a grant signature.',
+            ExitCode.verification,
+          );
+        }
+        if (result.status !== 0) {
           throw workflowError(
             'MAINTAINER_SIGNATURE_FAILED',
             'The interactive SSH signer did not create a grant signature.',
@@ -127,6 +142,27 @@ export function createInteractiveSshSigner(
       );
     },
   };
+}
+
+/**
+ * Verify an externally produced SSH signature against one explicitly supplied
+ * public key. This path never discovers a signing key and cannot sign.
+ */
+export function verifySshSignatureWithPublicKey(
+  payload: string,
+  signature: string,
+  identity: string,
+  publicKey: string,
+  namespace: string,
+): void {
+  verifySshSignature(
+    resolveSshKeygenExecutable(),
+    payload,
+    signature,
+    identity,
+    publicKey,
+    namespace,
+  );
 }
 
 function resolveSigningMaterial(
@@ -162,16 +198,26 @@ function resolveSigningMaterial(
     throw unsafeSigningKey();
   }
   const keyPath = fs.realpathSync(expanded);
-  const fingerprintResult = spawnSync(
+  const fingerprintArgs = ['-l', '-E', 'sha256', '-f', keyPath];
+  const fingerprintBudget = postApprovalSubprocessBudget(
+    'ssh-keygen',
     executable,
-    ['-l', '-E', 'sha256', '-f', keyPath],
-    {
-      encoding: 'utf8',
-      shell: false,
-      env: signerEnvironment(executable),
-    },
+    fingerprintArgs,
   );
-  if (fingerprintResult.error || fingerprintResult.status !== 0) {
+  const fingerprintResult = spawnSync(executable, fingerprintArgs, {
+    encoding: 'utf8',
+    shell: false,
+    timeout: fingerprintBudget?.processTimeoutMs,
+    env: signerEnvironment(executable),
+  });
+  if (fingerprintResult.error) {
+    normalizePostApprovalSubprocessError(
+      fingerprintBudget,
+      fingerprintResult.error,
+    );
+    throw unsafeSigningKey();
+  }
+  if (fingerprintResult.status !== 0) {
     throw unsafeSigningKey();
   }
   const fingerprint = fingerprintResult.stdout.match(
@@ -192,15 +238,25 @@ function resolveSigningMaterial(
     fingerprintResult.stdout.trim(),
   );
   if (!hardwareKey) {
-    const emptyPassphraseProbe = spawnSync(
+    const probeArgs = ['-y', '-P', '', '-f', keyPath];
+    const probeBudget = postApprovalSubprocessBudget(
+      'ssh-keygen',
       executable,
-      ['-y', '-P', '', '-f', keyPath],
-      {
-        shell: false,
-        stdio: 'ignore',
-        env: signerEnvironment(executable),
-      },
+      probeArgs,
     );
+    const emptyPassphraseProbe = spawnSync(executable, probeArgs, {
+      shell: false,
+      stdio: 'ignore',
+      timeout: probeBudget?.processTimeoutMs,
+      env: signerEnvironment(executable),
+    });
+    if (emptyPassphraseProbe.error) {
+      normalizePostApprovalSubprocessError(
+        probeBudget,
+        emptyPassphraseProbe.error,
+      );
+      throw unsafeSigningKey();
+    }
     if (emptyPassphraseProbe.status === 0) {
       throw workflowError(
         'MAINTAINER_UNENCRYPTED_KEY_REJECTED',
@@ -236,28 +292,31 @@ function verifySshSignature(
   try {
     writePrivateFile(allowedSignersPath, `${identity} ${publicKey}\n`);
     writePrivateFile(signaturePath, signature);
-    const result = spawnSync(
-      executable,
-      [
-        '-Y',
-        'verify',
-        '-f',
-        allowedSignersPath,
-        '-I',
-        identity,
-        '-n',
-        namespace,
-        '-s',
-        signaturePath,
-      ],
-      {
-        encoding: 'utf8',
-        shell: false,
-        input: payload,
-        env: signerEnvironment(executable),
-      },
-    );
-    if (result.error || result.status !== 0) {
+    const args = [
+      '-Y',
+      'verify',
+      '-f',
+      allowedSignersPath,
+      '-I',
+      identity,
+      '-n',
+      namespace,
+      '-s',
+      signaturePath,
+    ];
+    const budget = postApprovalSubprocessBudget('ssh-keygen', executable, args);
+    const result = spawnSync(executable, args, {
+      encoding: 'utf8',
+      shell: false,
+      input: payload,
+      timeout: budget?.processTimeoutMs,
+      env: signerEnvironment(executable),
+    });
+    if (result.error) {
+      normalizePostApprovalSubprocessError(budget, result.error);
+      throw invalidSignature();
+    }
+    if (result.status !== 0) {
       throw invalidSignature();
     }
   } finally {

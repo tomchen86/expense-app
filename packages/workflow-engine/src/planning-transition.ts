@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 import { assertSpecDeltaScenarioPreservation } from './archive-delta-verifier.ts';
+import { preEpochCompletedTaskIds } from './bootstrap-task-exemption.ts';
 import type { ArchiveApplicabilityRecord } from './planning-report.ts';
 import { loadWorkflowConfig } from './contracts.ts';
 import { ExitCode, WorkflowError, workflowError } from './errors.ts';
@@ -34,6 +35,7 @@ import {
 import {
   readPlanningTransitionReport,
   writePlanningTransitionReport,
+  type PlanningCarryForwardTaskEvidence,
   type PlanningTransitionReport,
 } from './planning-report.ts';
 import { runtimePaths } from './session-store.ts';
@@ -43,6 +45,13 @@ import {
   withPlanningAuthority,
 } from './planning-lock.ts';
 import type { InvestigationFirstPlanningAssuranceSummary } from './planning-assurance-validator.ts';
+import {
+  planningAmendmentDecisionDigest,
+  readPlanningAmendmentDecision,
+  type PlanningAmendmentDecision,
+} from './planning-amendment-decision.ts';
+import { committedPlanningGeneration } from './planning-generation-history.ts';
+import { resolveTaskExecutionGenerationEvidence } from './task-execution-evidence.ts';
 
 export type AmendmentRequest = {
   reason: string;
@@ -56,6 +65,8 @@ export type PlanningTransitionResult = {
   amendment?: {
     reason: string;
     executionImpact: 'none' | 'required';
+    rationale: string;
+    decisionDigest: string;
     reopenedTasks: string[];
     planningGeneration: string;
     amendsPlanningGeneration: string;
@@ -149,6 +160,85 @@ function assertAmendmentRequest(amendment: AmendmentRequest): void {
   }
 }
 
+/**
+ * Read the decision from the exact proposal bytes that the fresh PlanReview
+ * covers. CLI flags remain an explicit confirmation surface, but they cannot
+ * author or replace the reviewed reason, impact, rationale, or parent
+ * generation.
+ */
+function readReviewedAmendmentDecision(
+  repositoryRoot: string,
+  changeRoot: string,
+  changeId: string,
+  request: AmendmentRequest,
+  priorGeneration: string | null,
+): PlanningAmendmentDecision {
+  if (priorGeneration === null) {
+    throw workflowError(
+      'AMENDMENT_WITHOUT_PLAN',
+      'An amendment replaces a planning generation; this change has none to replace.',
+      ExitCode.guard,
+    );
+  }
+  const repositoryRealPath = fs.realpathSync(repositoryRoot);
+  const proposalPath = path.resolve(
+    repositoryRoot,
+    changeRoot,
+    changeId,
+    'proposal.md',
+  );
+  const expectedProposalRealPath = path.join(
+    repositoryRealPath,
+    changeRoot,
+    changeId,
+    'proposal.md',
+  );
+  let proposal: string;
+  try {
+    const stat = fs.lstatSync(proposalPath);
+    if (
+      !stat.isFile() ||
+      stat.isSymbolicLink() ||
+      fs.realpathSync(proposalPath) !== expectedProposalRealPath
+    ) {
+      throw new Error('proposal is not one confined regular file');
+    }
+    proposal = fs.readFileSync(proposalPath, 'utf8');
+  } catch {
+    throw workflowError(
+      'AMENDMENT_DECISION_INVALID',
+      'The reviewed amendment decision must live in the confined proposal artifact.',
+      ExitCode.guard,
+    );
+  }
+  const decision = readPlanningAmendmentDecision(proposal);
+  if (decision === null) {
+    throw workflowError(
+      'AMENDMENT_DECISION_REQUIRED',
+      'An amendment requires a reason, impact, and rationale already covered by the fresh PlanReview.',
+      ExitCode.guard,
+    );
+  }
+  if (
+    decision.reason !== request.reason ||
+    decision.executionImpact !== request.executionImpact
+  ) {
+    throw workflowError(
+      'AMENDMENT_DECISION_MISMATCH',
+      'CLI amendment arguments must exactly confirm the reviewed decision.',
+      ExitCode.guard,
+    );
+  }
+  if (decision.amendsPlanningGeneration !== priorGeneration) {
+    throw workflowError(
+      'AMENDMENT_DECISION_STALE',
+      'The reviewed amendment decision does not replace the exact generation committed by the parent.',
+      ExitCode.staleState,
+    );
+  }
+  return decision;
+}
+
 export function commitPlanningTransition(
   cwd: string,
   requestedChangeId: string,
@@ -204,55 +294,6 @@ export function commitPlanningTransitionUnderAuthority(
  * generation refuses the amendment: one that cannot say precisely what it
  * replaces records nothing worth reading later.
  */
-function previousPlanningGeneration(
-  repositoryRoot: string,
-  parentCommit: string,
-  changeRoot: string,
-  changeId: string,
-): string | null {
-  const committed = runGit(
-    repositoryRoot,
-    ['show', `${parentCommit}:${changeRoot}/${changeId}/plan-review.json`],
-    true,
-  );
-  if (committed.trim() === '') return null;
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(committed);
-  } catch {
-    return null;
-  }
-  const generations = new Set<string>();
-  collectPlanningGenerations(parsed, generations);
-  if (generations.size > 1) {
-    throw workflowError(
-      'AMENDMENT_GENERATION_AMBIGUOUS',
-      'The committed review names more than one planning generation, so an amendment cannot say which one it replaces.',
-      ExitCode.staleState,
-    );
-  }
-  return [...generations][0] ?? null;
-}
-
-function collectPlanningGenerations(value: unknown, into: Set<string>): void {
-  if (Array.isArray(value)) {
-    for (const item of value) collectPlanningGenerations(item, into);
-    return;
-  }
-  if (typeof value !== 'object' || value === null) return;
-  for (const [key, nested] of Object.entries(value)) {
-    if (
-      key === 'planningGenerationId' &&
-      typeof nested === 'string' &&
-      /^[0-9a-f]{64}$/.test(nested)
-    ) {
-      into.add(nested);
-      continue;
-    }
-    collectPlanningGenerations(nested, into);
-  }
-}
-
 function commitPlanningTransitionLocked(
   cwd: string,
   changeId: string,
@@ -319,7 +360,26 @@ function commitPlanningTransitionLocked(
     initial.repositoryRoot,
     initial.head,
   );
-  const reopenAuthorized = amendment?.executionImpact === 'required';
+  const priorGeneration =
+    amendment === undefined
+      ? null
+      : committedPlanningGeneration(
+          initial.repositoryRoot,
+          initial.head,
+          config.changeRoot,
+          changeId,
+        );
+  const amendmentDecision =
+    amendment === undefined
+      ? null
+      : readReviewedAmendmentDecision(
+          initial.repositoryRoot,
+          config.changeRoot,
+          changeId,
+          amendment,
+          priorGeneration,
+        );
+  const reopenAuthorized = amendmentDecision?.executionImpact === 'required';
   const inspection = inspectPlanningTransition(
     initial.repositoryRoot,
     initial.head,
@@ -348,15 +408,8 @@ function commitPlanningTransitionLocked(
     );
   }
 
-  const priorGeneration =
-    amendment === undefined
-      ? null
-      : previousPlanningGeneration(
-          initial.repositoryRoot,
-          initial.head,
-          config.changeRoot,
-          changeId,
-        );
+  let amendmentExecutionEvidence: PlanningCarryForwardTaskEvidence[] | null =
+    null;
   if (amendment !== undefined) {
     if (priorGeneration === null) {
       throw workflowError(
@@ -365,6 +418,19 @@ function commitPlanningTransitionLocked(
         ExitCode.guard,
       );
     }
+    amendmentExecutionEvidence = assertAmendmentStateEligible(
+      initial.repositoryRoot,
+      config.changeRoot,
+      changeId,
+      initial.head,
+      inspection.beforeTasks,
+    );
+    assertNoImpactAmendmentPaths(
+      amendmentDecision as PlanningAmendmentDecision,
+      config.changeRoot,
+      changeId,
+      changedPaths,
+    );
     if (planningValidation.planningAssurance === null) {
       throw workflowError(
         'AMENDMENT_REVIEW_REQUIRED',
@@ -392,9 +458,9 @@ function commitPlanningTransitionLocked(
     })
   ) {
     // Declaring the work invalid and then leaving it marked done is the one
-    // combination that would leave the record saying two different things. A
-    // change with nothing completed yet may still declare the impact
-    // conservatively, and reopens nothing because there is nothing to reopen.
+    // combination that would leave the record saying two different things.
+    // State admission above already proved the prior generation completed, so
+    // required impact must reopen every one of those completed tasks.
     throw workflowError(
       'AMENDMENT_EXECUTION_NOT_REOPENED',
       'An amendment that says the work must be redone has to reopen it; completed tasks are still marked done.',
@@ -409,12 +475,17 @@ function commitPlanningTransitionLocked(
 
   // Archive applies delta specs onto the base specs; a delta that cannot apply
   // is not discoverable until then, which is a whole execution too late.
+  const currentDeltaSpecPaths = inspection.currentPaths.filter(
+    (candidate) =>
+      candidate.startsWith(`${config.changeRoot}/${changeId}/specs/`) &&
+      candidate.endsWith('/spec.md'),
+  );
   const archiveApplicability = assertSpecDeltaScenarioPreservation(
     initial.repositoryRoot,
     initial.head,
     config.changeRoot,
     changeId,
-    changedPaths.filter((candidate) => candidate.endsWith('/spec.md')),
+    currentDeltaSpecPaths,
   );
 
   assertUnstagedPlanningState(
@@ -481,7 +552,8 @@ function commitPlanningTransitionLocked(
             planningGeneration:
               planningValidation.planningAssurance.planningGenerationId,
             amendsPlanningGeneration: priorGeneration as string,
-            executionImpact: amendment.executionImpact,
+            executionImpact: (amendmentDecision as PlanningAmendmentDecision)
+              .executionImpact,
             planReview: planningValidation.planningAssurance.reviewNodeId,
           };
     const subject =
@@ -518,6 +590,7 @@ function commitPlanningTransitionLocked(
 
     const report: PlanningTransitionReport = {
       schemaVersion: 1,
+      reportVersion: 2,
       kind: 'planning-transition',
       createdAt: new Date().toISOString(),
       changeId,
@@ -548,6 +621,32 @@ function commitPlanningTransitionLocked(
       },
       openspec: planningValidation.openspec,
       planningAssurance: planningValidation.planningAssurance,
+      amendment:
+        provenance === null ||
+        amendmentDecision === null ||
+        amendmentExecutionEvidence === null
+          ? null
+          : {
+              status: 'recorded',
+              reason: amendmentDecision.reason,
+              executionImpact: amendmentDecision.executionImpact,
+              rationale: amendmentDecision.rationale,
+              decisionDigest:
+                planningAmendmentDecisionDigest(amendmentDecision),
+              planningGeneration: provenance.planningGeneration,
+              amendsPlanningGeneration: provenance.amendsPlanningGeneration,
+              planReview: provenance.planReview,
+              executionDisposition:
+                amendmentDecision.executionImpact === 'none'
+                  ? {
+                      kind: 'carried-forward',
+                      tasks: amendmentExecutionEvidence,
+                    }
+                  : {
+                      kind: 'reopened',
+                      taskIds: inspection.reopenedTasks,
+                    },
+            },
       archiveApplicability,
     };
     const reportsDirectory = path.join(
@@ -611,18 +710,21 @@ function commitPlanningTransitionLocked(
     return {
       changeId,
       kind: inspection.transitionKind,
-    ...(provenance === null || amendment === undefined
-      ? {}
-      : {
-          amendment: {
-            reason: amendment.reason,
-            executionImpact: provenance.executionImpact,
-            reopenedTasks: inspection.reopenedTasks,
-            planningGeneration: provenance.planningGeneration,
-            amendsPlanningGeneration: provenance.amendsPlanningGeneration,
-            planReview: provenance.planReview,
-          },
-        }),
+      ...(provenance === null || amendmentDecision === null
+        ? {}
+        : {
+            amendment: {
+              reason: amendmentDecision.reason,
+              executionImpact: provenance.executionImpact,
+              rationale: amendmentDecision.rationale,
+              decisionDigest:
+                planningAmendmentDecisionDigest(amendmentDecision),
+              reopenedTasks: inspection.reopenedTasks,
+              planningGeneration: provenance.planningGeneration,
+              amendsPlanningGeneration: provenance.amendsPlanningGeneration,
+              planReview: provenance.planReview,
+            },
+          }),
       subject,
       baselineHead: initial.head,
       changedPaths,
@@ -644,6 +746,107 @@ function commitPlanningTransitionLocked(
     }
     throw error;
   }
+}
+
+function assertNoImpactAmendmentPaths(
+  amendment: AmendmentRequest,
+  changeRoot: string,
+  changeId: string,
+  changedPaths: readonly string[],
+): void {
+  if (amendment.executionImpact !== 'none') return;
+  const prefix = `${changeRoot}/${changeId}/`;
+  const executionContractPaths = new Set([
+    `${prefix}.openspec.yaml`,
+    `${prefix}execution.json`,
+    `${prefix}guard.json`,
+    `${prefix}tasks.md`,
+  ]);
+  const requiringExecution = changedPaths.filter((candidate) =>
+    executionContractPaths.has(candidate),
+  );
+  if (requiringExecution.length > 0) {
+    throw workflowError(
+      'AMENDMENT_EXECUTION_IMPACT_REQUIRED',
+      'A no-impact amendment may correct reviewed planning prose and delta specifications, but it may not change the task or execution contract.',
+      ExitCode.guard,
+      { details: { paths: requiringExecution } },
+    );
+  }
+}
+
+function assertAmendmentStateEligible(
+  repositoryRoot: string,
+  changeRoot: string,
+  changeId: string,
+  tip: string,
+  beforeTasks: readonly { id: string; completed: boolean }[] | undefined,
+): PlanningCarryForwardTaskEvidence[] {
+  const tasks = beforeTasks ?? [];
+  const preEpochCompleted = preEpochCompletedTaskIds(
+    repositoryRoot,
+    changeRoot,
+    changeId,
+    tip,
+  );
+  const incompleteTaskIds = tasks
+    .filter(({ completed }) => !completed)
+    .map(({ id }) => id);
+  const generationEvidence = resolveTaskExecutionGenerationEvidence(
+    repositoryRoot,
+    changeRoot,
+    changeId,
+    tasks.map(({ id }) => id),
+    tip,
+  );
+  const taskEvidence = tasks.map(({ id }) => ({
+    taskId: id,
+    boundary: generationEvidence.boundary,
+    commits: generationEvidence.commitsByTask[id] ?? [],
+  }));
+  const invalidTaskEvidence = taskEvidence.filter(
+    ({ taskId, boundary, commits }) =>
+      commits.length !== 1 &&
+      !(boundary === null && preEpochCompleted.has(taskId)),
+  );
+  if (
+    tasks.length === 0 ||
+    incompleteTaskIds.length > 0 ||
+    invalidTaskEvidence.length > 0
+  ) {
+    throw workflowError(
+      'AMENDMENT_STATE_INELIGIBLE',
+      'A plan amendment is available only after the committed execution generation is complete and every completed task has one exact task commit.',
+      ExitCode.guard,
+      {
+        details: {
+          incompleteTaskIds,
+          invalidTaskEvidence: invalidTaskEvidence.map(
+            ({ taskId, boundary, commits }) => ({
+              taskId,
+              boundary: boundary?.commitHash ?? null,
+              commitHashes: commits.map(({ hash }) => hash),
+            }),
+          ),
+        },
+      },
+    );
+  }
+  return taskEvidence
+    .map(({ taskId, commits }): PlanningCarryForwardTaskEvidence =>
+      commits.length === 1
+        ? {
+            taskId,
+            source: 'managed-task-commit',
+            commitHash: commits[0]!.hash,
+          }
+        : {
+            taskId,
+            source: 'pre-epoch-exemption',
+            commitHash: null,
+          },
+    )
+    .sort((left, right) => left.taskId.localeCompare(right.taskId));
 }
 
 function assertPlanningReportPersisted(

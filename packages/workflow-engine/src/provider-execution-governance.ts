@@ -360,23 +360,15 @@ export function inspectProviderPromptContextRetentionBinding(
   const matches = [...candidateEpochs]
     .sort((left, right) => left - right)
     .flatMap((epoch) => {
-      const manifest = providerPromptManifest(
-        request,
-        workflowId,
-        epoch,
-        content,
-      );
-      const digestBound =
-        (epoch === current.workflow.currentEpoch &&
-          canonicalJson(manifest) === canonicalJson(current.currentManifest)) ||
-        current.transitionReceipts.some(
-          (receipt) =>
-            (receipt.fromEpoch === epoch &&
-              receipt.previousContextDigest === manifest.contextDigest) ||
-            (receipt.toEpoch === epoch &&
-              receipt.newContextDigest === manifest.contextDigest),
-        );
-      if (!digestBound) return [];
+      const contractVersions = new Set<number>([
+        ...(epoch === current.workflow.currentEpoch
+          ? [current.workflow.contractVersion]
+          : []),
+        ...current.transitionReceipts.flatMap((receipt) => [
+          ...(receipt.fromEpoch === epoch ? [receipt.fromContractVersion] : []),
+          ...(receipt.toEpoch === epoch ? [receipt.toContractVersion] : []),
+        ]),
+      ]);
       const enteredAt = current.transitionReceipts.find(
         ({ toEpoch }) => toEpoch === epoch,
       )?.createdAt;
@@ -389,7 +381,29 @@ export function inspectProviderPromptContextRetentionBinding(
       ) {
         return [];
       }
-      return [{ epoch, contextDigest: manifest.contextDigest }];
+      return [...contractVersions].flatMap((contractVersion) => {
+        const manifest = providerPromptManifest(
+          request,
+          workflowId,
+          epoch,
+          contractVersion,
+          content,
+        );
+        const digestBound =
+          (epoch === current.workflow.currentEpoch &&
+            canonicalJson(manifest) ===
+              canonicalJson(current.currentManifest)) ||
+          current.transitionReceipts.some(
+            (receipt) =>
+              (receipt.fromEpoch === epoch &&
+                receipt.previousContextDigest === manifest.contextDigest) ||
+              (receipt.toEpoch === epoch &&
+                receipt.newContextDigest === manifest.contextDigest),
+          );
+        return digestBound
+          ? [{ epoch, contextDigest: manifest.contextDigest }]
+          : [];
+      });
     });
   if (matches.length !== 1) return null;
   return Object.freeze({
@@ -428,7 +442,7 @@ function resolveProviderPromptContext(
     ) {
       throw error;
     }
-    const manifest = providerPromptManifest(request, workflowId, 1, content);
+    const manifest = providerPromptManifest(request, workflowId, 1, 1, content);
     const workflow = providerPromptWorkflow(request, manifest);
     try {
       current = initializeDurableEpochContextStore(storeRoot, {
@@ -448,10 +462,17 @@ function resolveProviderPromptContext(
     }
   }
 
+  const semanticContractChanged =
+    current.currentManifest.termSetDigest !==
+    providerSemanticContractDigest(request);
+  const contractVersion = semanticContractChanged
+    ? current.workflow.contractVersion + 1
+    : current.workflow.contractVersion;
   let manifest = providerPromptManifest(
     request,
     workflowId,
     current.workflow.currentEpoch,
+    contractVersion,
     content,
   );
   let workflow = providerPromptWorkflow(request, manifest);
@@ -464,8 +485,16 @@ function resolveProviderPromptContext(
       request,
       workflowId,
       current.workflow.currentEpoch + 1,
+      contractVersion,
       content,
     );
+    const nextItems = new Map(
+      manifest.items.map(({ identity, digest }) => [identity, digest]),
+    );
+    const carriedForward = current.currentManifest.items
+      .filter(({ identity, digest }) => nextItems.get(identity) === digest)
+      .map(({ identity }) => identity);
+    const carriedForwardSet = new Set(carriedForward);
     current = rolloverDurableEpochContextStore(storeRoot, {
       workflowId,
       expectedGeneration: current.generation,
@@ -473,10 +502,30 @@ function resolveProviderPromptContext(
       expectedContextDigest: current.workflow.contextDigest,
       nextManifest: manifest,
       items,
-      reason: 'Lifecycle selected a new provider semantic input manifest.',
+      reason: semanticContractChanged
+        ? 'Lifecycle selected a new provider semantic output contract.'
+        : 'Lifecycle selected a new provider semantic input manifest.',
       restartFrom: request.purpose,
-      carriedForward: [],
-      invalidated: ['provider-input-manifest'],
+      carriedForward,
+      carryForwardManifest: {
+        sourceWorkflow: workflowId,
+        sourceEpoch: current.workflow.currentEpoch,
+        carriedForward: carriedForward.map((identity) => ({
+          identity,
+          reason:
+            'The exact provider input manifest remains selected semantic input in the new epoch.',
+        })),
+        excluded: current.currentManifest.items
+          .filter(({ identity }) => !carriedForwardSet.has(identity))
+          .map(({ identity }) => ({
+            identity,
+            reason:
+              'The prior provider input manifest is bound to the superseded semantic request.',
+          })),
+      },
+      invalidated: semanticContractChanged
+        ? ['provider-input-manifest', 'provider-semantic-contract']
+        : ['provider-input-manifest'],
       verification: null,
       createdAt: options.now,
     });
@@ -503,22 +552,35 @@ function providerPromptManifest(
   request: ProviderInvocationRequest,
   workflowId: string,
   epoch: number,
+  contractVersion: number,
   content: string,
 ): ContextManifest {
   return buildContextManifest({
     workflowId,
     epoch,
-    contractVersion: 1,
+    contractVersion,
     baselineDigest: digestCanonical({
       baseCommit: request.baseCommit,
       baseTree: request.baseTree,
     }),
     intentDigest: digestCanonical({ targetDigest: request.targetDigest }),
-    termSetDigest: digestCanonical({ purpose: request.purpose }),
+    termSetDigest: providerSemanticContractDigest(request),
     planningSnapshotDigest: digestCanonical({
       inputManifestDigest: request.inputManifestDigest,
     }),
     items: [{ identity: 'provider-input-manifest', content }],
+  });
+}
+
+function providerSemanticContractDigest(
+  request: ProviderInvocationRequest,
+): string {
+  return digestCanonical({
+    schemaVersion: 1,
+    kind: 'provider-semantic-output-contract',
+    purpose: request.purpose,
+    outputSchema: request.outputSchema,
+    evaluatorVersion: request.evaluatorVersion,
   });
 }
 

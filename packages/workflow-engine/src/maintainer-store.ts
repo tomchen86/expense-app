@@ -626,6 +626,109 @@ export function terminallyRevokeAvailableMaintainerGrantV2UnderLifecycleLock(
   return inspectTerminal(terminal);
 }
 
+export function terminallyFailAvailableMaintainerGrantV2UnderLifecycleLock(
+  gitCommonDirectory: string,
+  requestedGrantId: string,
+  reason: string,
+  now: Date,
+  assertOwned: () => void,
+): MaintainerGrantInspection {
+  const grantId = assertMaintainerGrantId(requestedGrantId);
+  const paths = maintainerGrantStorePaths(gitCommonDirectory);
+  const target = readMaintainerGrantV2RevocationTargetUnderLifecycleLock(
+    gitCommonDirectory,
+    grantId,
+    assertOwned,
+  );
+  if (target.state === 'failed') {
+    return inspectTerminal(
+      readTerminal(grantPath(paths.terminal, grantId), grantId),
+    );
+  }
+  if (target.state !== 'available') {
+    throw workflowError(
+      'MAINTAINER_GRANT_FAILURE_STATE_INVALID',
+      'Only an available Apply Grant v2 may fail before reservation.',
+      ExitCode.guard,
+    );
+  }
+  const terminal: MaintainerTerminalRecord = {
+    schemaVersion: 1,
+    state: 'failed',
+    grantId,
+    sessionId: null,
+    commitHash: null,
+    reason,
+    recordedAt: exactDate(now).toISOString(),
+    envelope: target.envelope,
+  };
+  createPrivateFileAtomic(
+    grantPath(paths.terminal, grantId),
+    serializeRecord(terminal),
+  );
+  cleanupNonterminalCopies(paths, grantId, target.envelope);
+  assertOwned();
+  return inspectTerminal(terminal);
+}
+
+export function terminallyFailSignedMaintainerGrantV2UnderLifecycleLock(
+  gitCommonDirectory: string,
+  envelope: MaintainerGrantV2Envelope,
+  reason: string,
+  now: Date,
+  assertOwned: () => void,
+): MaintainerGrantInspection {
+  const grantId = assertMaintainerGrantId(envelope.payload.grantId);
+  const paths = maintainerGrantStorePaths(gitCommonDirectory);
+  assertOwned();
+  ensureStoreDirectories(paths);
+  const availablePath = grantPath(paths.available, grantId);
+  const reservedPath = grantPath(paths.reserved, grantId);
+  const terminalPath = grantPath(paths.terminal, grantId);
+  if (fs.existsSync(reservedPath)) {
+    throw workflowError(
+      'MAINTAINER_GRANT_FAILURE_STATE_INVALID',
+      'An in-flight signed grant cannot become reserved during publication cleanup.',
+      ExitCode.guard,
+    );
+  }
+  if (fs.existsSync(terminalPath)) {
+    const terminal = readTerminal(terminalPath, grantId);
+    if (
+      terminal.state !== 'failed' ||
+      canonicalAnyMaintainerGrantEnvelope(terminal.envelope) !==
+        canonicalMaintainerGrantV2Envelope(envelope)
+    ) {
+      throw ambiguousGrant(grantId);
+    }
+    cleanupNonterminalCopies(paths, grantId, terminal.envelope);
+    return inspectTerminal(terminal);
+  }
+  if (fs.existsSync(availablePath)) {
+    const available = readAvailableGrant(availablePath, grantId);
+    if (
+      canonicalAnyMaintainerGrantEnvelope(available) !==
+      canonicalMaintainerGrantV2Envelope(envelope)
+    ) {
+      throw ambiguousGrant(grantId);
+    }
+  }
+  const terminal: MaintainerTerminalRecord = {
+    schemaVersion: 1,
+    state: 'failed',
+    grantId,
+    sessionId: null,
+    commitHash: null,
+    reason,
+    recordedAt: exactDate(now).toISOString(),
+    envelope,
+  };
+  createPrivateFileAtomic(terminalPath, serializeRecord(terminal));
+  cleanupNonterminalCopies(paths, grantId, envelope);
+  assertOwned();
+  return inspectTerminal(terminal);
+}
+
 export function terminallyRevokeMaintainerReservation(
   gitCommonDirectory: string,
   requestedGrantId: string,
@@ -672,6 +775,23 @@ export function terminallyInvalidateMaintainerReservation(
     requestedGrantId,
     requestedSessionId,
     'invalidated',
+    reason,
+    now,
+  );
+}
+
+export function terminallyFailMaintainerReservation(
+  gitCommonDirectory: string,
+  requestedGrantId: string,
+  requestedSessionId: string,
+  reason: string,
+  now: Date = new Date(),
+): MaintainerGrantInspection {
+  return terminalizeMaintainerReservation(
+    gitCommonDirectory,
+    requestedGrantId,
+    requestedSessionId,
+    'failed',
     reason,
     now,
   );

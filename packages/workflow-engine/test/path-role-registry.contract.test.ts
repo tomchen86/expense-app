@@ -174,10 +174,10 @@ test('the repository registry classifies its own risky substrate', () => {
     assert.equal(resolution.role, expected, candidate);
     assert.equal(compressionEligible(resolution), false, candidate);
   }
-  assert.equal(
-    compressionEligible(
-      resolvePathRole(registry, 'packages/workflow-engine/src/paths.ts'),
-    ),
-    true,
+  const protectedDependency = resolvePathRole(
+    registry,
+    'packages/workflow-engine/src/paths.ts',
   );
+  assert.equal(protectedDependency.role, 'control-plane');
+  assert.equal(compressionEligible(protectedDependency), false);
 });

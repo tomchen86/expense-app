@@ -397,7 +397,9 @@ function buildLegacyExecutionState(prepared, current) {
             previousEntry !== undefined &&
             entry.record.attempt === previousEntry.record.attempt + 1;
         const result = currentResults.get(projected.attemptId);
-        const changedFields = !hasAdjacentPrevious
+        // A missing ordinal prevents a direct retryOf edge, but it does not erase
+        // an observable policy difference from the last retained Attempt.
+        const changedFields = previous === undefined
             ? []
             : executionPolicyChangedFields(previous.policySnapshot, projected.policySnapshot);
         const acceptance = result?.acceptance;
@@ -473,11 +475,9 @@ function buildLegacyExecutionState(prepared, current) {
                 ? 'repair'
                 : index === 0
                     ? projected.retryMode
-                    : !hasAdjacentPrevious
-                        ? projected.retryMode
-                        : changedFields.length === 0
-                            ? 'same-input'
-                            : 'execution-policy-change',
+                    : changedFields.length === 0
+                        ? 'same-input'
+                        : 'execution-policy-change',
             changedFields: entry.repairLineage === null
                 ? changedFields
                 : baseAttempt.changedFields,

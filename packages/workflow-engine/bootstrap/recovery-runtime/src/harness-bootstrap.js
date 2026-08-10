@@ -4,15 +4,22 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { BUILT_IN_ENGINE_CLOSURE_MANIFEST_DIGEST } from '../bootstrap/built-in-engine-closure-pin.js';
+import { deriveAuthorityAuditRepositoryId, } from './authority-audit-ledger.js';
+import { authorityRefusalDigest, recordAuthorityRefusal, } from './authority-refusal-audit.js';
+import { recordAuthorityAuditEvent } from './authority-audit-service.js';
 import { canonicalJson } from './canonical-json.js';
+import { HARNESS_RECOVERY_SIGNATURE_NAMESPACE, canonicalControlPlaneRecoveryGrantPayload, findPersistedControlPlaneRecoveryGrantForSource, throwControlPlaneRecoveryAlreadyConsumed, } from './control-plane-recovery-grant.js';
 import { loadWorkflowConfig } from './contracts.js';
 import { ExitCode, WorkflowError, workflowError } from './errors.js';
 import { discoverRepository, runGit } from './git.js';
-import { bootstrapInterventionUsage, dispatchBootstrapInterventionCommand, } from './intervention-control-bootstrap-cli.js';
+import { bootstrapInterventionStateRoot, bootstrapInterventionUsage, dispatchBootstrapInterventionCommand, } from './intervention-control-bootstrap-cli.js';
 import { persistTrustedBootstrapSessionSnapshot, readLocalEngineBinding, } from './intervention-control-bootstrap.js';
-import { readControlPlaneSupervisorState } from './intervention-control-updater.js';
+import { executeControlPlaneRecoveryRollback, preflightControlPlaneRecoveryRollback, readControlPlaneSupervisorState, } from './intervention-control-updater.js';
 import { parseMaintainerPolicy } from './maintainer-policy.js';
-import { createInteractiveSshSigner, } from './maintainer-signer.js';
+import { createInteractiveSshSigner, verifySshSignatureWithPublicKey, } from './maintainer-signer.js';
+import { importRecoveryAuthorityDescriptor, readRecoveryAuthorityDescriptor, verifyRecoveryAuthorityDescriptor, } from './recovery-authority.js';
+import { executeRecoveryQuarantineEnter, executeRecoveryQuarantineRelease, readRecoveryQuarantineMarker, } from './recovery-quarantine.js';
+import { RECOVERY_TRUST_ROOT_RESTORE_NAMESPACE, executeRecoveryOperationalTrustRootRestore, } from './recovery-trust-root-restore.js';
 import { listActiveWorkflowSessionIds, readSessionFile, runtimePaths, } from './session-store.js';
 /**
  * Direct local recovery entry for intervention commands. This deliberately
@@ -20,28 +27,46 @@ import { listActiveWorkflowSessionIds, readSessionFile, runtimePaths, } from './
  * by bootstrap/harness-bootstrap-dependency-closure.json.
  */
 export function runHarnessBootstrapCli(argv, cwd = process.cwd(), overrides = {}) {
-    const json = argv.includes('--json');
-    const withoutOutputFlag = argv.filter((argument) => argument !== '--json');
+    let refusalAuthority = null;
+    const json = argv.at(-1) === '--json';
+    const outputFlagCount = argv.filter((argument) => argument === '--json').length;
+    const withoutOutputFlag = json ? argv.slice(0, -1) : [...argv];
     const args = withoutOutputFlag[0] === 'intervention'
         ? withoutOutputFlag.slice(1)
         : withoutOutputFlag;
     try {
+        if (outputFlagCount !== (json ? 1 : 0)) {
+            throw workflowError('HARNESS_RECOVERY_COMMAND_UNSUPPORTED', harnessBootstrapUsage(), ExitCode.usage);
+        }
+        assertHarnessRecoveryQuarantineRouting(args, cwd, (authority) => {
+            refusalAuthority = authority;
+        });
         if (args.length === 0 ||
             args[0] === '--help' ||
             args[0] === '-h' ||
             args[0] === 'help') {
-            process.stdout.write(`${bootstrapInterventionUsage()}\n`);
+            process.stdout.write(`${harnessBootstrapUsage()}\n`);
             return 0;
         }
+        const result = isRecoveryAuthorityCommand(args)
+            ? dispatchRecoveryAuthorityCommand(args, cwd, overrides)
+            : isRecoveryQuarantineCommand(args)
+                ? dispatchRecoveryQuarantineCommand(args, cwd, overrides)
+                : isControlPlaneRecoveryCommand(args)
+                    ? dispatchSealedControlPlaneRecovery(args, cwd, overrides)
+                    : dispatchBootstrapInterventionCommand(args, cwd, createHarnessBootstrapDependencies(cwd, overrides));
         const output = {
             kind: 'harness-bootstrap-cli-result.v1',
             ok: true,
-            result: dispatchBootstrapInterventionCommand(args, cwd, createHarnessBootstrapDependencies(cwd, overrides)),
+            result,
         };
         process.stdout.write(`${json ? JSON.stringify(output) : JSON.stringify(output, null, 2)}\n`);
         return 0;
     }
     catch (error) {
+        if (error instanceof WorkflowError && refusalAuthority !== null) {
+            auditHarnessRecoveryRefusal(refusalAuthority, args, error, overrides);
+        }
         const failure = error instanceof WorkflowError
             ? error
             : workflowError('INTERNAL_ERROR', error instanceof Error ? error.message : String(error), ExitCode.internal);
@@ -57,6 +82,710 @@ export function runHarnessBootstrapCli(argv, cwd = process.cwd(), overrides = {}
         process.stderr.write(`${json ? JSON.stringify(output) : JSON.stringify(output, null, 2)}\n`);
         return failure.exitCode;
     }
+}
+function isRecoveryAuthorityCommand(args) {
+    return args[0] === 'recovery-authority';
+}
+function isRecoveryQuarantineCommand(args) {
+    return args[0] === 'recovery-quarantine';
+}
+function isControlPlaneRecoveryCommand(args) {
+    return args[0] === 'control-plane';
+}
+function assertHarnessRecoveryQuarantineRouting(args, cwd, observeRefusalAuthority) {
+    let repository;
+    try {
+        repository = discoverRepository(cwd);
+    }
+    catch (error) {
+        if (args.length === 0 ||
+            args[0] === '--help' ||
+            args[0] === '-h' ||
+            args[0] === 'help') {
+            return;
+        }
+        throw error;
+    }
+    const marker = readOptionalRecoveryQuarantineMarker(recoveryAuthorityStateRoot(repository.gitCommonDirectory));
+    if (marker !== null) {
+        observeRefusalAuthority({
+            repositoryRoot: repository.repositoryRealPath,
+            marker,
+        });
+    }
+    const operationalTrustFence = hasRecoveryOperationalTrustRootFence(recoveryAuthorityStateRoot(repository.gitCommonDirectory));
+    if (marker !== null) {
+        if (isExactControlPlaneRollback(args) ||
+            isExactRecoveryQuarantineCommand(args, 'release') ||
+            isExactRecoveryAuthorityRestoreCommand(args)) {
+            return;
+        }
+        throw workflowError('WORKFLOW_RECOVERY_QUARANTINED', 'Only exact sealed Recovery Quarantine release, trust-root restore, or control-plane rollback is available while quarantine is active.', ExitCode.guard);
+    }
+    if (operationalTrustFence) {
+        if (isExactRecoveryQuarantineCommand(args, 'enter'))
+            return;
+        throw workflowError('RECOVERY_OPERATIONAL_TRUST_NOT_ACTIVATED', 'A restored operational trust root exists without an out-of-band pinned activation channel; only exact Recovery Quarantine entry remains available.', ExitCode.guard);
+    }
+}
+function auditHarnessRecoveryRefusal(authority, args, refusal, overrides) {
+    if (refusal.code.startsWith('AUTHORITY_AUDIT_'))
+        return;
+    const { marker, repositoryRoot } = authority;
+    try {
+        recordAuthorityRefusal({
+            scope: {
+                externalAuditRoot: marker.externalAuditRoot,
+                repositoryRoot,
+                repositoryId: deriveAuthorityAuditRepositoryId(marker.repositoryId),
+            },
+            family: 'recovery-authority',
+            operation: 'harness-bootstrap.rejection',
+            subjectId: marker.enterGrantId,
+            actor: { kind: 'engine', identity: 'sealed-recovery-harness' },
+            taskId: null,
+            changeId: null,
+            workflowId: marker.enterGrantId,
+            grantDigest: marker.enterEnvelopeDigest,
+            candidateBundleDigest: null,
+            bindingDigest: marker.markerDigest,
+            refusalIdentity: {
+                argvDigest: authorityRefusalDigest({ argv: [...args] }),
+            },
+        }, refusal, { now: overrides.now?.() ?? new Date() });
+    }
+    catch (auditError) {
+        attachHarnessRefusalAuditFailure(refusal, auditError);
+    }
+}
+function attachHarnessRefusalAuditFailure(refusal, auditError) {
+    try {
+        const currentCause = refusal.cause;
+        Object.defineProperty(refusal, 'cause', {
+            configurable: true,
+            enumerable: false,
+            value: currentCause === undefined
+                ? auditError
+                : new AggregateError([currentCause, auditError], 'Recovery refusal audit also failed.'),
+            writable: false,
+        });
+    }
+    catch {
+        // The stable refusal stays authoritative if diagnostic attachment fails.
+    }
+}
+function dispatchRecoveryAuthorityCommand(args, cwd, overrides) {
+    const repository = discoverRepository(cwd);
+    const boundary = recoveryImportBoundary(repository);
+    if (args.length === 5 &&
+        args[0] === 'recovery-authority' &&
+        args[1] === 'import' &&
+        isExactAbsolutePath(args[2]) &&
+        args[3] === '--expectations' &&
+        isExactAbsolutePath(args[4])) {
+        const expectations = readExternalRecoveryExpectations(args[4], boundary);
+        const descriptor = verifyRecoveryAuthorityDescriptor(readExternalRecoveryInput(args[2], boundary), expectations);
+        const stateRoot = ensureRecoveryAuthorityStateRoot(repository.gitCommonDirectory);
+        assertRecoveryQuarantineInactive(stateRoot);
+        return importRecoveryAuthorityDescriptor(args[2], stateRoot, expectations, boundary);
+    }
+    if (isExactRecoveryAuthorityRestoreCommand(args)) {
+        return dispatchRecoveryOperationalTrustRootRestore(args, repository, boundary, overrides);
+    }
+    if (args.length === 4 &&
+        args[0] === 'recovery-authority' &&
+        args[1] === 'status' &&
+        args[2] === '--expectations' &&
+        isExactAbsolutePath(args[3])) {
+        const expectations = readExternalRecoveryExpectations(args[3], boundary);
+        const stateRoot = requireRecoveryAuthorityStateRoot(repository.gitCommonDirectory);
+        assertRecoveryQuarantineInactive(stateRoot);
+        return {
+            kind: 'recovery-authority-status.v1',
+            descriptor: readRecoveryAuthorityDescriptor(stateRoot, expectations, boundary),
+            quarantine: null,
+        };
+    }
+    throw workflowError('HARNESS_RECOVERY_COMMAND_UNSUPPORTED', harnessBootstrapUsage(), ExitCode.usage);
+}
+function dispatchRecoveryOperationalTrustRootRestore(args, repository, boundary, overrides) {
+    const envelopePath = args[2];
+    const expectationsPath = args[4];
+    const expectations = readExternalRecoveryExpectations(expectationsPath, boundary);
+    const stateRoot = requireRecoveryAuthorityStateRoot(repository.gitCommonDirectory);
+    const descriptor = readRecoveryAuthorityDescriptor(stateRoot, expectations, boundary);
+    const externalAuditRoot = readExternalRecoveryTrustRootAuditRoot(envelopePath, boundary);
+    const markerDigest = requireMatchingRecoveryQuarantine(stateRoot, descriptor, externalAuditRoot);
+    const dependencies = recoveryOperationalTrustRootDependencies(descriptor, expectations, externalAuditRoot, repository.repositoryRealPath, overrides);
+    overrides.beforeRecoveryTrustRootExecute?.();
+    const markerDigestAtExecution = requireMatchingRecoveryQuarantine(stateRoot, descriptor, externalAuditRoot);
+    if (markerDigestAtExecution !== markerDigest) {
+        throw recoveryTrustRootQuarantineMismatch();
+    }
+    return executeRecoveryOperationalTrustRootRestore(envelopePath, stateRoot, boundary, dependencies);
+}
+function requireMatchingRecoveryQuarantine(stateRoot, descriptor, externalAuditRoot) {
+    const marker = readRecoveryQuarantineMarker(stateRoot);
+    if (marker === null) {
+        throw workflowError('RECOVERY_TRUST_ROOT_QUARANTINE_REQUIRED', 'Operational trust-root restore requires an active canonical Recovery Quarantine marker.', ExitCode.guard);
+    }
+    if (marker.repositoryId !== descriptor.repositoryIdentity.repositoryId ||
+        marker.authorityDescriptorDigest !== descriptor.descriptorDigest ||
+        marker.authorityGeneration !== descriptor.generation ||
+        marker.recoveryRuntimeDigest !== descriptor.sealedRuntime.closureDigest ||
+        marker.externalAuditRoot !== externalAuditRoot) {
+        throw recoveryTrustRootQuarantineMismatch();
+    }
+    return marker.markerDigest;
+}
+function recoveryTrustRootQuarantineMismatch() {
+    return workflowError('RECOVERY_TRUST_ROOT_QUARANTINE_MISMATCH', 'Operational trust-root restore does not bind the exact active Recovery Quarantine marker.', ExitCode.verification);
+}
+function recoveryOperationalTrustRootDependencies(descriptor, expectations, externalAuditRoot, repositoryRoot, overrides) {
+    return {
+        authorityDescriptor: descriptor,
+        authorityExpectations: expectations,
+        externalAuditRoot,
+        now: overrides.now?.() ?? new Date(),
+        verifyHumanSignature(payload, signature, identity, namespace) {
+            if (namespace !== RECOVERY_TRUST_ROOT_RESTORE_NAMESPACE ||
+                identity !== descriptor.signer.identity ||
+                descriptor.signer.fingerprint !== expectations.signerFingerprint) {
+                return false;
+            }
+            try {
+                verifySshSignatureWithPublicKey(payload, signature, identity, descriptor.signer.publicKey, namespace);
+                return true;
+            }
+            catch {
+                return false;
+            }
+        },
+        appendAudit: overrides.recoveryTrustRootAuditSink?.append ??
+            productionRecoveryTrustRootAuditSink(repositoryRoot).append,
+    };
+}
+function productionRecoveryTrustRootAuditSink(repositoryRoot) {
+    return {
+        append(record) {
+            recordAuthorityAuditEvent({
+                externalAuditRoot: record.externalAuditRoot,
+                repositoryRoot,
+                repositoryId: deriveAuthorityAuditRepositoryId(record.repositoryId),
+            }, {
+                eventType: 'recovery',
+                occurredAt: record.recordedAt,
+                idempotencyKey: record.recordId,
+                grantDigest: record.envelopeDigest,
+                candidateBundleDigest: record.rootDigest,
+                prestateDigest: record.previousPointerDigest,
+                poststateDigest: record.newPointerDigest,
+                actor: { kind: 'human', identity: record.humanSigner },
+                taskId: null,
+                changeId: null,
+                workflowId: record.grantId,
+                command: {
+                    name: 'recovery-authority.restore-trust-root',
+                    argvDigest: record.recordDigest,
+                },
+                providerInvocation: null,
+                externalEffect: null,
+                result: 'succeeded',
+                outcomeDigest: record.terminalDigest,
+                errorCode: null,
+            });
+        },
+    };
+}
+function dispatchRecoveryQuarantineCommand(args, cwd, overrides) {
+    const operation = args[1] === 'enter'
+        ? 'enter'
+        : args[1] === 'release'
+            ? 'release'
+            : null;
+    if (operation === null ||
+        !isExactRecoveryQuarantineCommand(args, operation)) {
+        throw workflowError('HARNESS_RECOVERY_COMMAND_UNSUPPORTED', harnessBootstrapUsage(), ExitCode.usage);
+    }
+    const repository = discoverRepository(cwd);
+    const boundary = recoveryImportBoundary(repository);
+    const expectations = readExternalRecoveryExpectations(args[4], boundary);
+    const stateRoot = requireRecoveryAuthorityStateRoot(repository.gitCommonDirectory);
+    const descriptor = readRecoveryAuthorityDescriptor(stateRoot, expectations, boundary);
+    const envelope = readExternalRecoveryEnvelope(args[2], boundary);
+    const dependencies = recoveryQuarantineDependencies(descriptor, expectations, envelope, repository.repositoryRealPath, overrides);
+    if (operation === 'enter')
+        assertRecoveryQuarantineInactive(stateRoot);
+    return operation === 'enter'
+        ? executeRecoveryQuarantineEnter(stateRoot, envelope, dependencies)
+        : executeRecoveryQuarantineRelease(stateRoot, envelope, dependencies);
+}
+function assertRecoveryQuarantineInactive(storageRoot) {
+    if (readRecoveryQuarantineMarker(storageRoot) !== null) {
+        throw workflowError('WORKFLOW_RECOVERY_QUARANTINED', 'Recovery Authority import, status, and enter are unavailable while quarantine is active.', ExitCode.guard);
+    }
+}
+function recoveryQuarantineDependencies(descriptor, expectations, envelope, repositoryRoot, overrides) {
+    const externalAuditRoot = envelope.payload.externalAuditRoot;
+    return {
+        authorityDescriptor: descriptor,
+        authorityExpectations: expectations,
+        externalAuditRoot,
+        now: overrides.now?.() ?? new Date(),
+        verifyHumanSignature(payload, signature, identity, namespace) {
+            if (identity !== descriptor.signer.identity ||
+                descriptor.signer.fingerprint !== expectations.signerFingerprint) {
+                return false;
+            }
+            try {
+                verifySshSignatureWithPublicKey(payload, signature, identity, descriptor.signer.publicKey, namespace);
+                return true;
+            }
+            catch {
+                return false;
+            }
+        },
+        appendAudit: overrides.recoveryQuarantineAuditSink?.append ??
+            productionRecoveryQuarantineAuditSink(repositoryRoot).append,
+    };
+}
+function productionRecoveryQuarantineAuditSink(repositoryRoot) {
+    return {
+        append(record) {
+            recordAuthorityAuditEvent({
+                externalAuditRoot: record.externalAuditRoot,
+                repositoryRoot,
+                repositoryId: deriveAuthorityAuditRepositoryId(record.repositoryId),
+            }, {
+                eventType: record.event === 'quarantine-entered'
+                    ? 'recovery'
+                    : 'grant-consume',
+                occurredAt: record.recordedAt,
+                idempotencyKey: record.recordId,
+                grantDigest: record.envelopeDigest,
+                candidateBundleDigest: null,
+                prestateDigest: record.event === 'quarantine-released' ? record.markerDigest : null,
+                poststateDigest: record.event === 'quarantine-entered' ? record.markerDigest : null,
+                actor: { kind: 'human', identity: record.humanSigner },
+                taskId: null,
+                changeId: null,
+                workflowId: record.grantId,
+                command: {
+                    name: record.event === 'quarantine-entered'
+                        ? 'recovery-quarantine.enter'
+                        : 'recovery-quarantine.release',
+                    argvDigest: record.recordDigest,
+                },
+                providerInvocation: null,
+                externalEffect: null,
+                result: 'succeeded',
+                outcomeDigest: record.receiptDigest,
+                errorCode: null,
+            });
+        },
+    };
+}
+function isExactControlPlaneRollback(args) {
+    return (args.length === 3 &&
+        args[0] === 'control-plane' &&
+        args[1] === 'rollback' &&
+        isExactCliIdentifier(args[2]));
+}
+function isExactRecoveryQuarantineCommand(args, operation) {
+    return (args.length === 5 &&
+        args[0] === 'recovery-quarantine' &&
+        args[1] === operation &&
+        isExactAbsolutePath(args[2]) &&
+        args[3] === '--expectations' &&
+        isExactAbsolutePath(args[4]));
+}
+function isExactRecoveryAuthorityRestoreCommand(args) {
+    return (args.length === 5 &&
+        args[0] === 'recovery-authority' &&
+        args[1] === 'restore-trust-root' &&
+        isExactAbsolutePath(args[2]) &&
+        args[3] === '--expectations' &&
+        isExactAbsolutePath(args[4]));
+}
+function recoveryImportBoundary(repository) {
+    return {
+        repositoryWorktreeRoot: repository.repositoryRealPath,
+        gitCommonDirectory: repository.gitCommonDirectory,
+    };
+}
+function recoveryAuthorityStateRoot(gitCommonDirectory) {
+    return path.join(gitCommonDirectory, 'workflow-engine', 'recovery-authority-state');
+}
+function ensureRecoveryAuthorityStateRoot(gitCommonDirectory) {
+    const engineRoot = path.join(gitCommonDirectory, 'workflow-engine');
+    ensurePrivateDirectory(gitCommonDirectory, engineRoot);
+    const stateRoot = recoveryAuthorityStateRoot(gitCommonDirectory);
+    ensurePrivateDirectory(engineRoot, stateRoot);
+    return stateRoot;
+}
+function requireRecoveryAuthorityStateRoot(gitCommonDirectory) {
+    const stateRoot = recoveryAuthorityStateRoot(gitCommonDirectory);
+    assertPrivateRecoveryDirectory(stateRoot);
+    return stateRoot;
+}
+function ensurePrivateDirectory(parent, directory) {
+    assertExactDirectory(parent, false);
+    if (path.dirname(directory) !== parent)
+        throw recoveryExternalInputUnsafe();
+    if (fs.lstatSync(directory, { throwIfNoEntry: false }) === undefined) {
+        fs.mkdirSync(directory, { mode: 0o700 });
+    }
+    assertPrivateRecoveryDirectory(directory);
+}
+function assertPrivateRecoveryDirectory(directory) {
+    assertExactDirectory(directory, true);
+}
+function assertExactDirectory(directory, requirePrivateMode) {
+    const stats = fs.lstatSync(directory, { throwIfNoEntry: false });
+    const currentUid = process.getuid?.();
+    if (!path.isAbsolute(directory) ||
+        path.resolve(directory) !== directory ||
+        !stats?.isDirectory() ||
+        stats.isSymbolicLink() ||
+        (requirePrivateMode && (stats.mode & 0o777) !== 0o700) ||
+        (currentUid !== undefined && stats.uid !== currentUid) ||
+        fs.realpathSync(directory) !== directory) {
+        throw recoveryExternalInputUnsafe();
+    }
+}
+function readOptionalRecoveryQuarantineMarker(storageRoot) {
+    if (fs.lstatSync(storageRoot, { throwIfNoEntry: false }) === undefined) {
+        return null;
+    }
+    assertPrivateRecoveryDirectory(storageRoot);
+    return readRecoveryQuarantineMarker(storageRoot);
+}
+function hasRecoveryOperationalTrustRootFence(storageRoot) {
+    if (fs.lstatSync(storageRoot, { throwIfNoEntry: false }) === undefined) {
+        return false;
+    }
+    assertPrivateRecoveryDirectory(storageRoot);
+    const allowed = new Set([
+        'recovery-authority',
+        'recovery-quarantine',
+        'recovery-operational-trust-root',
+    ]);
+    let present = false;
+    for (const entry of fs.readdirSync(storageRoot, { withFileTypes: true })) {
+        if (!allowed.has(entry.name) || !entry.isDirectory()) {
+            throw recoveryOperationalTrustStateUnsafe();
+        }
+        assertPrivateRecoveryDirectory(path.join(storageRoot, entry.name));
+        if (entry.name === 'recovery-operational-trust-root')
+            present = true;
+    }
+    return present;
+}
+function readExternalRecoveryExpectations(filePath, boundary) {
+    return readExternalRecoveryInput(filePath, boundary);
+}
+function readExternalRecoveryEnvelope(filePath, boundary) {
+    const value = readExternalRecoveryInput(filePath, boundary);
+    if (!isRecord(value) ||
+        JSON.stringify(Object.keys(value).sort()) !==
+            JSON.stringify(['payload', 'signature']) ||
+        !isRecord(value.payload) ||
+        typeof value.payload.externalAuditRoot !== 'string' ||
+        !isExactAbsolutePath(value.payload.externalAuditRoot) ||
+        typeof value.signature !== 'string' ||
+        value.signature.length === 0) {
+        throw recoveryExternalInputInvalid();
+    }
+    return value;
+}
+function readExternalRecoveryTrustRootAuditRoot(filePath, boundary) {
+    const value = readExternalRecoveryInput(filePath, boundary);
+    if (!isRecord(value) ||
+        JSON.stringify(Object.keys(value).sort()) !==
+            JSON.stringify(['payload', 'replacement', 'signature']) ||
+        !isRecord(value.payload) ||
+        !isRecord(value.replacement) ||
+        typeof value.payload.externalAuditRoot !== 'string' ||
+        !isExactAbsolutePath(value.payload.externalAuditRoot) ||
+        typeof value.signature !== 'string' ||
+        value.signature.length === 0) {
+        throw workflowError('RECOVERY_TRUST_ROOT_GRANT_INVALID', 'Operational trust-root restore requires an exact external pre-signed canonical replacement bundle.', ExitCode.verification);
+    }
+    return value.payload.externalAuditRoot;
+}
+function readExternalRecoveryInput(filePath, boundary) {
+    if (!isExactAbsolutePath(filePath) ||
+        pathIsWithin(boundary.repositoryWorktreeRoot, filePath) ||
+        pathIsWithin(boundary.gitCommonDirectory, filePath)) {
+        throw recoveryExternalInputUnsafe();
+    }
+    const before = fs.lstatSync(filePath, { throwIfNoEntry: false });
+    const currentUid = process.getuid?.();
+    if (!before?.isFile() ||
+        before.isSymbolicLink() ||
+        before.nlink !== 1 ||
+        (before.mode & 0o777) !== 0o600 ||
+        (currentUid !== undefined && before.uid !== currentUid) ||
+        before.size < 1 ||
+        before.size > 1024 * 1024 ||
+        fs.realpathSync(filePath) !== filePath) {
+        throw recoveryExternalInputUnsafe();
+    }
+    let descriptor;
+    try {
+        descriptor = fs.openSync(filePath, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0));
+        const openedBefore = fs.fstatSync(descriptor);
+        const bytes = fs.readFileSync(descriptor);
+        const openedAfter = fs.fstatSync(descriptor);
+        const afterPath = fs.lstatSync(filePath, { throwIfNoEntry: false });
+        if (!sameRecoveryInputSnapshot(before, openedBefore) ||
+            !sameRecoveryInputSnapshot(openedBefore, openedAfter) ||
+            !afterPath ||
+            !sameRecoveryInputSnapshot(openedAfter, afterPath)) {
+            throw recoveryExternalInputUnsafe();
+        }
+        const text = new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+        if (!text.endsWith('\n'))
+            throw recoveryExternalInputInvalid();
+        const value = JSON.parse(text);
+        if (`${canonicalJson(value)}\n` !== text) {
+            throw recoveryExternalInputInvalid();
+        }
+        return value;
+    }
+    catch (error) {
+        if (error instanceof WorkflowError)
+            throw error;
+        throw recoveryExternalInputInvalid();
+    }
+    finally {
+        if (descriptor !== undefined)
+            fs.closeSync(descriptor);
+    }
+}
+function sameRecoveryInputSnapshot(left, right) {
+    return (left.dev === right.dev &&
+        left.ino === right.ino &&
+        left.mode === right.mode &&
+        left.nlink === right.nlink &&
+        left.uid === right.uid &&
+        left.size === right.size &&
+        left.mtimeMs === right.mtimeMs &&
+        left.ctimeMs === right.ctimeMs);
+}
+function pathIsWithin(parent, candidate) {
+    const relative = path.relative(parent, candidate);
+    return (relative.length === 0 ||
+        (!relative.startsWith(`..${path.sep}`) && relative !== '..'));
+}
+function isExactAbsolutePath(value) {
+    return (typeof value === 'string' &&
+        path.isAbsolute(value) &&
+        path.resolve(value) === value);
+}
+function recoveryExternalInputUnsafe() {
+    return workflowError('RECOVERY_AUTHORITY_EXTERNAL_INPUT_UNSAFE', 'Recovery Authority inputs must be exact private canonical files outside the repository and Git common directory.', ExitCode.unsafeEnvironment);
+}
+function recoveryExternalInputInvalid() {
+    return workflowError('RECOVERY_AUTHORITY_EXTERNAL_INPUT_INVALID', 'Recovery Authority external input is not exact canonical JSON.', ExitCode.verification);
+}
+function recoveryOperationalTrustStateUnsafe() {
+    return workflowError('RECOVERY_OPERATIONAL_TRUST_STATE_UNSAFE', 'Recovery Authority state contains an unknown or unsafe operational trust-root entry.', ExitCode.unsafeEnvironment);
+}
+function dispatchSealedControlPlaneRecovery(args, cwd, overrides) {
+    if (args.length !== 3 ||
+        args[0] !== 'control-plane' ||
+        args[1] !== 'rollback' ||
+        !isExactCliIdentifier(args[2])) {
+        throw workflowError('HARNESS_RECOVERY_COMMAND_UNSUPPORTED', harnessBootstrapUsage(), ExitCode.usage);
+    }
+    const repository = discoverRepository(cwd);
+    const stateRoot = bootstrapInterventionStateRoot(repository.gitCommonDirectory);
+    const { dependencies, signer } = createHarnessRecoveryDependencies(cwd, repository.repositoryRoot, overrides);
+    const sourceControlPlaneGrantId = args[2];
+    const existing = findPersistedControlPlaneRecoveryGrantForSource(stateRoot, sourceControlPlaneGrantId);
+    if (existing?.state === 'consumed') {
+        throwControlPlaneRecoveryAlreadyConsumed();
+    }
+    let envelope;
+    if (existing?.state === 'reserved' ||
+        existing?.state === 'completion-pending') {
+        envelope = existing.envelope;
+    }
+    else {
+        signer.assertHumanPresent();
+        const issuedAt = (overrides.now?.() ?? new Date()).toISOString();
+        const preflight = preflightControlPlaneRecoveryRollback(stateRoot, sourceControlPlaneGrantId, {
+            humanSigner: signer.identity(),
+            issuedAt,
+        }, dependencies);
+        (overrides.presentRecoverySummary ?? defaultRecoverySummaryPresenter)(preflight.summary);
+        envelope = {
+            payload: preflight.payload,
+            signature: signer.sign(canonicalControlPlaneRecoveryGrantPayload(preflight.payload), HARNESS_RECOVERY_SIGNATURE_NAMESPACE),
+        };
+    }
+    return executeControlPlaneRecoveryRollback(stateRoot, envelope, dependencies);
+}
+function createHarnessRecoveryDependencies(cwd, repositoryRoot, overrides) {
+    const bootstrapDependencies = createHarnessBootstrapDependencies(cwd, {
+        ...overrides,
+        maintenanceSigner: overrides.recoverySigner ?? overrides.maintenanceSigner,
+    });
+    const signer = overrides.recoverySigner ?? bootstrapDependencies.maintenanceSigner;
+    if (signer === undefined) {
+        throw workflowError('HARNESS_RECOVERY_SIGNER_REQUIRED', 'Sealed recovery requires a controlling-terminal human signer.', ExitCode.unsafeEnvironment);
+    }
+    const verifyHumanSignature = bootstrapDependencies.verifyHumanSignature;
+    if (verifyHumanSignature === undefined) {
+        throw workflowError('HARNESS_RECOVERY_VERIFIER_REQUIRED', 'Sealed recovery requires the trusted root signature verifier.', ExitCode.unsafeEnvironment);
+    }
+    return {
+        signer,
+        dependencies: {
+            now: overrides.now ?? (() => new Date()),
+            consumedGrantIds: new Set(),
+            verifyHumanSignature,
+            auditSink: overrides.controlPlaneAuditSink ??
+                productionControlPlaneAuditSink(repositoryRoot),
+            recoveryAuditSink: overrides.recoveryAuditSink ??
+                productionRecoveryAuditSink(repositoryRoot),
+        },
+    };
+}
+function productionControlPlaneAuditSink(repositoryRoot) {
+    return {
+        append(record) {
+            recordAuthorityAuditEvent({
+                externalAuditRoot: record.externalAuditRoot,
+                repositoryRoot,
+                repositoryId: deriveAuthorityAuditRepositoryId(record.repositoryId),
+            }, {
+                eventType: controlPlaneAuditEventType(record),
+                occurredAt: record.recordedAt,
+                idempotencyKey: record.recordId,
+                grantDigest: record.grantEnvelopeDigest,
+                candidateBundleDigest: record.promotionBundleDigest,
+                prestateDigest: null,
+                poststateDigest: record.evidenceDigest,
+                actor: { kind: 'engine', identity: 'sealed-control-plane-updater' },
+                taskId: record.parentTaskId,
+                changeId: record.changeId,
+                workflowId: record.txId,
+                command: {
+                    name: 'control-plane.recovery.rollback-source-transaction',
+                    argvDigest: record.recordDigest,
+                },
+                providerInvocation: null,
+                externalEffect: null,
+                result: controlPlaneAuditResult(record),
+                outcomeDigest: record.recordDigest,
+                errorCode: null,
+            });
+        },
+    };
+}
+function productionRecoveryAuditSink(repositoryRoot) {
+    return {
+        append(record) {
+            recordAuthorityAuditEvent({
+                externalAuditRoot: record.externalAuditRoot,
+                repositoryRoot,
+                repositoryId: deriveAuthorityAuditRepositoryId(record.repositoryId),
+            }, {
+                eventType: record.event === 'authorized' ||
+                    record.event === 'expired' ||
+                    record.event === 'failed'
+                    ? 'recovery'
+                    : record.event === 'rolled-back'
+                        ? 'rollback'
+                        : 'grant-consume',
+                occurredAt: record.recordedAt,
+                idempotencyKey: record.recordId,
+                grantDigest: record.grantEnvelopeDigest,
+                candidateBundleDigest: record.promotionBundleDigest,
+                prestateDigest: record.prestateDigest,
+                poststateDigest: record.poststateDigest,
+                actor: {
+                    kind: record.event === 'authorized' ? 'human' : 'engine',
+                    identity: record.event === 'authorized'
+                        ? record.humanSigner
+                        : 'sealed-control-plane-recovery',
+                },
+                taskId: null,
+                changeId: null,
+                workflowId: record.sourceControlPlaneGrantId,
+                command: {
+                    name: 'control-plane.recovery.rollback-control-plane',
+                    argvDigest: record.recordDigest,
+                },
+                providerInvocation: null,
+                externalEffect: null,
+                result: record.event === 'rolled-back'
+                    ? 'rolled-back'
+                    : record.event === 'consumed'
+                        ? 'succeeded'
+                        : record.event === 'expired' || record.event === 'failed'
+                            ? 'failed'
+                            : 'recorded',
+                outcomeDigest: record.receiptDigest ?? record.recordDigest,
+                errorCode: null,
+            });
+        },
+    };
+}
+function controlPlaneAuditEventType(record) {
+    switch (record.event) {
+        case 'prepared':
+            return 'control-plane-grant';
+        case 'switched':
+            return 'cas';
+        case 'rollback-required':
+        case 'rolled-back':
+            return 'rollback';
+        case 'finalized':
+            return 'grant-consume';
+        default:
+            return 'poststate';
+    }
+}
+function controlPlaneAuditResult(record) {
+    return record.event === 'finalized'
+        ? 'succeeded'
+        : record.event === 'rolled-back'
+            ? 'rolled-back'
+            : 'recorded';
+}
+function defaultRecoverySummaryPresenter(summary) {
+    process.stderr.write(`\n${summary.humanReadable}\n\n`);
+}
+function harnessBootstrapUsage() {
+    return [
+        bootstrapInterventionUsage(),
+        '  pnpm harness-bootstrap control-plane rollback <control-plane-grant-id> [--json]',
+        '  pnpm harness-bootstrap recovery-authority import <external-descriptor.json> --expectations <external-expectations.json> [--json]',
+        '  pnpm harness-bootstrap recovery-authority status --expectations <external-expectations.json> [--json]',
+        '  pnpm harness-bootstrap recovery-authority restore-trust-root <external-pre-signed-envelope.json> --expectations <external-expectations.json> [--json]',
+        '  pnpm harness-bootstrap recovery-quarantine enter <external-signed-envelope.json> --expectations <external-expectations.json> [--json]',
+        '  pnpm harness-bootstrap recovery-quarantine release <external-signed-envelope.json> --expectations <external-expectations.json> [--json]',
+    ].join('\n');
+}
+function isExactCliIdentifier(value) {
+    return (typeof value === 'string' &&
+        value.length > 0 &&
+        value.length <= 255 &&
+        value.trim() === value &&
+        !value.startsWith('-') &&
+        !value.includes('\0') &&
+        !value.includes('\n') &&
+        !value.includes('\r'));
+}
+function isRecord(value) {
+    return (typeof value === 'object' &&
+        value !== null &&
+        !Array.isArray(value) &&
+        (Object.getPrototypeOf(value) === Object.prototype ||
+            Object.getPrototypeOf(value) === null));
 }
 export function createHarnessBootstrapDependencies(cwd, overrides = {}) {
     let resolvedSigner = overrides.maintenanceSigner;

@@ -7,6 +7,7 @@ import {
   assertPlainArchiveOutputFile,
   listPlainArchiveFiles,
 } from './archive-output-safety.ts';
+import { canonicalJson, compareCanonicalStrings } from './canonical-json.ts';
 import { readFileAtCommit } from './ci-git.ts';
 import { ExitCode, WorkflowError, workflowError } from './errors.ts';
 import { createTrustedExecutionEnvironment } from './execution-environment.ts';
@@ -55,6 +56,7 @@ type ArchivePayload = {
 
 export function createArchiveTransformation(
   eligibility: ArchiveEligibility,
+  options: { now?: () => Date } = {},
 ): ArchiveTransformation {
   assertEligibilityCurrent(eligibility);
   assertEligibilityArtifactManifest(eligibility);
@@ -90,7 +92,12 @@ export function createArchiveTransformation(
     } catch (error) {
       throw archiveFailure(error);
     }
-    const payload = parseArchivePayload(document.value, worktree, eligibility);
+    const payload = parseArchivePayload(
+      document.value,
+      worktree,
+      eligibility,
+      options.now ?? (() => new Date()),
+    );
     const result = verifyTransformation(
       worktree,
       eligibility,
@@ -329,6 +336,7 @@ function parseArchivePayload(
   value: unknown,
   worktree: string,
   eligibility: ArchiveEligibility,
+  now: () => Date,
 ): ArchivePayload {
   if (!isRecord(value) || !hasExactKeys(value, ['archive', 'root'])) {
     throw invalidPayload();
@@ -343,8 +351,6 @@ function parseArchivePayload(
     !isRecord(archive) ||
     !hasArchiveKeys(archive) ||
     archive.change !== eligibility.changeId ||
-    archive.archivedAs !== path.basename(eligibility.archiveDestination) ||
-    archive.path !== path.join(worktree, eligibility.archiveDestination) ||
     archive.specsUpdated !== true
   ) {
     throw invalidPayload();
@@ -353,11 +359,74 @@ function parseArchivePayload(
   if (totals !== undefined && !isTotals(totals)) {
     throw invalidPayload();
   }
+  const expectedName = path.basename(eligibility.archiveDestination);
+  const expectedPath = path.join(worktree, eligibility.archiveDestination);
+  if (archive.archivedAs !== expectedName || archive.path !== expectedPath) {
+    assertAdjacentUtcRollover(
+      archive,
+      worktree,
+      eligibility,
+      expectedName,
+      now,
+    );
+  }
   return {
     archivedAs: archive.archivedAs as string,
     specsUpdated: archive.specsUpdated as boolean,
     ...(totals ? { totals } : {}),
   };
+}
+
+function assertAdjacentUtcRollover(
+  archive: Record<string, unknown>,
+  worktree: string,
+  eligibility: ArchiveEligibility,
+  expectedName: string,
+  now: () => Date,
+): never {
+  const suffix = `-${eligibility.changeId}`;
+  const archiveParent = `${eligibility.changeRoot}/archive`;
+  const expectedDate = expectedName.endsWith(suffix)
+    ? expectedName.slice(0, -suffix.length)
+    : '';
+  const rolloverDate = nextUtcDate(expectedDate);
+  const rolloverName = `${rolloverDate}${suffix}`;
+  const rolloverPath = path.join(worktree, archiveParent, rolloverName);
+  if (
+    path.posix.dirname(eligibility.archiveDestination) !== archiveParent ||
+    archive.archivedAs !== rolloverName ||
+    archive.path !== rolloverPath
+  ) {
+    throw invalidPayload();
+  }
+
+  const observedAt = now();
+  if (
+    !(observedAt instanceof Date) ||
+    !Number.isFinite(observedAt.getTime()) ||
+    utcDate(observedAt) !== rolloverDate
+  ) {
+    throw invalidPayload();
+  }
+  throw archiveError(
+    'ARCHIVE_UTC_DATE_ROLLOVER',
+    'Archive output crossed to the adjacent UTC date during this operation.',
+    { expectedDate, observedDate: rolloverDate },
+  );
+}
+
+function nextUtcDate(value: string): string {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) throw invalidPayload();
+  const date = new Date(`${value}T00:00:00.000Z`);
+  if (!Number.isFinite(date.getTime()) || utcDate(date) !== value) {
+    throw invalidPayload();
+  }
+  date.setUTCDate(date.getUTCDate() + 1);
+  return utcDate(date);
+}
+
+function utcDate(value: Date): string {
+  return value.toISOString().slice(0, 10);
 }
 
 function assertDetachedWorktree(
@@ -495,12 +564,16 @@ export function boundedArchiveCauseDiagnostic(
 ): Record<string, unknown> {
   if (!(error instanceof WorkflowError)) return {};
   const diagnostic: Record<string, unknown> = { causeCode: error.code };
-  if (withinDiagnosticBudget(error.message)) {
-    diagnostic.causeMessage = error.message;
-  }
-  const details = error.details;
-  if (details !== undefined && withinDiagnosticBudget(details)) {
+  if (!withinDiagnosticBudget(diagnostic)) return {};
+
+  const details = boundedStructuredCauseDetails(error.details, diagnostic);
+  if (details !== undefined) {
     diagnostic.causeDetails = details;
+  }
+
+  const withMessage = { ...diagnostic, causeMessage: error.message };
+  if (withinDiagnosticBudget(withMessage)) {
+    diagnostic.causeMessage = error.message;
   }
   return diagnostic;
 }
@@ -508,11 +581,165 @@ export function boundedArchiveCauseDiagnostic(
 function withinDiagnosticBudget(value: unknown): boolean {
   try {
     return (
-      Buffer.byteLength(JSON.stringify(value) ?? '') <= MAX_DIAGNOSTIC_BYTES
+      Buffer.byteLength(canonicalJson(value), 'utf8') <= MAX_DIAGNOSTIC_BYTES
     );
   } catch {
     return false;
   }
+}
+
+const STRUCTURED_REPAIR_HINT_KEYS = new Set([
+  'capability',
+  'faults',
+  'from',
+  'id',
+  'identities',
+  'identity',
+  'issues',
+  'message',
+  'missingScenarios',
+  'operation',
+  'path',
+  'reason',
+  'rejectedSpecs',
+  'renameCandidate',
+  'renameCandidates',
+  'renamed',
+  'requirement',
+  'scenario',
+  'scenarios',
+  'spec',
+  'to',
+]);
+
+function boundedStructuredCauseDetails(
+  details: Record<string, unknown> | undefined,
+  diagnostic: Readonly<Record<string, unknown>>,
+): Record<string, unknown> | undefined {
+  if (details === undefined) return undefined;
+  if (withinDiagnosticBudget({ ...diagnostic, causeDetails: details })) {
+    return details;
+  }
+
+  const projected = projectStructuredRepairHints(details, false, new Set());
+  if (!isRecord(projected) || Object.keys(projected).length === 0) {
+    return undefined;
+  }
+  if (withinDiagnosticBudget({ ...diagnostic, causeDetails: projected })) {
+    return projected;
+  }
+
+  const bounded: Record<string, unknown> = {};
+  for (const key of orderedRepairHintKeys(projected)) {
+    const value = projected[key];
+    if (
+      withinDiagnosticBudget({
+        ...diagnostic,
+        causeDetails: { ...bounded, [key]: value },
+      })
+    ) {
+      bounded[key] = value;
+      continue;
+    }
+    if (!Array.isArray(value)) continue;
+    const entries: unknown[] = [];
+    for (const entry of value) {
+      if (
+        !withinDiagnosticBudget({
+          ...diagnostic,
+          causeDetails: { ...bounded, [key]: [...entries, entry] },
+        })
+      ) {
+        continue;
+      }
+      entries.push(entry);
+    }
+    if (entries.length > 0) bounded[key] = entries;
+  }
+  return Object.keys(bounded).length === 0 ? undefined : bounded;
+}
+
+function projectStructuredRepairHints(
+  value: unknown,
+  retainPrimitive: boolean,
+  ancestors: Set<object>,
+): unknown {
+  if (
+    value === null ||
+    typeof value === 'string' ||
+    typeof value === 'boolean' ||
+    (typeof value === 'number' && Number.isFinite(value))
+  ) {
+    return retainPrimitive ? value : undefined;
+  }
+  if (Array.isArray(value)) {
+    if (ancestors.has(value)) return undefined;
+    ancestors.add(value);
+    try {
+      const entries = value.flatMap((entry) => {
+        const projected = projectStructuredRepairHints(
+          entry,
+          retainPrimitive,
+          ancestors,
+        );
+        return projected === undefined ? [] : [projected];
+      });
+      return entries.length === 0 ? undefined : entries;
+    } finally {
+      ancestors.delete(value);
+    }
+  }
+  if (!isRecord(value)) return undefined;
+  if (ancestors.has(value)) return undefined;
+
+  ancestors.add(value);
+  try {
+    const projected: Record<string, unknown> = {};
+    for (const key of Object.keys(value).sort(compareCanonicalStrings)) {
+      const child = projectStructuredRepairHints(
+        value[key],
+        STRUCTURED_REPAIR_HINT_KEYS.has(key),
+        ancestors,
+      );
+      if (child !== undefined) projected[key] = child;
+    }
+    return Object.keys(projected).length === 0 ? undefined : projected;
+  } finally {
+    ancestors.delete(value);
+  }
+}
+
+function orderedRepairHintKeys(value: Record<string, unknown>): string[] {
+  const priority = [
+    'capability',
+    'requirement',
+    'missingScenarios',
+    'identities',
+    'identity',
+    'renameCandidates',
+    'renameCandidate',
+    'renamed',
+    'from',
+    'to',
+    'faults',
+    'rejectedSpecs',
+    'issues',
+    'spec',
+    'path',
+    'operation',
+    'reason',
+    'message',
+    'id',
+  ];
+  return Object.keys(value).sort((left, right) => {
+    const leftRank = priority.indexOf(left);
+    const rightRank = priority.indexOf(right);
+    return (
+      (leftRank === -1 ? priority.length : leftRank) -
+        (rightRank === -1 ? priority.length : rightRank) ||
+      compareCanonicalStrings(left, right)
+    );
+  });
 }
 
 function archiveFailure(error: unknown) {

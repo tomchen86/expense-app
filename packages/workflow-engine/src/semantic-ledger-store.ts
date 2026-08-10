@@ -1,9 +1,14 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
+import { replaceTextAtomic } from './atomic-text.ts';
 import { canonicalJson } from './canonical-json.ts';
 import { ExitCode, workflowError } from './errors.ts';
-import { assertLedgerEntry, type LedgerEntry } from './semantic-ledger.ts';
+import {
+  assertLedgerEntry,
+  isSemanticSubjectId,
+  type LedgerEntry,
+} from './semantic-ledger.ts';
 
 /**
  * Where the ledger lives.
@@ -22,6 +27,7 @@ import { assertLedgerEntry, type LedgerEntry } from './semantic-ledger.ts';
  */
 
 export const LEDGER_ROOT = 'workflow/semantic-ledger';
+const LEDGER_ENTRY_ID = /^sha256:[0-9a-f]{64}$/;
 
 export type LedgerIndex = Readonly<{
   schemaVersion: 1;
@@ -30,6 +36,9 @@ export type LedgerIndex = Readonly<{
 }>;
 
 export function ledgerObjectPath(entryId: string): string {
+  if (!LEDGER_ENTRY_ID.test(entryId)) {
+    throw ledgerStoreInvalid('Ledger object identity is malformed.');
+  }
   const hex = entryId.replace(/^sha256:/, '');
   return `${LEDGER_ROOT}/objects/sha256/${hex.slice(0, 2)}/${hex.slice(2)}.json`;
 }
@@ -45,9 +54,17 @@ export function writeLedgerEntry(
   const validated = assertLedgerEntry(entry);
   const relative = ledgerObjectPath(validated.entryId);
   const absolute = path.join(repositoryRoot, relative);
+  assertSafeLedgerParents(repositoryRoot, absolute);
   fs.mkdirSync(path.dirname(absolute), { recursive: true });
+  assertSafeLedgerParents(repositoryRoot, absolute);
   const serialized = `${canonicalJson(validated)}\n`;
-  if (fs.existsSync(absolute)) {
+  const existing = fs.lstatSync(absolute, { throwIfNoEntry: false });
+  if (existing !== undefined) {
+    if (!existing.isFile() || existing.isSymbolicLink()) {
+      throw ledgerStoreInvalid(
+        `Ledger object ${validated.entryId} is not a plain file.`,
+      );
+    }
     // Content-addressed: the same identity must already hold the same bytes,
     // and if it does not, something has rewritten history.
     if (fs.readFileSync(absolute, 'utf8') !== serialized) {
@@ -57,7 +74,10 @@ export function writeLedgerEntry(
     }
     return relative;
   }
-  fs.writeFileSync(absolute, serialized);
+  replaceTextAtomic(absolute, serialized, {
+    allowCreate: true,
+    defaultMode: 0o644,
+  });
   return relative;
 }
 
@@ -66,31 +86,65 @@ export function readLedgerEntry(
   entryId: string,
 ): LedgerEntry {
   const absolute = path.join(repositoryRoot, ledgerObjectPath(entryId));
+  assertSafeLedgerParents(repositoryRoot, absolute);
+  const existing = fs.lstatSync(absolute, { throwIfNoEntry: false });
+  if (
+    existing === undefined ||
+    !existing.isFile() ||
+    existing.isSymbolicLink()
+  ) {
+    throw ledgerStoreInvalid(`Ledger object ${entryId} is missing or unsafe.`);
+  }
   let raw: string;
   try {
     raw = fs.readFileSync(absolute, 'utf8');
   } catch {
     throw ledgerStoreInvalid(`Ledger object ${entryId} is missing.`);
   }
-  const entry = assertLedgerEntry(JSON.parse(raw));
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    throw ledgerStoreInvalid(`Ledger object ${entryId} is malformed.`);
+  }
+  const entry = assertLedgerEntry(parsed);
   if (entry.entryId !== entryId) {
     throw ledgerStoreInvalid(
       `Ledger object at ${entryId} identifies itself as ${entry.entryId}.`,
     );
+  }
+  if (raw !== `${canonicalJson(entry)}\n`) {
+    throw ledgerStoreInvalid(`Ledger object ${entryId} is not canonical.`);
   }
   return entry;
 }
 
 export function readLedgerIndex(repositoryRoot: string): LedgerIndex {
   const absolute = path.join(repositoryRoot, ledgerIndexPath());
-  if (!fs.existsSync(absolute)) {
+  assertSafeLedgerParents(repositoryRoot, absolute);
+  const existing = fs.lstatSync(absolute, { throwIfNoEntry: false });
+  if (existing === undefined) {
     return Object.freeze({
       schemaVersion: 1,
       kind: 'semantic-ledger-index',
       subjects: Object.freeze({}),
     });
   }
-  return assertLedgerIndex(JSON.parse(fs.readFileSync(absolute, 'utf8')));
+  if (!existing.isFile() || existing.isSymbolicLink()) {
+    throw ledgerStoreInvalid('Ledger index is not a plain file.');
+  }
+  const raw = fs.readFileSync(absolute, 'utf8');
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    throw ledgerStoreInvalid('Ledger index is malformed.');
+  }
+  const index = assertLedgerIndex(parsed);
+  if (raw !== `${canonicalJson(index)}\n`) {
+    throw ledgerStoreInvalid('Ledger index is not canonical.');
+  }
+  return index;
 }
 
 /**
@@ -106,13 +160,26 @@ export function updateLedgerIndex(
   const subjects: Record<string, { currentEntryId: string }> = {
     ...index.subjects,
   };
-  for (const entry of entries) {
+  for (const candidate of entries) {
+    const entry = assertLedgerEntry(candidate);
     if (entry.status !== 'current') {
       throw ledgerStoreInvalid(
         `Entry ${entry.entryId} is ${entry.status} and cannot be the current authority.`,
       );
     }
+    const stored = readLedgerEntry(repositoryRoot, entry.entryId);
+    if (canonicalJson(stored) !== canonicalJson(entry)) {
+      throw ledgerStoreInvalid(
+        `Ledger object ${entry.entryId} does not match the index candidate.`,
+      );
+    }
     const existing = subjects[entry.subject.subjectId]?.currentEntryId;
+    if (existing === entry.entryId) {
+      // Object-first/index-second projection is replayable. Once the exact
+      // entry is current, repeating the transaction is a no-op rather than a
+      // demand that an entry supersede itself.
+      continue;
+    }
     if (existing !== undefined && entry.supersedes !== existing) {
       // Replacing an understanding without naming the one it replaces would
       // lose the chain that makes the history readable.
@@ -128,35 +195,105 @@ export function updateLedgerIndex(
     subjects: Object.freeze(subjects),
   });
   const absolute = path.join(repositoryRoot, ledgerIndexPath());
+  const serialized = `${canonicalJson(next)}\n`;
+  assertSafeLedgerParents(repositoryRoot, absolute);
+  const existing = fs.lstatSync(absolute, { throwIfNoEntry: false });
+  if (
+    existing !== undefined &&
+    (!existing.isFile() || existing.isSymbolicLink())
+  ) {
+    throw ledgerStoreInvalid('Ledger index is not a plain file.');
+  }
+  if (
+    existing !== undefined &&
+    fs.readFileSync(absolute, 'utf8') === serialized
+  ) {
+    return next;
+  }
   fs.mkdirSync(path.dirname(absolute), { recursive: true });
-  fs.writeFileSync(absolute, `${canonicalJson(next)}\n`);
+  assertSafeLedgerParents(repositoryRoot, absolute);
+  replaceTextAtomic(absolute, serialized, {
+    allowCreate: true,
+    defaultMode: 0o644,
+  });
   return next;
 }
 
 export function assertLedgerIndex(value: unknown): LedgerIndex {
   if (
-    typeof value !== 'object' ||
-    value === null ||
-    Array.isArray(value) ||
-    (value as Record<string, unknown>).schemaVersion !== 1 ||
-    (value as Record<string, unknown>).kind !== 'semantic-ledger-index'
+    !isPlainRecord(value) ||
+    !hasExactKeys(value, ['kind', 'schemaVersion', 'subjects']) ||
+    value.schemaVersion !== 1 ||
+    value.kind !== 'semantic-ledger-index'
   ) {
     throw ledgerStoreInvalid('Ledger index is malformed.');
   }
-  const subjects = (value as Record<string, unknown>).subjects;
-  if (typeof subjects !== 'object' || subjects === null) {
+  const subjects = value.subjects;
+  if (!isPlainRecord(subjects)) {
     throw ledgerStoreInvalid('Ledger index is malformed.');
   }
-  for (const entry of Object.values(subjects as Record<string, unknown>)) {
+  const normalizedSubjects: Record<string, { currentEntryId: string }> = {};
+  for (const [subjectId, entry] of Object.entries(subjects).sort(
+    ([left], [right]) => left.localeCompare(right),
+  )) {
     if (
-      typeof entry !== 'object' ||
-      entry === null ||
-      typeof (entry as { currentEntryId?: unknown }).currentEntryId !== 'string'
+      !isSemanticSubjectId(subjectId) ||
+      !isPlainRecord(entry) ||
+      !hasExactKeys(entry, ['currentEntryId']) ||
+      typeof entry.currentEntryId !== 'string' ||
+      !LEDGER_ENTRY_ID.test(entry.currentEntryId)
     ) {
       throw ledgerStoreInvalid('Ledger index names a malformed entry.');
     }
+    normalizedSubjects[subjectId] = Object.freeze({
+      currentEntryId: entry.currentEntryId,
+    });
   }
-  return Object.freeze(value as LedgerIndex);
+  return Object.freeze({
+    schemaVersion: 1,
+    kind: 'semantic-ledger-index',
+    subjects: Object.freeze(normalizedSubjects),
+  });
+}
+
+function assertSafeLedgerParents(repositoryRoot: string, target: string): void {
+  const relative = path.relative(repositoryRoot, target);
+  if (
+    relative === '' ||
+    path.isAbsolute(relative) ||
+    relative === '..' ||
+    relative.startsWith(`..${path.sep}`)
+  ) {
+    throw ledgerStoreInvalid('Ledger path escapes the repository.');
+  }
+  let current = repositoryRoot;
+  for (const segment of path.dirname(relative).split(path.sep)) {
+    current = path.join(current, segment);
+    const stats = fs.lstatSync(current, { throwIfNoEntry: false });
+    if (
+      stats !== undefined &&
+      (!stats.isDirectory() || stats.isSymbolicLink())
+    ) {
+      throw ledgerStoreInvalid('Ledger parent path is not a plain directory.');
+    }
+  }
+}
+
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    return false;
+  }
+  const prototype = Object.getPrototypeOf(value);
+  return prototype === Object.prototype || prototype === null;
+}
+
+function hasExactKeys(
+  value: Record<string, unknown>,
+  expected: readonly string[],
+): boolean {
+  return (
+    Object.keys(value).sort().join('\0') === [...expected].sort().join('\0')
+  );
 }
 
 function ledgerStoreInvalid(message: string) {

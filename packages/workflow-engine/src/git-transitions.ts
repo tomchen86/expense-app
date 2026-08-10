@@ -504,7 +504,9 @@ export function amendPlanCommitMessage(
 ): string {
   const subject = `Amend plan ${changeId}`;
   validateCommitSubject(subject);
-  return [subject, '', amendPlanCommitTrailers(changeId, provenance)].join('\n');
+  return [subject, '', amendPlanCommitTrailers(changeId, provenance)].join(
+    '\n',
+  );
 }
 
 export function createAmendPlanCommitObject(
@@ -698,10 +700,11 @@ export function findExactTaskCommits(
   repositoryRoot: string,
   changeId: string,
   taskId: string,
+  tip = 'HEAD',
 ): TaskCommit[] {
   const values = runGit(repositoryRoot, [
     'log',
-    'HEAD',
+    tip,
     '--format=%H%x00%s%x00%B%x00',
   ]).split('\0');
   const commits: TaskCommit[] = [];

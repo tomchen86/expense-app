@@ -1,3 +1,6 @@
+import crypto from 'node:crypto';
+
+import { canonicalJson } from './canonical-json.ts';
 import { ExitCode, workflowError } from './errors.ts';
 import { INVESTIGATION_CHANGE_CLASSES } from './investigation-applicability.ts';
 import {
@@ -72,6 +75,19 @@ export type AssuranceAssessmentChain = Readonly<{
 
 /** The reader-facing bundle. Derived on demand — never stored, never decided. */
 export type CoverageTier = 'standard' | 'elevated' | 'critical';
+
+export type AssuranceAssessmentReport = Readonly<{
+  schemaVersion: 1;
+  kind: 'assurance-assessment';
+  changeId: string;
+  declaredChangeClasses: readonly InvestigationChangeClass[];
+  hitPathCount: number;
+  floors: AssuranceFloors;
+  coverageTier: CoverageTier;
+  escalated: boolean;
+  reasons: readonly string[];
+  chain: AssuranceAssessmentChain;
+}>;
 
 const ORDER: Readonly<Record<keyof AssuranceFloors, readonly string[]>> =
   Object.freeze({
@@ -261,6 +277,40 @@ const CLASS_FLOORS: Readonly<
   behavioral: { review: 'core-complete' },
 });
 
+/**
+ * Binds an assessment node to the exact code-owned tax table and monotonic
+ * floor semantics it used. The repository registry is a per-run input and is
+ * therefore bound separately by the evidence node's exact-input digest.
+ */
+export const ASSURANCE_ASSESSMENT_POLICY_DIGEST = crypto
+  .createHash('sha256')
+  .update(
+    canonicalJson({
+      schemaVersion: 1,
+      kind: 'assurance-assessment-policy',
+      stages: ASSESSMENT_STAGES,
+      floorOrder: {
+        planning: PLANNING_FLOORS,
+        evidence: EVIDENCE_FLOORS,
+        review: REVIEW_FLOORS,
+        cost: COST_FLOORS,
+      },
+      baseFloors: BASE_FLOORS,
+      classFloors: CLASS_FLOORS,
+      pathRoleReconciliation: {
+        compressibleRoles: ['ordinary'],
+        nonCompressiblePlanningFloor: 'individual-only',
+        unregisteredPlanningFloor: 'individual-only',
+      },
+      floorOverflowEscalation: {
+        stage: 'engine-start',
+        planning: 'individual-only',
+        review: 'target-complete',
+      },
+    }),
+  )
+  .digest('hex');
+
 export function floorsForChangeClass(
   changeClass: InvestigationChangeClass,
 ): Readonly<{ floors: AssuranceFloors; reasons: readonly string[] }> {
@@ -306,6 +356,89 @@ export function reconcileDeclaredClass(
       ...(escalated ? observed.reasons : []),
     ]),
     escalated,
+  });
+}
+
+/**
+ * Runs the one code-owned tax table and anti-gaming reconciliation used by
+ * both production propose and the read-only assurance inspector.
+ */
+export function assessAssurance(input: {
+  changeId: string;
+  declaredChangeClasses: readonly InvestigationChangeClass[];
+  registry: PathRoleRegistry;
+  hitPaths: readonly string[];
+  floorOverflow?: Readonly<{
+    escalated: boolean;
+    reasons: readonly string[];
+  }>;
+  at: string;
+}): AssuranceAssessmentReport {
+  const declaredAssessments = input.declaredChangeClasses.map((changeClass) =>
+    reconcileDeclaredClass(changeClass, input.registry, input.hitPaths),
+  );
+  const observed = floorsForHitPaths(input.registry, input.hitPaths);
+  const requestedFloors =
+    input.declaredChangeClasses.length === 0
+      ? floorsForChangeClass('behavioral').floors
+      : input.declaredChangeClasses
+          .map((changeClass) => floorsForChangeClass(changeClass).floors)
+          .reduce(highestOf);
+  const reconciledFloors =
+    declaredAssessments.length === 0
+      ? observed.floors
+      : declaredAssessments.map(({ floors }) => floors).reduce(highestOf);
+
+  let chain = startAssuranceChain({
+    changeId: input.changeId,
+    floors: requestedFloors,
+    reasons:
+      input.declaredChangeClasses.length === 0
+        ? ['no-declared-change-class']
+        : input.declaredChangeClasses.map(
+            (changeClass) => `declared-class:${changeClass}`,
+          ),
+    at: input.at,
+  });
+  if (input.floorOverflow?.escalated === true) {
+    chain = appendAssuranceAssessment(chain, {
+      stage: 'engine-start',
+      floors: Object.freeze({
+        ...BASE_FLOORS,
+        planning: 'individual-only',
+        review: 'target-complete',
+      }),
+      reasons: input.floorOverflow.reasons,
+      at: input.at,
+    });
+  }
+  chain = appendAssuranceAssessment(chain, {
+    stage: 'scan-discovered',
+    floors: reconciledFloors,
+    reasons:
+      observed.reasons.length === 0
+        ? [`scan-hit-paths-all-ordinary:${input.hitPaths.length}`]
+        : observed.reasons,
+    at: input.at,
+  });
+
+  return Object.freeze({
+    schemaVersion: 1,
+    kind: 'assurance-assessment',
+    changeId: input.changeId,
+    declaredChangeClasses: Object.freeze([...input.declaredChangeClasses]),
+    hitPathCount: input.hitPaths.length,
+    floors: effectiveFloors(chain),
+    coverageTier: coverageTier(chain),
+    escalated:
+      input.floorOverflow?.escalated === true ||
+      (declaredAssessments.length === 0
+        ? observed.reasons.length > 0
+        : declaredAssessments.some(({ escalated }) => escalated)),
+    reasons: Object.freeze(
+      chain.assessments.flatMap((assessment) => [...assessment.reasons]),
+    ),
+    chain,
   });
 }
 

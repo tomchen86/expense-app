@@ -31,9 +31,10 @@ import {
 } from './intervention-control-bootstrap.ts';
 import {
   engineAdoptionRecordPath,
-  preparePersistedEngineAdoption,
+  recordBootstrapSidecarAdopted,
   readPersistedIntervention,
   recoverPersistedEngineAdoption,
+  renewPersistedEngineAdoptionAuthority,
   type PersistedEngineAdoptionRecord,
   type PersistedInterventionRecord,
 } from './intervention-control-persistence.ts';
@@ -52,6 +53,7 @@ import {
   maintenanceApprovalSummary,
   maintenanceGrantId,
   persistMaintenanceGrantRecord,
+  preparePersistedEngineAdoptionFromArtifactRecord,
   readInterventionEngineArtifact,
   readMaintenanceGrantForParent,
   revokeMaintenanceGrantForParent,
@@ -430,12 +432,25 @@ export function dispatchBootstrapInterventionCommand(
     const parentChangeId = argv[1];
     const request = readPrepareAdoptionRequest(argv[3]!, cwd);
     const intervention = readPersistedIntervention(stateRoot, parentChangeId);
-    const adoption = preparePersistedEngineAdoption(
+    const artifactRecord = readInterventionEngineArtifact(
+      stateRoot,
+      request.artifact.artifactId,
+    );
+    if (
+      canonicalJson(artifactRecord.artifact) !== canonicalJson(request.artifact)
+    ) {
+      throw workflowError(
+        'INTERVENTION_ADOPTION_ARTIFACT_RECORD_MISMATCH',
+        'Prepare-adoption request differs from the exact persisted artifact record.',
+        ExitCode.verification,
+      );
+    }
+    const adoption = preparePersistedEngineAdoptionFromArtifactRecord(
       stateRoot,
       {
         txId: request.txId,
         parentChangeId,
-        artifact: request.artifact,
+        artifactId: request.artifact.artifactId,
         maintenanceGrantEnvelope: request.maintenanceGrantEnvelope,
         priorLocalAdoptions: request.priorLocalAdoptions,
       },
@@ -447,7 +462,7 @@ export function dispatchBootstrapInterventionCommand(
       bindingPath,
       intervention,
       adoption,
-      request.artifact,
+      artifactRecord.artifact,
       cliNow(dependencies),
     );
     return result({
@@ -1080,19 +1095,6 @@ function dispatchPersistedEngineAdoption(
     parentChangeId,
     cliNow(dependencies),
   );
-  if (grant.state === 'expired') {
-    refuseMaintenanceCommand(
-      dependencies,
-      auditScope.repositoryRoot,
-      argv,
-      grant,
-      workflowError(
-        'MAINTENANCE_GRANT_EXPIRED',
-        'Expired maintenance authority cannot begin an engine adoption.',
-        ExitCode.staleState,
-      ),
-    );
-  }
   if (grant.state === 'revoked') {
     refuseMaintenanceCommand(
       dependencies,
@@ -1139,14 +1141,38 @@ function dispatchPersistedEngineAdoption(
     artifactRecord.artifact.artifactId,
   );
   const bindingPath = parentBindingPath(stateRoot, parentChangeId);
+  const existingAdoption = fs.existsSync(
+    engineAdoptionRecordPath(stateRoot, txId),
+  )
+    ? recoverPersistedEngineAdoption(stateRoot, txId)
+    : null;
+  if (
+    grant.state === 'expired' &&
+    (existingAdoption === null ||
+      ['PREPARED', 'PARENT_CHECKPOINTED'].includes(
+        existingAdoption.record.journal.state,
+      ))
+  ) {
+    refuseMaintenanceCommand(
+      dependencies,
+      auditScope.repositoryRoot,
+      argv,
+      grant,
+      workflowError(
+        'MAINTENANCE_GRANT_EXPIRED',
+        'Expired maintenance authority cannot begin an engine adoption or cross the engine-binding boundary.',
+        ExitCode.staleState,
+      ),
+    );
+  }
   let effectsPerformed = false;
-  if (!fs.existsSync(engineAdoptionRecordPath(stateRoot, txId))) {
-    const adoption = preparePersistedEngineAdoption(
+  if (existingAdoption === null) {
+    const adoption = preparePersistedEngineAdoptionFromArtifactRecord(
       stateRoot,
       {
         txId,
         parentChangeId,
-        artifact: artifactRecord.artifact,
+        artifactId: artifactRecord.artifact.artifactId,
         maintenanceGrantEnvelope: grant.envelope,
         priorLocalAdoptions: 0,
       },
@@ -1161,6 +1187,22 @@ function dispatchPersistedEngineAdoption(
       cliNow(dependencies),
     );
     effectsPerformed = true;
+  } else if (
+    ['PREPARED', 'PARENT_CHECKPOINTED'].includes(
+      existingAdoption.record.journal.state,
+    ) &&
+    existingAdoption.record.journal.grantId !== grant.envelope.payload.grantId
+  ) {
+    renewPersistedEngineAdoptionAuthority(
+      stateRoot,
+      {
+        txId,
+        expectedJournalDigest: existingAdoption.record.journal.journalDigest,
+        maintenanceGrantEnvelope: grant.envelope,
+      },
+      dependencies,
+    );
+    effectsPerformed = true;
   }
   for (let step = 0; step < 16; step += 1) {
     const recovered = recoverPersistedEngineAdoption(stateRoot, txId);
@@ -1172,6 +1214,24 @@ function dispatchPersistedEngineAdoption(
           'Terminal adoption is missing parent session metadata.',
           ExitCode.verification,
         );
+      }
+      if (recovered.record.journal.state === 'COMMITTED') {
+        if (
+          recovered.record.artifactRecordDigest !== artifactRecord.recordDigest
+        ) {
+          throw workflowError(
+            'INTERVENTION_ADOPTION_ARTIFACT_RECORD_MISMATCH',
+            'Terminal adoption is not bound to the exact persisted artifact record.',
+            ExitCode.verification,
+          );
+        }
+        recordBootstrapSidecarAdopted(stateRoot, {
+          parentChangeId,
+          txId,
+          artifact: artifactRecord.artifact,
+          journalDigest: recovered.record.journal.journalDigest,
+          adoptedAt: recovered.record.journal.history.at(-1)!.at,
+        });
       }
       const resultKind =
         recovered.record.journal.state === 'COMMITTED'
@@ -1212,6 +1272,7 @@ function dispatchPersistedEngineAdoption(
         expectedJournalDigest: recovered.record.journal.journalDigest,
         bindingPath,
         artifact: artifactRecord.artifact,
+        artifactRecordDigest: artifactRecord.recordDigest,
         executablePath: artifactRecord.executablePath,
         at: nextAdoptionTime(recovered.record, dependencies),
       },

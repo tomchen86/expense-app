@@ -13,22 +13,35 @@ import {
 import { ExitCode, workflowError } from './errors.ts';
 import {
   createSignedAuthorityCommitObject,
+  previewExactStaging,
   resolveCommitIdentity,
+  rollbackExactStaging,
   stageExactPaths,
   updateManagedRef,
 } from './git-transitions.ts';
 import {
+  armPostApprovalAdmissionDeadline,
+  assertPostApprovalAdmissionDeadline,
+  assertPostApprovalAdmissionPhase,
+  createPostApprovalAdmissionDeadline,
   discoverRepository,
+  enterPostApprovalCompletionObligation,
+  enterPostApprovalTerminalCleanup,
   fingerprintWorkingState,
+  isPostApprovalAdmissionFailure,
   listChangedPaths,
   runGit,
+  withPostApprovalAdmissionDeadline,
+  type PostApprovalBudgetTestOptions,
 } from './git.ts';
 import {
   beginAuthorityCommitJournal,
+  failAuthorityCommitBeforeCas,
   recordAuthorityCasPrepared,
   recordAuthorityCommitCreated,
   recordAuthorityRefUpdated,
   expireAuthorityCommitBeforeCas,
+  readAuthorityCommitJournal,
   recoverAuthorityCommit,
   rollbackAuthorityCommitAfterCas,
   verifyCreatedAuthorityCommit,
@@ -53,16 +66,21 @@ import { createInteractiveSshSigner } from './maintainer-signer.ts';
 import { withRepositoryLifecycleOperation } from './session-store.ts';
 
 export type AuthorityCommitOptions = AuthoritySessionOptions & {
-  testCrashAfter?: 'commit-created' | 'ref-cas' | 'ref-updated';
+  testCrashAfter?:
+    'index-staged' | 'commit-created' | 'ref-cas' | 'ref-updated';
   clock?: () => Date;
   testBeforeRefUpdate?: () => void;
   testPoststateVerification?: () => void;
   testBeforeConsume?: () => void;
   testBeforeAudit?: (eventType: 'cas' | 'grant-consume') => void;
+  /** Test-only deterministic seam; production always uses the code-owned cap. */
+  testPostApprovalBudget?: PostApprovalBudgetTestOptions;
 };
 
 export class SimulatedAuthorityCrash extends Error {
-  constructor(state: 'commit-created' | 'ref-cas' | 'ref-updated') {
+  constructor(
+    state: 'index-staged' | 'commit-created' | 'ref-cas' | 'ref-updated',
+  ) {
     super(`Simulated authority crash after ${state}.`);
     this.name = 'SimulatedAuthorityCrash';
   }
@@ -94,6 +112,109 @@ export function commitAuthoritySession(
   subject: string,
   options: AuthorityCommitOptions = {},
 ): AuthorityCommitResult {
+  let deadline = options.postApprovalDeadline;
+  try {
+    if (deadline === undefined) {
+      const session = readAuthoritySession(cwd, requestedSessionId);
+      const journalPath = path.join(
+        maintainerGrantStorePaths(session.gitCommonDirectory).journals,
+        `${session.sessionId}.json`,
+      );
+      if (session.grantVersion === 1) {
+        return commitAuthoritySessionWithDeadline(
+          cwd,
+          requestedSessionId,
+          subject,
+          options,
+        );
+      }
+      deadline = createPostApprovalAdmissionDeadline(
+        options.testPostApprovalBudget,
+      );
+      if (fs.existsSync(journalPath)) {
+        const journal = readAuthorityCommitJournal(
+          session.gitCommonDirectory,
+          session.sessionId,
+        );
+        if (authorityJournalRequiresCompletion(journal.state)) {
+          enterPostApprovalCompletionObligation(deadline, {
+            allowExpired: true,
+          });
+        }
+      }
+      if (deadline.phase === 'unarmed') {
+        armPostApprovalAdmissionDeadline(deadline);
+      }
+    }
+    const phaseSession = readAuthoritySession(cwd, requestedSessionId);
+    if (phaseSession.grantVersion === 2) {
+      const phaseJournalPath = path.join(
+        maintainerGrantStorePaths(phaseSession.gitCommonDirectory).journals,
+        `${phaseSession.sessionId}.json`,
+      );
+      if (fs.existsSync(phaseJournalPath)) {
+        const phaseJournal = readAuthorityCommitJournal(
+          phaseSession.gitCommonDirectory,
+          phaseSession.sessionId,
+        );
+        if (authorityJournalRequiresCompletion(phaseJournal.state)) {
+          enterPostApprovalCompletionObligation(deadline, {
+            allowExpired: true,
+          });
+        } else {
+          assertPostApprovalAdmissionPhase(deadline);
+        }
+      } else {
+        assertPostApprovalAdmissionPhase(deadline);
+      }
+    }
+    if (deadline.phase === 'unarmed') {
+      armPostApprovalAdmissionDeadline(deadline);
+    }
+    return withPostApprovalAdmissionDeadline(deadline, () =>
+      commitAuthoritySessionWithDeadline(cwd, requestedSessionId, subject, {
+        ...options,
+        postApprovalDeadline: deadline,
+      }),
+    );
+  } catch (error) {
+    if (isPostApprovalAdmissionFailure(error)) {
+      enterPostApprovalTerminalCleanup(deadline);
+      const session = readAuthoritySession(cwd, requestedSessionId);
+      const journalPath = path.join(
+        maintainerGrantStorePaths(session.gitCommonDirectory).journals,
+        `${session.sessionId}.json`,
+      );
+      if (fs.existsSync(journalPath)) {
+        const journal = readAuthorityCommitJournal(
+          session.gitCommonDirectory,
+          session.sessionId,
+        );
+        if (
+          journal.state === 'preparing' ||
+          journal.state === 'commit-created'
+        ) {
+          failAuthorityCommitBeforeCas(
+            cwd,
+            requestedSessionId,
+            error,
+            operationNow(options),
+          );
+        }
+      } else if (session.state === 'active') {
+        failAuthoritySession(session, error, operationNow(options));
+      }
+    }
+    throw error;
+  }
+}
+
+function commitAuthoritySessionWithDeadline(
+  cwd: string,
+  requestedSessionId: string,
+  subject: string,
+  options: AuthorityCommitOptions,
+): AuthorityCommitResult {
   const discovered = discoverRepository(cwd);
   const store = maintainerGrantStorePaths(discovered.gitCommonDirectory);
   const journalPath = path.join(store.journals, `${requestedSessionId}.json`);
@@ -102,6 +223,7 @@ export function commitAuthoritySession(
       testBeforeConsume: options.testBeforeConsume,
       testBeforeAudit: options.testBeforeAudit,
       receiptSigner: options.signer,
+      postApprovalDeadline: options.postApprovalDeadline,
     });
   }
 
@@ -112,6 +234,9 @@ export function commitAuthoritySession(
       now: operationNow(options),
     });
   } catch (error) {
+    if (isPostApprovalAdmissionFailure(error)) {
+      enterPostApprovalTerminalCleanup(options.postApprovalDeadline);
+    }
     const session = readAuthoritySession(cwd, requestedSessionId);
     if (session.state === 'active') {
       failAuthoritySession(session, error, operationNow(options));
@@ -130,6 +255,13 @@ export function commitAuthoritySession(
         inspection.policy,
       );
     let journalCreated = false;
+    const stagedProjection: {
+      current: {
+        repositoryRoot: string;
+        previousIndexTree: string;
+        workflowTree: string;
+      } | null;
+    } = { current: null };
     try {
       signer.assertHumanPresent();
       if (signer.identity() !== inspection.session.signer) {
@@ -146,6 +278,7 @@ export function commitAuthoritySession(
         inspection.git.repositoryRoot,
         options.environment ?? process.env,
       );
+      assertPostApprovalAdmissionDeadline(options.postApprovalDeadline);
 
       const result = withRepositoryLifecycleOperation(
         store.runtime,
@@ -208,28 +341,80 @@ export function commitAuthoritySession(
             changedPaths,
             fingerprint,
           );
-          const staged = stageExactPaths(
-            current.git.repositoryRoot,
-            current.session.baseCommit,
-            changedPaths,
-          );
-          let journal = beginAuthorityCommitJournal(current.session, {
-            expectedTree: staged.tree,
-            previousIndexTree: staged.previousIndexTree,
-            changedPaths,
-            subject,
-            now: exactDate(options.now ?? new Date()),
-            auditScope,
-          });
-          journalCreated = true;
-          if (
-            current.session.resultTree !== null &&
-            current.session.resultTree !== staged.tree
-          ) {
-            throw commitError(
-              'AUTHORITY_CANDIDATE_TREE_MISMATCH',
-              'The staged tree differs from the immutable candidate result tree.',
+          let staged: ReturnType<typeof stageExactPaths>;
+          let journal: ReturnType<typeof beginAuthorityCommitJournal>;
+          if (current.session.grantVersion === 2) {
+            const preview = previewExactStaging(
+              current.git.repositoryRoot,
+              current.session.baseCommit,
+              changedPaths,
             );
+            if (
+              current.session.resultTree === null ||
+              current.session.resultTree !== preview.tree
+            ) {
+              throw commitError(
+                'AUTHORITY_CANDIDATE_TREE_MISMATCH',
+                'The prospective tree differs from the immutable candidate result tree.',
+              );
+            }
+            assertPostApprovalAdmissionDeadline(options.postApprovalDeadline);
+            journal = beginAuthorityCommitJournal(current.session, {
+              expectedTree: preview.tree,
+              previousIndexTree: preview.previousIndexTree,
+              changedPaths,
+              subject,
+              now: exactDate(options.now ?? new Date()),
+              auditScope,
+            });
+            journalCreated = true;
+            staged = stageExactPaths(
+              current.git.repositoryRoot,
+              current.session.baseCommit,
+              changedPaths,
+              {
+                expectedTree: preview.tree,
+                expectedPreviousIndexTree: preview.previousIndexTree,
+              },
+            );
+            stagedProjection.current = {
+              repositoryRoot: current.git.repositoryRoot,
+              previousIndexTree: staged.previousIndexTree,
+              workflowTree: staged.tree,
+            };
+            if (options.testCrashAfter === 'index-staged') {
+              throw new SimulatedAuthorityCrash('index-staged');
+            }
+          } else {
+            staged = stageExactPaths(
+              current.git.repositoryRoot,
+              current.session.baseCommit,
+              changedPaths,
+            );
+            stagedProjection.current = {
+              repositoryRoot: current.git.repositoryRoot,
+              previousIndexTree: staged.previousIndexTree,
+              workflowTree: staged.tree,
+            };
+            assertPostApprovalAdmissionDeadline(options.postApprovalDeadline);
+            journal = beginAuthorityCommitJournal(current.session, {
+              expectedTree: staged.tree,
+              previousIndexTree: staged.previousIndexTree,
+              changedPaths,
+              subject,
+              now: exactDate(options.now ?? new Date()),
+              auditScope,
+            });
+            journalCreated = true;
+            if (
+              current.session.resultTree !== null &&
+              current.session.resultTree !== staged.tree
+            ) {
+              throw commitError(
+                'AUTHORITY_CANDIDATE_TREE_MISMATCH',
+                'The staged tree differs from the immutable candidate result tree.',
+              );
+            }
           }
           const commitHash =
             current.session.candidateCommit ??
@@ -259,11 +444,15 @@ export function commitAuthoritySession(
           ) {
             throw new AuthorityGrantExpiredBeforeCas(casTime);
           }
+          assertPostApprovalAdmissionDeadline(options.postApprovalDeadline);
           journal = recordAuthorityCasPrepared(
             current.session.gitCommonDirectory,
             journal,
             casTime,
           );
+          enterPostApprovalCompletionObligation(options.postApprovalDeadline, {
+            allowExpired: true,
+          });
           updateManagedRef(
             current.git.repositoryRoot,
             current.session.baseCommit,
@@ -325,6 +514,7 @@ export function commitAuthoritySession(
         testBeforeConsume: options.testBeforeConsume,
         testBeforeAudit: options.testBeforeAudit,
         receiptSigner: signer,
+        postApprovalDeadline: options.postApprovalDeadline,
       });
     } catch (error) {
       if (error instanceof SimulatedAuthorityCrash) {
@@ -355,14 +545,59 @@ export function commitAuthoritySession(
           ExitCode.verification,
         );
       }
+      if (isPostApprovalAdmissionFailure(error)) {
+        enterPostApprovalTerminalCleanup(options.postApprovalDeadline);
+        if (journalCreated) {
+          const observed = readAuthorityCommitJournal(
+            inspection.session.gitCommonDirectory,
+            inspection.session.sessionId,
+          );
+          if (
+            observed.state === 'preparing' ||
+            observed.state === 'commit-created'
+          ) {
+            failAuthorityCommitBeforeCas(
+              cwd,
+              requestedSessionId,
+              error,
+              operationNow(options),
+            );
+          }
+        } else {
+          failAuthoritySession(
+            inspection.session,
+            error,
+            operationNow(options),
+          );
+          const staged = stagedProjection.current;
+          if (staged !== null) {
+            try {
+              rollbackExactStaging(
+                staged.repositoryRoot,
+                staged.previousIndexTree,
+                staged.workflowTree,
+                error,
+              );
+            } catch {
+              // A foreign index is never overwritten during denial cleanup.
+              // The failed grant remains the durable authority boundary.
+            }
+          }
+        }
+        throw error;
+      }
       if (journalCreated) {
         try {
           return recoverAuthorityCommit(cwd, requestedSessionId, options.now, {
             testBeforeConsume: options.testBeforeConsume,
             testBeforeAudit: options.testBeforeAudit,
             receiptSigner: signer,
+            postApprovalDeadline: options.postApprovalDeadline,
           });
-        } catch {
+        } catch (recoveryError) {
+          if (isPostApprovalAdmissionFailure(recoveryError)) {
+            throw recoveryError;
+          }
           // Recovery rolled the transaction back (or refused); the actionable
           // root cause is the original commit failure, not the recovery
           // wrapper, so surface the original error.
@@ -408,6 +643,19 @@ export function commitAuthoritySession(
       serviceHooks: options.testRefusalAuditServiceHooks,
     },
     executeCommit,
+  );
+}
+
+function authorityJournalRequiresCompletion(
+  state: ReturnType<typeof readAuthorityCommitJournal>['state'],
+): boolean {
+  return (
+    state === 'cas-prepared' ||
+    state === 'ref-updated' ||
+    state === 'rollback-prepared' ||
+    state === 'rolled-back' ||
+    state === 'consumed' ||
+    state === 'audited'
   );
 }
 

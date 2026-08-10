@@ -52,6 +52,17 @@ export function verifyArchiveDeltaOutcomes(
     const plan = parseDelta(delta);
     const beforeRequirements = parseRequirements(before ?? '');
     const afterRequirements = parseRequirements(after);
+    const assessment = assessSpecDeltaAgainstBase(before ?? '', delta);
+    if (assessment.faults.length > 0) {
+      throw deltaNotApplicable(capability, assessment.faults);
+    }
+    const firstMissing = assessment.missingScenarios[0];
+    if (firstMissing !== undefined) {
+      throw scenarioPreservationFailed(
+        firstMissing.requirement,
+        firstMissing.scenarios,
+      );
+    }
     verifyPlan(plan, beforeRequirements, afterRequirements);
     for (const operation of Object.keys(totals) as Operation[]) {
       totals[operation] += plan[operation].length;
@@ -82,11 +93,6 @@ function verifyPlan(
     ) {
       throw invalidOutcome();
     }
-    // A MODIFIED block replaces the base requirement wholesale, so a scenario
-    // it omits is deleted from the specification even when the engine still
-    // implements that behaviour.
-    const missing = findMissingScenarioIdentities(before.get(name) ?? '', raw);
-    if (missing.length > 0) throw scenarioPreservationFailed(name, missing);
   }
   for (const name of plan.removed) {
     if (!before.has(name) || after.has(name)) throw invalidOutcome();
@@ -189,36 +195,36 @@ export function assertSpecDeltaScenarioPreservation(
   for (const deltaPath of deltaSpecPaths) {
     const capability = deltaPath.split('/').at(-2);
     if (capability === undefined) continue;
-    const before = readFileAtCommit(
-      repositoryRoot,
-      head,
-      `openspec/specs/${capability}/spec.md`,
-    );
-    if (before === undefined) continue;
+    const baseSpecPath = `openspec/specs/${capability}/spec.md`;
+    const before = readFileAtCommit(repositoryRoot, head, baseSpecPath);
     const delta = readWorktreeFile(
       repositoryRoot,
       `${changeRoot}/${changeId}/specs/${capability}/spec.md`,
     );
-    if (delta === undefined) continue;
+    if (delta === undefined) {
+      throw workflowError(
+        'SPEC_DELTA_PREFLIGHT_TREE_INVALID',
+        `Current delta specification is unavailable during archive-applicability replay: ${deltaPath}.`,
+        ExitCode.staleState,
+      );
+    }
     // Whether each declared operation can land at all, before whether the
     // blocks it lands preserve their scenarios: an inapplicable MODIFIED is
     // not a preservation problem, it is a delta describing a base that is not
     // there.
-    validatedBaseSpecDigests[`openspec/specs/${capability}/spec.md`] =
-      digest(before);
+    const currentBase = before ?? '';
+    validatedBaseSpecDigests[baseSpecPath] = digest(currentBase);
 
-    const faults = findDeltaApplicabilityFaults(before, delta);
-    if (faults.length > 0) throw deltaNotApplicable(capability, faults);
-
-    const baseRequirements = parseRequirements(before);
-    const modified = requirementBlocks(
-      splitSections(delta).get('modified requirements') ?? '',
-    );
-    for (const { name, raw } of modified) {
-      const baseBlock = baseRequirements.get(name);
-      if (baseBlock === undefined) continue;
-      const missing = findMissingScenarioIdentities(baseBlock, raw);
-      if (missing.length > 0) throw scenarioPreservationFailed(name, missing);
+    const assessment = assessSpecDeltaAgainstBase(currentBase, delta);
+    if (assessment.faults.length > 0) {
+      throw deltaNotApplicable(capability, assessment.faults);
+    }
+    const firstMissing = assessment.missingScenarios[0];
+    if (firstMissing !== undefined) {
+      throw scenarioPreservationFailed(
+        firstMissing.requirement,
+        firstMissing.scenarios,
+      );
     }
   }
   // Naming the base this passed over lets a later archive failure be read as
@@ -232,7 +238,7 @@ export function assertSpecDeltaScenarioPreservation(
   };
 }
 
-export const SPEC_DELTA_VALIDATOR_VERSION = 'spec-delta-preflight-v1';
+export const SPEC_DELTA_VALIDATOR_VERSION = 'spec-delta-preflight-v2';
 
 export type SpecDeltaPreflightRecord = Readonly<{
   status: 'passed';
@@ -275,6 +281,48 @@ export type DeltaApplicabilityFault = {
   requirement: string;
   reason: string;
 };
+
+export type SpecDeltaAssessment = Readonly<{
+  faults: readonly DeltaApplicabilityFault[];
+  missingScenarios: readonly Readonly<{
+    requirement: string;
+    scenarios: readonly string[];
+  }>[];
+}>;
+
+/**
+ * Content-pure applicability and scenario-preservation core shared by plan,
+ * amendment, and archive validation. Archive still verifies the projected
+ * output tree, but it may not reinterpret whether the declared operations are
+ * legal or which exact scenario identities a MODIFIED block preserves.
+ */
+export function assessSpecDeltaAgainstBase(
+  baseSpec: string,
+  deltaSpec: string,
+): SpecDeltaAssessment {
+  const faults = findDeltaApplicabilityFaults(baseSpec, deltaSpec);
+  const baseRequirements = parseRequirements(baseSpec);
+  const modified = requirementBlocks(
+    splitSections(deltaSpec).get('modified requirements') ?? '',
+  );
+  const missingScenarios = modified.flatMap(({ name, raw }) => {
+    const baseBlock = baseRequirements.get(name);
+    if (baseBlock === undefined) return [];
+    const scenarios = findMissingScenarioIdentities(baseBlock, raw);
+    return scenarios.length === 0 ? [] : [{ requirement: name, scenarios }];
+  });
+  return Object.freeze({
+    faults: Object.freeze(faults.map((fault) => Object.freeze({ ...fault }))),
+    missingScenarios: Object.freeze(
+      missingScenarios.map(({ requirement, scenarios }) =>
+        Object.freeze({
+          requirement,
+          scenarios: Object.freeze([...scenarios]),
+        }),
+      ),
+    ),
+  });
+}
 
 /**
  * Whether the operations a delta declares can be applied to the base as it
@@ -447,7 +495,10 @@ function invalidOutcome() {
   );
 }
 
-function scenarioPreservationFailed(requirement: string, missing: string[]) {
+function scenarioPreservationFailed(
+  requirement: string,
+  missing: readonly string[],
+) {
   return workflowError(
     'SPEC_SCENARIO_PRESERVATION_FAILED',
     `Requirement "${requirement}" drops existing scenario identities: ${missing

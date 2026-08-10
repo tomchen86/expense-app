@@ -3,9 +3,15 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 import {
+  assertParentInterventionFenceCleared,
   bootstrapInterventionStateRoot,
+  initializeBuiltInControlPlaneSupervisor,
   resolveControlPlaneEngineSelection,
   resolveLocalEngineSelection,
+  resolveParentInterventionFence,
+  resolveRecoveryOperationalTrustRootFence,
+  resolveRecoveryQuarantineMarker,
+  verifyBootstrapRepositoryIdentity,
   verifyBuiltInEngineClosure,
 } from './control-plane-trust.ts';
 import { canonicalJson } from './canonical-json.ts';
@@ -17,20 +23,116 @@ try {
   const stateRoot = bootstrapInterventionStateRoot(
     repository.gitCommonDirectory,
   );
-  const local = resolveLocalEngineSelection(stateRoot, repository);
-  const global =
-    local === null ? resolveControlPlaneEngineSelection(stateRoot) : null;
-  const invocation = local
-    ? {
-        executable: local.executablePath,
-        argv: process.argv.slice(2),
+  const argv = process.argv.slice(2);
+  let local: ReturnType<typeof resolveLocalEngineSelection> = null;
+  let invocation: { executable: string; argv: string[] };
+  const quarantine = resolveRecoveryQuarantineMarker(
+    repository.gitCommonDirectory,
+  );
+  const operationalTrustFence = resolveRecoveryOperationalTrustRootFence(
+    repository.gitCommonDirectory,
+  );
+  if (quarantine !== null) {
+    if (!isQuarantinePermittedRecoveryInvocation(argv)) {
+      throw launcherError(
+        'WORKFLOW_RECOVERY_QUARANTINED',
+        'Workflow execution is fenced by an active Recovery Quarantine marker.',
+      );
+    }
+    invocation = sealedInterventionInvocation(argv);
+  } else if (operationalTrustFence) {
+    if (!isOperationalTrustFenceRecoveryInvocation(argv)) {
+      throw launcherError(
+        'RECOVERY_OPERATIONAL_TRUST_NOT_ACTIVATED',
+        'A restored operational trust root exists without an out-of-band pinned activation channel; ordinary workflow execution remains fenced.',
+      );
+    }
+    invocation = sealedInterventionInvocation(argv);
+  } else if (isSealedRecoveryInvocation(argv)) {
+    invocation = sealedInterventionInvocation(argv);
+  } else {
+    const fence = resolveParentInterventionFence(stateRoot, repository);
+    if (isInitialControlPlaneProvisioning(argv)) {
+      assertParentInterventionFenceCleared(fence, null);
+      if (
+        resolveRecoveryQuarantineMarker(repository.gitCommonDirectory) !== null
+      ) {
+        throw launcherError(
+          'WORKFLOW_RECOVERY_QUARANTINED',
+          'Workflow execution became Recovery Quarantined before control-plane initialization.',
+        );
       }
-    : global === null
-      ? builtInInvocation(process.argv.slice(2))
-      : {
-          executable: global.activeArtifact.executablePath,
-          argv: process.argv.slice(2),
-        };
+      const supervisor = initializeBuiltInControlPlaneSupervisor(
+        stateRoot,
+        ENGINE_PACKAGE_ROOT,
+        repository,
+      );
+      process.stdout.write(
+        `${canonicalJson({
+          kind: 'control-plane-initialization.v1',
+          supervisor,
+        })}\n`,
+      );
+      process.exit(0);
+    }
+    const readOnlyStatus = isReadOnlyStatusInvocation(argv);
+    if (fence !== null && isSealedInterventionInvocation(argv)) {
+      invocation = sealedInterventionInvocation(argv);
+    } else {
+      try {
+        local = resolveLocalEngineSelection(stateRoot, repository);
+      } catch (error) {
+        if (
+          !readOnlyStatus ||
+          errorCode(error) !== 'WORKFLOW_LOCAL_ADOPTION_INCOMPLETE'
+        ) {
+          throw error;
+        }
+      }
+      if (!isReadOnlyHelpInvocation(argv) && !readOnlyStatus) {
+        assertParentInterventionFenceCleared(fence, local);
+      }
+      const global =
+        local === null
+          ? resolveGlobalEngineSelection(stateRoot, repository)
+          : null;
+      invocation = local
+        ? {
+            executable: local.executablePath,
+            argv,
+          }
+        : global === null
+          ? builtInInvocation(argv)
+          : {
+              executable: global.activeArtifact.executablePath,
+              argv,
+            };
+    }
+  }
+  const quarantineAtLaunch = resolveRecoveryQuarantineMarker(
+    repository.gitCommonDirectory,
+  );
+  const operationalTrustFenceAtLaunch =
+    resolveRecoveryOperationalTrustRootFence(repository.gitCommonDirectory);
+  if (
+    quarantineAtLaunch !== null &&
+    !isQuarantinePermittedRecoveryInvocation(argv)
+  ) {
+    throw launcherError(
+      'WORKFLOW_RECOVERY_QUARANTINED',
+      'Workflow execution became Recovery Quarantined before engine launch.',
+    );
+  }
+  if (
+    quarantineAtLaunch === null &&
+    operationalTrustFenceAtLaunch &&
+    !isOperationalTrustFenceRecoveryInvocation(argv)
+  ) {
+    throw launcherError(
+      'RECOVERY_OPERATIONAL_TRUST_NOT_ACTIVATED',
+      'A restored operational trust root appeared without an out-of-band pinned activation channel before engine launch.',
+    );
+  }
   const result = childProcess.spawnSync(
     invocation.executable,
     invocation.argv,
@@ -58,6 +160,185 @@ try {
     })}\n`,
   );
   process.exit(errorExitCode(error));
+}
+
+function isInitialControlPlaneProvisioning(argv: readonly string[]): boolean {
+  return (
+    argv.length === 3 &&
+    argv[0] === 'control-plane' &&
+    argv[1] === 'initialize' &&
+    argv[2] === '--json'
+  );
+}
+
+function resolveGlobalEngineSelection(
+  stateRoot: string,
+  repository: ReturnType<typeof discoverRepositoryIdentity>,
+) {
+  const supervisorPath = path.join(stateRoot, 'control-plane-supervisor.json');
+  if (fs.lstatSync(supervisorPath, { throwIfNoEntry: false }) === undefined) {
+    return resolveControlPlaneEngineSelection(stateRoot);
+  }
+  const repositoryId = verifyBootstrapRepositoryIdentity(repository);
+  return resolveControlPlaneEngineSelection(stateRoot, repositoryId);
+}
+
+function isReadOnlyStatusInvocation(argv: readonly string[]): boolean {
+  return (
+    (argv.length === 2 || (argv.length === 3 && argv[2] === '--json')) &&
+    argv[0] === 'status' &&
+    typeof argv[1] === 'string' &&
+    argv[1].length > 0 &&
+    argv[1].length <= 255 &&
+    argv[1].trim() === argv[1] &&
+    !argv[1].startsWith('-') &&
+    !argv[1].includes('\0') &&
+    !argv[1].includes('\n')
+  );
+}
+
+function isReadOnlyHelpInvocation(argv: readonly string[]): boolean {
+  return (
+    argv.length === 1 &&
+    (argv[0] === '--help' || argv[0] === '-h' || argv[0] === 'help')
+  );
+}
+
+function isSealedInterventionInvocation(argv: readonly string[]): boolean {
+  return (
+    (argv[0] === 'intervention' &&
+      (argv[1] === 'status' || argv[1] === 'recover')) ||
+    (argv[0] === 'change' &&
+      (argv[1] === 'intervene' || argv[1] === 'revoke-intervention')) ||
+    (argv[0] === 'engine' &&
+      (argv[1] === 'build-artifact' || argv[1] === 'adopt'))
+  );
+}
+
+function isSealedRecoveryInvocation(argv: readonly string[]): boolean {
+  const args = exactRecoveryArguments(argv);
+  if (args === null) return false;
+  return (
+    isExactControlPlaneRollback(args) ||
+    (args.length === 5 &&
+      args[0] === 'recovery-authority' &&
+      args[1] === 'import' &&
+      isExactAbsoluteLauncherPath(args[2]) &&
+      args[3] === '--expectations' &&
+      isExactAbsoluteLauncherPath(args[4])) ||
+    (args.length === 4 &&
+      args[0] === 'recovery-authority' &&
+      args[1] === 'status' &&
+      args[2] === '--expectations' &&
+      isExactAbsoluteLauncherPath(args[3])) ||
+    isExactRecoveryAuthorityRestore(args) ||
+    isExactQuarantineOperation(args, 'enter') ||
+    isExactQuarantineOperation(args, 'release')
+  );
+}
+
+function isQuarantinePermittedRecoveryInvocation(
+  argv: readonly string[],
+): boolean {
+  const args = exactRecoveryArguments(argv);
+  return (
+    args !== null &&
+    (isExactControlPlaneRollback(args) ||
+      isExactRecoveryAuthorityRestore(args) ||
+      isExactQuarantineOperation(args, 'release'))
+  );
+}
+
+function isOperationalTrustFenceRecoveryInvocation(
+  argv: readonly string[],
+): boolean {
+  const args = exactRecoveryArguments(argv);
+  return args !== null && isExactQuarantineOperation(args, 'enter');
+}
+
+function exactRecoveryArguments(
+  argv: readonly string[],
+): readonly string[] | null {
+  const json = argv.at(-1) === '--json';
+  if (
+    argv.filter((argument) => argument === '--json').length !== (json ? 1 : 0)
+  ) {
+    return null;
+  }
+  return json ? argv.slice(0, -1) : argv;
+}
+
+function isExactControlPlaneRollback(argv: readonly string[]): boolean {
+  return (
+    argv.length === 3 &&
+    argv[0] === 'control-plane' &&
+    argv[1] === 'rollback' &&
+    isExactLauncherIdentifier(argv[2])
+  );
+}
+
+function isExactRecoveryAuthorityRestore(argv: readonly string[]): boolean {
+  return (
+    argv.length === 5 &&
+    argv[0] === 'recovery-authority' &&
+    argv[1] === 'restore-trust-root' &&
+    isExactAbsoluteLauncherPath(argv[2]) &&
+    argv[3] === '--expectations' &&
+    isExactAbsoluteLauncherPath(argv[4])
+  );
+}
+
+function isExactQuarantineOperation(
+  argv: readonly string[],
+  operation: 'enter' | 'release',
+): boolean {
+  return (
+    argv.length === 5 &&
+    argv[0] === 'recovery-quarantine' &&
+    argv[1] === operation &&
+    isExactAbsoluteLauncherPath(argv[2]) &&
+    argv[3] === '--expectations' &&
+    isExactAbsoluteLauncherPath(argv[4])
+  );
+}
+
+function isExactAbsoluteLauncherPath(value: unknown): value is string {
+  return (
+    typeof value === 'string' &&
+    path.isAbsolute(value) &&
+    path.resolve(value) === value
+  );
+}
+
+function isExactLauncherIdentifier(value: unknown): value is string {
+  return (
+    typeof value === 'string' &&
+    value.length > 0 &&
+    value.length <= 255 &&
+    value.trim() === value &&
+    !value.startsWith('-') &&
+    !value.includes('\0') &&
+    !value.includes('\n') &&
+    !value.includes('\r')
+  );
+}
+
+function sealedInterventionInvocation(argv: string[]): {
+  executable: string;
+  argv: string[];
+} {
+  return {
+    executable: process.execPath,
+    argv: [
+      '--experimental-strip-types',
+      path.join(
+        ENGINE_PACKAGE_ROOT,
+        'bootstrap',
+        'harness-bootstrap-launcher.ts',
+      ),
+      ...argv,
+    ],
+  };
 }
 
 function builtInInvocation(argv: string[]): {

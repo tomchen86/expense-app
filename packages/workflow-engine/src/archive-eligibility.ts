@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 import { assertUniqueCollaborationGrantUses } from './collaboration-grant.ts';
+import { canonicalJson } from './canonical-json.ts';
 import { collectHistoricalCollaborationGrantUses } from './ci-planning.ts';
 import { loadWorkflowConfig, type ManagedSchemaName } from './contracts.ts';
 import { ExitCode, workflowError } from './errors.ts';
@@ -52,7 +53,11 @@ export type ArchiveEligibility = {
 export function withArchiveEligibility<T>(
   cwd: string,
   requestedChangeId: string,
-  operation: (eligibility: ArchiveEligibility, assertOwned: () => void) => T,
+  operation: (
+    eligibility: ArchiveEligibility,
+    assertOwned: () => void,
+    refreshEligibility: (now: Date) => ArchiveEligibility,
+  ) => T,
   now = new Date(),
 ): T {
   const initial = discoverRepository(cwd);
@@ -72,9 +77,117 @@ export function withArchiveEligibility<T>(
         now,
       );
       assertOwned();
-      return operation(eligibility, assertOwned);
+      return operation(eligibility, assertOwned, (refreshedNow) => {
+        assertOwned();
+        const refreshed = inspectEligibility(
+          initial.repositoryRoot,
+          requestedChangeId,
+          refreshedNow,
+        );
+        assertOwned();
+        assertRolloverRefreshStable(eligibility, refreshed, refreshedNow);
+        return refreshed;
+      });
     },
   );
+}
+
+function assertRolloverRefreshStable(
+  original: ArchiveEligibility,
+  refreshed: ArchiveEligibility,
+  refreshedNow: Date,
+): void {
+  if (refreshed.head !== original.head) {
+    throw archiveError(
+      'ARCHIVE_HEAD_CHANGED',
+      'Archive eligibility refresh may not adopt a concurrent commit.',
+    );
+  }
+
+  const stableOriginal = stableRefreshAuthority(original);
+  const stableRefreshed = stableRefreshAuthority(refreshed);
+  const originalDate = archiveDestinationDate(original);
+  const refreshedDate = utcDate(refreshedNow);
+  const expectedDate = nextUtcDate(originalDate);
+  const expectedDestination = `${original.changeRoot}/archive/${expectedDate}-${original.changeId}`;
+  const expectedTargets = original.targetPaths
+    .map((targetPath) =>
+      targetPath === original.archiveDestination
+        ? expectedDestination
+        : targetPath,
+    )
+    .sort();
+  if (
+    canonicalJson(stableRefreshed) !== canonicalJson(stableOriginal) ||
+    refreshedDate !== expectedDate ||
+    refreshed.archiveDestination !== expectedDestination ||
+    canonicalJson(refreshed.targetPaths) !== canonicalJson(expectedTargets) ||
+    refreshed.fingerprint !== original.fingerprint
+  ) {
+    throw archiveError(
+      'ARCHIVE_ELIGIBILITY_CHANGED',
+      'Archive eligibility refresh changed state beyond the exact UTC-date projection.',
+    );
+  }
+}
+
+function stableRefreshAuthority(eligibility: ArchiveEligibility) {
+  return {
+    changeId: eligibility.changeId,
+    repositoryRoot: eligibility.repositoryRoot,
+    repositoryRealPath: eligibility.repositoryRealPath,
+    gitCommonDirectory: eligibility.gitCommonDirectory,
+    branch: eligibility.branch,
+    head: eligibility.head,
+    tree: eligibility.tree,
+    changeRoot: eligibility.changeRoot,
+    activeRoot: eligibility.activeRoot,
+    schemaName: eligibility.schemaName,
+    activeArtifactPaths: eligibility.activeArtifactPaths,
+    baseRef: eligibility.baseRef,
+    base: eligibility.base,
+    contractDigest: eligibility.contractDigest,
+    artifactDigests: eligibility.artifactDigests,
+    artifactModes: eligibility.artifactModes,
+    taskCommits: eligibility.taskCommits,
+  };
+}
+
+function archiveDestinationDate(eligibility: ArchiveEligibility): string {
+  const prefix = `${eligibility.changeRoot}/archive/`;
+  const suffix = `-${eligibility.changeId}`;
+  if (
+    !eligibility.archiveDestination.startsWith(prefix) ||
+    !eligibility.archiveDestination.endsWith(suffix)
+  ) {
+    throw archiveError(
+      'ARCHIVE_ELIGIBILITY_CHANGED',
+      'Archive eligibility has a non-canonical dated destination.',
+    );
+  }
+  const date = eligibility.archiveDestination.slice(
+    prefix.length,
+    -suffix.length,
+  );
+  if (!isUtcDate(date)) {
+    throw archiveError(
+      'ARCHIVE_ELIGIBILITY_CHANGED',
+      'Archive eligibility has a non-canonical dated destination.',
+    );
+  }
+  return date;
+}
+
+function nextUtcDate(value: string): string {
+  const date = new Date(`${value}T00:00:00.000Z`);
+  date.setUTCDate(date.getUTCDate() + 1);
+  return utcDate(date);
+}
+
+function isUtcDate(value: string): boolean {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  const date = new Date(`${value}T00:00:00.000Z`);
+  return Number.isFinite(date.getTime()) && utcDate(date) === value;
 }
 
 function inspectEligibility(

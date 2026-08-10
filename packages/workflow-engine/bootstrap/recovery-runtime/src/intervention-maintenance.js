@@ -8,8 +8,9 @@ import { discoverRepository, runGit } from './git.js';
 import { deriveAuthorityAuditRepositoryId } from './authority-audit-ledger.js';
 import { assertHumanRevocationAuthorization, authorizeHumanRevocation, canonicalHumanRevocationAuthorization, digestHumanRevocationSubject, } from './human-revocation.js';
 import { createEngineArtifact, verifyHarnessMaintenanceGrant, } from './intervention-control.js';
+import { interventionEngineArtifactRecordPath as storedArtifactRecordPath, readStoredInterventionEngineArtifact, } from './intervention-engine-artifact-store.js';
 import { parseMaintainerPolicy } from './maintainer-policy.js';
-import { interventionControlPersistencePaths, readPersistedIntervention, } from './intervention-control-persistence.js';
+import { activeBootstrapMaintenanceWorkflowBindingDigest, interventionControlPersistencePaths, preparePersistedEngineAdoption, recordBootstrapSidecarArtifactReady, readPersistedBootstrapSidecarWorkflow, readPersistedIntervention, } from './intervention-control-persistence.js';
 const PRIVATE_DIRECTORY_MODE = 0o700;
 const PRIVATE_FILE_MODE = 0o600;
 const MAX_RECORD_BYTES = 4 * 1024 * 1024;
@@ -42,6 +43,10 @@ export const MAINTENANCE_SCOPE_WAIVERS = Object.freeze([
 ]);
 export function buildAndPersistInterventionEngineArtifact(storageRoot, input) {
     const intervention = readPersistedIntervention(storageRoot, input.parentChangeId);
+    const sidecarWorkflow = readPersistedBootstrapSidecarWorkflow(storageRoot, input.parentChangeId);
+    if (sidecarWorkflow.workflowBinding.status !== 'repair-active') {
+        throw workflowError('INTERVENTION_ENGINE_BUILD_WORKFLOW_NOT_ACTIVE', 'Engine artifacts can only be built by the active bootstrap-maintenance Workflow.', ExitCode.conflict);
+    }
     if (!Number.isSafeInteger(input.protocolVersion) ||
         input.protocolVersion < 1 ||
         !Number.isSafeInteger(input.policySchemaVersion) ||
@@ -57,7 +62,7 @@ export function buildAndPersistInterventionEngineArtifact(storageRoot, input) {
         throw workflowError('INTERVENTION_ENGINE_BUILD_WORKSPACE_MISMATCH', 'Engine artifact must be built from the exact reserved child worktree and checkpoint base.', ExitCode.verification);
     }
     const executablePath = assertScopedChildArtifactPath(childWorkspacePath, input.executablePath);
-    const executableBytes = readBoundedArtifactSource(executablePath);
+    const executableBytes = readBoundedArtifactSource(childWorkspacePath, executablePath);
     const executableDigest = digest(executableBytes);
     const sourceDigestBeforeSmoke = interventionSourceDigest(childWorkspacePath);
     const probe = runArtifactProbe(executablePath, '--bootstrap-probe');
@@ -90,6 +95,7 @@ export function buildAndPersistInterventionEngineArtifact(storageRoot, input) {
         writesSessionSchema: intervention.parent.sessionSchema,
         policySchemaVersion: input.policySchemaVersion,
         smokeReportDigest,
+        workflowBindingDigest: sidecarWorkflow.workflowBinding.workflowBindingDigest,
     });
     return persistInterventionEngineArtifact(storageRoot, {
         parentChangeId: input.parentChangeId,
@@ -381,52 +387,80 @@ export function terminalizeExpiredMaintenanceGrantForParent(storageRoot, parentC
 }
 export function persistInterventionEngineArtifact(storageRoot, input) {
     const intervention = readPersistedIntervention(storageRoot, input.parentChangeId);
+    const sidecarWorkflow = readPersistedBootstrapSidecarWorkflow(storageRoot, input.parentChangeId);
+    if (sidecarWorkflow.workflowBinding.status !== 'repair-active') {
+        throw workflowError('INTERVENTION_ENGINE_ARTIFACT_WORKFLOW_NOT_ACTIVE', 'Engine artifacts can be persisted only while the bootstrap-maintenance Workflow is repair-active.', ExitCode.conflict);
+    }
+    const workflowBindingDigest = activeBootstrapMaintenanceWorkflowBindingDigest(sidecarWorkflow.workflowBinding);
     const artifact = verifyArtifact(input.artifact);
     if (artifact.sourceChangeId !== intervention.relationship.interventionChangeId) {
         throw workflowError('INTERVENTION_ENGINE_ARTIFACT_BINDING_MISMATCH', 'Engine artifact was not produced by the persisted intervention.', ExitCode.verification);
     }
-    const executablePath = verifyArtifactExecutable(intervention.childWorkspace.childWorkspacePath, input.executablePath, artifact.executableDigest);
+    if (artifact.workflowBindingDigest !== undefined &&
+        artifact.workflowBindingDigest !== workflowBindingDigest) {
+        throw workflowError('INTERVENTION_ENGINE_ARTIFACT_WORKFLOW_BINDING_MISMATCH', 'Engine artifact belongs to a different bootstrap-maintenance Workflow binding.', ExitCode.verification);
+    }
+    const executablePath = verifyArtifactExecutable(intervention.childWorkspace.childWorkspacePath, input.executablePath, artifact.executableDigest, input.testAfterArtifactExecutableOpenedBeforeRead);
     const record = withRecordDigest({
-        kind: 'persisted-intervention-engine-artifact.v1',
+        kind: 'persisted-intervention-engine-artifact.v2',
         parentChangeId: input.parentChangeId,
         interventionChangeId: intervention.relationship.interventionChangeId,
         checkpointId: intervention.checkpoint.checkpointId,
         artifact,
         executablePath,
+        workflowBindingDigest,
+        workflowStatus: 'repair-active',
         createdAt: exactDate(input.now).toISOString(),
     });
     const paths = maintenancePaths(storageRoot);
     ensurePrivateDirectory(paths.artifacts);
-    const target = interventionArtifactRecordPath(storageRoot, artifact.artifactId);
-    if (fs.existsSync(target)) {
+    const target = storedArtifactRecordPath(storageRoot, artifact.artifactId);
+    const serializedRecord = `${canonicalJson(record)}\n`;
+    if (reconcilePrivateFileExclusivePublication(target, serializedRecord) ||
+        fs.existsSync(target)) {
         const existing = readInterventionEngineArtifact(storageRoot, artifact.artifactId);
-        if (canonicalJson(existing) !== canonicalJson(record)) {
+        if (existing.parentChangeId !== record.parentChangeId ||
+            existing.interventionChangeId !== record.interventionChangeId ||
+            existing.checkpointId !== record.checkpointId ||
+            canonicalJson(existing.artifact) !== canonicalJson(record.artifact) ||
+            existing.executablePath !== record.executablePath ||
+            existing.workflowBindingDigest !== record.workflowBindingDigest ||
+            existing.workflowStatus !== record.workflowStatus) {
             throw workflowError('INTERVENTION_ENGINE_ARTIFACT_CONFLICT', 'Artifact id is already bound to different intervention bytes.', ExitCode.conflict);
         }
+        assertArtifactWorkflowStillActive(storageRoot, input.parentChangeId, sidecarWorkflow.recordDigest, workflowBindingDigest);
+        recordBootstrapSidecarArtifactReady(storageRoot, {
+            parentChangeId: existing.parentChangeId,
+            artifact: existing.artifact,
+            evidenceDigest: existing.recordDigest,
+            readyAt: existing.createdAt,
+        });
         return existing;
     }
-    createPrivateFileExclusive(target, `${canonicalJson(record)}\n`);
+    input.testAfterWorkflowBindingVerifiedBeforeArtifactPersisted?.();
+    assertArtifactWorkflowStillActive(storageRoot, input.parentChangeId, sidecarWorkflow.recordDigest, workflowBindingDigest);
+    createPrivateFileExclusive(target, serializedRecord, input.testObserveArtifactRecordPublication);
+    input.testAfterArtifactPersistedBeforeSidecar?.();
+    assertArtifactWorkflowStillActive(storageRoot, input.parentChangeId, sidecarWorkflow.recordDigest, workflowBindingDigest);
+    recordBootstrapSidecarArtifactReady(storageRoot, {
+        parentChangeId: record.parentChangeId,
+        artifact: record.artifact,
+        evidenceDigest: record.recordDigest,
+        readyAt: record.createdAt,
+    });
     return deepFreeze(structuredClone(record));
 }
-export function readInterventionEngineArtifact(storageRoot, artifactId) {
-    assertDigest(artifactId, 'INTERVENTION_ENGINE_ARTIFACT_INVALID');
-    const value = readCanonicalPrivateFile(interventionArtifactRecordPath(storageRoot, artifactId), 'INTERVENTION_ENGINE_ARTIFACT_NOT_FOUND');
-    if (!isRecord(value) ||
-        !hasExactKeys(value, [
-            'artifact',
-            'checkpointId',
-            'createdAt',
-            'executablePath',
-            'interventionChangeId',
-            'kind',
-            'parentChangeId',
-            'recordDigest',
-        ]) ||
-        value.kind !== 'persisted-intervention-engine-artifact.v1' ||
-        !verifyRecordDigest(value)) {
-        throw artifactRecordCorrupt();
+function assertArtifactWorkflowStillActive(storageRoot, parentChangeId, expectedSidecarRecordDigest, expectedWorkflowBindingDigest) {
+    const current = readPersistedBootstrapSidecarWorkflow(storageRoot, parentChangeId);
+    if (current.recordDigest !== expectedSidecarRecordDigest ||
+        current.workflowBinding.status !== 'repair-active' ||
+        current.workflowBinding.workflowBindingDigest !==
+            expectedWorkflowBindingDigest) {
+        throw workflowError('INTERVENTION_ENGINE_ARTIFACT_WORKFLOW_NOT_ACTIVE', 'Bootstrap-maintenance Workflow changed before the artifact record could be persisted.', ExitCode.staleState);
     }
-    const record = value;
+}
+export function readInterventionEngineArtifact(storageRoot, artifactId) {
+    const record = readStoredInterventionEngineArtifact(storageRoot, artifactId);
     const intervention = readPersistedIntervention(storageRoot, record.parentChangeId);
     const artifact = verifyArtifact(record.artifact);
     if (artifact.artifactId !== artifactId ||
@@ -435,8 +469,43 @@ export function readInterventionEngineArtifact(storageRoot, artifactId) {
         record.checkpointId !== intervention.checkpoint.checkpointId) {
         throw artifactRecordCorrupt();
     }
+    if (record.kind === 'persisted-intervention-engine-artifact.v2') {
+        const sidecarWorkflow = readPersistedBootstrapSidecarWorkflow(storageRoot, record.parentChangeId);
+        if (record.workflowStatus !== 'repair-active' ||
+            record.workflowBindingDigest === undefined ||
+            record.workflowBindingDigest !==
+                (sidecarWorkflow.workflowBinding.status === 'repair-active'
+                    ? sidecarWorkflow.workflowBinding.workflowBindingDigest
+                    : activeBootstrapMaintenanceWorkflowBindingDigest(sidecarWorkflow.workflowBinding)) ||
+            (artifact.workflowBindingDigest !== undefined &&
+                artifact.workflowBindingDigest !== record.workflowBindingDigest)) {
+            throw artifactRecordCorrupt();
+        }
+    }
     verifyArtifactExecutable(intervention.childWorkspace.childWorkspacePath, record.executablePath, artifact.executableDigest);
     return deepFreeze(structuredClone({ ...record, artifact }));
+}
+export function preparePersistedEngineAdoptionFromArtifactRecord(storageRoot, input, dependencies) {
+    const record = readInterventionEngineArtifact(storageRoot, input.artifactId);
+    if (record.kind !== 'persisted-intervention-engine-artifact.v2' ||
+        record.parentChangeId !== input.parentChangeId ||
+        record.workflowBindingDigest === undefined ||
+        record.workflowStatus !== 'repair-active') {
+        throw workflowError('INTERVENTION_ENGINE_ARTIFACT_WORKFLOW_BINDING_REQUIRED', 'Engine adoption requires the exact persisted v2 artifact record for the active bootstrap-maintenance Workflow.', ExitCode.verification);
+    }
+    input.testAfterArtifactSnapshotBeforeParentLock?.();
+    return preparePersistedEngineAdoption(storageRoot, {
+        txId: input.txId,
+        parentChangeId: input.parentChangeId,
+        artifact: record.artifact,
+        artifactAuthority: {
+            recordDigest: record.recordDigest,
+            createdAt: record.createdAt,
+            workflowBindingDigest: record.workflowBindingDigest,
+        },
+        maintenanceGrantEnvelope: input.maintenanceGrantEnvelope,
+        priorLocalAdoptions: input.priorLocalAdoptions,
+    }, dependencies);
 }
 function interventionSourceDigest(childWorkspacePath) {
     const changed = runGit(childWorkspacePath, [
@@ -515,17 +584,13 @@ function assertMaintenanceScopedRelativePath(relativePath) {
         throw workflowError('INTERVENTION_ENGINE_BUILD_SCOPE_VIOLATION', `Engine build changed a path outside the signed maintenance scope: ${relativePath}`, ExitCode.guard);
     }
 }
-function readBoundedArtifactSource(filePath) {
-    const stats = fs.lstatSync(filePath, { throwIfNoEntry: false });
-    if (!stats?.isFile() ||
-        stats.isSymbolicLink() ||
-        stats.nlink !== 1 ||
-        stats.size < 1 ||
-        stats.size > MAX_EXECUTABLE_BYTES ||
-        fs.realpathSync(filePath) !== filePath) {
+function readBoundedArtifactSource(childWorkspacePath, filePath) {
+    try {
+        return readStableArtifactExecutable(childWorkspacePath, filePath).bytes;
+    }
+    catch {
         throw workflowError('INTERVENTION_ENGINE_BUILD_EXECUTABLE_UNSAFE', 'Candidate engine must be a bounded canonical single-link executable.', ExitCode.unsafeEnvironment);
     }
-    return fs.readFileSync(filePath);
 }
 function runArtifactProbe(executablePath, mode) {
     const result = spawnSync(executablePath, [mode], {
@@ -590,23 +655,84 @@ function verifyArtifact(artifact) {
         throw artifactRecordCorrupt();
     return rebuilt;
 }
-function verifyArtifactExecutable(childWorkspacePath, requestedPath, expectedDigest) {
-    const childRoot = fs.realpathSync(childWorkspacePath);
-    const executablePath = path.resolve(requestedPath);
-    const relative = path.relative(childRoot, executablePath);
-    const stats = fs.lstatSync(executablePath, { throwIfNoEntry: false });
-    if (relative.length === 0 ||
-        relative.startsWith('..') ||
-        path.isAbsolute(relative) ||
-        !stats?.isFile() ||
-        stats.isSymbolicLink() ||
-        stats.nlink !== 1 ||
-        stats.size < 1 ||
-        stats.size > MAX_EXECUTABLE_BYTES ||
-        digest(fs.readFileSync(executablePath)) !== expectedDigest) {
+function verifyArtifactExecutable(childWorkspacePath, requestedPath, expectedDigest, testAfterOpenedBeforeRead) {
+    try {
+        const stable = readStableArtifactExecutable(childWorkspacePath, requestedPath, testAfterOpenedBeforeRead);
+        if (digest(stable.bytes) !== expectedDigest)
+            throw new Error('digest drift');
+        return stable.executablePath;
+    }
+    catch {
         throw workflowError('INTERVENTION_ENGINE_ARTIFACT_DRIFT', 'Persisted engine artifact executable is missing, unsafe, or changed.', ExitCode.verification);
     }
-    return fs.realpathSync(executablePath);
+}
+function readStableArtifactExecutable(childWorkspacePath, requestedPath, testAfterOpenedBeforeRead) {
+    if (typeof requestedPath !== 'string' ||
+        !path.isAbsolute(requestedPath) ||
+        path.resolve(requestedPath) !== requestedPath) {
+        throw new Error('non-canonical executable path');
+    }
+    const childRoot = fs.realpathSync(childWorkspacePath);
+    if (childRoot !== childWorkspacePath) {
+        throw new Error('non-canonical child workspace');
+    }
+    const relative = path.relative(childRoot, requestedPath);
+    if (relative.length === 0 ||
+        relative.startsWith('..') ||
+        path.isAbsolute(relative)) {
+        throw new Error('executable outside child workspace');
+    }
+    const descriptor = fs.openSync(requestedPath, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+    try {
+        const before = fs.fstatSync(descriptor, { bigint: true });
+        assertStableArtifactExecutable(before);
+        testAfterOpenedBeforeRead?.();
+        const bytes = fs.readFileSync(descriptor);
+        const after = fs.fstatSync(descriptor, { bigint: true });
+        const current = fs.lstatSync(requestedPath, {
+            bigint: true,
+            throwIfNoEntry: false,
+        });
+        let currentRealPath = null;
+        try {
+            currentRealPath = fs.realpathSync(requestedPath);
+        }
+        catch {
+            // The stable identity comparison below fails closed.
+        }
+        if (current === undefined ||
+            current.isSymbolicLink() ||
+            currentRealPath !== requestedPath ||
+            bytes.length !== Number(before.size) ||
+            !sameArtifactExecutableIdentity(before, after) ||
+            !sameArtifactExecutableIdentity(before, current)) {
+            throw new Error('executable pathname changed during verification');
+        }
+        return { executablePath: requestedPath, bytes };
+    }
+    finally {
+        fs.closeSync(descriptor);
+    }
+}
+function assertStableArtifactExecutable(stats) {
+    if (!stats.isFile() ||
+        stats.isSymbolicLink() ||
+        stats.nlink !== 1n ||
+        stats.size < 1n ||
+        stats.size > BigInt(MAX_EXECUTABLE_BYTES)) {
+        throw new Error('unsafe executable inode');
+    }
+}
+function sameArtifactExecutableIdentity(expected, observed) {
+    return (observed.isFile() &&
+        !observed.isSymbolicLink() &&
+        expected.dev === observed.dev &&
+        expected.ino === observed.ino &&
+        expected.mode === observed.mode &&
+        expected.nlink === observed.nlink &&
+        expected.size === observed.size &&
+        expected.mtimeNs === observed.mtimeNs &&
+        expected.ctimeNs === observed.ctimeNs);
 }
 function ensurePrivateDirectory(directory) {
     fs.mkdirSync(directory, { recursive: true, mode: PRIVATE_DIRECTORY_MODE });
@@ -617,23 +743,151 @@ function ensurePrivateDirectory(directory) {
         throw workflowError('INTERVENTION_MAINTENANCE_STORAGE_UNSAFE', 'Maintenance records require private plain directories.', ExitCode.unsafeEnvironment);
     }
 }
-function createPrivateFileExclusive(filePath, content) {
-    const descriptor = fs.openSync(filePath, fs.constants.O_WRONLY |
+function createPrivateFileExclusive(filePath, content, testObservePublication) {
+    const directory = path.dirname(filePath);
+    const temporary = privatePublicationTemporaryPath(filePath);
+    const descriptor = fs.openSync(temporary, fs.constants.O_WRONLY |
         fs.constants.O_CREAT |
         fs.constants.O_EXCL |
         fs.constants.O_NOFOLLOW, PRIVATE_FILE_MODE);
     try {
+        fs.fchmodSync(descriptor, PRIVATE_FILE_MODE);
         fs.writeFileSync(descriptor, content, 'utf8');
         fs.fsyncSync(descriptor);
     }
     finally {
         fs.closeSync(descriptor);
     }
+    testObservePublication?.('file-fsynced');
+    finishPrivateFileExclusivePublication(filePath, temporary, content, testObservePublication);
+}
+function reconcilePrivateFileExclusivePublication(filePath, content) {
+    const temporary = privatePublicationTemporaryPath(filePath);
+    const targetExists = fs.lstatSync(filePath, { throwIfNoEntry: false });
+    const temporaryExists = fs.lstatSync(temporary, { throwIfNoEntry: false });
+    if (targetExists === undefined && temporaryExists === undefined)
+        return false;
+    if (temporaryExists === undefined)
+        return true;
+    const prepared = readPrivatePublicationFile(temporary, targetExists === undefined ? 1n : 2n);
+    if (!sameArtifactPublicationReplay(prepared.content, content)) {
+        throw artifactPublicationCorrupt();
+    }
+    if (targetExists === undefined) {
+        finishPrivateFileExclusivePublication(filePath, temporary, prepared.content);
+        return true;
+    }
+    const target = readPrivatePublicationFile(filePath, 2n);
+    if (target.content !== prepared.content ||
+        target.stats.dev !== prepared.stats.dev ||
+        target.stats.ino !== prepared.stats.ino) {
+        throw artifactPublicationCorrupt();
+    }
+    finishPrivateFileExclusivePublication(filePath, temporary, prepared.content);
+    return true;
+}
+function finishPrivateFileExclusivePublication(filePath, temporary, content, testObservePublication) {
+    const directory = path.dirname(filePath);
+    if (fs.lstatSync(filePath, { throwIfNoEntry: false }) === undefined) {
+        fs.linkSync(temporary, filePath);
+        testObservePublication?.('target-linked');
+    }
+    assertExactPrivatePublicationPair(filePath, temporary, content);
+    fsyncDirectory(directory);
+    testObservePublication?.('target-directory-fsynced');
+    assertExactPrivatePublicationPair(filePath, temporary, content);
+    fs.unlinkSync(temporary);
+    fsyncDirectory(directory);
+    assertExactPrivatePublicationFile(filePath, content, 1n);
+    testObservePublication?.('temporary-cleaned');
+}
+function assertExactPrivatePublicationPair(filePath, temporary, content) {
+    const target = assertExactPrivatePublicationFile(filePath, content, 2n);
+    const prepared = assertExactPrivatePublicationFile(temporary, content, 2n);
+    if (target.dev !== prepared.dev || target.ino !== prepared.ino) {
+        throw artifactPublicationCorrupt();
+    }
+}
+function assertExactPrivatePublicationFile(filePath, content, expectedLinks) {
+    const observed = readPrivatePublicationFile(filePath, expectedLinks);
+    if (observed.content !== content)
+        throw artifactPublicationCorrupt();
+    return observed.stats;
+}
+function readPrivatePublicationFile(filePath, expectedLinks) {
+    let descriptor;
+    try {
+        descriptor = fs.openSync(filePath, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+    }
+    catch {
+        throw artifactPublicationCorrupt();
+    }
+    try {
+        const before = fs.fstatSync(descriptor, { bigint: true });
+        const raw = fs.readFileSync(descriptor, 'utf8');
+        const after = fs.fstatSync(descriptor, { bigint: true });
+        const current = fs.lstatSync(filePath, {
+            bigint: true,
+            throwIfNoEntry: false,
+        });
+        if (current === undefined ||
+            !before.isFile() ||
+            before.isSymbolicLink() ||
+            before.nlink !== expectedLinks ||
+            (before.mode & 511n) !== BigInt(PRIVATE_FILE_MODE) ||
+            !sameArtifactExecutableIdentity(before, after) ||
+            !sameArtifactExecutableIdentity(before, current)) {
+            throw artifactPublicationCorrupt();
+        }
+        return { stats: before, content: raw };
+    }
+    finally {
+        fs.closeSync(descriptor);
+    }
+}
+function sameArtifactPublicationReplay(observedContent, candidateContent) {
+    try {
+        const observed = JSON.parse(observedContent);
+        const candidate = JSON.parse(candidateContent);
+        if (!isRecord(observed) ||
+            !isRecord(candidate) ||
+            `${canonicalJson(observed)}\n` !== observedContent ||
+            `${canonicalJson(candidate)}\n` !== candidateContent ||
+            !verifyRecordDigest(observed) ||
+            !verifyRecordDigest(candidate) ||
+            typeof observed.createdAt !== 'string' ||
+            Number.isNaN(Date.parse(observed.createdAt)) ||
+            new Date(observed.createdAt).toISOString() !== observed.createdAt) {
+            return false;
+        }
+        const { createdAt: _observedCreatedAt, recordDigest: _observedRecordDigest, ...observedIdentity } = observed;
+        const { createdAt: _candidateCreatedAt, recordDigest: _candidateRecordDigest, ...candidateIdentity } = candidate;
+        return canonicalJson(observedIdentity) === canonicalJson(candidateIdentity);
+    }
+    catch {
+        return false;
+    }
+}
+function privatePublicationTemporaryPath(filePath) {
+    return `${filePath}.pending`;
 }
 function replacePrivateFileAtomic(filePath, content) {
     const temporary = `${filePath}.${crypto.randomUUID()}.tmp`;
     createPrivateFileExclusive(temporary, content);
     fs.renameSync(temporary, filePath);
+    fsyncDirectory(path.dirname(filePath));
+}
+function fsyncDirectory(directory) {
+    const descriptor = fs.openSync(directory, fs.constants.O_RDONLY);
+    try {
+        const stats = fs.fstatSync(descriptor);
+        if (!stats.isDirectory())
+            throw new Error('publication parent is not a directory');
+        fs.fsyncSync(descriptor);
+    }
+    finally {
+        fs.closeSync(descriptor);
+    }
 }
 function readCanonicalPrivateFile(filePath, notFoundCode) {
     const stats = fs.lstatSync(filePath, { throwIfNoEntry: false });
@@ -737,6 +991,9 @@ function maintenanceRecordCorrupt(message = 'Persisted maintenance grant failed 
 }
 function artifactRecordCorrupt() {
     return workflowError('INTERVENTION_ENGINE_ARTIFACT_RECORD_CORRUPT', 'Persisted intervention engine artifact failed integrity verification.', ExitCode.verification);
+}
+function artifactPublicationCorrupt() {
+    return workflowError('INTERVENTION_ENGINE_ARTIFACT_PUBLICATION_CORRUPT', 'Prepared intervention engine artifact publication is foreign, incomplete, or inconsistent.', ExitCode.verification);
 }
 function deepFreeze(value) {
     if (value !== null && typeof value === 'object' && !Object.isFrozen(value)) {

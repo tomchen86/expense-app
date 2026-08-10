@@ -137,6 +137,17 @@ export function deriveInvestigationFullBlobManifest(input) {
  */
 export function createInvestigationWhyNodes(input) {
     const manifest = assertManifestEntries(input.manifest);
+    const coverageManifest = input.coverageManifest === undefined
+        ? manifest
+        : assertManifestEntries(input.coverageManifest);
+    const coverageById = new Map(coverageManifest.map((entry) => [entry.manifestEntryId, entry]));
+    for (const entry of manifest) {
+        const covered = coverageById.get(entry.manifestEntryId);
+        if (covered === undefined ||
+            canonicalJson(covered) !== canonicalJson(entry)) {
+            throw whyInvalid('Fresh WHY rows must be an exact subset of complete load-bearing coverage.');
+        }
+    }
     const manifestById = new Map(manifest.map((entry) => [
         entry.manifestEntryId,
         entry,
@@ -144,7 +155,7 @@ export function createInvestigationWhyNodes(input) {
     const hitRecords = indexHitNodes(input.hitNodes);
     const groupRecords = indexGroupNodes(input.groupNodes);
     const dispositionRecords = indexDispositionNodes(input.dispositionNodes);
-    validateManifestEvidenceBindings(manifest, hitRecords, groupRecords, dispositionRecords);
+    validateManifestEvidenceBindings(coverageManifest, hitRecords, groupRecords, dispositionRecords);
     const hitNodeById = new Map([...hitRecords].map(([nodeId, record]) => [
         nodeId,
         record.node,

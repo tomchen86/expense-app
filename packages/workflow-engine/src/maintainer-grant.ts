@@ -5,7 +5,12 @@ import path from 'node:path';
 
 import { canonicalJson } from './canonical-json.ts';
 import { ExitCode, workflowError } from './errors.ts';
-import { discoverRepository, runGit, runGitWithEnvironment } from './git.ts';
+import {
+  discoverRepository,
+  isPostApprovalAdmissionFailure,
+  runGit,
+  runGitWithEnvironment,
+} from './git.ts';
 import {
   isAuthorityPathEligible,
   parseMaintainerPolicy,
@@ -1178,6 +1183,7 @@ export function createMaintainerAuditTag(
     );
     return runGit(repositoryRoot, ['rev-parse', `${tagRef}^{tag}`]).trim();
   } catch (error) {
+    if (isPostApprovalAdmissionFailure(error)) throw error;
     if (
       runGit(repositoryRoot, ['rev-parse', '--verify', tagRef], true).trim()
     ) {

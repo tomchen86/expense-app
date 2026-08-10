@@ -1243,6 +1243,22 @@ export function decideRetry(input: {
   if (failure.retryClass === 'terminal') {
     return noRetry(failure.code);
   }
+  const requiredStrategyReason =
+    failure.code === 'PROVIDER_TOOL_UNAVAILABLE'
+      ? 'PROVIDER_TOOL_CONFIGURATION_REQUIRED'
+      : failure.code === 'PROVIDER_OUTPUT_LIMIT_EXCEEDED' ||
+          failure.code === 'PROVIDER_STDOUT_TRUNCATED'
+        ? 'PROVIDER_OUTPUT_CONTEXT_REDUCTION_REQUIRED'
+        : null;
+  if (requiredStrategyReason !== null) {
+    return deepFreeze({
+      retryable: true,
+      automatic: false,
+      retryMode: 'strategy-change',
+      changedStrategyRequired: true,
+      reasonCode: requiredStrategyReason,
+    });
+  }
   const grant =
     input.boundedGrantRequest === undefined
       ? undefined
@@ -1379,9 +1395,48 @@ export function projectExecutionFailureState(input: {
       jobId: job.jobId,
       detailsDigest: failure.fingerprint,
     };
+  } else if (
+    decision.retryable &&
+    !decision.automatic &&
+    decision.retryMode === 'strategy-change' &&
+    decision.changedStrategyRequired === true
+  ) {
+    status = 'waiting-retry';
+    blocker = {
+      kind: 'configuration',
+      since: failure.observedAt,
+      jobId: job.jobId,
+      detailsDigest: failure.fingerprint,
+    };
   } else if (decision.retryable && decision.automatic) {
     status = 'waiting-retry';
-    blocker = null;
+    if (failure.code === 'PROVIDER_RATE_LIMIT') {
+      blocker = {
+        kind: 'retry-delay',
+        since: failure.observedAt,
+        jobId: job.jobId,
+        detailsDigest: failure.fingerprint,
+        ...(failure.retryAfterMs === null
+          ? {}
+          : {
+              retryAt: new Date(
+                Date.parse(failure.observedAt) + failure.retryAfterMs,
+              ).toISOString(),
+            }),
+      };
+    } else if (
+      failure.code === 'PROVIDER_CAPACITY' ||
+      failure.code === 'PROVIDER_UNAVAILABLE'
+    ) {
+      blocker = {
+        kind: 'provider-capacity',
+        since: failure.observedAt,
+        jobId: job.jobId,
+        detailsDigest: failure.fingerprint,
+      };
+    } else {
+      blocker = null;
+    }
   } else {
     status = 'failed-terminal';
     blocker = null;

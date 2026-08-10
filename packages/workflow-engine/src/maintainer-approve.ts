@@ -24,7 +24,19 @@ import {
   createCheckEnvironment,
 } from './database-policy.ts';
 import { ExitCode, workflowError } from './errors.ts';
-import { discoverRepository, fingerprintWorkingState, runGit } from './git.ts';
+import {
+  armPostApprovalAdmissionDeadline,
+  assertPostApprovalAdmissionDeadline,
+  createPostApprovalAdmissionDeadline,
+  discoverRepository,
+  enterPostApprovalTerminalCleanup,
+  fingerprintWorkingState,
+  isPostApprovalAdmissionFailure,
+  runGit,
+  withPostApprovalAdmissionDeadline,
+  type PostApprovalAdmissionDeadline,
+  type PostApprovalBudgetTestOptions,
+} from './git.ts';
 import {
   authorityCandidateCommitMessage,
   createSignedAuthorityCandidateCommitObject,
@@ -59,7 +71,9 @@ import {
   issueMaintainerGrantV2,
   maintainerChecksEnvironmentDigest,
   preflightMaintainerGrantV2,
+  validateMaintainerEvidenceWaivers,
   type MaintainerChecksAttestation,
+  type MaintainerEvidenceWaiver,
   type MaintainerGrantV2Envelope,
   type MaintainerGrantV2PreflightResult,
 } from './maintainer-grant-v2.ts';
@@ -73,6 +87,8 @@ import {
   maintainerGrantStorePaths,
   readMaintainerGrantV2RevocationTargetUnderLifecycleLock,
   readTerminalMaintainerGrant,
+  terminallyFailAvailableMaintainerGrantV2UnderLifecycleLock,
+  terminallyFailMaintainerReservationUnderLifecycleLock,
   terminallyRevokeAvailableMaintainerGrantV2UnderLifecycleLock,
 } from './maintainer-store.ts';
 import { listProviderInvocationLifecycleProjections } from './investigation-session-store.ts';
@@ -95,6 +111,7 @@ export type ApproveAndApplyMaintainerGrantV2Request = {
   reason: string;
   message: string;
   externalEffects: CandidateExternalEffect[];
+  evidenceWaivers?: MaintainerEvidenceWaiver[];
   ttlMinutes?: number;
 };
 
@@ -105,22 +122,30 @@ export type ApproveAndApplyMaintainerGrantV2Options = {
   commitClock?: () => Date;
   testBeforeRefUpdate?: () => void;
   testPoststateVerification?: () => void;
-  commitCrashAfter?: 'commit-created' | 'ref-cas' | 'ref-updated';
+  commitCrashAfter?:
+    'index-staged' | 'commit-created' | 'ref-cas' | 'ref-updated';
   testBeforeConsume?: () => void;
   testBeforeAudit?: (eventType: 'cas' | 'grant-consume') => void;
   testBeforeCandidateCommitSigning?: () => void;
+  /** Test-only interruption point after the signed grant is durable. */
+  testAfterGrantIssued?: (
+    grant: ReturnType<typeof issueMaintainerGrantV2>,
+  ) => void;
+  /** Test-only deterministic seam; production always uses the code-owned cap. */
+  testPostApprovalBudget?: PostApprovalBudgetTestOptions;
   testRefusalAuditServiceHooks?: AuthorityAuditServiceHooks;
 };
 
 export type ReissueAndApplyMaintainerGrantV2Request = {
   priorGrantId: string;
   reason: string;
+  evidenceWaivers?: MaintainerEvidenceWaiver[];
   ttlMinutes?: number;
 };
 
 export type ReissueAndApplyMaintainerGrantV2Options = Omit<
   ApproveAndApplyMaintainerGrantV2Options,
-  'testBeforeCandidateCommitSigning'
+  'testBeforeCandidateCommitSigning' | 'testAfterGrantIssued'
 > & {
   grantId?: string;
 };
@@ -305,25 +330,35 @@ export function approveAndApplyMaintainerGrantV2(
   request: ApproveAndApplyMaintainerGrantV2Request,
   options: ApproveAndApplyMaintainerGrantV2Options = {},
 ) {
-  const mandateBinding = inspectActiveTaskMandateBinding(cwd, request.taskId, {
-    now: options.now,
-    signer: options.signer,
-  });
-  const refusalBinding = applyRefusalBinding(cwd, mandateBinding, request);
-  return withAuthorityRefusalAudit(
-    refusalBinding,
-    {
-      now: options.now,
-      serviceHooks: options.testRefusalAuditServiceHooks,
-    },
-    () =>
-      approveAndApplyMaintainerGrantV2WithBinding(
-        cwd,
-        request,
-        options,
-        mandateBinding,
-      ),
+  const deadline = createPostApprovalAdmissionDeadline(
+    options.testPostApprovalBudget,
   );
+  return withPostApprovalAdmissionDeadline(deadline, () => {
+    const mandateBinding = inspectActiveTaskMandateBinding(
+      cwd,
+      request.taskId,
+      {
+        now: options.now,
+        signer: options.signer,
+      },
+    );
+    const refusalBinding = applyRefusalBinding(cwd, mandateBinding, request);
+    return withAuthorityRefusalAudit(
+      refusalBinding,
+      {
+        now: options.now,
+        serviceHooks: options.testRefusalAuditServiceHooks,
+      },
+      () =>
+        approveAndApplyMaintainerGrantV2WithBinding(
+          cwd,
+          request,
+          options,
+          mandateBinding,
+          deadline,
+        ),
+    );
+  });
 }
 
 function approveAndApplyMaintainerGrantV2WithBinding(
@@ -331,6 +366,7 @@ function approveAndApplyMaintainerGrantV2WithBinding(
   request: ApproveAndApplyMaintainerGrantV2Request,
   options: ApproveAndApplyMaintainerGrantV2Options,
   mandateBinding: TaskMandateBinding,
+  deadline: PostApprovalAdmissionDeadline,
 ) {
   assertApplyMandateChange(mandateBinding, request.changeId);
   const effectsManifest = buildCandidateExternalEffectsManifest({
@@ -491,6 +527,7 @@ function approveAndApplyMaintainerGrantV2WithBinding(
       manifest: preflight.manifest,
       checksAttestation,
       candidateBundle,
+      evidenceWaivers: request.evidenceWaivers ?? [],
       ttlMinutes: request.ttlMinutes,
     },
     {
@@ -498,20 +535,41 @@ function approveAndApplyMaintainerGrantV2WithBinding(
       grantId,
       signer,
       environment: options.environment,
-      beforeGrantPublication: (envelope) =>
-        appendApplyGrantAudit(auditScope, envelope),
+      beforeGrantPublication: (envelope) => {
+        armPostApprovalAdmissionDeadline(deadline);
+        appendApplyGrantAudit(auditScope, envelope);
+        assertPostApprovalAdmissionDeadline(deadline);
+      },
+    },
+  );
+  withPublishedGrantAdmissionCleanup(
+    repository.gitCommonDirectory,
+    grant.grantId,
+    deadline,
+    options.now,
+    () => {
+      assertPostApprovalAdmissionDeadline(deadline);
+      options.testAfterGrantIssued?.(grant);
     },
   );
   // The one command already established human presence while signing the exact
   // candidate. Subsequent session and commit admission may reverify identity
   // and signature but must not ask the maintainer to repeat the same ceremony.
   const confirmedSigner = afterConfirmedPresence(signer);
-  const session = startAuthoritySession(cwd, request.changeId, grant.grantId, {
-    now: options.now,
-    signer: confirmedSigner,
-    environment: options.environment,
-    allowSignedV2Candidate: true,
-  });
+  const session = withPublishedGrantAdmissionCleanup(
+    repository.gitCommonDirectory,
+    grant.grantId,
+    deadline,
+    options.now,
+    () =>
+      startAuthoritySession(cwd, request.changeId, grant.grantId, {
+        now: options.now,
+        signer: confirmedSigner,
+        environment: options.environment,
+        allowSignedV2Candidate: true,
+        postApprovalDeadline: deadline,
+      }),
+  );
   const committed = commitAuthoritySession(
     cwd,
     session.sessionId,
@@ -526,6 +584,7 @@ function approveAndApplyMaintainerGrantV2WithBinding(
       testCrashAfter: options.commitCrashAfter,
       testBeforeConsume: options.testBeforeConsume,
       testBeforeAudit: options.testBeforeAudit,
+      postApprovalDeadline: deadline,
     },
   );
   return {
@@ -542,6 +601,7 @@ function approveAndApplyMaintainerGrantV2WithBinding(
     resultTree: prospective.tree,
     candidateBundleDigest: candidateBundle.candidateBundleDigest,
     candidateStorePath,
+    evidenceWaivers: grant.envelope.payload.evidenceWaivers ?? [],
     applied: true as const,
   };
 }
@@ -557,6 +617,25 @@ export function reissueAndApplyMaintainerGrantV2(
   cwd: string,
   request: ReissueAndApplyMaintainerGrantV2Request,
   options: ReissueAndApplyMaintainerGrantV2Options = {},
+) {
+  const deadline = createPostApprovalAdmissionDeadline(
+    options.testPostApprovalBudget,
+  );
+  return withPostApprovalAdmissionDeadline(deadline, () =>
+    reissueAndApplyMaintainerGrantV2WithDeadline(
+      cwd,
+      request,
+      options,
+      deadline,
+    ),
+  );
+}
+
+function reissueAndApplyMaintainerGrantV2WithDeadline(
+  cwd: string,
+  request: ReissueAndApplyMaintainerGrantV2Request,
+  options: ReissueAndApplyMaintainerGrantV2Options,
+  deadline: PostApprovalAdmissionDeadline,
 ) {
   const repository = discoverRepository(cwd);
   const prior = readTerminalMaintainerGrant(
@@ -588,6 +667,11 @@ export function reissueAndApplyMaintainerGrantV2(
         reasonDigest: authorityRefusalDigest(request.reason),
         ttlMinutes: request.ttlMinutes ?? null,
         requestedGrantId: options.grantId ?? null,
+        evidenceWaiversDigest: authorityRefusalDigest(
+          request.evidenceWaivers === undefined
+            ? { declaration: 'preserve-prior' }
+            : request.evidenceWaivers,
+        ),
       },
     ),
     {
@@ -603,6 +687,10 @@ export function reissueAndApplyMaintainerGrantV2(
         );
       }
       const payload = envelope.payload;
+      const evidenceWaivers =
+        request.evidenceWaivers === undefined
+          ? (payload.evidenceWaivers ?? [])
+          : request.evidenceWaivers;
       const candidate = payload.candidateBundle;
       if (candidate === null || payload.checksAttestation === null) {
         throw workflowError(
@@ -639,27 +727,41 @@ export function reissueAndApplyMaintainerGrantV2(
           ttlMinutes: request.ttlMinutes,
           checksAttestation: payload.checksAttestation,
           candidateBundle: candidate,
+          evidenceWaivers,
         },
         {
           now: options.now,
           grantId: options.grantId,
           signer,
           environment: options.environment,
-          beforeGrantPublication: (issuedEnvelope) =>
-            appendApplyGrantAudit(trusted.auditScope, issuedEnvelope),
+          beforeGrantPublication: (issuedEnvelope) => {
+            armPostApprovalAdmissionDeadline(deadline);
+            appendApplyGrantAudit(trusted.auditScope, issuedEnvelope);
+            assertPostApprovalAdmissionDeadline(deadline);
+          },
         },
       );
-      const confirmedSigner = afterConfirmedPresence(signer);
-      const session = startAuthoritySession(
-        cwd,
-        payload.changeId,
+      withPublishedGrantAdmissionCleanup(
+        repository.gitCommonDirectory,
         grant.grantId,
-        {
-          now: options.now,
-          signer: confirmedSigner,
-          environment: options.environment,
-          allowSignedV2Candidate: true,
-        },
+        deadline,
+        options.now,
+        () => assertPostApprovalAdmissionDeadline(deadline),
+      );
+      const confirmedSigner = afterConfirmedPresence(signer);
+      const session = withPublishedGrantAdmissionCleanup(
+        repository.gitCommonDirectory,
+        grant.grantId,
+        deadline,
+        options.now,
+        () =>
+          startAuthoritySession(cwd, payload.changeId, grant.grantId, {
+            now: options.now,
+            signer: confirmedSigner,
+            environment: options.environment,
+            allowSignedV2Candidate: true,
+            postApprovalDeadline: deadline,
+          }),
       );
       const committed = commitAuthoritySession(
         cwd,
@@ -675,6 +777,7 @@ export function reissueAndApplyMaintainerGrantV2(
           testCrashAfter: options.commitCrashAfter,
           testBeforeConsume: options.testBeforeConsume,
           testBeforeAudit: options.testBeforeAudit,
+          postApprovalDeadline: deadline,
         },
       );
       return {
@@ -692,6 +795,7 @@ export function reissueAndApplyMaintainerGrantV2(
         candidateCommit: candidate.candidateCommit,
         resultTree: candidate.resultTree,
         candidateBundleDigest: candidate.candidateBundleDigest,
+        evidenceWaivers: grant.envelope.payload.evidenceWaivers ?? [],
         applied: true as const,
       };
     },
@@ -899,8 +1003,61 @@ function applyRefusalBinding(
           ? { declaration: 'missing' }
           : request.externalEffects,
       ),
+      evidenceWaiversDigest: authorityRefusalDigest(
+        request.evidenceWaivers === undefined
+          ? { declaration: 'missing' }
+          : request.evidenceWaivers,
+      ),
     },
   };
+}
+
+function withPublishedGrantAdmissionCleanup<T>(
+  gitCommonDirectory: string,
+  grantId: string,
+  deadline: PostApprovalAdmissionDeadline,
+  now: Date | undefined,
+  operation: () => T,
+): T {
+  try {
+    return operation();
+  } catch (error) {
+    if (!isPostApprovalAdmissionFailure(error)) throw error;
+    enterPostApprovalTerminalCleanup(deadline);
+    const reason =
+      error instanceof Error
+        ? error.message
+        : 'Post-approval admission timed out before CAS.';
+    withRepositoryLifecycleOperation(
+      maintainerGrantStorePaths(gitCommonDirectory).runtime,
+      (assertOwned) => {
+        const current = readMaintainerGrantV2RevocationTargetUnderLifecycleLock(
+          gitCommonDirectory,
+          grantId,
+          assertOwned,
+        );
+        if (current.state === 'available') {
+          terminallyFailAvailableMaintainerGrantV2UnderLifecycleLock(
+            gitCommonDirectory,
+            grantId,
+            reason,
+            now ?? new Date(),
+            assertOwned,
+          );
+        } else if (current.state === 'reserved' && current.sessionId !== null) {
+          terminallyFailMaintainerReservationUnderLifecycleLock(
+            gitCommonDirectory,
+            grantId,
+            current.sessionId,
+            reason,
+            now ?? new Date(),
+          );
+        }
+      },
+      { allowMaintainerGrantId: grantId },
+    );
+    throw error;
+  }
 }
 
 function verifyHistoricalApplyGrantTrust(
@@ -1088,6 +1245,7 @@ function appendApplyGrantAudit(
     classification: envelope.payload.classification,
     manifestDigest: envelope.payload.manifestDigest,
     checksAttestationDigest: envelope.payload.checksAttestationDigest,
+    evidenceWaivers: envelope.payload.evidenceWaivers ?? [],
   });
   recordAuthorityAuditEvent(scope, {
     eventType: 'apply-grant',
@@ -1250,6 +1408,11 @@ function assertApproveAndApplyPreconditions(
       ExitCode.guard,
     );
   }
+  validateMaintainerEvidenceWaivers(
+    request.evidenceWaivers ?? [],
+    preflight.requiredChecks,
+    preflight.checkDependencies,
+  );
   const repository = discoverRepository(cwd);
   if (repository.head !== preflight.trustBaseCommit || !repository.branch) {
     throw workflowError(

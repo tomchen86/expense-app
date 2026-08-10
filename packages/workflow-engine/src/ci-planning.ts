@@ -9,7 +9,10 @@ import {
 } from './collaboration-grant.ts';
 import { readFileAtCommit } from './ci-git.ts';
 import { isRecord } from './contract-values.ts';
-import { parseManagedTrailers } from './managed-trailers.ts';
+import {
+  parseManagedTrailers,
+  type AmendPlanManagedTrailers,
+} from './managed-trailers.ts';
 import {
   loadChangeContract,
   parseInvestigationArtifact,
@@ -36,6 +39,8 @@ import {
   validateInvestigationFirstPlanningReadiness,
   type InvestigationFirstPlanningAssuranceSummary,
 } from './planning-assurance-validator.ts';
+import { committedPlanningGeneration } from './planning-generation-history.ts';
+import { readPlanningAmendmentDecision } from './planning-amendment-decision.ts';
 import {
   amendmentLeftWorkMarkedDone,
   assertPlanningPaths,
@@ -207,7 +212,7 @@ type TreeEntry = {
 function readCommittedAmendment(
   message: string,
   changeId: string,
-): { executionImpact: 'none' | 'required' } | null {
+): AmendPlanManagedTrailers | null {
   let trailers;
   try {
     trailers = parseManagedTrailers(
@@ -223,7 +228,7 @@ function readCommittedAmendment(
       'An amendment names the change it amends, and this one names another.',
     );
   }
-  return { executionImpact: trailers.executionImpact };
+  return trailers;
 }
 
 export function validateCiPlanningCommit(
@@ -288,6 +293,16 @@ export function validateCiPlanningCommit(
   // checkout CI happens to run in, so it is resolved from the replayed tree
   // before any schema-sensitive path or artifact rule is applied.
   const replay = replayPlanningTree(repositoryRoot, facts.hash, changeId);
+  if (amendment !== null) {
+    assertCommittedAmendmentProvenance(
+      repositoryRoot,
+      normalizedChangeRoot,
+      facts.parents[0],
+      facts.hash,
+      amendment,
+      replay.planningAssurance,
+    );
+  }
   assertPlanningPaths(
     normalizedChangeRoot,
     changeId,
@@ -352,7 +367,11 @@ export function validateCiPlanningCommit(
     reopenAuthorized,
   });
   if (
-    amendmentLeftWorkMarkedDone({ reopenAuthorized, reopenedTasks, beforeTasks })
+    amendmentLeftWorkMarkedDone({
+      reopenAuthorized,
+      reopenedTasks,
+      beforeTasks,
+    })
   ) {
     throw ciPlanningError(
       'CI_PLANNING_AMENDMENT_NOT_REOPENED',
@@ -369,6 +388,57 @@ export function validateCiPlanningCommit(
     planningAssurance: replay.planningAssurance,
     collaborationGrantUses: replay.collaborationGrantUses,
   };
+}
+
+function assertCommittedAmendmentProvenance(
+  repositoryRoot: string,
+  changeRoot: string,
+  parentCommit: string,
+  amendmentCommit: string,
+  amendment: AmendPlanManagedTrailers,
+  planningAssurance: InvestigationFirstPlanningAssuranceSummary | null,
+): void {
+  let priorGeneration: string | null;
+  try {
+    priorGeneration = committedPlanningGeneration(
+      repositoryRoot,
+      parentCommit,
+      changeRoot,
+      amendment.changeId,
+    );
+  } catch {
+    throw ciPlanningError(
+      'CI_PLANNING_AMENDMENT_PROVENANCE_INVALID',
+      'An amendment parent does not name exactly one planning generation.',
+    );
+  }
+  let reviewedDecision: ReturnType<typeof readPlanningAmendmentDecision> = null;
+  try {
+    const proposal = readFileAtCommit(
+      repositoryRoot,
+      amendmentCommit,
+      `${changeRoot}/${amendment.changeId}/proposal.md`,
+    );
+    reviewedDecision =
+      proposal === undefined ? null : readPlanningAmendmentDecision(proposal);
+  } catch {
+    reviewedDecision = null;
+  }
+  if (
+    planningAssurance === null ||
+    priorGeneration === null ||
+    reviewedDecision === null ||
+    reviewedDecision.executionImpact !== amendment.executionImpact ||
+    reviewedDecision.amendsPlanningGeneration !== priorGeneration ||
+    amendment.planningGeneration !== planningAssurance.planningGenerationId ||
+    amendment.planReview !== planningAssurance.reviewNodeId ||
+    amendment.amendsPlanningGeneration !== priorGeneration
+  ) {
+    throw ciPlanningError(
+      'CI_PLANNING_AMENDMENT_PROVENANCE_INVALID',
+      'Amendment trailers and the reviewed decision must bind the exact impact, generation, review node, and generation replaced by the parent tree.',
+    );
+  }
 }
 
 type PlanningTreeReplay = {

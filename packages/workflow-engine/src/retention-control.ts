@@ -1,6 +1,7 @@
 import { canonicalJson } from './canonical-json.ts';
 import { projectProviderInvocationExecution } from './execution-core.ts';
 import {
+  compactDurableEpochTransitionReceipts,
   inspectDurableEpochContextStore,
   inspectDurableRetentionCatalog,
   pinDurableEvidence,
@@ -25,13 +26,14 @@ import {
   readProviderInvocationRequest,
 } from './provider-invocation-store.ts';
 import {
+  assertProviderRuntimeEvidencePinnableUnderLifecycleLock,
   inspectProviderRetentionMetrics,
   pruneProviderRuntime,
   type ProviderRetentionMetrics,
   type ProviderRetentionPassResult,
 } from './provider-retention.ts';
 import {
-  inspectActiveTaskMandateBinding,
+  withActiveTaskMandateBinding,
   type TaskMandateBinding,
 } from './task-mandate.ts';
 
@@ -43,6 +45,14 @@ export type EvidenceRetentionMaintenanceResult = Readonly<{
   provider: ProviderRetentionPassResult;
   durableContexts: Readonly<{
     examined: number;
+    compacted: ReadonlyArray<{
+      workflowId: string;
+      fullReceiptsBefore: number;
+      fullReceiptsAfter: number;
+      stubsBefore: number;
+      stubsAfter: number;
+      discarded: readonly string[];
+    }>;
     pruned: ReadonlyArray<{
       workflowId: string;
       deleted: number;
@@ -84,7 +94,43 @@ export function runEvidenceRetentionMaintenance(
   const now = exactTimestamp(input.now ?? new Date().toISOString());
   const provider = pruneProviderRuntime(cwd, { limit, now });
   const storeRoot = loadInvestigationRuntimeContext(cwd).runtime.root;
-  const workflows = durableContextEntries(cwd).slice(0, limit);
+  const workflows = durableContextEntries(cwd).map(
+    ({ workflowId }) => workflowId,
+  );
+  const durableContexts = runDurableContextRetentionMaintenance(
+    storeRoot,
+    workflows,
+    { limit, now: new Date(now) },
+  );
+  return deepFreeze({
+    schemaVersion: 1 as const,
+    kind: 'evidence-retention-maintenance.v1' as const,
+    provider,
+    durableContexts,
+  });
+}
+
+/**
+ * Generic durable-context half of repository retention maintenance. Keeping
+ * this as one callable production core lets workers and deterministic tests
+ * exercise the same receipt-compaction and evidence-pruning sequence.
+ */
+export function runDurableContextRetentionMaintenance(
+  storeRoot: string,
+  workflowIds: readonly string[],
+  input: { limit: number; now: Date },
+): EvidenceRetentionMaintenanceResult['durableContexts'] {
+  const limit = assertLimit(input.limit);
+  const now = new Date(exactTimestamp(input.now.toISOString()));
+  const workflows = [...new Set(workflowIds)].sort().slice(0, limit);
+  const compacted: Array<{
+    workflowId: string;
+    fullReceiptsBefore: number;
+    fullReceiptsAfter: number;
+    stubsBefore: number;
+    stubsAfter: number;
+    discarded: readonly string[];
+  }> = [];
   const pruned: Array<{
     workflowId: string;
     deleted: number;
@@ -94,7 +140,7 @@ export function runEvidenceRetentionMaintenance(
     workflowId: string;
     reason: 'context-not-found' | 'nothing-expired';
   }> = [];
-  for (const { workflowId } of workflows) {
+  for (const workflowId of workflows) {
     let context;
     let catalog;
     try {
@@ -107,11 +153,27 @@ export function runEvidenceRetentionMaintenance(
       }
       throw error;
     }
+    const receiptCompaction = compactDurableEpochTransitionReceipts(storeRoot, {
+      workflowId,
+      expectedContextGeneration: context.generation,
+      now,
+    });
+    if (receiptCompaction.changed) {
+      compacted.push({
+        workflowId,
+        fullReceiptsBefore: receiptCompaction.fullReceiptsBefore,
+        fullReceiptsAfter: receiptCompaction.fullReceiptsAfter,
+        stubsBefore: receiptCompaction.stubsBefore,
+        stubsAfter: receiptCompaction.stubsAfter,
+        discarded: receiptCompaction.discarded,
+      });
+      context = inspectDurableEpochContextStore(storeRoot, workflowId);
+    }
     const plan = planEvidencePruning({
       records: catalog.records,
       currentEpoch: context.workflow.currentEpoch,
       currentManifest: context.currentManifest,
-      now: new Date(now),
+      now,
     });
     if (plan.delete.length === 0) {
       skipped.push({ workflowId, reason: 'nothing-expired' });
@@ -123,7 +185,7 @@ export function runEvidenceRetentionMaintenance(
       expectedEpoch: context.workflow.currentEpoch,
       expectedContextDigest: context.workflow.contextDigest,
       expectedCatalogGeneration: catalog.generation,
-      now: new Date(now),
+      now,
     });
     pruned.push({
       workflowId,
@@ -132,14 +194,10 @@ export function runEvidenceRetentionMaintenance(
     });
   }
   return deepFreeze({
-    schemaVersion: 1 as const,
-    kind: 'evidence-retention-maintenance.v1' as const,
-    provider,
-    durableContexts: {
-      examined: workflows.length,
-      pruned,
-      skipped,
-    },
+    examined: workflows.length,
+    compacted,
+    pruned,
+    skipped,
   });
 }
 
@@ -211,23 +269,15 @@ export function pinWorkflowEvidence(
   const binding = exactWorkflowMandateBinding(
     entries.map(({ mandateBinding }) => mandateBinding),
   );
-  const active = inspectActiveTaskMandateBinding(cwd, binding.mandateTaskId, {
-    now: options.now,
-    ...(options.signer === undefined ? {} : { signer: options.signer }),
-  });
-  if (canonicalJson(active) !== canonicalJson(binding)) {
-    throw workflowError(
-      'RETENTION_TASK_MANDATE_MISMATCH',
-      'Evidence retention authority no longer matches the exact active Task Mandate.',
-      ExitCode.staleState,
-    );
-  }
   const storeRoot = loadInvestigationRuntimeContext(cwd).runtime.root;
-  const catalog = inspectDurableRetentionCatalog(storeRoot, request.workflowId);
-  const current = catalog.records.find(
+  const observedCatalog = inspectDurableRetentionCatalog(
+    storeRoot,
+    request.workflowId,
+  );
+  const observed = observedCatalog.records.find(
     ({ evidenceId }) => evidenceId === request.evidenceId,
   );
-  if (current === undefined) {
+  if (observed === undefined) {
     throw workflowError(
       'RETENTION_EVIDENCE_NOT_FOUND',
       `Evidence ${request.evidenceId} was not found.`,
@@ -255,43 +305,78 @@ export function pinWorkflowEvidence(
       ExitCode.verification,
     );
   }
-  if (current.retention === 'pinned') {
-    if (current.pin?.actor !== actor || current.pin.reason !== reason) {
-      throw workflowError(
-        'RETENTION_PIN_CONFLICT',
-        'Evidence is already pinned by a different durable human decision.',
-        ExitCode.conflict,
-      );
-    }
-    return deepFreeze({
-      workflowId: request.workflowId,
-      evidenceId: request.evidenceId,
-      record: current,
-      catalogGeneration: catalog.generation,
-      replayed: true,
-    });
-  }
-  const updated = pinDurableEvidence(storeRoot, {
-    workflowId: request.workflowId,
-    evidenceId: request.evidenceId,
-    expectedCatalogGeneration: catalog.generation,
-    decision: {
-      actor,
-      reason,
-      pinnedAt: options.now ?? new Date(),
-      humanConfirmed: true,
+  return withActiveTaskMandateBinding(
+    cwd,
+    binding.mandateTaskId,
+    {
+      now: options.now,
+      signer,
     },
-  });
-  const record = updated.records.find(
-    ({ evidenceId }) => evidenceId === request.evidenceId,
-  )!;
-  return deepFreeze({
-    workflowId: request.workflowId,
-    evidenceId: request.evidenceId,
-    record,
-    catalogGeneration: updated.generation,
-    replayed: false,
-  });
+    (active, assertOwned) => {
+      if (canonicalJson(active) !== canonicalJson(binding)) {
+        throw workflowError(
+          'RETENTION_TASK_MANDATE_MISMATCH',
+          'Evidence retention authority no longer matches the exact active Task Mandate.',
+          ExitCode.staleState,
+        );
+      }
+      const runtime = loadInvestigationRuntimeContext(cwd).runtime;
+      const catalog = inspectDurableRetentionCatalog(
+        runtime.root,
+        request.workflowId,
+      );
+      const current = catalog.records.find(
+        ({ evidenceId }) => evidenceId === request.evidenceId,
+      );
+      if (current === undefined) {
+        throw workflowError(
+          'RETENTION_EVIDENCE_NOT_FOUND',
+          `Evidence ${request.evidenceId} was not found.`,
+          ExitCode.guard,
+        );
+      }
+      assertProviderRuntimeEvidencePinnableUnderLifecycleLock(runtime, current);
+      assertOwned();
+      if (current.retention === 'pinned') {
+        if (current.pin?.actor !== actor || current.pin.reason !== reason) {
+          throw workflowError(
+            'RETENTION_PIN_CONFLICT',
+            'Evidence is already pinned by a different durable human decision.',
+            ExitCode.conflict,
+          );
+        }
+        return deepFreeze({
+          workflowId: request.workflowId,
+          evidenceId: request.evidenceId,
+          record: current,
+          catalogGeneration: catalog.generation,
+          replayed: true,
+        });
+      }
+      const updated = pinDurableEvidence(runtime.root, {
+        workflowId: request.workflowId,
+        evidenceId: request.evidenceId,
+        expectedCatalogGeneration: catalog.generation,
+        decision: {
+          actor,
+          reason,
+          pinnedAt: options.now ?? new Date(),
+          humanConfirmed: true,
+        },
+      });
+      assertOwned();
+      const record = updated.records.find(
+        ({ evidenceId }) => evidenceId === request.evidenceId,
+      )!;
+      return deepFreeze({
+        workflowId: request.workflowId,
+        evidenceId: request.evidenceId,
+        record,
+        catalogGeneration: updated.generation,
+        replayed: false,
+      });
+    },
+  );
 }
 
 function durableContextEntries(cwd: string): Array<{

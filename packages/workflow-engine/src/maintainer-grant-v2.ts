@@ -7,7 +7,12 @@ import type { CheckEvidence } from './check-runner.ts';
 import { isRecord, isStringArray } from './contract-values.ts';
 import { assertDisposableDatabase } from './database-policy.ts';
 import { ExitCode, workflowError } from './errors.ts';
-import { discoverRepository, runGit } from './git.ts';
+import {
+  discoverRepository,
+  enterActivePostApprovalTerminalCleanup,
+  isPostApprovalAdmissionFailure,
+  runGit,
+} from './git.ts';
 import {
   assertMaintainerGrantId,
   createMaintainerAuditTag,
@@ -42,6 +47,7 @@ import {
 import {
   maintainerGrantStorePaths,
   storeCanonicalAvailableMaintainerGrantUnderLifecycleLock,
+  terminallyFailSignedMaintainerGrantV2UnderLifecycleLock,
 } from './maintainer-store.ts';
 import { assertChangeId } from './paths.ts';
 import { classifyProtectedCapabilityPaths } from './protected-capabilities.ts';
@@ -58,7 +64,7 @@ export const MAINTAINER_GRANT_V2_SIGNATURE_NAMESPACE =
 const MAX_V2_TTL_MINUTES = 7 * 24 * 60;
 const DIGEST = /^[0-9a-f]{64}$/;
 const COMMIT_OID = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
-const PAYLOAD_KEYS = [
+const LEGACY_PAYLOAD_KEYS = [
   'version',
   'grantId',
   'repositoryId',
@@ -90,10 +96,19 @@ const PAYLOAD_KEYS = [
   'reason',
   'signer',
 ];
+const PAYLOAD_KEYS = [...LEGACY_PAYLOAD_KEYS, 'evidenceWaivers'];
+const CHECK_ID = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 
 export type MaintainerEvidenceOverlayEntry = {
   path: string;
   role: 'evidence';
+};
+
+export type MaintainerEvidenceWaiver = {
+  checkId: string;
+  /** Waives max-age admission only; exact binding, outcome, environment, and
+   * dependency invalidation remain mandatory. */
+  reason: string;
 };
 
 export type MaintainerPreapprovalCheck = {
@@ -133,6 +148,8 @@ export type MaintainerGrantV2Payload = {
   allowedPaths: string[];
   evidenceOverlay: MaintainerEvidenceOverlayEntry[];
   requiredChecks: string[];
+  /** Absent only on historical v2 envelopes issued before named waivers. */
+  evidenceWaivers?: MaintainerEvidenceWaiver[];
   checkDependencies: CapabilityProfile['checkDependencies'];
   checksAttestation: MaintainerChecksAttestation | null;
   checksAttestationDigest: string | null;
@@ -175,6 +192,7 @@ export type MaintainerGrantV2IssueRequest = {
   ttlMinutes?: number;
   checksAttestation?: MaintainerChecksAttestation;
   candidateBundle?: ImmutableCandidateBundle;
+  evidenceWaivers?: MaintainerEvidenceWaiver[];
 };
 
 export type MaintainerGrantV2IssueOptions = {
@@ -264,6 +282,11 @@ export function issueMaintainerGrantV2(
       'Maintainer grant manifest does not match its trust-base profile or policy.',
     );
   }
+  const evidenceWaivers = validateMaintainerEvidenceWaivers(
+    request.evidenceWaivers ?? [],
+    profile.requiredChecks,
+    profile.checkDependencies,
+  );
   const observed = buildMaintainerPatchManifest(
     context.repository.repositoryRoot,
     {
@@ -346,6 +369,7 @@ export function issueMaintainerGrantV2(
     patchDigest: manifest.patchDigest,
     trustBaseCommit: manifest.trustBaseCommit,
     requiredChecks: profile.requiredChecks,
+    waivedFreshnessCheckIds: evidenceWaivers.map(({ checkId }) => checkId),
     environmentDigest: currentChecksEnvironmentDigest(
       request.checksAttestation,
       options.environment ?? process.env,
@@ -428,6 +452,7 @@ export function issueMaintainerGrantV2(
     allowedPaths: manifest.files.map(({ path: filePath }) => filePath),
     evidenceOverlay: evidenceOverlay(manifest),
     requiredChecks: [...profile.requiredChecks],
+    evidenceWaivers,
     checkDependencies: cloneCheckDependencies(profile),
     checksAttestation: request.checksAttestation,
     checksAttestationDigest: digest(
@@ -478,19 +503,20 @@ export function issueMaintainerGrantV2(
 
   withRepositoryLifecycleOperation(paths.runtime, (assertOwned) => {
     assertOwned();
-    assertActiveApplyMandateBinding(cwd, changeId, mandateBinding, {
-      now,
-      signer,
-      assertLifecycleOwned: assertOwned,
-    });
-    const tagObject = createMaintainerAuditTag(
-      context.repository.repositoryRoot,
-      manifest.trustBaseCommit,
-      tagRef,
-      canonicalEnvelope,
-      signerIdentity,
-    );
+    let tagObject: string | null = null;
     try {
+      assertActiveApplyMandateBinding(cwd, changeId, mandateBinding, {
+        now,
+        signer,
+        assertLifecycleOwned: assertOwned,
+      });
+      tagObject = createMaintainerAuditTag(
+        context.repository.repositoryRoot,
+        manifest.trustBaseCommit,
+        tagRef,
+        canonicalEnvelope,
+        signerIdentity,
+      );
       storeCanonicalAvailableMaintainerGrantUnderLifecycleLock(
         context.repository.gitCommonDirectory,
         grantId,
@@ -498,12 +524,48 @@ export function issueMaintainerGrantV2(
         assertOwned,
       );
     } catch (error) {
-      runGit(context.repository.repositoryRoot, [
-        'update-ref',
-        '-d',
-        tagRef,
-        tagObject,
-      ]);
+      if (isPostApprovalAdmissionFailure(error)) {
+        enterActivePostApprovalTerminalCleanup();
+        terminallyFailSignedMaintainerGrantV2UnderLifecycleLock(
+          context.repository.gitCommonDirectory,
+          envelope,
+          error instanceof Error
+            ? error.message
+            : 'Post-approval grant publication failed.',
+          now,
+          assertOwned,
+        );
+        try {
+          const cleanupTagObject =
+            tagObject ??
+            exactPublishedAuditTagObject(
+              context.repository.repositoryRoot,
+              tagRef,
+              manifest.trustBaseCommit,
+              canonicalEnvelope,
+              signerIdentity,
+            );
+          if (cleanupTagObject !== null) {
+            runGit(context.repository.repositoryRoot, [
+              'update-ref',
+              '-d',
+              tagRef,
+              cleanupTagObject,
+            ]);
+          }
+        } catch {
+          // Durable failed authority is denial-first. An unknown or
+          // concurrently substituted tag is preserved, and cleanup cannot
+          // replace the original admission failure.
+        }
+      } else if (tagObject) {
+        runGit(context.repository.repositoryRoot, [
+          'update-ref',
+          '-d',
+          tagRef,
+          tagObject,
+        ]);
+      }
       throw error;
     }
   });
@@ -514,6 +576,41 @@ export function issueMaintainerGrantV2(
     availableTokenPath,
     envelope,
   };
+}
+
+function exactPublishedAuditTagObject(
+  repositoryRoot: string,
+  tagRef: string,
+  baseCommit: string,
+  canonicalEnvelope: string,
+  signerIdentity: string,
+): string | null {
+  const tagObject = runGit(
+    repositoryRoot,
+    ['rev-parse', `${tagRef}^{tag}`],
+    true,
+  ).trim();
+  if (!tagObject) return null;
+  const raw = runGit(repositoryRoot, ['cat-file', 'tag', tagObject], true);
+  const separator = raw.indexOf('\n\n');
+  if (separator === -1) return null;
+  const headers = raw.slice(0, separator).split('\n');
+  const object = headers.find((line) => line.startsWith('object '))?.slice(7);
+  const type = headers.find((line) => line.startsWith('type '))?.slice(5);
+  const tag = headers.find((line) => line.startsWith('tag '))?.slice(4);
+  const tagger = headers.find((line) => line.startsWith('tagger '));
+  const expectedTaggerPrefix = `tagger ${signerIdentity} <workflow-maintainer@users.noreply.github.com> `;
+  if (
+    headers.length !== 4 ||
+    object !== baseCommit ||
+    type !== 'commit' ||
+    tag !== tagRef.slice('refs/tags/'.length) ||
+    !tagger?.startsWith(expectedTaggerPrefix) ||
+    raw.slice(separator + 2) !== canonicalEnvelope
+  ) {
+    return null;
+  }
+  return tagObject;
 }
 
 function assertActiveApplyMandateBinding(
@@ -557,6 +654,51 @@ function currentChecksEnvironmentDigest(
   return maintainerChecksEnvironmentDigest(
     destructive ? assertDisposableDatabase(environment).identity : null,
   );
+}
+
+export function parseMaintainerEvidenceWaivers(
+  value: unknown,
+): MaintainerEvidenceWaiver[] {
+  if (!Array.isArray(value)) throw invalidEvidenceWaiver();
+  const waivers = value.map((entry): MaintainerEvidenceWaiver => {
+    if (
+      !isRecord(entry) ||
+      !hasExactKeys(entry, ['checkId', 'reason']) ||
+      typeof entry.checkId !== 'string' ||
+      !CHECK_ID.test(entry.checkId) ||
+      typeof entry.reason !== 'string' ||
+      !validReason(entry.reason)
+    ) {
+      throw invalidEvidenceWaiver();
+    }
+    return { checkId: entry.checkId, reason: entry.reason };
+  });
+  if (!isSortedUnique(waivers.map(({ checkId }) => checkId))) {
+    throw invalidEvidenceWaiver();
+  }
+  return waivers;
+}
+
+export function validateMaintainerEvidenceWaivers(
+  value: unknown,
+  requiredChecks: string[],
+  checkDependencies: CapabilityProfile['checkDependencies'],
+): MaintainerEvidenceWaiver[] {
+  const waivers = parseMaintainerEvidenceWaivers(value);
+  const required = new Set(requiredChecks);
+  if (waivers.some(({ checkId }) => !required.has(checkId))) {
+    throw invalidEvidenceWaiver();
+  }
+  if (
+    waivers.some(({ checkId }) =>
+      checkDependencies[checkId]?.includes('external-state'),
+    )
+  ) {
+    throw invalidEvidenceWaiver(
+      'Named evidence waivers cannot target external-state checks without a current snapshot comparison.',
+    );
+  }
+  return waivers;
 }
 
 export function canonicalMaintainerGrantV2Payload(
@@ -605,7 +747,8 @@ export function parseMaintainerGrantV2Envelope(
       !isRecord(value) ||
       !hasExactKeys(value, ['payload', 'signature']) ||
       !isRecord(value.payload) ||
-      !hasExactKeys(value.payload, PAYLOAD_KEYS) ||
+      (!hasExactKeys(value.payload, PAYLOAD_KEYS) &&
+        !hasExactKeys(value.payload, LEGACY_PAYLOAD_KEYS)) ||
       typeof value.signature !== 'string'
     ) {
       throw new Error('invalid envelope shape');
@@ -622,7 +765,8 @@ export function parseMaintainerGrantV2Envelope(
       error &&
       typeof error === 'object' &&
       'code' in error &&
-      error.code === 'MAINTAINER_SIGNATURE_INVALID'
+      (error.code === 'MAINTAINER_SIGNATURE_INVALID' ||
+        error.code === 'MAINTAINER_EVIDENCE_WAIVER_INVALID')
     ) {
       throw error;
     }
@@ -663,7 +807,8 @@ export function validateMaintainerGrantV2AuthorityBinding(
       envelope.payload.signer,
       MAINTAINER_GRANT_V2_SIGNATURE_NAMESPACE,
     );
-  } catch {
+  } catch (error) {
+    if (isPostApprovalAdmissionFailure(error)) throw error;
     throw workflowError(
       'AUTHORITY_SIGNATURE_INVALID',
       'The maintainer grant v2 signature is invalid.',
@@ -737,6 +882,10 @@ function parseMaintainerGrantV2Payload(
 ): MaintainerGrantV2Payload {
   const manifest = parsePatchManifest(raw.manifest);
   const evidence = raw.evidenceOverlay;
+  const evidenceWaivers =
+    raw.evidenceWaivers === undefined
+      ? undefined
+      : parseMaintainerEvidenceWaivers(raw.evidenceWaivers);
   if (
     raw.version !== 2 ||
     typeof raw.grantId !== 'string' ||
@@ -804,6 +953,7 @@ function parseMaintainerGrantV2Payload(
       return { path: entry.path, role: 'evidence' as const };
     }),
     requiredChecks: [...raw.requiredChecks],
+    ...(evidenceWaivers === undefined ? {} : { evidenceWaivers }),
     checkDependencies: Object.fromEntries(
       Object.entries(raw.checkDependencies).map(([checkId, dependencies]) => {
         if (!isStringArray(dependencies)) {
@@ -852,6 +1002,11 @@ function validateMaintainerGrantV2Payload(
     ({ path: filePath }) => filePath,
   );
   const expectedOverlay = evidenceOverlay(payload.manifest);
+  validateMaintainerEvidenceWaivers(
+    payload.evidenceWaivers ?? [],
+    payload.requiredChecks,
+    payload.checkDependencies,
+  );
   if (
     payload.checksAttestation === null ||
     payload.checksAttestationDigest === null ||
@@ -1266,4 +1421,14 @@ function hasExactKeys(value: Record<string, unknown>, keys: string[]): boolean {
 
 function invalidGrant(message: string) {
   return workflowError('MAINTAINER_GRANT_INVALID', message, ExitCode.guard);
+}
+
+function invalidEvidenceWaiver(
+  message = 'Named evidence waivers must be sorted, unique trust-base check IDs with explicit reasons.',
+) {
+  return workflowError(
+    'MAINTAINER_EVIDENCE_WAIVER_INVALID',
+    message,
+    ExitCode.guard,
+  );
 }
