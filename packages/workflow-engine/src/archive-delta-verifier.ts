@@ -49,23 +49,14 @@ export function verifyArchiveDeltaOutcomes(
       eligibility.head,
       baseSpecPath,
     );
-    const plan = parseDelta(delta);
-    const beforeRequirements = parseRequirements(before ?? '');
-    const afterRequirements = parseRequirements(after);
-    const assessment = assessSpecDeltaAgainstBase(before ?? '', delta);
-    if (assessment.faults.length > 0) {
-      throw deltaNotApplicable(capability, assessment.faults);
-    }
-    const firstMissing = assessment.missingScenarios[0];
-    if (firstMissing !== undefined) {
-      throw scenarioPreservationFailed(
-        firstMissing.requirement,
-        firstMissing.scenarios,
-      );
-    }
-    verifyPlan(plan, beforeRequirements, afterRequirements);
+    const verified = verifyProjectedSpecDeltaOutcome(
+      capability,
+      before ?? '',
+      delta,
+      after,
+    );
     for (const operation of Object.keys(totals) as Operation[]) {
-      totals[operation] += plan[operation].length;
+      totals[operation] += verified.totals[operation];
     }
     promotedSpecDigests[baseSpecPath] = digest(after);
   }
@@ -76,6 +67,52 @@ export function verifyArchiveDeltaOutcomes(
     throw invalidOutcome();
   }
   return { totals, promotedSpecDigests };
+}
+
+/**
+ * Verify one base-spec projection produced by the public OpenSpec archive
+ * implementation. Both live archive and planning dry-run replay call this
+ * exact function, so operation applicability and scenario preservation cannot
+ * drift into two independently maintained interpretations.
+ */
+export function verifyProjectedSpecDeltaOutcome(
+  capability: string,
+  before: string,
+  delta: string,
+  after: string,
+): { totals: Record<Operation, number>; projectedSpecDigest: string } {
+  const plan = parseDelta(delta);
+  const beforeRequirements = parseRequirements(before);
+  const afterRequirements = parseRequirements(after);
+  assertSpecDeltaPreconditions(capability, before, delta);
+  verifyPlan(plan, beforeRequirements, afterRequirements);
+  return {
+    totals: {
+      added: plan.added.length,
+      modified: plan.modified.length,
+      removed: plan.removed.length,
+      renamed: plan.renamed.length,
+    },
+    projectedSpecDigest: digest(after),
+  };
+}
+
+export function assertSpecDeltaPreconditions(
+  capability: string,
+  before: string,
+  delta: string,
+): void {
+  const assessment = assessSpecDeltaAgainstBase(before, delta);
+  if (assessment.faults.length > 0) {
+    throw deltaNotApplicable(capability, assessment.faults);
+  }
+  const firstMissing = assessment.missingScenarios[0];
+  if (firstMissing !== undefined) {
+    throw scenarioPreservationFailed(
+      firstMissing.requirement,
+      firstMissing.scenarios,
+    );
+  }
 }
 
 function verifyPlan(

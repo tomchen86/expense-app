@@ -128,6 +128,7 @@ import './adaptive-class-sample-gate.integration.test.ts';
 import './amend-plan-change-option.integration.test.ts';
 import './amend-plan-state-gate.integration.test.ts';
 import './archive-applicability-current-tree.integration.test.ts';
+import './archive-applicability-public-projection.integration.test.ts';
 import './archive-diagnostic-budget.integration.test.ts';
 import './archive-utc-midnight-rollover.integration.test.ts';
 import './assurance-floor-propose.integration.test.ts';

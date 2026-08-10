@@ -918,7 +918,21 @@ function writeChange(
   );
   fs.writeFileSync(
     path.join(changeDirectory, 'specs/demo/spec.md'),
-    '# Delta\n\n## ADDED Requirements\n',
+    [
+      '# Delta',
+      '',
+      '## ADDED Requirements',
+      '',
+      '### Requirement: Demo behavior',
+      '',
+      'The system SHALL provide the demo behavior.',
+      '',
+      '#### Scenario: Demo succeeds',
+      '',
+      '- **WHEN** the demo is exercised',
+      '- **THEN** the behavior succeeds',
+      '',
+    ].join('\n'),
   );
 }
 
@@ -1064,6 +1078,7 @@ function installFakeOpenSpec(repository: string): void {
     `import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { applyFixtureArchiveSpecs } from './archive-helper.js';
 if (process.argv[2] === '--version') {
   process.stdout.write('1.6.0\\n');
   process.exit(0);
@@ -1129,6 +1144,38 @@ if (process.argv[2] === 'status') {
   }));
   process.exit(0);
 }
+if (process.argv[2] === 'archive') {
+  const changeId = process.argv[3];
+  const root = process.cwd();
+  const applied = applyFixtureArchiveSpecs(root, changeId);
+  const archiveName = new Date().toISOString().slice(0, 10) + '-' + changeId;
+  const archivePath = path.join(root, 'openspec/changes/archive', archiveName);
+  fs.mkdirSync(path.dirname(archivePath), { recursive: true });
+  fs.renameSync(path.join(root, 'openspec/changes', changeId), archivePath);
+  process.stdout.write(JSON.stringify({
+    archive: {
+      change: changeId,
+      archivedAs: archiveName,
+      path: archivePath,
+      specsUpdated: true,
+      totals: applied.totals
+    },
+    root: { path: root, source: 'nearest' }
+  }));
+  process.exit(0);
+}
+if (process.argv[2] === 'validate' && process.argv.includes('--specs')) {
+  process.stdout.write(JSON.stringify({
+    items: [{ id: 'demo', type: 'spec', valid: true, issues: [], durationMs: 1 }],
+    summary: {
+      totals: { items: 1, passed: 1, failed: 0 },
+      byType: { spec: { items: 1, passed: 1, failed: 0 } }
+    },
+    version: '1.0',
+    root: { path: process.cwd(), source: 'nearest' }
+  }));
+  process.exit(0);
+}
 const changeId = process.argv[3];
 const changeRoot = path.join(process.cwd(), 'openspec/changes', changeId);
 const invalid = fs.readFileSync(path.join(changeRoot, 'proposal.md'), 'utf8')
@@ -1154,6 +1201,13 @@ process.stdout.write(JSON.stringify({
 }));
 process.exitCode = invalid ? 1 : 0;
 `,
+  );
+  fs.copyFileSync(
+    path.join(
+      sourceRepositoryRoot,
+      'packages/workflow-engine/test/fixtures/fake-openspec-archive.mjs',
+    ),
+    path.join(packageDirectory, 'bin/archive-helper.js'),
   );
 }
 

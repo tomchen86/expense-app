@@ -73,13 +73,13 @@ test('archive CLI exposes the exact public transition command', () => {
 
 test('archive transition rejects silently ignored delta outcomes', () => {
   const repository = completedFixture(
-    '# Delta\n\n## REMOVED Requirements\n\n### Requirement: Missing\n',
+    '# Delta\n\n<!-- ARCHIVE_IGNORE_DELTA -->\n\n## REMOVED Requirements\n\n### Requirement: Missing\n',
   );
   try {
     const before = repositoryState(repository);
     assert.throws(
       () => commitArchiveTransition(repository, 'demo-change'),
-      (error) => isWorkflowError(error, 'ARCHIVE_DELTA_OUTCOME_INVALID'),
+      (error) => isWorkflowError(error, 'OPENSPEC_ARCHIVE_PAYLOAD_INVALID'),
     );
     assert.deepEqual(repositoryState(repository), before);
   } finally {

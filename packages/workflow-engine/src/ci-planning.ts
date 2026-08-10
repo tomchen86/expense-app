@@ -29,6 +29,7 @@ import {
   commitFacts,
   planningCommitMessage,
 } from './git-transitions.ts';
+import { createArchiveApplicabilityProjection } from './archive-transformation.ts';
 import { runGit } from './git.ts';
 import {
   assertInvestigationPlanningActivation,
@@ -377,6 +378,19 @@ export function validateCiPlanningCommit(
       'CI_PLANNING_AMENDMENT_NOT_REOPENED',
       'An amendment that says the work must be redone has to reopen it; completed tasks are still marked done.',
     );
+  }
+  if (replay.planningAssurance !== null) {
+    createArchiveApplicabilityProjection({
+      repositoryRoot,
+      changeRoot: normalizedChangeRoot,
+      changeId,
+      baselineCommit: facts.parents[0],
+      sourceCommit: facts.hash,
+      activeArtifactPaths: afterEntries.map(
+        ({ path: artifactPath }) => artifactPath,
+      ),
+      source: 'commit',
+    });
   }
   return {
     changeId,

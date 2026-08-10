@@ -2,7 +2,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 
-import { assertSpecDeltaScenarioPreservation } from './archive-delta-verifier.ts';
+import { createArchiveApplicabilityProjection } from './archive-transformation.ts';
 import { preEpochCompletedTaskIds } from './bootstrap-task-exemption.ts';
 import type { ArchiveApplicabilityRecord } from './planning-report.ts';
 import { loadWorkflowConfig } from './contracts.ts';
@@ -473,26 +473,10 @@ function commitPlanningTransitionLocked(
       ExitCode.verification,
     );
   }
-  // A seam, deliberately not taken: when execution-side evidence lives in the
-  // durable catalog, an epoch rollover hooks onto this same amendment record.
-  // Nothing there today holds task completion — that lives in the committed
-  // tree and in the task commits, which this transition leaves untouched — so
-  // wiring one now would record a transition that never happened.
-
-  // Archive applies delta specs onto the base specs; a delta that cannot apply
-  // is not discoverable until then, which is a whole execution too late.
-  const currentDeltaSpecPaths = inspection.currentPaths.filter(
-    (candidate) =>
-      candidate.startsWith(`${config.changeRoot}/${changeId}/specs/`) &&
-      candidate.endsWith('/spec.md'),
-  );
-  const archiveApplicability = assertSpecDeltaScenarioPreservation(
-    initial.repositoryRoot,
-    initial.head,
-    config.changeRoot,
-    changeId,
-    currentDeltaSpecPaths,
-  );
+  // The durable execution-epoch transition is published only after the
+  // planning ref CAS below. Keeping that external projection out of this
+  // pre-CAS validation section prevents a failed commit from advancing epoch
+  // authority.
 
   assertUnstagedPlanningState(
     initial,
@@ -550,6 +534,20 @@ function commitPlanningTransitionLocked(
       inspection.currentPaths,
       inspection.artifactDigests,
     );
+
+    // Archive applies delta specs onto the base specs; a delta that cannot
+    // apply is not discoverable until then, which is a whole execution too
+    // late. Run the public projection only after the exact candidate tree is
+    // pinned; failure still rolls this reversible index lease back below.
+    const archiveApplicability = createArchiveApplicabilityProjection({
+      repositoryRoot: initial.repositoryRoot,
+      changeRoot: config.changeRoot,
+      changeId,
+      baselineCommit: initial.head,
+      sourceCommit: initial.head,
+      activeArtifactPaths: inspection.currentPaths,
+      source: 'worktree',
+    });
 
     const provenance =
       amendment === undefined || planningValidation.planningAssurance === null

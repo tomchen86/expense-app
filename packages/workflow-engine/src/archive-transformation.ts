@@ -4,6 +4,11 @@ import path from 'node:path';
 
 import type { ArchiveEligibility } from './archive-eligibility.ts';
 import {
+  assertSpecDeltaPreconditions,
+  verifyProjectedSpecDeltaOutcome,
+  type SpecDeltaPreflightRecord,
+} from './archive-delta-verifier.ts';
+import {
   assertPlainArchiveOutputFile,
   listPlainArchiveFiles,
 } from './archive-output-safety.ts';
@@ -26,6 +31,7 @@ import {
   assertPlanningPaths,
   requiredPlanningArtifactPaths,
 } from './planning-paths.ts';
+import { assertChangeId, normalizeChangedPath } from './paths.ts';
 
 export type ArchiveTransformation = {
   changeId: string;
@@ -41,6 +47,17 @@ export type ArchiveTransformation = {
   totals?: ArchiveTotals;
 };
 
+export type ArchiveApplicabilityProjectionInput = {
+  repositoryRoot: string;
+  changeRoot: string;
+  changeId: string;
+  baselineCommit: string;
+  sourceCommit: string;
+  activeArtifactPaths: string[];
+  source: 'worktree' | 'commit';
+  now?: Date;
+};
+
 type ArchiveTotals = {
   added: number;
   modified: number;
@@ -53,6 +70,8 @@ type ArchivePayload = {
   specsUpdated: boolean;
   totals?: ArchiveTotals;
 };
+
+type PublicArchivePayload = ArchivePayload & { archivePath: string };
 
 export function createArchiveTransformation(
   eligibility: ArchiveEligibility,
@@ -119,6 +138,715 @@ export function createArchiveTransformation(
     }
     fs.rmSync(temporaryRoot, { recursive: true, force: true });
   }
+}
+
+/**
+ * Execute the same pinned public OpenSpec archive used by the real archive
+ * transition, but only inside a disposable detached worktree. Planning uses a
+ * byte-exact overlay of its reviewed worktree artifacts; CI uses only the
+ * immutable planning commit. Neither path imports OpenSpec private modules or
+ * mutates a repository ref.
+ */
+export function createArchiveApplicabilityProjection(
+  input: ArchiveApplicabilityProjectionInput,
+): SpecDeltaPreflightRecord {
+  const repository = discoverRepository(input.repositoryRoot);
+  const { baselineCommit, changeId, changeRoot, sourceCommit, validatedAt } =
+    assertArchiveApplicabilityInput(repository, input);
+  const activeRoot = `${changeRoot}/${changeId}`;
+  const activeArtifactPaths = assertProjectionArtifactPaths(
+    activeRoot,
+    input.activeArtifactPaths,
+  );
+  const installation = resolveOpenSpecInstallation(repository.repositoryRoot);
+  const temporaryBase = createTrustedExecutionEnvironment().TMPDIR;
+  if (!temporaryBase) {
+    throw archiveError(
+      'ARCHIVE_TEMPORARY_DIRECTORY_UNAVAILABLE',
+      'A trusted temporary directory is required for archive applicability.',
+    );
+  }
+  const temporaryRoot = fs.mkdtempSync(
+    path.join(fs.realpathSync(temporaryBase), 'workflow-applicability-'),
+  );
+  const worktree = path.join(temporaryRoot, 'worktree');
+  let worktreeAdded = false;
+  try {
+    runGit(repository.repositoryRoot, [
+      'worktree',
+      'add',
+      '--detach',
+      worktree,
+      sourceCommit,
+    ]);
+    worktreeAdded = true;
+    assertProjectionWorktree(
+      worktree,
+      repository.gitCommonDirectory,
+      sourceCommit,
+    );
+    if (input.source === 'worktree') {
+      overlayPlanningArtifacts(
+        repository.repositoryRoot,
+        worktree,
+        activeRoot,
+        activeArtifactPaths,
+      );
+    } else {
+      assertCommittedProjectionArtifacts(
+        worktree,
+        sourceCommit,
+        activeRoot,
+        activeArtifactPaths,
+      );
+    }
+
+    const specInputs = readProjectionSpecInputs(
+      worktree,
+      activeRoot,
+      activeArtifactPaths,
+    );
+    const reviewedArtifacts = readProjectionArtifactBindings(
+      worktree,
+      activeArtifactPaths,
+    );
+    for (const specInput of specInputs) {
+      assertSpecDeltaPreconditions(
+        specInput.capability,
+        specInput.before,
+        specInput.delta,
+      );
+    }
+    const openspec = createOpenSpecProcess(installation, {
+      executionRoot: worktree,
+    });
+    let document: { value: unknown; status: number };
+    try {
+      document = openspec.archive(changeId);
+    } catch (error) {
+      throw archiveFailure(error);
+    }
+    const payload = parsePublicArchivePayload(
+      document.value,
+      worktree,
+      changeId,
+    );
+    if (!payload.specsUpdated || payload.totals === undefined) {
+      throw invalidPayload();
+    }
+    const archivedRoot = `${changeRoot}/archive/${payload.archivedAs}`;
+    assertPreflightArchiveDestination(
+      worktree,
+      changeRoot,
+      changeId,
+      payload,
+      archivedRoot,
+    );
+    assertArchivedProjectionArtifacts(
+      worktree,
+      activeRoot,
+      archivedRoot,
+      reviewedArtifacts,
+    );
+    validateRebuiltSpecs(openspec, worktree);
+
+    assertProjectionChangedPaths(
+      worktree,
+      sourceCommit,
+      activeRoot,
+      archivedRoot,
+      activeArtifactPaths,
+      specInputs.map(({ baseSpecPath }) => baseSpecPath),
+    );
+
+    const totals: ArchiveTotals = {
+      added: 0,
+      modified: 0,
+      removed: 0,
+      renamed: 0,
+    };
+    const validatedBaseSpecDigests: Record<string, string> = {};
+    for (const specInput of specInputs) {
+      const projected = readPlainProjectionFile(
+        worktree,
+        specInput.baseSpecPath,
+      );
+      const verified = verifyProjectedSpecDeltaOutcome(
+        specInput.capability,
+        specInput.before,
+        specInput.delta,
+        projected,
+      );
+      for (const operation of Object.keys(totals) as Array<
+        keyof ArchiveTotals
+      >) {
+        totals[operation] += verified.totals[operation];
+      }
+      validatedBaseSpecDigests[specInput.baseSpecPath] = sha256(
+        specInput.before,
+      );
+    }
+    if (canonicalJson(totals) !== canonicalJson(payload.totals)) {
+      throw archiveError(
+        'ARCHIVE_DELTA_OUTCOME_INVALID',
+        'Public OpenSpec archive totals differ from the verified spec projection.',
+      );
+    }
+    return {
+      status: 'passed',
+      validatedAt,
+      validatedBaseCommit: baselineCommit,
+      validatedBaseSpecDigests,
+      validatorVersion: 'spec-delta-preflight-v3-public-archive',
+    };
+  } finally {
+    if (worktreeAdded) {
+      runGit(repository.repositoryRoot, [
+        'worktree',
+        'remove',
+        '--force',
+        worktree,
+      ]);
+    }
+    fs.rmSync(temporaryRoot, { recursive: true, force: true });
+  }
+}
+
+function assertArchiveApplicabilityInput(
+  repository: ReturnType<typeof discoverRepository>,
+  input: ArchiveApplicabilityProjectionInput,
+): {
+  baselineCommit: string;
+  changeId: string;
+  changeRoot: string;
+  sourceCommit: string;
+  validatedAt: string;
+} {
+  let changeId: string;
+  let changeRoot: string;
+  try {
+    changeId = assertChangeId(input.changeId);
+    changeRoot = normalizeChangedPath(input.changeRoot);
+  } catch {
+    throw archiveError(
+      'ARCHIVE_APPLICABILITY_INPUT_INVALID',
+      'Archive applicability requires a canonical change identity and root.',
+    );
+  }
+  const repositoryInput = path.resolve(input.repositoryRoot);
+  if (
+    fs.realpathSync(repositoryInput) !== repository.repositoryRealPath ||
+    input.changeRoot !== changeRoot ||
+    changeRoot.endsWith('/archive') ||
+    !/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(input.baselineCommit) ||
+    !/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(input.sourceCommit) ||
+    !['worktree', 'commit'].includes(input.source)
+  ) {
+    throw archiveError(
+      'ARCHIVE_APPLICABILITY_INPUT_INVALID',
+      'Archive applicability requires an exact repository, commit, and source boundary.',
+    );
+  }
+  const baselineCommit = resolveExactCommit(
+    repository.repositoryRoot,
+    input.baselineCommit,
+  );
+  const sourceCommit = resolveExactCommit(
+    repository.repositoryRoot,
+    input.sourceCommit,
+  );
+  if (
+    (input.source === 'worktree' &&
+      (baselineCommit !== sourceCommit || repository.head !== sourceCommit)) ||
+    (input.source === 'commit' &&
+      canonicalJson(
+        runGit(repository.repositoryRoot, [
+          'show',
+          '-s',
+          '--format=%P',
+          sourceCommit,
+        ])
+          .trim()
+          .split(/\s+/)
+          .filter(Boolean),
+      ) !== canonicalJson([baselineCommit]))
+  ) {
+    throw archiveError(
+      'ARCHIVE_APPLICABILITY_INPUT_INVALID',
+      'Archive applicability source does not have the exact expected baseline.',
+    );
+  }
+  const now = input.now ?? new Date();
+  if (!(now instanceof Date) || !Number.isFinite(now.getTime())) {
+    throw archiveError(
+      'ARCHIVE_APPLICABILITY_INPUT_INVALID',
+      'Archive applicability requires a valid observation time.',
+    );
+  }
+  return {
+    baselineCommit,
+    changeId,
+    changeRoot,
+    sourceCommit,
+    validatedAt: now.toISOString(),
+  };
+}
+
+function resolveExactCommit(repositoryRoot: string, value: string): string {
+  let resolved: string;
+  try {
+    resolved = runGit(repositoryRoot, [
+      'rev-parse',
+      '--verify',
+      `${value}^{commit}`,
+    ]).trim();
+  } catch {
+    throw archiveError(
+      'ARCHIVE_APPLICABILITY_INPUT_INVALID',
+      'Archive applicability commit boundary does not resolve.',
+    );
+  }
+  if (resolved !== value) {
+    throw archiveError(
+      'ARCHIVE_APPLICABILITY_INPUT_INVALID',
+      'Archive applicability commit boundary is not exact.',
+    );
+  }
+  return resolved;
+}
+
+function assertProjectionArtifactPaths(
+  activeRoot: string,
+  values: readonly string[],
+): string[] {
+  let normalized: string[];
+  try {
+    normalized = values.map(normalizeChangedPath);
+  } catch {
+    throw archiveError(
+      'ARCHIVE_APPLICABILITY_INPUT_INVALID',
+      'Archive applicability requires exact canonical active artifact paths.',
+    );
+  }
+  const sorted = [...normalized].sort(compareCanonicalStrings);
+  if (
+    sorted.length === 0 ||
+    new Set(sorted).size !== sorted.length ||
+    canonicalJson(normalized) !== canonicalJson(values) ||
+    sorted.some(
+      (relativePath) =>
+        path.isAbsolute(relativePath) ||
+        path.posix.normalize(relativePath) !== relativePath ||
+        !relativePath.startsWith(`${activeRoot}/`) ||
+        relativePath.includes('\\'),
+    )
+  ) {
+    throw archiveError(
+      'ARCHIVE_APPLICABILITY_INPUT_INVALID',
+      'Archive applicability requires exact canonical active artifact paths.',
+    );
+  }
+  return sorted;
+}
+
+function assertProjectionWorktree(
+  worktree: string,
+  gitCommonDirectory: string,
+  sourceCommit: string,
+): void {
+  const git = discoverRepository(worktree);
+  const expectedHead = runGit(worktree, ['rev-parse', sourceCommit]).trim();
+  if (
+    git.repositoryRoot !== worktree ||
+    git.repositoryRealPath !== worktree ||
+    git.gitCommonDirectory !== gitCommonDirectory ||
+    git.branch !== null ||
+    git.head !== expectedHead ||
+    git.statusEntries.length > 0
+  ) {
+    throw archiveError(
+      'ARCHIVE_WORKTREE_INVALID',
+      'Archive applicability did not start from the exact detached source commit.',
+    );
+  }
+}
+
+function overlayPlanningArtifacts(
+  repositoryRoot: string,
+  worktree: string,
+  activeRoot: string,
+  activeArtifactPaths: readonly string[],
+): void {
+  const targetRoot = path.join(worktree, activeRoot);
+  assertInsideDirectory(worktree, targetRoot);
+  assertPlainDirectoryChain(worktree, path.dirname(targetRoot));
+  const existingTarget = fs.lstatSync(targetRoot, { throwIfNoEntry: false });
+  if (
+    existingTarget !== undefined &&
+    (!existingTarget.isDirectory() || existingTarget.isSymbolicLink())
+  ) {
+    throw archiveError(
+      'ARCHIVE_APPLICABILITY_INPUT_INVALID',
+      'Archive applicability target root is not one plain directory.',
+    );
+  }
+  fs.rmSync(targetRoot, { recursive: true, force: true });
+  for (const relativePath of activeArtifactPaths) {
+    const target = path.join(worktree, relativePath);
+    assertInsideDirectory(worktree, target);
+    const { bytes, mode } = readPlainProjectionBytes(
+      repositoryRoot,
+      relativePath,
+      'ARCHIVE_APPLICABILITY_INPUT_INVALID',
+    );
+    fs.mkdirSync(path.dirname(target), { recursive: true });
+    fs.writeFileSync(target, bytes, {
+      flag: 'wx',
+      mode,
+    });
+  }
+}
+
+function assertCommittedProjectionArtifacts(
+  worktree: string,
+  sourceCommit: string,
+  activeRoot: string,
+  activeArtifactPaths: readonly string[],
+): void {
+  const entries = runGit(worktree, [
+    'ls-tree',
+    '-r',
+    '-z',
+    sourceCommit,
+    '--',
+    `:(literal)${activeRoot}`,
+  ])
+    .split('\0')
+    .filter(Boolean)
+    .map((entry) => {
+      const match = /^100644 blob [0-9a-f]{40,64}\t(.+)$/.exec(entry);
+      if (!match) {
+        throw archiveError(
+          'ARCHIVE_APPLICABILITY_INPUT_INVALID',
+          'Immutable planning commit contains a non-plain artifact.',
+        );
+      }
+      return match[1];
+    })
+    .sort(compareCanonicalStrings);
+  if (canonicalJson(entries) !== canonicalJson(activeArtifactPaths)) {
+    throw archiveError(
+      'ARCHIVE_APPLICABILITY_INPUT_INVALID',
+      'Immutable planning commit does not contain the exact active artifact manifest.',
+    );
+  }
+}
+
+function readProjectionArtifactBindings(
+  worktree: string,
+  activeArtifactPaths: readonly string[],
+): ReadonlyMap<string, { digest: string; mode: number }> {
+  return new Map(
+    activeArtifactPaths.map((relativePath) => {
+      const artifact = readPlainProjectionBytes(
+        worktree,
+        relativePath,
+        'ARCHIVE_TRANSFORMATION_TREE_INVALID',
+      );
+      if ((artifact.mode & 0o111) !== 0) {
+        throw archiveError(
+          'ARCHIVE_TRANSFORMATION_TREE_INVALID',
+          `Archive applicability artifact is executable: ${relativePath}.`,
+        );
+      }
+      return [
+        relativePath,
+        { digest: sha256(artifact.bytes), mode: artifact.mode },
+      ];
+    }),
+  );
+}
+
+function assertArchivedProjectionArtifacts(
+  worktree: string,
+  activeRoot: string,
+  archivedRoot: string,
+  reviewedArtifacts: ReadonlyMap<string, { digest: string; mode: number }>,
+): void {
+  for (const [relativePath, expected] of reviewedArtifacts) {
+    const archivedPath = `${archivedRoot}/${relativePath.slice(activeRoot.length + 1)}`;
+    const actual = readPlainProjectionBytes(
+      worktree,
+      archivedPath,
+      'ARCHIVE_TRANSFORMATION_TREE_INVALID',
+    );
+    if (
+      sha256(actual.bytes) !== expected.digest ||
+      actual.mode !== expected.mode
+    ) {
+      throw archiveError(
+        'ARCHIVE_TRANSFORMATION_TREE_INVALID',
+        `Public OpenSpec archive changed a reviewed planning artifact: ${relativePath}.`,
+      );
+    }
+  }
+}
+
+function readProjectionSpecInputs(
+  worktree: string,
+  activeRoot: string,
+  activeArtifactPaths: readonly string[],
+): Array<{
+  capability: string;
+  delta: string;
+  before: string;
+  baseSpecPath: string;
+}> {
+  const prefix = `${activeRoot}/specs/`;
+  const deltaPaths = activeArtifactPaths.filter(
+    (relativePath) =>
+      relativePath.startsWith(prefix) && relativePath.endsWith('/spec.md'),
+  );
+  if (deltaPaths.length === 0) {
+    throw archiveError(
+      'ARCHIVE_APPLICABILITY_INPUT_INVALID',
+      'Archive applicability requires at least one current delta specification.',
+    );
+  }
+  return deltaPaths.map((deltaPath) => {
+    const capability = deltaPath.slice(prefix.length, -'/spec.md'.length);
+    if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(capability)) {
+      throw archiveError(
+        'ARCHIVE_APPLICABILITY_INPUT_INVALID',
+        `Delta specification has a non-canonical capability: ${deltaPath}.`,
+      );
+    }
+    const baseSpecPath = `openspec/specs/${capability}/spec.md`;
+    return {
+      capability,
+      delta: readPlainProjectionFile(worktree, deltaPath),
+      before: readOptionalPlainProjectionFile(worktree, baseSpecPath) ?? '',
+      baseSpecPath,
+    };
+  });
+}
+
+function assertPreflightArchiveDestination(
+  worktree: string,
+  changeRoot: string,
+  changeId: string,
+  payload: PublicArchivePayload,
+  archivedRoot: string,
+): void {
+  const suffix = `-${changeId}`;
+  const date = payload.archivedAs.endsWith(suffix)
+    ? payload.archivedAs.slice(0, -suffix.length)
+    : '';
+  const parsed = new Date(`${date}T00:00:00.000Z`);
+  if (
+    !/^\d{4}-\d{2}-\d{2}$/.test(date) ||
+    !Number.isFinite(parsed.getTime()) ||
+    utcDate(parsed) !== date ||
+    path.posix.dirname(archivedRoot) !== `${changeRoot}/archive` ||
+    payload.archivePath !== path.join(worktree, archivedRoot)
+  ) {
+    throw invalidPayload();
+  }
+}
+
+function assertProjectionChangedPaths(
+  worktree: string,
+  sourceCommit: string,
+  activeRoot: string,
+  archivedRoot: string,
+  activeArtifactPaths: readonly string[],
+  baseSpecPaths: readonly string[],
+): void {
+  const sourceActivePaths = runGit(worktree, [
+    'ls-tree',
+    '-r',
+    '--name-only',
+    '-z',
+    sourceCommit,
+    '--',
+    `:(literal)${activeRoot}`,
+  ])
+    .split('\0')
+    .filter(Boolean)
+    .sort(compareCanonicalStrings);
+  const archivedArtifactPaths = activeArtifactPaths.map(
+    (relativePath) =>
+      `${archivedRoot}/${relativePath.slice(activeRoot.length + 1)}`,
+  );
+  const changedPaths = listChangedPaths(worktree, sourceCommit);
+  const allowed = new Set([
+    ...sourceActivePaths,
+    ...activeArtifactPaths,
+    ...archivedArtifactPaths,
+    ...baseSpecPaths,
+  ]);
+  if (
+    changedPaths.some((relativePath) => !allowed.has(relativePath)) ||
+    [...sourceActivePaths, ...archivedArtifactPaths, ...baseSpecPaths].some(
+      (relativePath) => !changedPaths.includes(relativePath),
+    )
+  ) {
+    throw archiveError(
+      'ARCHIVE_TRANSFORMATION_PATHS_INVALID',
+      'Public OpenSpec applicability projection changed paths outside its exact planning targets.',
+      { changedPaths },
+    );
+  }
+}
+
+function readOptionalPlainProjectionFile(
+  root: string,
+  relativePath: string,
+): string | undefined {
+  const target = path.join(root, relativePath);
+  const stats = fs.lstatSync(target, { throwIfNoEntry: false });
+  if (stats === undefined) return undefined;
+  return readPlainProjectionFile(root, relativePath, stats);
+}
+
+function readPlainProjectionFile(
+  root: string,
+  relativePath: string,
+  knownStats?: fs.Stats,
+): string {
+  return readPlainProjectionBytes(
+    root,
+    relativePath,
+    'ARCHIVE_TRANSFORMATION_TREE_INVALID',
+    knownStats,
+  ).bytes.toString('utf8');
+}
+
+function readPlainProjectionBytes(
+  root: string,
+  relativePath: string,
+  errorCode: string,
+  knownStats?: fs.Stats,
+): { bytes: Buffer; mode: number } {
+  const target = path.join(root, relativePath);
+  assertInsideDirectory(root, target);
+  assertPlainDirectoryChain(root, path.dirname(target));
+  const pathBefore = knownStats ?? fs.lstatSync(target);
+  if (
+    !pathBefore.isFile() ||
+    pathBefore.isSymbolicLink() ||
+    pathBefore.nlink !== 1
+  ) {
+    throw archiveError(
+      errorCode,
+      `Archive applicability file is not one plain file: ${relativePath}.`,
+    );
+  }
+  let descriptor: number;
+  try {
+    descriptor = fs.openSync(
+      target,
+      fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW,
+    );
+  } catch {
+    throw archiveError(
+      errorCode,
+      `Archive applicability file could not be opened safely: ${relativePath}.`,
+    );
+  }
+  try {
+    const before = fs.fstatSync(descriptor, { bigint: true });
+    const bytes = fs.readFileSync(descriptor);
+    const after = fs.fstatSync(descriptor, { bigint: true });
+    const pathAfter = fs.lstatSync(target);
+    if (
+      !before.isFile() ||
+      before.nlink !== 1n ||
+      BigInt(pathBefore.dev) !== before.dev ||
+      BigInt(pathBefore.ino) !== before.ino ||
+      BigInt(pathBefore.mode) !== before.mode ||
+      BigInt(pathBefore.size) !== before.size ||
+      !sameBigIntSnapshot(before, after) ||
+      BigInt(pathAfter.dev) !== after.dev ||
+      BigInt(pathAfter.ino) !== after.ino ||
+      BigInt(pathAfter.mode) !== after.mode ||
+      BigInt(pathAfter.size) !== after.size ||
+      pathAfter.nlink !== 1
+    ) {
+      throw archiveError(
+        'ARCHIVE_APPLICABILITY_INPUT_CHANGED',
+        `Archive applicability file changed while it was read: ${relativePath}.`,
+      );
+    }
+    assertPlainDirectoryChain(root, path.dirname(target));
+    return { bytes, mode: Number(before.mode & 0o777n) };
+  } finally {
+    fs.closeSync(descriptor);
+  }
+}
+
+function sameBigIntSnapshot(
+  before: fs.BigIntStats,
+  after: fs.BigIntStats,
+): boolean {
+  return (
+    before.dev === after.dev &&
+    before.ino === after.ino &&
+    before.mode === after.mode &&
+    before.nlink === after.nlink &&
+    before.uid === after.uid &&
+    before.gid === after.gid &&
+    before.size === after.size &&
+    before.mtimeNs === after.mtimeNs &&
+    before.ctimeNs === after.ctimeNs
+  );
+}
+
+function assertPlainDirectoryChain(root: string, directory: string): void {
+  const canonicalRoot = fs.realpathSync(root);
+  if (canonicalRoot !== path.resolve(root)) {
+    throw archiveError(
+      'ARCHIVE_APPLICABILITY_INPUT_INVALID',
+      'Archive applicability root is not canonical.',
+    );
+  }
+  assertInsideDirectory(root, directory);
+  const relative = path.relative(root, directory);
+  let current = root;
+  for (const segment of relative.split(path.sep).filter(Boolean)) {
+    current = path.join(current, segment);
+    const stats = fs.lstatSync(current);
+    if (!stats.isDirectory() || stats.isSymbolicLink()) {
+      throw archiveError(
+        'ARCHIVE_APPLICABILITY_INPUT_INVALID',
+        'Archive applicability path has a non-plain parent directory.',
+      );
+    }
+  }
+  if (fs.realpathSync(directory) !== path.resolve(directory)) {
+    throw archiveError(
+      'ARCHIVE_APPLICABILITY_INPUT_INVALID',
+      'Archive applicability path has a non-canonical parent directory.',
+    );
+  }
+}
+
+function assertInsideDirectory(root: string, target: string): void {
+  const relative = path.relative(root, target);
+  if (
+    relative === '' ||
+    relative.startsWith('..') ||
+    path.isAbsolute(relative)
+  ) {
+    throw archiveError(
+      'ARCHIVE_APPLICABILITY_INPUT_INVALID',
+      'Archive applicability path escapes its repository root.',
+    );
+  }
+}
+
+function sha256(value: string | Buffer): string {
+  return crypto.createHash('sha256').update(value).digest('hex');
 }
 
 function verifyTransformation(
@@ -338,6 +1066,38 @@ function parseArchivePayload(
   eligibility: ArchiveEligibility,
   now: () => Date,
 ): ArchivePayload {
+  const parsed = parsePublicArchivePayload(
+    value,
+    worktree,
+    eligibility.changeId,
+  );
+  const expectedName = path.basename(eligibility.archiveDestination);
+  const expectedPath = path.join(worktree, eligibility.archiveDestination);
+  if (
+    parsed.archivedAs !== expectedName ||
+    parsed.archivePath !== expectedPath
+  ) {
+    const archive = (value as { archive: Record<string, unknown> }).archive;
+    assertAdjacentUtcRollover(
+      archive,
+      worktree,
+      eligibility,
+      expectedName,
+      now,
+    );
+  }
+  return {
+    archivedAs: parsed.archivedAs,
+    specsUpdated: parsed.specsUpdated,
+    ...(parsed.totals ? { totals: parsed.totals } : {}),
+  };
+}
+
+function parsePublicArchivePayload(
+  value: unknown,
+  worktree: string,
+  changeId: string,
+): PublicArchivePayload {
   if (!isRecord(value) || !hasExactKeys(value, ['archive', 'root'])) {
     throw invalidPayload();
   }
@@ -350,8 +1110,13 @@ function parseArchivePayload(
     root.source !== 'nearest' ||
     !isRecord(archive) ||
     !hasArchiveKeys(archive) ||
-    archive.change !== eligibility.changeId ||
-    archive.specsUpdated !== true
+    archive.change !== changeId ||
+    archive.specsUpdated !== true ||
+    typeof archive.archivedAs !== 'string' ||
+    typeof archive.path !== 'string' ||
+    path.basename(archive.path) !== archive.archivedAs ||
+    path.normalize(archive.path) !== archive.path ||
+    !archive.path.startsWith(`${worktree}${path.sep}`)
   ) {
     throw invalidPayload();
   }
@@ -359,20 +1124,10 @@ function parseArchivePayload(
   if (totals !== undefined && !isTotals(totals)) {
     throw invalidPayload();
   }
-  const expectedName = path.basename(eligibility.archiveDestination);
-  const expectedPath = path.join(worktree, eligibility.archiveDestination);
-  if (archive.archivedAs !== expectedName || archive.path !== expectedPath) {
-    assertAdjacentUtcRollover(
-      archive,
-      worktree,
-      eligibility,
-      expectedName,
-      now,
-    );
-  }
   return {
-    archivedAs: archive.archivedAs as string,
-    specsUpdated: archive.specsUpdated as boolean,
+    archivedAs: archive.archivedAs,
+    archivePath: archive.path,
+    specsUpdated: true,
     ...(totals ? { totals } : {}),
   };
 }
