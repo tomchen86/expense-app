@@ -690,6 +690,7 @@ function approveAndApplyMaintainerGrantV2WithBinding(
     sessionId: session.sessionId,
     commitHash: committed.commitHash,
     tagRef: grant.tagRef,
+    publishCommand: grant.publishCommand,
     applicationReceiptTagRef: authorityApplicationReceiptTagRef(
       policy,
       grant.grantId,
@@ -893,6 +894,7 @@ function reissueAndApplyMaintainerGrantV2WithDeadline(
         commitHash: committed.commitHash,
         journalState: committed.journalState,
         tagRef: grant.tagRef,
+        publishCommand: grant.publishCommand,
         applicationReceiptTagRef: authorityApplicationReceiptTagRef(
           trusted.basePolicy,
           grant.grantId,

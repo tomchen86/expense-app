@@ -14,6 +14,7 @@ import {
   type AuthorityAttestationEnvelope,
   type AuthorityAttestationPayload,
 } from './authority-attestation.ts';
+import { authorityTagPublishCommand } from './authority-relay-command.ts';
 import { loadWorkflowConfig } from './contracts.ts';
 import { ExitCode, workflowError } from './errors.ts';
 import { commitFacts } from './git-transitions.ts';
@@ -192,7 +193,10 @@ export function issueAuthorityAttestation(
   return {
     grantId: payload.grantId,
     tagRef,
-    publishCommand: `git push origin ${tagRef}:${tagRef}`,
+    publishCommand: authorityTagPublishCommand(
+      policy.repository.origin,
+      tagRef,
+    ),
     envelope,
   };
 }

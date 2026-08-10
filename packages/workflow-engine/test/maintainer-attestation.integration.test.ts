@@ -533,7 +533,7 @@ test('maintainer attest creates one canonical protected attestation tag', () => 
     );
     assert.equal(
       result.publishCommand,
-      `git push origin ${result.tagRef}:${result.tagRef}`,
+      `git push git@github.com:example/fixture.git ${result.tagRef}:${result.tagRef}`,
     );
     assert.deepEqual(namespaces, [AUTHORITY_ATTESTATION_SIGNATURE_NAMESPACE]);
 

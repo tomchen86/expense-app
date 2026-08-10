@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 import { canonicalJson } from './canonical-json.ts';
+import { authorityTagPublishCommand } from './authority-relay-command.ts';
 import type { CheckEvidence } from './check-runner.ts';
 import { isRecord, isStringArray } from './contract-values.ts';
 import { assertDisposableDatabase } from './database-policy.ts';
@@ -232,6 +233,7 @@ export type MaintainerGrantV2ValidationOptions = {
 export type MaintainerGrantV2IssueResult = {
   grantId: string;
   tagRef: string;
+  publishCommand: string;
   availableTokenPath: string;
   envelope: MaintainerGrantV2Envelope;
 };
@@ -605,6 +607,10 @@ export function issueMaintainerGrantV2(
   return {
     grantId,
     tagRef,
+    publishCommand: authorityTagPublishCommand(
+      context.policy.repository.origin,
+      tagRef,
+    ),
     availableTokenPath,
     envelope,
   };

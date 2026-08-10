@@ -1423,6 +1423,10 @@ test('v2 issue signs every binding and stores a canonical one-shot grant', () =>
     );
 
     assert.equal(result.envelope.payload.version, 2);
+    assert.equal(
+      result.publishCommand,
+      `git push git@github.com:example/fixture.git ${result.tagRef}:${result.tagRef}`,
+    );
     assert.equal(result.envelope.payload.profile, PROFILE_ID);
     assert.equal(
       result.envelope.payload.patchDigest,
@@ -2639,7 +2643,10 @@ test('approve-and-apply checks before signing and atomically consumes the exact 
       git(repository, ['rev-parse', '--verify', result.tagRef]).trim().length,
       40,
     );
-    assert.equal('publishCommand' in result, false);
+    assert.equal(
+      result.publishCommand,
+      `git push git@github.com:example/fixture.git ${result.tagRef}:${result.tagRef}`,
+    );
   } finally {
     fs.rmSync(repository, { recursive: true, force: true });
   }

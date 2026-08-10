@@ -59,6 +59,7 @@ import './openspec-schema-contract.integration.test.ts';
 import './planning-transition.contract.test.ts';
 import './openspec-planning-assets.integration.test.ts';
 import './authority-attestation.contract.test.ts';
+import './authority-relay-command.contract.test.ts';
 import './authority-audit-cli.contract.test.ts';
 import './authority-audit-ledger.contract.test.ts';
 import './authority-audit-profile.contract.test.ts';
