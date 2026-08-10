@@ -442,8 +442,13 @@ function recoverLatestPlanningExecutionEpoch(
   const amendment = latestAmendmentCommit(repositoryRoot, changeId, tip);
   if (amendment === null) return null;
   const reportsDirectory = path.join(storeRoot, 'planning-reports');
-  const matches = fs
-    .readdirSync(reportsDirectory)
+  // A fresh clone carries the committed amendment but no runtime report
+  // store; an absent directory holds the same zero reports an empty one does,
+  // and both refuse through the single-report requirement below.
+  const reportEntries = fs.existsSync(reportsDirectory)
+    ? fs.readdirSync(reportsDirectory)
+    : [];
+  const matches = reportEntries
     .filter((entry) => /^[0-9a-f]{64}\.json$/.test(entry))
     .flatMap((entry) => {
       const reportId = entry.slice(0, -'.json'.length);
