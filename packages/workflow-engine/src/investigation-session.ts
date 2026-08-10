@@ -3275,11 +3275,21 @@ function assertCurrentInvestigationContext(
       );
     }
   }
+  // A session born on a working or ceremony branch must still be able to
+  // reach the planning transition, which demands the change's canonical
+  // template branch. With the exact pinned head and tree unchanged, moving to
+  // that one name is ref renaming within the same lineage, not a context
+  // change; every other branch stays a staleness signal.
+  const canonicalBranch = context.config.branchTemplate.replaceAll(
+    '{changeId}',
+    session.changeId,
+  );
   if (
     current?.investigationId !== session.investigationId ||
     context.git.repositoryRealPath !== session.repositoryRoot ||
     context.git.gitCommonDirectory !== session.gitCommonDirectory ||
-    context.git.branch !== session.branch ||
+    (context.git.branch !== session.branch &&
+      context.git.branch !== canonicalBranch) ||
     context.git.head !== session.baseline.head ||
     context.git.tree !== session.baseline.tree
   ) {
@@ -3544,16 +3554,25 @@ function assertStartReservationContext(
     repositoryRoot: string;
     gitCommonDirectory: string;
     branch: string | null;
+    changeId: string;
     baseline: {
       head: string;
       tree: string;
     };
   },
 ): void {
+  // The same canonical-branch tolerance as the session context: at the exact
+  // pinned head and tree, the change's template branch is the one rename the
+  // planning transition itself demands.
+  const canonicalBranch = context.config.branchTemplate.replaceAll(
+    '{changeId}',
+    reservation.changeId,
+  );
   if (
     reservation.repositoryRoot !== context.git.repositoryRealPath ||
     reservation.gitCommonDirectory !== context.git.gitCommonDirectory ||
-    reservation.branch !== context.git.branch ||
+    (reservation.branch !== context.git.branch &&
+      context.git.branch !== canonicalBranch) ||
     reservation.baseline.head !== context.git.head ||
     reservation.baseline.tree !== context.git.tree
   ) {

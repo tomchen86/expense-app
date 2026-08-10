@@ -100,6 +100,7 @@ import './class-disposition-mounting.integration.test.ts';
 import './class-sample-gating.integration.test.ts';
 import './declared-path-symbol-floor.integration.test.ts';
 import './execution-replacement-crash-window.integration.test.ts';
+import './investigation-branch-rename.integration.test.ts';
 import './floor-trimming.integration.test.ts';
 import './legacy-provider-attempt-numbering.integration.test.ts';
 import './legacy-provider-invocation-projection.integration.test.ts';

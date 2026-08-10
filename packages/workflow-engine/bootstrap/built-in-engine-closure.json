@@ -491,7 +491,7 @@
     {
       "path": "src/investigation-session.ts",
       "mode": "100644",
-      "digest": "sha256:d6310d3a11db8657c6c72838f9503252bf22a140408dcc1cefd4c89c01dc2630"
+      "digest": "sha256:c3162ad2a56c43fe8ca8951e00f6610fcc39471ea44faa6558011e851604507f"
     },
     {
       "path": "src/investigation-term-projection.ts",
