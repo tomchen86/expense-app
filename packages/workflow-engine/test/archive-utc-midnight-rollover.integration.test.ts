@@ -193,8 +193,8 @@ test('archive requires exact payload identity and shape before recognizing a UTC
     ),
     replaceExactlyOnce(
       exactSource,
-      '      totals: { added: 1, modified: 0, removed: 0, renamed: 0 }\n    },',
-      '      totals: { added: 1, modified: 0, removed: 0, renamed: 0 },\n      unexpected: true\n    },',
+      '      totals: applied.totals\n    },',
+      '      totals: applied.totals,\n      unexpected: true\n    },',
     ),
   ];
   try {
