@@ -6,6 +6,7 @@ import path from 'node:path';
 import { canonicalJson } from './canonical-json.ts';
 import { ExitCode, WorkflowError, workflowError } from './errors.ts';
 import { ensurePlainDirectory } from './filesystem-safety.ts';
+import { readStoredInterventionEngineArtifact } from './intervention-engine-artifact-store.ts';
 import {
   createWipCheckpoint,
   verifyHarnessMaintenanceGrant,
@@ -15,12 +16,18 @@ import {
 } from './intervention-control.ts';
 import {
   advancePersistedEngineAdoption,
+  activeBootstrapSidecarPromotionPinTxIds,
+  inFlightPersistedEngineAdoptionTxIds,
   interventionRecordPath,
   interventionControlPersistencePaths,
   persistInterventionPlan,
+  recordBootstrapSidecarAbandoned,
+  recordBootstrapSidecarAdopted,
+  recordBootstrapSidecarWorkspaceMaterialized,
   readPersistedIntervention,
   recoverPersistedEngineAdoption,
   rollbackPersistedEngineAdoption,
+  withInterventionParentOperation,
   type PersistedEngineAdoptionRecord,
   type PersistedInterventionRecord,
 } from './intervention-control-persistence.ts';
@@ -45,6 +52,8 @@ export interface BootstrapDependencies {
   verifyHumanSignature?: BootstrapHumanSignatureVerifier;
   testHooks?: {
     afterBindingUpdatedBeforeJournal?: () => void;
+    afterWorktreeReceiptPersistedBeforeSidecar?: () => void;
+    afterAdoptionReceiptPersistedBeforeSidecar?: () => void;
   };
 }
 
@@ -231,6 +240,7 @@ export function capturePersistedWipIntervention(
     pendingIntent: string;
     policyDigest: Sha256Digest;
     now: Date;
+    testAfterInterventionPersistedBeforeSidecar?: () => void;
   },
 ): {
   intervention: PersistedInterventionRecord;
@@ -371,6 +381,8 @@ export function capturePersistedWipIntervention(
       changeRef: input.changeRef,
     },
     now,
+    testAfterInterventionPersistedBeforeSidecar:
+      input.testAfterInterventionPersistedBeforeSidecar,
   });
   return { intervention, bundle };
 }
@@ -654,6 +666,12 @@ export function materializeInterventionChildWorktree(
       readBootstrapReceipt<ChildWorktreeMaterializationReceipt>(receiptPath);
     assertMaterializationReceipt(receipt, repositoryRoot, metadata);
     verifyMaterializedWorktree(repositoryRoot, metadata);
+    recordBootstrapSidecarWorkspaceMaterialized(storageRoot, {
+      parentChangeId: input.parentChangeId,
+      workspaceId: receipt.workspaceId,
+      receiptDigest: receipt.receiptDigest,
+      materializedAt: receipt.materializedAt,
+    });
     return receipt;
   }
   if (fs.lstatSync(metadata.childWorkspacePath, { throwIfNoEntry: false })) {
@@ -717,6 +735,13 @@ export function materializeInterventionChildWorktree(
     `worktree-${metadata.workspaceId}`,
     receipt,
   );
+  dependencies.testHooks?.afterWorktreeReceiptPersistedBeforeSidecar?.();
+  recordBootstrapSidecarWorkspaceMaterialized(storageRoot, {
+    parentChangeId: input.parentChangeId,
+    workspaceId: receipt.workspaceId,
+    receiptDigest: receipt.receiptDigest,
+    materializedAt: receipt.materializedAt,
+  });
   return receipt;
 }
 
@@ -915,6 +940,34 @@ export function abandonPersistedIntervention(
   receipt: InterventionAbandonmentReceipt;
   effectsPerformed: boolean;
 } {
+  return withInterventionParentOperation(
+    storageRoot,
+    input.parentChangeId,
+    () =>
+      abandonPersistedInterventionUnderParentLock(
+        storageRoot,
+        bindingPath,
+        input,
+      ),
+  );
+}
+
+function abandonPersistedInterventionUnderParentLock(
+  storageRoot: string,
+  bindingPath: string,
+  input: {
+    parentChangeId: string;
+    grantId: string;
+    grantRecordDigest: Sha256Digest;
+    reason: string;
+    at: string;
+    testAfterIntentPersisted?: () => void;
+  },
+): {
+  intent: InterventionAbandonmentIntent;
+  receipt: InterventionAbandonmentReceipt;
+  effectsPerformed: boolean;
+} {
   assertDigest(input.grantRecordDigest, 'INTERVENTION_ABANDONMENT_INVALID');
   assertNonEmpty(input.reason, 'INTERVENTION_ABANDONMENT_INVALID');
   exactIso(input.at, 'INTERVENTION_ABANDONMENT_INVALID');
@@ -1019,6 +1072,12 @@ export function abandonPersistedIntervention(
     fsyncDirectory(path.dirname(activePath));
     effectsPerformed = true;
   }
+  recordBootstrapSidecarAbandoned(storageRoot, {
+    parentChangeId: input.parentChangeId,
+    intervention: intent.intervention,
+    evidenceDigest: intent.intentDigest,
+    abandonedAt: intent.abandonedAt,
+  });
   const receiptPayload = {
     kind: 'intervention-abandonment-receipt.v1' as const,
     parentChangeId: input.parentChangeId,
@@ -1046,6 +1105,7 @@ export function executePersistedAdoptionStep(
     expectedJournalDigest: Sha256Digest;
     bindingPath: string;
     artifact: EngineArtifact;
+    artifactRecordDigest?: Sha256Digest;
     executablePath: string;
     at: string;
   },
@@ -1059,6 +1119,27 @@ export function executePersistedAdoptionStep(
   exactIso(input.at, 'BOOTSTRAP_ADOPTION_TIMESTAMP_INVALID');
   const recovered = recoverPersistedEngineAdoption(storageRoot, input.txId);
   const current = recovered.record;
+  if (current.artifactRecordDigest !== undefined) {
+    const storedArtifact = readStoredInterventionEngineArtifact(
+      storageRoot,
+      current.journal.artifactId,
+    );
+    if (
+      storedArtifact.kind !== 'persisted-intervention-engine-artifact.v2' ||
+      storedArtifact.recordDigest !== current.artifactRecordDigest ||
+      (input.artifactRecordDigest !== undefined &&
+        input.artifactRecordDigest !== storedArtifact.recordDigest) ||
+      canonicalJson(storedArtifact.artifact) !==
+        canonicalJson(input.artifact) ||
+      storedArtifact.executablePath !== input.executablePath
+    ) {
+      throw workflowError(
+        'BOOTSTRAP_ENGINE_ARTIFACT_RECORD_MISMATCH',
+        'Bootstrap execution requires the exact persisted artifact record bound by the adoption.',
+        ExitCode.verification,
+      );
+    }
+  }
   if (current.journal.journalDigest !== input.expectedJournalDigest) {
     throw workflowError(
       'BOOTSTRAP_ADOPTION_CAS_MISMATCH',
@@ -1099,7 +1180,10 @@ export function executePersistedAdoptionStep(
     input.artifact.artifactId !== current.journal.artifactId ||
     input.artifact.executableDigest !== current.journal.toEngineDigest ||
     input.artifact.writesSessionSchema !== current.journal.sessionSchema ||
-    input.artifact.sourceChangeId !== current.journal.interventionChangeId
+    input.artifact.sourceChangeId !== current.journal.interventionChangeId ||
+    (input.artifact.workflowBindingDigest !== undefined &&
+      input.artifact.workflowBindingDigest !==
+        current.journal.workflowBindingDigest)
   ) {
     throw workflowError(
       'BOOTSTRAP_ENGINE_ARTIFACT_MISMATCH',
@@ -1341,6 +1425,21 @@ export function executePersistedAdoptionStep(
     `adoption-${input.txId}-${beforeJournalDigest}-${recovered.decision.action}`,
     receipt,
   );
+  if (
+    next.journal.state === 'COMMITTED' &&
+    recovered.decision.action !== 'none'
+  ) {
+    dependencies.testHooks?.afterAdoptionReceiptPersistedBeforeSidecar?.();
+  }
+  if (next.journal.state === 'COMMITTED') {
+    recordBootstrapSidecarAdopted(storageRoot, {
+      parentChangeId: next.journal.parentChangeId,
+      txId: next.journal.txId,
+      artifact: input.artifact,
+      journalDigest: next.journal.journalDigest,
+      adoptedAt: next.journal.history.at(-1)!.at,
+    });
+  }
   return { record: next, receipt };
 }
 
@@ -1810,20 +1909,26 @@ function assertMaterializationReceipt(
 }
 
 function assertEngineArtifactIntegrity(artifact: EngineArtifact): void {
+  const artifactKeys = [
+    'artifactId',
+    'canReadSessionSchemas',
+    'executableDigest',
+    'kind',
+    'policySchemaVersion',
+    'protocolVersion',
+    'smokeReportDigest',
+    'sourceChangeId',
+    'sourceDigest',
+    'writesSessionSchema',
+  ];
   if (
     !isRecord(artifact) ||
-    !hasExactKeys(artifact, [
-      'artifactId',
-      'canReadSessionSchemas',
-      'executableDigest',
-      'kind',
-      'policySchemaVersion',
-      'protocolVersion',
-      'smokeReportDigest',
-      'sourceChangeId',
-      'sourceDigest',
-      'writesSessionSchema',
-    ]) ||
+    !hasExactKeys(
+      artifact,
+      'workflowBindingDigest' in artifact
+        ? [...artifactKeys, 'workflowBindingDigest']
+        : artifactKeys,
+    ) ||
     artifact.kind !== 'engine-artifact.v1'
   ) {
     throw workflowError(
@@ -2070,7 +2175,33 @@ function assertAbandonableProjection(
   localBinding: LocalEngineBinding | null,
   storageRoot: string,
 ): void {
-  if (localBinding === null) return;
+  const inFlightTxIds = inFlightPersistedEngineAdoptionTxIds(
+    storageRoot,
+    intervention.parent.changeId,
+  );
+  const promotionTxIds = activeBootstrapSidecarPromotionPinTxIds(
+    storageRoot,
+    intervention.parent.changeId,
+  );
+  if (promotionTxIds.length > 0) {
+    throw workflowError(
+      'INTERVENTION_ABANDONMENT_PROMOTION_NOT_TERMINAL',
+      'An in-flight repository promotion must be recovered before intervention abandonment.',
+      ExitCode.guard,
+      { details: { txIds: promotionTxIds } },
+    );
+  }
+  if (localBinding === null) {
+    if (inFlightTxIds.length > 0) {
+      throw workflowError(
+        'INTERVENTION_ABANDONMENT_ADOPTION_NOT_TERMINAL',
+        'An in-flight adoption must be recovered before intervention abandonment.',
+        ExitCode.guard,
+        { details: { txIds: inFlightTxIds } },
+      );
+    }
+    return;
+  }
   if (
     localBinding.parentChangeId !== intervention.parent.changeId ||
     localBinding.interventionChangeId !==

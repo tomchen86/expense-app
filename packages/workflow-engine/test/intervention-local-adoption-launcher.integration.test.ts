@@ -15,8 +15,9 @@ import {
   readLocalEngineBinding,
 } from '../src/intervention-control-bootstrap.ts';
 import { createEngineArtifact } from '../src/intervention-control.ts';
+import { persistInterventionEngineArtifact } from '../src/intervention-maintenance.ts';
 import { preparePersistedEngineAdoption } from '../src/intervention-control-persistence.ts';
-import { initializeControlPlaneSupervisorState } from '../src/intervention-control-updater.ts';
+import { setupInitialControlPlaneBootstrapFixture } from './control-plane-promotion-fixture.ts';
 
 const NOW = new Date('2026-08-03T10:00:00.000Z');
 const SOURCE_REPOSITORY_ROOT = path.resolve(import.meta.dirname, '../../..');
@@ -54,54 +55,25 @@ function dependencies(now = NOW) {
   };
 }
 
-function fixture(healthy = true) {
-  const root = fs.realpathSync(
-    fs.mkdtempSync(path.join(os.tmpdir(), 'local-adoption-launcher-')),
-  );
-  fs.chmodSync(root, 0o700);
-  const repository = path.join(root, 'parent');
-  const child = path.join(root, 'child');
-  fs.mkdirSync(repository, { mode: 0o700 });
-  git(repository, ['init', '-b', 'work/parent-A']);
-  git(repository, ['config', 'user.email', 'workflow@example.test']);
-  git(repository, ['config', 'user.name', 'Workflow Test']);
-  fs.writeFileSync(path.join(repository, 'tracked.txt'), 'base\n');
-  git(repository, ['add', '.']);
-  git(repository, ['commit', '-m', 'Create fixture baseline']);
-  const gitCommonRaw = git(repository, [
-    'rev-parse',
-    '--path-format=absolute',
-    '--git-common-dir',
-  ]).trim();
-  const gitCommonDirectory = fs.realpathSync(gitCommonRaw);
-  const stateRoot = path.join(
-    gitCommonDirectory,
-    'workflow-engine',
-    'intervention-control',
-  );
-  fs.mkdirSync(stateRoot, { recursive: true, mode: 0o700 });
-  const globalClosureDigest = digest('repository-default-closure');
-  const globalSource = repositoryDefaultEngineSource(globalClosureDigest);
-  const globalArtifact = createEngineArtifact({
-    sourceChangeId: 'repository-default-E1',
-    sourceDigest: digest('repository-default-source'),
-    executableDigest: digest(globalSource),
-    protocolVersion: 3,
-    canReadSessionSchemas: ['v4'],
-    writesSessionSchema: 'v4',
-    policySchemaVersion: 2,
-    smokeReportDigest: digest('repository-default-smoke'),
-  });
-  initializeControlPlaneSupervisorState(stateRoot, {
-    repositoryId: 'github:example/local-adoption-fixture',
-    closureDigest: globalClosureDigest,
-    artifact: globalArtifact,
-    executableBase64: Buffer.from(globalSource).toString('base64'),
+async function fixture(healthy = true) {
+  const controlPlane = await setupInitialControlPlaneBootstrapFixture({
+    builtInEntrypointBytes: repositoryDefaultEngineSource(),
     now: NOW,
   });
+  const workspacePrefix = fs.realpathSync(
+    fs.mkdtempSync(path.join(os.tmpdir(), 'local-adoption-launcher-')),
+  );
+  fs.rmdirSync(workspacePrefix);
+  const repository = fs.realpathSync(controlPlane.repository);
+  const child = `${workspacePrefix}-child`;
+  const otherParent = `${workspacePrefix}-other-parent`;
+  const wrongParent = `${workspacePrefix}-wrong-parent`;
+  const stateRoot = controlPlane.stateRoot;
+  git(repository, ['checkout', '-b', 'work/parent-A']);
   const sessionPath = path.join(stateRoot, 'parent-session-snapshot.json');
   fs.writeFileSync(sessionPath, '{"step":"P1"}\n', { mode: 0o600 });
-  const fromEngineDigest = globalArtifact.executableDigest;
+  const fromEngineDigest =
+    controlPlane.initialized.activeArtifact.executableDigest;
   const captured = capturePersistedWipIntervention(stateRoot, {
     repositoryRoot: repository,
     parent: {
@@ -173,6 +145,12 @@ function fixture(healthy = true) {
     policySchemaVersion: 2,
     smokeReportDigest: digest(`smoke:${healthy}`),
   });
+  persistInterventionEngineArtifact(stateRoot, {
+    parentChangeId: 'parent-A',
+    artifact,
+    executablePath,
+    now: NOW,
+  });
   const txId = `local-adoption-${healthy ? 'healthy' : 'unhealthy'}-tx`;
   const adoption = preparePersistedEngineAdoption(
     stateRoot,
@@ -209,9 +187,10 @@ function fixture(healthy = true) {
   let journalDigest = adoption.journal.journalDigest;
 
   return {
-    root,
     repository,
     child,
+    otherParent,
+    wrongParent,
     stateRoot,
     bindingPath,
     materializedExecutablePath,
@@ -242,7 +221,10 @@ function fixture(healthy = true) {
       return result!;
     },
     cleanup() {
-      fs.rmSync(root, { recursive: true, force: true });
+      controlPlane.cleanup();
+      for (const target of [child, otherParent, wrongParent]) {
+        fs.rmSync(target, { recursive: true, force: true });
+      }
     },
   };
 }
@@ -271,20 +253,15 @@ process.exit(mode === '--launcher-exit-7' ? 7 : 0);
 `;
 }
 
-function repositoryDefaultEngineSource(closureDigest: string): string {
+function repositoryDefaultEngineSource(): string {
   return `#!/usr/bin/env node
-const mode = process.argv[2];
-if (mode === '--control-plane-restart-probe') {
-  process.stdout.write(JSON.stringify({kind:'control-plane-restart.v1',ready:true,closureDigest:'${closureDigest}'}) + '\\n');
-  process.exit(0);
-}
 process.stdout.write(JSON.stringify({kind:'repository-default-engine.v1',engine:'Eglobal',argv:process.argv.slice(2)}) + '\\n');
 process.exit(0);
 `;
 }
 
-test('committed local adoption dispatches exact E2 on the next parent command and nowhere else', () => {
-  const value = fixture(true);
+test('committed local adoption dispatches exact E2 on the next parent command and nowhere else', async () => {
+  const value = await fixture(true);
   try {
     const terminal = value.complete();
     assert.equal(terminal.record.journal.state, 'COMMITTED');
@@ -313,7 +290,7 @@ test('committed local adoption dispatches exact E2 on the next parent command an
     const exited = runWorkflowLauncher(value.repository, ['--launcher-exit-7']);
     assert.equal(exited.status, 7, exited.stderr);
 
-    const other = path.join(value.root, 'other-parent');
+    const other = value.otherParent;
     git(value.repository, [
       'worktree',
       'add',
@@ -342,8 +319,8 @@ test('committed local adoption dispatches exact E2 on the next parent command an
   }
 });
 
-test('mid-transaction local adoption fails ordinary dispatch closed', () => {
-  const value = fixture(true);
+test('mid-transaction local adoption fails ordinary dispatch closed', async () => {
+  const value = await fixture(true);
   try {
     const first = value.step(0);
     assert.equal(first.record.journal.state, 'PARENT_CHECKPOINTED');
@@ -356,8 +333,8 @@ test('mid-transaction local adoption fails ordinary dispatch closed', () => {
   }
 });
 
-test('binding-first crash windows fail closed and direct recovery reaches committed E2', () => {
-  const value = fixture(true);
+test('binding-first crash windows fail closed and direct recovery reaches committed E2', async () => {
+  const value = await fixture(true);
   try {
     value.step(0);
     rewriteCanonicalRecord(value.bindingPath, (binding) => {
@@ -391,8 +368,8 @@ test('binding-first crash windows fail closed and direct recovery reaches commit
   }
 });
 
-test('unhealthy rolled-back adoption keeps the parent on repository default with its blocker', () => {
-  const value = fixture(false);
+test('unhealthy rolled-back adoption keeps the parent on repository default with its blocker', async () => {
+  const value = await fixture(false);
   try {
     const terminal = value.complete();
     assert.equal(terminal.record.journal.state, 'ENGINE_BINDING_ROLLED_BACK');
@@ -407,11 +384,11 @@ test('unhealthy rolled-back adoption keeps the parent on repository default with
   }
 });
 
-test('committed local adoption fails closed for artifact, binding, and journal tampering', () => {
+test('committed local adoption fails closed for artifact, binding, and journal tampering', async () => {
   for (const [name, tamper, code] of [
     [
       'artifact',
-      (value: ReturnType<typeof fixture>) => {
+      (value: Awaited<ReturnType<typeof fixture>>) => {
         fs.chmodSync(value.materializedExecutablePath, 0o700);
         fs.appendFileSync(value.materializedExecutablePath, '\n// tampered\n');
         fs.chmodSync(value.materializedExecutablePath, 0o500);
@@ -420,22 +397,22 @@ test('committed local adoption fails closed for artifact, binding, and journal t
     ],
     [
       'binding',
-      (value: ReturnType<typeof fixture>) => {
+      (value: Awaited<ReturnType<typeof fixture>>) => {
         rewriteCanonicalRecord(value.bindingPath, (binding) => {
-          binding.parentWorkspacePath = path.join(value.root, 'wrong-parent');
+          binding.parentWorkspacePath = value.wrongParent;
         });
       },
       /WORKFLOW_LOCAL_ADOPTION_BINDING_MISMATCH/,
     ],
     [
       'journal',
-      (value: ReturnType<typeof fixture>) => {
+      (value: Awaited<ReturnType<typeof fixture>>) => {
         fs.appendFileSync(adoptionPath(value.stateRoot, value.txId), ' ');
       },
       /WORKFLOW_LOCAL_ADOPTION_JOURNAL_CORRUPT/,
     ],
   ] as const) {
-    const value = fixture(true);
+    const value = await fixture(true);
     try {
       value.complete();
       tamper(value);
@@ -449,8 +426,8 @@ test('committed local adoption fails closed for artifact, binding, and journal t
   }
 });
 
-test('sealed harness-bootstrap runtime remains usable when the mutable E1 src tree is broken', () => {
-  const value = fixture(true);
+test('sealed harness-bootstrap runtime remains usable when the mutable E1 src tree is broken', async () => {
+  const value = await fixture(true);
   const isolatedPackage = fs.mkdtempSync(
     path.join(os.tmpdir(), 'harness-bootstrap-sealed-runtime-'),
   );

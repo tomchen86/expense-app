@@ -636,6 +636,12 @@ test('engine adopt reads only persisted state, commits once, and rejects grant r
       true,
       'engine-healthy-1',
     );
+    const secondArtifact = persistArtifact(
+      fixture,
+      intervention.childWorkspace.childWorkspacePath,
+      true,
+      'engine-healthy-2',
+    );
     const differentAuditRoot = path.join(fixture.root, 'different-audit');
     assert.throws(
       () =>
@@ -705,12 +711,6 @@ test('engine adopt reads only persisted state, commits once, and rejects grant r
     assert.equal(replay.adoptionState, 'COMMITTED');
     assert.equal(replay.effectsPerformed, false);
 
-    const secondArtifact = persistArtifact(
-      fixture,
-      intervention.childWorkspace.childWorkspacePath,
-      true,
-      'engine-healthy-2',
-    );
     assert.throws(
       () =>
         dispatchBootstrapInterventionCommand(

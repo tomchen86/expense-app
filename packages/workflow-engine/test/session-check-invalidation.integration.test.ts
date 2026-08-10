@@ -13,6 +13,7 @@ import {
   localEngineArtifactPath,
 } from '../src/intervention-control-bootstrap.ts';
 import { createEngineArtifact } from '../src/intervention-control.ts';
+import { persistInterventionEngineArtifact } from '../src/intervention-maintenance.ts';
 import { preparePersistedEngineAdoption } from '../src/intervention-control-persistence.ts';
 import { resolveHarnessBootstrapParentState } from '../src/harness-bootstrap.ts';
 import { checkSession, getSession, startSession } from '../src/session.ts';
@@ -512,6 +513,12 @@ function adoptLocalEngine(repository: string, sessionId: string) {
     writesSessionSchema: durable.parent.sessionSchema,
     policySchemaVersion: 1,
     smokeReportDigest: digest('engine-smoke-E2'),
+  });
+  persistInterventionEngineArtifact(stateRoot, {
+    parentChangeId: 'demo-change',
+    artifact,
+    executablePath,
+    now: NOW,
   });
   const txId = `selective-invalidation-${sessionId.replace(/[^a-z0-9-]/gi, '-')}`;
   const envelope = {

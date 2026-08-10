@@ -34,6 +34,10 @@ import {
   REQUIRED_PROTECTED_CAPABILITIES as TYPED_REQUIRED_PROTECTED_CAPABILITIES,
   type ProtectedCapabilitiesManifest as TypedProtectedCapabilitiesManifest,
 } from '../src/protected-capabilities.ts';
+import {
+  setupFinalizedControlPlanePromotionFixture,
+  setupInitialControlPlaneBootstrapFixture,
+} from './control-plane-promotion-fixture.ts';
 import { createFixtureRepository } from './fixture.ts';
 
 const NOW = new Date('2026-08-03T10:00:00.000Z');
@@ -969,8 +973,11 @@ test('trusted workflow launcher uses built-in E1 only before supervisor initiali
   }
 });
 
-test('trusted workflow launcher selection is independent of a tampered src tree', () => {
-  const value = fixture(true, undefined, createFixtureRepository());
+test('trusted workflow launcher selection is independent of a tampered src tree', async () => {
+  const value = await setupInitialControlPlaneBootstrapFixture({
+    builtInEntrypointBytes: initialLauncherEngineSource(),
+    now: NOW,
+  });
   const isolatedPackage = fs.mkdtempSync(
     path.join(os.tmpdir(), 'workflow-launcher-trust-boundary-'),
   );
@@ -1008,14 +1015,18 @@ export function resolveControlPlaneEngineSelection() { return null; }
       `throw new Error('mutable built-in engine must not run');\n`,
     );
 
-    const launched = runWorkflowLauncher(value.root, ['ordinary-command'], {
-      launcherPath: path.join(bootstrap, 'workflow-launcher.ts'),
-      env: {
-        ...process.env,
-        LAUNCHER_SRC_TAMPER_MARKER: marker,
-        LAUNCHER_ATTACKER_STATE_ROOT: path.join(isolatedPackage, 'attacker'),
+    const launched = runWorkflowLauncher(
+      value.repository,
+      ['ordinary-command'],
+      {
+        launcherPath: path.join(bootstrap, 'workflow-launcher.ts'),
+        env: {
+          ...process.env,
+          LAUNCHER_SRC_TAMPER_MARKER: marker,
+          LAUNCHER_ATTACKER_STATE_ROOT: path.join(isolatedPackage, 'attacker'),
+        },
       },
-    });
+    );
     assert.equal(launched.status, 0, launched.stderr);
     assert.deepEqual(JSON.parse(launched.stdout), {
       kind: 'ordinary-engine.v1',
@@ -1080,29 +1091,15 @@ test('trusted workflow launcher rejects a tampered built-in E1 dependency', () =
   }
 });
 
-test('trusted workflow launcher selects finalized E2 and preserves argv and exit status', () => {
-  const value = fixture(true, undefined, createFixtureRepository());
-  const audit: ControlPlaneUpdaterAuditRecord[] = [];
+test('trusted workflow launcher selects finalized E2 and preserves argv and exit status', async () => {
+  const value = await setupFinalizedControlPlanePromotionFixture({
+    candidateExecutableFactory: (closureDigest) =>
+      Buffer.from(engineSource(closureDigest, true)),
+  });
   try {
-    prepareControlPlanePromotion(
-      value.storageRoot,
-      {
-        txId: 'launcher-promotion-success',
-        envelope: value.envelope,
-        beforeManifest: value.beforeManifest,
-        afterManifest: value.afterManifest,
-        bundle: value.promotionBundle,
-      },
-      dependencies(audit),
-    );
-    const completed = executeControlPlanePromotion(
-      value.storageRoot,
-      value.envelope.payload.grantId,
-      dependencies(audit),
-    );
-    assert.equal(completed.record.transaction.state, 'FINALIZED');
+    assert.equal(value.record.transaction.state, 'FINALIZED');
 
-    const launched = runWorkflowLauncher(value.root, [
+    const launched = runWorkflowLauncher(value.repository, [
       'ordinary-command',
       '--exact-argument',
     ]);
@@ -1112,7 +1109,8 @@ test('trusted workflow launcher selects finalized E2 and preserves argv and exit
       engine: 'E2',
       argv: ['ordinary-command', '--exact-argument'],
     });
-    const exited = runWorkflowLauncher(value.root, ['--launcher-exit-7']);
+
+    const exited = runWorkflowLauncher(value.repository, ['--launcher-exit-7']);
     assert.equal(exited.status, 7, exited.stderr);
     assert.equal(JSON.parse(exited.stdout).engine, 'E2');
   } finally {
@@ -1120,33 +1118,18 @@ test('trusted workflow launcher selects finalized E2 and preserves argv and exit
   }
 });
 
-test('trusted workflow launcher rejects a noncanonical terminal update record', () => {
-  const value = fixture(true, undefined, createFixtureRepository());
-  const audit: ControlPlaneUpdaterAuditRecord[] = [];
+test('trusted workflow launcher rejects a noncanonical terminal update record', async () => {
+  const value = await setupFinalizedControlPlanePromotionFixture();
   try {
-    prepareControlPlanePromotion(
-      value.storageRoot,
-      {
-        txId: 'launcher-terminal-record-canonicality',
-        envelope: value.envelope,
-        beforeManifest: value.beforeManifest,
-        afterManifest: value.afterManifest,
-        bundle: value.promotionBundle,
-      },
-      dependencies(audit),
-    );
-    const completed = executeControlPlanePromotion(
-      value.storageRoot,
-      value.envelope.payload.grantId,
-      dependencies(audit),
-    );
-    assert.equal(completed.record.transaction.state, 'FINALIZED');
+    assert.equal(value.record.transaction.state, 'FINALIZED');
     fs.appendFileSync(
-      controlUpdatePath(value.storageRoot, value.envelope.payload.grantId),
+      onlyPrivateJsonFile(path.join(value.stateRoot, 'control-updates')),
       ' ',
     );
 
-    const launched = runWorkflowLauncher(value.root, ['ordinary-command']);
+    const launched = runWorkflowLauncher(value.repository, [
+      'ordinary-command',
+    ]);
     assert.notEqual(launched.status, 0);
     assert.equal(launched.stdout, '');
     assert.match(launched.stderr, /CONTROL_PLANE_SUPERVISOR_CORRUPT/);
@@ -1155,29 +1138,20 @@ test('trusted workflow launcher rejects a noncanonical terminal update record', 
   }
 });
 
-test('trusted workflow launcher selects restored E1 after failed promotion', () => {
-  const value = fixture(false, undefined, createFixtureRepository());
-  const audit: ControlPlaneUpdaterAuditRecord[] = [];
+test('trusted workflow launcher selects restored E1 after failed promotion', async () => {
+  const value = await setupFinalizedControlPlanePromotionFixture({
+    builtInEntrypointBytes: initialLauncherEngineSource(),
+  });
   try {
-    prepareControlPlanePromotion(
-      value.storageRoot,
-      {
-        txId: 'launcher-promotion-rollback',
-        envelope: value.envelope,
-        beforeManifest: value.beforeManifest,
-        afterManifest: value.afterManifest,
-        bundle: value.promotionBundle,
-      },
-      dependencies(audit),
+    const rolledBack = installTerminalV2RollbackFixture(value);
+    assert.equal(
+      requireRecordField(rolledBack, 'transaction').state,
+      'ROLLED_BACK',
     );
-    const completed = executeControlPlanePromotion(
-      value.storageRoot,
-      value.envelope.payload.grantId,
-      dependencies(audit),
-    );
-    assert.equal(completed.record.transaction.state, 'ROLLED_BACK');
 
-    const launched = runWorkflowLauncher(value.root, ['ordinary-command']);
+    const launched = runWorkflowLauncher(value.repository, [
+      'ordinary-command',
+    ]);
     assert.equal(launched.status, 0, launched.stderr);
     assert.deepEqual(JSON.parse(launched.stdout), {
       kind: 'ordinary-engine.v1',
@@ -1189,18 +1163,18 @@ test('trusted workflow launcher selects restored E1 after failed promotion', () 
   }
 });
 
-test('trusted workflow launcher fails closed for missing, malformed, or mismatched supervisor authority', () => {
+test('trusted workflow launcher fails closed for missing, malformed, or mismatched supervisor authority', async () => {
   for (const [name, tamper] of [
     [
       'missing initialized pointer',
-      (value: ReturnType<typeof fixture>) => {
-        fs.unlinkSync(supervisorPath(value.storageRoot));
+      (value: InitialControlPlaneFixture) => {
+        fs.unlinkSync(supervisorPath(value.stateRoot));
       },
     ],
     [
       'closure mismatch',
-      (value: ReturnType<typeof fixture>) => {
-        rewriteSupervisor(value.storageRoot, (supervisor) => {
+      (value: InitialControlPlaneFixture) => {
+        rewriteSupervisor(value.stateRoot, (supervisor) => {
           const active = supervisor.activeArtifact as Record<string, unknown>;
           active.closureDigest = digest('wrong-active-closure');
         });
@@ -1208,10 +1182,10 @@ test('trusted workflow launcher fails closed for missing, malformed, or mismatch
     ],
     [
       'artifact path mismatch',
-      (value: ReturnType<typeof fixture>) => {
-        const supervisor = readControlPlaneSupervisorState(value.storageRoot);
+      (value: InitialControlPlaneFixture) => {
+        const supervisor = readControlPlaneSupervisorState(value.stateRoot);
         const alternate = path.join(
-          value.storageRoot,
+          value.stateRoot,
           'control-plane-artifacts',
           'alternate-artifact',
         );
@@ -1222,7 +1196,7 @@ test('trusted workflow launcher fails closed for missing, malformed, or mismatch
           alternateExecutable,
         );
         fs.chmodSync(alternateExecutable, 0o500);
-        rewriteSupervisor(value.storageRoot, (record) => {
+        rewriteSupervisor(value.stateRoot, (record) => {
           const active = record.activeArtifact as Record<string, unknown>;
           active.executablePath = alternateExecutable;
         });
@@ -1230,8 +1204,8 @@ test('trusted workflow launcher fails closed for missing, malformed, or mismatch
     ],
     [
       'artifact digest mismatch',
-      (value: ReturnType<typeof fixture>) => {
-        const executable = readControlPlaneSupervisorState(value.storageRoot)
+      (value: InitialControlPlaneFixture) => {
+        const executable = readControlPlaneSupervisorState(value.stateRoot)
           .activeArtifact.executablePath;
         fs.chmodSync(executable, 0o700);
         fs.writeFileSync(executable, '#!/usr/bin/env node\nprocess.exit(0);\n');
@@ -1240,8 +1214,8 @@ test('trusted workflow launcher fails closed for missing, malformed, or mismatch
     ],
     [
       'artifact symlink',
-      (value: ReturnType<typeof fixture>) => {
-        const executable = readControlPlaneSupervisorState(value.storageRoot)
+      (value: InitialControlPlaneFixture) => {
+        const executable = readControlPlaneSupervisorState(value.stateRoot)
           .activeArtifact.executablePath;
         const target = `${executable}.target`;
         fs.renameSync(executable, target);
@@ -1249,10 +1223,12 @@ test('trusted workflow launcher fails closed for missing, malformed, or mismatch
       },
     ],
   ] as const) {
-    const value = fixture(true, undefined, createFixtureRepository());
+    const value = await setupInitialControlPlaneBootstrapFixture({ now: NOW });
     try {
       tamper(value);
-      const launched = runWorkflowLauncher(value.root, ['ordinary-command']);
+      const launched = runWorkflowLauncher(value.repository, [
+        'ordinary-command',
+      ]);
       assert.notEqual(launched.status, 0, name);
       assert.equal(launched.stdout, '', name);
       assert.match(
@@ -1265,6 +1241,101 @@ test('trusted workflow launcher fails closed for missing, malformed, or mismatch
     }
   }
 });
+
+type InitialControlPlaneFixture = Awaited<
+  ReturnType<typeof setupInitialControlPlaneBootstrapFixture>
+>;
+
+type FinalizedControlPlaneFixture = Awaited<
+  ReturnType<typeof setupFinalizedControlPlanePromotionFixture>
+>;
+
+function initialLauncherEngineSource(): string {
+  return `#!/usr/bin/env node
+process.stdout.write(JSON.stringify({kind:'ordinary-engine.v1',engine:'E1',argv:process.argv.slice(2)}) + '\\n');
+process.exit(process.argv[2] === '--launcher-exit-7' ? 7 : 0);
+`;
+}
+
+function installTerminalV2RollbackFixture(
+  fixture: FinalizedControlPlaneFixture,
+): Record<string, unknown> {
+  const updatePath = onlyPrivateJsonFile(
+    path.join(fixture.stateRoot, 'control-updates'),
+  );
+  const update = readPrivateRecord(updatePath);
+  const transaction = requireRecordField(update, 'transaction');
+  assert.equal(Array.isArray(transaction.history), true);
+  assert.equal(Array.isArray(update.observations), true);
+  const history = transaction.history as Array<Record<string, unknown>>;
+  const observations = update.observations as Array<Record<string, unknown>>;
+  history.at(-2)!.state = 'ROLLBACK_REQUIRED';
+  history.at(-1)!.state = 'ROLLED_BACK';
+  observations.at(-2)!.toState = 'ROLLBACK_REQUIRED';
+  observations.at(-2)!.eventKind = 'self-tests-failed';
+  observations.at(-1)!.fromState = 'ROLLBACK_REQUIRED';
+  observations.at(-1)!.toState = 'ROLLED_BACK';
+  observations.at(-1)!.eventKind = 'rollback-completed';
+  transaction.state = 'ROLLED_BACK';
+  transaction.journalDigest = recordDigest(transaction, 'journalDigest');
+  update.recordDigest = recordDigest(update, 'recordDigest');
+  writePrivateRecord(updatePath, update);
+
+  rewriteSupervisor(fixture.stateRoot, (supervisor) => {
+    supervisor.generation = 3;
+    supervisor.activeArtifact = { ...fixture.initialized.activeArtifact };
+    requireRecordField(supervisor, 'transition').phase = 'rollback-restored';
+  });
+  return update;
+}
+
+function onlyPrivateJsonFile(directory: string): string {
+  const entries = fs.readdirSync(directory, { withFileTypes: true });
+  assert.equal(entries.length, 1);
+  assert.equal(entries[0]?.isFile(), true);
+  assert.equal(entries[0]?.isSymbolicLink(), false);
+  assert.match(entries[0]?.name ?? '', /^[0-9a-f]{64}\.json$/);
+  return path.join(directory, entries[0]!.name);
+}
+
+function readPrivateRecord(filePath: string): Record<string, unknown> {
+  const value = JSON.parse(fs.readFileSync(filePath, 'utf8')) as unknown;
+  assert.equal(
+    typeof value === 'object' && value !== null && !Array.isArray(value),
+    true,
+  );
+  return value as Record<string, unknown>;
+}
+
+function requireRecordField(
+  value: Record<string, unknown>,
+  field: string,
+): Record<string, unknown> {
+  const fieldValue = value[field];
+  assert.equal(
+    typeof fieldValue === 'object' &&
+      fieldValue !== null &&
+      !Array.isArray(fieldValue),
+    true,
+  );
+  return fieldValue as Record<string, unknown>;
+}
+
+function recordDigest(
+  value: Record<string, unknown>,
+  field: string,
+): `sha256:${string}` {
+  const payload = { ...value };
+  delete payload[field];
+  return digest(canonicalJson(payload));
+}
+
+function writePrivateRecord(
+  filePath: string,
+  value: Record<string, unknown>,
+): void {
+  fs.writeFileSync(filePath, `${canonicalJson(value)}\n`, { mode: 0o600 });
+}
 
 function runWorkflowLauncher(
   repository: string,
@@ -1291,14 +1362,6 @@ function runWorkflowLauncher(
 
 function supervisorPath(storageRoot: string): string {
   return path.join(storageRoot, 'control-plane-supervisor.json');
-}
-
-function controlUpdatePath(storageRoot: string, grantId: string): string {
-  const fileName = crypto
-    .createHash('sha256')
-    .update(`control-update\0${grantId}`)
-    .digest('hex');
-  return path.join(storageRoot, 'control-updates', `${fileName}.json`);
 }
 
 function rewriteSupervisor(

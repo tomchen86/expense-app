@@ -17,6 +17,7 @@ import {
   restorePersistedWipBundle,
 } from '../src/intervention-control-bootstrap.ts';
 import { createEngineArtifact } from '../src/intervention-control.ts';
+import { persistInterventionEngineArtifact } from '../src/intervention-maintenance.ts';
 import { preparePersistedEngineAdoption } from '../src/intervention-control-persistence.ts';
 import { WorkflowError } from '../src/errors.ts';
 
@@ -341,6 +342,12 @@ function prepareAdoptionFixture(
     writesSessionSchema: 'v4',
     policySchemaVersion: 2,
     smokeReportDigest: digest(`smoke:${healthy}`),
+  });
+  persistInterventionEngineArtifact(fixture.stateRoot, {
+    parentChangeId: 'parent-A',
+    artifact,
+    executablePath: executable.executablePath,
+    now: NOW,
   });
   const adoption = preparePersistedEngineAdoption(
     fixture.stateRoot,
