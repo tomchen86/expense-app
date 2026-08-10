@@ -23,10 +23,14 @@ import {
 } from './database-policy.ts';
 import { ExitCode, WorkflowError, workflowError } from './errors.ts';
 import {
+  assertPostApprovalAdmissionDeadline,
   discoverRepository,
+  enterPostApprovalTerminalCleanup,
   fingerprintWorkingState,
+  isPostApprovalAdmissionFailure,
   listChangedPaths,
   runGit,
+  type PostApprovalAdmissionDeadline,
 } from './git.ts';
 import { commitFacts, previewExactStaging } from './git-transitions.ts';
 import {
@@ -54,6 +58,7 @@ import {
   readReservedMaintainerGrant,
   releaseMaintainerReservation,
   reserveMaintainerGrant,
+  terminallyFailMaintainerReservation,
   terminallyExpireMaintainerReservation,
   terminallyInvalidateMaintainerReservation,
   terminallyRevokeMaintainerReservation,
@@ -117,6 +122,8 @@ export type AuthoritySessionOptions = {
   allowSignedV2Candidate?: boolean;
   lifecycleAssertOwned?: () => void;
   testRefusalAuditServiceHooks?: AuthorityAuditServiceHooks;
+  /** Engine-owned post-approval token; never populated from CLI input. */
+  postApprovalDeadline?: PostApprovalAdmissionDeadline;
 };
 
 /**
@@ -186,6 +193,7 @@ export function startAuthoritySession(
     },
   );
   try {
+    assertPostApprovalAdmissionDeadline(options.postApprovalDeadline);
     const envelope = reservation.envelope;
     assertExecutableAuthorityGrant(envelope);
     if (
@@ -410,6 +418,7 @@ export function startAuthoritySession(
         withRepositoryLifecycleOperation(
           runtimePaths(initial.gitCommonDirectory, 'workflow-engine'),
           (assertOwned) => {
+            assertPostApprovalAdmissionDeadline(options.postApprovalDeadline);
             validateMaintainerGrantV2AuthorityBinding(
               initial.repositoryRoot,
               envelope,
@@ -432,6 +441,7 @@ export function startAuthoritySession(
                 'Authority reservation changed before durable session publication.',
               );
             }
+            assertPostApprovalAdmissionDeadline(options.postApprovalDeadline);
             writeAuthoritySession(session, true);
           },
           { allowMaintainerGrantId: envelope.payload.grantId },
@@ -440,6 +450,17 @@ export function startAuthoritySession(
       },
     );
   } catch (error) {
+    if (isPostApprovalAdmissionFailure(error)) {
+      enterPostApprovalTerminalCleanup(options.postApprovalDeadline);
+      terminallyFailMaintainerReservation(
+        initial.gitCommonDirectory,
+        reservation.grantId,
+        sessionId,
+        failureReason(error),
+        options.now,
+      );
+      throw error;
+    }
     // Everything before the durable session write is read-only, so a start
     // failure is a recoverable precondition: return the grant to the
     // available store instead of burning the one-shot signature. Fall back
@@ -972,6 +993,9 @@ function assertV2CandidateFresh(
     patchDigest: envelope.payload.patchDigest,
     trustBaseCommit: envelope.payload.baseCommit,
     requiredChecks: envelope.payload.requiredChecks,
+    waivedFreshnessCheckIds: (envelope.payload.evidenceWaivers ?? []).map(
+      ({ checkId }) => checkId,
+    ),
     environmentDigest,
     changedDependencies: [],
   });
@@ -987,8 +1011,10 @@ export function failAuthoritySession(
     session.gitCommonDirectory,
     session.grantId,
   )[0];
-  const terminalize =
-    grant !== undefined && Date.parse(grant.expiresAt) <= evaluatedAt.getTime()
+  const terminalize = isPostApprovalAdmissionFailure(error)
+    ? terminallyFailMaintainerReservation
+    : grant !== undefined &&
+        Date.parse(grant.expiresAt) <= evaluatedAt.getTime()
       ? terminallyExpireMaintainerReservation
       : isSemanticAuthorityInvalidation(error)
         ? terminallyInvalidateMaintainerReservation
@@ -1043,7 +1069,8 @@ function loadBasePolicy(repositoryRoot: string, baseCommit: string) {
       `${baseCommit}:workflow/maintainer-policy.json`,
     ]).trim();
     return { policy, policyContent, policyBlob };
-  } catch {
+  } catch (error) {
+    if (isPostApprovalAdmissionFailure(error)) throw error;
     throw authorityError(
       'AUTHORITY_POLICY_INVALID',
       'The exact base maintainer policy is unavailable or invalid.',
@@ -1073,7 +1100,8 @@ function assertExactAuditTag(
     ) {
       throw new Error('audit mismatch');
     }
-  } catch {
+  } catch (error) {
+    if (isPostApprovalAdmissionFailure(error)) throw error;
     throw authorityError(
       'AUTHORITY_AUDIT_TAG_INVALID',
       'The exact maintainer audit tag is missing or different.',
@@ -1195,7 +1223,8 @@ function loadBaseCheckDefinitions(
         ];
       }),
     );
-  } catch {
+  } catch (error) {
+    if (isPostApprovalAdmissionFailure(error)) throw error;
     throw authorityError(
       'AUTHORITY_CHECK_INVALID',
       'Required check definitions are unavailable from the exact grant base.',

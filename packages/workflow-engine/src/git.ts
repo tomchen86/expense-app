@@ -1,11 +1,296 @@
 import crypto from 'node:crypto';
+import { AsyncLocalStorage } from 'node:async_hooks';
 import fs from 'node:fs';
 import path from 'node:path';
+import { performance } from 'node:perf_hooks';
 import { spawnSync } from 'node:child_process';
 
 import { ExitCode, WorkflowError, workflowError } from './errors.ts';
 import { createTrustedExecutionEnvironment } from './execution-environment.ts';
 import { normalizeChangedPath } from './paths.ts';
+
+export const POST_APPROVAL_ADMISSION_LIMIT_MS = 10_000;
+
+export type PostApprovalBudgetTestOptions = {
+  /** Test-only shorter limit; production callers cannot raise the code-owned cap. */
+  limitMs?: number;
+  monotonicNow?: () => number;
+  onArm?: () => void;
+  beforeGit?: (input: { args: string[]; timeoutMs: number }) => void;
+  beforeProcess?: (input: {
+    kind: 'ssh-keygen';
+    executable: string;
+    args: string[];
+    timeoutMs: number;
+  }) => void;
+  onCompletionObligatory?: () => void;
+};
+
+export type PostApprovalAdmissionDeadline = {
+  readonly limitMs: number;
+  readonly monotonicNow: () => number;
+  readonly enforceProcessTimeout: boolean;
+  readonly testHooks: Omit<
+    PostApprovalBudgetTestOptions,
+    'limitMs' | 'monotonicNow'
+  >;
+  phase: 'unarmed' | 'admission' | 'completion-obligatory' | 'terminal-cleanup';
+  startedAtMonotonicMs: number | null;
+  lastObservedMonotonicMs: number | null;
+};
+
+const postApprovalDeadlineStorage =
+  new AsyncLocalStorage<PostApprovalAdmissionDeadline>();
+
+export function createPostApprovalAdmissionDeadline(
+  testOptions: PostApprovalBudgetTestOptions = {},
+): PostApprovalAdmissionDeadline {
+  const limitMs = testOptions.limitMs ?? POST_APPROVAL_ADMISSION_LIMIT_MS;
+  if (
+    !Number.isInteger(limitMs) ||
+    limitMs < 1 ||
+    limitMs > POST_APPROVAL_ADMISSION_LIMIT_MS
+  ) {
+    throw workflowError(
+      'AUTHORITY_POST_APPROVAL_BUDGET_INVALID',
+      'Post-approval admission uses a positive code-owned timeout bound.',
+      ExitCode.usage,
+    );
+  }
+  return {
+    limitMs,
+    monotonicNow: testOptions.monotonicNow ?? (() => performance.now()),
+    enforceProcessTimeout: testOptions.monotonicNow === undefined,
+    testHooks: {
+      onArm: testOptions.onArm,
+      beforeGit: testOptions.beforeGit,
+      beforeProcess: testOptions.beforeProcess,
+      onCompletionObligatory: testOptions.onCompletionObligatory,
+    },
+    phase: 'unarmed',
+    startedAtMonotonicMs: null,
+    lastObservedMonotonicMs: null,
+  };
+}
+
+export function withPostApprovalAdmissionDeadline<T>(
+  deadline: PostApprovalAdmissionDeadline,
+  operation: () => T,
+): T {
+  return postApprovalDeadlineStorage.run(deadline, operation);
+}
+
+export function armPostApprovalAdmissionDeadline(
+  deadline: PostApprovalAdmissionDeadline,
+): void {
+  if (deadline.phase !== 'unarmed') {
+    throw workflowError(
+      'AUTHORITY_POST_APPROVAL_BUDGET_INVALID',
+      'Post-approval admission may be armed exactly once.',
+      ExitCode.guard,
+    );
+  }
+  deadline.startedAtMonotonicMs = readPostApprovalMonotonicClock(deadline);
+  deadline.phase = 'admission';
+  deadline.testHooks.onArm?.();
+}
+
+export function assertPostApprovalAdmissionDeadline(
+  deadline: PostApprovalAdmissionDeadline | undefined,
+): void {
+  if (deadline === undefined || deadline.phase !== 'admission') return;
+  remainingPostApprovalAdmissionMillis(deadline);
+}
+
+export function assertPostApprovalAdmissionPhase(
+  deadline: PostApprovalAdmissionDeadline,
+): void {
+  if (deadline.phase === 'unarmed' || deadline.phase === 'admission') return;
+  throw workflowError(
+    'AUTHORITY_POST_APPROVAL_BUDGET_INVALID',
+    'Pre-CAS authority work requires an unarmed or active admission deadline.',
+    ExitCode.guard,
+  );
+}
+
+export function enterPostApprovalCompletionObligation(
+  deadline: PostApprovalAdmissionDeadline | undefined,
+  options: { allowExpired?: boolean } = {},
+): void {
+  if (deadline === undefined || deadline.phase === 'completion-obligatory') {
+    return;
+  }
+  if (deadline.phase === 'terminal-cleanup') {
+    throw workflowError(
+      'AUTHORITY_POST_APPROVAL_BUDGET_INVALID',
+      'A terminal-cleanup authority transaction cannot become completion-obligatory.',
+      ExitCode.guard,
+    );
+  }
+  if (deadline.phase === 'unarmed') {
+    if (options.allowExpired) {
+      deadline.phase = 'completion-obligatory';
+      deadline.testHooks.onCompletionObligatory?.();
+      return;
+    }
+    armPostApprovalAdmissionDeadline(deadline);
+  }
+  if (!options.allowExpired) assertPostApprovalAdmissionDeadline(deadline);
+  deadline.phase = 'completion-obligatory';
+  deadline.testHooks.onCompletionObligatory?.();
+}
+
+export function enterPostApprovalTerminalCleanup(
+  deadline: PostApprovalAdmissionDeadline | undefined,
+): void {
+  if (deadline === undefined || deadline.phase === 'terminal-cleanup') return;
+  if (deadline.phase === 'completion-obligatory') {
+    throw workflowError(
+      'AUTHORITY_POST_APPROVAL_BUDGET_INVALID',
+      'A completion-obligatory authority transaction cannot return to pre-CAS cleanup.',
+      ExitCode.guard,
+    );
+  }
+  deadline.phase = 'terminal-cleanup';
+}
+
+export function enterActivePostApprovalTerminalCleanup(): void {
+  enterPostApprovalTerminalCleanup(postApprovalDeadlineStorage.getStore());
+}
+
+export function isPostApprovalAdmissionFailure(error: unknown): boolean {
+  if (error === null || typeof error !== 'object' || !('code' in error)) {
+    return false;
+  }
+  return (
+    error.code === 'AUTHORITY_POST_APPROVAL_TIMEOUT' ||
+    error.code === 'AUTHORITY_POST_APPROVAL_CLOCK_INVALID'
+  );
+}
+
+export type PostApprovalSubprocessBudget = {
+  processTimeoutMs: number | undefined;
+};
+
+export function postApprovalSubprocessBudget(
+  kind: 'ssh-keygen',
+  executable: string,
+  args: string[],
+): PostApprovalSubprocessBudget | undefined {
+  const deadline = postApprovalDeadlineStorage.getStore();
+  if (deadline === undefined || deadline.phase !== 'admission') {
+    return undefined;
+  }
+  const timeoutMs = Math.max(
+    1,
+    Math.ceil(remainingPostApprovalAdmissionMillis(deadline)),
+  );
+  try {
+    deadline.testHooks.beforeProcess?.({
+      kind,
+      executable,
+      args: [...args],
+      timeoutMs,
+    });
+  } catch (error) {
+    if (isProcessTimeout(error)) throw postApprovalAdmissionTimeout();
+    throw error;
+  }
+  assertPostApprovalAdmissionDeadline(deadline);
+  return {
+    processTimeoutMs: deadline.enforceProcessTimeout ? timeoutMs : undefined,
+  };
+}
+
+export function normalizePostApprovalSubprocessError(
+  budget: PostApprovalSubprocessBudget | undefined,
+  error: unknown,
+): void {
+  if (budget !== undefined && isProcessTimeout(error)) {
+    throw postApprovalAdmissionTimeout();
+  }
+}
+
+function remainingPostApprovalAdmissionMillis(
+  deadline: PostApprovalAdmissionDeadline,
+): number {
+  if (
+    deadline.phase !== 'admission' ||
+    deadline.startedAtMonotonicMs === null
+  ) {
+    throw workflowError(
+      'AUTHORITY_POST_APPROVAL_BUDGET_INVALID',
+      'Post-approval admission deadline is not active.',
+      ExitCode.guard,
+    );
+  }
+  const remaining =
+    deadline.startedAtMonotonicMs +
+    deadline.limitMs -
+    readPostApprovalMonotonicClock(deadline);
+  if (!Number.isFinite(remaining) || remaining <= 0) {
+    throw postApprovalAdmissionTimeout();
+  }
+  return remaining;
+}
+
+function readPostApprovalMonotonicClock(
+  deadline: PostApprovalAdmissionDeadline,
+): number {
+  const observed = deadline.monotonicNow();
+  if (
+    !Number.isFinite(observed) ||
+    (deadline.lastObservedMonotonicMs !== null &&
+      observed < deadline.lastObservedMonotonicMs)
+  ) {
+    throw workflowError(
+      'AUTHORITY_POST_APPROVAL_CLOCK_INVALID',
+      'Post-approval admission requires a finite monotonic clock.',
+      ExitCode.unsafeEnvironment,
+    );
+  }
+  deadline.lastObservedMonotonicMs = observed;
+  return observed;
+}
+
+function activePostApprovalGitTimeout(
+  args: string[],
+): { processTimeoutMs: number | undefined } | undefined {
+  const deadline = postApprovalDeadlineStorage.getStore();
+  if (deadline === undefined || deadline.phase !== 'admission')
+    return undefined;
+  const timeoutMs = Math.max(
+    1,
+    Math.ceil(remainingPostApprovalAdmissionMillis(deadline)),
+  );
+  try {
+    deadline.testHooks.beforeGit?.({ args: [...args], timeoutMs });
+  } catch (error) {
+    if (isProcessTimeout(error)) throw postApprovalAdmissionTimeout();
+    throw error;
+  }
+  assertPostApprovalAdmissionDeadline(deadline);
+  return {
+    processTimeoutMs: deadline.enforceProcessTimeout ? timeoutMs : undefined,
+  };
+}
+
+function postApprovalAdmissionTimeout() {
+  return workflowError(
+    'AUTHORITY_POST_APPROVAL_TIMEOUT',
+    'Post-approval admission exceeded its code-owned operational deadline before CAS.',
+    ExitCode.staleState,
+  );
+}
+
+function isProcessTimeout(error: unknown): boolean {
+  return (
+    error !== null &&
+    typeof error === 'object' &&
+    'code' in error &&
+    error.code === 'ETIMEDOUT'
+  );
+}
 
 export type GitState = {
   repositoryRoot: string;
@@ -258,6 +543,7 @@ function executeGit(
   environment: NodeJS.ProcessEnv,
 ): string {
   const executable = resolveGitExecutable();
+  const postApprovalTimeout = activePostApprovalGitTimeout(args);
   const commandArgs =
     args[0] === 'diff'
       ? ['diff', '--no-ext-diff', '--no-textconv', ...args.slice(1)]
@@ -280,6 +566,7 @@ function executeGit(
       encoding: 'utf8',
       shell: false,
       maxBuffer: 64 * 1024 * 1024,
+      timeout: postApprovalTimeout?.processTimeoutMs,
       env: {
         ...createTrustedExecutionEnvironment([executable]),
         ...environment,
@@ -288,6 +575,9 @@ function executeGit(
   );
 
   if (result.error) {
+    if (postApprovalTimeout !== undefined && isProcessTimeout(result.error)) {
+      throw postApprovalAdmissionTimeout();
+    }
     throw workflowError(
       'GIT_EXECUTION_FAILED',
       `Unable to run Git: ${result.error.message}`,
@@ -331,7 +621,21 @@ export function runGitBuffer(
     timeoutMs?: number;
   } = {},
 ): Buffer {
-  const timeoutMs = options.timeoutMs ?? 30_000;
+  const requestedTimeoutMs = options.timeoutMs ?? 30_000;
+  if (!Number.isInteger(requestedTimeoutMs) || requestedTimeoutMs < 1) {
+    throw workflowError(
+      'GIT_TIMEOUT_INVALID',
+      'Git timeout must be a positive integer number of milliseconds.',
+      ExitCode.usage,
+      { details: { timeoutMs: requestedTimeoutMs } },
+    );
+  }
+  const postApprovalTimeout = activePostApprovalGitTimeout(args);
+  const timeoutMs =
+    postApprovalTimeout === undefined ||
+    postApprovalTimeout.processTimeoutMs === undefined
+      ? requestedTimeoutMs
+      : Math.min(requestedTimeoutMs, postApprovalTimeout.processTimeoutMs);
   if (!Number.isInteger(timeoutMs) || timeoutMs < 1) {
     throw workflowError(
       'GIT_TIMEOUT_INVALID',
@@ -372,6 +676,9 @@ export function runGitBuffer(
   );
 
   if (result.error) {
+    if (postApprovalTimeout !== undefined && isProcessTimeout(result.error)) {
+      throw postApprovalAdmissionTimeout();
+    }
     throw workflowError(
       'GIT_EXECUTION_FAILED',
       `Unable to run Git: ${result.error.message}`,

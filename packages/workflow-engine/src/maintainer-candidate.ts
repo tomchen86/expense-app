@@ -1083,6 +1083,7 @@ export type CandidateCheckFreshnessOptions = {
   patchDigest: string;
   trustBaseCommit: string;
   requiredChecks: string[];
+  waivedFreshnessCheckIds?: string[];
   environmentDigest: string;
   changedDependencies: CheckDependency[];
 };
@@ -1098,6 +1099,20 @@ export function assertCandidateChecksFresh(
     CHECK_ID,
     'required check IDs',
   );
+  const waivedFreshnessCheckIds = assertSortedUnique(
+    options.waivedFreshnessCheckIds ?? [],
+    CHECK_ID,
+    'waived freshness check IDs',
+  );
+  if (
+    waivedFreshnessCheckIds.some((checkId) => !requiredChecks.includes(checkId))
+  ) {
+    throw candidateError(
+      'APPLY_ATTESTATION_BINDING_MISMATCH',
+      'Named freshness waivers must reference exact required check IDs.',
+    );
+  }
+  const waivedFreshness = new Set(waivedFreshnessCheckIds);
   const changedDependencies = assertSortedUnique(
     options.changedDependencies,
     /^(?:source-tree|base-commit|harness-engine|policy|runner|external-state)$/,
@@ -1139,7 +1154,11 @@ export function assertCandidateChecksFresh(
       );
     }
     const completedAt = Date.parse(check.completedAt);
-    if (check.maxAgeMs !== null && now - completedAt > check.maxAgeMs) {
+    if (
+      check.maxAgeMs !== null &&
+      now - completedAt > check.maxAgeMs &&
+      !waivedFreshness.has(check.checkId)
+    ) {
       throw candidateError(
         'APPLY_ATTESTATION_STALE',
         `Check ${check.checkId} exceeded its original evidence validity window.`,

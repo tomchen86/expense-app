@@ -35,7 +35,21 @@ import {
   rollbackExactStaging,
   updateManagedRef,
 } from './git-transitions.ts';
-import { discoverRepository, runGit } from './git.ts';
+import {
+  armPostApprovalAdmissionDeadline,
+  assertPostApprovalAdmissionDeadline,
+  assertPostApprovalAdmissionPhase,
+  createPostApprovalAdmissionDeadline,
+  discoverRepository,
+  enterActivePostApprovalTerminalCleanup,
+  enterPostApprovalCompletionObligation,
+  enterPostApprovalTerminalCleanup,
+  isPostApprovalAdmissionFailure,
+  runGit,
+  withPostApprovalAdmissionDeadline,
+  type PostApprovalAdmissionDeadline,
+  type PostApprovalBudgetTestOptions,
+} from './git.ts';
 import {
   canonicalMaintainerGrantV2Envelope,
   isMaintainerGrantV2Envelope,
@@ -142,7 +156,24 @@ export type AuthorityRecoveryOptions = {
   testBeforeConsume?: () => void;
   testBeforeAudit?: (eventType: 'cas' | 'grant-consume') => void;
   receiptSigner?: MaintainerSignerProvider;
+  /** Engine-owned post-approval token; never populated from CLI input. */
+  postApprovalDeadline?: PostApprovalAdmissionDeadline;
+  /** Test-only deterministic seam; production always uses the code-owned cap. */
+  testPostApprovalBudget?: PostApprovalBudgetTestOptions;
 };
+
+function journalRequiresCompletion(
+  state: AuthorityCommitJournalState,
+): boolean {
+  return (
+    state === 'cas-prepared' ||
+    state === 'ref-updated' ||
+    state === 'rollback-prepared' ||
+    state === 'rolled-back' ||
+    state === 'consumed' ||
+    state === 'audited'
+  );
+}
 
 export function beginAuthorityCommitJournal(
   session: AuthoritySession,
@@ -255,12 +286,89 @@ export function recoverAuthorityCommit(
   now = new Date(),
   options: AuthorityRecoveryOptions = {},
 ): AuthorityCommitResult {
+  let deadline = options.postApprovalDeadline;
+  try {
+    if (deadline === undefined) {
+      const session = readAuthoritySession(cwd, requestedSessionId);
+      if (session.grantVersion === 1) {
+        return recoverAuthorityCommitWithDeadline(
+          cwd,
+          requestedSessionId,
+          now,
+          options,
+        );
+      }
+      const journal = readAuthorityCommitJournal(
+        session.gitCommonDirectory,
+        session.sessionId,
+      );
+      deadline = createPostApprovalAdmissionDeadline(
+        options.testPostApprovalBudget,
+      );
+      if (journalRequiresCompletion(journal.state)) {
+        enterPostApprovalCompletionObligation(deadline, {
+          allowExpired: true,
+        });
+      }
+    }
+    const phaseSession = readAuthoritySession(cwd, requestedSessionId);
+    if (phaseSession.grantVersion === 2) {
+      const phaseJournal = readAuthorityCommitJournal(
+        phaseSession.gitCommonDirectory,
+        phaseSession.sessionId,
+      );
+      if (journalRequiresCompletion(phaseJournal.state)) {
+        enterPostApprovalCompletionObligation(deadline, {
+          allowExpired: true,
+        });
+      } else {
+        assertPostApprovalAdmissionPhase(deadline);
+      }
+    }
+    if (deadline.phase === 'unarmed') {
+      armPostApprovalAdmissionDeadline(deadline);
+    }
+    return withPostApprovalAdmissionDeadline(deadline, () =>
+      recoverAuthorityCommitWithDeadline(cwd, requestedSessionId, now, {
+        ...options,
+        postApprovalDeadline: deadline,
+      }),
+    );
+  } catch (error) {
+    if (isPostApprovalAdmissionFailure(error)) {
+      enterPostApprovalTerminalCleanup(deadline);
+      const session = readAuthoritySession(cwd, requestedSessionId);
+      const journal = readAuthorityCommitJournal(
+        session.gitCommonDirectory,
+        session.sessionId,
+      );
+      if (journal.state === 'preparing' || journal.state === 'commit-created') {
+        failAuthorityCommitBeforeCas(cwd, requestedSessionId, error, now);
+      }
+    }
+    throw error;
+  }
+}
+
+function recoverAuthorityCommitWithDeadline(
+  cwd: string,
+  requestedSessionId: string,
+  now: Date,
+  options: AuthorityRecoveryOptions,
+): AuthorityCommitResult {
   const session = readAuthoritySession(cwd, requestedSessionId);
   const journal = readAuthorityCommitJournal(
     session.gitCommonDirectory,
     session.sessionId,
   );
   assertJournalMatchesSession(journal, session);
+  if (journalRequiresCompletion(journal.state)) {
+    enterPostApprovalCompletionObligation(options.postApprovalDeadline, {
+      allowExpired: true,
+    });
+  } else {
+    assertPostApprovalAdmissionDeadline(options.postApprovalDeadline);
+  }
   const auditScope = authorityAuditScopeForJournal(session, journal);
 
   if (
@@ -277,6 +385,16 @@ export function recoverAuthorityCommit(
       'AUTHORITY_RECOVERY_ROLLED_BACK',
       'The failed authority apply was rolled back during recovery.',
     );
+  }
+
+  if (journal.state === 'revoked') {
+    const denial = recoveryError(
+      'AUTHORITY_RECOVERY_REVOKED',
+      'The authority transaction was terminally revoked.',
+    );
+    enterPostApprovalTerminalCleanup(options.postApprovalDeadline);
+    failAuthorityCommitBeforeCas(cwd, session.sessionId, denial, now);
+    throw denial;
   }
 
   const grantState = inspectMaintainerGrants(
@@ -296,15 +414,22 @@ export function recoverAuthorityCommit(
       'The authority grant expired before the protected ref was updated.',
     );
   }
-
-  if (journal.state === 'revoked') {
-    throw recoveryError(
+  if (
+    journal.state === 'commit-created' &&
+    (grantState?.state !== 'reserved' ||
+      grantState.reservationSessionId !== session.sessionId)
+  ) {
+    const denial = recoveryError(
       'AUTHORITY_RECOVERY_REVOKED',
-      'The authority transaction was terminally revoked.',
+      'Pre-CAS recovery requires the exact live same-session reservation.',
     );
+    enterPostApprovalTerminalCleanup(options.postApprovalDeadline);
+    failAuthorityCommitBeforeCas(cwd, session.sessionId, denial, now);
+    throw denial;
   }
+
   if (journal.state === 'preparing') {
-    revokePreparingTransaction(cwd, session, journal, now);
+    revokePreparingTransaction(cwd, session, now);
   }
 
   try {
@@ -318,6 +443,13 @@ export function recoverAuthorityCommit(
           session.gitCommonDirectory,
           session.sessionId,
         );
+        if (journalRequiresCompletion(currentJournal.state)) {
+          enterPostApprovalCompletionObligation(options.postApprovalDeadline, {
+            allowExpired: true,
+          });
+        } else {
+          assertPostApprovalAdmissionDeadline(options.postApprovalDeadline);
+        }
         if (currentJournal.state === 'audited') {
           return finalizeAudited(
             cwd,
@@ -401,11 +533,15 @@ export function recoverAuthorityCommit(
               expectedGeneration,
             );
           }
+          assertPostApprovalAdmissionDeadline(options.postApprovalDeadline);
           advanced = recordAuthorityCasPrepared(
             session.gitCommonDirectory,
             advanced,
             now,
           );
+          enterPostApprovalCompletionObligation(options.postApprovalDeadline, {
+            allowExpired: true,
+          });
           updateManagedRef(
             git.repositoryRoot,
             currentJournal.baseCommit,
@@ -537,6 +673,20 @@ export function recoverAuthorityCommit(
       { allowMaintainerGrantId: session.grantId },
     );
   } catch (error) {
+    if (isPostApprovalAdmissionFailure(error)) {
+      enterPostApprovalTerminalCleanup(options.postApprovalDeadline);
+      const observed = readAuthorityCommitJournal(
+        session.gitCommonDirectory,
+        session.sessionId,
+      );
+      if (
+        observed.state === 'preparing' ||
+        observed.state === 'commit-created'
+      ) {
+        failAuthorityCommitBeforeCas(cwd, session.sessionId, error, now);
+      }
+      throw error;
+    }
     const inspection = inspectMaintainerGrants(
       session.gitCommonDirectory,
       session.grantId,
@@ -640,7 +790,11 @@ export function expireAuthorityCommitBeforeCas(
         session.sessionId,
       );
       assertJournalMatchesSession(journal, session);
-      if (journal.state !== 'commit-created' && journal.state !== 'revoked') {
+      if (
+        journal.state !== 'preparing' &&
+        journal.state !== 'commit-created' &&
+        journal.state !== 'revoked'
+      ) {
         throw recoveryError(
           'AUTHORITY_EXPIRY_STATE_INVALID',
           'Only a pre-CAS commit-created transaction may expire.',
@@ -658,6 +812,13 @@ export function expireAuthorityCommitBeforeCas(
           'The pre-CAS transaction diverged before expiry cleanup.',
         );
       }
+      if (journal.state === 'preparing' || journal.state === 'commit-created') {
+        transitionJournal(session.gitCommonDirectory, journal, journal.state, {
+          state: 'revoked',
+          reason: expiryError.message,
+          updatedAt: timestamp.toISOString(),
+        });
+      }
       terminallyExpireMaintainerReservationUnderLifecycleLock(
         session.gitCommonDirectory,
         session.grantId,
@@ -665,18 +826,6 @@ export function expireAuthorityCommitBeforeCas(
         expiryError.message,
         timestamp,
       );
-      if (journal.state === 'commit-created') {
-        transitionJournal(
-          session.gitCommonDirectory,
-          journal,
-          'commit-created',
-          {
-            state: 'revoked',
-            reason: expiryError.message,
-            updatedAt: timestamp.toISOString(),
-          },
-        );
-      }
       if (indexTree === journal.expectedTree) {
         rollbackExactStaging(
           git.repositoryRoot,
@@ -690,6 +839,97 @@ export function expireAuthorityCommitBeforeCas(
   );
   if (session.state === 'active') {
     failAuthoritySession(session, expiryError, timestamp);
+  }
+}
+
+export function failAuthorityCommitBeforeCas(
+  cwd: string,
+  requestedSessionId: string,
+  cause: unknown,
+  now = new Date(),
+): void {
+  const session = readAuthoritySession(cwd, requestedSessionId);
+  const timestamp = exactDate(now);
+  const failure =
+    cause instanceof Error
+      ? cause
+      : recoveryError(
+          'AUTHORITY_POST_APPROVAL_TIMEOUT',
+          'Post-approval admission timed out before CAS.',
+        );
+  let cleanupAdmissionFailure: unknown;
+  withRepositoryLifecycleOperation(
+    maintainerGrantStorePaths(session.gitCommonDirectory).runtime,
+    (assertOwned) => {
+      assertOwned();
+      const journal = readAuthorityCommitJournal(
+        session.gitCommonDirectory,
+        session.sessionId,
+      );
+      assertJournalMatchesSession(journal, session);
+      if (
+        journal.state !== 'preparing' &&
+        journal.state !== 'commit-created' &&
+        journal.state !== 'revoked'
+      ) {
+        throw recoveryError(
+          'AUTHORITY_POST_APPROVAL_TIMEOUT_STATE_INVALID',
+          'Only a pre-CAS authority transaction may fail admission.',
+        );
+      }
+      if (journal.state === 'preparing' || journal.state === 'commit-created') {
+        transitionJournal(session.gitCommonDirectory, journal, journal.state, {
+          state: 'revoked',
+          reason: failure.message,
+          updatedAt: timestamp.toISOString(),
+        });
+      }
+      terminallyFailMaintainerReservationUnderLifecycleLock(
+        session.gitCommonDirectory,
+        session.grantId,
+        session.sessionId,
+        failure.message,
+        timestamp,
+      );
+      const restoreExactIndex = () => {
+        const git = discoverRepository(cwd);
+        const indexTree = runGit(git.repositoryRoot, ['write-tree']).trim();
+        if (
+          git.head === journal.baseCommit &&
+          indexTree === journal.expectedTree
+        ) {
+          rollbackExactStaging(
+            git.repositoryRoot,
+            journal.previousIndexTree,
+            journal.expectedTree,
+            failure,
+          );
+        }
+      };
+      try {
+        restoreExactIndex();
+      } catch (error) {
+        if (isPostApprovalAdmissionFailure(error)) {
+          cleanupAdmissionFailure = error;
+          enterActivePostApprovalTerminalCleanup();
+          try {
+            restoreExactIndex();
+          } catch {
+            // Durable denial remains authoritative when exact residue cleanup
+            // encounters a second independent failure.
+          }
+        }
+        // Denial is durable before best-effort exact residue cleanup. Unknown
+        // or foreign Git state is preserved and cannot restore authority.
+      }
+    },
+    { allowMaintainerGrantId: session.grantId },
+  );
+  if (session.state === 'active') {
+    failAuthoritySession(session, failure, timestamp);
+  }
+  if (cleanupAdmissionFailure !== undefined) {
+    throw cleanupAdmissionFailure;
   }
 }
 
@@ -1214,6 +1454,7 @@ function ensurePortableApplicationReceipt(
     ),
     candidateBundleDigest: candidate.candidateBundleDigest,
     effectsManifestDigest: candidate.effectsManifestDigest,
+    evidenceWaivers: envelope.payload.evidenceWaivers ?? [],
     candidatePatchDigest: envelope.payload.patchDigest,
     candidateCommit: candidate.candidateCommit,
     candidateTree: candidate.resultTree,
@@ -1726,7 +1967,8 @@ function verifyCommitSignature(
     ) {
       throw new Error('signature mismatch');
     }
-  } catch {
+  } catch (error) {
+    if (isPostApprovalAdmissionFailure(error)) throw error;
     throw recoveryError(
       'AUTHORITY_COMMIT_SIGNATURE_INVALID',
       'The authority commit signature is missing, invalid, or untrusted.',
@@ -1739,48 +1981,13 @@ function verifyCommitSignature(
 function revokePreparingTransaction(
   cwd: string,
   session: AuthoritySession,
-  journal: AuthorityCommitJournal,
   now: Date,
 ): never {
-  try {
-    withRepositoryLifecycleOperation(
-      maintainerGrantStorePaths(session.gitCommonDirectory).runtime,
-      (assertOwned) => {
-        assertOwned();
-        const git = discoverRepository(cwd);
-        const indexTree = runGit(git.repositoryRoot, ['write-tree']).trim();
-        if (
-          git.head !== journal.baseCommit ||
-          indexTree !== journal.expectedTree
-        ) {
-          throw recoveryError(
-            'AUTHORITY_RECOVERY_PREPARING_DIVERGED',
-            'Preparing transaction no longer matches its base and staged tree.',
-          );
-        }
-        rollbackExactStaging(
-          git.repositoryRoot,
-          journal.previousIndexTree,
-          journal.expectedTree,
-          new Error('authority preparing recovery'),
-        );
-        transitionJournal(session.gitCommonDirectory, journal, 'preparing', {
-          state: 'revoked',
-          reason: 'Commit object was not durably journaled',
-          updatedAt: exactDate(now).toISOString(),
-        });
-      },
-      { allowMaintainerGrantId: session.grantId },
-    );
-  } catch (error) {
-    revokeAmbiguousTransaction(session, journal, error, now);
-    throw error;
-  }
   const error = recoveryError(
     'AUTHORITY_RECOVERY_REVOKED',
     'Preparing authority transaction was rolled back and revoked.',
   );
-  failAuthoritySession(session, error, now);
+  failAuthorityCommitBeforeCas(cwd, session.sessionId, error, now);
   throw error;
 }
 

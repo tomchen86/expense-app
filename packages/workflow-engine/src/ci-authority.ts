@@ -9,6 +9,7 @@ import {
   verifyAuthorityApplicationReceiptSignature,
   type AuthorityApplicationReceiptTag,
 } from './authority-application-receipt.ts';
+import { canonicalJson } from './canonical-json.ts';
 import { canonicalCheckDefinition } from './ci-historical-contract.ts';
 import {
   listCommitPaths,
@@ -276,6 +277,8 @@ function validateCiAuthorityCandidateCommit(
     envelope.payload.candidateBundleDigest !== payload.candidateBundleDigest ||
     candidate.effectsManifestDigest !== payload.effectsManifestDigest ||
     envelope.payload.effectsManifestDigest !== payload.effectsManifestDigest ||
+    canonicalJson(payload.evidenceWaivers ?? []) !==
+      canonicalJson(envelope.payload.evidenceWaivers ?? []) ||
     envelope.payload.patchDigest !== payload.candidatePatchDigest ||
     candidate.manifest.patchDigest !== payload.candidatePatchDigest ||
     candidate.candidateCommit !== commit.hash ||

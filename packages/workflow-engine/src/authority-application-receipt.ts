@@ -5,6 +5,10 @@ import { verifySshDataSignature } from './ci-signature.ts';
 import { isRecord } from './contract-values.ts';
 import { ExitCode, workflowError } from './errors.ts';
 import { runGit } from './git.ts';
+import {
+  parseMaintainerEvidenceWaivers,
+  type MaintainerEvidenceWaiver,
+} from './maintainer-grant-v2.ts';
 import { createMaintainerAuditTag } from './maintainer-grant.ts';
 import type { MaintainerPolicy } from './maintainer-policy.ts';
 import type { MaintainerSignerProvider } from './maintainer-signer.ts';
@@ -19,7 +23,7 @@ const GRANT_ID =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const TARGET_REF = /^refs\/heads\/[A-Za-z0-9][A-Za-z0-9._/-]{0,254}$/;
 const TAG_REF = /^refs\/tags\/[A-Za-z0-9][A-Za-z0-9._/-]{0,254}$/;
-const RECEIPT_KEYS = [
+const LEGACY_RECEIPT_KEYS = [
   'schemaVersion',
   'kind',
   'grantId',
@@ -51,6 +55,7 @@ const RECEIPT_KEYS = [
   'grantConsumeAuditReceiptDigest',
   'issuedAt',
 ] as const;
+const RECEIPT_KEYS = [...LEGACY_RECEIPT_KEYS, 'evidenceWaivers'] as const;
 
 export type AuthorityApplicationReceiptPayload = {
   schemaVersion: 1;
@@ -64,6 +69,8 @@ export type AuthorityApplicationReceiptPayload = {
   grantEnvelopeDigest: `sha256:${string}`;
   candidateBundleDigest: string;
   effectsManifestDigest: string;
+  /** Absent only on historical receipts issued before named waivers. */
+  evidenceWaivers?: MaintainerEvidenceWaiver[];
   candidatePatchDigest: string;
   candidateCommit: string;
   candidateTree: string;
@@ -157,7 +164,8 @@ export function parseAuthorityApplicationReceiptEnvelope(
       !isRecord(value) ||
       !hasExactKeys(value, ['payload', 'signature']) ||
       !isRecord(value.payload) ||
-      !hasExactKeys(value.payload, RECEIPT_KEYS) ||
+      (!hasExactKeys(value.payload, RECEIPT_KEYS) &&
+        !hasExactKeys(value.payload, LEGACY_RECEIPT_KEYS)) ||
       typeof value.signature !== 'string'
     ) {
       throw new Error('invalid receipt envelope');
@@ -357,7 +365,8 @@ function validateAuthorityApplicationReceiptPayload(
 ): void {
   if (
     !isRecord(value) ||
-    !hasExactKeys(value, RECEIPT_KEYS) ||
+    (!hasExactKeys(value, RECEIPT_KEYS) &&
+      !hasExactKeys(value, LEGACY_RECEIPT_KEYS)) ||
     value.schemaVersion !== 1 ||
     value.kind !== 'authority-application-receipt.v1' ||
     !GRANT_ID.test(value.grantId) ||
@@ -369,6 +378,7 @@ function validateAuthorityApplicationReceiptPayload(
     !PREFIXED_DIGEST.test(value.grantEnvelopeDigest) ||
     !DIGEST.test(value.candidateBundleDigest) ||
     !DIGEST.test(value.effectsManifestDigest) ||
+    !validEvidenceWaivers(value.evidenceWaivers) ||
     !DIGEST.test(value.candidatePatchDigest) ||
     !OBJECT_ID.test(value.candidateCommit) ||
     !OBJECT_ID.test(value.candidateTree) ||
@@ -398,6 +408,16 @@ function validateAuthorityApplicationReceiptPayload(
     Date.parse(value.terminalConsumedAt) > Date.parse(value.issuedAt)
   ) {
     throw receiptInvalid();
+  }
+}
+
+function validEvidenceWaivers(value: unknown): boolean {
+  if (value === undefined) return true;
+  try {
+    parseMaintainerEvidenceWaivers(value);
+    return true;
+  } catch {
+    return false;
   }
 }
 

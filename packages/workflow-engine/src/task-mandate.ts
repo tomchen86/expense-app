@@ -21,7 +21,11 @@ import { canonicalJson } from './canonical-json.ts';
 import { isRecord } from './contract-values.ts';
 import { ExitCode, workflowError } from './errors.ts';
 import { ensurePlainDirectory } from './filesystem-safety.ts';
-import { discoverRepository, runGit } from './git.ts';
+import {
+  discoverRepository,
+  isPostApprovalAdmissionFailure,
+  runGit,
+} from './git.ts';
 import { parseMaintainerPolicy } from './maintainer-policy.ts';
 import {
   createInteractiveSshSigner,
@@ -1217,7 +1221,8 @@ function validateTaskMandateEnvelopeForRepository(
         ? TASK_MANDATE_SIGNATURE_NAMESPACE_V2
         : TASK_MANDATE_SIGNATURE_NAMESPACE,
     );
-  } catch {
+  } catch (error) {
+    if (isPostApprovalAdmissionFailure(error)) throw error;
     throw workflowError(
       'TASK_MANDATE_SIGNATURE_INVALID',
       'Task mandate signature is invalid for its dedicated domain.',
@@ -1670,7 +1675,8 @@ function parseTaskMandateRecord(raw: string): AnyTaskMandateRecord {
           !declaration ||
           !usage ||
           usage.invocations !== usage.reservations.length ||
-          usage.invocations > declaration.maxInvocations + grantedReservations ||
+          usage.invocations >
+            declaration.maxInvocations + grantedReservations ||
           (declaration.maxBudget !== null &&
             usage.budget > declaration.maxBudget)
         );
