@@ -258,3 +258,15 @@ API tests are destructive to their configured PostgreSQL database. Before any AP
 - Do not commit secrets; use environment variables defined in docs.
 - For local dev, stash secrets in `.env.local` (ignored) and document required keys in the PR.
 - Run `pnpm --filter api build` and targeted tests before pushing to avoid CI regressions.
+
+## Explicit human override for workflow-engine repair
+
+When the repository owner explicitly authorizes a named action, an agent may
+perform that exact action without workflow-engine authorization only when
+repairing or bootstrapping the workflow engine itself.
+
+The authorization must identify the exact scope, worktree or branch, and
+permitted Git operations. It does not authorize destructive operations,
+secret access, signer impersonation, force-pushing protected branches, or
+unrelated changes. The agent must preserve a recoverable snapshot and report
+the actions and verification results.
