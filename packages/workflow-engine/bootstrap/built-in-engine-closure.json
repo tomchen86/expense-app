@@ -31,7 +31,7 @@
     {
       "path": "src/archive-delta-verifier.ts",
       "mode": "100644",
-      "digest": "sha256:a0a3d16b77bd077511933dc24f0fc48648b1a279b9a554deed6fb8983e266c3d"
+      "digest": "sha256:e52fd9f40e97c811b1c11e1605cda594ffedaeece9e1259b553a6f156f75658f"
     },
     {
       "path": "src/archive-eligibility.ts",
@@ -51,7 +51,7 @@
     {
       "path": "src/archive-transformation.ts",
       "mode": "100644",
-      "digest": "sha256:e7272bb8261a5b55e8f2030aadee84ae4d35f68abee059308399ee5cc2ef88d8"
+      "digest": "sha256:8cf96f3fa3eaf04c1800c1547b7394d8d64356b55457e284aa4bfc50c716f0fb"
     },
     {
       "path": "src/archive-transition.ts",
@@ -166,7 +166,7 @@
     {
       "path": "src/ci-planning.ts",
       "mode": "100644",
-      "digest": "sha256:abe5f6d4ebd2630400afedb15939872ebe1109b8cdd057777646bea3047b1dfb"
+      "digest": "sha256:29ac805f246897a419289be22c12999497f11266d031cb59261b377027f67d60"
     },
     {
       "path": "src/ci-policy.ts",
@@ -521,7 +521,7 @@
     {
       "path": "src/investigation-session-store.ts",
       "mode": "100644",
-      "digest": "sha256:837391a6b02224f2129e4bf8d9c9d69780aaaab5cf36c49d9fb896377b5030a1"
+      "digest": "sha256:bce552703b0dbad03d1d1582ff3309cd219c03e91e99538c05f12e5a5772cae5"
     },
     {
       "path": "src/investigation-session.ts",
@@ -816,7 +816,7 @@
     {
       "path": "src/planning-transition.ts",
       "mode": "100644",
-      "digest": "sha256:b8c4a56d9125d460f9f84b78245175735e1c7282ad43cf5b5cb9c7a23906fd84"
+      "digest": "sha256:7bf85e02e0a44ea3a7685ec0a22f1bf8d2e79d47657df34df9635a1e5f40a985"
     },
     {
       "path": "src/predecessor-reconciliation.ts",
@@ -841,7 +841,7 @@
     {
       "path": "src/propose-orchestrator.ts",
       "mode": "100644",
-      "digest": "sha256:b67a2fcedab3ecaff8251aa8309be97cf3be4f17b8c08dcdf6b80bdf38b8276c"
+      "digest": "sha256:00730fc97d2e34df9f6e270c86bd7210949cd803023337e4d58064340977380a"
     },
     {
       "path": "src/protected-capabilities.ts",
