@@ -10,7 +10,10 @@ import {
   type LoadedLegacyAiAdapterPolicy,
 } from './ai-adapter-policy.ts';
 import { canonicalJson } from './canonical-json.ts';
-import { resolvePlanReviewInvocationOwner } from './evidence-object-store.ts';
+import {
+  resolvePlanReviewInvocationOwner,
+  resolveTaskDiffReviewInvocationOwner,
+} from './evidence-object-store.ts';
 import { ExitCode, workflowError } from './errors.ts';
 import {
   assertReadOnlyProbe,
@@ -973,6 +976,22 @@ function readProviderInvocationCore(
     }) !== record.investigationId
   ) {
     throw invocationInvalid();
+  }
+  if (manifest.kind === 'task-diff-review-manifest') {
+    const owner = resolveTaskDiffReviewInvocationOwner(paths, {
+      changeId: record.changeId,
+      sessionId: manifest.sessionId,
+      subject: manifest.subject,
+      assignment: request.roleAssignment,
+      authorizationNodeId: request.authorizationNodeId,
+    });
+    if (
+      owner.ownerInvestigationId !== record.investigationId ||
+      canonicalJson(owner.mandateBinding) !==
+        canonicalJson(record.mandateBinding ?? null)
+    ) {
+      throw invocationInvalid();
+    }
   }
   return deepFreeze(structuredClone(record));
 }

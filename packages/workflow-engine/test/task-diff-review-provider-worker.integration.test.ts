@@ -3,40 +3,43 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import test from 'node:test';
 
-import { loadAiAdapterPolicy } from '../src/ai-adapter-policy.ts';
 import { canonicalJson } from '../src/canonical-json.ts';
-import { createEvidenceNode } from '../src/evidence-node.ts';
-import { writeEvidenceNode } from '../src/evidence-object-store.ts';
 import { ExitCode, workflowError } from '../src/errors.ts';
 import { discoverRepository } from '../src/git.ts';
+import { renderHandoff } from '../src/handoff.ts';
+import { finalizeTask } from '../src/lifecycle.ts';
 import { investigationRuntimePaths } from '../src/paths.ts';
-import { createProviderInvocationRequest } from '../src/provider-contracts.ts';
+import { commitPlanningTransition } from '../src/planning-transition.ts';
 import {
-  createProviderInvocation,
-  providerInvocationManifestDigest,
   readProviderInvocation,
-  storeProviderExecutionPolicySnapshot,
-  type TaskDiffReviewManifest,
+  readProviderInvocationRequest,
 } from '../src/provider-invocation-store.ts';
 import { PROVIDER_RUNNER_RESIDUALS } from '../src/provider-runner.ts';
 import { readProviderAutomaticRetrySchedule } from '../src/provider-retry-scheduler.ts';
 import { runProviderWorker } from '../src/provider-worker.ts';
 import { listProviderWorkerMaintenanceWarnings } from '../src/provider-worker-maintenance.ts';
-import { scheduleOrdinaryRole } from '../src/role-scheduler.ts';
+import { startSession } from '../src/session.ts';
 import {
   TASK_DIFF_REVIEW_OUTPUT_SCHEMA,
   type TaskDiffReviewSubmission,
 } from '../src/task-diff-review-artifact.ts';
 import {
-  createTaskDiffReviewSubject,
-  TASK_DIFF_REVIEW_COVERAGE,
-} from '../src/task-diff-review.ts';
-import { createFixtureRepository } from './fixture.ts';
+  beginTaskDiffReview,
+  reconcileTaskDiffReview,
+} from '../src/task-diff-review-lifecycle.ts';
+import { TASK_DIFF_REVIEW_COVERAGE } from '../src/task-diff-review.ts';
+import {
+  configureChecks,
+  createFixtureRepository,
+  git as runFixtureGit,
+  sourceRepositoryRoot,
+  writeReadyV2ExemptChange,
+} from './fixture.ts';
 
 test('provider worker durably executes the code-owned TaskDiffReview contract without write authority', () => {
   const fixture = createTaskDiffWorkerFixture('success');
   try {
-    const submission = validSubmission(fixture.git.tree.length);
+    const submission = validSubmission(fixture.reviewedBlobObjectId);
     const result = runProviderWorker(fixture.repository, fixture.invocationId, {
       runner(input) {
         assert.equal(
@@ -86,6 +89,10 @@ test('provider worker durably executes the code-owned TaskDiffReview contract wi
         }),
       ),
     );
+    assert.equal(
+      reconcileTaskDiffReview(fixture.repository, fixture.sessionId).state,
+      'satisfied',
+    );
   } finally {
     fixture.dispose();
   }
@@ -129,135 +136,87 @@ test('TaskDiffReview provider failure cannot enter the legacy survey or plan-rev
 
 function createTaskDiffWorkerFixture(suffix: string) {
   const repository = createFixtureRepository();
+  const documentPolicyPath = `${repository}/workflow/document-policy.json`;
+  const documentPolicy = JSON.parse(
+    fs.readFileSync(documentPolicyPath, 'utf8'),
+  ) as { documents: Record<string, unknown> };
+  documentPolicy.documents['docs/CURRENT_AND_NEXT_STEPS.md'] = {
+    mode: 'generated',
+    enforcement: 'active',
+    transition: 'completion',
+  };
+  fs.writeFileSync(
+    documentPolicyPath,
+    `${JSON.stringify(documentPolicy, null, 2)}\n`,
+  );
+  fs.mkdirSync(`${repository}/docs`, { recursive: true });
+  renderHandoff(repository);
+  fs.copyFileSync(
+    `${sourceRepositoryRoot}/workflow/path-roles.json`,
+    `${repository}/workflow/path-roles.json`,
+  );
+  fs.copyFileSync(
+    `${sourceRepositoryRoot}/workflow/maintainer-policy.json`,
+    `${repository}/workflow/maintainer-policy.json`,
+  );
+  fs.writeFileSync(
+    `${repository}/scripts/task-diff-review-check.mjs`,
+    'process.exit(0);\n',
+  );
+  configureChecks(
+    repository,
+    {
+      reviewed: {
+        command: ['node', 'scripts/task-diff-review-check.mjs'],
+        destructiveDatabase: false,
+      },
+    },
+    ['reviewed'],
+  );
+  runFixtureGit(repository, ['checkout', '-b', 'work/demo-change']);
+  writeReadyV2ExemptChange(repository);
+  commitPlanningTransition(repository, 'demo-change');
+  const session = startSession(repository, 'demo-change', '1.1');
+  fs.writeFileSync(
+    `${repository}/src/feature.ts`,
+    `export const reviewed = ${JSON.stringify(suffix)};\n`,
+  );
+  assert.throws(
+    () =>
+      finalizeTask(repository, session.sessionId, process.env, {
+        testCrashAfter: 'checked',
+      }),
+    /Simulated finalize interruption/,
+  );
+  const prepared = beginTaskDiffReview(repository, session.sessionId, {
+    explicitActor: 'codex',
+    environment: {},
+  });
+  assert.equal(prepared.state, 'waiting-for-provider');
   const git = discoverRepository(repository);
   const runtime = investigationRuntimePaths(
     git.gitCommonDirectory,
     'workflow-engine',
   );
-  const subject = createTaskDiffReviewSubject({
-    repositoryId: 'github:tomchen86/fixture',
-    changeId: 'demo-change',
-    taskId: '1.1',
-    baseCommit: git.head,
-    baseTree: git.tree,
-    candidateTree: 'c'.repeat(git.tree.length),
-    transitions: [
-      {
-        path: 'src/a.ts',
-        before: { mode: '100644', objectId: 'd'.repeat(git.tree.length) },
-        after: { mode: '100644', objectId: 'e'.repeat(git.tree.length) },
-      },
-    ],
-    taskContractDigest: '1'.repeat(64),
-    requiredCheckPolicyDigest: '2'.repeat(64),
-    checkEvidenceDigest: '3'.repeat(64),
-    planningGenerationId: '4'.repeat(64),
-    planTargetDigest: '5'.repeat(64),
-    planReviewNodeId: '6'.repeat(64),
-    planningAssuranceDigest: '7'.repeat(64),
-    reviewRequirement: {
-      required: true,
-      basis: 'behavioral-strategy',
-      riskPaths: [],
-    },
-  });
-  const scheduled = scheduleOrdinaryRole({
-    role: 'task-diff-reviewer',
-    author: {
-      providerId: 'codex',
-      sessionId: 'implementation-session',
-      principalId: undefined,
-      identityAssurance: 'runtime-hint',
-      engineSpawned: false,
-    },
-    targetDigest: subject.subjectDigest,
-    candidates: [
-      {
-        providerId: 'claude',
-        sessionId: `provider-session-task-diff-review-${suffix}`,
-        enabled: true,
-        available: true,
-      },
-    ],
-  });
-  assert.equal(scheduled.outcome, 'assigned');
-  if (scheduled.outcome !== 'assigned') assert.fail('reviewer not assigned');
-  const assignment = scheduled.assignment;
-  const sessionId = `session-task-diff-review-${suffix}`;
-  const authorization = createEvidenceNode({
-    type: 'task-diff-review-authorization',
-    nodeSchema: 'workflow.task-diff-review-authorization.v1',
-    evaluator: 'workflow-finalize.v1',
-    policyDigest: '8'.repeat(64),
-    exactInputDigests: {
-      assignment: sha256(canonicalJson(assignment)),
-      subject: subject.subjectDigest,
-    },
-    semanticParentResultDigests: {},
-    provenanceParentNodeIds: {},
-    outputSchema: 'workflow.task-diff-review-authorization-output.v1',
-    output: { sessionId, subject, assignment },
-    runtimeMetadata: {},
-  });
-  writeEvidenceNode(runtime, authorization);
-  const manifest: TaskDiffReviewManifest = {
-    schemaVersion: 1,
-    kind: 'task-diff-review-manifest',
-    changeId: 'demo-change',
-    taskId: '1.1',
-    sessionId,
-    repositoryId: 'fixture',
-    repositoryIdentity: 'github:tomchen86/fixture',
-    baseCommit: git.head,
-    baseTree: git.tree,
-    subject,
-    capabilityProfile: 'repository-read-only',
-  };
-  const invocationId = `invocation-task-diff-review-${suffix}`;
-  const request = createProviderInvocationRequest({
-    invocationId,
-    nonce: `task-diff-review-${suffix}-nonce-0001`,
-    purpose: 'task-diff-review',
-    providerId: assignment.providerId,
-    roleAssignment: assignment,
-    capabilityProfile: 'repository-read-only',
-    repositoryId: 'fixture',
-    baseCommit: git.head,
-    baseTree: git.tree,
-    targetDigest: subject.subjectDigest,
-    inputManifestDigest: providerInvocationManifestDigest(manifest),
-    authorizationNodeId: authorization.nodeId,
-    writeAllowedPaths: [],
-    outputSchema: TASK_DIFF_REVIEW_OUTPUT_SCHEMA,
-    evaluatorVersion: 'task-diff-review.v1',
-    policyDigest: loadAiAdapterPolicy(repository).digest,
-    limits: { timeoutMs: 300_000, aggregateOutputBytes: 1_048_576 },
-  });
-  storeProviderExecutionPolicySnapshot(
-    runtime,
-    request,
-    loadAiAdapterPolicy(repository),
-  );
-  createProviderInvocation(runtime, {
-    investigationId: `investigation-task-diff-review-${suffix}`,
-    changeId: 'demo-change',
-    attempt: 1,
-    manifest,
-    request,
-  });
+  const reviewedBlobObjectId = prepared.subject.transitions.find(
+    ({ path: changedPath }) => changedPath === 'src/feature.ts',
+  )?.after?.objectId;
+  assert.ok(reviewedBlobObjectId);
   return {
     repository,
     git,
     runtime,
-    invocationId,
-    request,
+    invocationId: prepared.invocationId,
+    request: readProviderInvocationRequest(runtime, prepared.invocationId),
+    sessionId: session.sessionId,
+    reviewedBlobObjectId,
     dispose() {
       fs.rmSync(repository, { recursive: true, force: true });
     },
   };
 }
 
-function validSubmission(objectIdLength: number): TaskDiffReviewSubmission {
+function validSubmission(blobObjectId: string): TaskDiffReviewSubmission {
   return {
     schemaVersion: 1,
     verdict: 'advisory-approve',
@@ -267,9 +226,9 @@ function validSubmission(objectIdLength: number): TaskDiffReviewSubmission {
       evidence: [
         {
           kind: 'repository-location',
-          path: 'src/a.ts',
+          path: 'src/feature.ts',
           line: 1,
-          blobObjectId: 'e'.repeat(objectIdLength),
+          blobObjectId,
           observation: 'The exact candidate branch preserves the invariant.',
         },
       ],
