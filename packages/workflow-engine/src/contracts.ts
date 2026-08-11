@@ -21,6 +21,7 @@ import {
   readConvergenceBinding,
   readReuseProofBinding,
 } from './evidence-convergence.ts';
+import { validateTrackedEvidenceReusePaths } from './evidence-reuse-path.ts';
 import {
   assertChangeId,
   assertPolicyPathInsideRepository,
@@ -1082,6 +1083,11 @@ function parseEvidenceArtifactBundle(
       throw invalid();
     }
     currentRefs[role] = nodeId;
+  }
+  try {
+    validateTrackedEvidenceReusePaths(nodes, currentRefs);
+  } catch {
+    throw invalid();
   }
   return {
     schemaVersion: 1,

@@ -20,6 +20,7 @@ import {
   assertStoredEvidenceNode,
   type EvidenceNode,
 } from './evidence-node.ts';
+import { resolveTrackedEvidenceCurrentParents } from './evidence-reuse-path.ts';
 import {
   assertInvestigationApplicability,
   type InvestigationApplicability,
@@ -117,7 +118,11 @@ export function deriveInvestigationFirstPlanningSubject(
 
   const dependencies =
     applicability.kind === 'sealed-investigation'
-      ? investigationDependenciesForSeal(investigation.nodes, applicabilityNode)
+      ? investigationDependenciesForSeal(
+          investigation.nodes,
+          investigation.currentRefs,
+          applicabilityNode,
+        )
       : [
           {
             role: 'investigation-applicability',
@@ -547,14 +552,18 @@ function assertApplicabilityEvidence(
 
 function investigationDependenciesForSeal(
   nodes: EvidenceNode[],
+  currentRefs: Record<string, string>,
   seal: EvidenceNode,
 ): Array<{ role: string; nodeId: string; resultDigest: string }> {
-  const byId = new Map(nodes.map((node) => [node.nodeId, node]));
-  return Object.keys(seal.provenanceParentNodeIds)
+  const currentParents = resolveTrackedEvidenceCurrentParents(
+    nodes,
+    currentRefs,
+    seal,
+  );
+  return Object.keys(currentParents)
     .sort()
     .map((role) => {
-      const nodeId = seal.provenanceParentNodeIds[role]!;
-      const parent = byId.get(nodeId);
+      const parent = currentParents[role];
       if (
         !parent ||
         parent.resultDigest !== seal.semanticParentResultDigests[role]
@@ -563,7 +572,11 @@ function investigationDependenciesForSeal(
           'Sealed investigation dependencies are not a closed current set.',
         );
       }
-      return { role, nodeId, resultDigest: parent.resultDigest };
+      return {
+        role,
+        nodeId: parent.nodeId,
+        resultDigest: parent.resultDigest,
+      };
     });
 }
 

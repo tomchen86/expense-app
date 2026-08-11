@@ -36,6 +36,7 @@
       "packages/workflow-engine/src/database-policy.ts",
       "packages/workflow-engine/src/engine-metrics.ts",
       "packages/workflow-engine/src/evidence-object-store.ts",
+      "packages/workflow-engine/src/evidence-reuse-path.ts",
       "packages/workflow-engine/src/execution-environment.ts",
       "packages/workflow-engine/src/execution-governance.ts",
       "packages/workflow-engine/src/execution-grant-cli.ts",

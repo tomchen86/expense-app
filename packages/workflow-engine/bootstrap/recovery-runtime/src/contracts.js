@@ -9,6 +9,7 @@ import { isRecord, isStringArray } from './contract-values.js';
 import { assertStoredEvidenceNode, } from './evidence-node.js';
 import { validateClosedEvidenceDag } from './evidence-currentness.js';
 import { createConvergenceRecord, createDescendantReuseProof, readConvergenceBinding, readReuseProofBinding, } from './evidence-convergence.js';
+import { validateTrackedEvidenceReusePaths } from './evidence-reuse-path.js';
 import { assertChangeId, assertPolicyPathInsideRepository, assertTaskId, matchesAllowedPath, normalizePolicyPath, } from './paths.js';
 const CHECK_ID_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 export function isPlanningAssuranceBinding(value) {
@@ -601,6 +602,12 @@ function parseEvidenceArtifactBundle(value, expectedChangeId, expectedKind, erro
             throw invalid();
         }
         currentRefs[role] = nodeId;
+    }
+    try {
+        validateTrackedEvidenceReusePaths(nodes, currentRefs);
+    }
+    catch {
+        throw invalid();
     }
     return {
         schemaVersion: 1,
