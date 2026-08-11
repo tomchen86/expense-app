@@ -216,7 +216,7 @@
     {
       "path": "src/cli.ts",
       "mode": "100644",
-      "digest": "sha256:5a7e5b4735a87423b646c63f44dfe6c7eb8a32a1c467fd2b973fd0d0d2063e37"
+      "digest": "sha256:1dcd071b2cf9c82213a2be6baa790a8d45802dbc7c37faaf0c34e44bfcb475ce"
     },
     {
       "path": "src/codex-provider-adapter.ts",
@@ -404,9 +404,14 @@
       "digest": "sha256:53c50ab8c3191658552c0237b4a6f5cf7f0001ee6e9c58c5c85f4ebb97100445"
     },
     {
+      "path": "src/finalize-cancellation.ts",
+      "mode": "100644",
+      "digest": "sha256:127a0c1beb440963ad29eca3dd0ebe3bc10fe51880c8ec26de9329d2b241e2a6"
+    },
+    {
       "path": "src/finalize-transaction.ts",
       "mode": "100644",
-      "digest": "sha256:41e99662462a5607330acfe39cb0e90c93c7ac7e56803bf8edf59a13c1f43cd8"
+      "digest": "sha256:a2070264d2db9c36d99dbf4648d48fb177600c6fe38ced8868096a16e4b16ed1"
     },
     {
       "path": "src/floor-overflow-pruning.ts",
@@ -591,7 +596,7 @@
     {
       "path": "src/lifecycle.ts",
       "mode": "100644",
-      "digest": "sha256:1db39b98ed2dec0b39826320b0396b46a0ef9c52d2ef73a7ffdad22b7f239af3"
+      "digest": "sha256:9f7886cd84fb861a428145254f8c911d48ff6f0fda169baac6052b15512367b8"
     },
     {
       "path": "src/maintainer-approve.ts",
@@ -861,7 +866,7 @@
     {
       "path": "src/projected-finalization.ts",
       "mode": "100644",
-      "digest": "sha256:d7b0d4d335f5c468c2e247830f72227de9242b0d95203c68e085ad1a9a77b6f6"
+      "digest": "sha256:b7d84c5b065be30ee1e2868c2baea01dbc397523fbcf9f7620502e49373f278b"
     },
     {
       "path": "src/propose-exemption-store.ts",

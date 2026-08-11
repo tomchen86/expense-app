@@ -14,6 +14,15 @@ import { digestRequiredCheckDefinitions } from './contract-digests.ts';
 import { ExitCode, workflowError } from './errors.ts';
 import { classifyProjectionPaths } from './engine-projection-registry.ts';
 import {
+  completeFinalizeCancellation,
+  createFinalizeCancellation,
+  MAX_FINALIZE_CANCELLATION_REASON_BYTES,
+  markFinalizeProjectionRestored,
+  publishFinalizeCancellation,
+  readFinalizeCancellation,
+  type FinalizeCancellation,
+} from './finalize-cancellation.ts';
+import {
   commitFacts,
   createManagedCommitObject,
   findExactTaskCommits,
@@ -33,12 +42,14 @@ import {
 } from './lifecycle-context.ts';
 import { reconcilePredecessor } from './predecessor-reconciliation.ts';
 import {
+  removeFinalizeTransaction,
   readFinalizeTransaction,
   type FinalizeTransaction,
 } from './finalize-transaction.ts';
 import {
   finalizeTaskUnlocked,
   PROJECTED_SINGLE_PASS_ASSURANCE,
+  restoreFinalizeTransactionProjection,
   type FinalizeTaskOptions,
   type FinalizeTaskResult,
 } from './projected-finalization.ts';
@@ -118,6 +129,158 @@ export type FinalizeSessionResult = Omit<FinalizeTaskResult, 'session'> & {
 export type FinalizeSessionOptions = Readonly<{
   testCrashAfter?: FinalizeTaskOptions['testCrashAfter'] | 'finalized';
 }>;
+
+export type FinalizeRecoveryStatus = Readonly<{
+  state: 'in-progress' | 'recovery-required' | 'completed';
+  transactionId: string;
+  phase: FinalizeTransaction['phase'];
+  retrySafe: boolean;
+  recoveryCommand: string;
+}>;
+
+export type FinalizeCancellationResult = Readonly<{
+  state: 'cancelled';
+  sessionId: string;
+  transactionId: string;
+  reason: string;
+  cancelledAt: string;
+}>;
+
+export type FinalizeCancellationOptions = Readonly<{
+  testCrashAfter?:
+    'cancellation-requested' | 'projection-restored' | 'cancellation-completed';
+}>;
+
+export function cancelFinalizeRecovery(
+  cwd: string,
+  requestedSessionId: string,
+  transactionId: string,
+  reason: string,
+  options: FinalizeCancellationOptions = {},
+): FinalizeCancellationResult {
+  assertFinalizeCancellationReason(reason);
+  return runSessionOperation(cwd, requestedSessionId, () => {
+    const session = getSession(cwd, requestedSessionId);
+    const git = discoverRepository(cwd);
+    const config = loadWorkflowConfig(git.repositoryRoot);
+    const runtime = runtimePaths(
+      git.gitCommonDirectory,
+      config.runtimeDirectory,
+    );
+    const archived = readFinalizeCancellation(runtime.root, transactionId);
+    if (archived?.phase === 'completed') {
+      assertCancellationRequest(archived, session, git, transactionId, reason);
+      removeCancelledActiveTransaction(runtime.root, archived);
+      return cancellationResult(archived);
+    }
+    const transaction = readFinalizeTransaction(
+      runtime.root,
+      session.sessionId,
+    );
+    if (
+      transaction === null ||
+      transaction.transactionId !== transactionId ||
+      transaction.phase !== 'checks-running'
+    ) {
+      throw invalidFinalizeCancellation(
+        'The requested ambiguous finalize transaction is not active.',
+      );
+    }
+    assertFinalizeTransactionMatchesSession(transaction, session, git);
+    let cancellation = archived;
+    if (cancellation === null) {
+      cancellation = publishFinalizeCancellation(
+        runtime.root,
+        createFinalizeCancellation(
+          transaction,
+          reason,
+          new Date().toISOString(),
+        ),
+      );
+      maybeInterruptFinalizeCancellation(options, 'cancellation-requested');
+    } else {
+      assertCancellationRequest(
+        cancellation,
+        session,
+        git,
+        transactionId,
+        reason,
+      );
+    }
+    if (cancellation.phase === 'requested') {
+      restoreFinalizeTransactionProjection(cwd, transaction, cancellation);
+      cancellation = markFinalizeProjectionRestored(runtime.root, cancellation);
+      maybeInterruptFinalizeCancellation(options, 'projection-restored');
+    }
+    if (cancellation.phase === 'projection-restored') {
+      cancellation = completeFinalizeCancellation(
+        runtime.root,
+        cancellation,
+        new Date().toISOString(),
+      );
+      maybeInterruptFinalizeCancellation(options, 'cancellation-completed');
+    }
+    removeCancelledActiveTransaction(runtime.root, cancellation);
+    return cancellationResult(cancellation);
+  });
+}
+
+export function inspectFinalizeRecoveryStatus(
+  cwd: string,
+  requestedSessionId: string,
+): FinalizeRecoveryStatus | null {
+  const session = getSession(cwd, requestedSessionId);
+  const git = discoverRepository(cwd);
+  const config = loadWorkflowConfig(git.repositoryRoot);
+  const runtime = runtimePaths(git.gitCommonDirectory, config.runtimeDirectory);
+  const transaction = readFinalizeTransaction(runtime.root, session.sessionId);
+  if (transaction === null) return null;
+  assertFinalizeTransactionMatchesSession(transaction, session, git);
+  if (transaction.phase === 'checks-running') {
+    return {
+      state: 'recovery-required',
+      transactionId: transaction.transactionId,
+      phase: transaction.phase,
+      retrySafe: false,
+      recoveryCommand:
+        `pnpm workflow finalize-recover ${session.sessionId} ` +
+        `--cancel ${transaction.transactionId} --reason <text> --json`,
+    };
+  }
+  return {
+    state: transaction.phase === 'completed' ? 'completed' : 'in-progress',
+    transactionId: transaction.transactionId,
+    phase: transaction.phase,
+    retrySafe: true,
+    recoveryCommand: `pnpm workflow finalize-recover ${session.sessionId} --json`,
+  };
+}
+
+export function recoverFinalize(
+  cwd: string,
+  requestedSessionId: string,
+  environment: NodeJS.ProcessEnv = process.env,
+): FinalizeTaskResult {
+  return runSessionOperation(cwd, requestedSessionId, () => {
+    const session = getSession(cwd, requestedSessionId);
+    const git = discoverRepository(cwd);
+    const config = loadWorkflowConfig(git.repositoryRoot);
+    const runtime = runtimePaths(
+      git.gitCommonDirectory,
+      config.runtimeDirectory,
+    );
+    if (readFinalizeTransaction(runtime.root, session.sessionId) === null) {
+      throw workflowError(
+        'FINALIZE_TRANSACTION_NOT_FOUND',
+        'No durable finalize transaction exists for this session.',
+        ExitCode.staleState,
+      );
+    }
+    return session.state === 'committed'
+      ? replayCompletedFinalize(cwd, session)
+      : finalizeTaskUnlocked(cwd, requestedSessionId, environment);
+  });
+}
 
 export function finalizeSession(
   cwd: string,
@@ -890,20 +1053,118 @@ function replayCompletedFinalize(
   if (
     transaction === null ||
     !isCompletedFinalizeTransaction(transaction) ||
-    transaction.repositoryRoot !== git.repositoryRealPath ||
-    transaction.gitCommonDirectory !== git.gitCommonDirectory ||
-    transaction.sessionId !== session.sessionId ||
-    transaction.changeId !== session.changeId ||
-    transaction.taskId !== session.taskId ||
-    transaction.branch !== session.branch ||
-    JSON.stringify(transaction.baseline) !== JSON.stringify(session.baseline) ||
     transaction.checkReportId !== session.latestCheckReportId ||
     transaction.completionReportId !== session.completionReportId ||
     transaction.finishReportId !== session.finishReportId
   ) {
     throw invalidCompletedFinalize();
   }
+  assertFinalizeTransactionMatchesSession(transaction, session, git);
   return finalizeResultFromTransaction(transaction, session);
+}
+
+function assertFinalizeTransactionMatchesSession(
+  transaction: FinalizeTransaction,
+  session: WorkflowSession,
+  git: ReturnType<typeof discoverRepository>,
+): void {
+  if (
+    transaction.repositoryRoot !== git.repositoryRealPath ||
+    transaction.gitCommonDirectory !== git.gitCommonDirectory ||
+    transaction.sessionId !== session.sessionId ||
+    transaction.changeId !== session.changeId ||
+    transaction.taskId !== session.taskId ||
+    transaction.branch !== session.branch ||
+    JSON.stringify(transaction.baseline) !== JSON.stringify(session.baseline)
+  ) {
+    throw invalidCompletedFinalize();
+  }
+}
+
+function assertFinalizeCancellationReason(reason: string): void {
+  if (
+    reason.length === 0 ||
+    reason.trim() !== reason ||
+    Buffer.byteLength(reason) > MAX_FINALIZE_CANCELLATION_REASON_BYTES ||
+    /\p{Cc}/u.test(reason)
+  ) {
+    throw workflowError(
+      'FINALIZE_CANCELLATION_REASON_INVALID',
+      `Finalize cancellation requires one trimmed reason of at most ${MAX_FINALIZE_CANCELLATION_REASON_BYTES} bytes without control characters.`,
+      ExitCode.usage,
+    );
+  }
+}
+
+function assertCancellationRequest(
+  cancellation: FinalizeCancellation,
+  session: WorkflowSession,
+  git: ReturnType<typeof discoverRepository>,
+  transactionId: string,
+  reason: string,
+): void {
+  assertFinalizeTransactionMatchesSession(
+    cancellation.transaction,
+    session,
+    git,
+  );
+  if (
+    cancellation.sessionId !== session.sessionId ||
+    cancellation.transactionId !== transactionId ||
+    cancellation.reason !== reason
+  ) {
+    throw invalidFinalizeCancellation(
+      'Finalize cancellation does not match the exact transaction and reason.',
+    );
+  }
+}
+
+function removeCancelledActiveTransaction(
+  runtimeRoot: string,
+  cancellation: FinalizeCancellation,
+): void {
+  const active = readFinalizeTransaction(
+    runtimeRoot,
+    cancellation.transaction.sessionId,
+  );
+  if (active === null) return;
+  if (JSON.stringify(active) === JSON.stringify(cancellation.transaction)) {
+    removeFinalizeTransaction(runtimeRoot, active);
+  }
+}
+
+function cancellationResult(
+  cancellation: FinalizeCancellation,
+): FinalizeCancellationResult {
+  if (cancellation.phase !== 'completed' || cancellation.cancelledAt === null) {
+    throw invalidFinalizeCancellation(
+      'Finalize cancellation is not durably completed.',
+    );
+  }
+  return {
+    state: 'cancelled',
+    sessionId: cancellation.sessionId,
+    transactionId: cancellation.transactionId,
+    reason: cancellation.reason,
+    cancelledAt: cancellation.cancelledAt,
+  };
+}
+
+function maybeInterruptFinalizeCancellation(
+  options: FinalizeCancellationOptions,
+  phase: FinalizeCancellationOptions['testCrashAfter'],
+): void {
+  if (options.testCrashAfter === phase) {
+    throw new Error(`Simulated finalize cancellation after ${String(phase)}.`);
+  }
+}
+
+function invalidFinalizeCancellation(message: string) {
+  return workflowError(
+    'FINALIZE_CANCELLATION_INVALID',
+    message,
+    ExitCode.staleState,
+  );
 }
 
 function isCompletedFinalizeTransaction(

@@ -287,7 +287,7 @@ function finalizeTransactionDirectory(runtimeRoot: string): string {
   return path.join(runtimeRoot, 'finalize-transactions');
 }
 
-function parseFinalizeTransaction(value: unknown): FinalizeTransaction {
+export function parseFinalizeTransaction(value: unknown): FinalizeTransaction {
   if (!isRecord(value)) throw malformed();
   const keys = [
     'baseline',
