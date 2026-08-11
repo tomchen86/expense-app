@@ -1076,7 +1076,7 @@
     {
       "path": "src/task-diff-review-artifact.ts",
       "mode": "100644",
-      "digest": "sha256:ec1204278d7486639d56a24629c1e629ee2ba7c83e1cfbb59ba5380bf1f19d27"
+      "digest": "sha256:f621b03bb7161421b43b54c19751bf656d5bf2cc2b1f41b03f2501c15799132f"
     },
     {
       "path": "src/task-diff-review-lifecycle.ts",

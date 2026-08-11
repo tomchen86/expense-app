@@ -27,6 +27,15 @@ const SEVERITIES = new Set([
 const CATEGORIES = new Set<string>(TASK_DIFF_REVIEW_COVERAGE);
 const DISPOSITIONS = new Set(['accepted', 'rebutted', 'withdrawn']);
 
+const TASK_DIFF_REVIEW_OUTPUT_SCHEMA_ID =
+  'expense-app.workflow.task-diff-review-output';
+
+export const TASK_DIFF_REVIEW_LIMITS = Object.freeze({
+  maxTextBytes: MAX_TEXT_BYTES,
+  maxFindings: MAX_FINDINGS,
+  maxEvidence: MAX_EVIDENCE,
+});
+
 export type TaskDiffReviewVerdict = 'advisory-approve' | 'advisory-reject';
 export type TaskDiffReviewSeverity =
   'critical' | 'high' | 'medium' | 'low' | 'informational';
@@ -85,6 +94,193 @@ export type TaskDiffReviewSubmission = Readonly<{
   residualRisk: string;
   uncertainty: string;
 }>;
+
+/**
+ * Code-owned provider-facing grammar for one exact-diff review submission.
+ * The JSON schema gives provider CLIs the structural contract; the bound
+ * validator below additionally enforces canonical coverage, exact evidence
+ * forms, duplicate rejection, byte ceilings, and challenge/scope agreement.
+ */
+export const TASK_DIFF_REVIEW_PROVIDER_OUTPUT_SCHEMA = Object.freeze({
+  type: 'object',
+  additionalProperties: false,
+  required: [
+    'schemaVersion',
+    'verdict',
+    'coverage',
+    'scopeAssessment',
+    'findings',
+    'suggestions',
+    'residualRisk',
+    'uncertainty',
+  ],
+  properties: {
+    schemaVersion: { type: 'integer', const: 1 },
+    verdict: { enum: [...VERDICTS] },
+    coverage: {
+      type: 'array',
+      minItems: TASK_DIFF_REVIEW_COVERAGE.length,
+      maxItems: TASK_DIFF_REVIEW_COVERAGE.length,
+      items: { enum: [...TASK_DIFF_REVIEW_COVERAGE] },
+    },
+    scopeAssessment: {
+      anyOf: [
+        {
+          type: 'object',
+          additionalProperties: false,
+          required: ['kind'],
+          properties: { kind: { type: 'string', const: 'challenges' } },
+        },
+        {
+          type: 'object',
+          additionalProperties: false,
+          required: ['kind', 'evidence'],
+          properties: {
+            kind: { type: 'string', const: 'no-challenge' },
+            evidence: {
+              type: 'array',
+              minItems: 1,
+              maxItems: MAX_EVIDENCE,
+              items: { $ref: '#/$defs/evidence' },
+            },
+          },
+        },
+      ],
+    },
+    findings: {
+      type: 'array',
+      maxItems: MAX_FINDINGS,
+      items: { $ref: '#/$defs/challenge' },
+    },
+    suggestions: {
+      type: 'array',
+      maxItems: MAX_FINDINGS,
+      items: { $ref: '#/$defs/suggestion' },
+    },
+    residualRisk: { type: 'string', minLength: 1 },
+    uncertainty: { type: 'string', minLength: 1 },
+  },
+  $defs: {
+    evidence: {
+      anyOf: [
+        {
+          type: 'object',
+          additionalProperties: false,
+          required: ['kind', 'path', 'line', 'blobObjectId', 'observation'],
+          properties: {
+            kind: { type: 'string', const: 'repository-location' },
+            path: { type: 'string', minLength: 1 },
+            line: { type: 'integer', minimum: 1 },
+            blobObjectId: {
+              type: 'string',
+              pattern: '^(?:[0-9a-f]{40}|[0-9a-f]{64})$',
+            },
+            observation: { type: 'string', minLength: 1 },
+          },
+        },
+        {
+          type: 'object',
+          additionalProperties: false,
+          required: ['kind', 'reportId', 'checkId', 'observation'],
+          properties: {
+            kind: { type: 'string', const: 'check-report' },
+            reportId: { type: 'string', pattern: '^[0-9a-f]{64}$' },
+            checkId: { type: 'string', minLength: 1 },
+            observation: { type: 'string', minLength: 1 },
+          },
+        },
+        {
+          type: 'object',
+          additionalProperties: false,
+          required: ['kind', 'nodeId', 'resultDigest', 'observation'],
+          properties: {
+            kind: { type: 'string', const: 'planning-node' },
+            nodeId: { type: 'string', pattern: '^[0-9a-f]{64}$' },
+            resultDigest: { type: 'string', pattern: '^[0-9a-f]{64}$' },
+            observation: { type: 'string', minLength: 1 },
+          },
+        },
+      ],
+    },
+    challenge: {
+      type: 'object',
+      additionalProperties: false,
+      required: [
+        'kind',
+        'severity',
+        'category',
+        'currentChangeImpact',
+        'summary',
+        'evidence',
+      ],
+      properties: {
+        kind: { type: 'string', const: 'challenge' },
+        severity: { enum: [...SEVERITIES] },
+        category: { enum: [...TASK_DIFF_REVIEW_COVERAGE] },
+        currentChangeImpact: { type: 'string', const: 'required' },
+        summary: { type: 'string', minLength: 1 },
+        evidence: {
+          type: 'array',
+          minItems: 1,
+          maxItems: MAX_EVIDENCE,
+          items: { $ref: '#/$defs/evidence' },
+        },
+      },
+    },
+    suggestion: {
+      type: 'object',
+      additionalProperties: false,
+      required: [
+        'kind',
+        'severity',
+        'category',
+        'currentChangeImpact',
+        'summary',
+        'evidence',
+      ],
+      properties: {
+        kind: { type: 'string', const: 'suggestion' },
+        severity: { enum: [...SEVERITIES] },
+        category: { enum: [...TASK_DIFF_REVIEW_COVERAGE] },
+        currentChangeImpact: {
+          type: 'string',
+          const: 'independent-follow-up',
+        },
+        summary: { type: 'string', minLength: 1 },
+        evidence: {
+          type: 'array',
+          minItems: 1,
+          maxItems: MAX_EVIDENCE,
+          items: { $ref: '#/$defs/evidence' },
+        },
+      },
+    },
+  },
+});
+
+const TASK_DIFF_REVIEW_OUTPUT_SCHEMA_DIGEST = sha256(
+  canonicalJson(TASK_DIFF_REVIEW_PROVIDER_OUTPUT_SCHEMA),
+);
+
+export const TASK_DIFF_REVIEW_OUTPUT_SCHEMA = Object.freeze({
+  id: TASK_DIFF_REVIEW_OUTPUT_SCHEMA_ID,
+  version: 1,
+  digest: TASK_DIFF_REVIEW_OUTPUT_SCHEMA_DIGEST,
+});
+
+export const TASK_DIFF_REVIEW_OUTPUT_VALIDATOR = Object.freeze({
+  id: TASK_DIFF_REVIEW_OUTPUT_SCHEMA_ID,
+  version: 1,
+  digest: TASK_DIFF_REVIEW_OUTPUT_SCHEMA_DIGEST,
+  validate(value: unknown): boolean {
+    try {
+      parseTaskDiffReviewSubmission(value);
+      return true;
+    } catch {
+      return false;
+    }
+  },
+});
 
 export type TaskDiffReviewAssignment = Readonly<{
   implementerPrincipalId: string;
@@ -375,6 +571,26 @@ function normalizeSubmission(
   value: TaskDiffReviewSubmission,
   assignment: TaskDiffReviewAssignment,
 ) {
+  const submission = parseTaskDiffReviewSubmission(value);
+  const challenges = normalizeSubmittedFindings(
+    submission.findings,
+    assignment.reviewerPrincipalId,
+  );
+  const suggestions = normalizeSubmittedSuggestions(submission.suggestions);
+  return {
+    verdict: submission.verdict,
+    scopeAssessment: submission.scopeAssessment,
+    challenges,
+    suggestions,
+    residualRisk: submission.residualRisk,
+    uncertainty: submission.uncertainty,
+  };
+}
+
+/** Strictly parse and canonically normalize provider semantic output. */
+export function parseTaskDiffReviewSubmission(
+  value: unknown,
+): TaskDiffReviewSubmission {
   if (
     !isRecord(value) ||
     !hasExactKeys(value, [
@@ -392,23 +608,37 @@ function normalizeSubmission(
     throw recordInvalid();
   }
   const verdict = parseVerdict(value.verdict);
-  parseCoverage(value.coverage);
-  const challenges = normalizeSubmittedFindings(
-    value.findings,
-    assignment.reviewerPrincipalId,
+  const coverage = parseCoverage(value.coverage);
+  if (!Array.isArray(value.findings) || value.findings.length > MAX_FINDINGS) {
+    throw recordInvalid();
+  }
+  if (
+    !Array.isArray(value.suggestions) ||
+    value.suggestions.length > MAX_FINDINGS
+  ) {
+    throw recordInvalid();
+  }
+  const findings = value.findings.map((entry) =>
+    parseFinding(entry, 'challenge'),
   );
-  const suggestions = normalizeSubmittedSuggestions(value.suggestions);
-  return {
+  const suggestions = value.suggestions.map((entry) =>
+    parseFinding(entry, 'suggestion'),
+  );
+  canonicalValues(findings);
+  canonicalValues(suggestions);
+  return deepFreeze({
+    schemaVersion: 1,
     verdict,
+    coverage,
     scopeAssessment: parseScopeAssessment(
       value.scopeAssessment,
-      challenges.length,
+      findings.length,
     ),
-    challenges,
+    findings,
     suggestions,
     residualRisk: boundedText(value.residualRisk),
     uncertainty: boundedText(value.uncertainty),
-  };
+  });
 }
 
 function parseAssignment(value: unknown): TaskDiffReviewAssignment {
@@ -810,6 +1040,20 @@ function canonicalObjects<T extends Record<K, string>, K extends keyof T>(
     throw recordInvalid();
   }
   return Object.freeze(value);
+}
+
+function canonicalValues<T>(value: T[]): void {
+  value.sort((left, right) =>
+    canonicalJson(left).localeCompare(canonicalJson(right)),
+  );
+  if (
+    value.some(
+      (entry, index) =>
+        index > 0 && canonicalJson(entry) === canonicalJson(value[index - 1]),
+    )
+  ) {
+    throw recordInvalid();
+  }
 }
 
 function withoutRecordDigest(
