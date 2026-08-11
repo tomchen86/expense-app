@@ -7,9 +7,16 @@ import {
   type CollaborationGrantExpectedBinding,
   type CollaborationGrantRequest,
 } from './collaboration-grant.ts';
-import { reserveCollaborationGrantUnderLifecycleLock } from './collaboration-grant-store.ts';
+import {
+  consumeCollaborationGrantUnderLifecycleLock,
+  reserveCollaborationGrantUnderLifecycleLock,
+  type CollaborationGrantUseProjection,
+} from './collaboration-grant-store.ts';
 import { createEvidenceNode } from './evidence-node.ts';
-import { writeEvidenceNode } from './evidence-object-store.ts';
+import {
+  readEvidenceNode,
+  writeEvidenceNode,
+} from './evidence-object-store.ts';
 import { ExitCode, workflowError } from './errors.ts';
 import { previewExactStaging } from './git-transitions.ts';
 import { runGit } from './git.ts';
@@ -18,7 +25,10 @@ import {
   loadInvestigationRuntimeContext,
 } from './lifecycle-context.ts';
 import { parseMaintainerPolicy } from './maintainer-policy.ts';
-import type { MaintainerSignerProvider } from './maintainer-signer.ts';
+import {
+  createInteractiveSshSigner,
+  type MaintainerSignerProvider,
+} from './maintainer-signer.ts';
 import { createProviderInvocationRequest } from './provider-contracts.ts';
 import {
   createProviderInvocation,
@@ -31,8 +41,10 @@ import {
 } from './provider-invocation-store.ts';
 import type { ProviderId } from './provider-registry.ts';
 import {
+  admitRoleResult,
   authorizeGrantedOrdinaryRole,
   scheduleOrdinaryRole,
+  type AdmittedRoleResult,
   type GrantedSameProviderRoleAssignment,
   type ProviderRoleAssignment,
   type RoleParticipant,
@@ -44,15 +56,30 @@ import {
 import {
   TASK_STRATEGY_IMPLEMENTATION_OUTPUT_SCHEMA,
   TASK_STRATEGY_IMPLEMENTATION_POLICY_DIGEST,
+  assertTaskStrategyImplementationOutput,
   createTaskStrategyImplementationManifest,
   createTaskStrategyImplementationSubject,
+  type TaskStrategyImplementationOutput,
   type TaskStrategyImplementationSubject,
 } from './task-strategy-provider-contract.ts';
 import {
+  createTaskStrategyImplementationResultBinding,
   createTaskStrategyImplementationReservation,
+  readTaskStrategyImplementationResultBinding,
   readTaskStrategyImplementationReservation,
+  type TaskStrategyImplementationResultBinding,
   type TaskStrategyImplementationReservation,
 } from './task-strategy-provider-store.ts';
+import {
+  importTaskStrategyProviderPatchUnderLifecycleLock,
+  validateTaskStrategyProviderPatch,
+} from './task-strategy-patch.ts';
+import {
+  readTaskStrategyPatchCurrentBinding,
+  readTaskStrategyPatchImportReceipt,
+  readTaskStrategyPatchRecord,
+  readTaskStrategyPatchReservation,
+} from './task-strategy-patch-store.ts';
 import { readTaskStrategyTransaction } from './task-strategy-store.ts';
 import {
   authorizeTaskMandateProviderReservationUnderLifecycleLock,
@@ -66,6 +93,7 @@ export type BeginTaskStrategyImplementationOptions = Readonly<{
     now?: Date;
     verifier?: MaintainerSignerProvider;
   }>;
+  testCrashAfter?: 'provider-result-persisted';
 }>;
 
 type TaskStrategyRedAuthor = Readonly<{
@@ -107,6 +135,7 @@ export type TaskStrategyImplementationStatus =
       state:
         | 'waiting-for-provider'
         | 'provider-succeeded-awaiting-import'
+        | 'patch-imported'
         | 'provider-failed';
       sessionId: string;
       subject: TaskStrategyImplementationSubject;
@@ -161,7 +190,18 @@ export function beginTaskStrategyImplementation(
       assertReservationCurrent(context, transaction, subject, created);
       ensureProviderInvocation(context, runtime, created, assertOwned);
       assertOwned();
-      return renderStatus(runtime, created);
+      const status = renderStatus(runtime, created);
+      return status.state === 'provider-succeeded-awaiting-import'
+        ? reconcileProviderImplementationResult(
+            cwd,
+            context,
+            runtime,
+            transaction,
+            created,
+            options,
+            assertOwned,
+          )
+        : status;
     }),
   );
 }
@@ -546,6 +586,444 @@ function ensureProviderInvocation(
   assertOwned();
 }
 
+function reconcileProviderImplementationResult(
+  cwd: string,
+  context: ReturnType<typeof loadActiveSessionContext>,
+  runtime: ReturnType<typeof loadInvestigationRuntimeContext>['runtime'],
+  transaction: NonNullable<ReturnType<typeof readTaskStrategyTransaction>>,
+  reservation: TaskStrategyImplementationReservation,
+  options: BeginTaskStrategyImplementationOptions,
+  assertOwned: () => void,
+): TaskStrategyImplementationStatus {
+  const invocation = readProviderInvocation(
+    runtime,
+    reservation.request.invocationId,
+  );
+  if (invocation.state !== 'succeeded' || invocation.result === null) {
+    return renderStatus(runtime, reservation);
+  }
+  if (invocation.result.runtimeObservation === null) {
+    throw workflowError(
+      'TASK_STRATEGY_IMPLEMENTATION_PROVIDER_OBSERVATION_REQUIRED',
+      'Task implementation import requires a fixed-runner repository observation.',
+      ExitCode.verification,
+    );
+  }
+  const output = assertTaskStrategyImplementationOutput(
+    invocation.result.output,
+  );
+  if (
+    output.sessionId !== context.session.sessionId ||
+    output.sourceTree !== transaction.red.candidateTree
+  ) {
+    throw implementationResultStale();
+  }
+  validateTaskStrategyProviderPatch(cwd, context.session.sessionId, {
+    patch: Buffer.from(output.patchBase64, 'base64'),
+    implementationReservationDigest: reservation.recordDigest,
+  });
+
+  let binding = readTaskStrategyImplementationResultBinding(
+    runtime,
+    context.session.sessionId,
+  );
+  if (binding === null) {
+    const authorization = readEvidenceNode(
+      runtime,
+      reservation.authorizationNodeId,
+    );
+    const requestReservation = readEvidenceNode(
+      runtime,
+      reservation.reservationNodeId,
+    );
+    const observationNode = createEvidenceNode({
+      type: 'task-strategy-implementation-provider-observation',
+      nodeSchema:
+        'workflow.task-strategy-implementation-provider-observation.v1',
+      evaluator: 'workflow-task-strategy.v1',
+      policyDigest: TASK_STRATEGY_IMPLEMENTATION_POLICY_DIGEST,
+      exactInputDigests: {
+        output: invocation.result.outputDigest,
+        request: reservation.request.requestDigest,
+        runtimeObservation: sha256(
+          canonicalJson(invocation.result.runtimeObservation),
+        ),
+        subject: reservation.subject.subjectDigest,
+      },
+      semanticParentResultDigests: {
+        authorization: authorization.resultDigest,
+        reservation: requestReservation.resultDigest,
+      },
+      provenanceParentNodeIds: {
+        authorization: authorization.nodeId,
+        reservation: requestReservation.nodeId,
+      },
+      outputSchema:
+        'workflow.task-strategy-implementation-provider-observation-output.v1',
+      output: {
+        ownerInvestigationId: reservation.ownerInvestigationId,
+        sessionId: reservation.sessionId,
+        invocationId: invocation.invocationId,
+        requestDigest: reservation.request.requestDigest,
+        outputDigest: invocation.result.outputDigest,
+        submission: output,
+      },
+      runtimeMetadata: {
+        runtimeObservation: invocation.result.runtimeObservation,
+      },
+    });
+    writeEvidenceNode(runtime, observationNode);
+    const roleResult = admitTaskStrategyImplementationProviderResult({
+      context,
+      reservation,
+      invocation: { ...invocation, result: invocation.result },
+      observationNode,
+      validation: options.collaborationGrant,
+      assertOwned,
+    });
+    const resultNode = createEvidenceNode({
+      type: 'task-strategy-implementation-provider-result',
+      nodeSchema: 'workflow.task-strategy-implementation-provider-result.v1',
+      evaluator: 'workflow-task-strategy.v1',
+      policyDigest: TASK_STRATEGY_IMPLEMENTATION_POLICY_DIGEST,
+      exactInputDigests: {
+        admission: roleResult.resultDigest,
+        observation: observationNode.resultDigest,
+        subject: reservation.subject.subjectDigest,
+      },
+      semanticParentResultDigests: {
+        observation: observationNode.resultDigest,
+      },
+      provenanceParentNodeIds: { observation: observationNode.nodeId },
+      outputSchema:
+        'workflow.task-strategy-implementation-provider-result-output.v1',
+      output: {
+        ownerInvestigationId: reservation.ownerInvestigationId,
+        sessionId: reservation.sessionId,
+        invocationId: invocation.invocationId,
+        roleResult,
+        output,
+      },
+      runtimeMetadata: {},
+    });
+    writeEvidenceNode(runtime, resultNode);
+    binding = createTaskStrategyImplementationResultBinding(runtime, {
+      ownerInvestigationId: reservation.ownerInvestigationId,
+      sessionId: reservation.sessionId,
+      subjectDigest: reservation.subject.subjectDigest,
+      invocationId: invocation.invocationId,
+      requestDigest: reservation.request.requestDigest,
+      outputDigest: invocation.result.outputDigest,
+      runtimeObservationDigest: sha256(
+        canonicalJson(invocation.result.runtimeObservation),
+      ),
+      providerObservationNodeId: observationNode.nodeId,
+      providerObservationDigest: observationNode.resultDigest,
+      providerResultNodeId: resultNode.nodeId,
+      providerResultDigest: resultNode.resultDigest,
+      roleResult,
+      output,
+      createdAt: invocation.updatedAt,
+    });
+    if (options.testCrashAfter === 'provider-result-persisted') {
+      throw new Error(
+        'Simulated task implementation interruption after provider result persistence.',
+      );
+    }
+  }
+  assertCurrentImplementationResultBinding(
+    runtime,
+    reservation,
+    invocation,
+    binding,
+  );
+  importTaskStrategyProviderPatchUnderLifecycleLock(
+    cwd,
+    context.session.sessionId,
+    {
+      patch: Buffer.from(binding.output.patchBase64, 'base64'),
+      implementationResultBindingDigest: binding.bindingDigest,
+    },
+    assertOwned,
+  );
+  assertOwned();
+  return renderStatus(runtime, reservation);
+}
+
+function admitTaskStrategyImplementationProviderResult(input: {
+  context: ReturnType<typeof loadActiveSessionContext>;
+  reservation: TaskStrategyImplementationReservation;
+  invocation: ReturnType<typeof readProviderInvocation> & {
+    result: NonNullable<ReturnType<typeof readProviderInvocation>['result']>;
+  };
+  observationNode: ReturnType<typeof createEvidenceNode>;
+  validation: BeginTaskStrategyImplementationOptions['collaborationGrant'];
+  assertOwned: () => void;
+}): AdmittedRoleResult {
+  const assignment = input.reservation.assignment;
+  const content = {
+    kind: 'task-implementation' as const,
+    nodeId: input.observationNode.nodeId,
+    resultDigest: input.observationNode.resultDigest,
+    outputSchema: TASK_STRATEGY_IMPLEMENTATION_OUTPUT_SCHEMA,
+    evaluator: input.reservation.request.evaluatorVersion,
+    policyDigest: input.reservation.request.policyDigest,
+    contentDigest: input.observationNode.resultDigest,
+    current: true as const,
+  };
+  let grantUse: CollaborationGrantUseProjection | null = null;
+  let grantValidation: NonNullable<
+    Parameters<typeof admitRoleResult>[0]['grantValidation']
+  > | null = null;
+  if ('grantId' in assignment) {
+    if (
+      input.validation !== undefined &&
+      input.validation.grantId !== assignment.grantId
+    ) {
+      throw implementationResultStale();
+    }
+    const adapterPolicy = baselineAdapterPolicy(
+      input.context.git.repositoryRoot,
+      input.context.session.baseline.head,
+    );
+    const callableProviderIds = (['codex', 'claude'] as const).filter(
+      (providerId) => adapterPolicy.policy.providers[providerId].enabled,
+    );
+    const grantRequest = implementationGrantRequest(
+      input.context,
+      input.reservation.subject,
+      requireRecordedRedAuthor(input.reservation.redAuthor),
+      callableProviderIds,
+    );
+    if (grantRequest === null) throw implementationResultStale();
+    const expectedBinding = deriveCollaborationGrantBinding(
+      input.context.git.repositoryRoot,
+      grantRequest,
+    );
+    const transitionDigest = sha256(
+      canonicalJson({
+        schemaVersion: 1,
+        kind: 'collaboration-role-transition',
+        expectedBinding,
+      }),
+    );
+    const maintainerPolicy = parseMaintainerPolicy(
+      JSON.parse(
+        runGit(input.context.git.repositoryRoot, [
+          'show',
+          `${expectedBinding.baselineCommit}:workflow/maintainer-policy.json`,
+        ]),
+      ),
+    );
+    const verifier =
+      input.validation?.verifier ??
+      createInteractiveSshSigner(
+        input.context.git.repositoryRoot,
+        maintainerPolicy,
+      );
+    const now = input.validation?.now ?? new Date();
+    const consumed = consumeCollaborationGrantUnderLifecycleLock(
+      input.context.git.gitCommonDirectory,
+      assignment.grantId,
+      {
+        transitionDigest,
+        assignment,
+        contentAdmission: {
+          kind: content.kind,
+          nodeId: content.nodeId,
+          resultDigest: content.resultDigest,
+          current: true,
+        },
+        now,
+      },
+      input.assertOwned,
+    );
+    if (consumed.use === undefined) throw implementationResultStale();
+    grantUse = consumed.use;
+    grantValidation = {
+      now,
+      expectedBinding,
+      policy: maintainerPolicy,
+      verifier,
+      transitionDigest,
+    };
+  }
+  return admitRoleResult({
+    assignment,
+    author: input.reservation.redAuthor,
+    participant:
+      'grantId' in assignment
+        ? assignment.participant
+        : {
+            providerId: assignment.providerId,
+            sessionId: assignment.sessionId,
+            principalId: null,
+            identityAssurance: 'adapter-assigned',
+            engineSpawned: true,
+          },
+    content,
+    providerInvocation: {
+      invocationId: input.invocation.invocationId,
+      requestDigest: input.reservation.request.requestDigest,
+      outputDigest: input.invocation.result.outputDigest,
+      providerId: input.reservation.request.providerId,
+      sessionId: assignment.sessionId,
+      targetDigest: input.reservation.subject.subjectDigest,
+      engineSpawned: true,
+    },
+    grantUse,
+    grantValidation,
+  });
+}
+
+function requireRecordedRedAuthor(
+  value: TaskStrategyImplementationReservation['redAuthor'],
+): TaskStrategyRedAuthor {
+  if (
+    value.providerId === null ||
+    value.sessionId === null ||
+    value.principalId === null ||
+    value.identityAssurance === 'maintainer-signed' ||
+    value.engineSpawned !== false
+  ) {
+    throw implementationResultStale();
+  }
+  return Object.freeze({
+    providerId: value.providerId,
+    sessionId: value.sessionId,
+    principalId: value.principalId,
+    identityAssurance: value.identityAssurance,
+    engineSpawned: false,
+  });
+}
+
+function assertCurrentImplementationResultBinding(
+  runtime: ReturnType<typeof loadInvestigationRuntimeContext>['runtime'],
+  reservation: TaskStrategyImplementationReservation,
+  invocation: ReturnType<typeof readProviderInvocation>,
+  binding: TaskStrategyImplementationResultBinding,
+): void {
+  if (
+    invocation.state !== 'succeeded' ||
+    invocation.result === null ||
+    invocation.result.runtimeObservation === null
+  ) {
+    throw implementationResultStale();
+  }
+  const output = assertTaskStrategyImplementationOutput(
+    invocation.result.output,
+  );
+  const authorization = readEvidenceNode(
+    runtime,
+    reservation.authorizationNodeId,
+  );
+  const requestReservation = readEvidenceNode(
+    runtime,
+    reservation.reservationNodeId,
+  );
+  const observationNode = readEvidenceNode(
+    runtime,
+    binding.providerObservationNodeId,
+  );
+  const resultNode = readEvidenceNode(runtime, binding.providerResultNodeId);
+  const { resultDigest, ...roleResultBody } = binding.roleResult;
+  if (
+    binding.ownerInvestigationId !== reservation.ownerInvestigationId ||
+    binding.sessionId !== reservation.sessionId ||
+    binding.subjectDigest !== reservation.subject.subjectDigest ||
+    binding.invocationId !== invocation.invocationId ||
+    binding.requestDigest !== reservation.request.requestDigest ||
+    binding.outputDigest !== invocation.result.outputDigest ||
+    binding.runtimeObservationDigest !==
+      sha256(canonicalJson(invocation.result.runtimeObservation)) ||
+    canonicalJson(binding.output) !== canonicalJson(output) ||
+    canonicalJson(binding.roleResult.assignment) !==
+      canonicalJson(reservation.assignment) ||
+    canonicalJson(binding.roleResult.author) !==
+      canonicalJson(reservation.redAuthor) ||
+    resultDigest !==
+      sha256(
+        canonicalJson({
+          schema: 'admitted-role-result.v1',
+          ...roleResultBody,
+        }),
+      ) ||
+    observationNode.resultDigest !== binding.providerObservationDigest ||
+    observationNode.type !==
+      'task-strategy-implementation-provider-observation' ||
+    observationNode.nodeSchema !==
+      'workflow.task-strategy-implementation-provider-observation.v1' ||
+    observationNode.evaluator !== 'workflow-task-strategy.v1' ||
+    observationNode.policyDigest !==
+      TASK_STRATEGY_IMPLEMENTATION_POLICY_DIGEST ||
+    observationNode.outputSchema !==
+      'workflow.task-strategy-implementation-provider-observation-output.v1' ||
+    canonicalJson(observationNode.output) !==
+      canonicalJson({
+        ownerInvestigationId: reservation.ownerInvestigationId,
+        sessionId: reservation.sessionId,
+        invocationId: invocation.invocationId,
+        requestDigest: reservation.request.requestDigest,
+        outputDigest: invocation.result.outputDigest,
+        submission: output,
+      }) ||
+    observationNode.exactInputDigests.output !==
+      invocation.result.outputDigest ||
+    observationNode.exactInputDigests.request !==
+      reservation.request.requestDigest ||
+    observationNode.exactInputDigests.runtimeObservation !==
+      binding.runtimeObservationDigest ||
+    observationNode.exactInputDigests.subject !==
+      reservation.subject.subjectDigest ||
+    observationNode.semanticParentResultDigests.authorization !==
+      authorization.resultDigest ||
+    observationNode.semanticParentResultDigests.reservation !==
+      requestReservation.resultDigest ||
+    observationNode.provenanceParentNodeIds.authorization !==
+      reservation.authorizationNodeId ||
+    observationNode.provenanceParentNodeIds.reservation !==
+      reservation.reservationNodeId ||
+    canonicalJson(observationNode.runtimeMetadata) !==
+      canonicalJson({
+        runtimeObservation: invocation.result.runtimeObservation,
+      }) ||
+    resultNode.resultDigest !== binding.providerResultDigest ||
+    resultNode.type !== 'task-strategy-implementation-provider-result' ||
+    resultNode.nodeSchema !==
+      'workflow.task-strategy-implementation-provider-result.v1' ||
+    resultNode.evaluator !== 'workflow-task-strategy.v1' ||
+    resultNode.policyDigest !== TASK_STRATEGY_IMPLEMENTATION_POLICY_DIGEST ||
+    resultNode.outputSchema !==
+      'workflow.task-strategy-implementation-provider-result-output.v1' ||
+    canonicalJson(resultNode.output) !==
+      canonicalJson({
+        ownerInvestigationId: reservation.ownerInvestigationId,
+        sessionId: reservation.sessionId,
+        invocationId: invocation.invocationId,
+        roleResult: binding.roleResult,
+        output,
+      }) ||
+    resultNode.exactInputDigests.admission !==
+      binding.roleResult.resultDigest ||
+    resultNode.exactInputDigests.observation !== observationNode.resultDigest ||
+    resultNode.exactInputDigests.subject !==
+      reservation.subject.subjectDigest ||
+    resultNode.semanticParentResultDigests.observation !==
+      observationNode.resultDigest ||
+    resultNode.provenanceParentNodeIds.observation !== observationNode.nodeId
+  ) {
+    throw implementationResultStale();
+  }
+}
+
+function implementationResultStale() {
+  return workflowError(
+    'TASK_STRATEGY_IMPLEMENTATION_RESULT_STALE',
+    'The provider result no longer matches its exact sealed RED subject, assignment, observation, or patch bytes.',
+    ExitCode.staleState,
+  );
+}
+
 function renderStatus(
   runtime: ReturnType<typeof loadInvestigationRuntimeContext>['runtime'],
   reservation: TaskStrategyImplementationReservation,
@@ -554,12 +1032,41 @@ function renderStatus(
     runtime,
     reservation.request.invocationId,
   );
-  const state =
-    invocation.state === 'succeeded'
-      ? 'provider-succeeded-awaiting-import'
-      : invocation.state === 'failed'
+  let state:
+    | 'waiting-for-provider'
+    | 'provider-succeeded-awaiting-import'
+    | 'patch-imported'
+    | 'provider-failed';
+  if (invocation.state === 'succeeded' && invocation.result !== null) {
+    const resultBinding = readTaskStrategyImplementationResultBinding(
+      runtime,
+      reservation.sessionId,
+    );
+    const patchBinding = readTaskStrategyPatchCurrentBinding(
+      runtime,
+      reservation.sessionId,
+    );
+    if (resultBinding !== null) {
+      assertCurrentImplementationResultBinding(
+        runtime,
+        reservation,
+        invocation,
+        resultBinding,
+      );
+    }
+    state =
+      resultBinding !== null &&
+      patchBinding !== null &&
+      patchBinding.patchDigest === resultBinding.output.patchDigest &&
+      patchBinding.candidateTree !== resultBinding.output.sourceTree
+        ? 'patch-imported'
+        : 'provider-succeeded-awaiting-import';
+  } else {
+    state =
+      invocation.state === 'failed'
         ? 'provider-failed'
         : 'waiting-for-provider';
+  }
   return Object.freeze({
     state,
     sessionId: reservation.sessionId,
@@ -595,14 +1102,22 @@ function requireCurrentRedTransaction(
     inspection.session.baseline.head,
     [...inspection.changedPaths],
   );
+  const redCandidateCurrent =
+    transaction.red.candidateTree === preview.tree &&
+    canonicalJson(transaction.red.changedPaths) ===
+      canonicalJson(inspection.changedPaths);
   if (
     transaction.changeId !== context.session.changeId ||
     transaction.taskId !== context.session.taskId ||
     transaction.baseline.head !== context.session.baseline.head ||
     transaction.baseline.tree !== context.session.baseline.tree ||
-    transaction.red.candidateTree !== preview.tree ||
-    canonicalJson(transaction.red.changedPaths) !==
-      canonicalJson(inspection.changedPaths)
+    (!redCandidateCurrent &&
+      !isImportedImplementationCandidateCurrent(
+        runtime,
+        context.session.sessionId,
+        transaction.red.candidateTree,
+        preview.tree,
+      ))
   ) {
     throw workflowError(
       'TASK_STRATEGY_RED_STALE',
@@ -611,6 +1126,49 @@ function requireCurrentRedTransaction(
     );
   }
   return transaction;
+}
+
+function isImportedImplementationCandidateCurrent(
+  runtime: ReturnType<typeof loadInvestigationRuntimeContext>['runtime'],
+  sessionId: string,
+  redCandidateTree: string,
+  currentTree: string,
+): boolean {
+  const binding = readTaskStrategyPatchCurrentBinding(runtime, sessionId);
+  if (binding === null) return false;
+  const record = readTaskStrategyPatchRecord(
+    runtime,
+    sessionId,
+    binding.patchDigest,
+  );
+  const receipt = readTaskStrategyPatchImportReceipt(
+    runtime,
+    sessionId,
+    binding.patchDigest,
+  );
+  const reservation = readTaskStrategyPatchReservation(runtime, sessionId);
+  return (
+    record !== null &&
+    receipt !== null &&
+    reservation !== null &&
+    record.sourceTree === redCandidateTree &&
+    record.candidateTree === currentTree &&
+    reservation.sessionId === sessionId &&
+    reservation.patchDigest === record.patchDigest &&
+    reservation.recordDigest === record.recordDigest &&
+    reservation.sourceTree === record.sourceTree &&
+    reservation.candidateTree === record.candidateTree &&
+    reservation.createdAt === record.createdAt &&
+    receipt.recordDigest === record.recordDigest &&
+    receipt.sessionId === sessionId &&
+    receipt.patchDigest === record.patchDigest &&
+    receipt.candidateTree === record.candidateTree &&
+    binding.sessionId === sessionId &&
+    binding.recordDigest === record.recordDigest &&
+    binding.receiptDigest === receipt.receiptDigest &&
+    binding.candidateTree === currentTree &&
+    binding.createdAt === receipt.importedAt
+  );
 }
 
 function implementationTask(

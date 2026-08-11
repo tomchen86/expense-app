@@ -1126,12 +1126,12 @@
     {
       "path": "src/task-strategy-gate.ts",
       "mode": "100644",
-      "digest": "sha256:5f7c7e5f4ebf9dc58380f9dd081298be59631622a5da57591b8e5dd17460cd96"
+      "digest": "sha256:a93a4b98b5910a978539684e4725d445e1d269597d7b0c2f7f77efe849b6d5da"
     },
     {
       "path": "src/task-strategy-implementation-lifecycle.ts",
       "mode": "100644",
-      "digest": "sha256:e02cc0636542ac60025a194ec2d00cd0727d78bc2b30c6794eec873efead4246"
+      "digest": "sha256:5d87069bbb39bcf90a4b369cc57e710cb2b921fcf6ac4c62fb25fe6c96982d54"
     },
     {
       "path": "src/task-strategy-patch-store.ts",
@@ -1141,7 +1141,7 @@
     {
       "path": "src/task-strategy-patch.ts",
       "mode": "100644",
-      "digest": "sha256:7f312644fcc3ae0ab4e45ef308486c3d6431ece4ce9f4c1b2d8ce4b20bd7551b"
+      "digest": "sha256:83ea495618e7005090177b413e96b39c4b6d7e58dd8cf49d41ebd3f0eb946b28"
     },
     {
       "path": "src/task-strategy-provider-contract.ts",
@@ -1151,7 +1151,7 @@
     {
       "path": "src/task-strategy-provider-store.ts",
       "mode": "100644",
-      "digest": "sha256:4e853bf94018196fd3a4752ba42cae77a68b9dde1a93b3dcfaf9fec7afd72ac4"
+      "digest": "sha256:4ba3f4f14d31f3368b6699fb0ec2bdfe0909e66ec1dfa016c1c31211076f1513"
     },
     {
       "path": "src/task-strategy-store.ts",
