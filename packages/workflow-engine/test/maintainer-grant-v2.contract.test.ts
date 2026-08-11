@@ -2683,6 +2683,7 @@ test('maintainer attestation accepts the current signed v2 authority grant', () 
       {
         now: new Date('2026-08-03T09:00:00.000Z'),
         signer,
+        testPostApprovalBudget: { monotonicNow: () => 0 },
       },
     );
     const parent = git(repository, [
