@@ -216,7 +216,7 @@
     {
       "path": "src/cli.ts",
       "mode": "100644",
-      "digest": "sha256:1dcd071b2cf9c82213a2be6baa790a8d45802dbc7c37faaf0c34e44bfcb475ce"
+      "digest": "sha256:7301e49d2f6b8c83c3c7af089d79fc8b6b203ef14ac07669fd0aef3aae299cd8"
     },
     {
       "path": "src/codex-provider-adapter.ts",
@@ -1077,6 +1077,11 @@
       "path": "src/task-diff-review-artifact.ts",
       "mode": "100644",
       "digest": "sha256:ec1204278d7486639d56a24629c1e629ee2ba7c83e1cfbb59ba5380bf1f19d27"
+    },
+    {
+      "path": "src/task-diff-review-lifecycle.ts",
+      "mode": "100644",
+      "digest": "sha256:aeed47cacf4719c2b26d15c4d04c30566a65bba2117dcde513bf1adf109ba08e"
     },
     {
       "path": "src/task-diff-review.ts",
