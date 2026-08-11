@@ -341,7 +341,7 @@
     {
       "path": "src/evidence-object-store.ts",
       "mode": "100644",
-      "digest": "sha256:f5f366f5db45975bc3edf8ae2751178d023eafd800d9e3c72b5cc64e71c80e46"
+      "digest": "sha256:361f10f845d0995bdd50b593a13b0d78d389205e475fb053b4719ba2799c894e"
     },
     {
       "path": "src/evidence-reuse-path.ts",
@@ -901,7 +901,7 @@
     {
       "path": "src/provider-invocation-store.ts",
       "mode": "100644",
-      "digest": "sha256:54423f18a8ec8621e5662ddc70f4e14a7569c7f0289236ae448942d620fcbc0f"
+      "digest": "sha256:580c8cb1209b6d331de0feb9b3573fee9c7317c9bf1196a07994fd4220f2bd93"
     },
     {
       "path": "src/provider-invocation-supersession-schema.ts",
@@ -961,7 +961,7 @@
     {
       "path": "src/provider-worker.ts",
       "mode": "100644",
-      "digest": "sha256:e068598ec84cedaa9186f997af4ba7ae5f3790b4651bc233daf4c977506d0af4"
+      "digest": "sha256:5bb538e43bfc0ee7e356d0797a45a5b2712e14bba2333d910d57ffe615f5e945"
     },
     {
       "path": "src/publish-executor.ts",
@@ -1121,12 +1121,17 @@
     {
       "path": "src/task-strategy-execution.ts",
       "mode": "100644",
-      "digest": "sha256:9957fc487afb5adac2b40e67a76226b4529a42e119d141ed9efe5b1e66d0c28a"
+      "digest": "sha256:9e94e456fb9af3fd69565d05d91598151e8ab854927121f53c52405ad37173df"
     },
     {
       "path": "src/task-strategy-gate.ts",
       "mode": "100644",
       "digest": "sha256:5f7c7e5f4ebf9dc58380f9dd081298be59631622a5da57591b8e5dd17460cd96"
+    },
+    {
+      "path": "src/task-strategy-implementation-lifecycle.ts",
+      "mode": "100644",
+      "digest": "sha256:e02cc0636542ac60025a194ec2d00cd0727d78bc2b30c6794eec873efead4246"
     },
     {
       "path": "src/task-strategy-patch-store.ts",
@@ -1141,7 +1146,12 @@
     {
       "path": "src/task-strategy-provider-contract.ts",
       "mode": "100644",
-      "digest": "sha256:e00764a6069a291ac693349d0fa79859681fd198002a8f8382d973a70f4c59c2"
+      "digest": "sha256:548aa12735ad762a8793c0510feff6ffa7a7e5401be0dc6d5f41097e30977c34"
+    },
+    {
+      "path": "src/task-strategy-provider-store.ts",
+      "mode": "100644",
+      "digest": "sha256:4e853bf94018196fd3a4752ba42cae77a68b9dde1a93b3dcfaf9fec7afd72ac4"
     },
     {
       "path": "src/task-strategy-store.ts",

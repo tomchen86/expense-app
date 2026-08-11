@@ -17,6 +17,19 @@ const TASK_ID = /^\d+(?:\.\d+)+$/;
 const REPOSITORY_ID = /^[a-z0-9]+(?:[._/-][a-z0-9]+)*$/;
 const MAX_PATCH_BYTES = 8 * 1024 * 1024;
 
+export const TASK_STRATEGY_IMPLEMENTATION_POLICY = deepFreeze({
+  schemaVersion: 1,
+  kind: 'task-strategy-implementation-policy.v1',
+  capabilityProfile: 'repository-read-only',
+  crossAgentIndependence: 'provider-independent',
+  frozenTestsImmutable: true,
+  engineGreenRequired: true,
+  providerOutputAuthority: 'advisory-patch-only',
+});
+export const TASK_STRATEGY_IMPLEMENTATION_POLICY_DIGEST = sha256(
+  canonicalJson(TASK_STRATEGY_IMPLEMENTATION_POLICY),
+);
+
 export type TaskStrategyImplementationFrozenFile = Readonly<{
   path: string;
   mode: '100644' | '100755';

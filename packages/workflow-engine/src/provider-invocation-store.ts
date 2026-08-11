@@ -13,6 +13,7 @@ import { canonicalJson } from './canonical-json.ts';
 import {
   resolvePlanReviewInvocationOwner,
   resolveTaskDiffReviewInvocationOwner,
+  resolveTaskStrategyImplementationInvocationOwner,
 } from './evidence-object-store.ts';
 import { ExitCode, workflowError } from './errors.ts';
 import {
@@ -1020,6 +1021,22 @@ function readProviderInvocationCore(
     const owner = resolveTaskDiffReviewInvocationOwner(paths, {
       changeId: record.changeId,
       sessionId: manifest.sessionId,
+      subject: manifest.subject,
+      assignment: request.roleAssignment,
+      authorizationNodeId: request.authorizationNodeId,
+    });
+    if (
+      owner.ownerInvestigationId !== record.investigationId ||
+      canonicalJson(owner.mandateBinding) !==
+        canonicalJson(record.mandateBinding ?? null)
+    ) {
+      throw invocationInvalid();
+    }
+  }
+  if (manifest.kind === 'task-strategy-implementation-manifest') {
+    const owner = resolveTaskStrategyImplementationInvocationOwner(paths, {
+      changeId: record.changeId,
+      sessionId: manifest.subject.sessionId,
       subject: manifest.subject,
       assignment: request.roleAssignment,
       authorizationNodeId: request.authorizationNodeId,
