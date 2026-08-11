@@ -216,12 +216,12 @@ function createProviderRunner(host) {
         const manifestHasPlanningTarget = isRecord(manifestValue) &&
             manifestValue.kind === 'plan-review-manifest' &&
             isRecord(manifestValue.planningTarget);
-        if ((input.request.purpose === 'plan-review' &&
-            manifestHasPlanningTarget &&
+        const requiresPlanningSnapshot = input.request.purpose === 'plan-review' && manifestHasPlanningTarget;
+        if ((requiresPlanningSnapshot &&
             (reviewSnapshotRoot === null ||
                 canonicalDirectoryOrThrow(reviewSnapshotRoot) !==
                     expectedReviewSnapshotRoot)) ||
-            (input.request.purpose === 'survey' && reviewSnapshotRoot !== null)) {
+            (!requiresPlanningSnapshot && reviewSnapshotRoot !== null)) {
             throw inputManifestMismatch();
         }
         const contextStoreRoot = providerPromptContextStoreRoot(expectedDirectory);
@@ -472,6 +472,16 @@ const PROVIDER_PURPOSE_INSTRUCTIONS = Object.freeze({
         'If the immutable investigation.json contains an evidence node whose type is "plan-review-coverage-requirement", treat its output.requiredTargetIds as mandatory. For every required target, find the matching output.targetBindings row and cite that row\'s exact evidenceKind and path at least once in scopeAssessment, a finding, or a suggestion. Extra evidence is allowed; omitting a required row is rejected at plan commit.',
         'Cite a planningSnapshot member with kind "planning-location" and its logical path. Cite any other repository file with kind "repository-location"; repository-location lines are validated against the pinned baseline tree. The two namespaces are disjoint and a citation in the wrong namespace is rejected.',
         'Treat planningSnapshot.migration as a binding remediation constraint: preserved-byte-identical artifacts cannot be proposed as editable in this generation, replaceable-on-replanning artifacts may change only through a new planning generation, and engine-managed artifacts are not author-editable.',
+    ]),
+    'task-diff-review': Object.freeze([
+        'Independently review the exact bound candidate tree and its base-to-candidate blob and mode transitions.',
+        'Use only the reviewed read/search capability surface and do not mutate the worktree, index, refs, runtime, or any repository file.',
+        'Return only output that conforms to the bound task-diff-review output schema.',
+        'The output "coverage" array must list every required review area exactly once; duplicate or omitted coverage is rejected.',
+        'Inspect correctness and invariants, plan alignment, test adequacy, path scope, trust boundaries, dangling consumers, and generated or mirror consistency.',
+        'Every challenge must cite exact repository, check-report, or planning-node evidence. A no-challenge scope assessment must still cite affirmative evidence.',
+        'Classify current-change blockers as challenges and independent follow-up ideas as suggestions. The advisory verdict never authorizes completion.',
+        'Treat the manifest subject, candidate tree, check evidence, task contract, planning generation, and review policy as immutable bindings; do not substitute live runtime metadata.',
     ]),
 });
 function renderManagedProviderPrompt(request, manifest, reviewSnapshotRoot, repairContext) {

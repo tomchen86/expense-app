@@ -190,6 +190,9 @@ export function requestExecutionReplacement(
     (assertOwned) => {
       const inspection = inspectExecutionJob(cwd, requestedJobId);
       const source = inspectLegacyExecutionJobSource(cwd, requestedJobId);
+      if (source.record.purpose === 'task-diff-review') {
+        throw replacementNotGrantable();
+      }
       const previous = inspection.attempts.at(-1);
       const grantBase = inspection.latestFailure?.decision.requiredGrant;
       if (
@@ -318,6 +321,12 @@ export function executeGrantedReplacement(
   );
   if (grant.payload.jobId !== requestedJobId) {
     throw grantMismatch('Execution-budget grant belongs to another Job.');
+  }
+  if (
+    inspectLegacyExecutionJobSource(cwd, requestedJobId).record.purpose ===
+    'task-diff-review'
+  ) {
+    throw replacementNotGrantable();
   }
   const request = readPersistedRequest(
     context.runtime,
@@ -699,6 +708,9 @@ function publishReplacement(
     context.runtime,
     transaction.failedInvocationId,
   );
+  if (failed.purpose === 'task-diff-review') {
+    throw replacementNotGrantable();
+  }
   // A previous republication may have died after the replacement reservation
   // was published but before its invocation record existed. That half-state
   // cannot render a status projection, so the WAL finishes the interrupted

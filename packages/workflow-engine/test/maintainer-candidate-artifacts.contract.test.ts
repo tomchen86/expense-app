@@ -50,6 +50,17 @@ function artifacts(): CandidateSupportingArtifactSet {
           outputDigest: 'e'.repeat(64),
           failureDigest: null,
         },
+        {
+          invocationId: 'invocation-task-diff-review-evidence',
+          investigationId: 'investigation-task-diff-review-evidence',
+          purpose: 'task-diff-review',
+          attempt: 1,
+          state: 'succeeded',
+          requestDigest: 'f'.repeat(64),
+          manifestDigest: '0'.repeat(64),
+          outputDigest: '9'.repeat(64),
+          failureDigest: null,
+        },
       ],
     },
     recoveryPlan: {

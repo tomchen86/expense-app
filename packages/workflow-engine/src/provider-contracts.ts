@@ -11,7 +11,7 @@ import {
 } from './provider-registry.ts';
 import type {
   GrantedSameProviderRoleAssignment,
-  OrdinaryRole,
+  EngineProviderRole,
   ProviderRoleAssignment,
 } from './role-scheduler.ts';
 
@@ -39,9 +39,10 @@ export const MAX_PROVIDER_LIMITS = Object.freeze({
   aggregateOutputBytes: 1_048_576,
 });
 
-const ROLE_PURPOSE: Record<OrdinaryRole, CapabilityPurpose> = {
+const ROLE_PURPOSE: Record<EngineProviderRole, CapabilityPurpose> = {
   'blind-surveyor': 'survey',
   'plan-reviewer': 'plan-review',
+  'task-diff-reviewer': 'task-diff-review',
 };
 
 export type ProviderLimits = {
@@ -302,8 +303,7 @@ export function createProviderInvocationRequest(
   }
 
   // The assignment must select the same provider, target, and role the request
-  // binds. A blind-surveyor assignment maps only to `survey`; a plan-reviewer
-  // assignment maps only to `plan-review`.
+  // binds. Each role maps to one code-owned capability purpose.
   if (
     input.providerId !== input.roleAssignment.providerId ||
     input.targetDigest !== input.roleAssignment.targetDigest ||
@@ -566,7 +566,11 @@ function isNonce(value: unknown): value is string {
 }
 
 function isPurpose(value: unknown): value is CapabilityPurpose {
-  return value === 'survey' || value === 'plan-review';
+  return (
+    value === 'survey' ||
+    value === 'plan-review' ||
+    value === 'task-diff-review'
+  );
 }
 
 function isOutputSchema(value: unknown): value is ProviderOutputSchema {
@@ -589,7 +593,9 @@ export function isProviderRoleAssignment(
   const ordinary =
     isRecord(value) &&
     hasExactKeys(value, ROLE_ASSIGNMENT_KEYS) &&
-    (value.role === 'blind-surveyor' || value.role === 'plan-reviewer') &&
+    (value.role === 'blind-surveyor' ||
+      value.role === 'plan-reviewer' ||
+      value.role === 'task-diff-reviewer') &&
     isProviderId(value.providerId) &&
     isNonEmptyString(value.sessionId) &&
     typeof value.targetDigest === 'string' &&

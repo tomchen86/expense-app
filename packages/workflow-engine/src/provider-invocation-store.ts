@@ -65,9 +65,11 @@ import {
   assertChangeId,
   assertInvestigationId,
   assertInvocationId,
+  assertSessionId,
+  assertTaskId,
   type InvestigationRuntimePaths,
 } from './paths.ts';
-import type { ProviderId } from './provider-registry.ts';
+import type { CapabilityPurpose, ProviderId } from './provider-registry.ts';
 import type { TaskMandateBinding } from './task-mandate.ts';
 import { registerProviderRetentionInvocation } from './provider-retention-catalog.ts';
 import {
@@ -108,6 +110,14 @@ import {
   type PlanReviewTargetSnapshot,
   type PlanReviewSubject,
 } from './plan-review.ts';
+import {
+  TASK_DIFF_REVIEW_OUTPUT_SCHEMA,
+  TASK_DIFF_REVIEW_OUTPUT_VALIDATOR,
+} from './task-diff-review-artifact.ts';
+import {
+  parseTaskDiffReviewSubject,
+  type TaskDiffReviewSubject,
+} from './task-diff-review.ts';
 import {
   runtimePaths,
   withRepositoryLifecycleOperation,
@@ -191,8 +201,22 @@ export type PlanReviewManifest = {
   capabilityProfile: 'repository-read-only';
 };
 
+export type TaskDiffReviewManifest = {
+  schemaVersion: 1;
+  kind: 'task-diff-review-manifest';
+  changeId: string;
+  taskId: string;
+  sessionId: string;
+  repositoryId: string;
+  repositoryIdentity: string;
+  baseCommit: string;
+  baseTree: string;
+  subject: TaskDiffReviewSubject;
+  capabilityProfile: 'repository-read-only';
+};
+
 export type ProviderInvocationManifest =
-  BlindSurveyManifest | PlanReviewManifest;
+  BlindSurveyManifest | PlanReviewManifest | TaskDiffReviewManifest;
 
 export type InvestigationStartReservation = {
   schemaVersion: 1;
@@ -285,7 +309,7 @@ export type ProviderInvocationRecord = {
   revision: number;
   state: 'prepared' | 'leased' | 'succeeded' | 'failed';
   providerId: ProviderId;
-  purpose: 'survey' | 'plan-review';
+  purpose: CapabilityPurpose;
   requestDigest: string;
   manifestDigest: string;
   leaseGeneration: number;
@@ -2767,6 +2791,9 @@ function assertProviderInvocationManifest(
   if (isRecord(value) && value.kind === 'blind-survey-manifest') {
     return assertBlindSurveyManifest(value);
   }
+  if (isRecord(value) && value.kind === 'task-diff-review-manifest') {
+    return assertTaskDiffReviewManifest(value);
+  }
   if (
     !isRecord(value) ||
     !hasExactKeys(value, [
@@ -2824,6 +2851,81 @@ function assertProviderInvocationManifest(
     baseTree: value.baseTree,
     subject,
     ...(planningTarget ? { planningTarget } : {}),
+    capabilityProfile: 'repository-read-only',
+  };
+  if (
+    Buffer.byteLength(canonicalJson(manifest), 'utf8') >
+    MAX_BLIND_MANIFEST_BYTES
+  ) {
+    throw invocationInvalid();
+  }
+  return deepFreeze(manifest);
+}
+
+function assertTaskDiffReviewManifest(value: unknown): TaskDiffReviewManifest {
+  if (
+    !isRecord(value) ||
+    !hasExactKeys(value, [
+      'schemaVersion',
+      'kind',
+      'changeId',
+      'taskId',
+      'sessionId',
+      'repositoryId',
+      'repositoryIdentity',
+      'baseCommit',
+      'baseTree',
+      'subject',
+      'capabilityProfile',
+    ]) ||
+    value.schemaVersion !== 1 ||
+    value.kind !== 'task-diff-review-manifest' ||
+    typeof value.changeId !== 'string' ||
+    typeof value.taskId !== 'string' ||
+    typeof value.sessionId !== 'string' ||
+    !isBoundedBlindText(value.repositoryId, 512) ||
+    !isBoundedBlindText(value.repositoryIdentity, 512) ||
+    typeof value.baseCommit !== 'string' ||
+    !GIT_OBJECT_ID.test(value.baseCommit) ||
+    typeof value.baseTree !== 'string' ||
+    !GIT_OBJECT_ID.test(value.baseTree) ||
+    value.capabilityProfile !== 'repository-read-only'
+  ) {
+    throw invocationInvalid();
+  }
+  try {
+    assertChangeId(value.changeId);
+    assertTaskId(value.taskId);
+    assertSessionId(value.sessionId);
+  } catch {
+    throw invocationInvalid();
+  }
+  let subject: TaskDiffReviewSubject;
+  try {
+    subject = parseTaskDiffReviewSubject(value.subject);
+  } catch {
+    throw invocationInvalid();
+  }
+  if (
+    subject.changeId !== value.changeId ||
+    subject.taskId !== value.taskId ||
+    subject.repositoryId !== value.repositoryIdentity ||
+    subject.baseCommit !== value.baseCommit ||
+    subject.baseTree !== value.baseTree
+  ) {
+    throw invocationInvalid();
+  }
+  const manifest: TaskDiffReviewManifest = {
+    schemaVersion: 1,
+    kind: 'task-diff-review-manifest',
+    changeId: value.changeId,
+    taskId: value.taskId,
+    sessionId: value.sessionId,
+    repositoryId: value.repositoryId,
+    repositoryIdentity: value.repositoryIdentity,
+    baseCommit: value.baseCommit,
+    baseTree: value.baseTree,
+    subject,
     capabilityProfile: 'repository-read-only',
   };
   if (
@@ -3119,7 +3221,7 @@ function assertProviderRequest(value: unknown): ProviderInvocationRequest {
     const reconstructed = createProviderInvocationRequest({
       invocationId: value.invocationId as string,
       nonce: value.nonce as string,
-      purpose: value.purpose as 'survey',
+      purpose: value.purpose as CapabilityPurpose,
       providerId: value.providerId as ProviderId,
       roleAssignment: value.roleAssignment as never,
       capabilityProfile: value.capabilityProfile as 'repository-read-only',
@@ -3175,6 +3277,23 @@ function assertProviderInvocationBinding(
 ): void {
   if (manifest.kind === 'blind-survey-manifest') {
     assertBlindInvocationBinding(changeId, manifest, manifestDigest, request);
+    return;
+  }
+  if (manifest.kind === 'task-diff-review-manifest') {
+    if (
+      manifest.changeId !== changeId ||
+      manifest.repositoryId !== request.repositoryId ||
+      manifest.baseCommit !== request.baseCommit ||
+      manifest.baseTree !== request.baseTree ||
+      request.purpose !== 'task-diff-review' ||
+      request.roleAssignment.role !== 'task-diff-reviewer' ||
+      request.capabilityProfile !== 'repository-read-only' ||
+      request.targetDigest !== manifest.subject.subjectDigest ||
+      request.inputManifestDigest !== manifestDigest ||
+      request.roleAssignment.targetDigest !== request.targetDigest
+    ) {
+      throw invocationInvalid();
+    }
     return;
   }
   if (
@@ -3501,7 +3620,9 @@ function assertProviderInvocationRecord(
       String(value.state),
     ) ||
     (value.providerId !== 'codex' && value.providerId !== 'claude') ||
-    (value.purpose !== 'survey' && value.purpose !== 'plan-review') ||
+    (value.purpose !== 'survey' &&
+      value.purpose !== 'plan-review' &&
+      value.purpose !== 'task-diff-review') ||
     !isDigest(value.requestDigest) ||
     !isDigest(value.manifestDigest) ||
     !Number.isSafeInteger(value.leaseGeneration) ||
@@ -3615,6 +3736,9 @@ function codeOwnedProviderOutputSchema(request: ProviderInvocationRequest) {
   }
   if (request.purpose === 'plan-review') {
     return PLAN_REVIEW_OUTPUT_SCHEMA;
+  }
+  if (request.purpose === 'task-diff-review') {
+    return TASK_DIFF_REVIEW_OUTPUT_SCHEMA;
   }
   throw providerOutputSchemaUnsupported();
 }
@@ -3891,6 +4015,9 @@ function providerOutputValidator(request: ProviderInvocationRequest) {
   if (request.purpose === 'plan-review') {
     return PLAN_REVIEW_OUTPUT_VALIDATOR;
   }
+  if (request.purpose === 'task-diff-review') {
+    return TASK_DIFF_REVIEW_OUTPUT_VALIDATOR;
+  }
   throw providerOutputSchemaUnsupported();
 }
 
@@ -4089,7 +4216,9 @@ function isStoredResult(value: unknown): value is ProviderProcessResult | null {
       ]) &&
       isDigest(value.requestDigest) &&
       typeof value.invocationId === 'string' &&
-      (value.purpose === 'survey' || value.purpose === 'plan-review') &&
+      (value.purpose === 'survey' ||
+        value.purpose === 'plan-review' ||
+        value.purpose === 'task-diff-review') &&
       (value.providerId === 'codex' || value.providerId === 'claude') &&
       isDigest(value.outputDigest))
   );

@@ -5,11 +5,11 @@ import { ExitCode, workflowError } from './errors.ts';
  * may enable/disable these fixed IDs and lower bounded limits, but it can never
  * add an ID, executable path, argv, shell fragment, module path, prompt, or
  * result parser. This slice exposes exactly `codex` and `claude`, each with the
- * `survey` and `plan-review` capabilities under the `repository-read-only`
- * profile.
+ * `survey`, `plan-review`, and `task-diff-review` capabilities under the
+ * `repository-read-only` profile.
  */
 export type ProviderId = 'codex' | 'claude';
-export type CapabilityPurpose = 'survey' | 'plan-review';
+export type CapabilityPurpose = 'survey' | 'plan-review' | 'task-diff-review';
 export type CapabilityProfile = 'repository-read-only';
 
 export type ProviderCapability = {
@@ -26,6 +26,10 @@ function readOnlyCapabilities(): readonly ProviderCapability[] {
   return [
     Object.freeze({ purpose: 'survey', profile: 'repository-read-only' }),
     Object.freeze({ purpose: 'plan-review', profile: 'repository-read-only' }),
+    Object.freeze({
+      purpose: 'task-diff-review',
+      profile: 'repository-read-only',
+    }),
   ];
 }
 

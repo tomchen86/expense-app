@@ -20,6 +20,7 @@ export const MAX_PROVIDER_LIMITS = Object.freeze({
 const ROLE_PURPOSE = {
     'blind-surveyor': 'survey',
     'plan-reviewer': 'plan-review',
+    'task-diff-reviewer': 'task-diff-review',
 };
 const REQUEST_INPUT_KEYS = [
     'invocationId',
@@ -123,8 +124,7 @@ export function createProviderInvocationRequest(input) {
         throw requestInvalid();
     }
     // The assignment must select the same provider, target, and role the request
-    // binds. A blind-surveyor assignment maps only to `survey`; a plan-reviewer
-    // assignment maps only to `plan-review`.
+    // binds. Each role maps to one code-owned capability purpose.
     if (input.providerId !== input.roleAssignment.providerId ||
         input.targetDigest !== input.roleAssignment.targetDigest ||
         ROLE_PURPOSE[input.roleAssignment.role] !== input.purpose) {
@@ -345,7 +345,9 @@ function isNonce(value) {
     return typeof value === 'string' && value.length >= 16;
 }
 function isPurpose(value) {
-    return value === 'survey' || value === 'plan-review';
+    return (value === 'survey' ||
+        value === 'plan-review' ||
+        value === 'task-diff-review');
 }
 function isOutputSchema(value) {
     return (isRecord(value) &&
@@ -361,7 +363,9 @@ export function isProviderRoleAssignment(value) {
     // that weakens either field is rejected.
     const ordinary = isRecord(value) &&
         hasExactKeys(value, ROLE_ASSIGNMENT_KEYS) &&
-        (value.role === 'blind-surveyor' || value.role === 'plan-reviewer') &&
+        (value.role === 'blind-surveyor' ||
+            value.role === 'plan-reviewer' ||
+            value.role === 'task-diff-reviewer') &&
         isProviderId(value.providerId) &&
         isNonEmptyString(value.sessionId) &&
         typeof value.targetDigest === 'string' &&

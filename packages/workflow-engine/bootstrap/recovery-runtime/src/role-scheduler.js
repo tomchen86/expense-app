@@ -42,6 +42,7 @@ const RECORDED_PARTICIPANT_KEYS = [
 const ROLE_CAPABILITY = {
     'blind-surveyor': 'survey',
     'plan-reviewer': 'plan-review',
+    'task-diff-reviewer': 'task-diff-review',
 };
 /**
  * Assess independence of a candidate relative to the author being challenged.
@@ -83,8 +84,9 @@ export function assessRoleIndependence(author, candidate) {
     };
 }
 /**
- * Schedule an ordinary blind-survey or plan-review role. The requirement is
- * fixed at provider independence; requesting a weaker dimension fails closed.
+ * Schedule an ordinary survey, plan-review, or exact task-diff-review role.
+ * The requirement is fixed at provider independence; requesting a weaker
+ * dimension fails closed.
  * Every runtime candidate ID is checked against the code-owned registry and the
  * required role capability, so an unknown candidate fails closed rather than
  * being launched. The first enabled, available, provider-independent candidate
@@ -283,11 +285,16 @@ export function admitRoleResult(input) {
     const author = normalizeRecordedParticipant(input.author);
     const participant = normalizeRecordedParticipant(input.participant);
     if ((assignment.role !== 'blind-surveyor' &&
-        assignment.role !== 'plan-reviewer') ||
+        assignment.role !== 'plan-reviewer' &&
+        assignment.role !== 'task-diff-reviewer') ||
         !/^[0-9a-f]{64}$/.test(assignment.targetDigest)) {
         throw roleResultInvalid();
     }
-    const expectedContentKind = assignment.role === 'blind-surveyor' ? 'blind-survey' : 'plan-review';
+    const expectedContentKind = assignment.role === 'blind-surveyor'
+        ? 'blind-survey'
+        : assignment.role === 'plan-reviewer'
+            ? 'plan-review'
+            : 'task-diff-review';
     if (content.kind !== expectedContentKind) {
         throw roleResultInvalid();
     }
@@ -312,6 +319,12 @@ export function admitRoleResult(input) {
         achievedIndependence = 'provider-independent';
     }
     else {
+        // Collaboration grants have not yet been versioned for TaskDiffReview.
+        // Never let a widened content union smuggle that role through an older
+        // blind-survey/plan-review grant envelope.
+        if (content.kind === 'task-diff-review') {
+            throw roleResultInvalid();
+        }
         if (canonicalJson(author) !== canonicalJson(assignment.author) ||
             canonicalJson(participant) !== canonicalJson(assignment.participant) ||
             input.grantUse === null ||
@@ -393,7 +406,9 @@ export function isGrantedSameProviderRoleAssignment(value) {
 function isOrdinaryRoleAssignment(value) {
     return (!('grantId' in value) &&
         hasExactKeys(value, ORDINARY_ASSIGNMENT_KEYS) &&
-        (value.role === 'blind-surveyor' || value.role === 'plan-reviewer') &&
+        (value.role === 'blind-surveyor' ||
+            value.role === 'plan-reviewer' ||
+            value.role === 'task-diff-reviewer') &&
         isProviderId(value.providerId) &&
         typeof value.sessionId === 'string' &&
         value.sessionId.length > 0 &&
@@ -405,7 +420,7 @@ function assertRoleContentAdmission(value) {
     if (!value ||
         typeof value !== 'object' ||
         !hasExactKeys(value, ROLE_CONTENT_KEYS) ||
-        !['blind-survey', 'plan-review'].includes(value.kind) ||
+        !['blind-survey', 'plan-review', 'task-diff-review'].includes(value.kind) ||
         !/^[0-9a-f]{64}$/.test(value.nodeId) ||
         !/^[0-9a-f]{64}$/.test(value.resultDigest) ||
         !value.outputSchema ||

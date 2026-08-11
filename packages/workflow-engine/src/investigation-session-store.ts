@@ -286,7 +286,7 @@ export type ProviderInvocationLifecycleProjection = Readonly<{
   investigationId: string;
   ownerInvestigationId: string;
   changeId: string;
-  purpose: 'survey' | 'plan-review';
+  purpose: 'survey' | 'plan-review' | 'task-diff-review';
   attempt: number;
   revision: number;
   state: 'prepared' | 'leased' | 'succeeded' | 'failed';
@@ -1398,7 +1398,9 @@ export function readProviderInvocationLifecycleProjection(
       String(value.state),
     ) ||
     (value.providerId !== 'codex' && value.providerId !== 'claude') ||
-    (value.purpose !== 'survey' && value.purpose !== 'plan-review') ||
+    (value.purpose !== 'survey' &&
+      value.purpose !== 'plan-review' &&
+      value.purpose !== 'task-diff-review') ||
     !isDigest(value.requestDigest) ||
     !isDigest(value.manifestDigest) ||
     !isProviderInvocationFailureShape(value.failure) ||
@@ -1409,9 +1411,11 @@ export function readProviderInvocationLifecycleProjection(
     !isTimestamp(value.updatedAt) ||
     !isRecord(manifest) ||
     manifest.schemaVersion !== 1 ||
-    !['blind-survey-manifest', 'plan-review-manifest'].includes(
-      String(manifest.kind),
-    ) ||
+    ![
+      'blind-survey-manifest',
+      'plan-review-manifest',
+      'task-diff-review-manifest',
+    ].includes(String(manifest.kind)) ||
     manifest.changeId !== value.changeId ||
     manifest.repositoryId !== request.repositoryId ||
     manifest.baseCommit !== request.baseCommit ||
@@ -1424,7 +1428,9 @@ export function readProviderInvocationLifecycleProjection(
     sha256(canonicalJson(manifest)) !== value.manifestDigest ||
     (value.purpose === 'survey' && manifest.kind !== 'blind-survey-manifest') ||
     (value.purpose === 'plan-review' &&
-      manifest.kind !== 'plan-review-manifest')
+      manifest.kind !== 'plan-review-manifest') ||
+    (value.purpose === 'task-diff-review' &&
+      manifest.kind !== 'task-diff-review-manifest')
   ) {
     throw providerInvocationUnsafe();
   }

@@ -3,6 +3,10 @@ function readOnlyCapabilities() {
     return [
         Object.freeze({ purpose: 'survey', profile: 'repository-read-only' }),
         Object.freeze({ purpose: 'plan-review', profile: 'repository-read-only' }),
+        Object.freeze({
+            purpose: 'task-diff-review',
+            profile: 'repository-read-only',
+        }),
     ];
 }
 const BUILT_IN_PROVIDERS = Object.freeze(['codex', 'claude'].map((id) => Object.freeze({
