@@ -1553,15 +1553,28 @@ function dispatch(args: string[], cwd: string): CommandResult {
       }
       const sessionId = rest[0];
       const actor = optionValue(rest.slice(1), '--actor');
-      if (
-        sessionId &&
-        (rest.length === 1 ||
-          (rest.length === 3 && rest[1] === '--actor' && actor))
-      ) {
+      const grantId = optionValue(rest.slice(1), '--grant');
+      const validStartArguments =
+        rest.length === 1 ||
+        (rest.length === 3 && rest[1] === '--actor' && actor !== undefined) ||
+        (rest.length === 3 && rest[1] === '--grant' && grantId !== undefined) ||
+        (rest.length === 5 &&
+          rest[1] === '--actor' &&
+          actor !== undefined &&
+          rest[3] === '--grant' &&
+          grantId !== undefined);
+      if (sessionId && validStartArguments) {
         let status = inspectTaskDiffReviewStatus(cwd, sessionId);
-        if (status.state === 'ready' || actor !== undefined) {
+        if (
+          status.state === 'ready' ||
+          actor !== undefined ||
+          grantId !== undefined
+        ) {
           status = beginTaskDiffReview(cwd, sessionId, {
             ...(actor === undefined ? {} : { explicitActor: actor }),
+            ...(grantId === undefined
+              ? {}
+              : { collaborationGrant: { grantId } }),
           });
         }
         if (status.state === 'provider-succeeded-awaiting-reconciliation') {
@@ -1583,7 +1596,7 @@ function dispatch(args: string[], cwd: string): CommandResult {
         return { command, ok: true, result: status };
       }
       throw usage(
-        'Usage: pnpm workflow review-diff <session-id> [--actor <provider>] [--json]\n' +
+        'Usage: pnpm workflow review-diff <session-id> [--actor <provider>] [--grant <grant-id>] [--json]\n' +
           '       pnpm workflow review-diff <inspect|status|reconcile> <session-id> [--json]',
       );
     }
@@ -2634,7 +2647,7 @@ function usageText(): string {
     '  pnpm workflow finish <session-id> [--json]',
     '  pnpm workflow finalize <session-id> --message <subject> [--json]',
     '  pnpm workflow finalize-recover <session-id> [--cancel <transaction-id> --reason <text>] [--json]',
-    '  pnpm workflow review-diff <session-id> [--actor <provider>] [--json]',
+    '  pnpm workflow review-diff <session-id> [--actor <provider>] [--grant <grant-id>] [--json]',
     '  pnpm workflow review-diff <inspect|status|reconcile> <session-id> [--json]',
     '  pnpm workflow finalize-task <session-id> [--json]',
     '  pnpm workflow rollback-completion <session-id> --reason <text> [--json]',

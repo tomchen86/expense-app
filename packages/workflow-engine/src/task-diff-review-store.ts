@@ -19,7 +19,11 @@ import {
   type ProviderInvocationRequest,
 } from './provider-contracts.ts';
 import type { ProviderId } from './provider-registry.ts';
-import type { RecordedRoleParticipant } from './role-scheduler.ts';
+import type {
+  AdmittedRoleResult,
+  ProviderRoleAssignment,
+  RecordedRoleParticipant,
+} from './role-scheduler.ts';
 import {
   assertTaskDiffReviewChallengeResponseCurrent,
   parseTaskDiffFinalAssuranceRecord,
@@ -90,8 +94,11 @@ export type TaskDiffReviewResultBinding = Readonly<{
   requestDigest: string;
   outputDigest: string;
   runtimeObservationDigest: string;
+  providerObservationNodeId: string;
+  providerObservationDigest: string;
   providerResultNodeId: string;
   providerResultDigest: string;
+  roleResult: AdmittedRoleResult;
   review: TaskDiffReviewRecord;
   createdAt: string;
 }>;
@@ -589,15 +596,12 @@ function parseTaskDiffReviewReservation(
     request.authorizationNodeId !== record.authorizationNodeId ||
     request.targetDigest !== subject.subjectDigest ||
     request.inputManifestDigest !== sha256(canonicalJson(manifest)) ||
-    canonicalJson(request.roleAssignment) !==
-      canonicalJson({
-        role: 'task-diff-reviewer',
-        providerId: request.providerId,
-        sessionId: request.roleAssignment.sessionId,
-        targetDigest: subject.subjectDigest,
-        requiredIndependence: 'provider-independent',
-        achievedIndependence: 'provider-independent',
-      }) ||
+    !taskDiffRoleAssignmentMatchesReservation(
+      request.roleAssignment,
+      implementationActor,
+      subject.subjectDigest,
+      request.providerId,
+    ) ||
     record.reservationDigest !==
       sha256(canonicalJson(withoutDigest(record, 'reservationDigest')))
   ) {
@@ -622,8 +626,11 @@ function parseTaskDiffReviewResultBinding(
       'requestDigest',
       'outputDigest',
       'runtimeObservationDigest',
+      'providerObservationNodeId',
+      'providerObservationDigest',
       'providerResultNodeId',
       'providerResultDigest',
+      'roleResult',
       'review',
       'createdAt',
     ]) ||
@@ -637,8 +644,11 @@ function parseTaskDiffReviewResultBinding(
     !isDigest(value.requestDigest) ||
     !isDigest(value.outputDigest) ||
     !isDigest(value.runtimeObservationDigest) ||
+    !isDigest(value.providerObservationNodeId) ||
+    !isDigest(value.providerObservationDigest) ||
     !isDigest(value.providerResultNodeId) ||
     !isDigest(value.providerResultDigest) ||
+    !isAdmittedTaskDiffRoleResultShape(value.roleResult) ||
     !isTimestamp(value.createdAt)
   ) {
     throw storeUnsafe();
@@ -655,13 +665,18 @@ function parseTaskDiffReviewResultBinding(
     requestDigest: value.requestDigest,
     outputDigest: value.outputDigest,
     runtimeObservationDigest: value.runtimeObservationDigest,
+    providerObservationNodeId: value.providerObservationNodeId,
+    providerObservationDigest: value.providerObservationDigest,
     providerResultNodeId: value.providerResultNodeId,
     providerResultDigest: value.providerResultDigest,
+    roleResult: structuredClone(value.roleResult),
     review,
     createdAt: value.createdAt,
   };
   if (
     review.subjectDigest !== binding.subjectDigest ||
+    binding.roleResult.targetDigest !== binding.subjectDigest ||
+    binding.roleResult.role !== 'task-diff-reviewer' ||
     binding.bindingDigest !==
       sha256(canonicalJson(withoutDigest(binding, 'bindingDigest')))
   ) {
@@ -1053,6 +1068,71 @@ function parseParticipant(value: unknown): RecordedRoleParticipant {
       value.identityAssurance as RecordedRoleParticipant['identityAssurance'],
     engineSpawned: value.engineSpawned,
   });
+}
+
+function taskDiffRoleAssignmentMatchesReservation(
+  assignment: ProviderRoleAssignment,
+  implementationActor: RecordedRoleParticipant,
+  subjectDigest: string,
+  providerId: ProviderId,
+): boolean {
+  if (
+    assignment.role !== 'task-diff-reviewer' ||
+    assignment.providerId !== providerId ||
+    assignment.targetDigest !== subjectDigest ||
+    assignment.requiredIndependence !== 'provider-independent'
+  ) {
+    return false;
+  }
+  if (!('grantId' in assignment)) {
+    return assignment.achievedIndependence === 'provider-independent';
+  }
+  return (
+    assignment.degradedForm === 'same-provider-fresh-session' &&
+    assignment.achievedIndependence === 'session-independent' &&
+    assignment.providerIndependent === false &&
+    assignment.sessionIndependent === true &&
+    assignment.engineSpawned === true &&
+    assignment.orchestration === 'engine-spawned-provider' &&
+    assignment.author.providerId === implementationActor.providerId &&
+    assignment.author.sessionId === implementationActor.sessionId &&
+    assignment.participant.providerId === providerId &&
+    assignment.participant.sessionId === assignment.sessionId &&
+    assignment.participant.engineSpawned === true
+  );
+}
+
+function isAdmittedTaskDiffRoleResultShape(
+  value: unknown,
+): value is AdmittedRoleResult {
+  return (
+    isRecord(value) &&
+    hasExactKeys(value, [
+      'schemaVersion',
+      'form',
+      'role',
+      'targetDigest',
+      'assignment',
+      'author',
+      'participant',
+      'orchestration',
+      'requiredIndependence',
+      'achievedIndependence',
+      'content',
+      'providerInvocation',
+      'grantUse',
+      'directHumanReviewAttestation',
+      'resultDigest',
+    ]) &&
+    value.schemaVersion === 1 &&
+    value.role === 'task-diff-reviewer' &&
+    isDigest(value.targetDigest) &&
+    isDigest(value.resultDigest) &&
+    isRecord(value.assignment) &&
+    isRecord(value.author) &&
+    isRecord(value.participant) &&
+    isRecord(value.content)
+  );
 }
 
 function parseMandateBinding(

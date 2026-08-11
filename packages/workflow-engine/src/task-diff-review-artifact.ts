@@ -383,7 +383,9 @@ export type TaskDiffReviewAssignment = Readonly<{
   reviewerPrincipalId: string;
   reviewerProviderId: string;
   reviewerSessionId: string;
-  achievedIndependence: 'provider-independent';
+  achievedIndependence: 'provider-independent' | 'session-independent';
+  degradedForm: 'same-provider-fresh-session' | null;
+  grantUseDigest: string | null;
 }>;
 
 export type StoredTaskDiffReviewChallenge = TaskDiffReviewFinding &
@@ -699,13 +701,24 @@ export function createTaskDiffFinalAssuranceRecord(input: {
     input.reviewerAuthority,
   );
   const exceptions = parseFinalAssuranceExceptions(input.exceptions ?? []);
+  const expectedExceptions: readonly TaskDiffFinalAssuranceException[] =
+    review.assignment.degradedForm === null ||
+    review.assignment.grantUseDigest === null
+      ? []
+      : [
+          {
+            kind: 'collaboration-grant-degradation',
+            grantUseDigest: review.assignment.grantUseDigest,
+            degradedForm: review.assignment.degradedForm,
+          },
+        ];
   if (
     review.subjectDigest !== subject.subjectDigest ||
     canonicalJson(review.subject) !== canonicalJson(subject) ||
     review.assignment.reviewerPrincipalId !== reviewerAuthority.principalId ||
     review.assignment.reviewerProviderId !== reviewerAuthority.providerId ||
     reviewerAuthority.policyDigest !== subject.reviewPolicyDigest ||
-    exceptions.length !== 0
+    canonicalJson(exceptions) !== canonicalJson(expectedExceptions)
   ) {
     throw finalAssuranceInvalid();
   }
@@ -852,7 +865,20 @@ export function assertTaskDiffFinalAssuranceCurrent(input: {
     review.assignment.reviewerPrincipalId !==
       assurance.reviewerAuthority.principalId ||
     review.assignment.reviewerProviderId !==
-      assurance.reviewerAuthority.providerId
+      assurance.reviewerAuthority.providerId ||
+    canonicalJson(assurance.exceptions) !==
+      canonicalJson(
+        review.assignment.degradedForm === null ||
+          review.assignment.grantUseDigest === null
+          ? []
+          : [
+              {
+                kind: 'collaboration-grant-degradation',
+                grantUseDigest: review.assignment.grantUseDigest,
+                degradedForm: review.assignment.degradedForm,
+              },
+            ],
+      )
   ) {
     throw finalAssuranceInvalid();
   }
@@ -1123,8 +1149,17 @@ function parseAssignment(value: unknown): TaskDiffReviewAssignment {
       'reviewerProviderId',
       'reviewerSessionId',
       'achievedIndependence',
+      'degradedForm',
+      'grantUseDigest',
     ]) ||
-    value.achievedIndependence !== 'provider-independent'
+    (value.achievedIndependence !== 'provider-independent' &&
+      value.achievedIndependence !== 'session-independent') ||
+    ![null, 'same-provider-fresh-session'].includes(
+      value.degradedForm as null | string,
+    ) ||
+    (value.grantUseDigest !== null &&
+      (typeof value.grantUseDigest !== 'string' ||
+        !DIGEST.test(value.grantUseDigest)))
   ) {
     throw independenceInvalid();
   }
@@ -1135,13 +1170,25 @@ function parseAssignment(value: unknown): TaskDiffReviewAssignment {
     reviewerPrincipalId: identity(value.reviewerPrincipalId),
     reviewerProviderId: identity(value.reviewerProviderId),
     reviewerSessionId: identity(value.reviewerSessionId),
-    achievedIndependence: 'provider-independent',
+    achievedIndependence: value.achievedIndependence,
+    degradedForm:
+      value.degradedForm as TaskDiffReviewAssignment['degradedForm'],
+    grantUseDigest: value.grantUseDigest as string | null,
   };
-  if (
-    assignment.implementerProviderId === assignment.reviewerProviderId ||
+  const commonInvalid =
     assignment.implementerPrincipalId === assignment.reviewerPrincipalId ||
-    assignment.implementationSessionId === assignment.reviewerSessionId
-  ) {
+    assignment.implementationSessionId === assignment.reviewerSessionId;
+  const ordinaryInvalid =
+    assignment.achievedIndependence === 'provider-independent' &&
+    (assignment.implementerProviderId === assignment.reviewerProviderId ||
+      assignment.degradedForm !== null ||
+      assignment.grantUseDigest !== null);
+  const grantedInvalid =
+    assignment.achievedIndependence === 'session-independent' &&
+    (assignment.implementerProviderId !== assignment.reviewerProviderId ||
+      assignment.degradedForm !== 'same-provider-fresh-session' ||
+      assignment.grantUseDigest === null);
+  if (commonInvalid || ordinaryInvalid || grantedInvalid) {
     throw independenceInvalid();
   }
   return Object.freeze(assignment);

@@ -1,15 +1,22 @@
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
 import { canonicalJson } from '../src/canonical-json.ts';
+import { issueCollaborationGrant } from '../src/collaboration-grant.ts';
+import { inspectCollaborationGrants } from '../src/collaboration-grant-store.ts';
 import { loadWorkflowConfig } from '../src/contracts.ts';
 import { discoverRepository } from '../src/git.ts';
 import { renderHandoff } from '../src/handoff.ts';
 import { completeTask, finalizeTask, finishSession } from '../src/lifecycle.ts';
+import {
+  verifySshSignatureWithPublicKey,
+  type MaintainerSignerProvider,
+} from '../src/maintainer-signer.ts';
 import { investigationRuntimePaths } from '../src/paths.ts';
 import { commitPlanningTransition } from '../src/planning-transition.ts';
 import {
@@ -968,10 +975,17 @@ test('review-diff shortage pauses with the existing typed collaboration-grant vo
       () => finalizeTask(repository, session.sessionId),
       hasCode('TASK_DIFF_REVIEW_REQUIRED'),
     );
-    const paused = beginTaskDiffReview(repository, session.sessionId, {
-      explicitActor: 'codex',
-      environment: {},
-    });
+    const pausedCommand = runCli(
+      repository,
+      ['review-diff', session.sessionId, '--actor', 'codex', '--json'],
+      { WORKFLOW_TEST_DISABLE_PROVIDER_DISPATCH: '1' },
+    );
+    assert.equal(pausedCommand.status, 0, pausedCommand.stderr);
+    const paused = (
+      JSON.parse(pausedCommand.stdout) as {
+        result: ReturnType<typeof beginTaskDiffReview>;
+      }
+    ).result;
     assert.equal(paused.state, 'collaboration-grant-required');
     if (paused.state !== 'collaboration-grant-required') {
       assert.fail('expected typed TaskDiffReview collaboration-grant pause');
@@ -996,6 +1010,197 @@ test('review-diff shortage pauses with the existing typed collaboration-grant vo
   }
 });
 
+test('same-provider TaskDiffReview consumes one exact grant and satisfies the shared gate without a challenge', () => {
+  const signing = createTaskDiffReviewSigningFixture();
+  const { repository } = createReviewFixture({
+    configureAdapterPolicy(policy) {
+      policy.providers.claude.enabled = false;
+    },
+    configureMaintainerPolicy(policy) {
+      policy.trustedSigners = [signing.trustedSigner];
+    },
+  });
+  try {
+    const repositoryOrigin = (
+      JSON.parse(
+        fs.readFileSync(
+          path.join(repository, 'workflow/maintainer-policy.json'),
+          'utf8',
+        ),
+      ) as { repository: { origin: string } }
+    ).repository.origin;
+    git(repository, ['remote', 'add', 'origin', repositoryOrigin]);
+    const session = startSession(repository, 'demo-change', '1.1');
+    fs.writeFileSync(
+      path.join(repository, 'src/feature.ts'),
+      'export const reviewed = true;\n',
+    );
+    assert.throws(
+      () => finalizeTask(repository, session.sessionId),
+      hasCode('TASK_DIFF_REVIEW_REQUIRED'),
+    );
+    const pausedCommand = runCli(
+      repository,
+      ['review-diff', session.sessionId, '--actor', 'codex', '--json'],
+      { WORKFLOW_TEST_DISABLE_PROVIDER_DISPATCH: '1' },
+    );
+    assert.equal(pausedCommand.status, 0, pausedCommand.stderr);
+    const paused = (
+      JSON.parse(pausedCommand.stdout) as {
+        result: ReturnType<typeof beginTaskDiffReview>;
+      }
+    ).result;
+    assert.equal(paused.state, 'collaboration-grant-required');
+    if (
+      paused.state !== 'collaboration-grant-required' ||
+      paused.inputSchema.grantRequest === null
+    ) {
+      assert.fail('expected an exact same-provider grant request');
+    }
+    const now = new Date();
+    const grant = issueCollaborationGrant(
+      repository,
+      paused.inputSchema.grantRequest,
+      {
+        grantId: 'dddddddd-dddd-4ddd-8ddd-dddddddddddd',
+        now,
+        signer: signing.signer,
+      },
+    );
+    const replayedPauseCommand = runCli(
+      repository,
+      ['review-diff', session.sessionId, '--actor', 'codex', '--json'],
+      { WORKFLOW_TEST_DISABLE_PROVIDER_DISPATCH: '1' },
+    );
+    assert.equal(replayedPauseCommand.status, 0, replayedPauseCommand.stderr);
+    const replayedPause = (
+      JSON.parse(replayedPauseCommand.stdout) as {
+        result: ReturnType<typeof beginTaskDiffReview>;
+      }
+    ).result;
+    assert.equal(replayedPause.state, 'collaboration-grant-required');
+    if (replayedPause.state !== 'collaboration-grant-required') {
+      assert.fail('expected the same durable TaskDiffReview pause');
+    }
+    assert.deepEqual(
+      replayedPause.inputSchema.grantRequest,
+      paused.inputSchema.grantRequest,
+    );
+    const started = runCli(
+      repository,
+      [
+        'review-diff',
+        session.sessionId,
+        '--actor',
+        'codex',
+        '--grant',
+        grant.grantId,
+        '--json',
+      ],
+      { WORKFLOW_TEST_DISABLE_PROVIDER_DISPATCH: '1' },
+    );
+    assert.equal(started.status, 0, started.stderr);
+    const prepared = (
+      JSON.parse(started.stdout) as {
+        result: ReturnType<typeof beginTaskDiffReview>;
+      }
+    ).result;
+    assert.equal(prepared.state, 'waiting-for-provider');
+    if (prepared.state !== 'waiting-for-provider') {
+      assert.fail('expected granted TaskDiffReview provider work');
+    }
+    assert.equal(prepared.assignment.providerId, 'codex');
+    assert.equal(
+      prepared.assignment.achievedIndependence,
+      'session-independent',
+    );
+    assert.ok('grantId' in prepared.assignment);
+    assert.equal(prepared.assignment.grantId, grant.grantId);
+
+    const reviewedBlobObjectId = prepared.subject.transitions.find(
+      ({ path: changedPath }) => changedPath === 'src/feature.ts',
+    )?.after?.objectId;
+    assert.ok(reviewedBlobObjectId);
+    const submission = validTaskDiffSubmission(reviewedBlobObjectId);
+    assert.equal(
+      runProviderWorker(repository, prepared.invocationId, {
+        runner(input) {
+          return {
+            invocationId: prepared.invocationId,
+            providerId: 'codex',
+            purpose: 'task-diff-review',
+            requestDigest: input.request.requestDigest,
+            semanticOutput: submission,
+            semanticOutputDigest: sha256(canonicalJson(submission)),
+            assurance: 'unchanged-governed-projection',
+            projection: {
+              unchanged: true,
+              changedCategories: [],
+              beforeDigest: prepared.subject.subjectDigest,
+              afterDigest: prepared.subject.subjectDigest,
+            },
+            sameUserProcessConfined: false,
+            residuals: [...PROVIDER_RUNNER_RESIDUALS],
+            executable: executableIdentity(),
+            elapsedMs: 7,
+          };
+        },
+      }).state,
+      'succeeded',
+    );
+    const reviewed = reconcileTaskDiffReview(repository, session.sessionId, {
+      collaborationGrantValidation: { now, verifier: signing.signer },
+    });
+    assert.equal(reviewed.state, 'satisfied');
+    assert.equal(
+      reviewed.review.assignment.achievedIndependence,
+      'session-independent',
+    );
+    assert.deepEqual(
+      assertCurrentTaskDiffReviewSatisfied(repository, session.sessionId),
+      reviewed.review,
+    );
+    assert.equal(
+      inspectCollaborationGrants(
+        discoverRepository(repository).gitCommonDirectory,
+        grant.grantId,
+      )[0]?.state,
+      'consumed',
+    );
+    const resumed = runCli(
+      repository,
+      [
+        'review-diff',
+        session.sessionId,
+        '--actor',
+        'codex',
+        '--grant',
+        grant.grantId,
+        '--json',
+      ],
+      { WORKFLOW_TEST_DISABLE_PROVIDER_DISPATCH: '1' },
+    );
+    assert.equal(resumed.status, 0, resumed.stderr);
+    const resumedResult = (
+      JSON.parse(resumed.stdout) as {
+        result: ReturnType<typeof beginTaskDiffReview>;
+      }
+    ).result;
+    assert.equal(resumedResult.state, 'satisfied');
+    if (resumedResult.state !== 'satisfied') {
+      assert.fail('expected the same consumed TaskDiffReview result');
+    }
+    assert.equal(resumedResult.invocationId, prepared.invocationId);
+    assert.equal(
+      resumedResult.review.recordDigest,
+      reviewed.review.recordDigest,
+    );
+  } finally {
+    signing.dispose();
+    fs.rmSync(repository, { recursive: true, force: true });
+  }
+});
+
 function createReviewFixture(
   options: {
     configurePathRoles?: (registry: {
@@ -1003,6 +1208,13 @@ function createReviewFixture(
     }) => void;
     configureAdapterPolicy?: (policy: {
       providers: Record<'codex' | 'claude', { enabled: boolean }>;
+    }) => void;
+    configureMaintainerPolicy?: (policy: {
+      trustedSigners: Array<{
+        identity: string;
+        publicKey: string;
+        fingerprint: string;
+      }>;
     }) => void;
   } = {},
 ): {
@@ -1045,6 +1257,18 @@ function createReviewFixture(
     path.join(sourceRepositoryRoot, 'workflow/maintainer-policy.json'),
     path.join(repository, 'workflow/maintainer-policy.json'),
   );
+  if (options.configureMaintainerPolicy) {
+    const policyPath = path.join(repository, 'workflow/maintainer-policy.json');
+    const policy = JSON.parse(fs.readFileSync(policyPath, 'utf8')) as {
+      trustedSigners: Array<{
+        identity: string;
+        publicKey: string;
+        fingerprint: string;
+      }>;
+    };
+    options.configureMaintainerPolicy(policy);
+    fs.writeFileSync(policyPath, `${JSON.stringify(policy, null, 2)}\n`);
+  }
   if (options.configureAdapterPolicy) {
     const policyPath = path.join(repository, 'workflow/ai-adapter-policy.json');
     const policy = JSON.parse(fs.readFileSync(policyPath, 'utf8')) as {
@@ -1203,6 +1427,75 @@ function providerWireResult(
 
 function sha256(value: string): string {
   return crypto.createHash('sha256').update(value).digest('hex');
+}
+
+function createTaskDiffReviewSigningFixture(): {
+  signer: MaintainerSignerProvider;
+  trustedSigner: {
+    identity: string;
+    publicKey: string;
+    fingerprint: string;
+  };
+  dispose(): void;
+} {
+  const root = fs.realpathSync(
+    fs.mkdtempSync(path.join(os.tmpdir(), 'task-diff-review-signing-')),
+  );
+  const keyPath = path.join(root, 'review-key');
+  execFileSync('ssh-keygen', ['-q', '-t', 'ed25519', '-N', '', '-f', keyPath]);
+  const publicKey = fs
+    .readFileSync(`${keyPath}.pub`, 'utf8')
+    .trim()
+    .split(/\s+/)
+    .slice(0, 2)
+    .join(' ');
+  const fingerprint = execFileSync(
+    'ssh-keygen',
+    ['-l', '-E', 'sha256', '-f', `${keyPath}.pub`],
+    { encoding: 'utf8' },
+  ).match(/SHA256:[A-Za-z0-9+/]+/)?.[0];
+  if (!fingerprint)
+    throw new Error('TaskDiffReview fixture fingerprint missing.');
+  const identity = 'task-diff-review-maintainer';
+  const signer: MaintainerSignerProvider = {
+    assertHumanPresent() {},
+    identity: () => identity,
+    sign(payload, namespace) {
+      assert.ok(namespace);
+      const payloadPath = path.join(root, 'payload');
+      fs.writeFileSync(payloadPath, payload, { mode: 0o600 });
+      execFileSync('ssh-keygen', [
+        '-Y',
+        'sign',
+        '-f',
+        keyPath,
+        '-n',
+        namespace,
+        payloadPath,
+      ]);
+      const signature = fs.readFileSync(`${payloadPath}.sig`, 'utf8');
+      fs.rmSync(payloadPath, { force: true });
+      fs.rmSync(`${payloadPath}.sig`, { force: true });
+      return signature;
+    },
+    verify(payload, signature, requestedIdentity, namespace) {
+      assert.ok(namespace);
+      verifySshSignatureWithPublicKey(
+        payload,
+        signature,
+        requestedIdentity,
+        publicKey,
+        namespace,
+      );
+    },
+  };
+  return {
+    signer,
+    trustedSigner: { identity, publicKey, fingerprint },
+    dispose() {
+      fs.rmSync(root, { recursive: true, force: true });
+    },
+  };
 }
 
 function runCli(
