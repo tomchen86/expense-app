@@ -10,9 +10,11 @@ import {
 } from './filesystem-safety.ts';
 import { assertHumanResolutionLifecycleBarrier } from './investigation-session-store.ts';
 import {
+  assertOwnedLock,
   listConflictingActiveWorkflowSessionIds,
   readSessionFile,
   releaseOwnedLock,
+  type WorkflowSession,
   type runtimePaths,
   withRepositoryLifecycleOperation,
 } from './session-store.ts';
@@ -69,6 +71,57 @@ export function withOpenTaskPlanningAuthority<T>(
         }),
       );
     },
+  );
+}
+
+/**
+ * Turn the existing task-session change lock into a bounded planning
+ * authority while that exact session is durably revising. The caller already
+ * owns the repository and session lifecycle locks; this helper does not open a
+ * second authority lane or release the task lock.
+ */
+export function withTaskRevisionPlanningAuthority<T>(
+  runtime: RuntimePaths,
+  expectedSession: WorkflowSession,
+  revisionLeaseId: string,
+  assertRepositoryLock: () => void,
+  operation: (authority: HeldChangeTransitionAuthority) => T,
+): T {
+  assertHumanResolutionLifecycleBarrier(runtime.root, null);
+  assertRepositoryLock();
+  const current = readSessionFile(
+    path.join(runtime.sessions, `${expectedSession.sessionId}.json`),
+  );
+  if (
+    JSON.stringify(current) !== JSON.stringify(expectedSession) ||
+    current.state !== 'revising' ||
+    current.revisionLeaseId !== revisionLeaseId
+  ) {
+    throw workflowError(
+      'TASK_REVISION_AUTHORITY_STALE',
+      'Task revision planning authority is not bound to the exact revising session.',
+      ExitCode.staleState,
+    );
+  }
+  const assertOwned = () => {
+    assertRepositoryLock();
+    const reread = readSessionFile(
+      path.join(runtime.sessions, `${current.sessionId}.json`),
+    );
+    if (JSON.stringify(reread) !== JSON.stringify(current)) {
+      throw staleLock();
+    }
+    assertOwnedLock(
+      path.join(runtime.locks, `${current.changeId}.lock`),
+      current.sessionId,
+      current.changeId,
+      current.taskId,
+    );
+    assertHumanResolutionBarrier(runtime, current.changeId, null);
+  };
+  assertOwned();
+  return operation(
+    heldChangeTransitionAuthority(current.changeId, assertOwned),
   );
 }
 

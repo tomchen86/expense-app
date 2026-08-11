@@ -5,11 +5,14 @@ import path from 'node:path';
 import test from 'node:test';
 
 import { WorkflowError } from '../src/errors.ts';
+import { listChangedPaths } from '../src/git.ts';
 import {
   inspectTaskRevisionStatus,
   resumeTask,
   reviseTask,
 } from '../src/task-revision.ts';
+import { commitChangedPaths } from '../src/git-transitions.ts';
+import { commitPlanningTransition } from '../src/planning-transition.ts';
 import {
   abortSession,
   checkSession,
@@ -21,6 +24,7 @@ import {
   createFixtureRepository,
   git,
   sourceRepositoryRoot,
+  writeReadyV2ExemptChange,
 } from './fixture.ts';
 
 const STARTED_AT = new Date('2026-08-11T01:00:00.000Z');
@@ -111,7 +115,7 @@ test('resume-task detects implementation drift and abort preserves every byte', 
   }
 });
 
-test('no-op resume refuses planning edits without consuming the revision lease', () => {
+test('resume refuses unreviewed planning edits without consuming the revision lease', () => {
   const repository = revisionFixture();
   try {
     const implementationPath = path.join(repository, 'src/feature.ts');
@@ -131,7 +135,7 @@ test('no-op resume refuses planning edits without consuming the revision lease',
         resumeTask(repository, session.sessionId, {
           now: () => new Date('2026-08-11T01:05:00.000Z'),
         }),
-      (error) => workflowCode(error) === 'REVISION_PLAN_COMMIT_REQUIRED',
+      (error) => workflowCode(error) === 'REVISION_PLAN_REVIEW_REQUIRED',
     );
     assert.equal(getSession(repository, session.sessionId).state, 'revising');
     assert.equal(
@@ -144,6 +148,317 @@ test('no-op resume refuses planning edits without consuming the revision lease',
         .endsWith('\nA reviewed correction is required.\n'),
       true,
     );
+  } finally {
+    fs.rmSync(repository, { recursive: true, force: true });
+  }
+});
+
+test('resume-task commits only a freshly reviewed plan and rebinds the same session', () => {
+  const repository = createFixtureRepository();
+  try {
+    git(repository, ['checkout', '-b', 'work/demo-change']);
+    writeReadyV2ExemptChange(repository);
+    commitPlanningTransition(repository, 'demo-change');
+    const session = startSession(repository, 'demo-change', '1.1');
+    const implementationPath = path.join(repository, 'src/feature.ts');
+    const implementation = 'export const value = 1;\n';
+    fs.writeFileSync(implementationPath, implementation);
+    reviseTask(repository, session.sessionId, 'correct-plan', {
+      now: () => STARTED_AT,
+    });
+    const parent = git(repository, ['rev-parse', 'HEAD']).trim();
+
+    fs.appendFileSync(
+      path.join(repository, 'openspec/changes/demo-change/proposal.md'),
+      '\nThe implementation remains valid under this clarified plan.\n',
+    );
+    const reviewed = writeReadyV2ExemptChange(repository);
+    const resumed = resumeTask(repository, session.sessionId, {
+      now: () => new Date('2026-08-11T01:05:00.000Z'),
+    });
+
+    const planCommit = git(repository, ['rev-parse', 'HEAD']).trim();
+    assert.notEqual(planCommit, parent);
+    assert.equal(resumed.session.sessionId, session.sessionId);
+    assert.equal(resumed.session.state, 'active');
+    assert.equal(resumed.session.baseline.head, planCommit);
+    assert.equal(
+      resumed.session.planningAssurance?.planningGenerationId,
+      reviewed.planningAssurance.planningGenerationId,
+    );
+    assert.equal(resumed.lease.phase, 'completed');
+    assert.equal(fs.readFileSync(implementationPath, 'utf8'), implementation);
+    assert.deepEqual(listChangedPaths(repository, planCommit), [
+      'src/feature.ts',
+    ]);
+    assert.equal(
+      git(repository, ['diff', '--cached', '--name-only']).trim(),
+      '',
+    );
+    assert.equal(
+      commitChangedPaths(repository, planCommit).some((candidate) =>
+        candidate.startsWith('src/'),
+      ),
+      false,
+    );
+    assert.equal(checkSession(repository, session.sessionId).passed, true);
+  } finally {
+    fs.rmSync(repository, { recursive: true, force: true });
+  }
+});
+
+test('resume-task recovers the exact plan commit after a ref-CAS crash', () => {
+  const repository = createFixtureRepository();
+  try {
+    git(repository, ['checkout', '-b', 'work/demo-change']);
+    writeReadyV2ExemptChange(repository);
+    commitPlanningTransition(repository, 'demo-change');
+    const session = startSession(repository, 'demo-change', '1.1');
+    const implementationPath = path.join(repository, 'src/feature.ts');
+    const implementation = 'export const value = 1;\n';
+    fs.writeFileSync(implementationPath, implementation);
+    reviseTask(repository, session.sessionId, 'correct-plan', {
+      now: () => STARTED_AT,
+    });
+    const parent = git(repository, ['rev-parse', 'HEAD']).trim();
+    fs.appendFileSync(
+      path.join(repository, 'openspec/changes/demo-change/proposal.md'),
+      '\nThe implementation remains valid after review.\n',
+    );
+    writeReadyV2ExemptChange(repository);
+
+    assert.throws(
+      () =>
+        resumeTask(repository, session.sessionId, {
+          now: () => new Date('2026-08-11T01:05:00.000Z'),
+          testCrashAfter: 'plan-ref-updated',
+        }),
+      /simulated task revision crash/,
+    );
+    const committed = git(repository, ['rev-parse', 'HEAD']).trim();
+    assert.notEqual(committed, parent);
+    assert.equal(getSession(repository, session.sessionId).state, 'revising');
+    assert.equal(fs.readFileSync(implementationPath, 'utf8'), implementation);
+
+    const recovered = resumeTask(repository, session.sessionId, {
+      now: () => new Date('2026-08-11T01:06:00.000Z'),
+    });
+    assert.equal(recovered.session.state, 'active');
+    assert.equal(recovered.session.baseline.head, committed);
+    assert.equal(recovered.lease.phase, 'completed');
+    assert.equal(git(repository, ['rev-parse', 'HEAD']).trim(), committed);
+    assert.equal(fs.readFileSync(implementationPath, 'utf8'), implementation);
+  } finally {
+    fs.rmSync(repository, { recursive: true, force: true });
+  }
+});
+
+test('resume-task applies one exact prepared plan commit after a pre-CAS crash', () => {
+  const repository = createFixtureRepository();
+  try {
+    git(repository, ['checkout', '-b', 'work/demo-change']);
+    writeReadyV2ExemptChange(repository);
+    commitPlanningTransition(repository, 'demo-change');
+    const session = startSession(repository, 'demo-change', '1.1');
+    const implementationPath = path.join(repository, 'src/feature.ts');
+    const implementation = 'export const value = 1;\n';
+    fs.writeFileSync(implementationPath, implementation);
+    reviseTask(repository, session.sessionId, 'correct-plan', {
+      now: () => STARTED_AT,
+    });
+    const parent = git(repository, ['rev-parse', 'HEAD']).trim();
+    fs.appendFileSync(
+      path.join(repository, 'openspec/changes/demo-change/proposal.md'),
+      '\nThe prepared revision retains the implementation.\n',
+    );
+    writeReadyV2ExemptChange(repository);
+
+    assert.throws(
+      () =>
+        resumeTask(repository, session.sessionId, {
+          now: () => new Date('2026-08-11T01:05:00.000Z'),
+          testCrashAfter: 'plan-commit-prepared',
+        }),
+      /simulated task revision crash/,
+    );
+    const prepared = inspectTaskRevisionStatus(repository, session.sessionId);
+    assert.equal(prepared?.phase, 'plan-commit-prepared');
+    assert.equal(git(repository, ['rev-parse', 'HEAD']).trim(), parent);
+    assert.equal(
+      git(repository, ['diff', '--cached', '--name-only']).trim(),
+      '',
+    );
+    assert.equal(fs.readFileSync(implementationPath, 'utf8'), implementation);
+
+    const recovered = resumeTask(repository, session.sessionId, {
+      now: () => new Date('2026-08-11T01:06:00.000Z'),
+    });
+    assert.equal(recovered.session.state, 'active');
+    assert.notEqual(recovered.session.baseline.head, parent);
+    assert.equal(recovered.lease.phase, 'completed');
+    assert.equal(
+      git(repository, ['diff', '--cached', '--name-only']).trim(),
+      '',
+    );
+    assert.equal(fs.readFileSync(implementationPath, 'utf8'), implementation);
+  } finally {
+    fs.rmSync(repository, { recursive: true, force: true });
+  }
+});
+
+test('resume-task rebinds the same session after a post-commit pre-session crash', () => {
+  const repository = createFixtureRepository();
+  try {
+    git(repository, ['checkout', '-b', 'work/demo-change']);
+    writeReadyV2ExemptChange(repository);
+    commitPlanningTransition(repository, 'demo-change');
+    const session = startSession(repository, 'demo-change', '1.1');
+    const implementationPath = path.join(repository, 'src/feature.ts');
+    const implementation = 'export const value = 1;\n';
+    fs.writeFileSync(implementationPath, implementation);
+    reviseTask(repository, session.sessionId, 'correct-plan', {
+      now: () => STARTED_AT,
+    });
+    fs.appendFileSync(
+      path.join(repository, 'openspec/changes/demo-change/proposal.md'),
+      '\nThe reviewed session remains the same.\n',
+    );
+    writeReadyV2ExemptChange(repository);
+
+    assert.throws(
+      () =>
+        resumeTask(repository, session.sessionId, {
+          now: () => new Date('2026-08-11T01:05:00.000Z'),
+          testCrashAfter: 'resume-prepared',
+        }),
+      /simulated task revision crash/,
+    );
+    const committed = git(repository, ['rev-parse', 'HEAD']).trim();
+    assert.equal(getSession(repository, session.sessionId).state, 'revising');
+    assert.equal(
+      inspectTaskRevisionStatus(repository, session.sessionId)?.phase,
+      'resume-prepared',
+    );
+
+    const recovered = resumeTask(repository, session.sessionId, {
+      now: () => new Date('2026-08-11T01:06:00.000Z'),
+    });
+    assert.equal(recovered.session.sessionId, session.sessionId);
+    assert.equal(recovered.session.state, 'active');
+    assert.equal(recovered.session.baseline.head, committed);
+    assert.equal(fs.readFileSync(implementationPath, 'utf8'), implementation);
+  } finally {
+    fs.rmSync(repository, { recursive: true, force: true });
+  }
+});
+
+test('a reviewed path narrowing resumes without external widening authority', () => {
+  const repository = createFixtureRepository();
+  try {
+    git(repository, ['checkout', '-b', 'work/demo-change']);
+    writeReadyV2ExemptChange(repository);
+    commitPlanningTransition(repository, 'demo-change');
+    const session = startSession(repository, 'demo-change', '1.1');
+    fs.writeFileSync(
+      path.join(repository, 'src/feature.ts'),
+      'export const value = 1;\n',
+    );
+    reviseTask(repository, session.sessionId, 'narrow-task-scope', {
+      now: () => STARTED_AT,
+    });
+    writeTaskAllowedPaths(repository, ['src/feature.ts']);
+    writeReadyV2ExemptChange(repository);
+
+    const resumed = resumeTask(repository, session.sessionId, {
+      now: () => new Date('2026-08-11T01:05:00.000Z'),
+    });
+    assert.equal(resumed.session.state, 'active');
+    assert.deepEqual(resumed.session.allowedPaths, ['src/feature.ts']);
+  } finally {
+    fs.rmSync(repository, { recursive: true, force: true });
+  }
+});
+
+test('a reviewed authority widening is refused before the plan ref changes', () => {
+  const repository = createFixtureRepository();
+  try {
+    git(repository, ['checkout', '-b', 'work/demo-change']);
+    writeReadyV2ExemptChange(repository);
+    commitPlanningTransition(repository, 'demo-change');
+    const session = startSession(repository, 'demo-change', '1.1');
+    fs.writeFileSync(
+      path.join(repository, 'src/feature.ts'),
+      'export const value = 1;\n',
+    );
+    reviseTask(repository, session.sessionId, 'widen-task-scope', {
+      now: () => STARTED_AT,
+    });
+    const parent = git(repository, ['rev-parse', 'HEAD']).trim();
+    writeTaskAllowedPaths(repository, ['docs/**', 'src/**']);
+    writeReadyV2ExemptChange(repository);
+
+    assert.throws(
+      () =>
+        resumeTask(repository, session.sessionId, {
+          now: () => new Date('2026-08-11T01:05:00.000Z'),
+        }),
+      (error) => workflowCode(error) === 'REVISION_WIDENING_APPROVAL_REQUIRED',
+    );
+    assert.equal(git(repository, ['rev-parse', 'HEAD']).trim(), parent);
+    assert.equal(getSession(repository, session.sessionId).state, 'revising');
+  } finally {
+    fs.rmSync(repository, { recursive: true, force: true });
+  }
+});
+
+test('resume-task persists exact staging intent before mutating the index', () => {
+  const repository = createFixtureRepository();
+  try {
+    git(repository, ['checkout', '-b', 'work/demo-change']);
+    writeReadyV2ExemptChange(repository);
+    commitPlanningTransition(repository, 'demo-change');
+    const session = startSession(repository, 'demo-change', '1.1');
+    fs.writeFileSync(
+      path.join(repository, 'src/feature.ts'),
+      'export const value = 1;\n',
+    );
+    reviseTask(repository, session.sessionId, 'prepare-plan-staging', {
+      now: () => STARTED_AT,
+    });
+    const parent = git(repository, ['rev-parse', 'HEAD']).trim();
+    fs.appendFileSync(
+      path.join(repository, 'openspec/changes/demo-change/proposal.md'),
+      '\nThe partial index requires durable intent.\n',
+    );
+    writeReadyV2ExemptChange(repository);
+
+    assert.throws(
+      () =>
+        resumeTask(repository, session.sessionId, {
+          now: () => new Date('2026-08-11T01:05:00.000Z'),
+          testCrashAfter: 'planning-staging-prepared',
+        }),
+      /simulated task revision crash/,
+    );
+    assert.equal(
+      inspectTaskRevisionStatus(repository, session.sessionId)?.phase,
+      'planning-staging-prepared',
+    );
+    assert.equal(git(repository, ['rev-parse', 'HEAD']).trim(), parent);
+    const planningPaths = listChangedPaths(repository, parent).filter(
+      (candidate) => candidate.startsWith('openspec/changes/demo-change/'),
+    );
+    git(repository, ['add', '-A', '--', ...planningPaths]);
+    assert.notEqual(
+      git(repository, ['diff', '--cached', '--name-only']).trim(),
+      '',
+    );
+
+    const recovered = resumeTask(repository, session.sessionId, {
+      now: () => new Date('2026-08-11T01:06:00.000Z'),
+    });
+    assert.equal(recovered.session.state, 'active');
+    assert.equal(recovered.lease.phase, 'completed');
   } finally {
     fs.rmSync(repository, { recursive: true, force: true });
   }
@@ -293,6 +608,18 @@ function revisionFixture(): string {
   const repository = createFixtureRepository();
   git(repository, ['checkout', '-b', 'work/demo-change']);
   return repository;
+}
+
+function writeTaskAllowedPaths(repository: string, allowedPaths: string[]) {
+  const guardPath = path.join(
+    repository,
+    'openspec/changes/demo-change/guard.json',
+  );
+  const guard = JSON.parse(fs.readFileSync(guardPath, 'utf8')) as {
+    tasks: Record<string, { allowedPaths: string[] }>;
+  };
+  guard.tasks['1.1']!.allowedPaths = allowedPaths;
+  fs.writeFileSync(guardPath, `${JSON.stringify(guard, null, 2)}\n`);
 }
 
 function workflowCode(error: unknown): string | null {

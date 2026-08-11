@@ -17,6 +17,7 @@ import {
   listStagedPaths,
   planningCommitMessage,
   stageExactPaths,
+  stageExactPathsPreservingUnstaged,
   updateManagedRef,
 } from './git-transitions.ts';
 import {
@@ -102,6 +103,15 @@ export type PlanningTransitionTestHooks = {
     tree: string;
     reportId: string;
     changedPaths: string[];
+  }): void;
+  beforeStagingMutation?(context: {
+    repositoryRoot: string;
+    expectedHead: string;
+    previousIndexTree: string;
+    tree: string;
+    changedPaths: string[];
+    preservedUnstagedPaths: string[];
+    generatedMutations: GeneratedDocumentMutation[];
   }): void;
   afterRefUpdateBeforeEpoch?(context: {
     repositoryRoot: string;
@@ -298,6 +308,30 @@ export function commitPlanningTransitionUnderAuthority(
   );
 }
 
+export function commitTaskRevisionPlanningTransitionUnderAuthority(
+  cwd: string,
+  requestedChangeId: string,
+  authority: HeldChangeTransitionAuthority,
+  preservedUnstagedPaths: string[],
+  environment: NodeJS.ProcessEnv = process.env,
+  testHooks: PlanningTransitionTestHooks = {},
+): PlanningTransitionResult {
+  const changeId = assertChangeId(requestedChangeId);
+  const assertLocksOwned = assertHeldChangeTransitionAuthority(
+    authority,
+    changeId,
+  );
+  return commitPlanningTransitionLocked(
+    cwd,
+    changeId,
+    environment,
+    testHooks,
+    assertLocksOwned,
+    undefined,
+    preservedUnstagedPaths,
+  );
+}
+
 /**
  * The planning generation this change last committed under, read from what was
  * actually committed rather than from runtime state that may have been pruned.
@@ -315,6 +349,7 @@ function commitPlanningTransitionLocked(
   testHooks: PlanningTransitionTestHooks,
   assertLocksOwned: () => void,
   amendment?: AmendmentRequest,
+  preservedUnstagedPaths: string[] = [],
 ): PlanningTransitionResult {
   const initial = discoverRepository(cwd);
   const config = loadWorkflowConfig(initial.repositoryRoot);
@@ -358,7 +393,30 @@ function commitPlanningTransitionLocked(
     );
   }
 
-  const planningPaths = listChangedPaths(initial.repositoryRoot, initial.head);
+  const allInitialChangedPaths = listChangedPaths(
+    initial.repositoryRoot,
+    initial.head,
+  );
+  const preservedPaths = preservedUnstagedPaths
+    .map(normalizeChangedPath)
+    .sort();
+  if (
+    new Set(preservedPaths).size !== preservedPaths.length ||
+    JSON.stringify(preservedPaths) !==
+      JSON.stringify([...preservedUnstagedPaths].sort()) ||
+    preservedPaths.some(
+      (candidate) => !allInitialChangedPaths.includes(candidate),
+    )
+  ) {
+    throw planningGuard(
+      'PLANNING_PRESERVED_PATHS_INVALID',
+      'Task revision preserved paths must be a canonical subset of the exact worktree diff.',
+    );
+  }
+  const preservedSet = new Set(preservedPaths);
+  const planningPaths = allInitialChangedPaths.filter(
+    (candidate) => !preservedSet.has(candidate),
+  );
   if (planningPaths.length === 0) {
     throw workflowError(
       'PLANNING_DIFF_REQUIRED',
@@ -489,7 +547,7 @@ function commitPlanningTransitionLocked(
   assertUnstagedPlanningState(
     initial,
     headRef,
-    planningPaths,
+    allInitialChangedPaths,
     initialFingerprint,
   );
   const verified = inspectPlanningTransition(
@@ -528,10 +586,11 @@ function commitPlanningTransitionLocked(
       .map((mutation) => mutation.path)
       .sort();
     changedPaths = [...planningPaths, ...engineProjectionPaths].sort();
+    const allChangedPaths = [...changedPaths, ...preservedPaths].sort();
     if (
       new Set(changedPaths).size !== changedPaths.length ||
       JSON.stringify(listChangedPaths(initial.repositoryRoot, initial.head)) !==
-        JSON.stringify(changedPaths)
+        JSON.stringify(allChangedPaths)
     ) {
       throw planningStale('PLANNING_PROJECTION_CHANGED');
     }
@@ -543,18 +602,36 @@ function commitPlanningTransitionLocked(
       repositoryRoot: initial.repositoryRoot,
       expectedHead: initial.head,
     });
-    const staged = stageExactPaths(
-      initial.repositoryRoot,
-      initial.head,
-      changedPaths,
-    );
+    const staged =
+      preservedPaths.length === 0
+        ? stageExactPaths(initial.repositoryRoot, initial.head, changedPaths)
+        : stageExactPathsPreservingUnstaged(
+            initial.repositoryRoot,
+            initial.head,
+            changedPaths,
+            preservedPaths,
+            (preparation) =>
+              testHooks.beforeStagingMutation?.({
+                repositoryRoot: initial.repositoryRoot,
+                expectedHead: initial.head,
+                previousIndexTree: preparation.previousIndexTree,
+                tree: preparation.tree,
+                changedPaths: [...preparation.stagedPaths],
+                preservedUnstagedPaths: [...preparation.preservedUnstagedPaths],
+                generatedMutations: generatedMutations.map((mutation) => ({
+                  ...mutation,
+                })),
+              }),
+          );
     stagedTree = staged.tree;
     previousIndexTree = staged.previousIndexTree;
     assertStagedPlanningState(
       initial.repositoryRoot,
       initial.head,
       headRef,
+      allChangedPaths,
       changedPaths,
+      preservedPaths,
       staged.tree,
       transitionFingerprint,
     );
@@ -709,7 +786,9 @@ function commitPlanningTransitionLocked(
       initial.repositoryRoot,
       initial.head,
       headRef,
+      allChangedPaths,
       changedPaths,
+      preservedPaths,
       staged.tree,
       transitionFingerprint,
     );
@@ -1001,11 +1080,13 @@ function assertStagedPlanningState(
   repositoryRoot: string,
   expectedHead: string,
   expectedRef: string,
-  expectedPaths: string[],
+  expectedChangedPaths: string[],
+  expectedStagedPaths: string[],
+  expectedUnstagedPaths: string[],
   expectedTree: string,
   expectedFingerprint: string,
 ): void {
-  const unstaged = runGit(repositoryRoot, [
+  const trackedUnstaged = runGit(repositoryRoot, [
     'diff',
     '--name-only',
     '--no-renames',
@@ -1016,6 +1097,9 @@ function assertStagedPlanningState(
     .filter(Boolean)
     .map(normalizeChangedPath)
     .sort();
+  const changed = listChangedPaths(repositoryRoot, expectedHead);
+  const staged = listStagedPaths(repositoryRoot, expectedHead);
+  const unstaged = changed.filter((candidate) => !staged.includes(candidate));
   if (
     runGit(repositoryRoot, ['symbolic-ref', '--quiet', 'HEAD'], true).trim() !==
       expectedRef ||
@@ -1025,12 +1109,13 @@ function assertStagedPlanningState(
     throw planningStale('PLANNING_HEAD_CHANGED');
   }
   if (
-    JSON.stringify(listChangedPaths(repositoryRoot, expectedHead)) !==
-      JSON.stringify(expectedPaths) ||
-    JSON.stringify(listStagedPaths(repositoryRoot, expectedHead)) !==
-      JSON.stringify(expectedPaths) ||
+    JSON.stringify(changed) !== JSON.stringify(expectedChangedPaths) ||
+    JSON.stringify(staged) !== JSON.stringify(expectedStagedPaths) ||
     runGit(repositoryRoot, ['write-tree']).trim() !== expectedTree ||
-    unstaged.length > 0 ||
+    JSON.stringify(unstaged) !== JSON.stringify(expectedUnstagedPaths) ||
+    trackedUnstaged.some(
+      (candidate) => !expectedUnstagedPaths.includes(candidate),
+    ) ||
     fingerprintRepositoryWorktree(repositoryRoot, expectedHead) !==
       expectedFingerprint
   ) {
