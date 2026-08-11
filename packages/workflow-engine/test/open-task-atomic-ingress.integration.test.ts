@@ -1,14 +1,17 @@
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
 
+import { canonicalJson } from '../src/canonical-json.ts';
 import { validateCiPlanningCommit } from '../src/ci-planning.ts';
 import { commitFacts } from '../src/git-transitions.ts';
 import { renderHandoff } from '../src/handoff.ts';
 import { openTask, readOpenTaskJournal } from '../src/open-task.ts';
 import { readPlanningTransitionReport } from '../src/planning-report.ts';
 import { preparePlanningDraftWorkspace } from '../src/planning-workspace.ts';
+import { abortSession } from '../src/session.ts';
 import { readSessionFile } from '../src/session-store.ts';
 import { revokeTaskMandate } from '../src/task-mandate.ts';
 import {
@@ -71,6 +74,22 @@ test('open-task atomically commits the owned draft and activates its exact sessi
     assert.equal(journal?.phase, 'completed');
     assert.equal(journal?.sessionId, result.sessionId);
     assert.equal(journal?.planningCommit, result.planningCommit);
+    assert.ok(journal);
+    const status = runWorkflowCli(fixture.repository, [
+      'status',
+      result.sessionId,
+      '--json',
+    ]);
+    assert.equal(status.status, 0, status.stderr);
+    const statusPayload = JSON.parse(status.stdout) as {
+      openTask: Record<string, unknown>;
+      session: { sessionId: string };
+    };
+    assert.equal(statusPayload.openTask.state, 'active');
+    assert.equal(statusPayload.openTask.lastDurablePhase, 'completed');
+    assert.equal(statusPayload.openTask.retrySafe, true);
+    assert.equal(statusPayload.openTask.recoveryCommand, null);
+    assert.equal(statusPayload.session.sessionId, result.sessionId);
   } finally {
     fixture.dispose();
   }
@@ -152,6 +171,44 @@ test('open-task commits its engine-owned opening projection and CI replays the e
       ).changedPaths,
       changedPaths,
     );
+  } finally {
+    fixture.dispose();
+  }
+});
+
+test('status preserves the terminal session state after open-task ingress completes', () => {
+  const fixture = prepareOpenTaskFixture('atomic-open-terminal-status');
+  try {
+    const result = openTask(
+      fixture.repository,
+      fixture.changeId,
+      '1.1',
+      fixture.mandate.taskId,
+      { mandate: { signer: fixture.mandate.signer } },
+    );
+    abortSession(
+      fixture.repository,
+      result.sessionId,
+      'terminal status fixture',
+    );
+
+    const status = runWorkflowCli(fixture.repository, [
+      'status',
+      result.sessionId,
+      '--json',
+    ]);
+    assert.equal(status.status, 0, status.stderr);
+    const payload = JSON.parse(status.stdout) as {
+      openTask: Record<string, unknown>;
+      session: { sessionId: string; state: string };
+    };
+    assert.equal(payload.openTask.state, 'aborted');
+    assert.equal(payload.openTask.lastDurablePhase, 'completed');
+    assert.equal(payload.openTask.retrySafe, false);
+    assert.equal(payload.openTask.recoveryCommand, null);
+    assert.equal(payload.openTask.errorCode, null);
+    assert.equal(payload.session.sessionId, result.sessionId);
+    assert.equal(payload.session.state, 'aborted');
   } finally {
     fixture.dispose();
   }
@@ -336,7 +393,14 @@ for (const crashAfter of [
         fixture.changeId,
         '1.1',
       );
-      assert.equal(interrupted?.phase, 'prepared');
+      assert.equal(
+        interrupted?.phase,
+        {
+          'journal-prepared': 'prepared',
+          'plan-committed': 'plan-committed',
+          'session-active': 'session-active',
+        }[crashAfter],
+      );
       const interruptedHead = git(fixture.repository, [
         'rev-parse',
         'HEAD',
@@ -390,6 +454,204 @@ for (const crashAfter of [
     }
   });
 }
+
+test('status exposes the exact durable open-task phase and retry authority', () => {
+  const fixture = prepareOpenTaskFixture('atomic-open-status');
+  try {
+    assert.throws(
+      () =>
+        openTask(
+          fixture.repository,
+          fixture.changeId,
+          '1.1',
+          fixture.mandate.taskId,
+          {
+            mandate: { signer: fixture.mandate.signer },
+            testCrashAfter: 'plan-committed',
+          },
+        ),
+      /Simulated open-task interruption/u,
+    );
+    const journal = readOpenTaskJournal(
+      fixture.repository,
+      fixture.changeId,
+      '1.1',
+    );
+    assert.ok(journal);
+    const journalBytes = fs.readFileSync(openTaskJournalPath(fixture), 'utf8');
+    const head = git(fixture.repository, ['rev-parse', 'HEAD']).trim();
+
+    const status = runWorkflowCli(fixture.repository, [
+      'status',
+      journal.transactionId,
+      '--json',
+    ]);
+    assert.equal(status.status, 0, status.stderr);
+    const payload = JSON.parse(status.stdout) as {
+      openTask: Record<string, unknown>;
+    };
+    assert.deepEqual(payload.openTask, {
+      kind: 'open-task-lifecycle-status.v1',
+      state: 'opening',
+      lastDurablePhase: 'plan-committed',
+      transactionId: journal.transactionId,
+      changeId: fixture.changeId,
+      taskId: '1.1',
+      mandateTaskId: fixture.mandate.taskId,
+      sessionId: journal.sessionId,
+      parentCommit: journal.parentCommit,
+      planningCommit: journal.planningCommit,
+      baselineTree: journal.baselineTree,
+      reportId: journal.reportId,
+      retrySafe: true,
+      recoveryCommand: `pnpm workflow open-task ${fixture.changeId} --task 1.1 --mandate ${fixture.mandate.taskId} --json`,
+      errorCode: null,
+    });
+    assert.equal(
+      fs.readFileSync(openTaskJournalPath(fixture), 'utf8'),
+      journalBytes,
+    );
+    assert.equal(git(fixture.repository, ['rev-parse', 'HEAD']).trim(), head);
+  } finally {
+    fixture.dispose();
+  }
+});
+
+test('status classifies a durable phase ahead of its exact session as recovery-required', () => {
+  const fixture = prepareOpenTaskFixture('atomic-open-status-diverged');
+  try {
+    assert.throws(
+      () =>
+        openTask(
+          fixture.repository,
+          fixture.changeId,
+          '1.1',
+          fixture.mandate.taskId,
+          {
+            mandate: { signer: fixture.mandate.signer },
+            testCrashAfter: 'plan-committed',
+          },
+        ),
+      /Simulated open-task interruption/u,
+    );
+    const journal = readOpenTaskJournal(
+      fixture.repository,
+      fixture.changeId,
+      '1.1',
+    );
+    assert.ok(journal);
+    fs.writeFileSync(
+      openTaskJournalPath(fixture),
+      `${canonicalJson({ ...journal, phase: 'session-active' })}\n`,
+      { mode: 0o600 },
+    );
+
+    const status = runWorkflowCli(fixture.repository, [
+      'status',
+      journal.transactionId,
+      '--json',
+    ]);
+    assert.equal(status.status, 0, status.stderr);
+    const payload = JSON.parse(status.stdout) as {
+      openTask: Record<string, unknown>;
+    };
+    assert.equal(payload.openTask.state, 'recovery-required');
+    assert.equal(payload.openTask.lastDurablePhase, 'session-active');
+    assert.equal(payload.openTask.retrySafe, false);
+    assert.equal(payload.openTask.recoveryCommand, null);
+    assert.equal(payload.openTask.errorCode, 'OPEN_TASK_PHASE_DIVERGED');
+    assert.throws(
+      () =>
+        openTask(
+          fixture.repository,
+          fixture.changeId,
+          '1.1',
+          fixture.mandate.taskId,
+          { mandate: { signer: fixture.mandate.signer } },
+        ),
+      (error) => isWorkflowError(error, 'OPEN_TASK_PHASE_DIVERGED'),
+    );
+    assert.equal(
+      fs.existsSync(
+        path.join(
+          runtimeRoot(fixture.repository),
+          'sessions',
+          `${journal.sessionId}.json`,
+        ),
+      ),
+      false,
+    );
+  } finally {
+    fixture.dispose();
+  }
+});
+
+test('open-task preserves a granular recovery error and adds durable phase context', () => {
+  const fixture = prepareOpenTaskFixture('atomic-open-error-context');
+  try {
+    assert.throws(
+      () =>
+        openTask(
+          fixture.repository,
+          fixture.changeId,
+          '1.1',
+          fixture.mandate.taskId,
+          {
+            mandate: { signer: fixture.mandate.signer },
+            testCrashAfter: 'journal-prepared',
+          },
+        ),
+      /Simulated open-task interruption/u,
+    );
+    const journal = readOpenTaskJournal(
+      fixture.repository,
+      fixture.changeId,
+      '1.1',
+    );
+    assert.ok(journal);
+    const competingCommit = git(fixture.repository, [
+      'commit-tree',
+      journal.parentTree,
+      '-p',
+      journal.parentCommit,
+      '-m',
+      'Competing commit',
+    ]).trim();
+    git(fixture.repository, [
+      'update-ref',
+      `refs/heads/${journal.branch}`,
+      competingCommit,
+      journal.parentCommit,
+    ]);
+
+    const result = runWorkflowCli(fixture.repository, [
+      'open-task',
+      fixture.changeId,
+      '--task',
+      '1.1',
+      '--mandate',
+      fixture.mandate.taskId,
+      '--json',
+    ]);
+    assert.equal(result.status, 14);
+    const payload = JSON.parse(result.stderr) as {
+      error: {
+        code: string;
+        details: Record<string, unknown>;
+        recovery: string;
+      };
+    };
+    assert.equal(payload.error.code, 'OPEN_TASK_HEAD_DIVERGED');
+    assert.equal(payload.error.details.transactionId, journal.transactionId);
+    assert.equal(payload.error.details.phase, 'prepared');
+    assert.equal(
+      payload.error.recovery,
+      `pnpm workflow status ${journal.transactionId} --json`,
+    );
+  } finally {
+    fixture.dispose();
+  }
+});
 
 test('open-task refuses a different mandate from taking over a prepared transaction', () => {
   const fixture = prepareOpenTaskFixture('atomic-open-mandate-takeover');
@@ -665,4 +927,25 @@ function openTaskJournalPath(
     'transactions',
     `${fixture.changeId}.1.1.json`,
   );
+}
+
+function runWorkflowCli(repository: string, args: readonly string[]) {
+  const result = spawnSync(
+    process.execPath,
+    [
+      '--experimental-strip-types',
+      path.resolve(import.meta.dirname, '../src/cli.ts'),
+      ...args,
+    ],
+    {
+      cwd: repository,
+      encoding: 'utf8',
+      env: { ...process.env },
+    },
+  );
+  return {
+    status: result.status ?? 1,
+    stdout: result.stdout,
+    stderr: result.stderr,
+  };
 }

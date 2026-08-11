@@ -6,7 +6,7 @@ import { canonicalJson } from './canonical-json.ts';
 import { readFileAtCommit } from './ci-git.ts';
 import { loadWorkflowConfig } from './contracts.ts';
 import { engineProjectionPathsForTransition } from './engine-projection-registry.ts';
-import { ExitCode, workflowError } from './errors.ts';
+import { ExitCode, WorkflowError, workflowError } from './errors.ts';
 import { ensurePlainDirectory } from './filesystem-safety.ts';
 import {
   commitChangedPaths,
@@ -56,11 +56,14 @@ const MANDATE_ID =
   /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const MAX_JOURNAL_BYTES = 128 * 1024;
 
+export type OpenTaskPhase =
+  'prepared' | 'plan-committed' | 'session-active' | 'completed';
+
 export type OpenTaskJournal = Readonly<{
   schemaVersion: 1;
   kind: 'open-task-transaction.v1';
   transactionId: string;
-  phase: 'prepared' | 'completed';
+  phase: OpenTaskPhase;
   changeId: string;
   taskId: string;
   mandateTaskId: string;
@@ -78,6 +81,24 @@ export type OpenTaskJournal = Readonly<{
   sessionId: string;
   createdAt: string;
   completedAt: string | null;
+}>;
+
+export type OpenTaskLifecycleStatus = Readonly<{
+  kind: 'open-task-lifecycle-status.v1';
+  state: 'opening' | 'active' | 'committed' | 'aborted' | 'recovery-required';
+  lastDurablePhase: OpenTaskPhase;
+  transactionId: string;
+  changeId: string;
+  taskId: string;
+  mandateTaskId: string;
+  sessionId: string;
+  parentCommit: string;
+  planningCommit: string;
+  baselineTree: string;
+  reportId: string;
+  retrySafe: boolean;
+  recoveryCommand: string | null;
+  errorCode: string | null;
 }>;
 
 export type OpenTaskResult = Readonly<{
@@ -239,6 +260,7 @@ export function openTask(
     }
     assertTransitionMatchesJournal(transition, prepared);
     assertCommittedPlanningState(cwd, prepared);
+    let durable = advanceJournalPhase(runtime, prepared, 'plan-committed');
     if (options.testCrashAfter === 'plan-committed') {
       throw simulatedInterruption('plan-committed');
     }
@@ -246,13 +268,14 @@ export function openTask(
     const session = ensureExactSession(
       cwd,
       runtime,
-      prepared,
+      durable,
       assertRepositoryLock,
     );
+    durable = advanceJournalPhase(runtime, durable, 'session-active');
     if (options.testCrashAfter === 'session-active') {
       throw simulatedInterruption('session-active');
     }
-    const completed = completeJournal(runtime, prepared, options.now);
+    const completed = completeJournal(runtime, durable, options.now);
     return resultFrom(completed, session, false);
   });
 }
@@ -282,6 +305,210 @@ export function readOpenTaskJournal(
   return parseJournal(readPrivateCanonicalFile(filePath));
 }
 
+export function findOpenTaskLifecycleStatus(
+  cwd: string,
+  identifier: string,
+): OpenTaskLifecycleStatus | null {
+  const matches = listOpenTaskJournals(cwd).filter(
+    (journal) =>
+      journal.transactionId === identifier ||
+      journal.sessionId === identifier ||
+      journal.changeId === identifier,
+  );
+  if (matches.length === 0) return null;
+  if (matches.length !== 1) {
+    throw workflowError(
+      'OPEN_TASK_STATUS_AMBIGUOUS',
+      'The status identifier matches more than one durable open-task transaction.',
+      ExitCode.conflict,
+    );
+  }
+  return inspectOpenTaskJournalStatus(cwd, matches[0]!);
+}
+
+export function contextualizeOpenTaskError(
+  cwd: string,
+  changeId: string,
+  taskId: string,
+  error: unknown,
+): unknown {
+  const workflowFailure =
+    error instanceof WorkflowError
+      ? error
+      : workflowError(
+          'INTERNAL_ERROR',
+          error instanceof Error ? error.message : String(error),
+          ExitCode.internal,
+        );
+  try {
+    const journal = readOpenTaskJournal(cwd, changeId, taskId);
+    if (journal === null) return error;
+    const status = inspectOpenTaskJournalStatus(cwd, journal);
+    return workflowError(
+      workflowFailure.code,
+      workflowFailure.message,
+      workflowFailure.exitCode,
+      {
+        details: {
+          ...(workflowFailure.details ?? {}),
+          transactionId: journal.transactionId,
+          phase: journal.phase,
+          sessionId: journal.sessionId,
+          planningCommit: journal.planningCommit,
+          baselineTree: journal.baselineTree,
+        },
+        recovery:
+          workflowFailure.recovery ??
+          status.recoveryCommand ??
+          `pnpm workflow status ${journal.transactionId} --json`,
+      },
+    );
+  } catch {
+    return error;
+  }
+}
+
+function listOpenTaskJournals(cwd: string): OpenTaskJournal[] {
+  const repository = discoverRepository(cwd);
+  const config = loadWorkflowConfig(repository.repositoryRoot);
+  const runtime = runtimePaths(
+    repository.gitCommonDirectory,
+    config.runtimeDirectory,
+  );
+  const directory = path.join(runtime.root, 'open-task', 'transactions');
+  const stats = fs.lstatSync(directory, { throwIfNoEntry: false });
+  if (!stats) return [];
+  assertPrivateDirectory(directory);
+  const canonicalEntries = fs
+    .readdirSync(directory)
+    .filter((entry) => entry.endsWith('.json'))
+    .sort();
+  const journals = canonicalEntries.map((entry) => {
+    const journal = parseJournal(
+      readPrivateCanonicalFile(path.join(directory, entry)),
+    );
+    if (
+      path.basename(journalPath(runtime, journal.changeId, journal.taskId)) !==
+      entry
+    ) {
+      throw openTaskUnsafe('Open-task journal pathname is not canonical.');
+    }
+    return journal;
+  });
+  const expectedEntries = journals
+    .map((journal) =>
+      path.basename(journalPath(runtime, journal.changeId, journal.taskId)),
+    )
+    .sort();
+  if (
+    canonicalJson(fs.readdirSync(directory).sort()) !==
+    canonicalJson(expectedEntries)
+  ) {
+    throw openTaskUnsafe('Open-task journal inventory is not exact.');
+  }
+  return journals;
+}
+
+function inspectOpenTaskJournalStatus(
+  cwd: string,
+  journal: OpenTaskJournal,
+): OpenTaskLifecycleStatus {
+  let errorCode: string | null = null;
+  let completedSessionState: WorkflowSession['state'] | null = null;
+  try {
+    assertJournalAuthority(cwd, journal);
+    const repository = discoverRepository(cwd);
+    const config = loadWorkflowConfig(repository.repositoryRoot);
+    const runtime = runtimePaths(
+      repository.gitCommonDirectory,
+      config.runtimeDirectory,
+    );
+    const sessionPath = path.join(
+      runtime.sessions,
+      `${journal.sessionId}.json`,
+    );
+    const sessionExists =
+      fs.lstatSync(sessionPath, { throwIfNoEntry: false }) !== undefined;
+    if (journal.phase === 'completed') {
+      const session = readSessionFile(sessionPath);
+      assertSessionIngressIdentity(session, journal);
+      if (session.state === 'active') {
+        readAndAssertExactSession(cwd, runtime, journal);
+      }
+      completedSessionState = session.state;
+    } else if (journal.phase === 'prepared') {
+      if (repository.head === journal.parentCommit) {
+        if (
+          repository.tree !== journal.parentTree ||
+          repository.branch !== journal.branch
+        ) {
+          throw openTaskPhaseDiverged(
+            'Prepared open-task phase no longer matches its parent state.',
+          );
+        }
+      } else if (repository.head === journal.planningCommit) {
+        assertCommittedPlanningState(cwd, journal);
+        if (sessionExists) readAndAssertExactSession(cwd, runtime, journal);
+      } else {
+        throw workflowError(
+          'OPEN_TASK_HEAD_DIVERGED',
+          'Open-task status found neither its exact parent nor its exact planning commit.',
+          ExitCode.staleState,
+        );
+      }
+    } else {
+      if (repository.head !== journal.planningCommit) {
+        throw openTaskPhaseDiverged(
+          'Durable open-task phase is ahead of its observable planning commit.',
+        );
+      }
+      assertCommittedPlanningState(cwd, journal);
+      if (journal.phase === 'plan-committed') {
+        if (sessionExists) readAndAssertExactSession(cwd, runtime, journal);
+      } else {
+        if (!sessionExists) {
+          throw openTaskPhaseDiverged(
+            'Durable open-task phase is ahead of its observable task session.',
+          );
+        }
+        readAndAssertExactSession(cwd, runtime, journal);
+      }
+    }
+  } catch (error) {
+    if (!(error instanceof WorkflowError)) throw error;
+    errorCode = error.code;
+  }
+  const retrySafe =
+    errorCode === null &&
+    (journal.phase !== 'completed' || completedSessionState === 'active');
+  const recoveryCommand =
+    journal.phase === 'completed' || errorCode !== null
+      ? null
+      : exactOpenTaskRetryCommand(journal);
+  return Object.freeze({
+    kind: 'open-task-lifecycle-status.v1' as const,
+    state:
+      errorCode !== null
+        ? ('recovery-required' as const)
+        : journal.phase === 'completed'
+          ? (completedSessionState ?? ('recovery-required' as const))
+          : ('opening' as const),
+    lastDurablePhase: journal.phase,
+    transactionId: journal.transactionId,
+    changeId: journal.changeId,
+    taskId: journal.taskId,
+    mandateTaskId: journal.mandateTaskId,
+    sessionId: journal.sessionId,
+    parentCommit: journal.parentCommit,
+    planningCommit: journal.planningCommit,
+    baselineTree: journal.baselineTree,
+    reportId: journal.reportId,
+    retrySafe,
+    recoveryCommand,
+    errorCode,
+  });
+}
+
 function recoverOpenTask(
   cwd: string,
   runtime: ReturnType<typeof runtimePaths>,
@@ -295,37 +522,50 @@ function recoverOpenTask(
     return resultFrom(journal, session, true);
   }
 
+  let durable = journal;
   let current = discoverRepository(cwd);
-  if (current.head === journal.parentCommit) {
-    assertActiveTaskMandateBindingUnderLifecycleLock(
-      cwd,
-      journal.mandateBinding,
-      assertRepositoryLock,
-      options.mandate,
-    );
-    withOpenTaskPlanningAuthority(
-      runtime,
-      journal.changeId,
-      assertRepositoryLock,
-      () => recoverPreparedPlanningCommit(cwd, journal),
-    );
-    current = discoverRepository(cwd);
+  if (durable.phase === 'prepared') {
+    if (current.head === durable.parentCommit) {
+      assertActiveTaskMandateBindingUnderLifecycleLock(
+        cwd,
+        durable.mandateBinding,
+        assertRepositoryLock,
+        options.mandate,
+      );
+      withOpenTaskPlanningAuthority(
+        runtime,
+        durable.changeId,
+        assertRepositoryLock,
+        () => recoverPreparedPlanningCommit(cwd, durable),
+      );
+      current = discoverRepository(cwd);
+    }
+    if (current.head !== durable.planningCommit) {
+      throw workflowError(
+        'OPEN_TASK_HEAD_DIVERGED',
+        'Open-task recovery found neither its exact parent nor its exact planning commit.',
+        ExitCode.staleState,
+      );
+    }
+    assertCommittedPlanningState(cwd, durable);
+    durable = advanceJournalPhase(runtime, durable, 'plan-committed');
+  } else {
+    if (current.head !== durable.planningCommit) {
+      throw openTaskPhaseDiverged(
+        'Durable open-task phase is ahead of its observable planning commit.',
+      );
+    }
+    assertCommittedPlanningState(cwd, durable);
   }
-  if (current.head !== journal.planningCommit) {
-    throw workflowError(
-      'OPEN_TASK_HEAD_DIVERGED',
-      'Open-task recovery found neither its exact parent nor its exact planning commit.',
-      ExitCode.staleState,
-    );
+
+  let session: WorkflowSession;
+  if (durable.phase === 'plan-committed') {
+    session = ensureExactSession(cwd, runtime, durable, assertRepositoryLock);
+    durable = advanceJournalPhase(runtime, durable, 'session-active');
+  } else {
+    session = readSessionForDurablePhase(cwd, runtime, durable);
   }
-  assertCommittedPlanningState(cwd, journal);
-  const session = ensureExactSession(
-    cwd,
-    runtime,
-    journal,
-    assertRepositoryLock,
-  );
-  const completed = completeJournal(runtime, journal, options.now);
+  const completed = completeJournal(runtime, durable, options.now);
   return resultFrom(completed, session, true);
 }
 
@@ -528,12 +768,37 @@ function readAndAssertExactSession(
   return session;
 }
 
+function readSessionForDurablePhase(
+  cwd: string,
+  runtime: ReturnType<typeof runtimePaths>,
+  journal: OpenTaskJournal,
+): WorkflowSession {
+  const sessionPath = path.join(runtime.sessions, `${journal.sessionId}.json`);
+  if (!fs.lstatSync(sessionPath, { throwIfNoEntry: false })) {
+    throw openTaskPhaseDiverged(
+      'Durable open-task phase is ahead of its observable task session.',
+    );
+  }
+  return readAndAssertExactSession(cwd, runtime, journal);
+}
+
 function assertExactSession(
   session: WorkflowSession,
   journal: OpenTaskJournal,
 ): void {
+  if (session.state !== 'active') {
+    throw openTaskUnsafe(
+      'Durable open-task session is no longer active during ingress recovery.',
+    );
+  }
+  assertSessionIngressIdentity(session, journal);
+}
+
+function assertSessionIngressIdentity(
+  session: WorkflowSession,
+  journal: OpenTaskJournal,
+): void {
   if (
-    session.state !== 'active' ||
     session.sessionId !== journal.sessionId ||
     session.changeId !== journal.changeId ||
     session.taskId !== journal.taskId ||
@@ -717,6 +982,11 @@ function completeJournal(
   now?: Date,
 ): OpenTaskJournal {
   if (journal.phase === 'completed') return journal;
+  if (journal.phase !== 'session-active') {
+    throw openTaskPhaseDiverged(
+      'Open-task cannot complete before its exact session-active phase.',
+    );
+  }
   const completed = parseJournal({
     ...journal,
     phase: 'completed',
@@ -724,6 +994,23 @@ function completeJournal(
   });
   replaceJournal(runtime, journal, completed);
   return completed;
+}
+
+function advanceJournalPhase(
+  runtime: ReturnType<typeof runtimePaths>,
+  journal: OpenTaskJournal,
+  nextPhase: 'plan-committed' | 'session-active',
+): OpenTaskJournal {
+  const expectedCurrent =
+    nextPhase === 'plan-committed' ? 'prepared' : 'plan-committed';
+  if (journal.phase !== expectedCurrent) {
+    throw openTaskPhaseDiverged(
+      `Open-task cannot advance from ${journal.phase} to ${nextPhase}.`,
+    );
+  }
+  const next = parseJournal({ ...journal, phase: nextPhase });
+  replaceJournal(runtime, journal, next);
+  return next;
 }
 
 function publishPreparedJournal(
@@ -890,7 +1177,10 @@ function parseJournal(input: unknown): OpenTaskJournal {
     Object.keys(value).sort().join('\0') !== expectedKeys.join('\0') ||
     value.schemaVersion !== 1 ||
     value.kind !== 'open-task-transaction.v1' ||
-    (value.phase !== 'prepared' && value.phase !== 'completed') ||
+    (value.phase !== 'prepared' &&
+      value.phase !== 'plan-committed' &&
+      value.phase !== 'session-active' &&
+      value.phase !== 'completed') ||
     typeof value.transactionId !== 'string' ||
     !SHA256.test(value.transactionId) ||
     typeof value.changeId !== 'string' ||
@@ -916,7 +1206,7 @@ function parseJournal(input: unknown): OpenTaskJournal {
     typeof value.sessionId !== 'string' ||
     typeof value.createdAt !== 'string' ||
     (value.completedAt !== null && typeof value.completedAt !== 'string') ||
-    (value.phase === 'prepared' && value.completedAt !== null) ||
+    (value.phase !== 'completed' && value.completedAt !== null) ||
     (value.phase === 'completed' && value.completedAt === null)
   ) {
     throw openTaskUnsafe('Open-task journal is malformed.');
@@ -1241,6 +1531,18 @@ function assertMandateTaskId(value: string): string {
     );
   }
   return value;
+}
+
+function exactOpenTaskRetryCommand(journal: OpenTaskJournal): string {
+  return `pnpm workflow open-task ${journal.changeId} --task ${journal.taskId} --mandate ${journal.mandateTaskId} --json`;
+}
+
+function openTaskPhaseDiverged(message: string): WorkflowError {
+  return workflowError(
+    'OPEN_TASK_PHASE_DIVERGED',
+    message,
+    ExitCode.staleState,
+  );
 }
 
 function simulatedInterruption(phase: string): Error {
