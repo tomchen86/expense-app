@@ -216,7 +216,7 @@
     {
       "path": "src/cli.ts",
       "mode": "100644",
-      "digest": "sha256:37422ce9e01669c5064ed510fd8a3f35b033a9787e43be06ed18fc39d301ed7c"
+      "digest": "sha256:8016b1afefa8b7061d40508375cb8720e2c8c4b10f77299a79908661e9be8f5b"
     },
     {
       "path": "src/codex-provider-adapter.ts",
@@ -1074,9 +1074,14 @@
       "digest": "sha256:3996b8d4f5549e87bb2a4290db56861a82e7e739c02d1ddb550dd48fb1fff687"
     },
     {
+      "path": "src/task-revision-approval.ts",
+      "mode": "100644",
+      "digest": "sha256:f92bd966b955ba0d6c629b3f99c4d7c6b14237458d0eca82e865e24800c40751"
+    },
+    {
       "path": "src/task-revision.ts",
       "mode": "100644",
-      "digest": "sha256:af1fbb7ae93287fba89d015a1caeb3abb35ddeb244a436a7f131ac2fceece33a"
+      "digest": "sha256:2a3388b248ea57a208cee0dae059c62d86d57de7315d65d6b35616cb3e482d85"
     },
     {
       "path": "src/tracked-tree-reader.ts",
