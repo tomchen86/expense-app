@@ -88,6 +88,11 @@ export type TaskDiffReviewLifecycleStatus =
       subject: TaskDiffReviewSubject;
     }>
   | Readonly<{
+      state: 'ready';
+      sessionId: string;
+      subject: TaskDiffReviewSubject;
+    }>
+  | Readonly<{
       state:
         'waiting-for-provider' | 'provider-succeeded-awaiting-reconciliation';
       sessionId: string;
@@ -198,6 +203,42 @@ export function beginTaskDiffReview(
         return renderTaskDiffReviewStatus(runtime, reservation);
       }),
   );
+}
+
+/** Inspect the current subject and its durable lifecycle without creating work. */
+export function inspectTaskDiffReviewStatus(
+  cwd: string,
+  requestedSessionId: string,
+): TaskDiffReviewLifecycleStatus {
+  const context = loadActiveSessionContext(cwd, requestedSessionId);
+  const subject = inspectTaskDiffReviewSubject(cwd, requestedSessionId);
+  if (!subject.reviewRequirement.required) {
+    return Object.freeze({
+      state: 'not-required' as const,
+      sessionId: context.session.sessionId,
+      subject,
+    });
+  }
+  const runtime = loadInvestigationRuntimeContext(cwd).runtime;
+  const reservation = readTaskDiffReviewReservation(
+    runtime,
+    context.session.sessionId,
+    subject.subjectDigest,
+  );
+  if (reservation === null) {
+    return Object.freeze({
+      state: 'ready' as const,
+      sessionId: context.session.sessionId,
+      subject,
+    });
+  }
+  assertReservationCurrent(
+    context,
+    subject,
+    reservation.implementationActor,
+    reservation,
+  );
+  return renderTaskDiffReviewStatus(runtime, reservation);
 }
 
 /** Adopt only a durable fixed-runner result for the still-current subject. */

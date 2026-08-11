@@ -182,7 +182,12 @@ import {
   resumeTask,
   reviseTask,
 } from './task-revision.ts';
-import { inspectTaskDiffReviewSubject } from './task-diff-review-lifecycle.ts';
+import {
+  beginTaskDiffReview,
+  inspectTaskDiffReviewStatus,
+  inspectTaskDiffReviewSubject,
+  reconcileTaskDiffReview,
+} from './task-diff-review-lifecycle.ts';
 import { issueTaskRevisionApproval } from './task-revision-approval.ts';
 import { validateManagedDocuments } from './managed-documents.ts';
 import { diagnoseOpenSpec } from './openspec-doctor.ts';
@@ -199,6 +204,7 @@ import {
   dispatchProviderWorker,
   runProviderWorker,
 } from './provider-worker.ts';
+import { readProviderInvocation } from './provider-invocation-store.ts';
 import {
   listProviderAutomaticRetrySchedules,
   listProviderRetryScheduleReceipts,
@@ -1524,16 +1530,62 @@ function dispatch(args: string[], cwd: string): CommandResult {
       };
     }
     case 'review-diff': {
-      if (rest.length !== 2 || rest[0] !== 'inspect') {
-        throw usage(
-          'Usage: pnpm workflow review-diff inspect <session-id> [--json]',
-        );
+      if (rest.length === 2 && rest[0] === 'inspect') {
+        return {
+          command,
+          ok: true,
+          result: inspectTaskDiffReviewSubject(cwd, rest[1]),
+        };
       }
-      return {
-        command,
-        ok: true,
-        result: inspectTaskDiffReviewSubject(cwd, rest[1]),
-      };
+      if (rest.length === 2 && rest[0] === 'status') {
+        return {
+          command,
+          ok: true,
+          result: inspectTaskDiffReviewStatus(cwd, rest[1]),
+        };
+      }
+      if (rest.length === 2 && rest[0] === 'reconcile') {
+        return {
+          command,
+          ok: true,
+          result: reconcileTaskDiffReview(cwd, rest[1]),
+        };
+      }
+      const sessionId = rest[0];
+      const actor = optionValue(rest.slice(1), '--actor');
+      if (
+        sessionId &&
+        (rest.length === 1 ||
+          (rest.length === 3 && rest[1] === '--actor' && actor))
+      ) {
+        let status = inspectTaskDiffReviewStatus(cwd, sessionId);
+        if (status.state === 'ready' || actor !== undefined) {
+          status = beginTaskDiffReview(cwd, sessionId, {
+            ...(actor === undefined ? {} : { explicitActor: actor }),
+          });
+        }
+        if (status.state === 'provider-succeeded-awaiting-reconciliation') {
+          status = reconcileTaskDiffReview(cwd, sessionId);
+        }
+        if (status.state === 'waiting-for-provider') {
+          const runtime = loadInvestigationRuntimeContext(cwd).runtime;
+          const invocation = readProviderInvocation(
+            runtime,
+            status.invocationId,
+          );
+          if (
+            invocation.state === 'prepared' &&
+            process.env.WORKFLOW_TEST_DISABLE_PROVIDER_DISPATCH !== '1'
+          ) {
+            dispatchProviderWorker(cwd, invocation.invocationId);
+          }
+        }
+        return { command, ok: true, result: status };
+      }
+      throw usage(
+        'Usage: pnpm workflow review-diff <session-id> [--actor <provider>] [--json]\n' +
+          '       pnpm workflow review-diff <inspect|status|reconcile> <session-id> [--json]',
+      );
     }
     case 'finalize-task':
       requireArgumentCount(command, rest, 1, 1);
@@ -2582,7 +2634,8 @@ function usageText(): string {
     '  pnpm workflow finish <session-id> [--json]',
     '  pnpm workflow finalize <session-id> --message <subject> [--json]',
     '  pnpm workflow finalize-recover <session-id> [--cancel <transaction-id> --reason <text>] [--json]',
-    '  pnpm workflow review-diff inspect <session-id> [--json]',
+    '  pnpm workflow review-diff <session-id> [--actor <provider>] [--json]',
+    '  pnpm workflow review-diff <inspect|status|reconcile> <session-id> [--json]',
     '  pnpm workflow finalize-task <session-id> [--json]',
     '  pnpm workflow rollback-completion <session-id> --reason <text> [--json]',
     '  pnpm workflow commit <session-id> --message <subject> [--json]',
