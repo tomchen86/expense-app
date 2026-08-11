@@ -4,6 +4,11 @@ import { canonicalJson } from './canonical-json.ts';
 import { ExitCode, workflowError } from './errors.ts';
 import { normalizePolicyPath } from './paths.ts';
 import {
+  assertAuthorizedReviewChallengeClosure,
+  type Challenge,
+  type ChallengeClosure,
+} from './review-challenge.ts';
+import {
   parseTaskDiffReviewSubject,
   TASK_DIFF_REVIEW_COVERAGE,
   type TaskDiffReviewSubject,
@@ -26,9 +31,18 @@ const SEVERITIES = new Set([
 ]);
 const CATEGORIES = new Set<string>(TASK_DIFF_REVIEW_COVERAGE);
 const DISPOSITIONS = new Set(['accepted', 'rebutted', 'withdrawn']);
+const CONTINUATION_DECISIONS = new Set([
+  'accepted',
+  'rebutted',
+  'superseded',
+  'withdrawn',
+  'waived',
+]);
 
 const TASK_DIFF_REVIEW_OUTPUT_SCHEMA_ID =
   'expense-app.workflow.task-diff-review-output';
+const TASK_DIFF_REVIEW_CONTINUATION_OUTPUT_SCHEMA_ID =
+  'expense-app.workflow.task-diff-review-continuation-output';
 
 export const TASK_DIFF_REVIEW_LIMITS = Object.freeze({
   maxTextBytes: MAX_TEXT_BYTES,
@@ -282,6 +296,86 @@ export const TASK_DIFF_REVIEW_OUTPUT_VALIDATOR = Object.freeze({
   },
 });
 
+export type TaskDiffReviewContinuationDecision =
+  'accepted' | 'rebutted' | 'superseded' | 'withdrawn' | 'waived';
+
+export type TaskDiffReviewContinuationSubmission = Readonly<{
+  schemaVersion: 1;
+  reviewRecordDigest: string;
+  responseDigest: string;
+  proposedDispositions: readonly Readonly<{
+    challengeId: string;
+    decision: TaskDiffReviewContinuationDecision;
+    rationale: string;
+    supersededBy: string | null;
+  }>[];
+}>;
+
+/**
+ * Provider-facing continuation evidence. These are recommendations only: the
+ * engine must authenticate the fixed-runner reviewer and pass the proposal
+ * through the shared challenge-closure verifier before it can mint authority.
+ */
+export const TASK_DIFF_REVIEW_CONTINUATION_PROVIDER_OUTPUT_SCHEMA =
+  Object.freeze({
+    type: 'object',
+    additionalProperties: false,
+    required: [
+      'schemaVersion',
+      'reviewRecordDigest',
+      'responseDigest',
+      'proposedDispositions',
+    ],
+    properties: {
+      schemaVersion: { type: 'integer', const: 1 },
+      reviewRecordDigest: { type: 'string', pattern: '^[0-9a-f]{64}$' },
+      responseDigest: { type: 'string', pattern: '^[0-9a-f]{64}$' },
+      proposedDispositions: {
+        type: 'array',
+        minItems: 1,
+        maxItems: MAX_FINDINGS,
+        items: {
+          type: 'object',
+          additionalProperties: false,
+          required: ['challengeId', 'decision', 'rationale', 'supersededBy'],
+          properties: {
+            challengeId: { type: 'string', pattern: '^[0-9a-f]{64}$' },
+            decision: { enum: [...CONTINUATION_DECISIONS] },
+            rationale: { type: 'string', minLength: 1 },
+            supersededBy: {
+              anyOf: [
+                { type: 'null' },
+                { type: 'string', pattern: '^[0-9a-f]{64}$' },
+              ],
+            },
+          },
+        },
+      },
+    },
+  });
+
+const TASK_DIFF_REVIEW_CONTINUATION_OUTPUT_SCHEMA_DIGEST = sha256(
+  canonicalJson(TASK_DIFF_REVIEW_CONTINUATION_PROVIDER_OUTPUT_SCHEMA),
+);
+
+export const TASK_DIFF_REVIEW_CONTINUATION_OUTPUT_SCHEMA = Object.freeze({
+  id: TASK_DIFF_REVIEW_CONTINUATION_OUTPUT_SCHEMA_ID,
+  version: 1,
+  digest: TASK_DIFF_REVIEW_CONTINUATION_OUTPUT_SCHEMA_DIGEST,
+});
+
+export const TASK_DIFF_REVIEW_CONTINUATION_OUTPUT_VALIDATOR = Object.freeze({
+  ...TASK_DIFF_REVIEW_CONTINUATION_OUTPUT_SCHEMA,
+  validate(value: unknown): boolean {
+    try {
+      parseTaskDiffReviewContinuationSubmission(value);
+      return true;
+    } catch {
+      return false;
+    }
+  },
+});
+
 export type TaskDiffReviewAssignment = Readonly<{
   implementerPrincipalId: string;
   implementerProviderId: string;
@@ -359,6 +453,40 @@ export type TaskDiffReviewChallengeResponseRecord = Readonly<{
     rationale: string;
     evidence: readonly TaskDiffReviewEvidence[];
   }>[];
+}>;
+
+export type TaskDiffFinalAssuranceReviewerAuthority = Readonly<{
+  kind: 'engine-attributed-provider-reviewer';
+  principalId: string;
+  providerId: string;
+  policyDigest: string;
+}>;
+
+export type TaskDiffFinalAssuranceException = Readonly<{
+  kind: 'collaboration-grant-degradation';
+  grantUseDigest: string;
+  degradedForm:
+    'same-provider-fresh-session' | 'caller-supplied' | 'direct-human-review';
+}>;
+
+export type TaskDiffFinalAssuranceRecord = Readonly<{
+  schemaVersion: 1;
+  kind: 'task-diff-final-assurance.v1';
+  commitmentDigest: string;
+  subject: TaskDiffReviewSubject;
+  subjectDigest: string;
+  reviewRecordDigest: string;
+  responseDigest: string;
+  verdict: 'satisfied' | 'changes-required';
+  reviewerAuthority: TaskDiffFinalAssuranceReviewerAuthority;
+  dispositions: readonly Readonly<{
+    challengeId: string;
+    decision: TaskDiffReviewContinuationDecision;
+    rationale: string;
+    closedBy: string;
+    supersededBy: string | null;
+  }>[];
+  exceptions: readonly TaskDiffFinalAssuranceException[];
 }>;
 
 export function createTaskDiffReviewRecord(
@@ -548,6 +676,195 @@ export function assertTaskDiffReviewChallengeResponseCurrent(
   return response;
 }
 
+export function createTaskDiffFinalAssuranceRecord(input: {
+  subject: TaskDiffReviewSubject;
+  review: TaskDiffReviewRecord;
+  response: TaskDiffReviewChallengeResponseRecord;
+  submission: TaskDiffReviewContinuationSubmission;
+  reviewerAuthority: TaskDiffFinalAssuranceReviewerAuthority;
+  exceptions?: readonly TaskDiffFinalAssuranceException[];
+}): TaskDiffFinalAssuranceRecord {
+  const subject = parseTaskDiffReviewSubject(input.subject);
+  const review = parseTaskDiffReviewRecord(input.review);
+  const response = assertTaskDiffReviewChallengeResponseCurrent(
+    review,
+    input.response,
+  );
+  const submission = assertTaskDiffReviewContinuationSubmissionCurrent(
+    review,
+    response,
+    input.submission,
+  );
+  const reviewerAuthority = parseFinalAssuranceReviewerAuthority(
+    input.reviewerAuthority,
+  );
+  const exceptions = parseFinalAssuranceExceptions(input.exceptions ?? []);
+  if (
+    review.subjectDigest !== subject.subjectDigest ||
+    canonicalJson(review.subject) !== canonicalJson(subject) ||
+    review.assignment.reviewerPrincipalId !== reviewerAuthority.principalId ||
+    review.assignment.reviewerProviderId !== reviewerAuthority.providerId ||
+    reviewerAuthority.policyDigest !== subject.reviewPolicyDigest ||
+    exceptions.length !== 0
+  ) {
+    throw finalAssuranceInvalid();
+  }
+  const dispositions = submission.proposedDispositions.map((entry) =>
+    Object.freeze({
+      ...entry,
+      closedBy: reviewerAuthority.principalId,
+    }),
+  );
+  assertTaskDiffChallengeClosure(
+    subject,
+    review,
+    reviewerAuthority,
+    dispositions,
+  );
+  const body = {
+    schemaVersion: 1 as const,
+    kind: 'task-diff-final-assurance.v1' as const,
+    subject,
+    subjectDigest: subject.subjectDigest,
+    reviewRecordDigest: review.recordDigest,
+    responseDigest: response.responseDigest,
+    verdict: dispositions.some(({ decision }) => decision === 'accepted')
+      ? ('changes-required' as const)
+      : ('satisfied' as const),
+    reviewerAuthority,
+    dispositions,
+    exceptions,
+  };
+  return parseTaskDiffFinalAssuranceRecord({
+    ...body,
+    commitmentDigest: sha256(canonicalJson(body)),
+  });
+}
+
+export function parseTaskDiffFinalAssuranceRecord(
+  value: unknown,
+): TaskDiffFinalAssuranceRecord {
+  if (
+    !isRecord(value) ||
+    !hasExactKeys(value, [
+      'schemaVersion',
+      'kind',
+      'commitmentDigest',
+      'subject',
+      'subjectDigest',
+      'reviewRecordDigest',
+      'responseDigest',
+      'verdict',
+      'reviewerAuthority',
+      'dispositions',
+      'exceptions',
+    ]) ||
+    value.schemaVersion !== 1 ||
+    value.kind !== 'task-diff-final-assurance.v1' ||
+    (value.verdict !== 'satisfied' && value.verdict !== 'changes-required') ||
+    !Array.isArray(value.dispositions) ||
+    value.dispositions.length === 0 ||
+    value.dispositions.length > MAX_FINDINGS
+  ) {
+    throw finalAssuranceInvalid();
+  }
+  const subject = parseTaskDiffReviewSubject(value.subject);
+  const reviewerAuthority = parseFinalAssuranceReviewerAuthority(
+    value.reviewerAuthority,
+  );
+  const dispositions = value.dispositions.map((candidate) => {
+    if (
+      !isRecord(candidate) ||
+      !hasExactKeys(candidate, [
+        'challengeId',
+        'decision',
+        'rationale',
+        'closedBy',
+        'supersededBy',
+      ]) ||
+      !CONTINUATION_DECISIONS.has(String(candidate.decision)) ||
+      (candidate.supersededBy !== null &&
+        (typeof candidate.supersededBy !== 'string' ||
+          !DIGEST.test(candidate.supersededBy))) ||
+      (candidate.decision === 'superseded') !==
+        (typeof candidate.supersededBy === 'string')
+    ) {
+      throw finalAssuranceInvalid();
+    }
+    return Object.freeze({
+      challengeId: finalAssuranceDigest(candidate.challengeId),
+      decision: candidate.decision as TaskDiffReviewContinuationDecision,
+      rationale: boundedFinalAssuranceText(candidate.rationale),
+      closedBy: finalAssuranceIdentity(candidate.closedBy),
+      supersededBy: candidate.supersededBy as string | null,
+    });
+  });
+  const exceptions = parseFinalAssuranceExceptions(value.exceptions);
+  const record: TaskDiffFinalAssuranceRecord = {
+    schemaVersion: 1,
+    kind: 'task-diff-final-assurance.v1',
+    commitmentDigest: finalAssuranceDigest(value.commitmentDigest),
+    subject,
+    subjectDigest: finalAssuranceDigest(value.subjectDigest),
+    reviewRecordDigest: finalAssuranceDigest(value.reviewRecordDigest),
+    responseDigest: finalAssuranceDigest(value.responseDigest),
+    verdict: value.verdict,
+    reviewerAuthority,
+    dispositions,
+    exceptions,
+  };
+  if (
+    record.subjectDigest !== subject.subjectDigest ||
+    record.reviewerAuthority.policyDigest !== subject.reviewPolicyDigest ||
+    record.verdict !==
+      (record.dispositions.some(({ decision }) => decision === 'accepted')
+        ? 'changes-required'
+        : 'satisfied') ||
+    record.dispositions.some(
+      ({ closedBy }) => closedBy !== record.reviewerAuthority.principalId,
+    ) ||
+    record.commitmentDigest !==
+      sha256(canonicalJson(withoutFinalAssuranceCommitment(record)))
+  ) {
+    throw finalAssuranceInvalid();
+  }
+  return deepFreeze(record);
+}
+
+export function assertTaskDiffFinalAssuranceCurrent(input: {
+  subject: TaskDiffReviewSubject;
+  review: TaskDiffReviewRecord;
+  response: TaskDiffReviewChallengeResponseRecord;
+  assurance: TaskDiffFinalAssuranceRecord;
+}): TaskDiffFinalAssuranceRecord {
+  const subject = parseTaskDiffReviewSubject(input.subject);
+  const review = parseTaskDiffReviewRecord(input.review);
+  const response = assertTaskDiffReviewChallengeResponseCurrent(
+    review,
+    input.response,
+  );
+  const assurance = parseTaskDiffFinalAssuranceRecord(input.assurance);
+  if (
+    assurance.subjectDigest !== subject.subjectDigest ||
+    canonicalJson(assurance.subject) !== canonicalJson(subject) ||
+    assurance.reviewRecordDigest !== review.recordDigest ||
+    assurance.responseDigest !== response.responseDigest ||
+    review.assignment.reviewerPrincipalId !==
+      assurance.reviewerAuthority.principalId ||
+    review.assignment.reviewerProviderId !==
+      assurance.reviewerAuthority.providerId
+  ) {
+    throw finalAssuranceInvalid();
+  }
+  assertTaskDiffChallengeClosure(
+    subject,
+    review,
+    assurance.reviewerAuthority,
+    assurance.dispositions,
+  );
+  return assurance;
+}
+
 export function parseTaskDiffReviewDispositionRecord(
   value: unknown,
 ): TaskDiffReviewDispositionRecord {
@@ -589,9 +906,9 @@ export function parseTaskDiffReviewDispositionRecord(
  * Validate the content-level review gate for one exact subject.
  *
  * Assignment identities in this value object are not authentication. A
- * production caller must first bind the record to a verified provider result
- * or a separately signed human exception before this content assertion can
- * authorize a lifecycle transition.
+ * production caller must first bind the record to a verified provider result.
+ * Challenge-bearing reviews require a separately verified Final Assurance
+ * node; a legacy/advisory disposition value can never authorize this helper.
  */
 export function assertTaskDiffReviewContentSatisfied(
   candidate: TaskDiffReviewSubject,
@@ -614,52 +931,18 @@ export function assertTaskDiffReviewContentSatisfied(
     if (dispositionCandidate !== null) throw dispositionInvalid();
     return review;
   }
-  if (dispositionCandidate === null) {
-    throw workflowError(
-      'TASK_DIFF_REVIEW_CHALLENGE_OPEN',
-      'TaskDiffReview contains challenges without a current disposition.',
-      ExitCode.verification,
-      {
-        details: {
-          challengeIds: review.challenges.map(({ challengeId }) => challengeId),
-        },
+  throw workflowError(
+    'TASK_DIFF_REVIEW_CHALLENGE_OPEN',
+    dispositionCandidate === null
+      ? 'TaskDiffReview contains challenges without an authenticated Final Assurance record.'
+      : 'Advisory TaskDiffReview dispositions cannot substitute for an authenticated Final Assurance record.',
+    ExitCode.verification,
+    {
+      details: {
+        challengeIds: review.challenges.map(({ challengeId }) => challengeId),
       },
-    );
-  }
-  const disposition =
-    parseTaskDiffReviewDispositionRecord(dispositionCandidate);
-  if (
-    disposition.reviewRecordDigest !== review.recordDigest ||
-    disposition.subjectDigest !== subject.subjectDigest
-  ) {
-    throw dispositionInvalid();
-  }
-  assertDispositionAuthority(review, disposition.entries);
-  const challengeIds = review.challenges
-    .map(({ challengeId }) => challengeId)
-    .sort();
-  if (
-    canonicalJson(disposition.entries.map(({ challengeId }) => challengeId)) !==
-    canonicalJson(challengeIds)
-  ) {
-    throw workflowError(
-      'TASK_DIFF_REVIEW_CHALLENGE_OPEN',
-      'TaskDiffReview challenge dispositions are incomplete.',
-      ExitCode.verification,
-    );
-  }
-  if (
-    disposition.entries.some(
-      ({ disposition: decision }) => decision === 'accepted',
-    )
-  ) {
-    throw workflowError(
-      'TASK_DIFF_REVIEW_CHALLENGE_ACCEPTED',
-      'An accepted TaskDiffReview challenge requires a new implementation subject and review.',
-      ExitCode.verification,
-    );
-  }
-  return review;
+    },
+  );
 }
 
 function normalizeSubmission(
@@ -734,6 +1017,99 @@ export function parseTaskDiffReviewSubmission(
     residualRisk: boundedText(value.residualRisk),
     uncertainty: boundedText(value.uncertainty),
   });
+}
+
+export function parseTaskDiffReviewContinuationSubmission(
+  value: unknown,
+): TaskDiffReviewContinuationSubmission {
+  if (
+    !isRecord(value) ||
+    !hasExactKeys(value, [
+      'schemaVersion',
+      'reviewRecordDigest',
+      'responseDigest',
+      'proposedDispositions',
+    ]) ||
+    value.schemaVersion !== 1 ||
+    !Array.isArray(value.proposedDispositions) ||
+    value.proposedDispositions.length === 0 ||
+    value.proposedDispositions.length > MAX_FINDINGS
+  ) {
+    throw continuationInvalid();
+  }
+  const proposedDispositions = value.proposedDispositions
+    .map((candidate) => {
+      if (
+        !isRecord(candidate) ||
+        !hasExactKeys(candidate, [
+          'challengeId',
+          'decision',
+          'rationale',
+          'supersededBy',
+        ]) ||
+        !CONTINUATION_DECISIONS.has(String(candidate.decision)) ||
+        (candidate.supersededBy !== null &&
+          (typeof candidate.supersededBy !== 'string' ||
+            !DIGEST.test(candidate.supersededBy))) ||
+        (candidate.decision === 'superseded') !==
+          (typeof candidate.supersededBy === 'string')
+      ) {
+        throw continuationInvalid();
+      }
+      return Object.freeze({
+        challengeId: continuationDigest(candidate.challengeId),
+        decision: candidate.decision as TaskDiffReviewContinuationDecision,
+        rationale: boundedContinuationText(candidate.rationale),
+        supersededBy: candidate.supersededBy as string | null,
+      });
+    })
+    .sort((left, right) => left.challengeId.localeCompare(right.challengeId));
+  if (
+    proposedDispositions.some(
+      (entry, index) =>
+        index > 0 &&
+        entry.challengeId === proposedDispositions[index - 1]!.challengeId,
+    )
+  ) {
+    throw continuationInvalid();
+  }
+  return deepFreeze({
+    schemaVersion: 1,
+    reviewRecordDigest: continuationDigest(value.reviewRecordDigest),
+    responseDigest: continuationDigest(value.responseDigest),
+    proposedDispositions,
+  });
+}
+
+export function assertTaskDiffReviewContinuationSubmissionCurrent(
+  reviewCandidate: TaskDiffReviewRecord,
+  responseCandidate: TaskDiffReviewChallengeResponseRecord,
+  submissionCandidate: TaskDiffReviewContinuationSubmission,
+): TaskDiffReviewContinuationSubmission {
+  const review = parseTaskDiffReviewRecord(reviewCandidate);
+  const response = assertTaskDiffReviewChallengeResponseCurrent(
+    review,
+    responseCandidate,
+  );
+  const submission =
+    parseTaskDiffReviewContinuationSubmission(submissionCandidate);
+  const challenges = review.challenges
+    .map(({ challengeId }) => challengeId)
+    .sort();
+  if (
+    submission.reviewRecordDigest !== review.recordDigest ||
+    submission.responseDigest !== response.responseDigest ||
+    canonicalJson(
+      submission.proposedDispositions.map(({ challengeId }) => challengeId),
+    ) !== canonicalJson(challenges) ||
+    submission.proposedDispositions.some(
+      ({ supersededBy }) =>
+        supersededBy !== null && !challenges.includes(supersededBy),
+    )
+  ) {
+    throw continuationInvalid();
+  }
+  return submission;
 }
 
 function parseAssignment(value: unknown): TaskDiffReviewAssignment {
@@ -1226,6 +1602,101 @@ function withoutDispositionDigest(
   return body;
 }
 
+function withoutFinalAssuranceCommitment(
+  record: TaskDiffFinalAssuranceRecord,
+): Omit<TaskDiffFinalAssuranceRecord, 'commitmentDigest'> {
+  const { commitmentDigest: _commitmentDigest, ...body } = record;
+  return body;
+}
+
+function parseFinalAssuranceReviewerAuthority(
+  value: unknown,
+): TaskDiffFinalAssuranceReviewerAuthority {
+  if (
+    !isRecord(value) ||
+    !hasExactKeys(value, [
+      'kind',
+      'principalId',
+      'providerId',
+      'policyDigest',
+    ]) ||
+    value.kind !== 'engine-attributed-provider-reviewer'
+  ) {
+    throw finalAssuranceInvalid();
+  }
+  return Object.freeze({
+    kind: 'engine-attributed-provider-reviewer',
+    principalId: finalAssuranceIdentity(value.principalId),
+    providerId: finalAssuranceIdentity(value.providerId),
+    policyDigest: finalAssuranceDigest(value.policyDigest),
+  });
+}
+
+function parseFinalAssuranceExceptions(
+  value: unknown,
+): readonly TaskDiffFinalAssuranceException[] {
+  if (!Array.isArray(value) || value.length > 1) {
+    throw finalAssuranceInvalid();
+  }
+  return Object.freeze(
+    value.map((candidate) => {
+      if (
+        !isRecord(candidate) ||
+        !hasExactKeys(candidate, ['kind', 'grantUseDigest', 'degradedForm']) ||
+        candidate.kind !== 'collaboration-grant-degradation' ||
+        ![
+          'same-provider-fresh-session',
+          'caller-supplied',
+          'direct-human-review',
+        ].includes(String(candidate.degradedForm))
+      ) {
+        throw finalAssuranceInvalid();
+      }
+      return Object.freeze({
+        kind: 'collaboration-grant-degradation' as const,
+        grantUseDigest: finalAssuranceDigest(candidate.grantUseDigest),
+        degradedForm:
+          candidate.degradedForm as TaskDiffFinalAssuranceException['degradedForm'],
+      });
+    }),
+  );
+}
+
+function assertTaskDiffChallengeClosure(
+  subject: TaskDiffReviewSubject,
+  review: TaskDiffReviewRecord,
+  authority: TaskDiffFinalAssuranceReviewerAuthority,
+  dispositions: TaskDiffFinalAssuranceRecord['dispositions'],
+): void {
+  const challenges: Challenge[] = review.challenges.map((challenge) => ({
+    challengeId: challenge.challengeId,
+    raisedBy: challenge.raisedBy,
+    severity:
+      challenge.severity === 'critical' ? 'forbidden-floor' : 'ordinary',
+    targetId: challenge.challengeId,
+  }));
+  const closures: ChallengeClosure[] = dispositions.map((entry) => ({
+    challengeId: entry.challengeId,
+    disposition: entry.decision,
+    closedBy: entry.closedBy,
+    ...(entry.supersededBy === null
+      ? {}
+      : { supersededBy: entry.supersededBy }),
+  }));
+  assertAuthorizedReviewChallengeClosure({
+    expectedSubjectDigest: subject.subjectDigest,
+    authoritySubjectDigest: review.subjectDigest,
+    authenticatedCloserId: authority.principalId,
+    challenges,
+    closures,
+    context: {
+      authorId: review.assignment.implementerPrincipalId,
+      reviewerIds: [authority.principalId],
+      domainOwnerIds: [],
+    },
+  });
+}
+
 function exactPath(value: unknown): string {
   if (typeof value !== 'string') throw recordInvalid();
   let normalized: string;
@@ -1260,6 +1731,14 @@ function boundedDispositionText(value: unknown): string {
   }
 }
 
+function boundedContinuationText(value: unknown): string {
+  try {
+    return boundedText(value);
+  } catch {
+    throw continuationInvalid();
+  }
+}
+
 function identity(value: unknown): string {
   if (typeof value !== 'string' || !IDENTITY.test(value)) {
     throw recordInvalid();
@@ -1286,6 +1765,35 @@ function parseDispositionDigest(value: unknown): string {
     throw dispositionInvalid();
   }
   return value;
+}
+
+function continuationDigest(value: unknown): string {
+  if (typeof value !== 'string' || !DIGEST.test(value)) {
+    throw continuationInvalid();
+  }
+  return value;
+}
+
+function finalAssuranceDigest(value: unknown): string {
+  if (typeof value !== 'string' || !DIGEST.test(value)) {
+    throw finalAssuranceInvalid();
+  }
+  return value;
+}
+
+function finalAssuranceIdentity(value: unknown): string {
+  if (typeof value !== 'string' || !IDENTITY.test(value)) {
+    throw finalAssuranceInvalid();
+  }
+  return value;
+}
+
+function boundedFinalAssuranceText(value: unknown): string {
+  try {
+    return boundedText(value);
+  } catch {
+    throw finalAssuranceInvalid();
+  }
 }
 
 function sha256(value: string): string {
@@ -1326,6 +1834,22 @@ function dispositionInvalid() {
   return workflowError(
     'TASK_DIFF_REVIEW_DISPOSITION_INVALID',
     'TaskDiffReview disposition is malformed or lacks independent authority.',
+    ExitCode.guard,
+  );
+}
+
+function continuationInvalid() {
+  return workflowError(
+    'TASK_DIFF_REVIEW_CONTINUATION_INVALID',
+    'TaskDiffReview continuation evidence is malformed or does not cover the exact current challenge set.',
+    ExitCode.guard,
+  );
+}
+
+function finalAssuranceInvalid() {
+  return workflowError(
+    'TASK_DIFF_FINAL_ASSURANCE_INVALID',
+    'TaskDiff Final Assurance is malformed, stale, or lacks authenticated challenge-closure authority.',
     ExitCode.guard,
   );
 }

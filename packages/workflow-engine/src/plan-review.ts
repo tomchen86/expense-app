@@ -29,7 +29,7 @@ import {
   type PlanningGeneration,
 } from './planning-generation.ts';
 import {
-  assertChallengesClosed,
+  assertAuthorizedReviewChallengeClosure,
   type Challenge,
   type ChallengeClosure,
 } from './review-challenge.ts';
@@ -1695,10 +1695,18 @@ export function assertAuthorizedPlanReviewChallengeClosure(input: {
       ? {}
       : { supersededBy: entry.supersededBy }),
   }));
-  assertChallengesClosed(challenges, closures, {
-    authorId: authority.authorId,
-    reviewerIds: [authority.signer],
-    domainOwnerIds: authority.role === 'domain-owner' ? [authority.signer] : [],
+  assertAuthorizedReviewChallengeClosure({
+    expectedSubjectDigest: expected.subjectDigest,
+    authoritySubjectDigest: authority.subjectDigest,
+    authenticatedCloserId: authority.signer,
+    challenges,
+    closures,
+    context: {
+      authorId: authority.authorId,
+      reviewerIds: [authority.signer],
+      domainOwnerIds:
+        authority.role === 'domain-owner' ? [authority.signer] : [],
+    },
   });
   return record;
 }

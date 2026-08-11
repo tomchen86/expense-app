@@ -874,9 +874,9 @@ function providerPurposeInstructions(
     return Object.freeze([
       'Re-review the exact immutable candidate in light of every bound challenge and implementer response.',
       'Use only the reviewed read/search capability surface and do not mutate the worktree, index, refs, runtime, or any repository file.',
-      'Return a complete fresh TaskDiffReview under the ordinary code-owned schema; this advisory continuation does not accept, close, waive, or otherwise disposition any prior challenge.',
-      'Cite exact evidence for every finding or structured no-challenge result, and state remaining uncertainty explicitly.',
-      'Challenge closure remains a separately authenticated lifecycle decision and cannot be claimed in provider output.',
+      'Return structured proposed dispositions under the code-owned continuation schema; these recommendations are evidence and do not themselves accept, close, waive, or otherwise disposition any challenge.',
+      'Bind every recommendation to the exact review, response, and complete challenge set, with a concise rationale for each decision.',
+      'The workflow engine alone applies the shared authenticated challenge-closure verifier and may mint a Final Assurance record from an eligible result.',
     ]);
   }
   return PROVIDER_PURPOSE_INSTRUCTIONS[request.purpose];

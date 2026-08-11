@@ -4,11 +4,14 @@ import test from 'node:test';
 import {
   assertTaskDiffReviewChallengeResponseCurrent,
   assertTaskDiffReviewContentSatisfied,
+  assertTaskDiffFinalAssuranceCurrent,
+  createTaskDiffFinalAssuranceRecord,
   createTaskDiffReviewChallengeResponse,
   createTaskDiffReviewDispositionRecord,
   createTaskDiffReviewRecord,
   parseTaskDiffReviewChallengeResponseRecord,
   parseTaskDiffReviewDispositionRecord,
+  parseTaskDiffFinalAssuranceRecord,
   parseTaskDiffReviewRecord,
   type CreateTaskDiffReviewRecordInput,
 } from '../src/task-diff-review-artifact.ts';
@@ -110,7 +113,7 @@ test('TaskDiffReview record rejects same-provider, reused-session, and incomplet
   );
 });
 
-test('TaskDiffReview challenges block until independently dispositioned while suggestions remain advisory', () => {
+test('advisory dispositions cannot close challenges; Final Assurance uses the shared author-cannot-close verifier', () => {
   const input = reviewInput({ challenge: true });
   const record = createTaskDiffReviewRecord(input);
   const challenge = record.challenges[0]!;
@@ -151,9 +154,76 @@ test('TaskDiffReview challenges block until independently dispositioned while su
     parseTaskDiffReviewDispositionRecord(structuredClone(disposition)),
     disposition,
   );
+  assert.throws(
+    () =>
+      assertTaskDiffReviewContentSatisfied(input.subject, record, disposition),
+    hasCode('TASK_DIFF_REVIEW_CHALLENGE_OPEN'),
+  );
+
+  const response = createTaskDiffReviewChallengeResponse({
+    review: record,
+    responses: [
+      {
+        challengeId: challenge.challengeId,
+        rationale: 'The exact candidate evidence answers the challenge.',
+        evidence: [challenge.evidence[0]!],
+      },
+    ],
+  });
+  const submission = {
+    schemaVersion: 1 as const,
+    reviewRecordDigest: record.recordDigest,
+    responseDigest: response.responseDigest,
+    proposedDispositions: [
+      {
+        challengeId: challenge.challengeId,
+        decision: 'rebutted' as const,
+        rationale: 'The exact candidate evidence rebuts the challenge.',
+        supersededBy: null,
+      },
+    ],
+  };
+  assert.throws(
+    () =>
+      createTaskDiffFinalAssuranceRecord({
+        subject: input.subject,
+        review: record,
+        response,
+        submission,
+        reviewerAuthority: {
+          kind: 'engine-attributed-provider-reviewer',
+          principalId: input.assignment.implementerPrincipalId,
+          providerId: input.assignment.implementerProviderId,
+          policyDigest: input.subject.reviewPolicyDigest,
+        },
+      }),
+    hasCode('TASK_DIFF_FINAL_ASSURANCE_INVALID'),
+  );
+  const assurance = createTaskDiffFinalAssuranceRecord({
+    subject: input.subject,
+    review: record,
+    response,
+    submission,
+    reviewerAuthority: {
+      kind: 'engine-attributed-provider-reviewer',
+      principalId: input.assignment.reviewerPrincipalId,
+      providerId: input.assignment.reviewerProviderId,
+      policyDigest: input.subject.reviewPolicyDigest,
+    },
+  });
+  assert.equal(assurance.verdict, 'satisfied');
   assert.deepEqual(
-    assertTaskDiffReviewContentSatisfied(input.subject, record, disposition),
-    record,
+    parseTaskDiffFinalAssuranceRecord(structuredClone(assurance)),
+    assurance,
+  );
+  assert.deepEqual(
+    assertTaskDiffFinalAssuranceCurrent({
+      subject: input.subject,
+      review: record,
+      response,
+      assurance,
+    }),
+    assurance,
   );
 });
 
@@ -203,26 +273,44 @@ test('TaskDiffReview challenge responses are content-addressed and cover the exa
   );
 });
 
-test('accepted TaskDiffReview challenges require a changed subject and cannot authorize the reviewed candidate', () => {
+test('accepted TaskDiffReview challenges produce changes-required Final Assurance', () => {
   const input = reviewInput({ challenge: true });
   const record = createTaskDiffReviewRecord(input);
-  const disposition = createTaskDiffReviewDispositionRecord({
+  const response = createTaskDiffReviewChallengeResponse({
     review: record,
-    entries: [
+    responses: [
       {
         challengeId: record.challenges[0]!.challengeId,
-        disposition: 'accepted',
         rationale: 'The implementation must change before it can proceed.',
-        closedBy: input.assignment.reviewerPrincipalId,
+        evidence: [record.challenges[0]!.evidence[0]!],
       },
     ],
   });
-
-  assert.throws(
-    () =>
-      assertTaskDiffReviewContentSatisfied(input.subject, record, disposition),
-    hasCode('TASK_DIFF_REVIEW_CHALLENGE_ACCEPTED'),
-  );
+  const assurance = createTaskDiffFinalAssuranceRecord({
+    subject: input.subject,
+    review: record,
+    response,
+    submission: {
+      schemaVersion: 1,
+      reviewRecordDigest: record.recordDigest,
+      responseDigest: response.responseDigest,
+      proposedDispositions: [
+        {
+          challengeId: record.challenges[0]!.challengeId,
+          decision: 'accepted',
+          rationale: 'The implementation must change before it can proceed.',
+          supersededBy: null,
+        },
+      ],
+    },
+    reviewerAuthority: {
+      kind: 'engine-attributed-provider-reviewer',
+      principalId: input.assignment.reviewerPrincipalId,
+      providerId: input.assignment.reviewerProviderId,
+      policyDigest: input.subject.reviewPolicyDigest,
+    },
+  });
+  assert.equal(assurance.verdict, 'changes-required');
 });
 
 test('TaskDiffReview reuse fails when any canonical subject input changes or stored bytes are redigested incompletely', () => {

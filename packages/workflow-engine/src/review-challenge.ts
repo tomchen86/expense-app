@@ -40,6 +40,42 @@ export type ClosureContext = Readonly<{
   domainOwnerIds: readonly string[];
 }>;
 
+export type AuthorizedReviewChallengeClosureInput = Readonly<{
+  expectedSubjectDigest: string;
+  authoritySubjectDigest: string;
+  authenticatedCloserId: string;
+  challenges: readonly Challenge[];
+  closures: readonly ChallengeClosure[];
+  context: ClosureContext;
+}>;
+
+/**
+ * The single authority boundary shared by review domains. Callers must first
+ * authenticate the closer through their domain-specific mechanism (for
+ * example a fixed-runner provider result or a maintainer signature). This
+ * verifier then enforces the exact subject binding and the common
+ * author-cannot-close/disposition rules before an authority node is minted.
+ */
+export function assertAuthorizedReviewChallengeClosure(
+  input: AuthorizedReviewChallengeClosureInput,
+): void {
+  if (
+    !/^[0-9a-f]{64}$/.test(input.expectedSubjectDigest) ||
+    input.authoritySubjectDigest !== input.expectedSubjectDigest ||
+    input.authenticatedCloserId.length === 0 ||
+    input.closures.some(
+      ({ closedBy }) => closedBy !== input.authenticatedCloserId,
+    ) ||
+    (!input.context.reviewerIds.includes(input.authenticatedCloserId) &&
+      !input.context.domainOwnerIds.includes(input.authenticatedCloserId))
+  ) {
+    throw challengeInvalid(
+      'Authenticated challenge closure is not bound to its exact subject and closer authority.',
+    );
+  }
+  assertChallengesClosed(input.challenges, input.closures, input.context);
+}
+
 export function assertChallengesClosed(
   challenges: readonly Challenge[],
   closures: readonly ChallengeClosure[],

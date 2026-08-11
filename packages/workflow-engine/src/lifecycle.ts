@@ -94,6 +94,7 @@ import {
   digestTaskContent,
   restoreTaskProjection,
 } from './task-projection.ts';
+import { assertTaskDiffReviewCompletionGateSatisfied } from './task-diff-review-lifecycle.ts';
 
 export type CompleteTaskResult = {
   session: WorkflowSession;
@@ -650,6 +651,7 @@ function completeTaskUnlocked(
     throw staleReport('CHECK_REPORT_STALE');
   }
   assertCurrentImplementationReconciliation(initial);
+  assertTaskDiffReviewCompletionGateSatisfied(cwd, requestedSessionId);
 
   const reconciliation = reconcilePredecessor(cwd, initial, environment);
   const completedTaskIds = [
@@ -802,6 +804,11 @@ function finishSessionUnlocked(
     throw staleReport('COMPLETION_REPORT_STALE');
   }
   assertCurrentImplementationReconciliation(unprojected);
+  assertTaskDiffReviewCompletionGateSatisfied(cwd, requestedSessionId, {
+    projectedTaskIds: completedTaskIds,
+    projectionSourceDigest,
+    authorizedTransitionPaths: transitionPaths,
+  });
 
   const verified = executeChecks(
     cwd,

@@ -22,10 +22,15 @@ import type { ProviderId } from './provider-registry.ts';
 import type { RecordedRoleParticipant } from './role-scheduler.ts';
 import {
   assertTaskDiffReviewChallengeResponseCurrent,
+  parseTaskDiffFinalAssuranceRecord,
   parseTaskDiffReviewChallengeResponseRecord,
+  parseTaskDiffReviewContinuationSubmission,
   parseTaskDiffReviewRecord,
+  TASK_DIFF_REVIEW_CONTINUATION_OUTPUT_SCHEMA,
   TASK_DIFF_REVIEW_OUTPUT_SCHEMA,
   type TaskDiffReviewChallengeResponseRecord,
+  type TaskDiffFinalAssuranceRecord,
+  type TaskDiffReviewContinuationSubmission,
   type TaskDiffReviewRecord,
 } from './task-diff-review-artifact.ts';
 import {
@@ -146,7 +151,18 @@ export type TaskDiffReviewContinuationResultBinding = Readonly<{
   runtimeObservationDigest: string;
   providerResultNodeId: string;
   providerResultDigest: string;
-  continuationReview: TaskDiffReviewRecord;
+  submission: TaskDiffReviewContinuationSubmission;
+  createdAt: string;
+}>;
+
+export type TaskDiffFinalAssuranceBinding = Readonly<{
+  schemaVersion: 1;
+  kind: 'task-diff-final-assurance-binding.v1';
+  bindingDigest: string;
+  subjectDigest: string;
+  assuranceNodeId: string;
+  assuranceResultDigest: string;
+  assurance: TaskDiffFinalAssuranceRecord;
   createdAt: string;
 }>;
 
@@ -431,6 +447,58 @@ export function taskDiffReviewContinuationResultPath(
   );
 }
 
+export function createTaskDiffFinalAssuranceBinding(
+  paths: InvestigationRuntimePaths,
+  input: Omit<
+    TaskDiffFinalAssuranceBinding,
+    'schemaVersion' | 'kind' | 'bindingDigest'
+  >,
+): TaskDiffFinalAssuranceBinding {
+  const body = {
+    schemaVersion: 1 as const,
+    kind: 'task-diff-final-assurance-binding.v1' as const,
+    ...input,
+  };
+  const binding = parseTaskDiffFinalAssuranceBinding({
+    ...body,
+    bindingDigest: sha256(canonicalJson(body)),
+  });
+  createPrivateCanonicalJson(
+    paths,
+    taskDiffFinalAssurancePath(paths, binding.subjectDigest),
+    binding,
+    storeUnsafe,
+    'TASK_DIFF_FINAL_ASSURANCE_CONFLICT',
+  );
+  return readTaskDiffFinalAssuranceBinding(paths, binding.subjectDigest)!;
+}
+
+export function readTaskDiffFinalAssuranceBinding(
+  paths: InvestigationRuntimePaths,
+  requestedSubjectDigest: string,
+): TaskDiffFinalAssuranceBinding | null {
+  const subjectDigest = assertDigest(requestedSubjectDigest);
+  const target = taskDiffFinalAssurancePath(paths, subjectDigest);
+  if (!privatePathExists(paths, target, storeUnsafe)) return null;
+  const binding = parseTaskDiffFinalAssuranceBinding(
+    readPrivateCanonicalJson(paths, target, storeUnsafe),
+  );
+  if (binding.subjectDigest !== subjectDigest) throw storeUnsafe();
+  return binding;
+}
+
+export function taskDiffFinalAssurancePath(
+  paths: InvestigationRuntimePaths,
+  requestedSubjectDigest: string,
+): string {
+  return path.join(
+    paths.refs,
+    'task-diff-reviews',
+    'final-assurance',
+    `${assertDigest(requestedSubjectDigest)}.json`,
+  );
+}
+
 function parseTaskDiffReviewReservation(
   value: unknown,
 ): TaskDiffReviewReservationRecord {
@@ -710,9 +778,12 @@ function parseTaskDiffReviewContinuationReservation(
     request.roleAssignment.providerId !==
       review.assignment.reviewerProviderId ||
     request.roleAssignment.sessionId === review.assignment.reviewerSessionId ||
-    request.outputSchema.id !== TASK_DIFF_REVIEW_OUTPUT_SCHEMA.id ||
-    request.outputSchema.version !== TASK_DIFF_REVIEW_OUTPUT_SCHEMA.version ||
-    request.outputSchema.digest !== TASK_DIFF_REVIEW_OUTPUT_SCHEMA.digest ||
+    request.outputSchema.id !==
+      TASK_DIFF_REVIEW_CONTINUATION_OUTPUT_SCHEMA.id ||
+    request.outputSchema.version !==
+      TASK_DIFF_REVIEW_CONTINUATION_OUTPUT_SCHEMA.version ||
+    request.outputSchema.digest !==
+      TASK_DIFF_REVIEW_CONTINUATION_OUTPUT_SCHEMA.digest ||
     record.reservationDigest !==
       sha256(canonicalJson(withoutDigest(record, 'reservationDigest')))
   ) {
@@ -741,7 +812,7 @@ function parseTaskDiffReviewContinuationResultBinding(
       'runtimeObservationDigest',
       'providerResultNodeId',
       'providerResultDigest',
-      'continuationReview',
+      'submission',
       'createdAt',
     ]) ||
     value.schemaVersion !== 1 ||
@@ -762,8 +833,8 @@ function parseTaskDiffReviewContinuationResultBinding(
   ) {
     throw storeUnsafe();
   }
-  const continuationReview = parseTaskDiffReviewRecord(
-    value.continuationReview,
+  const submission = parseTaskDiffReviewContinuationSubmission(
+    value.submission,
   );
   const binding: TaskDiffReviewContinuationResultBinding = {
     schemaVersion: 1,
@@ -780,11 +851,58 @@ function parseTaskDiffReviewContinuationResultBinding(
     runtimeObservationDigest: value.runtimeObservationDigest,
     providerResultNodeId: value.providerResultNodeId,
     providerResultDigest: value.providerResultDigest,
-    continuationReview,
+    submission,
     createdAt: value.createdAt,
   };
   if (
-    continuationReview.subjectDigest !== binding.subjectDigest ||
+    submission.reviewRecordDigest !== binding.reviewRecordDigest ||
+    submission.responseDigest !== binding.responseDigest ||
+    binding.bindingDigest !==
+      sha256(canonicalJson(withoutDigest(binding, 'bindingDigest')))
+  ) {
+    throw storeUnsafe();
+  }
+  return deepFreeze(binding);
+}
+
+function parseTaskDiffFinalAssuranceBinding(
+  value: unknown,
+): TaskDiffFinalAssuranceBinding {
+  if (
+    !isRecord(value) ||
+    !hasExactKeys(value, [
+      'schemaVersion',
+      'kind',
+      'bindingDigest',
+      'subjectDigest',
+      'assuranceNodeId',
+      'assuranceResultDigest',
+      'assurance',
+      'createdAt',
+    ]) ||
+    value.schemaVersion !== 1 ||
+    value.kind !== 'task-diff-final-assurance-binding.v1' ||
+    !isDigest(value.bindingDigest) ||
+    !isDigest(value.subjectDigest) ||
+    !isDigest(value.assuranceNodeId) ||
+    !isDigest(value.assuranceResultDigest) ||
+    !isTimestamp(value.createdAt)
+  ) {
+    throw storeUnsafe();
+  }
+  const assurance = parseTaskDiffFinalAssuranceRecord(value.assurance);
+  const binding: TaskDiffFinalAssuranceBinding = {
+    schemaVersion: 1,
+    kind: 'task-diff-final-assurance-binding.v1',
+    bindingDigest: value.bindingDigest,
+    subjectDigest: value.subjectDigest,
+    assuranceNodeId: value.assuranceNodeId,
+    assuranceResultDigest: value.assuranceResultDigest,
+    assurance,
+    createdAt: value.createdAt,
+  };
+  if (
+    assurance.subjectDigest !== binding.subjectDigest ||
     binding.bindingDigest !==
       sha256(canonicalJson(withoutDigest(binding, 'bindingDigest')))
   ) {

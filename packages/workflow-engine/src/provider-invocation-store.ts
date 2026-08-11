@@ -117,6 +117,8 @@ import {
   assertTaskDiffReviewChallengeResponseCurrent,
   parseTaskDiffReviewChallengeResponseRecord,
   parseTaskDiffReviewRecord,
+  TASK_DIFF_REVIEW_CONTINUATION_OUTPUT_SCHEMA,
+  TASK_DIFF_REVIEW_CONTINUATION_OUTPUT_VALIDATOR,
   TASK_DIFF_REVIEW_OUTPUT_SCHEMA,
   TASK_DIFF_REVIEW_OUTPUT_VALIDATOR,
   type TaskDiffReviewChallengeResponseRecord,
@@ -3455,9 +3457,12 @@ function assertProviderInvocationBinding(
         manifest.review.assignment.reviewerProviderId ||
       request.roleAssignment.sessionId ===
         manifest.review.assignment.reviewerSessionId ||
-      request.outputSchema.id !== TASK_DIFF_REVIEW_OUTPUT_SCHEMA.id ||
-      request.outputSchema.version !== TASK_DIFF_REVIEW_OUTPUT_SCHEMA.version ||
-      request.outputSchema.digest !== TASK_DIFF_REVIEW_OUTPUT_SCHEMA.digest
+      request.outputSchema.id !==
+        TASK_DIFF_REVIEW_CONTINUATION_OUTPUT_SCHEMA.id ||
+      request.outputSchema.version !==
+        TASK_DIFF_REVIEW_CONTINUATION_OUTPUT_SCHEMA.version ||
+      request.outputSchema.digest !==
+        TASK_DIFF_REVIEW_CONTINUATION_OUTPUT_SCHEMA.digest
     ) {
       throw invocationInvalid();
     }
@@ -3905,6 +3910,11 @@ function codeOwnedProviderOutputSchema(request: ProviderInvocationRequest) {
     return PLAN_REVIEW_OUTPUT_SCHEMA;
   }
   if (request.purpose === 'task-diff-review') {
+    if (
+      request.outputSchema.id === TASK_DIFF_REVIEW_CONTINUATION_OUTPUT_SCHEMA.id
+    ) {
+      return TASK_DIFF_REVIEW_CONTINUATION_OUTPUT_SCHEMA;
+    }
     return TASK_DIFF_REVIEW_OUTPUT_SCHEMA;
   }
   throw providerOutputSchemaUnsupported();
@@ -3913,13 +3923,13 @@ function codeOwnedProviderOutputSchema(request: ProviderInvocationRequest) {
 /**
  * Classify which generation of a code-owned output schema a request binds.
  *
- * The current writer always binds the constant this module owns for the
- * request's purpose, so a request carrying that constant's exact id and version
- * with a different digest is a shape the writer cannot produce: the schema body
- * was edited after the record was written. That is the record's own age, and it
- * is reported rather than refused. An unrecognized id or version is not
- * evidence of age — no writer of this engine ever emitted one — so it stays
- * unsupported.
+ * The current writer always binds one constant this module owns for the
+ * request's purpose and semantic phase, so a request carrying that constant's
+ * exact id and version with a different digest is a shape the writer cannot
+ * produce: the schema body was edited after the record was written. That is
+ * the record's own age, and it is reported rather than refused. An unrecognized
+ * id or version is not evidence of age — no writer of this engine ever emitted
+ * one — so it stays unsupported.
  */
 export function providerOutputSchemaGeneration(
   request: ProviderInvocationRequest,
@@ -4183,6 +4193,16 @@ function providerOutputValidator(request: ProviderInvocationRequest) {
     return PLAN_REVIEW_OUTPUT_VALIDATOR;
   }
   if (request.purpose === 'task-diff-review') {
+    if (
+      request.outputSchema.id ===
+        TASK_DIFF_REVIEW_CONTINUATION_OUTPUT_SCHEMA.id &&
+      request.outputSchema.version ===
+        TASK_DIFF_REVIEW_CONTINUATION_OUTPUT_SCHEMA.version &&
+      request.outputSchema.digest ===
+        TASK_DIFF_REVIEW_CONTINUATION_OUTPUT_SCHEMA.digest
+    ) {
+      return TASK_DIFF_REVIEW_CONTINUATION_OUTPUT_VALIDATOR;
+    }
     return TASK_DIFF_REVIEW_OUTPUT_VALIDATOR;
   }
   throw providerOutputSchemaUnsupported();
