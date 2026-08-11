@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -9,7 +10,11 @@ import { runGitWithEnvironment } from '../src/git.ts';
 import { finalizeTask } from '../src/lifecycle.ts';
 import { commitPlanningTransition } from '../src/planning-transition.ts';
 import { startSession } from '../src/session.ts';
-import { validateTaskStrategyPatch } from '../src/task-strategy-patch.ts';
+import {
+  importTaskStrategyPatch,
+  inspectTaskStrategyPatchState,
+  validateTaskStrategyPatch,
+} from '../src/task-strategy-patch.ts';
 import {
   inspectTaskStrategyTransaction,
   sealTaskStrategyRed,
@@ -172,7 +177,7 @@ test('sealed RED state is canonical and digest-bound before any gate trusts it',
   }
 });
 
-test('cross-agent TDD rejects the RED author and admits an independent engine-checked implementer', () => {
+test('cross-agent TDD rejects manual implementation bytes without an engine-imported patch receipt', () => {
   const { repository, counterPath } = createCrossAgentFixture('assertion');
   try {
     const session = startSession(repository, 'demo-change', '1.1');
@@ -194,17 +199,11 @@ test('cross-agent TDD rejects the RED author and admits an independent engine-ch
     assert.throws(
       () =>
         checkSession(repository, session.sessionId, {
-          environment: { AGENT: 'codex' },
+          environment: { AGENT: 'claude' },
         }),
-      hasCode('TASK_STRATEGY_IMPLEMENTER_REQUIRED'),
+      hasCode('TASK_STRATEGY_PATCH_REQUIRED'),
     );
     assert.equal(fs.readFileSync(counterPath, 'utf8'), '1');
-
-    const checked = checkSession(repository, session.sessionId, {
-      environment: { AGENT: 'claude' },
-    });
-    assert.equal(checked.passed, true);
-    assert.equal(fs.readFileSync(counterPath, 'utf8'), '2');
   } finally {
     fs.rmSync(repository, { recursive: true, force: true });
   }
@@ -232,6 +231,15 @@ test('single-agent TDD keeps the RED gate and engine GREEN evidence without fals
       path.join(repository, 'src/feature.ts'),
       'export const feature = true;\n',
     );
+    const patch = diffAgainstTree(repository, transaction.red.candidateTree, [
+      'src/feature.ts',
+    ]);
+    fs.rmSync(path.join(repository, 'src/feature.ts'));
+    importTaskStrategyPatch(repository, session.sessionId, {
+      patch,
+      explicitActor: 'codex',
+      environment: {},
+    });
 
     const checked = checkSession(repository, session.sessionId, {
       environment: { AGENT: 'codex' },
@@ -407,6 +415,258 @@ test('single-agent patch validation permits the RED author without weakening pat
   }
 });
 
+test('patch import persists authority before mutation and exact replay reaches engine GREEN once', () => {
+  const { repository, counterPath } = createCrossAgentFixture('assertion');
+  try {
+    const session = startSession(repository, 'demo-change', '1.1');
+    const testPath = path.join(repository, 'test/feature.test.mjs');
+    fs.mkdirSync(path.dirname(testPath), { recursive: true });
+    fs.writeFileSync(
+      testPath,
+      "throw new Error('feature behavior is not implemented');\n",
+    );
+    const red = sealTaskStrategyRed(repository, session.sessionId, {
+      explicitActor: 'codex',
+      environment: {},
+    });
+    const implementationPath = path.join(repository, 'src/feature.ts');
+    fs.mkdirSync(path.dirname(implementationPath), { recursive: true });
+    fs.writeFileSync(implementationPath, 'export const feature = true;\n');
+    const patch = diffAgainstTree(repository, red.red.candidateTree, [
+      'src/feature.ts',
+    ]);
+    fs.rmSync(implementationPath);
+    const patchDigest = sha256Buffer(patch);
+
+    assert.throws(
+      () =>
+        importTaskStrategyPatch(repository, session.sessionId, {
+          patch,
+          explicitActor: 'claude',
+          environment: {},
+          testCrashAfter: 'reservation-persisted',
+        }),
+      /reservation-persisted/,
+    );
+    assert.equal(fs.existsSync(implementationPath), false);
+    assert.throws(
+      () =>
+        inspectTaskStrategyPatchState(
+          repository,
+          session.sessionId,
+          patchDigest,
+        ),
+      hasCode('TASK_STRATEGY_PATCH_NOT_FOUND'),
+    );
+    assert.throws(
+      () =>
+        importTaskStrategyPatch(repository, session.sessionId, {
+          patch,
+          explicitActor: 'claude',
+          environment: {},
+          testCrashAfter: 'record-persisted',
+        }),
+      /record-persisted/,
+    );
+    const prepared = inspectTaskStrategyPatchState(
+      repository,
+      session.sessionId,
+      patchDigest,
+    );
+    assert.equal(prepared.record.patchDigest, patchDigest);
+    assert.equal(prepared.receipt, null);
+
+    const imported = importTaskStrategyPatch(repository, session.sessionId, {
+      patch,
+      explicitActor: 'claude',
+      environment: {},
+    });
+    assert.equal(imported.receipt.candidateTree, imported.record.candidateTree);
+    assert.equal(
+      fs.readFileSync(implementationPath, 'utf8'),
+      'export const feature = true;\n',
+    );
+    assert.deepEqual(
+      importTaskStrategyPatch(repository, session.sessionId, {
+        patch,
+        explicitActor: 'claude',
+        environment: {},
+      }),
+      imported,
+    );
+
+    const checked = checkSession(repository, session.sessionId, {
+      environment: {},
+    });
+    assert.equal(checked.passed, true);
+    assert.equal(fs.readFileSync(counterPath, 'utf8'), '2');
+  } finally {
+    fs.rmSync(repository, { recursive: true, force: true });
+  }
+});
+
+test('patch-applied crash reconciles the exact candidate and later drift stales the receipt', () => {
+  const { repository } = createCrossAgentFixture('assertion');
+  try {
+    const session = startSession(repository, 'demo-change', '1.1');
+    const testPath = path.join(repository, 'test/feature.test.mjs');
+    fs.mkdirSync(path.dirname(testPath), { recursive: true });
+    fs.writeFileSync(
+      testPath,
+      "throw new Error('feature behavior is not implemented');\n",
+    );
+    const red = sealTaskStrategyRed(repository, session.sessionId, {
+      explicitActor: 'codex',
+      environment: {},
+    });
+    const implementationPath = path.join(repository, 'src/feature.ts');
+    fs.mkdirSync(path.dirname(implementationPath), { recursive: true });
+    fs.writeFileSync(implementationPath, 'export const feature = true;\n');
+    const patch = diffAgainstTree(repository, red.red.candidateTree, [
+      'src/feature.ts',
+    ]);
+    fs.rmSync(implementationPath);
+
+    assert.throws(
+      () =>
+        importTaskStrategyPatch(repository, session.sessionId, {
+          patch,
+          explicitActor: 'claude',
+          environment: {},
+          testCrashAfter: 'patch-applied',
+        }),
+      /patch-applied/,
+    );
+    assert.equal(
+      fs.readFileSync(implementationPath, 'utf8'),
+      'export const feature = true;\n',
+    );
+    const recovered = importTaskStrategyPatch(repository, session.sessionId, {
+      patch,
+      explicitActor: 'claude',
+      environment: {},
+    });
+    assert.notEqual(recovered.receipt, null);
+
+    fs.writeFileSync(implementationPath, 'export const feature = false;\n');
+    assert.throws(
+      () => checkSession(repository, session.sessionId, { environment: {} }),
+      hasCode('TASK_STRATEGY_PATCH_STALE'),
+    );
+  } finally {
+    fs.rmSync(repository, { recursive: true, force: true });
+  }
+});
+
+test('a durable prepared patch reservation rejects a different patch before either can mutate the worktree', () => {
+  const { repository } = createCrossAgentFixture('assertion');
+  try {
+    const session = startSession(repository, 'demo-change', '1.1');
+    const testPath = path.join(repository, 'test/feature.test.mjs');
+    fs.mkdirSync(path.dirname(testPath), { recursive: true });
+    fs.writeFileSync(
+      testPath,
+      "throw new Error('feature behavior is not implemented');\n",
+    );
+    const red = sealTaskStrategyRed(repository, session.sessionId, {
+      explicitActor: 'codex',
+      environment: {},
+    });
+    const implementationPath = path.join(repository, 'src/feature.ts');
+    fs.mkdirSync(path.dirname(implementationPath), { recursive: true });
+    fs.writeFileSync(implementationPath, 'export const feature = true;\n');
+    const patchA = diffAgainstTree(repository, red.red.candidateTree, [
+      'src/feature.ts',
+    ]);
+    fs.writeFileSync(implementationPath, 'export const feature = 2;\n');
+    const patchB = diffAgainstTree(repository, red.red.candidateTree, [
+      'src/feature.ts',
+    ]);
+    fs.rmSync(implementationPath);
+
+    assert.throws(
+      () =>
+        importTaskStrategyPatch(repository, session.sessionId, {
+          patch: patchA,
+          explicitActor: 'claude',
+          environment: {},
+          testCrashAfter: 'reservation-persisted',
+        }),
+      /reservation-persisted/,
+    );
+    assert.throws(
+      () =>
+        importTaskStrategyPatch(repository, session.sessionId, {
+          patch: patchB,
+          explicitActor: 'claude',
+          environment: {},
+        }),
+      hasCode('TASK_STRATEGY_PATCH_RESERVATION_CONFLICT'),
+    );
+    assert.equal(fs.existsSync(implementationPath), false);
+  } finally {
+    fs.rmSync(repository, { recursive: true, force: true });
+  }
+});
+
+test('patch inspection rejects independently redigested reservation metadata', () => {
+  const { repository } = createCrossAgentFixture('assertion');
+  try {
+    const session = startSession(repository, 'demo-change', '1.1');
+    const testPath = path.join(repository, 'test/feature.test.mjs');
+    fs.mkdirSync(path.dirname(testPath), { recursive: true });
+    fs.writeFileSync(
+      testPath,
+      "throw new Error('feature behavior is not implemented');\n",
+    );
+    const red = sealTaskStrategyRed(repository, session.sessionId, {
+      explicitActor: 'codex',
+      environment: {},
+    });
+    const implementationPath = path.join(repository, 'src/feature.ts');
+    fs.mkdirSync(path.dirname(implementationPath), { recursive: true });
+    fs.writeFileSync(implementationPath, 'export const feature = true;\n');
+    const patch = diffAgainstTree(repository, red.red.candidateTree, [
+      'src/feature.ts',
+    ]);
+    fs.rmSync(implementationPath);
+    const imported = importTaskStrategyPatch(repository, session.sessionId, {
+      patch,
+      explicitActor: 'claude',
+      environment: {},
+    });
+    const reservationPath = path.join(
+      runtimeRoot(repository),
+      'investigations/refs/task-strategy-patches',
+      session.sessionId,
+      'reservation.json',
+    );
+    const reservation = JSON.parse(
+      fs.readFileSync(reservationPath, 'utf8'),
+    ) as Record<string, unknown>;
+    reservation.createdAt = new Date(
+      Date.parse(String(reservation.createdAt)) + 1_000,
+    ).toISOString();
+    const { reservationDigest: _oldDigest, ...body } = reservation;
+    reservation.reservationDigest = createHash('sha256')
+      .update(canonicalJson(body))
+      .digest('hex');
+    fs.writeFileSync(reservationPath, `${canonicalJson(reservation)}\n`);
+
+    assert.throws(
+      () =>
+        inspectTaskStrategyPatchState(
+          repository,
+          session.sessionId,
+          imported.record.patchDigest,
+        ),
+      hasCode('TASK_STRATEGY_PATCH_STATE_CORRUPT'),
+    );
+  } finally {
+    fs.rmSync(repository, { recursive: true, force: true });
+  }
+});
+
 function createCrossAgentFixture(
   failureCategory: 'assertion' | 'syntax',
   strategy: 'cross-agent-tdd' | 'tdd-single-agent' = 'cross-agent-tdd',
@@ -539,4 +799,8 @@ function diffAgainstTree(
   } finally {
     fs.rmSync(temporaryDirectory, { recursive: true, force: true });
   }
+}
+
+function sha256Buffer(value: Buffer): string {
+  return createHash('sha256').update(value).digest('hex');
 }
