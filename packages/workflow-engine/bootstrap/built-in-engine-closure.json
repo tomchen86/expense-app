@@ -1126,12 +1126,17 @@
     {
       "path": "src/task-strategy-gate.ts",
       "mode": "100644",
-      "digest": "sha256:12f92e97555e5e8398fe3837012bdca04499f3172af69fb4ce2d10587ff93f27"
+      "digest": "sha256:5f7c7e5f4ebf9dc58380f9dd081298be59631622a5da57591b8e5dd17460cd96"
+    },
+    {
+      "path": "src/task-strategy-patch-store.ts",
+      "mode": "100644",
+      "digest": "sha256:bdd06ba04722f37b648ca912056586575558fac9b3572a311d7c88bd6cff5989"
     },
     {
       "path": "src/task-strategy-patch.ts",
       "mode": "100644",
-      "digest": "sha256:dafc276b0ad77fc68999c8f15763e73a1b99d328979192bfa225fbd469b63605"
+      "digest": "sha256:7f312644fcc3ae0ab4e45ef308486c3d6431ece4ce9f4c1b2d8ce4b20bd7551b"
     },
     {
       "path": "src/task-strategy-store.ts",

@@ -1,6 +1,5 @@
 import crypto from 'node:crypto';
 
-import { resolveActorIdentity } from './actor-identity.ts';
 import { canonicalJson } from './canonical-json.ts';
 import type {
   CrossAgentTddExecution,
@@ -10,6 +9,12 @@ import { ExitCode, workflowError } from './errors.ts';
 import { previewExactStaging } from './git-transitions.ts';
 import { runGit } from './git.ts';
 import { investigationRuntimePaths, matchesAllowedPath } from './paths.ts';
+import {
+  readTaskStrategyPatchCurrentBinding,
+  readTaskStrategyPatchImportReceipt,
+  readTaskStrategyPatchRecord,
+  readTaskStrategyPatchReservation,
+} from './task-strategy-patch-store.ts';
 import {
   readTaskStrategyTransaction,
   type TaskStrategyFrozenFile,
@@ -23,7 +28,7 @@ import type { SessionInspection } from './verification.ts';
  */
 export function assertTaskStrategyExecutionGate(
   inspection: SessionInspection,
-  environment: NodeJS.ProcessEnv,
+  _environment: NodeJS.ProcessEnv,
 ): void {
   const task = inspection.contract.execution?.tasks[inspection.session.taskId];
   if (
@@ -85,23 +90,67 @@ export function assertTaskStrategyExecutionGate(
   ) {
     throw redStale();
   }
-  if (task.strategy === 'cross-agent-tdd') {
-    const actor = resolveActorIdentity({ environment });
-    if (
-      actor.outcome !== 'resolved' ||
-      actor.actor.providerId === transaction.author.providerId
-    ) {
-      throw workflowError(
-        'TASK_STRATEGY_IMPLEMENTER_REQUIRED',
-        'Cross-agent TDD requires a provider-independent implementation actor after RED is sealed.',
-        ExitCode.guard,
-        {
-          details: { redAuthor: transaction.author.providerId },
-          recovery:
-            'Resume implementation with a different engine-attributed provider, then rerun the managed checks.',
-        },
-      );
-    }
+  const binding = readTaskStrategyPatchCurrentBinding(
+    runtime,
+    inspection.session.sessionId,
+  );
+  if (binding === null) {
+    throw workflowError(
+      'TASK_STRATEGY_PATCH_REQUIRED',
+      'GREEN checks require one engine-validated and durably imported implementation patch.',
+      ExitCode.verification,
+      {
+        recovery:
+          'Import the exact provider patch through the task strategy transaction before rerunning checks.',
+      },
+    );
+  }
+  const record = readTaskStrategyPatchRecord(
+    runtime,
+    inspection.session.sessionId,
+    binding.patchDigest,
+  );
+  const receipt = readTaskStrategyPatchImportReceipt(
+    runtime,
+    inspection.session.sessionId,
+    binding.patchDigest,
+  );
+  const reservation = readTaskStrategyPatchReservation(
+    runtime,
+    inspection.session.sessionId,
+  );
+  if (
+    record === null ||
+    receipt === null ||
+    reservation === null ||
+    record.sessionId !== inspection.session.sessionId ||
+    record.changeId !== inspection.session.changeId ||
+    record.taskId !== inspection.session.taskId ||
+    record.strategy !== task.strategy ||
+    record.sourceTree !== transaction.red.candidateTree ||
+    record.taskContractDigest !== sha256(canonicalJson(task)) ||
+    reservation.patchDigest !== record.patchDigest ||
+    reservation.recordDigest !== record.recordDigest ||
+    reservation.sourceTree !== record.sourceTree ||
+    reservation.candidateTree !== record.candidateTree ||
+    reservation.createdAt !== record.createdAt ||
+    receipt.recordDigest !== record.recordDigest ||
+    receipt.patchDigest !== record.patchDigest ||
+    receipt.candidateTree !== record.candidateTree ||
+    binding.patchDigest !== record.patchDigest ||
+    binding.recordDigest !== record.recordDigest ||
+    binding.receiptDigest !== receipt.receiptDigest ||
+    binding.candidateTree !== record.candidateTree ||
+    binding.createdAt !== receipt.importedAt ||
+    preview.tree !== record.candidateTree ||
+    (task.strategy === 'cross-agent-tdd' &&
+      record.implementer.providerId === transaction.author.providerId)
+  ) {
+    throw workflowError(
+      'TASK_STRATEGY_PATCH_STALE',
+      'The imported implementation patch is missing, stale, or not bound to the current strategy authority.',
+      ExitCode.staleState,
+    );
   }
 }
 
