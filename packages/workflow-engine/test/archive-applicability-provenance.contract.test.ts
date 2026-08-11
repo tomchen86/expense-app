@@ -73,11 +73,47 @@ test('a report written before the preflight existed reads as not-recorded', () =
   const root = directory();
   const legacy = { ...BASE_REPORT };
   const id = writeContentRecord(root, legacy);
-  assert.deepEqual(
-    readPlanningTransitionReport(root, id).archiveApplicability,
-    {
-      status: 'not-recorded',
-    },
+  const projected = readPlanningTransitionReport(root, id);
+  assert.deepEqual(projected.archiveApplicability, {
+    status: 'not-recorded',
+  });
+  assert.deepEqual(projected.planningPaths, BASE_REPORT.changedPaths);
+  assert.deepEqual(projected.engineProjectionPaths, []);
+});
+
+test('a version 3 report requires an exact disjoint planning/projection partition', () => {
+  const root = directory();
+  assert.throws(() =>
+    writePlanningTransitionReport(root, {
+      ...BASE_REPORT,
+      reportVersion: 3,
+      planningPaths: [...BASE_REPORT.changedPaths],
+      engineProjectionPaths: [...BASE_REPORT.changedPaths],
+    }),
+  );
+  assert.throws(() =>
+    writePlanningTransitionReport(root, {
+      ...BASE_REPORT,
+      reportVersion: 3,
+      planningPaths: [...BASE_REPORT.changedPaths],
+      engineProjectionPaths: ['docs/UNKNOWN.md'],
+      changedPaths: [...BASE_REPORT.changedPaths, 'docs/UNKNOWN.md'].sort(),
+    }),
+  );
+  assert.throws(() =>
+    writePlanningTransitionReport(root, {
+      ...BASE_REPORT,
+      reportVersion: 3,
+      planningPaths: [
+        ...BASE_REPORT.changedPaths,
+        'docs/CURRENT_AND_NEXT_STEPS.md',
+      ].sort(),
+      engineProjectionPaths: [],
+      changedPaths: [
+        ...BASE_REPORT.changedPaths,
+        'docs/CURRENT_AND_NEXT_STEPS.md',
+      ].sort(),
+    }),
   );
 });
 

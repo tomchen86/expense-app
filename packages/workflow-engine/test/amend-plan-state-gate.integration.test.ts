@@ -389,7 +389,7 @@ test('amend-plan admits a pre-epoch completed generation without forged task evi
         executionDisposition: unknown;
       };
     };
-    assert.equal(report.reportVersion, 2);
+    assert.equal(report.reportVersion, 3);
     assert.deepEqual(report.amendment.executionDisposition, {
       kind: 'carried-forward',
       tasks: [

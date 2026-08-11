@@ -171,7 +171,7 @@
     {
       "path": "src/ci-planning.ts",
       "mode": "100644",
-      "digest": "sha256:29ac805f246897a419289be22c12999497f11266d031cb59261b377027f67d60"
+      "digest": "sha256:89f8bd213460b210cc375d09a823118b2d163bca99c4061fc14bb6bf89d30649"
     },
     {
       "path": "src/ci-policy.ts",
@@ -416,7 +416,7 @@
     {
       "path": "src/handoff.ts",
       "mode": "100644",
-      "digest": "sha256:ac8daff3474730146248578b61e569bb98a35a62100426356c28d3c66585505b"
+      "digest": "sha256:70c9f343f28c147b94ea3abef4fc423b770ff2293ef820d9890edb0744ae9f06"
     },
     {
       "path": "src/harness-bootstrap.ts",
@@ -671,7 +671,7 @@
     {
       "path": "src/managed-documents.ts",
       "mode": "100644",
-      "digest": "sha256:3fd2ec91039f35c9ce503647872d836a3b0fa6d086b22783c4dca1e68e76dfe2"
+      "digest": "sha256:469e81ac8d1c8c25c628be9dfd7b10c33ea43345d875f23238a7612b4f65b478"
     },
     {
       "path": "src/managed-trailers.ts",
@@ -691,7 +691,7 @@
     {
       "path": "src/open-task.ts",
       "mode": "100644",
-      "digest": "sha256:3bbd2de1c0e73e60fd87c6e28b5213057920240c99b2ffaf7b62dc3846b4a299"
+      "digest": "sha256:f469663a51ee11197ee5b3d700aadc0a298a9ca1ac6beb8a216baba7e1603144"
     },
     {
       "path": "src/openspec-adapter.ts",
@@ -821,7 +821,7 @@
     {
       "path": "src/planning-report.ts",
       "mode": "100644",
-      "digest": "sha256:90ed00a1b25f76ff8aa8303822367843d14ad52f0208eeb46f452c3cb88c699a"
+      "digest": "sha256:f7b268e08d4a2de2db3576194a2f8e3d7a9bd88fb0fe240d51ccc68b8e5a752a"
     },
     {
       "path": "src/planning-shadow-metrics.ts",
@@ -831,7 +831,7 @@
     {
       "path": "src/planning-transition.ts",
       "mode": "100644",
-      "digest": "sha256:2863b9cdf9ace8b52498f0b0670193108b5e5a5939967af35bf0fece7fe1e1b9"
+      "digest": "sha256:f464614c5e49d8a380aad2a04b2dce2001504d40cd8e41641b1cd9a305688af6"
     },
     {
       "path": "src/planning-workspace.ts",

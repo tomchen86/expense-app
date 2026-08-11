@@ -3,8 +3,11 @@ import fs from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
 
+import { validateCiPlanningCommit } from '../src/ci-planning.ts';
 import { commitFacts } from '../src/git-transitions.ts';
+import { renderHandoff } from '../src/handoff.ts';
 import { openTask, readOpenTaskJournal } from '../src/open-task.ts';
+import { readPlanningTransitionReport } from '../src/planning-report.ts';
 import { preparePlanningDraftWorkspace } from '../src/planning-workspace.ts';
 import { readSessionFile } from '../src/session-store.ts';
 import { revokeTaskMandate } from '../src/task-mandate.ts';
@@ -68,6 +71,238 @@ test('open-task atomically commits the owned draft and activates its exact sessi
     assert.equal(journal?.phase, 'completed');
     assert.equal(journal?.sessionId, result.sessionId);
     assert.equal(journal?.planningCommit, result.planningCommit);
+  } finally {
+    fixture.dispose();
+  }
+});
+
+test('open-task commits its engine-owned opening projection and CI replays the exact union', () => {
+  const fixture = prepareOpenTaskFixture('atomic-open-projection', {
+    handoff: true,
+  });
+  try {
+    const before = fs.readFileSync(
+      path.join(fixture.repository, 'docs/CURRENT_AND_NEXT_STEPS.md'),
+      'utf8',
+    );
+    assert.match(before, /`demo-change`/u);
+
+    const result = openTask(
+      fixture.repository,
+      fixture.changeId,
+      '1.1',
+      fixture.mandate.taskId,
+      { mandate: { signer: fixture.mandate.signer } },
+    );
+    const after = fs.readFileSync(
+      path.join(fixture.repository, 'docs/CURRENT_AND_NEXT_STEPS.md'),
+      'utf8',
+    );
+    assert.notEqual(after, before);
+    assert.match(after, /`atomic-open-projection`/u);
+    assert.match(after, /`1\.1` — Atomic ingress/u);
+    assert.ok(commitFacts(fixture.repository, result.planningCommit));
+
+    const changedPaths = git(fixture.repository, [
+      'diff-tree',
+      '--no-commit-id',
+      '--name-only',
+      '-r',
+      result.planningCommit,
+    ])
+      .trim()
+      .split('\n')
+      .filter(Boolean)
+      .sort();
+    assert.ok(changedPaths.includes('docs/CURRENT_AND_NEXT_STEPS.md'));
+    const journal = readOpenTaskJournal(
+      fixture.repository,
+      fixture.changeId,
+      '1.1',
+    );
+    assert.ok(journal);
+    assert.deepEqual(journal.changedPaths, changedPaths);
+    const commonDirectoryValue = git(fixture.repository, [
+      'rev-parse',
+      '--git-common-dir',
+    ]).trim();
+    const commonDirectory = fs.realpathSync(
+      path.isAbsolute(commonDirectoryValue)
+        ? commonDirectoryValue
+        : path.resolve(fixture.repository, commonDirectoryValue),
+    );
+    const report = readPlanningTransitionReport(
+      path.join(commonDirectory, 'workflow-engine/planning-reports'),
+      journal.reportId,
+    );
+    assert.deepEqual(report.engineProjectionPaths, [
+      'docs/CURRENT_AND_NEXT_STEPS.md',
+    ]);
+    assert.deepEqual(
+      report.planningPaths,
+      changedPaths.filter(
+        (changedPath) => changedPath !== 'docs/CURRENT_AND_NEXT_STEPS.md',
+      ),
+    );
+    assert.deepEqual(
+      validateCiPlanningCommit(
+        fixture.repository,
+        result.planningCommit,
+        fixture.changeId,
+      ).changedPaths,
+      changedPaths,
+    );
+  } finally {
+    fixture.dispose();
+  }
+});
+
+test('open-task restores its opening projection before CAS and regenerates it on exact retry', () => {
+  const fixture = prepareOpenTaskFixture('atomic-open-projection-retry', {
+    handoff: true,
+  });
+  try {
+    const handoffPath = path.join(
+      fixture.repository,
+      'docs/CURRENT_AND_NEXT_STEPS.md',
+    );
+    const before = fs.readFileSync(handoffPath, 'utf8');
+    assert.throws(
+      () =>
+        openTask(
+          fixture.repository,
+          fixture.changeId,
+          '1.1',
+          fixture.mandate.taskId,
+          {
+            mandate: { signer: fixture.mandate.signer },
+            testCrashAfter: 'journal-prepared',
+          },
+        ),
+      /Simulated open-task interruption/u,
+    );
+    assert.equal(fs.readFileSync(handoffPath, 'utf8'), before);
+    assert.equal(
+      git(fixture.repository, ['rev-parse', 'HEAD']).trim(),
+      fixture.baselineHead,
+    );
+
+    const recovered = openTask(
+      fixture.repository,
+      fixture.changeId,
+      '1.1',
+      fixture.mandate.taskId,
+      { mandate: { signer: fixture.mandate.signer } },
+    );
+    assert.equal(recovered.recovered, true);
+    assert.match(
+      fs.readFileSync(handoffPath, 'utf8'),
+      /`atomic-open-projection-retry`/u,
+    );
+    assert.equal(git(fixture.repository, ['status', '--porcelain=v1']), '');
+  } finally {
+    fixture.dispose();
+  }
+});
+
+test('open-task recovery accepts only the parent or prepared projection bytes', () => {
+  const fixture = prepareOpenTaskFixture('atomic-open-projection-authority', {
+    handoff: true,
+  });
+  try {
+    assert.throws(
+      () =>
+        openTask(
+          fixture.repository,
+          fixture.changeId,
+          '1.1',
+          fixture.mandate.taskId,
+          {
+            mandate: { signer: fixture.mandate.signer },
+            testCrashAfter: 'journal-prepared',
+          },
+        ),
+      /Simulated open-task interruption/u,
+    );
+    const journal = readOpenTaskJournal(
+      fixture.repository,
+      fixture.changeId,
+      '1.1',
+    );
+    assert.ok(journal);
+    const handoffPath = path.join(
+      fixture.repository,
+      'docs/CURRENT_AND_NEXT_STEPS.md',
+    );
+    fs.writeFileSync(handoffPath, '# Foreign projection\n');
+
+    assert.throws(
+      () =>
+        openTask(
+          fixture.repository,
+          fixture.changeId,
+          '1.1',
+          fixture.mandate.taskId,
+          { mandate: { signer: fixture.mandate.signer } },
+        ),
+      (error) => isWorkflowError(error, 'OPEN_TASK_PROJECTION_DIVERGED'),
+    );
+    assert.equal(
+      fs.readFileSync(handoffPath, 'utf8'),
+      '# Foreign projection\n',
+    );
+    assert.equal(
+      git(fixture.repository, ['rev-parse', 'HEAD']).trim(),
+      fixture.baselineHead,
+    );
+  } finally {
+    fixture.dispose();
+  }
+});
+
+test('open-task recovery reconciles a durable prepared projection crash window', () => {
+  const fixture = prepareOpenTaskFixture('atomic-open-projection-crash', {
+    handoff: true,
+  });
+  try {
+    assert.throws(
+      () =>
+        openTask(
+          fixture.repository,
+          fixture.changeId,
+          '1.1',
+          fixture.mandate.taskId,
+          {
+            mandate: { signer: fixture.mandate.signer },
+            testCrashAfter: 'journal-prepared',
+          },
+        ),
+      /Simulated open-task interruption/u,
+    );
+    const journal = readOpenTaskJournal(
+      fixture.repository,
+      fixture.changeId,
+      '1.1',
+    );
+    assert.ok(journal);
+    fs.writeFileSync(
+      path.join(fixture.repository, 'docs/CURRENT_AND_NEXT_STEPS.md'),
+      git(fixture.repository, [
+        'show',
+        `${journal.planningCommit}:docs/CURRENT_AND_NEXT_STEPS.md`,
+      ]),
+    );
+
+    const recovered = openTask(
+      fixture.repository,
+      fixture.changeId,
+      '1.1',
+      fixture.mandate.taskId,
+      { mandate: { signer: fixture.mandate.signer } },
+    );
+    assert.equal(recovered.recovered, true);
+    assert.equal(recovered.planningCommit, journal.planningCommit);
+    assert.equal(git(fixture.repository, ['status', '--porcelain=v1']), '');
   } finally {
     fixture.dispose();
   }
@@ -317,7 +552,10 @@ test('open-task reconciles only its exact hard-link publication residue', () => 
   }
 });
 
-function prepareOpenTaskFixture(changeId: string): {
+function prepareOpenTaskFixture(
+  changeId: string,
+  options: Readonly<{ handoff?: boolean }> = {},
+): {
   repository: string;
   changeId: string;
   baselineHead: string;
@@ -325,6 +563,7 @@ function prepareOpenTaskFixture(changeId: string): {
   dispose(): void;
 } {
   const repository = createFixtureRepository();
+  if (options.handoff === true) enableOpeningProjection(repository);
   git(repository, ['checkout', '-b', `work/${changeId}`]);
   const mandate = prepareExecutionMandate(repository, changeId);
   const baselineHead = git(repository, ['rev-parse', 'HEAD']).trim();
@@ -343,6 +582,28 @@ function prepareOpenTaskFixture(changeId: string): {
       fs.rmSync(repository, { recursive: true, force: true });
     },
   };
+}
+
+function enableOpeningProjection(repository: string): void {
+  const policyPath = path.join(repository, 'workflow/document-policy.json');
+  const policy = JSON.parse(fs.readFileSync(policyPath, 'utf8')) as {
+    documents: Record<string, unknown>;
+  };
+  policy.documents['docs/CURRENT_AND_NEXT_STEPS.md'] = {
+    mode: 'generated',
+    enforcement: 'active',
+    source: 'openspec/changes/*/tasks.md',
+    validator: 'managed-documents',
+    transition: 'completion',
+  };
+  fs.writeFileSync(policyPath, `${JSON.stringify(policy, null, 2)}\n`);
+  renderHandoff(repository);
+  git(repository, [
+    'add',
+    'workflow/document-policy.json',
+    'docs/CURRENT_AND_NEXT_STEPS.md',
+  ]);
+  git(repository, ['commit', '-m', 'Enable opening projection']);
 }
 
 function writeChange(repository: string, changeId: string): void {

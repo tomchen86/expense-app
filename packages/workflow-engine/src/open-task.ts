@@ -3,7 +3,9 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 import { canonicalJson } from './canonical-json.ts';
+import { readFileAtCommit } from './ci-git.ts';
 import { loadWorkflowConfig } from './contracts.ts';
+import { engineProjectionPathsForTransition } from './engine-projection-registry.ts';
 import { ExitCode, workflowError } from './errors.ts';
 import { ensurePlainDirectory } from './filesystem-safety.ts';
 import {
@@ -14,6 +16,12 @@ import {
   updateManagedRef,
 } from './git-transitions.ts';
 import { discoverRepository, runGit } from './git.ts';
+import { validateHandoffForChange } from './handoff.ts';
+import {
+  refreshPlanningDocuments,
+  rollbackGeneratedDocuments,
+  type GeneratedDocumentMutation,
+} from './managed-documents.ts';
 import { assertChangeId, assertTaskId, normalizeChangedPath } from './paths.ts';
 import {
   commitPlanningTransitionUnderAuthority,
@@ -338,6 +346,10 @@ function recoverPreparedPlanningCommit(
       ExitCode.staleState,
     );
   }
+  const projectionMutations = restorePreparedPlanningProjection(
+    repository.repositoryRoot,
+    journal,
+  );
   const staged = stageExactPaths(
     repository.repositoryRoot,
     journal.parentCommit,
@@ -349,6 +361,10 @@ function recoverPreparedPlanningCommit(
       staged.previousIndexTree,
       staged.tree,
       openTaskUnsafe('Prepared planning tree changed before recovery.'),
+    );
+    rollbackPreparedPlanningProjection(
+      repository.repositoryRoot,
+      projectionMutations,
     );
     throw openTaskUnsafe('Prepared planning tree changed before recovery.');
   }
@@ -366,9 +382,99 @@ function recoverPreparedPlanningCommit(
       staged.tree,
       error,
     );
+    rollbackPreparedPlanningProjection(
+      repository.repositoryRoot,
+      projectionMutations,
+    );
     throw error;
   }
   assertCommittedPlanningState(cwd, journal);
+}
+
+function restorePreparedPlanningProjection(
+  repositoryRoot: string,
+  journal: OpenTaskJournal,
+): GeneratedDocumentMutation[] {
+  const projectionPaths = planningProjectionPaths(journal);
+  if (projectionPaths.length === 0) return [];
+  const mutations = projectionPaths.map((projectionPath) => {
+    const before = readFileAtCommit(
+      repositoryRoot,
+      journal.parentCommit,
+      projectionPath,
+    );
+    const after = readFileAtCommit(
+      repositoryRoot,
+      journal.planningCommit,
+      projectionPath,
+    );
+    if (after === undefined || after === before) {
+      throw openTaskUnsafe(
+        'Prepared open-task projection authority is invalid.',
+      );
+    }
+    const current = readPlainProjectionFile(repositoryRoot, projectionPath);
+    if (current !== before && current !== after) {
+      throw workflowError(
+        'OPEN_TASK_PROJECTION_DIVERGED',
+        'Open-task recovery found foreign engine-projection bytes.',
+        ExitCode.staleState,
+      );
+    }
+    return { path: projectionPath, before, after };
+  });
+  try {
+    refreshPlanningDocuments(repositoryRoot, journal.changeId);
+    for (const mutation of mutations) {
+      if (
+        readPlainProjectionFile(repositoryRoot, mutation.path) !==
+        mutation.after
+      ) {
+        throw openTaskUnsafe(
+          'Prepared open-task projection did not regenerate exactly.',
+        );
+      }
+    }
+    validatePreparedPlanningProjection(repositoryRoot, journal);
+    return mutations;
+  } catch (error) {
+    rollbackPreparedPlanningProjection(repositoryRoot, mutations, true);
+    throw error;
+  }
+}
+
+function rollbackPreparedPlanningProjection(
+  repositoryRoot: string,
+  mutations: GeneratedDocumentMutation[],
+  allowAlreadyRestored = false,
+): void {
+  const applied: GeneratedDocumentMutation[] = [];
+  for (const mutation of mutations) {
+    const current = readPlainProjectionFile(repositoryRoot, mutation.path);
+    if (allowAlreadyRestored && current === mutation.before) continue;
+    if (current !== mutation.after) {
+      throw workflowError(
+        'OPEN_TASK_PROJECTION_DIVERGED',
+        'Open-task could not restore a projection changed by another writer.',
+        ExitCode.staleState,
+      );
+    }
+    applied.push(mutation);
+  }
+  rollbackGeneratedDocuments(repositoryRoot, applied);
+}
+
+function readPlainProjectionFile(
+  repositoryRoot: string,
+  relativePath: string,
+): string | undefined {
+  const filePath = path.join(repositoryRoot, relativePath);
+  const stats = fs.lstatSync(filePath, { throwIfNoEntry: false });
+  if (!stats) return undefined;
+  if (!stats.isFile() || stats.isSymbolicLink() || stats.nlink !== 1) {
+    throw openTaskUnsafe('Open-task projection path is unsafe.');
+  }
+  return fs.readFileSync(filePath, 'utf8');
 }
 
 function ensureExactSession(
@@ -469,6 +575,7 @@ function assertJournalAuthority(cwd: string, journal: OpenTaskJournal): void {
   assertPreparedPlanningAuthority(
     repository.repositoryRoot,
     config.runtimeDirectory,
+    config.changeRoot,
     journal,
   );
 }
@@ -476,8 +583,22 @@ function assertJournalAuthority(cwd: string, journal: OpenTaskJournal): void {
 function assertPreparedPlanningAuthority(
   repositoryRoot: string,
   runtimeDirectory: string,
+  changeRoot: string,
   journal: OpenTaskJournal,
 ): void {
+  const prefix = `${changeRoot}/${journal.changeId}/`;
+  const projectionPaths = new Set(planningProjectionPaths(journal));
+  if (
+    !journal.changedPaths.some((changedPath) =>
+      changedPath.startsWith(prefix),
+    ) ||
+    journal.changedPaths.some(
+      (changedPath) =>
+        !changedPath.startsWith(prefix) && !projectionPaths.has(changedPath),
+    )
+  ) {
+    throw openTaskUnsafe('Prepared open-task path authority is invalid.');
+  }
   const facts = commitFacts(repositoryRoot, journal.planningCommit);
   if (
     facts.tree !== journal.baselineTree ||
@@ -503,7 +624,16 @@ function assertPreparedPlanningAuthority(
     report.parent.tree !== journal.parentTree ||
     report.tree !== journal.baselineTree ||
     report.commitHash !== journal.planningCommit ||
-    canonicalJson(report.changedPaths) !== canonicalJson(journal.changedPaths)
+    canonicalJson(report.changedPaths) !==
+      canonicalJson(journal.changedPaths) ||
+    canonicalJson(report.engineProjectionPaths) !==
+      canonicalJson(planningProjectionPaths(journal)) ||
+    canonicalJson(report.planningPaths) !==
+      canonicalJson(
+        journal.changedPaths.filter(
+          (changedPath) => !projectionPaths.has(changedPath),
+        ),
+      )
   ) {
     throw openTaskUnsafe('Prepared open-task planning report is invalid.');
   }
@@ -527,6 +657,23 @@ function assertCommittedPlanningState(
       'Open-task planning commit no longer matches the clean worktree and index.',
       ExitCode.staleState,
     );
+  }
+  validatePreparedPlanningProjection(repository.repositoryRoot, journal);
+}
+
+function planningProjectionPaths(journal: OpenTaskJournal): string[] {
+  const known = new Set(engineProjectionPathsForTransition('plan'));
+  return journal.changedPaths.filter((changedPath) => known.has(changedPath));
+}
+
+function validatePreparedPlanningProjection(
+  repositoryRoot: string,
+  journal: OpenTaskJournal,
+): void {
+  if (
+    planningProjectionPaths(journal).includes('docs/CURRENT_AND_NEXT_STEPS.md')
+  ) {
+    validateHandoffForChange(repositoryRoot, journal.changeId);
   }
 }
 

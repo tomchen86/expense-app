@@ -4,7 +4,11 @@ import { pathToFileURL } from 'node:url';
 
 import { ExitCode, workflowError } from './errors.ts';
 import { engineProjectionPathsForTransition } from './engine-projection-registry.ts';
-import { renderHandoff, validateHandoff } from './handoff.ts';
+import {
+  renderHandoff,
+  renderHandoffForChange,
+  validateHandoff,
+} from './handoff.ts';
 import { validateIssueLog } from './issues.ts';
 
 export type GeneratedDocumentMutation = {
@@ -80,6 +84,50 @@ export function refreshCompletionDocuments(
   );
   const before = fs.readFileSync(documentPath, 'utf8');
   const after = renderHandoff(repositoryRoot);
+  return before === after
+    ? []
+    : [{ path: 'docs/CURRENT_AND_NEXT_STEPS.md', before, after }];
+}
+
+/**
+ * Refresh the fixed opening projection from an explicit change identity. The
+ * legacy policy's `transition: completion` field enables the reviewed handoff
+ * projection but does not narrow the registry's code-owned plan transition.
+ */
+export function refreshPlanningDocuments(
+  repositoryRoot: string,
+  changeId: string,
+): GeneratedDocumentMutation[] {
+  if (!hasDocumentPolicy(repositoryRoot)) return [];
+  const policy = loadDocumentPolicy(repositoryRoot);
+  const handoff = policy.documents['docs/CURRENT_AND_NEXT_STEPS.md'];
+  if (
+    !engineProjectionPathsForTransition('plan').includes(
+      'docs/CURRENT_AND_NEXT_STEPS.md',
+    ) ||
+    !isRecord(handoff) ||
+    handoff.mode !== 'generated' ||
+    handoff.enforcement !== 'active'
+  ) {
+    return [];
+  }
+  const documentPath = path.join(
+    repositoryRoot,
+    'docs/CURRENT_AND_NEXT_STEPS.md',
+  );
+  const existing = fs.lstatSync(documentPath, { throwIfNoEntry: false });
+  if (
+    existing &&
+    (!existing.isFile() || existing.isSymbolicLink() || existing.nlink !== 1)
+  ) {
+    throw workflowError(
+      'HANDOFF_PATH_UNSAFE',
+      'Managed handoff path is not a plain file.',
+      ExitCode.verification,
+    );
+  }
+  const before = existing ? fs.readFileSync(documentPath, 'utf8') : undefined;
+  const after = renderHandoffForChange(repositoryRoot, changeId);
   return before === after
     ? []
     : [{ path: 'docs/CURRENT_AND_NEXT_STEPS.md', before, after }];
