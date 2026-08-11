@@ -585,7 +585,8 @@ export function readProviderInvocationLifecycleProjection(paths, requestedInvoca
         (value.providerId !== 'codex' && value.providerId !== 'claude') ||
         (value.purpose !== 'survey' &&
             value.purpose !== 'plan-review' &&
-            value.purpose !== 'task-diff-review') ||
+            value.purpose !== 'task-diff-review' &&
+            value.purpose !== 'task-implementation') ||
         !isDigest(value.requestDigest) ||
         !isDigest(value.manifestDigest) ||
         !isProviderInvocationFailureShape(value.failure) ||
@@ -601,8 +602,12 @@ export function readProviderInvocationLifecycleProjection(paths, requestedInvoca
             'plan-review-manifest',
             'task-diff-review-manifest',
             'task-diff-review-continuation-manifest',
+            'task-strategy-implementation-manifest',
         ].includes(String(manifest.kind)) ||
-        manifest.changeId !== value.changeId ||
+        (manifest.kind === 'task-strategy-implementation-manifest'
+            ? !isRecord(manifest.subject) ||
+                manifest.subject.changeId !== value.changeId
+            : manifest.changeId !== value.changeId) ||
         manifest.repositoryId !== request.repositoryId ||
         manifest.baseCommit !== request.baseCommit ||
         manifest.baseTree !== request.baseTree ||
@@ -617,7 +622,9 @@ export function readProviderInvocationLifecycleProjection(paths, requestedInvoca
             manifest.kind !== 'plan-review-manifest') ||
         (value.purpose === 'task-diff-review' &&
             manifest.kind !== 'task-diff-review-manifest' &&
-            manifest.kind !== 'task-diff-review-continuation-manifest')) {
+            manifest.kind !== 'task-diff-review-continuation-manifest') ||
+        (value.purpose === 'task-implementation' &&
+            manifest.kind !== 'task-strategy-implementation-manifest')) {
         throw providerInvocationUnsafe();
     }
     assertInvestigationId(value.investigationId);

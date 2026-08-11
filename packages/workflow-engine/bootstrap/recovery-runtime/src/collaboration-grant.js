@@ -29,6 +29,10 @@ export const COLLABORATION_GRANT_POLICY = deepFreeze({
             'caller-supplied',
             'direct-human-review',
         ],
+        'task-implementation': [
+            'same-provider-fresh-session',
+            'caller-supplied',
+        ],
     },
     trustCriticalDirectHumanRequiredPhases: [],
 });
@@ -577,7 +581,10 @@ function assertRolePhase(phase, rolePair) {
             rolePair.conflictingRole === 'plan-reviewer') ||
         (phase === 'task-diff-review' &&
             rolePair.authorRole === 'task-implementer' &&
-            rolePair.conflictingRole === 'task-diff-reviewer');
+            rolePair.conflictingRole === 'task-diff-reviewer') ||
+        (phase === 'task-implementation' &&
+            rolePair.authorRole === 'red-author' &&
+            rolePair.conflictingRole === 'task-implementer');
     if (!valid) {
         throw collaborationInvalid('Collaboration grant lifecycle phase and roles do not match.');
     }

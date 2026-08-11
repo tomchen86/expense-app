@@ -1358,7 +1358,8 @@ function assertProviderPromptContextBinding(
   if (
     (binding.purpose !== 'survey' &&
       binding.purpose !== 'plan-review' &&
-      binding.purpose !== 'task-diff-review') ||
+      binding.purpose !== 'task-diff-review' &&
+      binding.purpose !== 'task-implementation') ||
     binding.workflowId !==
       providerContextWorkflowId(ownerWorkflowId, binding) ||
     !Number.isSafeInteger(binding.generation) ||

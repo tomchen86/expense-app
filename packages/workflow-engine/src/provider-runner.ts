@@ -839,6 +839,14 @@ const PROVIDER_PURPOSE_INSTRUCTIONS: Readonly<
     'Classify current-change blockers as challenges and independent follow-up ideas as suggestions. The advisory verdict never authorizes completion.',
     'Treat the manifest subject, candidate tree, check evidence, task contract, planning generation, and review policy as immutable bindings; do not substitute live runtime metadata.',
   ]),
+  'task-implementation': Object.freeze([
+    'Implement only the exact engine-sealed RED subject and reviewed behavior contract carried by the bound manifest.',
+    'Treat every frozen test and fixture path as authoritative and immutable; do not include changes to those paths in the returned patch.',
+    'Return one unified binary-safe Git patch whose derived changes remain inside the reviewed implementation path scopes.',
+    'Use only the reviewed read/search capability surface and do not mutate the worktree, index, refs, runtime, or any repository file.',
+    'Return only output that conforms to the bound task-strategy implementation output schema.',
+    'Do not report GREEN as authority; the workflow engine independently imports the patch and runs every registered GREEN check.',
+  ]),
 });
 
 function renderManagedProviderPrompt(

@@ -43,6 +43,7 @@ const ROLE_CAPABILITY = {
     'blind-surveyor': 'survey',
     'plan-reviewer': 'plan-review',
     'task-diff-reviewer': 'task-diff-review',
+    'task-implementer': 'task-implementation',
 };
 /**
  * Assess independence of a candidate relative to the author being challenged.
@@ -177,7 +178,9 @@ export function authorizeGrantedOrdinaryRole(input) {
         (input.role === 'plan-reviewer' &&
             payload.lifecyclePhase !== 'plan-review') ||
         (input.role === 'task-diff-reviewer' &&
-            payload.lifecyclePhase !== 'task-diff-review')) {
+            payload.lifecyclePhase !== 'task-diff-review') ||
+        (input.role === 'task-implementer' &&
+            payload.lifecyclePhase !== 'task-implementation')) {
         throw grantedRoleInvalid();
     }
     const base = {
@@ -289,7 +292,8 @@ export function admitRoleResult(input) {
     const participant = normalizeRecordedParticipant(input.participant);
     if ((assignment.role !== 'blind-surveyor' &&
         assignment.role !== 'plan-reviewer' &&
-        assignment.role !== 'task-diff-reviewer') ||
+        assignment.role !== 'task-diff-reviewer' &&
+        assignment.role !== 'task-implementer') ||
         !/^[0-9a-f]{64}$/.test(assignment.targetDigest)) {
         throw roleResultInvalid();
     }
@@ -297,7 +301,9 @@ export function admitRoleResult(input) {
         ? 'blind-survey'
         : assignment.role === 'plan-reviewer'
             ? 'plan-review'
-            : 'task-diff-review';
+            : assignment.role === 'task-diff-reviewer'
+                ? 'task-diff-review'
+                : 'task-implementation';
     if (content.kind !== expectedContentKind) {
         throw roleResultInvalid();
     }
@@ -405,7 +411,8 @@ function isOrdinaryRoleAssignment(value) {
         hasExactKeys(value, ORDINARY_ASSIGNMENT_KEYS) &&
         (value.role === 'blind-surveyor' ||
             value.role === 'plan-reviewer' ||
-            value.role === 'task-diff-reviewer') &&
+            value.role === 'task-diff-reviewer' ||
+            value.role === 'task-implementer') &&
         isProviderId(value.providerId) &&
         typeof value.sessionId === 'string' &&
         value.sessionId.length > 0 &&
@@ -417,7 +424,12 @@ function assertRoleContentAdmission(value) {
     if (!value ||
         typeof value !== 'object' ||
         !hasExactKeys(value, ROLE_CONTENT_KEYS) ||
-        !['blind-survey', 'plan-review', 'task-diff-review'].includes(value.kind) ||
+        ![
+            'blind-survey',
+            'plan-review',
+            'task-diff-review',
+            'task-implementation',
+        ].includes(value.kind) ||
         !/^[0-9a-f]{64}$/.test(value.nodeId) ||
         !/^[0-9a-f]{64}$/.test(value.resultDigest) ||
         !value.outputSchema ||

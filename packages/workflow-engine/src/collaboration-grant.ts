@@ -45,6 +45,10 @@ export const COLLABORATION_GRANT_POLICY = deepFreeze({
       'caller-supplied',
       'direct-human-review',
     ] as const,
+    'task-implementation': [
+      'same-provider-fresh-session',
+      'caller-supplied',
+    ] as const,
   },
   trustCriticalDirectHumanRequiredPhases: [] as const,
 });
@@ -125,11 +129,14 @@ const DIRECT_HUMAN_PAYLOAD_KEYS = [
 ] as const;
 
 export type CollaborationLifecyclePhase =
-  'blind-survey' | 'plan-review' | 'task-diff-review';
+  'blind-survey' | 'plan-review' | 'task-diff-review' | 'task-implementation';
 export type CollaborationAuthorRole =
-  'investigation-author' | 'plan-author' | 'task-implementer';
+  'investigation-author' | 'plan-author' | 'task-implementer' | 'red-author';
 export type CollaborationConflictingRole =
-  'blind-surveyor' | 'plan-reviewer' | 'task-diff-reviewer';
+  | 'blind-surveyor'
+  | 'plan-reviewer'
+  | 'task-diff-reviewer'
+  | 'task-implementer';
 export type CollaborationRolePair =
   | {
       authorRole: 'investigation-author';
@@ -142,6 +149,10 @@ export type CollaborationRolePair =
   | {
       authorRole: 'task-implementer';
       conflictingRole: 'task-diff-reviewer';
+    }
+  | {
+      authorRole: 'red-author';
+      conflictingRole: 'task-implementer';
     };
 
 export type CollaborationAvailableActor =
@@ -983,7 +994,10 @@ function assertRolePhase(
       rolePair.conflictingRole === 'plan-reviewer') ||
     (phase === 'task-diff-review' &&
       rolePair.authorRole === 'task-implementer' &&
-      rolePair.conflictingRole === 'task-diff-reviewer');
+      rolePair.conflictingRole === 'task-diff-reviewer') ||
+    (phase === 'task-implementation' &&
+      rolePair.authorRole === 'red-author' &&
+      rolePair.conflictingRole === 'task-implementer');
   if (!valid) {
     throw collaborationInvalid(
       'Collaboration grant lifecycle phase and roles do not match.',

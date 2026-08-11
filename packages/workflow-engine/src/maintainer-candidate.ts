@@ -1035,7 +1035,8 @@ function assertCandidateSupportingArtifact(
         !INVESTIGATION_ID.test(entry.investigationId) ||
         (entry.purpose !== 'survey' &&
           entry.purpose !== 'plan-review' &&
-          entry.purpose !== 'task-diff-review') ||
+          entry.purpose !== 'task-diff-review' &&
+          entry.purpose !== 'task-implementation') ||
         !Number.isSafeInteger(entry.attempt) ||
         (entry.attempt as number) < 1 ||
         !['prepared', 'leased', 'succeeded', 'failed'].includes(

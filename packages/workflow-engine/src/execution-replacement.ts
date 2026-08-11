@@ -190,7 +190,10 @@ export function requestExecutionReplacement(
     (assertOwned) => {
       const inspection = inspectExecutionJob(cwd, requestedJobId);
       const source = inspectLegacyExecutionJobSource(cwd, requestedJobId);
-      if (source.record.purpose === 'task-diff-review') {
+      if (
+        source.record.purpose === 'task-diff-review' ||
+        source.record.purpose === 'task-implementation'
+      ) {
         throw replacementNotGrantable();
       }
       const previous = inspection.attempts.at(-1);
@@ -708,7 +711,10 @@ function publishReplacement(
     context.runtime,
     transaction.failedInvocationId,
   );
-  if (failed.purpose === 'task-diff-review') {
+  if (
+    failed.purpose === 'task-diff-review' ||
+    failed.purpose === 'task-implementation'
+  ) {
     throw replacementNotGrantable();
   }
   // A previous republication may have died after the replacement reservation

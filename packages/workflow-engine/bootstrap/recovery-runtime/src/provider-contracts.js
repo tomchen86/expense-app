@@ -21,6 +21,7 @@ const ROLE_PURPOSE = {
     'blind-surveyor': 'survey',
     'plan-reviewer': 'plan-review',
     'task-diff-reviewer': 'task-diff-review',
+    'task-implementer': 'task-implementation',
 };
 const REQUEST_INPUT_KEYS = [
     'invocationId',
@@ -347,7 +348,8 @@ function isNonce(value) {
 function isPurpose(value) {
     return (value === 'survey' ||
         value === 'plan-review' ||
-        value === 'task-diff-review');
+        value === 'task-diff-review' ||
+        value === 'task-implementation');
 }
 function isOutputSchema(value) {
     return (isRecord(value) &&
@@ -365,7 +367,8 @@ export function isProviderRoleAssignment(value) {
         hasExactKeys(value, ROLE_ASSIGNMENT_KEYS) &&
         (value.role === 'blind-surveyor' ||
             value.role === 'plan-reviewer' ||
-            value.role === 'task-diff-reviewer') &&
+            value.role === 'task-diff-reviewer' ||
+            value.role === 'task-implementer') &&
         isProviderId(value.providerId) &&
         isNonEmptyString(value.sessionId) &&
         typeof value.targetDigest === 'string' &&
@@ -382,7 +385,8 @@ function isGrantedSameProviderAssignment(value) {
         !hasExactKeys(value, GRANTED_ROLE_ASSIGNMENT_KEYS) ||
         (value.role !== 'blind-surveyor' &&
             value.role !== 'plan-reviewer' &&
-            value.role !== 'task-diff-reviewer') ||
+            value.role !== 'task-diff-reviewer' &&
+            value.role !== 'task-implementer') ||
         !isProviderId(value.providerId) ||
         !isNonEmptyString(value.sessionId) ||
         typeof value.targetDigest !== 'string' ||

@@ -25,6 +25,11 @@ import {
 } from './task-diff-review-artifact.ts';
 import { assertTaskDiffReviewProviderOwnerCurrent } from './task-diff-review-lifecycle.ts';
 import {
+  TASK_STRATEGY_IMPLEMENTATION_OUTPUT_SCHEMA,
+  TASK_STRATEGY_IMPLEMENTATION_OUTPUT_VALIDATOR,
+  TASK_STRATEGY_IMPLEMENTATION_PROVIDER_OUTPUT_SCHEMA,
+} from './task-strategy-provider-contract.ts';
+import {
   BLIND_SURVEY_OUTPUT_SCHEMA,
   BLIND_SURVEY_PROVIDER_OUTPUT_SCHEMA,
   blindSurveyOutputValidator,
@@ -409,6 +414,19 @@ function semanticContract(
     return {
       schema: TASK_DIFF_REVIEW_PROVIDER_OUTPUT_SCHEMA,
       validator: TASK_DIFF_REVIEW_OUTPUT_VALIDATOR,
+    };
+  }
+  if (
+    request.purpose === 'task-implementation' &&
+    request.outputSchema.id === TASK_STRATEGY_IMPLEMENTATION_OUTPUT_SCHEMA.id &&
+    request.outputSchema.version ===
+      TASK_STRATEGY_IMPLEMENTATION_OUTPUT_SCHEMA.version &&
+    request.outputSchema.digest ===
+      TASK_STRATEGY_IMPLEMENTATION_OUTPUT_SCHEMA.digest
+  ) {
+    return {
+      schema: TASK_STRATEGY_IMPLEMENTATION_PROVIDER_OUTPUT_SCHEMA,
+      validator: TASK_STRATEGY_IMPLEMENTATION_OUTPUT_VALIDATOR,
     };
   }
   throw workflowError(

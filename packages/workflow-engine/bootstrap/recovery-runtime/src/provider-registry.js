@@ -4,6 +4,10 @@ function readOnlyCapabilities() {
         Object.freeze({ purpose: 'survey', profile: 'repository-read-only' }),
         Object.freeze({ purpose: 'plan-review', profile: 'repository-read-only' }),
         Object.freeze({
+            purpose: 'task-implementation',
+            profile: 'repository-read-only',
+        }),
+        Object.freeze({
             purpose: 'task-diff-review',
             profile: 'repository-read-only',
         }),

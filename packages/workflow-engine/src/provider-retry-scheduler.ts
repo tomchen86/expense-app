@@ -208,14 +208,21 @@ export function processProviderFailureRetry(
       reasonCode: failed.failure?.code ?? 'PROVIDER_INVOCATION_NOT_RETRYABLE',
     });
   }
-  // TaskDiffReview is not owned by the investigation/PlanReview retry state
-  // machine. Until its exact WorkflowSession owner publishes a replacement,
-  // fail closed instead of routing the invocation through `resumePropose`.
-  if (failed.purpose === 'task-diff-review') {
+  // TaskDiffReview and task implementation are not owned by the
+  // investigation/PlanReview retry state machine. Until their exact
+  // WorkflowSession owner publishes a replacement, fail closed instead of
+  // routing the invocation through `resumePropose`.
+  if (
+    failed.purpose === 'task-diff-review' ||
+    failed.purpose === 'task-implementation'
+  ) {
     return deepFreeze({
       kind: 'decision-denied' as const,
       jobId: projection.job.jobId,
-      reasonCode: 'TASK_DIFF_REVIEW_RETRY_OWNER_REQUIRED',
+      reasonCode:
+        failed.purpose === 'task-diff-review'
+          ? 'TASK_DIFF_REVIEW_RETRY_OWNER_REQUIRED'
+          : 'TASK_IMPLEMENTATION_RETRY_OWNER_REQUIRED',
     });
   }
   const strategyDecision = inspectExecutionJob(cwd, projection.job.jobId)
