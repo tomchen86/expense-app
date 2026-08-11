@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
 
+import { renderHandoff } from '../src/handoff.ts';
 import { finalizeTask } from '../src/lifecycle.ts';
 import { getSession, startSession } from '../src/session.ts';
 import {
@@ -13,6 +14,9 @@ import {
 } from './fixture.ts';
 
 type CrashPhase =
+  | 'projection-prepared'
+  | 'task-projected'
+  | 'projection-applied'
   | 'candidate-prepared'
   | 'checks-running'
   | 'checks-executed'
@@ -28,6 +32,9 @@ type CrashableFinalize = (
 ) => unknown;
 
 for (const phase of [
+  'projection-prepared',
+  'task-projected',
+  'projection-applied',
   'candidate-prepared',
   'checked',
   'staged',
@@ -50,7 +57,14 @@ for (const phase of [
       );
       assert.equal(
         fs.existsSync(counterPath) ? fs.readFileSync(counterPath, 'utf8') : '0',
-        phase === 'candidate-prepared' ? '0' : '1',
+        [
+          'projection-prepared',
+          'task-projected',
+          'projection-applied',
+          'candidate-prepared',
+        ].includes(phase)
+          ? '0'
+          : '1',
       );
 
       const recovered = finalizeTask(repository, sessionId);
@@ -97,6 +111,59 @@ test('projected finalize rejects a changed checked candidate without reusing its
         'utf8',
       ),
       /- \[ \] 1\.1/,
+    );
+  } finally {
+    fs.rmSync(repository, { recursive: true, force: true });
+  }
+});
+
+test('projected finalize rejects projection-base drift and restores only its owned partial projection', () => {
+  const { repository, counterPath, sessionId, transactionPath } =
+    createFinalizeFixture();
+  try {
+    crashFinalize(repository, sessionId, 'projection-applied');
+    assert.match(
+      fs.readFileSync(
+        path.join(repository, 'openspec/changes/demo-change/tasks.md'),
+        'utf8',
+      ),
+      /- \[x\] 1\.1/,
+    );
+    assert.match(
+      fs.readFileSync(
+        path.join(repository, 'docs/CURRENT_AND_NEXT_STEPS.md'),
+        'utf8',
+      ),
+      /None — all tasks are complete\./,
+    );
+    fs.writeFileSync(
+      path.join(repository, 'src/feature.ts'),
+      'export const changedDuringRecovery = true;\n',
+    );
+
+    assert.throws(
+      () => finalizeTask(repository, sessionId),
+      hasCode('FINALIZE_TRANSACTION_DIVERGED'),
+    );
+    assert.equal(fs.existsSync(counterPath), false);
+    assert.equal(fs.existsSync(transactionPath), false);
+    assert.equal(
+      fs.readFileSync(path.join(repository, 'src/feature.ts'), 'utf8'),
+      'export const changedDuringRecovery = true;\n',
+    );
+    assert.match(
+      fs.readFileSync(
+        path.join(repository, 'openspec/changes/demo-change/tasks.md'),
+        'utf8',
+      ),
+      /- \[ \] 1\.1/,
+    );
+    assert.doesNotMatch(
+      fs.readFileSync(
+        path.join(repository, 'docs/CURRENT_AND_NEXT_STEPS.md'),
+        'utf8',
+      ),
+      /None — all tasks are complete\./,
     );
   } finally {
     fs.rmSync(repository, { recursive: true, force: true });
@@ -152,6 +219,7 @@ test('projected finalize preserves a foreign staged index and its recovery trans
         .split('\n')
         .sort(),
       [
+        'docs/CURRENT_AND_NEXT_STEPS.md',
         'openspec/changes/demo-change/tasks.md',
         'src/feature.ts',
         'src/foreign.ts',
@@ -247,6 +315,7 @@ function createFinalizeFixture(): {
 } {
   const repository = createFixtureRepository();
   const counterPath = path.join(repository, '.git', 'finalize-count');
+  enableCompletionHandoff(repository);
   fs.writeFileSync(
     path.join(repository, 'scripts/count-finalize.mjs'),
     [
@@ -254,6 +323,8 @@ function createFinalizeFixture(): {
       'const counterPath = process.argv[2];',
       "const current = fs.existsSync(counterPath) ? Number(fs.readFileSync(counterPath, 'utf8')) : 0;",
       'fs.writeFileSync(counterPath, String(current + 1));',
+      "const handoff = fs.readFileSync('docs/CURRENT_AND_NEXT_STEPS.md', 'utf8');",
+      "if (!handoff.includes('None — all tasks are complete.')) process.exit(18);",
       '',
     ].join('\n'),
   );
@@ -280,6 +351,27 @@ function createFinalizeFixture(): {
       `${session.sessionId}.json`,
     ),
   };
+}
+
+function enableCompletionHandoff(repository: string): void {
+  const documentPolicyPath = path.join(
+    repository,
+    'workflow/document-policy.json',
+  );
+  const documentPolicy = JSON.parse(
+    fs.readFileSync(documentPolicyPath, 'utf8'),
+  ) as { documents: Record<string, unknown> };
+  documentPolicy.documents['docs/CURRENT_AND_NEXT_STEPS.md'] = {
+    mode: 'generated',
+    enforcement: 'active',
+    transition: 'completion',
+  };
+  fs.writeFileSync(
+    documentPolicyPath,
+    `${JSON.stringify(documentPolicy, null, 2)}\n`,
+  );
+  fs.mkdirSync(path.join(repository, 'docs'), { recursive: true });
+  renderHandoff(repository);
 }
 
 function crashFinalize(

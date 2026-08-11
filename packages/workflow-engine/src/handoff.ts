@@ -29,9 +29,26 @@ type HandoffChange = {
 };
 
 export function renderHandoff(repositoryRoot: string): string {
-  const rendered = buildHandoff(repositoryRoot);
+  const rendered = projectHandoff(repositoryRoot);
   writeTextAtomic(handoffPath(repositoryRoot), rendered);
   return rendered;
+}
+
+export function projectHandoff(repositoryRoot: string): string {
+  return buildHandoff(repositoryRoot);
+}
+
+/** Build completion handoff bytes from an exact prospective tasks projection. */
+export function projectHandoffForTaskProjection(
+  repositoryRoot: string,
+  requestedChangeId: string,
+  projectedTasks: string,
+): string {
+  const changeId = assertChangeId(requestedChangeId);
+  return buildHandoff(repositoryRoot, undefined, {
+    changeId,
+    tasks: parseTasks(projectedTasks),
+  });
 }
 
 /**
@@ -52,8 +69,13 @@ export function renderHandoffForChange(
 function buildHandoff(
   repositoryRoot: string,
   selectedChangeId?: string,
+  projectedChange?: HandoffChange,
 ): string {
-  const contract = selectChange(repositoryRoot, selectedChangeId);
+  const contract = selectChange(
+    repositoryRoot,
+    selectedChangeId,
+    projectedChange,
+  );
   const currentIndex = contract.tasks.findIndex(({ completed }) => !completed);
   const current =
     currentIndex === -1 ? undefined : contract.tasks[currentIndex];
@@ -139,6 +161,7 @@ function assertHandoffBytes(repositoryRoot: string, expected: string): void {
 function selectChange(
   repositoryRoot: string,
   explicitChangeId?: string,
+  projectedChange?: HandoffChange,
 ): HandoffChange {
   const config = loadWorkflowConfig(repositoryRoot);
   const root = path.join(repositoryRoot, config.changeRoot);
@@ -146,6 +169,21 @@ function selectChange(
     .readdirSync(root, { withFileTypes: true })
     .filter((entry) => entry.isDirectory() && entry.name !== 'archive')
     .map((entry) => loadChangeContract(repositoryRoot, entry.name));
+  if (projectedChange) {
+    const projectedIndex = contracts.findIndex(
+      ({ changeId }) => changeId === projectedChange.changeId,
+    );
+    if (projectedIndex < 0) {
+      throw invalidHandoff(
+        'HANDOFF_CHANGE_INVALID',
+        'The prospective handoff change has no tracked task contract.',
+      );
+    }
+    contracts[projectedIndex] = {
+      ...contracts[projectedIndex],
+      tasks: projectedChange.tasks,
+    };
+  }
   const active = contracts.filter((contract) =>
     contract.tasks.some(({ completed }) => !completed),
   );

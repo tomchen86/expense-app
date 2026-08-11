@@ -410,6 +410,24 @@ export function fingerprintRepositoryProjection(
   );
 }
 
+export function fingerprintRepositoryProjectionExcludingPaths(
+  repositoryRoot: string,
+  baselineHead: string,
+  statusEntries: string[],
+  excludedPaths: string[],
+): string {
+  return fingerprintState(
+    repositoryRoot,
+    baselineHead,
+    statusEntries,
+    process.platform !== 'darwin',
+    true,
+    false,
+    undefined,
+    new Set(excludedPaths),
+  );
+}
+
 /**
  * Reconstruct the repository projection that existed before workflow-owned
  * staging. The caller must separately prove that the pinned candidate was
@@ -456,14 +474,21 @@ function fingerprintState(
   includeIndex: boolean = true,
   trackedFromBaseline: boolean = false,
   pinnedIndexState?: string,
+  excludedPaths: ReadonlySet<string> = new Set(),
 ): string {
   try {
     const digest = crypto.createHash('sha256');
-    const trackedPaths = trackedFromBaseline
-      ? listTrackedPathsAtCommit(repositoryRoot, baselineHead)
-      : listTrackedPaths(repositoryRoot);
-    const changedPaths = listChangedPaths(repositoryRoot, baselineHead);
-    const ignoredPaths = listRepositoryIgnoredPaths(repositoryRoot);
+    const trackedPaths = (
+      trackedFromBaseline
+        ? listTrackedPathsAtCommit(repositoryRoot, baselineHead)
+        : listTrackedPaths(repositoryRoot)
+    ).filter((entry) => !excludedPaths.has(entry));
+    const changedPaths = listChangedPaths(repositoryRoot, baselineHead).filter(
+      (entry) => !excludedPaths.has(entry),
+    );
+    const ignoredPaths = listRepositoryIgnoredPaths(repositoryRoot).filter(
+      (entry) => !excludedPaths.has(entry),
+    );
     if (includeIndex) {
       const indexState =
         pinnedIndexState ??
@@ -477,6 +502,7 @@ function fingerprintState(
         ]);
       updateFramed(digest, 'index', indexState);
       for (const statusEntry of statusEntries) {
+        if (statusEntryNamesExcludedPath(statusEntry, excludedPaths)) continue;
         updateFramed(digest, 'status', statusEntry);
       }
     }
@@ -535,6 +561,23 @@ function fingerprintState(
       ExitCode.staleState,
     );
   }
+}
+
+function statusEntryNamesExcludedPath(
+  entry: string,
+  excludedPaths: ReadonlySet<string>,
+): boolean {
+  for (const excludedPath of excludedPaths) {
+    if (
+      entry === `controlled-untracked:${excludedPath}` ||
+      entry === `? ${excludedPath}` ||
+      entry === `! ${excludedPath}` ||
+      entry.endsWith(` ${excludedPath}`)
+    ) {
+      return true;
+    }
+  }
+  return false;
 }
 
 export function runGit(

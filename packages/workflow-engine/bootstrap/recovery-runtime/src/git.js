@@ -236,6 +236,9 @@ export function fingerprintWorkingState(repositoryRoot, baselineHead, statusEntr
 export function fingerprintRepositoryProjection(repositoryRoot, baselineHead, statusEntries) {
     return fingerprintState(repositoryRoot, baselineHead, statusEntries, process.platform !== 'darwin', true);
 }
+export function fingerprintRepositoryProjectionExcludingPaths(repositoryRoot, baselineHead, statusEntries, excludedPaths) {
+    return fingerprintState(repositoryRoot, baselineHead, statusEntries, process.platform !== 'darwin', true, false, undefined, new Set(excludedPaths));
+}
 /**
  * Reconstruct the repository projection that existed before workflow-owned
  * staging. The caller must separately prove that the pinned candidate was
@@ -250,14 +253,14 @@ export function fingerprintUnstagedRepositoryProjection(repositoryRoot, baseline
 export function fingerprintRepositoryWorktree(repositoryRoot, baselineHead) {
     return fingerprintState(repositoryRoot, baselineHead, [], process.platform !== 'darwin', false, true);
 }
-function fingerprintState(repositoryRoot, baselineHead, statusEntries, includeVolatileMetadata, includeIndex = true, trackedFromBaseline = false, pinnedIndexState) {
+function fingerprintState(repositoryRoot, baselineHead, statusEntries, includeVolatileMetadata, includeIndex = true, trackedFromBaseline = false, pinnedIndexState, excludedPaths = new Set()) {
     try {
         const digest = crypto.createHash('sha256');
-        const trackedPaths = trackedFromBaseline
+        const trackedPaths = (trackedFromBaseline
             ? listTrackedPathsAtCommit(repositoryRoot, baselineHead)
-            : listTrackedPaths(repositoryRoot);
-        const changedPaths = listChangedPaths(repositoryRoot, baselineHead);
-        const ignoredPaths = listRepositoryIgnoredPaths(repositoryRoot);
+            : listTrackedPaths(repositoryRoot)).filter((entry) => !excludedPaths.has(entry));
+        const changedPaths = listChangedPaths(repositoryRoot, baselineHead).filter((entry) => !excludedPaths.has(entry));
+        const ignoredPaths = listRepositoryIgnoredPaths(repositoryRoot).filter((entry) => !excludedPaths.has(entry));
         if (includeIndex) {
             const indexState = pinnedIndexState ??
                 runGit(repositoryRoot, [
@@ -270,6 +273,8 @@ function fingerprintState(repositoryRoot, baselineHead, statusEntries, includeVo
                 ]);
             updateFramed(digest, 'index', indexState);
             for (const statusEntry of statusEntries) {
+                if (statusEntryNamesExcludedPath(statusEntry, excludedPaths))
+                    continue;
                 updateFramed(digest, 'status', statusEntry);
             }
         }
@@ -316,6 +321,17 @@ function fingerprintState(repositoryRoot, baselineHead, statusEntries, includeVo
         }
         throw workflowError('WORKTREE_FINGERPRINT_FAILED', 'Unable to fingerprint the current Git working state safely.', ExitCode.staleState);
     }
+}
+function statusEntryNamesExcludedPath(entry, excludedPaths) {
+    for (const excludedPath of excludedPaths) {
+        if (entry === `controlled-untracked:${excludedPath}` ||
+            entry === `? ${excludedPath}` ||
+            entry === `! ${excludedPath}` ||
+            entry.endsWith(` ${excludedPath}`)) {
+            return true;
+        }
+    }
+    return false;
 }
 export function runGit(cwd, args, allowFailure = false) {
     return executeGit(cwd, args, allowFailure, {});

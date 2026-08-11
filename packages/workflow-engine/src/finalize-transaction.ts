@@ -15,6 +15,7 @@ const DIGEST = /^[0-9a-f]{64}$/;
 const OBJECT_ID = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
 
 export type FinalizeTransactionPhase =
+  | 'projection-prepared'
   | 'candidate-prepared'
   | 'checks-running'
   | 'checked'
@@ -53,10 +54,11 @@ export type FinalizeTransaction = Readonly<{
   taskProjectionPath: string;
   projectionMutations: readonly FinalizeProjectionMutation[];
   projectionSourceDigest: string;
+  projectionBaseFingerprint: string;
   transitionPaths: readonly string[];
   changedPaths: readonly string[];
-  candidateTree: string;
-  candidateFingerprint: string;
+  candidateTree: string | null;
+  candidateFingerprint: string | null;
   candidateStatusEntries: readonly string[];
   previousIndexTree: string;
   createdAt: string;
@@ -65,15 +67,26 @@ export type FinalizeTransaction = Readonly<{
   finishReportId: string | null;
 }>;
 
-type FinalizeTransactionSeed = Omit<
-  FinalizeTransaction,
-  | 'transactionId'
-  | 'recordDigest'
-  | 'phase'
-  | 'checkReportId'
-  | 'completionReportId'
-  | 'finishReportId'
->;
+type FinalizeTransactionSeed = Readonly<{
+  schemaVersion: 1;
+  kind: 'projected-finalize-transaction.v1';
+  sessionId: string;
+  changeId: string;
+  taskId: string;
+  repositoryRoot: string;
+  gitCommonDirectory: string;
+  branch: string;
+  baseline: Readonly<{ head: string; tree: string }>;
+  completedTaskIds: readonly string[];
+  reconciledTasks: readonly FinalizeReconciledTask[];
+  taskProjectionPath: string;
+  projectionMutations: readonly FinalizeProjectionMutation[];
+  projectionSourceDigest: string;
+  projectionBaseFingerprint: string;
+  transitionPaths: readonly string[];
+  previousIndexTree: string;
+  createdAt: string;
+}>;
 
 export function createFinalizeTransaction(
   input: FinalizeTransactionSeed,
@@ -82,7 +95,11 @@ export function createFinalizeTransaction(
   return sealFinalizeTransaction({
     ...seed,
     transactionId: digestSeed(seed),
-    phase: 'candidate-prepared',
+    phase: 'projection-prepared',
+    changedPaths: [],
+    candidateTree: null,
+    candidateFingerprint: null,
+    candidateStatusEntries: [],
     checkReportId: null,
     completionReportId: null,
     finishReportId: null,
@@ -290,6 +307,7 @@ function parseFinalizeTransaction(value: unknown): FinalizeTransaction {
     'phase',
     'previousIndexTree',
     'projectionMutations',
+    'projectionBaseFingerprint',
     'projectionSourceDigest',
     'recordDigest',
     'reconciledTasks',
@@ -310,6 +328,7 @@ function parseFinalizeTransaction(value: unknown): FinalizeTransaction {
     typeof value.recordDigest !== 'string' ||
     !DIGEST.test(value.recordDigest) ||
     ![
+      'projection-prepared',
       'candidate-prepared',
       'checks-running',
       'checked',
@@ -342,13 +361,13 @@ function parseFinalizeTransaction(value: unknown): FinalizeTransaction {
     value.projectionMutations.length === 0 ||
     typeof value.projectionSourceDigest !== 'string' ||
     !DIGEST.test(value.projectionSourceDigest) ||
+    typeof value.projectionBaseFingerprint !== 'string' ||
+    !DIGEST.test(value.projectionBaseFingerprint) ||
     !isCanonicalPathArray(value.transitionPaths) ||
     !isCanonicalPathArray(value.changedPaths) ||
-    typeof value.candidateTree !== 'string' ||
-    !OBJECT_ID.test(value.candidateTree) ||
-    typeof value.candidateFingerprint !== 'string' ||
-    !DIGEST.test(value.candidateFingerprint) ||
-    !isCanonicalStringArray(value.candidateStatusEntries) ||
+    !isNullableObjectId(value.candidateTree) ||
+    !isNullableDigest(value.candidateFingerprint) ||
+    !isStringArray(value.candidateStatusEntries) ||
     typeof value.previousIndexTree !== 'string' ||
     !OBJECT_ID.test(value.previousIndexTree) ||
     typeof value.createdAt !== 'string' ||
@@ -404,6 +423,19 @@ function parseFinalizeTransaction(value: unknown): FinalizeTransaction {
     !projectionMutations.some(
       (entry) => entry.path === value.taskProjectionPath,
     ) ||
+    JSON.stringify(value.transitionPaths) !==
+      JSON.stringify(
+        projectionMutations
+          .map((entry) => entry.path)
+          .filter((entry) => entry !== value.taskProjectionPath),
+      ) ||
+    !phaseCandidateStateIsValid(
+      value.phase as FinalizeTransactionPhase,
+      value.changedPaths as string[],
+      value.candidateTree as string | null,
+      value.candidateFingerprint as string | null,
+      value.candidateStatusEntries as string[],
+    ) ||
     !phaseReportIdsAreValid(
       value.phase as FinalizeTransactionPhase,
       value.checkReportId as string | null,
@@ -434,10 +466,11 @@ function parseFinalizeTransaction(value: unknown): FinalizeTransaction {
     taskProjectionPath: value.taskProjectionPath,
     projectionMutations,
     projectionSourceDigest: value.projectionSourceDigest,
+    projectionBaseFingerprint: value.projectionBaseFingerprint,
     transitionPaths: [...value.transitionPaths] as string[],
     changedPaths: [...value.changedPaths] as string[],
-    candidateTree: value.candidateTree,
-    candidateFingerprint: value.candidateFingerprint,
+    candidateTree: value.candidateTree as string | null,
+    candidateFingerprint: value.candidateFingerprint as string | null,
     candidateStatusEntries: [...value.candidateStatusEntries] as string[],
     previousIndexTree: value.previousIndexTree,
     createdAt: value.createdAt,
@@ -482,11 +515,8 @@ function normalizeSeed(
       ...mutation,
     })),
     projectionSourceDigest: input.projectionSourceDigest,
+    projectionBaseFingerprint: input.projectionBaseFingerprint,
     transitionPaths: [...input.transitionPaths],
-    changedPaths: [...input.changedPaths],
-    candidateTree: input.candidateTree,
-    candidateFingerprint: input.candidateFingerprint,
-    candidateStatusEntries: [...input.candidateStatusEntries],
     previousIndexTree: input.previousIndexTree,
     createdAt: input.createdAt,
   };
@@ -495,7 +525,26 @@ function normalizeSeed(
 function transactionSeed(
   transaction: FinalizeTransaction,
 ): FinalizeTransactionSeed {
-  return normalizeSeed(transaction);
+  return normalizeSeed({
+    schemaVersion: transaction.schemaVersion,
+    kind: transaction.kind,
+    sessionId: transaction.sessionId,
+    changeId: transaction.changeId,
+    taskId: transaction.taskId,
+    repositoryRoot: transaction.repositoryRoot,
+    gitCommonDirectory: transaction.gitCommonDirectory,
+    branch: transaction.branch,
+    baseline: transaction.baseline,
+    completedTaskIds: transaction.completedTaskIds,
+    reconciledTasks: transaction.reconciledTasks,
+    taskProjectionPath: transaction.taskProjectionPath,
+    projectionMutations: transaction.projectionMutations,
+    projectionSourceDigest: transaction.projectionSourceDigest,
+    projectionBaseFingerprint: transaction.projectionBaseFingerprint,
+    transitionPaths: transaction.transitionPaths,
+    previousIndexTree: transaction.previousIndexTree,
+    createdAt: transaction.createdAt,
+  });
 }
 
 function digestSeed(seed: FinalizeTransactionSeed): string {
@@ -531,6 +580,7 @@ function digestRecord(
 
 function nextPhase(phase: FinalizeTransactionPhase): FinalizeTransactionPhase {
   const phases: FinalizeTransactionPhase[] = [
+    'projection-prepared',
     'candidate-prepared',
     'checks-running',
     'checked',
@@ -553,7 +603,11 @@ function phaseReportIdsAreValid(
   completionReportId: string | null,
   finishReportId: string | null,
 ): boolean {
-  if (phase === 'candidate-prepared' || phase === 'checks-running') {
+  if (
+    phase === 'projection-prepared' ||
+    phase === 'candidate-prepared' ||
+    phase === 'checks-running'
+  ) {
     return (
       checkReportId === null &&
       completionReportId === null &&
@@ -574,10 +628,41 @@ function phaseReportIdsAreValid(
   );
 }
 
+function phaseCandidateStateIsValid(
+  phase: FinalizeTransactionPhase,
+  changedPaths: string[],
+  candidateTree: string | null,
+  candidateFingerprint: string | null,
+  candidateStatusEntries: string[],
+): boolean {
+  if (phase === 'projection-prepared') {
+    return (
+      changedPaths.length === 0 &&
+      candidateTree === null &&
+      candidateFingerprint === null &&
+      candidateStatusEntries.length === 0
+    );
+  }
+  return (
+    changedPaths.length > 0 &&
+    candidateTree !== null &&
+    candidateFingerprint !== null &&
+    candidateStatusEntries.length > 0
+  );
+}
+
 function isCanonicalStringArray(value: unknown): value is string[] {
   return (
     Array.isArray(value) &&
     value.length > 0 &&
+    value.every((entry) => typeof entry === 'string' && entry.length > 0) &&
+    new Set(value).size === value.length
+  );
+}
+
+function isStringArray(value: unknown): value is string[] {
+  return (
+    Array.isArray(value) &&
     value.every((entry) => typeof entry === 'string' && entry.length > 0) &&
     new Set(value).size === value.length
   );
@@ -607,6 +692,10 @@ function isSafeRelativePath(value: string): boolean {
 
 function isNullableDigest(value: unknown): value is string | null {
   return value === null || (typeof value === 'string' && DIGEST.test(value));
+}
+
+function isNullableObjectId(value: unknown): value is string | null {
+  return value === null || (typeof value === 'string' && OBJECT_ID.test(value));
 }
 
 function isPrivateFile(stats: fs.Stats): boolean {

@@ -406,7 +406,7 @@
     {
       "path": "src/finalize-transaction.ts",
       "mode": "100644",
-      "digest": "sha256:06080068302fb78d8e0327e84d2b63ff425778980b50f1d4867599326d8193b0"
+      "digest": "sha256:41e99662462a5607330acfe39cb0e90c93c7ac7e56803bf8edf59a13c1f43cd8"
     },
     {
       "path": "src/floor-overflow-pruning.ts",
@@ -421,12 +421,12 @@
     {
       "path": "src/git.ts",
       "mode": "100644",
-      "digest": "sha256:e36fbf25b46631d1db9f23f5a0fd3a634d79debee0c48890ddaae85345a2a67b"
+      "digest": "sha256:60c08b2f4b20b996e574f174d019bd91bcc1f4014dd549f741d68643b6db368c"
     },
     {
       "path": "src/handoff.ts",
       "mode": "100644",
-      "digest": "sha256:70c9f343f28c147b94ea3abef4fc423b770ff2293ef820d9890edb0744ae9f06"
+      "digest": "sha256:8bba918c8ec1028255d3bbe5686883f45849d309a9b0090aea706d3df0b096a7"
     },
     {
       "path": "src/harness-bootstrap.ts",
@@ -681,7 +681,7 @@
     {
       "path": "src/managed-documents.ts",
       "mode": "100644",
-      "digest": "sha256:469e81ac8d1c8c25c628be9dfd7b10c33ea43345d875f23238a7612b4f65b478"
+      "digest": "sha256:0a4f61d2cac34b8f45eaddbc07edd61aa99ec492402d15355b66cac65a79a46d"
     },
     {
       "path": "src/managed-trailers.ts",
@@ -861,7 +861,7 @@
     {
       "path": "src/projected-finalization.ts",
       "mode": "100644",
-      "digest": "sha256:b5274783a3f8d4d29f8f19c7642be6241be34611cc76527440255cd7128bf712"
+      "digest": "sha256:b45d28c5ff0dd4f49d48aff3755fc8ce5a562ff77ab2daa341df2adcd7419cf1"
     },
     {
       "path": "src/propose-exemption-store.ts",
@@ -1081,7 +1081,7 @@
     {
       "path": "src/task-projection.ts",
       "mode": "100644",
-      "digest": "sha256:3996b8d4f5549e87bb2a4290db56861a82e7e739c02d1ddb550dd48fb1fff687"
+      "digest": "sha256:c5fc8a081a8fd8dc5e4a5aea9cec4401c28e0bedf88d382da431f76930cb7646"
     },
     {
       "path": "src/task-revision-approval.ts",

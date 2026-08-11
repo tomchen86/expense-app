@@ -8,6 +8,15 @@ export function projectTasksCompleted(
   tasksPath: string,
   taskIds: string[],
 ): { before: string; after: string } {
+  const projection = planTasksCompleted(tasksPath, taskIds);
+  applyTaskProjection(tasksPath, projection.before, projection.after);
+  return projection;
+}
+
+export function planTasksCompleted(
+  tasksPath: string,
+  taskIds: string[],
+): { before: string; after: string } {
   const before = fs.readFileSync(tasksPath, 'utf8');
   let after = before;
 
@@ -25,8 +34,18 @@ export function projectTasksCompleted(
     after = after.replace(unchecked, '$1x]$2');
   }
 
-  replaceTaskTextAtomic(tasksPath, after);
   return { before, after };
+}
+
+export function applyTaskProjection(
+  tasksPath: string,
+  expectedBefore: string,
+  projectedAfter: string,
+): void {
+  const current = fs.readFileSync(tasksPath, 'utf8');
+  if (current === projectedAfter) return;
+  if (current !== expectedBefore) throw invalidProjection();
+  replaceTaskTextAtomic(tasksPath, projectedAfter);
 }
 
 export function assertExactTaskProjection(
