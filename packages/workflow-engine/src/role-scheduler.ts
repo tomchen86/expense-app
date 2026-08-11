@@ -110,7 +110,7 @@ export type ScheduleOrdinaryRoleResult =
     };
 
 export type GrantedRoleAssignment = {
-  role: OrdinaryRole;
+  role: EngineProviderRole;
   providerId: ProviderId | null;
   sessionId: string | null;
   targetDigest: string;
@@ -247,7 +247,7 @@ export type DirectHumanReviewProof = {
 };
 
 export type AuthorizeGrantedOrdinaryRoleInput = {
-  role: OrdinaryRole;
+  role: EngineProviderRole;
   author: RoleParticipant;
   targetDigest: string;
   reservation: CollaborationReservationRecord;
@@ -430,7 +430,10 @@ export function authorizeGrantedOrdinaryRole(
     payload.rolePair.conflictingRole !== input.role ||
     (input.role === 'blind-surveyor' &&
       payload.lifecyclePhase !== 'blind-survey') ||
-    (input.role === 'plan-reviewer' && payload.lifecyclePhase !== 'plan-review')
+    (input.role === 'plan-reviewer' &&
+      payload.lifecyclePhase !== 'plan-review') ||
+    (input.role === 'task-diff-reviewer' &&
+      payload.lifecyclePhase !== 'task-diff-review')
   ) {
     throw grantedRoleInvalid();
   }
@@ -511,7 +514,7 @@ export function authorizeGrantedOrdinaryRole(
   if (
     payload.degradedForm === 'direct-human-review' &&
     payload.availableActor.kind === 'direct-human' &&
-    input.role === 'plan-reviewer' &&
+    (input.role === 'plan-reviewer' || input.role === 'task-diff-reviewer') &&
     participant.principalId === payload.availableActor.identity &&
     input.directHumanReview
   ) {
@@ -608,12 +611,6 @@ export function admitRoleResult(
     orchestration = 'engine-spawned-provider';
     achievedIndependence = 'provider-independent';
   } else {
-    // Collaboration grants have not yet been versioned for TaskDiffReview.
-    // Never let a widened content union smuggle that role through an older
-    // blind-survey/plan-review grant envelope.
-    if (content.kind === 'task-diff-review') {
-      throw roleResultInvalid();
-    }
     if (
       canonicalJson(author) !== canonicalJson(assignment.author) ||
       canonicalJson(participant) !== canonicalJson(assignment.participant) ||
