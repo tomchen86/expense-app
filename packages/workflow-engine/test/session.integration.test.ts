@@ -34,6 +34,7 @@ import {
 } from '../src/session.ts';
 import './atomic-text.test.ts';
 import './completion.integration.test.ts';
+import './finalize-transaction-recovery.integration.test.ts';
 import './collaboration-grant.integration.test.ts';
 import './contract-artifact-digests.test.ts';
 import './issues.integration.test.ts';

@@ -33,6 +33,7 @@ import { reconcilePredecessor } from './predecessor-reconciliation.ts';
 import {
   finalizeTaskUnlocked,
   PROJECTED_SINGLE_PASS_ASSURANCE,
+  type FinalizeTaskOptions,
   type FinalizeTaskResult,
 } from './projected-finalization.ts';
 import { assertCurrentImplementationReconciliation } from './implementation-reconciliation.ts';
@@ -104,9 +105,10 @@ export function finalizeTask(
   cwd: string,
   requestedSessionId: string,
   environment: NodeJS.ProcessEnv = process.env,
+  options: FinalizeTaskOptions = {},
 ): FinalizeTaskResult {
   return runSessionOperation(cwd, requestedSessionId, () =>
-    finalizeTaskUnlocked(cwd, requestedSessionId, environment),
+    finalizeTaskUnlocked(cwd, requestedSessionId, environment, options),
   );
 }
 

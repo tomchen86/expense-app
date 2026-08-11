@@ -404,6 +404,11 @@
       "digest": "sha256:53c50ab8c3191658552c0237b4a6f5cf7f0001ee6e9c58c5c85f4ebb97100445"
     },
     {
+      "path": "src/finalize-transaction.ts",
+      "mode": "100644",
+      "digest": "sha256:06080068302fb78d8e0327e84d2b63ff425778980b50f1d4867599326d8193b0"
+    },
+    {
       "path": "src/floor-overflow-pruning.ts",
       "mode": "100644",
       "digest": "sha256:243b8a8e0c96fc6938fe2dbad16bad108f99554cad73c0ce592ade2ac5b5a79e"
@@ -416,7 +421,7 @@
     {
       "path": "src/git.ts",
       "mode": "100644",
-      "digest": "sha256:55cc78054e5395eea40ef872894a2e61091754f0ca7ccb0983edd6ca162f824b"
+      "digest": "sha256:e36fbf25b46631d1db9f23f5a0fd3a634d79debee0c48890ddaae85345a2a67b"
     },
     {
       "path": "src/handoff.ts",
@@ -586,7 +591,7 @@
     {
       "path": "src/lifecycle.ts",
       "mode": "100644",
-      "digest": "sha256:f98578adb2c8e021e7f2ab31e0507693f2798d5347ce7183591e1c326b685858"
+      "digest": "sha256:71025ea5d783146b1e262ad6db429a62a9ff17f3812c9ca42a24898cb8ffe82d"
     },
     {
       "path": "src/maintainer-approve.ts",
@@ -856,7 +861,7 @@
     {
       "path": "src/projected-finalization.ts",
       "mode": "100644",
-      "digest": "sha256:814e85393785f127a830e0686bf85ec7f0d7f72f4347f5dc17528c286008f9d3"
+      "digest": "sha256:b5274783a3f8d4d29f8f19c7642be6241be34611cc76527440255cd7128bf712"
     },
     {
       "path": "src/propose-exemption-store.ts",

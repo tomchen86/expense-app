@@ -131,6 +131,7 @@
       "packages/workflow-engine/src/engine-projection-registry.ts",
       "packages/workflow-engine/src/execution-core.ts",
       "packages/workflow-engine/src/execution-store.ts",
+      "packages/workflow-engine/src/finalize-transaction.ts",
       "packages/workflow-engine/src/implementation-reconciliation.ts",
       "packages/workflow-engine/src/implementation-reconciliation-policy.ts",
       "packages/workflow-engine/src/implementation-term-floor.ts",
@@ -144,6 +145,7 @@
       "packages/workflow-engine/src/planning-report.ts",
       "packages/workflow-engine/src/planning-transition.ts",
       "packages/workflow-engine/src/planning-workspace.ts",
+      "packages/workflow-engine/src/projected-finalization.ts",
       "packages/workflow-engine/src/session-store.ts",
       "packages/workflow-engine/src/task-revision.ts",
       "packages/workflow-engine/src/task-execution-evidence.ts"
