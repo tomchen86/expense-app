@@ -406,7 +406,7 @@
     {
       "path": "src/git-transitions.ts",
       "mode": "100644",
-      "digest": "sha256:b4a3f5ca452f86bd10a2300362cb3930d040a3117992e67d37c2ffb4a3668290"
+      "digest": "sha256:1f5069c6ed49408d10db4b2f8d52223322c22ccba9327fb1886d9e12b45fa878"
     },
     {
       "path": "src/git.ts",
@@ -811,7 +811,7 @@
     {
       "path": "src/planning-lock.ts",
       "mode": "100644",
-      "digest": "sha256:056340435bff83f196d9d38aa620d108515e225d493dbfa31fbeabc7b604358a"
+      "digest": "sha256:0ce6f017f5d80b97a3568bc0f88617cf3e1c43dde6e9f030634d1b201af9b4bf"
     },
     {
       "path": "src/planning-paths.ts",
@@ -831,7 +831,7 @@
     {
       "path": "src/planning-transition.ts",
       "mode": "100644",
-      "digest": "sha256:f464614c5e49d8a380aad2a04b2dce2001504d40cd8e41641b1cd9a305688af6"
+      "digest": "sha256:80862dd864d885746c5045bea979f1d0fcdf4f5e469042ff1d04a44eefbf5584"
     },
     {
       "path": "src/planning-workspace.ts",
@@ -1076,7 +1076,7 @@
     {
       "path": "src/task-revision.ts",
       "mode": "100644",
-      "digest": "sha256:248329028ad359244e1da1ed8c11b809bff84ceac531197d2b05b7790ffb7f18"
+      "digest": "sha256:af1fbb7ae93287fba89d015a1caeb3abb35ddeb244a436a7f131ac2fceece33a"
     },
     {
       "path": "src/tracked-tree-reader.ts",

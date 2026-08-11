@@ -4,7 +4,7 @@ import path from 'node:path';
 import { ExitCode, workflowError } from './errors.js';
 import { ensurePlainDirectory, publishPreparedExclusiveLock, reclaimDeadPreparedLock, } from './filesystem-safety.js';
 import { assertHumanResolutionLifecycleBarrier } from './investigation-session-store.js';
-import { listConflictingActiveWorkflowSessionIds, readSessionFile, releaseOwnedLock, withRepositoryLifecycleOperation, } from './session-store.js';
+import { assertOwnedLock, listConflictingActiveWorkflowSessionIds, readSessionFile, releaseOwnedLock, withRepositoryLifecycleOperation, } from './session-store.js';
 const HELD_CHANGE_TRANSITION_AUTHORITY = Symbol('held-change-transition-authority');
 export function withPlanningAuthority(runtime, changeId, operation) {
     return withChangeTransitionAuthority(runtime, changeId, 'plan', operation);
@@ -30,6 +30,33 @@ export function withOpenTaskPlanningAuthority(runtime, changeId, assertRepositor
             assertHumanResolutionBarrier(runtime, changeId, null);
         }));
     });
+}
+/**
+ * Turn the existing task-session change lock into a bounded planning
+ * authority while that exact session is durably revising. The caller already
+ * owns the repository and session lifecycle locks; this helper does not open a
+ * second authority lane or release the task lock.
+ */
+export function withTaskRevisionPlanningAuthority(runtime, expectedSession, revisionLeaseId, assertRepositoryLock, operation) {
+    assertHumanResolutionLifecycleBarrier(runtime.root, null);
+    assertRepositoryLock();
+    const current = readSessionFile(path.join(runtime.sessions, `${expectedSession.sessionId}.json`));
+    if (JSON.stringify(current) !== JSON.stringify(expectedSession) ||
+        current.state !== 'revising' ||
+        current.revisionLeaseId !== revisionLeaseId) {
+        throw workflowError('TASK_REVISION_AUTHORITY_STALE', 'Task revision planning authority is not bound to the exact revising session.', ExitCode.staleState);
+    }
+    const assertOwned = () => {
+        assertRepositoryLock();
+        const reread = readSessionFile(path.join(runtime.sessions, `${current.sessionId}.json`));
+        if (JSON.stringify(reread) !== JSON.stringify(current)) {
+            throw staleLock();
+        }
+        assertOwnedLock(path.join(runtime.locks, `${current.changeId}.lock`), current.sessionId, current.changeId, current.taskId);
+        assertHumanResolutionBarrier(runtime, current.changeId, null);
+    };
+    assertOwned();
+    return operation(heldChangeTransitionAuthority(current.changeId, assertOwned));
 }
 /**
  * Investigation creation shares the repository and per-change transition

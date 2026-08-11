@@ -8,7 +8,7 @@
     {
       "path": "bootstrap/recovery-runtime/bootstrap/built-in-engine-closure-pin.js",
       "mode": "100644",
-      "digest": "sha256:7ff635e3819b704b2a91c267a5abad824e147bf5e1f265b798953797db9fa9b7"
+      "digest": "sha256:c640f3e71202c7b3def2f22c0455ee69454e73ce67aeccc7ad4fdaa942a37883"
     },
     {
       "path": "bootstrap/recovery-runtime/src/actor-identity.js",
@@ -153,7 +153,7 @@
     {
       "path": "bootstrap/recovery-runtime/src/git-transitions.js",
       "mode": "100644",
-      "digest": "sha256:f636e793467c46113593aafc528e954885e7119412c7bdba66e0152a8c96f698"
+      "digest": "sha256:dd92f250ee302b61ea59462f97d37e4b3d77458a7f2e2234e4398c220ca63826"
     },
     {
       "path": "bootstrap/recovery-runtime/src/git.js",
@@ -293,7 +293,7 @@
     {
       "path": "bootstrap/recovery-runtime/src/planning-lock.js",
       "mode": "100644",
-      "digest": "sha256:c8fe03fd50544f4c7b001375fd8f293d84bc3bace14ae86e9952709c884f9d30"
+      "digest": "sha256:639d1244be873dad872296c0181f3a4ef9c74ba7b2dd52f7f4520d50d256910f"
     },
     {
       "path": "bootstrap/recovery-runtime/src/predicate-discrimination.js",

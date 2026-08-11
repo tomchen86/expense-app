@@ -8,8 +8,26 @@ import { loadWorkflowConfig } from './contracts.ts';
 import { ExitCode, workflowError } from './errors.ts';
 import { ensurePlainDirectory } from './filesystem-safety.ts';
 import { discoverRepository, listChangedPaths, runGit } from './git.ts';
-import { assertSessionId, normalizeChangedPath } from './paths.ts';
+import {
+  commitChangedPaths,
+  commitFacts,
+  stageExactPathsPreservingUnstaged,
+  updateManagedRef,
+} from './git-transitions.ts';
+import {
+  refreshPlanningDocuments,
+  rollbackGeneratedDocuments,
+} from './managed-documents.ts';
+import {
+  assertSessionId,
+  matchesAllowedPath,
+  normalizeChangedPath,
+  normalizePolicyPath,
+} from './paths.ts';
 import { createTaskPlanningAssuranceBinding } from './planning-assurance-validator.ts';
+import { readPlanningTransitionReport } from './planning-report.ts';
+import { commitTaskRevisionPlanningTransitionUnderAuthority } from './planning-transition.ts';
+import { withTaskRevisionPlanningAuthority } from './planning-lock.ts';
 import {
   assertOwnedLock,
   readSessionFile,
@@ -34,7 +52,10 @@ const TASK_REVISION_PHASE_TRANSITIONS: Readonly<
 > = Object.freeze({
   prepared: ['session-revising', 'revising', 'abort-prepared'],
   'session-revising': ['revising', 'abort-prepared'],
-  revising: ['resume-prepared', 'abort-prepared'],
+  revising: ['planning-staging-prepared', 'resume-prepared', 'abort-prepared'],
+  'planning-staging-prepared': ['plan-commit-prepared'],
+  'plan-commit-prepared': ['plan-committed'],
+  'plan-committed': ['resume-prepared'],
   'resume-prepared': ['completed'],
   completed: [],
   'abort-prepared': ['revoked'],
@@ -45,6 +66,9 @@ export type TaskRevisionPhase =
   | 'prepared'
   | 'session-revising'
   | 'revising'
+  | 'planning-staging-prepared'
+  | 'plan-commit-prepared'
+  | 'plan-committed'
   | 'resume-prepared'
   | 'completed'
   | 'abort-prepared'
@@ -55,6 +79,12 @@ export type ImplementationSnapshotEntry = Readonly<{
   kind: 'file' | 'symlink' | 'missing';
   mode: '100644' | '100755' | '120000' | '000000';
   digest: string;
+}>;
+
+type StagingGeneratedMutation = Readonly<{
+  path: string;
+  before: string | null;
+  after: string;
 }>;
 
 export type TaskRevisionJournal = Readonly<{
@@ -87,6 +117,15 @@ export type TaskRevisionJournal = Readonly<{
   expiresAt: string;
   resumePreparedAt?: string;
   resumeSessionDigest?: string;
+  stagingTree?: string;
+  stagingChangedPaths?: string[];
+  stagingGeneratedMutations?: StagingGeneratedMutation[];
+  stagingPreparedAt?: string;
+  planCommitHash?: string;
+  planTree?: string;
+  planReportId?: string;
+  planChangedPaths?: string[];
+  planCommittedAt?: string;
   completedAt?: string;
   abortPreparedAt?: string;
   abortReason?: string;
@@ -109,6 +148,9 @@ export type TaskRevisionStatus = Readonly<{
   expiresAt: string;
   implementationFingerprint: string;
   implementationPaths: string[];
+  planCommitHash: string | null;
+  planReportId: string | null;
+  planChangedPaths: string[];
   retrySafe: boolean;
   retryCommand: string | null;
 }>;
@@ -116,7 +158,14 @@ export type TaskRevisionStatus = Readonly<{
 export type TaskRevisionOptions = Readonly<{
   now?: () => Date;
   /** Test-only deterministic interruption after one durable phase. */
-  testCrashAfter?: 'lease-prepared' | 'session-revising' | 'session-active';
+  testCrashAfter?:
+    | 'lease-prepared'
+    | 'session-revising'
+    | 'planning-staging-prepared'
+    | 'plan-commit-prepared'
+    | 'plan-ref-updated'
+    | 'resume-prepared'
+    | 'session-active';
 }>;
 
 export function reviseTask(
@@ -284,6 +333,34 @@ export function resumeTask(
           assertRepositoryLock,
         );
       }
+      if (journal.phase === 'plan-committed') {
+        return completeCommittedPlanningRevision(
+          runtime,
+          current,
+          journal,
+          options,
+          assertRepositoryLock,
+        );
+      }
+      if (journal.phase === 'planning-staging-prepared') {
+        return recoverPreparedPlanningStaging(
+          cwd,
+          runtime,
+          current,
+          journal,
+          options,
+          assertRepositoryLock,
+        );
+      }
+      if (journal.phase === 'plan-commit-prepared') {
+        return recoverPreparedPlanningRevision(
+          runtime,
+          current,
+          journal,
+          options,
+          assertRepositoryLock,
+        );
+      }
       if (
         journal.phase !== 'revising' &&
         journal.phase !== 'session-revising' &&
@@ -310,12 +387,23 @@ export function resumeTask(
           },
         );
       }
-      assertNoOpResumeState(
+      const planningPaths = assertResumePathState(
         discovered.repositoryRoot,
         config.changeRoot,
         current,
         journal,
       );
+      if (planningPaths.length > 0) {
+        return commitPlanningRevision(
+          cwd,
+          runtime,
+          current,
+          journal,
+          options,
+          assertRepositoryLock,
+        );
+      }
+      assertNoOpResumeContract(discovered.repositoryRoot, current, journal);
       const active = activeSessionAfterNoOpRevision(current);
       const prepared = transitionJournal(runtime, journal, {
         ...journal,
@@ -323,6 +411,7 @@ export function resumeTask(
         resumePreparedAt: now.toISOString(),
         resumeSessionDigest: digestValue(active),
       });
+      crashAfter(options, 'resume-prepared');
       writeSessionCas(runtime, current, active);
       crashAfter(options, 'session-active');
       assertRepositoryLock();
@@ -364,6 +453,9 @@ export function inspectTaskRevisionStatus(
     expiresAt: journal.expiresAt,
     implementationFingerprint: journal.implementationFingerprint,
     implementationPaths: [...journal.implementationPaths],
+    planCommitHash: journal.planCommitHash ?? null,
+    planReportId: journal.planReportId ?? null,
+    planChangedPaths: [...(journal.planChangedPaths ?? [])],
     retrySafe,
     retryCommand,
   };
@@ -528,13 +620,7 @@ function completePreparedResume(
     if (current.revisionLeaseId !== journal.leaseId) {
       throw corruptRevisionState();
     }
-    assertNoOpResumeState(
-      current.repositoryRoot,
-      loadWorkflowConfig(current.repositoryRoot).changeRoot,
-      current,
-      journal,
-    );
-    active = activeSessionAfterNoOpRevision(current);
+    active = activeSessionForPreparedResume(current, journal);
     if (digestValue(active) !== journal.resumeSessionDigest) {
       throw corruptRevisionState();
     }
@@ -555,12 +641,588 @@ function completePreparedResume(
   return { session: active, lease: completed };
 }
 
+function activeSessionForPreparedResume(
+  current: WorkflowSession,
+  journal: TaskRevisionJournal,
+): WorkflowSession {
+  if (!journal.planCommitHash) {
+    assertNoOpResumeState(
+      current.repositoryRoot,
+      loadWorkflowConfig(current.repositoryRoot).changeRoot,
+      current,
+      journal,
+    );
+    return activeSessionAfterNoOpRevision(current);
+  }
+  if (!journal.planTree) throw corruptRevisionState();
+  const discovered = discoverRepository(current.repositoryRoot);
+  if (
+    discovered.repositoryRealPath !== journal.repositoryRoot ||
+    discovered.gitCommonDirectory !== journal.gitCommonDirectory ||
+    discovered.branch !== journal.branch ||
+    discovered.head !== journal.planCommitHash ||
+    discovered.tree !== journal.planTree ||
+    runGit(discovered.repositoryRoot, ['write-tree']).trim() !==
+      journal.planTree ||
+    canonicalJson(
+      listChangedPaths(discovered.repositoryRoot, discovered.head),
+    ) !== canonicalJson(journal.implementationPaths) ||
+    canonicalJson(
+      snapshotImplementationPaths(
+        discovered.repositoryRoot,
+        journal.implementationPaths,
+      ),
+    ) !== canonicalJson(journal.implementationSnapshot)
+  ) {
+    throw revisionDrift();
+  }
+  const contract = loadStableValidatedChangeContract(
+    discovered,
+    current.changeId,
+  ).contract;
+  assertScopeNeutralRevisionCandidate(current, journal, contract);
+  return activeSessionAfterPlanningRevision(
+    current,
+    journal.planCommitHash,
+    journal.planTree,
+    contract,
+  );
+}
+
+function commitPlanningRevision(
+  cwd: string,
+  runtime: ReturnType<typeof runtimePaths>,
+  current: WorkflowSession,
+  journal: TaskRevisionJournal,
+  options: TaskRevisionOptions,
+  assertRepositoryLock: () => void,
+): TaskRevisionResult {
+  const before = discoverRepository(current.repositoryRoot);
+  const candidate = loadStableValidatedChangeContract(
+    before,
+    current.changeId,
+  ).contract;
+  assertScopeNeutralRevisionCandidate(current, journal, candidate);
+
+  let durableJournal = journal;
+  const transition = withTaskRevisionPlanningAuthority(
+    runtime,
+    current,
+    journal.leaseId,
+    assertRepositoryLock,
+    (authority) =>
+      commitTaskRevisionPlanningTransitionUnderAuthority(
+        cwd,
+        current.changeId,
+        authority,
+        journal.implementationPaths,
+        process.env,
+        {
+          beforeStagingMutation: (context) => {
+            if (durableJournal.phase === 'revising') {
+              if (
+                context.previousIndexTree !== durableJournal.indexTree ||
+                canonicalJson(context.preservedUnstagedPaths) !==
+                  canonicalJson(durableJournal.implementationPaths)
+              ) {
+                throw corruptRevisionState();
+              }
+              durableJournal = transitionJournal(runtime, durableJournal, {
+                ...durableJournal,
+                phase: 'planning-staging-prepared',
+                stagingTree: context.tree,
+                stagingChangedPaths: [...context.changedPaths].sort(),
+                stagingGeneratedMutations: context.generatedMutations.map(
+                  (mutation) => ({
+                    path: mutation.path,
+                    before: mutation.before ?? null,
+                    after: mutation.after,
+                  }),
+                ),
+                stagingPreparedAt: trustedNow(options.now).toISOString(),
+              });
+            } else if (
+              durableJournal.phase !== 'planning-staging-prepared' ||
+              durableJournal.stagingTree !== context.tree ||
+              canonicalJson(durableJournal.stagingChangedPaths) !==
+                canonicalJson([...context.changedPaths].sort()) ||
+              canonicalJson(durableJournal.stagingGeneratedMutations) !==
+                canonicalJson(
+                  context.generatedMutations.map((mutation) => ({
+                    path: mutation.path,
+                    before: mutation.before ?? null,
+                    after: mutation.after,
+                  })),
+                ) ||
+              context.previousIndexTree !== durableJournal.indexTree ||
+              canonicalJson(context.preservedUnstagedPaths) !==
+                canonicalJson(durableJournal.implementationPaths)
+            ) {
+              throw corruptRevisionState();
+            }
+            crashAfter(options, 'planning-staging-prepared');
+          },
+          beforeRefUpdate: (context) => {
+            if (
+              durableJournal.phase !== 'planning-staging-prepared' ||
+              durableJournal.stagingTree !== context.tree ||
+              canonicalJson(durableJournal.stagingChangedPaths) !==
+                canonicalJson([...context.changedPaths].sort())
+            ) {
+              throw corruptRevisionState();
+            }
+            durableJournal = transitionJournal(runtime, durableJournal, {
+              ...durableJournal,
+              phase: 'plan-commit-prepared',
+              planCommitHash: context.commitHash,
+              planTree: context.tree,
+              planReportId: context.reportId,
+              planChangedPaths: [...context.changedPaths].sort(),
+            });
+            crashAfter(options, 'plan-commit-prepared');
+          },
+          afterRefUpdateBeforeEpoch: (context) => {
+            if (
+              durableJournal.phase !== 'plan-commit-prepared' ||
+              durableJournal.planCommitHash !== context.commitHash ||
+              durableJournal.planReportId !== context.reportId
+            ) {
+              throw corruptRevisionState();
+            }
+            durableJournal = transitionJournal(runtime, durableJournal, {
+              ...durableJournal,
+              phase: 'plan-committed',
+              planCommittedAt: trustedNow(options.now).toISOString(),
+            });
+            crashAfter(options, 'plan-ref-updated');
+          },
+        },
+      ),
+  );
+  if (durableJournal.phase !== 'plan-committed') {
+    throw corruptRevisionState();
+  }
+  assertRepositoryLock();
+  const after = discoverRepository(current.repositoryRoot);
+  if (
+    after.head !== transition.commitHash ||
+    after.tree !== transition.tree ||
+    canonicalJson(listChangedPaths(after.repositoryRoot, after.head)) !==
+      canonicalJson(journal.implementationPaths) ||
+    runGit(after.repositoryRoot, ['write-tree']).trim() !== transition.tree
+  ) {
+    throw revisionDrift();
+  }
+  const snapshot = snapshotImplementationPaths(
+    after.repositoryRoot,
+    journal.implementationPaths,
+  );
+  if (
+    canonicalJson(snapshot) !== canonicalJson(journal.implementationSnapshot)
+  ) {
+    throw revisionDrift();
+  }
+  const committed = loadStableValidatedChangeContract(
+    after,
+    current.changeId,
+  ).contract;
+  if (committed.contractDigest !== candidate.contractDigest) {
+    throw workflowError(
+      'REVISION_CONTRACT_CHANGED',
+      'The committed task revision contract differs from its reviewed candidate.',
+      ExitCode.staleState,
+    );
+  }
+  const active = activeSessionAfterPlanningRevision(
+    current,
+    transition.commitHash,
+    transition.tree,
+    committed,
+  );
+  const now = trustedNow(options.now).toISOString();
+  const prepared = transitionJournal(runtime, durableJournal, {
+    ...durableJournal,
+    phase: 'resume-prepared',
+    resumePreparedAt: now,
+    resumeSessionDigest: digestValue(active),
+    planCommitHash: transition.commitHash,
+    planTree: transition.tree,
+    planReportId: transition.reportId,
+    planChangedPaths: [...transition.changedPaths],
+    planCommittedAt: now,
+  });
+  crashAfter(options, 'resume-prepared');
+  writeSessionCas(runtime, current, active);
+  crashAfter(options, 'session-active');
+  const completed = transitionJournal(runtime, prepared, {
+    ...prepared,
+    phase: 'completed',
+    completedAt: now,
+  });
+  return { session: active, lease: completed };
+}
+
+function completeCommittedPlanningRevision(
+  runtime: ReturnType<typeof runtimePaths>,
+  current: WorkflowSession,
+  journal: TaskRevisionJournal,
+  options: TaskRevisionOptions,
+  assertRepositoryLock: () => void,
+): TaskRevisionResult {
+  if (
+    current.state !== 'revising' ||
+    current.revisionLeaseId !== journal.leaseId ||
+    journal.phase !== 'plan-committed' ||
+    !journal.planCommitHash ||
+    !journal.planTree
+  ) {
+    throw corruptRevisionState();
+  }
+  assertRepositoryLock();
+  const discovered = discoverRepository(current.repositoryRoot);
+  if (
+    discovered.repositoryRealPath !== journal.repositoryRoot ||
+    discovered.gitCommonDirectory !== journal.gitCommonDirectory ||
+    discovered.branch !== journal.branch ||
+    discovered.head !== journal.planCommitHash ||
+    discovered.tree !== journal.planTree ||
+    runGit(discovered.repositoryRoot, ['write-tree']).trim() !==
+      journal.planTree ||
+    canonicalJson(
+      listChangedPaths(discovered.repositoryRoot, discovered.head),
+    ) !== canonicalJson(journal.implementationPaths) ||
+    canonicalJson(
+      snapshotImplementationPaths(
+        discovered.repositoryRoot,
+        journal.implementationPaths,
+      ),
+    ) !== canonicalJson(journal.implementationSnapshot)
+  ) {
+    throw revisionDrift();
+  }
+  const contract = loadStableValidatedChangeContract(
+    discovered,
+    current.changeId,
+  ).contract;
+  assertScopeNeutralRevisionCandidate(current, journal, contract);
+  const active = activeSessionAfterPlanningRevision(
+    current,
+    journal.planCommitHash,
+    journal.planTree,
+    contract,
+  );
+  const now = trustedNow(options.now).toISOString();
+  const prepared = transitionJournal(runtime, journal, {
+    ...journal,
+    phase: 'resume-prepared',
+    resumePreparedAt: now,
+    resumeSessionDigest: digestValue(active),
+  });
+  crashAfter(options, 'resume-prepared');
+  writeSessionCas(runtime, current, active);
+  crashAfter(options, 'session-active');
+  assertRepositoryLock();
+  const completed = transitionJournal(runtime, prepared, {
+    ...prepared,
+    phase: 'completed',
+    completedAt: now,
+  });
+  return { session: active, lease: completed };
+}
+
+function recoverPreparedPlanningRevision(
+  runtime: ReturnType<typeof runtimePaths>,
+  current: WorkflowSession,
+  journal: TaskRevisionJournal,
+  options: TaskRevisionOptions,
+  assertRepositoryLock: () => void,
+): TaskRevisionResult {
+  if (
+    current.state !== 'revising' ||
+    current.revisionLeaseId !== journal.leaseId ||
+    journal.phase !== 'plan-commit-prepared' ||
+    !journal.planCommitHash ||
+    !journal.planTree
+  ) {
+    throw corruptRevisionState();
+  }
+  assertRepositoryLock();
+  let discovered = discoverRepository(current.repositoryRoot);
+  const report = readPlanningTransitionReport(
+    path.join(runtime.root, 'planning-reports'),
+    journal.planReportId!,
+  );
+  const facts = commitFacts(discovered.repositoryRoot, journal.planCommitHash);
+  if (
+    report.changeId !== journal.changeId ||
+    report.transition !== 'plan' ||
+    report.parent.head !== journal.head ||
+    report.parent.tree !== journal.tree ||
+    report.commitHash !== journal.planCommitHash ||
+    report.tree !== journal.planTree ||
+    report.reportVersion !== 3 ||
+    canonicalJson(report.changedPaths) !==
+      canonicalJson(journal.planChangedPaths) ||
+    facts.tree !== journal.planTree ||
+    canonicalJson(facts.parents) !== canonicalJson([journal.head]) ||
+    facts.message !== `${report.message}\n` ||
+    canonicalJson(
+      commitChangedPaths(discovered.repositoryRoot, journal.planCommitHash),
+    ) !== canonicalJson(journal.planChangedPaths)
+  ) {
+    throw corruptRevisionState();
+  }
+  if (discovered.head === journal.head) {
+    const currentIndexTree = runGit(discovered.repositoryRoot, [
+      'write-tree',
+    ]).trim();
+    if (currentIndexTree === journal.indexTree) {
+      refreshPlanningDocuments(discovered.repositoryRoot, journal.changeId);
+      const expectedChanged = [
+        ...journal.planChangedPaths!,
+        ...journal.implementationPaths,
+      ].sort();
+      if (
+        canonicalJson(
+          listChangedPaths(discovered.repositoryRoot, journal.head),
+        ) !== canonicalJson(expectedChanged)
+      ) {
+        throw revisionDrift();
+      }
+      const staged = stageExactPathsPreservingUnstaged(
+        discovered.repositoryRoot,
+        journal.head,
+        journal.planChangedPaths!,
+        journal.implementationPaths,
+      );
+      if (
+        staged.previousIndexTree !== journal.indexTree ||
+        staged.tree !== journal.planTree
+      ) {
+        throw corruptRevisionState();
+      }
+    } else if (currentIndexTree === journal.planTree) {
+      if (
+        canonicalJson(
+          listStagedPaths(discovered.repositoryRoot, journal.head),
+        ) !== canonicalJson(journal.planChangedPaths) ||
+        canonicalJson(
+          listChangedPaths(discovered.repositoryRoot, journal.head).filter(
+            (candidate) => !journal.planChangedPaths!.includes(candidate),
+          ),
+        ) !== canonicalJson(journal.implementationPaths)
+      ) {
+        throw revisionDrift();
+      }
+    } else {
+      throw revisionDrift();
+    }
+    assertRepositoryLock();
+    updateManagedRef(
+      discovered.repositoryRoot,
+      journal.head,
+      journal.planCommitHash,
+      `refs/heads/${journal.branch}`,
+    );
+    discovered = discoverRepository(current.repositoryRoot);
+  }
+  if (
+    discovered.head !== journal.planCommitHash ||
+    discovered.tree !== journal.planTree ||
+    runGit(discovered.repositoryRoot, ['write-tree']).trim() !==
+      journal.planTree
+  ) {
+    throw revisionDrift();
+  }
+  const committed = transitionJournal(runtime, journal, {
+    ...journal,
+    phase: 'plan-committed',
+    planCommittedAt: trustedNow(options.now).toISOString(),
+  });
+  return completeCommittedPlanningRevision(
+    runtime,
+    current,
+    committed,
+    options,
+    assertRepositoryLock,
+  );
+}
+
+function recoverPreparedPlanningStaging(
+  cwd: string,
+  runtime: ReturnType<typeof runtimePaths>,
+  current: WorkflowSession,
+  journal: TaskRevisionJournal,
+  options: TaskRevisionOptions,
+  assertRepositoryLock: () => void,
+): TaskRevisionResult {
+  if (
+    current.state !== 'revising' ||
+    current.revisionLeaseId !== journal.leaseId ||
+    journal.phase !== 'planning-staging-prepared' ||
+    !journal.stagingTree
+  ) {
+    throw corruptRevisionState();
+  }
+  assertRepositoryLock();
+  const discovered = discoverRepository(current.repositoryRoot);
+  if (
+    discovered.repositoryRealPath !== journal.repositoryRoot ||
+    discovered.gitCommonDirectory !== journal.gitCommonDirectory ||
+    discovered.branch !== journal.branch ||
+    discovered.head !== journal.head ||
+    discovered.tree !== journal.tree ||
+    canonicalJson(
+      snapshotImplementationPaths(
+        discovered.repositoryRoot,
+        journal.implementationPaths,
+      ),
+    ) !== canonicalJson(journal.implementationSnapshot)
+  ) {
+    throw revisionDrift();
+  }
+  const indexTree = runGit(discovered.repositoryRoot, ['write-tree']).trim();
+  if (indexTree === journal.stagingTree) {
+    runGit(discovered.repositoryRoot, ['read-tree', journal.indexTree]);
+  } else if (indexTree !== journal.indexTree) {
+    throw revisionDrift();
+  }
+  reconcilePreparedGeneratedDocuments(
+    discovered.repositoryRoot,
+    journal.stagingGeneratedMutations ?? [],
+  );
+  assertRepositoryLock();
+  return commitPlanningRevision(
+    cwd,
+    runtime,
+    current,
+    journal,
+    options,
+    assertRepositoryLock,
+  );
+}
+
+function reconcilePreparedGeneratedDocuments(
+  repositoryRoot: string,
+  mutations: readonly StagingGeneratedMutation[],
+): void {
+  for (const mutation of mutations) {
+    const absolute = path.join(repositoryRoot, mutation.path);
+    const stats = fs.lstatSync(absolute, { throwIfNoEntry: false });
+    if (stats && (!stats.isFile() || stats.isSymbolicLink())) {
+      throw revisionDrift();
+    }
+    const current = stats ? fs.readFileSync(absolute, 'utf8') : null;
+    if (current === mutation.before) continue;
+    if (current !== mutation.after) throw revisionDrift();
+    rollbackGeneratedDocuments(repositoryRoot, [
+      {
+        path: mutation.path,
+        before: mutation.before ?? undefined,
+        after: mutation.after,
+      },
+    ]);
+  }
+}
+
+function assertScopeNeutralRevisionCandidate(
+  session: WorkflowSession,
+  journal: TaskRevisionJournal,
+  contract: ReturnType<typeof loadStableValidatedChangeContract>['contract'],
+): void {
+  const task = contract.tasks.find(
+    (candidate) => candidate.id === session.taskId,
+  );
+  const policy = contract.guard.tasks[session.taskId];
+  const planningAssurance = contract.planningAssurance;
+  if (!task || task.completed || !policy) {
+    throw workflowError(
+      'REVISION_TASK_CONTRACT_INVALID',
+      'The revised plan must retain the exact incomplete task being resumed.',
+      ExitCode.guard,
+    );
+  }
+  if (
+    planningAssurance === null ||
+    planningAssurance.investigationBaseline.head !== journal.head ||
+    planningAssurance.investigationBaseline.tree !== journal.tree ||
+    planningAssurance.planningGenerationId ===
+      journal.planningAssurance?.planningGenerationId
+  ) {
+    throw workflowError(
+      'REVISION_PLAN_REVIEW_REQUIRED',
+      'A task revision requires a fresh PlanReview bound to the exact pre-revision task baseline.',
+      ExitCode.verification,
+    );
+  }
+  const allowedPathsAreNarrower = policy.allowedPaths.every((candidate) =>
+    journal.allowedPaths.some((prior) => policyPathContains(prior, candidate)),
+  );
+  const checksAreNotWeaker = journal.requiredChecks.every((candidate) =>
+    policy.requiredChecks.includes(candidate),
+  );
+  if (!allowedPathsAreNarrower || !checksAreNotWeaker) {
+    throw workflowError(
+      'REVISION_WIDENING_APPROVAL_REQUIRED',
+      'A task revision that widens path or check authority requires an external non-benefiting approval.',
+      ExitCode.guard,
+    );
+  }
+  const outside = journal.implementationPaths.filter(
+    (changedPath) =>
+      !policy.allowedPaths.some((allowedPath) =>
+        matchesAllowedPath(changedPath, allowedPath),
+      ),
+  );
+  if (outside.length > 0) {
+    throw workflowError(
+      'REVISION_IMPLEMENTATION_OUT_OF_SCOPE',
+      'The revised task policy excludes implementation bytes already held by the session.',
+      ExitCode.guard,
+      { details: { paths: outside } },
+    );
+  }
+}
+
+function policyPathContains(container: string, candidate: string): boolean {
+  const outer = normalizePolicyPath(container);
+  const inner = normalizePolicyPath(candidate);
+  if (!inner.endsWith('/**')) return matchesAllowedPath(inner, outer);
+  if (!outer.endsWith('/**')) return false;
+  const outerBase = outer.slice(0, -3);
+  const innerBase = inner.slice(0, -3);
+  return innerBase === outerBase || innerBase.startsWith(`${outerBase}/`);
+}
+
 function assertNoOpResumeState(
   repositoryRoot: string,
   changeRoot: string,
   session: WorkflowSession,
   journal: TaskRevisionJournal,
 ): void {
+  const planningPaths = assertResumePathState(
+    repositoryRoot,
+    changeRoot,
+    session,
+    journal,
+  );
+  if (planningPaths.length > 0) {
+    throw workflowError(
+      'REVISION_PLAN_COMMIT_REQUIRED',
+      'Planning changes require the journaled temporary-index revision transition before execution can resume.',
+      ExitCode.verification,
+      { details: { planningPaths } },
+    );
+  }
+  assertNoOpResumeContract(repositoryRoot, session, journal);
+}
+
+function assertResumePathState(
+  repositoryRoot: string,
+  changeRoot: string,
+  session: WorkflowSession,
+  journal: TaskRevisionJournal,
+): string[] {
   assertLeaseCurrent(journal, session, repositoryRoot);
   const changedPaths = listChangedPaths(repositoryRoot, journal.head);
   const expected = journal.implementationPaths;
@@ -571,18 +1233,11 @@ function assertNoOpResumeState(
   );
   const planningPrefix = `${changeRoot}/${session.changeId}/`;
   if (
-    extra.length > 0 &&
-    missing.length === 0 &&
-    extra.every((candidate) => candidate.startsWith(planningPrefix))
+    missing.length > 0 ||
+    extra.some((candidate) => !candidate.startsWith(planningPrefix))
   ) {
-    throw workflowError(
-      'REVISION_PLAN_COMMIT_REQUIRED',
-      'Planning changes require the journaled temporary-index revision transition before execution can resume.',
-      ExitCode.verification,
-      { details: { planningPaths: extra } },
-    );
+    throw revisionDrift();
   }
-  if (extra.length > 0 || missing.length > 0) throw revisionDrift();
   const snapshot = snapshotImplementationPaths(repositoryRoot, expected);
   if (
     digestImplementationSnapshot(snapshot) !==
@@ -591,6 +1246,14 @@ function assertNoOpResumeState(
   ) {
     throw revisionDrift();
   }
+  return extra;
+}
+
+function assertNoOpResumeContract(
+  repositoryRoot: string,
+  session: WorkflowSession,
+  journal: TaskRevisionJournal,
+): void {
   const discovered = discoverRepository(repositoryRoot);
   const { contract } = loadStableValidatedChangeContract(
     discovered,
@@ -669,6 +1332,33 @@ function activeSessionAfterNoOpRevision(
 ): WorkflowSession {
   const { revisionLeaseId: _revisionLeaseId, ...preserved } = session;
   return { ...preserved, state: 'active' };
+}
+
+function activeSessionAfterPlanningRevision(
+  session: WorkflowSession,
+  head: string,
+  tree: string,
+  contract: ReturnType<typeof loadStableValidatedChangeContract>['contract'],
+): WorkflowSession {
+  const policy = contract.guard.tasks[session.taskId];
+  if (!policy) throw corruptRevisionState();
+  const { revisionLeaseId: _revisionLeaseId, ...preserved } = session;
+  return {
+    ...preserved,
+    state: 'active',
+    baseline: { head, tree },
+    artifacts: { ...contract.artifactDigests },
+    allowedPaths: [...policy.allowedPaths],
+    requiredChecks: [...policy.requiredChecks],
+    requiredCheckDigests: digestRequiredCheckDefinitions(
+      contract.checks,
+      policy.requiredChecks,
+    ),
+    planningAssurance: createTaskPlanningAssuranceBinding(
+      contract,
+      contract.planningAssurance,
+    ),
+  };
 }
 
 function assertRevisionSessionEligible(session: WorkflowSession): void {
@@ -970,6 +1660,15 @@ function isTaskRevisionJournal(value: unknown): value is TaskRevisionJournal {
     'expiresAt',
     'resumePreparedAt',
     'resumeSessionDigest',
+    'stagingTree',
+    'stagingChangedPaths',
+    'stagingGeneratedMutations',
+    'stagingPreparedAt',
+    'planCommitHash',
+    'planTree',
+    'planReportId',
+    'planChangedPaths',
+    'planCommittedAt',
     'completedAt',
     'abortPreparedAt',
     'abortReason',
@@ -983,6 +1682,9 @@ function isTaskRevisionJournal(value: unknown): value is TaskRevisionJournal {
       'prepared',
       'session-revising',
       'revising',
+      'planning-staging-prepared',
+      'plan-commit-prepared',
+      'plan-committed',
       'resume-prepared',
       'completed',
       'abort-prepared',
@@ -1053,6 +1755,67 @@ function isTaskRevisionJournal(value: unknown): value is TaskRevisionJournal {
   ) {
     return false;
   }
+  const stagingFields = [
+    value.stagingTree,
+    value.stagingChangedPaths,
+    value.stagingGeneratedMutations,
+    value.stagingPreparedAt,
+  ];
+  if (stagingFields.some((field) => field !== undefined)) {
+    if (
+      typeof value.stagingTree !== 'string' ||
+      !OBJECT_ID.test(value.stagingTree) ||
+      !isSortedStringArray(value.stagingChangedPaths) ||
+      !Array.isArray(value.stagingGeneratedMutations) ||
+      !value.stagingGeneratedMutations.every(isGeneratedDocumentMutation) ||
+      !isCanonicalTimestamp(value.stagingPreparedAt)
+    ) {
+      return false;
+    }
+  }
+  if (
+    value.phase === 'planning-staging-prepared' &&
+    stagingFields.some((field) => field === undefined)
+  ) {
+    return false;
+  }
+  const planCoreFields = [
+    value.planCommitHash,
+    value.planTree,
+    value.planReportId,
+    value.planChangedPaths,
+  ];
+  if (
+    planCoreFields.some((field) => field !== undefined) ||
+    value.planCommittedAt !== undefined
+  ) {
+    if (
+      typeof value.planCommitHash !== 'string' ||
+      !OBJECT_ID.test(value.planCommitHash) ||
+      typeof value.planTree !== 'string' ||
+      !OBJECT_ID.test(value.planTree) ||
+      typeof value.planReportId !== 'string' ||
+      !SHA256.test(value.planReportId) ||
+      !isSortedStringArray(value.planChangedPaths) ||
+      (value.planCommittedAt !== undefined &&
+        !isCanonicalTimestamp(value.planCommittedAt))
+    ) {
+      return false;
+    }
+  }
+  if (
+    (value.phase === 'plan-commit-prepared' ||
+      value.phase === 'plan-committed') &&
+    planCoreFields.some((field) => field === undefined)
+  ) {
+    return false;
+  }
+  if (
+    value.phase === 'plan-committed' &&
+    !isCanonicalTimestamp(value.planCommittedAt)
+  ) {
+    return false;
+  }
   if (
     value.abortReason !== undefined &&
     typeof value.abortReason !== 'string'
@@ -1109,6 +1872,20 @@ function isImplementationSnapshotEntry(
     ['100644', '100755', '120000', '000000'].includes(String(value.mode)) &&
     typeof value.digest === 'string' &&
     SHA256.test(value.digest)
+  );
+}
+
+function isGeneratedDocumentMutation(
+  value: unknown,
+): value is StagingGeneratedMutation {
+  return (
+    isRecord(value) &&
+    Object.keys(value).sort().join('\0') ===
+      ['after', 'before', 'path'].sort().join('\0') &&
+    typeof value.path === 'string' &&
+    normalizeChangedPath(value.path) === value.path &&
+    (value.before === null || typeof value.before === 'string') &&
+    typeof value.after === 'string'
   );
 }
 

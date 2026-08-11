@@ -16,6 +16,13 @@ export type ExactStagingPin = {
   expectedPreviousIndexTree: string;
 };
 
+export type PartialStagingPreparation = Readonly<{
+  stagedPaths: string[];
+  preservedUnstagedPaths: string[];
+  tree: string;
+  previousIndexTree: string;
+}>;
+
 /**
  * Compute the prospective checked tree and the current real index tree using an
  * isolated temporary index, enforcing the same expected-changed-path and
@@ -216,6 +223,7 @@ function predictIndexTree(
   previousIndexTree: string,
   literalPaths: string[],
   expectedPaths: string[],
+  expectedUnstagedPaths: string[] = [],
 ): string {
   const temporaryDirectory = fs.mkdtempSync(
     path.join(os.tmpdir(), 'workflow-index-'),
@@ -267,7 +275,9 @@ function predictIndexTree(
       .sort();
     if (
       JSON.stringify(stagedPaths) !== JSON.stringify(expectedPaths) ||
-      unstagedPaths.length > 0
+      unstagedPaths.some(
+        (candidate) => !expectedUnstagedPaths.includes(candidate),
+      )
     ) {
       throw workflowError(
         'STAGED_PATHS_MISMATCH',
@@ -279,6 +289,136 @@ function predictIndexTree(
   } finally {
     fs.rmSync(temporaryDirectory, { recursive: true, force: true });
   }
+}
+
+/**
+ * Stage one exact path set while preserving another exact path set as
+ * unstaged worktree bytes. Task-plan revision uses this projection so a plan
+ * commit can advance HEAD without ever staging, stashing, or rewriting the
+ * implementation that caused the revision.
+ */
+export function stageExactPathsPreservingUnstaged(
+  repositoryRoot: string,
+  baselineHead: string,
+  expectedStagedPaths: string[],
+  expectedUnstagedPaths: string[],
+  beforeMutation?: (preparation: PartialStagingPreparation) => void,
+): {
+  stagedPaths: string[];
+  tree: string;
+  previousIndexTree: string;
+} {
+  const staged = canonicalPathSet(expectedStagedPaths);
+  const unstaged = canonicalPathSet(expectedUnstagedPaths);
+  if (staged.length === 0 || staged.some((entry) => unstaged.includes(entry))) {
+    throw workflowError(
+      'PARTIAL_STAGING_PATHS_INVALID',
+      'The workflow partial staging projection requires disjoint non-empty staged paths.',
+      ExitCode.guard,
+    );
+  }
+  const expectedChanged = [...staged, ...unstaged].sort();
+  if (
+    JSON.stringify(listChangedPaths(repositoryRoot, baselineHead)) !==
+      JSON.stringify(expectedChanged) ||
+    listStagedPaths(repositoryRoot, baselineHead).length > 0
+  ) {
+    throw workflowError(
+      'PARTIAL_STAGING_STATE_CHANGED',
+      'Changed or staged paths no longer match the verified partial staging projection.',
+      ExitCode.staleState,
+    );
+  }
+  const previousIndexTree = runGit(repositoryRoot, ['write-tree']).trim();
+  const literalPaths = staged.map((entry) => `:(literal)${entry}`);
+  const tree = predictIndexTree(
+    repositoryRoot,
+    baselineHead,
+    previousIndexTree,
+    literalPaths,
+    staged,
+    unstaged,
+  );
+  const preparation = Object.freeze({
+    stagedPaths: [...staged],
+    preservedUnstagedPaths: [...unstaged],
+    tree,
+    previousIndexTree,
+  });
+  beforeMutation?.(preparation);
+  try {
+    if (runGit(repositoryRoot, ['write-tree']).trim() !== previousIndexTree) {
+      throw workflowError(
+        'STAGING_INDEX_DIVERGED',
+        'The Git index changed before workflow partial staging; foreign staging was preserved.',
+        ExitCode.staleState,
+      );
+    }
+    runGit(repositoryRoot, ['add', '-A', '--', ...literalPaths]);
+    const observedTree = runGit(repositoryRoot, ['write-tree']).trim();
+    const observedChanged = listChangedPaths(repositoryRoot, baselineHead);
+    const observedStaged = listStagedPaths(repositoryRoot, baselineHead);
+    const trackedUnstaged = splitNull(
+      runGit(repositoryRoot, [
+        'diff',
+        '--name-only',
+        '--no-renames',
+        '-z',
+        '--',
+      ]),
+    )
+      .map(normalizeChangedPath)
+      .sort();
+    const observedUnstaged = observedChanged.filter(
+      (candidate) => !observedStaged.includes(candidate),
+    );
+    if (
+      observedTree !== tree ||
+      JSON.stringify(observedChanged) !== JSON.stringify(expectedChanged) ||
+      JSON.stringify(observedStaged) !== JSON.stringify(staged) ||
+      JSON.stringify(observedUnstaged) !== JSON.stringify(unstaged) ||
+      trackedUnstaged.some((candidate) => !unstaged.includes(candidate))
+    ) {
+      throw workflowError(
+        'PARTIAL_STAGING_STATE_CHANGED',
+        'The real partial staging projection differs from its isolated prediction.',
+        ExitCode.staleState,
+      );
+    }
+    return { stagedPaths: observedStaged, tree, previousIndexTree };
+  } catch (error) {
+    const currentIndexTree = runGit(repositoryRoot, ['write-tree']).trim();
+    if (currentIndexTree === tree) {
+      runGit(repositoryRoot, ['read-tree', previousIndexTree]);
+    } else if (currentIndexTree !== previousIndexTree) {
+      throw workflowError(
+        'STAGING_INDEX_DIVERGED',
+        'The Git index changed during workflow partial staging; foreign staging was preserved.',
+        ExitCode.staleState,
+        {
+          details: {
+            causeCode: error instanceof Error ? error.name : String(error),
+          },
+        },
+      );
+    }
+    throw error;
+  }
+}
+
+function canonicalPathSet(paths: readonly string[]): string[] {
+  const normalized = paths.map(normalizeChangedPath).sort();
+  if (
+    new Set(normalized).size !== normalized.length ||
+    JSON.stringify(normalized) !== JSON.stringify([...paths].sort())
+  ) {
+    throw workflowError(
+      'PARTIAL_STAGING_PATHS_INVALID',
+      'The workflow partial staging paths are not canonical and unique.',
+      ExitCode.guard,
+    );
+  }
+  return normalized;
 }
 
 export function listStagedPaths(
