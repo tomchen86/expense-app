@@ -831,7 +831,7 @@
     {
       "path": "src/planning-workspace.ts",
       "mode": "100644",
-      "digest": "sha256:0b7470b899c73cf1f1ab24393247870f171f9ebec5e0da5391bc1a82de481fe3"
+      "digest": "sha256:329c1d1529e9e001103e2e2099a4b7d7bb10ee1b9ad9a6dee53b59a3ef584b71"
     },
     {
       "path": "src/predecessor-reconciliation.ts",
@@ -856,7 +856,7 @@
     {
       "path": "src/propose-orchestrator.ts",
       "mode": "100644",
-      "digest": "sha256:00730fc97d2e34df9f6e270c86bd7210949cd803023337e4d58064340977380a"
+      "digest": "sha256:6912a76fa760b0da2abd1220e7a58c454247008b9fcc03352622dc6f2a601f6f"
     },
     {
       "path": "src/protected-capabilities.ts",

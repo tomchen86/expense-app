@@ -17,7 +17,7 @@ import {
   withRepositoryLifecycleOperation,
 } from './session-store.ts';
 
-const FULL_COMMIT_OID = /^[0-9a-f]{40}$/;
+const FULL_COMMIT_OID = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
 const MAX_RECORD_BYTES = 16 * 1024;
 
 export type PlanningDraftWorkspaceRecord = Readonly<{
@@ -37,6 +37,7 @@ export type PreparedPlanningDraftWorkspace = PlanningDraftWorkspaceRecord &
 export type PreparePlanningDraftWorkspaceOptions = Readonly<{
   baseCommit?: string;
   workspaceParent?: string;
+  adoptCurrentWorktree?: boolean;
   now?: Date;
   testBeforeWorktreeAdd?: () => void;
 }>;
@@ -67,13 +68,23 @@ export function preparePlanningDraftWorkspace(
       options.baseCommit ?? repository.head,
     );
     const branch = config.branchTemplate.replaceAll('{changeId}', changeId);
-    const workspaceParent = resolveWorkspaceParent(repository, options);
-    const worktreePath = path.join(workspaceParent, changeId);
-    assertWorkspaceOutsideAuthorityRoots(
-      worktreePath,
-      repository.repositoryRealPath,
-      repository.gitCommonDirectory,
-    );
+    const adoptCurrentWorktree = options.adoptCurrentWorktree === true;
+    if (adoptCurrentWorktree && options.workspaceParent !== undefined) {
+      throw planningWorkspaceError(
+        'PLANNING_WORKSPACE_PATH_INVALID',
+        'Current-worktree adoption cannot also select a workspace parent.',
+      );
+    }
+    const worktreePath = adoptCurrentWorktree
+      ? repository.repositoryRealPath
+      : path.join(resolveWorkspaceParent(repository, options), changeId);
+    if (!adoptCurrentWorktree) {
+      assertWorkspaceOutsideAuthorityRoots(
+        worktreePath,
+        repository.repositoryRealPath,
+        repository.gitCommonDirectory,
+      );
+    }
     const existingRecord = readPlanningDraftWorkspaceRecord(
       repository.gitCommonDirectory,
       config.runtimeDirectory,
@@ -88,6 +99,16 @@ export function preparePlanningDraftWorkspace(
     );
 
     if (exactRegistration) {
+      const primaryWorktree = isPrimaryWorktree(
+        worktreePath,
+        repository.gitCommonDirectory,
+      );
+      if (adoptCurrentWorktree && !primaryWorktree && !existingRecord) {
+        throw planningWorkspaceError(
+          'PLANNING_WORKSPACE_OWNERSHIP_MISMATCH',
+          'Only the repository primary worktree can be adopted as a pre-existing planning workspace.',
+        );
+      }
       const record = validateReusableWorkspace({
         repositoryRoot: repository.repositoryRoot,
         gitCommonDirectory: repository.gitCommonDirectory,
@@ -98,6 +119,7 @@ export function preparePlanningDraftWorkspace(
         worktreePath,
         registration: exactRegistration,
         existingRecord,
+        enforcePlanningPathBoundary: !primaryWorktree,
       });
       if (!existingRecord) {
         persistPlanningDraftWorkspace(
@@ -108,6 +130,13 @@ export function preparePlanningDraftWorkspace(
       }
       assertOwned();
       return { ...record, status: 'reused' };
+    }
+
+    if (adoptCurrentWorktree) {
+      throw planningWorkspaceError(
+        'PLANNING_WORKSPACE_OWNERSHIP_MISMATCH',
+        'The current repository is not an exact registered Git worktree.',
+      );
     }
 
     if (existingRecord || branchRegistration || pathExists(worktreePath)) {
@@ -170,6 +199,7 @@ export function preparePlanningDraftWorkspace(
       registration,
       existingRecord: null,
       createdAt,
+      enforcePlanningPathBoundary: true,
     });
     persistPlanningDraftWorkspace(
       repository.gitCommonDirectory,
@@ -195,6 +225,47 @@ export function readPlanningDraftWorkspace(
   );
 }
 
+export function inspectPlanningDraftWorkspace(
+  cwd: string,
+  changeIdValue: string,
+): PlanningDraftWorkspaceRecord | null {
+  const changeId = assertChangeId(changeIdValue);
+  const repository = discoverRepository(cwd);
+  const config = loadWorkflowConfig(repository.repositoryRoot);
+  const record = readPlanningDraftWorkspaceRecord(
+    repository.gitCommonDirectory,
+    config.runtimeDirectory,
+    changeId,
+  );
+  if (!record) {
+    return null;
+  }
+  const registration = listWorktreeRegistrations(
+    repository.repositoryRoot,
+  ).find((entry) => entry.worktreePath === record.worktreePath);
+  if (!registration) {
+    throw planningWorkspaceError(
+      'PLANNING_WORKSPACE_OWNERSHIP_MISMATCH',
+      'The durable planning workspace is no longer registered with Git.',
+    );
+  }
+  return validateReusableWorkspace({
+    repositoryRoot: repository.repositoryRoot,
+    gitCommonDirectory: repository.gitCommonDirectory,
+    changeRoot: config.changeRoot,
+    changeId,
+    branch: record.branch,
+    baseCommit: record.baseCommit,
+    worktreePath: record.worktreePath,
+    registration,
+    existingRecord: record,
+    enforcePlanningPathBoundary: !isPrimaryWorktree(
+      record.worktreePath,
+      repository.gitCommonDirectory,
+    ),
+  });
+}
+
 function validateReusableWorkspace(input: {
   repositoryRoot: string;
   gitCommonDirectory: string;
@@ -206,6 +277,7 @@ function validateReusableWorkspace(input: {
   registration: WorktreeRegistration;
   existingRecord: PlanningDraftWorkspaceRecord | null;
   createdAt?: string;
+  enforcePlanningPathBoundary: boolean;
 }): PlanningDraftWorkspaceRecord {
   if (
     input.registration.branch !== input.branch ||
@@ -229,20 +301,22 @@ function validateReusableWorkspace(input: {
       'Planning worktree repository identity is not exact.',
     );
   }
-  const changedPaths = listChangedPaths(input.worktreePath, input.baseCommit);
-  try {
-    assertPlanningPaths(
-      input.changeRoot,
-      input.changeId,
-      changedPaths,
-      [],
-      'expense-app-v2',
-    );
-  } catch {
-    throw planningWorkspaceError(
-      'PLANNING_WORKSPACE_DIRTY',
-      'Planning worktree contains bytes outside its named planning tree.',
-    );
+  if (input.enforcePlanningPathBoundary) {
+    const changedPaths = listChangedPaths(input.worktreePath, input.baseCommit);
+    try {
+      assertPlanningPaths(
+        input.changeRoot,
+        input.changeId,
+        changedPaths,
+        [],
+        'expense-app-v2',
+      );
+    } catch {
+      throw planningWorkspaceError(
+        'PLANNING_WORKSPACE_DIRTY',
+        'Planning worktree contains bytes outside its named planning tree.',
+      );
+    }
   }
 
   const record: PlanningDraftWorkspaceRecord = {
@@ -268,6 +342,22 @@ function validateReusableWorkspace(input: {
     );
   }
   return record;
+}
+
+function isPrimaryWorktree(
+  repositoryRoot: string,
+  gitCommonDirectory: string,
+): boolean {
+  const gitDirectoryValue = runGit(repositoryRoot, [
+    'rev-parse',
+    '--git-dir',
+  ]).trim();
+  const gitDirectory = fs.realpathSync(
+    path.isAbsolute(gitDirectoryValue)
+      ? gitDirectoryValue
+      : path.resolve(repositoryRoot, gitDirectoryValue),
+  );
+  return gitDirectory === gitCommonDirectory;
 }
 
 function resolveWorkspaceParent(

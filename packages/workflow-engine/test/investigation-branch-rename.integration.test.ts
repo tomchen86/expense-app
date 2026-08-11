@@ -4,6 +4,7 @@ import path from 'node:path';
 import test from 'node:test';
 
 import { createInvestigationCheckpointEnvelope } from '../src/investigation-session.ts';
+import { readPlanningDraftWorkspace } from '../src/planning-workspace.ts';
 import { resumePropose, startPropose } from '../src/propose-orchestrator.ts';
 import type { ProviderInvocationRequest } from '../src/provider-contracts.ts';
 import {
@@ -14,8 +15,9 @@ import { createFixtureRepository, git, isWorkflowError } from './fixture.ts';
 
 const CHANGE_ID = 'branch-rename-change';
 
-test('an investigation follows a rename onto the canonical change branch and nothing else', () => {
+test('an investigation moves into its owned canonical worktree and rejects later branch drift', () => {
   const repository = createFixtureRepository();
+  let planningWorktree: string | undefined;
   try {
     // The session is born on a ceremony branch, not the template branch the
     // planning transition will later demand.
@@ -70,9 +72,21 @@ test('an investigation follows a rename onto the canonical change branch and not
     );
     assert.equal(started.state, 'awaiting-main-terms');
 
-    // Moving to the change's own canonical branch at the same head and tree
-    // is ref renaming within one lineage; the session follows.
-    git(repository, ['switch', '-C', `work/${CHANGE_ID}`]);
+    const owner = readPlanningDraftWorkspace(repository, CHANGE_ID);
+    assert.ok(owner);
+    planningWorktree = owner.worktreePath;
+    assert.equal(owner.branch, `work/${CHANGE_ID}`);
+    assert.equal(
+      git(repository, ['symbolic-ref', '--short', 'HEAD']).trim(),
+      `work/archive-${CHANGE_ID}`,
+    );
+    assert.equal(
+      git(planningWorktree, ['symbolic-ref', '--short', 'HEAD']).trim(),
+      `work/${CHANGE_ID}`,
+    );
+
+    // Resuming from the ceremony checkout resolves the durable owner and
+    // continues in the exact canonical planning worktree.
     const afterMain = resumePropose(
       repository,
       CHANGE_ID,
@@ -90,8 +104,9 @@ test('an investigation follows a rename onto the canonical change branch and not
     );
     assert.equal(afterMain.state, 'awaiting-group-dispositions');
 
-    // Any other branch stays a staleness signal, even at the same head.
-    git(repository, ['switch', '-C', 'work/unrelated-branch']);
+    // Any later branch drift in the owned worktree remains a staleness signal,
+    // even when its head and tree are unchanged.
+    git(planningWorktree, ['switch', '-C', 'work/unrelated-branch']);
     assert.throws(
       () =>
         resumePropose(
@@ -106,9 +121,17 @@ test('an investigation follows a rename onto the canonical change branch and not
             })),
           }),
         ),
-      (error: unknown) => isWorkflowError(error, 'INVESTIGATION_CONTEXT_STALE'),
+      (error: unknown) =>
+        isWorkflowError(error, 'PLANNING_WORKSPACE_OWNERSHIP_MISMATCH'),
     );
   } finally {
+    if (planningWorktree) {
+      git(repository, ['worktree', 'remove', '--force', planningWorktree]);
+      fs.rmSync(path.dirname(planningWorktree), {
+        recursive: true,
+        force: true,
+      });
+    }
     fs.rmSync(repository, { recursive: true, force: true });
   }
 });
