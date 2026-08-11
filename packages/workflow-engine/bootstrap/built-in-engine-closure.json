@@ -1129,6 +1129,11 @@
       "digest": "sha256:12f92e97555e5e8398fe3837012bdca04499f3172af69fb4ce2d10587ff93f27"
     },
     {
+      "path": "src/task-strategy-patch.ts",
+      "mode": "100644",
+      "digest": "sha256:dafc276b0ad77fc68999c8f15763e73a1b99d328979192bfa225fbd469b63605"
+    },
+    {
       "path": "src/task-strategy-store.ts",
       "mode": "100644",
       "digest": "sha256:6f270b77e0ca85e9c99eb0d2d13c7ddbbf668eb7cc722f95febbf3bc15c330e6"

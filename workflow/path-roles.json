@@ -153,6 +153,7 @@
       "packages/workflow-engine/src/task-execution-evidence.ts",
       "packages/workflow-engine/src/task-strategy-execution.ts",
       "packages/workflow-engine/src/task-strategy-gate.ts",
+      "packages/workflow-engine/src/task-strategy-patch.ts",
       "packages/workflow-engine/src/task-strategy-store.ts",
       "packages/workflow-engine/src/task-revision.ts"
     ],
