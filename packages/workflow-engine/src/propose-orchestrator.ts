@@ -25,6 +25,7 @@ import {
 } from './collaboration-grant-store.ts';
 import {
   loadChecksConfig,
+  loadWorkflowConfig,
   parseExecutionArtifact,
   parseInvestigationArtifact,
   parsePlanReviewArtifact,
@@ -56,7 +57,7 @@ import {
   loadProviderExecutionRepairContext,
   preflightProviderRepairRetry,
 } from './provider-execution-governance.ts';
-import { protectedBranchRef, runGit } from './git.ts';
+import { discoverRepository, protectedBranchRef, runGit } from './git.ts';
 import {
   expandClassDispositions,
   parseClassDisposition,
@@ -208,6 +209,11 @@ import {
   commitPlanningTransitionUnderAuthority,
   type PlanningTransitionResult,
 } from './planning-transition.ts';
+import {
+  inspectPlanningDraftWorkspace,
+  preparePlanningDraftWorkspace,
+  readPlanningDraftWorkspace,
+} from './planning-workspace.ts';
 import {
   assertAuthorizedPlanReviewChallengeClosure,
   createAuthorizedPlanReviewDispositionNode,
@@ -1013,6 +1019,8 @@ export function startPropose(
     };
   }
 
+  cwd = resolveProposePlanningWorkspace(cwd, changeId, 'start');
+
   const mandateAuthorization = options.taskMandateId
     ? authorizeTaskMandateOperation(
         cwd,
@@ -1766,6 +1774,7 @@ export function resumePropose(
       ExitCode.staleState,
     );
   }
+  cwd = resolveProposePlanningWorkspace(cwd, changeId, 'resume');
   if (input.kind === 'exemption-planning-contribution') {
     return resumeExemptionPlanningContribution(cwd, input, options);
   }
@@ -4476,11 +4485,73 @@ export function getProposeStatus(
   requestedInvestigationId: string,
   grantValidation?: ProposeResumeOptions['collaborationGrantValidation'],
 ): ProposeOutput {
+  cwd = resolveProposePlanningWorkspaceForInvestigation(
+    cwd,
+    requestedInvestigationId,
+  );
   return getProposeStatusInternal(
     cwd,
     requestedInvestigationId,
     grantValidation,
   );
+}
+
+function resolveProposePlanningWorkspaceForInvestigation(
+  cwd: string,
+  investigationId: string,
+): string {
+  const context = loadInvestigationRuntimeContext(cwd);
+  const changeId = isProposeExemptionInvestigationId(investigationId)
+    ? readProposeExemptionSession(context.runtime, investigationId).changeId
+    : readInvestigationSession(context.runtime, investigationId).changeId;
+  return resolveProposePlanningWorkspace(cwd, changeId, 'status');
+}
+
+function resolveProposePlanningWorkspace(
+  cwd: string,
+  changeId: string,
+  mode: 'start' | 'resume' | 'status',
+): string {
+  const repository = discoverRepository(cwd);
+  const config = loadWorkflowConfig(repository.repositoryRoot);
+  const expectedBranch = config.branchTemplate.replaceAll(
+    '{changeId}',
+    changeId,
+  );
+  const record =
+    mode === 'status'
+      ? inspectPlanningDraftWorkspace(cwd, changeId)
+      : readPlanningDraftWorkspace(cwd, changeId);
+  if (record) {
+    if (mode === 'status') {
+      return record.worktreePath;
+    }
+    return preparePlanningDraftWorkspace(cwd, changeId, {
+      baseCommit: record.baseCommit,
+      ...(repository.repositoryRealPath === record.worktreePath
+        ? { adoptCurrentWorktree: true }
+        : { workspaceParent: path.dirname(record.worktreePath) }),
+    }).worktreePath;
+  }
+  if (repository.branch === expectedBranch) {
+    if (mode === 'status') {
+      return repository.repositoryRealPath;
+    }
+    return preparePlanningDraftWorkspace(cwd, changeId, {
+      baseCommit: repository.head,
+      adoptCurrentWorktree: true,
+    }).worktreePath;
+  }
+  if (mode !== 'start') {
+    throw workflowError(
+      'PLANNING_WORKSPACE_NOT_FOUND',
+      `No durable planning workspace owns change ${changeId}.`,
+      ExitCode.staleState,
+    );
+  }
+  return preparePlanningDraftWorkspace(cwd, changeId, {
+    baseCommit: repository.head,
+  }).worktreePath;
 }
 
 function getProposeStatusInternal(

@@ -119,6 +119,7 @@ import './legacy-provider-residuals-projection.integration.test.ts';
 import './plan-amendment-contribution.integration.test.ts';
 import './planning-execution-epoch-recovery.integration.test.ts';
 import './planning-workspace.integration.test.ts';
+import './propose-planning-workspace.integration.test.ts';
 import './provider-retention-human-pin.contract.test.ts';
 import './task-mandate-grant-budget.integration.test.ts';
 import './provider-retention.contract.test.ts';

@@ -162,3 +162,63 @@ test('planning workspace refuses implementation bytes and ownership drift', () =
     fs.rmSync(workspaceParent, { recursive: true, force: true });
   }
 });
+
+test('planning workspace adopts only the primary canonical checkout without applying the linked-worktree path boundary', () => {
+  const repository = createFixtureRepository();
+  try {
+    const changeId = 'adopted-feature';
+    git(repository, ['checkout', '-b', `work/${changeId}`]);
+    fs.writeFileSync(
+      path.join(repository, 'src/pre-existing-edit.ts'),
+      'export const preExistingEdit = true;\n',
+    );
+    const adopted = preparePlanningDraftWorkspace(repository, changeId, {
+      adoptCurrentWorktree: true,
+    });
+    assert.equal(adopted.status, 'reused');
+    assert.equal(adopted.worktreePath, fs.realpathSync(repository));
+    assert.equal(
+      fs.readFileSync(
+        path.join(repository, 'src/pre-existing-edit.ts'),
+        'utf8',
+      ),
+      'export const preExistingEdit = true;\n',
+    );
+    assert.deepEqual(readPlanningDraftWorkspace(repository, changeId), {
+      schemaVersion: 1,
+      kind: 'planning-draft-workspace.v1',
+      changeId,
+      branch: `work/${changeId}`,
+      baseCommit: git(repository, ['rev-parse', 'HEAD']).trim(),
+      gitCommonDirectory: fs.realpathSync(path.join(repository, '.git')),
+      worktreePath: fs.realpathSync(repository),
+      createdAt: adopted.createdAt,
+    });
+  } finally {
+    fs.rmSync(repository, { recursive: true, force: true });
+  }
+});
+
+test('planning workspace accepts full SHA-256 commit identities', () => {
+  const repository = createFixtureRepository({ objectFormat: 'sha256' });
+  const workspaceParent = fs.realpathSync(
+    fs.mkdtempSync(path.join(os.tmpdir(), 'workflow-planning-sha256-')),
+  );
+  try {
+    const baseCommit = git(repository, ['rev-parse', 'HEAD']).trim();
+    assert.equal(baseCommit.length, 64);
+    const created = preparePlanningDraftWorkspace(
+      repository,
+      'sha256-feature',
+      {
+        baseCommit,
+        workspaceParent,
+      },
+    );
+    assert.equal(created.baseCommit, baseCommit);
+    assert.equal(created.status, 'created');
+  } finally {
+    fs.rmSync(repository, { recursive: true, force: true });
+    fs.rmSync(workspaceParent, { recursive: true, force: true });
+  }
+});
