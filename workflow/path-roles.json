@@ -134,6 +134,7 @@
       "packages/workflow-engine/src/implementation-term-floor.ts",
       "packages/workflow-engine/src/intervention-control.ts",
       "packages/workflow-engine/src/lifecycle.ts",
+      "packages/workflow-engine/src/open-task.ts",
       "packages/workflow-engine/src/planning-amendment-decision.ts",
       "packages/workflow-engine/src/planning-execution-epoch.ts",
       "packages/workflow-engine/src/planning-generation-history.ts",

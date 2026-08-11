@@ -19,6 +19,7 @@ import {
 } from './collaboration-grant-cli.ts';
 import { inspectChangeAssurance } from './assurance-inspection.ts';
 import { loadWorkflowConfig } from './contracts.ts';
+import { openTask } from './open-task.ts';
 import {
   checkOpenSpecPlanningAssets,
   generateOpenSpecPlanningAssets,
@@ -284,6 +285,30 @@ function dispatch(args: string[], cwd: string): CommandResult {
         ok: true,
         result: commitPlanningTransition(cwd, rest[0]),
       };
+    case 'open-task': {
+      const changeId = rest[0];
+      const taskId = optionValue(rest.slice(1), '--task');
+      const mandateTaskId = optionValue(rest.slice(1), '--mandate');
+      if (
+        !changeId ||
+        !taskId ||
+        !mandateTaskId ||
+        rest.length !== 5 ||
+        rest[1] !== '--task' ||
+        rest[2] !== taskId ||
+        rest[3] !== '--mandate' ||
+        rest[4] !== mandateTaskId
+      ) {
+        throw usage(
+          'Usage: pnpm workflow open-task <change-id> --task <task-id> --mandate <mandate-task-id> [--json]',
+        );
+      }
+      return {
+        command,
+        ok: true,
+        result: openTask(cwd, changeId, taskId, mandateTaskId),
+      };
+    }
     case 'amend-plan': {
       // Both arguments are mandatory: an amendment that has not said why it
       // was needed, or whether the work already done still stands, has not
@@ -2298,6 +2323,7 @@ function usageText(): string {
     '  pnpm workflow propose <change-id> --intent <intent.json> --mandate <mandate-task-id> [--actor <id>] [--grant <grant-id>] [--migrate-legacy] [--json]',
     '  pnpm workflow propose <change-id> --resume --input <envelope.json> [--grant <grant-id>] [--json]',
     '  pnpm workflow plan-commit <change-id> [--json]',
+    '  pnpm workflow open-task <change-id> --task <task-id> --mandate <mandate-task-id> [--json]',
     '  pnpm workflow amend-plan --change <change-id> --reason <code> --execution-impact <none|required> [--json]',
     '  pnpm workflow archive <change-id> [--json]',
     '  pnpm workflow openspec-assets <generate|check|install-prompts --codex-home <path>> [--json]',

@@ -10,6 +10,28 @@ export function withPlanningAuthority(runtime, changeId, operation) {
     return withChangeTransitionAuthority(runtime, changeId, 'plan', operation);
 }
 /**
+ * Open-task already owns the repository lifecycle lock while it moves from a
+ * planning transition to an active task-session lock. Keeping that outer lock
+ * held closes the otherwise unavoidable interval where another lifecycle
+ * operation could observe the plan commit without its exact session. This
+ * helper owns only the per-change transition lock and releases it before the
+ * caller publishes the session lock.
+ */
+export function withOpenTaskPlanningAuthority(runtime, changeId, assertRepositoryLock, operation) {
+    assertHumanResolutionLifecycleBarrier(runtime.root, null);
+    assertRepositoryLock();
+    reclaimDeadChangeTransitionLock(runtime, changeId, assertRepositoryLock);
+    return withChangeTransitionLock(runtime, changeId, 'open-task', (assertChangeLock) => {
+        assertNoActiveSessionsForChange(runtime, changeId);
+        assertHumanResolutionBarrier(runtime, changeId, null);
+        return operation(heldChangeTransitionAuthority(changeId, () => {
+            assertRepositoryLock();
+            assertChangeLock();
+            assertHumanResolutionBarrier(runtime, changeId, null);
+        }));
+    });
+}
+/**
  * Investigation creation shares the repository and per-change transition
  * locks with task, plan, and archive transitions. The callback must contain
  * only synchronous persistence/CAS work: provider execution and caller/human
@@ -193,7 +215,8 @@ export function reclaimDeadChangeTransitionLock(runtime, changeId, assertReposit
             (value.transition === 'plan' ||
                 value.transition === 'archive' ||
                 value.transition === 'investigation' ||
-                value.transition === 'human-resolution') &&
+                value.transition === 'human-resolution' ||
+                value.transition === 'open-task') &&
             Number.isSafeInteger(value.pid) &&
             `${JSON.stringify(value)}\n` === content) {
             return {

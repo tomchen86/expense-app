@@ -216,7 +216,7 @@
     {
       "path": "src/cli.ts",
       "mode": "100644",
-      "digest": "sha256:78359cb690646f1a01343183d7224cec9948e11a95bca48b72af0c0d2ea38b26"
+      "digest": "sha256:0fef0c98173e403d387c350b5592b4b01c098b621b3cda1f99db322033434261"
     },
     {
       "path": "src/codex-provider-adapter.ts",
@@ -689,6 +689,11 @@
       "digest": "sha256:842985ee0567b42db6052c5d27024faae3ec478c0db2c987f6d0c701375c4efe"
     },
     {
+      "path": "src/open-task.ts",
+      "mode": "100644",
+      "digest": "sha256:3bbd2de1c0e73e60fd87c6e28b5213057920240c99b2ffaf7b62dc3846b4a299"
+    },
+    {
       "path": "src/openspec-adapter.ts",
       "mode": "100644",
       "digest": "sha256:0594a38eb8041fea587ac46a0f21ea896a740d22b0e2f3b9bccba05655cc1cb7"
@@ -806,7 +811,7 @@
     {
       "path": "src/planning-lock.ts",
       "mode": "100644",
-      "digest": "sha256:232231608457f38a7f0a55d14e491e86b7315f4812e9f12e78d5b62a81207e0c"
+      "digest": "sha256:056340435bff83f196d9d38aa620d108515e225d493dbfa31fbeabc7b604358a"
     },
     {
       "path": "src/planning-paths.ts",
@@ -826,7 +831,7 @@
     {
       "path": "src/planning-transition.ts",
       "mode": "100644",
-      "digest": "sha256:7bf85e02e0a44ea3a7685ec0a22f1bf8d2e79d47657df34df9635a1e5f40a985"
+      "digest": "sha256:2863b9cdf9ace8b52498f0b0670193108b5e5a5939967af35bf0fece7fe1e1b9"
     },
     {
       "path": "src/planning-workspace.ts",
@@ -1051,7 +1056,7 @@
     {
       "path": "src/session.ts",
       "mode": "100644",
-      "digest": "sha256:4d3561246563e78d4b28f00a6d7f227def8d7f093b28337ea10a738d5a997961"
+      "digest": "sha256:26cf251e1f61bd1d6d8754a8125312fc40fac6c22951a3e065672df27ce1dc3d"
     },
     {
       "path": "src/task-execution-evidence.ts",
