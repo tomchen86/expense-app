@@ -32,6 +32,19 @@ export type TaskStrategyPatchChange = Readonly<{
   after: TaskStrategyPatchEntry | null;
 }>;
 
+export type TaskStrategyPatchImplementer =
+  | Readonly<{
+      providerId: ProviderId;
+      assurance: 'self-declared' | 'runtime-hint' | 'adapter-assigned';
+    }>
+  | Readonly<{
+      providerId: null;
+      principalId: string;
+      assurance: 'self-declared' | 'runtime-hint' | 'adapter-assigned';
+      degradedForm: 'caller-supplied';
+      grantId: string;
+    }>;
+
 export type TaskStrategyPatchRecord = Readonly<{
   schemaVersion: 1;
   kind: 'task-strategy-patch-record.v1';
@@ -47,10 +60,7 @@ export type TaskStrategyPatchRecord = Readonly<{
   patchBase64: string;
   changedPaths: readonly string[];
   changes: readonly TaskStrategyPatchChange[];
-  implementer: Readonly<{
-    providerId: ProviderId;
-    assurance: 'self-declared' | 'runtime-hint' | 'adapter-assigned';
-  }>;
+  implementer: TaskStrategyPatchImplementer;
   createdAt: string;
 }>;
 
@@ -523,14 +533,41 @@ function isEntryOrNull(value: unknown): value is TaskStrategyPatchEntry | null {
 function isImplementer(
   value: unknown,
 ): value is TaskStrategyPatchRecord['implementer'] {
-  return (
-    isRecord(value) &&
+  if (!isRecord(value)) return false;
+  if (
     hasExactKeys(value, ['providerId', 'assurance']) &&
     typeof value.providerId === 'string' &&
-    isProviderId(value.providerId) &&
-    ['self-declared', 'runtime-hint', 'adapter-assigned'].includes(
-      String(value.assurance),
+    isProviderId(value.providerId)
+  ) {
+    return isActorAssurance(value.assurance);
+  }
+  return (
+    hasExactKeys(value, [
+      'providerId',
+      'principalId',
+      'assurance',
+      'degradedForm',
+      'grantId',
+    ]) &&
+    value.providerId === null &&
+    typeof value.principalId === 'string' &&
+    /^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,511}$/.test(value.principalId) &&
+    isActorAssurance(value.assurance) &&
+    value.degradedForm === 'caller-supplied' &&
+    typeof value.grantId === 'string' &&
+    /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(
+      value.grantId,
     )
+  );
+}
+
+function isActorAssurance(
+  value: unknown,
+): value is 'self-declared' | 'runtime-hint' | 'adapter-assigned' {
+  return (
+    value === 'self-declared' ||
+    value === 'runtime-hint' ||
+    value === 'adapter-assigned'
   );
 }
 
