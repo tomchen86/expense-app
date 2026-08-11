@@ -89,10 +89,13 @@ import {
 } from './task-diff-review-artifact.ts';
 import {
   createTaskDiffFinalAssuranceBinding,
+  createTaskDiffReviewSupersession,
   createTaskDiffReviewContinuationReservation,
   createTaskDiffReviewContinuationResultBinding,
   createTaskDiffReviewReservation,
   createTaskDiffReviewResultBinding,
+  listTaskDiffReviewResultBindings,
+  listTaskDiffReviewSupersessions,
   readTaskDiffFinalAssuranceBinding,
   readTaskDiffReviewContinuationReservation,
   readTaskDiffReviewContinuationResultBinding,
@@ -101,11 +104,14 @@ import {
   type TaskDiffReviewContinuationReservationRecord,
   type TaskDiffReviewContinuationResultBinding,
   type TaskDiffReviewReservationRecord,
+  type TaskDiffReviewResultBinding,
 } from './task-diff-review-store.ts';
 import {
   createTaskDiffReviewSubject,
+  deriveTaskDiffReviewCandidatePlan,
   TASK_DIFF_REVIEW_POLICY_DIGEST,
   taskDiffReviewRequirement,
+  type TaskDiffReviewCandidatePlan,
   type TaskDiffPathTransition,
   type TaskDiffReviewSubject,
   type TaskDiffTreeEntry,
@@ -289,12 +295,24 @@ export function beginTaskDiffReview(
           context.session.sessionId,
           subject.subjectDigest,
         );
+        const candidatePlan =
+          existing === null
+            ? resolveTaskDiffReviewCandidatePlan(context, runtime, subject)
+            : null;
+        if (candidatePlan?.action === 'reuse') {
+          return renderReusedTaskDiffReviewStatus(
+            runtime,
+            subject,
+            loadReusedTaskDiffReview(runtime, context, subject, candidatePlan),
+          );
+        }
         const created =
           existing ??
           createNewTaskDiffReviewReservation(
             context,
             runtime,
             subject,
+            candidatePlan!,
             implementationActor,
             options.collaborationGrant,
             assertOwned,
@@ -342,6 +360,18 @@ export function inspectTaskDiffReviewStatus(
     subject.subjectDigest,
   );
   if (reservation === null) {
+    const candidatePlan = resolveTaskDiffReviewCandidatePlan(
+      context,
+      runtime,
+      subject,
+    );
+    if (candidatePlan.action === 'reuse') {
+      return renderReusedTaskDiffReviewStatus(
+        runtime,
+        subject,
+        loadReusedTaskDiffReview(runtime, context, subject, candidatePlan),
+      );
+    }
     return Object.freeze({
       state: 'ready' as const,
       sessionId: context.session.sessionId,
@@ -593,6 +623,7 @@ export function reconcileTaskDiffReview(
             reservation,
             existing.review,
           );
+          ensureTaskDiffReviewSupersession(runtime, existing);
           return renderTaskDiffReviewStatus(runtime, reservation);
         }
         const invocation = readProviderInvocation(
@@ -682,6 +713,7 @@ export function reconcileTaskDiffReview(
         }
         const review = createTaskDiffReviewRecord({
           subject,
+          reviewScope: reservation.manifest.reviewScope,
           assignment: {
             implementerPrincipalId:
               reservation.implementationActor.principalId!,
@@ -723,7 +755,7 @@ export function reconcileTaskDiffReview(
           runtimeMetadata: {},
         });
         writeEvidenceNode(runtime, resultNode);
-        createTaskDiffReviewResultBinding(runtime, {
+        const resultBinding = createTaskDiffReviewResultBinding(runtime, {
           ownerInvestigationId: reservation.ownerInvestigationId,
           sessionId: reservation.sessionId,
           subjectDigest: subject.subjectDigest,
@@ -741,6 +773,7 @@ export function reconcileTaskDiffReview(
           review,
           createdAt: invocation.updatedAt,
         });
+        ensureTaskDiffReviewSupersession(runtime, resultBinding);
         assertOwned();
         return renderTaskDiffReviewStatus(runtime, reservation);
       }),
@@ -1133,10 +1166,259 @@ function taskDiffReviewIsActive(
   );
 }
 
+function resolveTaskDiffReviewCandidatePlan(
+  context: ReturnType<typeof loadActiveSessionContext>,
+  runtime: ReturnType<typeof loadInvestigationRuntimeContext>['runtime'],
+  subject: TaskDiffReviewSubject,
+): TaskDiffReviewCandidatePlan {
+  const bindings = listTaskDiffReviewResultBindings(
+    runtime,
+    context.session.sessionId,
+  );
+  if (bindings.length === 0) {
+    return deriveTaskDiffReviewCandidatePlan({ current: subject });
+  }
+  const byReviewDigest = new Map<string, TaskDiffReviewResultBinding>();
+  for (const binding of bindings) {
+    const reservation = readTaskDiffReviewReservation(
+      runtime,
+      context.session.sessionId,
+      binding.subjectDigest,
+    );
+    if (reservation === null) throw taskDiffReviewLineageConflict();
+    assertCurrentTaskDiffReviewBinding(runtime, reservation, binding.review);
+    if (byReviewDigest.has(binding.review.recordDigest)) {
+      throw taskDiffReviewLineageConflict();
+    }
+    byReviewDigest.set(binding.review.recordDigest, binding);
+  }
+  const supersessions = listTaskDiffReviewSupersessions(
+    runtime,
+    context.session.sessionId,
+  );
+  const superseded = new Set<string>();
+  for (const relation of supersessions) {
+    const predecessor = byReviewDigest.get(
+      relation.predecessorReviewRecordDigest,
+    );
+    const successor = byReviewDigest.get(relation.supersededByDigest);
+    if (
+      predecessor === undefined ||
+      successor === undefined ||
+      predecessor.subjectDigest !== relation.predecessorSubjectDigest ||
+      successor.subjectDigest !== relation.supersededBySubjectDigest ||
+      canonicalJson(successor.review.reviewScope) !==
+        canonicalJson(relation.reviewScope) ||
+      superseded.has(relation.predecessorReviewRecordDigest)
+    ) {
+      throw taskDiffReviewLineageConflict();
+    }
+    superseded.add(relation.predecessorReviewRecordDigest);
+  }
+  const leaves = bindings.filter(
+    ({ review }) => !superseded.has(review.recordDigest),
+  );
+  if (leaves.length !== 1) throw taskDiffReviewLineageConflict();
+  const predecessorBinding = leaves[0]!;
+  const predecessorReservation = readTaskDiffReviewReservation(
+    runtime,
+    context.session.sessionId,
+    predecessorBinding.subjectDigest,
+  );
+  if (predecessorReservation === null) throw taskDiffReviewLineageConflict();
+  const finalAssuranceCommitmentDigest = taskDiffReviewTerminalCommitmentDigest(
+    runtime,
+    predecessorReservation,
+    predecessorBinding.review,
+  );
+  return deriveTaskDiffReviewCandidatePlan({
+    current: subject,
+    predecessor: {
+      subject: predecessorBinding.review.subject,
+      reviewRecordDigest: predecessorBinding.review.recordDigest,
+      finalAssuranceCommitmentDigest,
+    },
+  });
+}
+
+function ensureTaskDiffReviewSupersession(
+  runtime: ReturnType<typeof loadInvestigationRuntimeContext>['runtime'],
+  binding: TaskDiffReviewResultBinding,
+): void {
+  const scope = binding.review.reviewScope;
+  const predecessor = scope.predecessor;
+  if (predecessor === null) return;
+  const predecessorBinding = readTaskDiffReviewResultBinding(
+    runtime,
+    binding.sessionId,
+    predecessor.subjectDigest,
+  );
+  const predecessorReservation = readTaskDiffReviewReservation(
+    runtime,
+    binding.sessionId,
+    predecessor.subjectDigest,
+  );
+  if (
+    predecessorBinding === null ||
+    predecessorReservation === null ||
+    predecessorBinding.review.recordDigest !== predecessor.reviewRecordDigest
+  ) {
+    throw taskDiffReviewLineageConflict();
+  }
+  assertCurrentTaskDiffReviewBinding(
+    runtime,
+    predecessorReservation,
+    predecessorBinding.review,
+  );
+  if (
+    taskDiffReviewTerminalCommitmentDigest(
+      runtime,
+      predecessorReservation,
+      predecessorBinding.review,
+    ) !== predecessor.finalAssuranceCommitmentDigest
+  ) {
+    throw taskDiffReviewLineageConflict();
+  }
+  createTaskDiffReviewSupersession(runtime, {
+    sessionId: binding.sessionId,
+    predecessorSubjectDigest: predecessor.subjectDigest,
+    predecessorReviewRecordDigest: predecessor.reviewRecordDigest,
+    supersededBySubjectDigest: binding.subjectDigest,
+    supersededByDigest: binding.review.recordDigest,
+    reviewScope: scope,
+    createdAt: binding.createdAt,
+  });
+}
+
+function loadReusedTaskDiffReview(
+  runtime: ReturnType<typeof loadInvestigationRuntimeContext>['runtime'],
+  context: ReturnType<typeof loadActiveSessionContext>,
+  currentSubject: TaskDiffReviewSubject,
+  plan: Extract<TaskDiffReviewCandidatePlan, { action: 'reuse' }>,
+): Readonly<{
+  subject: TaskDiffReviewSubject;
+  reservation: TaskDiffReviewReservationRecord;
+  review: TaskDiffReviewRecord;
+}> {
+  const binding = readTaskDiffReviewResultBinding(
+    runtime,
+    context.session.sessionId,
+    plan.predecessor.subjectDigest,
+  );
+  const reservation = readTaskDiffReviewReservation(
+    runtime,
+    context.session.sessionId,
+    plan.predecessor.subjectDigest,
+  );
+  if (
+    binding === null ||
+    reservation === null ||
+    binding.review.recordDigest !== plan.predecessor.reviewRecordDigest
+  ) {
+    throw taskDiffReviewLineageConflict();
+  }
+  assertCurrentTaskDiffReviewBinding(runtime, reservation, binding.review);
+  if (
+    taskDiffReviewTerminalCommitmentDigest(
+      runtime,
+      reservation,
+      binding.review,
+    ) !== plan.predecessor.finalAssuranceCommitmentDigest
+  ) {
+    throw taskDiffReviewLineageConflict();
+  }
+  const replay = deriveTaskDiffReviewCandidatePlan({
+    current: currentSubject,
+    predecessor: {
+      subject: binding.review.subject,
+      reviewRecordDigest: binding.review.recordDigest,
+      finalAssuranceCommitmentDigest:
+        plan.predecessor.finalAssuranceCommitmentDigest,
+    },
+  });
+  if (canonicalJson(replay) !== canonicalJson(plan)) {
+    throw taskDiffReviewLineageConflict();
+  }
+  return Object.freeze({
+    subject: currentSubject,
+    reservation,
+    review: binding.review,
+  });
+}
+
+function renderReusedTaskDiffReviewStatus(
+  runtime: ReturnType<typeof loadInvestigationRuntimeContext>['runtime'],
+  currentSubject: TaskDiffReviewSubject,
+  current: ReturnType<typeof loadReusedTaskDiffReview>,
+): TaskDiffReviewLifecycleStatus {
+  const finalAssurance = taskDiffReviewTerminalAssurance(
+    runtime,
+    current.reservation,
+    current.review,
+  );
+  return Object.freeze({
+    state: finalAssurance?.verdict ?? 'satisfied',
+    sessionId: current.reservation.sessionId,
+    subject: currentSubject,
+    implementationActor: current.reservation.implementationActor,
+    assignment: current.reservation.request
+      .roleAssignment as ProviderRoleAssignment,
+    ownerInvestigationId: current.reservation.ownerInvestigationId,
+    invocationId: current.reservation.request.invocationId,
+    review: current.review,
+    finalAssurance,
+  });
+}
+
+function taskDiffReviewTerminalCommitmentDigest(
+  runtime: ReturnType<typeof loadInvestigationRuntimeContext>['runtime'],
+  reservation: TaskDiffReviewReservationRecord,
+  review: TaskDiffReviewRecord,
+): string | null {
+  return (
+    taskDiffReviewTerminalAssurance(runtime, reservation, review)
+      ?.commitmentDigest ?? null
+  );
+}
+
+function taskDiffReviewTerminalAssurance(
+  runtime: ReturnType<typeof loadInvestigationRuntimeContext>['runtime'],
+  reservation: TaskDiffReviewReservationRecord,
+  review: TaskDiffReviewRecord,
+): TaskDiffFinalAssuranceRecord | null {
+  if (review.challenges.length === 0) {
+    assertTaskDiffReviewContentSatisfied(review.subject, review, null);
+    return null;
+  }
+  const continuationReservation = readTaskDiffReviewContinuationReservation(
+    runtime,
+    reservation.sessionId,
+    review.recordDigest,
+  );
+  const continuationBinding = readTaskDiffReviewContinuationResultBinding(
+    runtime,
+    reservation.sessionId,
+    review.recordDigest,
+  );
+  if (continuationReservation === null || continuationBinding === null) {
+    throw taskDiffReviewPriorChallengeOpen();
+  }
+  const assurance = assertCurrentTaskDiffFinalAssuranceBinding(
+    runtime,
+    reservation,
+    review,
+    continuationReservation,
+    continuationBinding,
+  );
+  if (assurance === null) throw taskDiffReviewPriorChallengeOpen();
+  return assurance;
+}
+
 function createNewTaskDiffReviewReservation(
   context: ReturnType<typeof loadActiveSessionContext>,
   runtime: ReturnType<typeof loadInvestigationRuntimeContext>['runtime'],
   subject: TaskDiffReviewSubject,
+  candidatePlan: TaskDiffReviewCandidatePlan,
   implementationActor: RecordedRoleParticipant,
   collaborationGrant: BeginTaskDiffReviewOptions['collaborationGrant'],
   assertOwned: () => void,
@@ -1267,6 +1549,7 @@ function createNewTaskDiffReviewReservation(
     assignment = scheduled.assignment;
   }
   const ownerInvestigationId = `investigation-task-diff-${seed}`;
+  if (candidatePlan.action !== 'review') throw reviewNotSatisfied();
   const mandateBinding = (context.session.mandateBinding ??
     null) as TaskMandateBinding | null;
   const authorization = createEvidenceNode({
@@ -1314,6 +1597,7 @@ function createNewTaskDiffReviewReservation(
     baseCommit: context.session.baseline.head,
     baseTree: context.session.baseline.tree,
     subject,
+    reviewScope: candidatePlan.scope,
     capabilityProfile: 'repository-read-only',
   };
   const request = createProviderInvocationRequest({
@@ -2133,7 +2417,15 @@ function loadCurrentTaskDiffReview(
     context.session.sessionId,
     subject.subjectDigest,
   );
-  if (reservation === null) throw reviewNotSatisfied();
+  if (reservation === null) {
+    const candidatePlan = resolveTaskDiffReviewCandidatePlan(
+      context,
+      runtime,
+      subject,
+    );
+    if (candidatePlan.action !== 'reuse') throw reviewNotSatisfied();
+    return loadReusedTaskDiffReview(runtime, context, subject, candidatePlan);
+  }
   assertReservationCurrent(
     context,
     subject,
@@ -3002,5 +3294,21 @@ function candidateDiverged() {
     'TASK_DIFF_REVIEW_CANDIDATE_DIVERGED',
     'TaskDiffReview candidate state no longer matches the durable finalize transaction.',
     ExitCode.staleState,
+  );
+}
+
+function taskDiffReviewLineageConflict() {
+  return workflowError(
+    'TASK_DIFF_REVIEW_LINEAGE_CONFLICT',
+    'TaskDiffReview predecessor and supersession records do not form one exact append-only chain.',
+    ExitCode.guard,
+  );
+}
+
+function taskDiffReviewPriorChallengeOpen() {
+  return workflowError(
+    'TASK_DIFF_REVIEW_PRIOR_CHALLENGE_OPEN',
+    'The prior TaskDiffReview challenge set lacks authenticated Final Assurance and cannot authorize candidate re-review.',
+    ExitCode.verification,
   );
 }

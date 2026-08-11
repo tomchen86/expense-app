@@ -36,6 +36,22 @@ export const COLLABORATION_GRANT_POLICY_DIGEST = crypto
     .createHash('sha256')
     .update(JSON.stringify(COLLABORATION_GRANT_POLICY))
     .digest('hex');
+export const TASK_DIFF_REVIEW_COLLABORATION_POLICY = deepFreeze({
+    schemaVersion: 1,
+    policyId: 'expense-app.workflow.collaboration-policy.task-diff-review.v1',
+    permittedForms: {
+        'task-diff-review': [
+            'same-provider-fresh-session',
+            'caller-supplied',
+            'direct-human-review',
+        ],
+    },
+    trustCriticalDirectHumanRequiredPhases: [],
+});
+export const TASK_DIFF_REVIEW_COLLABORATION_POLICY_DIGEST = crypto
+    .createHash('sha256')
+    .update(JSON.stringify(TASK_DIFF_REVIEW_COLLABORATION_POLICY))
+    .digest('hex');
 export const COLLABORATION_GRANT_RETAINED_OBLIGATIONS = Object.freeze([
     'engine-search-floor',
     'typed-term-contributions',
@@ -273,7 +289,7 @@ export function issueCollaborationGrant(cwd, request, options = {}) {
         repositoryId: policy.repository.id,
         repositoryOrigin: policy.repository.origin,
         policyBlob,
-        collaborationPolicyDigest: COLLABORATION_GRANT_POLICY_DIGEST,
+        collaborationPolicyDigest: collaborationPolicyDigestForPhase(request.lifecyclePhase),
         changeId: request.changeId,
         taskId: request.taskId,
         baselineCommit,
@@ -315,16 +331,18 @@ export function issueCollaborationGrant(cwd, request, options = {}) {
     return { grantId, availableEnvelopePath, envelope };
 }
 /**
- * Sign the exact direct-human PlanReview content separately from the grant that
- * permits degraded continuation. This second signature proves who supplied the
- * review bytes; the continuation grant alone never creates that claim.
+ * Sign exact direct-human review content separately from the grant that permits
+ * degraded PlanReview or TaskDiffReview continuation. This second signature
+ * proves who supplied the review bytes; the continuation grant alone never
+ * creates that claim.
  */
 export function createDirectHumanReviewAttestation(cwd, request, options = {}) {
     const repository = discoverRepository(cwd);
     const grant = parseCollaborationGrantEnvelope(canonicalCollaborationGrantEnvelope(request.grantEnvelope));
     const payload = grant.payload;
     if (payload.degradedForm !== 'direct-human-review' ||
-        payload.lifecyclePhase !== 'plan-review' ||
+        (payload.lifecyclePhase !== 'plan-review' &&
+            payload.lifecyclePhase !== 'task-diff-review') ||
         payload.availableActor.kind !== 'direct-human') {
         throw workflowError('DIRECT_HUMAN_REVIEW_INVALID', 'This collaboration grant does not authorize direct-human review.', ExitCode.guard);
     }
@@ -440,7 +458,8 @@ export function validateCollaborationGrantPayload(payload, policy, options) {
     if (payload.repositoryId !== policy.repository.id ||
         payload.repositoryOrigin !== policy.repository.origin ||
         payload.policyBlob !== options.expectedPolicyBlob ||
-        payload.collaborationPolicyDigest !== COLLABORATION_GRANT_POLICY_DIGEST ||
+        payload.collaborationPolicyDigest !==
+            collaborationPolicyDigestForPhase(payload.lifecyclePhase) ||
         !policy.trustedSigners.some(({ identity }) => identity === payload.signer) ||
         payload.maxUses !== 1 ||
         policy.maxUses !== 1) {
@@ -530,10 +549,20 @@ function assertCollaborationPayloadShape(payload) {
         throw collaborationInvalid('Collaboration grant change or task binding is invalid.');
     }
     assertRolePhase(payload.lifecyclePhase, payload.rolePair);
-    if (!COLLABORATION_GRANT_POLICY.permittedForms[payload.lifecyclePhase].includes(payload.degradedForm)) {
+    if (!collaborationPermittedForms(payload.lifecyclePhase).includes(payload.degradedForm)) {
         throw collaborationInvalid('Collaboration policy does not permit this degraded form.');
     }
     assertAvailableActor(payload.availableActor, payload.degradedForm, payload);
+}
+export function collaborationPolicyDigestForPhase(phase) {
+    return phase === 'task-diff-review'
+        ? TASK_DIFF_REVIEW_COLLABORATION_POLICY_DIGEST
+        : COLLABORATION_GRANT_POLICY_DIGEST;
+}
+function collaborationPermittedForms(phase) {
+    return phase === 'task-diff-review'
+        ? TASK_DIFF_REVIEW_COLLABORATION_POLICY.permittedForms['task-diff-review']
+        : COLLABORATION_GRANT_POLICY.permittedForms[phase];
 }
 function assertRolePhase(phase, rolePair) {
     if (!isPlainRecord(rolePair) ||
@@ -545,7 +574,10 @@ function assertRolePhase(phase, rolePair) {
         rolePair.conflictingRole === 'blind-surveyor') ||
         (phase === 'plan-review' &&
             rolePair.authorRole === 'plan-author' &&
-            rolePair.conflictingRole === 'plan-reviewer');
+            rolePair.conflictingRole === 'plan-reviewer') ||
+        (phase === 'task-diff-review' &&
+            rolePair.authorRole === 'task-implementer' &&
+            rolePair.conflictingRole === 'task-diff-reviewer');
     if (!valid) {
         throw collaborationInvalid('Collaboration grant lifecycle phase and roles do not match.');
     }
@@ -570,7 +602,8 @@ function assertAvailableActor(actor, form, payload) {
         return;
     }
     if (form === 'direct-human-review' &&
-        payload.lifecyclePhase === 'plan-review' &&
+        (payload.lifecyclePhase === 'plan-review' ||
+            payload.lifecyclePhase === 'task-diff-review') &&
         hasExactDataKeys(actor, ['kind', 'identity', 'assurance']) &&
         actor.kind === 'direct-human' &&
         actor.identity === payload.signer &&

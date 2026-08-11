@@ -8,7 +8,7 @@ import { normalizeExactRepositoryPath } from './paths.js';
 import { isProviderId } from './provider-registry.js';
 import { isProviderRoleAssignment } from './provider-contracts.js';
 import { assertPlanningGeneration, } from './planning-generation.js';
-import { assertChallengesClosed, } from './review-challenge.js';
+import { assertAuthorizedReviewChallengeClosure, } from './review-challenge.js';
 const PLAN_REVIEW_TYPE = 'plan-review';
 const PLAN_REVIEW_SCHEMA = 'plan-review.v2';
 const PLAN_REVIEW_EVALUATOR = 'plan-review.v2';
@@ -1063,10 +1063,17 @@ export function assertAuthorizedPlanReviewChallengeClosure(input) {
             ? {}
             : { supersededBy: entry.supersededBy }),
     }));
-    assertChallengesClosed(challenges, closures, {
-        authorId: authority.authorId,
-        reviewerIds: [authority.signer],
-        domainOwnerIds: authority.role === 'domain-owner' ? [authority.signer] : [],
+    assertAuthorizedReviewChallengeClosure({
+        expectedSubjectDigest: expected.subjectDigest,
+        authoritySubjectDigest: authority.subjectDigest,
+        authenticatedCloserId: authority.signer,
+        challenges,
+        closures,
+        context: {
+            authorId: authority.authorId,
+            reviewerIds: [authority.signer],
+            domainOwnerIds: authority.role === 'domain-owner' ? [authority.signer] : [],
+        },
     });
     return record;
 }

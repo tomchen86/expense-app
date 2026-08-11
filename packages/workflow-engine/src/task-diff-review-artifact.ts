@@ -9,8 +9,12 @@ import {
   type ChallengeClosure,
 } from './review-challenge.ts';
 import {
+  deriveTaskDiffReviewCandidatePlan,
+  parseTaskDiffReviewScope,
   parseTaskDiffReviewSubject,
+  taskDiffReviewCandidateIdentityDigest,
   TASK_DIFF_REVIEW_COVERAGE,
+  type TaskDiffReviewScope,
   type TaskDiffReviewSubject,
 } from './task-diff-review.ts';
 
@@ -405,6 +409,7 @@ export type TaskDiffReviewRecord = Readonly<{
   recordDigest: string;
   subject: TaskDiffReviewSubject;
   subjectDigest: string;
+  reviewScope: TaskDiffReviewScope;
   assignment: TaskDiffReviewAssignment;
   verdict: TaskDiffReviewVerdict;
   coverage: typeof TASK_DIFF_REVIEW_COVERAGE;
@@ -422,6 +427,7 @@ export type TaskDiffReviewRecord = Readonly<{
 
 export type CreateTaskDiffReviewRecordInput = Readonly<{
   subject: TaskDiffReviewSubject;
+  reviewScope?: TaskDiffReviewScope;
   assignment: TaskDiffReviewAssignment;
   submission: TaskDiffReviewSubmission;
 }>;
@@ -495,6 +501,12 @@ export function createTaskDiffReviewRecord(
   input: CreateTaskDiffReviewRecordInput,
 ): TaskDiffReviewRecord {
   const subject = parseTaskDiffReviewSubject(input.subject);
+  const defaultPlan = deriveTaskDiffReviewCandidatePlan({ current: subject });
+  if (defaultPlan.action !== 'review') throw recordInvalid();
+  const reviewScope = assertReviewScopeCurrent(
+    subject,
+    input.reviewScope ?? defaultPlan.scope,
+  );
   const assignment = parseAssignment(input.assignment);
   const submission = normalizeSubmission(input.submission, assignment);
   const body = {
@@ -502,6 +514,7 @@ export function createTaskDiffReviewRecord(
     kind: 'task-diff-review-record.v1' as const,
     subject,
     subjectDigest: subject.subjectDigest,
+    reviewScope,
     assignment,
     verdict: submission.verdict,
     coverage: TASK_DIFF_REVIEW_COVERAGE,
@@ -528,6 +541,7 @@ export function parseTaskDiffReviewRecord(
       'recordDigest',
       'subject',
       'subjectDigest',
+      'reviewScope',
       'assignment',
       'verdict',
       'coverage',
@@ -543,6 +557,10 @@ export function parseTaskDiffReviewRecord(
     throw recordInvalid();
   }
   const subject = parseSubjectForRecord(value.subject);
+  const reviewScope = assertReviewScopeCurrent(
+    subject,
+    parseTaskDiffReviewScope(value.reviewScope),
+  );
   const assignment = parseAssignment(value.assignment);
   const verdict = parseVerdict(value.verdict);
   const coverage = parseCoverage(value.coverage);
@@ -558,6 +576,7 @@ export function parseTaskDiffReviewRecord(
     recordDigest: parseDigest(value.recordDigest),
     subject,
     subjectDigest: parseDigest(value.subjectDigest),
+    reviewScope,
     assignment,
     verdict,
     coverage,
@@ -944,8 +963,8 @@ export function assertTaskDiffReviewContentSatisfied(
   const subject = parseTaskDiffReviewSubject(candidate);
   const review = parseTaskDiffReviewRecord(reviewCandidate);
   if (
-    review.subjectDigest !== subject.subjectDigest ||
-    canonicalJson(review.subject) !== canonicalJson(subject)
+    taskDiffReviewCandidateIdentityDigest(review.subject) !==
+    taskDiffReviewCandidateIdentityDigest(subject)
   ) {
     throw workflowError(
       'TASK_DIFF_REVIEW_STALE',
@@ -1571,6 +1590,26 @@ function assertDispositionAuthority(
       throw dispositionInvalid();
     }
   }
+}
+
+function assertReviewScopeCurrent(
+  subject: TaskDiffReviewSubject,
+  candidate: TaskDiffReviewScope,
+): TaskDiffReviewScope {
+  const scope = parseTaskDiffReviewScope(candidate);
+  if (
+    scope.currentSubjectDigest !== subject.subjectDigest ||
+    scope.candidateIdentityDigest !==
+      taskDiffReviewCandidateIdentityDigest(subject) ||
+    (scope.predecessor === null &&
+      (scope.mode !== 'full' ||
+        canonicalJson(scope.reviewedPaths) !==
+          canonicalJson(subject.changedPaths))) ||
+    (scope.mode === 'delta' && scope.predecessor === null)
+  ) {
+    throw recordInvalid();
+  }
+  return scope;
 }
 
 function parseCoverage(value: unknown): typeof TASK_DIFF_REVIEW_COVERAGE {

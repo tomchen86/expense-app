@@ -125,7 +125,9 @@ import {
   type TaskDiffReviewRecord,
 } from './task-diff-review-artifact.ts';
 import {
+  parseTaskDiffReviewScope,
   parseTaskDiffReviewSubject,
+  type TaskDiffReviewScope,
   type TaskDiffReviewSubject,
 } from './task-diff-review.ts';
 import {
@@ -222,6 +224,7 @@ export type TaskDiffReviewManifest = {
   baseCommit: string;
   baseTree: string;
   subject: TaskDiffReviewSubject;
+  reviewScope: TaskDiffReviewScope;
   capabilityProfile: 'repository-read-only';
 };
 
@@ -2930,6 +2933,7 @@ function assertTaskDiffReviewManifest(value: unknown): TaskDiffReviewManifest {
       'baseCommit',
       'baseTree',
       'subject',
+      'reviewScope',
       'capabilityProfile',
     ]) ||
     value.schemaVersion !== 1 ||
@@ -2955,8 +2959,10 @@ function assertTaskDiffReviewManifest(value: unknown): TaskDiffReviewManifest {
     throw invocationInvalid();
   }
   let subject: TaskDiffReviewSubject;
+  let reviewScope: TaskDiffReviewScope;
   try {
     subject = parseTaskDiffReviewSubject(value.subject);
+    reviewScope = parseTaskDiffReviewScope(value.reviewScope);
   } catch {
     throw invocationInvalid();
   }
@@ -2965,7 +2971,8 @@ function assertTaskDiffReviewManifest(value: unknown): TaskDiffReviewManifest {
     subject.taskId !== value.taskId ||
     subject.repositoryId !== value.repositoryIdentity ||
     subject.baseCommit !== value.baseCommit ||
-    subject.baseTree !== value.baseTree
+    subject.baseTree !== value.baseTree ||
+    reviewScope.currentSubjectDigest !== subject.subjectDigest
   ) {
     throw invocationInvalid();
   }
@@ -2980,6 +2987,7 @@ function assertTaskDiffReviewManifest(value: unknown): TaskDiffReviewManifest {
     baseCommit: value.baseCommit,
     baseTree: value.baseTree,
     subject,
+    reviewScope,
     capabilityProfile: 'repository-read-only',
   };
   if (

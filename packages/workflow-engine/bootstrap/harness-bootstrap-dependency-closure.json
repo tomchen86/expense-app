@@ -8,7 +8,7 @@
     {
       "path": "bootstrap/recovery-runtime/bootstrap/built-in-engine-closure-pin.js",
       "mode": "100644",
-      "digest": "sha256:17e08939ede5de28b2976b55c701cdaa4a5779d089f5e5ec0a0adaebc69e9083"
+      "digest": "sha256:b9a53efbe8d4845bf0620027ad54cca404570b7cbbd19bee1b70de379ea0c04f"
     },
     {
       "path": "bootstrap/recovery-runtime/src/actor-identity.js",
@@ -68,7 +68,7 @@
     {
       "path": "bootstrap/recovery-runtime/src/collaboration-grant.js",
       "mode": "100644",
-      "digest": "sha256:1d973ffa84500b0784aea766bfa789531b1947837867a1649c7a38a3270a9501"
+      "digest": "sha256:1f238172e74f13912979d819aa53d07a35c0f25ec5fc8ec05d6339c25ed77d94"
     },
     {
       "path": "bootstrap/recovery-runtime/src/content-record-store.js",
@@ -123,7 +123,7 @@
     {
       "path": "bootstrap/recovery-runtime/src/evidence-object-store.js",
       "mode": "100644",
-      "digest": "sha256:3b88bef22fdbcdf39f93e206ab613cc18677f98ace0c5c932484ebf80ec3b123"
+      "digest": "sha256:430497b71ecabc52141b154304f1f723ee744bc465d31127364b2fcffc644047"
     },
     {
       "path": "bootstrap/recovery-runtime/src/evidence-reuse-path.js",
@@ -233,7 +233,7 @@
     {
       "path": "bootstrap/recovery-runtime/src/investigation-session-store.js",
       "mode": "100644",
-      "digest": "sha256:ff83041d36d60cc6a3afda7c95bc234190ea4ff49bb1d00920d7acd671451b5d"
+      "digest": "sha256:ed4ba8eed9ce75f2c162143bd016293376c17750fe45b209119d01387c2dc98d"
     },
     {
       "path": "bootstrap/recovery-runtime/src/investigation-terms.js",
@@ -283,7 +283,7 @@
     {
       "path": "bootstrap/recovery-runtime/src/plan-review.js",
       "mode": "100644",
-      "digest": "sha256:2cc113ea945276c02aacb889d227ab3f77eb241e0499a8148b14257002cf09e3"
+      "digest": "sha256:ac1d2e439de12ef6f0f9b0d28bb87af4e466310f4ff38e801b5d991b31b213e7"
     },
     {
       "path": "bootstrap/recovery-runtime/src/plan-target.js",
@@ -313,7 +313,7 @@
     {
       "path": "bootstrap/recovery-runtime/src/provider-contracts.js",
       "mode": "100644",
-      "digest": "sha256:dec7242d102f4ac331dfd2f7395c2e2cae4e19af7988e4dc787453c95e9ac8da"
+      "digest": "sha256:36d40755a0213dc1a2fa60b754c1e529b5cdad23b6b832b18c805372fca529cd"
     },
     {
       "path": "bootstrap/recovery-runtime/src/provider-execution-governance.js",
@@ -328,7 +328,7 @@
     {
       "path": "bootstrap/recovery-runtime/src/provider-invocation-store.js",
       "mode": "100644",
-      "digest": "sha256:cf8a531bdc1d5331baec429928769f4823f49490b86d9ed24e51a3c527324510"
+      "digest": "sha256:942354e26e7ef3aae7a114543310fd13161e0376f9fd11195b534c2436c77e34"
     },
     {
       "path": "bootstrap/recovery-runtime/src/provider-invocation-supersession-schema.js",
@@ -358,7 +358,7 @@
     {
       "path": "bootstrap/recovery-runtime/src/provider-runner.js",
       "mode": "100644",
-      "digest": "sha256:bbfd8b3836f2c63ab847ec746e6198377213619959c0da1742a47b0d42207377"
+      "digest": "sha256:2259da3b7bf8991c50c3361ee24465cf804b66aa5fd1ef24843fcaf2a1df3e84"
     },
     {
       "path": "bootstrap/recovery-runtime/src/recovery-authority.js",
@@ -378,12 +378,12 @@
     {
       "path": "bootstrap/recovery-runtime/src/review-challenge.js",
       "mode": "100644",
-      "digest": "sha256:6dd7b75ddb7fcdeefff037f19f8e8b0a0096b813e5e546abd264a555a92dd576"
+      "digest": "sha256:1f1db11d0a248128b745820a9097eac285e05038ea9db2bfc2f8481541bc3ada"
     },
     {
       "path": "bootstrap/recovery-runtime/src/role-scheduler.js",
       "mode": "100644",
-      "digest": "sha256:080cfc564154d0047f3a47d2cba717a9b7f7c17807a3cf95e25b10216ed54803"
+      "digest": "sha256:cacd48c80ba8d81591eaad1292896ac760ee08e6f3fc3f5f8cc9002115c338e3"
     },
     {
       "path": "bootstrap/recovery-runtime/src/session-store.js",
@@ -393,12 +393,12 @@
     {
       "path": "bootstrap/recovery-runtime/src/task-diff-review-artifact.js",
       "mode": "100644",
-      "digest": "sha256:a3d98e7deae70595de50d91b3c70c6f1d7e1a0e8f0e265da2eab2744643e5670"
+      "digest": "sha256:2f042206d0688524b6e19faabd135c1f46fbae5315eb3cbb656350e0f6e8302f"
     },
     {
       "path": "bootstrap/recovery-runtime/src/task-diff-review.js",
       "mode": "100644",
-      "digest": "sha256:3d4492c9f3fec40115af2edbb2eee0f84354d459244235fd59bbab5bcd3d07ca"
+      "digest": "sha256:337633dc363851b6e86d47b083346c11e6794586cfc0cb9f146b6b614183e2c1"
     },
     {
       "path": "bootstrap/recovery-runtime/src/task-mandate.js",

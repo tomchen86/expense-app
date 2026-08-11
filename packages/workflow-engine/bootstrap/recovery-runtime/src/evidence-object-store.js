@@ -8,7 +8,7 @@ import { assertStoredEvidenceNode, canonicalEvidenceNodeEnvelope, } from './evid
 import { assertInvestigationApplicability, INVESTIGATION_APPLICABILITY_POLICY_DIGEST, } from './investigation-applicability.js';
 import { assertPlanReviewSubject, readPlanReviewTargetSnapshotNode, } from './plan-review.js';
 import { assertChangeId, assertInvestigationId, } from './paths.js';
-import { PROPOSE_EXEMPTION_SESSION_STORE_POLICY_DIGEST, PROPOSE_POLICY_DIGEST, recreateProviderInvocationRequest, } from './provider-contracts.js';
+import { PROPOSE_EXEMPTION_SESSION_STORE_POLICY_DIGEST, PROPOSE_POLICY_DIGEST, isProviderRoleAssignment, recreateProviderInvocationRequest, } from './provider-contracts.js';
 import { parseTaskDiffReviewSubject, TASK_DIFF_REVIEW_POLICY_DIGEST, } from './task-diff-review.js';
 const DIGEST_PATTERN = /^[0-9a-f]{64}$/;
 const REF_NAME_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*(?:\/[a-z0-9]+(?:-[a-z0-9]+)*)*$/;
@@ -1236,23 +1236,25 @@ function isTaskDiffReviewImplementationActor(value) {
         value.engineSpawned === false);
 }
 function isTaskDiffReviewAssignmentForActor(value, actor, subjectDigest) {
-    return (isPlainRecord(value) &&
-        hasExactKeys(value, [
-            'role',
-            'providerId',
-            'sessionId',
-            'targetDigest',
-            'requiredIndependence',
-            'achievedIndependence',
-        ]) &&
-        value.role === 'task-diff-reviewer' &&
-        (value.providerId === 'codex' || value.providerId === 'claude') &&
-        value.providerId !== actor.providerId &&
-        typeof value.sessionId === 'string' &&
-        value.sessionId.length > 0 &&
-        value.targetDigest === subjectDigest &&
-        value.requiredIndependence === 'provider-independent' &&
-        value.achievedIndependence === 'provider-independent');
+    if (!isProviderRoleAssignment(value) ||
+        value.role !== 'task-diff-reviewer' ||
+        value.targetDigest !== subjectDigest) {
+        return false;
+    }
+    if (!('grantId' in value)) {
+        return (value.providerId !== actor.providerId &&
+            value.achievedIndependence === 'provider-independent');
+    }
+    return (value.degradedForm === 'same-provider-fresh-session' &&
+        value.providerId === actor.providerId &&
+        value.achievedIndependence === 'session-independent' &&
+        value.author.providerId === actor.providerId &&
+        value.author.sessionId === actor.sessionId &&
+        value.participant.providerId === value.providerId &&
+        value.participant.sessionId === value.sessionId &&
+        value.participant.engineSpawned === true &&
+        value.participant.principalId ===
+            `collaboration-grant:${value.grantId}:task-diff-reviewer`);
 }
 function isTaskDiffReviewMandateBinding(value, changeId) {
     return (value === null ||
