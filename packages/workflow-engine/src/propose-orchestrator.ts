@@ -47,6 +47,13 @@ import {
   createEvidenceNode,
   type EvidenceNode,
 } from './evidence-node.ts';
+import {
+  createInvestigationInventoryCurrentnessNode,
+  projectConvergedEvidenceGraph,
+  SEALED_INVESTIGATION_REUSE_EVALUATOR,
+  SEALED_INVESTIGATION_REUSE_OUTPUT_SCHEMA,
+  SEALED_INVESTIGATION_REUSE_SCHEMA,
+} from './evidence-reuse-path.ts';
 import { ExitCode, WorkflowError, workflowError } from './errors.ts';
 import {
   createReplacementAttempt,
@@ -7239,18 +7246,21 @@ function preparePlanningScaffold(
           whyNodes: rebuilt.whyNodes,
         })
       : null;
-  const sealNode = createInvestigationSealNode(
+  if (rebuilt.inventoryNode === null) {
+    throw workflowError(
+      'INVESTIGATION_NOT_SEALED',
+      'Investigation inventory evidence is unavailable.',
+      ExitCode.guard,
+    );
+  }
+  const inventoryCurrentnessNode = createInvestigationInventoryCurrentnessNode(
+    rebuilt.inventoryNode,
+  );
+  const freshSealNode = createInvestigationSealNode(
     rebuilt,
     implementationReconciliationNode,
   );
-  const applicability = createInvestigationApplicability({
-    kind: 'sealed-investigation',
-    baseline: rebuilt.session.baseline,
-    intentDigest: rebuilt.session.intentDigest,
-    sealNodeId: sealNode.nodeId,
-    sealResultDigest: sealNode.resultDigest,
-  });
-  const nodes = uniqueNodes([
+  const freshNodes = uniqueNodes([
     rebuilt.authorizationNode,
     ...(rebuilt.providerResultNode === null
       ? []
@@ -7265,6 +7275,7 @@ function preparePlanningScaffold(
       ? []
       : [rebuilt.assuranceAssessmentNode]),
     rebuilt.inventoryNode,
+    inventoryCurrentnessNode,
     ...rebuilt.scanNodes,
     ...rebuilt.hitNodes,
     ...rebuilt.groupNodes,
@@ -7277,25 +7288,72 @@ function preparePlanningScaffold(
     ...(implementationReconciliationNode === null
       ? []
       : [implementationReconciliationNode]),
-    sealNode,
+    freshSealNode,
   ]);
+  const freshCurrentRefs = {
+    coverage: rebuilt.coverageNode.nodeId,
+    ...(implementationReconciliationNode === null
+      ? {}
+      : {
+          implementationReconciliation: implementationReconciliationNode.nodeId,
+        }),
+    sealedInvestigation: freshSealNode.nodeId,
+  };
+  let evidence = {
+    nodes: freshNodes,
+    currentRefs: freshCurrentRefs as Record<string, string>,
+  };
+  if (managedPriorGeneration) {
+    const priorBytes = priorArtifactAtBaseline('investigation.json');
+    if (priorBytes !== undefined) {
+      let prior: ReturnType<typeof parseInvestigationArtifact> | null = null;
+      try {
+        prior = parseInvestigationArtifact(
+          JSON.parse(priorBytes),
+          status.changeId,
+        );
+      } catch {
+        // Historical v2 metadata may precede the evidence-artifact contract.
+        // Such bytes remain replaceable, but never become reuse authority.
+      }
+      if (prior !== null) {
+        evidence = projectConvergedEvidenceGraph({
+          previousNodes: prior.nodes,
+          previousCurrentRefs: prior.currentRefs,
+          nextNodes: freshNodes,
+          nextCurrentRefs: freshCurrentRefs,
+        });
+      }
+    }
+  }
+  const sealNodes = evidence.nodes.filter(
+    ({ nodeId, type }) =>
+      nodeId === evidence.currentRefs.sealedInvestigation &&
+      type === 'sealed-investigation',
+  );
+  if (sealNodes.length !== 1) {
+    throw workflowError(
+      'INVESTIGATION_NOT_SEALED',
+      'The projected current evidence path has no unique seal.',
+      ExitCode.guard,
+    );
+  }
+  const sealNode = sealNodes[0]!;
+  const applicability = createInvestigationApplicability({
+    kind: 'sealed-investigation',
+    baseline: rebuilt.session.baseline,
+    intentDigest: rebuilt.session.intentDigest,
+    sealNodeId: sealNode.nodeId,
+    sealResultDigest: sealNode.resultDigest,
+  });
   const investigation = parseInvestigationArtifact(
     {
       schemaVersion: 1,
       kind: 'investigation-artifact',
       changeId: status.changeId,
       legacyMigration: migration !== null,
-      nodes,
-      currentRefs: {
-        coverage: rebuilt.coverageNode.nodeId,
-        ...(implementationReconciliationNode === null
-          ? {}
-          : {
-              implementationReconciliation:
-                implementationReconciliationNode.nodeId,
-            }),
-        sealedInvestigation: sealNode.nodeId,
-      },
+      nodes: evidence.nodes,
+      currentRefs: evidence.currentRefs,
       applicability,
       ...(() => {
         const roleResults = [
@@ -7369,10 +7427,22 @@ function createInvestigationSealNode(
       ExitCode.guard,
     );
   }
+  if (rebuilt.inventoryNode === null) {
+    throw workflowError(
+      'INVESTIGATION_NOT_SEALED',
+      'Investigation inventory evidence is unavailable.',
+      ExitCode.guard,
+    );
+  }
+  const inventoryCurrentnessNode = createInvestigationInventoryCurrentnessNode(
+    rebuilt.inventoryNode,
+  );
   const provenance: Record<string, string> = { coverage: coverage.nodeId };
   const semantic: Record<string, string> = {
     coverage: coverage.resultDigest,
   };
+  provenance['inventory-currentness'] = inventoryCurrentnessNode.nodeId;
+  semantic['inventory-currentness'] = inventoryCurrentnessNode.resultDigest;
   provenance.authorization = rebuilt.authorizationNode.nodeId;
   semantic.authorization = rebuilt.authorizationNode.resultDigest;
   if (implementationReconciliationNode !== null) {
@@ -7432,8 +7502,8 @@ function createInvestigationSealNode(
     });
   return createEvidenceNode({
     type: 'sealed-investigation',
-    nodeSchema: 'investigation.seal.v1',
-    evaluator: 'workflow-propose.v1',
+    nodeSchema: SEALED_INVESTIGATION_REUSE_SCHEMA,
+    evaluator: SEALED_INVESTIGATION_REUSE_EVALUATOR,
     policyDigest: PROPOSE_POLICY_DIGEST,
     exactInputDigests: {
       intent: rebuilt.session.intentDigest,
@@ -7455,7 +7525,7 @@ function createInvestigationSealNode(
     },
     semanticParentResultDigests: semantic,
     provenanceParentNodeIds: provenance,
-    outputSchema: 'investigation.seal-output.v1',
+    outputSchema: SEALED_INVESTIGATION_REUSE_OUTPUT_SCHEMA,
     output: {
       sealed: true,
       baseline: rebuilt.session.baseline,

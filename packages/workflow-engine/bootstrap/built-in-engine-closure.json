@@ -271,7 +271,7 @@
     {
       "path": "src/contracts.ts",
       "mode": "100644",
-      "digest": "sha256:00ef376777ab111966afa75845f22f0b81ce672092d65055dfe7da28ead20ffb"
+      "digest": "sha256:75df3ebf1ecdc9858de2658dda3cf260c2e3bc4201675f7a082a681c8ada3664"
     },
     {
       "path": "src/control-plane-promotion-producer.ts",
@@ -342,6 +342,11 @@
       "path": "src/evidence-object-store.ts",
       "mode": "100644",
       "digest": "sha256:6c823643a760aa49c283dd79ae84577a69ae1eb4a5a6649cd24006d44e324af7"
+    },
+    {
+      "path": "src/evidence-reuse-path.ts",
+      "mode": "100644",
+      "digest": "sha256:b8b4b45557c47a9b75b275dc7aa72d936e6ca731770a36ca6eb0e5ad53c29622"
     },
     {
       "path": "src/execution-core.ts",
@@ -786,7 +791,7 @@
     {
       "path": "src/planning-assurance-validator.ts",
       "mode": "100644",
-      "digest": "sha256:2f8dc98abe9a81229727a0ee08f5ea5849d402fb1a2853404c74d314e69b784b"
+      "digest": "sha256:1c781c7007f5e919bc6fb3f6d817cc13125ccb4fa74ac2c24481a1dfd4d47355"
     },
     {
       "path": "src/planning-contract.ts",
@@ -861,7 +866,7 @@
     {
       "path": "src/propose-orchestrator.ts",
       "mode": "100644",
-      "digest": "sha256:6912a76fa760b0da2abd1220e7a58c454247008b9fcc03352622dc6f2a601f6f"
+      "digest": "sha256:fc414ebcf80ffa185de9e0f74a96d8af2b18f38461ee985c963370139ea8f47d"
     },
     {
       "path": "src/protected-capabilities.ts",

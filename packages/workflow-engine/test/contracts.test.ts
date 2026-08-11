@@ -20,6 +20,10 @@ import {
   createConvergenceRecord,
   createDescendantReuseProof,
 } from '../src/evidence-convergence.ts';
+import {
+  currentParentEvidenceRef,
+  descendantReuseProofEvidenceRef,
+} from '../src/evidence-reuse-path.ts';
 import { createEvidenceNode } from '../src/evidence-node.ts';
 import { WorkflowError } from '../src/errors.ts';
 import {
@@ -41,6 +45,8 @@ import './semantic-manifest-reuse.integration.test.ts';
 import './scan-saturation-exit.integration.test.ts';
 import './propose-scan-saturation-acceptance.integration.test.ts';
 import './semantic-reconciliation.contract.test.ts';
+import './evidence-reuse-path.contract.test.ts';
+import './evidence-reuse-production.integration.test.ts';
 import './implementation-reconciliation-finalization.integration.test.ts';
 import './floor-overflow-pruning.contract.test.ts';
 import './class-sample-audit.contract.test.ts';
@@ -1142,7 +1148,7 @@ test('engine artifact validators reject noncanonical, forged, over-keyed, and sc
     const convergence = createConvergenceRecord({
       oldParent,
       newParent,
-      validatorVersion: 'fixture-convergence.v1',
+      validatorVersion: 'evidence-currentness.v1',
       runtimeMetadata: {},
     });
     const reuseProof = createDescendantReuseProof({
@@ -1151,7 +1157,7 @@ test('engine artifact validators reject noncanonical, forged, over-keyed, and sc
       oldParent,
       newParent,
       convergenceRecord: convergence,
-      validatorVersion: 'fixture-convergence.v1',
+      validatorVersion: 'evidence-currentness.v1',
       runtimeMetadata: {},
     });
     const artifactWithReuse = {
@@ -1159,7 +1165,13 @@ test('engine artifact validators reject noncanonical, forged, over-keyed, and sc
       nodes: [oldParent, newParent, descendant, convergence, reuseProof].sort(
         (left, right) => left.nodeId.localeCompare(right.nodeId),
       ),
-      currentRefs: { sealedInvestigation: descendant.nodeId },
+      currentRefs: {
+        sealedInvestigation: descendant.nodeId,
+        [currentParentEvidenceRef(descendant.nodeId, 'source')]:
+          newParent.nodeId,
+        [descendantReuseProofEvidenceRef(descendant.nodeId, 'source')]:
+          reuseProof.nodeId,
+      },
     };
     assert.deepEqual(
       parseInvestigationArtifact(artifactWithReuse, 'demo-change'),
