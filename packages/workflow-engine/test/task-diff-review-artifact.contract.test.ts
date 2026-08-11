@@ -227,6 +227,88 @@ test('advisory dispositions cannot close challenges; Final Assurance uses the sh
   );
 });
 
+test('Final Assurance records the exact collaboration-grant degradation without weakening challenge closure', () => {
+  const ordinary = reviewInput({ challenge: true });
+  const grantUseDigest = '9'.repeat(64);
+  const input: CreateTaskDiffReviewRecordInput = {
+    ...ordinary,
+    assignment: {
+      ...ordinary.assignment,
+      reviewerPrincipalId: 'collaboration-grant:reviewer',
+      reviewerProviderId: ordinary.assignment.implementerProviderId,
+      reviewerSessionId: 'granted-review-session-2',
+      achievedIndependence: 'session-independent',
+      degradedForm: 'same-provider-fresh-session',
+      grantUseDigest,
+    },
+  };
+  const review = createTaskDiffReviewRecord(input);
+  const challenge = review.challenges[0]!;
+  const response = createTaskDiffReviewChallengeResponse({
+    review,
+    responses: [
+      {
+        challengeId: challenge.challengeId,
+        rationale: 'The exact candidate evidence answers the challenge.',
+        evidence: [challenge.evidence[0]!],
+      },
+    ],
+  });
+  const submission = {
+    schemaVersion: 1 as const,
+    reviewRecordDigest: review.recordDigest,
+    responseDigest: response.responseDigest,
+    proposedDispositions: [
+      {
+        challengeId: challenge.challengeId,
+        decision: 'rebutted' as const,
+        rationale: 'The exact candidate evidence rebuts the challenge.',
+        supersededBy: null,
+      },
+    ],
+  };
+  const reviewerAuthority = {
+    kind: 'engine-attributed-provider-reviewer' as const,
+    principalId: input.assignment.reviewerPrincipalId,
+    providerId: input.assignment.reviewerProviderId,
+    policyDigest: input.subject.reviewPolicyDigest,
+  };
+  assert.throws(
+    () =>
+      createTaskDiffFinalAssuranceRecord({
+        subject: input.subject,
+        review,
+        response,
+        submission,
+        reviewerAuthority,
+      }),
+    hasCode('TASK_DIFF_FINAL_ASSURANCE_INVALID'),
+  );
+  const assurance = createTaskDiffFinalAssuranceRecord({
+    subject: input.subject,
+    review,
+    response,
+    submission,
+    reviewerAuthority,
+    exceptions: [
+      {
+        kind: 'collaboration-grant-degradation',
+        grantUseDigest,
+        degradedForm: 'same-provider-fresh-session',
+      },
+    ],
+  });
+  assert.deepEqual(
+    assertTaskDiffFinalAssuranceCurrent({
+      subject: input.subject,
+      review,
+      response,
+      assurance,
+    }),
+    assurance,
+  );
+});
+
 test('TaskDiffReview challenge responses are content-addressed and cover the exact current challenge set', () => {
   const record = createTaskDiffReviewRecord(reviewInput({ challenge: true }));
   const challenge = record.challenges[0]!;
@@ -356,6 +438,8 @@ function reviewInput(
       reviewerProviderId: 'provider-a',
       reviewerSessionId: 'review-session-2',
       achievedIndependence: 'provider-independent',
+      degradedForm: null,
+      grantUseDigest: null,
     },
     submission: {
       schemaVersion: 1,

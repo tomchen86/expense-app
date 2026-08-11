@@ -29,6 +29,7 @@ import {
 import {
   PROPOSE_EXEMPTION_SESSION_STORE_POLICY_DIGEST,
   PROPOSE_POLICY_DIGEST,
+  isProviderRoleAssignment,
   recreateProviderInvocationRequest,
 } from './provider-contracts.ts';
 import {
@@ -1753,24 +1754,30 @@ function isTaskDiffReviewAssignmentForActor(
   actor: Record<string, unknown>,
   subjectDigest: string,
 ): value is Record<string, unknown> {
+  if (
+    !isProviderRoleAssignment(value) ||
+    value.role !== 'task-diff-reviewer' ||
+    value.targetDigest !== subjectDigest
+  ) {
+    return false;
+  }
+  if (!('grantId' in value)) {
+    return (
+      value.providerId !== actor.providerId &&
+      value.achievedIndependence === 'provider-independent'
+    );
+  }
   return (
-    isPlainRecord(value) &&
-    hasExactKeys(value, [
-      'role',
-      'providerId',
-      'sessionId',
-      'targetDigest',
-      'requiredIndependence',
-      'achievedIndependence',
-    ]) &&
-    value.role === 'task-diff-reviewer' &&
-    (value.providerId === 'codex' || value.providerId === 'claude') &&
-    value.providerId !== actor.providerId &&
-    typeof value.sessionId === 'string' &&
-    value.sessionId.length > 0 &&
-    value.targetDigest === subjectDigest &&
-    value.requiredIndependence === 'provider-independent' &&
-    value.achievedIndependence === 'provider-independent'
+    value.degradedForm === 'same-provider-fresh-session' &&
+    value.providerId === actor.providerId &&
+    value.achievedIndependence === 'session-independent' &&
+    value.author.providerId === actor.providerId &&
+    value.author.sessionId === actor.sessionId &&
+    value.participant.providerId === value.providerId &&
+    value.participant.sessionId === value.sessionId &&
+    value.participant.engineSpawned === true &&
+    value.participant.principalId ===
+      `collaboration-grant:${value.grantId}:task-diff-reviewer`
   );
 }
 

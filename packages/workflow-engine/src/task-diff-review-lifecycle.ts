@@ -3,7 +3,20 @@ import crypto from 'node:crypto';
 import { resolveActorIdentity } from './actor-identity.ts';
 import { parseAiAdapterPolicyDocument } from './ai-adapter-policy.ts';
 import { canonicalJson } from './canonical-json.ts';
-import type { CollaborationGrantRequest } from './collaboration-grant.ts';
+import {
+  bindingFromPayload,
+  canonicalCollaborationGrantEnvelope,
+  collaborationPolicyDigestForPhase,
+  parseCollaborationGrantEnvelope,
+  type CollaborationGrantExpectedBinding,
+  type CollaborationGrantRequest,
+} from './collaboration-grant.ts';
+import {
+  consumeCollaborationGrantUnderLifecycleLock,
+  readExactConsumedCollaborationGrantUse,
+  reserveCollaborationGrantUnderLifecycleLock,
+  type CollaborationGrantUseProjection,
+} from './collaboration-grant-store.ts';
 import { digestRequiredCheckDefinitions } from './contract-digests.ts';
 import {
   readEvidenceNode,
@@ -19,6 +32,10 @@ import {
   loadInvestigationRuntimeContext,
 } from './lifecycle-context.ts';
 import { parseMaintainerPolicy } from './maintainer-policy.ts';
+import {
+  createInteractiveSshSigner,
+  type MaintainerSignerProvider,
+} from './maintainer-signer.ts';
 import {
   parsePathRoleRegistry,
   resolvePathRole,
@@ -42,9 +59,13 @@ import {
   readSessionReport,
 } from './report-validation.ts';
 import {
+  admitRoleResult,
+  authorizeGrantedOrdinaryRole,
   scheduleOrdinaryRole,
+  type AdmittedRoleResult,
+  type GrantedSameProviderRoleAssignment,
+  type ProviderRoleAssignment,
   type RecordedRoleParticipant,
-  type RoleAssignment,
   type RoleParticipant,
 } from './role-scheduler.ts';
 import {
@@ -98,6 +119,18 @@ import { inspectSession, type SessionInspection } from './verification.ts';
 export type BeginTaskDiffReviewOptions = Readonly<{
   explicitActor?: string;
   environment?: Record<string, string | undefined>;
+  collaborationGrant?: Readonly<{
+    grantId: string;
+    now?: Date;
+    verifier?: MaintainerSignerProvider;
+  }>;
+}>;
+
+export type ReconcileTaskDiffReviewOptions = Readonly<{
+  collaborationGrantValidation?: Readonly<{
+    now?: Date;
+    verifier?: MaintainerSignerProvider;
+  }>;
 }>;
 
 export type ReconcileTaskDiffReviewContinuationOptions = Readonly<{
@@ -130,7 +163,7 @@ export type TaskDiffReviewLifecycleStatus =
       sessionId: string;
       subject: TaskDiffReviewSubject;
       implementationActor: RecordedRoleParticipant;
-      assignment: RoleAssignment;
+      assignment: ProviderRoleAssignment;
       ownerInvestigationId: string;
       invocationId: string;
     }>
@@ -139,7 +172,7 @@ export type TaskDiffReviewLifecycleStatus =
       sessionId: string;
       subject: TaskDiffReviewSubject;
       implementationActor: RecordedRoleParticipant;
-      assignment: RoleAssignment;
+      assignment: ProviderRoleAssignment;
       ownerInvestigationId: string;
       invocationId: string;
       failure: NonNullable<
@@ -155,7 +188,7 @@ export type TaskDiffReviewLifecycleStatus =
       sessionId: string;
       subject: TaskDiffReviewSubject;
       implementationActor: RecordedRoleParticipant;
-      assignment: RoleAssignment;
+      assignment: ProviderRoleAssignment;
       ownerInvestigationId: string;
       invocationId: string;
       review: TaskDiffReviewRecord;
@@ -191,7 +224,7 @@ export type TaskDiffReviewContinuationLifecycleStatus = Readonly<{
   sessionId: string;
   subject: TaskDiffReviewSubject;
   implementationActor: RecordedRoleParticipant;
-  assignment: RoleAssignment;
+  assignment: ProviderRoleAssignment;
   ownerInvestigationId: string;
   invocationId: string;
   review: TaskDiffReviewRecord;
@@ -263,6 +296,8 @@ export function beginTaskDiffReview(
             runtime,
             subject,
             implementationActor,
+            options.collaborationGrant,
+            assertOwned,
           );
         if (created.kind === 'task-diff-review-collaboration-grant-required') {
           return created.status;
@@ -517,6 +552,7 @@ export function reconcileTaskDiffReviewContinuation(
 export function reconcileTaskDiffReview(
   cwd: string,
   requestedSessionId: string,
+  options: ReconcileTaskDiffReviewOptions = {},
 ): TaskDiffReviewLifecycleStatus {
   const initialContext = loadActiveSessionContext(cwd, requestedSessionId);
   return withRepositoryLifecycleOperation(
@@ -573,20 +609,6 @@ export function reconcileTaskDiffReview(
             ExitCode.verification,
           );
         }
-        const review = createTaskDiffReviewRecord({
-          subject,
-          assignment: {
-            implementerPrincipalId:
-              reservation.implementationActor.principalId!,
-            implementerProviderId: reservation.implementationActor.providerId!,
-            implementationSessionId: reservation.sessionId,
-            reviewerPrincipalId: `provider:${reservation.request.providerId}`,
-            reviewerProviderId: reservation.request.providerId,
-            reviewerSessionId: reservation.request.roleAssignment.sessionId,
-            achievedIndependence: 'provider-independent',
-          },
-          submission: invocation.result.output as never,
-        });
         const authorization = readEvidenceNode(
           runtime,
           reservation.authorizationNodeId,
@@ -595,9 +617,9 @@ export function reconcileTaskDiffReview(
           runtime,
           reservation.reservationNodeId,
         );
-        const resultNode = createEvidenceNode({
-          type: 'task-diff-review-provider-result',
-          nodeSchema: 'workflow.task-diff-review-provider-result.v1',
+        const observationNode = createEvidenceNode({
+          type: 'task-diff-review-provider-observation',
+          nodeSchema: 'workflow.task-diff-review-provider-observation.v1',
           evaluator: 'workflow-task-diff-review.v1',
           policyDigest: TASK_DIFF_REVIEW_POLICY_DIGEST,
           exactInputDigests: {
@@ -616,18 +638,89 @@ export function reconcileTaskDiffReview(
             authorization: authorization.nodeId,
             reservation: requestReservation.nodeId,
           },
-          outputSchema: 'workflow.task-diff-review-provider-result-output.v1',
+          outputSchema:
+            'workflow.task-diff-review-provider-observation-output.v1',
           output: {
             ownerInvestigationId: reservation.ownerInvestigationId,
             sessionId: reservation.sessionId,
             invocationId: invocation.invocationId,
             requestDigest: reservation.request.requestDigest,
             outputDigest: invocation.result.outputDigest,
-            review,
+            submission: invocation.result.output,
           },
           runtimeMetadata: {
             runtimeObservation: invocation.result.runtimeObservation,
           },
+        });
+        writeEvidenceNode(runtime, observationNode);
+        const roleResult = admitTaskDiffReviewProviderResult({
+          context,
+          reservation,
+          invocation: { ...invocation, result: invocation.result },
+          observationNode,
+          validation: options.collaborationGrantValidation,
+          assertOwned,
+        });
+        if (
+          roleResult.assignment.providerId === null ||
+          roleResult.assignment.sessionId === null ||
+          (roleResult.achievedIndependence !== 'provider-independent' &&
+            roleResult.achievedIndependence !== 'session-independent')
+        ) {
+          throw reviewNotSatisfied();
+        }
+        const grantUseDigest =
+          roleResult.grantUse === null
+            ? null
+            : sha256(canonicalJson(roleResult.grantUse));
+        const degradedForm = roleResult.grantUse?.degradedForm ?? null;
+        if (
+          degradedForm !== null &&
+          degradedForm !== 'same-provider-fresh-session'
+        ) {
+          throw reviewNotSatisfied();
+        }
+        const review = createTaskDiffReviewRecord({
+          subject,
+          assignment: {
+            implementerPrincipalId:
+              reservation.implementationActor.principalId!,
+            implementerProviderId: reservation.implementationActor.providerId!,
+            implementationSessionId: reservation.sessionId,
+            reviewerPrincipalId:
+              roleResult.participant.principalId ??
+              `provider:${roleResult.assignment.providerId}`,
+            reviewerProviderId: roleResult.assignment.providerId,
+            reviewerSessionId: roleResult.assignment.sessionId,
+            achievedIndependence: roleResult.achievedIndependence,
+            degradedForm,
+            grantUseDigest,
+          },
+          submission: invocation.result.output as never,
+        });
+        const resultNode = createEvidenceNode({
+          type: 'task-diff-review-provider-result',
+          nodeSchema: 'workflow.task-diff-review-provider-result.v1',
+          evaluator: 'workflow-task-diff-review.v1',
+          policyDigest: TASK_DIFF_REVIEW_POLICY_DIGEST,
+          exactInputDigests: {
+            admission: roleResult.resultDigest,
+            observation: observationNode.resultDigest,
+            subject: subject.subjectDigest,
+          },
+          semanticParentResultDigests: {
+            observation: observationNode.resultDigest,
+          },
+          provenanceParentNodeIds: { observation: observationNode.nodeId },
+          outputSchema: 'workflow.task-diff-review-provider-result-output.v1',
+          output: {
+            ownerInvestigationId: reservation.ownerInvestigationId,
+            sessionId: reservation.sessionId,
+            invocationId: invocation.invocationId,
+            roleResult,
+            review,
+          },
+          runtimeMetadata: {},
         });
         writeEvidenceNode(runtime, resultNode);
         createTaskDiffReviewResultBinding(runtime, {
@@ -640,8 +733,11 @@ export function reconcileTaskDiffReview(
           runtimeObservationDigest: sha256(
             canonicalJson(invocation.result.runtimeObservation),
           ),
+          providerObservationNodeId: observationNode.nodeId,
+          providerObservationDigest: observationNode.resultDigest,
           providerResultNodeId: resultNode.nodeId,
           providerResultDigest: resultNode.resultDigest,
+          roleResult,
           review,
           createdAt: invocation.updatedAt,
         });
@@ -1042,6 +1138,8 @@ function createNewTaskDiffReviewReservation(
   runtime: ReturnType<typeof loadInvestigationRuntimeContext>['runtime'],
   subject: TaskDiffReviewSubject,
   implementationActor: RecordedRoleParticipant,
+  collaborationGrant: BeginTaskDiffReviewOptions['collaborationGrant'],
+  assertOwned: () => void,
 ):
   | TaskDiffReviewReservationRecord
   | Readonly<{
@@ -1089,6 +1187,7 @@ function createNewTaskDiffReviewReservation(
       available: policy.policy.providers[providerId].enabled,
     })),
   });
+  let assignment: ProviderRoleAssignment;
   if (scheduled.outcome !== 'assigned') {
     const callableProviderIds = (['codex', 'claude'] as const).filter(
       (providerId) => policy.policy.providers[providerId].enabled,
@@ -1099,30 +1198,74 @@ function createNewTaskDiffReviewReservation(
       implementationActor,
       callableProviderIds,
     });
-    return Object.freeze({
-      kind: 'task-diff-review-collaboration-grant-required' as const,
-      status: Object.freeze({
-        state: 'collaboration-grant-required' as const,
-        sessionId: context.session.sessionId,
-        subject,
-        implementationActor,
-        inputSchema: Object.freeze({
-          schemaVersion: 1 as const,
-          kind: 'collaboration-grant-selection' as const,
-          lifecyclePhase: 'task-diff-review' as const,
-          conflictingRole: 'task-diff-reviewer' as const,
-          grantRequest,
-          allowedDegradedForms: Object.freeze(
-            grantRequest === null
-              ? (['caller-supplied', 'direct-human-review'] as const)
-              : (['same-provider-fresh-session'] as const),
-          ),
-          resumeOption: '--grant <grant-id>' as const,
+    if (collaborationGrant === undefined) {
+      return Object.freeze({
+        kind: 'task-diff-review-collaboration-grant-required' as const,
+        status: Object.freeze({
+          state: 'collaboration-grant-required' as const,
+          sessionId: context.session.sessionId,
+          subject,
+          implementationActor,
+          inputSchema: Object.freeze({
+            schemaVersion: 1 as const,
+            kind: 'collaboration-grant-selection' as const,
+            lifecyclePhase: 'task-diff-review' as const,
+            conflictingRole: 'task-diff-reviewer' as const,
+            grantRequest,
+            allowedDegradedForms: Object.freeze(
+              grantRequest === null
+                ? (['caller-supplied', 'direct-human-review'] as const)
+                : (['same-provider-fresh-session'] as const),
+            ),
+            resumeOption: '--grant <grant-id>' as const,
+          }),
         }),
-      }),
-    });
+      });
+    }
+    if (grantRequest === null) {
+      throw workflowError(
+        'COLLABORATION_GRANT_FORM_REQUIRED',
+        'TaskDiffReview requires an explicitly typed caller-supplied or direct-human review grant when no provider is callable.',
+        ExitCode.guard,
+      );
+    }
+    const expectedBinding = deriveTaskDiffCollaborationGrantBinding(
+      context.git.repositoryRoot,
+      grantRequest,
+    );
+    const transitionDigest = collaborationTransitionDigest(expectedBinding);
+    const grantReservation = reserveCollaborationGrantUnderLifecycleLock(
+      context.git.repositoryRoot,
+      collaborationGrant.grantId,
+      {
+        transitionDigest,
+        expected: expectedBinding,
+        ...(collaborationGrant.now === undefined
+          ? {}
+          : { now: collaborationGrant.now }),
+        ...(collaborationGrant.verifier === undefined
+          ? {}
+          : { verifier: collaborationGrant.verifier }),
+      },
+      assertOwned,
+    );
+    assignment = authorizeGrantedOrdinaryRole({
+      role: 'task-diff-reviewer',
+      author,
+      targetDigest: subject.subjectDigest,
+      reservation: grantReservation,
+      actualParticipant: {
+        providerId: implementationActor.providerId ?? undefined,
+        sessionId: providerSessionId,
+        principalId: `collaboration-grant:${grantReservation.grantId}:task-diff-reviewer`,
+        identityAssurance: implementationActor.identityAssurance,
+        engineSpawned: true,
+      },
+      callableProviderIds,
+    }) as GrantedSameProviderRoleAssignment;
+  } else {
+    assignment = scheduled.assignment;
   }
-  const assignment = scheduled.assignment;
   const ownerInvestigationId = `investigation-task-diff-${seed}`;
   const mandateBinding = (context.session.mandateBinding ??
     null) as TaskMandateBinding | null;
@@ -1284,6 +1427,163 @@ function taskDiffReviewGrantRequest(input: {
     ttlMinutes: 30,
     maxUses: 1,
   };
+}
+
+function deriveTaskDiffCollaborationGrantBinding(
+  repositoryRoot: string,
+  request: CollaborationGrantRequest,
+): CollaborationGrantExpectedBinding {
+  const policy = parseBaselineJson(
+    repositoryRoot,
+    request.baselineCommit,
+    'workflow/maintainer-policy.json',
+    parseMaintainerPolicy,
+  );
+  return {
+    repositoryId: policy.repository.id,
+    repositoryOrigin: policy.repository.origin,
+    policyBlob: runGit(repositoryRoot, [
+      'rev-parse',
+      `${request.baselineCommit}:workflow/maintainer-policy.json`,
+    ]).trim(),
+    collaborationPolicyDigest: collaborationPolicyDigestForPhase(
+      request.lifecyclePhase,
+    ),
+    changeId: request.changeId,
+    taskId: request.taskId,
+    baselineCommit: request.baselineCommit,
+    baselineTree: request.baselineTree,
+    targetDigest: request.targetDigest,
+    lifecyclePhase: request.lifecyclePhase,
+    rolePair: request.rolePair,
+    availableActor: request.availableActor,
+    degradedForm: request.degradedForm,
+    reason: request.reason,
+  };
+}
+
+function collaborationTransitionDigest(
+  expectedBinding: CollaborationGrantExpectedBinding,
+): string {
+  return sha256(
+    canonicalJson({
+      schemaVersion: 1,
+      kind: 'collaboration-role-transition',
+      expectedBinding,
+    }),
+  );
+}
+
+function admitTaskDiffReviewProviderResult(input: {
+  context: ReturnType<typeof loadActiveSessionContext>;
+  reservation: TaskDiffReviewReservationRecord;
+  invocation: ReturnType<typeof readProviderInvocation> & {
+    result: NonNullable<ReturnType<typeof readProviderInvocation>['result']>;
+  };
+  observationNode: ReturnType<typeof createEvidenceNode>;
+  validation: ReconcileTaskDiffReviewOptions['collaborationGrantValidation'];
+  assertOwned: () => void;
+}): AdmittedRoleResult {
+  const assignment = input.reservation.request.roleAssignment;
+  const content = {
+    kind: 'task-diff-review' as const,
+    nodeId: input.observationNode.nodeId,
+    resultDigest: input.observationNode.resultDigest,
+    outputSchema: TASK_DIFF_REVIEW_OUTPUT_SCHEMA,
+    evaluator: input.reservation.request.evaluatorVersion,
+    policyDigest: input.reservation.request.policyDigest,
+    contentDigest: input.observationNode.resultDigest,
+    current: true as const,
+  };
+  let grantUse: CollaborationGrantUseProjection | null = null;
+  let grantValidation: NonNullable<
+    Parameters<typeof admitRoleResult>[0]['grantValidation']
+  > | null = null;
+  if ('grantId' in assignment) {
+    const policy = baselineAdapterPolicy(
+      input.context.git.repositoryRoot,
+      input.context.session.baseline.head,
+    );
+    const callableProviderIds = (['codex', 'claude'] as const).filter(
+      (providerId) => policy.policy.providers[providerId].enabled,
+    );
+    const grantRequest = taskDiffReviewGrantRequest({
+      context: input.context,
+      subject: input.reservation.subject,
+      implementationActor: input.reservation.implementationActor,
+      callableProviderIds,
+    });
+    if (grantRequest === null) throw reviewNotSatisfied();
+    const expectedBinding = deriveTaskDiffCollaborationGrantBinding(
+      input.context.git.repositoryRoot,
+      grantRequest,
+    );
+    const transitionDigest = collaborationTransitionDigest(expectedBinding);
+    const maintainerPolicy = parseBaselineJson(
+      input.context.git.repositoryRoot,
+      expectedBinding.baselineCommit,
+      'workflow/maintainer-policy.json',
+      parseMaintainerPolicy,
+    );
+    const verifier =
+      input.validation?.verifier ??
+      createInteractiveSshSigner(
+        input.context.git.repositoryRoot,
+        maintainerPolicy,
+      );
+    const now = input.validation?.now ?? new Date();
+    const consumed = consumeCollaborationGrantUnderLifecycleLock(
+      input.context.git.gitCommonDirectory,
+      assignment.grantId,
+      {
+        transitionDigest,
+        assignment,
+        contentAdmission: {
+          kind: content.kind,
+          nodeId: content.nodeId,
+          resultDigest: content.resultDigest,
+          current: true,
+        },
+        now,
+      },
+      input.assertOwned,
+    );
+    if (consumed.use === undefined) throw reviewNotSatisfied();
+    grantUse = consumed.use;
+    grantValidation = {
+      now,
+      expectedBinding,
+      policy: maintainerPolicy,
+      verifier,
+      transitionDigest,
+    };
+  }
+  return admitRoleResult({
+    assignment,
+    author: input.reservation.implementationActor,
+    participant:
+      'grantId' in assignment
+        ? assignment.participant
+        : {
+            providerId: assignment.providerId,
+            sessionId: assignment.sessionId,
+            principalId: null,
+            identityAssurance: 'adapter-assigned',
+            engineSpawned: true,
+          },
+    content,
+    providerInvocation: {
+      invocationId: input.invocation.invocationId,
+      requestDigest: input.reservation.request.requestDigest,
+      outputDigest: input.invocation.result.outputDigest,
+      providerId: input.reservation.request.providerId,
+      sessionId: assignment.sessionId!,
+      targetDigest: input.reservation.subject.subjectDigest,
+      engineSpawned: true,
+    },
+    grantUse,
+    grantValidation,
+  });
 }
 
 function createNewTaskDiffReviewContinuationReservation(
@@ -1641,7 +1941,8 @@ function renderTaskDiffReviewStatus(
   runtime: ReturnType<typeof loadInvestigationRuntimeContext>['runtime'],
   reservation: TaskDiffReviewReservationRecord,
 ): TaskDiffReviewLifecycleStatus {
-  const assignment = reservation.request.roleAssignment as RoleAssignment;
+  const assignment = reservation.request
+    .roleAssignment as ProviderRoleAssignment;
   const common = {
     sessionId: reservation.sessionId,
     subject: reservation.subject,
@@ -1744,7 +2045,8 @@ function renderTaskDiffReviewContinuationStatus(
   runtime: ReturnType<typeof loadInvestigationRuntimeContext>['runtime'],
   reservation: TaskDiffReviewContinuationReservationRecord,
 ): TaskDiffReviewContinuationLifecycleStatus {
-  const assignment = reservation.request.roleAssignment as RoleAssignment;
+  const assignment = reservation.request
+    .roleAssignment as ProviderRoleAssignment;
   const common = {
     sessionId: reservation.sessionId,
     subject: reservation.subject,
@@ -1971,6 +2273,218 @@ function assertCurrentTaskDiffReviewBinding(
   ) {
     throw reviewNotSatisfied();
   }
+  const authorization = readEvidenceNode(
+    runtime,
+    reservation.authorizationNodeId,
+  );
+  const requestReservation = readEvidenceNode(
+    runtime,
+    reservation.reservationNodeId,
+  );
+  const observationNode = readEvidenceNode(
+    runtime,
+    binding.providerObservationNodeId,
+  );
+  if (
+    observationNode.resultDigest !== binding.providerObservationDigest ||
+    observationNode.type !== 'task-diff-review-provider-observation' ||
+    observationNode.nodeSchema !==
+      'workflow.task-diff-review-provider-observation.v1' ||
+    observationNode.evaluator !== 'workflow-task-diff-review.v1' ||
+    observationNode.policyDigest !== TASK_DIFF_REVIEW_POLICY_DIGEST ||
+    observationNode.outputSchema !==
+      'workflow.task-diff-review-provider-observation-output.v1' ||
+    canonicalJson(observationNode.output) !==
+      canonicalJson({
+        ownerInvestigationId: reservation.ownerInvestigationId,
+        sessionId: reservation.sessionId,
+        invocationId: invocation.invocationId,
+        requestDigest: reservation.request.requestDigest,
+        outputDigest: invocation.result.outputDigest,
+        submission: invocation.result.output,
+      }) ||
+    canonicalJson(observationNode.runtimeMetadata) !==
+      canonicalJson({
+        runtimeObservation: invocation.result.runtimeObservation,
+      }) ||
+    observationNode.exactInputDigests.output !==
+      invocation.result.outputDigest ||
+    observationNode.exactInputDigests.request !==
+      reservation.request.requestDigest ||
+    observationNode.exactInputDigests.runtimeObservation !==
+      binding.runtimeObservationDigest ||
+    observationNode.exactInputDigests.subject !==
+      reservation.subject.subjectDigest ||
+    observationNode.semanticParentResultDigests.authorization !==
+      authorization.resultDigest ||
+    observationNode.semanticParentResultDigests.reservation !==
+      requestReservation.resultDigest ||
+    observationNode.provenanceParentNodeIds.authorization !==
+      reservation.authorizationNodeId ||
+    observationNode.provenanceParentNodeIds.reservation !==
+      reservation.reservationNodeId
+  ) {
+    throw reviewNotSatisfied();
+  }
+  const content = {
+    kind: 'task-diff-review' as const,
+    nodeId: observationNode.nodeId,
+    resultDigest: observationNode.resultDigest,
+    outputSchema: TASK_DIFF_REVIEW_OUTPUT_SCHEMA,
+    evaluator: reservation.request.evaluatorVersion,
+    policyDigest: reservation.request.policyDigest,
+    contentDigest: observationNode.resultDigest,
+    current: true as const,
+  };
+  const assignment = reservation.request.roleAssignment;
+  let grantUseForReplay = binding.roleResult.grantUse;
+  let grantValidation: NonNullable<
+    Parameters<typeof admitRoleResult>[0]['grantValidation']
+  > | null = null;
+  if ('grantId' in assignment) {
+    const grantUse = binding.roleResult.grantUse;
+    if (grantUse === null) throw reviewNotSatisfied();
+    const envelope = parseCollaborationGrantEnvelope(
+      canonicalCollaborationGrantEnvelope(grantUse.envelope),
+    );
+    const providerId = reservation.implementationActor.providerId;
+    const authorAssurance = reservation.implementationActor.identityAssurance;
+    if (
+      providerId === null ||
+      (authorAssurance !== 'self-declared' &&
+        authorAssurance !== 'runtime-hint') ||
+      assignment.grantId !== envelope.payload.grantId ||
+      envelope.payload.availableActor.kind !== 'provider' ||
+      authorAssurance !== envelope.payload.availableActor.assurance ||
+      envelope.payload.availableActor.providerId !== providerId
+    ) {
+      throw reviewNotSatisfied();
+    }
+    const grantRequest: CollaborationGrantRequest = {
+      changeId: reservation.changeId,
+      taskId: reservation.taskId,
+      baselineCommit: reservation.baseline.head,
+      baselineTree: reservation.baseline.tree,
+      targetDigest: reservation.subject.subjectDigest,
+      lifecyclePhase: 'task-diff-review',
+      rolePair: {
+        authorRole: 'task-implementer',
+        conflictingRole: 'task-diff-reviewer',
+      },
+      availableActor: {
+        kind: 'provider',
+        providerId,
+        assurance: authorAssurance,
+      },
+      degradedForm: 'same-provider-fresh-session',
+      reason:
+        'No provider-independent TaskDiffReview reviewer is enabled for this exact candidate.',
+      ttlMinutes: 30,
+      maxUses: 1,
+    };
+    const expectedBinding = deriveTaskDiffCollaborationGrantBinding(
+      reservation.repositoryRoot,
+      grantRequest,
+    );
+    const transitionDigest = collaborationTransitionDigest(expectedBinding);
+    if (
+      canonicalJson(bindingFromPayload(envelope.payload)) !==
+        canonicalJson(expectedBinding) ||
+      grantUse.transitionDigest !== transitionDigest
+    ) {
+      throw reviewNotSatisfied();
+    }
+    const policy = parseBaselineJson(
+      reservation.repositoryRoot,
+      expectedBinding.baselineCommit,
+      'workflow/maintainer-policy.json',
+      parseMaintainerPolicy,
+    );
+    const consumedUse = readExactConsumedCollaborationGrantUse(
+      reservation.gitCommonDirectory,
+      assignment.grantId,
+      {
+        transitionDigest,
+        assignment,
+        contentAdmission: {
+          kind: content.kind,
+          nodeId: content.nodeId,
+          resultDigest: content.resultDigest,
+          current: true,
+        },
+        now: new Date(envelope.payload.expiresAt),
+      },
+    );
+    if (
+      consumedUse === null ||
+      canonicalJson(consumedUse) !== canonicalJson(grantUse)
+    ) {
+      throw reviewNotSatisfied();
+    }
+    grantUseForReplay = consumedUse;
+    const verifier = createInteractiveSshSigner(
+      reservation.repositoryRoot,
+      policy,
+    );
+    grantValidation = {
+      now: new Date(envelope.payload.expiresAt),
+      expectedBinding,
+      policy,
+      verifier,
+      transitionDigest,
+    };
+  } else if (binding.roleResult.grantUse !== null) {
+    throw reviewNotSatisfied();
+  }
+  const replayedRoleResult = admitRoleResult({
+    assignment,
+    author: reservation.implementationActor,
+    participant:
+      'grantId' in assignment
+        ? assignment.participant
+        : {
+            providerId: assignment.providerId,
+            sessionId: assignment.sessionId,
+            principalId: null,
+            identityAssurance: 'adapter-assigned',
+            engineSpawned: true,
+          },
+    content,
+    providerInvocation: {
+      invocationId: invocation.invocationId,
+      requestDigest: reservation.request.requestDigest,
+      outputDigest: invocation.result.outputDigest,
+      providerId: reservation.request.providerId,
+      sessionId: assignment.sessionId!,
+      targetDigest: reservation.subject.subjectDigest,
+      engineSpawned: true,
+    },
+    grantUse: grantUseForReplay,
+    grantValidation,
+  });
+  const grantUseDigest =
+    replayedRoleResult.grantUse === null
+      ? null
+      : sha256(canonicalJson(replayedRoleResult.grantUse));
+  if (
+    canonicalJson(replayedRoleResult) !== canonicalJson(binding.roleResult) ||
+    canonicalJson(expectedReview.assignment) !==
+      canonicalJson({
+        implementerPrincipalId: reservation.implementationActor.principalId!,
+        implementerProviderId: reservation.implementationActor.providerId!,
+        implementationSessionId: reservation.sessionId,
+        reviewerPrincipalId:
+          replayedRoleResult.participant.principalId ??
+          `provider:${replayedRoleResult.assignment.providerId}`,
+        reviewerProviderId: replayedRoleResult.assignment.providerId,
+        reviewerSessionId: replayedRoleResult.assignment.sessionId,
+        achievedIndependence: replayedRoleResult.achievedIndependence,
+        degradedForm: replayedRoleResult.grantUse?.degradedForm ?? null,
+        grantUseDigest,
+      })
+  ) {
+    throw reviewNotSatisfied();
+  }
   const resultNode = readEvidenceNode(runtime, binding.providerResultNodeId);
   if (
     resultNode.resultDigest !== binding.providerResultDigest ||
@@ -1985,21 +2499,17 @@ function assertCurrentTaskDiffReviewBinding(
         ownerInvestigationId: reservation.ownerInvestigationId,
         sessionId: reservation.sessionId,
         invocationId: invocation.invocationId,
-        requestDigest: reservation.request.requestDigest,
-        outputDigest: invocation.result.outputDigest,
+        roleResult: replayedRoleResult,
         review: expectedReview,
       }) ||
-    resultNode.exactInputDigests.output !== invocation.result.outputDigest ||
-    resultNode.exactInputDigests.request !==
-      reservation.request.requestDigest ||
-    resultNode.exactInputDigests.runtimeObservation !==
-      binding.runtimeObservationDigest ||
+    resultNode.exactInputDigests.admission !==
+      replayedRoleResult.resultDigest ||
+    resultNode.exactInputDigests.observation !== observationNode.resultDigest ||
     resultNode.exactInputDigests.subject !==
       reservation.subject.subjectDigest ||
-    resultNode.provenanceParentNodeIds.authorization !==
-      reservation.authorizationNodeId ||
-    resultNode.provenanceParentNodeIds.reservation !==
-      reservation.reservationNodeId
+    resultNode.semanticParentResultDigests.observation !==
+      observationNode.resultDigest ||
+    resultNode.provenanceParentNodeIds.observation !== observationNode.nodeId
   ) {
     throw reviewNotSatisfied();
   }
@@ -2130,12 +2640,24 @@ function ensureTaskDiffFinalAssurance(
     providerId: current.review.assignment.reviewerProviderId,
     policyDigest: current.subject.reviewPolicyDigest,
   };
+  const exceptions =
+    current.review.assignment.degradedForm === null ||
+    current.review.assignment.grantUseDigest === null
+      ? []
+      : [
+          {
+            kind: 'collaboration-grant-degradation' as const,
+            grantUseDigest: current.review.assignment.grantUseDigest,
+            degradedForm: current.review.assignment.degradedForm,
+          },
+        ];
   const assurance = createTaskDiffFinalAssuranceRecord({
     subject: current.subject,
     review: current.review,
     response: continuationReservation.response,
     submission: continuationBinding.submission,
     reviewerAuthority,
+    exceptions,
   });
   const reviewResultNode = readEvidenceNode(
     runtime,
