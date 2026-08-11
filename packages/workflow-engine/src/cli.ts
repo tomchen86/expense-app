@@ -159,6 +159,7 @@ import { loadInvestigationRuntimeContext } from './lifecycle-context.ts';
 import {
   commitSession,
   completeTask,
+  finalizeSession,
   finalizeTask,
   findTaskCommits,
   finishSession,
@@ -1460,6 +1461,25 @@ function dispatch(args: string[], cwd: string): CommandResult {
     case 'finish':
       requireArgumentCount(command, rest, 1, 1);
       return { command, ok: true, result: finishSession(cwd, rest[0]) };
+    case 'finalize': {
+      const sessionId = rest[0];
+      const message = optionValue(rest.slice(1), '--message');
+      if (
+        !sessionId ||
+        !message ||
+        rest.length !== 3 ||
+        rest[1] !== '--message'
+      ) {
+        throw usage(
+          'Usage: pnpm workflow finalize <session-id> --message <subject> [--json]',
+        );
+      }
+      return {
+        command,
+        ok: true,
+        result: finalizeSession(cwd, sessionId, message),
+      };
+    }
     case 'finalize-task':
       requireArgumentCount(command, rest, 1, 1);
       return { command, ok: true, result: finalizeTask(cwd, rest[0]) };
@@ -2505,6 +2525,7 @@ function usageText(): string {
     '  pnpm workflow hook <pre-commit|commit-msg|pre-push|post-merge> ... [--json]',
     '  pnpm workflow complete-task <session-id> [--json]',
     '  pnpm workflow finish <session-id> [--json]',
+    '  pnpm workflow finalize <session-id> --message <subject> [--json]',
     '  pnpm workflow finalize-task <session-id> [--json]',
     '  pnpm workflow rollback-completion <session-id> --reason <text> [--json]',
     '  pnpm workflow commit <session-id> --message <subject> [--json]',

@@ -66,6 +66,7 @@ export const PROJECTED_SINGLE_PASS_ASSURANCE =
 export type FinalizeTaskResult = {
   session: WorkflowSession;
   assurance: typeof PROJECTED_SINGLE_PASS_ASSURANCE;
+  transactionId: string;
   checkReportId: string;
   completionReportId: string;
   finishReportId: string;
@@ -685,6 +686,7 @@ function resultFrom(
   return {
     session,
     assurance: PROJECTED_SINGLE_PASS_ASSURANCE,
+    transactionId: transaction.transactionId,
     checkReportId: transaction.checkReportId,
     completionReportId: transaction.completionReportId,
     finishReportId: transaction.finishReportId,
