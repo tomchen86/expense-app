@@ -10,6 +10,7 @@ import {
 } from './investigation-session-store.ts';
 import {
   assertInvestigationId,
+  assertInvocationId,
   assertSessionId,
   type InvestigationRuntimePaths,
 } from './paths.ts';
@@ -20,12 +21,16 @@ import {
 } from './provider-contracts.ts';
 import type { TaskMandateBinding } from './task-mandate.ts';
 import {
+  TASK_STRATEGY_IMPLEMENTATION_OUTPUT_SCHEMA,
   assertTaskStrategyImplementationManifest,
+  assertTaskStrategyImplementationOutput,
   assertTaskStrategyImplementationSubject,
   type TaskStrategyImplementationManifest,
+  type TaskStrategyImplementationOutput,
   type TaskStrategyImplementationSubject,
 } from './task-strategy-provider-contract.ts';
 import {
+  type AdmittedRoleResult,
   type ProviderRoleAssignment,
   type RecordedRoleParticipant,
 } from './role-scheduler.ts';
@@ -55,6 +60,26 @@ export type TaskStrategyImplementationReservation = Readonly<{
   request: ProviderInvocationRequest;
   authorizationNodeId: string;
   reservationNodeId: string;
+  createdAt: string;
+}>;
+
+export type TaskStrategyImplementationResultBinding = Readonly<{
+  schemaVersion: 1;
+  kind: 'task-strategy-implementation-result-binding.v1';
+  bindingDigest: string;
+  ownerInvestigationId: string;
+  sessionId: string;
+  subjectDigest: string;
+  invocationId: string;
+  requestDigest: string;
+  outputDigest: string;
+  runtimeObservationDigest: string;
+  providerObservationNodeId: string;
+  providerObservationDigest: string;
+  providerResultNodeId: string;
+  providerResultDigest: string;
+  roleResult: AdmittedRoleResult;
+  output: TaskStrategyImplementationOutput;
   createdAt: string;
 }>;
 
@@ -101,6 +126,46 @@ export function readTaskStrategyImplementationReservation(
   return reservation;
 }
 
+export function createTaskStrategyImplementationResultBinding(
+  paths: InvestigationRuntimePaths,
+  input: Omit<
+    TaskStrategyImplementationResultBinding,
+    'schemaVersion' | 'kind' | 'bindingDigest'
+  >,
+): TaskStrategyImplementationResultBinding {
+  const body = {
+    schemaVersion: 1 as const,
+    kind: 'task-strategy-implementation-result-binding.v1' as const,
+    ...input,
+  };
+  const binding = parseTaskStrategyImplementationResultBinding({
+    ...body,
+    bindingDigest: sha256(canonicalJson(body)),
+  });
+  createPrivateCanonicalJson(
+    paths,
+    resultPath(paths, binding.sessionId),
+    binding,
+    stateCorrupt,
+    'TASK_STRATEGY_IMPLEMENTATION_RESULT_CONFLICT',
+  );
+  return readTaskStrategyImplementationResultBinding(paths, binding.sessionId)!;
+}
+
+export function readTaskStrategyImplementationResultBinding(
+  paths: InvestigationRuntimePaths,
+  requestedSessionId: string,
+): TaskStrategyImplementationResultBinding | null {
+  const sessionId = assertSessionId(requestedSessionId);
+  const target = resultPath(paths, sessionId);
+  if (!privatePathExists(paths, target, stateCorrupt)) return null;
+  const binding = parseTaskStrategyImplementationResultBinding(
+    readPrivateCanonicalJson(paths, target, stateCorrupt),
+  );
+  if (binding.sessionId !== sessionId) throw stateCorrupt();
+  return binding;
+}
+
 function reservationPath(
   paths: InvestigationRuntimePaths,
   sessionId: string,
@@ -110,6 +175,18 @@ function reservationPath(
     'task-strategy-implementations',
     sessionId,
     'reservation.json',
+  );
+}
+
+function resultPath(
+  paths: InvestigationRuntimePaths,
+  sessionId: string,
+): string {
+  return path.join(
+    paths.refs,
+    'task-strategy-implementations',
+    sessionId,
+    'result.json',
   );
 }
 
@@ -195,6 +272,141 @@ function parseTaskStrategyImplementationReservation(
   ) as TaskStrategyImplementationReservation;
 }
 
+function parseTaskStrategyImplementationResultBinding(
+  value: unknown,
+): TaskStrategyImplementationResultBinding {
+  if (
+    !isRecord(value) ||
+    !hasExactKeys(value, [
+      'schemaVersion',
+      'kind',
+      'bindingDigest',
+      'ownerInvestigationId',
+      'sessionId',
+      'subjectDigest',
+      'invocationId',
+      'requestDigest',
+      'outputDigest',
+      'runtimeObservationDigest',
+      'providerObservationNodeId',
+      'providerObservationDigest',
+      'providerResultNodeId',
+      'providerResultDigest',
+      'roleResult',
+      'output',
+      'createdAt',
+    ]) ||
+    value.schemaVersion !== 1 ||
+    value.kind !== 'task-strategy-implementation-result-binding.v1' ||
+    !isDigest(value.bindingDigest) ||
+    !isInvestigationId(value.ownerInvestigationId) ||
+    !isSessionId(value.sessionId) ||
+    !isDigest(value.subjectDigest) ||
+    !isInvocationId(value.invocationId) ||
+    !isDigest(value.requestDigest) ||
+    !isDigest(value.outputDigest) ||
+    !isDigest(value.runtimeObservationDigest) ||
+    !isDigest(value.providerObservationNodeId) ||
+    !isDigest(value.providerObservationDigest) ||
+    !isDigest(value.providerResultNodeId) ||
+    !isDigest(value.providerResultDigest) ||
+    !isAdmittedImplementationRoleResult(value.roleResult) ||
+    !isTimestamp(value.createdAt)
+  ) {
+    throw stateCorrupt();
+  }
+  let output: TaskStrategyImplementationOutput;
+  try {
+    output = assertTaskStrategyImplementationOutput(value.output);
+  } catch {
+    throw stateCorrupt();
+  }
+  const binding: TaskStrategyImplementationResultBinding = {
+    schemaVersion: 1,
+    kind: 'task-strategy-implementation-result-binding.v1',
+    bindingDigest: value.bindingDigest,
+    ownerInvestigationId: value.ownerInvestigationId,
+    sessionId: value.sessionId,
+    subjectDigest: value.subjectDigest,
+    invocationId: value.invocationId,
+    requestDigest: value.requestDigest,
+    outputDigest: value.outputDigest,
+    runtimeObservationDigest: value.runtimeObservationDigest,
+    providerObservationNodeId: value.providerObservationNodeId,
+    providerObservationDigest: value.providerObservationDigest,
+    providerResultNodeId: value.providerResultNodeId,
+    providerResultDigest: value.providerResultDigest,
+    roleResult: structuredClone(value.roleResult),
+    output,
+    createdAt: value.createdAt,
+  };
+  if (
+    output.sessionId !== binding.sessionId ||
+    binding.roleResult.targetDigest !== binding.subjectDigest ||
+    binding.roleResult.role !== 'task-implementer' ||
+    !isCurrentImplementationRoleResult(binding.roleResult) ||
+    binding.roleResult.content.nodeId !== binding.providerObservationNodeId ||
+    binding.roleResult.content.resultDigest !==
+      binding.providerObservationDigest ||
+    binding.roleResult.providerInvocation?.invocationId !==
+      binding.invocationId ||
+    binding.roleResult.providerInvocation.requestDigest !==
+      binding.requestDigest ||
+    binding.roleResult.providerInvocation.outputDigest !==
+      binding.outputDigest ||
+    binding.bindingDigest !==
+      sha256(canonicalJson(withoutDigest(binding, 'bindingDigest')))
+  ) {
+    throw stateCorrupt();
+  }
+  return deepFreeze(binding);
+}
+
+function isCurrentImplementationRoleResult(value: AdmittedRoleResult): boolean {
+  const { resultDigest, ...body } = value;
+  if (
+    resultDigest !==
+      sha256(canonicalJson({ schema: 'admitted-role-result.v1', ...body })) ||
+    value.role !== 'task-implementer' ||
+    value.orchestration !== 'engine-spawned-provider' ||
+    value.requiredIndependence !== 'provider-independent' ||
+    value.content.kind !== 'task-implementation' ||
+    value.content.contentDigest !== value.content.resultDigest ||
+    value.content.current !== true ||
+    canonicalJson(value.content.outputSchema) !==
+      canonicalJson(TASK_STRATEGY_IMPLEMENTATION_OUTPUT_SCHEMA) ||
+    value.providerInvocation === null ||
+    value.providerInvocation.providerId !== value.assignment.providerId ||
+    value.providerInvocation.sessionId !== value.assignment.sessionId ||
+    value.providerInvocation.targetDigest !== value.targetDigest ||
+    value.participant.providerId !== value.assignment.providerId ||
+    value.participant.sessionId !== value.assignment.sessionId ||
+    value.participant.engineSpawned !== true ||
+    value.directHumanReviewAttestation !== null
+  ) {
+    return false;
+  }
+  if (!('grantId' in value.assignment)) {
+    return (
+      value.form === 'ordinary-provider' &&
+      value.achievedIndependence === 'provider-independent' &&
+      value.grantUse === null
+    );
+  }
+  return (
+    value.form === 'granted-same-provider' &&
+    value.achievedIndependence === 'session-independent' &&
+    value.assignment.degradedForm === 'same-provider-fresh-session' &&
+    value.grantUse !== null &&
+    value.grantUse.grantId === value.assignment.grantId &&
+    value.grantUse.degradedForm === 'same-provider-fresh-session' &&
+    value.grantUse.targetDigest === value.targetDigest &&
+    value.grantUse.structuredContent.kind === 'task-implementation' &&
+    value.grantUse.structuredContent.nodeId === value.content.nodeId &&
+    value.grantUse.structuredContent.resultDigest === value.content.resultDigest
+  );
+}
+
 function isBaseline(value: unknown): value is { head: string; tree: string } {
   return (
     isRecord(value) &&
@@ -277,6 +489,58 @@ function isInvestigationId(value: unknown): value is string {
   } catch {
     return false;
   }
+}
+
+function isInvocationId(value: unknown): value is string {
+  if (typeof value !== 'string') return false;
+  try {
+    return assertInvocationId(value) === value;
+  } catch {
+    return false;
+  }
+}
+
+function isAdmittedImplementationRoleResult(
+  value: unknown,
+): value is AdmittedRoleResult {
+  return (
+    isRecord(value) &&
+    hasExactKeys(value, [
+      'schemaVersion',
+      'form',
+      'role',
+      'targetDigest',
+      'assignment',
+      'author',
+      'participant',
+      'orchestration',
+      'requiredIndependence',
+      'achievedIndependence',
+      'content',
+      'providerInvocation',
+      'grantUse',
+      'directHumanReviewAttestation',
+      'resultDigest',
+    ]) &&
+    value.schemaVersion === 1 &&
+    value.role === 'task-implementer' &&
+    isDigest(value.targetDigest) &&
+    isDigest(value.resultDigest) &&
+    isRecord(value.assignment) &&
+    isRecord(value.author) &&
+    isRecord(value.participant) &&
+    isRecord(value.content) &&
+    isRecord(value.providerInvocation)
+  );
+}
+
+function withoutDigest<T extends Record<string, unknown>, K extends keyof T>(
+  value: T,
+  key: K,
+): Omit<T, K> {
+  const clone = { ...value };
+  delete clone[key];
+  return clone;
 }
 
 function isDigest(value: unknown): value is string {

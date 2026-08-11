@@ -20,6 +20,10 @@ import {
 } from './paths.ts';
 import { readTaskStrategyTransaction } from './task-strategy-store.ts';
 import {
+  readTaskStrategyImplementationReservation,
+  readTaskStrategyImplementationResultBinding,
+} from './task-strategy-provider-store.ts';
+import {
   createTaskStrategyPatchCurrentBinding,
   createTaskStrategyPatchImportReceipt,
   createTaskStrategyPatchReservation,
@@ -67,14 +71,47 @@ export type ImportedTaskStrategyPatch = Readonly<{
   binding: TaskStrategyPatchCurrentBinding;
 }>;
 
+type CallerTaskStrategyPatchInput = Readonly<{
+  patch: string | Buffer;
+  explicitActor?: string;
+  environment?: NodeJS.ProcessEnv;
+}>;
+
+type ProviderTaskStrategyPatchValidationInput = Readonly<{
+  patch: string | Buffer;
+  implementationReservationDigest: string;
+}>;
+
+type ProviderTaskStrategyPatchImportInput = Readonly<{
+  patch: string | Buffer;
+  implementationResultBindingDigest: string;
+  testCrashAfter?:
+    'reservation-persisted' | 'record-persisted' | 'patch-applied';
+}>;
+
 export function validateTaskStrategyPatch(
   cwd: string,
   requestedSessionId: string,
-  input: Readonly<{
-    patch: string | Buffer;
-    explicitActor?: string;
-    environment?: NodeJS.ProcessEnv;
-  }>,
+  input: CallerTaskStrategyPatchInput,
+): TaskStrategyPatchValidation {
+  return validateTaskStrategyPatchWithAuthority(cwd, requestedSessionId, input);
+}
+
+export function validateTaskStrategyProviderPatch(
+  cwd: string,
+  requestedSessionId: string,
+  input: ProviderTaskStrategyPatchValidationInput,
+): TaskStrategyPatchValidation {
+  return validateTaskStrategyPatchWithAuthority(cwd, requestedSessionId, input);
+}
+
+function validateTaskStrategyPatchWithAuthority(
+  cwd: string,
+  requestedSessionId: string,
+  input:
+    | CallerTaskStrategyPatchInput
+    | ProviderTaskStrategyPatchValidationInput
+    | ProviderTaskStrategyPatchImportInput,
 ): TaskStrategyPatchValidation {
   const patchBytes = normalizePatchBytes(input.patch);
   const inspection = inspectSession(cwd, requestedSessionId);
@@ -114,22 +151,16 @@ export function validateTaskStrategyPatch(
       ExitCode.staleState,
     );
   }
-  const actorResolution = resolveActorIdentity({
-    ...(input.explicitActor === undefined
-      ? {}
-      : { explicitActor: input.explicitActor }),
-    environment: input.environment ?? process.env,
-  });
-  if (actorResolution.outcome !== 'resolved') {
-    throw workflowError(
-      actorResolution.code,
-      'Patch validation requires one exact implementation actor.',
-      ExitCode.guard,
-    );
-  }
+  const authority = resolvePatchImplementer(
+    inspection,
+    transaction,
+    input,
+    sha256(patchBytes),
+  );
   if (
     task.strategy === 'cross-agent-tdd' &&
-    actorResolution.actor.providerId === transaction.author.providerId
+    authority.implementer.providerId === transaction.author.providerId &&
+    !authority.allowsSameProvider
   ) {
     throw workflowError(
       'TASK_STRATEGY_IMPLEMENTER_REQUIRED',
@@ -207,7 +238,7 @@ export function validateTaskStrategyPatch(
     patchDigest: sha256(patchBytes),
     changedPaths: Object.freeze(projection.changedPaths),
     changes: Object.freeze(changes),
-    implementer: Object.freeze(actorResolution.actor),
+    implementer: Object.freeze(authority.implementer),
   });
 }
 
@@ -273,6 +304,32 @@ export function importTaskStrategyPatch(
   );
 }
 
+export function importTaskStrategyProviderPatch(
+  cwd: string,
+  requestedSessionId: string,
+  input: ProviderTaskStrategyPatchImportInput,
+): ImportedTaskStrategyPatch {
+  return runSessionOperation(cwd, requestedSessionId, () =>
+    importTaskStrategyPatchUnlocked(cwd, requestedSessionId, input),
+  );
+}
+
+export function importTaskStrategyProviderPatchUnderLifecycleLock(
+  cwd: string,
+  requestedSessionId: string,
+  input: ProviderTaskStrategyPatchImportInput,
+  assertOwned: () => void,
+): ImportedTaskStrategyPatch {
+  assertOwned();
+  const imported = importTaskStrategyPatchUnlocked(
+    cwd,
+    requestedSessionId,
+    input,
+  );
+  assertOwned();
+  return imported;
+}
+
 function importTaskStrategyPatchUnlocked(
   cwd: string,
   requestedSessionId: string,
@@ -280,6 +337,7 @@ function importTaskStrategyPatchUnlocked(
     patch: string | Buffer;
     explicitActor?: string;
     environment?: NodeJS.ProcessEnv;
+    implementationResultBindingDigest?: string;
     testCrashAfter?:
       'reservation-persisted' | 'record-persisted' | 'patch-applied';
   }>,
@@ -292,11 +350,16 @@ function importTaskStrategyPatchUnlocked(
     inspection.git.gitCommonDirectory,
     inspection.contract.config.runtimeDirectory,
   );
-  const implementer = resolveImplementer(
-    task,
-    readTaskStrategyTransaction(runtime, inspection.session.sessionId),
-    input,
+  const transaction = readTaskStrategyTransaction(
+    runtime,
+    inspection.session.sessionId,
   );
+  const implementer = resolvePatchImplementer(
+    inspection,
+    transaction,
+    input,
+    patchDigest,
+  ).implementer;
   let reservation = readTaskStrategyPatchReservation(
     runtime,
     inspection.session.sessionId,
@@ -315,7 +378,7 @@ function importTaskStrategyPatchUnlocked(
     patchDigest,
   );
   if (record === null) {
-    const validation = validateTaskStrategyPatch(
+    const validation = validateTaskStrategyPatchWithAuthority(
       cwd,
       requestedSessionId,
       input,
@@ -452,20 +515,88 @@ function applyPatchToWorktree(
   }
 }
 
-function resolveImplementer(
-  task: CrossAgentTddExecution | TddSingleAgentExecution,
+function resolvePatchImplementer(
+  inspection: SessionInspection,
   transaction: ReturnType<typeof readTaskStrategyTransaction>,
-  input: Readonly<{
-    explicitActor?: string;
-    environment?: NodeJS.ProcessEnv;
-  }>,
-): ResolvedActor {
+  input:
+    | CallerTaskStrategyPatchInput
+    | ProviderTaskStrategyPatchValidationInput
+    | ProviderTaskStrategyPatchImportInput,
+  patchDigest: string,
+): Readonly<{ implementer: ResolvedActor; allowsSameProvider: boolean }> {
   if (transaction === null) {
     throw workflowError(
       'TASK_STRATEGY_RED_REQUIRED',
       'Patch import requires the exact current engine-sealed RED transaction.',
       ExitCode.verification,
     );
+  }
+  const runtime = investigationRuntimePaths(
+    inspection.git.gitCommonDirectory,
+    inspection.contract.config.runtimeDirectory,
+  );
+  if ('implementationReservationDigest' in input) {
+    const reservation = readTaskStrategyImplementationReservation(
+      runtime,
+      inspection.session.sessionId,
+    );
+    if (
+      reservation === null ||
+      reservation.recordDigest !== input.implementationReservationDigest ||
+      reservation.subject.transactionDigest !== transaction.recordDigest ||
+      reservation.subject.sourceTree !== transaction.red.candidateTree ||
+      reservation.assignment.providerId === null ||
+      reservation.assignment.sessionId === null
+    ) {
+      throw patchAuthorityStale();
+    }
+    return Object.freeze({
+      implementer: Object.freeze({
+        providerId: reservation.assignment.providerId,
+        assurance: 'adapter-assigned' as const,
+      }),
+      allowsSameProvider:
+        'grantId' in reservation.assignment &&
+        reservation.assignment.degradedForm === 'same-provider-fresh-session',
+    });
+  }
+  if ('implementationResultBindingDigest' in input) {
+    const reservation = readTaskStrategyImplementationReservation(
+      runtime,
+      inspection.session.sessionId,
+    );
+    const binding = readTaskStrategyImplementationResultBinding(
+      runtime,
+      inspection.session.sessionId,
+    );
+    if (
+      binding === null ||
+      reservation === null ||
+      binding.bindingDigest !== input.implementationResultBindingDigest ||
+      reservation.subject.transactionDigest !== transaction.recordDigest ||
+      reservation.subject.sourceTree !== transaction.red.candidateTree ||
+      binding.subjectDigest !== reservation.subject.subjectDigest ||
+      canonicalJson(binding.roleResult.assignment) !==
+        canonicalJson(reservation.assignment) ||
+      binding.output.sessionId !== inspection.session.sessionId ||
+      binding.output.sourceTree !== transaction.red.candidateTree ||
+      binding.output.patchDigest !== patchDigest ||
+      binding.roleResult.providerInvocation === null ||
+      binding.roleResult.assignment.providerId === null ||
+      binding.roleResult.assignment.sessionId === null
+    ) {
+      throw patchAuthorityStale();
+    }
+    return Object.freeze({
+      implementer: Object.freeze({
+        providerId: binding.roleResult.assignment.providerId,
+        assurance: 'adapter-assigned' as const,
+      }),
+      allowsSameProvider:
+        binding.roleResult.form === 'granted-same-provider' &&
+        binding.roleResult.grantUse?.degradedForm ===
+          'same-provider-fresh-session',
+    });
   }
   const actor = resolveActorIdentity({
     ...(input.explicitActor === undefined
@@ -480,17 +611,18 @@ function resolveImplementer(
       ExitCode.guard,
     );
   }
-  if (
-    task.strategy === 'cross-agent-tdd' &&
-    actor.actor.providerId === transaction.author.providerId
-  ) {
-    throw workflowError(
-      'TASK_STRATEGY_IMPLEMENTER_REQUIRED',
-      'Cross-agent TDD forbids the RED author from importing the implementation patch.',
-      ExitCode.guard,
-    );
-  }
-  return Object.freeze(actor.actor);
+  return Object.freeze({
+    implementer: Object.freeze(actor.actor),
+    allowsSameProvider: false,
+  });
+}
+
+function patchAuthorityStale() {
+  return workflowError(
+    'TASK_STRATEGY_IMPLEMENTATION_RESULT_STALE',
+    'The implementation patch does not match its exact current provider result authority.',
+    ExitCode.staleState,
+  );
 }
 
 function assertPatchRecordCurrent(

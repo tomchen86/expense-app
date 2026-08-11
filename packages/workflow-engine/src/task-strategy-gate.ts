@@ -19,6 +19,7 @@ import {
   readTaskStrategyTransaction,
   type TaskStrategyFrozenFile,
 } from './task-strategy-store.ts';
+import { readTaskStrategyImplementationResultBinding } from './task-strategy-provider-store.ts';
 import type { SessionInspection } from './verification.ts';
 
 /**
@@ -119,6 +120,21 @@ export function assertTaskStrategyExecutionGate(
     runtime,
     inspection.session.sessionId,
   );
+  const implementationResult = readTaskStrategyImplementationResultBinding(
+    runtime,
+    inspection.session.sessionId,
+  );
+  const sameProviderDegradationCurrent =
+    implementationResult !== null &&
+    implementationResult.output.patchDigest === record?.patchDigest &&
+    implementationResult.output.sourceTree === transaction.red.candidateTree &&
+    implementationResult.roleResult.form === 'granted-same-provider' &&
+    implementationResult.roleResult.grantUse?.degradedForm ===
+      'same-provider-fresh-session' &&
+    implementationResult.roleResult.grantUse.targetDigest ===
+      implementationResult.subjectDigest &&
+    implementationResult.roleResult.assignment.providerId ===
+      record?.implementer.providerId;
   if (
     record === null ||
     receipt === null ||
@@ -144,7 +160,8 @@ export function assertTaskStrategyExecutionGate(
     binding.createdAt !== receipt.importedAt ||
     preview.tree !== record.candidateTree ||
     (task.strategy === 'cross-agent-tdd' &&
-      record.implementer.providerId === transaction.author.providerId)
+      record.implementer.providerId === transaction.author.providerId &&
+      !sameProviderDegradationCurrent)
   ) {
     throw workflowError(
       'TASK_STRATEGY_PATCH_STALE',
