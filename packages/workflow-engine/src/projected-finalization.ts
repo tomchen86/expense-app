@@ -1,13 +1,26 @@
+import fs from 'node:fs';
 import path from 'node:path';
 
 import { digestRequiredCheckDefinitions } from './contract-digests.ts';
 import { classifyProjectionPaths } from './engine-projection-registry.ts';
-import { ExitCode, workflowError } from './errors.ts';
+import { ExitCode, WorkflowError, workflowError } from './errors.ts';
 import {
+  advanceFinalizeTransaction,
+  createFinalizeTransaction,
+  publishFinalizeTransaction,
+  readFinalizeTransaction,
+  removeFinalizeTransaction,
+  type FinalizeTransaction,
+  type FinalizeTransactionPhase,
+} from './finalize-transaction.ts';
+import {
+  listStagedPaths,
   previewExactStaging,
   rollbackExactStaging,
   stageExactPaths,
 } from './git-transitions.ts';
+import { fingerprintUnstagedRepositoryProjection, runGit } from './git.ts';
+import { loadActiveSessionContext } from './lifecycle-context.ts';
 import {
   refreshCompletionDocuments,
   rollbackGeneratedDocuments,
@@ -16,6 +29,11 @@ import {
 import { assertCurrentImplementationReconciliation } from './implementation-reconciliation.ts';
 import { reconcilePredecessor } from './predecessor-reconciliation.ts';
 import type { WorkflowReport } from './report-store.ts';
+import {
+  assertInspectionReport,
+  assertReportChecks,
+  readSessionReport,
+} from './report-validation.ts';
 import type { WorkflowSession } from './session-store.ts';
 import {
   digestTaskContent,
@@ -52,11 +70,39 @@ export type FinalizeTaskResult = {
   tree: string;
 };
 
+export type FinalizeTaskOptions = Readonly<{
+  testCrashAfter?:
+    | 'candidate-prepared'
+    | 'checks-running'
+    | 'checks-executed'
+    | 'checked'
+    | 'staged'
+    | 'reports-persisted'
+    | 'session-finished';
+}>;
+
 export function finalizeTaskUnlocked(
   cwd: string,
   requestedSessionId: string,
   environment: NodeJS.ProcessEnv,
+  options: FinalizeTaskOptions = {},
 ): FinalizeTaskResult {
+  const active = loadActiveSessionContext(cwd, requestedSessionId);
+  const existing = readFinalizeTransaction(
+    active.runtime.root,
+    active.session.sessionId,
+  );
+  if (existing !== null) {
+    assertFinalizeTransactionIdentity(active, existing);
+    try {
+      return continueFinalizeTransaction(cwd, existing, environment, options);
+    } catch (error) {
+      if (preservesFinalizeTransaction(error)) throw error;
+      rollbackPersistedFinalizeTransaction(cwd, existing.sessionId, error);
+      throw error;
+    }
+  }
+
   const initial = inspectSession(cwd, requestedSessionId);
   const session = initial.session;
   if (
@@ -80,6 +126,7 @@ export function finalizeTaskUnlocked(
   const projection = projectTasksCompleted(initial.tasksPath, completedTaskIds);
   const projectionSourceDigest = digestTaskContent(projection.before);
   let generatedDocuments: GeneratedDocumentMutation[] = [];
+  let transaction: FinalizeTransaction | null = null;
 
   try {
     generatedDocuments = refreshCompletionDocuments(initial.git.repositoryRoot);
@@ -90,13 +137,9 @@ export function finalizeTaskUnlocked(
       projectionSourceDigest,
       authorizedTransitionPaths: transitionPaths,
     });
-    const taskProjectionPaths = [
-      path.relative(projected.git.repositoryRoot, projected.tasksPath),
-    ];
-    const projectedPathClassification = classifyProjectionPaths(
-      projected.changedPaths,
-      taskProjectionPaths,
-      transitionPaths,
+    const taskProjectionPath = path.relative(
+      projected.git.repositoryRoot,
+      projected.tasksPath,
     );
 
     // Pin the prospective checked tree before verification so that same-path
@@ -106,153 +149,51 @@ export function finalizeTaskUnlocked(
       session.baseline.head,
       projected.changedPaths,
     );
-
-    // Each current-task required check runs exactly once on the final projected
-    // tree. Predecessor reconciliation, when needed, is separate above.
-    const verified = executeChecks(
-      cwd,
-      projected,
-      session.requiredChecks,
-      environment,
-      completedTaskIds,
-      projectionSourceDigest,
-      transitionPaths,
-    );
-    const inspection = verified.inspection;
-    const requiredCheckDigests = digestRequiredCheckDefinitions(
-      inspection.contract.checks,
-      session.requiredChecks,
-    );
-
-    const staged = stageExactPaths(
-      inspection.git.repositoryRoot,
-      session.baseline.head,
-      inspection.changedPaths,
-      {
-        expectedTree: preview.tree,
-        expectedPreviousIndexTree: preview.previousIndexTree,
-      },
-    );
-    try {
-      const finalized = inspectSession(cwd, session.sessionId, {
-        expectedSession: session,
-        projectedTaskIds: completedTaskIds,
-        projectionSourceDigest,
-        authorizedTransitionPaths: transitionPaths,
-      });
-
-      const createdAt = new Date().toISOString();
-      const checkReport: WorkflowReport = {
+    transaction = publishFinalizeTransaction(
+      active.runtime.root,
+      createFinalizeTransaction({
         schemaVersion: 1,
-        kind: 'check',
-        finalizeProfile: PROJECTED_SINGLE_PASS_ASSURANCE,
-        candidateTree: preview.tree,
+        kind: 'projected-finalize-transaction.v1',
         sessionId: session.sessionId,
         changeId: session.changeId,
         taskId: session.taskId,
-        createdAt,
-        baseline: session.baseline,
+        repositoryRoot: projected.git.repositoryRealPath,
+        gitCommonDirectory: projected.git.gitCommonDirectory,
         branch: session.branch,
-        artifactDigests: inspection.artifactDigests,
-        allowedPaths: session.allowedPaths,
-        requiredChecks: session.requiredChecks,
-        requiredCheckDigests,
-        ...projectedPathClassification,
-        fingerprint: inspection.fingerprint,
-        checks: verified.checks,
-      };
-      const checkReportId = writeSessionReport(inspection, checkReport);
-
-      const completionReport: WorkflowReport = {
-        schemaVersion: 1,
-        kind: 'completion',
-        finalizeProfile: PROJECTED_SINGLE_PASS_ASSURANCE,
-        candidateTree: preview.tree,
-        sessionId: session.sessionId,
-        changeId: session.changeId,
-        taskId: session.taskId,
-        createdAt,
-        parentReportId: checkReportId,
         baseline: session.baseline,
-        branch: session.branch,
-        artifactDigests: inspection.artifactDigests,
-        allowedPaths: session.allowedPaths,
-        requiredChecks: session.requiredChecks,
-        requiredCheckDigests,
-        ...projectedPathClassification,
-        fingerprint: inspection.fingerprint,
         completedTaskIds,
-        projectionSourceDigest,
-        transitionPaths,
         reconciledTasks: reconciliation,
-      };
-      const completionReportId = writeSessionReport(
-        inspection,
-        completionReport,
-      );
-
-      const finishReport: WorkflowReport = {
-        schemaVersion: 1,
-        kind: 'finish',
-        finalizeProfile: PROJECTED_SINGLE_PASS_ASSURANCE,
-        candidateTree: preview.tree,
-        sessionId: session.sessionId,
-        changeId: session.changeId,
-        taskId: session.taskId,
-        createdAt,
-        parentReportId: completionReportId,
-        baseline: session.baseline,
-        branch: session.branch,
-        artifactDigests: finalized.artifactDigests,
-        allowedPaths: session.allowedPaths,
-        requiredChecks: session.requiredChecks,
-        requiredCheckDigests: digestRequiredCheckDefinitions(
-          finalized.contract.checks,
-          session.requiredChecks,
-        ),
-        ...classifyProjectionPaths(
-          finalized.changedPaths,
-          taskProjectionPaths,
-          transitionPaths,
-        ),
-        fingerprint: finalized.fingerprint,
-        completedTaskIds,
+        taskProjectionPath,
+        projectionMutations: [
+          {
+            path: taskProjectionPath,
+            before: projection.before,
+            after: projection.after,
+          },
+          ...generatedDocuments.map((mutation) => ({
+            path: mutation.path,
+            before: mutation.before ?? null,
+            after: mutation.after,
+          })),
+        ].sort((left, right) => left.path.localeCompare(right.path)),
         projectionSourceDigest,
         transitionPaths,
-        checks: verified.checks,
-        stagedPaths: staged.stagedPaths,
-        tree: staged.tree,
-      };
-      const finishReportId = writeSessionReport(finalized, finishReport);
-
-      const updated: WorkflowSession = {
-        ...session,
-        latestCheckReportId: checkReportId,
-        completionReportId,
-        finishReportId,
-      };
-      persistSession(finalized, updated);
-
-      return {
-        session: updated,
-        assurance: PROJECTED_SINGLE_PASS_ASSURANCE,
-        checkReportId,
-        completionReportId,
-        finishReportId,
-        completedTaskIds,
-        stagedPaths: staged.stagedPaths,
-        tree: staged.tree,
-      };
-    } catch (error) {
-      rollbackExactStaging(
-        inspection.git.repositoryRoot,
-        staged.previousIndexTree,
-        staged.tree,
-        error,
-      );
+        changedPaths: projected.changedPaths,
+        candidateTree: preview.tree,
+        candidateFingerprint: projected.fingerprint,
+        candidateStatusEntries: projected.git.statusEntries,
+        previousIndexTree: preview.previousIndexTree,
+        createdAt: new Date().toISOString(),
+      }),
+    );
+    maybeInterrupt(options, 'candidate-prepared');
+    return continueFinalizeTransaction(cwd, transaction, environment, options);
+  } catch (error) {
+    if (preservesFinalizeTransaction(error)) throw error;
+    if (transaction !== null) {
+      rollbackPersistedFinalizeTransaction(cwd, session.sessionId, error);
       throw error;
     }
-  } catch (error) {
     try {
       rollbackGeneratedDocuments(
         initial.git.repositoryRoot,
@@ -267,4 +208,491 @@ export function finalizeTaskUnlocked(
     }
     throw error;
   }
+}
+
+function continueFinalizeTransaction(
+  cwd: string,
+  initial: FinalizeTransaction,
+  environment: NodeJS.ProcessEnv,
+  options: FinalizeTaskOptions,
+): FinalizeTaskResult {
+  let transaction = initial;
+  while (true) {
+    const state = inspectFinalizeTransaction(cwd, transaction);
+    const session = state.inspection.session;
+    if (transaction.phase === 'candidate-prepared') {
+      if (state.indexState !== 'previous') throw transactionDiverged();
+      transaction = advanceFinalizeTransaction(
+        state.context.runtime.root,
+        transaction,
+        { ...transaction, phase: 'checks-running' },
+      );
+      maybeInterrupt(options, 'checks-running');
+      const verified = executeChecks(
+        cwd,
+        state.inspection,
+        session.requiredChecks,
+        environment,
+        [...transaction.completedTaskIds],
+        transaction.projectionSourceDigest,
+        [...transaction.transitionPaths],
+      );
+      maybeInterrupt(options, 'checks-executed');
+      if (
+        verified.inspection.fingerprint !== transaction.candidateFingerprint ||
+        JSON.stringify(verified.inspection.git.statusEntries) !==
+          JSON.stringify(transaction.candidateStatusEntries)
+      ) {
+        throw transactionDiverged();
+      }
+      const checkReportId = writeSessionReport(
+        verified.inspection,
+        createCheckReport(transaction, verified.inspection, verified.checks),
+      );
+      transaction = advanceFinalizeTransaction(
+        state.context.runtime.root,
+        transaction,
+        { ...transaction, phase: 'checked', checkReportId },
+      );
+      maybeInterrupt(options, 'checked');
+      continue;
+    }
+    if (transaction.phase === 'checks-running') {
+      throw finalizeRecoveryRequired(transaction);
+    }
+    const checkReport = currentCheckReport(state.inspection, transaction);
+    if (transaction.phase === 'checked') {
+      if (state.indexState === 'previous') {
+        stageExactPaths(
+          state.inspection.git.repositoryRoot,
+          session.baseline.head,
+          [...transaction.changedPaths],
+          {
+            expectedTree: transaction.candidateTree,
+            expectedPreviousIndexTree: transaction.previousIndexTree,
+          },
+        );
+      }
+      transaction = advanceFinalizeTransaction(
+        state.context.runtime.root,
+        transaction,
+        { ...transaction, phase: 'staged' },
+      );
+      maybeInterrupt(options, 'staged');
+      continue;
+    }
+    if (transaction.phase === 'staged') {
+      if (state.indexState !== 'candidate') throw transactionDiverged();
+      const completionReportId = writeSessionReport(
+        state.inspection,
+        createCompletionReport(transaction, state.inspection),
+      );
+      const finishReportId = writeSessionReport(
+        state.inspection,
+        createFinishReport(
+          transaction,
+          state.inspection,
+          checkReport,
+          completionReportId,
+        ),
+      );
+      transaction = advanceFinalizeTransaction(
+        state.context.runtime.root,
+        transaction,
+        {
+          ...transaction,
+          phase: 'reports-persisted',
+          completionReportId,
+          finishReportId,
+        },
+      );
+      maybeInterrupt(options, 'reports-persisted');
+      continue;
+    }
+    if (transaction.phase === 'reports-persisted') {
+      if (state.indexState !== 'candidate') throw transactionDiverged();
+      const updated = finalizedSession(session, transaction);
+      if (!sessionHasFinalizeReports(session, transaction)) {
+        if (
+          session.latestCheckReportId ||
+          session.completionReportId ||
+          session.finishReportId
+        ) {
+          throw transactionDiverged();
+        }
+        persistSession(state.inspection, updated);
+      }
+      maybeInterrupt(options, 'session-finished');
+      transaction = advanceFinalizeTransaction(
+        state.context.runtime.root,
+        transaction,
+        { ...transaction, phase: 'completed' },
+      );
+      continue;
+    }
+    if (transaction.phase === 'completed') {
+      if (
+        state.indexState !== 'candidate' ||
+        !sessionHasFinalizeReports(session, transaction)
+      ) {
+        throw transactionDiverged();
+      }
+      return resultFrom(transaction, session);
+    }
+  }
+}
+
+function inspectFinalizeTransaction(
+  cwd: string,
+  transaction: FinalizeTransaction,
+) {
+  const context = loadActiveSessionContext(cwd, transaction.sessionId);
+  assertFinalizeTransactionIdentity(context, transaction);
+  for (const mutation of transaction.projectionMutations) {
+    if (
+      readProjectionText(transaction.repositoryRoot, mutation.path) !==
+      mutation.after
+    ) {
+      throw transactionDiverged();
+    }
+  }
+  const inspection = inspectSession(cwd, transaction.sessionId, {
+    expectedSession: context.session,
+    projectedTaskIds: [...transaction.completedTaskIds],
+    projectionSourceDigest: transaction.projectionSourceDigest,
+    authorizedTransitionPaths: [...transaction.transitionPaths],
+  });
+  if (
+    JSON.stringify(inspection.changedPaths) !==
+    JSON.stringify(transaction.changedPaths)
+  ) {
+    throw transactionDiverged();
+  }
+  const indexTree = runGit(inspection.git.repositoryRoot, [
+    'write-tree',
+  ]).trim();
+  const unstagedState = runGit(inspection.git.repositoryRoot, [
+    'diff',
+    '--name-only',
+    '-z',
+    '--',
+  ]);
+  const reconstructedCandidateFingerprint =
+    fingerprintUnstagedRepositoryProjection(
+      inspection.git.repositoryRoot,
+      transaction.baseline.head,
+      [...transaction.candidateStatusEntries],
+    );
+  let indexState: 'previous' | 'candidate';
+  if (indexTree === transaction.previousIndexTree) {
+    const preview = previewExactStaging(
+      inspection.git.repositoryRoot,
+      transaction.baseline.head,
+      [...transaction.changedPaths],
+    );
+    if (
+      preview.tree !== transaction.candidateTree ||
+      preview.previousIndexTree !== transaction.previousIndexTree ||
+      inspection.fingerprint !== transaction.candidateFingerprint ||
+      JSON.stringify(inspection.git.statusEntries) !==
+        JSON.stringify(transaction.candidateStatusEntries)
+    ) {
+      throw transactionDiverged();
+    }
+    indexState = 'previous';
+  } else if (
+    indexTree === transaction.candidateTree &&
+    JSON.stringify(
+      listStagedPaths(inspection.git.repositoryRoot, transaction.baseline.head),
+    ) === JSON.stringify(transaction.changedPaths) &&
+    unstagedState === '' &&
+    reconstructedCandidateFingerprint === transaction.candidateFingerprint
+  ) {
+    indexState = 'candidate';
+  } else {
+    throw transactionDiverged();
+  }
+  return {
+    context,
+    inspection,
+    indexState,
+    pathClassification: classifyProjectionPaths(
+      [...transaction.changedPaths],
+      [transaction.taskProjectionPath],
+      [...transaction.transitionPaths],
+    ),
+  };
+}
+
+function createCheckReport(
+  transaction: FinalizeTransaction,
+  inspection: ReturnType<typeof inspectSession>,
+  checks: unknown[],
+): WorkflowReport {
+  return {
+    schemaVersion: 1,
+    kind: 'check',
+    finalizeProfile: PROJECTED_SINGLE_PASS_ASSURANCE,
+    candidateTree: transaction.candidateTree,
+    sessionId: transaction.sessionId,
+    changeId: transaction.changeId,
+    taskId: transaction.taskId,
+    createdAt: transaction.createdAt,
+    baseline: transaction.baseline,
+    branch: transaction.branch,
+    artifactDigests: inspection.artifactDigests,
+    allowedPaths: inspection.session.allowedPaths,
+    requiredChecks: inspection.session.requiredChecks,
+    requiredCheckDigests: digestRequiredCheckDefinitions(
+      inspection.contract.checks,
+      inspection.session.requiredChecks,
+    ),
+    ...classifyProjectionPaths(
+      inspection.changedPaths,
+      [transaction.taskProjectionPath],
+      [...transaction.transitionPaths],
+    ),
+    fingerprint: inspection.fingerprint,
+    checks,
+  };
+}
+
+function createCompletionReport(
+  transaction: FinalizeTransaction,
+  inspection: ReturnType<typeof inspectSession>,
+): WorkflowReport {
+  return {
+    ...createCheckReport(transaction, inspection, []),
+    kind: 'completion',
+    parentReportId: transaction.checkReportId!,
+    completedTaskIds: [...transaction.completedTaskIds],
+    projectionSourceDigest: transaction.projectionSourceDigest,
+    transitionPaths: [...transaction.transitionPaths],
+    reconciledTasks: transaction.reconciledTasks,
+    checks: undefined,
+  };
+}
+
+function createFinishReport(
+  transaction: FinalizeTransaction,
+  inspection: ReturnType<typeof inspectSession>,
+  checkReport: WorkflowReport,
+  completionReportId: string,
+): WorkflowReport {
+  return {
+    ...createCheckReport(
+      transaction,
+      inspection,
+      checkReport.checks as unknown[],
+    ),
+    kind: 'finish',
+    parentReportId: completionReportId,
+    completedTaskIds: [...transaction.completedTaskIds],
+    projectionSourceDigest: transaction.projectionSourceDigest,
+    transitionPaths: [...transaction.transitionPaths],
+    stagedPaths: [...transaction.changedPaths],
+    tree: transaction.candidateTree,
+  };
+}
+
+function currentCheckReport(
+  inspection: ReturnType<typeof inspectSession>,
+  transaction: FinalizeTransaction,
+): WorkflowReport {
+  if (transaction.checkReportId === null) throw transactionDiverged();
+  const report = readSessionReport(inspection, transaction.checkReportId);
+  assertInspectionReport(
+    report,
+    { ...inspection, fingerprint: transaction.candidateFingerprint },
+    'check',
+    'CHECK_REPORT_STALE',
+  );
+  assertReportChecks(
+    report,
+    inspection,
+    inspection.session.requiredChecks,
+    'CHECK_REPORT_STALE',
+  );
+  if (
+    report.parentReportId !== undefined ||
+    report.finalizeProfile !== PROJECTED_SINGLE_PASS_ASSURANCE ||
+    report.candidateTree !== transaction.candidateTree
+  ) {
+    throw transactionDiverged();
+  }
+  return report;
+}
+
+function finalizedSession(
+  session: WorkflowSession,
+  transaction: FinalizeTransaction,
+): WorkflowSession {
+  if (
+    transaction.checkReportId === null ||
+    transaction.completionReportId === null ||
+    transaction.finishReportId === null
+  ) {
+    throw transactionDiverged();
+  }
+  return {
+    ...session,
+    latestCheckReportId: transaction.checkReportId,
+    completionReportId: transaction.completionReportId,
+    finishReportId: transaction.finishReportId,
+  };
+}
+
+function sessionHasFinalizeReports(
+  session: WorkflowSession,
+  transaction: FinalizeTransaction,
+): boolean {
+  return (
+    session.latestCheckReportId === transaction.checkReportId &&
+    session.completionReportId === transaction.completionReportId &&
+    session.finishReportId === transaction.finishReportId
+  );
+}
+
+function resultFrom(
+  transaction: FinalizeTransaction,
+  session: WorkflowSession,
+): FinalizeTaskResult {
+  if (
+    transaction.checkReportId === null ||
+    transaction.completionReportId === null ||
+    transaction.finishReportId === null
+  ) {
+    throw transactionDiverged();
+  }
+  return {
+    session,
+    assurance: PROJECTED_SINGLE_PASS_ASSURANCE,
+    checkReportId: transaction.checkReportId,
+    completionReportId: transaction.completionReportId,
+    finishReportId: transaction.finishReportId,
+    completedTaskIds: [...transaction.completedTaskIds],
+    stagedPaths: [...transaction.changedPaths],
+    tree: transaction.candidateTree,
+  };
+}
+
+function assertFinalizeTransactionIdentity(
+  context: ReturnType<typeof loadActiveSessionContext>,
+  transaction: FinalizeTransaction,
+): void {
+  const session = context.session;
+  if (
+    transaction.sessionId !== session.sessionId ||
+    transaction.changeId !== session.changeId ||
+    transaction.taskId !== session.taskId ||
+    transaction.repositoryRoot !== context.git.repositoryRealPath ||
+    transaction.gitCommonDirectory !== context.git.gitCommonDirectory ||
+    transaction.branch !== session.branch ||
+    JSON.stringify(transaction.baseline) !== JSON.stringify(session.baseline)
+  ) {
+    throw transactionDiverged();
+  }
+}
+
+function rollbackPersistedFinalizeTransaction(
+  cwd: string,
+  sessionId: string,
+  cause: unknown,
+): void {
+  const context = loadActiveSessionContext(cwd, sessionId);
+  const transaction = readFinalizeTransaction(
+    context.runtime.root,
+    context.session.sessionId,
+  );
+  if (transaction === null) return;
+  if (sessionHasFinalizeReports(context.session, transaction)) return;
+  const indexTree = runGit(context.git.repositoryRoot, ['write-tree']).trim();
+  if (indexTree === transaction.candidateTree) {
+    rollbackExactStaging(
+      context.git.repositoryRoot,
+      transaction.previousIndexTree,
+      transaction.candidateTree,
+      cause,
+    );
+  } else if (indexTree !== transaction.previousIndexTree) {
+    throw transactionDiverged();
+  }
+  for (const mutation of [...transaction.projectionMutations].reverse()) {
+    const current = readProjectionText(
+      transaction.repositoryRoot,
+      mutation.path,
+    );
+    if (current === mutation.before) continue;
+    if (current !== mutation.after) throw transactionDiverged();
+    const target = path.join(transaction.repositoryRoot, mutation.path);
+    if (mutation.path === transaction.taskProjectionPath) {
+      if (mutation.before === null) throw transactionDiverged();
+      restoreTaskProjection(target, mutation.after, mutation.before);
+    } else if (mutation.before === null) {
+      fs.rmSync(target, { force: true });
+    } else {
+      fs.writeFileSync(target, mutation.before, 'utf8');
+    }
+  }
+  removeFinalizeTransaction(context.runtime.root, transaction);
+}
+
+function readProjectionText(
+  repositoryRoot: string,
+  relativePath: string,
+): string | null {
+  const target = path.join(repositoryRoot, relativePath);
+  const stats = fs.lstatSync(target, { throwIfNoEntry: false });
+  if (!stats) return null;
+  if (!stats.isFile() || stats.isSymbolicLink() || stats.nlink !== 1) {
+    throw transactionDiverged();
+  }
+  return fs.readFileSync(target, 'utf8');
+}
+
+function maybeInterrupt(
+  options: FinalizeTaskOptions,
+  phase: FinalizeTaskOptions['testCrashAfter'],
+): void {
+  if (options.testCrashAfter === phase) {
+    throw new SimulatedFinalizeInterruption(String(phase));
+  }
+}
+
+function preservesFinalizeTransaction(error: unknown): boolean {
+  return (
+    error instanceof SimulatedFinalizeInterruption ||
+    (error instanceof WorkflowError &&
+      error.code === 'FINALIZE_RECOVERY_REQUIRED')
+  );
+}
+
+function finalizeRecoveryRequired(transaction: FinalizeTransaction) {
+  return workflowError(
+    'FINALIZE_RECOVERY_REQUIRED',
+    'Finalize check execution may have crossed an interruption boundary; automatic retry will not duplicate it.',
+    ExitCode.staleState,
+    {
+      details: {
+        transactionId: transaction.transactionId,
+        phase: transaction.phase,
+      },
+      recovery:
+        'Inspect the durable finalize transaction and explicitly cancel or reconcile it before retrying.',
+    },
+  );
+}
+
+class SimulatedFinalizeInterruption extends Error {
+  constructor(phase: string) {
+    super(`Simulated finalize interruption after ${phase}.`);
+  }
+}
+
+function transactionDiverged() {
+  return workflowError(
+    'FINALIZE_TRANSACTION_DIVERGED',
+    'Durable finalize state differs from its exact candidate transaction.',
+    ExitCode.staleState,
+  );
 }

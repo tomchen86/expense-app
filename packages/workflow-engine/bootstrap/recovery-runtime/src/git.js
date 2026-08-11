@@ -236,10 +236,21 @@ export function fingerprintWorkingState(repositoryRoot, baselineHead, statusEntr
 export function fingerprintRepositoryProjection(repositoryRoot, baselineHead, statusEntries) {
     return fingerprintState(repositoryRoot, baselineHead, statusEntries, process.platform !== 'darwin', true);
 }
+/**
+ * Reconstruct the repository projection that existed before workflow-owned
+ * staging. The caller must separately prove that the pinned candidate was
+ * created from an empty managed index and that the current index is the exact
+ * candidate tree. This keeps report currentness sensitive to worktree and
+ * ignored-path drift without treating the later staging phase as candidate
+ * mutation.
+ */
+export function fingerprintUnstagedRepositoryProjection(repositoryRoot, baselineHead, statusEntries) {
+    return fingerprintState(repositoryRoot, baselineHead, statusEntries, process.platform !== 'darwin', true, true, '');
+}
 export function fingerprintRepositoryWorktree(repositoryRoot, baselineHead) {
     return fingerprintState(repositoryRoot, baselineHead, [], process.platform !== 'darwin', false, true);
 }
-function fingerprintState(repositoryRoot, baselineHead, statusEntries, includeVolatileMetadata, includeIndex = true, trackedFromBaseline = false) {
+function fingerprintState(repositoryRoot, baselineHead, statusEntries, includeVolatileMetadata, includeIndex = true, trackedFromBaseline = false, pinnedIndexState) {
     try {
         const digest = crypto.createHash('sha256');
         const trackedPaths = trackedFromBaseline
@@ -248,14 +259,15 @@ function fingerprintState(repositoryRoot, baselineHead, statusEntries, includeVo
         const changedPaths = listChangedPaths(repositoryRoot, baselineHead);
         const ignoredPaths = listRepositoryIgnoredPaths(repositoryRoot);
         if (includeIndex) {
-            const indexState = runGit(repositoryRoot, [
-                'diff',
-                '--cached',
-                '--raw',
-                '-z',
-                baselineHead,
-                '--',
-            ]);
+            const indexState = pinnedIndexState ??
+                runGit(repositoryRoot, [
+                    'diff',
+                    '--cached',
+                    '--raw',
+                    '-z',
+                    baselineHead,
+                    '--',
+                ]);
             updateFramed(digest, 'index', indexState);
             for (const statusEntry of statusEntries) {
                 updateFramed(digest, 'status', statusEntry);

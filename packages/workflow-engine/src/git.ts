@@ -410,6 +410,30 @@ export function fingerprintRepositoryProjection(
   );
 }
 
+/**
+ * Reconstruct the repository projection that existed before workflow-owned
+ * staging. The caller must separately prove that the pinned candidate was
+ * created from an empty managed index and that the current index is the exact
+ * candidate tree. This keeps report currentness sensitive to worktree and
+ * ignored-path drift without treating the later staging phase as candidate
+ * mutation.
+ */
+export function fingerprintUnstagedRepositoryProjection(
+  repositoryRoot: string,
+  baselineHead: string,
+  statusEntries: string[],
+): string {
+  return fingerprintState(
+    repositoryRoot,
+    baselineHead,
+    statusEntries,
+    process.platform !== 'darwin',
+    true,
+    true,
+    '',
+  );
+}
+
 export function fingerprintRepositoryWorktree(
   repositoryRoot: string,
   baselineHead: string,
@@ -431,6 +455,7 @@ function fingerprintState(
   includeVolatileMetadata: boolean,
   includeIndex: boolean = true,
   trackedFromBaseline: boolean = false,
+  pinnedIndexState?: string,
 ): string {
   try {
     const digest = crypto.createHash('sha256');
@@ -440,14 +465,16 @@ function fingerprintState(
     const changedPaths = listChangedPaths(repositoryRoot, baselineHead);
     const ignoredPaths = listRepositoryIgnoredPaths(repositoryRoot);
     if (includeIndex) {
-      const indexState = runGit(repositoryRoot, [
-        'diff',
-        '--cached',
-        '--raw',
-        '-z',
-        baselineHead,
-        '--',
-      ]);
+      const indexState =
+        pinnedIndexState ??
+        runGit(repositoryRoot, [
+          'diff',
+          '--cached',
+          '--raw',
+          '-z',
+          baselineHead,
+          '--',
+        ]);
       updateFramed(digest, 'index', indexState);
       for (const statusEntry of statusEntries) {
         updateFramed(digest, 'status', statusEntry);
