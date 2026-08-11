@@ -145,6 +145,8 @@ export function finalizeTaskUnlocked(
       const checkReport: WorkflowReport = {
         schemaVersion: 1,
         kind: 'check',
+        finalizeProfile: PROJECTED_SINGLE_PASS_ASSURANCE,
+        candidateTree: preview.tree,
         sessionId: session.sessionId,
         changeId: session.changeId,
         taskId: session.taskId,
@@ -164,6 +166,8 @@ export function finalizeTaskUnlocked(
       const completionReport: WorkflowReport = {
         schemaVersion: 1,
         kind: 'completion',
+        finalizeProfile: PROJECTED_SINGLE_PASS_ASSURANCE,
+        candidateTree: preview.tree,
         sessionId: session.sessionId,
         changeId: session.changeId,
         taskId: session.taskId,
@@ -190,6 +194,8 @@ export function finalizeTaskUnlocked(
       const finishReport: WorkflowReport = {
         schemaVersion: 1,
         kind: 'finish',
+        finalizeProfile: PROJECTED_SINGLE_PASS_ASSURANCE,
+        candidateTree: preview.tree,
         sessionId: session.sessionId,
         changeId: session.changeId,
         taskId: session.taskId,

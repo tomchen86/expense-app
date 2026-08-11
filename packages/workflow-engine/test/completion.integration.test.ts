@@ -25,6 +25,7 @@ import {
   writeImmutableReport,
   type WorkflowReport,
 } from '../src/report-store.ts';
+import { writeJsonAtomic } from '../src/session-store.ts';
 import { checkSession, getSession, startSession } from '../src/session.ts';
 import {
   configureChecks,
@@ -295,12 +296,64 @@ test('projected single-pass finalize checks and stages one exact final tree', ()
     );
     assert.deepEqual(checkReport.checks, finishReport.checks);
     assert.equal(finishReport.tree, finalized.tree);
+    for (const report of [checkReport, completionReport, finishReport]) {
+      assert.equal(
+        report.finalizeProfile,
+        'projected-single-pass-ordinary-failure',
+      );
+      assert.equal(report.candidateTree, finalized.tree);
+    }
 
     commitSession(repository, session.sessionId, 'Complete once');
     assert.equal(fs.readFileSync(counterPath, 'utf8'), '1');
   } finally {
     fs.rmSync(repository, { recursive: true, force: true });
     fs.rmSync(outputDirectory, { recursive: true, force: true });
+  }
+});
+
+test('projected single-pass commit rejects a mismatched frozen candidate tree', () => {
+  const repository = createFixtureRepository();
+  try {
+    git(repository, ['checkout', '-b', 'work/demo-change']);
+    const session = startSession(repository, 'demo-change', '1.1');
+    fs.writeFileSync(path.join(repository, 'src/feature.ts'), 'export {};\n');
+
+    finalizeTask(repository, session.sessionId);
+    const finalizedSession = getSession(repository, session.sessionId);
+    const reportsRoot = path.join(runtimeRoot(repository), 'reports');
+    const finishReport = readImmutableReport(
+      reportsRoot,
+      session.sessionId,
+      finalizedSession.finishReportId!,
+    );
+    const mismatchedFinishReport: WorkflowReport = {
+      ...finishReport,
+      candidateTree: '0'.repeat(40),
+    };
+    const mismatchedFinishReportId = writeImmutableReport(
+      reportsRoot,
+      mismatchedFinishReport,
+    );
+    writeJsonAtomic(
+      path.join(
+        runtimeRoot(repository),
+        'sessions',
+        `${session.sessionId}.json`,
+      ),
+      { ...finalizedSession, finishReportId: mismatchedFinishReportId },
+    );
+
+    assert.throws(
+      () => commitSession(repository, session.sessionId, 'Reject mismatch'),
+      (error) => isWorkflowError(error, 'FINISH_REPORT_STALE'),
+    );
+    assert.equal(
+      git(repository, ['rev-parse', 'HEAD']).trim(),
+      session.baseline.head,
+    );
+  } finally {
+    fs.rmSync(repository, { recursive: true, force: true });
   }
 });
 
