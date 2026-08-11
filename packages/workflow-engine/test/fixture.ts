@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 
 import { canonicalJson } from '../src/canonical-json.ts';
-import { loadChangeContract } from '../src/contracts.ts';
+import { loadChangeContract, type ExecutionTask } from '../src/contracts.ts';
 import { createEvidenceNode } from '../src/evidence-node.ts';
 import { WorkflowError } from '../src/errors.ts';
 import {
@@ -306,6 +306,10 @@ export function writeReadyV2ExemptChange(
   changeId = 'demo-change',
   options: {
     diffReview?: 'required' | 'policy-required';
+    executionTask?: (input: {
+      taskId: string;
+      policy: { allowedPaths: string[]; requiredChecks: string[] };
+    }) => ExecutionTask;
   } = {},
 ) {
   const changeDirectory = path.join(repository, 'openspec/changes', changeId);
@@ -364,7 +368,7 @@ export function writeReadyV2ExemptChange(
     tasks: Object.fromEntries(
       Object.entries(guard.tasks).map(([taskId, policy]) => [
         taskId,
-        {
+        options.executionTask?.({ taskId, policy }) ?? {
           strategy: 'direct-reviewed' as const,
           enforcement: 'available' as const,
           allowedPaths: policy.allowedPaths,

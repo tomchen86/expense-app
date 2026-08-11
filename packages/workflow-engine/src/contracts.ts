@@ -260,6 +260,18 @@ export type CrossAgentTddExecution = ExecutionCommon & {
   requiredImplementerIndependence: 'provider-independent';
 };
 
+export type TddSingleAgentExecution = ExecutionCommon & {
+  strategy: 'tdd-single-agent';
+  enforcement: 'planned';
+  behaviorContractRefs: BehaviorContractRef[];
+  testPathScopes: string[];
+  fixturePathScopes: string[];
+  implementationPathScopes: string[];
+  redCheck: string;
+  greenChecks: string[];
+  requiredImplementerIndependence: 'none';
+};
+
 export type TransformationTerm = {
   kind: 'path' | 'content' | 'symbol' | 'config';
   value: string;
@@ -295,6 +307,7 @@ export type DirectReviewedExecution = ExecutionCommon & {
 
 export type ExecutionTask =
   | CrossAgentTddExecution
+  | TddSingleAgentExecution
   | MechanicalTransformExecution
   | DirectReviewedExecution;
 
@@ -917,7 +930,10 @@ export function parseExecutionArtifact(
       throw invalid();
     }
 
-    if (candidate.strategy === 'cross-agent-tdd') {
+    if (
+      candidate.strategy === 'cross-agent-tdd' ||
+      candidate.strategy === 'tdd-single-agent'
+    ) {
       if (
         !hasExactKeys(candidate, [
           ...commonKeys,
@@ -955,11 +971,15 @@ export function parseExecutionArtifact(
           JSON.stringify(policy.requiredChecks) ||
         !candidate.greenChecks.includes(candidate.redCheck) ||
         candidate.enforcement !== 'planned' ||
-        candidate.requiredImplementerIndependence !== 'provider-independent'
+        candidate.requiredImplementerIndependence !==
+          (candidate.strategy === 'cross-agent-tdd'
+            ? 'provider-independent'
+            : 'none')
       ) {
         throw invalid();
       }
-      parsedTasks[taskId] = candidate as CrossAgentTddExecution;
+      parsedTasks[taskId] = candidate as
+        CrossAgentTddExecution | TddSingleAgentExecution;
       continue;
     }
 

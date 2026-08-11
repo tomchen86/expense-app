@@ -1274,6 +1274,23 @@ test('execution artifacts use one exact strategy variant per task without claimi
         exemptionReason: 'Only authored documentation changes.',
         legacyBootstrap: null,
       },
+      {
+        ...common,
+        strategy: 'tdd-single-agent' as const,
+        behaviorContractRefs: [
+          {
+            specPath: 'specs/demo/spec.md',
+            requirement: 'Demo behavior',
+            scenario: 'Demo succeeds',
+          },
+        ],
+        testPathScopes: ['src/__tests__/**'],
+        fixturePathScopes: ['src/__tests__/fixtures/**'],
+        implementationPathScopes: ['src/features/**'],
+        redCheck: 'fixture',
+        greenChecks: ['fixture'],
+        requiredImplementerIndependence: 'none' as const,
+      },
     ];
 
     for (const task of variants) {
@@ -1378,6 +1395,14 @@ test('execution artifacts use one exact strategy variant per task without claimi
       {
         ...variants[0],
         testPathScopes: ['outside/**'],
+      },
+      {
+        ...variants[0],
+        requiredImplementerIndependence: 'none',
+      },
+      {
+        ...variants[3],
+        requiredImplementerIndependence: 'provider-independent',
       },
     ];
     for (const task of invalid) {

@@ -71,6 +71,7 @@ import './managed-change-lifecycle.integration.test.ts';
 import './runner.integration.test.ts';
 import './session-check-invalidation.integration.test.ts';
 import './task-revision-lease.integration.test.ts';
+import './task-strategy-execution.integration.test.ts';
 import {
   activateInvestigationPlanning,
   addFixtureScripts,
