@@ -271,7 +271,7 @@
     {
       "path": "src/contracts.ts",
       "mode": "100644",
-      "digest": "sha256:3bfa8f07497159cf47c3e359e1657e22cec84d01d94159134e64271fd3454bd3"
+      "digest": "sha256:4de47affe31c0b20b765fefaabcaab37087fa0d4bd068eb37b3386e390437c1c"
     },
     {
       "path": "src/control-plane-promotion-producer.ts",
@@ -866,7 +866,7 @@
     {
       "path": "src/projected-finalization.ts",
       "mode": "100644",
-      "digest": "sha256:d29d4e37b472b117346ffaa364b660a28c6057c6add3f3fee56df14edc8fbfa2"
+      "digest": "sha256:7c410338ba4f3af7e14f8fa3ab7391a868cb2f1c729dfcd4ad24fc02c17f6504"
     },
     {
       "path": "src/propose-exemption-store.ts",
@@ -876,7 +876,7 @@
     {
       "path": "src/propose-orchestrator.ts",
       "mode": "100644",
-      "digest": "sha256:fc414ebcf80ffa185de9e0f74a96d8af2b18f38461ee985c963370139ea8f47d"
+      "digest": "sha256:4f04fee69c007c5c6650a463298e7910cbec9e434d18a012001a0dffd7bdee23"
     },
     {
       "path": "src/protected-capabilities.ts",
@@ -1019,6 +1019,11 @@
       "digest": "sha256:8f536a6cfa1a799ccc7656cf8dbf052128d78d021d5c7c37ecd8ed1413bee148"
     },
     {
+      "path": "src/reviewed-mutation-policy.ts",
+      "mode": "100644",
+      "digest": "sha256:f0fb87e1a5b5d30fea26a31745fe19dfa647760935092a18887f9ec4d07aac72"
+    },
+    {
       "path": "src/role-scheduler.ts",
       "mode": "100644",
       "digest": "sha256:dc712715050aa1273d8a7099a38cbe8f17d2a7c028ba41d45d354cc5d67192f1"
@@ -1104,6 +1109,11 @@
       "digest": "sha256:9d5ec92a6b38f483fffd2db0d536e472142d61aac0be186e034bc8c0524c037a"
     },
     {
+      "path": "src/task-mechanical-transform.ts",
+      "mode": "100644",
+      "digest": "sha256:4a7a4f75c0ae14b8d986bd473cd99a3bb4940417e9a6afda6748d89645b6aa25"
+    },
+    {
       "path": "src/task-projection.ts",
       "mode": "100644",
       "digest": "sha256:c5fc8a081a8fd8dc5e4a5aea9cec4401c28e0bedf88d382da431f76930cb7646"
@@ -1126,7 +1136,7 @@
     {
       "path": "src/task-strategy-gate.ts",
       "mode": "100644",
-      "digest": "sha256:5a9041f080e0c2e6e62b694d8c81e9c76deff0357245bbf9cbad946b99f223e7"
+      "digest": "sha256:001736b9a85bf1b583c5c76a3d38f2729deda7e34c092ac9200c46513008f71c"
     },
     {
       "path": "src/task-strategy-implementation-lifecycle.ts",
@@ -1171,7 +1181,7 @@
     {
       "path": "src/verification.ts",
       "mode": "100644",
-      "digest": "sha256:48f81ae303bbc432aecde879c49cd792c3cccdef37a223b5b30ea2bb3afe7979"
+      "digest": "sha256:ac3e9bb58e2e47a11897108c1f3949492989d8e744df505958627f32965eb388"
     }
   ]
 }

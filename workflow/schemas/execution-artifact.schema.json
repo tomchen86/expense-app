@@ -87,6 +87,19 @@
         "after": { "$ref": "#/$defs/text" }
       }
     },
+    "transformationRetainedDisposition": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["term", "path", "mutationClass", "reason"],
+      "properties": {
+        "term": { "$ref": "#/$defs/transformationTerm" },
+        "path": { "$ref": "#/$defs/path" },
+        "mutationClass": {
+          "enum": ["append-only", "immutable", "historical-reference"]
+        },
+        "reason": { "$ref": "#/$defs/text" }
+      }
+    },
     "transformationContract": {
       "type": "object",
       "additionalProperties": false,
@@ -96,6 +109,7 @@
         "fileScopes",
         "oldTerms",
         "replacementTerms",
+        "retainedDispositions",
         "redInapplicableReason"
       ],
       "properties": {
@@ -115,8 +129,14 @@
         },
         "replacementTerms": {
           "type": "array",
+          "minItems": 1,
           "uniqueItems": true,
           "items": { "$ref": "#/$defs/transformationTerm" }
+        },
+        "retainedDispositions": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/transformationRetainedDisposition" }
         },
         "redInapplicableReason": { "$ref": "#/$defs/text" }
       }

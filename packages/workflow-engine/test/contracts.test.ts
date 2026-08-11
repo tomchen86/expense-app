@@ -546,7 +546,7 @@ test('public guidance preserves the assurance registry and keeps exemptions dist
       '`C-EXACT-CLOSURE`',
       'Exact declared bytes are absent from the governed live closure scope',
       'Hard',
-      'Future T2.4 mechanical closure; not delivered by T1.5',
+      'T2.4 `mechanical-transform` engine evidence on exact candidate trees',
     ],
     [
       '`C-GRAPH-COMPLETENESS`',
@@ -634,7 +634,7 @@ test('public guidance preserves the assurance registry and keeps exemptions dist
     /provider identity[\s\S]{0,120}(?:soft|not cryptographic)/i,
     /same-user containment[\s\S]{0,120}(?:soft|not proved)/i,
     /reviewer judgment[\s\S]{0,120}(?:soft|not proved)/i,
-    /semantic closure[\s\S]{0,120}(?:not delivered|T2\.4)/i,
+    /exact-byte closure[\s\S]{0,120}deterministic[\s\S]{0,80}mechanical-transform[\s\S]{0,160}does not claim[\s\S]{0,80}graph completeness[\s\S]{0,80}semantic equivalence/i,
     /degraded[\s\S]{0,160}does not recreate[\s\S]{0,80}independence/i,
     /availability[\s\S]{0,160}empirical[\s\S]{0,120}not structural/i,
     /projected single-pass[\s\S]{0,500}(?:not crash-safe|not fully atomic)/i,
@@ -1237,6 +1237,7 @@ test('execution artifacts use one exact strategy variant per task without claimi
       fileScopes: ['src/features/**'],
       oldTerms: [{ kind: 'symbol' as const, value: 'OLD_NAME' }],
       replacementTerms: [{ kind: 'symbol' as const, value: 'NEW_NAME' }],
+      retainedDispositions: [],
       redInapplicableReason:
         'Exact-byte closure and registered checks specify this codemod.',
     };
@@ -1341,7 +1342,28 @@ test('execution artifacts use one exact strategy variant per task without claimi
         ...variants[1],
         transformationContract: {
           ...transformationContract,
+          replacementTerms: [],
+        },
+      },
+      {
+        ...variants[1],
+        transformationContract: {
+          ...transformationContract,
           replacementTerms: [{ kind: 'symbol' as const, value: 'OLD_NAME' }],
+        },
+      },
+      {
+        ...variants[1],
+        transformationContract: {
+          ...transformationContract,
+          retainedDispositions: [
+            {
+              term: { kind: 'symbol' as const, value: 'OLD_NAME' },
+              path: 'outside/reference.md',
+              mutationClass: 'historical-reference' as const,
+              reason: 'The reviewed history retains the legacy name.',
+            },
+          ],
         },
       },
       {

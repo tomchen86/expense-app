@@ -180,16 +180,8 @@ import {
   createInteractiveSshSigner,
   type MaintainerSignerProvider,
 } from './maintainer-signer.ts';
-import {
-  createMutationClassPolicy,
-  type MutationClass,
-  type MutationClassRule,
-} from './mutation-class-policy.ts';
 import { createOpenSpecAdapter } from './openspec-adapter.ts';
-import {
-  OPENSPEC_ASSET_DEFINITIONS,
-  OPENSPEC_ASSET_MANIFEST_PATH,
-} from './openspec-planning-asset-contract.ts';
+import { OPENSPEC_ASSET_DEFINITIONS } from './openspec-planning-asset-contract.ts';
 import {
   assertChangeId,
   normalizeExactRepositoryPath,
@@ -199,6 +191,7 @@ import {
   assertPlanningTaskHistory,
   readFileAtCommit,
 } from './planning-contract.ts';
+import { deriveReviewedMutationClassPolicy } from './reviewed-mutation-policy.ts';
 import {
   assertActiveTaskMandateBindingUnderLifecycleLock,
   authorizeTaskMandateOperation,
@@ -5265,7 +5258,7 @@ function rebuildInvestigation(
     repositoryRoot: context.git.repositoryRoot,
     treeOid: session.baseline.tree,
   });
-  const mutationRules = deriveReviewedMutationRules(snapshot);
+  const mutationPolicy = deriveReviewedMutationClassPolicy(snapshot);
 
   const invocation = readProviderInvocation(
     context.runtime,
@@ -5419,9 +5412,7 @@ function rebuildInvestigation(
   }
   const grouped = deriveInvestigationGroups({
     scanNodes: scan.nodes,
-    mutationPolicy: createMutationClassPolicy({
-      rules: mutationRules,
-    }),
+    mutationPolicy,
     declaredRoots: [{ rootId: 'repository', path: '' }],
     reviewedRelationships,
     exceptions: [],
@@ -5843,171 +5834,6 @@ function deriveReviewedCounterpartFacts(
   return facts.sort((left, right) =>
     canonicalJson(left).localeCompare(canonicalJson(right)),
   );
-}
-
-function deriveReviewedMutationRules(
-  snapshot: TrackedTreeSnapshot,
-): MutationClassRule[] {
-  const rules = new Map<string, MutationClassRule>();
-  const addExactRule = (
-    source: string,
-    mutationClass: MutationClass,
-    relativePath: string,
-  ) => {
-    const normalized = normalizePolicyPath(relativePath);
-    const key = `${mutationClass}:${normalized}`;
-    if (rules.has(key)) {
-      return;
-    }
-    rules.set(key, {
-      ruleId: `reviewed-mutation:${sha256(
-        canonicalJson({ mutationClass, path: normalized, source }),
-      )}`,
-      mutationClass,
-      selector: { kind: 'exact-path', path: normalized },
-    });
-  };
-
-  for (const asset of OPENSPEC_ASSET_DEFINITIONS) {
-    addExactRule(
-      `OPENSPEC_ASSET_DEFINITIONS:${asset.destinationPath}`,
-      asset.mirrorOf === null ? 'generated' : 'mirror',
-      asset.destinationPath,
-    );
-  }
-  addExactRule(
-    'OPENSPEC_ASSET_MANIFEST_PATH',
-    'generated',
-    OPENSPEC_ASSET_MANIFEST_PATH,
-  );
-
-  const documentPolicy = readPinnedDocumentPolicy(snapshot);
-  const trackedPaths = snapshot.entries
-    .map((entry) => entry.path.utf8)
-    .filter((value): value is string => value !== null);
-  for (const [policyPath, value] of Object.entries(documentPolicy.documents)) {
-    const mutationClass = documentModeMutationClass(value.mode);
-    if (mutationClass === null) {
-      continue;
-    }
-    for (const trackedPath of trackedPaths) {
-      if (documentPolicyMatches(policyPath, trackedPath)) {
-        addExactRule(
-          `workflow/document-policy.json:${policyPath}`,
-          mutationClass,
-          trackedPath,
-        );
-      }
-    }
-  }
-  return [...rules.values()];
-}
-
-function readPinnedDocumentPolicy(snapshot: TrackedTreeSnapshot): {
-  documents: Record<string, { mode: string }>;
-} {
-  const policyEntry = snapshot.entries.find(
-    (entry) => entry.path.utf8 === 'workflow/document-policy.json',
-  );
-  if (!policyEntry?.content) {
-    throw investigationPolicyInvalid(
-      'The pinned document policy is unavailable as a regular text blob.',
-    );
-  }
-  let value: unknown;
-  try {
-    value = JSON.parse(
-      new TextDecoder('utf-8', { fatal: true }).decode(policyEntry.content),
-    );
-  } catch {
-    throw investigationPolicyInvalid(
-      'The pinned document policy is not valid UTF-8 JSON.',
-    );
-  }
-  if (
-    !isRecord(value) ||
-    !hasExactKeys(value, ['documents', 'enforcementMode', 'schemaVersion']) ||
-    value.schemaVersion !== 1 ||
-    value.enforcementMode !== 'enforced' ||
-    !isRecord(value.documents)
-  ) {
-    throw investigationPolicyInvalid(
-      'The pinned document policy envelope is malformed.',
-    );
-  }
-  const documents: Record<string, { mode: string }> = {};
-  for (const [policyPath, entry] of Object.entries(value.documents)) {
-    if (
-      !isRecord(entry) ||
-      typeof entry.mode !== 'string' ||
-      !DOCUMENT_POLICY_MODES.has(entry.mode)
-    ) {
-      throw investigationPolicyInvalid(
-        `The pinned document policy entry is malformed: ${policyPath}`,
-      );
-    }
-    assertDocumentPolicyPattern(policyPath);
-    documents[policyPath] = { mode: entry.mode };
-  }
-  return { documents };
-}
-
-const DOCUMENT_POLICY_MODES = new Set([
-  'append-only',
-  'change-artifact',
-  'curated',
-  'generated',
-  'immutable',
-  'normative',
-  'reference',
-]);
-
-function documentModeMutationClass(mode: string): MutationClass | null {
-  switch (mode) {
-    case 'generated':
-      return 'generated';
-    case 'append-only':
-      return 'append-only';
-    case 'immutable':
-      return 'immutable';
-    case 'reference':
-      return 'historical-reference';
-    default:
-      return null;
-  }
-}
-
-function assertDocumentPolicyPattern(policyPath: string): void {
-  if (
-    policyPath.length === 0 ||
-    policyPath.startsWith('/') ||
-    policyPath.includes('\\') ||
-    policyPath.includes('\0') ||
-    !/^[A-Za-z0-9._*/-]+$/.test(policyPath) ||
-    policyPath
-      .split('/')
-      .some((segment) => segment.length === 0 || segment === '..')
-  ) {
-    throw investigationPolicyInvalid(
-      `The pinned document policy path is unsafe: ${policyPath}`,
-    );
-  }
-}
-
-function documentPolicyMatches(
-  policyPath: string,
-  trackedPath: string,
-): boolean {
-  if (!policyPath.includes('*')) {
-    return normalizePolicyPath(policyPath) === trackedPath;
-  }
-  try {
-    return path.matchesGlob(trackedPath, policyPath);
-  } catch {
-    throw investigationPolicyInvalid(
-      `The pinned document policy glob is invalid: ${policyPath}`,
-    );
-  }
 }
 
 function pathIdentity(relativePath: string): {

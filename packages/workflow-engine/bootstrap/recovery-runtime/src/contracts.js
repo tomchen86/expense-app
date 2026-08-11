@@ -1021,6 +1021,7 @@ function isTransformationContract(value, allowedPaths) {
             'oldTerms',
             'redInapplicableReason',
             'replacementTerms',
+            'retainedDispositions',
             'rule',
         ]) ||
         !isSemanticText(value.rule) ||
@@ -1030,20 +1031,29 @@ function isTransformationContract(value, allowedPaths) {
         value.examples.length === 0 ||
         !Array.isArray(value.oldTerms) ||
         value.oldTerms.length === 0 ||
-        !Array.isArray(value.replacementTerms)) {
+        !Array.isArray(value.replacementTerms) ||
+        value.replacementTerms.length === 0 ||
+        !Array.isArray(value.retainedDispositions)) {
         return false;
     }
+    const oldTerms = value.oldTerms;
+    const replacementTerms = value.replacementTerms;
     const examplesValid = value.examples.every((example) => isRecord(example) &&
         hasExactKeys(example, ['after', 'before']) &&
         isSemanticText(example.before) &&
         isSemanticText(example.after) &&
         example.before !== example.after);
-    const terms = [...value.oldTerms, ...value.replacementTerms];
-    if (!examplesValid || !terms.every(isTransformationTerm)) {
+    const terms = [...oldTerms, ...replacementTerms];
+    if (!examplesValid ||
+        !terms.every(isTransformationTerm) ||
+        oldTerms.length !== replacementTerms.length ||
+        oldTerms.some((term, index) => isTransformationTerm(term) &&
+            isTransformationTerm(replacementTerms[index]) &&
+            term.kind !== replacementTerms[index].kind)) {
         return false;
     }
-    const oldTermKeys = new Set(value.oldTerms.map((term) => canonicalJson(term)));
-    const replacementTermKeys = new Set(value.replacementTerms.map((term) => canonicalJson(term)));
+    const oldTermKeys = new Set(oldTerms.map((term) => canonicalJson(term)));
+    const replacementTermKeys = new Set(replacementTerms.map((term) => canonicalJson(term)));
     if (new Set(value.examples.map((example) => canonicalJson(example))).size !==
         value.examples.length ||
         oldTermKeys.size !== value.oldTerms.length ||
@@ -1051,7 +1061,44 @@ function isTransformationContract(value, allowedPaths) {
         [...oldTermKeys].some((term) => replacementTermKeys.has(term))) {
         return false;
     }
-    return true;
+    const oldSurfaceKeys = oldTerms.map((term) => canonicalJson({
+        surface: isTransformationTerm(term) && term.kind === 'path' ? 'path' : 'content',
+        value: isTransformationTerm(term) ? term.value : '',
+    }));
+    if (new Set(oldSurfaceKeys).size !== oldSurfaceKeys.length)
+        return false;
+    const fileScopes = value.fileScopes;
+    const retainedDispositions = value.retainedDispositions;
+    const dispositionKeys = retainedDispositions.map((disposition) => {
+        if (!isRecord(disposition))
+            return null;
+        let dispositionPath;
+        try {
+            if (typeof disposition.path !== 'string')
+                return null;
+            dispositionPath = normalizePolicyPath(disposition.path);
+        }
+        catch {
+            return null;
+        }
+        if (!hasExactKeys(disposition, ['mutationClass', 'path', 'reason', 'term']) ||
+            !isTransformationTerm(disposition.term) ||
+            !oldTermKeys.has(canonicalJson(disposition.term)) ||
+            dispositionPath !== disposition.path ||
+            !fileScopes.some((scope) => matchesAllowedPath(dispositionPath, scope)) ||
+            !['append-only', 'immutable', 'historical-reference'].includes(String(disposition.mutationClass)) ||
+            !isSemanticText(disposition.reason)) {
+            return null;
+        }
+        return canonicalJson({
+            mutationClass: disposition.mutationClass,
+            path: dispositionPath,
+            term: disposition.term,
+        });
+    });
+    return (dispositionKeys.every((key) => key !== null) &&
+        new Set(dispositionKeys).size === dispositionKeys.length &&
+        dispositionKeys.every((key, index) => index === 0 || dispositionKeys[index - 1] < key));
 }
 function isTransformationTerm(value) {
     return (isRecord(value) &&
