@@ -20,6 +20,7 @@ import {
   TASK_DIFF_REVIEW_OUTPUT_VALIDATOR,
   TASK_DIFF_REVIEW_PROVIDER_OUTPUT_SCHEMA,
 } from './task-diff-review-artifact.ts';
+import { assertTaskDiffReviewProviderOwnerCurrent } from './task-diff-review-lifecycle.ts';
 import {
   BLIND_SURVEY_OUTPUT_SCHEMA,
   BLIND_SURVEY_PROVIDER_OUTPUT_SCHEMA,
@@ -160,6 +161,10 @@ export function runProviderWorker(
     context.runtime,
     initial.invocationId,
   );
+  const taskDiffReviewOwner =
+    request.purpose === 'task-diff-review'
+      ? assertTaskDiffReviewProviderOwnerCurrent(cwd, initial.invocationId)
+      : null;
   const semantic = semanticContract(request);
   const reviewSnapshot = readPlanReviewSnapshotRuntime(
     context.runtime,
@@ -178,17 +183,21 @@ export function runProviderWorker(
         initial.mandateBinding.mandateTaskId,
         {},
         (activeBinding, assertOwned) => {
-          const owner = isProposeExemptionInvestigationId(
-            initial.investigationId,
-          )
-            ? readProposeExemptionSession(
-                context.runtime,
-                initial.investigationId,
-              )
-            : readInvestigationSession(
-                context.runtime,
-                initial.investigationId,
-              );
+          const owner =
+            taskDiffReviewOwner === null
+              ? isProposeExemptionInvestigationId(initial.investigationId)
+                ? readProposeExemptionSession(
+                    context.runtime,
+                    initial.investigationId,
+                  )
+                : readInvestigationSession(
+                    context.runtime,
+                    initial.investigationId,
+                  )
+              : assertTaskDiffReviewProviderOwnerCurrent(
+                  cwd,
+                  initial.invocationId,
+                );
           if (
             owner.changeId !== initial.changeId ||
             canonicalJson(owner.mandateBinding ?? null) !==

@@ -31,6 +31,11 @@ import {
   PROPOSE_POLICY_DIGEST,
   recreateProviderInvocationRequest,
 } from './provider-contracts.ts';
+import {
+  parseTaskDiffReviewSubject,
+  TASK_DIFF_REVIEW_POLICY_DIGEST,
+} from './task-diff-review.ts';
+import type { TaskMandateBinding } from './task-mandate.ts';
 
 const DIGEST_PATTERN = /^[0-9a-f]{64}$/;
 const REF_NAME_PATTERN =
@@ -284,6 +289,98 @@ export function resolvePlanReviewInvocationOwner(
     throw refInvalid();
   }
   return ownership.ownerInvestigationId;
+}
+
+export function resolveTaskDiffReviewInvocationOwner(
+  paths: InvestigationRuntimePaths,
+  input: {
+    changeId: string;
+    sessionId: string;
+    subject: unknown;
+    assignment: unknown;
+    authorizationNodeId: string;
+  },
+): Readonly<{
+  ownerInvestigationId: string;
+  sessionId: string;
+  mandateBinding: TaskMandateBinding | null;
+}> {
+  const changeId = assertChangeId(input.changeId);
+  const subject = parseTaskDiffReviewSubject(input.subject);
+  if (!DIGEST_PATTERN.test(input.authorizationNodeId)) throw refInvalid();
+  const authorization = readEvidenceNode(paths, input.authorizationNodeId);
+  const output = authorization.output;
+  if (
+    authorization.type !== 'task-diff-review-authorization' ||
+    authorization.nodeSchema !== 'workflow.task-diff-review-authorization.v1' ||
+    authorization.evaluator !== 'workflow-task-diff-review.v1' ||
+    authorization.policyDigest !== TASK_DIFF_REVIEW_POLICY_DIGEST ||
+    authorization.outputSchema !==
+      'workflow.task-diff-review-authorization-output.v1' ||
+    !hasExactKeys(authorization.exactInputDigests, [
+      'actor',
+      'assignment',
+      'mandate',
+      'session',
+      'subject',
+    ]) ||
+    !hasExactKeys(authorization.semanticParentResultDigests, []) ||
+    !hasExactKeys(authorization.provenanceParentNodeIds, []) ||
+    !isPlainRecord(output) ||
+    !hasExactKeys(output, [
+      'ownerInvestigationId',
+      'sessionId',
+      'changeId',
+      'taskId',
+      'subject',
+      'implementationActor',
+      'assignment',
+      'mandateBinding',
+    ]) ||
+    output.changeId !== changeId ||
+    output.sessionId !== input.sessionId ||
+    output.taskId !== subject.taskId ||
+    canonicalJson(output.subject) !== canonicalJson(subject) ||
+    canonicalJson(output.assignment) !== canonicalJson(input.assignment) ||
+    !isTaskDiffReviewImplementationActor(output.implementationActor) ||
+    !isTaskDiffReviewAssignmentForActor(
+      output.assignment,
+      output.implementationActor,
+      subject.subjectDigest,
+    ) ||
+    !isTaskDiffReviewMandateBinding(output.mandateBinding, changeId) ||
+    authorization.exactInputDigests.actor !==
+      sha256(canonicalJson(output.implementationActor)) ||
+    authorization.exactInputDigests.assignment !==
+      sha256(canonicalJson(output.assignment)) ||
+    authorization.exactInputDigests.mandate !==
+      sha256(canonicalJson(output.mandateBinding)) ||
+    authorization.exactInputDigests.session !==
+      sha256(
+        canonicalJson({
+          sessionId: input.sessionId,
+          changeId,
+          taskId: subject.taskId,
+        }),
+      ) ||
+    authorization.exactInputDigests.subject !== subject.subjectDigest ||
+    typeof output.ownerInvestigationId !== 'string'
+  ) {
+    throw refInvalid();
+  }
+  let ownerInvestigationId: string;
+  try {
+    ownerInvestigationId = assertInvestigationId(output.ownerInvestigationId);
+  } catch {
+    throw refInvalid();
+  }
+  return Object.freeze({
+    ownerInvestigationId,
+    sessionId: input.sessionId,
+    mandateBinding: structuredClone(
+      output.mandateBinding,
+    ) as TaskMandateBinding | null,
+  });
 }
 
 export function readEvidenceRefs(
@@ -1626,6 +1723,82 @@ function isInvestigationOwner(value: unknown): value is string {
   } catch {
     return false;
   }
+}
+
+function isTaskDiffReviewImplementationActor(
+  value: unknown,
+): value is Record<string, unknown> {
+  return (
+    isPlainRecord(value) &&
+    hasExactKeys(value, [
+      'providerId',
+      'sessionId',
+      'principalId',
+      'identityAssurance',
+      'engineSpawned',
+    ]) &&
+    (value.providerId === 'codex' || value.providerId === 'claude') &&
+    typeof value.sessionId === 'string' &&
+    value.sessionId.length > 0 &&
+    typeof value.principalId === 'string' &&
+    value.principalId === `provider:${value.providerId}` &&
+    (value.identityAssurance === 'self-declared' ||
+      value.identityAssurance === 'runtime-hint') &&
+    value.engineSpawned === false
+  );
+}
+
+function isTaskDiffReviewAssignmentForActor(
+  value: unknown,
+  actor: Record<string, unknown>,
+  subjectDigest: string,
+): value is Record<string, unknown> {
+  return (
+    isPlainRecord(value) &&
+    hasExactKeys(value, [
+      'role',
+      'providerId',
+      'sessionId',
+      'targetDigest',
+      'requiredIndependence',
+      'achievedIndependence',
+    ]) &&
+    value.role === 'task-diff-reviewer' &&
+    (value.providerId === 'codex' || value.providerId === 'claude') &&
+    value.providerId !== actor.providerId &&
+    typeof value.sessionId === 'string' &&
+    value.sessionId.length > 0 &&
+    value.targetDigest === subjectDigest &&
+    value.requiredIndependence === 'provider-independent' &&
+    value.achievedIndependence === 'provider-independent'
+  );
+}
+
+function isTaskDiffReviewMandateBinding(
+  value: unknown,
+  changeId: string,
+): value is TaskMandateBinding | null {
+  return (
+    value === null ||
+    (isPlainRecord(value) &&
+      hasExactKeys(value, [
+        'schemaVersion',
+        'mandateTaskId',
+        'mandateId',
+        'mandateDigest',
+        'changeId',
+        'externalAuditRoot',
+      ]) &&
+      value.schemaVersion === 1 &&
+      typeof value.mandateTaskId === 'string' &&
+      value.mandateTaskId.length > 0 &&
+      typeof value.mandateId === 'string' &&
+      value.mandateId.length > 0 &&
+      isDigest(value.mandateDigest) &&
+      value.changeId === changeId &&
+      typeof value.externalAuditRoot === 'string' &&
+      value.externalAuditRoot.length > 0)
+  );
 }
 
 function releaseRefLock(

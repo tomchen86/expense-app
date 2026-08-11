@@ -341,7 +341,7 @@
     {
       "path": "src/evidence-object-store.ts",
       "mode": "100644",
-      "digest": "sha256:6c823643a760aa49c283dd79ae84577a69ae1eb4a5a6649cd24006d44e324af7"
+      "digest": "sha256:71de633caab8aef01bc3ac214ccec36933cc0d370b9e3331d3aab11ac601040f"
     },
     {
       "path": "src/evidence-reuse-path.ts",
@@ -901,7 +901,7 @@
     {
       "path": "src/provider-invocation-store.ts",
       "mode": "100644",
-      "digest": "sha256:2a049565cd8af33baac27e3c34c563246485fa1228a7245e38c99b72f8209d2f"
+      "digest": "sha256:cf166a8ad1b3f1abf7b2d1217d57f901679cd6f651118b58898fbf40e2636624"
     },
     {
       "path": "src/provider-invocation-supersession-schema.ts",
@@ -961,7 +961,7 @@
     {
       "path": "src/provider-worker.ts",
       "mode": "100644",
-      "digest": "sha256:ab4368fce33136ac4731879002928b26d4e700377eddfd2bb3540bdd15079bd9"
+      "digest": "sha256:91945911212ff824e921b23a959aa365f15ebdbf8fbb816fd9d78225671f4c2e"
     },
     {
       "path": "src/publish-executor.ts",
@@ -1081,7 +1081,12 @@
     {
       "path": "src/task-diff-review-lifecycle.ts",
       "mode": "100644",
-      "digest": "sha256:aeed47cacf4719c2b26d15c4d04c30566a65bba2117dcde513bf1adf109ba08e"
+      "digest": "sha256:97f57183f75c417b47691196edbbd1f5ad43d0acef802e49fdc724f41c492cbd"
+    },
+    {
+      "path": "src/task-diff-review-store.ts",
+      "mode": "100644",
+      "digest": "sha256:a672235c35260fb636a782e1e127f6eb9bab6b79caf2e1730fa30bfe81c89ee5"
     },
     {
       "path": "src/task-diff-review.ts",
