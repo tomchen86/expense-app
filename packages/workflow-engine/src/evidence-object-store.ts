@@ -36,6 +36,10 @@ import {
   parseTaskDiffReviewSubject,
   TASK_DIFF_REVIEW_POLICY_DIGEST,
 } from './task-diff-review.ts';
+import {
+  TASK_STRATEGY_IMPLEMENTATION_POLICY_DIGEST,
+  assertTaskStrategyImplementationSubject,
+} from './task-strategy-provider-contract.ts';
 import type { TaskMandateBinding } from './task-mandate.ts';
 
 const DIGEST_PATTERN = /^[0-9a-f]{64}$/;
@@ -366,6 +370,112 @@ export function resolveTaskDiffReviewInvocationOwner(
       ) ||
     authorization.exactInputDigests.subject !== subject.subjectDigest ||
     typeof output.ownerInvestigationId !== 'string'
+  ) {
+    throw refInvalid();
+  }
+  let ownerInvestigationId: string;
+  try {
+    ownerInvestigationId = assertInvestigationId(output.ownerInvestigationId);
+  } catch {
+    throw refInvalid();
+  }
+  return Object.freeze({
+    ownerInvestigationId,
+    sessionId: input.sessionId,
+    mandateBinding: structuredClone(
+      output.mandateBinding,
+    ) as TaskMandateBinding | null,
+  });
+}
+
+export function resolveTaskStrategyImplementationInvocationOwner(
+  paths: InvestigationRuntimePaths,
+  input: {
+    changeId: string;
+    sessionId: string;
+    subject: unknown;
+    assignment: unknown;
+    authorizationNodeId: string;
+  },
+): Readonly<{
+  ownerInvestigationId: string;
+  sessionId: string;
+  mandateBinding: TaskMandateBinding | null;
+}> {
+  const changeId = assertChangeId(input.changeId);
+  const subject = assertTaskStrategyImplementationSubject(input.subject);
+  if (!DIGEST_PATTERN.test(input.authorizationNodeId)) throw refInvalid();
+  const authorization = readEvidenceNode(paths, input.authorizationNodeId);
+  const output = authorization.output;
+  if (
+    authorization.type !== 'task-strategy-implementation-authorization' ||
+    authorization.nodeSchema !==
+      'workflow.task-strategy-implementation-authorization.v1' ||
+    authorization.evaluator !== 'workflow-task-strategy.v1' ||
+    authorization.policyDigest !== TASK_STRATEGY_IMPLEMENTATION_POLICY_DIGEST ||
+    authorization.outputSchema !==
+      'workflow.task-strategy-implementation-authorization-output.v1' ||
+    !hasExactKeys(authorization.exactInputDigests, [
+      'assignment',
+      'author',
+      'mandate',
+      'session',
+      'subject',
+      'transaction',
+    ]) ||
+    !hasExactKeys(authorization.semanticParentResultDigests, ['red']) ||
+    !hasExactKeys(authorization.provenanceParentNodeIds, ['red']) ||
+    !isPlainRecord(output) ||
+    !hasExactKeys(output, [
+      'ownerInvestigationId',
+      'sessionId',
+      'changeId',
+      'taskId',
+      'subject',
+      'redAuthor',
+      'assignment',
+      'mandateBinding',
+    ]) ||
+    output.changeId !== changeId ||
+    output.sessionId !== input.sessionId ||
+    output.taskId !== subject.taskId ||
+    canonicalJson(output.subject) !== canonicalJson(subject) ||
+    canonicalJson(output.assignment) !== canonicalJson(input.assignment) ||
+    !isTaskStrategyRedAuthor(output.redAuthor) ||
+    !isTaskStrategyImplementationAssignmentForAuthor(
+      output.assignment,
+      output.redAuthor,
+      subject.subjectDigest,
+    ) ||
+    !isTaskDiffReviewMandateBinding(output.mandateBinding, changeId) ||
+    authorization.exactInputDigests.author !==
+      sha256(canonicalJson(output.redAuthor)) ||
+    authorization.exactInputDigests.assignment !==
+      sha256(canonicalJson(output.assignment)) ||
+    authorization.exactInputDigests.mandate !==
+      sha256(canonicalJson(output.mandateBinding)) ||
+    authorization.exactInputDigests.session !==
+      sha256(
+        canonicalJson({
+          sessionId: input.sessionId,
+          changeId,
+          taskId: subject.taskId,
+        }),
+      ) ||
+    authorization.exactInputDigests.subject !== subject.subjectDigest ||
+    authorization.exactInputDigests.transaction !== subject.transactionDigest ||
+    authorization.semanticParentResultDigests.red !==
+      subject.redEvidenceResultDigest ||
+    authorization.provenanceParentNodeIds.red !== subject.redEvidenceNodeId ||
+    typeof output.ownerInvestigationId !== 'string'
+  ) {
+    throw refInvalid();
+  }
+  const red = readEvidenceNode(paths, subject.redEvidenceNodeId);
+  if (
+    red.type !== 'task-strategy-red-evidence' ||
+    red.nodeId !== subject.redEvidenceNodeId ||
+    red.resultDigest !== subject.redEvidenceResultDigest
   ) {
     throw refInvalid();
   }
@@ -1778,6 +1888,61 @@ function isTaskDiffReviewAssignmentForActor(
     value.participant.engineSpawned === true &&
     value.participant.principalId ===
       `collaboration-grant:${value.grantId}:task-diff-reviewer`
+  );
+}
+
+function isTaskStrategyImplementationAssignmentForAuthor(
+  value: unknown,
+  author: Record<string, unknown>,
+  subjectDigest: string,
+): value is Record<string, unknown> {
+  if (
+    !isProviderRoleAssignment(value) ||
+    value.role !== 'task-implementer' ||
+    value.targetDigest !== subjectDigest
+  ) {
+    return false;
+  }
+  if (!('grantId' in value)) {
+    return (
+      value.providerId !== author.providerId &&
+      value.achievedIndependence === 'provider-independent'
+    );
+  }
+  return (
+    value.degradedForm === 'same-provider-fresh-session' &&
+    value.providerId === author.providerId &&
+    value.achievedIndependence === 'session-independent' &&
+    value.author.providerId === author.providerId &&
+    value.author.sessionId === author.sessionId &&
+    value.participant.providerId === value.providerId &&
+    value.participant.sessionId === value.sessionId &&
+    value.participant.engineSpawned === true &&
+    value.participant.principalId ===
+      `collaboration-grant:${value.grantId}:task-implementer`
+  );
+}
+
+function isTaskStrategyRedAuthor(
+  value: unknown,
+): value is Record<string, unknown> {
+  return (
+    isPlainRecord(value) &&
+    hasExactKeys(value, [
+      'providerId',
+      'sessionId',
+      'principalId',
+      'identityAssurance',
+      'engineSpawned',
+    ]) &&
+    (value.providerId === 'codex' || value.providerId === 'claude') &&
+    typeof value.sessionId === 'string' &&
+    value.sessionId.length > 0 &&
+    value.principalId === `provider:${value.providerId}` &&
+    (value.identityAssurance === 'self-declared' ||
+      value.identityAssurance === 'runtime-hint' ||
+      value.identityAssurance === 'adapter-assigned') &&
+    value.engineSpawned === false
   );
 }
 

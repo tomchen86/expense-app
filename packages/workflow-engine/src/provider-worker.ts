@@ -29,6 +29,7 @@ import {
   TASK_STRATEGY_IMPLEMENTATION_OUTPUT_VALIDATOR,
   TASK_STRATEGY_IMPLEMENTATION_PROVIDER_OUTPUT_SCHEMA,
 } from './task-strategy-provider-contract.ts';
+import { assertTaskStrategyImplementationProviderOwnerCurrent } from './task-strategy-implementation-lifecycle.ts';
 import {
   BLIND_SURVEY_OUTPUT_SCHEMA,
   BLIND_SURVEY_PROVIDER_OUTPUT_SCHEMA,
@@ -173,6 +174,13 @@ export function runProviderWorker(
     request.purpose === 'task-diff-review'
       ? assertTaskDiffReviewProviderOwnerCurrent(cwd, initial.invocationId)
       : null;
+  const taskStrategyImplementationOwner =
+    request.purpose === 'task-implementation'
+      ? assertTaskStrategyImplementationProviderOwnerCurrent(
+          cwd,
+          initial.invocationId,
+        )
+      : null;
   const semantic = semanticContract(request);
   const reviewSnapshot = readPlanReviewSnapshotRuntime(
     context.runtime,
@@ -192,20 +200,25 @@ export function runProviderWorker(
         {},
         (activeBinding, assertOwned) => {
           const owner =
-            taskDiffReviewOwner === null
-              ? isProposeExemptionInvestigationId(initial.investigationId)
-                ? readProposeExemptionSession(
-                    context.runtime,
-                    initial.investigationId,
-                  )
-                : readInvestigationSession(
-                    context.runtime,
-                    initial.investigationId,
-                  )
-              : assertTaskDiffReviewProviderOwnerCurrent(
+            taskDiffReviewOwner !== null
+              ? assertTaskDiffReviewProviderOwnerCurrent(
                   cwd,
                   initial.invocationId,
-                );
+                )
+              : taskStrategyImplementationOwner !== null
+                ? assertTaskStrategyImplementationProviderOwnerCurrent(
+                    cwd,
+                    initial.invocationId,
+                  )
+                : isProposeExemptionInvestigationId(initial.investigationId)
+                  ? readProposeExemptionSession(
+                      context.runtime,
+                      initial.investigationId,
+                    )
+                  : readInvestigationSession(
+                      context.runtime,
+                      initial.investigationId,
+                    );
           if (
             owner.changeId !== initial.changeId ||
             canonicalJson(owner.mandateBinding ?? null) !==

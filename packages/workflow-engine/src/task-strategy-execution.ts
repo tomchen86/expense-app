@@ -9,6 +9,7 @@ import type {
 } from './contracts.ts';
 import { createCheckEnvironment } from './database-policy.ts';
 import { createEvidenceNode } from './evidence-node.ts';
+import { writeEvidenceNode } from './evidence-object-store.ts';
 import { ExitCode, workflowError } from './errors.ts';
 import { previewExactStaging } from './git-transitions.ts';
 import { runGit } from './git.ts';
@@ -230,6 +231,7 @@ function sealTaskStrategyRedUnlocked(
     },
     runtimeMetadata: { createdAt },
   });
+  writeEvidenceNode(runtime, evidenceNode);
   return createTaskStrategyTransaction(runtime, {
     sessionId: inspection.session.sessionId,
     changeId: inspection.session.changeId,

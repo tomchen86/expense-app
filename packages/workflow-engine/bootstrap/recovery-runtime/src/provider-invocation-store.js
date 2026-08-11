@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { parseAiAdapterPolicyDocument, parseLegacyAiAdapterPolicyDocument, } from './ai-adapter-policy.js';
 import { canonicalJson } from './canonical-json.js';
-import { resolvePlanReviewInvocationOwner, resolveTaskDiffReviewInvocationOwner, } from './evidence-object-store.js';
+import { resolvePlanReviewInvocationOwner, resolveTaskDiffReviewInvocationOwner, resolveTaskStrategyImplementationInvocationOwner, } from './evidence-object-store.js';
 import { ExitCode, workflowError } from './errors.js';
 import { assertReadOnlyProbe, projectProviderInvocationExecution, } from './execution-core.js';
 import { acceptLegacyProviderAttemptResult, materializeLegacyProviderExecutionJob, readExecutionJobState, } from './execution-store.js';
@@ -378,6 +378,20 @@ function readProviderInvocationCore(paths, requestedInvocationId) {
         const owner = resolveTaskDiffReviewInvocationOwner(paths, {
             changeId: record.changeId,
             sessionId: manifest.sessionId,
+            subject: manifest.subject,
+            assignment: request.roleAssignment,
+            authorizationNodeId: request.authorizationNodeId,
+        });
+        if (owner.ownerInvestigationId !== record.investigationId ||
+            canonicalJson(owner.mandateBinding) !==
+                canonicalJson(record.mandateBinding ?? null)) {
+            throw invocationInvalid();
+        }
+    }
+    if (manifest.kind === 'task-strategy-implementation-manifest') {
+        const owner = resolveTaskStrategyImplementationInvocationOwner(paths, {
+            changeId: record.changeId,
+            sessionId: manifest.subject.sessionId,
             subject: manifest.subject,
             assignment: request.roleAssignment,
             authorizationNodeId: request.authorizationNodeId,
