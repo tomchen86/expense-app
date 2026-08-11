@@ -858,8 +858,28 @@ function renderManagedProviderPrompt(
       manifest,
       reviewSnapshotRoot,
     ),
-    instructions: PROVIDER_PURPOSE_INSTRUCTIONS[request.purpose],
+    instructions: providerPurposeInstructions(request, manifest),
   });
+}
+
+function providerPurposeInstructions(
+  request: ProviderInvocationRequest,
+  manifest: unknown,
+): readonly string[] {
+  if (
+    request.purpose === 'task-diff-review' &&
+    isRecord(manifest) &&
+    manifest.kind === 'task-diff-review-continuation-manifest'
+  ) {
+    return Object.freeze([
+      'Re-review the exact immutable candidate in light of every bound challenge and implementer response.',
+      'Use only the reviewed read/search capability surface and do not mutate the worktree, index, refs, runtime, or any repository file.',
+      'Return a complete fresh TaskDiffReview under the ordinary code-owned schema; this advisory continuation does not accept, close, waive, or otherwise disposition any prior challenge.',
+      'Cite exact evidence for every finding or structured no-challenge result, and state remaining uncertainty explicitly.',
+      'Challenge closure remains a separately authenticated lifecycle decision and cannot be claimed in provider output.',
+    ]);
+  }
+  return PROVIDER_PURPOSE_INSTRUCTIONS[request.purpose];
 }
 
 function renderPlanningSnapshotPrompt(

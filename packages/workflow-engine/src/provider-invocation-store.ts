@@ -114,8 +114,13 @@ import {
   type PlanReviewSubject,
 } from './plan-review.ts';
 import {
+  assertTaskDiffReviewChallengeResponseCurrent,
+  parseTaskDiffReviewChallengeResponseRecord,
+  parseTaskDiffReviewRecord,
   TASK_DIFF_REVIEW_OUTPUT_SCHEMA,
   TASK_DIFF_REVIEW_OUTPUT_VALIDATOR,
+  type TaskDiffReviewChallengeResponseRecord,
+  type TaskDiffReviewRecord,
 } from './task-diff-review-artifact.ts';
 import {
   parseTaskDiffReviewSubject,
@@ -218,8 +223,27 @@ export type TaskDiffReviewManifest = {
   capabilityProfile: 'repository-read-only';
 };
 
+export type TaskDiffReviewContinuationManifest = {
+  schemaVersion: 1;
+  kind: 'task-diff-review-continuation-manifest';
+  changeId: string;
+  taskId: string;
+  sessionId: string;
+  repositoryId: string;
+  repositoryIdentity: string;
+  baseCommit: string;
+  baseTree: string;
+  subject: TaskDiffReviewSubject;
+  review: TaskDiffReviewRecord;
+  response: TaskDiffReviewChallengeResponseRecord;
+  capabilityProfile: 'repository-read-only';
+};
+
 export type ProviderInvocationManifest =
-  BlindSurveyManifest | PlanReviewManifest | TaskDiffReviewManifest;
+  | BlindSurveyManifest
+  | PlanReviewManifest
+  | TaskDiffReviewManifest
+  | TaskDiffReviewContinuationManifest;
 
 export type InvestigationStartReservation = {
   schemaVersion: 1;
@@ -977,7 +1001,10 @@ function readProviderInvocationCore(
   ) {
     throw invocationInvalid();
   }
-  if (manifest.kind === 'task-diff-review-manifest') {
+  if (
+    manifest.kind === 'task-diff-review-manifest' ||
+    manifest.kind === 'task-diff-review-continuation-manifest'
+  ) {
     const owner = resolveTaskDiffReviewInvocationOwner(paths, {
       changeId: record.changeId,
       sessionId: manifest.sessionId,
@@ -2810,6 +2837,12 @@ function assertProviderInvocationManifest(
   if (isRecord(value) && value.kind === 'blind-survey-manifest') {
     return assertBlindSurveyManifest(value);
   }
+  if (
+    isRecord(value) &&
+    value.kind === 'task-diff-review-continuation-manifest'
+  ) {
+    return assertTaskDiffReviewContinuationManifest(value);
+  }
   if (isRecord(value) && value.kind === 'task-diff-review-manifest') {
     return assertTaskDiffReviewManifest(value);
   }
@@ -2945,6 +2978,96 @@ function assertTaskDiffReviewManifest(value: unknown): TaskDiffReviewManifest {
     baseCommit: value.baseCommit,
     baseTree: value.baseTree,
     subject,
+    capabilityProfile: 'repository-read-only',
+  };
+  if (
+    Buffer.byteLength(canonicalJson(manifest), 'utf8') >
+    MAX_BLIND_MANIFEST_BYTES
+  ) {
+    throw invocationInvalid();
+  }
+  return deepFreeze(manifest);
+}
+
+function assertTaskDiffReviewContinuationManifest(
+  value: unknown,
+): TaskDiffReviewContinuationManifest {
+  if (
+    !isRecord(value) ||
+    !hasExactKeys(value, [
+      'schemaVersion',
+      'kind',
+      'changeId',
+      'taskId',
+      'sessionId',
+      'repositoryId',
+      'repositoryIdentity',
+      'baseCommit',
+      'baseTree',
+      'subject',
+      'review',
+      'response',
+      'capabilityProfile',
+    ]) ||
+    value.schemaVersion !== 1 ||
+    value.kind !== 'task-diff-review-continuation-manifest' ||
+    typeof value.changeId !== 'string' ||
+    typeof value.taskId !== 'string' ||
+    typeof value.sessionId !== 'string' ||
+    !isBoundedBlindText(value.repositoryId, 512) ||
+    !isBoundedBlindText(value.repositoryIdentity, 512) ||
+    typeof value.baseCommit !== 'string' ||
+    !GIT_OBJECT_ID.test(value.baseCommit) ||
+    typeof value.baseTree !== 'string' ||
+    !GIT_OBJECT_ID.test(value.baseTree) ||
+    value.capabilityProfile !== 'repository-read-only'
+  ) {
+    throw invocationInvalid();
+  }
+  try {
+    assertChangeId(value.changeId);
+    assertTaskId(value.taskId);
+    assertSessionId(value.sessionId);
+  } catch {
+    throw invocationInvalid();
+  }
+  let subject: TaskDiffReviewSubject;
+  let review: TaskDiffReviewRecord;
+  let response: TaskDiffReviewChallengeResponseRecord;
+  try {
+    subject = parseTaskDiffReviewSubject(value.subject);
+    review = parseTaskDiffReviewRecord(value.review);
+    response = assertTaskDiffReviewChallengeResponseCurrent(
+      review,
+      parseTaskDiffReviewChallengeResponseRecord(value.response),
+    );
+  } catch {
+    throw invocationInvalid();
+  }
+  if (
+    subject.changeId !== value.changeId ||
+    subject.taskId !== value.taskId ||
+    subject.repositoryId !== value.repositoryIdentity ||
+    subject.baseCommit !== value.baseCommit ||
+    subject.baseTree !== value.baseTree ||
+    review.subjectDigest !== subject.subjectDigest ||
+    canonicalJson(review.subject) !== canonicalJson(subject)
+  ) {
+    throw invocationInvalid();
+  }
+  const manifest: TaskDiffReviewContinuationManifest = {
+    schemaVersion: 1,
+    kind: 'task-diff-review-continuation-manifest',
+    changeId: value.changeId,
+    taskId: value.taskId,
+    sessionId: value.sessionId,
+    repositoryId: value.repositoryId,
+    repositoryIdentity: value.repositoryIdentity,
+    baseCommit: value.baseCommit,
+    baseTree: value.baseTree,
+    subject,
+    review,
+    response,
     capabilityProfile: 'repository-read-only',
   };
   if (
@@ -3310,6 +3433,31 @@ function assertProviderInvocationBinding(
       request.targetDigest !== manifest.subject.subjectDigest ||
       request.inputManifestDigest !== manifestDigest ||
       request.roleAssignment.targetDigest !== request.targetDigest
+    ) {
+      throw invocationInvalid();
+    }
+    return;
+  }
+  if (manifest.kind === 'task-diff-review-continuation-manifest') {
+    if (
+      manifest.changeId !== changeId ||
+      manifest.repositoryId !== request.repositoryId ||
+      manifest.baseCommit !== request.baseCommit ||
+      manifest.baseTree !== request.baseTree ||
+      request.purpose !== 'task-diff-review' ||
+      request.roleAssignment.role !== 'task-diff-reviewer' ||
+      request.capabilityProfile !== 'repository-read-only' ||
+      request.targetDigest !== manifest.subject.subjectDigest ||
+      request.inputManifestDigest !== manifestDigest ||
+      request.roleAssignment.targetDigest !== request.targetDigest ||
+      request.providerId !== manifest.review.assignment.reviewerProviderId ||
+      request.roleAssignment.providerId !==
+        manifest.review.assignment.reviewerProviderId ||
+      request.roleAssignment.sessionId ===
+        manifest.review.assignment.reviewerSessionId ||
+      request.outputSchema.id !== TASK_DIFF_REVIEW_OUTPUT_SCHEMA.id ||
+      request.outputSchema.version !== TASK_DIFF_REVIEW_OUTPUT_SCHEMA.version ||
+      request.outputSchema.digest !== TASK_DIFF_REVIEW_OUTPUT_SCHEMA.digest
     ) {
       throw invocationInvalid();
     }

@@ -25,11 +25,16 @@ import { runProviderWorker } from '../src/provider-worker.ts';
 import { startSession } from '../src/session.ts';
 import {
   assertCurrentTaskDiffReviewSatisfied,
+  beginTaskDiffReviewContinuation,
   beginTaskDiffReview,
   inspectTaskDiffReviewSubject,
+  reconcileTaskDiffReviewContinuation,
   reconcileTaskDiffReview,
 } from '../src/task-diff-review-lifecycle.ts';
-import type { TaskDiffReviewSubmission } from '../src/task-diff-review-artifact.ts';
+import {
+  createTaskDiffReviewChallengeResponse,
+  type TaskDiffReviewSubmission,
+} from '../src/task-diff-review-artifact.ts';
 import { TASK_DIFF_REVIEW_COVERAGE } from '../src/task-diff-review.ts';
 import {
   configureChecks,
@@ -601,6 +606,136 @@ test('review-diff CLI resumes the durable happy path from ready through fixed-ru
   }
 });
 
+test('a fixed-runner continuation remains advisory and cannot close a TaskDiffReview challenge', () => {
+  const { repository, counterPath } = createReviewFixture();
+  try {
+    const session = startSession(repository, 'demo-change', '1.1');
+    fs.writeFileSync(
+      path.join(repository, 'src/feature.ts'),
+      'export const reviewed = true;\n',
+    );
+    assert.throws(
+      () => finalizeTask(repository, session.sessionId),
+      hasCode('TASK_DIFF_REVIEW_REQUIRED'),
+    );
+    const prepared = beginTaskDiffReview(repository, session.sessionId, {
+      explicitActor: 'codex',
+      environment: {},
+    });
+    assert.equal(prepared.state, 'waiting-for-provider');
+    const blobObjectId = prepared.subject.transitions.find(
+      ({ path: changedPath }) => changedPath === 'src/feature.ts',
+    )?.after?.objectId;
+    assert.ok(blobObjectId);
+    const challenged = challengedTaskDiffSubmission(blobObjectId);
+    assert.equal(
+      runProviderWorker(repository, prepared.invocationId, {
+        runner(input) {
+          writeFixtureProviderRuntime(input.invocationDirectory, challenged);
+          return {
+            invocationId: prepared.invocationId,
+            providerId: 'claude',
+            purpose: 'task-diff-review',
+            requestDigest: input.request.requestDigest,
+            semanticOutput: challenged,
+            semanticOutputDigest: sha256(canonicalJson(challenged)),
+            assurance: 'unchanged-governed-projection',
+            projection: {
+              unchanged: true,
+              changedCategories: [],
+              beforeDigest: prepared.subject.subjectDigest,
+              afterDigest: prepared.subject.subjectDigest,
+            },
+            sameUserProcessConfined: false,
+            residuals: [...PROVIDER_RUNNER_RESIDUALS],
+            executable: executableIdentity(),
+            elapsedMs: 7,
+          };
+        },
+      }).state,
+      'succeeded',
+    );
+    const reviewed = reconcileTaskDiffReview(repository, session.sessionId);
+    assert.equal(reviewed.state, 'challenge-response-required');
+    assert.equal(reviewed.review.challenges.length, 1);
+    assert.throws(
+      () => finalizeTask(repository, session.sessionId),
+      hasCode('TASK_DIFF_REVIEW_CHALLENGE_OPEN'),
+    );
+
+    const response = createTaskDiffReviewChallengeResponse({
+      review: reviewed.review,
+      responses: reviewed.review.challenges.map((challenge) => ({
+        challengeId: challenge.challengeId,
+        rationale:
+          'The exact checked candidate and passing check evidence answer the challenge.',
+        evidence: [challenge.evidence[0]!],
+      })),
+    });
+    const continuation = beginTaskDiffReviewContinuation(
+      repository,
+      session.sessionId,
+      response,
+    );
+    assert.equal(continuation.state, 'waiting-for-provider');
+    assert.equal(continuation.assignment.providerId, 'claude');
+    assert.notEqual(
+      continuation.assignment.sessionId,
+      reviewed.assignment.sessionId,
+    );
+    const semanticOutput = validTaskDiffSubmission(blobObjectId);
+    assert.equal(
+      runProviderWorker(repository, continuation.invocationId, {
+        runner(input) {
+          writeFixtureProviderRuntime(
+            input.invocationDirectory,
+            semanticOutput,
+          );
+          return {
+            invocationId: continuation.invocationId,
+            providerId: 'claude',
+            purpose: 'task-diff-review',
+            requestDigest: input.request.requestDigest,
+            semanticOutput,
+            semanticOutputDigest: sha256(canonicalJson(semanticOutput)),
+            assurance: 'unchanged-governed-projection',
+            projection: {
+              unchanged: true,
+              changedCategories: [],
+              beforeDigest: prepared.subject.subjectDigest,
+              afterDigest: prepared.subject.subjectDigest,
+            },
+            sameUserProcessConfined: false,
+            residuals: [...PROVIDER_RUNNER_RESIDUALS],
+            executable: executableIdentity(),
+            elapsedMs: 7,
+          };
+        },
+      }).state,
+      'succeeded',
+    );
+    assert.equal(
+      reconcileTaskDiffReviewContinuation(
+        repository,
+        session.sessionId,
+        response.responseDigest,
+      ).state,
+      'challenge-closure-required',
+    );
+    assert.throws(
+      () => assertCurrentTaskDiffReviewSatisfied(repository, session.sessionId),
+      hasCode('TASK_DIFF_REVIEW_CHALLENGE_OPEN'),
+    );
+    assert.throws(
+      () => finalizeTask(repository, session.sessionId),
+      hasCode('TASK_DIFF_REVIEW_CHALLENGE_OPEN'),
+    );
+    assert.equal(fs.readFileSync(counterPath, 'utf8'), '1');
+  } finally {
+    fs.rmSync(repository, { recursive: true, force: true });
+  }
+});
+
 function createReviewFixture(): {
   repository: string;
   counterPath: string;
@@ -698,6 +833,31 @@ function validTaskDiffSubmission(
   };
 }
 
+function challengedTaskDiffSubmission(
+  blobObjectId: string,
+): TaskDiffReviewSubmission {
+  const base = validTaskDiffSubmission(blobObjectId);
+  const evidence =
+    base.scopeAssessment.kind === 'no-challenge'
+      ? base.scopeAssessment.evidence
+      : [];
+  return {
+    ...base,
+    verdict: 'advisory-reject',
+    scopeAssessment: { kind: 'challenges' },
+    findings: [
+      {
+        kind: 'challenge',
+        severity: 'high',
+        category: 'correctness-and-invariants',
+        currentChangeImpact: 'required',
+        summary: 'The changed branch may violate the task invariant.',
+        evidence,
+      },
+    ],
+  };
+}
+
 function executableIdentity() {
   return {
     candidatePath: '/opt/homebrew/bin/claude',
@@ -711,6 +871,21 @@ function executableIdentity() {
     mtimeNs: '123456789',
     sha256: 'b'.repeat(64),
   };
+}
+
+function writeFixtureProviderRuntime(
+  invocationDirectory: string,
+  semanticOutput: unknown,
+): void {
+  const runtime = path.join(invocationDirectory, 'runtime');
+  fs.mkdirSync(runtime, { mode: 0o700 });
+  for (const [name, content] of [
+    ['prompt.json', '{}\n'],
+    ['schema.json', '{}\n'],
+    ['semantic-output.json', `${canonicalJson(semanticOutput)}\n`],
+  ] as const) {
+    fs.writeFileSync(path.join(runtime, name), content, { mode: 0o600 });
+  }
 }
 
 function providerWireResult(
