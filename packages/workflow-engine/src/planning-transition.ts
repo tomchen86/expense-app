@@ -53,6 +53,11 @@ import {
 import { committedPlanningGeneration } from './planning-generation-history.ts';
 import { recordPlanningExecutionEpochTransition } from './planning-execution-epoch.ts';
 import { resolveTaskExecutionGenerationEvidence } from './task-execution-evidence.ts';
+import {
+  refreshPlanningDocuments,
+  rollbackGeneratedDocuments,
+  type GeneratedDocumentMutation,
+} from './managed-documents.ts';
 
 export type AmendmentRequest = {
   reason: string;
@@ -353,15 +358,15 @@ function commitPlanningTransitionLocked(
     );
   }
 
-  const changedPaths = listChangedPaths(initial.repositoryRoot, initial.head);
-  if (changedPaths.length === 0) {
+  const planningPaths = listChangedPaths(initial.repositoryRoot, initial.head);
+  if (planningPaths.length === 0) {
     throw workflowError(
       'PLANNING_DIFF_REQUIRED',
       'Planning transition requires a non-empty planning diff.',
       ExitCode.verification,
     );
   }
-  const deletedPaths = changedPaths.filter(
+  const deletedPaths = planningPaths.filter(
     (changedPath) =>
       !fs.existsSync(path.join(initial.repositoryRoot, changedPath)),
   );
@@ -394,7 +399,7 @@ function commitPlanningTransitionLocked(
     initial.head,
     config.changeRoot,
     changeId,
-    changedPaths,
+    planningPaths,
     deletedPaths,
     reopenAuthorized,
   );
@@ -438,7 +443,7 @@ function commitPlanningTransitionLocked(
       amendmentDecision as PlanningAmendmentDecision,
       config.changeRoot,
       changeId,
-      changedPaths,
+      planningPaths,
     );
     if (planningValidation.planningAssurance === null) {
       throw workflowError(
@@ -484,7 +489,7 @@ function commitPlanningTransitionLocked(
   assertUnstagedPlanningState(
     initial,
     headRef,
-    changedPaths,
+    planningPaths,
     initialFingerprint,
   );
   const verified = inspectPlanningTransition(
@@ -492,7 +497,7 @@ function commitPlanningTransitionLocked(
     initial.head,
     config.changeRoot,
     changeId,
-    changedPaths,
+    planningPaths,
     deletedPaths,
     reopenAuthorized,
   );
@@ -507,10 +512,33 @@ function commitPlanningTransitionLocked(
     throw planningStale('PLANNING_ARTIFACTS_CHANGED');
   }
 
+  let changedPaths = [...planningPaths];
+  let engineProjectionPaths: string[] = [];
+  let transitionFingerprint = initialFingerprint;
+  let generatedMutations: GeneratedDocumentMutation[] = [];
   let previousIndexTree = runGit(initial.repositoryRoot, ['write-tree']).trim();
   let stagedTree: string | undefined;
   let refUpdated = false;
   try {
+    generatedMutations = refreshPlanningDocuments(
+      initial.repositoryRoot,
+      changeId,
+    );
+    engineProjectionPaths = generatedMutations
+      .map((mutation) => mutation.path)
+      .sort();
+    changedPaths = [...planningPaths, ...engineProjectionPaths].sort();
+    if (
+      new Set(changedPaths).size !== changedPaths.length ||
+      JSON.stringify(listChangedPaths(initial.repositoryRoot, initial.head)) !==
+        JSON.stringify(changedPaths)
+    ) {
+      throw planningStale('PLANNING_PROJECTION_CHANGED');
+    }
+    transitionFingerprint = fingerprintRepositoryWorktree(
+      initial.repositoryRoot,
+      initial.head,
+    );
     testHooks.beforeStaging?.({
       repositoryRoot: initial.repositoryRoot,
       expectedHead: initial.head,
@@ -528,7 +556,7 @@ function commitPlanningTransitionLocked(
       headRef,
       changedPaths,
       staged.tree,
-      initialFingerprint,
+      transitionFingerprint,
     );
     assertStagedPlanningTree(
       initial.repositoryRoot,
@@ -597,7 +625,7 @@ function commitPlanningTransitionLocked(
 
     const report: PlanningTransitionReport = {
       schemaVersion: 1,
-      reportVersion: 2,
+      reportVersion: 3,
       kind: 'planning-transition',
       createdAt: new Date().toISOString(),
       changeId,
@@ -615,8 +643,10 @@ function commitPlanningTransitionLocked(
       tree: staged.tree,
       commitHash,
       changedPaths,
+      planningPaths,
+      engineProjectionPaths,
       artifactDigests: inspection.artifactDigests,
-      fingerprint: initialFingerprint,
+      fingerprint: transitionFingerprint,
       tasks: {
         before: inspection.beforeTasks
           ? taskStates(inspection.beforeTasks)
@@ -681,7 +711,7 @@ function commitPlanningTransitionLocked(
       headRef,
       changedPaths,
       staged.tree,
-      initialFingerprint,
+      transitionFingerprint,
     );
     try {
       updateManagedRef(
@@ -771,16 +801,60 @@ function commitPlanningTransitionLocked(
       archiveApplicability,
     };
   } catch (error) {
-    if (stagedTree && !refUpdated) {
-      rollbackIndexLease(
-        initial.repositoryRoot,
-        previousIndexTree,
-        stagedTree,
-        error,
-      );
+    if (!refUpdated) {
+      if (stagedTree) {
+        rollbackIndexLease(
+          initial.repositoryRoot,
+          previousIndexTree,
+          stagedTree,
+          error,
+        );
+      }
+      try {
+        rollbackExactGeneratedDocuments(
+          initial.repositoryRoot,
+          generatedMutations,
+        );
+      } catch (rollbackError) {
+        throw workflowError(
+          'PLANNING_PROJECTION_ROLLBACK_FAILED',
+          'Planning transition could not restore its exact pre-CAS projection state.',
+          ExitCode.staleState,
+          {
+            details: {
+              causeCode:
+                error instanceof WorkflowError ? error.code : undefined,
+              rollbackCode:
+                rollbackError instanceof WorkflowError
+                  ? rollbackError.code
+                  : undefined,
+            },
+          },
+        );
+      }
     }
     throw error;
   }
+}
+
+function rollbackExactGeneratedDocuments(
+  repositoryRoot: string,
+  mutations: GeneratedDocumentMutation[],
+): void {
+  for (const mutation of mutations) {
+    const filePath = path.join(repositoryRoot, mutation.path);
+    const stats = fs.lstatSync(filePath, { throwIfNoEntry: false });
+    if (
+      !stats ||
+      !stats.isFile() ||
+      stats.isSymbolicLink() ||
+      stats.nlink !== 1 ||
+      fs.readFileSync(filePath, 'utf8') !== mutation.after
+    ) {
+      throw planningStale('PLANNING_PROJECTION_CHANGED');
+    }
+  }
+  rollbackGeneratedDocuments(repositoryRoot, mutations);
 }
 
 function assertNoImpactAmendmentPaths(

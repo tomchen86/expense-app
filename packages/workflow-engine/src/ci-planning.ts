@@ -23,6 +23,7 @@ import {
   type ParsedTask,
 } from './contracts.ts';
 import { createTrustedExecutionEnvironment } from './execution-environment.ts';
+import { engineProjectionPathsForTransition } from './engine-projection-registry.ts';
 import { ExitCode, workflowError } from './errors.ts';
 import {
   commitChangedPaths,
@@ -31,6 +32,7 @@ import {
 } from './git-transitions.ts';
 import { createArchiveApplicabilityProjection } from './archive-transformation.ts';
 import { runGit } from './git.ts';
+import { validateHandoffForChange } from './handoff.ts';
 import {
   assertInvestigationPlanningActivation,
   readActivationMarkerFile,
@@ -276,6 +278,15 @@ export function validateCiPlanningCommit(
       'Planning commits require a non-empty planning diff.',
     );
   }
+  const knownProjectionPaths = new Set(
+    engineProjectionPathsForTransition('plan'),
+  );
+  const engineProjectionPaths = changedPaths.filter((changedPath) =>
+    knownProjectionPaths.has(changedPath),
+  );
+  const planningPaths = changedPaths.filter(
+    (changedPath) => !knownProjectionPaths.has(changedPath),
+  );
   const prefix = `${normalizedChangeRoot}/${changeId}`;
   const beforeEntries = listTreeEntries(
     repositoryRoot,
@@ -288,12 +299,17 @@ export function validateCiPlanningCommit(
     .map(({ path }) => path)
     .filter(
       (beforePath) =>
-        !afterPaths.has(beforePath) && changedPaths.includes(beforePath),
+        !afterPaths.has(beforePath) && planningPaths.includes(beforePath),
     );
   // The governing schema is a fact of the immutable commit, not of the
   // checkout CI happens to run in, so it is resolved from the replayed tree
   // before any schema-sensitive path or artifact rule is applied.
-  const replay = replayPlanningTree(repositoryRoot, facts.hash, changeId);
+  const replay = replayPlanningTree(
+    repositoryRoot,
+    facts.hash,
+    changeId,
+    engineProjectionPaths,
+  );
   if (amendment !== null) {
     assertCommittedAmendmentProvenance(
       repositoryRoot,
@@ -307,7 +323,7 @@ export function validateCiPlanningCommit(
   assertPlanningPaths(
     normalizedChangeRoot,
     changeId,
-    changedPaths,
+    planningPaths,
     deletedPaths,
     replay.schemaName,
   );
@@ -325,7 +341,7 @@ export function validateCiPlanningCommit(
   if (beforeEntries.length === 0) {
     kind = 'introduction';
     if (
-      JSON.stringify(changedPaths) !==
+      JSON.stringify(planningPaths) !==
       JSON.stringify(afterEntries.map(({ path }) => path))
     ) {
       throw ciPlanningError(
@@ -344,7 +360,7 @@ export function validateCiPlanningCommit(
       (requiredPath) =>
         !beforePaths.has(requiredPath) &&
         afterPaths.has(requiredPath) &&
-        changedPaths.includes(requiredPath),
+        planningPaths.includes(requiredPath),
     );
     assertCompletePlanningTree(
       normalizedChangeRoot,
@@ -471,6 +487,7 @@ function replayPlanningTree(
   repositoryRoot: string,
   commit: string,
   changeId: string,
+  engineProjectionPaths: readonly string[],
 ): PlanningTreeReplay {
   return withPlanningWorktree(repositoryRoot, commit, (worktree) => {
     const schemaName = resolveReplayedSchemaName(worktree, changeId);
@@ -480,6 +497,9 @@ function replayPlanningTree(
       readMarker: () => readActivationMarkerFile(worktree),
       declaredSchemaName: schemaName,
     });
+    if (engineProjectionPaths.includes('docs/CURRENT_AND_NEXT_STEPS.md')) {
+      validateHandoffForChange(worktree, changeId);
+    }
     if (schemaName !== 'expense-app-v2') {
       return {
         schemaName,

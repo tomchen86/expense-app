@@ -7,6 +7,7 @@ import {
   createPlanningAmendmentDecision,
   planningAmendmentDecisionDigest,
 } from './planning-amendment-decision.ts';
+import { engineProjectionPathsForTransition } from './engine-projection-registry.ts';
 import type { InvestigationFirstPlanningAssuranceSummary } from './planning-assurance-validator.ts';
 
 export type PlanningTaskState = {
@@ -45,7 +46,7 @@ export type PlanningAmendmentRecord =
 
 export type PlanningTransitionReport = {
   schemaVersion: 1;
-  reportVersion: 1 | 2;
+  reportVersion: 1 | 2 | 3;
   kind: 'planning-transition';
   createdAt: string;
   changeId: string;
@@ -62,6 +63,10 @@ export type PlanningTransitionReport = {
   tree: string;
   commitHash: string;
   changedPaths: string[];
+  /** Human-authored planning inputs changed by this transition. */
+  planningPaths: string[];
+  /** Fixed-registry engine outputs changed by this transition. */
+  engineProjectionPaths: string[];
   artifactDigests: Record<string, string>;
   fingerprint: string;
   tasks: {
@@ -119,12 +124,20 @@ export function writePlanningTransitionReport(
 /** What a caller must supply; engine-defaulted fields may be omitted. */
 export type PlanningTransitionInput = Omit<
   PlanningTransitionReport,
-  'amendment' | 'archiveApplicability' | 'reportVersion'
+  | 'amendment'
+  | 'archiveApplicability'
+  | 'engineProjectionPaths'
+  | 'planningPaths'
+  | 'reportVersion'
 > &
   Partial<
     Pick<
       PlanningTransitionReport,
-      'amendment' | 'archiveApplicability' | 'reportVersion'
+      | 'amendment'
+      | 'archiveApplicability'
+      | 'engineProjectionPaths'
+      | 'planningPaths'
+      | 'reportVersion'
     >
   >;
 
@@ -201,6 +214,20 @@ function normalizeLegacyPlanningTransitionReport(value: unknown): unknown {
   if (!Object.hasOwn(value, 'archiveApplicability')) {
     normalized.archiveApplicability = { status: 'not-recorded' };
   }
+  if (
+    Number(normalized.reportVersion) < 3 &&
+    !Object.hasOwn(value, 'planningPaths')
+  ) {
+    normalized.planningPaths = Array.isArray(value.changedPaths)
+      ? [...value.changedPaths]
+      : value.changedPaths;
+  }
+  if (
+    Number(normalized.reportVersion) < 3 &&
+    !Object.hasOwn(value, 'engineProjectionPaths')
+  ) {
+    normalized.engineProjectionPaths = [];
+  }
   return normalized;
 }
 
@@ -219,12 +246,14 @@ function assertPlanningTransitionReport(
     'changedPaths',
     'commitHash',
     'createdAt',
+    'engineProjectionPaths',
     'fingerprint',
     'headRef',
     'kind',
     'message',
     'openspec',
     'parent',
+    'planningPaths',
     'planningAssurance',
     'reportVersion',
     'schemaVersion',
@@ -238,7 +267,7 @@ function assertPlanningTransitionReport(
   if (
     !hasExactKeys(value, exactKeys) ||
     value.schemaVersion !== 1 ||
-    ![1, 2].includes(Number(value.reportVersion)) ||
+    ![1, 2, 3].includes(Number(value.reportVersion)) ||
     value.kind !== 'planning-transition' ||
     !['plan', 'amend-plan'].includes(String(value.transition)) ||
     !['introduction', 'revision'].includes(String(value.transitionKind)) ||
@@ -258,6 +287,7 @@ function assertPlanningTransitionReport(
     !isGitObject(value.commitHash) ||
     !isDigest(value.fingerprint) ||
     !isSortedUniqueStrings(value.changedPaths) ||
+    !isPlanningPathPartition(value) ||
     !isDigestRecord(value.artifactDigests) ||
     !isParent(value.parent) ||
     !isTaskProjection(value.tasks) ||
@@ -280,7 +310,7 @@ function isAmendmentRecord(
     return report.reportVersion === 1 && hasExactKeys(value, ['status']);
   }
   if (
-    report.reportVersion !== 2 ||
+    ![2, 3].includes(Number(report.reportVersion)) ||
     value.status !== 'recorded' ||
     !hasExactKeys(value, [
       'amendsPlanningGeneration',
@@ -560,6 +590,39 @@ function isSortedUniqueStrings(value: unknown): value is string[] {
     value.every((entry) => typeof entry === 'string') &&
     value.length > 0 &&
     JSON.stringify(value) === JSON.stringify([...new Set(value)].sort())
+  );
+}
+
+function isPlanningPathPartition(value: Record<string, unknown>): boolean {
+  if (
+    !isSortedUniqueStrings(value.planningPaths) ||
+    !Array.isArray(value.engineProjectionPaths) ||
+    value.engineProjectionPaths.some((entry) => typeof entry !== 'string') ||
+    JSON.stringify(value.engineProjectionPaths) !==
+      JSON.stringify([...new Set(value.engineProjectionPaths)].sort())
+  ) {
+    return false;
+  }
+  const allowedEnginePaths = new Set(
+    engineProjectionPathsForTransition('plan'),
+  );
+  const planningPaths = value.planningPaths as string[];
+  const engineProjectionPaths = value.engineProjectionPaths as string[];
+  if (
+    planningPaths.some((planningPath) =>
+      allowedEnginePaths.has(planningPath),
+    ) ||
+    engineProjectionPaths.some(
+      (projectionPath) =>
+        !allowedEnginePaths.has(projectionPath) ||
+        planningPaths.includes(projectionPath),
+    )
+  ) {
+    return false;
+  }
+  return (
+    JSON.stringify(value.changedPaths) ===
+    JSON.stringify([...planningPaths, ...engineProjectionPaths].sort())
   );
 }
 

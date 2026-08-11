@@ -34,8 +34,26 @@ export function renderHandoff(repositoryRoot: string): string {
   return rendered;
 }
 
-function buildHandoff(repositoryRoot: string): string {
-  const contract = selectChange(repositoryRoot);
+/**
+ * Render the handoff for one explicit lifecycle-owned change. The existing
+ * handoff bytes are deliberately not consulted: generated output is never an
+ * authority input for the transition that replaces it.
+ */
+export function renderHandoffForChange(
+  repositoryRoot: string,
+  requestedChangeId: string,
+): string {
+  const changeId = assertChangeId(requestedChangeId);
+  const rendered = buildHandoff(repositoryRoot, changeId);
+  writeTextAtomic(handoffPath(repositoryRoot), rendered);
+  return rendered;
+}
+
+function buildHandoff(
+  repositoryRoot: string,
+  selectedChangeId?: string,
+): string {
+  const contract = selectChange(repositoryRoot, selectedChangeId);
   const currentIndex = contract.tasks.findIndex(({ completed }) => !completed);
   const current =
     currentIndex === -1 ? undefined : contract.tasks[currentIndex];
@@ -85,6 +103,19 @@ function buildHandoff(repositoryRoot: string): string {
 
 export function validateHandoff(repositoryRoot: string): void {
   const expected = buildHandoff(repositoryRoot);
+  assertHandoffBytes(repositoryRoot, expected);
+}
+
+export function validateHandoffForChange(
+  repositoryRoot: string,
+  requestedChangeId: string,
+): void {
+  const changeId = assertChangeId(requestedChangeId);
+  const expected = buildHandoff(repositoryRoot, changeId);
+  assertHandoffBytes(repositoryRoot, expected);
+}
+
+function assertHandoffBytes(repositoryRoot: string, expected: string): void {
   let actual: string;
   try {
     actual = fs.readFileSync(handoffPath(repositoryRoot), 'utf8');
@@ -105,7 +136,10 @@ export function validateHandoff(repositoryRoot: string): void {
   }
 }
 
-function selectChange(repositoryRoot: string): HandoffChange {
+function selectChange(
+  repositoryRoot: string,
+  explicitChangeId?: string,
+): HandoffChange {
   const config = loadWorkflowConfig(repositoryRoot);
   const root = path.join(repositoryRoot, config.changeRoot);
   const contracts = fs
@@ -115,6 +149,18 @@ function selectChange(repositoryRoot: string): HandoffChange {
   const active = contracts.filter((contract) =>
     contract.tasks.some(({ completed }) => !completed),
   );
+  if (explicitChangeId !== undefined) {
+    const explicit = contracts.find(
+      (contract) => contract.changeId === explicitChangeId,
+    );
+    if (!explicit) {
+      throw invalidHandoff(
+        'HANDOFF_CHANGE_INVALID',
+        'The lifecycle-owned handoff change has no tracked task contract.',
+      );
+    }
+    return explicit;
+  }
   const selectedChangeId = readSelectedChangeId(repositoryRoot);
   if (selectedChangeId) {
     assertSelectedChangeId(selectedChangeId);
