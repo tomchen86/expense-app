@@ -18,8 +18,8 @@ import { providerRetentionArtifact, providerRetentionReviewRootArtifact, readCom
 import { assertProviderPromptContextCurrent, assertProviderRepairAuthorityCurrent, createProviderRepairLineage, ensureProviderPromptContext, persistProviderRepairEvidence, prepareProviderPromptContextForInvocation, readProviderRepairAuthorityBinding, registerProviderRuntimeEvidence, withCurrentProviderPromptContext, } from './provider-execution-governance.js';
 import { assertProviderInvocationSupersessionEndpointCurrent, finalizeProviderInvocationSupersession, prepareProviderInvocationSupersession, readProviderInvocationEvidenceRecord, recoverProviderInvocationSupersessionTransaction, resumePreparedProviderInvocationSupersession, } from './provider-invocation-supersession.js';
 import { PLAN_REVIEW_OUTPUT_SCHEMA, PLAN_REVIEW_OUTPUT_VALIDATOR, assertPlanReviewTargetSnapshot, assertPlanReviewSubject, planReviewSnapshotLineCount, } from './plan-review.js';
-import { TASK_DIFF_REVIEW_OUTPUT_SCHEMA, TASK_DIFF_REVIEW_OUTPUT_VALIDATOR, } from './task-diff-review-artifact.js';
-import { parseTaskDiffReviewSubject, } from './task-diff-review.js';
+import { assertTaskDiffReviewChallengeResponseCurrent, parseTaskDiffReviewChallengeResponseRecord, parseTaskDiffReviewRecord, TASK_DIFF_REVIEW_CONTINUATION_OUTPUT_SCHEMA, TASK_DIFF_REVIEW_CONTINUATION_OUTPUT_VALIDATOR, TASK_DIFF_REVIEW_OUTPUT_SCHEMA, TASK_DIFF_REVIEW_OUTPUT_VALIDATOR, } from './task-diff-review-artifact.js';
+import { parseTaskDiffReviewScope, parseTaskDiffReviewSubject, } from './task-diff-review.js';
 import { runtimePaths, withRepositoryLifecycleOperation, } from './session-store.js';
 const DIGEST = /^[0-9a-f]{64}$/;
 const GIT_OBJECT_ID = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
@@ -372,7 +372,8 @@ function readProviderInvocationCore(paths, requestedInvocationId) {
         }) !== record.investigationId) {
         throw invocationInvalid();
     }
-    if (manifest.kind === 'task-diff-review-manifest') {
+    if (manifest.kind === 'task-diff-review-manifest' ||
+        manifest.kind === 'task-diff-review-continuation-manifest') {
         const owner = resolveTaskDiffReviewInvocationOwner(paths, {
             changeId: record.changeId,
             sessionId: manifest.sessionId,
@@ -1430,6 +1431,10 @@ function assertProviderInvocationManifest(value) {
     if (isRecord(value) && value.kind === 'blind-survey-manifest') {
         return assertBlindSurveyManifest(value);
     }
+    if (isRecord(value) &&
+        value.kind === 'task-diff-review-continuation-manifest') {
+        return assertTaskDiffReviewContinuationManifest(value);
+    }
     if (isRecord(value) && value.kind === 'task-diff-review-manifest') {
         return assertTaskDiffReviewManifest(value);
     }
@@ -1508,6 +1513,7 @@ function assertTaskDiffReviewManifest(value) {
             'baseCommit',
             'baseTree',
             'subject',
+            'reviewScope',
             'capabilityProfile',
         ]) ||
         value.schemaVersion !== 1 ||
@@ -1533,8 +1539,10 @@ function assertTaskDiffReviewManifest(value) {
         throw invocationInvalid();
     }
     let subject;
+    let reviewScope;
     try {
         subject = parseTaskDiffReviewSubject(value.subject);
+        reviewScope = parseTaskDiffReviewScope(value.reviewScope);
     }
     catch {
         throw invocationInvalid();
@@ -1543,7 +1551,8 @@ function assertTaskDiffReviewManifest(value) {
         subject.taskId !== value.taskId ||
         subject.repositoryId !== value.repositoryIdentity ||
         subject.baseCommit !== value.baseCommit ||
-        subject.baseTree !== value.baseTree) {
+        subject.baseTree !== value.baseTree ||
+        reviewScope.currentSubjectDigest !== subject.subjectDigest) {
         throw invocationInvalid();
     }
     const manifest = {
@@ -1557,6 +1566,87 @@ function assertTaskDiffReviewManifest(value) {
         baseCommit: value.baseCommit,
         baseTree: value.baseTree,
         subject,
+        reviewScope,
+        capabilityProfile: 'repository-read-only',
+    };
+    if (Buffer.byteLength(canonicalJson(manifest), 'utf8') >
+        MAX_BLIND_MANIFEST_BYTES) {
+        throw invocationInvalid();
+    }
+    return deepFreeze(manifest);
+}
+function assertTaskDiffReviewContinuationManifest(value) {
+    if (!isRecord(value) ||
+        !hasExactKeys(value, [
+            'schemaVersion',
+            'kind',
+            'changeId',
+            'taskId',
+            'sessionId',
+            'repositoryId',
+            'repositoryIdentity',
+            'baseCommit',
+            'baseTree',
+            'subject',
+            'review',
+            'response',
+            'capabilityProfile',
+        ]) ||
+        value.schemaVersion !== 1 ||
+        value.kind !== 'task-diff-review-continuation-manifest' ||
+        typeof value.changeId !== 'string' ||
+        typeof value.taskId !== 'string' ||
+        typeof value.sessionId !== 'string' ||
+        !isBoundedBlindText(value.repositoryId, 512) ||
+        !isBoundedBlindText(value.repositoryIdentity, 512) ||
+        typeof value.baseCommit !== 'string' ||
+        !GIT_OBJECT_ID.test(value.baseCommit) ||
+        typeof value.baseTree !== 'string' ||
+        !GIT_OBJECT_ID.test(value.baseTree) ||
+        value.capabilityProfile !== 'repository-read-only') {
+        throw invocationInvalid();
+    }
+    try {
+        assertChangeId(value.changeId);
+        assertTaskId(value.taskId);
+        assertSessionId(value.sessionId);
+    }
+    catch {
+        throw invocationInvalid();
+    }
+    let subject;
+    let review;
+    let response;
+    try {
+        subject = parseTaskDiffReviewSubject(value.subject);
+        review = parseTaskDiffReviewRecord(value.review);
+        response = assertTaskDiffReviewChallengeResponseCurrent(review, parseTaskDiffReviewChallengeResponseRecord(value.response));
+    }
+    catch {
+        throw invocationInvalid();
+    }
+    if (subject.changeId !== value.changeId ||
+        subject.taskId !== value.taskId ||
+        subject.repositoryId !== value.repositoryIdentity ||
+        subject.baseCommit !== value.baseCommit ||
+        subject.baseTree !== value.baseTree ||
+        review.subjectDigest !== subject.subjectDigest ||
+        canonicalJson(review.subject) !== canonicalJson(subject)) {
+        throw invocationInvalid();
+    }
+    const manifest = {
+        schemaVersion: 1,
+        kind: 'task-diff-review-continuation-manifest',
+        changeId: value.changeId,
+        taskId: value.taskId,
+        sessionId: value.sessionId,
+        repositoryId: value.repositoryId,
+        repositoryIdentity: value.repositoryIdentity,
+        baseCommit: value.baseCommit,
+        baseTree: value.baseTree,
+        subject,
+        review,
+        response,
         capabilityProfile: 'repository-read-only',
     };
     if (Buffer.byteLength(canonicalJson(manifest), 'utf8') >
@@ -1856,6 +1946,32 @@ function assertProviderInvocationBinding(changeId, manifest, manifestDigest, req
             request.targetDigest !== manifest.subject.subjectDigest ||
             request.inputManifestDigest !== manifestDigest ||
             request.roleAssignment.targetDigest !== request.targetDigest) {
+            throw invocationInvalid();
+        }
+        return;
+    }
+    if (manifest.kind === 'task-diff-review-continuation-manifest') {
+        if (manifest.changeId !== changeId ||
+            manifest.repositoryId !== request.repositoryId ||
+            manifest.baseCommit !== request.baseCommit ||
+            manifest.baseTree !== request.baseTree ||
+            request.purpose !== 'task-diff-review' ||
+            request.roleAssignment.role !== 'task-diff-reviewer' ||
+            request.capabilityProfile !== 'repository-read-only' ||
+            request.targetDigest !== manifest.subject.subjectDigest ||
+            request.inputManifestDigest !== manifestDigest ||
+            request.roleAssignment.targetDigest !== request.targetDigest ||
+            request.providerId !== manifest.review.assignment.reviewerProviderId ||
+            request.roleAssignment.providerId !==
+                manifest.review.assignment.reviewerProviderId ||
+            request.roleAssignment.sessionId ===
+                manifest.review.assignment.reviewerSessionId ||
+            request.outputSchema.id !==
+                TASK_DIFF_REVIEW_CONTINUATION_OUTPUT_SCHEMA.id ||
+            request.outputSchema.version !==
+                TASK_DIFF_REVIEW_CONTINUATION_OUTPUT_SCHEMA.version ||
+            request.outputSchema.digest !==
+                TASK_DIFF_REVIEW_CONTINUATION_OUTPUT_SCHEMA.digest) {
             throw invocationInvalid();
         }
         return;
@@ -2216,6 +2332,9 @@ function codeOwnedProviderOutputSchema(request) {
         return PLAN_REVIEW_OUTPUT_SCHEMA;
     }
     if (request.purpose === 'task-diff-review') {
+        if (request.outputSchema.id === TASK_DIFF_REVIEW_CONTINUATION_OUTPUT_SCHEMA.id) {
+            return TASK_DIFF_REVIEW_CONTINUATION_OUTPUT_SCHEMA;
+        }
         return TASK_DIFF_REVIEW_OUTPUT_SCHEMA;
     }
     throw providerOutputSchemaUnsupported();
@@ -2223,13 +2342,13 @@ function codeOwnedProviderOutputSchema(request) {
 /**
  * Classify which generation of a code-owned output schema a request binds.
  *
- * The current writer always binds the constant this module owns for the
- * request's purpose, so a request carrying that constant's exact id and version
- * with a different digest is a shape the writer cannot produce: the schema body
- * was edited after the record was written. That is the record's own age, and it
- * is reported rather than refused. An unrecognized id or version is not
- * evidence of age — no writer of this engine ever emitted one — so it stays
- * unsupported.
+ * The current writer always binds one constant this module owns for the
+ * request's purpose and semantic phase, so a request carrying that constant's
+ * exact id and version with a different digest is a shape the writer cannot
+ * produce: the schema body was edited after the record was written. That is
+ * the record's own age, and it is reported rather than refused. An unrecognized
+ * id or version is not evidence of age — no writer of this engine ever emitted
+ * one — so it stays unsupported.
  */
 export function providerOutputSchemaGeneration(request) {
     const codeOwned = codeOwnedProviderOutputSchema(request);
@@ -2439,6 +2558,14 @@ function providerOutputValidator(request) {
         return PLAN_REVIEW_OUTPUT_VALIDATOR;
     }
     if (request.purpose === 'task-diff-review') {
+        if (request.outputSchema.id ===
+            TASK_DIFF_REVIEW_CONTINUATION_OUTPUT_SCHEMA.id &&
+            request.outputSchema.version ===
+                TASK_DIFF_REVIEW_CONTINUATION_OUTPUT_SCHEMA.version &&
+            request.outputSchema.digest ===
+                TASK_DIFF_REVIEW_CONTINUATION_OUTPUT_SCHEMA.digest) {
+            return TASK_DIFF_REVIEW_CONTINUATION_OUTPUT_VALIDATOR;
+        }
         return TASK_DIFF_REVIEW_OUTPUT_VALIDATOR;
     }
     throw providerOutputSchemaUnsupported();

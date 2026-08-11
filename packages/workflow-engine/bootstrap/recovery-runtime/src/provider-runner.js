@@ -492,8 +492,22 @@ function renderManagedProviderPrompt(request, manifest, reviewSnapshotRoot, repa
         manifest,
         repairContext,
         planningSnapshot: renderPlanningSnapshotPrompt(request, manifest, reviewSnapshotRoot),
-        instructions: PROVIDER_PURPOSE_INSTRUCTIONS[request.purpose],
+        instructions: providerPurposeInstructions(request, manifest),
     });
+}
+function providerPurposeInstructions(request, manifest) {
+    if (request.purpose === 'task-diff-review' &&
+        isRecord(manifest) &&
+        manifest.kind === 'task-diff-review-continuation-manifest') {
+        return Object.freeze([
+            'Re-review the exact immutable candidate in light of every bound challenge and implementer response.',
+            'Use only the reviewed read/search capability surface and do not mutate the worktree, index, refs, runtime, or any repository file.',
+            'Return structured proposed dispositions under the code-owned continuation schema; these recommendations are evidence and do not themselves accept, close, waive, or otherwise disposition any challenge.',
+            'Bind every recommendation to the exact review, response, and complete challenge set, with a concise rationale for each decision.',
+            'The workflow engine alone applies the shared authenticated challenge-closure verifier and may mint a Final Assurance record from an eligible result.',
+        ]);
+    }
+    return PROVIDER_PURPOSE_INSTRUCTIONS[request.purpose];
 }
 function renderPlanningSnapshotPrompt(request, manifest, reviewSnapshotRoot) {
     if (request.purpose !== 'plan-review')

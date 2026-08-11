@@ -25,6 +25,7 @@ import {
 } from '../src/task-diff-review-artifact.ts';
 import {
   createTaskDiffReviewSubject,
+  deriveTaskDiffReviewCandidatePlan,
   TASK_DIFF_REVIEW_COVERAGE,
 } from '../src/task-diff-review.ts';
 
@@ -182,6 +183,9 @@ function requestInput(assignment: RoleAssignment) {
 }
 
 function taskDiffManifest(): TaskDiffReviewManifest {
+  const subject = taskDiffSubject('github:tomchen86/expense-app');
+  const candidatePlan = deriveTaskDiffReviewCandidatePlan({ current: subject });
+  if (candidatePlan.action !== 'review') throw new Error('review required');
   return {
     schemaVersion: 1,
     kind: 'task-diff-review-manifest',
@@ -192,7 +196,8 @@ function taskDiffManifest(): TaskDiffReviewManifest {
     repositoryIdentity: 'github:tomchen86/expense-app',
     baseCommit: 'a'.repeat(40),
     baseTree: 'b'.repeat(40),
-    subject: taskDiffSubject('github:tomchen86/expense-app'),
+    subject,
+    reviewScope: candidatePlan.scope,
     capabilityProfile: 'repository-read-only',
   };
 }

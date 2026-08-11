@@ -304,6 +304,9 @@ export function writeV2ChangeArtifacts(
 export function writeReadyV2ExemptChange(
   repository: string,
   changeId = 'demo-change',
+  options: {
+    diffReview?: 'required' | 'policy-required';
+  } = {},
 ) {
   const changeDirectory = path.join(repository, 'openspec/changes', changeId);
   const baseline = {
@@ -366,7 +369,7 @@ export function writeReadyV2ExemptChange(
           enforcement: 'available' as const,
           allowedPaths: policy.allowedPaths,
           requiredChecks: policy.requiredChecks,
-          diffReview: 'policy-required' as const,
+          diffReview: options.diffReview ?? ('policy-required' as const),
           exemptionKind: 'documentation-only' as const,
           exemptionReason: 'Fixture documentation-only task.',
           legacyBootstrap: null,

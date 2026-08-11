@@ -2,7 +2,8 @@ import crypto from 'node:crypto';
 import { canonicalJson } from './canonical-json.js';
 import { ExitCode, workflowError } from './errors.js';
 import { normalizePolicyPath } from './paths.js';
-import { parseTaskDiffReviewSubject, TASK_DIFF_REVIEW_COVERAGE, } from './task-diff-review.js';
+import { assertAuthorizedReviewChallengeClosure, } from './review-challenge.js';
+import { deriveTaskDiffReviewCandidatePlan, parseTaskDiffReviewScope, parseTaskDiffReviewSubject, taskDiffReviewCandidateIdentityDigest, TASK_DIFF_REVIEW_COVERAGE, } from './task-diff-review.js';
 const DIGEST = /^[0-9a-f]{64}$/;
 const OBJECT_ID = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
 const IDENTITY = /^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,511}$/;
@@ -19,7 +20,15 @@ const SEVERITIES = new Set([
 ]);
 const CATEGORIES = new Set(TASK_DIFF_REVIEW_COVERAGE);
 const DISPOSITIONS = new Set(['accepted', 'rebutted', 'withdrawn']);
+const CONTINUATION_DECISIONS = new Set([
+    'accepted',
+    'rebutted',
+    'superseded',
+    'withdrawn',
+    'waived',
+]);
 const TASK_DIFF_REVIEW_OUTPUT_SCHEMA_ID = 'expense-app.workflow.task-diff-review-output';
+const TASK_DIFF_REVIEW_CONTINUATION_OUTPUT_SCHEMA_ID = 'expense-app.workflow.task-diff-review-continuation-output';
 export const TASK_DIFF_REVIEW_LIMITS = Object.freeze({
     maxTextBytes: MAX_TEXT_BYTES,
     maxFindings: MAX_FINDINGS,
@@ -207,8 +216,71 @@ export const TASK_DIFF_REVIEW_OUTPUT_VALIDATOR = Object.freeze({
         }
     },
 });
+/**
+ * Provider-facing continuation evidence. These are recommendations only: the
+ * engine must authenticate the fixed-runner reviewer and pass the proposal
+ * through the shared challenge-closure verifier before it can mint authority.
+ */
+export const TASK_DIFF_REVIEW_CONTINUATION_PROVIDER_OUTPUT_SCHEMA = Object.freeze({
+    type: 'object',
+    additionalProperties: false,
+    required: [
+        'schemaVersion',
+        'reviewRecordDigest',
+        'responseDigest',
+        'proposedDispositions',
+    ],
+    properties: {
+        schemaVersion: { type: 'integer', const: 1 },
+        reviewRecordDigest: { type: 'string', pattern: '^[0-9a-f]{64}$' },
+        responseDigest: { type: 'string', pattern: '^[0-9a-f]{64}$' },
+        proposedDispositions: {
+            type: 'array',
+            minItems: 1,
+            maxItems: MAX_FINDINGS,
+            items: {
+                type: 'object',
+                additionalProperties: false,
+                required: ['challengeId', 'decision', 'rationale', 'supersededBy'],
+                properties: {
+                    challengeId: { type: 'string', pattern: '^[0-9a-f]{64}$' },
+                    decision: { enum: [...CONTINUATION_DECISIONS] },
+                    rationale: { type: 'string', minLength: 1 },
+                    supersededBy: {
+                        anyOf: [
+                            { type: 'null' },
+                            { type: 'string', pattern: '^[0-9a-f]{64}$' },
+                        ],
+                    },
+                },
+            },
+        },
+    },
+});
+const TASK_DIFF_REVIEW_CONTINUATION_OUTPUT_SCHEMA_DIGEST = sha256(canonicalJson(TASK_DIFF_REVIEW_CONTINUATION_PROVIDER_OUTPUT_SCHEMA));
+export const TASK_DIFF_REVIEW_CONTINUATION_OUTPUT_SCHEMA = Object.freeze({
+    id: TASK_DIFF_REVIEW_CONTINUATION_OUTPUT_SCHEMA_ID,
+    version: 1,
+    digest: TASK_DIFF_REVIEW_CONTINUATION_OUTPUT_SCHEMA_DIGEST,
+});
+export const TASK_DIFF_REVIEW_CONTINUATION_OUTPUT_VALIDATOR = Object.freeze({
+    ...TASK_DIFF_REVIEW_CONTINUATION_OUTPUT_SCHEMA,
+    validate(value) {
+        try {
+            parseTaskDiffReviewContinuationSubmission(value);
+            return true;
+        }
+        catch {
+            return false;
+        }
+    },
+});
 export function createTaskDiffReviewRecord(input) {
     const subject = parseTaskDiffReviewSubject(input.subject);
+    const defaultPlan = deriveTaskDiffReviewCandidatePlan({ current: subject });
+    if (defaultPlan.action !== 'review')
+        throw recordInvalid();
+    const reviewScope = assertReviewScopeCurrent(subject, input.reviewScope ?? defaultPlan.scope);
     const assignment = parseAssignment(input.assignment);
     const submission = normalizeSubmission(input.submission, assignment);
     const body = {
@@ -216,6 +288,7 @@ export function createTaskDiffReviewRecord(input) {
         kind: 'task-diff-review-record.v1',
         subject,
         subjectDigest: subject.subjectDigest,
+        reviewScope,
         assignment,
         verdict: submission.verdict,
         coverage: TASK_DIFF_REVIEW_COVERAGE,
@@ -238,6 +311,7 @@ export function parseTaskDiffReviewRecord(value) {
             'recordDigest',
             'subject',
             'subjectDigest',
+            'reviewScope',
             'assignment',
             'verdict',
             'coverage',
@@ -252,6 +326,7 @@ export function parseTaskDiffReviewRecord(value) {
         throw recordInvalid();
     }
     const subject = parseSubjectForRecord(value.subject);
+    const reviewScope = assertReviewScopeCurrent(subject, parseTaskDiffReviewScope(value.reviewScope));
     const assignment = parseAssignment(value.assignment);
     const verdict = parseVerdict(value.verdict);
     const coverage = parseCoverage(value.coverage);
@@ -264,6 +339,7 @@ export function parseTaskDiffReviewRecord(value) {
         recordDigest: parseDigest(value.recordDigest),
         subject,
         subjectDigest: parseDigest(value.subjectDigest),
+        reviewScope,
         assignment,
         verdict,
         coverage,
@@ -294,6 +370,215 @@ export function createTaskDiffReviewDispositionRecord(input) {
         ...body,
         dispositionDigest: sha256(canonicalJson(body)),
     });
+}
+export function createTaskDiffReviewChallengeResponse(input) {
+    const review = parseTaskDiffReviewRecord(input.review);
+    const responses = normalizeChallengeResponses(input.responses);
+    assertExactChallengeSet(review.challenges.map(({ challengeId }) => challengeId), responses.map(({ challengeId }) => challengeId));
+    const body = {
+        schemaVersion: 1,
+        kind: 'task-diff-review-challenge-response.v1',
+        reviewRecordDigest: review.recordDigest,
+        subjectDigest: review.subjectDigest,
+        responses,
+    };
+    return parseTaskDiffReviewChallengeResponseRecord({
+        ...body,
+        responseDigest: sha256(canonicalJson(body)),
+    });
+}
+export function parseTaskDiffReviewChallengeResponseRecord(value) {
+    if (!isRecord(value) ||
+        !hasExactKeys(value, [
+            'schemaVersion',
+            'kind',
+            'responseDigest',
+            'reviewRecordDigest',
+            'subjectDigest',
+            'responses',
+        ]) ||
+        value.schemaVersion !== 1 ||
+        value.kind !== 'task-diff-review-challenge-response.v1') {
+        throw dispositionInvalid();
+    }
+    const record = {
+        schemaVersion: 1,
+        kind: 'task-diff-review-challenge-response.v1',
+        responseDigest: parseDispositionDigest(value.responseDigest),
+        reviewRecordDigest: parseDispositionDigest(value.reviewRecordDigest),
+        subjectDigest: parseDispositionDigest(value.subjectDigest),
+        responses: normalizeChallengeResponses(value.responses),
+    };
+    if (record.responseDigest !==
+        sha256(canonicalJson(withoutResponseDigest(record)))) {
+        throw dispositionInvalid();
+    }
+    return deepFreeze(record);
+}
+export function assertTaskDiffReviewChallengeResponseCurrent(reviewCandidate, responseCandidate) {
+    const review = parseTaskDiffReviewRecord(reviewCandidate);
+    const response = parseTaskDiffReviewChallengeResponseRecord(responseCandidate);
+    if (response.reviewRecordDigest !== review.recordDigest ||
+        response.subjectDigest !== review.subjectDigest) {
+        throw dispositionInvalid();
+    }
+    assertExactChallengeSet(review.challenges.map(({ challengeId }) => challengeId), response.responses.map(({ challengeId }) => challengeId));
+    return response;
+}
+export function createTaskDiffFinalAssuranceRecord(input) {
+    const subject = parseTaskDiffReviewSubject(input.subject);
+    const review = parseTaskDiffReviewRecord(input.review);
+    const response = assertTaskDiffReviewChallengeResponseCurrent(review, input.response);
+    const submission = assertTaskDiffReviewContinuationSubmissionCurrent(review, response, input.submission);
+    const reviewerAuthority = parseFinalAssuranceReviewerAuthority(input.reviewerAuthority);
+    const exceptions = parseFinalAssuranceExceptions(input.exceptions ?? []);
+    const expectedExceptions = review.assignment.degradedForm === null ||
+        review.assignment.grantUseDigest === null
+        ? []
+        : [
+            {
+                kind: 'collaboration-grant-degradation',
+                grantUseDigest: review.assignment.grantUseDigest,
+                degradedForm: review.assignment.degradedForm,
+            },
+        ];
+    if (review.subjectDigest !== subject.subjectDigest ||
+        canonicalJson(review.subject) !== canonicalJson(subject) ||
+        review.assignment.reviewerPrincipalId !== reviewerAuthority.principalId ||
+        review.assignment.reviewerProviderId !== reviewerAuthority.providerId ||
+        reviewerAuthority.policyDigest !== subject.reviewPolicyDigest ||
+        canonicalJson(exceptions) !== canonicalJson(expectedExceptions)) {
+        throw finalAssuranceInvalid();
+    }
+    const dispositions = submission.proposedDispositions.map((entry) => Object.freeze({
+        ...entry,
+        closedBy: reviewerAuthority.principalId,
+    }));
+    assertTaskDiffChallengeClosure(subject, review, reviewerAuthority, dispositions);
+    const body = {
+        schemaVersion: 1,
+        kind: 'task-diff-final-assurance.v1',
+        subject,
+        subjectDigest: subject.subjectDigest,
+        reviewRecordDigest: review.recordDigest,
+        responseDigest: response.responseDigest,
+        verdict: dispositions.some(({ decision }) => decision === 'accepted')
+            ? 'changes-required'
+            : 'satisfied',
+        reviewerAuthority,
+        dispositions,
+        exceptions,
+    };
+    return parseTaskDiffFinalAssuranceRecord({
+        ...body,
+        commitmentDigest: sha256(canonicalJson(body)),
+    });
+}
+export function parseTaskDiffFinalAssuranceRecord(value) {
+    if (!isRecord(value) ||
+        !hasExactKeys(value, [
+            'schemaVersion',
+            'kind',
+            'commitmentDigest',
+            'subject',
+            'subjectDigest',
+            'reviewRecordDigest',
+            'responseDigest',
+            'verdict',
+            'reviewerAuthority',
+            'dispositions',
+            'exceptions',
+        ]) ||
+        value.schemaVersion !== 1 ||
+        value.kind !== 'task-diff-final-assurance.v1' ||
+        (value.verdict !== 'satisfied' && value.verdict !== 'changes-required') ||
+        !Array.isArray(value.dispositions) ||
+        value.dispositions.length === 0 ||
+        value.dispositions.length > MAX_FINDINGS) {
+        throw finalAssuranceInvalid();
+    }
+    const subject = parseTaskDiffReviewSubject(value.subject);
+    const reviewerAuthority = parseFinalAssuranceReviewerAuthority(value.reviewerAuthority);
+    const dispositions = value.dispositions.map((candidate) => {
+        if (!isRecord(candidate) ||
+            !hasExactKeys(candidate, [
+                'challengeId',
+                'decision',
+                'rationale',
+                'closedBy',
+                'supersededBy',
+            ]) ||
+            !CONTINUATION_DECISIONS.has(String(candidate.decision)) ||
+            (candidate.supersededBy !== null &&
+                (typeof candidate.supersededBy !== 'string' ||
+                    !DIGEST.test(candidate.supersededBy))) ||
+            (candidate.decision === 'superseded') !==
+                (typeof candidate.supersededBy === 'string')) {
+            throw finalAssuranceInvalid();
+        }
+        return Object.freeze({
+            challengeId: finalAssuranceDigest(candidate.challengeId),
+            decision: candidate.decision,
+            rationale: boundedFinalAssuranceText(candidate.rationale),
+            closedBy: finalAssuranceIdentity(candidate.closedBy),
+            supersededBy: candidate.supersededBy,
+        });
+    });
+    const exceptions = parseFinalAssuranceExceptions(value.exceptions);
+    const record = {
+        schemaVersion: 1,
+        kind: 'task-diff-final-assurance.v1',
+        commitmentDigest: finalAssuranceDigest(value.commitmentDigest),
+        subject,
+        subjectDigest: finalAssuranceDigest(value.subjectDigest),
+        reviewRecordDigest: finalAssuranceDigest(value.reviewRecordDigest),
+        responseDigest: finalAssuranceDigest(value.responseDigest),
+        verdict: value.verdict,
+        reviewerAuthority,
+        dispositions,
+        exceptions,
+    };
+    if (record.subjectDigest !== subject.subjectDigest ||
+        record.reviewerAuthority.policyDigest !== subject.reviewPolicyDigest ||
+        record.verdict !==
+            (record.dispositions.some(({ decision }) => decision === 'accepted')
+                ? 'changes-required'
+                : 'satisfied') ||
+        record.dispositions.some(({ closedBy }) => closedBy !== record.reviewerAuthority.principalId) ||
+        record.commitmentDigest !==
+            sha256(canonicalJson(withoutFinalAssuranceCommitment(record)))) {
+        throw finalAssuranceInvalid();
+    }
+    return deepFreeze(record);
+}
+export function assertTaskDiffFinalAssuranceCurrent(input) {
+    const subject = parseTaskDiffReviewSubject(input.subject);
+    const review = parseTaskDiffReviewRecord(input.review);
+    const response = assertTaskDiffReviewChallengeResponseCurrent(review, input.response);
+    const assurance = parseTaskDiffFinalAssuranceRecord(input.assurance);
+    if (assurance.subjectDigest !== subject.subjectDigest ||
+        canonicalJson(assurance.subject) !== canonicalJson(subject) ||
+        assurance.reviewRecordDigest !== review.recordDigest ||
+        assurance.responseDigest !== response.responseDigest ||
+        review.assignment.reviewerPrincipalId !==
+            assurance.reviewerAuthority.principalId ||
+        review.assignment.reviewerProviderId !==
+            assurance.reviewerAuthority.providerId ||
+        canonicalJson(assurance.exceptions) !==
+            canonicalJson(review.assignment.degradedForm === null ||
+                review.assignment.grantUseDigest === null
+                ? []
+                : [
+                    {
+                        kind: 'collaboration-grant-degradation',
+                        grantUseDigest: review.assignment.grantUseDigest,
+                        degradedForm: review.assignment.degradedForm,
+                    },
+                ])) {
+        throw finalAssuranceInvalid();
+    }
+    assertTaskDiffChallengeClosure(subject, review, assurance.reviewerAuthority, assurance.dispositions);
+    return assurance;
 }
 export function parseTaskDiffReviewDispositionRecord(value) {
     if (!isRecord(value) ||
@@ -327,15 +612,15 @@ export function parseTaskDiffReviewDispositionRecord(value) {
  * Validate the content-level review gate for one exact subject.
  *
  * Assignment identities in this value object are not authentication. A
- * production caller must first bind the record to a verified provider result
- * or a separately signed human exception before this content assertion can
- * authorize a lifecycle transition.
+ * production caller must first bind the record to a verified provider result.
+ * Challenge-bearing reviews require a separately verified Final Assurance
+ * node; a legacy/advisory disposition value can never authorize this helper.
  */
 export function assertTaskDiffReviewContentSatisfied(candidate, reviewCandidate, dispositionCandidate) {
     const subject = parseTaskDiffReviewSubject(candidate);
     const review = parseTaskDiffReviewRecord(reviewCandidate);
-    if (review.subjectDigest !== subject.subjectDigest ||
-        canonicalJson(review.subject) !== canonicalJson(subject)) {
+    if (taskDiffReviewCandidateIdentityDigest(review.subject) !==
+        taskDiffReviewCandidateIdentityDigest(subject)) {
         throw workflowError('TASK_DIFF_REVIEW_STALE', 'TaskDiffReview does not cover the current canonical subject.', ExitCode.staleState);
     }
     if (review.challenges.length === 0) {
@@ -343,30 +628,13 @@ export function assertTaskDiffReviewContentSatisfied(candidate, reviewCandidate,
             throw dispositionInvalid();
         return review;
     }
-    if (dispositionCandidate === null) {
-        throw workflowError('TASK_DIFF_REVIEW_CHALLENGE_OPEN', 'TaskDiffReview contains challenges without a current disposition.', ExitCode.verification, {
-            details: {
-                challengeIds: review.challenges.map(({ challengeId }) => challengeId),
-            },
-        });
-    }
-    const disposition = parseTaskDiffReviewDispositionRecord(dispositionCandidate);
-    if (disposition.reviewRecordDigest !== review.recordDigest ||
-        disposition.subjectDigest !== subject.subjectDigest) {
-        throw dispositionInvalid();
-    }
-    assertDispositionAuthority(review, disposition.entries);
-    const challengeIds = review.challenges
-        .map(({ challengeId }) => challengeId)
-        .sort();
-    if (canonicalJson(disposition.entries.map(({ challengeId }) => challengeId)) !==
-        canonicalJson(challengeIds)) {
-        throw workflowError('TASK_DIFF_REVIEW_CHALLENGE_OPEN', 'TaskDiffReview challenge dispositions are incomplete.', ExitCode.verification);
-    }
-    if (disposition.entries.some(({ disposition: decision }) => decision === 'accepted')) {
-        throw workflowError('TASK_DIFF_REVIEW_CHALLENGE_ACCEPTED', 'An accepted TaskDiffReview challenge requires a new implementation subject and review.', ExitCode.verification);
-    }
-    return review;
+    throw workflowError('TASK_DIFF_REVIEW_CHALLENGE_OPEN', dispositionCandidate === null
+        ? 'TaskDiffReview contains challenges without an authenticated Final Assurance record.'
+        : 'Advisory TaskDiffReview dispositions cannot substitute for an authenticated Final Assurance record.', ExitCode.verification, {
+        details: {
+            challengeIds: review.challenges.map(({ challengeId }) => challengeId),
+        },
+    });
 }
 function normalizeSubmission(value, assignment) {
     const submission = parseTaskDiffReviewSubmission(value);
@@ -421,6 +689,71 @@ export function parseTaskDiffReviewSubmission(value) {
         uncertainty: boundedText(value.uncertainty),
     });
 }
+export function parseTaskDiffReviewContinuationSubmission(value) {
+    if (!isRecord(value) ||
+        !hasExactKeys(value, [
+            'schemaVersion',
+            'reviewRecordDigest',
+            'responseDigest',
+            'proposedDispositions',
+        ]) ||
+        value.schemaVersion !== 1 ||
+        !Array.isArray(value.proposedDispositions) ||
+        value.proposedDispositions.length === 0 ||
+        value.proposedDispositions.length > MAX_FINDINGS) {
+        throw continuationInvalid();
+    }
+    const proposedDispositions = value.proposedDispositions
+        .map((candidate) => {
+        if (!isRecord(candidate) ||
+            !hasExactKeys(candidate, [
+                'challengeId',
+                'decision',
+                'rationale',
+                'supersededBy',
+            ]) ||
+            !CONTINUATION_DECISIONS.has(String(candidate.decision)) ||
+            (candidate.supersededBy !== null &&
+                (typeof candidate.supersededBy !== 'string' ||
+                    !DIGEST.test(candidate.supersededBy))) ||
+            (candidate.decision === 'superseded') !==
+                (typeof candidate.supersededBy === 'string')) {
+            throw continuationInvalid();
+        }
+        return Object.freeze({
+            challengeId: continuationDigest(candidate.challengeId),
+            decision: candidate.decision,
+            rationale: boundedContinuationText(candidate.rationale),
+            supersededBy: candidate.supersededBy,
+        });
+    })
+        .sort((left, right) => left.challengeId.localeCompare(right.challengeId));
+    if (proposedDispositions.some((entry, index) => index > 0 &&
+        entry.challengeId === proposedDispositions[index - 1].challengeId)) {
+        throw continuationInvalid();
+    }
+    return deepFreeze({
+        schemaVersion: 1,
+        reviewRecordDigest: continuationDigest(value.reviewRecordDigest),
+        responseDigest: continuationDigest(value.responseDigest),
+        proposedDispositions,
+    });
+}
+export function assertTaskDiffReviewContinuationSubmissionCurrent(reviewCandidate, responseCandidate, submissionCandidate) {
+    const review = parseTaskDiffReviewRecord(reviewCandidate);
+    const response = assertTaskDiffReviewChallengeResponseCurrent(review, responseCandidate);
+    const submission = parseTaskDiffReviewContinuationSubmission(submissionCandidate);
+    const challenges = review.challenges
+        .map(({ challengeId }) => challengeId)
+        .sort();
+    if (submission.reviewRecordDigest !== review.recordDigest ||
+        submission.responseDigest !== response.responseDigest ||
+        canonicalJson(submission.proposedDispositions.map(({ challengeId }) => challengeId)) !== canonicalJson(challenges) ||
+        submission.proposedDispositions.some(({ supersededBy }) => supersededBy !== null && !challenges.includes(supersededBy))) {
+        throw continuationInvalid();
+    }
+    return submission;
+}
 function parseAssignment(value) {
     if (!isRecord(value) ||
         !hasExactKeys(value, [
@@ -431,8 +764,15 @@ function parseAssignment(value) {
             'reviewerProviderId',
             'reviewerSessionId',
             'achievedIndependence',
+            'degradedForm',
+            'grantUseDigest',
         ]) ||
-        value.achievedIndependence !== 'provider-independent') {
+        (value.achievedIndependence !== 'provider-independent' &&
+            value.achievedIndependence !== 'session-independent') ||
+        ![null, 'same-provider-fresh-session'].includes(value.degradedForm) ||
+        (value.grantUseDigest !== null &&
+            (typeof value.grantUseDigest !== 'string' ||
+                !DIGEST.test(value.grantUseDigest)))) {
         throw independenceInvalid();
     }
     const assignment = {
@@ -442,11 +782,21 @@ function parseAssignment(value) {
         reviewerPrincipalId: identity(value.reviewerPrincipalId),
         reviewerProviderId: identity(value.reviewerProviderId),
         reviewerSessionId: identity(value.reviewerSessionId),
-        achievedIndependence: 'provider-independent',
+        achievedIndependence: value.achievedIndependence,
+        degradedForm: value.degradedForm,
+        grantUseDigest: value.grantUseDigest,
     };
-    if (assignment.implementerProviderId === assignment.reviewerProviderId ||
-        assignment.implementerPrincipalId === assignment.reviewerPrincipalId ||
-        assignment.implementationSessionId === assignment.reviewerSessionId) {
+    const commonInvalid = assignment.implementerPrincipalId === assignment.reviewerPrincipalId ||
+        assignment.implementationSessionId === assignment.reviewerSessionId;
+    const ordinaryInvalid = assignment.achievedIndependence === 'provider-independent' &&
+        (assignment.implementerProviderId === assignment.reviewerProviderId ||
+            assignment.degradedForm !== null ||
+            assignment.grantUseDigest !== null);
+    const grantedInvalid = assignment.achievedIndependence === 'session-independent' &&
+        (assignment.implementerProviderId !== assignment.reviewerProviderId ||
+            assignment.degradedForm !== 'same-provider-fresh-session' ||
+            assignment.grantUseDigest === null);
+    if (commonInvalid || ordinaryInvalid || grantedInvalid) {
         throw independenceInvalid();
     }
     return Object.freeze(assignment);
@@ -690,6 +1040,43 @@ function normalizeDispositionEntries(value) {
     }
     return Object.freeze(entries);
 }
+function normalizeChallengeResponses(value) {
+    if (!Array.isArray(value) ||
+        value.length === 0 ||
+        value.length > MAX_FINDINGS) {
+        throw dispositionInvalid();
+    }
+    const responses = value
+        .map((entry) => {
+        if (!isRecord(entry) ||
+            !hasExactKeys(entry, ['challengeId', 'rationale', 'evidence'])) {
+            throw dispositionInvalid();
+        }
+        let evidence;
+        try {
+            evidence = normalizeEvidence(entry.evidence, false);
+        }
+        catch {
+            throw dispositionInvalid();
+        }
+        return Object.freeze({
+            challengeId: parseDispositionDigest(entry.challengeId),
+            rationale: boundedDispositionText(entry.rationale),
+            evidence,
+        });
+    })
+        .sort((left, right) => left.challengeId.localeCompare(right.challengeId));
+    if (responses.some((entry, index) => index > 0 && entry.challengeId === responses[index - 1].challengeId)) {
+        throw dispositionInvalid();
+    }
+    return Object.freeze(responses);
+}
+function assertExactChallengeSet(expected, actual) {
+    if (expected.length === 0 ||
+        canonicalJson([...expected].sort()) !== canonicalJson([...actual].sort())) {
+        throw dispositionInvalid();
+    }
+}
 function assertDispositionAuthority(review, entries) {
     const challengeIds = new Set(review.challenges.map(({ challengeId }) => challengeId));
     for (const entry of entries) {
@@ -699,6 +1086,20 @@ function assertDispositionAuthority(review, entries) {
             throw dispositionInvalid();
         }
     }
+}
+function assertReviewScopeCurrent(subject, candidate) {
+    const scope = parseTaskDiffReviewScope(candidate);
+    if (scope.currentSubjectDigest !== subject.subjectDigest ||
+        scope.candidateIdentityDigest !==
+            taskDiffReviewCandidateIdentityDigest(subject) ||
+        (scope.predecessor === null &&
+            (scope.mode !== 'full' ||
+                canonicalJson(scope.reviewedPaths) !==
+                    canonicalJson(subject.changedPaths))) ||
+        (scope.mode === 'delta' && scope.predecessor === null)) {
+        throw recordInvalid();
+    }
+    return scope;
 }
 function parseCoverage(value) {
     if (!Array.isArray(value) ||
@@ -740,9 +1141,85 @@ function withoutRecordDigest(record) {
     const { recordDigest: _recordDigest, ...body } = record;
     return body;
 }
+function withoutResponseDigest(record) {
+    const { responseDigest: _responseDigest, ...body } = record;
+    return body;
+}
 function withoutDispositionDigest(record) {
     const { dispositionDigest: _dispositionDigest, ...body } = record;
     return body;
+}
+function withoutFinalAssuranceCommitment(record) {
+    const { commitmentDigest: _commitmentDigest, ...body } = record;
+    return body;
+}
+function parseFinalAssuranceReviewerAuthority(value) {
+    if (!isRecord(value) ||
+        !hasExactKeys(value, [
+            'kind',
+            'principalId',
+            'providerId',
+            'policyDigest',
+        ]) ||
+        value.kind !== 'engine-attributed-provider-reviewer') {
+        throw finalAssuranceInvalid();
+    }
+    return Object.freeze({
+        kind: 'engine-attributed-provider-reviewer',
+        principalId: finalAssuranceIdentity(value.principalId),
+        providerId: finalAssuranceIdentity(value.providerId),
+        policyDigest: finalAssuranceDigest(value.policyDigest),
+    });
+}
+function parseFinalAssuranceExceptions(value) {
+    if (!Array.isArray(value) || value.length > 1) {
+        throw finalAssuranceInvalid();
+    }
+    return Object.freeze(value.map((candidate) => {
+        if (!isRecord(candidate) ||
+            !hasExactKeys(candidate, ['kind', 'grantUseDigest', 'degradedForm']) ||
+            candidate.kind !== 'collaboration-grant-degradation' ||
+            ![
+                'same-provider-fresh-session',
+                'caller-supplied',
+                'direct-human-review',
+            ].includes(String(candidate.degradedForm))) {
+            throw finalAssuranceInvalid();
+        }
+        return Object.freeze({
+            kind: 'collaboration-grant-degradation',
+            grantUseDigest: finalAssuranceDigest(candidate.grantUseDigest),
+            degradedForm: candidate.degradedForm,
+        });
+    }));
+}
+function assertTaskDiffChallengeClosure(subject, review, authority, dispositions) {
+    const challenges = review.challenges.map((challenge) => ({
+        challengeId: challenge.challengeId,
+        raisedBy: challenge.raisedBy,
+        severity: challenge.severity === 'critical' ? 'forbidden-floor' : 'ordinary',
+        targetId: challenge.challengeId,
+    }));
+    const closures = dispositions.map((entry) => ({
+        challengeId: entry.challengeId,
+        disposition: entry.decision,
+        closedBy: entry.closedBy,
+        ...(entry.supersededBy === null
+            ? {}
+            : { supersededBy: entry.supersededBy }),
+    }));
+    assertAuthorizedReviewChallengeClosure({
+        expectedSubjectDigest: subject.subjectDigest,
+        authoritySubjectDigest: review.subjectDigest,
+        authenticatedCloserId: authority.principalId,
+        challenges,
+        closures,
+        context: {
+            authorId: review.assignment.implementerPrincipalId,
+            reviewerIds: [authority.principalId],
+            domainOwnerIds: [],
+        },
+    });
 }
 function exactPath(value) {
     if (typeof value !== 'string')
@@ -776,6 +1253,14 @@ function boundedDispositionText(value) {
         throw dispositionInvalid();
     }
 }
+function boundedContinuationText(value) {
+    try {
+        return boundedText(value);
+    }
+    catch {
+        throw continuationInvalid();
+    }
+}
 function identity(value) {
     if (typeof value !== 'string' || !IDENTITY.test(value)) {
         throw recordInvalid();
@@ -799,6 +1284,32 @@ function parseDispositionDigest(value) {
         throw dispositionInvalid();
     }
     return value;
+}
+function continuationDigest(value) {
+    if (typeof value !== 'string' || !DIGEST.test(value)) {
+        throw continuationInvalid();
+    }
+    return value;
+}
+function finalAssuranceDigest(value) {
+    if (typeof value !== 'string' || !DIGEST.test(value)) {
+        throw finalAssuranceInvalid();
+    }
+    return value;
+}
+function finalAssuranceIdentity(value) {
+    if (typeof value !== 'string' || !IDENTITY.test(value)) {
+        throw finalAssuranceInvalid();
+    }
+    return value;
+}
+function boundedFinalAssuranceText(value) {
+    try {
+        return boundedText(value);
+    }
+    catch {
+        throw finalAssuranceInvalid();
+    }
 }
 function sha256(value) {
     return crypto.createHash('sha256').update(value).digest('hex');
@@ -824,6 +1335,12 @@ function recordInvalid() {
 }
 function dispositionInvalid() {
     return workflowError('TASK_DIFF_REVIEW_DISPOSITION_INVALID', 'TaskDiffReview disposition is malformed or lacks independent authority.', ExitCode.guard);
+}
+function continuationInvalid() {
+    return workflowError('TASK_DIFF_REVIEW_CONTINUATION_INVALID', 'TaskDiffReview continuation evidence is malformed or does not cover the exact current challenge set.', ExitCode.guard);
+}
+function finalAssuranceInvalid() {
+    return workflowError('TASK_DIFF_FINAL_ASSURANCE_INVALID', 'TaskDiff Final Assurance is malformed, stale, or lacks authenticated challenge-closure authority.', ExitCode.guard);
 }
 function independenceInvalid() {
     return workflowError('TASK_DIFF_REVIEW_INDEPENDENCE_INVALID', 'TaskDiffReview requires a fresh provider-independent reviewer assignment.', ExitCode.guard);

@@ -380,7 +380,9 @@ export function isProviderRoleAssignment(value) {
 function isGrantedSameProviderAssignment(value) {
     if (!isRecord(value) ||
         !hasExactKeys(value, GRANTED_ROLE_ASSIGNMENT_KEYS) ||
-        (value.role !== 'blind-surveyor' && value.role !== 'plan-reviewer') ||
+        (value.role !== 'blind-surveyor' &&
+            value.role !== 'plan-reviewer' &&
+            value.role !== 'task-diff-reviewer') ||
         !isProviderId(value.providerId) ||
         !isNonEmptyString(value.sessionId) ||
         typeof value.targetDigest !== 'string' ||

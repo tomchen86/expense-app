@@ -1,10 +1,12 @@
 import crypto from 'node:crypto';
+import fs from 'node:fs';
 import path from 'node:path';
 
 import { canonicalJson } from './canonical-json.ts';
 import { ExitCode, workflowError, type WorkflowError } from './errors.ts';
 import {
   createPrivateCanonicalJson,
+  assertPrivateInvestigationDirectory,
   privatePathExists,
   readPrivateCanonicalJson,
 } from './investigation-session-store.ts';
@@ -38,7 +40,9 @@ import {
   type TaskDiffReviewRecord,
 } from './task-diff-review-artifact.ts';
 import {
+  parseTaskDiffReviewScope,
   parseTaskDiffReviewSubject,
+  type TaskDiffReviewScope,
   type TaskDiffReviewSubject,
 } from './task-diff-review.ts';
 import type { TaskMandateBinding } from './task-mandate.ts';
@@ -58,6 +62,7 @@ export type TaskDiffReviewManifestSnapshot = Readonly<{
   baseCommit: string;
   baseTree: string;
   subject: TaskDiffReviewSubject;
+  reviewScope: TaskDiffReviewScope;
   capabilityProfile: 'repository-read-only';
 }>;
 
@@ -170,6 +175,19 @@ export type TaskDiffFinalAssuranceBinding = Readonly<{
   assuranceNodeId: string;
   assuranceResultDigest: string;
   assurance: TaskDiffFinalAssuranceRecord;
+  createdAt: string;
+}>;
+
+export type TaskDiffReviewSupersessionRecord = Readonly<{
+  schemaVersion: 1;
+  kind: 'task-diff-review-supersession.v1';
+  supersessionDigest: string;
+  sessionId: string;
+  predecessorSubjectDigest: string;
+  predecessorReviewRecordDigest: string;
+  supersededBySubjectDigest: string;
+  supersededByDigest: string;
+  reviewScope: TaskDiffReviewScope;
   createdAt: string;
 }>;
 
@@ -503,6 +521,127 @@ export function taskDiffFinalAssurancePath(
     'task-diff-reviews',
     'final-assurance',
     `${assertDigest(requestedSubjectDigest)}.json`,
+  );
+}
+
+export function listTaskDiffReviewResultBindings(
+  paths: InvestigationRuntimePaths,
+  requestedSessionId: string,
+): readonly TaskDiffReviewResultBinding[] {
+  const sessionId = assertSessionId(requestedSessionId);
+  const directory = path.join(
+    paths.refs,
+    'task-diff-reviews',
+    sessionId,
+    'results',
+  );
+  return listPrivateDigestJson(paths, directory).map((subjectDigest) => {
+    const binding = readTaskDiffReviewResultBinding(
+      paths,
+      sessionId,
+      subjectDigest,
+    );
+    if (binding === null) throw storeUnsafe();
+    return binding;
+  });
+}
+
+export function createTaskDiffReviewSupersession(
+  paths: InvestigationRuntimePaths,
+  input: Omit<
+    TaskDiffReviewSupersessionRecord,
+    'schemaVersion' | 'kind' | 'supersessionDigest'
+  >,
+): TaskDiffReviewSupersessionRecord {
+  const body = {
+    schemaVersion: 1 as const,
+    kind: 'task-diff-review-supersession.v1' as const,
+    ...input,
+  };
+  const record = parseTaskDiffReviewSupersession({
+    ...body,
+    supersessionDigest: sha256(canonicalJson(body)),
+  });
+  createPrivateCanonicalJson(
+    paths,
+    taskDiffReviewSupersessionPath(
+      paths,
+      record.sessionId,
+      record.predecessorReviewRecordDigest,
+    ),
+    record,
+    storeUnsafe,
+    'TASK_DIFF_REVIEW_SUPERSESSION_CONFLICT',
+  );
+  return readTaskDiffReviewSupersession(
+    paths,
+    record.sessionId,
+    record.predecessorReviewRecordDigest,
+  )!;
+}
+
+export function readTaskDiffReviewSupersession(
+  paths: InvestigationRuntimePaths,
+  requestedSessionId: string,
+  requestedPredecessorReviewRecordDigest: string,
+): TaskDiffReviewSupersessionRecord | null {
+  const sessionId = assertSessionId(requestedSessionId);
+  const predecessorReviewRecordDigest = assertDigest(
+    requestedPredecessorReviewRecordDigest,
+  );
+  const target = taskDiffReviewSupersessionPath(
+    paths,
+    sessionId,
+    predecessorReviewRecordDigest,
+  );
+  if (!privatePathExists(paths, target, storeUnsafe)) return null;
+  const record = parseTaskDiffReviewSupersession(
+    readPrivateCanonicalJson(paths, target, storeUnsafe),
+  );
+  if (
+    record.sessionId !== sessionId ||
+    record.predecessorReviewRecordDigest !== predecessorReviewRecordDigest
+  ) {
+    throw storeUnsafe();
+  }
+  return record;
+}
+
+export function listTaskDiffReviewSupersessions(
+  paths: InvestigationRuntimePaths,
+  requestedSessionId: string,
+): readonly TaskDiffReviewSupersessionRecord[] {
+  const sessionId = assertSessionId(requestedSessionId);
+  const directory = path.join(
+    paths.refs,
+    'task-diff-reviews',
+    sessionId,
+    'supersessions',
+  );
+  return listPrivateDigestJson(paths, directory).map(
+    (predecessorReviewRecordDigest) => {
+      const record = readTaskDiffReviewSupersession(
+        paths,
+        sessionId,
+        predecessorReviewRecordDigest,
+      );
+      if (record === null) throw storeUnsafe();
+      return record;
+    },
+  );
+}
+
+export function taskDiffReviewSupersessionPath(
+  paths: InvestigationRuntimePaths,
+  requestedSessionId: string,
+  requestedPredecessorReviewRecordDigest: string,
+): string {
+  return path.join(
+    paths.refs,
+    'task-diff-reviews',
+    assertSessionId(requestedSessionId),
+    'supersessions',
+    `${assertDigest(requestedPredecessorReviewRecordDigest)}.json`,
   );
 }
 
@@ -926,6 +1065,62 @@ function parseTaskDiffFinalAssuranceBinding(
   return deepFreeze(binding);
 }
 
+function parseTaskDiffReviewSupersession(
+  value: unknown,
+): TaskDiffReviewSupersessionRecord {
+  if (
+    !isRecord(value) ||
+    !hasExactKeys(value, [
+      'schemaVersion',
+      'kind',
+      'supersessionDigest',
+      'sessionId',
+      'predecessorSubjectDigest',
+      'predecessorReviewRecordDigest',
+      'supersededBySubjectDigest',
+      'supersededByDigest',
+      'reviewScope',
+      'createdAt',
+    ]) ||
+    value.schemaVersion !== 1 ||
+    value.kind !== 'task-diff-review-supersession.v1' ||
+    !isDigest(value.supersessionDigest) ||
+    typeof value.sessionId !== 'string' ||
+    !isDigest(value.predecessorSubjectDigest) ||
+    !isDigest(value.predecessorReviewRecordDigest) ||
+    !isDigest(value.supersededBySubjectDigest) ||
+    !isDigest(value.supersededByDigest) ||
+    !isTimestamp(value.createdAt)
+  ) {
+    throw storeUnsafe();
+  }
+  const reviewScope = parseTaskDiffReviewScope(value.reviewScope);
+  const predecessor = reviewScope.predecessor;
+  const record: TaskDiffReviewSupersessionRecord = {
+    schemaVersion: 1,
+    kind: 'task-diff-review-supersession.v1',
+    supersessionDigest: value.supersessionDigest,
+    sessionId: assertSessionId(value.sessionId as string),
+    predecessorSubjectDigest: value.predecessorSubjectDigest,
+    predecessorReviewRecordDigest: value.predecessorReviewRecordDigest,
+    supersededBySubjectDigest: value.supersededBySubjectDigest,
+    supersededByDigest: value.supersededByDigest,
+    reviewScope,
+    createdAt: value.createdAt as string,
+  };
+  if (
+    predecessor === null ||
+    predecessor.subjectDigest !== record.predecessorSubjectDigest ||
+    predecessor.reviewRecordDigest !== record.predecessorReviewRecordDigest ||
+    reviewScope.currentSubjectDigest !== record.supersededBySubjectDigest ||
+    record.supersessionDigest !==
+      sha256(canonicalJson(withoutDigest(record, 'supersessionDigest')))
+  ) {
+    throw storeUnsafe();
+  }
+  return deepFreeze(record);
+}
+
 function parseManifest(value: unknown): TaskDiffReviewManifestSnapshot {
   if (
     !isRecord(value) ||
@@ -940,6 +1135,7 @@ function parseManifest(value: unknown): TaskDiffReviewManifestSnapshot {
       'baseCommit',
       'baseTree',
       'subject',
+      'reviewScope',
       'capabilityProfile',
     ]) ||
     value.schemaVersion !== 1 ||
@@ -955,6 +1151,11 @@ function parseManifest(value: unknown): TaskDiffReviewManifestSnapshot {
   ) {
     throw storeUnsafe();
   }
+  const subject = parseTaskDiffReviewSubject(value.subject);
+  const reviewScope = parseTaskDiffReviewScope(value.reviewScope);
+  if (reviewScope.currentSubjectDigest !== subject.subjectDigest) {
+    throw storeUnsafe();
+  }
   return deepFreeze({
     schemaVersion: 1,
     kind: 'task-diff-review-manifest',
@@ -965,7 +1166,8 @@ function parseManifest(value: unknown): TaskDiffReviewManifestSnapshot {
     repositoryIdentity: value.repositoryIdentity,
     baseCommit: value.baseCommit as string,
     baseTree: value.baseTree as string,
-    subject: parseTaskDiffReviewSubject(value.subject),
+    subject,
+    reviewScope,
     capabilityProfile: 'repository-read-only',
   });
 }
@@ -1185,6 +1387,28 @@ function parseBaseline(
     head: value.head as string,
     tree: value.tree as string,
   });
+}
+
+function listPrivateDigestJson(
+  paths: InvestigationRuntimePaths,
+  directory: string,
+): readonly string[] {
+  const observed = fs.lstatSync(directory, { throwIfNoEntry: false });
+  if (!observed) return Object.freeze([]);
+  assertPrivateInvestigationDirectory(paths, directory, storeUnsafe);
+  const names = fs.readdirSync(directory).sort();
+  const digests = names.map((name) => {
+    const match = /^([0-9a-f]{64})\.json$/.exec(name);
+    if (!match) throw storeUnsafe();
+    return match[1]!;
+  });
+  if (
+    new Set(digests).size !== digests.length ||
+    canonicalJson(fs.readdirSync(directory).sort()) !== canonicalJson(names)
+  ) {
+    throw storeUnsafe();
+  }
+  return Object.freeze(digests);
 }
 
 function withoutDigest<T extends Record<string, unknown>>(

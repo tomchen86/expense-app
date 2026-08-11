@@ -174,7 +174,10 @@ export function authorizeGrantedOrdinaryRole(input) {
         payload.rolePair.conflictingRole !== input.role ||
         (input.role === 'blind-surveyor' &&
             payload.lifecyclePhase !== 'blind-survey') ||
-        (input.role === 'plan-reviewer' && payload.lifecyclePhase !== 'plan-review')) {
+        (input.role === 'plan-reviewer' &&
+            payload.lifecyclePhase !== 'plan-review') ||
+        (input.role === 'task-diff-reviewer' &&
+            payload.lifecyclePhase !== 'task-diff-review')) {
         throw grantedRoleInvalid();
     }
     const base = {
@@ -240,7 +243,7 @@ export function authorizeGrantedOrdinaryRole(input) {
     }
     if (payload.degradedForm === 'direct-human-review' &&
         payload.availableActor.kind === 'direct-human' &&
-        input.role === 'plan-reviewer' &&
+        (input.role === 'plan-reviewer' || input.role === 'task-diff-reviewer') &&
         participant.principalId === payload.availableActor.identity &&
         input.directHumanReview) {
         const attestation = validateDirectHumanReviewAttestation(input.directHumanReview.attestation, {
@@ -319,12 +322,6 @@ export function admitRoleResult(input) {
         achievedIndependence = 'provider-independent';
     }
     else {
-        // Collaboration grants have not yet been versioned for TaskDiffReview.
-        // Never let a widened content union smuggle that role through an older
-        // blind-survey/plan-review grant envelope.
-        if (content.kind === 'task-diff-review') {
-            throw roleResultInvalid();
-        }
         if (canonicalJson(author) !== canonicalJson(assignment.author) ||
             canonicalJson(participant) !== canonicalJson(assignment.participant) ||
             input.grantUse === null ||

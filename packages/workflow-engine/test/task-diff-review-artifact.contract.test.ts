@@ -395,16 +395,25 @@ test('accepted TaskDiffReview challenges produce changes-required Final Assuranc
   assert.equal(assurance.verdict, 'changes-required');
 });
 
-test('TaskDiffReview reuse fails when any canonical subject input changes or stored bytes are redigested incompletely', () => {
+test('TaskDiffReview reuse follows candidate identity while redigested record bytes still fail closed', () => {
   const input = reviewInput();
   const record = createTaskDiffReviewRecord(input);
-  const changed = createTaskDiffReviewSubject({
+  const sameCandidate = createTaskDiffReviewSubject({
     ...subjectInput(),
     checkEvidenceDigest: '8'.repeat(64),
   });
+  const changedCandidate = createTaskDiffReviewSubject({
+    ...subjectInput(),
+    candidateTree: '8'.repeat(40),
+  });
 
+  assert.equal(
+    assertTaskDiffReviewContentSatisfied(sameCandidate, record, null)
+      .recordDigest,
+    record.recordDigest,
+  );
   assert.throws(
-    () => assertTaskDiffReviewContentSatisfied(changed, record, null),
+    () => assertTaskDiffReviewContentSatisfied(changedCandidate, record, null),
     hasCode('TASK_DIFF_REVIEW_STALE'),
   );
   assert.throws(
