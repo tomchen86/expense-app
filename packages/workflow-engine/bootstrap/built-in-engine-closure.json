@@ -216,7 +216,7 @@
     {
       "path": "src/cli.ts",
       "mode": "100644",
-      "digest": "sha256:f3853439403a3e2584bebc021851e5c29f69b2b24681fd400ae6f0f5a2dfb31f"
+      "digest": "sha256:37422ce9e01669c5064ed510fd8a3f35b033a9787e43be06ed18fc39d301ed7c"
     },
     {
       "path": "src/codex-provider-adapter.ts",
@@ -691,7 +691,7 @@
     {
       "path": "src/open-task.ts",
       "mode": "100644",
-      "digest": "sha256:94e2c992edf8cd0806bbe50b120ddd1997610457944386f2bc812894d31eded7"
+      "digest": "sha256:f492d53c4c39488d028c38e960171c9cc9a2aaa657ec26d0cd90e3bf46900a5c"
     },
     {
       "path": "src/openspec-adapter.ts",
@@ -1051,12 +1051,12 @@
     {
       "path": "src/session-store.ts",
       "mode": "100644",
-      "digest": "sha256:6f0a7714f191ca6c18aa783aa1a930e137e5a7d0dced3a618ca4e9779e53b5e0"
+      "digest": "sha256:6cdd945fc01de3cb3942421d49032708a40f8cd0704b3c61b3bc9e44f3ca7dae"
     },
     {
       "path": "src/session.ts",
       "mode": "100644",
-      "digest": "sha256:26cf251e1f61bd1d6d8754a8125312fc40fac6c22951a3e065672df27ce1dc3d"
+      "digest": "sha256:6a20cf425abb09148c746a243562a865e3b91cf3b27a3c9a0c4ffe243ba2a5c4"
     },
     {
       "path": "src/task-execution-evidence.ts",
@@ -1072,6 +1072,11 @@
       "path": "src/task-projection.ts",
       "mode": "100644",
       "digest": "sha256:3996b8d4f5549e87bb2a4290db56861a82e7e739c02d1ddb550dd48fb1fff687"
+    },
+    {
+      "path": "src/task-revision.ts",
+      "mode": "100644",
+      "digest": "sha256:248329028ad359244e1da1ed8c11b809bff84ceac531197d2b05b7790ffb7f18"
     },
     {
       "path": "src/tracked-tree-reader.ts",
