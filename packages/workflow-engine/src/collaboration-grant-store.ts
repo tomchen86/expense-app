@@ -52,7 +52,7 @@ const STATE_FILE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\.json$/;
 
 export type CollaborationGrantedAssignmentRecord = {
-  role: 'blind-surveyor' | 'plan-reviewer';
+  role: 'blind-surveyor' | 'plan-reviewer' | 'task-diff-reviewer';
   providerId: 'codex' | 'claude' | null;
   sessionId: string | null;
   targetDigest: string;
@@ -82,7 +82,7 @@ export type CollaborationParticipantRecord = {
 };
 
 export type CollaborationStructuredContent = {
-  kind: 'blind-survey' | 'plan-review';
+  kind: 'blind-survey' | 'plan-review' | 'task-diff-review';
   nodeId: string;
   resultDigest: string;
 };

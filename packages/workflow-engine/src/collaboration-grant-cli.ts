@@ -222,7 +222,11 @@ function parseAvailableActor(
 function isLifecyclePhase(
   value: string | undefined,
 ): value is CollaborationLifecyclePhase {
-  return value === 'blind-survey' || value === 'plan-review';
+  return (
+    value === 'blind-survey' ||
+    value === 'plan-review' ||
+    value === 'task-diff-review'
+  );
 }
 
 function isRolePair(
@@ -236,7 +240,10 @@ function isRolePair(
       conflictingRole === 'blind-surveyor') ||
     (phase === 'plan-review' &&
       authorRole === 'plan-author' &&
-      conflictingRole === 'plan-reviewer')
+      conflictingRole === 'plan-reviewer') ||
+    (phase === 'task-diff-review' &&
+      authorRole === 'task-implementer' &&
+      conflictingRole === 'task-diff-reviewer')
   );
 }
 
@@ -263,7 +270,7 @@ export function collaborationUsage() {
     'INVALID_USAGE',
     [
       'Usage:',
-      '  pnpm workflow maintainer collaboration-grant --change <id> [--task <task-id>] --base <commit> --target <digest> --phase <blind-survey|plan-review> --author-role <role> --conflicting-role <role> (--provider <codex|claude> --actor-assurance <grade>|--caller <id> --actor-assurance <grade>|--direct-human true) --degraded <same-provider-fresh-session|caller-supplied|direct-human-review> --reason <text> [--ttl <minutes>m] [--uses 1] [--json]',
+      '  pnpm workflow maintainer collaboration-grant --change <id> [--task <task-id>] --base <commit> --target <digest> --phase <blind-survey|plan-review|task-diff-review> --author-role <role> --conflicting-role <role> (--provider <codex|claude> --actor-assurance <grade>|--caller <id> --actor-assurance <grade>|--direct-human true) --degraded <same-provider-fresh-session|caller-supplied|direct-human-review> --reason <text> [--ttl <minutes>m] [--uses 1] [--json]',
       '  pnpm workflow maintainer collaboration-inspect [grant-id] [--json]',
       '  pnpm workflow maintainer collaboration-revoke <grant-id> --reason <text> [--json]',
     ].join('\n'),

@@ -3,6 +3,7 @@ import crypto from 'node:crypto';
 import { resolveActorIdentity } from './actor-identity.ts';
 import { parseAiAdapterPolicyDocument } from './ai-adapter-policy.ts';
 import { canonicalJson } from './canonical-json.ts';
+import type { CollaborationGrantRequest } from './collaboration-grant.ts';
 import { digestRequiredCheckDefinitions } from './contract-digests.ts';
 import {
   readEvidenceNode,
@@ -122,6 +123,7 @@ export type TaskDiffReviewLifecycleStatus =
       sessionId: string;
       subject: TaskDiffReviewSubject;
     }>
+  | TaskDiffReviewCollaborationGrantRequiredStatus
   | Readonly<{
       state:
         'waiting-for-provider' | 'provider-succeeded-awaiting-reconciliation';
@@ -159,6 +161,24 @@ export type TaskDiffReviewLifecycleStatus =
       review: TaskDiffReviewRecord;
       finalAssurance: TaskDiffFinalAssuranceRecord | null;
     }>;
+
+export type TaskDiffReviewCollaborationGrantRequiredStatus = Readonly<{
+  state: 'collaboration-grant-required';
+  sessionId: string;
+  subject: TaskDiffReviewSubject;
+  implementationActor: RecordedRoleParticipant;
+  inputSchema: Readonly<{
+    schemaVersion: 1;
+    kind: 'collaboration-grant-selection';
+    lifecyclePhase: 'task-diff-review';
+    conflictingRole: 'task-diff-reviewer';
+    grantRequest: CollaborationGrantRequest | null;
+    allowedDegradedForms: readonly (
+      'same-provider-fresh-session' | 'caller-supplied' | 'direct-human-review'
+    )[];
+    resumeOption: '--grant <grant-id>';
+  }>;
+}>;
 
 export type TaskDiffReviewContinuationLifecycleStatus = Readonly<{
   state:
@@ -236,7 +256,7 @@ export function beginTaskDiffReview(
           context.session.sessionId,
           subject.subjectDigest,
         );
-        const reservation =
+        const created =
           existing ??
           createNewTaskDiffReviewReservation(
             context,
@@ -244,6 +264,10 @@ export function beginTaskDiffReview(
             subject,
             implementationActor,
           );
+        if (created.kind === 'task-diff-review-collaboration-grant-required') {
+          return created.status;
+        }
+        const reservation = created;
         assertReservationCurrent(
           context,
           subject,
@@ -1018,7 +1042,12 @@ function createNewTaskDiffReviewReservation(
   runtime: ReturnType<typeof loadInvestigationRuntimeContext>['runtime'],
   subject: TaskDiffReviewSubject,
   implementationActor: RecordedRoleParticipant,
-): TaskDiffReviewReservationRecord {
+):
+  | TaskDiffReviewReservationRecord
+  | Readonly<{
+      kind: 'task-diff-review-collaboration-grant-required';
+      status: TaskDiffReviewCollaborationGrantRequiredStatus;
+    }> {
   if (
     implementationActor.identityAssurance !== 'self-declared' &&
     implementationActor.identityAssurance !== 'runtime-hint'
@@ -1061,11 +1090,37 @@ function createNewTaskDiffReviewReservation(
     })),
   });
   if (scheduled.outcome !== 'assigned') {
-    throw workflowError(
-      'TASK_DIFF_REVIEW_PROVIDER_INDEPENDENCE_REQUIRED',
-      'No enabled provider-independent TaskDiffReview reviewer is available.',
-      ExitCode.guard,
+    const callableProviderIds = (['codex', 'claude'] as const).filter(
+      (providerId) => policy.policy.providers[providerId].enabled,
     );
+    const grantRequest = taskDiffReviewGrantRequest({
+      context,
+      subject,
+      implementationActor,
+      callableProviderIds,
+    });
+    return Object.freeze({
+      kind: 'task-diff-review-collaboration-grant-required' as const,
+      status: Object.freeze({
+        state: 'collaboration-grant-required' as const,
+        sessionId: context.session.sessionId,
+        subject,
+        implementationActor,
+        inputSchema: Object.freeze({
+          schemaVersion: 1 as const,
+          kind: 'collaboration-grant-selection' as const,
+          lifecyclePhase: 'task-diff-review' as const,
+          conflictingRole: 'task-diff-reviewer' as const,
+          grantRequest,
+          allowedDegradedForms: Object.freeze(
+            grantRequest === null
+              ? (['caller-supplied', 'direct-human-review'] as const)
+              : (['same-provider-fresh-session'] as const),
+          ),
+          resumeOption: '--grant <grant-id>' as const,
+        }),
+      }),
+    });
   }
   const assignment = scheduled.assignment;
   const ownerInvestigationId = `investigation-task-diff-${seed}`;
@@ -1189,6 +1244,46 @@ function createNewTaskDiffReviewReservation(
     reservationNodeId: requestReservation.nodeId,
     createdAt: new Date().toISOString(),
   });
+}
+
+function taskDiffReviewGrantRequest(input: {
+  context: ReturnType<typeof loadActiveSessionContext>;
+  subject: TaskDiffReviewSubject;
+  implementationActor: RecordedRoleParticipant;
+  callableProviderIds: readonly ProviderId[];
+}): CollaborationGrantRequest | null {
+  const providerId = input.implementationActor.providerId;
+  if (
+    providerId === null ||
+    (input.implementationActor.identityAssurance !== 'self-declared' &&
+      input.implementationActor.identityAssurance !== 'runtime-hint') ||
+    input.callableProviderIds.length !== 1 ||
+    input.callableProviderIds[0] !== providerId
+  ) {
+    return null;
+  }
+  return {
+    changeId: input.context.session.changeId,
+    taskId: input.context.session.taskId,
+    baselineCommit: input.context.session.baseline.head,
+    baselineTree: input.context.session.baseline.tree,
+    targetDigest: input.subject.subjectDigest,
+    lifecyclePhase: 'task-diff-review',
+    rolePair: {
+      authorRole: 'task-implementer',
+      conflictingRole: 'task-diff-reviewer',
+    },
+    availableActor: {
+      kind: 'provider',
+      providerId,
+      assurance: input.implementationActor.identityAssurance,
+    },
+    degradedForm: 'same-provider-fresh-session',
+    reason:
+      'No provider-independent TaskDiffReview reviewer is enabled for this exact candidate.',
+    ttlMinutes: 30,
+    maxUses: 1,
+  };
 }
 
 function createNewTaskDiffReviewContinuationReservation(

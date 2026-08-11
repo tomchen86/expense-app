@@ -952,10 +952,57 @@ test('legacy finish re-evaluates the shared review predicate after completion pr
   }
 });
 
+test('review-diff shortage pauses with the existing typed collaboration-grant vocabulary', () => {
+  const { repository } = createReviewFixture({
+    configureAdapterPolicy(policy) {
+      policy.providers.claude.enabled = false;
+    },
+  });
+  try {
+    const session = startSession(repository, 'demo-change', '1.1');
+    fs.writeFileSync(
+      path.join(repository, 'src/feature.ts'),
+      'export const reviewed = true;\n',
+    );
+    assert.throws(
+      () => finalizeTask(repository, session.sessionId),
+      hasCode('TASK_DIFF_REVIEW_REQUIRED'),
+    );
+    const paused = beginTaskDiffReview(repository, session.sessionId, {
+      explicitActor: 'codex',
+      environment: {},
+    });
+    assert.equal(paused.state, 'collaboration-grant-required');
+    if (paused.state !== 'collaboration-grant-required') {
+      assert.fail('expected typed TaskDiffReview collaboration-grant pause');
+    }
+    assert.equal(paused.inputSchema.lifecyclePhase, 'task-diff-review');
+    assert.equal(paused.inputSchema.conflictingRole, 'task-diff-reviewer');
+    assert.equal(
+      paused.inputSchema.grantRequest?.degradedForm,
+      'same-provider-fresh-session',
+    );
+    assert.equal(
+      paused.inputSchema.grantRequest?.targetDigest,
+      paused.subject.subjectDigest,
+    );
+    assert.equal(paused.inputSchema.resumeOption, '--grant <grant-id>');
+    assert.equal(
+      inspectTaskDiffReviewStatus(repository, session.sessionId).state,
+      'ready',
+    );
+  } finally {
+    fs.rmSync(repository, { recursive: true, force: true });
+  }
+});
+
 function createReviewFixture(
   options: {
     configurePathRoles?: (registry: {
       roles: Record<string, string[]>;
+    }) => void;
+    configureAdapterPolicy?: (policy: {
+      providers: Record<'codex' | 'claude', { enabled: boolean }>;
     }) => void;
   } = {},
 ): {
@@ -998,6 +1045,14 @@ function createReviewFixture(
     path.join(sourceRepositoryRoot, 'workflow/maintainer-policy.json'),
     path.join(repository, 'workflow/maintainer-policy.json'),
   );
+  if (options.configureAdapterPolicy) {
+    const policyPath = path.join(repository, 'workflow/ai-adapter-policy.json');
+    const policy = JSON.parse(fs.readFileSync(policyPath, 'utf8')) as {
+      providers: Record<'codex' | 'claude', { enabled: boolean }>;
+    };
+    options.configureAdapterPolicy(policy);
+    fs.writeFileSync(policyPath, `${JSON.stringify(policy, null, 2)}\n`);
+  }
   configureCountingCheck(repository, counterPath);
   git(repository, ['checkout', '-b', 'work/demo-change']);
   writeReadyV2ExemptChange(repository);
