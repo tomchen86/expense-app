@@ -44,6 +44,7 @@ import {
   planTasksCompleted,
   restoreTaskProjection,
 } from './task-projection.ts';
+import { assertCurrentTaskDiffReviewSatisfied } from './task-diff-review-lifecycle.ts';
 import {
   executeChecks,
   inspectSession,
@@ -268,6 +269,7 @@ function continueFinalizeTransaction(
     }
     const checkReport = currentCheckReport(state.inspection, transaction);
     if (transaction.phase === 'checked') {
+      assertFinalizeTaskDiffReviewSatisfied(cwd, transaction);
       if (state.indexState === 'previous') {
         stageExactPaths(
           state.inspection.git.repositoryRoot,
@@ -804,8 +806,61 @@ function preservesFinalizeTransaction(error: unknown): boolean {
   return (
     error instanceof SimulatedFinalizeInterruption ||
     (error instanceof WorkflowError &&
-      error.code === 'FINALIZE_RECOVERY_REQUIRED')
+      [
+        'FINALIZE_RECOVERY_REQUIRED',
+        'TASK_DIFF_REVIEW_REQUIRED',
+        'TASK_DIFF_REVIEW_CHALLENGE_OPEN',
+        'TASK_DIFF_REVIEW_CHALLENGE_ACCEPTED',
+      ].includes(error.code))
   );
+}
+
+function assertFinalizeTaskDiffReviewSatisfied(
+  cwd: string,
+  transaction: CandidateFinalizeTransaction,
+): void {
+  const activationPaths = [
+    'workflow/maintainer-policy.json',
+    'workflow/path-roles.json',
+  ];
+  if (
+    activationPaths.some(
+      (activationPath) =>
+        runGit(transaction.repositoryRoot, [
+          'ls-tree',
+          '--name-only',
+          transaction.baseline.head,
+          '--',
+          activationPath,
+        ]).trim() !== activationPath,
+    )
+  ) {
+    return;
+  }
+  try {
+    assertCurrentTaskDiffReviewSatisfied(cwd, transaction.sessionId);
+  } catch (error) {
+    if (
+      error instanceof WorkflowError &&
+      error.code === 'TASK_DIFF_REVIEW_NOT_SATISFIED'
+    ) {
+      throw workflowError(
+        'TASK_DIFF_REVIEW_REQUIRED',
+        'Finalize requires a current provider-bound TaskDiffReview for the exact checked candidate.',
+        ExitCode.verification,
+        {
+          details: {
+            sessionId: transaction.sessionId,
+            transactionId: transaction.transactionId,
+            candidateTree: transaction.candidateTree,
+          },
+          recovery:
+            'Start or resume TaskDiffReview for this session, adopt its fixed-runner result, then retry finalize.',
+        },
+      );
+    }
+    throw error;
+  }
 }
 
 function finalizeRecoveryRequired(transaction: FinalizeTransaction) {

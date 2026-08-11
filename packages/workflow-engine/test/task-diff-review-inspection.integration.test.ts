@@ -355,6 +355,134 @@ test('review-diff provider worker refuses a candidate that changed after reserva
   }
 });
 
+test('finalize pauses before staging for a required review and resumes without rerunning checks after the exact result is adopted', () => {
+  const { repository, counterPath } = createReviewFixture();
+  try {
+    const session = startSession(repository, 'demo-change', '1.1');
+    fs.writeFileSync(
+      path.join(repository, 'src/feature.ts'),
+      'export const reviewed = true;\n',
+    );
+    assert.throws(
+      () => finalizeTask(repository, session.sessionId),
+      hasCode('TASK_DIFF_REVIEW_REQUIRED'),
+    );
+    const transaction = JSON.parse(
+      fs.readFileSync(
+        path.join(
+          runtimeRoot(repository),
+          'finalize-transactions',
+          `${session.sessionId}.json`,
+        ),
+        'utf8',
+      ),
+    ) as { phase: string; previousIndexTree: string };
+    assert.equal(transaction.phase, 'checked');
+    assert.equal(
+      git(repository, ['write-tree']).trim(),
+      transaction.previousIndexTree,
+    );
+    assert.equal(fs.readFileSync(counterPath, 'utf8'), '1');
+
+    const prepared = beginTaskDiffReview(repository, session.sessionId, {
+      explicitActor: 'codex',
+      environment: {},
+    });
+    assert.equal(prepared.state, 'waiting-for-provider');
+    const reviewedBlobObjectId = prepared.subject.transitions.find(
+      ({ path: changedPath }) => changedPath === 'src/feature.ts',
+    )?.after?.objectId;
+    assert.ok(reviewedBlobObjectId);
+    const submission = validTaskDiffSubmission(reviewedBlobObjectId);
+    assert.equal(
+      runProviderWorker(repository, prepared.invocationId, {
+        runner(input) {
+          return {
+            invocationId: prepared.invocationId,
+            providerId: 'claude',
+            purpose: 'task-diff-review',
+            requestDigest: input.request.requestDigest,
+            semanticOutput: submission,
+            semanticOutputDigest: sha256(canonicalJson(submission)),
+            assurance: 'unchanged-governed-projection',
+            projection: {
+              unchanged: true,
+              changedCategories: [],
+              beforeDigest: prepared.subject.subjectDigest,
+              afterDigest: prepared.subject.subjectDigest,
+            },
+            sameUserProcessConfined: false,
+            residuals: [...PROVIDER_RUNNER_RESIDUALS],
+            executable: executableIdentity(),
+            elapsedMs: 7,
+          };
+        },
+      }).state,
+      'succeeded',
+    );
+    assert.equal(
+      reconcileTaskDiffReview(repository, session.sessionId).state,
+      'satisfied',
+    );
+
+    const finalized = finalizeTask(repository, session.sessionId);
+    assert.equal(finalized.session.finishReportId, finalized.finishReportId);
+    assert.equal(fs.readFileSync(counterPath, 'utf8'), '1');
+  } finally {
+    fs.rmSync(repository, { recursive: true, force: true });
+  }
+});
+
+test('a corrected candidate receives a distinct immutable TaskDiffReview generation in the same WorkflowSession', () => {
+  const { repository, counterPath } = createReviewFixture();
+  try {
+    const session = startSession(repository, 'demo-change', '1.1');
+    fs.writeFileSync(
+      path.join(repository, 'src/feature.ts'),
+      'export const reviewed = true;\n',
+    );
+    assert.throws(
+      () => finalizeTask(repository, session.sessionId),
+      hasCode('TASK_DIFF_REVIEW_REQUIRED'),
+    );
+    const first = beginTaskDiffReview(repository, session.sessionId, {
+      explicitActor: 'codex',
+      environment: {},
+    });
+    assert.equal(first.state, 'waiting-for-provider');
+
+    fs.writeFileSync(
+      path.join(repository, 'src/feature.ts'),
+      'export const reviewed = false;\n',
+    );
+    assert.throws(
+      () => finalizeTask(repository, session.sessionId),
+      hasCode('FINALIZE_TRANSACTION_DIVERGED'),
+    );
+    assert.throws(
+      () => finalizeTask(repository, session.sessionId),
+      hasCode('TASK_DIFF_REVIEW_REQUIRED'),
+    );
+    const second = beginTaskDiffReview(repository, session.sessionId, {
+      explicitActor: 'codex',
+      environment: {},
+    });
+    assert.equal(second.state, 'waiting-for-provider');
+    assert.notEqual(second.subject.subjectDigest, first.subject.subjectDigest);
+    assert.notEqual(second.invocationId, first.invocationId);
+    assert.equal(
+      readProviderInvocation(
+        investigationRuntime(repository),
+        first.invocationId,
+      ).state,
+      'prepared',
+    );
+    assert.equal(fs.readFileSync(counterPath, 'utf8'), '2');
+  } finally {
+    fs.rmSync(repository, { recursive: true, force: true });
+  }
+});
+
 function createReviewFixture(): {
   repository: string;
   counterPath: string;

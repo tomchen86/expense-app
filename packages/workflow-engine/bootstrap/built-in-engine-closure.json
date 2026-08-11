@@ -866,7 +866,7 @@
     {
       "path": "src/projected-finalization.ts",
       "mode": "100644",
-      "digest": "sha256:b7d84c5b065be30ee1e2868c2baea01dbc397523fbcf9f7620502e49373f278b"
+      "digest": "sha256:3065c14c2b90edba1cf2817f6bb697547c289a670b75648ed024790ea2c23563"
     },
     {
       "path": "src/propose-exemption-store.ts",
@@ -1081,12 +1081,12 @@
     {
       "path": "src/task-diff-review-lifecycle.ts",
       "mode": "100644",
-      "digest": "sha256:97f57183f75c417b47691196edbbd1f5ad43d0acef802e49fdc724f41c492cbd"
+      "digest": "sha256:0c4ede06ed0b4ba0ce78b4324942e6e8fc3fc556c483af0f4e6a64413cd8b0df"
     },
     {
       "path": "src/task-diff-review-store.ts",
       "mode": "100644",
-      "digest": "sha256:a672235c35260fb636a782e1e127f6eb9bab6b79caf2e1730fa30bfe81c89ee5"
+      "digest": "sha256:5a089cbb1a2d3ac6f98207c3b004c431143be94105109d118a45673cb656f5a4"
     },
     {
       "path": "src/task-diff-review.ts",
