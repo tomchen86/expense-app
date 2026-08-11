@@ -173,10 +173,13 @@ function inspectSessionStart(
 function persistSessionStart(
   inspection: ReturnType<typeof inspectSessionStart>,
   mandateBinding?: TaskMandateBinding,
+  fixedIdentity?: Readonly<{ sessionId: string; createdAt: string }>,
 ): WorkflowSession {
   const { changeId, taskId, git, contract, branch } = inspection;
   const policy = contract.guard.tasks[taskId];
-  const sessionId = createSessionId();
+  const sessionId = fixedIdentity
+    ? assertSessionId(fixedIdentity.sessionId)
+    : createSessionId();
   const runtime = runtimePaths(
     git.gitCommonDirectory,
     contract.config.runtimeDirectory,
@@ -239,7 +242,9 @@ function persistSessionStart(
       contract,
       contract.planningAssurance,
     ),
-    createdAt: new Date().toISOString(),
+    createdAt: fixedIdentity
+      ? assertExactSessionTimestamp(fixedIdentity.createdAt)
+      : new Date().toISOString(),
   };
   const sessionPath = path.join(runtime.sessions, `${sessionId}.json`);
 
@@ -260,6 +265,47 @@ function persistSessionStart(
   }
 
   return session;
+}
+
+/**
+ * Publish one exact session while the caller owns the repository lifecycle
+ * lock. Open-task uses this only after releasing its per-change planning lock,
+ * so the change-lock pathname can become the durable active-session lock
+ * without ever dropping repository-wide exclusion.
+ */
+export function startMandatedSessionUnderLifecycleLock(
+  cwd: string,
+  requestedChangeId: string,
+  requestedTaskId: string,
+  mandateBinding: TaskMandateBinding,
+  identity: Readonly<{ sessionId: string; createdAt: string }>,
+  assertRepositoryLock: () => void,
+): WorkflowSession {
+  assertRepositoryLock();
+  const inspection = inspectSessionStart(
+    cwd,
+    requestedChangeId,
+    requestedTaskId,
+  );
+  assertRepositoryLock();
+  const session = persistSessionStart(inspection, mandateBinding, identity);
+  assertRepositoryLock();
+  return session;
+}
+
+function assertExactSessionTimestamp(value: string): string {
+  const milliseconds = Date.parse(value);
+  if (
+    !Number.isFinite(milliseconds) ||
+    new Date(milliseconds).toISOString() !== value
+  ) {
+    throw workflowError(
+      'SESSION_TIMESTAMP_INVALID',
+      'The durable session timestamp is not canonical.',
+      ExitCode.staleState,
+    );
+  }
+  return value;
 }
 
 function sessionLockInvalid() {

@@ -94,6 +94,9 @@ export type PlanningTransitionTestHooks = {
     expectedHead: string;
     expectedRef: string;
     commitHash: string;
+    tree: string;
+    reportId: string;
+    changedPaths: string[];
   }): void;
   afterRefUpdateBeforeEpoch?(context: {
     repositoryRoot: string;
@@ -666,6 +669,9 @@ function commitPlanningTransitionLocked(
       expectedHead: initial.head,
       expectedRef: headRef,
       commitHash,
+      tree: staged.tree,
+      reportId,
+      changedPaths: [...changedPaths],
     });
     assertPlanningReportPersisted(reportsDirectory, reportId, report);
     assertLocksOwned();
