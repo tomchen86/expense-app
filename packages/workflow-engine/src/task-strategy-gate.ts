@@ -23,6 +23,7 @@ import {
   readTaskStrategyCallerImplementationBinding,
   readTaskStrategyImplementationResultBinding,
 } from './task-strategy-provider-store.ts';
+import { assertTaskMechanicalTransformationEvidence } from './task-mechanical-transform.ts';
 import type { SessionInspection } from './verification.ts';
 
 /**
@@ -35,6 +36,10 @@ export function assertTaskStrategyExecutionGate(
   _environment: NodeJS.ProcessEnv,
 ): void {
   const task = inspection.contract.execution?.tasks[inspection.session.taskId];
+  if (task?.strategy === 'mechanical-transform') {
+    assertTaskMechanicalTransformationEvidence(inspection);
+    return;
+  }
   if (
     task?.strategy !== 'cross-agent-tdd' &&
     task?.strategy !== 'tdd-single-agent'

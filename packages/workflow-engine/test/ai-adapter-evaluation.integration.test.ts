@@ -69,6 +69,14 @@ test('AI adapter evaluation denies launch on every platform without side effects
                 purpose: 'plan-review',
                 profile: 'repository-read-only',
               },
+              {
+                purpose: 'task-implementation',
+                profile: 'repository-read-only',
+              },
+              {
+                purpose: 'task-diff-review',
+                profile: 'repository-read-only',
+              },
             ],
           },
           {
@@ -81,6 +89,14 @@ test('AI adapter evaluation denies launch on every platform without side effects
               },
               {
                 purpose: 'plan-review',
+                profile: 'repository-read-only',
+              },
+              {
+                purpose: 'task-implementation',
+                profile: 'repository-read-only',
+              },
+              {
+                purpose: 'task-diff-review',
                 profile: 'repository-read-only',
               },
             ],

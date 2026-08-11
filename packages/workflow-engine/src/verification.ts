@@ -69,6 +69,7 @@ import {
   writeJsonAtomic,
 } from './session-store.ts';
 import { assertTaskStrategyExecutionGate } from './task-strategy-gate.ts';
+import { ensureTaskMechanicalTransformationEvidence } from './task-mechanical-transform.ts';
 import { assertTaskProjectionSourceDigest } from './task-projection.ts';
 import { loadStableValidatedChangeContract } from './validated-contract-context.ts';
 
@@ -146,6 +147,7 @@ function checkSessionUnlocked(
   );
   if (reconciled !== null) return reconciled;
   const initial = inspectSession(cwd, requestedSessionId);
+  ensureTaskMechanicalTransformationEvidence(initial);
   assertTaskStrategyExecutionGate(initial, options.environment ?? process.env);
   const trustedPolicy = tryLoadTrustedCheckPolicy(
     initial.git.repositoryRoot,
