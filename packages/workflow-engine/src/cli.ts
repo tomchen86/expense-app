@@ -182,6 +182,7 @@ import {
   resumeTask,
   reviseTask,
 } from './task-revision.ts';
+import { inspectTaskDiffReviewSubject } from './task-diff-review-lifecycle.ts';
 import { issueTaskRevisionApproval } from './task-revision-approval.ts';
 import { validateManagedDocuments } from './managed-documents.ts';
 import { diagnoseOpenSpec } from './openspec-doctor.ts';
@@ -1522,6 +1523,18 @@ function dispatch(args: string[], cwd: string): CommandResult {
         result: cancelFinalizeRecovery(cwd, sessionId, transactionId, reason),
       };
     }
+    case 'review-diff': {
+      if (rest.length !== 2 || rest[0] !== 'inspect') {
+        throw usage(
+          'Usage: pnpm workflow review-diff inspect <session-id> [--json]',
+        );
+      }
+      return {
+        command,
+        ok: true,
+        result: inspectTaskDiffReviewSubject(cwd, rest[1]),
+      };
+    }
     case 'finalize-task':
       requireArgumentCount(command, rest, 1, 1);
       return { command, ok: true, result: finalizeTask(cwd, rest[0]) };
@@ -2569,6 +2582,7 @@ function usageText(): string {
     '  pnpm workflow finish <session-id> [--json]',
     '  pnpm workflow finalize <session-id> --message <subject> [--json]',
     '  pnpm workflow finalize-recover <session-id> [--cancel <transaction-id> --reason <text>] [--json]',
+    '  pnpm workflow review-diff inspect <session-id> [--json]',
     '  pnpm workflow finalize-task <session-id> [--json]',
     '  pnpm workflow rollback-completion <session-id> --reason <text> [--json]',
     '  pnpm workflow commit <session-id> --message <subject> [--json]',

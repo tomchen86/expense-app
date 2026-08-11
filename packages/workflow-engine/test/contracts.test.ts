@@ -52,6 +52,7 @@ import './single-pass-finalize-command.integration.test.ts';
 import './finalize-recovery-command.integration.test.ts';
 import './task-diff-review.contract.test.ts';
 import './task-diff-review-artifact.contract.test.ts';
+import './task-diff-review-inspection.integration.test.ts';
 import './floor-overflow-pruning.contract.test.ts';
 import './class-sample-audit.contract.test.ts';
 import './hit-predicate.contract.test.ts';
