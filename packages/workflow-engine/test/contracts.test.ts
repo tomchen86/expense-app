@@ -56,6 +56,7 @@ import './task-diff-review-inspection.integration.test.ts';
 import './task-diff-review-provider-output.contract.test.ts';
 import './task-diff-review-provider-role.contract.test.ts';
 import './task-diff-review-provider-worker.integration.test.ts';
+import './task-strategy-provider-contract.test.ts';
 import './floor-overflow-pruning.contract.test.ts';
 import './class-sample-audit.contract.test.ts';
 import './hit-predicate.contract.test.ts';

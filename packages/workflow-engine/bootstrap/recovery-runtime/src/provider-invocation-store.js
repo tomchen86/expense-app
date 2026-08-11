@@ -20,6 +20,7 @@ import { assertProviderInvocationSupersessionEndpointCurrent, finalizeProviderIn
 import { PLAN_REVIEW_OUTPUT_SCHEMA, PLAN_REVIEW_OUTPUT_VALIDATOR, assertPlanReviewTargetSnapshot, assertPlanReviewSubject, planReviewSnapshotLineCount, } from './plan-review.js';
 import { assertTaskDiffReviewChallengeResponseCurrent, parseTaskDiffReviewChallengeResponseRecord, parseTaskDiffReviewRecord, TASK_DIFF_REVIEW_CONTINUATION_OUTPUT_SCHEMA, TASK_DIFF_REVIEW_CONTINUATION_OUTPUT_VALIDATOR, TASK_DIFF_REVIEW_OUTPUT_SCHEMA, TASK_DIFF_REVIEW_OUTPUT_VALIDATOR, } from './task-diff-review-artifact.js';
 import { parseTaskDiffReviewScope, parseTaskDiffReviewSubject, } from './task-diff-review.js';
+import { TASK_STRATEGY_IMPLEMENTATION_OUTPUT_SCHEMA, TASK_STRATEGY_IMPLEMENTATION_OUTPUT_VALIDATOR, assertTaskStrategyImplementationManifest, } from './task-strategy-provider-contract.js';
 import { runtimePaths, withRepositoryLifecycleOperation, } from './session-store.js';
 const DIGEST = /^[0-9a-f]{64}$/;
 const GIT_OBJECT_ID = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
@@ -1438,6 +1439,15 @@ function assertProviderInvocationManifest(value) {
     if (isRecord(value) && value.kind === 'task-diff-review-manifest') {
         return assertTaskDiffReviewManifest(value);
     }
+    if (isRecord(value) &&
+        value.kind === 'task-strategy-implementation-manifest') {
+        try {
+            return assertTaskStrategyImplementationManifest(value);
+        }
+        catch {
+            throw invocationInvalid();
+        }
+    }
     if (!isRecord(value) ||
         !hasExactKeys(value, [
             'schemaVersion',
@@ -1976,6 +1986,27 @@ function assertProviderInvocationBinding(changeId, manifest, manifestDigest, req
         }
         return;
     }
+    if (manifest.kind === 'task-strategy-implementation-manifest') {
+        if (manifest.subject.changeId !== changeId ||
+            manifest.repositoryId !== request.repositoryId ||
+            manifest.baseCommit !== request.baseCommit ||
+            manifest.baseTree !== request.baseTree ||
+            request.purpose !== 'task-implementation' ||
+            request.roleAssignment.role !== 'task-implementer' ||
+            request.capabilityProfile !== 'repository-read-only' ||
+            request.targetDigest !== manifest.subject.subjectDigest ||
+            request.inputManifestDigest !== manifestDigest ||
+            request.roleAssignment.targetDigest !== request.targetDigest ||
+            request.outputSchema.id !==
+                TASK_STRATEGY_IMPLEMENTATION_OUTPUT_SCHEMA.id ||
+            request.outputSchema.version !==
+                TASK_STRATEGY_IMPLEMENTATION_OUTPUT_SCHEMA.version ||
+            request.outputSchema.digest !==
+                TASK_STRATEGY_IMPLEMENTATION_OUTPUT_SCHEMA.digest) {
+            throw invocationInvalid();
+        }
+        return;
+    }
     if (manifest.changeId !== changeId ||
         manifest.repositoryId !== request.repositoryId ||
         manifest.baseCommit !== request.baseCommit ||
@@ -2245,7 +2276,8 @@ function assertProviderInvocationRecord(value) {
         (value.providerId !== 'codex' && value.providerId !== 'claude') ||
         (value.purpose !== 'survey' &&
             value.purpose !== 'plan-review' &&
-            value.purpose !== 'task-diff-review') ||
+            value.purpose !== 'task-diff-review' &&
+            value.purpose !== 'task-implementation') ||
         !isDigest(value.requestDigest) ||
         !isDigest(value.manifestDigest) ||
         !Number.isSafeInteger(value.leaseGeneration) ||
@@ -2336,6 +2368,9 @@ function codeOwnedProviderOutputSchema(request) {
             return TASK_DIFF_REVIEW_CONTINUATION_OUTPUT_SCHEMA;
         }
         return TASK_DIFF_REVIEW_OUTPUT_SCHEMA;
+    }
+    if (request.purpose === 'task-implementation') {
+        return TASK_STRATEGY_IMPLEMENTATION_OUTPUT_SCHEMA;
     }
     throw providerOutputSchemaUnsupported();
 }
@@ -2568,6 +2603,9 @@ function providerOutputValidator(request) {
         }
         return TASK_DIFF_REVIEW_OUTPUT_VALIDATOR;
     }
+    if (request.purpose === 'task-implementation') {
+        return TASK_STRATEGY_IMPLEMENTATION_OUTPUT_VALIDATOR;
+    }
     throw providerOutputSchemaUnsupported();
 }
 function assertRuntimeObservation(value, request, residuals = 'current-only') {
@@ -2745,7 +2783,8 @@ function isStoredResult(value) {
             typeof value.invocationId === 'string' &&
             (value.purpose === 'survey' ||
                 value.purpose === 'plan-review' ||
-                value.purpose === 'task-diff-review') &&
+                value.purpose === 'task-diff-review' ||
+                value.purpose === 'task-implementation') &&
             (value.providerId === 'codex' || value.providerId === 'claude') &&
             isDigest(value.outputDigest)));
 }

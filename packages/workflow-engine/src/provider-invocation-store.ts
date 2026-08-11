@@ -131,6 +131,12 @@ import {
   type TaskDiffReviewSubject,
 } from './task-diff-review.ts';
 import {
+  TASK_STRATEGY_IMPLEMENTATION_OUTPUT_SCHEMA,
+  TASK_STRATEGY_IMPLEMENTATION_OUTPUT_VALIDATOR,
+  assertTaskStrategyImplementationManifest,
+  type TaskStrategyImplementationManifest,
+} from './task-strategy-provider-contract.ts';
+import {
   runtimePaths,
   withRepositoryLifecycleOperation,
 } from './session-store.ts';
@@ -248,7 +254,8 @@ export type ProviderInvocationManifest =
   | BlindSurveyManifest
   | PlanReviewManifest
   | TaskDiffReviewManifest
-  | TaskDiffReviewContinuationManifest;
+  | TaskDiffReviewContinuationManifest
+  | TaskStrategyImplementationManifest;
 
 export type InvestigationStartReservation = {
   schemaVersion: 1;
@@ -2852,6 +2859,16 @@ function assertProviderInvocationManifest(
     return assertTaskDiffReviewManifest(value);
   }
   if (
+    isRecord(value) &&
+    value.kind === 'task-strategy-implementation-manifest'
+  ) {
+    try {
+      return assertTaskStrategyImplementationManifest(value);
+    } catch {
+      throw invocationInvalid();
+    }
+  }
+  if (
     !isRecord(value) ||
     !hasExactKeys(value, [
       'schemaVersion',
@@ -3476,6 +3493,29 @@ function assertProviderInvocationBinding(
     }
     return;
   }
+  if (manifest.kind === 'task-strategy-implementation-manifest') {
+    if (
+      manifest.subject.changeId !== changeId ||
+      manifest.repositoryId !== request.repositoryId ||
+      manifest.baseCommit !== request.baseCommit ||
+      manifest.baseTree !== request.baseTree ||
+      request.purpose !== 'task-implementation' ||
+      request.roleAssignment.role !== 'task-implementer' ||
+      request.capabilityProfile !== 'repository-read-only' ||
+      request.targetDigest !== manifest.subject.subjectDigest ||
+      request.inputManifestDigest !== manifestDigest ||
+      request.roleAssignment.targetDigest !== request.targetDigest ||
+      request.outputSchema.id !==
+        TASK_STRATEGY_IMPLEMENTATION_OUTPUT_SCHEMA.id ||
+      request.outputSchema.version !==
+        TASK_STRATEGY_IMPLEMENTATION_OUTPUT_SCHEMA.version ||
+      request.outputSchema.digest !==
+        TASK_STRATEGY_IMPLEMENTATION_OUTPUT_SCHEMA.digest
+    ) {
+      throw invocationInvalid();
+    }
+    return;
+  }
   if (
     manifest.changeId !== changeId ||
     manifest.repositoryId !== request.repositoryId ||
@@ -3802,7 +3842,8 @@ function assertProviderInvocationRecord(
     (value.providerId !== 'codex' && value.providerId !== 'claude') ||
     (value.purpose !== 'survey' &&
       value.purpose !== 'plan-review' &&
-      value.purpose !== 'task-diff-review') ||
+      value.purpose !== 'task-diff-review' &&
+      value.purpose !== 'task-implementation') ||
     !isDigest(value.requestDigest) ||
     !isDigest(value.manifestDigest) ||
     !Number.isSafeInteger(value.leaseGeneration) ||
@@ -3924,6 +3965,9 @@ function codeOwnedProviderOutputSchema(request: ProviderInvocationRequest) {
       return TASK_DIFF_REVIEW_CONTINUATION_OUTPUT_SCHEMA;
     }
     return TASK_DIFF_REVIEW_OUTPUT_SCHEMA;
+  }
+  if (request.purpose === 'task-implementation') {
+    return TASK_STRATEGY_IMPLEMENTATION_OUTPUT_SCHEMA;
   }
   throw providerOutputSchemaUnsupported();
 }
@@ -4213,6 +4257,9 @@ function providerOutputValidator(request: ProviderInvocationRequest) {
     }
     return TASK_DIFF_REVIEW_OUTPUT_VALIDATOR;
   }
+  if (request.purpose === 'task-implementation') {
+    return TASK_STRATEGY_IMPLEMENTATION_OUTPUT_VALIDATOR;
+  }
   throw providerOutputSchemaUnsupported();
 }
 
@@ -4413,7 +4460,8 @@ function isStoredResult(value: unknown): value is ProviderProcessResult | null {
       typeof value.invocationId === 'string' &&
       (value.purpose === 'survey' ||
         value.purpose === 'plan-review' ||
-        value.purpose === 'task-diff-review') &&
+        value.purpose === 'task-diff-review' ||
+        value.purpose === 'task-implementation') &&
       (value.providerId === 'codex' || value.providerId === 'claude') &&
       isDigest(value.outputDigest))
   );

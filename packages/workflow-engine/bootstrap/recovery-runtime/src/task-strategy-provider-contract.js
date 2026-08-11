@@ -1,0 +1,278 @@
+import crypto from 'node:crypto';
+import { canonicalJson } from './canonical-json.js';
+import { ExitCode, workflowError } from './errors.js';
+import { assertSessionId, normalizeChangedPath, normalizePolicyPath, } from './paths.js';
+const DIGEST = /^[0-9a-f]{64}$/;
+const GIT_OBJECT_ID = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
+const CHANGE_ID = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
+const TASK_ID = /^\d+(?:\.\d+)+$/;
+const REPOSITORY_ID = /^[a-z0-9]+(?:[._/-][a-z0-9]+)*$/;
+const MAX_PATCH_BYTES = 8 * 1024 * 1024;
+export const TASK_STRATEGY_IMPLEMENTATION_PROVIDER_OUTPUT_SCHEMA = Object.freeze({
+    type: 'object',
+    additionalProperties: false,
+    required: [
+        'schemaVersion',
+        'kind',
+        'sessionId',
+        'sourceTree',
+        'patchBase64',
+        'patchDigest',
+    ],
+    properties: {
+        schemaVersion: { const: 1 },
+        kind: { const: 'task-strategy-patch-output.v1' },
+        sessionId: { type: 'string', minLength: 1 },
+        sourceTree: {
+            type: 'string',
+            pattern: '^(?:[0-9a-f]{40}|[0-9a-f]{64})$',
+        },
+        patchBase64: {
+            type: 'string',
+            minLength: 1,
+            maxLength: Math.ceil(MAX_PATCH_BYTES / 3) * 4,
+        },
+        patchDigest: { type: 'string', pattern: '^[0-9a-f]{64}$' },
+    },
+});
+export const TASK_STRATEGY_IMPLEMENTATION_OUTPUT_SCHEMA = Object.freeze({
+    id: 'expense-app.workflow.task-strategy-implementation-output',
+    version: 1,
+    digest: sha256(canonicalJson(TASK_STRATEGY_IMPLEMENTATION_PROVIDER_OUTPUT_SCHEMA)),
+});
+export const TASK_STRATEGY_IMPLEMENTATION_OUTPUT_VALIDATOR = Object.freeze({
+    ...TASK_STRATEGY_IMPLEMENTATION_OUTPUT_SCHEMA,
+    validate(value) {
+        try {
+            assertTaskStrategyImplementationOutput(value);
+            return true;
+        }
+        catch {
+            return false;
+        }
+    },
+});
+export function createTaskStrategyImplementationSubject(input) {
+    const normalized = {
+        ...input,
+        testPaths: [...input.testPaths].sort(),
+        fixturePaths: [...input.fixturePaths].sort(),
+        frozenFiles: [...input.frozenFiles].sort((left, right) => left.path < right.path ? -1 : left.path > right.path ? 1 : 0),
+    };
+    const body = {
+        schemaVersion: 1,
+        kind: 'task-strategy-implementation-subject.v1',
+        ...normalized,
+    };
+    return assertTaskStrategyImplementationSubject({
+        ...body,
+        subjectDigest: sha256(canonicalJson(body)),
+    });
+}
+export function createTaskStrategyImplementationManifest(input) {
+    return assertTaskStrategyImplementationManifest({
+        schemaVersion: 1,
+        kind: 'task-strategy-implementation-manifest',
+        repositoryId: input.repositoryId,
+        baseCommit: input.baseCommit,
+        baseTree: input.baseTree,
+        subject: input.subject,
+        behaviorContractRefs: [...input.behaviorContractRefs].sort(compareCanonical),
+        implementationPathScopes: [...input.implementationPathScopes].sort(),
+        capabilityProfile: 'repository-read-only',
+    });
+}
+export function assertTaskStrategyImplementationManifest(value) {
+    if (!isRecord(value) ||
+        !hasExactKeys(value, [
+            'schemaVersion',
+            'kind',
+            'repositoryId',
+            'baseCommit',
+            'baseTree',
+            'subject',
+            'behaviorContractRefs',
+            'implementationPathScopes',
+            'capabilityProfile',
+        ]) ||
+        value.schemaVersion !== 1 ||
+        value.kind !== 'task-strategy-implementation-manifest' ||
+        typeof value.repositoryId !== 'string' ||
+        !REPOSITORY_ID.test(value.repositoryId) ||
+        !isObjectId(value.baseCommit) ||
+        !isObjectId(value.baseTree) ||
+        value.capabilityProfile !== 'repository-read-only' ||
+        !isBehaviorContractRefs(value.behaviorContractRefs) ||
+        !isImplementationScopes(value.implementationPathScopes)) {
+        throw manifestInvalid();
+    }
+    assertTaskStrategyImplementationSubject(value.subject);
+    return deepFreeze(structuredClone(value));
+}
+export function assertTaskStrategyImplementationSubject(value) {
+    if (!isRecord(value) ||
+        !hasExactKeys(value, [
+            'schemaVersion',
+            'kind',
+            'subjectDigest',
+            'sessionId',
+            'changeId',
+            'taskId',
+            'strategy',
+            'transactionDigest',
+            'taskContractDigest',
+            'sourceTree',
+            'failureFingerprint',
+            'redEvidenceNodeId',
+            'redEvidenceResultDigest',
+            'testPaths',
+            'fixturePaths',
+            'frozenFiles',
+        ]) ||
+        value.schemaVersion !== 1 ||
+        value.kind !== 'task-strategy-implementation-subject.v1' ||
+        !isDigest(value.subjectDigest) ||
+        !isSessionId(value.sessionId) ||
+        typeof value.changeId !== 'string' ||
+        !CHANGE_ID.test(value.changeId) ||
+        typeof value.taskId !== 'string' ||
+        !TASK_ID.test(value.taskId) ||
+        (value.strategy !== 'cross-agent-tdd' &&
+            value.strategy !== 'tdd-single-agent') ||
+        !isDigest(value.transactionDigest) ||
+        !isDigest(value.taskContractDigest) ||
+        !isObjectId(value.sourceTree) ||
+        !isDigest(value.failureFingerprint) ||
+        !isDigest(value.redEvidenceNodeId) ||
+        !isDigest(value.redEvidenceResultDigest) ||
+        !isSortedPaths(value.testPaths, true) ||
+        !isSortedPaths(value.fixturePaths, false) ||
+        !isFrozenFiles(value.frozenFiles, value.testPaths, value.fixturePaths)) {
+        throw manifestInvalid();
+    }
+    const { subjectDigest, ...body } = value;
+    if (subjectDigest !== sha256(canonicalJson(body)))
+        throw manifestInvalid();
+    return deepFreeze(structuredClone(value));
+}
+export function assertTaskStrategyImplementationOutput(value) {
+    if (!isRecord(value) ||
+        !hasExactKeys(value, [
+            'schemaVersion',
+            'kind',
+            'sessionId',
+            'sourceTree',
+            'patchBase64',
+            'patchDigest',
+        ]) ||
+        value.schemaVersion !== 1 ||
+        value.kind !== 'task-strategy-patch-output.v1' ||
+        !isSessionId(value.sessionId) ||
+        !isObjectId(value.sourceTree) ||
+        !isDigest(value.patchDigest) ||
+        typeof value.patchBase64 !== 'string') {
+        throw outputInvalid();
+    }
+    const patch = Buffer.from(value.patchBase64, 'base64');
+    if (patch.length === 0 ||
+        patch.length > MAX_PATCH_BYTES ||
+        patch.toString('base64') !== value.patchBase64 ||
+        sha256(patch) !== value.patchDigest) {
+        throw outputInvalid();
+    }
+    return deepFreeze(structuredClone(value));
+}
+function isFrozenFiles(value, testPaths, fixturePaths) {
+    if (!Array.isArray(value) ||
+        !Array.isArray(testPaths) ||
+        !Array.isArray(fixturePaths)) {
+        return false;
+    }
+    const expectedPaths = [...testPaths, ...fixturePaths].sort();
+    return (value.length === expectedPaths.length &&
+        value.every((entry, index) => isRecord(entry) &&
+            hasExactKeys(entry, ['path', 'mode', 'objectId']) &&
+            entry.path === expectedPaths[index] &&
+            (entry.mode === '100644' || entry.mode === '100755') &&
+            isObjectId(entry.objectId)));
+}
+function isBehaviorContractRefs(value) {
+    return (Array.isArray(value) &&
+        value.length > 0 &&
+        value.every((entry) => isRecord(entry) &&
+            hasExactKeys(entry, ['specPath', 'requirement', 'scenario']) &&
+            typeof entry.specPath === 'string' &&
+            entry.specPath.startsWith('specs/') &&
+            entry.specPath.endsWith('/spec.md') &&
+            typeof entry.requirement === 'string' &&
+            entry.requirement.trim() === entry.requirement &&
+            entry.requirement.length > 0 &&
+            (entry.scenario === null ||
+                (typeof entry.scenario === 'string' &&
+                    entry.scenario.trim() === entry.scenario &&
+                    entry.scenario.length > 0))) &&
+        isCanonicalSet(value));
+}
+function isImplementationScopes(value) {
+    return (Array.isArray(value) &&
+        value.length > 0 &&
+        value.every((entry) => typeof entry === 'string' && normalizePolicyPath(entry) === entry) &&
+        isCanonicalSet(value));
+}
+function isSortedPaths(value, nonEmpty) {
+    return (Array.isArray(value) &&
+        (!nonEmpty || value.length > 0) &&
+        value.every((entry) => typeof entry === 'string' && normalizeChangedPath(entry) === entry) &&
+        isCanonicalSet(value));
+}
+function isCanonicalSet(value) {
+    return value.every((entry, index) => index === 0 || compareCanonical(value[index - 1], entry) < 0);
+}
+function compareCanonical(left, right) {
+    return Buffer.from(canonicalJson(left)).compare(Buffer.from(canonicalJson(right)));
+}
+function isSessionId(value) {
+    if (typeof value !== 'string')
+        return false;
+    try {
+        return assertSessionId(value) === value;
+    }
+    catch {
+        return false;
+    }
+}
+function isObjectId(value) {
+    return typeof value === 'string' && GIT_OBJECT_ID.test(value);
+}
+function isDigest(value) {
+    return typeof value === 'string' && DIGEST.test(value);
+}
+function isRecord(value) {
+    if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+        return false;
+    }
+    const prototype = Object.getPrototypeOf(value);
+    return prototype === Object.prototype || prototype === null;
+}
+function hasExactKeys(value, expected) {
+    return (canonicalJson(Object.keys(value).sort()) ===
+        canonicalJson([...expected].sort()));
+}
+function deepFreeze(value) {
+    if (typeof value !== 'object' || value === null || Object.isFrozen(value)) {
+        return value;
+    }
+    Object.freeze(value);
+    for (const nested of Object.values(value))
+        deepFreeze(nested);
+    return value;
+}
+function sha256(value) {
+    return crypto.createHash('sha256').update(value).digest('hex');
+}
+function manifestInvalid() {
+    return workflowError('TASK_STRATEGY_IMPLEMENTATION_MANIFEST_INVALID', 'Task strategy implementation manifest is malformed or not canonically bound.', ExitCode.verification);
+}
+function outputInvalid() {
+    return workflowError('TASK_STRATEGY_IMPLEMENTATION_OUTPUT_INVALID', 'Task strategy implementation output is malformed or not bound to one exact patch.', ExitCode.verification);
+}

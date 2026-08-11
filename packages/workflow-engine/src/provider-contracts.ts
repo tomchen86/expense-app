@@ -43,6 +43,7 @@ const ROLE_PURPOSE: Record<EngineProviderRole, CapabilityPurpose> = {
   'blind-surveyor': 'survey',
   'plan-reviewer': 'plan-review',
   'task-diff-reviewer': 'task-diff-review',
+  'task-implementer': 'task-implementation',
 };
 
 export type ProviderLimits = {
@@ -569,7 +570,8 @@ function isPurpose(value: unknown): value is CapabilityPurpose {
   return (
     value === 'survey' ||
     value === 'plan-review' ||
-    value === 'task-diff-review'
+    value === 'task-diff-review' ||
+    value === 'task-implementation'
   );
 }
 
@@ -595,7 +597,8 @@ export function isProviderRoleAssignment(
     hasExactKeys(value, ROLE_ASSIGNMENT_KEYS) &&
     (value.role === 'blind-surveyor' ||
       value.role === 'plan-reviewer' ||
-      value.role === 'task-diff-reviewer') &&
+      value.role === 'task-diff-reviewer' ||
+      value.role === 'task-implementer') &&
     isProviderId(value.providerId) &&
     isNonEmptyString(value.sessionId) &&
     typeof value.targetDigest === 'string' &&
@@ -616,7 +619,8 @@ function isGrantedSameProviderAssignment(
     !hasExactKeys(value, GRANTED_ROLE_ASSIGNMENT_KEYS) ||
     (value.role !== 'blind-surveyor' &&
       value.role !== 'plan-reviewer' &&
-      value.role !== 'task-diff-reviewer') ||
+      value.role !== 'task-diff-reviewer' &&
+      value.role !== 'task-implementer') ||
     !isProviderId(value.providerId) ||
     !isNonEmptyString(value.sessionId) ||
     typeof value.targetDigest !== 'string' ||
