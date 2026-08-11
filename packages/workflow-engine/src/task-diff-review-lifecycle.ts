@@ -172,6 +172,7 @@ export function beginTaskDiffReview(
         const existing = readTaskDiffReviewReservation(
           runtime,
           context.session.sessionId,
+          subject.subjectDigest,
         );
         const reservation =
           existing ??
@@ -223,6 +224,7 @@ export function reconcileTaskDiffReview(
         const reservation = readTaskDiffReviewReservation(
           runtime,
           context.session.sessionId,
+          subject.subjectDigest,
         );
         if (reservation === null) throw reviewNotStarted();
         assertReservationCurrent(
@@ -234,6 +236,7 @@ export function reconcileTaskDiffReview(
         const existing = readTaskDiffReviewResultBinding(
           runtime,
           context.session.sessionId,
+          subject.subjectDigest,
         );
         if (existing !== null) {
           assertCurrentTaskDiffReviewBinding(
@@ -346,10 +349,12 @@ export function assertCurrentTaskDiffReviewSatisfied(
   const reservation = readTaskDiffReviewReservation(
     runtime,
     context.session.sessionId,
+    subject.subjectDigest,
   );
   const result = readTaskDiffReviewResultBinding(
     runtime,
     context.session.sessionId,
+    subject.subjectDigest,
   );
   if (reservation === null || result === null) throw reviewNotSatisfied();
   assertReservationCurrent(
@@ -385,6 +390,7 @@ export function assertTaskDiffReviewProviderOwnerCurrent(
   const reservation = readTaskDiffReviewReservation(
     runtime,
     manifest.sessionId,
+    manifest.subject.subjectDigest,
   );
   if (reservation === null) throw reviewNotStarted();
   assertReservationCurrent(
@@ -846,6 +852,7 @@ function renderTaskDiffReviewStatus(
   const binding = readTaskDiffReviewResultBinding(
     runtime,
     reservation.sessionId,
+    reservation.subject.subjectDigest,
   );
   if (binding !== null) {
     assertCurrentTaskDiffReviewBinding(runtime, reservation, binding.review);
@@ -913,6 +920,7 @@ function assertCurrentTaskDiffReviewBinding(
   const binding = readTaskDiffReviewResultBinding(
     runtime,
     reservation.sessionId,
+    reservation.subject.subjectDigest,
   );
   const invocation = readProviderInvocation(
     runtime,

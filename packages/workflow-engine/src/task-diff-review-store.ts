@@ -105,25 +105,40 @@ export function createTaskDiffReviewReservation(
   });
   createPrivateCanonicalJson(
     paths,
-    taskDiffReviewReservationPath(paths, reservation.sessionId),
+    taskDiffReviewReservationPath(
+      paths,
+      reservation.sessionId,
+      reservation.subject.subjectDigest,
+    ),
     reservation,
     storeUnsafe,
     'TASK_DIFF_REVIEW_RESERVATION_CONFLICT',
   );
-  return readTaskDiffReviewReservation(paths, reservation.sessionId)!;
+  return readTaskDiffReviewReservation(
+    paths,
+    reservation.sessionId,
+    reservation.subject.subjectDigest,
+  )!;
 }
 
 export function readTaskDiffReviewReservation(
   paths: InvestigationRuntimePaths,
   requestedSessionId: string,
+  requestedSubjectDigest: string,
 ): TaskDiffReviewReservationRecord | null {
   const sessionId = assertSessionId(requestedSessionId);
-  const target = taskDiffReviewReservationPath(paths, sessionId);
+  const subjectDigest = assertDigest(requestedSubjectDigest);
+  const target = taskDiffReviewReservationPath(paths, sessionId, subjectDigest);
   if (!privatePathExists(paths, target, storeUnsafe)) return null;
   const reservation = parseTaskDiffReviewReservation(
     readPrivateCanonicalJson(paths, target, storeUnsafe),
   );
-  if (reservation.sessionId !== sessionId) throw storeUnsafe();
+  if (
+    reservation.sessionId !== sessionId ||
+    reservation.subject.subjectDigest !== subjectDigest
+  ) {
+    throw storeUnsafe();
+  }
   return reservation;
 }
 
@@ -145,49 +160,64 @@ export function createTaskDiffReviewResultBinding(
   });
   createPrivateCanonicalJson(
     paths,
-    taskDiffReviewResultPath(paths, binding.sessionId),
+    taskDiffReviewResultPath(paths, binding.sessionId, binding.subjectDigest),
     binding,
     storeUnsafe,
     'TASK_DIFF_REVIEW_RESULT_CONFLICT',
   );
-  return readTaskDiffReviewResultBinding(paths, binding.sessionId)!;
+  return readTaskDiffReviewResultBinding(
+    paths,
+    binding.sessionId,
+    binding.subjectDigest,
+  )!;
 }
 
 export function readTaskDiffReviewResultBinding(
   paths: InvestigationRuntimePaths,
   requestedSessionId: string,
+  requestedSubjectDigest: string,
 ): TaskDiffReviewResultBinding | null {
   const sessionId = assertSessionId(requestedSessionId);
-  const target = taskDiffReviewResultPath(paths, sessionId);
+  const subjectDigest = assertDigest(requestedSubjectDigest);
+  const target = taskDiffReviewResultPath(paths, sessionId, subjectDigest);
   if (!privatePathExists(paths, target, storeUnsafe)) return null;
   const binding = parseTaskDiffReviewResultBinding(
     readPrivateCanonicalJson(paths, target, storeUnsafe),
   );
-  if (binding.sessionId !== sessionId) throw storeUnsafe();
+  if (
+    binding.sessionId !== sessionId ||
+    binding.subjectDigest !== subjectDigest
+  ) {
+    throw storeUnsafe();
+  }
   return binding;
 }
 
 export function taskDiffReviewReservationPath(
   paths: InvestigationRuntimePaths,
   requestedSessionId: string,
+  requestedSubjectDigest: string,
 ): string {
   return path.join(
     paths.refs,
     'task-diff-reviews',
     assertSessionId(requestedSessionId),
-    'reservation.json',
+    'reservations',
+    `${assertDigest(requestedSubjectDigest)}.json`,
   );
 }
 
 export function taskDiffReviewResultPath(
   paths: InvestigationRuntimePaths,
   requestedSessionId: string,
+  requestedSubjectDigest: string,
 ): string {
   return path.join(
     paths.refs,
     'task-diff-reviews',
     assertSessionId(requestedSessionId),
-    'result.json',
+    'results',
+    `${assertDigest(requestedSubjectDigest)}.json`,
   );
 }
 
@@ -524,6 +554,11 @@ function hasExactKeys(
 
 function isDigest(value: unknown): value is string {
   return typeof value === 'string' && DIGEST.test(value);
+}
+
+function assertDigest(value: unknown): string {
+  if (!isDigest(value)) throw storeUnsafe();
+  return value;
 }
 
 function isIdentity(value: unknown): value is string {
