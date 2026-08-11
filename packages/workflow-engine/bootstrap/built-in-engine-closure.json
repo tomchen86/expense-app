@@ -216,7 +216,7 @@
     {
       "path": "src/cli.ts",
       "mode": "100644",
-      "digest": "sha256:0fef0c98173e403d387c350b5592b4b01c098b621b3cda1f99db322033434261"
+      "digest": "sha256:f3853439403a3e2584bebc021851e5c29f69b2b24681fd400ae6f0f5a2dfb31f"
     },
     {
       "path": "src/codex-provider-adapter.ts",
@@ -691,7 +691,7 @@
     {
       "path": "src/open-task.ts",
       "mode": "100644",
-      "digest": "sha256:f469663a51ee11197ee5b3d700aadc0a298a9ca1ac6beb8a216baba7e1603144"
+      "digest": "sha256:94e2c992edf8cd0806bbe50b120ddd1997610457944386f2bc812894d31eded7"
     },
     {
       "path": "src/openspec-adapter.ts",

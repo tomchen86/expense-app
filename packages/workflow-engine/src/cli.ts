@@ -19,7 +19,11 @@ import {
 } from './collaboration-grant-cli.ts';
 import { inspectChangeAssurance } from './assurance-inspection.ts';
 import { loadWorkflowConfig } from './contracts.ts';
-import { openTask } from './open-task.ts';
+import {
+  contextualizeOpenTaskError,
+  findOpenTaskLifecycleStatus,
+  openTask,
+} from './open-task.ts';
 import {
   checkOpenSpecPlanningAssets,
   generateOpenSpecPlanningAssets,
@@ -303,11 +307,15 @@ function dispatch(args: string[], cwd: string): CommandResult {
           'Usage: pnpm workflow open-task <change-id> --task <task-id> --mandate <mandate-task-id> [--json]',
         );
       }
-      return {
-        command,
-        ok: true,
-        result: openTask(cwd, changeId, taskId, mandateTaskId),
-      };
+      try {
+        return {
+          command,
+          ok: true,
+          result: openTask(cwd, changeId, taskId, mandateTaskId),
+        };
+      } catch (error) {
+        throw contextualizeOpenTaskError(cwd, changeId, taskId, error);
+      }
     }
     case 'amend-plan': {
       // Both arguments are mandatory: an amendment that has not said why it
@@ -993,6 +1001,23 @@ function dispatch(args: string[], cwd: string): CommandResult {
             command,
             ok: true,
             result: getProposeStatus(cwd, rest[0]),
+          };
+        }
+        const openTaskStatus = findOpenTaskLifecycleStatus(cwd, rest[0]);
+        if (openTaskStatus !== null) {
+          if (
+            openTaskStatus.state === 'opening' ||
+            openTaskStatus.state === 'recovery-required'
+          ) {
+            return { command, ok: true, openTask: openTaskStatus };
+          }
+          const session = getSession(cwd, openTaskStatus.sessionId);
+          return {
+            command,
+            ok: true,
+            openTask: openTaskStatus,
+            session,
+            taskCommits: findTaskCommits(cwd, session.changeId, session.taskId),
           };
         }
         const session = getSession(cwd, rest[0]);
