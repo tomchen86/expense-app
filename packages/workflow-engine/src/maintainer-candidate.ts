@@ -151,7 +151,7 @@ export type CandidateExternalEffectsManifest = {
 export type CandidateProviderInvocation = {
   invocationId: string;
   investigationId: string;
-  purpose: 'survey' | 'plan-review';
+  purpose: 'survey' | 'plan-review' | 'task-diff-review';
   attempt: number;
   state: 'prepared' | 'leased' | 'succeeded' | 'failed';
   requestDigest: string;
@@ -1033,7 +1033,9 @@ function assertCandidateSupportingArtifact(
         !INVOCATION_ID.test(entry.invocationId) ||
         typeof entry.investigationId !== 'string' ||
         !INVESTIGATION_ID.test(entry.investigationId) ||
-        (entry.purpose !== 'survey' && entry.purpose !== 'plan-review') ||
+        (entry.purpose !== 'survey' &&
+          entry.purpose !== 'plan-review' &&
+          entry.purpose !== 'task-diff-review') ||
         !Number.isSafeInteger(entry.attempt) ||
         (entry.attempt as number) < 1 ||
         !['prepared', 'leased', 'succeeded', 'failed'].includes(

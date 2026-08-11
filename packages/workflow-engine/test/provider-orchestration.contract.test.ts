@@ -50,6 +50,10 @@ test('built-in provider registry is exact, immutable, and capability-scoped', ()
           purpose: 'plan-review',
           profile: 'repository-read-only',
         },
+        {
+          purpose: 'task-diff-review',
+          profile: 'repository-read-only',
+        },
       ],
     },
     {
@@ -61,6 +65,10 @@ test('built-in provider registry is exact, immutable, and capability-scoped', ()
         },
         {
           purpose: 'plan-review',
+          profile: 'repository-read-only',
+        },
+        {
+          purpose: 'task-diff-review',
           profile: 'repository-read-only',
         },
       ],

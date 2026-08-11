@@ -1356,7 +1356,9 @@ function assertProviderPromptContextBinding(
 ): void {
   const ownerWorkflowId = assertInvestigationId(binding.ownerWorkflowId);
   if (
-    (binding.purpose !== 'survey' && binding.purpose !== 'plan-review') ||
+    (binding.purpose !== 'survey' &&
+      binding.purpose !== 'plan-review' &&
+      binding.purpose !== 'task-diff-review') ||
     binding.workflowId !==
       providerContextWorkflowId(ownerWorkflowId, binding) ||
     !Number.isSafeInteger(binding.generation) ||
