@@ -3,8 +3,10 @@ import test from 'node:test';
 
 import {
   createTaskDiffReviewSubject,
+  deriveTaskDiffReviewCandidatePlan,
   parseTaskDiffReviewSubject,
   taskDiffReviewRequirement,
+  taskDiffReviewCandidateIdentityDigest,
   TASK_DIFF_REVIEW_POLICY_DIGEST,
   type CreateTaskDiffReviewSubjectInput,
 } from '../src/task-diff-review.ts';
@@ -43,7 +45,7 @@ test('TaskDiffReview subject canonicalizes exact blob and mode transitions witho
   );
 });
 
-test('every assurance-relevant TaskDiffReview subject input invalidates reuse', () => {
+test('every assurance-relevant input produces a distinct TaskDiffReview subject record', () => {
   const initial = subjectInput();
   const baseline = createTaskDiffReviewSubject(initial).subjectDigest;
   const variants: CreateTaskDiffReviewSubjectInput[] = [
@@ -93,6 +95,140 @@ test('every assurance-relevant TaskDiffReview subject input invalidates reuse', 
       baseline,
     );
   }
+});
+
+test('TaskDiffReview candidate identity ignores non-candidate metadata and reuses the exact reviewed tree without a new scope', () => {
+  const prior = createTaskDiffReviewSubject(subjectInput());
+  const current = createTaskDiffReviewSubject({
+    ...subjectInput(),
+    checkEvidenceDigest: '8'.repeat(64),
+    planningAssuranceDigest: '9'.repeat(64),
+  });
+
+  assert.notEqual(current.subjectDigest, prior.subjectDigest);
+  assert.equal(
+    taskDiffReviewCandidateIdentityDigest(current),
+    taskDiffReviewCandidateIdentityDigest(prior),
+  );
+  const plan = deriveTaskDiffReviewCandidatePlan({
+    current,
+    predecessor: {
+      subject: prior,
+      reviewRecordDigest: 'a'.repeat(64),
+      finalAssuranceCommitmentDigest: null,
+    },
+  });
+  assert.deepEqual(plan, {
+    action: 'reuse',
+    candidateIdentityDigest: taskDiffReviewCandidateIdentityDigest(current),
+    predecessor: {
+      subjectDigest: prior.subjectDigest,
+      reviewRecordDigest: 'a'.repeat(64),
+      finalAssuranceCommitmentDigest: null,
+    },
+  });
+  assert.equal(Object.hasOwn(plan, 'scope'), false);
+});
+
+test('TaskDiffReview candidate planning re-reviews only ordinary transition deltas and escalates a changed risk role to full review', () => {
+  const prior = createTaskDiffReviewSubject({
+    ...subjectInput(),
+    reviewRequirement: {
+      required: true,
+      basis: 'explicit',
+      riskPaths: [],
+    },
+  });
+  const ordinaryCurrent = createTaskDiffReviewSubject({
+    ...subjectInput(),
+    candidateTree: '8'.repeat(40),
+    transitions: subjectInput().transitions.map((transition) =>
+      transition.path === 'src/a.ts'
+        ? {
+            ...transition,
+            after: { ...transition.after!, objectId: '9'.repeat(40) },
+          }
+        : transition,
+    ),
+    reviewRequirement: {
+      required: true,
+      basis: 'explicit',
+      riskPaths: [],
+    },
+  });
+  const predecessor = {
+    subject: prior,
+    reviewRecordDigest: 'a'.repeat(64),
+    finalAssuranceCommitmentDigest: 'b'.repeat(64),
+  } as const;
+  const ordinaryPlan = deriveTaskDiffReviewCandidatePlan({
+    current: ordinaryCurrent,
+    predecessor,
+  });
+  assert.equal(ordinaryPlan.action, 'review');
+  if (ordinaryPlan.action !== 'review') throw new Error('review required');
+  assert.equal(ordinaryPlan.scope.mode, 'delta');
+  assert.deepEqual(ordinaryPlan.scope.reviewedPaths, ['src/a.ts']);
+  assert.equal(
+    ordinaryPlan.scope.predecessor?.reviewRecordDigest,
+    predecessor.reviewRecordDigest,
+  );
+
+  const riskCurrent = createTaskDiffReviewSubject({
+    ...subjectInput(),
+    candidateTree: '8'.repeat(40),
+    transitions: ordinaryCurrent.transitions,
+    reviewRequirement: {
+      required: true,
+      basis: 'risk-role',
+      riskPaths: [{ path: 'src/a.ts', role: 'lifecycle' }],
+    },
+  });
+  const riskPlan = deriveTaskDiffReviewCandidatePlan({
+    current: riskCurrent,
+    predecessor,
+  });
+  assert.equal(riskPlan.action, 'review');
+  if (riskPlan.action !== 'review') throw new Error('review required');
+  assert.equal(riskPlan.scope.mode, 'full');
+  assert.deepEqual(riskPlan.scope.reviewedPaths, riskCurrent.changedPaths);
+});
+
+test('TaskDiffReview requirement boundary emits no review artifact when a corrected ordinary candidate becomes not-required', () => {
+  const prior = createTaskDiffReviewSubject(subjectInput());
+  const current = createTaskDiffReviewSubject({
+    ...subjectInput(),
+    candidateTree: '8'.repeat(40),
+    transitions: subjectInput().transitions.map((transition) =>
+      transition.path === 'src/a.ts'
+        ? {
+            ...transition,
+            after: { ...transition.after!, objectId: '9'.repeat(40) },
+          }
+        : transition,
+    ),
+    reviewRequirement: {
+      required: false,
+      basis: 'policy-not-triggered',
+      riskPaths: [],
+    },
+  });
+  const plan = deriveTaskDiffReviewCandidatePlan({
+    current,
+    predecessor: {
+      subject: prior,
+      reviewRecordDigest: 'a'.repeat(64),
+      finalAssuranceCommitmentDigest: null,
+    },
+  });
+
+  assert.deepEqual(plan, {
+    action: 'not-required',
+    candidateIdentityDigest: taskDiffReviewCandidateIdentityDigest(current),
+    basis: 'policy-not-triggered',
+  });
+  assert.equal(Object.hasOwn(plan, 'scope'), false);
+  assert.equal(Object.hasOwn(plan, 'predecessor'), false);
 });
 
 test('TaskDiffReview subject rejects duplicate, unchanged, and empty transitions', () => {
