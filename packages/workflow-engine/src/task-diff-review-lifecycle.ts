@@ -31,6 +31,7 @@ import {
   readProviderInvocationManifest,
   readProviderInvocationRequest,
   storeProviderExecutionPolicySnapshot,
+  type TaskDiffReviewContinuationManifest,
   type TaskDiffReviewManifest,
 } from './provider-invocation-store.ts';
 import type { ProviderId } from './provider-registry.ts';
@@ -50,16 +51,23 @@ import {
   withSessionOperation,
 } from './session-store.ts';
 import {
+  assertTaskDiffReviewChallengeResponseCurrent,
   assertTaskDiffReviewContentSatisfied,
   createTaskDiffReviewRecord,
   TASK_DIFF_REVIEW_OUTPUT_SCHEMA,
+  type TaskDiffReviewChallengeResponseRecord,
   type TaskDiffReviewRecord,
 } from './task-diff-review-artifact.ts';
 import {
+  createTaskDiffReviewContinuationReservation,
+  createTaskDiffReviewContinuationResultBinding,
   createTaskDiffReviewReservation,
   createTaskDiffReviewResultBinding,
+  readTaskDiffReviewContinuationReservation,
+  readTaskDiffReviewContinuationResultBinding,
   readTaskDiffReviewReservation,
   readTaskDiffReviewResultBinding,
+  type TaskDiffReviewContinuationReservationRecord,
   type TaskDiffReviewReservationRecord,
 } from './task-diff-review-store.ts';
 import {
@@ -115,7 +123,10 @@ export type TaskDiffReviewLifecycleStatus =
       >;
     }>
   | Readonly<{
-      state: 'satisfied';
+      state:
+        | 'satisfied'
+        | 'challenge-response-required'
+        | 'challenge-closure-required';
       sessionId: string;
       subject: TaskDiffReviewSubject;
       implementationActor: RecordedRoleParticipant;
@@ -123,7 +134,28 @@ export type TaskDiffReviewLifecycleStatus =
       ownerInvestigationId: string;
       invocationId: string;
       review: TaskDiffReviewRecord;
+      continuationReview: TaskDiffReviewRecord | null;
     }>;
+
+export type TaskDiffReviewContinuationLifecycleStatus = Readonly<{
+  state:
+    | 'waiting-for-provider'
+    | 'provider-succeeded-awaiting-reconciliation'
+    | 'provider-failed'
+    | 'challenge-closure-required';
+  sessionId: string;
+  subject: TaskDiffReviewSubject;
+  implementationActor: RecordedRoleParticipant;
+  assignment: RoleAssignment;
+  ownerInvestigationId: string;
+  invocationId: string;
+  review: TaskDiffReviewRecord;
+  response: TaskDiffReviewChallengeResponseRecord;
+  continuationReview: TaskDiffReviewRecord | null;
+  failure: NonNullable<
+    ReturnType<typeof readProviderInvocation>['failure']
+  > | null;
+}>;
 
 /**
  * Reserve one exact, provider-independent TaskDiffReview. The reservation is
@@ -239,6 +271,199 @@ export function inspectTaskDiffReviewStatus(
     reservation,
   );
   return renderTaskDiffReviewStatus(runtime, reservation);
+}
+
+export function beginTaskDiffReviewContinuation(
+  cwd: string,
+  requestedSessionId: string,
+  responseCandidate: TaskDiffReviewChallengeResponseRecord,
+): TaskDiffReviewContinuationLifecycleStatus {
+  const initialContext = loadActiveSessionContext(cwd, requestedSessionId);
+  return withRepositoryLifecycleOperation(
+    initialContext.runtime,
+    (assertOwned) =>
+      withSessionOperation(initialContext.runtime, requestedSessionId, () => {
+        assertOwned();
+        const context = loadActiveSessionContext(cwd, requestedSessionId);
+        const runtime = loadInvestigationRuntimeContext(cwd).runtime;
+        const current = loadCurrentTaskDiffReview(context, runtime);
+        const response = assertTaskDiffReviewChallengeResponseCurrent(
+          current.review,
+          responseCandidate,
+        );
+        const existing = readTaskDiffReviewContinuationReservation(
+          runtime,
+          context.session.sessionId,
+          current.review.recordDigest,
+        );
+        const reservation =
+          existing ??
+          createNewTaskDiffReviewContinuationReservation(
+            context,
+            runtime,
+            current.reservation,
+            current.review,
+            response,
+          );
+        assertContinuationReservationCurrent(
+          context,
+          current.reservation,
+          current.review,
+          response,
+          reservation,
+        );
+        ensureTaskDiffReviewContinuationInvocation(
+          context,
+          runtime,
+          reservation,
+          assertOwned,
+        );
+        assertOwned();
+        return renderTaskDiffReviewContinuationStatus(runtime, reservation);
+      }),
+  );
+}
+
+export function reconcileTaskDiffReviewContinuation(
+  cwd: string,
+  requestedSessionId: string,
+  requestedResponseDigest: string,
+): TaskDiffReviewContinuationLifecycleStatus {
+  const initialContext = loadActiveSessionContext(cwd, requestedSessionId);
+  return withRepositoryLifecycleOperation(
+    initialContext.runtime,
+    (assertOwned) =>
+      withSessionOperation(initialContext.runtime, requestedSessionId, () => {
+        assertOwned();
+        const context = loadActiveSessionContext(cwd, requestedSessionId);
+        const runtime = loadInvestigationRuntimeContext(cwd).runtime;
+        const current = loadCurrentTaskDiffReview(context, runtime);
+        const reservation = readTaskDiffReviewContinuationReservation(
+          runtime,
+          context.session.sessionId,
+          current.review.recordDigest,
+        );
+        if (reservation === null) throw continuationNotStarted();
+        if (reservation.response.responseDigest !== requestedResponseDigest) {
+          throw continuationNotStarted();
+        }
+        assertContinuationReservationCurrent(
+          context,
+          current.reservation,
+          current.review,
+          reservation.response,
+          reservation,
+        );
+        const existing = readTaskDiffReviewContinuationResultBinding(
+          runtime,
+          context.session.sessionId,
+          current.review.recordDigest,
+        );
+        if (existing !== null) {
+          assertCurrentTaskDiffReviewContinuationBinding(
+            runtime,
+            reservation,
+            existing.continuationReview,
+          );
+          return renderTaskDiffReviewContinuationStatus(runtime, reservation);
+        }
+        const invocation = readProviderInvocation(
+          runtime,
+          reservation.request.invocationId,
+        );
+        if (invocation.state !== 'succeeded' || invocation.result === null) {
+          return renderTaskDiffReviewContinuationStatus(runtime, reservation);
+        }
+        if (invocation.result.runtimeObservation === null) {
+          throw workflowError(
+            'TASK_DIFF_REVIEW_PROVIDER_OBSERVATION_REQUIRED',
+            'TaskDiffReview continuation authority requires a fixed-runner repository observation.',
+            ExitCode.verification,
+          );
+        }
+        const continuationReview = createTaskDiffReviewRecord({
+          subject: current.subject,
+          assignment: {
+            implementerPrincipalId:
+              reservation.implementationActor.principalId!,
+            implementerProviderId: reservation.implementationActor.providerId!,
+            implementationSessionId: reservation.sessionId,
+            reviewerPrincipalId: `provider:${reservation.request.providerId}`,
+            reviewerProviderId: reservation.request.providerId,
+            reviewerSessionId: reservation.request.roleAssignment.sessionId,
+            achievedIndependence: 'provider-independent',
+          },
+          submission: invocation.result.output as never,
+        });
+        const authorization = readEvidenceNode(
+          runtime,
+          reservation.authorizationNodeId,
+        );
+        const requestReservation = readEvidenceNode(
+          runtime,
+          reservation.reservationNodeId,
+        );
+        const resultNode = createEvidenceNode({
+          type: 'task-diff-review-continuation-provider-result',
+          nodeSchema:
+            'workflow.task-diff-review-continuation-provider-result.v1',
+          evaluator: 'workflow-task-diff-review.v1',
+          policyDigest: TASK_DIFF_REVIEW_POLICY_DIGEST,
+          exactInputDigests: {
+            output: invocation.result.outputDigest,
+            request: reservation.request.requestDigest,
+            response: reservation.response.responseDigest,
+            review: reservation.review.recordDigest,
+            runtimeObservation: sha256(
+              canonicalJson(invocation.result.runtimeObservation),
+            ),
+            subject: reservation.subject.subjectDigest,
+          },
+          semanticParentResultDigests: {
+            authorization: authorization.resultDigest,
+            reservation: requestReservation.resultDigest,
+          },
+          provenanceParentNodeIds: {
+            authorization: authorization.nodeId,
+            reservation: requestReservation.nodeId,
+          },
+          outputSchema:
+            'workflow.task-diff-review-continuation-provider-result-output.v1',
+          output: {
+            ownerInvestigationId: reservation.ownerInvestigationId,
+            sessionId: reservation.sessionId,
+            invocationId: invocation.invocationId,
+            requestDigest: reservation.request.requestDigest,
+            outputDigest: invocation.result.outputDigest,
+            responseDigest: reservation.response.responseDigest,
+            continuationReview,
+          },
+          runtimeMetadata: {
+            runtimeObservation: invocation.result.runtimeObservation,
+          },
+        });
+        writeEvidenceNode(runtime, resultNode);
+        createTaskDiffReviewContinuationResultBinding(runtime, {
+          ownerInvestigationId: reservation.ownerInvestigationId,
+          sessionId: reservation.sessionId,
+          subjectDigest: reservation.subject.subjectDigest,
+          reviewRecordDigest: reservation.review.recordDigest,
+          responseDigest: reservation.response.responseDigest,
+          invocationId: invocation.invocationId,
+          requestDigest: reservation.request.requestDigest,
+          outputDigest: invocation.result.outputDigest,
+          runtimeObservationDigest: sha256(
+            canonicalJson(invocation.result.runtimeObservation),
+          ),
+          providerResultNodeId: resultNode.nodeId,
+          providerResultDigest: resultNode.resultDigest,
+          continuationReview,
+          createdAt: invocation.updatedAt,
+        });
+        assertOwned();
+        return renderTaskDiffReviewContinuationStatus(runtime, reservation);
+      }),
+  );
 }
 
 /** Adopt only a durable fixed-runner result for the still-current subject. */
@@ -387,31 +612,16 @@ export function assertCurrentTaskDiffReviewSatisfied(
   const subject = inspectTaskDiffReviewSubject(cwd, requestedSessionId);
   if (!subject.reviewRequirement.required) return null;
   const runtime = loadInvestigationRuntimeContext(cwd).runtime;
-  const reservation = readTaskDiffReviewReservation(
-    runtime,
-    context.session.sessionId,
-    subject.subjectDigest,
-  );
-  const result = readTaskDiffReviewResultBinding(
-    runtime,
-    context.session.sessionId,
-    subject.subjectDigest,
-  );
-  if (reservation === null || result === null) throw reviewNotSatisfied();
-  assertReservationCurrent(
-    context,
-    subject,
-    reservation.implementationActor,
-    reservation,
-  );
-  assertCurrentTaskDiffReviewBinding(runtime, reservation, result.review);
-  return assertTaskDiffReviewContentSatisfied(subject, result.review, null);
+  const current = loadCurrentTaskDiffReview(context, runtime);
+  return assertTaskDiffReviewContentSatisfied(subject, current.review, null);
 }
 
 export function assertTaskDiffReviewProviderOwnerCurrent(
   cwd: string,
   requestedInvocationId: string,
-): TaskDiffReviewReservationRecord {
+):
+  | TaskDiffReviewReservationRecord
+  | TaskDiffReviewContinuationReservationRecord {
   const runtime = loadInvestigationRuntimeContext(cwd).runtime;
   const invocation = readProviderInvocation(runtime, requestedInvocationId);
   const manifest = readProviderInvocationManifest(
@@ -419,6 +629,37 @@ export function assertTaskDiffReviewProviderOwnerCurrent(
     requestedInvocationId,
   );
   const request = readProviderInvocationRequest(runtime, requestedInvocationId);
+  if (manifest.kind === 'task-diff-review-continuation-manifest') {
+    const context = loadActiveSessionContext(cwd, manifest.sessionId);
+    const current = loadCurrentTaskDiffReview(context, runtime);
+    const reservation = readTaskDiffReviewContinuationReservation(
+      runtime,
+      manifest.sessionId,
+      manifest.review.recordDigest,
+    );
+    if (reservation === null) throw continuationNotStarted();
+    assertContinuationReservationCurrent(
+      context,
+      current.reservation,
+      current.review,
+      manifest.response,
+      reservation,
+    );
+    if (
+      invocation.investigationId !== reservation.ownerInvestigationId ||
+      canonicalJson(invocation.mandateBinding ?? null) !==
+        canonicalJson(reservation.mandateBinding) ||
+      canonicalJson(manifest) !== canonicalJson(reservation.manifest) ||
+      canonicalJson(request) !== canonicalJson(reservation.request)
+    ) {
+      throw workflowError(
+        'TASK_DIFF_REVIEW_REQUEST_CONFLICT',
+        'Provider invocation no longer matches its current TaskDiffReview continuation owner.',
+        ExitCode.staleState,
+      );
+    }
+    return reservation;
+  }
   if (manifest.kind !== 'task-diff-review-manifest') {
     throw workflowError(
       'TASK_DIFF_REVIEW_REQUEST_CONFLICT',
@@ -799,6 +1040,201 @@ function createNewTaskDiffReviewReservation(
   });
 }
 
+function createNewTaskDiffReviewContinuationReservation(
+  context: ReturnType<typeof loadActiveSessionContext>,
+  runtime: ReturnType<typeof loadInvestigationRuntimeContext>['runtime'],
+  reviewReservation: TaskDiffReviewReservationRecord,
+  review: TaskDiffReviewRecord,
+  response: TaskDiffReviewChallengeResponseRecord,
+): TaskDiffReviewContinuationReservationRecord {
+  const implementationActorAssurance =
+    reviewReservation.implementationActor.identityAssurance;
+  if (implementationActorAssurance === 'maintainer-signed') {
+    throw workflowError(
+      'TASK_DIFF_REVIEW_ACTOR_INVALID',
+      'TaskDiffReview continuation cannot derive provider scheduling from a maintainer-signed implementation actor.',
+      ExitCode.guard,
+    );
+  }
+  const policy = baselineAdapterPolicy(
+    context.git.repositoryRoot,
+    context.session.baseline.head,
+  );
+  const seed = sha256(
+    canonicalJson({
+      schemaVersion: 1,
+      kind: 'task-diff-review-continuation-owner.v1',
+      sessionId: context.session.sessionId,
+      subjectDigest: review.subjectDigest,
+      reviewRecordDigest: review.recordDigest,
+      responseDigest: response.responseDigest,
+    }),
+  );
+  const providerSessionId = `provider-session-task-diff-continuation-${seed}`;
+  const reviewerProviderId = reviewReservation.request.providerId;
+  const scheduled = scheduleOrdinaryRole({
+    role: 'task-diff-reviewer',
+    author: {
+      providerId: reviewReservation.implementationActor.providerId ?? undefined,
+      sessionId: reviewReservation.implementationActor.sessionId ?? undefined,
+      principalId:
+        reviewReservation.implementationActor.principalId ?? undefined,
+      identityAssurance: implementationActorAssurance,
+      engineSpawned: false,
+    },
+    targetDigest: review.subjectDigest,
+    candidates: [
+      {
+        providerId: reviewerProviderId,
+        sessionId: providerSessionId,
+        enabled: policy.policy.providers[reviewerProviderId].enabled,
+        available: policy.policy.providers[reviewerProviderId].enabled,
+      },
+    ],
+  });
+  if (
+    scheduled.outcome !== 'assigned' ||
+    scheduled.assignment.providerId !== reviewerProviderId ||
+    scheduled.assignment.sessionId === review.assignment.reviewerSessionId
+  ) {
+    throw workflowError(
+      'TASK_DIFF_REVIEW_CONTINUATION_REVIEWER_REQUIRED',
+      'Challenge continuation requires the original provider-independent reviewer in a fresh session.',
+      ExitCode.guard,
+    );
+  }
+  const assignment = scheduled.assignment;
+  const ownerInvestigationId = `investigation-task-diff-continuation-${seed}`;
+  const mandateBinding = reviewReservation.mandateBinding;
+  const authorization = createEvidenceNode({
+    type: 'task-diff-review-authorization',
+    nodeSchema: 'workflow.task-diff-review-authorization.v1',
+    evaluator: 'workflow-task-diff-review.v1',
+    policyDigest: TASK_DIFF_REVIEW_POLICY_DIGEST,
+    exactInputDigests: {
+      actor: sha256(canonicalJson(reviewReservation.implementationActor)),
+      assignment: sha256(canonicalJson(assignment)),
+      mandate: sha256(canonicalJson(mandateBinding)),
+      session: sha256(
+        canonicalJson({
+          sessionId: context.session.sessionId,
+          changeId: context.session.changeId,
+          taskId: context.session.taskId,
+        }),
+      ),
+      subject: review.subjectDigest,
+    },
+    semanticParentResultDigests: {},
+    provenanceParentNodeIds: {},
+    outputSchema: 'workflow.task-diff-review-authorization-output.v1',
+    output: {
+      ownerInvestigationId,
+      sessionId: context.session.sessionId,
+      changeId: context.session.changeId,
+      taskId: context.session.taskId,
+      subject: review.subject,
+      implementationActor: reviewReservation.implementationActor,
+      assignment,
+      mandateBinding,
+    },
+    runtimeMetadata: {},
+  });
+  writeEvidenceNode(runtime, authorization);
+  const manifest: TaskDiffReviewContinuationManifest = {
+    schemaVersion: 1,
+    kind: 'task-diff-review-continuation-manifest',
+    changeId: context.session.changeId,
+    taskId: context.session.taskId,
+    sessionId: context.session.sessionId,
+    repositoryId: context.config.repositoryName,
+    repositoryIdentity: review.subject.repositoryId,
+    baseCommit: context.session.baseline.head,
+    baseTree: context.session.baseline.tree,
+    subject: review.subject,
+    review,
+    response,
+    capabilityProfile: 'repository-read-only',
+  };
+  const request = createProviderInvocationRequest({
+    invocationId: `invocation-task-diff-continuation-${seed}`,
+    nonce: `task-diff-review-continuation-${seed}`,
+    purpose: 'task-diff-review',
+    providerId: assignment.providerId,
+    roleAssignment: assignment,
+    capabilityProfile: 'repository-read-only',
+    repositoryId: context.config.repositoryName,
+    baseCommit: context.session.baseline.head,
+    baseTree: context.session.baseline.tree,
+    targetDigest: review.subjectDigest,
+    inputManifestDigest: providerInvocationManifestDigest(manifest),
+    authorizationNodeId: authorization.nodeId,
+    writeAllowedPaths: [],
+    outputSchema: TASK_DIFF_REVIEW_OUTPUT_SCHEMA,
+    evaluatorVersion: 'task-diff-review-continuation.v1',
+    policyDigest: policy.digest,
+    limits: {
+      timeoutMs: policy.policy.limits.timeoutMs,
+      aggregateOutputBytes: policy.policy.limits.aggregateOutputBytes,
+    },
+  });
+  const requestReservation = createEvidenceNode({
+    type: 'task-diff-review-continuation-request-reservation',
+    nodeSchema: 'workflow.task-diff-review-continuation-reservation.v1',
+    evaluator: 'workflow-task-diff-review.v1',
+    policyDigest: TASK_DIFF_REVIEW_POLICY_DIGEST,
+    exactInputDigests: {
+      manifest: request.inputManifestDigest,
+      request: request.requestDigest,
+      response: response.responseDigest,
+      review: review.recordDigest,
+      subject: review.subjectDigest,
+    },
+    semanticParentResultDigests: {
+      authorization: authorization.resultDigest,
+    },
+    provenanceParentNodeIds: { authorization: authorization.nodeId },
+    outputSchema:
+      'workflow.task-diff-review-continuation-reservation-output.v1',
+    output: {
+      ownerInvestigationId,
+      sessionId: context.session.sessionId,
+      changeId: context.session.changeId,
+      taskId: context.session.taskId,
+      subject: review.subject,
+      implementationActor: reviewReservation.implementationActor,
+      assignment,
+      review,
+      response,
+      manifest,
+      request,
+      mandateBinding,
+    },
+    runtimeMetadata: {},
+  });
+  storeProviderExecutionPolicySnapshot(runtime, request, policy);
+  writeEvidenceNode(runtime, requestReservation);
+  return createTaskDiffReviewContinuationReservation(runtime, {
+    ownerInvestigationId,
+    sessionId: context.session.sessionId,
+    changeId: context.session.changeId,
+    taskId: context.session.taskId,
+    repositoryRoot: context.git.repositoryRealPath,
+    gitCommonDirectory: context.git.gitCommonDirectory,
+    branch: context.session.branch,
+    baseline: context.session.baseline,
+    mandateBinding,
+    subject: review.subject,
+    implementationActor: reviewReservation.implementationActor,
+    review,
+    response,
+    manifest,
+    request,
+    authorizationNodeId: authorization.nodeId,
+    reservationNodeId: requestReservation.nodeId,
+    createdAt: new Date().toISOString(),
+  });
+}
+
 function ensureTaskDiffReviewInvocation(
   context: ReturnType<typeof loadActiveSessionContext>,
   runtime: ReturnType<typeof loadInvestigationRuntimeContext>['runtime'],
@@ -877,6 +1313,84 @@ function ensureTaskDiffReviewInvocation(
   assertOwned();
 }
 
+function ensureTaskDiffReviewContinuationInvocation(
+  context: ReturnType<typeof loadActiveSessionContext>,
+  runtime: ReturnType<typeof loadInvestigationRuntimeContext>['runtime'],
+  reservation: TaskDiffReviewContinuationReservationRecord,
+  assertOwned: () => void,
+): void {
+  const policy = baselineAdapterPolicy(
+    context.git.repositoryRoot,
+    context.session.baseline.head,
+  );
+  storeProviderExecutionPolicySnapshot(runtime, reservation.request, policy);
+  if (reservation.mandateBinding !== null) {
+    authorizeTaskMandateProviderReservationUnderLifecycleLock(
+      context.git.repositoryRoot,
+      reservation.mandateBinding,
+      reservation.request.invocationId,
+      {
+        providerId: reservation.request.providerId,
+        dataTypes: [
+          'diff',
+          'repository-metadata',
+          'source-code',
+          'test-output',
+        ],
+        sourceCode: true,
+        secrets: false,
+        retry: false,
+        budget: null,
+        requestDigest: reservation.request.requestDigest,
+      },
+      assertOwned,
+    );
+  }
+  if (providerInvocationExists(runtime, reservation.request.invocationId)) {
+    const invocation = readProviderInvocation(
+      runtime,
+      reservation.request.invocationId,
+    );
+    const request = readProviderInvocationRequest(
+      runtime,
+      reservation.request.invocationId,
+    );
+    const manifest = readProviderInvocationManifest(
+      runtime,
+      reservation.request.invocationId,
+    );
+    if (
+      invocation.investigationId !== reservation.ownerInvestigationId ||
+      invocation.changeId !== reservation.changeId ||
+      invocation.attempt !== 1 ||
+      invocation.requestDigest !== reservation.request.requestDigest ||
+      canonicalJson(invocation.mandateBinding ?? null) !==
+        canonicalJson(reservation.mandateBinding) ||
+      canonicalJson(request) !== canonicalJson(reservation.request) ||
+      canonicalJson(manifest) !== canonicalJson(reservation.manifest)
+    ) {
+      throw workflowError(
+        'TASK_DIFF_REVIEW_REQUEST_CONFLICT',
+        'Durable TaskDiffReview continuation work differs from its exact reservation.',
+        ExitCode.conflict,
+      );
+    }
+    return;
+  }
+  createProviderInvocation(runtime, {
+    investigationId: reservation.ownerInvestigationId,
+    changeId: reservation.changeId,
+    ...(reservation.mandateBinding === null
+      ? {}
+      : { mandateBinding: reservation.mandateBinding }),
+    attempt: 1,
+    manifest: reservation.manifest,
+    request: reservation.request,
+    createdAt: reservation.createdAt,
+  });
+  assertOwned();
+}
+
 function renderTaskDiffReviewStatus(
   runtime: ReturnType<typeof loadInvestigationRuntimeContext>['runtime'],
   reservation: TaskDiffReviewReservationRecord,
@@ -897,10 +1411,56 @@ function renderTaskDiffReviewStatus(
   );
   if (binding !== null) {
     assertCurrentTaskDiffReviewBinding(runtime, reservation, binding.review);
+    if (binding.review.challenges.length === 0) {
+      return Object.freeze({
+        state: 'satisfied',
+        ...common,
+        review: binding.review,
+        continuationReview: null,
+      });
+    }
+    const continuationReservation = readTaskDiffReviewContinuationReservation(
+      runtime,
+      reservation.sessionId,
+      binding.review.recordDigest,
+    );
+    if (continuationReservation === null) {
+      return Object.freeze({
+        state: 'challenge-response-required',
+        ...common,
+        review: binding.review,
+        continuationReview: null,
+      });
+    }
+    assertContinuationReservationBound(
+      reservation,
+      binding.review,
+      continuationReservation.response,
+      continuationReservation,
+    );
+    const continuationBinding = readTaskDiffReviewContinuationResultBinding(
+      runtime,
+      reservation.sessionId,
+      binding.review.recordDigest,
+    );
+    if (continuationBinding === null) {
+      return Object.freeze({
+        state: 'challenge-response-required',
+        ...common,
+        review: binding.review,
+        continuationReview: null,
+      });
+    }
+    assertCurrentTaskDiffReviewContinuationBinding(
+      runtime,
+      continuationReservation,
+      continuationBinding.continuationReview,
+    );
     return Object.freeze({
-      state: 'satisfied',
+      state: 'challenge-closure-required',
       ...common,
       review: binding.review,
+      continuationReview: continuationBinding.continuationReview,
     });
   }
   const invocation = readProviderInvocation(
@@ -922,6 +1482,98 @@ function renderTaskDiffReviewStatus(
         : 'waiting-for-provider',
     ...common,
   });
+}
+
+function renderTaskDiffReviewContinuationStatus(
+  runtime: ReturnType<typeof loadInvestigationRuntimeContext>['runtime'],
+  reservation: TaskDiffReviewContinuationReservationRecord,
+): TaskDiffReviewContinuationLifecycleStatus {
+  const assignment = reservation.request.roleAssignment as RoleAssignment;
+  const common = {
+    sessionId: reservation.sessionId,
+    subject: reservation.subject,
+    implementationActor: reservation.implementationActor,
+    assignment,
+    ownerInvestigationId: reservation.ownerInvestigationId,
+    invocationId: reservation.request.invocationId,
+    review: reservation.review,
+    response: reservation.response,
+  };
+  const binding = readTaskDiffReviewContinuationResultBinding(
+    runtime,
+    reservation.sessionId,
+    reservation.review.recordDigest,
+  );
+  if (binding !== null) {
+    assertCurrentTaskDiffReviewContinuationBinding(
+      runtime,
+      reservation,
+      binding.continuationReview,
+    );
+    return Object.freeze({
+      state: 'challenge-closure-required',
+      ...common,
+      continuationReview: binding.continuationReview,
+      failure: null,
+    });
+  }
+  const invocation = readProviderInvocation(
+    runtime,
+    reservation.request.invocationId,
+  );
+  if (invocation.state === 'failed') {
+    if (invocation.failure === null) throw reviewNotSatisfied();
+    return Object.freeze({
+      state: 'provider-failed',
+      ...common,
+      continuationReview: null,
+      failure: invocation.failure,
+    });
+  }
+  return Object.freeze({
+    state:
+      invocation.state === 'succeeded'
+        ? 'provider-succeeded-awaiting-reconciliation'
+        : 'waiting-for-provider',
+    ...common,
+    continuationReview: null,
+    failure: null,
+  });
+}
+
+function loadCurrentTaskDiffReview(
+  context: ReturnType<typeof loadActiveSessionContext>,
+  runtime: ReturnType<typeof loadInvestigationRuntimeContext>['runtime'],
+): Readonly<{
+  subject: TaskDiffReviewSubject;
+  reservation: TaskDiffReviewReservationRecord;
+  review: TaskDiffReviewRecord;
+}> {
+  const subject = inspectTaskDiffReviewSubject(
+    context.git.repositoryRoot,
+    context.session.sessionId,
+  );
+  if (!subject.reviewRequirement.required) throw reviewNotSatisfied();
+  const reservation = readTaskDiffReviewReservation(
+    runtime,
+    context.session.sessionId,
+    subject.subjectDigest,
+  );
+  if (reservation === null) throw reviewNotSatisfied();
+  assertReservationCurrent(
+    context,
+    subject,
+    reservation.implementationActor,
+    reservation,
+  );
+  const binding = readTaskDiffReviewResultBinding(
+    runtime,
+    context.session.sessionId,
+    subject.subjectDigest,
+  );
+  if (binding === null) throw reviewNotSatisfied();
+  assertCurrentTaskDiffReviewBinding(runtime, reservation, binding.review);
+  return Object.freeze({ subject, reservation, review: binding.review });
 }
 
 function assertReservationCurrent(
@@ -948,6 +1600,70 @@ function assertReservationCurrent(
     throw workflowError(
       'TASK_DIFF_REVIEW_RESERVATION_STALE',
       'TaskDiffReview reservation no longer matches its WorkflowSession or candidate.',
+      ExitCode.staleState,
+    );
+  }
+}
+
+function assertContinuationReservationCurrent(
+  context: ReturnType<typeof loadActiveSessionContext>,
+  reviewReservation: TaskDiffReviewReservationRecord,
+  review: TaskDiffReviewRecord,
+  response: TaskDiffReviewChallengeResponseRecord,
+  reservation: TaskDiffReviewContinuationReservationRecord,
+): void {
+  assertReservationCurrent(
+    context,
+    reviewReservation.subject,
+    reviewReservation.implementationActor,
+    reviewReservation,
+  );
+  assertContinuationReservationBound(
+    reviewReservation,
+    review,
+    response,
+    reservation,
+  );
+}
+
+function assertContinuationReservationBound(
+  reviewReservation: TaskDiffReviewReservationRecord,
+  review: TaskDiffReviewRecord,
+  responseCandidate: TaskDiffReviewChallengeResponseRecord,
+  reservation: TaskDiffReviewContinuationReservationRecord,
+): void {
+  const response = assertTaskDiffReviewChallengeResponseCurrent(
+    review,
+    responseCandidate,
+  );
+  if (
+    reservation.sessionId !== reviewReservation.sessionId ||
+    reservation.changeId !== reviewReservation.changeId ||
+    reservation.taskId !== reviewReservation.taskId ||
+    reservation.repositoryRoot !== reviewReservation.repositoryRoot ||
+    reservation.gitCommonDirectory !== reviewReservation.gitCommonDirectory ||
+    reservation.branch !== reviewReservation.branch ||
+    canonicalJson(reservation.baseline) !==
+      canonicalJson(reviewReservation.baseline) ||
+    canonicalJson(reservation.mandateBinding) !==
+      canonicalJson(reviewReservation.mandateBinding) ||
+    canonicalJson(reservation.subject) !==
+      canonicalJson(reviewReservation.subject) ||
+    canonicalJson(reservation.implementationActor) !==
+      canonicalJson(reviewReservation.implementationActor) ||
+    canonicalJson(reservation.review) !== canonicalJson(review) ||
+    canonicalJson(reservation.response) !== canonicalJson(response) ||
+    reservation.request.providerId !== review.assignment.reviewerProviderId ||
+    reservation.request.roleAssignment.providerId !==
+      review.assignment.reviewerProviderId ||
+    reservation.request.roleAssignment.sessionId ===
+      review.assignment.reviewerSessionId ||
+    canonicalJson(reservation.manifest.review) !== canonicalJson(review) ||
+    canonicalJson(reservation.manifest.response) !== canonicalJson(response)
+  ) {
+    throw workflowError(
+      'TASK_DIFF_REVIEW_CONTINUATION_RESERVATION_STALE',
+      'TaskDiffReview continuation reservation no longer matches its current review, response, or WorkflowSession.',
       ExitCode.staleState,
     );
   }
@@ -1008,6 +1724,91 @@ function assertCurrentTaskDiffReviewBinding(
       binding.runtimeObservationDigest ||
     resultNode.exactInputDigests.subject !==
       reservation.subject.subjectDigest ||
+    resultNode.provenanceParentNodeIds.authorization !==
+      reservation.authorizationNodeId ||
+    resultNode.provenanceParentNodeIds.reservation !==
+      reservation.reservationNodeId
+  ) {
+    throw reviewNotSatisfied();
+  }
+}
+
+function assertCurrentTaskDiffReviewContinuationBinding(
+  runtime: ReturnType<typeof loadInvestigationRuntimeContext>['runtime'],
+  reservation: TaskDiffReviewContinuationReservationRecord,
+  expectedContinuationReview: TaskDiffReviewRecord,
+): void {
+  const binding = readTaskDiffReviewContinuationResultBinding(
+    runtime,
+    reservation.sessionId,
+    reservation.review.recordDigest,
+  );
+  const invocation = readProviderInvocation(
+    runtime,
+    reservation.request.invocationId,
+  );
+  if (
+    binding === null ||
+    invocation.state !== 'succeeded' ||
+    invocation.result === null ||
+    invocation.result.runtimeObservation === null ||
+    binding.ownerInvestigationId !== reservation.ownerInvestigationId ||
+    binding.sessionId !== reservation.sessionId ||
+    binding.subjectDigest !== reservation.subject.subjectDigest ||
+    binding.reviewRecordDigest !== reservation.review.recordDigest ||
+    binding.responseDigest !== reservation.response.responseDigest ||
+    binding.invocationId !== invocation.invocationId ||
+    binding.requestDigest !== reservation.request.requestDigest ||
+    binding.outputDigest !== invocation.result.outputDigest ||
+    binding.runtimeObservationDigest !==
+      sha256(canonicalJson(invocation.result.runtimeObservation)) ||
+    canonicalJson(binding.continuationReview) !==
+      canonicalJson(expectedContinuationReview)
+  ) {
+    throw reviewNotSatisfied();
+  }
+  const authorization = readEvidenceNode(
+    runtime,
+    reservation.authorizationNodeId,
+  );
+  const requestReservation = readEvidenceNode(
+    runtime,
+    reservation.reservationNodeId,
+  );
+  const resultNode = readEvidenceNode(runtime, binding.providerResultNodeId);
+  if (
+    resultNode.resultDigest !== binding.providerResultDigest ||
+    resultNode.type !== 'task-diff-review-continuation-provider-result' ||
+    resultNode.nodeSchema !==
+      'workflow.task-diff-review-continuation-provider-result.v1' ||
+    resultNode.evaluator !== 'workflow-task-diff-review.v1' ||
+    resultNode.policyDigest !== TASK_DIFF_REVIEW_POLICY_DIGEST ||
+    resultNode.outputSchema !==
+      'workflow.task-diff-review-continuation-provider-result-output.v1' ||
+    canonicalJson(resultNode.output) !==
+      canonicalJson({
+        ownerInvestigationId: reservation.ownerInvestigationId,
+        sessionId: reservation.sessionId,
+        invocationId: invocation.invocationId,
+        requestDigest: reservation.request.requestDigest,
+        outputDigest: invocation.result.outputDigest,
+        responseDigest: reservation.response.responseDigest,
+        continuationReview: expectedContinuationReview,
+      }) ||
+    resultNode.exactInputDigests.output !== invocation.result.outputDigest ||
+    resultNode.exactInputDigests.request !==
+      reservation.request.requestDigest ||
+    resultNode.exactInputDigests.response !==
+      reservation.response.responseDigest ||
+    resultNode.exactInputDigests.review !== reservation.review.recordDigest ||
+    resultNode.exactInputDigests.runtimeObservation !==
+      binding.runtimeObservationDigest ||
+    resultNode.exactInputDigests.subject !==
+      reservation.subject.subjectDigest ||
+    resultNode.semanticParentResultDigests.authorization !==
+      authorization.resultDigest ||
+    resultNode.semanticParentResultDigests.reservation !==
+      requestReservation.resultDigest ||
     resultNode.provenanceParentNodeIds.authorization !==
       reservation.authorizationNodeId ||
     resultNode.provenanceParentNodeIds.reservation !==
@@ -1210,6 +2011,22 @@ function reviewNotSatisfied() {
   return workflowError(
     'TASK_DIFF_REVIEW_NOT_SATISFIED',
     'TaskDiffReview has no current, provider-bound result for this candidate.',
+    ExitCode.verification,
+  );
+}
+
+function continuationNotStarted() {
+  return workflowError(
+    'TASK_DIFF_REVIEW_CONTINUATION_NOT_STARTED',
+    'TaskDiffReview challenge continuation has no durable provider reservation for this response.',
+    ExitCode.staleState,
+  );
+}
+
+function continuationResultInvalid() {
+  return workflowError(
+    'TASK_DIFF_REVIEW_CONTINUATION_RESULT_INVALID',
+    'TaskDiffReview challenge continuation output does not cover the exact current review and response.',
     ExitCode.verification,
   );
 }

@@ -21,7 +21,11 @@ import {
 import type { ProviderId } from './provider-registry.ts';
 import type { RecordedRoleParticipant } from './role-scheduler.ts';
 import {
+  assertTaskDiffReviewChallengeResponseCurrent,
+  parseTaskDiffReviewChallengeResponseRecord,
   parseTaskDiffReviewRecord,
+  TASK_DIFF_REVIEW_OUTPUT_SCHEMA,
+  type TaskDiffReviewChallengeResponseRecord,
   type TaskDiffReviewRecord,
 } from './task-diff-review-artifact.ts';
 import {
@@ -84,6 +88,65 @@ export type TaskDiffReviewResultBinding = Readonly<{
   providerResultNodeId: string;
   providerResultDigest: string;
   review: TaskDiffReviewRecord;
+  createdAt: string;
+}>;
+
+export type TaskDiffReviewContinuationManifestSnapshot = Readonly<{
+  schemaVersion: 1;
+  kind: 'task-diff-review-continuation-manifest';
+  changeId: string;
+  taskId: string;
+  sessionId: string;
+  repositoryId: string;
+  repositoryIdentity: string;
+  baseCommit: string;
+  baseTree: string;
+  subject: TaskDiffReviewSubject;
+  review: TaskDiffReviewRecord;
+  response: TaskDiffReviewChallengeResponseRecord;
+  capabilityProfile: 'repository-read-only';
+}>;
+
+export type TaskDiffReviewContinuationReservationRecord = Readonly<{
+  schemaVersion: 1;
+  kind: 'task-diff-review-continuation-reservation.v1';
+  reservationDigest: string;
+  ownerInvestigationId: string;
+  sessionId: string;
+  changeId: string;
+  taskId: string;
+  repositoryRoot: string;
+  gitCommonDirectory: string;
+  branch: string;
+  baseline: Readonly<{ head: string; tree: string }>;
+  mandateBinding: TaskMandateBinding | null;
+  subject: TaskDiffReviewSubject;
+  implementationActor: RecordedRoleParticipant;
+  review: TaskDiffReviewRecord;
+  response: TaskDiffReviewChallengeResponseRecord;
+  manifest: TaskDiffReviewContinuationManifestSnapshot;
+  request: ProviderInvocationRequest;
+  authorizationNodeId: string;
+  reservationNodeId: string;
+  createdAt: string;
+}>;
+
+export type TaskDiffReviewContinuationResultBinding = Readonly<{
+  schemaVersion: 1;
+  kind: 'task-diff-review-continuation-result-binding.v1';
+  bindingDigest: string;
+  ownerInvestigationId: string;
+  sessionId: string;
+  subjectDigest: string;
+  reviewRecordDigest: string;
+  responseDigest: string;
+  invocationId: string;
+  requestDigest: string;
+  outputDigest: string;
+  runtimeObservationDigest: string;
+  providerResultNodeId: string;
+  providerResultDigest: string;
+  continuationReview: TaskDiffReviewRecord;
   createdAt: string;
 }>;
 
@@ -218,6 +281,153 @@ export function taskDiffReviewResultPath(
     assertSessionId(requestedSessionId),
     'results',
     `${assertDigest(requestedSubjectDigest)}.json`,
+  );
+}
+
+export function createTaskDiffReviewContinuationReservation(
+  paths: InvestigationRuntimePaths,
+  input: Omit<
+    TaskDiffReviewContinuationReservationRecord,
+    'schemaVersion' | 'kind' | 'reservationDigest'
+  >,
+): TaskDiffReviewContinuationReservationRecord {
+  const body = {
+    schemaVersion: 1 as const,
+    kind: 'task-diff-review-continuation-reservation.v1' as const,
+    ...input,
+  };
+  const reservation = parseTaskDiffReviewContinuationReservation({
+    ...body,
+    reservationDigest: sha256(canonicalJson(body)),
+  });
+  createPrivateCanonicalJson(
+    paths,
+    taskDiffReviewContinuationReservationPath(
+      paths,
+      reservation.sessionId,
+      reservation.review.recordDigest,
+    ),
+    reservation,
+    storeUnsafe,
+    'TASK_DIFF_REVIEW_CONTINUATION_RESERVATION_CONFLICT',
+  );
+  return readTaskDiffReviewContinuationReservation(
+    paths,
+    reservation.sessionId,
+    reservation.review.recordDigest,
+  )!;
+}
+
+export function readTaskDiffReviewContinuationReservation(
+  paths: InvestigationRuntimePaths,
+  requestedSessionId: string,
+  requestedReviewRecordDigest: string,
+): TaskDiffReviewContinuationReservationRecord | null {
+  const sessionId = assertSessionId(requestedSessionId);
+  const reviewRecordDigest = assertDigest(requestedReviewRecordDigest);
+  const target = taskDiffReviewContinuationReservationPath(
+    paths,
+    sessionId,
+    reviewRecordDigest,
+  );
+  if (!privatePathExists(paths, target, storeUnsafe)) return null;
+  const reservation = parseTaskDiffReviewContinuationReservation(
+    readPrivateCanonicalJson(paths, target, storeUnsafe),
+  );
+  if (
+    reservation.sessionId !== sessionId ||
+    reservation.review.recordDigest !== reviewRecordDigest
+  ) {
+    throw storeUnsafe();
+  }
+  return reservation;
+}
+
+export function createTaskDiffReviewContinuationResultBinding(
+  paths: InvestigationRuntimePaths,
+  input: Omit<
+    TaskDiffReviewContinuationResultBinding,
+    'schemaVersion' | 'kind' | 'bindingDigest'
+  >,
+): TaskDiffReviewContinuationResultBinding {
+  const body = {
+    schemaVersion: 1 as const,
+    kind: 'task-diff-review-continuation-result-binding.v1' as const,
+    ...input,
+  };
+  const binding = parseTaskDiffReviewContinuationResultBinding({
+    ...body,
+    bindingDigest: sha256(canonicalJson(body)),
+  });
+  createPrivateCanonicalJson(
+    paths,
+    taskDiffReviewContinuationResultPath(
+      paths,
+      binding.sessionId,
+      binding.reviewRecordDigest,
+    ),
+    binding,
+    storeUnsafe,
+    'TASK_DIFF_REVIEW_CONTINUATION_RESULT_CONFLICT',
+  );
+  return readTaskDiffReviewContinuationResultBinding(
+    paths,
+    binding.sessionId,
+    binding.reviewRecordDigest,
+  )!;
+}
+
+export function readTaskDiffReviewContinuationResultBinding(
+  paths: InvestigationRuntimePaths,
+  requestedSessionId: string,
+  requestedReviewRecordDigest: string,
+): TaskDiffReviewContinuationResultBinding | null {
+  const sessionId = assertSessionId(requestedSessionId);
+  const reviewRecordDigest = assertDigest(requestedReviewRecordDigest);
+  const target = taskDiffReviewContinuationResultPath(
+    paths,
+    sessionId,
+    reviewRecordDigest,
+  );
+  if (!privatePathExists(paths, target, storeUnsafe)) return null;
+  const binding = parseTaskDiffReviewContinuationResultBinding(
+    readPrivateCanonicalJson(paths, target, storeUnsafe),
+  );
+  if (
+    binding.sessionId !== sessionId ||
+    binding.reviewRecordDigest !== reviewRecordDigest
+  ) {
+    throw storeUnsafe();
+  }
+  return binding;
+}
+
+export function taskDiffReviewContinuationReservationPath(
+  paths: InvestigationRuntimePaths,
+  requestedSessionId: string,
+  requestedReviewRecordDigest: string,
+): string {
+  return path.join(
+    paths.refs,
+    'task-diff-reviews',
+    assertSessionId(requestedSessionId),
+    'continuations',
+    assertDigest(requestedReviewRecordDigest),
+    'reservation.json',
+  );
+}
+
+export function taskDiffReviewContinuationResultPath(
+  paths: InvestigationRuntimePaths,
+  requestedSessionId: string,
+  requestedReviewRecordDigest: string,
+): string {
+  return path.join(
+    paths.refs,
+    'task-diff-reviews',
+    assertSessionId(requestedSessionId),
+    'continuation-results',
+    `${assertDigest(requestedReviewRecordDigest)}.json`,
   );
 }
 
@@ -392,6 +602,197 @@ function parseTaskDiffReviewResultBinding(
   return deepFreeze(binding);
 }
 
+function parseTaskDiffReviewContinuationReservation(
+  value: unknown,
+): TaskDiffReviewContinuationReservationRecord {
+  if (
+    !isRecord(value) ||
+    !hasExactKeys(value, [
+      'schemaVersion',
+      'kind',
+      'reservationDigest',
+      'ownerInvestigationId',
+      'sessionId',
+      'changeId',
+      'taskId',
+      'repositoryRoot',
+      'gitCommonDirectory',
+      'branch',
+      'baseline',
+      'mandateBinding',
+      'subject',
+      'implementationActor',
+      'review',
+      'response',
+      'manifest',
+      'request',
+      'authorizationNodeId',
+      'reservationNodeId',
+      'createdAt',
+    ]) ||
+    value.schemaVersion !== 1 ||
+    value.kind !== 'task-diff-review-continuation-reservation.v1' ||
+    !isDigest(value.reservationDigest) ||
+    typeof value.ownerInvestigationId !== 'string' ||
+    typeof value.sessionId !== 'string' ||
+    typeof value.changeId !== 'string' ||
+    typeof value.taskId !== 'string' ||
+    !isAbsolutePath(value.repositoryRoot) ||
+    !isAbsolutePath(value.gitCommonDirectory) ||
+    !isIdentity(value.branch) ||
+    !isTimestamp(value.createdAt) ||
+    !isDigest(value.authorizationNodeId) ||
+    !isDigest(value.reservationNodeId)
+  ) {
+    throw storeUnsafe();
+  }
+  const ownerInvestigationId = assertInvestigationId(
+    value.ownerInvestigationId,
+  );
+  const sessionId = assertSessionId(value.sessionId);
+  const subject = parseTaskDiffReviewSubject(value.subject);
+  const review = parseTaskDiffReviewRecord(value.review);
+  const response = assertTaskDiffReviewChallengeResponseCurrent(
+    review,
+    parseTaskDiffReviewChallengeResponseRecord(value.response),
+  );
+  const manifest = parseContinuationManifest(value.manifest);
+  const request = recreateProviderInvocationRequest(value.request);
+  const implementationActor = parseParticipant(value.implementationActor);
+  const mandateBinding = parseMandateBinding(
+    value.mandateBinding,
+    value.changeId,
+  );
+  const baseline = parseBaseline(value.baseline);
+  const record: TaskDiffReviewContinuationReservationRecord = {
+    schemaVersion: 1,
+    kind: 'task-diff-review-continuation-reservation.v1',
+    reservationDigest: value.reservationDigest,
+    ownerInvestigationId,
+    sessionId,
+    changeId: value.changeId,
+    taskId: value.taskId,
+    repositoryRoot: value.repositoryRoot,
+    gitCommonDirectory: value.gitCommonDirectory,
+    branch: value.branch,
+    baseline,
+    mandateBinding,
+    subject,
+    implementationActor,
+    review,
+    response,
+    manifest,
+    request,
+    authorizationNodeId: value.authorizationNodeId,
+    reservationNodeId: value.reservationNodeId,
+    createdAt: value.createdAt,
+  };
+  if (
+    subject.changeId !== record.changeId ||
+    subject.taskId !== record.taskId ||
+    subject.baseCommit !== baseline.head ||
+    subject.baseTree !== baseline.tree ||
+    review.subjectDigest !== subject.subjectDigest ||
+    response.subjectDigest !== subject.subjectDigest ||
+    manifest.changeId !== record.changeId ||
+    manifest.taskId !== record.taskId ||
+    manifest.sessionId !== sessionId ||
+    manifest.repositoryIdentity !== subject.repositoryId ||
+    canonicalJson(manifest.subject) !== canonicalJson(subject) ||
+    canonicalJson(manifest.review) !== canonicalJson(review) ||
+    canonicalJson(manifest.response) !== canonicalJson(response) ||
+    request.invocationId !== assertInvocationId(request.invocationId) ||
+    request.authorizationNodeId !== record.authorizationNodeId ||
+    request.targetDigest !== subject.subjectDigest ||
+    request.inputManifestDigest !== sha256(canonicalJson(manifest)) ||
+    request.providerId !== review.assignment.reviewerProviderId ||
+    request.roleAssignment.role !== 'task-diff-reviewer' ||
+    request.roleAssignment.providerId !==
+      review.assignment.reviewerProviderId ||
+    request.roleAssignment.sessionId === review.assignment.reviewerSessionId ||
+    request.outputSchema.id !== TASK_DIFF_REVIEW_OUTPUT_SCHEMA.id ||
+    request.outputSchema.version !== TASK_DIFF_REVIEW_OUTPUT_SCHEMA.version ||
+    request.outputSchema.digest !== TASK_DIFF_REVIEW_OUTPUT_SCHEMA.digest ||
+    record.reservationDigest !==
+      sha256(canonicalJson(withoutDigest(record, 'reservationDigest')))
+  ) {
+    throw storeUnsafe();
+  }
+  return deepFreeze(record);
+}
+
+function parseTaskDiffReviewContinuationResultBinding(
+  value: unknown,
+): TaskDiffReviewContinuationResultBinding {
+  if (
+    !isRecord(value) ||
+    !hasExactKeys(value, [
+      'schemaVersion',
+      'kind',
+      'bindingDigest',
+      'ownerInvestigationId',
+      'sessionId',
+      'subjectDigest',
+      'reviewRecordDigest',
+      'responseDigest',
+      'invocationId',
+      'requestDigest',
+      'outputDigest',
+      'runtimeObservationDigest',
+      'providerResultNodeId',
+      'providerResultDigest',
+      'continuationReview',
+      'createdAt',
+    ]) ||
+    value.schemaVersion !== 1 ||
+    value.kind !== 'task-diff-review-continuation-result-binding.v1' ||
+    !isDigest(value.bindingDigest) ||
+    typeof value.ownerInvestigationId !== 'string' ||
+    typeof value.sessionId !== 'string' ||
+    !isDigest(value.subjectDigest) ||
+    !isDigest(value.reviewRecordDigest) ||
+    !isDigest(value.responseDigest) ||
+    typeof value.invocationId !== 'string' ||
+    !isDigest(value.requestDigest) ||
+    !isDigest(value.outputDigest) ||
+    !isDigest(value.runtimeObservationDigest) ||
+    !isDigest(value.providerResultNodeId) ||
+    !isDigest(value.providerResultDigest) ||
+    !isTimestamp(value.createdAt)
+  ) {
+    throw storeUnsafe();
+  }
+  const continuationReview = parseTaskDiffReviewRecord(
+    value.continuationReview,
+  );
+  const binding: TaskDiffReviewContinuationResultBinding = {
+    schemaVersion: 1,
+    kind: 'task-diff-review-continuation-result-binding.v1',
+    bindingDigest: value.bindingDigest,
+    ownerInvestigationId: assertInvestigationId(value.ownerInvestigationId),
+    sessionId: assertSessionId(value.sessionId),
+    subjectDigest: value.subjectDigest,
+    reviewRecordDigest: value.reviewRecordDigest,
+    responseDigest: value.responseDigest,
+    invocationId: assertInvocationId(value.invocationId),
+    requestDigest: value.requestDigest,
+    outputDigest: value.outputDigest,
+    runtimeObservationDigest: value.runtimeObservationDigest,
+    providerResultNodeId: value.providerResultNodeId,
+    providerResultDigest: value.providerResultDigest,
+    continuationReview,
+    createdAt: value.createdAt,
+  };
+  if (
+    continuationReview.subjectDigest !== binding.subjectDigest ||
+    binding.bindingDigest !==
+      sha256(canonicalJson(withoutDigest(binding, 'bindingDigest')))
+  ) {
+    throw storeUnsafe();
+  }
+  return deepFreeze(binding);
+}
+
 function parseManifest(value: unknown): TaskDiffReviewManifestSnapshot {
   if (
     !isRecord(value) ||
@@ -432,6 +833,73 @@ function parseManifest(value: unknown): TaskDiffReviewManifestSnapshot {
     baseCommit: value.baseCommit as string,
     baseTree: value.baseTree as string,
     subject: parseTaskDiffReviewSubject(value.subject),
+    capabilityProfile: 'repository-read-only',
+  });
+}
+
+function parseContinuationManifest(
+  value: unknown,
+): TaskDiffReviewContinuationManifestSnapshot {
+  if (
+    !isRecord(value) ||
+    !hasExactKeys(value, [
+      'schemaVersion',
+      'kind',
+      'changeId',
+      'taskId',
+      'sessionId',
+      'repositoryId',
+      'repositoryIdentity',
+      'baseCommit',
+      'baseTree',
+      'subject',
+      'review',
+      'response',
+      'capabilityProfile',
+    ]) ||
+    value.schemaVersion !== 1 ||
+    value.kind !== 'task-diff-review-continuation-manifest' ||
+    !isIdentity(value.changeId) ||
+    !isIdentity(value.taskId) ||
+    !isIdentity(value.sessionId) ||
+    !isIdentity(value.repositoryId) ||
+    !isIdentity(value.repositoryIdentity) ||
+    !GIT_OBJECT_ID.test(String(value.baseCommit)) ||
+    !GIT_OBJECT_ID.test(String(value.baseTree)) ||
+    value.capabilityProfile !== 'repository-read-only'
+  ) {
+    throw storeUnsafe();
+  }
+  const subject = parseTaskDiffReviewSubject(value.subject);
+  const review = parseTaskDiffReviewRecord(value.review);
+  const response = assertTaskDiffReviewChallengeResponseCurrent(
+    review,
+    parseTaskDiffReviewChallengeResponseRecord(value.response),
+  );
+  if (
+    subject.changeId !== value.changeId ||
+    subject.taskId !== value.taskId ||
+    subject.repositoryId !== value.repositoryIdentity ||
+    subject.baseCommit !== value.baseCommit ||
+    subject.baseTree !== value.baseTree ||
+    review.subjectDigest !== subject.subjectDigest ||
+    canonicalJson(review.subject) !== canonicalJson(subject)
+  ) {
+    throw storeUnsafe();
+  }
+  return deepFreeze({
+    schemaVersion: 1,
+    kind: 'task-diff-review-continuation-manifest',
+    changeId: value.changeId,
+    taskId: value.taskId,
+    sessionId: value.sessionId,
+    repositoryId: value.repositoryId,
+    repositoryIdentity: value.repositoryIdentity,
+    baseCommit: value.baseCommit as string,
+    baseTree: value.baseTree as string,
+    subject,
+    review,
+    response,
     capabilityProfile: 'repository-read-only',
   });
 }

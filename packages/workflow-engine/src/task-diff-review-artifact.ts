@@ -348,6 +348,19 @@ export type TaskDiffReviewDispositionRecord = Readonly<{
   entries: readonly TaskDiffReviewDispositionEntry[];
 }>;
 
+export type TaskDiffReviewChallengeResponseRecord = Readonly<{
+  schemaVersion: 1;
+  kind: 'task-diff-review-challenge-response.v1';
+  responseDigest: string;
+  reviewRecordDigest: string;
+  subjectDigest: string;
+  responses: readonly Readonly<{
+    challengeId: string;
+    rationale: string;
+    evidence: readonly TaskDiffReviewEvidence[];
+  }>[];
+}>;
+
 export function createTaskDiffReviewRecord(
   input: CreateTaskDiffReviewRecordInput,
 ): TaskDiffReviewRecord {
@@ -451,6 +464,88 @@ export function createTaskDiffReviewDispositionRecord(input: {
     ...body,
     dispositionDigest: sha256(canonicalJson(body)),
   });
+}
+
+export function createTaskDiffReviewChallengeResponse(input: {
+  review: TaskDiffReviewRecord;
+  responses: readonly Readonly<{
+    challengeId: string;
+    rationale: string;
+    evidence: readonly TaskDiffReviewEvidence[];
+  }>[];
+}): TaskDiffReviewChallengeResponseRecord {
+  const review = parseTaskDiffReviewRecord(input.review);
+  const responses = normalizeChallengeResponses(input.responses);
+  assertExactChallengeSet(
+    review.challenges.map(({ challengeId }) => challengeId),
+    responses.map(({ challengeId }) => challengeId),
+  );
+  const body = {
+    schemaVersion: 1 as const,
+    kind: 'task-diff-review-challenge-response.v1' as const,
+    reviewRecordDigest: review.recordDigest,
+    subjectDigest: review.subjectDigest,
+    responses,
+  };
+  return parseTaskDiffReviewChallengeResponseRecord({
+    ...body,
+    responseDigest: sha256(canonicalJson(body)),
+  });
+}
+
+export function parseTaskDiffReviewChallengeResponseRecord(
+  value: unknown,
+): TaskDiffReviewChallengeResponseRecord {
+  if (
+    !isRecord(value) ||
+    !hasExactKeys(value, [
+      'schemaVersion',
+      'kind',
+      'responseDigest',
+      'reviewRecordDigest',
+      'subjectDigest',
+      'responses',
+    ]) ||
+    value.schemaVersion !== 1 ||
+    value.kind !== 'task-diff-review-challenge-response.v1'
+  ) {
+    throw dispositionInvalid();
+  }
+  const record: TaskDiffReviewChallengeResponseRecord = {
+    schemaVersion: 1,
+    kind: 'task-diff-review-challenge-response.v1',
+    responseDigest: parseDispositionDigest(value.responseDigest),
+    reviewRecordDigest: parseDispositionDigest(value.reviewRecordDigest),
+    subjectDigest: parseDispositionDigest(value.subjectDigest),
+    responses: normalizeChallengeResponses(value.responses),
+  };
+  if (
+    record.responseDigest !==
+    sha256(canonicalJson(withoutResponseDigest(record)))
+  ) {
+    throw dispositionInvalid();
+  }
+  return deepFreeze(record);
+}
+
+export function assertTaskDiffReviewChallengeResponseCurrent(
+  reviewCandidate: TaskDiffReviewRecord,
+  responseCandidate: TaskDiffReviewChallengeResponseRecord,
+): TaskDiffReviewChallengeResponseRecord {
+  const review = parseTaskDiffReviewRecord(reviewCandidate);
+  const response =
+    parseTaskDiffReviewChallengeResponseRecord(responseCandidate);
+  if (
+    response.reviewRecordDigest !== review.recordDigest ||
+    response.subjectDigest !== review.subjectDigest
+  ) {
+    throw dispositionInvalid();
+  }
+  assertExactChallengeSet(
+    review.challenges.map(({ challengeId }) => challengeId),
+    response.responses.map(({ challengeId }) => challengeId),
+  );
+  return response;
 }
 
 export function parseTaskDiffReviewDispositionRecord(
@@ -983,6 +1078,60 @@ function normalizeDispositionEntries(
   return Object.freeze(entries);
 }
 
+function normalizeChallengeResponses(
+  value: unknown,
+): TaskDiffReviewChallengeResponseRecord['responses'] {
+  if (
+    !Array.isArray(value) ||
+    value.length === 0 ||
+    value.length > MAX_FINDINGS
+  ) {
+    throw dispositionInvalid();
+  }
+  const responses = value
+    .map((entry) => {
+      if (
+        !isRecord(entry) ||
+        !hasExactKeys(entry, ['challengeId', 'rationale', 'evidence'])
+      ) {
+        throw dispositionInvalid();
+      }
+      let evidence: readonly TaskDiffReviewEvidence[];
+      try {
+        evidence = normalizeEvidence(entry.evidence, false);
+      } catch {
+        throw dispositionInvalid();
+      }
+      return Object.freeze({
+        challengeId: parseDispositionDigest(entry.challengeId),
+        rationale: boundedDispositionText(entry.rationale),
+        evidence,
+      });
+    })
+    .sort((left, right) => left.challengeId.localeCompare(right.challengeId));
+  if (
+    responses.some(
+      (entry, index) =>
+        index > 0 && entry.challengeId === responses[index - 1]!.challengeId,
+    )
+  ) {
+    throw dispositionInvalid();
+  }
+  return Object.freeze(responses);
+}
+
+function assertExactChallengeSet(
+  expected: readonly string[],
+  actual: readonly string[],
+): void {
+  if (
+    expected.length === 0 ||
+    canonicalJson([...expected].sort()) !== canonicalJson([...actual].sort())
+  ) {
+    throw dispositionInvalid();
+  }
+}
+
 function assertDispositionAuthority(
   review: TaskDiffReviewRecord,
   entries: readonly TaskDiffReviewDispositionEntry[],
@@ -1060,6 +1209,13 @@ function withoutRecordDigest(
   record: TaskDiffReviewRecord,
 ): Omit<TaskDiffReviewRecord, 'recordDigest'> {
   const { recordDigest: _recordDigest, ...body } = record;
+  return body;
+}
+
+function withoutResponseDigest(
+  record: TaskDiffReviewChallengeResponseRecord,
+): Omit<TaskDiffReviewChallengeResponseRecord, 'responseDigest'> {
+  const { responseDigest: _responseDigest, ...body } = record;
   return body;
 }
 

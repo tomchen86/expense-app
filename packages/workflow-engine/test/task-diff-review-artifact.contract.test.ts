@@ -2,9 +2,12 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
+  assertTaskDiffReviewChallengeResponseCurrent,
   assertTaskDiffReviewContentSatisfied,
+  createTaskDiffReviewChallengeResponse,
   createTaskDiffReviewDispositionRecord,
   createTaskDiffReviewRecord,
+  parseTaskDiffReviewChallengeResponseRecord,
   parseTaskDiffReviewDispositionRecord,
   parseTaskDiffReviewRecord,
   type CreateTaskDiffReviewRecordInput,
@@ -151,6 +154,52 @@ test('TaskDiffReview challenges block until independently dispositioned while su
   assert.deepEqual(
     assertTaskDiffReviewContentSatisfied(input.subject, record, disposition),
     record,
+  );
+});
+
+test('TaskDiffReview challenge responses are content-addressed and cover the exact current challenge set', () => {
+  const record = createTaskDiffReviewRecord(reviewInput({ challenge: true }));
+  const challenge = record.challenges[0]!;
+  const response = createTaskDiffReviewChallengeResponse({
+    review: record,
+    responses: [
+      {
+        challengeId: challenge.challengeId,
+        rationale: 'The exact candidate check evidence answers the challenge.',
+        evidence: [challenge.evidence[0]!],
+      },
+    ],
+  });
+  assert.match(response.responseDigest, /^[0-9a-f]{64}$/);
+  assert.deepEqual(
+    parseTaskDiffReviewChallengeResponseRecord(structuredClone(response)),
+    response,
+  );
+  assert.deepEqual(
+    assertTaskDiffReviewChallengeResponseCurrent(record, response),
+    response,
+  );
+  assert.throws(
+    () =>
+      createTaskDiffReviewChallengeResponse({
+        review: record,
+        responses: [],
+      }),
+    hasCode('TASK_DIFF_REVIEW_DISPOSITION_INVALID'),
+  );
+  assert.throws(
+    () =>
+      createTaskDiffReviewChallengeResponse({
+        review: record,
+        responses: [
+          {
+            challengeId: 'f'.repeat(64),
+            rationale: 'This challenge was not raised by the bound review.',
+            evidence: [],
+          },
+        ],
+      }),
+    hasCode('TASK_DIFF_REVIEW_DISPOSITION_INVALID'),
   );
 });
 

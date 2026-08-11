@@ -1415,6 +1415,7 @@ export function readProviderInvocationLifecycleProjection(
       'blind-survey-manifest',
       'plan-review-manifest',
       'task-diff-review-manifest',
+      'task-diff-review-continuation-manifest',
     ].includes(String(manifest.kind)) ||
     manifest.changeId !== value.changeId ||
     manifest.repositoryId !== request.repositoryId ||
@@ -1430,7 +1431,8 @@ export function readProviderInvocationLifecycleProjection(
     (value.purpose === 'plan-review' &&
       manifest.kind !== 'plan-review-manifest') ||
     (value.purpose === 'task-diff-review' &&
-      manifest.kind !== 'task-diff-review-manifest')
+      manifest.kind !== 'task-diff-review-manifest' &&
+      manifest.kind !== 'task-diff-review-continuation-manifest')
   ) {
     throw providerInvocationUnsafe();
   }
