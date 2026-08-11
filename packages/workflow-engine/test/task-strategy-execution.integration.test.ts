@@ -1,12 +1,15 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
 import { canonicalJson } from '../src/canonical-json.ts';
+import { runGitWithEnvironment } from '../src/git.ts';
 import { finalizeTask } from '../src/lifecycle.ts';
 import { commitPlanningTransition } from '../src/planning-transition.ts';
 import { startSession } from '../src/session.ts';
+import { validateTaskStrategyPatch } from '../src/task-strategy-patch.ts';
 import {
   inspectTaskStrategyTransaction,
   sealTaskStrategyRed,
@@ -240,6 +243,170 @@ test('single-agent TDD keeps the RED gate and engine GREEN evidence without fals
   }
 });
 
+test('cross-agent patch validation derives one bounded implementation tree without touching the task worktree', () => {
+  const { repository } = createCrossAgentFixture('assertion');
+  try {
+    const session = startSession(repository, 'demo-change', '1.1');
+    const testPath = path.join(repository, 'test/feature.test.mjs');
+    fs.mkdirSync(path.dirname(testPath), { recursive: true });
+    fs.writeFileSync(
+      testPath,
+      "throw new Error('feature behavior is not implemented');\n",
+    );
+    const red = sealTaskStrategyRed(repository, session.sessionId, {
+      explicitActor: 'codex',
+      environment: {},
+    });
+    const implementationPath = path.join(repository, 'src/feature.ts');
+    fs.mkdirSync(path.dirname(implementationPath), { recursive: true });
+    fs.writeFileSync(implementationPath, 'export const feature = true;\n');
+    const patch = diffAgainstTree(repository, red.red.candidateTree, [
+      'src/feature.ts',
+    ]);
+    fs.rmSync(implementationPath);
+
+    assert.throws(
+      () =>
+        validateTaskStrategyPatch(repository, session.sessionId, {
+          patch,
+          explicitActor: 'codex',
+          environment: {},
+        }),
+      hasCode('TASK_STRATEGY_IMPLEMENTER_REQUIRED'),
+    );
+    const validation = validateTaskStrategyPatch(
+      repository,
+      session.sessionId,
+      {
+        patch,
+        explicitActor: 'claude',
+        environment: {},
+      },
+    );
+    assert.equal(validation.sourceTree, red.red.candidateTree);
+    assert.notEqual(validation.candidateTree, validation.sourceTree);
+    assert.deepEqual(validation.changedPaths, ['src/feature.ts']);
+    assert.equal(validation.implementer.providerId, 'claude');
+    assert.match(validation.patchDigest, /^[0-9a-f]{64}$/);
+    assert.equal(fs.existsSync(implementationPath), false);
+    assert.deepEqual(
+      inspectTaskStrategyTransaction(repository, session.sessionId),
+      red,
+    );
+  } finally {
+    fs.rmSync(repository, { recursive: true, force: true });
+  }
+});
+
+test('patch validation rejects frozen tests, path escape, and unsafe file modes from the derived tree', () => {
+  const { repository } = createCrossAgentFixture('assertion');
+  try {
+    const session = startSession(repository, 'demo-change', '1.1');
+    const testPath = path.join(repository, 'test/feature.test.mjs');
+    const originalTest =
+      "throw new Error('feature behavior is not implemented');\n";
+    fs.mkdirSync(path.dirname(testPath), { recursive: true });
+    fs.writeFileSync(testPath, originalTest);
+    const red = sealTaskStrategyRed(repository, session.sessionId, {
+      explicitActor: 'codex',
+      environment: {},
+    });
+
+    fs.writeFileSync(testPath, "throw new Error('weakened');\n");
+    const frozenPatch = diffAgainstTree(repository, red.red.candidateTree, [
+      'test/feature.test.mjs',
+    ]);
+    fs.writeFileSync(testPath, originalTest);
+    assert.throws(
+      () =>
+        validateTaskStrategyPatch(repository, session.sessionId, {
+          patch: frozenPatch,
+          explicitActor: 'claude',
+          environment: {},
+        }),
+      hasCode('TASK_STRATEGY_PATCH_FROZEN_PATH'),
+    );
+
+    const escapedPath = path.join(repository, 'docs/escape.md');
+    fs.mkdirSync(path.dirname(escapedPath), { recursive: true });
+    fs.writeFileSync(escapedPath, 'escape\n');
+    const escapedPatch = diffAgainstTree(repository, red.red.candidateTree, [
+      'docs/escape.md',
+    ]);
+    fs.rmSync(escapedPath);
+    assert.throws(
+      () =>
+        validateTaskStrategyPatch(repository, session.sessionId, {
+          patch: escapedPatch,
+          explicitActor: 'claude',
+          environment: {},
+        }),
+      hasCode('TASK_STRATEGY_PATCH_SCOPE_INVALID'),
+    );
+
+    const symlinkPath = path.join(repository, 'src/feature.ts');
+    fs.mkdirSync(path.dirname(symlinkPath), { recursive: true });
+    fs.symlinkSync('../test/feature.test.mjs', symlinkPath);
+    const symlinkPatch = diffAgainstTree(repository, red.red.candidateTree, [
+      'src/feature.ts',
+    ]);
+    fs.rmSync(symlinkPath);
+    assert.throws(
+      () =>
+        validateTaskStrategyPatch(repository, session.sessionId, {
+          patch: symlinkPatch,
+          explicitActor: 'claude',
+          environment: {},
+        }),
+      hasCode('TASK_STRATEGY_PATCH_MODE_INVALID'),
+    );
+  } finally {
+    fs.rmSync(repository, { recursive: true, force: true });
+  }
+});
+
+test('single-agent patch validation permits the RED author without weakening patch boundaries', () => {
+  const { repository } = createCrossAgentFixture(
+    'assertion',
+    'tdd-single-agent',
+  );
+  try {
+    const session = startSession(repository, 'demo-change', '1.1');
+    const testPath = path.join(repository, 'test/feature.test.mjs');
+    fs.mkdirSync(path.dirname(testPath), { recursive: true });
+    fs.writeFileSync(
+      testPath,
+      "throw new Error('feature behavior is not implemented');\n",
+    );
+    const red = sealTaskStrategyRed(repository, session.sessionId, {
+      explicitActor: 'codex',
+      environment: {},
+    });
+    const implementationPath = path.join(repository, 'src/feature.ts');
+    fs.mkdirSync(path.dirname(implementationPath), { recursive: true });
+    fs.writeFileSync(implementationPath, 'export const feature = true;\n');
+    const patch = diffAgainstTree(repository, red.red.candidateTree, [
+      'src/feature.ts',
+    ]);
+    fs.rmSync(implementationPath);
+
+    const validation = validateTaskStrategyPatch(
+      repository,
+      session.sessionId,
+      {
+        patch,
+        explicitActor: 'codex',
+        environment: {},
+      },
+    );
+    assert.equal(validation.implementer.providerId, 'codex');
+    assert.deepEqual(validation.changedPaths, ['src/feature.ts']);
+    assert.equal(fs.existsSync(implementationPath), false);
+  } finally {
+    fs.rmSync(repository, { recursive: true, force: true });
+  }
+});
+
 function createCrossAgentFixture(
   failureCategory: 'assertion' | 'syntax',
   strategy: 'cross-agent-tdd' | 'tdd-single-agent' = 'cross-agent-tdd',
@@ -332,4 +499,44 @@ function createCrossAgentFixture(
 
 function hasCode(code: string): (error: unknown) => boolean {
   return (error) => isWorkflowError(error, code);
+}
+
+function diffAgainstTree(
+  repository: string,
+  tree: string,
+  paths: string[],
+): Buffer {
+  const temporaryDirectory = fs.mkdtempSync(
+    path.join(os.tmpdir(), 'task-strategy-test-patch-'),
+  );
+  const environment = {
+    GIT_INDEX_FILE: path.join(temporaryDirectory, 'index'),
+  };
+  const literals = paths.map((entry) => `:(literal)${entry}`);
+  try {
+    runGitWithEnvironment(repository, ['read-tree', tree], environment);
+    runGitWithEnvironment(
+      repository,
+      ['add', '-A', '--', ...literals],
+      environment,
+    );
+    return Buffer.from(
+      runGitWithEnvironment(
+        repository,
+        [
+          'diff',
+          '--cached',
+          '--binary',
+          '--full-index',
+          '--no-renames',
+          tree,
+          '--',
+          ...literals,
+        ],
+        environment,
+      ),
+    );
+  } finally {
+    fs.rmSync(temporaryDirectory, { recursive: true, force: true });
+  }
 }
