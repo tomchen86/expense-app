@@ -1074,6 +1074,11 @@
       "digest": "sha256:6a20cf425abb09148c746a243562a865e3b91cf3b27a3c9a0c4ffe243ba2a5c4"
     },
     {
+      "path": "src/task-diff-review-artifact.ts",
+      "mode": "100644",
+      "digest": "sha256:ec1204278d7486639d56a24629c1e629ee2ba7c83e1cfbb59ba5380bf1f19d27"
+    },
+    {
       "path": "src/task-diff-review.ts",
       "mode": "100644",
       "digest": "sha256:17255b6c7b9c8e5d79260355df63a5d6ce57c50f94a09106be5c9802aa4392ef"

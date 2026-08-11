@@ -1,0 +1,294 @@
+import assert from 'node:assert/strict';
+import test from 'node:test';
+
+import {
+  assertTaskDiffReviewContentSatisfied,
+  createTaskDiffReviewDispositionRecord,
+  createTaskDiffReviewRecord,
+  parseTaskDiffReviewDispositionRecord,
+  parseTaskDiffReviewRecord,
+  type CreateTaskDiffReviewRecordInput,
+} from '../src/task-diff-review-artifact.ts';
+import {
+  createTaskDiffReviewSubject,
+  TASK_DIFF_REVIEW_COVERAGE,
+} from '../src/task-diff-review.ts';
+
+test('TaskDiffReview record canonically binds a fresh provider-independent assignment and complete coverage', () => {
+  const input = reviewInput();
+  const record = createTaskDiffReviewRecord(input);
+  const reordered = createTaskDiffReviewRecord({
+    ...input,
+    submission: {
+      ...input.submission,
+      coverage: [...input.submission.coverage].reverse(),
+      scopeAssessment: {
+        kind: 'no-challenge',
+        evidence: [
+          ...(input.submission.scopeAssessment.kind === 'no-challenge'
+            ? input.submission.scopeAssessment.evidence
+            : []),
+        ].reverse(),
+      },
+    },
+  });
+
+  assert.deepEqual(record, reordered);
+  assert.deepEqual(record.coverage, TASK_DIFF_REVIEW_COVERAGE);
+  assert.equal(record.assignment.achievedIndependence, 'provider-independent');
+  assert.match(record.recordDigest, /^[0-9a-f]{64}$/);
+  assert.deepEqual(parseTaskDiffReviewRecord(structuredClone(record)), record);
+  assert.deepEqual(
+    assertTaskDiffReviewContentSatisfied(input.subject, record, null),
+    record,
+  );
+});
+
+test('TaskDiffReview record rejects same-provider, reused-session, and incomplete review claims', () => {
+  const input = reviewInput();
+  assert.throws(
+    () =>
+      createTaskDiffReviewRecord({
+        ...input,
+        assignment: {
+          ...input.assignment,
+          reviewerProviderId: input.assignment.implementerProviderId,
+        },
+      }),
+    hasCode('TASK_DIFF_REVIEW_INDEPENDENCE_INVALID'),
+  );
+  assert.throws(
+    () =>
+      createTaskDiffReviewRecord({
+        ...input,
+        assignment: {
+          ...input.assignment,
+          reviewerSessionId: input.assignment.implementationSessionId,
+        },
+      }),
+    hasCode('TASK_DIFF_REVIEW_INDEPENDENCE_INVALID'),
+  );
+  assert.throws(
+    () =>
+      createTaskDiffReviewRecord({
+        ...input,
+        submission: {
+          ...input.submission,
+          coverage: input.submission.coverage.slice(1),
+        },
+      }),
+    hasCode('TASK_DIFF_REVIEW_RECORD_INVALID'),
+  );
+  assert.throws(
+    () =>
+      createTaskDiffReviewRecord({
+        ...input,
+        submission: {
+          ...input.submission,
+          scopeAssessment: { kind: 'no-challenge', evidence: [] },
+        },
+      }),
+    hasCode('TASK_DIFF_REVIEW_RECORD_INVALID'),
+  );
+  const challenged = reviewInput({ challenge: true });
+  assert.throws(
+    () =>
+      createTaskDiffReviewRecord({
+        ...challenged,
+        submission: {
+          ...challenged.submission,
+          findings: challenged.submission.findings.map((finding) => ({
+            ...finding,
+            evidence: [],
+          })),
+        },
+      }),
+    hasCode('TASK_DIFF_REVIEW_RECORD_INVALID'),
+  );
+});
+
+test('TaskDiffReview challenges block until independently dispositioned while suggestions remain advisory', () => {
+  const input = reviewInput({ challenge: true });
+  const record = createTaskDiffReviewRecord(input);
+  const challenge = record.challenges[0]!;
+
+  assert.equal(record.suggestions.length, 1);
+  assert.throws(
+    () => assertTaskDiffReviewContentSatisfied(input.subject, record, null),
+    hasCode('TASK_DIFF_REVIEW_CHALLENGE_OPEN'),
+  );
+  assert.throws(
+    () =>
+      createTaskDiffReviewDispositionRecord({
+        review: record,
+        entries: [
+          {
+            challengeId: challenge.challengeId,
+            disposition: 'rebutted',
+            rationale: 'The exact candidate blob preserves the invariant.',
+            closedBy: input.assignment.implementerPrincipalId,
+          },
+        ],
+      }),
+    hasCode('TASK_DIFF_REVIEW_DISPOSITION_INVALID'),
+  );
+
+  const disposition = createTaskDiffReviewDispositionRecord({
+    review: record,
+    entries: [
+      {
+        challengeId: challenge.challengeId,
+        disposition: 'rebutted',
+        rationale: 'The exact candidate blob preserves the invariant.',
+        closedBy: input.assignment.reviewerPrincipalId,
+      },
+    ],
+  });
+  assert.deepEqual(
+    parseTaskDiffReviewDispositionRecord(structuredClone(disposition)),
+    disposition,
+  );
+  assert.deepEqual(
+    assertTaskDiffReviewContentSatisfied(input.subject, record, disposition),
+    record,
+  );
+});
+
+test('accepted TaskDiffReview challenges require a changed subject and cannot authorize the reviewed candidate', () => {
+  const input = reviewInput({ challenge: true });
+  const record = createTaskDiffReviewRecord(input);
+  const disposition = createTaskDiffReviewDispositionRecord({
+    review: record,
+    entries: [
+      {
+        challengeId: record.challenges[0]!.challengeId,
+        disposition: 'accepted',
+        rationale: 'The implementation must change before it can proceed.',
+        closedBy: input.assignment.reviewerPrincipalId,
+      },
+    ],
+  });
+
+  assert.throws(
+    () =>
+      assertTaskDiffReviewContentSatisfied(input.subject, record, disposition),
+    hasCode('TASK_DIFF_REVIEW_CHALLENGE_ACCEPTED'),
+  );
+});
+
+test('TaskDiffReview reuse fails when any canonical subject input changes or stored bytes are redigested incompletely', () => {
+  const input = reviewInput();
+  const record = createTaskDiffReviewRecord(input);
+  const changed = createTaskDiffReviewSubject({
+    ...subjectInput(),
+    checkEvidenceDigest: '8'.repeat(64),
+  });
+
+  assert.throws(
+    () => assertTaskDiffReviewContentSatisfied(changed, record, null),
+    hasCode('TASK_DIFF_REVIEW_STALE'),
+  );
+  assert.throws(
+    () =>
+      parseTaskDiffReviewRecord({
+        ...record,
+        verdict: 'advisory-reject',
+      }),
+    hasCode('TASK_DIFF_REVIEW_RECORD_INVALID'),
+  );
+});
+
+function reviewInput(
+  options: { challenge?: boolean } = {},
+): CreateTaskDiffReviewRecordInput {
+  const subject = createTaskDiffReviewSubject(subjectInput());
+  const repositoryEvidence = {
+    kind: 'repository-location' as const,
+    path: 'src/a.ts',
+    line: 1,
+    blobObjectId: 'e'.repeat(40),
+    observation: 'The changed branch preserves the task invariant.',
+  };
+  return {
+    subject,
+    assignment: {
+      implementerPrincipalId: 'provider-b:implementer',
+      implementerProviderId: 'provider-b',
+      implementationSessionId: 'implementation-session-1',
+      reviewerPrincipalId: 'provider-a:reviewer',
+      reviewerProviderId: 'provider-a',
+      reviewerSessionId: 'review-session-2',
+      achievedIndependence: 'provider-independent',
+    },
+    submission: {
+      schemaVersion: 1,
+      verdict: options.challenge ? 'advisory-reject' : 'advisory-approve',
+      coverage: [...TASK_DIFF_REVIEW_COVERAGE],
+      scopeAssessment: options.challenge
+        ? { kind: 'challenges' }
+        : { kind: 'no-challenge', evidence: [repositoryEvidence] },
+      findings: options.challenge
+        ? [
+            {
+              kind: 'challenge',
+              severity: 'high',
+              category: 'correctness-and-invariants',
+              currentChangeImpact: 'required',
+              summary: 'The changed branch may violate the task invariant.',
+              evidence: [repositoryEvidence],
+            },
+          ]
+        : [],
+      suggestions: [
+        {
+          kind: 'suggestion',
+          severity: 'informational',
+          category: 'test-adequacy',
+          currentChangeImpact: 'independent-follow-up',
+          summary: 'A follow-up property test could improve diagnostics.',
+          evidence: [repositoryEvidence],
+        },
+      ],
+      residualRisk: 'No residual release-blocking risk was identified.',
+      uncertainty: 'Review is limited to the exact canonical subject.',
+    },
+  };
+}
+
+function subjectInput() {
+  return {
+    repositoryId: 'github:tomchen86/expense-app',
+    changeId: 'demo-change',
+    taskId: '1.1',
+    baseCommit: 'a'.repeat(40),
+    baseTree: 'b'.repeat(40),
+    candidateTree: 'c'.repeat(40),
+    transitions: [
+      {
+        path: 'src/a.ts',
+        before: { mode: '100644' as const, objectId: 'd'.repeat(40) },
+        after: { mode: '100644' as const, objectId: 'e'.repeat(40) },
+      },
+    ],
+    taskContractDigest: '1'.repeat(64),
+    requiredCheckPolicyDigest: '2'.repeat(64),
+    checkEvidenceDigest: '3'.repeat(64),
+    planningGenerationId: '4'.repeat(64),
+    planTargetDigest: '5'.repeat(64),
+    planReviewNodeId: '6'.repeat(64),
+    planningAssuranceDigest: '7'.repeat(64),
+    reviewRequirement: {
+      required: true,
+      basis: 'behavioral-strategy' as const,
+      riskPaths: [],
+    },
+  };
+}
+
+function hasCode(code: string): (error: unknown) => boolean {
+  return (error) =>
+    typeof error === 'object' &&
+    error !== null &&
+    'code' in error &&
+    (error as { code: unknown }).code === code;
+}
