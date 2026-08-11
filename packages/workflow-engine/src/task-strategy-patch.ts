@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-import { resolveActorIdentity, type ResolvedActor } from './actor-identity.ts';
+import { resolveActorIdentity } from './actor-identity.ts';
 import { canonicalJson } from './canonical-json.ts';
 import type {
   CrossAgentTddExecution,
@@ -20,6 +20,7 @@ import {
 } from './paths.ts';
 import { readTaskStrategyTransaction } from './task-strategy-store.ts';
 import {
+  readTaskStrategyCallerImplementationBinding,
   readTaskStrategyImplementationReservation,
   readTaskStrategyImplementationResultBinding,
 } from './task-strategy-provider-store.ts';
@@ -35,6 +36,7 @@ import {
   readTaskStrategyPatchReservation,
   type TaskStrategyPatchChange,
   type TaskStrategyPatchCurrentBinding,
+  type TaskStrategyPatchImplementer,
   type TaskStrategyPatchImportReceipt,
   type TaskStrategyPatchRecord,
   type TaskStrategyPatchReservation,
@@ -54,7 +56,7 @@ export type TaskStrategyPatchValidation = Readonly<{
   patchDigest: string;
   changedPaths: readonly string[];
   changes: readonly TaskStrategyPatchChange[];
-  implementer: ResolvedActor;
+  implementer: TaskStrategyPatchImplementer;
 }>;
 
 export type TaskStrategyPatchState = Readonly<{
@@ -89,6 +91,21 @@ type ProviderTaskStrategyPatchImportInput = Readonly<{
     'reservation-persisted' | 'record-persisted' | 'patch-applied';
 }>;
 
+type CallerTaskStrategyPatchValidationInput = Readonly<{
+  patch: string | Buffer;
+  callerImplementer: Extract<
+    TaskStrategyPatchImplementer,
+    { providerId: null }
+  >;
+}>;
+
+type CallerTaskStrategyPatchImportInput = Readonly<{
+  patch: string | Buffer;
+  callerImplementationBindingDigest: string;
+  testCrashAfter?:
+    'reservation-persisted' | 'record-persisted' | 'patch-applied';
+}>;
+
 export function validateTaskStrategyPatch(
   cwd: string,
   requestedSessionId: string,
@@ -105,13 +122,23 @@ export function validateTaskStrategyProviderPatch(
   return validateTaskStrategyPatchWithAuthority(cwd, requestedSessionId, input);
 }
 
+export function validateTaskStrategyCallerPatch(
+  cwd: string,
+  requestedSessionId: string,
+  input: CallerTaskStrategyPatchValidationInput,
+): TaskStrategyPatchValidation {
+  return validateTaskStrategyPatchWithAuthority(cwd, requestedSessionId, input);
+}
+
 function validateTaskStrategyPatchWithAuthority(
   cwd: string,
   requestedSessionId: string,
   input:
     | CallerTaskStrategyPatchInput
     | ProviderTaskStrategyPatchValidationInput
-    | ProviderTaskStrategyPatchImportInput,
+    | ProviderTaskStrategyPatchImportInput
+    | CallerTaskStrategyPatchValidationInput
+    | CallerTaskStrategyPatchImportInput,
 ): TaskStrategyPatchValidation {
   const patchBytes = normalizePatchBytes(input.patch);
   const inspection = inspectSession(cwd, requestedSessionId);
@@ -330,6 +357,22 @@ export function importTaskStrategyProviderPatchUnderLifecycleLock(
   return imported;
 }
 
+export function importTaskStrategyCallerPatchUnderLifecycleLock(
+  cwd: string,
+  requestedSessionId: string,
+  input: CallerTaskStrategyPatchImportInput,
+  assertOwned: () => void,
+): ImportedTaskStrategyPatch {
+  assertOwned();
+  const imported = importTaskStrategyPatchUnlocked(
+    cwd,
+    requestedSessionId,
+    input,
+  );
+  assertOwned();
+  return imported;
+}
+
 function importTaskStrategyPatchUnlocked(
   cwd: string,
   requestedSessionId: string,
@@ -338,6 +381,7 @@ function importTaskStrategyPatchUnlocked(
     explicitActor?: string;
     environment?: NodeJS.ProcessEnv;
     implementationResultBindingDigest?: string;
+    callerImplementationBindingDigest?: string;
     testCrashAfter?:
       'reservation-persisted' | 'record-persisted' | 'patch-applied';
   }>,
@@ -521,9 +565,14 @@ function resolvePatchImplementer(
   input:
     | CallerTaskStrategyPatchInput
     | ProviderTaskStrategyPatchValidationInput
-    | ProviderTaskStrategyPatchImportInput,
+    | ProviderTaskStrategyPatchImportInput
+    | CallerTaskStrategyPatchValidationInput
+    | CallerTaskStrategyPatchImportInput,
   patchDigest: string,
-): Readonly<{ implementer: ResolvedActor; allowsSameProvider: boolean }> {
+): Readonly<{
+  implementer: TaskStrategyPatchImplementer;
+  allowsSameProvider: boolean;
+}> {
   if (transaction === null) {
     throw workflowError(
       'TASK_STRATEGY_RED_REQUIRED',
@@ -535,6 +584,12 @@ function resolvePatchImplementer(
     inspection.git.gitCommonDirectory,
     inspection.contract.config.runtimeDirectory,
   );
+  if ('callerImplementer' in input) {
+    return Object.freeze({
+      implementer: Object.freeze(structuredClone(input.callerImplementer)),
+      allowsSameProvider: true,
+    });
+  }
   if ('implementationReservationDigest' in input) {
     const reservation = readTaskStrategyImplementationReservation(
       runtime,
@@ -598,6 +653,41 @@ function resolvePatchImplementer(
           'same-provider-fresh-session',
     });
   }
+  if ('callerImplementationBindingDigest' in input) {
+    const binding = readTaskStrategyCallerImplementationBinding(
+      runtime,
+      inspection.session.sessionId,
+    );
+    const participant = binding?.roleResult.participant;
+    const assignment = binding?.roleResult.assignment;
+    if (
+      binding === null ||
+      binding.bindingDigest !== input.callerImplementationBindingDigest ||
+      binding.output.sessionId !== inspection.session.sessionId ||
+      binding.output.sourceTree !== transaction.red.candidateTree ||
+      binding.output.patchDigest !== patchDigest ||
+      binding.roleResult.form !== 'granted-caller-supplied' ||
+      participant === undefined ||
+      participant.providerId !== null ||
+      participant.principalId === null ||
+      participant.identityAssurance === 'maintainer-signed' ||
+      assignment === undefined ||
+      !('grantId' in assignment) ||
+      assignment.degradedForm !== 'caller-supplied'
+    ) {
+      throw patchAuthorityStale();
+    }
+    return Object.freeze({
+      implementer: Object.freeze({
+        providerId: null,
+        principalId: participant.principalId,
+        assurance: participant.identityAssurance,
+        degradedForm: 'caller-supplied' as const,
+        grantId: assignment.grantId,
+      }),
+      allowsSameProvider: true,
+    });
+  }
   const actor = resolveActorIdentity({
     ...(input.explicitActor === undefined
       ? {}
@@ -629,7 +719,7 @@ function assertPatchRecordCurrent(
   record: TaskStrategyPatchRecord,
   inspection: SessionInspection,
   task: CrossAgentTddExecution | TddSingleAgentExecution,
-  implementer: ResolvedActor,
+  implementer: TaskStrategyPatchImplementer,
   patchBytes: Buffer,
 ): void {
   if (
