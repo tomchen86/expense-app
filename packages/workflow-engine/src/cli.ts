@@ -174,9 +174,11 @@ import {
 import { runtimePaths } from './session-store.ts';
 import {
   inspectTaskRevisionStatus,
+  prepareTaskRevisionApprovalBinding,
   resumeTask,
   reviseTask,
 } from './task-revision.ts';
+import { issueTaskRevisionApproval } from './task-revision-approval.ts';
 import { validateManagedDocuments } from './managed-documents.ts';
 import { diagnoseOpenSpec } from './openspec-doctor.ts';
 import {
@@ -1017,9 +1019,26 @@ function dispatch(args: string[], cwd: string): CommandResult {
         result: reviseTask(cwd, sessionId, reason),
       };
     }
-    case 'resume-task':
-      requireArgumentCount(command, rest, 1, 1);
-      return { command, ok: true, result: resumeTask(cwd, rest[0]!) };
+    case 'resume-task': {
+      const sessionId = rest[0];
+      const approvalId = optionValue(rest.slice(1), '--approval');
+      if (
+        !sessionId ||
+        !(
+          rest.length === 1 ||
+          (rest.length === 3 && rest[1] === '--approval' && approvalId)
+        )
+      ) {
+        throw usage(
+          'Usage: pnpm workflow resume-task <session-id> [--approval <approval-id>] [--json]',
+        );
+      }
+      return {
+        command,
+        ok: true,
+        result: resumeTask(cwd, sessionId, { approvalId }),
+      };
+    }
     case 'status': {
       requireArgumentCount(command, rest, 0, 1);
       if (rest[0]) {
@@ -1113,6 +1132,29 @@ function dispatch(args: string[], cwd: string): CommandResult {
         ),
       };
     case 'maintainer': {
+      if (
+        rest.length === 6 &&
+        rest[0] === 'revision-approval' &&
+        rest[2] === '--target' &&
+        rest[4] === '--reason'
+      ) {
+        const binding = prepareTaskRevisionApprovalBinding(cwd, rest[1]!);
+        const approval = issueTaskRevisionApproval(cwd, {
+          binding,
+          expectedTargetDigest: rest[3]!,
+          rationale: rest[5]!,
+        });
+        return {
+          command,
+          action: 'revision-approval',
+          ok: true,
+          approvalId: approval.approvalId,
+          recordPath: approval.recordPath,
+          expiresAt: approval.envelope.payload.expiresAt,
+          targetDigest: approval.envelope.payload.targetDigest,
+          binding: approval.envelope.payload.binding,
+        };
+      }
       if (isCollaborationGrantCommand(rest)) {
         return {
           command,
@@ -2427,7 +2469,7 @@ function usageText(): string {
     '  pnpm workflow audit verify <repository-id> --audit-root <absolute-external-path> [--json]',
     '  pnpm workflow start <change-id> --task <task-id> --mandate <mandate-task-id> [--json]',
     '  pnpm workflow revise-task <session-id> --reason <text> [--json]',
-    '  pnpm workflow resume-task <session-id> [--json]',
+    '  pnpm workflow resume-task <session-id> [--approval <approval-id>] [--json]',
     '  pnpm workflow status [investigation-or-task-id] [--json]',
     '  pnpm workflow check <session-id> [--json]',
     '  pnpm workflow run-check <check-id> [--json]',
@@ -2437,6 +2479,7 @@ function usageText(): string {
     '  pnpm workflow maintainer grant preflight --profile <profile-id> [--json]',
     '  pnpm workflow maintainer grant approve-and-apply --change <change-id> --task <mandate-task-id> --profile <profile-id> --reason <text> --message <subject> --effects-file <json|none> [--waivers-file <json|none>] [--json]',
     '  pnpm workflow maintainer grant reissue-and-apply --grant <prior-grant-id> --reason <text> [--ttl-minutes <positive-integer>] [--waivers-file <json|none>] [--json]',
+    '  pnpm workflow maintainer revision-approval <session-id> --target <digest> --reason <text> [--json]',
     '  pnpm workflow maintainer resolution-grant --investigation <id> --decision <kind> --continuity <mode> --assurance <mode> --rationale <text> [--json]',
     '  pnpm workflow maintainer resolution-inspect [grant-id] [--json]',
     '  pnpm workflow maintainer resolution-publication-discard <grant-id> --expected-publication-state <digest> --reason <text> [--json]',

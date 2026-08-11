@@ -39,6 +39,12 @@ import {
 } from './session-store.ts';
 import { loadStableValidatedChangeContract } from './validated-contract-context.ts';
 import { inspectSession } from './verification.ts';
+import {
+  readAndValidateTaskRevisionApproval,
+  taskRevisionApprovalTargetDigest,
+  type TaskRevisionApprovalBinding,
+  type TaskRevisionApprovalValidationOptions,
+} from './task-revision-approval.ts';
 
 const REVISION_LEASE_TTL_MS = 24 * 60 * 60 * 1_000;
 const REVISION_LEASE_ID =
@@ -126,6 +132,7 @@ export type TaskRevisionJournal = Readonly<{
   planReportId?: string;
   planChangedPaths?: string[];
   planCommittedAt?: string;
+  approvalId?: string;
   completedAt?: string;
   abortPreparedAt?: string;
   abortReason?: string;
@@ -151,12 +158,15 @@ export type TaskRevisionStatus = Readonly<{
   planCommitHash: string | null;
   planReportId: string | null;
   planChangedPaths: string[];
+  approvalId: string | null;
   retrySafe: boolean;
   retryCommand: string | null;
 }>;
 
 export type TaskRevisionOptions = Readonly<{
   now?: () => Date;
+  approvalId?: string;
+  approvalVerifier?: TaskRevisionApprovalValidationOptions['verifier'];
   /** Test-only deterministic interruption after one durable phase. */
   testCrashAfter?:
     | 'lease-prepared'
@@ -456,9 +466,83 @@ export function inspectTaskRevisionStatus(
     planCommitHash: journal.planCommitHash ?? null,
     planReportId: journal.planReportId ?? null,
     planChangedPaths: [...(journal.planChangedPaths ?? [])],
+    approvalId: journal.approvalId ?? null,
     retrySafe,
     retryCommand,
   };
+}
+
+export function prepareTaskRevisionApprovalBinding(
+  cwd: string,
+  requestedSessionId: string,
+  options: Pick<TaskRevisionOptions, 'now'> = {},
+): TaskRevisionApprovalBinding {
+  const sessionId = assertSessionId(requestedSessionId);
+  const discovered = discoverRepository(cwd);
+  const config = loadWorkflowConfig(discovered.repositoryRoot);
+  const runtime = runtimePaths(
+    discovered.gitCommonDirectory,
+    config.runtimeDirectory,
+  );
+  return withRepositoryLifecycleOperation(runtime, (assertRepositoryLock) =>
+    withSessionOperation(runtime, sessionId, () => {
+      assertRepositoryLock();
+      const current = readSessionFile(sessionPath(runtime, sessionId));
+      const journal = findLiveRevisionJournal(runtime, sessionId);
+      if (
+        journal === null ||
+        journal.phase !== 'revising' ||
+        current.state !== 'revising' ||
+        current.revisionLeaseId !== journal.leaseId
+      ) {
+        throw workflowError(
+          'REVISION_APPROVAL_NOT_AVAILABLE',
+          'A task-revision approval can be prepared only for an exact live widening lease before transition effects.',
+          ExitCode.staleState,
+        );
+      }
+      assertLeaseCurrent(journal, current, discovered.repositoryRoot);
+      const now = trustedNow(options.now);
+      if (now.getTime() >= Date.parse(journal.expiresAt)) {
+        throw workflowError(
+          'REVISION_LEASE_EXPIRED',
+          'The task revision lease expired before widening approval preparation.',
+          ExitCode.staleState,
+        );
+      }
+      const planningPaths = assertResumePathState(
+        discovered.repositoryRoot,
+        config.changeRoot,
+        current,
+        journal,
+      );
+      if (planningPaths.length === 0) {
+        throw workflowError(
+          'REVISION_APPROVAL_NOT_REQUIRED',
+          'An unchanged task contract does not require widening approval.',
+          ExitCode.guard,
+        );
+      }
+      const candidate = loadStableValidatedChangeContract(
+        discovered,
+        current.changeId,
+      ).contract;
+      const classification = classifyRevisionCandidate(
+        current,
+        journal,
+        candidate,
+      );
+      if (classification.kind !== 'widening') {
+        throw workflowError(
+          'REVISION_APPROVAL_NOT_REQUIRED',
+          'Scope-neutral and narrowing task revisions do not accept external widening authority.',
+          ExitCode.guard,
+        );
+      }
+      assertRepositoryLock();
+      return classification.approvalBinding;
+    }),
+  );
 }
 
 export function prepareTaskRevisionAbort(
@@ -620,7 +704,7 @@ function completePreparedResume(
     if (current.revisionLeaseId !== journal.leaseId) {
       throw corruptRevisionState();
     }
-    active = activeSessionForPreparedResume(current, journal);
+    active = activeSessionForPreparedResume(current, journal, options);
     if (digestValue(active) !== journal.resumeSessionDigest) {
       throw corruptRevisionState();
     }
@@ -644,6 +728,7 @@ function completePreparedResume(
 function activeSessionForPreparedResume(
   current: WorkflowSession,
   journal: TaskRevisionJournal,
+  options: TaskRevisionOptions,
 ): WorkflowSession {
   if (!journal.planCommitHash) {
     assertNoOpResumeState(
@@ -680,7 +765,14 @@ function activeSessionForPreparedResume(
     discovered,
     current.changeId,
   ).contract;
-  assertScopeNeutralRevisionCandidate(current, journal, contract);
+  assertRevisionCandidateAuthorized(
+    current.repositoryRoot,
+    current,
+    journal,
+    contract,
+    options,
+    true,
+  );
   return activeSessionAfterPlanningRevision(
     current,
     journal.planCommitHash,
@@ -702,7 +794,14 @@ function commitPlanningRevision(
     before,
     current.changeId,
   ).contract;
-  assertScopeNeutralRevisionCandidate(current, journal, candidate);
+  const approvalId = assertRevisionCandidateAuthorized(
+    current.repositoryRoot,
+    current,
+    journal,
+    candidate,
+    options,
+    journal.phase !== 'revising',
+  );
 
   let durableJournal = journal;
   const transition = withTaskRevisionPlanningAuthority(
@@ -740,6 +839,7 @@ function commitPlanningRevision(
                   }),
                 ),
                 stagingPreparedAt: trustedNow(options.now).toISOString(),
+                ...(approvalId === null ? {} : { approvalId }),
               });
             } else if (
               durableJournal.phase !== 'planning-staging-prepared' ||
@@ -755,6 +855,7 @@ function commitPlanningRevision(
                   })),
                 ) ||
               context.previousIndexTree !== durableJournal.indexTree ||
+              (durableJournal.approvalId ?? null) !== approvalId ||
               canonicalJson(context.preservedUnstagedPaths) !==
                 canonicalJson(durableJournal.implementationPaths)
             ) {
@@ -904,7 +1005,14 @@ function completeCommittedPlanningRevision(
     discovered,
     current.changeId,
   ).contract;
-  assertScopeNeutralRevisionCandidate(current, journal, contract);
+  assertRevisionCandidateAuthorized(
+    current.repositoryRoot,
+    current,
+    journal,
+    contract,
+    options,
+    true,
+  );
   const active = activeSessionAfterPlanningRevision(
     current,
     journal.planCommitHash,
@@ -1125,11 +1233,18 @@ function reconcilePreparedGeneratedDocuments(
   }
 }
 
-function assertScopeNeutralRevisionCandidate(
+type RevisionCandidateClassification =
+  | Readonly<{ kind: 'scope-neutral-or-narrowing' }>
+  | Readonly<{
+      kind: 'widening';
+      approvalBinding: TaskRevisionApprovalBinding;
+    }>;
+
+function classifyRevisionCandidate(
   session: WorkflowSession,
   journal: TaskRevisionJournal,
   contract: ReturnType<typeof loadStableValidatedChangeContract>['contract'],
-): void {
+): RevisionCandidateClassification {
   const task = contract.tasks.find(
     (candidate) => candidate.id === session.taskId,
   );
@@ -1161,13 +1276,6 @@ function assertScopeNeutralRevisionCandidate(
   const checksAreNotWeaker = journal.requiredChecks.every((candidate) =>
     policy.requiredChecks.includes(candidate),
   );
-  if (!allowedPathsAreNarrower || !checksAreNotWeaker) {
-    throw workflowError(
-      'REVISION_WIDENING_APPROVAL_REQUIRED',
-      'A task revision that widens path or check authority requires an external non-benefiting approval.',
-      ExitCode.guard,
-    );
-  }
   const outside = journal.implementationPaths.filter(
     (changedPath) =>
       !policy.allowedPaths.some((allowedPath) =>
@@ -1182,6 +1290,92 @@ function assertScopeNeutralRevisionCandidate(
       { details: { paths: outside } },
     );
   }
+  if (allowedPathsAreNarrower && checksAreNotWeaker) {
+    return { kind: 'scope-neutral-or-narrowing' };
+  }
+  return {
+    kind: 'widening',
+    approvalBinding: {
+      schemaVersion: 1,
+      kind: 'task-revision-approval-binding.v1',
+      changeId: journal.changeId,
+      taskId: journal.taskId,
+      sessionId: journal.sessionId,
+      leaseId: journal.leaseId,
+      actorAuthorityId: journal.actorAuthorityId,
+      baselineCommit: journal.head,
+      baselineTree: journal.tree,
+      priorContractDigest: journal.contractDigest,
+      candidateContractDigest: contract.contractDigest,
+      candidatePlanningGenerationId: planningAssurance.planningGenerationId,
+      implementationFingerprint: journal.implementationFingerprint,
+      revisionReasonDigest: crypto
+        .createHash('sha256')
+        .update('task-revision-reason.v1\0')
+        .update(journal.reason)
+        .digest('hex'),
+      previousAllowedPaths: [...journal.allowedPaths].sort(),
+      nextAllowedPaths: [...policy.allowedPaths].sort(),
+      previousRequiredChecks: [...journal.requiredChecks].sort(),
+      nextRequiredChecks: [...policy.requiredChecks].sort(),
+    },
+  };
+}
+
+function assertRevisionCandidateAuthorized(
+  cwd: string,
+  session: WorkflowSession,
+  journal: TaskRevisionJournal,
+  contract: ReturnType<typeof loadStableValidatedChangeContract>['contract'],
+  options: TaskRevisionOptions,
+  allowExpired: boolean,
+): string | null {
+  const classification = classifyRevisionCandidate(session, journal, contract);
+  if (classification.kind === 'scope-neutral-or-narrowing') {
+    if (journal.approvalId !== undefined) throw corruptRevisionState();
+    return null;
+  }
+  const approvalId = journal.approvalId ?? options.approvalId;
+  if (approvalId === undefined) {
+    const approvalTargetDigest = taskRevisionApprovalTargetDigest(
+      classification.approvalBinding,
+    );
+    throw workflowError(
+      'REVISION_REQUIRES_APPROVAL',
+      'A task revision that widens path or check authority requires an external non-benefiting approval.',
+      ExitCode.guard,
+      {
+        details: {
+          approvalTargetDigest,
+          previousAllowedPaths:
+            classification.approvalBinding.previousAllowedPaths,
+          nextAllowedPaths: classification.approvalBinding.nextAllowedPaths,
+          previousRequiredChecks:
+            classification.approvalBinding.previousRequiredChecks,
+          nextRequiredChecks: classification.approvalBinding.nextRequiredChecks,
+        },
+        recovery: `A controlling maintainer may issue the exact decision with pnpm workflow maintainer revision-approval ${journal.sessionId} --target ${approvalTargetDigest} --reason <text> --json, then retry resume-task with --approval <approval-id>.`,
+      },
+    );
+  }
+  if (
+    journal.approvalId !== undefined &&
+    options.approvalId !== undefined &&
+    options.approvalId !== journal.approvalId
+  ) {
+    throw corruptRevisionState();
+  }
+  readAndValidateTaskRevisionApproval(
+    cwd,
+    approvalId,
+    classification.approvalBinding,
+    {
+      now: trustedNow(options.now),
+      allowExpired,
+      verifier: options.approvalVerifier,
+    },
+  );
+  return approvalId;
 }
 
 function policyPathContains(container: string, candidate: string): boolean {
@@ -1669,6 +1863,7 @@ function isTaskRevisionJournal(value: unknown): value is TaskRevisionJournal {
     'planReportId',
     'planChangedPaths',
     'planCommittedAt',
+    'approvalId',
     'completedAt',
     'abortPreparedAt',
     'abortReason',
@@ -1723,6 +1918,24 @@ function isTaskRevisionJournal(value: unknown): value is TaskRevisionJournal {
     !SHA256.test(value.sessionBeforeDigest) ||
     !isCanonicalTimestamp(value.createdAt) ||
     !isCanonicalTimestamp(value.expiresAt)
+  ) {
+    return false;
+  }
+  if (
+    value.approvalId !== undefined &&
+    (typeof value.approvalId !== 'string' || !SHA256.test(value.approvalId))
+  ) {
+    return false;
+  }
+  if (
+    value.approvalId !== undefined &&
+    [
+      'prepared',
+      'session-revising',
+      'revising',
+      'abort-prepared',
+      'revoked',
+    ].includes(String(value.phase))
   ) {
     return false;
   }
