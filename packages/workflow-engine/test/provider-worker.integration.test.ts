@@ -13,6 +13,7 @@ import { writeEvidenceNode } from '../src/evidence-object-store.ts';
 import { projectProviderInvocationExecution } from '../src/execution-core.ts';
 import {
   buildContextManifest,
+  inspectDurableEpochContextStore,
   rolloverDurableEpochContextStore,
 } from '../src/execution-governance.ts';
 import {
@@ -245,6 +246,10 @@ test('provider worker rejects output when current context rolls during execution
             { identity: 'provider-input-manifest', content: nextContent },
           ],
         });
+        const current = inspectDurableEpochContextStore(
+          storeRoot,
+          binding.workflowId,
+        );
         rolloverDurableEpochContextStore(storeRoot, {
           workflowId: binding.workflowId,
           expectedGeneration: binding.generation,
@@ -259,7 +264,7 @@ test('provider worker rejects output when current context rolls during execution
           carriedForward: [],
           invalidated: ['provider-input-manifest'],
           verification: null,
-          createdAt: new Date('2026-08-03T20:00:00.000Z'),
+          createdAt: new Date(Date.parse(current.updatedAt) + 1),
         });
         return successfulWorkerReport(request, invocationId);
       },
@@ -360,6 +365,10 @@ test('completion guard rejects rollover after runner return and before acceptanc
         acceptanceBinding.context.manifest.planningSnapshotDigest,
       items: [{ identity: 'provider-input-manifest', content: nextContent }],
     });
+    const current = inspectDurableEpochContextStore(
+      runtime.root,
+      acceptanceBinding.context.workflowId,
+    );
     rolloverDurableEpochContextStore(runtime.root, {
       workflowId: acceptanceBinding.context.workflowId,
       expectedGeneration: acceptanceBinding.context.generation,
@@ -372,7 +381,7 @@ test('completion guard rejects rollover after runner return and before acceptanc
       carriedForward: [],
       invalidated: ['provider-input-manifest'],
       verification: null,
-      createdAt: new Date('2026-08-03T20:01:00.000Z'),
+      createdAt: new Date(Date.parse(current.updatedAt) + 1),
     });
 
     assert.throws(
