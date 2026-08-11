@@ -22,11 +22,13 @@ const MAINTAINER_GRANT_STATE_FILE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\.json$/;
 const SESSION_LOCK_OWNER_TOKEN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+const TASK_REVISION_LEASE_ID =
+  /^revision-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 
 export type WorkflowSession = {
   schemaVersion: 1;
   sessionId: string;
-  state: 'active' | 'aborted' | 'committed';
+  state: 'active' | 'revising' | 'aborted' | 'committed';
   changeId: string;
   taskId: string;
   /** Durable top-level task mandate authorization for production sessions. */
@@ -53,6 +55,8 @@ export type WorkflowSession = {
   checkEvidenceEngineDigest?: `sha256:${string}`;
   /** Optional only for sessions created before this binding was introduced. */
   planningAssurance?: PlanningAssuranceBinding | null;
+  /** Current same-session planning-authority lease while execution is paused. */
+  revisionLeaseId?: string;
   /** Immutable post-implementation semantic reconciliation authority. */
   implementationReconciliationReportId?: string;
   /** Exact engine-owned Git projection authorized by that reconciliation. */
@@ -79,6 +83,7 @@ export function runtimePaths(
     operations: path.join(root, 'operations'),
     sessions: path.join(root, 'sessions'),
     reports: path.join(root, 'reports'),
+    taskRevisions: path.join(root, 'task-revisions'),
   };
 }
 
@@ -440,7 +445,9 @@ function listActiveWorkflowSessions(
     .readdirSync(runtime.sessions)
     .filter((entry) => entry.endsWith('.json'))
     .map((entry) => readSessionFile(path.join(runtime.sessions, entry)))
-    .filter((session) => session.state === 'active')
+    .filter(
+      (session) => session.state === 'active' || session.state === 'revising',
+    )
     .sort((left, right) =>
       left.sessionId < right.sessionId
         ? -1
@@ -717,6 +724,7 @@ function isWorkflowSession(value: unknown): value is WorkflowSession {
     'requiredCheckDigests',
     'checkEvidenceEngineDigest',
     'planningAssurance',
+    'revisionLeaseId',
     'implementationReconciliationReportId',
     'implementationReconciliationPaths',
     'createdAt',
@@ -734,7 +742,9 @@ function isWorkflowSession(value: unknown): value is WorkflowSession {
   }
   if (
     typeof value.sessionId !== 'string' ||
-    !['active', 'aborted', 'committed'].includes(String(value.state)) ||
+    !['active', 'revising', 'aborted', 'committed'].includes(
+      String(value.state),
+    ) ||
     typeof value.changeId !== 'string' ||
     typeof value.taskId !== 'string' ||
     typeof value.repositoryRoot !== 'string' ||
@@ -812,6 +822,22 @@ function isWorkflowSession(value: unknown): value is WorkflowSession {
     return false;
   }
   if (
+    value.revisionLeaseId !== undefined &&
+    (typeof value.revisionLeaseId !== 'string' ||
+      !TASK_REVISION_LEASE_ID.test(value.revisionLeaseId))
+  ) {
+    return false;
+  }
+  if (
+    (value.state === 'revising') !==
+    (typeof value.revisionLeaseId === 'string')
+  ) {
+    // An aborted session may retain its terminal lease pointer for audit.
+    if (value.state !== 'aborted' || value.revisionLeaseId === undefined) {
+      return false;
+    }
+  }
+  if (
     (value.commitHash !== undefined && !isCommitHash(value.commitHash)) ||
     (value.commitReportId === undefined) !== (value.commitHash === undefined)
   ) {
@@ -821,6 +847,17 @@ function isWorkflowSession(value: unknown): value is WorkflowSession {
     value.state === 'active' &&
     value.commitReportId !== undefined &&
     (value.finishReportId === undefined || value.committedAt !== undefined)
+  ) {
+    return false;
+  }
+  if (
+    value.state === 'revising' &&
+    (value.latestCheckReportId !== undefined ||
+      value.completionReportId !== undefined ||
+      value.finishReportId !== undefined ||
+      value.commitReportId !== undefined ||
+      value.commitHash !== undefined ||
+      value.committedAt !== undefined)
   ) {
     return false;
   }

@@ -172,6 +172,11 @@ import {
   startMandatedSession,
 } from './session.ts';
 import { runtimePaths } from './session-store.ts';
+import {
+  inspectTaskRevisionStatus,
+  resumeTask,
+  reviseTask,
+} from './task-revision.ts';
 import { validateManagedDocuments } from './managed-documents.ts';
 import { diagnoseOpenSpec } from './openspec-doctor.ts';
 import {
@@ -993,6 +998,28 @@ function dispatch(args: string[], cwd: string): CommandResult {
         session: startMandatedSession(cwd, changeId, taskId, mandateTaskId),
       };
     }
+    case 'revise-task': {
+      const sessionId = rest[0];
+      const reason = optionValue(rest.slice(1), '--reason');
+      if (
+        !sessionId ||
+        !reason ||
+        rest.length !== 3 ||
+        rest[1] !== '--reason'
+      ) {
+        throw usage(
+          'Usage: pnpm workflow revise-task <session-id> --reason <text> [--json]',
+        );
+      }
+      return {
+        command,
+        ok: true,
+        result: reviseTask(cwd, sessionId, reason),
+      };
+    }
+    case 'resume-task':
+      requireArgumentCount(command, rest, 1, 1);
+      return { command, ok: true, result: resumeTask(cwd, rest[0]!) };
     case 'status': {
       requireArgumentCount(command, rest, 0, 1);
       if (rest[0]) {
@@ -1017,6 +1044,7 @@ function dispatch(args: string[], cwd: string): CommandResult {
             ok: true,
             openTask: openTaskStatus,
             session,
+            taskRevision: inspectTaskRevisionStatus(cwd, session.sessionId),
             taskCommits: findTaskCommits(cwd, session.changeId, session.taskId),
           };
         }
@@ -1025,6 +1053,7 @@ function dispatch(args: string[], cwd: string): CommandResult {
           command,
           ok: true,
           session,
+          taskRevision: inspectTaskRevisionStatus(cwd, session.sessionId),
           taskCommits: findTaskCommits(cwd, session.changeId, session.taskId),
         };
       }
@@ -1033,6 +1062,9 @@ function dispatch(args: string[], cwd: string): CommandResult {
         command,
         ok: true,
         sessions,
+        taskRevisions: sessions.map((session) =>
+          inspectTaskRevisionStatus(cwd, session.sessionId),
+        ),
         taskCommits: sessions.map((session) => ({
           changeId: session.changeId,
           taskId: session.taskId,
@@ -2394,6 +2426,8 @@ function usageText(): string {
     '  pnpm workflow audit show <task-id> --audit-root <absolute-external-path> [--json]',
     '  pnpm workflow audit verify <repository-id> --audit-root <absolute-external-path> [--json]',
     '  pnpm workflow start <change-id> --task <task-id> --mandate <mandate-task-id> [--json]',
+    '  pnpm workflow revise-task <session-id> --reason <text> [--json]',
+    '  pnpm workflow resume-task <session-id> [--json]',
     '  pnpm workflow status [investigation-or-task-id] [--json]',
     '  pnpm workflow check <session-id> [--json]',
     '  pnpm workflow run-check <check-id> [--json]',

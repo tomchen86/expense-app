@@ -7,6 +7,7 @@ import { ensurePlainDirectory, publishPreparedExclusiveLock, reclaimDeadPrepared
 import { assertHumanResolutionLifecycleBarrier, reclaimHumanResolutionJournalTemporaries, } from './investigation-session-store.js';
 const MAINTAINER_GRANT_STATE_FILE = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\.json$/;
 const SESSION_LOCK_OWNER_TOKEN = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+const TASK_REVISION_LEASE_ID = /^revision-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 export function runtimePaths(gitCommonDirectory, runtimeDirectory) {
     const root = path.join(gitCommonDirectory, runtimeDirectory);
     return {
@@ -15,6 +16,7 @@ export function runtimePaths(gitCommonDirectory, runtimeDirectory) {
         operations: path.join(root, 'operations'),
         sessions: path.join(root, 'sessions'),
         reports: path.join(root, 'reports'),
+        taskRevisions: path.join(root, 'task-revisions'),
     };
 }
 export function withSessionOperation(runtime, sessionId, operation) {
@@ -275,7 +277,7 @@ function listActiveWorkflowSessions(runtime) {
         .readdirSync(runtime.sessions)
         .filter((entry) => entry.endsWith('.json'))
         .map((entry) => readSessionFile(path.join(runtime.sessions, entry)))
-        .filter((session) => session.state === 'active')
+        .filter((session) => session.state === 'active' || session.state === 'revising')
         .sort((left, right) => left.sessionId < right.sessionId
         ? -1
         : left.sessionId > right.sessionId
@@ -473,6 +475,7 @@ function isWorkflowSession(value) {
         'requiredCheckDigests',
         'checkEvidenceEngineDigest',
         'planningAssurance',
+        'revisionLeaseId',
         'implementationReconciliationReportId',
         'implementationReconciliationPaths',
         'createdAt',
@@ -489,7 +492,7 @@ function isWorkflowSession(value) {
         return false;
     }
     if (typeof value.sessionId !== 'string' ||
-        !['active', 'aborted', 'committed'].includes(String(value.state)) ||
+        !['active', 'revising', 'aborted', 'committed'].includes(String(value.state)) ||
         typeof value.changeId !== 'string' ||
         typeof value.taskId !== 'string' ||
         typeof value.repositoryRoot !== 'string' ||
@@ -550,6 +553,18 @@ function isWorkflowSession(value) {
         !isPlanningAssuranceBinding(value.planningAssurance)) {
         return false;
     }
+    if (value.revisionLeaseId !== undefined &&
+        (typeof value.revisionLeaseId !== 'string' ||
+            !TASK_REVISION_LEASE_ID.test(value.revisionLeaseId))) {
+        return false;
+    }
+    if ((value.state === 'revising') !==
+        (typeof value.revisionLeaseId === 'string')) {
+        // An aborted session may retain its terminal lease pointer for audit.
+        if (value.state !== 'aborted' || value.revisionLeaseId === undefined) {
+            return false;
+        }
+    }
     if ((value.commitHash !== undefined && !isCommitHash(value.commitHash)) ||
         (value.commitReportId === undefined) !== (value.commitHash === undefined)) {
         return false;
@@ -557,6 +572,15 @@ function isWorkflowSession(value) {
     if (value.state === 'active' &&
         value.commitReportId !== undefined &&
         (value.finishReportId === undefined || value.committedAt !== undefined)) {
+        return false;
+    }
+    if (value.state === 'revising' &&
+        (value.latestCheckReportId !== undefined ||
+            value.completionReportId !== undefined ||
+            value.finishReportId !== undefined ||
+            value.commitReportId !== undefined ||
+            value.commitHash !== undefined ||
+            value.committedAt !== undefined)) {
         return false;
     }
     if (value.state === 'aborted' &&

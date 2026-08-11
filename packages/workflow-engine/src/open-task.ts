@@ -85,7 +85,13 @@ export type OpenTaskJournal = Readonly<{
 
 export type OpenTaskLifecycleStatus = Readonly<{
   kind: 'open-task-lifecycle-status.v1';
-  state: 'opening' | 'active' | 'committed' | 'aborted' | 'recovery-required';
+  state:
+    | 'opening'
+    | 'active'
+    | 'revising'
+    | 'committed'
+    | 'aborted'
+    | 'recovery-required';
   lastDurablePhase: OpenTaskPhase;
   transactionId: string;
   changeId: string;

@@ -30,6 +30,10 @@ import {
   type TaskMandateBinding,
   type TaskMandateOptions,
 } from './task-mandate.ts';
+import {
+  completeTaskRevisionAbort,
+  prepareTaskRevisionAbort,
+} from './task-revision.ts';
 
 export type { WorkflowSession } from './session-store.ts';
 
@@ -333,9 +337,16 @@ export function abortSession(
   const config = loadWorkflowConfig(git.repositoryRoot);
   const runtime = runtimePaths(git.gitCommonDirectory, config.runtimeDirectory);
   const sessionId = assertSessionId(requestedSessionId);
-  return withSessionOperation(runtime, sessionId, () =>
-    abortSessionUnlocked(runtime, sessionId, reason),
+  const initial = readSessionFile(
+    path.join(runtime.sessions, `${sessionId}.json`),
   );
+  const operation = () =>
+    withSessionOperation(runtime, sessionId, () =>
+      abortSessionUnlocked(runtime, sessionId, reason),
+    );
+  return initial.state === 'revising' || initial.revisionLeaseId !== undefined
+    ? withRepositoryLifecycleOperation(runtime, operation)
+    : operation();
 }
 
 function abortSessionUnlocked(
@@ -346,7 +357,15 @@ function abortSessionUnlocked(
   const sessionPath = path.join(runtime.sessions, `${sessionId}.json`);
   const session = readSessionFile(sessionPath);
 
-  if (session.state !== 'active') {
+  if (session.state === 'aborted' && session.revisionLeaseId !== undefined) {
+    releaseOwnedLock(
+      path.join(runtime.locks, `${session.changeId}.lock`),
+      sessionId,
+    );
+    completeTaskRevisionAbort(runtime, session);
+    return session;
+  }
+  if (session.state !== 'active' && session.state !== 'revising') {
     throw workflowError(
       'SESSION_NOT_ACTIVE',
       `Session ${sessionId} is already ${session.state}.`,
@@ -365,6 +384,10 @@ function abortSessionUnlocked(
     );
   }
 
+  if (session.state === 'revising') {
+    prepareTaskRevisionAbort(runtime, session, reason.trim());
+  }
+
   const aborted: WorkflowSession = {
     ...session,
     state: 'aborted',
@@ -376,6 +399,9 @@ function abortSessionUnlocked(
     path.join(runtime.locks, `${session.changeId}.lock`),
     sessionId,
   );
+  if (session.state === 'revising') {
+    completeTaskRevisionAbort(runtime, aborted);
+  }
   return aborted;
 }
 
