@@ -32,6 +32,7 @@ import {
 import { reconcilePredecessor } from './predecessor-reconciliation.ts';
 import {
   finalizeTaskUnlocked,
+  PROJECTED_SINGLE_PASS_ASSURANCE,
   type FinalizeTaskResult,
 } from './projected-finalization.ts';
 import { assertCurrentImplementationReconciliation } from './implementation-reconciliation.ts';
@@ -739,6 +740,12 @@ function commitSessionUnlocked(
   if (finishReport.parentReportId !== initialSession.completionReportId) {
     throw staleReport('FINISH_REPORT_STALE');
   }
+  assertProjectedFinalizeCandidateChain(
+    inspection,
+    initialSession,
+    completionReport,
+    finishReport,
+  );
   assertFinishProjection(finishReport, inspection);
 
   const expectedTree = reportString(
@@ -796,6 +803,49 @@ function commitSessionUnlocked(
     commitHash,
   );
   return finalizeCommittedSession(context.runtime, pending);
+}
+
+function assertProjectedFinalizeCandidateChain(
+  inspection: ReturnType<typeof inspectSession>,
+  session: WorkflowSession,
+  completionReport: WorkflowReport,
+  finishReport: WorkflowReport,
+): void {
+  const projectedFields = [
+    completionReport.finalizeProfile,
+    completionReport.candidateTree,
+    finishReport.finalizeProfile,
+    finishReport.candidateTree,
+  ];
+  if (projectedFields.every((value) => value === undefined)) return;
+  if (!session.latestCheckReportId) {
+    throw staleReport('FINISH_REPORT_STALE');
+  }
+  const checkReport = readSessionReport(
+    inspection,
+    session.latestCheckReportId,
+  );
+  const candidateTree = reportString(
+    finishReport,
+    'candidateTree',
+    'FINISH_REPORT_STALE',
+  );
+  if (
+    checkReport.kind !== 'check' ||
+    completionReport.kind !== 'completion' ||
+    checkReport.parentReportId !== undefined ||
+    completionReport.parentReportId !== session.latestCheckReportId ||
+    checkReport.finalizeProfile !== PROJECTED_SINGLE_PASS_ASSURANCE ||
+    completionReport.finalizeProfile !== PROJECTED_SINGLE_PASS_ASSURANCE ||
+    finishReport.finalizeProfile !== PROJECTED_SINGLE_PASS_ASSURANCE ||
+    reportString(checkReport, 'candidateTree', 'FINISH_REPORT_STALE') !==
+      candidateTree ||
+    reportString(completionReport, 'candidateTree', 'FINISH_REPORT_STALE') !==
+      candidateTree ||
+    reportString(finishReport, 'tree', 'FINISH_REPORT_STALE') !== candidateTree
+  ) {
+    throw staleReport('FINISH_REPORT_STALE');
+  }
 }
 
 export function findTaskCommits(
