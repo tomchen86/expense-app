@@ -19,6 +19,7 @@ import { DEFAULT_AI_ADAPTER_RETRY_ACCOUNTING } from '../src/ai-adapter-policy.ts
 import { createProviderExecutionEnvironment } from '../src/execution-environment.ts';
 import {
   buildContextManifest,
+  inspectDurableEpochContextStore,
   inspectDurableRetentionCatalog,
   rolloverDurableEpochContextStore,
   storeDurableEvidence,
@@ -1018,6 +1019,10 @@ test('production prompt assembly rejects a stale request after durable context r
       planningSnapshotDigest: binding.manifest.planningSnapshotDigest,
       items: [{ identity: 'provider-input-manifest', content: nextContent }],
     });
+    const current = inspectDurableEpochContextStore(
+      storeRoot,
+      binding.workflowId,
+    );
     rolloverDurableEpochContextStore(storeRoot, {
       workflowId: binding.workflowId,
       expectedGeneration: 1,
@@ -1030,7 +1035,7 @@ test('production prompt assembly rejects a stale request after durable context r
       carriedForward: [],
       invalidated: ['provider-input-manifest'],
       verification: null,
-      createdAt: new Date('2026-08-03T15:00:00.000Z'),
+      createdAt: new Date(Date.parse(current.updatedAt) + 1),
     });
     assert.throws(
       () =>
