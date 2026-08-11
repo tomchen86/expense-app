@@ -8,7 +8,7 @@
     {
       "path": "bootstrap/recovery-runtime/bootstrap/built-in-engine-closure-pin.js",
       "mode": "100644",
-      "digest": "sha256:b9a53efbe8d4845bf0620027ad54cca404570b7cbbd19bee1b70de379ea0c04f"
+      "digest": "sha256:b874b56f8942d8d103e960d3b5f2dc1174a4788e8b52e2152d1dd917eba3dc36"
     },
     {
       "path": "bootstrap/recovery-runtime/src/actor-identity.js",
@@ -88,7 +88,7 @@
     {
       "path": "bootstrap/recovery-runtime/src/contracts.js",
       "mode": "100644",
-      "digest": "sha256:c38fdc84477b3c0801d453fe7fe18a4954eb88e08165058e245de8563539c480"
+      "digest": "sha256:1f6e4a6d280c3c5246ce97ed592803d1cc47423b84a6ff994f3fec2d9aefd9cb"
     },
     {
       "path": "bootstrap/recovery-runtime/src/control-plane-recovery-grant.js",
@@ -398,7 +398,7 @@
     {
       "path": "bootstrap/recovery-runtime/src/task-diff-review.js",
       "mode": "100644",
-      "digest": "sha256:337633dc363851b6e86d47b083346c11e6794586cfc0cb9f146b6b614183e2c1"
+      "digest": "sha256:bff9cbb6b75f24562bb06d61cb8b300d44e78727af1916c5f22d4746754e425b"
     },
     {
       "path": "bootstrap/recovery-runtime/src/task-mandate.js",

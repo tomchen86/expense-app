@@ -291,6 +291,14 @@ test('TaskDiffReview policy requires explicit, behavioral, risky, and unregister
   assert.deepEqual(
     taskDiffReviewRequirement({
       diffReview: 'policy-required',
+      strategy: 'tdd-single-agent',
+      paths: [{ path: 'apps/api/src/feature.ts', role: 'ordinary' }],
+    }),
+    { required: true, basis: 'behavioral-strategy', riskPaths: [] },
+  );
+  assert.deepEqual(
+    taskDiffReviewRequirement({
+      diffReview: 'policy-required',
       strategy: 'mechanical-transform',
       paths: [{ path: 'apps/api/src/feature.ts', role: 'ordinary' }],
     }),

@@ -124,6 +124,7 @@
     "executionTask": {
       "oneOf": [
         { "$ref": "#/$defs/crossAgentTdd" },
+        { "$ref": "#/$defs/tddSingleAgent" },
         { "$ref": "#/$defs/mechanicalTransform" },
         { "$ref": "#/$defs/directReviewed" }
       ]
@@ -165,6 +166,43 @@
         "requiredImplementerIndependence": {
           "const": "provider-independent"
         }
+      }
+    },
+    "tddSingleAgent": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "strategy",
+        "enforcement",
+        "allowedPaths",
+        "requiredChecks",
+        "diffReview",
+        "behaviorContractRefs",
+        "testPathScopes",
+        "fixturePathScopes",
+        "implementationPathScopes",
+        "redCheck",
+        "greenChecks",
+        "requiredImplementerIndependence"
+      ],
+      "properties": {
+        "strategy": { "const": "tdd-single-agent" },
+        "enforcement": { "const": "planned" },
+        "allowedPaths": { "$ref": "#/$defs/nonEmptyPaths" },
+        "requiredChecks": { "$ref": "#/$defs/checks" },
+        "diffReview": { "enum": ["required", "policy-required"] },
+        "behaviorContractRefs": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/behaviorContractRef" }
+        },
+        "testPathScopes": { "$ref": "#/$defs/nonEmptyPaths" },
+        "fixturePathScopes": { "$ref": "#/$defs/paths" },
+        "implementationPathScopes": { "$ref": "#/$defs/nonEmptyPaths" },
+        "redCheck": { "$ref": "#/$defs/check" },
+        "greenChecks": { "$ref": "#/$defs/checks" },
+        "requiredImplementerIndependence": { "const": "none" }
       }
     },
     "mechanicalTransform": {

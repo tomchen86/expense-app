@@ -121,7 +121,7 @@
     {
       "path": "src/check-runner.ts",
       "mode": "100644",
-      "digest": "sha256:6068a29744eac43a4bb08ec0c27fa98bd92eae10ac668ff9a26ef07b9a38d1e9"
+      "digest": "sha256:d5228ef2d8c8103ae06a81b2425ce4fb6a5958139aba4fcfe2800a02580635ca"
     },
     {
       "path": "src/ci-archive-tree.ts",
@@ -271,7 +271,7 @@
     {
       "path": "src/contracts.ts",
       "mode": "100644",
-      "digest": "sha256:75df3ebf1ecdc9858de2658dda3cf260c2e3bc4201675f7a082a681c8ada3664"
+      "digest": "sha256:3bfa8f07497159cf47c3e359e1657e22cec84d01d94159134e64271fd3454bd3"
     },
     {
       "path": "src/control-plane-promotion-producer.ts",
@@ -866,7 +866,7 @@
     {
       "path": "src/projected-finalization.ts",
       "mode": "100644",
-      "digest": "sha256:1ec3f4d352792771e887ffb7b6242d24269b0d53f4401c1cc6c2385e7a1a41ed"
+      "digest": "sha256:d29d4e37b472b117346ffaa364b660a28c6057c6add3f3fee56df14edc8fbfa2"
     },
     {
       "path": "src/propose-exemption-store.ts",
@@ -1091,7 +1091,7 @@
     {
       "path": "src/task-diff-review.ts",
       "mode": "100644",
-      "digest": "sha256:acc594f7c4000a9134c00f81a96ca8d0a35bde2012990532bb5b0f618cd03d6b"
+      "digest": "sha256:276a07c1cd8980b199e18d55151a858172b2487c24e51762fc313a557c227020"
     },
     {
       "path": "src/task-execution-evidence.ts",
@@ -1119,6 +1119,21 @@
       "digest": "sha256:2a3388b248ea57a208cee0dae059c62d86d57de7315d65d6b35616cb3e482d85"
     },
     {
+      "path": "src/task-strategy-execution.ts",
+      "mode": "100644",
+      "digest": "sha256:9957fc487afb5adac2b40e67a76226b4529a42e119d141ed9efe5b1e66d0c28a"
+    },
+    {
+      "path": "src/task-strategy-gate.ts",
+      "mode": "100644",
+      "digest": "sha256:12f92e97555e5e8398fe3837012bdca04499f3172af69fb4ce2d10587ff93f27"
+    },
+    {
+      "path": "src/task-strategy-store.ts",
+      "mode": "100644",
+      "digest": "sha256:6f270b77e0ca85e9c99eb0d2d13c7ddbbf668eb7cc722f95febbf3bc15c330e6"
+    },
+    {
       "path": "src/tracked-tree-reader.ts",
       "mode": "100644",
       "digest": "sha256:dfba015ff0f90738b66d9eb3631c224919f60fd91b446b9a3f86d89b7e822a47"
@@ -1131,7 +1146,7 @@
     {
       "path": "src/verification.ts",
       "mode": "100644",
-      "digest": "sha256:a86f65963289a22b30ef45ec05b5c09daf73dab7d43fb2bb4ee7763ac5a0c44a"
+      "digest": "sha256:48f81ae303bbc432aecde879c49cd792c3cccdef37a223b5b30ea2bb3afe7979"
     }
   ]
 }

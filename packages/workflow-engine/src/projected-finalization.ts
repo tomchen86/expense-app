@@ -45,6 +45,7 @@ import {
   restoreTaskProjection,
 } from './task-projection.ts';
 import { assertTaskDiffReviewCompletionGateSatisfied } from './task-diff-review-lifecycle.ts';
+import { assertTaskStrategyExecutionGate } from './task-strategy-gate.ts';
 import {
   executeChecks,
   inspectSession,
@@ -126,6 +127,7 @@ export function finalizeTaskUnlocked(
     );
   }
   assertCurrentImplementationReconciliation(initial);
+  assertTaskStrategyExecutionGate(initial, environment);
 
   const reconciliation = reconcilePredecessor(cwd, initial, environment);
   const completedTaskIds = [

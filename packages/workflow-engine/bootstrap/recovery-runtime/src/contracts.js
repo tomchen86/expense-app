@@ -489,7 +489,8 @@ export function parseExecutionArtifact(value, expectedChangeId, tasks, guard, ch
             candidate.requiredChecks.some((checkId) => !Object.hasOwn(checks.checks, checkId))) {
             throw invalid();
         }
-        if (candidate.strategy === 'cross-agent-tdd') {
+        if (candidate.strategy === 'cross-agent-tdd' ||
+            candidate.strategy === 'tdd-single-agent') {
             if (!hasExactKeys(candidate, [
                 ...commonKeys,
                 'behaviorContractRefs',
@@ -511,7 +512,10 @@ export function parseExecutionArtifact(value, expectedChangeId, tasks, guard, ch
                     JSON.stringify(policy.requiredChecks) ||
                 !candidate.greenChecks.includes(candidate.redCheck) ||
                 candidate.enforcement !== 'planned' ||
-                candidate.requiredImplementerIndependence !== 'provider-independent') {
+                candidate.requiredImplementerIndependence !==
+                    (candidate.strategy === 'cross-agent-tdd'
+                        ? 'provider-independent'
+                        : 'none')) {
                 throw invalid();
             }
             parsedTasks[taskId] = candidate;
