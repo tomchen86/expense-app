@@ -4,7 +4,11 @@ import test from 'node:test';
 
 import { canonicalJson } from '../src/canonical-json.ts';
 import {
+  parseTaskDiffReviewContinuationSubmission,
   parseTaskDiffReviewSubmission,
+  TASK_DIFF_REVIEW_CONTINUATION_OUTPUT_SCHEMA,
+  TASK_DIFF_REVIEW_CONTINUATION_OUTPUT_VALIDATOR,
+  TASK_DIFF_REVIEW_CONTINUATION_PROVIDER_OUTPUT_SCHEMA,
   TASK_DIFF_REVIEW_OUTPUT_SCHEMA,
   TASK_DIFF_REVIEW_OUTPUT_VALIDATOR,
   TASK_DIFF_REVIEW_PROVIDER_OUTPUT_SCHEMA,
@@ -103,6 +107,66 @@ test('TaskDiffReview provider output requires challenges and scope assessment to
     }),
     false,
   );
+});
+
+test('TaskDiffReview continuation output is advisory structured evidence, not a closure credential', () => {
+  const submission = {
+    schemaVersion: 1 as const,
+    reviewRecordDigest: 'a'.repeat(64),
+    responseDigest: 'b'.repeat(64),
+    proposedDispositions: [
+      {
+        challengeId: 'c'.repeat(64),
+        decision: 'rebutted' as const,
+        rationale: 'The exact response rebuts the challenge.',
+        supersededBy: null,
+      },
+    ],
+  };
+  assert.equal(
+    TASK_DIFF_REVIEW_CONTINUATION_OUTPUT_VALIDATOR.validate(submission),
+    true,
+  );
+  assert.deepEqual(
+    parseTaskDiffReviewContinuationSubmission(submission),
+    submission,
+  );
+  assert.deepEqual(TASK_DIFF_REVIEW_CONTINUATION_OUTPUT_SCHEMA, {
+    id: 'expense-app.workflow.task-diff-review-continuation-output',
+    version: 1,
+    digest: crypto
+      .createHash('sha256')
+      .update(
+        canonicalJson(TASK_DIFF_REVIEW_CONTINUATION_PROVIDER_OUTPUT_SCHEMA),
+      )
+      .digest('hex'),
+  });
+  for (const invalid of [
+    { ...submission, reviewRecordDigest: 'not-a-digest' },
+    { ...submission, proposedDispositions: [] },
+    {
+      ...submission,
+      proposedDispositions: [
+        submission.proposedDispositions[0],
+        submission.proposedDispositions[0],
+      ],
+    },
+    {
+      ...submission,
+      proposedDispositions: [
+        {
+          ...submission.proposedDispositions[0],
+          decision: 'closed',
+        },
+      ],
+    },
+  ]) {
+    assert.equal(
+      TASK_DIFF_REVIEW_CONTINUATION_OUTPUT_VALIDATOR.validate(invalid),
+      false,
+    );
+    assert.throws(() => parseTaskDiffReviewContinuationSubmission(invalid));
+  }
 });
 
 function validSubmission(): TaskDiffReviewSubmission {

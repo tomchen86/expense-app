@@ -9,7 +9,7 @@ import { canonicalJson } from '../src/canonical-json.ts';
 import { loadWorkflowConfig } from '../src/contracts.ts';
 import { discoverRepository } from '../src/git.ts';
 import { renderHandoff } from '../src/handoff.ts';
-import { finalizeTask } from '../src/lifecycle.ts';
+import { completeTask, finalizeTask, finishSession } from '../src/lifecycle.ts';
 import { investigationRuntimePaths } from '../src/paths.ts';
 import { commitPlanningTransition } from '../src/planning-transition.ts';
 import {
@@ -22,11 +22,12 @@ import {
 } from '../src/provider-invocation-store.ts';
 import { PROVIDER_RUNNER_RESIDUALS } from '../src/provider-runner.ts';
 import { runProviderWorker } from '../src/provider-worker.ts';
-import { startSession } from '../src/session.ts';
+import { checkSession, startSession } from '../src/session.ts';
 import {
   assertCurrentTaskDiffReviewSatisfied,
   beginTaskDiffReviewContinuation,
   beginTaskDiffReview,
+  inspectTaskDiffReviewStatus,
   inspectTaskDiffReviewSubject,
   reconcileTaskDiffReviewContinuation,
   reconcileTaskDiffReview,
@@ -606,7 +607,7 @@ test('review-diff CLI resumes the durable happy path from ready through fixed-ru
   }
 });
 
-test('a fixed-runner continuation remains advisory and cannot close a TaskDiffReview challenge', () => {
+test('advisory dispositions cannot close a challenge until the shared verifier mints Final Assurance', () => {
   const { repository, counterPath } = createReviewFixture();
   try {
     const session = startSession(repository, 'demo-change', '1.1');
@@ -683,9 +684,22 @@ test('a fixed-runner continuation remains advisory and cannot close a TaskDiffRe
       continuation.assignment.sessionId,
       reviewed.assignment.sessionId,
     );
-    const semanticOutput = validTaskDiffSubmission(blobObjectId);
-    assert.equal(
-      runProviderWorker(repository, continuation.invocationId, {
+    const semanticOutput = {
+      schemaVersion: 1 as const,
+      reviewRecordDigest: reviewed.review.recordDigest,
+      responseDigest: response.responseDigest,
+      proposedDispositions: reviewed.review.challenges.map((challenge) => ({
+        challengeId: challenge.challengeId,
+        decision: 'rebutted' as const,
+        rationale:
+          'The bound response and candidate evidence rebut the challenge.',
+        supersededBy: null,
+      })),
+    };
+    const continuationResult = runProviderWorker(
+      repository,
+      continuation.invocationId,
+      {
         runner(input) {
           writeFixtureProviderRuntime(
             input.invocationDirectory,
@@ -711,15 +725,25 @@ test('a fixed-runner continuation remains advisory and cannot close a TaskDiffRe
             elapsedMs: 7,
           };
         },
-      }).state,
-      'succeeded',
+      },
     );
     assert.equal(
-      reconcileTaskDiffReviewContinuation(
-        repository,
-        session.sessionId,
-        response.responseDigest,
-      ).state,
+      continuationResult.state,
+      'succeeded',
+      JSON.stringify(continuationResult.failure),
+    );
+    assert.throws(
+      () =>
+        reconcileTaskDiffReviewContinuation(
+          repository,
+          session.sessionId,
+          response.responseDigest,
+          { testCrashAfter: 'advisory-result-persisted' },
+        ),
+      /Simulated TaskDiffReview continuation interruption/,
+    );
+    assert.equal(
+      inspectTaskDiffReviewStatus(repository, session.sessionId).state,
       'challenge-closure-required',
     );
     assert.throws(
@@ -730,13 +754,211 @@ test('a fixed-runner continuation remains advisory and cannot close a TaskDiffRe
       () => finalizeTask(repository, session.sessionId),
       hasCode('TASK_DIFF_REVIEW_CHALLENGE_OPEN'),
     );
+
+    const closed = reconcileTaskDiffReviewContinuation(
+      repository,
+      session.sessionId,
+      response.responseDigest,
+    );
+    assert.equal(closed.state, 'satisfied');
+    assert.equal(closed.finalAssurance?.verdict, 'satisfied');
+    assert.equal(
+      closed.finalAssurance?.subjectDigest,
+      reviewed.subject.subjectDigest,
+    );
+    assert.equal(
+      assertCurrentTaskDiffReviewSatisfied(repository, session.sessionId)
+        ?.recordDigest,
+      reviewed.review.recordDigest,
+    );
+    const finalized = finalizeTask(repository, session.sessionId);
+    assert.equal(finalized.session.finishReportId, finalized.finishReportId);
     assert.equal(fs.readFileSync(counterPath, 'utf8'), '1');
   } finally {
     fs.rmSync(repository, { recursive: true, force: true });
   }
 });
 
-function createReviewFixture(): {
+test('an accepted continuation decision requires a new candidate and never satisfies finalize', () => {
+  const { repository } = createReviewFixture();
+  try {
+    const session = startSession(repository, 'demo-change', '1.1');
+    fs.writeFileSync(
+      path.join(repository, 'src/feature.ts'),
+      'export const reviewed = true;\n',
+    );
+    assert.throws(
+      () => finalizeTask(repository, session.sessionId),
+      hasCode('TASK_DIFF_REVIEW_REQUIRED'),
+    );
+    const prepared = beginTaskDiffReview(repository, session.sessionId, {
+      explicitActor: 'codex',
+      environment: {},
+    });
+    assert.equal(prepared.state, 'waiting-for-provider');
+    const blobObjectId = prepared.subject.transitions.find(
+      ({ path: changedPath }) => changedPath === 'src/feature.ts',
+    )?.after?.objectId;
+    assert.ok(blobObjectId);
+    const challenged = challengedTaskDiffSubmission(blobObjectId);
+    runProviderWorker(repository, prepared.invocationId, {
+      runner(input) {
+        writeFixtureProviderRuntime(input.invocationDirectory, challenged);
+        return {
+          invocationId: prepared.invocationId,
+          providerId: 'claude',
+          purpose: 'task-diff-review',
+          requestDigest: input.request.requestDigest,
+          semanticOutput: challenged,
+          semanticOutputDigest: sha256(canonicalJson(challenged)),
+          assurance: 'unchanged-governed-projection',
+          projection: {
+            unchanged: true,
+            changedCategories: [],
+            beforeDigest: prepared.subject.subjectDigest,
+            afterDigest: prepared.subject.subjectDigest,
+          },
+          sameUserProcessConfined: false,
+          residuals: [...PROVIDER_RUNNER_RESIDUALS],
+          executable: executableIdentity(),
+          elapsedMs: 7,
+        };
+      },
+    });
+    const reviewed = reconcileTaskDiffReview(repository, session.sessionId);
+    if (!('review' in reviewed)) throw new Error('review required');
+    const response = createTaskDiffReviewChallengeResponse({
+      review: reviewed.review,
+      responses: reviewed.review.challenges.map((challenge) => ({
+        challengeId: challenge.challengeId,
+        rationale: 'The challenge is accepted and the candidate must change.',
+        evidence: [challenge.evidence[0]!],
+      })),
+    });
+    const continuation = beginTaskDiffReviewContinuation(
+      repository,
+      session.sessionId,
+      response,
+    );
+    const semanticOutput = {
+      schemaVersion: 1 as const,
+      reviewRecordDigest: reviewed.review.recordDigest,
+      responseDigest: response.responseDigest,
+      proposedDispositions: reviewed.review.challenges.map((challenge) => ({
+        challengeId: challenge.challengeId,
+        decision: 'accepted' as const,
+        rationale: 'The candidate must change before completion.',
+        supersededBy: null,
+      })),
+    };
+    const continuationResult = runProviderWorker(
+      repository,
+      continuation.invocationId,
+      {
+        runner(input) {
+          writeFixtureProviderRuntime(
+            input.invocationDirectory,
+            semanticOutput,
+          );
+          return {
+            invocationId: continuation.invocationId,
+            providerId: 'claude',
+            purpose: 'task-diff-review',
+            requestDigest: input.request.requestDigest,
+            semanticOutput,
+            semanticOutputDigest: sha256(canonicalJson(semanticOutput)),
+            assurance: 'unchanged-governed-projection',
+            projection: {
+              unchanged: true,
+              changedCategories: [],
+              beforeDigest: prepared.subject.subjectDigest,
+              afterDigest: prepared.subject.subjectDigest,
+            },
+            sameUserProcessConfined: false,
+            residuals: [...PROVIDER_RUNNER_RESIDUALS],
+            executable: executableIdentity(),
+            elapsedMs: 7,
+          };
+        },
+      },
+    );
+    assert.equal(
+      continuationResult.state,
+      'succeeded',
+      JSON.stringify(continuationResult.failure),
+    );
+    assert.equal(
+      reconcileTaskDiffReviewContinuation(
+        repository,
+        session.sessionId,
+        response.responseDigest,
+      ).state,
+      'changes-required',
+    );
+    assert.throws(
+      () => assertCurrentTaskDiffReviewSatisfied(repository, session.sessionId),
+      hasCode('TASK_DIFF_REVIEW_CHANGES_REQUIRED'),
+    );
+    assert.throws(
+      () => finalizeTask(repository, session.sessionId),
+      hasCode('TASK_DIFF_REVIEW_CHANGES_REQUIRED'),
+    );
+  } finally {
+    fs.rmSync(repository, { recursive: true, force: true });
+  }
+});
+
+test('legacy complete-task refuses a review-required candidate instead of bypassing Final Assurance', () => {
+  const { repository } = createReviewFixture();
+  try {
+    const session = startSession(repository, 'demo-change', '1.1');
+    fs.writeFileSync(
+      path.join(repository, 'src/feature.ts'),
+      'export const reviewed = true;\n',
+    );
+    checkSession(repository, session.sessionId);
+    assert.throws(
+      () => completeTask(repository, session.sessionId),
+      hasCode('TASK_DIFF_REVIEW_REQUIRED'),
+    );
+  } finally {
+    fs.rmSync(repository, { recursive: true, force: true });
+  }
+});
+
+test('legacy finish re-evaluates the shared review predicate after completion projection', () => {
+  const { repository } = createReviewFixture({
+    configurePathRoles(registry) {
+      registry.roles.ordinary.unshift('src/**');
+      registry.roles['contract-surface'].push(
+        'openspec/changes/demo-change/tasks.md',
+      );
+    },
+  });
+  try {
+    const session = startSession(repository, 'demo-change', '1.1');
+    fs.writeFileSync(
+      path.join(repository, 'src/feature.ts'),
+      'export const reviewed = true;\n',
+    );
+    checkSession(repository, session.sessionId);
+    completeTask(repository, session.sessionId);
+    assert.throws(
+      () => finishSession(repository, session.sessionId),
+      hasCode('TASK_DIFF_REVIEW_REQUIRED'),
+    );
+  } finally {
+    fs.rmSync(repository, { recursive: true, force: true });
+  }
+});
+
+function createReviewFixture(
+  options: {
+    configurePathRoles?: (registry: {
+      roles: Record<string, string[]>;
+    }) => void;
+  } = {},
+): {
   repository: string;
   counterPath: string;
 } {
@@ -764,6 +986,14 @@ function createReviewFixture(): {
     path.join(sourceRepositoryRoot, 'workflow/path-roles.json'),
     path.join(repository, 'workflow/path-roles.json'),
   );
+  if (options.configurePathRoles) {
+    const registryPath = path.join(repository, 'workflow/path-roles.json');
+    const registry = JSON.parse(fs.readFileSync(registryPath, 'utf8')) as {
+      roles: Record<string, string[]>;
+    };
+    options.configurePathRoles(registry);
+    fs.writeFileSync(registryPath, `${JSON.stringify(registry, null, 2)}\n`);
+  }
   fs.copyFileSync(
     path.join(sourceRepositoryRoot, 'workflow/maintainer-policy.json'),
     path.join(repository, 'workflow/maintainer-policy.json'),

@@ -16,6 +16,9 @@ import {
   PLAN_REVIEW_PROVIDER_OUTPUT_SCHEMA,
 } from './plan-review.ts';
 import {
+  TASK_DIFF_REVIEW_CONTINUATION_OUTPUT_SCHEMA,
+  TASK_DIFF_REVIEW_CONTINUATION_OUTPUT_VALIDATOR,
+  TASK_DIFF_REVIEW_CONTINUATION_PROVIDER_OUTPUT_SCHEMA,
   TASK_DIFF_REVIEW_OUTPUT_SCHEMA,
   TASK_DIFF_REVIEW_OUTPUT_VALIDATOR,
   TASK_DIFF_REVIEW_PROVIDER_OUTPUT_SCHEMA,
@@ -381,6 +384,20 @@ function semanticContract(
     return {
       schema: PLAN_REVIEW_PROVIDER_OUTPUT_SCHEMA,
       validator: PLAN_REVIEW_OUTPUT_VALIDATOR,
+    };
+  }
+  if (
+    request.purpose === 'task-diff-review' &&
+    request.outputSchema.id ===
+      TASK_DIFF_REVIEW_CONTINUATION_OUTPUT_SCHEMA.id &&
+    request.outputSchema.version ===
+      TASK_DIFF_REVIEW_CONTINUATION_OUTPUT_SCHEMA.version &&
+    request.outputSchema.digest ===
+      TASK_DIFF_REVIEW_CONTINUATION_OUTPUT_SCHEMA.digest
+  ) {
+    return {
+      schema: TASK_DIFF_REVIEW_CONTINUATION_PROVIDER_OUTPUT_SCHEMA,
+      validator: TASK_DIFF_REVIEW_CONTINUATION_OUTPUT_VALIDATOR,
     };
   }
   if (
