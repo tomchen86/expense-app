@@ -19,12 +19,15 @@ import {
   rollbackExactStaging,
   stageExactPaths,
 } from './git-transitions.ts';
-import { fingerprintUnstagedRepositoryProjection, runGit } from './git.ts';
+import {
+  fingerprintRepositoryProjectionExcludingPaths,
+  fingerprintUnstagedRepositoryProjection,
+  runGit,
+} from './git.ts';
 import { loadActiveSessionContext } from './lifecycle-context.ts';
 import {
-  refreshCompletionDocuments,
-  rollbackGeneratedDocuments,
-  type GeneratedDocumentMutation,
+  applyGeneratedDocumentMutations,
+  planCompletionDocuments,
 } from './managed-documents.ts';
 import { assertCurrentImplementationReconciliation } from './implementation-reconciliation.ts';
 import { reconcilePredecessor } from './predecessor-reconciliation.ts';
@@ -36,8 +39,9 @@ import {
 } from './report-validation.ts';
 import type { WorkflowSession } from './session-store.ts';
 import {
+  applyTaskProjection,
   digestTaskContent,
-  projectTasksCompleted,
+  planTasksCompleted,
   restoreTaskProjection,
 } from './task-projection.ts';
 import {
@@ -72,6 +76,9 @@ export type FinalizeTaskResult = {
 
 export type FinalizeTaskOptions = Readonly<{
   testCrashAfter?:
+    | 'projection-prepared'
+    | 'task-projected'
+    | 'projection-applied'
     | 'candidate-prepared'
     | 'checks-running'
     | 'checks-executed'
@@ -123,32 +130,43 @@ export function finalizeTaskUnlocked(
     ...reconciliation.map(({ taskId }) => taskId),
     session.taskId,
   ];
-  const projection = projectTasksCompleted(initial.tasksPath, completedTaskIds);
+  const projection = planTasksCompleted(initial.tasksPath, completedTaskIds);
   const projectionSourceDigest = digestTaskContent(projection.before);
-  let generatedDocuments: GeneratedDocumentMutation[] = [];
   let transaction: FinalizeTransaction | null = null;
 
   try {
-    generatedDocuments = refreshCompletionDocuments(initial.git.repositoryRoot);
+    const generatedDocuments = planCompletionDocuments(
+      initial.git.repositoryRoot,
+      { changeId: session.changeId, tasks: projection.after },
+    );
     const transitionPaths = generatedDocuments.map(({ path }) => path).sort();
-    const projected = inspectSession(cwd, session.sessionId, {
-      expectedSession: session,
-      projectedTaskIds: completedTaskIds,
-      projectionSourceDigest,
-      authorizedTransitionPaths: transitionPaths,
-    });
     const taskProjectionPath = path.relative(
-      projected.git.repositoryRoot,
-      projected.tasksPath,
+      initial.git.repositoryRoot,
+      initial.tasksPath,
     );
-
-    // Pin the prospective checked tree before verification so that same-path
-    // byte drift after the check cannot be silently staged.
-    const preview = previewExactStaging(
-      projected.git.repositoryRoot,
-      session.baseline.head,
-      projected.changedPaths,
-    );
+    const projectionMutations = [
+      {
+        path: taskProjectionPath,
+        before: projection.before,
+        after: projection.after,
+      },
+      ...generatedDocuments.map((mutation) => ({
+        path: mutation.path,
+        before: mutation.before ?? null,
+        after: mutation.after,
+      })),
+    ].sort((left, right) => left.path.localeCompare(right.path));
+    const projectionPaths = projectionMutations.map(({ path }) => path);
+    if (
+      listStagedPaths(initial.git.repositoryRoot, session.baseline.head)
+        .length > 0
+    ) {
+      throw workflowError(
+        'STAGING_ALREADY_PRESENT',
+        'Only workflow finalize may create the managed staging projection.',
+        ExitCode.staleState,
+      );
+    }
     transaction = publishFinalizeTransaction(
       active.runtime.root,
       createFinalizeTransaction({
@@ -157,54 +175,36 @@ export function finalizeTaskUnlocked(
         sessionId: session.sessionId,
         changeId: session.changeId,
         taskId: session.taskId,
-        repositoryRoot: projected.git.repositoryRealPath,
-        gitCommonDirectory: projected.git.gitCommonDirectory,
+        repositoryRoot: initial.git.repositoryRealPath,
+        gitCommonDirectory: initial.git.gitCommonDirectory,
         branch: session.branch,
         baseline: session.baseline,
         completedTaskIds,
         reconciledTasks: reconciliation,
         taskProjectionPath,
-        projectionMutations: [
-          {
-            path: taskProjectionPath,
-            before: projection.before,
-            after: projection.after,
-          },
-          ...generatedDocuments.map((mutation) => ({
-            path: mutation.path,
-            before: mutation.before ?? null,
-            after: mutation.after,
-          })),
-        ].sort((left, right) => left.path.localeCompare(right.path)),
+        projectionMutations,
         projectionSourceDigest,
+        projectionBaseFingerprint:
+          fingerprintRepositoryProjectionExcludingPaths(
+            initial.git.repositoryRoot,
+            session.baseline.head,
+            initial.git.statusEntries,
+            projectionPaths,
+          ),
         transitionPaths,
-        changedPaths: projected.changedPaths,
-        candidateTree: preview.tree,
-        candidateFingerprint: projected.fingerprint,
-        candidateStatusEntries: projected.git.statusEntries,
-        previousIndexTree: preview.previousIndexTree,
+        previousIndexTree: runGit(initial.git.repositoryRoot, [
+          'write-tree',
+        ]).trim(),
         createdAt: new Date().toISOString(),
       }),
     );
-    maybeInterrupt(options, 'candidate-prepared');
+    maybeInterrupt(options, 'projection-prepared');
     return continueFinalizeTransaction(cwd, transaction, environment, options);
   } catch (error) {
     if (preservesFinalizeTransaction(error)) throw error;
     if (transaction !== null) {
       rollbackPersistedFinalizeTransaction(cwd, session.sessionId, error);
       throw error;
-    }
-    try {
-      rollbackGeneratedDocuments(
-        initial.git.repositoryRoot,
-        generatedDocuments,
-      );
-    } finally {
-      restoreTaskProjection(
-        initial.tasksPath,
-        projection.after,
-        projection.before,
-      );
     }
     throw error;
   }
@@ -218,6 +218,11 @@ function continueFinalizeTransaction(
 ): FinalizeTaskResult {
   let transaction = initial;
   while (true) {
+    if (transaction.phase === 'projection-prepared') {
+      transaction = applyPreparedFinalizeProjection(cwd, transaction, options);
+      continue;
+    }
+    assertCandidateTransaction(transaction);
     const state = inspectFinalizeTransaction(cwd, transaction);
     const session = state.inspection.session;
     if (transaction.phase === 'candidate-prepared') {
@@ -342,9 +347,122 @@ function continueFinalizeTransaction(
   }
 }
 
-function inspectFinalizeTransaction(
+type CandidateFinalizeTransaction = FinalizeTransaction & {
+  candidateTree: string;
+  candidateFingerprint: string;
+};
+
+function applyPreparedFinalizeProjection(
   cwd: string,
   transaction: FinalizeTransaction,
+  options: FinalizeTaskOptions,
+): CandidateFinalizeTransaction {
+  const context = loadActiveSessionContext(cwd, transaction.sessionId);
+  assertFinalizeTransactionIdentity(context, transaction);
+  if (
+    context.session.latestCheckReportId ||
+    context.session.completionReportId ||
+    context.session.finishReportId ||
+    runGit(context.git.repositoryRoot, ['write-tree']).trim() !==
+      transaction.previousIndexTree
+  ) {
+    throw transactionDiverged();
+  }
+  const projectionPaths = transaction.projectionMutations.map(
+    ({ path: mutationPath }) => mutationPath,
+  );
+  assertProjectionBaseCurrent(context.git, transaction, projectionPaths);
+  const taskMutation = transaction.projectionMutations.find(
+    ({ path: mutationPath }) => mutationPath === transaction.taskProjectionPath,
+  );
+  if (!taskMutation || taskMutation.before === null) {
+    throw transactionDiverged();
+  }
+  applyTaskProjection(
+    path.join(transaction.repositoryRoot, taskMutation.path),
+    taskMutation.before,
+    taskMutation.after,
+  );
+  maybeInterrupt(options, 'task-projected');
+  applyGeneratedDocumentMutations(
+    transaction.repositoryRoot,
+    transaction.projectionMutations
+      .filter(
+        ({ path: mutationPath }) =>
+          mutationPath !== transaction.taskProjectionPath,
+      )
+      .map((mutation) => ({
+        path: mutation.path,
+        before: mutation.before ?? undefined,
+        after: mutation.after,
+      })),
+  );
+  maybeInterrupt(options, 'projection-applied');
+
+  const projected = inspectSession(cwd, transaction.sessionId, {
+    expectedSession: context.session,
+    projectedTaskIds: [...transaction.completedTaskIds],
+    projectionSourceDigest: transaction.projectionSourceDigest,
+    authorizedTransitionPaths: [...transaction.transitionPaths],
+  });
+  assertProjectionBaseCurrent(projected.git, transaction, projectionPaths);
+  const preview = previewExactStaging(
+    projected.git.repositoryRoot,
+    transaction.baseline.head,
+    projected.changedPaths,
+  );
+  if (preview.previousIndexTree !== transaction.previousIndexTree) {
+    throw transactionDiverged();
+  }
+  const candidate = advanceFinalizeTransaction(
+    context.runtime.root,
+    transaction,
+    {
+      ...transaction,
+      phase: 'candidate-prepared',
+      changedPaths: projected.changedPaths,
+      candidateTree: preview.tree,
+      candidateFingerprint: projected.fingerprint,
+      candidateStatusEntries: projected.git.statusEntries,
+    },
+  );
+  assertCandidateTransaction(candidate);
+  maybeInterrupt(options, 'candidate-prepared');
+  return candidate;
+}
+
+function assertProjectionBaseCurrent(
+  git: ReturnType<typeof loadActiveSessionContext>['git'],
+  transaction: FinalizeTransaction,
+  projectionPaths: string[],
+): void {
+  if (
+    fingerprintRepositoryProjectionExcludingPaths(
+      git.repositoryRoot,
+      transaction.baseline.head,
+      git.statusEntries,
+      projectionPaths,
+    ) !== transaction.projectionBaseFingerprint
+  ) {
+    throw transactionDiverged();
+  }
+}
+
+function assertCandidateTransaction(
+  transaction: FinalizeTransaction,
+): asserts transaction is CandidateFinalizeTransaction {
+  if (
+    transaction.phase === 'projection-prepared' ||
+    transaction.candidateTree === null ||
+    transaction.candidateFingerprint === null
+  ) {
+    throw transactionDiverged();
+  }
+}
+
+function inspectFinalizeTransaction(
+  cwd: string,
+  transaction: CandidateFinalizeTransaction,
 ) {
   const context = loadActiveSessionContext(cwd, transaction.sessionId);
   assertFinalizeTransactionIdentity(context, transaction);
@@ -497,7 +615,7 @@ function createFinishReport(
 
 function currentCheckReport(
   inspection: ReturnType<typeof inspectSession>,
-  transaction: FinalizeTransaction,
+  transaction: CandidateFinalizeTransaction,
 ): WorkflowReport {
   if (transaction.checkReportId === null) throw transactionDiverged();
   const report = readSessionReport(inspection, transaction.checkReportId);
@@ -554,7 +672,7 @@ function sessionHasFinalizeReports(
 }
 
 function resultFrom(
-  transaction: FinalizeTransaction,
+  transaction: CandidateFinalizeTransaction,
   session: WorkflowSession,
 ): FinalizeTaskResult {
   if (

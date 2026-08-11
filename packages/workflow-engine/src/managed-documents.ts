@@ -2,10 +2,12 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
+import { AtomicTextSafetyError, replaceTextAtomic } from './atomic-text.ts';
 import { ExitCode, workflowError } from './errors.ts';
 import { engineProjectionPathsForTransition } from './engine-projection-registry.ts';
 import {
-  renderHandoff,
+  projectHandoff,
+  projectHandoffForTaskProjection,
   renderHandoffForChange,
   validateHandoff,
 } from './handoff.ts';
@@ -64,6 +66,15 @@ export function validateManagedDocuments(repositoryRoot: string): string[] {
 export function refreshCompletionDocuments(
   repositoryRoot: string,
 ): GeneratedDocumentMutation[] {
+  const mutations = planCompletionDocuments(repositoryRoot);
+  applyGeneratedDocumentMutations(repositoryRoot, mutations);
+  return mutations;
+}
+
+export function planCompletionDocuments(
+  repositoryRoot: string,
+  taskProjection?: Readonly<{ changeId: string; tasks: string }>,
+): GeneratedDocumentMutation[] {
   if (!hasDocumentPolicy(repositoryRoot)) {
     return [];
   }
@@ -83,10 +94,33 @@ export function refreshCompletionDocuments(
     'docs/CURRENT_AND_NEXT_STEPS.md',
   );
   const before = fs.readFileSync(documentPath, 'utf8');
-  const after = renderHandoff(repositoryRoot);
+  const after = taskProjection
+    ? projectHandoffForTaskProjection(
+        repositoryRoot,
+        taskProjection.changeId,
+        taskProjection.tasks,
+      )
+    : projectHandoff(repositoryRoot);
   return before === after
     ? []
     : [{ path: 'docs/CURRENT_AND_NEXT_STEPS.md', before, after }];
+}
+
+export function applyGeneratedDocumentMutations(
+  repositoryRoot: string,
+  mutations: GeneratedDocumentMutation[],
+): void {
+  for (const mutation of mutations) {
+    const target = path.join(repositoryRoot, mutation.path);
+    const current = readGeneratedDocument(target);
+    if (current === mutation.after) continue;
+    if (current !== mutation.before) throw invalidDocumentProjection();
+    replaceGeneratedDocument(
+      target,
+      mutation.after,
+      mutation.before === undefined,
+    );
+  }
 }
 
 /**
@@ -162,16 +196,48 @@ export function rollbackGeneratedDocuments(
   mutations: GeneratedDocumentMutation[],
 ): void {
   for (const mutation of [...mutations].reverse()) {
+    const target = path.join(repositoryRoot, mutation.path);
+    const current = readGeneratedDocument(target);
+    if (current === mutation.before) continue;
+    if (current !== mutation.after) throw invalidDocumentProjection();
     if (mutation.before === undefined) {
-      fs.rmSync(path.join(repositoryRoot, mutation.path), { force: true });
+      fs.rmSync(target);
     } else {
-      fs.writeFileSync(
-        path.join(repositoryRoot, mutation.path),
-        mutation.before,
-        'utf8',
-      );
+      replaceGeneratedDocument(target, mutation.before, false);
     }
   }
+}
+
+function readGeneratedDocument(filePath: string): string | undefined {
+  const stats = fs.lstatSync(filePath, { throwIfNoEntry: false });
+  if (!stats) return undefined;
+  if (!stats.isFile() || stats.isSymbolicLink() || stats.nlink !== 1) {
+    throw invalidDocumentProjection();
+  }
+  return fs.readFileSync(filePath, 'utf8');
+}
+
+function replaceGeneratedDocument(
+  filePath: string,
+  content: string,
+  allowCreate: boolean,
+): void {
+  try {
+    replaceTextAtomic(filePath, content, { allowCreate });
+  } catch (error) {
+    if (error instanceof AtomicTextSafetyError) {
+      throw invalidDocumentProjection();
+    }
+    throw error;
+  }
+}
+
+function invalidDocumentProjection() {
+  return workflowError(
+    'DOCUMENT_PROJECTION_INVALID',
+    'A generated completion document differs from its exact engine-owned projection.',
+    ExitCode.staleState,
+  );
 }
 
 function loadDocumentPolicy(repositoryRoot: string): {
