@@ -4,6 +4,7 @@ import path from 'node:path';
 
 import { assertCommitObject } from './commit-object-validation.ts';
 import { readFileAtCommit } from './ci-git.ts';
+import { loadWorkflowConfig } from './contracts.ts';
 import {
   finalizeCommittedSession,
   resumePendingCommit,
@@ -20,6 +21,7 @@ import {
   rollbackExactStaging,
   stageExactPaths,
   updateManagedRef,
+  validateCommitSubject,
   type TaskCommit,
 } from './git-transitions.ts';
 import { discoverRepository } from './git.ts';
@@ -30,6 +32,10 @@ import {
   runSessionOperation,
 } from './lifecycle-context.ts';
 import { reconcilePredecessor } from './predecessor-reconciliation.ts';
+import {
+  readFinalizeTransaction,
+  type FinalizeTransaction,
+} from './finalize-transaction.ts';
 import {
   finalizeTaskUnlocked,
   PROJECTED_SINGLE_PASS_ASSURANCE,
@@ -52,9 +58,11 @@ import {
 import {
   assertOwnedLock,
   readSessionFile,
+  runtimePaths,
   writeJsonAtomic,
   type WorkflowSession,
 } from './session-store.ts';
+import { getSession } from './session.ts';
 import {
   executeChecks,
   inspectSession,
@@ -100,6 +108,66 @@ export type RollbackCompletionResult = {
 
 export type { CommitSessionResult } from './commit-recovery.ts';
 export type { FinalizeTaskResult } from './projected-finalization.ts';
+
+export type FinalizeSessionResult = Omit<FinalizeTaskResult, 'session'> & {
+  session: WorkflowSession;
+  commitReportId: string;
+  commitHash: string;
+};
+
+export type FinalizeSessionOptions = Readonly<{
+  testCrashAfter?: FinalizeTaskOptions['testCrashAfter'] | 'finalized';
+}>;
+
+export function finalizeSession(
+  cwd: string,
+  requestedSessionId: string,
+  subject: string,
+  environment: NodeJS.ProcessEnv = process.env,
+  options: FinalizeSessionOptions = {},
+): FinalizeSessionResult {
+  validateCommitSubject(subject);
+  return runSessionOperation(cwd, requestedSessionId, () => {
+    const observed = getSession(cwd, requestedSessionId);
+    let finalized: FinalizeTaskResult;
+    if (observed.state === 'committed') {
+      finalized = replayCompletedFinalize(cwd, observed);
+    } else {
+      finalized = finalizeTaskUnlocked(cwd, requestedSessionId, environment, {
+        ...(options.testCrashAfter && options.testCrashAfter !== 'finalized'
+          ? { testCrashAfter: options.testCrashAfter }
+          : {}),
+      });
+      if (options.testCrashAfter === 'finalized') {
+        throw new Error('Simulated finalize interruption after finalized.');
+      }
+    }
+    const committed = commitSessionUnlocked(
+      cwd,
+      requestedSessionId,
+      subject,
+      environment,
+    );
+    const facts = commitFacts(
+      finalized.session.repositoryRoot,
+      committed.commitHash,
+    );
+    if (facts.tree !== finalized.tree) {
+      throw workflowError(
+        'FINALIZE_TRANSACTION_DIVERGED',
+        'Managed finalize commit does not match its checked candidate tree.',
+        ExitCode.staleState,
+      );
+    }
+    const { session: _activeSession, ...result } = finalized;
+    return {
+      ...result,
+      session: committed.session,
+      commitReportId: committed.reportId,
+      commitHash: committed.commitHash,
+    };
+  });
+}
 
 export function finalizeTask(
   cwd: string,
@@ -660,6 +728,10 @@ function commitSessionUnlocked(
   subject: string,
   environment: NodeJS.ProcessEnv,
 ): CommitSessionResult {
+  const observed = getSession(cwd, requestedSessionId);
+  if (observed.state === 'committed') {
+    return replayCommittedCommit(cwd, observed, subject);
+  }
   const context = loadActiveSessionContext(cwd, requestedSessionId);
   const initialSession = context.session;
   if (initialSession.commitReportId || initialSession.commitHash) {
@@ -805,6 +877,131 @@ function commitSessionUnlocked(
     commitHash,
   );
   return finalizeCommittedSession(context.runtime, pending);
+}
+
+function replayCompletedFinalize(
+  cwd: string,
+  session: WorkflowSession,
+): FinalizeTaskResult {
+  const git = discoverRepository(cwd);
+  const config = loadWorkflowConfig(git.repositoryRoot);
+  const runtime = runtimePaths(git.gitCommonDirectory, config.runtimeDirectory);
+  const transaction = readFinalizeTransaction(runtime.root, session.sessionId);
+  if (
+    transaction === null ||
+    !isCompletedFinalizeTransaction(transaction) ||
+    transaction.repositoryRoot !== git.repositoryRealPath ||
+    transaction.gitCommonDirectory !== git.gitCommonDirectory ||
+    transaction.sessionId !== session.sessionId ||
+    transaction.changeId !== session.changeId ||
+    transaction.taskId !== session.taskId ||
+    transaction.branch !== session.branch ||
+    JSON.stringify(transaction.baseline) !== JSON.stringify(session.baseline) ||
+    transaction.checkReportId !== session.latestCheckReportId ||
+    transaction.completionReportId !== session.completionReportId ||
+    transaction.finishReportId !== session.finishReportId
+  ) {
+    throw invalidCompletedFinalize();
+  }
+  return finalizeResultFromTransaction(transaction, session);
+}
+
+function isCompletedFinalizeTransaction(
+  transaction: FinalizeTransaction,
+): transaction is FinalizeTransaction & {
+  candidateTree: string;
+  checkReportId: string;
+  completionReportId: string;
+  finishReportId: string;
+} {
+  return (
+    transaction.phase === 'completed' &&
+    transaction.candidateTree !== null &&
+    transaction.checkReportId !== null &&
+    transaction.completionReportId !== null &&
+    transaction.finishReportId !== null
+  );
+}
+
+function finalizeResultFromTransaction(
+  transaction: FinalizeTransaction & {
+    candidateTree: string;
+    checkReportId: string;
+    completionReportId: string;
+    finishReportId: string;
+  },
+  session: WorkflowSession,
+): FinalizeTaskResult {
+  return {
+    session,
+    assurance: PROJECTED_SINGLE_PASS_ASSURANCE,
+    transactionId: transaction.transactionId,
+    checkReportId: transaction.checkReportId,
+    completionReportId: transaction.completionReportId,
+    finishReportId: transaction.finishReportId,
+    completedTaskIds: [...transaction.completedTaskIds],
+    stagedPaths: [...transaction.changedPaths],
+    tree: transaction.candidateTree,
+  };
+}
+
+function replayCommittedCommit(
+  cwd: string,
+  session: WorkflowSession,
+  subject: string,
+): CommitSessionResult {
+  const git = discoverRepository(cwd);
+  const config = loadWorkflowConfig(git.repositoryRoot);
+  const runtime = runtimePaths(git.gitCommonDirectory, config.runtimeDirectory);
+  if (
+    session.repositoryRoot !== git.repositoryRealPath ||
+    session.gitCommonDirectory !== git.gitCommonDirectory ||
+    session.state !== 'committed' ||
+    !session.finishReportId ||
+    !session.commitReportId ||
+    !session.commitHash
+  ) {
+    throw invalidCompletedFinalize();
+  }
+  const report = readImmutableReport(
+    runtime.reports,
+    session.sessionId,
+    session.commitReportId,
+  );
+  const changedPaths = reportStringArray(
+    report,
+    'changedPaths',
+    'PENDING_COMMIT_INVALID',
+  );
+  const facts = commitFacts(git.repositoryRoot, session.commitHash);
+  assertCommitObject(
+    git.repositoryRoot,
+    session,
+    subject,
+    facts,
+    reportString(report, 'tree', 'PENDING_COMMIT_INVALID'),
+    changedPaths,
+  );
+  if (
+    report.kind !== 'commit' ||
+    report.parentReportId !== session.finishReportId ||
+    report.commitHash !== session.commitHash
+  ) {
+    throw invalidCompletedFinalize();
+  }
+  return {
+    session,
+    reportId: session.commitReportId,
+    commitHash: session.commitHash,
+  };
+}
+
+function invalidCompletedFinalize() {
+  return workflowError(
+    'FINALIZE_TRANSACTION_INVALID',
+    'Completed finalize state does not match its immutable transaction and commit evidence.',
+    ExitCode.staleState,
+  );
 }
 
 function assertProjectedFinalizeCandidateChain(

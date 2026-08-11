@@ -48,6 +48,7 @@ import './semantic-reconciliation.contract.test.ts';
 import './evidence-reuse-path.contract.test.ts';
 import './evidence-reuse-production.integration.test.ts';
 import './implementation-reconciliation-finalization.integration.test.ts';
+import './single-pass-finalize-command.integration.test.ts';
 import './floor-overflow-pruning.contract.test.ts';
 import './class-sample-audit.contract.test.ts';
 import './hit-predicate.contract.test.ts';

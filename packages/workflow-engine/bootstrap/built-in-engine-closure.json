@@ -216,7 +216,7 @@
     {
       "path": "src/cli.ts",
       "mode": "100644",
-      "digest": "sha256:8016b1afefa8b7061d40508375cb8720e2c8c4b10f77299a79908661e9be8f5b"
+      "digest": "sha256:5a7e5b4735a87423b646c63f44dfe6c7eb8a32a1c467fd2b973fd0d0d2063e37"
     },
     {
       "path": "src/codex-provider-adapter.ts",
@@ -591,7 +591,7 @@
     {
       "path": "src/lifecycle.ts",
       "mode": "100644",
-      "digest": "sha256:71025ea5d783146b1e262ad6db429a62a9ff17f3812c9ca42a24898cb8ffe82d"
+      "digest": "sha256:1db39b98ed2dec0b39826320b0396b46a0ef9c52d2ef73a7ffdad22b7f239af3"
     },
     {
       "path": "src/maintainer-approve.ts",
@@ -861,7 +861,7 @@
     {
       "path": "src/projected-finalization.ts",
       "mode": "100644",
-      "digest": "sha256:b45d28c5ff0dd4f49d48aff3755fc8ce5a562ff77ab2daa341df2adcd7419cf1"
+      "digest": "sha256:d7b0d4d335f5c468c2e247830f72227de9242b0d95203c68e085ad1a9a77b6f6"
     },
     {
       "path": "src/propose-exemption-store.ts",
