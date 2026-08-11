@@ -483,6 +483,124 @@ test('a corrected candidate receives a distinct immutable TaskDiffReview generat
   }
 });
 
+test('review-diff CLI resumes the durable happy path from ready through fixed-runner reconciliation', () => {
+  const { repository, counterPath } = createReviewFixture();
+  try {
+    const session = startSession(repository, 'demo-change', '1.1');
+    fs.writeFileSync(
+      path.join(repository, 'src/feature.ts'),
+      'export const reviewed = true;\n',
+    );
+    assert.throws(
+      () => finalizeTask(repository, session.sessionId),
+      hasCode('TASK_DIFF_REVIEW_REQUIRED'),
+    );
+
+    const ready = runCli(repository, [
+      'review-diff',
+      'status',
+      session.sessionId,
+      '--json',
+    ]);
+    assert.equal(ready.status, 0, ready.stderr);
+    assert.equal(
+      (JSON.parse(ready.stdout) as { result: { state: string } }).result.state,
+      'ready',
+    );
+
+    const started = runCli(
+      repository,
+      ['review-diff', session.sessionId, '--actor', 'codex', '--json'],
+      { WORKFLOW_TEST_DISABLE_PROVIDER_DISPATCH: '1' },
+    );
+    assert.equal(started.status, 0, started.stderr);
+    const startedResult = (
+      JSON.parse(started.stdout) as {
+        result: {
+          state: string;
+          invocationId: string;
+          subject: { subjectDigest: string; transitions: unknown[] };
+        };
+      }
+    ).result;
+    assert.equal(startedResult.state, 'waiting-for-provider');
+    assert.equal(
+      readProviderInvocation(
+        investigationRuntime(repository),
+        startedResult.invocationId,
+      ).state,
+      'prepared',
+    );
+
+    const reviewedBlobObjectId = (
+      startedResult.subject.transitions as Array<{
+        path: string;
+        after: { objectId: string } | null;
+      }>
+    ).find(({ path: changedPath }) => changedPath === 'src/feature.ts')?.after
+      ?.objectId;
+    assert.ok(reviewedBlobObjectId);
+    const submission = validTaskDiffSubmission(reviewedBlobObjectId);
+    assert.equal(
+      runProviderWorker(repository, startedResult.invocationId, {
+        runner(input) {
+          return {
+            invocationId: startedResult.invocationId,
+            providerId: 'claude',
+            purpose: 'task-diff-review',
+            requestDigest: input.request.requestDigest,
+            semanticOutput: submission,
+            semanticOutputDigest: sha256(canonicalJson(submission)),
+            assurance: 'unchanged-governed-projection',
+            projection: {
+              unchanged: true,
+              changedCategories: [],
+              beforeDigest: startedResult.subject.subjectDigest,
+              afterDigest: startedResult.subject.subjectDigest,
+            },
+            sameUserProcessConfined: false,
+            residuals: [...PROVIDER_RUNNER_RESIDUALS],
+            executable: executableIdentity(),
+            elapsedMs: 7,
+          };
+        },
+      }).state,
+      'succeeded',
+    );
+
+    const awaiting = runCli(repository, [
+      'review-diff',
+      'status',
+      session.sessionId,
+      '--json',
+    ]);
+    assert.equal(awaiting.status, 0, awaiting.stderr);
+    assert.equal(
+      (JSON.parse(awaiting.stdout) as { result: { state: string } }).result
+        .state,
+      'provider-succeeded-awaiting-reconciliation',
+    );
+    const resumed = runCli(repository, [
+      'review-diff',
+      session.sessionId,
+      '--actor',
+      'codex',
+      '--json',
+    ]);
+    assert.equal(resumed.status, 0, resumed.stderr);
+    assert.equal(
+      (JSON.parse(resumed.stdout) as { result: { state: string } }).result
+        .state,
+      'satisfied',
+    );
+    const finalized = finalizeTask(repository, session.sessionId);
+    assert.equal(finalized.session.finishReportId, finalized.finishReportId);
+    assert.equal(fs.readFileSync(counterPath, 'utf8'), '1');
+  } finally {
+    fs.rmSync(repository, { recursive: true, force: true });
+  }
+});
+
 function createReviewFixture(): {
   repository: string;
   counterPath: string;
@@ -630,6 +748,7 @@ function sha256(value: string): string {
 function runCli(
   repository: string,
   args: string[],
+  environment: NodeJS.ProcessEnv = {},
 ): { status: number | null; stdout: string; stderr: string } {
   return spawnSync(
     process.execPath,
@@ -638,7 +757,11 @@ function runCli(
       path.resolve(import.meta.dirname, '../src/cli.ts'),
       ...args,
     ],
-    { cwd: repository, encoding: 'utf8' },
+    {
+      cwd: repository,
+      encoding: 'utf8',
+      env: { ...process.env, ...environment },
+    },
   );
 }
 
