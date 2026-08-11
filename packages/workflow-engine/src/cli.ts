@@ -157,12 +157,15 @@ import {
 } from './implementation-reconciliation.ts';
 import { loadInvestigationRuntimeContext } from './lifecycle-context.ts';
 import {
+  cancelFinalizeRecovery,
   commitSession,
   completeTask,
   finalizeSession,
   finalizeTask,
   findTaskCommits,
   finishSession,
+  inspectFinalizeRecoveryStatus,
+  recoverFinalize,
   rollbackCompletion,
 } from './lifecycle.ts';
 import {
@@ -1059,20 +1062,30 @@ function dispatch(args: string[], cwd: string): CommandResult {
             return { command, ok: true, openTask: openTaskStatus };
           }
           const session = getSession(cwd, openTaskStatus.sessionId);
+          const finalizeStatus = inspectFinalizeRecoveryStatus(
+            cwd,
+            session.sessionId,
+          );
           return {
             command,
             ok: true,
             openTask: openTaskStatus,
             session,
+            ...(finalizeStatus ? { finalize: finalizeStatus } : {}),
             taskRevision: inspectTaskRevisionStatus(cwd, session.sessionId),
             taskCommits: findTaskCommits(cwd, session.changeId, session.taskId),
           };
         }
         const session = getSession(cwd, rest[0]);
+        const finalizeStatus = inspectFinalizeRecoveryStatus(
+          cwd,
+          session.sessionId,
+        );
         return {
           command,
           ok: true,
           session,
+          ...(finalizeStatus ? { finalize: finalizeStatus } : {}),
           taskRevision: inspectTaskRevisionStatus(cwd, session.sessionId),
           taskCommits: findTaskCommits(cwd, session.changeId, session.taskId),
         };
@@ -1478,6 +1491,35 @@ function dispatch(args: string[], cwd: string): CommandResult {
         command,
         ok: true,
         result: finalizeSession(cwd, sessionId, message),
+      };
+    }
+    case 'finalize-recover': {
+      if (rest.length === 1) {
+        return {
+          command,
+          ok: true,
+          result: recoverFinalize(cwd, rest[0]),
+        };
+      }
+      const sessionId = rest[0];
+      const transactionId = optionValue(rest.slice(1), '--cancel');
+      const reason = optionValue(rest.slice(1), '--reason');
+      if (
+        !sessionId ||
+        !transactionId ||
+        !reason ||
+        rest.length !== 5 ||
+        rest[1] !== '--cancel' ||
+        rest[3] !== '--reason'
+      ) {
+        throw usage(
+          'Usage: pnpm workflow finalize-recover <session-id> [--cancel <transaction-id> --reason <text>] [--json]',
+        );
+      }
+      return {
+        command,
+        ok: true,
+        result: cancelFinalizeRecovery(cwd, sessionId, transactionId, reason),
       };
     }
     case 'finalize-task':
@@ -2526,6 +2568,7 @@ function usageText(): string {
     '  pnpm workflow complete-task <session-id> [--json]',
     '  pnpm workflow finish <session-id> [--json]',
     '  pnpm workflow finalize <session-id> --message <subject> [--json]',
+    '  pnpm workflow finalize-recover <session-id> [--cancel <transaction-id> --reason <text>] [--json]',
     '  pnpm workflow finalize-task <session-id> [--json]',
     '  pnpm workflow rollback-completion <session-id> --reason <text> [--json]',
     '  pnpm workflow commit <session-id> --message <subject> [--json]',

@@ -726,6 +726,28 @@ function rollbackPersistedFinalizeTransaction(
   );
   if (transaction === null) return;
   if (sessionHasFinalizeReports(context.session, transaction)) return;
+  restoreFinalizeTransactionProjection(cwd, transaction, cause);
+  removeFinalizeTransaction(context.runtime.root, transaction);
+}
+
+export function restoreFinalizeTransactionProjection(
+  cwd: string,
+  transaction: FinalizeTransaction,
+  cause: unknown,
+): void {
+  const context = loadActiveSessionContext(cwd, transaction.sessionId);
+  assertFinalizeTransactionIdentity(context, transaction);
+  const observed = readFinalizeTransaction(
+    context.runtime.root,
+    transaction.sessionId,
+  );
+  if (
+    observed === null ||
+    JSON.stringify(observed) !== JSON.stringify(transaction) ||
+    sessionHasFinalizeReports(context.session, transaction)
+  ) {
+    throw transactionDiverged();
+  }
   const indexTree = runGit(context.git.repositoryRoot, ['write-tree']).trim();
   if (indexTree === transaction.candidateTree) {
     rollbackExactStaging(
@@ -754,7 +776,6 @@ function rollbackPersistedFinalizeTransaction(
       fs.writeFileSync(target, mutation.before, 'utf8');
     }
   }
-  removeFinalizeTransaction(context.runtime.root, transaction);
 }
 
 function readProjectionText(
