@@ -222,6 +222,7 @@ import {
 import {
   WORKFLOW_GUIDANCE_CATALOG,
   workflowCommandGuidance,
+  workflowFailureRecoveryCommand,
   workflowGuidanceUsageLines,
   workflowResultNextSteps,
 } from './workflow-guidance.ts';
@@ -260,7 +261,7 @@ export function runCli(argv: string[], cwd = process.cwd()): number {
             error instanceof Error ? error.message : String(error),
             ExitCode.internal,
           );
-    printFailure(workflowFailure, json);
+    printFailure(workflowFailure, json, args);
     return workflowFailure.exitCode;
   }
 }
@@ -2677,14 +2678,18 @@ function printSuccess(result: CommandResult, json: boolean): void {
   process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
 }
 
-function printFailure(error: WorkflowError, json: boolean): void {
+function printFailure(
+  error: WorkflowError,
+  json: boolean,
+  invocation: readonly string[],
+): void {
   const result = {
     ok: false,
     error: {
       code: error.code,
       message: error.message,
       ...(error.details ? { details: error.details } : {}),
-      ...(error.recovery ? { recovery: error.recovery } : {}),
+      recovery: workflowFailureRecoveryCommand(error, invocation),
     },
   };
 

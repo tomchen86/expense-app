@@ -851,9 +851,15 @@ test('task-revision approval CLI reaches the controlling-terminal boundary witho
       { cwd: repository, encoding: 'utf8' },
     );
     assert.equal(invoked.status, 12, invoked.stderr);
+    const error = (
+      JSON.parse(invoked.stderr) as {
+        error: { code: string; recovery: string };
+      }
+    ).error;
+    assert.equal(error.code, 'MAINTAINER_INTERACTIVE_REQUIRED');
     assert.equal(
-      (JSON.parse(invoked.stderr) as { error: { code: string } }).error.code,
-      'MAINTAINER_INTERACTIVE_REQUIRED',
+      error.recovery,
+      `pnpm workflow maintainer revision-approval ${session.sessionId} --target ${taskRevisionApprovalTargetDigest(binding)} --reason 'Approve this exact reviewed widening at the controlling terminal.' --json`,
     );
     assert.deepEqual(fs.readdirSync(approvalDirectory).sort(), recordsBefore);
     assert.equal(getSession(repository, session.sessionId).state, 'revising');

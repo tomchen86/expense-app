@@ -1,3 +1,5 @@
+import type { WorkflowError } from './errors.ts';
+
 export type WorkflowGuidanceStatus =
   'preferred' | 'compatible' | 'deprecated' | 'read-only' | 'recovery';
 
@@ -312,6 +314,44 @@ export function workflowResultNextSteps(
   );
 }
 
+export function workflowFailureRecoveryCommand(
+  error: Pick<WorkflowError, 'code' | 'recovery'>,
+  invocation: readonly string[],
+): string {
+  const sessionId = sessionIdFromInvocation(invocation);
+  if (
+    sessionId !== undefined &&
+    ['TASK_DIFF_REVIEW_REQUIRED', 'TASK_DIFF_REVIEW_CHALLENGE_OPEN'].includes(
+      error.code,
+    )
+  ) {
+    return nextStep('review-diff', { sessionId }).command;
+  }
+  if (
+    sessionId !== undefined &&
+    error.code === 'TASK_DIFF_REVIEW_CHANGES_REQUIRED'
+  ) {
+    return nextStep('status', { sessionId }).command;
+  }
+  if (sessionId !== undefined && error.code === 'FINALIZE_RECOVERY_REQUIRED') {
+    return nextStep('finalize-recover', { sessionId }).command;
+  }
+  if (
+    sessionId !== undefined &&
+    ['REVISION_LEASE_EXPIRED', 'REVISION_REQUIRES_APPROVAL'].includes(
+      error.code,
+    )
+  ) {
+    return nextStep('status', { sessionId }).command;
+  }
+  if (error.code === 'MAINTAINER_INTERACTIVE_REQUIRED') {
+    const replay = renderWorkflowInvocation(invocation);
+    if (replay !== null) return replay;
+  }
+  if (isLiteralWorkflowRecovery(error.recovery)) return error.recovery;
+  return nextStep('guide', {}).command;
+}
+
 function statusNextSteps(
   result: Readonly<Record<string, unknown>>,
   bindings: WorkflowNextStepBindings,
@@ -454,10 +494,59 @@ function resultBindings(
 function sessionIdFromInvocation(
   invocation: readonly string[],
 ): string | undefined {
-  if (invocation[0] !== 'review-diff') return undefined;
-  return ['inspect', 'status', 'reconcile'].includes(invocation[1] ?? '')
-    ? invocation[2]
-    : invocation[1];
+  if (invocation[0] === 'review-diff') {
+    return ['inspect', 'status', 'reconcile'].includes(invocation[1] ?? '')
+      ? invocation[2]
+      : invocation[1];
+  }
+  return [
+    'revise-task',
+    'resume-task',
+    'status',
+    'check',
+    'complete-task',
+    'finish',
+    'finalize',
+    'finalize-recover',
+    'finalize-task',
+    'rollback-completion',
+    'commit',
+    'abort',
+  ].includes(invocation[0] ?? '')
+    ? invocation[1]
+    : undefined;
+}
+
+function isLiteralWorkflowRecovery(value: string | undefined): value is string {
+  if (value === undefined || value !== value.trim()) return false;
+  const tokens = value.split(' ');
+  return (
+    tokens.length >= 4 &&
+    tokens[0] === 'pnpm' &&
+    tokens[1] === 'workflow' &&
+    tokens.at(-1) === '--json' &&
+    tokens.every((token) => /^[A-Za-z0-9_./:@=+-]+$/.test(token))
+  );
+}
+
+function renderWorkflowInvocation(
+  invocation: readonly string[],
+): string | null {
+  if (
+    invocation.length === 0 ||
+    invocation.some((argument) => /[\0\r\n]/.test(argument))
+  ) {
+    return null;
+  }
+  const normalized =
+    invocation.at(-1) === '--json' ? invocation : [...invocation, '--json'];
+  return `pnpm workflow ${normalized.map(shellQuote).join(' ')}`;
+}
+
+function shellQuote(value: string): string {
+  return /^[A-Za-z0-9_./:@=+,-]+$/.test(value)
+    ? value
+    : `'${value.replaceAll("'", `'"'"'`)}'`;
 }
 
 function firstString(
