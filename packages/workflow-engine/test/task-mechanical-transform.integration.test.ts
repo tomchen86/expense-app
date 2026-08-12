@@ -49,6 +49,24 @@ test('mechanical transformation closure scans unchanged live consumers in the fu
   }
 });
 
+test('mechanical transformation closure rejects a live consumer outside the mutation scope', () => {
+  const fixture = createMechanicalFixture({
+    files: {
+      'src/features/changed.ts': "export const value = 'OLD_NAME';\n",
+      'src/outside-scope.ts': "export const consumer = 'OLD_NAME';\n",
+    },
+  });
+  try {
+    replaceInFile(fixture.repository, 'src/features/changed.ts');
+    assertCheckFails(
+      fixture,
+      'TASK_MECHANICAL_TRANSFORMATION_LIVE_TERM_REMAINS',
+    );
+  } finally {
+    cleanup(fixture.repository);
+  }
+});
+
 test('mechanical transformation closure mints evidence only for the exact deterministic projection', () => {
   const fixture = createMechanicalFixture({
     files: {
@@ -199,6 +217,38 @@ test('mechanical transformation closure permits an exact reviewed historical ret
     );
   } finally {
     cleanup(withDisposition.repository);
+  }
+});
+
+test('mechanical closure observes and dispositions retained terms outside mutation authority', () => {
+  const fixture = createMechanicalFixture({
+    files: {
+      'src/features/feature.ts': "export const value = 'OLD_NAME';\n",
+      'docs/research/reference.md': 'Historical OLD_NAME behavior.\n',
+    },
+    allowedPaths: ['docs/research/**', 'src/**'],
+    fileScopes: ['src/features/**'],
+    referencePolicy: true,
+    retainedDispositions: [
+      {
+        term: { kind: 'symbol', value: 'OLD_NAME' },
+        path: 'docs/research/reference.md',
+        mutationClass: 'historical-reference',
+        reason:
+          'This immutable research record is observed but is outside mutation authority.',
+      },
+    ],
+  });
+  try {
+    replaceInFile(fixture.repository, 'src/features/feature.ts');
+    assert.equal(
+      checkSession(fixture.repository, fixture.sessionId, {
+        environment: {},
+      }).passed,
+      true,
+    );
+  } finally {
+    cleanup(fixture.repository);
   }
 });
 

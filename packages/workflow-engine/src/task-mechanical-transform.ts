@@ -281,16 +281,16 @@ function evaluateMechanicalClosure(
   task: MechanicalTransformExecution,
   mutationPolicy: ReturnType<typeof deriveReviewedMutationClassPolicy>,
 ): Omit<MechanicalEvidenceOutput, 'projectionDigest'> {
-  const scopedEntries = scopedEntriesForTask(entries, task);
-  assertScannableEntries(scopedEntries);
+  const closureEntries = closureEntriesForTask(entries, task);
+  assertScannableEntries(closureEntries);
 
   const oldTermHits = scanTerms(
-    scopedEntries,
+    closureEntries,
     task.transformationContract.oldTerms,
     mutationPolicy,
   );
   const replacementTermHits = scanTerms(
-    scopedEntries,
+    closureEntries,
     task.transformationContract.replacementTerms,
     mutationPolicy,
   );
@@ -373,8 +373,8 @@ function evaluateMechanicalClosure(
     candidateTree,
     candidateTreeDigest: treeDigest,
     changedPaths: [...changedPaths],
-    scannedPathCount: scopedEntries.length,
-    scannedBlobBytes: scopedEntries.reduce(
+    scannedPathCount: closureEntries.length,
+    scannedBlobBytes: closureEntries.reduce(
       (sum, entry) => sum + (entry.byteSize ?? 0),
       0,
     ),
@@ -476,6 +476,19 @@ function assertDeterministicMechanicalProjection(
         left.path.localeCompare(right.path),
       ),
     }),
+  );
+}
+
+function closureEntriesForTask(
+  entries: readonly TrackedTreeEntry[],
+  task: MechanicalTransformExecution,
+): TrackedTreeEntry[] {
+  return entries.filter(
+    (entry) =>
+      entry.path.utf8 !== null &&
+      task.allowedPaths.some((scope) =>
+        matchesAllowedPath(entry.path.utf8!, scope),
+      ),
   );
 }
 
