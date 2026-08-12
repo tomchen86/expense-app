@@ -11,14 +11,21 @@ import type {
 } from './contracts.ts';
 import { ExitCode, workflowError } from './errors.ts';
 import { previewExactStaging } from './git-transitions.ts';
-import { runGit, runGitWithEnvironment } from './git.ts';
-import { runSessionOperation } from './lifecycle-context.ts';
+import { runGit, runGitBuffer, runGitWithEnvironment } from './git.ts';
+import {
+  loadActiveSessionContext,
+  runSessionOperation,
+} from './lifecycle-context.ts';
 import {
   investigationRuntimePaths,
   matchesAllowedPath,
   normalizeChangedPath,
 } from './paths.ts';
 import { readTaskStrategyTransaction } from './task-strategy-store.ts';
+import {
+  withRepositoryLifecycleOperation,
+  withSessionOperation,
+} from './session-store.ts';
 import {
   readTaskStrategyCallerImplementationBinding,
   readTaskStrategyImplementationReservation,
@@ -45,6 +52,12 @@ import { inspectSession, type SessionInspection } from './verification.ts';
 
 const MAX_PATCH_BYTES = 8 * 1024 * 1024;
 const MAX_PATCH_PATHS = 1024;
+
+type TaskStrategyPatchCrashPhase =
+  | 'reservation-persisted'
+  | 'record-persisted'
+  | 'patch-applied'
+  | 'receipt-persisted';
 
 export type TaskStrategyPatchValidation = Readonly<{
   schemaVersion: 1;
@@ -87,8 +100,7 @@ type ProviderTaskStrategyPatchValidationInput = Readonly<{
 type ProviderTaskStrategyPatchImportInput = Readonly<{
   patch: string | Buffer;
   implementationResultBindingDigest: string;
-  testCrashAfter?:
-    'reservation-persisted' | 'record-persisted' | 'patch-applied';
+  testCrashAfter?: TaskStrategyPatchCrashPhase;
 }>;
 
 type CallerTaskStrategyPatchValidationInput = Readonly<{
@@ -102,8 +114,12 @@ type CallerTaskStrategyPatchValidationInput = Readonly<{
 type CallerTaskStrategyPatchImportInput = Readonly<{
   patch: string | Buffer;
   callerImplementationBindingDigest: string;
-  testCrashAfter?:
-    'reservation-persisted' | 'record-persisted' | 'patch-applied';
+  testCrashAfter?: TaskStrategyPatchCrashPhase;
+}>;
+
+type SealedLocalPatchAuthority = Readonly<{
+  kind: 'sealed-local';
+  implementer: Exclude<TaskStrategyPatchImplementer, { providerId: null }>;
 }>;
 
 export function validateTaskStrategyPatch(
@@ -139,6 +155,7 @@ function validateTaskStrategyPatchWithAuthority(
     | ProviderTaskStrategyPatchImportInput
     | CallerTaskStrategyPatchValidationInput
     | CallerTaskStrategyPatchImportInput,
+  sealedLocalAuthority?: SealedLocalPatchAuthority,
 ): TaskStrategyPatchValidation {
   const patchBytes = normalizePatchBytes(input.patch);
   const inspection = inspectSession(cwd, requestedSessionId);
@@ -166,23 +183,12 @@ function validateTaskStrategyPatchWithAuthority(
       ExitCode.verification,
     );
   }
-  const current = previewExactStaging(
-    inspection.git.repositoryRoot,
-    inspection.session.baseline.head,
-    [...inspection.changedPaths],
-  );
-  if (current.tree !== transaction.red.candidateTree) {
-    throw workflowError(
-      'TASK_STRATEGY_RED_STALE',
-      'The task worktree changed after RED sealing and before isolated patch validation.',
-      ExitCode.staleState,
-    );
-  }
   const authority = resolvePatchImplementer(
     inspection,
     transaction,
     input,
     sha256(patchBytes),
+    sealedLocalAuthority,
   );
   if (
     task.strategy === 'cross-agent-tdd' &&
@@ -200,12 +206,38 @@ function validateTaskStrategyPatchWithAuthority(
       },
     );
   }
+  if (
+    task.strategy === 'tdd-single-agent' &&
+    canonicalJson(authority.implementer) !== canonicalJson(transaction.author)
+  ) {
+    throw workflowError(
+      'TASK_STRATEGY_IMPLEMENTER_REQUIRED',
+      'Single-agent TDD binds implementation authority to the sealed RED author.',
+      ExitCode.guard,
+    );
+  }
 
   const projection = applyPatchToIsolatedTree(
     inspection.git.repositoryRoot,
     transaction.red.candidateTree,
     patchBytes,
   );
+  const current = previewExactStaging(
+    inspection.git.repositoryRoot,
+    inspection.session.baseline.head,
+    [...inspection.changedPaths],
+  );
+  if (
+    current.tree !== transaction.red.candidateTree &&
+    (sealedLocalAuthority === undefined ||
+      current.tree !== projection.candidateTree)
+  ) {
+    throw workflowError(
+      'TASK_STRATEGY_RED_STALE',
+      'The task worktree changed after RED sealing and before isolated patch validation.',
+      ExitCode.staleState,
+    );
+  }
   if (
     projection.changedPaths.length === 0 ||
     projection.changedPaths.length > MAX_PATCH_PATHS
@@ -322,12 +354,82 @@ export function importTaskStrategyPatch(
     patch: string | Buffer;
     explicitActor?: string;
     environment?: NodeJS.ProcessEnv;
-    testCrashAfter?:
-      'reservation-persisted' | 'record-persisted' | 'patch-applied';
+    testCrashAfter?: TaskStrategyPatchCrashPhase;
   }>,
 ): ImportedTaskStrategyPatch {
   return runSessionOperation(cwd, requestedSessionId, () =>
     importTaskStrategyPatchUnlocked(cwd, requestedSessionId, input),
+  );
+}
+
+/**
+ * Bind an already-present single-agent implementation to the same durable
+ * patch record/receipt used by provider imports. The sealed RED author is the
+ * implementation identity; ambient resume actors cannot replace it.
+ */
+export function adoptCurrentTaskStrategyImplementation(
+  cwd: string,
+  requestedSessionId: string,
+  options: Readonly<{ testCrashAfter?: TaskStrategyPatchCrashPhase }> = {},
+): ImportedTaskStrategyPatch | null {
+  const initial = loadActiveSessionContext(cwd, requestedSessionId);
+  return withRepositoryLifecycleOperation(initial.runtime, (assertOwned) =>
+    withSessionOperation(initial.runtime, requestedSessionId, () => {
+      assertOwned();
+      const inspection = inspectSession(cwd, requestedSessionId);
+      const task = executionTask(inspection);
+      const runtime = investigationRuntimePaths(
+        inspection.git.gitCommonDirectory,
+        inspection.contract.config.runtimeDirectory,
+      );
+      const transaction = readTaskStrategyTransaction(
+        runtime,
+        inspection.session.sessionId,
+      );
+      if (
+        task.strategy !== 'tdd-single-agent' ||
+        transaction === null ||
+        transaction.strategy !== 'tdd-single-agent'
+      ) {
+        throw workflowError(
+          'TASK_STRATEGY_LOCAL_ADOPTION_NOT_APPLICABLE',
+          'Only an exact engine-sealed single-agent TDD transaction can adopt local implementation bytes.',
+          ExitCode.guard,
+        );
+      }
+      const current = previewExactStaging(
+        inspection.git.repositoryRoot,
+        inspection.session.baseline.head,
+        [...inspection.changedPaths],
+      );
+      if (current.tree === transaction.red.candidateTree) return null;
+      const patch = runGitBuffer(inspection.git.repositoryRoot, [
+        'diff',
+        '--binary',
+        '--full-index',
+        '--no-renames',
+        '--diff-algorithm=myers',
+        transaction.red.candidateTree,
+        current.tree,
+        '--',
+      ]);
+      const imported = importTaskStrategyPatchUnlocked(
+        cwd,
+        requestedSessionId,
+        {
+          patch,
+          ...(options.testCrashAfter === undefined
+            ? {}
+            : { testCrashAfter: options.testCrashAfter }),
+        },
+        {
+          kind: 'sealed-local',
+          implementer: Object.freeze(structuredClone(transaction.author)),
+        },
+      );
+      assertOwned();
+      return imported;
+    }),
   );
 }
 
@@ -382,9 +484,9 @@ function importTaskStrategyPatchUnlocked(
     environment?: NodeJS.ProcessEnv;
     implementationResultBindingDigest?: string;
     callerImplementationBindingDigest?: string;
-    testCrashAfter?:
-      'reservation-persisted' | 'record-persisted' | 'patch-applied';
+    testCrashAfter?: TaskStrategyPatchCrashPhase;
   }>,
+  sealedLocalAuthority?: SealedLocalPatchAuthority,
 ): ImportedTaskStrategyPatch {
   const patchBytes = normalizePatchBytes(input.patch);
   const patchDigest = sha256(patchBytes);
@@ -403,6 +505,7 @@ function importTaskStrategyPatchUnlocked(
     transaction,
     input,
     patchDigest,
+    sealedLocalAuthority,
   ).implementer;
   let reservation = readTaskStrategyPatchReservation(
     runtime,
@@ -426,6 +529,7 @@ function importTaskStrategyPatchUnlocked(
       cwd,
       requestedSessionId,
       input,
+      sealedLocalAuthority,
     );
     const preparedRecord = prepareTaskStrategyPatchRecord({
       sessionId: inspection.session.sessionId,
@@ -466,7 +570,15 @@ function importTaskStrategyPatchUnlocked(
         ExitCode.staleState,
       );
     }
-    assertPatchRecordCurrent(record, inspection, task, implementer, patchBytes);
+    if (transaction === null) throw patchStale();
+    assertPatchRecordCurrent(
+      record,
+      inspection,
+      task,
+      transaction,
+      implementer,
+      patchBytes,
+    );
     assertPatchStateRelations(record, reservation, null, null);
   }
   assertPatchStateRelations(record, reservation, null, null);
@@ -491,6 +603,7 @@ function importTaskStrategyPatchUnlocked(
     return Object.freeze({ record, reservation, receipt, binding });
   }
   if (currentTree === record.sourceTree) {
+    if (sealedLocalAuthority !== undefined) throw patchStale();
     applyPatchToWorktree(
       inspection.git.repositoryRoot,
       Buffer.from(record.patchBase64, 'base64'),
@@ -509,13 +622,16 @@ function importTaskStrategyPatchUnlocked(
     throw patchStale();
   }
   const importedAt = receipt?.importedAt ?? new Date().toISOString();
-  receipt ??= createTaskStrategyPatchImportReceipt(runtime, {
-    recordDigest: record.recordDigest,
-    sessionId: record.sessionId,
-    patchDigest: record.patchDigest,
-    candidateTree: record.candidateTree,
-    importedAt,
-  });
+  if (receipt === null) {
+    receipt = createTaskStrategyPatchImportReceipt(runtime, {
+      recordDigest: record.recordDigest,
+      sessionId: record.sessionId,
+      patchDigest: record.patchDigest,
+      candidateTree: record.candidateTree,
+      importedAt,
+    });
+    maybeInterrupt(input.testCrashAfter, 'receipt-persisted');
+  }
   binding ??= createTaskStrategyPatchCurrentBinding(runtime, {
     sessionId: record.sessionId,
     patchDigest: record.patchDigest,
@@ -569,6 +685,7 @@ function resolvePatchImplementer(
     | CallerTaskStrategyPatchValidationInput
     | CallerTaskStrategyPatchImportInput,
   patchDigest: string,
+  sealedLocalAuthority?: SealedLocalPatchAuthority,
 ): Readonly<{
   implementer: TaskStrategyPatchImplementer;
   allowsSameProvider: boolean;
@@ -579,6 +696,19 @@ function resolvePatchImplementer(
       'Patch import requires the exact current engine-sealed RED transaction.',
       ExitCode.verification,
     );
+  }
+  if (sealedLocalAuthority !== undefined) {
+    if (
+      transaction.strategy !== 'tdd-single-agent' ||
+      canonicalJson(sealedLocalAuthority.implementer) !==
+        canonicalJson(transaction.author)
+    ) {
+      throw patchAuthorityStale();
+    }
+    return Object.freeze({
+      implementer: sealedLocalAuthority.implementer,
+      allowsSameProvider: true,
+    });
   }
   const runtime = investigationRuntimePaths(
     inspection.git.gitCommonDirectory,
@@ -719,6 +849,7 @@ function assertPatchRecordCurrent(
   record: TaskStrategyPatchRecord,
   inspection: SessionInspection,
   task: CrossAgentTddExecution | TddSingleAgentExecution,
+  transaction: NonNullable<ReturnType<typeof readTaskStrategyTransaction>>,
   implementer: TaskStrategyPatchImplementer,
   patchBytes: Buffer,
 ): void {
@@ -727,6 +858,8 @@ function assertPatchRecordCurrent(
     record.changeId !== inspection.session.changeId ||
     record.taskId !== inspection.session.taskId ||
     record.strategy !== task.strategy ||
+    record.sourceTree !== transaction.red.candidateTree ||
+    record.candidateTree === record.sourceTree ||
     record.taskContractDigest !== sha256(canonicalJson(task)) ||
     record.patchDigest !== sha256(patchBytes) ||
     record.patchBase64 !== patchBytes.toString('base64') ||
@@ -772,9 +905,8 @@ function assertPatchStateRelations(
 }
 
 function maybeInterrupt(
-  requested:
-    'reservation-persisted' | 'record-persisted' | 'patch-applied' | undefined,
-  phase: 'reservation-persisted' | 'record-persisted' | 'patch-applied',
+  requested: TaskStrategyPatchCrashPhase | undefined,
+  phase: TaskStrategyPatchCrashPhase,
 ): void {
   if (requested === phase) {
     throw new SimulatedTaskStrategyPatchInterruption(phase);

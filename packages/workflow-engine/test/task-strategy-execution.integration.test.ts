@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -6,6 +7,7 @@ import path from 'node:path';
 import test from 'node:test';
 
 import { canonicalJson } from '../src/canonical-json.ts';
+import { dispatchPreparedTaskStrategyProvider } from '../src/cli.ts';
 import {
   issueCollaborationGrant,
   type CollaborationGrantRequest,
@@ -13,16 +15,20 @@ import {
 import { inspectCollaborationGrants } from '../src/collaboration-grant-store.ts';
 import { runGitWithEnvironment } from '../src/git.ts';
 import { finalizeTask } from '../src/lifecycle.ts';
+import { loadInvestigationRuntimeContext } from '../src/lifecycle-context.ts';
 import type { MaintainerSignerProvider } from '../src/maintainer-signer.ts';
 import { commitPlanningTransition } from '../src/planning-transition.ts';
 import { PROVIDER_RUNNER_RESIDUALS } from '../src/provider-runner.ts';
 import { runProviderWorker } from '../src/provider-worker.ts';
 import { startSession } from '../src/session.ts';
+import { beginTaskDiffReview } from '../src/task-diff-review-lifecycle.ts';
 import {
+  adoptCurrentTaskStrategyImplementation,
   importTaskStrategyPatch,
   inspectTaskStrategyPatchState,
   validateTaskStrategyPatch,
 } from '../src/task-strategy-patch.ts';
+import { readTaskStrategyPatchCurrentBinding } from '../src/task-strategy-patch-store.ts';
 import {
   inspectTaskStrategyTransaction,
   sealTaskStrategyRed,
@@ -227,8 +233,16 @@ test('single-agent TDD keeps the RED gate and engine GREEN evidence without fals
   const { repository, counterPath } = createCrossAgentFixture(
     'assertion',
     'tdd-single-agent',
+    { codex: true, claude: true },
+    true,
   );
   try {
+    fs.copyFileSync(
+      path.join(sourceRepositoryRoot, 'workflow/path-roles.json'),
+      path.join(repository, 'workflow/path-roles.json'),
+    );
+    git(repository, ['add', 'workflow/path-roles.json']);
+    git(repository, ['commit', '-m', 'Configure fixture path roles']);
     const session = startSession(repository, 'demo-change', '1.1');
     fs.mkdirSync(path.join(repository, 'test'), { recursive: true });
     fs.writeFileSync(
@@ -255,11 +269,27 @@ test('single-agent TDD keeps the RED gate and engine GREEN evidence without fals
       environment: {},
     });
 
-    const checked = checkSession(repository, session.sessionId, {
-      environment: { AGENT: 'codex' },
-    });
-    assert.equal(checked.passed, true);
+    assert.throws(
+      () =>
+        finalizeTask(
+          repository,
+          session.sessionId,
+          { AGENT: 'codex' },
+          {
+            testCrashAfter: 'checked',
+          },
+        ),
+      /Simulated finalize interruption/,
+    );
     assert.equal(fs.readFileSync(counterPath, 'utf8'), '2');
+    const review = beginTaskDiffReview(repository, session.sessionId, {
+      explicitActor: 'claude',
+      environment: {},
+    });
+    assert.equal(review.state, 'waiting-for-provider');
+    if (review.state !== 'waiting-for-provider') return;
+    assert.equal(review.implementationActor.providerId, 'codex');
+    assert.equal(review.assignment.providerId, 'claude');
   } finally {
     fs.rmSync(repository, { recursive: true, force: true });
   }
@@ -398,6 +428,499 @@ test('cross-agent RED schedules one provider-independent implementation reservat
     assert.throws(
       () => inspectTaskStrategyImplementation(repository, session.sessionId),
       hasCode('TASK_STRATEGY_IMPLEMENTATION_STATE_CORRUPT'),
+    );
+  } finally {
+    fs.rmSync(repository, { recursive: true, force: true });
+  }
+});
+
+test('routine status and resume drive one durable cross-agent TDD transaction to engine GREEN', () => {
+  const { repository, counterPath } = createCrossAgentFixture('assertion');
+  try {
+    const session = startSession(repository, 'demo-change', '1.1');
+    const testPath = path.join(repository, 'test/feature.test.mjs');
+    fs.mkdirSync(path.dirname(testPath), { recursive: true });
+    fs.writeFileSync(
+      testPath,
+      "throw new Error('feature behavior is not implemented');\n",
+    );
+
+    const beforeStatus = snapshotTree(runtimeRoot(repository));
+    const authored = runWorkflowCli(
+      repository,
+      ['status', session.sessionId, '--json'],
+      { AGENT: 'codex', WORKFLOW_TEST_DISABLE_PROVIDER_DISPATCH: '1' },
+    );
+    assert.equal(authored.status, 0, authored.stderr);
+    const authoredOutput = JSON.parse(authored.stdout) as {
+      taskStrategy: { state: string; strategy: string };
+      nextSteps: Array<{ command: string }>;
+    };
+    assert.equal(authoredOutput.taskStrategy.state, 'red-authoring');
+    assert.equal(authoredOutput.taskStrategy.strategy, 'cross-agent-tdd');
+    assert.equal(
+      authoredOutput.nextSteps[0]?.command,
+      `pnpm workflow resume ${session.sessionId} --json`,
+    );
+    assert.deepEqual(snapshotTree(runtimeRoot(repository)), beforeStatus);
+
+    const first = runWorkflowCli(
+      repository,
+      ['resume', session.sessionId, '--json'],
+      { AGENT: 'codex', WORKFLOW_TEST_DISABLE_PROVIDER_DISPATCH: '1' },
+    );
+    assert.equal(first.status, 0, first.stderr);
+    const firstOutput = JSON.parse(first.stdout) as {
+      result: {
+        state: 'waiting-for-provider';
+        invocationId: string;
+        transactionDigest: string;
+      };
+    };
+    assert.equal(firstOutput.result.state, 'waiting-for-provider');
+    assert.match(firstOutput.result.transactionDigest, /^[0-9a-f]{64}$/);
+    assert.equal(fs.readFileSync(counterPath, 'utf8'), '1');
+    let dispatchedInvocationId: string | null = null;
+    const dispatched = dispatchPreparedTaskStrategyProvider(
+      repository,
+      firstOutput.result,
+      (_cwd, invocationId) => {
+        dispatchedInvocationId = invocationId;
+        return {
+          schemaVersion: 1,
+          kind: 'provider-worker-dispatch',
+          invocationId,
+          pid: 12345,
+        };
+      },
+    );
+    assert.equal(dispatched?.invocationId, firstOutput.result.invocationId);
+    assert.equal(dispatchedInvocationId, firstOutput.result.invocationId);
+
+    const replay = runWorkflowCli(
+      repository,
+      ['resume', session.sessionId, '--json'],
+      { AGENT: 'codex', WORKFLOW_TEST_DISABLE_PROVIDER_DISPATCH: '1' },
+    );
+    assert.equal(replay.status, 0, replay.stderr);
+    const replayOutput = JSON.parse(replay.stdout) as {
+      result: {
+        state: string;
+        invocationId: string;
+        transactionDigest: string;
+      };
+    };
+    assert.deepEqual(replayOutput.result, firstOutput.result);
+    assert.equal(fs.readFileSync(counterPath, 'utf8'), '1');
+
+    const beforeWaitingStatus = snapshotTree(runtimeRoot(repository));
+    const waitingStatus = runWorkflowCli(
+      repository,
+      ['status', session.sessionId, '--json'],
+      { WORKFLOW_TEST_DISABLE_PROVIDER_DISPATCH: '1' },
+    );
+    assert.equal(waitingStatus.status, 0, waitingStatus.stderr);
+    const waitingOutput = JSON.parse(waitingStatus.stdout) as {
+      taskStrategy: { state: string; invocationId: string };
+      nextSteps: Array<{ command: string }>;
+    };
+    assert.equal(waitingOutput.taskStrategy.state, 'waiting-for-provider');
+    assert.equal(
+      waitingOutput.taskStrategy.invocationId,
+      firstOutput.result.invocationId,
+    );
+    assert.equal(
+      waitingOutput.nextSteps[0]?.command,
+      `pnpm workflow status ${session.sessionId} --json`,
+    );
+    assert.deepEqual(
+      snapshotTree(runtimeRoot(repository)),
+      beforeWaitingStatus,
+    );
+
+    const red = inspectTaskStrategyTransaction(repository, session.sessionId)!;
+    const implementationPath = path.join(repository, 'src/feature.ts');
+    fs.mkdirSync(path.dirname(implementationPath), { recursive: true });
+    fs.writeFileSync(implementationPath, 'export const feature = true;\n');
+    const patch = diffAgainstTree(repository, red.red.candidateTree, [
+      'src/feature.ts',
+    ]);
+    fs.rmSync(implementationPath);
+    completeTaskImplementationProvider(
+      repository,
+      firstOutput.result.invocationId,
+      'claude',
+      taskImplementationOutput(session.sessionId, red.red.candidateTree, patch),
+    );
+    assert.equal(
+      dispatchPreparedTaskStrategyProvider(
+        repository,
+        firstOutput.result,
+        () => {
+          throw new Error('terminal provider work must not be redispatched');
+        },
+      ),
+      null,
+    );
+
+    const imported = runWorkflowCli(
+      repository,
+      ['resume', session.sessionId, '--json'],
+      { AGENT: 'codex', WORKFLOW_TEST_DISABLE_PROVIDER_DISPATCH: '1' },
+    );
+    assert.equal(imported.status, 0, imported.stderr);
+    const importedOutput = JSON.parse(imported.stdout) as {
+      result: { state: string; invocationId: string };
+      nextSteps: Array<{ command: string }>;
+    };
+    assert.equal(importedOutput.result.state, 'patch-imported');
+    assert.equal(
+      fs.readFileSync(implementationPath, 'utf8'),
+      'export const feature = true;\n',
+    );
+    assert.equal(
+      importedOutput.nextSteps[0]?.command,
+      `pnpm workflow check ${session.sessionId} --json`,
+    );
+
+    const checked = runWorkflowCli(
+      repository,
+      ['check', session.sessionId, '--json'],
+      { AGENT: 'codex' },
+    );
+    assert.equal(checked.status, 0, checked.stderr);
+    assert.equal(
+      (JSON.parse(checked.stdout) as { result: { passed: boolean } }).result
+        .passed,
+      true,
+    );
+    assert.equal(fs.readFileSync(counterPath, 'utf8'), '2');
+  } finally {
+    fs.rmSync(repository, { recursive: true, force: true });
+  }
+});
+
+test('routine resume adopts exact single-agent implementation bytes without provider ceremony', () => {
+  const { repository, counterPath } = createCrossAgentFixture(
+    'assertion',
+    'tdd-single-agent',
+  );
+  try {
+    const session = startSession(repository, 'demo-change', '1.1');
+    const testPath = path.join(repository, 'test/feature.test.mjs');
+    fs.mkdirSync(path.dirname(testPath), { recursive: true });
+    fs.writeFileSync(
+      testPath,
+      "throw new Error('feature behavior is not implemented');\n",
+    );
+
+    const sealed = runWorkflowCli(
+      repository,
+      ['resume', session.sessionId, '--json'],
+      { AGENT: 'codex', WORKFLOW_TEST_DISABLE_PROVIDER_DISPATCH: '1' },
+    );
+    assert.equal(sealed.status, 0, sealed.stderr);
+    const sealedOutput = JSON.parse(sealed.stdout) as {
+      result: { state: string; invocationId: null };
+      nextSteps: Array<{ command: string }>;
+    };
+    assert.equal(sealedOutput.result.state, 'implementation-required');
+    assert.equal(sealedOutput.result.invocationId, null);
+    assert.equal(
+      sealedOutput.nextSteps[0]?.command,
+      `pnpm workflow resume ${session.sessionId} --json`,
+    );
+    assert.equal(fs.readFileSync(counterPath, 'utf8'), '1');
+
+    const implementationPath = path.join(repository, 'src/feature.ts');
+    fs.mkdirSync(path.dirname(implementationPath), { recursive: true });
+    const implementationBytes = 'export const feature = true;\n';
+    fs.writeFileSync(implementationPath, implementationBytes);
+    const beforeResume = fs.readFileSync(implementationPath);
+
+    const adopted = runWorkflowCli(
+      repository,
+      ['resume', session.sessionId, '--json'],
+      { AGENT: 'claude', WORKFLOW_TEST_DISABLE_PROVIDER_DISPATCH: '1' },
+    );
+    assert.equal(adopted.status, 0, adopted.stderr);
+    const adoptedOutput = JSON.parse(adopted.stdout) as {
+      result: { state: string; invocationId: null };
+      nextSteps: Array<{ command: string }>;
+    };
+    assert.equal(adoptedOutput.result.state, 'patch-imported');
+    assert.equal(adoptedOutput.result.invocationId, null);
+    assert.deepEqual(fs.readFileSync(implementationPath), beforeResume);
+    assert.equal(
+      adoptedOutput.nextSteps[0]?.command,
+      `pnpm workflow check ${session.sessionId} --json`,
+    );
+
+    const replay = runWorkflowCli(
+      repository,
+      ['resume', session.sessionId, '--json'],
+      { AGENT: 'claude', WORKFLOW_TEST_DISABLE_PROVIDER_DISPATCH: '1' },
+    );
+    assert.equal(replay.status, 0, replay.stderr);
+    assert.deepEqual(JSON.parse(replay.stdout), JSON.parse(adopted.stdout));
+    assert.deepEqual(fs.readFileSync(implementationPath), beforeResume);
+
+    const checked = runWorkflowCli(
+      repository,
+      ['check', session.sessionId, '--json'],
+      { AGENT: 'claude' },
+    );
+    assert.equal(checked.status, 0, checked.stderr);
+    assert.equal(
+      (JSON.parse(checked.stdout) as { result: { passed: boolean } }).result
+        .passed,
+      true,
+    );
+    assert.equal(fs.readFileSync(counterPath, 'utf8'), '2');
+  } finally {
+    fs.rmSync(repository, { recursive: true, force: true });
+  }
+});
+
+test('single-agent resume refuses frozen RED drift before minting a patch receipt', () => {
+  const { repository, counterPath } = createCrossAgentFixture(
+    'assertion',
+    'tdd-single-agent',
+  );
+  try {
+    const session = startSession(repository, 'demo-change', '1.1');
+    const testPath = path.join(repository, 'test/feature.test.mjs');
+    const originalTest =
+      "throw new Error('feature behavior is not implemented');\n";
+    fs.mkdirSync(path.dirname(testPath), { recursive: true });
+    fs.writeFileSync(testPath, originalTest);
+    const sealed = runWorkflowCli(
+      repository,
+      ['resume', session.sessionId, '--json'],
+      { AGENT: 'codex', WORKFLOW_TEST_DISABLE_PROVIDER_DISPATCH: '1' },
+    );
+    assert.equal(sealed.status, 0, sealed.stderr);
+
+    fs.writeFileSync(testPath, "throw new Error('weakened');\n");
+    fs.mkdirSync(path.join(repository, 'src'), { recursive: true });
+    fs.writeFileSync(
+      path.join(repository, 'src/feature.ts'),
+      'export const feature = true;\n',
+    );
+    const refused = runWorkflowCli(
+      repository,
+      ['resume', session.sessionId, '--json'],
+      { AGENT: 'claude', WORKFLOW_TEST_DISABLE_PROVIDER_DISPATCH: '1' },
+    );
+    assert.notEqual(refused.status, 0);
+    assert.match(refused.stderr, /TASK_STRATEGY_PATCH_FROZEN_PATH/);
+    assert.equal(
+      readTaskStrategyPatchCurrentBinding(
+        loadInvestigationRuntimeContext(repository).runtime,
+        session.sessionId,
+      ),
+      null,
+    );
+    assert.equal(
+      fs.readFileSync(testPath, 'utf8'),
+      "throw new Error('weakened');\n",
+    );
+    assert.equal(fs.readFileSync(counterPath, 'utf8'), '1');
+  } finally {
+    fs.rmSync(repository, { recursive: true, force: true });
+  }
+});
+
+test('single-agent local adoption replays every durable publication cut without rewriting bytes', () => {
+  for (const phase of [
+    'reservation-persisted',
+    'record-persisted',
+    'receipt-persisted',
+  ] as const) {
+    const { repository } = createCrossAgentFixture(
+      'assertion',
+      'tdd-single-agent',
+    );
+    try {
+      const session = startSession(repository, 'demo-change', '1.1');
+      const testPath = path.join(repository, 'test/feature.test.mjs');
+      fs.mkdirSync(path.dirname(testPath), { recursive: true });
+      fs.writeFileSync(
+        testPath,
+        "throw new Error('feature behavior is not implemented');\n",
+      );
+      sealTaskStrategyRed(repository, session.sessionId, {
+        explicitActor: 'codex',
+        environment: {},
+      });
+      const implementationPath = path.join(repository, 'src/feature.ts');
+      fs.mkdirSync(path.dirname(implementationPath), { recursive: true });
+      const implementationBytes = Buffer.from('export const feature = true;\n');
+      fs.writeFileSync(implementationPath, implementationBytes);
+
+      assert.throws(
+        () =>
+          adoptCurrentTaskStrategyImplementation(
+            repository,
+            session.sessionId,
+            { testCrashAfter: phase },
+          ),
+        new RegExp(phase),
+      );
+      assert.deepEqual(
+        fs.readFileSync(implementationPath),
+        implementationBytes,
+      );
+
+      const replayed = adoptCurrentTaskStrategyImplementation(
+        repository,
+        session.sessionId,
+      );
+      assert.ok(replayed);
+      assert.deepEqual(
+        fs.readFileSync(implementationPath),
+        implementationBytes,
+      );
+      assert.equal(
+        readTaskStrategyPatchCurrentBinding(
+          loadInvestigationRuntimeContext(repository).runtime,
+          session.sessionId,
+        )?.candidateTree,
+        replayed.record.candidateTree,
+      );
+    } finally {
+      fs.rmSync(repository, { recursive: true, force: true });
+    }
+  }
+});
+
+test('single-agent reservation replay never resurrects implementation bytes reverted by the caller', () => {
+  const { repository } = createCrossAgentFixture(
+    'assertion',
+    'tdd-single-agent',
+  );
+  try {
+    const session = startSession(repository, 'demo-change', '1.1');
+    const testPath = path.join(repository, 'test/feature.test.mjs');
+    fs.mkdirSync(path.dirname(testPath), { recursive: true });
+    fs.writeFileSync(
+      testPath,
+      "throw new Error('feature behavior is not implemented');\n",
+    );
+    sealTaskStrategyRed(repository, session.sessionId, {
+      explicitActor: 'codex',
+      environment: {},
+    });
+    const implementationPath = path.join(repository, 'src/feature.ts');
+    fs.mkdirSync(path.dirname(implementationPath), { recursive: true });
+    fs.writeFileSync(implementationPath, 'export const feature = true;\n');
+    assert.throws(
+      () =>
+        adoptCurrentTaskStrategyImplementation(repository, session.sessionId, {
+          testCrashAfter: 'record-persisted',
+        }),
+      /record-persisted/,
+    );
+    fs.rmSync(implementationPath);
+
+    assert.equal(
+      adoptCurrentTaskStrategyImplementation(repository, session.sessionId),
+      null,
+    );
+    assert.equal(fs.existsSync(implementationPath), false);
+    assert.equal(
+      readTaskStrategyPatchCurrentBinding(
+        loadInvestigationRuntimeContext(repository).runtime,
+        session.sessionId,
+      ),
+      null,
+    );
+  } finally {
+    fs.rmSync(repository, { recursive: true, force: true });
+  }
+});
+
+test('routine strategy resume leaves ordinary tasks outside Mode A ceremony', () => {
+  const repository = createFixtureRepository();
+  try {
+    git(repository, ['checkout', '-b', 'work/demo-change']);
+    const session = startSession(repository, 'demo-change', '1.1');
+    const before = snapshotTree(runtimeRoot(repository));
+
+    const resumed = runWorkflowCli(repository, [
+      'resume',
+      session.sessionId,
+      '--json',
+    ]);
+    assert.equal(resumed.status, 0, resumed.stderr);
+    const output = JSON.parse(resumed.stdout) as {
+      result: { state: string; transactionDigest: null };
+      nextSteps: Array<{ command: string }>;
+    };
+    assert.equal(output.result.state, 'not-required');
+    assert.equal(output.result.transactionDigest, null);
+    assert.equal(
+      output.nextSteps[0]?.command,
+      `pnpm workflow check ${session.sessionId} --json`,
+    );
+    assert.deepEqual(snapshotTree(runtimeRoot(repository)), before);
+  } finally {
+    fs.rmSync(repository, { recursive: true, force: true });
+  }
+});
+
+test('routine strategy resume exposes the existing collaboration-grant pause without partial provider state', () => {
+  const { repository, counterPath } = createCrossAgentFixture(
+    'assertion',
+    'cross-agent-tdd',
+    { codex: true, claude: false },
+  );
+  try {
+    const session = startSession(repository, 'demo-change', '1.1');
+    fs.mkdirSync(path.join(repository, 'test'), { recursive: true });
+    fs.writeFileSync(
+      path.join(repository, 'test/feature.test.mjs'),
+      "throw new Error('feature behavior is not implemented');\n",
+    );
+    const paused = runWorkflowCli(
+      repository,
+      ['resume', session.sessionId, '--json'],
+      { AGENT: 'codex', WORKFLOW_TEST_DISABLE_PROVIDER_DISPATCH: '1' },
+    );
+    assert.equal(paused.status, 0, paused.stderr);
+    const output = JSON.parse(paused.stdout) as {
+      result: {
+        state: string;
+        invocationId: null;
+        inputSchema: {
+          kind: string;
+          allowedDegradedForms: string[];
+          resumeOption: string;
+        };
+      };
+      nextSteps: Array<{ command: string }>;
+    };
+    assert.equal(output.result.state, 'collaboration-grant-required');
+    assert.equal(output.result.invocationId, null);
+    assert.equal(
+      output.result.inputSchema.kind,
+      'collaboration-grant-selection',
+    );
+    assert.deepEqual(output.result.inputSchema.allowedDegradedForms, [
+      'same-provider-fresh-session',
+    ]);
+    assert.equal(output.result.inputSchema.resumeOption, '--grant <grant-id>');
+    assert.deepEqual(
+      output.nextSteps.map(({ command }) => command),
+      [
+        `pnpm workflow status ${session.sessionId} --json`,
+        'pnpm workflow guide --json',
+      ],
+    );
+    assert.equal(fs.readFileSync(counterPath, 'utf8'), '1');
+    assert.equal(
+      inspectTaskStrategyImplementation(repository, session.sessionId).state,
+      'ready',
     );
   } finally {
     fs.rmSync(repository, { recursive: true, force: true });
@@ -1318,6 +1841,45 @@ test('single-agent patch validation permits the RED author without weakening pat
   }
 });
 
+test('single-agent patch validation rejects an actor other than the sealed RED author', () => {
+  const { repository } = createCrossAgentFixture(
+    'assertion',
+    'tdd-single-agent',
+  );
+  try {
+    const session = startSession(repository, 'demo-change', '1.1');
+    const testPath = path.join(repository, 'test/feature.test.mjs');
+    fs.mkdirSync(path.dirname(testPath), { recursive: true });
+    fs.writeFileSync(
+      testPath,
+      "throw new Error('feature behavior is not implemented');\n",
+    );
+    const red = sealTaskStrategyRed(repository, session.sessionId, {
+      explicitActor: 'codex',
+      environment: {},
+    });
+    const implementationPath = path.join(repository, 'src/feature.ts');
+    fs.mkdirSync(path.dirname(implementationPath), { recursive: true });
+    fs.writeFileSync(implementationPath, 'export const feature = true;\n');
+    const patch = diffAgainstTree(repository, red.red.candidateTree, [
+      'src/feature.ts',
+    ]);
+    fs.rmSync(implementationPath);
+
+    assert.throws(
+      () =>
+        validateTaskStrategyPatch(repository, session.sessionId, {
+          patch,
+          explicitActor: 'claude',
+          environment: {},
+        }),
+      hasCode('TASK_STRATEGY_IMPLEMENTER_REQUIRED'),
+    );
+  } finally {
+    fs.rmSync(repository, { recursive: true, force: true });
+  }
+});
+
 test('patch import persists authority before mutation and exact replay reaches engine GREEN once', () => {
   const { repository, counterPath } = createCrossAgentFixture('assertion');
   try {
@@ -1800,6 +2362,26 @@ function completeTaskImplementationProvider(
       };
     },
   });
+}
+
+function runWorkflowCli(
+  repository: string,
+  args: string[],
+  environment: NodeJS.ProcessEnv = {},
+): { status: number | null; stdout: string; stderr: string } {
+  return spawnSync(
+    process.execPath,
+    [
+      '--experimental-strip-types',
+      path.join(sourceRepositoryRoot, 'packages/workflow-engine/src/cli.ts'),
+      ...args,
+    ],
+    {
+      cwd: repository,
+      encoding: 'utf8',
+      env: { ...process.env, ...environment },
+    },
+  );
 }
 
 function executableIdentity() {

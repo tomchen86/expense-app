@@ -183,6 +183,11 @@ import {
   reviseTask,
 } from './task-revision.ts';
 import {
+  inspectTaskStrategyLifecycle,
+  resumeTaskStrategy,
+  type TaskStrategyLifecycleStatus,
+} from './task-strategy-lifecycle.ts';
+import {
   beginTaskDiffReview,
   inspectTaskDiffReviewStatus,
   inspectTaskDiffReviewSubject,
@@ -1069,6 +1074,39 @@ function dispatch(args: string[], cwd: string): CommandResult {
         result: resumeTask(cwd, sessionId, { approvalId }),
       };
     }
+    case 'resume': {
+      const sessionId = rest[0];
+      const actor = optionValue(rest.slice(1), '--actor');
+      const grantId = optionValue(rest.slice(1), '--grant');
+      const validArguments =
+        rest.length === 1 ||
+        (rest.length === 3 && rest[1] === '--actor' && actor !== undefined) ||
+        (rest.length === 3 && rest[1] === '--grant' && grantId !== undefined) ||
+        (rest.length === 5 &&
+          rest[1] === '--actor' &&
+          actor !== undefined &&
+          rest[3] === '--grant' &&
+          grantId !== undefined);
+      if (!sessionId || !validArguments) {
+        throw usage(
+          'Usage: pnpm workflow resume <session-id> [--actor <provider>] [--grant <grant-id>] [--json]',
+        );
+      }
+      const result = resumeTaskStrategy(cwd, sessionId, {
+        ...(actor === undefined ? {} : { explicitActor: actor }),
+        ...(grantId === undefined ? {} : { collaborationGrant: { grantId } }),
+      });
+      let providerDispatch = null;
+      if (process.env.WORKFLOW_TEST_DISABLE_PROVIDER_DISPATCH !== '1') {
+        providerDispatch = dispatchPreparedTaskStrategyProvider(cwd, result);
+      }
+      return {
+        command,
+        ok: true,
+        result,
+        ...(providerDispatch === null ? {} : { providerDispatch }),
+      };
+    }
     case 'status': {
       requireArgumentCount(command, rest, 0, 1);
       if (rest[0]) {
@@ -1098,6 +1136,7 @@ function dispatch(args: string[], cwd: string): CommandResult {
             openTask: openTaskStatus,
             session,
             ...(finalizeStatus ? { finalize: finalizeStatus } : {}),
+            taskStrategy: inspectTaskStrategyLifecycle(cwd, session.sessionId),
             taskRevision: inspectTaskRevisionStatus(cwd, session.sessionId),
             taskCommits: findTaskCommits(cwd, session.changeId, session.taskId),
           };
@@ -1112,6 +1151,7 @@ function dispatch(args: string[], cwd: string): CommandResult {
           ok: true,
           session,
           ...(finalizeStatus ? { finalize: finalizeStatus } : {}),
+          taskStrategy: inspectTaskStrategyLifecycle(cwd, session.sessionId),
           taskRevision: inspectTaskRevisionStatus(cwd, session.sessionId),
           taskCommits: findTaskCommits(cwd, session.changeId, session.taskId),
         };
@@ -1121,6 +1161,9 @@ function dispatch(args: string[], cwd: string): CommandResult {
         command,
         ok: true,
         sessions,
+        taskStrategies: sessions.map((session) =>
+          inspectTaskStrategyLifecycle(cwd, session.sessionId),
+        ),
         taskRevisions: sessions.map((session) =>
           inspectTaskRevisionStatus(cwd, session.sessionId),
         ),
@@ -2697,6 +2740,22 @@ function printFailure(
     ? JSON.stringify(result)
     : JSON.stringify(result, null, 2);
   process.stderr.write(`${rendered}\n`);
+}
+
+/** Production CLI seam: only a current prepared strategy invocation dispatches. */
+export function dispatchPreparedTaskStrategyProvider(
+  cwd: string,
+  result: Pick<TaskStrategyLifecycleStatus, 'state' | 'invocationId'>,
+  dispatcher: typeof dispatchProviderWorker = dispatchProviderWorker,
+) {
+  if (result.state !== 'waiting-for-provider' || result.invocationId === null) {
+    return null;
+  }
+  const runtime = loadInvestigationRuntimeContext(cwd).runtime;
+  const invocation = readProviderInvocation(runtime, result.invocationId);
+  return invocation.state === 'prepared'
+    ? dispatcher(cwd, invocation.invocationId)
+    : null;
 }
 
 const entryPath = process.argv[1];

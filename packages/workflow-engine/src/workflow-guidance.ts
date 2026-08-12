@@ -111,6 +111,21 @@ const commands: WorkflowCommandGuidance[] = [
     successors: ['status', 'check', 'finalize'],
   }),
   command({
+    id: 'resume',
+    usage: [
+      'pnpm workflow resume <session-id> [--actor <provider>] [--grant <grant-id>] [--json]',
+    ],
+    status: 'preferred',
+    purpose: 'Resume the next exact durable implementation-strategy substate.',
+    preconditions: [
+      'The active task and any collaboration grant match the current strategy subject.',
+    ],
+    consequences: [
+      'Seals, schedules, or reconciles only the next persisted strategy transition.',
+    ],
+    successors: ['status'],
+  }),
+  command({
     id: 'status',
     usage: ['pnpm workflow status [investigation-or-task-id] [--json]'],
     status: 'read-only',
@@ -300,6 +315,9 @@ export function workflowResultNextSteps(
   if (commandId === 'review-diff') {
     return taskDiffReviewNextSteps(result, bindings);
   }
+  if (commandId === 'resume') {
+    return taskStrategyNextSteps(record(result.result), bindings);
+  }
   const entry =
     commandId === null
       ? null
@@ -357,6 +375,10 @@ function statusNextSteps(
   bindings: WorkflowNextStepBindings,
 ): readonly WorkflowNextStep[] {
   const candidates: WorkflowNextStep[] = [];
+  const strategy = record(result.taskStrategy);
+  if (strategy !== undefined) {
+    return taskStrategyNextSteps(strategy, bindings);
+  }
   const openTask = record(result.openTask);
   const openTaskRecovery = stringField(openTask, 'recoveryCommand');
   if (openTaskRecovery !== undefined) {
@@ -388,6 +410,35 @@ function statusNextSteps(
   return limitNextSteps(
     candidates.length > 0 ? candidates : [nextStep('guide', bindings)],
   );
+}
+
+function taskStrategyNextSteps(
+  strategy: Readonly<Record<string, unknown>> | undefined,
+  bindings: WorkflowNextStepBindings,
+): readonly WorkflowNextStep[] {
+  const state = stringField(strategy, 'state');
+  if (
+    [
+      'red-authoring',
+      'implementation-required',
+      'ready',
+      'reservation-persisted',
+      'provider-succeeded-awaiting-import',
+      'caller-supplied-awaiting-import',
+    ].includes(state ?? '')
+  ) {
+    return projectWorkflowNextSteps(['resume', 'status'], bindings);
+  }
+  if (state === 'waiting-for-provider') {
+    return projectWorkflowNextSteps(['status', 'resume'], bindings);
+  }
+  if (state === 'collaboration-grant-required' || state === 'provider-failed') {
+    return projectWorkflowNextSteps(['status', 'guide'], bindings);
+  }
+  if (state === 'patch-imported' || state === 'not-required') {
+    return projectWorkflowNextSteps(['check', 'finalize', 'status'], bindings);
+  }
+  return projectWorkflowNextSteps(['status'], bindings);
 }
 
 function taskDiffReviewNextSteps(
@@ -502,6 +553,7 @@ function sessionIdFromInvocation(
   return [
     'revise-task',
     'resume-task',
+    'resume',
     'status',
     'check',
     'complete-task',

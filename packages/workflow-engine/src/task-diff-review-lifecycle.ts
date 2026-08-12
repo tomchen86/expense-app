@@ -117,6 +117,15 @@ import {
   type TaskDiffTreeEntry,
 } from './task-diff-review.ts';
 import {
+  readTaskStrategyCallerImplementationBinding,
+  readTaskStrategyImplementationResultBinding,
+} from './task-strategy-provider-store.ts';
+import {
+  readTaskStrategyPatchCurrentBinding,
+  readTaskStrategyPatchRecord,
+} from './task-strategy-patch-store.ts';
+import { readTaskStrategyTransaction } from './task-strategy-store.ts';
+import {
   authorizeTaskMandateProviderReservationUnderLifecycleLock,
   type TaskMandateBinding,
 } from './task-mandate.ts';
@@ -259,20 +268,12 @@ export function beginTaskDiffReview(
       subject: initialSubject,
     });
   }
-  const actorResolution = resolveActorIdentity({
-    ...(options.explicitActor === undefined
-      ? {}
-      : { explicitActor: options.explicitActor }),
-    environment: options.environment ?? process.env,
-  });
-  if (actorResolution.outcome === 'actor-resolution-required') {
-    throw workflowError(
-      actorResolution.code,
-      'TaskDiffReview requires an unambiguous implementation actor.',
-      ExitCode.guard,
-      { details: { signals: actorResolution.signals } },
-    );
-  }
+  const initialImplementationActor = resolveTaskDiffImplementationActor(
+    cwd,
+    requestedSessionId,
+    initialSubject,
+    options,
+  );
 
   const initialContext = loadActiveSessionContext(cwd, requestedSessionId);
   return withRepositoryLifecycleOperation(
@@ -286,10 +287,18 @@ export function beginTaskDiffReview(
           throw candidateDiverged();
         }
         const runtime = loadInvestigationRuntimeContext(cwd).runtime;
-        const implementationActor = recordImplementationActor(
-          context.session.sessionId,
-          actorResolution.actor,
+        const implementationActor = resolveTaskDiffImplementationActor(
+          cwd,
+          requestedSessionId,
+          subject,
+          options,
         );
+        if (
+          canonicalJson(implementationActor) !==
+          canonicalJson(initialImplementationActor)
+        ) {
+          throw candidateDiverged();
+        }
         const existing = readTaskDiffReviewReservation(
           runtime,
           context.session.sessionId,
@@ -3090,6 +3099,145 @@ function recordImplementationActor(
     identityAssurance: actor.assurance,
     engineSpawned: false,
   });
+}
+
+function resolveTaskDiffImplementationActor(
+  cwd: string,
+  requestedSessionId: string,
+  subject: TaskDiffReviewSubject,
+  options: BeginTaskDiffReviewOptions,
+): RecordedRoleParticipant {
+  const context = loadActiveSessionContext(cwd, requestedSessionId);
+  const runtime = loadInvestigationRuntimeContext(cwd).runtime;
+  const transaction = readTaskStrategyTransaction(
+    runtime,
+    context.session.sessionId,
+  );
+  if (transaction !== null) {
+    const current = readTaskStrategyPatchCurrentBinding(
+      runtime,
+      context.session.sessionId,
+    );
+    const record =
+      current === null
+        ? null
+        : readTaskStrategyPatchRecord(
+            runtime,
+            context.session.sessionId,
+            current.patchDigest,
+          );
+    const finalizeTransaction = readFinalizeTransaction(
+      context.runtime.root,
+      context.session.sessionId,
+    );
+    if (
+      current === null ||
+      record === null ||
+      finalizeTransaction === null ||
+      transaction.sessionId !== context.session.sessionId ||
+      transaction.changeId !== context.session.changeId ||
+      transaction.taskId !== context.session.taskId ||
+      record.strategy !== transaction.strategy ||
+      record.sourceTree !== transaction.red.candidateTree ||
+      record.candidateTree !== current.candidateTree ||
+      record.recordDigest !== current.recordDigest ||
+      finalizeTransaction.candidateTree !== subject.candidateTree ||
+      !taskDiffSubjectExtendsPatchTree(
+        context.git.repositoryRoot,
+        record.candidateTree,
+        subject.candidateTree,
+        finalizeTransaction.projectionMutations.map(({ path }) => path),
+      )
+    ) {
+      throw reviewNotSatisfied();
+    }
+    if (record.implementer.providerId === null) {
+      const caller = readTaskStrategyCallerImplementationBinding(
+        runtime,
+        context.session.sessionId,
+      );
+      if (
+        caller === null ||
+        caller.output.patchDigest !== record.patchDigest ||
+        caller.roleResult.participant.providerId !== null ||
+        caller.roleResult.participant.principalId !==
+          record.implementer.principalId ||
+        caller.roleResult.participant.identityAssurance !==
+          record.implementer.assurance
+      ) {
+        throw reviewNotSatisfied();
+      }
+      return Object.freeze(structuredClone(caller.roleResult.participant));
+    }
+    const provider = readTaskStrategyImplementationResultBinding(
+      runtime,
+      context.session.sessionId,
+    );
+    if (provider !== null) {
+      if (
+        provider.output.patchDigest !== record.patchDigest ||
+        provider.roleResult.participant.providerId !==
+          record.implementer.providerId ||
+        provider.roleResult.participant.identityAssurance !==
+          record.implementer.assurance
+      ) {
+        throw reviewNotSatisfied();
+      }
+      return Object.freeze(structuredClone(provider.roleResult.participant));
+    }
+    if (
+      transaction.strategy !== 'tdd-single-agent' ||
+      canonicalJson(record.implementer) !== canonicalJson(transaction.author)
+    ) {
+      throw reviewNotSatisfied();
+    }
+    return recordImplementationActor(
+      context.session.sessionId,
+      transaction.author,
+    );
+  }
+
+  const actorResolution = resolveActorIdentity({
+    ...(options.explicitActor === undefined
+      ? {}
+      : { explicitActor: options.explicitActor }),
+    environment: options.environment ?? process.env,
+  });
+  if (actorResolution.outcome === 'actor-resolution-required') {
+    throw workflowError(
+      actorResolution.code,
+      'TaskDiffReview requires an unambiguous implementation actor.',
+      ExitCode.guard,
+      { details: { signals: actorResolution.signals } },
+    );
+  }
+  return recordImplementationActor(
+    context.session.sessionId,
+    actorResolution.actor,
+  );
+}
+
+function taskDiffSubjectExtendsPatchTree(
+  repositoryRoot: string,
+  patchTree: string,
+  subjectTree: string,
+  transitionPaths: readonly string[],
+): boolean {
+  const changedPaths = runGit(repositoryRoot, [
+    'diff',
+    '--name-only',
+    '--no-renames',
+    '-z',
+    patchTree,
+    subjectTree,
+    '--',
+  ])
+    .split('\0')
+    .filter(Boolean)
+    .sort();
+  return (
+    canonicalJson(changedPaths) === canonicalJson([...transitionPaths].sort())
+  );
 }
 
 function baselineAdapterPolicy(repositoryRoot: string, commit: string) {
