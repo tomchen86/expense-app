@@ -8,7 +8,9 @@ import {
   projectWorkflowNextSteps,
   WORKFLOW_GUIDANCE_CATALOG,
   workflowCommandGuidance,
+  workflowFailureRecoveryCommand,
 } from '../src/workflow-guidance.ts';
+import { ExitCode, workflowError } from '../src/errors.ts';
 import { reviseTask } from '../src/task-revision.ts';
 import { getSession, startSession } from '../src/session.ts';
 import {
@@ -134,6 +136,103 @@ test('next-step projection keeps two likely transitions and sends overflow to th
       },
     ],
   );
+});
+
+test('error recovery emits one exact executable command and never treats advisory prose as authority', () => {
+  const sessionId =
+    'session-20260812000000000-00000000-0000-4000-8000-000000000000';
+  assert.equal(
+    workflowFailureRecoveryCommand(
+      workflowError(
+        'TASK_DIFF_REVIEW_CHALLENGE_OPEN',
+        'Advisory dispositions are not Final Assurance.',
+        ExitCode.verification,
+      ),
+      ['finalize', sessionId, '--message', 'Complete exact task'],
+    ),
+    `pnpm workflow review-diff ${sessionId} --json`,
+  );
+  assert.equal(
+    workflowFailureRecoveryCommand(
+      workflowError(
+        'FINALIZE_RECOVERY_REQUIRED',
+        'A durable finalize transaction requires recovery.',
+        ExitCode.staleState,
+        { recovery: 'Inspect it, then decide what to do.' },
+      ),
+      ['finalize-task', sessionId],
+    ),
+    `pnpm workflow finalize-recover ${sessionId} --json`,
+  );
+  assert.equal(
+    workflowFailureRecoveryCommand(
+      workflowError(
+        'OPEN_TASK_RECOVERY_REQUIRED',
+        'The durable opening transaction requires recovery.',
+        ExitCode.staleState,
+        { recovery: 'pnpm workflow status opening-123 --json' },
+      ),
+      ['open-task', 'demo-change'],
+    ),
+    'pnpm workflow status opening-123 --json',
+  );
+  assert.equal(
+    workflowFailureRecoveryCommand(
+      workflowError(
+        'MAINTAINER_INTERACTIVE_REQUIRED',
+        'Run from a controlling terminal.',
+        ExitCode.unsafeEnvironment,
+      ),
+      [
+        'maintainer',
+        'revision-approval',
+        sessionId,
+        '--reason',
+        "literal $(touch /tmp/no) and 'quote'",
+      ],
+    ),
+    `pnpm workflow maintainer revision-approval ${sessionId} --reason 'literal $(touch /tmp/no) and '"'"'quote'"'"'' --json`,
+  );
+  assert.equal(
+    workflowFailureRecoveryCommand(
+      workflowError(
+        'MAINTAINER_INTERACTIVE_REQUIRED',
+        'Run from a controlling terminal.',
+        ExitCode.unsafeEnvironment,
+      ),
+      ['maintainer', 'revoke', 'grant-id', '--reason', 'line one\nline two'],
+    ),
+    'pnpm workflow guide --json',
+  );
+  assert.equal(
+    workflowFailureRecoveryCommand(
+      workflowError(
+        'DIRTY_WORKTREE',
+        'The checkout is dirty.',
+        ExitCode.guard,
+        { recovery: 'Delete or stash whatever seems appropriate.' },
+      ),
+      ['start', 'demo-change'],
+    ),
+    'pnpm workflow guide --json',
+  );
+});
+
+test('JSON errors default to a literal read-only guide command', () => {
+  const run = spawnSync(
+    process.execPath,
+    ['--experimental-strip-types', cliPath, 'status', 'bad', 'extra', '--json'],
+    { cwd: sourceRepositoryRoot, encoding: 'utf8' },
+  );
+  assert.equal(run.status, ExitCode.usage);
+  const output = JSON.parse(run.stderr) as {
+    ok: boolean;
+    error: { code: string; message: string; recovery: string };
+  };
+  assert.equal(output.ok, false);
+  assert.equal(output.error.code, 'INVALID_USAGE');
+  assert.match(output.error.message, /Invalid arguments for workflow status/);
+  assert.equal(output.error.recovery, 'pnpm workflow guide --json');
 });
 
 test('deprecated finalize-task and preferred finalize resume one durable transaction without rerunning checks', () => {

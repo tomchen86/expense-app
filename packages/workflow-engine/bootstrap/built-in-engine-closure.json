@@ -216,7 +216,7 @@
     {
       "path": "src/cli.ts",
       "mode": "100644",
-      "digest": "sha256:adf91728c2b9bf42900ec467c143bb70939e430c34a1064d86bf3d1f68ac91d3"
+      "digest": "sha256:a7ab7a242ff677fc4a8d2d2a1f337859736699e908c7a2eaf7eafa2ab1600149"
     },
     {
       "path": "src/codex-provider-adapter.ts",
@@ -1186,7 +1186,7 @@
     {
       "path": "src/workflow-guidance.ts",
       "mode": "100644",
-      "digest": "sha256:2d8e0e6a51ff49cd58578e0b4f0f52b1fde8bc74e7b945c08eefc20aeb3fe24b"
+      "digest": "sha256:39e7ccd85bc3b3c260dbd073a2efd5fdadbe92ed314c0f24ace7cd56a2f3ee5b"
     }
   ]
 }

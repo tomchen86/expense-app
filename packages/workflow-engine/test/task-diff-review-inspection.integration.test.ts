@@ -1011,6 +1011,23 @@ test('advisory dispositions cannot close a challenge until the shared verifier m
       () => finalizeTask(repository, session.sessionId),
       hasCode('TASK_DIFF_REVIEW_CHALLENGE_OPEN'),
     );
+    const refusedFinalize = runCli(repository, [
+      'finalize-task',
+      session.sessionId,
+      '--json',
+    ]);
+    assert.equal(refusedFinalize.status, 13, refusedFinalize.stderr);
+    const refusal = (
+      JSON.parse(refusedFinalize.stderr) as {
+        error: { code: string; recovery: string };
+      }
+    ).error;
+    assert.equal(refusal.code, 'TASK_DIFF_REVIEW_CHALLENGE_OPEN');
+    assert.equal(
+      refusal.recovery,
+      `pnpm workflow review-diff ${session.sessionId} --json`,
+    );
+    assert.equal(fs.readFileSync(counterPath, 'utf8'), '1');
 
     const response = createTaskDiffReviewChallengeResponse({
       review: reviewed.review,
