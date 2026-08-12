@@ -15,6 +15,10 @@ import {
 } from './provider-invocation-store.ts';
 import { getSession, type WorkflowSession } from './session.ts';
 import {
+  inspectTaskMechanicalTransformLifecycle,
+  resumeTaskMechanicalTransformation,
+} from './task-mechanical-transform-lifecycle.ts';
+import {
   beginTaskStrategyImplementation,
   type BeginTaskStrategyImplementationOptions,
   type TaskStrategyImplementationStatus,
@@ -26,23 +30,40 @@ import {
 import {
   readTaskStrategyCallerImplementationBinding,
   readTaskStrategyCallerImplementationReservation,
+  readCurrentTaskStrategyImplementationProviderAttempt,
   readTaskStrategyImplementationReservation,
   readTaskStrategyImplementationResultBinding,
 } from './task-strategy-provider-store.ts';
 import { sealTaskStrategyRed } from './task-strategy-execution.ts';
-import { adoptCurrentTaskStrategyImplementation } from './task-strategy-patch.ts';
+import {
+  adoptCurrentTaskStrategyCorrection,
+  adoptCurrentTaskStrategyImplementation,
+} from './task-strategy-patch.ts';
+import {
+  resolveCurrentTaskStrategyCorrection,
+  resolveCurrentTaskStrategyImplementationAuthority,
+  type TaskStrategyCorrectionProjection,
+} from './task-strategy-correction.ts';
+import {
+  beginTaskStrategyRedRevision,
+  continueTaskStrategyRedRevision,
+} from './task-strategy-red-revision.ts';
+import type { TaskStrategyRedRevisionRequest } from './task-strategy-red-revision-store.ts';
 import { readTaskStrategyPatchCurrentBinding } from './task-strategy-patch-store.ts';
 import {
   readTaskStrategyTransaction,
   type TaskStrategyTransaction,
 } from './task-strategy-store.ts';
 import { loadStableValidatedChangeContract } from './validated-contract-context.ts';
+import { inspectSession } from './verification.ts';
 
 type TddStrategy = 'cross-agent-tdd' | 'tdd-single-agent';
 
 export type TaskStrategyLifecycleState =
   | 'not-required'
   | 'session-terminal'
+  | 'transformation-required'
+  | 'transformation-produced'
   | 'red-authoring'
   | 'implementation-required'
   | 'ready'
@@ -51,6 +72,8 @@ export type TaskStrategyLifecycleState =
   | 'waiting-for-provider'
   | 'provider-succeeded-awaiting-import'
   | 'provider-failed'
+  | 'correction-required'
+  | 'correction-exhausted'
   | 'caller-supplied-awaiting-import'
   | 'patch-imported';
 
@@ -69,6 +92,7 @@ export type TaskStrategyLifecycleStatus = Readonly<{
 export type ResumeTaskStrategyOptions = Readonly<{
   explicitActor?: string;
   collaborationGrant?: BeginTaskStrategyImplementationOptions['collaborationGrant'];
+  redRevisionRequest?: TaskStrategyRedRevisionRequest;
 }>;
 
 /** Strictly read durable strategy state; never seal, reserve, dispatch, or import. */
@@ -97,6 +121,21 @@ export function inspectTaskStrategyLifecycle(
     session.changeId,
   ).contract;
   const task = contract.execution?.tasks[session.taskId];
+  if (task?.strategy === 'mechanical-transform') {
+    if (transaction !== null) throw lifecycleStale();
+    const mechanical = inspectTaskMechanicalTransformLifecycle(
+      cwd,
+      session.sessionId,
+    );
+    if (mechanical === null) throw lifecycleStale();
+    return lifecycleStatus({
+      sessionId: session.sessionId,
+      strategy: task.strategy,
+      state: mechanical.state,
+      transactionDigest: null,
+      sessionState: session.state,
+    });
+  }
   if (!isTddExecution(task)) {
     if (transaction !== null) throw lifecycleStale();
     return lifecycleStatus({
@@ -117,10 +156,16 @@ export function inspectTaskStrategyLifecycle(
     });
   }
   assertTransactionContractCurrent(transaction, session, task);
+  const inspection = inspectSession(cwd, session.sessionId);
+  const correction = resolveCurrentTaskStrategyCorrection(inspection);
+  const implementationAuthority =
+    resolveCurrentTaskStrategyImplementationAuthority(inspection, correction);
   return projectDurableImplementationState(
     context.runtime,
     transaction,
     session.state,
+    correction,
+    implementationAuthority.subject,
   );
 }
 
@@ -142,6 +187,39 @@ export function resumeTaskStrategy(
       ExitCode.staleState,
     );
   }
+  if (current.strategy === 'mechanical-transform') {
+    if (
+      options.explicitActor !== undefined ||
+      options.collaborationGrant !== undefined ||
+      options.redRevisionRequest !== undefined
+    ) {
+      throw workflowError(
+        'TASK_MECHANICAL_TRANSFORMATION_INPUT_INVALID',
+        'Deterministic mechanical transformation resume does not accept provider, grant, or RED-revision input.',
+        ExitCode.usage,
+      );
+    }
+    resumeTaskMechanicalTransformation(cwd, current.sessionId);
+    return inspectTaskStrategyLifecycle(cwd, current.sessionId);
+  }
+  if (options.redRevisionRequest !== undefined) {
+    if (
+      options.redRevisionRequest.sessionId !== current.sessionId ||
+      options.explicitActor !== undefined ||
+      options.collaborationGrant !== undefined
+    ) {
+      throw workflowError(
+        'TASK_STRATEGY_RED_REVISION_REQUEST_INVALID',
+        'RED revision input must name this session and cannot be combined with actor or collaboration-grant authority.',
+        ExitCode.usage,
+      );
+    }
+    beginTaskStrategyRedRevision(cwd, options.redRevisionRequest);
+    return inspectTaskStrategyLifecycle(cwd, current.sessionId);
+  }
+
+  continueTaskStrategyRedRevision(cwd, current.sessionId);
+  current = inspectTaskStrategyLifecycle(cwd, current.sessionId);
   if (current.state === 'red-authoring') {
     const transaction = sealTaskStrategyRed(cwd, current.sessionId, {
       ...(options.explicitActor === undefined
@@ -167,12 +245,26 @@ export function resumeTaskStrategy(
       : inspectTaskStrategyLifecycle(cwd, current.sessionId);
   }
   if (
+    current.strategy === 'tdd-single-agent' &&
+    current.state === 'correction-required'
+  ) {
+    const adopted = adoptCurrentTaskStrategyCorrection(cwd, current.sessionId);
+    return adopted === null
+      ? current
+      : inspectTaskStrategyLifecycle(cwd, current.sessionId);
+  }
+  if (
     current.state === 'patch-imported' ||
-    current.state === 'provider-failed'
+    current.state === 'correction-exhausted' ||
+    (current.state === 'correction-required' &&
+      current.strategy === 'tdd-single-agent')
   ) {
     return current;
   }
   const advanced = beginTaskStrategyImplementation(cwd, current.sessionId, {
+    ...(current.state === 'provider-failed'
+      ? { retryProviderFailure: true as const }
+      : {}),
     ...(options.collaborationGrant === undefined
       ? {}
       : { collaborationGrant: options.collaborationGrant }),
@@ -185,6 +277,8 @@ function projectDurableImplementationState(
   runtime: ReturnType<typeof loadInvestigationRuntimeContext>['runtime'],
   transaction: TaskStrategyTransaction,
   sessionState: string,
+  correction: TaskStrategyCorrectionProjection,
+  expectedSubject: TaskStrategyImplementationSubject,
 ): TaskStrategyLifecycleStatus {
   const base = {
     sessionId: transaction.sessionId,
@@ -192,35 +286,45 @@ function projectDurableImplementationState(
     transactionDigest: transaction.recordDigest,
     sessionState,
   };
-  const patchBinding = readTaskStrategyPatchCurrentBinding(
-    runtime,
-    transaction.sessionId,
-  );
+  const patchBinding = correction.head?.binding ?? null;
+  if (correction.exhausted) {
+    return lifecycleStatus({
+      ...base,
+      state: 'correction-exhausted',
+    });
+  }
   if (transaction.strategy === 'tdd-single-agent') {
     return lifecycleStatus({
       ...base,
       state:
-        patchBinding === null ? 'implementation-required' : 'patch-imported',
+        correction.failure !== null
+          ? 'correction-required'
+          : patchBinding === null
+            ? 'implementation-required'
+            : 'patch-imported',
     });
   }
 
   const reservation = readTaskStrategyImplementationReservation(
     runtime,
     transaction.sessionId,
+    expectedSubject.subjectDigest,
   );
   const callerReservation = readTaskStrategyCallerImplementationReservation(
     runtime,
     transaction.sessionId,
+    expectedSubject.subjectDigest,
   );
   const callerBinding = readTaskStrategyCallerImplementationBinding(
     runtime,
     transaction.sessionId,
+    expectedSubject.subjectDigest,
   );
   if (reservation === null) {
     if (callerReservation !== null || callerBinding !== null) {
       if (
         callerReservation === null ||
-        callerReservation.subjectDigest !== subject(transaction).subjectDigest
+        callerReservation.subjectDigest !== expectedSubject.subjectDigest
       ) {
         throw lifecycleStale();
       }
@@ -235,25 +339,31 @@ function projectDurableImplementationState(
             : 'caller-supplied-awaiting-import',
       });
     }
-    return lifecycleStatus({ ...base, state: 'ready' });
+    return lifecycleStatus({
+      ...base,
+      state: correction.failure === null ? 'ready' : 'correction-required',
+    });
   }
-  const expectedSubject = subject(transaction);
   if (
     reservation.subject.subjectDigest !== expectedSubject.subjectDigest ||
     reservation.subject.transactionDigest !== transaction.recordDigest
   ) {
     throw lifecycleStale();
   }
-  if (!providerInvocationExists(runtime, reservation.request.invocationId)) {
+  const attempt = readCurrentTaskStrategyImplementationProviderAttempt(
+    runtime,
+    reservation,
+  );
+  if (!providerInvocationExists(runtime, attempt.request.invocationId)) {
     return lifecycleStatus({
       ...base,
       state: 'reservation-persisted',
-      invocationId: reservation.request.invocationId,
+      invocationId: attempt.request.invocationId,
     });
   }
   const invocation = readProviderInvocation(
     runtime,
-    reservation.request.invocationId,
+    attempt.request.invocationId,
   );
   if (invocation.state === 'failed') {
     return lifecycleStatus({
@@ -272,6 +382,7 @@ function projectDurableImplementationState(
   const result = readTaskStrategyImplementationResultBinding(
     runtime,
     transaction.sessionId,
+    expectedSubject.subjectDigest,
   );
   return lifecycleStatus({
     ...base,

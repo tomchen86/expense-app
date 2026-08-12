@@ -121,7 +121,7 @@
     {
       "path": "src/check-runner.ts",
       "mode": "100644",
-      "digest": "sha256:d5228ef2d8c8103ae06a81b2425ce4fb6a5958139aba4fcfe2800a02580635ca"
+      "digest": "sha256:d94b1dde87c67c894cb6c14930348dc111678e2a1210d18617a98e42cb6290aa"
     },
     {
       "path": "src/ci-archive-tree.ts",
@@ -216,7 +216,7 @@
     {
       "path": "src/cli.ts",
       "mode": "100644",
-      "digest": "sha256:02c10b1f68eb4e732504723c38cd86aa42ec6c4b5b1c49ffb537cec804ee2c32"
+      "digest": "sha256:23f5c807b9a2add3db6c02f881856d10b7963c9b7e027f7eec93e0a3d05e3567"
     },
     {
       "path": "src/codex-provider-adapter.ts",
@@ -271,7 +271,7 @@
     {
       "path": "src/contracts.ts",
       "mode": "100644",
-      "digest": "sha256:82d0d8ae2c19838ea20c36b83b75ab1770f87ecf646f38056cd1200fb475f322"
+      "digest": "sha256:42ec091e88f6b17ed33dfa0f2e362be114b43d400bc277cef79f4178d62b4f1c"
     },
     {
       "path": "src/control-plane-promotion-producer.ts",
@@ -341,7 +341,7 @@
     {
       "path": "src/evidence-object-store.ts",
       "mode": "100644",
-      "digest": "sha256:361f10f845d0995bdd50b593a13b0d78d389205e475fb053b4719ba2799c894e"
+      "digest": "sha256:e464155a052554f065e32c786110eb8d68bbc014e34f6d2355ee55866c133b7b"
     },
     {
       "path": "src/evidence-reuse-path.ts",
@@ -386,7 +386,7 @@
     {
       "path": "src/execution-store.ts",
       "mode": "100644",
-      "digest": "sha256:db627b531f521347fd266d4a67a61f6e01eb53578f9255f2e31f74b3a6446272"
+      "digest": "sha256:4a71454d7d5a63983756aca1a9c513ff536bcb8e9be22ce31265c6923c8e9022"
     },
     {
       "path": "src/external-effect-audit.ts",
@@ -406,7 +406,7 @@
     {
       "path": "src/finalize-cancellation.ts",
       "mode": "100644",
-      "digest": "sha256:127a0c1beb440963ad29eca3dd0ebe3bc10fe51880c8ec26de9329d2b241e2a6"
+      "digest": "sha256:c8b0b7072564b16bd99fcfd1687c5a47b1b3367f5f3b5552d70bcd09c764e26c"
     },
     {
       "path": "src/finalize-transaction.ts",
@@ -596,7 +596,7 @@
     {
       "path": "src/lifecycle.ts",
       "mode": "100644",
-      "digest": "sha256:e241727a0a16b6c8cc57b750b066e6c3a45029e32332776af8f7b0a6a0afac2d"
+      "digest": "sha256:9acadf794930939d135e71f2978d0ce523c1dabc1aeff57749e1d9972b34c0fc"
     },
     {
       "path": "src/maintainer-approve.ts",
@@ -901,7 +901,7 @@
     {
       "path": "src/provider-invocation-store.ts",
       "mode": "100644",
-      "digest": "sha256:580c8cb1209b6d331de0feb9b3573fee9c7317c9bf1196a07994fd4220f2bd93"
+      "digest": "sha256:7b001315ece7b4f44b1dd91b22f1c1ebf5a7eea8eb63c4f0f1edb3ac6e996af6"
     },
     {
       "path": "src/provider-invocation-supersession-schema.ts",
@@ -961,7 +961,7 @@
     {
       "path": "src/provider-worker.ts",
       "mode": "100644",
-      "digest": "sha256:5bb538e43bfc0ee7e356d0797a45a5b2712e14bba2333d910d57ffe615f5e945"
+      "digest": "sha256:b61b6a814597cc59dbe7ddb756c69fa1d21c401e6effe5af9de0aacef7f31cbc"
     },
     {
       "path": "src/publish-executor.ts",
@@ -1021,7 +1021,7 @@
     {
       "path": "src/reviewed-mutation-policy.ts",
       "mode": "100644",
-      "digest": "sha256:f0fb87e1a5b5d30fea26a31745fe19dfa647760935092a18887f9ec4d07aac72"
+      "digest": "sha256:6b512ab270d34c620ade931c3dd1ab33f3dd2d4ab77fba90b99f485995722029"
     },
     {
       "path": "src/role-scheduler.ts",
@@ -1084,9 +1084,14 @@
       "digest": "sha256:ab3c78f62535bc6dfa9b9fea5252c7d70e566ec80f46c4b8c4c7a5ac8322964c"
     },
     {
+      "path": "src/task-diff-review-input.ts",
+      "mode": "100644",
+      "digest": "sha256:c91df29dd86f3ff4d22684adffbb3e83b3275e01a209c5e3d32784a82a900132"
+    },
+    {
       "path": "src/task-diff-review-lifecycle.ts",
       "mode": "100644",
-      "digest": "sha256:16310d77221f5a6a0abf67872d06b688391844c892c6befe8eb08b4571277661"
+      "digest": "sha256:869180e6c5a565990b65e8da8d25383ef8431d1a34e3a69235d7d95889a3ddb8"
     },
     {
       "path": "src/task-diff-review-store.ts",
@@ -1109,9 +1114,14 @@
       "digest": "sha256:9d5ec92a6b38f483fffd2db0d536e472142d61aac0be186e034bc8c0524c037a"
     },
     {
+      "path": "src/task-mechanical-transform-lifecycle.ts",
+      "mode": "100644",
+      "digest": "sha256:1264716adebf60fde0033279bef6c806c22c3a3c3d7729a365a5c1764a5799d8"
+    },
+    {
       "path": "src/task-mechanical-transform.ts",
       "mode": "100644",
-      "digest": "sha256:23cabfefc054c8e2896422197c9568e1a7f0c250670d38ec4f9316768aafa1b6"
+      "digest": "sha256:32b976018e82bc6007a278eedbe71275930ef9f5b91b6a5dda4a9e729cdfba64"
     },
     {
       "path": "src/task-projection.ts",
@@ -1129,49 +1139,74 @@
       "digest": "sha256:2a3388b248ea57a208cee0dae059c62d86d57de7315d65d6b35616cb3e482d85"
     },
     {
+      "path": "src/task-strategy-correction-round-store.ts",
+      "mode": "100644",
+      "digest": "sha256:176727faa78d0092dd33d5f7e42ba917362ec68c43e83538b64d6d9eb7b270d4"
+    },
+    {
+      "path": "src/task-strategy-correction-store.ts",
+      "mode": "100644",
+      "digest": "sha256:8c42c12578084b02721597770d1629c45c9836c9a045143a7579deee1968b1ff"
+    },
+    {
+      "path": "src/task-strategy-correction.ts",
+      "mode": "100644",
+      "digest": "sha256:537fd0a2679fc252fbeee8351a4ff500bfef4ace9d7f9be6d0ac1ec266d88fee"
+    },
+    {
       "path": "src/task-strategy-execution.ts",
       "mode": "100644",
-      "digest": "sha256:9e94e456fb9af3fd69565d05d91598151e8ab854927121f53c52405ad37173df"
+      "digest": "sha256:00d7ef8dc8a21dc031a77190d796f03857537dfdf217da995ede739ad850cf88"
     },
     {
       "path": "src/task-strategy-gate.ts",
       "mode": "100644",
-      "digest": "sha256:11265048da3c67233242223943dfe7822aa69c31c7ba22287110e416a9bfe1ef"
+      "digest": "sha256:4e10855ab1f80cfb36eba79bca9e6ea2e5de0b13c7f4ecdea92803efd93b610a"
     },
     {
       "path": "src/task-strategy-implementation-lifecycle.ts",
       "mode": "100644",
-      "digest": "sha256:f46a26add4fdc8e38f2c4e77786d27425f6d835f645e71302e5f5a944530ead0"
+      "digest": "sha256:084903dee147cb5eda5d0699f55ff29c2ec52e97b15f2989f6bf1cd62695dd7e"
     },
     {
       "path": "src/task-strategy-lifecycle.ts",
       "mode": "100644",
-      "digest": "sha256:c9714eac5ae949b9792ff64ac06ac13a4992a34932fbc41532441a8354b9f1cd"
+      "digest": "sha256:fef44810873525c006d34ee3220a3add653d9348e6c4db0523453a5a467baaba"
     },
     {
       "path": "src/task-strategy-patch-store.ts",
       "mode": "100644",
-      "digest": "sha256:d94ce7a8d5c5113110c6526892d6d7947eba734fb2b9d1a4d7789e82f3f80239"
+      "digest": "sha256:88df9098df0b5f2b3cbda6dc7665c06303a3508fd52bcf15f64b51530149a83e"
     },
     {
       "path": "src/task-strategy-patch.ts",
       "mode": "100644",
-      "digest": "sha256:b8c1dcfac440b8285c56cf2970b0ccd759a1d0b75fb80108c52c4d2fe2b5739a"
+      "digest": "sha256:16e46e555339abf6160f817df60263d06b81b683767641dc543a17271e704adb"
     },
     {
       "path": "src/task-strategy-provider-contract.ts",
       "mode": "100644",
-      "digest": "sha256:548aa12735ad762a8793c0510feff6ffa7a7e5401be0dc6d5f41097e30977c34"
+      "digest": "sha256:de792af03f4b5ce10edc2b96461209d55c98d047697fad6239bc1f0834cd7143"
     },
     {
       "path": "src/task-strategy-provider-store.ts",
       "mode": "100644",
-      "digest": "sha256:30d733f997a356a5dc76066309c509a3ed824b23d5efe818b12ce8c727d1b964"
+      "digest": "sha256:ad8bd8fec38d1318b705146b824d356a5afce1c23e22e53dfebd2cf040b9f119"
+    },
+    {
+      "path": "src/task-strategy-red-revision-store.ts",
+      "mode": "100644",
+      "digest": "sha256:5801d57fdf43258394b137f30a0f13666df740fd91961be26b31a24884a34d5e"
+    },
+    {
+      "path": "src/task-strategy-red-revision.ts",
+      "mode": "100644",
+      "digest": "sha256:79960144687137d72c1f0bf5014b6a56991c9a32bea12a89f7f726934aeb80fc"
     },
     {
       "path": "src/task-strategy-store.ts",
       "mode": "100644",
-      "digest": "sha256:6f270b77e0ca85e9c99eb0d2d13c7ddbbf668eb7cc722f95febbf3bc15c330e6"
+      "digest": "sha256:fed9714243dabe4ef502e847ea4e552599a288845cdd696d154252a85a023b26"
     },
     {
       "path": "src/tracked-tree-reader.ts",
@@ -1186,12 +1221,12 @@
     {
       "path": "src/verification.ts",
       "mode": "100644",
-      "digest": "sha256:ac3e9bb58e2e47a11897108c1f3949492989d8e744df505958627f32965eb388"
+      "digest": "sha256:a6490f041a9f4a9257cd69912bb22bf0ff7b8c0c22716ae7fe290e423ad10fc0"
     },
     {
       "path": "src/workflow-guidance.ts",
       "mode": "100644",
-      "digest": "sha256:a3b25abe81f61f495e8ff2925cdb6276117938e919ba25bdd1f40ef2da1bbddf"
+      "digest": "sha256:f4cfd4ce65fd3f7d06c3ee2263173f6ce73e127141513a0e0801a47762e00362"
     }
   ]
 }

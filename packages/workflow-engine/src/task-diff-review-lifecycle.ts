@@ -78,6 +78,7 @@ import {
   assertTaskDiffReviewContinuationSubmissionCurrent,
   assertTaskDiffReviewContentSatisfied,
   createTaskDiffFinalAssuranceRecord,
+  createTaskDiffReviewChallengeResponse,
   createTaskDiffReviewRecord,
   parseTaskDiffReviewContinuationSubmission,
   TASK_DIFF_REVIEW_CONTINUATION_OUTPUT_SCHEMA,
@@ -87,6 +88,7 @@ import {
   type TaskDiffReviewContinuationSubmission,
   type TaskDiffReviewRecord,
 } from './task-diff-review-artifact.ts';
+import type { TaskDiffReviewChallengeResponseInput } from './task-diff-review-input.ts';
 import {
   createTaskDiffFinalAssuranceBinding,
   createTaskDiffReviewSupersession,
@@ -116,14 +118,16 @@ import {
   type TaskDiffReviewSubject,
   type TaskDiffTreeEntry,
 } from './task-diff-review.ts';
+import { resolveCurrentTaskStrategyCorrection } from './task-strategy-correction.ts';
+import { readTaskStrategyGreenFailureRecord } from './task-strategy-correction-store.ts';
+import {
+  createTaskStrategyCorrectionSubject,
+  createTaskStrategyImplementationSubject,
+} from './task-strategy-provider-contract.ts';
 import {
   readTaskStrategyCallerImplementationBinding,
   readTaskStrategyImplementationResultBinding,
 } from './task-strategy-provider-store.ts';
-import {
-  readTaskStrategyPatchCurrentBinding,
-  readTaskStrategyPatchRecord,
-} from './task-strategy-patch-store.ts';
 import { readTaskStrategyTransaction } from './task-strategy-store.ts';
 import {
   authorizeTaskMandateProviderReservationUnderLifecycleLock,
@@ -250,6 +254,9 @@ export type TaskDiffReviewContinuationLifecycleStatus = Readonly<{
   > | null;
 }>;
 
+export type TaskDiffReviewInspectionStatus =
+  TaskDiffReviewLifecycleStatus | TaskDiffReviewContinuationLifecycleStatus;
+
 /**
  * Reserve one exact, provider-independent TaskDiffReview. The reservation is
  * immutable and replay-safe; it does not launch the provider or advance the
@@ -259,7 +266,7 @@ export function beginTaskDiffReview(
   cwd: string,
   requestedSessionId: string,
   options: BeginTaskDiffReviewOptions = {},
-): TaskDiffReviewLifecycleStatus {
+): TaskDiffReviewInspectionStatus {
   const initialSubject = inspectTaskDiffReviewSubject(cwd, requestedSessionId);
   if (!initialSubject.reviewRequirement.required) {
     return Object.freeze({
@@ -352,7 +359,7 @@ export function beginTaskDiffReview(
 export function inspectTaskDiffReviewStatus(
   cwd: string,
   requestedSessionId: string,
-): TaskDiffReviewLifecycleStatus {
+): TaskDiffReviewInspectionStatus {
   const context = loadActiveSessionContext(cwd, requestedSessionId);
   const subject = inspectTaskDiffReviewSubject(cwd, requestedSessionId);
   if (!subject.reviewRequirement.required) {
@@ -394,6 +401,38 @@ export function inspectTaskDiffReviewStatus(
     reservation,
   );
   return renderTaskDiffReviewStatus(runtime, reservation);
+}
+
+/**
+ * Convert caller-authored response evidence into the engine-owned response
+ * record, then enter the existing authenticated continuation transaction. The
+ * input cannot name a closer or disposition and therefore cannot mint closure
+ * authority by itself.
+ */
+export function beginTaskDiffReviewContinuationFromInput(
+  cwd: string,
+  requestedSessionId: string,
+  input: TaskDiffReviewChallengeResponseInput,
+): TaskDiffReviewContinuationLifecycleStatus {
+  const context = loadActiveSessionContext(cwd, requestedSessionId);
+  const runtime = loadInvestigationRuntimeContext(cwd).runtime;
+  const current = loadCurrentTaskDiffReview(context, runtime);
+  if (input.reviewRecordDigest !== current.review.recordDigest) {
+    throw workflowError(
+      'TASK_DIFF_REVIEW_RESPONSE_INPUT_STALE',
+      'TaskDiffReview challenge response input does not name the current exact review record.',
+      ExitCode.staleState,
+    );
+  }
+  const response = createTaskDiffReviewChallengeResponse({
+    review: current.review,
+    responses: input.responses,
+  });
+  return beginTaskDiffReviewContinuation(
+    cwd,
+    context.session.sessionId,
+    response,
+  );
 }
 
 export function beginTaskDiffReviewContinuation(
@@ -592,7 +631,7 @@ export function reconcileTaskDiffReview(
   cwd: string,
   requestedSessionId: string,
   options: ReconcileTaskDiffReviewOptions = {},
-): TaskDiffReviewLifecycleStatus {
+): TaskDiffReviewInspectionStatus {
   const initialContext = loadActiveSessionContext(cwd, requestedSessionId);
   return withRepositoryLifecycleOperation(
     initialContext.runtime,
@@ -1437,10 +1476,23 @@ function createNewTaskDiffReviewReservation(
       kind: 'task-diff-review-collaboration-grant-required';
       status: TaskDiffReviewCollaborationGrantRequiredStatus;
     }> {
-  if (
-    implementationActor.identityAssurance !== 'self-declared' &&
-    implementationActor.identityAssurance !== 'runtime-hint'
-  ) {
+  if (implementationActor.identityAssurance === 'maintainer-signed') {
+    throw workflowError(
+      'TASK_DIFF_REVIEW_ACTOR_INVALID',
+      'TaskDiffReview implementation actor has unsupported assurance.',
+      ExitCode.guard,
+    );
+  }
+  const callerAttributed =
+    !implementationActor.engineSpawned &&
+    (implementationActor.identityAssurance === 'self-declared' ||
+      implementationActor.identityAssurance === 'runtime-hint');
+  const engineAttributedProvider =
+    implementationActor.engineSpawned &&
+    implementationActor.identityAssurance === 'adapter-assigned' &&
+    implementationActor.providerId !== null &&
+    implementationActor.sessionId !== null;
+  if (!callerAttributed && !engineAttributedProvider) {
     throw workflowError(
       'TASK_DIFF_REVIEW_ACTOR_INVALID',
       'TaskDiffReview implementation actor has unsupported assurance.',
@@ -1465,7 +1517,7 @@ function createNewTaskDiffReviewReservation(
     sessionId: implementationActor.sessionId ?? undefined,
     principalId: implementationActor.principalId ?? undefined,
     identityAssurance: implementationActor.identityAssurance,
-    engineSpawned: false,
+    engineSpawned: implementationActor.engineSpawned,
   };
   const scheduled = scheduleOrdinaryRole({
     role: 'task-diff-reviewer',
@@ -2233,7 +2285,7 @@ function ensureTaskDiffReviewContinuationInvocation(
 function renderTaskDiffReviewStatus(
   runtime: ReturnType<typeof loadInvestigationRuntimeContext>['runtime'],
   reservation: TaskDiffReviewReservationRecord,
-): TaskDiffReviewLifecycleStatus {
+): TaskDiffReviewInspectionStatus {
   const assignment = reservation.request
     .roleAssignment as ProviderRoleAssignment;
   const common = {
@@ -2278,40 +2330,10 @@ function renderTaskDiffReviewStatus(
       continuationReservation.response,
       continuationReservation,
     );
-    const continuationBinding = readTaskDiffReviewContinuationResultBinding(
-      runtime,
-      reservation.sessionId,
-      binding.review.recordDigest,
-    );
-    if (continuationBinding === null) {
-      return Object.freeze({
-        state: 'challenge-response-required',
-        ...common,
-        review: binding.review,
-        finalAssurance: null,
-      });
-    }
-    assertCurrentTaskDiffReviewContinuationBinding(
+    return renderTaskDiffReviewContinuationStatus(
       runtime,
       continuationReservation,
-      continuationBinding.submission,
     );
-    const finalAssurance = assertCurrentTaskDiffFinalAssuranceBinding(
-      runtime,
-      reservation,
-      binding.review,
-      continuationReservation,
-      continuationBinding,
-    );
-    return Object.freeze({
-      state:
-        finalAssurance === null
-          ? 'challenge-closure-required'
-          : finalAssurance.verdict,
-      ...common,
-      review: binding.review,
-      finalAssurance,
-    });
   }
   const invocation = readProviderInvocation(
     runtime,
@@ -3113,34 +3135,70 @@ function resolveTaskDiffImplementationActor(
     runtime,
     context.session.sessionId,
   );
+  const finalizeTransaction = readFinalizeTransaction(
+    context.runtime.root,
+    context.session.sessionId,
+  );
+  if (
+    finalizeTransaction === null ||
+    finalizeTransaction.candidateTree !== subject.candidateTree
+  ) {
+    throw reviewNotSatisfied();
+  }
   if (transaction !== null) {
-    const current = readTaskStrategyPatchCurrentBinding(
-      runtime,
-      context.session.sessionId,
-    );
-    const record =
-      current === null
-        ? null
-        : readTaskStrategyPatchRecord(
-            runtime,
-            context.session.sessionId,
-            current.patchDigest,
-          );
-    const finalizeTransaction = readFinalizeTransaction(
-      context.runtime.root,
-      context.session.sessionId,
-    );
+    const inspection = inspectSession(cwd, context.session.sessionId, {
+      expectedSession: context.session,
+      projectedTaskIds: [...finalizeTransaction.completedTaskIds],
+      projectionSourceDigest: finalizeTransaction.projectionSourceDigest,
+      authorizedTransitionPaths: [...finalizeTransaction.transitionPaths],
+    });
+    const correction = resolveCurrentTaskStrategyCorrection(inspection);
+    const initialImplementationSubject =
+      createTaskStrategyImplementationSubject({
+        sessionId: transaction.sessionId,
+        changeId: transaction.changeId,
+        taskId: transaction.taskId,
+        strategy: transaction.strategy,
+        transactionDigest: transaction.recordDigest,
+        taskContractDigest: transaction.taskContractDigest,
+        sourceTree: transaction.red.candidateTree,
+        failureFingerprint: transaction.red.failureFingerprint,
+        redEvidenceNodeId: transaction.red.evidenceNodeId,
+        redEvidenceResultDigest: transaction.red.evidenceResultDigest,
+        testPaths: transaction.red.testPaths,
+        fixturePaths: transaction.red.fixturePaths,
+        frozenFiles: transaction.red.files,
+      });
+    const head = correction.head;
+    const current = head?.binding ?? null;
+    const record = head?.record ?? null;
+    const receipt = head?.receipt ?? null;
     if (
+      correction.transaction.recordDigest !== transaction.recordDigest ||
+      correction.failure !== null ||
+      correction.exhausted ||
       current === null ||
       record === null ||
-      finalizeTransaction === null ||
+      receipt === null ||
       transaction.sessionId !== context.session.sessionId ||
       transaction.changeId !== context.session.changeId ||
       transaction.taskId !== context.session.taskId ||
+      record.sessionId !== context.session.sessionId ||
+      record.changeId !== context.session.changeId ||
+      record.taskId !== context.session.taskId ||
       record.strategy !== transaction.strategy ||
-      record.sourceTree !== transaction.red.candidateTree ||
+      record.taskContractDigest !== transaction.taskContractDigest ||
+      record.candidateTree === record.sourceTree ||
+      current.sessionId !== context.session.sessionId ||
+      current.patchDigest !== record.patchDigest ||
       record.candidateTree !== current.candidateTree ||
       record.recordDigest !== current.recordDigest ||
+      receipt.sessionId !== context.session.sessionId ||
+      receipt.recordDigest !== record.recordDigest ||
+      receipt.patchDigest !== record.patchDigest ||
+      receipt.candidateTree !== record.candidateTree ||
+      receipt.receiptDigest !== current.receiptDigest ||
+      receipt.importedAt !== current.createdAt ||
       finalizeTransaction.candidateTree !== subject.candidateTree ||
       !taskDiffSubjectExtendsPatchTree(
         context.git.repositoryRoot,
@@ -3151,14 +3209,59 @@ function resolveTaskDiffImplementationActor(
     ) {
       throw reviewNotSatisfied();
     }
+    let implementationSubject = initialImplementationSubject;
+    if (correction.completedCorrectionRounds === 0) {
+      if (record.sourceTree !== transaction.red.candidateTree) {
+        throw reviewNotSatisfied();
+      }
+    } else {
+      const originatingFailure = readTaskStrategyGreenFailureRecord(
+        runtime,
+        context.session.sessionId,
+        record.sourceTree,
+      );
+      if (
+        originatingFailure === null ||
+        originatingFailure.candidateTree !== record.sourceTree ||
+        originatingFailure.currentRedTransactionDigest !==
+          transaction.recordDigest
+      ) {
+        throw reviewNotSatisfied();
+      }
+      implementationSubject = createTaskStrategyCorrectionSubject({
+        subject: initialImplementationSubject,
+        round: correction.completedCorrectionRounds,
+        greenFailureRecord: originatingFailure,
+      });
+      if (implementationSubject.sourceTree !== record.sourceTree) {
+        throw reviewNotSatisfied();
+      }
+    }
+    if (transaction.strategy === 'tdd-single-agent') {
+      if (
+        canonicalJson(record.implementer) !== canonicalJson(transaction.author)
+      ) {
+        throw reviewNotSatisfied();
+      }
+      return recordImplementationActor(
+        context.session.sessionId,
+        transaction.author,
+      );
+    }
     if (record.implementer.providerId === null) {
       const caller = readTaskStrategyCallerImplementationBinding(
         runtime,
         context.session.sessionId,
+        implementationSubject.subjectDigest,
       );
       if (
         caller === null ||
+        caller.subjectDigest !== implementationSubject.subjectDigest ||
+        caller.output.sessionId !== context.session.sessionId ||
         caller.output.patchDigest !== record.patchDigest ||
+        caller.output.sourceTree !== record.sourceTree ||
+        caller.roleResult.targetDigest !==
+          implementationSubject.subjectDigest ||
         caller.roleResult.participant.providerId !== null ||
         caller.roleResult.participant.principalId !==
           record.implementer.principalId ||
@@ -3172,10 +3275,16 @@ function resolveTaskDiffImplementationActor(
     const provider = readTaskStrategyImplementationResultBinding(
       runtime,
       context.session.sessionId,
+      implementationSubject.subjectDigest,
     );
     if (provider !== null) {
       if (
+        provider.subjectDigest !== implementationSubject.subjectDigest ||
+        provider.output.sessionId !== context.session.sessionId ||
         provider.output.patchDigest !== record.patchDigest ||
+        provider.output.sourceTree !== record.sourceTree ||
+        provider.roleResult.targetDigest !==
+          implementationSubject.subjectDigest ||
         provider.roleResult.participant.providerId !==
           record.implementer.providerId ||
         provider.roleResult.participant.identityAssurance !==
@@ -3185,16 +3294,20 @@ function resolveTaskDiffImplementationActor(
       }
       return Object.freeze(structuredClone(provider.roleResult.participant));
     }
-    if (
-      transaction.strategy !== 'tdd-single-agent' ||
-      canonicalJson(record.implementer) !== canonicalJson(transaction.author)
-    ) {
-      throw reviewNotSatisfied();
-    }
-    return recordImplementationActor(
-      context.session.sessionId,
-      transaction.author,
-    );
+    throw reviewNotSatisfied();
+  }
+
+  const task = inspectSession(cwd, context.session.sessionId, {
+    expectedSession: context.session,
+    projectedTaskIds: [...finalizeTransaction.completedTaskIds],
+    projectionSourceDigest: finalizeTransaction.projectionSourceDigest,
+    authorizedTransitionPaths: [...finalizeTransaction.transitionPaths],
+  }).contract.execution?.tasks[context.session.taskId];
+  if (
+    task?.strategy === 'cross-agent-tdd' ||
+    task?.strategy === 'tdd-single-agent'
+  ) {
+    throw reviewNotSatisfied();
   }
 
   const actorResolution = resolveActorIdentity({

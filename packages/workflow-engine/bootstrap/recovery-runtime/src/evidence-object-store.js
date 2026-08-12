@@ -1301,7 +1301,7 @@ function isInvestigationOwner(value) {
     }
 }
 function isTaskDiffReviewImplementationActor(value) {
-    return (isPlainRecord(value) &&
+    if (!(isPlainRecord(value) &&
         hasExactKeys(value, [
             'providerId',
             'sessionId',
@@ -1311,12 +1311,18 @@ function isTaskDiffReviewImplementationActor(value) {
         ]) &&
         (value.providerId === 'codex' || value.providerId === 'claude') &&
         typeof value.sessionId === 'string' &&
-        value.sessionId.length > 0 &&
-        typeof value.principalId === 'string' &&
+        value.sessionId.length > 0)) {
+        return false;
+    }
+    const callerAttributed = typeof value.principalId === 'string' &&
         value.principalId === `provider:${value.providerId}` &&
         (value.identityAssurance === 'self-declared' ||
             value.identityAssurance === 'runtime-hint') &&
-        value.engineSpawned === false);
+        value.engineSpawned === false;
+    const engineAttributed = value.principalId === null &&
+        value.identityAssurance === 'adapter-assigned' &&
+        value.engineSpawned === true;
+    return callerAttributed || engineAttributed;
 }
 function isTaskDiffReviewAssignmentForActor(value, actor, subjectDigest) {
     if (!isProviderRoleAssignment(value) ||

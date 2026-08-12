@@ -1839,7 +1839,7 @@ function isInvestigationOwner(value: unknown): value is string {
 function isTaskDiffReviewImplementationActor(
   value: unknown,
 ): value is Record<string, unknown> {
-  return (
+  if (!(
     isPlainRecord(value) &&
     hasExactKeys(value, [
       'providerId',
@@ -1850,13 +1850,21 @@ function isTaskDiffReviewImplementationActor(
     ]) &&
     (value.providerId === 'codex' || value.providerId === 'claude') &&
     typeof value.sessionId === 'string' &&
-    value.sessionId.length > 0 &&
+    value.sessionId.length > 0
+  )) {
+    return false;
+  }
+  const callerAttributed =
     typeof value.principalId === 'string' &&
     value.principalId === `provider:${value.providerId}` &&
     (value.identityAssurance === 'self-declared' ||
       value.identityAssurance === 'runtime-hint') &&
-    value.engineSpawned === false
-  );
+    value.engineSpawned === false;
+  const engineAttributed =
+    value.principalId === null &&
+    value.identityAssurance === 'adapter-assigned' &&
+    value.engineSpawned === true;
+  return callerAttributed || engineAttributed;
 }
 
 function isTaskDiffReviewAssignmentForActor(

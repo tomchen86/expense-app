@@ -9,6 +9,8 @@ import { ExitCode, workflowError } from './errors.ts';
 import { previewExactStaging } from './git-transitions.ts';
 import { runGit } from './git.ts';
 import { investigationRuntimePaths, matchesAllowedPath } from './paths.ts';
+import { resolveCurrentTaskStrategyCorrection } from './task-strategy-correction.ts';
+import { readTaskStrategyGreenFailureRecord } from './task-strategy-correction-store.ts';
 import {
   readTaskStrategyPatchCurrentBinding,
   readTaskStrategyPatchImportReceipt,
@@ -19,6 +21,10 @@ import {
   readTaskStrategyTransaction,
   type TaskStrategyFrozenFile,
 } from './task-strategy-store.ts';
+import {
+  createTaskStrategyCorrectionSubject,
+  createTaskStrategyImplementationSubject,
+} from './task-strategy-provider-contract.ts';
 import {
   readTaskStrategyCallerImplementationBinding,
   readTaskStrategyImplementationResultBinding,
@@ -99,11 +105,37 @@ export function assertTaskStrategyExecutionGate(
   ) {
     throw redStale();
   }
-  const binding = readTaskStrategyPatchCurrentBinding(
-    runtime,
-    inspection.session.sessionId,
-  );
-  if (binding === null) {
+  const initialImplementationSubject = createTaskStrategyImplementationSubject({
+    sessionId: transaction.sessionId,
+    changeId: transaction.changeId,
+    taskId: transaction.taskId,
+    strategy: transaction.strategy,
+    transactionDigest: transaction.recordDigest,
+    taskContractDigest: transaction.taskContractDigest,
+    sourceTree: transaction.red.candidateTree,
+    failureFingerprint: transaction.red.failureFingerprint,
+    redEvidenceNodeId: transaction.red.evidenceNodeId,
+    redEvidenceResultDigest: transaction.red.evidenceResultDigest,
+    testPaths: transaction.red.testPaths,
+    fixturePaths: transaction.red.fixturePaths,
+    frozenFiles: transaction.red.files,
+  });
+  const correction = resolveCurrentTaskStrategyCorrection(inspection);
+  if (correction.transaction.recordDigest !== transaction.recordDigest) {
+    throw redStale();
+  }
+  if (correction.failure !== null) {
+    throw workflowError(
+      'TASK_STRATEGY_CORRECTION_REQUIRED',
+      'GREEN checks cannot run while the latest imported candidate has an unresolved engine-observed failure.',
+      ExitCode.verification,
+      {
+        recovery: `pnpm workflow resume ${transaction.sessionId} --json`,
+      },
+    );
+  }
+  const head = correction.head;
+  if (head === null) {
     throw workflowError(
       'TASK_STRATEGY_PATCH_REQUIRED',
       'GREEN checks require one engine-validated and durably imported implementation patch.',
@@ -114,33 +146,56 @@ export function assertTaskStrategyExecutionGate(
       },
     );
   }
+  const sourceTree = head.record.sourceTree;
+  const binding = readTaskStrategyPatchCurrentBinding(
+    runtime,
+    inspection.session.sessionId,
+    sourceTree,
+  );
   const record = readTaskStrategyPatchRecord(
     runtime,
     inspection.session.sessionId,
-    binding.patchDigest,
+    head.record.patchDigest,
+    sourceTree,
   );
   const receipt = readTaskStrategyPatchImportReceipt(
     runtime,
     inspection.session.sessionId,
-    binding.patchDigest,
+    head.record.patchDigest,
+    sourceTree,
   );
   const reservation = readTaskStrategyPatchReservation(
     runtime,
     inspection.session.sessionId,
+    sourceTree,
   );
+  const implementationSubject =
+    correction.completedCorrectionRounds === 0
+      ? initialImplementationSubject
+      : createTaskStrategyCorrectionSubject({
+          subject: initialImplementationSubject,
+          round: correction.completedCorrectionRounds,
+          greenFailureRecord: requireCorrectionFailureRecord(
+            runtime,
+            inspection.session.sessionId,
+            sourceTree,
+          ),
+        });
   const implementationResult = readTaskStrategyImplementationResultBinding(
     runtime,
     inspection.session.sessionId,
+    implementationSubject.subjectDigest,
   );
   const callerImplementationResult =
     readTaskStrategyCallerImplementationBinding(
       runtime,
       inspection.session.sessionId,
+      implementationSubject.subjectDigest,
     );
   const sameProviderDegradationCurrent =
     implementationResult !== null &&
     implementationResult.output.patchDigest === record?.patchDigest &&
-    implementationResult.output.sourceTree === transaction.red.candidateTree &&
+    implementationResult.output.sourceTree === sourceTree &&
     implementationResult.roleResult.form === 'granted-same-provider' &&
     implementationResult.roleResult.grantUse?.degradedForm ===
       'same-provider-fresh-session' &&
@@ -152,8 +207,7 @@ export function assertTaskStrategyExecutionGate(
     record?.implementer.providerId === null &&
     callerImplementationResult !== null &&
     callerImplementationResult.output.patchDigest === record.patchDigest &&
-    callerImplementationResult.output.sourceTree ===
-      transaction.red.candidateTree &&
+    callerImplementationResult.output.sourceTree === sourceTree &&
     callerImplementationResult.subjectDigest ===
       callerImplementationResult.roleResult.targetDigest &&
     callerImplementationResult.roleResult.form === 'granted-caller-supplied' &&
@@ -190,12 +244,16 @@ export function assertTaskStrategyExecutionGate(
   if (
     record === null ||
     receipt === null ||
+    binding === null ||
     reservation === null ||
+    binding.bindingDigest !== head.binding.bindingDigest ||
+    record.recordDigest !== head.record.recordDigest ||
+    receipt.receiptDigest !== head.receipt.receiptDigest ||
     record.sessionId !== inspection.session.sessionId ||
     record.changeId !== inspection.session.changeId ||
     record.taskId !== inspection.session.taskId ||
     record.strategy !== task.strategy ||
-    record.sourceTree !== transaction.red.candidateTree ||
+    record.sourceTree !== sourceTree ||
     record.taskContractDigest !== sha256(canonicalJson(task)) ||
     reservation.patchDigest !== record.patchDigest ||
     reservation.recordDigest !== record.recordDigest ||
@@ -275,6 +333,26 @@ function readFrozenFiles(
       objectId: match[2]!,
     };
   });
+}
+
+function requireCorrectionFailureRecord(
+  runtime: ReturnType<typeof investigationRuntimePaths>,
+  sessionId: string,
+  candidateTree: string,
+) {
+  const failure = readTaskStrategyGreenFailureRecord(
+    runtime,
+    sessionId,
+    candidateTree,
+  );
+  if (failure === null) {
+    throw workflowError(
+      'TASK_STRATEGY_PATCH_STALE',
+      'The latest correction patch is not bound to its exact preceding engine-observed GREEN failure.',
+      ExitCode.staleState,
+    );
+  }
+  return failure;
 }
 
 function redStale() {

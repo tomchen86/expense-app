@@ -172,18 +172,18 @@ export function createProviderRetryReservation(paths, input) {
     if (!Number.isSafeInteger(input.attempt) || input.attempt < 2) {
         throw invocationInvalid();
     }
-    const manifest = assertBlindSurveyManifest(input.manifest);
+    const manifest = assertProviderInvocationManifest(input.manifest);
     const request = assertProviderRequest(input.request);
     if (input.retryDecision === undefined) {
         throw workflowError('PROVIDER_RETRY_DECISION_EVIDENCE_REQUIRED', 'A durable retry decision binding is required before reserving provider work.', ExitCode.guard);
     }
     const retryDecision = assertProviderRetryDecisionBinding(input.retryDecision);
     const executionPolicySnapshot = createProviderExecutionPolicySnapshot(request, input.executionPolicy, input.executionGrantAuthorization);
-    const manifestDigest = blindSurveyManifestDigest(manifest);
-    assertBlindInvocationBinding(changeId, manifest, manifestDigest, request);
+    const manifestDigest = providerInvocationManifestDigest(manifest);
+    assertProviderInvocationBinding(changeId, manifest, manifestDigest, request);
     const createdAt = input.createdAt ?? new Date().toISOString();
     const reservation = assertProviderRetryReservation({
-        schemaVersion: 2,
+        schemaVersion: input.replacement === undefined ? 2 : 3,
         kind: 'provider-retry-reservation',
         investigationId,
         changeId,
@@ -197,6 +197,9 @@ export function createProviderRetryReservation(paths, input) {
         ...(input.mandateBinding ? { mandateBinding: input.mandateBinding } : {}),
         retryDecision,
         executionPolicySnapshot,
+        ...(input.replacement === undefined
+            ? {}
+            : { replacement: input.replacement }),
         createdAt,
     });
     createPrivateCanonicalJson(paths, providerRetryReservationPath(paths, investigationId, input.attempt), reservation, invocationUnsafe, 'PROVIDER_RETRY_RESERVATION_CONFLICT');
@@ -1078,6 +1081,14 @@ export function completeProviderInvocation(paths, requestedInvocationId, input) 
  * real report is never reconstructed through the fake stdout evaluator.
  */
 export function completeProviderInvocationFromRunner(paths, requestedInvocationId, input) {
+    return withProviderWorkerLifecycle(paths, (assertOwned) => completeProviderInvocationFromRunnerUnderLifecycleLock(paths, requestedInvocationId, input, assertOwned));
+}
+/**
+ * Complete one fixed-runner result while the caller holds the repository
+ * lifecycle lock. This seam lets lifecycle-owned subjects revalidate their
+ * exact owner and publish terminal success in one critical section.
+ */
+export function completeProviderInvocationFromRunnerUnderLifecycleLock(paths, requestedInvocationId, input, assertOwned) {
     const invocationId = assertInvocationId(requestedInvocationId);
     const request = readProviderInvocationRequest(paths, invocationId);
     const result = providerResultFromRunnerReport(request, input.report);
@@ -1087,7 +1098,8 @@ export function completeProviderInvocationFromRunner(paths, requestedInvocationI
         input.acceptanceBinding.requestDigest !== request.requestDigest) {
         throw providerAcceptanceBindingStale();
     }
-    return withProviderWorkerLifecycle(paths, () => withCurrentProviderPromptContext(paths.root, input.acceptanceBinding.context, () => updateProviderInvocation(paths, invocationId, input.expectedRevision, (current) => {
+    assertOwned();
+    const completed = withCurrentProviderPromptContext(paths.root, input.acceptanceBinding.context, () => updateProviderInvocation(paths, invocationId, input.expectedRevision, (current) => {
         assertCurrentLease(current, input.leaseGeneration, input.leaseToken, now);
         assertProviderInvocationAcceptanceBindingCurrent(paths, input.acceptanceBinding);
         persistProviderCompletionCandidate(paths, {
@@ -1111,7 +1123,9 @@ export function completeProviderInvocationFromRunner(paths, requestedInvocationI
             failure: null,
             updatedAt: new Date(now).toISOString(),
         };
-    })));
+    }));
+    assertOwned();
+    return completed;
 }
 export function providerCompletionCandidateExists(paths, requestedInvocationId) {
     const invocationId = assertInvocationId(requestedInvocationId);
@@ -1402,11 +1416,23 @@ function providerExecutionEntry(paths, record, request) {
     // the retry ladder in execution-store. Reading a snapshot that was never
     // written would fail the whole history instead.
     const snapshotRecorded = privatePathExists(paths, providerExecutionPolicySnapshotPath(paths, request.invocationId), providerExecutionPolicySnapshotUnsafe);
+    const retryReservation = record.attempt < 2
+        ? null
+        : readProviderRetryReservation(paths, record.investigationId, record.attempt);
+    if (retryReservation !== null &&
+        (retryReservation.invocationId !== record.invocationId ||
+            retryReservation.requestDigest !== request.requestDigest ||
+            retryReservation.manifestDigest !== record.manifestDigest)) {
+        throw invocationUnsafe();
+    }
     return {
         record,
         request,
         retryAccounting: snapshotRecorded
             ? readProviderExecutionPolicySnapshot(paths, request).accounting
+            : null,
+        retryReplacement: retryReservation?.schemaVersion === 3
+            ? retryReservation.replacement
             : null,
     };
 }
@@ -1823,14 +1849,16 @@ function assertProviderRetryReservation(value) {
     if (!isRecord(value) ||
         (value.schemaVersion === 1
             ? !hasExactKeys(value, baseKeys)
-            : value.schemaVersion !== 2 ||
-                !hasExactKeys(value, [
+            : value.schemaVersion !== 2 && value.schemaVersion !== 3
+                ? true
+                : !hasExactKeys(value, [
                     ...baseKeys,
                     'executionPolicySnapshot',
                     ...(Object.prototype.hasOwnProperty.call(value, 'mandateBinding')
                         ? ['mandateBinding']
                         : []),
                     'retryDecision',
+                    ...(value.schemaVersion === 3 ? ['replacement'] : []),
                 ])) ||
         value.kind !== 'provider-retry-reservation' ||
         typeof value.investigationId !== 'string' ||
@@ -1851,15 +1879,21 @@ function assertProviderRetryReservation(value) {
     assertInvocationId(value.previousInvocationId);
     const invocationId = assertInvocationId(value.invocationId);
     const request = assertProviderRequest(value.request);
-    const retryDecision = value.schemaVersion === 2
+    const retryDecision = value.schemaVersion === 2 || value.schemaVersion === 3
         ? assertProviderRetryDecisionBinding(value.retryDecision)
         : undefined;
-    const executionPolicySnapshot = value.schemaVersion === 2
+    const executionPolicySnapshot = value.schemaVersion === 2 || value.schemaVersion === 3
         ? assertEmbeddedProviderExecutionPolicySnapshot(value.executionPolicySnapshot, request)
+        : undefined;
+    const replacement = value.schemaVersion === 3
+        ? assertProviderRetryReplacementBinding(value.replacement)
         : undefined;
     if (invocationId !== request.invocationId ||
         value.requestDigest !== request.requestDigest ||
-        value.previousInvocationId === invocationId) {
+        value.previousInvocationId === invocationId ||
+        (replacement !== undefined &&
+            (replacement.attemptId !== `attempt-legacy-${invocationId}` ||
+                request.authorizationNodeId !== replacement.authorizationNodeId))) {
         throw invocationInvalid();
     }
     return deepFreeze(structuredClone({
@@ -1870,6 +1904,7 @@ function assertProviderRetryReservation(value) {
         ...(executionPolicySnapshot === undefined
             ? {}
             : { executionPolicySnapshot }),
+        ...(replacement === undefined ? {} : { replacement }),
     }));
 }
 function assertEmbeddedProviderExecutionPolicySnapshot(value, request) {
@@ -1905,6 +1940,53 @@ function assertProviderRetryDecisionBinding(value) {
         throw invocationInvalid();
     }
     return deepFreeze(structuredClone(value));
+}
+function assertProviderRetryReplacementBinding(value) {
+    if (!isRecord(value) ||
+        !hasExactKeys(value, [
+            'attemptId',
+            'retryMode',
+            'strategyChanges',
+            'environmentDigest',
+            'executionGrantId',
+            'authorizationNodeId',
+            'reservationNodeId',
+        ]) ||
+        typeof value.attemptId !== 'string' ||
+        !/^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,511}$/u.test(value.attemptId) ||
+        ![
+            'same-input',
+            'execution-policy-change',
+            'repair',
+            'strategy-change',
+        ].includes(value.retryMode) ||
+        !Array.isArray(value.strategyChanges) ||
+        value.strategyChanges.length > 32 ||
+        value.strategyChanges.some((entry) => typeof entry !== 'string' ||
+            entry.length < 1 ||
+            Buffer.byteLength(entry, 'utf8') > 512) ||
+        new Set(value.strategyChanges).size !== value.strategyChanges.length ||
+        typeof value.environmentDigest !== 'string' ||
+        !/^sha256:[0-9a-f]{64}$/u.test(value.environmentDigest) ||
+        (value.executionGrantId !== null &&
+            (typeof value.executionGrantId !== 'string' ||
+                !/^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,511}$/u.test(value.executionGrantId))) ||
+        typeof value.authorizationNodeId !== 'string' ||
+        !DIGEST.test(value.authorizationNodeId) ||
+        typeof value.reservationNodeId !== 'string' ||
+        !DIGEST.test(value.reservationNodeId) ||
+        (value.retryMode === 'strategy-change') !== value.strategyChanges.length > 0) {
+        throw invocationInvalid();
+    }
+    return deepFreeze({
+        attemptId: value.attemptId,
+        retryMode: value.retryMode,
+        strategyChanges: [...value.strategyChanges],
+        environmentDigest: value.environmentDigest,
+        executionGrantId: value.executionGrantId,
+        authorizationNodeId: value.authorizationNodeId,
+        reservationNodeId: value.reservationNodeId,
+    });
 }
 function assertProviderRequest(value) {
     if (!isRecord(value)) {

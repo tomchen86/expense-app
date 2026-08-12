@@ -187,12 +187,16 @@ import {
   resumeTaskStrategy,
   type TaskStrategyLifecycleStatus,
 } from './task-strategy-lifecycle.ts';
+import { parseTaskStrategyRedRevisionRequest } from './task-strategy-red-revision-store.ts';
 import {
+  beginTaskDiffReviewContinuationFromInput,
   beginTaskDiffReview,
   inspectTaskDiffReviewStatus,
   inspectTaskDiffReviewSubject,
+  reconcileTaskDiffReviewContinuation,
   reconcileTaskDiffReview,
 } from './task-diff-review-lifecycle.ts';
+import { parseTaskDiffReviewChallengeResponseInput } from './task-diff-review-input.ts';
 import { issueTaskRevisionApproval } from './task-revision-approval.ts';
 import { validateManagedDocuments } from './managed-documents.ts';
 import { diagnoseOpenSpec } from './openspec-doctor.ts';
@@ -1078,10 +1082,14 @@ function dispatch(args: string[], cwd: string): CommandResult {
       const sessionId = rest[0];
       const actor = optionValue(rest.slice(1), '--actor');
       const grantId = optionValue(rest.slice(1), '--grant');
+      const inputPath = optionValue(rest.slice(1), '--input');
       const validArguments =
         rest.length === 1 ||
         (rest.length === 3 && rest[1] === '--actor' && actor !== undefined) ||
         (rest.length === 3 && rest[1] === '--grant' && grantId !== undefined) ||
+        (rest.length === 3 &&
+          rest[1] === '--input' &&
+          inputPath !== undefined) ||
         (rest.length === 5 &&
           rest[1] === '--actor' &&
           actor !== undefined &&
@@ -1089,12 +1097,30 @@ function dispatch(args: string[], cwd: string): CommandResult {
           grantId !== undefined);
       if (!sessionId || !validArguments) {
         throw usage(
-          'Usage: pnpm workflow resume <session-id> [--actor <provider>] [--grant <grant-id>] [--json]',
+          'Usage: pnpm workflow resume <session-id> [--actor <provider>] [--grant <grant-id>] [--input <typed-envelope.json>] [--json]',
         );
+      }
+      let redRevisionRequest;
+      if (inputPath !== undefined) {
+        try {
+          redRevisionRequest = parseTaskStrategyRedRevisionRequest(
+            JSON.parse(
+              fs.readFileSync(path.resolve(cwd, inputPath), 'utf8'),
+            ) as unknown,
+          );
+        } catch (error) {
+          if (error instanceof WorkflowError) throw error;
+          throw workflowError(
+            'TASK_STRATEGY_RED_REVISION_REQUEST_INVALID',
+            'Task strategy resume input must be a readable typed RED revision envelope.',
+            ExitCode.usage,
+          );
+        }
       }
       const result = resumeTaskStrategy(cwd, sessionId, {
         ...(actor === undefined ? {} : { explicitActor: actor }),
         ...(grantId === undefined ? {} : { collaborationGrant: { grantId } }),
+        ...(redRevisionRequest === undefined ? {} : { redRevisionRequest }),
       });
       let providerDispatch = null;
       if (process.env.WORKFLOW_TEST_DISABLE_PROVIDER_DISPATCH !== '1') {
@@ -1607,40 +1633,83 @@ function dispatch(args: string[], cwd: string): CommandResult {
         };
       }
       if (rest.length === 2 && rest[0] === 'reconcile') {
+        const status = inspectTaskDiffReviewStatus(cwd, rest[1]);
         return {
           command,
           ok: true,
-          result: reconcileTaskDiffReview(cwd, rest[1]),
+          result:
+            'response' in status
+              ? reconcileTaskDiffReviewContinuation(
+                  cwd,
+                  rest[1],
+                  status.response.responseDigest,
+                )
+              : reconcileTaskDiffReview(cwd, rest[1]),
         };
       }
       const sessionId = rest[0];
       const actor = optionValue(rest.slice(1), '--actor');
       const grantId = optionValue(rest.slice(1), '--grant');
+      const inputPath = optionValue(rest.slice(1), '--input');
       const validStartArguments =
         rest.length === 1 ||
         (rest.length === 3 && rest[1] === '--actor' && actor !== undefined) ||
         (rest.length === 3 && rest[1] === '--grant' && grantId !== undefined) ||
+        (rest.length === 3 &&
+          rest[1] === '--input' &&
+          inputPath !== undefined) ||
         (rest.length === 5 &&
           rest[1] === '--actor' &&
           actor !== undefined &&
           rest[3] === '--grant' &&
           grantId !== undefined);
       if (sessionId && validStartArguments) {
-        let status = inspectTaskDiffReviewStatus(cwd, sessionId);
-        if (
-          status.state === 'ready' ||
-          actor !== undefined ||
-          grantId !== undefined
-        ) {
-          status = beginTaskDiffReview(cwd, sessionId, {
-            ...(actor === undefined ? {} : { explicitActor: actor }),
-            ...(grantId === undefined
-              ? {}
-              : { collaborationGrant: { grantId } }),
-          });
+        let status;
+        if (inputPath !== undefined) {
+          let input;
+          try {
+            input = parseTaskDiffReviewChallengeResponseInput(
+              JSON.parse(
+                fs.readFileSync(path.resolve(cwd, inputPath), 'utf8'),
+              ) as unknown,
+            );
+          } catch (error) {
+            if (error instanceof WorkflowError) throw error;
+            throw workflowError(
+              'TASK_DIFF_REVIEW_RESPONSE_INPUT_INVALID',
+              'TaskDiffReview challenge response input must be a readable exact typed envelope.',
+              ExitCode.usage,
+            );
+          }
+          status = beginTaskDiffReviewContinuationFromInput(
+            cwd,
+            sessionId,
+            input,
+          );
+        } else {
+          status = inspectTaskDiffReviewStatus(cwd, sessionId);
+          if (
+            status.state === 'ready' ||
+            actor !== undefined ||
+            grantId !== undefined
+          ) {
+            status = beginTaskDiffReview(cwd, sessionId, {
+              ...(actor === undefined ? {} : { explicitActor: actor }),
+              ...(grantId === undefined
+                ? {}
+                : { collaborationGrant: { grantId } }),
+            });
+          }
         }
         if (status.state === 'provider-succeeded-awaiting-reconciliation') {
-          status = reconcileTaskDiffReview(cwd, sessionId);
+          status =
+            'response' in status
+              ? reconcileTaskDiffReviewContinuation(
+                  cwd,
+                  sessionId,
+                  status.response.responseDigest,
+                )
+              : reconcileTaskDiffReview(cwd, sessionId);
         }
         if (status.state === 'waiting-for-provider') {
           const runtime = loadInvestigationRuntimeContext(cwd).runtime;
@@ -1658,7 +1727,7 @@ function dispatch(args: string[], cwd: string): CommandResult {
         return { command, ok: true, result: status };
       }
       throw usage(
-        'Usage: pnpm workflow review-diff <session-id> [--actor <provider>] [--grant <grant-id>] [--json]\n' +
+        'Usage: pnpm workflow review-diff <session-id> [--actor <provider>] [--grant <grant-id>] [--input <typed-response.json>] [--json]\n' +
           '       pnpm workflow review-diff <inspect|status|reconcile> <session-id> [--json]',
       );
     }

@@ -18,6 +18,7 @@ import {
   type InvestigationRuntimePaths,
 } from './paths.ts';
 import { isProviderId, type ProviderId } from './provider-registry.ts';
+import { readTaskStrategyCurrentRef } from './task-strategy-red-revision-store.ts';
 
 const DIGEST = /^[0-9a-f]{64}$/;
 const GIT_OBJECT_ID = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
@@ -67,30 +68,89 @@ export type TaskStrategyTransaction = Readonly<{
   createdAt: string;
 }>;
 
+export type TaskStrategyTransactionInput = Omit<
+  TaskStrategyTransaction,
+  'schemaVersion' | 'kind' | 'recordDigest'
+>;
+
 export function createTaskStrategyTransaction(
   paths: InvestigationRuntimePaths,
-  input: Omit<
-    TaskStrategyTransaction,
-    'schemaVersion' | 'kind' | 'recordDigest'
-  >,
+  input: TaskStrategyTransactionInput,
+): TaskStrategyTransaction {
+  const transaction = prepareTaskStrategyTransaction(input);
+  persistTaskStrategyTransaction(paths, transaction);
+  createPrivateCanonicalJson(
+    paths,
+    legacyTaskStrategyTransactionPath(paths, transaction.sessionId),
+    transaction,
+    stateCorrupt,
+    'TASK_STRATEGY_TRANSACTION_CONFLICT',
+  );
+  const stored = readLegacyTaskStrategyTransaction(
+    paths,
+    transaction.sessionId,
+  );
+  if (stored?.recordDigest !== transaction.recordDigest) throw stateCorrupt();
+  return stored;
+}
+
+/**
+ * Persist a successor RED transaction without replacing the legacy per-session
+ * singleton. Revision currentness is published separately through the strict
+ * current ref, so a crash can never destroy the predecessor transaction.
+ */
+export function createContentAddressedTaskStrategyTransaction(
+  paths: InvestigationRuntimePaths,
+  input: TaskStrategyTransactionInput,
+): TaskStrategyTransaction {
+  return persistTaskStrategyTransaction(
+    paths,
+    prepareTaskStrategyTransaction(input),
+  );
+}
+
+/**
+ * Build and validate an immutable RED transaction without publishing it. This
+ * lets a recovery journal pin the exact successor bytes before any descendant
+ * object or current ref becomes durable.
+ */
+export function prepareTaskStrategyTransaction(
+  input: TaskStrategyTransactionInput,
 ): TaskStrategyTransaction {
   const body = {
     schemaVersion: 1 as const,
     kind: 'task-strategy-transaction.v1' as const,
     ...input,
   };
-  const transaction = parseTaskStrategyTransaction({
+  return parseTaskStrategyTransaction({
     ...body,
     recordDigest: sha256(canonicalJson(body)),
   });
+}
+
+export function persistTaskStrategyTransaction(
+  paths: InvestigationRuntimePaths,
+  input: TaskStrategyTransaction,
+): TaskStrategyTransaction {
+  const transaction = parseTaskStrategyTransaction(input);
   createPrivateCanonicalJson(
     paths,
-    taskStrategyTransactionPath(paths, transaction.sessionId),
+    contentAddressedTaskStrategyTransactionPath(
+      paths,
+      transaction.sessionId,
+      transaction.recordDigest,
+    ),
     transaction,
     stateCorrupt,
     'TASK_STRATEGY_TRANSACTION_CONFLICT',
   );
-  return readTaskStrategyTransaction(paths, transaction.sessionId)!;
+  const stored = readTaskStrategyTransactionByDigest(
+    paths,
+    transaction.sessionId,
+    transaction.recordDigest,
+  );
+  if (stored === null) throw stateCorrupt();
+  return stored;
 }
 
 export function readTaskStrategyTransaction(
@@ -98,7 +158,85 @@ export function readTaskStrategyTransaction(
   requestedSessionId: string,
 ): TaskStrategyTransaction | null {
   const sessionId = assertSessionId(requestedSessionId);
-  const target = taskStrategyTransactionPath(paths, sessionId);
+  const current = readTaskStrategyCurrentRef(paths, sessionId);
+  if (current === null) {
+    return readLegacyTaskStrategyTransaction(paths, sessionId);
+  }
+  if (current.state === 'red-authoring') {
+    const predecessor = readTaskStrategyTransactionByDigest(
+      paths,
+      sessionId,
+      current.predecessorTransactionDigest,
+    );
+    if (
+      predecessor === null ||
+      predecessor.taskContractDigest !== current.taskContractDigest
+    ) {
+      throw stateCorrupt();
+    }
+    return null;
+  }
+  const transaction = readTaskStrategyTransactionByDigest(
+    paths,
+    sessionId,
+    current.transactionDigest,
+  );
+  if (
+    transaction === null ||
+    transaction.taskContractDigest !== current.taskContractDigest
+  ) {
+    throw stateCorrupt();
+  }
+  if (
+    current.predecessorTransactionDigest !== null &&
+    !isSameReviewedTaskStrategyLineage(
+      transaction,
+      readTaskStrategyTransactionByDigest(
+        paths,
+        sessionId,
+        current.predecessorTransactionDigest,
+      ),
+    )
+  ) {
+    throw stateCorrupt();
+  }
+  return transaction;
+}
+
+export function readTaskStrategyTransactionByDigest(
+  paths: InvestigationRuntimePaths,
+  requestedSessionId: string,
+  requestedRecordDigest: string,
+): TaskStrategyTransaction | null {
+  const sessionId = assertSessionId(requestedSessionId);
+  if (!DIGEST.test(requestedRecordDigest)) throw stateCorrupt();
+  const target = contentAddressedTaskStrategyTransactionPath(
+    paths,
+    sessionId,
+    requestedRecordDigest,
+  );
+  if (!privatePathExists(paths, target, stateCorrupt)) {
+    const legacy = readLegacyTaskStrategyTransaction(paths, sessionId);
+    return legacy?.recordDigest === requestedRecordDigest ? legacy : null;
+  }
+  const transaction = parseTaskStrategyTransaction(
+    readPrivateCanonicalJson(paths, target, stateCorrupt),
+  );
+  if (
+    transaction.sessionId !== sessionId ||
+    transaction.recordDigest !== requestedRecordDigest
+  ) {
+    throw stateCorrupt();
+  }
+  return transaction;
+}
+
+export function readLegacyTaskStrategyTransaction(
+  paths: InvestigationRuntimePaths,
+  requestedSessionId: string,
+): TaskStrategyTransaction | null {
+  const sessionId = assertSessionId(requestedSessionId);
+  const target = legacyTaskStrategyTransactionPath(paths, sessionId);
   if (!privatePathExists(paths, target, stateCorrupt)) return null;
   const transaction = parseTaskStrategyTransaction(
     readPrivateCanonicalJson(paths, target, stateCorrupt),
@@ -107,14 +245,49 @@ export function readTaskStrategyTransaction(
   return transaction;
 }
 
-function taskStrategyTransactionPath(
+function legacyTaskStrategyTransactionPath(
   paths: InvestigationRuntimePaths,
   sessionId: string,
 ): string {
   return path.join(paths.refs, 'task-strategies', `${sessionId}.json`);
 }
 
-function parseTaskStrategyTransaction(value: unknown): TaskStrategyTransaction {
+function contentAddressedTaskStrategyTransactionPath(
+  paths: InvestigationRuntimePaths,
+  sessionId: string,
+  recordDigest: string,
+): string {
+  return path.join(
+    paths.refs,
+    'task-strategy-transactions',
+    sessionId,
+    `${recordDigest}.json`,
+  );
+}
+
+export function isSameReviewedTaskStrategyLineage(
+  successor: TaskStrategyTransaction,
+  predecessor: TaskStrategyTransaction | null,
+): boolean {
+  return (
+    predecessor !== null &&
+    successor.recordDigest !== predecessor.recordDigest &&
+    successor.sessionId === predecessor.sessionId &&
+    successor.changeId === predecessor.changeId &&
+    successor.taskId === predecessor.taskId &&
+    canonicalJson(successor.baseline) === canonicalJson(predecessor.baseline) &&
+    successor.strategy === predecessor.strategy &&
+    successor.taskContractDigest === predecessor.taskContractDigest &&
+    canonicalJson(successor.author) === canonicalJson(predecessor.author) &&
+    successor.red.checkId === predecessor.red.checkId &&
+    successor.red.runner === predecessor.red.runner &&
+    successor.red.runnerDigest === predecessor.red.runnerDigest
+  );
+}
+
+export function parseTaskStrategyTransaction(
+  value: unknown,
+): TaskStrategyTransaction {
   if (
     !isRecord(value) ||
     !hasExactKeys(value, [

@@ -50,13 +50,25 @@ import './evidence-reuse-production.integration.test.ts';
 import './implementation-reconciliation-finalization.integration.test.ts';
 import './single-pass-finalize-command.integration.test.ts';
 import './finalize-recovery-command.integration.test.ts';
+import './finalize-authenticated-gate-recovery.integration.test.ts';
+import './task-strategy-red-revision-store.contract.test.ts';
+import './task-strategy-correction-store.contract.test.ts';
+import './task-strategy-correction-round-store.contract.test.ts';
+import './task-strategy-local-correction-round.integration.test.ts';
+import './task-strategy-caller-correction.integration.test.ts';
+import './task-strategy-store.contract.test.ts';
 import './task-diff-review.contract.test.ts';
 import './task-diff-review-artifact.contract.test.ts';
 import './task-diff-review-inspection.integration.test.ts';
+import './task-diff-review-public-continuation.integration.test.ts';
+import './task-diff-review-correction-head.integration.test.ts';
 import './task-diff-review-provider-output.contract.test.ts';
 import './task-diff-review-provider-role.contract.test.ts';
 import './task-diff-review-provider-worker.integration.test.ts';
 import './task-strategy-provider-contract.test.ts';
+import './task-strategy-correction-provider-contract.test.ts';
+import './task-strategy-correction-provider-lifecycle.integration.test.ts';
+import './task-strategy-provider-retry.integration.test.ts';
 import './floor-overflow-pruning.contract.test.ts';
 import './full-gate-progress.contract.test.ts';
 import './full-gate-runner.integration.test.ts';
@@ -1362,8 +1374,9 @@ test('execution artifacts use one exact strategy variant per task without claimi
             {
               term: { kind: 'symbol' as const, value: 'OLD_NAME' },
               path: 'outside/reference.md',
-              mutationClass: 'historical-reference' as const,
-              reason: 'The reviewed history retains the legacy name.',
+              mutationClass: 'live' as const,
+              reason:
+                'A live residual cannot be dispositioned outside mutation authority.',
             },
           ],
         },

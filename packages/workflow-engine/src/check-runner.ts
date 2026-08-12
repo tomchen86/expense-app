@@ -31,6 +31,25 @@ export type CheckEvidenceMetadata = {
 
 export type PinnedCheckRunner = Readonly<ResolvedCheckRunner>;
 
+export const OBSERVED_CHECK_FAILURE_EXCERPT_BYTES = 8 * 1024;
+
+export type ObservedCheckFailure = Readonly<{
+  checkId: string;
+  outcome: 'failed';
+  exitCode: number;
+  runner: string;
+  runnerDigest: string;
+  stdoutDigest: string;
+  stderrDigest: string;
+  stdoutExcerpt: string;
+  stderrExcerpt: string;
+  stdoutTruncated: boolean;
+  stderrTruncated: boolean;
+  failureFingerprint: string;
+}>;
+
+export type ObservedCheckOutcome = CheckEvidence | ObservedCheckFailure;
+
 export type ExpectedRedCheckResult = Readonly<{
   checkId: string;
   exitCode: number;
@@ -69,6 +88,47 @@ export function runCheck(
   databaseIdentity?: string,
   evidenceMetadata?: CheckEvidenceMetadata,
 ): CheckEvidence {
+  const outcome = runObservedCheck(
+    repositoryRoot,
+    checkId,
+    definition,
+    pinnedRunner,
+    environment,
+    databaseIdentity,
+    evidenceMetadata,
+  );
+  if (outcome.outcome === 'failed') {
+    throw workflowError(
+      'CHECK_FAILED',
+      `Required check ${checkId} exited non-zero.`,
+      ExitCode.verification,
+      {
+        details: {
+          checkId,
+          exitCode: outcome.exitCode,
+          signal: null,
+        },
+      },
+    );
+  }
+  return outcome;
+}
+
+/**
+ * Execute one engine-owned check while retaining a bounded, authenticated
+ * observation for an ordinary non-zero result. Transport failures, signals,
+ * and max-buffer failures still throw and can never be mistaken for a
+ * semantic GREEN failure.
+ */
+export function runObservedCheck(
+  repositoryRoot: string,
+  checkId: string,
+  definition: CheckDefinition,
+  pinnedRunner: PinnedCheckRunner,
+  environment: NodeJS.ProcessEnv,
+  databaseIdentity?: string,
+  evidenceMetadata?: CheckEvidenceMetadata,
+): ObservedCheckOutcome {
   const resolved = resolveCheckRunner(repositoryRoot, checkId, definition);
   assertRunnerUnchanged(checkId, pinnedRunner, resolved);
   let result: ReturnType<typeof spawnSync>;
@@ -89,12 +149,10 @@ export function runCheck(
     throw executionFailure(checkId, result.error);
   }
 
-  if (result.status !== 0) {
+  if (result.signal !== null || result.status === null) {
     throw workflowError(
-      result.signal ? 'CHECK_TERMINATED' : 'CHECK_FAILED',
-      result.signal
-        ? `Required check ${checkId} was terminated by a signal.`
-        : `Required check ${checkId} exited non-zero.`,
+      'CHECK_TERMINATED',
+      `Required check ${checkId} was terminated by a signal.`,
       ExitCode.verification,
       {
         details: {
@@ -104,6 +162,38 @@ export function runCheck(
         },
       },
     );
+  }
+
+  if (result.status !== 0) {
+    const stdout = outputText(result.stdout);
+    const stderr = outputText(result.stderr);
+    const failureBody = {
+      checkId,
+      outcome: 'failed' as const,
+      exitCode: result.status,
+      runner: resolved.runner,
+      runnerDigest: resolved.digest,
+      stdoutDigest: sha256(stdout),
+      stderrDigest: sha256(stderr),
+      stdoutExcerpt: boundedExcerpt(stdout),
+      stderrExcerpt: boundedExcerpt(stderr),
+      stdoutTruncated:
+        Buffer.byteLength(stdout, 'utf8') >
+        OBSERVED_CHECK_FAILURE_EXCERPT_BYTES,
+      stderrTruncated:
+        Buffer.byteLength(stderr, 'utf8') >
+        OBSERVED_CHECK_FAILURE_EXCERPT_BYTES,
+    };
+    const resolvedAfter = resolveCheckRunner(
+      repositoryRoot,
+      checkId,
+      definition,
+    );
+    assertRunnerUnchanged(checkId, pinnedRunner, resolvedAfter);
+    return Object.freeze({
+      ...failureBody,
+      failureFingerprint: sha256(canonicalJson(failureBody)),
+    });
   }
 
   const resolvedAfter = resolveCheckRunner(repositoryRoot, checkId, definition);
@@ -147,6 +237,81 @@ export function runCheck(
         }
       : {}),
   };
+}
+
+export function parseObservedCheckFailure(
+  value: unknown,
+): ObservedCheckFailure {
+  if (
+    !isRecord(value) ||
+    JSON.stringify(Object.keys(value).sort()) !==
+      JSON.stringify(
+        [
+          'checkId',
+          'outcome',
+          'exitCode',
+          'runner',
+          'runnerDigest',
+          'stdoutDigest',
+          'stderrDigest',
+          'stdoutExcerpt',
+          'stderrExcerpt',
+          'stdoutTruncated',
+          'stderrTruncated',
+          'failureFingerprint',
+        ].sort(),
+      ) ||
+    typeof value.checkId !== 'string' ||
+    !/^[a-z0-9]+(?:-[a-z0-9]+)*$/u.test(value.checkId) ||
+    value.outcome !== 'failed' ||
+    !Number.isSafeInteger(value.exitCode) ||
+    (value.exitCode as number) < 1 ||
+    (value.exitCode as number) > 255 ||
+    typeof value.runner !== 'string' ||
+    value.runner.trim() !== value.runner ||
+    Buffer.byteLength(value.runner, 'utf8') < 1 ||
+    Buffer.byteLength(value.runner, 'utf8') > 1024 ||
+    !isDigest(value.runnerDigest) ||
+    !isDigest(value.stdoutDigest) ||
+    !isDigest(value.stderrDigest) ||
+    typeof value.stdoutExcerpt !== 'string' ||
+    typeof value.stderrExcerpt !== 'string' ||
+    Buffer.byteLength(value.stdoutExcerpt, 'utf8') >
+      OBSERVED_CHECK_FAILURE_EXCERPT_BYTES ||
+    Buffer.byteLength(value.stderrExcerpt, 'utf8') >
+      OBSERVED_CHECK_FAILURE_EXCERPT_BYTES ||
+    typeof value.stdoutTruncated !== 'boolean' ||
+    typeof value.stderrTruncated !== 'boolean' ||
+    !isDigest(value.failureFingerprint)
+  ) {
+    throw observedFailureInvalid();
+  }
+  const body = {
+    checkId: value.checkId,
+    outcome: value.outcome,
+    exitCode: value.exitCode,
+    runner: value.runner,
+    runnerDigest: value.runnerDigest,
+    stdoutDigest: value.stdoutDigest,
+    stderrDigest: value.stderrDigest,
+    stdoutExcerpt: value.stdoutExcerpt,
+    stderrExcerpt: value.stderrExcerpt,
+    stdoutTruncated: value.stdoutTruncated,
+    stderrTruncated: value.stderrTruncated,
+  };
+  if (
+    value.failureFingerprint !== sha256(canonicalJson(body)) ||
+    (!value.stdoutTruncated &&
+      value.stdoutDigest !== sha256(value.stdoutExcerpt)) ||
+    (!value.stderrTruncated &&
+      value.stderrDigest !== sha256(value.stderrExcerpt))
+  ) {
+    throw observedFailureInvalid();
+  }
+  return Object.freeze({
+    ...body,
+    failureFingerprint: value.failureFingerprint,
+  }) as ObservedCheckFailure;
 }
 
 /**
@@ -309,6 +474,34 @@ function redEnvelopeInvalid() {
     'The RED runner did not emit one exact structured failure result.',
     ExitCode.verification,
   );
+}
+
+function outputText(value: string | Buffer | null): string {
+  return typeof value === 'string' ? value : (value?.toString('utf8') ?? '');
+}
+
+function boundedExcerpt(value: string): string {
+  const bytes = Buffer.from(value, 'utf8');
+  if (bytes.length <= OBSERVED_CHECK_FAILURE_EXCERPT_BYTES) return value;
+  let end = OBSERVED_CHECK_FAILURE_EXCERPT_BYTES;
+  while (end > 0 && (bytes[end]! & 0xc0) === 0x80) end -= 1;
+  return bytes.subarray(0, end).toString('utf8');
+}
+
+function observedFailureInvalid() {
+  return workflowError(
+    'OBSERVED_CHECK_FAILURE_INVALID',
+    'Observed check failure evidence is invalid.',
+    ExitCode.staleState,
+  );
+}
+
+function isDigest(value: unknown): value is string {
+  return typeof value === 'string' && /^[0-9a-f]{64}$/u.test(value);
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 function sha256(value: string): string {

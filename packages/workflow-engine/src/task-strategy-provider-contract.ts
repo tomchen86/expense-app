@@ -9,6 +9,11 @@ import {
   normalizePolicyPath,
 } from './paths.ts';
 import type { ProviderOutputValidator } from './provider-contracts.ts';
+import {
+  parseTaskStrategyGreenFailureRecord,
+  type TaskStrategyGreenFailureRecord,
+  type TaskStrategyPatchHead,
+} from './task-strategy-correction-store.ts';
 
 const DIGEST = /^[0-9a-f]{64}$/;
 const GIT_OBJECT_ID = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
@@ -36,6 +41,15 @@ export type TaskStrategyImplementationFrozenFile = Readonly<{
   objectId: string;
 }>;
 
+export type TaskStrategyImplementationCorrection = Readonly<{
+  round: number;
+  greenFailureRecordDigest: string;
+  greenFailureSubjectDigest: string;
+  candidateTree: string;
+  failingCheckFingerprint: string;
+  currentPatchHead: TaskStrategyPatchHead;
+}>;
+
 export type TaskStrategyImplementationSubject = Readonly<{
   schemaVersion: 1;
   kind: 'task-strategy-implementation-subject.v1';
@@ -53,6 +67,7 @@ export type TaskStrategyImplementationSubject = Readonly<{
   testPaths: readonly string[];
   fixturePaths: readonly string[];
   frozenFiles: readonly TaskStrategyImplementationFrozenFile[];
+  correction?: TaskStrategyImplementationCorrection;
 }>;
 
 export type TaskStrategyImplementationManifest = Readonly<{
@@ -65,6 +80,7 @@ export type TaskStrategyImplementationManifest = Readonly<{
   behaviorContractRefs: readonly BehaviorContractRef[];
   implementationPathScopes: readonly string[];
   capabilityProfile: 'repository-read-only';
+  greenFailureRecord?: TaskStrategyGreenFailureRecord;
 }>;
 
 export type TaskStrategyImplementationOutput = Readonly<{
@@ -151,6 +167,48 @@ export function createTaskStrategyImplementationSubject(
   });
 }
 
+export function createTaskStrategyCorrectionSubject(
+  input: Readonly<{
+    subject: TaskStrategyImplementationSubject;
+    round: number;
+    greenFailureRecord: TaskStrategyGreenFailureRecord;
+  }>,
+): TaskStrategyImplementationSubject {
+  const subject = assertTaskStrategyImplementationSubject(input.subject);
+  let greenFailureRecord: TaskStrategyGreenFailureRecord;
+  try {
+    greenFailureRecord = parseTaskStrategyGreenFailureRecord(
+      input.greenFailureRecord,
+    );
+  } catch {
+    throw manifestInvalid();
+  }
+  if (
+    greenFailureRecord.sessionId !== subject.sessionId ||
+    greenFailureRecord.currentRedTransactionDigest !== subject.transactionDigest
+  ) {
+    throw manifestInvalid();
+  }
+  const {
+    subjectDigest: _subjectDigest,
+    correction: _priorCorrection,
+    ...base
+  } = subject;
+  return createTaskStrategyImplementationSubject({
+    ...base,
+    sourceTree: greenFailureRecord.candidateTree,
+    correction: {
+      round: input.round,
+      greenFailureRecordDigest: greenFailureRecord.recordDigest,
+      greenFailureSubjectDigest: greenFailureRecord.subjectDigest,
+      candidateTree: greenFailureRecord.candidateTree,
+      failingCheckFingerprint:
+        greenFailureRecord.failingCheck.failureFingerprint,
+      currentPatchHead: greenFailureRecord.currentPatchHead,
+    },
+  });
+}
+
 export function createTaskStrategyImplementationManifest(
   input: Omit<
     TaskStrategyImplementationManifest,
@@ -169,12 +227,17 @@ export function createTaskStrategyImplementationManifest(
     ),
     implementationPathScopes: [...input.implementationPathScopes].sort(),
     capabilityProfile: 'repository-read-only',
+    ...(input.greenFailureRecord === undefined
+      ? {}
+      : { greenFailureRecord: input.greenFailureRecord }),
   });
 }
 
 export function assertTaskStrategyImplementationManifest(
   value: unknown,
 ): TaskStrategyImplementationManifest {
+  const hasGreenFailureRecord =
+    isRecord(value) && Object.hasOwn(value, 'greenFailureRecord');
   if (
     !isRecord(value) ||
     !hasExactKeys(value, [
@@ -187,6 +250,7 @@ export function assertTaskStrategyImplementationManifest(
       'behaviorContractRefs',
       'implementationPathScopes',
       'capabilityProfile',
+      ...(hasGreenFailureRecord ? ['greenFailureRecord'] : []),
     ]) ||
     value.schemaVersion !== 1 ||
     value.kind !== 'task-strategy-implementation-manifest' ||
@@ -200,7 +264,23 @@ export function assertTaskStrategyImplementationManifest(
   ) {
     throw manifestInvalid();
   }
-  assertTaskStrategyImplementationSubject(value.subject);
+  const subject = assertTaskStrategyImplementationSubject(value.subject);
+  if (hasGreenFailureRecord !== (subject.correction !== undefined)) {
+    throw manifestInvalid();
+  }
+  if (hasGreenFailureRecord) {
+    let greenFailureRecord: TaskStrategyGreenFailureRecord;
+    try {
+      greenFailureRecord = parseTaskStrategyGreenFailureRecord(
+        value.greenFailureRecord,
+      );
+    } catch {
+      throw manifestInvalid();
+    }
+    if (!correctionMatchesGreenFailure(subject, greenFailureRecord)) {
+      throw manifestInvalid();
+    }
+  }
   return deepFreeze(
     structuredClone(value),
   ) as TaskStrategyImplementationManifest;
@@ -209,6 +289,7 @@ export function assertTaskStrategyImplementationManifest(
 export function assertTaskStrategyImplementationSubject(
   value: unknown,
 ): TaskStrategyImplementationSubject {
+  const hasCorrection = isRecord(value) && Object.hasOwn(value, 'correction');
   if (
     !isRecord(value) ||
     !hasExactKeys(value, [
@@ -228,6 +309,7 @@ export function assertTaskStrategyImplementationSubject(
       'testPaths',
       'fixturePaths',
       'frozenFiles',
+      ...(hasCorrection ? ['correction'] : []),
     ]) ||
     value.schemaVersion !== 1 ||
     value.kind !== 'task-strategy-implementation-subject.v1' ||
@@ -247,7 +329,10 @@ export function assertTaskStrategyImplementationSubject(
     !isDigest(value.redEvidenceResultDigest) ||
     !isSortedPaths(value.testPaths, true) ||
     !isSortedPaths(value.fixturePaths, false) ||
-    !isFrozenFiles(value.frozenFiles, value.testPaths, value.fixturePaths)
+    !isFrozenFiles(value.frozenFiles, value.testPaths, value.fixturePaths) ||
+    (hasCorrection &&
+      (!isCorrection(value.correction) ||
+        value.sourceTree !== value.correction.candidateTree))
   ) {
     throw manifestInvalid();
   }
@@ -256,6 +341,67 @@ export function assertTaskStrategyImplementationSubject(
   return deepFreeze(
     structuredClone(value),
   ) as TaskStrategyImplementationSubject;
+}
+
+function correctionMatchesGreenFailure(
+  subject: TaskStrategyImplementationSubject,
+  greenFailureRecord: TaskStrategyGreenFailureRecord,
+): boolean {
+  const correction = subject.correction;
+  return (
+    correction !== undefined &&
+    greenFailureRecord.sessionId === subject.sessionId &&
+    greenFailureRecord.currentRedTransactionDigest ===
+      subject.transactionDigest &&
+    subject.sourceTree === greenFailureRecord.candidateTree &&
+    correction.greenFailureRecordDigest === greenFailureRecord.recordDigest &&
+    correction.greenFailureSubjectDigest === greenFailureRecord.subjectDigest &&
+    correction.candidateTree === greenFailureRecord.candidateTree &&
+    correction.failingCheckFingerprint ===
+      greenFailureRecord.failingCheck.failureFingerprint &&
+    canonicalJson(correction.currentPatchHead) ===
+      canonicalJson(greenFailureRecord.currentPatchHead)
+  );
+}
+
+function isCorrection(
+  value: unknown,
+): value is TaskStrategyImplementationCorrection {
+  return (
+    isRecord(value) &&
+    hasExactKeys(value, [
+      'round',
+      'greenFailureRecordDigest',
+      'greenFailureSubjectDigest',
+      'candidateTree',
+      'failingCheckFingerprint',
+      'currentPatchHead',
+    ]) &&
+    typeof value.round === 'number' &&
+    Number.isSafeInteger(value.round) &&
+    value.round > 0 &&
+    isDigest(value.greenFailureRecordDigest) &&
+    isDigest(value.greenFailureSubjectDigest) &&
+    isObjectId(value.candidateTree) &&
+    isDigest(value.failingCheckFingerprint) &&
+    isPatchHead(value.currentPatchHead)
+  );
+}
+
+function isPatchHead(value: unknown): value is TaskStrategyPatchHead {
+  return (
+    isRecord(value) &&
+    hasExactKeys(value, [
+      'bindingDigest',
+      'recordDigest',
+      'patchDigest',
+      'receiptDigest',
+    ]) &&
+    isDigest(value.bindingDigest) &&
+    isDigest(value.recordDigest) &&
+    isDigest(value.patchDigest) &&
+    isDigest(value.receiptDigest)
+  );
 }
 
 export function assertTaskStrategyImplementationOutput(

@@ -2,6 +2,7 @@ import crypto from 'node:crypto';
 import { canonicalJson } from './canonical-json.js';
 import { ExitCode, workflowError } from './errors.js';
 import { assertSessionId, normalizeChangedPath, normalizePolicyPath, } from './paths.js';
+import { parseTaskStrategyGreenFailureRecord, } from './task-strategy-correction-store.js';
 const DIGEST = /^[0-9a-f]{64}$/;
 const GIT_OBJECT_ID = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
 const CHANGE_ID = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
@@ -79,6 +80,33 @@ export function createTaskStrategyImplementationSubject(input) {
         subjectDigest: sha256(canonicalJson(body)),
     });
 }
+export function createTaskStrategyCorrectionSubject(input) {
+    const subject = assertTaskStrategyImplementationSubject(input.subject);
+    let greenFailureRecord;
+    try {
+        greenFailureRecord = parseTaskStrategyGreenFailureRecord(input.greenFailureRecord);
+    }
+    catch {
+        throw manifestInvalid();
+    }
+    if (greenFailureRecord.sessionId !== subject.sessionId ||
+        greenFailureRecord.currentRedTransactionDigest !== subject.transactionDigest) {
+        throw manifestInvalid();
+    }
+    const { subjectDigest: _subjectDigest, correction: _priorCorrection, ...base } = subject;
+    return createTaskStrategyImplementationSubject({
+        ...base,
+        sourceTree: greenFailureRecord.candidateTree,
+        correction: {
+            round: input.round,
+            greenFailureRecordDigest: greenFailureRecord.recordDigest,
+            greenFailureSubjectDigest: greenFailureRecord.subjectDigest,
+            candidateTree: greenFailureRecord.candidateTree,
+            failingCheckFingerprint: greenFailureRecord.failingCheck.failureFingerprint,
+            currentPatchHead: greenFailureRecord.currentPatchHead,
+        },
+    });
+}
 export function createTaskStrategyImplementationManifest(input) {
     return assertTaskStrategyImplementationManifest({
         schemaVersion: 1,
@@ -90,9 +118,13 @@ export function createTaskStrategyImplementationManifest(input) {
         behaviorContractRefs: [...input.behaviorContractRefs].sort(compareCanonical),
         implementationPathScopes: [...input.implementationPathScopes].sort(),
         capabilityProfile: 'repository-read-only',
+        ...(input.greenFailureRecord === undefined
+            ? {}
+            : { greenFailureRecord: input.greenFailureRecord }),
     });
 }
 export function assertTaskStrategyImplementationManifest(value) {
+    const hasGreenFailureRecord = isRecord(value) && Object.hasOwn(value, 'greenFailureRecord');
     if (!isRecord(value) ||
         !hasExactKeys(value, [
             'schemaVersion',
@@ -104,6 +136,7 @@ export function assertTaskStrategyImplementationManifest(value) {
             'behaviorContractRefs',
             'implementationPathScopes',
             'capabilityProfile',
+            ...(hasGreenFailureRecord ? ['greenFailureRecord'] : []),
         ]) ||
         value.schemaVersion !== 1 ||
         value.kind !== 'task-strategy-implementation-manifest' ||
@@ -116,10 +149,26 @@ export function assertTaskStrategyImplementationManifest(value) {
         !isImplementationScopes(value.implementationPathScopes)) {
         throw manifestInvalid();
     }
-    assertTaskStrategyImplementationSubject(value.subject);
+    const subject = assertTaskStrategyImplementationSubject(value.subject);
+    if (hasGreenFailureRecord !== (subject.correction !== undefined)) {
+        throw manifestInvalid();
+    }
+    if (hasGreenFailureRecord) {
+        let greenFailureRecord;
+        try {
+            greenFailureRecord = parseTaskStrategyGreenFailureRecord(value.greenFailureRecord);
+        }
+        catch {
+            throw manifestInvalid();
+        }
+        if (!correctionMatchesGreenFailure(subject, greenFailureRecord)) {
+            throw manifestInvalid();
+        }
+    }
     return deepFreeze(structuredClone(value));
 }
 export function assertTaskStrategyImplementationSubject(value) {
+    const hasCorrection = isRecord(value) && Object.hasOwn(value, 'correction');
     if (!isRecord(value) ||
         !hasExactKeys(value, [
             'schemaVersion',
@@ -138,6 +187,7 @@ export function assertTaskStrategyImplementationSubject(value) {
             'testPaths',
             'fixturePaths',
             'frozenFiles',
+            ...(hasCorrection ? ['correction'] : []),
         ]) ||
         value.schemaVersion !== 1 ||
         value.kind !== 'task-strategy-implementation-subject.v1' ||
@@ -157,13 +207,63 @@ export function assertTaskStrategyImplementationSubject(value) {
         !isDigest(value.redEvidenceResultDigest) ||
         !isSortedPaths(value.testPaths, true) ||
         !isSortedPaths(value.fixturePaths, false) ||
-        !isFrozenFiles(value.frozenFiles, value.testPaths, value.fixturePaths)) {
+        !isFrozenFiles(value.frozenFiles, value.testPaths, value.fixturePaths) ||
+        (hasCorrection &&
+            (!isCorrection(value.correction) ||
+                value.sourceTree !== value.correction.candidateTree))) {
         throw manifestInvalid();
     }
     const { subjectDigest, ...body } = value;
     if (subjectDigest !== sha256(canonicalJson(body)))
         throw manifestInvalid();
     return deepFreeze(structuredClone(value));
+}
+function correctionMatchesGreenFailure(subject, greenFailureRecord) {
+    const correction = subject.correction;
+    return (correction !== undefined &&
+        greenFailureRecord.sessionId === subject.sessionId &&
+        greenFailureRecord.currentRedTransactionDigest ===
+            subject.transactionDigest &&
+        subject.sourceTree === greenFailureRecord.candidateTree &&
+        correction.greenFailureRecordDigest === greenFailureRecord.recordDigest &&
+        correction.greenFailureSubjectDigest === greenFailureRecord.subjectDigest &&
+        correction.candidateTree === greenFailureRecord.candidateTree &&
+        correction.failingCheckFingerprint ===
+            greenFailureRecord.failingCheck.failureFingerprint &&
+        canonicalJson(correction.currentPatchHead) ===
+            canonicalJson(greenFailureRecord.currentPatchHead));
+}
+function isCorrection(value) {
+    return (isRecord(value) &&
+        hasExactKeys(value, [
+            'round',
+            'greenFailureRecordDigest',
+            'greenFailureSubjectDigest',
+            'candidateTree',
+            'failingCheckFingerprint',
+            'currentPatchHead',
+        ]) &&
+        typeof value.round === 'number' &&
+        Number.isSafeInteger(value.round) &&
+        value.round > 0 &&
+        isDigest(value.greenFailureRecordDigest) &&
+        isDigest(value.greenFailureSubjectDigest) &&
+        isObjectId(value.candidateTree) &&
+        isDigest(value.failingCheckFingerprint) &&
+        isPatchHead(value.currentPatchHead));
+}
+function isPatchHead(value) {
+    return (isRecord(value) &&
+        hasExactKeys(value, [
+            'bindingDigest',
+            'recordDigest',
+            'patchDigest',
+            'receiptDigest',
+        ]) &&
+        isDigest(value.bindingDigest) &&
+        isDigest(value.recordDigest) &&
+        isDigest(value.patchDigest) &&
+        isDigest(value.receiptDigest));
 }
 export function assertTaskStrategyImplementationOutput(value) {
     if (!isRecord(value) ||

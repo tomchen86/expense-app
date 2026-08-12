@@ -9,6 +9,7 @@ import {
   WORKFLOW_GUIDANCE_CATALOG,
   workflowCommandGuidance,
   workflowFailureRecoveryCommand,
+  workflowResultNextSteps,
 } from '../src/workflow-guidance.ts';
 import { ExitCode, workflowError } from '../src/errors.ts';
 import { reviseTask } from '../src/task-revision.ts';
@@ -134,6 +135,33 @@ test('next-step projection keeps two likely transitions and sends overflow to th
         command: 'pnpm workflow guide --json',
         why: workflowCommandGuidance('guide').purpose,
       },
+    ],
+  );
+});
+
+test('task-strategy retry and exhaustion guidance exposes executable recovery without weakening the budget', () => {
+  const sessionId =
+    'session-20260812000000000-00000000-0000-4000-8000-000000000000';
+  assert.deepEqual(
+    workflowResultNextSteps({
+      command: 'resume',
+      result: { sessionId, state: 'provider-failed' },
+    }).map(({ command }) => command),
+    [
+      `pnpm workflow resume ${sessionId} --json`,
+      `pnpm workflow status ${sessionId} --json`,
+      'pnpm workflow guide --json',
+    ],
+  );
+  assert.deepEqual(
+    workflowResultNextSteps({
+      command: 'resume',
+      result: { sessionId, state: 'correction-exhausted' },
+    }).map(({ command }) => command),
+    [
+      `pnpm workflow status ${sessionId} --json`,
+      `pnpm workflow abort ${sessionId} --reason 'Correction budget exhausted' --json`,
+      'pnpm workflow guide --json',
     ],
   );
 });
