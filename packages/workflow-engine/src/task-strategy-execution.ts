@@ -39,6 +39,20 @@ export type SealTaskStrategyRedOptions = Readonly<{
   environment?: NodeJS.ProcessEnv;
 }>;
 
+export type PreparedTaskStrategyRed = Readonly<{
+  transactionInput: Omit<
+    TaskStrategyTransaction,
+    'schemaVersion' | 'kind' | 'recordDigest'
+  >;
+  evidenceNode: ReturnType<typeof createEvidenceNode>;
+}>;
+
+export type PrepareTaskStrategyRedSuccessorOptions = Readonly<{
+  author: TaskStrategyTransaction['author'];
+  predecessorCandidateTree: string;
+  environment?: NodeJS.ProcessEnv;
+}>;
+
 export function inspectTaskStrategyTransaction(
   cwd: string,
   requestedSessionId: string,
@@ -112,6 +126,71 @@ function sealTaskStrategyRedUnlocked(
     return existing;
   }
 
+  const prepared = prepareTaskStrategyRed(
+    cwd,
+    requestedSessionId,
+    inspection,
+    task,
+    taskContractDigest,
+    actorResolution.actor,
+    options.environment ?? process.env,
+  );
+  writeEvidenceNode(runtime, prepared.evidenceNode);
+  return createTaskStrategyTransaction(runtime, prepared.transactionInput);
+}
+
+/**
+ * Prepare a successor RED transaction without publishing any descendant.
+ * The revision journal must durably bind this exact value before the caller
+ * writes the evidence node, transaction object, or current-ref transition.
+ * The caller owns the repository and session lifecycle locks.
+ */
+export function prepareTaskStrategyRedSuccessorUnlocked(
+  cwd: string,
+  requestedSessionId: string,
+  options: PrepareTaskStrategyRedSuccessorOptions,
+): PreparedTaskStrategyRed {
+  const inspection = inspectSession(cwd, requestedSessionId);
+  const task = executionTask(inspection);
+  const taskContractDigest = sha256(canonicalJson(task));
+  if (inspection.session.state !== 'active') {
+    throw workflowError(
+      'TASK_STRATEGY_RED_REVISION_NOT_APPLICABLE',
+      'RED revision requires an active task session.',
+      ExitCode.staleState,
+    );
+  }
+  const prepared = prepareTaskStrategyRed(
+    cwd,
+    requestedSessionId,
+    inspection,
+    task,
+    taskContractDigest,
+    options.author,
+    options.environment ?? process.env,
+  );
+  if (
+    prepared.transactionInput.red.candidateTree ===
+    options.predecessorCandidateTree
+  ) {
+    throw workflowError(
+      'TASK_STRATEGY_RED_REVISION_NO_CHANGE',
+      'RED revision must change at least one governed test or fixture byte.',
+      ExitCode.verification,
+    );
+  }
+  return prepared;
+}
+
+function prepareTaskStrategyRed(
+  cwd: string,
+  requestedSessionId: string,
+  inspection: ReturnType<typeof inspectSession>,
+  task: CrossAgentTddExecution | TddSingleAgentExecution,
+  taskContractDigest: string,
+  author: TaskStrategyTransaction['author'],
+  environment: NodeJS.ProcessEnv,
+): PreparedTaskStrategyRed {
   const classified = classifyRedPaths(inspection.changedPaths, task);
   if (
     classified.implementationPaths.length > 0 ||
@@ -154,7 +233,7 @@ function sealTaskStrategyRedUnlocked(
     task.redCheck,
     definition,
     runner,
-    createCheckEnvironment(options.environment ?? process.env, false),
+    createCheckEnvironment(environment, false),
   );
   if (
     result.failureCategory !== 'assertion' &&
@@ -227,40 +306,42 @@ function sealTaskStrategyRedUnlocked(
       selector: result.selector,
       testPaths: result.testPaths,
       fixturePaths: classified.fixturePaths,
-      author: actorResolution.actor,
+      author,
     },
     runtimeMetadata: { createdAt },
   });
-  writeEvidenceNode(runtime, evidenceNode);
-  return createTaskStrategyTransaction(runtime, {
-    sessionId: inspection.session.sessionId,
-    changeId: inspection.session.changeId,
-    taskId: inspection.session.taskId,
-    baseline: inspection.session.baseline,
-    strategy: task.strategy,
-    phase: 'red-sealed',
-    taskContractDigest,
-    author: actorResolution.actor,
-    red: {
-      candidateTree: preview.tree,
-      changedPaths: [...inspection.changedPaths],
-      checkId: result.checkId,
-      runner: result.runner,
-      runnerDigest: result.runnerDigest,
-      exitCode: result.exitCode,
-      failureCategory: result.failureCategory,
-      selector: result.selector,
-      testPaths: [...result.testPaths],
-      fixturePaths: classified.fixturePaths,
-      files,
-      stdoutDigest: result.stdoutDigest,
-      stderrDigest: result.stderrDigest,
-      failureFingerprint: result.failureFingerprint,
-      evidenceNodeId: evidenceNode.nodeId,
-      evidenceResultDigest: evidenceNode.resultDigest,
-      evidenceNode,
-    },
-    createdAt,
+  return Object.freeze({
+    evidenceNode,
+    transactionInput: Object.freeze({
+      sessionId: inspection.session.sessionId,
+      changeId: inspection.session.changeId,
+      taskId: inspection.session.taskId,
+      baseline: inspection.session.baseline,
+      strategy: task.strategy,
+      phase: 'red-sealed',
+      taskContractDigest,
+      author,
+      red: {
+        candidateTree: preview.tree,
+        changedPaths: [...inspection.changedPaths],
+        checkId: result.checkId,
+        runner: result.runner,
+        runnerDigest: result.runnerDigest,
+        exitCode: result.exitCode,
+        failureCategory: result.failureCategory,
+        selector: result.selector,
+        testPaths: [...result.testPaths],
+        fixturePaths: classified.fixturePaths,
+        files,
+        stdoutDigest: result.stdoutDigest,
+        stderrDigest: result.stderrDigest,
+        failureFingerprint: result.failureFingerprint,
+        evidenceNodeId: evidenceNode.nodeId,
+        evidenceResultDigest: evidenceNode.resultDigest,
+        evidenceNode,
+      },
+      createdAt,
+    }),
   });
 }
 

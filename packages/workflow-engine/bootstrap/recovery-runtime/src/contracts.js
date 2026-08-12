@@ -1084,7 +1084,6 @@ function isTransformationContract(value, allowedPaths) {
             !isTransformationTerm(disposition.term) ||
             !oldTermKeys.has(canonicalJson(disposition.term)) ||
             dispositionPath !== disposition.path ||
-            !allowedPaths.some((scope) => matchesAllowedPath(dispositionPath, scope)) ||
             !['append-only', 'immutable', 'historical-reference'].includes(String(disposition.mutationClass)) ||
             !isSemanticText(disposition.reason)) {
             return null;

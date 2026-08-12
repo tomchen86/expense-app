@@ -21,6 +21,7 @@ import {
   projectProviderInvocationExecution,
   type ExecutionFailureKind,
   type ReadOnlyProbeRequest,
+  type RetryMode,
 } from './execution-core.ts';
 import {
   acceptLegacyProviderAttemptResult,
@@ -319,8 +320,28 @@ export type ProviderRetryReservationV2 = Omit<
   executionPolicySnapshot: ProviderExecutionPolicySnapshotCurrent;
 };
 
+export type ProviderRetryReplacementBinding = Readonly<{
+  attemptId: string;
+  retryMode: Exclude<RetryMode, 'none' | 'new-context'>;
+  strategyChanges: readonly string[];
+  environmentDigest: string;
+  executionGrantId: string | null;
+  authorizationNodeId: string;
+  reservationNodeId: string;
+}>;
+
+export type ProviderRetryReservationV3 = Omit<
+  ProviderRetryReservationV2,
+  'schemaVersion'
+> & {
+  schemaVersion: 3;
+  replacement: ProviderRetryReplacementBinding;
+};
+
 export type ProviderRetryReservation =
-  ProviderRetryReservationV1 | ProviderRetryReservationV2;
+  | ProviderRetryReservationV1
+  | ProviderRetryReservationV2
+  | ProviderRetryReservationV3;
 
 export type ProviderInvocationFailure = {
   kind: 'retryable' | 'repository-reconciliation-required';
@@ -661,11 +682,12 @@ export function createProviderRetryReservation(
     changeId: string;
     attempt: number;
     previousInvocationId: string;
-    manifest: BlindSurveyManifest;
+    manifest: ProviderInvocationManifest;
     request: ProviderInvocationRequest;
     executionPolicy: LoadedAiAdapterPolicy;
     executionGrantAuthorization?: ProviderExecutionGrantAuthorityInput;
     retryDecision?: ProviderRetryDecisionBinding;
+    replacement?: ProviderRetryReplacementBinding;
     mandateBinding?: TaskMandateBinding;
     createdAt?: string;
   },
@@ -676,7 +698,7 @@ export function createProviderRetryReservation(
   if (!Number.isSafeInteger(input.attempt) || input.attempt < 2) {
     throw invocationInvalid();
   }
-  const manifest = assertBlindSurveyManifest(input.manifest);
+  const manifest = assertProviderInvocationManifest(input.manifest);
   const request = assertProviderRequest(input.request);
   if (input.retryDecision === undefined) {
     throw workflowError(
@@ -691,11 +713,11 @@ export function createProviderRetryReservation(
     input.executionPolicy,
     input.executionGrantAuthorization,
   );
-  const manifestDigest = blindSurveyManifestDigest(manifest);
-  assertBlindInvocationBinding(changeId, manifest, manifestDigest, request);
+  const manifestDigest = providerInvocationManifestDigest(manifest);
+  assertProviderInvocationBinding(changeId, manifest, manifestDigest, request);
   const createdAt = input.createdAt ?? new Date().toISOString();
   const reservation = assertProviderRetryReservation({
-    schemaVersion: 2,
+    schemaVersion: input.replacement === undefined ? 2 : 3,
     kind: 'provider-retry-reservation',
     investigationId,
     changeId,
@@ -709,6 +731,9 @@ export function createProviderRetryReservation(
     ...(input.mandateBinding ? { mandateBinding: input.mandateBinding } : {}),
     retryDecision,
     executionPolicySnapshot,
+    ...(input.replacement === undefined
+      ? {}
+      : { replacement: input.replacement }),
     createdAt,
   });
   createPrivateCanonicalJson(
@@ -2203,6 +2228,35 @@ export function completeProviderInvocationFromRunner(
     simulateCrashAfterExecutionAcceptance?: boolean;
   },
 ): ProviderInvocationRecord {
+  return withProviderWorkerLifecycle(paths, (assertOwned) =>
+    completeProviderInvocationFromRunnerUnderLifecycleLock(
+      paths,
+      requestedInvocationId,
+      input,
+      assertOwned,
+    ),
+  );
+}
+
+/**
+ * Complete one fixed-runner result while the caller holds the repository
+ * lifecycle lock. This seam lets lifecycle-owned subjects revalidate their
+ * exact owner and publish terminal success in one critical section.
+ */
+export function completeProviderInvocationFromRunnerUnderLifecycleLock(
+  paths: InvestigationRuntimePaths,
+  requestedInvocationId: string,
+  input: {
+    expectedRevision: number;
+    leaseGeneration: number;
+    leaseToken: string;
+    report: ProviderRunnerReport;
+    acceptanceBinding: ProviderInvocationAcceptanceBinding;
+    now?: string;
+    simulateCrashAfterExecutionAcceptance?: boolean;
+  },
+  assertOwned: () => void,
+): ProviderInvocationRecord {
   const invocationId = assertInvocationId(requestedInvocationId);
   const request = readProviderInvocationRequest(paths, invocationId);
   const result = providerResultFromRunnerReport(request, input.report);
@@ -2214,64 +2268,65 @@ export function completeProviderInvocationFromRunner(
   ) {
     throw providerAcceptanceBindingStale();
   }
-  return withProviderWorkerLifecycle(paths, () =>
-    withCurrentProviderPromptContext(
-      paths.root,
-      input.acceptanceBinding.context,
-      () =>
-        updateProviderInvocation(
-          paths,
-          invocationId,
-          input.expectedRevision,
-          (current) => {
-            assertCurrentLease(
-              current,
-              input.leaseGeneration,
-              input.leaseToken,
-              now,
+  assertOwned();
+  const completed = withCurrentProviderPromptContext(
+    paths.root,
+    input.acceptanceBinding.context,
+    () =>
+      updateProviderInvocation(
+        paths,
+        invocationId,
+        input.expectedRevision,
+        (current) => {
+          assertCurrentLease(
+            current,
+            input.leaseGeneration,
+            input.leaseToken,
+            now,
+          );
+          assertProviderInvocationAcceptanceBindingCurrent(
+            paths,
+            input.acceptanceBinding,
+          );
+          persistProviderCompletionCandidate(paths, {
+            current,
+            request,
+            leaseGeneration: input.leaseGeneration,
+            leaseToken: input.leaseToken,
+            result,
+            completedAt: new Date(now).toISOString(),
+          });
+          persistProviderExecutionResult(
+            paths,
+            current,
+            request,
+            input.leaseGeneration,
+            input.leaseToken,
+            result.outputDigest,
+            now,
+            input.acceptanceBinding.executionRevision,
+          );
+          if (input.simulateCrashAfterExecutionAcceptance === true) {
+            throw workflowError(
+              'PROVIDER_COMPLETION_SIMULATED_CRASH',
+              'Simulated crash after durable execution acceptance.',
+              ExitCode.internal,
             );
-            assertProviderInvocationAcceptanceBindingCurrent(
-              paths,
-              input.acceptanceBinding,
-            );
-            persistProviderCompletionCandidate(paths, {
-              current,
-              request,
-              leaseGeneration: input.leaseGeneration,
-              leaseToken: input.leaseToken,
-              result,
-              completedAt: new Date(now).toISOString(),
-            });
-            persistProviderExecutionResult(
-              paths,
-              current,
-              request,
-              input.leaseGeneration,
-              input.leaseToken,
-              result.outputDigest,
-              now,
-              input.acceptanceBinding.executionRevision,
-            );
-            if (input.simulateCrashAfterExecutionAcceptance === true) {
-              throw workflowError(
-                'PROVIDER_COMPLETION_SIMULATED_CRASH',
-                'Simulated crash after durable execution acceptance.',
-                ExitCode.internal,
-              );
-            }
-            return {
-              ...current,
-              revision: current.revision + 1,
-              state: 'succeeded',
-              lease: null,
-              result,
-              failure: null,
-              updatedAt: new Date(now).toISOString(),
-            };
-          },
-        ),
-    ),
+          }
+          return {
+            ...current,
+            revision: current.revision + 1,
+            state: 'succeeded',
+            lease: null,
+            result,
+            failure: null,
+            updatedAt: new Date(now).toISOString(),
+          };
+        },
+      ),
   );
+  assertOwned();
+  return completed;
 }
 
 export type ProviderCompletionRecovery = Readonly<{
@@ -2811,12 +2866,32 @@ function providerExecutionEntry(
     providerExecutionPolicySnapshotPath(paths, request.invocationId),
     providerExecutionPolicySnapshotUnsafe,
   );
+  const retryReservation =
+    record.attempt < 2
+      ? null
+      : readProviderRetryReservation(
+          paths,
+          record.investigationId,
+          record.attempt,
+        );
+  if (
+    retryReservation !== null &&
+    (retryReservation.invocationId !== record.invocationId ||
+      retryReservation.requestDigest !== request.requestDigest ||
+      retryReservation.manifestDigest !== record.manifestDigest)
+  ) {
+    throw invocationUnsafe();
+  }
   return {
     record,
     request,
     retryAccounting: snapshotRecorded
       ? readProviderExecutionPolicySnapshot(paths, request).accounting
       : null,
+    retryReplacement:
+      retryReservation?.schemaVersion === 3
+        ? retryReservation.replacement
+        : null,
   };
 }
 
@@ -3297,15 +3372,17 @@ function assertProviderRetryReservation(
     !isRecord(value) ||
     (value.schemaVersion === 1
       ? !hasExactKeys(value, baseKeys)
-      : value.schemaVersion !== 2 ||
-        !hasExactKeys(value, [
-          ...baseKeys,
-          'executionPolicySnapshot',
-          ...(Object.prototype.hasOwnProperty.call(value, 'mandateBinding')
-            ? ['mandateBinding']
-            : []),
-          'retryDecision',
-        ])) ||
+      : value.schemaVersion !== 2 && value.schemaVersion !== 3
+        ? true
+        : !hasExactKeys(value, [
+            ...baseKeys,
+            'executionPolicySnapshot',
+            ...(Object.prototype.hasOwnProperty.call(value, 'mandateBinding')
+              ? ['mandateBinding']
+              : []),
+            'retryDecision',
+            ...(value.schemaVersion === 3 ? ['replacement'] : []),
+          ])) ||
     value.kind !== 'provider-retry-reservation' ||
     typeof value.investigationId !== 'string' ||
     typeof value.changeId !== 'string' ||
@@ -3327,20 +3404,27 @@ function assertProviderRetryReservation(
   const invocationId = assertInvocationId(value.invocationId);
   const request = assertProviderRequest(value.request);
   const retryDecision =
-    value.schemaVersion === 2
+    value.schemaVersion === 2 || value.schemaVersion === 3
       ? assertProviderRetryDecisionBinding(value.retryDecision)
       : undefined;
   const executionPolicySnapshot =
-    value.schemaVersion === 2
+    value.schemaVersion === 2 || value.schemaVersion === 3
       ? assertEmbeddedProviderExecutionPolicySnapshot(
           value.executionPolicySnapshot,
           request,
         )
       : undefined;
+  const replacement =
+    value.schemaVersion === 3
+      ? assertProviderRetryReplacementBinding(value.replacement)
+      : undefined;
   if (
     invocationId !== request.invocationId ||
     value.requestDigest !== request.requestDigest ||
-    value.previousInvocationId === invocationId
+    value.previousInvocationId === invocationId ||
+    (replacement !== undefined &&
+      (replacement.attemptId !== `attempt-legacy-${invocationId}` ||
+        request.authorizationNodeId !== replacement.authorizationNodeId))
   ) {
     throw invocationInvalid();
   }
@@ -3353,6 +3437,7 @@ function assertProviderRetryReservation(
       ...(executionPolicySnapshot === undefined
         ? {}
         : { executionPolicySnapshot }),
+      ...(replacement === undefined ? {} : { replacement }),
     }),
   ) as ProviderRetryReservation;
 }
@@ -3397,6 +3482,63 @@ function assertProviderRetryDecisionBinding(
     throw invocationInvalid();
   }
   return deepFreeze(structuredClone(value) as ProviderRetryDecisionBinding);
+}
+
+function assertProviderRetryReplacementBinding(
+  value: unknown,
+): ProviderRetryReplacementBinding {
+  if (
+    !isRecord(value) ||
+    !hasExactKeys(value, [
+      'attemptId',
+      'retryMode',
+      'strategyChanges',
+      'environmentDigest',
+      'executionGrantId',
+      'authorizationNodeId',
+      'reservationNodeId',
+    ]) ||
+    typeof value.attemptId !== 'string' ||
+    !/^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,511}$/u.test(value.attemptId) ||
+    ![
+      'same-input',
+      'execution-policy-change',
+      'repair',
+      'strategy-change',
+    ].includes(value.retryMode as string) ||
+    !Array.isArray(value.strategyChanges) ||
+    value.strategyChanges.length > 32 ||
+    value.strategyChanges.some(
+      (entry) =>
+        typeof entry !== 'string' ||
+        entry.length < 1 ||
+        Buffer.byteLength(entry, 'utf8') > 512,
+    ) ||
+    new Set(value.strategyChanges).size !== value.strategyChanges.length ||
+    typeof value.environmentDigest !== 'string' ||
+    !/^sha256:[0-9a-f]{64}$/u.test(value.environmentDigest) ||
+    (value.executionGrantId !== null &&
+      (typeof value.executionGrantId !== 'string' ||
+        !/^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,511}$/u.test(
+          value.executionGrantId,
+        ))) ||
+    typeof value.authorizationNodeId !== 'string' ||
+    !DIGEST.test(value.authorizationNodeId) ||
+    typeof value.reservationNodeId !== 'string' ||
+    !DIGEST.test(value.reservationNodeId) ||
+    (value.retryMode === 'strategy-change') !== value.strategyChanges.length > 0
+  ) {
+    throw invocationInvalid();
+  }
+  return deepFreeze({
+    attemptId: value.attemptId,
+    retryMode: value.retryMode as ProviderRetryReplacementBinding['retryMode'],
+    strategyChanges: [...value.strategyChanges] as string[],
+    environmentDigest: value.environmentDigest,
+    executionGrantId: value.executionGrantId as string | null,
+    authorizationNodeId: value.authorizationNodeId,
+    reservationNodeId: value.reservationNodeId,
+  });
 }
 
 function assertProviderRequest(value: unknown): ProviderInvocationRequest {

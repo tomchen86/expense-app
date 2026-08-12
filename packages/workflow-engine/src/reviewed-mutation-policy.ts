@@ -141,6 +141,12 @@ function documentModeMutationClass(mode: string): MutationClass | null {
       return 'append-only';
     case 'immutable':
       return 'immutable';
+    case 'change-artifact':
+      // Change artifacts are planning inputs during execution. Classification
+      // affects observation/disposition only and never grants mutation
+      // authority, so retained historical terms remain visible without being
+      // mislabeled as live consumers.
+      return 'immutable';
     case 'reference':
       return 'historical-reference';
     default:

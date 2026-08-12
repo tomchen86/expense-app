@@ -312,12 +312,13 @@ function prepareLegacyEntries(paths, input) {
     let entries;
     try {
         entries = input
-            .map(({ record, request, retryAccounting = null }) => ({
+            .map(({ record, request, retryAccounting = null, retryReplacement = null, }) => ({
             record,
             request,
             projection: projectProviderInvocationExecution({ record, request }),
             repairLineage: readProviderRepairLineage(paths, record, request),
             retryAccounting,
+            retryReplacement,
         }))
             .sort((left, right) => left.record.attempt - right.record.attempt ||
             left.record.invocationId.localeCompare(right.record.invocationId));
@@ -468,17 +469,69 @@ function buildLegacyExecutionState(prepared, current) {
                 updatedAt: projected.updatedAt,
             });
         }
+        else if (entry.retryReplacement != null) {
+            const replacementBinding = entry.retryReplacement;
+            if (!hasAdjacentPrevious ||
+                replacementBinding.attemptId !== projected.attemptId ||
+                replacementBinding.environmentDigest !== projected.environmentDigest) {
+                throw executionProjectionConflict('Durable retry replacement does not bind adjacent legacy Attempts.');
+            }
+            const replacement = createReplacementAttempt({
+                workflow: current?.workflow ?? first.workflow,
+                job: assertJobRecord({
+                    ...(current?.job ?? first.job),
+                    status: 'waiting-retry',
+                    acceptedAttemptId: null,
+                    attemptCount: previous.attemptNumber,
+                    repairAttemptCount: attempts.filter(({ retryMode }) => retryMode === 'repair').length,
+                    retryPolicy: frozenRetryPolicy,
+                    updatedAt: previous.updatedAt,
+                }),
+                previousAttempt: previous,
+                attemptId: replacementBinding.attemptId,
+                retryMode: replacementBinding.retryMode,
+                currentExecutionPolicy: projected.policySnapshot,
+                strategyChanges: [...replacementBinding.strategyChanges],
+                ...(replacementBinding.executionGrantId === null
+                    ? {}
+                    : { grantId: replacementBinding.executionGrantId }),
+                environmentDigest: replacementBinding.environmentDigest,
+                createdAt: projected.createdAt,
+            });
+            if (replacement.attempt.attemptNumber !== projected.attemptNumber ||
+                replacement.attempt.retryOf !== previous.attemptId ||
+                replacement.attempt.retryMode !== replacementBinding.retryMode) {
+                throw executionProjectionConflict('Retry replacement does not preserve the authorized attempt semantics.');
+            }
+            baseAttempt = assertAttemptRecord({
+                ...replacement.attempt,
+                status: projected.status,
+                leaseGeneration: projected.leaseGeneration,
+                lease: projected.lease,
+                failure: projected.failure,
+                failureFingerprint: projected.failureFingerprint,
+                runtimeMs: chargedProjection.runtimeMs,
+                providerCostMicros: chargedProjection.providerCostMicros,
+                providerTokens: chargedProjection.providerTokens,
+                retention: projected.retention,
+                legacyInvocation: projected.legacyInvocation,
+                createdAt: projected.createdAt,
+                updatedAt: projected.updatedAt,
+            });
+        }
         attempts.push(assertAttemptRecord({
             ...baseAttempt,
             retryOf: hasAdjacentPrevious ? previous.attemptId : null,
             retryMode: entry.repairLineage !== null
                 ? 'repair'
-                : index === 0
-                    ? projected.retryMode
-                    : changedFields.length === 0
-                        ? 'same-input'
-                        : 'execution-policy-change',
-            changedFields: entry.repairLineage === null
+                : entry.retryReplacement != null
+                    ? baseAttempt.retryMode
+                    : index === 0
+                        ? projected.retryMode
+                        : changedFields.length === 0
+                            ? 'same-input'
+                            : 'execution-policy-change',
+            changedFields: entry.repairLineage === null && entry.retryReplacement == null
                 ? changedFields
                 : baseAttempt.changedFields,
             status: effectiveAcceptance === 'accepted'

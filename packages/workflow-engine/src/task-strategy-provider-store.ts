@@ -3,6 +3,10 @@ import path from 'node:path';
 
 import { canonicalJson } from './canonical-json.ts';
 import { COLLABORATION_GRANT_AUTHORIZED_EFFECT } from './collaboration-grant.ts';
+import {
+  readEvidenceNode,
+  resolveTaskStrategyImplementationInvocationOwner,
+} from './evidence-object-store.ts';
 import { ExitCode, workflowError } from './errors.ts';
 import {
   createPrivateCanonicalJson,
@@ -20,6 +24,18 @@ import {
   recreateProviderInvocationRequest,
   type ProviderInvocationRequest,
 } from './provider-contracts.ts';
+import {
+  providerInvocationManifestDigest,
+  providerInvocationExists,
+  readProviderInvocation,
+  readProviderInvocationEvidence,
+  readProviderInvocationRequest,
+  readProviderRetryReservation,
+  type ProviderInvocationRecord,
+  type ProviderRetryDecisionBinding,
+  type ProviderRetryReservationV2,
+  type ProviderRetryReservationV3,
+} from './provider-invocation-store.ts';
 import type { TaskMandateBinding } from './task-mandate.ts';
 import {
   TASK_STRATEGY_IMPLEMENTATION_OUTPUT_SCHEMA,
@@ -37,6 +53,7 @@ import {
   type ProviderRoleAssignment,
   type RecordedRoleParticipant,
 } from './role-scheduler.ts';
+import type { TaskStrategyTransaction } from './task-strategy-store.ts';
 
 const DIGEST = /^[0-9a-f]{64}$/;
 const GIT_OBJECT_ID = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
@@ -63,6 +80,21 @@ export type TaskStrategyImplementationReservation = Readonly<{
   request: ProviderInvocationRequest;
   authorizationNodeId: string;
   reservationNodeId: string;
+  createdAt: string;
+}>;
+
+export type TaskStrategyImplementationProviderAttempt = Readonly<{
+  root: TaskStrategyImplementationReservation;
+  attempt: number;
+  previousInvocationId: string | null;
+  assignment: ProviderRoleAssignment;
+  manifestDigest: string;
+  request: ProviderInvocationRequest;
+  authorizationNodeId: string;
+  reservationNodeId: string;
+  retryDecision: ProviderRetryDecisionBinding | null;
+  retryReservation:
+    ProviderRetryReservationV2 | ProviderRetryReservationV3 | null;
   createdAt: string;
 }>;
 
@@ -117,6 +149,265 @@ export type TaskStrategyCallerImplementationReservation = Readonly<{
   createdAt: string;
 }>;
 
+/**
+ * Replay the complete durable provider-result authority chain. Both the live
+ * implementation lifecycle and correction projection use this one predicate
+ * so a persisted binding cannot become authoritative merely by being copied
+ * into a later round record.
+ */
+export function assertTaskStrategyImplementationProviderAuthorityCurrent(
+  paths: InvestigationRuntimePaths,
+  reservation: TaskStrategyImplementationReservation,
+  invocation: ProviderInvocationRecord,
+  binding: TaskStrategyImplementationResultBinding,
+): void {
+  if (
+    invocation.state !== 'succeeded' ||
+    invocation.result === null ||
+    invocation.result.runtimeObservation === null
+  ) {
+    throw implementationResultStale();
+  }
+  const output = assertTaskStrategyImplementationOutput(
+    invocation.result.output,
+  );
+  const authorization = readEvidenceNode(
+    paths,
+    reservation.authorizationNodeId,
+  );
+  const requestReservation = readEvidenceNode(
+    paths,
+    reservation.reservationNodeId,
+  );
+  const observationNode = readEvidenceNode(
+    paths,
+    binding.providerObservationNodeId,
+  );
+  const resultNode = readEvidenceNode(paths, binding.providerResultNodeId);
+  const { resultDigest, ...roleResultBody } = binding.roleResult;
+  if (
+    invocation.investigationId !== reservation.ownerInvestigationId ||
+    invocation.changeId !== reservation.changeId ||
+    invocation.invocationId !== reservation.request.invocationId ||
+    invocation.requestDigest !== reservation.request.requestDigest ||
+    invocation.manifestDigest !== reservation.request.inputManifestDigest ||
+    invocation.providerId !== reservation.request.providerId ||
+    invocation.purpose !== reservation.request.purpose ||
+    binding.ownerInvestigationId !== reservation.ownerInvestigationId ||
+    binding.sessionId !== reservation.sessionId ||
+    binding.subjectDigest !== reservation.subject.subjectDigest ||
+    binding.invocationId !== invocation.invocationId ||
+    binding.requestDigest !== reservation.request.requestDigest ||
+    binding.outputDigest !== invocation.result.outputDigest ||
+    binding.runtimeObservationDigest !==
+      sha256(canonicalJson(invocation.result.runtimeObservation)) ||
+    canonicalJson(binding.output) !== canonicalJson(output) ||
+    canonicalJson(binding.roleResult.assignment) !==
+      canonicalJson(reservation.assignment) ||
+    canonicalJson(binding.roleResult.author) !==
+      canonicalJson(reservation.redAuthor) ||
+    resultDigest !==
+      sha256(
+        canonicalJson({
+          schema: 'admitted-role-result.v1',
+          ...roleResultBody,
+        }),
+      ) ||
+    observationNode.resultDigest !== binding.providerObservationDigest ||
+    observationNode.type !==
+      'task-strategy-implementation-provider-observation' ||
+    observationNode.nodeSchema !==
+      'workflow.task-strategy-implementation-provider-observation.v1' ||
+    observationNode.evaluator !== 'workflow-task-strategy.v1' ||
+    observationNode.policyDigest !==
+      TASK_STRATEGY_IMPLEMENTATION_POLICY_DIGEST ||
+    observationNode.outputSchema !==
+      'workflow.task-strategy-implementation-provider-observation-output.v1' ||
+    canonicalJson(observationNode.output) !==
+      canonicalJson({
+        ownerInvestigationId: reservation.ownerInvestigationId,
+        sessionId: reservation.sessionId,
+        invocationId: invocation.invocationId,
+        requestDigest: reservation.request.requestDigest,
+        outputDigest: invocation.result.outputDigest,
+        submission: output,
+      }) ||
+    observationNode.exactInputDigests.output !==
+      invocation.result.outputDigest ||
+    observationNode.exactInputDigests.request !==
+      reservation.request.requestDigest ||
+    observationNode.exactInputDigests.runtimeObservation !==
+      binding.runtimeObservationDigest ||
+    observationNode.exactInputDigests.subject !==
+      reservation.subject.subjectDigest ||
+    observationNode.semanticParentResultDigests.authorization !==
+      authorization.resultDigest ||
+    observationNode.semanticParentResultDigests.reservation !==
+      requestReservation.resultDigest ||
+    observationNode.provenanceParentNodeIds.authorization !==
+      reservation.authorizationNodeId ||
+    observationNode.provenanceParentNodeIds.reservation !==
+      reservation.reservationNodeId ||
+    canonicalJson(observationNode.runtimeMetadata) !==
+      canonicalJson({
+        runtimeObservation: invocation.result.runtimeObservation,
+      }) ||
+    resultNode.resultDigest !== binding.providerResultDigest ||
+    resultNode.type !== 'task-strategy-implementation-provider-result' ||
+    resultNode.nodeSchema !==
+      'workflow.task-strategy-implementation-provider-result.v1' ||
+    resultNode.evaluator !== 'workflow-task-strategy.v1' ||
+    resultNode.policyDigest !== TASK_STRATEGY_IMPLEMENTATION_POLICY_DIGEST ||
+    resultNode.outputSchema !==
+      'workflow.task-strategy-implementation-provider-result-output.v1' ||
+    canonicalJson(resultNode.output) !==
+      canonicalJson({
+        ownerInvestigationId: reservation.ownerInvestigationId,
+        sessionId: reservation.sessionId,
+        invocationId: invocation.invocationId,
+        roleResult: binding.roleResult,
+        output,
+      }) ||
+    resultNode.exactInputDigests.admission !==
+      binding.roleResult.resultDigest ||
+    resultNode.exactInputDigests.observation !== observationNode.resultDigest ||
+    resultNode.exactInputDigests.subject !==
+      reservation.subject.subjectDigest ||
+    resultNode.semanticParentResultDigests.observation !==
+      observationNode.resultDigest ||
+    resultNode.provenanceParentNodeIds.observation !== observationNode.nodeId
+  ) {
+    throw implementationResultStale();
+  }
+}
+
+export function assertTaskStrategyCallerImplementationReservationAuthorityCurrent(
+  paths: InvestigationRuntimePaths,
+  transaction: TaskStrategyTransaction,
+  subject: TaskStrategyImplementationSubject,
+  reservation: TaskStrategyCallerImplementationReservation,
+): void {
+  const submissionNode = readEvidenceNode(paths, reservation.submissionNodeId);
+  const caller = {
+    callerId: reservation.assignment.participant.principalId,
+    assurance: reservation.assignment.participant.identityAssurance,
+  };
+  if (
+    reservation.sessionId !== transaction.sessionId ||
+    reservation.subjectDigest !== subject.subjectDigest ||
+    reservation.assignment.role !== 'task-implementer' ||
+    reservation.assignment.targetDigest !== subject.subjectDigest ||
+    reservation.assignment.providerId !== null ||
+    reservation.assignment.sessionId !== null ||
+    reservation.assignment.degradedForm !== 'caller-supplied' ||
+    reservation.assignment.orchestration !== 'caller-supplied' ||
+    reservation.assignment.participant.providerId !== null ||
+    reservation.assignment.participant.sessionId !== null ||
+    reservation.assignment.participant.principalId === null ||
+    reservation.assignment.participant.identityAssurance ===
+      'maintainer-signed' ||
+    reservation.assignment.participant.engineSpawned !== false ||
+    canonicalJson(reservation.assignment.author) !==
+      canonicalJson(taskStrategyRecordedRedAuthor(transaction)) ||
+    reservation.output.sessionId !== transaction.sessionId ||
+    reservation.output.sourceTree !== subject.sourceTree ||
+    submissionNode.resultDigest !== reservation.submissionResultDigest ||
+    submissionNode.type !== 'task-strategy-implementation-caller-submission' ||
+    submissionNode.nodeSchema !==
+      'workflow.task-strategy-implementation-caller-submission.v1' ||
+    submissionNode.evaluator !== 'workflow-task-strategy.v1' ||
+    submissionNode.policyDigest !==
+      TASK_STRATEGY_IMPLEMENTATION_POLICY_DIGEST ||
+    submissionNode.outputSchema !==
+      'workflow.task-strategy-implementation-caller-submission-output.v1' ||
+    submissionNode.exactInputDigests.assignment !==
+      sha256(canonicalJson(reservation.assignment)) ||
+    submissionNode.exactInputDigests.caller !== sha256(canonicalJson(caller)) ||
+    submissionNode.exactInputDigests.output !==
+      sha256(canonicalJson(reservation.output)) ||
+    submissionNode.exactInputDigests.subject !== subject.subjectDigest ||
+    submissionNode.exactInputDigests.transition !==
+      reservation.transitionDigest ||
+    submissionNode.semanticParentResultDigests.red !==
+      transaction.red.evidenceResultDigest ||
+    submissionNode.provenanceParentNodeIds.red !==
+      transaction.red.evidenceNodeId ||
+    canonicalJson(submissionNode.output) !==
+      canonicalJson({
+        sessionId: reservation.sessionId,
+        subjectDigest: reservation.subjectDigest,
+        transitionDigest: reservation.transitionDigest,
+        caller,
+        assignment: reservation.assignment,
+        output: reservation.output,
+      }) ||
+    canonicalJson(submissionNode.runtimeMetadata) !== canonicalJson({})
+  ) {
+    throw implementationResultStale();
+  }
+}
+
+export function assertTaskStrategyCallerImplementationAuthorityCurrent(
+  paths: InvestigationRuntimePaths,
+  transaction: TaskStrategyTransaction,
+  subject: TaskStrategyImplementationSubject,
+  reservation: TaskStrategyCallerImplementationReservation,
+  binding: TaskStrategyCallerImplementationBinding,
+): void {
+  assertTaskStrategyCallerImplementationReservationAuthorityCurrent(
+    paths,
+    transaction,
+    subject,
+    reservation,
+  );
+  const submissionNode = readEvidenceNode(paths, reservation.submissionNodeId);
+  const resultNode = readEvidenceNode(paths, binding.resultNodeId);
+  if (
+    binding.sessionId !== reservation.sessionId ||
+    binding.subjectDigest !== reservation.subjectDigest ||
+    binding.transitionDigest !== reservation.transitionDigest ||
+    binding.submissionNodeId !== reservation.submissionNodeId ||
+    binding.submissionResultDigest !== reservation.submissionResultDigest ||
+    canonicalJson(binding.output) !== canonicalJson(reservation.output) ||
+    canonicalJson(binding.roleResult.assignment) !==
+      canonicalJson(reservation.assignment) ||
+    canonicalJson(binding.roleResult.author) !==
+      canonicalJson(reservation.assignment.author) ||
+    canonicalJson(binding.roleResult.participant) !==
+      canonicalJson(reservation.assignment.participant) ||
+    binding.roleResult.content.nodeId !== submissionNode.nodeId ||
+    binding.roleResult.content.resultDigest !== submissionNode.resultDigest ||
+    resultNode.resultDigest !== binding.resultDigest ||
+    resultNode.type !== 'task-strategy-implementation-caller-result' ||
+    resultNode.nodeSchema !==
+      'workflow.task-strategy-implementation-caller-result.v1' ||
+    resultNode.evaluator !== 'workflow-task-strategy.v1' ||
+    resultNode.policyDigest !== TASK_STRATEGY_IMPLEMENTATION_POLICY_DIGEST ||
+    resultNode.outputSchema !==
+      'workflow.task-strategy-implementation-caller-result-output.v1' ||
+    resultNode.exactInputDigests.admission !==
+      binding.roleResult.resultDigest ||
+    resultNode.exactInputDigests.submission !==
+      reservation.submissionResultDigest ||
+    resultNode.exactInputDigests.subject !== subject.subjectDigest ||
+    resultNode.exactInputDigests.transition !== reservation.transitionDigest ||
+    resultNode.semanticParentResultDigests.submission !==
+      reservation.submissionResultDigest ||
+    resultNode.provenanceParentNodeIds.submission !==
+      reservation.submissionNodeId ||
+    canonicalJson(resultNode.output) !==
+      canonicalJson({
+        sessionId: reservation.sessionId,
+        subjectDigest: reservation.subjectDigest,
+        roleResult: binding.roleResult,
+        output: reservation.output,
+      }) ||
+    canonicalJson(resultNode.runtimeMetadata) !== canonicalJson({})
+  ) {
+    throw implementationResultStale();
+  }
+}
+
 export function createTaskStrategyImplementationReservation(
   paths: InvestigationRuntimePaths,
   input: Omit<
@@ -133,31 +424,247 @@ export function createTaskStrategyImplementationReservation(
     ...body,
     recordDigest: sha256(canonicalJson(body)),
   });
-  createPrivateCanonicalJson(
+  return createSubjectScopedRecord(
     paths,
     reservationPath(paths, reservation.sessionId),
+    subjectReservationPath(
+      paths,
+      reservation.sessionId,
+      reservation.subject.subjectDigest,
+    ),
     reservation,
-    stateCorrupt,
+    parseTaskStrategyImplementationReservation,
+    (value) => value.subject.subjectDigest,
+    reservation.sessionId,
+    (value) => value.sessionId,
     'TASK_STRATEGY_IMPLEMENTATION_RESERVATION_CONFLICT',
   );
-  return readTaskStrategyImplementationReservation(
-    paths,
-    reservation.sessionId,
-  )!;
 }
 
 export function readTaskStrategyImplementationReservation(
   paths: InvestigationRuntimePaths,
   requestedSessionId: string,
+  expectedSubjectDigest?: string,
 ): TaskStrategyImplementationReservation | null {
   const sessionId = assertSessionId(requestedSessionId);
-  const target = reservationPath(paths, sessionId);
-  if (!privatePathExists(paths, target, stateCorrupt)) return null;
-  const reservation = parseTaskStrategyImplementationReservation(
-    readPrivateCanonicalJson(paths, target, stateCorrupt),
+  return readSubjectScopedRecord(
+    paths,
+    reservationPath(paths, sessionId),
+    expectedSubjectDigest,
+    (subjectDigest) => subjectReservationPath(paths, sessionId, subjectDigest),
+    parseTaskStrategyImplementationReservation,
+    (value) => value.subject.subjectDigest,
+    sessionId,
+    (value) => value.sessionId,
   );
-  if (reservation.sessionId !== sessionId) throw stateCorrupt();
-  return reservation;
+}
+
+export function readTaskStrategyImplementationProviderAttempt(
+  paths: InvestigationRuntimePaths,
+  root: TaskStrategyImplementationReservation,
+  requestedInvocationId: string,
+): TaskStrategyImplementationProviderAttempt {
+  const invocationId = assertInvocationId(requestedInvocationId);
+  if (invocationId === root.request.invocationId) {
+    return rootProviderAttempt(root);
+  }
+  const invocation = readProviderInvocation(paths, invocationId);
+  const retry = readProviderRetryReservation(
+    paths,
+    root.ownerInvestigationId,
+    invocation.attempt,
+  );
+  if (
+    retry === null ||
+    (retry.schemaVersion !== 2 && retry.schemaVersion !== 3)
+  ) {
+    throw stateCorrupt();
+  }
+  return retryProviderAttempt(paths, root, retry);
+}
+
+export function readCurrentTaskStrategyImplementationProviderAttempt(
+  paths: InvestigationRuntimePaths,
+  root: TaskStrategyImplementationReservation,
+): TaskStrategyImplementationProviderAttempt {
+  let current = rootProviderAttempt(root);
+  if (!providerInvocationExists(paths, current.request.invocationId)) {
+    return current;
+  }
+  const visited = new Set<string>();
+  while (true) {
+    if (visited.has(current.request.invocationId)) throw stateCorrupt();
+    visited.add(current.request.invocationId);
+    const evidence = readProviderInvocationEvidence(
+      paths,
+      current.request.invocationId,
+    );
+    const successor = evidence.supersededBy?.invocation.invocationId ?? null;
+    if (successor === null) {
+      const reserved = readProviderRetryReservation(
+        paths,
+        root.ownerInvestigationId,
+        current.attempt + 1,
+      );
+      return reserved === null
+        ? current
+        : retryProviderAttempt(
+            paths,
+            root,
+            requireRetryReservationV2(reserved),
+          );
+    }
+    current = readTaskStrategyImplementationProviderAttempt(
+      paths,
+      root,
+      successor,
+    );
+  }
+}
+
+export function taskStrategyImplementationReservationForAttempt(
+  attempt: TaskStrategyImplementationProviderAttempt,
+): TaskStrategyImplementationReservation {
+  return deepFreeze({
+    ...attempt.root,
+    assignment: attempt.assignment,
+    request: attempt.request,
+    authorizationNodeId: attempt.authorizationNodeId,
+    reservationNodeId: attempt.reservationNodeId,
+    createdAt: attempt.createdAt,
+  });
+}
+
+export function taskStrategyImplementationProviderAttemptReservationDigest(
+  attempt: TaskStrategyImplementationProviderAttempt,
+): string {
+  return attempt.retryReservation === null
+    ? attempt.root.recordDigest
+    : sha256(canonicalJson(attempt.retryReservation));
+}
+
+function rootProviderAttempt(
+  root: TaskStrategyImplementationReservation,
+): TaskStrategyImplementationProviderAttempt {
+  return deepFreeze({
+    root,
+    attempt: 1,
+    previousInvocationId: null,
+    assignment: root.assignment,
+    manifestDigest: providerInvocationManifestDigest(root.manifest),
+    request: root.request,
+    authorizationNodeId: root.authorizationNodeId,
+    reservationNodeId: root.reservationNodeId,
+    retryDecision: null,
+    retryReservation: null,
+    createdAt: root.createdAt,
+  });
+}
+
+function retryProviderAttempt(
+  paths: InvestigationRuntimePaths,
+  root: TaskStrategyImplementationReservation,
+  retry: ProviderRetryReservationV2 | ProviderRetryReservationV3,
+): TaskStrategyImplementationProviderAttempt {
+  const previous = readProviderInvocation(paths, retry.previousInvocationId);
+  const previousRequest = readProviderInvocationRequest(
+    paths,
+    previous.invocationId,
+  );
+  const retryAuthority =
+    retry.schemaVersion === 3
+      ? resolveTaskStrategyImplementationInvocationOwner(paths, {
+          changeId: root.changeId,
+          sessionId: root.sessionId,
+          subject: root.subject,
+          assignment: retry.request.roleAssignment,
+          authorizationNodeId: retry.replacement.authorizationNodeId,
+        })
+      : null;
+  const replacement = retry.schemaVersion === 3 ? retry.replacement : null;
+  const requestReservation =
+    replacement !== null
+      ? readEvidenceNode(paths, replacement.reservationNodeId)
+      : null;
+  if (
+    retry.investigationId !== root.ownerInvestigationId ||
+    retry.changeId !== root.changeId ||
+    canonicalJson(retry.mandateBinding ?? null) !==
+      canonicalJson(root.mandateBinding) ||
+    retry.manifestDigest !== providerInvocationManifestDigest(root.manifest) ||
+    retry.request.inputManifestDigest !== retry.manifestDigest ||
+    retry.request.targetDigest !== root.subject.subjectDigest ||
+    retry.request.authorizationNodeId !==
+      (retry.schemaVersion === 3
+        ? retry.replacement.authorizationNodeId
+        : root.authorizationNodeId) ||
+    retry.request.invocationId !== retry.invocationId ||
+    retry.request.requestDigest !== retry.requestDigest ||
+    (retry.schemaVersion === 2 &&
+      canonicalJson(retry.request.roleAssignment) !==
+        canonicalJson(root.assignment)) ||
+    (retryAuthority !== null &&
+      (retryAuthority.ownerInvestigationId !== root.ownerInvestigationId ||
+        retryAuthority.sessionId !== root.sessionId ||
+        canonicalJson(retryAuthority.mandateBinding) !==
+          canonicalJson(root.mandateBinding))) ||
+    (requestReservation !== null &&
+      (requestReservation.type !==
+        'task-strategy-implementation-request-reservation' ||
+        requestReservation.nodeSchema !==
+          'workflow.task-strategy-implementation-reservation.v1' ||
+        requestReservation.evaluator !== 'workflow-task-strategy.v1' ||
+        requestReservation.policyDigest !==
+          TASK_STRATEGY_IMPLEMENTATION_POLICY_DIGEST ||
+        requestReservation.exactInputDigests.request !==
+          retry.request.requestDigest ||
+        requestReservation.exactInputDigests.manifest !==
+          retry.manifestDigest ||
+        requestReservation.exactInputDigests.subject !==
+          root.subject.subjectDigest ||
+        requestReservation.provenanceParentNodeIds.authorization !==
+          replacement?.authorizationNodeId ||
+        canonicalJson(
+          (requestReservation.output as { request?: unknown }).request,
+        ) !== canonicalJson(retry.request))) ||
+    previous.investigationId !== root.ownerInvestigationId ||
+    previous.changeId !== root.changeId ||
+    previous.attempt !== retry.attempt - 1 ||
+    previous.state !== 'failed' ||
+    previous.failure === null ||
+    previousRequest.invocationId === retry.request.invocationId ||
+    previousRequest.nonce === retry.request.nonce
+  ) {
+    throw stateCorrupt();
+  }
+  return deepFreeze({
+    root,
+    attempt: retry.attempt,
+    previousInvocationId: retry.previousInvocationId,
+    assignment: retry.request.roleAssignment,
+    manifestDigest: retry.manifestDigest,
+    request: retry.request,
+    authorizationNodeId: retry.request.authorizationNodeId,
+    reservationNodeId:
+      replacement !== null
+        ? replacement.reservationNodeId
+        : root.reservationNodeId,
+    retryDecision: retry.retryDecision,
+    retryReservation: retry,
+    createdAt: retry.createdAt,
+  });
+}
+
+function requireRetryReservationV2(
+  value: ReturnType<typeof readProviderRetryReservation>,
+): ProviderRetryReservationV2 | ProviderRetryReservationV3 {
+  if (
+    value === null ||
+    (value.schemaVersion !== 2 && value.schemaVersion !== 3)
+  ) {
+    throw stateCorrupt();
+  }
+  return value;
 }
 
 export function createTaskStrategyImplementationResultBinding(
@@ -176,28 +683,35 @@ export function createTaskStrategyImplementationResultBinding(
     ...body,
     bindingDigest: sha256(canonicalJson(body)),
   });
-  createPrivateCanonicalJson(
+  return createSubjectScopedRecord(
     paths,
     resultPath(paths, binding.sessionId),
+    subjectResultPath(paths, binding.sessionId, binding.subjectDigest),
     binding,
-    stateCorrupt,
+    parseTaskStrategyImplementationResultBinding,
+    (value) => value.subjectDigest,
+    binding.sessionId,
+    (value) => value.sessionId,
     'TASK_STRATEGY_IMPLEMENTATION_RESULT_CONFLICT',
   );
-  return readTaskStrategyImplementationResultBinding(paths, binding.sessionId)!;
 }
 
 export function readTaskStrategyImplementationResultBinding(
   paths: InvestigationRuntimePaths,
   requestedSessionId: string,
+  expectedSubjectDigest?: string,
 ): TaskStrategyImplementationResultBinding | null {
   const sessionId = assertSessionId(requestedSessionId);
-  const target = resultPath(paths, sessionId);
-  if (!privatePathExists(paths, target, stateCorrupt)) return null;
-  const binding = parseTaskStrategyImplementationResultBinding(
-    readPrivateCanonicalJson(paths, target, stateCorrupt),
+  return readSubjectScopedRecord(
+    paths,
+    resultPath(paths, sessionId),
+    expectedSubjectDigest,
+    (subjectDigest) => subjectResultPath(paths, sessionId, subjectDigest),
+    parseTaskStrategyImplementationResultBinding,
+    (value) => value.subjectDigest,
+    sessionId,
+    (value) => value.sessionId,
   );
-  if (binding.sessionId !== sessionId) throw stateCorrupt();
-  return binding;
 }
 
 export function createTaskStrategyCallerImplementationBinding(
@@ -216,28 +730,35 @@ export function createTaskStrategyCallerImplementationBinding(
     ...body,
     bindingDigest: sha256(canonicalJson(body)),
   });
-  createPrivateCanonicalJson(
+  return createSubjectScopedRecord(
     paths,
     callerResultPath(paths, binding.sessionId),
+    subjectCallerResultPath(paths, binding.sessionId, binding.subjectDigest),
     binding,
-    stateCorrupt,
+    parseTaskStrategyCallerImplementationBinding,
+    (value) => value.subjectDigest,
+    binding.sessionId,
+    (value) => value.sessionId,
     'TASK_STRATEGY_CALLER_IMPLEMENTATION_CONFLICT',
   );
-  return readTaskStrategyCallerImplementationBinding(paths, binding.sessionId)!;
 }
 
 export function readTaskStrategyCallerImplementationBinding(
   paths: InvestigationRuntimePaths,
   requestedSessionId: string,
+  expectedSubjectDigest?: string,
 ): TaskStrategyCallerImplementationBinding | null {
   const sessionId = assertSessionId(requestedSessionId);
-  const target = callerResultPath(paths, sessionId);
-  if (!privatePathExists(paths, target, stateCorrupt)) return null;
-  const binding = parseTaskStrategyCallerImplementationBinding(
-    readPrivateCanonicalJson(paths, target, stateCorrupt),
+  return readSubjectScopedRecord(
+    paths,
+    callerResultPath(paths, sessionId),
+    expectedSubjectDigest,
+    (subjectDigest) => subjectCallerResultPath(paths, sessionId, subjectDigest),
+    parseTaskStrategyCallerImplementationBinding,
+    (value) => value.subjectDigest,
+    sessionId,
+    (value) => value.sessionId,
   );
-  if (binding.sessionId !== sessionId) throw stateCorrupt();
-  return binding;
 }
 
 export function createTaskStrategyCallerImplementationReservation(
@@ -256,31 +777,40 @@ export function createTaskStrategyCallerImplementationReservation(
     ...body,
     reservationDigest: sha256(canonicalJson(body)),
   });
-  createPrivateCanonicalJson(
+  return createSubjectScopedRecord(
     paths,
     callerReservationPath(paths, reservation.sessionId),
+    subjectCallerReservationPath(
+      paths,
+      reservation.sessionId,
+      reservation.subjectDigest,
+    ),
     reservation,
-    stateCorrupt,
+    parseTaskStrategyCallerImplementationReservation,
+    (value) => value.subjectDigest,
+    reservation.sessionId,
+    (value) => value.sessionId,
     'TASK_STRATEGY_CALLER_IMPLEMENTATION_RESERVATION_CONFLICT',
   );
-  return readTaskStrategyCallerImplementationReservation(
-    paths,
-    reservation.sessionId,
-  )!;
 }
 
 export function readTaskStrategyCallerImplementationReservation(
   paths: InvestigationRuntimePaths,
   requestedSessionId: string,
+  expectedSubjectDigest?: string,
 ): TaskStrategyCallerImplementationReservation | null {
   const sessionId = assertSessionId(requestedSessionId);
-  const target = callerReservationPath(paths, sessionId);
-  if (!privatePathExists(paths, target, stateCorrupt)) return null;
-  const reservation = parseTaskStrategyCallerImplementationReservation(
-    readPrivateCanonicalJson(paths, target, stateCorrupt),
+  return readSubjectScopedRecord(
+    paths,
+    callerReservationPath(paths, sessionId),
+    expectedSubjectDigest,
+    (subjectDigest) =>
+      subjectCallerReservationPath(paths, sessionId, subjectDigest),
+    parseTaskStrategyCallerImplementationReservation,
+    (value) => value.subjectDigest,
+    sessionId,
+    (value) => value.sessionId,
   );
-  if (reservation.sessionId !== sessionId) throw stateCorrupt();
-  return reservation;
 }
 
 function reservationPath(
@@ -329,6 +859,135 @@ function callerReservationPath(
     sessionId,
     'caller-reservation.json',
   );
+}
+
+function subjectReservationPath(
+  paths: InvestigationRuntimePaths,
+  sessionId: string,
+  subjectDigest: string,
+): string {
+  return subjectScopedPath(paths, sessionId, subjectDigest, 'reservation.json');
+}
+
+function subjectResultPath(
+  paths: InvestigationRuntimePaths,
+  sessionId: string,
+  subjectDigest: string,
+): string {
+  return subjectScopedPath(paths, sessionId, subjectDigest, 'result.json');
+}
+
+function subjectCallerResultPath(
+  paths: InvestigationRuntimePaths,
+  sessionId: string,
+  subjectDigest: string,
+): string {
+  return subjectScopedPath(
+    paths,
+    sessionId,
+    subjectDigest,
+    'caller-result.json',
+  );
+}
+
+function subjectCallerReservationPath(
+  paths: InvestigationRuntimePaths,
+  sessionId: string,
+  subjectDigest: string,
+): string {
+  return subjectScopedPath(
+    paths,
+    sessionId,
+    subjectDigest,
+    'caller-reservation.json',
+  );
+}
+
+function subjectScopedPath(
+  paths: InvestigationRuntimePaths,
+  sessionId: string,
+  subjectDigest: string,
+  filename: string,
+): string {
+  return path.join(
+    paths.refs,
+    'task-strategy-implementations',
+    sessionId,
+    'subjects',
+    assertDigest(subjectDigest),
+    filename,
+  );
+}
+
+function createSubjectScopedRecord<T>(
+  paths: InvestigationRuntimePaths,
+  legacyPath: string,
+  scopedPath: string,
+  value: T,
+  parse: (value: unknown) => T,
+  subjectDigestOf: (value: T) => string,
+  expectedSessionId: string,
+  sessionIdOf: (value: T) => string,
+  collisionCode: string,
+): T {
+  const legacy = readRecordAt(paths, legacyPath, parse);
+  if (legacy !== null && sessionIdOf(legacy) !== expectedSessionId) {
+    throw stateCorrupt();
+  }
+  const expectedSubjectDigest = assertDigest(subjectDigestOf(value));
+  const target =
+    legacy === null || subjectDigestOf(legacy) === expectedSubjectDigest
+      ? legacyPath
+      : scopedPath;
+  createPrivateCanonicalJson(paths, target, value, stateCorrupt, collisionCode);
+  const stored = readRecordAt(paths, target, parse);
+  if (
+    stored === null ||
+    sessionIdOf(stored) !== expectedSessionId ||
+    subjectDigestOf(stored) !== expectedSubjectDigest
+  ) {
+    throw stateCorrupt();
+  }
+  return stored;
+}
+
+function readSubjectScopedRecord<T>(
+  paths: InvestigationRuntimePaths,
+  legacyPath: string,
+  requestedSubjectDigest: string | undefined,
+  scopedPath: (subjectDigest: string) => string,
+  parse: (value: unknown) => T,
+  subjectDigestOf: (value: T) => string,
+  expectedSessionId: string,
+  sessionIdOf: (value: T) => string,
+): T | null {
+  const legacy = readRecordAt(paths, legacyPath, parse);
+  if (legacy !== null && sessionIdOf(legacy) !== expectedSessionId) {
+    throw stateCorrupt();
+  }
+  if (requestedSubjectDigest === undefined) return legacy;
+  const expectedSubjectDigest = assertDigest(requestedSubjectDigest);
+  if (legacy !== null && subjectDigestOf(legacy) === expectedSubjectDigest) {
+    return legacy;
+  }
+  const scoped = readRecordAt(paths, scopedPath(expectedSubjectDigest), parse);
+  if (
+    scoped !== null &&
+    (sessionIdOf(scoped) !== expectedSessionId ||
+      subjectDigestOf(scoped) !== expectedSubjectDigest)
+  ) {
+    throw stateCorrupt();
+  }
+  return scoped;
+}
+
+function readRecordAt<T>(
+  paths: InvestigationRuntimePaths,
+  target: string,
+  parse: (value: unknown) => T,
+): T | null {
+  if (!privatePathExists(paths, target, stateCorrupt)) return null;
+  return parse(readPrivateCanonicalJson(paths, target, stateCorrupt));
 }
 
 function parseTaskStrategyImplementationReservation(
@@ -933,6 +1592,11 @@ function isDigest(value: unknown): value is string {
   return typeof value === 'string' && DIGEST.test(value);
 }
 
+function assertDigest(value: string): string {
+  if (!DIGEST.test(value)) throw stateCorrupt();
+  return value;
+}
+
 function isGrantId(value: unknown): value is string {
   return (
     typeof value === 'string' &&
@@ -967,6 +1631,26 @@ function deepFreeze<T>(value: T): T {
 
 function sha256(value: string): string {
   return crypto.createHash('sha256').update(value).digest('hex');
+}
+
+function taskStrategyRecordedRedAuthor(
+  transaction: TaskStrategyTransaction,
+): RecordedRoleParticipant {
+  return Object.freeze({
+    providerId: transaction.author.providerId,
+    sessionId: transaction.sessionId,
+    principalId: `provider:${transaction.author.providerId}`,
+    identityAssurance: transaction.author.assurance,
+    engineSpawned: false,
+  });
+}
+
+function implementationResultStale() {
+  return workflowError(
+    'TASK_STRATEGY_IMPLEMENTATION_RESULT_STALE',
+    'The provider result no longer matches its exact sealed RED subject, assignment, observation, or patch bytes.',
+    ExitCode.staleState,
+  );
 }
 
 function stateCorrupt() {

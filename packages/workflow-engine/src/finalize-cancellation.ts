@@ -39,9 +39,12 @@ export function createFinalizeCancellation(
   reason: string,
   requestedAt: string,
 ): FinalizeCancellation {
-  if (transaction.phase !== 'checks-running') {
+  if (
+    transaction.phase !== 'checks-running' &&
+    transaction.phase !== 'checked'
+  ) {
     throw invalidCancellation(
-      'Only an ambiguous checks-running transaction can be cancelled.',
+      'Only an ambiguous checks-running or authorized checked transaction can be cancelled.',
     );
   }
   return sealCancellation({
@@ -434,7 +437,7 @@ function parseFinalizeCancellation(value: unknown): FinalizeCancellation {
   }
   const transaction = parseFinalizeTransaction(value.transaction);
   if (
-    transaction.phase !== 'checks-running' ||
+    !['checks-running', 'checked'].includes(transaction.phase) ||
     transaction.sessionId !== value.sessionId ||
     transaction.transactionId !== value.transactionId ||
     (value.phase === 'completed'

@@ -11,7 +11,7 @@ import {
   type CommitSessionResult,
 } from './commit-recovery.ts';
 import { digestRequiredCheckDefinitions } from './contract-digests.ts';
-import { ExitCode, workflowError } from './errors.ts';
+import { ExitCode, WorkflowError, workflowError } from './errors.ts';
 import { classifyProjectionPaths } from './engine-projection-registry.ts';
 import {
   completeFinalizeCancellation,
@@ -178,11 +178,7 @@ export function cancelFinalizeRecovery(
       runtime.root,
       session.sessionId,
     );
-    if (
-      transaction === null ||
-      transaction.transactionId !== transactionId ||
-      transaction.phase !== 'checks-running'
-    ) {
+    if (transaction === null || transaction.transactionId !== transactionId) {
       throw invalidFinalizeCancellation(
         'The requested ambiguous finalize transaction is not active.',
       );
@@ -190,6 +186,18 @@ export function cancelFinalizeRecovery(
     assertFinalizeTransactionMatchesSession(transaction, session, git);
     let cancellation = archived;
     if (cancellation === null) {
+      if (
+        transaction.phase !== 'checks-running' &&
+        !isAuthenticatedCheckedFinalizeCancellation(
+          cwd,
+          session.sessionId,
+          transaction,
+        )
+      ) {
+        throw invalidFinalizeCancellation(
+          'The requested finalize transaction is not cancellable.',
+        );
+      }
       cancellation = publishFinalizeCancellation(
         runtime.root,
         createFinalizeCancellation(
@@ -248,6 +256,23 @@ export function inspectFinalizeRecoveryStatus(
         `--cancel ${transaction.transactionId} --reason <text> --json`,
     };
   }
+  if (
+    isAuthenticatedCheckedFinalizeCancellation(
+      cwd,
+      session.sessionId,
+      transaction,
+    )
+  ) {
+    return {
+      state: 'recovery-required',
+      transactionId: transaction.transactionId,
+      phase: transaction.phase,
+      retrySafe: false,
+      recoveryCommand:
+        `pnpm workflow finalize-recover ${session.sessionId} ` +
+        `--cancel ${transaction.transactionId} --reason <text> --json`,
+    };
+  }
   return {
     state: transaction.phase === 'completed' ? 'completed' : 'in-progress',
     transactionId: transaction.transactionId,
@@ -255,6 +280,37 @@ export function inspectFinalizeRecoveryStatus(
     retrySafe: true,
     recoveryCommand: `pnpm workflow finalize-recover ${session.sessionId} --json`,
   };
+}
+
+function isAuthenticatedCheckedFinalizeCancellation(
+  cwd: string,
+  sessionId: string,
+  transaction: FinalizeTransaction,
+): boolean {
+  if (transaction.phase !== 'checked' || transaction.candidateTree === null) {
+    return false;
+  }
+  try {
+    assertTaskDiffReviewCompletionGateSatisfied(cwd, sessionId, {
+      projectedTaskIds: transaction.completedTaskIds,
+      projectionSourceDigest: transaction.projectionSourceDigest,
+      authorizedTransitionPaths: transaction.transitionPaths,
+      transactionId: transaction.transactionId,
+      candidateTree: transaction.candidateTree,
+    });
+    return false;
+  } catch (error) {
+    if (!(error instanceof WorkflowError)) throw error;
+    if (error.code === 'TASK_DIFF_REVIEW_CHANGES_REQUIRED') return true;
+    if (
+      ['TASK_DIFF_REVIEW_REQUIRED', 'TASK_DIFF_REVIEW_CHALLENGE_OPEN'].includes(
+        error.code,
+      )
+    ) {
+      return false;
+    }
+    throw error;
+  }
 }
 
 export function recoverFinalize(

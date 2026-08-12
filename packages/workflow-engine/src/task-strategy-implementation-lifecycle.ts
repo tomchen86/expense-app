@@ -21,6 +21,11 @@ import {
   writeEvidenceNode,
 } from './evidence-object-store.ts';
 import { ExitCode, workflowError } from './errors.ts';
+import {
+  createReplacementAttempt,
+  providerExecutionEnvironmentDigest,
+  providerExecutionPolicySnapshot,
+} from './execution-core.ts';
 import { previewExactStaging } from './git-transitions.ts';
 import { runGit } from './git.ts';
 import {
@@ -35,13 +40,17 @@ import {
 import { createProviderInvocationRequest } from './provider-contracts.ts';
 import {
   createProviderInvocation,
+  createProviderRetryReservation,
   providerInvocationExists,
   providerInvocationManifestDigest,
   readProviderInvocation,
   readProviderInvocationManifest,
   readProviderInvocationRequest,
   storeProviderExecutionPolicySnapshot,
+  type ProviderRetryDecisionBinding,
+  type ProviderRetryReservationV2,
 } from './provider-invocation-store.ts';
+import { authorizeAutomaticProviderRetry } from './provider-retry-decision.ts';
 import type { ProviderId } from './provider-registry.ts';
 import {
   admitRoleResult,
@@ -61,36 +70,62 @@ import {
   TASK_STRATEGY_IMPLEMENTATION_OUTPUT_SCHEMA,
   TASK_STRATEGY_IMPLEMENTATION_POLICY_DIGEST,
   assertTaskStrategyImplementationOutput,
+  createTaskStrategyCorrectionSubject,
   createTaskStrategyImplementationManifest,
   createTaskStrategyImplementationSubject,
   type TaskStrategyImplementationOutput,
   type TaskStrategyImplementationSubject,
 } from './task-strategy-provider-contract.ts';
 import {
+  resolveCurrentTaskStrategyCorrection,
+  type TaskStrategyCorrectionProjection,
+} from './task-strategy-correction.ts';
+import {
+  DEFAULT_TASK_STRATEGY_CORRECTION_POLICY,
+  readTaskStrategyGreenFailureRecord,
+  type TaskStrategyGreenFailureRecord,
+} from './task-strategy-correction-store.ts';
+import {
+  listTaskStrategyCorrectionRounds,
+  publishTaskStrategyCorrectionRoundImport,
+  publishTaskStrategyCorrectionRoundResult,
+  readTaskStrategyCorrectionRound,
+  reserveTaskStrategyCorrectionRound,
+  type TaskStrategyCorrectionReservationAuthority,
+  type TaskStrategyCorrectionResultAuthority,
+} from './task-strategy-correction-round-store.ts';
+import {
+  assertTaskStrategyCallerImplementationAuthorityCurrent,
+  assertTaskStrategyCallerImplementationReservationAuthorityCurrent,
+  assertTaskStrategyImplementationProviderAuthorityCurrent,
   createTaskStrategyCallerImplementationBinding,
   createTaskStrategyCallerImplementationReservation,
   createTaskStrategyImplementationResultBinding,
   createTaskStrategyImplementationReservation,
+  readCurrentTaskStrategyImplementationProviderAttempt,
+  readTaskStrategyImplementationProviderAttempt,
   readTaskStrategyCallerImplementationBinding,
   readTaskStrategyCallerImplementationReservation,
   readTaskStrategyImplementationResultBinding,
   readTaskStrategyImplementationReservation,
+  taskStrategyImplementationReservationForAttempt,
+  taskStrategyImplementationProviderAttemptReservationDigest,
   type TaskStrategyCallerImplementationBinding,
   type TaskStrategyCallerImplementationReservation,
   type TaskStrategyImplementationResultBinding,
   type TaskStrategyImplementationReservation,
+  type TaskStrategyImplementationProviderAttempt,
 } from './task-strategy-provider-store.ts';
 import {
   importTaskStrategyCallerPatchUnderLifecycleLock,
   importTaskStrategyProviderPatchUnderLifecycleLock,
+  type ImportedTaskStrategyPatch,
   validateTaskStrategyCallerPatch,
   validateTaskStrategyProviderPatch,
 } from './task-strategy-patch.ts';
 import {
   readTaskStrategyPatchCurrentBinding,
-  readTaskStrategyPatchImportReceipt,
   readTaskStrategyPatchRecord,
-  readTaskStrategyPatchReservation,
 } from './task-strategy-patch-store.ts';
 import { readTaskStrategyTransaction } from './task-strategy-store.ts';
 import {
@@ -100,6 +135,7 @@ import {
 import { inspectSession } from './verification.ts';
 
 export type BeginTaskStrategyImplementationOptions = Readonly<{
+  retryProviderFailure?: boolean;
   collaborationGrant?: Readonly<{
     grantId: string;
     now?: Date;
@@ -110,7 +146,12 @@ export type BeginTaskStrategyImplementationOptions = Readonly<{
       patch: string | Buffer;
     }>;
   }>;
-  testCrashAfter?: 'provider-result-persisted';
+  testCrashAfter?:
+    | 'provider-retry-reservation-persisted'
+    | 'provider-result-persisted'
+    | 'patch-applied'
+    | 'receipt-persisted'
+    | 'provider-patch-imported';
 }>;
 
 type TaskStrategyRedAuthor = Readonly<{
@@ -188,7 +229,12 @@ export function beginTaskStrategyImplementation(
       // inspection and owner-currentness checks remain strictly read-only.
       writeEvidenceNode(runtime, transaction.red.evidenceNode);
       const task = implementationTask(cwd, context, transaction);
-      const subject = createSubject(transaction);
+      const current = resolveCurrentImplementationSubject(
+        cwd,
+        context,
+        transaction,
+      );
+      const subject = current.subject;
       if (transaction.strategy === 'tdd-single-agent') {
         return Object.freeze({
           state: 'provider-not-required' as const,
@@ -199,6 +245,7 @@ export function beginTaskStrategyImplementation(
       const existing = readTaskStrategyImplementationReservation(
         runtime,
         context.session.sessionId,
+        subject.subjectDigest,
       );
       const created =
         existing ??
@@ -207,6 +254,7 @@ export function beginTaskStrategyImplementation(
           runtime,
           transaction,
           subject,
+          current.greenFailureRecord,
           task,
           options.collaborationGrant,
           options.testCrashAfter,
@@ -214,16 +262,50 @@ export function beginTaskStrategyImplementation(
         );
       if (!('recordDigest' in created)) return created;
       assertReservationCurrent(context, transaction, subject, created);
-      ensureProviderInvocation(context, runtime, created, assertOwned);
+      ensureProviderCorrectionRoundReservation(
+        runtime,
+        transaction,
+        created,
+        current.greenFailureRecord,
+      );
+      let attempt = readCurrentTaskStrategyImplementationProviderAttempt(
+        runtime,
+        created,
+      );
+      if (
+        options.retryProviderFailure === true &&
+        providerInvocationExists(runtime, attempt.request.invocationId) &&
+        readProviderInvocation(runtime, attempt.request.invocationId).state ===
+          'failed'
+      ) {
+        const retry = reserveProviderRetryAttempt(
+          context,
+          runtime,
+          created,
+          attempt,
+          options,
+          assertOwned,
+        );
+        if ('state' in retry) return retry;
+        attempt = retry;
+      }
+      ensureProviderInvocation(context, runtime, attempt, assertOwned);
       assertOwned();
-      const status = renderStatus(runtime, created);
-      return status.state === 'provider-succeeded-awaiting-import'
+      const status = renderStatus(runtime, created, attempt);
+      return status.state === 'provider-succeeded-awaiting-import' ||
+        (status.state === 'patch-imported' &&
+          providerCorrectionRoundNeedsReconciliation(
+            runtime,
+            transaction,
+            created,
+          ))
         ? reconcileProviderImplementationResult(
             cwd,
             context,
             runtime,
             transaction,
             created,
+            attempt,
             options,
             assertOwned,
           )
@@ -239,7 +321,11 @@ export function inspectTaskStrategyImplementation(
   const context = loadActiveSessionContext(cwd, requestedSessionId);
   const runtime = loadInvestigationRuntimeContext(cwd).runtime;
   const transaction = requireCurrentRedTransaction(cwd, context);
-  const subject = createSubject(transaction);
+  const subject = resolveCurrentImplementationSubject(
+    cwd,
+    context,
+    transaction,
+  ).subject;
   if (transaction.strategy === 'tdd-single-agent') {
     return Object.freeze({
       state: 'provider-not-required' as const,
@@ -250,26 +336,29 @@ export function inspectTaskStrategyImplementation(
   const reservation = readTaskStrategyImplementationReservation(
     runtime,
     context.session.sessionId,
+    subject.subjectDigest,
   );
   if (reservation === null) {
     const callerReservation = readTaskStrategyCallerImplementationReservation(
       runtime,
       context.session.sessionId,
+      subject.subjectDigest,
     );
     const callerBinding = readTaskStrategyCallerImplementationBinding(
       runtime,
       context.session.sessionId,
+      subject.subjectDigest,
     );
     if (callerReservation !== null || callerBinding !== null) {
       if (callerReservation === null) throw implementationResultStale();
-      assertCurrentCallerImplementationReservation(
+      assertTaskStrategyCallerImplementationReservationAuthorityCurrent(
         runtime,
         transaction,
         subject,
         callerReservation,
       );
       if (callerBinding !== null) {
-        assertCurrentCallerImplementationBinding(
+        assertTaskStrategyCallerImplementationAuthorityCurrent(
           runtime,
           transaction,
           subject,
@@ -291,14 +380,18 @@ export function inspectTaskStrategyImplementation(
     });
   }
   assertReservationCurrent(context, transaction, subject, reservation);
-  if (!providerInvocationExists(runtime, reservation.request.invocationId)) {
+  const attempt = readCurrentTaskStrategyImplementationProviderAttempt(
+    runtime,
+    reservation,
+  );
+  if (!providerInvocationExists(runtime, attempt.request.invocationId)) {
     return Object.freeze({
       state: 'reservation-persisted' as const,
       sessionId: context.session.sessionId,
       subject,
     });
   }
-  return renderStatus(runtime, reservation);
+  return renderStatus(runtime, reservation, attempt);
 }
 
 export function assertTaskStrategyImplementationProviderOwnerCurrent(
@@ -317,10 +410,15 @@ export function assertTaskStrategyImplementationProviderOwnerCurrent(
   }
   const context = loadActiveSessionContext(cwd, manifest.subject.sessionId);
   const transaction = requireCurrentRedTransaction(cwd, context);
-  const subject = createSubject(transaction);
+  const subject = resolveCurrentImplementationSubject(
+    cwd,
+    context,
+    transaction,
+  ).subject;
   const reservation = readTaskStrategyImplementationReservation(
     runtime,
     manifest.subject.sessionId,
+    subject.subjectDigest,
   );
   if (reservation === null) throw requestConflict();
   assertReservationCurrent(context, transaction, subject, reservation);
@@ -329,11 +427,27 @@ export function assertTaskStrategyImplementationProviderOwnerCurrent(
     canonicalJson(invocation.mandateBinding ?? null) !==
       canonicalJson(reservation.mandateBinding) ||
     canonicalJson(manifest) !== canonicalJson(reservation.manifest) ||
-    canonicalJson(request) !== canonicalJson(reservation.request)
+    (invocation.attempt === 1 &&
+      invocation.invocationId !== reservation.request.invocationId)
   ) {
     throw requestConflict();
   }
-  return reservation;
+  const attempt = readTaskStrategyImplementationProviderAttempt(
+    runtime,
+    reservation,
+    invocation.invocationId,
+  );
+  const current = readCurrentTaskStrategyImplementationProviderAttempt(
+    runtime,
+    reservation,
+  );
+  if (
+    canonicalJson(request) !== canonicalJson(attempt.request) ||
+    current.request.invocationId !== attempt.request.invocationId
+  ) {
+    throw requestConflict();
+  }
+  return taskStrategyImplementationReservationForAttempt(attempt);
 }
 
 function createImplementationReservation(
@@ -341,6 +455,7 @@ function createImplementationReservation(
   runtime: ReturnType<typeof loadInvestigationRuntimeContext>['runtime'],
   transaction: NonNullable<ReturnType<typeof readTaskStrategyTransaction>>,
   subject: TaskStrategyImplementationSubject,
+  greenFailureRecord: TaskStrategyGreenFailureRecord | null,
   task: ReturnType<typeof implementationTask>,
   collaborationGrant:
     BeginTaskStrategyImplementationOptions['collaborationGrant'] | undefined,
@@ -404,6 +519,7 @@ function createImplementationReservation(
         runtime,
         transaction,
         subject,
+        greenFailureRecord,
         author,
         collaborationGrant,
         testCrashAfter,
@@ -501,6 +617,7 @@ function createImplementationReservation(
     subject,
     behaviorContractRefs: task.behaviorContractRefs,
     implementationPathScopes: task.implementationPathScopes,
+    ...(greenFailureRecord === null ? {} : { greenFailureRecord }),
   });
   const request = createProviderInvocationRequest({
     invocationId: `invocation-task-implementation-${seed}`,
@@ -581,6 +698,7 @@ function importCallerSuppliedImplementation(
   runtime: ReturnType<typeof loadInvestigationRuntimeContext>['runtime'],
   transaction: NonNullable<ReturnType<typeof readTaskStrategyTransaction>>,
   subject: TaskStrategyImplementationSubject,
+  greenFailureRecord: TaskStrategyGreenFailureRecord | null,
   author: RoleParticipant,
   collaborationGrant: NonNullable<
     BeginTaskStrategyImplementationOptions['collaborationGrant']
@@ -603,7 +721,7 @@ function importCallerSuppliedImplementation(
     schemaVersion: 1,
     kind: 'task-strategy-patch-output.v1',
     sessionId: context.session.sessionId,
-    sourceTree: transaction.red.candidateTree,
+    sourceTree: subject.sourceTree,
     patchBase64: patchBytes.toString('base64'),
     patchDigest: sha256Bytes(patchBytes),
   });
@@ -614,16 +732,27 @@ function importCallerSuppliedImplementation(
     degradedForm: 'caller-supplied' as const,
     grantId: collaborationGrant.grantId,
   });
-  const validation = validateTaskStrategyCallerPatch(
-    context.git.repositoryRoot,
+  let reservation = readTaskStrategyCallerImplementationReservation(
+    runtime,
     context.session.sessionId,
-    { patch: patchBytes, callerImplementer },
+    subject.subjectDigest,
   );
-  if (
-    validation.patchDigest !== output.patchDigest ||
-    validation.sourceTree !== output.sourceTree
-  ) {
-    throw implementationResultStale();
+  if (reservation === null) {
+    const validation = validateTaskStrategyCallerPatch(
+      context.git.repositoryRoot,
+      context.session.sessionId,
+      {
+        patch: patchBytes,
+        callerImplementer,
+        implementationSubjectDigest: subject.subjectDigest,
+      },
+    );
+    if (
+      validation.patchDigest !== output.patchDigest ||
+      validation.sourceTree !== output.sourceTree
+    ) {
+      throw implementationResultStale();
+    }
   }
 
   const grantRequest = callerImplementationGrantRequest(
@@ -637,10 +766,6 @@ function importCallerSuppliedImplementation(
     grantRequest,
   );
   const transitionDigest = collaborationTransitionDigest(expectedBinding);
-  let reservation = readTaskStrategyCallerImplementationReservation(
-    runtime,
-    context.session.sessionId,
-  );
   if (reservation === null) {
     const inspection = inspectCollaborationGrantsUnderLifecycleLock(
       context.git.gitCommonDirectory,
@@ -743,7 +868,7 @@ function importCallerSuppliedImplementation(
       createdAt: grantReservation.reservedAt,
     });
   }
-  assertCurrentCallerImplementationReservation(
+  assertTaskStrategyCallerImplementationReservationAuthorityCurrent(
     runtime,
     transaction,
     subject,
@@ -758,10 +883,18 @@ function importCallerSuppliedImplementation(
   ) {
     throw implementationResultStale();
   }
+  ensureCallerCorrectionRoundReservation(
+    runtime,
+    transaction,
+    subject,
+    greenFailureRecord,
+    reservation,
+  );
 
   let binding = readTaskStrategyCallerImplementationBinding(
     runtime,
     context.session.sessionId,
+    subject.subjectDigest,
   );
   if (binding === null) {
     const maintainerPolicy = parseMaintainerPolicy(
@@ -867,7 +1000,7 @@ function importCallerSuppliedImplementation(
       }
     }
   }
-  assertCurrentCallerImplementationBinding(
+  assertTaskStrategyCallerImplementationAuthorityCurrent(
     runtime,
     transaction,
     subject,
@@ -879,14 +1012,27 @@ function importCallerSuppliedImplementation(
       'Simulated task implementation interruption after caller result persistence.',
     );
   }
-  importTaskStrategyCallerPatchUnderLifecycleLock(
+  const imported = importTaskStrategyCallerPatchUnderLifecycleLock(
     context.git.repositoryRoot,
     context.session.sessionId,
     {
       patch: Buffer.from(binding.output.patchBase64, 'base64'),
       callerImplementationBindingDigest: binding.bindingDigest,
+      implementationSubjectDigest: subject.subjectDigest,
+      ...(testCrashAfter === 'patch-applied' ||
+      testCrashAfter === 'receipt-persisted'
+        ? { testCrashAfter }
+        : {}),
     },
     assertOwned,
+  );
+  publishCallerCorrectionRoundArtifacts(
+    runtime,
+    transaction,
+    subject,
+    reservation,
+    binding,
+    imported,
   );
   assertOwned();
   return renderCallerImplementationStatus(
@@ -897,12 +1043,484 @@ function importCallerSuppliedImplementation(
   );
 }
 
+function reserveProviderRetryAttempt(
+  context: ReturnType<typeof loadActiveSessionContext>,
+  runtime: ReturnType<typeof loadInvestigationRuntimeContext>['runtime'],
+  root: TaskStrategyImplementationReservation,
+  failedAttempt: TaskStrategyImplementationProviderAttempt,
+  options: BeginTaskStrategyImplementationOptions,
+  assertOwned: () => void,
+):
+  TaskStrategyImplementationProviderAttempt | TaskStrategyImplementationStatus {
+  const failed = readProviderInvocation(
+    runtime,
+    failedAttempt.request.invocationId,
+  );
+  if (
+    failed.state !== 'failed' ||
+    failed.failure === null ||
+    failed.failure.kind !== 'retryable' ||
+    failed.attempt !== failedAttempt.attempt
+  ) {
+    throw providerRetryDenied(
+      'TASK_STRATEGY_IMPLEMENTATION_RETRY_NOT_ALLOWED',
+      root.sessionId,
+    );
+  }
+  const nextAttempt = failed.attempt + 1;
+  const retrySeed = sha256(
+    canonicalJson({
+      schemaVersion: 1,
+      kind: 'task-strategy-implementation-transport-retry.v1',
+      rootReservationDigest: root.recordDigest,
+      failedInvocationId: failed.invocationId,
+      failedRevision: failed.revision,
+      failure: failed.failure,
+      attempt: nextAttempt,
+    }),
+  );
+  const policy = baselineAdapterPolicy(
+    context.git.repositoryRoot,
+    context.session.baseline.head,
+  );
+  let assignment = failedAttempt.assignment;
+  let authorizationNode = readEvidenceNode(
+    runtime,
+    failedAttempt.authorizationNodeId,
+  );
+  let replacementRequest = createProviderRetryRequest({
+    failedAttempt,
+    assignment,
+    authorizationNodeId: authorizationNode.nodeId,
+    policy,
+    retrySeed,
+  });
+  let authorization = authorizeAutomaticProviderRetry(runtime, {
+    failed,
+    failedRequest: failedAttempt.request,
+    replacementRequest,
+    replacementExecutionPolicy: policy,
+  });
+  let strategyChanges: string[] = [];
+  if (authorization.decision.retryMode === 'strategy-change') {
+    const changed = authorizeTaskStrategyRetryStrategyChange({
+      context,
+      root,
+      failedAttempt,
+      retrySeed,
+      policy,
+      collaborationGrant: options.collaborationGrant,
+      assertOwned,
+    });
+    if ('state' in changed) return changed;
+    assignment = changed.assignment;
+    strategyChanges =
+      failedAttempt.assignment.providerId === assignment.providerId
+        ? [
+            `provider-session:${failedAttempt.assignment.sessionId}->${assignment.sessionId}`,
+          ]
+        : [
+            `provider:${failedAttempt.assignment.providerId}->${assignment.providerId}`,
+          ];
+    authorizationNode = createProviderRetryAuthorization(
+      runtime,
+      root,
+      assignment,
+    );
+    replacementRequest = createProviderRetryRequest({
+      failedAttempt,
+      assignment,
+      authorizationNodeId: authorizationNode.nodeId,
+      policy,
+      retrySeed,
+    });
+    authorization = authorizeAutomaticProviderRetry(runtime, {
+      failed,
+      failedRequest: failedAttempt.request,
+      replacementRequest,
+      replacementExecutionPolicy: policy,
+    });
+  } else if (options.collaborationGrant !== undefined) {
+    if (
+      !('grantId' in root.assignment) ||
+      root.assignment.grantId !== options.collaborationGrant.grantId
+    ) {
+      throw providerRetryDenied(
+        'TASK_STRATEGY_IMPLEMENTATION_RETRY_GRANT_OWNER_MISMATCH',
+        root.sessionId,
+      );
+    }
+  }
+  const retryMode = authorization.decision.retryMode;
+  if (
+    !authorization.decision.retryable ||
+    !authorization.decision.automatic ||
+    (retryMode !== 'same-input' && retryMode !== 'strategy-change') ||
+    (retryMode === 'strategy-change' && strategyChanges.length === 0)
+  ) {
+    throw providerRetryDenied(
+      authorization.decision.reasonCode,
+      root.sessionId,
+    );
+  }
+  const replacement = createReplacementAttempt({
+    workflow: authorization.workflow,
+    job: authorization.job,
+    previousAttempt: authorization.attempt,
+    attemptId: `attempt-legacy-${replacementRequest.invocationId}`,
+    retryMode,
+    currentExecutionPolicy: providerExecutionPolicySnapshot(replacementRequest),
+    strategyChanges,
+    environmentDigest: providerExecutionEnvironmentDigest(replacementRequest),
+    createdAt: authorization.evaluatedAt,
+  });
+  if (
+    replacement.job.jobId !== authorization.job.jobId ||
+    replacement.attempt.attemptNumber !== nextAttempt ||
+    replacement.attempt.retryOf !== authorization.attempt.attemptId
+  ) {
+    throw providerRetryDenied(
+      'TASK_STRATEGY_IMPLEMENTATION_RETRY_LINEAGE_INVALID',
+      root.sessionId,
+    );
+  }
+  const retryDecision: ProviderRetryDecisionBinding = Object.freeze({
+    schemaVersion: 1,
+    kind: 'provider-retry-decision-binding',
+    executionJobId: authorization.job.jobId,
+    executionRevision: authorization.executionRevision,
+    failedAttemptId: authorization.attempt.attemptId,
+    evidenceDigest: authorization.evidenceDigest,
+    evaluatedAt: authorization.evaluatedAt,
+  });
+  const requestReservation = createProviderRetryRequestReservation(
+    runtime,
+    root,
+    failedAttempt,
+    replacementRequest,
+    authorizationNode,
+    retryDecision,
+  );
+  const persisted = createProviderRetryReservation(runtime, {
+    investigationId: root.ownerInvestigationId,
+    changeId: root.changeId,
+    attempt: nextAttempt,
+    previousInvocationId: failed.invocationId,
+    manifest: root.manifest,
+    request: replacementRequest,
+    executionPolicy: policy,
+    retryDecision,
+    replacement: {
+      attemptId: replacement.attempt.attemptId,
+      retryMode: replacement.attempt.retryMode as
+        'same-input' | 'strategy-change',
+      strategyChanges: [...replacement.attempt.strategyChanges],
+      environmentDigest: replacement.attempt.environmentDigest,
+      executionGrantId: replacement.attempt.grantId,
+      authorizationNodeId: authorizationNode.nodeId,
+      reservationNodeId: requestReservation.nodeId,
+    },
+    ...(root.mandateBinding === null
+      ? {}
+      : { mandateBinding: root.mandateBinding }),
+    createdAt: authorization.evaluatedAt,
+  });
+  if (persisted.schemaVersion !== 3) {
+    throw providerRetryDenied(
+      'TASK_STRATEGY_IMPLEMENTATION_RETRY_RESERVATION_INVALID',
+      root.sessionId,
+    );
+  }
+  if (options.testCrashAfter === 'provider-retry-reservation-persisted') {
+    throw new Error(
+      'Simulated task implementation interruption after provider retry reservation persistence.',
+    );
+  }
+  return readCurrentTaskStrategyImplementationProviderAttempt(runtime, root);
+}
+
+function createProviderRetryRequest(input: {
+  failedAttempt: TaskStrategyImplementationProviderAttempt;
+  assignment: ProviderRoleAssignment;
+  authorizationNodeId: string;
+  policy: ReturnType<typeof baselineAdapterPolicy>;
+  retrySeed: string;
+}) {
+  return createProviderInvocationRequest({
+    invocationId: `invocation-task-implementation-retry-${input.retrySeed}`,
+    nonce: `task-implementation-retry-${input.retrySeed}`,
+    purpose: input.failedAttempt.request.purpose,
+    providerId: input.assignment.providerId,
+    roleAssignment: input.assignment,
+    capabilityProfile: input.failedAttempt.request.capabilityProfile,
+    repositoryId: input.failedAttempt.request.repositoryId,
+    baseCommit: input.failedAttempt.request.baseCommit,
+    baseTree: input.failedAttempt.request.baseTree,
+    targetDigest: input.failedAttempt.request.targetDigest,
+    inputManifestDigest: input.failedAttempt.request.inputManifestDigest,
+    authorizationNodeId: input.authorizationNodeId,
+    writeAllowedPaths: [...input.failedAttempt.request.writeAllowedPaths],
+    outputSchema: input.failedAttempt.request.outputSchema,
+    evaluatorVersion: input.failedAttempt.request.evaluatorVersion,
+    policyDigest: input.policy.digest,
+    limits: {
+      timeoutMs: input.policy.policy.limits.timeoutMs,
+      aggregateOutputBytes: input.policy.policy.limits.aggregateOutputBytes,
+    },
+  });
+}
+
+function createProviderRetryAuthorization(
+  runtime: ReturnType<typeof loadInvestigationRuntimeContext>['runtime'],
+  root: TaskStrategyImplementationReservation,
+  assignment: ProviderRoleAssignment,
+) {
+  const authorization = createEvidenceNode({
+    type: 'task-strategy-implementation-authorization',
+    nodeSchema: 'workflow.task-strategy-implementation-authorization.v1',
+    evaluator: 'workflow-task-strategy.v1',
+    policyDigest: TASK_STRATEGY_IMPLEMENTATION_POLICY_DIGEST,
+    exactInputDigests: {
+      assignment: sha256(canonicalJson(assignment)),
+      author: sha256(canonicalJson(root.redAuthor)),
+      mandate: sha256(canonicalJson(root.mandateBinding)),
+      session: sha256(
+        canonicalJson({
+          sessionId: root.sessionId,
+          changeId: root.changeId,
+          taskId: root.taskId,
+        }),
+      ),
+      subject: root.subject.subjectDigest,
+      transaction: root.subject.transactionDigest,
+    },
+    semanticParentResultDigests: {
+      red: root.subject.redEvidenceResultDigest,
+    },
+    provenanceParentNodeIds: { red: root.subject.redEvidenceNodeId },
+    outputSchema:
+      'workflow.task-strategy-implementation-authorization-output.v1',
+    output: {
+      ownerInvestigationId: root.ownerInvestigationId,
+      sessionId: root.sessionId,
+      changeId: root.changeId,
+      taskId: root.taskId,
+      subject: root.subject,
+      redAuthor: root.redAuthor,
+      assignment,
+      mandateBinding: root.mandateBinding,
+    },
+    runtimeMetadata: {},
+  });
+  writeEvidenceNode(runtime, authorization);
+  return authorization;
+}
+
+function createProviderRetryRequestReservation(
+  runtime: ReturnType<typeof loadInvestigationRuntimeContext>['runtime'],
+  root: TaskStrategyImplementationReservation,
+  failedAttempt: TaskStrategyImplementationProviderAttempt,
+  request: ReturnType<typeof createProviderInvocationRequest>,
+  authorization: ReturnType<typeof createEvidenceNode>,
+  retryDecision: ProviderRetryDecisionBinding,
+) {
+  const failed = readProviderInvocation(
+    runtime,
+    failedAttempt.request.invocationId,
+  );
+  if (failed.failure === null) throw implementationResultStale();
+  const reservation = createEvidenceNode({
+    type: 'task-strategy-implementation-request-reservation',
+    nodeSchema: 'workflow.task-strategy-implementation-reservation.v1',
+    evaluator: 'workflow-task-strategy.v1',
+    policyDigest: TASK_STRATEGY_IMPLEMENTATION_POLICY_DIGEST,
+    exactInputDigests: {
+      failure: sha256(canonicalJson(failed.failure)),
+      manifest: request.inputManifestDigest,
+      previousRequest: failedAttempt.request.requestDigest,
+      request: request.requestDigest,
+      retryDecision: retryDecision.evidenceDigest,
+      subject: root.subject.subjectDigest,
+    },
+    semanticParentResultDigests: {
+      authorization: authorization.resultDigest,
+    },
+    provenanceParentNodeIds: { authorization: authorization.nodeId },
+    outputSchema: 'workflow.task-strategy-implementation-reservation-output.v1',
+    output: {
+      ownerInvestigationId: root.ownerInvestigationId,
+      sessionId: root.sessionId,
+      changeId: root.changeId,
+      taskId: root.taskId,
+      subject: root.subject,
+      redAuthor: root.redAuthor,
+      assignment: request.roleAssignment,
+      manifest: root.manifest,
+      request,
+      mandateBinding: root.mandateBinding,
+      previousInvocationId: failed.invocationId,
+      retryDecision,
+    },
+    runtimeMetadata: {},
+  });
+  writeEvidenceNode(runtime, reservation);
+  return reservation;
+}
+
+function authorizeTaskStrategyRetryStrategyChange(input: {
+  context: ReturnType<typeof loadActiveSessionContext>;
+  root: TaskStrategyImplementationReservation;
+  failedAttempt: TaskStrategyImplementationProviderAttempt;
+  retrySeed: string;
+  policy: ReturnType<typeof baselineAdapterPolicy>;
+  collaborationGrant:
+    BeginTaskStrategyImplementationOptions['collaborationGrant'] | undefined;
+  assertOwned: () => void;
+}):
+  | Readonly<{ assignment: ProviderRoleAssignment }>
+  | TaskStrategyImplementationStatus {
+  const providerSessionId = `provider-session-task-implementation-retry-${input.retrySeed}`;
+  const redAuthor = requireRecordedRedAuthor(input.root.redAuthor);
+  const author: RoleParticipant = {
+    providerId: redAuthor.providerId,
+    sessionId: redAuthor.sessionId,
+    principalId: redAuthor.principalId,
+    identityAssurance: redAuthor.identityAssurance,
+    engineSpawned: false,
+  };
+  let candidates = (['codex', 'claude'] as const)
+    .filter(
+      (providerId) =>
+        providerId !== input.failedAttempt.assignment.providerId &&
+        input.policy.policy.providers[providerId].enabled,
+    )
+    .map((providerId) => ({
+      providerId,
+      sessionId: providerSessionId,
+      enabled: true,
+      available: true,
+    }));
+  if (candidates.length === 0) {
+    const currentProvider = input.failedAttempt.assignment.providerId;
+    if (!input.policy.policy.providers[currentProvider].enabled) {
+      throw providerRetryDenied(
+        'TASK_STRATEGY_IMPLEMENTATION_RETRY_STRATEGY_UNAVAILABLE',
+        input.root.sessionId,
+      );
+    }
+    candidates = [
+      {
+        providerId: currentProvider,
+        sessionId: providerSessionId,
+        enabled: true,
+        available: true,
+      },
+    ];
+  }
+  if (candidates.length !== 1) {
+    throw providerRetryDenied(
+      'TASK_STRATEGY_IMPLEMENTATION_RETRY_STRATEGY_UNAVAILABLE',
+      input.root.sessionId,
+    );
+  }
+  const scheduled = scheduleOrdinaryRole({
+    role: 'task-implementer',
+    author,
+    targetDigest: input.root.subject.subjectDigest,
+    candidates,
+  });
+  if (scheduled.outcome === 'assigned') {
+    return Object.freeze({ assignment: scheduled.assignment });
+  }
+  const callableProviderIds = candidates.map(({ providerId }) => providerId);
+  const grantRequest = implementationGrantRequest(
+    input.context,
+    input.root.subject,
+    redAuthor,
+    callableProviderIds,
+  );
+  if (grantRequest === null) {
+    throw providerRetryDenied(
+      'TASK_STRATEGY_IMPLEMENTATION_RETRY_STRATEGY_UNAVAILABLE',
+      input.root.sessionId,
+    );
+  }
+  if (input.collaborationGrant === undefined) {
+    return collaborationPause(
+      input.root.sessionId,
+      input.root.subject,
+      grantRequest,
+    );
+  }
+  const expected = deriveCollaborationGrantBinding(
+    input.context.git.repositoryRoot,
+    grantRequest,
+  );
+  const transitionDigest = collaborationTransitionDigest(expected);
+  const inspection = inspectCollaborationGrantsUnderLifecycleLock(
+    input.context.git.gitCommonDirectory,
+    input.collaborationGrant.grantId,
+    input.assertOwned,
+  )[0];
+  if (inspection === undefined) throw implementationResultStale();
+  const grantReservation =
+    inspection.state === 'available'
+      ? reserveCollaborationGrantUnderLifecycleLock(
+          input.context.git.repositoryRoot,
+          input.collaborationGrant.grantId,
+          {
+            transitionDigest,
+            expected,
+            ...(input.collaborationGrant.now === undefined
+              ? {}
+              : { now: input.collaborationGrant.now }),
+            ...(input.collaborationGrant.verifier === undefined
+              ? {}
+              : { verifier: input.collaborationGrant.verifier }),
+          },
+          input.assertOwned,
+        )
+      : inspection.state === 'reserved'
+        ? readReservedCollaborationGrantUnderLifecycleLock(
+            input.context.git.gitCommonDirectory,
+            input.collaborationGrant.grantId,
+            input.assertOwned,
+          )
+        : null;
+  if (
+    grantReservation === null ||
+    grantReservation.transitionDigest !== transitionDigest ||
+    canonicalJson(bindingFromPayload(grantReservation.envelope.payload)) !==
+      canonicalJson(expected)
+  ) {
+    throw implementationResultStale();
+  }
+  const providerId = callableProviderIds[0]!;
+  return Object.freeze({
+    assignment: authorizeGrantedOrdinaryRole({
+      role: 'task-implementer',
+      author,
+      targetDigest: input.root.subject.subjectDigest,
+      reservation: grantReservation,
+      actualParticipant: {
+        providerId,
+        sessionId: providerSessionId,
+        principalId: `collaboration-grant:${grantReservation.grantId}:task-implementer`,
+        identityAssurance: redAuthor.identityAssurance,
+        engineSpawned: true,
+      },
+      callableProviderIds,
+    }) as GrantedSameProviderRoleAssignment,
+  });
+}
+
 function ensureProviderInvocation(
   context: ReturnType<typeof loadActiveSessionContext>,
   runtime: ReturnType<typeof loadInvestigationRuntimeContext>['runtime'],
-  reservation: TaskStrategyImplementationReservation,
+  attempt: TaskStrategyImplementationProviderAttempt,
   assertOwned: () => void,
 ): void {
+  const reservation = taskStrategyImplementationReservationForAttempt(attempt);
   const policy = baselineAdapterPolicy(
     context.git.repositoryRoot,
     context.session.baseline.head,
@@ -923,7 +1541,7 @@ function ensureProviderInvocation(
         ],
         sourceCode: true,
         secrets: false,
-        retry: false,
+        retry: attempt.attempt > 1,
         budget: null,
         requestDigest: reservation.request.requestDigest,
       },
@@ -946,7 +1564,7 @@ function ensureProviderInvocation(
     if (
       invocation.investigationId !== reservation.ownerInvestigationId ||
       invocation.changeId !== reservation.changeId ||
-      invocation.attempt !== 1 ||
+      invocation.attempt !== attempt.attempt ||
       invocation.requestDigest !== reservation.request.requestDigest ||
       canonicalJson(invocation.mandateBinding ?? null) !==
         canonicalJson(reservation.mandateBinding) ||
@@ -963,7 +1581,7 @@ function ensureProviderInvocation(
     ...(reservation.mandateBinding === null
       ? {}
       : { mandateBinding: reservation.mandateBinding }),
-    attempt: 1,
+    attempt: attempt.attempt,
     manifest: reservation.manifest,
     request: reservation.request,
     createdAt: reservation.createdAt,
@@ -971,21 +1589,288 @@ function ensureProviderInvocation(
   assertOwned();
 }
 
+function ensureProviderCorrectionRoundReservation(
+  runtime: ReturnType<typeof loadInvestigationRuntimeContext>['runtime'],
+  transaction: NonNullable<ReturnType<typeof readTaskStrategyTransaction>>,
+  reservation: TaskStrategyImplementationReservation,
+  greenFailureRecord: TaskStrategyGreenFailureRecord | null,
+): void {
+  const correction = reservation.subject.correction;
+  if (greenFailureRecord === null) {
+    if (correction !== undefined) throw implementationResultStale();
+    return;
+  }
+  if (
+    correction === undefined ||
+    correction.greenFailureRecordDigest !== greenFailureRecord.recordDigest ||
+    correction.greenFailureSubjectDigest !== greenFailureRecord.subjectDigest ||
+    correction.candidateTree !== greenFailureRecord.candidateTree ||
+    correction.failingCheckFingerprint !==
+      greenFailureRecord.failingCheck.failureFingerprint ||
+    canonicalJson(correction.currentPatchHead) !==
+      canonicalJson(greenFailureRecord.currentPatchHead)
+  ) {
+    throw implementationResultStale();
+  }
+  reserveTaskStrategyCorrectionRound(runtime, {
+    sessionId: reservation.sessionId,
+    round: correction.round,
+    policy: DEFAULT_TASK_STRATEGY_CORRECTION_POLICY,
+    predecessorFailure: greenFailureRecord,
+    correctionSubjectDigest: reservation.subject.subjectDigest,
+    redSourceTree: transaction.red.candidateTree,
+    authority: providerCorrectionReservationAuthority(reservation),
+    createdAt: reservation.createdAt,
+  });
+}
+
+function ensureCallerCorrectionRoundReservation(
+  runtime: ReturnType<typeof loadInvestigationRuntimeContext>['runtime'],
+  transaction: NonNullable<ReturnType<typeof readTaskStrategyTransaction>>,
+  subject: TaskStrategyImplementationSubject,
+  greenFailureRecord: TaskStrategyGreenFailureRecord | null,
+  reservation: TaskStrategyCallerImplementationReservation,
+): void {
+  const correction = subject.correction;
+  if (greenFailureRecord === null) {
+    if (correction !== undefined) throw implementationResultStale();
+    return;
+  }
+  if (
+    correction === undefined ||
+    correction.greenFailureRecordDigest !== greenFailureRecord.recordDigest ||
+    correction.greenFailureSubjectDigest !== greenFailureRecord.subjectDigest ||
+    correction.candidateTree !== greenFailureRecord.candidateTree ||
+    correction.failingCheckFingerprint !==
+      greenFailureRecord.failingCheck.failureFingerprint ||
+    canonicalJson(correction.currentPatchHead) !==
+      canonicalJson(greenFailureRecord.currentPatchHead)
+  ) {
+    throw implementationResultStale();
+  }
+  reserveTaskStrategyCorrectionRound(runtime, {
+    sessionId: reservation.sessionId,
+    round: correction.round,
+    policy: DEFAULT_TASK_STRATEGY_CORRECTION_POLICY,
+    predecessorFailure: greenFailureRecord,
+    correctionSubjectDigest: subject.subjectDigest,
+    redSourceTree: transaction.red.candidateTree,
+    authority: callerCorrectionReservationAuthority(reservation),
+    createdAt: reservation.createdAt,
+  });
+}
+
+function callerCorrectionReservationAuthority(
+  reservation: TaskStrategyCallerImplementationReservation,
+): Extract<
+  TaskStrategyCorrectionReservationAuthority,
+  { kind: 'caller-supplied' }
+> {
+  return Object.freeze({
+    kind: 'caller-supplied' as const,
+    callerReservation: Object.freeze({
+      reservationDigest: reservation.reservationDigest,
+      grantId: reservation.grantId,
+      transitionDigest: reservation.transitionDigest,
+      submissionNodeId: reservation.submissionNodeId,
+      submissionResultDigest: reservation.submissionResultDigest,
+    }),
+  });
+}
+
+function callerCorrectionResultAuthority(
+  reservation: TaskStrategyCallerImplementationReservation,
+  binding: TaskStrategyCallerImplementationBinding,
+): Extract<TaskStrategyCorrectionResultAuthority, { kind: 'caller-supplied' }> {
+  return Object.freeze({
+    ...callerCorrectionReservationAuthority(reservation),
+    kind: 'caller-supplied' as const,
+    callerResult: Object.freeze({
+      bindingDigest: binding.bindingDigest,
+      resultNodeId: binding.resultNodeId,
+      resultDigest: binding.resultDigest,
+      roleResultDigest: binding.roleResult.resultDigest,
+      grantUseDigest: sha256(canonicalJson(binding.roleResult.grantUse)),
+    }),
+  });
+}
+
+function publishCallerCorrectionRoundArtifacts(
+  runtime: ReturnType<typeof loadInvestigationRuntimeContext>['runtime'],
+  transaction: NonNullable<ReturnType<typeof readTaskStrategyTransaction>>,
+  subject: TaskStrategyImplementationSubject,
+  reservation: TaskStrategyCallerImplementationReservation,
+  binding: TaskStrategyCallerImplementationBinding,
+  imported: ImportedTaskStrategyPatch,
+): void {
+  const correction = subject.correction;
+  if (correction === undefined) return;
+  const authority = callerCorrectionResultAuthority(reservation, binding);
+  publishTaskStrategyCorrectionRoundResult(runtime, {
+    sessionId: reservation.sessionId,
+    currentRedTransactionDigest: transaction.recordDigest,
+    round: correction.round,
+    correctionSubjectDigest: subject.subjectDigest,
+    authority,
+    patchResult: {
+      sourceTree: imported.record.sourceTree,
+      targetCandidateTree: imported.record.candidateTree,
+      patchRecordDigest: imported.record.recordDigest,
+      patchDigest: imported.record.patchDigest,
+    },
+    createdAt: binding.createdAt,
+  });
+  publishTaskStrategyCorrectionRoundImport(runtime, {
+    sessionId: reservation.sessionId,
+    currentRedTransactionDigest: transaction.recordDigest,
+    round: correction.round,
+    correctionSubjectDigest: subject.subjectDigest,
+    authority,
+    importReceipt: {
+      patchRecordDigest: imported.record.recordDigest,
+      patchDigest: imported.record.patchDigest,
+      receiptDigest: imported.receipt.receiptDigest,
+      candidateTree: imported.record.candidateTree,
+    },
+    currentPatchHead: {
+      bindingDigest: imported.binding.bindingDigest,
+      recordDigest: imported.record.recordDigest,
+      patchDigest: imported.record.patchDigest,
+      receiptDigest: imported.receipt.receiptDigest,
+    },
+    importedAt: imported.receipt.importedAt,
+  });
+}
+
+function providerCorrectionRoundNeedsReconciliation(
+  runtime: ReturnType<typeof loadInvestigationRuntimeContext>['runtime'],
+  transaction: NonNullable<ReturnType<typeof readTaskStrategyTransaction>>,
+  reservation: TaskStrategyImplementationReservation,
+): boolean {
+  const correction = reservation.subject.correction;
+  if (correction === undefined) return false;
+  return (
+    readTaskStrategyCorrectionRound(
+      runtime,
+      reservation.sessionId,
+      transaction.recordDigest,
+      correction.round,
+    )?.importRecord === null
+  );
+}
+
+function providerCorrectionReservationAuthority(
+  reservation: TaskStrategyImplementationReservation,
+): Extract<TaskStrategyCorrectionReservationAuthority, { kind: 'provider' }> {
+  return Object.freeze({
+    kind: 'provider' as const,
+    providerRequest: Object.freeze({
+      ownerInvestigationId: reservation.ownerInvestigationId,
+      invocationId: reservation.request.invocationId,
+      requestDigest: reservation.request.requestDigest,
+    }),
+    providerReservation: Object.freeze({
+      reservationDigest: reservation.recordDigest,
+      authorizationNodeId: reservation.authorizationNodeId,
+      reservationNodeId: reservation.reservationNodeId,
+    }),
+  });
+}
+
+function providerCorrectionResultAuthority(
+  reservation: TaskStrategyImplementationReservation,
+  attempt: TaskStrategyImplementationProviderAttempt,
+  binding: TaskStrategyImplementationResultBinding,
+): TaskStrategyCorrectionResultAuthority {
+  return Object.freeze({
+    ...providerCorrectionReservationAuthority(reservation),
+    kind: 'provider' as const,
+    providerAttempt: Object.freeze({
+      attempt: attempt.attempt,
+      attemptReservationDigest:
+        taskStrategyImplementationProviderAttemptReservationDigest(attempt),
+      invocationId: attempt.request.invocationId,
+      requestDigest: attempt.request.requestDigest,
+    }),
+    providerResult: Object.freeze({
+      bindingDigest: binding.bindingDigest,
+      invocationId: binding.invocationId,
+      requestDigest: binding.requestDigest,
+      outputDigest: binding.outputDigest,
+      providerResultNodeId: binding.providerResultNodeId,
+      providerResultDigest: binding.providerResultDigest,
+    }),
+  });
+}
+
+function publishProviderCorrectionRoundArtifacts(
+  runtime: ReturnType<typeof loadInvestigationRuntimeContext>['runtime'],
+  transaction: NonNullable<ReturnType<typeof readTaskStrategyTransaction>>,
+  reservation: TaskStrategyImplementationReservation,
+  attempt: TaskStrategyImplementationProviderAttempt,
+  binding: TaskStrategyImplementationResultBinding,
+  imported: ImportedTaskStrategyPatch,
+): void {
+  const correction = reservation.subject.correction;
+  if (correction === undefined) return;
+  const authority = providerCorrectionResultAuthority(
+    reservation,
+    attempt,
+    binding,
+  );
+  publishTaskStrategyCorrectionRoundResult(runtime, {
+    sessionId: reservation.sessionId,
+    currentRedTransactionDigest: transaction.recordDigest,
+    round: correction.round,
+    correctionSubjectDigest: reservation.subject.subjectDigest,
+    authority,
+    patchResult: {
+      sourceTree: imported.record.sourceTree,
+      targetCandidateTree: imported.record.candidateTree,
+      patchRecordDigest: imported.record.recordDigest,
+      patchDigest: imported.record.patchDigest,
+    },
+    createdAt: binding.createdAt,
+  });
+  publishTaskStrategyCorrectionRoundImport(runtime, {
+    sessionId: reservation.sessionId,
+    currentRedTransactionDigest: transaction.recordDigest,
+    round: correction.round,
+    correctionSubjectDigest: reservation.subject.subjectDigest,
+    authority,
+    importReceipt: {
+      patchRecordDigest: imported.record.recordDigest,
+      patchDigest: imported.record.patchDigest,
+      receiptDigest: imported.receipt.receiptDigest,
+      candidateTree: imported.record.candidateTree,
+    },
+    currentPatchHead: {
+      bindingDigest: imported.binding.bindingDigest,
+      recordDigest: imported.record.recordDigest,
+      patchDigest: imported.record.patchDigest,
+      receiptDigest: imported.receipt.receiptDigest,
+    },
+    importedAt: imported.receipt.importedAt,
+  });
+}
+
 function reconcileProviderImplementationResult(
   cwd: string,
   context: ReturnType<typeof loadActiveSessionContext>,
   runtime: ReturnType<typeof loadInvestigationRuntimeContext>['runtime'],
   transaction: NonNullable<ReturnType<typeof readTaskStrategyTransaction>>,
-  reservation: TaskStrategyImplementationReservation,
+  root: TaskStrategyImplementationReservation,
+  attempt: TaskStrategyImplementationProviderAttempt,
   options: BeginTaskStrategyImplementationOptions,
   assertOwned: () => void,
 ): TaskStrategyImplementationStatus {
+  const reservation = taskStrategyImplementationReservationForAttempt(attempt);
   const invocation = readProviderInvocation(
     runtime,
     reservation.request.invocationId,
   );
   if (invocation.state !== 'succeeded' || invocation.result === null) {
-    return renderStatus(runtime, reservation);
+    return renderStatus(runtime, root, attempt);
   }
   if (invocation.result.runtimeObservation === null) {
     throw workflowError(
@@ -999,18 +1884,28 @@ function reconcileProviderImplementationResult(
   );
   if (
     output.sessionId !== context.session.sessionId ||
-    output.sourceTree !== transaction.red.candidateTree
+    output.sourceTree !== reservation.subject.sourceTree
   ) {
     throw implementationResultStale();
   }
-  validateTaskStrategyProviderPatch(cwd, context.session.sessionId, {
-    patch: Buffer.from(output.patchBase64, 'base64'),
-    implementationReservationDigest: reservation.recordDigest,
-  });
+  const durablePatchRecord = readTaskStrategyPatchRecord(
+    runtime,
+    context.session.sessionId,
+    output.patchDigest,
+    output.sourceTree,
+  );
+  if (durablePatchRecord === null) {
+    validateTaskStrategyProviderPatch(cwd, context.session.sessionId, {
+      patch: Buffer.from(output.patchBase64, 'base64'),
+      implementationReservationDigest: reservation.recordDigest,
+      implementationSubjectDigest: reservation.subject.subjectDigest,
+    });
+  }
 
   let binding = readTaskStrategyImplementationResultBinding(
     runtime,
     context.session.sessionId,
+    reservation.subject.subjectDigest,
   );
   if (binding === null) {
     const authorization = readEvidenceNode(
@@ -1116,23 +2011,41 @@ function reconcileProviderImplementationResult(
       );
     }
   }
-  assertCurrentImplementationResultBinding(
+  assertTaskStrategyImplementationProviderAuthorityCurrent(
     runtime,
     reservation,
     invocation,
     binding,
   );
-  importTaskStrategyProviderPatchUnderLifecycleLock(
+  const imported = importTaskStrategyProviderPatchUnderLifecycleLock(
     cwd,
     context.session.sessionId,
     {
       patch: Buffer.from(binding.output.patchBase64, 'base64'),
       implementationResultBindingDigest: binding.bindingDigest,
+      implementationSubjectDigest: reservation.subject.subjectDigest,
+      ...(options.testCrashAfter === 'patch-applied' ||
+      options.testCrashAfter === 'receipt-persisted'
+        ? { testCrashAfter: options.testCrashAfter }
+        : {}),
     },
     assertOwned,
   );
+  if (options.testCrashAfter === 'provider-patch-imported') {
+    throw new Error(
+      'Simulated task implementation interruption after provider patch import.',
+    );
+  }
+  publishProviderCorrectionRoundArtifacts(
+    runtime,
+    transaction,
+    root,
+    attempt,
+    binding,
+    imported,
+  );
   assertOwned();
-  return renderStatus(runtime, reservation);
+  return renderStatus(runtime, root, attempt);
 }
 
 function admitTaskStrategyImplementationProviderResult(input: {
@@ -1174,11 +2087,16 @@ function admitTaskStrategyImplementationProviderResult(input: {
     const callableProviderIds = (['codex', 'claude'] as const).filter(
       (providerId) => adapterPolicy.policy.providers[providerId].enabled,
     );
+    const grantCallableProviderIds =
+      assignment.degradedForm === 'same-provider-fresh-session' &&
+      assignment.providerId === input.reservation.redAuthor.providerId
+        ? [assignment.providerId]
+        : callableProviderIds;
     const grantRequest = implementationGrantRequest(
       input.context,
       input.reservation.subject,
       requireRecordedRedAuthor(input.reservation.redAuthor),
-      callableProviderIds,
+      grantCallableProviderIds,
     );
     if (grantRequest === null) throw implementationResultStale();
     const expectedBinding = deriveCollaborationGrantBinding(
@@ -1282,258 +2200,6 @@ function requireRecordedRedAuthor(
   });
 }
 
-function assertCurrentImplementationResultBinding(
-  runtime: ReturnType<typeof loadInvestigationRuntimeContext>['runtime'],
-  reservation: TaskStrategyImplementationReservation,
-  invocation: ReturnType<typeof readProviderInvocation>,
-  binding: TaskStrategyImplementationResultBinding,
-): void {
-  if (
-    invocation.state !== 'succeeded' ||
-    invocation.result === null ||
-    invocation.result.runtimeObservation === null
-  ) {
-    throw implementationResultStale();
-  }
-  const output = assertTaskStrategyImplementationOutput(
-    invocation.result.output,
-  );
-  const authorization = readEvidenceNode(
-    runtime,
-    reservation.authorizationNodeId,
-  );
-  const requestReservation = readEvidenceNode(
-    runtime,
-    reservation.reservationNodeId,
-  );
-  const observationNode = readEvidenceNode(
-    runtime,
-    binding.providerObservationNodeId,
-  );
-  const resultNode = readEvidenceNode(runtime, binding.providerResultNodeId);
-  const { resultDigest, ...roleResultBody } = binding.roleResult;
-  if (
-    binding.ownerInvestigationId !== reservation.ownerInvestigationId ||
-    binding.sessionId !== reservation.sessionId ||
-    binding.subjectDigest !== reservation.subject.subjectDigest ||
-    binding.invocationId !== invocation.invocationId ||
-    binding.requestDigest !== reservation.request.requestDigest ||
-    binding.outputDigest !== invocation.result.outputDigest ||
-    binding.runtimeObservationDigest !==
-      sha256(canonicalJson(invocation.result.runtimeObservation)) ||
-    canonicalJson(binding.output) !== canonicalJson(output) ||
-    canonicalJson(binding.roleResult.assignment) !==
-      canonicalJson(reservation.assignment) ||
-    canonicalJson(binding.roleResult.author) !==
-      canonicalJson(reservation.redAuthor) ||
-    resultDigest !==
-      sha256(
-        canonicalJson({
-          schema: 'admitted-role-result.v1',
-          ...roleResultBody,
-        }),
-      ) ||
-    observationNode.resultDigest !== binding.providerObservationDigest ||
-    observationNode.type !==
-      'task-strategy-implementation-provider-observation' ||
-    observationNode.nodeSchema !==
-      'workflow.task-strategy-implementation-provider-observation.v1' ||
-    observationNode.evaluator !== 'workflow-task-strategy.v1' ||
-    observationNode.policyDigest !==
-      TASK_STRATEGY_IMPLEMENTATION_POLICY_DIGEST ||
-    observationNode.outputSchema !==
-      'workflow.task-strategy-implementation-provider-observation-output.v1' ||
-    canonicalJson(observationNode.output) !==
-      canonicalJson({
-        ownerInvestigationId: reservation.ownerInvestigationId,
-        sessionId: reservation.sessionId,
-        invocationId: invocation.invocationId,
-        requestDigest: reservation.request.requestDigest,
-        outputDigest: invocation.result.outputDigest,
-        submission: output,
-      }) ||
-    observationNode.exactInputDigests.output !==
-      invocation.result.outputDigest ||
-    observationNode.exactInputDigests.request !==
-      reservation.request.requestDigest ||
-    observationNode.exactInputDigests.runtimeObservation !==
-      binding.runtimeObservationDigest ||
-    observationNode.exactInputDigests.subject !==
-      reservation.subject.subjectDigest ||
-    observationNode.semanticParentResultDigests.authorization !==
-      authorization.resultDigest ||
-    observationNode.semanticParentResultDigests.reservation !==
-      requestReservation.resultDigest ||
-    observationNode.provenanceParentNodeIds.authorization !==
-      reservation.authorizationNodeId ||
-    observationNode.provenanceParentNodeIds.reservation !==
-      reservation.reservationNodeId ||
-    canonicalJson(observationNode.runtimeMetadata) !==
-      canonicalJson({
-        runtimeObservation: invocation.result.runtimeObservation,
-      }) ||
-    resultNode.resultDigest !== binding.providerResultDigest ||
-    resultNode.type !== 'task-strategy-implementation-provider-result' ||
-    resultNode.nodeSchema !==
-      'workflow.task-strategy-implementation-provider-result.v1' ||
-    resultNode.evaluator !== 'workflow-task-strategy.v1' ||
-    resultNode.policyDigest !== TASK_STRATEGY_IMPLEMENTATION_POLICY_DIGEST ||
-    resultNode.outputSchema !==
-      'workflow.task-strategy-implementation-provider-result-output.v1' ||
-    canonicalJson(resultNode.output) !==
-      canonicalJson({
-        ownerInvestigationId: reservation.ownerInvestigationId,
-        sessionId: reservation.sessionId,
-        invocationId: invocation.invocationId,
-        roleResult: binding.roleResult,
-        output,
-      }) ||
-    resultNode.exactInputDigests.admission !==
-      binding.roleResult.resultDigest ||
-    resultNode.exactInputDigests.observation !== observationNode.resultDigest ||
-    resultNode.exactInputDigests.subject !==
-      reservation.subject.subjectDigest ||
-    resultNode.semanticParentResultDigests.observation !==
-      observationNode.resultDigest ||
-    resultNode.provenanceParentNodeIds.observation !== observationNode.nodeId
-  ) {
-    throw implementationResultStale();
-  }
-}
-
-function assertCurrentCallerImplementationReservation(
-  runtime: ReturnType<typeof loadInvestigationRuntimeContext>['runtime'],
-  transaction: NonNullable<ReturnType<typeof readTaskStrategyTransaction>>,
-  subject: TaskStrategyImplementationSubject,
-  reservation: TaskStrategyCallerImplementationReservation,
-): void {
-  const submissionNode = readEvidenceNode(
-    runtime,
-    reservation.submissionNodeId,
-  );
-  const caller = {
-    callerId: reservation.assignment.participant.principalId,
-    assurance: reservation.assignment.participant.identityAssurance,
-  };
-  if (
-    reservation.sessionId !== transaction.sessionId ||
-    reservation.subjectDigest !== subject.subjectDigest ||
-    reservation.assignment.role !== 'task-implementer' ||
-    reservation.assignment.targetDigest !== subject.subjectDigest ||
-    reservation.assignment.providerId !== null ||
-    reservation.assignment.sessionId !== null ||
-    reservation.assignment.degradedForm !== 'caller-supplied' ||
-    reservation.assignment.orchestration !== 'caller-supplied' ||
-    reservation.assignment.participant.providerId !== null ||
-    reservation.assignment.participant.sessionId !== null ||
-    reservation.assignment.participant.principalId === null ||
-    reservation.assignment.participant.identityAssurance ===
-      'maintainer-signed' ||
-    reservation.assignment.participant.engineSpawned !== false ||
-    canonicalJson(reservation.assignment.author) !==
-      canonicalJson(recordRedAuthor(transaction)) ||
-    reservation.output.sessionId !== transaction.sessionId ||
-    reservation.output.sourceTree !== transaction.red.candidateTree ||
-    submissionNode.resultDigest !== reservation.submissionResultDigest ||
-    submissionNode.type !== 'task-strategy-implementation-caller-submission' ||
-    submissionNode.nodeSchema !==
-      'workflow.task-strategy-implementation-caller-submission.v1' ||
-    submissionNode.evaluator !== 'workflow-task-strategy.v1' ||
-    submissionNode.policyDigest !==
-      TASK_STRATEGY_IMPLEMENTATION_POLICY_DIGEST ||
-    submissionNode.outputSchema !==
-      'workflow.task-strategy-implementation-caller-submission-output.v1' ||
-    submissionNode.exactInputDigests.assignment !==
-      sha256(canonicalJson(reservation.assignment)) ||
-    submissionNode.exactInputDigests.caller !== sha256(canonicalJson(caller)) ||
-    submissionNode.exactInputDigests.output !==
-      sha256(canonicalJson(reservation.output)) ||
-    submissionNode.exactInputDigests.subject !== subject.subjectDigest ||
-    submissionNode.exactInputDigests.transition !==
-      reservation.transitionDigest ||
-    submissionNode.semanticParentResultDigests.red !==
-      transaction.red.evidenceResultDigest ||
-    submissionNode.provenanceParentNodeIds.red !==
-      transaction.red.evidenceNodeId ||
-    canonicalJson(submissionNode.output) !==
-      canonicalJson({
-        sessionId: reservation.sessionId,
-        subjectDigest: reservation.subjectDigest,
-        transitionDigest: reservation.transitionDigest,
-        caller,
-        assignment: reservation.assignment,
-        output: reservation.output,
-      }) ||
-    canonicalJson(submissionNode.runtimeMetadata) !== canonicalJson({})
-  ) {
-    throw implementationResultStale();
-  }
-}
-
-function assertCurrentCallerImplementationBinding(
-  runtime: ReturnType<typeof loadInvestigationRuntimeContext>['runtime'],
-  transaction: NonNullable<ReturnType<typeof readTaskStrategyTransaction>>,
-  subject: TaskStrategyImplementationSubject,
-  reservation: TaskStrategyCallerImplementationReservation,
-  binding: TaskStrategyCallerImplementationBinding,
-): void {
-  assertCurrentCallerImplementationReservation(
-    runtime,
-    transaction,
-    subject,
-    reservation,
-  );
-  const submissionNode = readEvidenceNode(
-    runtime,
-    reservation.submissionNodeId,
-  );
-  const resultNode = readEvidenceNode(runtime, binding.resultNodeId);
-  if (
-    binding.sessionId !== reservation.sessionId ||
-    binding.subjectDigest !== reservation.subjectDigest ||
-    binding.transitionDigest !== reservation.transitionDigest ||
-    binding.submissionNodeId !== reservation.submissionNodeId ||
-    binding.submissionResultDigest !== reservation.submissionResultDigest ||
-    canonicalJson(binding.output) !== canonicalJson(reservation.output) ||
-    canonicalJson(binding.roleResult.assignment) !==
-      canonicalJson(reservation.assignment) ||
-    canonicalJson(binding.roleResult.author) !==
-      canonicalJson(reservation.assignment.author) ||
-    canonicalJson(binding.roleResult.participant) !==
-      canonicalJson(reservation.assignment.participant) ||
-    binding.roleResult.content.nodeId !== submissionNode.nodeId ||
-    binding.roleResult.content.resultDigest !== submissionNode.resultDigest ||
-    resultNode.resultDigest !== binding.resultDigest ||
-    resultNode.type !== 'task-strategy-implementation-caller-result' ||
-    resultNode.nodeSchema !==
-      'workflow.task-strategy-implementation-caller-result.v1' ||
-    resultNode.evaluator !== 'workflow-task-strategy.v1' ||
-    resultNode.policyDigest !== TASK_STRATEGY_IMPLEMENTATION_POLICY_DIGEST ||
-    resultNode.outputSchema !==
-      'workflow.task-strategy-implementation-caller-result-output.v1' ||
-    resultNode.exactInputDigests.admission !==
-      binding.roleResult.resultDigest ||
-    resultNode.exactInputDigests.submission !==
-      reservation.submissionResultDigest ||
-    resultNode.exactInputDigests.subject !== subject.subjectDigest ||
-    resultNode.exactInputDigests.transition !== reservation.transitionDigest ||
-    resultNode.semanticParentResultDigests.submission !==
-      reservation.submissionResultDigest ||
-    resultNode.provenanceParentNodeIds.submission !==
-      reservation.submissionNodeId ||
-    canonicalJson(resultNode.output) !==
-      canonicalJson({
-        sessionId: reservation.sessionId,
-        subjectDigest: reservation.subjectDigest,
-        roleResult: binding.roleResult,
-        output: reservation.output,
-      }) ||
-    canonicalJson(resultNode.runtimeMetadata) !== canonicalJson({})
-  ) {
-    throw implementationResultStale();
-  }
-}
-
 function renderCallerImplementationStatus(
   runtime: ReturnType<typeof loadInvestigationRuntimeContext>['runtime'],
   subject: TaskStrategyImplementationSubject,
@@ -1543,6 +2209,7 @@ function renderCallerImplementationStatus(
   const patchBinding = readTaskStrategyPatchCurrentBinding(
     runtime,
     reservation.sessionId,
+    subject.sourceTree,
   );
   const imported =
     binding !== null &&
@@ -1572,8 +2239,13 @@ function implementationResultStale() {
 
 function renderStatus(
   runtime: ReturnType<typeof loadInvestigationRuntimeContext>['runtime'],
-  reservation: TaskStrategyImplementationReservation,
+  root: TaskStrategyImplementationReservation,
+  attempt: TaskStrategyImplementationProviderAttempt,
 ): TaskStrategyImplementationStatus {
+  if (attempt.root.recordDigest !== root.recordDigest) {
+    throw implementationResultStale();
+  }
+  const reservation = taskStrategyImplementationReservationForAttempt(attempt);
   const invocation = readProviderInvocation(
     runtime,
     reservation.request.invocationId,
@@ -1587,13 +2259,15 @@ function renderStatus(
     const resultBinding = readTaskStrategyImplementationResultBinding(
       runtime,
       reservation.sessionId,
+      reservation.subject.subjectDigest,
     );
     const patchBinding = readTaskStrategyPatchCurrentBinding(
       runtime,
       reservation.sessionId,
+      reservation.subject.sourceTree,
     );
     if (resultBinding !== null) {
-      assertCurrentImplementationResultBinding(
+      assertTaskStrategyImplementationProviderAuthorityCurrent(
         runtime,
         reservation,
         invocation,
@@ -1663,18 +2337,24 @@ function requireCurrentRedTransaction(
     transaction.red.candidateTree === preview.tree &&
     canonicalJson(transaction.red.changedPaths) ===
       canonicalJson(inspection.changedPaths);
+  const currentPatchHead =
+    resolveCurrentTaskStrategyCorrection(inspection).head;
+  const recoverableCorrection = readRecoverableCorrectionCandidate(
+    runtime,
+    transaction,
+    preview.tree,
+  );
+  const importedCandidateCurrent =
+    currentPatchHead !== null &&
+    currentPatchHead.record.candidateTree === preview.tree;
   if (
     transaction.changeId !== context.session.changeId ||
     transaction.taskId !== context.session.taskId ||
     transaction.baseline.head !== context.session.baseline.head ||
     transaction.baseline.tree !== context.session.baseline.tree ||
     (!redCandidateCurrent &&
-      !isImportedImplementationCandidateCurrent(
-        runtime,
-        context.session.sessionId,
-        transaction.red.candidateTree,
-        preview.tree,
-      ))
+      !importedCandidateCurrent &&
+      !recoverableCorrection)
   ) {
     throw workflowError(
       'TASK_STRATEGY_RED_STALE',
@@ -1685,47 +2365,43 @@ function requireCurrentRedTransaction(
   return transaction;
 }
 
-function isImportedImplementationCandidateCurrent(
+function readRecoverableCorrectionCandidate(
   runtime: ReturnType<typeof loadInvestigationRuntimeContext>['runtime'],
-  sessionId: string,
-  redCandidateTree: string,
+  transaction: NonNullable<ReturnType<typeof readTaskStrategyTransaction>>,
   currentTree: string,
 ): boolean {
-  const binding = readTaskStrategyPatchCurrentBinding(runtime, sessionId);
+  const rounds = listTaskStrategyCorrectionRounds(
+    runtime,
+    transaction.sessionId,
+    transaction.recordDigest,
+  );
+  const latest = rounds.at(-1);
+  if (latest === undefined || latest.importRecord !== null) {
+    return false;
+  }
+  const binding =
+    latest.reservation.authority.kind === 'provider'
+      ? readTaskStrategyImplementationResultBinding(
+          runtime,
+          transaction.sessionId,
+          latest.reservation.correctionSubjectDigest,
+        )
+      : latest.reservation.authority.kind === 'caller-supplied'
+        ? readTaskStrategyCallerImplementationBinding(
+            runtime,
+            transaction.sessionId,
+            latest.reservation.correctionSubjectDigest,
+          )
+        : null;
   if (binding === null) return false;
+  const patchDigest = binding.output.patchDigest;
   const record = readTaskStrategyPatchRecord(
     runtime,
-    sessionId,
-    binding.patchDigest,
+    transaction.sessionId,
+    patchDigest,
+    binding.output.sourceTree,
   );
-  const receipt = readTaskStrategyPatchImportReceipt(
-    runtime,
-    sessionId,
-    binding.patchDigest,
-  );
-  const reservation = readTaskStrategyPatchReservation(runtime, sessionId);
-  return (
-    record !== null &&
-    receipt !== null &&
-    reservation !== null &&
-    record.sourceTree === redCandidateTree &&
-    record.candidateTree === currentTree &&
-    reservation.sessionId === sessionId &&
-    reservation.patchDigest === record.patchDigest &&
-    reservation.recordDigest === record.recordDigest &&
-    reservation.sourceTree === record.sourceTree &&
-    reservation.candidateTree === record.candidateTree &&
-    reservation.createdAt === record.createdAt &&
-    receipt.recordDigest === record.recordDigest &&
-    receipt.sessionId === sessionId &&
-    receipt.patchDigest === record.patchDigest &&
-    receipt.candidateTree === record.candidateTree &&
-    binding.sessionId === sessionId &&
-    binding.recordDigest === record.recordDigest &&
-    binding.receiptDigest === receipt.receiptDigest &&
-    binding.candidateTree === currentTree &&
-    binding.createdAt === receipt.importedAt
-  );
+  return record !== null && record.candidateTree === currentTree;
 }
 
 function implementationTask(
@@ -1751,6 +2427,76 @@ function implementationTask(
     );
   }
   return task;
+}
+
+function resolveCurrentImplementationSubject(
+  cwd: string,
+  context: ReturnType<typeof loadActiveSessionContext>,
+  transaction: NonNullable<ReturnType<typeof readTaskStrategyTransaction>>,
+): Readonly<{
+  subject: TaskStrategyImplementationSubject;
+  greenFailureRecord: TaskStrategyGreenFailureRecord | null;
+}> {
+  const initialSubject = createSubject(transaction);
+  const inspection = inspectSession(cwd, context.session.sessionId, {
+    expectedSession: context.session,
+  });
+  const projection = resolveCurrentTaskStrategyCorrection(inspection);
+  if (projection.transaction.recordDigest !== transaction.recordDigest) {
+    throw implementationResultStale();
+  }
+  if (projection.exhausted) {
+    throw workflowError(
+      'TASK_STRATEGY_CORRECTION_EXHAUSTED',
+      'The bounded task-strategy correction budget is exhausted.',
+      ExitCode.guard,
+    );
+  }
+  const correction = resolveCorrectionSubjectInput(inspection, projection);
+  if (correction === null) {
+    return Object.freeze({
+      subject: initialSubject,
+      greenFailureRecord: null,
+    });
+  }
+  return Object.freeze({
+    subject: createTaskStrategyCorrectionSubject({
+      subject: initialSubject,
+      round: correction.round,
+      greenFailureRecord: correction.greenFailureRecord,
+    }),
+    greenFailureRecord: correction.greenFailureRecord,
+  });
+}
+
+function resolveCorrectionSubjectInput(
+  inspection: ReturnType<typeof inspectSession>,
+  projection: TaskStrategyCorrectionProjection,
+): Readonly<{
+  round: number;
+  greenFailureRecord: TaskStrategyGreenFailureRecord;
+}> | null {
+  if (projection.failure !== null) {
+    return Object.freeze({
+      round: projection.completedCorrectionRounds + 1,
+      greenFailureRecord: projection.failure,
+    });
+  }
+  if (projection.completedCorrectionRounds === 0) return null;
+  if (projection.head === null) throw implementationResultStale();
+  const runtime = loadInvestigationRuntimeContext(
+    inspection.git.repositoryRoot,
+  ).runtime;
+  const greenFailureRecord = readTaskStrategyGreenFailureRecord(
+    runtime,
+    inspection.session.sessionId,
+    projection.head.record.sourceTree,
+  );
+  if (greenFailureRecord === null) throw implementationResultStale();
+  return Object.freeze({
+    round: projection.completedCorrectionRounds,
+    greenFailureRecord,
+  });
 }
 
 function createSubject(
@@ -1975,6 +2721,18 @@ function requestConflict() {
     'TASK_STRATEGY_IMPLEMENTATION_REQUEST_CONFLICT',
     'Task implementation provider work differs from its current sealed RED owner.',
     ExitCode.staleState,
+  );
+}
+
+function providerRetryDenied(reasonCode: string, sessionId: string) {
+  return workflowError(
+    'TASK_STRATEGY_IMPLEMENTATION_RETRY_DENIED',
+    'The bounded provider RetryDecision does not authorize this exact task implementation replacement Attempt.',
+    ExitCode.guard,
+    {
+      details: { reasonCode },
+      recovery: `pnpm workflow resume ${sessionId} --json`,
+    },
   );
 }
 

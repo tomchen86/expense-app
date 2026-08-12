@@ -21,13 +21,31 @@ import {
   matchesAllowedPath,
   normalizeChangedPath,
 } from './paths.ts';
-import { readTaskStrategyTransaction } from './task-strategy-store.ts';
+import {
+  readTaskStrategyTransaction,
+  type TaskStrategyTransaction,
+} from './task-strategy-store.ts';
+import {
+  createCurrentTaskStrategyCorrectionSubject,
+  resolveCurrentTaskStrategyCorrection,
+  resolveCurrentTaskStrategyImplementationAuthority,
+} from './task-strategy-correction.ts';
+import { readTaskStrategyGreenFailureRecord } from './task-strategy-correction-store.ts';
+import {
+  publishTaskStrategyCorrectionRoundImport,
+  publishTaskStrategyCorrectionRoundResult,
+  reserveTaskStrategyCorrectionRound,
+} from './task-strategy-correction-round-store.ts';
+import { DEFAULT_TASK_STRATEGY_CORRECTION_POLICY } from './task-strategy-correction-store.ts';
 import {
   withRepositoryLifecycleOperation,
   withSessionOperation,
 } from './session-store.ts';
 import {
   readTaskStrategyCallerImplementationBinding,
+  readTaskStrategyCallerImplementationReservation,
+  readCurrentTaskStrategyImplementationProviderAttempt,
+  readTaskStrategyImplementationProviderAttempt,
   readTaskStrategyImplementationReservation,
   readTaskStrategyImplementationResultBinding,
 } from './task-strategy-provider-store.ts';
@@ -95,11 +113,13 @@ type CallerTaskStrategyPatchInput = Readonly<{
 type ProviderTaskStrategyPatchValidationInput = Readonly<{
   patch: string | Buffer;
   implementationReservationDigest: string;
+  implementationSubjectDigest?: string;
 }>;
 
 type ProviderTaskStrategyPatchImportInput = Readonly<{
   patch: string | Buffer;
   implementationResultBindingDigest: string;
+  implementationSubjectDigest?: string;
   testCrashAfter?: TaskStrategyPatchCrashPhase;
 }>;
 
@@ -109,17 +129,20 @@ type CallerTaskStrategyPatchValidationInput = Readonly<{
     TaskStrategyPatchImplementer,
     { providerId: null }
   >;
+  implementationSubjectDigest: string;
 }>;
 
 type CallerTaskStrategyPatchImportInput = Readonly<{
   patch: string | Buffer;
   callerImplementationBindingDigest: string;
+  implementationSubjectDigest: string;
   testCrashAfter?: TaskStrategyPatchCrashPhase;
 }>;
 
 type SealedLocalPatchAuthority = Readonly<{
   kind: 'sealed-local';
   implementer: Exclude<TaskStrategyPatchImplementer, { providerId: null }>;
+  sourceTree: string;
 }>;
 
 export function validateTaskStrategyPatch(
@@ -219,7 +242,7 @@ function validateTaskStrategyPatchWithAuthority(
 
   const projection = applyPatchToIsolatedTree(
     inspection.git.repositoryRoot,
-    transaction.red.candidateTree,
+    authority.sourceTree,
     patchBytes,
   );
   const current = previewExactStaging(
@@ -228,7 +251,7 @@ function validateTaskStrategyPatchWithAuthority(
     [...inspection.changedPaths],
   );
   if (
-    current.tree !== transaction.red.candidateTree &&
+    current.tree !== authority.sourceTree &&
     (sealedLocalAuthority === undefined ||
       current.tree !== projection.candidateTree)
   ) {
@@ -278,7 +301,7 @@ function validateTaskStrategyPatchWithAuthority(
     path: changedPath,
     before: readRegularTreeEntry(
       inspection.git.repositoryRoot,
-      transaction.red.candidateTree,
+      authority.sourceTree,
       changedPath,
     ),
     after: readRegularTreeEntry(
@@ -292,7 +315,7 @@ function validateTaskStrategyPatchWithAuthority(
     kind: 'task-strategy-patch-validation.v1',
     sessionId: inspection.session.sessionId,
     strategy: task.strategy,
-    sourceTree: transaction.red.candidateTree,
+    sourceTree: authority.sourceTree,
     candidateTree: projection.candidateTree,
     patchDigest: sha256(patchBytes),
     changedPaths: Object.freeze(projection.changedPaths),
@@ -425,12 +448,271 @@ export function adoptCurrentTaskStrategyImplementation(
         {
           kind: 'sealed-local',
           implementer: Object.freeze(structuredClone(transaction.author)),
+          sourceTree: transaction.red.candidateTree,
         },
       );
       assertOwned();
       return imported;
     }),
   );
+}
+
+/**
+ * Bind a local single-agent correction already present in the worktree. The
+ * preceding failed candidate is the new immutable patch source; prior patch
+ * records remain append-only provenance and are never replaced.
+ */
+export function adoptCurrentTaskStrategyCorrection(
+  cwd: string,
+  requestedSessionId: string,
+  options: Readonly<{ testCrashAfter?: TaskStrategyPatchCrashPhase }> = {},
+): ImportedTaskStrategyPatch | null {
+  const initial = loadActiveSessionContext(cwd, requestedSessionId);
+  return withRepositoryLifecycleOperation(initial.runtime, (assertOwned) =>
+    withSessionOperation(initial.runtime, requestedSessionId, () => {
+      assertOwned();
+      const inspection = inspectSession(cwd, requestedSessionId);
+      const runtime = investigationRuntimePaths(
+        inspection.git.gitCommonDirectory,
+        inspection.contract.config.runtimeDirectory,
+      );
+      const task = executionTask(inspection);
+      const projection = resolveCurrentTaskStrategyCorrection(inspection);
+      const transaction = projection.transaction;
+      const failure = projection.failure;
+      if (
+        task.strategy !== 'tdd-single-agent' ||
+        transaction.strategy !== 'tdd-single-agent' ||
+        failure === null ||
+        projection.exhausted
+      ) {
+        throw workflowError(
+          'TASK_STRATEGY_CORRECTION_NOT_APPLICABLE',
+          'Only a current bounded single-agent GREEN failure can adopt local correction bytes.',
+          ExitCode.guard,
+        );
+      }
+      const correctionState = projection.correctionState;
+      if (
+        correctionState === null ||
+        correctionState.state !== 'correction-required'
+      ) {
+        throw workflowError(
+          'TASK_STRATEGY_CORRECTION_NOT_APPLICABLE',
+          'The current GREEN failure has no resumable correction-round authority.',
+          ExitCode.guard,
+        );
+      }
+      const current = previewExactStaging(
+        inspection.git.repositoryRoot,
+        inspection.session.baseline.head,
+        [...inspection.changedPaths],
+      );
+      if (current.tree === failure.candidateTree) return null;
+      const patch = runGitBuffer(inspection.git.repositoryRoot, [
+        'diff',
+        '--binary',
+        '--full-index',
+        '--no-renames',
+        '--diff-algorithm=myers',
+        failure.candidateTree,
+        current.tree,
+        '--',
+      ]);
+      const correctionSubject = createCurrentTaskStrategyCorrectionSubject(
+        transaction,
+        failure,
+        correctionState.round,
+      );
+      const reservationAuthority = Object.freeze({
+        kind: 'sealed-local' as const,
+        author: Object.freeze(structuredClone(transaction.author)),
+      });
+      reserveTaskStrategyCorrectionRound(runtime, {
+        sessionId: inspection.session.sessionId,
+        round: correctionState.round,
+        policy: DEFAULT_TASK_STRATEGY_CORRECTION_POLICY,
+        predecessorFailure: failure,
+        correctionSubjectDigest: correctionSubject.subjectDigest,
+        redSourceTree: transaction.red.candidateTree,
+        authority: reservationAuthority,
+        createdAt: new Date().toISOString(),
+      });
+      const imported = importTaskStrategyPatchUnlocked(
+        cwd,
+        requestedSessionId,
+        {
+          patch,
+          ...(options.testCrashAfter === undefined
+            ? {}
+            : { testCrashAfter: options.testCrashAfter }),
+        },
+        {
+          kind: 'sealed-local',
+          implementer: Object.freeze(structuredClone(transaction.author)),
+          sourceTree: failure.candidateTree,
+        },
+      );
+      const resultAuthority = Object.freeze({
+        kind: 'sealed-local' as const,
+        author: Object.freeze(structuredClone(transaction.author)),
+      });
+      publishTaskStrategyCorrectionRoundResult(runtime, {
+        sessionId: inspection.session.sessionId,
+        currentRedTransactionDigest: transaction.recordDigest,
+        round: correctionState.round,
+        correctionSubjectDigest: correctionSubject.subjectDigest,
+        authority: resultAuthority,
+        patchResult: {
+          sourceTree: imported.record.sourceTree,
+          targetCandidateTree: imported.record.candidateTree,
+          patchRecordDigest: imported.record.recordDigest,
+          patchDigest: imported.record.patchDigest,
+        },
+        createdAt: imported.receipt.importedAt,
+      });
+      publishTaskStrategyCorrectionRoundImport(runtime, {
+        sessionId: inspection.session.sessionId,
+        currentRedTransactionDigest: transaction.recordDigest,
+        round: correctionState.round,
+        correctionSubjectDigest: correctionSubject.subjectDigest,
+        authority: resultAuthority,
+        importReceipt: {
+          patchRecordDigest: imported.record.recordDigest,
+          patchDigest: imported.record.patchDigest,
+          receiptDigest: imported.receipt.receiptDigest,
+          candidateTree: imported.record.candidateTree,
+        },
+        currentPatchHead: {
+          bindingDigest: imported.binding.bindingDigest,
+          recordDigest: imported.record.recordDigest,
+          patchDigest: imported.record.patchDigest,
+          receiptDigest: imported.receipt.receiptDigest,
+        },
+        importedAt: imported.receipt.importedAt,
+      });
+      assertOwned();
+      return imported;
+    }),
+  );
+}
+
+/**
+ * Restore only the exact implementation delta of the current RED lineage.
+ * This is the mutation step used by RED revision while the repository and
+ * session lifecycle locks are already held. Durable patch records remain
+ * immutable provenance; replay accepts only the exact candidate or source
+ * tree and never overwrites ambient bytes.
+ */
+export function restoreCurrentTaskStrategyImplementationToRedUnderLifecycleLock(
+  cwd: string,
+  requestedSessionId: string,
+  transaction: TaskStrategyTransaction,
+  assertOwned: () => void,
+): TaskStrategyPatchRecord | null {
+  assertOwned();
+  let inspection = inspectSession(cwd, requestedSessionId);
+  const runtime = investigationRuntimePaths(
+    inspection.git.gitCommonDirectory,
+    inspection.contract.config.runtimeDirectory,
+  );
+  const currentTree = () =>
+    previewExactStaging(
+      inspection.git.repositoryRoot,
+      inspection.session.baseline.head,
+      [...inspection.changedPaths],
+    ).tree;
+  const projection = resolveCurrentTaskStrategyCorrection(inspection);
+  if (projection.transaction.recordDigest !== transaction.recordDigest) {
+    throw patchStale();
+  }
+  const records: TaskStrategyPatchRecord[] = [];
+  let sourceTree = transaction.red.candidateTree;
+  while (true) {
+    const binding = readTaskStrategyPatchCurrentBinding(
+      runtime,
+      inspection.session.sessionId,
+      sourceTree,
+    );
+    if (binding === null) break;
+    const record = readTaskStrategyPatchRecord(
+      runtime,
+      inspection.session.sessionId,
+      binding.patchDigest,
+      sourceTree,
+    );
+    const reservation = readTaskStrategyPatchReservation(
+      runtime,
+      inspection.session.sessionId,
+      sourceTree,
+    );
+    const receipt = readTaskStrategyPatchImportReceipt(
+      runtime,
+      inspection.session.sessionId,
+      binding.patchDigest,
+      sourceTree,
+    );
+    if (
+      record === null ||
+      reservation === null ||
+      receipt === null ||
+      record.sourceTree !== sourceTree
+    ) {
+      throw workflowError(
+        'TASK_STRATEGY_PATCH_STATE_CORRUPT',
+        'The current implementation lineage has no exact patch authority.',
+        ExitCode.staleState,
+      );
+    }
+    assertPatchStateRelations(record, reservation, receipt, binding);
+    records.push(record);
+    sourceTree = record.candidateTree;
+    if (projection.head?.record.recordDigest === record.recordDigest) break;
+    if (records.length > 64) throw patchStale();
+  }
+  if (records.length === 0) {
+    if (currentTree() !== transaction.red.candidateTree) throw patchStale();
+    return null;
+  }
+  if (records.at(-1)?.recordDigest !== projection.head?.record.recordDigest) {
+    throw patchStale();
+  }
+  for (const record of [...records].reverse()) {
+    const observedTree = currentTree();
+    const changedEntries = record.changes.map((change) => ({
+      change,
+      observed: readRegularTreeEntry(
+        inspection.git.repositoryRoot,
+        observedTree,
+        change.path,
+      ),
+    }));
+    const alreadyRestored = changedEntries.every(
+      ({ change, observed }) =>
+        canonicalJson(observed) === canonicalJson(change.before),
+    );
+    if (!alreadyRestored) {
+      if (
+        changedEntries.some(
+          ({ change, observed }) =>
+            canonicalJson(observed) !== canonicalJson(change.after),
+        )
+      ) {
+        throw patchStale();
+      }
+      applyPatchToWorktree(
+        inspection.git.repositoryRoot,
+        Buffer.from(record.patchBase64, 'base64'),
+        true,
+      );
+      assertOwned();
+      inspection = inspectSession(cwd, requestedSessionId, {
+        expectedSession: inspection.session,
+      });
+    }
+    if (currentTree() !== record.sourceTree) throw patchStale();
+  }
+  return records[0]!;
 }
 
 export function importTaskStrategyProviderPatch(
@@ -483,6 +765,7 @@ function importTaskStrategyPatchUnlocked(
     explicitActor?: string;
     environment?: NodeJS.ProcessEnv;
     implementationResultBindingDigest?: string;
+    implementationSubjectDigest?: string;
     callerImplementationBindingDigest?: string;
     testCrashAfter?: TaskStrategyPatchCrashPhase;
   }>,
@@ -506,10 +789,11 @@ function importTaskStrategyPatchUnlocked(
     input,
     patchDigest,
     sealedLocalAuthority,
-  ).implementer;
+  );
   let reservation = readTaskStrategyPatchReservation(
     runtime,
     inspection.session.sessionId,
+    implementer.sourceTree,
   );
   if (reservation !== null && reservation.patchDigest !== patchDigest) {
     throw workflowError(
@@ -523,6 +807,7 @@ function importTaskStrategyPatchUnlocked(
     runtime,
     inspection.session.sessionId,
     patchDigest,
+    implementer.sourceTree,
   );
   if (record === null) {
     const validation = validateTaskStrategyPatchWithAuthority(
@@ -543,7 +828,7 @@ function importTaskStrategyPatchUnlocked(
       patchBase64: patchBytes.toString('base64'),
       changedPaths: [...validation.changedPaths],
       changes: [...validation.changes],
-      implementer,
+      implementer: implementer.implementer,
       createdAt: reservation?.createdAt ?? new Date().toISOString(),
     });
     if (reservation === null) {
@@ -576,8 +861,9 @@ function importTaskStrategyPatchUnlocked(
       inspection,
       task,
       transaction,
-      implementer,
+      implementer.implementer,
       patchBytes,
+      implementer.sourceTree,
     );
     assertPatchStateRelations(record, reservation, null, null);
   }
@@ -587,10 +873,12 @@ function importTaskStrategyPatchUnlocked(
     runtime,
     inspection.session.sessionId,
     patchDigest,
+    record.sourceTree,
   );
   let binding = readTaskStrategyPatchCurrentBinding(
     runtime,
     inspection.session.sessionId,
+    record.sourceTree,
   );
   assertPatchStateRelations(record, reservation, receipt, binding);
   let currentTree = previewExactStaging(
@@ -623,23 +911,31 @@ function importTaskStrategyPatchUnlocked(
   }
   const importedAt = receipt?.importedAt ?? new Date().toISOString();
   if (receipt === null) {
-    receipt = createTaskStrategyPatchImportReceipt(runtime, {
-      recordDigest: record.recordDigest,
-      sessionId: record.sessionId,
-      patchDigest: record.patchDigest,
-      candidateTree: record.candidateTree,
-      importedAt,
-    });
+    receipt = createTaskStrategyPatchImportReceipt(
+      runtime,
+      {
+        recordDigest: record.recordDigest,
+        sessionId: record.sessionId,
+        patchDigest: record.patchDigest,
+        candidateTree: record.candidateTree,
+        importedAt,
+      },
+      record.sourceTree,
+    );
     maybeInterrupt(input.testCrashAfter, 'receipt-persisted');
   }
-  binding ??= createTaskStrategyPatchCurrentBinding(runtime, {
-    sessionId: record.sessionId,
-    patchDigest: record.patchDigest,
-    recordDigest: record.recordDigest,
-    receiptDigest: receipt.receiptDigest,
-    candidateTree: record.candidateTree,
-    createdAt: importedAt,
-  });
+  binding ??= createTaskStrategyPatchCurrentBinding(
+    runtime,
+    {
+      sessionId: record.sessionId,
+      patchDigest: record.patchDigest,
+      recordDigest: record.recordDigest,
+      receiptDigest: receipt.receiptDigest,
+      candidateTree: record.candidateTree,
+      createdAt: importedAt,
+    },
+    record.sourceTree,
+  );
   assertPatchStateRelations(record, reservation, receipt, binding);
   return Object.freeze({ record, reservation, receipt, binding });
 }
@@ -647,6 +943,7 @@ function importTaskStrategyPatchUnlocked(
 function applyPatchToWorktree(
   repositoryRoot: string,
   patchBytes: Buffer,
+  reverse = false,
 ): void {
   const temporaryDirectory = fs.mkdtempSync(
     path.join(os.tmpdir(), 'workflow-task-patch-import-'),
@@ -657,6 +954,7 @@ function applyPatchToWorktree(
     try {
       runGit(repositoryRoot, [
         'apply',
+        ...(reverse ? ['--reverse'] : []),
         '--binary',
         '--whitespace=error-all',
         '--recount',
@@ -666,7 +964,9 @@ function applyPatchToWorktree(
     } catch {
       throw workflowError(
         'TASK_STRATEGY_PATCH_IMPORT_FAILED',
-        'The validated implementation patch could not be applied to the exact RED worktree.',
+        reverse
+          ? 'The exact current implementation patch could not be restored to its sealed RED source tree.'
+          : 'The validated implementation patch could not be applied to the exact RED worktree.',
         ExitCode.staleState,
       );
     }
@@ -689,6 +989,7 @@ function resolvePatchImplementer(
 ): Readonly<{
   implementer: TaskStrategyPatchImplementer;
   allowsSameProvider: boolean;
+  sourceTree: string;
 }> {
   if (transaction === null) {
     throw workflowError(
@@ -708,6 +1009,7 @@ function resolvePatchImplementer(
     return Object.freeze({
       implementer: sealedLocalAuthority.implementer,
       allowsSameProvider: true,
+      sourceTree: sealedLocalAuthority.sourceTree,
     });
   }
   const runtime = investigationRuntimePaths(
@@ -715,56 +1017,103 @@ function resolvePatchImplementer(
     inspection.contract.config.runtimeDirectory,
   );
   if ('callerImplementer' in input) {
+    const subject = resolveCallerImplementationSubject(
+      inspection,
+      transaction,
+      input.implementationSubjectDigest,
+    );
+    if (subject.subjectDigest !== input.implementationSubjectDigest) {
+      throw patchAuthorityStale();
+    }
     return Object.freeze({
       implementer: Object.freeze(structuredClone(input.callerImplementer)),
       allowsSameProvider: true,
+      sourceTree: subject.sourceTree,
     });
   }
   if ('implementationReservationDigest' in input) {
     const reservation = readTaskStrategyImplementationReservation(
       runtime,
       inspection.session.sessionId,
+      input.implementationSubjectDigest,
     );
+    const attempt =
+      reservation === null
+        ? null
+        : readCurrentTaskStrategyImplementationProviderAttempt(
+            runtime,
+            reservation,
+          );
     if (
       reservation === null ||
+      attempt === null ||
       reservation.recordDigest !== input.implementationReservationDigest ||
       reservation.subject.transactionDigest !== transaction.recordDigest ||
-      reservation.subject.sourceTree !== transaction.red.candidateTree ||
-      reservation.assignment.providerId === null ||
-      reservation.assignment.sessionId === null
+      !implementationSubjectSourceCurrent(
+        inspection,
+        transaction,
+        reservation.subject,
+      ) ||
+      attempt.assignment.providerId === null ||
+      attempt.assignment.sessionId === null
     ) {
       throw patchAuthorityStale();
     }
     return Object.freeze({
       implementer: Object.freeze({
-        providerId: reservation.assignment.providerId,
+        providerId: attempt.assignment.providerId,
         assurance: 'adapter-assigned' as const,
       }),
       allowsSameProvider:
-        'grantId' in reservation.assignment &&
-        reservation.assignment.degradedForm === 'same-provider-fresh-session',
+        'grantId' in attempt.assignment &&
+        attempt.assignment.degradedForm === 'same-provider-fresh-session',
+      sourceTree: reservation.subject.sourceTree,
     });
   }
   if ('implementationResultBindingDigest' in input) {
     const reservation = readTaskStrategyImplementationReservation(
       runtime,
       inspection.session.sessionId,
+      input.implementationSubjectDigest,
     );
     const binding = readTaskStrategyImplementationResultBinding(
       runtime,
       inspection.session.sessionId,
+      input.implementationSubjectDigest,
     );
+    const attempt =
+      reservation === null || binding === null
+        ? null
+        : readTaskStrategyImplementationProviderAttempt(
+            runtime,
+            reservation,
+            binding.invocationId,
+          );
+    const currentAttempt =
+      reservation === null
+        ? null
+        : readCurrentTaskStrategyImplementationProviderAttempt(
+            runtime,
+            reservation,
+          );
     if (
       binding === null ||
       reservation === null ||
+      attempt === null ||
+      currentAttempt === null ||
       binding.bindingDigest !== input.implementationResultBindingDigest ||
       reservation.subject.transactionDigest !== transaction.recordDigest ||
-      reservation.subject.sourceTree !== transaction.red.candidateTree ||
+      !implementationSubjectSourceCurrent(
+        inspection,
+        transaction,
+        reservation.subject,
+      ) ||
       binding.subjectDigest !== reservation.subject.subjectDigest ||
       canonicalJson(binding.roleResult.assignment) !==
-        canonicalJson(reservation.assignment) ||
+        canonicalJson(attempt.assignment) ||
+      currentAttempt.request.invocationId !== attempt.request.invocationId ||
       binding.output.sessionId !== inspection.session.sessionId ||
-      binding.output.sourceTree !== transaction.red.candidateTree ||
+      binding.output.sourceTree !== reservation.subject.sourceTree ||
       binding.output.patchDigest !== patchDigest ||
       binding.roleResult.providerInvocation === null ||
       binding.roleResult.assignment.providerId === null ||
@@ -781,20 +1130,35 @@ function resolvePatchImplementer(
         binding.roleResult.form === 'granted-same-provider' &&
         binding.roleResult.grantUse?.degradedForm ===
           'same-provider-fresh-session',
+      sourceTree: reservation.subject.sourceTree,
     });
   }
   if ('callerImplementationBindingDigest' in input) {
     const binding = readTaskStrategyCallerImplementationBinding(
       runtime,
       inspection.session.sessionId,
+      input.implementationSubjectDigest,
+    );
+    const reservation = readTaskStrategyCallerImplementationReservation(
+      runtime,
+      inspection.session.sessionId,
+      input.implementationSubjectDigest,
     );
     const participant = binding?.roleResult.participant;
     const assignment = binding?.roleResult.assignment;
     if (
       binding === null ||
+      reservation === null ||
       binding.bindingDigest !== input.callerImplementationBindingDigest ||
+      binding.subjectDigest !== reservation.subjectDigest ||
+      reservation.subjectDigest !== input.implementationSubjectDigest ||
+      resolveCallerImplementationSubject(
+        inspection,
+        transaction,
+        input.implementationSubjectDigest,
+      ).subjectDigest !== reservation.subjectDigest ||
       binding.output.sessionId !== inspection.session.sessionId ||
-      binding.output.sourceTree !== transaction.red.candidateTree ||
+      binding.output.sourceTree !== reservation.output.sourceTree ||
       binding.output.patchDigest !== patchDigest ||
       binding.roleResult.form !== 'granted-caller-supplied' ||
       participant === undefined ||
@@ -816,6 +1180,7 @@ function resolvePatchImplementer(
         grantId: assignment.grantId,
       }),
       allowsSameProvider: true,
+      sourceTree: reservation.output.sourceTree,
     });
   }
   const actor = resolveActorIdentity({
@@ -834,7 +1199,68 @@ function resolvePatchImplementer(
   return Object.freeze({
     implementer: Object.freeze(actor.actor),
     allowsSameProvider: false,
+    sourceTree: transaction.red.candidateTree,
   });
+}
+
+function resolveCallerImplementationSubject(
+  inspection: SessionInspection,
+  transaction: TaskStrategyTransaction,
+  expectedSubjectDigest: string,
+) {
+  const authority = resolveCurrentTaskStrategyImplementationAuthority(
+    inspection,
+    resolveCurrentTaskStrategyCorrection(inspection),
+  );
+  if (
+    authority.subject.transactionDigest !== transaction.recordDigest ||
+    authority.subject.subjectDigest !== expectedSubjectDigest
+  ) {
+    throw patchAuthorityStale();
+  }
+  return authority.subject;
+}
+
+function implementationSubjectSourceCurrent(
+  inspection: SessionInspection,
+  transaction: TaskStrategyTransaction,
+  subject: NonNullable<
+    ReturnType<typeof readTaskStrategyImplementationReservation>
+  >['subject'],
+): boolean {
+  if (subject.correction === undefined) {
+    return subject.sourceTree === transaction.red.candidateTree;
+  }
+  const runtime = investigationRuntimePaths(
+    inspection.git.gitCommonDirectory,
+    inspection.contract.config.runtimeDirectory,
+  );
+  const projection = resolveCurrentTaskStrategyCorrection(inspection);
+  const expectedRound = subject.correction.round;
+  const failure =
+    projection.failure !== null &&
+    projection.completedCorrectionRounds + 1 === expectedRound
+      ? projection.failure
+      : projection.head !== null &&
+          projection.completedCorrectionRounds === expectedRound &&
+          projection.head.record.sourceTree === subject.sourceTree
+        ? readTaskStrategyGreenFailureRecord(
+            runtime,
+            inspection.session.sessionId,
+            subject.sourceTree,
+          )
+        : null;
+  return (
+    failure !== null &&
+    subject.sourceTree === failure.candidateTree &&
+    subject.correction.greenFailureRecordDigest === failure.recordDigest &&
+    subject.correction.greenFailureSubjectDigest === failure.subjectDigest &&
+    subject.correction.candidateTree === failure.candidateTree &&
+    subject.correction.failingCheckFingerprint ===
+      failure.failingCheck.failureFingerprint &&
+    canonicalJson(subject.correction.currentPatchHead) ===
+      canonicalJson(failure.currentPatchHead)
+  );
 }
 
 function patchAuthorityStale() {
@@ -852,13 +1278,14 @@ function assertPatchRecordCurrent(
   transaction: NonNullable<ReturnType<typeof readTaskStrategyTransaction>>,
   implementer: TaskStrategyPatchImplementer,
   patchBytes: Buffer,
+  expectedSourceTree: string,
 ): void {
   if (
     record.sessionId !== inspection.session.sessionId ||
     record.changeId !== inspection.session.changeId ||
     record.taskId !== inspection.session.taskId ||
     record.strategy !== task.strategy ||
-    record.sourceTree !== transaction.red.candidateTree ||
+    record.sourceTree !== expectedSourceTree ||
     record.candidateTree === record.sourceTree ||
     record.taskContractDigest !== sha256(canonicalJson(task)) ||
     record.patchDigest !== sha256(patchBytes) ||

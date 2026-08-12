@@ -113,12 +113,12 @@ const commands: WorkflowCommandGuidance[] = [
   command({
     id: 'resume',
     usage: [
-      'pnpm workflow resume <session-id> [--actor <provider>] [--grant <grant-id>] [--json]',
+      'pnpm workflow resume <session-id> [--actor <provider>] [--grant <grant-id>] [--input <typed-envelope.json>] [--json]',
     ],
     status: 'preferred',
     purpose: 'Resume the next exact durable implementation-strategy substate.',
     preconditions: [
-      'The active task and any collaboration grant match the current strategy subject.',
+      'The active task and any collaboration grant or typed RED-revision input match the current strategy subject.',
     ],
     consequences: [
       'Seals, schedules, or reconciles only the next persisted strategy transition.',
@@ -166,7 +166,7 @@ const commands: WorkflowCommandGuidance[] = [
   command({
     id: 'review-diff',
     usage: [
-      'pnpm workflow review-diff <session-id> [--actor <provider>] [--grant <grant-id>] [--json]',
+      'pnpm workflow review-diff <session-id> [--actor <provider>] [--grant <grant-id>] [--input <typed-response.json>] [--json]',
       'pnpm workflow review-diff <inspect|status|reconcile> <session-id> [--json]',
     ],
     status: 'preferred',
@@ -375,19 +375,20 @@ function statusNextSteps(
   bindings: WorkflowNextStepBindings,
 ): readonly WorkflowNextStep[] {
   const candidates: WorkflowNextStep[] = [];
-  const strategy = record(result.taskStrategy);
-  if (strategy !== undefined) {
-    return taskStrategyNextSteps(strategy, bindings);
+  const finalize = record(result.finalize);
+  const finalizeRecovery = stringField(finalize, 'recoveryCommand');
+  if (finalizeRecovery !== undefined) {
+    candidates.push(explicitNextStep('finalize-recover', finalizeRecovery));
   }
   const openTask = record(result.openTask);
   const openTaskRecovery = stringField(openTask, 'recoveryCommand');
   if (openTaskRecovery !== undefined) {
     candidates.push(explicitNextStep('open-task', openTaskRecovery));
   }
-  const finalize = record(result.finalize);
-  const finalizeRecovery = stringField(finalize, 'recoveryCommand');
-  if (finalizeRecovery !== undefined) {
-    candidates.push(explicitNextStep('finalize-recover', finalizeRecovery));
+  const strategy = record(result.taskStrategy);
+  if (strategy !== undefined) {
+    candidates.push(...taskStrategyNextSteps(strategy, bindings));
+    return limitNextSteps(candidates);
   }
   const taskRevision = record(result.taskRevision);
   const revisionRetry = stringField(taskRevision, 'retryCommand');
@@ -425,6 +426,7 @@ function taskStrategyNextSteps(
       'reservation-persisted',
       'provider-succeeded-awaiting-import',
       'caller-supplied-awaiting-import',
+      'transformation-required',
     ].includes(state ?? '')
   ) {
     return projectWorkflowNextSteps(['resume', 'status'], bindings);
@@ -432,10 +434,30 @@ function taskStrategyNextSteps(
   if (state === 'waiting-for-provider') {
     return projectWorkflowNextSteps(['status', 'resume'], bindings);
   }
-  if (state === 'collaboration-grant-required' || state === 'provider-failed') {
+  if (state === 'provider-failed') {
+    return projectWorkflowNextSteps(['resume', 'status', 'guide'], bindings);
+  }
+  if (state === 'collaboration-grant-required') {
     return projectWorkflowNextSteps(['status', 'guide'], bindings);
   }
-  if (state === 'patch-imported' || state === 'not-required') {
+  if (state === 'correction-exhausted') {
+    if (bindings.sessionId === undefined) {
+      return projectWorkflowNextSteps(['status', 'guide'], bindings);
+    }
+    return Object.freeze([
+      nextStep('status', bindings),
+      explicitNextStep(
+        'abort',
+        `pnpm workflow abort ${shellQuote(bindings.sessionId)} --reason 'Correction budget exhausted' --json`,
+      ),
+      nextStep('guide', bindings),
+    ]);
+  }
+  if (
+    state === 'patch-imported' ||
+    state === 'transformation-produced' ||
+    state === 'not-required'
+  ) {
     return projectWorkflowNextSteps(['check', 'finalize', 'status'], bindings);
   }
   return projectWorkflowNextSteps(['status'], bindings);

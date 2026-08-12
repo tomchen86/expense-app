@@ -38,6 +38,7 @@ import {
   claimProviderInvocationForWorker,
   claimProviderInvocationForWorkerUnderLifecycleLock,
   completeProviderInvocationFromRunner,
+  completeProviderInvocationFromRunnerUnderLifecycleLock,
   failProviderInvocation,
   prepareProviderInvocationAcceptanceBinding,
   releaseProviderInvocationWorkerFence,
@@ -64,6 +65,7 @@ import {
   type ProviderRetrySchedulePumpOptions,
 } from './provider-retry-scheduler.ts';
 import { runEvidenceRetentionMaintenance } from './retention-control.ts';
+import { withRepositoryLifecycleOperation } from './session-store.ts';
 import {
   recordTaskMandateProviderInvocationUnderLifecycleLock,
   withActiveTaskMandateBinding,
@@ -289,17 +291,36 @@ export function runProviderWorker(
       context.runtime,
       acceptanceBinding,
     );
-    terminal = completeProviderInvocationFromRunner(
-      context.runtime,
-      request.invocationId,
-      {
-        expectedRevision: claim.record.revision,
-        leaseGeneration: claim.record.leaseGeneration,
-        leaseToken: claim.leaseToken,
-        report,
-        acceptanceBinding,
-      },
-    );
+    const completion = {
+      expectedRevision: claim.record.revision,
+      leaseGeneration: claim.record.leaseGeneration,
+      leaseToken: claim.leaseToken,
+      report,
+      acceptanceBinding,
+    };
+    terminal =
+      taskStrategyImplementationOwner === null
+        ? completeProviderInvocationFromRunner(
+            context.runtime,
+            request.invocationId,
+            completion,
+          )
+        : withRepositoryLifecycleOperation(
+            context.lifecycleRuntime,
+            (assertOwned) => {
+              assertTaskStrategyImplementationProviderOwnerCurrent(
+                cwd,
+                request.invocationId,
+              );
+              assertOwned();
+              return completeProviderInvocationFromRunnerUnderLifecycleLock(
+                context.runtime,
+                request.invocationId,
+                completion,
+                assertOwned,
+              );
+            },
+          );
   } catch (error) {
     const failure = classifyProviderFailure(error);
     const repair = extractProviderRepairFailure(error, semantic.schema);

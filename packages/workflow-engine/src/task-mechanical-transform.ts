@@ -356,7 +356,9 @@ function evaluateMechanicalClosure(
   for (const replacement of task.transformationContract.replacementTerms) {
     if (
       !replacementTermHits.some(
-        (hit) => canonicalJson(hit.term) === canonicalJson(replacement),
+        (hit) =>
+          canonicalJson(hit.term) === canonicalJson(replacement) &&
+          LIVE_CLOSURE_CLASSES.has(hit.mutationClass),
       )
     ) {
       throw workflowError(
@@ -481,15 +483,12 @@ function assertDeterministicMechanicalProjection(
 
 function closureEntriesForTask(
   entries: readonly TrackedTreeEntry[],
-  task: MechanicalTransformExecution,
+  _task: MechanicalTransformExecution,
 ): TrackedTreeEntry[] {
-  return entries.filter(
-    (entry) =>
-      entry.path.utf8 !== null &&
-      task.allowedPaths.some((scope) =>
-        matchesAllowedPath(entry.path.utf8!, scope),
-      ),
-  );
+  // Exact closure is observational authority, not mutation authority. Scan
+  // every tracked candidate entry; fileScopes and allowedPaths still bound the
+  // deterministic projection and the bytes the task may change.
+  return [...entries];
 }
 
 function scopedEntriesForTask(

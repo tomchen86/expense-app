@@ -17,7 +17,7 @@ import {
 import { digestRequiredCheckDefinitions } from './contract-digests.ts';
 import {
   pinCheckRunner,
-  runCheck,
+  runObservedCheck,
   type CheckEvidence,
   type CheckEvidenceMetadata,
 } from './check-runner.ts';
@@ -69,6 +69,7 @@ import {
   writeJsonAtomic,
 } from './session-store.ts';
 import { assertTaskStrategyExecutionGate } from './task-strategy-gate.ts';
+import { recordTaskStrategyGreenFailure } from './task-strategy-correction.ts';
 import { ensureTaskMechanicalTransformationEvidence } from './task-mechanical-transform.ts';
 import { assertTaskProjectionSourceDigest } from './task-projection.ts';
 import { loadStableValidatedChangeContract } from './validated-contract-context.ts';
@@ -971,16 +972,14 @@ export function executeChecks(
   const checks: CheckEvidence[] = [];
   let inspection = initial;
   for (const { checkId, definition, runner } of pinnedChecks) {
-    checks.push(
-      runCheck(
-        initial.git.repositoryRoot,
-        checkId,
-        definition,
-        runner,
-        createCheckEnvironment(environment, definition.destructiveDatabase),
-        definition.destructiveDatabase ? databaseEvidence?.identity : undefined,
-        evidenceMetadata[checkId],
-      ),
+    const outcome = runObservedCheck(
+      initial.git.repositoryRoot,
+      checkId,
+      definition,
+      runner,
+      createCheckEnvironment(environment, definition.destructiveDatabase),
+      definition.destructiveDatabase ? databaseEvidence?.identity : undefined,
+      evidenceMetadata[checkId],
     );
     inspection = inspectSession(cwd, initial.session.sessionId, {
       expectedSession: initial.session,
@@ -1002,6 +1001,18 @@ export function executeChecks(
         { details: { checkId } },
       );
     }
+    if (outcome.outcome === 'failed') {
+      recordTaskStrategyGreenFailure(inspection, checks, outcome);
+      throw workflowError(
+        'CHECK_FAILED',
+        `Required check ${checkId} exited non-zero.`,
+        ExitCode.verification,
+        {
+          details: { checkId, exitCode: outcome.exitCode, signal: null },
+        },
+      );
+    }
+    checks.push(outcome);
   }
   return { checks, inspection };
 }

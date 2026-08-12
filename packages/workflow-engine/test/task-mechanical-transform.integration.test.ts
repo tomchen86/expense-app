@@ -252,6 +252,38 @@ test('mechanical closure observes and dispositions retained terms outside mutati
   }
 });
 
+test('mechanical closure scans and dispositions the full tracked tree outside task write authority', () => {
+  const fixture = createMechanicalFixture({
+    files: {
+      'src/features/feature.ts': "export const value = 'OLD_NAME';\n",
+      'docs/research/reference.md': 'Historical OLD_NAME behavior.\n',
+    },
+    allowedPaths: ['src/**'],
+    fileScopes: ['src/features/**'],
+    referencePolicy: true,
+    retainedDispositions: [
+      {
+        term: { kind: 'symbol', value: 'OLD_NAME' },
+        path: 'docs/research/reference.md',
+        mutationClass: 'historical-reference',
+        reason:
+          'The full-tree scan observes this immutable archive outside task write authority.',
+      },
+    ],
+  });
+  try {
+    replaceInFile(fixture.repository, 'src/features/feature.ts');
+    assert.equal(
+      checkSession(fixture.repository, fixture.sessionId, {
+        environment: {},
+      }).passed,
+      true,
+    );
+  } finally {
+    cleanup(fixture.repository);
+  }
+});
+
 test('mechanical transformation closure rejects scope escape before checks run', () => {
   const fixture = createMechanicalFixture({
     files: {
@@ -347,14 +379,15 @@ function createMechanicalFixture(options: MechanicalFixtureOptions): {
     fs.mkdirSync(path.dirname(target), { recursive: true });
     fs.writeFileSync(target, content);
   }
+  const policyPath = path.join(repository, 'workflow/document-policy.json');
+  const policy = JSON.parse(fs.readFileSync(policyPath, 'utf8')) as {
+    documents: Record<string, unknown>;
+  };
+  policy.documents['openspec/changes/**'] = { mode: 'change-artifact' };
   if (options.referencePolicy) {
-    const policyPath = path.join(repository, 'workflow/document-policy.json');
-    const policy = JSON.parse(fs.readFileSync(policyPath, 'utf8')) as {
-      documents: Record<string, unknown>;
-    };
     policy.documents['docs/research/**'] = { mode: 'reference' };
-    fs.writeFileSync(policyPath, `${JSON.stringify(policy, null, 2)}\n`);
   }
+  fs.writeFileSync(policyPath, `${JSON.stringify(policy, null, 2)}\n`);
   git(repository, ['add', '.']);
   git(repository, ['commit', '-m', 'Add mechanical transform baseline']);
   git(repository, ['checkout', '-b', 'work/demo-change']);
@@ -385,7 +418,22 @@ function createMechanicalFixture(options: MechanicalFixtureOptions): {
           replacementTerms: options.replacementTerms ?? [
             { kind: 'symbol', value: 'NEW_NAME' },
           ],
-          retainedDispositions: options.retainedDispositions ?? [],
+          retainedDispositions: [
+            ...(options.retainedDispositions ?? []),
+            ...(
+              options.oldTerms ?? [
+                { kind: 'symbol' as const, value: 'OLD_NAME' },
+              ]
+            )
+              .filter((term) => term.kind !== 'path')
+              .map((term) => ({
+                term,
+                path: 'openspec/changes/demo-change/execution.json',
+                mutationClass: 'immutable' as const,
+                reason:
+                  'The reviewed change artifact records this old term as transformation input authority.',
+              })),
+          ],
           redInapplicableReason:
             'The reviewed literal codemod and exact-byte closure specify this task.',
         },

@@ -8,7 +8,7 @@
     {
       "path": "bootstrap/recovery-runtime/bootstrap/built-in-engine-closure-pin.js",
       "mode": "100644",
-      "digest": "sha256:5ab08b2302105ea94ba896677effb4fed1d57f4c82d689ccc2f865b0a9a905b2"
+      "digest": "sha256:99327a092d9f86124d6424825e3bcfd2603f4b53f730fe23797242c7d11f6d9c"
     },
     {
       "path": "bootstrap/recovery-runtime/src/actor-identity.js",
@@ -39,6 +39,11 @@
       "path": "bootstrap/recovery-runtime/src/canonical-json.js",
       "mode": "100644",
       "digest": "sha256:71eaffbe54dbcf5294f04c39f0bf0eff8a8f30323c43f313f01888f9162df19c"
+    },
+    {
+      "path": "bootstrap/recovery-runtime/src/check-runner.js",
+      "mode": "100644",
+      "digest": "sha256:ab9501a785e3b9e8ac457976c15275b4e7b1e05688f9d187f66a2528ef5a7bd5"
     },
     {
       "path": "bootstrap/recovery-runtime/src/class-disposition.js",
@@ -88,7 +93,7 @@
     {
       "path": "bootstrap/recovery-runtime/src/contracts.js",
       "mode": "100644",
-      "digest": "sha256:f5ba3bb0706a571d80ae33a0f52ce51f399c75bb7c65a55a4128339bbdc2d5ee"
+      "digest": "sha256:e77b8b9c7f334b89952261c88f84c65b99404cac14c557ade42df2ece8e771f4"
     },
     {
       "path": "bootstrap/recovery-runtime/src/control-plane-recovery-grant.js",
@@ -123,7 +128,7 @@
     {
       "path": "bootstrap/recovery-runtime/src/evidence-object-store.js",
       "mode": "100644",
-      "digest": "sha256:02a3f7764dd626f1cbc084e819821cd6de7e45aa02291f23c1f7fc9e44f38463"
+      "digest": "sha256:da314bea1bd994685340a905064cce3c97a19766afd6ffac940ca4b01cc820eb"
     },
     {
       "path": "bootstrap/recovery-runtime/src/evidence-reuse-path.js",
@@ -148,7 +153,7 @@
     {
       "path": "bootstrap/recovery-runtime/src/execution-store.js",
       "mode": "100644",
-      "digest": "sha256:be0fa4cef9cfc1689867052817198d8bbea04cbf6aa32c84639e6bff6a9008d1"
+      "digest": "sha256:8868211bce28964c6131e81bf6d3fc814a591e9718b1becb8f30b6df739e50f1"
     },
     {
       "path": "bootstrap/recovery-runtime/src/filesystem-safety.js",
@@ -271,6 +276,11 @@
       "digest": "sha256:735d9ce1e125088510e4a218b6f80220ddece90f934844208f1aeb759a3bf4aa"
     },
     {
+      "path": "bootstrap/recovery-runtime/src/package-closure.js",
+      "mode": "100644",
+      "digest": "sha256:431a4eca27a3448e129d8fc7805f9c21830adbbaff7e07b5e8c738eb6faf02cb"
+    },
+    {
       "path": "bootstrap/recovery-runtime/src/path-role-registry.js",
       "mode": "100644",
       "digest": "sha256:1092bba8b583b055db21944e60115bb165ae376342dcfddb1349e31f3f417c7b"
@@ -328,7 +338,7 @@
     {
       "path": "bootstrap/recovery-runtime/src/provider-invocation-store.js",
       "mode": "100644",
-      "digest": "sha256:5db8f9b04f2e2c4c05d342e92a98025887fbeebe648c390b6256db355afdf186"
+      "digest": "sha256:b5cf9f59e63e3244920982a12cd29a6c09c1f3c9f62e67c79317b09076616187"
     },
     {
       "path": "bootstrap/recovery-runtime/src/provider-invocation-supersession-schema.js",
@@ -386,6 +396,11 @@
       "digest": "sha256:b33d2183d89216dc9e7ea9877f2c28b6cef6ffba3adbe09d0eb994dd4286e875"
     },
     {
+      "path": "bootstrap/recovery-runtime/src/runner-resolution.js",
+      "mode": "100644",
+      "digest": "sha256:85f8912a4f4d565dd898124496fc399d90118bf94721aee9396524c83d7bd5b3"
+    },
+    {
       "path": "bootstrap/recovery-runtime/src/session-store.js",
       "mode": "100644",
       "digest": "sha256:0435e2027ff57315c77d8c6bbcf2f843538731462ec4c0d6dcf35e0b4953e8e0"
@@ -406,9 +421,14 @@
       "digest": "sha256:cae008126c94470a757d26ea0b7bedeaf5742e768cc853bd6e3aec17eb1df6d1"
     },
     {
+      "path": "bootstrap/recovery-runtime/src/task-strategy-correction-store.js",
+      "mode": "100644",
+      "digest": "sha256:be34a6320e771f1c09ebf72002638fed0c719ab4b2aae3f1e4ea3d12fb4e8955"
+    },
+    {
       "path": "bootstrap/recovery-runtime/src/task-strategy-provider-contract.js",
       "mode": "100644",
-      "digest": "sha256:51b6534bb7589defefd78da42791056396bd1ac43d6705a488fc876e75454db7"
+      "digest": "sha256:6ed2ac7c63da36107b31b15c1906bc81e54af60457331a9e403723a8a6d946b3"
     },
     {
       "path": "bootstrap/recovery-runtime/src/tracked-tree-reader.js",
