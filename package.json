@@ -13,7 +13,8 @@
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
     "workflow": "node --experimental-strip-types packages/workflow-engine/bootstrap/workflow-launcher.ts",
-    "workflow:test": "node --experimental-strip-types --test packages/workflow-engine/test/contracts.test.ts packages/workflow-engine/test/session.integration.test.ts",
+    "workflow:test": "node --experimental-strip-types scripts/workflow-full-gate.ts",
+    "workflow:test:status": "node --experimental-strip-types scripts/workflow-full-gate.ts --status",
     "workflow:typecheck": "tsc -p packages/workflow-engine/tsconfig.json"
   },
   "dependencies": {

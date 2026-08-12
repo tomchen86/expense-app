@@ -673,6 +673,31 @@ Treat a nonzero exit as a stop condition. Correct the underlying input and
 produce fresh evidence; do not bypass hooks, edit reports, or manually perform
 the rejected transition.
 
+## Full-Gate Economy and Progress
+
+Use targeted tests during RED/GREEN iteration. Run the coherent workflow-engine
+gate once with `pnpm workflow:test`; the wrapper preserves the existing two test
+entrypoints and their order while keeping raw stdout/stderr in private files
+under `.git/workflow-engine/full-gate/`. Poll the single latest snapshot with
+`pnpm workflow:test:status` or add `-- --json` for its structured form. Routine
+polling never replays raw test output into chat context.
+
+A successful local receipt is observational only: it cannot authorize a task,
+commit, merge, or archive. Reuse requires the exact projected Git tree,
+generated-artifact digest, Node runtime, command, platform, and working
+directory, plus intact raw-log digests and a passing terminal summary. An empty
+commit with the same tree may reuse that result. A material merge or a
+high-risk lifecycle, security, recovery, or generated-artifact change must run
+again with an explicit reason, for example:
+
+```bash
+pnpm workflow:test -- --reason "material lifecycle merge"
+```
+
+The identity lock rejects parallel gates for the same tree. Three minutes with
+no counter, CPU, or log activity triggers process-tree inspection; it never
+automatically terminates a quiet process.
+
 ## Recovery and Rollback
 
 - If implementation changes after `check`, rerun `check`; old evidence is

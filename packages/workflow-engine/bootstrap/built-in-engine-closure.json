@@ -6,7 +6,7 @@
     {
       "path": "package.json",
       "mode": "100644",
-      "digest": "sha256:6ffde3e3bddce54686752e1596cac53e9849c5d4371f2a8164d26cf32e358717"
+      "digest": "sha256:12d4da2353ac06c50a1985455dee564dacc1c7a52cbbb05b72696f34ef737db3"
     },
     {
       "path": "src/actor-identity.ts",

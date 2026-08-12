@@ -8,7 +8,8 @@
   "scripts": {
     "harness-bootstrap": "node --experimental-strip-types bootstrap/harness-bootstrap-launcher.ts",
     "workflow": "node --experimental-strip-types bootstrap/workflow-launcher.ts",
-    "test": "node --experimental-strip-types --test test/contracts.test.ts test/session.integration.test.ts",
+    "test": "node --experimental-strip-types ../../scripts/workflow-full-gate.ts",
+    "test:status": "node --experimental-strip-types ../../scripts/workflow-full-gate.ts --status",
     "typecheck": "tsc -p tsconfig.json"
   },
   "devDependencies": {
