@@ -16,6 +16,7 @@ import {
   generateOpenSpecPlanningAssets,
   installOpenSpecPlanningPrompts,
 } from '../src/openspec-planning-assets.ts';
+import { workflowCommandGuidance } from '../src/workflow-guidance.ts';
 import {
   installFakeOpenSpec,
   isWorkflowError,
@@ -42,6 +43,13 @@ const PROPOSE_ASSET_PATHS = [
   '.agents/skills/openspec-propose/SKILL.md',
   'workflow/openspec-assets/prompts/opsx-propose.md',
 ];
+const GUIDED_FINALIZE_COMMAND = workflowCommandGuidance('finalize')
+  .usage[0]!.replace('<subject>', '"Imperative subject"')
+  .replace('[--json]', '--json');
+const GUIDED_GUIDE_COMMAND = workflowCommandGuidance('guide').usage[0]!.replace(
+  '[--json]',
+  '--json',
+);
 const EXPECTED_ASSET_METADATA = [
   {
     target: 'codex',
@@ -348,7 +356,8 @@ test('governed propose assets use the investigation-first checkpoint wrapper wit
     for (const required of [
       'pnpm workflow propose <change-id> --intent <intent.json>',
       'pnpm workflow propose <change-id> --resume --input <envelope.json>',
-      'pnpm workflow finalize-task',
+      GUIDED_GUIDE_COMMAND,
+      GUIDED_FINALIZE_COMMAND,
       '`state`',
       '`nextAction`',
       '`inputSchema`',
@@ -1625,8 +1634,8 @@ function assertInvestigationFirstProposeContract(
   for (const command of [
     'pnpm workflow status',
     'pnpm workflow start',
-    'pnpm workflow finalize-task',
-    'pnpm workflow commit',
+    GUIDED_GUIDE_COMMAND,
+    GUIDED_FINALIZE_COMMAND,
   ]) {
     assert.match(
       content,
@@ -1634,6 +1643,16 @@ function assertInvestigationFirstProposeContract(
       message(`missing ${command} handoff`),
     );
   }
+  assert.doesNotMatch(
+    content,
+    /pnpm workflow finalize-task/,
+    message('retains the deprecated finalize-task handoff'),
+  );
+  assert.doesNotMatch(
+    content,
+    /pnpm workflow commit <session-id>/,
+    message('retains a second managed commit command after finalize'),
+  );
   assert.match(content, /projected single-pass/i, message('missing assurance'));
   assert.match(
     content,

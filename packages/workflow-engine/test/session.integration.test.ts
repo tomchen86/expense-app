@@ -72,6 +72,7 @@ import './runner.integration.test.ts';
 import './session-check-invalidation.integration.test.ts';
 import './task-revision-lease.integration.test.ts';
 import './task-mechanical-transform.integration.test.ts';
+import './workflow-guidance.integration.test.ts';
 import './task-strategy-execution.integration.test.ts';
 import {
   activateInvestigationPlanning,
