@@ -294,7 +294,7 @@ test('TaskDiffReview policy requires explicit, behavioral, risky, and unregister
       strategy: 'tdd-single-agent',
       paths: [{ path: 'apps/api/src/feature.ts', role: 'ordinary' }],
     }),
-    { required: true, basis: 'behavioral-strategy', riskPaths: [] },
+    { required: false, basis: 'policy-not-triggered', riskPaths: [] },
   );
   assert.deepEqual(
     taskDiffReviewRequirement({

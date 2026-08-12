@@ -1774,7 +1774,6 @@ function isTransformationContract(
     }),
   );
   if (new Set(oldSurfaceKeys).size !== oldSurfaceKeys.length) return false;
-  const fileScopes = value.fileScopes as string[];
   const retainedDispositions = value.retainedDispositions as unknown[];
   const dispositionKeys = retainedDispositions.map((disposition) => {
     if (!isRecord(disposition)) return null;
@@ -1790,7 +1789,9 @@ function isTransformationContract(
       !isTransformationTerm(disposition.term) ||
       !oldTermKeys.has(canonicalJson(disposition.term)) ||
       dispositionPath !== disposition.path ||
-      !fileScopes.some((scope) => matchesAllowedPath(dispositionPath, scope)) ||
+      !allowedPaths.some((scope) =>
+        matchesAllowedPath(dispositionPath, scope),
+      ) ||
       !['append-only', 'immutable', 'historical-reference'].includes(
         String(disposition.mutationClass),
       ) ||

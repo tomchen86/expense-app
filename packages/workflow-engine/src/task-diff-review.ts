@@ -26,7 +26,7 @@ const TASK_DIFF_REVIEW_POLICY = Object.freeze({
   schemaVersion: 1,
   kind: 'task-diff-review-policy.v1',
   requiredIndependence: 'provider-independent',
-  behavioralStrategies: ['cross-agent-tdd', 'tdd-single-agent'],
+  behavioralStrategies: ['cross-agent-tdd'],
   mechanicallySatisfiedStrategies: ['mechanical-transform', 'direct-reviewed'],
   riskyPathRoles: [
     'control-plane',
@@ -175,10 +175,7 @@ export function taskDiffReviewRequirement(input: {
       riskPaths: [],
     });
   }
-  if (
-    input.strategy === 'cross-agent-tdd' ||
-    input.strategy === 'tdd-single-agent'
-  ) {
+  if (input.strategy === 'cross-agent-tdd') {
     return freezeRequirement({
       required: true,
       basis: 'behavioral-strategy',
