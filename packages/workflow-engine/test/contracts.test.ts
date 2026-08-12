@@ -58,6 +58,8 @@ import './task-diff-review-provider-role.contract.test.ts';
 import './task-diff-review-provider-worker.integration.test.ts';
 import './task-strategy-provider-contract.test.ts';
 import './floor-overflow-pruning.contract.test.ts';
+import './full-gate-progress.contract.test.ts';
+import './full-gate-runner.integration.test.ts';
 import './class-sample-audit.contract.test.ts';
 import './hit-predicate.contract.test.ts';
 import './predicate-discrimination.contract.test.ts';
