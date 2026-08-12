@@ -219,6 +219,11 @@ import {
   parseTaskMandateRequest,
   revokeTaskMandate,
 } from './task-mandate.ts';
+import {
+  WORKFLOW_GUIDANCE_CATALOG,
+  workflowCommandGuidance,
+  workflowGuidanceUsageLines,
+} from './workflow-guidance.ts';
 
 type CommandResult = Record<string, unknown>;
 const STANDALONE_COMMAND_FLAGS = new Set(['--migrate-legacy', '--resume']);
@@ -278,6 +283,13 @@ function dispatch(args: string[], cwd: string): CommandResult {
   const [command, ...rest] = args;
 
   switch (command) {
+    case 'guide':
+      requireArgumentCount(command, rest, 0, 0);
+      return {
+        command,
+        ok: true,
+        guide: WORKFLOW_GUIDANCE_CATALOG,
+      };
     case 'doctor':
       requireArgumentCount(command, rest, 0, 0);
       return doctor(cwd);
@@ -1602,7 +1614,12 @@ function dispatch(args: string[], cwd: string): CommandResult {
     }
     case 'finalize-task':
       requireArgumentCount(command, rest, 1, 1);
-      return { command, ok: true, result: finalizeTask(cwd, rest[0]) };
+      return {
+        command,
+        ok: true,
+        deprecation: workflowCommandGuidance(command).deprecation,
+        result: finalizeTask(cwd, rest[0]),
+      };
     case 'rollback-completion': {
       const sessionId = rest[0];
       const reason = optionValue(rest.slice(1), '--reason');
@@ -2562,7 +2579,6 @@ function usageText(): string {
     '  pnpm workflow propose <change-id> --intent <intent.json> --mandate <mandate-task-id> [--actor <id>] [--grant <grant-id>] [--migrate-legacy] [--json]',
     '  pnpm workflow propose <change-id> --resume --input <envelope.json> [--grant <grant-id>] [--json]',
     '  pnpm workflow plan-commit <change-id> [--json]',
-    '  pnpm workflow open-task <change-id> --task <task-id> --mandate <mandate-task-id> [--json]',
     '  pnpm workflow amend-plan --change <change-id> --reason <code> --execution-impact <none|required> [--json]',
     '  pnpm workflow archive <change-id> [--json]',
     '  pnpm workflow openspec-assets <generate|check|install-prompts --codex-home <path>> [--json]',
@@ -2607,11 +2623,6 @@ function usageText(): string {
     '  pnpm workflow control-plane status <grant-id> [--json]',
     '  pnpm workflow audit show <task-id> --audit-root <absolute-external-path> [--json]',
     '  pnpm workflow audit verify <repository-id> --audit-root <absolute-external-path> [--json]',
-    '  pnpm workflow start <change-id> --task <task-id> --mandate <mandate-task-id> [--json]',
-    '  pnpm workflow revise-task <session-id> --reason <text> [--json]',
-    '  pnpm workflow resume-task <session-id> [--approval <approval-id>] [--json]',
-    '  pnpm workflow status [investigation-or-task-id] [--json]',
-    '  pnpm workflow check <session-id> [--json]',
     '  pnpm workflow run-check <check-id> [--json]',
     '  pnpm workflow ci --base <commit> --head <commit> [--json]',
     '  pnpm workflow adapter evaluate [--json]',
@@ -2643,16 +2654,7 @@ function usageText(): string {
     '  pnpm workflow document-refresh <propose|show|review|apply> ... [--json]',
     '  pnpm workflow handoff validate [--json]',
     '  pnpm workflow hook <pre-commit|commit-msg|pre-push|post-merge> ... [--json]',
-    '  pnpm workflow complete-task <session-id> [--json]',
-    '  pnpm workflow finish <session-id> [--json]',
-    '  pnpm workflow finalize <session-id> --message <subject> [--json]',
-    '  pnpm workflow finalize-recover <session-id> [--cancel <transaction-id> --reason <text>] [--json]',
-    '  pnpm workflow review-diff <session-id> [--actor <provider>] [--grant <grant-id>] [--json]',
-    '  pnpm workflow review-diff <inspect|status|reconcile> <session-id> [--json]',
-    '  pnpm workflow finalize-task <session-id> [--json]',
-    '  pnpm workflow rollback-completion <session-id> --reason <text> [--json]',
-    '  pnpm workflow commit <session-id> --message <subject> [--json]',
-    '  pnpm workflow abort <session-id> --reason <text> [--json]',
+    ...workflowGuidanceUsageLines().map((line) => `  ${line}`),
   ].join('\n');
 }
 

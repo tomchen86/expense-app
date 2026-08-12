@@ -216,7 +216,7 @@
     {
       "path": "src/cli.ts",
       "mode": "100644",
-      "digest": "sha256:b12fd1d17f6f0f1e154e8b5f63475733418a5955fb9e605edfb1926203634d2b"
+      "digest": "sha256:7db5ed715c264badbf43226293c975b91297144f6e586fd74f1d20ff788c36eb"
     },
     {
       "path": "src/codex-provider-adapter.ts",
@@ -741,7 +741,7 @@
     {
       "path": "src/openspec-planning-asset-contract.ts",
       "mode": "100644",
-      "digest": "sha256:203ea5df1847f6c1fb7d770afbec243796fbec9d9560851a1461b4b5821289da"
+      "digest": "sha256:9432dddb198afa3ea4c02765461bd210d36fcfa65baf2f33be8f7d59d5ee97ab"
     },
     {
       "path": "src/openspec-planning-assets.ts",
@@ -1182,6 +1182,11 @@
       "path": "src/verification.ts",
       "mode": "100644",
       "digest": "sha256:ac3e9bb58e2e47a11897108c1f3949492989d8e744df505958627f32965eb388"
+    },
+    {
+      "path": "src/workflow-guidance.ts",
+      "mode": "100644",
+      "digest": "sha256:58265bf217a643eeb911271469b29b304c1a35e9c520632598741b11e0e4ef15"
     }
   ]
 }

@@ -45,14 +45,14 @@ The wrapper gathers evidence, obtains exact PlanReview, materializes the governe
    pnpm workflow start <change-id> --task <task-id> --json
    ```
 
-6. During implementation, the optional projected single-pass path is:
+6. During implementation, inspect the versioned advisory command catalog and use its preferred projected single-pass path:
 
    ```bash
-   pnpm workflow finalize-task <session-id> --json
-   pnpm workflow commit <session-id> --message "Imperative subject" --json
+   pnpm workflow guide --json
+   pnpm workflow finalize <session-id> --message "Imperative subject" --json
    ```
 
-   It checks the implementation + checkbox + handoff prospective tree once and stages only that identical checked tree. Only a caught ordinary failure receives exact projection rollback. Commit remains separate and must not rerun required checks. The legacy `check` → `complete-task` → `finish` → `commit` sequence remains supported.
+   The preferred transaction checks the implementation + checkbox + handoff prospective tree once, stages only that identical checked tree, and creates its managed commit without rerunning required checks. Only a caught ordinary failure receives exact projection rollback. Deprecated and compatible surfaces remain discoverable through the same catalog. New callers do not compose a separate finalize-task and commit path.
 
 ## Applicability and assurance boundaries
 

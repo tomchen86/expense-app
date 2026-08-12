@@ -9,12 +9,21 @@ import {
   ensurePlainDirectory,
 } from './filesystem-safety.ts';
 import { PINNED_OPENSPEC_VERSION } from './openspec-executor.ts';
+import { workflowCommandGuidance } from './workflow-guidance.ts';
 
 export const OPENSPEC_ASSET_MANIFEST_PATH =
   'workflow/openspec-assets/manifest.json';
 
 const OVERLAY_VERSION = 3;
 const FORMATTER_RUNNER = 'node-package-bin:.:prettier/prettier' as const;
+const GUIDED_WORKFLOW_GUIDE_COMMAND = workflowCommandGuidance(
+  'guide',
+).usage[0]!.replace('[--json]', '--json');
+const GUIDED_FINALIZE_COMMAND = workflowCommandGuidance('finalize')
+  .usage[0]!.replace('<subject>', '"Imperative subject"')
+  .replace('[--json]', '--json');
+const DEPRECATED_FINALIZE_TASK_COMMAND =
+  workflowCommandGuidance('finalize-task').usage[0]!;
 const OVERLAY_POLICY = [
   'planning-only',
   'pnpm-exec-openspec',
@@ -495,14 +504,14 @@ function investigationFirstProposeAsset(source: string): string {
     '   pnpm workflow start <change-id> --task <task-id> --json',
     '   ```',
     '',
-    '6. During implementation, the optional projected single-pass path is:',
+    '6. During implementation, inspect the versioned advisory command catalog and use its preferred projected single-pass path:',
     '',
     '   ```bash',
-    '   pnpm workflow finalize-task <session-id> --json',
-    '   pnpm workflow commit <session-id> --message "Imperative subject" --json',
+    `   ${GUIDED_WORKFLOW_GUIDE_COMMAND}`,
+    `   ${GUIDED_FINALIZE_COMMAND}`,
     '   ```',
     '',
-    '   It checks the implementation + checkbox + handoff prospective tree once and stages only that identical checked tree. Only a caught ordinary failure receives exact projection rollback. Commit remains separate and must not rerun required checks. The legacy `check` → `complete-task` → `finish` → `commit` sequence remains supported.',
+    '   The preferred transaction checks the implementation + checkbox + handoff prospective tree once, stages only that identical checked tree, and creates its managed commit without rerunning required checks. Only a caught ordinary failure receives exact projection rollback. Deprecated and compatible surfaces remain discoverable through the same catalog. New callers do not compose a separate finalize-task and commit path.',
     '',
     '## Applicability and assurance boundaries',
     '',
@@ -582,8 +591,8 @@ export function verifyOpenSpecPlanningAssetContent(
     'pnpm workflow propose <change-id> --resume --input <envelope.json>',
     'pnpm workflow status',
     'pnpm workflow start',
-    'pnpm workflow finalize-task',
-    'pnpm workflow commit',
+    GUIDED_WORKFLOW_GUIDE_COMMAND,
+    GUIDED_FINALIZE_COMMAND,
   ];
   const requiredSurface =
     workflow === 'propose'
@@ -599,6 +608,7 @@ export function verifyOpenSpecPlanningAssetContent(
         content.includes('`renamePairs`') &&
         content.includes('`from`') &&
         content.includes('`to`') &&
+        !content.includes(DEPRECATED_FINALIZE_TASK_COMMAND) &&
         !/(?:all artifacts generated|generate all artifacts in one step|generated? in one step)/i.test(
           content,
         ) &&

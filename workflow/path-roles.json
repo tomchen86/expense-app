@@ -192,7 +192,8 @@
       "packages/workflow-engine/src/planning-paths.ts",
       "packages/workflow-engine/src/semantic-ledger-projection.ts",
       "packages/workflow-engine/src/task-diff-review-artifact.ts",
-      "packages/workflow-engine/src/task-diff-review.ts"
+      "packages/workflow-engine/src/task-diff-review.ts",
+      "packages/workflow-engine/src/workflow-guidance.ts"
     ],
     "ordinary": [
       "apps/**",
