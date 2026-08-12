@@ -829,7 +829,7 @@ test('resume rejects approval signature failure and unsafe record publication', 
 });
 
 test('task-revision approval CLI reaches the controlling-terminal boundary without publishing authority', () => {
-  const fixture = approvedWideningFixture();
+  const fixture = approvedWideningFixture(new Date());
   const { repository, session, binding, approval } = fixture;
   try {
     const approvalDirectory = path.dirname(approval.recordPath);
@@ -1120,7 +1120,7 @@ function installRevisionApprovalPolicy(repository: string): void {
   );
 }
 
-function approvedWideningFixture() {
+function approvedWideningFixture(startedAt = STARTED_AT) {
   const repository = createFixtureRepository();
   git(repository, ['checkout', '-b', 'work/demo-change']);
   installRevisionApprovalPolicy(repository);
@@ -1134,14 +1134,14 @@ function approvedWideningFixture() {
     'export const value = 1;\n',
   );
   reviseTask(repository, session.sessionId, 'widen-task-scope', {
-    now: () => STARTED_AT,
+    now: () => startedAt,
   });
   writeTaskAllowedPaths(repository, ['docs/**', 'src/**']);
   writeReadyV2ExemptChange(repository);
   const binding = prepareTaskRevisionApprovalBinding(
     repository,
     session.sessionId,
-    { now: () => new Date('2026-08-11T01:03:00.000Z') },
+    { now: () => new Date(startedAt.getTime() + 3 * 60_000) },
   );
   const signer = revisionApprovalSigner();
   const approval = issueTaskRevisionApproval(
@@ -1152,7 +1152,7 @@ function approvedWideningFixture() {
       rationale: 'Approve this exact reviewed task-scope widening.',
     },
     {
-      now: new Date('2026-08-11T01:04:00.000Z'),
+      now: new Date(startedAt.getTime() + 4 * 60_000),
       signer,
     },
   );

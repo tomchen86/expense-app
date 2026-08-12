@@ -118,6 +118,8 @@ test('review-diff inspect derives one exact checked candidate subject without re
       },
     );
 
+    const observationBeforeInspection =
+      snapshotRepositoryObservation(repository);
     const inspected = runCli(repository, [
       'review-diff',
       'inspect',
@@ -125,9 +127,37 @@ test('review-diff inspect derives one exact checked candidate subject without re
       '--json',
     ]);
     assert.equal(inspected.status, 0, inspected.stderr);
+    const inspectedOutput = JSON.parse(inspected.stdout) as {
+      result: unknown;
+      nextSteps: Array<{ command: string; why: string }>;
+    };
+    assert.deepEqual(inspectedOutput.result, first);
+    const expectedNextSteps = [
+      `pnpm workflow review-diff ${session.sessionId} --json`,
+      `pnpm workflow status ${session.sessionId} --json`,
+    ];
     assert.deepEqual(
-      (JSON.parse(inspected.stdout) as { result: unknown }).result,
-      first,
+      inspectedOutput.nextSteps.map(({ command }) => command),
+      expectedNextSteps,
+    );
+    const status = runCli(repository, [
+      'review-diff',
+      'status',
+      session.sessionId,
+      '--json',
+    ]);
+    assert.equal(status.status, 0, status.stderr);
+    assert.deepEqual(
+      (
+        JSON.parse(status.stdout) as {
+          nextSteps: Array<{ command: string; why: string }>;
+        }
+      ).nextSteps.map(({ command }) => command),
+      expectedNextSteps,
+    );
+    assert.deepEqual(
+      snapshotRepositoryObservation(repository),
+      observationBeforeInspection,
     );
     assert.equal(fs.readFileSync(counterPath, 'utf8'), '1');
 
@@ -1834,6 +1864,30 @@ function runCli(
       env: { ...process.env, ...environment },
     },
   );
+}
+
+function snapshotRepositoryObservation(repository: string): {
+  status: string;
+  runtime: Array<readonly [string, string]>;
+} {
+  const root = runtimeRoot(repository);
+  return {
+    status: git(repository, ['status', '--porcelain=v2', '-z']),
+    runtime: fs
+      .readdirSync(root, { recursive: true, encoding: 'utf8' })
+      .map(String)
+      .sort()
+      .filter((relativePath) =>
+        fs.lstatSync(path.join(root, relativePath)).isFile(),
+      )
+      .map(
+        (relativePath) =>
+          [
+            relativePath,
+            fs.readFileSync(path.join(root, relativePath), 'hex'),
+          ] as const,
+      ),
+  };
 }
 
 function hasCode(code: string): (error: unknown) => boolean {

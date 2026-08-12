@@ -223,6 +223,7 @@ import {
   WORKFLOW_GUIDANCE_CATALOG,
   workflowCommandGuidance,
   workflowGuidanceUsageLines,
+  workflowResultNextSteps,
 } from './workflow-guidance.ts';
 
 type CommandResult = Record<string, unknown>;
@@ -243,7 +244,12 @@ export function runCli(argv: string[], cwd = process.cwd()): number {
 
   try {
     const result = dispatch(args, cwd);
-    printSuccess(result, json);
+    printSuccess(
+      json
+        ? { ...result, nextSteps: workflowResultNextSteps(result, args) }
+        : result,
+      json,
+    );
     return 0;
   } catch (error) {
     const workflowFailure =
