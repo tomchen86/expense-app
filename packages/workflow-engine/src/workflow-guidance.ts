@@ -27,6 +27,18 @@ export type WorkflowGuidanceCatalog = Readonly<{
   commands: readonly WorkflowCommandGuidance[];
 }>;
 
+export type WorkflowNextStep = Readonly<{
+  command: string;
+  why: string;
+}>;
+
+export type WorkflowNextStepBindings = Readonly<{
+  sessionId?: string;
+  changeId?: string;
+  taskId?: string;
+  investigationOrTaskId?: string;
+}>;
+
 const FINALIZE_REPLACEMENT =
   'pnpm workflow finalize <session-id> --message <subject> [--json]';
 
@@ -35,7 +47,7 @@ const commands: WorkflowCommandGuidance[] = [
     id: 'guide',
     usage: ['pnpm workflow guide [--json]'],
     status: 'read-only',
-    purpose: 'Inspect the complete versioned workflow command guide.',
+    purpose: 'Inspect the versioned managed-task workflow command guide.',
     preconditions: [],
     consequences: ['Reads command guidance without changing repository state.'],
     successors: [],
@@ -263,6 +275,214 @@ export function workflowCommandGuidance(id: string): WorkflowCommandGuidance {
 
 export function workflowGuidanceUsageLines(): readonly string[] {
   return WORKFLOW_GUIDANCE_CATALOG.commands.flatMap(({ usage }) => usage);
+}
+
+export function projectWorkflowNextSteps(
+  requestedCommandIds: readonly string[],
+  bindings: WorkflowNextStepBindings = {},
+): readonly WorkflowNextStep[] {
+  const commandIds = requestedCommandIds.filter(
+    (id, index) => requestedCommandIds.indexOf(id) === index,
+  );
+  return limitNextSteps(commandIds.map((id) => nextStep(id, bindings)));
+}
+
+export function workflowResultNextSteps(
+  result: Readonly<Record<string, unknown>>,
+  invocation: readonly string[] = [],
+): readonly WorkflowNextStep[] {
+  const commandId = typeof result.command === 'string' ? result.command : null;
+  if (commandId === 'guide') return Object.freeze([]);
+  const bindings = resultBindings(result, invocation);
+  if (commandId === 'status') return statusNextSteps(result, bindings);
+  if (commandId === 'review-diff') {
+    return taskDiffReviewNextSteps(result, bindings);
+  }
+  const entry =
+    commandId === null
+      ? null
+      : (WORKFLOW_GUIDANCE_CATALOG.commands.find(
+          ({ id }) => id === commandId,
+        ) ?? null);
+  return projectWorkflowNextSteps(
+    entry !== null && entry.successors.length > 0
+      ? entry.successors
+      : ['guide'],
+    bindings,
+  );
+}
+
+function statusNextSteps(
+  result: Readonly<Record<string, unknown>>,
+  bindings: WorkflowNextStepBindings,
+): readonly WorkflowNextStep[] {
+  const candidates: WorkflowNextStep[] = [];
+  const openTask = record(result.openTask);
+  const openTaskRecovery = stringField(openTask, 'recoveryCommand');
+  if (openTaskRecovery !== undefined) {
+    candidates.push(explicitNextStep('open-task', openTaskRecovery));
+  }
+  const finalize = record(result.finalize);
+  const finalizeRecovery = stringField(finalize, 'recoveryCommand');
+  if (finalizeRecovery !== undefined) {
+    candidates.push(explicitNextStep('finalize-recover', finalizeRecovery));
+  }
+  const taskRevision = record(result.taskRevision);
+  const revisionRetry = stringField(taskRevision, 'retryCommand');
+  if (taskRevision?.retrySafe === true && revisionRetry !== undefined) {
+    candidates.push(explicitNextStep('resume-task', revisionRetry));
+  }
+  const session = record(result.session);
+  if (session?.state === 'active') {
+    candidates.push(
+      ...projectWorkflowNextSteps(
+        ['check', 'review-diff', 'finalize'],
+        bindings,
+      ),
+    );
+  } else if (session?.state === 'revising') {
+    candidates.push(
+      ...projectWorkflowNextSteps(['resume-task', 'status'], bindings),
+    );
+  }
+  return limitNextSteps(
+    candidates.length > 0 ? candidates : [nextStep('guide', bindings)],
+  );
+}
+
+function taskDiffReviewNextSteps(
+  result: Readonly<Record<string, unknown>>,
+  bindings: WorkflowNextStepBindings,
+): readonly WorkflowNextStep[] {
+  const reviewResult = record(result.result);
+  const subject = record(reviewResult?.subject);
+  const requirement =
+    record(reviewResult?.reviewRequirement) ??
+    record(subject?.reviewRequirement);
+  const satisfied =
+    reviewResult?.state === 'satisfied' ||
+    reviewResult?.state === 'not-required' ||
+    requirement?.required === false;
+  return projectWorkflowNextSteps(
+    satisfied ? ['finalize', 'status'] : ['review-diff', 'status'],
+    bindings,
+  );
+}
+
+function limitNextSteps(
+  candidates: readonly WorkflowNextStep[],
+): readonly WorkflowNextStep[] {
+  const unique = candidates.filter(
+    ({ command }, index) =>
+      candidates.findIndex((candidate) => candidate.command === command) ===
+      index,
+  );
+  if (unique.length <= 3) return Object.freeze(unique);
+  return Object.freeze([unique[0]!, unique[1]!, nextStep('guide', {})]);
+}
+
+function explicitNextStep(
+  commandId: string,
+  renderedCommand: string,
+): WorkflowNextStep {
+  return Object.freeze({
+    command: renderedCommand,
+    why: workflowCommandGuidance(commandId).purpose,
+  });
+}
+
+function nextStep(
+  commandId: string,
+  bindings: WorkflowNextStepBindings,
+): WorkflowNextStep {
+  const guidance = workflowCommandGuidance(commandId);
+  let rendered = guidance.usage[0]!;
+  const replacements: ReadonlyArray<readonly [string, string | undefined]> = [
+    ['<session-id>', bindings.sessionId],
+    ['<change-id>', bindings.changeId],
+    ['<task-id>', bindings.taskId],
+    [
+      '<investigation-or-task-id>',
+      bindings.investigationOrTaskId ?? bindings.sessionId,
+    ],
+    [
+      '[investigation-or-task-id]',
+      bindings.investigationOrTaskId ?? bindings.sessionId,
+    ],
+  ];
+  for (const [placeholder, value] of replacements) {
+    if (value !== undefined) rendered = rendered.replaceAll(placeholder, value);
+  }
+  rendered = rendered
+    .replaceAll('[--json]', '--json')
+    .replaceAll(/\s+\[[^\]]+\]/g, '')
+    .replaceAll(/\s+/g, ' ')
+    .trim();
+  return Object.freeze({ command: rendered, why: guidance.purpose });
+}
+
+function resultBindings(
+  result: Readonly<Record<string, unknown>>,
+  invocation: readonly string[],
+): WorkflowNextStepBindings {
+  const nestedResult = record(result.result);
+  const candidates = [
+    result,
+    nestedResult,
+    record(result.session),
+    record(result.openTask),
+    record(nestedResult?.session),
+    record(nestedResult?.subject),
+  ].filter((candidate): candidate is Readonly<Record<string, unknown>> =>
+    Boolean(candidate),
+  );
+  const sessionId =
+    firstString(candidates, 'sessionId') ?? sessionIdFromInvocation(invocation);
+  const changeId = firstString(candidates, 'changeId');
+  const taskId = firstString(candidates, 'taskId');
+  const investigationId = firstString(candidates, 'investigationId');
+  return Object.freeze({
+    ...(sessionId === undefined ? {} : { sessionId }),
+    ...(changeId === undefined ? {} : { changeId }),
+    ...(taskId === undefined ? {} : { taskId }),
+    ...(sessionId === undefined && investigationId === undefined
+      ? {}
+      : { investigationOrTaskId: sessionId ?? investigationId }),
+  });
+}
+
+function sessionIdFromInvocation(
+  invocation: readonly string[],
+): string | undefined {
+  if (invocation[0] !== 'review-diff') return undefined;
+  return ['inspect', 'status', 'reconcile'].includes(invocation[1] ?? '')
+    ? invocation[2]
+    : invocation[1];
+}
+
+function firstString(
+  candidates: readonly Readonly<Record<string, unknown>>[],
+  key: string,
+): string | undefined {
+  for (const candidate of candidates) {
+    const value = candidate[key];
+    if (typeof value === 'string' && value.length > 0) return value;
+  }
+  return undefined;
+}
+
+function stringField(
+  candidate: Readonly<Record<string, unknown>> | undefined,
+  key: string,
+): string | undefined {
+  const value = candidate?.[key];
+  return typeof value === 'string' && value.length > 0 ? value : undefined;
+}
+
+function record(value: unknown): Readonly<Record<string, unknown>> | undefined {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+    ? (value as Readonly<Record<string, unknown>>)
+    : undefined;
 }
 
 function command(value: WorkflowCommandGuidance): WorkflowCommandGuidance {
