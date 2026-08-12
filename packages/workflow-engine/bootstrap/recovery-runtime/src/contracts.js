@@ -1067,7 +1067,6 @@ function isTransformationContract(value, allowedPaths) {
     }));
     if (new Set(oldSurfaceKeys).size !== oldSurfaceKeys.length)
         return false;
-    const fileScopes = value.fileScopes;
     const retainedDispositions = value.retainedDispositions;
     const dispositionKeys = retainedDispositions.map((disposition) => {
         if (!isRecord(disposition))
@@ -1085,7 +1084,7 @@ function isTransformationContract(value, allowedPaths) {
             !isTransformationTerm(disposition.term) ||
             !oldTermKeys.has(canonicalJson(disposition.term)) ||
             dispositionPath !== disposition.path ||
-            !fileScopes.some((scope) => matchesAllowedPath(dispositionPath, scope)) ||
+            !allowedPaths.some((scope) => matchesAllowedPath(dispositionPath, scope)) ||
             !['append-only', 'immutable', 'historical-reference'].includes(String(disposition.mutationClass)) ||
             !isSemanticText(disposition.reason)) {
             return null;

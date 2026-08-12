@@ -216,7 +216,7 @@
     {
       "path": "src/cli.ts",
       "mode": "100644",
-      "digest": "sha256:a7ab7a242ff677fc4a8d2d2a1f337859736699e908c7a2eaf7eafa2ab1600149"
+      "digest": "sha256:02c10b1f68eb4e732504723c38cd86aa42ec6c4b5b1c49ffb537cec804ee2c32"
     },
     {
       "path": "src/codex-provider-adapter.ts",
@@ -271,7 +271,7 @@
     {
       "path": "src/contracts.ts",
       "mode": "100644",
-      "digest": "sha256:4de47affe31c0b20b765fefaabcaab37087fa0d4bd068eb37b3386e390437c1c"
+      "digest": "sha256:82d0d8ae2c19838ea20c36b83b75ab1770f87ecf646f38056cd1200fb475f322"
     },
     {
       "path": "src/control-plane-promotion-producer.ts",
@@ -1086,7 +1086,7 @@
     {
       "path": "src/task-diff-review-lifecycle.ts",
       "mode": "100644",
-      "digest": "sha256:43f1ff05d48082a70f845304f256fbd407cdfce00e017fd7276fa96917bee62a"
+      "digest": "sha256:16310d77221f5a6a0abf67872d06b688391844c892c6befe8eb08b4571277661"
     },
     {
       "path": "src/task-diff-review-store.ts",
@@ -1096,7 +1096,7 @@
     {
       "path": "src/task-diff-review.ts",
       "mode": "100644",
-      "digest": "sha256:276a07c1cd8980b199e18d55151a858172b2487c24e51762fc313a557c227020"
+      "digest": "sha256:7b32376746498ce3a5fca6a90883362d482a22607e08098842c55bec96b5ad78"
     },
     {
       "path": "src/task-execution-evidence.ts",
@@ -1111,7 +1111,7 @@
     {
       "path": "src/task-mechanical-transform.ts",
       "mode": "100644",
-      "digest": "sha256:4a7a4f75c0ae14b8d986bd473cd99a3bb4940417e9a6afda6748d89645b6aa25"
+      "digest": "sha256:23cabfefc054c8e2896422197c9568e1a7f0c250670d38ec4f9316768aafa1b6"
     },
     {
       "path": "src/task-projection.ts",
@@ -1136,12 +1136,17 @@
     {
       "path": "src/task-strategy-gate.ts",
       "mode": "100644",
-      "digest": "sha256:001736b9a85bf1b583c5c76a3d38f2729deda7e34c092ac9200c46513008f71c"
+      "digest": "sha256:11265048da3c67233242223943dfe7822aa69c31c7ba22287110e416a9bfe1ef"
     },
     {
       "path": "src/task-strategy-implementation-lifecycle.ts",
       "mode": "100644",
       "digest": "sha256:f46a26add4fdc8e38f2c4e77786d27425f6d835f645e71302e5f5a944530ead0"
+    },
+    {
+      "path": "src/task-strategy-lifecycle.ts",
+      "mode": "100644",
+      "digest": "sha256:c9714eac5ae949b9792ff64ac06ac13a4992a34932fbc41532441a8354b9f1cd"
     },
     {
       "path": "src/task-strategy-patch-store.ts",
@@ -1151,7 +1156,7 @@
     {
       "path": "src/task-strategy-patch.ts",
       "mode": "100644",
-      "digest": "sha256:262c435ca61b99590b1c20aa35ce8b0480098c517be6687422e9570b89449023"
+      "digest": "sha256:b8c1dcfac440b8285c56cf2970b0ccd759a1d0b75fb80108c52c4d2fe2b5739a"
     },
     {
       "path": "src/task-strategy-provider-contract.ts",
@@ -1186,7 +1191,7 @@
     {
       "path": "src/workflow-guidance.ts",
       "mode": "100644",
-      "digest": "sha256:39e7ccd85bc3b3c260dbd073a2efd5fdadbe92ed314c0f24ace7cd56a2f3ee5b"
+      "digest": "sha256:a3b25abe81f61f495e8ff2925cdb6276117938e919ba25bdd1f40ef2da1bbddf"
     }
   ]
 }
