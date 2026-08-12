@@ -212,6 +212,9 @@ export function assertTaskStrategyExecutionGate(
     binding.createdAt !== receipt.importedAt ||
     preview.tree !== record.candidateTree ||
     (record.implementer.providerId === null && !callerDegradationCurrent) ||
+    (task.strategy === 'tdd-single-agent' &&
+      canonicalJson(record.implementer) !==
+        canonicalJson(transaction.author)) ||
     (task.strategy === 'cross-agent-tdd' &&
       record.implementer.providerId === transaction.author.providerId &&
       !sameProviderDegradationCurrent)
