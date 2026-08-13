@@ -87,4 +87,38 @@ describe('Participant Entity (sql.js)', () => {
       ),
     ).rejects.toThrow();
   });
+
+  it('enforces active participant email uniqueness and permits reuse after deletion', async () => {
+    const owner = await createUser('participant-email-owner@example.com');
+    const couple = await createCouple(owner.id);
+    const original = await participants.save(
+      participants.create({
+        coupleId: couple.id,
+        displayName: 'Original Friend',
+        email: 'friend@example.com',
+      }),
+    );
+
+    await expect(
+      participants.save(
+        participants.create({
+          coupleId: couple.id,
+          displayName: 'Duplicate Friend',
+          email: 'friend@example.com',
+        }),
+      ),
+    ).rejects.toThrow();
+
+    await participants.softRemove(original);
+
+    await expect(
+      participants.save(
+        participants.create({
+          coupleId: couple.id,
+          displayName: 'Replacement Friend',
+          email: 'friend@example.com',
+        }),
+      ),
+    ).resolves.toMatchObject({ displayName: 'Replacement Friend' });
+  });
 });

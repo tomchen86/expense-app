@@ -10,6 +10,7 @@ import {
 } from '../dto/participant.dto';
 import {
   ApiBadRequestException,
+  ApiForbiddenException,
   ApiNotFoundException,
 } from '../common/api-error';
 import { LedgerService } from './ledger.service';
@@ -37,10 +38,15 @@ export class GroupService {
     private readonly participantService: ParticipantService,
   ) {}
 
-  async listGroupsForUser(userId: string): Promise<GroupResponse[]> {
-    const { coupleId } = await this.ledgerService.ensureLedgerForUser(userId, {
-      ensureParticipant: true,
-    });
+  async listGroupsForUser(
+    userId: string,
+    spaceId?: string,
+  ): Promise<GroupResponse[]> {
+    const { coupleId } = await this.ledgerService.resolveSpaceForUser(
+      userId,
+      spaceId,
+      { ensureParticipant: true },
+    );
 
     const groups = await this.groupRepository
       .createQueryBuilder('group')
@@ -59,9 +65,10 @@ export class GroupService {
   async createGroupForUser(
     userId: string,
     payload: CreateGroupDto,
+    spaceId?: string,
   ): Promise<GroupResponse> {
     const { coupleId, participantId: selfParticipantId } =
-      await this.ledgerService.ensureLedgerForUser(userId, {
+      await this.ledgerService.resolveSpaceForUser(userId, spaceId, {
         ensureParticipant: true,
       });
 
@@ -114,6 +121,7 @@ export class GroupService {
     const membershipEntities = participants.map((participant) => {
       const membership = this.groupMemberRepository.create();
       membership.groupId = savedGroup.id;
+      membership.coupleId = coupleId;
       membership.participantId = participant.id;
       membership.role =
         participant.id === selfParticipantId ? 'owner' : 'member';
@@ -134,9 +142,10 @@ export class GroupService {
     userId: string,
     groupId: string,
     payload: UpdateGroupDto,
+    spaceId?: string,
   ): Promise<GroupResponse> {
     const { coupleId, participantId: selfParticipantId } =
-      await this.ledgerService.ensureLedgerForUser(userId, {
+      await this.ledgerService.resolveSpaceForUser(userId, spaceId, {
         ensureParticipant: true,
       });
 
@@ -154,6 +163,8 @@ export class GroupService {
     if (!group || group.deletedAt) {
       throw new ApiNotFoundException('GROUP_NOT_FOUND', 'Group not found');
     }
+
+    await this.assertGroupOwner(group.id, selfParticipantId);
 
     if (payload.name) {
       const normalizedName = payload.name.trim();
@@ -208,7 +219,12 @@ export class GroupService {
           participantIds,
         );
 
-      await this.syncGroupMembers(group.id, participants, selfParticipantId);
+      await this.syncGroupMembers(
+        coupleId,
+        group.id,
+        participants,
+        selfParticipantId,
+      );
 
       participantResponses = participants.map((participant) =>
         this.participantService.mapParticipantEntity(participant),
@@ -227,10 +243,22 @@ export class GroupService {
     return this.mapGroup(savedGroup, participantResponses);
   }
 
-  async deleteGroupForUser(userId: string, groupId: string): Promise<void> {
-    const { coupleId } = await this.ledgerService.ensureLedgerForUser(userId, {
-      ensureParticipant: true,
-    });
+  async deleteGroupForUser(
+    userId: string,
+    groupId: string,
+    spaceId?: string,
+  ): Promise<void> {
+    const { coupleId, participantId: selfParticipantId } =
+      await this.ledgerService.resolveSpaceForUser(userId, spaceId, {
+        ensureParticipant: true,
+      });
+
+    if (!selfParticipantId) {
+      throw new ApiBadRequestException(
+        'PARTICIPANT_NOT_FOUND',
+        'Unable to resolve owner participant for space',
+      );
+    }
 
     const group = await this.groupRepository.findOne({
       where: { id: groupId, coupleId },
@@ -239,6 +267,8 @@ export class GroupService {
     if (!group || group.deletedAt) {
       throw new ApiNotFoundException('GROUP_NOT_FOUND', 'Group not found');
     }
+
+    await this.assertGroupOwner(group.id, selfParticipantId);
 
     group.isArchived = true;
     group.deletedAt = new Date();
@@ -312,7 +342,28 @@ export class GroupService {
     return map;
   }
 
+  private async assertGroupOwner(
+    groupId: string,
+    participantId: string,
+  ): Promise<void> {
+    const membership = await this.groupMemberRepository.findOne({
+      where: {
+        groupId,
+        participantId,
+        status: 'active' as GroupMemberStatus,
+      },
+    });
+
+    if (!membership || membership.role !== ('owner' as GroupMemberRole)) {
+      throw new ApiForbiddenException(
+        'GROUP_OWNER_REQUIRED',
+        'Only a group owner can modify this group',
+      );
+    }
+  }
+
   private async syncGroupMembers(
+    coupleId: string,
     groupId: string,
     desiredParticipants: ParticipantEntity[],
     selfParticipantId: string,
@@ -359,6 +410,7 @@ export class GroupService {
       } else {
         const newMembership = this.groupMemberRepository.create();
         newMembership.groupId = groupId;
+        newMembership.coupleId = coupleId;
         newMembership.participantId = participant.id;
         newMembership.role = desiredRole;
         newMembership.status = 'active';

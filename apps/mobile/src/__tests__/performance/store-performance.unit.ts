@@ -76,7 +76,7 @@ describe('Store Performance Benchmarks', () => {
         (accumulated, expense) => {
           const key = expense.category;
 
-          accumulated[key] = (accumulated[key] ?? 0) + expense.amount;
+          accumulated[key] = (accumulated[key] ?? 0) + (expense.amount ?? 0);
           return accumulated;
         },
         {} as Record<string, number>,

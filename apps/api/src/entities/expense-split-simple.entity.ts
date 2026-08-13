@@ -14,7 +14,10 @@ import { ParticipantSimple } from './participant-simple.entity';
 
 @Entity('expense_splits')
 @Unique('UQ_expense_splits_expense_participant', ['expenseId', 'participantId'])
-@Check('CHK_expense_splits_share_cents', 'share_cents >= 0')
+@Check(
+  'CHK_expense_splits_share_cents',
+  'share_cents >= 0 AND share_cents <= 9007199254740991',
+)
 @Check(
   'CHK_expense_splits_share_percent',
   'share_percent IS NULL OR (share_percent >= 0 AND share_percent <= 100)',
@@ -25,6 +28,9 @@ export class ExpenseSplitSimple {
 
   @Column({ name: 'expense_id', type: 'text' })
   expenseId: string;
+
+  @Column({ name: 'couple_id', type: 'text', nullable: false })
+  coupleId: string;
 
   @Column({ name: 'participant_id', type: 'text' })
   participantId: string;
@@ -45,10 +51,24 @@ export class ExpenseSplitSimple {
   updatedAt: Date;
 
   @ManyToOne(() => ExpenseSimple, { onDelete: 'CASCADE' })
-  @JoinColumn({ name: 'expense_id' })
+  @JoinColumn([
+    {
+      name: 'expense_id',
+      referencedColumnName: 'id',
+      foreignKeyConstraintName: 'FK_expense_splits_expense_couple',
+    },
+    { name: 'couple_id', referencedColumnName: 'coupleId' },
+  ])
   expense?: ExpenseSimple;
 
   @ManyToOne(() => ParticipantSimple, { onDelete: 'CASCADE' })
-  @JoinColumn({ name: 'participant_id' })
+  @JoinColumn([
+    {
+      name: 'participant_id',
+      referencedColumnName: 'id',
+      foreignKeyConstraintName: 'FK_expense_splits_participant_couple',
+    },
+    { name: 'couple_id', referencedColumnName: 'coupleId' },
+  ])
   participant?: ParticipantSimple;
 }

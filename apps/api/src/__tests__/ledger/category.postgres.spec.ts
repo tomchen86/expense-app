@@ -75,7 +75,7 @@ describe('Category Entity (Postgres)', () => {
           color: '#FEDCBA',
         }),
       ),
-    ).rejects.toThrow(/uq_categories_couple_name/i);
+    ).rejects.toThrow(/uq_categories_couple_name_active/i);
   });
 
   it('rejects colors that do not meet hex pattern', async () => {
@@ -116,5 +116,29 @@ describe('Category Entity (Postgres)', () => {
     });
     expect(withDeleted).toHaveLength(1);
     expect(withDeleted[0]?.deletedAt).toBeInstanceOf(Date);
+  });
+
+  it('allows an active category name to be reused after soft deletion', async () => {
+    const user = await createUser('reuse-category@example.com');
+    const couple = await createCouple(user.id);
+
+    const original = await categories.save(
+      categories.create({
+        coupleId: couple.id,
+        name: 'Subscriptions',
+        color: '#123456',
+      }),
+    );
+    await categories.softRemove(original);
+
+    await expect(
+      categories.save(
+        categories.create({
+          coupleId: couple.id,
+          name: 'subscriptions',
+          color: '#654321',
+        }),
+      ),
+    ).resolves.toMatchObject({ name: 'subscriptions' });
   });
 });

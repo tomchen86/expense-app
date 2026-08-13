@@ -1,6 +1,10 @@
 # Expense App API 程式碼導讀與架構教學
 
-> 本文件以 `apps/api/src/` 的目前實作為準。最後核對日期：2026-07-13。
+> 本文件以 `apps/api/src/` 的目前實作為準。最後核對日期：2026-08-13。
+>
+> 名詞先釐清：程式與資料表中的 `Couple`／`couple_id` 是早期留下的
+> persistence 名稱，現在代表一般化的 expense **space**，不是「使用者一定是
+> 情侶」。新的 API contract 使用 `space_id`；physical rename 另走相容性 migration。
 
 ## 1. 這個 API 在做什麼？
 
@@ -10,7 +14,10 @@
 - 使用者個人資料、偏好與同步裝置管理。
 - 帳本中的參與者、群組與分類管理。
 - 費用、分攤、查詢篩選與統計。
-- 透過 `couple_id` 隔離不同帳本的資料。
+- 透過明確的 `space_id` 選擇個人或共用空間；資料庫內暫由
+  `couple_id` 這個 legacy 欄位隔離。
+- 提供個人帳本 projection，把個人支出與自己參與的共用支出放在同一個 view。
+- 提供離線 client 使用的 idempotent mutation、version conflict 與 incremental sync feed。
 
 技術核心如下：
 
@@ -24,7 +31,7 @@
 | 輸入驗證         | `class-validator` + `class-transformer` | DTO 轉換、白名單與格式驗證                               |
 | 測試             | Jest + Supertest                        | Entity、migration、service/API integration、效能預算     |
 
-先記住一句話：**Controller 處理 HTTP，Service 執行商業規則，Repository 存取資料，而 `couple_id` 決定資料屬於哪一本帳。**
+先記住一句話：**Controller 處理 HTTP，Service 執行商業規則，Repository 存取資料；public contract 用 `space_id`，`couple_id` 只是目前資料庫內的 legacy 名稱。**
 
 ## 2. 目錄地圖
 
@@ -117,7 +124,7 @@ await app.listen(process.env.PORT ?? 3000);
 
 - 全域 `ConfigModule`。
 - 一個 TypeORM connection。
-- `AuthModule`、`UserModule`、`CategoryModule`、`ParticipantModule`、`GroupModule`、`ExpenseModule`。
+- `AuthModule`、`UserModule`、`SpaceModule`、`CategoryModule`、`ParticipantModule`、`GroupModule`、`ExpenseModule`、`PersonalLedgerModule`、`ExpenseSyncModule`。
 - 根路由 `GET /`，目前只回傳 `Hello World!`。
 
 `LedgerModule` 沒有直接列在 `AppModule`，而是由 Category、Participant、Group、Expense 等功能模組匯入。它是跨功能共用的帳本初始化服務。
@@ -152,25 +159,30 @@ export class ExpenseModule {}
 
 目前依賴關係大致如下：
 
-| Module              | 主要 Entity                                       | 相依 Module                     |
-| ------------------- | ------------------------------------------------- | ------------------------------- |
-| `AuthModule`        | User、UserSettings                                | JwtModule                       |
-| `UserModule`        | User、UserSettings、UserDevice                    | —                               |
-| `LedgerModule`      | Couple、CoupleMember、Participant、User、Category | —                               |
-| `CategoryModule`    | Category、Expense                                 | LedgerModule                    |
-| `ParticipantModule` | Participant、GroupMember                          | LedgerModule                    |
-| `GroupModule`       | ExpenseGroup、GroupMember、Participant            | LedgerModule、ParticipantModule |
-| `ExpenseModule`     | Expense、ExpenseSplit、Category、ExpenseGroup     | LedgerModule、ParticipantModule |
+| Module                 | 主要 Entity                                                             | 相依 Module                     |
+| ---------------------- | ----------------------------------------------------------------------- | ------------------------------- |
+| `AuthModule`           | User、UserSettings                                                      | JwtModule                       |
+| `UserModule`           | User、UserSettings、UserDevice                                          | —                               |
+| `LedgerModule`         | Couple（legacy Space table）、CoupleMember、Participant、User、Category | —                               |
+| `SpaceModule`          | Couple、CoupleMember、Participant                                       | LedgerModule                    |
+| `CategoryModule`       | Category、Expense                                                       | LedgerModule                    |
+| `ParticipantModule`    | Participant、GroupMember                                                | LedgerModule                    |
+| `GroupModule`          | ExpenseGroup、GroupMember、Participant                                  | LedgerModule、ParticipantModule |
+| `ExpenseModule`        | Expense、ExpenseSplit、Category、ExpenseGroup                           | LedgerModule、ParticipantModule |
+| `PersonalLedgerModule` | Expense、ExpenseSplit、Participant、Space membership                    | LedgerModule                    |
+| `ExpenseSyncModule`    | Expense、ExpenseSplit                                                   | LedgerModule                    |
 
-## 6. Domain model：User、Ledger 與 Participant 不一樣
+## 6. Domain model：User、Space 與 Participant 不一樣
 
 這是理解此 API 最重要的概念。
 
 - `User`：可登入的真實帳號。
-- `Couple`：資料隔離邊界；目前也可理解為一本 ledger。
-- `CoupleMember`：哪個 User 可以進入哪個 Couple。
+- `Space`：真正的 domain boundary，kind 為 `personal` 或 `shared`。
+- `Couple`：`Space` 在目前 entity／table 的 legacy 名稱，不表示關係類型。
+- `CoupleMember`：`SpaceMember` 的 legacy persistence 名稱；記錄 User 可進入哪些 space。
 - `Participant`：出現在費用分攤中的人，可以有 User，也可以只是未註冊的名字／email。
-- `ExpenseGroup`：帳本內為旅行、家庭等情境建立的分組。
+- `ExpenseGroup`：Space 內可選的 collection/folder；它不是 mobile 畫面所稱的
+  共用「Group」。Mobile Group 對應的是 `Space(kind=shared)`。
 - `GroupMember`：Group 和 Participant 的多對多 join entity。
 
 ```mermaid
@@ -195,13 +207,14 @@ erDiagram
 
 如果兩個人一起吃飯，付款人或分攤人不一定都已註冊 App。`Participant.userId` 可以是 `null`，因此可先建立「Alex」參與分攤，之後再處理帳號連結；API 不必為每位分攤者強迫建立登入帳號。
 
-### 6.2 `LedgerService.ensureLedgerForUser()`
+### 6.2 `LedgerService.resolveSpaceForUser()`
 
 大部分 domain service 一開始都會呼叫：
 
 ```typescript
-const { coupleId, participantId } = await ledgerService.ensureLedgerForUser(
+const { spaceId, participantId } = await ledgerService.resolveSpaceForUser(
   userId,
+  requestedSpaceId,
   {
     ensureParticipant: true,
     ensureDefaultCategories: true,
@@ -211,20 +224,26 @@ const { coupleId, participantId } = await ledgerService.ensureLedgerForUser(
 
 它會按需求：
 
-1. 找出使用者最早加入且仍 active 的 Couple。
-2. 找不到時建立名為 `Personal Ledger` 的 Couple。
-3. 建立 owner `CoupleMember`。
-4. 確保登入者有一筆對應的 Participant。
-5. 若需要，為新帳本建立預設 Categories。
+1. 有 `requestedSpaceId` 時，只解析那個 exact space 並驗證 active membership。
+2. 未指定時，安全地回到使用者唯一的 personal space（舊 client 相容路徑），絕不以 membership 建立順序猜測。
+3. API 端 personal space 不存在時建立 `Personal Ledger`、owner membership 與
+   `cloud_sync` policy；純 device-only personal space 在 client 端存在，尚未連結
+   account 前不會先造一筆假的 cloud row。
+4. 視 caller 需求確保登入者有對應 Participant。
+5. 視 caller 需求建立該 space 的預設 Categories。
 
 所以某些看似純讀取的 endpoint，例如第一次 `GET /api/categories`，可能會初始化資料。這是目前刻意採用的 lazy initialization 行為。
 
 ## 7. 多租戶資料隔離
 
-Guard 只能證明「是誰」，真正避免跨帳本讀寫的是 service query 中的 `coupleId`：
+Guard 只能證明「是誰」，真正避免跨 space 讀寫的是 exact space membership 與
+tenant-scoped query。因 physical rename 尚未執行，service 內部欄位仍叫 `coupleId`：
 
 ```typescript
-const { coupleId } = await this.ledgerService.ensureLedgerForUser(userId);
+const { coupleId } = await this.ledgerService.resolveSpaceForUser(
+  userId,
+  requestedSpaceId,
+);
 
 const expense = await this.expenseRepository.findOne({
   where: { id: expenseId, coupleId },
@@ -234,7 +253,7 @@ const expense = await this.expenseRepository.findOne({
 只有 `where: { id: expenseId }` 不足夠，因為知道別人的 UUID 不應該代表可以讀取該資料。新增任何帳本內資源時，應遵守：
 
 - 從 JWT 的 `req.user.id` 取得 User，不接受 client 傳入 owner user ID。
-- 由 `LedgerService` 解析 `coupleId`。
+- 從 route/query/body 取得 `space_id`，由 `LedgerService` 驗證 exact membership；省略時只可落到 personal compatibility path。
 - 所有讀、改、刪 query 同時限制 resource ID 與 `coupleId`。
 - 關聯的 category、group、participant 也要驗證屬於同一個 `coupleId`。
 
@@ -316,7 +335,7 @@ Query string 原本都是字串，所以 Expense query 額外開啟 `enableImpli
 DTO 只處理輸入形狀與基本格式，service 仍必須處理跨欄位或資料庫相關規則，例如：
 
 - 分攤金額總和等於費用總額。
-- payer 必須出現在 splits。
+- payment 與 shares 必須各自平衡；付款者不必同時是消費／分攤者。
 - participant/category/group 必須屬於同一本 ledger。
 - category 名稱在同一 ledger 中不可重複。
 
@@ -339,8 +358,8 @@ sequenceDiagram
     G->>EC: allow request
     EC->>EC: transform and validate CreateExpenseDto
     EC->>ES: createExpenseForUser(userId, dto)
-    ES->>LS: ensureLedgerForUser
-    LS->>DB: resolve/create ledger and self participant
+    ES->>LS: resolveSpaceForUser(userId, space_id)
+    LS->>DB: verify exact membership or resolve personal space
     ES->>DB: validate category and group ownership
     ES->>PS: validate all split participants
     PS->>DB: query participants by coupleId
@@ -361,6 +380,9 @@ Authorization: Bearer <access-token>
 Content-Type: application/json
 
 {
+  "id": "<client-generated-expense-uuid>",
+  "client_mutation_id": "<stable-mutation-id>",
+  "space_id": "<personal-or-shared-space-uuid>",
   "description": "Weekend Groceries",
   "amount_cents": 12500,
   "currency": "USD",
@@ -385,11 +407,12 @@ API 使用最小貨幣單位的整數，`12500` 代表 125.00。這避免 JavaSc
 
 ### 10.3 Update 的策略
 
-更新費用時，service 先建立「更新後的完整狀態」，再在 transaction 中：
+更新費用時，client 必須帶 `expected_version`。Service 先建立「更新後的完整
+狀態」，再用 atomic `WHERE version = expected_version` 寫入：
 
 1. 儲存 Expense。
-2. 刪除原本 splits。
-3. 寫入新的完整 splits。
+2. payload 有提供 `splits` 才刪除原本 splits 並寫入新的完整 splits。
+3. payload 沒有 `splits` 時保留原 split rows（包含 settled/historical metadata）。
 
 這比逐筆 diff 容易維持分攤總額等 invariant，但要注意 update payload 若改金額卻沒提供 splits，既有 splits 仍必須能通過新金額的一致性檢查。
 
@@ -406,7 +429,8 @@ API 使用最小貨幣單位的整數，`12500` 代表 125.00。這避免 JavaSc
 - regex check constraints。
 - `DeleteDateColumn` soft delete。
 
-正式環境 `synchronize: false`、`migrationsRun: true`，schema 由 `database/migrations/001...008` 管理。不要只改 Entity 而不考慮 migration。
+正式環境 `synchronize: false`、`migrationsRun: true`，schema 由
+`database/migrations/001...009` 管理。不要只改 Entity 而不考慮 migration。
 
 ### 11.2 Simple entities
 
@@ -447,27 +471,35 @@ Domain 還有額外處理：
 
 - 刪 Participant：不可刪自己，並把其 GroupMember 狀態改成 `left`。
 - 刪 Group：設 `isArchived = true`、soft delete，成員狀態改成 `left`。
-- 刪 Category：若仍被未刪除 Expense 使用，回傳 `CATEGORY_IN_USE`。
+- 刪 Category：default category 回傳 `DEFAULT_CATEGORY_PROTECTED`；其他分類若仍
+  被未刪除 Expense 使用，回傳 `CATEGORY_IN_USE`。
 - 刪 Expense：split rows 保留；因 Expense 只是 soft delete，資料仍可供稽核／恢復策略使用。
 
-這和資料庫 FK 的 `CASCADE`／`SET NULL` 是不同層次：FK 行為只在實際刪除 row 時發生。
+這和資料庫 FK 的 `CASCADE`／`NO ACTION` 是不同層次：tenant-aware optional
+reference 會阻止被引用 parent 的 hard delete，allocation/join row 則在 parent
+真的被刪除時 cascade；一般 service 流程仍以 soft delete 為主。
 
 ## 13. QueryBuilder、分頁與統計
 
 `ExpenseService.buildExpenseQuery()` 集中套用：
 
-- `coupleId` 與未刪除條件。
+- explicit space（內部 legacy `coupleId`）與未刪除條件。
 - category、payer、日期區間、金額區間。
 - description case-insensitive search。
 - 日期與建立時間倒序。
 
 列表把同一個 base query 加上 `skip/take`，上限為 100；統計則 clone 同一組 filters，再執行：
 
-- 總金額與筆數。
-- 依 category group by。
-- 依付款 participant group by。
+- 總筆數。
+- 依 currency 的精確字串 minor-unit 總額。
+- 依 category + currency group by。
+- 依付款 participant + currency group by。
 
 因此列表與統計的篩選語意保持一致。新增 filter 時也應優先放進 `buildExpenseQuery()`，避免兩邊產生不同結果。
+
+`/api/expenses/statistics` 不再提供無幣別的 `total_spent_cents`；所有金額均按
+currency 分桶並以 decimal string 回傳，避免把 AUD cents 和 JPY minor units
+相加，也避免 aggregate 超過 JavaScript safe integer。
 
 ## 14. API response 與錯誤格式
 
@@ -540,6 +572,23 @@ DELETE 成功通常回傳 204，不帶 response body。
 | Categories   | `GET/POST /api/categories`、`GET /api/categories/default`、`PUT/DELETE /api/categories/:categoryId` |
 | Expenses     | `GET/POST /api/expenses`、`GET /api/expenses/statistics`、`GET/PUT/DELETE /api/expenses/:expenseId` |
 
+### Space、個人 projection 與 sync
+
+| Method     | Route                                | 用途                                                            |
+| ---------- | ------------------------------------ | --------------------------------------------------------------- |
+| GET / POST | `/api/spaces`                        | 列出 personal/shared spaces；建立 shared space                  |
+| POST       | `/api/spaces/:spaceId/members`       | owner 新增 account member                                       |
+| POST       | `/api/spaces/:spaceId/sync-policy`   | 更新 personal space policy；shared 只能 `cloud_sync`            |
+| GET        | `/api/ledger`                        | personal-space expense 加上自己參與的 shared expense projection |
+| GET        | `/api/spaces/:spaceId/sync/expenses` | 依 durable cursor 取得 upserts 與 tombstones                    |
+
+`SpaceResponse.currentParticipantId` 是目前 account 在該 space 內的 allocation
+identity；它不同於 account `userId`，mobile 建立 payments/shares 時應使用這個
+participant ID。`syncPolicy` 是資料庫持久化的 per-space policy。
+
+舊的 resource routes 以 `space_id` query/body 選定 exact space；未傳時只為舊
+client 相容而解析 personal space。新 client 應一律明確傳送。
+
 注意 `/api/categories/default` 也在 controller-level guard 之下，所以仍需要 access token。
 
 ## 16. 測試架構
@@ -587,7 +636,7 @@ pnpm --filter api test participant-group.spec.ts
 1. 定義 request/response DTO 和驗證規則。
 2. 確認 domain entity 與關聯。
 3. 若 schema 改變，同步建立 PostgreSQL migration 與 simple entity。
-4. 在 service 中由 `userId` 解析 `coupleId`，實作 tenant-scoped query。
+4. 接受 explicit `space_id`，在 service 中由 `userId` 驗證 exact membership，再以 internal `coupleId` 實作 tenant-scoped query。
 5. 跨多表寫入時使用 transaction。
 6. 用 `Api*Exception` 回傳穩定的 error code。
 7. Controller 只做 HTTP mapping、DTO validation、呼叫 service、response envelope。
@@ -597,7 +646,7 @@ pnpm --filter api test participant-group.spec.ts
 
 一個 service method 至少要自問：
 
-- 這筆資料是否限制在使用者的 `coupleId`？
+- 這筆資料是否限制在 request 指定且使用者有權存取的 exact space？
 - client 傳入的相關 UUID 是否也屬於同一本帳？
 - 操作一半失敗會不會留下不一致資料？
 - soft-deleted row 應視為不存在、恢復，還是衝突？
@@ -615,6 +664,22 @@ pnpm --filter api test participant-group.spec.ts
 - Auth login response 中 currency/date/split method 有暫時 hard-coded 值。
 - `POST /api/users/avatar` 明確回傳 501，尚無上傳流程。
 - User persistence mode 同時存在 Auth 舊入口與 Users 新入口，擴充時要避免行為漂移。
+- `Couple`／`couple_id` 只保留作 internal compatibility；新的 domain、DTO 與 mobile code 不應再把它解讀為「情侶帳本」。
+- Expense create 的 `id`／`client_mutation_id` 只有在 logical payload 相同時才 replay；相同 key 搭配不同 payload 會回 409。
+- Shared expense 的一般 member 可建立費用；只有原建立者或 space owner 可更新／刪除。這是目前的 `edit-own`／`edit-any` baseline。
+- Cloud Expense schema 目前只支援一位全額 payer；mobile canonical model 可表示多筆 payment，但 adapter 會明確拒絕尚未支援的形狀。
+- Mobile 已有 durable snapshots 與 sync DTO mapper，但 network transport、durable outbox/inbox、retry/backoff 與 conflict UI 尚未接上，所以不是完整端到端 sync。
+- Mobile custom category 與 API create 都可保存 client UUID；但 catalog 尚未 per-space 或接上 transport，legacy default category IDs 仍需 association migration。Sync adapter 會明確拒絕 invalid ID，不會靜默丟掉 `category_id`。
+- Device-only personal Space／Participant／Category ID 尚未接上 account-link
+  adoption/mapping transaction；在完成 mapping 前不可直接把 local `space_id`
+  當成已存在的 cloud space 上傳。
+- 已在雲端的 personal Space 目前不能直接切成 `local_only`；API 會回
+  `SYNC_POLICY_HANDOFF_REQUIRED`，直到完整 local replica 與 acknowledged
+  cursor 的 handoff 流程交付。
+- Mobile UI 的 `Group` 是 shared Space；`/api/groups` 的 `ExpenseGroup` 是 space
+  內可選 collection，兩者不能互換 ID。
+- Refresh token 現階段仍是 stateless JWT refresh；token-family rotation、reuse
+  detection 與 logout/revocation store 尚未交付，不能宣稱已具備該安全生命週期。
 - `JwtAuthGuard` 用 `replace('Bearer ', '')` 解析 header，沒有嚴格檢查 scheme；修改時需補相容性測試。
 - 正式環境有開發用 JWT fallback secret；部署時必須提供安全的 `JWT_SECRET` 與 `JWT_REFRESH_SECRET`。
 - simple entities 是測試便利層，不能取代 PostgreSQL migration/constraint 測試。
@@ -630,11 +695,13 @@ pnpm --filter api test participant-group.spec.ts
 
 ### 400 INVALID_PARTICIPANTS / CATEGORY_NOT_FOUND / GROUP_NOT_FOUND
 
-UUID 格式可能正確，但資源不屬於當前 `coupleId`，或已 soft delete。從 `LedgerService` 解析出的 ledger 往下追 query 條件。
+UUID 格式可能正確，但資源不屬於 request 指定的 space，或已 soft delete。從
+`LedgerService.resolveSpaceForUser()` 的 membership 驗證與 internal `coupleId`
+query condition 往下追。
 
 ### 400 INVALID_SPLIT_TOTAL
 
-檢查所有 `share_cents` 相加是否精確等於 `amount_cents`。percentage 模式還需要每筆 `share_percent`，合計誤差不得超過 0.01。
+檢查所有 `share_cents` 相加是否精確等於 `amount_cents`。percentage 模式還需要每筆 `share_percent`；API 會轉成 basis points 驗證，合計必須精確等於 100.00%。
 
 ### SQL.js 通過、PostgreSQL 失敗
 

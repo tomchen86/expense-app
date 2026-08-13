@@ -30,11 +30,18 @@ export class CategoryService {
     private readonly ledgerService: LedgerService,
   ) {}
 
-  async listCategoriesForUser(userId: string): Promise<CategoryResponse[]> {
-    const { coupleId } = await this.ledgerService.ensureLedgerForUser(userId, {
-      ensureDefaultCategories: true,
-      ensureParticipant: true,
-    });
+  async listCategoriesForUser(
+    userId: string,
+    spaceId?: string,
+  ): Promise<CategoryResponse[]> {
+    const { coupleId } = await this.ledgerService.resolveSpaceForUser(
+      userId,
+      spaceId,
+      {
+        ensureDefaultCategories: true,
+        ensureParticipant: true,
+      },
+    );
 
     const categories = await this.categoryRepository
       .createQueryBuilder('category')
@@ -57,11 +64,16 @@ export class CategoryService {
   async createCategoryForUser(
     userId: string,
     payload: CreateCategoryDto,
+    spaceId?: string,
   ): Promise<CategoryResponse> {
-    const { coupleId } = await this.ledgerService.ensureLedgerForUser(userId, {
-      ensureDefaultCategories: true,
-      ensureParticipant: true,
-    });
+    const { coupleId } = await this.ledgerService.resolveSpaceForUser(
+      userId,
+      spaceId,
+      {
+        ensureDefaultCategories: true,
+        ensureParticipant: true,
+      },
+    );
 
     const normalizedName = payload.name.trim();
     const normalizedColor = payload.color.toUpperCase();
@@ -82,6 +94,22 @@ export class CategoryService {
       );
     }
 
+    if (payload.id) {
+      const existingById = await this.categoryRepository.findOne({
+        where: { id: payload.id },
+        withDeleted: true,
+      });
+      if (existingById) {
+        return this.resolveCreateReplay(
+          existingById,
+          coupleId,
+          normalizedName,
+          normalizedColor,
+          payload.icon,
+        );
+      }
+    }
+
     const existing = await this.categoryRepository
       .createQueryBuilder('category')
       .where('category.coupleId = :coupleId', { coupleId })
@@ -100,6 +128,9 @@ export class CategoryService {
     }
 
     const category = this.categoryRepository.create();
+    if (payload.id) {
+      category.id = payload.id;
+    }
     category.name = normalizedName;
     category.color = normalizedColor;
     category.icon = payload.icon ?? null;
@@ -107,19 +138,43 @@ export class CategoryService {
     category.createdBy = userId;
     category.isDefault = false;
 
-    const saved = await this.categoryRepository.save(category);
-    return this.mapCategory(saved);
+    try {
+      const saved = await this.categoryRepository.save(category);
+      return this.mapCategory(saved);
+    } catch (error) {
+      if (payload.id && this.isUniqueConstraintViolation(error)) {
+        const existingById = await this.categoryRepository.findOne({
+          where: { id: payload.id },
+          withDeleted: true,
+        });
+        if (existingById) {
+          return this.resolveCreateReplay(
+            existingById,
+            coupleId,
+            normalizedName,
+            normalizedColor,
+            payload.icon,
+          );
+        }
+      }
+      throw error;
+    }
   }
 
   async updateCategoryForUser(
     userId: string,
     categoryId: string,
     payload: UpdateCategoryDto,
+    spaceId?: string,
   ): Promise<CategoryResponse> {
-    const { coupleId } = await this.ledgerService.ensureLedgerForUser(userId, {
-      ensureDefaultCategories: true,
-      ensureParticipant: true,
-    });
+    const { coupleId } = await this.ledgerService.resolveSpaceForUser(
+      userId,
+      spaceId,
+      {
+        ensureDefaultCategories: true,
+        ensureParticipant: true,
+      },
+    );
 
     const category = await this.categoryRepository.findOne({
       where: { id: categoryId, coupleId },
@@ -186,11 +241,16 @@ export class CategoryService {
   async deleteCategoryForUser(
     userId: string,
     categoryId: string,
+    spaceId?: string,
   ): Promise<void> {
-    const { coupleId } = await this.ledgerService.ensureLedgerForUser(userId, {
-      ensureDefaultCategories: true,
-      ensureParticipant: true,
-    });
+    const { coupleId } = await this.ledgerService.resolveSpaceForUser(
+      userId,
+      spaceId,
+      {
+        ensureDefaultCategories: true,
+        ensureParticipant: true,
+      },
+    );
 
     const category = await this.categoryRepository.findOne({
       where: { id: categoryId, coupleId },
@@ -200,6 +260,13 @@ export class CategoryService {
       throw new ApiNotFoundException(
         'CATEGORY_NOT_FOUND',
         'Category not found',
+      );
+    }
+
+    if (category.isDefault) {
+      throw new ApiBadRequestException(
+        'DEFAULT_CATEGORY_PROTECTED',
+        'Default categories cannot be deleted',
       );
     }
 
@@ -218,6 +285,44 @@ export class CategoryService {
 
     category.deletedAt = new Date();
     await this.categoryRepository.save(category);
+  }
+
+  private resolveCreateReplay(
+    category: CategoryEntity,
+    coupleId: string,
+    normalizedName: string,
+    normalizedColor: string,
+    icon: string | null | undefined,
+  ): CategoryResponse {
+    const isExactReplay =
+      category.coupleId === coupleId &&
+      !category.deletedAt &&
+      category.isDefault === false &&
+      category.name === normalizedName &&
+      category.color === normalizedColor &&
+      (category.icon ?? null) === (icon ?? null);
+
+    if (!isExactReplay) {
+      throw new ApiConflictException(
+        'CATEGORY_ID_CONFLICT',
+        'Category ID is already in use by a different category',
+        { field: 'id' },
+      );
+    }
+
+    return this.mapCategory(category);
+  }
+
+  private isUniqueConstraintViolation(error: unknown): boolean {
+    if (!error || typeof error !== 'object') {
+      return false;
+    }
+    const candidate = error as { code?: unknown; message?: unknown };
+    return (
+      candidate.code === '23505' ||
+      (typeof candidate.message === 'string' &&
+        /duplicate key|unique constraint failed/i.test(candidate.message))
+    );
   }
 
   private mapCategory(category: CategoryEntity): CategoryResponse {

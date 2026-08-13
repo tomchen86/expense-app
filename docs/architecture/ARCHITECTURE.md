@@ -1,82 +1,86 @@
 # System Architecture
 
-_Last Updated: August 26, 2025_
+_Last Updated: August 13, 2026_
 
 ## System Overview
 
-This document describes the architecture of the Expense Tracking Application, a monorepo containing three interconnected applications designed for couples and group expense management.
+Expense App is personal-first: every user has a personal expense space and may
+join shared spaces for a partner, friends, a household, or a trip. A shared
+expense remains one logical record in its shared space; the personal ledger is
+a projection that includes the current user's payment/share allocation.
 
-### Current Architecture (Phase 1)
+The mobile app is the client and owns a durable on-device replica. The NestJS
+API and PostgreSQL form the cloud replica. `Couple` is only a legacy entity and
+table name for `Space`; it is not the universal product or domain model.
 
-```mermaid
-graph TB
-    User[👤 User] --> Mobile[📱 Mobile App]
-    Mobile --> Store[🗄️ Zustand Store]
-    Store --> AsyncStorage[💾 Local Storage]
-
-    API[🔧 NestJS API] -.-> Database[(🗄️ PostgreSQL)]
-    Web[🌐 Next.js Web] -.-> API
-
-    subgraph "Current State"
-        Mobile
-        Store
-        AsyncStorage
-    end
-
-    subgraph "Future State (Phase 2-3)"
-        API
-        Database
-        Web
-    end
-
-    classDef current fill:#e1f5fe
-    classDef future fill:#fff3e0
-    class Mobile,Store,AsyncStorage current
-    class API,Database,Web future
-```
-
-### Target Architecture (Phase 3+)
+### Current Architecture
 
 ```mermaid
-graph TB
-    MobileUser[👤 Mobile User] --> MobileApp[📱 Mobile App]
-    WebUser[👤 Web User] --> WebApp[🌐 Web Dashboard]
-
-    MobileApp --> Auth[🔐 Auth Service]
-    WebApp --> Auth
-
-    MobileApp --> APIGateway[🚪 API Gateway]
-    WebApp --> APIGateway
-
-    APIGateway --> ExpenseAPI[💰 Expense Service]
-    APIGateway --> UserAPI[👥 User Service]
-    APIGateway --> GroupAPI[👨‍👩‍👧‍👦 Group Service]
-
-    ExpenseAPI --> Database[(🗄️ PostgreSQL)]
-    UserAPI --> Database
-    GroupAPI --> Database
-
-    ExpenseAPI --> Cache[(⚡ Redis Cache)]
-
-    Database --> Backup[(📦 Backups)]
-
-    subgraph "Authentication Layer"
-        Auth
-    end
-
-    subgraph "API Layer"
-        APIGateway
-        ExpenseAPI
-        UserAPI
-        GroupAPI
-    end
-
-    subgraph "Data Layer"
-        Database
-        Cache
-        Backup
-    end
+flowchart LR
+    User["User"] --> Mobile["Expo / React Native client"]
+    Mobile --> UIState["Hydrated Zustand UI state"]
+    UIState <--> Local["AsyncStorage snapshots"]
+    Mobile -. "DTO/feed mappers only; no transport" .-> API["NestJS API"]
+    API --> PG[("PostgreSQL cloud replica")]
+    PG --> Feed["Incremental expense feed endpoint"]
+    Web["apps/web placeholder"] -. no current capability .-> API
 ```
+
+Current implementation status:
+
+- Mobile canonical expenses use stable IDs, integer minor units, explicit
+  `spaceId`, payments, shares, tombstones, and persisted Zustand stores.
+- Expense submission waits for its coalesced AsyncStorage write before reporting
+  success. A transactional local repository plus ordered durable outbox/inbox
+  remains the next production-hardening layer.
+- The API supports explicit space selection, personal-ledger projection,
+  idempotent expense creates, optimistic versions, tombstones, and an
+  incremental expense feed.
+- PostgreSQL persists personal/shared `kind` and per-space `sync_policy` on the
+  physical `couples` table. Shared spaces are constrained to `cloud_sync`.
+- Device-only personal Space/Participant/Category IDs do not yet have an
+  account-link adoption transaction. The mobile `Group` label represents a
+  shared Space; API `ExpenseGroup` remains a distinct optional nested
+  collection.
+- `apps/web` is an ordinary-directory placeholder and claims no current web UI.
+
+### Storage Policy
+
+| Space kind | Allowed policy               | Meaning                                                                                                  |
+| ---------- | ---------------------------- | -------------------------------------------------------------------------------------------------------- |
+| Personal   | `local_only` or `cloud_sync` | Personal bookkeeping works without an account/cloud; the user may opt into backup and multi-device sync. |
+| Shared     | `cloud_sync`                 | Collaboration requires a convergent cloud replica.                                                       |
+
+A user-wide persistence switch cannot model these two cases and is retained
+only as compatibility metadata. See
+[`STORAGE_STRATEGY.md`](./STORAGE_STRATEGY.md) for the replica protocol and
+conflict model, and
+[`GUIDE-API_CODE.md`](../features/api/GUIDE-API_CODE.md) for current routes.
+
+### Personal Ledger Projection
+
+```mermaid
+flowchart LR
+    Personal["Expenses in personal space"] --> Ledger["Current-user ledger"]
+    Shared["Authorized shared expenses"] --> Filter["Has my payment or share"]
+    Filter --> Ledger
+    Ledger --> Paid["myPaid"]
+    Ledger --> Spent["mySpent"]
+    Ledger --> Balance["myPaid - mySpent"]
+```
+
+This is a read model, not a second copied expense table. Totals remain separated
+by currency unless a defined conversion contract is applied.
+
+## Historical Design Material (Non-normative)
+
+The material below is retained as an early snapshot. It predates the working
+API, decomposed persisted mobile stores, canonical minor-unit allocation model,
+and personal/shared space decision. Do not use its “current/future” labels,
+sample types, or endpoint names as implementation requirements.
+
+<details>
+<summary>Expand the superseded 2025 snapshot</summary>
 
 ## Domain Models & Shared Concepts
 
@@ -382,9 +386,11 @@ sequenceDiagram
 
 ## API Architecture (NestJS)
 
-### Current State
+### State at the Time of This Superseded Snapshot
 
-The API is currently a minimal NestJS scaffold with only a "Hello World" endpoint. Development will follow the phases outlined in the ROADMAP.md.
+At the time this historical section was written, the API was only a minimal
+NestJS scaffold. That statement is not true of the current repository; use the
+current architecture summary above and `GUIDE-API_CODE.md` instead.
 
 ### Planned Architecture
 
@@ -492,9 +498,10 @@ GET    /api/groups/:id/expenses  # Get group expenses
 
 ## Web Application Architecture (Next.js)
 
-### Current State
+### State Assumed by This Superseded Snapshot
 
-Basic Next.js 15 setup with App Router. No custom functionality implemented yet.
+This old section assumed a future Next.js application. The current
+`apps/web` directory is only a placeholder and claims no working web product.
 
 ### Planned Architecture
 
@@ -708,3 +715,5 @@ enum ConflictResolution {
 ---
 
 _This architecture document is a living specification that evolves with the application. All major architectural changes should be documented here and reflected in the codebase._
+
+</details>

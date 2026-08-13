@@ -39,6 +39,7 @@ describe('Couple Entity (sql.js)', () => {
 
     expect(couple.id).toBeDefined();
     expect(couple.status).toBe('active');
+    expect(couple.kind).toBe('personal');
     expect(couple.createdAt).toBeInstanceOf(Date);
     expect(couple.updatedAt).toBeInstanceOf(Date);
   });
@@ -47,12 +48,36 @@ describe('Couple Entity (sql.js)', () => {
     const creator = await createUser();
 
     await couples.save(
-      couples.create({ inviteCode: 'CODE999999', createdBy: creator.id }),
+      couples.create({
+        inviteCode: 'CODE999999',
+        createdBy: creator.id,
+        kind: 'shared',
+        syncPolicy: 'cloud_sync',
+      }),
     );
 
     await expect(
       couples.save(
-        couples.create({ inviteCode: 'CODE999999', createdBy: creator.id }),
+        couples.create({
+          inviteCode: 'CODE999999',
+          createdBy: creator.id,
+          kind: 'shared',
+          syncPolicy: 'cloud_sync',
+        }),
+      ),
+    ).rejects.toThrow();
+  });
+
+  it('rejects a second active personal space for the same creator', async () => {
+    const creator = await createUser();
+
+    await couples.save(
+      couples.create({ inviteCode: 'PERSONAL01', createdBy: creator.id }),
+    );
+
+    await expect(
+      couples.save(
+        couples.create({ inviteCode: 'PERSONAL02', createdBy: creator.id }),
       ),
     ).rejects.toThrow();
   });

@@ -78,4 +78,28 @@ describe('Category Entity (sql.js)', () => {
       }),
     ).rejects.toThrow();
   });
+
+  it('allows an exact name to be reused after soft deletion', async () => {
+    const user = await createUser('category-reuse@example.com');
+    const couple = await createCouple(user.id);
+
+    const original = await categories.save(
+      categories.create({
+        coupleId: couple.id,
+        name: 'Subscriptions',
+        color: '#123456',
+      }),
+    );
+    await categories.softRemove(original);
+
+    await expect(
+      categories.save(
+        categories.create({
+          coupleId: couple.id,
+          name: 'Subscriptions',
+          color: '#654321',
+        }),
+      ),
+    ).resolves.toMatchObject({ name: 'Subscriptions' });
+  });
 });

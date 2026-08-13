@@ -2,8 +2,9 @@ import {
   calculateGroupTotal,
   calculateUserTotalContributionInGroup,
   calculateAllMemberBalancesInGroup,
+  resolveGroupParticipantIdForUser,
 } from '../groupCalculations';
-import type { Expense, Participant } from '../../types';
+import type { Expense, ExpenseGroup, Participant } from '../../types';
 
 describe('groupCalculations', () => {
   const members: Participant[] = [
@@ -61,6 +62,29 @@ describe('groupCalculations', () => {
     ).toBe(0);
   });
 
+  it('resolves an account identity to its distinct participant in a shared space', () => {
+    const canonicalGroup: ExpenseGroup = {
+      id: 'group-1',
+      name: 'Trip',
+      createdAt: '2026-08-13T00:00:00.000Z',
+      participants: [
+        {
+          id: 'participant-alice',
+          userId: 'account-alice',
+          spaceId: 'group-1',
+          name: 'Alice',
+        },
+      ],
+    };
+
+    expect(
+      resolveGroupParticipantIdForUser(canonicalGroup, 'account-alice'),
+    ).toBe('participant-alice');
+    expect(
+      resolveGroupParticipantIdForUser(canonicalGroup, 'account-bob'),
+    ).toBeNull();
+  });
+
   it('calculates balances for each member', () => {
     const groupExpenses = expenses.filter((exp) => exp.groupId === 'group-1');
     const balances = calculateAllMemberBalancesInGroup(members, groupExpenses);
@@ -77,8 +101,13 @@ describe('groupCalculations', () => {
     expect(totalShares.reduce((sum, share) => sum + share, 0)).toBeCloseTo(135);
   });
 
-  it('returns empty balances when no members provided', () => {
+  it('retains historical allocation participants when no members remain', () => {
     const result = calculateAllMemberBalancesInGroup([], expenses);
-    expect(result).toEqual([]);
+    expect(result.map((balance) => balance.memberId)).toEqual(
+      expect.arrayContaining(['user-1', 'user-2', 'user-3']),
+    );
+    expect(
+      result.reduce((sum, balance) => sum + balance.netBalanceMinor, 0),
+    ).toBe(0);
   });
 });

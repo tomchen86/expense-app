@@ -3,6 +3,7 @@ import { Platform as _Platform, Alert } from 'react-native';
 import { router } from 'expo-router';
 import { DateTimePickerEvent } from '@react-native-community/datetimepicker';
 import { useExpenseStore } from '../store/expenseStore';
+import { flushExpensePersistence } from '../store/features/expenseStore';
 import {
   Expense,
   Participant,
@@ -10,6 +11,21 @@ import {
   ExpenseCategory,
   Category as _Category,
 } from '../types'; // Added Category for type safety if needed
+import {
+  allocateEqualShares,
+  formatLocalCalendarDate,
+  minorUnitsToDecimalString,
+  parseDecimalToMinorUnits,
+  parseLocalCalendarDate,
+} from '../utils/money';
+import {
+  getExpenseAmountMinor,
+  getExpenseCurrency,
+  getExpensePayments,
+  getExpenseShares,
+  getExpenseSpaceId,
+  getExpenseSpaceKind,
+} from '../utils/expenseDomain';
 
 // Define the shape of the form data
 interface FormState {
@@ -26,9 +42,13 @@ interface FormState {
 // Define the props for the hook
 interface UseExpenseFormProps {
   editingExpense?: Expense | null;
+  initialSpaceId?: string;
 }
 
-export const useExpenseForm = ({ editingExpense }: UseExpenseFormProps) => {
+export const useExpenseForm = ({
+  editingExpense,
+  initialSpaceId,
+}: UseExpenseFormProps) => {
   // Get data and actions from the Zustand store
   const addExpenseToStore = useExpenseStore((state) => state.addExpense);
   const updateExpenseToStore = useExpenseStore((state) => state.updateExpense);
@@ -37,6 +57,12 @@ export const useExpenseForm = ({ editingExpense }: UseExpenseFormProps) => {
   const categories = useExpenseStore((state) => state.categories);
   const userSettings = useExpenseStore((state) => state.userSettings);
   const internalUserId = useExpenseStore((state) => state.internalUserId); // Get internalUserId
+  const user = useExpenseStore((state) => state.user);
+  const settings = useExpenseStore((state) => state.settings);
+  const personalSpaceId = useExpenseStore((state) => state.personalSpaceId);
+  const personalParticipantId = useExpenseStore(
+    (state) => state.personalParticipantId,
+  );
 
   const isEditing = !!editingExpense;
 
@@ -62,6 +88,9 @@ export const useExpenseForm = ({ editingExpense }: UseExpenseFormProps) => {
   // Initialize form state from editingExpense when it changes
   useEffect(() => {
     if (!editingExpense) {
+      const initialGroup = initialSpaceId
+        ? (groups.find((group) => group.id === initialSpaceId) ?? null)
+        : null;
       // Reset form if editingExpense becomes null/undefined (e.g., navigating back)
       setFormState({
         title: '',
@@ -69,34 +98,45 @@ export const useExpenseForm = ({ editingExpense }: UseExpenseFormProps) => {
         date: new Date(),
         caption: '',
         category: categories[0]?.name ?? 'Other', // Use first category from store
-        selectedGroup: null,
+        selectedGroup: initialGroup,
         paidByParticipant: null,
         selectedParticipants: [],
       });
       return;
     }
 
-    const group = editingExpense.groupId
-      ? (groups.find((g) => g.id === editingExpense.groupId) ?? null)
+    const expenseSpaceId = getExpenseSpaceId(editingExpense);
+    const group =
+      expenseSpaceId && getExpenseSpaceKind(editingExpense) !== 'personal'
+        ? (groups.find((g) => g.id === expenseSpaceId) ?? null)
+        : null;
+    const paymentParticipantId =
+      getExpensePayments(editingExpense)[0]?.participantId;
+    const paidBy = paymentParticipantId
+      ? (participants.find((p) => p.id === paymentParticipantId) ?? null)
       : null;
-    const paidBy = editingExpense.paidBy
-      ? (participants.find((p) => p.id === editingExpense.paidBy) ?? null)
-      : null;
-    const splitBetween = editingExpense.splitBetween
-      ? participants.filter((p) => editingExpense.splitBetween?.includes(p.id))
-      : [];
+    const shareParticipantIds = new Set(
+      getExpenseShares(editingExpense).map((share) => share.participantId),
+    );
+    const splitBetween = participants.filter((participant) =>
+      shareParticipantIds.has(participant.id),
+    );
+    const expenseCurrency = getExpenseCurrency(editingExpense);
 
     setFormState({
       title: editingExpense.title,
-      amount: editingExpense.amount.toString(),
-      date: new Date(editingExpense.date), // Ensure date is a Date object
+      amount: minorUnitsToDecimalString(
+        getExpenseAmountMinor(editingExpense),
+        expenseCurrency,
+      ),
+      date: parseLocalCalendarDate(editingExpense.date) ?? new Date(),
       caption: editingExpense.caption ?? '',
       category: editingExpense.category,
       selectedGroup: group,
       paidByParticipant: paidBy,
       selectedParticipants: splitBetween,
     });
-  }, [editingExpense, groups, participants, categories]); // Rerun effect if these change
+  }, [editingExpense, groups, participants, categories, initialSpaceId]);
 
   // Generic handler to update any form field
   const handleUpdateFormState = (field: keyof FormState, value: any) => {
@@ -121,7 +161,7 @@ export const useExpenseForm = ({ editingExpense }: UseExpenseFormProps) => {
   };
 
   // Handler for form submission (add or update)
-  const handleSubmit = () => {
+  const handleSubmit = async () => {
     // --- Validation ---
     if (
       !formState.title ||
@@ -133,9 +173,13 @@ export const useExpenseForm = ({ editingExpense }: UseExpenseFormProps) => {
       return;
     }
 
-    const numericAmount = parseFloat(formState.amount);
-    if (isNaN(numericAmount) || numericAmount <= 0) {
-      Alert.alert('Validation Error', 'Amount must be a positive number.');
+    const currency = settings.currency.toUpperCase();
+    const amountMinor = parseDecimalToMinorUnits(formState.amount, currency);
+    if (amountMinor === null) {
+      Alert.alert(
+        'Validation Error',
+        'Amount must be a positive value with valid currency precision.',
+      );
       return;
     }
 
@@ -152,42 +196,41 @@ export const useExpenseForm = ({ editingExpense }: UseExpenseFormProps) => {
     }
     // --- End Validation ---
 
-    // Determine who paid and the groupId
-    let paidById: string | undefined;
-    let groupIdForExpense: string | undefined;
-
-    if (formState.selectedGroup) {
-      // If group expense, use the selected payer and group ID
-      paidById = formState.paidByParticipant?.id;
-      groupIdForExpense = formState.selectedGroup.id;
-    } else {
-      // If personal expense, use internalUserId for both paidBy and as the 'personal' groupId
-      if (internalUserId) {
-        paidById = internalUserId;
-        groupIdForExpense = internalUserId; // Personal expenses are grouped under internalUserId
-      } else {
-        // This case should ideally not happen if internalUserId is always generated.
-        // If it does, the expense will have no payer and no group.
-        console.warn(
-          '[useExpenseForm] internalUserId is null, personal expense will have no payer/group.',
-        );
-      }
+    const currentUserId = user?.id ?? internalUserId;
+    if (!currentUserId || !personalParticipantId) {
+      Alert.alert('Validation Error', 'A local user identity is required.');
+      return;
     }
+
+    const isSharedExpense = !!formState.selectedGroup;
+    const spaceId = formState.selectedGroup?.id ?? personalSpaceId;
+    const payerId = isSharedExpense
+      ? formState.paidByParticipant!.id
+      : personalParticipantId;
+    const shares = isSharedExpense
+      ? allocateEqualShares(
+          amountMinor,
+          formState.selectedParticipants.map((participant) => participant.id),
+        )
+      : [{ participantId: personalParticipantId, amountMinor }];
+    const selectedCategory = categories.find(
+      (category) => category.name === formState.category,
+    );
 
     // Prepare data for the store action
     const expenseData = {
       title: formState.title.trim(),
-      amount: numericAmount,
-      date: formState.date.toISOString().split('T')[0],
+      amountMinor,
+      currency,
+      date: formatLocalCalendarDate(formState.date),
       category: formState.category,
+      ...(selectedCategory ? { categoryId: selectedCategory.id } : {}),
+      spaceId,
+      spaceKind: isSharedExpense ? ('shared' as const) : ('personal' as const),
+      payments: [{ participantId: payerId, amountMinor }],
+      shares,
       ...(formState.caption.trim()
         ? { caption: formState.caption.trim() }
-        : {}),
-      ...(groupIdForExpense ? { groupId: groupIdForExpense } : {}),
-      ...(paidById ? { paidBy: paidById } : {}),
-      // Split between only makes sense for formal group expenses where explicitly selected
-      ...(formState.selectedGroup && formState.selectedParticipants.length > 0
-        ? { splitBetween: formState.selectedParticipants.map((p) => p.id) }
         : {}),
     };
 
@@ -205,7 +248,15 @@ export const useExpenseForm = ({ editingExpense }: UseExpenseFormProps) => {
       addExpenseToStore(expenseData);
     }
 
-    router.back(); // Navigate back after successful submission
+    try {
+      await flushExpensePersistence();
+      router.back();
+    } catch {
+      Alert.alert(
+        'Storage Error',
+        'The expense could not be saved to this device. Please try again.',
+      );
+    }
   };
 
   return {

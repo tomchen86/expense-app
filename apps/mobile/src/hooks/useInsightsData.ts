@@ -11,6 +11,11 @@ import {
   ChartDataPoint,
 } from '../utils/calculations/insightCalculations';
 import { ExpenseGroup as _ExpenseGroup } from '../types';
+import { calculateUserShareMinor } from '../utils/expenseCalculations';
+import {
+  getExpenseAmountMinor,
+  getExpenseSpaceId,
+} from '../utils/expenseDomain';
 
 interface UseInsightsDataProps {
   contextType: 'personal' | 'group';
@@ -52,6 +57,11 @@ export const useInsightsData = ({
   // Store data
   const allExpenses = useExpenseStore((state) => state.expenses);
   const internalUserId = useExpenseStore((state) => state.internalUserId);
+  const personalParticipantId = useExpenseStore(
+    (state) => state.personalParticipantId,
+  );
+  const personalSpaceId = useExpenseStore((state) => state.personalSpaceId);
+  const participants = useExpenseStore((state) => state.participants);
   const groups = useExpenseStore((state) => state.groups);
   const appCategories = useExpenseStore((state) => state.categories);
 
@@ -119,11 +129,21 @@ export const useInsightsData = ({
 
   // Get filtered expenses
   const filteredExpenses = useMemo(() => {
+    const personalParticipantIds = Array.from(
+      new Set([
+        personalParticipantId,
+        ...participants
+          .filter((participant) => participant.userId === internalUserId)
+          .map((participant) => participant.id),
+      ]),
+    );
     const relevantExpenses = getRelevantExpenses(
       allExpenses,
       contextType,
       contextId,
-      internalUserId,
+      personalParticipantId,
+      personalSpaceId,
+      personalParticipantIds,
     );
 
     return filterExpensesByDate(
@@ -137,6 +157,9 @@ export const useInsightsData = ({
     contextType,
     contextId,
     internalUserId,
+    personalParticipantId,
+    personalSpaceId,
+    participants,
     aggregation,
     selectedYear,
     selectedMonth,
@@ -144,8 +167,45 @@ export const useInsightsData = ({
 
   // Generate chart data
   const chartData = useMemo(() => {
-    return generateCategoryChartData(filteredExpenses, appCategories);
-  }, [filteredExpenses, appCategories]);
+    return generateCategoryChartData(
+      filteredExpenses,
+      appCategories,
+      '#808080',
+      contextType === 'personal'
+        ? (expense) => {
+            if (
+              expense.spaceKind === 'personal' &&
+              getExpenseSpaceId(expense) === personalSpaceId
+            ) {
+              return getExpenseAmountMinor(expense);
+            }
+            const participantIds = Array.from(
+              new Set([
+                personalParticipantId,
+                ...participants
+                  .filter(
+                    (participant) => participant.userId === internalUserId,
+                  )
+                  .map((participant) => participant.id),
+              ]),
+            );
+            return participantIds.reduce(
+              (sum, participantId) =>
+                sum + calculateUserShareMinor(expense, participantId),
+              0,
+            );
+          }
+        : undefined,
+    );
+  }, [
+    filteredExpenses,
+    appCategories,
+    contextType,
+    internalUserId,
+    participants,
+    personalParticipantId,
+    personalSpaceId,
+  ]);
 
   // Period navigation handlers
   const handlePreviousPeriod = () => {

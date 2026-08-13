@@ -5,8 +5,10 @@ import { INestApplication } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import supertest from 'supertest';
 import * as http from 'http';
+import { DataSource } from 'typeorm';
 import { AppModule } from '../../../app.module';
 import { PerformanceAssertions } from '../../helpers/performance-assertions';
+import { Entities } from '../../../entities/runtime-entities';
 
 const PASSWORD = 'TestPassword123!';
 
@@ -163,7 +165,7 @@ describe('Expense API - Mobile Compatibility', () => {
       expect(metrics).toBeFastOperation();
 
       const createBody = createResponse.body as ApiResponse<{
-        expense: { id: string };
+        expense: { id: string; version: number };
       }>;
       if (!createBody.success || !createBody.data) {
         throw new Error('Failed to create expense');
@@ -239,18 +241,25 @@ describe('Expense API - Mobile Compatibility', () => {
         success: true,
         data: {
           statistics: {
-            total_spent_cents: 12500,
             total_transactions: 1,
+            totals_by_currency: [
+              {
+                currency: 'USD',
+                amount_cents: '12500',
+              },
+            ],
             totals_by_category: [
               {
                 category_id: categoryId,
-                amount_cents: 12500,
+                currency: 'USD',
+                amount_cents: '12500',
               },
             ],
             totals_by_participant: [
               {
                 participant_id: selfParticipant.id,
-                amount_cents: 12500,
+                currency: 'USD',
+                amount_cents: '12500',
               },
             ],
           },
@@ -258,6 +267,7 @@ describe('Expense API - Mobile Compatibility', () => {
       });
 
       const updatePayload = {
+        expected_version: createBody.data.expense.version,
         amount_cents: 15000,
         splits: [
           { participant_id: selfParticipant.id, share_cents: 5000 },
@@ -274,7 +284,9 @@ describe('Expense API - Mobile Compatibility', () => {
         .expect(200);
 
       const updateBody = updateResponse.body as ApiResponse<{ expense: any }>;
+      let latestVersion = createBody.data.expense.version;
       if (updateBody.success && updateBody.data) {
+        latestVersion = updateBody.data.expense.version as number;
         expect(updateBody.data.expense).toEqual(
           expect.objectContaining({
             id: createdExpenseId,
@@ -298,6 +310,7 @@ describe('Expense API - Mobile Compatibility', () => {
       await api
         .delete(`/api/expenses/${createdExpenseId}`)
         .set('Authorization', `Bearer ${accessToken}`)
+        .query({ expected_version: latestVersion })
         .expect(204);
 
       const deletedLookup = await api
@@ -316,6 +329,276 @@ describe('Expense API - Mobile Compatibility', () => {
   });
 
   describe('Validation', () => {
+    it.each([
+      ['fractional', 5000.5],
+      ['unsafe', Number.MAX_SAFE_INTEGER + 1],
+    ])('should reject %s cent amounts', async (_caseName, amountCents) => {
+      const { accessToken } = await registerMobileUser();
+      const selfParticipant = await fetchSelfParticipant(accessToken);
+
+      const response = await api
+        .post('/api/expenses')
+        .set('Authorization', `Bearer ${accessToken}`)
+        .send({
+          description: 'Invalid cent amount',
+          amount_cents: amountCents,
+          currency: 'USD',
+          expense_date: '2025-09-20',
+          paid_by_participant_id: selfParticipant.id,
+          split_type: 'custom',
+          splits: [
+            {
+              participant_id: selfParticipant.id,
+              share_cents: amountCents,
+            },
+          ],
+        })
+        .expect(400);
+
+      expect(response.body).toMatchObject({
+        success: false,
+        error: {
+          code: 'VALIDATION_ERROR',
+          field: 'amount_cents',
+        },
+      });
+    });
+
+    it('should require the deterministic remainder allocation for equal splits', async () => {
+      const { accessToken } = await registerMobileUser();
+      const selfParticipant = await fetchSelfParticipant(accessToken);
+      const partnerParticipantId = await createParticipant(
+        accessToken,
+        'Equal Split Partner',
+      );
+
+      const response = await api
+        .post('/api/expenses')
+        .set('Authorization', `Bearer ${accessToken}`)
+        .send({
+          description: 'Non-canonical equal split',
+          amount_cents: 5,
+          currency: 'USD',
+          expense_date: '2025-09-20',
+          paid_by_participant_id: selfParticipant.id,
+          split_type: 'equal',
+          splits: [
+            { participant_id: selfParticipant.id, share_cents: 2 },
+            { participant_id: partnerParticipantId, share_cents: 3 },
+          ],
+        })
+        .expect(400);
+
+      expect(response.body).toEqual({
+        success: false,
+        error: {
+          code: 'INVALID_EQUAL_SPLITS',
+          message:
+            'Equal split shares must use the canonical remainder allocation',
+          field: 'splits',
+        },
+      });
+    });
+
+    it('should reject percentage shares that contradict share cents', async () => {
+      const { accessToken } = await registerMobileUser();
+      const selfParticipant = await fetchSelfParticipant(accessToken);
+      const partnerParticipantId = await createParticipant(
+        accessToken,
+        'Percentage Split Partner',
+      );
+
+      const response = await api
+        .post('/api/expenses')
+        .set('Authorization', `Bearer ${accessToken}`)
+        .send({
+          description: 'Contradictory percentage split',
+          amount_cents: 1000,
+          currency: 'USD',
+          expense_date: '2025-09-20',
+          paid_by_participant_id: selfParticipant.id,
+          split_type: 'percentage',
+          splits: [
+            {
+              participant_id: selfParticipant.id,
+              share_cents: 400,
+              share_percent: 50,
+            },
+            {
+              participant_id: partnerParticipantId,
+              share_cents: 600,
+              share_percent: 50,
+            },
+          ],
+        })
+        .expect(400);
+
+      expect(response.body).toEqual({
+        success: false,
+        error: {
+          code: 'INVALID_PERCENTAGE_SPLITS',
+          message:
+            'Percentage split cents must match the canonical percentage allocation',
+          field: 'splits',
+        },
+      });
+    });
+
+    it('should allow a payer who does not consume any share', async () => {
+      const { accessToken } = await registerMobileUser();
+      const selfParticipant = await fetchSelfParticipant(accessToken);
+      const partnerParticipantId = await createParticipant(
+        accessToken,
+        'Sponsored Participant',
+      );
+
+      const response = await api
+        .post('/api/expenses')
+        .set('Authorization', `Bearer ${accessToken}`)
+        .send({
+          description: 'Gift for a friend',
+          amount_cents: 5000,
+          currency: 'USD',
+          expense_date: '2025-09-20',
+          paid_by_participant_id: selfParticipant.id,
+          split_type: 'custom',
+          splits: [{ participant_id: partnerParticipantId, share_cents: 5000 }],
+        })
+        .expect(201);
+
+      expect(response.body.data.expense).toMatchObject({
+        paid_by_participant_id: selfParticipant.id,
+        splits: [{ participant_id: partnerParticipantId, share_cents: 5000 }],
+      });
+    });
+
+    it('should preserve split identity and settlement on non-split updates', async () => {
+      const { accessToken } = await registerMobileUser();
+      const selfParticipant = await fetchSelfParticipant(accessToken);
+
+      const createResponse = await api
+        .post('/api/expenses')
+        .set('Authorization', `Bearer ${accessToken}`)
+        .send({
+          description: 'Settled expense',
+          amount_cents: 2500,
+          currency: 'USD',
+          expense_date: '2025-09-20',
+          paid_by_participant_id: selfParticipant.id,
+          split_type: 'custom',
+          splits: [{ participant_id: selfParticipant.id, share_cents: 2500 }],
+        })
+        .expect(201);
+
+      const expenseId = createResponse.body.data.expense.id as string;
+      const expectedVersion = createResponse.body.data.expense
+        .version as number;
+      const splitRepository = app
+        .get(DataSource)
+        .getRepository(Entities.ExpenseSplit);
+      const [before] = await splitRepository.find({ where: { expenseId } });
+      const settledAt = new Date('2025-09-21T00:00:00.000Z');
+      before.settledAt = settledAt;
+      await splitRepository.save(before);
+
+      await api
+        .put(`/api/expenses/${expenseId}`)
+        .set('Authorization', `Bearer ${accessToken}`)
+        .send({
+          expected_version: expectedVersion,
+          notes: 'Description-only metadata update',
+        })
+        .expect(200);
+
+      const [after] = await splitRepository.find({ where: { expenseId } });
+      expect(after.id).toBe(before.id);
+      expect(new Date(after.settledAt as Date).toISOString()).toBe(
+        settledAt.toISOString(),
+      );
+    });
+
+    it('should return the same expense when a client mutation is retried', async () => {
+      const { accessToken } = await registerMobileUser();
+      const selfParticipant = await fetchSelfParticipant(accessToken);
+      const clientExpenseId = '951fe698-5c66-4bcc-90a2-96962c8baf71';
+      const payload = {
+        id: clientExpenseId,
+        client_mutation_id: `expense-retry-${Date.now()}`,
+        description: 'Idempotent mobile retry',
+        amount_cents: 3200,
+        currency: 'USD',
+        expense_date: '2025-09-20',
+        paid_by_participant_id: selfParticipant.id,
+        split_type: 'custom',
+        splits: [{ participant_id: selfParticipant.id, share_cents: 3200 }],
+      };
+
+      const first = await api
+        .post('/api/expenses')
+        .set('Authorization', `Bearer ${accessToken}`)
+        .send(payload)
+        .expect(201);
+      const second = await api
+        .post('/api/expenses')
+        .set('Authorization', `Bearer ${accessToken}`)
+        .send(payload)
+        .expect(201);
+
+      expect(second.body.data.expense.id).toBe(first.body.data.expense.id);
+      expect(first.body.data.expense.id).toBe(clientExpenseId);
+
+      const list = await api
+        .get('/api/expenses')
+        .set('Authorization', `Bearer ${accessToken}`)
+        .query({ search: 'Idempotent mobile retry' })
+        .expect(200);
+      expect(list.body.data.expenses).toHaveLength(1);
+    });
+
+    it('should reject an update made from a stale expense version', async () => {
+      const { accessToken } = await registerMobileUser();
+      const selfParticipant = await fetchSelfParticipant(accessToken);
+
+      const created = await api
+        .post('/api/expenses')
+        .set('Authorization', `Bearer ${accessToken}`)
+        .send({
+          description: 'Versioned expense',
+          amount_cents: 4100,
+          currency: 'USD',
+          expense_date: '2025-09-20',
+          paid_by_participant_id: selfParticipant.id,
+          split_type: 'custom',
+          splits: [{ participant_id: selfParticipant.id, share_cents: 4100 }],
+        })
+        .expect(201);
+
+      const expense = created.body.data.expense as {
+        id: string;
+        version: number;
+      };
+      const firstUpdate = await api
+        .put(`/api/expenses/${expense.id}`)
+        .set('Authorization', `Bearer ${accessToken}`)
+        .send({ expected_version: expense.version, notes: 'First writer' })
+        .expect(200);
+      expect(firstUpdate.body.data.expense.version).toBe(expense.version + 1);
+
+      const stale = await api
+        .put(`/api/expenses/${expense.id}`)
+        .set('Authorization', `Bearer ${accessToken}`)
+        .send({ expected_version: expense.version, notes: 'Stale writer' })
+        .expect(409);
+      expect(stale.body).toEqual({
+        success: false,
+        error: {
+          code: 'EXPENSE_VERSION_CONFLICT',
+          message: 'Expense was modified by another request',
+          field: 'expected_version',
+        },
+      });
+    });
+
     it('should reject expenses when splits do not sum to amount', async () => {
       const { accessToken } = await registerMobileUser();
       const selfParticipant = await fetchSelfParticipant(accessToken);

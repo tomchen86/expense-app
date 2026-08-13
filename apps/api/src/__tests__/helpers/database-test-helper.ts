@@ -16,16 +16,14 @@ type CoupleEntity = InstanceType<EntityCollection['Couple']>;
 
 // Mobile app's default categories for seeding test data
 const MOBILE_DEFAULT_CATEGORIES = [
-  { name: 'Food & Dining', color: '#FF6B6B' },
-  { name: 'Transportation', color: '#4ECDC4' },
-  { name: 'Shopping', color: '#45B7D1' },
-  { name: 'Entertainment', color: '#96CEB4' },
-  { name: 'Bills & Utilities', color: '#FFEAA7' },
-  { name: 'Healthcare', color: '#DDA0DD' },
-  { name: 'Travel', color: '#98D8C8' },
-  { name: 'Education', color: '#F7DC6F' },
-  { name: 'Personal Care', color: '#BB8FCE' },
-  { name: 'Other', color: '#AED6F1' },
+  { name: 'Food & Dining', color: '#FF6384' },
+  { name: 'Transportation', color: '#36A2EB' },
+  { name: 'Shopping', color: '#FFCE56' },
+  { name: 'Entertainment', color: '#4BC0C0' },
+  { name: 'Bills & Utilities', color: '#9966FF' },
+  { name: 'Health', color: '#FF9F40' },
+  { name: 'Travel', color: '#C9CBCF' },
+  { name: 'Other', color: '#61C0BF' },
 ];
 
 export class DatabaseTestHelper {

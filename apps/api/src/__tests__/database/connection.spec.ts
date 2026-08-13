@@ -20,17 +20,15 @@ describe('Database Connection Tests', () => {
       order: { name: 'ASC' },
     });
 
-    expect(categories).toHaveLength(10);
+    expect(categories).toHaveLength(8);
 
     // Verify mobile app's default categories are present (alphabetical order)
     const expectedCategories = [
       'Bills & Utilities',
-      'Education',
       'Entertainment',
       'Food & Dining',
-      'Healthcare',
+      'Health',
       'Other',
-      'Personal Care',
       'Shopping',
       'Transportation',
       'Travel',

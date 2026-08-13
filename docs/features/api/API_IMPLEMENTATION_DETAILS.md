@@ -1,7 +1,7 @@
 # API 實作細節深度教學
 
 > [!WARNING]
-> 本文件是歷史設計草稿，不是目前架構說明。Passport strategy、全域 DTO validation、全域 exception filter、檔案上傳與部分 routes 等內容可能仍是未實作範例。若要了解目前 API 的實際架構、路由與程式碼流程，請改讀 [`GUIDE-API_CODE.md`](./GUIDE-API_CODE.md)，並以 `apps/api/src/` 與 integration tests 為最終依據。
+> 本文件是歷史設計草稿，不是目前架構說明。Passport strategy、全域 DTO validation、全域 exception filter、檔案上傳與部分 routes 等內容可能仍是未實作範例。尤其下文的 `/couples` 與「伴侶關係」不是現行 domain contract：`Couple` 只是 general expense `Space` 的 legacy persistence 名稱，新 API 使用 `/api/spaces` 與 `space_id`。若要了解目前 API 的實際架構、路由與程式碼流程，請改讀 [`GUIDE-API_CODE.md`](./GUIDE-API_CODE.md)，並以 `apps/api/src/`、OpenSpec 與 integration tests 為最終依據。
 
 本文件提供了一份關於 API 實作細節、架構和設計模式的深度教學，旨在幫助開發者快速理解並參與開發。
 
@@ -187,7 +187,7 @@ export class ProfileController {
 
 - `/auth`: 處理認證和使用者註冊。
 - `/users`: 處理使用者個人資料和設定。
-- `/couples`: 處理伴侶關係管理。
+- `/api/spaces`: 處理 personal/shared expense spaces；下文若出現 `/couples`，只屬歷史草稿。
 - `/categories`: 處理費用類別管理。
 - `/expenses`: 處理費用追蹤。
 - `/analytics`: 處理資料分析和洞察。

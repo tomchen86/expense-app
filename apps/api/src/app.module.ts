@@ -11,6 +11,9 @@ import { CategoryModule } from './modules/category.module';
 import { ParticipantModule } from './modules/participant.module';
 import { GroupModule } from './modules/group.module';
 import { ExpenseModule } from './modules/expense.module';
+import { SpaceModule } from './modules/space.module';
+import { PersonalLedgerModule } from './modules/personal-ledger.module';
+import { ExpenseSyncModule } from './modules/expense-sync.module';
 
 @Module({
   imports: [
@@ -24,6 +27,9 @@ import { ExpenseModule } from './modules/expense.module';
     CategoryModule,
     ParticipantModule,
     GroupModule,
+    SpaceModule,
+    PersonalLedgerModule,
+    ExpenseSyncModule,
     ExpenseModule,
   ],
   controllers: [AppController],

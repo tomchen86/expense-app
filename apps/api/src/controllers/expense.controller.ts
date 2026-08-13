@@ -19,8 +19,10 @@ import { JwtAuthGuard } from '../guards/jwt-auth.guard';
 import { ExpenseService } from '../services/expense.service';
 import {
   CreateExpenseDto,
+  DeleteExpenseQueryDto,
   ExpenseQueryDto,
   ExpenseResponseDto,
+  ExpenseSpaceQueryDto,
   ExpenseStatisticsResponse,
   UpdateExpenseDto,
 } from '../dto/expense.dto';
@@ -101,14 +103,19 @@ export class ExpenseController {
     );
 
     const response: ExpenseStatisticsResponse = {
-      total_spent_cents: stats.totalSpentCents,
       total_transactions: stats.totalTransactions,
+      totals_by_currency: stats.totalsByCurrency.map((row) => ({
+        currency: row.currency,
+        amount_cents: row.amountCents,
+      })),
       totals_by_category: stats.totalsByCategory.map((row) => ({
         category_id: row.categoryId,
+        currency: row.currency,
         amount_cents: row.amountCents,
       })),
       totals_by_participant: stats.totalsByParticipant.map((row) => ({
         participant_id: row.participantId,
+        currency: row.currency,
         amount_cents: row.amountCents,
       })),
     };
@@ -125,10 +132,20 @@ export class ExpenseController {
   async getExpense(
     @Req() req: AuthenticatedRequest,
     @Param('expenseId') expenseId: string,
+    @Query() query: Record<string, unknown>,
   ): Promise<ApiResponse<{ expense: ExpenseResponseDto }>> {
+    const { space_id: spaceId } = this.validateDto(
+      ExpenseSpaceQueryDto,
+      query,
+      {
+        skipMissingProperties: true,
+        messageOverride: 'Invalid expense query parameters',
+      },
+    );
     const expense = await this.expenseService.getExpenseForUser(
       req.user.id,
       expenseId,
+      spaceId,
     );
 
     return {
@@ -167,16 +184,25 @@ export class ExpenseController {
     @Req() req: AuthenticatedRequest,
     @Param('expenseId') expenseId: string,
     @Body() body: unknown,
+    @Query() query: Record<string, unknown>,
   ): Promise<ApiResponse<{ expense: ExpenseResponseDto }>> {
     const dto = this.validateDto(UpdateExpenseDto, body, {
-      skipMissingProperties: true,
       messageOverride: 'Invalid expense payload',
     });
+    const { space_id: spaceId } = this.validateDto(
+      ExpenseSpaceQueryDto,
+      query,
+      {
+        skipMissingProperties: true,
+        messageOverride: 'Invalid expense query parameters',
+      },
+    );
 
     const expense = await this.expenseService.updateExpenseForUser(
       req.user.id,
       expenseId,
       dto,
+      spaceId,
     );
 
     return {
@@ -192,8 +218,19 @@ export class ExpenseController {
   async deleteExpense(
     @Req() req: AuthenticatedRequest,
     @Param('expenseId') expenseId: string,
+    @Query() query: Record<string, unknown>,
   ): Promise<void> {
-    await this.expenseService.deleteExpenseForUser(req.user.id, expenseId);
+    const { space_id: spaceId, expected_version: expectedVersion } =
+      this.validateDto(DeleteExpenseQueryDto, query, {
+        transformOptions: { enableImplicitConversion: true },
+        messageOverride: 'Invalid expense query parameters',
+      });
+    await this.expenseService.deleteExpenseForUser(
+      req.user.id,
+      expenseId,
+      expectedVersion,
+      spaceId,
+    );
   }
 
   private validateDto<T>(

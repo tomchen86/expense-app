@@ -20,9 +20,17 @@ import ExpenseListItem from '../src/components/ExpenseListItem';
 import GroupBalancesOverlay from '../src/components/GroupBalancesOverlay';
 import FloatingActionButton from '../src/components/FloatingActionButton';
 import {
-  calculateGroupTotal,
-  calculateUserTotalContributionInGroup,
+  calculateGroupTotalsByCurrency,
+  calculateUserTotalContributionMinorInGroup,
+  resolveGroupParticipantIdForUser,
 } from '../src/utils/groupCalculations';
+import {
+  getExpenseAmountMinor,
+  getExpenseCurrency,
+  getExpenseSpaceId,
+  isExpenseDeleted,
+} from '../src/utils/expenseDomain';
+import { formatMinorUnits } from '../src/utils/money';
 
 const GroupDetailScreen = () => {
   const params = useLocalSearchParams();
@@ -42,23 +50,31 @@ const GroupDetailScreen = () => {
   }, [groups, groupId]);
 
   const groupExpenses = useMemo(() => {
-    return expenses.filter((e) => e.groupId === groupId);
+    return expenses.filter(
+      (expense) =>
+        !isExpenseDeleted(expense) && getExpenseSpaceId(expense) === groupId,
+    );
   }, [expenses, groupId]);
 
-  const groupTotal = useMemo(() => {
-    return calculateGroupTotal(groupExpenses, groupId as string);
+  const groupTotals = useMemo(() => {
+    return calculateGroupTotalsByCurrency(groupExpenses, groupId as string);
   }, [groupExpenses, groupId]);
 
-  const currentUserTotalContribution = useMemo(() => {
-    if (!internalUserId) {
-      return 0;
+  const currentGroupParticipantId = useMemo(
+    () => resolveGroupParticipantIdForUser(group, internalUserId),
+    [group, internalUserId],
+  );
+
+  const currentUserTotalContributions = useMemo(() => {
+    if (!currentGroupParticipantId) {
+      return [];
     }
-    return calculateUserTotalContributionInGroup(
-      internalUserId,
+    return calculateUserTotalContributionMinorInGroup(
+      currentGroupParticipantId,
       groupExpenses,
       groupId as string,
     );
-  }, [internalUserId, groupExpenses, groupId]);
+  }, [currentGroupParticipantId, groupExpenses, groupId]);
 
   const groupMembers = useMemo(() => {
     return group?.participants || [];
@@ -89,7 +105,8 @@ const GroupDetailScreen = () => {
         item={item}
         group={group ?? null}
         allParticipants={allParticipants}
-        displayAmount={item.amount}
+        displayAmountMinor={getExpenseAmountMinor(item)}
+        currency={getExpenseCurrency(item)}
         onEdit={handleEdit}
         onDelete={handleDelete}
       />
@@ -121,20 +138,25 @@ const GroupDetailScreen = () => {
         }
       >
         <View style={styles.totalContainer}>
-          <Text style={styles.totalText}>
-            Group Total: ${groupTotal.toFixed(2)}
-          </Text>
+          {groupTotals.map((total) => (
+            <Text key={total.currency} style={styles.totalText}>
+              Group Total: {formatMinorUnits(total.amountMinor, total.currency)}
+            </Text>
+          ))}
         </View>
       </TouchableOpacity>
 
-      {internalUserId && (
+      {currentGroupParticipantId && (
         <TouchableOpacity
           onPress={() => setIsBalancesOverlayVisible(true)}
           style={styles.totalContainer}
         >
-          <Text style={styles.totalText}>
-            My Total Contribution: ${currentUserTotalContribution.toFixed(2)}
-          </Text>
+          {currentUserTotalContributions.map((total) => (
+            <Text key={total.currency} style={styles.totalText}>
+              My Total Contribution:{' '}
+              {formatMinorUnits(total.amountMinor, total.currency)}
+            </Text>
+          ))}
         </TouchableOpacity>
       )}
 
@@ -150,13 +172,14 @@ const GroupDetailScreen = () => {
         style={styles.list}
       />
 
-      {group && internalUserId && (
+      {group && currentGroupParticipantId && (
         <GroupBalancesOverlay
           visible={isBalancesOverlayVisible}
           onClose={() => setIsBalancesOverlayVisible(false)}
           members={groupMembers}
           expenses={groupExpenses}
-          currentUserId={internalUserId}
+          currentUserId={currentGroupParticipantId}
+          allParticipants={allParticipants}
         />
       )}
       <FloatingActionButton groupId={groupId as string} />

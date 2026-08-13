@@ -7,14 +7,18 @@
 export type ExpenseCategory = string;
 
 export interface Category {
-  id: string; // Unique identifier for the category (e.g., the name itself or a UUID)
+  id: string; // Stable UUID; legacy name-based identifiers require migration before sync.
   name: string;
   color: string; // Hex color code
+  isDefault?: boolean;
 }
 
 export interface Participant {
   id: string;
   name: string;
+  active?: boolean;
+  spaceId?: string;
+  userId?: string;
 }
 
 export interface ExpenseGroup {
@@ -24,23 +28,58 @@ export interface ExpenseGroup {
   createdAt: string;
 }
 
+export type ExpenseSpaceKind = 'personal' | 'shared';
+
+export interface MoneyAllocation {
+  participantId: string;
+  amountMinor: number;
+}
+
+export type ExpenseSyncStatus =
+  'local_only' | 'pending' | 'syncing' | 'synced' | 'conflict' | 'failed';
+
+export interface ExpenseSyncMetadata {
+  mutationId: string;
+  serverVersion?: number;
+  localRevision?: number;
+  /** @deprecated Legacy mobile-local counter retained for hydration only. */
+  version?: number;
+  status: ExpenseSyncStatus;
+  updatedAt: string;
+  deletedAt?: string;
+  lastError?: string;
+}
+
 export interface Expense {
   id: string;
   title: string;
-  amount: number;
-  date: string; // Store date as string for simplicity, can be Date object
-  caption?: string; // Optional caption field
+  date: string;
+  caption?: string;
   category: ExpenseCategory;
-  groupId?: string; // Reference to the group this expense belongs to
-  paidBy?: string; // Participant ID who paid
-  splitBetween?: string[]; // Participant IDs to split the expense between
-  participants?: Participant[]; // Participants involved in this expense
+  categoryId?: string;
+
+  // Canonical V2 fields. All newly-created expenses populate these fields.
+  amountMinor?: number;
+  currency?: string;
+  spaceId?: string;
+  spaceKind?: ExpenseSpaceKind;
+  payments?: MoneyAllocation[];
+  shares?: MoneyAllocation[];
+  sync?: ExpenseSyncMetadata;
+
+  // Legacy read compatibility. New writes must not populate these fields.
+  amount?: number;
+  groupId?: string;
+  paidBy?: string;
+  splitBetween?: string[];
+  participants?: Participant[];
 }
 
 // User Identity (rarely changes)
 export interface User {
   id: string; // Internal unique ID (replaces internalUserId)
   displayName: string; // Human-readable name for all purposes
+  personalSpaceId?: string;
 }
 
 // User Preferences (frequently changes)
@@ -70,9 +109,11 @@ export interface ExpenseState {
   // Legacy structure (temporary - will be removed)
   userSettings: UserSettings | null;
   internalUserId: string | null;
+  personalSpaceId: string;
+  personalParticipantId: string;
 
   // Expense management
-  addExpense: (expense: Omit<Expense, 'id'>) => void;
+  addExpense: (expense: Omit<Expense, 'id' | 'sync'>) => string;
   updateExpense: (expense: Expense) => void;
   deleteExpense: (id: string) => void;
   getExpenseById: (id: string) => Expense | undefined;
@@ -92,7 +133,11 @@ export interface ExpenseState {
   getGroupById: (id: string) => ExpenseGroup | undefined;
 
   // Participant management
-  addParticipant: (name: string, idOverride?: string) => string; // Returns new participant ID, accepts optional ID
+  addParticipant: (
+    name: string,
+    idOverride?: string,
+    identity?: Pick<Participant, 'spaceId' | 'userId'>,
+  ) => string;
   updateParticipant: (participant: Participant) => void;
   deleteParticipant: (id: string) => void;
   getParticipantById: (id: string) => Participant | undefined;

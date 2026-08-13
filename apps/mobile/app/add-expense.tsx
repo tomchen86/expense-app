@@ -10,6 +10,9 @@ import { ExpenseModals } from '../src/components/ExpenseForm/ExpenseModals';
 
 const AddExpenseScreen = () => {
   const params = useLocalSearchParams();
+  const initialSpaceId = Array.isArray(params.groupId)
+    ? params.groupId[0]
+    : params.groupId;
   let editingExpense: Expense | undefined;
 
   try {
@@ -31,7 +34,7 @@ const AddExpenseScreen = () => {
     isEditing,
     groups,
     participants,
-  } = useExpenseForm({ editingExpense });
+  } = useExpenseForm({ editingExpense, initialSpaceId });
 
   const {
     showCategoryModal,

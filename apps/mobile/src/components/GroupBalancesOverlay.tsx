@@ -12,6 +12,7 @@ import {
   calculateAllMemberBalancesInGroup,
   MemberBalanceDetails,
 } from '../utils/groupCalculations'; // Import the new util
+import { formatMinorUnits } from '../utils/money';
 
 interface GroupBalancesOverlayProps {
   visible: boolean;
@@ -19,6 +20,7 @@ interface GroupBalancesOverlayProps {
   members: Participant[]; // Use Participant type
   expenses: Expense[]; // Define or import Expense type
   currentUserId: string; // To identify the current user
+  allParticipants?: Participant[];
 }
 
 // Removed local calculateMemberBalance function
@@ -29,19 +31,24 @@ const GroupBalancesOverlay: React.FC<GroupBalancesOverlayProps> = ({
   members,
   expenses,
   currentUserId,
+  allParticipants = members,
 }) => {
   // Calculate all balances once
   const memberBalanceDetails = React.useMemo(() => {
-    return calculateAllMemberBalancesInGroup(members, expenses);
-  }, [members, expenses]);
+    return calculateAllMemberBalancesInGroup(
+      members,
+      expenses,
+      allParticipants,
+    );
+  }, [members, expenses, allParticipants]);
 
   const renderMemberBalance = ({ item }: { item: MemberBalanceDetails }) => {
-    const balance = item.netBalance;
+    const balance = item.netBalanceMinor;
     const balanceText =
       balance > 0
-        ? `Is Owed $${balance.toFixed(2)}`
+        ? `Is Owed ${formatMinorUnits(balance, item.currency)}`
         : balance < 0
-          ? `Owes $${Math.abs(balance).toFixed(2)}`
+          ? `Owes ${formatMinorUnits(Math.abs(balance), item.currency)}`
           : 'Settled up';
 
     return (
@@ -52,8 +59,8 @@ const GroupBalancesOverlay: React.FC<GroupBalancesOverlayProps> = ({
         </Text>
         <Text style={styles.memberBalance}>{balanceText}</Text>
         <Text style={styles.balanceDetail}>
-          Paid: ${item.totalPaid.toFixed(2)}, Share: $
-          {item.totalShare.toFixed(2)}
+          Paid: {formatMinorUnits(item.totalPaidMinor, item.currency)}, Share:{' '}
+          {formatMinorUnits(item.totalShareMinor, item.currency)}
         </Text>
       </View>
     );
@@ -72,7 +79,7 @@ const GroupBalancesOverlay: React.FC<GroupBalancesOverlayProps> = ({
           <FlatList
             data={memberBalanceDetails} // Use pre-calculated balances
             renderItem={renderMemberBalance}
-            keyExtractor={(item) => item.memberId} // Use memberId from MemberBalanceDetails
+            keyExtractor={(item) => `${item.memberId}:${item.currency}`}
             style={styles.list}
           />
           <Pressable

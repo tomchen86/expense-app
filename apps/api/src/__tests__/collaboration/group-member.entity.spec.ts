@@ -81,6 +81,7 @@ describe('GroupMember Entity (sql.js)', () => {
     const member = await groupMembers.save(
       groupMembers.create({
         groupId: group.id,
+        coupleId: couple.id,
         participantId: participant.id,
       }),
     );
@@ -101,6 +102,7 @@ describe('GroupMember Entity (sql.js)', () => {
     await groupMembers.save(
       groupMembers.create({
         groupId: group.id,
+        coupleId: couple.id,
         participantId: participant.id,
       }),
     );
@@ -108,7 +110,28 @@ describe('GroupMember Entity (sql.js)', () => {
     await expect(
       groupMembers.insert({
         groupId: group.id,
+        coupleId: couple.id,
         participantId: participant.id,
+      }),
+    ).rejects.toThrow();
+  });
+
+  it('rejects a participant from another space', async () => {
+    const owner = await createUser('tenant-owner@example.com');
+    const otherOwner = await createUser('tenant-other@example.com');
+    const groupCouple = await createCouple(owner.id);
+    const otherCouple = await createCouple(otherOwner.id);
+    const group = await createGroup(groupCouple.id, owner.id);
+    const otherParticipant = await createParticipant(otherCouple.id, {
+      userId: otherOwner.id,
+      isRegistered: true,
+    });
+
+    await expect(
+      groupMembers.insert({
+        groupId: group.id,
+        coupleId: groupCouple.id,
+        participantId: otherParticipant.id,
       }),
     ).rejects.toThrow();
   });

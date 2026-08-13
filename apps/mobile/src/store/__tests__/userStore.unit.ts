@@ -8,13 +8,16 @@ const defaultSettings = {
 };
 
 const resetUserStore = () => {
-  const { internalUserId } = useUserStore.getState();
+  const { internalUserId, personalSpaceId, personalParticipantId } =
+    useUserStore.getState();
 
   useUserStore.setState({
     user: null,
     settings: { ...defaultSettings },
     userSettings: null,
     internalUserId,
+    personalSpaceId,
+    personalParticipantId,
   });
 };
 
@@ -42,7 +45,9 @@ describe('UserStore', () => {
   it('creates a new user and returns the generated identifier', () => {
     const id = useUserStore.getState().createUser('Morgan');
 
-    expect(id).toMatch(/^user_/);
+    expect(id).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
+    );
     expect(useUserStore.getState().user).toMatchObject({
       id,
       displayName: 'Morgan',
@@ -80,6 +85,21 @@ describe('UserStore', () => {
     resetUserStore();
     const fallbackId = useUserStore.getState().getInternalUserId();
 
-    expect(fallbackId).toMatch(/^user_/);
+    expect(fallbackId).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
+    );
+  });
+
+  it('keeps distinct UUID identities for the user, personal space, and participant', () => {
+    const { internalUserId, personalSpaceId, personalParticipantId } =
+      useUserStore.getState();
+    const identities = [internalUserId, personalSpaceId, personalParticipantId];
+
+    expect(new Set(identities).size).toBe(3);
+    identities.forEach((id) =>
+      expect(id).toMatch(
+        /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
+      ),
+    );
   });
 });

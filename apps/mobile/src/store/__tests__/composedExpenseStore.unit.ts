@@ -15,13 +15,16 @@ const defaultSettings = {
 };
 
 const resetAllStores = () => {
-  const { internalUserId } = useUserStore.getState();
+  const { internalUserId, personalSpaceId, personalParticipantId } =
+    useUserStore.getState();
 
   useUserStore.setState({
     user: null,
     settings: { ...defaultSettings },
     userSettings: null,
     internalUserId,
+    personalSpaceId,
+    personalParticipantId,
   });
   useParticipantStore.setState({ participants: [] });
   useGroupStore.setState({ groups: [] });
@@ -39,6 +42,8 @@ const resetAllStores = () => {
     settings: { ...defaultSettings },
     userSettings: null,
     internalUserId,
+    personalSpaceId,
+    personalParticipantId,
   });
 };
 
@@ -56,14 +61,20 @@ describe('ComposedExpenseStore', () => {
 
     updateUser({ displayName: 'Jamie' });
 
-    const { user, participants } = useComposedExpenseStore.getState();
+    const { user, participants, personalParticipantId, personalSpaceId } =
+      useComposedExpenseStore.getState();
     const syncedParticipant = useParticipantStore
       .getState()
-      .getParticipantById(user!.id);
+      .getParticipantById(personalParticipantId);
 
     expect(user?.displayName).toBe('Jamie');
-    expect(syncedParticipant).toEqual({ id: user!.id, name: 'Jamie' });
-    expect(participants).toContainEqual({ id: user!.id, name: 'Jamie' });
+    expect(syncedParticipant).toEqual({
+      id: personalParticipantId,
+      name: 'Jamie',
+      userId: user!.id,
+      spaceId: personalSpaceId,
+    });
+    expect(participants).toContainEqual(syncedParticipant);
   });
 
   it('creates groups seeded with the current user as a participant', () => {
@@ -74,12 +85,19 @@ describe('ComposedExpenseStore', () => {
 
     const group = useGroupStore.getState().getGroupById(groupId);
     expect(group).toBeDefined();
-    expect(group?.participants).toContainEqual({ id: userId, name: 'Morgan' });
-
-    const participant = useParticipantStore
-      .getState()
-      .getParticipantById(userId);
-    expect(participant).toEqual({ id: userId, name: 'Morgan' });
+    const creator = group?.participants[0];
+    expect(creator).toMatchObject({
+      name: 'Morgan',
+      userId,
+      spaceId: groupId,
+    });
+    expect(creator?.id).not.toBe(userId);
+    expect(creator?.id).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
+    );
+    expect(
+      useParticipantStore.getState().getParticipantById(creator!.id),
+    ).toEqual(creator);
   });
 
   it('manages categories across composed and feature stores', () => {
@@ -102,7 +120,7 @@ describe('ComposedExpenseStore', () => {
     ).toBeUndefined();
   });
 
-  it('removes groups and detaches any linked expenses', () => {
+  it('removes a group while retaining linked expense history', () => {
     const expense: Expense = {
       id: 'expense-1',
       title: 'Hotel',
@@ -131,15 +149,15 @@ describe('ComposedExpenseStore', () => {
     const updatedExpense = useExpenseFeatureStore
       .getState()
       .expenses.find((item) => item.id === 'expense-1');
-    expect(updatedExpense?.groupId).toBeUndefined();
+    expect(updatedExpense?.groupId).toBe('group-1');
 
     const composedExpense = useComposedExpenseStore
       .getState()
       .expenses.find((item) => item.id === 'expense-1');
-    expect(composedExpense?.groupId).toBeUndefined();
+    expect(composedExpense?.groupId).toBe('group-1');
   });
 
-  it('removes a participant across stores and expenses', () => {
+  it('deactivates a participant while retaining expense allocations', () => {
     const group: ExpenseGroup = {
       id: 'group-2',
       name: 'Roommates',
@@ -180,6 +198,7 @@ describe('ComposedExpenseStore', () => {
     useComposedExpenseStore.getState().deleteParticipant('p1');
 
     expect(useParticipantStore.getState().participants).toEqual([
+      { id: 'p1', name: 'Casey', active: false },
       { id: 'p2', name: 'Drew' },
     ]);
     const updatedGroup = useGroupStore.getState().getGroupById('group-2');
@@ -187,12 +206,15 @@ describe('ComposedExpenseStore', () => {
     const updatedExpense = useExpenseFeatureStore
       .getState()
       .expenses.find((item) => item.id === 'expense-2');
-    expect(updatedExpense?.paidBy).toBeUndefined();
-    expect(updatedExpense?.splitBetween).toEqual(['p2']);
+    expect(updatedExpense?.paidBy).toBe('p1');
+    expect(updatedExpense?.splitBetween).toEqual(['p1', 'p2']);
 
     const composedParticipants =
       useComposedExpenseStore.getState().participants;
-    expect(composedParticipants).toEqual([{ id: 'p2', name: 'Drew' }]);
+    expect(composedParticipants).toEqual([
+      { id: 'p1', name: 'Casey', active: false },
+      { id: 'p2', name: 'Drew' },
+    ]);
   });
 
   it('adds and updates participants through composed actions', () => {
@@ -236,7 +258,9 @@ describe('ComposedExpenseStore', () => {
     expect(useUserStore.getState().settings.currency).toBe('EUR');
 
     const newUserId = store.createUser('Jordan');
-    expect(newUserId).toMatch(/^user_/);
+    expect(newUserId).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
+    );
     store.updateUser({ displayName: 'Jordan Updated' });
     expect(useUserStore.getState().user?.displayName).toBe('Jordan Updated');
   });

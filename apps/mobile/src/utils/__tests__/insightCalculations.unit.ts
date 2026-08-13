@@ -13,6 +13,7 @@ import {
   mockCategories,
   createMockExpense,
 } from '../../__tests__/fixtures';
+import type { Expense } from '../../types';
 
 describe('insightCalculations', () => {
   describe('calculateCategoryTotals', () => {
@@ -292,6 +293,85 @@ describe('insightCalculations', () => {
     it('should return empty array for personal context without internal user ID', () => {
       const result = getRelevantExpenses(testExpenses, 'personal', '', null);
       expect(result).toEqual([]);
+    });
+
+    it('includes every active personal-space expense but filters shared expenses by participant allocation', () => {
+      const personalSpaceId = '10f499e9-da49-4458-a7eb-d07e945d1396';
+      const personalParticipantId = '41604f24-7122-4662-84f6-01b5c35e4ca8';
+      const expenses: Expense[] = [
+        {
+          id: 'personal-without-current-allocation',
+          title: 'Imported personal record',
+          amountMinor: 900,
+          currency: 'AUD',
+          date: '2026-08-13',
+          category: 'Other',
+          spaceId: personalSpaceId,
+          spaceKind: 'personal',
+          payments: [
+            {
+              participantId: 'cc93cdbc-3c4c-45c4-b68c-eb655c028325',
+              amountMinor: 900,
+            },
+          ],
+          shares: [
+            {
+              participantId: 'cc93cdbc-3c4c-45c4-b68c-eb655c028325',
+              amountMinor: 900,
+            },
+          ],
+        },
+        {
+          id: 'shared-current-participant',
+          title: 'Shared allocation',
+          amountMinor: 500,
+          currency: 'AUD',
+          date: '2026-08-13',
+          category: 'Other',
+          spaceId: '0f7ecf70-4752-4fcf-97c1-69426dd1609d',
+          spaceKind: 'shared',
+          payments: [
+            { participantId: personalParticipantId, amountMinor: 500 },
+          ],
+          shares: [{ participantId: personalParticipantId, amountMinor: 500 }],
+        },
+        {
+          id: 'unrelated-shared',
+          title: 'Not mine',
+          amountMinor: 500,
+          currency: 'AUD',
+          date: '2026-08-13',
+          category: 'Other',
+          spaceId: 'e54fd827-07d7-4874-b9e6-7d50bf6ff6e0',
+          spaceKind: 'shared',
+          payments: [
+            {
+              participantId: 'a6ff3fa3-1c6e-42d6-a79a-0548e7083aa3',
+              amountMinor: 500,
+            },
+          ],
+          shares: [
+            {
+              participantId: 'a6ff3fa3-1c6e-42d6-a79a-0548e7083aa3',
+              amountMinor: 500,
+            },
+          ],
+        },
+      ];
+
+      expect(
+        getRelevantExpenses(
+          expenses,
+          'personal',
+          '',
+          personalParticipantId,
+          personalSpaceId,
+          [personalParticipantId],
+        ).map((expense) => expense.id),
+      ).toEqual([
+        'personal-without-current-allocation',
+        'shared-current-participant',
+      ]);
     });
 
     it('should return empty array for non-existent group', () => {

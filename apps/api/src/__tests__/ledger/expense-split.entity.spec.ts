@@ -78,6 +78,7 @@ describe('ExpenseSplit Entity (sql.js)', () => {
     await splits.save(
       splits.create({
         expenseId: expense.id,
+        coupleId: couple.id,
         participantId: participant.id,
         shareCents: 2500,
       }),
@@ -86,6 +87,7 @@ describe('ExpenseSplit Entity (sql.js)', () => {
     await expect(
       splits.insert({
         expenseId: expense.id,
+        coupleId: couple.id,
         participantId: participant.id,
         shareCents: 2500,
       }),
@@ -101,9 +103,31 @@ describe('ExpenseSplit Entity (sql.js)', () => {
     await expect(
       splits.insert({
         expenseId: expense.id,
+        coupleId: couple.id,
         participantId: participant.id,
         shareCents: 2500,
         sharePercent: 120,
+      }),
+    ).rejects.toThrow();
+  });
+
+  it('rejects a participant from another space', async () => {
+    const owner = await createUser('split-owner@example.com');
+    const otherOwner = await createUser('split-other@example.com');
+    const expenseCouple = await createCouple(owner.id);
+    const otherCouple = await createCouple(otherOwner.id);
+    const expense = await createExpense(expenseCouple.id, owner.id);
+    const otherParticipant = await createParticipant(
+      otherCouple.id,
+      otherOwner.id,
+    );
+
+    await expect(
+      splits.insert({
+        expenseId: expense.id,
+        coupleId: expenseCouple.id,
+        participantId: otherParticipant.id,
+        shareCents: 5000,
       }),
     ).rejects.toThrow();
   });

@@ -1,8 +1,8 @@
 import { create } from 'zustand';
+import { createJSONStorage, persist } from 'zustand/middleware';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { ExpenseGroup, Participant } from '../../types';
-
-// Helper to generate a simple unique ID
-const generateId = () => Math.random().toString(36).substr(2, 9);
+import { createUuid } from '../../utils/ids';
 
 export interface GroupState {
   groups: ExpenseGroup[];
@@ -27,81 +27,93 @@ export interface GroupState {
   removeParticipantFromAllGroups: (participantId: string) => void;
 }
 
-export const useGroupStore = create<GroupState>((set, get) => ({
-  groups: [],
+export const useGroupStore = create<GroupState>()(
+  persist(
+    (set, get) => ({
+      groups: [],
 
-  addGroup: (name, creatorParticipant) => {
-    const newGroupId = generateId();
-    const newGroup: ExpenseGroup = {
-      id: newGroupId,
-      name,
-      participants: creatorParticipant ? [creatorParticipant] : [],
-      createdAt: new Date().toISOString(),
-    };
+      addGroup: (name, creatorParticipant) => {
+        const newGroupId = createUuid();
+        const newGroup: ExpenseGroup = {
+          id: newGroupId,
+          name,
+          participants: creatorParticipant ? [creatorParticipant] : [],
+          createdAt: new Date().toISOString(),
+        };
 
-    set((state) => ({
-      groups: [...state.groups, newGroup],
-    }));
+        set((state) => ({
+          groups: [...state.groups, newGroup],
+        }));
 
-    return newGroupId;
-  },
+        return newGroupId;
+      },
 
-  updateGroup: (updatedGroup) =>
-    set((state) => ({
-      groups: state.groups.map((group) =>
-        group.id === updatedGroup.id ? updatedGroup : group,
-      ),
-    })),
+      updateGroup: (updatedGroup) =>
+        set((state) => ({
+          groups: state.groups.map((group) =>
+            group.id === updatedGroup.id ? updatedGroup : group,
+          ),
+        })),
 
-  deleteGroup: (id) =>
-    set((state) => ({
-      groups: state.groups.filter((group) => group.id !== id),
-    })),
+      deleteGroup: (id) =>
+        set((state) => ({
+          groups: state.groups.filter((group) => group.id !== id),
+        })),
 
-  getGroupById: (id) => get().groups.find((group) => group.id === id),
+      getGroupById: (id) => get().groups.find((group) => group.id === id),
 
-  addParticipantToGroup: (groupId, participantId, participant) =>
-    set((state) => ({
-      groups: state.groups.map((group) =>
-        group.id === groupId &&
-        !group.participants.some((p) => p.id === participantId)
-          ? {
-              ...group,
-              participants: [...group.participants, participant],
-            }
-          : group,
-      ),
-    })),
+      addParticipantToGroup: (groupId, participantId, participant) =>
+        set((state) => ({
+          groups: state.groups.map((group) =>
+            group.id === groupId &&
+            !group.participants.some((p) => p.id === participantId)
+              ? {
+                  ...group,
+                  participants: [...group.participants, participant],
+                }
+              : group,
+          ),
+        })),
 
-  removeParticipantFromGroup: (groupId, participantId) =>
-    set((state) => ({
-      groups: state.groups.map((group) =>
-        group.id === groupId
-          ? {
-              ...group,
-              participants: group.participants.filter(
-                (p) => p.id !== participantId,
-              ),
-            }
-          : group,
-      ),
-    })),
+      removeParticipantFromGroup: (groupId, participantId) =>
+        set((state) => ({
+          groups: state.groups.map((group) =>
+            group.id === groupId
+              ? {
+                  ...group,
+                  participants: group.participants.filter(
+                    (p) => p.id !== participantId,
+                  ),
+                }
+              : group,
+          ),
+        })),
 
-  updateParticipantInGroups: (participantId, updatedParticipant) =>
-    set((state) => ({
-      groups: state.groups.map((group) => ({
-        ...group,
-        participants: group.participants.map((p) =>
-          p.id === participantId ? updatedParticipant : p,
-        ),
-      })),
-    })),
+      updateParticipantInGroups: (participantId, updatedParticipant) =>
+        set((state) => ({
+          groups: state.groups.map((group) => ({
+            ...group,
+            participants: group.participants.map((p) =>
+              p.id === participantId ? updatedParticipant : p,
+            ),
+          })),
+        })),
 
-  removeParticipantFromAllGroups: (participantId) =>
-    set((state) => ({
-      groups: state.groups.map((group) => ({
-        ...group,
-        participants: group.participants.filter((p) => p.id !== participantId),
-      })),
-    })),
-}));
+      removeParticipantFromAllGroups: (participantId) =>
+        set((state) => ({
+          groups: state.groups.map((group) => ({
+            ...group,
+            participants: group.participants.filter(
+              (p) => p.id !== participantId,
+            ),
+          })),
+        })),
+    }),
+    {
+      name: 'expense-mobile-groups-v2',
+      version: 2,
+      storage: createJSONStorage(() => AsyncStorage),
+      partialize: (state) => ({ groups: state.groups }),
+    },
+  ),
+);

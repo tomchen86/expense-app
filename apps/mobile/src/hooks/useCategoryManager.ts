@@ -97,7 +97,7 @@ export const useCategoryManager = (): UseCategoryManagerReturn => {
     }
 
     if (!canDeleteCategory(categoryToDelete)) {
-      Alert.alert('Error', "The 'Other' category cannot be deleted.");
+      Alert.alert('Error', 'Default categories cannot be deleted.');
       return;
     }
 
@@ -117,7 +117,7 @@ export const useCategoryManager = (): UseCategoryManagerReturn => {
 
   // Helper functions
   const canDeleteCategory = (category: Category): boolean => {
-    return category.name !== 'Other';
+    return category.isDefault !== true;
   };
 
   return {

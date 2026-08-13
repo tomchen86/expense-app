@@ -102,12 +102,14 @@ describe('expense split balance trigger', () => {
       dataSource.transaction(async (manager) => {
         await manager.getRepository(ExpenseSplit).insert({
           expenseId: expense.id,
+          coupleId: couple.id,
           participantId: participantA.id,
           shareCents: '6000',
         });
 
         await manager.getRepository(ExpenseSplit).insert({
           expenseId: expense.id,
+          coupleId: couple.id,
           participantId: participantB.id,
           shareCents: '4000',
         });
@@ -127,16 +129,136 @@ describe('expense split balance trigger', () => {
       dataSource.transaction(async (manager) => {
         await manager.getRepository(ExpenseSplit).insert({
           expenseId: expense.id,
+          coupleId: couple.id,
           participantId: participantA.id,
           shareCents: '5000',
         });
 
         await manager.getRepository(ExpenseSplit).insert({
           expenseId: expense.id,
+          coupleId: couple.id,
           participantId: participantB.id,
           shareCents: '3000',
         });
       }),
     ).rejects.toThrow(/Split total/);
+  });
+
+  it('rejects deleting a split when the remaining shares are unbalanced', async () => {
+    const userA = await createUser('balance-delete-a@example.com');
+    const userB = await createUser('balance-delete-b@example.com');
+    const couple = await createCouple(userA.id);
+    const participantA = await linkParticipant(couple.id, userA.id, 'A');
+    const participantB = await linkParticipant(couple.id, userB.id, 'B');
+    const expense = await createExpense(couple.id, userA.id, participantA.id);
+
+    await dataSource.transaction(async (manager) => {
+      await manager.getRepository(ExpenseSplit).insert([
+        {
+          expenseId: expense.id,
+          coupleId: couple.id,
+          participantId: participantA.id,
+          shareCents: '6000',
+        },
+        {
+          expenseId: expense.id,
+          coupleId: couple.id,
+          participantId: participantB.id,
+          shareCents: '4000',
+        },
+      ]);
+    });
+
+    await expect(
+      dataSource.transaction(async (manager) => {
+        await manager.getRepository(ExpenseSplit).delete({
+          expenseId: expense.id,
+          coupleId: couple.id,
+          participantId: participantB.id,
+        });
+      }),
+    ).rejects.toThrow(/Split total/);
+  });
+
+  it('rejects changing an expense amount without matching split changes', async () => {
+    const userA = await createUser('balance-amount-a@example.com');
+    const userB = await createUser('balance-amount-b@example.com');
+    const couple = await createCouple(userA.id);
+    const participantA = await linkParticipant(couple.id, userA.id, 'A');
+    const participantB = await linkParticipant(couple.id, userB.id, 'B');
+    const expense = await createExpense(couple.id, userA.id, participantA.id);
+
+    await dataSource.transaction(async (manager) => {
+      await manager.getRepository(ExpenseSplit).insert([
+        {
+          expenseId: expense.id,
+          coupleId: couple.id,
+          participantId: participantA.id,
+          shareCents: '6000',
+        },
+        {
+          expenseId: expense.id,
+          coupleId: couple.id,
+          participantId: participantB.id,
+          shareCents: '4000',
+        },
+      ]);
+    });
+
+    await expect(
+      expenses.update({ id: expense.id }, { amountCents: '12000' }),
+    ).rejects.toThrow(/Split total/);
+  });
+
+  it('allows an amount and its splits to be replaced atomically', async () => {
+    const userA = await createUser('balance-replace-a@example.com');
+    const userB = await createUser('balance-replace-b@example.com');
+    const couple = await createCouple(userA.id);
+    const participantA = await linkParticipant(couple.id, userA.id, 'A');
+    const participantB = await linkParticipant(couple.id, userB.id, 'B');
+    const expense = await createExpense(couple.id, userA.id, participantA.id);
+
+    await dataSource.transaction(async (manager) => {
+      await manager.getRepository(ExpenseSplit).insert([
+        {
+          expenseId: expense.id,
+          coupleId: couple.id,
+          participantId: participantA.id,
+          shareCents: '6000',
+        },
+        {
+          expenseId: expense.id,
+          coupleId: couple.id,
+          participantId: participantB.id,
+          shareCents: '4000',
+        },
+      ]);
+    });
+
+    await expect(
+      dataSource.transaction(async (manager) => {
+        await manager
+          .getRepository(Expense)
+          .update({ id: expense.id }, { amountCents: '12000' });
+        await manager.getRepository(ExpenseSplit).delete({
+          expenseId: expense.id,
+          coupleId: couple.id,
+        });
+        await manager.getRepository(ExpenseSplit).insert([
+          {
+            expenseId: expense.id,
+            coupleId: couple.id,
+            participantId: participantA.id,
+            shareCents: '7000',
+          },
+          {
+            expenseId: expense.id,
+            coupleId: couple.id,
+            participantId: participantB.id,
+            shareCents: '5000',
+          },
+        ]);
+      }),
+    ).resolves.toBeUndefined();
   });
 });

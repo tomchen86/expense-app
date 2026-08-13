@@ -107,6 +107,7 @@ describe('Expense Entity (sql.js)', () => {
     );
 
     expect(expense.splitType).toBe('equal');
+    expect(expense.version).toBe(1);
     expect(expense.createdAt).toBeInstanceOf(Date);
     expect(expense.updatedAt).toBeInstanceOf(Date);
     expect(expense.deletedAt).toBeNull();
@@ -125,6 +126,83 @@ describe('Expense Entity (sql.js)', () => {
         currency: 'USD',
         expenseDate: '2025-09-24',
       }),
+    ).rejects.toThrow();
+  });
+
+  it('rejects amounts above the JavaScript safe-integer boundary', async () => {
+    const user = await createUser('owner-max@example.com');
+    const couple = await createCouple(user.id);
+
+    await expect(
+      expenses.insert({
+        coupleId: couple.id,
+        createdBy: user.id,
+        description: 'Unsafe integer',
+        amountCents: Number.MAX_SAFE_INTEGER + 1,
+        currency: 'USD',
+        expenseDate: '2025-09-24',
+      }),
+    ).rejects.toThrow();
+  });
+
+  it.each(['groupId', 'categoryId', 'paidByParticipantId'] as const)(
+    'rejects a cross-space %s reference',
+    async (foreignKey) => {
+      const owner = await createUser(`expense-${foreignKey}@example.com`);
+      const otherOwner = await createUser(
+        `expense-${foreignKey}-other@example.com`,
+      );
+      const expenseCouple = await createCouple(owner.id);
+      const otherCouple = await createCouple(otherOwner.id);
+      const otherGroup = await createExpenseGroup(
+        otherCouple.id,
+        otherOwner.id,
+      );
+      const otherCategory = await createCategory(otherCouple.id);
+      const otherParticipant = await createParticipant(otherCouple.id, {
+        userId: otherOwner.id,
+        isRegistered: true,
+      });
+      const referenceIds = {
+        groupId: otherGroup.id,
+        categoryId: otherCategory.id,
+        paidByParticipantId: otherParticipant.id,
+      };
+
+      await expect(
+        expenses.insert({
+          coupleId: expenseCouple.id,
+          createdBy: owner.id,
+          description: 'Cross-space reference',
+          amountCents: 500,
+          currency: 'USD',
+          expenseDate: '2025-09-24',
+          [foreignKey]: referenceIds[foreignKey],
+        }),
+      ).rejects.toThrow();
+    },
+  );
+
+  it('enforces client mutation idempotency within one legacy space', async () => {
+    const user = await createUser('idempotency@example.com');
+    const couple = await createCouple(user.id);
+    const base = {
+      coupleId: couple.id,
+      createdBy: user.id,
+      amountCents: 500,
+      currency: 'USD',
+      expenseDate: '2025-09-24',
+      clientMutationId: 'offline-mutation-1',
+    };
+
+    await expenses.save(
+      expenses.create({ ...base, description: 'First delivery' }),
+    );
+
+    await expect(
+      expenses.save(
+        expenses.create({ ...base, description: 'Retried delivery' }),
+      ),
     ).rejects.toThrow();
   });
 });

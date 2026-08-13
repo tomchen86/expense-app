@@ -2,7 +2,15 @@
 
 ## Overview
 
-This document defines the PostgreSQL schema for the expense tracking application, designed primarily for couples to manage shared expenses with support for groups and participants.
+This document describes the PostgreSQL cloud schema for a personal-first
+expense application with optional shared spaces for couples, friends,
+households, and trips. The physical `couples`/`couple_id` names are legacy;
+they represent the generalized `Space`/`space_id` domain until a compatibility
+migration renames them.
+
+The device-local store is a second replica and is documented in
+`docs/architecture/STORAGE_STRATEGY.md`; PostgreSQL is not the only persistence
+location for local-first personal expenses.
 
 ## Core Entities
 
@@ -29,7 +37,8 @@ CREATE TABLE users (
 
 ### 2. User Settings Table
 
-User preferences and storage modes.
+User preferences and legacy user-wide storage metadata. `persistence_mode`
+is retained for compatibility; authoritative storage policy is per space.
 
 ```sql
 CREATE TABLE user_settings (
@@ -86,9 +95,13 @@ CREATE TABLE user_devices (
 );
 ```
 
-### 5. Couples Table
+### 5. Spaces Table (physical name: `couples`)
 
-Represents a shared ledger container created by a user with an invite workflow.
+Represents either the user's unique personal ledger or a shared collaboration
+space. `sync_policy` is local-only or cloud-synchronized for personal spaces;
+shared spaces are always cloud-synchronized. The physical column default stays
+`local_only` for device-originated/adoption workflows, but every API-provisioned
+personal space is written explicitly as `cloud_sync`.
 
 ```sql
 CREATE TABLE couples (
@@ -96,15 +109,24 @@ CREATE TABLE couples (
   name VARCHAR(100),
   invite_code VARCHAR(10) NOT NULL UNIQUE,
   status VARCHAR(20) NOT NULL DEFAULT 'active' CHECK (status IN ('active','pending','archived')),
+  kind VARCHAR(20) NOT NULL DEFAULT 'personal' CHECK (kind IN ('personal','shared')),
+  sync_policy VARCHAR(20) NOT NULL DEFAULT 'local_only'
+    CHECK (sync_policy IN ('local_only','cloud_sync')),
   created_by UUID NOT NULL REFERENCES users(id),
   created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  CHECK (kind <> 'shared' OR sync_policy = 'cloud_sync')
 );
+
+CREATE UNIQUE INDEX UQ_couples_active_personal_creator
+  ON couples(created_by)
+  WHERE kind = 'personal' AND status = 'active';
 ```
 
 ### 6. Couple Members Table
 
-Assigns users to a couple with roles and lifecycle tracking.
+Assigns users to a space with roles and lifecycle tracking. The table and
+foreign-key column retain legacy names.
 
 ```sql
 CREATE TABLE couple_members (
@@ -137,7 +159,7 @@ CREATE TABLE couple_invitations (
 
 ### 8. Participants Table
 
-Represents internal users or external contacts scoped to a couple.
+Represents internal users or external contacts scoped to a space.
 
 ```sql
 CREATE TABLE participants (
@@ -149,16 +171,22 @@ CREATE TABLE participants (
   is_registered BOOLEAN NOT NULL DEFAULT false,
   default_currency CHAR(3) NOT NULL DEFAULT 'USD' CHECK (default_currency ~ '^[A-Z]{3}$'),
   notification_preferences JSONB NOT NULL DEFAULT '{"expenses":true,"invites":true,"reminders":true}'::jsonb,
+  deleted_at TIMESTAMPTZ,
   created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
   UNIQUE (couple_id, user_id),
+  UNIQUE (id, couple_id),
   CHECK (user_id IS NOT NULL OR is_registered = false)
 );
+
+CREATE UNIQUE INDEX UQ_participants_couple_email_active
+  ON participants(couple_id, email)
+  WHERE email IS NOT NULL AND deleted_at IS NULL;
 ```
 
 ### 9. Expense Groups Table
 
-Organizes expenses within a couple into named collections.
+Organizes expenses within a space into optional named collections.
 
 ```sql
 CREATE TABLE expense_groups (
@@ -173,6 +201,7 @@ CREATE TABLE expense_groups (
   created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
   deleted_at TIMESTAMPTZ,
+  UNIQUE (id, couple_id),
   CHECK (color IS NULL OR color ~ '^#[0-9A-Fa-f]{6}$'),
   CHECK (default_currency IS NULL OR default_currency ~ '^[A-Z]{3}$')
 );
@@ -184,12 +213,17 @@ Many-to-many join between groups and participants with status tracking.
 
 ```sql
 CREATE TABLE group_members (
-  group_id UUID NOT NULL REFERENCES expense_groups(id) ON DELETE CASCADE,
-  participant_id UUID NOT NULL REFERENCES participants(id) ON DELETE CASCADE,
+  group_id UUID NOT NULL,
+  couple_id UUID NOT NULL,
+  participant_id UUID NOT NULL,
   role VARCHAR(20) NOT NULL DEFAULT 'member' CHECK (role IN ('owner','member')),
   status VARCHAR(20) NOT NULL DEFAULT 'active' CHECK (status IN ('active','invited','left')),
   joined_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  PRIMARY KEY (group_id, participant_id)
+  PRIMARY KEY (group_id, participant_id),
+  FOREIGN KEY (group_id, couple_id)
+    REFERENCES expense_groups(id, couple_id) ON DELETE CASCADE,
+  FOREIGN KEY (participant_id, couple_id)
+    REFERENCES participants(id, couple_id) ON DELETE CASCADE
 );
 ```
 
@@ -209,9 +243,13 @@ CREATE TABLE categories (
   created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
   deleted_at TIMESTAMPTZ,
-  UNIQUE (couple_id, name),
+  UNIQUE (id, couple_id),
   CHECK (color ~ '^#[0-9A-Fa-f]{6}$')
 );
+
+CREATE UNIQUE INDEX UQ_categories_couple_name_active
+  ON categories(couple_id, name)
+  WHERE deleted_at IS NULL;
 ```
 
 ### 12. Expenses Table
@@ -222,12 +260,13 @@ Individual expense records.
 CREATE TABLE expenses (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   couple_id UUID NOT NULL REFERENCES couples(id) ON DELETE CASCADE,
-  group_id UUID REFERENCES expense_groups(id) ON DELETE SET NULL,
-  category_id UUID REFERENCES categories(id) ON DELETE SET NULL,
+  group_id UUID,
+  category_id UUID,
   created_by UUID NOT NULL REFERENCES users(id),
-  paid_by_participant_id UUID REFERENCES participants(id) ON DELETE SET NULL,
+  paid_by_participant_id UUID,
   description VARCHAR(200) NOT NULL,
-  amount_cents BIGINT NOT NULL CHECK (amount_cents > 0),
+  amount_cents BIGINT NOT NULL
+    CHECK (amount_cents > 0 AND amount_cents <= 9007199254740991),
   currency CHAR(3) NOT NULL DEFAULT 'USD' CHECK (currency ~ '^[A-Z]{3}$'),
   exchange_rate NUMERIC(12,6),
   expense_date DATE NOT NULL,
@@ -235,10 +274,23 @@ CREATE TABLE expenses (
   notes TEXT,
   receipt_url TEXT,
   location VARCHAR(200),
+  version INTEGER NOT NULL DEFAULT 1 CHECK (version > 0),
+  client_mutation_id VARCHAR(128),
   deleted_at TIMESTAMPTZ,
   created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE (id, couple_id),
+  FOREIGN KEY (group_id, couple_id)
+    REFERENCES expense_groups(id, couple_id) ON DELETE NO ACTION,
+  FOREIGN KEY (category_id, couple_id)
+    REFERENCES categories(id, couple_id) ON DELETE NO ACTION,
+  FOREIGN KEY (paid_by_participant_id, couple_id)
+    REFERENCES participants(id, couple_id) ON DELETE NO ACTION
 );
+
+CREATE UNIQUE INDEX UQ_expenses_couple_client_mutation_id
+  ON expenses(couple_id, client_mutation_id)
+  WHERE client_mutation_id IS NOT NULL;
 ```
 
 ### 13. Expense Splits Table
@@ -248,14 +300,20 @@ Tracks how expenses are split between participants.
 ```sql
 CREATE TABLE expense_splits (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  expense_id UUID NOT NULL REFERENCES expenses(id) ON DELETE CASCADE,
-  participant_id UUID NOT NULL REFERENCES participants(id) ON DELETE CASCADE,
-  share_cents BIGINT NOT NULL CHECK (share_cents >= 0),
+  expense_id UUID NOT NULL,
+  couple_id UUID NOT NULL,
+  participant_id UUID NOT NULL,
+  share_cents BIGINT NOT NULL
+    CHECK (share_cents >= 0 AND share_cents <= 9007199254740991),
   share_percent NUMERIC(5,2),
   settled_at TIMESTAMPTZ,
   created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-  UNIQUE(expense_id, participant_id)
+  UNIQUE(expense_id, participant_id),
+  FOREIGN KEY (expense_id, couple_id)
+    REFERENCES expenses(id, couple_id) ON DELETE CASCADE,
+  FOREIGN KEY (participant_id, couple_id)
+    REFERENCES participants(id, couple_id) ON DELETE CASCADE
 );
 ```
 
@@ -289,7 +347,7 @@ CREATE INDEX idx_user_settings_user_id ON user_settings(user_id);
 CREATE INDEX idx_user_devices_user ON user_devices(user_id);
 CREATE INDEX idx_user_devices_status ON user_devices(sync_status);
 
--- Couples & membership
+-- Spaces & membership (legacy physical names)
 CREATE INDEX idx_couples_invite_code ON couples(invite_code);
 CREATE INDEX idx_couples_status ON couples(status);
 CREATE INDEX idx_couple_members_user ON couple_members(user_id);
@@ -325,6 +383,7 @@ CREATE INDEX idx_expenses_category_id ON expenses(category_id);
 CREATE INDEX idx_expenses_expense_date ON expenses(expense_date);
 CREATE INDEX idx_expenses_paid_by_participant ON expenses(paid_by_participant_id);
 CREATE INDEX idx_expenses_deleted_at ON expenses(couple_id) WHERE deleted_at IS NULL;
+CREATE INDEX IDX_expenses_couple_updated_id ON expenses(couple_id, updated_at, id);
 
 -- Expense splits
 CREATE INDEX idx_expense_splits_expense_id ON expense_splits(expense_id);
@@ -363,15 +422,17 @@ CREATE TRIGGER trg_expenses_updated_at BEFORE UPDATE ON expenses FOR EACH ROW EX
 CREATE OR REPLACE FUNCTION assert_split_balance()
 RETURNS TRIGGER AS $$
 DECLARE
+  affected_expense_id UUID;
   total_shares BIGINT;
   expense_total BIGINT;
 BEGIN
-  SELECT COALESCE(SUM(share_cents), 0) INTO total_shares FROM expense_splits WHERE expense_id = NEW.expense_id;
-  SELECT amount_cents INTO expense_total FROM expenses WHERE id = NEW.expense_id;
+  affected_expense_id := CASE WHEN TG_OP = 'DELETE' THEN OLD.expense_id ELSE NEW.expense_id END;
+  SELECT COALESCE(SUM(share_cents), 0) INTO total_shares FROM expense_splits WHERE expense_id = affected_expense_id;
+  SELECT amount_cents INTO expense_total FROM expenses WHERE id = affected_expense_id;
   IF total_shares <> expense_total THEN
     RAISE EXCEPTION 'Split total % must equal expense amount %', total_shares, expense_total;
   END IF;
-  RETURN NEW;
+  RETURN CASE WHEN TG_OP = 'DELETE' THEN OLD ELSE NEW END;
 END;
 $$ LANGUAGE plpgsql;
 
@@ -383,23 +444,14 @@ FOR EACH ROW EXECUTE FUNCTION assert_split_balance();
 
 ## Default Categories
 
-```sql
--- Insert default system categories
-INSERT INTO categories (name, color, user_id, is_default) VALUES
-  ('Food & Dining', '#FF5722', NULL, true),
-  ('Transportation', '#2196F3', NULL, true),
-  ('Shopping', '#9C27B0', NULL, true),
-  ('Entertainment', '#FF9800', NULL, true),
-  ('Bills & Utilities', '#F44336', NULL, true),
-  ('Healthcare', '#4CAF50', NULL, true),
-  ('Travel', '#00BCD4', NULL, true),
-  ('Other', '#607D8B', NULL, true);
-```
+Default categories are provisioned per space by `LedgerService`, because every
+category requires the target legacy `couple_id`. They are not global rows and
+must not be inserted with a nonexistent `user_id` column.
 
 ## Migration Strategy
 
 1. **Phase 1**: Core tables (users, user_settings, categories)
-2. **Phase 2**: Relationship tables (couples, participants, groups)
+2. **Phase 2**: Relationship tables (physical `couples`, participants, groups)
 3. **Phase 3**: Transaction tables (expenses, expense_splits)
 4. **Phase 4**: Indexes and performance optimizations
 5. **Phase 5**: Triggers and constraints
@@ -410,7 +462,65 @@ INSERT INTO categories (name, color, user_id, is_default) VALUES
 - Requires the `uuid-ossp` and `citext` extensions for identity tables
 - Soft-delete strategies are handled per-domain using status columns or `deleted_at` timestamps
 - Timestamps include timezone information
-- Decimal type used for money to avoid floating-point precision issues
+- Money is stored as integer minor units (`BIGINT`), never binary floating point
 - Foreign key constraints maintain referential integrity
 - Indexes optimized for common query patterns
-- Supports both couple-based and general group expense tracking
+- `kind` distinguishes the one personal space from any number of shared spaces
+- `sync_policy` is per space; the old user-wide persistence setting is compatibility metadata
+
+## Same-Space Integrity
+
+Migration 009 validates legacy rows before changing constraints, backfills
+`couple_id` onto `expense_splits` and `group_members`, and installs composite
+foreign keys for group, category, payer, split participant, and group member
+references. A detected cross-space legacy row aborts migration with a repair
+message; it is never silently reassigned or deleted.
+
+The optional expense references use `MATCH SIMPLE` semantics and `ON DELETE NO
+ACTION`: a null optional ID remains valid, while a hard delete cannot null the
+non-null tenant key. Normal application deletion is soft deletion. Allocation
+and membership join rows retain `ON DELETE CASCADE` for actual parent-row
+deletion.
+
+Migration 009 is currently a new migration in this worktree. If an environment
+has already recorded this exact migration name, do not edit and rerun it there;
+publish the additional schema work as a new migration instead.
+
+## Migration 009 legacy classification and storage policy
+
+All rows that already exist in PostgreSQL are backfilled to `cloud_sync`,
+including personal spaces: their presence in the cloud is durable evidence that
+they were server-backed. `local_only` is not inferred for existing cloud data.
+
+The migration recognizes a legacy personal row automatically only when it has
+the exact old constructor shape: name `Personal Ledger`, exactly one membership,
+that membership is the active owner matching `created_by`, and the space has no
+invitation history. A multi-member or invitation-bearing row is shared. A
+single-member row outside that provable shape is ambiguous and aborts migration
+instead of being guessed from its display name.
+
+Before retrying an ambiguous database, a maintainer must review each row and
+create an exact mapping table:
+
+```sql
+CREATE TABLE space_kind_migration_overrides (
+  couple_id UUID PRIMARY KEY,
+  kind VARCHAR(20) NOT NULL CHECK (kind IN ('personal', 'shared'))
+);
+
+INSERT INTO space_kind_migration_overrides (couple_id, kind)
+VALUES ('reviewed-space-uuid', 'personal');
+```
+
+Migration 009 validates every override, consumes it, and drops this staging
+table after a successful classification. It also aborts if the resulting data
+would violate one active personal space per creator.
+
+Migration 009 also aligns pre-existing default-category rows with the canonical
+mobile/API catalog. It records and updates only rows whose `is_default`, name,
+color, and icon exactly match one of the eight legacy definitions. Modified or
+custom rows are untouched. The `Healthcare` to `Health` rename aborts when an
+active `Health` already exists in the same space. A small
+`category_catalog_migration_009` provenance table is retained so `down` can
+restore only rows actually changed by this migration; rollback fails closed if
+a tracked row has since changed or would collide.
