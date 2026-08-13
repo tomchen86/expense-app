@@ -2,34 +2,58 @@ import {
   IsString,
   IsOptional,
   IsNumber,
+  IsInt,
   IsDateString,
   IsEnum,
   IsArray,
   ValidateNested,
   IsUUID,
   Min,
+  Max,
+  MaxLength,
+  IsNotEmpty,
 } from 'class-validator';
 import { Type } from 'class-transformer';
+
+export const MAX_SAFE_CENTS = Number.MAX_SAFE_INTEGER;
 
 export class ExpenseSplitDto {
   @IsUUID()
   participant_id: string;
 
-  @IsNumber()
+  @IsInt()
   @Min(0)
+  @Max(MAX_SAFE_CENTS)
   share_cents: number;
 
   @IsOptional()
-  @IsNumber()
+  @IsNumber({ maxDecimalPlaces: 2 })
+  @Min(0)
+  @Max(100)
   share_percent?: number;
 }
 
 export class CreateExpenseDto {
+  @IsOptional()
+  @IsUUID()
+  id?: string;
+
+  @IsOptional()
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(128)
+  client_mutation_id?: string;
+
+  @IsOptional()
+  @IsUUID()
+  space_id?: string;
+
   @IsString()
   description: string;
 
-  @IsNumber()
+  @IsInt()
   @Min(1)
+  @Max(MAX_SAFE_CENTS)
   amount_cents: number;
 
   @IsString()
@@ -76,13 +100,18 @@ export class CreateExpenseDto {
 }
 
 export class UpdateExpenseDto {
+  @IsInt()
+  @Min(1)
+  expected_version: number;
+
   @IsOptional()
   @IsString()
   description?: string;
 
   @IsOptional()
-  @IsNumber()
+  @IsInt()
   @Min(1)
+  @Max(MAX_SAFE_CENTS)
   amount_cents?: number;
 
   @IsOptional()
@@ -135,6 +164,10 @@ export class UpdateExpenseDto {
 
 export class ExpenseResponseDto {
   id: string;
+  version: number;
+  client_mutation_id: string | null;
+  space_id: string;
+  /** @deprecated Use space_id. */
   couple_id: string;
   group_id: string | null;
   category_id: string | null;
@@ -155,6 +188,10 @@ export class ExpenseResponseDto {
 }
 
 export class ExpenseQueryDto {
+  @IsOptional()
+  @IsUUID()
+  space_id?: string;
+
   @IsOptional()
   @Type(() => Number)
   @IsNumber()
@@ -196,15 +233,33 @@ export class ExpenseQueryDto {
   search?: string;
 }
 
+export class ExpenseSpaceQueryDto {
+  @IsOptional()
+  @IsUUID()
+  space_id?: string;
+}
+
+export class DeleteExpenseQueryDto extends ExpenseSpaceQueryDto {
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  expected_version: number;
+}
+
 export interface ExpenseStatisticsResponse {
-  total_spent_cents: number;
   total_transactions: number;
+  totals_by_currency: Array<{
+    currency: string;
+    amount_cents: string;
+  }>;
   totals_by_category: Array<{
     category_id: string | null;
-    amount_cents: number;
+    currency: string;
+    amount_cents: string;
   }>;
   totals_by_participant: Array<{
     participant_id: string;
-    amount_cents: number;
+    currency: string;
+    amount_cents: string;
   }>;
 }

@@ -6,6 +6,7 @@ import React, {
 } from 'react';
 import TestRenderer, { act } from 'react-test-renderer';
 import { useExpenseModals } from '../useExpenseModals';
+import { useCategoryStore } from '../../store/features/categoryStore';
 import type { ExpenseGroup, Participant } from '../../types';
 
 // Expo router is already mocked in jest.setup.unit.ts
@@ -65,6 +66,32 @@ describe('useExpenseModals', () => {
     participants,
     createdAt: '2025-02-01',
   };
+
+  beforeEach(() => {
+    useCategoryStore.setState({
+      categories: [
+        {
+          id: '2f5833c5-6584-460e-89db-b15556599b49',
+          name: 'Hydrated custom',
+          color: '#102030',
+        },
+      ],
+    });
+  });
+
+  it('derives category options from the hydrated category store', () => {
+    const Harness = buildHarness(participants);
+    const ref = createRef<HookHandle>();
+
+    act(() => {
+      TestRenderer.create(<Harness ref={ref} />);
+    });
+
+    expect(ref.current!.hookValue.categoryModalData).toEqual([
+      'Hydrated custom',
+      ref.current!.hookValue.ADD_NEW_CATEGORY_ACTION,
+    ]);
+  });
 
   it('sets and clears group selections and dependent fields', () => {
     const Harness = buildHarness(participants);

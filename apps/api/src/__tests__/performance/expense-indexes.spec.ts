@@ -62,8 +62,14 @@ describe('Expense indexes', () => {
       throw new Error(`Plan payload missing: ${JSON.stringify(planJson)}`);
     }
 
+    // Several indexes lead with couple_id, so the planner is free to pick any
+    // of them for this lookup. Pin the access path, not one index name.
+    const coupleLeadingIndexes = indexes
+      .filter((index) => /\(\s*couple_id\b/i.test(index.indexdef))
+      .map((index) => index.indexname);
+
     expect(plan['Node Type']).toMatch(/Index/i);
-    expect(plan['Index Name']).toMatch(/idx_expenses_deleted_at/i);
+    expect(coupleLeadingIndexes).toContain(plan['Index Name']);
   });
 
   it('includes partial index for active participants', async () => {

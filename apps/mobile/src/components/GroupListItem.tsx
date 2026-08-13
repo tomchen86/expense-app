@@ -1,10 +1,12 @@
 import React from 'react';
 import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
 import { ExpenseGroup, Participant as _Participant } from '../types';
+import type { CurrencyTotal } from '../utils/groupCalculations';
+import { formatMinorUnits } from '../utils/money';
 
 interface GroupListItemProps {
   group: ExpenseGroup;
-  totalAmount: number; // Pass calculated total as prop
+  totals: CurrencyTotal[];
   onDeleteGroup: (groupId: string) => void;
   onRemoveParticipant: (groupId: string, participantId: string) => void;
   onAddParticipant: (group: ExpenseGroup) => void;
@@ -13,7 +15,7 @@ interface GroupListItemProps {
 
 const GroupListItem: React.FC<GroupListItemProps> = ({
   group,
-  totalAmount,
+  totals,
   onDeleteGroup,
   onRemoveParticipant,
   onAddParticipant,
@@ -36,7 +38,15 @@ const GroupListItem: React.FC<GroupListItemProps> = ({
       </View>
 
       {/* Group Total */}
-      <Text style={styles.groupTotal}>Total: ${totalAmount.toFixed(2)}</Text>
+      {totals.length === 0 ? (
+        <Text style={styles.groupTotal}>Total: —</Text>
+      ) : (
+        totals.map((total) => (
+          <Text key={total.currency} style={styles.groupTotal}>
+            Total: {formatMinorUnits(total.amountMinor, total.currency)}
+          </Text>
+        ))
+      )}
 
       {/* Participants Section */}
       <Text style={styles.participantsLabel}>Participants:</Text>

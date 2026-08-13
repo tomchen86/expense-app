@@ -2,6 +2,7 @@ import React from 'react';
 import { View, Text, StyleSheet } from 'react-native';
 import { PieChart } from 'react-native-gifted-charts';
 import { ChartDataPoint } from '../../utils/calculations/insightCalculations';
+import { formatMinorUnits, getCurrencyFractionDigits } from '../../utils/money';
 
 interface CategoryChartProps {
   data: ChartDataPoint[];
@@ -40,13 +41,25 @@ const CategoryChart: React.FC<CategoryChartProps> = ({
       {showLegend && (
         <View style={styles.legendContainer}>
           {data.map((item) => (
-            <View key={item.category} style={styles.legendItem}>
+            <View
+              key={`${item.category}-${item.currency ?? 'USD'}`}
+              style={styles.legendItem}
+            >
               <View
                 style={[styles.legendColorBox, { backgroundColor: item.color }]}
               />
               <Text style={styles.legendText}>
-                {item.category}: ${item.absoluteValue.toFixed(2)} (
-                {item.percentage.toFixed(1)}%)
+                {item.category}:{' '}
+                {formatMinorUnits(
+                  Math.round(
+                    item.absoluteValue *
+                      10 **
+                        (getCurrencyFractionDigits(item.currency ?? 'USD') ??
+                          2),
+                  ),
+                  item.currency ?? 'USD',
+                )}{' '}
+                ({item.percentage.toFixed(1)}%)
               </Text>
             </View>
           ))}

@@ -1,8 +1,8 @@
 import { create } from 'zustand';
+import { createJSONStorage, persist } from 'zustand/middleware';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { User, Settings, UserSettings } from '../../types';
-
-// Helper to generate a simple unique ID
-const generateId = () => Math.random().toString(36).substr(2, 9);
+import { createUuid } from '../../utils/ids';
 
 export interface UserState {
   // New structure
@@ -12,6 +12,8 @@ export interface UserState {
   // Legacy support (temporary)
   userSettings: UserSettings | null;
   internalUserId: string | null;
+  personalSpaceId: string;
+  personalParticipantId: string;
 
   // New actions
   updateUser: (userData: Partial<User>) => void;
@@ -23,72 +25,107 @@ export interface UserState {
   getInternalUserId: () => string;
 }
 
-export const useUserStore = create<UserState>((set, get) => {
-  // Generate initial user ID
-  const initialUserId = `user_${generateId()}`;
+export const useUserStore = create<UserState>()(
+  persist(
+    (set, get) => {
+      // Generate initial user ID
+      const initialUserId = createUuid();
+      const initialPersonalSpaceId = createUuid();
+      const initialPersonalParticipantId = createUuid();
 
-  // Default settings
-  const defaultSettings: Settings = {
-    theme: 'light',
-    currency: 'USD',
-    dateFormat: 'MM/DD/YYYY',
-    notifications: true,
-  };
-
-  return {
-    // New structure
-    user: null,
-    settings: defaultSettings,
-
-    // Legacy structure (temporary)
-    userSettings: null,
-    internalUserId: initialUserId,
-
-    // New actions
-    updateUser: (userData) => {
-      const currentUser = get().user;
-      const updatedUser = currentUser
-        ? { ...currentUser, ...userData }
-        : { id: initialUserId, displayName: '', ...userData };
-
-      set({ user: updatedUser });
-    },
-
-    updateSettings: (settingsData) => {
-      const currentSettings = get().settings;
-      set({ settings: { ...currentSettings, ...settingsData } });
-    },
-
-    createUser: (displayName) => {
-      const userId = `user_${generateId()}`;
-      const newUser: User = {
-        id: userId,
-        displayName,
+      // Default settings
+      const defaultSettings: Settings = {
+        theme: 'light',
+        currency: 'USD',
+        dateFormat: 'MM/DD/YYYY',
+        notifications: true,
       };
-      set({ user: newUser });
-      return userId;
-    },
 
-    // Legacy actions (temporary)
-    updateUserSettings: (settings) => {
-      set({ userSettings: settings });
+      return {
+        // New structure
+        user: null,
+        settings: defaultSettings,
 
-      // Sync to new structure if possible
-      if (settings.name) {
-        const currentUser = get().user;
-        const updatedUser = currentUser
-          ? { ...currentUser, displayName: settings.name }
-          : {
-              id: get().internalUserId || initialUserId,
-              displayName: settings.name,
-            };
-        set({ user: updatedUser });
-      }
-    },
+        // Legacy structure (temporary)
+        userSettings: null,
+        internalUserId: initialUserId,
+        personalSpaceId: initialPersonalSpaceId,
+        personalParticipantId: initialPersonalParticipantId,
 
-    getInternalUserId: () => {
-      const state = get();
-      return state.user?.id || state.internalUserId || '';
+        // New actions
+        updateUser: (userData) => {
+          const currentUser = get().user;
+          const updatedUser = currentUser
+            ? { ...currentUser, ...userData }
+            : {
+                id: get().internalUserId || initialUserId,
+                displayName: '',
+                personalSpaceId: get().personalSpaceId,
+                ...userData,
+              };
+
+          set({ user: updatedUser });
+        },
+
+        updateSettings: (settingsData) => {
+          const currentSettings = get().settings;
+          set({ settings: { ...currentSettings, ...settingsData } });
+        },
+
+        createUser: (displayName) => {
+          const userId = get().internalUserId || initialUserId;
+          const newUser: User = {
+            id: userId,
+            displayName,
+            personalSpaceId: get().personalSpaceId,
+          };
+          set({ user: newUser, internalUserId: userId });
+          return userId;
+        },
+
+        // Legacy actions (temporary)
+        updateUserSettings: (settings) => {
+          set({ userSettings: settings });
+
+          // Sync to new structure if possible
+          if (settings.name) {
+            const currentUser = get().user;
+            const updatedUser = currentUser
+              ? { ...currentUser, displayName: settings.name }
+              : {
+                  id: get().internalUserId || initialUserId,
+                  displayName: settings.name,
+                  personalSpaceId: get().personalSpaceId,
+                };
+            set({ user: updatedUser });
+          }
+        },
+
+        getInternalUserId: () => {
+          const state = get();
+          return state.user?.id || state.internalUserId || '';
+        },
+      };
     },
-  };
-});
+    {
+      name: 'expense-mobile-user-v2',
+      version: 3,
+      storage: createJSONStorage(() => AsyncStorage),
+      partialize: (state) => ({
+        user: state.user,
+        settings: state.settings,
+        userSettings: state.userSettings,
+        internalUserId: state.internalUserId,
+        personalSpaceId: state.personalSpaceId,
+        personalParticipantId: state.personalParticipantId,
+      }),
+      migrate: (persistedState) => {
+        const state = (persistedState ?? {}) as Partial<UserState>;
+        return {
+          ...state,
+          personalParticipantId: state.personalParticipantId ?? createUuid(),
+        } as UserState;
+      },
+    },
+  ),
+);

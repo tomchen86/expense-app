@@ -103,7 +103,7 @@ describe('useCategoryManager', () => {
     );
   });
 
-  it("updates existing categories and prevents deleting 'Other'", () => {
+  it('updates existing categories and prevents deleting every default', () => {
     const ref = createRef<ReturnType<typeof useCategoryManager>>();
 
     act(() => {
@@ -122,14 +122,12 @@ describe('useCategoryManager', () => {
     ).toBe('#654321');
 
     act(() => {
-      ref.current?.deleteCategory(
-        ref.current!.categories.find((cat) => cat.name === 'Other')!.id,
-      );
+      ref.current?.deleteCategory(ref.current!.categories[0].id);
     });
 
     expect(Alert.alert).toHaveBeenCalledWith(
       'Error',
-      "The 'Other' category cannot be deleted.",
+      'Default categories cannot be deleted.',
     );
   });
 });

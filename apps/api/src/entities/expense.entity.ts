@@ -4,10 +4,13 @@ import {
   CreateDateColumn,
   DeleteDateColumn,
   Entity,
+  Index,
   JoinColumn,
   ManyToOne,
   PrimaryGeneratedColumn,
+  Unique,
   UpdateDateColumn,
+  VersionColumn,
 } from 'typeorm';
 import { Couple } from './couple.entity';
 import { ExpenseGroup } from './expense-group.entity';
@@ -18,8 +21,22 @@ import { User } from './user.entity';
 export type ExpenseSplitType = 'equal' | 'custom' | 'percentage';
 
 @Entity('expenses')
-@Check('CHK_expenses_amount_positive', 'amount_cents > 0')
+@Unique('UQ_expenses_id_couple', ['id', 'coupleId'])
+@Index('IDX_expenses_couple_updated_id', ['coupleId', 'updatedAt', 'id'])
+@Index(
+  'UQ_expenses_couple_client_mutation_id',
+  ['coupleId', 'clientMutationId'],
+  {
+    unique: true,
+    where: '"client_mutation_id" IS NOT NULL',
+  },
+)
+@Check(
+  'CHK_expenses_amount_positive',
+  'amount_cents > 0 AND amount_cents <= 9007199254740991',
+)
 @Check('CHK_expenses_currency', "currency ~ '^[A-Z]{3}$'")
+@Check('CHK_expenses_version_positive', 'version > 0')
 @Check(
   'CHK_expenses_split_type',
   "split_type IN ('equal','custom','percentage')",
@@ -27,6 +44,14 @@ export type ExpenseSplitType = 'equal' | 'custom' | 'percentage';
 export class Expense {
   @PrimaryGeneratedColumn('uuid')
   id: string;
+
+  @Column({
+    name: 'client_mutation_id',
+    type: 'varchar',
+    length: 128,
+    nullable: true,
+  })
+  clientMutationId?: string;
 
   @Column({ name: 'couple_id', type: 'uuid' })
   coupleId: string;
@@ -85,20 +110,44 @@ export class Expense {
   @UpdateDateColumn({ name: 'updated_at', type: 'timestamptz' })
   updatedAt: Date;
 
+  @VersionColumn({ type: 'integer', default: 1 })
+  version: number;
+
   @ManyToOne(() => Couple, { onDelete: 'CASCADE' })
   @JoinColumn({ name: 'couple_id' })
   couple?: Couple;
 
-  @ManyToOne(() => ExpenseGroup, { nullable: true, onDelete: 'SET NULL' })
-  @JoinColumn({ name: 'group_id' })
+  @ManyToOne(() => ExpenseGroup, { nullable: true, onDelete: 'NO ACTION' })
+  @JoinColumn([
+    {
+      name: 'group_id',
+      referencedColumnName: 'id',
+      foreignKeyConstraintName: 'FK_expenses_group_couple',
+    },
+    { name: 'couple_id', referencedColumnName: 'coupleId' },
+  ])
   group?: ExpenseGroup;
 
-  @ManyToOne(() => Category, { nullable: true, onDelete: 'SET NULL' })
-  @JoinColumn({ name: 'category_id' })
+  @ManyToOne(() => Category, { nullable: true, onDelete: 'NO ACTION' })
+  @JoinColumn([
+    {
+      name: 'category_id',
+      referencedColumnName: 'id',
+      foreignKeyConstraintName: 'FK_expenses_category_couple',
+    },
+    { name: 'couple_id', referencedColumnName: 'coupleId' },
+  ])
   category?: Category;
 
-  @ManyToOne(() => Participant, { nullable: true, onDelete: 'SET NULL' })
-  @JoinColumn({ name: 'paid_by_participant_id' })
+  @ManyToOne(() => Participant, { nullable: true, onDelete: 'NO ACTION' })
+  @JoinColumn([
+    {
+      name: 'paid_by_participant_id',
+      referencedColumnName: 'id',
+      foreignKeyConstraintName: 'FK_expenses_payer_couple',
+    },
+    { name: 'couple_id', referencedColumnName: 'coupleId' },
+  ])
   payer?: Participant;
 
   @ManyToOne(() => User)

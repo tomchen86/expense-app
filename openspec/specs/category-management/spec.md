@@ -2,139 +2,116 @@
 
 ## Purpose
 
-This specification records the category behavior that exists today. The mobile
-in-memory catalog and the authenticated API ledger catalog are separate
-surfaces; no synchronization or identifier parity between them is implied.
+Define one category model shared by the mobile client and cloud API. Mobile
+uses a durable local replica; cloud-synced spaces use the same stable category
+identifiers in PostgreSQL.
+
+## Delivery Status
+
+Custom categories currently use client UUIDs that the API preserves with
+same-space idempotency, and both clients protect default or in-use categories
+from deletion. The mobile catalog is not yet per-space or connected to API
+transport. Legacy name-based default IDs still require an explicit association
+migration during account/space adoption; the expense sync adapter rejects them
+instead of silently dropping category identity.
 
 ## Requirements
 
-### Requirement: Mobile Default Category Catalog
+### Requirement: Space Category Catalog
 
-Each new mobile category-store instance SHALL initialize with the eight local
-categories `Food & Dining`, `Transportation`, `Shopping`, `Entertainment`,
-`Bills & Utilities`, `Health`, `Travel`, and `Other`, including a color for each
-category.
+Each space SHALL have a category catalog. A new personal space SHALL begin with
+the supported default categories, including an `Other` fallback. A shared space
+MAY initialize from the creator's defaults, but later category mutations SHALL
+remain scoped to that space.
 
-#### Scenario: Mobile category store initializes
+#### Scenario: New personal space is initialized
 
-- GIVEN a new mobile category-store instance
-- WHEN its initial category state is read
-- THEN all eight local default categories are available
-- AND `Other` is available as the fallback category
+- GIVEN a personal space has no category records
+- WHEN its catalog is initialized
+- THEN all supported default categories are available locally
+- AND cloud replicas use the same stable identifiers when sync is enabled
 
-### Requirement: Mobile Category Management
+### Requirement: Legacy Default Catalog Migration
 
-The mobile Manage Categories surface SHALL list the current local catalog and
-allow a user to add and edit category names and colors. An add operation SHALL
-trim the submitted name, reject an empty name, and reject a case-insensitive
-duplicate name. The form SHALL offer the implemented twelve-color palette.
+A cloud schema upgrade that replaces the canonical default catalog SHALL only
+rewrite rows marked as default whose name, color, and icon exactly match the
+previous canonical definition. It SHALL leave custom or user-modified rows
+unchanged. A rename that conflicts with another active category in the same
+space SHALL stop with an explicit manual-mapping requirement rather than merge,
+delete, or guess.
 
-#### Scenario: User adds a unique category
+#### Scenario: Legacy Healthcare default conflicts with Health
 
-- GIVEN the Manage Categories surface is open
-- WHEN the user submits a non-empty name that does not duplicate a current name
-- AND selects a color from the palette
-- THEN the local catalog contains the new category
-- AND the form closes
+- GIVEN a space contains the untouched legacy `Healthcare` default
+- AND another active category in that space is named `Health`
+- WHEN the catalog migration runs
+- THEN the migration aborts with a manual-mapping error
+- AND neither category is silently renamed, merged, or deleted
 
-#### Scenario: User attempts a duplicate category
+### Requirement: Local and Cloud Identity Parity
 
-- GIVEN a category with the submitted name already exists with any letter case
-- WHEN the user attempts to add that name again
-- THEN the mobile surface reports that the category already exists
-- AND it does not add a second category
+A category SHALL retain the same identifier across local and cloud replicas.
+Expense records SHALL reference `categoryId`, not a category name. Category
+rename SHALL therefore update presentation without rewriting historical
+expenses.
 
-#### Scenario: User edits a category
+#### Scenario: Synced category is renamed
 
-- GIVEN an existing category is shown in the local catalog
-- WHEN the user opens it and submits a non-empty name and selected color
-- THEN the category with that identifier is updated in the local catalog
+- GIVEN local and cloud replicas contain the same category identifier
+- WHEN an accepted rename is synchronized
+- THEN both replicas show the new name
+- AND existing expenses continue to resolve the category
 
-### Requirement: Mobile Category Deletion
+### Requirement: Category Creation and Update
 
-The mobile category surface SHALL protect the category named `Other` from
-deletion. It SHALL require confirmation before deleting any other category from
-the local catalog.
+An authorized space member SHALL be able to create and update category name,
+six-digit hexadecimal color, and optional icon. Names SHALL be trimmed and
+unique case-insensitively among active categories in the same space. Colors
+SHALL be normalized consistently.
 
-#### Scenario: User swipes a deletable category
+#### Scenario: User creates a unique category
 
-- GIVEN a local category is not named `Other`
-- WHEN the user invokes its swipe action and confirms deletion
-- THEN the category is removed from the local catalog
+- GIVEN no active category in the space has the submitted name
+- WHEN the user submits a non-empty name and valid color
+- THEN one category with a stable client-generated identifier is committed
+  locally
+- AND cloud sync, when enabled, preserves that identifier
 
-#### Scenario: User views the Other category
+#### Scenario: User creates a duplicate category
 
-- GIVEN the local catalog contains `Other`
-- WHEN the Manage Categories surface renders that row
-- THEN the row is marked as protected
-- AND no swipe-delete action is provided for it
+- GIVEN an active category named `Subscriptions` exists in the space
+- WHEN the user submits `subscriptions`
+- THEN the mutation is rejected as a duplicate
 
-### Requirement: API Ledger Category Catalog
+### Requirement: Category Selection
 
-Authenticated category requests SHALL be scoped to the requesting user's
-ledger. On the first ledger-scoped category operation for a new ledger, the API
-SHALL create its eight API default categories, and list operations SHALL return
-only non-deleted categories ordered by name. The API SHALL also expose the
-default category definitions for client bootstrapping.
+Expense capture SHALL select from the hydrated space catalog rather than a
+hard-coded constant list. If a referenced category is archived, historical
+expenses SHALL retain a resolvable label while new expenses SHALL not select
+it.
 
-#### Scenario: New API ledger lists categories
+#### Scenario: User creates a custom category
 
-- GIVEN an authenticated user whose ledger has no category records
-- WHEN the user lists API categories
-- THEN the ledger receives the eight API default categories
-- AND the response identifies them as default categories
+- GIVEN the custom category has been committed to the current space catalog
+- WHEN the user opens expense capture
+- THEN that category is available in the picker
 
-#### Scenario: Deleted API category is listed
+### Requirement: Category Deletion Safety
 
-- GIVEN a category in the user's ledger has been soft deleted
-- WHEN the user lists API categories
-- THEN that category is absent from the response
+Default protected categories SHALL not be deleted. A category referenced by an
+active expense SHALL be archived or rejected rather than hard-deleted. Active
+category uniqueness SHALL ignore archived rows so that an authorized user can
+restore or recreate an equivalent catalog entry deterministically.
 
-### Requirement: API Category Creation and Update
+#### Scenario: Category is in use
 
-The API SHALL allow an authenticated ledger user to create and update category
-name, six-digit hexadecimal color, and optional icon values. It SHALL trim
-category names, normalize accepted colors to uppercase, and reject
-case-insensitive duplicate active names within the same ledger.
+- GIVEN an expense references an active category
+- WHEN deletion is requested
+- THEN the implementation rejects deletion or archives the category
+- AND the expense reference remains resolvable
 
-#### Scenario: User creates a custom API category
+#### Scenario: Archived name is reused
 
-- GIVEN an authenticated user and a name not used by an active category in the
-  user's ledger
-- WHEN the user submits the name and a valid hexadecimal color
-- THEN the API creates a non-default category in that ledger
-- AND returns its identifier, name, color, icon, default flag, and timestamps
-
-#### Scenario: User creates a duplicate API category
-
-- GIVEN the user's ledger already has an active category named `Subscriptions`
-- WHEN the user submits `subscriptions` as a new category
-- THEN the API rejects the request with `CATEGORY_EXISTS`
-
-#### Scenario: User submits an invalid API color
-
-- GIVEN an authenticated user
-- WHEN the user submits a category color that is not `#` followed by six
-  hexadecimal digits
-- THEN the API rejects the category payload as invalid
-
-### Requirement: API Category Deletion Safety
-
-The API SHALL refuse to delete a category referenced by any non-deleted
-expense. For an unused category in the user's ledger, deletion SHALL be a soft
-delete and subsequent list operations SHALL omit it.
-
-#### Scenario: Category is used by an expense
-
-- GIVEN a category is referenced by a non-deleted expense
-- WHEN an authenticated ledger user requests deletion of that category
-- THEN the API rejects the request with `CATEGORY_IN_USE`
-- AND the category remains active
-
-#### Scenario: Category is unused
-
-- GIVEN a category belongs to the user's ledger
-- AND no non-deleted expense references it
-- WHEN the user requests deletion
-- THEN the API soft deletes the category
-- AND returns no response body
+- GIVEN a category name exists only on archived rows
+- WHEN an authorized user creates that name again
+- THEN the database active-row uniqueness policy permits the operation

@@ -1,4 +1,10 @@
 import { Expense } from '../types';
+import {
+  getExpenseAmountMinor,
+  getExpenseCurrency,
+  getPersonalExpenseProjection,
+} from './expenseDomain';
+import { minorUnitsToMajor } from './money';
 
 /**
  * Calculates the total amount from a list of expenses.
@@ -6,8 +12,43 @@ import { Expense } from '../types';
  * @returns The sum of all expense amounts.
  */
 export const calculateTotalExpenses = (expenses: Expense[]): number => {
-  return expenses.reduce((sum, expense) => sum + expense.amount, 0);
+  return expenses.reduce(
+    (sum, expense) =>
+      sum +
+      minorUnitsToMajor(
+        getExpenseAmountMinor(expense),
+        getExpenseCurrency(expense),
+      ),
+    0,
+  );
 };
+
+export const calculateUserShareMinor = (
+  expense: Expense,
+  userId: string | null | undefined,
+): number => {
+  if (userId) {
+    return getPersonalExpenseProjection(expense, userId)?.mySpentMinor ?? 0;
+  }
+
+  if (
+    !expense.spaceId &&
+    !expense.groupId &&
+    !expense.paidBy &&
+    (!expense.splitBetween || expense.splitBetween.length === 0)
+  ) {
+    return getExpenseAmountMinor(expense);
+  }
+  return 0;
+};
+
+export const calculateUserPaidMinor = (
+  expense: Expense,
+  userId: string | null | undefined,
+): number =>
+  userId
+    ? (getPersonalExpenseProjection(expense, userId)?.myPaidMinor ?? 0)
+    : 0;
 
 /**
  * Calculates the user's share of a single expense.
@@ -22,37 +63,10 @@ export const calculateUserShare = (
   expense: Expense,
   userId: string | null | undefined,
 ): number => {
-  // Case 1: Expense is split
-  if (expense.splitBetween && expense.splitBetween.length > 0) {
-    if (userId && expense.splitBetween.includes(userId)) {
-      return expense.amount / expense.splitBetween.length;
-    }
-    return 0; // User is not in the split, or user is anonymous and it's a group split
-  }
-
-  // Case 2: Expense is not split
-  if (userId && expense.paidBy === userId) {
-    return expense.amount; // User paid the full amount
-  }
-
-  // Case 3: Personal expense viewed by an anonymous user (no userId, no split, no specific paidBy)
-  // or an expense not paid by the current known user and not split with them.
-  if (
-    !userId &&
-    !expense.groupId &&
-    !expense.paidBy &&
-    (!expense.splitBetween || expense.splitBetween.length === 0)
-  ) {
-    return expense.amount; // Anonymous user sees full amount of their own unassigned personal expenses
-  }
-
-  if (!userId && expense.paidBy) {
-    // Personal expense paid by someone else, anonymous user sees 0
-    return 0;
-  }
-
-  // Default: User is not involved or it's a personal expense not paid by them (if userId is known)
-  return 0;
+  return minorUnitsToMajor(
+    calculateUserShareMinor(expense, userId),
+    getExpenseCurrency(expense),
+  );
 };
 
 // Add other general expense-related calculation functions here if needed.

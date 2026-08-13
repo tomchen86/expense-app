@@ -4,6 +4,7 @@ import {
   CreateDateColumn,
   DeleteDateColumn,
   Entity,
+  Index,
   JoinColumn,
   ManyToOne,
   PrimaryGeneratedColumn,
@@ -20,7 +21,12 @@ export type ParticipantNotificationPreferences = {
 };
 
 @Entity('participants')
+@Unique('UQ_participants_id_couple', ['id', 'coupleId'])
 @Unique('UQ_participants_couple_user', ['coupleId', 'userId'])
+@Index('UQ_participants_couple_email_active', ['coupleId', 'email'], {
+  unique: true,
+  where: '"email" IS NOT NULL AND "deleted_at" IS NULL',
+})
 @Check('CHK_participants_currency', "default_currency ~ '^[A-Z]{3}$'")
 @Check(
   'CHK_participants_registered_user',

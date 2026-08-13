@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   ConflictException,
+  ForbiddenException,
   HttpException,
   HttpStatus,
   NotFoundException,
@@ -64,6 +65,16 @@ export class ApiUnauthorizedException extends UnauthorizedException {
 }
 
 export class ApiConflictException extends ConflictException {
+  constructor(
+    code: string,
+    message: string,
+    extras: Partial<Omit<ApiErrorDetails, 'code' | 'message'>> = {},
+  ) {
+    super(createApiError(code, message, extras));
+  }
+}
+
+export class ApiForbiddenException extends ForbiddenException {
   constructor(
     code: string,
     message: string,

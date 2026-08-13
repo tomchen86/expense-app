@@ -4,6 +4,7 @@ import {
   IsNotEmpty,
   IsOptional,
   IsString,
+  IsUUID,
   Matches,
   ValidateNested,
 } from 'class-validator';
@@ -26,6 +27,10 @@ export class ParticipantNotificationDto {
 }
 
 export class CreateParticipantDto {
+  @IsOptional()
+  @IsUUID('4')
+  id?: string;
+
   @IsString()
   @IsNotEmpty()
   name: string;

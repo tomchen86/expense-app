@@ -38,6 +38,8 @@ const group: ExpenseGroup = {
 const personalExpenses: Expense[] = [
   {
     id: 'exp-1',
+    spaceId: 'personal-space',
+    spaceKind: 'personal',
     title: 'Coffee',
     amount: 5,
     date: '2025-01-02',
@@ -46,6 +48,8 @@ const personalExpenses: Expense[] = [
   },
   {
     id: 'exp-2',
+    spaceId: 'personal-space',
+    spaceKind: 'personal',
     title: 'Metro',
     amount: 8,
     date: '2025-01-15',
@@ -54,6 +58,8 @@ const personalExpenses: Expense[] = [
   },
   {
     id: 'exp-3',
+    spaceId: 'personal-space',
+    spaceKind: 'personal',
     title: 'Dinner',
     amount: 20,
     date: '2024-12-31',
@@ -86,6 +92,8 @@ const resetStore = () => {
     settings: { ...defaultSettings },
     userSettings: null,
     internalUserId: null,
+    personalSpaceId: 'personal-space',
+    personalParticipantId: 'personal-participant',
   });
 };
 

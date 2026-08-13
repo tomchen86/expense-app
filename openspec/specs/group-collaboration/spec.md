@@ -2,197 +2,167 @@
 
 ## Purpose
 
-This specification records the independent mobile in-memory group model and
-authenticated API ledger model that exist today. It does not assert mobile/API
-synchronization, owner-only group mutation, an explicit leave-group flow, or
-durable persistence.
+Define shared expense spaces used by couples, friends, households, and trips.
+`Couple` MAY remain temporarily as a legacy persistence name, but it SHALL NOT
+be the universal product label or domain boundary. Mobile and API SHALL operate
+on the same space, membership, participant, expense, and allocation identities.
+
+## Delivery Status
+
+The current API can list/create shared Spaces, add an existing account as an
+active member, return its per-space Participant, and enforce owner-only storage
+policy. Mobile creates durable local shared-Space identities and projections.
+Invitation issue/acceptance, role changes, explicit leave/remove, Space
+archival, and authenticated mobile transport remain target behavior below and
+are not claims about the current routes.
 
 ## Requirements
 
-### Requirement: Mobile Group Creation Prerequisite
+### Requirement: Personal and Shared Spaces
 
-The mobile Group tab SHALL require a non-empty session display name before it
-opens the group-creation form. A created local group SHALL have a generated
-identifier and creation timestamp and SHALL include the current user's local
-participant record when that record can be resolved.
+Every registered user SHALL have exactly one personal space and MAY belong to
+multiple shared spaces. Every request and mutation SHALL identify its target
+space explicitly; an implementation SHALL NOT choose a space by taking the
+user's earliest membership. A bounded old-client compatibility path MAY treat
+an omitted space as the user's unique personal space, never as a shared space.
 
-#### Scenario: User has not supplied a display name
+#### Scenario: User has several spaces
 
-- GIVEN the mobile session has no non-empty display name
-- WHEN the user requests a new group
-- THEN the app reports that a username is required
-- AND offers navigation to Settings instead of opening the creation form
+- GIVEN a user owns one personal space and belongs to two shared spaces
+- WHEN the client creates an expense for one selected shared space
+- THEN that exact space receives the expense
+- AND membership creation order has no effect on routing
 
-#### Scenario: Named user creates a group
+#### Scenario: User opens the personal ledger
 
-- GIVEN the mobile session has a non-empty display name
-- WHEN the user submits a non-empty group name
-- THEN a local group is created with that name, an identifier, and a timestamp
-- AND the current user's participant is included in the group
+- GIVEN the user has personal and shared expenses
+- WHEN the personal ledger projection is requested
+- THEN it combines the personal-space expenses with the user's allocations in
+  authorized shared spaces
+- AND it does not expose unrelated expenses from those spaces
 
-#### Scenario: User submits an empty group name
+### Requirement: Shared Space Membership
 
-- GIVEN the group-creation modal is open
-- WHEN the user submits an empty or whitespace-only group name
-- THEN the app presents its input-required alert
-- AND no local group is created
+A shared space SHALL maintain account membership with role `owner` or `member`
+and status `invited`, `active`, `left`, or `removed`. Invitations SHALL target
+a stable account identity or an email awaiting account linkage. An active
+member SHALL be represented by a participant usable in payments and shares.
 
-### Requirement: Mobile Group List and Membership Controls
+#### Scenario: Invitee joins a shared space
 
-The mobile Group tab SHALL list each local group with its name, total expense
-amount, and current participant names. It SHALL allow local participants to be
-added or removed and SHALL ask for confirmation before deleting a group.
-Confirming local group deletion SHALL remove that group and its associated
-group identifier from local expenses while preserving those expense records.
+- GIVEN a pending invitation belongs to an authenticated account or its
+  verified email
+- WHEN the invitee accepts it
+- THEN the account becomes an active space member
+- AND its participant is linked to that account
 
-#### Scenario: User adds a participant
+#### Scenario: Guest participates without an account
 
-- GIVEN a local group is listed
-- WHEN the user submits a non-empty participant name that can be added to the
-  local participant store
-- THEN that participant appears in the group's participant list
+- GIVEN an active member adds a guest participant
+- WHEN an expense is allocated to the guest
+- THEN the guest is represented by a stable participant identifier
+- AND a later account link preserves historical allocation identity
 
-#### Scenario: User removes a participant from one group
+### Requirement: Shared Space Authorization
 
-- GIVEN a participant is in a local group
-- WHEN the user confirms removal from that group
-- THEN the participant is removed from that group's participant list
-- AND the participant remains available in the global local participant store
+Every shared-space operation SHALL verify active space membership. Owner-only
+operations SHALL include managing invitations, changing roles, archiving the
+space, and changing its storage policy. Expense mutation SHALL follow an
+explicit capability policy that distinguishes create, edit-own, edit-any, and
+delete permissions. Merely belonging to the same space SHALL NOT grant every
+mutation capability.
 
-#### Scenario: User deletes a local group
+#### Scenario: Non-member uses a known identifier
 
-- GIVEN a local group has associated local expenses
-- WHEN the user confirms deletion of the group
-- THEN the group is removed from the local group list
-- AND expenses that used that group identifier remain in the local expense
-  store with their `groupId` cleared
+- GIVEN a user knows a shared-space or expense identifier but is not an active
+  member
+- WHEN the user reads or mutates that resource
+- THEN the API rejects the operation without revealing private contents
 
-### Requirement: Mobile Group Expense Detail
+#### Scenario: Member attempts an owner action
 
-The mobile group-detail surface SHALL show the selected group's total, the
-current user's amount paid in that group, and the expense feed filtered by the
-group identifier. It SHALL provide navigation to group insights and an
-add-expense flow preselected for the group.
+- GIVEN an active member is not an owner
+- WHEN that member tries to remove another member or archive the space
+- THEN the API rejects the operation
 
-#### Scenario: User opens a group
+### Requirement: Shared Space Expense Participants
 
-- GIVEN a local group exists with expenses
-- WHEN the user opens that group
-- THEN the detail surface sums amounts for expenses with that group identifier
-- AND lists only those expenses
-- AND the displayed current-user contribution sums expenses paid by the
-  current user's local identifier
+Payments and shares on a shared expense SHALL reference participants belonging
+to the same space. New expenses SHALL use active participants. The database
+SHALL enforce same-space relationships in addition to application validation.
 
-#### Scenario: Group identifier is unknown
+#### Scenario: Participant belongs to another space
 
-- GIVEN the requested group identifier is not in the local group store
-- WHEN the group-detail surface loads
-- THEN the app reports that the group was not found
+- GIVEN a participant belongs to shared space B
+- WHEN a client submits that participant in an expense for shared space A
+- THEN the mutation is rejected
+- AND no cross-space relationship is stored
 
-### Requirement: Mobile Group Balance Projection
+### Requirement: Mobile Group Surfaces
 
-The mobile balance overlay SHALL show, for every current group participant,
-the total paid, total allocated share, and net balance. An expense SHALL use
-its participant snapshot when one exists; otherwise its amount SHALL be split
-equally across the group's current participants for this projection.
+The mobile product MAY label shared spaces as groups. Group list, detail,
+balance, invitation, and expense-entry surfaces SHALL use the canonical shared
+space identifier. Starting expense capture from a group detail SHALL preselect
+that shared space.
 
-#### Scenario: Expense has no participant snapshot
+#### Scenario: User adds from group detail
 
-- GIVEN a group expense identifies a payer but has no populated `participants`
-  snapshot
-- WHEN the balance overlay is opened
-- THEN the payer's total paid includes the expense amount
-- AND the expense amount is allocated equally across the group's current
-  participants
-- AND each displayed net balance is total paid minus total share
+- GIVEN the user is viewing a known shared space
+- WHEN the user activates add expense
+- THEN the form opens with that shared space selected
+- AND payer and share choices come from its active participants
 
-### Requirement: API Ledger Participants
+The mobile product label `Group` SHALL map to a shared `Space`. It SHALL NOT be
+mapped to the API's optional `ExpenseGroup` collection nested inside a space.
+If nested collections remain supported, clients SHALL carry their identifier
+separately from `spaceId`.
 
-The API SHALL allow an authenticated user to list, create, update, and soft
-delete participants only within that user's ledger. It SHALL reject duplicate
-non-empty participant email addresses within the ledger, SHALL reject
-participant identifiers from another ledger, and SHALL prevent the requesting
-user from deleting their own ledger participant.
+#### Scenario: Mobile group is synchronized
 
-#### Scenario: User creates an API participant
+- GIVEN a mobile Group represents a trip shared by several accounts
+- WHEN the client creates or resolves its cloud counterpart
+- THEN it uses the shared Space API and preserves the Group ID as `spaceId`
+- AND it does not create an `ExpenseGroup` under an unrelated personal space
 
-- GIVEN an authenticated user and an optional email not used by an active
-  participant in the ledger
-- WHEN the user submits a non-empty participant name
-- THEN the API creates an unregistered participant in that ledger
-- AND applies the submitted or default currency and notification preferences
+### Requirement: Historical Membership Integrity
 
-#### Scenario: User deletes another participant
+Leaving or removing a member SHALL deactivate current membership without
+deleting historical participants, payments, or shares. Historical records
+SHALL preserve display information needed to explain prior balances.
 
-- GIVEN an active participant belongs to the user's ledger and is not the
-  user's own participant
-- WHEN the authenticated user requests deletion
-- THEN the API soft deletes the participant
-- AND marks that participant's group memberships as left
+#### Scenario: Member leaves after a trip
 
-#### Scenario: User attempts self removal
+- GIVEN the member has payment or share allocations in existing expenses
+- WHEN the member leaves the shared space
+- THEN those allocations and balances remain unchanged
+- AND the member is unavailable for new expense allocation
 
-- GIVEN the target participant represents the requesting user
-- WHEN deletion is requested
-- THEN the API rejects the request with `CANNOT_REMOVE_SELF`
+### Requirement: Shared Spaces Require Cloud Sync
 
-### Requirement: API Group Creation
+A shared space SHALL use cloud synchronization because multiple devices and
+accounts must converge on the same records. Every accepted cloud mutation
+SHALL be replicated into each participating device's local store through the
+sync protocol. Temporary loss of connectivity SHALL NOT block local capture by
+an authorized, previously hydrated member.
 
-The API SHALL create a group only for an authenticated user's ledger and only
-from participant identifiers that belong to that ledger. Creation SHALL
-require at least one submitted participant identifier, add the requesting
-user's participant if necessary, assign that participant the `owner` role,
-and assign other participants the `member` role.
+#### Scenario: Member creates an expense offline
 
-#### Scenario: User creates an API group
+- GIVEN the member has a hydrated shared space but no network connection
+- WHEN the member creates a valid expense
+- THEN the client commits it to local durable storage
+- AND queues a cloud mutation
+- WHEN connectivity returns
+- THEN the same logical expense is synchronized without duplication
 
-- GIVEN an authenticated user and at least one active participant identifier
-  from the same ledger
-- WHEN the user submits a non-empty group name and those participants
-- THEN the API creates an active group in the user's ledger
-- AND returns the owner participant and requested participants
-- AND defaults the group's currency to `USD`
+### Requirement: Shared Space Archival
 
-#### Scenario: Participant belongs elsewhere
+Only an owner SHALL archive a shared space. Archival SHALL prevent new
+expenses and membership changes while retaining historical expenses and
+allocations for authorized members.
 
-- GIVEN a submitted participant identifier is not an active participant in
-  the requesting user's ledger
-- WHEN the user attempts to create or update a group with that identifier
-- THEN the API rejects the request with `INVALID_PARTICIPANTS`
+#### Scenario: Owner archives a shared space
 
-### Requirement: API Group Listing and Mutation
-
-The API SHALL list non-deleted groups in the authenticated user's ledger in
-newest-first order with their active participants. It SHALL allow group name,
-description, color, and participant membership to be updated within that
-ledger, while retaining the requesting user's participant as owner.
-
-#### Scenario: User updates group membership
-
-- GIVEN an active group and active participants belong to the user's ledger
-- WHEN the authenticated user submits the desired participant identifiers
-- THEN requested memberships become active
-- AND omitted non-owner memberships become left
-- AND the requesting user's participant remains active with the owner role
-
-#### Scenario: User lists API groups
-
-- GIVEN the user's ledger has active and soft-deleted groups
-- WHEN the authenticated user lists groups
-- THEN only non-deleted groups are returned
-- AND each group includes its active participant representations
-
-### Requirement: API Group Archival
-
-Deleting an API group, or updating it with `isArchived: true`, SHALL mark the
-group archived and soft deleted. Deletion SHALL also mark all of that group's
-memberships as left, and later list operations SHALL omit the group.
-
-#### Scenario: User deletes an API group
-
-- GIVEN an active group belongs to the authenticated user's ledger
-- WHEN deletion is requested
-- THEN the API returns no response body
-- AND marks the group archived and soft deleted
-- AND marks its memberships as left
-- AND the group is absent from subsequent list responses
+- GIVEN a shared space contains historical expenses
+- WHEN an owner archives it
+- THEN new mutations are rejected
+- AND authorized members can still inspect its history

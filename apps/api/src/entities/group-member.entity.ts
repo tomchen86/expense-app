@@ -19,6 +19,9 @@ export class GroupMember {
   @PrimaryColumn({ name: 'group_id', type: 'uuid' })
   groupId: string;
 
+  @Column({ name: 'couple_id', type: 'uuid', nullable: false })
+  coupleId: string;
+
   @PrimaryColumn({ name: 'participant_id', type: 'uuid' })
   participantId: string;
 
@@ -36,10 +39,24 @@ export class GroupMember {
   joinedAt: Date;
 
   @ManyToOne(() => ExpenseGroup, { onDelete: 'CASCADE' })
-  @JoinColumn({ name: 'group_id' })
+  @JoinColumn([
+    {
+      name: 'group_id',
+      referencedColumnName: 'id',
+      foreignKeyConstraintName: 'FK_group_members_group_couple',
+    },
+    { name: 'couple_id', referencedColumnName: 'coupleId' },
+  ])
   group?: ExpenseGroup;
 
   @ManyToOne(() => Participant, { onDelete: 'CASCADE' })
-  @JoinColumn({ name: 'participant_id' })
+  @JoinColumn([
+    {
+      name: 'participant_id',
+      referencedColumnName: 'id',
+      foreignKeyConstraintName: 'FK_group_members_participant_couple',
+    },
+    { name: 'couple_id', referencedColumnName: 'coupleId' },
+  ])
   participant?: Participant;
 }

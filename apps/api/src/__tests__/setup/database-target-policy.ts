@@ -1,10 +1,8 @@
 type AvailabilityProbe = (connectionString: string) => Promise<boolean>;
-type DatabaseProvisioner = () => Promise<string>;
 
 export const resolvePostgresTestDatabaseUrl = async (
   environment: NodeJS.ProcessEnv,
   isAvailable: AvailabilityProbe,
-  provision: DatabaseProvisioner,
 ): Promise<string> => {
   const explicitUrl = environment.TEST_DATABASE_URL?.trim();
 
@@ -24,14 +22,7 @@ export const resolvePostgresTestDatabaseUrl = async (
     return explicitUrl;
   }
 
-  if (
-    environment.WORKFLOW_CHECK_EXECUTION === '1' ||
-    environment.WORKFLOW_DISPOSABLE_DATABASE === '1'
-  ) {
-    throw new Error(
-      'Explicit TEST_DATABASE_URL is required for workflow database checks.',
-    );
-  }
-
-  return provision();
+  throw new Error(
+    'Explicit TEST_DATABASE_URL is required for PostgreSQL-writing tests.',
+  );
 };

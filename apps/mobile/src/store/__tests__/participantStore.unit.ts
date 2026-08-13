@@ -14,7 +14,9 @@ describe('ParticipantStore', () => {
 
     const id = addParticipant('Alex');
 
-    expect(id).toBeTruthy();
+    expect(id).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
+    );
     expect(useParticipantStore.getState().participants).toContainEqual({
       id,
       name: 'Alex',
@@ -64,16 +66,51 @@ describe('ParticipantStore', () => {
     });
   });
 
-  it('deletes a participant by identifier', () => {
+  it('keeps user identity distinct from a space-scoped participant identity', () => {
+    const participantId = '6ca81ea8-56b6-4147-85db-cad209885ce6';
+    useParticipantStore.getState().syncUserAsParticipant(
+      participantId,
+      { name: 'Morgan' },
+      {
+        userId: 'bdf125cb-cbe7-4b8d-98f4-50bc6213d31e',
+        spaceId: 'd1f5558f-4290-4f6c-9273-ab5cf594db26',
+      },
+    );
+
+    expect(
+      useParticipantStore.getState().getParticipantById(participantId),
+    ).toEqual({
+      id: participantId,
+      name: 'Morgan',
+      userId: 'bdf125cb-cbe7-4b8d-98f4-50bc6213d31e',
+      spaceId: 'd1f5558f-4290-4f6c-9273-ab5cf594db26',
+    });
+  });
+
+  it('allows the same display name in different spaces', () => {
+    const store = useParticipantStore.getState();
+    const first = store.addParticipant('Alex', undefined, {
+      spaceId: '1d84f3e2-c61c-4098-a383-b9ea7253150b',
+    });
+    const second = store.addParticipant('Alex', undefined, {
+      spaceId: 'aabfe4e9-c005-4b1a-9366-e4569ae2231f',
+    });
+
+    expect(first).not.toBe(second);
+    expect(useParticipantStore.getState().participants).toHaveLength(2);
+  });
+
+  it('deactivates a participant by identifier for historical resolution', () => {
     const { addParticipant, deleteParticipant } =
       useParticipantStore.getState();
 
     const id = addParticipant('Casey');
     deleteParticipant(id);
 
-    expect(useParticipantStore.getState().participants).not.toContainEqual({
+    expect(useParticipantStore.getState().participants).toContainEqual({
       id,
       name: 'Casey',
+      active: false,
     });
   });
 

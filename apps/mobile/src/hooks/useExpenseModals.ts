@@ -2,7 +2,7 @@ import { useState, useMemo } from 'react';
 import type { Dispatch, SetStateAction } from 'react';
 import { router } from 'expo-router';
 import { ExpenseCategory, Participant, ExpenseGroup } from '../types';
-import { DEFAULT_CATEGORIES } from '../constants/expenses';
+import { useCategoryStore } from '../store/features/categoryStore';
 
 const ADD_NEW_CATEGORY_ACTION = '+ Add New Category' as const;
 
@@ -29,6 +29,7 @@ export const useExpenseModals = <TFormState extends ModalFormState>({
   handleUpdateFormState,
   setFormState,
 }: UseExpenseModalsPropsGeneric<TFormState>) => {
+  const categories = useCategoryStore((state) => state.categories);
   // Modal visibility state
   const [showCategoryModal, setShowCategoryModal] = useState(false);
   const [showGroupModal, setShowGroupModal] = useState(false);
@@ -44,9 +45,9 @@ export const useExpenseModals = <TFormState extends ModalFormState>({
 
   // Category modal data
   const categoryModalData = useMemo(() => {
-    const categoryNames = DEFAULT_CATEGORIES.map((cat) => cat.name);
+    const categoryNames = categories.map((cat) => cat.name);
     return [...categoryNames, ADD_NEW_CATEGORY_ACTION];
-  }, []);
+  }, [categories]);
 
   // Modal handlers
   const handleCategorySelect = (

@@ -8,6 +8,7 @@ import {
   Param,
   Post,
   Put,
+  Query,
   Req,
   UseGuards,
 } from '@nestjs/common';
@@ -50,9 +51,11 @@ export class CategoryController {
   @Get()
   async listCategories(
     @Req() req: AuthenticatedRequest,
+    @Query('space_id') spaceId?: string,
   ): Promise<ApiResponse<{ categories: CategoryResponse[] }>> {
     const categories = await this.categoryService.listCategoriesForUser(
       req.user.id,
+      spaceId,
     );
 
     return {
@@ -82,6 +85,7 @@ export class CategoryController {
   async createCategory(
     @Req() req: AuthenticatedRequest,
     @Body() body: unknown,
+    @Query('space_id') spaceId?: string,
   ): Promise<ApiResponse<{ category: CategoryResponse }>> {
     const dto = this.validateDto(CreateCategoryDto, body, {
       messageOverride: 'Invalid category payload',
@@ -90,6 +94,7 @@ export class CategoryController {
     const category = await this.categoryService.createCategoryForUser(
       req.user.id,
       dto,
+      spaceId,
     );
 
     return {
@@ -105,6 +110,7 @@ export class CategoryController {
     @Req() req: AuthenticatedRequest,
     @Param('categoryId') categoryId: string,
     @Body() body: unknown,
+    @Query('space_id') spaceId?: string,
   ): Promise<ApiResponse<{ category: CategoryResponse }>> {
     const dto = this.validateDto(UpdateCategoryDto, body, {
       skipMissingProperties: true,
@@ -115,6 +121,7 @@ export class CategoryController {
       req.user.id,
       categoryId,
       dto,
+      spaceId,
     );
 
     return {
@@ -130,8 +137,13 @@ export class CategoryController {
   async deleteCategory(
     @Req() req: AuthenticatedRequest,
     @Param('categoryId') categoryId: string,
+    @Query('space_id') spaceId?: string,
   ): Promise<void> {
-    await this.categoryService.deleteCategoryForUser(req.user.id, categoryId);
+    await this.categoryService.deleteCategoryForUser(
+      req.user.id,
+      categoryId,
+      spaceId,
+    );
   }
 
   private validateDto<T>(

@@ -1,11 +1,12 @@
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { In, Repository } from 'typeorm';
 import { Entities } from '../entities/runtime-entities';
 import {
   defaultCategories,
   DefaultCategory,
 } from '../database/seeds/default-categories.seed';
+import { ApiNotFoundException } from '../common/api-error';
 
 const DEFAULT_PARTICIPANT_NOTIFICATIONS = {
   expenses: true,
@@ -21,9 +22,21 @@ type UserEntity = InstanceType<typeof Entities.User>;
 
 type CoupleMemberStatus = CoupleMemberEntity['status'];
 
+export type SpaceKind = 'personal' | 'shared';
+export type SpaceRole = 'owner' | 'member';
+
 type EnsureLedgerOptions = {
   ensureDefaultCategories?: boolean;
   ensureParticipant?: boolean;
+};
+
+export type ResolvedSpace = {
+  spaceId: string;
+  /** Legacy persistence name retained until the physical table migration. */
+  coupleId: string;
+  kind: SpaceKind;
+  role: SpaceRole;
+  participantId?: string;
 };
 
 @Injectable()
@@ -44,8 +57,27 @@ export class LedgerService {
   async ensureLedgerForUser(
     userId: string,
     options: EnsureLedgerOptions = {},
-  ): Promise<{ coupleId: string; participantId?: string }> {
-    const coupleId = await this.ensureCoupleForUser(userId);
+  ): Promise<ResolvedSpace> {
+    return this.resolveSpaceForUser(userId, undefined, options);
+  }
+
+  /**
+   * Resolves either the exact requested space or the user's personal space.
+   * Callers must never infer context from membership order.
+   */
+  async resolveSpaceForUser(
+    userId: string,
+    requestedSpaceId?: string,
+    options: EnsureLedgerOptions = {},
+  ): Promise<ResolvedSpace> {
+    const authorized = requestedSpaceId
+      ? await this.getAuthorizedSpace(userId, requestedSpaceId)
+      : {
+          space: await this.ensurePersonalSpaceForUser(userId),
+          role: 'owner' as const,
+        };
+    const { space, role } = authorized;
+    const coupleId = space.id;
 
     let participantId: string | undefined;
     if (options.ensureParticipant) {
@@ -57,21 +89,77 @@ export class LedgerService {
       await this.ensureDefaultCategoriesForCouple(coupleId, userId);
     }
 
-    return { coupleId, participantId };
+    return {
+      spaceId: coupleId,
+      coupleId,
+      kind: this.readSpaceKind(space),
+      role,
+      participantId,
+    };
   }
 
   getDefaultCategories(): DefaultCategory[] {
     return defaultCategories;
   }
 
-  private async ensureCoupleForUser(userId: string): Promise<string> {
-    const existingMembership = await this.coupleMemberRepository.findOne({
+  private async getAuthorizedSpace(
+    userId: string,
+    spaceId: string,
+  ): Promise<{ space: CoupleEntity; role: SpaceRole }> {
+    const membership = await this.coupleMemberRepository.findOne({
+      where: {
+        coupleId: spaceId,
+        userId,
+        status: 'active' as CoupleMemberStatus,
+      },
+    });
+
+    if (!membership) {
+      throw new ApiNotFoundException('SPACE_NOT_FOUND', 'Space not found');
+    }
+
+    const space = await this.coupleRepository.findOne({
+      where: { id: spaceId, status: 'active' },
+    });
+
+    if (!space) {
+      throw new ApiNotFoundException('SPACE_NOT_FOUND', 'Space not found');
+    }
+
+    if (
+      this.readSpaceKind(space) === 'personal' &&
+      space.createdBy !== userId
+    ) {
+      throw new ApiNotFoundException('SPACE_NOT_FOUND', 'Space not found');
+    }
+
+    return { space, role: membership.role };
+  }
+
+  private async ensurePersonalSpaceForUser(
+    userId: string,
+  ): Promise<CoupleEntity> {
+    const activeMemberships = await this.coupleMemberRepository.find({
       where: { userId, status: 'active' as CoupleMemberStatus },
       order: { joinedAt: 'ASC' },
     });
 
-    if (existingMembership) {
-      return existingMembership.coupleId;
+    if (activeMemberships.length > 0) {
+      const spaces = await this.coupleRepository.find({
+        where: {
+          id: In(activeMemberships.map((membership) => membership.coupleId)),
+          status: 'active',
+        },
+      });
+      const personalSpace = spaces.find(
+        (candidate) =>
+          this.readSpaceKind(candidate) === 'personal' &&
+          candidate.createdBy === userId,
+      );
+
+      if (personalSpace) {
+        return personalSpace;
+      }
     }
 
     const couple = this.coupleRepository.create();
@@ -79,8 +167,47 @@ export class LedgerService {
     couple.inviteCode = this.generateInviteCode();
     couple.status = 'active';
     couple.createdBy = userId;
+    Object.assign(couple, {
+      kind: 'personal' satisfies SpaceKind,
+      // Reaching this constructor means the account is already using the
+      // cloud API. Device-only personal spaces exist only in the client until
+      // an explicit adoption/link flow creates their cloud replica.
+      syncPolicy: 'cloud_sync' as const,
+    });
 
-    const savedCouple = await this.coupleRepository.save(couple);
+    let savedCouple: CoupleEntity;
+    try {
+      savedCouple = await this.coupleRepository.save(couple);
+    } catch (error) {
+      if (this.isUniqueConstraintViolation(error)) {
+        const existing = await this.coupleRepository.findOne({
+          where: {
+            createdBy: userId,
+            kind: 'personal',
+            status: 'active',
+          },
+        });
+        if (existing) {
+          const membership = await this.coupleMemberRepository.findOne({
+            where: {
+              coupleId: existing.id,
+              userId,
+              status: 'active' as CoupleMemberStatus,
+            },
+          });
+          if (!membership) {
+            const ownerMembership = this.coupleMemberRepository.create();
+            ownerMembership.coupleId = existing.id;
+            ownerMembership.userId = userId;
+            ownerMembership.role = 'owner';
+            ownerMembership.status = 'active';
+            await this.coupleMemberRepository.save(ownerMembership);
+          }
+          return existing;
+        }
+      }
+      throw error;
+    }
 
     const membership = this.coupleMemberRepository.create();
     membership.coupleId = savedCouple.id;
@@ -90,7 +217,24 @@ export class LedgerService {
 
     await this.coupleMemberRepository.save(membership);
 
-    return savedCouple.id;
+    return savedCouple;
+  }
+
+  private isUniqueConstraintViolation(error: unknown): boolean {
+    if (!error || typeof error !== 'object') {
+      return false;
+    }
+    const candidate = error as { code?: unknown; message?: unknown };
+    return (
+      candidate.code === '23505' ||
+      (typeof candidate.message === 'string' &&
+        /duplicate key|unique constraint failed/i.test(candidate.message))
+    );
+  }
+
+  private readSpaceKind(space: CoupleEntity): SpaceKind {
+    const kind = (space as CoupleEntity & { kind?: SpaceKind }).kind;
+    return kind === 'shared' ? 'shared' : 'personal';
   }
 
   private async ensureParticipantForUser(

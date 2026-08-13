@@ -15,9 +15,12 @@ import { CoupleSimple } from './couple-simple.entity';
 import { UserSimple } from './user-simple.entity';
 
 @Entity('categories')
+@Unique('UQ_categories_id_couple', ['id', 'coupleId'])
 @Check('CHK_categories_color', "color LIKE '#______'")
-@Index('IDX_categories_couple_name_unique', ['coupleId', 'name'])
-@Unique('UQ_categories_couple_name', ['coupleId', 'name'])
+@Index('UQ_categories_couple_name_active', ['coupleId', 'name'], {
+  unique: true,
+  where: '"deleted_at" IS NULL',
+})
 export class CategorySimple {
   @PrimaryGeneratedColumn('uuid')
   id: string;

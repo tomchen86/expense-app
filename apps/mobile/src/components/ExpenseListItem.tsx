@@ -1,12 +1,15 @@
 import React from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, Alert } from 'react-native';
 import { Expense, ExpenseGroup, Participant } from '../types'; // Import necessary types
+import { getExpenseCurrency, getExpensePayments } from '../utils/expenseDomain';
+import { formatMinorUnits } from '../utils/money';
 
 interface ExpenseListItemProps {
   item: Expense;
   group: ExpenseGroup | null;
   allParticipants: Participant[]; // Add allParticipants prop
-  displayAmount: number; // Add prop for the amount to display (user's share)
+  displayAmountMinor: number;
+  currency?: string;
   onEdit: (expense: Expense) => void;
   onDelete: (expenseId: string) => void;
 }
@@ -15,14 +18,16 @@ const ExpenseListItem: React.FC<ExpenseListItemProps> = ({
   item,
   group,
   allParticipants, // Destructure the new prop
-  displayAmount,
+  displayAmountMinor,
+  currency,
   onEdit,
   onDelete,
 }) => {
   // Safeguard: Ensure allParticipants is defined before calling .find()
+  const payerId = getExpensePayments(item)[0]?.participantId;
   const payer =
-    item.paidBy && allParticipants
-      ? allParticipants.find((p) => p.id === item.paidBy)
+    payerId && allParticipants
+      ? allParticipants.find((p) => p.id === payerId)
       : null;
 
   const handleDeletePress = () => {
@@ -47,7 +52,12 @@ const ExpenseListItem: React.FC<ExpenseListItemProps> = ({
         <View style={styles.expenseMain}>
           <Text style={styles.expenseTitle}>{item.title}</Text>
           {/* Use displayAmount for rendering */}
-          <Text style={styles.expenseAmount}>${displayAmount.toFixed(2)}</Text>
+          <Text style={styles.expenseAmount}>
+            {formatMinorUnits(
+              displayAmountMinor,
+              currency ?? getExpenseCurrency(item),
+            )}
+          </Text>
         </View>
         <View style={styles.expenseDetails}>
           <View style={styles.expenseMetadata}>

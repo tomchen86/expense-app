@@ -14,7 +14,7 @@ import { ExpenseGroup, Participant as _Participant } from '../../src/types';
 import GroupListItem from '../../src/components/GroupListItem';
 import TextInputModal from '../../src/components/TextInputModal';
 import FloatingActionButton from '../../src/components/FloatingActionButton';
-import { calculateGroupTotal } from '../../src/utils/groupCalculations';
+import { calculateGroupTotalsByCurrency } from '../../src/utils/groupCalculations';
 
 const HistoryScreen = () => {
   const groups = useExpenseStore((state) => state.groups);
@@ -96,7 +96,9 @@ const HistoryScreen = () => {
 
   const handleAddParticipantSubmit = (participantName: string) => {
     if (groupToAddParticipantTo) {
-      const participantId = addParticipant(participantName);
+      const participantId = addParticipant(participantName, undefined, {
+        spaceId: groupToAddParticipantTo.id,
+      });
       addParticipantToGroup(groupToAddParticipantTo.id, participantId);
     }
     setGroupToAddParticipantTo(null);
@@ -110,12 +112,12 @@ const HistoryScreen = () => {
   };
 
   const renderGroupListItem = ({ item: group }: { item: ExpenseGroup }) => {
-    const totalAmount = calculateGroupTotal(expenses, group.id);
+    const totals = calculateGroupTotalsByCurrency(expenses, group.id);
 
     return (
       <GroupListItem
         group={group}
-        totalAmount={totalAmount}
+        totals={totals}
         onDeleteGroup={handleDeleteGroup}
         onRemoveParticipant={handleRemoveParticipant}
         onAddParticipant={openAddParticipantModal}

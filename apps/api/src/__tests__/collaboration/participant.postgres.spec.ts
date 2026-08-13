@@ -106,4 +106,38 @@ describe('Participant Entity (Postgres)', () => {
     expect(withDeleted).toHaveLength(1);
     expect(withDeleted[0]?.deletedAt).toBeInstanceOf(Date);
   });
+
+  it('enforces case-insensitive active email uniqueness and permits reuse after deletion', async () => {
+    const owner = await createUser('participant-email@example.com');
+    const couple = await createCouple(owner.id);
+    const original = await participants.save(
+      participants.create({
+        coupleId: couple.id,
+        displayName: 'Original Friend',
+        email: 'friend@example.com',
+      }),
+    );
+
+    await expect(
+      participants.save(
+        participants.create({
+          coupleId: couple.id,
+          displayName: 'Duplicate Friend',
+          email: 'FRIEND@example.com',
+        }),
+      ),
+    ).rejects.toThrow(/UQ_participants_couple_email_active/i);
+
+    await participants.softRemove(original);
+
+    await expect(
+      participants.save(
+        participants.create({
+          coupleId: couple.id,
+          displayName: 'Replacement Friend',
+          email: 'FRIEND@example.com',
+        }),
+      ),
+    ).resolves.toMatchObject({ displayName: 'Replacement Friend' });
+  });
 });

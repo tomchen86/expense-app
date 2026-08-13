@@ -1,104 +1,182 @@
-import { Expense, Participant } from '../types';
+import { Expense, ExpenseGroup, Participant } from '../types';
+import {
+  getExpenseAmountMinor,
+  getExpenseCurrency,
+  getExpensePayments,
+  getExpenseShares,
+  getExpenseSpaceId,
+  isExpenseDeleted,
+} from './expenseDomain';
+import { minorUnitsToMajor } from './money';
 
-/**
- * Calculates the total amount of expenses for a specific group.
- * @param expenses - The full list of expenses.
- * @param groupId - The ID of the group to calculate the total for.
- * @returns The total amount for the group.
- */
+export interface CurrencyTotal {
+  currency: string;
+  amountMinor: number;
+}
+
+export const resolveGroupParticipantIdForUser = (
+  group: ExpenseGroup | undefined,
+  internalUserId: string | null,
+): string | null => {
+  if (!group || !internalUserId) {
+    return null;
+  }
+
+  return (
+    group.participants.find(
+      (participant) => participant.userId === internalUserId,
+    )?.id ??
+    group.participants.find((participant) => participant.id === internalUserId)
+      ?.id ??
+    null
+  );
+};
+
+export const calculateGroupTotalsByCurrency = (
+  expenses: Expense[],
+  groupId: string,
+): CurrencyTotal[] => {
+  const totals = new Map<string, number>();
+  expenses
+    .filter(
+      (expense) =>
+        !isExpenseDeleted(expense) && getExpenseSpaceId(expense) === groupId,
+    )
+    .forEach((expense) => {
+      const currency = getExpenseCurrency(expense);
+      totals.set(
+        currency,
+        (totals.get(currency) ?? 0) + getExpenseAmountMinor(expense),
+      );
+    });
+  return [...totals.entries()].map(([currency, amountMinor]) => ({
+    currency,
+    amountMinor,
+  }));
+};
+
+// Legacy major-unit facade retained for older callers and persisted records.
 export const calculateGroupTotal = (
   expenses: Expense[],
   groupId: string,
-): number => {
-  return expenses
-    .filter((e) => e.groupId === groupId) // Filter expenses for the group
-    .reduce((sum, e) => sum + e.amount, 0); // Sum the amounts
+): number =>
+  calculateGroupTotalsByCurrency(expenses, groupId).reduce(
+    (sum, total) => sum + minorUnitsToMajor(total.amountMinor, total.currency),
+    0,
+  );
+
+export const calculateUserTotalContributionMinorInGroup = (
+  userId: string,
+  expenses: Expense[],
+  groupId: string,
+): CurrencyTotal[] => {
+  const totals = new Map<string, number>();
+  expenses
+    .filter(
+      (expense) =>
+        !isExpenseDeleted(expense) && getExpenseSpaceId(expense) === groupId,
+    )
+    .forEach((expense) => {
+      const amountMinor = getExpensePayments(expense)
+        .filter((payment) => payment.participantId === userId)
+        .reduce((sum, payment) => sum + payment.amountMinor, 0);
+      if (amountMinor > 0) {
+        const currency = getExpenseCurrency(expense);
+        totals.set(currency, (totals.get(currency) ?? 0) + amountMinor);
+      }
+    });
+  return [...totals.entries()].map(([currency, amountMinor]) => ({
+    currency,
+    amountMinor,
+  }));
 };
 
-/**
- * Calculates the total amount a specific user has paid for expenses within a specific group.
- * @param userId - The ID of the user.
- * @param expenses - The list of all expenses.
- * @param groupId - The ID of the group.
- * @returns The total amount paid by the user in the group.
- */
 export const calculateUserTotalContributionInGroup = (
   userId: string,
   expenses: Expense[],
   groupId: string,
-): number => {
-  return expenses
-    .filter((e) => e.groupId === groupId && e.paidBy === userId)
-    .reduce((sum, e) => sum + e.amount, 0);
-};
+): number =>
+  calculateUserTotalContributionMinorInGroup(userId, expenses, groupId).reduce(
+    (sum, total) => sum + minorUnitsToMajor(total.amountMinor, total.currency),
+    0,
+  );
 
 export interface MemberBalanceDetails {
   memberId: string;
   memberName: string;
+  currency: string;
+  totalPaidMinor: number;
+  totalShareMinor: number;
+  netBalanceMinor: number;
+  /** @deprecated major-unit compatibility */
   totalPaid: number;
+  /** @deprecated major-unit compatibility */
   totalShare: number;
+  /** @deprecated major-unit compatibility */
   netBalance: number;
 }
 
-/**
- * Calculates the balance for each member in a group.
- * Assumes expenses are split equally among all participants of that expense,
- * or all group members if no specific participants are listed for an expense.
- * @param groupMembers - Array of participants in the group.
- * @param groupExpenses - Array of expenses belonging to the group.
- * @returns An array of objects, each containing memberId, memberName, totalPaid, totalShare, and netBalance.
- */
 export const calculateAllMemberBalancesInGroup = (
   groupMembers: Participant[],
   groupExpenses: Expense[],
+  allParticipants: Participant[] = groupMembers,
 ): MemberBalanceDetails[] => {
-  if (!groupMembers || groupMembers.length === 0) {
+  if (groupMembers.length === 0 && groupExpenses.length === 0) {
     return [];
   }
 
-  const memberBalances: Record<string, { paid: number; share: number }> = {};
+  const names = new Map<string, string>();
+  const activeExpenses = groupExpenses.filter(
+    (expense) => !isExpenseDeleted(expense),
+  );
+  [...allParticipants, ...groupMembers].forEach((participant) =>
+    names.set(participant.id, participant.name),
+  );
+  activeExpenses.forEach((expense) =>
+    expense.participants?.forEach((participant) =>
+      names.set(participant.id, participant.name),
+    ),
+  );
 
-  groupMembers.forEach((member) => {
-    memberBalances[member.id] = { paid: 0, share: 0 };
+  const balances = new Map<
+    string,
+    { memberId: string; currency: string; paid: number; share: number }
+  >();
+  const ensureBalance = (memberId: string, currency: string) => {
+    const key = `${memberId}\u0000${currency}`;
+    const existing = balances.get(key);
+    if (existing) {
+      return existing;
+    }
+    const created = { memberId, currency, paid: 0, share: 0 };
+    balances.set(key, created);
+    return created;
+  };
+
+  activeExpenses.forEach((expense) => {
+    const currency = getExpenseCurrency(expense);
+    groupMembers.forEach((member) => ensureBalance(member.id, currency));
+    getExpensePayments(expense).forEach((payment) => {
+      ensureBalance(payment.participantId, currency).paid +=
+        payment.amountMinor;
+    });
+    getExpenseShares(expense).forEach((share) => {
+      ensureBalance(share.participantId, currency).share += share.amountMinor;
+    });
   });
 
-  groupExpenses.forEach((expense) => {
-    // Add to payer's paid amount
-    if (expense.paidBy && memberBalances[expense.paidBy]) {
-      memberBalances[expense.paidBy].paid += expense.amount;
-    }
-
-    // Calculate and add to each participant's share
-    // If expense.participants is defined and not empty, use it
-    // Otherwise, assume the expense is split among all groupMembers
-    const expenseParticipants =
-      expense.participants && expense.participants.length > 0
-        ? expense.participants
-        : groupMembers;
-
-    if (expenseParticipants.length > 0) {
-      const sharePerParticipant = expense.amount / expenseParticipants.length;
-      expenseParticipants.forEach((participant) => {
-        // Ensure the participant is part of the current group context
-        if (memberBalances[participant.id]) {
-          memberBalances[participant.id].share += sharePerParticipant;
-        }
-      });
-    }
-  });
-
-  return groupMembers.map((member) => {
-    const paid = memberBalances[member.id]?.paid || 0;
-    const share = memberBalances[member.id]?.share || 0;
+  return [...balances.values()].map(({ memberId, currency, paid, share }) => {
+    const net = paid - share;
     return {
-      memberId: member.id,
-      memberName: member.name,
-      totalPaid: paid,
-      totalShare: share,
-      netBalance: paid - share,
+      memberId,
+      memberName: names.get(memberId) ?? 'Former participant',
+      currency,
+      totalPaidMinor: paid,
+      totalShareMinor: share,
+      netBalanceMinor: net,
+      totalPaid: minorUnitsToMajor(paid, currency),
+      totalShare: minorUnitsToMajor(share, currency),
+      netBalance: minorUnitsToMajor(net, currency),
     };
   });
 };
-
-// Add other group-related calculation functions here if needed in the future
-// e.g., calculateUserShare, calculateGroupBalance, etc.

@@ -1,4 +1,12 @@
 import { Expense, ExpenseCategory, Category } from '../../types';
+import {
+  getExpenseAmountMinor,
+  getExpenseCurrency,
+  getExpenseSpaceId,
+  getPersonalExpenseProjection,
+  isExpenseDeleted,
+} from '../expenseDomain';
+import { minorUnitsToMajor, parseLocalCalendarDate } from '../money';
 
 export interface ChartDataPoint {
   value: number;
@@ -8,6 +16,7 @@ export interface ChartDataPoint {
   category: ExpenseCategory;
   absoluteValue: number;
   percentage: number;
+  currency?: string;
 }
 
 export interface CategoryTotals {
@@ -24,8 +33,12 @@ export const calculateCategoryTotals = (
   let totalAmount = 0;
 
   expenses.forEach((expense) => {
-    totals[expense.category] = (totals[expense.category] || 0) + expense.amount;
-    totalAmount += expense.amount;
+    const amount = minorUnitsToMajor(
+      getExpenseAmountMinor(expense),
+      getExpenseCurrency(expense),
+    );
+    totals[expense.category] = (totals[expense.category] || 0) + amount;
+    totalAmount += amount;
   });
 
   return { totals, total: totalAmount };
@@ -38,28 +51,53 @@ export const generateCategoryChartData = (
   expenses: Expense[],
   categories: Category[],
   defaultColor: string = '#808080',
+  amountMinorSelector?: (expense: Expense) => number,
 ): ChartDataPoint[] => {
   if (expenses.length === 0) {
     return [];
   }
 
-  const { totals, total: totalForPeriod } = calculateCategoryTotals(expenses);
+  const totals = new Map<
+    string,
+    { category: ExpenseCategory; currency: string; amountMinor: number }
+  >();
+  const currencyTotals = new Map<string, number>();
+  expenses.forEach((expense) => {
+    const amountMinor = (amountMinorSelector ?? getExpenseAmountMinor)(expense);
+    if (amountMinor <= 0) {
+      return;
+    }
+    const currency = getExpenseCurrency(expense);
+    const key = `${currency}\u0000${expense.category}`;
+    const existing = totals.get(key);
+    totals.set(key, {
+      category: expense.category,
+      currency,
+      amountMinor: (existing?.amountMinor ?? 0) + amountMinor,
+    });
+    currencyTotals.set(
+      currency,
+      (currencyTotals.get(currency) ?? 0) + amountMinor,
+    );
+  });
 
-  if (totalForPeriod === 0) {
+  if (totals.size === 0) {
     return [];
   }
 
-  return Object.entries(totals).map(([categoryName, value]) => {
-    const categoryDetails = categories.find((c) => c.name === categoryName);
+  return [...totals.values()].map(({ category, currency, amountMinor }) => {
+    const categoryDetails = categories.find((c) => c.name === category);
+    const absoluteValue = minorUnitsToMajor(amountMinor, currency);
 
     return {
-      value: value || 0,
-      label: categoryName,
-      text: categoryName,
+      value: absoluteValue,
+      label: category,
+      text: category,
       color: categoryDetails ? categoryDetails.color : defaultColor,
-      category: categoryName as ExpenseCategory,
-      absoluteValue: value || 0,
-      percentage: ((value || 0) / totalForPeriod) * 100,
+      category,
+      currency,
+      absoluteValue,
+      percentage: (amountMinor / (currencyTotals.get(currency) ?? 1)) * 100,
     };
   });
 };
@@ -74,7 +112,10 @@ export const filterExpensesByDate = (
   selectedMonth?: number,
 ): Expense[] => {
   return expenses.filter((expense) => {
-    const expenseDate = new Date(expense.date);
+    const expenseDate = parseLocalCalendarDate(expense.date);
+    if (!expenseDate) {
+      return false;
+    }
 
     if (aggregation === 'year') {
       return expenseDate.getFullYear() === selectedYear;
@@ -96,12 +137,25 @@ export const getRelevantExpenses = (
   contextType: 'personal' | 'group',
   contextId: string,
   internalUserId: string | null,
+  personalSpaceId?: string,
+  participantIds: string[] = internalUserId ? [internalUserId] : [],
 ): Expense[] => {
   if (contextType === 'personal' && internalUserId) {
-    // For personal insights, show all expenses paid by the user
-    return allExpenses.filter((expense) => expense.paidBy === internalUserId);
+    return allExpenses.filter(
+      (expense) =>
+        !isExpenseDeleted(expense) &&
+        ((expense.spaceKind === 'personal' &&
+          getExpenseSpaceId(expense) === personalSpaceId) ||
+          participantIds.some(
+            (participantId) =>
+              getPersonalExpenseProjection(expense, participantId) !== null,
+          )),
+    );
   } else if (contextType === 'group') {
-    return allExpenses.filter((expense) => expense.groupId === contextId);
+    return allExpenses.filter(
+      (expense) =>
+        !isExpenseDeleted(expense) && getExpenseSpaceId(expense) === contextId,
+    );
   }
 
   return [];

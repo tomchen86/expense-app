@@ -3,6 +3,8 @@ import { DataSource } from 'typeorm';
 const DEMO_IDS = {
   userAlex: '11111111-1111-4111-8111-111111111111',
   userJamie: '22222222-2222-4222-8222-222222222222',
+  participantAlex: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1',
+  participantJamie: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb2',
   couple: '33333333-3333-4333-8333-333333333333',
   group: '44444444-4444-4444-8444-444444444444',
   category: '55555555-5555-4555-8555-555555555555',
@@ -69,11 +71,13 @@ export const seedSampleData = async (dataSource: DataSource): Promise<void> => {
     );
 
     await queryRunner.query(
-      `INSERT INTO couples (id, name, invite_code, status, created_by)
-       VALUES ($1, $2, $3, 'active', $4)
+      `INSERT INTO couples (id, name, invite_code, status, kind, sync_policy, created_by)
+       VALUES ($1, $2, $3, 'active', 'shared', 'cloud_sync', $4)
        ON CONFLICT (invite_code) DO UPDATE SET
          name = EXCLUDED.name,
          status = 'active',
+         kind = 'shared',
+         sync_policy = 'cloud_sync',
          created_by = EXCLUDED.created_by,
          updated_at = CURRENT_TIMESTAMP;
       `,
@@ -106,41 +110,43 @@ export const seedSampleData = async (dataSource: DataSource): Promise<void> => {
       reminders: true,
     });
 
-    await queryRunner.query(
+    const [alexParticipant] = (await queryRunner.query(
       `INSERT INTO participants (id, couple_id, user_id, display_name, email, is_registered, default_currency, notification_preferences)
        VALUES ($1, $2, $3, $4, $5, true, 'USD', $6::jsonb)
        ON CONFLICT (couple_id, user_id) DO UPDATE SET
          display_name = EXCLUDED.display_name,
          email = EXCLUDED.email,
-         deleted_at = NULL;
+         deleted_at = NULL
+       RETURNING id;
       `,
       [
-        DEMO_IDS.userAlex,
+        DEMO_IDS.participantAlex,
         DEMO_IDS.couple,
         DEMO_IDS.userAlex,
         'Alex Demo',
         DEMO_EMAILS.alex,
         notificationPreferences,
       ],
-    );
+    )) as [{ id: string }];
 
-    await queryRunner.query(
+    const [jamieParticipant] = (await queryRunner.query(
       `INSERT INTO participants (id, couple_id, user_id, display_name, email, is_registered, default_currency, notification_preferences)
        VALUES ($1, $2, $3, $4, $5, true, 'USD', $6::jsonb)
        ON CONFLICT (couple_id, user_id) DO UPDATE SET
          display_name = EXCLUDED.display_name,
          email = EXCLUDED.email,
-         deleted_at = NULL;
+         deleted_at = NULL
+       RETURNING id;
       `,
       [
-        DEMO_IDS.userJamie,
+        DEMO_IDS.participantJamie,
         DEMO_IDS.couple,
         DEMO_IDS.userJamie,
         'Jamie Demo',
         DEMO_EMAILS.jamie,
         notificationPreferences,
       ],
-    );
+    )) as [{ id: string }];
 
     await queryRunner.query(
       `INSERT INTO participants (id, couple_id, user_id, display_name, email, is_registered, default_currency, notification_preferences)
@@ -183,7 +189,7 @@ export const seedSampleData = async (dataSource: DataSource): Promise<void> => {
     await queryRunner.query(
       `INSERT INTO categories (id, couple_id, name, color, icon, is_default, created_by)
        VALUES ($1, $2, $3, $4, $5, false, $6)
-       ON CONFLICT (couple_id, name) DO UPDATE SET
+       ON CONFLICT (id) DO UPDATE SET
          color = EXCLUDED.color,
          icon = EXCLUDED.icon,
          deleted_at = NULL,
@@ -215,7 +221,7 @@ export const seedSampleData = async (dataSource: DataSource): Promise<void> => {
         DEMO_IDS.group,
         DEMO_IDS.category,
         DEMO_IDS.userAlex,
-        DEMO_IDS.userAlex,
+        alexParticipant.id,
         'Weekly groceries run',
         9000,
         '2025-09-20',
@@ -224,25 +230,37 @@ export const seedSampleData = async (dataSource: DataSource): Promise<void> => {
     );
 
     await queryRunner.query(
-      `INSERT INTO expense_splits (id, expense_id, participant_id, share_cents, share_percent)
-       VALUES ($1, $2, $3, $4, 50)
+      `INSERT INTO expense_splits (id, expense_id, couple_id, participant_id, share_cents, share_percent)
+       VALUES ($1, $2, $3, $4, $5, 50)
        ON CONFLICT (expense_id, participant_id) DO UPDATE SET
          share_cents = EXCLUDED.share_cents,
          share_percent = EXCLUDED.share_percent,
          updated_at = CURRENT_TIMESTAMP;
       `,
-      [DEMO_IDS.splitAlex, DEMO_IDS.expense, DEMO_IDS.userAlex, 4500],
+      [
+        DEMO_IDS.splitAlex,
+        DEMO_IDS.expense,
+        DEMO_IDS.couple,
+        alexParticipant.id,
+        4500,
+      ],
     );
 
     await queryRunner.query(
-      `INSERT INTO expense_splits (id, expense_id, participant_id, share_cents, share_percent)
-       VALUES ($1, $2, $3, $4, 50)
+      `INSERT INTO expense_splits (id, expense_id, couple_id, participant_id, share_cents, share_percent)
+       VALUES ($1, $2, $3, $4, $5, 50)
        ON CONFLICT (expense_id, participant_id) DO UPDATE SET
          share_cents = EXCLUDED.share_cents,
          share_percent = EXCLUDED.share_percent,
          updated_at = CURRENT_TIMESTAMP;
       `,
-      [DEMO_IDS.splitJamie, DEMO_IDS.expense, DEMO_IDS.userJamie, 4500],
+      [
+        DEMO_IDS.splitJamie,
+        DEMO_IDS.expense,
+        DEMO_IDS.couple,
+        jamieParticipant.id,
+        4500,
+      ],
     );
 
     await queryRunner.query(

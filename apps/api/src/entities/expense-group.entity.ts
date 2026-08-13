@@ -7,12 +7,14 @@ import {
   JoinColumn,
   ManyToOne,
   PrimaryGeneratedColumn,
+  Unique,
   UpdateDateColumn,
 } from 'typeorm';
 import { Couple } from './couple.entity';
 import { User } from './user.entity';
 
 @Entity('expense_groups')
+@Unique('UQ_expense_groups_id_couple', ['id', 'coupleId'])
 @Check(
   'CHK_expense_groups_color',
   "color IS NULL OR color ~ '^#[0-9A-Fa-f]{6}$'",

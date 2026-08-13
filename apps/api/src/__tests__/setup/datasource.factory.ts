@@ -29,7 +29,6 @@ import { ExpenseSimple } from '../../entities/expense-simple.entity';
 import { ExpenseSplitSimple } from '../../entities/expense-split-simple.entity';
 import { ExpenseAttachmentSimple } from '../../entities/expense-attachment-simple.entity';
 
-import { ensureTestPostgresUri } from './postgres-test-container';
 import { resolvePostgresTestDatabaseUrl } from './database-target-policy';
 import { EnableExtensions0011738364606484 } from '../../database/migrations/001_enable_extensions';
 import { IdentityTables0021738364606485 } from '../../database/migrations/002_identity_tables';
@@ -39,6 +38,7 @@ import { IndexesAndTriggers0051738364606488 } from '../../database/migrations/00
 import { SoftDeleteExtensions0061738364606489 } from '../../database/migrations/006_soft_delete_extensions';
 import { SoftDeleteParticipants0071738364606490 } from '../../database/migrations/007_soft_delete_participants';
 import { SoftDeleteAttachments0081738364606491 } from '../../database/migrations/008_soft_delete_attachments';
+import { OfflineSharedSpaceFoundation0091738364606492 } from '../../database/migrations/009_offline_shared_space_foundation';
 
 type CreatePostgresOptions = {
   runMigrations?: boolean;
@@ -89,21 +89,6 @@ const isConnectionAvailable = async (
   }
 };
 
-const resolveLegacyPostgresTestDatabaseUrl = async (): Promise<string> => {
-  const candidateUrls = [
-    process.env.COMPOSE_TEST_DATABASE_URL,
-    'postgres://dev_user:dev_password@127.0.0.1:5432/expense_tracker_dev',
-  ].filter((value): value is string => Boolean(value));
-
-  for (const candidate of candidateUrls) {
-    if (await isConnectionAvailable(candidate)) {
-      return candidate;
-    }
-  }
-
-  return ensureTestPostgresUri();
-};
-
 export const createPostgresDataSource = async (
   options: CreatePostgresOptions = {},
 ): Promise<DataSource> => {
@@ -112,7 +97,6 @@ export const createPostgresDataSource = async (
   const connectionString = await resolvePostgresTestDatabaseUrl(
     process.env,
     isConnectionAvailable,
-    resolveLegacyPostgresTestDatabaseUrl,
   );
 
   process.env.TEST_DATABASE_URL = connectionString;
@@ -147,6 +131,7 @@ export const createPostgresDataSource = async (
       SoftDeleteExtensions0061738364606489,
       SoftDeleteParticipants0071738364606490,
       SoftDeleteAttachments0081738364606491,
+      OfflineSharedSpaceFoundation0091738364606492,
     ],
     logging: false,
   });

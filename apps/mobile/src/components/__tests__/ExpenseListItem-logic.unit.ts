@@ -186,7 +186,7 @@ describe('ExpenseListItem Logic', () => {
         if (!expense.title || expense.title.trim().length === 0) {
           errors.push('Title is required');
         }
-        if (expense.amount <= 0) {
+        if ((expense.amount ?? 0) <= 0) {
           errors.push('Amount must be greater than 0');
         }
         if (!expense.date) {

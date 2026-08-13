@@ -8,6 +8,7 @@ import {
   Param,
   Post,
   Put,
+  Query,
   Req,
   UseGuards,
 } from '@nestjs/common';
@@ -49,8 +50,12 @@ export class GroupController {
   @Get()
   async listGroups(
     @Req() req: AuthenticatedRequest,
+    @Query('space_id') spaceId?: string,
   ): Promise<ApiResponse<{ groups: GroupResponse[] }>> {
-    const groups = await this.groupService.listGroupsForUser(req.user.id);
+    const groups = await this.groupService.listGroupsForUser(
+      req.user.id,
+      spaceId,
+    );
 
     return {
       success: true,
@@ -65,12 +70,17 @@ export class GroupController {
   async createGroup(
     @Req() req: AuthenticatedRequest,
     @Body() body: unknown,
+    @Query('space_id') spaceId?: string,
   ): Promise<ApiResponse<{ group: GroupResponse }>> {
     const dto = this.validateDto(CreateGroupDto, body, {
       messageOverride: 'Invalid group payload',
     });
 
-    const group = await this.groupService.createGroupForUser(req.user.id, dto);
+    const group = await this.groupService.createGroupForUser(
+      req.user.id,
+      dto,
+      spaceId,
+    );
 
     return {
       success: true,
@@ -85,6 +95,7 @@ export class GroupController {
     @Req() req: AuthenticatedRequest,
     @Param('groupId') groupId: string,
     @Body() body: unknown,
+    @Query('space_id') spaceId?: string,
   ): Promise<ApiResponse<{ group: GroupResponse }>> {
     const dto = this.validateDto(UpdateGroupDto, body, {
       skipMissingProperties: true,
@@ -95,6 +106,7 @@ export class GroupController {
       req.user.id,
       groupId,
       dto,
+      spaceId,
     );
 
     return {
@@ -110,8 +122,9 @@ export class GroupController {
   async deleteGroup(
     @Req() req: AuthenticatedRequest,
     @Param('groupId') groupId: string,
+    @Query('space_id') spaceId?: string,
   ): Promise<void> {
-    await this.groupService.deleteGroupForUser(req.user.id, groupId);
+    await this.groupService.deleteGroupForUser(req.user.id, groupId, spaceId);
   }
 
   private validateDto<T>(

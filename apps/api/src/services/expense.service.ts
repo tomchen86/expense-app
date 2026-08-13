@@ -11,6 +11,8 @@ import {
 } from '../dto/expense.dto';
 import {
   ApiBadRequestException,
+  ApiConflictException,
+  ApiForbiddenException,
   ApiNotFoundException,
 } from '../common/api-error';
 import { LedgerService } from './ledger.service';
@@ -18,12 +20,17 @@ import { ParticipantService } from './participant.service';
 import { ExpenseSplitType } from '../entities/expense.entity';
 
 interface ExpenseStatistics {
-  totalSpentCents: number;
   totalTransactions: number;
-  totalsByCategory: Array<{ categoryId: string | null; amountCents: number }>;
+  totalsByCurrency: Array<{ currency: string; amountCents: string }>;
+  totalsByCategory: Array<{
+    categoryId: string | null;
+    currency: string;
+    amountCents: string;
+  }>;
   totalsByParticipant: Array<{
     participantId: string;
-    amountCents: number;
+    currency: string;
+    amountCents: string;
   }>;
 }
 
@@ -37,6 +44,8 @@ interface NormalizedSplit {
   shareCents: number;
   sharePercent?: number;
 }
+
+const MAX_SAFE_CENTS = Number.MAX_SAFE_INTEGER;
 
 interface PaginatedExpenses {
   expenses: ExpenseResponseDto[];
@@ -69,9 +78,11 @@ export class ExpenseService {
     userId: string,
     query: ExpenseQueryDto,
   ): Promise<PaginatedExpenses> {
-    const { coupleId } = await this.ledgerService.ensureLedgerForUser(userId, {
-      ensureParticipant: true,
-    });
+    const { coupleId } = await this.ledgerService.resolveSpaceForUser(
+      userId,
+      query.space_id,
+      { ensureParticipant: true },
+    );
 
     const page = Math.max(1, query.page ?? 1);
     const limit = Math.max(1, Math.min(100, query.limit ?? 50));
@@ -118,10 +129,13 @@ export class ExpenseService {
   async getExpenseForUser(
     userId: string,
     expenseId: string,
+    requestedSpaceId?: string,
   ): Promise<ExpenseResponseDto> {
-    const { coupleId } = await this.ledgerService.ensureLedgerForUser(userId, {
-      ensureParticipant: true,
-    });
+    const { coupleId } = await this.ledgerService.resolveSpaceForUser(
+      userId,
+      requestedSpaceId,
+      { ensureParticipant: true },
+    );
 
     const expense = await this.expenseRepository.findOne({
       where: { id: expenseId, coupleId },
@@ -143,9 +157,28 @@ export class ExpenseService {
     userId: string,
     payload: CreateExpenseDto,
   ): Promise<ExpenseResponseDto> {
-    const { coupleId } = await this.ledgerService.ensureLedgerForUser(userId, {
-      ensureParticipant: true,
-    });
+    const { coupleId } = await this.ledgerService.resolveSpaceForUser(
+      userId,
+      payload.space_id,
+      { ensureParticipant: true },
+    );
+
+    if (payload.id) {
+      const replay = await this.findExpenseById(coupleId, payload.id);
+      if (replay) {
+        return this.resolveCreateReplay(replay, payload, 'id');
+      }
+    }
+
+    if (payload.client_mutation_id) {
+      const replay = await this.findExpenseByClientMutationId(
+        coupleId,
+        payload.client_mutation_id,
+      );
+      if (replay) {
+        return this.resolveCreateReplay(replay, payload, 'client_mutation_id');
+      }
+    }
 
     this.validateCurrency(payload.currency);
     const normalizedDescription = payload.description.trim();
@@ -160,7 +193,11 @@ export class ExpenseService {
     await this.validateCategoryOwnership(coupleId, payload.category_id);
     await this.validateGroupOwnership(coupleId, payload.group_id);
 
-    const amountCents = Math.trunc(payload.amount_cents);
+    const amountCents = this.assertSafeCents(
+      payload.amount_cents,
+      'amount_cents',
+      false,
+    );
     const splitType = payload.split_type ?? 'equal';
 
     const normalizedSplits = await this.validateAndNormalizeSplits(
@@ -171,63 +208,110 @@ export class ExpenseService {
       payload.paid_by_participant_id,
     );
 
-    return await this.expenseRepository.manager.transaction(async (manager) => {
-      const expenseRepo = manager.getRepository(Entities.Expense);
-      const splitRepo = manager.getRepository(Entities.ExpenseSplit);
+    return await this.expenseRepository.manager
+      .transaction(async (manager) => {
+        const expenseRepo = manager.getRepository(Entities.Expense);
+        const splitRepo = manager.getRepository(Entities.ExpenseSplit);
 
-      const expense = expenseRepo.create();
-      expense.coupleId = coupleId;
-      expense.groupId = payload.group_id ?? undefined;
-      expense.categoryId = payload.category_id ?? undefined;
-      expense.createdBy = userId;
-      expense.paidByParticipantId = payload.paid_by_participant_id;
-      expense.description = normalizedDescription;
-      expense.amountCents = amountCents.toString();
-      expense.currency = payload.currency.toUpperCase();
-      expense.exchangeRate =
-        payload.exchange_rate !== undefined
-          ? payload.exchange_rate.toString()
-          : undefined;
-      expense.expenseDate = payload.expense_date;
-      expense.splitType = splitType;
-      expense.notes = this.normalizeOptionalText(payload.notes);
-      expense.receiptUrl = this.normalizeOptionalText(payload.receipt_url);
-      expense.location = this.normalizeOptionalText(payload.location);
-
-      const savedExpense = await expenseRepo.save(expense);
-
-      const splitEntities = normalizedSplits.map((split) => {
-        const entity = splitRepo.create();
-        entity.expenseId = savedExpense.id;
-        entity.participantId = split.participantId;
-        entity.shareCents = split.shareCents.toString();
-        entity.sharePercent =
-          split.sharePercent !== undefined
-            ? split.sharePercent.toString()
+        const expense = expenseRepo.create();
+        if (payload.id) {
+          expense.id = payload.id;
+        }
+        expense.clientMutationId = payload.client_mutation_id;
+        expense.coupleId = coupleId;
+        expense.groupId = payload.group_id ?? undefined;
+        expense.categoryId = payload.category_id ?? undefined;
+        expense.createdBy = userId;
+        expense.paidByParticipantId = payload.paid_by_participant_id;
+        expense.description = normalizedDescription;
+        expense.amountCents = amountCents.toString();
+        expense.currency = payload.currency.toUpperCase();
+        expense.exchangeRate =
+          payload.exchange_rate !== undefined
+            ? payload.exchange_rate.toString()
             : undefined;
-        return entity;
+        expense.expenseDate = payload.expense_date;
+        expense.splitType = splitType;
+        expense.notes = this.normalizeOptionalText(payload.notes);
+        expense.receiptUrl = this.normalizeOptionalText(payload.receipt_url);
+        expense.location = this.normalizeOptionalText(payload.location);
+
+        const savedExpense = await expenseRepo.save(expense);
+
+        const splitEntities = normalizedSplits.map((split) => {
+          const entity = splitRepo.create();
+          entity.expenseId = savedExpense.id;
+          entity.coupleId = coupleId;
+          entity.participantId = split.participantId;
+          entity.shareCents = split.shareCents.toString();
+          entity.sharePercent =
+            split.sharePercent !== undefined
+              ? split.sharePercent.toString()
+              : undefined;
+          return entity;
+        });
+
+        if (splitEntities.length > 0) {
+          await splitRepo.save(splitEntities);
+        }
+
+        const finalSplits = await splitRepo.find({
+          where: { expenseId: savedExpense.id },
+        });
+
+        return this.mapExpense(savedExpense, finalSplits);
+      })
+      .catch(async (error: unknown) => {
+        if (payload.id) {
+          const replay = await this.findExpenseById(coupleId, payload.id);
+          if (replay) {
+            return this.resolveCreateReplay(replay, payload, 'id');
+          }
+        }
+        if (payload.client_mutation_id) {
+          const replay = await this.findExpenseByClientMutationId(
+            coupleId,
+            payload.client_mutation_id,
+          );
+          if (replay) {
+            return this.resolveCreateReplay(
+              replay,
+              payload,
+              'client_mutation_id',
+            );
+          }
+        }
+        if (this.isUniqueConstraintViolation(error)) {
+          if (payload.id) {
+            throw new ApiConflictException(
+              'EXPENSE_ID_CONFLICT',
+              'Expense ID is already in use',
+              { field: 'id' },
+            );
+          }
+          if (payload.client_mutation_id) {
+            throw new ApiConflictException(
+              'CLIENT_MUTATION_ID_CONFLICT',
+              'Client mutation ID is already in use',
+              { field: 'client_mutation_id' },
+            );
+          }
+        }
+        throw error;
       });
-
-      if (splitEntities.length > 0) {
-        await splitRepo.save(splitEntities);
-      }
-
-      const finalSplits = await splitRepo.find({
-        where: { expenseId: savedExpense.id },
-      });
-
-      return this.mapExpense(savedExpense, finalSplits);
-    });
   }
 
   async updateExpenseForUser(
     userId: string,
     expenseId: string,
     payload: UpdateExpenseDto,
+    requestedSpaceId?: string,
   ): Promise<ExpenseResponseDto> {
-    const { coupleId } = await this.ledgerService.ensureLedgerForUser(userId, {
-      ensureParticipant: true,
-    });
+    const { coupleId, role } = await this.ledgerService.resolveSpaceForUser(
+      userId,
+      requestedSpaceId,
+      { ensureParticipant: true },
+    );
 
     const expense = await this.expenseRepository.findOne({
       where: { id: expenseId, coupleId },
@@ -237,6 +321,12 @@ export class ExpenseService {
     if (!expense || expense.deletedAt) {
       throw new ApiNotFoundException('EXPENSE_NOT_FOUND', 'Expense not found');
     }
+
+    if (expense.version !== payload.expected_version) {
+      throw this.expenseVersionConflict(expense.version);
+    }
+
+    this.assertExpenseMutationAllowed(userId, role, expense.createdBy, 'edit');
 
     const existingSplits = await this.expenseSplitRepository.find({
       where: { expenseId: expense.id },
@@ -336,38 +426,71 @@ export class ExpenseService {
             : undefined,
       }));
 
-      this.ensureSplitsConsistency(
-        updatedSplits,
-        amountCents,
-        splitType,
-        payerParticipantId,
-      );
+      this.ensureSplitsConsistency(updatedSplits, amountCents, splitType);
     }
 
     return await this.expenseRepository.manager.transaction(async (manager) => {
       const expenseRepo = manager.getRepository(Entities.Expense);
       const splitRepo = manager.getRepository(Entities.ExpenseSplit);
 
-      const savedExpense = await expenseRepo.save(expense);
+      const updateResult = await expenseRepo
+        .createQueryBuilder()
+        .update()
+        .set({
+          groupId: expense.groupId,
+          categoryId: expense.categoryId,
+          paidByParticipantId: expense.paidByParticipantId,
+          description: expense.description,
+          amountCents: expense.amountCents,
+          currency: expense.currency,
+          exchangeRate: expense.exchangeRate,
+          expenseDate: expense.expenseDate,
+          splitType: expense.splitType,
+          notes: expense.notes,
+          receiptUrl: expense.receiptUrl,
+          location: expense.location,
+        })
+        .where('id = :expenseId', { expenseId: expense.id })
+        .andWhere('couple_id = :coupleId', { coupleId })
+        .andWhere('version = :expectedVersion', {
+          expectedVersion: payload.expected_version,
+        })
+        .andWhere('deleted_at IS NULL')
+        .execute();
 
-      await splitRepo.delete({ expenseId: expense.id });
-
-      const splitEntities = updatedSplits.map((split) => {
-        const entity = splitRepo.create();
-        entity.expenseId = expense.id;
-        entity.participantId = split.participantId;
-        entity.shareCents = split.shareCents.toString();
-        entity.sharePercent =
-          split.sharePercent !== undefined
-            ? split.sharePercent.toString()
-            : undefined;
-        return entity;
-      });
-
-      if (splitEntities.length > 0) {
-        await splitRepo.save(splitEntities);
+      if (updateResult.affected !== 1) {
+        const current = await expenseRepo.findOne({
+          where: { id: expense.id, coupleId },
+          withDeleted: true,
+        });
+        throw this.expenseVersionConflict(current?.version);
       }
 
+      if (payload.splits !== undefined) {
+        await splitRepo.delete({ expenseId: expense.id });
+
+        const splitEntities = updatedSplits.map((split) => {
+          const entity = splitRepo.create();
+          entity.expenseId = expense.id;
+          entity.coupleId = coupleId;
+          entity.participantId = split.participantId;
+          entity.shareCents = split.shareCents.toString();
+          entity.sharePercent =
+            split.sharePercent !== undefined
+              ? split.sharePercent.toString()
+              : undefined;
+          return entity;
+        });
+
+        if (splitEntities.length > 0) {
+          await splitRepo.save(splitEntities);
+        }
+      }
+
+      const savedExpense = await expenseRepo.findOneByOrFail({
+        id: expense.id,
+        coupleId,
+      });
       const finalSplits = await splitRepo.find({
         where: { expenseId: expense.id },
       });
@@ -376,10 +499,17 @@ export class ExpenseService {
     });
   }
 
-  async deleteExpenseForUser(userId: string, expenseId: string): Promise<void> {
-    const { coupleId } = await this.ledgerService.ensureLedgerForUser(userId, {
-      ensureParticipant: true,
-    });
+  async deleteExpenseForUser(
+    userId: string,
+    expenseId: string,
+    expectedVersion: number,
+    requestedSpaceId?: string,
+  ): Promise<void> {
+    const { coupleId, role } = await this.ledgerService.resolveSpaceForUser(
+      userId,
+      requestedSpaceId,
+      { ensureParticipant: true },
+    );
 
     const expense = await this.expenseRepository.findOne({
       where: { id: expenseId, coupleId },
@@ -389,52 +519,100 @@ export class ExpenseService {
       throw new ApiNotFoundException('EXPENSE_NOT_FOUND', 'Expense not found');
     }
 
-    expense.deletedAt = new Date();
-    await this.expenseRepository.save(expense);
+    if (expense.version !== expectedVersion) {
+      throw this.expenseVersionConflict(expense.version);
+    }
+
+    this.assertExpenseMutationAllowed(
+      userId,
+      role,
+      expense.createdBy,
+      'delete',
+    );
+
+    const result = await this.expenseRepository
+      .createQueryBuilder()
+      .update()
+      .set({ deletedAt: new Date() })
+      .where('id = :expenseId', { expenseId })
+      .andWhere('couple_id = :coupleId', { coupleId })
+      .andWhere('version = :expectedVersion', { expectedVersion })
+      .andWhere('deleted_at IS NULL')
+      .execute();
+
+    if (result.affected !== 1) {
+      const current = await this.expenseRepository.findOne({
+        where: { id: expenseId, coupleId },
+        withDeleted: true,
+      });
+      throw this.expenseVersionConflict(current?.version);
+    }
   }
 
   async getExpenseStatisticsForUser(
     userId: string,
     query: ExpenseQueryDto,
   ): Promise<ExpenseStatistics> {
-    const { coupleId } = await this.ledgerService.ensureLedgerForUser(userId, {
-      ensureParticipant: true,
-    });
+    const { coupleId } = await this.ledgerService.resolveSpaceForUser(
+      userId,
+      query.space_id,
+      { ensureParticipant: true },
+    );
 
     const baseQuery = this.buildExpenseQuery(coupleId, query);
 
-    const aggregate = await baseQuery
+    const totalTransactions = await baseQuery.getCount();
+
+    const currencyRows = await baseQuery
       .clone()
-      .select('COALESCE(SUM(expense.amountCents), 0)', 'totalSpent')
-      .addSelect('COUNT(*)', 'expenseCount')
-      .getRawOne<{ totalSpent: string; expenseCount: string }>();
+      .select('expense.currency', 'currency')
+      .addSelect('COALESCE(SUM(expense.amountCents), 0)', 'amountCents')
+      .groupBy('expense.currency')
+      .getRawMany<{ currency: string; amountCents: string }>();
 
     const categoryRows = await baseQuery
       .clone()
       .select('expense.categoryId', 'categoryId')
+      .addSelect('expense.currency', 'currency')
       .addSelect('COALESCE(SUM(expense.amountCents), 0)', 'amountCents')
       .groupBy('expense.categoryId')
-      .getRawMany<{ categoryId: string | null; amountCents: string }>();
+      .addGroupBy('expense.currency')
+      .getRawMany<{
+        categoryId: string | null;
+        currency: string;
+        amountCents: string;
+      }>();
 
     const participantRows = await baseQuery
       .clone()
       .select('expense.paidByParticipantId', 'participantId')
+      .addSelect('expense.currency', 'currency')
       .addSelect('COALESCE(SUM(expense.amountCents), 0)', 'amountCents')
       .groupBy('expense.paidByParticipantId')
-      .getRawMany<{ participantId: string | null; amountCents: string }>();
+      .addGroupBy('expense.currency')
+      .getRawMany<{
+        participantId: string | null;
+        currency: string;
+        amountCents: string;
+      }>();
 
     return {
-      totalSpentCents: this.parseNumeric(aggregate?.totalSpent ?? '0'),
-      totalTransactions: this.parseNumeric(aggregate?.expenseCount ?? '0'),
+      totalTransactions,
+      totalsByCurrency: currencyRows.map((row) => ({
+        currency: row.currency,
+        amountCents: String(row.amountCents ?? '0'),
+      })),
       totalsByCategory: categoryRows.map((row) => ({
         categoryId: row.categoryId,
-        amountCents: this.parseNumeric(row.amountCents ?? '0'),
+        currency: row.currency,
+        amountCents: String(row.amountCents ?? '0'),
       })),
       totalsByParticipant: participantRows
         .filter((row) => !!row.participantId)
         .map((row) => ({
           participantId: row.participantId as string,
-          amountCents: this.parseNumeric(row.amountCents ?? '0'),
+          currency: row.currency,
+          amountCents: String(row.amountCents ?? '0'),
         })),
     };
   }
@@ -593,25 +771,21 @@ export class ExpenseService {
 
     await this.participantService.assertParticipantsBelongToCouple(
       coupleId,
-      uniqueParticipantIds,
+      Array.from(new Set([...uniqueParticipantIds, payerParticipantId])),
     );
 
     const normalizedSplits = splits.map<NormalizedSplit>((split) => {
-      const shareCents = Math.trunc(split.share_cents);
-
-      if (shareCents < 0) {
-        throw new ApiBadRequestException(
-          'INVALID_SPLIT_SHARE',
-          'Split shares must be positive integers',
-          { field: 'splits' },
-        );
-      }
+      const shareCents = this.assertSafeCents(
+        split.share_cents,
+        'splits',
+        true,
+      );
 
       let sharePercent: number | undefined;
 
       if (split.share_percent !== undefined) {
         sharePercent = Number(split.share_percent);
-        if (Number.isNaN(sharePercent)) {
+        if (!Number.isFinite(sharePercent)) {
           throw new ApiBadRequestException(
             'INVALID_SPLIT_PERCENT',
             'Split percentage must be numeric',
@@ -626,6 +800,16 @@ export class ExpenseService {
             { field: 'splits' },
           );
         }
+
+        if (
+          Math.abs(sharePercent * 100 - Math.round(sharePercent * 100)) > 1e-8
+        ) {
+          throw new ApiBadRequestException(
+            'INVALID_SPLIT_PERCENT',
+            'Split percentages support at most two decimal places',
+            { field: 'splits' },
+          );
+        }
       }
 
       return {
@@ -635,12 +819,7 @@ export class ExpenseService {
       };
     });
 
-    this.ensureSplitsConsistency(
-      normalizedSplits,
-      amountCents,
-      splitType,
-      payerParticipantId,
-    );
+    this.ensureSplitsConsistency(normalizedSplits, amountCents, splitType);
 
     return normalizedSplits;
   }
@@ -649,7 +828,6 @@ export class ExpenseService {
     splits: NormalizedSplit[],
     amountCents: number,
     splitType: ExpenseSplitType,
-    payerParticipantId: string,
   ): void {
     const totalShare = splits.reduce((sum, split) => sum + split.shareCents, 0);
 
@@ -676,25 +854,51 @@ export class ExpenseService {
         0,
       );
 
-      if (Math.abs(totalPercent - 100) > 0.01) {
+      const basisPoints = (percentages as number[]).map((percentage) =>
+        Math.round(percentage * 100),
+      );
+      if (
+        Math.abs(totalPercent - 100) > 0.001 ||
+        basisPoints.reduce((sum, value) => sum + value, 0) !== 10_000
+      ) {
         throw new ApiBadRequestException(
           'INVALID_SPLIT_PERCENT',
           'Percentage splits must total 100%',
           { field: 'splits' },
         );
       }
+
+      const canonicalShares = this.allocateByPercentages(
+        amountCents,
+        basisPoints,
+      );
+      if (
+        splits.some(
+          (split, index) => split.shareCents !== canonicalShares[index],
+        )
+      ) {
+        throw new ApiBadRequestException(
+          'INVALID_PERCENTAGE_SPLITS',
+          'Percentage split cents must match the canonical percentage allocation',
+          { field: 'splits' },
+        );
+      }
     }
 
-    const payerIncluded = splits.some(
-      (split) => split.participantId === payerParticipantId,
-    );
-
-    if (!payerIncluded) {
-      throw new ApiBadRequestException(
-        'PAYER_NOT_IN_SPLITS',
-        'Payer must be included in the expense splits',
-        { field: 'paid_by_participant_id' },
+    if (splitType === 'equal') {
+      const baseShare = Math.floor(amountCents / splits.length);
+      const remainder = amountCents % splits.length;
+      const isCanonical = splits.every(
+        (split, index) =>
+          split.shareCents === baseShare + (index < remainder ? 1 : 0),
       );
+      if (!isCanonical) {
+        throw new ApiBadRequestException(
+          'INVALID_EQUAL_SPLITS',
+          'Equal split shares must use the canonical remainder allocation',
+          { field: 'splits' },
+        );
+      }
     }
   }
 
@@ -703,10 +907,219 @@ export class ExpenseService {
     override?: number,
   ): number {
     if (override !== undefined) {
-      return Math.trunc(override);
+      return this.assertSafeCents(override, 'amount_cents', false);
     }
 
     return this.parseNumeric(expense.amountCents);
+  }
+
+  private assertSafeCents(
+    value: number,
+    field: string,
+    allowZero: boolean,
+  ): number {
+    const minimum = allowZero ? 0 : 1;
+    if (
+      !Number.isSafeInteger(value) ||
+      value < minimum ||
+      value > MAX_SAFE_CENTS
+    ) {
+      throw new ApiBadRequestException(
+        'VALIDATION_ERROR',
+        'Cent amounts must be safe integers',
+        { field },
+      );
+    }
+    return value;
+  }
+
+  private allocateByPercentages(
+    amountCents: number,
+    basisPoints: number[],
+  ): number[] {
+    const denominator = 10_000n;
+    const numerators = basisPoints.map(
+      (basisPoint) => BigInt(amountCents) * BigInt(basisPoint),
+    );
+    const allocated = numerators.map((numerator) =>
+      Number(numerator / denominator),
+    );
+    const remainder =
+      amountCents - allocated.reduce((sum, share) => sum + share, 0);
+    const allocationOrder = numerators
+      .map((numerator, index) => ({
+        index,
+        fraction: numerator % denominator,
+      }))
+      .sort((left, right) => {
+        if (left.fraction === right.fraction) {
+          return left.index - right.index;
+        }
+        return left.fraction > right.fraction ? -1 : 1;
+      });
+
+    for (let index = 0; index < remainder; index += 1) {
+      const target = allocationOrder[index % allocationOrder.length];
+      allocated[target.index] += 1;
+    }
+    return allocated;
+  }
+
+  private expenseVersionConflict(
+    currentVersion?: number,
+  ): ApiConflictException {
+    return new ApiConflictException(
+      'EXPENSE_VERSION_CONFLICT',
+      'Expense was modified by another request',
+      {
+        field: 'expected_version',
+        details: { currentVersion: currentVersion ?? null },
+      },
+    );
+  }
+
+  private assertExpenseMutationAllowed(
+    userId: string,
+    role: 'owner' | 'member',
+    createdBy: string,
+    operation: 'edit' | 'delete',
+  ): void {
+    if (createdBy === userId || role === 'owner') {
+      return;
+    }
+
+    throw new ApiForbiddenException(
+      operation === 'edit'
+        ? 'EXPENSE_EDIT_FORBIDDEN'
+        : 'EXPENSE_DELETE_FORBIDDEN',
+      operation === 'edit'
+        ? 'Only the expense creator or a space owner can edit this expense'
+        : 'Only the expense creator or a space owner can delete this expense',
+    );
+  }
+
+  private isUniqueConstraintViolation(error: unknown): boolean {
+    if (!error || typeof error !== 'object') {
+      return false;
+    }
+    const candidate = error as { code?: unknown; message?: unknown };
+    if (candidate.code === '23505') {
+      return true;
+    }
+    return (
+      typeof candidate.message === 'string' &&
+      /duplicate key|unique constraint failed/i.test(candidate.message)
+    );
+  }
+
+  private resolveCreateReplay(
+    replay: ExpenseResponseDto,
+    payload: CreateExpenseDto,
+    conflictField: 'id' | 'client_mutation_id',
+  ): ExpenseResponseDto {
+    if (this.matchesCreatePayload(replay, payload)) {
+      return replay;
+    }
+
+    throw new ApiConflictException(
+      conflictField === 'id'
+        ? 'EXPENSE_ID_CONFLICT'
+        : 'CLIENT_MUTATION_ID_CONFLICT',
+      conflictField === 'id'
+        ? 'Expense ID is already in use for a different payload'
+        : 'Client mutation ID is already in use for a different payload',
+      { field: conflictField },
+    );
+  }
+
+  private matchesCreatePayload(
+    replay: ExpenseResponseDto,
+    payload: CreateExpenseDto,
+  ): boolean {
+    if (payload.id !== undefined && payload.id !== replay.id) {
+      return false;
+    }
+    if (
+      payload.client_mutation_id !== undefined &&
+      payload.client_mutation_id !== replay.client_mutation_id
+    ) {
+      return false;
+    }
+
+    const exchangeRate =
+      payload.exchange_rate === undefined ? undefined : payload.exchange_rate;
+    const replaySplits = [...replay.splits]
+      .map((split) => ({
+        participantId: split.participant_id,
+        shareCents: split.share_cents,
+        sharePercent: split.share_percent ?? null,
+      }))
+      .sort((left, right) =>
+        left.participantId.localeCompare(right.participantId),
+      );
+    const submittedSplits = [...payload.splits]
+      .map((split) => ({
+        participantId: split.participant_id,
+        shareCents: split.share_cents,
+        sharePercent: split.share_percent ?? null,
+      }))
+      .sort((left, right) =>
+        left.participantId.localeCompare(right.participantId),
+      );
+
+    return (
+      replay.description === payload.description.trim() &&
+      replay.amount_cents === payload.amount_cents &&
+      replay.currency === payload.currency.toUpperCase() &&
+      replay.expense_date === payload.expense_date &&
+      replay.category_id === (payload.category_id ?? null) &&
+      replay.group_id === (payload.group_id ?? null) &&
+      replay.paid_by_participant_id === payload.paid_by_participant_id &&
+      replay.split_type === (payload.split_type ?? 'equal') &&
+      (replay.exchange_rate ?? undefined) === exchangeRate &&
+      replay.notes === (this.normalizeOptionalText(payload.notes) ?? null) &&
+      replay.receipt_url ===
+        (this.normalizeOptionalText(payload.receipt_url) ?? null) &&
+      replay.location ===
+        (this.normalizeOptionalText(payload.location) ?? null) &&
+      JSON.stringify(replaySplits) === JSON.stringify(submittedSplits)
+    );
+  }
+
+  private async findExpenseByClientMutationId(
+    coupleId: string,
+    clientMutationId: string,
+  ): Promise<ExpenseResponseDto | null> {
+    const expense = await this.expenseRepository.findOne({
+      where: { coupleId, clientMutationId },
+      withDeleted: true,
+    });
+    if (!expense || expense.deletedAt) {
+      return null;
+    }
+
+    const splits = await this.expenseSplitRepository.find({
+      where: { expenseId: expense.id },
+    });
+    return this.mapExpense(expense, splits);
+  }
+
+  private async findExpenseById(
+    coupleId: string,
+    expenseId: string,
+  ): Promise<ExpenseResponseDto | null> {
+    const expense = await this.expenseRepository.findOne({
+      where: { id: expenseId, coupleId },
+      withDeleted: true,
+    });
+    if (!expense || expense.deletedAt) {
+      return null;
+    }
+
+    const splits = await this.expenseSplitRepository.find({
+      where: { expenseId: expense.id },
+    });
+    return this.mapExpense(expense, splits);
   }
 
   private parseNumeric(value: string | number | null | undefined): number {
@@ -734,6 +1147,9 @@ export class ExpenseService {
 
     return {
       id: expense.id,
+      version: expense.version,
+      client_mutation_id: expense.clientMutationId ?? null,
+      space_id: expense.coupleId,
       couple_id: expense.coupleId,
       group_id: expense.groupId ?? null,
       category_id: expense.categoryId ?? null,

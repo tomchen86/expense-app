@@ -32,13 +32,16 @@ const defaultSettings = {
 import { router } from 'expo-router';
 
 const resetAllStores = () => {
-  const { internalUserId } = useUserStore.getState();
+  const { internalUserId, personalSpaceId, personalParticipantId } =
+    useUserStore.getState();
 
   useUserStore.setState({
     user: null,
     settings: { ...defaultSettings },
     userSettings: null,
     internalUserId,
+    personalSpaceId,
+    personalParticipantId,
   });
   useParticipantStore.setState({ participants: [] });
   useGroupStore.setState({ groups: [] });
@@ -56,14 +59,21 @@ const resetAllStores = () => {
     settings: { ...defaultSettings },
     userSettings: null,
     internalUserId,
+    personalSpaceId,
+    personalParticipantId,
   });
 };
 
 // Router mocking is handled in jest.setup.unit.ts
 
+interface HookHarnessProps {
+  editingExpense?: Expense | null;
+  initialSpaceId?: string;
+}
+
 const HookHarness = forwardRef(
-  ({ editingExpense }: { editingExpense?: Expense | null }, ref) => {
-    const hookValue = useExpenseForm({ editingExpense });
+  ({ editingExpense, initialSpaceId }: HookHarnessProps, ref) => {
+    const hookValue = useExpenseForm({ editingExpense, initialSpaceId });
     useImperativeHandle(ref, () => hookValue, [hookValue]);
     return null;
   },
@@ -79,7 +89,7 @@ describe('useExpenseForm', () => {
   afterEach(() => {
     jest.clearAllMocks();
   });
-  it('creates a personal expense using the internal user identifier', () => {
+  it('creates a canonical personal expense in the explicit personal space', async () => {
     const ref = createRef<ReturnType<typeof useExpenseForm>>();
     let renderer: TestRenderer.ReactTestRenderer;
     act(() => {
@@ -88,7 +98,8 @@ describe('useExpenseForm', () => {
       );
     });
 
-    const { internalUserId } = useComposedExpenseStore.getState();
+    const { personalParticipantId, personalSpaceId } =
+      useComposedExpenseStore.getState();
 
     act(() => {
       ref.current!.handleUpdateFormState('title', 'Coffee run');
@@ -96,23 +107,58 @@ describe('useExpenseForm', () => {
       ref.current!.handleUpdateFormState('caption', 'Morning treat');
     });
 
-    act(() => {
-      ref.current!.handleSubmit();
+    await act(async () => {
+      await ref.current!.handleSubmit();
     });
 
     const expenses = useComposedExpenseStore.getState().expenses;
     expect(expenses).toHaveLength(1);
     expect(expenses[0]).toMatchObject({
       title: 'Coffee run',
-      amount: 8.75,
-      paidBy: internalUserId,
-      groupId: internalUserId,
+      amountMinor: 875,
+      currency: 'USD',
+      spaceId: personalSpaceId,
+      spaceKind: 'personal',
+      payments: [{ participantId: personalParticipantId, amountMinor: 875 }],
+      shares: [{ participantId: personalParticipantId, amountMinor: 875 }],
       caption: 'Morning treat',
     });
+    expect(expenses[0]).not.toHaveProperty('amount');
+    expect(expenses[0]).not.toHaveProperty('groupId');
+    expect(expenses[0]).not.toHaveProperty('paidBy');
+    expect(expenses[0]).not.toHaveProperty('splitBetween');
     expect(router.back).toHaveBeenCalledTimes(1);
     expect(Alert.alert).not.toHaveBeenCalled();
   });
-  it('validates group expenses require payer and participants', () => {
+  it('stores the selected stable category identifier when available', async () => {
+    const category = {
+      id: 'f7686a96-d2d3-49bb-968f-e80e9f436763',
+      name: 'Local custom',
+      color: '#123456',
+    };
+    act(() => {
+      useCategoryStore.setState({ categories: [category] });
+      useComposedExpenseStore.setState({ categories: [category] });
+    });
+
+    const ref = createRef<ReturnType<typeof useExpenseForm>>();
+    act(() => {
+      TestRenderer.create(<HookHarness ref={ref} editingExpense={null} />);
+    });
+    act(() => {
+      ref.current!.handleUpdateFormState('title', 'Custom category expense');
+      ref.current!.handleUpdateFormState('amount', '12.00');
+    });
+    await act(async () => {
+      await ref.current!.handleSubmit();
+    });
+
+    expect(useExpenseFeatureStore.getState().expenses[0]).toMatchObject({
+      category: category.name,
+      categoryId: category.id,
+    });
+  });
+  it('validates group expenses require payer and participants', async () => {
     const group: ExpenseGroup = {
       id: 'group-1',
       name: 'Roommates',
@@ -138,8 +184,8 @@ describe('useExpenseForm', () => {
       ref.current!.handleUpdateFormState('selectedGroup', group);
     });
 
-    act(() => {
-      ref.current!.handleSubmit();
+    await act(async () => {
+      await ref.current!.handleSubmit();
     });
 
     expect(Alert.alert).toHaveBeenCalledWith(
@@ -149,7 +195,33 @@ describe('useExpenseForm', () => {
     expect(useComposedExpenseStore.getState().expenses).toHaveLength(0);
     expect(router.back).not.toHaveBeenCalled();
   });
-  it('updates an existing expense when editing', () => {
+  it('preselects the shared space supplied by the group-detail route', () => {
+    const participant: Participant = { id: 'p1', name: 'Alex' };
+    const group: ExpenseGroup = {
+      id: 'space-route',
+      name: 'Route Group',
+      participants: [participant],
+      createdAt: '2025-02-01T00:00:00.000Z',
+    };
+    act(() => {
+      useGroupStore.setState({ groups: [group] });
+      useComposedExpenseStore.setState({ groups: [group] });
+    });
+
+    const ref = createRef<ReturnType<typeof useExpenseForm>>();
+    act(() => {
+      TestRenderer.create(
+        <HookHarness
+          ref={ref}
+          editingExpense={null}
+          initialSpaceId={group.id}
+        />,
+      );
+    });
+
+    expect(ref.current!.formState.selectedGroup?.id).toBe(group.id);
+  });
+  it('updates an existing expense when editing', async () => {
     const participant: Participant = { id: 'p1', name: 'Alex' };
     const group: ExpenseGroup = {
       id: 'group-2',
@@ -195,8 +267,8 @@ describe('useExpenseForm', () => {
       ref.current!.handleUpdateFormState('caption', 'Updated snacks');
     });
 
-    act(() => {
-      ref.current!.handleSubmit();
+    await act(async () => {
+      await ref.current!.handleSubmit();
     });
 
     const updated = useComposedExpenseStore
@@ -204,9 +276,13 @@ describe('useExpenseForm', () => {
       .expenses.find((expense) => expense.id === 'expense-1');
 
     expect(updated).toMatchObject({
-      amount: 21.5,
+      amountMinor: 2150,
+      currency: 'USD',
+      spaceId: group.id,
+      spaceKind: 'shared',
       caption: 'Updated snacks',
     });
+    expect(updated).not.toHaveProperty('amount');
     expect(router.back).toHaveBeenCalledTimes(1);
     expect(Alert.alert).not.toHaveBeenCalled();
   });

@@ -6,6 +6,17 @@ global.__DEV__ = true;
 global.setImmediate =
   global.setImmediate || ((fn, ...args) => global.setTimeout(fn, 0, ...args));
 
+if (!global.crypto) {
+  Object.defineProperty(global, 'crypto', {
+    configurable: true,
+    value: require('crypto').webcrypto,
+  });
+}
+
+jest.mock('expo-crypto', () => ({
+  randomUUID: () => require('crypto').randomUUID(),
+}));
+
 // Mock React Native modules (copied from setup-component.ts, excluding Navigation mock)
 jest.mock('react-native-reanimated', () => {
   const Reanimated = require('react-native-reanimated/mock');

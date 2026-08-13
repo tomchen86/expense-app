@@ -37,10 +37,13 @@ export class ParticipantService {
 
   async listParticipantsForUser(
     userId: string,
+    spaceId?: string,
   ): Promise<ParticipantResponse[]> {
-    const { coupleId } = await this.ledgerService.ensureLedgerForUser(userId, {
-      ensureParticipant: true,
-    });
+    const { coupleId } = await this.ledgerService.resolveSpaceForUser(
+      userId,
+      spaceId,
+      { ensureParticipant: true },
+    );
 
     const participants = await this.participantRepository
       .createQueryBuilder('participant')
@@ -55,10 +58,13 @@ export class ParticipantService {
   async createParticipantForUser(
     userId: string,
     payload: CreateParticipantDto,
+    spaceId?: string,
   ): Promise<ParticipantResponse> {
-    const { coupleId } = await this.ledgerService.ensureLedgerForUser(userId, {
-      ensureParticipant: true,
-    });
+    const { coupleId } = await this.ledgerService.resolveSpaceForUser(
+      userId,
+      spaceId,
+      { ensureParticipant: true },
+    );
 
     const normalizedName = payload.name.trim();
     if (!normalizedName) {
@@ -67,6 +73,21 @@ export class ParticipantService {
         'Participant name is required',
         { field: 'name' },
       );
+    }
+
+    if (payload.id) {
+      const existingById = await this.participantRepository.findOne({
+        where: { id: payload.id },
+        withDeleted: true,
+      });
+      if (existingById) {
+        return this.resolveCreateReplay(
+          existingById,
+          coupleId,
+          normalizedName,
+          payload,
+        );
+      }
     }
 
     if (payload.email) {
@@ -79,6 +100,14 @@ export class ParticipantService {
       });
 
       if (existingWithEmail) {
+        if (payload.id && existingWithEmail.id === payload.id) {
+          return this.resolveCreateReplay(
+            existingWithEmail,
+            coupleId,
+            normalizedName,
+            payload,
+          );
+        }
         throw new ApiConflictException(
           'PARTICIPANT_EMAIL_EXISTS',
           'A participant with this email already exists',
@@ -88,6 +117,9 @@ export class ParticipantService {
     }
 
     const participant = this.participantRepository.create();
+    if (payload.id) {
+      participant.id = payload.id;
+    }
     participant.coupleId = coupleId;
     participant.userId = undefined;
     participant.displayName = normalizedName;
@@ -99,18 +131,39 @@ export class ParticipantService {
       payload.notifications,
     );
 
-    const saved = await this.participantRepository.save(participant);
-    return this.mapParticipant(saved);
+    try {
+      const saved = await this.participantRepository.save(participant);
+      return this.mapParticipant(saved);
+    } catch (error) {
+      if (payload.id && this.isUniqueConstraintViolation(error)) {
+        const existingById = await this.participantRepository.findOne({
+          where: { id: payload.id },
+          withDeleted: true,
+        });
+        if (existingById) {
+          return this.resolveCreateReplay(
+            existingById,
+            coupleId,
+            normalizedName,
+            payload,
+          );
+        }
+      }
+      throw error;
+    }
   }
 
   async updateParticipantForUser(
     userId: string,
     participantId: string,
     payload: UpdateParticipantDto,
+    spaceId?: string,
   ): Promise<ParticipantResponse> {
-    const { coupleId } = await this.ledgerService.ensureLedgerForUser(userId, {
-      ensureParticipant: true,
-    });
+    const { coupleId } = await this.ledgerService.resolveSpaceForUser(
+      userId,
+      spaceId,
+      { ensureParticipant: true },
+    );
 
     const participant = await this.participantRepository.findOne({
       where: { id: participantId, coupleId },
@@ -178,9 +231,10 @@ export class ParticipantService {
   async deleteParticipantForUser(
     userId: string,
     participantId: string,
+    spaceId?: string,
   ): Promise<void> {
     const { coupleId, participantId: selfParticipantId } =
-      await this.ledgerService.ensureLedgerForUser(userId, {
+      await this.ledgerService.resolveSpaceForUser(userId, spaceId, {
         ensureParticipant: true,
       });
 
@@ -271,6 +325,55 @@ export class ParticipantService {
     }
 
     return merged;
+  }
+
+  private resolveCreateReplay(
+    participant: ParticipantEntity,
+    coupleId: string,
+    normalizedName: string,
+    payload: CreateParticipantDto,
+  ): ParticipantResponse {
+    const requestedNotifications = this.mergeNotifications(
+      undefined,
+      payload.notifications,
+    );
+    const storedNotifications = this.mergeNotifications(
+      undefined,
+      participant.notificationPreferences,
+    );
+    const isExactReplay =
+      participant.coupleId === coupleId &&
+      !participant.deletedAt &&
+      participant.userId == null &&
+      participant.isRegistered === false &&
+      participant.displayName === normalizedName &&
+      (participant.email ?? undefined) === (payload.email ?? undefined) &&
+      participant.defaultCurrency === (payload.defaultCurrency ?? 'USD') &&
+      storedNotifications.expenses === requestedNotifications.expenses &&
+      storedNotifications.invites === requestedNotifications.invites &&
+      storedNotifications.reminders === requestedNotifications.reminders;
+
+    if (!isExactReplay) {
+      throw new ApiConflictException(
+        'PARTICIPANT_ID_CONFLICT',
+        'Participant ID is already in use by a different participant',
+        { field: 'id' },
+      );
+    }
+
+    return this.mapParticipant(participant);
+  }
+
+  private isUniqueConstraintViolation(error: unknown): boolean {
+    if (!error || typeof error !== 'object') {
+      return false;
+    }
+    const candidate = error as { code?: unknown; message?: unknown };
+    return (
+      candidate.code === '23505' ||
+      (typeof candidate.message === 'string' &&
+        /duplicate key|unique constraint failed/i.test(candidate.message))
+    );
   }
 
   private mapParticipant(participant: ParticipantEntity): ParticipantResponse {

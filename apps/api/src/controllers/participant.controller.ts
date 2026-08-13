@@ -8,6 +8,7 @@ import {
   Param,
   Post,
   Put,
+  Query,
   Req,
   UseGuards,
 } from '@nestjs/common';
@@ -49,9 +50,11 @@ export class ParticipantController {
   @Get()
   async listParticipants(
     @Req() req: AuthenticatedRequest,
+    @Query('space_id') spaceId?: string,
   ): Promise<ApiResponse<{ participants: ParticipantResponse[] }>> {
     const participants = await this.participantService.listParticipantsForUser(
       req.user.id,
+      spaceId,
     );
 
     return {
@@ -67,6 +70,7 @@ export class ParticipantController {
   async createParticipant(
     @Req() req: AuthenticatedRequest,
     @Body() body: unknown,
+    @Query('space_id') spaceId?: string,
   ): Promise<ApiResponse<{ participant: ParticipantResponse }>> {
     const dto = this.validateDto(CreateParticipantDto, body, {
       messageOverride: 'Invalid participant payload',
@@ -75,6 +79,7 @@ export class ParticipantController {
     const participant = await this.participantService.createParticipantForUser(
       req.user.id,
       dto,
+      spaceId,
     );
 
     return {
@@ -90,6 +95,7 @@ export class ParticipantController {
     @Req() req: AuthenticatedRequest,
     @Param('participantId') participantId: string,
     @Body() body: unknown,
+    @Query('space_id') spaceId?: string,
   ): Promise<ApiResponse<{ participant: ParticipantResponse }>> {
     const dto = this.validateDto(UpdateParticipantDto, body, {
       skipMissingProperties: true,
@@ -100,6 +106,7 @@ export class ParticipantController {
       req.user.id,
       participantId,
       dto,
+      spaceId,
     );
 
     return {
@@ -115,10 +122,12 @@ export class ParticipantController {
   async deleteParticipant(
     @Req() req: AuthenticatedRequest,
     @Param('participantId') participantId: string,
+    @Query('space_id') spaceId?: string,
   ): Promise<void> {
     await this.participantService.deleteParticipantForUser(
       req.user.id,
       participantId,
+      spaceId,
     );
   }
 

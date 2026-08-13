@@ -28,6 +28,7 @@ describe('Identity migrations', () => {
       'SoftDeleteExtensions0061738364606489',
       'SoftDeleteParticipants0071738364606490',
       'SoftDeleteAttachments0081738364606491',
+      'OfflineSharedSpaceFoundation0091738364606492',
     ]);
 
     const tables = await dataSource.query<
@@ -63,6 +64,7 @@ describe('Identity migrations', () => {
     await dataSource.dropDatabase();
     await dataSource.runMigrations({ transaction: 'all' });
 
+    await dataSource.undoLastMigration();
     await dataSource.undoLastMigration();
     await dataSource.undoLastMigration();
     await dataSource.undoLastMigration();

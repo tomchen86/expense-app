@@ -1,4 +1,5 @@
 import { useCategoryStore } from '../features/categoryStore';
+import { useExpenseStore } from '../features/expenseStore';
 import { DEFAULT_CATEGORIES } from '../../constants/expenses';
 
 describe('CategoryStore', () => {
@@ -6,6 +7,7 @@ describe('CategoryStore', () => {
     useCategoryStore.setState({
       categories: DEFAULT_CATEGORIES.map((category) => ({ ...category })),
     });
+    useExpenseStore.setState({ expenses: [] });
   });
 
   afterEach(() => {
@@ -19,7 +21,9 @@ describe('CategoryStore', () => {
     const categories = useCategoryStore.getState().categories;
 
     expect(result).toMatchObject({
-      id: 'Fitness',
+      id: expect.stringMatching(
+        /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
+      ),
       name: 'Fitness',
       color: '#111111',
     });
@@ -70,24 +74,22 @@ describe('CategoryStore', () => {
     );
   });
 
-  it("prevents deleting the reserved 'Other' category", () => {
+  it('prevents deleting every protected default category', () => {
     const warnSpy = jest
       .spyOn(console, 'warn')
       .mockImplementation(() => undefined);
-    const otherCategory = useCategoryStore
-      .getState()
-      .categories.find((category) => category.name === 'Other');
+    const defaultCategory = useCategoryStore.getState().categories[0];
 
-    expect(otherCategory).toBeDefined();
+    expect(defaultCategory).toBeDefined();
 
-    useCategoryStore.getState().deleteCategory(otherCategory!.id);
+    useCategoryStore.getState().deleteCategory(defaultCategory.id);
 
     const categories = useCategoryStore.getState().categories;
 
-    expect(
-      categories.find((category) => category.name === 'Other'),
-    ).toBeDefined();
-    expect(warnSpy).toHaveBeenCalledWith("Cannot delete the 'Other' category.");
+    expect(categories).toContainEqual(defaultCategory);
+    expect(warnSpy).toHaveBeenCalledWith(
+      `Cannot delete the default category "${defaultCategory.name}".`,
+    );
   });
 
   it('retrieves categories by name after updates', () => {
@@ -101,5 +103,32 @@ describe('CategoryStore', () => {
     updateCategory(updated);
 
     expect(getCategoryByName('Outdoors')?.color).toBe('#654321');
+  });
+
+  it('does not delete a custom category referenced by an active expense', () => {
+    const warnSpy = jest
+      .spyOn(console, 'warn')
+      .mockImplementation(() => undefined);
+    const category = useCategoryStore
+      .getState()
+      .addCategory({ name: 'Fitness', color: '#111111' });
+    useExpenseStore.setState({
+      expenses: [
+        {
+          id: 'expense-1',
+          title: 'Gym',
+          date: '2026-08-13',
+          category: category.name,
+          categoryId: category.id,
+        },
+      ],
+    });
+
+    useCategoryStore.getState().deleteCategory(category.id);
+
+    expect(useCategoryStore.getState().categories).toContainEqual(category);
+    expect(warnSpy).toHaveBeenCalledWith(
+      `Cannot delete category "${category.name}" while active expenses use it.`,
+    );
   });
 });
