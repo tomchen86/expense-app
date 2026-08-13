@@ -12,6 +12,7 @@ import {
   canonicalHumanResolutionGrantPayload,
   canonicalGrantEnvelope,
   canonicalGrantPayload,
+  readHumanResolutionAuditTag,
   type HumanResolutionGrantEnvelope,
   type HumanResolutionGrantPayload,
   type MaintainerGrantEnvelope,
@@ -272,6 +273,7 @@ function writeResolutionTag(
     targetCommit?: string;
     policyBlob?: string;
     consequences?: HumanResolutionGrantPayload['consequences'];
+    legacySupersede?: boolean;
     messageTransform?: (message: string) => string;
     signatureNamespace?: string;
   } = {},
@@ -300,10 +302,15 @@ function writeResolutionTag(
       stateDigest: 'a'.repeat(64),
       currentRefDigest: null,
     },
-    decision: {
-      kind: 'quarantine',
-      parameters: { reason: 'Preserve fixture evidence' },
-    },
+    decision: options.legacySupersede
+      ? ({
+          kind: 'supersede',
+          parameters: { successorInvestigationId: null },
+        } as unknown as HumanResolutionGrantPayload['decision'])
+      : {
+          kind: 'quarantine',
+          parameters: { reason: 'Preserve fixture evidence' },
+        },
     consequences: options.consequences ?? {
       continuity: 'not-applicable',
       assurance: 'degraded',
@@ -472,6 +479,79 @@ test('base replay accepts a fully attested authority lineage', () => {
       },
     ]);
     assert.deepEqual(result.directAuthorities, []);
+  } finally {
+    cleanup(fixture);
+  }
+});
+
+test('base replay accepts an authenticated legacy resolution tag read-only', () => {
+  const fixture = prepareScannerFixture();
+  try {
+    issueFixtureAttestation(fixture);
+    writeResolutionTag(
+      fixture.repository,
+      fixture.privateKey,
+      fixture.policy,
+      fixture.originalBase,
+      fixture.now,
+      {
+        legacySupersede: true,
+        consequences: {
+          continuity: 'broken',
+          assurance: 'degraded',
+          claimsWaived: [],
+        },
+      },
+    );
+    const tagRef =
+      fixture.policy.auditTagPrefix + 'resolution-' + RESOLUTION_GRANT;
+
+    assert.throws(
+      () =>
+        readHumanResolutionAuditTag(fixture.repository, fixture.policy, tagRef),
+      (error) => isWorkflowError(error, 'HUMAN_RESOLUTION_AUDIT_TAG_INVALID'),
+    );
+    assert.doesNotThrow(() =>
+      verifyBaseAuthorityAttestations(
+        fixture.repository,
+        fixture.mainCommit,
+        fixture.now,
+      ),
+    );
+  } finally {
+    cleanup(fixture);
+  }
+});
+
+test('base replay rejects a legacy resolution tag with incompatible consequences', () => {
+  const fixture = prepareScannerFixture();
+  try {
+    issueFixtureAttestation(fixture);
+    writeResolutionTag(
+      fixture.repository,
+      fixture.privateKey,
+      fixture.policy,
+      fixture.originalBase,
+      fixture.now,
+      {
+        legacySupersede: true,
+        consequences: {
+          continuity: 'preserved',
+          assurance: 'unchanged',
+          claimsWaived: [],
+        },
+      },
+    );
+
+    assert.throws(
+      () =>
+        verifyBaseAuthorityAttestations(
+          fixture.repository,
+          fixture.mainCommit,
+          fixture.now,
+        ),
+      (error) => isWorkflowError(error, 'CI_ATTESTATION_GRANT_INVALID'),
+    );
   } finally {
     cleanup(fixture);
   }

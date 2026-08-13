@@ -314,6 +314,38 @@ export function readHumanResolutionAuditTag(
   policy: MaintainerPolicy,
   observedRef: string,
 ): HumanResolutionGrantEnvelope | null {
+  return readHumanResolutionAuditTagWithMode(
+    repositoryRoot,
+    policy,
+    observedRef,
+    false,
+  );
+}
+
+/**
+ * Reads either a current audit tag or the exact supersede shape signed before
+ * canonical reasons were required. This compatibility path is verification
+ * only: live grant and lifecycle readers remain strict.
+ */
+export function readHistoricalHumanResolutionAuditTagReadOnly(
+  repositoryRoot: string,
+  policy: MaintainerPolicy,
+  observedRef: string,
+): HumanResolutionGrantEnvelope | null {
+  return readHumanResolutionAuditTagWithMode(
+    repositoryRoot,
+    policy,
+    observedRef,
+    true,
+  );
+}
+
+function readHumanResolutionAuditTagWithMode(
+  repositoryRoot: string,
+  policy: MaintainerPolicy,
+  observedRef: string,
+  allowLegacySupersedeReadOnly: boolean,
+): HumanResolutionGrantEnvelope | null {
   const resolutionPrefix = `${policy.auditTagPrefix}resolution-`;
   if (!observedRef.startsWith(resolutionPrefix)) {
     return null;
@@ -360,6 +392,7 @@ export function readHumanResolutionAuditTag(
       policy,
       trustBase.policy,
       trustBase.policyBlob,
+      { allowLegacySupersedeReadOnly },
     );
     return envelope;
   } catch {
@@ -784,6 +817,7 @@ function assertHumanResolutionAuditPayload(
   policy: MaintainerPolicy,
   trustBasePolicy: MaintainerPolicy,
   expectedPolicyBlob: string,
+  options: { allowLegacySupersedeReadOnly?: boolean } = {},
 ): void {
   const target = payload.target as unknown as Record<string, unknown>;
   const expected = payload.expected as unknown as Record<string, unknown>;
@@ -849,11 +883,24 @@ function assertHumanResolutionAuditPayload(
   try {
     assertChangeId(target.changeId);
     assertInvestigationId(target.workflowId);
-    const decision = assertHumanResolutionDecision(payload.decision);
     const consequences = assertHumanResolutionConsequences(
       payload.consequences,
     );
-    assertResolutionConsequences(decision, consequences);
+    try {
+      const decision = assertHumanResolutionDecision(payload.decision);
+      assertResolutionConsequences(decision, consequences);
+    } catch (error) {
+      if (!options.allowLegacySupersedeReadOnly) {
+        throw error;
+      }
+      assertLegacySupersedeHumanResolutionDecisionReadOnly(payload.decision);
+      if (
+        consequences.continuity !== 'broken' ||
+        consequences.assurance !== 'degraded'
+      ) {
+        throw error;
+      }
+    }
   } catch {
     throw humanResolutionGrantInvalid(
       'Human resolution audit grant carries an invalid decision.',

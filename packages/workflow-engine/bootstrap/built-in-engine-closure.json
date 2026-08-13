@@ -136,7 +136,7 @@
     {
       "path": "src/ci-attestation.ts",
       "mode": "100644",
-      "digest": "sha256:ebe9308e92c028a25e7f6c81f51598a1929b4f2cef86b2f6a496f794c885c232"
+      "digest": "sha256:d037627b7b8f37fe8e3fa85cf1a3a8573291db7b8ed0aa8d3f07956f03ce18ff"
     },
     {
       "path": "src/ci-authority.ts",
@@ -426,7 +426,7 @@
     {
       "path": "src/git.ts",
       "mode": "100644",
-      "digest": "sha256:60c08b2f4b20b996e574f174d019bd91bcc1f4014dd549f741d68643b6db368c"
+      "digest": "sha256:7d239cca601d866574fb75551851b1a342b622e6b1b3a5edb40828a2b8ee5865"
     },
     {
       "path": "src/handoff.ts",
@@ -636,7 +636,7 @@
     {
       "path": "src/maintainer-grant.ts",
       "mode": "100644",
-      "digest": "sha256:f900b32f90bfd2f18d1844f8c798c7d77a79799efbca12357b8a9113212b3134"
+      "digest": "sha256:5e0aca37aad1bece0215f2c73d35ba22c324bc7c113c41e77e3294e11bd1c57c"
     },
     {
       "path": "src/maintainer-manifest.ts",

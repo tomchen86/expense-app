@@ -636,11 +636,9 @@ test('governed projection names repository, planning, ref, index, ignored, and r
     {
       expected: 'refs',
       mutate(repository) {
-        git(repository, [
-          'update-ref',
-          'refs/heads/provider-drift',
-          git(repository, ['rev-parse', 'HEAD']).trim(),
-        ]);
+        const head = git(repository, ['rev-parse', 'HEAD']).trim();
+        git(repository, ['update-ref', 'refs/heads/provider-drift', head]);
+        git(repository, ['symbolic-ref', 'HEAD', 'refs/heads/provider-drift']);
       },
     },
     {
@@ -720,25 +718,49 @@ test('governed refs projection binds symbolic-ref targets at the same object', (
   const repository = createFixtureRepository();
   try {
     const head = git(repository, ['rev-parse', 'HEAD']).trim();
-    git(repository, ['update-ref', 'refs/remotes/origin/main', head]);
-    git(repository, ['update-ref', 'refs/remotes/origin/master', head]);
-    git(repository, [
-      'symbolic-ref',
-      'refs/remotes/origin/HEAD',
-      'refs/remotes/origin/main',
-    ]);
+    git(repository, ['update-ref', 'refs/heads/provider-alternate', head]);
     const before = captureGovernedProviderProjection(repository);
-    git(repository, [
-      'symbolic-ref',
-      'refs/remotes/origin/HEAD',
-      'refs/remotes/origin/master',
-    ]);
+    git(repository, ['symbolic-ref', 'HEAD', 'refs/heads/provider-alternate']);
     const after = captureGovernedProviderProjection(repository);
 
     const comparison = compareGovernedProviderProjections(before, after);
     assert.equal(comparison.unchanged, false);
     assert.ok(comparison.changedCategories.includes('refs'));
   } finally {
+    fs.rmSync(repository, { recursive: true, force: true });
+  }
+});
+
+test('governed refs projection ignores unrelated shared refs during linked-worktree activity', () => {
+  const repository = createFixtureRepository();
+  const linkedParent = fs.mkdtempSync(
+    path.join(os.tmpdir(), 'provider-concurrent-worktree-'),
+  );
+  const linked = path.join(linkedParent, 'linked');
+  try {
+    git(repository, ['worktree', 'add', '-b', 'concurrent-task', linked]);
+    const before = captureGovernedProviderProjection(repository);
+
+    fs.writeFileSync(path.join(linked, 'concurrent-change.txt'), 'changed\n');
+    git(linked, ['add', 'concurrent-change.txt']);
+    git(linked, ['commit', '-m', 'Advance unrelated concurrent task']);
+    // Shared refs that are not selected by this worktree are outside the
+    // accidental-drift tripwire, including remote-tracking activity.
+    git(repository, [
+      'update-ref',
+      'refs/remotes/origin/concurrent-task',
+      git(linked, ['rev-parse', 'HEAD']).trim(),
+    ]);
+
+    const after = captureGovernedProviderProjection(repository);
+    const comparison = compareGovernedProviderProjections(before, after);
+    assert.equal(comparison.unchanged, true);
+    assert.deepEqual(comparison.changedCategories, []);
+  } finally {
+    if (fs.existsSync(linked)) {
+      git(repository, ['worktree', 'remove', '--force', linked]);
+    }
+    fs.rmSync(linkedParent, { recursive: true, force: true });
     fs.rmSync(repository, { recursive: true, force: true });
   }
 });
