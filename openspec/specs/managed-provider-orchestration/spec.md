@@ -179,9 +179,11 @@ A malformed result, mismatched binding, excessive output, timeout, signal, spawn
 
 ### Requirement: Read-Only Provider Results Require an Unchanged Governed Projection
 
-Survey and plan-review providers SHALL receive the reviewed repository-read-only capability profile. The engine SHALL compare the governed repository and runtime projection before and after invocation, including HEAD/ref/tree, refs, index, tracked/untracked/ignored worktree manifests, planning artifacts, and governed runtime inputs.
+Survey and plan-review providers SHALL receive the reviewed repository-read-only capability profile. The engine SHALL compare the governed current-worktree and runtime projection before and after invocation, including the current worktree's symbolic HEAD ref, resolved commit and tree, index, tracked/untracked/ignored worktree manifests, planning artifacts, and governed runtime inputs.
 
-Any observed drift outside the exact engine-owned invocation output MUST make the result unusable. The resulting claim MUST be limited to observed projection equality and MUST NOT be described as adversarial same-user containment.
+Refs not selected by the current worktree, including other linked-worktree branches, remote-tracking refs, and tags, SHALL remain outside this invocation projection so unrelated concurrent repository activity does not invalidate a bounded result. A lifecycle that consumes one of those refs as authority MUST validate it at that lifecycle's own transition boundary; provider projection equality MUST NOT substitute for that validation.
+
+Any observed drift inside the governed current-worktree or runtime projection, outside the exact engine-owned invocation output, MUST make the result unusable. The resulting claim MUST be limited to observed projection equality and MUST NOT be described as shared-ref integrity or adversarial same-user containment.
 
 #### Scenario: Read-only invocation preserves governed state
 
@@ -189,12 +191,19 @@ Any observed drift outside the exact engine-owned invocation output MUST make th
 - **WHEN** before and after governed fingerprints are identical and typed output is valid
 - **THEN** the invocation may produce an immutable successful report
 
-#### Scenario: Read-only invocation changes a governed path or ref
+#### Scenario: Read-only invocation changes a governed path or current HEAD ref
 
 - **GIVEN** a read-only provider invocation
-- **WHEN** worktree, index, refs, planning artifacts, or governed runtime inputs drift
+- **WHEN** the current worktree, index, symbolic HEAD ref, resolved commit or tree, planning artifacts, or governed runtime inputs drift
 - **THEN** the result is rejected
 - **AND** it cannot become review or investigation evidence
+
+#### Scenario: Unrelated shared ref changes concurrently
+
+- **GIVEN** another linked worktree or background Git operation changes a ref not selected by the provider invocation's current worktree
+- **WHEN** every governed current-worktree and runtime projection category remains unchanged
+- **THEN** the result is not rejected solely because that shared ref changed
+- **AND** the assurance does not claim that unrelated shared refs remained unchanged
 
 #### Scenario: Assurance is displayed
 
@@ -233,4 +242,3 @@ All forms SHALL preserve author, participants, actual orchestration, required an
 - **WHEN** orchestration advances
 - **THEN** no provider invocation is prepared or launched
 - **AND** the signed typed content enters result admission directly
-

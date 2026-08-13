@@ -714,12 +714,15 @@ const MAX_GOVERNED_PROJECTION_DEPTH = 64;
 const INCLUDE_VOLATILE_PROJECTION_METADATA = process.platform !== 'darwin';
 /**
  * Capture the engine-owned governed projection of a repository before or after a
- * bounded provider process. It binds the symbolic HEAD/ref/OID/tree and every
- * ref, the exact index stages/flags and staged tree, the tracked, untracked,
- * and ignored worktree manifests, the planning artifacts, and the exact governed
- * runtime inputs. Equality of two projections establishes only that this
- * observed governed surface did not change; it does not prove same-user process
- * confinement or global filesystem immutability.
+ * bounded provider process. It binds the current worktree's symbolic HEAD,
+ * resolved commit/tree, exact index stages/flags and staged tree, tracked,
+ * untracked, and ignored worktree manifests, planning artifacts, and exact
+ * governed runtime inputs. Refs not selected by the current worktree live in
+ * shared Git-common-directory state and are deliberately outside this
+ * invocation projection so unrelated concurrent activity does not stale the
+ * bounded result. Equality of two projections establishes only that this
+ * observed governed surface did not change; it does not prove shared-ref or
+ * same-user process confinement, or global filesystem immutability.
  */
 export function captureGovernedProviderProjection(repositoryRoot, runtimeInputs = []) {
     try {
@@ -776,13 +779,6 @@ function digestRefsProjection(repositoryRoot, budget) {
     updateBoundedFramed(digest, 'head-symbolic', runGit(repositoryRoot, ['symbolic-ref', '--quiet', 'HEAD'], true), budget);
     updateBoundedFramed(digest, 'head-oid', runGit(repositoryRoot, ['rev-parse', 'HEAD']), budget);
     updateBoundedFramed(digest, 'head-tree', runGit(repositoryRoot, ['rev-parse', 'HEAD^{tree}']), budget);
-    // Binding %(symref) keeps a symbolic ref (for example refs/remotes/origin/HEAD)
-    // pinned to its exact target, so retargeting a non-HEAD symref to another ref
-    // at the same object is still observed as drift.
-    updateBoundedFramed(digest, 'for-each-ref', runGit(repositoryRoot, [
-        'for-each-ref',
-        '--format=%(objectname) %(objecttype) %(refname) %(symref)',
-    ]), budget);
     return digest.digest('hex');
 }
 /**

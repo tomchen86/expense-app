@@ -26,7 +26,7 @@ import {
   canonicalGrantEnvelope,
   canonicalGrantPayload,
   parseMaintainerGrantEnvelope,
-  readHumanResolutionAuditTag,
+  readHistoricalHumanResolutionAuditTagReadOnly,
   validateGrantPayload,
   type MaintainerGrantEnvelope,
 } from './maintainer-grant.ts';
@@ -550,7 +550,7 @@ function listGrantTags(
     }
     const grantId = ref.slice(prefix.length);
     try {
-      const resolution = readHumanResolutionAuditTag(
+      const resolution = readHistoricalHumanResolutionAuditTagReadOnly(
         repositoryRoot,
         policy,
         ref,

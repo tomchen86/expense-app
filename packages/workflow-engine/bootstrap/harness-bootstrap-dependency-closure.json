@@ -8,7 +8,7 @@
     {
       "path": "bootstrap/recovery-runtime/bootstrap/built-in-engine-closure-pin.js",
       "mode": "100644",
-      "digest": "sha256:ca165c4fdc80f9ca8dc5ac095ed61cd2d264d6926d679bb8318136aa9884de02"
+      "digest": "sha256:694986839a0c88acdbc3d285b9205d2a940623b5a7c8f77e18ae03d1bf203c6a"
     },
     {
       "path": "bootstrap/recovery-runtime/src/actor-identity.js",
@@ -168,7 +168,7 @@
     {
       "path": "bootstrap/recovery-runtime/src/git.js",
       "mode": "100644",
-      "digest": "sha256:b658b5447116f931847025b23769266b68f1321c8f16d52787176bdf85ca6a0a"
+      "digest": "sha256:f404fc1adc6c4d8a8ac7c654c1ba6e8afd1fc766cfa841de50cd5f8c1f190987"
     },
     {
       "path": "bootstrap/recovery-runtime/src/harness-bootstrap.js",
