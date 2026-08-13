@@ -17,8 +17,15 @@
         "node",
         "--experimental-strip-types",
         "--test",
-        "packages/workflow-engine/test/contracts.test.ts",
-        "packages/workflow-engine/test/session.integration.test.ts"
+        "--test-concurrency=4",
+        "packages/workflow-engine/test/shards/shard-01.ts",
+        "packages/workflow-engine/test/shards/shard-02.ts",
+        "packages/workflow-engine/test/shards/shard-03.ts",
+        "packages/workflow-engine/test/shards/shard-04.ts",
+        "packages/workflow-engine/test/shards/shard-05.ts",
+        "packages/workflow-engine/test/shards/shard-06.ts",
+        "packages/workflow-engine/test/shards/shard-07.ts",
+        "packages/workflow-engine/test/shards/shard-08.ts"
       ],
       "destructiveDatabase": false
     },

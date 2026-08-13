@@ -11,20 +11,32 @@ import {
   parseFullGateCli,
   projectWorkingTreeOid,
   releaseFullGateLock,
+  runFullGate,
   runFullGateForTesting,
 } from '../../../scripts/workflow-full-gate.ts';
 import { createFullGateIdentity } from '../../../scripts/full-gate-progress.ts';
+import {
+  digestWorkflowTestFileSet,
+  loadWorkflowTestShardManifest,
+  workflowTestShardWrapperPaths,
+  type FullGateCoverageExpectation,
+} from '../../../scripts/workflow-test-inventory.ts';
 
-test('full-gate wrapper preserves the two existing test entrypoints and their order', () => {
+test('full-gate wrapper runs the exact eight shard wrappers with bounded concurrency', () => {
   const repository = path.resolve(import.meta.dirname, '../../..');
   const packageRoot = path.join(repository, 'packages/workflow-engine');
-  const reporter = path.join(repository, 'scripts/full-gate-reporter.ts');
+  const shardWrappers = workflowTestShardWrapperPaths(
+    loadWorkflowTestShardManifest(repository),
+  );
   const rootManifest = JSON.parse(
     fs.readFileSync(path.join(repository, 'package.json'), 'utf8'),
   ) as { scripts: Record<string, string> };
   const packageManifest = JSON.parse(
     fs.readFileSync(path.join(packageRoot, 'package.json'), 'utf8'),
   ) as { scripts: Record<string, string> };
+  const checkRegistry = JSON.parse(
+    fs.readFileSync(path.join(repository, 'workflow/checks.json'), 'utf8'),
+  ) as { checks: Record<string, { command: string[] }> };
   const fromRepository = buildFullGateCommand(repository);
   const fromPackage = buildFullGateCommand(packageRoot);
 
@@ -32,16 +44,25 @@ test('full-gate wrapper preserves the two existing test entrypoints and their or
   assert.deepEqual(fromRepository.args, [
     '--experimental-strip-types',
     '--test',
+    '--test-concurrency=4',
     '--test-reporter=./scripts/full-gate-reporter.ts',
-    'packages/workflow-engine/test/contracts.test.ts',
-    'packages/workflow-engine/test/session.integration.test.ts',
+    ...shardWrappers,
   ]);
   assert.deepEqual(fromPackage.args, [
     '--experimental-strip-types',
     '--test',
+    '--test-concurrency=4',
     '--test-reporter=../../scripts/full-gate-reporter.ts',
-    'test/contracts.test.ts',
-    'test/session.integration.test.ts',
+    ...shardWrappers.map((wrapper) =>
+      path.posix.relative('packages/workflow-engine', wrapper),
+    ),
+  ]);
+  assert.deepEqual(checkRegistry.checks['workflow-tests']?.command, [
+    'node',
+    '--experimental-strip-types',
+    '--test',
+    '--test-concurrency=4',
+    ...shardWrappers,
   ]);
   assert.equal(
     rootManifest.scripts['workflow:test'],
@@ -81,8 +102,12 @@ test('full-gate runner publishes one private run-bound telemetry sidecar without
   const repository = createGitRepository();
   const sourceRepository = path.resolve(import.meta.dirname, '../../..');
   const reporter = path.join(sourceRepository, 'scripts/full-gate-reporter.ts');
+  const sampleTest = 'packages/workflow-engine/test/sample.test.ts';
+  fs.mkdirSync(path.join(repository, 'packages/workflow-engine/test'), {
+    recursive: true,
+  });
   fs.writeFileSync(
-    path.join(repository, 'sample.test.mjs'),
+    path.join(repository, sampleTest),
     "import test from 'node:test';\ntest('measured leaf', async () => {});\n",
   );
   commitAll(repository, 'Initial');
@@ -96,9 +121,10 @@ test('full-gate runner publishes one private run-bound telemetry sidecar without
         '--experimental-strip-types',
         '--test',
         `--test-reporter=${reporter}`,
-        'sample.test.mjs',
+        sampleTest,
       ],
     },
+    coverageExpectation: syntheticCoverageExpectation([sampleTest]),
     expectedTotal: 1,
     terminal: false,
     writeProgress: () => {},
@@ -120,7 +146,7 @@ test('full-gate runner publishes one private run-bound telemetry sidecar without
     .map((line) => JSON.parse(line) as Record<string, unknown>);
   assert.equal(telemetry.length, 2);
   assert.equal(telemetry[0]?.name, 'measured leaf');
-  assert.equal(telemetry[0]?.file, 'sample.test.mjs');
+  assert.equal(telemetry[0]?.file, sampleTest);
   assert.deepEqual(telemetry[1], {
     kind: 'workflow-full-gate-test-telemetry-end.v1',
     recordCount: 1,
@@ -163,6 +189,24 @@ test('full-gate runner publishes one private run-bound telemetry sidecar without
     'workflow-full-gate-telemetry-summary.v1',
   );
   assert.equal(machine.summary?.testNodeCount, 1);
+  const receipt = JSON.parse(
+    fs.readFileSync(gate.receiptPath ?? '', 'utf8'),
+  ) as {
+    kind?: string;
+    outcome?: string;
+    coverage?: {
+      fileSetMatches?: boolean;
+      footerComplete?: boolean;
+      observedFileCount?: number;
+      testNodeCount?: number;
+    };
+  };
+  assert.equal(receipt.kind, 'full-gate-run-receipt.v2');
+  assert.equal(receipt.outcome, 'passed');
+  assert.equal(receipt.coverage?.fileSetMatches, true);
+  assert.equal(receipt.coverage?.footerComplete, true);
+  assert.equal(receipt.coverage?.observedFileCount, 1);
+  assert.equal(receipt.coverage?.testNodeCount, 1);
 });
 
 test('pnpm argument separator is transport, not a full-gate option', () => {
@@ -213,6 +257,39 @@ test('projected tree identity survives an empty commit and changes with bytes', 
   assert.notEqual(projectWorkingTreeOid(repository), before);
 });
 
+test('production full-gate API rejects every test-only override own key', async () => {
+  const repository = createGitRepository();
+  fs.writeFileSync(path.join(repository, 'tracked.txt'), 'one\n');
+  commitAll(repository, 'Initial');
+  const stateRoot = fs.mkdtempSync(
+    path.join(os.tmpdir(), 'full-gate-production-boundary-'),
+  );
+  const invokeProduction = runFullGate as unknown as (
+    options: Record<string, unknown>,
+  ) => Promise<unknown>;
+  const command = syntheticCommand(
+    "process.stdout.write('TAP version 13\\nok 1 - pass\\n# tests 1\\n# pass 1\\n# fail 0\\n# cancelled 0\\n# skipped 0\\n# todo 0\\n# duration_ms 1\\n')",
+    ['passed'],
+  );
+  const coverageExpectation = syntheticCoverageExpectation();
+
+  for (const override of [
+    { command },
+    { coverageExpectation },
+    { command, coverageExpectation },
+    { command: undefined, coverageExpectation: undefined },
+  ]) {
+    await assert.rejects(
+      invokeProduction({ cwd: repository, stateRoot, ...override }),
+      (error) =>
+        error instanceof TypeError &&
+        /test-only full-gate overrides.*runFullGateForTesting/i.test(
+          error.message,
+        ),
+    );
+  }
+});
+
 test('full-gate transport stores raw TAP and emits exact startup hints once', async () => {
   const repository = createGitRepository();
   fs.writeFileSync(path.join(repository, 'tracked.txt'), 'one\n');
@@ -226,18 +303,16 @@ test('full-gate transport stores raw TAP and emits exact startup hints once', as
         stdoutLogPath: string;
       }
     | undefined;
-  const command = {
-    executable: process.execPath,
-    args: [
-      '-e',
-      "process.stdout.write('TAP version 13\\nok 1 - first\\nok 2 - second\\n# tests 2\\n# suites 0\\n# pass 2\\n# fail 0\\n# cancelled 0\\n# skipped 0\\n# todo 0\\n# duration_ms 10\\n')",
-    ],
-  };
+  const command = syntheticCommand(
+    "process.stdout.write('TAP version 13\\nok 1 - first\\nok 2 - second\\n# tests 2\\n# suites 0\\n# pass 2\\n# fail 0\\n# cancelled 0\\n# skipped 0\\n# todo 0\\n# duration_ms 10\\n')",
+    ['passed', 'passed'],
+  );
 
   const first = await runFullGateForTesting({
     cwd: repository,
     stateRoot,
     command,
+    coverageExpectation: syntheticCoverageExpectation(),
     expectedTotal: 2,
     terminal: false,
     writeProgress: (line) => {
@@ -280,6 +355,7 @@ test('full-gate transport stores raw TAP and emits exact startup hints once', as
     cwd: repository,
     stateRoot,
     command,
+    coverageExpectation: syntheticCoverageExpectation(),
     expectedTotal: 2,
     terminal: false,
     writeProgress: (line) => output.push(line),
@@ -295,6 +371,7 @@ test('full-gate transport stores raw TAP and emits exact startup hints once', as
     cwd: repository,
     stateRoot,
     command,
+    coverageExpectation: syntheticCoverageExpectation(),
     expectedTotal: 2,
     reason: 'generated-artifact change',
     terminal: false,
@@ -311,17 +388,15 @@ test('reusing an exact passing receipt republishes latest status and observation
   fs.writeFileSync(path.join(repository, 'tracked.txt'), 'one\n');
   commitAll(repository, 'Initial');
   const stateRoot = path.join(repository, '.git/workflow-engine/full-gate');
-  const passingCommand = {
-    executable: process.execPath,
-    args: [
-      '-e',
-      "process.stdout.write('✔ pass (1ms)\\nℹ tests 1\\nℹ pass 1\\nℹ fail 0\\n')",
-    ],
-  };
+  const passingCommand = syntheticCommand(
+    "process.stdout.write('✔ pass (1ms)\\nℹ tests 1\\nℹ pass 1\\nℹ fail 0\\n')",
+    ['passed'],
+  );
   const passed = await runFullGateForTesting({
     cwd: repository,
     stateRoot,
     command: passingCommand,
+    coverageExpectation: syntheticCoverageExpectation(),
     expectedTotal: 1,
     terminal: false,
     writeProgress: () => {},
@@ -330,13 +405,11 @@ test('reusing an exact passing receipt republishes latest status and observation
   const forcedFailure = await runFullGateForTesting({
     cwd: repository,
     stateRoot,
-    command: {
-      executable: process.execPath,
-      args: [
-        '-e',
-        "process.stdout.write('✖ fail (1ms)\\nℹ tests 1\\nℹ pass 0\\nℹ fail 1\\n'); process.exitCode=1",
-      ],
-    },
+    command: syntheticCommand(
+      "process.stdout.write('✖ fail (1ms)\\nℹ tests 1\\nℹ pass 0\\nℹ fail 1\\n'); process.exitCode=1",
+      ['not-passed'],
+    ),
+    coverageExpectation: syntheticCoverageExpectation(),
     expectedTotal: 1,
     reason: 'force newer failure',
     terminal: false,
@@ -349,6 +422,7 @@ test('reusing an exact passing receipt republishes latest status and observation
     cwd: repository,
     stateRoot,
     command: passingCommand,
+    coverageExpectation: syntheticCoverageExpectation(),
     expectedTotal: 1,
     terminal: false,
     writeProgress: () => {},
@@ -367,6 +441,118 @@ test('reusing an exact passing receipt republishes latest status and observation
   assert.equal(latest.snapshot?.state, 'complete');
   assert.equal(latest.transition, 'reused');
   assert.equal(latest.stdoutLogPath, passed.stdoutLogPath);
+});
+
+test('receipt reuse rejects symlinked and non-private run ancestors', async (t) => {
+  for (const attack of ['symlink', 'non-private'] as const) {
+    await t.test(attack, async () => {
+      const repository = createGitRepository();
+      fs.writeFileSync(path.join(repository, 'tracked.txt'), 'one\n');
+      commitAll(repository, 'Initial');
+      const stateRoot = fs.mkdtempSync(
+        path.join(os.tmpdir(), `full-gate-reuse-${attack}-`),
+      );
+      const command = syntheticCommand(
+        "process.stdout.write('TAP version 13\\nok 1 - pass\\n# tests 1\\n# pass 1\\n# fail 0\\n# cancelled 0\\n# skipped 0\\n# todo 0\\n# duration_ms 1\\n')",
+        ['passed'],
+      );
+      const options = {
+        cwd: repository,
+        stateRoot,
+        command,
+        coverageExpectation: syntheticCoverageExpectation(),
+        expectedTotal: 1,
+        terminal: false,
+        writeProgress: () => {},
+        sampleIntervalMs: 5,
+      } as const;
+      const first = await runFullGateForTesting(options);
+      assert.equal(first.exitCode, 0);
+      assert.equal(first.reused, false);
+      const runRoot = path.dirname(first.stdoutLogPath);
+
+      if (attack === 'symlink') {
+        const relocated = path.join(stateRoot, `relocated-${first.runId}`);
+        fs.renameSync(runRoot, relocated);
+        fs.symlinkSync(relocated, runRoot, 'dir');
+      } else {
+        fs.chmodSync(runRoot, 0o755);
+      }
+
+      const second = await runFullGateForTesting(options);
+      assert.equal(second.exitCode, 0);
+      assert.equal(second.reused, false);
+      assert.notEqual(second.runId, first.runId);
+    });
+  }
+});
+
+test('receipt reuse opens evidence with no-follow semantics', async () => {
+  const repository = createGitRepository();
+  fs.writeFileSync(path.join(repository, 'tracked.txt'), 'one\n');
+  commitAll(repository, 'Initial');
+  const stateRoot = fs.mkdtempSync(
+    path.join(os.tmpdir(), 'full-gate-reuse-no-follow-'),
+  );
+  const command = syntheticCommand(
+    "process.stdout.write('TAP version 13\\nok 1 - pass\\n# tests 1\\n# pass 1\\n# fail 0\\n# cancelled 0\\n# skipped 0\\n# todo 0\\n# duration_ms 1\\n')",
+    ['passed'],
+  );
+  const options = {
+    cwd: repository,
+    stateRoot,
+    command,
+    coverageExpectation: syntheticCoverageExpectation(),
+    expectedTotal: 1,
+    terminal: false,
+    writeProgress: () => {},
+    sampleIntervalMs: 5,
+  } as const;
+  const first = await runFullGateForTesting(options);
+  assert.equal(first.exitCode, 0);
+  const telemetryPath = first.telemetryLogPath;
+  const originalTelemetryPath = `${telemetryPath}.original`;
+  const mutableFs = fs as unknown as {
+    openSync: typeof fs.openSync;
+  };
+  const originalOpenSync = mutableFs.openSync;
+  let attackTriggered = false;
+  mutableFs.openSync = ((
+    target: fs.PathLike,
+    flags: fs.OpenMode,
+    mode?: fs.Mode,
+  ): number => {
+    if (
+      !attackTriggered &&
+      String(target) === telemetryPath &&
+      typeof flags === 'number' &&
+      (flags & fs.constants.O_NOFOLLOW) !== 0
+    ) {
+      attackTriggered = true;
+      fs.renameSync(telemetryPath, originalTelemetryPath);
+      fs.symlinkSync(originalTelemetryPath, telemetryPath);
+    }
+    return mode === undefined
+      ? originalOpenSync(target, flags)
+      : originalOpenSync(target, flags, mode);
+  }) as typeof fs.openSync;
+
+  let second: Awaited<ReturnType<typeof runFullGateForTesting>>;
+  try {
+    second = await runFullGateForTesting(options);
+  } finally {
+    mutableFs.openSync = originalOpenSync;
+    const observed = fs.lstatSync(telemetryPath, { throwIfNoEntry: false });
+    if (observed?.isSymbolicLink()) {
+      fs.unlinkSync(telemetryPath);
+      fs.renameSync(originalTelemetryPath, telemetryPath);
+    }
+  }
+
+  assert.equal(attackTriggered, true);
+  assert.equal(second.exitCode, 0);
+  assert.equal(second.reused, false);
+  assert.notEqual(second.runId, first.runId);
 });
 
 test('failure inspector reads only the latest raw stdout log and bounds concise locations', async () => {
@@ -393,13 +579,11 @@ test('failure inspector reads only the latest raw stdout log and bounds concise 
   const gate = await runFullGateForTesting({
     cwd: repository,
     stateRoot,
-    command: {
-      executable: process.execPath,
-      args: [
-        '-e',
-        `process.stdout.write(${JSON.stringify(`${[...resultLines, ...summary].join('\n')}\n`)}); process.exitCode = 1`,
-      ],
-    },
+    command: syntheticCommand(
+      `process.stdout.write(${JSON.stringify(`${[...resultLines, ...summary].join('\n')}\n`)}); process.exitCode = 1`,
+      Array.from({ length: 22 }, () => 'not-passed'),
+    ),
+    coverageExpectation: syntheticCoverageExpectation(),
     expectedTotal: 22,
     terminal: false,
     writeProgress: () => {},
@@ -472,13 +656,11 @@ test('failure inspector says No failures observed for a latest passing raw log',
   await runFullGateForTesting({
     cwd: repository,
     stateRoot,
-    command: {
-      executable: process.execPath,
-      args: [
-        '-e',
-        "process.stdout.write('✔ pass (1ms)\\nℹ tests 1\\nℹ pass 1\\nℹ fail 0\\n')",
-      ],
-    },
+    command: syntheticCommand(
+      "process.stdout.write('✔ pass (1ms)\\nℹ tests 1\\nℹ pass 1\\nℹ fail 0\\n')",
+      ['passed'],
+    ),
+    coverageExpectation: syntheticCoverageExpectation(),
     expectedTotal: 1,
     terminal: false,
     writeProgress: () => {},
@@ -510,13 +692,11 @@ test('failure inspector rejects symlinked or non-private run ancestors', async (
     const gate = await runFullGateForTesting({
       cwd: repository,
       stateRoot,
-      command: {
-        executable: process.execPath,
-        args: [
-          '-e',
-          "process.stdout.write('✖ failed test (1ms)\\nℹ tests 1\\nℹ pass 0\\nℹ fail 1\\n'); process.exitCode = 1",
-        ],
-      },
+      command: syntheticCommand(
+        "process.stdout.write('✖ failed test (1ms)\\nℹ tests 1\\nℹ pass 0\\nℹ fail 1\\n'); process.exitCode = 1",
+        ['not-passed'],
+      ),
+      coverageExpectation: syntheticCoverageExpectation(),
       expectedTotal: 1,
       terminal: false,
       writeProgress: () => {},
@@ -544,13 +724,11 @@ test('failure inspector rejects symlinked or non-private run ancestors', async (
     const gate = await runFullGateForTesting({
       cwd: repository,
       stateRoot,
-      command: {
-        executable: process.execPath,
-        args: [
-          '-e',
-          "process.stdout.write('✖ failed test (1ms)\\nℹ tests 1\\nℹ pass 0\\nℹ fail 1\\n'); process.exitCode = 1",
-        ],
-      },
+      command: syntheticCommand(
+        "process.stdout.write('✖ failed test (1ms)\\nℹ tests 1\\nℹ pass 0\\nℹ fail 1\\n'); process.exitCode = 1",
+        ['not-passed'],
+      ),
+      coverageExpectation: syntheticCoverageExpectation(),
       expectedTotal: 1,
       terminal: false,
       writeProgress: () => {},
@@ -576,13 +754,11 @@ test('human failure output escapes terminal control characters', async () => {
   const gate = await runFullGateForTesting({
     cwd: repository,
     stateRoot,
-    command: {
-      executable: process.execPath,
-      args: [
-        '-e',
-        "process.stdout.write('✖ safe test (1ms)\\nℹ tests 1\\nℹ pass 0\\nℹ fail 1\\n'); process.exitCode = 1",
-      ],
-    },
+    command: syntheticCommand(
+      "process.stdout.write('✖ safe test (1ms)\\nℹ tests 1\\nℹ pass 0\\nℹ fail 1\\n'); process.exitCode = 1",
+      ['not-passed'],
+    ),
+    coverageExpectation: syntheticCoverageExpectation(),
     expectedTotal: 1,
     terminal: false,
     writeProgress: () => {},
@@ -615,24 +791,22 @@ test('running durable status preserves the first failure name and an exact rerea
   const failureSnapshotWritten = new Promise<void>((resolve) => {
     releaseFailureSnapshot = resolve;
   });
-  const command = {
-    executable: process.execPath,
-    args: [
-      '-e',
-      [
-        "process.stdout.write('✔ first test (1.2ms)\\n✖ second test (2.4ms)\\n');",
-        'setTimeout(() => {',
-        "  process.stdout.write('ℹ tests 2\\nℹ suites 0\\nℹ pass 1\\nℹ fail 1\\nℹ cancelled 0\\nℹ skipped 0\\nℹ todo 0\\nℹ duration_ms 10.5\\n✖ failing tests:\\ntest at fixture.test.ts:2:1\\n✖ second test (2.4ms)\\n');",
-        '  process.exitCode = 1;',
-        '}, 150);',
-      ].join(' '),
-    ],
-  };
+  const command = syntheticCommand(
+    [
+      "process.stdout.write('✔ first test (1.2ms)\\n✖ second test (2.4ms)\\n');",
+      'setTimeout(() => {',
+      "  process.stdout.write('ℹ tests 2\\nℹ suites 0\\nℹ pass 1\\nℹ fail 1\\nℹ cancelled 0\\nℹ skipped 0\\nℹ todo 0\\nℹ duration_ms 10.5\\n✖ failing tests:\\ntest at fixture.test.ts:2:1\\n✖ second test (2.4ms)\\n');",
+      '  process.exitCode = 1;',
+      '}, 150);',
+    ].join(' '),
+    ['passed', 'not-passed'],
+  );
 
   const run = runFullGateForTesting({
     cwd: repository,
     stateRoot,
     command,
+    coverageExpectation: syntheticCoverageExpectation(),
     expectedTotal: 2,
     terminal: false,
     writeProgress: (line) => {
@@ -719,6 +893,48 @@ test('same-identity full gates cannot run in parallel', () => {
   releaseFullGateLock(recovered);
 });
 
+test('malformed telemetry fails closed with a terminal failed snapshot and receipt', async () => {
+  const repository = createGitRepository();
+  fs.writeFileSync(path.join(repository, 'tracked.txt'), 'one\n');
+  commitAll(repository, 'Initial');
+  const stateRoot = fs.mkdtempSync(
+    path.join(os.tmpdir(), 'full-gate-malformed-telemetry-'),
+  );
+  const result = await runFullGateForTesting({
+    cwd: repository,
+    stateRoot,
+    command: syntheticCommand(
+      [
+        `require('node:fs').writeFileSync(process.env.WORKFLOW_FULL_GATE_TELEMETRY_PATH, '{malformed}\\n')`,
+        "process.stdout.write('TAP version 13\\nok 1 - pass\\n# tests 1\\n# pass 1\\n# fail 0\\n# cancelled 0\\n# skipped 0\\n# todo 0\\n# duration_ms 10\\n')",
+      ].join('; '),
+      ['passed'],
+    ),
+    coverageExpectation: syntheticCoverageExpectation(),
+    expectedTotal: 1,
+    terminal: false,
+    writeProgress: () => {},
+    sampleIntervalMs: 5,
+  });
+
+  assert.equal(result.exitCode, 1);
+  const latest = JSON.parse(
+    fs.readFileSync(path.join(stateRoot, 'latest.json'), 'utf8'),
+  ) as { snapshot: { state: string } };
+  assert.equal(latest.snapshot.state, 'failed');
+  const receipt = JSON.parse(
+    fs.readFileSync(result.receiptPath ?? '', 'utf8'),
+  ) as {
+    kind: string;
+    outcome: string;
+    coverage: { footerComplete: boolean; fileSetMatches: boolean };
+  };
+  assert.equal(receipt.kind, 'full-gate-run-receipt.v2');
+  assert.equal(receipt.outcome, 'failed');
+  assert.equal(receipt.coverage.footerComplete, false);
+  assert.equal(receipt.coverage.fileSetMatches, false);
+});
+
 test('a nonzero process without a test failure is still rendered and receipted as failed', async () => {
   const repository = createGitRepository();
   fs.writeFileSync(path.join(repository, 'tracked.txt'), 'one\n');
@@ -728,10 +944,11 @@ test('a nonzero process without a test failure is still rendered and receipted a
   const result = await runFullGateForTesting({
     cwd: repository,
     stateRoot,
-    command: {
-      executable: process.execPath,
-      args: ['-e', "process.stderr.write('runner failed\\n'); process.exit(3)"],
-    },
+    command: syntheticCommand(
+      "process.stderr.write('runner failed\\n'); process.exitCode = 3",
+      [],
+    ),
+    coverageExpectation: syntheticCoverageExpectation(),
     expectedTotal: 2,
     terminal: false,
     writeProgress: (line) => output.push(line),
@@ -763,13 +980,11 @@ test('a passing process cannot publish a reusable receipt after the checkout dri
   const result = await runFullGateForTesting({
     cwd: repository,
     stateRoot,
-    command: {
-      executable: process.execPath,
-      args: [
-        '-e',
-        "require('node:fs').writeFileSync('tracked.txt','drift\\n'); process.stdout.write('TAP version 13\\nok 1 - pass\\n# tests 1\\n# pass 1\\n# fail 0\\n# cancelled 0\\n# skipped 0\\n# todo 0\\n# duration_ms 10\\n')",
-      ],
-    },
+    command: syntheticCommand(
+      "require('node:fs').writeFileSync('tracked.txt','drift\\n'); process.stdout.write('TAP version 13\\nok 1 - pass\\n# tests 1\\n# pass 1\\n# fail 0\\n# cancelled 0\\n# skipped 0\\n# todo 0\\n# duration_ms 10\\n')",
+      ['passed'],
+    ),
+    coverageExpectation: syntheticCoverageExpectation(),
     expectedTotal: 1,
     terminal: false,
     writeProgress: () => {},
@@ -792,6 +1007,53 @@ test('a passing process cannot publish a reusable receipt after the checkout dri
   assert.equal(receipt.identityStable, false);
   assert.equal(receipt.identity.bindings.workingDirectory, '.');
 });
+
+type SyntheticTestOutcome = 'passed' | 'not-passed' | 'skipped' | 'todo';
+
+const SYNTHETIC_TEST_FILE = 'packages/workflow-engine/test/synthetic.test.ts';
+
+function syntheticCommand(
+  body: string,
+  outcomes: readonly SyntheticTestOutcome[],
+  file = SYNTHETIC_TEST_FILE,
+): { executable: string; args: readonly string[] } {
+  const records = outcomes.map((outcome, index) => ({
+    kind: 'workflow-full-gate-test-telemetry.v1',
+    sequence: index + 1,
+    testNumber: index + 1,
+    file,
+    line: index + 1,
+    name: `synthetic test ${index + 1}`,
+    nesting: 0,
+    outcome,
+    durationMs: 1,
+  }));
+  const telemetry = `${[
+    ...records,
+    {
+      kind: 'workflow-full-gate-test-telemetry-end.v1',
+      recordCount: records.length,
+    },
+  ]
+    .map((record) => JSON.stringify(record))
+    .join('\n')}\n`;
+  const writeTelemetry = `require('node:fs').writeFileSync(process.env.WORKFLOW_FULL_GATE_TELEMETRY_PATH, ${JSON.stringify(telemetry)}, { encoding: 'utf8', flag: 'wx', mode: 0o600 })`;
+  return Object.freeze({
+    executable: process.execPath,
+    args: Object.freeze(['-e', `${writeTelemetry}; ${body}`]),
+  });
+}
+
+function syntheticCoverageExpectation(
+  expectedFiles: readonly string[] = [SYNTHETIC_TEST_FILE],
+): FullGateCoverageExpectation {
+  const files = Object.freeze([...expectedFiles]);
+  return Object.freeze({
+    inventoryDigest: `sha256:${'f'.repeat(64)}`,
+    expectedFiles: files,
+    expectedFileSetDigest: digestWorkflowTestFileSet(files),
+  });
+}
 
 function createGitRepository(): string {
   const repository = fs.mkdtempSync(path.join(os.tmpdir(), 'full-gate-repo-'));

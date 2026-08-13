@@ -1,3 +1,4 @@
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { TextDecoder } from 'node:util';
@@ -52,8 +53,15 @@ export type FullGateTelemetrySlowTestNode = Readonly<{
 export type FullGateTelemetrySummary = Readonly<{
   kind: typeof FULL_GATE_TELEMETRY_SUMMARY_KIND;
   partial: boolean;
+  footerComplete: boolean;
+  telemetryDigest: `sha256:${string}`;
+  telemetryBytes: number;
   testNodeCount: number;
   fileCount: number;
+  outcomeCounts: FullGateTelemetryOutcomeCounts;
+  observedFiles: readonly string[];
+  observedFileSetDigest: `sha256:${string}`;
+  unattributedTestNodeCount: number;
   files: readonly FullGateTelemetryFileTiming[];
   topSlowTestNodeLimit: typeof FULL_GATE_TELEMETRY_TOP_SLOW_LIMIT;
   topSlowTestNodes: readonly FullGateTelemetrySlowTestNode[];
@@ -117,17 +125,37 @@ export function readFullGateTelemetrySummary(
       if (observed === 0) break;
       offset += observed;
     }
-    const text = decodeUtf8(bytes.subarray(0, offset));
-    return summarizeFullGateTelemetryJsonl(text, options);
+    return summarizeFullGateTelemetry(bytes.subarray(0, offset), options);
   } finally {
     fs.closeSync(descriptor);
   }
+}
+
+/** Summarizes one exact immutable snapshot of telemetry bytes. */
+export function summarizeFullGateTelemetry(
+  telemetry: Buffer,
+  options: FullGateTelemetrySummaryOptions = {},
+): FullGateTelemetrySummary {
+  const snapshot = Buffer.from(telemetry);
+  return summarizeFullGateTelemetryText(
+    decodeUtf8(snapshot),
+    snapshot,
+    options,
+  );
 }
 
 /** Parses only newline-complete records; an unterminated final fragment is ignored. */
 export function summarizeFullGateTelemetryJsonl(
   jsonl: string,
   options: FullGateTelemetrySummaryOptions = {},
+): FullGateTelemetrySummary {
+  return summarizeFullGateTelemetryText(jsonl, Buffer.from(jsonl), options);
+}
+
+function summarizeFullGateTelemetryText(
+  jsonl: string,
+  telemetry: Buffer,
+  options: FullGateTelemetrySummaryOptions,
 ): FullGateTelemetrySummary {
   const maximumBytes = positiveInteger(
     options.maxBytes ?? DEFAULT_MAX_BYTES,
@@ -137,7 +165,7 @@ export function summarizeFullGateTelemetryJsonl(
     options.maxRecords ?? DEFAULT_MAX_RECORDS,
     'maxRecords',
   );
-  if (Buffer.byteLength(jsonl) > maximumBytes) {
+  if (telemetry.length > maximumBytes) {
     throw new Error(
       `Full-gate telemetry summary input exceeds its ${maximumBytes}-byte bound.`,
     );
@@ -203,7 +231,7 @@ export function summarizeFullGateTelemetryJsonl(
     throw new Error('Full-gate telemetry contains bytes after its footer.');
   }
 
-  return summarizeRecords(records, unterminated || !footerSeen);
+  return summarizeRecords(records, unterminated || !footerSeen, telemetry);
 }
 
 export function projectFullGateTelemetrySummaryJson(
@@ -245,6 +273,7 @@ export function projectFullGateTelemetrySummaryHuman(
 function summarizeRecords(
   records: readonly FullGateTestTelemetryRecord[],
   partial: boolean,
+  telemetry: Buffer,
 ): FullGateTelemetrySummary {
   const byFile = new Map<string | null, MutableFileTiming>();
   for (const record of records) {
@@ -295,18 +324,43 @@ function summarizeRecords(
         right.durationMs - left.durationMs || left.sequence - right.sequence,
     )
     .slice(0, FULL_GATE_TELEMETRY_TOP_SLOW_LIMIT);
+  const outcomeCounts: Record<FullGateTestOutcome, number> = {
+    passed: 0,
+    'not-passed': 0,
+    skipped: 0,
+    todo: 0,
+  };
+  let unattributedTestNodeCount = 0;
+  const observedFileSet = new Set<string>();
+  for (const record of records) {
+    outcomeCounts[record.outcome] += 1;
+    if (record.file === null) unattributedTestNodeCount += 1;
+    else observedFileSet.add(record.file);
+  }
+  const observedFiles = [...observedFileSet].sort(compareText);
 
   return Object.freeze({
     kind: FULL_GATE_TELEMETRY_SUMMARY_KIND,
     partial,
+    footerComplete: !partial,
+    telemetryDigest: sha256(telemetry),
+    telemetryBytes: telemetry.length,
     testNodeCount: records.length,
     fileCount: files.length,
+    outcomeCounts: Object.freeze(outcomeCounts),
+    observedFiles: Object.freeze(observedFiles),
+    observedFileSetDigest: sha256(JSON.stringify(observedFiles)),
+    unattributedTestNodeCount,
     files: Object.freeze(files.map((timing) => Object.freeze(timing))),
     topSlowTestNodeLimit: FULL_GATE_TELEMETRY_TOP_SLOW_LIMIT,
     topSlowTestNodes: Object.freeze(
       topSlowTestNodes.map((timing) => Object.freeze(timing)),
     ),
   });
+}
+
+function sha256(value: Buffer | string): `sha256:${string}` {
+  return `sha256:${crypto.createHash('sha256').update(value).digest('hex')}`;
 }
 
 function parseRecord(

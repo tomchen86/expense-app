@@ -41,12 +41,18 @@ function resolveNodeRunner(repositoryRoot, nodeExecutable, command) {
 }
 function resolvedNodeArgs(args, entrypointPaths) {
     if (args[0] === '--test') {
-        return ['--test', ...entrypointPaths];
+        return [...nodeTestPrefix(args, 1), ...entrypointPaths];
     }
     if (args[0] === '--experimental-strip-types' && args[1] === '--test') {
-        return ['--experimental-strip-types', '--test', ...entrypointPaths];
+        return [...nodeTestPrefix(args, 2), ...entrypointPaths];
     }
     return [entrypointPaths[0], ...args.slice(1)];
+}
+function nodeTestPrefix(args, entrypointStart) {
+    const prefixEnd = args[entrypointStart] === '--test-concurrency=4'
+        ? entrypointStart + 1
+        : entrypointStart;
+    return args.slice(0, prefixEnd);
 }
 function resolvePackageRunner(repositoryRoot, nodeExecutable, command) {
     const { workspace, packageName, binName, args } = command;

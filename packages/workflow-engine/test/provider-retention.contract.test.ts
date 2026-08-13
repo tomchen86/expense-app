@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import test from 'node:test';
@@ -556,8 +557,20 @@ test('missing or tampered complete receipts make pruned invocation scans fail cl
 
 test('receipt parents, link count, mode, and size fail closed before trust or deletion', () => {
   const parentFixture = createFailedHistory('retention-parent-link');
-  const external = fs.mkdtempSync(path.join(process.cwd(), '.retention-link-'));
+  const external = fs.mkdtempSync(
+    path.join(fs.realpathSync(os.tmpdir()), 'retention-link-'),
+  );
   try {
+    const checkoutRelativeScratch = path.relative(
+      sourceRepositoryRoot,
+      external,
+    );
+    assert.ok(
+      path.isAbsolute(checkoutRelativeScratch) ||
+        checkoutRelativeScratch === '..' ||
+        checkoutRelativeScratch.startsWith(`..${path.sep}`),
+      'retention test scratch must stay outside the repository checkout',
+    );
     const retentionRoot = path.join(
       parentFixture.runtime.root,
       'provider-retention',

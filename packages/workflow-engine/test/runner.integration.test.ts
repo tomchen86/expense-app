@@ -22,6 +22,51 @@ test('change validation rejects eval, preload, external, and ambiguous runners',
     ['node', '--eval', 'process.exit(0)'],
     ['node', '--require', '/tmp/inject.cjs'],
     ['node', '--test', '--import=./scripts/preload.mjs', 'scripts/pass.mjs'],
+    [
+      'node',
+      '--experimental-strip-types',
+      '--test-concurrency=4',
+      '--test',
+      'scripts/pass.mjs',
+    ],
+    [
+      'node',
+      '--experimental-strip-types',
+      '--test',
+      '--test-concurrency=3',
+      'scripts/pass.mjs',
+    ],
+    [
+      'node',
+      '--experimental-strip-types',
+      '--test',
+      '--test-concurrency',
+      '4',
+      'scripts/pass.mjs',
+    ],
+    [
+      'node',
+      '--experimental-strip-types',
+      '--test',
+      '--test-concurrency=4',
+      '--test-concurrency=4',
+      'scripts/pass.mjs',
+    ],
+    [
+      'node',
+      '--experimental-strip-types',
+      '--test',
+      'scripts/pass.mjs',
+      '--test-concurrency=4',
+    ],
+    [
+      'node',
+      '--experimental-strip-types',
+      '--test',
+      '--test-concurrency=4',
+      '--test-reporter=spec',
+      'scripts/pass.mjs',
+    ],
     ['node', '/tmp/check.mjs'],
     ['node', '../check.mjs'],
     ['node-package-bin', 'src/**', 'fixture-tool', 'fixture-tool'],
@@ -46,6 +91,51 @@ test('change validation rejects eval, preload, external, and ambiguous runners',
     } finally {
       fs.rmSync(repository, { recursive: true, force: true });
     }
+  }
+});
+
+test('registered node test concurrency is exact, retained, and digests every entrypoint', () => {
+  const repository = createFixtureRepository();
+  const entrypoints = ['scripts/pass.mjs', 'scripts/fail.mjs'];
+  const absoluteEntrypoints = entrypoints.map((entrypoint) =>
+    fs.realpathSync(path.join(repository, entrypoint)),
+  );
+  const definition = {
+    command: [
+      'node',
+      '--experimental-strip-types',
+      '--test',
+      '--test-concurrency=4',
+      ...entrypoints,
+    ],
+    destructiveDatabase: false,
+  };
+
+  try {
+    const before = resolveCheckRunner(repository, 'concurrent', definition);
+
+    assert.deepEqual(before.args, [
+      '--experimental-strip-types',
+      '--test',
+      '--test-concurrency=4',
+      ...absoluteEntrypoints,
+    ]);
+
+    const withoutStripTypes = resolveCheckRunner(repository, 'concurrent', {
+      ...definition,
+      command: ['node', '--test', '--test-concurrency=4', ...entrypoints],
+    });
+    assert.deepEqual(withoutStripTypes.args, [
+      '--test',
+      '--test-concurrency=4',
+      ...absoluteEntrypoints,
+    ]);
+
+    fs.appendFileSync(absoluteEntrypoints[1], '// changed\n');
+    const after = resolveCheckRunner(repository, 'concurrent', definition);
+    assert.notEqual(after.digest, before.digest);
+  } finally {
+    fs.rmSync(repository, { recursive: true, force: true });
   }
 });
 

@@ -451,9 +451,9 @@ export function parseCheckCommand(
 function nodeEntrypoints(args: string[]): string[] | undefined {
   let entrypoints: string[];
   if (args[0] === '--test') {
-    entrypoints = args.slice(1);
+    entrypoints = nodeTestEntrypoints(args, 1);
   } else if (args[0] === '--experimental-strip-types' && args[1] === '--test') {
-    entrypoints = args.slice(2);
+    entrypoints = nodeTestEntrypoints(args, 2);
   } else {
     if (!args[0] || args[0].startsWith('-')) {
       return undefined;
@@ -464,6 +464,10 @@ function nodeEntrypoints(args: string[]): string[] | undefined {
   return entrypoints.length > 0 && entrypoints.every(isExactPolicyPath)
     ? entrypoints
     : undefined;
+}
+
+function nodeTestEntrypoints(args: string[], start: number): string[] {
+  return args.slice(args[start] === '--test-concurrency=4' ? start + 1 : start);
 }
 
 function isExactPolicyPath(value: string): boolean {

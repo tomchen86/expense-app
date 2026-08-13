@@ -34,8 +34,24 @@ test('telemetry summary deterministically aggregates files and bounds the slowes
 
   assert.equal(summary.kind, 'workflow-full-gate-telemetry-summary.v1');
   assert.equal(summary.partial, false);
+  assert.equal(summary.footerComplete, true);
+  assert.match(summary.telemetryDigest, /^sha256:[0-9a-f]{64}$/);
+  assert.equal(summary.telemetryBytes, Buffer.byteLength(jsonl(records)));
   assert.equal(summary.testNodeCount, 23);
   assert.equal(summary.fileCount, 3);
+  assert.deepEqual(summary.outcomeCounts, {
+    passed: 21,
+    'not-passed': 1,
+    skipped: 1,
+    todo: 0,
+  });
+  assert.deepEqual(summary.observedFiles, [
+    'test/a.test.ts',
+    'test/b.test.ts',
+    'test/z\\u202e.test.ts',
+  ]);
+  assert.match(summary.observedFileSetDigest, /^sha256:[0-9a-f]{64}$/);
+  assert.equal(summary.unattributedTestNodeCount, 0);
   assert.deepEqual(summary.files, [
     {
       file: 'test/a.test.ts',
@@ -87,8 +103,8 @@ test('telemetry summary deterministically aggregates files and bounds the slowes
   assert.match(human, /23 test nodes across 3 files/);
   assert.match(human, /Top 20 slow test nodes/);
   assert.match(human, /file wall time and runner queue time are not observed/i);
-  assert.doesNotMatch(human, /\u001b|\u202e/iu);
-  assert.doesNotMatch(machine, /\u001b|\u202e/iu);
+  assert.equal(human.includes('\u001b') || human.includes('\u202e'), false);
+  assert.equal(machine.includes('\u001b') || machine.includes('\u202e'), false);
   assert.match(machine, /slow\\\\u001b\[31mslow|z\\\\u202e/u);
   assert.deepEqual(JSON.parse(machine), summary);
 });
@@ -104,6 +120,7 @@ test('telemetry summary reports an unterminated tail as partial and ignores it',
   );
 
   assert.equal(summary.partial, true);
+  assert.equal(summary.footerComplete, false);
   assert.equal(summary.testNodeCount, 1);
   assert.equal(summary.topSlowTestNodes[0]?.durationMs, 5);
   assert.match(projectFullGateTelemetrySummaryHuman(summary), /incomplete/i);
@@ -118,7 +135,60 @@ test('telemetry summary reports an unterminated tail as partial and ignores it',
     `${JSON.stringify(first)}\n`,
   );
   assert.equal(cleanRecordWithoutFooter.partial, true);
+  assert.equal(cleanRecordWithoutFooter.footerComplete, false);
   assert.equal(cleanRecordWithoutFooter.testNodeCount, 1);
+});
+
+test('coverage file-set identity is canonical and independent of telemetry arrival sequence', () => {
+  const firstArrival = [
+    telemetryRecord(1, { file: 'test/z.test.ts', name: 'z root' }),
+    telemetryRecord(2, {
+      file: 'test/a.test.ts',
+      name: 'a nested',
+      nesting: 1,
+    }),
+    telemetryRecord(3, {
+      file: 'test/z.test.ts',
+      name: 'z nested',
+      nesting: 1,
+    }),
+  ];
+  const secondArrival = [
+    telemetryRecord(1, {
+      file: 'test/z.test.ts',
+      name: 'z nested',
+      nesting: 1,
+    }),
+    telemetryRecord(2, {
+      file: 'test/a.test.ts',
+      name: 'a nested',
+      nesting: 1,
+    }),
+    telemetryRecord(3, { file: 'test/z.test.ts', name: 'z root' }),
+  ];
+
+  const first = summarizeFullGateTelemetryJsonl(jsonl(firstArrival));
+  const second = summarizeFullGateTelemetryJsonl(jsonl(secondArrival));
+
+  assert.deepEqual(first.observedFiles, ['test/a.test.ts', 'test/z.test.ts']);
+  assert.deepEqual(second.observedFiles, first.observedFiles);
+  assert.equal(second.observedFileSetDigest, first.observedFileSetDigest);
+  assert.notEqual(second.telemetryDigest, first.telemetryDigest);
+  assert.equal(first.testNodeCount, 3);
+  assert.equal(first.observedFiles.length, 2);
+});
+
+test('coverage records unattributed test nodes without treating unknown as a physical file', () => {
+  const summary = summarizeFullGateTelemetryJsonl(
+    jsonl([
+      telemetryRecord(1, { file: 'test/attributed.test.ts' }),
+      telemetryRecord(2, { file: null }),
+    ]),
+  );
+
+  assert.deepEqual(summary.observedFiles, ['test/attributed.test.ts']);
+  assert.equal(summary.unattributedTestNodeCount, 1);
+  assert.equal(summary.fileCount, 2);
 });
 
 test('telemetry summary fails closed on malformed or noncontiguous completed records', () => {

@@ -13,9 +13,12 @@ import {
   createFullGateReceipt,
   FULL_GATE_INACTIVITY_INSPECTION_MS,
   FullGateTapCounter,
+  fullGateCoverageMatchesProgress,
   locateFullGateFailures,
   progressOutputFor,
   renderFullGateProgress,
+  validateFullGateCoverage,
+  type FullGateCoverageEvidence,
   type FullGateIdentity,
   type FullGateProgressSnapshot,
   type FullGateProgressState,
@@ -31,6 +34,13 @@ import {
   readFullGateTelemetrySummary,
   type FullGateTelemetrySummary,
 } from './full-gate-telemetry-summary.ts';
+import {
+  createFullGateCoverageExpectation,
+  loadWorkflowTestShardManifest,
+  workflowTestShardWrapperPaths,
+  type FullGateCoverageExpectation,
+  type WorkflowTestShardManifest,
+} from './workflow-test-inventory.ts';
 
 const DEFAULT_SAMPLE_INTERVAL_MS = 5_000;
 const DUPLICATE_GATE_EXIT_CODE = 75;
@@ -86,13 +96,22 @@ type FullGateRunResult = Readonly<{
 type FullGateRunOptions = Readonly<{
   cwd: string;
   stateRoot?: string;
-  command?: FullGateCommand;
   expectedTotal?: number | null;
   reason?: string | null;
   terminal?: boolean;
   writeProgress?: (line: string) => void;
   sampleIntervalMs?: number;
 }>;
+
+type FullGateExecutionOptions = FullGateRunOptions &
+  Readonly<{
+    command?: FullGateCommand;
+    coverageExpectation?: FullGateCoverageExpectation;
+  }>;
+
+const FULL_GATE_TEST_OVERRIDE_CAPABILITY = Symbol(
+  'full-gate-test-override-capability',
+);
 
 type ProcessTreeSample = Readonly<{
   cpuTotalSeconds: number | null;
@@ -108,16 +127,22 @@ type ProcessTreeSample = Readonly<{
 export function buildFullGateCommand(cwd: string): FullGateCommand {
   const canonicalCwd = fs.realpathSync(path.resolve(cwd));
   const repositoryRoot = repositoryRootFor(canonicalCwd);
-  const entrypoints = [
-    path.join(
-      repositoryRoot,
-      'packages/workflow-engine/test/contracts.test.ts',
-    ),
-    path.join(
-      repositoryRoot,
-      'packages/workflow-engine/test/session.integration.test.ts',
-    ),
-  ];
+  const manifest = loadWorkflowTestShardManifest(repositoryRoot);
+  return buildFullGateCommandFromManifest(
+    canonicalCwd,
+    repositoryRoot,
+    manifest,
+  );
+}
+
+function buildFullGateCommandFromManifest(
+  canonicalCwd: string,
+  repositoryRoot: string,
+  manifest: WorkflowTestShardManifest,
+): FullGateCommand {
+  const entrypoints = workflowTestShardWrapperPaths(manifest).map((wrapper) =>
+    path.join(repositoryRoot, ...wrapper.split('/')),
+  );
   const reporter = path.join(repositoryRoot, 'scripts/full-gate-reporter.ts');
   const relativeReporter = normalizeRelativePath(
     path.relative(canonicalCwd, reporter),
@@ -130,6 +155,7 @@ export function buildFullGateCommand(cwd: string): FullGateCommand {
     args: Object.freeze([
       '--experimental-strip-types',
       '--test',
+      '--test-concurrency=4',
       `--test-reporter=${reporterSpecifier}`,
       ...entrypoints.map((entrypoint) =>
         normalizeRelativePath(path.relative(canonicalCwd, entrypoint)),
@@ -226,13 +252,33 @@ export function releaseFullGateLock(lock: FullGateLock): void {
 }
 
 export async function runFullGateForTesting(
-  options: FullGateRunOptions & { command: FullGateCommand; stateRoot: string },
+  options: FullGateRunOptions & {
+    command: FullGateCommand;
+    coverageExpectation: FullGateCoverageExpectation;
+    stateRoot: string;
+  },
 ): Promise<FullGateRunResult> {
-  return runFullGate(options);
+  return executeFullGate(options, FULL_GATE_TEST_OVERRIDE_CAPABILITY);
 }
 
 export async function runFullGate(
   options: FullGateRunOptions,
+): Promise<FullGateRunResult> {
+  const runtimeOptions = options as FullGateExecutionOptions;
+  if (
+    Object.hasOwn(runtimeOptions, 'command') ||
+    Object.hasOwn(runtimeOptions, 'coverageExpectation')
+  ) {
+    throw new TypeError(
+      'Test-only full-gate overrides require runFullGateForTesting.',
+    );
+  }
+  return executeFullGate(runtimeOptions, null);
+}
+
+async function executeFullGate(
+  options: FullGateExecutionOptions,
+  overrideCapability: symbol | null,
 ): Promise<FullGateRunResult> {
   const sampleIntervalMs =
     options.sampleIntervalMs ?? DEFAULT_SAMPLE_INTERVAL_MS;
@@ -241,7 +287,25 @@ export async function runFullGate(
   }
   const cwd = fs.realpathSync(path.resolve(options.cwd));
   const repositoryRoot = repositoryRootFor(cwd);
-  const command = options.command ?? buildFullGateCommand(cwd);
+  const testOverridesAuthorized =
+    overrideCapability === FULL_GATE_TEST_OVERRIDE_CAPABILITY;
+  if (
+    testOverridesAuthorized &&
+    (options.command === undefined || options.coverageExpectation === undefined)
+  ) {
+    throw new TypeError(
+      'Test full-gate execution requires command and coverageExpectation overrides.',
+    );
+  }
+  const manifest = testOverridesAuthorized
+    ? null
+    : loadWorkflowTestShardManifest(repositoryRoot);
+  const command = testOverridesAuthorized
+    ? options.command!
+    : buildFullGateCommandFromManifest(cwd, repositoryRoot, manifest!);
+  const coverageExpectation = testOverridesAuthorized
+    ? options.coverageExpectation!
+    : createFullGateCoverageExpectation(manifest!);
   const configuredStateRoot =
     options.stateRoot ??
     path.join(
@@ -263,7 +327,9 @@ export async function runFullGate(
   const reason = normalizeReason(options.reason);
   const terminal = options.terminal ?? Boolean(process.stderr.isTTY);
   const reusable =
-    reason === null ? findReusableReceipt(stateRoot, identity) : null;
+    reason === null
+      ? findReusableReceipt(stateRoot, identity, coverageExpectation)
+      : null;
   const writeProgress =
     options.writeProgress ??
     ((line: string) => {
@@ -491,6 +557,11 @@ export async function runFullGate(
       fs.closeSync(openedStderrFd);
       stderrFd = null;
       const finalProgress = tap.progress();
+      const telemetry = readPrivateFileOrEmpty(telemetryLogPath);
+      const coverage = fullGateCoverageEvidenceFor(
+        telemetry,
+        coverageExpectation,
+      );
       let completedHeadCommit: string | null = null;
       let completedIdentityDigest: `sha256:${string}` | null = null;
       let identityStable = false;
@@ -519,7 +590,8 @@ export async function runFullGate(
         finalProgress.total !== null &&
         finalProgress.total > 0 &&
         finalProgress.fail === 0 &&
-        finalProgress.cancelled === 0;
+        finalProgress.cancelled === 0 &&
+        fullGateCoverageMatchesProgress(coverage, finalProgress);
       emitSnapshot('complete', false, processSucceeded);
       if (terminal) process.stderr.write('\n');
       const stdoutLog = readPrivateFile(stdoutLogPath);
@@ -536,6 +608,7 @@ export async function runFullGate(
         signal: closed.signal,
         rawLog: stdoutLog,
         standardError: stderrLog,
+        coverage,
         completedAt: new Date().toISOString(),
       });
       const receiptPath = publishReceipt(stateRoot, receipt);
@@ -608,9 +681,26 @@ function generatedArtifactsDigest(repositoryRoot: string): `sha256:${string}` {
   return `sha256:${hash.digest('hex')}`;
 }
 
+function fullGateCoverageEvidenceFor(
+  telemetry: Buffer,
+  expectation: FullGateCoverageExpectation,
+): FullGateCoverageEvidence {
+  try {
+    return validateFullGateCoverage(telemetry, expectation);
+  } catch {
+    const failed = validateFullGateCoverage(Buffer.alloc(0), expectation);
+    return Object.freeze({
+      ...failed,
+      telemetryDigest: `sha256:${crypto.createHash('sha256').update(telemetry).digest('hex')}`,
+      telemetryBytes: telemetry.length,
+    });
+  }
+}
+
 function findReusableReceipt(
   stateRoot: string,
   identity: FullGateIdentity,
+  coverageExpectation: FullGateCoverageExpectation,
 ): Readonly<{
   receipt: FullGateReceipt;
   receiptPath: string;
@@ -623,7 +713,7 @@ function findReusableReceipt(
     digestHex(identity.digest),
   );
   if (!fs.existsSync(receiptRoot)) return null;
-  assertPrivateDirectory(receiptRoot);
+  assertCanonicalPrivateDirectoryChain(stateRoot, receiptRoot);
   const entries = fs
     .readdirSync(receiptRoot, { withFileTypes: true, recursive: false })
     .filter((entry) => entry.isFile() && entry.name.endsWith('.json'))
@@ -634,24 +724,26 @@ function findReusableReceipt(
     const receiptPath = path.join(receiptRoot, entry);
     try {
       const receipt = JSON.parse(
-        readPrivateFile(receiptPath).toString(),
+        readPrivateFileNoFollow(receiptPath).toString(),
       ) as FullGateReceipt;
       if (`${receipt.runId}.json` !== entry) continue;
-      const stdoutLogPath = path.join(
-        stateRoot,
-        'runs',
-        receipt.runId,
-        'stdout.log',
-      );
-      const stderrLogPath = path.join(
-        stateRoot,
-        'runs',
-        receipt.runId,
-        'stderr.log',
-      );
-      const stdoutLog = readPrivateFile(stdoutLogPath);
-      const stderrLog = readPrivateFile(stderrLogPath);
-      if (canReuseFullGateReceipt(receipt, identity, stdoutLog, stderrLog)) {
+      if (!/^run-\d{17}-[0-9a-f-]{36}$/.test(receipt.runId)) continue;
+      const runRoot = path.join(stateRoot, 'runs', receipt.runId);
+      assertCanonicalPrivateDirectoryChain(stateRoot, runRoot);
+      const stdoutLogPath = path.join(runRoot, 'stdout.log');
+      const stderrLogPath = path.join(runRoot, 'stderr.log');
+      const telemetryLogPath = path.join(runRoot, 'test-telemetry.jsonl');
+      const stdoutLog = readPrivateFileNoFollow(stdoutLogPath);
+      const stderrLog = readPrivateFileNoFollow(stderrLogPath);
+      const telemetry = readPrivateFileNoFollow(telemetryLogPath);
+      if (
+        canReuseFullGateReceipt(receipt, identity, {
+          rawLog: stdoutLog,
+          standardError: stderrLog,
+          telemetry,
+          coverageExpectation,
+        })
+      ) {
         return Object.freeze({
           receipt,
           receiptPath,
@@ -883,6 +975,38 @@ function assertPrivateDirectory(directory: string): void {
   }
 }
 
+function assertCanonicalPrivateDirectoryChain(
+  stateRoot: string,
+  targetDirectory: string,
+): void {
+  const root = path.resolve(stateRoot);
+  const target = path.resolve(targetDirectory);
+  const relative = path.relative(root, target);
+  if (
+    root !== stateRoot ||
+    target !== targetDirectory ||
+    relative === '..' ||
+    relative.startsWith(`..${path.sep}`) ||
+    path.isAbsolute(relative)
+  ) {
+    throw new Error(
+      `Full-gate state directory is outside its canonical root: ${targetDirectory}`,
+    );
+  }
+  let current = root;
+  for (const segment of relative.length === 0 ? [] : relative.split(path.sep)) {
+    assertPrivateDirectory(current);
+    if (fs.realpathSync(current) !== current) {
+      throw new Error(`Full-gate state directory is unsafe: ${current}`);
+    }
+    current = path.join(current, segment);
+  }
+  assertPrivateDirectory(current);
+  if (fs.realpathSync(current) !== current) {
+    throw new Error(`Full-gate state directory is unsafe: ${current}`);
+  }
+}
+
 function writePrivateFileNoReplace(filePath: string, bytes: string): void {
   const descriptor = fs.openSync(filePath, 'wx', 0o600);
   try {
@@ -905,6 +1029,15 @@ function readPrivateFile(filePath: string): Buffer {
     throw new Error(`Full-gate state file is unsafe: ${filePath}`);
   }
   return fs.readFileSync(filePath);
+}
+
+function readPrivateFileOrEmpty(filePath: string): Buffer {
+  try {
+    return readPrivateFile(filePath);
+  } catch (error) {
+    if (isNodeError(error, 'ENOENT')) return Buffer.alloc(0);
+    throw error;
+  }
 }
 
 function readPrivateFileNoFollow(filePath: string): Buffer {
