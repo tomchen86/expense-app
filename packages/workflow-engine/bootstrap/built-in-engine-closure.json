@@ -99,6 +99,11 @@
       "digest": "sha256:427f22606fb27e61e8846f07ef6009164721d416d7e1ff6bb3a652c40482c7ff"
     },
     {
+      "path": "src/authority-plan.ts",
+      "mode": "100644",
+      "digest": "sha256:b550077ee808e213307693a824dd29b2f2f24715e38480a6fd48833e2963a527"
+    },
+    {
       "path": "src/authority-refusal-audit.ts",
       "mode": "100644",
       "digest": "sha256:a6e594abc539c353a8581b02aa04a57a13ca81ba5ad6a06850438cbd8a605473"
@@ -216,7 +221,7 @@
     {
       "path": "src/cli.ts",
       "mode": "100644",
-      "digest": "sha256:216495d97119a84f2227d96119c2fa34e03749bd7289caab951e01e765c9da12"
+      "digest": "sha256:05b0d5aa488c3afafe5c5dfeaed53531805e800732e78c83464f284f403d610c"
     },
     {
       "path": "src/codex-provider-adapter.ts",
@@ -869,6 +874,21 @@
       "digest": "sha256:329c1d1529e9e001103e2e2099a4b7d7bb10ee1b9ad9a6dee53b59a3ef584b71"
     },
     {
+      "path": "src/pre-merge-assurance-git.ts",
+      "mode": "100644",
+      "digest": "sha256:39598bbfde3794a44fb257743812ef84d91000ac9cd6e3e2b295f7285ff8f8e9"
+    },
+    {
+      "path": "src/pre-merge-assurance-store.ts",
+      "mode": "100644",
+      "digest": "sha256:1a5933030fe7016a7afc05d3b73045412d995ae1c80d11d9080c771872cd37b7"
+    },
+    {
+      "path": "src/pre-merge-assurance.ts",
+      "mode": "100644",
+      "digest": "sha256:1ba42a10bf44f3855f49098020bbd02640bac10c1c5c9084828210e6eb9a1b61"
+    },
+    {
       "path": "src/predecessor-reconciliation.ts",
       "mode": "100644",
       "digest": "sha256:e4f73db9b23562a993820cb500453135381168d3e6bbaefc91eec49743d96cb4"
@@ -1256,7 +1276,7 @@
     {
       "path": "src/workflow-guidance.ts",
       "mode": "100644",
-      "digest": "sha256:3c5d735cbc180807b44d8b24ed04bf6e501f8cc666b7bc7e7802fb0d479019c5"
+      "digest": "sha256:701446dd2ea8e526e53a36e9cfe61adba98433e4dc25212dc835214d0b0f4674"
     }
   ]
 }

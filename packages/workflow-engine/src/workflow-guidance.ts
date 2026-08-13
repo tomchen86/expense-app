@@ -206,6 +206,26 @@ const commands: WorkflowCommandGuidance[] = [
     successors: ['review-diff', 'status'],
   }),
   command({
+    id: 'authority-plan',
+    usage: [
+      'pnpm workflow authority-plan prepare --intent <intent.json> [--json]',
+      'pnpm workflow authority-plan status <plan-id> [--json]',
+      'pnpm workflow authority-plan approve-and-apply <plan-id> [--json]',
+      'pnpm workflow authority-plan resume <plan-id> [--json]',
+      'pnpm workflow authority-plan attest <plan-id> [--json]',
+    ],
+    status: 'preferred',
+    purpose:
+      'Prepare, inspect, and resume one durable whole-round authority transaction while keeping signing, push, and merge human-controlled.',
+    preconditions: [
+      'Prepare receives an exact authority intent on the matching clean work branch; approve and attest run only at the controlling maintainer terminal.',
+    ],
+    consequences: [
+      'Persists each local ceremony, remote handoff, merge observation, attestation, and terminal completion as an immutable authority-plan revision.',
+    ],
+    successors: [],
+  }),
+  command({
     id: 'finalize',
     usage: [FINALIZE_REPLACEMENT],
     status: 'preferred',
@@ -347,6 +367,9 @@ export function workflowResultNextSteps(
   if (commandId === 'maintainer' && result.action === 'review-diff-attest') {
     return taskDiffReviewNextSteps(result, bindings, invocation);
   }
+  if (commandId === 'authority-plan') {
+    return authorityPlanNextSteps(record(result.result));
+  }
   if (commandId === 'resume') {
     return taskStrategyNextSteps(record(result.result), bindings);
   }
@@ -362,6 +385,69 @@ export function workflowResultNextSteps(
       : ['guide'],
     bindings,
   );
+}
+
+function authorityPlanNextSteps(
+  plan: Readonly<Record<string, unknown>> | undefined,
+): readonly WorkflowNextStep[] {
+  const planId = stringField(plan, 'planId');
+  const state = stringField(plan, 'state');
+  if (planId === undefined) return projectWorkflowNextSteps(['guide']);
+  const status = explicitNextStep(
+    'authority-plan',
+    `pnpm workflow authority-plan status ${shellQuote(planId)} --json`,
+  );
+  if (state === 'prepared' || state === 'applying-local') {
+    return limitNextSteps([
+      explicitNextStep(
+        'authority-plan',
+        `pnpm workflow authority-plan approve-and-apply ${shellQuote(planId)} --json`,
+      ),
+      status,
+    ]);
+  }
+  if (state === 'local-applied') {
+    const publishCommand = stringField(
+      record(plan?.localApplication),
+      'publishCommand',
+    );
+    return limitNextSteps([
+      ...(publishCommand === undefined
+        ? []
+        : [explicitNextStep('authority-plan', publishCommand)]),
+      explicitNextStep(
+        'authority-plan',
+        `pnpm workflow authority-plan resume ${shellQuote(planId)} --json`,
+      ),
+      status,
+    ]);
+  }
+  if (state === 'awaiting-attestation') {
+    return limitNextSteps([
+      explicitNextStep(
+        'authority-plan',
+        `pnpm workflow authority-plan attest ${shellQuote(planId)} --json`,
+      ),
+      status,
+    ]);
+  }
+  if (state === 'attestation-issued') {
+    const publishCommand = stringField(
+      record(plan?.attestation),
+      'publishCommand',
+    );
+    return limitNextSteps([
+      ...(publishCommand === undefined
+        ? []
+        : [explicitNextStep('authority-plan', publishCommand)]),
+      explicitNextStep(
+        'authority-plan',
+        `pnpm workflow authority-plan resume ${shellQuote(planId)} --json`,
+      ),
+      status,
+    ]);
+  }
+  return Object.freeze([status]);
 }
 
 export function workflowFailureRecoveryCommand(

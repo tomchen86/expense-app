@@ -302,6 +302,24 @@ test('repository publishes the complete typed control-plane capability closure',
     true,
   );
   assert.equal(
+    (byCapability.get('apply.journal')?.entrypoints as unknown[]).includes(
+      'packages/workflow-engine/src/authority-plan.ts',
+    ),
+    true,
+  );
+  assert.equal(
+    (
+      byCapability.get('authorization.verify')?.entrypoints as unknown[]
+    ).includes('packages/workflow-engine/src/pre-merge-assurance-git.ts'),
+    true,
+  );
+  assert.equal(
+    (
+      byCapability.get('authorization.verify')?.dependencies as unknown[]
+    ).includes('packages/workflow-engine/src/pre-merge-assurance.ts'),
+    true,
+  );
+  assert.equal(
     (
       byCapability.get('control-plane.update')?.entrypoints as unknown[]
     ).includes('packages/workflow-engine/src/intervention-control-updater.ts'),

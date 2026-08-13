@@ -6,6 +6,14 @@ import { pathToFileURL } from 'node:url';
 
 import { dispatchAiAdapterCommand } from './ai-adapter-cli.ts';
 import { commitArchiveTransition } from './archive-transition.ts';
+import {
+  approveAndApplyAuthorityPlan,
+  attestAuthorityPlan,
+  createAuthorityPlan,
+  inspectAuthorityPlan,
+  resumeAuthorityPlan,
+  type AuthorityPlanIntent,
+} from './authority-plan.ts';
 import { dispatchAuthorityAuditCommand } from './authority-audit-cli.ts';
 import {
   deriveAuthorityAuditRepositoryId,
@@ -30,7 +38,11 @@ import {
   generateOpenSpecPlanningAssets,
   installOpenSpecPlanningPrompts,
 } from './openspec-planning-assets.ts';
-import { verifyPullRequest } from './ci.ts';
+import {
+  completePreparedPullRequestPreMergeAssurance,
+  preparePullRequestPreMergeAssurance,
+} from './pre-merge-assurance-git.ts';
+import type { IntegrationDeltaReviewSubmission } from './pre-merge-assurance.ts';
 import { dispatchDocumentRefreshCommand } from './document-refresh-cli.ts';
 import { collectEngineMetrics } from './engine-metrics.ts';
 import { ExitCode, WorkflowError, workflowError } from './errors.ts';
@@ -1233,16 +1245,92 @@ function dispatch(args: string[], cwd: string): CommandResult {
         result: runRegisteredCheck(cwd, rest[0], process.env),
       };
     case 'ci': {
-      if (rest.length !== 4 || rest[0] !== '--base' || rest[2] !== '--head') {
+      const inputPath = optionValue(rest, '--input');
+      const expected =
+        inputPath === undefined
+          ? ['--base', rest[1], '--head', rest[3]]
+          : ['--base', rest[1], '--head', rest[3], '--input', inputPath];
+      if (
+        !rest[1] ||
+        !rest[3] ||
+        (rest.length !== 4 && rest.length !== 6) ||
+        JSON.stringify(rest) !== JSON.stringify(expected)
+      ) {
         throw usage(
-          'Usage: pnpm workflow ci --base <commit> --head <commit> [--json]',
+          'Usage: pnpm workflow ci --base <commit> --head <commit> [--input <integration-review.json>] [--json]',
         );
       }
+      const prepared = preparePullRequestPreMergeAssurance(
+        cwd,
+        rest[1],
+        rest[3],
+      );
+      if (prepared.prepared === null && inputPath === undefined) {
+        return { command, ok: true, result: prepared.verification };
+      }
+      const submission =
+        inputPath === undefined ? null : readPreMergeSubmission(cwd, inputPath);
       return {
         command,
         ok: true,
-        result: verifyPullRequest(cwd, rest[1], rest[3]),
+        result: completePreparedPullRequestPreMergeAssurance(
+          prepared,
+          submission,
+          cwd,
+        ),
       };
+    }
+    case 'authority-plan': {
+      if (
+        rest.length === 3 &&
+        rest[0] === 'prepare' &&
+        rest[1] === '--intent'
+      ) {
+        return {
+          command,
+          action: 'prepare',
+          ok: true,
+          result: createAuthorityPlan(
+            cwd,
+            readAuthorityPlanIntent(cwd, rest[2]),
+          ),
+        };
+      }
+      if (rest.length === 2 && rest[0] === 'status') {
+        return {
+          command,
+          action: 'status',
+          ok: true,
+          result: inspectAuthorityPlan(cwd, rest[1]),
+        };
+      }
+      if (rest.length === 2 && rest[0] === 'resume') {
+        return {
+          command,
+          action: 'resume',
+          ok: true,
+          result: resumeAuthorityPlan(cwd, rest[1]),
+        };
+      }
+      if (rest.length === 2 && rest[0] === 'approve-and-apply') {
+        assertControllingTerminal();
+        return {
+          command,
+          action: 'approve-and-apply',
+          ok: true,
+          result: approveAndApplyAuthorityPlan(cwd, rest[1]),
+        };
+      }
+      if (rest.length === 2 && rest[0] === 'attest') {
+        assertControllingTerminal();
+        return {
+          command,
+          action: 'attest',
+          ok: true,
+          result: attestAuthorityPlan(cwd, rest[1]),
+        };
+      }
+      throw authorityPlanUsage();
     }
     case 'adapter':
       return {
@@ -2518,6 +2606,54 @@ function maintainerUsage(): WorkflowError {
   );
 }
 
+function authorityPlanUsage(): WorkflowError {
+  return usage(
+    'Usage: pnpm workflow authority-plan <prepare --intent <intent.json>|status <plan-id>|approve-and-apply <plan-id>|resume <plan-id>|attest <plan-id>> [--json]',
+  );
+}
+
+function readAuthorityPlanIntent(
+  cwd: string,
+  inputPath: string,
+): AuthorityPlanIntent {
+  try {
+    return JSON.parse(
+      fs.readFileSync(path.resolve(cwd, inputPath), 'utf8'),
+    ) as AuthorityPlanIntent;
+  } catch {
+    throw workflowError(
+      'AUTHORITY_PLAN_INVALID',
+      'Authority plan intent must be a readable exact JSON document.',
+      ExitCode.usage,
+    );
+  }
+}
+
+function readPreMergeSubmission(
+  cwd: string,
+  inputPath: string,
+): IntegrationDeltaReviewSubmission {
+  try {
+    return JSON.parse(
+      fs.readFileSync(path.resolve(cwd, inputPath), 'utf8'),
+    ) as IntegrationDeltaReviewSubmission;
+  } catch {
+    throw workflowError(
+      'PRE_MERGE_INTEGRATION_REVIEW_INVALID',
+      'Pre-merge review input must be a readable exact JSON document.',
+      ExitCode.usage,
+    );
+  }
+}
+
+function assertControllingTerminal(): void {
+  assertInteractiveSignerContext({
+    stdinIsTty: process.stdin.isTTY === true,
+    stdoutIsTty: process.stdout.isTTY === true,
+    stderrIsTty: process.stderr.isTTY === true,
+  });
+}
+
 function proposeUsage(): WorkflowError {
   return usage(
     'Usage: pnpm workflow propose <change-id> --intent <intent.json> [--mandate <mandate-task-id>] [--actor <id>] [--grant <grant-id>] [--migrate-legacy] [--json]\n       pnpm workflow propose <change-id> --resume --input <envelope.json> [--grant <grant-id>] [--json]',
@@ -2903,7 +3039,12 @@ function usageText(): string {
     '  pnpm workflow audit show <task-id> --audit-root <absolute-external-path> [--json]',
     '  pnpm workflow audit verify <repository-id> --audit-root <absolute-external-path> [--json]',
     '  pnpm workflow run-check <check-id> [--json]',
-    '  pnpm workflow ci --base <commit> --head <commit> [--json]',
+    '  pnpm workflow ci --base <commit> --head <commit> [--input <integration-review.json>] [--json]',
+    '  pnpm workflow authority-plan prepare --intent <intent.json> [--json]',
+    '  pnpm workflow authority-plan status <plan-id> [--json]',
+    '  pnpm workflow authority-plan approve-and-apply <plan-id> [--json]',
+    '  pnpm workflow authority-plan resume <plan-id> [--json]',
+    '  pnpm workflow authority-plan attest <plan-id> [--json]',
     '  pnpm workflow adapter evaluate [--json]',
     '  pnpm workflow issue <add|update|close|render|validate> ... [--json]',
     '  pnpm workflow maintainer grant preflight --profile <profile-id> [--json]',

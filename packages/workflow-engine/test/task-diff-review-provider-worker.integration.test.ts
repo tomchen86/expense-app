@@ -34,6 +34,11 @@ import { PROVIDER_RUNNER_RESIDUALS } from '../src/provider-runner.ts';
 import { readProviderAutomaticRetrySchedule } from '../src/provider-retry-scheduler.ts';
 import { runProviderWorker } from '../src/provider-worker.ts';
 import { listProviderWorkerMaintenanceWarnings } from '../src/provider-worker-maintenance.ts';
+import {
+  preparePullRequestPreMergeAssurance,
+  verifyPullRequestWithPreMergeAssurance,
+} from '../src/pre-merge-assurance-git.ts';
+import { runCli } from '../src/cli.ts';
 import { startSession } from '../src/session.ts';
 import {
   TASK_DIFF_REVIEW_OUTPUT_SCHEMA,
@@ -57,7 +62,7 @@ import {
   writeReadyV2ExemptChange,
 } from './fixture.ts';
 
-test('activated final task review binds documentation closure into commit and CI replay', () => {
+test('activated final task review binds documentation closure into commit and CI replay', async () => {
   const fixture = createTaskDiffWorkerFixture('documentation-closure', {
     documentationClosure: true,
   });
@@ -130,6 +135,59 @@ test('activated final task review binds documentation closure into commit and CI
         finalized.commitHash,
       ).completedTasks,
       [{ changeId: 'demo-change', taskId: '1.1' }],
+    );
+    let preMergeProviderCalls = 0;
+    const preMergePreparation = preparePullRequestPreMergeAssurance(
+      fixture.repository,
+      fixture.pullRequestBase,
+      finalized.commitHash,
+    );
+    assert.ok(preMergePreparation.prepared);
+    assert.equal(preMergePreparation.prepared.reviewRequest, null);
+    const preMerge = await verifyPullRequestWithPreMergeAssurance(
+      fixture.repository,
+      fixture.pullRequestBase,
+      finalized.commitHash,
+      {
+        invokeIntegrationReview: async () => {
+          preMergeProviderCalls += 1;
+          throw new Error('fully covered single-task PR must not re-review');
+        },
+      },
+    );
+    assert.equal(preMergeProviderCalls, 0);
+    assert.equal(preMerge.preMergeAssurance.integrationReview, null);
+    assert.deepEqual(preMerge.preMergeAssurance.uncoveredEntryDigests, []);
+    let ciOutput = '';
+    const originalWrite = process.stdout.write;
+    process.stdout.write = ((chunk: string | Uint8Array) => {
+      ciOutput += chunk.toString();
+      return true;
+    }) as typeof process.stdout.write;
+    try {
+      assert.equal(
+        runCli(
+          [
+            'ci',
+            '--base',
+            fixture.pullRequestBase,
+            '--head',
+            finalized.commitHash,
+            '--json',
+          ],
+          fixture.repository,
+        ),
+        0,
+      );
+    } finally {
+      process.stdout.write = originalWrite;
+    }
+    const ciResult = JSON.parse(ciOutput) as {
+      result: { preMergeAssurance?: { nodeId: string } };
+    };
+    assert.equal(
+      ciResult.result.preMergeAssurance?.nodeId,
+      preMerge.preMergeAssurance.nodeId,
     );
     const replay = finalizeSession(
       fixture.repository,

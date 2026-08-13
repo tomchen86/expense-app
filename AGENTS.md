@@ -46,7 +46,10 @@ commit, or archive. Use the workflow commands below for those operations.
 | `pnpm workflow propose <id> --intent <intent.json> [--actor <id>] --json` | Starting the investigation-first planning wrapper |
 | `pnpm workflow propose <id> --resume --input <envelope.json> --json` | Submitting the exact typed checkpoint returned by the wrapper |
 | `pnpm workflow plan-commit <id> --json`                     | Underlying managed planning authority; routine proposals reach it through `propose` |
-| `pnpm workflow ci --base <sha> --head <sha> --json`         | Recomputing PR assurance from exact Git commits                 |
+| `pnpm workflow ci --base <sha> --head <sha> [--input <integration-review.json>] --json` | Recomputing deterministic PR assurance and composing exact current PlanReview/TaskDiffReview coverage; `--input` resumes only the exact uncovered integration request |
+| `pnpm workflow authority-plan prepare --intent <intent.json> --json` | Dry-running one whole-round authority-file plan without applying or signing |
+| `pnpm workflow authority-plan status <plan-id> --json`      | Reading one durable authority round without advancing it        |
+| `pnpm workflow authority-plan resume <plan-id> --json`      | Observing publication/merge state and advancing only non-signing durable substates |
 | `pnpm workflow run-check <check-id> --json`                 | Running one registered non-destructive check on clean HEAD for evidence only |
 | `pnpm workflow adapter evaluate --input <path> --json`      | Evaluating a supported AI adapter request under repository policy |
 
@@ -144,6 +147,8 @@ procedure.
 | `pnpm workflow maintainer grant preflight --profile <profile-id> --json` | Read-only validation of one reviewed V2 authority profile and exact current candidate |
 | `pnpm workflow maintainer grant approve-and-apply ... --json` | Human-only exact-candidate V2 approval and atomic application |
 | `pnpm workflow maintainer grant reissue-and-apply ... --json` | Human-only replacement of one terminal V2 attempt against the same governed candidate |
+| `pnpm workflow authority-plan approve-and-apply <plan-id> --json` | Human-only local signing ceremony for the exact dry-run authority plan |
+| `pnpm workflow authority-plan attest <plan-id> --json` | Human-only attestation ceremony after the protected-branch merge is observed |
 | `pnpm workflow maintainer inspect [grant-id] --json` | Reading redacted local grant, reservation, or terminal state |
 | `pnpm workflow maintainer revoke <grant-id> --reason <text> --json` | Human-only terminal revocation of an unused, reserved, or already-terminal grant with a durable reason; repeated use is cleanup-safe |
 

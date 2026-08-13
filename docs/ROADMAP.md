@@ -20,6 +20,26 @@ in the linked OpenSpec change.
   `finalize-task` path provides one checked prospective tree and caught
   ordinary-failure rollback only; it is not crash-safe, fully atomic, or an
   automatic commit.
+- Treat the T2.3 pre-merge composition gap as implemented: exact base/head CI
+  now derives canonical required coverage, proves the effective planning
+  generation for every included task, reuses current PlanReview and terminal
+  TaskDiffReview results, persists a content-addressed
+  `PreMergeAssuranceNode`, and requests only uncovered/integration coverage.
+  The fully covered ordinary single-task path is regression-tested at zero
+  provider calls. The typed integration-review handoff remains advisory and
+  does not replace deterministic CI or remote merge policy.
+- Treat the T2.5 whole-round authority-plan transaction as implemented but not
+  yet piloted: exact intent/dry-run, immutable status/resume revisions, local
+  approve-and-apply recovery, remote merge observation, attestation, publish
+  observation, and terminal friction evidence compose the existing human-only
+  ceremonies without giving the engine signing, push, or merge authority. A
+  real maintainer round is still required before claiming operational
+  acceptance or sealed enforcement.
+- When a current contract is synthesized from historical references, every
+  owner-required historical capability needs an explicit disposition:
+  delivered with evidence, superseded by a named decision, still open, or
+  explicitly descoped by the owner. Neither assurance escalation nor
+  simplification may silently erase an owner decision.
 - Treat a healthy Codex/Claude read-only run as an empirical observation, not
   structural provider availability. Task 7.1 has no durable verifier for
   success, unavailable, fake-backed, or human-authorized degraded outcomes, so

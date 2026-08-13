@@ -18,6 +18,7 @@
         "workflow/checks.json"
       ],
       "forbiddenPaths": [
+        "packages/workflow-engine/src/authority-plan.ts",
         "packages/workflow-engine/src/canonical-json.ts",
         "packages/workflow-engine/src/check-runner.ts",
         "packages/workflow-engine/src/ci-attestation.ts",
@@ -38,6 +39,9 @@
         "packages/workflow-engine/src/maintainer-session.ts",
         "packages/workflow-engine/src/maintainer-signer.ts",
         "packages/workflow-engine/src/maintainer-store.ts",
+        "packages/workflow-engine/src/pre-merge-assurance-git.ts",
+        "packages/workflow-engine/src/pre-merge-assurance-store.ts",
+        "packages/workflow-engine/src/pre-merge-assurance.ts",
         "packages/workflow-engine/src/protected-capabilities.ts",
         "packages/workflow-engine/src/provider-registry.ts",
         "packages/workflow-engine/src/runner-resolution.ts",
@@ -96,6 +100,7 @@
         "workflow/checks.json"
       ],
       "forbiddenPaths": [
+        "packages/workflow-engine/src/authority-plan.ts",
         "packages/workflow-engine/src/canonical-json.ts",
         "packages/workflow-engine/src/check-runner.ts",
         "packages/workflow-engine/src/ci-attestation.ts",
@@ -116,6 +121,9 @@
         "packages/workflow-engine/src/maintainer-session.ts",
         "packages/workflow-engine/src/maintainer-signer.ts",
         "packages/workflow-engine/src/maintainer-store.ts",
+        "packages/workflow-engine/src/pre-merge-assurance-git.ts",
+        "packages/workflow-engine/src/pre-merge-assurance-store.ts",
+        "packages/workflow-engine/src/pre-merge-assurance.ts",
         "packages/workflow-engine/src/protected-capabilities.ts",
         "packages/workflow-engine/src/provider-registry.ts",
         "packages/workflow-engine/src/runner-resolution.ts",

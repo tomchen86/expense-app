@@ -26,4 +26,7 @@ import '../floor-overflow-production-closure.integration.test.ts';
 import '../intervention-sidecar-public-replay.integration.test.ts';
 import '../provider-strategy-change.integration.test.ts';
 import '../execution-governance-store.integration.test.ts';
+import '../authority-plan.integration.test.ts';
+import '../pre-merge-assurance-store.contract.test.ts';
+import '../pre-merge-assurance.contract.test.ts';
 import '../workflow-test-inventory.contract.test.ts';

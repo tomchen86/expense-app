@@ -105,6 +105,8 @@ import './maintainer-post-approval-budget.integration.test.ts';
 import './maintainer-grant-v2-reissue-cli.integration.test.ts';
 import './maintainer-manifest.contract.test.ts';
 import './plan-review.contract.test.ts';
+import './pre-merge-assurance.contract.test.ts';
+import './pre-merge-assurance-store.contract.test.ts';
 import './provider-orchestration.contract.test.ts';
 import './provider-invocation-supersession.contract.test.ts';
 import './provider-retry-accounting.contract.test.ts';

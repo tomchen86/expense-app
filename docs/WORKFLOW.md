@@ -422,6 +422,31 @@ against task order, trailers, path scope, anchored policy, and task-state
 projection, then recomputes required checks. Runtime reports from a developer
 session are not trusted as CI evidence.
 
+For a reviewed v2 range, the verifier also constructs canonical
+`RequiredPreMergeCoverage`, proves that each included task names the effective
+reviewed planning generation, and composes current PlanReview and terminal
+TaskDiffReview references into a content-addressed `PreMergeAssuranceNode`.
+A fully covered ordinary single-task range creates and replays that node with
+zero provider calls. Extra bytes or base context, multiple tasks, or another
+integration question produce one minimal exact request containing only the
+uncovered coverage plus referenced prior results.
+
+The deterministic preparation is read-only and resumable. When a provider or
+human review adapter has produced the exact typed
+`integration-delta-review-submission.v1` envelope returned by the failure
+details, resume with:
+
+```bash
+pnpm workflow ci --base <base-commit> --head <head-commit> \
+  --input <integration-review.json> --json
+```
+
+The base/head binding is immutable: a different range, planning generation,
+coverage manifest, or integration subject cannot reuse the stored node. Review
+judgment remains advisory; deterministic CI, branch protection, and human
+merge policy remain the hard shell. This command does not infer provider
+identity from an environment variable or silently expand an uncovered subject.
+
 `.github/workflows/workflow-assurance.yml` invokes this verifier for pull
 requests. Repository rules must separately require pull requests, the
 `workflow-assurance` check, an up-to-date base, and no bypass. Code-owner
@@ -438,6 +463,50 @@ It is not a bypass for product code, ordinary documents, failed checks, task
 completion, plan commits, or archives. The engine keeps local grants,
 reservations, terminal records, sessions, and commit journals in the Git common
 directory shared by linked worktrees; none is a reusable worktree credential.
+
+### Whole-round authority plan
+
+For a complete break-glass round, prefer the durable wrapper over manually
+reassembling the primitives. An intent names one reviewed change/task/profile,
+reason, commit subject, sorted exact mutations with before digests, and any
+already-reviewed effects or evidence waivers. Preparation validates the
+profile and exact bytes, renders the complete unified diff, and writes the
+first journal revision before changing a target file:
+
+```bash
+pnpm workflow authority-plan prepare --intent <intent.json> --json
+pnpm workflow authority-plan status <plan-id> --json
+```
+
+The engine then exposes one explicit state sequence:
+
+```text
+prepared → applying-local → local-applied → awaiting-attestation
+         → attestation-issued → completed
+```
+
+Only the two signing transitions are human-only and require a controlling
+interactive terminal:
+
+```bash
+pnpm workflow authority-plan approve-and-apply <plan-id> --json
+# Human publishes the exact returned grant/audit tag and merges through the
+# configured remote review path.
+pnpm workflow authority-plan resume <plan-id> --json
+pnpm workflow authority-plan attest <plan-id> --json
+# Human publishes the exact returned attestation tag.
+pnpm workflow authority-plan resume <plan-id> --json
+```
+
+`resume` only observes and journals: it never signs, pushes, opens or merges a
+pull request, or substitutes a different intent. A crash after the local
+authority commit replays that exact commit and grant rather than applying the
+mutation twice. Completion requires both publication handoffs, the observed
+protected-branch rewrite, and the second attestation ceremony. The low-level
+maintainer commands below remain recovery and expert surfaces. This wrapper is
+implemented and integration-tested; its required real human round remains a
+separate pilot and the repository remains bootstrap-only until that pilot and
+the remote prerequisites are independently verified.
 
 The checked-in implementation starts in `bootstrap`. Describe it as
 **bootstrap-only**, and do not claim sealed enforcement, until a maintainer has
