@@ -46,6 +46,9 @@ function resolvedNodeArgs(args, entrypointPaths) {
     if (args[0] === '--experimental-strip-types' && args[1] === '--test') {
         return [...nodeTestPrefix(args, 2), ...entrypointPaths];
     }
+    if (args[0] === '--experimental-strip-types') {
+        return [args[0], entrypointPaths[0], ...args.slice(2)];
+    }
     return [entrypointPaths[0], ...args.slice(1)];
 }
 function nodeTestPrefix(args, entrypointStart) {

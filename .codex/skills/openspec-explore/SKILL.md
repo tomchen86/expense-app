@@ -299,4 +299,4 @@ But this summary is optional. Sometimes the thinking IS the value.
 
 ## Repository workflow boundary
 
-This interface is planning-only. Use `pnpm exec openspec` for the reviewed planning commands above, submit planning changes with `pnpm workflow plan-commit <change-id>`, and begin implementation only with `pnpm workflow start <change-id> --task <task-id>`. OpenSpec lifecycle operations and external planning stores are outside this interface.
+This interface is planning-only. Use `pnpm exec openspec` for the reviewed planning commands above, submit planning changes with `pnpm workflow plan-commit <change-id>`, and begin implementation only with `pnpm workflow open-task <change-id> [--task <task-id>] --mandate <mandate-task-id> --json`. OpenSpec lifecycle operations and external planning stores are outside this interface.

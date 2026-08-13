@@ -121,7 +121,7 @@
     {
       "path": "src/check-runner.ts",
       "mode": "100644",
-      "digest": "sha256:d94b1dde87c67c894cb6c14930348dc111678e2a1210d18617a98e42cb6290aa"
+      "digest": "sha256:d5d0f11261429410bbfd5dd7afb3359053325e721b3f20b617aa330161ab11fe"
     },
     {
       "path": "src/ci-archive-tree.ts",
@@ -216,7 +216,7 @@
     {
       "path": "src/cli.ts",
       "mode": "100644",
-      "digest": "sha256:ff01d8592c2e72804b3b4e04b6d933426d913958f6bcb2ddc27d6675cd419860"
+      "digest": "sha256:915d21d406de5f71240b05b8448627be5328054864f7414d0dfbffbfb961272b"
     },
     {
       "path": "src/codex-provider-adapter.ts",
@@ -271,7 +271,7 @@
     {
       "path": "src/contracts.ts",
       "mode": "100644",
-      "digest": "sha256:ef9cfd530dbef473ceaf597382a01b18a17b73da1818bdd7cb8c559aae1b3fea"
+      "digest": "sha256:79c24e3db621e25f80d10a2ec2065d0b5252db02c2ab6a720e79196261081ab7"
     },
     {
       "path": "src/control-plane-promotion-producer.ts",
@@ -419,9 +419,14 @@
       "digest": "sha256:c8b0b7072564b16bd99fcfd1687c5a47b1b3367f5f3b5552d70bcd09c764e26c"
     },
     {
+      "path": "src/finalize-check-policy.ts",
+      "mode": "100644",
+      "digest": "sha256:56c461285cbf357c3c7957b158afed77ebcbf3e093f51cc0f2dffc019c6ff9ed"
+    },
+    {
       "path": "src/finalize-transaction.ts",
       "mode": "100644",
-      "digest": "sha256:ffcfa20838a19cee329182bfde488e04ecd499432da852b12d4049b8c6763967"
+      "digest": "sha256:46e12af6ba0ff1829affaa23be51ef69c8351577b8d7785903794ceb40a3a3ae"
     },
     {
       "path": "src/floor-overflow-pruning.ts",
@@ -606,7 +611,7 @@
     {
       "path": "src/lifecycle.ts",
       "mode": "100644",
-      "digest": "sha256:b9a4aa630f1dc2693e8112a59659955c6ce3711c4e8dc56bd9b3522ca1c67b9e"
+      "digest": "sha256:a50502e0f68739938670056bf64a0a5d22d9201c546a360aba58b28d2204bf68"
     },
     {
       "path": "src/maintainer-approve.ts",
@@ -716,7 +721,7 @@
     {
       "path": "src/open-task.ts",
       "mode": "100644",
-      "digest": "sha256:f492d53c4c39488d028c38e960171c9cc9a2aaa657ec26d0cd90e3bf46900a5c"
+      "digest": "sha256:470b59bd360ffc0f5889f00403b44c132fc8afaa15bb9f9f5ef32febad46812b"
     },
     {
       "path": "src/openspec-adapter.ts",
@@ -751,7 +756,7 @@
     {
       "path": "src/openspec-planning-asset-contract.ts",
       "mode": "100644",
-      "digest": "sha256:9432dddb198afa3ea4c02765461bd210d36fcfa65baf2f33be8f7d59d5ee97ab"
+      "digest": "sha256:5b3375ed347de279e2e59d37828547aedbce663525031db97dc6e6538403e5ca"
     },
     {
       "path": "src/openspec-planning-assets.ts",
@@ -876,7 +881,7 @@
     {
       "path": "src/projected-finalization.ts",
       "mode": "100644",
-      "digest": "sha256:9fe400a286ee5067c6906a8607ea75f9bd2846f557f01e9d1b14206b5249b448"
+      "digest": "sha256:9df9b502553936cc4cb4c071bac3d097ea173cebdbaf3eb9ccac80f1f0387a0b"
     },
     {
       "path": "src/propose-exemption-store.ts",
@@ -1006,7 +1011,7 @@
     {
       "path": "src/report-validation.ts",
       "mode": "100644",
-      "digest": "sha256:b654138fe9a63ba5d38cf2b47a7d9a9c7e4c19fe221fbf40c5ae8180a8c55119"
+      "digest": "sha256:f8c585372b7347b8167912ed7807c2525e3a0023c56414b9069b961bddf9cbed"
     },
     {
       "path": "src/repository-validation.ts",
@@ -1041,7 +1046,7 @@
     {
       "path": "src/runner-resolution.ts",
       "mode": "100644",
-      "digest": "sha256:fce865400872c4153a186e33768107023d67cdd1c66ba4616d5ac0f4959a32d4"
+      "digest": "sha256:565fb5e1d321dadf3a565e805aaa292c6aa82628764148ce95c31c24b61f4bac"
     },
     {
       "path": "src/semantic-freshness.ts",
@@ -1106,7 +1111,7 @@
     {
       "path": "src/task-diff-review-lifecycle.ts",
       "mode": "100644",
-      "digest": "sha256:b8da9cf26a38f79a091b97a21d15ad0d5aef891da9f7ffd35e804fd5dbc39087"
+      "digest": "sha256:c4ba831592ebc3b6307f9e300f57e63fbbdda437648d0f63821d293fa6e44e20"
     },
     {
       "path": "src/task-diff-review-lineage.ts",
@@ -1246,7 +1251,7 @@
     {
       "path": "src/workflow-guidance.ts",
       "mode": "100644",
-      "digest": "sha256:9ef3e97dc5bd5c24581e86f2916dfc50435cae444e5acccd64020fb2180d6505"
+      "digest": "sha256:35c369371234246051c470597a7801ac9b2bf73dd9c8739de2e8fb9a8d37902f"
     }
   ]
 }

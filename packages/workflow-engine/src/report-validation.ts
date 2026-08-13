@@ -26,6 +26,7 @@ export function assertInspectionReport(
   inspection: SessionInspection,
   kind: WorkflowReport['kind'],
   errorCode: string,
+  expectedRequiredChecks: readonly string[] = inspection.session.requiredChecks,
 ): void {
   if (
     report.kind !== kind ||
@@ -40,13 +41,12 @@ export function assertInspectionReport(
     report.branch !== inspection.session.branch ||
     !same(report.artifactDigests, inspection.artifactDigests) ||
     !same(report.allowedPaths, inspection.session.allowedPaths) ||
-    !same(report.requiredChecks, inspection.session.requiredChecks) ||
+    !same(report.requiredChecks, expectedRequiredChecks) ||
     !same(
       report.requiredCheckDigests,
-      digestRequiredCheckDefinitions(
-        inspection.contract.checks,
-        inspection.session.requiredChecks,
-      ),
+      digestRequiredCheckDefinitions(inspection.contract.checks, [
+        ...expectedRequiredChecks,
+      ]),
     ) ||
     !same(report.changedPaths, inspection.changedPaths) ||
     report.fingerprint !== inspection.fingerprint

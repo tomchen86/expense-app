@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -14,7 +15,49 @@ import {
   createFixtureRepository,
   git,
   isWorkflowError,
+  sourceRepositoryRoot,
 } from './fixture.ts';
+
+test('registered full-gate style runner preserves strip-types and streams startup hints', () => {
+  const repository = createFixtureRepository();
+  try {
+    fs.writeFileSync(
+      path.join(repository, 'scripts/live-hint.ts'),
+      "process.stderr.write('LIVE FULL GATE HINT\\n');\n",
+    );
+    configureChecks(
+      repository,
+      {
+        live: {
+          command: [
+            'node',
+            '--experimental-strip-types',
+            'scripts/live-hint.ts',
+          ],
+          destructiveDatabase: false,
+          liveStderr: true,
+        },
+      },
+      ['live'],
+    );
+    const run = spawnSync(
+      process.execPath,
+      [
+        '--experimental-strip-types',
+        path.join(sourceRepositoryRoot, 'packages/workflow-engine/src/cli.ts'),
+        'run-check',
+        'live',
+        '--json',
+      ],
+      { cwd: repository, encoding: 'utf8' },
+    );
+    assert.equal(run.status, 0, run.stderr);
+    assert.match(run.stderr, /LIVE FULL GATE HINT/);
+    assert.equal(JSON.parse(run.stdout).result.check.outcome, 'passed');
+  } finally {
+    fs.rmSync(repository, { recursive: true, force: true });
+  }
+});
 
 test('change validation rejects eval, preload, external, and ambiguous runners', () => {
   const invalidCommands = [

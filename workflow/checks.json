@@ -29,6 +29,15 @@
       ],
       "destructiveDatabase": false
     },
+    "workflow-full-gate": {
+      "command": [
+        "node",
+        "--experimental-strip-types",
+        "scripts/workflow-full-gate.ts"
+      ],
+      "destructiveDatabase": false,
+      "liveStderr": true
+    },
     "workflow-lint": {
       "command": [
         "node-package-bin",

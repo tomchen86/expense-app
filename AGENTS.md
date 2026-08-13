@@ -96,24 +96,32 @@ never promoted to `pinned` automatically.
 
 ### Managed task lifecycle
 
-| Command                                                        | Use when                                                       |
-| -------------------------------------------------------------- | -------------------------------------------------------------- |
-| `pnpm workflow start <id> --task <task-id> --json`             | Opening one authorized task session on `work/<id>`             |
-| `pnpm workflow status <session-id> --json`                     | Inspecting session state or resolving semantic task history    |
-| `pnpm workflow check <session-id> --json`                      | Producing fresh scoped check evidence for the current diff     |
-| `pnpm workflow complete-task <session-id> --json`              | Applying the task checkbox and generated-document projection   |
-| `pnpm workflow finish <session-id> --json`                     | Rechecking and staging the exact authorized task tree          |
-| `pnpm workflow finalize-task <session-id> --json`              | Checking and staging one exact projected task tree with ordinary-failure rollback |
-| `pnpm workflow commit <session-id> --message "Subject" --json` | Creating the managed task commit with engine-owned trailers  |
-| `pnpm workflow rollback-completion <session-id> --json`        | Reverting an uncommitted completion projection through the engine |
-| `pnpm workflow abort <session-id> --reason "Reason" --json`   | Abandoning a pre-completion session without discarding files   |
+| Command | Use when |
+| ------- | -------- |
+| `pnpm workflow open-task <id> [--task <task-id>] --mandate <mandate-task-id> --json` | Preferred entry: commit an owned draft when needed, then open the selected or next incomplete task |
+| `pnpm workflow finalize <session-id> --message "Subject" [--full-gate] --json` | Preferred exit: check, project, stage, and commit one exact task tree |
+| `pnpm workflow status <session-id> --json` | Inspecting session state or resolving semantic task history |
+| `pnpm workflow start <id> --task <task-id> --mandate <mandate-task-id> --json` | Deprecated compatibility entry for an already committed plan |
+| `pnpm workflow check <session-id> --json` | Compatibility: producing fresh scoped check evidence |
+| `pnpm workflow complete-task <session-id> --json` | Compatibility: applying the task and document projection |
+| `pnpm workflow finish <session-id> --json` | Compatibility: rechecking and staging the exact task tree |
+| `pnpm workflow finalize-task <session-id> --json` | Deprecated compatibility exit that leaves commit separate |
+| `pnpm workflow commit <session-id> --message "Subject" --json` | Compatibility: committing an already finished exact tree |
+| `pnpm workflow rollback-completion <session-id> --json` | Reverting an uncommitted completion projection through the engine |
+| `pnpm workflow abort <session-id> --reason "Reason" --json` | Abandoning a pre-completion session without discarding files |
 
-After `start` and implementation, use either the compatible
-`check` → `complete-task` → `finish` → `commit` sequence or the projected
-single-pass `finalize-task` → `commit` sequence. `finalize-task` promises
-rollback only for caught ordinary failures; it is not crash-safe, fully
-atomic, or an automatic commit. Never stage, edit checkboxes, or commit managed
-task work by hand.
+The routine lifecycle is `propose → [open-task → finalize]×N → archive`.
+Each task keeps its own managed commit and evidence. An intermediate finalize
+runs only that task's targeted `requiredChecks`. Planning should keep those
+checks scoped to the task; it must not use the terminal full gate as a routine
+per-task default. When an exact projection makes every task terminal, the
+engine applies `workflow/config.json`'s `allTasksTerminalChecks`. A terminal
+check may explicitly cover an otherwise duplicated task check; the repository
+full gate covers `workflow-tests`, so that suite runs once, while unrelated
+task checks remain required. `--full-gate` may request the same escalation
+early. There is no agent-controlled defer flag. The compatible multi-command
+path applies the same terminal-check policy and cannot bypass it. Never stage,
+edit checkboxes, or commit managed task work by hand.
 
 ### Archive transition
 

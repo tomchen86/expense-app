@@ -138,7 +138,11 @@ export function runObservedCheck(
       shell: false,
       env: environment,
       encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'pipe'],
+      stdio: [
+        'ignore',
+        'pipe',
+        definition.liveStderr === true ? 'inherit' : 'pipe',
+      ],
       maxBuffer: 10 * 1024 * 1024,
     });
   } catch (error) {
@@ -166,7 +170,8 @@ export function runObservedCheck(
 
   if (result.status !== 0) {
     const stdout = outputText(result.stdout);
-    const stderr = outputText(result.stderr);
+    const stderr =
+      definition.liveStderr === true ? '' : outputText(result.stderr);
     const failureBody = {
       checkId,
       outcome: 'failed' as const,

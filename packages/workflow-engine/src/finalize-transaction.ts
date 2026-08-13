@@ -14,6 +14,7 @@ import {
 } from './filesystem-safety.ts';
 import { assertSessionId } from './paths.ts';
 import { writeJsonAtomic } from './session-store.ts';
+import type { FinalizeCheckEscalation } from './finalize-check-policy.ts';
 
 const DIGEST = /^[0-9a-f]{64}$/;
 const OBJECT_ID = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
@@ -41,8 +42,9 @@ export type FinalizeReconciledTask = Readonly<{
 }>;
 
 export type FinalizeTransaction = Readonly<{
-  schemaVersion: 1;
-  kind: 'projected-finalize-transaction.v1';
+  schemaVersion: 1 | 2;
+  kind:
+    'projected-finalize-transaction.v1' | 'projected-finalize-transaction.v2';
   transactionId: string;
   recordDigest: string;
   phase: FinalizeTransactionPhase;
@@ -54,6 +56,8 @@ export type FinalizeTransaction = Readonly<{
   branch: string;
   baseline: Readonly<{ head: string; tree: string }>;
   completedTaskIds: readonly string[];
+  requiredChecks?: readonly string[];
+  checkEscalation?: FinalizeCheckEscalation;
   reconciledTasks: readonly FinalizeReconciledTask[];
   taskProjectionPath: string;
   projectionMutations: readonly FinalizeProjectionMutation[];
@@ -73,8 +77,9 @@ export type FinalizeTransaction = Readonly<{
 }>;
 
 type FinalizeTransactionSeed = Readonly<{
-  schemaVersion: 1;
-  kind: 'projected-finalize-transaction.v1';
+  schemaVersion: 1 | 2;
+  kind:
+    'projected-finalize-transaction.v1' | 'projected-finalize-transaction.v2';
   sessionId: string;
   changeId: string;
   taskId: string;
@@ -83,6 +88,8 @@ type FinalizeTransactionSeed = Readonly<{
   branch: string;
   baseline: Readonly<{ head: string; tree: string }>;
   completedTaskIds: readonly string[];
+  requiredChecks?: readonly string[];
+  checkEscalation?: FinalizeCheckEscalation;
   reconciledTasks: readonly FinalizeReconciledTask[];
   taskProjectionPath: string;
   projectionMutations: readonly FinalizeProjectionMutation[];
@@ -294,7 +301,15 @@ function finalizeTransactionDirectory(runtimeRoot: string): string {
 
 export function parseFinalizeTransaction(value: unknown): FinalizeTransaction {
   if (!isRecord(value)) throw malformed();
-  const legacyKeys = [
+  const version =
+    value.schemaVersion === 1 &&
+    value.kind === 'projected-finalize-transaction.v1'
+      ? 1
+      : value.schemaVersion === 2 &&
+          value.kind === 'projected-finalize-transaction.v2'
+        ? 2
+        : null;
+  const baseKeys = [
     'baseline',
     'branch',
     'candidateFingerprint',
@@ -323,14 +338,14 @@ export function parseFinalizeTransaction(value: unknown): FinalizeTransaction {
     'taskProjectionPath',
     'transactionId',
     'transitionPaths',
+    ...(version === 2 ? ['checkEscalation', 'requiredChecks'] : []),
   ].sort();
   const keys = Object.hasOwn(value, 'documentationReview')
-    ? [...legacyKeys, 'documentationReview'].sort()
-    : legacyKeys;
+    ? [...baseKeys, 'documentationReview'].sort()
+    : baseKeys;
   if (
+    version === null ||
     JSON.stringify(Object.keys(value).sort()) !== JSON.stringify(keys) ||
-    value.schemaVersion !== 1 ||
-    value.kind !== 'projected-finalize-transaction.v1' ||
     typeof value.transactionId !== 'string' ||
     !DIGEST.test(value.transactionId) ||
     typeof value.recordDigest !== 'string' ||
@@ -362,6 +377,9 @@ export function parseFinalizeTransaction(value: unknown): FinalizeTransaction {
     !OBJECT_ID.test(value.baseline.head) ||
     !OBJECT_ID.test(value.baseline.tree) ||
     !isCanonicalStringArray(value.completedTaskIds) ||
+    (version === 2 &&
+      (!isCanonicalCheckArray(value.requiredChecks) ||
+        !isFinalizeCheckEscalation(value.checkEscalation))) ||
     !Array.isArray(value.reconciledTasks) ||
     typeof value.taskProjectionPath !== 'string' ||
     !isSafeRelativePath(value.taskProjectionPath) ||
@@ -464,8 +482,11 @@ export function parseFinalizeTransaction(value: unknown): FinalizeTransaction {
     throw malformed();
   }
   const transaction: FinalizeTransaction = {
-    schemaVersion: 1,
-    kind: 'projected-finalize-transaction.v1',
+    schemaVersion: version,
+    kind:
+      version === 1
+        ? 'projected-finalize-transaction.v1'
+        : 'projected-finalize-transaction.v2',
     transactionId: value.transactionId,
     recordDigest: value.recordDigest,
     phase: value.phase as FinalizeTransactionPhase,
@@ -480,6 +501,12 @@ export function parseFinalizeTransaction(value: unknown): FinalizeTransaction {
       tree: value.baseline.tree,
     },
     completedTaskIds: [...value.completedTaskIds] as string[],
+    ...(version === 2
+      ? {
+          requiredChecks: [...(value.requiredChecks as string[])],
+          checkEscalation: value.checkEscalation as FinalizeCheckEscalation,
+        }
+      : {}),
     reconciledTasks,
     taskProjectionPath: value.taskProjectionPath,
     projectionMutations,
@@ -511,8 +538,8 @@ function normalizeSeed(
   input: FinalizeTransactionSeed,
 ): FinalizeTransactionSeed {
   return {
-    schemaVersion: 1,
-    kind: 'projected-finalize-transaction.v1',
+    schemaVersion: input.schemaVersion,
+    kind: input.kind,
     sessionId: input.sessionId,
     changeId: input.changeId,
     taskId: input.taskId,
@@ -521,6 +548,12 @@ function normalizeSeed(
     branch: input.branch,
     baseline: { ...input.baseline },
     completedTaskIds: [...input.completedTaskIds],
+    ...(input.schemaVersion === 2
+      ? {
+          requiredChecks: [...(input.requiredChecks ?? [])],
+          checkEscalation: input.checkEscalation ?? null,
+        }
+      : {}),
     reconciledTasks: input.reconciledTasks.map((entry) => ({
       taskId: entry.taskId,
       commitHash: entry.commitHash,
@@ -555,6 +588,12 @@ function transactionSeed(
     branch: transaction.branch,
     baseline: transaction.baseline,
     completedTaskIds: transaction.completedTaskIds,
+    ...(transaction.schemaVersion === 2
+      ? {
+          requiredChecks: transaction.requiredChecks,
+          checkEscalation: transaction.checkEscalation,
+        }
+      : {}),
     reconciledTasks: transaction.reconciledTasks,
     taskProjectionPath: transaction.taskProjectionPath,
     projectionMutations: transaction.projectionMutations,
@@ -676,6 +715,26 @@ function isCanonicalStringArray(value: unknown): value is string[] {
     value.length > 0 &&
     value.every((entry) => typeof entry === 'string' && entry.length > 0) &&
     new Set(value).size === value.length
+  );
+}
+
+function isCanonicalCheckArray(value: unknown): value is string[] {
+  return (
+    Array.isArray(value) &&
+    value.length > 0 &&
+    value.every(
+      (entry) =>
+        typeof entry === 'string' && /^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(entry),
+    ) &&
+    new Set(value).size === value.length
+  );
+}
+
+function isFinalizeCheckEscalation(
+  value: unknown,
+): value is FinalizeCheckEscalation {
+  return (
+    value === null || value === 'all-tasks-terminal' || value === 'explicit'
   );
 }
 

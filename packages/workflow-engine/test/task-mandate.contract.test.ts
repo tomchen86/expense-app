@@ -31,7 +31,7 @@ import {
   readProviderRetryReservation,
 } from '../src/provider-invocation-store.ts';
 import type { MaintainerSignerProvider } from '../src/maintainer-signer.ts';
-import { startMandatedSession } from '../src/session.ts';
+import { getSession, startMandatedSession } from '../src/session.ts';
 import {
   authorizeTaskMandate,
   authorizeTaskMandateOperation,
@@ -728,6 +728,66 @@ test('true start CLI requires and durably persists an exact mandate binding', ()
       changeId: CHANGE_ID,
       externalAuditRoot: externalAuditRoot(repository),
     });
+  } finally {
+    cleanupRepository(repository);
+    fs.rmSync(keyDirectory, { recursive: true, force: true });
+  }
+});
+
+test('open-task selects the next incomplete task for an already committed plan', () => {
+  const keyDirectory = fs.mkdtempSync(
+    path.join(os.tmpdir(), 'task-mandate-open-key-'),
+  );
+  const { privateKey, trustedSigner } = generateSigningKey(keyDirectory);
+  const repository = prepareRepository(trustedSigner);
+  const cli = path.join(
+    sourceRepositoryRoot,
+    'packages/workflow-engine/src/cli.ts',
+  );
+  const changeId = CHANGE_ID;
+  try {
+    git(repository, ['checkout', '-b', 'work/demo-change']);
+    fs.appendFileSync(
+      path.join(repository, 'openspec/changes/demo-change/design.md'),
+      '\n## Committed plan\n',
+    );
+    git(repository, ['add', 'openspec/changes/demo-change/design.md']);
+    git(repository, [
+      'commit',
+      '-m',
+      'Plan demo-change\n\nChange: demo-change\nTransition: plan',
+    ]);
+    const governingCommit = git(repository, ['rev-parse', 'HEAD']).trim();
+    authorizeTaskMandate(repository, request(changeId), {
+      mandateId: MANDATE_ID,
+      externalAuditRoot: externalAuditRoot(repository),
+      now: new Date(),
+      signer: realSigningProvider(privateKey),
+    });
+    const opened = spawnSync(
+      process.execPath,
+      [
+        '--experimental-strip-types',
+        cli,
+        'open-task',
+        changeId,
+        '--mandate',
+        TASK_ID,
+        '--json',
+      ],
+      { cwd: repository, encoding: 'utf8' },
+    );
+    assert.equal(opened.status, 0, opened.stderr);
+    const output = JSON.parse(opened.stdout) as {
+      result: {
+        taskId: string;
+        sessionId: string;
+        planningCommit: string;
+      };
+    };
+    assert.equal(output.result.taskId, '1.1');
+    assert.equal(output.result.planningCommit, governingCommit);
+    assert.equal(getSession(repository, output.result.sessionId).taskId, '1.1');
   } finally {
     cleanupRepository(repository);
     fs.rmSync(keyDirectory, { recursive: true, force: true });

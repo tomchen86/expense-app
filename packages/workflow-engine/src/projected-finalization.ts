@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 import { digestRequiredCheckDefinitions } from './contract-digests.ts';
+import { parseTasks } from './contracts.ts';
 import { classifyProjectionPaths } from './engine-projection-registry.ts';
 import { ExitCode, WorkflowError, workflowError } from './errors.ts';
 import {
@@ -13,6 +14,11 @@ import {
   type FinalizeTransaction,
   type FinalizeTransactionPhase,
 } from './finalize-transaction.ts';
+import {
+  resolveExplicitFinalizeChecks,
+  resolveFinalizeCheckPolicy,
+  type FinalizeCheckEscalation,
+} from './finalize-check-policy.ts';
 import {
   listStagedPaths,
   previewExactStaging,
@@ -78,11 +84,18 @@ export type FinalizeTaskResult = {
   completionReportId: string;
   finishReportId: string;
   completedTaskIds: string[];
+  requiredChecks: string[];
+  checkEscalation: 'all-tasks-terminal' | 'explicit' | null;
   stagedPaths: string[];
   tree: string;
 };
 
 export type FinalizeTaskOptions = Readonly<{
+  fullGate?: boolean;
+  onCheckEscalation?: (
+    escalation: Exclude<FinalizeCheckEscalation, null>,
+    requiredChecks: readonly string[],
+  ) => void;
   testCrashAfter?:
     | 'projection-prepared'
     | 'task-projected'
@@ -109,6 +122,7 @@ export function finalizeTaskUnlocked(
   );
   if (existing !== null) {
     assertFinalizeTransactionIdentity(active, existing);
+    assertExplicitCheckRequestMatches(active, existing, options);
     try {
       return continueFinalizeTransaction(cwd, existing, environment, options);
     } catch (error) {
@@ -142,6 +156,19 @@ export function finalizeTaskUnlocked(
   ];
   const projection = planTasksCompleted(initial.tasksPath, completedTaskIds);
   const projectionSourceDigest = digestTaskContent(projection.before);
+  const checkPolicy = resolveFinalizeCheckPolicy(
+    parseTasks(projection.after),
+    session.requiredChecks,
+    initial.contract.config,
+    options.fullGate === true,
+  );
+  if (options.fullGate === true && checkPolicy.checkEscalation === null) {
+    throw workflowError(
+      'FINALIZE_FULL_GATE_NOT_CONFIGURED',
+      'Explicit full-gate escalation requires repository terminal checks.',
+      ExitCode.guard,
+    );
+  }
   let transaction: FinalizeTransaction | null = null;
 
   try {
@@ -180,8 +207,8 @@ export function finalizeTaskUnlocked(
     transaction = publishFinalizeTransaction(
       active.runtime.root,
       createFinalizeTransaction({
-        schemaVersion: 1,
-        kind: 'projected-finalize-transaction.v1',
+        schemaVersion: 2,
+        kind: 'projected-finalize-transaction.v2',
         sessionId: session.sessionId,
         changeId: session.changeId,
         taskId: session.taskId,
@@ -190,6 +217,8 @@ export function finalizeTaskUnlocked(
         branch: session.branch,
         baseline: session.baseline,
         completedTaskIds,
+        requiredChecks: checkPolicy.requiredChecks,
+        checkEscalation: checkPolicy.checkEscalation,
         reconciledTasks: reconciliation,
         taskProjectionPath,
         projectionMutations,
@@ -237,6 +266,12 @@ function continueFinalizeTransaction(
     const session = state.inspection.session;
     if (transaction.phase === 'candidate-prepared') {
       if (state.indexState !== 'previous') throw transactionDiverged();
+      if (transaction.checkEscalation) {
+        options.onCheckEscalation?.(
+          transaction.checkEscalation,
+          transactionRequiredChecks(transaction, session),
+        );
+      }
       transaction = advanceFinalizeTransaction(
         state.context.runtime.root,
         transaction,
@@ -246,7 +281,7 @@ function continueFinalizeTransaction(
       const verified = executeChecks(
         cwd,
         state.inspection,
-        session.requiredChecks,
+        transactionRequiredChecks(transaction, session),
         environment,
         [...transaction.completedTaskIds],
         transaction.projectionSourceDigest,
@@ -576,6 +611,10 @@ function createCheckReport(
   inspection: ReturnType<typeof inspectSession>,
   checks: unknown[],
 ): WorkflowReport {
+  const requiredChecks = transactionRequiredChecks(
+    transaction,
+    inspection.session,
+  );
   return {
     schemaVersion: 1,
     kind: 'check',
@@ -589,11 +628,14 @@ function createCheckReport(
     branch: transaction.branch,
     artifactDigests: inspection.artifactDigests,
     allowedPaths: inspection.session.allowedPaths,
-    requiredChecks: inspection.session.requiredChecks,
+    requiredChecks,
     requiredCheckDigests: digestRequiredCheckDefinitions(
       inspection.contract.checks,
-      inspection.session.requiredChecks,
+      requiredChecks,
     ),
+    ...(transaction.schemaVersion === 2
+      ? { checkEscalation: transaction.checkEscalation ?? null }
+      : {}),
     ...classifyProjectionPaths(
       inspection.changedPaths,
       [transaction.taskProjectionPath],
@@ -655,17 +697,19 @@ function currentCheckReport(
     { ...inspection, fingerprint: transaction.candidateFingerprint },
     'check',
     'CHECK_REPORT_STALE',
+    transactionRequiredChecks(transaction, inspection.session),
   );
   assertReportChecks(
     report,
     inspection,
-    inspection.session.requiredChecks,
+    transactionRequiredChecks(transaction, inspection.session),
     'CHECK_REPORT_STALE',
   );
   if (
     report.parentReportId !== undefined ||
     report.finalizeProfile !== PROJECTED_SINGLE_PASS_ASSURANCE ||
-    report.candidateTree !== transaction.candidateTree
+    report.candidateTree !== transaction.candidateTree ||
+    report.checkEscalation !== transactionReportCheckEscalation(transaction)
   ) {
     throw transactionDiverged();
   }
@@ -721,9 +765,57 @@ function resultFrom(
     completionReportId: transaction.completionReportId,
     finishReportId: transaction.finishReportId,
     completedTaskIds: [...transaction.completedTaskIds],
+    requiredChecks: transactionRequiredChecks(transaction, session),
+    checkEscalation: transaction.checkEscalation ?? null,
     stagedPaths: [...transaction.changedPaths],
     tree: transaction.candidateTree,
   };
+}
+
+export function transactionRequiredChecks(
+  transaction: FinalizeTransaction,
+  session: Pick<WorkflowSession, 'requiredChecks'>,
+): string[] {
+  return [
+    ...(transaction.schemaVersion === 2 && transaction.requiredChecks
+      ? transaction.requiredChecks
+      : session.requiredChecks),
+  ];
+}
+
+export function transactionReportCheckEscalation(
+  transaction: FinalizeTransaction,
+): FinalizeCheckEscalation | undefined {
+  return transaction.schemaVersion === 2
+    ? (transaction.checkEscalation ?? null)
+    : undefined;
+}
+
+function assertExplicitCheckRequestMatches(
+  context: ReturnType<typeof loadActiveSessionContext>,
+  transaction: FinalizeTransaction,
+  options: FinalizeTaskOptions,
+): void {
+  if (options.fullGate !== true) return;
+  const terminalChecks = context.config.allTasksTerminalChecks ?? [];
+  const expected = resolveExplicitFinalizeChecks(
+    context.session.requiredChecks,
+    context.config,
+  );
+  if (
+    terminalChecks.length === 0 ||
+    JSON.stringify(transactionRequiredChecks(transaction, context.session)) !==
+      JSON.stringify(expected)
+  ) {
+    throw workflowError(
+      'FINALIZE_REQUEST_CHANGED',
+      'A durable finalize transaction cannot be escalated after it was created.',
+      ExitCode.conflict,
+      {
+        recovery: `Resume without --full-gate: pnpm workflow finalize-recover ${transaction.sessionId} --json`,
+      },
+    );
+  }
 }
 
 function assertFinalizeTransactionIdentity(

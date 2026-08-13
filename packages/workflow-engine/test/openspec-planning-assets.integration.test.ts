@@ -45,6 +45,7 @@ const PROPOSE_ASSET_PATHS = [
 ];
 const GUIDED_FINALIZE_COMMAND = workflowCommandGuidance('finalize')
   .usage[0]!.replace('<subject>', '"Imperative subject"')
+  .replace(' [--full-gate]', '')
   .replace('[--json]', '--json');
 const GUIDED_GUIDE_COMMAND = workflowCommandGuidance('guide').usage[0]!.replace(
   '[--json]',
@@ -1369,7 +1370,7 @@ test('forbidden lifecycle and Spectra authority is prefix-independent', () => {
     'pnpm exec openspec list',
     'pnpm exec openspec status',
     'pnpm workflow plan-commit demo-change',
-    'pnpm workflow start demo-change --task 1.1',
+    'pnpm workflow open-task demo-change --task 1.1 --mandate mandate-1',
     'The historical name Spectra appears only as prose.',
     'The historical name spectra also appears only as prose.',
     '<artifact>Planning prose.</artifact>',
@@ -1633,7 +1634,7 @@ function assertInvestigationFirstProposeContract(
   );
   for (const command of [
     'pnpm workflow status',
-    'pnpm workflow start',
+    'pnpm workflow open-task',
     GUIDED_GUIDE_COMMAND,
     GUIDED_FINALIZE_COMMAND,
   ]) {

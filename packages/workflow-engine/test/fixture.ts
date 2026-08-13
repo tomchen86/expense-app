@@ -677,7 +677,14 @@ export function addFixturePackage(
 
 export function configureChecks(
   repository: string,
-  checks: Record<string, { command: string[]; destructiveDatabase: boolean }>,
+  checks: Record<
+    string,
+    {
+      command: string[];
+      destructiveDatabase: boolean;
+      liveStderr?: boolean;
+    }
+  >,
   requiredChecks: string[],
 ): void {
   writeJson(path.join(repository, 'workflow/checks.json'), {

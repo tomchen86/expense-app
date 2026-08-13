@@ -25,7 +25,7 @@ The wrapper gathers evidence, obtains exact PlanReview, materializes the governe
    pnpm workflow propose <change-id> --intent <intent.json> [--actor <id>] --json
    ```
 
-3. Read the returned `state`, `nextAction`, and `inputSchema` exactly. Preserve every returned binding value. Fill only the caller-owned contribution requested by that schema, using `work` and any `authoredInstructions` as constraints. Do not directly create or overwrite engine-owned `investigation.json`, `execution.json`, `plan-review.json`, or managed ledger fields.
+3. Read the returned `state`, `nextAction`, and `inputSchema` exactly. Preserve every returned binding value. Fill only the caller-owned contribution requested by that schema, using `work` and any `authoredInstructions` as constraints. Keep each task guard’s `requiredChecks` targeted to that task. The engine owns terminal full-gate escalation. Do not directly create or overwrite engine-owned `investigation.json`, `execution.json`, `plan-review.json`, or managed ledger fields.
 
 4. Submit each typed checkpoint from a temporary envelope file:
 
@@ -39,10 +39,10 @@ The wrapper gathers evidence, obtains exact PlanReview, materializes the governe
    pnpm workflow status <investigation-or-task-id> --json
    ```
 
-5. Planning is ready only when the wrapper returns `state: planning-complete` with its managed planning transition. Then start the selected task:
+5. Planning is ready only when the wrapper returns `state: planning-complete` with its managed planning transition. Then open the selected or next incomplete task:
 
    ```bash
-   pnpm workflow start <change-id> --task <task-id> --json
+   pnpm workflow open-task <change-id> [--task <task-id>] --mandate <mandate-task-id> --json
    ```
 
 6. During implementation, inspect the versioned advisory command catalog and use its preferred projected single-pass path:

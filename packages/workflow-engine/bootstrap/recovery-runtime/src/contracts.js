@@ -104,12 +104,43 @@ export function loadWorkflowConfig(repositoryRoot) {
         typeof value.runtimeDirectory !== 'string' ||
         !isStringArray(value.protectedBranches) ||
         typeof value.branchTemplate !== 'string' ||
-        !value.branchTemplate.includes('{changeId}')) {
+        !value.branchTemplate.includes('{changeId}') ||
+        (value.allTasksTerminalChecks !== undefined &&
+            !isTerminalCheckPolicyArray(value.allTasksTerminalChecks))) {
         throw invalidContract('INVALID_WORKFLOW_CONFIG', 'workflow/config.json does not match schema version 1.', configPath);
     }
     normalizePolicyPath(value.changeRoot);
     normalizePolicyPath(value.runtimeDirectory);
-    return value;
+    return {
+        ...value,
+        ...(value.allTasksTerminalChecks === undefined
+            ? {}
+            : {
+                allTasksTerminalChecks: value.allTasksTerminalChecks.map((policy) => ({
+                    checkId: policy.checkId,
+                    subsumes: [...policy.subsumes],
+                })),
+            }),
+    };
+}
+function isTerminalCheckPolicyArray(value) {
+    if (!Array.isArray(value) || value.length === 0)
+        return false;
+    const checkIds = new Set();
+    for (const policy of value) {
+        if (!isRecord(policy) ||
+            !hasExactKeys(policy, ['checkId', 'subsumes']) ||
+            typeof policy.checkId !== 'string' ||
+            !CHECK_ID_PATTERN.test(policy.checkId) ||
+            checkIds.has(policy.checkId) ||
+            !isStringArray(policy.subsumes) ||
+            policy.subsumes.some((checkId) => !CHECK_ID_PATTERN.test(checkId) || checkId === policy.checkId) ||
+            new Set(policy.subsumes).size !== policy.subsumes.length) {
+            return false;
+        }
+        checkIds.add(policy.checkId);
+    }
+    return true;
 }
 export function loadChecksConfig(repositoryRoot) {
     const checksPath = path.join(repositoryRoot, 'workflow/checks.json');
@@ -122,9 +153,12 @@ export function loadChecksConfig(repositoryRoot) {
     for (const [checkId, definition] of Object.entries(value.checks)) {
         if (!CHECK_ID_PATTERN.test(checkId) ||
             !isRecord(definition) ||
+            !Object.keys(definition).every((key) => ['command', 'destructiveDatabase', 'liveStderr'].includes(key)) ||
             !isStringArray(definition.command) ||
             !parseCheckCommand(definition.command) ||
-            typeof definition.destructiveDatabase !== 'boolean') {
+            typeof definition.destructiveDatabase !== 'boolean' ||
+            (definition.liveStderr !== undefined &&
+                typeof definition.liveStderr !== 'boolean')) {
             throw invalidContract('INVALID_CHECK_DEFINITION', `Invalid check definition: ${checkId}`, checksPath);
         }
     }
@@ -168,6 +202,11 @@ function nodeEntrypoints(args) {
     }
     else if (args[0] === '--experimental-strip-types' && args[1] === '--test') {
         entrypoints = nodeTestEntrypoints(args, 2);
+    }
+    else if (args[0] === '--experimental-strip-types' &&
+        args[1] &&
+        !args[1].startsWith('-')) {
+        entrypoints = [args[1]];
     }
     else {
         if (!args[0] || args[0].startsWith('-')) {
@@ -213,6 +252,13 @@ export function loadChangeContract(repositoryRootInput, requestedChangeId, expec
     }
     const config = loadWorkflowConfig(repositoryRoot);
     const checks = loadChecksConfig(repositoryRoot);
+    for (const policy of config.allTasksTerminalChecks ?? []) {
+        for (const checkId of [policy.checkId, ...policy.subsumes]) {
+            if (!Object.hasOwn(checks.checks, checkId)) {
+                throw invalidContract('UNKNOWN_TERMINAL_CHECK', `All-tasks-terminal check policy references an unregistered check: ${checkId}`, path.join(repositoryRoot, 'workflow/config.json'));
+            }
+        }
+    }
     const changeDirectory = path.join(repositoryRoot, config.changeRoot, changeId);
     const metadataPath = path.join(changeDirectory, '.openspec.yaml');
     const schemaName = readChangeSchemaName(repositoryRoot, metadataPath);

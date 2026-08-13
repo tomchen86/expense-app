@@ -14,14 +14,18 @@ import { workflowCommandGuidance } from './workflow-guidance.ts';
 export const OPENSPEC_ASSET_MANIFEST_PATH =
   'workflow/openspec-assets/manifest.json';
 
-const OVERLAY_VERSION = 3;
+const OVERLAY_VERSION = 4;
 const FORMATTER_RUNNER = 'node-package-bin:.:prettier/prettier' as const;
 const GUIDED_WORKFLOW_GUIDE_COMMAND = workflowCommandGuidance(
   'guide',
 ).usage[0]!.replace('[--json]', '--json');
 const GUIDED_FINALIZE_COMMAND = workflowCommandGuidance('finalize')
   .usage[0]!.replace('<subject>', '"Imperative subject"')
+  .replace(' [--full-gate]', '')
   .replace('[--json]', '--json');
+const GUIDED_OPEN_TASK_COMMAND = workflowCommandGuidance(
+  'open-task',
+).usage[0]!.replace('[--json]', '--json');
 const DEPRECATED_FINALIZE_TASK_COMMAND =
   workflowCommandGuidance('finalize-task').usage[0]!;
 const OVERLAY_POLICY = [
@@ -229,7 +233,7 @@ export type OpenSpecAssetManifest = {
     }>;
   };
   overlay: {
-    version: 3;
+    version: 4;
     policyDigest: string;
   };
   formatter: OpenSpecFormatterMetadata;
@@ -436,10 +440,7 @@ export function applyOpenSpecPlanningAssetOverlay(
     .replaceAll('**AskUserQuestion tool**', 'an open-ended question')
     .replaceAll('the **TodoWrite tool**', 'a task list')
     .replaceAll('**TodoWrite tool**', 'a task list')
-    .replaceAll(
-      '/opsx:apply',
-      'pnpm workflow start <change-id> --task <task-id>',
-    )
+    .replaceAll('/opsx:apply', GUIDED_OPEN_TASK_COMMAND)
     .replaceAll('/opsx:explore', 'openspec-explore')
     .replaceAll('/opsx:propose', 'openspec-propose')
     .replace(
@@ -449,7 +450,7 @@ export function applyOpenSpecPlanningAssetOverlay(
   if (workflow === 'propose') {
     return investigationFirstProposeAsset(adapted);
   }
-  return `${adapted.trimEnd()}\n\n## Repository workflow boundary\n\nThis interface is planning-only. Use \`pnpm exec openspec\` for the reviewed planning commands above, submit planning changes with \`pnpm workflow plan-commit <change-id>\`, and begin implementation only with \`pnpm workflow start <change-id> --task <task-id>\`. OpenSpec lifecycle operations and external planning stores are outside this interface.\n`;
+  return `${adapted.trimEnd()}\n\n## Repository workflow boundary\n\nThis interface is planning-only. Use \`pnpm exec openspec\` for the reviewed planning commands above, submit planning changes with \`pnpm workflow plan-commit <change-id>\`, and begin implementation only with \`${GUIDED_OPEN_TASK_COMMAND}\`. OpenSpec lifecycle operations and external planning stores are outside this interface.\n`;
 }
 
 function investigationFirstProposeAsset(source: string): string {
@@ -484,7 +485,7 @@ function investigationFirstProposeAsset(source: string): string {
     '   pnpm workflow propose <change-id> --intent <intent.json> [--actor <id>] --json',
     '   ```',
     '',
-    '3. Read the returned `state`, `nextAction`, and `inputSchema` exactly. Preserve every returned binding value. Fill only the caller-owned contribution requested by that schema, using `work` and any `authoredInstructions` as constraints. Do not directly create or overwrite engine-owned `investigation.json`, `execution.json`, `plan-review.json`, or managed ledger fields.',
+    '3. Read the returned `state`, `nextAction`, and `inputSchema` exactly. Preserve every returned binding value. Fill only the caller-owned contribution requested by that schema, using `work` and any `authoredInstructions` as constraints. Keep each task guard’s `requiredChecks` targeted to that task. The engine owns terminal full-gate escalation. Do not directly create or overwrite engine-owned `investigation.json`, `execution.json`, `plan-review.json`, or managed ledger fields.',
     '',
     '4. Submit each typed checkpoint from a temporary envelope file:',
     '',
@@ -498,10 +499,10 @@ function investigationFirstProposeAsset(source: string): string {
     '   pnpm workflow status <investigation-or-task-id> --json',
     '   ```',
     '',
-    '5. Planning is ready only when the wrapper returns `state: planning-complete` with its managed planning transition. Then start the selected task:',
+    '5. Planning is ready only when the wrapper returns `state: planning-complete` with its managed planning transition. Then open the selected or next incomplete task:',
     '',
     '   ```bash',
-    '   pnpm workflow start <change-id> --task <task-id> --json',
+    `   ${GUIDED_OPEN_TASK_COMMAND}`,
     '   ```',
     '',
     '6. During implementation, inspect the versioned advisory command catalog and use its preferred projected single-pass path:',
@@ -590,7 +591,7 @@ export function verifyOpenSpecPlanningAssetContent(
     'pnpm workflow propose <change-id> --intent <intent.json>',
     'pnpm workflow propose <change-id> --resume --input <envelope.json>',
     'pnpm workflow status',
-    'pnpm workflow start',
+    'pnpm workflow open-task',
     GUIDED_WORKFLOW_GUIDE_COMMAND,
     GUIDED_FINALIZE_COMMAND,
   ];
@@ -616,7 +617,7 @@ export function verifyOpenSpecPlanningAssetContent(
         !content.includes('pnpm workflow plan-commit')
       : content.includes('pnpm exec openspec') &&
         content.includes('pnpm workflow plan-commit') &&
-        content.includes('pnpm workflow start');
+        content.includes('pnpm workflow open-task');
   if (
     !content.endsWith('\n') ||
     content.includes('\r') ||

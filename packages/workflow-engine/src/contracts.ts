@@ -39,11 +39,18 @@ export type WorkflowConfig = {
   runtimeDirectory: string;
   protectedBranches: string[];
   branchTemplate: string;
+  allTasksTerminalChecks?: TerminalCheckPolicy[];
+};
+
+export type TerminalCheckPolicy = {
+  checkId: string;
+  subsumes: string[];
 };
 
 export type CheckDefinition = {
   command: string[];
   destructiveDatabase: boolean;
+  liveStderr?: boolean;
 };
 
 export type ChecksConfig = {
@@ -354,7 +361,9 @@ export function loadWorkflowConfig(repositoryRoot: string): WorkflowConfig {
     typeof value.runtimeDirectory !== 'string' ||
     !isStringArray(value.protectedBranches) ||
     typeof value.branchTemplate !== 'string' ||
-    !value.branchTemplate.includes('{changeId}')
+    !value.branchTemplate.includes('{changeId}') ||
+    (value.allTasksTerminalChecks !== undefined &&
+      !isTerminalCheckPolicyArray(value.allTasksTerminalChecks))
   ) {
     throw invalidContract(
       'INVALID_WORKFLOW_CONFIG',
@@ -366,7 +375,45 @@ export function loadWorkflowConfig(repositoryRoot: string): WorkflowConfig {
   normalizePolicyPath(value.changeRoot);
   normalizePolicyPath(value.runtimeDirectory);
 
-  return value as WorkflowConfig;
+  return {
+    ...value,
+    ...(value.allTasksTerminalChecks === undefined
+      ? {}
+      : {
+          allTasksTerminalChecks: (
+            value.allTasksTerminalChecks as TerminalCheckPolicy[]
+          ).map((policy) => ({
+            checkId: policy.checkId,
+            subsumes: [...policy.subsumes],
+          })),
+        }),
+  } as WorkflowConfig;
+}
+
+function isTerminalCheckPolicyArray(
+  value: unknown,
+): value is TerminalCheckPolicy[] {
+  if (!Array.isArray(value) || value.length === 0) return false;
+  const checkIds = new Set<string>();
+  for (const policy of value) {
+    if (
+      !isRecord(policy) ||
+      !hasExactKeys(policy, ['checkId', 'subsumes']) ||
+      typeof policy.checkId !== 'string' ||
+      !CHECK_ID_PATTERN.test(policy.checkId) ||
+      checkIds.has(policy.checkId) ||
+      !isStringArray(policy.subsumes) ||
+      policy.subsumes.some(
+        (checkId) =>
+          !CHECK_ID_PATTERN.test(checkId) || checkId === policy.checkId,
+      ) ||
+      new Set(policy.subsumes).size !== policy.subsumes.length
+    ) {
+      return false;
+    }
+    checkIds.add(policy.checkId);
+  }
+  return true;
 }
 
 export function loadChecksConfig(repositoryRoot: string): ChecksConfig {
@@ -389,9 +436,14 @@ export function loadChecksConfig(repositoryRoot: string): ChecksConfig {
     if (
       !CHECK_ID_PATTERN.test(checkId) ||
       !isRecord(definition) ||
+      !Object.keys(definition).every((key) =>
+        ['command', 'destructiveDatabase', 'liveStderr'].includes(key),
+      ) ||
       !isStringArray(definition.command) ||
       !parseCheckCommand(definition.command) ||
-      typeof definition.destructiveDatabase !== 'boolean'
+      typeof definition.destructiveDatabase !== 'boolean' ||
+      (definition.liveStderr !== undefined &&
+        typeof definition.liveStderr !== 'boolean')
     ) {
       throw invalidContract(
         'INVALID_CHECK_DEFINITION',
@@ -454,6 +506,12 @@ function nodeEntrypoints(args: string[]): string[] | undefined {
     entrypoints = nodeTestEntrypoints(args, 1);
   } else if (args[0] === '--experimental-strip-types' && args[1] === '--test') {
     entrypoints = nodeTestEntrypoints(args, 2);
+  } else if (
+    args[0] === '--experimental-strip-types' &&
+    args[1] &&
+    !args[1].startsWith('-')
+  ) {
+    entrypoints = [args[1]];
   } else {
     if (!args[0] || args[0].startsWith('-')) {
       return undefined;
@@ -513,6 +571,17 @@ export function loadChangeContract(
   }
   const config = loadWorkflowConfig(repositoryRoot);
   const checks = loadChecksConfig(repositoryRoot);
+  for (const policy of config.allTasksTerminalChecks ?? []) {
+    for (const checkId of [policy.checkId, ...policy.subsumes]) {
+      if (!Object.hasOwn(checks.checks, checkId)) {
+        throw invalidContract(
+          'UNKNOWN_TERMINAL_CHECK',
+          `All-tasks-terminal check policy references an unregistered check: ${checkId}`,
+          path.join(repositoryRoot, 'workflow/config.json'),
+        );
+      }
+    }
+  }
   const changeDirectory = path.join(
     repositoryRoot,
     config.changeRoot,

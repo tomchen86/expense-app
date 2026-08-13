@@ -23,6 +23,7 @@ import {
   contextualizeOpenTaskError,
   findOpenTaskLifecycleStatus,
   openTask,
+  resolveOpenTaskId,
 } from './open-task.ts';
 import {
   checkOpenSpecPlanningAssets,
@@ -351,28 +352,28 @@ function dispatch(args: string[], cwd: string): CommandResult {
       const changeId = rest[0];
       const taskId = optionValue(rest.slice(1), '--task');
       const mandateTaskId = optionValue(rest.slice(1), '--mandate');
+      const expected = taskId
+        ? [changeId, '--task', taskId, '--mandate', mandateTaskId]
+        : [changeId, '--mandate', mandateTaskId];
       if (
         !changeId ||
-        !taskId ||
         !mandateTaskId ||
-        rest.length !== 5 ||
-        rest[1] !== '--task' ||
-        rest[2] !== taskId ||
-        rest[3] !== '--mandate' ||
-        rest[4] !== mandateTaskId
+        rest.length !== expected.length ||
+        JSON.stringify(rest) !== JSON.stringify(expected)
       ) {
         throw usage(
-          'Usage: pnpm workflow open-task <change-id> --task <task-id> --mandate <mandate-task-id> [--json]',
+          'Usage: pnpm workflow open-task <change-id> [--task <task-id>] --mandate <mandate-task-id> [--json]',
         );
       }
+      const resolvedTaskId = resolveOpenTaskId(cwd, changeId, taskId);
       try {
         return {
           command,
           ok: true,
-          result: openTask(cwd, changeId, taskId, mandateTaskId),
+          result: openTask(cwd, changeId, resolvedTaskId, mandateTaskId),
         };
       } catch (error) {
-        throw contextualizeOpenTaskError(cwd, changeId, taskId, error);
+        throw contextualizeOpenTaskError(cwd, changeId, resolvedTaskId, error);
       }
     }
     case 'amend-plan': {
@@ -1048,6 +1049,7 @@ function dispatch(args: string[], cwd: string): CommandResult {
       return {
         command,
         ok: true,
+        deprecation: workflowCommandGuidance(command).deprecation,
         session: startMandatedSession(cwd, changeId, taskId, mandateTaskId),
       };
     }
@@ -1614,20 +1616,30 @@ function dispatch(args: string[], cwd: string): CommandResult {
     case 'finalize': {
       const sessionId = rest[0];
       const message = optionValue(rest.slice(1), '--message');
+      const fullGate = rest.includes('--full-gate');
+      const expected = [
+        sessionId,
+        '--message',
+        message,
+        ...(fullGate ? ['--full-gate'] : []),
+      ];
       if (
         !sessionId ||
         !message ||
-        rest.length !== 3 ||
-        rest[1] !== '--message'
+        rest.length !== expected.length ||
+        JSON.stringify(rest) !== JSON.stringify(expected)
       ) {
         throw usage(
-          'Usage: pnpm workflow finalize <session-id> --message <subject> [--json]',
+          'Usage: pnpm workflow finalize <session-id> --message <subject> [--full-gate] [--json]',
         );
       }
       return {
         command,
         ok: true,
-        result: finalizeSession(cwd, sessionId, message),
+        result: finalizeSession(cwd, sessionId, message, process.env, {
+          fullGate,
+          onCheckEscalation: announceFinalizeCheckEscalation,
+        }),
       };
     }
     case 'finalize-recover': {
@@ -1800,7 +1812,9 @@ function dispatch(args: string[], cwd: string): CommandResult {
         command,
         ok: true,
         deprecation: workflowCommandGuidance(command).deprecation,
-        result: finalizeTask(cwd, rest[0]),
+        result: finalizeTask(cwd, rest[0], process.env, {
+          onCheckEscalation: announceFinalizeCheckEscalation,
+        }),
       };
     case 'rollback-completion': {
       const sessionId = rest[0];
@@ -2926,6 +2940,18 @@ function printSuccess(result: CommandResult, json: boolean): void {
     return;
   }
   process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+}
+
+function announceFinalizeCheckEscalation(
+  escalation: 'all-tasks-terminal' | 'explicit',
+  requiredChecks: readonly string[],
+): void {
+  if (!requiredChecks.includes('workflow-full-gate')) return;
+  process.stderr.write(
+    escalation === 'all-tasks-terminal'
+      ? 'This finalize completes the change → running full gate.\n'
+      : 'This finalize was explicitly escalated → running full gate.\n',
+  );
 }
 
 function printFailure(

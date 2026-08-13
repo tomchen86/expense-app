@@ -24,7 +24,7 @@ export type WorkflowCommandGuidance = Readonly<{
 export type WorkflowGuidanceCatalog = Readonly<{
   schemaVersion: 1;
   kind: 'workflow-command-guide.v1';
-  catalogVersion: 'managed-task-lifecycle.v1';
+  catalogVersion: 'managed-task-lifecycle.v2';
   authority: 'advisory';
   commands: readonly WorkflowCommandGuidance[];
 }>;
@@ -42,7 +42,9 @@ export type WorkflowNextStepBindings = Readonly<{
 }>;
 
 const FINALIZE_REPLACEMENT =
-  'pnpm workflow finalize <session-id> --message <subject> [--json]';
+  'pnpm workflow finalize <session-id> --message <subject> [--full-gate] [--json]';
+const OPEN_TASK_REPLACEMENT =
+  'pnpm workflow open-task <change-id> [--task <task-id>] --mandate <mandate-task-id> [--json]';
 
 const commands: WorkflowCommandGuidance[] = [
   command({
@@ -56,17 +58,15 @@ const commands: WorkflowCommandGuidance[] = [
   }),
   command({
     id: 'open-task',
-    usage: [
-      'pnpm workflow open-task <change-id> --task <task-id> --mandate <mandate-task-id> [--json]',
-    ],
+    usage: [OPEN_TASK_REPLACEMENT],
     status: 'preferred',
     purpose:
-      'Atomically commit the owned planning draft and open its exact task session.',
+      'Open the selected or next incomplete task, committing an owned draft only when required.',
     preconditions: [
-      'The planning draft, task mandate, branch, and repository identity are current.',
+      'The task mandate, branch, and either owned draft or replayable planning generation are current.',
     ],
     consequences: [
-      'Creates the managed planning transition and activates its exact task session.',
+      'Selects the planning-state transition and activates one exact task session.',
     ],
     successors: ['status', 'check', 'finalize'],
   }),
@@ -75,13 +75,20 @@ const commands: WorkflowCommandGuidance[] = [
     usage: [
       'pnpm workflow start <change-id> --task <task-id> --mandate <mandate-task-id> [--json]',
     ],
-    status: 'compatible',
-    purpose: 'Open an authorized task session for an already committed plan.',
+    status: 'deprecated',
+    purpose: 'Compatibility alias for opening an already committed plan.',
     preconditions: [
       'The exact planning transition is committed and the mandate is active.',
     ],
     consequences: ['Activates one exact task session and its lifecycle lock.'],
     successors: ['status', 'check', 'finalize'],
+    deprecation: {
+      phase: 1,
+      replacementCommandId: 'open-task',
+      replacement: OPEN_TASK_REPLACEMENT,
+      reason:
+        'open-task selects the correct planning state; start remains a compatibility alias.',
+    },
   }),
   command({
     id: 'revise-task',
@@ -205,7 +212,7 @@ const commands: WorkflowCommandGuidance[] = [
       'The session, strategy evidence, reconciliation, and TaskDiff review gate are current.',
     ],
     consequences: [
-      'Runs the durable projected-finalize transaction and commits its exact checked tree.',
+      'Runs targeted task checks; when the change closes (or escalation is explicit), terminal policy replaces only declared covered checks and commits the exact checked tree.',
     ],
     successors: ['status'],
   }),
@@ -293,7 +300,7 @@ export const WORKFLOW_GUIDANCE_CATALOG: WorkflowGuidanceCatalog = Object.freeze(
   {
     schemaVersion: 1,
     kind: 'workflow-command-guide.v1',
-    catalogVersion: 'managed-task-lifecycle.v1',
+    catalogVersion: 'managed-task-lifecycle.v2',
     authority: 'advisory',
     commands: Object.freeze(commands),
   },

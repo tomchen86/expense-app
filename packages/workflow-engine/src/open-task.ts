@@ -4,7 +4,8 @@ import path from 'node:path';
 
 import { canonicalJson } from './canonical-json.ts';
 import { readFileAtCommit } from './ci-git.ts';
-import { loadWorkflowConfig } from './contracts.ts';
+import { loadChangeContract, loadWorkflowConfig } from './contracts.ts';
+import { validateCiPlanningCommit } from './ci-planning.ts';
 import { engineProjectionPathsForTransition } from './engine-projection-registry.ts';
 import { ExitCode, WorkflowError, workflowError } from './errors.ts';
 import { ensurePlainDirectory } from './filesystem-safety.ts';
@@ -17,6 +18,7 @@ import {
 } from './git-transitions.ts';
 import { discoverRepository, runGit } from './git.ts';
 import { validateHandoffForChange } from './handoff.ts';
+import { parseManagedTrailers } from './managed-trailers.ts';
 import {
   refreshPlanningDocuments,
   rollbackGeneratedDocuments,
@@ -32,7 +34,10 @@ import {
   withOpenTaskPlanningAuthority,
 } from './planning-lock.ts';
 import { readPlanningTransitionReport } from './planning-report.ts';
-import { inspectPlanningDraftWorkspace } from './planning-workspace.ts';
+import {
+  inspectPlanningDraftWorkspace,
+  readPlanningDraftWorkspace,
+} from './planning-workspace.ts';
 import {
   assertOwnedLock,
   createSessionId,
@@ -41,7 +46,10 @@ import {
   withRepositoryLifecycleOperation,
   type WorkflowSession,
 } from './session-store.ts';
-import { startMandatedSessionUnderLifecycleLock } from './session.ts';
+import {
+  startMandatedSession,
+  startMandatedSessionUnderLifecycleLock,
+} from './session.ts';
 import {
   assertActiveTaskMandateBindingUnderLifecycleLock,
   authorizeTaskMandateOperation,
@@ -138,12 +146,12 @@ export type OpenTaskOptions = Readonly<{
 export function openTask(
   cwd: string,
   requestedChangeId: string,
-  requestedTaskId: string,
+  requestedTaskId: string | undefined,
   requestedMandateTaskId: string,
   options: OpenTaskOptions = {},
 ): OpenTaskResult {
   const changeId = assertChangeId(requestedChangeId);
-  const taskId = assertTaskId(requestedTaskId);
+  const taskId = resolveOpenTaskId(cwd, changeId, requestedTaskId);
   const mandateTaskId = assertMandateTaskId(requestedMandateTaskId);
   const initialRepository = discoverRepository(cwd);
   const config = loadWorkflowConfig(initialRepository.repositoryRoot);
@@ -156,6 +164,28 @@ export function openTask(
     changeId,
     taskId,
   );
+  const planningWorkspace = readPlanningDraftWorkspace(cwd, changeId);
+  if (
+    observedBeforeAuthorization === null &&
+    (planningWorkspace === null ||
+      planningWorkspace.baseCommit !== initialRepository.head)
+  ) {
+    const planningCommit = assertCommittedPlanningGeneration(
+      initialRepository.repositoryRoot,
+      config.changeRoot,
+      changeId,
+    );
+    return existingPlanResult(
+      startMandatedSession(
+        cwd,
+        changeId,
+        taskId,
+        mandateTaskId,
+        options.mandate,
+      ),
+      planningCommit,
+    );
+  }
   const authorization =
     observedBeforeAuthorization === null
       ? authorizeTaskMandateOperation(
@@ -309,6 +339,99 @@ export function readOpenTaskJournal(
     return null;
   }
   return parseJournal(readPrivateCanonicalFile(filePath));
+}
+
+export function resolveOpenTaskId(
+  cwd: string,
+  requestedChangeId: string,
+  requestedTaskId?: string,
+): string {
+  const changeId = assertChangeId(requestedChangeId);
+  const repository = discoverRepository(cwd);
+  const tasks = loadChangeContract(repository.repositoryRoot, changeId).tasks;
+  const task =
+    requestedTaskId === undefined
+      ? tasks.find((candidate) => !candidate.completed)
+      : tasks.find(
+          (candidate) => candidate.id === assertTaskId(requestedTaskId),
+        );
+  if (!task) {
+    throw workflowError(
+      requestedTaskId === undefined ? 'NO_ELIGIBLE_TASK' : 'UNKNOWN_TASK',
+      requestedTaskId === undefined
+        ? `Change ${changeId} has no incomplete task to open.`
+        : `Task ${requestedTaskId} does not exist in change ${changeId}.`,
+      ExitCode.guard,
+    );
+  }
+  if (task.completed) {
+    throw workflowError(
+      'TASK_ALREADY_COMPLETED',
+      `Task ${task.id} is already checked in tasks.md.`,
+      ExitCode.guard,
+      { recovery: 'Select the next incomplete task.' },
+    );
+  }
+  return task.id;
+}
+
+function assertCommittedPlanningGeneration(
+  repositoryRoot: string,
+  changeRoot: string,
+  changeId: string,
+): string {
+  const values = runGit(repositoryRoot, [
+    'log',
+    '--first-parent',
+    'HEAD',
+    '--format=%H%x00%B%x00',
+  ]).split('\0');
+  for (let index = 0; index + 1 < values.length; index += 2) {
+    const commitHash = values[index]!.trimStart();
+    if (!COMMIT_OID.test(commitHash)) continue;
+    const trailers = parseManagedTrailers(values[index + 1]!);
+    if (
+      (trailers?.kind === 'plan' || trailers?.kind === 'amend-plan') &&
+      trailers.changeId === changeId
+    ) {
+      validateCiPlanningCommit(
+        repositoryRoot,
+        commitHash,
+        changeId,
+        changeRoot,
+      );
+      return commitHash;
+    }
+  }
+  throw workflowError(
+    'OPEN_TASK_PLANNING_GENERATION_REQUIRED',
+    `Change ${changeId} has neither an owned planning draft nor a replayable planning generation.`,
+    ExitCode.guard,
+  );
+}
+
+function existingPlanResult(
+  session: WorkflowSession,
+  planningCommit: string,
+): OpenTaskResult {
+  if (!session.mandateBinding) {
+    throw openTaskUnsafe(
+      'Committed-plan open-task did not preserve its mandate binding.',
+    );
+  }
+  return Object.freeze({
+    changeId: session.changeId,
+    taskId: session.taskId,
+    mandateTaskId: session.mandateBinding.mandateTaskId,
+    sessionId: session.sessionId,
+    worktree: session.repositoryRoot,
+    branch: session.branch,
+    planningCommit,
+    baselineTree: session.baseline.tree,
+    allowedPaths: Object.freeze([...session.allowedPaths]),
+    requiredChecks: Object.freeze([...session.requiredChecks]),
+    recovered: false,
+  });
 }
 
 export function findOpenTaskLifecycleStatus(

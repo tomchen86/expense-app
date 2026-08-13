@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -25,6 +25,8 @@ import {
   writeImmutableReport,
   type WorkflowReport,
 } from '../src/report-store.ts';
+import { readFinalizeTransaction } from '../src/finalize-transaction.ts';
+import { resolveFinalizeCheckPolicy } from '../src/finalize-check-policy.ts';
 import { writeJsonAtomic } from '../src/session-store.ts';
 import { checkSession, getSession, startSession } from '../src/session.ts';
 import {
@@ -34,6 +36,32 @@ import {
   isWorkflowError,
   runtimeRoot,
 } from './fixture.ts';
+
+test('explicit full-gate escalation substitutes only reviewed covered checks and does not impersonate terminal state', () => {
+  const tasks = [
+    { id: '1.1', completed: true, title: 'First' },
+    { id: '1.2', completed: false, title: 'Second' },
+  ];
+  assert.deepEqual(
+    resolveFinalizeCheckPolicy(
+      tasks,
+      ['scoped', 'workflow-tests'],
+      {
+        allTasksTerminalChecks: [
+          {
+            checkId: 'workflow-full-gate',
+            subsumes: ['workflow-tests'],
+          },
+        ],
+      },
+      true,
+    ),
+    {
+      requiredChecks: ['scoped', 'workflow-full-gate'],
+      checkEscalation: 'explicit',
+    },
+  );
+});
 
 test(
   'task projection preserves existing extended attributes on macOS',
@@ -306,6 +334,224 @@ test('projected single-pass finalize checks and stages one exact final tree', ()
 
     commitSession(repository, session.sessionId, 'Complete once');
     assert.equal(fs.readFileSync(counterPath, 'utf8'), '1');
+  } finally {
+    fs.rmSync(repository, { recursive: true, force: true });
+    fs.rmSync(outputDirectory, { recursive: true, force: true });
+  }
+});
+
+test('finalize adds terminal policy checks only when its projection closes the task set', () => {
+  const repository = createFixtureRepository();
+  const outputDirectory = fs.mkdtempSync(
+    path.join(os.tmpdir(), 'terminal-finalize-policy-'),
+  );
+  const scopedCounter = path.join(outputDirectory, 'scoped-count');
+  const terminalCounter = path.join(outputDirectory, 'terminal-count');
+  try {
+    const incrementScript = path.join(repository, 'scripts/increment.mjs');
+    fs.writeFileSync(
+      incrementScript,
+      [
+        "import fs from 'node:fs';",
+        'const target = process.argv[2];',
+        "const count = fs.existsSync(target) ? Number(fs.readFileSync(target, 'utf8')) : 0;",
+        'fs.writeFileSync(target, String(count + 1));',
+        '',
+      ].join('\n'),
+    );
+    const changeDirectory = path.join(
+      repository,
+      'openspec/changes/demo-change',
+    );
+    fs.writeFileSync(
+      path.join(changeDirectory, 'tasks.md'),
+      '# Tasks\n\n- [ ] 1.1 First task\n- [ ] 1.2 Second task\n',
+    );
+    const guardPath = path.join(changeDirectory, 'guard.json');
+    const guard = JSON.parse(fs.readFileSync(guardPath, 'utf8')) as {
+      tasks: Record<string, unknown>;
+    };
+    guard.tasks = {
+      '1.1': {
+        allowedPaths: ['src/**'],
+        requiredChecks: ['workflow-tests'],
+      },
+      '1.2': {
+        allowedPaths: ['src/**'],
+        requiredChecks: ['workflow-tests'],
+      },
+    };
+    fs.writeFileSync(guardPath, `${JSON.stringify(guard, null, 2)}\n`);
+    fs.writeFileSync(
+      path.join(repository, 'workflow/checks.json'),
+      `${JSON.stringify(
+        {
+          schemaVersion: 1,
+          checks: {
+            'workflow-tests': {
+              command: ['node', 'scripts/increment.mjs', scopedCounter],
+              destructiveDatabase: false,
+            },
+            'workflow-full-gate': {
+              command: ['node', 'scripts/increment.mjs', terminalCounter],
+              destructiveDatabase: false,
+              liveStderr: true,
+            },
+          },
+        },
+        null,
+        2,
+      )}\n`,
+    );
+    const configPath = path.join(repository, 'workflow/config.json');
+    const config = JSON.parse(fs.readFileSync(configPath, 'utf8')) as Record<
+      string,
+      unknown
+    >;
+    config.allTasksTerminalChecks = [
+      {
+        checkId: 'workflow-full-gate',
+        subsumes: ['workflow-tests'],
+      },
+    ];
+    fs.writeFileSync(configPath, `${JSON.stringify(config, null, 2)}\n`);
+    git(repository, ['add', '.']);
+    git(repository, ['commit', '-m', 'Configure terminal finalize policy']);
+    git(repository, ['checkout', '-b', 'work/demo-change']);
+
+    const first = startSession(repository, 'demo-change', '1.1');
+    fs.writeFileSync(path.join(repository, 'src/feature.ts'), 'export {}\n');
+    const firstFinalized = finalizeTask(repository, first.sessionId);
+    assert.equal(fs.readFileSync(scopedCounter, 'utf8'), '1');
+    assert.equal(fs.existsSync(terminalCounter), false);
+    const firstTransaction = readFinalizeTransaction(
+      runtimeRoot(repository),
+      first.sessionId,
+    );
+    assert.deepEqual(firstTransaction?.requiredChecks, ['workflow-tests']);
+    assert.equal(firstTransaction?.checkEscalation, null);
+    commitSession(repository, first.sessionId, 'Complete first task');
+
+    const second = startSession(repository, 'demo-change', '1.2');
+    fs.writeFileSync(
+      path.join(repository, 'src/feature.ts'),
+      'export const complete = true;\n',
+    );
+    const secondRun = spawnSync(
+      process.execPath,
+      [
+        '--experimental-strip-types',
+        path.resolve(import.meta.dirname, '../src/cli.ts'),
+        'finalize',
+        second.sessionId,
+        '--message',
+        'Complete second task',
+        '--json',
+      ],
+      { cwd: repository, encoding: 'utf8' },
+    );
+    assert.equal(secondRun.status, 0, secondRun.stderr);
+    assert.match(
+      secondRun.stderr,
+      /This finalize completes the change → running full gate\./,
+    );
+    const secondFinalized = JSON.parse(secondRun.stdout).result as {
+      checkReportId: string;
+      commitHash: string;
+      tree: string;
+    };
+    assert.equal(
+      git(repository, ['rev-parse', 'HEAD']).trim(),
+      secondFinalized.commitHash,
+    );
+    assert.equal(fs.readFileSync(scopedCounter, 'utf8'), '1');
+    assert.equal(fs.readFileSync(terminalCounter, 'utf8'), '1');
+    const secondTransaction = readFinalizeTransaction(
+      runtimeRoot(repository),
+      second.sessionId,
+    );
+    assert.deepEqual(secondTransaction?.requiredChecks, ['workflow-full-gate']);
+    assert.equal(secondTransaction?.checkEscalation, 'all-tasks-terminal');
+    const secondReport = readImmutableReport(
+      path.join(runtimeRoot(repository), 'reports'),
+      second.sessionId,
+      secondFinalized.checkReportId,
+    );
+    assert.deepEqual(secondReport.requiredChecks, ['workflow-full-gate']);
+    assert.equal(secondReport.checkEscalation, 'all-tasks-terminal');
+    assert.notEqual(firstFinalized.tree, secondFinalized.tree);
+  } finally {
+    fs.rmSync(repository, { recursive: true, force: true });
+    fs.rmSync(outputDirectory, { recursive: true, force: true });
+  }
+});
+
+test('compatible finish cannot bypass checks required by the terminal transition', () => {
+  const repository = createFixtureRepository();
+  const outputDirectory = fs.mkdtempSync(
+    path.join(os.tmpdir(), 'terminal-compatible-finish-'),
+  );
+  const scopedCounter = path.join(outputDirectory, 'scoped-count');
+  const terminalCounter = path.join(outputDirectory, 'terminal-count');
+  try {
+    fs.writeFileSync(
+      path.join(repository, 'scripts/increment.mjs'),
+      [
+        "import fs from 'node:fs';",
+        'const target = process.argv[2];',
+        "const count = fs.existsSync(target) ? Number(fs.readFileSync(target, 'utf8')) : 0;",
+        'fs.writeFileSync(target, String(count + 1));',
+        '',
+      ].join('\n'),
+    );
+    configureChecks(
+      repository,
+      {
+        'workflow-tests': {
+          command: ['node', 'scripts/increment.mjs', scopedCounter],
+          destructiveDatabase: false,
+        },
+        'workflow-full-gate': {
+          command: ['node', 'scripts/increment.mjs', terminalCounter],
+          destructiveDatabase: false,
+          liveStderr: true,
+        },
+      },
+      ['workflow-tests'],
+    );
+    const configPath = path.join(repository, 'workflow/config.json');
+    const config = JSON.parse(fs.readFileSync(configPath, 'utf8')) as Record<
+      string,
+      unknown
+    >;
+    config.allTasksTerminalChecks = [
+      {
+        checkId: 'workflow-full-gate',
+        subsumes: ['workflow-tests'],
+      },
+    ];
+    fs.writeFileSync(configPath, `${JSON.stringify(config, null, 2)}\n`);
+    git(repository, ['add', 'workflow/config.json']);
+    git(repository, ['commit', '-m', 'Require terminal full gate']);
+    git(repository, ['checkout', '-b', 'work/demo-change']);
+    const session = startSession(repository, 'demo-change', '1.1');
+    fs.writeFileSync(path.join(repository, 'src/feature.ts'), 'export {}\n');
+
+    checkSession(repository, session.sessionId);
+    completeTask(repository, session.sessionId);
+    const finished = finishSession(repository, session.sessionId);
+    assert.equal(fs.readFileSync(scopedCounter, 'utf8'), '1');
+    assert.equal(fs.readFileSync(terminalCounter, 'utf8'), '1');
+    const finishReport = readImmutableReport(
+      path.join(runtimeRoot(repository), 'reports'),
+      session.sessionId,
+      finished.reportId,
+    );
+    assert.deepEqual(finishReport.requiredChecks, ['workflow-full-gate']);
+    assert.equal(finishReport.checkEscalation, 'all-tasks-terminal');
+    assert.doesNotThrow(() =>
+      commitSession(repository, session.sessionId, 'Complete with full gate'),
+    );
   } finally {
     fs.rmSync(repository, { recursive: true, force: true });
     fs.rmSync(outputDirectory, { recursive: true, force: true });

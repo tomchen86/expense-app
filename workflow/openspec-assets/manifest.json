@@ -38,12 +38,12 @@
     ]
   },
   "overlay": {
-    "version": 3,
+    "version": 4,
     "policyDigest": "4b88985a14fe25673a91422282d3bd29cee060f13ffad7dffb8834bf80c35e99"
   },
   "formatter": {
     "runner": "node-package-bin:.:prettier/prettier",
-    "configurationDigest": "93c6449f71a776f506d5e20e4403d953fbab7e3fd9746c64db9723dd7457ff53",
+    "configurationDigest": "8b56b3f0c1e4d2f895fdaf19a406d1d292b665bf9cfc7cc90aa91eeb9f2d7c58",
     "assetParser": "markdown",
     "manifestParser": "json"
   },
@@ -56,8 +56,8 @@
       "destinationPath": ".codex/skills/openspec-explore/SKILL.md",
       "mirrorOf": null,
       "sourceDigest": "79249f798ad0d69bf95f08f3c7a29d44d982e4c1645f1a12a21dfcd488f4ba0d",
-      "overlayDigest": "dcbf3544e0c3ee40557660c7fa5e6bed81d74329879c98057a3cb38555e12e41",
-      "finalDigest": "94fc5214c1eb060043a528742658ffcb6f77464f7e6664f58f1c1a3ac1a2df24"
+      "overlayDigest": "d47ff82e050d0998cf831b7755edca785d61fd2bd8a46605b270089ed1378b5d",
+      "finalDigest": "ffbe68f13c224f5f752ccdd1619eea0b4c231e7d3e567788240ce74cbafc7474"
     },
     {
       "target": "codex",
@@ -67,8 +67,8 @@
       "destinationPath": ".codex/skills/openspec-propose/SKILL.md",
       "mirrorOf": null,
       "sourceDigest": "a666b2381a7d5e982d8e32183484020f518da2b795c0f387c5ff4b3cb47be0fd",
-      "overlayDigest": "12e34759a195cf49734f89e1c651722876cbed313ad6e4c4e92f05821bfc1e5e",
-      "finalDigest": "a0b50c3ba67d0fc539122f8fe21ea65b632c38865a3a329ff7aed0d5c9ee2794"
+      "overlayDigest": "363a68c86a79d6753ac7ab02584819aed395d77746162ed09ac8182b4e57e61e",
+      "finalDigest": "2eeba23d5a7264d4f9858151aafbff4cf7657a890d943caf2ce17c29c8507205"
     },
     {
       "target": "claude",
@@ -78,8 +78,8 @@
       "destinationPath": ".claude/skills/openspec-explore/SKILL.md",
       "mirrorOf": null,
       "sourceDigest": "79249f798ad0d69bf95f08f3c7a29d44d982e4c1645f1a12a21dfcd488f4ba0d",
-      "overlayDigest": "dcbf3544e0c3ee40557660c7fa5e6bed81d74329879c98057a3cb38555e12e41",
-      "finalDigest": "94fc5214c1eb060043a528742658ffcb6f77464f7e6664f58f1c1a3ac1a2df24"
+      "overlayDigest": "d47ff82e050d0998cf831b7755edca785d61fd2bd8a46605b270089ed1378b5d",
+      "finalDigest": "ffbe68f13c224f5f752ccdd1619eea0b4c231e7d3e567788240ce74cbafc7474"
     },
     {
       "target": "claude",
@@ -89,8 +89,8 @@
       "destinationPath": ".claude/skills/openspec-propose/SKILL.md",
       "mirrorOf": null,
       "sourceDigest": "a666b2381a7d5e982d8e32183484020f518da2b795c0f387c5ff4b3cb47be0fd",
-      "overlayDigest": "12e34759a195cf49734f89e1c651722876cbed313ad6e4c4e92f05821bfc1e5e",
-      "finalDigest": "a0b50c3ba67d0fc539122f8fe21ea65b632c38865a3a329ff7aed0d5c9ee2794"
+      "overlayDigest": "363a68c86a79d6753ac7ab02584819aed395d77746162ed09ac8182b4e57e61e",
+      "finalDigest": "2eeba23d5a7264d4f9858151aafbff4cf7657a890d943caf2ce17c29c8507205"
     },
     {
       "target": "agents",
@@ -100,8 +100,8 @@
       "destinationPath": ".agents/skills/openspec-explore/SKILL.md",
       "mirrorOf": ".codex/skills/openspec-explore/SKILL.md",
       "sourceDigest": "79249f798ad0d69bf95f08f3c7a29d44d982e4c1645f1a12a21dfcd488f4ba0d",
-      "overlayDigest": "dcbf3544e0c3ee40557660c7fa5e6bed81d74329879c98057a3cb38555e12e41",
-      "finalDigest": "94fc5214c1eb060043a528742658ffcb6f77464f7e6664f58f1c1a3ac1a2df24"
+      "overlayDigest": "d47ff82e050d0998cf831b7755edca785d61fd2bd8a46605b270089ed1378b5d",
+      "finalDigest": "ffbe68f13c224f5f752ccdd1619eea0b4c231e7d3e567788240ce74cbafc7474"
     },
     {
       "target": "agents",
@@ -111,8 +111,8 @@
       "destinationPath": ".agents/skills/openspec-propose/SKILL.md",
       "mirrorOf": ".codex/skills/openspec-propose/SKILL.md",
       "sourceDigest": "a666b2381a7d5e982d8e32183484020f518da2b795c0f387c5ff4b3cb47be0fd",
-      "overlayDigest": "12e34759a195cf49734f89e1c651722876cbed313ad6e4c4e92f05821bfc1e5e",
-      "finalDigest": "a0b50c3ba67d0fc539122f8fe21ea65b632c38865a3a329ff7aed0d5c9ee2794"
+      "overlayDigest": "363a68c86a79d6753ac7ab02584819aed395d77746162ed09ac8182b4e57e61e",
+      "finalDigest": "2eeba23d5a7264d4f9858151aafbff4cf7657a890d943caf2ce17c29c8507205"
     },
     {
       "target": "codex",
@@ -122,8 +122,8 @@
       "destinationPath": "workflow/openspec-assets/prompts/opsx-explore.md",
       "mirrorOf": null,
       "sourceDigest": "5157eb0a41890551bcc4089159d645172de2a030def8ebb6f2481c3f46ed3d42",
-      "overlayDigest": "a4c623e0971635a9d74a520bb834dc24758510a99a171d09ce8099f4bb99f899",
-      "finalDigest": "2ba254e602fd58f3a903edb7688008996b80086a8ccb5fb0754edd5539e81988"
+      "overlayDigest": "3364572c22b65dcef6012fb4de7bb07c47f5443348138ef5f79fb3ac0a070ff8",
+      "finalDigest": "cac11a2351fe3d30284e2d274342e0158df94f88630a46d46d2618248755b1d0"
     },
     {
       "target": "codex",
@@ -133,8 +133,8 @@
       "destinationPath": "workflow/openspec-assets/prompts/opsx-propose.md",
       "mirrorOf": null,
       "sourceDigest": "887ef29166ad98e5fa45df6e3da3265f8e343389c432c3bd951862ffa7e9dbff",
-      "overlayDigest": "0dc1f7417ff93c1ba3f0e6bc2a87bbae2cb52ef43a33526e8e6c3d650d75f3fa",
-      "finalDigest": "0dc1f7417ff93c1ba3f0e6bc2a87bbae2cb52ef43a33526e8e6c3d650d75f3fa"
+      "overlayDigest": "16ee86b9e8ccf39c3ad58ad81bf0b8a124a12fd92e0093a51a414407f4a41ca9",
+      "finalDigest": "16ee86b9e8ccf39c3ad58ad81bf0b8a124a12fd92e0093a51a414407f4a41ca9"
     }
   ]
 }

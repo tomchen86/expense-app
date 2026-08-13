@@ -177,6 +177,24 @@ test('format verification delegates to the registered canonical authority', () =
   ];
   assert.equal(registeredFormat?.destructiveDatabase, false);
   assert.deepEqual(registeredFormat?.command, assetSeparatedFormatCommand);
+  const config = JSON.parse(
+    fs.readFileSync(path.join(repositoryRoot, 'workflow/config.json'), 'utf8'),
+  );
+  assert.deepEqual(config.allTasksTerminalChecks, [
+    {
+      checkId: 'workflow-full-gate',
+      subsumes: ['workflow-tests'],
+    },
+  ]);
+  assert.deepEqual(checks.checks['workflow-full-gate'], {
+    command: [
+      'node',
+      '--experimental-strip-types',
+      'scripts/workflow-full-gate.ts',
+    ],
+    destructiveDatabase: false,
+    liveStderr: true,
+  });
 });
 
 test('repository exposes only reviewed OpenSpec planning skills', () => {
@@ -242,6 +260,8 @@ test('agent guide documents the complete public workflow surface and source-size
     'pnpm workflow openspec-assets generate',
     'pnpm workflow openspec-assets check',
     'pnpm workflow openspec-assets install-prompts',
+    'pnpm workflow open-task',
+    'pnpm workflow finalize',
     'pnpm workflow start',
     'pnpm workflow status',
     'pnpm workflow check',
@@ -288,7 +308,7 @@ test('agent guide documents the complete public workflow surface and source-size
   assert.doesNotMatch(agents, /keep files under 500 LOC/i);
 });
 
-test('public guidance exposes the investigation-first and projected single-pass boundaries', () => {
+test('public guidance exposes the investigation-first and repeated managed-task lifecycle', () => {
   const repositoryRoot = path.resolve(import.meta.dirname, '../../..');
   const agents = fs.readFileSync(
     path.join(repositoryRoot, 'AGENTS.md'),
@@ -305,23 +325,49 @@ test('public guidance exposes the investigation-first and projected single-pass 
 
   for (const surface of [agents, workflow]) {
     assert.match(surface, /pnpm workflow propose/);
+    assert.match(surface, /pnpm workflow open-task/);
+    assert.match(surface, /pnpm workflow finalize <session-id>/);
     assert.match(surface, /pnpm workflow finalize-task/);
   }
-  assert.match(workflow, /implementation \+ checkbox \+ handoff/i);
+  assert.match(workflow, /propose → \[ open-task → finalize \]×N → archive/);
   assert.match(
     workflow,
     /(?:checked\s+tree[\s\S]{0,160}staged\s+tree|stages only[\s\S]{0,160}checked\s+tree)/i,
   );
-  assert.match(workflow, /caught ordinary failure/i);
+  assert.match(workflow, /durable transaction[\s\S]{0,120}replay-safe/i);
   assert.match(
     workflow,
-    /legacy[\s\S]{0,240}check[\s\S]{0,120}complete-task[\s\S]{0,120}finish/i,
+    /intermediate finalize[\s\S]{0,120}targeted[\s\S]{0,120}requiredChecks/i,
   );
-  assert.match(workflow, /commit[\s\S]{0,120}separate/i);
-  assert.match(workflow, /must not rerun required checks/i);
-  assert.match(roadmap, /T2\.3[\s\S]{0,160}exact-diff AI review/i);
-  assert.match(roadmap, /T2\.3[\s\S]{0,240}crash-safe[\s\S]{0,80}finalize/i);
-  assert.match(roadmap, /T2\.3[\s\S]{0,240}commit transaction/i);
+  assert.match(workflow, /all-terminal[\s\S]{0,200}allTasksTerminalChecks/i);
+  assert.match(
+    workflow,
+    /workflow-full-gate[\s\S]{0,120}covers `workflow-tests`[\s\S]{0,120}do not run twice/i,
+  );
+  assert.match(workflow, /no[\s\S]{0,80}(?:defer|skip) flag/i);
+  assert.match(
+    workflow,
+    /This finalize completes the change → running full gate\./,
+  );
+  for (const hint of [
+    'Monitor: pnpm workflow:test:status',
+    'Machine status: pnpm workflow:test:status --json',
+    'Full log: <exact stdout log path>',
+    'Failures: pnpm workflow:test:failures',
+  ]) {
+    assert.match(
+      workflow,
+      new RegExp(hint.replaceAll(/[.*+?^${}()|[\]\\]/g, '\\$&')),
+    );
+  }
+  assert.match(
+    workflow,
+    /Compatibility lifecycle[\s\S]{0,240}check[\s\S]{0,120}complete-task[\s\S]{0,120}finish/i,
+  );
+  assert.match(
+    workflow,
+    /longer route[\s\S]{0,120}cannot bypass the full gate/i,
+  );
   assert.match(roadmap, /T2\.4[\s\S]{0,120}exact-byte[\s\S]{0,80}closure/i);
 });
 
@@ -485,7 +531,6 @@ test('public guidance preserves the assurance registry and keeps exemptions dist
     /exact-byte closure[\s\S]{0,120}deterministic[\s\S]{0,80}mechanical-transform[\s\S]{0,160}does not claim[\s\S]{0,80}graph completeness[\s\S]{0,80}semantic equivalence/i,
     /degraded[\s\S]{0,160}does not recreate[\s\S]{0,80}independence/i,
     /availability[\s\S]{0,160}empirical[\s\S]{0,120}not structural/i,
-    /projected single-pass[\s\S]{0,500}(?:not crash-safe|not fully atomic)/i,
   ]) {
     assert.match(workflow, boundary);
   }

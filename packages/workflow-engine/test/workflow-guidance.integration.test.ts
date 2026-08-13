@@ -43,11 +43,25 @@ test('workflow guide exposes one versioned advisory catalog with finalize as the
   assert.equal(WORKFLOW_GUIDANCE_CATALOG.schemaVersion, 1);
   assert.equal(WORKFLOW_GUIDANCE_CATALOG.kind, 'workflow-command-guide.v1');
   assert.equal(workflowCommandGuidance('finalize').status, 'preferred');
+  assert.deepEqual(workflowCommandGuidance('finalize').usage, [
+    'pnpm workflow finalize <session-id> --message <subject> [--full-gate] [--json]',
+  ]);
+  assert.deepEqual(workflowCommandGuidance('open-task').usage, [
+    'pnpm workflow open-task <change-id> [--task <task-id>] --mandate <mandate-task-id> [--json]',
+  ]);
+  assert.deepEqual(workflowCommandGuidance('start').deprecation, {
+    phase: 1,
+    replacementCommandId: 'open-task',
+    replacement:
+      'pnpm workflow open-task <change-id> [--task <task-id>] --mandate <mandate-task-id> [--json]',
+    reason:
+      'open-task selects the correct planning state; start remains a compatibility alias.',
+  });
   assert.deepEqual(workflowCommandGuidance('finalize-task').deprecation, {
     phase: 1,
     replacementCommandId: 'finalize',
     replacement:
-      'pnpm workflow finalize <session-id> --message <subject> [--json]',
+      'pnpm workflow finalize <session-id> --message <subject> [--full-gate] [--json]',
     reason:
       'New callers use one durable finalization and commit transaction; finalize-task remains a compatibility surface.',
   });

@@ -11,7 +11,7 @@ import {
 } from './documentation-closure.ts';
 import { documentationClosureActivationAtCommit } from './documentation-closure-activation.ts';
 import { readFileAtCommit } from './ci-git.ts';
-import { loadWorkflowConfig } from './contracts.ts';
+import { loadWorkflowConfig, parseTasks } from './contracts.ts';
 import {
   finalizeCommittedSession,
   resumePendingCommit,
@@ -29,6 +29,7 @@ import {
   readFinalizeCancellation,
   type FinalizeCancellation,
 } from './finalize-cancellation.ts';
+import { resolveFinalizeCheckPolicy } from './finalize-check-policy.ts';
 import {
   commitFacts,
   createManagedCommitObject,
@@ -57,6 +58,8 @@ import {
   finalizeTaskUnlocked,
   PROJECTED_SINGLE_PASS_ASSURANCE,
   restoreFinalizeTransactionProjection,
+  transactionReportCheckEscalation,
+  transactionRequiredChecks,
   type FinalizeTaskOptions,
   type FinalizeTaskResult,
 } from './projected-finalization.ts';
@@ -138,6 +141,8 @@ export type FinalizeSessionResult = Omit<FinalizeTaskResult, 'session'> & {
 };
 
 export type FinalizeSessionOptions = Readonly<{
+  fullGate?: boolean;
+  onCheckEscalation?: FinalizeTaskOptions['onCheckEscalation'];
   testCrashAfter?: FinalizeTaskOptions['testCrashAfter'] | 'finalized';
 }>;
 
@@ -364,6 +369,10 @@ export function finalizeSession(
       finalized = replayCompletedFinalize(cwd, observed);
     } else {
       finalized = finalizeTaskUnlocked(cwd, requestedSessionId, environment, {
+        ...(options.fullGate === true ? { fullGate: true } : {}),
+        ...(options.onCheckEscalation
+          ? { onCheckEscalation: options.onCheckEscalation }
+          : {}),
         ...(options.testCrashAfter && options.testCrashAfter !== 'finalized'
           ? { testCrashAfter: options.testCrashAfter }
           : {}),
@@ -881,10 +890,15 @@ function finishSessionUnlocked(
     authorizedTransitionPaths: transitionPaths,
   });
 
+  const checkPolicy = resolveFinalizeCheckPolicy(
+    parseTasks(fs.readFileSync(unprojected.tasksPath, 'utf8')),
+    session.requiredChecks,
+    unprojected.contract.config,
+  );
   const verified = executeChecks(
     cwd,
     unprojected,
-    session.requiredChecks,
+    [...checkPolicy.requiredChecks],
     environment,
     completedTaskIds,
     projectionSourceDigest,
@@ -914,11 +928,12 @@ function finishSessionUnlocked(
       branch: session.branch,
       artifactDigests: finished.artifactDigests,
       allowedPaths: session.allowedPaths,
-      requiredChecks: session.requiredChecks,
+      requiredChecks: [...checkPolicy.requiredChecks],
       requiredCheckDigests: digestRequiredCheckDefinitions(
         finished.contract.checks,
-        session.requiredChecks,
+        [...checkPolicy.requiredChecks],
       ),
+      checkEscalation: checkPolicy.checkEscalation,
       ...classifyProjectionPaths(
         finished.changedPaths,
         pathClassification.taskProjectionPaths,
@@ -1025,18 +1040,42 @@ function commitSessionUnlocked(
     inspection,
     initialSession.finishReportId,
   );
+  const finalizeTransaction = readFinalizeTransaction(
+    context.runtime.root,
+    initialSession.sessionId,
+  );
+  const checkPolicy =
+    finalizeTransaction === null
+      ? resolveFinalizeCheckPolicy(
+          parseTasks(fs.readFileSync(inspection.tasksPath, 'utf8')),
+          initialSession.requiredChecks,
+          inspection.contract.config,
+        )
+      : {
+          requiredChecks: transactionRequiredChecks(
+            finalizeTransaction,
+            initialSession,
+          ),
+          checkEscalation:
+            transactionReportCheckEscalation(finalizeTransaction),
+        };
+  const requiredChecks = [...checkPolicy.requiredChecks];
   assertInspectionReport(
     finishReport,
     inspection,
     'finish',
     'FINISH_REPORT_STALE',
+    requiredChecks,
   );
   assertReportChecks(
     finishReport,
     inspection,
-    initialSession.requiredChecks,
+    requiredChecks,
     'FINISH_REPORT_STALE',
   );
+  if (finishReport.checkEscalation !== checkPolicy.checkEscalation) {
+    throw staleReport('FINISH_REPORT_STALE');
+  }
   assertCompletionTaskIds(
     completionReport,
     inspection,
@@ -1292,6 +1331,8 @@ function finalizeResultFromTransaction(
     completionReportId: transaction.completionReportId,
     finishReportId: transaction.finishReportId,
     completedTaskIds: [...transaction.completedTaskIds],
+    requiredChecks: transactionRequiredChecks(transaction, session),
+    checkEscalation: transaction.checkEscalation ?? null,
     stagedPaths: [...transaction.changedPaths],
     tree: transaction.candidateTree,
   };
@@ -1449,6 +1490,8 @@ function assertProjectedFinalizeCandidateChain(
     checkReport.finalizeProfile !== PROJECTED_SINGLE_PASS_ASSURANCE ||
     completionReport.finalizeProfile !== PROJECTED_SINGLE_PASS_ASSURANCE ||
     finishReport.finalizeProfile !== PROJECTED_SINGLE_PASS_ASSURANCE ||
+    checkReport.checkEscalation !== finishReport.checkEscalation ||
+    completionReport.checkEscalation !== finishReport.checkEscalation ||
     reportString(checkReport, 'candidateTree', 'FINISH_REPORT_STALE') !==
       candidateTree ||
     reportString(completionReport, 'candidateTree', 'FINISH_REPORT_STALE') !==
