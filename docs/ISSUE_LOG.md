@@ -1,6 +1,6 @@
 # Issue Log
 
-_Last updated: July 21, 2026_
+_Last updated: August 13, 2026_
 
 ## Purpose
 
@@ -46,10 +46,6 @@ Track bugs, feature proposals, and technical chores without relying on GitHub Is
 | ISS-104 | Category swipe-to-delete shows red background but no "Delete" text | 📋 | Now | — | `apps/mobile/src/components/categories/CategoryListItem.tsx` | Swipeable delete action displays red color but text not visible. Check Reanimated interpolate transform. |
 | ISS-105 | Deleted categories still appear in Add Expense form | 📋 | Now | — | `apps/mobile/src/hooks/useExpenseForm.ts` | Reopened: useExpenseForm reads the category store, but useExpenseModals still builds its selector from DEFAULT_CATEGORIES, so deleted or custom categories can drift. |
 | ISS-106 | Create navigation integration tests using renderRouter | 📋 | Next | — | `docs/features/testing/EXPO_ROUTER_TESTING_ANALYSIS.md` | Add integration tests for: Home→AddExpense flow, expense editing with params, group detail navigation, tab navigation. Use `renderRouter` from expo-router/testing-library. |
-| ISS-107 | Expense category selector bypasses category store | 📋 | Now | [Category management](../openspec/specs/category-management/spec.md) | `apps/mobile/src/hooks/useExpenseModals.ts`, `apps/mobile/src/hooks/useExpenseForm.ts` | Build modal options from current store categories so add/edit flows reflect custom and deleted categories. |
-| ISS-108 | Group balances ignore splitBetween selections | 📋 | Now | [Group collaboration](../openspec/specs/group-collaboration/spec.md) | `apps/mobile/src/utils/groupCalculations.ts`, `apps/mobile/src/hooks/useExpenseForm.ts` | The form stores participant IDs in splitBetween, while balance calculation reads expense.participants and can divide across the wrong members. |
-| ISS-109 | Group mutations do not enforce owner role | 📋 | Now | [Group collaboration](../openspec/specs/group-collaboration/spec.md) | `apps/api/src/services/group.service.ts`, `apps/mobile/app/(tabs)/history.tsx` | Membership roles are stored, but update/delete operations authorize by ledger membership rather than requiring the group owner. |
-| ISS-110 | API can delete default categories | 📋 | Next | [Category management](../openspec/specs/category-management/spec.md) | `apps/api/src/services/category.service.ts` | The API blocks deletion of categories in use but does not reject deletion when isDefault is true; align server protection with the reserved mobile category rule. |
 | ISS-112 | Mobile domain state is not persisted | 📋 | Now | — | `apps/mobile/src/store/composedExpenseStore.ts`, `apps/mobile/src/store/features/userStore.ts` | Zustand stores use subscribeWithSelector without persist middleware or an AsyncStorage adapter, so expenses, groups, categories, and identity reset with process state. |
 | ISS-113 | Mobile can delete categories that are in use | 📋 | Next | [Category management](../openspec/specs/category-management/spec.md) | `apps/mobile/src/hooks/useCategoryManager.ts`, `apps/api/src/services/category.service.ts` | The mobile flow warns and then deletes; the API already rejects CATEGORY_IN_USE. Align local behavior before synchronization. |
 
@@ -73,4 +69,8 @@ Track bugs, feature proposals, and technical chores without relying on GitHub Is
 | ID | Title | Requirement | Completion Notes | Date |
 | --- | --- | --- | --- | --- |
 | ISS-103 | Tab bar navigation wrong order after Expo Router migration | — | Repository audit confirmed the intended tab order in apps/mobile/app/(tabs)/_layout.tsx. | 2026-07-15 |
+| ISS-107 | Expense category selector bypasses category store | [Category management](../openspec/specs/category-management/spec.md) | Expense add/edit category options now derive from the hydrated category store and persist the selected stable category identifier; the focused expense modal and form regression suites pass. | 2026-08-13 |
+| ISS-108 | Group balances ignore splitBetween selections | [Group collaboration](../openspec/specs/group-collaboration/spec.md) | Group balances now derive each allocation from canonical expense shares backed by splitBetween and retain historical allocation participants; the focused group calculation regression suite passes. | 2026-08-13 |
+| ISS-109 | Group mutations do not enforce owner role | [Group collaboration](../openspec/specs/group-collaboration/spec.md) | Group update and delete operations now require an active owner membership and reject ordinary members before mutation; the isolated group authorization regression suite passes. | 2026-08-13 |
+| ISS-110 | API can delete default categories | [Category management](../openspec/specs/category-management/spec.md) | Category deletion now rejects protected defaults with DEFAULT_CATEGORY_PROTECTED before any usage lookup or mutation; the isolated category deletion regression suite passes. | 2026-08-13 |
 | ISS-111 | API authentication accepts fallback JWT secrets | [Identity and access](../openspec/specs/identity-and-access/spec.md) | Fail-closed JWT secret resolution landed via make-api-jwt-fail-closed (PR #78, archived PR #79): startup and token operations require explicit non-forbidden secrets; published development literals rejected. | 2026-07-20 |

@@ -1,6 +1,6 @@
 # Roadmap
 
-_Last verified: July 31, 2026_
+_Last verified: August 14, 2026_
 
 This document owns project priority. Detailed implementation tasks belong only
 in the linked OpenSpec change.
@@ -68,13 +68,10 @@ in the linked OpenSpec change.
 
 1. Remove fallback JWT secrets and make non-test API startup fail closed
    (`ISS-111`).
-2. Make group balances honor `splitBetween` and enforce owner-only group
-   mutations (`ISS-108`, `ISS-109`).
-3. Make expense category selection use live category state (`ISS-105`,
-   `ISS-107`).
-4. Define the mobile/API contract boundary, including identifiers, token
+2. Finish eliminating deleted-category drift in expense selection (`ISS-105`).
+3. Define the mobile/API contract boundary, including identifiers, token
    lifecycle, money units, and response adapters (`ISS-203`, `ISS-204`).
-5. Add explicit mobile persistence; current Zustand domain state is process
+4. Add explicit mobile persistence; current Zustand domain state is process
    memory only (`ISS-112`).
 
 ## Next
@@ -83,8 +80,7 @@ in the linked OpenSpec change.
   of the API's existing query support (`ISS-002`).
 - Define the persistence provider contract before exposing a local/cloud toggle
   (`ISS-201`, then `ISS-001`).
-- Protect default categories on the API and add refresh-token revocation
-  (`ISS-110`, `ISS-206`).
+- Add refresh-token revocation (`ISS-206`).
 - Replace global group-name alerts with inline validation and add router-level
   mobile integration tests (`ISS-101`, `ISS-106`).
 

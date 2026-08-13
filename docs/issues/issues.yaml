@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "lastUpdated": "2026-07-21",
+  "lastUpdated": "2026-08-13",
   "issues": [
     {
       "id": "ISS-001",
@@ -129,7 +129,7 @@
       "id": "ISS-107",
       "category": "bug",
       "title": "Expense category selector bypasses category store",
-      "status": "proposed",
+      "status": "done",
       "priority": "Now",
       "requirement": {
         "label": "Category management",
@@ -139,13 +139,17 @@
         "apps/mobile/src/hooks/useExpenseModals.ts",
         "apps/mobile/src/hooks/useExpenseForm.ts"
       ],
-      "notes": "Build modal options from current store categories so add/edit flows reflect custom and deleted categories."
+      "notes": "Build modal options from current store categories so add/edit flows reflect custom and deleted categories.",
+      "closed": {
+        "date": "2026-08-13",
+        "notes": "Expense add/edit category options now derive from the hydrated category store and persist the selected stable category identifier; the focused expense modal and form regression suites pass."
+      }
     },
     {
       "id": "ISS-108",
       "category": "bug",
       "title": "Group balances ignore splitBetween selections",
-      "status": "proposed",
+      "status": "done",
       "priority": "Now",
       "requirement": {
         "label": "Group collaboration",
@@ -155,13 +159,17 @@
         "apps/mobile/src/utils/groupCalculations.ts",
         "apps/mobile/src/hooks/useExpenseForm.ts"
       ],
-      "notes": "The form stores participant IDs in splitBetween, while balance calculation reads expense.participants and can divide across the wrong members."
+      "notes": "The form stores participant IDs in splitBetween, while balance calculation reads expense.participants and can divide across the wrong members.",
+      "closed": {
+        "date": "2026-08-13",
+        "notes": "Group balances now derive each allocation from canonical expense shares backed by splitBetween and retain historical allocation participants; the focused group calculation regression suite passes."
+      }
     },
     {
       "id": "ISS-109",
       "category": "bug",
       "title": "Group mutations do not enforce owner role",
-      "status": "proposed",
+      "status": "done",
       "priority": "Now",
       "requirement": {
         "label": "Group collaboration",
@@ -171,13 +179,17 @@
         "apps/api/src/services/group.service.ts",
         "apps/mobile/app/(tabs)/history.tsx"
       ],
-      "notes": "Membership roles are stored, but update/delete operations authorize by ledger membership rather than requiring the group owner."
+      "notes": "Membership roles are stored, but update/delete operations authorize by ledger membership rather than requiring the group owner.",
+      "closed": {
+        "date": "2026-08-13",
+        "notes": "Group update and delete operations now require an active owner membership and reject ordinary members before mutation; the isolated group authorization regression suite passes."
+      }
     },
     {
       "id": "ISS-110",
       "category": "bug",
       "title": "API can delete default categories",
-      "status": "proposed",
+      "status": "done",
       "priority": "Next",
       "requirement": {
         "label": "Category management",
@@ -186,7 +198,11 @@
       "references": [
         "apps/api/src/services/category.service.ts"
       ],
-      "notes": "The API blocks deletion of categories in use but does not reject deletion when isDefault is true; align server protection with the reserved mobile category rule."
+      "notes": "The API blocks deletion of categories in use but does not reject deletion when isDefault is true; align server protection with the reserved mobile category rule.",
+      "closed": {
+        "date": "2026-08-13",
+        "notes": "Category deletion now rejects protected defaults with DEFAULT_CATEGORY_PROTECTED before any usage lookup or mutation; the isolated category deletion regression suite passes."
+      }
     },
     {
       "id": "ISS-111",
