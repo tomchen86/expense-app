@@ -159,6 +159,9 @@ export function authorizeGrantedOrdinaryRole(input) {
         throw grantedRoleInvalid();
     }
     const callableProviderIds = [...input.callableProviderIds];
+    const degradedAuthorityOverride = input.degradedAuthorityOverride === undefined
+        ? undefined
+        : assertTaskDiffChallengeClosureAuthorityOverride(input.degradedAuthorityOverride, input.role, input.targetDigest);
     if (callableProviderIds.some((providerId) => !isProviderId(providerId)) ||
         callableProviderIds.length !== new Set(callableProviderIds).size) {
         throw grantedRoleInvalid();
@@ -193,6 +196,9 @@ export function authorizeGrantedOrdinaryRole(input) {
         authorizedEffect: COLLABORATION_GRANT_AUTHORIZED_EFFECT,
         author: recordParticipant(input.author),
         callableProviderIds: Object.freeze([...callableProviderIds].sort()),
+        ...(degradedAuthorityOverride === undefined
+            ? {}
+            : { degradedAuthorityOverride }),
     };
     const participant = input.actualParticipant;
     if (payload.degradedForm === 'same-provider-fresh-session' &&
@@ -203,6 +209,7 @@ export function authorizeGrantedOrdinaryRole(input) {
             callableProviderIds[0] !== providerId ||
             participant.providerId !== providerId ||
             participant.identityAssurance !== payload.availableActor.assurance ||
+            degradedAuthorityOverride !== undefined ||
             !participant.engineSpawned ||
             typeof input.author.sessionId !== 'string' ||
             typeof participant.sessionId !== 'string' ||
@@ -222,7 +229,8 @@ export function authorizeGrantedOrdinaryRole(input) {
             directHumanReviewAttestationDigest: null,
         });
     }
-    if (callableProviderIds.length !== 0 ||
+    if ((callableProviderIds.length !== 0 &&
+        degradedAuthorityOverride === undefined) ||
         participant.providerId !== undefined ||
         participant.sessionId !== undefined ||
         participant.engineSpawned) {
@@ -404,7 +412,38 @@ export function isGrantedSameProviderRoleAssignment(value) {
         value.achievedIndependence === 'session-independent' &&
         value.sessionIndependent === true &&
         value.engineSpawned === true &&
-        value.directHumanReviewAttestationDigest === null);
+        value.directHumanReviewAttestationDigest === null &&
+        value.degradedAuthorityOverride === undefined);
+}
+function assertTaskDiffChallengeClosureAuthorityOverride(value, role, targetDigest) {
+    if (role !== 'task-diff-reviewer' ||
+        !value ||
+        typeof value !== 'object' ||
+        !hasExactKeys(value, [
+            'kind',
+            'targetDigest',
+            'subjectDigest',
+            'reviewRecordDigest',
+            'responseDigest',
+        ]) ||
+        value.kind !== 'task-diff-challenge-closure' ||
+        !/^[0-9a-f]{64}$/.test(value.subjectDigest) ||
+        !/^[0-9a-f]{64}$/.test(value.reviewRecordDigest) ||
+        !/^[0-9a-f]{64}$/.test(value.responseDigest) ||
+        value.targetDigest !== targetDigest ||
+        value.targetDigest !==
+            crypto
+                .createHash('sha256')
+                .update(canonicalJson({
+                schema: 'workflow.task-diff-external-continuation-target.v1',
+                subjectDigest: value.subjectDigest,
+                reviewRecordDigest: value.reviewRecordDigest,
+                responseDigest: value.responseDigest,
+            }))
+                .digest('hex')) {
+        throw grantedRoleInvalid();
+    }
+    return deepFreeze(structuredClone(value));
 }
 function isOrdinaryRoleAssignment(value) {
     return (!('grantId' in value) &&

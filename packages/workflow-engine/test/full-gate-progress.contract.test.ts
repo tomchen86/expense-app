@@ -204,6 +204,45 @@ test('the existing Node spec reporter advances the same counter without changing
   });
 });
 
+test('Node terminal failure details preserve the first failure without double-counting its repeated marker', () => {
+  const counter = new FullGateTapCounter();
+  const firstFailureLine = '✖ second test (2.4ms)';
+  const output = [
+    '✔ first test (1.2ms)',
+    firstFailureLine,
+    'ℹ tests 2',
+    'ℹ suites 0',
+    'ℹ pass 1',
+    'ℹ fail 1',
+    'ℹ cancelled 0',
+    'ℹ skipped 0',
+    'ℹ todo 0',
+    'ℹ duration_ms 10.5',
+    '✖ failing tests:',
+    'test at fixture.test.ts:2:1',
+    firstFailureLine,
+    '  AssertionError: expected one failure',
+    '',
+  ].join('\n');
+
+  counter.push(output);
+
+  assert.deepEqual(counter.progress(), {
+    completed: 2,
+    pass: 1,
+    fail: 1,
+    total: 2,
+    cancelled: 0,
+    skipped: 0,
+    todo: 0,
+    durationMs: 10.5,
+  });
+  assert.deepEqual(counter.firstFailure(), {
+    name: 'second test',
+    byteOffset: Buffer.byteLength('✔ first test (1.2ms)\n'),
+  });
+});
+
 test('successful receipt reuse binds exact tree, generated artifacts, runtime, command, and raw log', () => {
   const rawLog = Buffer.from(
     'TAP version 13\nok 1 - pass\n# tests 1\n# pass 1\n# fail 0\n# cancelled 0\n# skipped 0\n# todo 0\n# duration_ms 10\n',

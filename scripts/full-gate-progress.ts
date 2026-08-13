@@ -32,6 +32,11 @@ export type FullGateProgressSnapshot = Readonly<{
   pass: number;
   fail: number;
   total: number | null;
+  firstFailureName: string | null;
+  firstFailureLogLocator: Readonly<{
+    path: string;
+    byteOffset: number;
+  }> | null;
 }>;
 
 export type FullGateProgressState = Readonly<{
@@ -59,6 +64,11 @@ export type FullGateObservation = Readonly<{
   pass: number;
   fail: number;
   total?: number | null;
+  firstFailureName?: string | null;
+  firstFailureLogLocator?: Readonly<{
+    path: string;
+    byteOffset: number;
+  }> | null;
 }>;
 
 export type FullGateProgressTransition =
@@ -80,6 +90,24 @@ export type FullGateTapProgress = Readonly<{
   skipped: number;
   todo: number;
   durationMs: number | null;
+}>;
+
+export type FullGateFirstFailure = Readonly<{
+  name: string;
+  byteOffset: number;
+}>;
+
+export type FullGateFailureLocation = Readonly<{
+  index: number;
+  name: string;
+  logLine: number;
+  byteOffset: number;
+}>;
+
+export type FullGateFailureLocations = Readonly<{
+  failures: readonly FullGateFailureLocation[];
+  observedFailureCount: number;
+  truncated: boolean;
 }>;
 
 export type FullGateReceipt = Readonly<{
@@ -178,6 +206,20 @@ export function advanceFullGateProgress(
   assertNonNegativeInteger('completed', observation.completed);
   assertNonNegativeInteger('pass', observation.pass);
   assertNonNegativeInteger('fail', observation.fail);
+  const firstFailureName = observation.firstFailureName ?? null;
+  const firstFailureLogLocator = observation.firstFailureLogLocator ?? null;
+  if (
+    (firstFailureName === null) !== (firstFailureLogLocator === null) ||
+    (firstFailureName !== null &&
+      (firstFailureName.length === 0 || /[\0\r\n]/.test(firstFailureName))) ||
+    (firstFailureLogLocator !== null &&
+      (firstFailureLogLocator.path.length === 0 ||
+        /[\0\r\n]/.test(firstFailureLogLocator.path) ||
+        !Number.isInteger(firstFailureLogLocator.byteOffset) ||
+        firstFailureLogLocator.byteOffset < 0))
+  ) {
+    throw new TypeError('first failure log metadata is malformed.');
+  }
   if (
     observation.cpuTotalSeconds !== null &&
     (!Number.isFinite(observation.cpuTotalSeconds) ||
@@ -251,6 +293,11 @@ export function advanceFullGateProgress(
     pass: observation.pass,
     fail: observation.fail,
     total,
+    firstFailureName,
+    firstFailureLogLocator:
+      firstFailureLogLocator === null
+        ? null
+        : Object.freeze({ ...firstFailureLogLocator }),
   });
   const progress = Object.freeze({
     ...previous,
@@ -316,7 +363,8 @@ export function progressOutputFor(
 }
 
 export class FullGateTapCounter {
-  #buffer = '';
+  #buffer = Buffer.alloc(0);
+  #bufferStartOffset = 0;
   #completed = 0;
   #pass = 0;
   #fail = 0;
@@ -326,12 +374,30 @@ export class FullGateTapCounter {
   #todo = 0;
   #durationMs: number | null = null;
   #failureReported = false;
+  #nodeSummaryStarted = false;
+  #firstFailure: FullGateFirstFailure | null = null;
 
   push(chunk: string | Buffer): void {
-    this.#buffer += chunk.toString();
-    const lines = this.#buffer.split(/\r?\n/);
-    this.#buffer = lines.pop() ?? '';
-    for (const line of lines) this.#consumeLine(line);
+    const appended = typeof chunk === 'string' ? Buffer.from(chunk) : chunk;
+    this.#buffer = Buffer.concat([this.#buffer, appended]);
+    let lineStart = 0;
+    for (;;) {
+      const newline = this.#buffer.indexOf(0x0a, lineStart);
+      if (newline < 0) break;
+      let lineEnd = newline;
+      if (lineEnd > lineStart && this.#buffer[lineEnd - 1] === 0x0d) {
+        lineEnd -= 1;
+      }
+      this.#consumeLine(
+        this.#buffer.subarray(lineStart, lineEnd).toString('utf8'),
+        this.#bufferStartOffset + lineStart,
+      );
+      lineStart = newline + 1;
+    }
+    if (lineStart > 0) {
+      this.#buffer = this.#buffer.subarray(lineStart);
+      this.#bufferStartOffset += lineStart;
+    }
   }
 
   progress(): FullGateTapProgress {
@@ -353,15 +419,24 @@ export class FullGateTapCounter {
     return true;
   }
 
-  #consumeLine(line: string): void {
-    if (/^\s*✔ .+ \(\d+(?:\.\d+)?(?:ms|s|m)\)$/.test(line)) {
-      this.#completed += 1;
-      this.#pass += 1;
-      return;
-    }
-    if (/^\s*✖ .+ \(\d+(?:\.\d+)?(?:ms|s|m)\)$/.test(line)) {
-      this.#completed += 1;
-      this.#fail += 1;
+  firstFailure(): FullGateFirstFailure | null {
+    return this.#firstFailure === null
+      ? null
+      : Object.freeze({ ...this.#firstFailure });
+  }
+
+  #consumeLine(line: string, byteOffset: number): void {
+    const nodeResult = /^\s*([✔✖]) (.+) \(\d+(?:\.\d+)?(?:ms|s|m)\)$/.exec(
+      line,
+    );
+    if (nodeResult !== null) {
+      const failed = nodeResult[1] === '✖';
+      if (failed) this.#recordFirstFailure(nodeResult[2]!, byteOffset);
+      if (!this.#nodeSummaryStarted) {
+        this.#completed += 1;
+        if (failed) this.#fail += 1;
+        else this.#pass += 1;
+      }
       return;
     }
     if (/^ok \d+\b/.test(line)) {
@@ -369,19 +444,24 @@ export class FullGateTapCounter {
       this.#pass += 1;
       return;
     }
-    if (/^not ok \d+\b/.test(line)) {
+    const tapFailure = /^not ok \d+\b(?:\s+-\s+(.+))?/.exec(line);
+    if (tapFailure !== null) {
+      this.#recordFirstFailure(tapFailure[1] ?? line, byteOffset);
       this.#completed += 1;
       this.#fail += 1;
       return;
     }
     const summary =
-      /^(?:#|ℹ) (tests|pass|fail|cancelled|skipped|todo) (\d+)$/.exec(line);
+      /^(#|ℹ) (tests|pass|fail|cancelled|skipped|todo) (\d+)$/.exec(line);
     if (summary !== null) {
-      const value = Number(summary[2]);
-      switch (summary[1]) {
+      const value = Number(summary[3]);
+      if (summary[1] === 'ℹ' && summary[2] === 'tests') {
+        this.#nodeSummaryStarted = true;
+      }
+      switch (summary[2]) {
         case 'tests':
           this.#total = value;
-          this.#completed = Math.max(this.#completed, value);
+          this.#completed = value;
           break;
         case 'pass':
           this.#pass = value;
@@ -404,6 +484,104 @@ export class FullGateTapCounter {
     const duration = /^(?:#|ℹ) duration_ms (\d+(?:\.\d+)?)$/.exec(line);
     if (duration !== null) this.#durationMs = Number(duration[1]);
   }
+
+  #recordFirstFailure(name: string, byteOffset: number): void {
+    if (this.#firstFailure !== null) return;
+    const normalized = name.trim();
+    if (normalized.length === 0) return;
+    this.#firstFailure = Object.freeze({ name: normalized, byteOffset });
+  }
+}
+
+export function locateFullGateFailures(
+  rawLog: Buffer,
+  limit = 20,
+): FullGateFailureLocations {
+  if (!Number.isInteger(limit) || limit <= 0 || limit > 100) {
+    throw new TypeError('Full-gate failure location limit is invalid.');
+  }
+  const failures: FullGateFailureLocation[] = [];
+  let observedFailureCount = 0;
+  let sequentialIndex = 0;
+  let nodeSummaryStarted = false;
+  forEachRawLogLine(rawLog, (line, logLine, byteOffset) => {
+    const nodeResult = /^\s*([✔✖]) (.+) \(\d+(?:\.\d+)?(?:ms|s|m)\)$/.exec(
+      line,
+    );
+    if (nodeResult !== null) {
+      if (nodeSummaryStarted) return;
+      sequentialIndex += 1;
+      if (nodeResult[1] !== '✖') return;
+      observedFailureCount += 1;
+      if (failures.length < limit) {
+        failures.push(
+          Object.freeze({
+            index: sequentialIndex,
+            name: boundedFailureName(nodeResult[2]!),
+            logLine,
+            byteOffset,
+          }),
+        );
+      }
+      return;
+    }
+    if (/^ℹ tests \d+$/.test(line)) {
+      nodeSummaryStarted = true;
+      return;
+    }
+    const tapPass = /^ok (\d+)\b/.exec(line);
+    if (tapPass !== null) {
+      sequentialIndex = Math.max(sequentialIndex, Number(tapPass[1]));
+      return;
+    }
+    const tapFailure = /^not ok (\d+)\b(?:\s+-\s+(.+))?/.exec(line);
+    if (tapFailure === null) return;
+    const index = Number(tapFailure[1]);
+    sequentialIndex = Math.max(sequentialIndex, index);
+    observedFailureCount += 1;
+    if (failures.length < limit) {
+      failures.push(
+        Object.freeze({
+          index,
+          name: boundedFailureName(tapFailure[2] ?? line),
+          logLine,
+          byteOffset,
+        }),
+      );
+    }
+  });
+  return Object.freeze({
+    failures: Object.freeze(failures),
+    observedFailureCount,
+    truncated: observedFailureCount > failures.length,
+  });
+}
+
+function forEachRawLogLine(
+  rawLog: Buffer,
+  consume: (line: string, logLine: number, byteOffset: number) => void,
+): void {
+  let byteOffset = 0;
+  let logLine = 1;
+  while (byteOffset < rawLog.length) {
+    const newline = rawLog.indexOf(0x0a, byteOffset);
+    const nextOffset = newline < 0 ? rawLog.length : newline + 1;
+    let lineEnd = newline < 0 ? rawLog.length : newline;
+    if (lineEnd > byteOffset && rawLog[lineEnd - 1] === 0x0d) lineEnd -= 1;
+    consume(
+      rawLog.subarray(byteOffset, lineEnd).toString('utf8'),
+      logLine,
+      byteOffset,
+    );
+    byteOffset = nextOffset;
+    logLine += 1;
+  }
+}
+
+function boundedFailureName(value: string): string {
+  const normalized = value.trim().replaceAll(/\s+/g, ' ');
+  if (normalized.length <= 240) return normalized;
+  return `${normalized.slice(0, 239)}…`;
 }
 
 export function createFullGateReceipt(input: {

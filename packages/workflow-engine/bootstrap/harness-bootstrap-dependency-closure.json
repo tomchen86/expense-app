@@ -8,7 +8,7 @@
     {
       "path": "bootstrap/recovery-runtime/bootstrap/built-in-engine-closure-pin.js",
       "mode": "100644",
-      "digest": "sha256:99327a092d9f86124d6424825e3bcfd2603f4b53f730fe23797242c7d11f6d9c"
+      "digest": "sha256:c8eb8dd0a47f943e3658fda687dc6b0868c0a68e1ef48a60c56d0efb7fab0d0a"
     },
     {
       "path": "bootstrap/recovery-runtime/src/actor-identity.js",
@@ -68,7 +68,7 @@
     {
       "path": "bootstrap/recovery-runtime/src/collaboration-grant-store.js",
       "mode": "100644",
-      "digest": "sha256:306d2d401a84d3c0e76562d14501bcff1ab03f4531858a33f1a5e2da018db811"
+      "digest": "sha256:79bf22a30abd3bbc5a12836d20d70f9f0adc458ea9388e326bef57c388468f03"
     },
     {
       "path": "bootstrap/recovery-runtime/src/collaboration-grant.js",
@@ -368,7 +368,7 @@
     {
       "path": "bootstrap/recovery-runtime/src/provider-runner.js",
       "mode": "100644",
-      "digest": "sha256:74df4d378c7f77b63f250bf5702e119abeb59dd9a13a3cbf1e518cfee773d874"
+      "digest": "sha256:62d3860db35658a4b52bb366c9f085ea7f77bbdcb32ec5cc8931e40f0c18be26"
     },
     {
       "path": "bootstrap/recovery-runtime/src/recovery-authority.js",
@@ -393,7 +393,7 @@
     {
       "path": "bootstrap/recovery-runtime/src/role-scheduler.js",
       "mode": "100644",
-      "digest": "sha256:b33d2183d89216dc9e7ea9877f2c28b6cef6ffba3adbe09d0eb994dd4286e875"
+      "digest": "sha256:23953a6638cbfdc4c08ef3e2cfc2eaf7e488da2caa535643630b3d7a154478cc"
     },
     {
       "path": "bootstrap/recovery-runtime/src/runner-resolution.js",
@@ -408,7 +408,7 @@
     {
       "path": "bootstrap/recovery-runtime/src/task-diff-review-artifact.js",
       "mode": "100644",
-      "digest": "sha256:2f042206d0688524b6e19faabd135c1f46fbae5315eb3cbb656350e0f6e8302f"
+      "digest": "sha256:854bf957af299e46b2a341b378a88e59ad87b2b9401a11f211ccf73df705fdde"
     },
     {
       "path": "bootstrap/recovery-runtime/src/task-diff-review.js",

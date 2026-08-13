@@ -50,6 +50,11 @@ import type { TaskMandateBinding } from './task-mandate.ts';
 const DIGEST = /^[0-9a-f]{64}$/;
 const IDENTITY = /^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,511}$/;
 const GIT_OBJECT_ID = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
+const TASK_DIFF_REVIEW_GLOBAL_NAMESPACES = new Set([
+  'external-authority',
+  'final-assurance',
+  'lineage-supersessions',
+]);
 
 export type TaskDiffReviewManifestSnapshot = Readonly<{
   schemaVersion: 1;
@@ -189,6 +194,37 @@ export type TaskDiffReviewSupersessionRecord = Readonly<{
   supersededByDigest: string;
   reviewScope: TaskDiffReviewScope;
   createdAt: string;
+}>;
+
+/**
+ * Session-free projection of one semantic review-lineage edge. The complete
+ * subjects and reviews are retained so replay never depends on a mutable
+ * provider session store. This record carries no closure or freshness
+ * authority; the successor review scope remains the semantic source of truth.
+ */
+export type TaskDiffReviewLineageSupersessionRecord = Readonly<{
+  schemaVersion: 1;
+  kind: 'task-diff-review-lineage-supersession.v1';
+  supersessionDigest: string;
+  predecessorSubject: TaskDiffReviewSubject;
+  predecessorSubjectDigest: string;
+  predecessorReview: TaskDiffReviewRecord;
+  predecessorReviewRecordDigest: string;
+  successorSubject: TaskDiffReviewSubject;
+  successorSubjectDigest: string;
+  successorReview: TaskDiffReviewRecord;
+  successorReviewRecordDigest: string;
+  successorReviewScope: TaskDiffReviewScope;
+  successorReviewScopeDigest: string;
+}>;
+
+export type CreateTaskDiffReviewLineageSupersessionInput = Readonly<{
+  predecessorSubject: TaskDiffReviewSubject;
+  predecessorReview: TaskDiffReviewRecord;
+  successorSubject: TaskDiffReviewSubject;
+  successorReview: TaskDiffReviewRecord;
+  successorReviewScope: TaskDiffReviewScope;
+  successorReviewScopeDigest: string;
 }>;
 
 export function createTaskDiffReviewReservation(
@@ -544,6 +580,197 @@ export function listTaskDiffReviewResultBindings(
     if (binding === null) throw storeUnsafe();
     return binding;
   });
+}
+
+/** List every legacy provider review binding across sessions, strictly. */
+export function listAllTaskDiffReviewResultBindings(
+  paths: InvestigationRuntimePaths,
+): readonly TaskDiffReviewResultBinding[] {
+  return Object.freeze(
+    listTaskDiffReviewProviderSessionIds(paths).flatMap((sessionId) =>
+      listTaskDiffReviewResultBindings(paths, sessionId),
+    ),
+  );
+}
+
+/** List every legacy provider review reservation across sessions, strictly. */
+export function listAllTaskDiffReviewReservations(
+  paths: InvestigationRuntimePaths,
+): readonly TaskDiffReviewReservationRecord[] {
+  const root = path.join(paths.refs, 'task-diff-reviews');
+  return Object.freeze(
+    listTaskDiffReviewProviderSessionIds(paths).flatMap((sessionId) => {
+      const directory = path.join(root, sessionId, 'reservations');
+      return listPrivateDigestJson(paths, directory).map((subjectDigest) => {
+        const reservation = readTaskDiffReviewReservation(
+          paths,
+          sessionId,
+          subjectDigest,
+        );
+        if (reservation === null) throw storeUnsafe();
+        return reservation;
+      });
+    }),
+  );
+}
+
+function listTaskDiffReviewProviderSessionIds(
+  paths: InvestigationRuntimePaths,
+): readonly string[] {
+  const root = path.join(paths.refs, 'task-diff-reviews');
+  const observed = fs.lstatSync(root, { throwIfNoEntry: false });
+  if (!observed) return Object.freeze([]);
+  assertPrivateInvestigationDirectory(paths, root, storeUnsafe);
+  return Object.freeze(
+    fs
+      .readdirSync(root)
+      .filter((name) => !TASK_DIFF_REVIEW_GLOBAL_NAMESPACES.has(name))
+      .sort()
+      .map(assertSessionId),
+  );
+}
+
+/** List every legacy provider continuation reservation across sessions. */
+export function listAllTaskDiffReviewContinuationReservations(
+  paths: InvestigationRuntimePaths,
+): readonly TaskDiffReviewContinuationReservationRecord[] {
+  const root = path.join(paths.refs, 'task-diff-reviews');
+  return Object.freeze(
+    listTaskDiffReviewProviderSessionIds(paths).flatMap((sessionId) => {
+      const directory = path.join(root, sessionId, 'continuations');
+      const observed = fs.lstatSync(directory, { throwIfNoEntry: false });
+      if (!observed) return [];
+      assertPrivateInvestigationDirectory(paths, directory, storeUnsafe);
+      return fs
+        .readdirSync(directory)
+        .sort()
+        .map((reviewRecordDigest) => {
+          if (!DIGEST.test(reviewRecordDigest)) throw storeUnsafe();
+          const reservationDirectory = path.join(directory, reviewRecordDigest);
+          assertPrivateInvestigationDirectory(
+            paths,
+            reservationDirectory,
+            storeUnsafe,
+          );
+          if (
+            canonicalJson(fs.readdirSync(reservationDirectory).sort()) !==
+            canonicalJson(['reservation.json'])
+          ) {
+            throw storeUnsafe();
+          }
+          const reservation = readTaskDiffReviewContinuationReservation(
+            paths,
+            sessionId,
+            reviewRecordDigest,
+          );
+          if (reservation === null) throw storeUnsafe();
+          return reservation;
+        });
+    }),
+  );
+}
+
+/** List every legacy provider continuation result across sessions. */
+export function listAllTaskDiffReviewContinuationResultBindings(
+  paths: InvestigationRuntimePaths,
+): readonly TaskDiffReviewContinuationResultBinding[] {
+  const root = path.join(paths.refs, 'task-diff-reviews');
+  return Object.freeze(
+    listTaskDiffReviewProviderSessionIds(paths).flatMap((sessionId) => {
+      const directory = path.join(root, sessionId, 'continuation-results');
+      return listPrivateDigestJson(paths, directory).map(
+        (reviewRecordDigest) => {
+          const binding = readTaskDiffReviewContinuationResultBinding(
+            paths,
+            sessionId,
+            reviewRecordDigest,
+          );
+          if (binding === null) throw storeUnsafe();
+          return binding;
+        },
+      );
+    }),
+  );
+}
+
+export function createTaskDiffReviewLineageSupersession(
+  paths: InvestigationRuntimePaths,
+  input: CreateTaskDiffReviewLineageSupersessionInput,
+): TaskDiffReviewLineageSupersessionRecord {
+  const predecessorSubject = parseTaskDiffReviewSubject(
+    input.predecessorSubject,
+  );
+  const predecessorReview = parseTaskDiffReviewRecord(input.predecessorReview);
+  const successorSubject = parseTaskDiffReviewSubject(input.successorSubject);
+  const successorReview = parseTaskDiffReviewRecord(input.successorReview);
+  const successorReviewScope = parseTaskDiffReviewScope(
+    input.successorReviewScope,
+  );
+  const body = {
+    schemaVersion: 1 as const,
+    kind: 'task-diff-review-lineage-supersession.v1' as const,
+    predecessorSubject,
+    predecessorSubjectDigest: predecessorSubject.subjectDigest,
+    predecessorReview,
+    predecessorReviewRecordDigest: predecessorReview.recordDigest,
+    successorSubject,
+    successorSubjectDigest: successorSubject.subjectDigest,
+    successorReview,
+    successorReviewRecordDigest: successorReview.recordDigest,
+    successorReviewScope,
+    successorReviewScopeDigest: assertDigest(input.successorReviewScopeDigest),
+  };
+  const record = parseTaskDiffReviewLineageSupersession({
+    ...body,
+    supersessionDigest: sha256(canonicalJson(body)),
+  });
+  createPrivateCanonicalJson(
+    paths,
+    taskDiffReviewLineageSupersessionPath(
+      paths,
+      record.predecessorReviewRecordDigest,
+    ),
+    record,
+    storeUnsafe,
+    'TASK_DIFF_REVIEW_LINEAGE_SUPERSESSION_CONFLICT',
+  );
+  return readTaskDiffReviewLineageSupersession(
+    paths,
+    record.predecessorReviewRecordDigest,
+  )!;
+}
+
+export function readTaskDiffReviewLineageSupersession(
+  paths: InvestigationRuntimePaths,
+  requestedPredecessorReviewRecordDigest: string,
+): TaskDiffReviewLineageSupersessionRecord | null {
+  const predecessorReviewRecordDigest = assertDigest(
+    requestedPredecessorReviewRecordDigest,
+  );
+  return (
+    readTaskDiffReviewLineageSupersessionInventory(paths).find(
+      (record) =>
+        record.predecessorReviewRecordDigest === predecessorReviewRecordDigest,
+    ) ?? null
+  );
+}
+
+export function listTaskDiffReviewLineageSupersessions(
+  paths: InvestigationRuntimePaths,
+): readonly TaskDiffReviewLineageSupersessionRecord[] {
+  return readTaskDiffReviewLineageSupersessionInventory(paths);
+}
+
+export function taskDiffReviewLineageSupersessionPath(
+  paths: InvestigationRuntimePaths,
+  requestedPredecessorReviewRecordDigest: string,
+): string {
+  return path.join(
+    paths.refs,
+    'task-diff-reviews',
+    'lineage-supersessions',
+    `${assertDigest(requestedPredecessorReviewRecordDigest)}.json`,
+  );
 }
 
 export function createTaskDiffReviewSupersession(
@@ -1065,6 +1292,96 @@ function parseTaskDiffFinalAssuranceBinding(
   return deepFreeze(binding);
 }
 
+function parseTaskDiffReviewLineageSupersession(
+  value: unknown,
+): TaskDiffReviewLineageSupersessionRecord {
+  if (
+    !isRecord(value) ||
+    !hasExactKeys(value, [
+      'schemaVersion',
+      'kind',
+      'supersessionDigest',
+      'predecessorSubject',
+      'predecessorSubjectDigest',
+      'predecessorReview',
+      'predecessorReviewRecordDigest',
+      'successorSubject',
+      'successorSubjectDigest',
+      'successorReview',
+      'successorReviewRecordDigest',
+      'successorReviewScope',
+      'successorReviewScopeDigest',
+    ]) ||
+    value.schemaVersion !== 1 ||
+    value.kind !== 'task-diff-review-lineage-supersession.v1' ||
+    !isDigest(value.supersessionDigest) ||
+    !isDigest(value.predecessorSubjectDigest) ||
+    !isDigest(value.predecessorReviewRecordDigest) ||
+    !isDigest(value.successorSubjectDigest) ||
+    !isDigest(value.successorReviewRecordDigest) ||
+    !isDigest(value.successorReviewScopeDigest)
+  ) {
+    throw storeUnsafe();
+  }
+  const predecessorSubject = parseTaskDiffReviewSubject(
+    value.predecessorSubject,
+  );
+  const predecessorReview = parseTaskDiffReviewRecord(value.predecessorReview);
+  const successorSubject = parseTaskDiffReviewSubject(value.successorSubject);
+  const successorReview = parseTaskDiffReviewRecord(value.successorReview);
+  const successorReviewScope = parseTaskDiffReviewScope(
+    value.successorReviewScope,
+  );
+  const record: TaskDiffReviewLineageSupersessionRecord = {
+    schemaVersion: 1,
+    kind: 'task-diff-review-lineage-supersession.v1',
+    supersessionDigest: value.supersessionDigest,
+    predecessorSubject,
+    predecessorSubjectDigest: value.predecessorSubjectDigest,
+    predecessorReview,
+    predecessorReviewRecordDigest: value.predecessorReviewRecordDigest,
+    successorSubject,
+    successorSubjectDigest: value.successorSubjectDigest,
+    successorReview,
+    successorReviewRecordDigest: value.successorReviewRecordDigest,
+    successorReviewScope,
+    successorReviewScopeDigest: value.successorReviewScopeDigest,
+  };
+  const predecessor = successorReviewScope.predecessor;
+  if (
+    record.predecessorSubjectDigest !== predecessorSubject.subjectDigest ||
+    record.predecessorReviewRecordDigest !== predecessorReview.recordDigest ||
+    predecessorReview.subjectDigest !== predecessorSubject.subjectDigest ||
+    canonicalJson(predecessorReview.subject) !==
+      canonicalJson(predecessorSubject) ||
+    record.successorSubjectDigest !== successorSubject.subjectDigest ||
+    record.successorReviewRecordDigest !== successorReview.recordDigest ||
+    successorReview.subjectDigest !== successorSubject.subjectDigest ||
+    canonicalJson(successorReview.subject) !==
+      canonicalJson(successorSubject) ||
+    canonicalJson(successorReview.reviewScope) !==
+      canonicalJson(successorReviewScope) ||
+    record.successorReviewScopeDigest !== successorReviewScope.scopeDigest ||
+    successorReviewScope.currentSubjectDigest !==
+      successorSubject.subjectDigest ||
+    predecessor === null ||
+    predecessor.subjectDigest !== predecessorSubject.subjectDigest ||
+    predecessor.reviewRecordDigest !== predecessorReview.recordDigest ||
+    predecessorSubject.subjectDigest === successorSubject.subjectDigest ||
+    predecessorReview.recordDigest === successorReview.recordDigest ||
+    predecessorSubject.repositoryId !== successorSubject.repositoryId ||
+    predecessorSubject.changeId !== successorSubject.changeId ||
+    predecessorSubject.taskId !== successorSubject.taskId ||
+    predecessorSubject.baseCommit !== successorSubject.baseCommit ||
+    predecessorSubject.baseTree !== successorSubject.baseTree ||
+    record.supersessionDigest !==
+      sha256(canonicalJson(withoutDigest(record, 'supersessionDigest')))
+  ) {
+    throw storeUnsafe();
+  }
+  return deepFreeze(record);
+}
+
 function parseTaskDiffReviewSupersession(
   value: unknown,
 ): TaskDiffReviewSupersessionRecord {
@@ -1387,6 +1704,35 @@ function parseBaseline(
     head: value.head as string,
     tree: value.tree as string,
   });
+}
+
+function readTaskDiffReviewLineageSupersessionInventory(
+  paths: InvestigationRuntimePaths,
+): readonly TaskDiffReviewLineageSupersessionRecord[] {
+  const directory = path.join(
+    paths.refs,
+    'task-diff-reviews',
+    'lineage-supersessions',
+  );
+  return Object.freeze(
+    listPrivateDigestJson(paths, directory).map(
+      (predecessorReviewRecordDigest) => {
+        const target = taskDiffReviewLineageSupersessionPath(
+          paths,
+          predecessorReviewRecordDigest,
+        );
+        const record = parseTaskDiffReviewLineageSupersession(
+          readPrivateCanonicalJson(paths, target, storeUnsafe),
+        );
+        if (
+          record.predecessorReviewRecordDigest !== predecessorReviewRecordDigest
+        ) {
+          throw storeUnsafe();
+        }
+        return record;
+      },
+    ),
+  );
 }
 
 function listPrivateDigestJson(

@@ -20,6 +20,21 @@ const SEVERITIES = new Set([
 ]);
 const CATEGORIES = new Set(TASK_DIFF_REVIEW_COVERAGE);
 const DISPOSITIONS = new Set(['accepted', 'rebutted', 'withdrawn']);
+const RISK_PATH_ROLES = Object.freeze([
+    'control-plane',
+    'grant',
+    'lifecycle',
+    'policy',
+    'verification-infrastructure',
+    'contract-surface',
+    'unregistered',
+]);
+const RISK_PATH_OUTCOMES = Object.freeze([
+    'no-challenge',
+    'challenge-raised',
+]);
+const RISK_PATH_ROLE_SET = new Set(RISK_PATH_ROLES);
+const RISK_PATH_OUTCOME_SET = new Set(RISK_PATH_OUTCOMES);
 const CONTINUATION_DECISIONS = new Set([
     'accepted',
     'rebutted',
@@ -50,6 +65,7 @@ export const TASK_DIFF_REVIEW_PROVIDER_OUTPUT_SCHEMA = Object.freeze({
         'scopeAssessment',
         'findings',
         'suggestions',
+        'riskPathDispositions',
         'residualRisk',
         'uncertainty',
     ],
@@ -95,6 +111,19 @@ export const TASK_DIFF_REVIEW_PROVIDER_OUTPUT_SCHEMA = Object.freeze({
             type: 'array',
             maxItems: MAX_FINDINGS,
             items: { $ref: '#/$defs/suggestion' },
+        },
+        riskPathDispositions: {
+            type: 'array',
+            items: {
+                type: 'object',
+                additionalProperties: false,
+                required: ['path', 'role', 'outcome'],
+                properties: {
+                    path: { type: 'string', minLength: 1 },
+                    role: { enum: [...RISK_PATH_ROLES] },
+                    outcome: { enum: [...RISK_PATH_OUTCOMES] },
+                },
+            },
         },
         residualRisk: { type: 'string', minLength: 1 },
         uncertainty: { type: 'string', minLength: 1 },
@@ -282,7 +311,7 @@ export function createTaskDiffReviewRecord(input) {
         throw recordInvalid();
     const reviewScope = assertReviewScopeCurrent(subject, input.reviewScope ?? defaultPlan.scope);
     const assignment = parseAssignment(input.assignment);
-    const submission = normalizeSubmission(input.submission, assignment);
+    const submission = normalizeSubmission(input.submission, assignment, subject, reviewScope);
     const body = {
         schemaVersion: 1,
         kind: 'task-diff-review-record.v1',
@@ -295,6 +324,7 @@ export function createTaskDiffReviewRecord(input) {
         scopeAssessment: submission.scopeAssessment,
         challenges: submission.challenges,
         suggestions: submission.suggestions,
+        riskPathDispositions: submission.riskPathDispositions,
         residualRisk: submission.residualRisk,
         uncertainty: submission.uncertainty,
     };
@@ -318,6 +348,7 @@ export function parseTaskDiffReviewRecord(value) {
             'scopeAssessment',
             'challenges',
             'suggestions',
+            'riskPathDispositions',
             'residualRisk',
             'uncertainty',
         ]) ||
@@ -332,6 +363,8 @@ export function parseTaskDiffReviewRecord(value) {
     const coverage = parseCoverage(value.coverage);
     const challenges = parseStoredChallenges(value.challenges, assignment);
     const suggestions = parseStoredSuggestions(value.suggestions);
+    const riskPathDispositions = assertRiskPathDispositionsCurrent(subject, reviewScope, value.riskPathDispositions);
+    assertRiskPathChallengeConsistency(riskPathDispositions, challenges);
     const scopeAssessment = parseScopeAssessment(value.scopeAssessment, challenges.length);
     const record = {
         schemaVersion: 1,
@@ -346,6 +379,7 @@ export function parseTaskDiffReviewRecord(value) {
         scopeAssessment,
         challenges,
         suggestions,
+        riskPathDispositions,
         residualRisk: boundedText(value.residualRisk),
         uncertainty: boundedText(value.uncertainty),
     };
@@ -432,24 +466,21 @@ export function createTaskDiffFinalAssuranceRecord(input) {
     const submission = assertTaskDiffReviewContinuationSubmissionCurrent(review, response, input.submission);
     const reviewerAuthority = parseFinalAssuranceReviewerAuthority(input.reviewerAuthority);
     const exceptions = parseFinalAssuranceExceptions(input.exceptions ?? []);
-    const expectedExceptions = review.assignment.degradedForm === null ||
-        review.assignment.grantUseDigest === null
-        ? []
-        : [
-            {
-                kind: 'collaboration-grant-degradation',
-                grantUseDigest: review.assignment.grantUseDigest,
-                degradedForm: review.assignment.degradedForm,
-            },
-        ];
+    const expectedExceptions = expectedFinalAssuranceExceptions(review, reviewerAuthority);
     if (review.subjectDigest !== subject.subjectDigest ||
         canonicalJson(review.subject) !== canonicalJson(subject) ||
-        review.assignment.reviewerPrincipalId !== reviewerAuthority.principalId ||
-        review.assignment.reviewerProviderId !== reviewerAuthority.providerId ||
         reviewerAuthority.policyDigest !== subject.reviewPolicyDigest ||
         canonicalJson(exceptions) !== canonicalJson(expectedExceptions)) {
         throw finalAssuranceInvalid();
     }
+    assertFinalAssuranceAuthorityBindings({
+        subject,
+        review,
+        response,
+        reviewerAuthority,
+        authenticatedReviewAuthority: input.authenticatedReviewAuthority,
+        authenticatedChallengeClosureAuthority: input.authenticatedChallengeClosureAuthority,
+    });
     const dispositions = submission.proposedDispositions.map((entry) => Object.freeze({
         ...entry,
         closedBy: reviewerAuthority.principalId,
@@ -545,6 +576,7 @@ export function parseTaskDiffFinalAssuranceRecord(value) {
                 ? 'changes-required'
                 : 'satisfied') ||
         record.dispositions.some(({ closedBy }) => closedBy !== record.reviewerAuthority.principalId) ||
+        !finalAssuranceAuthorityMatchesStoredExceptions(record.reviewerAuthority, record.exceptions) ||
         record.commitmentDigest !==
             sha256(canonicalJson(withoutFinalAssuranceCommitment(record)))) {
         throw finalAssuranceInvalid();
@@ -560,23 +592,18 @@ export function assertTaskDiffFinalAssuranceCurrent(input) {
         canonicalJson(assurance.subject) !== canonicalJson(subject) ||
         assurance.reviewRecordDigest !== review.recordDigest ||
         assurance.responseDigest !== response.responseDigest ||
-        review.assignment.reviewerPrincipalId !==
-            assurance.reviewerAuthority.principalId ||
-        review.assignment.reviewerProviderId !==
-            assurance.reviewerAuthority.providerId ||
         canonicalJson(assurance.exceptions) !==
-            canonicalJson(review.assignment.degradedForm === null ||
-                review.assignment.grantUseDigest === null
-                ? []
-                : [
-                    {
-                        kind: 'collaboration-grant-degradation',
-                        grantUseDigest: review.assignment.grantUseDigest,
-                        degradedForm: review.assignment.degradedForm,
-                    },
-                ])) {
+            canonicalJson(expectedFinalAssuranceExceptions(review, assurance.reviewerAuthority))) {
         throw finalAssuranceInvalid();
     }
+    assertFinalAssuranceAuthorityBindings({
+        subject,
+        review,
+        response,
+        reviewerAuthority: assurance.reviewerAuthority,
+        authenticatedReviewAuthority: input.authenticatedReviewAuthority,
+        authenticatedChallengeClosureAuthority: input.authenticatedChallengeClosureAuthority,
+    });
     assertTaskDiffChallengeClosure(subject, review, assurance.reviewerAuthority, assurance.dispositions);
     return assurance;
 }
@@ -636,15 +663,18 @@ export function assertTaskDiffReviewContentSatisfied(candidate, reviewCandidate,
         },
     });
 }
-function normalizeSubmission(value, assignment) {
+function normalizeSubmission(value, assignment, subject, reviewScope) {
     const submission = parseTaskDiffReviewSubmission(value);
     const challenges = normalizeSubmittedFindings(submission.findings, assignment.reviewerPrincipalId);
     const suggestions = normalizeSubmittedSuggestions(submission.suggestions);
+    const riskPathDispositions = assertRiskPathDispositionsCurrent(subject, reviewScope, submission.riskPathDispositions);
+    assertRiskPathChallengeConsistency(riskPathDispositions, challenges);
     return {
         verdict: submission.verdict,
         scopeAssessment: submission.scopeAssessment,
         challenges,
         suggestions,
+        riskPathDispositions,
         residualRisk: submission.residualRisk,
         uncertainty: submission.uncertainty,
     };
@@ -659,6 +689,7 @@ export function parseTaskDiffReviewSubmission(value) {
             'scopeAssessment',
             'findings',
             'suggestions',
+            'riskPathDispositions',
             'residualRisk',
             'uncertainty',
         ]) ||
@@ -685,6 +716,7 @@ export function parseTaskDiffReviewSubmission(value) {
         scopeAssessment: parseScopeAssessment(value.scopeAssessment, findings.length),
         findings,
         suggestions,
+        riskPathDispositions: parseRiskPathDispositions(value.riskPathDispositions),
         residualRisk: boundedText(value.residualRisk),
         uncertainty: boundedText(value.uncertainty),
     });
@@ -767,33 +799,63 @@ function parseAssignment(value) {
             'degradedForm',
             'grantUseDigest',
         ]) ||
-        (value.achievedIndependence !== 'provider-independent' &&
-            value.achievedIndependence !== 'session-independent') ||
-        ![null, 'same-provider-fresh-session'].includes(value.degradedForm) ||
         (value.grantUseDigest !== null &&
             (typeof value.grantUseDigest !== 'string' ||
                 !DIGEST.test(value.grantUseDigest)))) {
         throw independenceInvalid();
     }
+    const implementerPrincipalId = identity(value.implementerPrincipalId);
+    const implementerProviderId = nullableIdentity(value.implementerProviderId);
+    const implementationSessionId = identity(value.implementationSessionId);
+    const reviewerPrincipalId = identity(value.reviewerPrincipalId);
+    if (implementerPrincipalId === reviewerPrincipalId) {
+        throw independenceInvalid();
+    }
+    if (value.achievedIndependence === 'none') {
+        if (value.reviewerProviderId !== null ||
+            value.reviewerSessionId !== null ||
+            (value.degradedForm !== 'caller-supplied' &&
+                value.degradedForm !== 'direct-human-review') ||
+            typeof value.grantUseDigest !== 'string') {
+            throw independenceInvalid();
+        }
+        return Object.freeze({
+            implementerPrincipalId,
+            implementerProviderId,
+            implementationSessionId,
+            reviewerPrincipalId,
+            reviewerProviderId: null,
+            reviewerSessionId: null,
+            achievedIndependence: 'none',
+            degradedForm: value.degradedForm,
+            grantUseDigest: value.grantUseDigest,
+        });
+    }
+    if ((value.achievedIndependence !== 'provider-independent' &&
+        value.achievedIndependence !== 'session-independent') ||
+        ![null, 'same-provider-fresh-session'].includes(value.degradedForm)) {
+        throw independenceInvalid();
+    }
     const assignment = {
-        implementerPrincipalId: identity(value.implementerPrincipalId),
-        implementerProviderId: identity(value.implementerProviderId),
-        implementationSessionId: identity(value.implementationSessionId),
-        reviewerPrincipalId: identity(value.reviewerPrincipalId),
+        implementerPrincipalId,
+        implementerProviderId,
+        implementationSessionId,
+        reviewerPrincipalId,
         reviewerProviderId: identity(value.reviewerProviderId),
         reviewerSessionId: identity(value.reviewerSessionId),
         achievedIndependence: value.achievedIndependence,
         degradedForm: value.degradedForm,
         grantUseDigest: value.grantUseDigest,
     };
-    const commonInvalid = assignment.implementerPrincipalId === assignment.reviewerPrincipalId ||
-        assignment.implementationSessionId === assignment.reviewerSessionId;
+    const commonInvalid = assignment.implementationSessionId === assignment.reviewerSessionId;
     const ordinaryInvalid = assignment.achievedIndependence === 'provider-independent' &&
-        (assignment.implementerProviderId === assignment.reviewerProviderId ||
+        (assignment.implementerProviderId === null ||
+            assignment.implementerProviderId === assignment.reviewerProviderId ||
             assignment.degradedForm !== null ||
             assignment.grantUseDigest !== null);
     const grantedInvalid = assignment.achievedIndependence === 'session-independent' &&
-        (assignment.implementerProviderId !== assignment.reviewerProviderId ||
+        (assignment.implementerProviderId === null ||
+            assignment.implementerProviderId !== assignment.reviewerProviderId ||
             assignment.degradedForm !== 'same-provider-fresh-session' ||
             assignment.grantUseDigest === null);
     if (commonInvalid || ordinaryInvalid || grantedInvalid) {
@@ -881,6 +943,41 @@ function parseStoredSuggestions(value) {
         return Object.freeze({ ...suggestion, suggestionId });
     });
     return canonicalObjects(suggestions, 'suggestionId');
+}
+function parseRiskPathDispositions(value) {
+    if (!Array.isArray(value))
+        throw recordInvalid();
+    const dispositions = value.map((entry) => {
+        if (!isRecord(entry) ||
+            !hasExactKeys(entry, ['path', 'role', 'outcome']) ||
+            !RISK_PATH_ROLE_SET.has(String(entry.role)) ||
+            !RISK_PATH_OUTCOME_SET.has(String(entry.outcome))) {
+            throw recordInvalid();
+        }
+        return Object.freeze({
+            path: exactPath(entry.path),
+            role: entry.role,
+            outcome: entry.outcome,
+        });
+    });
+    return canonicalObjects(dispositions, 'path');
+}
+function assertRiskPathDispositionsCurrent(subject, reviewScope, value) {
+    const dispositions = parseRiskPathDispositions(value);
+    const reviewedPaths = new Set(reviewScope.reviewedPaths);
+    const expected = subject.reviewRequirement.riskPaths.filter(({ path }) => reviewScope.mode === 'full' || reviewedPaths.has(path));
+    if (expected.length !== dispositions.length ||
+        expected.some(({ path, role }, index) => dispositions[index]?.path !== path ||
+            dispositions[index]?.role !== role)) {
+        throw recordInvalid();
+    }
+    return dispositions;
+}
+function assertRiskPathChallengeConsistency(dispositions, challenges) {
+    const challengedPaths = new Set(challenges.flatMap(({ evidence }) => evidence.flatMap((entry) => entry.kind === 'repository-location' ? [entry.path] : [])));
+    if (dispositions.some(({ path, outcome }) => (outcome === 'challenge-raised') !== challengedPaths.has(path))) {
+        throw recordInvalid();
+    }
 }
 function parseFinding(value, expectedKind) {
     if (!isRecord(value) ||
@@ -1154,31 +1251,61 @@ function withoutFinalAssuranceCommitment(record) {
     return body;
 }
 function parseFinalAssuranceReviewerAuthority(value) {
-    if (!isRecord(value) ||
-        !hasExactKeys(value, [
+    if (!isRecord(value)) {
+        throw finalAssuranceInvalid();
+    }
+    if (value.kind === 'engine-attributed-provider-reviewer') {
+        if (!hasExactKeys(value, [
             'kind',
             'principalId',
             'providerId',
             'policyDigest',
+        ])) {
+            throw finalAssuranceInvalid();
+        }
+        return Object.freeze({
+            kind: 'engine-attributed-provider-reviewer',
+            principalId: finalAssuranceIdentity(value.principalId),
+            providerId: finalAssuranceIdentity(value.providerId),
+            policyDigest: finalAssuranceDigest(value.policyDigest),
+        });
+    }
+    if (value.kind !== 'grant-attributed-external-reviewer' ||
+        !hasExactKeys(value, [
+            'kind',
+            'principalId',
+            'degradedForm',
+            'grantUseDigest',
+            'policyDigest',
         ]) ||
-        value.kind !== 'engine-attributed-provider-reviewer') {
+        (value.degradedForm !== 'caller-supplied' &&
+            value.degradedForm !== 'direct-human-review')) {
         throw finalAssuranceInvalid();
     }
     return Object.freeze({
-        kind: 'engine-attributed-provider-reviewer',
+        kind: 'grant-attributed-external-reviewer',
         principalId: finalAssuranceIdentity(value.principalId),
-        providerId: finalAssuranceIdentity(value.providerId),
+        degradedForm: value.degradedForm,
+        grantUseDigest: finalAssuranceDigest(value.grantUseDigest),
         policyDigest: finalAssuranceDigest(value.policyDigest),
     });
 }
 function parseFinalAssuranceExceptions(value) {
-    if (!Array.isArray(value) || value.length > 1) {
+    if (!Array.isArray(value) || value.length > 2) {
         throw finalAssuranceInvalid();
     }
-    return Object.freeze(value.map((candidate) => {
+    const exceptions = value
+        .map((candidate) => {
         if (!isRecord(candidate) ||
-            !hasExactKeys(candidate, ['kind', 'grantUseDigest', 'degradedForm']) ||
+            !hasExactKeys(candidate, [
+                'kind',
+                'stage',
+                'grantUseDigest',
+                'degradedForm',
+            ]) ||
             candidate.kind !== 'collaboration-grant-degradation' ||
+            (candidate.stage !== 'review' &&
+                candidate.stage !== 'challenge-closure') ||
             ![
                 'same-provider-fresh-session',
                 'caller-supplied',
@@ -1188,10 +1315,134 @@ function parseFinalAssuranceExceptions(value) {
         }
         return Object.freeze({
             kind: 'collaboration-grant-degradation',
+            stage: candidate.stage,
             grantUseDigest: finalAssuranceDigest(candidate.grantUseDigest),
             degradedForm: candidate.degradedForm,
         });
-    }));
+    })
+        .sort((left, right) => finalAssuranceStageOrder(left.stage) -
+        finalAssuranceStageOrder(right.stage));
+    if (exceptions.some((entry, index) => index > 0 && entry.stage === exceptions[index - 1].stage) ||
+        new Set(exceptions.map(({ grantUseDigest }) => grantUseDigest)).size !==
+            exceptions.length) {
+        throw finalAssuranceInvalid();
+    }
+    return Object.freeze(exceptions);
+}
+function expectedFinalAssuranceExceptions(review, authority) {
+    const expected = [];
+    if (review.assignment.degradedForm !== null &&
+        review.assignment.grantUseDigest !== null) {
+        expected.push({
+            kind: 'collaboration-grant-degradation',
+            stage: 'review',
+            grantUseDigest: review.assignment.grantUseDigest,
+            degradedForm: review.assignment.degradedForm,
+        });
+    }
+    if (authority.kind === 'grant-attributed-external-reviewer') {
+        expected.push({
+            kind: 'collaboration-grant-degradation',
+            stage: 'challenge-closure',
+            grantUseDigest: authority.grantUseDigest,
+            degradedForm: authority.degradedForm,
+        });
+    }
+    return parseFinalAssuranceExceptions(expected);
+}
+function finalAssuranceAuthorityMatchesStoredExceptions(authority, exceptions) {
+    const closureException = exceptions.find(({ stage }) => stage === 'challenge-closure');
+    return authority.kind === 'grant-attributed-external-reviewer'
+        ? closureException?.grantUseDigest === authority.grantUseDigest &&
+            closureException.degradedForm === authority.degradedForm
+        : closureException === undefined;
+}
+function finalAssuranceStageOrder(stage) {
+    return stage === 'review' ? 0 : 1;
+}
+function parseAuthenticatedReviewerAuthority(value) {
+    if (!isRecord(value) ||
+        !hasExactKeys(value, [
+            'schemaVersion',
+            'kind',
+            'stage',
+            'subjectDigest',
+            'reviewRecordDigest',
+            'responseDigest',
+            'authorityNodeId',
+            'authorityResultDigest',
+            'authority',
+        ]) ||
+        value.schemaVersion !== 1 ||
+        value.kind !== 'task-diff-authenticated-reviewer-authority.v1' ||
+        (value.stage !== 'review' && value.stage !== 'challenge-closure') ||
+        (value.responseDigest !== null &&
+            (typeof value.responseDigest !== 'string' ||
+                !DIGEST.test(value.responseDigest)))) {
+        throw finalAssuranceInvalid();
+    }
+    return Object.freeze({
+        schemaVersion: 1,
+        kind: 'task-diff-authenticated-reviewer-authority.v1',
+        stage: value.stage,
+        subjectDigest: finalAssuranceDigest(value.subjectDigest),
+        reviewRecordDigest: finalAssuranceDigest(value.reviewRecordDigest),
+        responseDigest: value.responseDigest,
+        authorityNodeId: finalAssuranceDigest(value.authorityNodeId),
+        authorityResultDigest: finalAssuranceDigest(value.authorityResultDigest),
+        authority: parseFinalAssuranceReviewerAuthority(value.authority),
+    });
+}
+function expectedInitialReviewAuthority(review) {
+    const assignment = review.assignment;
+    return assignment.reviewerProviderId === null
+        ? Object.freeze({
+            kind: 'grant-attributed-external-reviewer',
+            principalId: assignment.reviewerPrincipalId,
+            degradedForm: assignment.degradedForm,
+            grantUseDigest: assignment.grantUseDigest,
+            policyDigest: review.subject.reviewPolicyDigest,
+        })
+        : Object.freeze({
+            kind: 'engine-attributed-provider-reviewer',
+            principalId: assignment.reviewerPrincipalId,
+            providerId: assignment.reviewerProviderId,
+            policyDigest: review.subject.reviewPolicyDigest,
+        });
+}
+function assertFinalAssuranceAuthorityBindings(input) {
+    const expectedReviewAuthority = expectedInitialReviewAuthority(input.review);
+    const legacyExactProviderContinuation = expectedReviewAuthority.kind === 'engine-attributed-provider-reviewer' &&
+        input.reviewerAuthority.kind === 'engine-attributed-provider-reviewer' &&
+        canonicalJson(input.reviewerAuthority) ===
+            canonicalJson(expectedReviewAuthority);
+    const reviewFact = input.authenticatedReviewAuthority;
+    const closureFact = input.authenticatedChallengeClosureAuthority;
+    if (reviewFact === undefined && closureFact === undefined) {
+        if (!legacyExactProviderContinuation)
+            throw finalAssuranceInvalid();
+        return;
+    }
+    if (reviewFact === undefined || closureFact === undefined) {
+        throw finalAssuranceInvalid();
+    }
+    const authenticatedReview = parseAuthenticatedReviewerAuthority(reviewFact);
+    const authenticatedClosure = parseAuthenticatedReviewerAuthority(closureFact);
+    if (authenticatedReview.stage !== 'review' ||
+        authenticatedReview.subjectDigest !== input.subject.subjectDigest ||
+        authenticatedReview.reviewRecordDigest !== input.review.recordDigest ||
+        authenticatedReview.responseDigest !== null ||
+        canonicalJson(authenticatedReview.authority) !==
+            canonicalJson(expectedReviewAuthority) ||
+        authenticatedClosure.stage !== 'challenge-closure' ||
+        authenticatedClosure.subjectDigest !== input.subject.subjectDigest ||
+        authenticatedClosure.reviewRecordDigest !== input.review.recordDigest ||
+        authenticatedClosure.responseDigest !== input.response.responseDigest ||
+        canonicalJson(authenticatedClosure.authority) !==
+            canonicalJson(input.reviewerAuthority) ||
+        authenticatedReview.authorityNodeId === authenticatedClosure.authorityNodeId) {
+        throw finalAssuranceInvalid();
+    }
 }
 function assertTaskDiffChallengeClosure(subject, review, authority, dispositions) {
     const challenges = review.challenges.map((challenge) => ({
@@ -1266,6 +1517,9 @@ function identity(value) {
         throw recordInvalid();
     }
     return value;
+}
+function nullableIdentity(value) {
+    return value === null ? null : identity(value);
 }
 function dispositionIdentity(value) {
     if (typeof value !== 'string' || !IDENTITY.test(value)) {

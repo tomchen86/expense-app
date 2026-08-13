@@ -247,6 +247,7 @@ function validSubmission(): TaskDiffReviewSubmission {
     scopeAssessment: { kind: 'no-challenge', evidence: [evidence] },
     findings: [],
     suggestions: [],
+    riskPathDispositions: [],
     residualRisk: 'No release-blocking residual risk was identified.',
     uncertainty: 'Review is limited to the exact canonical candidate.',
   };
