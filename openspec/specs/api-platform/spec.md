@@ -1,123 +1,146 @@
-# api-platform Specification
+# API Platform Specification
 
 ## Purpose
 
-Define the repository's current API platform contract: a modular NestJS
-application backed by migration-managed relational data, authenticated HTTP
-endpoints, and ledger-scoped expense collaboration resources.
+Define the NestJS cloud boundary for authenticated, explicit-space expense
+collaboration and synchronization with offline-first mobile clients.
+
+## Delivery Status
+
+The current API implements explicit Space context, personal-ledger projection,
+canonical expense validation, idempotent create, optimistic versions,
+tombstones, per-currency statistics, and the incremental expense feed. The
+mobile HTTP coordinator and durable inbox/outbox are not connected yet, and
+refresh-token family rotation/reuse detection, logout/revocation, and
+credential throttling in the security requirement below remain target behavior.
 
 ## Requirements
 
-### Requirement: Modular API application
+### Requirement: Modular API Application
 
-The API application SHALL bootstrap through NestJS and SHALL compose
-authentication, user, category, participant, group, and expense modules through
-the root application module.
+The API SHALL bootstrap through NestJS and compose authentication, user,
+space, category, participant, expense, and synchronization capabilities. Its
+public boundary SHALL validate request DTOs and map failures to a consistent
+error contract.
 
-#### Scenario: Start the API application
+#### Scenario: Invalid request reaches the API
 
-- **WHEN** the API process starts with a valid database configuration
-- **THEN** NestJS creates the root application and listens on the configured
-  port, defaulting to port 3000
-- **AND** the root module makes the implemented domain modules available
+- WHEN a request violates a runtime DTO constraint
+- THEN the API rejects it before domain mutation
+- AND returns a stable validation error without leaking database details
 
-### Requirement: Migration-managed PostgreSQL persistence
+### Requirement: Migration-Managed PostgreSQL Persistence
 
-The API SHALL use PostgreSQL as its normal runtime database and SHALL keep
-schema synchronization disabled for PostgreSQL so that tracked migrations own
-schema evolution.
+The normal runtime database SHALL be PostgreSQL with schema synchronization
+disabled. Tracked migrations SHALL own schema evolution and SHALL preserve
+financial history across upgrades.
 
-#### Scenario: Configure a PostgreSQL runtime
+#### Scenario: PostgreSQL runtime starts
 
-- **WHEN** the database driver is PostgreSQL
-- **THEN** the API loads its runtime entities and tracked migrations
-- **AND** it enables migration execution without TypeORM schema synchronization
+- WHEN the API starts with valid database configuration
+- THEN it loads tracked runtime entities and migrations
+- AND TypeORM schema synchronization remains disabled
 
-### Requirement: Seeded baseline data
+### Requirement: Explicit Space Context
 
-The API repository SHALL provide repeatable seed implementations for default
-categories, default user settings, and representative sample data.
+Every category, participant, expense, membership, and shared-space request
+SHALL identify a `spaceId` explicitly through its route or validated payload.
+The API SHALL verify active membership and capability for that exact space. It
+SHALL NOT infer the target from the earliest user membership. During migration,
+an old-client request that omits space context MAY resolve only to the user's
+unique personal space; omission SHALL never select a shared space.
 
-#### Scenario: Prepare a new ledger baseline
+#### Scenario: User selects one of several spaces
 
-- **WHEN** the relevant seed is run against an eligible database
-- **THEN** the corresponding baseline records are created without requiring
-  hand-entered application data
+- GIVEN the user belongs to several spaces
+- WHEN the client submits the validated explicit space identifier
+- THEN only that explicit space is queried
+- AND another membership cannot redirect the request
 
-### Requirement: Account authentication endpoints
+### Requirement: Personal Ledger Projection API
 
-The API SHALL provide account registration, login, refresh-token, and current
-user endpoints. Registration SHALL hash the submitted password and initialize
-user settings, and protected endpoints SHALL resolve the authenticated user
-from an access token.
+The API SHALL expose a current-user projection that combines personal-space
+expenses with the user's payments and shares in authorized shared spaces. It
+SHALL distinguish paid, spent, and balance values and SHALL not duplicate an
+expense into a second ledger row.
 
-#### Scenario: Register an account
+#### Scenario: User consumes part of a shared expense
 
-- **WHEN** a client submits a unique email, password, and display name
-- **THEN** the API creates the user and initial settings
-- **AND** it returns an access token and a refresh token
+- GIVEN a shared expense is `10000` minor units and the user's share is `2000`
+- WHEN the current-user ledger is requested
+- THEN the expense appears once
+- AND its `mySpent` value is `2000`
 
-#### Scenario: Reject invalid credentials
+### Requirement: Atomic Expense Aggregate
 
-- **WHEN** a client submits an unknown email or an incorrect password
-- **THEN** the API rejects the login without exposing which credential failed
+Expense, payment, and share creation or allocation changes SHALL be atomic.
+Canonical minor-unit payment totals and share totals SHALL each equal the
+expense amount. Same-space relationships SHALL be enforced by both service
+validation and database constraints.
 
-### Requirement: User settings and device resources
+#### Scenario: Allocation write fails
 
-Authenticated users SHALL be able to read and update their profile and
-settings, select a supported persistence-mode value, and register, list,
-update, or remove their device records.
+- GIVEN an expense mutation contains an invalid participant or unbalanced
+  allocation
+- WHEN persistence is attempted
+- THEN no part of the aggregate is committed
 
-#### Scenario: Change persistence preference
+### Requirement: Idempotent Versioned Synchronization
 
-- **WHEN** an authenticated user selects `local_only` or `cloud_sync`
-- **THEN** the API stores that preference and records the change time
+Syncable creates SHALL include a stable client mutation identifier. The API
+SHALL deduplicate retries in the target space. Updates and deletes SHALL
+include an expected record version; stale mutations SHALL return a conflict.
+Deletes SHALL produce versioned tombstones available to incremental sync.
 
-### Requirement: Ledger-scoped expense resources
+#### Scenario: Client retries a create
 
-The API SHALL provide authenticated expense create, read, update, delete,
-statistics, and paginated list operations. Expense reads and mutations SHALL
-be scoped to the authenticated user's ledger.
+- GIVEN a create with the same space and mutation identifier was accepted
+- WHEN it is submitted again
+- THEN the API returns the existing logical record
+- AND does not create a duplicate
 
-#### Scenario: Query expenses
+#### Scenario: Client updates a stale version
 
-- **WHEN** an authenticated user lists expenses with supported pagination,
-  category, participant, date, amount, or keyword filters
-- **THEN** the API returns only matching expenses from that user's ledger
-- **AND** the result includes pagination metadata
+- GIVEN the server version is newer than the client's expected version
+- WHEN the update is submitted
+- THEN the API returns a conflict with current version metadata
 
-#### Scenario: Create a split expense
+### Requirement: Incremental Sync Feed
 
-- **WHEN** an authenticated user submits a positive cent amount, currency,
-  expense date, payer, and valid split data for ledger-owned resources
-- **THEN** the API stores the expense and its splits atomically
+An authorized device SHALL be able to request changes for an explicit space
+after a durable cursor. The response SHALL include upserts and tombstones in a
+stable order and SHALL return the next cursor. Advancing a device cursor SHALL
+occur only after the client durably applies the batch.
 
-### Requirement: Participant and group resources
+#### Scenario: Device reconnects
 
-The API SHALL provide authenticated participant and group list, create,
-update, and delete operations scoped to the authenticated user's ledger.
-Creating a group SHALL record its creator and establish active member records.
+- GIVEN a device has a previously acknowledged cursor
+- WHEN it requests changes after that cursor
+- THEN the API returns only later authorized changes
+- AND includes deleted records as tombstones
 
-#### Scenario: Create a group
+### Requirement: Currency-Safe Statistics
 
-- **WHEN** an authenticated user submits a non-empty group name and valid
-  participant identifiers from the user's ledger
-- **THEN** the API creates the group
-- **AND** it records the user's participant as an owner member
+Statistics SHALL use the requested projection and SHALL group totals by
+currency unless an explicit conversion contract is supplied. The API SHALL
+never add unlike minor-unit currencies into one unlabeled total.
 
-#### Scenario: Remove a group
+#### Scenario: Space has multiple currencies
 
-- **WHEN** an authenticated user in the ledger deletes an existing group
-- **THEN** the API soft-deletes the group and marks its memberships as left
+- GIVEN no base-currency conversion applies
+- WHEN statistics are requested
+- THEN each currency has a separate total
 
-### Requirement: Category resources and usage integrity
+### Requirement: Account and Device Security
 
-The API SHALL provide authenticated category list, create, update, and delete
-operations, SHALL expose the built-in category definitions, and SHALL reject
-deletion of a category referenced by a non-deleted expense.
+The API SHALL validate registration and login payloads, throttle credential
+attempts, rotate refresh-token sessions with reuse detection, and permit
+logout/revocation. Device records SHALL be scoped to the authenticated account
+and SHALL report sync state without becoming the source of financial truth.
 
-#### Scenario: Reject deletion of an in-use category
+#### Scenario: Refresh token is reused
 
-- **WHEN** an authenticated user tries to delete a category used by an active
-  expense
-- **THEN** the API rejects the operation with a category-in-use error
+- GIVEN a refresh token was already rotated
+- WHEN the same token is presented again
+- THEN the token family is rejected or revoked
+- AND no new access token is issued

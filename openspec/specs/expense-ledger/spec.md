@@ -2,196 +2,187 @@
 
 ## Purpose
 
-Define the current mobile expense capture, mutation, list, and user-share
-behavior backed by the local Zustand ledger.
+Define the canonical expense model shared by the mobile client and cloud API.
+An expense is one logical record even when it has both an on-device replica and
+a cloud replica. Personal and shared expenses use the same money, allocation,
+identity, and history rules.
 
 ## Requirements
 
-### Requirement: Expense Capture Fields
+### Requirement: Canonical Money and Date Values
 
-The mobile expense form SHALL collect a title, amount, category, and date. It
-SHALL also support an optional caption and optional group assignment. When a
-group is selected, the form SHALL expose payer and split-participant selection
-from that group's participants.
+Every expense SHALL store its amount as positive integer minor units together
+with an ISO 4217 currency code. An expense date SHALL be a calendar date in
+`YYYY-MM-DD` form and SHALL NOT be derived by converting local midnight through
+UTC. User-entered decimal amounts SHALL be validated in full and converted to
+minor units before the expense is created.
 
-#### Scenario: User opens a new personal expense form
+#### Scenario: User enters a valid amount
 
-- GIVEN no existing expense was supplied to the add/edit destination
-- WHEN the form is initialized
-- THEN title, amount, and caption are empty
-- AND the date is initialized to the current date
-- AND category is initialized from the first available category, falling back
-  to `Other`
-- AND no group, payer, or split participant is selected
+- GIVEN the selected currency has two fractional digits
+- WHEN the user submits `12.34`
+- THEN the canonical expense amount is `1234` minor units
+- AND both local and cloud representations retain the same value
 
-#### Scenario: User selects a group
+#### Scenario: User enters an invalid amount
 
-- GIVEN the expense form is open
-- WHEN the user selects a group
-- THEN the selected payer is cleared
-- AND the selected split participants are cleared
-- AND payer and split choices are limited to the selected group's participants
-
-### Requirement: Expense Validation
-
-The mobile expense form SHALL block submission when title, amount, date, or
-category is absent. It SHALL parse the amount as a number and SHALL block a
-non-numeric, zero, or negative result. A group expense SHALL additionally
-require a selected payer and at least one selected split participant.
-
-#### Scenario: A required value is absent
-
-- GIVEN the expense form lacks title, amount, date, or category
+- GIVEN the amount contains trailing characters, is non-finite, has unsupported
+  precision, is zero, or is negative
 - WHEN the user submits the form
-- THEN the application displays `Please fill all required fields.`
-- AND no expense is added or updated
+- THEN no expense is created
+- AND the client identifies the amount as invalid
 
-#### Scenario: Amount is not positive
+#### Scenario: User selects a local calendar date
 
-- GIVEN the supplied amount parses to a non-number, zero, or a negative number
-- WHEN the user submits the form
-- THEN the application displays `Amount must be a positive number.`
-- AND no expense is added or updated
+- GIVEN the device timezone is ahead of UTC
+- WHEN the user selects a calendar date
+- THEN the stored `YYYY-MM-DD` value equals the date shown in the picker
 
-#### Scenario: Group allocation is incomplete
+### Requirement: Expense Space
 
-- GIVEN a group is selected
-- AND either no payer or no split participant is selected
-- WHEN the user submits the form
-- THEN the application asks the user to select both payer and split participants
-- AND no expense is added or updated
-
-### Requirement: Expense Date Selection
-
-The mobile expense form SHALL expose a platform date picker that displays the
-selected date in `YYYY-MM-DD` form and prevents selection of a future date.
-
-#### Scenario: User chooses an expense date
-
-- GIVEN the expense form is open
-- WHEN the user activates the date field
-- THEN the platform date picker is displayed
-- AND dates after the current date are unavailable
-
-### Requirement: Personal Expense Creation
-
-On valid personal submission, the ledger SHALL trim the title, parse and store
-the numeric amount, store the selected date as the date portion of its ISO
-representation, preserve a non-empty trimmed caption, and assign the internal
-user identifier as both `paidBy` and `groupId`. The ledger SHALL assign a new
-local expense identifier and return to the preceding screen.
+Every expense SHALL belong to exactly one explicit space. A space SHALL have
+kind `personal` or `shared`. A personal expense SHALL belong to the current
+user's personal space; a collaborative expense SHALL belong to the selected
+shared space. A user identifier SHALL NOT be stored as a fake group or space
+identifier.
 
 #### Scenario: User creates a personal expense
 
-- GIVEN the form contains valid required values
-- AND no group is selected
-- AND an internal user identifier is available
-- WHEN the user submits the form
-- THEN one new expense is stored with a generated identifier
-- AND `paidBy` and `groupId` both equal the internal user identifier
-- AND no `splitBetween` field is stored
-- AND the application navigates back
+- GIVEN the user submits a valid expense without selecting a shared space
+- WHEN the expense is created
+- THEN it belongs to that user's personal space
+- AND no synthetic `groupId = userId` association is created
 
-### Requirement: Group Expense Creation
+#### Scenario: User creates a shared expense
 
-On valid group submission, the ledger SHALL store the selected group's
-identifier, the selected payer's identifier, and the identifiers of all
-selected split participants with the expense.
+- GIVEN the user is an active member of a shared space
+- WHEN the user submits an expense for that space
+- THEN the expense belongs to that exact shared space
+- AND it is visible only through users authorized for that space
 
-#### Scenario: User creates a group expense
+### Requirement: Explicit Payments and Shares
 
-- GIVEN the form contains valid required values
-- AND a group, payer, and one or more split participants are selected
-- WHEN the user submits the form
-- THEN one new expense is stored for the selected group
-- AND `paidBy` identifies the selected payer
-- AND `splitBetween` contains the selected participants' identifiers
-- AND the application navigates back
+An expense SHALL record who paid through one full-amount payment allocation and
+who consumed the expense through one or more share allocations. Payment and
+share amounts SHALL use integer minor units. The payment and share totals SHALL
+each equal the expense amount. Supporting several payers for one expense is an
+explicit future extension, not part of this base contract. Participant
+membership changes SHALL NOT rewrite historical allocations.
 
-### Requirement: Existing Expense Editing
+#### Scenario: Personal expense allocation
 
-When an expense is supplied to the add/edit destination, the form SHALL load
-its stored fields and enter edit mode. A valid submission SHALL replace the
-expense with the submitted values while preserving its identifier.
+- GIVEN a personal expense amount is `1500` minor units
+- WHEN it is created
+- THEN the current user's payment allocation is `1500`
+- AND the current user's share allocation is `1500`
 
-#### Scenario: User updates an existing expense
+#### Scenario: One user pays for several people
 
-- GIVEN the add/edit destination received a serialized existing expense
-- WHEN the route value is parsed and the form is initialized
-- THEN the form displays that expense's title, amount, date, category, caption,
-  group, payer, and split participants when those references are available
-- WHEN the user submits valid changes
-- THEN the ledger updates the expense with the same identifier
-- AND the application navigates back
+- GIVEN one participant pays `10000` minor units
+- AND the submitted shares are `2000`, `3000`, and `5000`
+- WHEN the shared expense is accepted
+- THEN the payer need not be one of the consuming participants
+- AND payments and shares each total `10000`
 
-### Requirement: Ledger Ordering
+#### Scenario: Equal split has a remainder
 
-After adding or updating an expense, the ledger SHALL order stored expenses by
-date in descending order.
+- GIVEN `1000` minor units are split equally among three participants
+- WHEN allocations are generated
+- THEN the generated shares are deterministic integer values
+- AND they total exactly `1000`
 
-#### Scenario: A mutation changes chronological order
+### Requirement: One Allocation Source of Truth
 
-- GIVEN the ledger contains expenses on different dates
-- WHEN an expense is added or its date is updated
-- THEN expenses with later dates precede expenses with earlier dates
+Canonical share amounts SHALL be the source of truth for balances. Equal,
+percentage, or shares-based split methods MAY be accepted as user input, but
+the implementation SHALL derive canonical minor-unit shares and SHALL NOT
+persist contradictory percentage and amount truths.
 
-### Requirement: Expense Screen Relevance and Share
+#### Scenario: Percentage input is converted
 
-The Expense screen SHALL list only expenses relevant to the internal user. An
-expense is relevant when it is personal to that user, the user paid it in a
-different group, or the user appears in its split participants in a different
-group. The screen SHALL calculate a split expense's user share as the full
-amount divided equally by the number of split participants when the user is in
-that split; it SHALL use the full amount for an unsplit expense paid by the
-user, and zero otherwise. `Your Total Share` SHALL be the sum of those computed
-shares.
+- GIVEN a valid percentage split totals 100 percent
+- WHEN the expense is created
+- THEN the implementation derives deterministic minor-unit shares
+- AND later balance calculations use those shares
 
-#### Scenario: Split expense includes the user
+#### Scenario: Client supplies contradictory values
 
-- GIVEN an expense amount is split among multiple participant identifiers
-- AND the internal user identifier is included
-- WHEN the Expense screen calculates the user's share
-- THEN the share equals the expense amount divided by the number of split
-  participants
+- GIVEN submitted percentages and submitted minor-unit shares describe
+  different allocations
+- WHEN the API validates the mutation
+- THEN it rejects the mutation or ignores the non-canonical derived values
+- AND it never stores both as contradictory truths
 
-#### Scenario: User is not involved in an expense
+### Requirement: Personal Ledger Projection
 
-- GIVEN an expense is neither personal to, paid by, nor split with the internal
-  user
-- WHEN the Expense screen derives its list
-- THEN that expense is omitted
+The personal expense feed SHALL be a projection, not a duplicate collection.
+It SHALL include expenses in the user's personal space and shared-space
+expenses for which the user has a payment or share allocation. For each
+expense, `mySpent` SHALL equal the user's shares, `myPaid` SHALL equal the
+user's payments, and `myBalance` SHALL equal `myPaid - mySpent`.
 
-#### Scenario: Internal user identity is unavailable
+#### Scenario: Friend pays for the user
 
-- GIVEN no internal user identifier is available
-- WHEN the Expense screen derives its list and total
-- THEN no expenses are listed
-- AND the total share is zero
+- GIVEN a friend pays `10000` minor units for a shared expense
+- AND the current user's share is `2000`
+- WHEN the current user opens the personal ledger
+- THEN that one shared expense appears in the feed
+- AND `mySpent` is `2000`
+- AND no second copy of the expense is created
 
-### Requirement: Expense List Presentation and Actions
+#### Scenario: User pays on behalf of others
 
-Each listed expense SHALL display its title, computed display amount prefixed
-with `$` and rounded to two decimal places, category name, and date. It SHALL
-also display a known non-personal group tag, resolved payer name, and caption
-when those values are available. Each item SHALL expose explicit `Edit` and
-`Delete` controls; deletion SHALL require confirmation before removing the
-expense by identifier.
+- GIVEN the current user pays `10000` minor units
+- AND the current user's own share is `2000`
+- WHEN personal totals are calculated
+- THEN `myPaid` is `10000`
+- AND `mySpent` is `2000`
+- AND `myBalance` is `8000`
 
-#### Scenario: User edits a listed expense
+### Requirement: Historical Integrity
 
-- GIVEN an expense appears on the Expense screen
-- WHEN the user activates its `Edit` control
-- THEN the application pushes `/add-expense`
-- AND the route includes the serialized expense to edit
+Expense payments and shares SHALL remain resolvable after a participant leaves
+a shared space or is deactivated. Removing a current membership SHALL affect
+future selection only. Deleting an expense SHALL create a tombstone for sync;
+it SHALL NOT silently mutate unrelated historical expenses.
 
-#### Scenario: User confirms deletion
+#### Scenario: Participant leaves a shared space
 
-- GIVEN an expense appears on the Expense screen
-- WHEN the user activates `Delete` and confirms the destructive action
-- THEN the ledger removes the expense with that identifier
+- GIVEN a participant appears in an existing expense allocation
+- WHEN that participant leaves the shared space
+- THEN the existing payment and share amounts remain unchanged
+- AND current member selectors omit that participant for new expenses
 
-#### Scenario: User cancels deletion
+### Requirement: Versioned Expense Mutation
 
-- GIVEN the deletion confirmation is visible
-- WHEN the user selects `Cancel`
-- THEN the expense remains in the ledger
+Each syncable expense SHALL have a stable client-generated identifier and a
+monotonically increasing version. Retried creates SHALL be idempotent. An
+update based on a stale version SHALL return a conflict rather than silently
+overwriting a newer mutation.
+
+#### Scenario: Create is retried after a timeout
+
+- GIVEN the cloud already accepted a mutation identifier
+- WHEN the client retries the same create
+- THEN the API returns the same logical expense
+- AND no duplicate expense is created
+
+#### Scenario: Two devices edit the same expense
+
+- GIVEN device A has already advanced an expense version
+- WHEN device B submits an update using the previous version
+- THEN the cloud rejects it as a conflict
+- AND returns the current server version for deterministic reconciliation
+
+### Requirement: Expense Presentation
+
+The client SHALL format money using the expense currency rather than a
+hard-coded symbol. Category, payer, space, notes, and date SHALL be rendered
+from stable identifiers and canonical values when available.
+
+#### Scenario: Expense uses Australian dollars
+
+- GIVEN an expense currency is `AUD`
+- WHEN it is displayed
+- THEN formatting uses the configured locale and `AUD`
+- AND the display does not assume that `$` uniquely means USD

@@ -2,140 +2,110 @@
 
 ## Purpose
 
-Define the current personal and group spending breakdowns presented by the
-mobile insights screen.
+Define personal and shared-space insights from canonical payment and share
+allocations. Insights SHALL use the same projection rules as the expense feed
+and balances.
 
 ## Requirements
 
 ### Requirement: Insights Context
 
-The insights screen SHALL accept either a `personal` context with a user
-identifier or a `group` context with a group identifier. Personal insights
-SHALL use expenses whose `paidBy` value equals the internal user identifier.
-Group insights SHALL use expenses whose `groupId` equals the requested group
-identifier.
+The insights screen SHALL accept either a `personal` context for the current
+user or a `shared` context with an explicit shared-space identifier. Personal
+insights SHALL be derived from the user's share allocations, not from expenses
+the user happened to pay. Shared insights SHALL be derived from expenses in
+the authorized shared space.
 
 #### Scenario: Personal insights are requested
 
-- GIVEN the insights route identifies a personal context
-- AND an internal user identifier is available
-- WHEN the screen derives relevant expenses
-- THEN it includes expenses paid by that internal user
-- AND the screen title is `Personal Expense Insights`
+- GIVEN the current user has personal and shared-space allocations
+- WHEN personal insights are derived
+- THEN each expense contributes the current user's canonical share
+- AND expenses paid by the user for other people do not inflate personal
+  spending
+- AND expenses paid by other people still contribute the user's share
 
-#### Scenario: Group insights are requested
+#### Scenario: Shared insights are requested
 
-- GIVEN the insights route identifies a group context and group identifier
-- WHEN the screen derives relevant expenses
-- THEN it includes expenses assigned to that exact group identifier
-- AND the title uses the known group name followed by `Insights`
+- GIVEN the user is authorized for a shared space
+- WHEN shared insights are derived
+- THEN only expenses belonging to that exact space are included
 
-#### Scenario: Requested group is unknown
+### Requirement: Paid, Spent, and Balance Totals
 
-- GIVEN the insights route identifies a group that is not present in the store
-- WHEN the screen title is derived
-- THEN the title is `Group Insights`
+Insights SHALL distinguish `paid`, `spent`, and `balance`. `paid` SHALL sum the
+user's payments, `spent` SHALL sum the user's shares, and `balance` SHALL equal
+`paid - spent`.
+
+#### Scenario: User fronts an expense
+
+- GIVEN the user pays `10000` minor units and consumes `2000`
+- WHEN personal insights are calculated
+- THEN paid is `10000`
+- AND spent is `2000`
+- AND balance is `8000`
 
 ### Requirement: Monthly and Yearly Aggregation
 
-The insights screen SHALL support month and year aggregation. It SHALL default
-to month aggregation and the current month unless an initial date is supplied.
-Month aggregation SHALL include only expenses in the selected month and year;
-year aggregation SHALL include all relevant expenses in the selected year.
+Insights SHALL support month and year aggregation using each expense's calendar
+date. Month aggregation SHALL include only the selected calendar month and
+year; year aggregation SHALL include the selected calendar year.
 
 #### Scenario: User views a monthly period
 
 - GIVEN month aggregation is selected
 - WHEN chart data is derived for a selected month and year
-- THEN only relevant expenses in that calendar month and year contribute
-- AND the displayed period contains the month name and year
-
-#### Scenario: User views a yearly period
-
-- GIVEN year aggregation is selected
-- WHEN chart data is derived for a selected year
-- THEN all relevant expenses in that calendar year contribute
-- AND the displayed period is that year
+- THEN only canonical dates in that month and year contribute
 
 ### Requirement: Category Breakdown
 
-For the selected context and period, the insights screen SHALL sum full expense
-amounts by category and calculate each category's percentage of the period
-total. It SHALL use the configured category color when available and gray when
-the category is unknown.
+Personal category breakdowns SHALL sum the current user's share for each
+expense. Shared-space category breakdowns SHALL sum full expense amounts.
+Category identity SHALL use stable category identifiers. Percentages SHALL be
+derived from the same amounts shown in the chart.
 
-#### Scenario: Multiple expenses share a category
+#### Scenario: Shared expense has a partial user share
 
-- GIVEN multiple relevant period expenses have the same category
-- WHEN chart data is generated
-- THEN their amounts are summed into one category value
-- AND its percentage equals that value divided by the sum of all included
-  expense amounts
+- GIVEN a shared expense is `10000` minor units and the user's share is `2000`
+- WHEN personal category data is generated
+- THEN that expense contributes `2000`
+- WHEN shared-space category data is generated
+- THEN it contributes `10000`
 
-#### Scenario: Category metadata is unavailable
+### Requirement: Currency-Safe Aggregation
 
-- GIVEN a relevant expense references a category absent from configured
-  categories
-- WHEN chart data is generated
-- THEN that category remains in the breakdown
-- AND its chart color is gray
+Insights SHALL NOT add unlike currencies into one unlabeled total. A space MAY
+enforce one currency, or insights SHALL group totals by currency. Currency
+conversion SHALL require an explicit base currency, rate, rate date, and
+decimal-safe calculation.
+
+#### Scenario: Period contains AUD and JPY
+
+- GIVEN no explicit conversion contract applies
+- WHEN insights are calculated
+- THEN AUD and JPY totals are returned separately
+- AND they are not reported as one summed minor-unit value
 
 ### Requirement: Insights Visualization
 
-The insights screen SHALL render a donut chart for non-empty category data and
-a legend containing each category name, absolute amount prefixed with `$` and
-rounded to two decimal places, and percentage rounded to one decimal place. If
-the selected period has no non-zero expense data, the screen SHALL display a
-no-data message instead of a chart.
+The client SHALL format each amount with its currency and locale. It SHALL
+render category data for non-empty periods and a no-data state for periods
+without non-zero canonical shares or expenses.
 
-#### Scenario: Selected period contains expense data
+#### Scenario: Selected period has no data
 
-- GIVEN category breakdown data is non-empty
-- WHEN the insights visualization renders
-- THEN a donut chart is displayed
-- AND the legend reports each category's amount and percentage
-
-#### Scenario: Selected period contains no expense data
-
-- GIVEN category breakdown data is empty
-- WHEN the insights visualization renders
+- GIVEN the selected projection contains no non-zero values
+- WHEN insights render
 - THEN the screen displays `No expense data for the selected period.`
 
 ### Requirement: Period Navigation
 
-The insights screen SHALL provide explicit previous-period and next-period
-controls. Monthly navigation SHALL cross year boundaries one month at a time,
-and yearly navigation SHALL move one year at a time. Forward navigation SHALL
-not advance beyond the current month or current year for the selected
-aggregation.
+The client SHALL provide previous and next period controls and an explicit
+period picker. Forward navigation SHALL not advance beyond the current month
+or year for the selected aggregation.
 
 #### Scenario: User moves back from January
 
-- GIVEN January of a selected year is shown in month aggregation
-- WHEN the user activates the previous-period control
+- GIVEN January is shown in month aggregation
+- WHEN the user selects the previous period
 - THEN December of the preceding year is selected
-
-#### Scenario: Current period is shown
-
-- GIVEN the selected period is the current month or current year
-- WHEN the period controls render
-- THEN the next-period control is disabled
-
-### Requirement: Explicit Period Picker
-
-Activating the displayed period SHALL open a period picker. The picker SHALL
-offer years from five years before through five years after the current year,
-and SHALL also offer a month when month aggregation is selected. Applying a
-picker selection SHALL update the period used for filtering.
-
-#### Scenario: User chooses a monthly period
-
-- GIVEN month aggregation is selected
-- WHEN the user opens the period picker and chooses a month and year
-- THEN the selected month and year become the active filtering period
-
-#### Scenario: User chooses a yearly period
-
-- GIVEN year aggregation is selected
-- WHEN the user opens the period picker and chooses a year
-- THEN that year becomes the active filtering period
