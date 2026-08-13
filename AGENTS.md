@@ -205,6 +205,14 @@ upgrade, and post-merge pilot procedures are in `docs/WORKFLOW.md`.
 - A task's configured checks and workflow report are the evidence; a checkbox
   or prose statement is not.
 
+### Full-gate economy
+
+Use targeted tests while iterating. Run the full gate once for a coherent batch;
+at the exact merge or push tip, reuse that result when the commit/tree and
+generated artifacts are unchanged. Run an additional full gate only after a
+material merge or a high-risk lifecycle, security, or recovery change, and state
+the reason. Never run duplicate or parallel full gates against the same tree.
+
 # Repository Guidelines
 
 ## Project Structure & Module Organization
