@@ -3,6 +3,13 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 import { assertCommitObject } from './commit-object-validation.ts';
+import {
+  createDocumentationClosureRecord,
+  parseDocumentationReviewCapture,
+  parseDocumentationClosureFromCommitMessage,
+  type DocumentationReviewCapture,
+} from './documentation-closure.ts';
+import { documentationClosureActivationAtCommit } from './documentation-closure-activation.ts';
 import { readFileAtCommit } from './ci-git.ts';
 import { loadWorkflowConfig } from './contracts.ts';
 import {
@@ -94,7 +101,10 @@ import {
   digestTaskContent,
   restoreTaskProjection,
 } from './task-projection.ts';
-import { assertTaskDiffReviewCompletionGateSatisfied } from './task-diff-review-lifecycle.ts';
+import {
+  assertTaskDiffReviewCompletionGateSatisfied,
+  loadTaskDiffDocumentationReviewCapture,
+} from './task-diff-review-lifecycle.ts';
 
 export type CompleteTaskResult = {
   session: WorkflowSession;
@@ -708,6 +718,10 @@ function completeTaskUnlocked(
   }
   assertCurrentImplementationReconciliation(initial);
   assertTaskDiffReviewCompletionGateSatisfied(cwd, requestedSessionId);
+  const documentationReview = loadTaskDiffDocumentationReviewCapture(
+    cwd,
+    requestedSessionId,
+  );
 
   const reconciliation = reconcilePredecessor(cwd, initial, environment);
   const completedTaskIds = [
@@ -755,6 +769,7 @@ function completeTaskUnlocked(
       projectionSourceDigest,
       transitionPaths,
       reconciledTasks: reconciliation,
+      ...(documentationReview === null ? {} : { documentationReview }),
     };
     const reportId = writeSessionReport(projected, report);
     const session: WorkflowSession = {
@@ -1053,6 +1068,17 @@ function commitSessionUnlocked(
     'tree',
     'FINISH_REPORT_STALE',
   );
+  const documentationClosure = documentationClosureForCommit(
+    inspection.git.repositoryRoot,
+    initialSession,
+    completionReport,
+    inspection.contract.tasks.every(({ completed }) => completed),
+    expectedTree,
+    [
+      ...pathClassification.taskProjectionPaths,
+      ...pathClassification.engineProjectionPaths,
+    ],
+  );
   const commitHash = createManagedCommitObject(
     inspection.git.repositoryRoot,
     expectedTree,
@@ -1061,6 +1087,7 @@ function commitSessionUnlocked(
     initialSession.changeId,
     initialSession.taskId,
     environment,
+    documentationClosure,
   );
   const facts = commitFacts(inspection.git.repositoryRoot, commitHash);
   assertCommitObject(
@@ -1070,6 +1097,7 @@ function commitSessionUnlocked(
     facts,
     expectedTree,
     inspection.changedPaths,
+    documentationClosure,
   );
 
   const report: WorkflowReport = {
@@ -1298,6 +1326,11 @@ function replayCommittedCommit(
     'PENDING_COMMIT_INVALID',
   );
   const facts = commitFacts(git.repositoryRoot, session.commitHash);
+  const reportMessage = reportString(
+    report,
+    'message',
+    'PENDING_COMMIT_INVALID',
+  );
   assertCommitObject(
     git.repositoryRoot,
     session,
@@ -1305,11 +1338,13 @@ function replayCommittedCommit(
     facts,
     reportString(report, 'tree', 'PENDING_COMMIT_INVALID'),
     changedPaths,
+    parseDocumentationClosureFromCommitMessage(reportMessage),
   );
   if (
     report.kind !== 'commit' ||
     report.parentReportId !== session.finishReportId ||
-    report.commitHash !== session.commitHash
+    report.commitHash !== session.commitHash ||
+    reportMessage !== facts.message
   ) {
     throw invalidCompletedFinalize();
   }
@@ -1318,6 +1353,59 @@ function replayCommittedCommit(
     reportId: session.commitReportId,
     commitHash: session.commitHash,
   };
+}
+
+function documentationClosureForCommit(
+  repositoryRoot: string,
+  session: WorkflowSession,
+  completionReport: WorkflowReport,
+  finalTask: boolean,
+  projectedCommitTree: string,
+  projectionPaths: readonly string[],
+) {
+  const activation = documentationClosureActivationAtCommit(
+    repositoryRoot,
+    session.baseline.head,
+  );
+  if (!activation.activated) {
+    if (completionReport.documentationReview !== undefined) {
+      throw invalidDocumentationClosureCapture();
+    }
+    return null;
+  }
+  if (!finalTask) {
+    if (completionReport.documentationReview !== undefined) {
+      throw invalidDocumentationClosureCapture();
+    }
+    return null;
+  }
+  const captured = parseDocumentationReviewCapture(
+    completionReport.documentationReview,
+  );
+  if (captured.review.subject.documentationRequirement?.required !== true) {
+    throw workflowError(
+      'DOCUMENTATION_CLOSURE_REQUIRED',
+      'The final task commit requires a satisfied documentation closure review.',
+      ExitCode.verification,
+    );
+  }
+  return createDocumentationClosureRecord({
+    changeId: session.changeId,
+    taskId: session.taskId,
+    review: captured.review,
+    finalAssurance: captured.finalAssurance,
+    remediation: session.documentationRemediation ?? null,
+    projectedCommitTree,
+    projectionPaths: [...projectionPaths].sort(),
+  });
+}
+
+function invalidDocumentationClosureCapture() {
+  return workflowError(
+    'DOCUMENTATION_CLOSURE_CAPTURE_INVALID',
+    'The completion report documentation review capture is missing, malformed, or unexpected.',
+    ExitCode.verification,
+  );
 }
 
 function invalidCompletedFinalize() {

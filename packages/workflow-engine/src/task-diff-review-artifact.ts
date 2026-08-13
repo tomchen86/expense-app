@@ -119,6 +119,29 @@ export type TaskDiffReviewRiskPathDisposition = Readonly<{
   outcome: (typeof RISK_PATH_OUTCOMES)[number];
 }>;
 
+export type TaskDiffDocumentationAssessment =
+  | Readonly<{
+      decision: 'updated';
+      paths: readonly string[];
+      notes: string;
+    }>
+  | Readonly<{
+      decision: 'no-impact';
+      notes: string;
+    }>
+  | Readonly<{
+      decision: 'generated-verified';
+      sources: readonly string[];
+      generated: readonly string[];
+      evidence: readonly string[];
+      notes: string;
+    }>
+  | Readonly<{
+      decision: 'needs-changes';
+      requiredPaths: readonly string[];
+      notes: string;
+    }>;
+
 export type TaskDiffReviewSubmission = Readonly<{
   schemaVersion: 1;
   verdict: TaskDiffReviewVerdict;
@@ -134,6 +157,7 @@ export type TaskDiffReviewSubmission = Readonly<{
   riskPathDispositions: readonly TaskDiffReviewRiskPathDisposition[];
   residualRisk: string;
   uncertainty: string;
+  documentationAssessment?: TaskDiffDocumentationAssessment;
 }>;
 
 /**
@@ -214,6 +238,71 @@ export const TASK_DIFF_REVIEW_PROVIDER_OUTPUT_SCHEMA = Object.freeze({
     },
     residualRisk: { type: 'string', minLength: 1 },
     uncertainty: { type: 'string', minLength: 1 },
+    documentationAssessment: {
+      anyOf: [
+        {
+          type: 'object',
+          additionalProperties: false,
+          required: ['decision', 'paths', 'notes'],
+          properties: {
+            decision: { type: 'string', const: 'updated' },
+            paths: {
+              type: 'array',
+              minItems: 1,
+              items: { type: 'string', minLength: 1 },
+            },
+            notes: { type: 'string', minLength: 1 },
+          },
+        },
+        {
+          type: 'object',
+          additionalProperties: false,
+          required: ['decision', 'notes'],
+          properties: {
+            decision: { type: 'string', const: 'no-impact' },
+            notes: { type: 'string', minLength: 1 },
+          },
+        },
+        {
+          type: 'object',
+          additionalProperties: false,
+          required: ['decision', 'sources', 'generated', 'evidence', 'notes'],
+          properties: {
+            decision: { type: 'string', const: 'generated-verified' },
+            sources: {
+              type: 'array',
+              minItems: 1,
+              items: { type: 'string', minLength: 1 },
+            },
+            generated: {
+              type: 'array',
+              minItems: 1,
+              items: { type: 'string', minLength: 1 },
+            },
+            evidence: {
+              type: 'array',
+              minItems: 1,
+              items: { type: 'string', minLength: 1 },
+            },
+            notes: { type: 'string', minLength: 1 },
+          },
+        },
+        {
+          type: 'object',
+          additionalProperties: false,
+          required: ['decision', 'requiredPaths', 'notes'],
+          properties: {
+            decision: { type: 'string', const: 'needs-changes' },
+            requiredPaths: {
+              type: 'array',
+              minItems: 1,
+              items: { type: 'string', minLength: 1 },
+            },
+            notes: { type: 'string', minLength: 1 },
+          },
+        },
+      ],
+    },
   },
   $defs: {
     evidence: {
@@ -475,6 +564,7 @@ export type TaskDiffReviewRecord = Readonly<{
   riskPathDispositions: readonly TaskDiffReviewRiskPathDisposition[];
   residualRisk: string;
   uncertainty: string;
+  documentationAssessment?: TaskDiffDocumentationAssessment;
 }>;
 
 export type CreateTaskDiffReviewRecordInput = Readonly<{
@@ -607,6 +697,9 @@ export function createTaskDiffReviewRecord(
     riskPathDispositions: submission.riskPathDispositions,
     residualRisk: submission.residualRisk,
     uncertainty: submission.uncertainty,
+    ...(submission.documentationAssessment === undefined
+      ? {}
+      : { documentationAssessment: submission.documentationAssessment }),
   };
   return parseTaskDiffReviewRecord({
     ...body,
@@ -617,25 +710,27 @@ export function createTaskDiffReviewRecord(
 export function parseTaskDiffReviewRecord(
   value: unknown,
 ): TaskDiffReviewRecord {
+  const legacyKeys = [
+    'schemaVersion',
+    'kind',
+    'recordDigest',
+    'subject',
+    'subjectDigest',
+    'reviewScope',
+    'assignment',
+    'verdict',
+    'coverage',
+    'scopeAssessment',
+    'challenges',
+    'suggestions',
+    'riskPathDispositions',
+    'residualRisk',
+    'uncertainty',
+  ];
   if (
     !isRecord(value) ||
-    !hasExactKeys(value, [
-      'schemaVersion',
-      'kind',
-      'recordDigest',
-      'subject',
-      'subjectDigest',
-      'reviewScope',
-      'assignment',
-      'verdict',
-      'coverage',
-      'scopeAssessment',
-      'challenges',
-      'suggestions',
-      'riskPathDispositions',
-      'residualRisk',
-      'uncertainty',
-    ]) ||
+    (!hasExactKeys(value, legacyKeys) &&
+      !hasExactKeys(value, [...legacyKeys, 'documentationAssessment'])) ||
     value.schemaVersion !== 1 ||
     value.kind !== 'task-diff-review-record.v1'
   ) {
@@ -661,6 +756,22 @@ export function parseTaskDiffReviewRecord(
     value.scopeAssessment,
     challenges.length,
   );
+  const documentationAssessment = Object.hasOwn(
+    value,
+    'documentationAssessment',
+  )
+    ? assertDocumentationAssessmentCurrent(
+        subject,
+        parseDocumentationAssessment(value.documentationAssessment),
+        verdict,
+        challenges.length,
+      )
+    : assertDocumentationAssessmentCurrent(
+        subject,
+        undefined,
+        verdict,
+        challenges.length,
+      );
   const record: TaskDiffReviewRecord = {
     schemaVersion: 1,
     kind: 'task-diff-review-record.v1',
@@ -677,6 +788,9 @@ export function parseTaskDiffReviewRecord(
     riskPathDispositions,
     residualRisk: boundedText(value.residualRisk),
     uncertainty: boundedText(value.uncertainty),
+    ...(documentationAssessment === undefined
+      ? {}
+      : { documentationAssessment }),
   };
   if (
     record.subjectDigest !== subject.subjectDigest ||
@@ -1116,6 +1230,16 @@ function normalizeSubmission(
     riskPathDispositions,
     residualRisk: submission.residualRisk,
     uncertainty: submission.uncertainty,
+    ...(submission.documentationAssessment === undefined
+      ? {}
+      : {
+          documentationAssessment: assertDocumentationAssessmentCurrent(
+            subject,
+            submission.documentationAssessment,
+            submission.verdict,
+            challenges.length,
+          ),
+        }),
   };
 }
 
@@ -1123,19 +1247,21 @@ function normalizeSubmission(
 export function parseTaskDiffReviewSubmission(
   value: unknown,
 ): TaskDiffReviewSubmission {
+  const legacyKeys = [
+    'schemaVersion',
+    'verdict',
+    'coverage',
+    'scopeAssessment',
+    'findings',
+    'suggestions',
+    'riskPathDispositions',
+    'residualRisk',
+    'uncertainty',
+  ];
   if (
     !isRecord(value) ||
-    !hasExactKeys(value, [
-      'schemaVersion',
-      'verdict',
-      'coverage',
-      'scopeAssessment',
-      'findings',
-      'suggestions',
-      'riskPathDispositions',
-      'residualRisk',
-      'uncertainty',
-    ]) ||
+    (!hasExactKeys(value, legacyKeys) &&
+      !hasExactKeys(value, [...legacyKeys, 'documentationAssessment'])) ||
     value.schemaVersion !== 1
   ) {
     throw recordInvalid();
@@ -1172,6 +1298,13 @@ export function parseTaskDiffReviewSubmission(
     riskPathDispositions: parseRiskPathDispositions(value.riskPathDispositions),
     residualRisk: boundedText(value.residualRisk),
     uncertainty: boundedText(value.uncertainty),
+    ...(Object.hasOwn(value, 'documentationAssessment')
+      ? {
+          documentationAssessment: parseDocumentationAssessment(
+            value.documentationAssessment,
+          ),
+        }
+      : {}),
   });
 }
 
@@ -1833,6 +1966,146 @@ function parseCoverage(value: unknown): typeof TASK_DIFF_REVIEW_COVERAGE {
     throw recordInvalid();
   }
   return TASK_DIFF_REVIEW_COVERAGE;
+}
+
+function parseDocumentationAssessment(
+  value: unknown,
+): TaskDiffDocumentationAssessment {
+  if (!isRecord(value) || typeof value.decision !== 'string') {
+    throw recordInvalid();
+  }
+  if (
+    value.decision === 'updated' &&
+    hasExactKeys(value, ['decision', 'paths', 'notes'])
+  ) {
+    return Object.freeze({
+      decision: 'updated' as const,
+      paths: documentationPaths(value.paths),
+      notes: boundedText(value.notes),
+    });
+  }
+  if (
+    value.decision === 'no-impact' &&
+    hasExactKeys(value, ['decision', 'notes'])
+  ) {
+    return Object.freeze({
+      decision: 'no-impact' as const,
+      notes: boundedText(value.notes),
+    });
+  }
+  if (
+    value.decision === 'generated-verified' &&
+    hasExactKeys(value, [
+      'decision',
+      'sources',
+      'generated',
+      'evidence',
+      'notes',
+    ])
+  ) {
+    return Object.freeze({
+      decision: 'generated-verified' as const,
+      sources: exactPaths(value.sources, false),
+      generated: documentationPaths(value.generated),
+      evidence: boundedIdentities(value.evidence),
+      notes: boundedText(value.notes),
+    });
+  }
+  if (
+    value.decision === 'needs-changes' &&
+    hasExactKeys(value, ['decision', 'requiredPaths', 'notes'])
+  ) {
+    return Object.freeze({
+      decision: 'needs-changes' as const,
+      requiredPaths: documentationPaths(value.requiredPaths),
+      notes: boundedText(value.notes),
+    });
+  }
+  throw recordInvalid();
+}
+
+function assertDocumentationAssessmentCurrent(
+  subject: TaskDiffReviewSubject,
+  assessment: TaskDiffDocumentationAssessment | undefined,
+  verdict: TaskDiffReviewVerdict,
+  challengeCount: number,
+): TaskDiffDocumentationAssessment | undefined {
+  const requirement = subject.documentationRequirement;
+  if (requirement?.required !== true) {
+    if (assessment !== undefined) throw recordInvalid();
+    return undefined;
+  }
+  if (assessment === undefined) throw recordInvalid();
+  const changed = new Set(requirement.changedPaths);
+  const changedDocumentation =
+    requirement.changedPaths.filter(isDocumentationPath);
+  if (assessment.decision === 'updated') {
+    if (assessment.paths.some((candidate) => !changed.has(candidate))) {
+      throw recordInvalid();
+    }
+  } else if (assessment.decision === 'no-impact') {
+    if (changedDocumentation.length > 0) throw recordInvalid();
+  } else if (assessment.decision === 'generated-verified') {
+    if (
+      [...assessment.sources, ...assessment.generated].some(
+        (candidate) => !changed.has(candidate),
+      )
+    ) {
+      throw recordInvalid();
+    }
+  } else if (verdict !== 'advisory-reject' || challengeCount === 0) {
+    throw recordInvalid();
+  }
+  return assessment;
+}
+
+function documentationPaths(value: unknown): readonly string[] {
+  const paths = exactPaths(value, true);
+  if (paths.some((candidate) => !isDocumentationPath(candidate))) {
+    throw recordInvalid();
+  }
+  return paths;
+}
+
+function exactPaths(
+  value: unknown,
+  requireNonEmpty: boolean,
+): readonly string[] {
+  if (
+    !Array.isArray(value) ||
+    value.length > MAX_FINDINGS ||
+    (requireNonEmpty && value.length === 0)
+  ) {
+    throw recordInvalid();
+  }
+  const paths = value.map(exactPath).sort();
+  if (
+    paths.some(
+      (candidate, index) => index > 0 && candidate === paths[index - 1],
+    )
+  ) {
+    throw recordInvalid();
+  }
+  return Object.freeze(paths);
+}
+
+function boundedIdentities(value: unknown): readonly string[] {
+  if (!Array.isArray(value) || value.length === 0 || value.length > 64) {
+    throw recordInvalid();
+  }
+  const identities = value.map(identity).sort();
+  if (
+    identities.some(
+      (candidate, index) => index > 0 && candidate === identities[index - 1],
+    )
+  ) {
+    throw recordInvalid();
+  }
+  return Object.freeze(identities);
+}
+
+function isDocumentationPath(candidate: string): boolean {
+  return candidate.startsWith('docs/') || /(?:^|\/)README\.md$/.test(candidate);
 }
 
 function parseVerdict(value: unknown): TaskDiffReviewVerdict {

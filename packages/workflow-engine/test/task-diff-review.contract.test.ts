@@ -1,7 +1,14 @@
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import path from 'node:path';
 import test from 'node:test';
 
 import {
+  DOCUMENTATION_CLOSURE_ACTIVATION_MARKER,
+  parseDocumentationClosureActivationMarker,
+} from '../src/documentation-closure-activation.ts';
+import {
+  createTaskDiffDocumentationClosureRequirement,
   createTaskDiffReviewSubject,
   deriveTaskDiffReviewCandidatePlan,
   parseTaskDiffReviewSubject,
@@ -19,6 +26,30 @@ const OID = {
   afterA: 'e'.repeat(40),
   afterB: 'f'.repeat(40),
 };
+
+test('documentation closure activation is an exact reviewed marker', () => {
+  const repositoryRoot = path.resolve(import.meta.dirname, '../../..');
+  const marker = fs.readFileSync(
+    path.join(repositoryRoot, DOCUMENTATION_CLOSURE_ACTIVATION_MARKER),
+  );
+
+  assert.deepEqual(parseDocumentationClosureActivationMarker(marker), {
+    schemaVersion: 1,
+    activation: {
+      marker: DOCUMENTATION_CLOSURE_ACTIVATION_MARKER,
+      enforcement: 'final-managed-task',
+      reviewProtocol: 'task-diff-review',
+      monotonic: true,
+    },
+  });
+  assert.throws(
+    () =>
+      parseDocumentationClosureActivationMarker(
+        Buffer.concat([marker, Buffer.from('\n')]),
+      ),
+    hasCode('DOCUMENTATION_CLOSURE_ACTIVATION_INVALID'),
+  );
+});
 
 test('TaskDiffReview subject canonicalizes exact blob and mode transitions without runtime metadata', () => {
   const input = subjectInput();
@@ -95,6 +126,43 @@ test('every assurance-relevant input produces a distinct TaskDiffReview subject 
       baseline,
     );
   }
+});
+
+test('TaskDiffReview binds a final-change documentation closure requirement into candidate identity', () => {
+  const input = subjectInput();
+  const requirement = createTaskDiffDocumentationClosureRequirement({
+    required: true,
+    changeBaseCommit: '1'.repeat(40),
+    changeBaseTree: '2'.repeat(40),
+    candidateTree: input.candidateTree,
+    changedPaths: ['docs/WORKFLOW.md', 'src/a.ts'],
+    patchDigest: '3'.repeat(64),
+    hints: [
+      {
+        reason: 'workflow-lifecycle-changed',
+        suggestedPaths: ['docs/WORKFLOW.md'],
+      },
+    ],
+  });
+  const subject = createTaskDiffReviewSubject({
+    ...input,
+    documentationRequirement: requirement,
+  } as CreateTaskDiffReviewSubjectInput);
+  const ordinary = createTaskDiffReviewSubject(input);
+
+  assert.equal(subject.documentationRequirement?.required, true);
+  assert.equal(
+    subject.documentationRequirement?.requirementDigest,
+    requirement.requirementDigest,
+  );
+  assert.notEqual(
+    taskDiffReviewCandidateIdentityDigest(subject),
+    taskDiffReviewCandidateIdentityDigest(ordinary),
+  );
+  assert.deepEqual(
+    parseTaskDiffReviewSubject(structuredClone(subject)),
+    subject,
+  );
 });
 
 test('TaskDiffReview candidate identity ignores non-candidate metadata and reuses the exact reviewed tree without a new scope', () => {

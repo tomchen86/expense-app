@@ -33,15 +33,26 @@ import {
   writeEvidenceNode,
 } from './evidence-object-store.ts';
 import { createEvidenceNode } from './evidence-node.ts';
+import type { DocumentationReviewCapture } from './documentation-closure.ts';
 import { ExitCode, WorkflowError, workflowError } from './errors.ts';
 import { readFinalizeTransaction } from './finalize-transaction.ts';
-import { listStagedPaths, previewExactStaging } from './git-transitions.ts';
+import {
+  assertDocumentationClosureActivation,
+  documentationClosureActivationAtCommit,
+  readDocumentationClosureActivationMarkerFile,
+} from './documentation-closure-activation.ts';
+import {
+  findExactTaskCommits,
+  listStagedPaths,
+  previewExactStaging,
+} from './git-transitions.ts';
 import { fingerprintUnstagedRepositoryProjection, runGit } from './git.ts';
 import {
   loadActiveSessionContext,
   loadInvestigationRuntimeContext,
 } from './lifecycle-context.ts';
 import { parseMaintainerPolicy } from './maintainer-policy.ts';
+import { completionDocumentPaths } from './managed-documents.ts';
 import {
   createInteractiveSshSigner,
   type MaintainerSignerProvider,
@@ -173,12 +184,14 @@ import {
 } from './task-diff-review-lineage.ts';
 import {
   createTaskDiffReviewSubject,
+  createTaskDiffDocumentationClosureRequirement,
   deriveTaskDiffReviewCandidatePlan,
   TASK_DIFF_REVIEW_POLICY_DIGEST,
   taskDiffReviewRequirement,
   type TaskDiffReviewCandidatePlan,
   type TaskDiffPathTransition,
   type TaskDiffReviewSubject,
+  type TaskDiffDocumentationHint,
   type TaskDiffTreeEntry,
 } from './task-diff-review.ts';
 import { resolveCurrentTaskStrategyCorrection } from './task-strategy-correction.ts';
@@ -196,7 +209,11 @@ import {
   authorizeTaskMandateProviderReservationUnderLifecycleLock,
   type TaskMandateBinding,
 } from './task-mandate.ts';
-import { inspectSession, type SessionInspection } from './verification.ts';
+import {
+  inspectSession,
+  persistSession,
+  type SessionInspection,
+} from './verification.ts';
 
 export type BeginTaskDiffReviewOptions = Readonly<{
   explicitActor?: string;
@@ -727,17 +744,19 @@ export function submitExternalTaskDiffReview(
           if (existingBinding.inputDigest !== inputDigest) {
             throw externalTaskDiffInputStale();
           }
+          const current = assertCurrentExternalTaskDiffReviewBinding(
+            context,
+            runtime,
+            subject,
+            existingBinding,
+            assertOwned,
+          );
+          bindDocumentationRemediation(cwd, requestedSessionId, current.review);
           return renderExternalTaskDiffReviewStatus(
             context,
             runtime,
             subject,
-            assertCurrentExternalTaskDiffReviewBinding(
-              context,
-              runtime,
-              subject,
-              existingBinding,
-              assertOwned,
-            ),
+            current,
           );
         }
         if (
@@ -1058,6 +1077,7 @@ export function submitExternalTaskDiffReview(
           authorityResultDigest: authorityNode.resultDigest,
           reviewRecordDigest: review.recordDigest,
         });
+        bindDocumentationRemediation(cwd, requestedSessionId, review);
         assertOwned();
         const binding = readTaskDiffExternalReviewBinding(
           runtime,
@@ -4535,6 +4555,11 @@ export function reconcileTaskDiffReview(
             existing.review,
           );
           ensureTaskDiffReviewSupersession(context, runtime, existing);
+          bindDocumentationRemediation(
+            cwd,
+            requestedSessionId,
+            existing.review,
+          );
           return renderTaskDiffReviewStatus(runtime, reservation);
         }
         const invocation = readProviderInvocation(
@@ -4684,6 +4709,7 @@ export function reconcileTaskDiffReview(
           review,
           createdAt: invocation.updatedAt,
         });
+        bindDocumentationRemediation(cwd, requestedSessionId, review);
         if (options.testCrashAfter === 'result-binding-persisted') {
           throw new Error(
             'Simulated TaskDiffReview interruption after result binding persistence.',
@@ -4694,6 +4720,54 @@ export function reconcileTaskDiffReview(
         return renderTaskDiffReviewStatus(runtime, reservation);
       }),
   );
+}
+
+function bindDocumentationRemediation(
+  cwd: string,
+  requestedSessionId: string,
+  review: TaskDiffReviewRecord,
+): void {
+  const assessment = review.documentationAssessment;
+  if (assessment?.decision !== 'needs-changes') return;
+  const context = loadActiveSessionContext(cwd, requestedSessionId);
+  const transaction = readFinalizeTransaction(
+    context.runtime.root,
+    context.session.sessionId,
+  );
+  if (
+    transaction === null ||
+    !['checked', 'staged', 'reports-persisted', 'completed'].includes(
+      transaction.phase,
+    )
+  ) {
+    throw reviewNotReady();
+  }
+  const inspection = inspectSession(cwd, requestedSessionId, {
+    expectedSession: context.session,
+    projectedTaskIds: [...transaction.completedTaskIds],
+    projectionSourceDigest: transaction.projectionSourceDigest,
+    authorizedTransitionPaths: [...transaction.transitionPaths],
+  });
+  const current = inspection.session.documentationRemediation;
+  const reviewRecordDigests = [
+    ...(current?.reviewRecordDigests ?? []),
+    review.recordDigest,
+  ]
+    .filter((candidate, index, values) => values.indexOf(candidate) === index)
+    .sort();
+  const paths = [...(current?.paths ?? []), ...assessment.requiredPaths]
+    .filter((candidate, index, values) => values.indexOf(candidate) === index)
+    .sort();
+  if (
+    canonicalJson(current ?? null) ===
+    canonicalJson({ reviewRecordDigests, paths })
+  ) {
+    return;
+  }
+  persistSession(inspection, {
+    ...inspection.session,
+    documentationRemediation: { reviewRecordDigests, paths },
+  });
 }
 
 export function assertCurrentTaskDiffReviewSatisfied(
@@ -4790,6 +4864,34 @@ export function assertTaskDiffReviewCompletionGateSatisfied(
     }
     throw error;
   }
+}
+
+export function loadTaskDiffDocumentationReviewCapture(
+  cwd: string,
+  requestedSessionId: string,
+): DocumentationReviewCapture | null {
+  const context = loadActiveSessionContext(cwd, requestedSessionId);
+  if (
+    !documentationClosureActivationAtCommit(
+      context.git.repositoryRoot,
+      context.session.baseline.head,
+    ).activated
+  ) {
+    return null;
+  }
+  const status = inspectTaskDiffReviewStatus(cwd, requestedSessionId);
+  if (status.subject.documentationRequirement?.required !== true) return null;
+  if (status.state !== 'satisfied' || !('review' in status)) {
+    throw workflowError(
+      'DOCUMENTATION_CLOSURE_REQUIRED',
+      'The final task completion requires a satisfied documentation closure review.',
+      ExitCode.verification,
+    );
+  }
+  return Object.freeze({
+    review: status.review,
+    finalAssurance: status.finalAssurance,
+  });
 }
 
 export function assertTaskDiffReviewProviderOwnerCurrent(
@@ -4976,6 +5078,10 @@ export function inspectTaskDiffReviewSubject(
     inspection.session.requiredChecks,
   );
 
+  const documentationRequirement = taskDiffDocumentationRequirement(
+    inspection,
+    checkedTransaction.candidateTree,
+  );
   return createTaskDiffReviewSubject({
     repositoryId: maintainerPolicy.repository.id,
     changeId: inspection.session.changeId,
@@ -5009,8 +5115,179 @@ export function inspectTaskDiffReviewSubject(
     planTargetDigest: planningAssurance.planTargetDigest,
     planReviewNodeId: planningAssurance.reviewNodeId,
     planningAssuranceDigest: sha256(canonicalJson(planningAssurance)),
-    reviewRequirement: requirement,
+    reviewRequirement:
+      documentationRequirement.required && !requirement.required
+        ? { required: true, basis: 'explicit', riskPaths: [] }
+        : requirement,
+    documentationRequirement,
   });
+}
+
+function taskDiffDocumentationRequirement(
+  inspection: SessionInspection,
+  candidateTree: string,
+) {
+  const activation = assertDocumentationClosureActivation({
+    repositoryRoot: inspection.git.repositoryRoot,
+    baseline: inspection.session.baseline.head,
+    readMarker: () =>
+      readDocumentationClosureActivationMarkerFile(
+        inspection.git.repositoryRoot,
+      ),
+  });
+  if (!activation.activated) {
+    return createTaskDiffDocumentationClosureRequirement({ required: false });
+  }
+  const remainingTasks = inspection.contract.tasks.filter(
+    ({ completed, id }) => !completed && id !== inspection.session.taskId,
+  );
+  if (remainingTasks.length > 0) {
+    return createTaskDiffDocumentationClosureRequirement({ required: false });
+  }
+  const completedTasks = inspection.contract.tasks.filter(
+    ({ completed, id }) => completed && id !== inspection.session.taskId,
+  );
+  let changeBaseCommit = inspection.session.baseline.head;
+  if (completedTasks.length > 0) {
+    const firstTask = completedTasks[0]!;
+    const commits = findExactTaskCommits(
+      inspection.git.repositoryRoot,
+      inspection.session.changeId,
+      firstTask.id,
+      inspection.session.baseline.head,
+    );
+    if (commits.length !== 1) {
+      throw workflowError(
+        'TASK_DIFF_DOCUMENTATION_BASE_INVALID',
+        'Final documentation review requires one canonical first-task commit.',
+        ExitCode.staleState,
+        { details: { taskId: firstTask.id, commitCount: commits.length } },
+      );
+    }
+    changeBaseCommit = runGit(inspection.git.repositoryRoot, [
+      'rev-parse',
+      `${commits[0]!.hash}^`,
+    ]).trim();
+  }
+  const changeBaseTree = runGit(inspection.git.repositoryRoot, [
+    'rev-parse',
+    `${changeBaseCommit}^{tree}`,
+  ]).trim();
+  const ignoredPaths = new Set([
+    `${inspection.contract.config.changeRoot}/${inspection.session.changeId}/tasks.md`,
+    ...completionDocumentPaths(inspection.git.repositoryRoot),
+  ]);
+  const changedPaths = runGit(inspection.git.repositoryRoot, [
+    'diff',
+    '--name-only',
+    '--no-renames',
+    '-z',
+    changeBaseTree,
+    candidateTree,
+    '--',
+  ])
+    .split('\0')
+    .filter((candidate) => candidate !== '' && !ignoredPaths.has(candidate))
+    .sort();
+  if (changedPaths.length === 0) {
+    throw workflowError(
+      'TASK_DIFF_DOCUMENTATION_CHANGE_EMPTY',
+      'Final documentation review requires at least one non-projection change path.',
+      ExitCode.verification,
+    );
+  }
+  const transitions = deriveTransitions(
+    inspection.git.repositoryRoot,
+    changeBaseTree,
+    candidateTree,
+    changedPaths,
+  );
+  return createTaskDiffDocumentationClosureRequirement({
+    required: true,
+    changeBaseCommit,
+    changeBaseTree,
+    candidateTree,
+    changedPaths,
+    patchDigest: sha256(
+      canonicalJson({
+        schemaVersion: 1,
+        kind: 'task-diff-documentation-change-patch.v1',
+        transitions,
+      }),
+    ),
+    hints: documentationHints(changedPaths),
+  });
+}
+
+function documentationHints(
+  changedPaths: readonly string[],
+): readonly TaskDiffDocumentationHint[] {
+  const hints = new Map<TaskDiffDocumentationHint['reason'], Set<string>>();
+  const add = (
+    reason: TaskDiffDocumentationHint['reason'],
+    paths: readonly string[],
+  ) => {
+    const existing = hints.get(reason) ?? new Set<string>();
+    for (const candidate of paths) existing.add(candidate);
+    hints.set(reason, existing);
+  };
+  for (const changedPath of changedPaths) {
+    if (
+      changedPath.startsWith('packages/workflow-engine/src/cli') ||
+      changedPath.startsWith('packages/workflow-engine/src/lifecycle') ||
+      changedPath.includes('workflow')
+    ) {
+      add('workflow-lifecycle-changed', ['docs/WORKFLOW.md']);
+    }
+    if (
+      changedPath.includes('/controller') ||
+      changedPath.includes('/dto/') ||
+      changedPath.endsWith('package.json')
+    ) {
+      add('public-interface-changed', ['docs/features']);
+    }
+    if (
+      changedPath.includes('config') ||
+      changedPath.startsWith('workflow/schemas/')
+    ) {
+      add('configuration-changed', ['docs/WORKFLOW.md']);
+    }
+    if (changedPath.includes('migration')) {
+      add('migration-changed', ['docs/architecture', 'docs/features']);
+    }
+    if (
+      changedPath.startsWith('apps/mobile/') ||
+      changedPath.startsWith('apps/api/')
+    ) {
+      add('user-visible-behavior-changed', ['docs/features']);
+    }
+    if (
+      changedPath === 'docs/issues/issues.yaml' ||
+      changedPath === 'docs/ISSUE_LOG.md' ||
+      changedPath === 'docs/ROADMAP.md'
+    ) {
+      add('issue-or-roadmap-state-changed', [
+        'docs/ISSUE_LOG.md',
+        'docs/ROADMAP.md',
+      ]);
+    }
+    if (
+      changedPath.includes('authority') ||
+      changedPath.includes('grant') ||
+      changedPath.includes('security')
+    ) {
+      add('authority-boundary-changed', [
+        'docs/WORKFLOW.md',
+        'docs/architecture',
+      ]);
+    }
+  }
+  return [...hints.entries()]
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([reason, suggestedPaths]) => ({
+      reason,
+      suggestedPaths: [...suggestedPaths].sort(),
+    }));
 }
 
 function resolveTaskDiffReviewContract(inspection: SessionInspection) {

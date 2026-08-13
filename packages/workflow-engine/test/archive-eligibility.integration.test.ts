@@ -5,6 +5,7 @@ import path from 'node:path';
 import test from 'node:test';
 
 import { withArchiveEligibility } from '../src/archive-eligibility.ts';
+import { DOCUMENTATION_CLOSURE_ACTIVATION_MARKER } from '../src/documentation-closure-activation.ts';
 import { INVESTIGATION_PLANNING_ACTIVATION_MARKER } from '../src/openspec-schema-contract.ts';
 import { startSession } from '../src/session.ts';
 import {
@@ -13,6 +14,7 @@ import {
   git,
   isWorkflowError,
   runtimeRoot,
+  sourceRepositoryRoot,
   syncOriginMain,
   writeV2ChangeArtifacts,
 } from './fixture.ts';
@@ -51,6 +53,28 @@ test('archive eligibility binds completed task evidence to the configured base',
         path.join(runtimeRoot(repository), 'locks', 'demo-change.lock'),
       ),
       false,
+    );
+  } finally {
+    fs.rmSync(repository, { recursive: true, force: true });
+  }
+});
+
+test('archive eligibility requires documentation closure after activation', () => {
+  const repository = configuredFixture();
+  try {
+    fs.copyFileSync(
+      path.join(sourceRepositoryRoot, DOCUMENTATION_CLOSURE_ACTIVATION_MARKER),
+      path.join(repository, DOCUMENTATION_CLOSURE_ACTIVATION_MARKER),
+    );
+    git(repository, ['add', '--', DOCUMENTATION_CLOSURE_ACTIVATION_MARKER]);
+    git(repository, ['commit', '--amend', '--no-edit']);
+    completeTasks(repository);
+    commitTask(repository);
+    git(repository, ['checkout', '-b', 'work/archive-demo']);
+
+    assert.throws(
+      () => withArchiveEligibility(repository, 'demo-change', () => undefined),
+      (error) => isWorkflowError(error, 'TASK_EXECUTION_GENERATION_INVALID'),
     );
   } finally {
     fs.rmSync(repository, { recursive: true, force: true });

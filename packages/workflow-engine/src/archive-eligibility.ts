@@ -4,7 +4,14 @@ import path from 'node:path';
 import { assertUniqueCollaborationGrantUses } from './collaboration-grant.ts';
 import { canonicalJson } from './canonical-json.ts';
 import { collectHistoricalCollaborationGrantUses } from './ci-planning.ts';
-import { loadWorkflowConfig, type ManagedSchemaName } from './contracts.ts';
+import {
+  loadWorkflowConfig,
+  parseTasks,
+  type ManagedSchemaName,
+} from './contracts.ts';
+import { readFileAtCommit } from './ci-git.ts';
+import { assertDocumentationClosureCommitCurrent } from './documentation-closure.ts';
+import { documentationClosureActivationAtCommit } from './documentation-closure-activation.ts';
 import { ExitCode, workflowError } from './errors.ts';
 import {
   assertInvestigationPlanningActivation,
@@ -29,6 +36,7 @@ import {
 } from './planning-paths.ts';
 import { runtimePaths } from './session-store.ts';
 import { loadStableValidatedChangeContract } from './validated-contract-context.ts';
+import { completionDocumentPaths } from './managed-documents.ts';
 
 export type ArchiveEligibility = {
   changeId: string;
@@ -360,6 +368,14 @@ function inspectEligibility(
     );
     return [{ ...commit, taskId }];
   });
+  assertArchiveDocumentationClosure({
+    repositoryRoot: git.repositoryRoot,
+    head: git.head,
+    changeId: contract.changeId,
+    tasksPath: `${activePrefix}tasks.md`,
+    taskCommits,
+    completionPaths: completionDocumentPaths(git.repositoryRoot),
+  });
   ensurePlanningExecutionEpochCompleteForArchive(git.repositoryRoot, {
     changeId: contract.changeId,
     head: git.head,
@@ -433,6 +449,77 @@ function inspectEligibility(
     archiveDestination,
     fingerprint: fingerprintRepositoryWorktree(git.repositoryRoot, git.head),
   };
+}
+
+function assertArchiveDocumentationClosure(input: {
+  repositoryRoot: string;
+  head: string;
+  changeId: string;
+  tasksPath: string;
+  taskCommits: readonly (TaskCommit & { taskId: string })[];
+  completionPaths: readonly string[];
+}): void {
+  if (input.taskCommits.length === 0) return;
+  const finalCandidates = input.taskCommits.filter(({ hash }) => {
+    const tasks = readFileAtCommit(input.repositoryRoot, hash, input.tasksPath);
+    return (
+      tasks !== undefined &&
+      parseTasks(tasks).every(({ completed }) => completed)
+    );
+  });
+  if (finalCandidates.length !== 1) {
+    throw archiveError(
+      'ARCHIVE_DOCUMENTATION_CLOSURE_INVALID',
+      'Archive requires one canonical final managed task commit.',
+      { commitHashes: finalCandidates.map(({ hash }) => hash) },
+    );
+  }
+  const finalCommit = finalCandidates[0]!;
+  const finalParent = runGit(input.repositoryRoot, [
+    'rev-parse',
+    `${finalCommit.hash}^`,
+  ]).trim();
+  const activation = documentationClosureActivationAtCommit(
+    input.repositoryRoot,
+    finalParent,
+  );
+  if (!activation.activated) return;
+  documentationClosureActivationAtCommit(input.repositoryRoot, input.head);
+  const taskHashes = new Set(input.taskCommits.map(({ hash }) => hash));
+  const firstTaskCommit = runGit(input.repositoryRoot, [
+    'rev-list',
+    '--reverse',
+    '--topo-order',
+    input.head,
+  ])
+    .split('\n')
+    .find((hash) => taskHashes.has(hash));
+  if (firstTaskCommit === undefined) {
+    throw archiveError(
+      'ARCHIVE_DOCUMENTATION_CLOSURE_INVALID',
+      'Archive cannot resolve the first managed task commit.',
+    );
+  }
+  const changeBaseCommit = runGit(input.repositoryRoot, [
+    'rev-parse',
+    `${firstTaskCommit}^`,
+  ]).trim();
+  try {
+    assertDocumentationClosureCommitCurrent({
+      repositoryRoot: input.repositoryRoot,
+      commitHash: finalCommit.hash,
+      changeId: input.changeId,
+      taskId: finalCommit.taskId,
+      changeBaseCommit,
+      allowedProjectionPaths: [input.tasksPath, ...input.completionPaths],
+    });
+  } catch {
+    throw archiveError(
+      'ARCHIVE_DOCUMENTATION_CLOSURE_INVALID',
+      'The final managed task documentation closure is missing, malformed, or stale.',
+      { taskId: finalCommit.taskId, commitHash: finalCommit.hash },
+    );
+  }
 }
 
 function inspectArchiveTargets(

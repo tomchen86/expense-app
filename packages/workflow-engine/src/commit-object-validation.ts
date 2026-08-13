@@ -5,6 +5,7 @@ import {
   managedCommitMessage,
 } from './git-transitions.ts';
 import type { WorkflowSession } from './session-store.ts';
+import type { DocumentationClosureRecord } from './documentation-closure.ts';
 
 export function assertCommitObject(
   repositoryRoot: string,
@@ -13,11 +14,13 @@ export function assertCommitObject(
   facts: ReturnType<typeof commitFacts>,
   expectedTree: string,
   expectedPaths: string[],
+  documentationClosure: DocumentationClosureRecord | null = null,
 ): void {
   const expectedMessage = managedCommitMessage(
     subject,
     session.changeId,
     session.taskId,
+    documentationClosure,
   );
   if (
     JSON.stringify(facts.parents) !== JSON.stringify([session.baseline.head]) ||

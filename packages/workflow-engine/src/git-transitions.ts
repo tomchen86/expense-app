@@ -1,4 +1,8 @@
 import { ExitCode, workflowError } from './errors.ts';
+import {
+  encodeDocumentationClosure,
+  type DocumentationClosureRecord,
+} from './documentation-closure.ts';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -449,6 +453,7 @@ export function createManagedCommitObject(
   changeId: string,
   taskId: string,
   environment: NodeJS.ProcessEnv = process.env,
+  documentationClosure: DocumentationClosureRecord | null = null,
 ): string {
   validateCommitSubject(subject);
   const identity = resolveCommitIdentity(repositoryRoot, environment);
@@ -461,6 +466,9 @@ export function createManagedCommitObject(
       parent,
       '-m',
       subject,
+      ...(documentationClosure === null
+        ? []
+        : ['-m', encodeDocumentationClosure(documentationClosure)]),
       '-m',
       `Change: ${changeId}\nTask: ${taskId}`,
     ],
@@ -714,9 +722,18 @@ export function managedCommitMessage(
   subject: string,
   changeId: string,
   taskId: string,
+  documentationClosure: DocumentationClosureRecord | null = null,
 ): string {
   validateCommitSubject(subject);
-  return [subject, '', `Change: ${changeId}`, `Task: ${taskId}`].join('\n');
+  return [
+    subject,
+    ...(documentationClosure === null
+      ? []
+      : ['', encodeDocumentationClosure(documentationClosure)]),
+    '',
+    `Change: ${changeId}`,
+    `Task: ${taskId}`,
+  ].join('\n');
 }
 
 export function validateCommitSubject(subject: string): void {

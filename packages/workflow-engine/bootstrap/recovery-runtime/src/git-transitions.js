@@ -1,4 +1,5 @@
 import { ExitCode, workflowError } from './errors.js';
+import { encodeDocumentationClosure, } from './documentation-closure.js';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -229,7 +230,7 @@ export function listStagedPaths(repositoryRoot, baselineHead) {
         .map(normalizeChangedPath)
         .sort();
 }
-export function createManagedCommitObject(repositoryRoot, tree, parent, subject, changeId, taskId, environment = process.env) {
+export function createManagedCommitObject(repositoryRoot, tree, parent, subject, changeId, taskId, environment = process.env, documentationClosure = null) {
     validateCommitSubject(subject);
     const identity = resolveCommitIdentity(repositoryRoot, environment);
     return runGitWithEnvironment(repositoryRoot, [
@@ -239,6 +240,9 @@ export function createManagedCommitObject(repositoryRoot, tree, parent, subject,
         parent,
         '-m',
         subject,
+        ...(documentationClosure === null
+            ? []
+            : ['-m', encodeDocumentationClosure(documentationClosure)]),
         '-m',
         `Change: ${changeId}\nTask: ${taskId}`,
     ], identity).trim();
@@ -388,9 +392,17 @@ export function authorityCandidateCommitMessage(subject, changeId) {
         'Transition: authority-candidate',
     ].join('\n');
 }
-export function managedCommitMessage(subject, changeId, taskId) {
+export function managedCommitMessage(subject, changeId, taskId, documentationClosure = null) {
     validateCommitSubject(subject);
-    return [subject, '', `Change: ${changeId}`, `Task: ${taskId}`].join('\n');
+    return [
+        subject,
+        ...(documentationClosure === null
+            ? []
+            : ['', encodeDocumentationClosure(documentationClosure)]),
+        '',
+        `Change: ${changeId}`,
+        `Task: ${taskId}`,
+    ].join('\n');
 }
 export function validateCommitSubject(subject) {
     if (!subject ||

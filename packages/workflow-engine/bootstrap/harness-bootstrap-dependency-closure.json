@@ -8,7 +8,7 @@
     {
       "path": "bootstrap/recovery-runtime/bootstrap/built-in-engine-closure-pin.js",
       "mode": "100644",
-      "digest": "sha256:694986839a0c88acdbc3d285b9205d2a940623b5a7c8f77e18ae03d1bf203c6a"
+      "digest": "sha256:3584a83e77319c21c33979501880bc03365b3a5303cf8d5e81a3264d1c4b410e"
     },
     {
       "path": "bootstrap/recovery-runtime/src/actor-identity.js",
@@ -106,6 +106,11 @@
       "digest": "sha256:b397265b027732c336748b82cc345b43faea9a48fe399a1160fd2a0dfaca7143"
     },
     {
+      "path": "bootstrap/recovery-runtime/src/documentation-closure.js",
+      "mode": "100644",
+      "digest": "sha256:ea01d1c112f47029e74ee2cead272e81b5948556bd89798f903ce8637999bb19"
+    },
+    {
       "path": "bootstrap/recovery-runtime/src/errors.js",
       "mode": "100644",
       "digest": "sha256:ab21b9d3cdec61ea568fc942e6b54d92d46d6b7aa8cc5408ade18316e65cc394"
@@ -163,7 +168,7 @@
     {
       "path": "bootstrap/recovery-runtime/src/git-transitions.js",
       "mode": "100644",
-      "digest": "sha256:dd92f250ee302b61ea59462f97d37e4b3d77458a7f2e2234e4398c220ca63826"
+      "digest": "sha256:00b0923732ec50953bd403ad6c13d65276dd0c318f5e62eab1bed8691751e6fc"
     },
     {
       "path": "bootstrap/recovery-runtime/src/git.js",
@@ -368,7 +373,7 @@
     {
       "path": "bootstrap/recovery-runtime/src/provider-runner.js",
       "mode": "100644",
-      "digest": "sha256:62d3860db35658a4b52bb366c9f085ea7f77bbdcb32ec5cc8931e40f0c18be26"
+      "digest": "sha256:b475bc25fd0ae587bbb8d138ca7755b8295839fc9cab8ee46a834239c296ca0e"
     },
     {
       "path": "bootstrap/recovery-runtime/src/recovery-authority.js",
@@ -403,17 +408,17 @@
     {
       "path": "bootstrap/recovery-runtime/src/session-store.js",
       "mode": "100644",
-      "digest": "sha256:0435e2027ff57315c77d8c6bbcf2f843538731462ec4c0d6dcf35e0b4953e8e0"
+      "digest": "sha256:345caf2d0f62823fdcd8b9a0dbc7e0b5da7e8b48929f0e5120633ad4ab99b93f"
     },
     {
       "path": "bootstrap/recovery-runtime/src/task-diff-review-artifact.js",
       "mode": "100644",
-      "digest": "sha256:854bf957af299e46b2a341b378a88e59ad87b2b9401a11f211ccf73df705fdde"
+      "digest": "sha256:2e421b7e943a1d26d3a57e569d5fb7d3caad11320aba01b7c455b83ff9b2f4bd"
     },
     {
       "path": "bootstrap/recovery-runtime/src/task-diff-review.js",
       "mode": "100644",
-      "digest": "sha256:337633dc363851b6e86d47b083346c11e6794586cfc0cb9f146b6b614183e2c1"
+      "digest": "sha256:9194d584a24ab861d46dd3d4d76832f14ed7c92e73511fb1f52ed49866e3b6e8"
     },
     {
       "path": "bootstrap/recovery-runtime/src/task-mandate.js",

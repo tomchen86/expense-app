@@ -127,6 +127,71 @@ export const TASK_DIFF_REVIEW_PROVIDER_OUTPUT_SCHEMA = Object.freeze({
         },
         residualRisk: { type: 'string', minLength: 1 },
         uncertainty: { type: 'string', minLength: 1 },
+        documentationAssessment: {
+            anyOf: [
+                {
+                    type: 'object',
+                    additionalProperties: false,
+                    required: ['decision', 'paths', 'notes'],
+                    properties: {
+                        decision: { type: 'string', const: 'updated' },
+                        paths: {
+                            type: 'array',
+                            minItems: 1,
+                            items: { type: 'string', minLength: 1 },
+                        },
+                        notes: { type: 'string', minLength: 1 },
+                    },
+                },
+                {
+                    type: 'object',
+                    additionalProperties: false,
+                    required: ['decision', 'notes'],
+                    properties: {
+                        decision: { type: 'string', const: 'no-impact' },
+                        notes: { type: 'string', minLength: 1 },
+                    },
+                },
+                {
+                    type: 'object',
+                    additionalProperties: false,
+                    required: ['decision', 'sources', 'generated', 'evidence', 'notes'],
+                    properties: {
+                        decision: { type: 'string', const: 'generated-verified' },
+                        sources: {
+                            type: 'array',
+                            minItems: 1,
+                            items: { type: 'string', minLength: 1 },
+                        },
+                        generated: {
+                            type: 'array',
+                            minItems: 1,
+                            items: { type: 'string', minLength: 1 },
+                        },
+                        evidence: {
+                            type: 'array',
+                            minItems: 1,
+                            items: { type: 'string', minLength: 1 },
+                        },
+                        notes: { type: 'string', minLength: 1 },
+                    },
+                },
+                {
+                    type: 'object',
+                    additionalProperties: false,
+                    required: ['decision', 'requiredPaths', 'notes'],
+                    properties: {
+                        decision: { type: 'string', const: 'needs-changes' },
+                        requiredPaths: {
+                            type: 'array',
+                            minItems: 1,
+                            items: { type: 'string', minLength: 1 },
+                        },
+                        notes: { type: 'string', minLength: 1 },
+                    },
+                },
+            ],
+        },
     },
     $defs: {
         evidence: {
@@ -327,6 +392,9 @@ export function createTaskDiffReviewRecord(input) {
         riskPathDispositions: submission.riskPathDispositions,
         residualRisk: submission.residualRisk,
         uncertainty: submission.uncertainty,
+        ...(submission.documentationAssessment === undefined
+            ? {}
+            : { documentationAssessment: submission.documentationAssessment }),
     };
     return parseTaskDiffReviewRecord({
         ...body,
@@ -334,24 +402,26 @@ export function createTaskDiffReviewRecord(input) {
     });
 }
 export function parseTaskDiffReviewRecord(value) {
+    const legacyKeys = [
+        'schemaVersion',
+        'kind',
+        'recordDigest',
+        'subject',
+        'subjectDigest',
+        'reviewScope',
+        'assignment',
+        'verdict',
+        'coverage',
+        'scopeAssessment',
+        'challenges',
+        'suggestions',
+        'riskPathDispositions',
+        'residualRisk',
+        'uncertainty',
+    ];
     if (!isRecord(value) ||
-        !hasExactKeys(value, [
-            'schemaVersion',
-            'kind',
-            'recordDigest',
-            'subject',
-            'subjectDigest',
-            'reviewScope',
-            'assignment',
-            'verdict',
-            'coverage',
-            'scopeAssessment',
-            'challenges',
-            'suggestions',
-            'riskPathDispositions',
-            'residualRisk',
-            'uncertainty',
-        ]) ||
+        (!hasExactKeys(value, legacyKeys) &&
+            !hasExactKeys(value, [...legacyKeys, 'documentationAssessment'])) ||
         value.schemaVersion !== 1 ||
         value.kind !== 'task-diff-review-record.v1') {
         throw recordInvalid();
@@ -366,6 +436,9 @@ export function parseTaskDiffReviewRecord(value) {
     const riskPathDispositions = assertRiskPathDispositionsCurrent(subject, reviewScope, value.riskPathDispositions);
     assertRiskPathChallengeConsistency(riskPathDispositions, challenges);
     const scopeAssessment = parseScopeAssessment(value.scopeAssessment, challenges.length);
+    const documentationAssessment = Object.hasOwn(value, 'documentationAssessment')
+        ? assertDocumentationAssessmentCurrent(subject, parseDocumentationAssessment(value.documentationAssessment), verdict, challenges.length)
+        : assertDocumentationAssessmentCurrent(subject, undefined, verdict, challenges.length);
     const record = {
         schemaVersion: 1,
         kind: 'task-diff-review-record.v1',
@@ -382,6 +455,9 @@ export function parseTaskDiffReviewRecord(value) {
         riskPathDispositions,
         residualRisk: boundedText(value.residualRisk),
         uncertainty: boundedText(value.uncertainty),
+        ...(documentationAssessment === undefined
+            ? {}
+            : { documentationAssessment }),
     };
     if (record.subjectDigest !== subject.subjectDigest ||
         record.recordDigest !== sha256(canonicalJson(withoutRecordDigest(record)))) {
@@ -677,22 +753,29 @@ function normalizeSubmission(value, assignment, subject, reviewScope) {
         riskPathDispositions,
         residualRisk: submission.residualRisk,
         uncertainty: submission.uncertainty,
+        ...(submission.documentationAssessment === undefined
+            ? {}
+            : {
+                documentationAssessment: assertDocumentationAssessmentCurrent(subject, submission.documentationAssessment, submission.verdict, challenges.length),
+            }),
     };
 }
 /** Strictly parse and canonically normalize provider semantic output. */
 export function parseTaskDiffReviewSubmission(value) {
+    const legacyKeys = [
+        'schemaVersion',
+        'verdict',
+        'coverage',
+        'scopeAssessment',
+        'findings',
+        'suggestions',
+        'riskPathDispositions',
+        'residualRisk',
+        'uncertainty',
+    ];
     if (!isRecord(value) ||
-        !hasExactKeys(value, [
-            'schemaVersion',
-            'verdict',
-            'coverage',
-            'scopeAssessment',
-            'findings',
-            'suggestions',
-            'riskPathDispositions',
-            'residualRisk',
-            'uncertainty',
-        ]) ||
+        (!hasExactKeys(value, legacyKeys) &&
+            !hasExactKeys(value, [...legacyKeys, 'documentationAssessment'])) ||
         value.schemaVersion !== 1) {
         throw recordInvalid();
     }
@@ -719,6 +802,11 @@ export function parseTaskDiffReviewSubmission(value) {
         riskPathDispositions: parseRiskPathDispositions(value.riskPathDispositions),
         residualRisk: boundedText(value.residualRisk),
         uncertainty: boundedText(value.uncertainty),
+        ...(Object.hasOwn(value, 'documentationAssessment')
+            ? {
+                documentationAssessment: parseDocumentationAssessment(value.documentationAssessment),
+            }
+            : {}),
     });
 }
 export function parseTaskDiffReviewContinuationSubmission(value) {
@@ -1207,6 +1295,113 @@ function parseCoverage(value) {
         throw recordInvalid();
     }
     return TASK_DIFF_REVIEW_COVERAGE;
+}
+function parseDocumentationAssessment(value) {
+    if (!isRecord(value) || typeof value.decision !== 'string') {
+        throw recordInvalid();
+    }
+    if (value.decision === 'updated' &&
+        hasExactKeys(value, ['decision', 'paths', 'notes'])) {
+        return Object.freeze({
+            decision: 'updated',
+            paths: documentationPaths(value.paths),
+            notes: boundedText(value.notes),
+        });
+    }
+    if (value.decision === 'no-impact' &&
+        hasExactKeys(value, ['decision', 'notes'])) {
+        return Object.freeze({
+            decision: 'no-impact',
+            notes: boundedText(value.notes),
+        });
+    }
+    if (value.decision === 'generated-verified' &&
+        hasExactKeys(value, [
+            'decision',
+            'sources',
+            'generated',
+            'evidence',
+            'notes',
+        ])) {
+        return Object.freeze({
+            decision: 'generated-verified',
+            sources: exactPaths(value.sources, false),
+            generated: documentationPaths(value.generated),
+            evidence: boundedIdentities(value.evidence),
+            notes: boundedText(value.notes),
+        });
+    }
+    if (value.decision === 'needs-changes' &&
+        hasExactKeys(value, ['decision', 'requiredPaths', 'notes'])) {
+        return Object.freeze({
+            decision: 'needs-changes',
+            requiredPaths: documentationPaths(value.requiredPaths),
+            notes: boundedText(value.notes),
+        });
+    }
+    throw recordInvalid();
+}
+function assertDocumentationAssessmentCurrent(subject, assessment, verdict, challengeCount) {
+    const requirement = subject.documentationRequirement;
+    if (requirement?.required !== true) {
+        if (assessment !== undefined)
+            throw recordInvalid();
+        return undefined;
+    }
+    if (assessment === undefined)
+        throw recordInvalid();
+    const changed = new Set(requirement.changedPaths);
+    const changedDocumentation = requirement.changedPaths.filter(isDocumentationPath);
+    if (assessment.decision === 'updated') {
+        if (assessment.paths.some((candidate) => !changed.has(candidate))) {
+            throw recordInvalid();
+        }
+    }
+    else if (assessment.decision === 'no-impact') {
+        if (changedDocumentation.length > 0)
+            throw recordInvalid();
+    }
+    else if (assessment.decision === 'generated-verified') {
+        if ([...assessment.sources, ...assessment.generated].some((candidate) => !changed.has(candidate))) {
+            throw recordInvalid();
+        }
+    }
+    else if (verdict !== 'advisory-reject' || challengeCount === 0) {
+        throw recordInvalid();
+    }
+    return assessment;
+}
+function documentationPaths(value) {
+    const paths = exactPaths(value, true);
+    if (paths.some((candidate) => !isDocumentationPath(candidate))) {
+        throw recordInvalid();
+    }
+    return paths;
+}
+function exactPaths(value, requireNonEmpty) {
+    if (!Array.isArray(value) ||
+        value.length > MAX_FINDINGS ||
+        (requireNonEmpty && value.length === 0)) {
+        throw recordInvalid();
+    }
+    const paths = value.map(exactPath).sort();
+    if (paths.some((candidate, index) => index > 0 && candidate === paths[index - 1])) {
+        throw recordInvalid();
+    }
+    return Object.freeze(paths);
+}
+function boundedIdentities(value) {
+    if (!Array.isArray(value) || value.length === 0 || value.length > 64) {
+        throw recordInvalid();
+    }
+    const identities = value.map(identity).sort();
+    if (identities.some((candidate, index) => index > 0 && candidate === identities[index - 1])) {
+        throw recordInvalid();
+    }
+    return Object.freeze(identities);
+}
+function isDocumentationPath(candidate) {
+    return candidate.startsWith('docs/') || /(?:^|\/)README\.md$/.test(candidate);
 }
 function parseVerdict(value) {
     if (!VERDICTS.has(String(value)))

@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://expense-app.local/workflow/documentation-closure-v1.schema.json",
+  "title": "Change-level documentation closure activation v1",
+  "description": "Reviewed monotonic activation marker. Every managed change whose final task parent reaches the first commit containing this exact marker must bind one current whole-change documentation assessment into that final task commit. CI and archive replay the binding; pre-activation task history remains valid.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "activation"],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "activation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["marker", "enforcement", "reviewProtocol", "monotonic"],
+      "properties": {
+        "marker": {
+          "const": "workflow/schemas/documentation-closure-v1.schema.json"
+        },
+        "enforcement": { "const": "final-managed-task" },
+        "reviewProtocol": { "const": "task-diff-review" },
+        "monotonic": { "const": true }
+      }
+    }
+  }
+}

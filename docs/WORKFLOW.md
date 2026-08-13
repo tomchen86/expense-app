@@ -269,14 +269,42 @@ required immediate-predecessor checks remain separate. It rejects check-view
 mutation and post-check drift, stages only a tree identical to the checked
 tree, and emits a schema-compatible check/completion/finish evidence chain.
 
+When the tracked documentation-closure activation marker is present in the
+task baseline, the task that completes the last unchecked row also performs a
+whole-change documentation review. The engine derives that review from the
+parent of the first managed task commit through the final projected candidate,
+excluding only the task checkbox and generated completion projections. It adds
+code-owned hints for likely documentation consumers, but the authenticated
+TaskDiff reviewer must return exactly one disposition:
+
+- `updated`, naming the changed documentation paths;
+- `generated-verified`, naming the changed sources, generated documents, and
+  check evidence;
+- `no-impact`, with a concrete rationale and only when no documentation path
+  changed; or
+- `needs-changes`, naming exact `docs/**` or `README.md` remediation paths.
+
+`needs-changes` does not grant a broad documentation wildcard. It adds only the
+reviewer-named paths to that session, requires authenticated challenge closure,
+and then requires fresh checks and a fresh TaskDiff review of the new candidate.
+The original review digest and exact remediation paths remain in the final
+closure record. Provider shortage uses the existing TaskDiff collaboration
+grant path, including caller-supplied or direct-human review; rendered assurance
+continues to report actual achieved independence rather than upgrading it.
+
+The final task commit embeds the canonical documentation closure between its
+subject and managed trailers. Commit recovery compares that message with the
+content-addressed commit report, while CI and archive replay the whole-change
+tree/path/digest binding directly from Git. Histories whose task baseline
+predates activation remain valid and are not retroactively re-reviewed.
+
 Before final application, a caught ordinary failure restores exact projection
 bytes and modes while leaving the real index and report pointers unchanged.
-This projected single-pass substrate is not crash-safe or fully atomic:
-external process death, machine loss, and uncooperative writes outside the
-governed projection have no durable recovery guarantee. `workflow commit`
-remains separate and must not rerun required checks; there is no automatic
-commit or commit transaction. Exact-diff AI review, durable crash recovery,
-coverage composition, and a commit transaction remain T2.3 work.
+This projected single-pass substrate is not crash-safe or fully atomic. Its
+durable recovery journal covers the implemented interruption points, but it
+does not claim recovery from machine loss or uncooperative writes outside the
+governed projection. `workflow commit` remains separate and must not rerun
+required checks.
 
 The commit subject must be one trimmed line without control characters or
 trailers. If commit ref advancement is interrupted after the commit object is
@@ -656,6 +684,11 @@ pnpm workflow document-refresh apply --proposal <proposal-id> \
 
 Approval is bound to the exact proposal. A changed source document or policy
 invalidates the apply operation.
+
+This curated-section CAS is distinct from final-task documentation closure.
+Ordinary product changes update documentation inside their managed task and are
+reviewed with the whole change; `document-refresh` remains the narrow tool for
+an exact replacement of an already managed curated section.
 
 ## Failure Classes
 

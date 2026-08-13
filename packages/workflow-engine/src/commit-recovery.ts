@@ -1,6 +1,7 @@
 import path from 'node:path';
 
 import { assertCommitObject } from './commit-object-validation.ts';
+import { parseDocumentationClosureFromCommitMessage } from './documentation-closure.ts';
 import { ExitCode, workflowError } from './errors.ts';
 import { commitFacts, updateManagedRef } from './git-transitions.ts';
 import { type loadActiveSessionContext } from './lifecycle-context.ts';
@@ -50,6 +51,11 @@ export function resumePendingCommit(
     'changedPaths',
     'PENDING_COMMIT_INVALID',
   );
+  const reportMessage = reportString(
+    report,
+    'message',
+    'PENDING_COMMIT_INVALID',
+  );
   assertCommitObject(
     context.git.repositoryRoot,
     session,
@@ -57,11 +63,13 @@ export function resumePendingCommit(
     facts,
     reportString(report, 'tree', 'PENDING_COMMIT_INVALID'),
     changedPaths,
+    parseDocumentationClosureFromCommitMessage(reportMessage),
   );
   if (
     report.kind !== 'commit' ||
     report.parentReportId !== session.finishReportId ||
-    report.commitHash !== session.commitHash
+    report.commitHash !== session.commitHash ||
+    reportMessage !== facts.message
   ) {
     throw staleReport('PENDING_COMMIT_INVALID');
   }

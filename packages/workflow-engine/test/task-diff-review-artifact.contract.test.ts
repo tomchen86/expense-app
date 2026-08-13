@@ -2,6 +2,13 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
+  createDocumentationClosureRecord,
+  encodeDocumentationClosure,
+  parseDocumentationClosureFromCommitMessage,
+  parseDocumentationClosureRecord,
+} from '../src/documentation-closure.ts';
+
+import {
   assertTaskDiffReviewChallengeResponseCurrent,
   assertTaskDiffReviewContentSatisfied,
   assertTaskDiffFinalAssuranceCurrent,
@@ -17,6 +24,7 @@ import {
   type TaskDiffReviewAssignment,
 } from '../src/task-diff-review-artifact.ts';
 import {
+  createTaskDiffDocumentationClosureRequirement,
   createTaskDiffReviewSubject,
   deriveTaskDiffReviewCandidatePlan,
   TASK_DIFF_REVIEW_COVERAGE,
@@ -50,6 +58,155 @@ test('TaskDiffReview record canonically binds a fresh provider-independent assig
   assert.deepEqual(
     assertTaskDiffReviewContentSatisfied(input.subject, record, null),
     record,
+  );
+});
+
+test('final-change TaskDiffReview requires an explicit documentation disposition', () => {
+  const base = reviewInput();
+  const subject = createTaskDiffReviewSubject({
+    ...subjectInput(),
+    documentationRequirement: createTaskDiffDocumentationClosureRequirement({
+      required: true,
+      changeBaseCommit: '1'.repeat(40),
+      changeBaseTree: '2'.repeat(40),
+      candidateTree: 'c'.repeat(40),
+      changedPaths: ['docs/WORKFLOW.md', 'src/a.ts', 'src/b.ts'],
+      patchDigest: '3'.repeat(64),
+      hints: [
+        {
+          reason: 'workflow-lifecycle-changed',
+          suggestedPaths: ['docs/WORKFLOW.md'],
+        },
+      ],
+    }),
+  } as Parameters<typeof createTaskDiffReviewSubject>[0]);
+
+  assert.throws(
+    () => createTaskDiffReviewRecord({ ...base, subject }),
+    hasCode('TASK_DIFF_REVIEW_RECORD_INVALID'),
+  );
+
+  const record = createTaskDiffReviewRecord({
+    ...base,
+    subject,
+    submission: {
+      ...base.submission,
+      documentationAssessment: {
+        decision: 'updated',
+        paths: ['docs/WORKFLOW.md'],
+        notes: 'The lifecycle documentation reflects the reviewed behavior.',
+      },
+    },
+  } as CreateTaskDiffReviewRecordInput);
+
+  assert.deepEqual(record.documentationAssessment, {
+    decision: 'updated',
+    paths: ['docs/WORKFLOW.md'],
+    notes: 'The lifecycle documentation reflects the reviewed behavior.',
+  });
+  assert.deepEqual(parseTaskDiffReviewRecord(structuredClone(record)), record);
+
+  assert.throws(
+    () =>
+      createTaskDiffReviewRecord({
+        ...base,
+        subject,
+        submission: {
+          ...base.submission,
+          documentationAssessment: {
+            decision: 'no-impact',
+            notes: 'This incorrectly ignores the changed documentation path.',
+          },
+        },
+      } as CreateTaskDiffReviewRecordInput),
+    hasCode('TASK_DIFF_REVIEW_RECORD_INVALID'),
+  );
+
+  const generated = createTaskDiffReviewRecord({
+    ...base,
+    subject,
+    submission: {
+      ...base.submission,
+      documentationAssessment: {
+        decision: 'generated-verified',
+        sources: ['src/a.ts'],
+        generated: ['docs/WORKFLOW.md'],
+        evidence: ['check:documentation-projection'],
+        notes: 'The generated documentation matches its reviewed source.',
+      },
+    },
+  } as CreateTaskDiffReviewRecordInput);
+  assert.equal(
+    generated.documentationAssessment?.decision,
+    'generated-verified',
+  );
+
+  const challenged = reviewInput({ challenge: true });
+  const needsChanges = createTaskDiffReviewRecord({
+    ...challenged,
+    subject,
+    submission: {
+      ...challenged.submission,
+      documentationAssessment: {
+        decision: 'needs-changes',
+        requiredPaths: ['docs/ROADMAP.md'],
+        notes: 'The final change needs an exact roadmap update.',
+      },
+    },
+  } as CreateTaskDiffReviewRecordInput);
+  assert.equal(needsChanges.documentationAssessment?.decision, 'needs-changes');
+  assert.throws(
+    () =>
+      createDocumentationClosureRecord({
+        changeId: subject.changeId,
+        taskId: subject.taskId,
+        review: needsChanges,
+        finalAssurance: null,
+        remediation: {
+          reviewRecordDigests: [needsChanges.recordDigest],
+          paths: ['docs/ROADMAP.md'],
+        },
+        projectedCommitTree: '4'.repeat(40),
+        projectionPaths: [`openspec/changes/${subject.changeId}/tasks.md`],
+      }),
+    hasCode('DOCUMENTATION_CLOSURE_INVALID'),
+  );
+
+  const closure = createDocumentationClosureRecord({
+    changeId: subject.changeId,
+    taskId: subject.taskId,
+    review: record,
+    finalAssurance: null,
+    remediation: null,
+    projectedCommitTree: '4'.repeat(40),
+    projectionPaths: [
+      `openspec/changes/${subject.changeId}/tasks.md`,
+      'docs/CURRENT_AND_NEXT_STEPS.md',
+    ],
+  });
+  const message = [
+    'Complete documentation closure',
+    '',
+    encodeDocumentationClosure(closure),
+    '',
+    `Change: ${subject.changeId}`,
+    `Task: ${subject.taskId}`,
+  ].join('\n');
+
+  assert.deepEqual(
+    parseDocumentationClosureRecord(structuredClone(closure)),
+    closure,
+  );
+  assert.deepEqual(
+    parseDocumentationClosureFromCommitMessage(message),
+    closure,
+  );
+  assert.throws(
+    () =>
+      parseDocumentationClosureFromCommitMessage(
+        message.replace('Task: 1.1', 'Task: 1.1\nDocumentation-Closure: bad'),
+      ),
+    hasCode('DOCUMENTATION_CLOSURE_INVALID'),
   );
 });
 

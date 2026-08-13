@@ -5,6 +5,7 @@ import { isPlanningAssuranceBinding, } from './contracts.js';
 import { ExitCode, workflowError } from './errors.js';
 import { ensurePlainDirectory, publishPreparedExclusiveLock, reclaimDeadPreparedLock, withPreparedLockCleanupClaim, } from './filesystem-safety.js';
 import { assertHumanResolutionLifecycleBarrier, reclaimHumanResolutionJournalTemporaries, } from './investigation-session-store.js';
+import { normalizePolicyPath } from './paths.js';
 const MAINTAINER_GRANT_STATE_FILE = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\.json$/;
 const SESSION_LOCK_OWNER_TOKEN = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const TASK_REVISION_LEASE_ID = /^revision-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
@@ -478,6 +479,7 @@ function isWorkflowSession(value) {
         'revisionLeaseId',
         'implementationReconciliationReportId',
         'implementationReconciliationPaths',
+        'documentationRemediation',
         'createdAt',
         'latestCheckReportId',
         'completionReportId',
@@ -544,6 +546,22 @@ function isWorkflowSession(value) {
         value.implementationReconciliationReportId === undefined) {
         return false;
     }
+    if (value.documentationRemediation !== undefined &&
+        (!isRecord(value.documentationRemediation) ||
+            Object.keys(value.documentationRemediation).sort().join('\0') !==
+                ['paths', 'reviewRecordDigests'].join('\0') ||
+            !isStringArray(value.documentationRemediation.reviewRecordDigests) ||
+            value.documentationRemediation.reviewRecordDigests.length === 0 ||
+            value.documentationRemediation.reviewRecordDigests.some((candidate) => !isDigest(candidate)) ||
+            !isCanonicalStringSet(value.documentationRemediation.reviewRecordDigests) ||
+            !isStringArray(value.documentationRemediation.paths) ||
+            value.documentationRemediation.paths.length === 0 ||
+            !isCanonicalStringSet(value.documentationRemediation.paths) ||
+            value.documentationRemediation.paths.some((candidate) => !isCanonicalDocumentationRemediationPath(candidate) ||
+                (!candidate.startsWith('docs/') &&
+                    !/(?:^|\/)README\.md$/.test(candidate))))) {
+        return false;
+    }
     if (value.checkEvidenceEngineDigest !== undefined &&
         !isSha256Digest(value.checkEvidenceEngineDigest)) {
         return false;
@@ -602,6 +620,14 @@ function isWorkflowSession(value) {
     }
     return true;
 }
+function isCanonicalDocumentationRemediationPath(candidate) {
+    try {
+        return (normalizePolicyPath(candidate) === candidate && !candidate.endsWith('/**'));
+    }
+    catch {
+        return false;
+    }
+}
 function isTaskMandateBinding(value, changeId) {
     if (!isRecord(value))
         return false;
@@ -644,6 +670,10 @@ function isRecord(value) {
 }
 function isStringArray(value) {
     return (Array.isArray(value) && value.every((item) => typeof item === 'string'));
+}
+function isCanonicalStringSet(value) {
+    return (new Set(value).size === value.length &&
+        JSON.stringify(value) === JSON.stringify([...value].sort()));
 }
 function isStringRecord(value) {
     return (isRecord(value) &&

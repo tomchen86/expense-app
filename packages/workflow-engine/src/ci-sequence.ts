@@ -28,6 +28,13 @@ import {
 } from './ci-task-state.ts';
 import { parseTasks, type ChangeContract } from './contracts.ts';
 import { ExitCode, workflowError } from './errors.ts';
+import {
+  assertDocumentationClosureCommitCurrent,
+  parseDocumentationClosureFromCommitMessage,
+} from './documentation-closure.ts';
+import { documentationClosureActivationAtCommit } from './documentation-closure-activation.ts';
+import { commitFacts, findExactTaskCommits } from './git-transitions.ts';
+import { runGit } from './git.ts';
 import { completionDocumentPaths } from './managed-documents.ts';
 import { matchesAllowedPath } from './paths.ts';
 import { assertExactTaskProjection } from './task-projection.ts';
@@ -230,6 +237,12 @@ export function replayCommitSequence(
       authority,
       completionPaths,
     );
+    validateDocumentationClosure(
+      repositoryRoot,
+      commit,
+      authority,
+      completionPaths,
+    );
     recordTransitions(completedTasks, transitions);
     recordCheckDefinitions(requiredCheckDefinitions, authority);
     priorTaskTrailers.add(taskKey(commit.trailers));
@@ -255,6 +268,113 @@ export function replayCommitSequence(
     ),
     collaborationGrantUses,
   };
+}
+
+function validateDocumentationClosure(
+  repositoryRoot: string,
+  commit: RangeCommit,
+  authority: HistoricalTaskAuthority,
+  completionPaths: readonly string[],
+): void {
+  const trailers = commit.trailers;
+  if (trailers?.kind !== 'task') {
+    throw ciError(
+      'CI_DOCUMENTATION_CLOSURE_INVALID',
+      'Documentation closure validation requires a task commit.',
+    );
+  }
+  const after = readFileAtCommit(
+    repositoryRoot,
+    commit.hash,
+    authority.tasksPath,
+  );
+  if (after === undefined) {
+    throw ciError(
+      'CI_TASK_PROJECTION_INVALID',
+      'A task commit is missing its task projection.',
+    );
+  }
+  const finalTask = parseTasks(after).every(({ completed }) => completed);
+  const message = commitFacts(repositoryRoot, commit.hash).message;
+  const closure = parseDocumentationClosureFromCommitMessage(message);
+  const activation = documentationClosureActivationAtCommit(
+    repositoryRoot,
+    commit.parents[0]!,
+  );
+  if (!activation.activated) {
+    if (closure !== null) {
+      throw ciError(
+        'CI_DOCUMENTATION_CLOSURE_PREMATURE',
+        'A pre-activation task commit may not carry documentation closure.',
+      );
+    }
+    return;
+  }
+  documentationClosureActivationAtCommit(repositoryRoot, commit.hash);
+  if (!finalTask) {
+    if (closure !== null) {
+      throw ciError(
+        'CI_DOCUMENTATION_CLOSURE_PREMATURE',
+        'Only the task commit that completes the whole change may carry documentation closure.',
+      );
+    }
+    return;
+  }
+  const firstTask = authority.tasks[0];
+  if (firstTask === undefined) {
+    throw ciError(
+      'CI_DOCUMENTATION_CLOSURE_INVALID',
+      'Documentation closure cannot resolve the first task.',
+    );
+  }
+  const firstTaskCommits = findExactTaskCommits(
+    repositoryRoot,
+    authority.changeId,
+    firstTask.id,
+    commit.hash,
+  );
+  let changeBaseCommit: string;
+  if (firstTaskCommits.length === 0) {
+    if (trailers.taskId !== firstTask.id) {
+      throw ciError(
+        'CI_DOCUMENTATION_CLOSURE_INVALID',
+        'Documentation closure cannot resolve the first managed task commit.',
+      );
+    }
+    changeBaseCommit = commit.parents[0]!;
+  } else if (firstTaskCommits.length === 1) {
+    changeBaseCommit = runGit(repositoryRoot, [
+      'rev-parse',
+      `${firstTaskCommits[0]!.hash}^`,
+    ]).trim();
+  } else {
+    throw ciError(
+      'CI_DOCUMENTATION_CLOSURE_INVALID',
+      'Documentation closure found ambiguous first-task commit history.',
+    );
+  }
+  try {
+    assertDocumentationClosureCommitCurrent({
+      repositoryRoot,
+      commitHash: commit.hash,
+      changeId: authority.changeId,
+      taskId: trailers.taskId,
+      changeBaseCommit,
+      allowedProjectionPaths: [authority.tasksPath, ...completionPaths],
+    });
+  } catch (error) {
+    if (
+      error instanceof Error &&
+      'code' in error &&
+      error.code === 'DOCUMENTATION_CLOSURE_REQUIRED'
+    ) {
+      throw error;
+    }
+    throw ciError(
+      'CI_DOCUMENTATION_CLOSURE_INVALID',
+      'The final task commit documentation closure is malformed or stale.',
+    );
+  }
 }
 
 function taskTransitionsForCommit(

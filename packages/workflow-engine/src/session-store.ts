@@ -17,6 +17,7 @@ import {
   assertHumanResolutionLifecycleBarrier,
   reclaimHumanResolutionJournalTemporaries,
 } from './investigation-session-store.ts';
+import { normalizePolicyPath } from './paths.ts';
 
 const MAINTAINER_GRANT_STATE_FILE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\.json$/;
@@ -61,6 +62,11 @@ export type WorkflowSession = {
   implementationReconciliationReportId?: string;
   /** Exact engine-owned Git projection authorized by that reconciliation. */
   implementationReconciliationPaths?: string[];
+  /** Authenticated reviewer-requested documentation paths for this session. */
+  documentationRemediation?: {
+    reviewRecordDigests: string[];
+    paths: string[];
+  };
   createdAt: string;
   latestCheckReportId?: string;
   completionReportId?: string;
@@ -727,6 +733,7 @@ function isWorkflowSession(value: unknown): value is WorkflowSession {
     'revisionLeaseId',
     'implementationReconciliationReportId',
     'implementationReconciliationPaths',
+    'documentationRemediation',
     'createdAt',
     'latestCheckReportId',
     'completionReportId',
@@ -809,6 +816,31 @@ function isWorkflowSession(value: unknown): value is WorkflowSession {
     return false;
   }
   if (
+    value.documentationRemediation !== undefined &&
+    (!isRecord(value.documentationRemediation) ||
+      Object.keys(value.documentationRemediation).sort().join('\0') !==
+        ['paths', 'reviewRecordDigests'].join('\0') ||
+      !isStringArray(value.documentationRemediation.reviewRecordDigests) ||
+      value.documentationRemediation.reviewRecordDigests.length === 0 ||
+      value.documentationRemediation.reviewRecordDigests.some(
+        (candidate) => !isDigest(candidate),
+      ) ||
+      !isCanonicalStringSet(
+        value.documentationRemediation.reviewRecordDigests,
+      ) ||
+      !isStringArray(value.documentationRemediation.paths) ||
+      value.documentationRemediation.paths.length === 0 ||
+      !isCanonicalStringSet(value.documentationRemediation.paths) ||
+      value.documentationRemediation.paths.some(
+        (candidate) =>
+          !isCanonicalDocumentationRemediationPath(candidate) ||
+          (!candidate.startsWith('docs/') &&
+            !/(?:^|\/)README\.md$/.test(candidate)),
+      ))
+  ) {
+    return false;
+  }
+  if (
     value.checkEvidenceEngineDigest !== undefined &&
     !isSha256Digest(value.checkEvidenceEngineDigest)
   ) {
@@ -885,6 +917,16 @@ function isWorkflowSession(value: unknown): value is WorkflowSession {
   return true;
 }
 
+function isCanonicalDocumentationRemediationPath(candidate: string): boolean {
+  try {
+    return (
+      normalizePolicyPath(candidate) === candidate && !candidate.endsWith('/**')
+    );
+  } catch {
+    return false;
+  }
+}
+
 function isTaskMandateBinding(value: unknown, changeId: string): boolean {
   if (!isRecord(value)) return false;
   const keys = Object.keys(value).sort();
@@ -940,6 +982,13 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 function isStringArray(value: unknown): value is string[] {
   return (
     Array.isArray(value) && value.every((item) => typeof item === 'string')
+  );
+}
+
+function isCanonicalStringSet(value: string[]): boolean {
+  return (
+    new Set(value).size === value.length &&
+    JSON.stringify(value) === JSON.stringify([...value].sort())
   );
 }
 

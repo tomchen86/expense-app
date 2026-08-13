@@ -5,6 +5,10 @@ import path from 'node:path';
 import { canonicalJson } from './canonical-json.ts';
 import { ExitCode, workflowError } from './errors.ts';
 import {
+  parseDocumentationReviewCapture,
+  type DocumentationReviewCapture,
+} from './documentation-closure.ts';
+import {
   assertPlainDirectory,
   ensurePlainDirectory,
 } from './filesystem-safety.ts';
@@ -65,6 +69,7 @@ export type FinalizeTransaction = Readonly<{
   checkReportId: string | null;
   completionReportId: string | null;
   finishReportId: string | null;
+  documentationReview?: DocumentationReviewCapture;
 }>;
 
 type FinalizeTransactionSeed = Readonly<{
@@ -289,7 +294,7 @@ function finalizeTransactionDirectory(runtimeRoot: string): string {
 
 export function parseFinalizeTransaction(value: unknown): FinalizeTransaction {
   if (!isRecord(value)) throw malformed();
-  const keys = [
+  const legacyKeys = [
     'baseline',
     'branch',
     'candidateFingerprint',
@@ -319,6 +324,9 @@ export function parseFinalizeTransaction(value: unknown): FinalizeTransaction {
     'transactionId',
     'transitionPaths',
   ].sort();
+  const keys = Object.hasOwn(value, 'documentationReview')
+    ? [...legacyKeys, 'documentationReview'].sort()
+    : legacyKeys;
   if (
     JSON.stringify(Object.keys(value).sort()) !== JSON.stringify(keys) ||
     value.schemaVersion !== 1 ||
@@ -418,6 +426,16 @@ export function parseFinalizeTransaction(value: unknown): FinalizeTransaction {
       checks: entry.checks.map((check) => ({ ...check })),
     };
   });
+  let documentationReview: DocumentationReviewCapture | undefined;
+  if (Object.hasOwn(value, 'documentationReview')) {
+    try {
+      documentationReview = parseDocumentationReviewCapture(
+        value.documentationReview,
+      );
+    } catch {
+      throw malformed();
+    }
+  }
   if (
     !isCanonicalPathArray(projectionMutations.map((entry) => entry.path)) ||
     !projectionMutations.some(
@@ -477,6 +495,7 @@ export function parseFinalizeTransaction(value: unknown): FinalizeTransaction {
     checkReportId: value.checkReportId as string | null,
     completionReportId: value.completionReportId as string | null,
     finishReportId: value.finishReportId as string | null,
+    ...(documentationReview === undefined ? {} : { documentationReview }),
   };
   const seed = transactionSeed(transaction);
   if (

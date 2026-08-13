@@ -1,8 +1,11 @@
 # workflow-assurance Specification
 
 ## Purpose
+
 TBD - created by archiving change establish-executable-ai-workflow. Update Purpose after archive.
+
 ## Requirements
+
 ### Requirement: Canonical Planning Artifacts
 
 The repository SHALL use OpenSpec specs for normative requirements and one OpenSpec change directory for each active planning generation. Investigation-first generations SHALL keep normalized investigation, proposal, design, delta specs, task list, execution strategy, guard, and exact-plan review in that canonical change tree. The repository SHALL NOT maintain a parallel workflow planning/task tree.
@@ -280,6 +283,58 @@ after the corresponding executable validator and CI check exist.
 - THEN validation fails
 - AND the correction must be made through an authorized issue command
 
+### Requirement: Whole-Change Documentation Closure
+
+For every managed change whose final task baseline reaches the exact tracked
+documentation-closure activation marker, the workflow engine SHALL require one
+authenticated TaskDiff review of the whole final change before final task
+completion. The review subject SHALL bind the parent of the first managed task
+commit, its tree, the final projected candidate tree, every non-projection
+changed path, their canonical transition digest, and code-owned documentation
+hints. Hints are advisory inputs and SHALL NOT themselves decide documentation
+impact.
+
+The reviewer SHALL return exactly one structured documentation assessment:
+`updated` with exact changed documentation paths, `generated-verified` with
+exact changed source/generated paths and check evidence, `no-impact` with a
+bounded rationale only when no documentation path changed, or `needs-changes`
+with exact documentation remediation paths. The engine SHALL use the existing
+TaskDiff provider, collaboration-grant, caller-supplied, and direct-human review
+authority paths and SHALL preserve their actual achieved independence.
+
+#### Scenario: Final product task has no documentation impact
+
+- **GIVEN** the activated final candidate changes no documentation path
+- **WHEN** the authenticated reviewer returns `no-impact` with a concrete rationale
+- **THEN** finalization may continue
+- **AND** the final task commit records the exact review and assessment
+
+#### Scenario: Reviewer requires a documentation path outside task scope
+
+- **GIVEN** an activated final review returns `needs-changes`
+- **WHEN** it names exact canonical paths under `docs/**` or an exact `README.md`
+- **THEN** only those paths are added to that session's remediation scope
+- **AND** every other out-of-scope path remains rejected
+- **AND** accepting the challenge does not satisfy the old candidate
+- **AND** the corrected candidate requires fresh checks and a fresh final review
+
+#### Scenario: Final closure is replayed from Git
+
+- **GIVEN** the activated final task has a satisfied documentation assessment
+- **WHEN** the managed task commit is created
+- **THEN** its canonical message embeds a closure bound to the whole-change
+  base/tree/path/patch digest, reviewer authority, assessment, final-assurance
+  commitment when present, and remediation lineage
+- **AND** commit recovery compares it with content-addressed report evidence
+- **AND** CI and archive independently replay the closure from Git objects
+
+#### Scenario: Historical task predates activation
+
+- **GIVEN** a managed task parent does not reach the activation marker
+- **WHEN** commit, CI, or archive validation runs
+- **THEN** existing task evidence remains valid without a documentation closure
+- **AND** the validator does not accept a premature closure on that history
+
 ### Requirement: Semantic Handoff Traceability
 
 The current-state handoff SHALL contain exactly current change, current task,
@@ -434,4 +489,3 @@ An investigation exemption MUST mark `C-TERM-SCAN`, `C-WHY-BINDING`, and related
 - **WHEN** T1.5 assurance is rendered
 - **THEN** the claim is labeled undelivered
 - **AND** no synonym promotes it to a current hard guarantee
-

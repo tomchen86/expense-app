@@ -36,7 +36,7 @@
     {
       "path": "src/archive-eligibility.ts",
       "mode": "100644",
-      "digest": "sha256:973f98552b7924a878ceb431ad4f90f5cc2d3613b7977710dec03097f7afc21a"
+      "digest": "sha256:14ed7d8ec454b351d604fbf6ad3e5a049be171c135bae2437503da9fbfed1e97"
     },
     {
       "path": "src/archive-output-safety.ts",
@@ -181,7 +181,7 @@
     {
       "path": "src/ci-sequence.ts",
       "mode": "100644",
-      "digest": "sha256:8dc5bf9a0c66be7d6e2b290a02071b7714b7f0040e1ff5b70c6f6c6df43b9504"
+      "digest": "sha256:75ccfa2a2e35af76942bc02216edf1edb48f75aa323d46c59a99b56d9cfc182a"
     },
     {
       "path": "src/ci-signature.ts",
@@ -241,12 +241,12 @@
     {
       "path": "src/commit-object-validation.ts",
       "mode": "100644",
-      "digest": "sha256:7b328f8a0c02eee634df24e5871502ef810463465a7609cf896e37e9dcbb2259"
+      "digest": "sha256:5528ea5b1ac14330263c5187824453c63ead1eb2d22b150ccf2298166a550d31"
     },
     {
       "path": "src/commit-recovery.ts",
       "mode": "100644",
-      "digest": "sha256:c1e3827172db596c4ecf0baee32792c939f26e631c8fa26bc07e6d46388b68f3"
+      "digest": "sha256:e58c27b7ec04bb5e63666f8e3c789b79cba5b2854f63efd0d7548f25ce3c5ac0"
     },
     {
       "path": "src/content-record-store.ts",
@@ -307,6 +307,16 @@
       "path": "src/document-refresh.ts",
       "mode": "100644",
       "digest": "sha256:fa99345c6987a97b56cdc212cf6ed5faa6321f5e4ea2a14f6d49c63f2f0fbcea"
+    },
+    {
+      "path": "src/documentation-closure-activation.ts",
+      "mode": "100644",
+      "digest": "sha256:0562e09cd12228f70fca6e16a8cee7353930f96451cffc4b9e0e8a9392c89e49"
+    },
+    {
+      "path": "src/documentation-closure.ts",
+      "mode": "100644",
+      "digest": "sha256:eb1ffb488dc81132720705364d77a09690b4dc402272b2efd24c3611a96bf204"
     },
     {
       "path": "src/engine-metrics.ts",
@@ -411,7 +421,7 @@
     {
       "path": "src/finalize-transaction.ts",
       "mode": "100644",
-      "digest": "sha256:a2070264d2db9c36d99dbf4648d48fb177600c6fe38ced8868096a16e4b16ed1"
+      "digest": "sha256:ffcfa20838a19cee329182bfde488e04ecd499432da852b12d4049b8c6763967"
     },
     {
       "path": "src/floor-overflow-pruning.ts",
@@ -421,7 +431,7 @@
     {
       "path": "src/git-transitions.ts",
       "mode": "100644",
-      "digest": "sha256:1f5069c6ed49408d10db4b2f8d52223322c22ccba9327fb1886d9e12b45fa878"
+      "digest": "sha256:cf8f64365771fe5cf49dc2bf8d552f309476bd71234e8e809b8e05ac091ff99c"
     },
     {
       "path": "src/git.ts",
@@ -596,7 +606,7 @@
     {
       "path": "src/lifecycle.ts",
       "mode": "100644",
-      "digest": "sha256:9acadf794930939d135e71f2978d0ce523c1dabc1aeff57749e1d9972b34c0fc"
+      "digest": "sha256:b9a4aa630f1dc2693e8112a59659955c6ce3711c4e8dc56bd9b3522ca1c67b9e"
     },
     {
       "path": "src/maintainer-approve.ts",
@@ -866,7 +876,7 @@
     {
       "path": "src/projected-finalization.ts",
       "mode": "100644",
-      "digest": "sha256:7c410338ba4f3af7e14f8fa3ab7391a868cb2f1c729dfcd4ad24fc02c17f6504"
+      "digest": "sha256:9fe400a286ee5067c6906a8607ea75f9bd2846f557f01e9d1b14206b5249b448"
     },
     {
       "path": "src/propose-exemption-store.ts",
@@ -951,7 +961,7 @@
     {
       "path": "src/provider-runner.ts",
       "mode": "100644",
-      "digest": "sha256:8fa4fa70d4afd5ac60765c0ba9722d37281f0f74530edfa0db4de75a56a59ca0"
+      "digest": "sha256:3a0e34fec0a18df25c5357a4695266e85749f8b8cf61c02a87709efe3fcd814d"
     },
     {
       "path": "src/provider-worker-maintenance.ts",
@@ -1071,7 +1081,7 @@
     {
       "path": "src/session-store.ts",
       "mode": "100644",
-      "digest": "sha256:6cdd945fc01de3cb3942421d49032708a40f8cd0704b3c61b3bc9e44f3ca7dae"
+      "digest": "sha256:96ce5dfc1238ba42a02a77e0ab1ecb62ea7fca3bc02d8bb5b6787cbcc178ada3"
     },
     {
       "path": "src/session.ts",
@@ -1081,7 +1091,7 @@
     {
       "path": "src/task-diff-review-artifact.ts",
       "mode": "100644",
-      "digest": "sha256:b3a8c35ad29ee2b912d76e00fa9f7e48ea12fb6965717d288f64aeed0bd523a4"
+      "digest": "sha256:7e1041ccfeeca3e9d9d577c956335b5f499106a665fd4fb963d063a336748129"
     },
     {
       "path": "src/task-diff-review-external-store.ts",
@@ -1096,7 +1106,7 @@
     {
       "path": "src/task-diff-review-lifecycle.ts",
       "mode": "100644",
-      "digest": "sha256:1748e73d41aebea527b89eb4e2b4ba4f892f616add03b20b9321e69273f17e48"
+      "digest": "sha256:b8da9cf26a38f79a091b97a21d15ad0d5aef891da9f7ffd35e804fd5dbc39087"
     },
     {
       "path": "src/task-diff-review-lineage.ts",
@@ -1111,7 +1121,7 @@
     {
       "path": "src/task-diff-review.ts",
       "mode": "100644",
-      "digest": "sha256:7b32376746498ce3a5fca6a90883362d482a22607e08098842c55bec96b5ad78"
+      "digest": "sha256:375fff72e5b3b99393e26845809e48f15e738c425a014df1863aa1d867909461"
     },
     {
       "path": "src/task-execution-evidence.ts",
@@ -1231,7 +1241,7 @@
     {
       "path": "src/verification.ts",
       "mode": "100644",
-      "digest": "sha256:a6490f041a9f4a9257cd69912bb22bf0ff7b8c0c22716ae7fe290e423ad10fc0"
+      "digest": "sha256:3a1e44b47cefb94d082a6124bd6ad253bd3d9cece29e329988e06095da429f1b"
     },
     {
       "path": "src/workflow-guidance.ts",

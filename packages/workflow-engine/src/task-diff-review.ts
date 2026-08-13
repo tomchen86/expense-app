@@ -46,6 +46,40 @@ export const TASK_DIFF_REVIEW_POLICY_DIGEST = sha256(
 
 export type TaskDiffReviewPathRole = PathRole | 'unregistered';
 
+export type TaskDiffDocumentationHint = Readonly<{
+  reason:
+    | 'workflow-lifecycle-changed'
+    | 'public-interface-changed'
+    | 'configuration-changed'
+    | 'migration-changed'
+    | 'user-visible-behavior-changed'
+    | 'issue-or-roadmap-state-changed'
+    | 'authority-boundary-changed';
+  suggestedPaths: readonly string[];
+}>;
+
+export type TaskDiffDocumentationClosureRequirement =
+  | Readonly<{
+      schemaVersion: 1;
+      kind: 'task-diff-documentation-closure-requirement.v1';
+      requirementDigest: string;
+      required: false;
+      basis: 'change-open';
+    }>
+  | Readonly<{
+      schemaVersion: 1;
+      kind: 'task-diff-documentation-closure-requirement.v1';
+      requirementDigest: string;
+      required: true;
+      basis: 'final-task';
+      changeBaseCommit: string;
+      changeBaseTree: string;
+      candidateTree: string;
+      changedPaths: readonly string[];
+      patchDigest: string;
+      hints: readonly TaskDiffDocumentationHint[];
+    }>;
+
 export type TaskDiffReviewRequirement = Readonly<{
   required: boolean;
   basis:
@@ -87,6 +121,7 @@ export type CreateTaskDiffReviewSubjectInput = Readonly<{
   planReviewNodeId: string;
   planningAssuranceDigest: string;
   reviewRequirement: TaskDiffReviewRequirement;
+  documentationRequirement?: TaskDiffDocumentationClosureRequirement;
 }>;
 
 export type TaskDiffReviewSubject = Readonly<{
@@ -111,6 +146,8 @@ export type TaskDiffReviewSubject = Readonly<{
   planningAssuranceDigest: string;
   reviewPolicyDigest: string;
   reviewRequirement: TaskDiffReviewRequirement;
+  /** Absent only on durable subjects created before documentation closure. */
+  documentationRequirement?: TaskDiffDocumentationClosureRequirement;
   requiredIndependence: 'provider-independent';
   coverage: typeof TASK_DIFF_REVIEW_COVERAGE;
 }>;
@@ -205,6 +242,19 @@ export function createTaskDiffReviewSubject(
 ): TaskDiffReviewSubject {
   const transitions = normalizeTransitions(input.transitions);
   const reviewRequirement = parseReviewRequirement(input.reviewRequirement);
+  const documentationRequirement =
+    input.documentationRequirement === undefined
+      ? createTaskDiffDocumentationClosureRequirement({ required: false })
+      : parseTaskDiffDocumentationClosureRequirement(
+          input.documentationRequirement,
+        );
+  if (
+    documentationRequirement.required &&
+    documentationRequirement.candidateTree !==
+      normalizeObjectId(input.candidateTree)
+  ) {
+    throw subjectInvalid();
+  }
   const body = {
     schemaVersion: 1 as const,
     kind: 'task-diff-review-subject.v1' as const,
@@ -226,6 +276,7 @@ export function createTaskDiffReviewSubject(
     planningAssuranceDigest: normalizeDigest(input.planningAssuranceDigest),
     reviewPolicyDigest: TASK_DIFF_REVIEW_POLICY_DIGEST,
     reviewRequirement,
+    documentationRequirement,
     requiredIndependence: 'provider-independent' as const,
     coverage: TASK_DIFF_REVIEW_COVERAGE,
   };
@@ -251,6 +302,8 @@ export function taskDiffReviewCandidateIdentityDigest(
       kind: 'task-diff-review-candidate-identity.v1',
       candidateTree: subject.candidateTree,
       patchDigest: subject.patchDigest,
+      documentationRequirementDigest:
+        subject.documentationRequirement?.requirementDigest ?? null,
     }),
   );
 }
@@ -378,33 +431,35 @@ export function parseTaskDiffReviewScope(value: unknown): TaskDiffReviewScope {
 export function parseTaskDiffReviewSubject(
   value: unknown,
 ): TaskDiffReviewSubject {
+  const legacyKeys = [
+    'schemaVersion',
+    'kind',
+    'subjectDigest',
+    'repositoryId',
+    'changeId',
+    'taskId',
+    'baseCommit',
+    'baseTree',
+    'candidateTree',
+    'changedPaths',
+    'transitions',
+    'patchDigest',
+    'taskContractDigest',
+    'requiredCheckPolicyDigest',
+    'checkEvidenceDigest',
+    'planningGenerationId',
+    'planTargetDigest',
+    'planReviewNodeId',
+    'planningAssuranceDigest',
+    'reviewPolicyDigest',
+    'reviewRequirement',
+    'requiredIndependence',
+    'coverage',
+  ];
+  const currentKeys = [...legacyKeys, 'documentationRequirement'];
   if (
     !isRecord(value) ||
-    !hasExactKeys(value, [
-      'schemaVersion',
-      'kind',
-      'subjectDigest',
-      'repositoryId',
-      'changeId',
-      'taskId',
-      'baseCommit',
-      'baseTree',
-      'candidateTree',
-      'changedPaths',
-      'transitions',
-      'patchDigest',
-      'taskContractDigest',
-      'requiredCheckPolicyDigest',
-      'checkEvidenceDigest',
-      'planningGenerationId',
-      'planTargetDigest',
-      'planReviewNodeId',
-      'planningAssuranceDigest',
-      'reviewPolicyDigest',
-      'reviewRequirement',
-      'requiredIndependence',
-      'coverage',
-    ]) ||
+    (!hasExactKeys(value, legacyKeys) && !hasExactKeys(value, currentKeys)) ||
     value.schemaVersion !== 1 ||
     value.kind !== 'task-diff-review-subject.v1' ||
     value.reviewPolicyDigest !== TASK_DIFF_REVIEW_POLICY_DIGEST ||
@@ -421,6 +476,14 @@ export function parseTaskDiffReviewSubject(
     throw subjectInvalid();
   }
   const reviewRequirement = parseReviewRequirement(value.reviewRequirement);
+  const documentationRequirement = Object.hasOwn(
+    value,
+    'documentationRequirement',
+  )
+    ? parseTaskDiffDocumentationClosureRequirement(
+        value.documentationRequirement,
+      )
+    : undefined;
   const subject: TaskDiffReviewSubject = {
     schemaVersion: 1,
     kind: 'task-diff-review-subject.v1',
@@ -443,17 +506,143 @@ export function parseTaskDiffReviewSubject(
     planningAssuranceDigest: normalizeDigest(value.planningAssuranceDigest),
     reviewPolicyDigest: TASK_DIFF_REVIEW_POLICY_DIGEST,
     reviewRequirement,
+    ...(documentationRequirement === undefined
+      ? {}
+      : { documentationRequirement }),
     requiredIndependence: 'provider-independent',
     coverage: TASK_DIFF_REVIEW_COVERAGE,
   };
   if (
     subject.patchDigest !== patchDigest(transitions) ||
+    (documentationRequirement?.required === true &&
+      documentationRequirement.candidateTree !== subject.candidateTree) ||
     subject.subjectDigest !==
       sha256(canonicalJson(subjectWithoutDigest(subject)))
   ) {
     throw subjectInvalid();
   }
   return deepFreeze(subject);
+}
+
+export function createTaskDiffDocumentationClosureRequirement(
+  input:
+    | Readonly<{ required: false }>
+    | Readonly<{
+        required: true;
+        changeBaseCommit: string;
+        changeBaseTree: string;
+        candidateTree: string;
+        changedPaths: readonly string[];
+        patchDigest: string;
+        hints: readonly TaskDiffDocumentationHint[];
+      }>,
+): TaskDiffDocumentationClosureRequirement {
+  const body =
+    input.required === false
+      ? {
+          schemaVersion: 1 as const,
+          kind: 'task-diff-documentation-closure-requirement.v1' as const,
+          required: false as const,
+          basis: 'change-open' as const,
+        }
+      : {
+          schemaVersion: 1 as const,
+          kind: 'task-diff-documentation-closure-requirement.v1' as const,
+          required: true as const,
+          basis: 'final-task' as const,
+          changeBaseCommit: normalizeObjectId(input.changeBaseCommit),
+          changeBaseTree: normalizeObjectId(input.changeBaseTree),
+          candidateTree: normalizeObjectId(input.candidateTree),
+          changedPaths: canonicalPaths(input.changedPaths),
+          patchDigest: normalizeDigest(input.patchDigest),
+          hints: normalizeDocumentationHints(input.hints),
+        };
+  return parseTaskDiffDocumentationClosureRequirement({
+    ...body,
+    requirementDigest: sha256(canonicalJson(body)),
+  });
+}
+
+export function parseTaskDiffDocumentationClosureRequirement(
+  value: unknown,
+): TaskDiffDocumentationClosureRequirement {
+  if (
+    !isRecord(value) ||
+    value.schemaVersion !== 1 ||
+    value.kind !== 'task-diff-documentation-closure-requirement.v1' ||
+    typeof value.required !== 'boolean'
+  ) {
+    throw subjectInvalid();
+  }
+  if (value.required === false) {
+    if (
+      !hasExactKeys(value, [
+        'schemaVersion',
+        'kind',
+        'requirementDigest',
+        'required',
+        'basis',
+      ]) ||
+      value.basis !== 'change-open'
+    ) {
+      throw subjectInvalid();
+    }
+    const record = {
+      schemaVersion: 1 as const,
+      kind: 'task-diff-documentation-closure-requirement.v1' as const,
+      requirementDigest: normalizeDigest(value.requirementDigest),
+      required: false as const,
+      basis: 'change-open' as const,
+    };
+    if (
+      record.requirementDigest !==
+      sha256(canonicalJson(withoutRequirementDigest(record)))
+    ) {
+      throw subjectInvalid();
+    }
+    return deepFreeze(record);
+  }
+  if (
+    !hasExactKeys(value, [
+      'schemaVersion',
+      'kind',
+      'requirementDigest',
+      'required',
+      'basis',
+      'changeBaseCommit',
+      'changeBaseTree',
+      'candidateTree',
+      'changedPaths',
+      'patchDigest',
+      'hints',
+    ]) ||
+    value.basis !== 'final-task' ||
+    !Array.isArray(value.changedPaths) ||
+    value.changedPaths.length === 0 ||
+    !Array.isArray(value.hints)
+  ) {
+    throw subjectInvalid();
+  }
+  const record: TaskDiffDocumentationClosureRequirement = {
+    schemaVersion: 1,
+    kind: 'task-diff-documentation-closure-requirement.v1',
+    requirementDigest: normalizeDigest(value.requirementDigest),
+    required: true,
+    basis: 'final-task',
+    changeBaseCommit: normalizeObjectId(value.changeBaseCommit),
+    changeBaseTree: normalizeObjectId(value.changeBaseTree),
+    candidateTree: normalizeObjectId(value.candidateTree),
+    changedPaths: canonicalPaths(value.changedPaths),
+    patchDigest: normalizeDigest(value.patchDigest),
+    hints: normalizeDocumentationHints(value.hints),
+  };
+  if (
+    record.requirementDigest !==
+    sha256(canonicalJson(withoutRequirementDigest(record)))
+  ) {
+    throw subjectInvalid();
+  }
+  return deepFreeze(record);
 }
 
 function subjectWithoutDigest(
@@ -766,6 +955,60 @@ function normalizeExactPath(value: unknown): string {
     throw subjectInvalid();
   }
   return normalized;
+}
+
+function canonicalPaths(value: readonly unknown[]): readonly string[] {
+  if (!Array.isArray(value)) throw subjectInvalid();
+  const paths = value.map(normalizeExactPath).sort();
+  if (
+    paths.some(
+      (candidate, index) => index > 0 && candidate === paths[index - 1],
+    )
+  ) {
+    throw subjectInvalid();
+  }
+  return Object.freeze(paths);
+}
+
+function normalizeDocumentationHints(
+  value: readonly TaskDiffDocumentationHint[],
+): readonly TaskDiffDocumentationHint[] {
+  if (!Array.isArray(value)) throw subjectInvalid();
+  const reasons = new Set<string>();
+  const hints = value.map((candidate) => {
+    if (
+      !isRecord(candidate) ||
+      !hasExactKeys(candidate, ['reason', 'suggestedPaths']) ||
+      ![
+        'workflow-lifecycle-changed',
+        'public-interface-changed',
+        'configuration-changed',
+        'migration-changed',
+        'user-visible-behavior-changed',
+        'issue-or-roadmap-state-changed',
+        'authority-boundary-changed',
+      ].includes(String(candidate.reason)) ||
+      !Array.isArray(candidate.suggestedPaths) ||
+      candidate.suggestedPaths.length === 0 ||
+      reasons.has(String(candidate.reason))
+    ) {
+      throw subjectInvalid();
+    }
+    reasons.add(String(candidate.reason));
+    return Object.freeze({
+      reason: candidate.reason as TaskDiffDocumentationHint['reason'],
+      suggestedPaths: canonicalPaths(candidate.suggestedPaths),
+    });
+  });
+  hints.sort((left, right) => left.reason.localeCompare(right.reason));
+  return Object.freeze(hints);
+}
+
+function withoutRequirementDigest<T extends { requirementDigest: string }>(
+  requirement: T,
+): Omit<T, 'requirementDigest'> {
+  const { requirementDigest: _requirementDigest, ...body } = requirement;
+  return body;
 }
 
 function normalizeDigest(value: unknown): string {

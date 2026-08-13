@@ -883,6 +883,8 @@ export function inspectSession(
     (options.projectedTaskIds?.length ?? 0) > 0 ? [relativeTasksPath] : [];
   const transitionPaths = options.authorizedTransitionPaths ?? [];
   const reconciliationPaths = session.implementationReconciliationPaths ?? [];
+  const documentationRemediationPaths =
+    session.documentationRemediation?.paths ?? [];
   const allowedTransitionPaths = completionDocumentPaths(git.repositoryRoot);
   if (
     transitionPaths.some(
@@ -900,6 +902,7 @@ export function inspectSession(
       !projectedPaths.includes(changedPath) &&
       !transitionPaths.includes(changedPath) &&
       !reconciliationPaths.includes(changedPath) &&
+      !documentationRemediationPaths.includes(changedPath) &&
       !policy.allowedPaths.some((allowedPath) =>
         matchesAllowedPath(changedPath, allowedPath),
       ),

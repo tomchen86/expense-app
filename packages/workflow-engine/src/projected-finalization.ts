@@ -44,7 +44,11 @@ import {
   planTasksCompleted,
   restoreTaskProjection,
 } from './task-projection.ts';
-import { assertTaskDiffReviewCompletionGateSatisfied } from './task-diff-review-lifecycle.ts';
+import {
+  assertTaskDiffReviewCompletionGateSatisfied,
+  loadTaskDiffDocumentationReviewCapture,
+} from './task-diff-review-lifecycle.ts';
+import type { DocumentationReviewCapture } from './documentation-closure.ts';
 import { assertTaskStrategyExecutionGate } from './task-strategy-gate.ts';
 import { ensureTaskMechanicalTransformationEvidence } from './task-mechanical-transform.ts';
 import {
@@ -280,6 +284,10 @@ function continueFinalizeTransaction(
         transactionId: transaction.transactionId,
         candidateTree: transaction.candidateTree,
       });
+      const documentationReview = loadTaskDiffDocumentationReviewCapture(
+        cwd,
+        transaction.sessionId,
+      );
       if (state.indexState === 'previous') {
         stageExactPaths(
           state.inspection.git.repositoryRoot,
@@ -294,7 +302,11 @@ function continueFinalizeTransaction(
       transaction = advanceFinalizeTransaction(
         state.context.runtime.root,
         transaction,
-        { ...transaction, phase: 'staged' },
+        {
+          ...transaction,
+          phase: 'staged',
+          ...(documentationReview === null ? {} : { documentationReview }),
+        },
       );
       maybeInterrupt(options, 'staged');
       continue;
@@ -303,7 +315,11 @@ function continueFinalizeTransaction(
       if (state.indexState !== 'candidate') throw transactionDiverged();
       const completionReportId = writeSessionReport(
         state.inspection,
-        createCompletionReport(transaction, state.inspection),
+        createCompletionReport(
+          transaction,
+          state.inspection,
+          transaction.documentationReview ?? null,
+        ),
       );
       const finishReportId = writeSessionReport(
         state.inspection,
@@ -591,6 +607,7 @@ function createCheckReport(
 function createCompletionReport(
   transaction: FinalizeTransaction,
   inspection: ReturnType<typeof inspectSession>,
+  documentationReview: DocumentationReviewCapture | null,
 ): WorkflowReport {
   return {
     ...createCheckReport(transaction, inspection, []),
@@ -601,6 +618,7 @@ function createCompletionReport(
     transitionPaths: [...transaction.transitionPaths],
     reconciledTasks: transaction.reconciledTasks,
     checks: undefined,
+    ...(documentationReview === null ? {} : { documentationReview }),
   };
 }
 
