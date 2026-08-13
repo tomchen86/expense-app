@@ -595,6 +595,7 @@ describe('Expense API - Mobile Compatibility', () => {
           code: 'EXPENSE_VERSION_CONFLICT',
           message: 'Expense was modified by another request',
           field: 'expected_version',
+          details: { currentVersion: expense.version + 1 },
         },
       });
     });
