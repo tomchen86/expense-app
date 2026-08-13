@@ -6,11 +6,11 @@ import path from 'node:path';
 import test from 'node:test';
 
 import {
-  commitAuthoritySession,
+  commitAuthoritySession as commitAuthoritySessionProduction,
   SimulatedAuthorityCrash,
 } from '../src/maintainer-commit.ts';
 import { readDurableRefGenerationLedger } from '../src/maintainer-candidate.ts';
-import { approveAndApplyMaintainerGrantV2 } from '../src/maintainer-approve.ts';
+import { approveAndApplyMaintainerGrantV2 as approveAndApplyMaintainerGrantV2Production } from '../src/maintainer-approve.ts';
 import {
   armPostApprovalAdmissionDeadline,
   createPostApprovalAdmissionDeadline,
@@ -19,7 +19,7 @@ import {
 } from '../src/git.ts';
 import {
   readAuthorityCommitJournal,
-  recoverAuthorityCommit,
+  recoverAuthorityCommit as recoverAuthorityCommitProduction,
 } from '../src/maintainer-recovery.ts';
 import { parseMaintainerPolicy } from '../src/maintainer-policy.ts';
 import { startAuthoritySession } from '../src/maintainer-session.ts';
@@ -53,6 +53,50 @@ const FAKE_SIGNATURE = [
   '',
 ].join('\n');
 const temporaryAuditRoots = new Set<string>();
+const STABLE_POST_APPROVAL_TEST_BUDGET = Object.freeze({
+  monotonicNow: () => 0,
+});
+
+function approveAndApplyMaintainerGrantV2(
+  cwd: Parameters<typeof approveAndApplyMaintainerGrantV2Production>[0],
+  request: Parameters<typeof approveAndApplyMaintainerGrantV2Production>[1],
+  options: NonNullable<
+    Parameters<typeof approveAndApplyMaintainerGrantV2Production>[2]
+  > = {},
+) {
+  return approveAndApplyMaintainerGrantV2Production(cwd, request, {
+    testPostApprovalBudget: STABLE_POST_APPROVAL_TEST_BUDGET,
+    ...options,
+  });
+}
+
+function commitAuthoritySession(
+  cwd: Parameters<typeof commitAuthoritySessionProduction>[0],
+  requestedSessionId: Parameters<typeof commitAuthoritySessionProduction>[1],
+  subject: Parameters<typeof commitAuthoritySessionProduction>[2],
+  options: NonNullable<
+    Parameters<typeof commitAuthoritySessionProduction>[3]
+  > = {},
+) {
+  return commitAuthoritySessionProduction(cwd, requestedSessionId, subject, {
+    testPostApprovalBudget: STABLE_POST_APPROVAL_TEST_BUDGET,
+    ...options,
+  });
+}
+
+function recoverAuthorityCommit(
+  cwd: Parameters<typeof recoverAuthorityCommitProduction>[0],
+  requestedSessionId: Parameters<typeof recoverAuthorityCommitProduction>[1],
+  now: Parameters<typeof recoverAuthorityCommitProduction>[2],
+  options: NonNullable<
+    Parameters<typeof recoverAuthorityCommitProduction>[3]
+  > = {},
+) {
+  return recoverAuthorityCommitProduction(cwd, requestedSessionId, now, {
+    testPostApprovalBudget: STABLE_POST_APPROVAL_TEST_BUDGET,
+    ...options,
+  });
+}
 
 test.after(() => {
   for (const root of temporaryAuditRoots) {

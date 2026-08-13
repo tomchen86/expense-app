@@ -36,7 +36,7 @@ The wrapper gathers evidence, obtains exact PlanReview, materializes the governe
 5. Planning is ready only when the wrapper returns `state: planning-complete` with its managed planning transition. Then open the selected or next incomplete task:
 
    ```bash
-   pnpm workflow open-task <change-id> [--task <task-id>] --mandate <mandate-task-id> --json
+   pnpm workflow open-task <change-id> [--task <task-id>] [--mandate <mandate-task-id>] --json
    ```
 
 6. During implementation, inspect the versioned advisory command catalog and use its preferred projected single-pass path:

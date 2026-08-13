@@ -256,14 +256,24 @@ export function advanceFullGateProgress(
     );
   }
 
+  const observedCompleted = Math.max(
+    previous.lastCompleted,
+    observation.completed,
+  );
+  const observedPass = Math.max(previous.lastPass, observation.pass);
+  const observedFail = Math.max(previous.lastFail, observation.fail);
+  const observedLogBytes = Math.max(
+    previous.lastLogBytes,
+    observation.logBytes,
+  );
   const cpuDeltaSeconds =
     observation.cpuTotalSeconds === null ||
     previous.lastCpuTotalSeconds === null
       ? null
       : Math.max(0, observation.cpuTotalSeconds - previous.lastCpuTotalSeconds);
-  const counterAdvanced = observation.completed > previous.lastCompleted;
+  const counterAdvanced = observedCompleted > previous.lastCompleted;
   const cpuAdvanced = (cpuDeltaSeconds ?? 0) > 0;
-  const logAdvanced = observation.logBytes > previous.lastLogBytes;
+  const logAdvanced = observedLogBytes > previous.lastLogBytes;
   const activity = counterAdvanced || cpuAdvanced || logAdvanced;
   const lastActivityAtMs = activity
     ? observation.nowMs
@@ -289,7 +299,7 @@ export function advanceFullGateProgress(
   let transition: FullGateProgressTransition = 'none';
   if (!observation.processAlive) {
     transition = 'complete';
-  } else if (observation.fail > previous.lastFail) {
+  } else if (observedFail > previous.lastFail) {
     transition = 'failure';
   } else if (previous.lastSnapshotState === 'inspecting' && activity) {
     transition = 'recovery';
@@ -314,10 +324,10 @@ export function advanceFullGateProgress(
     quietMs,
     processAlive: observation.processAlive,
     cpuDeltaSeconds,
-    logBytes: observation.logBytes,
-    completed: observation.completed,
-    pass: observation.pass,
-    fail: observation.fail,
+    logBytes: observedLogBytes,
+    completed: observedCompleted,
+    pass: observedPass,
+    fail: observedFail,
     total,
     firstFailureName,
     firstFailureLogLocator:
@@ -330,10 +340,10 @@ export function advanceFullGateProgress(
     expectedTotal: total,
     lastActivityAtMs,
     lastCpuTotalSeconds: observation.cpuTotalSeconds,
-    lastLogBytes: observation.logBytes,
-    lastCompleted: observation.completed,
-    lastPass: observation.pass,
-    lastFail: observation.fail,
+    lastLogBytes: observedLogBytes,
+    lastCompleted: observedCompleted,
+    lastPass: observedPass,
+    lastFail: observedFail,
     lastSnapshotState: state,
   });
   return Object.freeze({
@@ -348,13 +358,16 @@ export function renderFullGateProgress(
   snapshot: FullGateProgressSnapshot,
 ): string {
   const elapsedMinutes = Math.floor(snapshot.elapsedMs / 60_000);
-  const bar = progressBar(snapshot.completed, snapshot.total);
+  const observed =
+    snapshot.completed === 0
+      ? 'no completed results observed'
+      : `last observed ${snapshot.completed}/${snapshot.total ?? '?'} · fail ${snapshot.fail}`;
   if (snapshot.state === 'inspecting') {
     const quietMinutes = Math.floor(snapshot.quietMs / 60_000);
-    return `FULL GATE [${bar}] ${elapsedMinutes}m · alive, no CPU/log progress for ${quietMinutes}m · inspecting`;
+    return `FULL GATE ${elapsedMinutes}m · progress unavailable · alive, no CPU/log progress for ${quietMinutes}m · inspecting · ${observed}`;
   }
   if (snapshot.state === 'buffered') {
-    return `FULL GATE [${bar}] ${elapsedMinutes}m · process alive · ${renderCpu(snapshot.cpuDeltaSeconds)} · output buffered`;
+    return `FULL GATE ${elapsedMinutes}m · progress unavailable · output buffered · process alive · ${renderCpu(snapshot.cpuDeltaSeconds)} · ${observed}`;
   }
   const processState =
     snapshot.state === 'complete'
@@ -362,7 +375,7 @@ export function renderFullGateProgress(
       : snapshot.state === 'failed'
         ? 'failed'
         : 'process alive';
-  return `FULL GATE [${bar}] ${elapsedMinutes}m · ${processState} · ${renderCpu(snapshot.cpuDeltaSeconds)} · ${snapshot.completed}/${snapshot.total ?? '?'} · fail ${snapshot.fail}`;
+  return `FULL GATE ${elapsedMinutes}m · observed ${snapshot.completed}/${snapshot.total ?? '?'} · fail ${snapshot.fail} · ${processState} · ${renderCpu(snapshot.cpuDeltaSeconds)}`;
 }
 
 export function progressOutputFor(
@@ -370,11 +383,7 @@ export function progressOutputFor(
   transition: FullGateProgressTransition | 'reused',
   terminal: boolean,
 ): string | null {
-  const rendered = renderFullGateProgress(
-    transition === 'started' && snapshot.state === 'buffered'
-      ? Object.freeze({ ...snapshot, state: 'running' as const })
-      : snapshot,
-  );
+  const rendered = renderFullGateProgress(snapshot);
   if (terminal) return `\r\u001b[2K${rendered}`;
   return [
     'started',
@@ -999,14 +1008,6 @@ function isCoverageEvidenceShape(
     coverage.outcomeCounts as FullGateTelemetryOutcomeCounts,
     coverage.testNodeCount,
   );
-}
-
-function progressBar(completed: number, total: number | null): string {
-  const filled =
-    total === null || total <= 0
-      ? 0
-      : Math.max(0, Math.min(10, Math.round((completed / total) * 10)));
-  return `${'█'.repeat(filled)}${'░'.repeat(10 - filled)}`;
 }
 
 function renderCpu(value: number | null): string {

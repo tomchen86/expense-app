@@ -11,6 +11,7 @@ import { validateClosedEvidenceDag } from './evidence-currentness.js';
 import { createConvergenceRecord, createDescendantReuseProof, readConvergenceBinding, readReuseProofBinding, } from './evidence-convergence.js';
 import { validateTrackedEvidenceReusePaths } from './evidence-reuse-path.js';
 import { assertChangeId, assertPolicyPathInsideRepository, assertTaskId, matchesAllowedPath, normalizePolicyPath, } from './paths.js';
+import { PATH_ROLES } from './path-role-registry.js';
 const CHECK_ID_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 export function isPlanningAssuranceBinding(value) {
     if (!isRecord(value) ||
@@ -106,11 +107,20 @@ export function loadWorkflowConfig(repositoryRoot) {
         typeof value.branchTemplate !== 'string' ||
         !value.branchTemplate.includes('{changeId}') ||
         (value.allTasksTerminalChecks !== undefined &&
-            !isTerminalCheckPolicyArray(value.allTasksTerminalChecks))) {
+            !isTerminalCheckPolicyArray(value.allTasksTerminalChecks)) ||
+        (value.taskAuthorization !== undefined &&
+            !isTaskAuthorizationPolicy(value.taskAuthorization))) {
         throw invalidContract('INVALID_WORKFLOW_CONFIG', 'workflow/config.json does not match schema version 1.', configPath);
     }
     normalizePolicyPath(value.changeRoot);
     normalizePolicyPath(value.runtimeDirectory);
+    if (value.taskAuthorization !== undefined) {
+        const registryPath = normalizePolicyPath(value.taskAuthorization.pathRoleRegistry);
+        if (registryPath !== 'workflow/path-roles.json') {
+            throw invalidContract('INVALID_WORKFLOW_CONFIG', 'Task authorization requires the reviewed workflow/path-roles.json registry.', configPath);
+        }
+        assertPolicyPathInsideRepository(repositoryRoot, registryPath);
+    }
     return {
         ...value,
         ...(value.allTasksTerminalChecks === undefined
@@ -121,7 +131,33 @@ export function loadWorkflowConfig(repositoryRoot) {
                     subsumes: [...policy.subsumes],
                 })),
             }),
+        ...(value.taskAuthorization === undefined
+            ? {}
+            : {
+                taskAuthorization: {
+                    pathRoleRegistry: value.taskAuthorization.pathRoleRegistry,
+                    mandateRequiredRoles: [
+                        ...value.taskAuthorization
+                            .mandateRequiredRoles,
+                    ],
+                },
+            }),
     };
+}
+function isTaskAuthorizationPolicy(value) {
+    if (!isRecord(value) ||
+        !hasExactKeys(value, ['pathRoleRegistry', 'mandateRequiredRoles']) ||
+        typeof value.pathRoleRegistry !== 'string' ||
+        !isStringArray(value.mandateRequiredRoles) ||
+        value.mandateRequiredRoles.length === 0) {
+        return false;
+    }
+    const knownRoles = new Set(PATH_ROLES);
+    return (value.mandateRequiredRoles.every((role) => knownRoles.has(role)) &&
+        new Set(value.mandateRequiredRoles).size ===
+            value.mandateRequiredRoles.length &&
+        JSON.stringify(value.mandateRequiredRoles) ===
+            JSON.stringify([...value.mandateRequiredRoles].sort()));
 }
 function isTerminalCheckPolicyArray(value) {
     if (!Array.isArray(value) || value.length === 0)

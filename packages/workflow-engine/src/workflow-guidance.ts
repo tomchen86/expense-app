@@ -44,7 +44,7 @@ export type WorkflowNextStepBindings = Readonly<{
 const FINALIZE_REPLACEMENT =
   'pnpm workflow finalize <session-id> --message <subject> [--full-gate] [--json]';
 const OPEN_TASK_REPLACEMENT =
-  'pnpm workflow open-task <change-id> [--task <task-id>] --mandate <mandate-task-id> [--json]';
+  'pnpm workflow open-task <change-id> [--task <task-id>] [--mandate <mandate-task-id>] [--json]';
 
 const commands: WorkflowCommandGuidance[] = [
   command({
@@ -63,7 +63,7 @@ const commands: WorkflowCommandGuidance[] = [
     purpose:
       'Open the selected or next incomplete task, committing an owned draft only when required.',
     preconditions: [
-      'The task mandate, branch, and either owned draft or replayable planning generation are current.',
+      'The branch and either owned draft or replayable planning generation are current; a protected task scope requires an exact active Task Mandate.',
     ],
     consequences: [
       'Selects the planning-state transition and activates one exact task session.',
@@ -73,12 +73,12 @@ const commands: WorkflowCommandGuidance[] = [
   command({
     id: 'start',
     usage: [
-      'pnpm workflow start <change-id> --task <task-id> --mandate <mandate-task-id> [--json]',
+      'pnpm workflow start <change-id> --task <task-id> [--mandate <mandate-task-id>] [--json]',
     ],
     status: 'deprecated',
     purpose: 'Compatibility alias for opening an already committed plan.',
     preconditions: [
-      'The exact planning transition is committed and the mandate is active.',
+      'The exact planning transition is committed; a protected task scope requires an exact active Task Mandate.',
     ],
     consequences: ['Activates one exact task session and its lifecycle lock.'],
     successors: ['status', 'check', 'finalize'],
@@ -155,7 +155,9 @@ const commands: WorkflowCommandGuidance[] = [
     usage: ['pnpm workflow complete-task <session-id> [--json]'],
     status: 'compatible',
     purpose: 'Apply the compatible task and document completion projection.',
-    preconditions: ['Current passing check evidence exists.'],
+    preconditions: [
+      'Current passing check evidence exists and the actual diff does not require protected Apply authority.',
+    ],
     consequences: ['Projects completion but does not stage or commit it.'],
     successors: ['finish', 'rollback-completion'],
   }),
@@ -207,9 +209,11 @@ const commands: WorkflowCommandGuidance[] = [
     id: 'finalize',
     usage: [FINALIZE_REPLACEMENT],
     status: 'preferred',
-    purpose: 'Check, project, stage, and commit one exact candidate tree.',
+    purpose:
+      'Check, project, stage, and commit one exact ordinary candidate tree.',
     preconditions: [
       'The session, strategy evidence, reconciliation, and TaskDiff review gate are current.',
+      'The actual implementation diff contains no protected or unclassified path; otherwise use the returned human-only V2 Apply recovery.',
     ],
     consequences: [
       'Runs targeted task checks; when the change closes (or escalation is explicit), terminal policy replaces only declared covered checks and commits the exact checked tree.',
@@ -240,6 +244,7 @@ const commands: WorkflowCommandGuidance[] = [
       'Compatibility surface for the projected-finalize transaction without commit.',
     preconditions: [
       'The session satisfies the same gates as the preferred finalize command.',
+      'The actual implementation diff does not require protected Apply authority.',
     ],
     consequences: [
       'Runs the same durable projected-finalize transaction and leaves commit separate.',

@@ -338,7 +338,11 @@ test('full-gate transport stores raw TAP and emits exact startup hints once', as
     `Full log: ${first.stdoutLogPath}`,
     'Failures: pnpm workflow:test:failures',
   ]);
-  assert.match(output[4] ?? '', /0\/2/);
+  assert.match(
+    output[4] ?? '',
+    /progress unavailable.*output buffered.*no completed results observed/,
+  );
+  assert.doesNotMatch(output[4] ?? '', /0\/2/);
   assert.match(output[5] ?? '', /2\/2/);
   assert.doesNotMatch(output.slice(0, 4).join('\n'), /-- --json/);
   assert.doesNotMatch(output.join('\n'), /TAP version/);

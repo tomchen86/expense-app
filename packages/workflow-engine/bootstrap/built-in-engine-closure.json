@@ -216,7 +216,7 @@
     {
       "path": "src/cli.ts",
       "mode": "100644",
-      "digest": "sha256:915d21d406de5f71240b05b8448627be5328054864f7414d0dfbffbfb961272b"
+      "digest": "sha256:216495d97119a84f2227d96119c2fa34e03749bd7289caab951e01e765c9da12"
     },
     {
       "path": "src/codex-provider-adapter.ts",
@@ -256,7 +256,7 @@
     {
       "path": "src/contract-artifacts.ts",
       "mode": "100644",
-      "digest": "sha256:4bba993a07e73c2b5f1640f4c4f5b7b99ad0c62b4afba6948555a81284994ac9"
+      "digest": "sha256:b71a288305de79e4ed782fb88f57967850464e791e00b642b00c30ce7fc1feec"
     },
     {
       "path": "src/contract-digests.ts",
@@ -271,7 +271,7 @@
     {
       "path": "src/contracts.ts",
       "mode": "100644",
-      "digest": "sha256:79c24e3db621e25f80d10a2ec2065d0b5252db02c2ab6a720e79196261081ab7"
+      "digest": "sha256:e7f09225c1948d8a1d885051e744f2ff9cbc4790aa8e03331a353c905dd67fd3"
     },
     {
       "path": "src/control-plane-promotion-producer.ts",
@@ -611,7 +611,7 @@
     {
       "path": "src/lifecycle.ts",
       "mode": "100644",
-      "digest": "sha256:a50502e0f68739938670056bf64a0a5d22d9201c546a360aba58b28d2204bf68"
+      "digest": "sha256:692889912f2abdfbba6e70bebbe8054165eca15aa0a9ba73ed1394936030a511"
     },
     {
       "path": "src/maintainer-approve.ts",
@@ -721,7 +721,7 @@
     {
       "path": "src/open-task.ts",
       "mode": "100644",
-      "digest": "sha256:470b59bd360ffc0f5889f00403b44c132fc8afaa15bb9f9f5ef32febad46812b"
+      "digest": "sha256:12e71c67b6e898d45a4ac04d00529a641d99febcf214b8bd66c710f5b09ea97a"
     },
     {
       "path": "src/openspec-adapter.ts",
@@ -891,7 +891,7 @@
     {
       "path": "src/propose-orchestrator.ts",
       "mode": "100644",
-      "digest": "sha256:4f04fee69c007c5c6650a463298e7910cbec9e434d18a012001a0dffd7bdee23"
+      "digest": "sha256:b1047fbec5e42d17cd026de055464aee052264bb595a2ce4967ceae298a50b30"
     },
     {
       "path": "src/protected-capabilities.ts",
@@ -1091,7 +1091,12 @@
     {
       "path": "src/session.ts",
       "mode": "100644",
-      "digest": "sha256:6a20cf425abb09148c746a243562a865e3b91cf3b27a3c9a0c4ffe243ba2a5c4"
+      "digest": "sha256:8fffb1b0f65b0356deb6e660316922d30e20c2018dc0c3e05d0af9a59d31ea88"
+    },
+    {
+      "path": "src/task-authorization-policy.ts",
+      "mode": "100644",
+      "digest": "sha256:32c9a9f986d8e12aac9ab155d0e3a2cc5f247b701906ab756d83610865c21649"
     },
     {
       "path": "src/task-diff-review-artifact.ts",
@@ -1251,7 +1256,7 @@
     {
       "path": "src/workflow-guidance.ts",
       "mode": "100644",
-      "digest": "sha256:35c369371234246051c470597a7801ac9b2bf73dd9c8739de2e8fb9a8d37902f"
+      "digest": "sha256:3c5d735cbc180807b44d8b24ed04bf6e501f8cc666b7bc7e7802fb0d479019c5"
     }
   ]
 }

@@ -47,6 +47,8 @@ import {
   type WorkflowSession,
 } from './session-store.ts';
 import {
+  startSession,
+  startSessionUnderLifecycleLock,
   startMandatedSession,
   startMandatedSessionUnderLifecycleLock,
 } from './session.ts';
@@ -56,9 +58,14 @@ import {
   type TaskMandateBinding,
   type TaskMandateOptions,
 } from './task-mandate.ts';
+import {
+  assertTaskMandateOptional,
+  resolveTaskAuthorizationRequirement,
+} from './task-authorization-policy.ts';
 
 const COMMIT_OID = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
 const SHA256 = /^[0-9a-f]{64}$/;
+const SHA256_PREFIX = /^sha256:[0-9a-f]{64}$/;
 const MANDATE_TASK_ID = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 const MANDATE_ID =
   /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
@@ -68,14 +75,15 @@ export type OpenTaskPhase =
   'prepared' | 'plan-committed' | 'session-active' | 'completed';
 
 export type OpenTaskJournal = Readonly<{
-  schemaVersion: 1;
-  kind: 'open-task-transaction.v1';
+  schemaVersion: 1 | 2;
+  kind: 'open-task-transaction.v1' | 'open-task-transaction.v2';
   transactionId: string;
   phase: OpenTaskPhase;
   changeId: string;
   taskId: string;
-  mandateTaskId: string;
-  mandateBinding: TaskMandateBinding;
+  mandateTaskId: string | null;
+  mandateBinding: TaskMandateBinding | null;
+  authorizationPolicyDigest?: string;
   repositoryRoot: string;
   gitCommonDirectory: string;
   worktree: string;
@@ -104,7 +112,7 @@ export type OpenTaskLifecycleStatus = Readonly<{
   transactionId: string;
   changeId: string;
   taskId: string;
-  mandateTaskId: string;
+  mandateTaskId: string | null;
   sessionId: string;
   parentCommit: string;
   planningCommit: string;
@@ -118,7 +126,7 @@ export type OpenTaskLifecycleStatus = Readonly<{
 export type OpenTaskResult = Readonly<{
   changeId: string;
   taskId: string;
-  mandateTaskId: string;
+  mandateTaskId: string | null;
   sessionId: string;
   worktree: string;
   branch: string;
@@ -147,14 +155,34 @@ export function openTask(
   cwd: string,
   requestedChangeId: string,
   requestedTaskId: string | undefined,
-  requestedMandateTaskId: string,
+  requestedMandateTaskId?: string,
   options: OpenTaskOptions = {},
 ): OpenTaskResult {
   const changeId = assertChangeId(requestedChangeId);
   const taskId = resolveOpenTaskId(cwd, changeId, requestedTaskId);
-  const mandateTaskId = assertMandateTaskId(requestedMandateTaskId);
+  const mandateTaskId =
+    requestedMandateTaskId === undefined
+      ? null
+      : assertMandateTaskId(requestedMandateTaskId);
   const initialRepository = discoverRepository(cwd);
   const config = loadWorkflowConfig(initialRepository.repositoryRoot);
+  const initialContract = loadChangeContract(
+    initialRepository.repositoryRoot,
+    changeId,
+  );
+  const initialTaskPolicy = initialContract.guard.tasks[taskId]!;
+  const authorizationRequirement =
+    mandateTaskId === null
+      ? assertTaskMandateOptional(
+          initialRepository.repositoryRoot,
+          config,
+          initialTaskPolicy.allowedPaths,
+        )
+      : resolveTaskAuthorizationRequirement(
+          initialRepository.repositoryRoot,
+          config,
+          initialTaskPolicy.allowedPaths,
+        );
   const runtime = runtimePaths(
     initialRepository.gitCommonDirectory,
     config.runtimeDirectory,
@@ -176,18 +204,20 @@ export function openTask(
       changeId,
     );
     return existingPlanResult(
-      startMandatedSession(
-        cwd,
-        changeId,
-        taskId,
-        mandateTaskId,
-        options.mandate,
-      ),
+      mandateTaskId === null
+        ? startSession(cwd, changeId, taskId)
+        : startMandatedSession(
+            cwd,
+            changeId,
+            taskId,
+            mandateTaskId,
+            options.mandate,
+          ),
       planningCommit,
     );
   }
   const authorization =
-    observedBeforeAuthorization === null
+    observedBeforeAuthorization === null && mandateTaskId !== null
       ? authorizeTaskMandateOperation(
           cwd,
           mandateTaskId,
@@ -214,7 +244,7 @@ export function openTask(
         options,
       );
     }
-    if (authorization === null) {
+    if (authorization === null && mandateTaskId !== null) {
       throw openTaskUnsafe(
         'The open-task journal disappeared after recovery admission.',
       );
@@ -234,12 +264,15 @@ export function openTask(
         ExitCode.staleState,
       );
     }
-    const binding = assertActiveTaskMandateBindingUnderLifecycleLock(
-      cwd,
-      authorization.binding,
-      assertRepositoryLock,
-      options.mandate,
-    );
+    const binding =
+      mandateTaskId === null
+        ? null
+        : assertActiveTaskMandateBindingUnderLifecycleLock(
+            cwd,
+            authorization!.binding,
+            assertRepositoryLock,
+            options.mandate,
+          );
     const createdAt = exactTimestamp(options.now ?? new Date());
     const sessionId = createSessionId();
     let prepared: OpenTaskJournal | null = null;
@@ -262,6 +295,8 @@ export function openTask(
                 taskId,
                 mandateTaskId,
                 mandateBinding: binding,
+                authorizationPolicyDigest:
+                  authorizationRequirement.policyDigest,
                 repositoryRoot: current.repositoryRealPath,
                 gitCommonDirectory: current.gitCommonDirectory,
                 worktree: current.repositoryRealPath,
@@ -414,15 +449,10 @@ function existingPlanResult(
   session: WorkflowSession,
   planningCommit: string,
 ): OpenTaskResult {
-  if (!session.mandateBinding) {
-    throw openTaskUnsafe(
-      'Committed-plan open-task did not preserve its mandate binding.',
-    );
-  }
   return Object.freeze({
     changeId: session.changeId,
     taskId: session.taskId,
-    mandateTaskId: session.mandateBinding.mandateTaskId,
+    mandateTaskId: session.mandateBinding?.mandateTaskId ?? null,
     sessionId: session.sessionId,
     worktree: session.repositoryRoot,
     branch: session.branch,
@@ -655,12 +685,16 @@ function recoverOpenTask(
   let current = discoverRepository(cwd);
   if (durable.phase === 'prepared') {
     if (current.head === durable.parentCommit) {
-      assertActiveTaskMandateBindingUnderLifecycleLock(
-        cwd,
-        durable.mandateBinding,
-        assertRepositoryLock,
-        options.mandate,
-      );
+      if (durable.mandateBinding !== null) {
+        assertActiveTaskMandateBindingUnderLifecycleLock(
+          cwd,
+          durable.mandateBinding,
+          assertRepositoryLock,
+          options.mandate,
+        );
+      } else {
+        assertJournalTaskAuthorization(cwd, durable);
+      }
       withOpenTaskPlanningAuthority(
         runtime,
         durable.changeId,
@@ -861,14 +895,23 @@ function ensureExactSession(
     journal.changeId,
     assertRepositoryLock,
   );
-  const session = startMandatedSessionUnderLifecycleLock(
-    cwd,
-    journal.changeId,
-    journal.taskId,
-    journal.mandateBinding,
-    { sessionId: journal.sessionId, createdAt: journal.createdAt },
-    assertRepositoryLock,
-  );
+  const session =
+    journal.mandateBinding === null
+      ? startSessionUnderLifecycleLock(
+          cwd,
+          journal.changeId,
+          journal.taskId,
+          { sessionId: journal.sessionId, createdAt: journal.createdAt },
+          assertRepositoryLock,
+        )
+      : startMandatedSessionUnderLifecycleLock(
+          cwd,
+          journal.changeId,
+          journal.taskId,
+          journal.mandateBinding,
+          { sessionId: journal.sessionId, createdAt: journal.createdAt },
+          assertRepositoryLock,
+        );
   assertExactSession(session, journal);
   return session;
 }
@@ -937,7 +980,7 @@ function assertSessionIngressIdentity(
     session.baseline.head !== journal.planningCommit ||
     session.baseline.tree !== journal.baselineTree ||
     session.createdAt !== journal.createdAt ||
-    canonicalJson(session.mandateBinding) !==
+    canonicalJson(session.mandateBinding ?? null) !==
       canonicalJson(journal.mandateBinding)
   ) {
     throw openTaskUnsafe(
@@ -966,12 +1009,46 @@ function assertJournalAuthority(cwd: string, journal: OpenTaskJournal): void {
       ExitCode.staleState,
     );
   }
+  assertJournalTaskAuthorization(cwd, journal);
   assertPreparedPlanningAuthority(
     repository.repositoryRoot,
     config.runtimeDirectory,
     config.changeRoot,
     journal,
   );
+}
+
+function assertJournalTaskAuthorization(
+  cwd: string,
+  journal: OpenTaskJournal,
+): void {
+  if (journal.schemaVersion === 1) return;
+  const repository = discoverRepository(cwd);
+  const contract = loadChangeContract(
+    repository.repositoryRoot,
+    journal.changeId,
+  );
+  const taskPolicy = contract.guard.tasks[journal.taskId];
+  if (!taskPolicy) {
+    throw openTaskUnsafe(
+      'Open-task authorization references a missing task policy.',
+    );
+  }
+  const requirement = resolveTaskAuthorizationRequirement(
+    repository.repositoryRoot,
+    contract.config,
+    taskPolicy.allowedPaths,
+  );
+  if (
+    requirement.policyDigest !== journal.authorizationPolicyDigest ||
+    (journal.mandateBinding === null && requirement.requiresMandate)
+  ) {
+    throw workflowError(
+      'OPEN_TASK_AUTHORIZATION_CHANGED',
+      'The task authorization policy changed after the open-task transaction was prepared.',
+      ExitCode.staleState,
+    );
+  }
 }
 
 function assertPreparedPlanningAuthority(
@@ -1078,12 +1155,19 @@ function createPreparedJournal(
   >,
 ): OpenTaskJournal {
   const stable = {
-    schemaVersion: 1 as const,
-    kind: 'open-task-transaction.v1' as const,
+    schemaVersion: 2 as const,
+    kind: 'open-task-transaction.v2' as const,
     changeId: input.changeId,
     taskId: input.taskId,
     mandateTaskId: input.mandateTaskId,
     mandateBinding: structuredClone(input.mandateBinding),
+    authorizationPolicyDigest:
+      input.authorizationPolicyDigest ??
+      (() => {
+        throw openTaskUnsafe(
+          'Open-task authorization policy digest is missing.',
+        );
+      })(),
     repositoryRoot: input.repositoryRoot,
     gitCommonDirectory: input.gitCommonDirectory,
     worktree: input.worktree,
@@ -1279,7 +1363,7 @@ function parseJournal(input: unknown): OpenTaskJournal {
     }
   }
   if (!isRecord(value)) throw openTaskUnsafe('Open-task journal is malformed.');
-  const expectedKeys = [
+  const commonKeys = [
     'baselineTree',
     'branch',
     'changeId',
@@ -1301,11 +1385,18 @@ function parseJournal(input: unknown): OpenTaskJournal {
     'taskId',
     'transactionId',
     'worktree',
+  ];
+  const schemaVersion = value.schemaVersion;
+  const expectedKeys = [
+    ...commonKeys,
+    ...(schemaVersion === 2 ? ['authorizationPolicyDigest'] : []),
   ].sort();
   if (
     Object.keys(value).sort().join('\0') !== expectedKeys.join('\0') ||
-    value.schemaVersion !== 1 ||
-    value.kind !== 'open-task-transaction.v1' ||
+    (schemaVersion !== 1 && schemaVersion !== 2) ||
+    (schemaVersion === 1
+      ? value.kind !== 'open-task-transaction.v1'
+      : value.kind !== 'open-task-transaction.v2') ||
     (value.phase !== 'prepared' &&
       value.phase !== 'plan-committed' &&
       value.phase !== 'session-active' &&
@@ -1314,8 +1405,13 @@ function parseJournal(input: unknown): OpenTaskJournal {
     !SHA256.test(value.transactionId) ||
     typeof value.changeId !== 'string' ||
     typeof value.taskId !== 'string' ||
-    typeof value.mandateTaskId !== 'string' ||
-    !MANDATE_TASK_ID.test(value.mandateTaskId) ||
+    (value.mandateTaskId !== null &&
+      (typeof value.mandateTaskId !== 'string' ||
+        !MANDATE_TASK_ID.test(value.mandateTaskId))) ||
+    (schemaVersion === 1 && value.mandateTaskId === null) ||
+    (schemaVersion === 2 &&
+      (typeof value.authorizationPolicyDigest !== 'string' ||
+        !SHA256_PREFIX.test(value.authorizationPolicyDigest))) ||
     typeof value.repositoryRoot !== 'string' ||
     typeof value.gitCommonDirectory !== 'string' ||
     typeof value.worktree !== 'string' ||
@@ -1354,7 +1450,10 @@ function parseJournal(input: unknown): OpenTaskJournal {
   ) {
     throw openTaskUnsafe('Open-task journal identity is malformed.');
   }
-  const mandateBinding = parseMandateBinding(value.mandateBinding);
+  const mandateBinding =
+    value.mandateBinding === null
+      ? null
+      : parseMandateBinding(value.mandateBinding);
   const createdAt = exactTimestamp(new Date(value.createdAt));
   const completedAt =
     value.completedAt === null
@@ -1363,20 +1462,28 @@ function parseJournal(input: unknown): OpenTaskJournal {
   if (
     createdAt !== value.createdAt ||
     completedAt !== value.completedAt ||
-    mandateBinding.mandateTaskId !== value.mandateTaskId ||
-    mandateBinding.changeId !== changeId
+    (mandateBinding === null) !== (value.mandateTaskId === null) ||
+    (mandateBinding !== null &&
+      (mandateBinding.mandateTaskId !== value.mandateTaskId ||
+        mandateBinding.changeId !== changeId))
   ) {
     throw openTaskUnsafe('Open-task journal bindings are not exact.');
   }
   const journal: OpenTaskJournal = {
-    schemaVersion: 1,
-    kind: 'open-task-transaction.v1',
+    schemaVersion,
+    kind:
+      schemaVersion === 1
+        ? 'open-task-transaction.v1'
+        : 'open-task-transaction.v2',
     transactionId: value.transactionId,
     phase: value.phase,
     changeId,
     taskId,
     mandateTaskId: value.mandateTaskId,
     mandateBinding,
+    ...(schemaVersion === 2
+      ? { authorizationPolicyDigest: value.authorizationPolicyDigest as string }
+      : {}),
     repositoryRoot: value.repositoryRoot,
     gitCommonDirectory: value.gitCommonDirectory,
     worktree: value.worktree,
@@ -1439,7 +1546,7 @@ function assertRequestedTransaction(
   request: {
     changeId: string;
     taskId: string;
-    mandateTaskId: string;
+    mandateTaskId: string | null;
     repository: ReturnType<typeof discoverRepository>;
   },
 ): void {
@@ -1506,11 +1613,17 @@ function transactionDigest(
     .createHash('sha256')
     .update(
       canonicalJson({
-        schema: 'open-task-transaction.v1',
+        schema:
+          value.schemaVersion === 2
+            ? 'open-task-transaction.v2'
+            : 'open-task-transaction.v1',
         changeId: value.changeId,
         taskId: value.taskId,
         mandateTaskId: value.mandateTaskId,
         mandateBinding: value.mandateBinding,
+        ...(value.schemaVersion === 2
+          ? { authorizationPolicyDigest: value.authorizationPolicyDigest }
+          : {}),
         repositoryRoot: value.repositoryRoot,
         gitCommonDirectory: value.gitCommonDirectory,
         worktree: value.worktree,
@@ -1663,7 +1776,9 @@ function assertMandateTaskId(value: string): string {
 }
 
 function exactOpenTaskRetryCommand(journal: OpenTaskJournal): string {
-  return `pnpm workflow open-task ${journal.changeId} --task ${journal.taskId} --mandate ${journal.mandateTaskId} --json`;
+  return `pnpm workflow open-task ${journal.changeId} --task ${journal.taskId}${
+    journal.mandateTaskId === null ? '' : ` --mandate ${journal.mandateTaskId}`
+  } --json`;
 }
 
 function openTaskPhaseDiverged(message: string): WorkflowError {

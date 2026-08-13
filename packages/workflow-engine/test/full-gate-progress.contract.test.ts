@@ -31,7 +31,7 @@ const IDENTITY = createFullGateIdentity({
   platform: `${process.platform}-${process.arch}`,
 });
 
-test('full-gate counter progress renders one latest-only terminal snapshot', () => {
+test('full-gate counter progress reports observed counts without a predictive bar', () => {
   const initial = createFullGateProgress({
     runId: RUN_ID,
     identityDigest: IDENTITY.digest,
@@ -53,16 +53,52 @@ test('full-gate counter progress renders one latest-only terminal snapshot', () 
   assert.equal(advanced.transition, 'progress');
   assert.equal(
     renderFullGateProgress(advanced.snapshot),
-    'FULL GATE [██████░░░░] 14m · process alive · CPU +41s · 1034/1724 · fail 0',
+    'FULL GATE 14m · observed 1034/1724 · fail 0 · process alive · CPU +41s',
   );
   assert.equal(
     progressOutputFor(advanced.snapshot, advanced.transition, true),
-    '\r\u001b[2KFULL GATE [██████░░░░] 14m · process alive · CPU +41s · 1034/1724 · fail 0',
+    '\r\u001b[2KFULL GATE 14m · observed 1034/1724 · fail 0 · process alive · CPU +41s',
   );
   assert.equal(
     progressOutputFor(advanced.snapshot, advanced.transition, false),
     null,
   );
+});
+
+test('full-gate observations never move completed or failure counts backwards', () => {
+  const initial = createFullGateProgress({
+    runId: RUN_ID,
+    identityDigest: IDENTITY.digest,
+    expectedTotal: 1_724,
+    startedAtMs: 0,
+  });
+  const first = advanceFullGateProgress(initial, {
+    nowMs: 1_000,
+    processAlive: true,
+    processTreeInspected: false,
+    cpuTotalSeconds: 10,
+    logBytes: 1_000,
+    completed: 827,
+    pass: 823,
+    fail: 4,
+  });
+  const stale = advanceFullGateProgress(first.progress, {
+    nowMs: 2_000,
+    processAlive: true,
+    processTreeInspected: false,
+    cpuTotalSeconds: 11,
+    logBytes: 900,
+    completed: 822,
+    pass: 819,
+    fail: 3,
+  });
+
+  assert.equal(stale.snapshot.completed, 827);
+  assert.equal(stale.snapshot.pass, 823);
+  assert.equal(stale.snapshot.fail, 4);
+  assert.equal(stale.snapshot.logBytes, 1_000);
+  assert.match(renderFullGateProgress(stale.snapshot), /observed 827\/1724/);
+  assert.doesNotMatch(renderFullGateProgress(stale.snapshot), /\[/);
 });
 
 test('full-gate progress reports buffered output without moving the last bar', () => {
@@ -97,9 +133,37 @@ test('full-gate progress reports buffered output without moving the last bar', (
   assert.equal(buffered.transition, 'buffered');
   assert.equal(
     renderFullGateProgress(buffered.snapshot),
-    'FULL GATE [██████░░░░] 15m · process alive · CPU +39s · output buffered',
+    'FULL GATE 15m · progress unavailable · output buffered · process alive · CPU +39s · last observed 1034/1724 · fail 0',
   );
   assert.equal(progressOutputFor(buffered.snapshot, 'buffered', false), null);
+});
+
+test('full-gate startup does not present buffered zero output as zero progress', () => {
+  const initial = createFullGateProgress({
+    runId: RUN_ID,
+    identityDigest: IDENTITY.digest,
+    expectedTotal: 1_724,
+    startedAtMs: 0,
+  });
+  const started = advanceFullGateProgress(initial, {
+    nowMs: 0,
+    processAlive: true,
+    processTreeInspected: false,
+    cpuTotalSeconds: 0,
+    logBytes: 0,
+    completed: 0,
+    pass: 0,
+    fail: 0,
+  });
+
+  assert.equal(
+    renderFullGateProgress(started.snapshot),
+    'FULL GATE 0m · progress unavailable · output buffered · process alive · CPU +0s · no completed results observed',
+  );
+  assert.equal(
+    progressOutputFor(started.snapshot, 'started', true),
+    '\r\u001b[2KFULL GATE 0m · progress unavailable · output buffered · process alive · CPU +0s · no completed results observed',
+  );
 });
 
 test('full-gate inactivity requires three quiet minutes and process-tree inspection', () => {
@@ -146,7 +210,7 @@ test('full-gate inactivity requires three quiet minutes and process-tree inspect
   assert.equal(inspecting.transition, 'inspection');
   assert.equal(
     renderFullGateProgress(inspecting.snapshot),
-    'FULL GATE [█████░░░░░] 21m · alive, no CPU/log progress for 3m · inspecting',
+    'FULL GATE 21m · progress unavailable · alive, no CPU/log progress for 3m · inspecting · last observed 800/1724 · fail 0',
   );
 
   const recovered = advanceFullGateProgress(inspecting.progress, {
@@ -670,7 +734,7 @@ test('non-TTY progress emits only lifecycle transitions', () => {
 
   assert.match(
     progressOutputFor(started.snapshot, 'started', false) ?? '',
-    /0\/2/,
+    /progress unavailable[\s\S]*no completed results observed/,
   );
   assert.match(
     progressOutputFor(failed.snapshot, 'failure', false) ?? '',

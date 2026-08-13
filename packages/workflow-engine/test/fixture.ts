@@ -56,6 +56,34 @@ export function createFixtureRepository(
     runtimeDirectory: 'workflow-engine',
     protectedBranches: ['main', 'master'],
     branchTemplate: 'work/{changeId}',
+    taskAuthorization: {
+      pathRoleRegistry: 'workflow/path-roles.json',
+      mandateRequiredRoles: ['control-plane'],
+    },
+  });
+  writeJson(path.join(repository, 'workflow/path-roles.json'), {
+    schemaVersion: 1,
+    kind: 'path-role-registry',
+    roles: {
+      ordinary: [
+        'additional/**',
+        'alias/**',
+        'apps/**',
+        'broken/**',
+        'docs/**',
+        'escape/**',
+        'feature/**',
+        'openspec/**',
+        'outside.txt',
+        'package.json',
+        'packages/**',
+        'sample/**',
+        'scripts/**',
+        'src/**',
+        'test/**',
+        'workflow/**',
+      ],
+    },
   });
   writeJson(path.join(repository, 'package.json'), {
     name: 'workflow-fixture',

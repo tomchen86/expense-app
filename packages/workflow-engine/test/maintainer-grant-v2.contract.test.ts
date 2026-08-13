@@ -23,9 +23,9 @@ import {
   type MaintainerGrantV2Payload,
 } from '../src/maintainer-grant-v2.ts';
 import {
-  approveAndApplyMaintainerGrantV2,
+  approveAndApplyMaintainerGrantV2 as approveAndApplyMaintainerGrantV2Production,
   prepareMaintainerGrantV2Checks,
-  reissueAndApplyMaintainerGrantV2,
+  reissueAndApplyMaintainerGrantV2 as reissueAndApplyMaintainerGrantV2Production,
   revokeMaintainerGrantV2,
 } from '../src/maintainer-approve.ts';
 import {
@@ -37,12 +37,12 @@ import { verifyBaseAuthorityAttestations } from '../src/ci-attestation.ts';
 import { listRangeCommits } from '../src/ci-git.ts';
 import { replayCommitSequence } from '../src/ci-sequence.ts';
 import {
-  commitAuthoritySession,
+  commitAuthoritySession as commitAuthoritySessionProduction,
   SimulatedAuthorityCrash,
 } from '../src/maintainer-commit.ts';
 import {
   readAuthorityCommitJournal,
-  recoverAuthorityCommit,
+  recoverAuthorityCommit as recoverAuthorityCommitProduction,
 } from '../src/maintainer-recovery.ts';
 import {
   authorityAuditLedgerPaths,
@@ -99,6 +99,63 @@ const FAKE_SIGNATURE = [
   '',
 ].join('\n');
 const temporaryAuditRoots = new Set<string>();
+const STABLE_POST_APPROVAL_TEST_BUDGET = Object.freeze({
+  monotonicNow: () => 0,
+});
+
+function approveAndApplyMaintainerGrantV2(
+  cwd: Parameters<typeof approveAndApplyMaintainerGrantV2Production>[0],
+  request: Parameters<typeof approveAndApplyMaintainerGrantV2Production>[1],
+  options: NonNullable<
+    Parameters<typeof approveAndApplyMaintainerGrantV2Production>[2]
+  > = {},
+) {
+  return approveAndApplyMaintainerGrantV2Production(cwd, request, {
+    testPostApprovalBudget: STABLE_POST_APPROVAL_TEST_BUDGET,
+    ...options,
+  });
+}
+
+function reissueAndApplyMaintainerGrantV2(
+  cwd: Parameters<typeof reissueAndApplyMaintainerGrantV2Production>[0],
+  request: Parameters<typeof reissueAndApplyMaintainerGrantV2Production>[1],
+  options: NonNullable<
+    Parameters<typeof reissueAndApplyMaintainerGrantV2Production>[2]
+  > = {},
+) {
+  return reissueAndApplyMaintainerGrantV2Production(cwd, request, {
+    testPostApprovalBudget: STABLE_POST_APPROVAL_TEST_BUDGET,
+    ...options,
+  });
+}
+
+function commitAuthoritySession(
+  cwd: Parameters<typeof commitAuthoritySessionProduction>[0],
+  requestedSessionId: Parameters<typeof commitAuthoritySessionProduction>[1],
+  subject: Parameters<typeof commitAuthoritySessionProduction>[2],
+  options: NonNullable<
+    Parameters<typeof commitAuthoritySessionProduction>[3]
+  > = {},
+) {
+  return commitAuthoritySessionProduction(cwd, requestedSessionId, subject, {
+    testPostApprovalBudget: STABLE_POST_APPROVAL_TEST_BUDGET,
+    ...options,
+  });
+}
+
+function recoverAuthorityCommit(
+  cwd: Parameters<typeof recoverAuthorityCommitProduction>[0],
+  requestedSessionId: Parameters<typeof recoverAuthorityCommitProduction>[1],
+  now: Parameters<typeof recoverAuthorityCommitProduction>[2],
+  options: NonNullable<
+    Parameters<typeof recoverAuthorityCommitProduction>[3]
+  > = {},
+) {
+  return recoverAuthorityCommitProduction(cwd, requestedSessionId, now, {
+    testPostApprovalBudget: STABLE_POST_APPROVAL_TEST_BUDGET,
+    ...options,
+  });
+}
 
 function externalAuditRoot(repository: string): string {
   const root = `${fs.realpathSync(repository)}.external-authority-audit`;

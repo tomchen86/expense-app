@@ -30,6 +30,7 @@ import {
   type TaskMandateBinding,
   type TaskMandateOptions,
 } from './task-mandate.ts';
+import { assertTaskMandateOptional } from './task-authorization-policy.ts';
 import {
   completeTaskRevisionAbort,
   prepareTaskRevisionAbort,
@@ -181,6 +182,13 @@ function persistSessionStart(
 ): WorkflowSession {
   const { changeId, taskId, git, contract, branch } = inspection;
   const policy = contract.guard.tasks[taskId];
+  if (!mandateBinding) {
+    assertTaskMandateOptional(
+      git.repositoryRoot,
+      contract.config,
+      policy.allowedPaths,
+    );
+  }
   const sessionId = fixedIdentity
     ? assertSessionId(fixedIdentity.sessionId)
     : createSessionId();
@@ -293,6 +301,25 @@ export function startMandatedSessionUnderLifecycleLock(
   );
   assertRepositoryLock();
   const session = persistSessionStart(inspection, mandateBinding, identity);
+  assertRepositoryLock();
+  return session;
+}
+
+export function startSessionUnderLifecycleLock(
+  cwd: string,
+  requestedChangeId: string,
+  requestedTaskId: string,
+  identity: Readonly<{ sessionId: string; createdAt: string }>,
+  assertRepositoryLock: () => void,
+): WorkflowSession {
+  assertRepositoryLock();
+  const inspection = inspectSessionStart(
+    cwd,
+    requestedChangeId,
+    requestedTaskId,
+  );
+  assertRepositoryLock();
+  const session = persistSessionStart(inspection, undefined, identity);
   assertRepositoryLock();
   return session;
 }

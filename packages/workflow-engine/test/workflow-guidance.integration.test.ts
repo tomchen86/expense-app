@@ -47,13 +47,17 @@ test('workflow guide exposes one versioned advisory catalog with finalize as the
     'pnpm workflow finalize <session-id> --message <subject> [--full-gate] [--json]',
   ]);
   assert.deepEqual(workflowCommandGuidance('open-task').usage, [
-    'pnpm workflow open-task <change-id> [--task <task-id>] --mandate <mandate-task-id> [--json]',
+    'pnpm workflow open-task <change-id> [--task <task-id>] [--mandate <mandate-task-id>] [--json]',
   ]);
+  assert.match(
+    workflowCommandGuidance('open-task').preconditions.join('\n'),
+    /protected task scope requires/u,
+  );
   assert.deepEqual(workflowCommandGuidance('start').deprecation, {
     phase: 1,
     replacementCommandId: 'open-task',
     replacement:
-      'pnpm workflow open-task <change-id> [--task <task-id>] --mandate <mandate-task-id> [--json]',
+      'pnpm workflow open-task <change-id> [--task <task-id>] [--mandate <mandate-task-id>] [--json]',
     reason:
       'open-task selects the correct planning state; start remains a compatibility alias.',
   });

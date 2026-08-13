@@ -47,6 +47,7 @@ import {
   type TaskMandateEnvelope,
   type TaskMandateRequest,
 } from '../src/task-mandate.ts';
+import { resolveTaskAuthorizationRequirement } from '../src/task-authorization-policy.ts';
 import {
   createFixtureRepository,
   git,
@@ -125,6 +126,33 @@ function prepareRepository(
   git(repository, ['add', '.']);
   git(repository, ['commit', '-m', 'Install task mandate trust base']);
   return repository;
+}
+
+function enableConditionalTaskAuthorization(repository: string): void {
+  const configPath = path.join(repository, 'workflow/config.json');
+  const config = JSON.parse(fs.readFileSync(configPath, 'utf8')) as Record<
+    string,
+    unknown
+  >;
+  config.taskAuthorization = {
+    pathRoleRegistry: 'workflow/path-roles.json',
+    mandateRequiredRoles: ['lifecycle'],
+  };
+  fs.writeFileSync(configPath, `${canonicalJson(config)}\n`, 'utf8');
+  fs.writeFileSync(
+    path.join(repository, 'workflow/path-roles.json'),
+    `${canonicalJson({
+      schemaVersion: 1,
+      kind: 'path-role-registry',
+      roles: {
+        lifecycle: ['packages/workflow-engine/src/**'],
+        ordinary: ['src/**'],
+      },
+    })}\n`,
+    'utf8',
+  );
+  git(repository, ['add', 'workflow/config.json', 'workflow/path-roles.json']);
+  git(repository, ['commit', '-m', 'Enable conditional task authorization']);
 }
 
 function request(changeId = CHANGE_ID, maxInvocations = 1): TaskMandateRequest {
@@ -656,26 +684,17 @@ test('managed start binds the exact top-level mandate without conflating the Ope
   }
 });
 
-test('true start CLI requires and durably persists an exact mandate binding', () => {
-  const keyDirectory = fs.mkdtempSync(
-    path.join(os.tmpdir(), 'task-mandate-cli-key-'),
-  );
-  const { privateKey, trustedSigner } = generateSigningKey(keyDirectory);
-  const repository = prepareRepository(trustedSigner);
+test('ordinary start CLI needs no task mandate', () => {
+  const repository = prepareRepository();
   const cli = path.join(
     sourceRepositoryRoot,
     'packages/workflow-engine/src/cli.ts',
   );
   try {
-    authorizeTaskMandate(repository, request(), {
-      mandateId: MANDATE_ID,
-      externalAuditRoot: externalAuditRoot(repository),
-      now: new Date(),
-      signer: realSigningProvider(privateKey),
-    });
+    enableConditionalTaskAuthorization(repository);
     git(repository, ['checkout', '-b', 'work/demo-change']);
 
-    const missing = spawnSync(
+    const ordinary = spawnSync(
       process.execPath,
       [
         '--experimental-strip-types',
@@ -688,7 +707,96 @@ test('true start CLI requires and durably persists an exact mandate binding', ()
       ],
       { cwd: repository, encoding: 'utf8' },
     );
-    assert.equal(missing.status, 2, missing.stderr);
+    assert.equal(ordinary.status, 0, ordinary.stderr);
+    const ordinaryOutput = JSON.parse(ordinary.stdout) as {
+      session: { mandateBinding?: unknown };
+    };
+    assert.equal(ordinaryOutput.session.mandateBinding, undefined);
+  } finally {
+    cleanupRepository(repository);
+  }
+});
+
+test('unclassified task scope remains ordinary unless policy explicitly protects it', () => {
+  const repository = prepareRepository();
+  try {
+    enableConditionalTaskAuthorization(repository);
+
+    const requirement = resolveTaskAuthorizationRequirement(
+      repository,
+      {
+        taskAuthorization: {
+          pathRoleRegistry: 'workflow/path-roles.json',
+          mandateRequiredRoles: ['lifecycle'],
+        },
+      },
+      ['apps/mobile/**'],
+    );
+
+    assert.equal(requirement.unclassifiedScope, true);
+    assert.equal(requirement.requiresMandate, false);
+    assert.deepEqual(requirement.roles, []);
+    assert.deepEqual(requirement.matchedPatterns, []);
+  } finally {
+    cleanupRepository(repository);
+  }
+});
+
+test('protected start CLI requires and persists an exact task mandate', () => {
+  const keyDirectory = fs.mkdtempSync(
+    path.join(os.tmpdir(), 'task-mandate-cli-key-'),
+  );
+  const { privateKey, trustedSigner } = generateSigningKey(keyDirectory);
+  const protectedRepository = prepareRepository(trustedSigner);
+  const cli = path.join(
+    sourceRepositoryRoot,
+    'packages/workflow-engine/src/cli.ts',
+  );
+  try {
+    enableConditionalTaskAuthorization(protectedRepository);
+    const guardPath = path.join(
+      protectedRepository,
+      'openspec/changes/demo-change/guard.json',
+    );
+    const guard = JSON.parse(fs.readFileSync(guardPath, 'utf8')) as {
+      tasks: Record<string, { allowedPaths: string[] }>;
+    };
+    guard.tasks['1.1']!.allowedPaths = ['packages/workflow-engine/src/**'];
+    const protectedPath = path.join(
+      protectedRepository,
+      'packages/workflow-engine/src/protected-demo.ts',
+    );
+    fs.mkdirSync(path.dirname(protectedPath), { recursive: true });
+    fs.writeFileSync(protectedPath, 'export const protectedDemo = 1;\n');
+    fs.writeFileSync(guardPath, `${canonicalJson(guard)}\n`, 'utf8');
+    git(protectedRepository, ['add', guardPath, protectedPath]);
+    git(protectedRepository, ['commit', '-m', 'Protect the task scope']);
+    authorizeTaskMandate(protectedRepository, request(), {
+      mandateId: MANDATE_ID,
+      externalAuditRoot: externalAuditRoot(protectedRepository),
+      now: new Date(),
+      signer: realSigningProvider(privateKey),
+    });
+    git(protectedRepository, ['checkout', '-b', 'work/demo-change']);
+
+    const missing = spawnSync(
+      process.execPath,
+      [
+        '--experimental-strip-types',
+        cli,
+        'start',
+        CHANGE_ID,
+        '--task',
+        '1.1',
+        '--json',
+      ],
+      { cwd: protectedRepository, encoding: 'utf8' },
+    );
+    assert.notEqual(missing.status, 0, missing.stderr);
+    assert.match(
+      `${missing.stdout}\n${missing.stderr}`,
+      /TASK_MANDATE_REQUIRED/,
+    );
 
     const started = spawnSync(
       process.execPath,
@@ -703,11 +811,12 @@ test('true start CLI requires and durably persists an exact mandate binding', ()
         TASK_ID,
         '--json',
       ],
-      { cwd: repository, encoding: 'utf8' },
+      { cwd: protectedRepository, encoding: 'utf8' },
     );
     assert.equal(started.status, 0, started.stderr);
     const output = JSON.parse(started.stdout) as {
       session: {
+        sessionId: string;
         taskId: string;
         mandateBinding: {
           schemaVersion: 1;
@@ -726,10 +835,66 @@ test('true start CLI requires and durably persists an exact mandate binding', ()
       mandateId: MANDATE_ID,
       mandateDigest: output.session.mandateBinding.mandateDigest,
       changeId: CHANGE_ID,
-      externalAuditRoot: externalAuditRoot(repository),
+      externalAuditRoot: externalAuditRoot(protectedRepository),
     });
+    fs.writeFileSync(protectedPath, 'export const protectedDemo = 2;\n');
+    const finalized = spawnSync(
+      process.execPath,
+      [
+        '--experimental-strip-types',
+        cli,
+        'finalize',
+        output.session.sessionId,
+        '--message',
+        'Update protected demo',
+        '--json',
+      ],
+      { cwd: protectedRepository, encoding: 'utf8' },
+    );
+    assert.notEqual(finalized.status, 0, finalized.stderr);
+    assert.match(
+      `${finalized.stdout}\n${finalized.stderr}`,
+      /PROTECTED_TASK_APPLY_REQUIRED/,
+    );
+    const protectedError = JSON.parse(finalized.stderr) as {
+      error: { recovery: string };
+    };
+    assert.equal(
+      protectedError.error.recovery,
+      `pnpm workflow abort ${output.session.sessionId} --reason protected-apply-required --json`,
+    );
+    for (const compatibleCommand of ['finalize-task', 'complete-task']) {
+      const bypass = spawnSync(
+        process.execPath,
+        [
+          '--experimental-strip-types',
+          cli,
+          compatibleCommand,
+          output.session.sessionId,
+          '--json',
+        ],
+        { cwd: protectedRepository, encoding: 'utf8' },
+      );
+      assert.notEqual(bypass.status, 0, bypass.stderr);
+      assert.match(
+        `${bypass.stdout}\n${bypass.stderr}`,
+        /PROTECTED_TASK_APPLY_REQUIRED/,
+        compatibleCommand,
+      );
+    }
+    assert.equal(
+      git(protectedRepository, ['diff', '--cached', '--name-only']),
+      '',
+    );
+    assert.match(
+      fs.readFileSync(
+        path.join(protectedRepository, 'openspec/changes/demo-change/tasks.md'),
+        'utf8',
+      ),
+      /- \[ \] 1\.1/u,
+    );
   } finally {
-    cleanupRepository(repository);
+    cleanupRepository(protectedRepository);
     fs.rmSync(keyDirectory, { recursive: true, force: true });
   }
 });
@@ -746,6 +911,7 @@ test('open-task selects the next incomplete task for an already committed plan',
   );
   const changeId = CHANGE_ID;
   try {
+    enableConditionalTaskAuthorization(repository);
     git(repository, ['checkout', '-b', 'work/demo-change']);
     fs.appendFileSync(
       path.join(repository, 'openspec/changes/demo-change/design.md'),
@@ -758,23 +924,9 @@ test('open-task selects the next incomplete task for an already committed plan',
       'Plan demo-change\n\nChange: demo-change\nTransition: plan',
     ]);
     const governingCommit = git(repository, ['rev-parse', 'HEAD']).trim();
-    authorizeTaskMandate(repository, request(changeId), {
-      mandateId: MANDATE_ID,
-      externalAuditRoot: externalAuditRoot(repository),
-      now: new Date(),
-      signer: realSigningProvider(privateKey),
-    });
     const opened = spawnSync(
       process.execPath,
-      [
-        '--experimental-strip-types',
-        cli,
-        'open-task',
-        changeId,
-        '--mandate',
-        TASK_ID,
-        '--json',
-      ],
+      ['--experimental-strip-types', cli, 'open-task', changeId, '--json'],
       { cwd: repository, encoding: 'utf8' },
     );
     assert.equal(opened.status, 0, opened.stderr);
@@ -791,6 +943,123 @@ test('open-task selects the next incomplete task for an already committed plan',
   } finally {
     cleanupRepository(repository);
     fs.rmSync(keyDirectory, { recursive: true, force: true });
+  }
+});
+
+test('ordinary propose CLI starts without a task mandate', () => {
+  const repository = prepareRepository();
+  const inputDirectory = fs.mkdtempSync(
+    path.join(os.tmpdir(), 'ordinary-propose-input-'),
+  );
+  const cli = path.join(
+    sourceRepositoryRoot,
+    'packages/workflow-engine/src/cli.ts',
+  );
+  const changeId = 'ordinary-propose';
+  const intentPath = path.join(inputDirectory, 'intent.json');
+  try {
+    enableConditionalTaskAuthorization(repository);
+    git(repository, ['checkout', '-b', `work/${changeId}`]);
+    fs.writeFileSync(
+      intentPath,
+      `${canonicalJson({
+        schemaVersion: 1,
+        summary: 'Plan an ordinary source-only change.',
+        explicitPaths: ['src/.gitkeep'],
+        explicitSymbols: [],
+        explicitConfigKeys: [],
+        renamePairs: [],
+      })}\n`,
+      'utf8',
+    );
+    const started = spawnSync(
+      process.execPath,
+      [
+        '--experimental-strip-types',
+        cli,
+        'propose',
+        changeId,
+        '--intent',
+        intentPath,
+        '--actor',
+        'codex',
+        '--json',
+      ],
+      {
+        cwd: repository,
+        encoding: 'utf8',
+        env: {
+          ...process.env,
+          AGENT: undefined,
+          CLAUDECODE: undefined,
+          CLAUDE_CODE_ENTRYPOINT: undefined,
+          CODEX_SANDBOX: undefined,
+          WORKFLOW_TEST_DISABLE_PROVIDER_DISPATCH: '1',
+        },
+      },
+    );
+    assert.equal(started.status, 0, started.stderr);
+    assert.equal(
+      (JSON.parse(started.stdout) as { result: { changeId: string } }).result
+        .changeId,
+      changeId,
+    );
+  } finally {
+    cleanupRepository(repository);
+    fs.rmSync(inputDirectory, { recursive: true, force: true });
+  }
+});
+
+test('protected propose CLI requires a task mandate before durable planning', () => {
+  const repository = prepareRepository();
+  const inputDirectory = fs.mkdtempSync(
+    path.join(os.tmpdir(), 'protected-propose-input-'),
+  );
+  const cli = path.join(
+    sourceRepositoryRoot,
+    'packages/workflow-engine/src/cli.ts',
+  );
+  const changeId = 'protected-propose';
+  const intentPath = path.join(inputDirectory, 'intent.json');
+  try {
+    enableConditionalTaskAuthorization(repository);
+    git(repository, ['checkout', '-b', `work/${changeId}`]);
+    fs.writeFileSync(
+      intentPath,
+      `${canonicalJson({
+        schemaVersion: 1,
+        summary: 'Change protected workflow lifecycle behavior.',
+        explicitPaths: ['packages/workflow-engine/src/lifecycle.ts'],
+        explicitSymbols: [],
+        explicitConfigKeys: [],
+        renamePairs: [],
+      })}\n`,
+      'utf8',
+    );
+    const started = spawnSync(
+      process.execPath,
+      [
+        '--experimental-strip-types',
+        cli,
+        'propose',
+        changeId,
+        '--intent',
+        intentPath,
+        '--actor',
+        'codex',
+        '--json',
+      ],
+      { cwd: repository, encoding: 'utf8' },
+    );
+    assert.notEqual(started.status, 0, started.stderr);
+    assert.match(
+      `${started.stdout}\n${started.stderr}`,
+      /TASK_MANDATE_REQUIRED/,
+    );
+    assert.equal(fs.existsSync(runtimeRoot(repository)), false);
+  } finally {
+    cleanupRepository(repository);
+    fs.rmSync(inputDirectory, { recursive: true, force: true });
   }
 });
 
@@ -854,19 +1123,6 @@ test('true propose CLI charges the durable Survey reservation once and revoked r
       CODEX_SANDBOX: undefined,
       WORKFLOW_TEST_DISABLE_PROVIDER_DISPATCH: '1',
     };
-    const missingMandate = spawnSync(
-      process.execPath,
-      arguments_.filter(
-        (argument, index) =>
-          argument !== '--mandate' && arguments_[index - 1] !== '--mandate',
-      ),
-      {
-        cwd: repository,
-        encoding: 'utf8',
-        env: environment,
-      },
-    );
-    assert.equal(missingMandate.status, 2, missingMandate.stderr);
     const started = spawnSync(process.execPath, arguments_, {
       cwd: repository,
       encoding: 'utf8',

@@ -1,6 +1,6 @@
 # Repository Workflow
 
-_Last reviewed: July 31, 2026_
+_Last reviewed: August 13, 2026_
 
 This repository plans changes with OpenSpec and executes them with the
 repository-owned `pnpm workflow` engine. Spectra is retained only for
@@ -25,12 +25,12 @@ current evidence.
 
 ## Managed Transition Matrix
 
-| Kind      | Exact trailers                                                               | Public authority                          |
-| --------- | ---------------------------------------------------------------------------- | ----------------------------------------- |
-| Task      | `Change: <id>` and `Task: <task-id>`                                         | session `complete-task`/`finish`/`commit` |
-| Plan      | `Change: <id>` and `Transition: plan`                                        | `pnpm workflow plan-commit <id>`          |
-| Archive   | `Change: <id>` and `Transition: archive`                                     | `pnpm workflow archive <id>`              |
-| Authority | `Change: <id>`, `Transition: authority-maintenance`, and `Grant: <grant-id>` | human-only authority lifecycle            |
+| Kind      | Exact trailers                                                               | Public authority                 |
+| --------- | ---------------------------------------------------------------------------- | -------------------------------- |
+| Task      | `Change: <id>` and `Task: <task-id>`                                         | session `open-task`/`finalize`   |
+| Plan      | `Change: <id>` and `Transition: plan`                                        | `pnpm workflow plan-commit <id>` |
+| Archive   | `Change: <id>` and `Transition: archive`                                     | `pnpm workflow archive <id>`     |
+| Authority | `Change: <id>`, `Transition: authority-maintenance`, and `Grant: <grant-id>` | human-only authority lifecycle   |
 
 The forms are mutually exclusive. A plan or archive commit has no `Task:`
 trailer, a task commit has no `Transition:` trailer, and none may be mixed with
@@ -194,18 +194,60 @@ and availability remains empirical and not structural.
 
 ## Managed Task Lifecycle
 
-### 1. Start the selected current task
+The routine lifecycle is one repeated pair:
 
-```bash
-pnpm workflow start <change-id> --task <task-id> --json
+```text
+propose → [ open-task → finalize ]×N → archive
 ```
 
-Choose the current task named by the handoff and keep the returned session ID.
-Start fails closed for a protected branch, dirty baseline, unknown or already
-completed task, an active session for the same change, or invalid change
-contract. Task ordering is authorized later by completion reconciliation and
-CI, not by session creation. The session snapshots the change contract,
-allowed paths, required check IDs, and their policy digests.
+Each pair produces one task-scoped commit. Per-task commits are the durable
+provenance boundary for rollback, bisect, and concurrent-agent attribution;
+they are not a reason to rerun the whole repository gate for every task.
+
+### 1. Open the selected or next task
+
+```bash
+pnpm workflow open-task <change-id> [--task <task-id>] [--mandate <mandate-task-id>] --json
+```
+
+`open-task` carries the caller's intent; the engine selects the state-specific
+transition. For an owned planning draft it durably commits the exact reviewed
+plan and opens its task in one recoverable transaction. For an already
+committed plan it first replays a canonical governing planning generation and
+then opens the task directly. Omitting `--task` selects the first incomplete
+task in the validated plan; `--task` remains available when the plan permits a
+different order. Planning state does not change the authorization rule below.
+
+Task authorization is conditional, not a ceremony for every change. The
+engine evaluates `guard.json` task scope against the reviewed path-role
+registry configured by `workflow/config.json`:
+
+- ordinary product, documentation, and test scope opens without a mandate;
+- scope matching a configured protected role requires one exact human-signed
+  mandate at task ingress; an unlisted path is not implicitly protected;
+- the engine evaluates the actual implementation diff again before completion;
+  a protected diff cannot use ordinary `finalize`, even when its ingress
+  mandate is current, and must follow the returned human-only V2
+  approve-and-apply recovery;
+- external effects and control-plane authority retain their separate, stronger
+  policies.
+
+The mandate authorizes bounded preparation. It is not exact Apply authority.
+If planning begins with ordinary scope and later work needs a protected path,
+the current operation fails closed instead of silently widening authority.
+
+When `finalize` returns `PROTECTED_TASK_APPLY_REQUIRED`, run its exact `abort`
+recovery first. Abort releases the task session without discarding the candidate
+bytes. The maintainer then runs V2 `preflight` and `approve-and-apply` for that
+exact candidate at a controlling terminal. After the protected authority commit
+exists, reopen the still-incomplete task with the same active mandate and run
+ordinary `finalize` to record only the task/document completion projection. The
+two commits intentionally separate human-approved protected bytes from task
+bookkeeping; neither commit alone claims both authorities.
+
+`start` is a phase-1 deprecated compatibility command for callers that already
+know the plan is committed. New callers do not inspect planning state to choose
+between verbs.
 
 ### 2. Implement within the session boundary
 
@@ -225,57 +267,64 @@ Inspect a session or resolve semantic task-to-commit history with:
 pnpm workflow status <session-id> --json
 ```
 
-### 3. Produce current check evidence
+### 3. Finalize the exact task tree
 
 ```bash
-pnpm workflow check <session-id> --json
+pnpm workflow finalize <session-id> --message "Imperative subject" --json
 ```
 
-The engine rejects out-of-scope paths and executes only the task's configured
-check IDs through their pinned runners. Reports bind the current diff
-fingerprint, policy, artifact, required-check and runner digests, and passing
-outcomes; each report is itself content-addressed. Any later content change
-makes earlier evidence stale, so run `check` again after a correction.
+`finalize` rejects out-of-scope changes, projects the exact task checkbox and
+controlled documents, runs the effective check policy against that candidate,
+stages only the checked tree, and creates the task commit with engine-owned
+trailers. Its durable transaction is replay-safe across ordinary interruption;
+rerun the same command or follow `finalize-recover` when status requests it.
 
-### 4. Complete, stage, and commit
+The effective checks are state-dependent:
 
-The legacy `check` → `complete-task` → `finish` path remains supported, with
-`commit` as its separate final transition:
+1. An intermediate finalize runs only the task's targeted
+   `guard.json.requiredChecks`. Planning should not use the full gate as a
+   routine per-task default.
+2. If this exact projection changes the plan from not-all-terminal to
+   all-terminal, apply `workflow/config.json.allTasksTerminalChecks` while
+   retaining every task check they do not explicitly cover. The repository
+   `workflow-full-gate` covers `workflow-tests`, so the same eight shards do not
+   run twice; typecheck, lint, format, document, database, and other
+   independent task checks remain required when selected by the task.
+3. `--full-gate` may request the same escalation early. There is no
+   agent-controlled defer or skip flag; a reviewed waiver must use its normal
+   policy path.
 
-```bash
-pnpm workflow complete-task <session-id> --json
-pnpm workflow finish <session-id> --json
-pnpm workflow commit <session-id> --message "Imperative subject" --json
+The trigger is the state transition, not a task number. Adding or reopening a
+task rearms the terminal transition; waived and out-of-order tasks are handled
+by their projected terminal state. Risk-specific heavy checks remain in each
+task's `requiredChecks` and are independent of this final-change escalation.
+
+When the terminal transition selects `workflow-full-gate`, the CLI announces:
+
+```text
+This finalize completes the change → running full gate.
 ```
 
-- `complete-task` accepts only current passing evidence, updates the exact task
-  checkbox, and regenerates controlled documents such as the semantic handoff.
-- `finish` verifies the completion projection, reruns the required checks, and
-  stages the exact authorized tree.
-- `commit` rejects index drift and creates the commit with exact
-  `Change: <change-id>` and `Task: <task-id>` trailers.
+The full-gate runner then prints its four startup hints, including the monitor,
+machine-readable status, exact log paths, and the failure-query command:
 
-The optional projected single-pass path replaces `check`/`complete-task`/`finish`
-with one finalization transition after implementation:
-
-```bash
-pnpm workflow finalize-task <session-id> --json
-pnpm workflow commit <session-id> --message "Imperative subject" --json
+```text
+Monitor: pnpm workflow:test:status
+Machine status: pnpm workflow:test:status --json
+Full log: <exact stdout log path>
+Failures: pnpm workflow:test:failures
 ```
 
-`finalize-task` executes each current-task required check exactly once against
-the implementation + checkbox + handoff prospective tree. Independently
-required immediate-predecessor checks remain separate. It rejects check-view
-mutation and post-check drift, stages only a tree identical to the checked
-tree, and emits a schema-compatible check/completion/finish evidence chain.
+The runner reuses a passing receipt only for the exact same projected tree and
+generated/runner identity.
 
 When the tracked documentation-closure activation marker is present in the
-task baseline, the task that completes the last unchecked row also performs a
-whole-change documentation review. The engine derives that review from the
-parent of the first managed task commit through the final projected candidate,
-excluding only the task checkbox and generated completion projections. It adds
-code-owned hints for likely documentation consumers, but the authenticated
-TaskDiff reviewer must return exactly one disposition:
+task baseline, the task whose projection closes the all-tasks-terminal set also
+performs a whole-change documentation review. The engine derives that review
+from the parent of the first managed task commit through the final projected
+candidate, excluding only the task checkbox and generated completion
+projections. It adds code-owned hints for likely documentation consumers, but
+the authenticated TaskDiff reviewer must return exactly one disposition:
 
 - `updated`, naming the changed documentation paths;
 - `generated-verified`, naming the changed sources, generated documents, and
@@ -298,22 +347,35 @@ content-addressed commit report, while CI and archive replay the whole-change
 tree/path/digest binding directly from Git. Histories whose task baseline
 predates activation remain valid and are not retroactively re-reviewed.
 
-Before final application, a caught ordinary failure restores exact projection
-bytes and modes while leaving the real index and report pointers unchanged.
-This projected single-pass substrate is not crash-safe or fully atomic. Its
-durable recovery journal covers the implemented interruption points, but it
-does not claim recovery from machine loss or uncooperative writes outside the
-governed projection. `workflow commit` remains separate and must not rerun
-required checks.
+### Compatibility lifecycle
+
+Existing integrations may still use:
+
+```bash
+pnpm workflow check <session-id> --json
+pnpm workflow complete-task <session-id> --json
+pnpm workflow finish <session-id> --json
+pnpm workflow commit <session-id> --message "Imperative subject" --json
+```
+
+`finish` resolves the same additive terminal policy, so this longer route
+cannot bypass the full gate. `finalize-task` is also retained as a deprecated
+compatibility surface that performs the durable projection and leaves commit
+separate:
+
+```bash
+pnpm workflow finalize-task <session-id> --json
+pnpm workflow commit <session-id> --message "Imperative subject" --json
+```
 
 The commit subject must be one trimmed line without control characters or
 trailers. If commit ref advancement is interrupted after the commit object is
-created, rerun the same `commit` command so the engine can reconcile it.
+created, rerun the same command so the engine can reconcile it.
 
 Do not write a commit hash into `CURRENT_AND_NEXT_STEPS.md` or create a
 hash-only metadata commit. Use Git or `workflow status` when a hash is needed.
 
-### 5. Abort only when abandoning the session
+### 4. Abort only when abandoning the session
 
 ```bash
 pnpm workflow abort <session-id> --reason "Concrete reason" --json
@@ -425,18 +487,20 @@ ordinary reviewed OpenSpec change plus planning commit on the exact
 
 ### Maintainer command reference
 
-| Command                                                                                                                                                                         | Use and boundary                                                                                                                                                                                                                                    |
-| ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `pnpm workflow maintainer grant approve-and-apply --change <id> --task <task-id> --profile <profile-id> --reason <text> --message <subject> --effects-file <json\|none> --json` | Check, interactively sign, and atomically apply one immutable candidate under a short-lived one-shot V2 grant. The result includes the exact audit-tag `publishCommand` and post-merge `attestationRelayCommand`.                                   |
-| `pnpm workflow maintainer attestation-relay --original <commit> --json`                                                                                                         | After a rebase merge, find the exact rewritten protected-main commit and any rewritten grant base, then emit the literal `maintainer attest` and SSH tag-publish commands. This command is read-only and never signs.                               |
-| `pnpm workflow maintainer attest --original <commit> --main <commit> [--base <original>=<main> ...] --json`                                                                     | Interactively sign one canonical authority attestation binding a rebase-rewritten protected-main authority commit to its retained signed original, then create the immutable `workflow-attestation/<grant-id>` tag targeting the original.          |
-| `pnpm workflow maintainer inspect [grant-id] --json`                                                                                                                            | Read redacted available, reserved, consumed, or revoked local state. It grants no authority and exposes no private signing material.                                                                                                                |
-| `pnpm workflow maintainer revoke <grant-id> --reason <text> --json`                                                                                                             | Human-only terminal revocation of an available or reserved grant with a durable reason. Repeating it is cleanup-safe; a consumed or revoked grant never becomes available again.                                                                    |
-| `pnpm workflow authority-start <change-id> --grant <grant-id> --json`                                                                                                           | Atomically reserve the grant on its exact clean base and `work/<change-id>` branch, then pin policy, contract, signer, exact paths, and the complete normal check set.                                                                              |
-| `pnpm workflow authority-check <session-id> --json`                                                                                                                             | Require at least one changed granted path, reject every ungranted path, run all base-pinned normal checks, and record current content-addressed evidence. Any later edit makes it stale.                                                            |
-| `pnpm workflow authority-commit <session-id> --message "Imperative subject" --json`                                                                                             | Revalidate human presence and the same signer, stage only the exact diff, create one SSH-signed authority-maintenance commit with engine-owned trailers, advance the ref, and consume the grant. There is no authority `complete-task` or `finish`. |
-| `pnpm workflow authority-recover <session-id> --json`                                                                                                                           | Resume only a durable authority-commit journal. It may complete the exact pending old-OID ref update or idempotent consumption; ambiguity terminally revokes the use.                                                                               |
-| `pnpm workflow authority-abort <session-id> --reason "Concrete reason" --json`                                                                                                  | Cancel an active session before commit journaling and terminally revoke the reservation. It does not discard or reset worktree edits.                                                                                                               |
+| Command                                                                                                                                                                         | Use and boundary                                                                                                                                                                                                                           |
+| ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `pnpm workflow maintainer grant preflight --profile <profile-id> --json`                                                                                                        | Validate the reviewed V2 profile, current base, candidate paths, and checks without signing or mutating grant state.                                                                                                                       |
+| `pnpm workflow maintainer grant approve-and-apply --change <id> --task <task-id> --profile <profile-id> --reason <text> --message <subject> --effects-file <json\|none> --json` | Check, interactively sign, and atomically apply one immutable candidate under a short-lived one-shot V2 grant. The result includes the exact audit-tag `publishCommand` and post-merge `attestationRelayCommand`.                          |
+| `pnpm workflow maintainer grant reissue-and-apply --grant <prior-grant-id> --reason <text> --json`                                                                              | Replace one terminal V2 attempt only after replaying its exact governed candidate and current recovery policy; it never broadens the original candidate.                                                                                   |
+| `pnpm workflow maintainer attestation-relay --original <commit> --json`                                                                                                         | After a rebase merge, find the exact rewritten protected-main commit and any rewritten grant base, then emit the literal `maintainer attest` and SSH tag-publish commands. This command is read-only and never signs.                      |
+| `pnpm workflow maintainer attest --original <commit> --main <commit> [--base <original>=<main> ...] --json`                                                                     | Interactively sign one canonical authority attestation binding a rebase-rewritten protected-main authority commit to its retained signed original, then create the immutable `workflow-attestation/<grant-id>` tag targeting the original. |
+| `pnpm workflow maintainer inspect [grant-id] --json`                                                                                                                            | Read redacted available, reserved, consumed, or revoked local state. It grants no authority and exposes no private signing material.                                                                                                       |
+| `pnpm workflow maintainer revoke <grant-id> --reason <text> --json`                                                                                                             | Human-only terminal revocation of an available or reserved grant with a durable reason. Repeating it is cleanup-safe; a consumed or revoked grant never becomes available again.                                                           |
+
+The legacy V1 `maintainer grant` issuer and `authority-start` session family
+cannot authorize new work. Their signed envelopes, tags, terminal records, and
+revocations remain readable so historical commits can still be verified and
+audited; retained historical verification is not a signing fallback.
 
 Grant issuance creates both the local single-use token and an annotated audit
 tag. Run the exact `publishCommand` returned by the command immediately; it has
@@ -474,16 +538,15 @@ transition, and every normal check. A grant that expires after its signed commit
 was created remains historical evidence, but it cannot authorize another
 operation.
 
-Any failure after reservation closes the session and terminally revokes that
-use. `authority-abort` is for an active session that has not started commit
-journaling. `authority-recover` is only for a journal created by
-`authority-commit`; it is not a retry for a failed check, expired grant, dirty
-branch, missing tag, signature error, or divergent tree. Preserve the error,
-inspect the session and grant, and obtain explicit maintainer approval before
-discarding any leftover edits. A lost trusted key, missing/altered journal,
-divergent branch, or damaged trust root is a repository-admin, out-of-band
-recovery event with separately retained audit evidence—not a workflow command
-or AI-accessible override.
+Any V2 failure after reservation follows its durable terminal or recovery
+state. Replay the exact returned recovery command; use
+`reissue-and-apply` only where the governing record explicitly permits it.
+Legacy `authority-abort` and `authority-recover` are not alternate entry points
+for new work. Preserve the error, inspect the grant, and obtain explicit
+maintainer approval before discarding leftover edits. A lost trusted key,
+missing or altered journal, divergent branch, or damaged trust root is a
+repository-admin, out-of-band recovery event with separately retained audit
+evidence—not a workflow command or AI-accessible override.
 
 ### Authority tree attestation
 
@@ -548,17 +611,15 @@ After this implementation is merged, first verify the remote prerequisites and
 run a dedicated, non-database bootstrap pilot from the updated configured base:
 
 1. Create and plan-commit a small OpenSpec change for one harmless exact file
-   already allowed by `bootstrapEligiblePaths`. Do not put product work or the
-   phase transition in this pilot.
-2. With separate grants, record read-only inspection, idempotent explicit
-   revocation, a one-minute expiry rejection, and terminal cleanup after a
-   deliberate pre-commit failure. Never reuse those grant IDs or delete their
-   audit tags.
-3. Issue and publish a fresh grant for the successful pilot, run the full
-   authority sequence, then call `authority-recover` on the consumed session to
-   prove idempotent journal finalization. Interrupted commit points remain
-   integration-test evidence; do not deliberately crash or corrupt a real
-   repository.
+   covered by a reviewed V2 profile. Do not put product work or the phase
+   transition in this pilot.
+2. Record V2 preflight, read-only inspection, idempotent explicit revocation,
+   expiry rejection, and terminal cleanup after a deliberate pre-apply
+   failure. Never reuse those grant IDs or delete their audit tags.
+3. Run `approve-and-apply` for the successful exact candidate and publish its
+   returned audit tag. Replay only the exact returned recovery state to prove
+   idempotency. Interrupted commit points remain integration-test evidence; do
+   not deliberately crash or corrupt a real repository.
 4. Push the pilot PR and record the exact commands, semantic change/grant IDs,
    audit-tag publication, check results, commit-signature verification, and
    base-owned `workflow-assurance` result. Merge only through the configured
@@ -850,14 +911,11 @@ merged and reachable from the configured base:
    identities, achieved independence, and terminal planning transition. Do not
    substitute a hand-authored plan commit.
 
-3. Execute its one task with the full managed sequence:
+3. Execute its one task with the preferred managed pair:
 
    ```bash
-   pnpm workflow start <pilot-change-id> --task <task-id> --json
-   pnpm workflow check <session-id> --json
-   pnpm workflow complete-task <session-id> --json
-   pnpm workflow finish <session-id> --json
-   pnpm workflow commit <session-id> --message "Complete pilot task" --json
+   pnpm workflow open-task <pilot-change-id> --task <task-id> [--mandate <mandate-task-id>] --json
+   pnpm workflow finalize <session-id> --message "Complete pilot task" --json
    ```
 
    Record the semantic change/task IDs, exact commands, check outcomes, and

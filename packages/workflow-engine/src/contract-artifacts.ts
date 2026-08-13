@@ -26,6 +26,10 @@ export function workflowContractArtifactPaths(
     repositoryRoot,
     'workflow/maintainer-policy.json',
   );
+  const pathRoleRegistry = path.join(
+    repositoryRoot,
+    'workflow/path-roles.json',
+  );
   return [
     ...required,
     ...schemas,
@@ -37,6 +41,9 @@ export function workflowContractArtifactPaths(
       : []),
     ...(fs.statSync(maintainerPolicy, { throwIfNoEntry: false })?.isFile()
       ? [maintainerPolicy]
+      : []),
+    ...(fs.statSync(pathRoleRegistry, { throwIfNoEntry: false })?.isFile()
+      ? [pathRoleRegistry]
       : []),
   ].sort();
 }

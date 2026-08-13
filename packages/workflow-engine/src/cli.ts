@@ -175,6 +175,7 @@ import {
   getSession,
   listSessions,
   startMandatedSession,
+  startSession,
 } from './session.ts';
 import { runtimePaths } from './session-store.ts';
 import {
@@ -353,16 +354,19 @@ function dispatch(args: string[], cwd: string): CommandResult {
       const taskId = optionValue(rest.slice(1), '--task');
       const mandateTaskId = optionValue(rest.slice(1), '--mandate');
       const expected = taskId
-        ? [changeId, '--task', taskId, '--mandate', mandateTaskId]
-        : [changeId, '--mandate', mandateTaskId];
+        ? mandateTaskId
+          ? [changeId, '--task', taskId, '--mandate', mandateTaskId]
+          : [changeId, '--task', taskId]
+        : mandateTaskId
+          ? [changeId, '--mandate', mandateTaskId]
+          : [changeId];
       if (
         !changeId ||
-        !mandateTaskId ||
         rest.length !== expected.length ||
         JSON.stringify(rest) !== JSON.stringify(expected)
       ) {
         throw usage(
-          'Usage: pnpm workflow open-task <change-id> [--task <task-id>] --mandate <mandate-task-id> [--json]',
+          'Usage: pnpm workflow open-task <change-id> [--task <task-id>] [--mandate <mandate-task-id>] [--json]',
         );
       }
       const resolvedTaskId = resolveOpenTaskId(cwd, changeId, taskId);
@@ -444,7 +448,7 @@ function dispatch(args: string[], cwd: string): CommandResult {
         );
         const intent = values.get('--intent');
         const mandateTaskId = values.get('--mandate');
-        if (!intent || !mandateTaskId) {
+        if (!intent) {
           throw proposeUsage();
         }
         return {
@@ -455,7 +459,9 @@ function dispatch(args: string[], cwd: string): CommandResult {
               ? {}
               : { explicitActor: values.get('--actor') }),
             environment: process.env,
-            taskMandateId: mandateTaskId,
+            ...(mandateTaskId === undefined
+              ? {}
+              : { taskMandateId: mandateTaskId }),
             ...(flags.has('--migrate-legacy') ? { migrateLegacy: true } : {}),
             ...(providerDispatcher ? { providerDispatcher } : {}),
             ...(values.get('--grant') === undefined
@@ -1029,28 +1035,30 @@ function dispatch(args: string[], cwd: string): CommandResult {
       const changeId = rest[0];
       const taskId = optionValue(rest.slice(1), '--task');
       const mandateTaskId = optionValue(rest.slice(1), '--mandate');
-      if (!changeId || !taskId || !mandateTaskId) {
+      if (!changeId || !taskId) {
         throw usage(
-          'Usage: pnpm workflow start <change-id> --task <task-id> --mandate <mandate-task-id> [--json]',
+          'Usage: pnpm workflow start <change-id> --task <task-id> [--mandate <mandate-task-id>] [--json]',
         );
       }
-      const allowed = [changeId, '--task', taskId, '--mandate', mandateTaskId];
+      const allowed = mandateTaskId
+        ? [changeId, '--task', taskId, '--mandate', mandateTaskId]
+        : [changeId, '--task', taskId];
       if (
         rest.length !== allowed.length ||
-        rest[1] !== '--task' ||
-        rest[2] !== taskId ||
-        rest[3] !== '--mandate' ||
-        rest[4] !== mandateTaskId
+        JSON.stringify(rest) !== JSON.stringify(allowed)
       ) {
         throw usage(
-          'Usage: pnpm workflow start <change-id> --task <task-id> --mandate <mandate-task-id> [--json]',
+          'Usage: pnpm workflow start <change-id> --task <task-id> [--mandate <mandate-task-id>] [--json]',
         );
       }
       return {
         command,
         ok: true,
         deprecation: workflowCommandGuidance(command).deprecation,
-        session: startMandatedSession(cwd, changeId, taskId, mandateTaskId),
+        session:
+          mandateTaskId === undefined
+            ? startSession(cwd, changeId, taskId)
+            : startMandatedSession(cwd, changeId, taskId, mandateTaskId),
       };
     }
     case 'revise-task': {
@@ -2512,7 +2520,7 @@ function maintainerUsage(): WorkflowError {
 
 function proposeUsage(): WorkflowError {
   return usage(
-    'Usage: pnpm workflow propose <change-id> --intent <intent.json> --mandate <mandate-task-id> [--actor <id>] [--grant <grant-id>] [--migrate-legacy] [--json]\n       pnpm workflow propose <change-id> --resume --input <envelope.json> [--grant <grant-id>] [--json]',
+    'Usage: pnpm workflow propose <change-id> --intent <intent.json> [--mandate <mandate-task-id>] [--actor <id>] [--grant <grant-id>] [--migrate-legacy] [--json]\n       pnpm workflow propose <change-id> --resume --input <envelope.json> [--grant <grant-id>] [--json]',
   );
 }
 

@@ -83,7 +83,7 @@ test('a repository that has classified no paths cannot fold anything', () => {
           dispositions: others.map(individual),
           classes: [classOver(members.map(({ groupId }) => groupId))],
         }),
-      (error) => isWorkflowError(error, 'CLASS_DISPOSITION_INVALID'),
+      (error) => isWorkflowError(error, 'ASSURANCE_PLANNING_FLOOR_VIOLATION'),
     );
   } finally {
     fixture.dispose();

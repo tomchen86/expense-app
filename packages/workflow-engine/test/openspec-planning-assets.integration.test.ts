@@ -250,7 +250,7 @@ test('tool-plural generation is isolated, three-stage pinned, and byte determini
         files: ['prompts/opsx-explore.md', 'prompts/opsx-propose.md'],
       },
     ]);
-    assert.equal(manifest.overlay.version, 3);
+    assert.equal(manifest.overlay.version, 4);
     assert.match(manifest.overlay.policyDigest, /^[0-9a-f]{64}$/);
     assert.equal(
       manifest.formatter.runner,

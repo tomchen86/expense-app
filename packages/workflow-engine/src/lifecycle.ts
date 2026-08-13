@@ -41,7 +41,7 @@ import {
   validateCommitSubject,
   type TaskCommit,
 } from './git-transitions.ts';
-import { discoverRepository } from './git.ts';
+import { discoverRepository, listChangedPaths } from './git.ts';
 import { assertChangeId, assertTaskId } from './paths.ts';
 import {
   assertFinishProjection,
@@ -108,6 +108,7 @@ import {
   assertTaskDiffReviewCompletionGateSatisfied,
   loadTaskDiffDocumentationReviewCapture,
 } from './task-diff-review-lifecycle.ts';
+import { resolveTaskAuthorizationRequirement } from './task-authorization-policy.ts';
 
 export type CompleteTaskResult = {
   session: WorkflowSession;
@@ -341,13 +342,23 @@ export function recoverFinalize(
       git.gitCommonDirectory,
       config.runtimeDirectory,
     );
-    if (readFinalizeTransaction(runtime.root, session.sessionId) === null) {
+    const transaction = readFinalizeTransaction(
+      runtime.root,
+      session.sessionId,
+    );
+    if (transaction === null) {
       throw workflowError(
         'FINALIZE_TRANSACTION_NOT_FOUND',
         'No durable finalize transaction exists for this session.',
         ExitCode.staleState,
       );
     }
+    assertProtectedTaskApplyNotRequired(
+      git.repositoryRoot,
+      config,
+      session,
+      finalizeTransactionTaskPaths(transaction, session),
+    );
     return session.state === 'committed'
       ? replayCompletedFinalize(cwd, session)
       : finalizeTaskUnlocked(cwd, requestedSessionId, environment);
@@ -368,6 +379,7 @@ export function finalizeSession(
     if (observed.state === 'committed') {
       finalized = replayCompletedFinalize(cwd, observed);
     } else {
+      assertCurrentTaskMayUseOrdinaryFinalize(cwd, requestedSessionId);
       finalized = finalizeTaskUnlocked(cwd, requestedSessionId, environment, {
         ...(options.fullGate === true ? { fullGate: true } : {}),
         ...(options.onCheckEscalation
@@ -414,8 +426,114 @@ export function finalizeTask(
   environment: NodeJS.ProcessEnv = process.env,
   options: FinalizeTaskOptions = {},
 ): FinalizeTaskResult {
-  return runSessionOperation(cwd, requestedSessionId, () =>
-    finalizeTaskUnlocked(cwd, requestedSessionId, environment, options),
+  return runSessionOperation(cwd, requestedSessionId, () => {
+    assertCurrentTaskMayUseOrdinaryFinalize(cwd, requestedSessionId);
+    return finalizeTaskUnlocked(cwd, requestedSessionId, environment, options);
+  });
+}
+
+function assertCurrentTaskMayUseOrdinaryFinalize(
+  cwd: string,
+  requestedSessionId: string,
+): void {
+  const session = getSession(cwd, requestedSessionId);
+  const git = discoverRepository(cwd);
+  const config = loadWorkflowConfig(git.repositoryRoot);
+  const runtime = runtimePaths(git.gitCommonDirectory, config.runtimeDirectory);
+  const transaction = readFinalizeTransaction(runtime.root, session.sessionId);
+  if (transaction !== null) {
+    assertProtectedTaskApplyNotRequired(
+      git.repositoryRoot,
+      config,
+      session,
+      finalizeTransactionTaskPaths(transaction, session),
+    );
+    return;
+  }
+  const inspection = inspectSession(cwd, requestedSessionId);
+  assertProtectedTaskApplyNotRequired(
+    inspection.git.repositoryRoot,
+    inspection.contract.config,
+    inspection.session,
+    inspection.changedPaths,
+  );
+}
+
+function assertProtectedTaskApplyNotRequired(
+  repositoryRoot: string,
+  config: ReturnType<typeof loadWorkflowConfig>,
+  session: WorkflowSession,
+  changedPaths: readonly string[],
+): void {
+  // Repositories without the conditional policy retain their historical
+  // lifecycle. Once configured, the actual implementation diff is the
+  // completion boundary: planning scope alone cannot mint Apply authority.
+  if (config.taskAuthorization === undefined) return;
+  const engineOwnedPaths = new Set(
+    session.implementationReconciliationPaths ?? [],
+  );
+  const taskAuthoredPaths = changedPaths.filter(
+    (changedPath) => !engineOwnedPaths.has(changedPath),
+  );
+  const requirement = resolveTaskAuthorizationRequirement(
+    repositoryRoot,
+    config,
+    taskAuthoredPaths,
+  );
+  if (!requirement.requiresMandate) return;
+  if (session.mandateBinding === undefined || session.mandateBinding === null) {
+    throw workflowError(
+      'TASK_MANDATE_REQUIRED',
+      'The actual task diff intersects protected repository paths but the session has no Task Mandate.',
+      ExitCode.guard,
+      {
+        details: {
+          changeId: session.changeId,
+          taskId: session.taskId,
+          changedPaths: taskAuthoredPaths,
+          roles: requirement.roles,
+          matchedPatterns: requirement.matchedPatterns,
+          unclassifiedScope: requirement.unclassifiedScope,
+        },
+        recovery:
+          'Abort this session, authorize the protected task scope, and reopen the task with --mandate <mandate-task-id>.',
+      },
+    );
+  }
+  throw workflowError(
+    'PROTECTED_TASK_APPLY_REQUIRED',
+    'Ordinary task finalization cannot commit a diff that intersects protected repository paths.',
+    ExitCode.guard,
+    {
+      details: {
+        changeId: session.changeId,
+        taskId: session.taskId,
+        mandateTaskId: session.mandateBinding.mandateTaskId,
+        changedPaths: taskAuthoredPaths,
+        roles: requirement.roles,
+        matchedPatterns: requirement.matchedPatterns,
+        unclassifiedScope: requirement.unclassifiedScope,
+      },
+      recovery: `pnpm workflow abort ${session.sessionId} --reason protected-apply-required --json`,
+    },
+  );
+}
+
+function finalizeTransactionTaskPaths(
+  transaction: FinalizeTransaction,
+  session: WorkflowSession,
+): string[] {
+  const changedPaths =
+    transaction.changedPaths.length > 0
+      ? [...transaction.changedPaths]
+      : listChangedPaths(transaction.repositoryRoot, transaction.baseline.head);
+  const engineOwnedPaths = new Set([
+    transaction.taskProjectionPath,
+    ...transaction.transitionPaths,
+    ...(session.implementationReconciliationPaths ?? []),
+  ]);
+  return changedPaths.filter(
+    (changedPath) => !engineOwnedPaths.has(changedPath),
   );
 }
 
@@ -699,6 +817,12 @@ function completeTaskUnlocked(
     environment,
   });
   const initial = inspectSession(cwd, requestedSessionId);
+  assertProtectedTaskApplyNotRequired(
+    initial.git.repositoryRoot,
+    initial.contract.config,
+    initial.session,
+    initial.changedPaths,
+  );
   if (initial.session.completionReportId) {
     throw workflowError(
       'TASK_ALREADY_PROJECTED',
@@ -863,6 +987,12 @@ function finishSessionUnlocked(
     unprojected.changedPaths,
     [path.relative(unprojected.git.repositoryRoot, unprojected.tasksPath)],
     transitionPaths,
+  );
+  assertProtectedTaskApplyNotRequired(
+    unprojected.git.repositoryRoot,
+    unprojected.contract.config,
+    unprojected.session,
+    pathClassification.taskPaths,
   );
   assertProjectionPathClassification(
     completionReport,
@@ -1035,6 +1165,12 @@ function commitSessionUnlocked(
     inspection.changedPaths,
     [path.relative(inspection.git.repositoryRoot, inspection.tasksPath)],
     transitionPaths,
+  );
+  assertProtectedTaskApplyNotRequired(
+    inspection.git.repositoryRoot,
+    inspection.contract.config,
+    inspection.session,
+    pathClassification.taskPaths,
   );
   const finishReport = readSessionReport(
     inspection,

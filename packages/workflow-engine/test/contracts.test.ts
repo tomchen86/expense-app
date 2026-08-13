@@ -11,6 +11,7 @@ import {
 } from '../src/database-policy.ts';
 import {
   loadChangeContract,
+  loadWorkflowConfig,
   parseExecutionArtifact,
   parseInvestigationArtifact,
   parsePlanReviewArtifact,
@@ -53,6 +54,31 @@ test('maintainer policy is a pinned workflow contract artifact', () => {
   assert.ok(
     artifacts.includes('workflow/schemas/authority-attestation.schema.json'),
   );
+  assert.ok(artifacts.includes('workflow/path-roles.json'));
+});
+
+test('task authorization binds the one reviewed path-role registry artifact', () => {
+  const repository = createFixtureRepository();
+  try {
+    const configPath = path.join(repository, 'workflow/config.json');
+    const config = JSON.parse(fs.readFileSync(configPath, 'utf8')) as {
+      taskAuthorization: { pathRoleRegistry: string };
+    };
+    config.taskAuthorization.pathRoleRegistry = 'workflow/other-roles.json';
+    fs.copyFileSync(
+      path.join(repository, 'workflow/path-roles.json'),
+      path.join(repository, 'workflow/other-roles.json'),
+    );
+    fs.writeFileSync(configPath, `${JSON.stringify(config)}\n`);
+    assert.throws(
+      () => loadWorkflowConfig(repository),
+      (error) =>
+        error instanceof WorkflowError &&
+        error.code === 'INVALID_WORKFLOW_CONFIG',
+    );
+  } finally {
+    fs.rmSync(repository, { recursive: true, force: true });
+  }
 });
 
 test('runner security suite is portable to the package working directory', () => {
@@ -162,6 +188,7 @@ test('format verification delegates to the registered canonical authority', () =
     'workflow/config.json',
     'workflow/document-policy.json',
     'workflow/maintainer-policy.json',
+    'workflow/path-roles.json',
     'workflow/schemas',
     'apps/api/src/__tests__/setup/datasource.factory.ts',
     'apps/api/src/__tests__/setup/database-target-policy.ts',
@@ -186,6 +213,17 @@ test('format verification delegates to the registered canonical authority', () =
       subsumes: ['workflow-tests'],
     },
   ]);
+  assert.deepEqual(config.taskAuthorization, {
+    pathRoleRegistry: 'workflow/path-roles.json',
+    mandateRequiredRoles: [
+      'contract-surface',
+      'control-plane',
+      'grant',
+      'lifecycle',
+      'policy',
+      'verification-infrastructure',
+    ],
+  });
   assert.deepEqual(checks.checks['workflow-full-gate'], {
     command: [
       'node',
@@ -275,11 +313,6 @@ test('agent guide documents the complete public workflow surface and source-size
     'pnpm workflow maintainer grant',
     'pnpm workflow maintainer inspect',
     'pnpm workflow maintainer revoke',
-    'pnpm workflow authority-start',
-    'pnpm workflow authority-check',
-    'pnpm workflow authority-commit',
-    'pnpm workflow authority-recover',
-    'pnpm workflow authority-abort',
     'pnpm workflow documents validate',
     'pnpm workflow document-refresh propose',
     'pnpm workflow document-refresh show',
@@ -300,6 +333,10 @@ test('agent guide documents the complete public workflow surface and source-size
   for (const command of commands) {
     assert.match(agents, new RegExp(command.replaceAll(' ', '\\s+')));
   }
+  assert.match(
+    agents,
+    /Legacy V1 issuance and authority-session entry are disabled/i,
+  );
   assert.doesNotMatch(agents, /pnpm workflow handoff render/);
   assert.match(
     agents,
@@ -342,7 +379,7 @@ test('public guidance exposes the investigation-first and repeated managed-task 
   assert.match(workflow, /all-terminal[\s\S]{0,200}allTasksTerminalChecks/i);
   assert.match(
     workflow,
-    /workflow-full-gate[\s\S]{0,120}covers `workflow-tests`[\s\S]{0,120}do not run twice/i,
+    /workflow-full-gate[\s\S]{0,120}covers `workflow-tests`[\s\S]{0,120}do\s+not\s+run\s+twice/i,
   );
   assert.match(workflow, /no[\s\S]{0,80}(?:defer|skip) flag/i);
   assert.match(
@@ -601,14 +638,13 @@ test('break-glass maintainer operator contract is complete and bootstrap-only', 
     'pnpm workflow maintainer attestation-relay',
     'pnpm workflow maintainer inspect',
     'pnpm workflow maintainer revoke',
-    'pnpm workflow authority-start',
-    'pnpm workflow authority-check',
-    'pnpm workflow authority-commit',
-    'pnpm workflow authority-recover',
-    'pnpm workflow authority-abort',
   ]) {
     assert.match(workflow, new RegExp(command.replaceAll(' ', '\\s+')));
   }
+  assert.match(
+    workflow,
+    /legacy V1[\s\S]{0,160}authority-start[\s\S]{0,160}cannot authorize new work/i,
+  );
 
   assert.match(workflow, /controlling interactive terminal/i);
   assert.match(workflow, /git config --local gpg\.format ssh/);

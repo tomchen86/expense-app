@@ -11,5 +11,16 @@
       "subsumes": ["workflow-tests"]
     }
   ],
+  "taskAuthorization": {
+    "pathRoleRegistry": "workflow/path-roles.json",
+    "mandateRequiredRoles": [
+      "contract-surface",
+      "control-plane",
+      "grant",
+      "lifecycle",
+      "policy",
+      "verification-infrastructure"
+    ]
+  },
   "allowedPathModes": ["exact", "directory-prefix"]
 }

@@ -29,6 +29,7 @@ import {
   matchesAllowedPath,
   normalizePolicyPath,
 } from './paths.ts';
+import { PATH_ROLES, type PathRole } from './path-role-registry.ts';
 
 const CHECK_ID_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 
@@ -40,11 +41,17 @@ export type WorkflowConfig = {
   protectedBranches: string[];
   branchTemplate: string;
   allTasksTerminalChecks?: TerminalCheckPolicy[];
+  taskAuthorization?: TaskAuthorizationPolicy;
 };
 
 export type TerminalCheckPolicy = {
   checkId: string;
   subsumes: string[];
+};
+
+export type TaskAuthorizationPolicy = {
+  pathRoleRegistry: string;
+  mandateRequiredRoles: PathRole[];
 };
 
 export type CheckDefinition = {
@@ -363,7 +370,9 @@ export function loadWorkflowConfig(repositoryRoot: string): WorkflowConfig {
     typeof value.branchTemplate !== 'string' ||
     !value.branchTemplate.includes('{changeId}') ||
     (value.allTasksTerminalChecks !== undefined &&
-      !isTerminalCheckPolicyArray(value.allTasksTerminalChecks))
+      !isTerminalCheckPolicyArray(value.allTasksTerminalChecks)) ||
+    (value.taskAuthorization !== undefined &&
+      !isTaskAuthorizationPolicy(value.taskAuthorization))
   ) {
     throw invalidContract(
       'INVALID_WORKFLOW_CONFIG',
@@ -374,6 +383,19 @@ export function loadWorkflowConfig(repositoryRoot: string): WorkflowConfig {
 
   normalizePolicyPath(value.changeRoot);
   normalizePolicyPath(value.runtimeDirectory);
+  if (value.taskAuthorization !== undefined) {
+    const registryPath = normalizePolicyPath(
+      (value.taskAuthorization as TaskAuthorizationPolicy).pathRoleRegistry,
+    );
+    if (registryPath !== 'workflow/path-roles.json') {
+      throw invalidContract(
+        'INVALID_WORKFLOW_CONFIG',
+        'Task authorization requires the reviewed workflow/path-roles.json registry.',
+        configPath,
+      );
+    }
+    assertPolicyPathInsideRepository(repositoryRoot, registryPath);
+  }
 
   return {
     ...value,
@@ -387,7 +409,42 @@ export function loadWorkflowConfig(repositoryRoot: string): WorkflowConfig {
             subsumes: [...policy.subsumes],
           })),
         }),
+    ...(value.taskAuthorization === undefined
+      ? {}
+      : {
+          taskAuthorization: {
+            pathRoleRegistry: (
+              value.taskAuthorization as TaskAuthorizationPolicy
+            ).pathRoleRegistry,
+            mandateRequiredRoles: [
+              ...(value.taskAuthorization as TaskAuthorizationPolicy)
+                .mandateRequiredRoles,
+            ],
+          },
+        }),
   } as WorkflowConfig;
+}
+
+function isTaskAuthorizationPolicy(
+  value: unknown,
+): value is TaskAuthorizationPolicy {
+  if (
+    !isRecord(value) ||
+    !hasExactKeys(value, ['pathRoleRegistry', 'mandateRequiredRoles']) ||
+    typeof value.pathRoleRegistry !== 'string' ||
+    !isStringArray(value.mandateRequiredRoles) ||
+    value.mandateRequiredRoles.length === 0
+  ) {
+    return false;
+  }
+  const knownRoles = new Set<string>(PATH_ROLES);
+  return (
+    value.mandateRequiredRoles.every((role) => knownRoles.has(role)) &&
+    new Set(value.mandateRequiredRoles).size ===
+      value.mandateRequiredRoles.length &&
+    JSON.stringify(value.mandateRequiredRoles) ===
+      JSON.stringify([...value.mandateRequiredRoles].sort())
+  );
 }
 
 function isTerminalCheckPolicyArray(

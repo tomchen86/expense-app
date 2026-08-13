@@ -80,6 +80,7 @@
         "workflow/config.json",
         "workflow/document-policy.json",
         "workflow/maintainer-policy.json",
+        "workflow/path-roles.json",
         "workflow/schemas",
         "apps/api/src/__tests__/setup/datasource.factory.ts",
         "apps/api/src/__tests__/setup/database-target-policy.ts",

@@ -201,6 +201,7 @@ import {
   type TaskMandateBinding,
   type TaskMandateOptions,
 } from './task-mandate.ts';
+import { assertTaskMandateOptional } from './task-authorization-policy.ts';
 import {
   type HeldChangeTransitionAuthority,
   withInvestigationTransitionAuthority,
@@ -1017,6 +1018,15 @@ export function startPropose(
       classSampleAudits: [],
       floorTrimming: { dropped: [], escalated: false },
     };
+  }
+
+  if (options.taskMandateId === undefined) {
+    const repository = discoverRepository(cwd);
+    assertTaskMandateOptional(
+      repository.repositoryRoot,
+      loadWorkflowConfig(repository.repositoryRoot),
+      intent.explicitPaths,
+    );
   }
 
   cwd = resolveProposePlanningWorkspace(cwd, changeId, 'start');

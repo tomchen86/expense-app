@@ -98,10 +98,10 @@ never promoted to `pinned` automatically.
 
 | Command | Use when |
 | ------- | -------- |
-| `pnpm workflow open-task <id> [--task <task-id>] --mandate <mandate-task-id> --json` | Preferred entry: commit an owned draft when needed, then open the selected or next incomplete task |
-| `pnpm workflow finalize <session-id> --message "Subject" [--full-gate] --json` | Preferred exit: check, project, stage, and commit one exact task tree |
+| `pnpm workflow open-task <id> [--task <task-id>] [--mandate <mandate-task-id>] --json` | Preferred entry: commit an owned draft when needed, then open the selected or next incomplete task; `--mandate` is required only for scope matching a configured protected role |
+| `pnpm workflow finalize <session-id> --message "Subject" [--full-gate] --json` | Preferred ordinary exit: check, project, stage, and commit one exact task tree; a protected actual diff stops for human V2 Apply |
 | `pnpm workflow status <session-id> --json` | Inspecting session state or resolving semantic task history |
-| `pnpm workflow start <id> --task <task-id> --mandate <mandate-task-id> --json` | Deprecated compatibility entry for an already committed plan |
+| `pnpm workflow start <id> --task <task-id> [--mandate <mandate-task-id>] --json` | Deprecated compatibility entry for an already committed plan; scope matching a configured protected role still requires the mandate |
 | `pnpm workflow check <session-id> --json` | Compatibility: producing fresh scoped check evidence |
 | `pnpm workflow complete-task <session-id> --json` | Compatibility: applying the task and document projection |
 | `pnpm workflow finish <session-id> --json` | Compatibility: rechecking and staging the exact task tree |
@@ -141,19 +141,18 @@ procedure.
 
 | Command | Use when |
 | ------- | -------- |
-| `pnpm workflow maintainer grant ... --json` | A human maintainer is issuing one short-lived, single-use grant for sorted exact eligible authority paths |
+| `pnpm workflow maintainer grant preflight --profile <profile-id> --json` | Read-only validation of one reviewed V2 authority profile and exact current candidate |
+| `pnpm workflow maintainer grant approve-and-apply ... --json` | Human-only exact-candidate V2 approval and atomic application |
+| `pnpm workflow maintainer grant reissue-and-apply ... --json` | Human-only replacement of one terminal V2 attempt against the same governed candidate |
 | `pnpm workflow maintainer inspect [grant-id] --json` | Reading redacted local grant, reservation, or terminal state |
 | `pnpm workflow maintainer revoke <grant-id> --reason <text> --json` | Human-only terminal revocation of an unused, reserved, or already-terminal grant with a durable reason; repeated use is cleanup-safe |
-| `pnpm workflow authority-start <id> --grant <grant-id> --json` | Reserving the published grant on the exact clean `work/<id>` branch and base |
-| `pnpm workflow authority-check <session-id> --json` | Running all base-pinned normal checks against an exact-path authority diff |
-| `pnpm workflow authority-commit <session-id> --message "Subject" --json` | Creating the signed authority-maintenance commit and consuming the grant from current evidence |
-| `pnpm workflow authority-recover <session-id> --json` | Finalizing only an exact durable commit journal after an interrupted authority commit |
-| `pnpm workflow authority-abort <session-id> --reason "Reason" --json` | Cancelling an active pre-commit authority session and terminally revoking its grant |
 
+Legacy V1 issuance and authority-session entry are disabled; their parsers and
+verifiers remain only for historical evidence and audited terminal cleanup.
 Never stage or commit authority work manually, reuse a failed or expired grant,
-delete its audit tag to erase history, or use `authority-recover` as a general
-retry. Until the remote prerequisites in `docs/WORKFLOW.md` are independently
-verified, describe the facility as bootstrap-only, not sealed enforcement.
+or delete its audit tag to erase history. Until the remote prerequisites in
+`docs/WORKFLOW.md` are independently verified, describe the facility as
+bootstrap-only, not sealed enforcement.
 
 ### Issues and managed documents
 

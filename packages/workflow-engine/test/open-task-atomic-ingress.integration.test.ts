@@ -22,6 +22,62 @@ import {
 } from './fixture.ts';
 import { prepareExecutionMandate } from './execution-mandate-fixture.ts';
 
+test('ordinary open-task crash recovery preserves explicit no-mandate authority', () => {
+  const fixture = prepareOrdinaryOpenTaskFixture('ordinary-open-recovery');
+  try {
+    assert.throws(
+      () =>
+        openTask(fixture.repository, fixture.changeId, '1.1', undefined, {
+          testCrashAfter: 'journal-prepared',
+        }),
+      /Simulated open-task interruption/,
+    );
+    const prepared = readOpenTaskJournal(
+      fixture.repository,
+      fixture.changeId,
+      '1.1',
+    );
+    assert.equal(prepared?.schemaVersion, 2);
+    assert.equal(prepared?.kind, 'open-task-transaction.v2');
+    assert.equal(prepared?.mandateTaskId, null);
+    assert.equal(prepared?.mandateBinding, null);
+    assert.match(
+      prepared?.authorizationPolicyDigest ?? '',
+      /^sha256:[0-9a-f]{64}$/,
+    );
+
+    const status = runWorkflowCli(fixture.repository, [
+      'status',
+      fixture.changeId,
+      '--json',
+    ]);
+    assert.equal(status.status, 0, status.stderr);
+    const statusPayload = JSON.parse(status.stdout) as {
+      openTask: { recoveryCommand: string };
+    };
+    assert.doesNotMatch(statusPayload.openTask.recoveryCommand, /--mandate/u);
+
+    const result = openTask(
+      fixture.repository,
+      fixture.changeId,
+      '1.1',
+      undefined,
+    );
+    assert.equal(result.recovered, true);
+    assert.equal(result.mandateTaskId, null);
+    const session = readSessionFile(
+      path.join(
+        runtimeRoot(fixture.repository),
+        'sessions',
+        `${result.sessionId}.json`,
+      ),
+    );
+    assert.equal(session.mandateBinding, undefined);
+  } finally {
+    fixture.dispose();
+  }
+});
+
 test('open-task atomically commits the owned draft and activates its exact session', () => {
   const fixture = prepareOpenTaskFixture('atomic-open-success');
   try {
@@ -841,6 +897,51 @@ function prepareOpenTaskFixture(
     mandate,
     dispose() {
       mandate.dispose();
+      fs.rmSync(repository, { recursive: true, force: true });
+    },
+  };
+}
+
+function prepareOrdinaryOpenTaskFixture(changeId: string): {
+  repository: string;
+  changeId: string;
+  dispose(): void;
+} {
+  const repository = createFixtureRepository();
+  const configPath = path.join(repository, 'workflow/config.json');
+  const config = JSON.parse(fs.readFileSync(configPath, 'utf8')) as Record<
+    string,
+    unknown
+  >;
+  config.taskAuthorization = {
+    pathRoleRegistry: 'workflow/path-roles.json',
+    mandateRequiredRoles: ['lifecycle'],
+  };
+  fs.writeFileSync(configPath, `${canonicalJson(config)}\n`, 'utf8');
+  fs.writeFileSync(
+    path.join(repository, 'workflow/path-roles.json'),
+    `${canonicalJson({
+      schemaVersion: 1,
+      kind: 'path-role-registry',
+      roles: {
+        lifecycle: ['packages/workflow-engine/src/**'],
+        ordinary: ['src/**'],
+      },
+    })}\n`,
+    'utf8',
+  );
+  git(repository, ['add', 'workflow/config.json', 'workflow/path-roles.json']);
+  git(repository, ['commit', '-m', 'Enable conditional task authorization']);
+  git(repository, ['checkout', '-b', `work/${changeId}`]);
+  writeChange(repository, changeId);
+  preparePlanningDraftWorkspace(repository, changeId, {
+    adoptCurrentWorktree: true,
+    now: new Date('2026-08-11T03:00:00.000Z'),
+  });
+  return {
+    repository,
+    changeId,
+    dispose() {
       fs.rmSync(repository, { recursive: true, force: true });
     },
   };
