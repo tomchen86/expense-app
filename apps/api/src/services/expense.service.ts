@@ -426,12 +426,7 @@ export class ExpenseService {
             : undefined,
       }));
 
-      this.ensureSplitsConsistency(
-        updatedSplits,
-        amountCents,
-        splitType,
-        payerParticipantId,
-      );
+      this.ensureSplitsConsistency(updatedSplits, amountCents, splitType);
     }
 
     return await this.expenseRepository.manager.transaction(async (manager) => {
@@ -824,12 +819,7 @@ export class ExpenseService {
       };
     });
 
-    this.ensureSplitsConsistency(
-      normalizedSplits,
-      amountCents,
-      splitType,
-      payerParticipantId,
-    );
+    this.ensureSplitsConsistency(normalizedSplits, amountCents, splitType);
 
     return normalizedSplits;
   }
@@ -838,7 +828,6 @@ export class ExpenseService {
     splits: NormalizedSplit[],
     amountCents: number,
     splitType: ExpenseSplitType,
-    payerParticipantId: string,
   ): void {
     const totalShare = splits.reduce((sum, split) => sum + split.shareCents, 0);
 

@@ -141,21 +141,25 @@ describe('expense aggregate contract', () => {
   it('persists the resolved space on every new split row', async () => {
     const transactionExpenseRepository = {
       create: jest.fn(() => ({})),
-      save: jest.fn(async (expense) => ({
-        ...expense,
-        id: 'expense-1',
-        version: 1,
-        createdAt: new Date('2026-08-13T00:00:00.000Z'),
-        updatedAt: new Date('2026-08-13T00:00:00.000Z'),
-      })),
+      save: jest.fn((expense) =>
+        Promise.resolve({
+          ...expense,
+          id: 'expense-1',
+          version: 1,
+          createdAt: new Date('2026-08-13T00:00:00.000Z'),
+          updatedAt: new Date('2026-08-13T00:00:00.000Z'),
+        }),
+      ),
     };
     const transactionSplitRepository = {
       create: jest.fn(() => ({})),
-      save: jest.fn(async (splits) => splits),
+      save: jest.fn((splits) => Promise.resolve(splits)),
       find: jest
         .fn()
-        .mockImplementation(
-          async () => transactionSplitRepository.save.mock.calls[0]?.[0] ?? [],
+        .mockImplementation(() =>
+          Promise.resolve(
+            transactionSplitRepository.save.mock.calls[0]?.[0] ?? [],
+          ),
         ),
     };
     const manager = {
@@ -169,8 +173,8 @@ describe('expense aggregate contract', () => {
         findOne: jest.fn().mockResolvedValue(null),
         manager: {
           transaction: jest.fn(
-            async (callback: (transactionManager: typeof manager) => unknown) =>
-              callback(manager),
+            (callback: (transactionManager: typeof manager) => unknown) =>
+              Promise.resolve().then(() => callback(manager)),
           ),
         },
       } as never,
@@ -274,8 +278,8 @@ describe('expense aggregate contract', () => {
       findOne: jest.fn().mockResolvedValue(existingExpense),
       manager: {
         transaction: jest.fn(
-          async (callback: (transactionManager: typeof manager) => unknown) =>
-            callback(manager),
+          (callback: (transactionManager: typeof manager) => unknown) =>
+            Promise.resolve().then(() => callback(manager)),
         ),
       },
     };

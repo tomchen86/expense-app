@@ -82,7 +82,9 @@ export class ExpenseSyncService {
       );
     }
 
-    const fetchedResult = await qb.getRawAndEntities();
+    const fetchedResult = await qb.getRawAndEntities<{
+      sync_updated_at?: unknown;
+    }>();
     const fetched = fetchedResult.entities.map((expense, index) => {
       const cursorUpdatedAt = fetchedResult.raw[index]?.sync_updated_at;
       if (

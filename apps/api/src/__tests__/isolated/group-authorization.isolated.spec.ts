@@ -5,7 +5,7 @@ const repository = () => ({
   find: jest.fn(),
   findOne: jest.fn(),
   create: jest.fn((value = {}) => ({ ...value })),
-  save: jest.fn(async (value) => value),
+  save: jest.fn((value) => Promise.resolve(value)),
   createQueryBuilder: jest.fn(),
 });
 
@@ -14,12 +14,14 @@ describe('GroupService object-level authorization', () => {
   const memberRepository = repository();
   const participantRepository = repository();
   const ledgerService = {
-    resolveSpaceForUser: jest.fn(async () => ({
-      coupleId: 'space-1',
-      spaceId: 'space-1',
-      kind: 'shared',
-      participantId: 'self-participant',
-    })),
+    resolveSpaceForUser: jest.fn(() =>
+      Promise.resolve({
+        coupleId: 'space-1',
+        spaceId: 'space-1',
+        kind: 'shared',
+        participantId: 'self-participant',
+      }),
+    ),
   };
   const participantService = {
     assertParticipantsBelongToCouple: jest.fn(),
@@ -85,12 +87,14 @@ describe('GroupService object-level authorization', () => {
       (participant) => participant,
     );
     groupRepository.create.mockReturnValue({});
-    groupRepository.save.mockImplementation(async (group) => ({
-      ...group,
-      id: 'group-1',
-      createdAt: new Date('2026-08-13T00:00:00.000Z'),
-      updatedAt: new Date('2026-08-13T00:00:00.000Z'),
-    }));
+    groupRepository.save.mockImplementation((group) =>
+      Promise.resolve({
+        ...group,
+        id: 'group-1',
+        createdAt: new Date('2026-08-13T00:00:00.000Z'),
+        updatedAt: new Date('2026-08-13T00:00:00.000Z'),
+      }),
+    );
     memberRepository.create.mockImplementation(() => ({}));
 
     await service.createGroupForUser(

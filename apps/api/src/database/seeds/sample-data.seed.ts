@@ -110,7 +110,7 @@ export const seedSampleData = async (dataSource: DataSource): Promise<void> => {
       reminders: true,
     });
 
-    const [alexParticipant] = await queryRunner.query(
+    const [alexParticipant] = (await queryRunner.query(
       `INSERT INTO participants (id, couple_id, user_id, display_name, email, is_registered, default_currency, notification_preferences)
        VALUES ($1, $2, $3, $4, $5, true, 'USD', $6::jsonb)
        ON CONFLICT (couple_id, user_id) DO UPDATE SET
@@ -127,9 +127,9 @@ export const seedSampleData = async (dataSource: DataSource): Promise<void> => {
         DEMO_EMAILS.alex,
         notificationPreferences,
       ],
-    );
+    )) as [{ id: string }];
 
-    const [jamieParticipant] = await queryRunner.query(
+    const [jamieParticipant] = (await queryRunner.query(
       `INSERT INTO participants (id, couple_id, user_id, display_name, email, is_registered, default_currency, notification_preferences)
        VALUES ($1, $2, $3, $4, $5, true, 'USD', $6::jsonb)
        ON CONFLICT (couple_id, user_id) DO UPDATE SET
@@ -146,7 +146,7 @@ export const seedSampleData = async (dataSource: DataSource): Promise<void> => {
         DEMO_EMAILS.jamie,
         notificationPreferences,
       ],
-    );
+    )) as [{ id: string }];
 
     await queryRunner.query(
       `INSERT INTO participants (id, couple_id, user_id, display_name, email, is_registered, default_currency, notification_preferences)

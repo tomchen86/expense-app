@@ -9,33 +9,39 @@ describe('PersonalLedgerService personal-space ownership', () => {
       distinct: jest.fn().mockReturnThis(),
       orderBy: jest.fn().mockReturnThis(),
       addOrderBy: jest.fn().mockReturnThis(),
-      getMany: jest.fn(async () => []),
+      getMany: jest.fn(() => Promise.resolve([])),
     };
     const service = new PersonalLedgerService(
       {
-        find: jest.fn(async () => [
-          { id: 'personal-own', kind: 'personal', createdBy: 'user-1' },
-          { id: 'personal-foreign', kind: 'personal', createdBy: 'user-2' },
-          { id: 'shared-1', kind: 'shared', createdBy: 'user-2' },
-        ]),
+        find: jest.fn(() =>
+          Promise.resolve([
+            { id: 'personal-own', kind: 'personal', createdBy: 'user-1' },
+            { id: 'personal-foreign', kind: 'personal', createdBy: 'user-2' },
+            { id: 'shared-1', kind: 'shared', createdBy: 'user-2' },
+          ]),
+        ),
       } as never,
       {
-        find: jest.fn(async () => [
-          { coupleId: 'personal-own' },
-          { coupleId: 'personal-foreign' },
-          { coupleId: 'shared-1' },
-        ]),
+        find: jest.fn(() =>
+          Promise.resolve([
+            { coupleId: 'personal-own' },
+            { coupleId: 'personal-foreign' },
+            { coupleId: 'shared-1' },
+          ]),
+        ),
       } as never,
       {
-        find: jest.fn(async () => [
-          { id: 'participant-own', coupleId: 'personal-own' },
-          { id: 'participant-foreign', coupleId: 'personal-foreign' },
-          { id: 'participant-shared', coupleId: 'shared-1' },
-        ]),
+        find: jest.fn(() =>
+          Promise.resolve([
+            { id: 'participant-own', coupleId: 'personal-own' },
+            { id: 'participant-foreign', coupleId: 'personal-foreign' },
+            { id: 'participant-shared', coupleId: 'shared-1' },
+          ]),
+        ),
       } as never,
       { createQueryBuilder: jest.fn(() => expenseQuery) } as never,
-      { find: jest.fn(async () => []) } as never,
-      { resolveSpaceForUser: jest.fn(async () => ({})) } as never,
+      { find: jest.fn(() => Promise.resolve([])) } as never,
+      { resolveSpaceForUser: jest.fn(() => Promise.resolve({})) } as never,
     );
 
     await service.listForUser('user-1');

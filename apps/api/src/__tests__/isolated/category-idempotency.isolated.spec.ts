@@ -33,7 +33,7 @@ const repositoryMock = (): RepositoryMock => {
   return {
     findOne: jest.fn(),
     create: jest.fn(() => ({})),
-    save: jest.fn(async (value) => value),
+    save: jest.fn((value) => Promise.resolve(value)),
     createQueryBuilder: jest.fn(() => queryBuilder),
   };
 };
@@ -69,7 +69,9 @@ describe('Category client identity', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     categoryRepository.findOne.mockResolvedValue(null);
-    categoryRepository.save.mockImplementation(async (value) => value);
+    categoryRepository.save.mockImplementation((value) =>
+      Promise.resolve(value),
+    );
     const queryBuilder = categoryRepository.createQueryBuilder();
     queryBuilder.getOne.mockResolvedValue(null);
     (ledgerService.resolveSpaceForUser as jest.Mock).mockResolvedValue({
@@ -103,7 +105,7 @@ describe('Category client identity', () => {
         name: ' Dining ',
         color: '#ffaa00',
         icon: 'restaurant',
-      } as CreateCategoryDto,
+      },
       'space-1',
     );
 
@@ -129,7 +131,7 @@ describe('Category client identity', () => {
           name: ' Dining ',
           color: '#ffaa00',
           icon: 'restaurant',
-        } as CreateCategoryDto,
+        },
         'space-1',
       ),
     ).resolves.toEqual(expect.objectContaining({ id: categoryId }));
@@ -152,7 +154,7 @@ describe('Category client identity', () => {
           name: 'Dining',
           color: '#FFAA00',
           icon: 'restaurant',
-        } as CreateCategoryDto,
+        },
         'space-1',
       ),
     ).rejects.toMatchObject({
@@ -177,7 +179,7 @@ describe('Category client identity', () => {
           name: 'Dining',
           color: '#FFAA00',
           icon: 'restaurant',
-        } as CreateCategoryDto,
+        },
         'space-1',
       ),
     ).resolves.toEqual(expect.objectContaining({ id: categoryId }));
@@ -197,7 +199,7 @@ describe('Category client identity', () => {
           name: 'Dining',
           color: '#FFAA00',
           icon: 'restaurant',
-        } as CreateCategoryDto,
+        },
         'space-1',
       ),
     ).rejects.toBeInstanceOf(ApiConflictException);

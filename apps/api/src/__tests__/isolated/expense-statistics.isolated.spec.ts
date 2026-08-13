@@ -5,7 +5,7 @@ const aggregateQuery = (rows: unknown[]) => ({
   addSelect: jest.fn().mockReturnThis(),
   groupBy: jest.fn().mockReturnThis(),
   addGroupBy: jest.fn().mockReturnThis(),
-  getRawMany: jest.fn(async () => rows),
+  getRawMany: jest.fn(() => Promise.resolve(rows)),
 });
 
 describe('ExpenseService currency-safe statistics', () => {
@@ -27,7 +27,7 @@ describe('ExpenseService currency-safe statistics', () => {
       andWhere: jest.fn().mockReturnThis(),
       orderBy: jest.fn().mockReturnThis(),
       addOrderBy: jest.fn().mockReturnThis(),
-      getCount: jest.fn(async () => 2),
+      getCount: jest.fn(() => Promise.resolve(2)),
       clone: jest
         .fn()
         .mockReturnValueOnce(currencyQuery)
@@ -43,7 +43,9 @@ describe('ExpenseService currency-safe statistics', () => {
       {} as never,
       {} as never,
       {
-        resolveSpaceForUser: jest.fn(async () => ({ coupleId: 'space-1' })),
+        resolveSpaceForUser: jest.fn(() =>
+          Promise.resolve({ coupleId: 'space-1' }),
+        ),
       } as never,
       {} as never,
     );

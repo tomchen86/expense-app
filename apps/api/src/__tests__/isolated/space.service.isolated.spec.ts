@@ -15,7 +15,7 @@ const repositoryMock = (): RepositoryMock => ({
   find: jest.fn(),
   findOne: jest.fn(),
   create: jest.fn((value = {}) => ({ ...value })),
-  save: jest.fn(async (value) => value),
+  save: jest.fn((value) => Promise.resolve(value)),
 });
 
 const asRepository = <T extends ObjectLiteral>(
@@ -129,41 +129,46 @@ describe('SpaceService', () => {
   });
 
   it('returns the creator participant ID when it creates a shared space', async () => {
-    const transaction = jest.fn(
-      async (callback: (manager: unknown) => unknown) =>
+    const transaction = jest.fn((callback: (manager: unknown) => unknown) =>
+      Promise.resolve().then(() =>
         callback({
           getRepository: (entity: unknown) => {
             if (entity === Entities.Couple) {
               return {
                 create: jest.fn(() => ({})),
-                save: jest.fn(async (space) => ({
-                  ...space,
-                  id: 'trip-new',
-                  createdAt: new Date('2024-03-01'),
-                  updatedAt: new Date('2024-03-01'),
-                })),
+                save: jest.fn((space) =>
+                  Promise.resolve({
+                    ...space,
+                    id: 'trip-new',
+                    createdAt: new Date('2024-03-01'),
+                    updatedAt: new Date('2024-03-01'),
+                  }),
+                ),
               };
             }
             if (entity === Entities.CoupleMember) {
               return {
                 create: jest.fn(() => ({})),
-                save: jest.fn(async (members) => members),
+                save: jest.fn((members) => Promise.resolve(members)),
               };
             }
             return {
               create: jest.fn(() => ({})),
-              save: jest.fn(async (participants: Array<{ userId: string }>) =>
-                participants.map((participant) => ({
-                  ...participant,
-                  id:
-                    participant.userId === 'user-1'
-                      ? 'participant-creator'
-                      : 'participant-friend',
-                })),
+              save: jest.fn((participants: Array<{ userId: string }>) =>
+                Promise.resolve().then(() =>
+                  participants.map((participant) => ({
+                    ...participant,
+                    id:
+                      participant.userId === 'user-1'
+                        ? 'participant-creator'
+                        : 'participant-friend',
+                  })),
+                ),
               ),
             };
           },
         }),
+      ),
     );
     Object.assign(spaceRepository, { manager: { transaction } });
     userRepository.find.mockResolvedValue([
@@ -251,7 +256,7 @@ describe('SpaceService', () => {
       updatedAt: new Date('2024-01-01'),
     };
     spaceRepository.findOne.mockResolvedValue(space);
-    spaceRepository.save.mockImplementation(async (value) => value);
+    spaceRepository.save.mockImplementation((value) => Promise.resolve(value));
 
     await expect(
       service.updateSyncPolicy('user-1', 'personal-1', 'cloud_sync'),

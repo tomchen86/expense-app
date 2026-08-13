@@ -15,7 +15,7 @@ const repositoryMock = (): RepositoryMock => ({
   find: jest.fn(),
   findOne: jest.fn(),
   create: jest.fn((value = {}) => ({ ...value })),
-  save: jest.fn(async (value) => value),
+  save: jest.fn((value) => Promise.resolve(value)),
   createQueryBuilder: jest.fn(),
 });
 
@@ -51,7 +51,7 @@ describe('LedgerService explicit space context', () => {
     categoryRepository.createQueryBuilder.mockReturnValue({
       withDeleted: () => ({
         where: () => ({
-          getCount: async () => 1,
+          getCount: () => Promise.resolve(1),
         }),
       }),
     });
@@ -192,10 +192,12 @@ describe('LedgerService explicit space context', () => {
 
   it('marks an API-provisioned personal space as cloud synchronized', async () => {
     coupleRepository.create.mockReturnValue({});
-    coupleRepository.save.mockImplementation(async (space) => ({
-      ...space,
-      id: 'personal-space',
-    }));
+    coupleRepository.save.mockImplementation((space) =>
+      Promise.resolve({
+        ...space,
+        id: 'personal-space',
+      }),
+    );
 
     await service.resolveSpaceForUser('user-1');
 

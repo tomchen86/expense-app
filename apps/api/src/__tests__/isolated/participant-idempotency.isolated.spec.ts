@@ -16,7 +16,7 @@ type RepositoryMock = {
 const repositoryMock = (): RepositoryMock => ({
   findOne: jest.fn(),
   create: jest.fn(() => ({})),
-  save: jest.fn(async (value) => value),
+  save: jest.fn((value) => Promise.resolve(value)),
 });
 
 const asRepository = <T extends ObjectLiteral>(
@@ -75,7 +75,7 @@ describe('Participant client identity', () => {
   it('preserves a new client-generated participant ID', async () => {
     await service.createParticipantForUser(
       'user-1',
-      { id: participantId, name: ' Alex ' } as CreateParticipantDto,
+      { id: participantId, name: ' Alex ' },
       'space-1',
     );
 
@@ -114,7 +114,7 @@ describe('Participant client identity', () => {
           email: 'alex@example.com',
           defaultCurrency: 'AUD',
           notifications: { invites: false },
-        } as CreateParticipantDto,
+        },
         'space-1',
       ),
     ).resolves.toEqual(expect.objectContaining({ id: participantId }));
@@ -145,7 +145,7 @@ describe('Participant client identity', () => {
     await expect(
       service.createParticipantForUser(
         'user-1',
-        { id: participantId, name: 'Alex' } as CreateParticipantDto,
+        { id: participantId, name: 'Alex' },
         'space-1',
       ),
     ).resolves.toEqual(expect.objectContaining({ id: participantId }));
@@ -168,7 +168,7 @@ describe('Participant client identity', () => {
     await expect(
       service.createParticipantForUser(
         'user-1',
-        { id: participantId, name: 'Alex' } as CreateParticipantDto,
+        { id: participantId, name: 'Alex' },
         'space-1',
       ),
     ).rejects.toMatchObject({
@@ -199,7 +199,7 @@ describe('Participant client identity', () => {
     await expect(
       service.createParticipantForUser(
         'user-1',
-        { id: participantId, name: 'Different name' } as CreateParticipantDto,
+        { id: participantId, name: 'Different name' },
         'space-1',
       ),
     ).rejects.toBeInstanceOf(ApiConflictException);

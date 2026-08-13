@@ -2,7 +2,7 @@ import { CategoryService } from '../../services/category.service';
 
 const repository = () => ({
   findOne: jest.fn(),
-  save: jest.fn(async (value) => value),
+  save: jest.fn((value) => Promise.resolve(value)),
   createQueryBuilder: jest.fn(),
 });
 
@@ -10,13 +10,15 @@ describe('CategoryService deletion safety', () => {
   const categoryRepository = repository();
   const expenseRepository = repository();
   const ledgerService = {
-    resolveSpaceForUser: jest.fn(async () => ({
-      coupleId: 'space-1',
-      spaceId: 'space-1',
-      kind: 'personal',
-      participantId: 'participant-1',
-      role: 'owner',
-    })),
+    resolveSpaceForUser: jest.fn(() =>
+      Promise.resolve({
+        coupleId: 'space-1',
+        spaceId: 'space-1',
+        kind: 'personal',
+        participantId: 'participant-1',
+        role: 'owner',
+      }),
+    ),
   };
 
   const service = new CategoryService(

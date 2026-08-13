@@ -133,7 +133,7 @@ export class LedgerService {
       throw new ApiNotFoundException('SPACE_NOT_FOUND', 'Space not found');
     }
 
-    return { space, role: membership.role as SpaceRole };
+    return { space, role: membership.role };
   }
 
   private async ensurePersonalSpaceForUser(
