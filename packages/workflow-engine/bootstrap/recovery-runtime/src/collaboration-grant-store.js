@@ -1,5 +1,7 @@
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
+import { canonicalJson } from './canonical-json.js';
 import { COLLABORATION_GRANT_AUTHORIZED_EFFECT, COLLABORATION_GRANT_REPLAY_SCOPE, COLLABORATION_GRANT_RESIDUALS, COLLABORATION_GRANT_RETAINED_OBLIGATIONS, assertCollaborationGrantId, canonicalCollaborationGrantEnvelope, collaborationGrantEnvelopeDigest, directHumanReviewAttestationDigest, bindingFromPayload, parseCollaborationGrantEnvelope, parseDirectHumanReviewAttestation, validateCollaborationGrantEnvelope, validateDirectHumanReviewAttestation, } from './collaboration-grant.js';
 import { deriveAuthorityAuditRepositoryId } from './authority-audit-ledger.js';
 import { ExitCode, workflowError } from './errors.js';
@@ -148,6 +150,69 @@ export function reserveCollaborationGrantUnderLifecycleLock(cwd, requestedGrantI
     replacePrivateFileAtomic(reservedPath, serialize(record));
     assertOwned();
     return deepFreeze(record);
+}
+/**
+ * Select and reserve a signed caller-supplied or direct-human grant without
+ * asking the lifecycle caller to trust actor or reason fields from an
+ * unverified local envelope. The caller supplies only immutable transition
+ * facts and the forms it is prepared to admit. The complete binding and its
+ * transition digest are derived from the signed payload after those facts
+ * match.
+ *
+ * Repeating the exact selection reuses an existing durable reservation. That
+ * replay verifies the signed envelope again but does not add a second
+ * wall-clock freshness rule after the grant was reserved while valid.
+ */
+export function selectAndReserveCollaborationGrantUnderLifecycleLock(cwd, requestedGrantId, request, assertOwned) {
+    assertOwned();
+    const grantId = assertCollaborationGrantId(requestedGrantId);
+    const allowedDegradedForms = assertSelectableDegradedForms(request.allowedDegradedForms);
+    const repository = discoverRepository(cwd);
+    const paths = collaborationGrantStorePaths(repository.gitCommonDirectory);
+    ensureStoreDirectories(paths);
+    assertOwned();
+    const terminalPath = statePath(paths.terminal, grantId);
+    if (fs.existsSync(terminalPath)) {
+        const terminal = readTerminal(terminalPath, grantId);
+        cleanupNonterminal(paths, grantId, terminal.envelope, terminal.transitionDigest);
+        throw unavailableGrant(grantId);
+    }
+    assertNonterminalUnambiguous(paths, grantId);
+    const reservedPath = statePath(paths.reserved, grantId);
+    if (fs.existsSync(reservedPath)) {
+        const reservation = readReservation(reservedPath, grantId);
+        const expectedBinding = assertSelectedGrantBinding(reservation.envelope, request.expectedCore, allowedDegradedForms);
+        const transitionDigest = collaborationRoleTransitionDigest(expectedBinding);
+        if (reservation.repositoryRoot !== repository.repositoryRoot ||
+            reservation.transitionDigest !== transitionDigest) {
+            throw bindingMismatch();
+        }
+        const context = loadSelectionValidationContext(repository.repositoryRoot, request.expectedCore, request.now, request.verifier);
+        validateCollaborationGrantEnvelope(reservation.envelope, context.policy, {
+            now: context.now,
+            expected: expectedBinding,
+            verifier: context.verifier,
+            allowExpired: true,
+        });
+        assertOwned();
+        return deepFreeze({ reservation, expectedBinding });
+    }
+    const availablePath = statePath(paths.available, grantId);
+    if (!fs.existsSync(availablePath)) {
+        throw unavailableGrant(grantId);
+    }
+    const available = readAvailable(availablePath, grantId);
+    const expectedBinding = assertSelectedGrantBinding(available, request.expectedCore, allowedDegradedForms);
+    const reservation = reserveCollaborationGrantUnderLifecycleLock(repository.repositoryRoot, grantId, {
+        transitionDigest: collaborationRoleTransitionDigest(expectedBinding),
+        expected: expectedBinding,
+        ...(request.now === undefined ? {} : { now: request.now }),
+        ...(request.verifier === undefined ? {} : { verifier: request.verifier }),
+    }, assertOwned);
+    return deepFreeze({
+        reservation,
+        expectedBinding: bindingFromPayload(reservation.envelope.payload),
+    });
 }
 export function readReservedCollaborationGrant(gitCommonDirectory, requestedGrantId) {
     const paths = collaborationGrantStorePaths(gitCommonDirectory);
@@ -566,6 +631,34 @@ export function inspectCollaborationGrants(gitCommonDirectory, requestedGrantId)
     const paths = collaborationGrantStorePaths(gitCommonDirectory);
     return withRepositoryLifecycleOperation(paths.runtime, (assertOwned) => inspectCollaborationGrantsUnderLifecycleLock(gitCommonDirectory, requestedGrantId, assertOwned));
 }
+/**
+ * Read one durable grant state without acquiring a lifecycle lock or creating,
+ * chmodding, repairing, or otherwise changing the collaboration store. This is
+ * the status/replay surface; transition callers use the locked APIs above.
+ */
+export function readCollaborationGrantInspection(gitCommonDirectory, requestedGrantId) {
+    const paths = collaborationGrantStorePaths(gitCommonDirectory);
+    if (!assertExistingStoreReadOnlySafe(paths))
+        return null;
+    return (inspectOne(paths, assertCollaborationGrantId(requestedGrantId)) ?? null);
+}
+/**
+ * List every durable grant state through the same strict, mutation-free reader
+ * used by status replay. This deliberately does not acquire the repository
+ * lifecycle lock or create/repair any store directory.
+ */
+export function listCollaborationGrantInspections(gitCommonDirectory) {
+    const paths = collaborationGrantStorePaths(gitCommonDirectory);
+    if (!assertExistingStoreReadOnlySafe(paths))
+        return Object.freeze([]);
+    const grantIds = [
+        ...new Set(existingStateDirectories(paths).flatMap(({ directory }) => listGrantIds(directory))),
+    ].sort();
+    return Object.freeze(grantIds.flatMap((grantId) => {
+        const inspection = inspectOne(paths, grantId);
+        return inspection === undefined ? [] : [inspection];
+    }));
+}
 export function inspectCollaborationGrantsUnderLifecycleLock(gitCommonDirectory, requestedGrantId, assertOwned) {
     assertOwned();
     const paths = collaborationGrantStorePaths(gitCommonDirectory);
@@ -622,6 +715,7 @@ function inspectEnvelope(envelope, state) {
         issuedAt: envelope.payload.issuedAt,
         expiresAt: envelope.payload.expiresAt,
         signer: envelope.payload.signer,
+        signedEnvelopeDigest: collaborationGrantEnvelopeDigest(envelope),
     });
 }
 function inspectTerminal(terminal) {
@@ -721,9 +815,16 @@ function readTerminal(filePath, grantId) {
     let use = null;
     if (value.state === 'consumed') {
         use = assertStoredUse(value.use, envelope);
+        if (value.transitionDigest === null ||
+            value.transitionDigest !== use.transitionDigest) {
+            throw ambiguousGrant(grantId);
+        }
     }
-    else if (value.use !== null) {
-        throw ambiguousGrant(grantId);
+    else {
+        if (value.use !== null ||
+            (value.state !== 'revoked' && value.transitionDigest === null)) {
+            throw ambiguousGrant(grantId);
+        }
     }
     let revocationAuthorization;
     if (hasAuthorization) {
@@ -830,6 +931,9 @@ function assertGrantedAssignment(value, envelope) {
             'author',
             'participant',
             'callableProviderIds',
+            ...('degradedAuthorityOverride' in value
+                ? ['degradedAuthorityOverride']
+                : []),
             'directHumanReviewAttestationDigest',
         ]) ||
         value.role !== envelope.payload.rolePair.conflictingRole ||
@@ -852,6 +956,11 @@ function assertGrantedAssignment(value, envelope) {
         author: assertRecordedParticipant(value.author),
         participant: assertRecordedParticipant(value.participant),
         callableProviderIds: assertCallableProviderIds(value.callableProviderIds),
+        ...('degradedAuthorityOverride' in value
+            ? {
+                degradedAuthorityOverride: assertTaskDiffChallengeClosureAuthorityOverride(value.degradedAuthorityOverride, value.role, value.targetDigest),
+            }
+            : {}),
     };
     if (envelope.payload.degradedForm === 'same-provider-fresh-session' &&
         envelope.payload.availableActor.kind === 'provider' &&
@@ -873,6 +982,7 @@ function assertGrantedAssignment(value, envelope) {
             common.author.sessionId === common.participant.sessionId ||
             JSON.stringify(common.callableProviderIds) !==
                 JSON.stringify([envelope.payload.availableActor.providerId]) ||
+            common.degradedAuthorityOverride !== undefined ||
             value.directHumanReviewAttestationDigest !== null) {
             throw invalidUse();
         }
@@ -906,7 +1016,8 @@ function assertGrantedAssignment(value, envelope) {
             common.participant.sessionId !== null ||
             common.participant.engineSpawned !== false ||
             common.participant.principalId !== expectedPrincipal ||
-            common.callableProviderIds.length !== 0 ||
+            (common.callableProviderIds.length !== 0 &&
+                common.degradedAuthorityOverride === undefined) ||
             (envelope.payload.degradedForm === 'caller-supplied'
                 ? value.directHumanReviewAttestationDigest !== null ||
                     common.participant.identityAssurance !==
@@ -928,6 +1039,45 @@ function assertGrantedAssignment(value, envelope) {
         });
     }
     throw invalidUse();
+}
+function assertTaskDiffChallengeClosureAuthorityOverride(value, role, targetDigest) {
+    if (role !== 'task-diff-reviewer' ||
+        !isRecord(value) ||
+        !hasExactKeys(value, [
+            'kind',
+            'targetDigest',
+            'subjectDigest',
+            'reviewRecordDigest',
+            'responseDigest',
+        ]) ||
+        value.kind !== 'task-diff-challenge-closure' ||
+        typeof targetDigest !== 'string' ||
+        value.targetDigest !== targetDigest ||
+        typeof value.subjectDigest !== 'string' ||
+        !DIGEST.test(value.subjectDigest) ||
+        typeof value.reviewRecordDigest !== 'string' ||
+        !DIGEST.test(value.reviewRecordDigest) ||
+        typeof value.responseDigest !== 'string' ||
+        !DIGEST.test(value.responseDigest) ||
+        value.targetDigest !==
+            crypto
+                .createHash('sha256')
+                .update(canonicalJson({
+                schema: 'workflow.task-diff-external-continuation-target.v1',
+                subjectDigest: value.subjectDigest,
+                reviewRecordDigest: value.reviewRecordDigest,
+                responseDigest: value.responseDigest,
+            }))
+                .digest('hex')) {
+        throw invalidUse();
+    }
+    return deepFreeze({
+        kind: 'task-diff-challenge-closure',
+        targetDigest: value.targetDigest,
+        subjectDigest: value.subjectDigest,
+        reviewRecordDigest: value.reviewRecordDigest,
+        responseDigest: value.responseDigest,
+    });
 }
 function assertRecordedParticipant(value) {
     if (!isRecord(value) ||
@@ -1133,6 +1283,49 @@ function existingStateDirectories(paths) {
         return [{ directory }];
     });
 }
+function assertExistingStoreReadOnlySafe(paths) {
+    const rootStats = fs.lstatSync(paths.root, { throwIfNoEntry: false });
+    if (!rootStats)
+        return false;
+    assertExistingPrivateDirectory(paths.root, rootStats);
+    const allowed = new Set([
+        path.basename(paths.available),
+        path.basename(paths.reserved),
+        path.basename(paths.terminal),
+        path.basename(paths.revocationAuthorizations),
+    ]);
+    for (const entry of fs.readdirSync(paths.root)) {
+        if (!allowed.has(entry))
+            throw unsafeStore();
+        const directory = path.join(paths.root, entry);
+        const stats = fs.lstatSync(directory, { throwIfNoEntry: false });
+        if (!stats)
+            throw unsafeStore();
+        assertExistingPrivateDirectory(directory, stats);
+        for (const name of fs.readdirSync(directory)) {
+            if (!STATE_FILE.test(name))
+                throw unsafeStore();
+            const filePath = path.join(directory, name);
+            const fileStats = fs.lstatSync(filePath, { throwIfNoEntry: false });
+            if (!fileStats ||
+                !fileStats.isFile() ||
+                fileStats.isSymbolicLink() ||
+                fileStats.nlink !== 1 ||
+                (fileStats.mode & 0o777) !== 0o600) {
+                throw unsafeStore();
+            }
+        }
+    }
+    return true;
+}
+function assertExistingPrivateDirectory(directory, stats) {
+    if (!stats.isDirectory() ||
+        stats.isSymbolicLink() ||
+        fs.realpathSync(directory) !== path.resolve(directory) ||
+        (stats.mode & 0o777) !== 0o700) {
+        throw unsafeStore();
+    }
+}
 function assertNoState(paths, grantId) {
     if ([paths.available, paths.reserved, paths.terminal].some((directory) => fs.existsSync(statePath(directory, grantId)))) {
         throw unavailableGrant(grantId);
@@ -1262,6 +1455,106 @@ function hasExactKeys(value, expected) {
     const sorted = [...expected].sort();
     return (actual.length === sorted.length &&
         actual.every((entry, index) => entry === sorted[index]));
+}
+function assertSelectableDegradedForms(value) {
+    if (!Array.isArray(value) ||
+        value.length === 0 ||
+        value.some((entry) => entry !== 'caller-supplied' && entry !== 'direct-human-review') ||
+        new Set(value).size !== value.length) {
+        throw bindingMismatch();
+    }
+    return Object.freeze([...value].sort());
+}
+function assertSelectedGrantBinding(envelope, expectedCore, allowedDegradedForms) {
+    if (!isRecord(expectedCore) ||
+        !hasExactKeys(expectedCore, [
+            'repositoryId',
+            'repositoryOrigin',
+            'policyBlob',
+            'collaborationPolicyDigest',
+            'changeId',
+            'taskId',
+            'baselineCommit',
+            'baselineTree',
+            'targetDigest',
+            'lifecyclePhase',
+            'rolePair',
+        ])) {
+        throw bindingMismatch();
+    }
+    const expectedBinding = bindingFromPayload(envelope.payload);
+    const observedCore = {
+        repositoryId: expectedBinding.repositoryId,
+        repositoryOrigin: expectedBinding.repositoryOrigin,
+        policyBlob: expectedBinding.policyBlob,
+        collaborationPolicyDigest: expectedBinding.collaborationPolicyDigest,
+        changeId: expectedBinding.changeId,
+        taskId: expectedBinding.taskId,
+        baselineCommit: expectedBinding.baselineCommit,
+        baselineTree: expectedBinding.baselineTree,
+        targetDigest: expectedBinding.targetDigest,
+        lifecyclePhase: expectedBinding.lifecyclePhase,
+        rolePair: expectedBinding.rolePair,
+    };
+    let coreMatches = false;
+    try {
+        coreMatches =
+            canonicalJson(observedCore) === canonicalJson(expectedCore) &&
+                allowedDegradedForms.includes(expectedBinding.degradedForm);
+    }
+    catch {
+        throw bindingMismatch();
+    }
+    const actorMatchesForm = (expectedBinding.degradedForm === 'caller-supplied' &&
+        expectedBinding.availableActor.kind === 'caller') ||
+        (expectedBinding.degradedForm === 'direct-human-review' &&
+            expectedBinding.availableActor.kind === 'direct-human');
+    if (!coreMatches || !actorMatchesForm) {
+        throw bindingMismatch();
+    }
+    return deepFreeze(expectedBinding);
+}
+function loadSelectionValidationContext(repositoryRoot, expectedCore, requestedNow, requestedVerifier) {
+    const baselineCommit = exactRepositoryCommit(repositoryRoot, expectedCore.baselineCommit);
+    const baselineTree = runGit(repositoryRoot, [
+        'rev-parse',
+        `${baselineCommit}^{tree}`,
+    ]).trim();
+    const head = runGit(repositoryRoot, ['rev-parse', 'HEAD']).trim();
+    const mergeBase = runGit(repositoryRoot, [
+        'merge-base',
+        baselineCommit,
+        head,
+    ]).trim();
+    const policy = loadPolicyAtCommit(repositoryRoot, baselineCommit);
+    const policyBlob = runGit(repositoryRoot, [
+        'rev-parse',
+        `${baselineCommit}:workflow/maintainer-policy.json`,
+    ]).trim();
+    const origin = runGit(repositoryRoot, ['remote', 'get-url', 'origin']).trim();
+    if (mergeBase !== baselineCommit ||
+        expectedCore.baselineTree !== baselineTree ||
+        expectedCore.policyBlob !== policyBlob ||
+        expectedCore.repositoryId !== policy.repository.id ||
+        expectedCore.repositoryOrigin !== policy.repository.origin ||
+        origin !== policy.repository.origin) {
+        throw bindingMismatch();
+    }
+    return {
+        now: exactDate(requestedNow ?? new Date()),
+        policy,
+        verifier: requestedVerifier ?? createInteractiveSshSigner(repositoryRoot, policy),
+    };
+}
+function collaborationRoleTransitionDigest(expectedBinding) {
+    return crypto
+        .createHash('sha256')
+        .update(canonicalJson({
+        schemaVersion: 1,
+        kind: 'collaboration-role-transition',
+        expectedBinding,
+    }))
+        .digest('hex');
 }
 function exactDigest(value, label) {
     if (typeof value !== 'string' || !DIGEST.test(value)) {

@@ -129,8 +129,17 @@ export type GrantedRoleAssignment = {
   author: RecordedRoleParticipant;
   participant: RecordedRoleParticipant;
   callableProviderIds: readonly ProviderId[];
+  degradedAuthorityOverride?: TaskDiffChallengeClosureAuthorityOverride;
   directHumanReviewAttestationDigest: string | null;
 };
+
+export type TaskDiffChallengeClosureAuthorityOverride = Readonly<{
+  kind: 'task-diff-challenge-closure';
+  targetDigest: string;
+  subjectDigest: string;
+  reviewRecordDigest: string;
+  responseDigest: string;
+}>;
 
 export type GrantedSameProviderRoleAssignment = GrantedRoleAssignment & {
   providerId: ProviderId;
@@ -256,6 +265,7 @@ export type AuthorizeGrantedOrdinaryRoleInput = {
   reservation: CollaborationReservationRecord;
   actualParticipant: RoleParticipant;
   callableProviderIds: ProviderId[];
+  degradedAuthorityOverride?: TaskDiffChallengeClosureAuthorityOverride;
   directHumanReview?: DirectHumanReviewProof;
 };
 
@@ -410,6 +420,14 @@ export function authorizeGrantedOrdinaryRole(
     throw grantedRoleInvalid();
   }
   const callableProviderIds = [...input.callableProviderIds];
+  const degradedAuthorityOverride =
+    input.degradedAuthorityOverride === undefined
+      ? undefined
+      : assertTaskDiffChallengeClosureAuthorityOverride(
+          input.degradedAuthorityOverride,
+          input.role,
+          input.targetDigest,
+        );
   if (
     callableProviderIds.some((providerId) => !isProviderId(providerId)) ||
     callableProviderIds.length !== new Set(callableProviderIds).size
@@ -454,6 +472,9 @@ export function authorizeGrantedOrdinaryRole(
     authorizedEffect: COLLABORATION_GRANT_AUTHORIZED_EFFECT,
     author: recordParticipant(input.author),
     callableProviderIds: Object.freeze([...callableProviderIds].sort()),
+    ...(degradedAuthorityOverride === undefined
+      ? {}
+      : { degradedAuthorityOverride }),
   };
   const participant = input.actualParticipant;
 
@@ -468,6 +489,7 @@ export function authorizeGrantedOrdinaryRole(
       callableProviderIds[0] !== providerId ||
       participant.providerId !== providerId ||
       participant.identityAssurance !== payload.availableActor.assurance ||
+      degradedAuthorityOverride !== undefined ||
       !participant.engineSpawned ||
       typeof input.author.sessionId !== 'string' ||
       typeof participant.sessionId !== 'string' ||
@@ -490,7 +512,8 @@ export function authorizeGrantedOrdinaryRole(
   }
 
   if (
-    callableProviderIds.length !== 0 ||
+    (callableProviderIds.length !== 0 &&
+      degradedAuthorityOverride === undefined) ||
     participant.providerId !== undefined ||
     participant.sessionId !== undefined ||
     participant.engineSpawned
@@ -708,8 +731,48 @@ export function isGrantedSameProviderRoleAssignment(
     value.achievedIndependence === 'session-independent' &&
     value.sessionIndependent === true &&
     value.engineSpawned === true &&
-    value.directHumanReviewAttestationDigest === null
+    value.directHumanReviewAttestationDigest === null &&
+    value.degradedAuthorityOverride === undefined
   );
+}
+
+function assertTaskDiffChallengeClosureAuthorityOverride(
+  value: TaskDiffChallengeClosureAuthorityOverride,
+  role: EngineProviderRole,
+  targetDigest: string,
+): TaskDiffChallengeClosureAuthorityOverride {
+  if (
+    role !== 'task-diff-reviewer' ||
+    !value ||
+    typeof value !== 'object' ||
+    !hasExactKeys(value, [
+      'kind',
+      'targetDigest',
+      'subjectDigest',
+      'reviewRecordDigest',
+      'responseDigest',
+    ]) ||
+    value.kind !== 'task-diff-challenge-closure' ||
+    !/^[0-9a-f]{64}$/.test(value.subjectDigest) ||
+    !/^[0-9a-f]{64}$/.test(value.reviewRecordDigest) ||
+    !/^[0-9a-f]{64}$/.test(value.responseDigest) ||
+    value.targetDigest !== targetDigest ||
+    value.targetDigest !==
+      crypto
+        .createHash('sha256')
+        .update(
+          canonicalJson({
+            schema: 'workflow.task-diff-external-continuation-target.v1',
+            subjectDigest: value.subjectDigest,
+            reviewRecordDigest: value.reviewRecordDigest,
+            responseDigest: value.responseDigest,
+          }),
+        )
+        .digest('hex')
+  ) {
+    throw grantedRoleInvalid();
+  }
+  return deepFreeze(structuredClone(value));
 }
 
 function isOrdinaryRoleAssignment(

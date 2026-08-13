@@ -14,7 +14,9 @@
     "lint:fix": "eslint . --fix",
     "workflow": "node --experimental-strip-types packages/workflow-engine/bootstrap/workflow-launcher.ts",
     "workflow:test": "node --experimental-strip-types scripts/workflow-full-gate.ts",
+    "workflow:test:failures": "node --experimental-strip-types scripts/workflow-full-gate.ts --failures",
     "workflow:test:status": "node --experimental-strip-types scripts/workflow-full-gate.ts --status",
+    "workflow:test:timings": "node --experimental-strip-types scripts/workflow-full-gate.ts --timings",
     "workflow:typecheck": "tsc -p packages/workflow-engine/tsconfig.json"
   },
   "dependencies": {

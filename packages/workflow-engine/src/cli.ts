@@ -193,10 +193,22 @@ import {
   beginTaskDiffReview,
   inspectTaskDiffReviewStatus,
   inspectTaskDiffReviewSubject,
+  loadCurrentAuthenticatedTaskDiffReview,
   reconcileTaskDiffReviewContinuation,
   reconcileTaskDiffReview,
+  resumeDirectHumanTaskDiffReview,
+  submitExternalTaskDiffReview,
+  submitExternalTaskDiffReviewContinuation,
 } from './task-diff-review-lifecycle.ts';
-import { parseTaskDiffReviewChallengeResponseInput } from './task-diff-review-input.ts';
+import { createTaskDiffReviewChallengeResponse } from './task-diff-review-artifact.ts';
+import {
+  parseTaskDiffReviewChallengeResponseInput,
+  parseTaskDiffReviewExternalClosureRequestInput,
+  parseTaskDiffReviewExternalSubmissionInput,
+  type TaskDiffReviewChallengeResponseInput,
+  type TaskDiffReviewExternalClosureRequestInput,
+  type TaskDiffReviewExternalSubmissionInput,
+} from './task-diff-review-input.ts';
 import { issueTaskRevisionApproval } from './task-revision-approval.ts';
 import { validateManagedDocuments } from './managed-documents.ts';
 import { diagnoseOpenSpec } from './openspec-doctor.ts';
@@ -1241,6 +1253,36 @@ function dispatch(args: string[], cwd: string): CommandResult {
         ),
       };
     case 'maintainer': {
+      if (rest[0] === 'review-diff-attest') {
+        const sessionId = rest[1];
+        const inputPath = rest[3];
+        const grantId = rest[5];
+        if (
+          rest.length !== 6 ||
+          !sessionId ||
+          rest[2] !== '--input' ||
+          !inputPath ||
+          rest[4] !== '--grant' ||
+          !grantId
+        ) {
+          throw maintainerTaskDiffReviewUsage();
+        }
+        const parsedInput = parseTaskDiffReviewCliInput(cwd, inputPath);
+        if (parsedInput.route === 'provider-response') {
+          throw maintainerTaskDiffReviewUsage();
+        }
+        return {
+          command,
+          action: 'review-diff-attest',
+          ok: true,
+          result: resumeDirectHumanTaskDiffReview(
+            cwd,
+            sessionId,
+            parsedInput.input,
+            grantId,
+          ),
+        };
+      }
       if (
         rest.length === 6 &&
         rest[0] === 'revision-approval' &&
@@ -1662,30 +1704,54 @@ function dispatch(args: string[], cwd: string): CommandResult {
           rest[1] === '--actor' &&
           actor !== undefined &&
           rest[3] === '--grant' &&
+          grantId !== undefined) ||
+        (rest.length === 5 &&
+          rest[1] === '--input' &&
+          inputPath !== undefined &&
+          rest[3] === '--grant' &&
           grantId !== undefined);
       if (sessionId && validStartArguments) {
         let status;
         if (inputPath !== undefined) {
-          let input;
-          try {
-            input = parseTaskDiffReviewChallengeResponseInput(
-              JSON.parse(
-                fs.readFileSync(path.resolve(cwd, inputPath), 'utf8'),
-              ) as unknown,
+          const parsedInput = parseTaskDiffReviewCliInput(cwd, inputPath);
+          if (parsedInput.route === 'provider-response') {
+            if (grantId !== undefined) throw taskDiffReviewUsage();
+            status = beginTaskDiffReviewContinuationFromInput(
+              cwd,
+              sessionId,
+              parsedInput.input,
             );
-          } catch (error) {
-            if (error instanceof WorkflowError) throw error;
-            throw workflowError(
-              'TASK_DIFF_REVIEW_RESPONSE_INPUT_INVALID',
-              'TaskDiffReview challenge response input must be a readable exact typed envelope.',
-              ExitCode.usage,
+          } else if (parsedInput.route === 'external-initial') {
+            status = submitExternalTaskDiffReview(
+              cwd,
+              sessionId,
+              parsedInput.input,
+              grantId === undefined ? {} : { collaborationGrant: { grantId } },
+            );
+          } else {
+            const current = loadCurrentAuthenticatedTaskDiffReview(
+              cwd,
+              sessionId,
+            );
+            const response = createTaskDiffReviewChallengeResponse({
+              review: current.review,
+              responses: parsedInput.input.responses,
+            });
+            status = submitExternalTaskDiffReviewContinuation(
+              cwd,
+              sessionId,
+              response,
+              {
+                schemaVersion: 1,
+                kind: 'task-diff-review-closure-input.v1',
+                subjectDigest: parsedInput.input.subjectDigest,
+                reviewRecordDigest: parsedInput.input.reviewRecordDigest,
+                responseDigest: response.responseDigest,
+                proposedDispositions: parsedInput.input.proposedDispositions,
+              },
+              grantId === undefined ? {} : { collaborationGrant: { grantId } },
             );
           }
-          status = beginTaskDiffReviewContinuationFromInput(
-            cwd,
-            sessionId,
-            input,
-          );
         } else {
           status = inspectTaskDiffReviewStatus(cwd, sessionId);
           if (
@@ -1726,10 +1792,7 @@ function dispatch(args: string[], cwd: string): CommandResult {
         }
         return { command, ok: true, result: status };
       }
-      throw usage(
-        'Usage: pnpm workflow review-diff <session-id> [--actor <provider>] [--grant <grant-id>] [--input <typed-response.json>] [--json]\n' +
-          '       pnpm workflow review-diff <inspect|status|reconcile> <session-id> [--json]',
-      );
+      throw taskDiffReviewUsage();
     }
     case 'finalize-task':
       requireArgumentCount(command, rest, 1, 1);
@@ -1873,6 +1936,81 @@ function doctor(cwd: string): CommandResult {
 function optionValue(args: string[], name: string): string | undefined {
   const index = args.indexOf(name);
   return index === -1 ? undefined : args[index + 1];
+}
+
+type TaskDiffReviewCliInput =
+  | Readonly<{
+      route: 'provider-response';
+      input: TaskDiffReviewChallengeResponseInput;
+    }>
+  | Readonly<{
+      route: 'external-initial';
+      input: TaskDiffReviewExternalSubmissionInput;
+    }>
+  | Readonly<{
+      route: 'external-closure';
+      input: TaskDiffReviewExternalClosureRequestInput;
+    }>;
+
+function parseTaskDiffReviewCliInput(
+  cwd: string,
+  inputPath: string,
+): TaskDiffReviewCliInput {
+  let value: unknown;
+  try {
+    value = JSON.parse(
+      fs.readFileSync(path.resolve(cwd, inputPath), 'utf8'),
+    ) as unknown;
+  } catch {
+    throw workflowError(
+      'TASK_DIFF_REVIEW_INPUT_INVALID',
+      'TaskDiffReview input must be a readable exact typed JSON envelope.',
+      ExitCode.usage,
+    );
+  }
+  const kind =
+    typeof value === 'object' &&
+    value !== null &&
+    !Array.isArray(value) &&
+    typeof (value as Record<string, unknown>).kind === 'string'
+      ? (value as Record<string, unknown>).kind
+      : null;
+  if (kind === 'task-diff-review-challenge-response-input.v1') {
+    return Object.freeze({
+      route: 'provider-response' as const,
+      input: parseTaskDiffReviewChallengeResponseInput(value),
+    });
+  }
+  if (kind === 'task-diff-review-submission-input.v1') {
+    return Object.freeze({
+      route: 'external-initial' as const,
+      input: parseTaskDiffReviewExternalSubmissionInput(value),
+    });
+  }
+  if (kind === 'task-diff-review-external-closure-request.v1') {
+    return Object.freeze({
+      route: 'external-closure' as const,
+      input: parseTaskDiffReviewExternalClosureRequestInput(value),
+    });
+  }
+  throw workflowError(
+    'TASK_DIFF_REVIEW_INPUT_INVALID',
+    'TaskDiffReview input kind must select provider response, external initial review, or external challenge closure.',
+    ExitCode.usage,
+  );
+}
+
+function taskDiffReviewUsage(): WorkflowError {
+  return usage(
+    'Usage: pnpm workflow review-diff <session-id> [--actor <provider>] [--grant <grant-id>] [--input <typed-envelope.json> [--grant <grant-id>]] [--json]\n' +
+      '       pnpm workflow review-diff <inspect|status|reconcile> <session-id> [--json]',
+  );
+}
+
+function maintainerTaskDiffReviewUsage(): WorkflowError {
+  return usage(
+    'Usage: pnpm workflow maintainer review-diff-attest <session-id> --input <typed-envelope.json> --grant <grant-id> [--json]',
+  );
 }
 
 function parseProposeOptions(
@@ -2354,7 +2492,7 @@ function maintainerAttestUsage(): WorkflowError {
 
 function maintainerUsage(): WorkflowError {
   return usage(
-    'Usage: pnpm workflow maintainer <grant ...|resolution-grant ...|resolution-inspect [grant-id]|resolution-publication-discard <grant-id> ...|resolution-revoke <grant-id> --reason <text>|attest ...|attestation-relay --original <commit>|inspect [grant-id]|revoke <grant-id> --reason <text>|collaboration-grant ...|collaboration-inspect [grant-id]|collaboration-revoke <grant-id> --reason <text>> [--json]',
+    'Usage: pnpm workflow maintainer <review-diff-attest <session-id> --input <typed-envelope.json> --grant <grant-id>|grant ...|resolution-grant ...|resolution-inspect [grant-id]|resolution-publication-discard <grant-id> ...|resolution-revoke <grant-id> --reason <text>|attest ...|attestation-relay --original <commit>|inspect [grant-id]|revoke <grant-id> --reason <text>|collaboration-grant ...|collaboration-inspect [grant-id]|collaboration-revoke <grant-id> --reason <text>> [--json]',
   );
 }
 

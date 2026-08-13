@@ -13,6 +13,7 @@ import {
   createFullGateReceipt,
   FULL_GATE_INACTIVITY_INSPECTION_MS,
   FullGateTapCounter,
+  locateFullGateFailures,
   progressOutputFor,
   renderFullGateProgress,
   type FullGateIdentity,
@@ -21,6 +22,15 @@ import {
   type FullGateReceipt,
   type FullGateProgressTransition,
 } from './full-gate-progress.ts';
+import {
+  FULL_GATE_REPOSITORY_ROOT_ENV,
+  FULL_GATE_TELEMETRY_PATH_ENV,
+} from './full-gate-reporter.ts';
+import {
+  projectFullGateTelemetrySummaryHuman,
+  readFullGateTelemetrySummary,
+  type FullGateTelemetrySummary,
+} from './full-gate-telemetry-summary.ts';
 
 const DEFAULT_SAMPLE_INTERVAL_MS = 5_000;
 const DUPLICATE_GATE_EXIT_CODE = 75;
@@ -69,6 +79,7 @@ type FullGateRunResult = Readonly<{
   runId: string;
   stdoutLogPath: string;
   stderrLogPath: string;
+  telemetryLogPath: string;
   receiptPath: string | null;
 }>;
 
@@ -107,11 +118,19 @@ export function buildFullGateCommand(cwd: string): FullGateCommand {
       'packages/workflow-engine/test/session.integration.test.ts',
     ),
   ];
+  const reporter = path.join(repositoryRoot, 'scripts/full-gate-reporter.ts');
+  const relativeReporter = normalizeRelativePath(
+    path.relative(canonicalCwd, reporter),
+  );
+  const reporterSpecifier = relativeReporter.startsWith('.')
+    ? relativeReporter
+    : `./${relativeReporter}`;
   return Object.freeze({
     executable: process.execPath,
     args: Object.freeze([
       '--experimental-strip-types',
       '--test',
+      `--test-reporter=${reporterSpecifier}`,
       ...entrypoints.map((entrypoint) =>
         normalizeRelativePath(path.relative(canonicalCwd, entrypoint)),
       ),
@@ -223,13 +242,15 @@ export async function runFullGate(
   const cwd = fs.realpathSync(path.resolve(options.cwd));
   const repositoryRoot = repositoryRootFor(cwd);
   const command = options.command ?? buildFullGateCommand(cwd);
-  const stateRoot =
+  const configuredStateRoot =
     options.stateRoot ??
     path.join(
       gitCommonDirectoryFor(repositoryRoot),
       'workflow-engine/full-gate',
     );
-  ensurePrivateDirectory(stateRoot);
+  const stateRoot = fs.realpathSync(
+    ensurePrivateDirectory(configuredStateRoot),
+  );
   const identity = createFullGateIdentity({
     projectedTreeOid: projectWorkingTreeOid(repositoryRoot),
     generatedArtifactsDigest: generatedArtifactsDigest(repositoryRoot),
@@ -249,6 +270,41 @@ export async function runFullGate(
       process.stderr.write(line.startsWith('\r') ? line : `${line}\n`);
     });
   if (reusable !== null) {
+    const telemetryLogPath = path.join(
+      stateRoot,
+      'runs',
+      reusable.receipt.runId,
+      'test-telemetry.jsonl',
+    );
+    const reusedSnapshot: FullGateProgressSnapshot = Object.freeze({
+      kind: 'full-gate-progress-snapshot.v1',
+      authority: 'observational-only',
+      runId: reusable.receipt.runId,
+      identityDigest: reusable.receipt.identity.digest,
+      state: 'complete',
+      elapsedMs: reusable.receipt.progress.durationMs ?? 0,
+      quietMs: 0,
+      processAlive: false,
+      cpuDeltaSeconds: null,
+      logBytes:
+        reusable.receipt.rawLogBytes + reusable.receipt.standardErrorBytes,
+      completed: reusable.receipt.progress.total ?? 0,
+      pass: reusable.receipt.progress.pass,
+      fail: reusable.receipt.progress.fail,
+      total: reusable.receipt.progress.total,
+      firstFailureName: null,
+      firstFailureLogLocator: null,
+    });
+    writeLatestSnapshot(stateRoot, {
+      snapshot: reusedSnapshot,
+      rendered: renderFullGateProgress(reusedSnapshot),
+      transition: 'reused',
+      stdoutLogPath: reusable.stdoutLogPath,
+      stderrLogPath: reusable.stderrLogPath,
+      telemetryLogPath,
+      processTree: [],
+      updatedAt: new Date().toISOString(),
+    });
     writeProgress(
       `FULL GATE REUSED · ${reusable.receipt.progress.total}/${reusable.receipt.progress.total} · tree ${identity.bindings.projectedTreeOid} · receipt ${reusable.receipt.runId}`,
     );
@@ -258,6 +314,7 @@ export async function runFullGate(
       runId: reusable.receipt.runId,
       stdoutLogPath: reusable.stdoutLogPath,
       stderrLogPath: reusable.stderrLogPath,
+      telemetryLogPath,
       receiptPath: reusable.receiptPath,
     });
   }
@@ -274,6 +331,7 @@ export async function runFullGate(
       runId,
       stdoutLogPath: '',
       stderrLogPath: '',
+      telemetryLogPath: '',
       receiptPath: null,
     });
   }
@@ -284,6 +342,7 @@ export async function runFullGate(
     const runRoot = ensurePrivateDirectory(path.join(stateRoot, 'runs', runId));
     const stdoutLogPath = path.join(runRoot, 'stdout.log');
     const stderrLogPath = path.join(runRoot, 'stderr.log');
+    const telemetryLogPath = path.join(runRoot, 'test-telemetry.jsonl');
     const openedStdoutFd = fs.openSync(stdoutLogPath, 'wx', 0o600);
     stdoutFd = openedStdoutFd;
     const openedStderrFd = fs.openSync(stderrLogPath, 'wx', 0o600);
@@ -309,9 +368,17 @@ export async function runFullGate(
     let childError: Error | null = null;
     let timer: NodeJS.Timeout | undefined;
 
+    const childEnvironment: NodeJS.ProcessEnv = {
+      ...process.env,
+      [FULL_GATE_TELEMETRY_PATH_ENV]: telemetryLogPath,
+      [FULL_GATE_REPOSITORY_ROOT_ENV]: repositoryRoot,
+    };
+    // The coordinator may itself be exercised by node:test. Its private
+    // context marker must not make the governed child runner look recursive.
+    delete childEnvironment.NODE_TEST_CONTEXT;
     const child = spawn(command.executable, [...command.args], {
       cwd,
-      env: process.env,
+      env: childEnvironment,
       stdio: ['ignore', 'pipe', 'pipe'],
       windowsHide: true,
     });
@@ -320,8 +387,10 @@ export async function runFullGate(
       requestedTransition?: FullGateProgressTransition,
       processAlive = true,
       processSucceeded: boolean | null = null,
+      emitProgressOutput = true,
     ): FullGateProgressSnapshot => {
       lastProcessTree = sampleProcessTree(child.pid);
+      const firstFailure = tap.firstFailure();
       const nowMs = Date.now();
       const quietCandidate = Math.max(0, nowMs - progress.lastActivityAtMs);
       const result = advanceFullGateProgress(progress, {
@@ -337,6 +406,14 @@ export async function runFullGate(
         pass: tap.progress().pass,
         fail: tap.progress().fail,
         total: tap.progress().total,
+        firstFailureName: firstFailure?.name ?? null,
+        firstFailureLogLocator:
+          firstFailure === null
+            ? null
+            : {
+                path: stdoutLogPath,
+                byteOffset: firstFailure.byteOffset,
+              },
       });
       progress = result.progress;
       const transition = requestedTransition ?? result.transition;
@@ -346,11 +423,12 @@ export async function runFullGate(
         transition,
         stdoutLogPath,
         stderrLogPath,
+        telemetryLogPath,
         processTree: lastProcessTree.processes,
         updatedAt: new Date().toISOString(),
       });
       const output = progressOutputFor(result.snapshot, transition, terminal);
-      if (output !== null) writeProgress(output);
+      if (emitProgressOutput && output !== null) writeProgress(output);
       return result.snapshot;
     };
 
@@ -358,7 +436,10 @@ export async function runFullGate(
       fs.writeSync(openedStdoutFd, chunk);
       stdoutBytes += chunk.length;
       tap.push(chunk);
-      if (tap.takeFirstFailureTransition()) emitSnapshot('failure');
+      if (tap.takeFirstFailureTransition()) {
+        fs.fsyncSync(openedStdoutFd);
+        emitSnapshot('failure');
+      }
     });
     child.stderr.on('data', (chunk: Buffer) => {
       fs.writeSync(openedStderrFd, chunk);
@@ -378,7 +459,21 @@ export async function runFullGate(
     process.once('SIGTERM', terminate);
 
     try {
-      emitSnapshot('started');
+      const startedSnapshot = emitSnapshot('started', true, null, false);
+      for (const hint of [
+        'Monitor: pnpm workflow:test:status',
+        'Machine status: pnpm workflow:test:status --json',
+        `Full log: ${stdoutLogPath}`,
+        'Failures: pnpm workflow:test:failures',
+      ]) {
+        writeProgress(hint);
+      }
+      const startedOutput = progressOutputFor(
+        startedSnapshot,
+        'started',
+        terminal,
+      );
+      if (startedOutput !== null) writeProgress(startedOutput);
       timer = setInterval(() => emitSnapshot(), sampleIntervalMs);
       const closed = await new Promise<{
         code: number | null;
@@ -456,6 +551,7 @@ export async function runFullGate(
         runId,
         stdoutLogPath,
         stderrLogPath,
+        telemetryLogPath,
         receiptPath,
       });
     } finally {
@@ -811,6 +907,28 @@ function readPrivateFile(filePath: string): Buffer {
   return fs.readFileSync(filePath);
 }
 
+function readPrivateFileNoFollow(filePath: string): Buffer {
+  let descriptor: number | undefined;
+  try {
+    descriptor = fs.openSync(
+      filePath,
+      fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW,
+    );
+    const stats = fs.fstatSync(descriptor);
+    if (!stats.isFile() || stats.nlink !== 1 || (stats.mode & 0o077) !== 0) {
+      throw new Error(`Full-gate state file is unsafe: ${filePath}`);
+    }
+    return fs.readFileSync(descriptor);
+  } catch (error) {
+    if (isNodeError(error, 'ELOOP')) {
+      throw new Error(`Full-gate state file is unsafe: ${filePath}`);
+    }
+    throw error;
+  } finally {
+    if (descriptor !== undefined) fs.closeSync(descriptor);
+  }
+}
+
 function fsyncDirectory(directory: string): void {
   const descriptor = fs.openSync(directory, 'r');
   try {
@@ -875,11 +993,15 @@ function git(
 
 export function parseFullGateCli(argv: readonly string[]): {
   status: boolean;
+  failures: boolean;
+  timings: boolean;
   json: boolean;
   expectedTotal: number | null;
   reason: string | null;
 } {
   let status = false;
+  let failures = false;
+  let timings = false;
   let json = false;
   let expectedTotal: number | null = null;
   let reason: string | null = null;
@@ -889,6 +1011,10 @@ export function parseFullGateCli(argv: readonly string[]): {
       continue;
     } else if (argument === '--status') {
       status = true;
+    } else if (argument === '--failures') {
+      failures = true;
+    } else if (argument === '--timings') {
+      timings = true;
     } else if (argument === '--json') {
       json = true;
     } else if (argument === '--expected-total') {
@@ -905,14 +1031,20 @@ export function parseFullGateCli(argv: readonly string[]): {
       reason = normalizeReason(value);
     } else {
       throw new TypeError(
-        'Usage: workflow-full-gate.ts [--expected-total <count>] [--reason <text>] [--status [--json]]',
+        'Usage: workflow-full-gate.ts [--expected-total <count>] [--reason <text>] [--status|--failures|--timings [--json]]',
       );
     }
   }
-  if (status && (expectedTotal !== null || reason !== null)) {
-    throw new TypeError('--status cannot be combined with run options.');
+  if (
+    Number(status) + Number(failures) + Number(timings) > 1 ||
+    ((status || failures || timings) &&
+      (expectedTotal !== null || reason !== null))
+  ) {
+    throw new TypeError(
+      '--status, --failures, and --timings are read-only and cannot be combined with each other or run options.',
+    );
   }
-  return { status, json, expectedTotal, reason };
+  return { status, failures, timings, json, expectedTotal, reason };
 }
 
 function showLatest(cwd: string, json: boolean): number {
@@ -929,9 +1061,198 @@ function showLatest(cwd: string, json: boolean): number {
   return 0;
 }
 
+type FullGateFailureInspection = Readonly<{
+  kind: 'full-gate-failure-locations.v1';
+  authority: 'observational-only';
+  runId: string;
+  stdoutLogPath: string;
+  failures: ReturnType<typeof locateFullGateFailures>['failures'];
+  observedFailureCount: number;
+  truncated: boolean;
+}>;
+
+function inspectLatestFailures(cwd: string): FullGateFailureInspection {
+  const resolved = resolveLatestRunArtifact(cwd, 'stdoutLogPath', 'stdout.log');
+  const located = locateFullGateFailures(
+    readPrivateFileNoFollow(resolved.artifactPath),
+  );
+  return Object.freeze({
+    kind: 'full-gate-failure-locations.v1',
+    authority: 'observational-only',
+    runId: resolved.runId,
+    stdoutLogPath: resolved.artifactPath,
+    failures: located.failures,
+    observedFailureCount: located.observedFailureCount,
+    truncated: located.truncated,
+  });
+}
+
+function showLatestTimings(cwd: string, json: boolean): number {
+  const resolved = resolveLatestRunArtifact(
+    cwd,
+    'telemetryLogPath',
+    'test-telemetry.jsonl',
+  );
+  const summary = readFullGateTelemetrySummary(resolved.artifactPath);
+  const inspection: FullGateTimingInspection = Object.freeze({
+    kind: 'full-gate-timing-inspection.v1',
+    authority: 'observational-only',
+    runId: resolved.runId,
+    identityDigest: resolved.identityDigest,
+    runState: resolved.runState,
+    complete:
+      (resolved.runState === 'complete' || resolved.runState === 'failed') &&
+      !summary.partial,
+    telemetryLogPath: resolved.artifactPath,
+    summary,
+  });
+  if (json) {
+    process.stdout.write(serializeJson(inspection));
+    return 0;
+  }
+  const snapshotLabel = inspection.complete
+    ? 'complete snapshot'
+    : `${inspection.runState} snapshot; more records may arrive`;
+  process.stdout.write(
+    `Full-gate run: ${inspection.runId} (${snapshotLabel})\nTelemetry log: ${inspection.telemetryLogPath}\n${projectFullGateTelemetrySummaryHuman(summary)}`,
+  );
+  return 0;
+}
+
+type FullGateTimingInspection = Readonly<{
+  kind: 'full-gate-timing-inspection.v1';
+  authority: 'observational-only';
+  runId: string;
+  identityDigest: `sha256:${string}`;
+  runState: FullGateProgressSnapshot['state'];
+  complete: boolean;
+  telemetryLogPath: string;
+  summary: FullGateTelemetrySummary;
+}>;
+
+function resolveLatestRunArtifact(
+  cwd: string,
+  locatorField: 'stdoutLogPath' | 'telemetryLogPath',
+  artifactName: 'stdout.log' | 'test-telemetry.jsonl',
+): Readonly<{
+  runId: string;
+  identityDigest: `sha256:${string}`;
+  runState: FullGateProgressSnapshot['state'];
+  artifactPath: string;
+}> {
+  const repositoryRoot = repositoryRootFor(cwd);
+  const stateRoot = path.join(
+    gitCommonDirectoryFor(repositoryRoot),
+    'workflow-engine/full-gate',
+  );
+  const latestPath = path.join(stateRoot, 'latest.json');
+  if (!fs.existsSync(latestPath)) {
+    throw new Error('No full-gate run is available.');
+  }
+  const latest = JSON.parse(readPrivateFile(latestPath).toString()) as {
+    snapshot?: { runId?: unknown; identityDigest?: unknown; state?: unknown };
+    stdoutLogPath?: unknown;
+    telemetryLogPath?: unknown;
+  };
+  const runId = latest.snapshot?.runId;
+  const identityDigest = latest.snapshot?.identityDigest;
+  const runState = latest.snapshot?.state;
+  const observedPath = latest[locatorField];
+  if (locatorField === 'telemetryLogPath' && typeof observedPath !== 'string') {
+    throw new Error('No full-gate timing data is available for this run.');
+  }
+  if (
+    typeof runId !== 'string' ||
+    !/^run-\d{17}-[0-9a-f-]{36}$/.test(runId) ||
+    typeof identityDigest !== 'string' ||
+    !/^sha256:[0-9a-f]{64}$/.test(identityDigest) ||
+    !['running', 'buffered', 'inspecting', 'complete', 'failed'].includes(
+      String(runState),
+    ) ||
+    typeof observedPath !== 'string'
+  ) {
+    throw new Error('The latest full-gate run locator is malformed.');
+  }
+  const runsRoot = path.join(stateRoot, 'runs');
+  const runRoot = path.join(runsRoot, runId);
+  const expectedPath = path.join(runRoot, artifactName);
+  assertCanonicalPrivateChildDirectory(stateRoot, runsRoot);
+  assertCanonicalPrivateChildDirectory(runsRoot, runRoot);
+  if (!fs.existsSync(expectedPath)) {
+    throw new Error(
+      artifactName === 'test-telemetry.jsonl'
+        ? 'No full-gate timing data is available yet.'
+        : 'The latest full-gate stdout log is missing.',
+    );
+  }
+  const canonicalPath = path.join(fs.realpathSync(runRoot), artifactName);
+  if (
+    fs.realpathSync(expectedPath) !== canonicalPath ||
+    fs.realpathSync(observedPath) !== canonicalPath
+  ) {
+    throw new Error(`The latest full-gate ${artifactName} locator is unsafe.`);
+  }
+  return Object.freeze({
+    runId,
+    identityDigest: identityDigest as `sha256:${string}`,
+    runState: runState as FullGateProgressSnapshot['state'],
+    artifactPath: expectedPath,
+  });
+}
+
+function showLatestFailures(cwd: string, json: boolean): number {
+  const inspection = inspectLatestFailures(cwd);
+  if (json) {
+    process.stdout.write(serializeJson(inspection));
+    return 0;
+  }
+  if (inspection.failures.length === 0) {
+    process.stdout.write('No failures observed\n');
+    return 0;
+  }
+  for (const failure of inspection.failures) {
+    process.stdout.write(
+      `${failure.index}. ${escapeTerminalControls(failure.name)} — ${inspection.stdoutLogPath}:${failure.logLine}\n`,
+    );
+  }
+  if (inspection.truncated) {
+    process.stdout.write(
+      `... ${inspection.observedFailureCount - inspection.failures.length} additional failures omitted\n`,
+    );
+  }
+  return 0;
+}
+
+function assertCanonicalPrivateChildDirectory(
+  parent: string,
+  child: string,
+): void {
+  assertPrivateDirectory(parent);
+  assertPrivateDirectory(child);
+  const canonicalParent = fs.realpathSync(parent);
+  const expectedCanonicalChild = path.join(
+    canonicalParent,
+    path.basename(child),
+  );
+  if (fs.realpathSync(child) !== expectedCanonicalChild) {
+    throw new Error(`Full-gate state directory is unsafe: ${child}`);
+  }
+}
+
+function escapeTerminalControls(value: string): string {
+  return value.replaceAll(/[\p{Cc}\p{Cf}]/gu, (character) => {
+    const codePoint = character.codePointAt(0)!;
+    return codePoint <= 0xffff
+      ? `\\u${codePoint.toString(16).toUpperCase().padStart(4, '0')}`
+      : `\\u{${codePoint.toString(16).toUpperCase()}}`;
+  });
+}
+
 async function main(): Promise<number> {
   const parsed = parseFullGateCli(process.argv.slice(2));
   if (parsed.status) return showLatest(process.cwd(), parsed.json);
+  if (parsed.failures) return showLatestFailures(process.cwd(), parsed.json);
+  if (parsed.timings) return showLatestTimings(process.cwd(), parsed.json);
   const result = await runFullGate({
     cwd: process.cwd(),
     expectedTotal: parsed.expectedTotal,

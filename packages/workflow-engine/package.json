@@ -9,7 +9,9 @@
     "harness-bootstrap": "node --experimental-strip-types bootstrap/harness-bootstrap-launcher.ts",
     "workflow": "node --experimental-strip-types bootstrap/workflow-launcher.ts",
     "test": "node --experimental-strip-types ../../scripts/workflow-full-gate.ts",
+    "test:failures": "node --experimental-strip-types ../../scripts/workflow-full-gate.ts --failures",
     "test:status": "node --experimental-strip-types ../../scripts/workflow-full-gate.ts --status",
+    "test:timings": "node --experimental-strip-types ../../scripts/workflow-full-gate.ts --timings",
     "typecheck": "tsc -p tsconfig.json"
   },
   "devDependencies": {

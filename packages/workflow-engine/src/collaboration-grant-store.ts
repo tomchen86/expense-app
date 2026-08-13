@@ -1,6 +1,8 @@
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 
+import { canonicalJson } from './canonical-json.ts';
 import {
   COLLABORATION_GRANT_AUTHORIZED_EFFECT,
   COLLABORATION_GRANT_REPLAY_SCOPE,
@@ -73,6 +75,13 @@ export type CollaborationGrantedAssignmentRecord = {
   author: CollaborationParticipantRecord;
   participant: CollaborationParticipantRecord;
   callableProviderIds: readonly ('codex' | 'claude')[];
+  degradedAuthorityOverride?: Readonly<{
+    kind: 'task-diff-challenge-closure';
+    targetDigest: string;
+    subjectDigest: string;
+    reviewRecordDigest: string;
+    responseDigest: string;
+  }>;
   directHumanReviewAttestationDigest: string | null;
 };
 
@@ -146,6 +155,7 @@ export type CollaborationGrantInspection = {
   issuedAt: string;
   expiresAt: string;
   signer: string;
+  signedEnvelopeDigest: string;
   transitionDigest?: string;
   terminalReason?: string;
   use?: CollaborationGrantUseProjection;
@@ -156,6 +166,38 @@ export type CollaborationReservationRequest = {
   expected: CollaborationGrantExpectedBinding;
   now?: Date;
   verifier?: MaintainerSignerProvider;
+};
+
+export type CollaborationGrantSelectionCoreBinding = Pick<
+  CollaborationGrantExpectedBinding,
+  | 'repositoryId'
+  | 'repositoryOrigin'
+  | 'policyBlob'
+  | 'collaborationPolicyDigest'
+  | 'changeId'
+  | 'taskId'
+  | 'baselineCommit'
+  | 'baselineTree'
+  | 'targetDigest'
+  | 'lifecyclePhase'
+  | 'rolePair'
+>;
+
+export type CollaborationGrantSelectableDegradedForm = Extract<
+  CollaborationDegradedForm,
+  'caller-supplied' | 'direct-human-review'
+>;
+
+export type CollaborationGrantSelectionRequest = {
+  expectedCore: CollaborationGrantSelectionCoreBinding;
+  allowedDegradedForms: readonly CollaborationGrantSelectableDegradedForm[];
+  now?: Date;
+  verifier?: MaintainerSignerProvider;
+};
+
+export type CollaborationGrantSelection = {
+  reservation: CollaborationReservationRecord;
+  expectedBinding: CollaborationGrantExpectedBinding;
 };
 
 export type CollaborationConsumptionRequest = {
@@ -363,6 +405,105 @@ export function reserveCollaborationGrantUnderLifecycleLock(
   replacePrivateFileAtomic(reservedPath, serialize(record));
   assertOwned();
   return deepFreeze(record);
+}
+
+/**
+ * Select and reserve a signed caller-supplied or direct-human grant without
+ * asking the lifecycle caller to trust actor or reason fields from an
+ * unverified local envelope. The caller supplies only immutable transition
+ * facts and the forms it is prepared to admit. The complete binding and its
+ * transition digest are derived from the signed payload after those facts
+ * match.
+ *
+ * Repeating the exact selection reuses an existing durable reservation. That
+ * replay verifies the signed envelope again but does not add a second
+ * wall-clock freshness rule after the grant was reserved while valid.
+ */
+export function selectAndReserveCollaborationGrantUnderLifecycleLock(
+  cwd: string,
+  requestedGrantId: string,
+  request: CollaborationGrantSelectionRequest,
+  assertOwned: () => void,
+): CollaborationGrantSelection {
+  assertOwned();
+  const grantId = assertCollaborationGrantId(requestedGrantId);
+  const allowedDegradedForms = assertSelectableDegradedForms(
+    request.allowedDegradedForms,
+  );
+  const repository = discoverRepository(cwd);
+  const paths = collaborationGrantStorePaths(repository.gitCommonDirectory);
+  ensureStoreDirectories(paths);
+  assertOwned();
+
+  const terminalPath = statePath(paths.terminal, grantId);
+  if (fs.existsSync(terminalPath)) {
+    const terminal = readTerminal(terminalPath, grantId);
+    cleanupNonterminal(
+      paths,
+      grantId,
+      terminal.envelope,
+      terminal.transitionDigest,
+    );
+    throw unavailableGrant(grantId);
+  }
+  assertNonterminalUnambiguous(paths, grantId);
+
+  const reservedPath = statePath(paths.reserved, grantId);
+  if (fs.existsSync(reservedPath)) {
+    const reservation = readReservation(reservedPath, grantId);
+    const expectedBinding = assertSelectedGrantBinding(
+      reservation.envelope,
+      request.expectedCore,
+      allowedDegradedForms,
+    );
+    const transitionDigest = collaborationRoleTransitionDigest(expectedBinding);
+    if (
+      reservation.repositoryRoot !== repository.repositoryRoot ||
+      reservation.transitionDigest !== transitionDigest
+    ) {
+      throw bindingMismatch();
+    }
+    const context = loadSelectionValidationContext(
+      repository.repositoryRoot,
+      request.expectedCore,
+      request.now,
+      request.verifier,
+    );
+    validateCollaborationGrantEnvelope(reservation.envelope, context.policy, {
+      now: context.now,
+      expected: expectedBinding,
+      verifier: context.verifier,
+      allowExpired: true,
+    });
+    assertOwned();
+    return deepFreeze({ reservation, expectedBinding });
+  }
+
+  const availablePath = statePath(paths.available, grantId);
+  if (!fs.existsSync(availablePath)) {
+    throw unavailableGrant(grantId);
+  }
+  const available = readAvailable(availablePath, grantId);
+  const expectedBinding = assertSelectedGrantBinding(
+    available,
+    request.expectedCore,
+    allowedDegradedForms,
+  );
+  const reservation = reserveCollaborationGrantUnderLifecycleLock(
+    repository.repositoryRoot,
+    grantId,
+    {
+      transitionDigest: collaborationRoleTransitionDigest(expectedBinding),
+      expected: expectedBinding,
+      ...(request.now === undefined ? {} : { now: request.now }),
+      ...(request.verifier === undefined ? {} : { verifier: request.verifier }),
+    },
+    assertOwned,
+  );
+  return deepFreeze({
+    reservation,
+    expectedBinding: bindingFromPayload(reservation.envelope.payload),
+  });
 }
 
 export function readReservedCollaborationGrant(
@@ -1029,6 +1170,47 @@ export function inspectCollaborationGrants(
   );
 }
 
+/**
+ * Read one durable grant state without acquiring a lifecycle lock or creating,
+ * chmodding, repairing, or otherwise changing the collaboration store. This is
+ * the status/replay surface; transition callers use the locked APIs above.
+ */
+export function readCollaborationGrantInspection(
+  gitCommonDirectory: string,
+  requestedGrantId: string,
+): CollaborationGrantInspection | null {
+  const paths = collaborationGrantStorePaths(gitCommonDirectory);
+  if (!assertExistingStoreReadOnlySafe(paths)) return null;
+  return (
+    inspectOne(paths, assertCollaborationGrantId(requestedGrantId)) ?? null
+  );
+}
+
+/**
+ * List every durable grant state through the same strict, mutation-free reader
+ * used by status replay. This deliberately does not acquire the repository
+ * lifecycle lock or create/repair any store directory.
+ */
+export function listCollaborationGrantInspections(
+  gitCommonDirectory: string,
+): readonly CollaborationGrantInspection[] {
+  const paths = collaborationGrantStorePaths(gitCommonDirectory);
+  if (!assertExistingStoreReadOnlySafe(paths)) return Object.freeze([]);
+  const grantIds = [
+    ...new Set(
+      existingStateDirectories(paths).flatMap(({ directory }) =>
+        listGrantIds(directory),
+      ),
+    ),
+  ].sort();
+  return Object.freeze(
+    grantIds.flatMap((grantId) => {
+      const inspection = inspectOne(paths, grantId);
+      return inspection === undefined ? [] : [inspection];
+    }),
+  );
+}
+
 export function inspectCollaborationGrantsUnderLifecycleLock(
   gitCommonDirectory: string,
   requestedGrantId: string | undefined,
@@ -1106,6 +1288,7 @@ function inspectEnvelope(
     issuedAt: envelope.payload.issuedAt,
     expiresAt: envelope.payload.expiresAt,
     signer: envelope.payload.signer,
+    signedEnvelopeDigest: collaborationGrantEnvelopeDigest(envelope),
   });
 }
 
@@ -1238,8 +1421,19 @@ function readTerminal(
   let use: CollaborationGrantUseProjection | null = null;
   if (value.state === 'consumed') {
     use = assertStoredUse(value.use, envelope);
-  } else if (value.use !== null) {
-    throw ambiguousGrant(grantId);
+    if (
+      value.transitionDigest === null ||
+      value.transitionDigest !== use.transitionDigest
+    ) {
+      throw ambiguousGrant(grantId);
+    }
+  } else {
+    if (
+      value.use !== null ||
+      (value.state !== 'revoked' && value.transitionDigest === null)
+    ) {
+      throw ambiguousGrant(grantId);
+    }
   }
   let revocationAuthorization: HumanRevocationAuthorization | undefined;
   if (hasAuthorization) {
@@ -1372,6 +1566,9 @@ function assertGrantedAssignment(
       'author',
       'participant',
       'callableProviderIds',
+      ...('degradedAuthorityOverride' in value
+        ? ['degradedAuthorityOverride']
+        : []),
       'directHumanReviewAttestationDigest',
     ]) ||
     value.role !== envelope.payload.rolePair.conflictingRole ||
@@ -1395,6 +1592,16 @@ function assertGrantedAssignment(
     author: assertRecordedParticipant(value.author),
     participant: assertRecordedParticipant(value.participant),
     callableProviderIds: assertCallableProviderIds(value.callableProviderIds),
+    ...('degradedAuthorityOverride' in value
+      ? {
+          degradedAuthorityOverride:
+            assertTaskDiffChallengeClosureAuthorityOverride(
+              value.degradedAuthorityOverride,
+              value.role,
+              value.targetDigest,
+            ),
+        }
+      : {}),
   };
   if (
     envelope.payload.degradedForm === 'same-provider-fresh-session' &&
@@ -1419,6 +1626,7 @@ function assertGrantedAssignment(
       common.author.sessionId === common.participant.sessionId ||
       JSON.stringify(common.callableProviderIds) !==
         JSON.stringify([envelope.payload.availableActor.providerId]) ||
+      common.degradedAuthorityOverride !== undefined ||
       value.directHumanReviewAttestationDigest !== null
     ) {
       throw invalidUse();
@@ -1458,7 +1666,8 @@ function assertGrantedAssignment(
       common.participant.sessionId !== null ||
       common.participant.engineSpawned !== false ||
       common.participant.principalId !== expectedPrincipal ||
-      common.callableProviderIds.length !== 0 ||
+      (common.callableProviderIds.length !== 0 &&
+        common.degradedAuthorityOverride === undefined) ||
       (envelope.payload.degradedForm === 'caller-supplied'
         ? value.directHumanReviewAttestationDigest !== null ||
           common.participant.identityAssurance !==
@@ -1482,6 +1691,56 @@ function assertGrantedAssignment(
     });
   }
   throw invalidUse();
+}
+
+function assertTaskDiffChallengeClosureAuthorityOverride(
+  value: unknown,
+  role: unknown,
+  targetDigest: unknown,
+): NonNullable<
+  CollaborationGrantedAssignmentRecord['degradedAuthorityOverride']
+> {
+  if (
+    role !== 'task-diff-reviewer' ||
+    !isRecord(value) ||
+    !hasExactKeys(value, [
+      'kind',
+      'targetDigest',
+      'subjectDigest',
+      'reviewRecordDigest',
+      'responseDigest',
+    ]) ||
+    value.kind !== 'task-diff-challenge-closure' ||
+    typeof targetDigest !== 'string' ||
+    value.targetDigest !== targetDigest ||
+    typeof value.subjectDigest !== 'string' ||
+    !DIGEST.test(value.subjectDigest) ||
+    typeof value.reviewRecordDigest !== 'string' ||
+    !DIGEST.test(value.reviewRecordDigest) ||
+    typeof value.responseDigest !== 'string' ||
+    !DIGEST.test(value.responseDigest) ||
+    value.targetDigest !==
+      crypto
+        .createHash('sha256')
+        .update(
+          canonicalJson({
+            schema: 'workflow.task-diff-external-continuation-target.v1',
+            subjectDigest: value.subjectDigest,
+            reviewRecordDigest: value.reviewRecordDigest,
+            responseDigest: value.responseDigest,
+          }),
+        )
+        .digest('hex')
+  ) {
+    throw invalidUse();
+  }
+  return deepFreeze({
+    kind: 'task-diff-challenge-closure',
+    targetDigest: value.targetDigest,
+    subjectDigest: value.subjectDigest,
+    reviewRecordDigest: value.reviewRecordDigest,
+    responseDigest: value.responseDigest,
+  });
 }
 
 function assertRecordedParticipant(
@@ -1780,6 +2039,56 @@ function existingStateDirectories(
   );
 }
 
+function assertExistingStoreReadOnlySafe(
+  paths: ReturnType<typeof collaborationGrantStorePaths>,
+): boolean {
+  const rootStats = fs.lstatSync(paths.root, { throwIfNoEntry: false });
+  if (!rootStats) return false;
+  assertExistingPrivateDirectory(paths.root, rootStats);
+  const allowed = new Set([
+    path.basename(paths.available),
+    path.basename(paths.reserved),
+    path.basename(paths.terminal),
+    path.basename(paths.revocationAuthorizations),
+  ]);
+  for (const entry of fs.readdirSync(paths.root)) {
+    if (!allowed.has(entry)) throw unsafeStore();
+    const directory = path.join(paths.root, entry);
+    const stats = fs.lstatSync(directory, { throwIfNoEntry: false });
+    if (!stats) throw unsafeStore();
+    assertExistingPrivateDirectory(directory, stats);
+    for (const name of fs.readdirSync(directory)) {
+      if (!STATE_FILE.test(name)) throw unsafeStore();
+      const filePath = path.join(directory, name);
+      const fileStats = fs.lstatSync(filePath, { throwIfNoEntry: false });
+      if (
+        !fileStats ||
+        !fileStats.isFile() ||
+        fileStats.isSymbolicLink() ||
+        fileStats.nlink !== 1 ||
+        (fileStats.mode & 0o777) !== 0o600
+      ) {
+        throw unsafeStore();
+      }
+    }
+  }
+  return true;
+}
+
+function assertExistingPrivateDirectory(
+  directory: string,
+  stats: fs.Stats,
+): void {
+  if (
+    !stats.isDirectory() ||
+    stats.isSymbolicLink() ||
+    fs.realpathSync(directory) !== path.resolve(directory) ||
+    (stats.mode & 0o777) !== 0o700
+  ) {
+    throw unsafeStore();
+  }
+}
+
 function assertNoState(
   paths: ReturnType<typeof collaborationGrantStorePaths>,
   grantId: string,
@@ -1940,6 +2249,143 @@ function hasExactKeys(
     actual.length === sorted.length &&
     actual.every((entry, index) => entry === sorted[index])
   );
+}
+
+function assertSelectableDegradedForms(
+  value: readonly CollaborationGrantSelectableDegradedForm[],
+): readonly CollaborationGrantSelectableDegradedForm[] {
+  if (
+    !Array.isArray(value) ||
+    value.length === 0 ||
+    value.some(
+      (entry) => entry !== 'caller-supplied' && entry !== 'direct-human-review',
+    ) ||
+    new Set(value).size !== value.length
+  ) {
+    throw bindingMismatch();
+  }
+  return Object.freeze([...value].sort());
+}
+
+function assertSelectedGrantBinding(
+  envelope: CollaborationGrantEnvelope,
+  expectedCore: CollaborationGrantSelectionCoreBinding,
+  allowedDegradedForms: readonly CollaborationGrantSelectableDegradedForm[],
+): CollaborationGrantExpectedBinding {
+  if (
+    !isRecord(expectedCore) ||
+    !hasExactKeys(expectedCore, [
+      'repositoryId',
+      'repositoryOrigin',
+      'policyBlob',
+      'collaborationPolicyDigest',
+      'changeId',
+      'taskId',
+      'baselineCommit',
+      'baselineTree',
+      'targetDigest',
+      'lifecyclePhase',
+      'rolePair',
+    ])
+  ) {
+    throw bindingMismatch();
+  }
+  const expectedBinding = bindingFromPayload(envelope.payload);
+  const observedCore: CollaborationGrantSelectionCoreBinding = {
+    repositoryId: expectedBinding.repositoryId,
+    repositoryOrigin: expectedBinding.repositoryOrigin,
+    policyBlob: expectedBinding.policyBlob,
+    collaborationPolicyDigest: expectedBinding.collaborationPolicyDigest,
+    changeId: expectedBinding.changeId,
+    taskId: expectedBinding.taskId,
+    baselineCommit: expectedBinding.baselineCommit,
+    baselineTree: expectedBinding.baselineTree,
+    targetDigest: expectedBinding.targetDigest,
+    lifecyclePhase: expectedBinding.lifecyclePhase,
+    rolePair: expectedBinding.rolePair,
+  };
+  let coreMatches = false;
+  try {
+    coreMatches =
+      canonicalJson(observedCore) === canonicalJson(expectedCore) &&
+      allowedDegradedForms.includes(
+        expectedBinding.degradedForm as CollaborationGrantSelectableDegradedForm,
+      );
+  } catch {
+    throw bindingMismatch();
+  }
+  const actorMatchesForm =
+    (expectedBinding.degradedForm === 'caller-supplied' &&
+      expectedBinding.availableActor.kind === 'caller') ||
+    (expectedBinding.degradedForm === 'direct-human-review' &&
+      expectedBinding.availableActor.kind === 'direct-human');
+  if (!coreMatches || !actorMatchesForm) {
+    throw bindingMismatch();
+  }
+  return deepFreeze(expectedBinding);
+}
+
+function loadSelectionValidationContext(
+  repositoryRoot: string,
+  expectedCore: CollaborationGrantSelectionCoreBinding,
+  requestedNow: Date | undefined,
+  requestedVerifier: MaintainerSignerProvider | undefined,
+): {
+  now: Date;
+  policy: MaintainerPolicy;
+  verifier: MaintainerSignerProvider;
+} {
+  const baselineCommit = exactRepositoryCommit(
+    repositoryRoot,
+    expectedCore.baselineCommit,
+  );
+  const baselineTree = runGit(repositoryRoot, [
+    'rev-parse',
+    `${baselineCommit}^{tree}`,
+  ]).trim();
+  const head = runGit(repositoryRoot, ['rev-parse', 'HEAD']).trim();
+  const mergeBase = runGit(repositoryRoot, [
+    'merge-base',
+    baselineCommit,
+    head,
+  ]).trim();
+  const policy = loadPolicyAtCommit(repositoryRoot, baselineCommit);
+  const policyBlob = runGit(repositoryRoot, [
+    'rev-parse',
+    `${baselineCommit}:workflow/maintainer-policy.json`,
+  ]).trim();
+  const origin = runGit(repositoryRoot, ['remote', 'get-url', 'origin']).trim();
+  if (
+    mergeBase !== baselineCommit ||
+    expectedCore.baselineTree !== baselineTree ||
+    expectedCore.policyBlob !== policyBlob ||
+    expectedCore.repositoryId !== policy.repository.id ||
+    expectedCore.repositoryOrigin !== policy.repository.origin ||
+    origin !== policy.repository.origin
+  ) {
+    throw bindingMismatch();
+  }
+  return {
+    now: exactDate(requestedNow ?? new Date()),
+    policy,
+    verifier:
+      requestedVerifier ?? createInteractiveSshSigner(repositoryRoot, policy),
+  };
+}
+
+function collaborationRoleTransitionDigest(
+  expectedBinding: CollaborationGrantExpectedBinding,
+): string {
+  return crypto
+    .createHash('sha256')
+    .update(
+      canonicalJson({
+        schemaVersion: 1,
+        kind: 'collaboration-role-transition',
+        expectedBinding,
+      }),
+    )
+    .digest('hex');
 }
 
 function exactDigest(value: string, label: string): string {

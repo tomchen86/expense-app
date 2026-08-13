@@ -60,7 +60,10 @@ test('authenticated changes-required Final Assurance can cancel its exact checke
       ({ path: changedPath }) => changedPath === 'src/feature.ts',
     )?.after?.objectId;
     assert.ok(blobObjectId);
-    const challenged = challengedTaskDiffSubmission(blobObjectId);
+    const challenged = challengedTaskDiffSubmission(
+      blobObjectId,
+      prepared.subject,
+    );
     completeProviderReview(
       repository,
       prepared.invocationId,
@@ -298,6 +301,7 @@ function completeProviderReview(
 
 function challengedTaskDiffSubmission(
   blobObjectId: string,
+  subject: Parameters<typeof riskPathDispositionsFor>[0],
 ): TaskDiffReviewSubmission {
   const evidence = [
     {
@@ -324,9 +328,24 @@ function challengedTaskDiffSubmission(
       },
     ],
     suggestions: [],
+    riskPathDispositions: riskPathDispositionsFor(subject),
     residualRisk: 'The challenged invariant requires a candidate correction.',
     uncertainty: 'Review is limited to the exact canonical candidate.',
   };
+}
+
+function riskPathDispositionsFor(
+  subject: Readonly<{
+    reviewRequirement: Readonly<{
+      riskPaths: readonly Readonly<{ path: string; role: string }>[];
+    }>;
+  }>,
+): TaskDiffReviewSubmission['riskPathDispositions'] {
+  return subject.reviewRequirement.riskPaths.map(({ path, role }) => ({
+    path,
+    role: role as TaskDiffReviewSubmission['riskPathDispositions'][number]['role'],
+    outcome: 'challenge-raised',
+  }));
 }
 
 function writeFixtureProviderRuntime(

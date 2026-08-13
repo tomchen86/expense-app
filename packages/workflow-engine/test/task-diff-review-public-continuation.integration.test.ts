@@ -100,7 +100,10 @@ test('review-diff publicly journals and resumes authenticated provider challenge
       prepared.subject,
       'src/feature.ts',
     );
-    const challenged = challengedSubmission(reviewedBlobObjectId);
+    const challenged = challengedSubmission(
+      reviewedBlobObjectId,
+      prepared.subject,
+    );
     completeFakeProvider(
       repository,
       prepared.invocationId,
@@ -357,7 +360,10 @@ function createReviewFixture(): string {
   return repository;
 }
 
-function challengedSubmission(blobObjectId: string): TaskDiffReviewSubmission {
+function challengedSubmission(
+  blobObjectId: string,
+  subject: TaskDiffReviewSubject,
+): TaskDiffReviewSubmission {
   const evidence = [
     {
       kind: 'repository-location' as const,
@@ -383,6 +389,13 @@ function challengedSubmission(blobObjectId: string): TaskDiffReviewSubmission {
       },
     ],
     suggestions: [],
+    riskPathDispositions: subject.reviewRequirement.riskPaths.map(
+      ({ path, role }) => ({
+        path,
+        role: role as TaskDiffReviewSubmission['riskPathDispositions'][number]['role'],
+        outcome: 'challenge-raised',
+      }),
+    ),
     residualRisk: 'The exact challenge requires an authenticated disposition.',
     uncertainty: 'Review is limited to the exact canonical candidate.',
   };

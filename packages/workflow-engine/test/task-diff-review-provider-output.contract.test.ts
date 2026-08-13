@@ -45,6 +45,9 @@ test('TaskDiffReview provider output schema and validator bind the complete sema
 test('TaskDiffReview provider output rejects incomplete, duplicate, and evidence-free conclusions', () => {
   const submission = validSubmission();
   const invalid: unknown[] = [
+    (({ riskPathDispositions: _riskPathDispositions, ...rest }) => rest)(
+      submission,
+    ),
     { ...submission, coverage: submission.coverage.slice(1) },
     {
       ...submission,
@@ -61,6 +64,40 @@ test('TaskDiffReview provider output rejects incomplete, duplicate, and evidence
     {
       ...submission,
       suggestions: [submission.suggestions[0], submission.suggestions[0]],
+    },
+    {
+      ...submission,
+      riskPathDispositions: [
+        { path: 'src/a.ts', role: 'ordinary', outcome: 'no-challenge' },
+      ],
+    },
+    {
+      ...submission,
+      riskPathDispositions: [
+        { path: 'src/a.ts', role: 'lifecycle', outcome: 'no-challenge' },
+        { path: 'src/a.ts', role: 'lifecycle', outcome: 'challenge-raised' },
+      ],
+    },
+    {
+      ...submission,
+      riskPathDispositions: [
+        {
+          path: 'src/a.ts',
+          role: 'lifecycle',
+          outcome: 'accepted',
+        },
+      ],
+    },
+    {
+      ...submission,
+      riskPathDispositions: [
+        {
+          path: 'src/a.ts',
+          role: 'lifecycle',
+          outcome: 'no-challenge',
+          closedBy: 'provider-a:reviewer',
+        },
+      ],
     },
   ];
 
@@ -196,6 +233,7 @@ function validSubmission(): TaskDiffReviewSubmission {
         evidence: [repositoryEvidence],
       },
     ],
+    riskPathDispositions: [],
     residualRisk: 'No release-blocking residual risk was identified.',
     uncertainty: 'Review is limited to the exact canonical candidate.',
   };

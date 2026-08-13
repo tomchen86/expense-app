@@ -39,7 +39,10 @@ import {
 test('provider worker durably executes the code-owned TaskDiffReview contract without write authority', () => {
   const fixture = createTaskDiffWorkerFixture('success');
   try {
-    const submission = validSubmission(fixture.reviewedBlobObjectId);
+    const submission = validSubmission(
+      fixture.reviewedBlobObjectId,
+      fixture.riskPathDispositions,
+    );
     const result = runProviderWorker(fixture.repository, fixture.invocationId, {
       runner(input) {
         assert.equal(
@@ -210,13 +213,23 @@ function createTaskDiffWorkerFixture(suffix: string) {
     request: readProviderInvocationRequest(runtime, prepared.invocationId),
     sessionId: session.sessionId,
     reviewedBlobObjectId,
+    riskPathDispositions: prepared.subject.reviewRequirement.riskPaths.map(
+      ({ path, role }) => ({
+        path,
+        role: role as TaskDiffReviewSubmission['riskPathDispositions'][number]['role'],
+        outcome: 'no-challenge' as const,
+      }),
+    ),
     dispose() {
       fs.rmSync(repository, { recursive: true, force: true });
     },
   };
 }
 
-function validSubmission(blobObjectId: string): TaskDiffReviewSubmission {
+function validSubmission(
+  blobObjectId: string,
+  riskPathDispositions: TaskDiffReviewSubmission['riskPathDispositions'],
+): TaskDiffReviewSubmission {
   return {
     schemaVersion: 1,
     verdict: 'advisory-approve',
@@ -235,6 +248,7 @@ function validSubmission(blobObjectId: string): TaskDiffReviewSubmission {
     },
     findings: [],
     suggestions: [],
+    riskPathDispositions,
     residualRisk: 'No release-blocking residual risk was identified.',
     uncertainty: 'Review is limited to the exact canonical candidate.',
   };

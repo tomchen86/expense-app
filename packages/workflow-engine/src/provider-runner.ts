@@ -834,6 +834,7 @@ const PROVIDER_PURPOSE_INSTRUCTIONS: Readonly<
     'Use only the reviewed read/search capability surface and do not mutate the worktree, index, refs, runtime, or any repository file.',
     'Return only output that conforms to the bound task-diff-review output schema.',
     'The output "coverage" array must list every required review area exactly once; duplicate or omitted coverage is rejected.',
+    'The output "riskPathDispositions" array must contain exactly one row for every subject.reviewRequirement.riskPaths entry covered by reviewScope, with the exact path and role; do not include ordinary paths.',
     'Inspect correctness and invariants, plan alignment, test adequacy, path scope, trust boundaries, dangling consumers, and generated or mirror consistency.',
     'Every challenge must cite exact repository, check-report, or planning-node evidence. A no-challenge scope assessment must still cite affirmative evidence.',
     'Classify current-change blockers as challenges and independent follow-up ideas as suggestions. The advisory verdict never authorizes completion.',

@@ -166,7 +166,8 @@ const commands: WorkflowCommandGuidance[] = [
   command({
     id: 'review-diff',
     usage: [
-      'pnpm workflow review-diff <session-id> [--actor <provider>] [--grant <grant-id>] [--input <typed-response.json>] [--json]',
+      'pnpm workflow review-diff <session-id> [--actor <provider>] [--grant <grant-id>] [--json]',
+      'pnpm workflow review-diff <session-id> --input <typed-envelope.json> [--grant <grant-id>] [--json]',
       'pnpm workflow review-diff <inspect|status|reconcile> <session-id> [--json]',
     ],
     status: 'preferred',
@@ -178,6 +179,22 @@ const commands: WorkflowCommandGuidance[] = [
       'Records advisory review output; only the shared closure verifier can authorize challenge closure.',
     ],
     successors: ['status', 'finalize'],
+  }),
+  command({
+    id: 'maintainer-review-diff-attest',
+    usage: [
+      'pnpm workflow maintainer review-diff-attest <session-id> --input <typed-envelope.json> --grant <grant-id> [--json]',
+    ],
+    status: 'recovery',
+    purpose:
+      'Sign and resume one exact durable direct-human TaskDiff review pause at the controlling maintainer terminal.',
+    preconditions: [
+      'The typed authority-free input, grant, and persisted content reference exactly match the current direct-human pause.',
+    ],
+    consequences: [
+      'Creates the attestation internally and resumes only the already-persisted review transaction.',
+    ],
+    successors: ['review-diff', 'status'],
   }),
   command({
     id: 'finalize',
@@ -313,7 +330,10 @@ export function workflowResultNextSteps(
   const bindings = resultBindings(result, invocation);
   if (commandId === 'status') return statusNextSteps(result, bindings);
   if (commandId === 'review-diff') {
-    return taskDiffReviewNextSteps(result, bindings);
+    return taskDiffReviewNextSteps(result, bindings, invocation);
+  }
+  if (commandId === 'maintainer' && result.action === 'review-diff-attest') {
+    return taskDiffReviewNextSteps(result, bindings, invocation);
   }
   if (commandId === 'resume') {
     return taskStrategyNextSteps(record(result.result), bindings);
@@ -466,6 +486,7 @@ function taskStrategyNextSteps(
 function taskDiffReviewNextSteps(
   result: Readonly<Record<string, unknown>>,
   bindings: WorkflowNextStepBindings,
+  invocation: readonly string[],
 ): readonly WorkflowNextStep[] {
   const reviewResult = record(result.result);
   const subject = record(reviewResult?.subject);
@@ -476,10 +497,78 @@ function taskDiffReviewNextSteps(
     reviewResult?.state === 'satisfied' ||
     reviewResult?.state === 'not-required' ||
     requirement?.required === false;
-  return projectWorkflowNextSteps(
-    satisfied ? ['finalize', 'status'] : ['review-diff', 'status'],
-    bindings,
+  if (satisfied) {
+    return projectWorkflowNextSteps(['finalize', 'status'], bindings);
+  }
+  const sessionId = bindings.sessionId;
+  if (sessionId === undefined) {
+    return projectWorkflowNextSteps(['status', 'guide'], bindings);
+  }
+  const reviewStatus = explicitNextStep(
+    'review-diff',
+    `pnpm workflow review-diff status ${shellQuote(sessionId)} --json`,
   );
+  const generalStatus = nextStep('status', bindings);
+  const state = stringField(reviewResult, 'state');
+  if (state === 'direct-human-attestation-required') {
+    const grantId = stringField(reviewResult, 'grantId');
+    const inputPath = invocationOptionValue(invocation, '--input');
+    if (grantId !== undefined && inputPath !== undefined) {
+      return limitNextSteps([
+        explicitNextStep(
+          'maintainer-review-diff-attest',
+          `pnpm workflow maintainer review-diff-attest ${shellQuote(sessionId)} --input ${shellQuote(inputPath)} --grant ${shellQuote(grantId)} --json`,
+        ),
+        reviewStatus,
+        generalStatus,
+      ]);
+    }
+  }
+  if (state === 'provider-succeeded-awaiting-reconciliation') {
+    return limitNextSteps([
+      explicitNextStep(
+        'review-diff',
+        `pnpm workflow review-diff reconcile ${shellQuote(sessionId)} --json`,
+      ),
+      reviewStatus,
+      generalStatus,
+    ]);
+  }
+  if (state === 'external-grant-resume-required') {
+    const grantId = stringField(reviewResult, 'grantId');
+    if (grantId !== undefined) {
+      return limitNextSteps([
+        explicitNextStep(
+          'review-diff',
+          `pnpm workflow review-diff ${shellQuote(sessionId)} --grant ${shellQuote(grantId)} --json`,
+        ),
+        reviewStatus,
+        generalStatus,
+      ]);
+    }
+  }
+  if (
+    state === 'waiting-for-provider' ||
+    state === 'provider-failed' ||
+    state === 'collaboration-grant-required' ||
+    state === 'direct-human-attestation-required' ||
+    state === 'external-reconciliation-required' ||
+    state === 'challenge-closure-required' ||
+    state === 'changes-required'
+  ) {
+    return limitNextSteps([reviewStatus, generalStatus, nextStep('guide', {})]);
+  }
+  if (state === 'challenge-response-required') {
+    return limitNextSteps([
+      explicitNextStep(
+        'review-diff',
+        `pnpm workflow review-diff inspect ${shellQuote(sessionId)} --json`,
+      ),
+      reviewStatus,
+      nextStep('guide', {}),
+    ]);
+  }
+  return projectWorkflowNextSteps(['review-diff', 'status'], bindings);
 }
 
 function limitNextSteps(
@@ -572,6 +661,12 @@ function sessionIdFromInvocation(
       ? invocation[2]
       : invocation[1];
   }
+  if (
+    invocation[0] === 'maintainer' &&
+    invocation[1] === 'review-diff-attest'
+  ) {
+    return invocation[2];
+  }
   return [
     'revise-task',
     'resume-task',
@@ -589,6 +684,15 @@ function sessionIdFromInvocation(
   ].includes(invocation[0] ?? '')
     ? invocation[1]
     : undefined;
+}
+
+function invocationOptionValue(
+  invocation: readonly string[],
+  option: string,
+): string | undefined {
+  const index = invocation.indexOf(option);
+  const value = index === -1 ? undefined : invocation[index + 1];
+  return value === undefined || value.startsWith('--') ? undefined : value;
 }
 
 function isLiteralWorkflowRecovery(value: string | undefined): value is string {
