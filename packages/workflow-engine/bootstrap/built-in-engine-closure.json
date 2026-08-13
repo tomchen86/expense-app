@@ -271,7 +271,7 @@
     {
       "path": "src/contracts.ts",
       "mode": "100644",
-      "digest": "sha256:42ec091e88f6b17ed33dfa0f2e362be114b43d400bc277cef79f4178d62b4f1c"
+      "digest": "sha256:ef9cfd530dbef473ceaf597382a01b18a17b73da1818bdd7cb8c559aae1b3fea"
     },
     {
       "path": "src/control-plane-promotion-producer.ts",
@@ -1031,7 +1031,7 @@
     {
       "path": "src/runner-resolution.ts",
       "mode": "100644",
-      "digest": "sha256:e83bd90394703ea92b5d3d1db6c4f31ea7b20cba226910686949ae71d5e6492d"
+      "digest": "sha256:fce865400872c4153a186e33768107023d67cdd1c66ba4616d5ac0f4959a32d4"
     },
     {
       "path": "src/semantic-freshness.ts",

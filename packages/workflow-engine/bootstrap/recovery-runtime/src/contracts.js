@@ -164,10 +164,10 @@ export function parseCheckCommand(command) {
 function nodeEntrypoints(args) {
     let entrypoints;
     if (args[0] === '--test') {
-        entrypoints = args.slice(1);
+        entrypoints = nodeTestEntrypoints(args, 1);
     }
     else if (args[0] === '--experimental-strip-types' && args[1] === '--test') {
-        entrypoints = args.slice(2);
+        entrypoints = nodeTestEntrypoints(args, 2);
     }
     else {
         if (!args[0] || args[0].startsWith('-')) {
@@ -178,6 +178,9 @@ function nodeEntrypoints(args) {
     return entrypoints.length > 0 && entrypoints.every(isExactPolicyPath)
         ? entrypoints
         : undefined;
+}
+function nodeTestEntrypoints(args, start) {
+    return args.slice(args[start] === '--test-concurrency=4' ? start + 1 : start);
 }
 function isExactPolicyPath(value) {
     if (value.startsWith('-')) {

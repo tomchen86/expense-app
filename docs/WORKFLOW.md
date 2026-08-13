@@ -676,22 +676,49 @@ the rejected transition.
 ## Full-Gate Economy and Progress
 
 Use targeted tests during RED/GREEN iteration. Run the coherent workflow-engine
-gate once with `pnpm workflow:test`; the wrapper preserves the existing two test
-entrypoints and their order while keeping raw stdout/stderr in private files
-under `.git/workflow-engine/full-gate/`. Poll the single latest snapshot with
-`pnpm workflow:test:status` or add `-- --json` for its structured form. Routine
-polling never replays raw test output into chat context.
-
-A successful local receipt is observational only: it cannot authorize a task,
-commit, merge, or archive. Reuse requires the exact projected Git tree,
-generated-artifact digest, Node runtime, command, platform, and working
-directory, plus intact raw-log digests and a passing terminal summary. An empty
-commit with the same tree may reuse that result. A material merge or a
-high-risk lifecycle, security, recovery, or generated-artifact change must run
-again with an explicit reason, for example:
+gate once with `pnpm workflow:test`. The wrapper runs one Node test coordinator
+over eight deterministic shard entrypoints with concurrency bounded at four.
+The tracked shard manifest owns every physical workflow-engine test exactly
+once, including the test bodies in the two legacy aggregate roots and nested
+runner suites. Adding, removing, or reassigning a test requires regenerating and
+validating that manifest; an incomplete or duplicate inventory fails closed.
+Validate tracked ownership and generated wrapper bytes with:
 
 ```bash
-pnpm workflow:test -- --reason "material lifecycle merge"
+node --experimental-strip-types scripts/generate-workflow-test-shards.ts --check
+```
+
+To rebalance after a representative completed gate, regenerate from that run's
+complete telemetry sidecar and exact run ID, then review the manifest and wrapper
+diff before running the next coherent gate:
+
+```bash
+node --experimental-strip-types scripts/generate-workflow-test-shards.ts \
+  --telemetry <test-telemetry.jsonl> --run-id <run-id>
+```
+
+At startup, the wrapper prints four one-time hints: the human monitor command,
+its `--json` machine form, the absolute full-log path, and the failure-summary
+command. Poll the latest snapshot with `pnpm workflow:test:status`, use
+`pnpm workflow:test:status --json` for structured output, inspect bounded current
+failures with `pnpm workflow:test:failures`, and inspect observational per-test
+timings with `pnpm workflow:test:timings`. Raw stdout/stderr and the telemetry
+sidecar remain in private files under `.git/workflow-engine/full-gate/`;
+routine polling never replays the full test output into chat context.
+
+A successful local receipt is observational only: it cannot authorize a task,
+commit, merge, or archive. A passing receipt additionally requires a complete
+telemetry footer, the exact manifest-bound physical-file set, no unattributed
+test nodes, and outcome counts that reconcile with the terminal test summary.
+Reuse requires those same intact coverage bytes plus the exact projected Git
+tree, generated-artifact digest, Node runtime, command, platform, and working
+directory. Old or partial receipt formats are not reusable. An empty commit with
+the same tree may reuse that result. A material merge or a high-risk lifecycle,
+security, recovery, or generated-artifact change must run again with an explicit
+reason, for example:
+
+```bash
+pnpm workflow:test --reason "material lifecycle merge"
 ```
 
 The identity lock rejects parallel gates for the same tree. Three minutes with

@@ -1,5 +1,14 @@
 import crypto from 'node:crypto';
 
+import {
+  summarizeFullGateTelemetry,
+  type FullGateTelemetryOutcomeCounts,
+} from './full-gate-telemetry-summary.ts';
+import {
+  digestWorkflowTestFileSet,
+  type FullGateCoverageExpectation,
+} from './workflow-test-inventory.ts';
+
 export const FULL_GATE_INACTIVITY_INSPECTION_MS = 3 * 60_000;
 
 export type FullGateIdentityBindings = Readonly<{
@@ -110,8 +119,24 @@ export type FullGateFailureLocations = Readonly<{
   truncated: boolean;
 }>;
 
+export type FullGateCoverageEvidence = Readonly<{
+  kind: 'full-gate-coverage-evidence.v1';
+  inventoryDigest: `sha256:${string}`;
+  expectedFileCount: number;
+  expectedFileSetDigest: `sha256:${string}`;
+  observedFileCount: number;
+  observedFileSetDigest: `sha256:${string}`;
+  fileSetMatches: boolean;
+  telemetryDigest: `sha256:${string}`;
+  telemetryBytes: number;
+  footerComplete: boolean;
+  testNodeCount: number;
+  unattributedTestNodeCount: number;
+  outcomeCounts: FullGateTelemetryOutcomeCounts;
+}>;
+
 export type FullGateReceipt = Readonly<{
-  kind: 'full-gate-run-receipt.v1';
+  kind: 'full-gate-run-receipt.v2';
   authority: 'observational-only';
   runId: string;
   identity: FullGateIdentity;
@@ -128,6 +153,7 @@ export type FullGateReceipt = Readonly<{
   rawLogBytes: number;
   standardErrorDigest: `sha256:${string}`;
   standardErrorBytes: number;
+  coverage: FullGateCoverageEvidence;
   completedAt: string;
   receiptDigest: `sha256:${string}`;
 }>;
@@ -557,6 +583,103 @@ export function locateFullGateFailures(
   });
 }
 
+export function validateFullGateCoverage(
+  telemetry: Buffer,
+  expectation: FullGateCoverageExpectation,
+): FullGateCoverageEvidence {
+  if (!Buffer.isBuffer(telemetry)) {
+    throw new TypeError('Full-gate telemetry evidence must be bytes.');
+  }
+  if (!/^sha256:[0-9a-f]{64}$/.test(expectation.inventoryDigest)) {
+    throw new TypeError(
+      'Full-gate coverage inventoryDigest must be a SHA-256 digest.',
+    );
+  }
+  if (!Array.isArray(expectation.expectedFiles)) {
+    throw new TypeError('Full-gate coverage expectedFiles must be an array.');
+  }
+  const expectedFiles = [...expectation.expectedFiles];
+  const expectedFileSetDigest = digestWorkflowTestFileSet(expectedFiles);
+  if (
+    !/^sha256:[0-9a-f]{64}$/.test(expectation.expectedFileSetDigest) ||
+    expectation.expectedFileSetDigest !== expectedFileSetDigest
+  ) {
+    throw new TypeError(
+      'Full-gate coverage expectedFileSetDigest does not match its expected files.',
+    );
+  }
+  const canonicalExpectedFiles = [...expectedFiles].sort(compareText);
+  const summary = summarizeFullGateTelemetry(telemetry);
+  const observedFileSetDigest = digestWorkflowTestFileSet(
+    summary.observedFiles,
+  );
+  if (observedFileSetDigest !== summary.observedFileSetDigest) {
+    throw new Error(
+      'Full-gate telemetry file-set digest is internally inconsistent.',
+    );
+  }
+  const fileSetMatches =
+    canonicalExpectedFiles.length === summary.observedFiles.length &&
+    canonicalExpectedFiles.every(
+      (file, index) => file === summary.observedFiles[index],
+    ) &&
+    expectedFileSetDigest === observedFileSetDigest;
+
+  return Object.freeze({
+    kind: 'full-gate-coverage-evidence.v1' as const,
+    inventoryDigest: expectation.inventoryDigest as `sha256:${string}`,
+    expectedFileCount: canonicalExpectedFiles.length,
+    expectedFileSetDigest,
+    observedFileCount: summary.observedFiles.length,
+    observedFileSetDigest,
+    fileSetMatches,
+    telemetryDigest: summary.telemetryDigest,
+    telemetryBytes: summary.telemetryBytes,
+    footerComplete: summary.footerComplete,
+    testNodeCount: summary.testNodeCount,
+    unattributedTestNodeCount: summary.unattributedTestNodeCount,
+    outcomeCounts: Object.freeze({ ...summary.outcomeCounts }),
+  });
+}
+
+export function fullGateCoverageMatchesProgress(
+  coverage: FullGateCoverageEvidence,
+  progress: FullGateTapProgress,
+): boolean {
+  if (!isCoverageEvidenceShape(coverage)) return false;
+  const outcomes = coverage.outcomeCounts;
+  return (
+    coverage.kind === 'full-gate-coverage-evidence.v1' &&
+    /^sha256:[0-9a-f]{64}$/.test(coverage.inventoryDigest) &&
+    /^sha256:[0-9a-f]{64}$/.test(coverage.expectedFileSetDigest) &&
+    /^sha256:[0-9a-f]{64}$/.test(coverage.observedFileSetDigest) &&
+    /^sha256:[0-9a-f]{64}$/.test(coverage.telemetryDigest) &&
+    Number.isSafeInteger(coverage.expectedFileCount) &&
+    coverage.expectedFileCount > 0 &&
+    Number.isSafeInteger(coverage.observedFileCount) &&
+    coverage.observedFileCount > 0 &&
+    Number.isSafeInteger(coverage.telemetryBytes) &&
+    coverage.telemetryBytes > 0 &&
+    Number.isSafeInteger(coverage.testNodeCount) &&
+    coverage.testNodeCount > 0 &&
+    Number.isSafeInteger(coverage.unattributedTestNodeCount) &&
+    coverage.unattributedTestNodeCount === 0 &&
+    coverage.footerComplete === true &&
+    coverage.fileSetMatches === true &&
+    coverage.expectedFileCount === coverage.observedFileCount &&
+    coverage.expectedFileSetDigest === coverage.observedFileSetDigest &&
+    outcomeCountsAreCanonical(outcomes, coverage.testNodeCount) &&
+    progress.total !== null &&
+    progress.total > 0 &&
+    progress.completed === progress.total &&
+    coverage.testNodeCount === progress.total &&
+    outcomes.passed === progress.pass &&
+    outcomes['not-passed'] === progress.fail + progress.cancelled &&
+    outcomes.skipped === progress.skipped &&
+    outcomes.todo === progress.todo
+  );
+}
+
 function forEachRawLogLine(
   rawLog: Buffer,
   consume: (line: string, logLine: number, byteOffset: number) => void,
@@ -596,6 +719,7 @@ export function createFullGateReceipt(input: {
   signal: NodeJS.Signals | null;
   rawLog: Buffer;
   standardError?: Buffer;
+  coverage: FullGateCoverageEvidence;
   completedAt: string;
 }): FullGateReceipt {
   const standardError = input.standardError ?? Buffer.alloc(0);
@@ -606,15 +730,18 @@ export function createFullGateReceipt(input: {
     input.signal !== null || input.exitCode === null
       ? 'interrupted'
       : input.identityStable &&
+          input.completedHeadCommit === input.headCommit &&
+          input.completedIdentityDigest === input.identity.digest &&
           input.exitCode === 0 &&
           progress.total !== null &&
           progress.total > 0 &&
           progress.fail === 0 &&
-          progress.cancelled === 0
+          progress.cancelled === 0 &&
+          fullGateCoverageMatchesProgress(input.coverage, progress)
         ? 'passed'
         : 'failed';
   const unsigned = {
-    kind: 'full-gate-run-receipt.v1' as const,
+    kind: 'full-gate-run-receipt.v2' as const,
     authority: 'observational-only' as const,
     runId: input.runId,
     identity: input.identity,
@@ -631,6 +758,7 @@ export function createFullGateReceipt(input: {
     rawLogBytes: input.rawLog.length,
     standardErrorDigest: sha256(standardError),
     standardErrorBytes: standardError.length,
+    coverage: input.coverage,
     completedAt: input.completedAt,
   };
   return Object.freeze({
@@ -642,12 +770,18 @@ export function createFullGateReceipt(input: {
 export function canReuseFullGateReceipt(
   receipt: FullGateReceipt,
   identity: FullGateIdentity,
-  rawLog: Buffer,
-  standardError: Buffer = Buffer.alloc(0),
+  evidence: Readonly<{
+    rawLog: Buffer;
+    standardError?: Buffer;
+    telemetry: Buffer;
+    coverageExpectation: FullGateCoverageExpectation;
+  }>,
 ): boolean {
+  if (!isReusableReceiptShape(receipt)) return false;
+  const standardError = evidence.standardError ?? Buffer.alloc(0);
   const { receiptDigest: _receiptDigest, ...unsigned } = receipt;
   if (
-    receipt.kind !== 'full-gate-run-receipt.v1' ||
+    receipt.kind !== 'full-gate-run-receipt.v2' ||
     receipt.authority !== 'observational-only' ||
     receipt.outcome !== 'passed' ||
     receipt.identityStable !== true ||
@@ -660,15 +794,27 @@ export function canReuseFullGateReceipt(
     canonicalJson(receipt.identity.bindings) !==
       canonicalJson(identity.bindings) ||
     receipt.receiptDigest !== sha256(canonicalJson(unsigned)) ||
-    receipt.rawLogBytes !== rawLog.length ||
-    receipt.rawLogDigest !== sha256(rawLog) ||
+    receipt.rawLogBytes !== evidence.rawLog.length ||
+    receipt.rawLogDigest !== sha256(evidence.rawLog) ||
     receipt.standardErrorBytes !== standardError.length ||
     receipt.standardErrorDigest !== sha256(standardError)
   ) {
     return false;
   }
+  let observedCoverage: FullGateCoverageEvidence;
+  try {
+    observedCoverage = validateFullGateCoverage(
+      evidence.telemetry,
+      evidence.coverageExpectation,
+    );
+  } catch {
+    return false;
+  }
+  if (canonicalJson(observedCoverage) !== canonicalJson(receipt.coverage)) {
+    return false;
+  }
   const counter = new FullGateTapCounter();
-  counter.push(rawLog);
+  counter.push(evidence.rawLog);
   const observed = counter.progress();
   return (
     observed.total !== null &&
@@ -676,7 +822,182 @@ export function canReuseFullGateReceipt(
     observed.pass === receipt.progress.pass &&
     observed.fail === 0 &&
     observed.cancelled === 0 &&
+    fullGateCoverageMatchesProgress(observedCoverage, observed) &&
     canonicalJson(observed) === canonicalJson(receipt.progress)
+  );
+}
+
+function isReusableReceiptShape(value: unknown): value is FullGateReceipt {
+  if (
+    !hasExactKeys(value, [
+      'authority',
+      'completedAt',
+      'completedHeadCommit',
+      'completedIdentityDigest',
+      'coverage',
+      'exitCode',
+      'headCommit',
+      'identity',
+      'identityStable',
+      'kind',
+      'outcome',
+      'progress',
+      'rawLogBytes',
+      'rawLogDigest',
+      'reason',
+      'receiptDigest',
+      'runId',
+      'signal',
+      'standardErrorBytes',
+      'standardErrorDigest',
+    ])
+  ) {
+    return false;
+  }
+  const receipt = value as Record<string, unknown>;
+  return (
+    receipt.kind === 'full-gate-run-receipt.v2' &&
+    receipt.authority === 'observational-only' &&
+    typeof receipt.runId === 'string' &&
+    /^run-\d{17}-[0-9a-f-]{36}$/.test(receipt.runId) &&
+    isFullGateIdentityShape(receipt.identity) &&
+    isGitObjectId(receipt.headCommit) &&
+    isGitObjectId(receipt.completedHeadCommit) &&
+    isSha256Digest(receipt.completedIdentityDigest) &&
+    receipt.identityStable === true &&
+    (receipt.reason === null || typeof receipt.reason === 'string') &&
+    receipt.outcome === 'passed' &&
+    receipt.exitCode === 0 &&
+    receipt.signal === null &&
+    isTapProgressShape(receipt.progress) &&
+    isSha256Digest(receipt.rawLogDigest) &&
+    isNonnegativeSafeInteger(receipt.rawLogBytes) &&
+    isSha256Digest(receipt.standardErrorDigest) &&
+    isNonnegativeSafeInteger(receipt.standardErrorBytes) &&
+    isCoverageEvidenceShape(receipt.coverage) &&
+    typeof receipt.completedAt === 'string' &&
+    canonicalIsoTimestamp(receipt.completedAt) &&
+    isSha256Digest(receipt.receiptDigest)
+  );
+}
+
+function isFullGateIdentityShape(value: unknown): value is FullGateIdentity {
+  if (!hasExactKeys(value, ['bindings', 'digest', 'kind'])) return false;
+  const identity = value as Record<string, unknown>;
+  if (
+    identity.kind !== 'full-gate-run-identity.v1' ||
+    !isSha256Digest(identity.digest) ||
+    !hasExactKeys(identity.bindings, [
+      'command',
+      'generatedArtifactsDigest',
+      'nodeVersion',
+      'platform',
+      'projectedTreeOid',
+      'workingDirectory',
+    ])
+  ) {
+    return false;
+  }
+  const bindings = identity.bindings as Record<string, unknown>;
+  return (
+    isGitObjectId(bindings.projectedTreeOid) &&
+    isSha256Digest(bindings.generatedArtifactsDigest) &&
+    Array.isArray(bindings.command) &&
+    bindings.command.length > 0 &&
+    bindings.command.every(
+      (argument) =>
+        typeof argument === 'string' &&
+        argument.length > 0 &&
+        !/[\0\r\n]/.test(argument),
+    ) &&
+    typeof bindings.workingDirectory === 'string' &&
+    !pathIsAbsoluteOrEscaping(bindings.workingDirectory) &&
+    typeof bindings.nodeVersion === 'string' &&
+    bindings.nodeVersion.length > 0 &&
+    typeof bindings.platform === 'string' &&
+    bindings.platform.length > 0
+  );
+}
+
+function isTapProgressShape(value: unknown): value is FullGateTapProgress {
+  if (
+    !hasExactKeys(value, [
+      'cancelled',
+      'completed',
+      'durationMs',
+      'fail',
+      'pass',
+      'skipped',
+      'todo',
+      'total',
+    ])
+  ) {
+    return false;
+  }
+  const progress = value as Record<string, unknown>;
+  return (
+    isNonnegativeSafeInteger(progress.completed) &&
+    isNonnegativeSafeInteger(progress.pass) &&
+    isNonnegativeSafeInteger(progress.fail) &&
+    isNonnegativeSafeInteger(progress.total) &&
+    isNonnegativeSafeInteger(progress.cancelled) &&
+    isNonnegativeSafeInteger(progress.skipped) &&
+    isNonnegativeSafeInteger(progress.todo) &&
+    (progress.durationMs === null ||
+      (typeof progress.durationMs === 'number' &&
+        Number.isFinite(progress.durationMs) &&
+        progress.durationMs >= 0))
+  );
+}
+
+function isCoverageEvidenceShape(
+  value: unknown,
+): value is FullGateCoverageEvidence {
+  if (
+    !hasExactKeys(value, [
+      'expectedFileCount',
+      'expectedFileSetDigest',
+      'fileSetMatches',
+      'footerComplete',
+      'inventoryDigest',
+      'kind',
+      'observedFileCount',
+      'observedFileSetDigest',
+      'outcomeCounts',
+      'telemetryBytes',
+      'telemetryDigest',
+      'testNodeCount',
+      'unattributedTestNodeCount',
+    ])
+  ) {
+    return false;
+  }
+  const coverage = value as Record<string, unknown>;
+  if (
+    coverage.kind !== 'full-gate-coverage-evidence.v1' ||
+    !isSha256Digest(coverage.inventoryDigest) ||
+    !isNonnegativeSafeInteger(coverage.expectedFileCount) ||
+    !isSha256Digest(coverage.expectedFileSetDigest) ||
+    !isNonnegativeSafeInteger(coverage.observedFileCount) ||
+    !isSha256Digest(coverage.observedFileSetDigest) ||
+    typeof coverage.fileSetMatches !== 'boolean' ||
+    !isSha256Digest(coverage.telemetryDigest) ||
+    !isNonnegativeSafeInteger(coverage.telemetryBytes) ||
+    typeof coverage.footerComplete !== 'boolean' ||
+    !isNonnegativeSafeInteger(coverage.testNodeCount) ||
+    !isNonnegativeSafeInteger(coverage.unattributedTestNodeCount) ||
+    !hasExactKeys(coverage.outcomeCounts, [
+      'not-passed',
+      'passed',
+      'skipped',
+      'todo',
+    ])
+  ) {
+    return false;
+  }
+  return outcomeCountsAreCanonical(
+    coverage.outcomeCounts as FullGateTelemetryOutcomeCounts,
+    coverage.testNodeCount,
   );
 }
 
@@ -704,6 +1025,52 @@ function assertNonNegativeInteger(name: string, value: number): void {
   }
 }
 
+function outcomeCountsAreCanonical(
+  value: FullGateTelemetryOutcomeCounts,
+  expectedTotal: number,
+): boolean {
+  if (value === null || typeof value !== 'object') return false;
+  const counts = [value.passed, value['not-passed'], value.skipped, value.todo];
+  return (
+    counts.every((count) => Number.isSafeInteger(count) && count >= 0) &&
+    counts.reduce((sum, count) => sum + count, 0) === expectedTotal
+  );
+}
+
+function hasExactKeys(
+  value: unknown,
+  expectedKeys: readonly string[],
+): value is Record<string, unknown> {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+    return false;
+  }
+  const keys = Object.keys(value).sort(compareText);
+  const expected = [...expectedKeys].sort(compareText);
+  return (
+    keys.length === expected.length &&
+    keys.every((key, index) => key === expected[index])
+  );
+}
+
+function isSha256Digest(value: unknown): value is `sha256:${string}` {
+  return typeof value === 'string' && /^sha256:[0-9a-f]{64}$/.test(value);
+}
+
+function isGitObjectId(value: unknown): value is string {
+  return (
+    typeof value === 'string' && /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(value)
+  );
+}
+
+function isNonnegativeSafeInteger(value: unknown): value is number {
+  return Number.isSafeInteger(value) && (value as number) >= 0;
+}
+
+function canonicalIsoTimestamp(value: string): boolean {
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) && new Date(parsed).toISOString() === value;
+}
+
 function sha256(value: string | Buffer): `sha256:${string}` {
   return `sha256:${crypto.createHash('sha256').update(value).digest('hex')}`;
 }
@@ -722,6 +1089,10 @@ function canonicalize(value: unknown): unknown {
     );
   }
   return value;
+}
+
+function compareText(left: string, right: string): number {
+  return left < right ? -1 : left > right ? 1 : 0;
 }
 
 function pathIsAbsoluteOrEscaping(value: string): boolean {

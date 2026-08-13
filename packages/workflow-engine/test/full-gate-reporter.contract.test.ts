@@ -69,7 +69,8 @@ test('full-gate telemetry projects deterministic bounded test-node records witho
   });
   const serialized = serializeFullGateTelemetryRecord(record!);
   assert.equal(serialized, `${JSON.stringify(record)}\n`);
-  assert.doesNotMatch(serialized, /SECRET|\u001b|error|stack/i);
+  assert.doesNotMatch(serialized, /SECRET|error|stack/i);
+  assert.equal(serialized.includes('\u001b'), false);
   assert.equal(projector.recordCount, 1);
 });
 

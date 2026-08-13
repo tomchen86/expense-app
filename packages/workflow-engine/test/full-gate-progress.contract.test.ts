@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import crypto from 'node:crypto';
 import test from 'node:test';
 
 import {
@@ -8,8 +9,10 @@ import {
   createFullGateProgress,
   createFullGateReceipt,
   FullGateTapCounter,
+  fullGateCoverageMatchesProgress,
   progressOutputFor,
   renderFullGateProgress,
+  validateFullGateCoverage,
 } from '../../../scripts/full-gate-progress.ts';
 
 const RUN_ID = 'run-20260812000000000-00000000-0000-4000-8000-000000000000';
@@ -247,6 +250,15 @@ test('successful receipt reuse binds exact tree, generated artifacts, runtime, c
   const rawLog = Buffer.from(
     'TAP version 13\nok 1 - pass\n# tests 1\n# pass 1\n# fail 0\n# cancelled 0\n# skipped 0\n# todo 0\n# duration_ms 10\n',
   );
+  const expectation = coverageExpectation([
+    'packages/workflow-engine/test/pass.test.ts',
+  ]);
+  const telemetry = coverageTelemetry([
+    telemetryRecord(1, {
+      file: 'packages/workflow-engine/test/pass.test.ts',
+    }),
+  ]);
+  const coverage = validateFullGateCoverage(telemetry, expectation);
   const receipt = createFullGateReceipt({
     runId: RUN_ID,
     identity: IDENTITY,
@@ -258,10 +270,19 @@ test('successful receipt reuse binds exact tree, generated artifacts, runtime, c
     exitCode: 0,
     signal: null,
     rawLog,
+    coverage,
     completedAt: '2026-08-12T00:00:00.000Z',
   });
 
-  assert.equal(canReuseFullGateReceipt(receipt, IDENTITY, rawLog), true);
+  assert.deepEqual(receipt.coverage, coverage);
+  assert.equal(
+    canReuseFullGateReceipt(receipt, IDENTITY, {
+      rawLog,
+      telemetry,
+      coverageExpectation: expectation,
+    }),
+    true,
+  );
   assert.equal(
     canReuseFullGateReceipt(
       receipt,
@@ -269,7 +290,7 @@ test('successful receipt reuse binds exact tree, generated artifacts, runtime, c
         ...IDENTITY.bindings,
         projectedTreeOid: 'd'.repeat(40),
       }),
-      rawLog,
+      { rawLog, telemetry, coverageExpectation: expectation },
     ),
     false,
   );
@@ -280,7 +301,7 @@ test('successful receipt reuse binds exact tree, generated artifacts, runtime, c
         ...IDENTITY.bindings,
         generatedArtifactsDigest: `sha256:${'e'.repeat(64)}`,
       }),
-      rawLog,
+      { rawLog, telemetry, coverageExpectation: expectation },
     ),
     false,
   );
@@ -291,7 +312,7 @@ test('successful receipt reuse binds exact tree, generated artifacts, runtime, c
         ...IDENTITY.bindings,
         command: [...IDENTITY.bindings.command, '--test-only'],
       }),
-      rawLog,
+      { rawLog, telemetry, coverageExpectation: expectation },
     ),
     false,
   );
@@ -302,21 +323,310 @@ test('successful receipt reuse binds exact tree, generated artifacts, runtime, c
         ...IDENTITY.bindings,
         nodeVersion: 'v99.0.0',
       }),
-      rawLog,
+      { rawLog, telemetry, coverageExpectation: expectation },
     ),
     false,
   );
   assert.equal(
-    canReuseFullGateReceipt(receipt, IDENTITY, Buffer.from('tampered')),
+    canReuseFullGateReceipt(receipt, IDENTITY, {
+      rawLog: Buffer.from('tampered'),
+      telemetry,
+      coverageExpectation: expectation,
+    }),
     false,
   );
   assert.equal(
-    canReuseFullGateReceipt(
-      { ...receipt, outcome: 'failed' },
-      IDENTITY,
+    canReuseFullGateReceipt({ ...receipt, outcome: 'failed' }, IDENTITY, {
       rawLog,
-    ),
+      telemetry,
+      coverageExpectation: expectation,
+    }),
     false,
+  );
+  assert.equal(
+    canReuseFullGateReceipt(receipt, IDENTITY, {
+      rawLog,
+      telemetry: Buffer.from(telemetry.toString().replace('pass', 'changed')),
+      coverageExpectation: expectation,
+    }),
+    false,
+  );
+  assert.equal(
+    canReuseFullGateReceipt(receipt, IDENTITY, {
+      rawLog,
+      telemetry,
+      coverageExpectation: {
+        ...expectation,
+        inventoryDigest: `sha256:${'9'.repeat(64)}`,
+      },
+    }),
+    false,
+  );
+});
+
+test('coverage validation binds exact inventory, physical file set, footer, telemetry, and outcomes', () => {
+  const expectation = coverageExpectation([
+    'packages/workflow-engine/test/a.test.ts',
+    'packages/workflow-engine/test/b.test.ts',
+  ]);
+  const telemetry = coverageTelemetry([
+    telemetryRecord(1, {
+      file: 'packages/workflow-engine/test/b.test.ts',
+      name: 'b root',
+    }),
+    telemetryRecord(2, {
+      file: 'packages/workflow-engine/test/a.test.ts',
+      name: 'a root',
+      outcome: 'skipped',
+    }),
+    telemetryRecord(3, {
+      file: 'packages/workflow-engine/test/b.test.ts',
+      name: 'b nested',
+      nesting: 1,
+      outcome: 'todo',
+    }),
+  ]);
+  const coverage = validateFullGateCoverage(telemetry, expectation);
+
+  assert.equal(coverage.kind, 'full-gate-coverage-evidence.v1');
+  assert.equal(coverage.inventoryDigest, expectation.inventoryDigest);
+  assert.equal(
+    coverage.expectedFileSetDigest,
+    expectation.expectedFileSetDigest,
+  );
+  assert.equal(coverage.expectedFileCount, 2);
+  assert.equal(
+    coverage.observedFileSetDigest,
+    expectation.expectedFileSetDigest,
+  );
+  assert.equal(coverage.observedFileCount, 2);
+  assert.equal(coverage.fileSetMatches, true);
+  assert.equal(coverage.footerComplete, true);
+  assert.equal(coverage.telemetryBytes, telemetry.length);
+  assert.equal(coverage.telemetryDigest, digest(telemetry));
+  assert.deepEqual(coverage.outcomeCounts, {
+    passed: 1,
+    'not-passed': 0,
+    skipped: 1,
+    todo: 1,
+  });
+  assert.equal(coverage.testNodeCount, 3);
+  assert.equal(coverage.unattributedTestNodeCount, 0);
+  assert.equal(
+    fullGateCoverageMatchesProgress(coverage, {
+      completed: 3,
+      pass: 1,
+      fail: 0,
+      total: 3,
+      cancelled: 0,
+      skipped: 1,
+      todo: 1,
+      durationMs: 1,
+    }),
+    true,
+  );
+});
+
+test('a zero-exit passing TAP receipt fails closed without complete exact telemetry coverage', () => {
+  const rawLog = Buffer.from(
+    'TAP version 13\nok 1 - pass\n# tests 1\n# pass 1\n# fail 0\n# cancelled 0\n# skipped 0\n# todo 0\n# duration_ms 10\n',
+  );
+  const passFile = 'packages/workflow-engine/test/pass.test.ts';
+  const exactExpectation = coverageExpectation([passFile]);
+  const exactRecord = telemetryRecord(1, { file: passFile });
+  const invalidCoverage = [
+    validateFullGateCoverage(Buffer.alloc(0), exactExpectation),
+    validateFullGateCoverage(
+      Buffer.from(`${JSON.stringify(exactRecord)}\n`),
+      exactExpectation,
+    ),
+    validateFullGateCoverage(
+      coverageTelemetry([exactRecord]),
+      coverageExpectation([
+        passFile,
+        'packages/workflow-engine/test/missing.test.ts',
+      ]),
+    ),
+    validateFullGateCoverage(
+      coverageTelemetry([
+        exactRecord,
+        telemetryRecord(2, {
+          file: 'packages/workflow-engine/test/extra.test.ts',
+        }),
+      ]),
+      exactExpectation,
+    ),
+    validateFullGateCoverage(
+      coverageTelemetry([telemetryRecord(1, { file: null })]),
+      exactExpectation,
+    ),
+    validateFullGateCoverage(
+      coverageTelemetry([
+        telemetryRecord(1, { file: passFile, outcome: 'not-passed' }),
+      ]),
+      exactExpectation,
+    ),
+  ];
+
+  for (const [index, coverage] of invalidCoverage.entries()) {
+    const receipt = createFullGateReceipt({
+      runId: RUN_ID,
+      identity: IDENTITY,
+      headCommit: 'c'.repeat(40),
+      completedHeadCommit: 'c'.repeat(40),
+      completedIdentityDigest: IDENTITY.digest,
+      identityStable: true,
+      reason: null,
+      exitCode: 0,
+      signal: null,
+      rawLog,
+      coverage,
+      completedAt: '2026-08-12T00:00:00.000Z',
+    });
+    assert.equal(receipt.outcome, 'failed', `invalid coverage ${index}`);
+  }
+
+  assert.throws(
+    () =>
+      validateFullGateCoverage(coverageTelemetry([exactRecord]), {
+        ...exactExpectation,
+        expectedFiles: [passFile, passFile],
+      }),
+    /duplicate/i,
+  );
+});
+
+test('coverage file-set digest ignores test-node arrival order while receipt reuse binds raw telemetry order', () => {
+  const expectation = coverageExpectation([
+    'packages/workflow-engine/test/a.test.ts',
+    'packages/workflow-engine/test/z.test.ts',
+  ]);
+  const firstTelemetry = coverageTelemetry([
+    telemetryRecord(1, {
+      file: 'packages/workflow-engine/test/z.test.ts',
+      name: 'z',
+    }),
+    telemetryRecord(2, {
+      file: 'packages/workflow-engine/test/a.test.ts',
+      name: 'a',
+    }),
+  ]);
+  const reversedTelemetry = coverageTelemetry([
+    telemetryRecord(1, {
+      file: 'packages/workflow-engine/test/a.test.ts',
+      name: 'a',
+    }),
+    telemetryRecord(2, {
+      file: 'packages/workflow-engine/test/z.test.ts',
+      name: 'z',
+    }),
+  ]);
+  const firstCoverage = validateFullGateCoverage(firstTelemetry, expectation);
+  const reversedCoverage = validateFullGateCoverage(
+    reversedTelemetry,
+    expectation,
+  );
+
+  assert.equal(
+    reversedCoverage.observedFileSetDigest,
+    firstCoverage.observedFileSetDigest,
+  );
+  assert.notEqual(
+    reversedCoverage.telemetryDigest,
+    firstCoverage.telemetryDigest,
+  );
+});
+
+test('receipt reuse rejects legacy, malformed, and extension-bearing JSON without throwing', () => {
+  const rawLog = Buffer.from(
+    'TAP version 13\nok 1 - pass\n# tests 1\n# pass 1\n# fail 0\n# cancelled 0\n# skipped 0\n# todo 0\n# duration_ms 10\n',
+  );
+  const expectedFile = 'packages/workflow-engine/test/pass.test.ts';
+  const expectation = coverageExpectation([expectedFile]);
+  const telemetry = coverageTelemetry([
+    telemetryRecord(1, { file: expectedFile }),
+  ]);
+  const receipt = createFullGateReceipt({
+    runId: RUN_ID,
+    identity: IDENTITY,
+    headCommit: 'c'.repeat(40),
+    completedHeadCommit: 'c'.repeat(40),
+    completedIdentityDigest: IDENTITY.digest,
+    identityStable: true,
+    reason: null,
+    exitCode: 0,
+    signal: null,
+    rawLog,
+    coverage: validateFullGateCoverage(telemetry, expectation),
+    completedAt: '2026-08-12T00:00:00.000Z',
+  });
+  const evidence = { rawLog, telemetry, coverageExpectation: expectation };
+  const malformed: unknown[] = [
+    null,
+    {},
+    { ...receipt, kind: 'full-gate-run-receipt.v1' },
+    { ...receipt, extension: true },
+    { ...receipt, identity: null },
+    { ...receipt, progress: { ...receipt.progress, pass: '1' } },
+    { ...receipt, coverage: undefined },
+    { ...receipt, coverage: { ...receipt.coverage, extension: true } },
+    { ...receipt, coverage: { ...receipt.coverage, footerComplete: 1 } },
+    {
+      ...receipt,
+      coverage: {
+        ...receipt.coverage,
+        outcomeCounts: { ...receipt.coverage.outcomeCounts, passed: '1' },
+      },
+    },
+  ];
+
+  for (const [index, candidate] of malformed.entries()) {
+    assert.doesNotThrow(() =>
+      canReuseFullGateReceipt(candidate as typeof receipt, IDENTITY, evidence),
+    );
+    assert.equal(
+      canReuseFullGateReceipt(candidate as typeof receipt, IDENTITY, evidence),
+      false,
+      `malformed receipt ${index}`,
+    );
+  }
+});
+
+test('coverage reconciles the 1893-node passed, skipped, todo, and nested summary exactly', () => {
+  const expectedFile = 'packages/workflow-engine/test/all.test.ts';
+  const records = Array.from({ length: 1_893 }, (_, index) => {
+    const sequence = index + 1;
+    return telemetryRecord(sequence, {
+      file: expectedFile,
+      nesting: index % 3,
+      outcome: index < 11 ? 'skipped' : index < 18 ? 'todo' : 'passed',
+    });
+  });
+  const coverage = validateFullGateCoverage(
+    coverageTelemetry(records),
+    coverageExpectation([expectedFile]),
+  );
+
+  assert.deepEqual(coverage.outcomeCounts, {
+    passed: 1_875,
+    'not-passed': 0,
+    skipped: 11,
+    todo: 7,
+  });
+  assert.equal(coverage.testNodeCount, 1_893);
+  assert.equal(coverage.observedFileCount, 1);
+  assert.equal(
+    fullGateCoverageMatchesProgress(coverage, {
+      completed: 1_893,
+      pass: 1_875,
+      fail: 0,
+      total: 1_893,
+      cancelled: 0,
+      skipped: 11,
+      todo: 7,
+      durationMs: 60_000,
+    }),
+    true,
   );
 });
 
@@ -372,3 +682,70 @@ test('non-TTY progress emits only lifecycle transitions', () => {
   );
   assert.equal(progressOutputFor(failed.snapshot, 'progress', false), null);
 });
+
+type CoverageTelemetryRecord = Readonly<{
+  kind: 'workflow-full-gate-test-telemetry.v1';
+  sequence: number;
+  testNumber: number | null;
+  file: string | null;
+  line: number | null;
+  name: string;
+  nesting: number;
+  outcome: 'passed' | 'not-passed' | 'skipped' | 'todo';
+  durationMs: number;
+}>;
+
+function telemetryRecord(
+  sequence: number,
+  overrides: Partial<CoverageTelemetryRecord> = {},
+): CoverageTelemetryRecord {
+  return {
+    kind: 'workflow-full-gate-test-telemetry.v1',
+    sequence,
+    testNumber: sequence,
+    file: 'packages/workflow-engine/test/default.test.ts',
+    line: sequence,
+    name: `test ${sequence}`,
+    nesting: 0,
+    outcome: 'passed',
+    durationMs: 1,
+    ...overrides,
+  };
+}
+
+function coverageTelemetry(
+  records: readonly CoverageTelemetryRecord[],
+): Buffer {
+  return Buffer.from(
+    `${[
+      ...records,
+      {
+        kind: 'workflow-full-gate-test-telemetry-end.v1',
+        recordCount: records.length,
+      },
+    ]
+      .map((record) => JSON.stringify(record))
+      .join('\n')}\n`,
+  );
+}
+
+function coverageExpectation(expectedFiles: readonly string[]): {
+  inventoryDigest: `sha256:${string}`;
+  expectedFiles: string[];
+  expectedFileSetDigest: `sha256:${string}`;
+} {
+  const files = [...expectedFiles];
+  return {
+    inventoryDigest: `sha256:${'8'.repeat(64)}`,
+    expectedFiles: files,
+    expectedFileSetDigest: digest(JSON.stringify([...files].sort(compareText))),
+  };
+}
+
+function digest(value: string | Buffer): `sha256:${string}` {
+  return `sha256:${crypto.createHash('sha256').update(value).digest('hex')}`;
+}
+
+function compareText(left: string, right: string): number {
+  return left < right ? -1 : left > right ? 1 : 0;
+}
