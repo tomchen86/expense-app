@@ -1016,12 +1016,14 @@ function assertGrantedAssignment(value, envelope) {
             common.participant.sessionId !== null ||
             common.participant.engineSpawned !== false ||
             common.participant.principalId !== expectedPrincipal ||
-            (common.callableProviderIds.length !== 0 &&
-                common.degradedAuthorityOverride === undefined) ||
+            common.callableProviderIds.length !== 0 ||
             (envelope.payload.degradedForm === 'caller-supplied'
                 ? value.directHumanReviewAttestationDigest !== null ||
                     common.participant.identityAssurance !==
-                        envelope.payload.availableActor.assurance
+                        envelope.payload.availableActor.assurance ||
+                    (value.role !== 'task-implementer' &&
+                        (common.author.principalId === null ||
+                            common.participant.principalId === common.author.principalId))
                 : typeof value.directHumanReviewAttestationDigest !== 'string' ||
                     !DIGEST.test(value.directHumanReviewAttestationDigest) ||
                     common.participant.identityAssurance !== 'maintainer-signed')) {

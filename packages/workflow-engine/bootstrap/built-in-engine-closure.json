@@ -16,7 +16,7 @@
     {
       "path": "src/ai-adapter-cli.ts",
       "mode": "100644",
-      "digest": "sha256:81e232ffd6546c746b0ce820763110e419fa265b431fc4b898b7185c9935d809"
+      "digest": "sha256:9552460519070ab969108647723773246a0323aa578c8d03fee7036b2c4fef3b"
     },
     {
       "path": "src/ai-adapter-evaluation.ts",
@@ -101,7 +101,7 @@
     {
       "path": "src/authority-plan.ts",
       "mode": "100644",
-      "digest": "sha256:b550077ee808e213307693a824dd29b2f2f24715e38480a6fd48833e2963a527"
+      "digest": "sha256:af2c73962a4ef1d196d27f477cbafbae446fa6600b1359044442b70c249d0653"
     },
     {
       "path": "src/authority-refusal-audit.ts",
@@ -221,7 +221,7 @@
     {
       "path": "src/cli.ts",
       "mode": "100644",
-      "digest": "sha256:05b0d5aa488c3afafe5c5dfeaed53531805e800732e78c83464f284f403d610c"
+      "digest": "sha256:e1b73f43d96bc0d9e36086c01deeb3d8a7bc19540e55373b9d8fd15f1313d67c"
     },
     {
       "path": "src/codex-provider-adapter.ts",
@@ -236,7 +236,7 @@
     {
       "path": "src/collaboration-grant-store.ts",
       "mode": "100644",
-      "digest": "sha256:b50bcb66f9ec5665df28cfd6769cd44133a545a83b61afd59f629999ef484564"
+      "digest": "sha256:ad9d2bf0edc931433d1ed0c459cd65dfe70e004f3554c9b88e84fc371b5bb37c"
     },
     {
       "path": "src/collaboration-grant.ts",
@@ -924,6 +924,11 @@
       "digest": "sha256:d28ed1b4f5442651c33a89137e28a8fd289f36e78c6cfb853e341a5fa2aa0730"
     },
     {
+      "path": "src/provider-availability-pilot.ts",
+      "mode": "100644",
+      "digest": "sha256:8299b8d54b1427bda6229b4631847beefa30c414e072fffc1d0e3e215ccdd0b7"
+    },
+    {
       "path": "src/provider-contracts.ts",
       "mode": "100644",
       "digest": "sha256:0c429e40ec3ab9e8180d996f23ff569bbd07671c07e737f60debfb9bc7dfeba4"
@@ -1066,7 +1071,7 @@
     {
       "path": "src/role-scheduler.ts",
       "mode": "100644",
-      "digest": "sha256:743fcc7c84cd49dd1f5959da4f9bf9d2a87b0d1141151eeb142e92b608b2bf9c"
+      "digest": "sha256:afb48808987c4859d8a1cb21ed93a827956344d23d4998b07e4e1f475e5644a8"
     },
     {
       "path": "src/runner-resolution.ts",
@@ -1141,7 +1146,7 @@
     {
       "path": "src/task-diff-review-lifecycle.ts",
       "mode": "100644",
-      "digest": "sha256:c4ba831592ebc3b6307f9e300f57e63fbbdda437648d0f63821d293fa6e44e20"
+      "digest": "sha256:7efdfbdcc868d9d53a9e97fd1a10c70cb22ab4180c7081c6a7ed6f84bfadc85d"
     },
     {
       "path": "src/task-diff-review-lineage.ts",

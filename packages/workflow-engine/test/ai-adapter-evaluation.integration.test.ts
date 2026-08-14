@@ -1,12 +1,19 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
 import { DEFAULT_AI_ADAPTER_RETRY_ACCOUNTING } from '../src/ai-adapter-policy.ts';
+import { canonicalJson } from '../src/canonical-json.ts';
 import { evaluateAiAdapter } from '../src/ai-adapter-evaluation.ts';
+import {
+  createProviderAvailabilityPilotRunnerForTesting,
+  verifyProviderAvailabilityPilot,
+} from '../src/provider-availability-pilot.ts';
+import { PROVIDER_RUNNER_RESIDUALS } from '../src/provider-runner.ts';
 import {
   createFixtureRepository,
   git,
@@ -343,6 +350,22 @@ test('tracked adapter policy and schema publish the same strict v4 bounds', () =
   );
   assert.equal(schema.properties.limits.additionalProperties, false);
   assert.equal(schema.$defs.providerPolicy.additionalProperties, false);
+
+  const pilotSchema = JSON.parse(
+    fs.readFileSync(
+      path.join(
+        sourceRepositoryRoot,
+        'workflow/schemas/provider-availability-pilot.schema.json',
+      ),
+      'utf8',
+    ),
+  );
+  assert.equal(pilotSchema.additionalProperties, false);
+  assert.equal(
+    pilotSchema.properties.kind.const,
+    'provider-availability-pilot-result.v1',
+  );
+  assert.equal(pilotSchema.$defs.observation.additionalProperties, false);
 });
 
 test(
@@ -371,7 +394,7 @@ test(
   },
 );
 
-test('AI adapter CLI exposes evaluation only and ignores fake sandbox tools', () => {
+test('AI adapter evaluation remains diagnostic and ignores fake sandbox tools', () => {
   const repository = createFixtureRepository();
   const fakeBin = fs.mkdtempSync(path.join(os.tmpdir(), 'fake-sandbox-bin-'));
   const markerPath = path.join(fakeBin, 'sandbox-ran');
@@ -411,6 +434,213 @@ test('AI adapter CLI exposes evaluation only and ignores fake sandbox tools', ()
     assert.equal(fs.existsSync(runtimeRoot(repository)), false);
   } finally {
     fs.rmSync(fakeBin, { recursive: true, force: true });
+    fs.rmSync(repository, { recursive: true, force: true });
+  }
+});
+
+test('provider availability pilot durably verifies a credential-safe ordinary Codex and Claude observation', () => {
+  const repository = createFixtureRepository();
+  const uuids = [
+    '11111111-1111-4111-8111-111111111111',
+    '22222222-2222-4222-8222-222222222222',
+  ];
+  let tick = 0;
+  try {
+    const runPilot = createProviderAvailabilityPilotRunnerForTesting({
+      now() {
+        return new Date(Date.UTC(2026, 7, 15, 0, 0, tick++));
+      },
+      randomUUID() {
+        return uuids.shift()!;
+      },
+      preflight(providerId) {
+        return {
+          status: 'available' as const,
+          version: `${providerId}-fixture-v1`,
+          executable: executableIdentity(providerId),
+        };
+      },
+      runProvider(input) {
+        const semanticOutput = {
+          reference: input.request.invocationId,
+          terms: [
+            {
+              kind: 'literal-content',
+              value: 'RAW_PROVIDER_TERM_MUST_NOT_BE_RECORDED',
+            },
+          ],
+        };
+        const providerRuntime = path.join(input.invocationDirectory, 'runtime');
+        fs.mkdirSync(providerRuntime, { mode: 0o700 });
+        for (const [name, content] of [
+          ['prompt.json', '{}\n'],
+          ['schema.json', `${canonicalJson(input.semanticOutputSchema)}\n`],
+          ['semantic-output.json', `${canonicalJson(semanticOutput)}\n`],
+        ] as const) {
+          fs.writeFileSync(path.join(providerRuntime, name), content, {
+            mode: 0o600,
+          });
+        }
+        return {
+          invocationId: input.request.invocationId,
+          providerId: input.providerId,
+          purpose: input.request.purpose,
+          requestDigest: input.request.requestDigest,
+          semanticOutput,
+          semanticOutputDigest: crypto
+            .createHash('sha256')
+            .update(canonicalJson(semanticOutput))
+            .digest('hex'),
+          assurance: 'unchanged-governed-projection' as const,
+          projection: {
+            unchanged: true as const,
+            changedCategories: [],
+            beforeDigest: 'a'.repeat(64),
+            afterDigest: 'a'.repeat(64),
+          },
+          sameUserProcessConfined: false as const,
+          residuals: [...PROVIDER_RUNNER_RESIDUALS],
+          executable: executableIdentity(input.providerId),
+          elapsedMs: input.providerId === 'codex' ? 12 : 14,
+        };
+      },
+    });
+    const result = runPilot(repository, {
+      recordPath: 'workflow/provider-availability-pilots/healthy-fixture.json',
+    });
+
+    assert.equal(result.record.accepted, true);
+    assert.equal(result.record.decision, 'healthy-two-provider-observed');
+    assert.equal(result.record.authority, 'empirical-observation-only');
+    assert.deepEqual(result.record.friction, {
+      providerWaitCount: 0,
+      collaborationGrantCount: 0,
+      humanActionCount: 0,
+    });
+    assert.deepEqual(
+      result.record.observations.map(
+        ({ providerId, state, role, achievedIndependence, grantUsed }) => ({
+          providerId,
+          state,
+          role,
+          achievedIndependence,
+          grantUsed,
+        }),
+      ),
+      [
+        {
+          providerId: 'codex',
+          state: 'succeeded',
+          role: 'blind-surveyor',
+          achievedIndependence: 'provider-independent',
+          grantUsed: false,
+        },
+        {
+          providerId: 'claude',
+          state: 'succeeded',
+          role: 'blind-surveyor',
+          achievedIndependence: 'provider-independent',
+          grantUsed: false,
+        },
+      ],
+    );
+    assert.deepEqual(
+      verifyProviderAvailabilityPilot(repository, result.recordPath),
+      result.record,
+    );
+    const recordedBytes = fs.readFileSync(
+      path.join(repository, result.recordPath),
+      'utf8',
+    );
+    assert.equal(
+      recordedBytes.includes('RAW_PROVIDER_TERM_MUST_NOT_BE_RECORDED'),
+      false,
+    );
+
+    const verified = runCli(repository, [
+      'adapter',
+      'verify-availability-pilot',
+      '--record',
+      result.recordPath,
+      '--json',
+    ]);
+    assert.equal(verified.status, 0, verified.stderr);
+    assert.equal(JSON.parse(verified.stdout).result.accepted, true);
+
+    const tamperedPath =
+      'workflow/provider-availability-pilots/tampered-fixture.json';
+    const tampered = structuredClone(result.record) as { accepted: boolean };
+    tampered.accepted = false;
+    fs.writeFileSync(
+      path.join(repository, tamperedPath),
+      `${canonicalJson(tampered)}\n`,
+    );
+    assert.throws(
+      () => verifyProviderAvailabilityPilot(repository, tamperedPath),
+      (error) => isWorkflowError(error, 'PROVIDER_AVAILABILITY_PILOT_INVALID'),
+    );
+  } finally {
+    fs.rmSync(repository, { recursive: true, force: true });
+  }
+});
+
+test('provider availability pilot records adapter unavailability without launching or claiming success', () => {
+  const repository = createFixtureRepository();
+  let launches = 0;
+  try {
+    const runPilot = createProviderAvailabilityPilotRunnerForTesting({
+      now: () => new Date('2026-08-15T01:00:00.000Z'),
+      randomUUID: () => '33333333-3333-4333-8333-333333333333',
+      preflight(providerId) {
+        return {
+          status: 'unauthenticated' as const,
+          version: `${providerId}-fixture-v1`,
+          executable: executableIdentity(providerId),
+        };
+      },
+      runProvider() {
+        launches += 1;
+        assert.fail('an unavailable adapter must not launch');
+      },
+    });
+    const result = runPilot(repository, {
+      recordPath:
+        'workflow/provider-availability-pilots/unavailable-fixture.json',
+    });
+
+    assert.equal(launches, 0);
+    assert.equal(result.record.accepted, false);
+    assert.equal(result.record.decision, 'incomplete');
+    assert.equal(result.record.friction.providerWaitCount, 2);
+    assert.deepEqual(
+      result.record.observations.map(
+        ({ providerId, state, resolutionStatus, invocationId }) => ({
+          providerId,
+          state,
+          resolutionStatus,
+          invocationId,
+        }),
+      ),
+      [
+        {
+          providerId: 'codex',
+          state: 'unavailable',
+          resolutionStatus: 'unauthenticated',
+          invocationId: null,
+        },
+        {
+          providerId: 'claude',
+          state: 'unavailable',
+          resolutionStatus: 'unauthenticated',
+          invocationId: null,
+        },
+      ],
+    );
+    assert.deepEqual(
+      verifyProviderAvailabilityPilot(repository, result.recordPath),
+      result.record,
+    );
+  } finally {
     fs.rmSync(repository, { recursive: true, force: true });
   }
 });
@@ -471,4 +701,19 @@ function runCli(
       env: { ...process.env, ...environment },
     },
   );
+}
+
+function executableIdentity(providerId: 'codex' | 'claude') {
+  return {
+    candidatePath: `/opt/homebrew/bin/${providerId}`,
+    realPath: `/opt/homebrew/bin/${providerId}`,
+    device: '1',
+    inode: providerId === 'codex' ? '11' : '12',
+    mode: 0o100755,
+    uid: 501,
+    gid: 20,
+    size: 1024,
+    mtimeNs: '1',
+    sha256: providerId === 'codex' ? 'c'.repeat(64) : 'd'.repeat(64),
+  };
 }

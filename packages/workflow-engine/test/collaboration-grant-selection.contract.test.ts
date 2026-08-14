@@ -350,7 +350,62 @@ test('read-only inspection rejects inconsistent consumed tombstones and unsafe s
   }
 });
 
-test('records callable providers when an exact signed grant selects external challenge closure only', () => {
+test('caller-supplied challenger content cannot be attributed to the audited principal', () => {
+  const repository = collaborationFixture();
+  const signer = fixtureSigner();
+  try {
+    const core = selectionCore(repository);
+    const issued = issueCollaborationGrant(
+      repository,
+      grantRequest(repository, 'caller-supplied'),
+      { now: NOW, grantId: CALLER_GRANT_ID, signer },
+    );
+    const common = fs.realpathSync(path.join(repository, '.git'));
+    const paths = collaborationGrantStorePaths(common);
+    const selected = withRepositoryLifecycleOperation(
+      paths.runtime,
+      (assertOwned) =>
+        selectAndReserveCollaborationGrantUnderLifecycleLock(
+          repository,
+          issued.grantId,
+          {
+            expectedCore: core,
+            allowedDegradedForms: ['caller-supplied'],
+            now: new Date(NOW.getTime() + 60_000),
+            verifier: signer,
+          },
+          assertOwned,
+        ),
+    );
+
+    assert.throws(() =>
+      authorizeGrantedOrdinaryRole({
+        role: 'task-diff-reviewer',
+        author: {
+          providerId: undefined,
+          sessionId: undefined,
+          principalId: 'independent-reviewer',
+          identityAssurance: 'runtime-hint',
+          engineSpawned: false,
+        },
+        targetDigest: TARGET_DIGEST,
+        reservation: selected.reservation,
+        actualParticipant: {
+          providerId: undefined,
+          sessionId: undefined,
+          principalId: 'independent-reviewer',
+          identityAssurance: 'runtime-hint',
+          engineSpawned: false,
+        },
+        callableProviderIds: [],
+      }),
+    );
+  } finally {
+    fs.rmSync(repository, { recursive: true, force: true });
+  }
+});
+
+test('challenge closure override requires an actual empty callable-provider set', () => {
   const repository = collaborationFixture();
   const signer = fixtureSigner();
   try {
@@ -420,11 +475,19 @@ test('records callable providers when an exact signed grant selects external cha
     };
 
     assert.throws(() => authorizeGrantedOrdinaryRole(commonInput));
-    const assignment = authorizeGrantedOrdinaryRole({
+    assert.throws(() =>
+      authorizeGrantedOrdinaryRole({
+        ...commonInput,
+        degradedAuthorityOverride: override,
+      } as Parameters<typeof authorizeGrantedOrdinaryRole>[0]),
+    );
+    const shortageInput = {
       ...commonInput,
+      callableProviderIds: [],
       degradedAuthorityOverride: override,
-    } as Parameters<typeof authorizeGrantedOrdinaryRole>[0]);
-    assert.deepEqual(assignment.callableProviderIds, ['claude', 'codex']);
+    } as Parameters<typeof authorizeGrantedOrdinaryRole>[0];
+    const assignment = authorizeGrantedOrdinaryRole(shortageInput);
+    assert.deepEqual(assignment.callableProviderIds, []);
     assert.deepEqual(
       (
         assignment as typeof assignment & {
@@ -447,14 +510,14 @@ test('records callable providers when an exact signed grant selects external cha
     assert.deepEqual(consumed.use?.assignment, assignment);
     assert.throws(() =>
       authorizeGrantedOrdinaryRole({
-        ...commonInput,
+        ...shortageInput,
         role: 'plan-reviewer',
         degradedAuthorityOverride: override,
       } as Parameters<typeof authorizeGrantedOrdinaryRole>[0]),
     );
     assert.throws(() =>
       authorizeGrantedOrdinaryRole({
-        ...commonInput,
+        ...shortageInput,
         degradedAuthorityOverride: {
           ...override,
           responseDigest: '8'.repeat(64),

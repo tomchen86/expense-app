@@ -41,10 +41,12 @@ in the linked OpenSpec change.
   explicitly descoped by the owner. Neither assurance escalation nor
   simplification may silently erase an owner decision.
 - Treat a healthy Codex/Claude read-only run as an empirical observation, not
-  structural provider availability. Task 7.1 has no durable verifier for
-  success, unavailable, fake-backed, or human-authorized degraded outcomes, so
-  successor managed work must define that decision contract before
-  `C-AVAILABILITY` can be closed.
+  structural provider availability. `C-AVAILABILITY` is delivered by the
+  verifier-accepted real ordinary-path record at
+  `workflow/provider-availability-pilots/c-availability-2026-08-15.json`:
+  both providers succeeded with unchanged governed projections, zero grants,
+  and zero human actions. The record contains no raw provider output; its cost
+  fields are policy reservation upper bounds, not billed usage.
 - Preserve the completed break-glass implementation and real bootstrap-pilot
   evidence from PRs #51 and #54. PR #54 passed all normal checks plus the
   base-owned `workflow-assurance` check without a ruleset exception.

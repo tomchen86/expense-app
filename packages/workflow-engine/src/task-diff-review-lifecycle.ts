@@ -1165,11 +1165,13 @@ export function submitExternalTaskDiffReviewContinuation(
           reviewRecordDigest: current.review.recordDigest,
           responseDigest: response.responseDigest,
         });
-        assertNoProviderTaskDiffContinuationCollision(
-          runtime,
-          context.session.sessionId,
-          current.review,
-        );
+        const callableProviderIds =
+          assertExternalTaskDiffContinuationProviderShortage(
+            context,
+            runtime,
+            context.session.sessionId,
+            current.review,
+          );
 
         const existingBinding = readTaskDiffExternalContinuationBinding(
           runtime,
@@ -1371,13 +1373,6 @@ export function submitExternalTaskDiffReviewContinuation(
               reservation,
             );
           }
-          const callableProviderIds = (['codex', 'claude'] as const).filter(
-            (providerId) =>
-              baselineAdapterPolicy(
-                context.git.repositoryRoot,
-                current.review.subject.baseCommit,
-              ).policy.providers[providerId].enabled,
-          );
           assignment = authorizeGrantedOrdinaryRole({
             role: 'task-diff-reviewer',
             author: roleParticipantFromRecorded(current.implementationActor),
@@ -1848,12 +1843,13 @@ export function loadAuthenticatedExternalTaskDiffTerminalAssurance(input: {
   );
   if (bindings.length === 0) return null;
   if (bindings.length !== 1) throw taskDiffReviewLineageConflict();
-  assertNoProviderTaskDiffContinuationCollision(
+  const binding = bindings[0]!;
+  assertExternalTaskDiffContinuationProviderShortage(
+    context,
     runtime,
     context.session.sessionId,
     current.review,
   );
-  const binding = bindings[0]!;
   const storedResponse = readTaskDiffExternalChallengeResponse(
     runtime,
     current.review.subjectDigest,
@@ -1919,11 +1915,19 @@ function assertExternalTaskDiffContinuationInputCurrent(
   return response;
 }
 
-function assertNoProviderTaskDiffContinuationCollision(
+const TASK_DIFF_EXTERNAL_CONTINUATION_SHORTAGE_FAILURE_CODES = new Set([
+  'PROVIDER_CAPACITY',
+  'PROVIDER_RATE_LIMIT',
+  'PROVIDER_TOOL_UNAVAILABLE',
+  'PROVIDER_UNAVAILABLE',
+]);
+
+function assertExternalTaskDiffContinuationProviderShortage(
+  context: ReturnType<typeof loadActiveSessionContext>,
   runtime: ReturnType<typeof loadInvestigationRuntimeContext>['runtime'],
   sessionId: string,
   review: TaskDiffReviewRecord,
-): void {
+): ProviderId[] {
   const reservations = listAllTaskDiffReviewContinuationReservations(
     runtime,
   ).filter(
@@ -1934,24 +1938,81 @@ function assertNoProviderTaskDiffContinuationCollision(
   ).filter(
     ({ reviewRecordDigest }) => reviewRecordDigest === review.recordDigest,
   );
+  const exactReservation = readTaskDiffReviewContinuationReservation(
+    runtime,
+    sessionId,
+    review.recordDigest,
+  );
+  const exactResult = readTaskDiffReviewContinuationResultBinding(
+    runtime,
+    sessionId,
+    review.recordDigest,
+  );
   if (
-    reservations.length > 0 ||
     results.length > 0 ||
-    // Keep the exact-session reads as a strict orphan detector even if the
-    // global inventory is subsequently refactored.
-    readTaskDiffReviewContinuationReservation(
-      runtime,
-      sessionId,
-      review.recordDigest,
-    ) !== null ||
-    readTaskDiffReviewContinuationResultBinding(
-      runtime,
-      sessionId,
-      review.recordDigest,
-    ) !== null
+    exactResult !== null ||
+    reservations.length > 1 ||
+    (exactReservation !== null &&
+      !reservations.some(
+        (reservation) =>
+          reservation.reservationDigest === exactReservation.reservationDigest,
+      ))
   ) {
     throw taskDiffReviewLineageConflict();
   }
+  if (reservations.length === 1) {
+    const reservation = reservations[0]!;
+    if (
+      canonicalJson(reservation.review) !== canonicalJson(review) ||
+      reservation.subject.subjectDigest !== review.subjectDigest
+    ) {
+      throw taskDiffReviewLineageConflict();
+    }
+    const invocation = readProviderInvocation(
+      runtime,
+      reservation.request.invocationId,
+    );
+    if (
+      invocation.requestDigest !== reservation.request.requestDigest ||
+      invocation.investigationId !== reservation.ownerInvestigationId ||
+      invocation.changeId !== reservation.changeId
+    ) {
+      throw taskDiffReviewLineageConflict();
+    }
+    if (
+      invocation.state === 'failed' &&
+      invocation.failure !== null &&
+      TASK_DIFF_EXTERNAL_CONTINUATION_SHORTAGE_FAILURE_CODES.has(
+        invocation.failure.code,
+      )
+    ) {
+      return [];
+    }
+    if (invocation.state !== 'failed') {
+      throw taskDiffReviewLineageConflict();
+    }
+    throw externalTaskDiffContinuationProviderShortageRequired();
+  }
+
+  const callableProviderIds = (['codex', 'claude'] as const).filter(
+    (providerId) =>
+      baselineAdapterPolicy(
+        context.git.repositoryRoot,
+        review.subject.baseCommit,
+      ).policy.providers[providerId].enabled,
+  );
+  if (callableProviderIds.length !== 0) {
+    throw externalTaskDiffContinuationProviderShortageRequired();
+  }
+  return [];
+}
+
+function externalTaskDiffContinuationProviderShortageRequired(): WorkflowError {
+  return workflowError(
+    'TASK_DIFF_EXTERNAL_CONTINUATION_PROVIDER_SHORTAGE_REQUIRED',
+    'External TaskDiffReview challenge closure requires either no callable review provider or one exact provider continuation that failed with an availability shortage.',
+    ExitCode.guard,
+  );
 }
 
 function externalTaskDiffContinuationGrantCore(
@@ -5628,10 +5689,21 @@ function replayTaskDiffReviewTerminal(
   ) {
     throw taskDiffReviewLineageConflict();
   }
-  const hasProviderContinuation =
-    providerReservation !== null || providerBinding !== null;
   const hasExternalContinuation =
     activeExternalReservations.length > 0 || externalBindings.length > 0;
+  let providerReservationIsShortageProvenance = false;
+  if (hasExternalContinuation && providerBinding === null) {
+    assertExternalTaskDiffContinuationProviderShortage(
+      context,
+      runtime,
+      context.session.sessionId,
+      review,
+    );
+    providerReservationIsShortageProvenance = providerReservation !== null;
+  }
+  const hasProviderContinuation =
+    !providerReservationIsShortageProvenance &&
+    (providerReservation !== null || providerBinding !== null);
   if (hasProviderContinuation && hasExternalContinuation) {
     throw taskDiffReviewLineageConflict();
   }
@@ -5655,7 +5727,7 @@ function replayTaskDiffReviewTerminal(
       closureSource: null,
     });
   }
-  if (providerReservation !== null) {
+  if (hasProviderContinuation && providerReservation !== null) {
     if (providerBinding === null) {
       if (storedAssurance !== null) throw taskDiffReviewLineageConflict();
       return openTaskDiffReviewTerminal(null);

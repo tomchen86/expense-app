@@ -8,7 +8,7 @@
     {
       "path": "bootstrap/recovery-runtime/bootstrap/built-in-engine-closure-pin.js",
       "mode": "100644",
-      "digest": "sha256:3a60a7beafd37e51092795ed2b54e2ffbdadd574edacd2cc176f911163558ba7"
+      "digest": "sha256:d80c2c84abf391d5414d77d8c5573826c10eb262f5e13e84e2cd6443d517cd92"
     },
     {
       "path": "bootstrap/recovery-runtime/src/actor-identity.js",
@@ -68,7 +68,7 @@
     {
       "path": "bootstrap/recovery-runtime/src/collaboration-grant-store.js",
       "mode": "100644",
-      "digest": "sha256:79bf22a30abd3bbc5a12836d20d70f9f0adc458ea9388e326bef57c388468f03"
+      "digest": "sha256:203bcf03e46a1b09019b90df8c5bd7710a5043f805236ec9853e66141765ae46"
     },
     {
       "path": "bootstrap/recovery-runtime/src/collaboration-grant.js",
@@ -403,7 +403,7 @@
     {
       "path": "bootstrap/recovery-runtime/src/role-scheduler.js",
       "mode": "100644",
-      "digest": "sha256:23953a6638cbfdc4c08ef3e2cfc2eaf7e488da2caa535643630b3d7a154478cc"
+      "digest": "sha256:961e60d9e912c9ee6938f5227b090822a8a12e3225034fbdf59aa93002b4ff3a"
     },
     {
       "path": "bootstrap/recovery-runtime/src/runner-resolution.js",

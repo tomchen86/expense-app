@@ -3046,6 +3046,8 @@ function usageText(): string {
     '  pnpm workflow authority-plan resume <plan-id> [--json]',
     '  pnpm workflow authority-plan attest <plan-id> [--json]',
     '  pnpm workflow adapter evaluate [--json]',
+    '  pnpm workflow adapter availability-pilot --record <workflow/provider-availability-pilots/name.json> [--json]',
+    '  pnpm workflow adapter verify-availability-pilot --record <workflow/provider-availability-pilots/name.json> [--json]',
     '  pnpm workflow issue <add|update|close|render|validate> ... [--json]',
     '  pnpm workflow maintainer grant preflight --profile <profile-id> [--json]',
     '  pnpm workflow maintainer grant approve-and-apply --change <change-id> --task <mandate-task-id> --profile <profile-id> --reason <text> --message <subject> --effects-file <json|none> [--waivers-file <json|none>] [--json]',

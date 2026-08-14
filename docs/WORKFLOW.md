@@ -964,17 +964,37 @@ Use a degraded path only after an exact human collaboration grant, and retain
 the lower achieved independence; human authorization does not recreate the
 missing perspective.
 
-The current Task 7.1 plan does not provide a durable result schema, verifier,
-acceptance decision, or credential-safe tracked record for that local
-observation. Therefore neither a manual success nor an unavailable adapter may
-close `C-AVAILABILITY`. Success, unavailable, fake-backed, and
-human-authorized-degraded outcomes require successor managed work before the
-availability pilot can be claimed complete.
+The engine now provides a strict v1 result schema and verifier:
+
+```bash
+pnpm workflow adapter availability-pilot \
+  --record workflow/provider-availability-pilots/<name>.json --json
+pnpm workflow adapter verify-availability-pilot \
+  --record workflow/provider-availability-pilots/<name>.json --json
+```
+
+The run uses the ordinary lifecycle-owned read-only provider runner. Its
+tracked result writes no raw provider output or credentials; ordinary local
+invocation evidence remains under the engine runtime policy. It accepts only
+one successful Codex and one successful Claude observation with unchanged
+governed projections, ordinary provider independence, zero grants, and latency
+inside repository policy. Because the adapters do not expose a trustworthy
+billed-usage field, cost is recorded honestly as the policy reservation upper
+bound with `actualUsageReported: false`; it must not be described as actual
+spend.
+Unavailable adapters produce a durable `incomplete` observation and fake-backed
+tests never close `C-AVAILABILITY`. The real ordinary-path record
+`workflow/provider-availability-pilots/c-availability-2026-08-15.json` passed
+the strict verifier on 2026-08-15: Codex and Claude both succeeded, their
+governed projections remained unchanged, and the run used zero grants and zero
+human actions. This closes the empirical pilot claim for that exact baseline;
+it does not establish structural availability, a future SLA, or actual billed
+cost.
 
 The disposable repository rehearsal proves the implementation path but is not
-the workflow-adoption pilot. The gate below is the post-merge
-workflow-adoption pilot; it does not close the separate two-provider
-`C-AVAILABILITY` pilot described above. Workflow-adoption support remains
+the workflow-adoption pilot. The gate below is the separate post-merge
+workflow-adoption pilot; it does not replace or broaden the exact-baseline
+`C-AVAILABILITY` observation described above. Workflow-adoption support remains
 undeclared until a maintainer performs this gate after the integration is
 merged and reachable from the configured base:
 
@@ -1027,8 +1047,8 @@ merged and reachable from the configured base:
 6. Verify that CI succeeds without developer runtime reports and that only the
    UTC date prefix varies if the replay crosses a day. Declare
    workflow-adoption support only after all results are recorded and the
-   required remote rule is confirmed; this declaration does not close
-   `C-AVAILABILITY`.
+   required remote rule is confirmed; this declaration does not broaden the
+   exact-baseline `C-AVAILABILITY` observation.
 
 Do not perform the post-merge pilot inside the integration branch, describe the
 disposable rehearsal or Task 7.1 local observation as the completed pilot, or

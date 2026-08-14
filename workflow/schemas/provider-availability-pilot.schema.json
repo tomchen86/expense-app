@@ -1,0 +1,169 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.local/workflow/provider-availability-pilot.schema.json",
+  "title": "Provider availability pilot result",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "kind",
+    "pilotId",
+    "authority",
+    "repositoryId",
+    "baseCommit",
+    "baseTree",
+    "policyDigest",
+    "startedAt",
+    "completedAt",
+    "decision",
+    "accepted",
+    "friction",
+    "totalProviderLatencyMs",
+    "totalReservedCostMicros",
+    "totalReservedTokens",
+    "observations",
+    "recordDigest"
+  ],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "kind": { "const": "provider-availability-pilot-result.v1" },
+    "pilotId": {
+      "type": "string",
+      "pattern": "^provider-availability-[a-z0-9]{32}$"
+    },
+    "authority": { "const": "empirical-observation-only" },
+    "repositoryId": { "type": "string", "minLength": 1 },
+    "baseCommit": { "$ref": "#/$defs/gitObjectId" },
+    "baseTree": { "$ref": "#/$defs/gitObjectId" },
+    "policyDigest": { "$ref": "#/$defs/sha256" },
+    "startedAt": { "type": "string", "format": "date-time" },
+    "completedAt": { "type": "string", "format": "date-time" },
+    "decision": {
+      "enum": ["healthy-two-provider-observed", "incomplete"]
+    },
+    "accepted": { "type": "boolean" },
+    "friction": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "providerWaitCount",
+        "collaborationGrantCount",
+        "humanActionCount"
+      ],
+      "properties": {
+        "providerWaitCount": { "type": "integer", "minimum": 0 },
+        "collaborationGrantCount": { "const": 0 },
+        "humanActionCount": { "const": 0 }
+      }
+    },
+    "totalProviderLatencyMs": { "type": "integer", "minimum": 0 },
+    "totalReservedCostMicros": { "type": "integer", "minimum": 0 },
+    "totalReservedTokens": { "type": "integer", "minimum": 0 },
+    "observations": {
+      "type": "array",
+      "minItems": 2,
+      "maxItems": 2,
+      "items": { "$ref": "#/$defs/observation" }
+    },
+    "recordDigest": { "$ref": "#/$defs/sha256" }
+  },
+  "$defs": {
+    "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "gitObjectId": {
+      "type": "string",
+      "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$"
+    },
+    "nullableString": {
+      "anyOf": [{ "type": "string" }, { "type": "null" }]
+    },
+    "nullableSha256": {
+      "anyOf": [{ "$ref": "#/$defs/sha256" }, { "type": "null" }]
+    },
+    "cost": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "basis",
+        "actualUsageReported",
+        "providerCostMicros",
+        "providerTokens",
+        "withinPolicyBudget"
+      ],
+      "properties": {
+        "basis": { "const": "policy-reservation-upper-bound" },
+        "actualUsageReported": { "const": false },
+        "providerCostMicros": { "type": "integer", "minimum": 0 },
+        "providerTokens": { "type": "integer", "minimum": 0 },
+        "withinPolicyBudget": { "type": "boolean" }
+      }
+    },
+    "mutationObservation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["assurance", "unchanged", "beforeDigest", "afterDigest"],
+      "properties": {
+        "assurance": { "const": "unchanged-governed-projection" },
+        "unchanged": { "const": true },
+        "beforeDigest": { "$ref": "#/$defs/sha256" },
+        "afterDigest": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "observation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "providerId",
+        "role",
+        "state",
+        "resolutionStatus",
+        "version",
+        "invocationId",
+        "requestDigest",
+        "outputDigest",
+        "authorizationNodeId",
+        "achievedIndependence",
+        "grantUsed",
+        "providerLatencyMs",
+        "mutationObservation",
+        "executableSha256",
+        "failureCode",
+        "cost"
+      ],
+      "properties": {
+        "providerId": { "enum": ["codex", "claude"] },
+        "role": { "const": "blind-surveyor" },
+        "state": { "enum": ["succeeded", "unavailable", "failed"] },
+        "resolutionStatus": {
+          "enum": [
+            "disabled",
+            "unsupported-platform",
+            "absent",
+            "unsafe-candidate",
+            "incompatible",
+            "unauthenticated",
+            "available"
+          ]
+        },
+        "version": { "$ref": "#/$defs/nullableString" },
+        "invocationId": { "$ref": "#/$defs/nullableString" },
+        "requestDigest": { "$ref": "#/$defs/nullableSha256" },
+        "outputDigest": { "$ref": "#/$defs/nullableSha256" },
+        "authorizationNodeId": { "$ref": "#/$defs/nullableSha256" },
+        "achievedIndependence": {
+          "enum": ["provider-independent", null]
+        },
+        "grantUsed": { "const": false },
+        "providerLatencyMs": { "type": "integer", "minimum": 0 },
+        "mutationObservation": {
+          "anyOf": [
+            { "$ref": "#/$defs/mutationObservation" },
+            { "type": "null" }
+          ]
+        },
+        "executableSha256": { "$ref": "#/$defs/nullableSha256" },
+        "failureCode": { "$ref": "#/$defs/nullableString" },
+        "cost": { "$ref": "#/$defs/cost" }
+      }
+    }
+  }
+}

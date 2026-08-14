@@ -512,8 +512,7 @@ export function authorizeGrantedOrdinaryRole(
   }
 
   if (
-    (callableProviderIds.length !== 0 &&
-      degradedAuthorityOverride === undefined) ||
+    callableProviderIds.length !== 0 ||
     participant.providerId !== undefined ||
     participant.sessionId !== undefined ||
     participant.engineSpawned
@@ -525,7 +524,10 @@ export function authorizeGrantedOrdinaryRole(
     payload.degradedForm === 'caller-supplied' &&
     payload.availableActor.kind === 'caller' &&
     participant.principalId === payload.availableActor.callerId &&
-    participant.identityAssurance === payload.availableActor.assurance
+    participant.identityAssurance === payload.availableActor.assurance &&
+    (input.role === 'task-implementer' ||
+      (typeof input.author.principalId === 'string' &&
+        participant.principalId !== input.author.principalId))
   ) {
     return Object.freeze({
       ...base,

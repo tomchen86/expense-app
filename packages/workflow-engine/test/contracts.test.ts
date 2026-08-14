@@ -305,6 +305,8 @@ test('agent guide documents the complete public workflow surface and source-size
     'pnpm workflow check',
     'pnpm workflow ci',
     'pnpm workflow adapter evaluate',
+    'pnpm workflow adapter availability-pilot',
+    'pnpm workflow adapter verify-availability-pilot',
     'pnpm workflow issue add',
     'pnpm workflow issue update',
     'pnpm workflow issue close',

@@ -51,7 +51,9 @@ commit, or archive. Use the workflow commands below for those operations.
 | `pnpm workflow authority-plan status <plan-id> --json`      | Reading one durable authority round without advancing it        |
 | `pnpm workflow authority-plan resume <plan-id> --json`      | Observing publication/merge state and advancing only non-signing durable substates |
 | `pnpm workflow run-check <check-id> --json`                 | Running one registered non-destructive check on clean HEAD for evidence only |
-| `pnpm workflow adapter evaluate --input <path> --json`      | Evaluating a supported AI adapter request under repository policy |
+| `pnpm workflow adapter evaluate --json`                   | Inspecting fixed adapter availability without launching a model  |
+| `pnpm workflow adapter availability-pilot --record workflow/provider-availability-pilots/<name>.json --json` | Running the non-authoritative ordinary Codex/Claude read-only pilot and writing one create-only credential-safe result |
+| `pnpm workflow adapter verify-availability-pilot --record workflow/provider-availability-pilots/<name>.json --json` | Recomputing the empirical pilot decision from its pinned Git and policy inputs |
 
 `run-check` is for local or external-CI adapters that need the exact registered
 runner and path scope. It does not authorize task completion, staging, commit,

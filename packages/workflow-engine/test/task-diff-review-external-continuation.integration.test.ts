@@ -17,6 +17,7 @@ import {
 } from '../src/collaboration-grant-store.ts';
 import { loadWorkflowConfig } from '../src/contracts.ts';
 import { readEvidenceNode } from '../src/evidence-object-store.ts';
+import { ExitCode, workflowError } from '../src/errors.ts';
 import { discoverRepository } from '../src/git.ts';
 import { renderHandoff } from '../src/handoff.ts';
 import { finalizeTask } from '../src/lifecycle.ts';
@@ -111,6 +112,47 @@ test('provider review reaches FAR only through an authenticated external continu
       reviewRecordDigest: reviewed.review.recordDigest,
       responseDigest: response.responseDigest,
     });
+    const now = new Date();
+    const prematureGrant = issueExternalGrant(
+      repository,
+      signing,
+      reviewed.review.subject,
+      targetDigest,
+      '99999999-9999-4999-8999-999999999999',
+      'independent-closer',
+      now,
+    );
+    assert.throws(
+      () =>
+        submitExternalTaskDiffReviewContinuation(
+          repository,
+          session.sessionId,
+          response,
+          closureInput,
+          grantOptions(signing, prematureGrant.grantId, now, 15_000),
+        ),
+      hasCode('TASK_DIFF_EXTERNAL_CONTINUATION_PROVIDER_SHORTAGE_REQUIRED'),
+    );
+    assert.equal(
+      inspectCollaborationGrants(
+        discoverRepository(repository).gitCommonDirectory,
+        prematureGrant.grantId,
+      )[0]?.state,
+      'available',
+    );
+    const failedProviderContinuation = beginTaskDiffReviewContinuation(
+      repository,
+      session.sessionId,
+      response,
+    );
+    if (failedProviderContinuation.state !== 'waiting-for-provider') {
+      assert.fail('expected an exact provider continuation attempt');
+    }
+    failFakeProvider(
+      repository,
+      failedProviderContinuation.invocationId,
+      'PROVIDER_RATE_LIMIT',
+    );
 
     const authorityFree = submitExternalTaskDiffReviewContinuation(
       repository,
@@ -139,7 +181,6 @@ test('provider review reaches FAR only through an authenticated external continu
       null,
     );
 
-    const now = new Date();
     const badGrant = issueExternalGrant(
       repository,
       signing,
@@ -369,6 +410,19 @@ test('direct-human continuation binds the exposed authority-free node before FAR
       assert.fail('expected provider challenge');
     }
     const response = challengeResponse(reviewed.review);
+    const failedProviderContinuation = beginTaskDiffReviewContinuation(
+      repository,
+      session.sessionId,
+      response,
+    );
+    if (failedProviderContinuation.state !== 'waiting-for-provider') {
+      assert.fail('expected an exact provider continuation attempt');
+    }
+    failFakeProvider(
+      repository,
+      failedProviderContinuation.invocationId,
+      'PROVIDER_CAPACITY',
+    );
     const closureInput = closureInputFor(
       reviewed.subject,
       reviewed.review,
@@ -784,6 +838,24 @@ function completeFakeProvider(
       };
     },
   });
+}
+
+function failFakeProvider(
+  repository: string,
+  invocationId: string,
+  code: 'PROVIDER_RATE_LIMIT' | 'PROVIDER_CAPACITY',
+) {
+  const failed = runProviderWorker(repository, invocationId, {
+    runner() {
+      throw workflowError(
+        code,
+        'The exact TaskDiffReview continuation provider is unavailable.',
+        ExitCode.verification,
+      );
+    },
+  });
+  assert.equal(failed.state, 'failed');
+  assert.equal(failed.failure?.code, code);
 }
 
 function createReviewFixture(

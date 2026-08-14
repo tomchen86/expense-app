@@ -583,7 +583,7 @@ test('a reviewed authority widening requires an external decision before the pla
       now: () => STARTED_AT,
     });
     const parent = git(repository, ['rev-parse', 'HEAD']).trim();
-    writeTaskAllowedPaths(repository, ['docs/**', 'src/**']);
+    writeTaskAllowedPaths(repository, ['src/**', 'test/**']);
     writeReadyV2ExemptChange(repository);
 
     assert.throws(
@@ -649,7 +649,7 @@ test('an unverified approval reference cannot authorize a reviewed widening', ()
     reviseTask(repository, session.sessionId, 'widen-task-scope', {
       now: () => STARTED_AT,
     });
-    writeTaskAllowedPaths(repository, ['docs/**', 'src/**']);
+    writeTaskAllowedPaths(repository, ['src/**', 'test/**']);
     writeReadyV2ExemptChange(repository);
 
     assert.throws(
@@ -676,7 +676,7 @@ test('an exact external approval authorizes one reviewed widening for the same s
       approvalVerifier: signer,
     });
     assert.equal(resumed.session.state, 'active');
-    assert.deepEqual(resumed.session.allowedPaths, ['docs/**', 'src/**']);
+    assert.deepEqual(resumed.session.allowedPaths, ['src/**', 'test/**']);
     assert.equal(resumed.lease.approvalId, approval.approvalId);
     assert.equal(
       inspectTaskRevisionStatus(repository, session.sessionId)?.approvalId,
@@ -692,7 +692,7 @@ test('a signed approval becomes stale when the reviewed widening target changes'
   const { repository, session, signer, approval } = fixture;
   try {
     const parent = git(repository, ['rev-parse', 'HEAD']).trim();
-    writeTaskAllowedPaths(repository, ['docs/**', 'src/**', 'test/**']);
+    writeTaskAllowedPaths(repository, ['scripts/**', 'src/**', 'test/**']);
     writeReadyV2ExemptChange(repository);
 
     assert.throws(
@@ -782,7 +782,7 @@ test('an effect-ahead widening recovery completes the exact journaled approval a
     });
     assert.equal(recovered.session.state, 'active');
     assert.equal(recovered.lease.approvalId, approval.approvalId);
-    assert.deepEqual(recovered.session.allowedPaths, ['docs/**', 'src/**']);
+    assert.deepEqual(recovered.session.allowedPaths, ['src/**', 'test/**']);
   } finally {
     fs.rmSync(repository, { recursive: true, force: true });
   }
@@ -1217,7 +1217,7 @@ function approvedWideningFixture(startedAt = STARTED_AT) {
   reviseTask(repository, session.sessionId, 'widen-task-scope', {
     now: () => startedAt,
   });
-  writeTaskAllowedPaths(repository, ['docs/**', 'src/**']);
+  writeTaskAllowedPaths(repository, ['src/**', 'test/**']);
   writeReadyV2ExemptChange(repository);
   const binding = prepareTaskRevisionApprovalBinding(
     repository,

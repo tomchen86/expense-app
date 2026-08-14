@@ -333,6 +333,14 @@ test('authority plan recovers a crash after local apply and rejects changed inte
     const recovered = approveAndApplyAuthorityPlan(repository, plan.planId);
     assert.equal(recovered.state, 'local-applied');
     assert.equal(recovered.localApplication?.grantId, grantId);
+    assert.equal(
+      recovered.localApplication?.publishCommand,
+      `git push git@github.com:tomchen86/expense-app.git refs/tags/workflow-authority/${grantId}:refs/tags/workflow-authority/${grantId}`,
+    );
+    assert.doesNotMatch(
+      recovered.localApplication!.publishCommand,
+      /\bgit push origin\b/,
+    );
   } finally {
     fs.rmSync(repository, { recursive: true, force: true });
   }
@@ -344,10 +352,19 @@ function hasCode(code: string) {
 }
 
 function installAuthorityPlanTrustBase(repository: string): void {
-  fs.copyFileSync(
-    path.join(sourceRepositoryRoot, 'workflow/maintainer-profiles.json'),
-    path.join(repository, 'workflow/maintainer-profiles.json'),
-  );
-  git(repository, ['add', 'workflow/maintainer-profiles.json']);
+  for (const file of [
+    'workflow/maintainer-policy.json',
+    'workflow/maintainer-profiles.json',
+  ]) {
+    fs.copyFileSync(
+      path.join(sourceRepositoryRoot, file),
+      path.join(repository, file),
+    );
+  }
+  git(repository, [
+    'add',
+    'workflow/maintainer-policy.json',
+    'workflow/maintainer-profiles.json',
+  ]);
   git(repository, ['commit', '-m', 'Install authority plan profile']);
 }

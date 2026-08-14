@@ -1,0 +1,83 @@
+{
+  "accepted": true,
+  "authority": "empirical-observation-only",
+  "baseCommit": "76bdcb81cf40243c845f2dcb21028a27037e4fc2",
+  "baseTree": "30363a999e310270ad3e3a2080c0eaad811ffc24",
+  "completedAt": "2026-08-14T14:41:19.965Z",
+  "decision": "healthy-two-provider-observed",
+  "friction": {
+    "collaborationGrantCount": 0,
+    "humanActionCount": 0,
+    "providerWaitCount": 0
+  },
+  "kind": "provider-availability-pilot-result.v1",
+  "observations": [
+    {
+      "achievedIndependence": "provider-independent",
+      "authorizationNodeId": "10e4962d9be66bb7b68f4bca62778fc44060f1a326f97483183e5671171ffeab",
+      "cost": {
+        "actualUsageReported": false,
+        "basis": "policy-reservation-upper-bound",
+        "providerCostMicros": 10000000,
+        "providerTokens": 500000,
+        "withinPolicyBudget": true
+      },
+      "executableSha256": "04ddea2f332bd524bf6cc02f8efcf45f0afa0c7d9b97d77aaef7bb84adf3d4c5",
+      "failureCode": null,
+      "grantUsed": false,
+      "invocationId": "invocation-provider-availability-codex-d50a88a33e784cefb297948ebce48d6d",
+      "mutationObservation": {
+        "afterDigest": "538074abb7436eb7545e2630532cb1da12dbc8400b97547c485d93bcaef87c2f",
+        "assurance": "unchanged-governed-projection",
+        "beforeDigest": "538074abb7436eb7545e2630532cb1da12dbc8400b97547c485d93bcaef87c2f",
+        "unchanged": true
+      },
+      "outputDigest": "a7db3f810763306a39d1d761c69eb86bb508a97d3ebfbfd2b07cd2024ea63531",
+      "providerId": "codex",
+      "providerLatencyMs": 12875,
+      "requestDigest": "ea5e8114438f08a19e9bf4acd58e995679fa2a1e2c2af472082eb237cb5fc94f",
+      "resolutionStatus": "available",
+      "role": "blind-surveyor",
+      "state": "succeeded",
+      "version": "codex-cli 0.147.0-alpha.6.5"
+    },
+    {
+      "achievedIndependence": "provider-independent",
+      "authorizationNodeId": "2f7d04e62416cde67141c19b42857373d5a4eb989699c47bf80c756dd4dd5ad7",
+      "cost": {
+        "actualUsageReported": false,
+        "basis": "policy-reservation-upper-bound",
+        "providerCostMicros": 10000000,
+        "providerTokens": 500000,
+        "withinPolicyBudget": true
+      },
+      "executableSha256": "3197aba4442dbd5b3df42b6f35e6d7bd03b5e48ce18b7a3c5c6f5f8c28e03b7f",
+      "failureCode": null,
+      "grantUsed": false,
+      "invocationId": "invocation-provider-availability-claude-d50a88a33e784cefb297948ebce48d6d",
+      "mutationObservation": {
+        "afterDigest": "7c7ec80015bde6b559881c8c97e43bac798cff47cef6ab9127e261375130bd24",
+        "assurance": "unchanged-governed-projection",
+        "beforeDigest": "7c7ec80015bde6b559881c8c97e43bac798cff47cef6ab9127e261375130bd24",
+        "unchanged": true
+      },
+      "outputDigest": "05966a17e07af4422146eab32350091992242c9fae48e3f3e43d14549097d8a1",
+      "providerId": "claude",
+      "providerLatencyMs": 221470,
+      "requestDigest": "1e788ca769e193363ee649209280a2d06fa1b883c89f4add845840f9c98a9684",
+      "resolutionStatus": "available",
+      "role": "blind-surveyor",
+      "state": "succeeded",
+      "version": "2.1.206 (Claude Code)"
+    }
+  ],
+  "pilotId": "provider-availability-d50a88a33e784cefb297948ebce48d6d",
+  "policyDigest": "ec3643da7d3607a5d18514536bddbdcc3cb04c4c66427ee16d7b29a1132197c2",
+  "recordDigest": "4207deaca417e4260dacabfea805813d14814ca7ef8246520607a9bfec733763",
+  "repositoryId": "expense-app",
+  "schemaVersion": 1,
+  "startedAt": "2026-08-14T14:37:17.907Z",
+  "totalProviderLatencyMs": 234345,
+  "totalReservedCostMicros": 20000000,
+  "totalReservedTokens": 1000000
+}

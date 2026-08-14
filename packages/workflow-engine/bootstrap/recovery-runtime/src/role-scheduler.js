@@ -229,8 +229,7 @@ export function authorizeGrantedOrdinaryRole(input) {
             directHumanReviewAttestationDigest: null,
         });
     }
-    if ((callableProviderIds.length !== 0 &&
-        degradedAuthorityOverride === undefined) ||
+    if (callableProviderIds.length !== 0 ||
         participant.providerId !== undefined ||
         participant.sessionId !== undefined ||
         participant.engineSpawned) {
@@ -239,7 +238,10 @@ export function authorizeGrantedOrdinaryRole(input) {
     if (payload.degradedForm === 'caller-supplied' &&
         payload.availableActor.kind === 'caller' &&
         participant.principalId === payload.availableActor.callerId &&
-        participant.identityAssurance === payload.availableActor.assurance) {
+        participant.identityAssurance === payload.availableActor.assurance &&
+        (input.role === 'task-implementer' ||
+            (typeof input.author.principalId === 'string' &&
+                participant.principalId !== input.author.principalId))) {
         return Object.freeze({
             ...base,
             providerId: null,

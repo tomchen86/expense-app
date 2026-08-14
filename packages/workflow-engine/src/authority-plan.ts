@@ -5,6 +5,7 @@ import path from 'node:path';
 import { canonicalJson } from './canonical-json.ts';
 import { isRecord } from './contract-values.ts';
 import { loadWorkflowConfig } from './contracts.ts';
+import { authorityTagPublishCommand } from './authority-relay-command.ts';
 import { ExitCode, workflowError, type WorkflowError } from './errors.ts';
 import { discoverRepository, runGit } from './git.ts';
 import {
@@ -25,6 +26,7 @@ import {
 } from './maintainer-approve.ts';
 import type { CandidateExternalEffect } from './maintainer-candidate.ts';
 import type { MaintainerEvidenceWaiver } from './maintainer-grant-v2.ts';
+import { parseMaintainerPolicy } from './maintainer-policy.ts';
 import {
   classifyFileRole,
   loadCapabilityProfileFromTrustBase,
@@ -887,13 +889,24 @@ function recoverLocalApplication(
     )
     .sort();
   const tagRef = tagCandidates[0] ?? `refs/tags/workflow-authority/${grantId}`;
+  const basePolicy = parseMaintainerPolicy(
+    JSON.parse(
+      runGit(repositoryRoot, [
+        'show',
+        `${record.baseCommit}:workflow/maintainer-policy.json`,
+      ]),
+    ),
+  );
   return {
     grantId,
     sessionId: null,
     commitHash: current.head,
     resultTree: current.tree,
     tagRef,
-    publishCommand: `git push origin ${tagRef}:${tagRef}`,
+    publishCommand: authorityTagPublishCommand(
+      basePolicy.repository.origin,
+      tagRef,
+    ),
     attestationRelayCommand: `pnpm workflow maintainer attestation-relay --original ${current.head} --json`,
     applicationReceiptTagRef: `refs/tags/workflow-authority-application/${grantId}`,
   };
