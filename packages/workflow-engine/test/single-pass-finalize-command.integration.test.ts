@@ -223,7 +223,7 @@ function configureCountingCheck(repository: string, counterPath: string): void {
       "const current = fs.existsSync(counterPath) ? Number(fs.readFileSync(counterPath, 'utf8')) : 0;",
       'fs.writeFileSync(counterPath, String(current + 1));',
       "if (!fs.readFileSync('openspec/changes/demo-change/tasks.md', 'utf8').includes('- [x] 1.1')) process.exit(17);",
-      "if (!fs.readFileSync('docs/CURRENT_AND_NEXT_STEPS.md', 'utf8').includes('None — all tasks are complete.')) process.exit(18);",
+      "if (!fs.readFileSync('docs/CURRENT_AND_NEXT_STEPS.md', 'utf8').includes('None — no active change.')) process.exit(18);",
       '',
     ].join('\n'),
   );

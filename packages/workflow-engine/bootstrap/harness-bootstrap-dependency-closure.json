@@ -8,7 +8,7 @@
     {
       "path": "bootstrap/recovery-runtime/bootstrap/built-in-engine-closure-pin.js",
       "mode": "100644",
-      "digest": "sha256:42c8d7f3a65b91a3bc9301302a10616af0f5b0663794ef3dc7e318c650b9749a"
+      "digest": "sha256:a6e6af9c9da4cc7f9be3626a101bfec39bda8f5c033bd62724105ba9c0ac2f13"
     },
     {
       "path": "bootstrap/recovery-runtime/src/actor-identity.js",
@@ -93,7 +93,7 @@
     {
       "path": "bootstrap/recovery-runtime/src/contracts.js",
       "mode": "100644",
-      "digest": "sha256:487b96fb9239ea0a5461580763ff2d349fc4f383227503756e0554a65c2e9cae"
+      "digest": "sha256:45d94c82bcc8a652cfd58bf463f951d60756dbc0034add697a97fb8cf6ff1dcd"
     },
     {
       "path": "bootstrap/recovery-runtime/src/control-plane-recovery-grant.js",
@@ -109,6 +109,11 @@
       "path": "bootstrap/recovery-runtime/src/documentation-closure.js",
       "mode": "100644",
       "digest": "sha256:ea01d1c112f47029e74ee2cead272e81b5948556bd89798f903ce8637999bb19"
+    },
+    {
+      "path": "bootstrap/recovery-runtime/src/engine-projection-registry.js",
+      "mode": "100644",
+      "digest": "sha256:b4698738c553c58a78e6d60853ee92900eaedb60fbdabae61866234a795799e1"
     },
     {
       "path": "bootstrap/recovery-runtime/src/errors.js",

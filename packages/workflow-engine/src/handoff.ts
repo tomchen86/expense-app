@@ -75,10 +75,18 @@ function buildHandoff(
     selectedChangeId,
     projectedChange,
   );
-  const currentIndex = contract.tasks.findIndex(({ completed }) => !completed);
+  const currentIndex =
+    contract === null
+      ? -1
+      : contract.tasks.findIndex(({ completed }) => !completed);
   const current =
-    currentIndex === -1 ? undefined : contract.tasks[currentIndex];
-  const next = current ? contract.tasks.slice(currentIndex + 1)[0] : undefined;
+    contract === null || currentIndex === -1
+      ? undefined
+      : contract.tasks[currentIndex];
+  const next =
+    contract !== null && current
+      ? contract.tasks.slice(currentIndex + 1)[0]
+      : undefined;
   const blockers = readBlockers(repositoryRoot);
   return [
     '# Current and Next Steps',
@@ -87,13 +95,15 @@ function buildHandoff(
     '',
     '## Current Change',
     '',
-    `\`${contract.changeId}\``,
+    contract === null ? 'None.' : `\`${contract.changeId}\``,
     '',
     '## Current Task',
     '',
-    current
-      ? `\`${current.id}\` — ${current.title}`
-      : 'None — all tasks are complete.',
+    contract === null
+      ? 'None — no active change.'
+      : current
+        ? `\`${current.id}\` — ${current.title}`
+        : 'None — all tasks are complete.',
     '',
     '## Next Task',
     '',
@@ -101,9 +111,11 @@ function buildHandoff(
     '',
     '## Current Focus',
     '',
-    current
-      ? current.title
-      : 'No implementation tasks remain; follow the Roadmap for the next explicit transition.',
+    contract === null
+      ? 'No active OpenSpec change; follow the Roadmap for the next explicit transition.'
+      : current
+        ? current.title
+        : 'No implementation tasks remain; follow the Roadmap for the next explicit transition.',
     '',
     '## Known Blockers',
     '',
@@ -161,7 +173,7 @@ function selectChange(
   repositoryRoot: string,
   explicitChangeId?: string,
   projectedChange?: HandoffChange,
-): HandoffChange {
+): HandoffChange | null {
   const config = loadWorkflowConfig(repositoryRoot);
   const root = path.join(repositoryRoot, config.changeRoot);
   const contracts = fs
@@ -198,108 +210,14 @@ function selectChange(
     }
     return explicit;
   }
-  const selectedChangeId = readSelectedChangeId(repositoryRoot);
-  if (selectedChangeId) {
-    assertSelectedChangeId(selectedChangeId);
-    const selected = contracts.find(
-      (contract) => contract.changeId === selectedChangeId,
-    );
-    if (selected) return selected;
-
-    const archived = loadArchivedChange(root, selectedChangeId);
-    if (archived) return archived;
-    throw invalidHandoff(
-      'HANDOFF_ARCHIVE_INVALID',
-      'The previously selected change has no unique, complete, plain archived task contract.',
-    );
-  }
-
   if (active.length === 1) {
     return active[0];
   }
-  if (active.length === 0 && contracts.length === 1) {
-    return contracts[0];
-  }
+  if (active.length === 0) return null;
   throw invalidHandoff(
     'HANDOFF_CHANGE_AMBIGUOUS',
-    'The handoff requires one active change or one previously selected completed change.',
+    'The handoff requires at most one active change.',
   );
-}
-
-function loadArchivedChange(
-  changeRoot: string,
-  changeId: string,
-): HandoffChange | undefined {
-  const archiveRoot = path.join(changeRoot, 'archive');
-  const archiveStats = fs.lstatSync(archiveRoot, { throwIfNoEntry: false });
-  if (!archiveStats) return undefined;
-  if (!archiveStats.isDirectory() || archiveStats.isSymbolicLink()) {
-    throw invalidArchivedChange();
-  }
-  const candidates = fs
-    .readdirSync(archiveRoot)
-    .filter((name) => isCanonicalArchiveName(name, changeId));
-  if (candidates.length === 0) return undefined;
-  if (candidates.length !== 1) throw invalidArchivedChange();
-
-  const directory = path.join(archiveRoot, candidates[0]);
-  const directoryStats = fs.lstatSync(directory, { throwIfNoEntry: false });
-  const tasksPath = path.join(directory, 'tasks.md');
-  const tasksStats = fs.lstatSync(tasksPath, { throwIfNoEntry: false });
-  if (
-    !directoryStats?.isDirectory() ||
-    directoryStats.isSymbolicLink() ||
-    !tasksStats?.isFile() ||
-    tasksStats.isSymbolicLink() ||
-    tasksStats.nlink !== 1
-  ) {
-    throw invalidArchivedChange();
-  }
-  const tasks = parseTasks(fs.readFileSync(tasksPath, 'utf8'));
-  if (tasks.length === 0 || tasks.some(({ completed }) => !completed)) {
-    throw invalidArchivedChange();
-  }
-  return { changeId, tasks };
-}
-
-function isCanonicalArchiveName(name: string, changeId: string): boolean {
-  if (!name.endsWith(`-${changeId}`)) return false;
-  const date = name.slice(0, name.length - changeId.length - 1);
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return false;
-  const parsed = new Date(`${date}T00:00:00.000Z`);
-  return (
-    !Number.isNaN(parsed.valueOf()) &&
-    parsed.toISOString().slice(0, 10) === date
-  );
-}
-
-function assertSelectedChangeId(changeId: string): void {
-  try {
-    assertChangeId(changeId);
-  } catch {
-    throw invalidHandoff(
-      'HANDOFF_CHANGE_INVALID',
-      'The selected handoff change ID is invalid.',
-    );
-  }
-}
-
-function invalidArchivedChange() {
-  return invalidHandoff(
-    'HANDOFF_ARCHIVE_INVALID',
-    'The previously selected change has no unique, complete, plain archived task contract.',
-  );
-}
-
-function readSelectedChangeId(repositoryRoot: string): string | undefined {
-  const filePath = handoffPath(repositoryRoot);
-  const stats = fs.lstatSync(filePath, { throwIfNoEntry: false });
-  if (!stats?.isFile() || stats.isSymbolicLink()) return undefined;
-  const content = fs.readFileSync(filePath, 'utf8');
-  const matches = [
-    ...content.matchAll(/^## Current Change\n\n`([^`\n]+)`(?:\n|$)/gm),
-  ];
-  return matches.length === 1 ? matches[0]?.[1] : undefined;
 }
 
 function readBlockers(repositoryRoot: string) {

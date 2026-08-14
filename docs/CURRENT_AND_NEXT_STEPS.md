@@ -4,11 +4,11 @@ This generated handoff contains semantic project state only. Its sources are tra
 
 ## Current Change
 
-`establish-investigation-first-planning`
+None.
 
 ## Current Task
 
-None — all tasks are complete.
+None — no active change.
 
 ## Next Task
 
@@ -16,7 +16,7 @@ None.
 
 ## Current Focus
 
-No implementation tasks remain; follow the Roadmap for the next explicit transition.
+No active OpenSpec change; follow the Roadmap for the next explicit transition.
 
 ## Known Blockers
 

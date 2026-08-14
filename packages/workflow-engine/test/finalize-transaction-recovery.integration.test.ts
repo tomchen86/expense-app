@@ -134,7 +134,7 @@ test('projected finalize rejects projection-base drift and restores only its own
         path.join(repository, 'docs/CURRENT_AND_NEXT_STEPS.md'),
         'utf8',
       ),
-      /None — all tasks are complete\./,
+      /None — no active change\./,
     );
     fs.writeFileSync(
       path.join(repository, 'src/feature.ts'),
@@ -163,7 +163,7 @@ test('projected finalize rejects projection-base drift and restores only its own
         path.join(repository, 'docs/CURRENT_AND_NEXT_STEPS.md'),
         'utf8',
       ),
-      /None — all tasks are complete\./,
+      /None — no active change\./,
     );
   } finally {
     fs.rmSync(repository, { recursive: true, force: true });
@@ -324,7 +324,7 @@ function createFinalizeFixture(): {
       "const current = fs.existsSync(counterPath) ? Number(fs.readFileSync(counterPath, 'utf8')) : 0;",
       'fs.writeFileSync(counterPath, String(current + 1));',
       "const handoff = fs.readFileSync('docs/CURRENT_AND_NEXT_STEPS.md', 'utf8');",
-      "if (!handoff.includes('None — all tasks are complete.')) process.exit(18);",
+      "if (!handoff.includes('None — no active change.')) process.exit(18);",
       '',
     ].join('\n'),
   );

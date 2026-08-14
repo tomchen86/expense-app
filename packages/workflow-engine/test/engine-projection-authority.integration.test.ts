@@ -9,6 +9,7 @@ import {
   engineProjectionDefinitions,
   engineProjectionPathsForTransition,
 } from '../src/engine-projection-registry.ts';
+import { loadChangeContract } from '../src/contracts.ts';
 import { renderHandoff } from '../src/handoff.ts';
 import { completeTask, finalizeTask, finishSession } from '../src/lifecycle.ts';
 import {
@@ -92,6 +93,34 @@ test('document policy cannot invent an engine-owned completion projection', () =
       () => completeTask(repository, session.sessionId),
       (error) => isWorkflowError(error, 'UNSUPPORTED_ACTIVE_DOCUMENT_POLICY'),
     );
+  } finally {
+    fs.rmSync(repository, { recursive: true, force: true });
+  }
+});
+
+test('unfinished task guards cannot claim engine-owned projection paths', () => {
+  const repository = createFixtureRepository();
+  try {
+    const changeDirectory = path.join(
+      repository,
+      'openspec/changes/demo-change',
+    );
+    const guardPath = path.join(changeDirectory, 'guard.json');
+    const guard = JSON.parse(fs.readFileSync(guardPath, 'utf8'));
+    guard.tasks['1.1'].allowedPaths = ['docs/**', 'src/**'];
+    fs.writeFileSync(guardPath, `${JSON.stringify(guard, null, 2)}\n`);
+
+    assert.throws(
+      () => loadChangeContract(repository, 'demo-change'),
+      (error) => isWorkflowError(error, 'ENGINE_PROJECTION_PATH_IN_TASK_SCOPE'),
+    );
+
+    const tasksPath = path.join(changeDirectory, 'tasks.md');
+    fs.writeFileSync(
+      tasksPath,
+      fs.readFileSync(tasksPath, 'utf8').replace(/- \[ \]/g, '- [x]'),
+    );
+    assert.doesNotThrow(() => loadChangeContract(repository, 'demo-change'));
   } finally {
     fs.rmSync(repository, { recursive: true, force: true });
   }

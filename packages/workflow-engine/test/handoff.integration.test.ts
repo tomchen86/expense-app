@@ -35,7 +35,7 @@ test('repository handoff has exactly six semantic sections and no hashes', () =>
   }
 });
 
-test('completion projection refreshes the handoff to the next task', () => {
+test('completion projection refreshes the handoff to no active change', () => {
   const repository = createFixtureRepository();
   try {
     const policyPath = path.join(repository, 'workflow/document-policy.json');
@@ -70,14 +70,15 @@ test('completion projection refreshes the handoff to the next task', () => {
       path.join(repository, 'docs/CURRENT_AND_NEXT_STEPS.md'),
       'utf8',
     );
-    assert.match(handoff, /## Current Task\n\nNone — all tasks are complete\./);
+    assert.match(handoff, /## Current Change\n\nNone\./);
+    assert.match(handoff, /## Current Task\n\nNone — no active change\./);
     validateHandoff(repository);
   } finally {
     fs.rmSync(repository, { recursive: true, force: true });
   }
 });
 
-test('final completion preserves the selected handoff when another completed change remains', () => {
+test('final completion renders an explicit no-active-change handoff', () => {
   const repository = createFixtureRepository();
   try {
     writeCompletedChange(repository, 'older-completed-change');
@@ -113,8 +114,8 @@ test('final completion preserves the selected handoff when another completed cha
       path.join(repository, 'docs/CURRENT_AND_NEXT_STEPS.md'),
       'utf8',
     );
-    assert.match(handoff, /## Current Change\n\n`demo-change`/);
-    assert.match(handoff, /## Current Task\n\nNone — all tasks are complete\./);
+    assert.match(handoff, /## Current Change\n\nNone\./);
+    assert.match(handoff, /## Current Task\n\nNone — no active change\./);
     validateHandoff(repository);
   } finally {
     fs.rmSync(repository, { recursive: true, force: true });
@@ -134,9 +135,10 @@ test('reserved OpenSpec archive directory is not an active change', () => {
   }
 });
 
-test('completed handoff remains byte-stable when its change is archived beside multiple active changes', () => {
+test('handoff ignores its previous output and selects the sole active change', () => {
   const repository = createFixtureRepository();
   try {
+    completeExistingChange(repository, 'demo-change');
     writeChange(repository, 'selected-completed-change', true);
     writeChange(repository, 'another-active-change', false);
     writeSelectedHandoff(repository, 'selected-completed-change');
@@ -146,10 +148,7 @@ test('completed handoff remains byte-stable when its change is archived beside m
     const afterArchive = renderHandoff(repository);
 
     assert.equal(afterArchive, beforeArchive);
-    assert.match(
-      afterArchive,
-      /## Current Change\n\n`selected-completed-change`/,
-    );
+    assert.match(afterArchive, /## Current Change\n\n`another-active-change`/);
     validateHandoff(repository);
   } finally {
     fs.rmSync(repository, { recursive: true, force: true });
@@ -159,6 +158,7 @@ test('completed handoff remains byte-stable when its change is archived beside m
 test('handoff selection is stable when another work branch is checked out', () => {
   const repository = createFixtureRepository();
   try {
+    completeExistingChange(repository, 'demo-change');
     writeChange(repository, 'selected-completed-change', true);
     archiveChange(repository, 'selected-completed-change', '2026-07-17');
     writeChange(repository, 'branch-selected-change', false);
@@ -167,7 +167,7 @@ test('handoff selection is stable when another work branch is checked out', () =
 
     const handoff = renderHandoff(repository);
 
-    assert.match(handoff, /## Current Change\n\n`selected-completed-change`/);
+    assert.match(handoff, /## Current Change\n\n`branch-selected-change`/);
     validateHandoff(repository);
   } finally {
     fs.rmSync(repository, { recursive: true, force: true });
@@ -188,42 +188,40 @@ test('a work branch cannot resolve an otherwise ambiguous handoff', () => {
   }
 });
 
-test('ambiguous and incomplete archived handoff selections fail closed', () => {
-  for (const scenario of ['ambiguous', 'incomplete'] as const) {
-    const repository = createFixtureRepository();
-    try {
-      writeChange(
-        repository,
-        'selected-completed-change',
-        scenario !== 'incomplete',
-      );
-      archiveChange(repository, 'selected-completed-change', '2026-07-17');
-      if (scenario === 'ambiguous') {
-        fs.cpSync(
-          path.join(
-            repository,
-            'openspec/changes/archive/2026-07-17-selected-completed-change',
-          ),
-          path.join(
-            repository,
-            'openspec/changes/archive/2026-07-16-selected-completed-change',
-          ),
-          { recursive: true },
-        );
-      }
-      writeSelectedHandoff(repository, 'selected-completed-change');
+test('no active changes render an explicit state independent of prior handoff bytes', () => {
+  const repository = createFixtureRepository();
+  try {
+    completeExistingChange(repository, 'demo-change');
+    writeChange(repository, 'selected-completed-change', true);
+    archiveChange(repository, 'selected-completed-change', '2026-07-17');
+    writeSelectedHandoff(repository, 'selected-completed-change');
 
-      assert.throws(() => renderHandoff(repository), {
-        code: 'HANDOFF_ARCHIVE_INVALID',
-      });
-    } finally {
-      fs.rmSync(repository, { recursive: true, force: true });
-    }
+    const handoff = renderHandoff(repository);
+
+    assert.match(handoff, /## Current Change\n\nNone\./);
+    assert.match(handoff, /## Current Task\n\nNone — no active change\./);
+    assert.doesNotMatch(handoff, /selected-completed-change/);
+    validateHandoff(repository);
+  } finally {
+    fs.rmSync(repository, { recursive: true, force: true });
   }
 });
 
 function writeCompletedChange(repository: string, changeId: string): void {
   writeChange(repository, changeId, true);
+}
+
+function completeExistingChange(repository: string, changeId: string): void {
+  const tasksPath = path.join(
+    repository,
+    'openspec/changes',
+    changeId,
+    'tasks.md',
+  );
+  fs.writeFileSync(
+    tasksPath,
+    fs.readFileSync(tasksPath, 'utf8').replace(/- \[ \]/g, '- [x]'),
+  );
 }
 
 function writeChange(

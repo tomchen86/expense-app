@@ -9,6 +9,7 @@ import { isRecord, isStringArray } from './contract-values.js';
 import { assertStoredEvidenceNode, } from './evidence-node.js';
 import { validateClosedEvidenceDag } from './evidence-currentness.js';
 import { createConvergenceRecord, createDescendantReuseProof, readConvergenceBinding, readReuseProofBinding, } from './evidence-convergence.js';
+import { engineProjectionDefinitions } from './engine-projection-registry.js';
 import { validateTrackedEvidenceReusePaths } from './evidence-reuse-path.js';
 import { assertChangeId, assertPolicyPathInsideRepository, assertTaskId, matchesAllowedPath, normalizePolicyPath, } from './paths.js';
 import { PATH_ROLES } from './path-role-registry.js';
@@ -327,8 +328,8 @@ export function loadChangeContract(repositoryRootInput, requestedChangeId, expec
         throw invalidContract('MISSING_DELTA_SPEC', `Change ${changeId} must contain at least one delta spec.`, path.join(changeDirectory, 'specs'));
     }
     const behaviorContracts = indexBehaviorContracts(changeDirectory, specPaths);
-    const guard = parseGuardContract(guardPath, changeId);
     const tasks = parseTasks(fs.readFileSync(tasksPath, 'utf8'));
+    const guard = parseGuardContract(guardPath, changeId);
     if (tasks.length === 0) {
         throw invalidContract('EMPTY_TASK_LIST', `Change ${changeId} has no parseable tasks.`, tasksPath);
     }
@@ -336,7 +337,7 @@ export function loadChangeContract(repositoryRootInput, requestedChangeId, expec
     const guardTaskIds = new Set(Object.keys(guard.tasks));
     for (const [taskId, policy] of Object.entries(guard.tasks)) {
         assertTaskId(taskId);
-        validateTaskPolicy(repositoryRoot, taskId, policy, checks);
+        validateTaskPolicy(repositoryRoot, taskId, policy, checks, tasks.every(({ completed }) => completed));
     }
     const missingPolicies = [...markdownTaskIds].filter((taskId) => !guardTaskIds.has(taskId));
     const unknownPolicies = [...guardTaskIds].filter((taskId) => !markdownTaskIds.has(taskId));
@@ -928,7 +929,7 @@ function parseGuardContract(guardPath, expectedChangeId) {
     }
     return value;
 }
-function validateTaskPolicy(repositoryRoot, taskId, policy, checks) {
+function validateTaskPolicy(repositoryRoot, taskId, policy, checks, allowCompletedLegacyProjectionScope) {
     const normalizedPaths = policy.allowedPaths.map((policyPath) => {
         const normalized = normalizePolicyPath(policyPath);
         assertPolicyPathInsideRepository(repositoryRoot, normalized);
@@ -936,6 +937,14 @@ function validateTaskPolicy(repositoryRoot, taskId, policy, checks) {
     });
     if (new Set(normalizedPaths).size !== normalizedPaths.length) {
         throw workflowError('DUPLICATE_ALLOWED_PATH', `Task ${taskId} contains duplicate allowed paths.`, ExitCode.guard);
+    }
+    if (!allowCompletedLegacyProjectionScope) {
+        const claimedProjectionPaths = engineProjectionDefinitions()
+            .map(({ path: projectionPath }) => projectionPath)
+            .filter((projectionPath) => normalizedPaths.some((allowedPath) => matchesAllowedPath(projectionPath, allowedPath)));
+        if (claimedProjectionPaths.length > 0) {
+            throw workflowError('ENGINE_PROJECTION_PATH_IN_TASK_SCOPE', `Task ${taskId} cannot claim engine-owned projection paths.`, ExitCode.guard, { details: { taskId, claimedProjectionPaths } });
+        }
     }
     const malformedChecks = policy.requiredChecks.filter((checkId) => !CHECK_ID_PATTERN.test(checkId));
     if (malformedChecks.length > 0) {

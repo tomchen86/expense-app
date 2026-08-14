@@ -21,6 +21,7 @@ import {
   readConvergenceBinding,
   readReuseProofBinding,
 } from './evidence-convergence.ts';
+import { engineProjectionDefinitions } from './engine-projection-registry.ts';
 import { validateTrackedEvidenceReusePaths } from './evidence-reuse-path.ts';
 import {
   assertChangeId,
@@ -690,8 +691,8 @@ export function loadChangeContract(
   }
   const behaviorContracts = indexBehaviorContracts(changeDirectory, specPaths);
 
-  const guard = parseGuardContract(guardPath, changeId);
   const tasks = parseTasks(fs.readFileSync(tasksPath, 'utf8'));
+  const guard = parseGuardContract(guardPath, changeId);
 
   if (tasks.length === 0) {
     throw invalidContract(
@@ -706,7 +707,13 @@ export function loadChangeContract(
 
   for (const [taskId, policy] of Object.entries(guard.tasks)) {
     assertTaskId(taskId);
-    validateTaskPolicy(repositoryRoot, taskId, policy, checks);
+    validateTaskPolicy(
+      repositoryRoot,
+      taskId,
+      policy,
+      checks,
+      tasks.every(({ completed }) => completed),
+    );
   }
 
   const missingPolicies = [...markdownTaskIds].filter(
@@ -1567,6 +1574,7 @@ function validateTaskPolicy(
   taskId: string,
   policy: TaskPolicy,
   checks: ChecksConfig,
+  allowCompletedLegacyProjectionScope: boolean,
 ): void {
   const normalizedPaths = policy.allowedPaths.map((policyPath) => {
     const normalized = normalizePolicyPath(policyPath);
@@ -1580,6 +1588,24 @@ function validateTaskPolicy(
       `Task ${taskId} contains duplicate allowed paths.`,
       ExitCode.guard,
     );
+  }
+
+  if (!allowCompletedLegacyProjectionScope) {
+    const claimedProjectionPaths = engineProjectionDefinitions()
+      .map(({ path: projectionPath }) => projectionPath)
+      .filter((projectionPath) =>
+        normalizedPaths.some((allowedPath) =>
+          matchesAllowedPath(projectionPath, allowedPath),
+        ),
+      );
+    if (claimedProjectionPaths.length > 0) {
+      throw workflowError(
+        'ENGINE_PROJECTION_PATH_IN_TASK_SCOPE',
+        `Task ${taskId} cannot claim engine-owned projection paths.`,
+        ExitCode.guard,
+        { details: { taskId, claimedProjectionPaths } },
+      );
+    }
   }
 
   const malformedChecks = policy.requiredChecks.filter(

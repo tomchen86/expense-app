@@ -252,7 +252,7 @@ test('projected single-pass finalize checks and stages one exact final tree', ()
         "const tasks = fs.readFileSync('openspec/changes/demo-change/tasks.md', 'utf8');",
         "const handoff = fs.readFileSync('docs/CURRENT_AND_NEXT_STEPS.md', 'utf8');",
         'if (!/- \\[x\\] 1\\.1 Demo task/.test(tasks)) process.exit(17);',
-        "if (!handoff.includes('None — all tasks are complete.')) process.exit(18);",
+        "if (!handoff.includes('None — no active change.')) process.exit(18);",
         '',
       ].join('\n'),
     );
@@ -618,7 +618,7 @@ test('projected single-pass failure restores projections and leaves no evidence 
         'const observationPath = process.argv[2];',
         "const tasks = fs.readFileSync('openspec/changes/demo-change/tasks.md', 'utf8');",
         "const handoff = fs.readFileSync('docs/CURRENT_AND_NEXT_STEPS.md', 'utf8');",
-        "const projected = /- \\[x\\] 1\\.1 Demo task/.test(tasks) && handoff.includes('None — all tasks are complete.');",
+        "const projected = /- \\[x\\] 1\\.1 Demo task/.test(tasks) && handoff.includes('None — no active change.');",
         "fs.writeFileSync(observationPath, projected ? 'projected' : 'missing');",
         'process.exit(projected ? 17 : 18);',
         '',

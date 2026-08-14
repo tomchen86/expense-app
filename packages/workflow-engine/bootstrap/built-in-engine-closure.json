@@ -276,7 +276,7 @@
     {
       "path": "src/contracts.ts",
       "mode": "100644",
-      "digest": "sha256:e7f09225c1948d8a1d885051e744f2ff9cbc4790aa8e03331a353c905dd67fd3"
+      "digest": "sha256:07ae00c4db5d4e7b467fd0aba1c0f49867483730f692ef27546677b3d32194ba"
     },
     {
       "path": "src/control-plane-promotion-producer.ts",
@@ -451,7 +451,7 @@
     {
       "path": "src/handoff.ts",
       "mode": "100644",
-      "digest": "sha256:0117b8fb937be16d670f9dde4b3ca1aa4e8abe7aa6a06447b492a0ebcfab65f2"
+      "digest": "sha256:14573f1fd2590289b0553aa1594980c32b8baa8fb645d798c602d38fc64f726a"
     },
     {
       "path": "src/harness-bootstrap.ts",

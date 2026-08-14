@@ -138,7 +138,7 @@ test('workflow finalize-recover explicitly cancels one ambiguous transaction and
         path.join(repository, 'docs/CURRENT_AND_NEXT_STEPS.md'),
         'utf8',
       ),
-      /None — all tasks are complete\./,
+      /None — no active change\./,
     );
     assert.equal(
       fs.readFileSync(path.join(repository, 'src/feature.ts'), 'utf8'),
@@ -356,7 +356,7 @@ test('workflow finalize cancellation preserves a foreign staged index and its ac
         path.join(repository, 'docs/CURRENT_AND_NEXT_STEPS.md'),
         'utf8',
       ),
-      /None — all tasks are complete\./,
+      /None — no active change\./,
     );
     const archived = JSON.parse(
       fs.readFileSync(
