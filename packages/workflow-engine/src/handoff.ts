@@ -10,7 +10,6 @@ import {
   type ParsedTask,
 } from './contracts.ts';
 import { ExitCode, workflowError } from './errors.ts';
-import { runGit } from './git.ts';
 import { readIssueData } from './issues.ts';
 import { assertChangeId } from './paths.ts';
 
@@ -207,13 +206,6 @@ function selectChange(
     );
     if (selected) return selected;
 
-    const branchSelected = selectBranchChange(
-      repositoryRoot,
-      config.branchTemplate,
-      active,
-    );
-    if (branchSelected) return branchSelected;
-
     const archived = loadArchivedChange(root, selectedChangeId);
     if (archived) return archived;
     throw invalidHandoff(
@@ -222,12 +214,6 @@ function selectChange(
     );
   }
 
-  const branchSelected = selectBranchChange(
-    repositoryRoot,
-    config.branchTemplate,
-    active,
-  );
-  if (branchSelected) return branchSelected;
   if (active.length === 1) {
     return active[0];
   }
@@ -237,23 +223,6 @@ function selectChange(
   throw invalidHandoff(
     'HANDOFF_CHANGE_AMBIGUOUS',
     'The handoff requires one active change or one previously selected completed change.',
-  );
-}
-
-function selectBranchChange(
-  repositoryRoot: string,
-  branchTemplate: string,
-  active: ChangeContract[],
-): ChangeContract | undefined {
-  const branch = runGit(
-    repositoryRoot,
-    ['symbolic-ref', '--quiet', '--short', 'HEAD'],
-    true,
-  ).trim();
-  if (!branch) return undefined;
-  return active.find(
-    ({ changeId }) =>
-      branchTemplate.replaceAll('{changeId}', changeId) === branch,
   );
 }
 

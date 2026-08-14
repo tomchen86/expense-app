@@ -156,7 +156,7 @@ test('completed handoff remains byte-stable when its change is archived beside m
   }
 });
 
-test('exact work branch selects its active change when the previous handoff change is archived', () => {
+test('handoff selection is stable when another work branch is checked out', () => {
   const repository = createFixtureRepository();
   try {
     writeChange(repository, 'selected-completed-change', true);
@@ -167,8 +167,22 @@ test('exact work branch selects its active change when the previous handoff chan
 
     const handoff = renderHandoff(repository);
 
-    assert.match(handoff, /## Current Change\n\n`branch-selected-change`/);
+    assert.match(handoff, /## Current Change\n\n`selected-completed-change`/);
     validateHandoff(repository);
+  } finally {
+    fs.rmSync(repository, { recursive: true, force: true });
+  }
+});
+
+test('a work branch cannot resolve an otherwise ambiguous handoff', () => {
+  const repository = createFixtureRepository();
+  try {
+    writeChange(repository, 'another-active-change', false);
+    git(repository, ['checkout', '-b', 'work/another-active-change']);
+
+    assert.throws(() => renderHandoff(repository), {
+      code: 'HANDOFF_CHANGE_AMBIGUOUS',
+    });
   } finally {
     fs.rmSync(repository, { recursive: true, force: true });
   }

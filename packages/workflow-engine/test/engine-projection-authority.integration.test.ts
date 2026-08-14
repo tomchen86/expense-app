@@ -27,13 +27,21 @@ test('the reviewed engine projection registry is fixed and transition-scoped', (
   assert.deepEqual(engineProjectionDefinitions(), [
     {
       path: 'docs/CURRENT_AND_NEXT_STEPS.md',
-      transitions: ['archive', 'completion', 'plan', 'rollback-completion'],
+      transitions: [
+        'archive',
+        'completion',
+        'issue',
+        'plan',
+        'rollback-completion',
+      ],
     },
   ]);
   assert.deepEqual(engineProjectionPathsForTransition('completion'), [
     'docs/CURRENT_AND_NEXT_STEPS.md',
   ]);
-  assert.deepEqual(engineProjectionPathsForTransition('issue'), []);
+  assert.deepEqual(engineProjectionPathsForTransition('issue'), [
+    'docs/CURRENT_AND_NEXT_STEPS.md',
+  ]);
   assert.throws(
     () =>
       classifyProjectionPaths(

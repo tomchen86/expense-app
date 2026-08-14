@@ -24,6 +24,7 @@ const REGISTRY: readonly Readonly<{
     transitions: Object.freeze([
       'archive',
       'completion',
+      'issue',
       'plan',
       'rollback-completion',
     ] satisfies EngineProjectionTransition[]),

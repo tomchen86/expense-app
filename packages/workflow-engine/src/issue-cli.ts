@@ -1,4 +1,5 @@
 import { ExitCode, workflowError } from './errors.ts';
+import { renderHandoff } from './handoff.ts';
 import {
   addIssue,
   closeIssue,
@@ -39,6 +40,7 @@ export function dispatchIssueCommand(
         notes: single(options, 'notes'),
       };
       const data = addIssue(repositoryRoot, issue);
+      refreshIssueProjections(repositoryRoot);
       return { action, issueId: issue.id, issueCount: data.issues.length };
     }
     case 'update': {
@@ -52,6 +54,7 @@ export function dispatchIssueCommand(
         throw usage('Issue update field is not supported.');
       }
       updateIssue(repositoryRoot, issueId, field, single(options, 'value'));
+      refreshIssueProjections(repositoryRoot);
       return { action, issueId, field };
     }
     case 'close': {
@@ -66,6 +69,7 @@ export function dispatchIssueCommand(
         single(options, 'date'),
         single(options, 'notes'),
       );
+      refreshIssueProjections(repositoryRoot);
       return { action, issueId };
     }
     case 'render':
@@ -85,6 +89,11 @@ export function dispatchIssueCommand(
         'Usage: pnpm workflow issue <add|update|close|render|validate> ...',
       );
   }
+}
+
+function refreshIssueProjections(repositoryRoot: string): void {
+  renderIssues(repositoryRoot);
+  renderHandoff(repositoryRoot);
 }
 
 function parseOptions(args: string[]): Map<string, string[]> {

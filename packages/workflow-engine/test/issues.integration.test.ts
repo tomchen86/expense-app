@@ -14,7 +14,9 @@ import {
   writeIssueData,
   type IssueData,
 } from '../src/issues.ts';
-import { sourceRepositoryRoot } from './fixture.ts';
+import { dispatchIssueCommand } from '../src/issue-cli.ts';
+import { renderHandoff } from '../src/handoff.ts';
+import { createFixtureRepository, sourceRepositoryRoot } from './fixture.ts';
 
 test('issue commands preserve structured fields and deterministic rendering', () => {
   const repository = fs.mkdtempSync(path.join(os.tmpdir(), 'workflow-issues-'));
@@ -91,4 +93,51 @@ test('repository issue seed is complete and renders without drift', () => {
     { feature: 3, bug: 13, enhancement: 10 },
   );
   validateIssueLog(sourceRepositoryRoot);
+});
+
+test('managed issue mutations refresh issue and handoff projections together', () => {
+  const repository = createFixtureRepository();
+  try {
+    writeIssueData(repository, {
+      schemaVersion: 1,
+      lastUpdated: '2026-08-14',
+      issues: [],
+    });
+    renderIssues(repository);
+    renderHandoff(repository);
+
+    dispatchIssueCommand(
+      [
+        'add',
+        '--id',
+        'ISS-199',
+        '--category',
+        'bug',
+        '--title',
+        'Projected blocker',
+        '--status',
+        'blocked',
+        '--priority',
+        'Now',
+        '--notes',
+        'The handoff must surface this blocker.',
+      ],
+      repository,
+    );
+
+    assert.match(
+      fs.readFileSync(path.join(repository, 'docs/ISSUE_LOG.md'), 'utf8'),
+      /ISS-199[\s\S]*Projected blocker/,
+    );
+    assert.match(
+      fs.readFileSync(
+        path.join(repository, 'docs/CURRENT_AND_NEXT_STEPS.md'),
+        'utf8',
+      ),
+      /## Known Blockers[\s\S]*ISS-199[^\n]*Projected blocker/,
+    );
+    validateIssueLog(repository);
+  } finally {
+    fs.rmSync(repository, { recursive: true, force: true });
+  }
 });
