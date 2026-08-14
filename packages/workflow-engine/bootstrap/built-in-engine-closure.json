@@ -331,7 +331,7 @@
     {
       "path": "src/engine-projection-registry.ts",
       "mode": "100644",
-      "digest": "sha256:6990a76ccd1d381fdc99ba396d749e16f4375726829749116e0589d3c7708606"
+      "digest": "sha256:1140d3da4cf5bec82bd558e6e0d0ff569a1eeae184422de263faf467daa1673b"
     },
     {
       "path": "src/errors.ts",
@@ -451,7 +451,7 @@
     {
       "path": "src/handoff.ts",
       "mode": "100644",
-      "digest": "sha256:8bba918c8ec1028255d3bbe5686883f45849d309a9b0090aea706d3df0b096a7"
+      "digest": "sha256:0117b8fb937be16d670f9dde4b3ca1aa4e8abe7aa6a06447b492a0ebcfab65f2"
     },
     {
       "path": "src/harness-bootstrap.ts",
@@ -571,7 +571,7 @@
     {
       "path": "src/investigation-session.ts",
       "mode": "100644",
-      "digest": "sha256:acf3c4c5f9a6c9870e1ec21618dbdef7a8bdb620cd6d13e0960945461cbd2afd"
+      "digest": "sha256:4dab48597a00a1ab27bf844b65408d2c9fd6d368ee2f35bb2d2a115685cacdcb"
     },
     {
       "path": "src/investigation-term-projection.ts",
@@ -591,7 +591,7 @@
     {
       "path": "src/issue-cli.ts",
       "mode": "100644",
-      "digest": "sha256:751940fccfbd5e1152299a5d97340372622019f9c65d98ad181c9aa751f0b101"
+      "digest": "sha256:086a83ba5158c582a2f302d262ab6ba330ba402344ed9133be2b7122c7abf804"
     },
     {
       "path": "src/issue-renderer.ts",
@@ -794,6 +794,11 @@
       "digest": "sha256:d356ec189a49f3e703279dd2678009ca93b8d29883ce4a6fbeffb6b81230de82"
     },
     {
+      "path": "src/plan-digest.ts",
+      "mode": "100644",
+      "digest": "sha256:ef101cced75ce39eee69c182fbaadd587b98ee435586ef7203bce365de634f4b"
+    },
+    {
       "path": "src/plan-review-coverage.ts",
       "mode": "100644",
       "digest": "sha256:8ba324a64a7451e8c7a68030ed939242c5b94f3bf0429727bfed557942d444b4"
@@ -911,7 +916,7 @@
     {
       "path": "src/propose-orchestrator.ts",
       "mode": "100644",
-      "digest": "sha256:b1047fbec5e42d17cd026de055464aee052264bb595a2ce4967ceae298a50b30"
+      "digest": "sha256:898cb7fcfd9bbdcb21ae58d34e9079d6f7f4a34d3f31acec5d0d50b1ecfec174"
     },
     {
       "path": "src/protected-capabilities.ts",
@@ -1186,7 +1191,7 @@
     {
       "path": "src/task-revision.ts",
       "mode": "100644",
-      "digest": "sha256:2a3388b248ea57a208cee0dae059c62d86d57de7315d65d6b35616cb3e482d85"
+      "digest": "sha256:35e3e5a5b4d33de484c6633287b6d3148e88f628fcb90dfb26464035ebea96a1"
     },
     {
       "path": "src/task-strategy-correction-round-store.ts",

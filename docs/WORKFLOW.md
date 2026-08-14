@@ -83,8 +83,8 @@ prove that `workflow-assurance` is required for merge.
 OpenSpec supplies authored-artifact instructions, while the repository-owned
 wrapper owns investigation applicability, evidence, execution declaration,
 PlanReview, managed-ledger projection, and the eventual planning transition.
-Routine new and revised plans start on a clean `work/<change-id>` branch with a
-normalized intent file:
+Routine new plans and revisions made before task execution start on a clean
+`work/<change-id>` branch with a normalized intent file:
 
 ```bash
 pnpm workflow propose <change-id> --intent <intent.json> [--actor <id>] --json
@@ -105,6 +105,18 @@ returns a durable `state`, `nextAction`, and exact `inputSchema`. Preserve every
 returned binding value and fill only the caller-owned work that schema asks
 for. Later checkpoints can request main terms, grouping dispositions, WHY
 answers, authored planning contributions, or reviewer challenge dispositions.
+Once planning artifacts materialize, every response also carries a deterministic
+`planDigest` projection of the proposal WHY, key decisions, touched files and
+their protected invariants, and open questions. It is an operator-facing
+summary of exact reviewed inputs, not a second authority artifact.
+
+When an active task has entered `revising`, use these same `propose` and
+`--resume` commands from any worktree in the repository. The engine resolves
+the durable revising session, reuses its planning authority, and continuously
+proves that preserved implementation bytes have not changed. Accepted
+PlanReview returns `state: revision-plan-reviewed` with `nextAction:
+resume-task`; it deliberately does not create a second plan commit. The exact
+planning-only commit and same-session rebind remain owned by `resume-task`.
 If term scan budgets require narrowing without a returned typed input schema,
 stop: the current wrapper has no caller-owned narrowing checkpoint. Use
 `work.authoredInstructions` for the authored OpenSpec graph; never
@@ -115,12 +127,15 @@ fields.
 Resume only with the latest typed envelope. Do not replay completed provider
 work, transcribe reviewer terms, manufacture collaboration evidence, or bypass
 `human-action-required`. When provider work is pending, `status` is read-only
-and a later resume advances from the durable result. A planning change is ready
-only when the wrapper returns `state: planning-complete` and its managed
-planning transition.
+and a later resume advances from the durable result. A new planning change is
+ready only when the wrapper returns `state: planning-complete` and its managed
+planning transition. A task revision instead returns
+`state: revision-plan-reviewed`; its planning transition is created by the
+following `resume-task`.
 
-The wrapper invokes the existing `plan-commit` authority after assembling and
-validating its prerequisites. `plan-commit` still rejects implementation files,
+For a new plan, the wrapper invokes the existing `plan-commit` authority after
+assembling and validating its prerequisites. `plan-commit` still rejects
+implementation files,
 normative base specs, archives, task-checkbox changes, active task sessions,
 wrong branches, and unrelated planning paths; it is not the routine shortcut
 around investigation-first planning. A later planning generation invalidates
