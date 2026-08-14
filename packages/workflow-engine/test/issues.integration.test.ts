@@ -141,3 +141,64 @@ test('managed issue mutations refresh issue and handoff projections together', (
     fs.rmSync(repository, { recursive: true, force: true });
   }
 });
+
+test('managed issue mutations roll back every projection after a caught refresh failure', () => {
+  const repository = createFixtureRepository();
+  const sourcePath = path.join(repository, 'docs/issues/issues.yaml');
+  const issueLogPath = path.join(repository, 'docs/ISSUE_LOG.md');
+  const handoffPath = path.join(repository, 'docs/CURRENT_AND_NEXT_STEPS.md');
+  try {
+    writeIssueData(repository, {
+      schemaVersion: 1,
+      lastUpdated: '2026-08-14',
+      issues: [],
+    });
+    renderIssues(repository);
+    renderHandoff(repository);
+    const before = new Map(
+      [sourcePath, issueLogPath, handoffPath].map((filePath) => [
+        filePath,
+        fs.readFileSync(filePath),
+      ]),
+    );
+    const command = [
+      'add',
+      '--id',
+      'ISS-199',
+      '--category',
+      'bug',
+      '--title',
+      'Transactional blocker',
+      '--status',
+      'blocked',
+      '--priority',
+      'Now',
+      '--notes',
+      'No partial managed projection may survive.',
+    ];
+
+    for (const hooks of [
+      {
+        afterSourceWrite: () => {
+          throw new Error('simulated source-write interruption');
+        },
+      },
+      {
+        afterIssueLogWrite: () => {
+          throw new Error('simulated issue-log interruption');
+        },
+      },
+    ]) {
+      assert.throws(
+        () => dispatchIssueCommand(command, repository, hooks),
+        /simulated (source-write|issue-log) interruption/,
+      );
+      for (const [filePath, expected] of before) {
+        assert.deepEqual(fs.readFileSync(filePath), expected);
+      }
+      validateIssueLog(repository);
+    }
+  } finally {
+    fs.rmSync(repository, { recursive: true, force: true });
+  }
+});

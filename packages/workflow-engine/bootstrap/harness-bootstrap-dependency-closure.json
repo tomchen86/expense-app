@@ -8,7 +8,7 @@
     {
       "path": "bootstrap/recovery-runtime/bootstrap/built-in-engine-closure-pin.js",
       "mode": "100644",
-      "digest": "sha256:a6e6af9c9da4cc7f9be3626a101bfec39bda8f5c033bd62724105ba9c0ac2f13"
+      "digest": "sha256:3a60a7beafd37e51092795ed2b54e2ffbdadd574edacd2cc176f911163558ba7"
     },
     {
       "path": "bootstrap/recovery-runtime/src/actor-identity.js",

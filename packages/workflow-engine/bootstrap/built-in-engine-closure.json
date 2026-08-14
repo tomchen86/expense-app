@@ -591,7 +591,7 @@
     {
       "path": "src/issue-cli.ts",
       "mode": "100644",
-      "digest": "sha256:086a83ba5158c582a2f302d262ab6ba330ba402344ed9133be2b7122c7abf804"
+      "digest": "sha256:1bc8e0083966301d0b81170dc2fd1fcb6d88b627a77ab20789b4079b1ec5c8f2"
     },
     {
       "path": "src/issue-renderer.ts",
