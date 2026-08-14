@@ -21,6 +21,7 @@ import {
   type ProviderRunnerReport,
 } from '../src/provider-runner.ts';
 import { runProviderWorker } from '../src/provider-worker.ts';
+import { commitPlanningTransition } from '../src/planning-transition.ts';
 import {
   createPlanningContributionEnvelope,
   createPlanReviewDispositionsEnvelope,
@@ -28,12 +29,19 @@ import {
   getProposeStatus,
   resumePropose,
 } from '../src/propose-orchestrator.ts';
+import { startSession } from '../src/session.ts';
+import { resumeTask, reviseTask } from '../src/task-revision.ts';
 import {
   ledgerIndexPath,
   ledgerObjectPath,
 } from '../src/semantic-ledger-store.ts';
 import { createLedgerEntry } from '../src/semantic-ledger.ts';
-import { isWorkflowError } from './fixture.ts';
+import {
+  createFixtureRepository,
+  git,
+  isWorkflowError,
+  writeReadyV2ExemptChange,
+} from './fixture.ts';
 import { installPlanReviewAuthority } from './plan-review-authority-fixture.ts';
 import { driveProposeToDispositions } from './propose-drive-fixture.ts';
 
@@ -201,7 +209,9 @@ test('plan commit rejects a provider submission that omits an engine-required ta
 });
 
 test('exact evidence for every required binding permits the immutable plan-commit replay', () => {
-  const prepared = prepareCoverageReview('r6-coverage-complete');
+  const prepared = prepareCoverageReview('r6-coverage-complete', {
+    includeLedger: false,
+  });
   try {
     completeProviderReview(
       prepared,
@@ -215,8 +225,173 @@ test('exact evidence for every required binding permits the immutable plan-commi
       ),
     );
     assert.equal(completed.state, 'planning-complete');
+    const planDigest = (
+      completed as typeof completed & {
+        planDigest?: {
+          schemaVersion: number;
+          kind: string;
+          proposalWhy: string;
+          keyDecisions: string[];
+          touchedFilesAndWhy: Array<{
+            path: string;
+            why: string;
+            protectedInvariant: string;
+          }>;
+          openQuestions: string[];
+          rendered: string;
+        };
+      }
+    ).planDigest;
+    assert.ok(planDigest);
+    assert.equal(planDigest.schemaVersion, 1);
+    assert.equal(planDigest.kind, 'workflow-plan-digest.v1');
+    assert.match(planDigest.proposalWhy, /semantic review coverage/i);
+    assert.ok(
+      planDigest.keyDecisions.some((decision) =>
+        /seals required review targets/i.test(decision),
+      ),
+    );
+    assert.deepEqual(
+      planDigest.touchedFilesAndWhy.map(({ path }) => path),
+      [TARGET],
+    );
+    assert.match(
+      planDigest.touchedFilesAndWhy[0]!.why,
+      /owns review coverage behavior/i,
+    );
+    assert.match(
+      planDigest.touchedFilesAndWhy[0]!.protectedInvariant,
+      /cannot be omitted/i,
+    );
+    assert.deepEqual(planDigest.openQuestions, []);
+    assert.match(planDigest.rendered, /^# Plan Digest/m);
+    assert.match(planDigest.rendered, /## Touched Files and Why/);
   } finally {
     prepared.dispose();
+  }
+});
+
+test('a revising task regenerates ordinary investigation and PlanReview before same-session resume', () => {
+  const repository = createFixtureRepository();
+  const authority = installPlanReviewAuthority(repository);
+  const startedAt = new Date();
+  try {
+    git(repository, ['checkout', '-b', 'work/demo-change']);
+    fs.writeFileSync(path.join(repository, TARGET), TARGET_CONTENT);
+    fs.writeFileSync(
+      path.join(repository, 'workflow/path-roles.json'),
+      `${canonicalJson({
+        schemaVersion: 1,
+        kind: 'path-role-registry',
+        roles: { ordinary: ['src/**'] },
+      })}\n`,
+    );
+    git(repository, [
+      'add',
+      TARGET,
+      'workflow/path-roles.json',
+      'workflow/maintainer-policy.json',
+    ]);
+    git(repository, ['commit', '-m', 'Prepare revision review fixture']);
+    writeReadyV2ExemptChange(repository);
+    commitPlanningTransition(repository, 'demo-change');
+
+    const session = startSession(repository, 'demo-change', '1.1');
+    const implementation = `${TARGET_CONTENT}export const revised = true;\n`;
+    fs.writeFileSync(path.join(repository, TARGET), implementation);
+    reviseTask(repository, session.sessionId, 'regenerate-reviewed-plan', {
+      now: () => startedAt,
+    });
+    const preRevisionHead = git(repository, ['rev-parse', 'HEAD']).trim();
+
+    const fixture = driveProposeToDispositions('demo-change', {
+      repository,
+      mainTerm: TERM,
+      surveyTerm: TERM,
+      explicitPaths: [TARGET],
+      explicitSymbols: [],
+    });
+    const afterDispositions = fixture.submit({
+      dispositions: (fixture.output.work?.groups ?? []).map(({ groupId }) => ({
+        groupId,
+        classification: 'load-bearing' as const,
+        rationale: 'The target owns the R6 production coverage contract.',
+        author: 'codex',
+      })),
+    });
+    const sealed = fixture.submit({
+      answers: (afterDispositions.work?.fullBlobManifest ?? []).map(
+        ({ manifestEntryId }) => ({
+          manifestEntryId,
+          why: 'The target owns review coverage behavior.',
+          protectedInvariant: 'Required targets cannot be omitted.',
+          reviewerQuestion: 'Does plan commit replay every required target?',
+          answer: 'Yes, against the immutable review snapshot.',
+          semanticAuthor: 'codex',
+          readComplete: true as const,
+        }),
+      ),
+    });
+    assert.equal(sealed.state, 'awaiting-planning-contribution');
+    const materialized = resumePropose(
+      repository,
+      'demo-change',
+      createPlanningContributionEnvelope(
+        sealed,
+        planningPayload('demo-change'),
+      ),
+    );
+    assert.equal(materialized.state, 'waiting-for-plan-review');
+    completeProviderReview(
+      {
+        repository,
+        invocationId: materialized.planReview!.invocationId,
+      },
+      noChallengeSubmission(
+        'covered-target',
+        coverageTargetPaths({ repository, changeId: 'demo-change' }),
+      ),
+    );
+    const reviewed = resumePropose(
+      repository,
+      'demo-change',
+      createPlanReviewProgressEnvelope(
+        getProposeStatus(repository, fixture.investigationId),
+      ),
+    );
+
+    assert.equal(reviewed.state, 'revision-plan-reviewed');
+    assert.equal(reviewed.nextAction, 'resume-task');
+    assert.equal(reviewed.planningTransition, null);
+    assert.equal(
+      git(repository, ['rev-parse', 'HEAD']).trim(),
+      preRevisionHead,
+    );
+    assert.equal(
+      fs.readFileSync(path.join(repository, TARGET), 'utf8'),
+      implementation,
+    );
+
+    const resumed = resumeTask(repository, session.sessionId, {
+      now: () => new Date(startedAt.getTime() + 60_000),
+    });
+    assert.equal(resumed.session.sessionId, session.sessionId);
+    assert.equal(resumed.session.state, 'active');
+    assert.notEqual(
+      git(repository, ['rev-parse', 'HEAD']).trim(),
+      preRevisionHead,
+    );
+    assert.equal(
+      fs.readFileSync(path.join(repository, TARGET), 'utf8'),
+      implementation,
+    );
+    assert.equal(
+      resumed.session.planningAssurance?.applicabilityKind,
+      'sealed-investigation',
+    );
+  } finally {
+    authority.dispose();
+    fs.rmSync(repository, { recursive: true, force: true });
   }
 });
 
@@ -476,7 +651,7 @@ function prepareCoverageReview(
 }
 
 function completeProviderReview(
-  prepared: ReturnType<typeof prepareCoverageReview>,
+  prepared: { repository: string; invocationId: string },
   submission: PlanReviewSubmission,
 ): void {
   runProviderWorker(prepared.repository, prepared.invocationId, {
@@ -578,9 +753,10 @@ function currentChallengeId(
     .findings[0]!.findingId;
 }
 
-function coverageTargetPaths(
-  prepared: ReturnType<typeof prepareCoverageReview>,
-): string[] {
+function coverageTargetPaths(prepared: {
+  repository: string;
+  changeId: string;
+}): string[] {
   const investigation = JSON.parse(
     fs.readFileSync(
       path.join(

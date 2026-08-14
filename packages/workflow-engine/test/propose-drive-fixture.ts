@@ -26,6 +26,8 @@ import { createFixtureRepository, git } from './fixture.ts';
 export function driveProposeToDispositions(
   changeId: string,
   options: {
+    /** Reuse an already prepared work/<change> repository, such as a revising task. */
+    repository?: string;
     surveyTerm?: string;
     mainTerm?: string;
     /** Committed into the baseline before the propose starts. */
@@ -35,11 +37,14 @@ export function driveProposeToDispositions(
     prepareRepository?: (repository: string) => void;
   } = {},
 ) {
-  const repository = createFixtureRepository();
-  git(repository, ['checkout', '-b', `work/${changeId}`]);
-  setFixtureProviderTimeout(repository, 300_000);
-  options.prepareRepository?.(repository);
-  if (options.files !== undefined) {
+  const ownsRepository = options.repository === undefined;
+  const repository = options.repository ?? createFixtureRepository();
+  if (ownsRepository) {
+    git(repository, ['checkout', '-b', `work/${changeId}`]);
+    setFixtureProviderTimeout(repository, 300_000);
+    options.prepareRepository?.(repository);
+  }
+  if (ownsRepository && options.files !== undefined) {
     for (const [relative, contents] of Object.entries(options.files)) {
       const target = path.join(repository, relative);
       fs.mkdirSync(path.dirname(target), { recursive: true });
@@ -142,7 +147,9 @@ export function driveProposeToDispositions(
       ) as OrdinaryProposeOutput;
     },
     dispose() {
-      fs.rmSync(repository, { recursive: true, force: true });
+      if (ownsRepository) {
+        fs.rmSync(repository, { recursive: true, force: true });
+      }
     },
   };
 }

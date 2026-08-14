@@ -118,7 +118,7 @@ import {
   getInvestigationStatus,
   inspectReviewerTermResolutionAuthorization,
   reopenInvestigationForReviewerTermsUnderAuthority,
-  resumeInvestigationSession,
+  resumeInvestigationSessionUnderAuthority,
   retryInvestigationProvider,
   startInvestigationSessionUnderLifecycleLock,
   type InvestigationStatus,
@@ -191,6 +191,11 @@ import {
   assertPlanningTaskHistory,
   readFileAtCommit,
 } from './planning-contract.ts';
+import {
+  projectWorkflowPlanDigest,
+  type WorkflowPlanDigest,
+  type WorkflowPlanDigestTouchedFile,
+} from './plan-digest.ts';
 import { deriveReviewedMutationClassPolicy } from './reviewed-mutation-policy.ts';
 import {
   assertActiveTaskMandateBindingUnderLifecycleLock,
@@ -215,6 +220,8 @@ import {
   preparePlanningDraftWorkspace,
   readPlanningDraftWorkspace,
 } from './planning-workspace.ts';
+import { listSessions } from './session.ts';
+import { withTaskRevisionPlanningOperation } from './task-revision.ts';
 import {
   assertAuthorizedPlanReviewChallengeClosure,
   createAuthorizedPlanReviewDispositionNode,
@@ -592,6 +599,7 @@ export type ProposeOutput = {
     | 'plan-review-required'
     | 'waiting-for-plan-review'
     | 'awaiting-challenge-dispositions'
+    | 'revision-plan-reviewed'
     | 'planning-complete'
     | 'human-action-required';
   nextAction:
@@ -603,6 +611,7 @@ export type ProposeOutput = {
     | 'retry-plan-review'
     | 'resume-plan-review'
     | 'submit-challenge-dispositions'
+    | 'resume-task'
     | 'planning-complete'
     | 'human-action';
   investigation: InvestigationStatus | ProposeExemptionSession | null;
@@ -623,6 +632,12 @@ export type ProposeOutput = {
   inputSchema: Record<string, unknown> | null;
   work: ProposeWork | null;
   materializedArtifacts: Record<string, string> | null;
+  /**
+   * A deterministic one-screen projection of the exact authored plan and its
+   * investigation WHY rows. It appears as soon as planning artifacts have
+   * materialized and is never accepted as caller-authored authority.
+   */
+  planDigest?: WorkflowPlanDigest;
   planReview: ProposePlanReviewStatus | null;
   planningTransition: PlanningTransitionResult | null;
   /**
@@ -922,6 +937,63 @@ function assertProposeStartContextStable(
   }
 }
 
+function currentRevisingTaskSession(cwd: string, changeId: string) {
+  const matches = listSessions(cwd).filter(
+    (session) => session.changeId === changeId && session.state === 'revising',
+  );
+  if (matches.length > 1) {
+    throw workflowError(
+      'TASK_REVISION_AUTHORITY_AMBIGUOUS',
+      `Change ${changeId} has more than one revising task session.`,
+      ExitCode.conflict,
+    );
+  }
+  return matches[0] ?? null;
+}
+
+function withProposeTransitionAuthority<T>(
+  cwd: string,
+  lifecycleRuntime: Parameters<typeof withInvestigationTransitionAuthority>[0],
+  changeId: string,
+  operation: (authority: HeldChangeTransitionAuthority) => T,
+): T {
+  const revising = currentRevisingTaskSession(cwd, changeId);
+  if (revising === null) {
+    return withInvestigationTransitionAuthority(
+      lifecycleRuntime,
+      changeId,
+      operation,
+    );
+  }
+  return withTaskRevisionPlanningOperation(
+    revising.repositoryRoot,
+    revising.sessionId,
+    operation,
+  );
+}
+
+function resumeInvestigationForPropose(
+  cwd: string,
+  changeId: string,
+  investigationId: string,
+  checkpoint?: InvestigationCheckpointEnvelope,
+): InvestigationStatus {
+  const context = loadInvestigationRuntimeContext(cwd);
+  return withProposeTransitionAuthority(
+    cwd,
+    context.lifecycleRuntime,
+    changeId,
+    (authority) =>
+      resumeInvestigationSessionUnderAuthority(
+        cwd,
+        changeId,
+        investigationId,
+        checkpoint,
+        authority,
+      ),
+  );
+}
+
 function assertCurrentExemptionContext(
   context: ReturnType<typeof loadInvestigationRuntimeContext>,
   session: ProposeExemptionSession,
@@ -1173,7 +1245,8 @@ export function startPropose(
   };
   const manifestDigest = blindSurveyManifestDigest(manifest);
   const collaborationGrant = options.collaborationGrant;
-  const status = withInvestigationTransitionAuthority(
+  const status = withProposeTransitionAuthority(
+    cwd,
     context.lifecycleRuntime,
     changeId,
     (assertOwned) => {
@@ -1463,7 +1536,8 @@ function startExemptionPropose(
   mandateBinding?: TaskMandateBinding,
 ): ProposeOutput {
   const context = loadInvestigationRuntimeContext(cwd);
-  return withInvestigationTransitionAuthority(
+  return withProposeTransitionAuthority(
+    cwd,
     context.lifecycleRuntime,
     changeId,
     (assertOwned) => {
@@ -1680,7 +1754,8 @@ function resumeExemptionPlanningContribution(
   options: ProposeResumeOptions,
 ): ExemptionProposeOutput {
   const initialContext = loadInvestigationRuntimeContext(cwd);
-  const output = withInvestigationTransitionAuthority(
+  const output = withProposeTransitionAuthority(
+    cwd,
     initialContext.lifecycleRuntime,
     input.changeId,
     (assertOwned) => {
@@ -1793,7 +1868,8 @@ export function resumePropose(
   }
   if (input.kind === 'planning-contribution') {
     const initialContext = loadInvestigationRuntimeContext(cwd);
-    const output = withInvestigationTransitionAuthority(
+    const output = withProposeTransitionAuthority(
+      cwd,
       initialContext.lifecycleRuntime,
       changeId,
       (assertOwned) => {
@@ -1863,7 +1939,11 @@ export function resumePropose(
     let resumed: InvestigationStatus;
     if (current.revision === input.expectedRevision) {
       dispatchPreparedInvocation(cwd, current, options.providerDispatcher);
-      resumed = resumeInvestigationSession(cwd, input.investigationId);
+      resumed = resumeInvestigationForPropose(
+        cwd,
+        changeId,
+        input.investigationId,
+      );
     } else if (
       current.revision === input.expectedRevision + 1 &&
       isExactPublishedProviderProgressReplay(cwd, current)
@@ -1941,8 +2021,9 @@ export function resumePropose(
     });
   }
 
-  let status = resumeInvestigationSession(
+  let status = resumeInvestigationForPropose(
     cwd,
+    changeId,
     checkpoint.investigationId,
     checkpoint,
   );
@@ -1951,7 +2032,11 @@ export function resumePropose(
     status.state === 'waiting-for-provider' &&
     status.provider.state === 'succeeded'
   ) {
-    status = resumeInvestigationSession(cwd, checkpoint.investigationId);
+    status = resumeInvestigationForPropose(
+      cwd,
+      changeId,
+      checkpoint.investigationId,
+    );
   }
   if (
     status.state === 'investigation-sealed' &&
@@ -1976,7 +2061,8 @@ function resumeScanSaturationAcceptance(
   options: ProposeResumeOptions,
 ): ProposeOutput {
   const initialContext = loadInvestigationRuntimeContext(cwd);
-  return withInvestigationTransitionAuthority(
+  return withProposeTransitionAuthority(
+    cwd,
     initialContext.lifecycleRuntime,
     input.changeId,
     (assertOwned) => {
@@ -2375,7 +2461,8 @@ export function completeInterruptedPlanReviewReplacement(
   },
 ): { published: boolean } {
   const initialContext = loadInvestigationRuntimeContext(cwd);
-  return withInvestigationTransitionAuthority(
+  return withProposeTransitionAuthority(
+    cwd,
     initialContext.lifecycleRuntime,
     input.changeId,
     (assertOwned) => {
@@ -2767,7 +2854,8 @@ function resumePlanReviewRetry(
   options: ProposeResumeOptions,
 ): ProposeOutput {
   const initialContext = loadInvestigationRuntimeContext(cwd);
-  const retried = withInvestigationTransitionAuthority(
+  const retried = withProposeTransitionAuthority(
+    cwd,
     initialContext.lifecycleRuntime,
     input.changeId,
     (assertOwned) => {
@@ -3361,7 +3449,8 @@ function resumePlanReview(
   if (invocation.state !== 'succeeded' || invocation.result === null) {
     return getProposeStatus(cwd, status.investigationId);
   }
-  const admitted = withInvestigationTransitionAuthority(
+  const admitted = withProposeTransitionAuthority(
+    cwd,
     context.lifecycleRuntime,
     status.changeId,
     (assertOwned) => {
@@ -3810,7 +3899,8 @@ function completePlanReviewDispositions(
   options: ProposeResumeOptions,
 ): ProposeOutput {
   const initialContext = loadInvestigationRuntimeContext(cwd);
-  return withInvestigationTransitionAuthority(
+  return withProposeTransitionAuthority(
+    cwd,
     initialContext.lifecycleRuntime,
     input.changeId,
     (assertOwned) => {
@@ -4405,6 +4495,16 @@ function commitCompletedPlanningUnderAuthority(
     // An exemption has no groups, so no class and nothing to have sampled.
     assertClassSamplesAudited(cwd, status);
   }
+  const revising = currentRevisingTaskSession(cwd, status.changeId);
+  if (revising !== null) {
+    return {
+      ...before,
+      state: 'revision-plan-reviewed',
+      nextAction: 'resume-task',
+      inputSchema: null,
+      planningTransition: null,
+    };
+  }
   const planningTransition = commitPlanningTransitionUnderAuthority(
     cwd,
     status.changeId,
@@ -4487,6 +4587,7 @@ function renderExemptionProposeOutput(
       authoredInstructions: scaffold.instructions,
     },
     materializedArtifacts,
+    projectExemptionPlanDigest(cwd, session),
   ) as ExemptionProposeOutput;
 }
 
@@ -4523,6 +4624,10 @@ function resolveProposePlanningWorkspace(
   mode: 'start' | 'resume' | 'status',
 ): string {
   const repository = discoverRepository(cwd);
+  const revising = currentRevisingTaskSession(cwd, changeId);
+  if (revising !== null) {
+    return revising.repositoryRoot;
+  }
   const config = loadWorkflowConfig(repository.repositoryRoot);
   const expectedBranch = config.branchTemplate.replaceAll(
     '{changeId}',
@@ -4663,6 +4768,7 @@ function getProposeStatusInternal(
     createdDate,
     workFromRebuilt(rebuilt, []),
     materialized,
+    projectOrdinaryPlanDigest(cwd, rebuilt),
     rebuilt.reuseCoverage,
     classSampleAuditsFor(rebuilt),
     rebuilt.floorTrimming,
@@ -4686,7 +4792,8 @@ function renderProposeOutputWithPlanningAuthority(
     );
   }
   const initialContext = loadInvestigationRuntimeContext(cwd);
-  return withInvestigationTransitionAuthority(
+  return withProposeTransitionAuthority(
+    cwd,
     initialContext.lifecycleRuntime,
     status.changeId,
     (assertOwned) => {
@@ -4771,6 +4878,7 @@ function renderProposeOutput(
         createdDate,
         workFromRebuilt(rebuilt, receiptLookup.instructions),
         materialized,
+        projectOrdinaryPlanDigest(cwd, rebuilt),
         rebuilt.reuseCoverage,
         classSampleAuditsFor(rebuilt),
         rebuilt.floorTrimming,
@@ -4893,6 +5001,109 @@ function renderScanSaturationAcceptanceRequired(
   };
 }
 
+function projectOrdinaryPlanDigest(
+  cwd: string,
+  rebuilt: RebuiltInvestigation,
+): WorkflowPlanDigest {
+  const freshWhyByPath = new Map(
+    rebuilt.whyNodes.flatMap((node) => {
+      const why = readInvestigationWhyNode(node);
+      return why.path.utf8 === null
+        ? []
+        : [
+            [
+              why.path.utf8,
+              {
+                path: why.path.utf8,
+                why: why.why,
+                protectedInvariant: why.protectedInvariant,
+              },
+            ] as const,
+          ];
+    }),
+  );
+  const manifestById = new Map(
+    rebuilt.completeFullBlobManifest.map((entry) => [
+      entry.manifestEntryId,
+      entry,
+    ]),
+  );
+  const carriedWhyByPath = new Map<string, WorkflowPlanDigestTouchedFile>();
+  const repositoryRoot =
+    loadInvestigationRuntimeContext(cwd).git.repositoryRoot;
+  for (const carried of rebuilt.reuseCoverage.carried) {
+    const manifest = manifestById.get(carried.manifestEntryId);
+    const pathValue = manifest?.path.utf8;
+    if (pathValue === undefined || pathValue === null) continue;
+    const ledger = readLedgerEntry(repositoryRoot, carried.ledgerEntryId);
+    carriedWhyByPath.set(pathValue, {
+      path: pathValue,
+      why: ledger.why.responsibility,
+      protectedInvariant:
+        ledger.why.protectedInvariants.join('; ') ||
+        'Preserve the exact reviewed behavior of this planned mutation.',
+    });
+  }
+  return projectPlanDigestFromCurrentArtifacts(
+    cwd,
+    rebuilt.session.changeId,
+    rebuilt.intent.explicitPaths.map((pathValue) =>
+      planDigestTouchedFile(
+        pathValue,
+        freshWhyByPath.get(pathValue) ?? carriedWhyByPath.get(pathValue),
+      ),
+    ),
+  );
+}
+
+function projectExemptionPlanDigest(
+  cwd: string,
+  session: ProposeExemptionSession,
+): WorkflowPlanDigest {
+  return projectPlanDigestFromCurrentArtifacts(
+    cwd,
+    session.changeId,
+    session.intent.explicitPaths.map((pathValue) =>
+      planDigestTouchedFile(pathValue),
+    ),
+  );
+}
+
+function planDigestTouchedFile(
+  pathValue: string,
+  semanticWhy?: WorkflowPlanDigestTouchedFile,
+): WorkflowPlanDigestTouchedFile {
+  return (
+    semanticWhy ?? {
+      path: pathValue,
+      why: 'No load-bearing investigation WHY row was required; this exact planned mutation remains bound to PlanReview coverage.',
+      protectedInvariant:
+        'Preserve the exact reviewed behavior of this planned mutation.',
+    }
+  );
+}
+
+function projectPlanDigestFromCurrentArtifacts(
+  cwd: string,
+  changeId: string,
+  touchedFilesAndWhy: readonly WorkflowPlanDigestTouchedFile[],
+): WorkflowPlanDigest {
+  const context = loadInvestigationRuntimeContext(cwd);
+  const changeDirectory = path.join(
+    context.git.repositoryRoot,
+    context.config.changeRoot,
+    changeId,
+  );
+  return projectWorkflowPlanDigest({
+    proposal: fs.readFileSync(
+      path.join(changeDirectory, 'proposal.md'),
+      'utf8',
+    ),
+    design: fs.readFileSync(path.join(changeDirectory, 'design.md'), 'utf8'),
+    touchedFilesAndWhy,
+  });
+}
+
 function renderMaterializedProposeOutput(
   cwd: string,
   status: ProposeLifecycleStatus,
@@ -4900,6 +5111,7 @@ function renderMaterializedProposeOutput(
   createdDate: string,
   work: ProposeWork,
   materializedArtifacts: Record<string, string>,
+  planDigest: WorkflowPlanDigest,
   semanticReuse: ReuseCoverageRecord | null = null,
   classSampleAudits: ProposeOutput['classSampleAudits'] = [],
   floorTrimming: ProposeOutput['floorTrimming'] = {
@@ -4945,6 +5157,7 @@ function renderMaterializedProposeOutput(
             },
       work,
       materializedArtifacts,
+      planDigest,
       planReview: null,
       planningTransition: null,
       semanticReuse,
@@ -5018,6 +5231,7 @@ function renderMaterializedProposeOutput(
         : null,
       work,
       materializedArtifacts,
+      planDigest,
       planReview,
       planningTransition: null,
       semanticReuse,
@@ -5040,6 +5254,7 @@ function renderMaterializedProposeOutput(
         inputSchema: planReviewDispositionSchema(status, review),
         work,
         materializedArtifacts,
+        planDigest,
         planReview,
         planningTransition: null,
         semanticReuse: null,
@@ -5063,6 +5278,7 @@ function renderMaterializedProposeOutput(
     inputSchema: planReviewProgressSchema(status, reservation),
     work,
     materializedArtifacts,
+    planDigest,
     planReview,
     planningTransition: null,
     semanticReuse: null,
@@ -7381,7 +7597,8 @@ function reconcileReviewerTermPlanningRevision(
   options: ProposeResumeOptions,
 ): ProposeOutput {
   const initialContext = loadInvestigationRuntimeContext(cwd);
-  withInvestigationTransitionAuthority(
+  withProposeTransitionAuthority(
+    cwd,
     initialContext.lifecycleRuntime,
     status.changeId,
     (assertOwned) => {

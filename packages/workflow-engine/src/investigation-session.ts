@@ -2036,6 +2036,23 @@ export function resumeInvestigationSession(
   );
 }
 
+export function resumeInvestigationSessionUnderAuthority(
+  cwd: string,
+  changeId: string,
+  requestedInvestigationId: string,
+  checkpoint: InvestigationCheckpointEnvelope | undefined,
+  authority: HeldChangeTransitionAuthority,
+): InvestigationStatus {
+  const assertOwned = assertHeldChangeTransitionAuthority(authority, changeId);
+  return withInvestigationMutation(
+    cwd,
+    requestedInvestigationId,
+    (context, current) =>
+      resumeInvestigationSessionUnlocked(context, current, checkpoint),
+    { changeId: authority.changeId, assertOwned },
+  );
+}
+
 function resumeInvestigationSessionUnlocked(
   context: ReturnType<typeof loadInvestigationRuntimeContext>,
   current: InvestigationSession,

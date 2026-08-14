@@ -27,7 +27,10 @@ import {
 import { createTaskPlanningAssuranceBinding } from './planning-assurance-validator.ts';
 import { readPlanningTransitionReport } from './planning-report.ts';
 import { commitTaskRevisionPlanningTransitionUnderAuthority } from './planning-transition.ts';
-import { withTaskRevisionPlanningAuthority } from './planning-lock.ts';
+import {
+  withTaskRevisionPlanningAuthority,
+  type HeldChangeTransitionAuthority,
+} from './planning-lock.ts';
 import {
   assertOwnedLock,
   readSessionFile,
@@ -177,6 +180,58 @@ export type TaskRevisionOptions = Readonly<{
     | 'resume-prepared'
     | 'session-active';
 }>;
+
+/**
+ * Run one bounded planning mutation through the authority already owned by an
+ * exact revising task. This is the public bridge used by high-level planning
+ * orchestration; it does not create a second change lock or a replacement
+ * session.
+ */
+export function withTaskRevisionPlanningOperation<T>(
+  cwd: string,
+  requestedSessionId: string,
+  operation: (authority: HeldChangeTransitionAuthority) => T,
+): T {
+  const sessionId = assertSessionId(requestedSessionId);
+  const discovered = discoverRepository(cwd);
+  const config = loadWorkflowConfig(discovered.repositoryRoot);
+  const runtime = runtimePaths(
+    discovered.gitCommonDirectory,
+    config.runtimeDirectory,
+  );
+  return withRepositoryLifecycleOperation(runtime, (assertRepositoryLock) =>
+    withSessionOperation(runtime, sessionId, () => {
+      assertRepositoryLock();
+      const current = readSessionFile(sessionPath(runtime, sessionId));
+      const journal = findLiveRevisionJournal(runtime, sessionId);
+      if (
+        current.state !== 'revising' ||
+        journal === null ||
+        journal.phase !== 'revising' ||
+        current.revisionLeaseId !== journal.leaseId
+      ) {
+        throw workflowError(
+          'TASK_REVISION_AUTHORITY_STALE',
+          'Planning orchestration requires the exact live revising task session.',
+          ExitCode.staleState,
+        );
+      }
+      assertResumePathState(
+        discovered.repositoryRoot,
+        config.changeRoot,
+        current,
+        journal,
+      );
+      return withTaskRevisionPlanningAuthority(
+        runtime,
+        current,
+        journal.leaseId,
+        assertRepositoryLock,
+        operation,
+      );
+    }),
+  );
+}
 
 export function reviseTask(
   cwd: string,

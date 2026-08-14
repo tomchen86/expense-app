@@ -20,6 +20,7 @@ import {
 import type { MaintainerSignerProvider } from '../src/maintainer-signer.ts';
 import { commitChangedPaths } from '../src/git-transitions.ts';
 import { commitPlanningTransition } from '../src/planning-transition.ts';
+import { startPropose } from '../src/propose-orchestrator.ts';
 import {
   abortSession,
   checkSession,
@@ -155,6 +156,80 @@ test('resume refuses unreviewed planning edits without consuming the revision le
         .endsWith('\nA reviewed correction is required.\n'),
       true,
     );
+  } finally {
+    fs.rmSync(repository, { recursive: true, force: true });
+  }
+});
+
+test('propose reuses the exact revising task authority without touching implementation bytes', () => {
+  const repository = createFixtureRepository();
+  try {
+    git(repository, ['checkout', '-b', 'work/demo-change']);
+    writeReadyV2ExemptChange(repository);
+    commitPlanningTransition(repository, 'demo-change');
+    const session = startSession(repository, 'demo-change', '1.1');
+    const implementationPath = path.join(repository, 'src/feature.ts');
+    const implementation = 'export const value = 1;\n';
+    fs.writeFileSync(implementationPath, implementation);
+    reviseTask(repository, session.sessionId, 'regenerate-reviewed-plan', {
+      now: () => STARTED_AT,
+    });
+
+    const proposed = startPropose(
+      repository,
+      'demo-change',
+      {
+        schemaVersion: 1,
+        summary: 'Regenerate the reviewed plan for the active task.',
+        explicitPaths: ['src/feature.ts'],
+        explicitSymbols: [],
+        explicitConfigKeys: [],
+        renamePairs: [],
+      },
+      { explicitActor: 'codex', environment: {} },
+    );
+
+    assert.equal(proposed.state, 'awaiting-main-terms');
+    assert.equal(proposed.investigation?.changeId, 'demo-change');
+    assert.equal(getSession(repository, session.sessionId).state, 'revising');
+    assert.equal(fs.readFileSync(implementationPath, 'utf8'), implementation);
+  } finally {
+    fs.rmSync(repository, { recursive: true, force: true });
+  }
+});
+
+test('revision-bound propose rejects implementation drift before planning mutation', () => {
+  const repository = createFixtureRepository();
+  try {
+    git(repository, ['checkout', '-b', 'work/demo-change']);
+    writeReadyV2ExemptChange(repository);
+    commitPlanningTransition(repository, 'demo-change');
+    const session = startSession(repository, 'demo-change', '1.1');
+    const implementationPath = path.join(repository, 'src/feature.ts');
+    fs.writeFileSync(implementationPath, 'export const value = 1;\n');
+    reviseTask(repository, session.sessionId, 'regenerate-reviewed-plan', {
+      now: () => STARTED_AT,
+    });
+    fs.writeFileSync(implementationPath, 'export const value = 2;\n');
+
+    assert.throws(
+      () =>
+        startPropose(
+          repository,
+          'demo-change',
+          {
+            schemaVersion: 1,
+            summary: 'Attempt planning after implementation drift.',
+            explicitPaths: ['src/feature.ts'],
+            explicitSymbols: [],
+            explicitConfigKeys: [],
+            renamePairs: [],
+          },
+          { explicitActor: 'codex', environment: {} },
+        ),
+      (error) => workflowCode(error) === 'REVISION_WORKTREE_DRIFT',
+    );
+    assert.equal(getSession(repository, session.sessionId).state, 'revising');
   } finally {
     fs.rmSync(repository, { recursive: true, force: true });
   }
