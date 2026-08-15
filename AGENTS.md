@@ -22,7 +22,7 @@ commands or prepare an ordinary reviewed OpenSpec change, but must not attempt
 to satisfy the controlling-terminal, trusted-signer, protected-tag, or remote
 approval requirements on the maintainer's behalf.
 
-## Planning Skill Routing
+## Repository Skill Routing
 
 The exact supported skill names are listed below. Do not invent aliases from
 prompt filenames or from another tool's command syntax.
@@ -31,9 +31,11 @@ prompt filenames or from another tool's command syntax.
 | ------------------- | ------------------------------------------------------------------------ | ------------------------------------------------------ |
 | `openspec-explore`  | Investigating a problem, comparing options, or clarifying requirements   | Editing files, authorizing work, or lifecycle changes  |
 | `openspec-propose`  | Creating a complete proposal, design, delta specs, tasks, and `guard.json` | Implementation, task completion, commit, or archive    |
+| `workflow-engine`   | Routing implementation, recovery, review, finalize, and archive work after planning | Inventing authority, signing, protected Apply, or manual managed Git |
 
-There is no repository skill for implementation, recovery, completion,
-commit, or archive. Use the workflow commands below for those operations.
+`workflow-engine` is a non-authorizing routing guide. Executable workflow
+commands remain the only authority for implementation recovery, completion,
+managed commits, and archive transitions.
 
 ## Workflow Command Routing
 

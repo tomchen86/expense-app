@@ -1,9 +1,10 @@
-# OpenSpec skill mirror maintenance
+# Repository skill mirror maintenance
 
-The repository exposes two planning-only OpenSpec skills to agents:
+The repository exposes three reviewed skills to agents:
 
 - `openspec-explore`
 - `openspec-propose`
+- `workflow-engine`
 
 The versioned OpenSpec asset manifest governs their generated Codex, Claude
 Code, and `.agents` deliveries. Each `.agents/skills/` file must remain
@@ -15,17 +16,21 @@ approved managed change, run `pnpm workflow openspec-assets generate --json`
 to regenerate every delivery target from one pinned tool-plural source run,
 then run `pnpm workflow openspec-assets check --json`.
 
-These skills create or refine planning artifacts only. They do not authorize
-task execution, completion, staging, commits, or archive transitions; those
-remain the responsibility of `pnpm workflow`.
+The two OpenSpec skills investigate or create planning artifacts. The
+`workflow-engine` skill routes later implementation, recovery, review,
+finalization, and archive work to the public command surface. None of the
+skills authorizes execution, completion, staging, commits, signing, protected
+Apply, or archive transitions; those remain the responsibility of the exact
+`pnpm workflow` command and any required human checkpoint.
 
 The regenerated `openspec-propose` deliveries route formal planning through
 `pnpm workflow propose`: callers follow its exact typed checkpoints, while the
 engine owns investigation, execution, PlanReview, managed-ledger, and planning
 transition fields. Do not prompt-author those fields or jump directly to the
-underlying plan commit. The current managed task does not authorize the three
-`openspec-explore` skill paths, so complete cross-surface adoption remains
-successor work and must not be claimed from the propose update.
+underlying plan commit. The generated skill families are reviewed and
+delivered byte-identically across their declared mirrors. Each skill remains
+confined to its documented intent; one skill never grants the authority owned
+by another command.
 
 The optional `workflow finalize-task` handoff is a projected single-pass
 substrate with caught ordinary-failure rollback. It checks and stages one

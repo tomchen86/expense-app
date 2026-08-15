@@ -761,12 +761,12 @@
     {
       "path": "src/openspec-planning-asset-contract.ts",
       "mode": "100644",
-      "digest": "sha256:5b3375ed347de279e2e59d37828547aedbce663525031db97dc6e6538403e5ca"
+      "digest": "sha256:20d5d969c038823feab8ff9cffb235f99d15d2299f4cf3bbbb92a34a6a3d1bb8"
     },
     {
       "path": "src/openspec-planning-assets.ts",
       "mode": "100644",
-      "digest": "sha256:c28776988ddab5375a22e9f75c7fa7c3ffdacb738971e0248ebf850fbc1d4e7f"
+      "digest": "sha256:9562647d5d6d3844188eba55c64e0a664a3db7a217200f727848ca93b1c431ed"
     },
     {
       "path": "src/openspec-provenance.ts",

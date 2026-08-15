@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "lastUpdated": "2026-08-13",
+  "lastUpdated": "2026-08-15",
   "issues": [
     {
       "id": "ISS-001",
@@ -105,13 +105,21 @@
       "id": "ISS-105",
       "category": "bug",
       "title": "Deleted categories still appear in Add Expense form",
-      "status": "proposed",
+      "status": "done",
       "priority": "Now",
-      "requirement": null,
+      "requirement": {
+        "label": "Category management",
+        "href": "../openspec/specs/category-management/spec.md"
+      },
       "references": [
+        "apps/mobile/src/hooks/useExpenseModals.ts",
         "apps/mobile/src/hooks/useExpenseForm.ts"
       ],
-      "notes": "Reopened: useExpenseForm reads the category store, but useExpenseModals still builds its selector from DEFAULT_CATEGORIES, so deleted or custom categories can drift."
+      "notes": "Keep add/edit expense category options subscribed to the live category store so custom and deleted categories update without remounting.",
+      "closed": {
+        "date": "2026-08-15",
+        "notes": "The reopened report duplicated the delivered ISS-107 behavior. Repository verification confirmed that the mounted expense selector subscribes to the category store; a focused regression now proves deleting a category removes it immediately, and the five-test hook suite passes."
+      }
     },
     {
       "id": "ISS-106",

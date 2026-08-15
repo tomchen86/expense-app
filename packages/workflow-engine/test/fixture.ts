@@ -12,6 +12,7 @@ import {
   createInvestigationApplicability,
   INVESTIGATION_APPLICABILITY_POLICY_DIGEST,
 } from '../src/investigation-applicability.ts';
+import { OPENSPEC_REPOSITORY_REVIEWED_SOURCES } from '../src/openspec-planning-asset-contract.ts';
 import { generateOpenSpecPlanningAssets } from '../src/openspec-planning-assets.ts';
 import { INVESTIGATION_PLANNING_ACTIVATION_MARKER } from '../src/openspec-schema-contract.ts';
 import {
@@ -1172,6 +1173,11 @@ function openSpecAssetTemplate(): string {
       private: true,
       devDependencies: {},
     });
+    for (const sourcePath of OPENSPEC_REPOSITORY_REVIEWED_SOURCES) {
+      const destination = path.join(repository, sourcePath);
+      fs.mkdirSync(path.dirname(destination), { recursive: true });
+      fs.copyFileSync(path.join(sourceRepositoryRoot, sourcePath), destination);
+    }
     installFakeOpenSpec(repository);
     generateOpenSpecPlanningAssets(repository, {
       installationRepositoryRoot: repository,

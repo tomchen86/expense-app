@@ -141,18 +141,21 @@ wrong branches, and unrelated planning paths; it is not the routine shortcut
 around investigation-first planning. A later planning generation invalidates
 stale task evidence.
 
-Repository planning assets are limited to the exact exposed skill names
-`openspec-explore` and `openspec-propose` across Codex, Claude Code, and the
+Repository assets expose the exact skill names `openspec-explore`,
+`openspec-propose`, and `workflow-engine` across Codex, Claude Code, and the
 `.agents` mirror, with reviewed Codex prompt copies and a schema-v2 digest
 manifest under `workflow/openspec-assets/`. Use `openspec-explore` for
 read-only investigation and requirement clarification. Use `openspec-propose`
-to drive the typed wrapper through managed planning. Do not infer a slash
-command or alias from an internal prompt filename.
+to drive the typed wrapper through managed planning. Use `workflow-engine`
+after planning to route implementation, recovery, review, finalization, and
+archive work to the final public command surface. Do not infer a slash command
+or alias from an internal prompt filename.
 
-The governed propose skills and prompt carry this wrapper contract. The three
-separately governed explore skills still have a reviewed scope gap in this
-generation and are not claimed adopted; successor managed planning must
-authorize and regenerate those consumers with the complete asset closure.
+The generated mirrors are byte-identical to their reviewed Codex source. A
+skill is guidance, not authority: it cannot create mandates, grants,
+attestations, task completion, managed Git transitions, protected Apply, or
+remote publication. The governing executable command and any required human
+checkpoint validate the exact current state.
 
 ### Investigation applicability is not task-execution exemption
 
@@ -522,6 +525,14 @@ maintainer commands below remain recovery and expert surfaces. This wrapper is
 implemented and integration-tested; its required real human round remains a
 separate pilot and the repository remains bootstrap-only until that pilot and
 the remote prerequisites are independently verified.
+
+For that real round, retain the terminal authority-plan status as the friction
+record. It must report `operatorSigningCeremonies`, `publishedTagHandoffs`, and
+`remoteMergeObserved`, plus every interruption/resume observed by the
+operator. The expected healthy whole round has two signing ceremonies and two
+publication handoffs; these are explicit human-custody boundaries, not routine
+agent confirmations. Do not copy signer material or credentials into the
+report.
 
 The checked-in implementation starts in `bootstrap`. Describe it as
 **bootstrap-only**, and do not claim sealed enforcement, until a maintainer has
@@ -1001,8 +1012,9 @@ merged and reachable from the configured base:
 1. Update the configured base locally and create a new small, non-database
    OpenSpec change with one task and a harmless, tightly scoped repository
    change. Use a new `work/<pilot-change-id>` branch and a normalized intent
-   file. Use a governed propose skill only if that running UI visibly exposes
-   it.
+   file. Confirm that the running UI visibly exposes the exact governed skills
+   `openspec-explore`, `openspec-propose`, and `workflow-engine`; otherwise
+   record the pilot as incomplete rather than substituting an untracked skill.
 2. Drive the investigation-first wrapper through its exact returned
    checkpoints until it reports `planning-complete`:
 
@@ -1023,8 +1035,10 @@ merged and reachable from the configured base:
    ```
 
    Record the semantic change/task IDs, exact commands, check outcomes, and
-   observed Codex skill-discovery surface in the pilot review; do not put
-   commit hashes in the semantic handoff.
+   observed Codex skill-discovery surface in the pilot review. Also record
+   provider wait count/rate, collaboration-grant count/rate and exact cause,
+   provider latency, the reported or reserved cost basis, and direct human
+   review/action count. Do not put commit hashes in the semantic handoff.
 
 4. Merge the task commit into the configured base through normal review, then
    create a fresh archive branch from the updated base and run the following

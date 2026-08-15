@@ -7,6 +7,7 @@ import { pathToFileURL } from 'node:url';
 import { replaceTextAtomic } from './atomic-text.ts';
 import {
   OPENSPEC_ASSET_MANIFEST_PATH,
+  OPENSPEC_REPOSITORY_REVIEWED_SOURCES,
   OPENSPEC_SOURCE_CLOSURES,
   canonicalOpenSpecAssetDirectory,
   createOpenSpecAssetManifest,
@@ -301,6 +302,12 @@ function generateUpstreamAssets(
           readOpenSpecAssetFile(path.join(sourceRoot, sourcePath)),
         );
       }
+    }
+    for (const sourcePath of OPENSPEC_REPOSITORY_REVIEWED_SOURCES) {
+      generated.set(
+        `repository-root/${sourcePath}`,
+        readOpenSpecAssetFile(path.join(repositoryRoot, sourcePath)),
+      );
     }
     return generated;
   } finally {

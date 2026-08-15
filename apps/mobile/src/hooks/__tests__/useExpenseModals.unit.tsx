@@ -93,6 +93,43 @@ describe('useExpenseModals', () => {
     ]);
   });
 
+  it('removes a deleted category from an already mounted expense selector', () => {
+    useCategoryStore.setState({
+      categories: [
+        {
+          id: '2f5833c5-6584-460e-89db-b15556599b49',
+          name: 'Hydrated custom',
+          color: '#102030',
+        },
+        {
+          id: 'b4f5e0bb-a645-49bd-9d36-a6af406f54c9',
+          name: 'Delete me',
+          color: '#405060',
+        },
+      ],
+    });
+    const Harness = buildHarness(participants);
+    const ref = createRef<HookHandle>();
+
+    act(() => {
+      TestRenderer.create(<Harness ref={ref} />);
+    });
+    expect(ref.current!.hookValue.categoryModalData).toContain('Delete me');
+
+    act(() => {
+      useCategoryStore.setState((state) => ({
+        categories: state.categories.filter(
+          (category) => category.name !== 'Delete me',
+        ),
+      }));
+    });
+
+    expect(ref.current!.hookValue.categoryModalData).toEqual([
+      'Hydrated custom',
+      ref.current!.hookValue.ADD_NEW_CATEGORY_ACTION,
+    ]);
+  });
+
   it('sets and clears group selections and dependent fields', () => {
     const Harness = buildHarness(participants);
     const ref = createRef<HookHandle>();

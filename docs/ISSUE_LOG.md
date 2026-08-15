@@ -1,6 +1,6 @@
 # Issue Log
 
-_Last updated: August 13, 2026_
+_Last updated: August 15, 2026_
 
 ## Purpose
 
@@ -44,7 +44,6 @@ Track bugs, feature proposals, and technical chores without relying on GitHub Is
 | ISS-101 | Group name validation lacks inline feedback | 📋 | Now | [Group collaboration](../openspec/specs/group-collaboration/spec.md) | `docs/Testing/PHASE3_TESTING_REPORT.md` | TextInputModal reports an empty group name through a global alert rather than inline field feedback and focus handling. |
 | ISS-102 | Post-migration tests still rely on sqlite entity mirrors | 🕒 | Later | — | `apps/api/src/entities/*simple.entity.ts` | Decide whether to remove mirrors after Postgres-first testing lands. |
 | ISS-104 | Category swipe-to-delete shows red background but no "Delete" text | 📋 | Now | — | `apps/mobile/src/components/categories/CategoryListItem.tsx` | Swipeable delete action displays red color but text not visible. Check Reanimated interpolate transform. |
-| ISS-105 | Deleted categories still appear in Add Expense form | 📋 | Now | — | `apps/mobile/src/hooks/useExpenseForm.ts` | Reopened: useExpenseForm reads the category store, but useExpenseModals still builds its selector from DEFAULT_CATEGORIES, so deleted or custom categories can drift. |
 | ISS-106 | Create navigation integration tests using renderRouter | 📋 | Next | — | `docs/features/testing/EXPO_ROUTER_TESTING_ANALYSIS.md` | Add integration tests for: Home→AddExpense flow, expense editing with params, group detail navigation, tab navigation. Use `renderRouter` from expo-router/testing-library. |
 | ISS-112 | Mobile domain state is not persisted | 📋 | Now | — | `apps/mobile/src/store/composedExpenseStore.ts`, `apps/mobile/src/store/features/userStore.ts` | Zustand stores use subscribeWithSelector without persist middleware or an AsyncStorage adapter, so expenses, groups, categories, and identity reset with process state. |
 | ISS-113 | Mobile can delete categories that are in use | 📋 | Next | [Category management](../openspec/specs/category-management/spec.md) | `apps/mobile/src/hooks/useCategoryManager.ts`, `apps/api/src/services/category.service.ts` | The mobile flow warns and then deletes; the API already rejects CATEGORY_IN_USE. Align local behavior before synchronization. |
@@ -69,6 +68,7 @@ Track bugs, feature proposals, and technical chores without relying on GitHub Is
 | ID | Title | Requirement | Completion Notes | Date |
 | --- | --- | --- | --- | --- |
 | ISS-103 | Tab bar navigation wrong order after Expo Router migration | — | Repository audit confirmed the intended tab order in apps/mobile/app/(tabs)/_layout.tsx. | 2026-07-15 |
+| ISS-105 | Deleted categories still appear in Add Expense form | [Category management](../openspec/specs/category-management/spec.md) | The reopened report duplicated the delivered ISS-107 behavior. Repository verification confirmed that the mounted expense selector subscribes to the category store; a focused regression now proves deleting a category removes it immediately, and the five-test hook suite passes. | 2026-08-15 |
 | ISS-107 | Expense category selector bypasses category store | [Category management](../openspec/specs/category-management/spec.md) | Expense add/edit category options now derive from the hydrated category store and persist the selected stable category identifier; the focused expense modal and form regression suites pass. | 2026-08-13 |
 | ISS-108 | Group balances ignore splitBetween selections | [Group collaboration](../openspec/specs/group-collaboration/spec.md) | Group balances now derive each allocation from canonical expense shares backed by splitBetween and retain historical allocation participants; the focused group calculation regression suite passes. | 2026-08-13 |
 | ISS-109 | Group mutations do not enforce owner role | [Group collaboration](../openspec/specs/group-collaboration/spec.md) | Group update and delete operations now require an active owner membership and reject ordinary members before mutation; the isolated group authorization regression suite passes. | 2026-08-13 |

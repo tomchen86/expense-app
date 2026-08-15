@@ -235,7 +235,7 @@ test('format verification delegates to the registered canonical authority', () =
   });
 });
 
-test('repository exposes only reviewed OpenSpec planning skills', () => {
+test('repository exposes only reviewed planning and workflow routing skills', () => {
   const repositoryRoot = path.resolve(import.meta.dirname, '../../..');
   const agentSkillsRoot = path.join(repositoryRoot, '.agents/skills');
   const skillNames = fs
@@ -244,7 +244,11 @@ test('repository exposes only reviewed OpenSpec planning skills', () => {
     .map((entry) => entry.name)
     .sort();
 
-  assert.deepEqual(skillNames, ['openspec-explore', 'openspec-propose']);
+  assert.deepEqual(skillNames, [
+    'openspec-explore',
+    'openspec-propose',
+    'workflow-engine',
+  ]);
   for (const skillName of skillNames) {
     const agentSkill = fs.readFileSync(
       path.join(agentSkillsRoot, skillName, 'SKILL.md'),
@@ -274,10 +278,47 @@ test('repository exposes only reviewed OpenSpec planning skills', () => {
     path.join(repositoryRoot, 'docs/ROADMAP.md'),
     'utf8',
   );
+  const workflow = fs.readFileSync(
+    path.join(repositoryRoot, 'docs/WORKFLOW.md'),
+    'utf8',
+  );
   assert.doesNotMatch(agents, /spectra/i);
   assert.match(agents, /`openspec-explore`/);
   assert.match(agents, /`openspec-propose`/);
-  assert.match(maintenance, /^# OpenSpec skill mirror maintenance/m);
+  assert.match(agents, /`workflow-engine`/);
+  const workflowEngineSkill = fs.readFileSync(
+    path.join(agentSkillsRoot, 'workflow-engine', 'SKILL.md'),
+    'utf8',
+  );
+  for (const command of [
+    'pnpm workflow guide',
+    'pnpm workflow open-task',
+    'pnpm workflow status',
+    'pnpm workflow resume',
+    'pnpm workflow review-diff',
+    'pnpm workflow finalize',
+    'pnpm workflow archive',
+  ]) {
+    assert.match(
+      workflowEngineSkill,
+      new RegExp(command.replaceAll(' ', '\\s+')),
+    );
+  }
+  assert.match(workflowEngineSkill, /does not authorize/i);
+  assert.doesNotMatch(workflowEngineSkill, /pnpm workflow maintainer/);
+  assert.doesNotMatch(workflowEngineSkill, /git (?:add|commit|push)/);
+  for (const skillName of skillNames) {
+    assert.match(workflow, new RegExp('`' + skillName + '`'));
+  }
+  for (const frictionField of [
+    'provider wait count/rate',
+    'collaboration-grant count/rate',
+    'provider latency',
+    'direct human review/action count',
+  ]) {
+    assert.match(workflow, new RegExp(frictionField.replaceAll(' ', '\\s+')));
+  }
+  assert.match(maintenance, /^# Repository skill mirror maintenance/m);
   assert.doesNotMatch(maintenance, /spectra update/i);
   assert.match(roadmap, /retained root Spectra configuration historical-only/);
   assert.doesNotMatch(roadmap, /Keep Spectra installed/);

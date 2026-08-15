@@ -1,6 +1,6 @@
 # Roadmap
 
-_Last verified: August 14, 2026_
+_Last verified: August 15, 2026_
 
 This document owns project priority. Detailed implementation tasks belong only
 in the linked OpenSpec change.
@@ -9,11 +9,12 @@ in the linked OpenSpec change.
 
 ### Finish repository workflow adoption
 
-- Treat the investigation-first wrapper, governed propose surfaces, stable
-  assurance-claim registry, and projected single-pass finalization substrate as
-  the T1.5 delivery boundary. The three governed explore-skill consumers remain
-  an explicit successor scope gap, so current documentation must not claim
-  complete user-facing adoption.
+- Treat the investigation-first wrapper, governed explore/propose surfaces,
+  stable assurance-claim registry, and projected single-pass finalization
+  substrate as the T1.5 delivery boundary. The tool-plural `workflow-engine`
+  skill now routes the final T2 implementation/recovery/finalize/archive
+  surface without granting authority; operational adoption still depends on
+  the real post-merge pilot below.
 - Keep T2.3 as the owner of exact-diff AI review, coverage composition,
   crash-safe durable finalize recovery, and the commit transaction. Keep T2.4
   as the owner of exact-byte mechanical closure. The pulled-forward
@@ -88,12 +89,9 @@ in the linked OpenSpec change.
 
 ### Correct product integrity gaps before mobile/API integration
 
-1. Remove fallback JWT secrets and make non-test API startup fail closed
-   (`ISS-111`).
-2. Finish eliminating deleted-category drift in expense selection (`ISS-105`).
-3. Define the mobile/API contract boundary, including identifiers, token
+1. Define the mobile/API contract boundary, including identifiers, token
    lifecycle, money units, and response adapters (`ISS-203`, `ISS-204`).
-4. Add explicit mobile persistence; current Zustand domain state is process
+2. Add explicit mobile persistence; current Zustand domain state is process
    memory only (`ISS-112`).
 
 ## Next

@@ -1002,10 +1002,13 @@ test('repository authority check entrypoints remain pinned across workflow CLI e
                 assetPaths: [
                   '.codex/skills/openspec-explore/SKILL.md',
                   '.codex/skills/openspec-propose/SKILL.md',
+                  '.codex/skills/workflow-engine/SKILL.md',
                   '.claude/skills/openspec-explore/SKILL.md',
                   '.claude/skills/openspec-propose/SKILL.md',
+                  '.claude/skills/workflow-engine/SKILL.md',
                   '.agents/skills/openspec-explore/SKILL.md',
                   '.agents/skills/openspec-propose/SKILL.md',
+                  '.agents/skills/workflow-engine/SKILL.md',
                   'workflow/openspec-assets/prompts/opsx-explore.md',
                   'workflow/openspec-assets/prompts/opsx-propose.md',
                 ],

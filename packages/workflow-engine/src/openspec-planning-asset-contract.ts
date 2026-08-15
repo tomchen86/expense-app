@@ -14,7 +14,7 @@ import { workflowCommandGuidance } from './workflow-guidance.ts';
 export const OPENSPEC_ASSET_MANIFEST_PATH =
   'workflow/openspec-assets/manifest.json';
 
-const OVERLAY_VERSION = 4;
+const OVERLAY_VERSION = 5;
 const FORMATTER_RUNNER = 'node-package-bin:.:prettier/prettier' as const;
 const GUIDED_WORKFLOW_GUIDE_COMMAND = workflowCommandGuidance(
   'guide',
@@ -38,7 +38,8 @@ const OVERLAY_POLICY = [
   'projected-single-pass-handoff',
   'assurance-claim-boundaries',
   'no-external-stores',
-  'no-lifecycle-entrypoints',
+  'non-authorizing-workflow-routing',
+  'no-direct-lifecycle-authority',
   'no-tool-wide-openspec-permission',
   'no-tool-specific-primitives',
   'no-unverified-slash-syntax',
@@ -67,11 +68,15 @@ export const OPENSPEC_SOURCE_CLOSURES = [
   },
 ] as const;
 
-export type OpenSpecAssetWorkflow = 'explore' | 'propose';
+export const OPENSPEC_REPOSITORY_REVIEWED_SOURCES = [
+  'workflow/openspec-assets/sources/workflow-engine/SKILL.md',
+] as const;
+
+export type OpenSpecAssetWorkflow = 'explore' | 'propose' | 'workflow-engine';
 export type OpenSpecAssetTarget = 'codex' | 'claude' | 'agents';
 export type OpenSpecAssetKind = 'skill' | 'prompt';
 export type OpenSpecAssetSourceRoot =
-  'temporary-project' | 'isolated-codex-home';
+  'temporary-project' | 'isolated-codex-home' | 'repository-root';
 
 export type OpenSpecAssetDefinition = {
   target: OpenSpecAssetTarget;
@@ -113,6 +118,15 @@ export const OPENSPEC_ASSET_DEFINITIONS: readonly OpenSpecAssetDefinition[] = [
     mirrorOf: null,
   }),
   definition({
+    target: 'codex',
+    kind: 'skill',
+    workflow: 'workflow-engine',
+    sourceRoot: 'repository-root',
+    sourcePath: 'workflow/openspec-assets/sources/workflow-engine/SKILL.md',
+    destinationPath: '.codex/skills/workflow-engine/SKILL.md',
+    mirrorOf: null,
+  }),
+  definition({
     target: 'claude',
     kind: 'skill',
     workflow: 'explore',
@@ -131,6 +145,15 @@ export const OPENSPEC_ASSET_DEFINITIONS: readonly OpenSpecAssetDefinition[] = [
     mirrorOf: null,
   }),
   definition({
+    target: 'claude',
+    kind: 'skill',
+    workflow: 'workflow-engine',
+    sourceRoot: 'repository-root',
+    sourcePath: 'workflow/openspec-assets/sources/workflow-engine/SKILL.md',
+    destinationPath: '.claude/skills/workflow-engine/SKILL.md',
+    mirrorOf: '.codex/skills/workflow-engine/SKILL.md',
+  }),
+  definition({
     target: 'agents',
     kind: 'skill',
     workflow: 'explore',
@@ -147,6 +170,15 @@ export const OPENSPEC_ASSET_DEFINITIONS: readonly OpenSpecAssetDefinition[] = [
     sourcePath: '.codex/skills/openspec-propose/SKILL.md',
     destinationPath: '.agents/skills/openspec-propose/SKILL.md',
     mirrorOf: '.codex/skills/openspec-propose/SKILL.md',
+  }),
+  definition({
+    target: 'agents',
+    kind: 'skill',
+    workflow: 'workflow-engine',
+    sourceRoot: 'repository-root',
+    sourcePath: 'workflow/openspec-assets/sources/workflow-engine/SKILL.md',
+    destinationPath: '.agents/skills/workflow-engine/SKILL.md',
+    mirrorOf: '.codex/skills/workflow-engine/SKILL.md',
   }),
   definition({
     target: 'codex',
@@ -171,11 +203,13 @@ export const OPENSPEC_ASSET_DEFINITIONS: readonly OpenSpecAssetDefinition[] = [
 const OPENSPEC_SKILL_CLOSURE = [
   'openspec-explore/SKILL.md',
   'openspec-propose/SKILL.md',
+  'workflow-engine/SKILL.md',
 ] as const;
 const OPENSPEC_ASSET_HOME_CLOSURE = [
   'manifest.json',
   'prompts/opsx-explore.md',
   'prompts/opsx-propose.md',
+  'sources/workflow-engine/SKILL.md',
 ] as const;
 
 type OpenSpecManifestAssetEntry = {
@@ -233,7 +267,7 @@ export type OpenSpecAssetManifest = {
     }>;
   };
   overlay: {
-    version: 4;
+    version: 5;
     policyDigest: string;
   };
   formatter: OpenSpecFormatterMetadata;
@@ -426,6 +460,9 @@ export function applyOpenSpecPlanningAssetOverlay(
   workflow: OpenSpecAssetWorkflow = 'explore',
 ): string {
   const normalized = source.replaceAll('\r\n', '\n');
+  if (workflow === 'workflow-engine') {
+    return `${normalized.trimEnd()}\n`;
+  }
   const withoutStore = normalized.replace(
     /^\*\*Store selection:\*\*[^\n]*(?:\n\n|\n)?/m,
     '',
@@ -520,7 +557,7 @@ function investigationFirstProposeAsset(source: string): string {
     '',
     'This interface does not prove semantic completeness, provider identity, same-user containment, reviewer judgment, or provider availability. It does not claim crash-safe or fully atomic finalization. A collaboration grant records an authorized degradation and does not recreate missing independence.',
     '',
-    'The governed propose surfaces use this wrapper. The separately governed explore-skill handoff remains outside this task and must not be described as adopted until successor managed work updates it.',
+    'The repository exposes separate governed skills for exploration, formal planning, and workflow execution routing. This propose skill owns only the formal planning wrapper and does not authorize later lifecycle transitions.',
     '',
   ].join('\n');
 }
@@ -595,6 +632,15 @@ export function verifyOpenSpecPlanningAssetContent(
     GUIDED_WORKFLOW_GUIDE_COMMAND,
     GUIDED_FINALIZE_COMMAND,
   ];
+  const workflowEngineCommands = [
+    GUIDED_WORKFLOW_GUIDE_COMMAND,
+    'pnpm workflow open-task',
+    'pnpm workflow status',
+    'pnpm workflow resume',
+    'pnpm workflow review-diff',
+    'pnpm workflow finalize',
+    'pnpm workflow archive',
+  ];
   const requiredSurface =
     workflow === 'propose'
       ? appearsInOrder(content, proposeCommands) &&
@@ -615,9 +661,17 @@ export function verifyOpenSpecPlanningAssetContent(
         ) &&
         !/\bpnpm exec openspec (?:new|status|instructions)\b/.test(content) &&
         !content.includes('pnpm workflow plan-commit')
-      : content.includes('pnpm exec openspec') &&
-        content.includes('pnpm workflow plan-commit') &&
-        content.includes('pnpm workflow open-task');
+      : workflow === 'workflow-engine'
+        ? appearsInOrder(content, workflowEngineCommands) &&
+          /does not authorize/i.test(content) &&
+          /human-only/i.test(content) &&
+          !/\bpnpm workflow (?:start|check|complete-task|finish|finalize-task|commit|plan-commit|authority-plan|maintainer)\b/i.test(
+            content,
+          ) &&
+          !/\bgit (?:add|commit|push)\b/i.test(content)
+        : content.includes('pnpm exec openspec') &&
+          content.includes('pnpm workflow plan-commit') &&
+          content.includes('pnpm workflow open-task');
   if (
     !content.endsWith('\n') ||
     content.includes('\r') ||
@@ -782,8 +836,10 @@ function verifyOpenSpecSkillClosures(
       listOptionalPlainFiles(path.join(repositoryRoot, skillsRoot)),
       includePlannedFiles ? OPENSPEC_SKILL_CLOSURE : [],
     );
-    const actual = files.filter((file) =>
-      firstSegmentMatchesNamespace(file, 'openspec'),
+    const actual = files.filter(
+      (file) =>
+        firstSegmentMatchesNamespace(file, 'openspec') ||
+        firstSegmentMatchesNamespace(file, 'workflow-engine'),
     );
     if (JSON.stringify(actual) !== JSON.stringify(OPENSPEC_SKILL_CLOSURE)) {
       throw openSpecAssetError(
@@ -1024,9 +1080,14 @@ function manifestEntry(
 function assertGeneratedSourceClosure(
   generated: ReadonlyMap<string, string>,
 ): void {
-  const expected = OPENSPEC_SOURCE_CLOSURES.flatMap((closure) =>
-    closure.files.map((file) => openSpecAssetSourceKey(closure.root, file)),
-  ).sort();
+  const expected = [
+    ...OPENSPEC_SOURCE_CLOSURES.flatMap((closure) =>
+      closure.files.map((file) => openSpecAssetSourceKey(closure.root, file)),
+    ),
+    ...OPENSPEC_REPOSITORY_REVIEWED_SOURCES.map((file) =>
+      openSpecAssetSourceKey('repository-root', file),
+    ),
+  ].sort();
   const actual = [...generated.keys()].sort();
   if (JSON.stringify(actual) !== JSON.stringify(expected)) {
     throw openSpecAssetError(
@@ -1121,10 +1182,14 @@ function assertFinalToolParity(
 function assertRepositoryToolParity(
   contentByDestination: ReadonlyMap<string, string>,
 ): void {
-  for (const workflow of ['explore', 'propose'] as const) {
-    const codexPath = `.codex/skills/openspec-${workflow}/SKILL.md`;
-    const claudePath = `.claude/skills/openspec-${workflow}/SKILL.md`;
-    const agentsPath = `.agents/skills/openspec-${workflow}/SKILL.md`;
+  for (const skillName of [
+    'openspec-explore',
+    'openspec-propose',
+    'workflow-engine',
+  ] as const) {
+    const codexPath = `.codex/skills/${skillName}/SKILL.md`;
+    const claudePath = `.claude/skills/${skillName}/SKILL.md`;
+    const agentsPath = `.agents/skills/${skillName}/SKILL.md`;
     const codex = contentByDestination.get(codexPath);
     const claude = contentByDestination.get(claudePath);
     const agents = contentByDestination.get(agentsPath);
@@ -1132,14 +1197,14 @@ function assertRepositoryToolParity(
       throw openSpecAssetError(
         'OPENSPEC_ASSET_TOOL_PARITY_INVALID',
         'Reviewed Codex and Claude planning skills are not byte-identical.',
-        { workflow },
+        { skillName },
       );
     }
     if (agents === undefined || agents !== codex) {
       throw openSpecAssetError(
         'OPENSPEC_ASSET_MIRROR_INVALID',
         'A reviewed agent skill is not a byte-identical Codex mirror.',
-        { workflow },
+        { skillName },
       );
     }
   }
@@ -1602,7 +1667,7 @@ function prospectiveFiles(
 
 function firstSegmentMatchesNamespace(
   file: string,
-  namespace: 'openspec' | 'opsx' | 'spectra',
+  namespace: 'openspec' | 'opsx' | 'spectra' | 'workflow-engine',
 ): boolean {
   const first = file.split('/')[0]!.toLowerCase();
   return first.startsWith(namespace);

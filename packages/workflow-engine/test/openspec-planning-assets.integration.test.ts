@@ -30,10 +30,13 @@ const FIXTURE_ROOT = path.join(
 const EXPECTED_ASSET_PATHS = [
   '.codex/skills/openspec-explore/SKILL.md',
   '.codex/skills/openspec-propose/SKILL.md',
+  '.codex/skills/workflow-engine/SKILL.md',
   '.claude/skills/openspec-explore/SKILL.md',
   '.claude/skills/openspec-propose/SKILL.md',
+  '.claude/skills/workflow-engine/SKILL.md',
   '.agents/skills/openspec-explore/SKILL.md',
   '.agents/skills/openspec-propose/SKILL.md',
+  '.agents/skills/workflow-engine/SKILL.md',
   'workflow/openspec-assets/prompts/opsx-explore.md',
   'workflow/openspec-assets/prompts/opsx-propose.md',
 ];
@@ -69,6 +72,14 @@ const EXPECTED_ASSET_METADATA = [
     mirrorOf: null,
   },
   {
+    target: 'codex',
+    kind: 'skill',
+    sourceRoot: 'repository-root',
+    sourcePath: 'workflow/openspec-assets/sources/workflow-engine/SKILL.md',
+    destinationPath: '.codex/skills/workflow-engine/SKILL.md',
+    mirrorOf: null,
+  },
+  {
     target: 'claude',
     kind: 'skill',
     sourceRoot: 'temporary-project',
@@ -85,6 +96,14 @@ const EXPECTED_ASSET_METADATA = [
     mirrorOf: null,
   },
   {
+    target: 'claude',
+    kind: 'skill',
+    sourceRoot: 'repository-root',
+    sourcePath: 'workflow/openspec-assets/sources/workflow-engine/SKILL.md',
+    destinationPath: '.claude/skills/workflow-engine/SKILL.md',
+    mirrorOf: '.codex/skills/workflow-engine/SKILL.md',
+  },
+  {
     target: 'agents',
     kind: 'skill',
     sourceRoot: 'temporary-project',
@@ -99,6 +118,14 @@ const EXPECTED_ASSET_METADATA = [
     sourcePath: '.codex/skills/openspec-propose/SKILL.md',
     destinationPath: '.agents/skills/openspec-propose/SKILL.md',
     mirrorOf: '.codex/skills/openspec-propose/SKILL.md',
+  },
+  {
+    target: 'agents',
+    kind: 'skill',
+    sourceRoot: 'repository-root',
+    sourcePath: 'workflow/openspec-assets/sources/workflow-engine/SKILL.md',
+    destinationPath: '.agents/skills/workflow-engine/SKILL.md',
+    mirrorOf: '.codex/skills/workflow-engine/SKILL.md',
   },
   {
     target: 'codex',
@@ -250,7 +277,7 @@ test('tool-plural generation is isolated, three-stage pinned, and byte determini
         files: ['prompts/opsx-explore.md', 'prompts/opsx-propose.md'],
       },
     ]);
-    assert.equal(manifest.overlay.version, 4);
+    assert.equal(manifest.overlay.version, 5);
     assert.match(manifest.overlay.policyDigest, /^[0-9a-f]{64}$/);
     assert.equal(
       manifest.formatter.runner,
@@ -275,7 +302,11 @@ test('tool-plural generation is isolated, three-stage pinned, and byte determini
       assert.match(entry.sourceDigest, /^[0-9a-f]{64}$/);
       assert.match(entry.overlayDigest, /^[0-9a-f]{64}$/);
       assert.match(entry.finalDigest, /^[0-9a-f]{64}$/);
-      assert.notEqual(entry.sourceDigest, entry.overlayDigest);
+      if (entry.sourceRoot === 'repository-root') {
+        assert.equal(entry.sourceDigest, entry.overlayDigest);
+      } else {
+        assert.notEqual(entry.sourceDigest, entry.overlayDigest);
+      }
       assert.equal(
         entry.finalDigest,
         digest(fs.readFileSync(path.join(repository, entry.destinationPath))),
@@ -310,7 +341,10 @@ test('tool-plural generation is isolated, three-stage pinned, and byte determini
         entry.sourceRoot === 'isolated-codex-home'
           ? `codex-home/${entry.sourcePath}`
           : entry.sourcePath;
-      const rawSource = captures[0]!.sources[captureKey];
+      const rawSource =
+        entry.sourceRoot === 'repository-root'
+          ? fs.readFileSync(path.join(repository, entry.sourcePath), 'utf8')
+          : captures[0]!.sources[captureKey];
       assert.notEqual(rawSource, undefined, captureKey);
       assert.equal(entry.sourceDigest, digest(rawSource!));
       const definition = OPENSPEC_ASSET_DEFINITIONS.find(
@@ -353,6 +387,11 @@ test('governed propose assets use the investigation-first checkpoint wrapper wit
     assert.equal(
       fs.readFileSync(path.join(repository, PROPOSE_ASSET_PATHS[2]!), 'utf8'),
       codex,
+    );
+    assert.doesNotMatch(codex, /explore-skill handoff remains outside/i);
+    assert.match(
+      codex,
+      /The repository exposes separate governed skills for exploration, formal planning, and workflow execution routing\./,
     );
     for (const required of [
       'pnpm workflow propose <change-id> --intent <intent.json>',
@@ -419,6 +458,39 @@ test('governed propose assets use the investigation-first checkpoint wrapper wit
     );
   } finally {
     fs.rmSync(repository, { recursive: true, force: true });
+  }
+});
+
+test('workflow routing skill exposes preferred commands without compatibility or human authority', () => {
+  const skill = fs.readFileSync(
+    path.join(
+      sourceRepositoryRoot,
+      'workflow/openspec-assets/sources/workflow-engine/SKILL.md',
+    ),
+    'utf8',
+  );
+  verifyOpenSpecPlanningAssetContent(skill, 'workflow-engine');
+
+  for (const forbidden of [
+    'pnpm workflow start demo --task 1.1',
+    'pnpm workflow check session-1',
+    'pnpm workflow complete-task session-1',
+    'pnpm workflow finish session-1',
+    'pnpm workflow finalize-task session-1',
+    'pnpm workflow commit session-1 --message "Bypass"',
+    'pnpm workflow plan-commit demo',
+    'pnpm workflow authority-plan approve-and-apply plan-1',
+    'pnpm workflow maintainer grant approve-and-apply',
+  ]) {
+    assert.throws(
+      () =>
+        verifyOpenSpecPlanningAssetContent(
+          `${skill.trimEnd()}\n\n${forbidden}\n`,
+          'workflow-engine',
+        ),
+      (error) => isWorkflowError(error, 'OPENSPEC_ASSET_FORBIDDEN_AUTHORITY'),
+      forbidden,
+    );
   }
 });
 
@@ -593,6 +665,7 @@ test('source, overlay, final, target, and mirror drift all fail closed', async (
     '.claude/skills/opsxapply/SKILL.md',
     '.agents/skills/spectraapply/SKILL.md',
     '.agents/skills/spectra apply/SKILL.md',
+    '.agents/skills/workflow-engine/extra.md',
     '.claude/commands/opsx/apply.md',
     '.claude/commands/opsx_apply.md',
     '.claude/commands/opsxapply.md',
@@ -1354,6 +1427,15 @@ test('real pinned OpenSpec and Prettier generate the plural closure read-only', 
     formatterRepositoryRoot: sourceRepositoryRoot,
   };
   try {
+    const workflowEngineSource =
+      'workflow/openspec-assets/sources/workflow-engine/SKILL.md';
+    fs.mkdirSync(path.dirname(path.join(repository, workflowEngineSource)), {
+      recursive: true,
+    });
+    fs.copyFileSync(
+      path.join(sourceRepositoryRoot, workflowEngineSource),
+      path.join(repository, workflowEngineSource),
+    );
     const generated = generateOpenSpecPlanningAssets(repository, options);
     assert.deepEqual(generated.assetPaths, EXPECTED_ASSET_PATHS);
     assertToolMirrors(repository);
@@ -1547,6 +1629,15 @@ function temporaryRepository(): string {
       private: true,
       devDependencies: {},
     })}\n`,
+  );
+  const workflowEngineSource =
+    'workflow/openspec-assets/sources/workflow-engine/SKILL.md';
+  fs.mkdirSync(path.dirname(path.join(repository, workflowEngineSource)), {
+    recursive: true,
+  });
+  fs.copyFileSync(
+    path.join(sourceRepositoryRoot, workflowEngineSource),
+    path.join(repository, workflowEngineSource),
   );
   installFakeOpenSpec(repository);
 
@@ -1747,7 +1838,11 @@ function writeManifest(repository: string, manifest: Manifest): void {
 
 function governedBytes(repository: string): Record<string, string> {
   return Object.fromEntries(
-    [...EXPECTED_ASSET_PATHS, OPENSPEC_ASSET_MANIFEST_PATH].map((filePath) => [
+    [
+      ...EXPECTED_ASSET_PATHS,
+      OPENSPEC_ASSET_MANIFEST_PATH,
+      'workflow/openspec-assets/sources/workflow-engine/SKILL.md',
+    ].map((filePath) => [
       filePath,
       fs.readFileSync(path.join(repository, filePath), 'utf8'),
     ]),
@@ -1799,7 +1894,11 @@ function repositorySnapshot(repository: string): Record<
 }
 
 function assertToolMirrors(repository: string): void {
-  for (const skillName of ['openspec-explore', 'openspec-propose']) {
+  for (const skillName of [
+    'openspec-explore',
+    'openspec-propose',
+    'workflow-engine',
+  ]) {
     const codex = fs.readFileSync(
       path.join(repository, `.codex/skills/${skillName}/SKILL.md`),
     );

@@ -54,4 +54,4 @@ An investigation exemption changes planning applicability only: omitted scan and
 
 This interface does not prove semantic completeness, provider identity, same-user containment, reviewer judgment, or provider availability. It does not claim crash-safe or fully atomic finalization. A collaboration grant records an authorized degradation and does not recreate missing independence.
 
-The governed propose surfaces use this wrapper. The separately governed explore-skill handoff remains outside this task and must not be described as adopted until successor managed work updates it.
+The repository exposes separate governed skills for exploration, formal planning, and workflow execution routing. This propose skill owns only the formal planning wrapper and does not authorize later lifecycle transitions.
