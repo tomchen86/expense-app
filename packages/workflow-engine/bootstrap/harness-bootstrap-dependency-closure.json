@@ -8,7 +8,7 @@
     {
       "path": "bootstrap/recovery-runtime/bootstrap/built-in-engine-closure-pin.js",
       "mode": "100644",
-      "digest": "sha256:6dcd64f00940442ec4144d926ba9e3b5f010c1857889e21921f539c2c6e30739"
+      "digest": "sha256:419e71e0c3a0d21ba0cf94eb95bc42c36e70beb129b91ceaadf35c5803bedfd1"
     },
     {
       "path": "bootstrap/recovery-runtime/src/actor-identity.js",
@@ -93,7 +93,7 @@
     {
       "path": "bootstrap/recovery-runtime/src/contracts.js",
       "mode": "100644",
-      "digest": "sha256:45d94c82bcc8a652cfd58bf463f951d60756dbc0034add697a97fb8cf6ff1dcd"
+      "digest": "sha256:b10263b820b31f105235e9e7ceec9651fdf119d27d29d5620ccb1ec0b058e122"
     },
     {
       "path": "bootstrap/recovery-runtime/src/control-plane-recovery-grant.js",
@@ -236,9 +236,14 @@
       "digest": "sha256:7997f164c0a32dbc930c7254f7353f0365212a4f84e4db4aec64fabcb065a816"
     },
     {
+      "path": "bootstrap/recovery-runtime/src/investigation-artifact-projection.js",
+      "mode": "100644",
+      "digest": "sha256:0d97991fafbf6c6920daef0d10300b575c66df98f4dc980d07e43e571670e2e5"
+    },
+    {
       "path": "bootstrap/recovery-runtime/src/investigation-groups.js",
       "mode": "100644",
-      "digest": "sha256:cc63c3517ff3007bc1a5eeb2d83d9438fd30157697c6b1de89b1c777b2d0d26e"
+      "digest": "sha256:d637839d22732a72f976fe028dc05805134cf2730861e75d65bcb872e5288146"
     },
     {
       "path": "bootstrap/recovery-runtime/src/investigation-scanner.js",

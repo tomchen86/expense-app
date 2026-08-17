@@ -4,6 +4,7 @@ import path from 'node:path';
 import { canonicalJson } from './canonical-json.js';
 import { ExitCode, workflowError } from './errors.js';
 import { assertInvestigationApplicability, } from './investigation-applicability.js';
+import { materializeProjectedInvestigationArtifact } from './investigation-artifact-projection.js';
 import { workflowContractArtifactPaths } from './contract-artifacts.js';
 import { isRecord, isStringArray } from './contract-values.js';
 import { assertStoredEvidenceNode, } from './evidence-node.js';
@@ -345,7 +346,7 @@ export function loadChangeContract(repositoryRootInput, requestedChangeId, expec
         throw invalidContract('TASK_POLICY_MISMATCH', `tasks.md and guard.json task IDs differ for change ${changeId}.`, guardPath, { missingPolicies, unknownPolicies });
     }
     const investigation = schemaName === 'expense-app-v2'
-        ? parseInvestigationArtifact(readCanonicalJson(investigationPath, 'investigation artifact', 'INVALID_INVESTIGATION_ARTIFACT'), changeId)
+        ? parseInvestigationArtifact(readCanonicalJson(investigationPath, 'investigation artifact', 'INVALID_INVESTIGATION_ARTIFACT'), changeId, { repositoryRoot })
         : undefined;
     const execution = schemaName === 'expense-app-v2'
         ? parseExecutionArtifact(readCanonicalJson(executionPath, 'execution artifact', 'INVALID_EXECUTION_ARTIFACT'), changeId, tasks, guard, checks, behaviorContracts)
@@ -464,7 +465,13 @@ export function readChangeSchemaName(repositoryRoot, metadataPath) {
     }
     return schemaName;
 }
-export function parseInvestigationArtifact(value, expectedChangeId) {
+export function parseInvestigationArtifact(value, expectedChangeId, options = {}) {
+    if (isRecord(value) && value.schemaVersion === 2) {
+        if (options.repositoryRoot === undefined) {
+            throw artifactInvalid('INVALID_INVESTIGATION_ARTIFACT', 'Git-backed investigation evidence requires its repository object database.');
+        }
+        return parseInvestigationArtifact(materializeProjectedInvestigationArtifact(options.repositoryRoot, value, expectedChangeId), expectedChangeId);
+    }
     const optionalKeys = optionalArtifactKeys(value, [
         'applicability',
         'roleResults',
