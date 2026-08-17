@@ -193,7 +193,7 @@ type ParsedScan = {
   policyDigest: string;
 };
 
-type GroupSelector = {
+export type GroupSelector = {
   selectorId: string;
   termId: string;
   rootId: string;
@@ -246,6 +246,14 @@ export type InvestigationGroups = {
   groupNodes: EvidenceNode[];
 };
 
+export type InvestigationGroupReplayRecord = {
+  nodeId: string;
+  policyDigest: string;
+  selector: unknown;
+  hitIds: unknown;
+  exceptions: unknown;
+};
+
 /**
  * Deterministically project one hit node per raw-byte occurrence and conservative
  * groups keyed by term, nearest declared root, extension, mutation class, and any
@@ -265,42 +273,21 @@ export function deriveInvestigationGroups(
 
   const baseGroups = new Map<string, GroupAccumulator>();
   const hitBaseSelector = new Map<string, string>();
-  const hitNodes: EvidenceNode[] = [];
-  const seenTermIds = new Set<string>();
-  let sharedTreeDigest: string | null = null;
-  let sharedPolicyDigest: string | null = null;
+  const hitRecords = deriveInvestigationHitRecords(input.scanNodes);
 
-  for (const scanNode of input.scanNodes) {
-    const scan = readScanNode(scanNode, groupsInvalid);
-    if (seenTermIds.has(scan.termId)) {
-      throw groupsInvalid(`Duplicate scan term: ${scan.termId}`);
+  for (const record of hitRecords) {
+    const selector = baseSelectorFor(
+      record.summary.termId,
+      record.summary,
+      context,
+    );
+    let group = baseGroups.get(selector.selectorId);
+    if (!group) {
+      group = { selector, members: new Map(), exceptions: [] };
+      baseGroups.set(selector.selectorId, group);
     }
-    seenTermIds.add(scan.termId);
-    if (sharedTreeDigest === null) {
-      sharedTreeDigest = scan.treeDigest;
-      sharedPolicyDigest = scan.policyDigest;
-    } else if (
-      scan.treeDigest !== sharedTreeDigest ||
-      scan.policyDigest !== sharedPolicyDigest
-    ) {
-      throw groupsInvalid(
-        'Scans must share one pinned tree and scanner policy.',
-      );
-    }
-
-    for (const hit of scan.hits) {
-      const record = buildHitRecord(scan.termId, hit, scan.node);
-      hitNodes.push(record.node);
-
-      const selector = baseSelectorFor(scan.termId, hit, context);
-      let group = baseGroups.get(selector.selectorId);
-      if (!group) {
-        group = { selector, members: new Map(), exceptions: [] };
-        baseGroups.set(selector.selectorId, group);
-      }
-      group.members.set(record.hitId, record);
-      hitBaseSelector.set(record.hitId, selector.selectorId);
-    }
+    group.members.set(record.hitId, record);
+    hitBaseSelector.set(record.hitId, selector.selectorId);
   }
 
   const finalGroups = applyExceptions(
@@ -313,7 +300,87 @@ export function deriveInvestigationGroups(
     .map((group) => buildGroupNode(group, context.groupingPolicyDigest))
     .sort(byNodeId);
 
-  return { hitNodes: hitNodes.sort(byNodeId), groupNodes };
+  return {
+    hitNodes: hitRecords.map(({ node }) => node).sort(byNodeId),
+    groupNodes,
+  };
+}
+
+/**
+ * Replay the deterministic hit envelopes from stored scan semantics. Hit
+ * identity depends only on the scan, term, pinned tree, and exact byte locator;
+ * grouping policy is intentionally not an input.
+ */
+export function deriveInvestigationHitNodes(
+  scanNodes: EvidenceNode[],
+): EvidenceNode[] {
+  return deriveInvestigationHitRecords(scanNodes)
+    .map(({ node }) => node)
+    .sort(byNodeId);
+}
+
+/**
+ * Materialize exact group envelopes from their compact selectors and hit
+ * membership. The replay records must form a one-to-one partition of the
+ * supplied hits, and each expected node ID must match recomputation.
+ */
+export function replayInvestigationGroupNodes(input: {
+  hitNodes: EvidenceNode[];
+  groups: InvestigationGroupReplayRecord[];
+}): EvidenceNode[] {
+  const hitsById = new Map<string, HitRecord>();
+  for (const node of input.hitNodes) {
+    const summary = readInvestigationHitNode(node);
+    if (hitsById.has(node.nodeId)) {
+      throw groupsInvalid(`Duplicate hit node: ${node.nodeId}`);
+    }
+    hitsById.set(node.nodeId, { hitId: node.nodeId, node, summary });
+  }
+
+  const covered = new Set<string>();
+  const replayed = input.groups.map((record) => {
+    if (
+      typeof record.nodeId !== 'string' ||
+      !DIGEST_PATTERN.test(record.nodeId) ||
+      typeof record.policyDigest !== 'string' ||
+      !DIGEST_PATTERN.test(record.policyDigest)
+    ) {
+      throw groupsInvalid('Group replay identity is malformed.');
+    }
+    const selector = assertGroupSelector(record.selector, groupsInvalid);
+    const hitIds = assertSortedUniqueIds(
+      record.hitIds,
+      DIGEST_PATTERN,
+      groupsInvalid,
+    );
+    const exceptions = assertExceptionArray(record.exceptions, groupsInvalid);
+    const members = new Map<string, HitRecord>();
+    for (const hitId of hitIds) {
+      const hit = hitsById.get(hitId);
+      if (!hit || covered.has(hitId)) {
+        throw groupsInvalid(
+          'Group replay does not partition the current hit nodes exactly.',
+        );
+      }
+      covered.add(hitId);
+      members.set(hitId, hit);
+    }
+    const node = buildGroupNode(
+      { selector, members, exceptions },
+      record.policyDigest,
+    );
+    if (node.nodeId !== record.nodeId) {
+      throw groupsInvalid('Group replay node ID does not match recomputation.');
+    }
+    readInvestigationGroupNode(node);
+    return node;
+  });
+  if (covered.size !== hitsById.size) {
+    throw groupsInvalid(
+      'Group replay does not cover every current hit node exactly once.',
+    );
+  }
+  return replayed.sort(byNodeId);
 }
 
 /**
@@ -1128,6 +1195,36 @@ function applyExceptions(
     finalGroups.push(group);
   }
   return finalGroups;
+}
+
+function deriveInvestigationHitRecords(scanNodes: EvidenceNode[]): HitRecord[] {
+  const records: HitRecord[] = [];
+  const seenTermIds = new Set<string>();
+  let sharedTreeDigest: string | null = null;
+  let sharedPolicyDigest: string | null = null;
+
+  for (const scanNode of scanNodes) {
+    const scan = readScanNode(scanNode, groupsInvalid);
+    if (seenTermIds.has(scan.termId)) {
+      throw groupsInvalid(`Duplicate scan term: ${scan.termId}`);
+    }
+    seenTermIds.add(scan.termId);
+    if (sharedTreeDigest === null) {
+      sharedTreeDigest = scan.treeDigest;
+      sharedPolicyDigest = scan.policyDigest;
+    } else if (
+      scan.treeDigest !== sharedTreeDigest ||
+      scan.policyDigest !== sharedPolicyDigest
+    ) {
+      throw groupsInvalid(
+        'Scans must share one pinned tree and scanner policy.',
+      );
+    }
+    for (const hit of scan.hits) {
+      records.push(buildHitRecord(scan.termId, hit, scan.node));
+    }
+  }
+  return records;
 }
 
 function buildHitRecord(

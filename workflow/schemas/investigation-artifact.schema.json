@@ -12,7 +12,7 @@
     "currentRefs"
   ],
   "properties": {
-    "schemaVersion": { "const": 1 },
+    "schemaVersion": { "enum": [1, 2] },
     "kind": { "const": "investigation-artifact" },
     "changeId": { "$ref": "#/$defs/changeId" },
     "legacyMigration": { "type": "boolean" },
@@ -23,12 +23,68 @@
     },
     "currentRefs": { "$ref": "#/$defs/currentRefs" },
     "applicability": { "$ref": "#/$defs/investigationApplicability" },
+    "replay": { "$ref": "#/$defs/gitBackedReplay" },
     "roleResults": {
       "type": "array",
       "items": { "$ref": "#/$defs/admittedRoleResult" }
     }
   },
   "allOf": [
+    {
+      "if": {
+        "properties": { "schemaVersion": { "const": 1 } },
+        "required": ["schemaVersion"]
+      },
+      "then": {
+        "properties": { "replay": false }
+      }
+    },
+    {
+      "if": {
+        "properties": { "schemaVersion": { "const": 2 } },
+        "required": ["schemaVersion"]
+      },
+      "then": {
+        "required": ["applicability", "replay"],
+        "properties": {
+          "legacyMigration": { "const": false },
+          "applicability": {
+            "type": "object",
+            "required": ["kind"],
+            "properties": { "kind": { "const": "sealed-investigation" } }
+          },
+          "nodes": {
+            "contains": {
+              "type": "object",
+              "required": ["type"],
+              "properties": {
+                "type": { "const": "investigation-term-union" }
+              }
+            },
+            "minContains": 1,
+            "maxContains": 1,
+            "items": {
+              "type": "object",
+              "required": ["type"],
+              "properties": {
+                "type": {
+                  "not": {
+                    "enum": [
+                      "investigation-term-scan",
+                      "investigation-tree-inventory",
+                      "investigation-hit",
+                      "investigation-group",
+                      "investigation-disposition",
+                      "investigation-coverage"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     {
       "if": {
         "properties": { "legacyMigration": { "const": true } },
@@ -64,6 +120,174 @@
       "minProperties": 1,
       "propertyNames": { "$ref": "#/$defs/role" },
       "additionalProperties": { "$ref": "#/$defs/digest" }
+    },
+    "pathIdentity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["rawBase64", "utf8"],
+      "properties": {
+        "rawBase64": { "type": "string" },
+        "utf8": {
+          "oneOf": [{ "type": "string" }, { "type": "null" }]
+        }
+      }
+    },
+    "groupSelector": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "selectorId",
+        "termId",
+        "rootId",
+        "extension",
+        "mutationClass",
+        "relationshipId",
+        "splitId"
+      ],
+      "properties": {
+        "selectorId": { "$ref": "#/$defs/digest" },
+        "termId": { "$ref": "#/$defs/digest" },
+        "rootId": { "type": "string", "minLength": 1 },
+        "extension": { "$ref": "#/$defs/pathIdentity" },
+        "mutationClass": {
+          "enum": [
+            "live",
+            "prohibited",
+            "generated",
+            "mirror",
+            "append-only",
+            "immutable",
+            "historical-reference"
+          ]
+        },
+        "relationshipId": {
+          "oneOf": [{ "type": "string", "minLength": 1 }, { "type": "null" }]
+        },
+        "splitId": {
+          "oneOf": [{ "type": "string", "minLength": 1 }, { "type": "null" }]
+        }
+      }
+    },
+    "groupException": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "exceptionId",
+        "hitId",
+        "baseSelectorId",
+        "splitId",
+        "rationale",
+        "author"
+      ],
+      "properties": {
+        "exceptionId": { "type": "string", "minLength": 1 },
+        "hitId": { "$ref": "#/$defs/digest" },
+        "baseSelectorId": { "$ref": "#/$defs/digest" },
+        "splitId": { "type": "string", "minLength": 1 },
+        "rationale": { "type": "string", "minLength": 1 },
+        "author": { "type": "string", "minLength": 1 }
+      }
+    },
+    "gitBackedReplay": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "kind",
+        "baseline",
+        "fullNodeCount",
+        "fullNodesDigest",
+        "termUnionNodeId",
+        "scan",
+        "groups",
+        "dispositions",
+        "coverageNodeId"
+      ],
+      "properties": {
+        "schemaVersion": { "const": 1 },
+        "kind": { "const": "git-backed-investigation-replay" },
+        "baseline": { "$ref": "#/$defs/baseline" },
+        "fullNodeCount": { "type": "integer", "minimum": 1 },
+        "fullNodesDigest": { "$ref": "#/$defs/digest" },
+        "termUnionNodeId": { "$ref": "#/$defs/digest" },
+        "scan": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["nodeIds", "inventoryNodeId", "policyDigest"],
+          "properties": {
+            "nodeIds": {
+              "type": "array",
+              "minItems": 1,
+              "uniqueItems": true,
+              "items": { "$ref": "#/$defs/digest" }
+            },
+            "inventoryNodeId": { "$ref": "#/$defs/digest" },
+            "policyDigest": { "$ref": "#/$defs/digest" }
+          }
+        },
+        "groups": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "nodeId",
+              "policyDigest",
+              "selector",
+              "hitIds",
+              "exceptions"
+            ],
+            "properties": {
+              "nodeId": { "$ref": "#/$defs/digest" },
+              "policyDigest": { "$ref": "#/$defs/digest" },
+              "selector": { "$ref": "#/$defs/groupSelector" },
+              "hitIds": {
+                "type": "array",
+                "minItems": 1,
+                "uniqueItems": true,
+                "items": { "$ref": "#/$defs/digest" }
+              },
+              "exceptions": {
+                "type": "array",
+                "uniqueItems": true,
+                "items": { "$ref": "#/$defs/groupException" }
+              }
+            }
+          }
+        },
+        "dispositions": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "nodeId",
+              "groupId",
+              "classification",
+              "rationale",
+              "author"
+            ],
+            "properties": {
+              "nodeId": { "$ref": "#/$defs/digest" },
+              "groupId": { "$ref": "#/$defs/digest" },
+              "classification": {
+                "enum": [
+                  "load-bearing",
+                  "test-or-mirror",
+                  "generated",
+                  "incidental-reference",
+                  "irrelevant"
+                ]
+              },
+              "rationale": { "type": "string", "minLength": 1 },
+              "author": { "type": "string", "minLength": 1 }
+            }
+          }
+        },
+        "coverageNodeId": { "$ref": "#/$defs/digest" }
+      }
     },
     "investigationApplicability": {
       "oneOf": [

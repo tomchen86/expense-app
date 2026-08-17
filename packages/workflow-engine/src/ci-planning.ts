@@ -122,6 +122,7 @@ export function collectHistoricalCollaborationGrantUses(
         return [];
       }
       return grantUsesFromPlanningArtifact(
+        repositoryRoot,
         raw,
         changeId,
         artifactPath.endsWith('/investigation.json')
@@ -133,6 +134,7 @@ export function collectHistoricalCollaborationGrantUses(
 }
 
 function grantUsesFromPlanningArtifact(
+  repositoryRoot: string,
   raw: string,
   changeId: string,
   artifactKind: 'investigation' | 'plan-review',
@@ -145,7 +147,9 @@ function grantUsesFromPlanningArtifact(
     }
     roleResults =
       artifactKind === 'investigation'
-        ? parseInvestigationArtifact(parsed, changeId).roleResults
+        ? parseInvestigationArtifact(parsed, changeId, {
+            repositoryRoot,
+          }).roleResults
         : parsePlanReviewArtifact(parsed, changeId).roleResults;
   } catch {
     throw ciPlanningError(

@@ -110,6 +110,7 @@ import {
   type InvestigationDispositionInput,
   type ReviewedPathRelationship,
 } from './investigation-groups.ts';
+import { projectInvestigationArtifactForTracking } from './investigation-artifact-projection.ts';
 import { scanInvestigationTree } from './investigation-scanner.ts';
 import {
   acknowledgeReviewerTermInputClosureUnderAuthority,
@@ -7363,6 +7364,7 @@ function preparePlanningScaffold(
         prior = parseInvestigationArtifact(
           JSON.parse(priorBytes),
           status.changeId,
+          { repositoryRoot: context.git.repositoryRoot },
         );
       } catch {
         // Historical v2 metadata may precede the evidence-artifact contract.
@@ -7417,7 +7419,11 @@ function preparePlanningScaffold(
     },
     status.changeId,
   );
-  const investigationBytes = `${canonicalJson(investigation)}\n`;
+  const trackedInvestigation = projectInvestigationArtifactForTracking(
+    context.git.repositoryRoot,
+    investigation,
+  );
+  const investigationBytes = `${canonicalJson(trackedInvestigation)}\n`;
   const scaffoldEntries = new Map([
     ['.openspec.yaml', metadataBytes],
     ['investigation.json', investigationBytes],
@@ -8221,6 +8227,7 @@ function derivePlanningSubjectFromCurrentDraft(
   const investigation = parseInvestigationArtifact(
     JSON.parse(investigationBytes),
     status.changeId,
+    { repositoryRoot: context.git.repositoryRoot },
   );
   const checks = loadChecksConfig(context.git.repositoryRoot);
   const contract: ChangeContract = {
@@ -8447,6 +8454,7 @@ function materializePlanningContribution(
     const investigation = parseInvestigationArtifact(
       JSON.parse(scaffold.investigationBytes),
       status.changeId,
+      { repositoryRoot: context.git.repositoryRoot },
     );
     const checks = loadChecksConfig(context.git.repositoryRoot);
     const draftContract: ChangeContract = {

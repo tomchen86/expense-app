@@ -124,6 +124,18 @@ prompt-author or overwrite engine-owned
 `investigation.json`, `execution.json`, `plan-review.json`, or managed-ledger
 fields.
 
+The tracked `investigation.json` may use schema v2 as a compact Git-backed
+projection. In that form it keeps semantic/provider/WHY/review/seal evidence as
+full immutable nodes and replaces only deterministic inventory, scan, hit,
+group, disposition, and coverage envelopes with a replay recipe bound to the
+exact baseline commit and tree. Consumers reconstruct the schema-v1 logical
+DAG from the pinned Git objects and reject the artifact if an object is
+missing, the commit no longer resolves to the recorded tree, or the recovered
+node set differs in identity, count, digest, grouping, or provenance. The
+working tree is never a fallback source. Existing schema-v1 full artifacts
+remain valid, and a graph that cannot be reproduced exactly remains stored in
+that full form.
+
 Resume only with the latest typed envelope. Do not replay completed provider
 work, transcribe reviewer terms, manufacture collaboration evidence, or bypass
 `human-action-required`. When provider work is pending, `status` is read-only

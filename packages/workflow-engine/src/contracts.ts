@@ -8,6 +8,7 @@ import {
   assertInvestigationApplicability,
   type InvestigationApplicability,
 } from './investigation-applicability.ts';
+import { materializeProjectedInvestigationArtifact } from './investigation-artifact-projection.ts';
 import { workflowContractArtifactPaths } from './contract-artifacts.ts';
 import { isRecord, isStringArray } from './contract-values.ts';
 import {
@@ -741,6 +742,7 @@ export function loadChangeContract(
             'INVALID_INVESTIGATION_ARTIFACT',
           ),
           changeId,
+          { repositoryRoot },
         )
       : undefined;
   const execution =
@@ -912,7 +914,24 @@ export function readChangeSchemaName(
 export function parseInvestigationArtifact(
   value: unknown,
   expectedChangeId: string,
+  options: { repositoryRoot?: string } = {},
 ): InvestigationArtifact {
+  if (isRecord(value) && value.schemaVersion === 2) {
+    if (options.repositoryRoot === undefined) {
+      throw artifactInvalid(
+        'INVALID_INVESTIGATION_ARTIFACT',
+        'Git-backed investigation evidence requires its repository object database.',
+      );
+    }
+    return parseInvestigationArtifact(
+      materializeProjectedInvestigationArtifact(
+        options.repositoryRoot,
+        value,
+        expectedChangeId,
+      ),
+      expectedChangeId,
+    );
+  }
   const optionalKeys = optionalArtifactKeys(value, [
     'applicability',
     'roleResults',

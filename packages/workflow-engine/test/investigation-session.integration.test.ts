@@ -9,6 +9,10 @@ import { pathToFileURL } from 'node:url';
 
 import { loadAiAdapterPolicy } from '../src/ai-adapter-policy.ts';
 import { canonicalJson } from '../src/canonical-json.ts';
+import {
+  loadChangeContract,
+  parseInvestigationArtifact,
+} from '../src/contracts.ts';
 import { projectProviderInvocationExecution } from '../src/execution-core.ts';
 import { readExecutionJobState } from '../src/execution-store.ts';
 import {
@@ -1165,7 +1169,17 @@ test('fake-backed propose composes breadth and depth before materializing an unc
     const trackedInvestigation = JSON.parse(
       fs.readFileSync(path.join(changeDirectory, 'investigation.json'), 'utf8'),
     );
+    assert.equal(trackedInvestigation.schemaVersion, 2);
     assert.equal(trackedInvestigation.kind, 'investigation-artifact');
+    assert.equal(
+      trackedInvestigation.replay.kind,
+      'git-backed-investigation-replay',
+    );
+    const expandedTrackedInvestigation = parseInvestigationArtifact(
+      trackedInvestigation,
+      changeId,
+      { repositoryRoot: repository },
+    );
     const authorizationEvidence = trackedInvestigation.nodes.find(
       (node: { type: string }) => node.type === 'propose-authorization',
     );
@@ -1208,7 +1222,7 @@ test('fake-backed propose composes breadth and depth before materializing an unc
     const trackedGroups: Array<{
       selector: { mutationClass: string; relationshipId: string | null };
       hits: Array<{ path: { utf8: string | null } }>;
-    }> = trackedInvestigation.nodes
+    }> = expandedTrackedInvestigation.nodes
       .filter((node: { type: string }) => node.type === 'investigation-group')
       .map((node: Parameters<typeof readInvestigationGroupNode>[0]) =>
         readInvestigationGroupNode(node),
@@ -1398,6 +1412,31 @@ test('fake-backed propose composes breadth and depth before materializing an unc
     assert.equal(
       git(repository, ['log', '-1', '--format=%s']).trim(),
       'Add investigation target',
+    );
+
+    const materializedTrackedInvestigation = JSON.parse(
+      fs.readFileSync(path.join(changeDirectory, 'investigation.json'), 'utf8'),
+    );
+    assert.equal(materializedTrackedInvestigation.schemaVersion, 2);
+    assert.ok(
+      materializedTrackedInvestigation.nodes.every(
+        (node: { type: string }) => node.type !== 'investigation-hit',
+      ),
+    );
+    const materializedInvestigation = parseInvestigationArtifact(
+      materializedTrackedInvestigation,
+      changeId,
+      { repositoryRoot: repository },
+    );
+    assert.equal(materializedInvestigation.schemaVersion, 1);
+    assert.equal(
+      materializedInvestigation.nodes.length,
+      materializedTrackedInvestigation.replay.fullNodeCount,
+    );
+    assert.ok(
+      materializedInvestigation.nodes.some(
+        (node) => node.type === 'investigation-hit',
+      ),
     );
 
     const beforeReplay = git(repository, ['diff', '--no-ext-diff']);
@@ -2558,13 +2597,16 @@ test('fake-backed propose composes breadth and depth before materializing an unc
         node.type === 'investigation-reviewer-term-source',
     );
     assert.equal(reviewerTermSources.length, 2);
+    const twiceRevisedExpanded = parseInvestigationArtifact(
+      twiceRevisedInvestigation,
+      changeId,
+      { repositoryRoot: repository },
+    );
     const twiceRevisedNodeIds = new Set(
-      twiceRevisedInvestigation.nodes.map(
-        (node: { nodeId: string }) => node.nodeId,
-      ),
+      twiceRevisedExpanded.nodes.map((node: { nodeId: string }) => node.nodeId),
     );
     assert.equal(
-      twiceRevisedInvestigation.nodes.every(
+      twiceRevisedExpanded.nodes.every(
         (node: { provenanceParentNodeIds: Record<string, string> }) =>
           Object.values(node.provenanceParentNodeIds).every((parentNodeId) =>
             twiceRevisedNodeIds.has(parentNodeId),
@@ -2572,9 +2614,8 @@ test('fake-backed propose composes breadth and depth before materializing an unc
       ),
       true,
     );
-    const requiredCoverageEvidence = planReviewCoverageEvidence(
-      twiceRevisedInvestigation,
-    );
+    const requiredCoverageEvidence =
+      planReviewCoverageEvidence(twiceRevisedExpanded);
 
     runProviderWorker(repository, twiceReplanned.planReview!.invocationId, {
       runner(input): ProviderRunnerReport {
@@ -2681,6 +2722,16 @@ test('fake-backed propose composes breadth and depth before materializing an unc
     );
     assert.equal(completedPlanning.state, 'planning-complete');
     assert.equal(completedPlanning.planningTransition?.changeId, changeId);
+    const committedTrackedInvestigation = JSON.parse(
+      fs.readFileSync(path.join(changeDirectory, 'investigation.json'), 'utf8'),
+    );
+    assert.equal(committedTrackedInvestigation.schemaVersion, 2);
+    const committedContract = loadChangeContract(repository, changeId);
+    assert.equal(committedContract.investigation?.schemaVersion, 1);
+    assert.equal(
+      committedContract.investigation?.nodes.length,
+      committedTrackedInvestigation.replay.fullNodeCount,
+    );
     assert.equal(
       git(repository, [
         'log',

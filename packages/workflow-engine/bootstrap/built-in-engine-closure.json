@@ -66,7 +66,7 @@
     {
       "path": "src/assurance-inspection.ts",
       "mode": "100644",
-      "digest": "sha256:b7139b2199a119081ac2cea3dc7d8719b957352f5082aebe64c99cf8fde58123"
+      "digest": "sha256:9362d669723b6c81c99665af7aaa6609271885c799564f09826e6ea830cae990"
     },
     {
       "path": "src/atomic-text.ts",
@@ -176,7 +176,7 @@
     {
       "path": "src/ci-planning.ts",
       "mode": "100644",
-      "digest": "sha256:89f8bd213460b210cc375d09a823118b2d163bca99c4061fc14bb6bf89d30649"
+      "digest": "sha256:be8a0ff1332d8eb7fa07da8f81210435c38ddac563f97e0c976acdbcef669b35"
     },
     {
       "path": "src/ci-policy.ts",
@@ -276,7 +276,7 @@
     {
       "path": "src/contracts.ts",
       "mode": "100644",
-      "digest": "sha256:07ae00c4db5d4e7b467fd0aba1c0f49867483730f692ef27546677b3d32194ba"
+      "digest": "sha256:ec96b00158d7955c126783a966555272f55cbcec1b90dbfa0d53a6629f8fe77c"
     },
     {
       "path": "src/control-plane-promotion-producer.ts",
@@ -544,6 +544,11 @@
       "digest": "sha256:e6398c2ce394edaaf0a39cf240745147b8e92ab0ac83f3cdd17d8f63e3c2afd8"
     },
     {
+      "path": "src/investigation-artifact-projection.ts",
+      "mode": "100644",
+      "digest": "sha256:f5a4ed221c71045337342d6d9a930b78113948de391273bf2a944a7f10e37119"
+    },
+    {
       "path": "src/investigation-design-projection.ts",
       "mode": "100644",
       "digest": "sha256:83b6cd513b1df7a60c2dcf88ffa53ffffec2d6f0501ab2710fe2afea61c3ac8a"
@@ -556,7 +561,7 @@
     {
       "path": "src/investigation-groups.ts",
       "mode": "100644",
-      "digest": "sha256:0afd86358c69e981ccf9563fa6652564c88984fc9e312d047f25424b78a06b87"
+      "digest": "sha256:d0124c3eb593f822ea6de04c3ef44110f78fba17021f4ec2f43b445faeb44b23"
     },
     {
       "path": "src/investigation-scanner.ts",
@@ -916,7 +921,7 @@
     {
       "path": "src/propose-orchestrator.ts",
       "mode": "100644",
-      "digest": "sha256:898cb7fcfd9bbdcb21ae58d34e9079d6f7f4a34d3f31acec5d0d50b1ecfec174"
+      "digest": "sha256:72e1fe576af4022fd801253eae8ff3aca3caa71da9a88c37187d946cbc2c85eb"
     },
     {
       "path": "src/protected-capabilities.ts",

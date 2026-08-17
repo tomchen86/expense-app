@@ -1,8 +1,11 @@
 # investigation-evidence-and-why Specification
 
 ## Purpose
+
 TBD - created by archiving change establish-investigation-first-planning. Update Purpose after archive.
+
 ## Requirements
+
 ### Requirement: Every Investigation Hit Has Exactly One Effective Disposition
 
 The workflow engine SHALL organize current search hits into semantic evidence groups and SHALL require every current hit to be covered by exactly one effective disposition.
@@ -150,6 +153,47 @@ An exact input or provenance-parent change MUST produce a new `nodeId`. Invalida
 - **WHEN** output bytes happen to match
 - **THEN** the old and new parent edges do not converge
 
+### Requirement: Tracked Investigation Evidence May Replay Deterministic Nodes From Pinned Git
+
+The tracked investigation artifact MAY omit deterministic tree-inventory, scan, hit, group, disposition, and coverage node envelopes only when it stores a strict replay recipe bound to the exact baseline commit and tree. Loading that projection SHALL verify the commit-to-tree binding, read source content from the pinned Git objects, regenerate the omitted nodes under the recorded policies, and recover the exact logical artifact before assurance validation.
+
+The replayed logical artifact MUST match the recorded complete node count and canonical node-set digest. The projection MUST retain semantic term contributions, provider results, WHY evidence, annotations, reviews, seals, and every other non-replayable node as immutable full envelopes. It MUST NOT infer or regenerate actor judgment from Git source. Missing Git objects, malformed replay data, unexpected node identities, digest mismatch, incomplete grouping, or provenance collision MUST fail closed. Existing schema-v1 full artifacts SHALL remain readable without projection.
+
+#### Scenario: Compact artifact has an intact pinned Git baseline
+
+- **GIVEN** a tracked compact investigation artifact names an existing commit, its exact tree, and a valid replay recipe
+- **WHEN** the artifact is loaded for validation or execution
+- **THEN** the engine regenerates every omitted deterministic node from the pinned Git tree
+- **AND** the recovered logical node set has the recorded identities, count, digest, and provenance closure
+
+#### Scenario: Pinned Git content is unavailable
+
+- **GIVEN** a compact artifact names a commit, tree, or blob that is not available in the repository
+- **WHEN** the artifact is loaded
+- **THEN** loading fails closed
+- **AND** current working-tree bytes are not substituted for the missing pinned content
+
+#### Scenario: Replay no longer produces the recorded evidence
+
+- **GIVEN** replay code, policy, or compact recipe produces a different scan, group, disposition, coverage, node identity, or complete node-set digest
+- **WHEN** reconstruction is validated
+- **THEN** the artifact is rejected as invalid
+- **AND** the differing reconstruction does not become current evidence
+
+#### Scenario: Semantic evidence is present beside a replay recipe
+
+- **GIVEN** the investigation contains actor-authored WHY or provider and review evidence
+- **WHEN** a compact tracked projection is written
+- **THEN** those semantic nodes remain as complete immutable envelopes
+- **AND** only eligible deterministic nodes are represented by replay instructions
+
+#### Scenario: Legacy full artifact is loaded
+
+- **GIVEN** an existing schema-v1 investigation artifact contains the complete node set
+- **WHEN** it is loaded after compact projection support is enabled
+- **THEN** it remains readable under its original validation rules
+- **AND** it does not require a replay recipe
+
 ### Requirement: Descendant Reuse Preserves Original Provenance
 
 An existing descendant MAY remain current across a converged parent only when its current evidence path contains a valid reuse proof for every changed parent edge. The descendant's immutable object and original parent provenance MUST NOT be rewritten.
@@ -174,4 +218,3 @@ An existing descendant MAY remain current across a converged parent only when it
 - **WHEN** reuse is recorded
 - **THEN** the engine retains the original descendant object and parent link
 - **AND** it records the new evidence path in separate immutable proof objects
-

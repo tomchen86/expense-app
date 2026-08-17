@@ -74,6 +74,7 @@ test('a replacement planning generation persists exact descendant reuse proofs',
         ),
       ),
       CHANGE_ID,
+      { repositoryRoot: first },
     );
     fs.writeFileSync(
       path.join(changeDirectory, 'tasks.md'),
@@ -157,7 +158,9 @@ test('a replacement planning generation persists exact descendant reuse proofs',
       proofs.length,
     );
     assert.doesNotThrow(() =>
-      parseInvestigationArtifact(investigation, CHANGE_ID),
+      parseInvestigationArtifact(investigation, CHANGE_ID, {
+        repositoryRoot: second,
+      }),
     );
     const missingProofRef = structuredClone(investigation);
     const proofRef = Object.keys(missingProofRef.currentRefs).find((name) =>
@@ -166,7 +169,10 @@ test('a replacement planning generation persists exact descendant reuse proofs',
     assert.ok(proofRef);
     delete missingProofRef.currentRefs[proofRef];
     assert.throws(
-      () => parseInvestigationArtifact(missingProofRef, CHANGE_ID),
+      () =>
+        parseInvestigationArtifact(missingProofRef, CHANGE_ID, {
+          repositoryRoot: second,
+        }),
       (error: unknown) =>
         error instanceof Error &&
         'code' in error &&

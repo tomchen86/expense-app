@@ -72,6 +72,7 @@ export function inspectChangeAssurance(
       `Change ${changeId} has no investigation to assess.`,
     ),
     changeId,
+    { repositoryRoot: repository.repositoryRoot },
   );
 
   const declaredChangeClasses = declaredClasses(investigation);

@@ -4,7 +4,21 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import { canonicalEvidenceNodeEnvelope } from '../src/evidence-node.ts';
+import { canonicalJson } from '../src/canonical-json.ts';
+import {
+  parseInvestigationArtifact,
+  type InvestigationArtifact,
+} from '../src/contracts.ts';
+import {
+  canonicalEvidenceNodeEnvelope,
+  createEvidenceNode,
+} from '../src/evidence-node.ts';
+import {
+  createInvestigationCoverageNode,
+  createInvestigationDispositionNodes,
+  deriveInvestigationGroups,
+} from '../src/investigation-groups.ts';
+import { projectInvestigationArtifactForTracking } from '../src/investigation-artifact-projection.ts';
 import {
   deriveEngineFloor,
   derivePinnedDiffPathFacts,
@@ -31,6 +45,7 @@ import {
   readPinnedTrackedTree,
   TRACKED_TREE_LIMITS,
 } from '../src/tracked-tree-reader.ts';
+import { createMutationClassPolicy } from '../src/mutation-class-policy.ts';
 import { git, isWorkflowError } from './fixture.ts';
 
 test('typed terms preserve exact bytes, deduplicate semantics, and retain every provenance', () => {
@@ -1389,6 +1404,222 @@ test('operational CPU timeout aborts without returning semantic evidence', (t) =
           terms: [termWithProvenance('literal-content', 'base')],
         }),
       (error) => isWorkflowError(error, 'INVESTIGATION_SCAN_TIMEOUT'),
+    );
+  } finally {
+    fs.rmSync(repository, { recursive: true, force: true });
+  }
+});
+
+test('Git-backed tracked projection replays deterministic evidence from the pinned tree', () => {
+  const repository = createScannerRepository();
+  try {
+    fs.writeFileSync(
+      path.join(repository, 'src/base.txt'),
+      `${'needle\n'.repeat(100)}tail\n`,
+    );
+    commitAll(repository, 'Add repeated investigation evidence');
+    const baseline = {
+      head: git(repository, ['rev-parse', 'HEAD']).trim(),
+      tree: treeOid(repository),
+    };
+    const term = termWithProvenance('literal-content', 'needle');
+    const scan = scanInvestigationTree({
+      repositoryRoot: repository,
+      treeOid: baseline.tree,
+      terms: [term],
+    });
+    assert.equal(scan.outcome, 'ready');
+    if (scan.outcome !== 'ready') {
+      assert.fail('expected a replayable scan');
+    }
+    const grouped = deriveInvestigationGroups({
+      scanNodes: scan.nodes,
+      mutationPolicy: createMutationClassPolicy({ rules: [] }),
+      declaredRoots: [{ rootId: 'repository', path: '' }],
+      reviewedRelationships: [],
+      exceptions: [],
+    });
+    const dispositions = createInvestigationDispositionNodes({
+      groupNodes: grouped.groupNodes,
+      dispositions: grouped.groupNodes.map((node) => ({
+        groupId: (node.output as { groupId: string }).groupId,
+        classification: 'load-bearing',
+        rationale: 'The repeated fixture is deliberately load-bearing.',
+        author: 'projection-test',
+      })),
+    });
+    const coverage = createInvestigationCoverageNode({
+      effectiveTermIds: [term.termId],
+      scanNodes: scan.nodes,
+      inventoryNode: scan.inventory.evidenceNode,
+      hitNodes: grouped.hitNodes,
+      groupNodes: grouped.groupNodes,
+      dispositionNodes: dispositions,
+    });
+    const termUnion = createEvidenceNode({
+      type: 'investigation-term-union',
+      nodeSchema: 'investigation.term-union.test.v1',
+      evaluator: 'investigation-projection-test.v1',
+      policyDigest: '1'.repeat(64),
+      exactInputDigests: {},
+      semanticParentResultDigests: {},
+      provenanceParentNodeIds: {},
+      outputSchema: 'investigation.term-union-output.test.v1',
+      output: {
+        rawCounts: { engine: 0, main: 1, reviewer: 0, survey: 0 },
+        terms: [term],
+      },
+      runtimeMetadata: {},
+    });
+    const applicability = createInvestigationApplicability({
+      kind: 'sealed-investigation',
+      baseline,
+      intentDigest: '2'.repeat(64),
+      sealNodeId: coverage.nodeId,
+      sealResultDigest: coverage.resultDigest,
+    });
+    const full = parseInvestigationArtifact(
+      {
+        schemaVersion: 1,
+        kind: 'investigation-artifact',
+        changeId: 'compact-investigation',
+        legacyMigration: false,
+        nodes: [
+          termUnion,
+          ...scan.nodes,
+          scan.inventory.evidenceNode,
+          ...grouped.hitNodes,
+          ...grouped.groupNodes,
+          ...dispositions,
+          coverage,
+        ].sort((left, right) => left.nodeId.localeCompare(right.nodeId)),
+        currentRefs: { coverage: coverage.nodeId },
+        applicability,
+      },
+      'compact-investigation',
+    );
+
+    const projected = projectInvestigationArtifactForTracking(repository, full);
+    assert.equal(projected.schemaVersion, 2);
+    assert.equal(projected.nodes.length, 1);
+    assert.ok(
+      Buffer.byteLength(canonicalJson(projected)) <
+        Buffer.byteLength(canonicalJson(full)) / 2,
+    );
+
+    const historicalTermUnion = createEvidenceNode({
+      type: 'investigation-term-union',
+      nodeSchema: 'investigation.term-union.test.v1',
+      evaluator: 'investigation-projection-test.v1',
+      policyDigest: '3'.repeat(64),
+      exactInputDigests: {},
+      semanticParentResultDigests: {},
+      provenanceParentNodeIds: {},
+      outputSchema: 'investigation.term-union-output.test.v1',
+      output: termUnion.output,
+      runtimeMetadata: {},
+    });
+    const multiEpoch = parseInvestigationArtifact(
+      {
+        ...full,
+        nodes: [...full.nodes, historicalTermUnion].sort((left, right) =>
+          left.nodeId.localeCompare(right.nodeId),
+        ),
+      },
+      'compact-investigation',
+    );
+    assert.strictEqual(
+      projectInvestigationArtifactForTracking(repository, multiEpoch),
+      multiEpoch,
+    );
+
+    fs.writeFileSync(
+      path.join(repository, 'src/base.txt'),
+      'uncommitted worktree bytes must never satisfy replay\n',
+    );
+    const replayed = parseInvestigationArtifact(
+      projected,
+      'compact-investigation',
+      { repositoryRoot: repository },
+    );
+    assert.equal(canonicalJson(replayed), canonicalJson(full));
+    assert.throws(
+      () => parseInvestigationArtifact(projected, 'compact-investigation'),
+      (error) => isWorkflowError(error, 'INVALID_INVESTIGATION_ARTIFACT'),
+    );
+
+    const changedDisposition = {
+      ...projected,
+      replay: {
+        ...projected.replay,
+        dispositions: projected.replay.dispositions.map((disposition, index) =>
+          index === 0
+            ? {
+                ...disposition,
+                rationale:
+                  'A different semantic decision cannot reuse the recorded node identity.',
+              }
+            : disposition,
+        ),
+      },
+    };
+    assert.throws(
+      () =>
+        parseInvestigationArtifact(
+          changedDisposition,
+          'compact-investigation',
+          { repositoryRoot: repository },
+        ),
+      (error) => isWorkflowError(error, 'INVALID_INVESTIGATION_ARTIFACT'),
+    );
+
+    const missingTree = {
+      ...projected,
+      applicability: {
+        ...projected.applicability,
+        baseline: {
+          ...projected.applicability.baseline,
+          tree: 'f'.repeat(40),
+        },
+      },
+      replay: {
+        ...projected.replay,
+        baseline: { ...projected.replay.baseline, tree: 'f'.repeat(40) },
+      },
+    };
+    assert.throws(
+      () =>
+        parseInvestigationArtifact(missingTree, 'compact-investigation', {
+          repositoryRoot: repository,
+        }),
+      (error) => isWorkflowError(error, 'INVALID_INVESTIGATION_ARTIFACT'),
+    );
+
+    const treeObjectBaseline = {
+      head: projected.applicability.baseline.tree,
+      tree: projected.applicability.baseline.tree,
+    };
+    const treeObjectApplicability = createInvestigationApplicability({
+      kind: 'sealed-investigation',
+      baseline: treeObjectBaseline,
+      intentDigest: projected.applicability.intentDigest,
+      sealNodeId: projected.applicability.sealNodeId,
+      sealResultDigest: projected.applicability.sealResultDigest,
+    });
+    const treeAsHead = {
+      ...projected,
+      applicability: treeObjectApplicability,
+      replay: {
+        ...projected.replay,
+        baseline: treeObjectBaseline,
+      },
+    };
+    assert.throws(
+      () =>
+        parseInvestigationArtifact(treeAsHead, 'compact-investigation', {
+          repositoryRoot: repository,
+        }),
+      (error) => isWorkflowError(error, 'INVALID_INVESTIGATION_ARTIFACT'),
     );
   } finally {
     fs.rmSync(repository, { recursive: true, force: true });
