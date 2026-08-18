@@ -1,6 +1,15 @@
 import { canonicalJson } from './canonical-json.js';
-import { ExitCode, workflowError } from './errors.js';
+import { ExitCode, WorkflowError, workflowError } from './errors.js';
 import { freezeGrantCanonical, GRANT_SHA256_DIGEST as SHA256_DIGEST, GRANT_STABLE_ID as STABLE_ID, } from './grant-primitives.js';
+export class GrantTransitionPreconditionError extends WorkflowError {
+    constructor(code, message) {
+        super({ code, message, exitCode: ExitCode.staleState });
+        this.name = 'GrantTransitionPreconditionError';
+    }
+}
+export function grantTransitionPreconditionChanged(code, message) {
+    return new GrantTransitionPreconditionError(code, message);
+}
 export function createTransitionRegistry(definitions) {
     const registered = new Map();
     for (const candidate of definitions) {

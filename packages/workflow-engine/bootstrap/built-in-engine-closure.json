@@ -456,7 +456,7 @@
     {
       "path": "src/grant-coordinator.ts",
       "mode": "100644",
-      "digest": "sha256:6584ee30131750ad8069e757dbe3c100b50a8f14a0bbbee97c4122016d990914"
+      "digest": "sha256:850a1c9864cdbd2ed5a525f0cbd11902af51fe57ea3ff63fb856da9b8ea4a0f4"
     },
     {
       "path": "src/grant-core.ts",
@@ -476,7 +476,7 @@
     {
       "path": "src/grant-production.ts",
       "mode": "100644",
-      "digest": "sha256:4b07001cb4e338d66ec80f28a74631cbc6badc9b0394e1a4bbc7eaa9a5b1bfe3"
+      "digest": "sha256:04a1119c9b711cc43c981fcb247492db60f4296023844c4b1490c020231d828a"
     },
     {
       "path": "src/grant-proof-ssh.ts",
@@ -491,7 +491,7 @@
     {
       "path": "src/grant-transition-registry.ts",
       "mode": "100644",
-      "digest": "sha256:377cb7b8a71bd94f2dd97a8bc365d200f4a6a82d08eb289b7ec17942f0c9cb34"
+      "digest": "sha256:7b91a85770b10f2048247beb9f50d8ee59ab7e61d93386a94fd087afc213fcb3"
     },
     {
       "path": "src/handoff.ts",
@@ -631,7 +631,7 @@
     {
       "path": "src/investigation-manifest.ts",
       "mode": "100644",
-      "digest": "sha256:ea524933446a26f9a05d65a5fdf3518aed881183d57895787e9995b977627830"
+      "digest": "sha256:278326de1e07d0490bdb2d390945907cb8540055a44094f27e19f30988eb5389"
     },
     {
       "path": "src/investigation-materializer.ts",
@@ -641,7 +641,7 @@
     {
       "path": "src/investigation-publication.ts",
       "mode": "100644",
-      "digest": "sha256:b70e979c4b3fa182dec33082ecd01db8793ea617c98d6b22ad96599d1fa01eb9"
+      "digest": "sha256:309a257faf55e1a05407ea32362fee2f477800b3f8d114c59b41f221c44c4598"
     },
     {
       "path": "src/investigation-roots.ts",
@@ -689,9 +689,14 @@
       "digest": "sha256:985ca3f3464600c9a098d62a39d664245f01396d42cf4e3351a495610d044677"
     },
     {
+      "path": "src/investigation-v3-failure-source.ts",
+      "mode": "100644",
+      "digest": "sha256:6021fb723acaf524c52a08ab10a77d87b041cdff31ba51f1bcdd92e076f8550d"
+    },
+    {
       "path": "src/investigation-v3-grant.ts",
       "mode": "100644",
-      "digest": "sha256:36f82e21931900d4982006af2cf367860fd0ee6421c568a89923ffd228ac0828"
+      "digest": "sha256:cfa4d29140d83896cd69783dda50c9088a3692352f870732957d23e6e8cb316a"
     },
     {
       "path": "src/investigation-why-domain.ts",
