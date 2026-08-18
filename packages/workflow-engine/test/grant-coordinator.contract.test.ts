@@ -11,7 +11,11 @@ import {
   type TrustedGrantPresentation,
 } from '../src/grant-coordinator.ts';
 import type { GrantRequestInput, StateBinding } from '../src/grant-core.ts';
-import { grantStorePaths, readGrantRecord } from '../src/grant-store.ts';
+import {
+  assertGrantLifecycleBarrier,
+  grantStorePaths,
+  readGrantRecord,
+} from '../src/grant-store.ts';
 import {
   codeOwnedApprovalModuleRegistry,
   GRANT_PROOF_SSH_V1_CONFIGURATION_DIGEST,
@@ -20,6 +24,7 @@ import {
 } from '../src/grant-policy.ts';
 import {
   createTransitionRegistry,
+  grantTransitionPreconditionChanged,
   type TransitionDefinition,
 } from '../src/grant-transition-registry.ts';
 import { ExitCode, workflowError } from '../src/errors.ts';
@@ -274,6 +279,181 @@ test('after durable prepare recovery repeats only the same idempotent transition
     assert.equal(duplicate.recovered, true);
     assert.equal(attempts, 2);
     assert.equal(effects, 1);
+  });
+});
+
+test('prepared recovery converges an idempotent transition that applied before its receipt was durable', async () => {
+  await withRuntime(async (runtimeRoot) => {
+    let state = binding('1');
+    let attempts = 0;
+    let effects = 0;
+    const definition = abortDefinition({
+      observe: () => state,
+      execute: () => {
+        attempts += 1;
+        if (state.digest === binding('1').digest) {
+          effects += 1;
+          state = binding('9');
+          throw workflowError(
+            'SIMULATED_POST_EFFECT_LOCK_STALE',
+            'simulated crash after transition effect',
+            ExitCode.staleState,
+          );
+        }
+      },
+    });
+    const coordinator = coordinatorFixture(runtimeRoot, definition, {
+      openSession: successfulSession,
+    });
+    await coordinator.requestGrant(request());
+
+    await assert.rejects(
+      coordinator.resolveChallenge(CHALLENGE_ID),
+      /simulated crash after transition effect/,
+    );
+    assert.equal(
+      readGrantRecord(grantStorePaths(runtimeRoot), CHALLENGE_ID).state,
+      'prepared',
+    );
+
+    const recovered = await coordinator.recoverChallenge(CHALLENGE_ID);
+    assert.equal(recovered.outcome, 'completed');
+    assert.equal(recovered.recovered, true);
+    assert.equal(attempts, 2);
+    assert.equal(effects, 1);
+    assert.equal(
+      readGrantRecord(grantStorePaths(runtimeRoot), CHALLENGE_ID).state,
+      'completed',
+    );
+  });
+});
+
+test('prepared recovery terminalizes deterministic state drift without applying effects or retaining the lifecycle barrier', async () => {
+  await withRuntime(async (runtimeRoot) => {
+    let state = binding('1');
+    let attempts = 0;
+    let effects = 0;
+    const definition = abortDefinition({
+      observe: () => state,
+      execute: () => {
+        attempts += 1;
+        if (attempts === 1) throw new Error('simulated process crash');
+        if (state.digest !== binding('1').digest) {
+          throw grantTransitionPreconditionChanged(
+            'FIXTURE_STATE_CHANGED',
+            'The fixture state changed before its transition could execute.',
+          );
+        }
+        effects += 1;
+      },
+    });
+    const coordinator = coordinatorFixture(runtimeRoot, definition, {
+      openSession: successfulSession,
+    });
+    await coordinator.requestGrant(request());
+
+    await assert.rejects(
+      coordinator.resolveChallenge(CHALLENGE_ID),
+      /simulated process crash/,
+    );
+    assert.equal(
+      readGrantRecord(grantStorePaths(runtimeRoot), CHALLENGE_ID).state,
+      'prepared',
+    );
+    assert.throws(
+      () => assertGrantLifecycleBarrier(runtimeRoot),
+      (error) => isWorkflowError(error, 'GRANT_TRANSITION_RECOVERY_REQUIRED'),
+    );
+
+    state = binding('d');
+    const recovered = await coordinator.recoverChallenge(CHALLENGE_ID);
+    assert.deepEqual(recovered, {
+      challengeId: CHALLENGE_ID,
+      operationId: OPERATION_ID,
+      transitionId: 'investigation.abort.v1',
+      outcome: 'failed',
+      poststateDigest: binding('d').digest,
+      recovered: true,
+    });
+    assert.equal(attempts, 2);
+    assert.equal(effects, 0);
+
+    const terminal = readGrantRecord(
+      grantStorePaths(runtimeRoot),
+      CHALLENGE_ID,
+    );
+    assert.equal(terminal.state, 'failed');
+    if (terminal.state !== 'failed') assert.fail('expected terminal failure');
+    assert.deepEqual(terminal.outcome, {
+      outcome: 'failed',
+      details: {
+        schemaVersion: 1,
+        kind: 'grant-transition-state-drift.v1',
+        failureCode: 'GRANT_STATE_CHANGED',
+        transitionCompleted: false,
+        transitionErrorCode: 'FIXTURE_STATE_CHANGED',
+        expectedStateBinding: binding('1'),
+        observedStateBinding: binding('d'),
+      },
+    });
+    assert.deepEqual(terminal.audit, {
+      approvalMethod: 'human-presence',
+      authorityClass: 'local-device-owner',
+      identity: null,
+      identityAssurance: 'not-asserted',
+      presenceAssurance: 'fresh-os-authentication',
+      proofModules: ['human-gate-macos@1'],
+    });
+    assert.doesNotThrow(() => assertGrantLifecycleBarrier(runtimeRoot));
+
+    assert.deepEqual(
+      await coordinator.recoverChallenge(CHALLENGE_ID),
+      recovered,
+    );
+    assert.equal(attempts, 2);
+    assert.equal(effects, 0);
+    await assert.rejects(coordinator.resolveChallenge(CHALLENGE_ID), (error) =>
+      isWorkflowError(error, 'GRANT_CHALLENGE_UNAVAILABLE'),
+    );
+  });
+});
+
+test('a stale-state error without changed observed state cannot cancel a prepared transition', async () => {
+  await withRuntime(async (runtimeRoot) => {
+    let attempts = 0;
+    const definition = abortDefinition({
+      observe: () => binding('1'),
+      execute: () => {
+        attempts += 1;
+        if (attempts === 1) throw new Error('simulated process crash');
+        throw workflowError(
+          'FIXTURE_TRANSIENT_STALE',
+          'The fixture emitted a stale signal without state drift.',
+          ExitCode.staleState,
+        );
+      },
+    });
+    const coordinator = coordinatorFixture(runtimeRoot, definition, {
+      openSession: successfulSession,
+    });
+    await coordinator.requestGrant(request());
+    await assert.rejects(
+      coordinator.resolveChallenge(CHALLENGE_ID),
+      /simulated process crash/,
+    );
+
+    await assert.rejects(coordinator.recoverChallenge(CHALLENGE_ID), (error) =>
+      isWorkflowError(error, 'FIXTURE_TRANSIENT_STALE'),
+    );
+    assert.equal(attempts, 2);
+    assert.equal(
+      readGrantRecord(grantStorePaths(runtimeRoot), CHALLENGE_ID).state,
+      'prepared',
+    );
+    assert.throws(
+      () => assertGrantLifecycleBarrier(runtimeRoot),
+      (error) => isWorkflowError(error, 'GRANT_TRANSITION_RECOVERY_REQUIRED'),
+    );
   });
 });
 

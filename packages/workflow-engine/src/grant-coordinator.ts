@@ -40,8 +40,10 @@ import {
 } from './grant-store.ts';
 import type {
   RegisteredTransitionDefinition,
+  TransitionOutcome,
   TransitionRegistry,
 } from './grant-transition-registry.ts';
+import { GrantTransitionPreconditionError } from './grant-transition-registry.ts';
 
 const DEFAULT_CHALLENGE_TTL_MS = 10 * 60_000;
 
@@ -307,15 +309,53 @@ async function executePreparedTransition(
     registry,
   );
   assertOwned();
-  const outcome = await selected.definition.execute({
-    parameters: selected.parameters,
-    approvalSubject: record.approvalSubject,
-    approvalSubjectDigest: approvalSubjectDigest(record.approvalSubject),
-    challengeId: challenge.challengeId,
-    operationId: record.operationId,
-    recovered,
-    assertLifecycleOwned: assertOwned,
-  });
+  let outcome: TransitionOutcome;
+  try {
+    outcome = await selected.definition.execute({
+      parameters: selected.parameters,
+      approvalSubject: record.approvalSubject,
+      approvalSubjectDigest: approvalSubjectDigest(record.approvalSubject),
+      challengeId: challenge.challengeId,
+      operationId: record.operationId,
+      recovered,
+      assertLifecycleOwned: assertOwned,
+    });
+  } catch (error) {
+    if (!(error instanceof GrantTransitionPreconditionError)) {
+      throw error;
+    }
+    assertOwned();
+    const observed = assertStateBinding(
+      await selected.definition.observeState(selected.parameters),
+    );
+    assertOwned();
+    if (
+      observed.kind === challenge.stateBinding.kind &&
+      observed.digest === challenge.stateBinding.digest
+    ) {
+      throw error;
+    }
+    const failed = recordGrantTransitionOutcome(paths, {
+      challengeId: challenge.challengeId,
+      operationId: record.operationId,
+      poststateDigest: observed.digest,
+      outcome: {
+        outcome: 'failed',
+        details: {
+          schemaVersion: 1,
+          kind: 'grant-transition-state-drift.v1',
+          failureCode: 'GRANT_STATE_CHANGED',
+          transitionCompleted: false,
+          transitionErrorCode: safeTransitionErrorCode(error.code),
+          expectedStateBinding: challenge.stateBinding,
+          observedStateBinding: observed,
+        },
+      },
+      completedAt: exactDate(now()).toISOString(),
+      audit: grantAudit(record),
+    });
+    return executionResult(failed, recovered);
+  }
   assertOwned();
   const poststate = await selected.definition.observeState(selected.parameters);
   const normalizedPoststate = assertStateBinding(poststate);
@@ -328,6 +368,12 @@ async function executePreparedTransition(
     audit: grantAudit(record),
   });
   return executionResult(completed, recovered);
+}
+
+function safeTransitionErrorCode(value: string): string {
+  return /^[A-Z][A-Z0-9_]{0,255}$/.test(value)
+    ? value
+    : 'UNCLASSIFIED_STALE_STATE';
 }
 
 function grantAudit(record: PreparedGrantRecord): GrantAuditRecord {

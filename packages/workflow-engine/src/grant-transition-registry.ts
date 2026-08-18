@@ -1,5 +1,5 @@
 import { canonicalJson } from './canonical-json.ts';
-import { ExitCode, workflowError } from './errors.ts';
+import { ExitCode, WorkflowError, workflowError } from './errors.ts';
 import type {
   ApprovalSubject,
   GrantChoice,
@@ -31,6 +31,20 @@ export type AuthorizedTransitionContext<TParameters> = Readonly<{
   assertLifecycleOwned(): void;
 }>;
 
+export class GrantTransitionPreconditionError extends WorkflowError {
+  constructor(code: string, message: string) {
+    super({ code, message, exitCode: ExitCode.staleState });
+    this.name = 'GrantTransitionPreconditionError';
+  }
+}
+
+export function grantTransitionPreconditionChanged(
+  code: string,
+  message: string,
+): GrantTransitionPreconditionError {
+  return new GrantTransitionPreconditionError(code, message);
+}
+
 export type TransitionDefinition<TParameters> = Readonly<{
   transitionId: string;
   parameterSchemaDigest: `sha256:${string}`;
@@ -39,6 +53,7 @@ export type TransitionDefinition<TParameters> = Readonly<{
   validateParameters(value: unknown): TParameters;
   renderTrustedChoice(parameters: TParameters): TrustedChoicePresentation;
   observeState(parameters: TParameters): StateBinding | Promise<StateBinding>;
+  /** A GrantTransitionPreconditionError asserts no effect was applied. */
   execute(
     context: AuthorizedTransitionContext<TParameters>,
   ): Promise<TransitionOutcome>;
