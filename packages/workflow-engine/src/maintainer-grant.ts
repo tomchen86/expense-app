@@ -1,13 +1,10 @@
-import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
 import { canonicalJson } from './canonical-json.ts';
-import { authorityTagPublishCommand } from './authority-relay-command.ts';
 import { ExitCode, workflowError } from './errors.ts';
 import {
-  discoverRepository,
   isPostApprovalAdmissionFailure,
   runGit,
   runGitWithEnvironment,
@@ -25,14 +22,8 @@ import {
   assertHumanResolutionConsequences,
   assertHumanResolutionDecision,
   assertLegacySupersedeHumanResolutionDecisionReadOnly,
-  assertHumanResolutionLifecycleBarrier,
   humanResolutionDecisionSchemaDigest,
-  inspectInvestigationResolutionState,
-  inspectInvestigationQuarantineState,
-  readActiveHumanResolutionJournal,
   readInvestigationSession,
-  rollbackAvailableHumanResolutionGrant,
-  storeAvailableHumanResolutionGrant,
   type HumanResolutionConsequences,
   type HumanResolutionDecision,
   type HumanResolutionExpectedState,
@@ -46,7 +37,6 @@ import {
   assertPolicyPathInsideRepository,
   normalizeExactRepositoryPath,
 } from './paths.ts';
-import { withRepositoryLifecycleOperation } from './session-store.ts';
 
 const COMMIT_OID = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
 const DIGEST = /^[0-9a-f]{64}$/;
@@ -479,248 +469,14 @@ export function issueMaintainerGrant(
 }
 
 export function issueHumanResolutionGrant(
-  cwd: string,
-  request: HumanResolutionGrantRequest,
-  options: HumanResolutionGrantIssueOptions = {},
+  _cwd: string,
+  _request: HumanResolutionGrantRequest,
+  _options: HumanResolutionGrantIssueOptions = {},
 ): HumanResolutionGrantIssueResult {
-  const repository = discoverRepository(cwd);
-  const policy = loadBasePolicy(repository.repositoryRoot, repository.head);
-  const origin = runGit(repository.repositoryRoot, [
-    'remote',
-    'get-url',
-    'origin',
-  ]).trim();
-  if (origin !== policy.repository.origin) {
-    throw workflowError(
-      'MAINTAINER_REPOSITORY_MISMATCH',
-      'The repository origin does not match the trusted maintainer policy.',
-      ExitCode.guard,
-    );
-  }
-  const context = loadInvestigationRuntimeContext(repository.repositoryRoot);
-  assertHumanResolutionLifecycleBarrier(context.lifecycleRuntime.root);
-  const session = readInvestigationSession(
-    context.runtime,
-    request.investigationId,
-  );
-  if (
-    readActiveHumanResolutionJournal(context.runtime, session.changeId) !== null
-  ) {
-    throw workflowError(
-      'HUMAN_RESOLUTION_RECOVERY_REQUIRED',
-      'An active human-resolution transaction must be recovered before another grant is issued.',
-      ExitCode.conflict,
-    );
-  }
-  const decision = assertHumanResolutionDecision(request.decision);
-  const state =
-    decision.kind === 'quarantine'
-      ? inspectInvestigationQuarantineState(
-          context.runtime,
-          request.investigationId,
-          policy.repository.id,
-        )
-      : inspectInvestigationResolutionState(
-          context.runtime,
-          request.investigationId,
-          policy.repository.id,
-        );
-  const consequences = assertHumanResolutionConsequences(request.consequences);
-  assertResolutionDecisionAvailable(state, decision);
-  assertResolutionDecisionTarget(context.runtime, state, decision);
-  const ttlMinutes = request.ttlMinutes ?? policy.maxTtlMinutes;
-  if (
-    !Number.isInteger(ttlMinutes) ||
-    ttlMinutes < 1 ||
-    ttlMinutes > policy.maxTtlMinutes
-  ) {
-    throw humanResolutionGrantInvalid(
-      'Human resolution grant bounds exceed trusted policy.',
-    );
-  }
-  if (!validReason(request.rationale)) {
-    throw humanResolutionGrantInvalid(
-      'Human resolution rationale is malformed.',
-    );
-  }
-  const now = options.now ? new Date(options.now) : new Date();
-  if (!Number.isFinite(now.getTime())) {
-    throw humanResolutionGrantInvalid(
-      'Human resolution grant issue time is invalid.',
-    );
-  }
-  const grantId = options.grantId ?? crypto.randomUUID();
-  if (!GRANT_ID.test(grantId)) {
-    throw humanResolutionGrantInvalid('Human resolution grant ID is invalid.');
-  }
-  const tagRef = `${policy.auditTagPrefix}resolution-${grantId}`;
-  if (
-    runGit(
-      repository.repositoryRoot,
-      ['rev-parse', '--verify', tagRef],
-      true,
-    ).trim()
-  ) {
-    throw grantExists(grantId);
-  }
-  const signer =
-    options.signer ??
-    createInteractiveSshSigner(repository.repositoryRoot, policy);
-  signer.assertHumanPresent();
-  const signerIdentity = signer.identity();
-  const policyBlob = runGit(repository.repositoryRoot, [
-    'rev-parse',
-    `${repository.head}:workflow/maintainer-policy.json`,
-  ]).trim();
-  const blockerBinding = humanResolutionBlockerBinding(state);
-  const payload: HumanResolutionGrantPayload = {
-    version: 1,
-    grantId,
-    repositoryId: policy.repository.id,
-    repositoryOrigin: policy.repository.origin,
-    trustBaseCommit: repository.head,
-    policyBlob,
-    target: {
-      workflowKind: 'investigation',
-      changeId: state.envelope.changeId,
-      workflowId: state.envelope.investigationId,
-    },
-    expected: {
-      ...blockerBinding,
-      stateDigest: state.currentStateDigest,
-      currentRefDigest: state.currentRefDigest,
-    },
-    decision,
-    consequences,
-    rationale: request.rationale,
-    issuedAt: now.toISOString(),
-    expiresAt: new Date(now.getTime() + ttlMinutes * 60_000).toISOString(),
-    maxUses: 1,
-    signer: signerIdentity,
-  };
-  validateHumanResolutionGrantPayload(payload, policy, {
-    now,
-    expectedTrustBase: repository.head,
-    expectedPolicyBlob: policyBlob,
-    state,
-  });
-  const canonicalPayload = canonicalHumanResolutionGrantPayload(payload);
-  const signature = signer.sign(
-    canonicalPayload,
-    HUMAN_RESOLUTION_SIGNATURE_NAMESPACE,
-  );
-  assertArmoredSshSignature(signature);
-  signer.verify(
-    canonicalPayload,
-    signature,
-    signerIdentity,
-    HUMAN_RESOLUTION_SIGNATURE_NAMESPACE,
-  );
-  const envelope = { payload, signature };
-  const canonicalEnvelope = canonicalHumanResolutionGrantEnvelope(envelope);
-  const { availableTokenPath } = withRepositoryLifecycleOperation(
-    context.lifecycleRuntime,
-    (assertOwned) => {
-      const currentRepository = discoverRepository(repository.repositoryRoot);
-      if (
-        currentRepository.head !== repository.head ||
-        currentRepository.tree !== repository.tree
-      ) {
-        throw humanResolutionGrantInvalid(
-          'Repository baseline changed before human resolution grant publication.',
-        );
-      }
-      const currentState =
-        decision.kind === 'quarantine'
-          ? inspectInvestigationQuarantineState(
-              context.runtime,
-              request.investigationId,
-              policy.repository.id,
-            )
-          : inspectInvestigationResolutionState(
-              context.runtime,
-              request.investigationId,
-              policy.repository.id,
-            );
-      if (currentState.currentStateDigest !== state.currentStateDigest) {
-        throw humanResolutionGrantInvalid(
-          'Investigation state changed before human resolution grant publication.',
-        );
-      }
-      assertOwned();
-      const stored = storeAvailableHumanResolutionGrant(
-        context.runtime,
-        grantId,
-        canonicalEnvelope,
-      );
-      let tagObject: string | undefined;
-      try {
-        assertOwned();
-        tagObject = createMaintainerAuditTag(
-          repository.repositoryRoot,
-          repository.head,
-          tagRef,
-          canonicalEnvelope,
-          signerIdentity,
-        );
-        assertOwned();
-        return { availableTokenPath: stored };
-      } catch (error) {
-        if (tagObject !== undefined) {
-          try {
-            runGit(repository.repositoryRoot, [
-              'update-ref',
-              '-d',
-              tagRef,
-              tagObject,
-            ]);
-          } catch {
-            throw humanResolutionGrantPublicationRecoveryRequired();
-          }
-        } else if (
-          runGit(
-            repository.repositoryRoot,
-            ['rev-parse', '--verify', tagRef],
-            true,
-          ).trim()
-        ) {
-          throw humanResolutionGrantPublicationRecoveryRequired();
-        }
-        let rollback: ReturnType<typeof rollbackAvailableHumanResolutionGrant>;
-        try {
-          rollback = rollbackAvailableHumanResolutionGrant(
-            context.runtime,
-            grantId,
-            canonicalEnvelope,
-          );
-        } catch {
-          throw humanResolutionGrantPublicationRecoveryRequired();
-        }
-        if (rollback !== 'removed') {
-          throw humanResolutionGrantPublicationRecoveryRequired();
-        }
-        throw error;
-      }
-    },
-  );
-  return {
-    grantId,
-    tagRef,
-    publishCommand: authorityTagPublishCommand(
-      policy.repository.origin,
-      tagRef,
-    ),
-    availableTokenPath,
-    envelope,
-    state,
-  };
-}
-
-function humanResolutionGrantPublicationRecoveryRequired() {
-  return workflowError(
-    'HUMAN_RESOLUTION_GRANT_PUBLICATION_RECOVERY_REQUIRED',
-    'Human resolution grant publication could not safely reconcile its audit tag and local token.',
-    ExitCode.unsafeEnvironment,
+  throw workflowError(
+    'LEGACY_GRANT_V1_NEW_SIGNING_DISABLED',
+    'New V1 human-resolution grant signing is disabled; V1 records are historical read-only evidence.',
+    ExitCode.guard,
   );
 }
 
@@ -1276,7 +1032,7 @@ function validBoundedText(value: unknown, maxBytes: number): boolean {
   );
 }
 
-function humanResolutionBlockerBinding(
+export function humanResolutionBlockerBinding(
   state: InvestigationResolutionState,
 ): Pick<HumanResolutionExpectedState, 'reasonCode' | 'blockedTransition'> {
   const blocker = state.blocker;
@@ -1298,7 +1054,7 @@ function humanResolutionBlockerBinding(
   };
 }
 
-function assertResolutionDecisionAvailable(
+export function assertResolutionDecisionAvailable(
   state: InvestigationResolutionState,
   decision: HumanResolutionDecision,
 ): void {
@@ -1316,7 +1072,7 @@ function assertResolutionDecisionAvailable(
   }
 }
 
-function assertResolutionDecisionTarget(
+export function assertResolutionDecisionTarget(
   paths: ReturnType<typeof loadInvestigationRuntimeContext>['runtime'],
   state: InvestigationResolutionState,
   decision: HumanResolutionDecision,
@@ -1341,7 +1097,7 @@ function assertResolutionDecisionTarget(
   }
 }
 
-function assertResolutionConsequences(
+export function assertResolutionConsequences(
   decision: HumanResolutionDecision,
   consequences: HumanResolutionConsequences,
 ): void {

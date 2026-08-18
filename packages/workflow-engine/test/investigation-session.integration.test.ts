@@ -36,16 +36,17 @@ import { readInvestigationGroupNode } from '../src/investigation-groups.ts';
 import {
   createInvestigationCheckpointEnvelope,
   discardHumanResolutionGrantPublication,
-  executeHumanResolutionGrant,
+  executeGrantCoreHumanResolution,
   getInvestigationStatus,
   inspectHumanResolutionGrantPublicationRecoveries,
   inspectReviewerTermResolutionAuthorization,
   publishProviderResultToInvestigation,
-  recoverHumanResolutionGrant,
   resumeInvestigationSession,
   retryInvestigationProvider,
   SimulatedHumanResolutionCrash,
   startInvestigationSession,
+  type GrantCoreHumanResolutionAuthorization,
+  type GrantCoreHumanResolutionExecutionOptions,
 } from '../src/investigation-session.ts';
 import {
   createPlanningContributionEnvelope,
@@ -83,9 +84,9 @@ import {
   storeAvailableHumanResolutionGrant,
   withHumanResolutionGrantExecution,
   writeHumanResolutionJournal,
+  type HumanResolutionConsequences,
+  type HumanResolutionDecision,
 } from '../src/investigation-session-store.ts';
-import { issueHumanResolutionGrant } from '../src/maintainer-grant.ts';
-import type { MaintainerSignerProvider } from '../src/maintainer-signer.ts';
 import { investigationRuntimePaths } from '../src/paths.ts';
 import {
   withChangeTransitionAuthority,
@@ -117,6 +118,7 @@ import {
   storeProviderExecutionPolicySnapshot,
   type BlindSurveyManifest,
 } from '../src/provider-invocation-store.ts';
+import { humanResolutionBlockerBinding } from '../src/maintainer-grant.ts';
 import { abortSession, startSession } from '../src/session.ts';
 import {
   createFixtureRepository,
@@ -3169,37 +3171,27 @@ test('reviewer reopen limit preserves exact materialization evidence for human r
       nextRefs: { ...exactBlockedRefs },
     });
 
-    const signer = fixtureMaintainerSigner();
     const resumeAt = new Date('2026-07-30T10:00:00.000Z');
-    const resumeGrant = issueHumanResolutionGrant(
+    const resumedAuthorization = grantCoreHumanResolutionAuthorizationFixture(
       repository,
+      investigationId,
       {
-        investigationId,
-        decision: {
-          kind: 'resume-with-capability',
-          capability: 'reviewer-term-reopen',
-          parameters: { additionalUses: 1 },
-        },
-        consequences: {
-          continuity: 'preserved',
-          assurance: 'unchanged',
-          claimsWaived: [],
-        },
-        rationale:
-          'Permit one exact additional reviewer-term reopen in the fixture.',
+        kind: 'resume-with-capability',
+        capability: 'reviewer-term-reopen',
+        parameters: { additionalUses: 1 },
       },
       {
-        now: resumeAt,
-        grantId: 'a3111111-1111-4111-8111-111111111111',
-        signer,
+        continuity: 'preserved',
+        assurance: 'unchanged',
+        claimsWaived: [],
       },
+      'a3111111-1111-4111-8111-111111111111',
     );
-    const resumedResolution = executeHumanResolutionGrant(
+    const resumedResolution = executeGrantCoreHumanResolutionFixture(
       repository,
-      resumeGrant.grantId,
+      resumedAuthorization,
       {
         now: new Date(resumeAt.getTime() + 1_000),
-        verifier: signer,
       },
     );
     const authorizedButNotReopened = readInvestigationSession(
@@ -3250,35 +3242,26 @@ test('reviewer reopen limit preserves exact materialization evidence for human r
       strictInspection.currentStateDigest,
     );
     const closeAt = new Date('2026-07-30T10:05:00.000Z');
-    const closeGrant = issueHumanResolutionGrant(
+    const closedAuthorization = grantCoreHumanResolutionAuthorizationFixture(
       repository,
+      investigationId,
       {
-        investigationId,
-        decision: {
-          kind: 'close-input',
-          input: 'reviewer-terms',
-          parameters: {},
-        },
-        consequences: {
-          continuity: 'preserved',
-          assurance: 'degraded',
-          claimsWaived: ['reviewer-term-incorporation'],
-        },
-        rationale:
-          'Close reviewer-term input while admitting the exact retained review.',
+        kind: 'close-input',
+        input: 'reviewer-terms',
+        parameters: {},
       },
       {
-        now: closeAt,
-        grantId: 'a4111111-1111-4111-8111-111111111111',
-        signer,
+        continuity: 'preserved',
+        assurance: 'degraded',
+        claimsWaived: ['reviewer-term-incorporation'],
       },
+      'a4111111-1111-4111-8111-111111111111',
     );
-    const closedResolution = executeHumanResolutionGrant(
+    const closedResolution = executeGrantCoreHumanResolutionFixture(
       repository,
-      closeGrant.grantId,
+      closedAuthorization,
       {
         now: new Date(closeAt.getTime() + 1_000),
-        verifier: signer,
       },
     );
     assert.notEqual(
@@ -6688,21 +6671,6 @@ test('quarantine retires a legacy materialization whose monolithic session revis
     'invocation-quarantine-stale-materialization',
   );
   const now = new Date('2026-07-29T22:00:00.000Z');
-  const signer: MaintainerSignerProvider = {
-    assertHumanPresent() {},
-    identity() {
-      return 'fixture-maintainer';
-    },
-    sign() {
-      return [
-        '-----BEGIN SSH SIGNATURE-----',
-        'AAAA',
-        '-----END SSH SIGNATURE-----',
-        '',
-      ].join('\n');
-    },
-    verify() {},
-  };
   try {
     const started = startFixture(fixture);
     const artifacts = {};
@@ -6830,31 +6798,24 @@ test('quarantine retires a legacy materialization whose monolithic session revis
       ['quarantine'],
     );
 
-    const issueQuarantine = (grantId: string) =>
-      issueHumanResolutionGrant(
+    const quarantineAuthorization = (challengeId: string) =>
+      grantCoreHumanResolutionAuthorizationFixture(
         fixture.repository,
+        started.investigationId,
         {
-          investigationId: started.investigationId,
-          decision: {
-            kind: 'quarantine',
-            parameters: {
-              reason:
-                'The persisted materialization no longer matches the durable session revision.',
-            },
+          kind: 'quarantine',
+          parameters: {
+            reason:
+              'The persisted materialization no longer matches the durable session revision.',
           },
-          consequences: {
-            continuity: 'not-applicable',
-            assurance: 'degraded',
-            claimsWaived: [],
-          },
-          rationale:
-            'Quarantine the exact observed evidence-ref document without inventing a repaired interpretation.',
         },
         {
-          now,
-          grantId,
-          signer,
+          continuity: 'not-applicable',
+          assurance: 'degraded',
+          claimsWaived: [],
         },
+        challengeId,
+        true,
       );
     const exactEvidence = fs.readFileSync(evidencePath);
     const quarantineDirectory = path.join(
@@ -6876,19 +6837,24 @@ test('quarantine retires a legacy materialization whose monolithic session revis
     );
     const exactCurrentRef = fs.readFileSync(currentRefPath);
     const exactStartReservation = fs.readFileSync(startReservationPath);
-    const staleGrant = issueQuarantine('d1111111-1111-4111-8111-111111111111');
+    const staleAuthorization = quarantineAuthorization(
+      'd1111111-1111-4111-8111-111111111111',
+    );
     const mutatedEvidence = Buffer.concat([exactEvidence, Buffer.from(' ')]);
     fs.writeFileSync(evidencePath, mutatedEvidence);
     assert.throws(
       () =>
-        executeHumanResolutionGrant(fixture.repository, staleGrant.grantId, {
-          now: new Date(now.getTime() + 1_000),
-          verifier: signer,
-        }),
-      (error) => isWorkflowError(error, 'HUMAN_RESOLUTION_GRANT_STALE'),
+        executeGrantCoreHumanResolutionFixture(
+          fixture.repository,
+          staleAuthorization,
+          {
+            now: new Date(now.getTime() + 1_000),
+          },
+        ),
+      (error) => isWorkflowError(error, 'GRANT_STATE_CHANGED'),
     );
     assert.equal(
-      readHumanResolutionJournal(fixture.paths, staleGrant.grantId),
+      readHumanResolutionJournal(fixture.paths, staleAuthorization.challengeId),
       null,
     );
     assert.deepEqual(fs.readFileSync(evidencePath), mutatedEvidence);
@@ -6900,20 +6866,26 @@ test('quarantine retires a legacy materialization whose monolithic session revis
     assert.deepEqual(quarantineArtifacts(), []);
     fs.writeFileSync(evidencePath, exactEvidence);
 
-    const issued = issueQuarantine('d2111111-1111-4111-8111-111111111111');
+    const authorization = quarantineAuthorization(
+      'd2111111-1111-4111-8111-111111111111',
+    );
     assert.throws(
       () =>
-        executeHumanResolutionGrant(fixture.repository, issued.grantId, {
-          now: new Date(now.getTime() + 1_000),
-          verifier: signer,
-          simulateCrashAfter: 'evidence-refs',
-        }),
+        executeGrantCoreHumanResolutionFixture(
+          fixture.repository,
+          authorization,
+          {
+            now: new Date(now.getTime() + 1_000),
+            simulateCrashAfter: 'evidence-refs',
+          },
+        ),
       (error) =>
         error instanceof SimulatedHumanResolutionCrash &&
         error.phase === 'evidence-refs',
     );
     assert.equal(
-      readHumanResolutionJournal(fixture.paths, issued.grantId)?.phase,
+      readHumanResolutionJournal(fixture.paths, authorization.challengeId)
+        ?.phase,
       'evidence-refs-published',
     );
     assert.equal(fs.existsSync(evidencePath), false);
@@ -6927,12 +6899,11 @@ test('quarantine retires a legacy materialization whose monolithic session revis
     );
     assert.deepEqual(fs.readFileSync(quarantinedEvidencePath), exactEvidence);
     assert.equal(fs.statSync(quarantinedEvidencePath).mode & 0o777, 0o600);
-    const result = recoverHumanResolutionGrant(
+    const result = executeGrantCoreHumanResolutionFixture(
       fixture.repository,
-      issued.grantId,
+      authorization,
       {
         now: new Date(now.getTime() + 2_000),
-        verifier: signer,
       },
     );
     assert.equal(result.recovered, true);
@@ -8264,6 +8235,79 @@ function writeFixtureProviderRuntime(
   }
 }
 
+function grantCoreHumanResolutionAuthorizationFixture(
+  repository: string,
+  investigationId: string,
+  decision: HumanResolutionDecision,
+  consequences: HumanResolutionConsequences,
+  challengeId: string,
+  quarantine = false,
+): GrantCoreHumanResolutionAuthorization {
+  const repositoryState = discoverRepository(repository);
+  const runtime = investigationRuntimePaths(
+    repositoryState.gitCommonDirectory,
+    'workflow-engine',
+  );
+  const state = quarantine
+    ? inspectInvestigationQuarantineState(
+        runtime,
+        investigationId,
+        'github:R_fixture',
+      )
+    : inspectInvestigationResolutionState(
+        runtime,
+        investigationId,
+        'github:R_fixture',
+      );
+  return {
+    schemaVersion: 1,
+    kind: 'grant-core-human-resolution.v1',
+    challengeId,
+    approvalSubjectDigest: `sha256:${sha256(`approval-${challengeId}`)}`,
+    repositoryId: state.envelope.repositoryId,
+    repositoryHead: repositoryState.head,
+    repositoryTree: repositoryState.tree,
+    target: {
+      workflowKind: 'investigation',
+      changeId: state.envelope.changeId,
+      workflowId: state.envelope.investigationId,
+    },
+    expected: {
+      ...humanResolutionBlockerBinding(state),
+      stateDigest: state.currentStateDigest,
+      currentRefDigest: state.currentRefDigest,
+    },
+    decision,
+    consequences,
+  };
+}
+
+function executeGrantCoreHumanResolutionFixture(
+  repository: string,
+  authorization: GrantCoreHumanResolutionAuthorization,
+  options: GrantCoreHumanResolutionExecutionOptions = {},
+) {
+  const repositoryState = discoverRepository(repository);
+  const runtime = workflowRuntimePaths(
+    repositoryState.gitCommonDirectory,
+    'workflow-engine',
+  );
+  return withRepositoryLifecycleOperation(
+    runtime,
+    (assertOwned) =>
+      executeGrantCoreHumanResolution(
+        repository,
+        authorization,
+        assertOwned,
+        options,
+      ),
+    {
+      allowHumanResolutionGrantId: authorization.challengeId,
+      allowHumanResolutionChangeId: authorization.target.changeId,
+    },
+  );
+}
+
 function installFixtureMaintainerPolicy(repository: string): void {
   const origin = 'https://github.com/example/fixture.git';
   git(repository, ['remote', 'add', 'origin', origin]);
@@ -8294,21 +8338,6 @@ function installFixtureMaintainerPolicy(repository: string): void {
       2,
     )}\n`,
   );
-}
-
-function fixtureMaintainerSigner(): MaintainerSignerProvider {
-  return {
-    assertHumanPresent() {},
-    identity: () => 'fixture-maintainer',
-    sign: () =>
-      [
-        '-----BEGIN SSH SIGNATURE-----',
-        'AAAA',
-        '-----END SSH SIGNATURE-----',
-        '',
-      ].join('\n'),
-    verify() {},
-  };
 }
 
 function investigationFixture(invocationId: string): InvestigationFixture {

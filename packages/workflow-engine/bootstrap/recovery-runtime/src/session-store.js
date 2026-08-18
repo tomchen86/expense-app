@@ -5,6 +5,7 @@ import { isPlanningAssuranceBinding, } from './contracts.js';
 import { ExitCode, workflowError } from './errors.js';
 import { ensurePlainDirectory, publishPreparedExclusiveLock, reclaimDeadPreparedLock, withPreparedLockCleanupClaim, } from './filesystem-safety.js';
 import { assertHumanResolutionLifecycleBarrier, reclaimHumanResolutionJournalTemporaries, } from './investigation-session-store.js';
+import { assertGrantLifecycleBarrier } from './grant-store.js';
 import { normalizePolicyPath } from './paths.js';
 const MAINTAINER_GRANT_STATE_FILE = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\.json$/;
 const SESSION_LOCK_OWNER_TOKEN = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
@@ -119,6 +120,31 @@ function reclaimDeadSessionOperationLock(lockPath, expectedSessionId) {
     return result === 'absent' || result === 'reclaimed';
 }
 export function withRepositoryLifecycleOperation(runtime, operation, options = {}) {
+    const lease = acquireRepositoryLifecycleLease(runtime, options);
+    let result;
+    try {
+        result = operation(lease.assertOwned);
+    }
+    catch (operationError) {
+        releaseAfterOperationError(lease, operationError);
+    }
+    lease.release();
+    return result;
+}
+export async function withRepositoryLifecycleOperationAsync(runtime, operation, options = {}) {
+    const lease = acquireRepositoryLifecycleLease(runtime, options);
+    let result;
+    try {
+        result = await operation(lease.assertOwned);
+    }
+    catch (operationError) {
+        releaseAfterOperationError(lease, operationError);
+    }
+    lease.release();
+    return result;
+}
+function acquireRepositoryLifecycleLease(runtime, options) {
+    assertGrantLifecycleBarrier(runtime.root, options.allowGrantChallengeId ?? null);
     assertHumanResolutionLifecycleBarrier(runtime.root, options.allowHumanResolutionGrantId ?? null, options.allowHumanResolutionChangeId ?? null);
     ensurePlainDirectory(runtime.operations);
     const lockPath = path.join(runtime.operations, 'repository-lifecycle.lock');
@@ -196,28 +222,36 @@ export function withRepositoryLifecycleOperation(runtime, operation, options = {
         fs.unlinkSync(lockPath);
         fsyncDirectory(path.dirname(lockPath));
     };
-    let result;
     try {
         reclaimHumanResolutionJournalTemporaries(runtime.root, assertOwned);
         const assertLifecycleOwned = () => {
             assertOwned();
+            assertGrantLifecycleBarrier(runtime.root, options.allowGrantChallengeId ?? null);
             assertHumanResolutionLifecycleBarrier(runtime.root, options.allowHumanResolutionGrantId ?? null, options.allowHumanResolutionChangeId ?? null);
         };
         assertHumanResolutionLifecycleBarrier(runtime.root, options.allowHumanResolutionGrantId ?? null, options.allowHumanResolutionChangeId ?? null);
+        assertGrantLifecycleBarrier(runtime.root, options.allowGrantChallengeId ?? null);
         assertMaintainerReservationCompatibility(runtime, options.allowMaintainerGrantId);
-        result = operation(assertLifecycleOwned);
+        return { assertOwned: assertLifecycleOwned, release };
     }
-    catch (operationError) {
+    catch (setupError) {
         try {
             release();
         }
         catch (releaseError) {
-            throw new AggregateError([operationError, releaseError], 'Repository lifecycle operation and lock release both failed.', { cause: releaseError });
+            throw new AggregateError([setupError, releaseError], 'Repository lifecycle setup and lock release both failed.', { cause: releaseError });
         }
-        throw operationError;
+        throw setupError;
     }
-    release();
-    return result;
+}
+function releaseAfterOperationError(lease, operationError) {
+    try {
+        lease.release();
+    }
+    catch (releaseError) {
+        throw new AggregateError([operationError, releaseError], 'Repository lifecycle operation and lock release both failed.', { cause: releaseError });
+    }
+    throw operationError;
 }
 function reclaimDeadRepositoryLifecycleLock(lockPath) {
     const result = reclaimDeadPreparedLock(lockPath, (content) => {

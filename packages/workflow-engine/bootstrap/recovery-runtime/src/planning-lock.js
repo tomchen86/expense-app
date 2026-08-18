@@ -97,6 +97,26 @@ export function withHumanResolutionTransitionAuthority(runtime, changeId, active
         allowHumanResolutionChangeId: activeGrantId === null ? undefined : changeId,
     });
 }
+/**
+ * Grant Core already owns the repository lifecycle lease while it invokes a
+ * registered transition. This helper adds only the exact per-change
+ * human-resolution authority, avoiding a nested repository lock while
+ * preserving the existing active-task and durable-journal barriers.
+ */
+export function withGrantHumanResolutionTransitionAuthority(runtime, changeId, activeGrantId, assertRepositoryLock, operation) {
+    assertRepositoryLock();
+    assertHumanResolutionLifecycleBarrier(runtime.root, activeGrantId, changeId);
+    reclaimDeadChangeTransitionLock(runtime, changeId, assertRepositoryLock);
+    return withChangeTransitionLock(runtime, changeId, 'human-resolution', (assertChangeLock) => {
+        assertNoActiveSessionsForChange(runtime, changeId);
+        assertHumanResolutionBarrier(runtime, changeId, activeGrantId);
+        return operation(heldChangeTransitionAuthority(changeId, () => {
+            assertRepositoryLock();
+            assertChangeLock();
+            assertHumanResolutionBarrier(runtime, changeId, activeGrantId);
+        }));
+    });
+}
 export function withChangeTransitionAuthority(runtime, changeId, transition, operation) {
     assertHumanResolutionLifecycleBarrier(runtime.root, null);
     return withRepositoryLifecycleOperation(runtime, (assertRepositoryLock) => {

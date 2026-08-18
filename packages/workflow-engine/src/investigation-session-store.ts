@@ -376,6 +376,7 @@ export type HumanResolutionJournal = {
     | 'current-ref-published'
     | 'state-published'
     | 'receipt-written'
+    | 'completed'
     | 'grant-consumed';
   grantId: string;
   grantDigest: string;
@@ -3478,7 +3479,7 @@ export function writeHumanResolutionJournal(
     validated.target.changeId,
   );
   const historicalPath = humanResolutionJournalPath(paths, validated.grantId);
-  if (validated.phase === 'grant-consumed') {
+  if (isTerminalHumanResolutionJournalPhase(validated.phase)) {
     const active = readActiveHumanResolutionJournal(
       paths,
       validated.target.changeId,
@@ -3493,7 +3494,8 @@ export function writeHumanResolutionJournal(
         validated.grantId,
       );
       if (
-        historical?.phase === 'grant-consumed' &&
+        historical !== null &&
+        isTerminalHumanResolutionJournalPhase(historical.phase) &&
         historical.journalId === validated.journalId
       ) {
         return;
@@ -3562,8 +3564,15 @@ function humanResolutionJournalPhaseIndex(
     'current-ref-published',
     'state-published',
     'receipt-written',
+    'completed',
     'grant-consumed',
   ].indexOf(phase);
+}
+
+function isTerminalHumanResolutionJournalPhase(
+  phase: HumanResolutionJournal['phase'],
+): boolean {
+  return phase === 'completed' || phase === 'grant-consumed';
 }
 
 export function readHumanResolutionJournal(
@@ -3624,7 +3633,10 @@ function readHistoricalHumanResolutionJournal(
   const journal = assertHumanResolutionJournal(
     readPrivateCanonicalJson(paths, journalPath, humanResolutionJournalUnsafe),
   );
-  if (journal.grantId !== grantId || journal.phase !== 'grant-consumed') {
+  if (
+    journal.grantId !== grantId ||
+    !isTerminalHumanResolutionJournalPhase(journal.phase)
+  ) {
     throw humanResolutionJournalUnsafe();
   }
   return journal;
@@ -5732,6 +5744,7 @@ function assertHumanResolutionJournal(value: unknown): HumanResolutionJournal {
       'current-ref-published',
       'state-published',
       'receipt-written',
+      'completed',
       'grant-consumed',
     ].includes(String(value.phase)) ||
     typeof value.grantId !== 'string' ||

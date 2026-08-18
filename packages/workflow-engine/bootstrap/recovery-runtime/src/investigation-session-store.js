@@ -1930,13 +1930,14 @@ export function writeHumanResolutionJournal(paths, journal) {
     const validated = assertHumanResolutionJournal(journal);
     const activePath = activeHumanResolutionJournalPath(paths, validated.target.changeId);
     const historicalPath = humanResolutionJournalPath(paths, validated.grantId);
-    if (validated.phase === 'grant-consumed') {
+    if (isTerminalHumanResolutionJournalPhase(validated.phase)) {
         const active = readActiveHumanResolutionJournal(paths, validated.target.changeId);
         if (active === null ||
             active.journalId !== validated.journalId ||
             active.grantId !== validated.grantId) {
             const historical = readHistoricalHumanResolutionJournal(paths, validated.grantId);
-            if (historical?.phase === 'grant-consumed' &&
+            if (historical !== null &&
+                isTerminalHumanResolutionJournalPhase(historical.phase) &&
                 historical.journalId === validated.journalId) {
                 return;
             }
@@ -1973,8 +1974,12 @@ function humanResolutionJournalPhaseIndex(phase) {
         'current-ref-published',
         'state-published',
         'receipt-written',
+        'completed',
         'grant-consumed',
     ].indexOf(phase);
+}
+function isTerminalHumanResolutionJournalPhase(phase) {
+    return phase === 'completed' || phase === 'grant-consumed';
 }
 export function readHumanResolutionJournal(paths, requestedGrantId) {
     const grantId = assertHumanResolutionGrantId(requestedGrantId);
@@ -2020,7 +2025,8 @@ function readHistoricalHumanResolutionJournal(paths, grantId) {
         return null;
     }
     const journal = assertHumanResolutionJournal(readPrivateCanonicalJson(paths, journalPath, humanResolutionJournalUnsafe));
-    if (journal.grantId !== grantId || journal.phase !== 'grant-consumed') {
+    if (journal.grantId !== grantId ||
+        !isTerminalHumanResolutionJournalPhase(journal.phase)) {
         throw humanResolutionJournalUnsafe();
     }
     return journal;
@@ -3517,6 +3523,7 @@ function assertHumanResolutionJournal(value) {
             'current-ref-published',
             'state-published',
             'receipt-written',
+            'completed',
             'grant-consumed',
         ].includes(String(value.phase)) ||
         typeof value.grantId !== 'string' ||

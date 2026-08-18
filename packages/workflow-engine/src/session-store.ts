@@ -17,6 +17,7 @@ import {
   assertHumanResolutionLifecycleBarrier,
   reclaimHumanResolutionJournalTemporaries,
 } from './investigation-session-store.ts';
+import { assertGrantLifecycleBarrier } from './grant-store.ts';
 import { normalizePolicyPath } from './paths.ts';
 
 const MAINTAINER_GRANT_STATE_FILE =
@@ -216,15 +217,58 @@ function reclaimDeadSessionOperationLock(
   return result === 'absent' || result === 'reclaimed';
 }
 
+export type RepositoryLifecycleOperationOptions = Readonly<{
+  allowMaintainerGrantId?: string;
+  allowHumanResolutionGrantId?: string;
+  allowHumanResolutionChangeId?: string;
+  allowGrantChallengeId?: string;
+}>;
+
+type RepositoryLifecycleLease = Readonly<{
+  assertOwned(): void;
+  release(): void;
+}>;
+
 export function withRepositoryLifecycleOperation<T>(
   runtime: ReturnType<typeof runtimePaths>,
   operation: (assertOwned: () => void) => T,
-  options: {
-    allowMaintainerGrantId?: string;
-    allowHumanResolutionGrantId?: string;
-    allowHumanResolutionChangeId?: string;
-  } = {},
+  options: RepositoryLifecycleOperationOptions = {},
 ): T {
+  const lease = acquireRepositoryLifecycleLease(runtime, options);
+  let result: T;
+  try {
+    result = operation(lease.assertOwned);
+  } catch (operationError) {
+    releaseAfterOperationError(lease, operationError);
+  }
+  lease.release();
+  return result!;
+}
+
+export async function withRepositoryLifecycleOperationAsync<T>(
+  runtime: ReturnType<typeof runtimePaths>,
+  operation: (assertOwned: () => void) => Promise<T>,
+  options: RepositoryLifecycleOperationOptions = {},
+): Promise<T> {
+  const lease = acquireRepositoryLifecycleLease(runtime, options);
+  let result: T;
+  try {
+    result = await operation(lease.assertOwned);
+  } catch (operationError) {
+    releaseAfterOperationError(lease, operationError);
+  }
+  lease.release();
+  return result!;
+}
+
+function acquireRepositoryLifecycleLease(
+  runtime: ReturnType<typeof runtimePaths>,
+  options: RepositoryLifecycleOperationOptions,
+): RepositoryLifecycleLease {
+  assertGrantLifecycleBarrier(
+    runtime.root,
+    options.allowGrantChallengeId ?? null,
+  );
   assertHumanResolutionLifecycleBarrier(
     runtime.root,
     options.allowHumanResolutionGrantId ?? null,
@@ -329,11 +373,14 @@ export function withRepositoryLifecycleOperation<T>(
     fsyncDirectory(path.dirname(lockPath));
   };
 
-  let result: T;
   try {
     reclaimHumanResolutionJournalTemporaries(runtime.root, assertOwned);
     const assertLifecycleOwned = () => {
       assertOwned();
+      assertGrantLifecycleBarrier(
+        runtime.root,
+        options.allowGrantChallengeId ?? null,
+      );
       assertHumanResolutionLifecycleBarrier(
         runtime.root,
         options.allowHumanResolutionGrantId ?? null,
@@ -345,25 +392,43 @@ export function withRepositoryLifecycleOperation<T>(
       options.allowHumanResolutionGrantId ?? null,
       options.allowHumanResolutionChangeId ?? null,
     );
+    assertGrantLifecycleBarrier(
+      runtime.root,
+      options.allowGrantChallengeId ?? null,
+    );
     assertMaintainerReservationCompatibility(
       runtime,
       options.allowMaintainerGrantId,
     );
-    result = operation(assertLifecycleOwned);
-  } catch (operationError) {
+    return { assertOwned: assertLifecycleOwned, release };
+  } catch (setupError) {
     try {
       release();
     } catch (releaseError) {
       throw new AggregateError(
-        [operationError, releaseError],
-        'Repository lifecycle operation and lock release both failed.',
+        [setupError, releaseError],
+        'Repository lifecycle setup and lock release both failed.',
         { cause: releaseError },
       );
     }
-    throw operationError;
+    throw setupError;
   }
-  release();
-  return result;
+}
+
+function releaseAfterOperationError(
+  lease: RepositoryLifecycleLease,
+  operationError: unknown,
+): never {
+  try {
+    lease.release();
+  } catch (releaseError) {
+    throw new AggregateError(
+      [operationError, releaseError],
+      'Repository lifecycle operation and lock release both failed.',
+      { cause: releaseError },
+    );
+  }
+  throw operationError;
 }
 
 function reclaimDeadRepositoryLifecycleLock(lockPath: string): boolean {

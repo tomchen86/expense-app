@@ -55,6 +55,8 @@ test('maintainer policy is a pinned workflow contract artifact', () => {
     artifacts.includes('workflow/schemas/authority-attestation.schema.json'),
   );
   assert.ok(artifacts.includes('workflow/path-roles.json'));
+  assert.ok(artifacts.includes('workflow/grant-policy.json'));
+  assert.ok(artifacts.includes('workflow/schemas/grant-policy.schema.json'));
 });
 
 test('task authorization binds the one reviewed path-role registry artifact', () => {

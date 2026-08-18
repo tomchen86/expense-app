@@ -1,0 +1,120 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://expense-app.local/workflow/grant-policy.schema.json",
+  "title": "Human Gate Grant Policy",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "defaultProfile",
+    "profiles",
+    "approvalModules",
+    "legacyVerification"
+  ],
+  "properties": {
+    "schemaVersion": { "const": 2 },
+    "defaultProfile": { "const": "local-presence" },
+    "profiles": {
+      "type": "object",
+      "minProperties": 1,
+      "propertyNames": {
+        "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+      },
+      "required": ["local-presence"],
+      "additionalProperties": { "$ref": "#/$defs/profile" }
+    },
+    "approvalModules": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/approvalModule" }
+    },
+    "optionalSsh": { "$ref": "#/$defs/optionalSsh" },
+    "legacyVerification": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["maintainerPolicyV1"],
+      "properties": {
+        "maintainerPolicyV1": { "const": "read-only" }
+      }
+    }
+  },
+  "$defs": {
+    "approvalClaim": {
+      "enum": ["fresh-local-device-owner", "ssh-signature"]
+    },
+    "profile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["requiredClaims"],
+      "properties": {
+        "requiredClaims": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/approvalClaim" }
+        }
+      }
+    },
+    "approvalModule": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "moduleId",
+        "version",
+        "allowedClaims",
+        "configurationDigest"
+      ],
+      "properties": {
+        "moduleId": {
+          "enum": ["human-gate-macos", "grant-proof-ssh"]
+        },
+        "version": { "const": "1" },
+        "allowedClaims": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/approvalClaim" }
+        },
+        "configurationDigest": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$"
+        }
+      }
+    },
+    "optionalSsh": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["signatureNamespace", "trustedSigners"],
+      "properties": {
+        "signatureNamespace": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
+        },
+        "trustedSigners": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/trustedSigner" }
+        }
+      }
+    },
+    "trustedSigner": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["identity", "publicKey", "fingerprint"],
+      "properties": {
+        "identity": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._@+-]{0,127}$"
+        },
+        "publicKey": {
+          "type": "string",
+          "pattern": "^ssh-(?:ed25519|ed25519-sk|rsa|ecdsa-[^ ]+) [A-Za-z0-9+/]+={0,2}$"
+        },
+        "fingerprint": {
+          "type": "string",
+          "pattern": "^SHA256:[A-Za-z0-9+/]{20,}$"
+        }
+      }
+    }
+  }
+}
