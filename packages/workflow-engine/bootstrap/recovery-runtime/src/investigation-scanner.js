@@ -65,7 +65,7 @@ export function hitContextWindow(haystack, byteOffset, byteLength) {
  * closed. A per-term, aggregate, work, or scanned-byte overage returns typed
  * `requires-narrowing` with the original terms and no partial nodes.
  */
-export function scanInvestigationTree(request) {
+export function scanInvestigationTreeFacts(request) {
     const { repositoryRoot, treeOid, terms } = request;
     const allowSaturatedTerms = request.allowSaturatedTerms === true;
     const limits = assertInvestigationLimits(request.limits ?? { ...INVESTIGATION_LIMITS });
@@ -88,7 +88,7 @@ export function scanInvestigationTree(request) {
     });
     assertOperationalScanBudget(operationalDeadline, scanCpuStart, limits.maxScanCpuMillis);
     const policyDigest = computePolicyDigest(limits);
-    const inventory = buildInventory(snapshot, policyDigest);
+    const inventory = buildInventoryFacts(snapshot);
     const violations = [];
     if (snapshot.budgetExceeded) {
         violations.push({ code: 'SCANNED_BYTE_LIMIT_EXCEEDED' });
@@ -135,21 +135,67 @@ export function scanInvestigationTree(request) {
         violations.sort(compareViolations);
         return {
             outcome: 'requires-narrowing',
-            nodes: [],
+            policyDigest,
             inventory,
             violations,
             terms,
         };
     }
     const saturated = allowSaturatedTerms ? saturatedTermIds : [];
-    const nodes = terms
-        .map((term, index) => buildScanNode(term, perTermHits[index], snapshot.treeDigest, policyDigest))
+    const termFacts = terms
+        .map((term, index) => ({
+        term: structuredClone(term),
+        hits: structuredClone(perTermHits[index]),
+    }))
+        .sort((left, right) => (left.term.termId < right.term.termId ? -1 : 1));
+    return {
+        outcome: 'ready',
+        facts: {
+            schemaVersion: 1,
+            kind: 'investigation-scan-facts',
+            treeDigest: snapshot.treeDigest,
+            policyDigest,
+            inventory,
+            terms: termFacts,
+        },
+        ...(saturated.length === 0 ? {} : { saturatedTermIds: saturated }),
+    };
+}
+/**
+ * Compatibility adapter for the schema-v2 shadow authority. New manifest
+ * construction consumes `scanInvestigationTreeFacts` directly and never needs
+ * these generic evidence envelopes.
+ */
+export function scanInvestigationTree(request) {
+    return adaptInvestigationScanFactsResult(scanInvestigationTreeFacts(request));
+}
+/**
+ * Build the temporary schema-v2 evidence view from one already-computed domain
+ * scan. Shadow mode calls this adapter so v2 and v3 observe the same scanner
+ * execution instead of independently reopening Git and merely hoping that two
+ * executions had equivalent inputs.
+ */
+export function adaptInvestigationScanFactsResult(result) {
+    if (result.outcome !== 'ready') {
+        return {
+            outcome: 'requires-narrowing',
+            nodes: [],
+            inventory: adaptInventoryFacts(result.inventory, result.policyDigest),
+            violations: result.violations,
+            terms: result.terms,
+        };
+    }
+    const { facts } = result;
+    const nodes = facts.terms
+        .map(({ term, hits }) => buildScanNode(term, hits, facts.treeDigest, facts.policyDigest))
         .sort((left, right) => scanNodeTermId(left) < scanNodeTermId(right) ? -1 : 1);
     return {
         outcome: 'ready',
         nodes,
-        inventory,
-        ...(saturated.length === 0 ? {} : { saturatedTermIds: saturated }),
+        inventory: adaptInventoryFacts(facts.inventory, facts.policyDigest),
+        ...(result.saturatedTermIds === undefined
+            ? {}
+            : { saturatedTermIds: [...result.saturatedTermIds] }),
     };
 }
 function assertScanTerms(terms) {
@@ -315,7 +361,7 @@ function buildScanNode(term, hits, treeDigest, policyDigest) {
         runtimeMetadata: {},
     });
 }
-function buildInventory(snapshot, policyDigest) {
+function buildInventoryFacts(snapshot) {
     const skippedObjects = snapshot.entries
         .filter((entry) => entry.skipReason !== undefined)
         .map((entry) => ({
@@ -329,16 +375,22 @@ function buildInventory(snapshot, policyDigest) {
     return {
         treeDigest: snapshot.treeDigest,
         skippedObjects,
+    };
+}
+function adaptInventoryFacts(facts, policyDigest) {
+    return {
+        treeDigest: facts.treeDigest,
+        skippedObjects: structuredClone(facts.skippedObjects),
         evidenceNode: createEvidenceNode({
             type: INVENTORY_NODE_TYPE,
             nodeSchema: INVENTORY_NODE_SCHEMA,
             evaluator: NODE_EVALUATOR,
             policyDigest,
-            exactInputDigests: { tree: snapshot.treeDigest },
+            exactInputDigests: { tree: facts.treeDigest },
             semanticParentResultDigests: {},
             provenanceParentNodeIds: {},
             outputSchema: INVENTORY_OUTPUT_SCHEMA,
-            output: { skippedObjects },
+            output: { skippedObjects: facts.skippedObjects },
             runtimeMetadata: {},
         }),
     };

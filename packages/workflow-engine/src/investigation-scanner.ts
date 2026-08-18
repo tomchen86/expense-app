@@ -140,6 +140,29 @@ export type ScanSkippedObject = {
   reason: TrackedTreeSkipReason;
 };
 
+export type ScanInventoryFacts = {
+  treeDigest: string;
+  skippedObjects: readonly ScanSkippedObject[];
+};
+
+export type InvestigationScanTermFacts = {
+  term: ScanInvestigationTerm;
+  hits: ScanHit[];
+};
+
+/**
+ * Deterministic scanner output before any legacy evidence envelope is built.
+ * This is the scanner boundary consumed by the manifest-first v3 writer.
+ */
+export type InvestigationScanFacts = {
+  schemaVersion: 1;
+  kind: 'investigation-scan-facts';
+  treeDigest: string;
+  policyDigest: string;
+  inventory: ScanInventoryFacts;
+  terms: InvestigationScanTermFacts[];
+};
+
 export type ScanInventory = {
   treeDigest: string;
   skippedObjects: readonly ScanSkippedObject[];
@@ -179,6 +202,23 @@ export type NarrowingScanResult = {
 
 export type InvestigationScanResult = ReadyScanResult | NarrowingScanResult;
 
+export type ReadyScanFactsResult = {
+  outcome: 'ready';
+  facts: InvestigationScanFacts;
+  saturatedTermIds?: string[];
+};
+
+export type NarrowingScanFactsResult = {
+  outcome: 'requires-narrowing';
+  policyDigest: string;
+  inventory: ScanInventoryFacts;
+  violations: ScanViolation[];
+  terms: ScanInvestigationTerm[];
+};
+
+export type InvestigationScanFactsResult =
+  ReadyScanFactsResult | NarrowingScanFactsResult;
+
 /**
  * Deterministically scan every sealed term against the pinned Git-tracked tree
  * and emit one independent EvidenceNode per term, sorted by term ID so caller
@@ -191,7 +231,7 @@ export type InvestigationScanResult = ReadyScanResult | NarrowingScanResult;
  * closed. A per-term, aggregate, work, or scanned-byte overage returns typed
  * `requires-narrowing` with the original terms and no partial nodes.
  */
-export function scanInvestigationTree(request: {
+export function scanInvestigationTreeFacts(request: {
   repositoryRoot: string;
   treeOid: string;
   terms: ScanInvestigationTerm[];
@@ -207,7 +247,7 @@ export function scanInvestigationTree(request: {
    * merely convenient.
    */
   allowSaturatedTerms?: boolean;
-}): InvestigationScanResult {
+}): InvestigationScanFactsResult {
   const { repositoryRoot, treeOid, terms } = request;
   const allowSaturatedTerms = request.allowSaturatedTerms === true;
   const limits = assertInvestigationLimits(
@@ -240,7 +280,7 @@ export function scanInvestigationTree(request: {
   );
 
   const policyDigest = computePolicyDigest(limits);
-  const inventory = buildInventory(snapshot, policyDigest);
+  const inventory = buildInventoryFacts(snapshot);
   const violations: ScanViolation[] = [];
   if (snapshot.budgetExceeded) {
     violations.push({ code: 'SCANNED_BYTE_LIMIT_EXCEEDED' });
@@ -303,7 +343,7 @@ export function scanInvestigationTree(request: {
     violations.sort(compareViolations);
     return {
       outcome: 'requires-narrowing',
-      nodes: [],
+      policyDigest,
       inventory,
       violations,
       terms,
@@ -311,24 +351,75 @@ export function scanInvestigationTree(request: {
   }
 
   const saturated = allowSaturatedTerms ? saturatedTermIds : [];
-  const nodes = terms
-    .map((term, index) =>
-      buildScanNode(
-        term,
-        perTermHits[index]!,
-        snapshot.treeDigest,
-        policyDigest,
-      ),
+  const termFacts = terms
+    .map((term, index) => ({
+      term: structuredClone(term),
+      hits: structuredClone(perTermHits[index]!),
+    }))
+    .sort((left, right) => (left.term.termId < right.term.termId ? -1 : 1));
+
+  return {
+    outcome: 'ready',
+    facts: {
+      schemaVersion: 1,
+      kind: 'investigation-scan-facts',
+      treeDigest: snapshot.treeDigest,
+      policyDigest,
+      inventory,
+      terms: termFacts,
+    },
+    ...(saturated.length === 0 ? {} : { saturatedTermIds: saturated }),
+  };
+}
+
+/**
+ * Compatibility adapter for the schema-v2 shadow authority. New manifest
+ * construction consumes `scanInvestigationTreeFacts` directly and never needs
+ * these generic evidence envelopes.
+ */
+export function scanInvestigationTree(request: {
+  repositoryRoot: string;
+  treeOid: string;
+  terms: ScanInvestigationTerm[];
+  limits?: InvestigationLimits;
+  allowSaturatedTerms?: boolean;
+}): InvestigationScanResult {
+  return adaptInvestigationScanFactsResult(scanInvestigationTreeFacts(request));
+}
+
+/**
+ * Build the temporary schema-v2 evidence view from one already-computed domain
+ * scan. Shadow mode calls this adapter so v2 and v3 observe the same scanner
+ * execution instead of independently reopening Git and merely hoping that two
+ * executions had equivalent inputs.
+ */
+export function adaptInvestigationScanFactsResult(
+  result: InvestigationScanFactsResult,
+): InvestigationScanResult {
+  if (result.outcome !== 'ready') {
+    return {
+      outcome: 'requires-narrowing',
+      nodes: [],
+      inventory: adaptInventoryFacts(result.inventory, result.policyDigest),
+      violations: result.violations,
+      terms: result.terms,
+    };
+  }
+  const { facts } = result;
+  const nodes = facts.terms
+    .map(({ term, hits }) =>
+      buildScanNode(term, hits, facts.treeDigest, facts.policyDigest),
     )
     .sort((left, right) =>
       scanNodeTermId(left) < scanNodeTermId(right) ? -1 : 1,
     );
-
   return {
     outcome: 'ready',
     nodes,
-    inventory,
-    ...(saturated.length === 0 ? {} : { saturatedTermIds: saturated }),
+    inventory: adaptInventoryFacts(facts.inventory, facts.policyDigest),
+    ...(result.saturatedTermIds === undefined
+      ? {}
+      : { saturatedTermIds: [...result.saturatedTermIds] }),
   };
 }
 
@@ -574,10 +665,9 @@ function buildScanNode(
   });
 }
 
-function buildInventory(
+function buildInventoryFacts(
   snapshot: TrackedTreeSnapshot,
-  policyDigest: string,
-): ScanInventory {
+): ScanInventoryFacts {
   const skippedObjects = snapshot.entries
     .filter((entry) => entry.skipReason !== undefined)
     .map((entry) => ({
@@ -591,16 +681,26 @@ function buildInventory(
   return {
     treeDigest: snapshot.treeDigest,
     skippedObjects,
+  };
+}
+
+function adaptInventoryFacts(
+  facts: ScanInventoryFacts,
+  policyDigest: string,
+): ScanInventory {
+  return {
+    treeDigest: facts.treeDigest,
+    skippedObjects: structuredClone(facts.skippedObjects),
     evidenceNode: createEvidenceNode({
       type: INVENTORY_NODE_TYPE,
       nodeSchema: INVENTORY_NODE_SCHEMA,
       evaluator: NODE_EVALUATOR,
       policyDigest,
-      exactInputDigests: { tree: snapshot.treeDigest },
+      exactInputDigests: { tree: facts.treeDigest },
       semanticParentResultDigests: {},
       provenanceParentNodeIds: {},
       outputSchema: INVENTORY_OUTPUT_SCHEMA,
-      output: { skippedObjects },
+      output: { skippedObjects: facts.skippedObjects },
       runtimeMetadata: {},
     }),
   };

@@ -2,6 +2,7 @@ import crypto from 'node:crypto';
 
 import {
   SCAN_HIT_MAX_CONTEXT_BYTES,
+  type InvestigationScanFacts,
   type ScanHitContextWindow,
 } from './investigation-scanner.ts';
 import { canonicalJson } from './canonical-json.ts';
@@ -246,6 +247,60 @@ export type InvestigationGroups = {
   groupNodes: EvidenceNode[];
 };
 
+export type InvestigationHitFact = {
+  hitKey: string;
+  termId: string;
+  path: PathIdentity;
+  sourceObject: SourceObject;
+  surface: 'path' | 'content';
+  byteOffset: number;
+  byteLength: number;
+};
+
+export type InvestigationMechanicalGroupSelector = {
+  termId: string;
+  rootId: string;
+  extension: PathIdentity;
+  mutationClass: MutationClass;
+  relationshipId: string | null;
+  splitId: null;
+};
+
+export type InvestigationMechanicalGroupFact = {
+  key: string;
+  leafDigest: string;
+  selector: InvestigationMechanicalGroupSelector;
+  hitKeys: string[];
+  hits: InvestigationHitFact[];
+  sourceObjects: SourceObject[];
+};
+
+/**
+ * Deterministic grouping output before any legacy EvidenceNode is created.
+ * Semantic merge/split decisions are intentionally not represented here; they
+ * belong to the v3 semantic delta rather than the replay contract.
+ */
+export type InvestigationGroupFacts = {
+  schemaVersion: 1;
+  kind: 'investigation-group-facts';
+  treeDigest: string;
+  scanPolicyDigest: string;
+  groupingPolicyDigest: string;
+  hits: InvestigationHitFact[];
+  groups: InvestigationMechanicalGroupFact[];
+};
+
+type DomainHitRecord = {
+  hitKey: string;
+  summary: InvestigationHitFact;
+};
+
+type DomainGroupAccumulator = {
+  key: string;
+  selector: InvestigationMechanicalGroupSelector;
+  members: Map<string, DomainHitRecord>;
+};
+
 export type InvestigationGroupReplayRecord = {
   nodeId: string;
   policyDigest: string;
@@ -253,6 +308,132 @@ export type InvestigationGroupReplayRecord = {
   hitIds: unknown;
   exceptions: unknown;
 };
+
+/**
+ * Derive mechanical Hit and Group facts directly from the scanner domain
+ * result. This is the manifest-first path: it neither accepts nor constructs a
+ * generic evidence envelope. The legacy v2 adapter below remains independent
+ * so it can serve as a transition-time parity oracle.
+ */
+export function deriveInvestigationGroupFacts(input: {
+  scanFacts: InvestigationScanFacts;
+  mutationPolicy: MutationClassPolicy;
+  declaredRoots: DeclaredInvestigationRoot[];
+  reviewedRelationships: ReviewedPathRelationship[];
+}): InvestigationGroupFacts {
+  const { scanFacts } = input;
+  if (
+    scanFacts.schemaVersion !== 1 ||
+    scanFacts.kind !== 'investigation-scan-facts' ||
+    !DIGEST_PATTERN.test(scanFacts.treeDigest) ||
+    !DIGEST_PATTERN.test(scanFacts.policyDigest) ||
+    scanFacts.inventory.treeDigest !== scanFacts.treeDigest
+  ) {
+    throw groupsInvalid('Scanner domain facts are malformed.');
+  }
+
+  const context = normalizeContext(
+    input.mutationPolicy,
+    input.declaredRoots,
+    input.reviewedRelationships,
+  );
+  const hitRecords: DomainHitRecord[] = [];
+  const hitKeys = new Set<string>();
+  const termIds = new Set<string>();
+  for (const termFacts of scanFacts.terms) {
+    if (
+      !DIGEST_PATTERN.test(termFacts.term.termId) ||
+      termIds.has(termFacts.term.termId)
+    ) {
+      throw groupsInvalid('Scanner domain term identity is malformed.');
+    }
+    termIds.add(termFacts.term.termId);
+    for (const value of termFacts.hits) {
+      const hit = parseHit(value, groupsInvalid);
+      const summary = buildInvestigationHitFact(
+        scanFacts.treeDigest,
+        scanFacts.policyDigest,
+        termFacts.term.termId,
+        hit,
+      );
+      if (hitKeys.has(summary.hitKey)) {
+        throw groupsInvalid('Scanner domain facts contain a duplicate hit.');
+      }
+      hitKeys.add(summary.hitKey);
+      hitRecords.push({ hitKey: summary.hitKey, summary });
+    }
+  }
+
+  const accumulators = new Map<string, DomainGroupAccumulator>();
+  for (const record of hitRecords) {
+    const legacySelector = baseSelectorFor(
+      record.summary.termId,
+      record.summary,
+      context,
+    );
+    const selector: InvestigationMechanicalGroupSelector = {
+      termId: legacySelector.termId,
+      rootId: legacySelector.rootId,
+      extension: legacySelector.extension,
+      mutationClass: legacySelector.mutationClass,
+      relationshipId: legacySelector.relationshipId,
+      splitId: null,
+    };
+    const key = legacySelector.selectorId;
+    let group = accumulators.get(key);
+    if (group === undefined) {
+      group = { key, selector, members: new Map() };
+      accumulators.set(key, group);
+    }
+    group.members.set(record.hitKey, record);
+  }
+
+  const groups = [...accumulators.values()]
+    .map((group): InvestigationMechanicalGroupFact => {
+      const members = [...group.members.values()].sort((left, right) =>
+        left.hitKey < right.hitKey ? -1 : left.hitKey > right.hitKey ? 1 : 0,
+      );
+      const memberKeys = members.map(({ hitKey }) => hitKey);
+      const leafDigest = sha256(
+        canonicalJson({
+          schema: 'investigation.mechanical-group.v3',
+          key: group.key,
+          hitKeys: memberKeys,
+        }),
+      );
+      return {
+        key: group.key,
+        leafDigest,
+        selector: group.selector,
+        hitKeys: memberKeys,
+        hits: members.map(({ summary }) => summary),
+        sourceObjects: dedupeSourceObjects(
+          members.map(({ summary }) => summary.sourceObject),
+        ),
+      };
+    })
+    .sort((left, right) =>
+      left.leafDigest < right.leafDigest
+        ? -1
+        : left.leafDigest > right.leafDigest
+          ? 1
+          : 0,
+    );
+
+  return {
+    schemaVersion: 1,
+    kind: 'investigation-group-facts',
+    treeDigest: scanFacts.treeDigest,
+    scanPolicyDigest: scanFacts.policyDigest,
+    groupingPolicyDigest: context.groupingPolicyDigest,
+    hits: hitRecords
+      .map(({ summary }) => summary)
+      .sort((left, right) =>
+        left.hitKey < right.hitKey ? -1 : left.hitKey > right.hitKey ? 1 : 0,
+      ),
+    groups,
+  };
+}
 
 /**
  * Deterministically project one hit node per raw-byte occurrence and conservative
@@ -1278,6 +1459,31 @@ function buildHitRecord(
       byteLength: hit.byteLength,
     },
   };
+}
+
+function buildInvestigationHitFact(
+  treeDigest: string,
+  scanPolicyDigest: string,
+  termId: string,
+  hit: ParsedHit,
+): InvestigationHitFact {
+  const fields = {
+    termId,
+    path: hit.path,
+    sourceObject: hit.sourceObject,
+    surface: hit.surface,
+    byteOffset: hit.byteOffset,
+    byteLength: hit.byteLength,
+  };
+  const hitKey = sha256(
+    canonicalJson({
+      schema: 'investigation.hit-fact.v3',
+      treeDigest,
+      scanPolicyDigest,
+      ...fields,
+    }),
+  );
+  return { hitKey, ...fields };
 }
 
 function buildGroupNode(

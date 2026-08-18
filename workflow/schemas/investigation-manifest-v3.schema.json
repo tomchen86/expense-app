@@ -1,0 +1,955 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://expense-app.local/workflow/investigation-manifest-v3.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "kind",
+    "repositoryId",
+    "changeId",
+    "investigationId",
+    "normalizedIntent",
+    "intentDigest",
+    "authoring",
+    "applicability",
+    "investigationApproval",
+    "manifestDigest"
+  ],
+  "properties": {
+    "schemaVersion": { "const": 3 },
+    "kind": { "const": "manifest-first-investigation" },
+    "repositoryId": { "$ref": "#/$defs/text" },
+    "changeId": { "$ref": "#/$defs/changeId" },
+    "investigationId": { "$ref": "#/$defs/text" },
+    "normalizedIntent": { "$ref": "#/$defs/normalizedIntent" },
+    "intentDigest": { "$ref": "#/$defs/digest" },
+    "authoring": { "$ref": "#/$defs/authoring" },
+    "applicability": {
+      "oneOf": [
+        { "$ref": "#/$defs/ordinaryApplicability" },
+        { "$ref": "#/$defs/exemptionApplicability" }
+      ]
+    },
+    "investigationApproval": { "$ref": "#/$defs/approval" },
+    "manifestDigest": { "$ref": "#/$defs/digest" }
+  },
+  "$defs": {
+    "digest": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "gitObjectId": {
+      "type": "string",
+      "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$"
+    },
+    "text": { "type": "string", "minLength": 1 },
+    "changeId": {
+      "type": "string",
+      "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"
+    },
+    "nullableText": {
+      "oneOf": [{ "$ref": "#/$defs/text" }, { "type": "null" }]
+    },
+    "textArray": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/text" }
+    },
+    "digestArray": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/digest" }
+    },
+    "pathIdentity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["rawBase64", "utf8"],
+      "properties": {
+        "rawBase64": { "type": "string", "minLength": 1 },
+        "utf8": {
+          "oneOf": [{ "type": "string" }, { "type": "null" }]
+        }
+      }
+    },
+    "baseline": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["commitOid", "treeOid"],
+      "properties": {
+        "commitOid": { "$ref": "#/$defs/gitObjectId" },
+        "treeOid": { "$ref": "#/$defs/gitObjectId" }
+      }
+    },
+    "semanticAuthor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "provenance"],
+      "properties": {
+        "id": { "$ref": "#/$defs/text" },
+        "provenance": { "$ref": "#/$defs/text" }
+      }
+    },
+    "renamePair": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["from", "to"],
+      "properties": {
+        "from": { "$ref": "#/$defs/text" },
+        "to": { "$ref": "#/$defs/text" }
+      }
+    },
+    "normalizedIntent": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "summary",
+        "explicitPaths",
+        "explicitSymbols",
+        "explicitConfigKeys",
+        "renamePairs"
+      ],
+      "properties": {
+        "schemaVersion": { "const": 1 },
+        "summary": { "$ref": "#/$defs/text" },
+        "explicitPaths": { "$ref": "#/$defs/textArray" },
+        "explicitSymbols": { "$ref": "#/$defs/textArray" },
+        "explicitConfigKeys": { "$ref": "#/$defs/textArray" },
+        "renamePairs": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/renamePair" }
+        }
+      }
+    },
+    "authoring": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["sessionRevision", "sessionSnapshotDigest"],
+      "properties": {
+        "sessionRevision": { "type": "integer", "minimum": 0 },
+        "sessionSnapshotDigest": { "$ref": "#/$defs/digest" }
+      }
+    },
+    "termInput": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "value"],
+      "properties": {
+        "kind": {
+          "enum": ["literal-content", "literal-path", "symbol", "config-key"]
+        },
+        "value": { "$ref": "#/$defs/text" }
+      }
+    },
+    "mainTermInput": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "value", "rationale", "expectedRelationship"],
+      "properties": {
+        "kind": {
+          "enum": ["literal-content", "literal-path", "symbol", "config-key"]
+        },
+        "value": { "$ref": "#/$defs/text" },
+        "rationale": { "$ref": "#/$defs/text" },
+        "expectedRelationship": { "$ref": "#/$defs/text" }
+      }
+    },
+    "mainContribution": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["source", "reference", "terms"],
+      "properties": {
+        "source": { "const": "main" },
+        "reference": { "$ref": "#/$defs/text" },
+        "terms": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/mainTermInput" }
+        }
+      }
+    },
+    "nonMainContribution": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["source", "reference", "terms"],
+      "properties": {
+        "source": { "enum": ["engine", "survey", "reviewer"] },
+        "reference": { "$ref": "#/$defs/text" },
+        "terms": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/termInput" }
+        }
+      }
+    },
+    "termContribution": {
+      "oneOf": [
+        { "$ref": "#/$defs/mainContribution" },
+        { "$ref": "#/$defs/nonMainContribution" }
+      ]
+    },
+    "termProvenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["source", "reference", "rationale", "expectedRelationship"],
+      "properties": {
+        "source": { "enum": ["engine", "main", "survey", "reviewer"] },
+        "reference": { "$ref": "#/$defs/text" },
+        "rationale": { "$ref": "#/$defs/nullableText" },
+        "expectedRelationship": { "$ref": "#/$defs/nullableText" }
+      }
+    },
+    "canonicalTerm": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["termId", "kind", "value", "matching", "provenance"],
+      "properties": {
+        "termId": { "$ref": "#/$defs/digest" },
+        "kind": {
+          "enum": ["literal-content", "literal-path", "symbol", "config-key"]
+        },
+        "value": { "$ref": "#/$defs/text" },
+        "matching": { "const": "case-sensitive-literal-v1" },
+        "provenance": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/termProvenance" }
+        }
+      }
+    },
+    "limits": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "maxMainTerms",
+        "maxSurveyTerms",
+        "maxReviewerTerms",
+        "maxEffectiveTerms",
+        "maxHitsPerTerm",
+        "maxTotalHits",
+        "maxHitDispositionWorkItems",
+        "maxScanCpuMillis",
+        "maxScanWorkBytes",
+        "maxBlobBytes",
+        "maxTotalScannedBlobBytes"
+      ],
+      "properties": {
+        "maxMainTerms": { "type": "integer", "minimum": 1 },
+        "maxSurveyTerms": { "type": "integer", "minimum": 1 },
+        "maxReviewerTerms": { "type": "integer", "minimum": 1 },
+        "maxEffectiveTerms": { "type": "integer", "minimum": 1 },
+        "maxHitsPerTerm": { "type": "integer", "minimum": 1 },
+        "maxTotalHits": { "type": "integer", "minimum": 1 },
+        "maxHitDispositionWorkItems": { "type": "integer", "minimum": 1 },
+        "maxScanCpuMillis": { "type": "integer", "minimum": 1 },
+        "maxScanWorkBytes": { "type": "integer", "minimum": 1 },
+        "maxBlobBytes": { "type": "integer", "minimum": 1 },
+        "maxTotalScannedBlobBytes": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "scannerContract": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "evaluatorId",
+        "policyDigest",
+        "canonicalizationVersion",
+        "limits",
+        "allowSaturatedTerms"
+      ],
+      "properties": {
+        "evaluatorId": { "const": "investigation-scanner.v1" },
+        "policyDigest": { "$ref": "#/$defs/digest" },
+        "canonicalizationVersion": {
+          "const": "investigation-scan-canonicalization.v1"
+        },
+        "limits": { "$ref": "#/$defs/limits" },
+        "allowSaturatedTerms": { "type": "boolean" }
+      }
+    },
+    "pathSelector": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "path"],
+      "properties": {
+        "kind": { "enum": ["path-prefix", "exact-path"] },
+        "path": { "$ref": "#/$defs/text" }
+      }
+    },
+    "rawSelector": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "rawBase64"],
+      "properties": {
+        "kind": { "const": "raw-prefix" },
+        "rawBase64": { "type": "string", "minLength": 1 }
+      }
+    },
+    "mutationRule": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["ruleId", "mutationClass", "selector"],
+      "properties": {
+        "ruleId": { "$ref": "#/$defs/text" },
+        "mutationClass": {
+          "enum": [
+            "live",
+            "prohibited",
+            "generated",
+            "mirror",
+            "append-only",
+            "immutable",
+            "historical-reference"
+          ]
+        },
+        "selector": {
+          "oneOf": [
+            { "$ref": "#/$defs/pathSelector" },
+            { "$ref": "#/$defs/rawSelector" }
+          ]
+        }
+      }
+    },
+    "mutationPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["policyDigest", "rules"],
+      "properties": {
+        "policyDigest": { "$ref": "#/$defs/digest" },
+        "rules": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/mutationRule" }
+        }
+      }
+    },
+    "declaredRoot": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["rootId", "path"],
+      "properties": {
+        "rootId": { "$ref": "#/$defs/text" },
+        "path": { "type": "string" }
+      }
+    },
+    "reviewedRelationship": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "relationshipId",
+        "kind",
+        "subjectPath",
+        "counterpartPath",
+        "reference"
+      ],
+      "properties": {
+        "relationshipId": { "$ref": "#/$defs/text" },
+        "kind": { "enum": ["generated", "mirror"] },
+        "subjectPath": { "$ref": "#/$defs/pathIdentity" },
+        "counterpartPath": { "$ref": "#/$defs/pathIdentity" },
+        "reference": { "$ref": "#/$defs/text" }
+      }
+    },
+    "groupingContract": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "evaluatorId",
+        "policyDigest",
+        "canonicalizationVersion",
+        "mutationPolicy",
+        "declaredRoots",
+        "reviewedRelationships"
+      ],
+      "properties": {
+        "evaluatorId": { "const": "investigation-groups.v1" },
+        "policyDigest": { "$ref": "#/$defs/digest" },
+        "canonicalizationVersion": {
+          "const": "investigation-mechanical-groups.v3"
+        },
+        "mutationPolicy": { "$ref": "#/$defs/mutationPolicy" },
+        "declaredRoots": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/declaredRoot" }
+        },
+        "reviewedRelationships": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/reviewedRelationship" }
+        }
+      }
+    },
+    "coverageContract": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["evaluatorId", "canonicalizationVersion"],
+      "properties": {
+        "evaluatorId": { "const": "investigation-coverage.v3" },
+        "canonicalizationVersion": {
+          "const": "investigation-root-canonicalization.v3"
+        }
+      }
+    },
+    "replayCounts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["terms", "hits", "mechanicalGroups"],
+      "properties": {
+        "terms": { "type": "integer", "minimum": 1 },
+        "hits": { "type": "integer", "minimum": 0 },
+        "mechanicalGroups": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "replayContract": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "baseline",
+        "termContributions",
+        "canonicalTerms",
+        "termNormalizationVersion",
+        "termSetDigest",
+        "scanner",
+        "grouping",
+        "coverage",
+        "inventoryRoot",
+        "hitRoot",
+        "mechanicalGroupRoot",
+        "counts"
+      ],
+      "properties": {
+        "baseline": { "$ref": "#/$defs/baseline" },
+        "termContributions": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/termContribution" }
+        },
+        "canonicalTerms": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/canonicalTerm" }
+        },
+        "termNormalizationVersion": { "const": "investigation-term-v1" },
+        "termSetDigest": { "$ref": "#/$defs/digest" },
+        "scanner": { "$ref": "#/$defs/scannerContract" },
+        "grouping": { "$ref": "#/$defs/groupingContract" },
+        "coverage": { "$ref": "#/$defs/coverageContract" },
+        "inventoryRoot": { "$ref": "#/$defs/digest" },
+        "hitRoot": { "$ref": "#/$defs/digest" },
+        "mechanicalGroupRoot": { "$ref": "#/$defs/digest" },
+        "counts": { "$ref": "#/$defs/replayCounts" }
+      }
+    },
+    "roleResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "role",
+        "targetDigest",
+        "providerId",
+        "sessionId",
+        "principalId",
+        "requiredIndependence",
+        "achievedIndependence",
+        "requestDigest",
+        "outputDigest",
+        "contentDigest",
+        "policyDigest",
+        "provenanceDigest"
+      ],
+      "properties": {
+        "role": { "enum": ["blind-surveyor", "investigation-reviewer"] },
+        "targetDigest": { "$ref": "#/$defs/digest" },
+        "providerId": { "$ref": "#/$defs/nullableText" },
+        "sessionId": { "$ref": "#/$defs/nullableText" },
+        "principalId": { "$ref": "#/$defs/nullableText" },
+        "requiredIndependence": { "$ref": "#/$defs/text" },
+        "achievedIndependence": { "$ref": "#/$defs/text" },
+        "requestDigest": { "$ref": "#/$defs/digest" },
+        "outputDigest": { "$ref": "#/$defs/digest" },
+        "contentDigest": { "$ref": "#/$defs/digest" },
+        "policyDigest": { "$ref": "#/$defs/digest" },
+        "provenanceDigest": { "$ref": "#/$defs/digest" }
+      }
+    },
+    "scanSaturationDecision": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "saturatedTermIds",
+        "acknowledgeIncompleteScan",
+        "rationale",
+        "semanticAuthor",
+        "provenanceDigest"
+      ],
+      "properties": {
+        "saturatedTermIds": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/digest" }
+        },
+        "acknowledgeIncompleteScan": { "const": true },
+        "rationale": { "$ref": "#/$defs/text" },
+        "semanticAuthor": { "$ref": "#/$defs/semanticAuthor" },
+        "provenanceDigest": { "$ref": "#/$defs/digest" }
+      }
+    },
+    "droppedFloorTerm": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["termId", "kind", "value", "reason"],
+      "properties": {
+        "termId": { "$ref": "#/$defs/digest" },
+        "kind": { "$ref": "#/$defs/text" },
+        "value": { "$ref": "#/$defs/text" },
+        "reason": { "$ref": "#/$defs/text" }
+      }
+    },
+    "floorOverflowDecision": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "kind",
+        "limit",
+        "retainedLimit",
+        "reservedNonFloorTerms",
+        "observed",
+        "escalated",
+        "reasons",
+        "dropped"
+      ],
+      "properties": {
+        "schemaVersion": { "const": 1 },
+        "kind": { "const": "floor-overflow-decision" },
+        "limit": { "type": "integer", "minimum": 1 },
+        "retainedLimit": { "type": "integer", "minimum": 0 },
+        "reservedNonFloorTerms": { "type": "integer", "minimum": 0 },
+        "observed": { "type": "integer", "minimum": 1 },
+        "escalated": { "const": true },
+        "reasons": { "$ref": "#/$defs/textArray" },
+        "dropped": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/droppedFloorTerm" }
+        }
+      }
+    },
+    "semanticGroupDecision": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "decisionId",
+        "key",
+        "title",
+        "sourceMechanicalGroupKeys",
+        "hitKeys",
+        "rationale",
+        "semanticAuthor"
+      ],
+      "properties": {
+        "decisionId": { "$ref": "#/$defs/text" },
+        "key": { "$ref": "#/$defs/text" },
+        "title": { "$ref": "#/$defs/text" },
+        "sourceMechanicalGroupKeys": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/digest" }
+        },
+        "hitKeys": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/digest" }
+        },
+        "rationale": { "$ref": "#/$defs/text" },
+        "semanticAuthor": { "$ref": "#/$defs/semanticAuthor" }
+      }
+    },
+    "groupRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["index", "key", "leafDigest"],
+      "properties": {
+        "index": { "type": "integer", "minimum": 0 },
+        "key": { "$ref": "#/$defs/text" },
+        "leafDigest": { "$ref": "#/$defs/digest" }
+      }
+    },
+    "disposition": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "groupRef",
+        "classification",
+        "rationale",
+        "semanticAuthor",
+        "dispositionDigest"
+      ],
+      "properties": {
+        "groupRef": { "$ref": "#/$defs/groupRef" },
+        "classification": {
+          "enum": [
+            "load-bearing",
+            "test-or-mirror",
+            "generated",
+            "incidental-reference",
+            "irrelevant"
+          ]
+        },
+        "rationale": { "$ref": "#/$defs/text" },
+        "semanticAuthor": { "$ref": "#/$defs/semanticAuthor" },
+        "dispositionDigest": { "$ref": "#/$defs/digest" }
+      }
+    },
+    "byteRange": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["start", "end"],
+      "properties": {
+        "start": { "type": "integer", "minimum": 0 },
+        "end": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "sourceAnchor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["pathIdentity", "blobOid", "byteRange", "termId"],
+      "properties": {
+        "pathIdentity": { "$ref": "#/$defs/pathIdentity" },
+        "blobOid": { "$ref": "#/$defs/gitObjectId" },
+        "byteRange": { "$ref": "#/$defs/byteRange" },
+        "termId": { "$ref": "#/$defs/digest" }
+      }
+    },
+    "whyOverlay": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "overlayId",
+        "pathIdentity",
+        "blobOid",
+        "contentSha256",
+        "groupRefs",
+        "anchors",
+        "why",
+        "protectedInvariant",
+        "reviewerQuestion",
+        "answer",
+        "semanticAuthor",
+        "readComplete",
+        "semanticAssurance"
+      ],
+      "properties": {
+        "overlayId": { "$ref": "#/$defs/text" },
+        "pathIdentity": { "$ref": "#/$defs/pathIdentity" },
+        "blobOid": { "$ref": "#/$defs/gitObjectId" },
+        "contentSha256": { "$ref": "#/$defs/digest" },
+        "groupRefs": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/groupRef" }
+        },
+        "anchors": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/sourceAnchor" }
+        },
+        "why": { "$ref": "#/$defs/text" },
+        "protectedInvariant": { "$ref": "#/$defs/text" },
+        "reviewerQuestion": { "$ref": "#/$defs/text" },
+        "answer": { "$ref": "#/$defs/text" },
+        "semanticAuthor": { "$ref": "#/$defs/semanticAuthor" },
+        "readComplete": { "const": true },
+        "semanticAssurance": {
+          "const": "actor-attested-not-engine-verified"
+        }
+      }
+    },
+    "knowledgeRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["subjectId", "versionDigest"],
+      "properties": {
+        "subjectId": { "$ref": "#/$defs/text" },
+        "versionDigest": { "$ref": "#/$defs/digest" }
+      }
+    },
+    "freshness": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "decision",
+        "rationale",
+        "semanticAuthor",
+        "provenanceDigest"
+      ],
+      "properties": {
+        "decision": { "const": "fresh" },
+        "rationale": { "$ref": "#/$defs/text" },
+        "semanticAuthor": { "$ref": "#/$defs/semanticAuthor" },
+        "provenanceDigest": { "$ref": "#/$defs/digest" }
+      }
+    },
+    "knowledgeReuseDecision": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "decisionId",
+        "pathIdentity",
+        "blobOid",
+        "knowledgeRef",
+        "freshness"
+      ],
+      "properties": {
+        "decisionId": { "$ref": "#/$defs/text" },
+        "pathIdentity": { "$ref": "#/$defs/pathIdentity" },
+        "blobOid": { "$ref": "#/$defs/gitObjectId" },
+        "knowledgeRef": { "$ref": "#/$defs/knowledgeRef" },
+        "freshness": { "$ref": "#/$defs/freshness" }
+      }
+    },
+    "semanticException": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "exceptionId",
+        "kind",
+        "subjectKey",
+        "rationale",
+        "semanticAuthor",
+        "provenanceDigest"
+      ],
+      "properties": {
+        "exceptionId": { "$ref": "#/$defs/text" },
+        "kind": {
+          "enum": ["semantic-group", "disposition", "why", "knowledge-reuse"]
+        },
+        "subjectKey": { "$ref": "#/$defs/text" },
+        "rationale": { "$ref": "#/$defs/text" },
+        "semanticAuthor": { "$ref": "#/$defs/semanticAuthor" },
+        "provenanceDigest": { "$ref": "#/$defs/digest" }
+      }
+    },
+    "investigationRequirement": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "requirementId",
+        "text",
+        "semanticAuthor",
+        "provenanceDigest"
+      ],
+      "properties": {
+        "requirementId": { "$ref": "#/$defs/text" },
+        "text": { "$ref": "#/$defs/text" },
+        "semanticAuthor": { "$ref": "#/$defs/semanticAuthor" },
+        "provenanceDigest": { "$ref": "#/$defs/digest" }
+      }
+    },
+    "assuranceFacts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "assessmentDigest",
+        "coverageTier",
+        "escalated",
+        "reasons",
+        "provenanceDigest"
+      ],
+      "properties": {
+        "assessmentDigest": { "$ref": "#/$defs/digest" },
+        "coverageTier": { "enum": ["standard", "elevated", "critical"] },
+        "escalated": { "type": "boolean" },
+        "reasons": { "$ref": "#/$defs/textArray" },
+        "provenanceDigest": { "$ref": "#/$defs/digest" }
+      }
+    },
+    "semanticDelta": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "investigationRoleResults",
+        "scanSaturationDecision",
+        "floorOverflowDecision",
+        "semanticGroupDecisions",
+        "finalGroupRoot",
+        "dispositions",
+        "whyOverlays",
+        "knowledgeReuseDecisions",
+        "exceptions",
+        "investigationRequirements",
+        "assuranceFacts"
+      ],
+      "properties": {
+        "investigationRoleResults": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/roleResult" }
+        },
+        "scanSaturationDecision": {
+          "oneOf": [
+            { "$ref": "#/$defs/scanSaturationDecision" },
+            { "type": "null" }
+          ]
+        },
+        "floorOverflowDecision": {
+          "oneOf": [
+            { "$ref": "#/$defs/floorOverflowDecision" },
+            { "type": "null" }
+          ]
+        },
+        "semanticGroupDecisions": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/semanticGroupDecision" }
+        },
+        "finalGroupRoot": { "$ref": "#/$defs/digest" },
+        "dispositions": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/disposition" }
+        },
+        "whyOverlays": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/whyOverlay" }
+        },
+        "knowledgeReuseDecisions": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/knowledgeReuseDecision" }
+        },
+        "exceptions": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/semanticException" }
+        },
+        "investigationRequirements": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/investigationRequirement" }
+        },
+        "assuranceFacts": { "$ref": "#/$defs/assuranceFacts" }
+      }
+    },
+    "derivedCommitments": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["coverageRoot", "zeroHitTermIds", "finalGroupCount"],
+      "properties": {
+        "coverageRoot": { "$ref": "#/$defs/digest" },
+        "zeroHitTermIds": { "$ref": "#/$defs/digestArray" },
+        "finalGroupCount": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "ordinaryApplicability": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "replayContract",
+        "semanticDelta",
+        "derivedCommitments"
+      ],
+      "properties": {
+        "kind": { "const": "ordinary" },
+        "replayContract": { "$ref": "#/$defs/replayContract" },
+        "semanticDelta": { "$ref": "#/$defs/semanticDelta" },
+        "derivedCommitments": { "$ref": "#/$defs/derivedCommitments" }
+      }
+    },
+    "exemptionApplicability": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "category",
+        "baseline",
+        "declaredPaths",
+        "declaredChangeClasses",
+        "rationale",
+        "semanticAuthor",
+        "nonTrivialBehaviorReliance",
+        "researchBudgetMinutes",
+        "policyDigest",
+        "applicabilityDigest"
+      ],
+      "properties": {
+        "kind": { "const": "exemption" },
+        "category": {
+          "enum": [
+            "documentation-only",
+            "formatting-only",
+            "deterministic-generated-projection",
+            "time-boxed-research"
+          ]
+        },
+        "baseline": { "$ref": "#/$defs/baseline" },
+        "declaredPaths": { "$ref": "#/$defs/textArray" },
+        "declaredChangeClasses": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "enum": [
+              "documentation-only",
+              "formatting-only",
+              "deterministic-generated-projection",
+              "time-boxed-research",
+              "security",
+              "migration",
+              "shared-contract",
+              "public-api",
+              "rename-removal",
+              "behavioral"
+            ]
+          }
+        },
+        "rationale": { "$ref": "#/$defs/text" },
+        "semanticAuthor": { "$ref": "#/$defs/semanticAuthor" },
+        "nonTrivialBehaviorReliance": { "const": "none-declared" },
+        "researchBudgetMinutes": {
+          "oneOf": [
+            { "type": "integer", "minimum": 1, "maximum": 480 },
+            { "type": "null" }
+          ]
+        },
+        "policyDigest": { "$ref": "#/$defs/digest" },
+        "applicabilityDigest": { "$ref": "#/$defs/digest" }
+      }
+    },
+    "approval": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "kind",
+        "investigationTargetDigest",
+        "semanticAuthor",
+        "approvalProvenanceDigest",
+        "semanticAssurance",
+        "sealDigest"
+      ],
+      "properties": {
+        "schemaVersion": { "const": 1 },
+        "kind": { "const": "investigation-approval" },
+        "investigationTargetDigest": { "$ref": "#/$defs/digest" },
+        "semanticAuthor": { "$ref": "#/$defs/semanticAuthor" },
+        "approvalProvenanceDigest": { "$ref": "#/$defs/digest" },
+        "semanticAssurance": {
+          "const": "actor-attested-not-engine-verified"
+        },
+        "sealDigest": { "$ref": "#/$defs/digest" }
+      }
+    }
+  }
+}

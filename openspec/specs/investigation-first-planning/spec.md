@@ -1,8 +1,11 @@
 # investigation-first-planning Specification
 
 ## Purpose
+
 TBD - created by archiving change establish-investigation-first-planning. Update Purpose after archive.
+
 ## Requirements
+
 ### Requirement: Current Investigation Applicability Gates Authoritative Planning
 
 The workflow engine SHALL bind each investigation applicability decision to a structured change intent and pinned repository baseline. It MUST NOT authorize or materialize the authoritative design or planning transition until the current applicability ref selects either a current sealed investigation or a current eligible structured investigation exemption.
@@ -210,3 +213,23 @@ The wrapper SHALL assemble existing planning and plan-commit prerequisites witho
 - **THEN** it invokes the existing managed plan transition
 - **AND** it does not hand-author a commit or bypass plan-transition validation
 
+### Requirement: Manifest v3 and PlanReview Remain Separate Authorities
+
+At v3 cutover, `investigation.json` SHALL contain only the current Manifest and its investigation attestation. `plan-review.json` SHALL remain a separate artifact bound to the exact `manifestDigest`, `investigationTargetDigest`, planning generation, complete plan target, reviewer result, challenges, dispositions, and provenance. A change to baseline, intent, terms, evaluator/policy versions, roots, Groups, Dispositions, WHY, knowledge references, exceptions, or provenance MUST stale both the investigation seal and any PlanReview that targeted it.
+
+Any degraded-continuation reference SHALL appear only where the published central Fail-Grant contract requires it. Investigation v3 MUST NOT invent a local reference field or placement rule.
+
+#### Scenario: Shadow v3 exists before central Grant Core readiness
+
+- **GIVEN** a matched non-authoritative schema-v3 shadow Manifest exists
+- **AND** the published central contract does not cover every realized v3 failure outcome
+- **WHEN** planning authority is selected
+- **THEN** the current v2 investigation and its separately validated PlanReview remain authoritative
+- **AND** the shadow Manifest cannot authorize planning, CI, merge, task start, or archive
+
+#### Scenario: Manifest semantics change after PlanReview
+
+- **GIVEN** PlanReview binds one exact v3 Manifest target
+- **WHEN** any replay input, semantic delta, derived commitment, provenance, or attestation changes
+- **THEN** the old PlanReview is stale
+- **AND** a fresh exact-plan review is required independently of investigation validation

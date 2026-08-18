@@ -157,7 +157,7 @@ An exact input or provenance-parent change MUST produce a new `nodeId`. Invalida
 
 The tracked investigation artifact MAY omit deterministic tree-inventory, scan, hit, group, disposition, and coverage node envelopes only when it stores a strict replay recipe bound to the exact baseline commit and tree. Loading that projection SHALL verify the commit-to-tree binding, read source content from the pinned Git objects, regenerate the omitted nodes under the recorded policies, and recover the exact logical artifact before assurance validation.
 
-The replayed logical artifact MUST match the recorded complete node count and canonical node-set digest. The projection MUST retain semantic term contributions, provider results, WHY evidence, annotations, reviews, seals, and every other non-replayable node as immutable full envelopes. It MUST NOT infer or regenerate actor judgment from Git source. Missing Git objects, malformed replay data, unexpected node identities, digest mismatch, incomplete grouping, or provenance collision MUST fail closed. Existing schema-v1 full artifacts SHALL remain readable without projection.
+The replayed logical artifact MUST match the recorded complete node count and canonical node-set digest. The projection MUST retain semantic term contributions, provider results, WHY evidence, annotations, reviews, seals, and every other non-replayable node as immutable full envelopes. It MUST NOT infer or regenerate actor judgment from Git source. Missing Git objects, malformed replay data, unexpected node identities, digest mismatch, incomplete grouping, or provenance collision MUST fail closed. During the v2 shadow interval, existing schema-v1 full artifacts remain readable without projection; after v3 authority cutover, an active top-level schema-v1 input is forbidden while archived bytes remain untouched and read-only historical inspection cannot confer authority.
 
 #### Scenario: Compact artifact has an intact pinned Git baseline
 
@@ -187,12 +187,101 @@ The replayed logical artifact MUST match the recorded complete node count and ca
 - **THEN** those semantic nodes remain as complete immutable envelopes
 - **AND** only eligible deterministic nodes are represented by replay instructions
 
-#### Scenario: Legacy full artifact is loaded
+#### Scenario: Legacy full artifact is loaded during v2 shadow
 
 - **GIVEN** an existing schema-v1 investigation artifact contains the complete node set
 - **WHEN** it is loaded after compact projection support is enabled
 - **THEN** it remains readable under its original validation rules
 - **AND** it does not require a replay recipe
+
+### Requirement: Investigation v3 Is Manifest-First
+
+The v3 writer SHALL consume `InvestigationAuthoringState` directly and persist only exact Git replay inputs, irreducible semantic decisions and provenance, derived roots/counts, and the final investigation attestation. It MUST NOT accept or first construct a schema-v1/v2 artifact, complete `EvidenceNode[]`, or full evidence DAG. Git objects are the sole source-content authority.
+
+A `MaterializedEvidenceView` MAY exist only in process-local memory for replay and comparison. It MUST throw or fail closed if serialization is attempted and MUST NOT be written to the runtime, tracked tree, cache, journal, or authority store.
+
+#### Scenario: v3 ordinary Manifest is built
+
+- **GIVEN** common raw authoring inputs, a pinned commit/tree, and complete semantic decisions
+- **WHEN** the v3 writer builds the ordinary branch
+- **THEN** it scans and groups directly into domain facts
+- **AND** it persists replay contract, semantic delta, derived commitments, and attestation without generic evidence envelopes
+
+#### Scenario: Process-local replay view reaches a serializer
+
+- **GIVEN** a materialized v3 replay view exists in memory
+- **WHEN** code attempts to serialize or persist it
+- **THEN** the operation fails with `PROJECTION_PIPELINE_FORBIDDEN`
+- **AND** no replay view bytes become durable
+
+### Requirement: v3 Applicability and Validation Boundaries Are Exact
+
+The v3 Manifest SHALL select exactly one closed applicability branch. The ordinary branch contains `replayContract`, `semanticDelta`, and `derivedCommitments`; the exemption branch contains only the exact eligible exemption subject and MUST NOT manufacture empty replay, Group, Disposition, coverage, or WHY proof.
+
+The engine SHALL expose distinct draft-seal validation, current authority validation, and read-only historical inspection. Current authority validation MUST re-resolve `commitOid^{tree}`, reconstruct terms and deterministic facts from pinned Git, verify every root and compact root-bound Group reference, enforce exact Hit→final-Group→Disposition cardinality, verify WHY/reuse completeness, and bind the exact lifecycle snapshot, target, seal, and Manifest digest. Historical inspection can never satisfy a current lifecycle gate.
+
+#### Scenario: Ordinary semantic coverage is incomplete
+
+- **GIVEN** a current Hit is missing a final Group or a final Group is missing exactly one Disposition
+- **WHEN** v3 authority validation runs
+- **THEN** validation returns a structured semantic-completeness failure
+- **AND** no partial or synthetic coverage becomes authority
+
+#### Scenario: Exemption is validated
+
+- **GIVEN** an eligible structured exemption bound to exact intent and baseline
+- **WHEN** the v3 exemption branch is validated
+- **THEN** replay and semantic-proof collections are absent
+- **AND** investigation breadth/depth claims remain inapplicable rather than satisfied
+
+### Requirement: v2/v3 Shadow Is Independent and Non-Authoritative
+
+During transition, v2 SHALL remain the sole investigation authority. The engine SHALL produce v2 and v3 from common raw/domain inputs, use v2 only as a parity oracle, and compare terms, inventory/hits, mechanical and final Groups, coverage, Dispositions, WHY, exceptions, applicability, knowledge reuse, and assurance through canonical facet roots. A shadow record MAY persist the compact v3 Manifest and parity roots or structured blocker, but MUST mark itself non-authoritative.
+
+#### Scenario: Shadow facets match
+
+- **GIVEN** v2 and v3 were independently derived from one pinned raw input set
+- **WHEN** every governed facet has the same canonical root
+- **THEN** the private shadow observation records a matched schema-v3 Manifest
+- **AND** it remains ineligible for lifecycle authority
+
+#### Scenario: One shadow facet differs
+
+- **GIVEN** any governed v2/v3 facet differs
+- **WHEN** parity is evaluated
+- **THEN** the v3 shadow returns `INVESTIGATION_V3_SHADOW_MISMATCH`
+- **AND** authority cutover remains prohibited
+
+### Requirement: Every v3 Failure Delegates Continuation to Central Grant Core
+
+Every v3 failure outcome under engine control, including validation, reconstruction, publication/CAS, shadow mismatch, and recoverable crash-state classification, SHALL emit exact failure identity, attempted transition, candidate digest, non-exhaustive failure code, details digest, and missing-assurance facts in a shape consumable by the published central Grant Core producer contract.
+
+Investigation v3 MUST NOT define a local grant schema, candidate label, callback, signer, trusted UI, authentication step, reservation, consumption rule, audit journal, degraded-reference placement, or resume command. It only emits canonical failure facts and state binding; the central Transition Registry and Grant Core own choices, fresh local device-owner authentication, once-only consumption, recovery, and audit.
+
+#### Scenario: Central contract is not published for every v3 failure
+
+- **GIVEN** one realized v3 failure has no registered central producer/transition contract
+- **WHEN** cutover readiness is evaluated
+- **THEN** v3 may continue in non-authoritative shadow
+- **AND** v2 authority, readers, and fallback remain in place
+
+#### Scenario: File publication crashes after current-ref installation
+
+- **GIVEN** the exact v3 Manifest and current ref were installed but the file-publication journal remains prepared
+- **WHEN** recovery reacquires the lifecycle lock
+- **THEN** it accepts only the transaction-installed ref with unchanged lifecycle identity
+- **AND** it completes idempotently without creating or consuming a Grant
+
+### Requirement: Reusable Knowledge Remains Separate From Per-Change WHY
+
+The v3 Manifest SHALL persist only per-change WHY overlays or immutable `knowledgeRef` versions plus an explicit current freshness decision. The separate Semantic Knowledge Graph owns reusable subject meaning, responsibilities, invariants, failure modes, dependencies, freshness, and supersession. Reusable knowledge MUST NOT prove current Git facts without exact current replay and source binding.
+
+#### Scenario: Current replay cites an immutable knowledge version
+
+- **GIVEN** a load-bearing Git path/blob has one explicitly fresh reusable-knowledge decision
+- **WHEN** v3 authority validation replays the current Manifest
+- **THEN** the exact `knowledgeRef` version and freshness provenance bind that current source tuple
+- **AND** reusable subject content remains in the separate Semantic Knowledge Graph rather than being copied into the Manifest
 
 ### Requirement: Descendant Reuse Preserves Original Provenance
 

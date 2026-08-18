@@ -554,6 +554,11 @@
       "digest": "sha256:83b6cd513b1df7a60c2dcf88ffa53ffffec2d6f0501ab2710fe2afea61c3ac8a"
     },
     {
+      "path": "src/investigation-domain.ts",
+      "mode": "100644",
+      "digest": "sha256:0966dc23de33e3c7fb981cdc82c8668dfd60d3257ee6c39250e944bdc9d2c2b5"
+    },
+    {
       "path": "src/investigation-floor.ts",
       "mode": "100644",
       "digest": "sha256:9dcc0309fe614fd508785d7862b241f1b94368c679b85d257cbe14dcf5d10b79"
@@ -561,12 +566,32 @@
     {
       "path": "src/investigation-groups.ts",
       "mode": "100644",
-      "digest": "sha256:d0124c3eb593f822ea6de04c3ef44110f78fba17021f4ec2f43b445faeb44b23"
+      "digest": "sha256:88ff1f5ea25f961206295df844791f549c7ff27d00e455306596092b5313d962"
+    },
+    {
+      "path": "src/investigation-manifest.ts",
+      "mode": "100644",
+      "digest": "sha256:0b7d3ae5ee6dc5e1662abe73a8f97d6bbe8279025ef580b50e47a21e2d74142a"
+    },
+    {
+      "path": "src/investigation-materializer.ts",
+      "mode": "100644",
+      "digest": "sha256:70954e71b3ddd649637cb42f872920de251985013d24b5340e32a6cfb4998ad3"
+    },
+    {
+      "path": "src/investigation-publication.ts",
+      "mode": "100644",
+      "digest": "sha256:b70e979c4b3fa182dec33082ecd01db8793ea617c98d6b22ad96599d1fa01eb9"
+    },
+    {
+      "path": "src/investigation-roots.ts",
+      "mode": "100644",
+      "digest": "sha256:ed3fa6cd16419f5df368d3ba94952f0ceb82877f385eaaa27ec03b34aa4d6c3b"
     },
     {
       "path": "src/investigation-scanner.ts",
       "mode": "100644",
-      "digest": "sha256:3575e13043f3d02dbfe4f1350136294554c9abb9d1c539a6c1458b595688d247"
+      "digest": "sha256:927065205cb306df92c6510f5588e0a9c03bb22ef81ece7ccb4f4e56d7b27b92"
     },
     {
       "path": "src/investigation-session-store.ts",
@@ -579,6 +604,21 @@
       "digest": "sha256:4dab48597a00a1ab27bf844b65408d2c9fd6d368ee2f35bb2d2a115685cacdcb"
     },
     {
+      "path": "src/investigation-shadow-builder.ts",
+      "mode": "100644",
+      "digest": "sha256:17e0247856158d3802ef4adaab79a24a1ef9550f0a0821abe8f599272b965b09"
+    },
+    {
+      "path": "src/investigation-shadow-parity.ts",
+      "mode": "100644",
+      "digest": "sha256:4e3f8f6b894d83e094abdb05b69e4236ad4c8034c7c0602a7aa1bf88869cb6a4"
+    },
+    {
+      "path": "src/investigation-shadow-store.ts",
+      "mode": "100644",
+      "digest": "sha256:1e73ed48e5706b7fa60c7d827b5983dcbeba1714918c946e84168e5513ea5639"
+    },
+    {
       "path": "src/investigation-term-projection.ts",
       "mode": "100644",
       "digest": "sha256:a98148b2de645944ff6871cc1a511ea0d232a288bb27274d882edeb112a34a56"
@@ -587,6 +627,11 @@
       "path": "src/investigation-terms.ts",
       "mode": "100644",
       "digest": "sha256:985ca3f3464600c9a098d62a39d664245f01396d42cf4e3351a495610d044677"
+    },
+    {
+      "path": "src/investigation-why-domain.ts",
+      "mode": "100644",
+      "digest": "sha256:b00f0fb27e75567bf590d7d401bce25133441c6b28957e0af27776353765401f"
     },
     {
       "path": "src/investigation-why.ts",
@@ -921,7 +966,7 @@
     {
       "path": "src/propose-orchestrator.ts",
       "mode": "100644",
-      "digest": "sha256:72e1fe576af4022fd801253eae8ff3aca3caa71da9a88c37187d946cbc2c85eb"
+      "digest": "sha256:e51b01faac72874f2c8ad30d848bb633459a70686cffc7856956919ceb80d21c"
     },
     {
       "path": "src/protected-capabilities.ts",

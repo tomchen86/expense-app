@@ -4,7 +4,7 @@ import path from 'node:path';
 import test from 'node:test';
 
 import { canonicalJson } from '../src/canonical-json.ts';
-import { isWorkflowError } from './fixture.ts';
+import { isWorkflowError, runtimeRoot } from './fixture.ts';
 import { driveProposeToDispositions } from './propose-drive-fixture.ts';
 
 const TERM = 'UnderReportedNeedle';
@@ -78,6 +78,38 @@ test('a critical scan hit forbids even a low-reported ordinary class and persist
       ),
     });
     assert.equal(sealed.state, 'awaiting-planning-contribution');
+    assert.ok(sealed.investigation);
+
+    const shadowBytes = fs.readFileSync(
+      path.join(
+        runtimeRoot(fixture.repository),
+        'investigations',
+        'shadow-v3',
+        `${sealed.investigation.investigationId}.json`,
+      ),
+      'utf8',
+    );
+    const shadow = JSON.parse(shadowBytes) as {
+      authorityEligible: boolean;
+      cutoverState: string;
+      result: { outcome: string; manifest?: { schemaVersion: number } };
+    };
+    assert.equal(shadow.authorityEligible, false);
+    assert.equal(
+      shadow.cutoverState,
+      'waiting-for-central-fail-grant-contract',
+    );
+    assert.equal(shadow.result.outcome, 'matched');
+    assert.equal(shadow.result.manifest?.schemaVersion, 3);
+    for (const forbidden of [
+      'MaterializedEvidenceView',
+      'nodeId',
+      'nodeSchema',
+      'provenanceParentNodeIds',
+      'semanticParentResultDigests',
+    ]) {
+      assert.equal(shadowBytes.includes(`"${forbidden}"`), false);
+    }
 
     const artifact = JSON.parse(
       fs.readFileSync(
@@ -89,7 +121,13 @@ test('a critical scan hit forbids even a low-reported ordinary class and persist
         ),
         'utf8',
       ),
-    ) as { nodes: Array<Record<string, unknown>> };
+    ) as {
+      schemaVersion: number;
+      kind: string;
+      nodes: Array<Record<string, unknown>>;
+    };
+    assert.notEqual(artifact.schemaVersion, 3);
+    assert.equal(artifact.kind, 'investigation-artifact');
     const persisted = artifact.nodes.find(
       (node) => node.type === 'assurance-assessment',
     );

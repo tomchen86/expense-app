@@ -91,6 +91,95 @@ function assertContextWindow(value, invalid) {
     };
 }
 /**
+ * Derive mechanical Hit and Group facts directly from the scanner domain
+ * result. This is the manifest-first path: it neither accepts nor constructs a
+ * generic evidence envelope. The legacy v2 adapter below remains independent
+ * so it can serve as a transition-time parity oracle.
+ */
+export function deriveInvestigationGroupFacts(input) {
+    const { scanFacts } = input;
+    if (scanFacts.schemaVersion !== 1 ||
+        scanFacts.kind !== 'investigation-scan-facts' ||
+        !DIGEST_PATTERN.test(scanFacts.treeDigest) ||
+        !DIGEST_PATTERN.test(scanFacts.policyDigest) ||
+        scanFacts.inventory.treeDigest !== scanFacts.treeDigest) {
+        throw groupsInvalid('Scanner domain facts are malformed.');
+    }
+    const context = normalizeContext(input.mutationPolicy, input.declaredRoots, input.reviewedRelationships);
+    const hitRecords = [];
+    const hitKeys = new Set();
+    const termIds = new Set();
+    for (const termFacts of scanFacts.terms) {
+        if (!DIGEST_PATTERN.test(termFacts.term.termId) ||
+            termIds.has(termFacts.term.termId)) {
+            throw groupsInvalid('Scanner domain term identity is malformed.');
+        }
+        termIds.add(termFacts.term.termId);
+        for (const value of termFacts.hits) {
+            const hit = parseHit(value, groupsInvalid);
+            const summary = buildInvestigationHitFact(scanFacts.treeDigest, scanFacts.policyDigest, termFacts.term.termId, hit);
+            if (hitKeys.has(summary.hitKey)) {
+                throw groupsInvalid('Scanner domain facts contain a duplicate hit.');
+            }
+            hitKeys.add(summary.hitKey);
+            hitRecords.push({ hitKey: summary.hitKey, summary });
+        }
+    }
+    const accumulators = new Map();
+    for (const record of hitRecords) {
+        const legacySelector = baseSelectorFor(record.summary.termId, record.summary, context);
+        const selector = {
+            termId: legacySelector.termId,
+            rootId: legacySelector.rootId,
+            extension: legacySelector.extension,
+            mutationClass: legacySelector.mutationClass,
+            relationshipId: legacySelector.relationshipId,
+            splitId: null,
+        };
+        const key = legacySelector.selectorId;
+        let group = accumulators.get(key);
+        if (group === undefined) {
+            group = { key, selector, members: new Map() };
+            accumulators.set(key, group);
+        }
+        group.members.set(record.hitKey, record);
+    }
+    const groups = [...accumulators.values()]
+        .map((group) => {
+        const members = [...group.members.values()].sort((left, right) => left.hitKey < right.hitKey ? -1 : left.hitKey > right.hitKey ? 1 : 0);
+        const memberKeys = members.map(({ hitKey }) => hitKey);
+        const leafDigest = sha256(canonicalJson({
+            schema: 'investigation.mechanical-group.v3',
+            key: group.key,
+            hitKeys: memberKeys,
+        }));
+        return {
+            key: group.key,
+            leafDigest,
+            selector: group.selector,
+            hitKeys: memberKeys,
+            hits: members.map(({ summary }) => summary),
+            sourceObjects: dedupeSourceObjects(members.map(({ summary }) => summary.sourceObject)),
+        };
+    })
+        .sort((left, right) => left.leafDigest < right.leafDigest
+        ? -1
+        : left.leafDigest > right.leafDigest
+            ? 1
+            : 0);
+    return {
+        schemaVersion: 1,
+        kind: 'investigation-group-facts',
+        treeDigest: scanFacts.treeDigest,
+        scanPolicyDigest: scanFacts.policyDigest,
+        groupingPolicyDigest: context.groupingPolicyDigest,
+        hits: hitRecords
+            .map(({ summary }) => summary)
+            .sort((left, right) => left.hitKey < right.hitKey ? -1 : left.hitKey > right.hitKey ? 1 : 0),
+        groups,
+    };
+}
+/**
  * Deterministically project one hit node per raw-byte occurrence and conservative
  * groups keyed by term, nearest declared root, extension, mutation class, and any
  * single reviewed relationship. Output is independent of scan/root/relationship
@@ -766,6 +855,23 @@ function buildHitRecord(termId, hit, scanNode) {
             byteLength: hit.byteLength,
         },
     };
+}
+function buildInvestigationHitFact(treeDigest, scanPolicyDigest, termId, hit) {
+    const fields = {
+        termId,
+        path: hit.path,
+        sourceObject: hit.sourceObject,
+        surface: hit.surface,
+        byteOffset: hit.byteOffset,
+        byteLength: hit.byteLength,
+    };
+    const hitKey = sha256(canonicalJson({
+        schema: 'investigation.hit-fact.v3',
+        treeDigest,
+        scanPolicyDigest,
+        ...fields,
+    }));
+    return { hitKey, ...fields };
 }
 function buildGroupNode(group, groupingPolicyDigest) {
     const members = [...group.members.values()].sort((left, right) => left.hitId < right.hitId ? -1 : left.hitId > right.hitId ? 1 : 0);

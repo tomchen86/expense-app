@@ -16,7 +16,9 @@ import {
 import {
   createInvestigationCoverageNode,
   createInvestigationDispositionNodes,
+  deriveInvestigationGroupFacts,
   deriveInvestigationGroups,
+  readInvestigationGroupNode,
 } from '../src/investigation-groups.ts';
 import { projectInvestigationArtifactForTracking } from '../src/investigation-artifact-projection.ts';
 import {
@@ -26,6 +28,8 @@ import {
   type EngineFloorFacts,
 } from '../src/investigation-floor.ts';
 import {
+  adaptInvestigationScanFactsResult,
+  scanInvestigationTreeFacts,
   scanInvestigationTree,
   type InvestigationScanResult,
   type ScanSkippedObject,
@@ -600,7 +604,7 @@ test('engine floor path facts come from an exact pinned diff, not the worktree',
   }
 });
 
-test('pinned scan ignores worktree, untracked, ignored, caller PATH, and allowedPaths', () => {
+test('pinned scan ignores index, worktree, untracked, ignored, caller PATH, and allowedPaths', () => {
   const repository = createScannerRepository();
   const fakeBin = fs.mkdtempSync(path.join(os.tmpdir(), 'scanner-fake-bin-'));
   const marker = path.join(fakeBin, 'executed');
@@ -639,6 +643,11 @@ test('pinned scan ignores worktree, untracked, ignored, caller PATH, and allowed
       path.join(repository, 'untracked.txt'),
       'committed-needle untracked-only\n',
     );
+    fs.writeFileSync(
+      path.join(repository, 'index-only.txt'),
+      'committed-needle index-only\n',
+    );
+    git(repository, ['add', 'docs/outside.md', 'index-only.txt']);
     fs.mkdirSync(path.join(repository, 'ignored'), { recursive: true });
     fs.writeFileSync(
       path.join(repository, 'ignored/secret.txt'),
@@ -679,6 +688,7 @@ test('pinned scan ignores worktree, untracked, ignored, caller PATH, and allowed
     assert.equal(fs.existsSync(marker), false);
     const serialized = JSON.stringify(result.nodes);
     assert.equal(serialized.includes('worktree-only'), false);
+    assert.equal(serialized.includes('index-only'), false);
     assert.equal(serialized.includes('untracked-only'), false);
     assert.equal(serialized.includes('ignored-only'), false);
   } finally {
@@ -1405,6 +1415,167 @@ test('operational CPU timeout aborts without returning semantic evidence', (t) =
         }),
       (error) => isWorkflowError(error, 'INVESTIGATION_SCAN_TIMEOUT'),
     );
+  } finally {
+    fs.rmSync(repository, { recursive: true, force: true });
+  }
+});
+
+test('domain scanner facts contain no generic evidence envelopes and preserve legacy scan semantics', () => {
+  const repository = createScannerRepository();
+  try {
+    fs.writeFileSync(
+      path.join(repository, 'src/base.txt'),
+      'base domain-fact marker\n',
+    );
+    commitAll(repository, 'Add domain scanner fixture');
+    const request = {
+      repositoryRoot: repository,
+      treeOid: treeOid(repository),
+      terms: [termWithProvenance('literal-content', 'domain-fact')],
+    };
+
+    const domain = scanInvestigationTreeFacts(request);
+    assert.equal(domain.outcome, 'ready');
+    if (domain.outcome !== 'ready') {
+      assert.fail('expected domain scan facts');
+    }
+    assert.equal(domain.facts.terms.length, 1);
+    assert.equal(domain.facts.terms[0]?.hits.length, 1);
+    assert.equal(domain.facts.inventory.skippedObjects.length, 0);
+    const serializedFacts = canonicalJson(domain.facts);
+    for (const forbidden of [
+      'nodeId',
+      'nodeSchema',
+      'evaluator',
+      'outputSchema',
+      'provenanceParentNodeIds',
+      'semanticParentResultDigests',
+    ]) {
+      assert.equal(serializedFacts.includes(`"${forbidden}"`), false);
+    }
+
+    const legacy = adaptInvestigationScanFactsResult(domain);
+    assert.equal(legacy.outcome, 'ready');
+    if (legacy.outcome !== 'ready') {
+      assert.fail('expected legacy scan adapter');
+    }
+    assert.equal(
+      legacy.inventory.treeDigest,
+      domain.facts.inventory.treeDigest,
+    );
+    assert.deepEqual(
+      legacy.inventory.skippedObjects,
+      domain.facts.inventory.skippedObjects,
+    );
+    assert.deepEqual(
+      legacy.nodes.map((node) => ({
+        termId: (node.output as { termId: string }).termId,
+        hits: (node.output as { hits: unknown[] }).hits,
+      })),
+      domain.facts.terms.map(({ term, hits }) => ({
+        termId: term.termId,
+        hits,
+      })),
+    );
+  } finally {
+    fs.rmSync(repository, { recursive: true, force: true });
+  }
+});
+
+test('domain grouping facts consume scanner facts without constructing evidence envelopes', () => {
+  const repository = createScannerRepository();
+  try {
+    fs.writeFileSync(
+      path.join(repository, 'src/base.txt'),
+      'group-domain marker\ngroup-domain marker\n',
+    );
+    fs.writeFileSync(
+      path.join(repository, 'src/secondary.ts'),
+      'export const value = "group-domain";\n',
+    );
+    commitAll(repository, 'Add domain grouping fixture');
+    const request = {
+      repositoryRoot: repository,
+      treeOid: treeOid(repository),
+      terms: [termWithProvenance('literal-content', 'group-domain')],
+    };
+    const mutationPolicy = createMutationClassPolicy({ rules: [] });
+    const declaredRoots = [{ rootId: 'repository', path: '' }];
+
+    const scanFacts = scanInvestigationTreeFacts(request);
+    assert.equal(scanFacts.outcome, 'ready');
+    if (scanFacts.outcome !== 'ready') {
+      assert.fail('expected domain scan facts');
+    }
+    const domain = deriveInvestigationGroupFacts({
+      scanFacts: scanFacts.facts,
+      mutationPolicy,
+      declaredRoots,
+      reviewedRelationships: [],
+    });
+    const serializedFacts = canonicalJson(domain);
+    for (const forbidden of [
+      'nodeId',
+      'nodeSchema',
+      'evaluator',
+      'outputSchema',
+      'provenanceParentNodeIds',
+      'semanticParentResultDigests',
+    ]) {
+      assert.equal(serializedFacts.includes(`"${forbidden}"`), false);
+    }
+
+    const legacyScan = scanInvestigationTree(request);
+    assert.equal(legacyScan.outcome, 'ready');
+    if (legacyScan.outcome !== 'ready') {
+      assert.fail('expected legacy scan adapter');
+    }
+    const legacyGroups = deriveInvestigationGroups({
+      scanNodes: legacyScan.nodes,
+      mutationPolicy,
+      declaredRoots,
+      reviewedRelationships: [],
+      exceptions: [],
+    }).groupNodes.map(readInvestigationGroupNode);
+
+    const normalizeDomainGroups = domain.groups
+      .map((group) => ({
+        selector: group.selector,
+        hits: group.hits
+          .map(({ hitKey: _hitKey, ...hit }) => hit)
+          .sort((left, right) =>
+            canonicalJson(left).localeCompare(canonicalJson(right)),
+          ),
+        sourceObjects: group.sourceObjects,
+      }))
+      .sort((left, right) =>
+        canonicalJson(left.selector).localeCompare(
+          canonicalJson(right.selector),
+        ),
+      );
+    const normalizeLegacyGroups = legacyGroups
+      .map((group) => ({
+        selector: {
+          termId: group.selector.termId,
+          rootId: group.selector.rootId,
+          extension: group.selector.extension,
+          mutationClass: group.selector.mutationClass,
+          relationshipId: group.selector.relationshipId,
+          splitId: group.selector.splitId,
+        },
+        hits: group.hits
+          .map(({ hitId: _hitId, ...hit }) => hit)
+          .sort((left, right) =>
+            canonicalJson(left).localeCompare(canonicalJson(right)),
+          ),
+        sourceObjects: group.sourceObjects,
+      }))
+      .sort((left, right) =>
+        canonicalJson(left.selector).localeCompare(
+          canonicalJson(right.selector),
+        ),
+      );
+    assert.deepEqual(normalizeDomainGroups, normalizeLegacyGroups);
   } finally {
     fs.rmSync(repository, { recursive: true, force: true });
   }

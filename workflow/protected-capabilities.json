@@ -286,6 +286,7 @@
         "workflow/schemas/execution-artifact.schema.json",
         "workflow/schemas/guard.schema.json",
         "workflow/schemas/investigation-artifact.schema.json",
+        "workflow/schemas/investigation-manifest-v3.schema.json",
         "workflow/schemas/investigation-planning-v1.schema.json",
         "workflow/schemas/maintainer-grant.schema.json",
         "workflow/schemas/maintainer-policy.schema.json",

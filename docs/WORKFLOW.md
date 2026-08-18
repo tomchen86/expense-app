@@ -136,6 +136,26 @@ working tree is never a fallback source. Existing schema-v1 full artifacts
 remain valid, and a graph that cannot be reproduced exactly remains stored in
 that full form.
 
+Investigation v3 is currently a non-authoritative Manifest-first shadow. For a
+sealed ordinary investigation the engine independently builds schema v3 from
+the common raw checkpoints and domain scanner facts, replays it from pinned Git,
+and compares canonical roots for terms, inventory/hits, mechanical and final
+Groups, coverage, Dispositions, WHY, exceptions, applicability, knowledge reuse,
+and assurance. The private Git-common runtime records only the compact Manifest
+and parity roots (or a structured blocker) under
+`investigations/shadow-v3/<investigation-id>.json`; it marks
+`authorityEligible: false`. The process-local `MaterializedEvidenceView` is
+never serialized or stored.
+
+Schema v2 remains the tracked authority. Do not treat a matched v3 shadow as
+authority and do not remove schema-v1/v2 readers, the full-artifact fallback, or
+the v2 projection until the published central Grant Core contract covers every
+realized v3 failure outcome and the explicit cutover/migration checks pass. v3
+emits canonical failure facts only. Trusted choices, fresh local device-owner
+authentication, stable transition definitions, once-only consumption, recovery,
+and grant audit state belong to central Grant Core; the v3 file-publication CAS
+journal is not a grant journal.
+
 Resume only with the latest typed envelope. Do not replay completed provider
 work, transcribe reviewer terms, manufacture collaboration evidence, or bypass
 `human-action-required`. When provider work is pending, `status` is read-only

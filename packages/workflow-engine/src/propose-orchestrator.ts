@@ -105,13 +105,30 @@ import {
   createInvestigationCoverageNode,
   createInvestigationDispositionNodes,
   deriveClassGroupsWithContext,
+  deriveInvestigationGroupFacts,
   deriveInvestigationGroups,
   readInvestigationGroupNode,
   type InvestigationDispositionInput,
+  type InvestigationGroupFacts,
   type ReviewedPathRelationship,
 } from './investigation-groups.ts';
 import { projectInvestigationArtifactForTracking } from './investigation-artifact-projection.ts';
-import { scanInvestigationTree } from './investigation-scanner.ts';
+import {
+  createInvestigationV3Blocker,
+  type InvestigationAssuranceFacts,
+  type InvestigationV3RoleResult,
+} from './investigation-manifest.ts';
+import {
+  buildInvestigationV3Shadow,
+  type InvestigationV3ShadowBuildResult,
+} from './investigation-shadow-builder.ts';
+import { writeInvestigationV3ShadowObservation } from './investigation-shadow-store.ts';
+import type { InvestigationV2ShadowOracle } from './investigation-shadow-parity.ts';
+import {
+  adaptInvestigationScanFactsResult,
+  scanInvestigationTreeFacts,
+  type InvestigationScanFacts,
+} from './investigation-scanner.ts';
 import {
   acknowledgeReviewerTermInputClosureUnderAuthority,
   blockInvestigationForReviewerTermsUnderAuthority,
@@ -716,6 +733,16 @@ type RebuiltInvestigation = {
    */
   reuseCoverage: ReuseCoverageRecord;
   whyNodes: EvidenceNode[];
+  /** Common raw/domain inputs retained only in memory for v2/v3 shadow. */
+  v3Domain: {
+    termContributions: InvestigationTermContribution[];
+    canonicalTerms: PreviewInvestigationTerm[];
+    scanFacts: InvestigationScanFacts;
+    groupFacts: InvestigationGroupFacts;
+    mutationPolicy: ReturnType<typeof deriveReviewedMutationClassPolicy>;
+    reviewedRelationships: ReviewedPathRelationship[];
+    dispositionInputs: InvestigationDispositionInput[];
+  } | null;
 };
 
 type ProposeLifecycleStatus = InvestigationStatus | ProposeExemptionSession;
@@ -5582,7 +5609,7 @@ function rebuildInvestigation(
     grantValidation,
     assertOwned,
   );
-  const scan = scanInvestigationTree({
+  const scanFactsResult = scanInvestigationTreeFacts({
     repositoryRoot: context.git.repositoryRoot,
     treeOid: session.baseline.tree,
     terms: preview.terms,
@@ -5590,13 +5617,16 @@ function rebuildInvestigation(
       inspectSaturationAcceptance ||
       session.scanSaturationAcceptance !== undefined,
   });
+  const scan = adaptInvestigationScanFactsResult(scanFactsResult);
   if (scan.outcome !== 'ready') {
-    const acceptedScan = scanInvestigationTree({
-      repositoryRoot: context.git.repositoryRoot,
-      treeOid: session.baseline.tree,
-      terms: preview.terms,
-      allowSaturatedTerms: true,
-    });
+    const acceptedScan = adaptInvestigationScanFactsResult(
+      scanInvestigationTreeFacts({
+        repositoryRoot: context.git.repositoryRoot,
+        treeOid: session.baseline.tree,
+        terms: preview.terms,
+        allowSaturatedTerms: true,
+      }),
+    );
     if (
       session.scanSaturationAcceptance === undefined &&
       acceptedScan.outcome === 'ready' &&
@@ -5644,6 +5674,19 @@ function rebuildInvestigation(
     reviewedRelationships,
     exceptions: [],
   });
+  if (scanFactsResult.outcome !== 'ready') {
+    throw workflowError(
+      'INVESTIGATION_SCAN_REPLAY_INVALID',
+      'The v2 scan adapter reported ready for a non-ready domain scan.',
+      ExitCode.verification,
+    );
+  }
+  const groupFacts = deriveInvestigationGroupFacts({
+    scanFacts: scanFactsResult.facts,
+    mutationPolicy,
+    declaredRoots: [{ rootId: 'repository', path: '' }],
+    reviewedRelationships,
+  });
   const assuranceAssessmentNode = createProposeAssuranceAssessmentNode({
     repositoryRoot: context.git.repositoryRoot,
     session,
@@ -5653,6 +5696,7 @@ function rebuildInvestigation(
     floorOverflowDecisionNode: floorOverflow.node,
   });
   let dispositionNodes: EvidenceNode[] = [];
+  let dispositionInputs: InvestigationDispositionInput[] = [];
   if (session.milestones.groupDispositions !== null) {
     const stored = session.milestones.groupDispositions.envelope;
     if (stored.kind !== 'group-dispositions') {
@@ -5662,15 +5706,19 @@ function rebuildInvestigation(
         ExitCode.staleState,
       );
     }
-    dispositionNodes = createInvestigationDispositionNodes({
-      groupNodes: grouped.groupNodes,
-      dispositions: expandSubmittedDispositions(context.git.repositoryRoot, {
+    dispositionInputs = expandSubmittedDispositions(
+      context.git.repositoryRoot,
+      {
         scanNodes: scan.nodes,
         groupNodes: grouped.groupNodes,
         payload: stored.payload,
         saturatedTermIds: scan.saturatedTermIds,
         assuranceAssessmentNode,
-      }),
+      },
+    );
+    dispositionNodes = createInvestigationDispositionNodes({
+      groupNodes: grouped.groupNodes,
+      dispositions: dispositionInputs,
     });
   }
   const derivedFullBlobManifest =
@@ -5809,6 +5857,15 @@ function rebuildInvestigation(
     fullBlobManifest,
     reuseCoverage,
     whyNodes,
+    v3Domain: {
+      termContributions: structuredClone(contributions),
+      canonicalTerms: structuredClone(preview.terms),
+      scanFacts: structuredClone(scanFactsResult.facts),
+      groupFacts: structuredClone(groupFacts),
+      mutationPolicy: structuredClone(mutationPolicy),
+      reviewedRelationships: structuredClone(reviewedRelationships),
+      dispositionInputs: structuredClone(dispositionInputs),
+    },
   };
 }
 
@@ -5867,6 +5924,7 @@ function emptyRebuilt(
       plan: null,
     }),
     whyNodes: [],
+    v3Domain: null,
   };
 }
 
@@ -7423,6 +7481,18 @@ function preparePlanningScaffold(
     context.git.repositoryRoot,
     investigation,
   );
+  const v3Shadow = buildProposeInvestigationV3Shadow(context, rebuilt);
+  if (materializeScaffold) {
+    writeInvestigationV3ShadowObservation({
+      runtime: context.runtime,
+      investigationId: rebuilt.session.investigationId,
+      sessionRevision: rebuilt.session.revision,
+      sessionSnapshotDigest: investigationV3SessionSnapshotDigest(
+        rebuilt.session,
+      ),
+      result: v3Shadow,
+    });
+  }
   const investigationBytes = `${canonicalJson(trackedInvestigation)}\n`;
   const scaffoldEntries = new Map([
     ['.openspec.yaml', metadataBytes],
@@ -7462,6 +7532,353 @@ function preparePlanningScaffold(
     replaceablePriorGeneration,
     instructions,
   };
+}
+
+function buildProposeInvestigationV3Shadow(
+  context: ReturnType<typeof loadInvestigationRuntimeContext>,
+  rebuilt: RebuiltInvestigation,
+): InvestigationV3ShadowBuildResult {
+  const candidate = {
+    repositoryId: context.config.repositoryName,
+    changeId: rebuilt.session.changeId,
+    investigationId: rebuilt.session.investigationId,
+    sessionRevision: rebuilt.session.revision,
+    sessionSnapshotDigest: investigationV3SessionSnapshotDigest(
+      rebuilt.session,
+    ),
+  };
+  try {
+    if (
+      rebuilt.v3Domain === null ||
+      rebuilt.coverageNode === null ||
+      rebuilt.assuranceAssessmentNode === null ||
+      rebuilt.providerRoleResult === null ||
+      rebuilt.session.milestones.groupDispositions === null ||
+      rebuilt.session.milestones.whyAnswers === null
+    ) {
+      throw workflowError(
+        'SEMANTIC_COMPLETENESS_FAILURE',
+        'A sealed v2 investigation lacks the raw/domain inputs required by v3 shadow.',
+        ExitCode.guard,
+      );
+    }
+    if (rebuilt.saturatedTermIds.length > 0) {
+      // The v2 acknowledgement predates semantic author/rationale fields. A
+      // shadow may name the missing fact but must not invent it or let a local
+      // continuation mechanism stand in for the central Grant contract.
+      throw workflowError(
+        'SEMANTIC_COMPLETENESS_FAILURE',
+        'The legacy scan-saturation acknowledgement has no v3 semantic author and rationale.',
+        ExitCode.guard,
+      );
+    }
+    const groupCheckpoint = rebuilt.session.milestones.groupDispositions;
+    const whyCheckpoint = rebuilt.session.milestones.whyAnswers;
+    if (
+      groupCheckpoint.envelope.kind !== 'group-dispositions' ||
+      whyCheckpoint.envelope.kind !== 'why-answers'
+    ) {
+      throw workflowError(
+        'SEMANTIC_COMPLETENESS_FAILURE',
+        'Stored v2 checkpoints cannot be mapped to v3 semantic decisions.',
+        ExitCode.guard,
+      );
+    }
+    const dispositionDecisions = rebuilt.v3Domain.dispositionInputs.map(
+      (disposition) => ({
+        groupKey: disposition.groupId,
+        classification: disposition.classification,
+        rationale: disposition.rationale,
+        semanticAuthor: {
+          id: disposition.author,
+          provenance: `checkpoint:${groupCheckpoint.envelopeDigest}`,
+        },
+      }),
+    );
+    const rowById = new Map(
+      rebuilt.completeFullBlobManifest.map((row) => [row.manifestEntryId, row]),
+    );
+    const carried = rebuilt.reuseCoverage.carried.map((carry) => {
+      const row = rowById.get(carry.manifestEntryId);
+      if (row === undefined) {
+        throw workflowError(
+          'RECONSTRUCTION_MISMATCH',
+          'Semantic reuse cites a missing load-bearing Manifest row.',
+          ExitCode.verification,
+        );
+      }
+      const entry = readLedgerEntry(
+        context.git.repositoryRoot,
+        carry.ledgerEntryId,
+      );
+      if (entry.subject.subjectId !== carry.subjectId) {
+        throw workflowError(
+          'RECONSTRUCTION_MISMATCH',
+          'Semantic reuse subject no longer matches its immutable knowledge version.',
+          ExitCode.verification,
+        );
+      }
+      return {
+        manifestEntryId: carry.manifestEntryId,
+        subjectId: carry.subjectId,
+        versionDigest: entry.entryId,
+        freshnessRationale:
+          'The semantic freshness plan accepted this exact blob, policy and dependency state.',
+        semanticAuthor: {
+          id: 'workflow-engine',
+          provenance: `semantic-freshness:${entry.entryId}`,
+        },
+        provenanceDigest: sha256(
+          canonicalJson({
+            schema: 'investigation-v3-shadow-knowledge-freshness.v1',
+            carry,
+            entryId: entry.entryId,
+            resolutions: rebuilt.reuseCoverage.resolutions,
+          }),
+        ),
+      };
+    });
+    const v2KnowledgeReuse = carried.map((carry) => {
+      const row = rowById.get(carry.manifestEntryId)!;
+      return {
+        pathIdentity: row.path,
+        blobOid: row.blob.objectId,
+        subjectId: carry.subjectId,
+        versionDigest: carry.versionDigest,
+      };
+    });
+    const assessment = reportProposeAssuranceAssessment(
+      rebuilt.assuranceAssessmentNode,
+    );
+    const assuranceFacts = investigationV3AssuranceFacts(assessment);
+    const investigationRoleResults = [
+      rebuilt.providerRoleResult,
+      rebuilt.reviewerRoleResult,
+    ]
+      .filter((role): role is AdmittedRoleResult => role !== null)
+      .map(investigationV3RoleResult);
+    const semanticAuthorIds = [
+      ...rebuilt.v3Domain.dispositionInputs.map(({ author }) => author.trim()),
+      ...whyCheckpoint.envelope.payload.answers.map(({ semanticAuthor }) =>
+        semanticAuthor.trim(),
+      ),
+    ].filter((value) => value.length > 0);
+    const uniqueAuthors = [...new Set(semanticAuthorIds)].sort();
+    if (uniqueAuthors.length !== 1) {
+      throw workflowError(
+        'SEMANTIC_COMPLETENESS_FAILURE',
+        'v2 final checkpoints do not identify one exact v3 investigation approver.',
+        ExitCode.guard,
+      );
+    }
+    const approvalProvenanceDigest = sha256(
+      canonicalJson({
+        schema: 'investigation-v3-shadow-approval-provenance.v1',
+        groupCheckpoint: groupCheckpoint.envelopeDigest,
+        whyCheckpoint: whyCheckpoint.envelopeDigest,
+      }),
+    );
+    const v2Oracle: InvestigationV2ShadowOracle = {
+      canonicalTerms: structuredClone(rebuilt.v3Domain.canonicalTerms),
+      inventory: structuredClone(rebuilt.v3Domain.scanFacts.inventory),
+      groupNodes: rebuilt.groupNodes,
+      dispositionNodes: rebuilt.dispositionNodes,
+      coverageNode: rebuilt.coverageNode,
+      whyNodes: rebuilt.whyNodes,
+      knowledgeReuse: v2KnowledgeReuse,
+      baseline: structuredClone(rebuilt.session.baseline),
+      intentDigest: rebuilt.session.intentDigest,
+      assurance: {
+        coverageTier: assessment.coverageTier,
+        escalated: assessment.escalated,
+        reasons: [...assessment.reasons],
+      },
+    };
+    return buildInvestigationV3Shadow({
+      repositoryRoot: context.git.repositoryRoot,
+      repositoryId: context.config.repositoryName,
+      changeId: rebuilt.session.changeId,
+      investigationId: rebuilt.session.investigationId,
+      normalizedIntent: rebuilt.intent,
+      authoring: {
+        sessionRevision: rebuilt.session.revision,
+        sessionSnapshotDigest: investigationV3SessionSnapshotDigest(
+          rebuilt.session,
+        ),
+      },
+      baseline: {
+        commitOid: rebuilt.session.baseline.head,
+        treeOid: rebuilt.session.baseline.tree,
+      },
+      termContributions: rebuilt.v3Domain.termContributions,
+      canonicalTerms: rebuilt.v3Domain.canonicalTerms,
+      scanFacts: rebuilt.v3Domain.scanFacts,
+      groupFacts: rebuilt.v3Domain.groupFacts,
+      scanner: {
+        allowSaturatedTerms: false,
+        saturationDecision: null,
+      },
+      grouping: {
+        mutationPolicy: rebuilt.v3Domain.mutationPolicy,
+        declaredRoots: [{ rootId: 'repository', path: '' }],
+        reviewedRelationships: rebuilt.v3Domain.reviewedRelationships,
+      },
+      dispositionDecisions,
+      whyAuthoring: {
+        kind: 'legacy-v2-shadow',
+        manifestRows: rebuilt.completeFullBlobManifest.map((row) => ({
+          manifestEntryId: row.manifestEntryId,
+          path: row.path,
+          blob: {
+            objectId: row.blob.objectId,
+            contentSha256: row.blob.contentSha256,
+          },
+        })),
+        answers: whyCheckpoint.envelope.payload.answers,
+        carried,
+        checkpointProvenanceDigest: whyCheckpoint.envelopeDigest,
+      },
+      investigationRoleResults,
+      floorOverflowDecision: rebuilt.floorOverflowDecision,
+      assuranceFacts,
+      approval: {
+        semanticAuthor: {
+          id: uniqueAuthors[0]!,
+          provenance: `v2-shadow-final-checkpoints:${approvalProvenanceDigest}`,
+        },
+        approvalProvenanceDigest,
+      },
+      v2Oracle,
+    });
+  } catch (error) {
+    return {
+      outcome: 'blocked',
+      blocker: createInvestigationV3Blocker({
+        attemptedTransition: 'build-draft',
+        candidate,
+        failureCode:
+          error instanceof WorkflowError
+            ? error.code
+            : 'RECONSTRUCTION_MISMATCH',
+        message:
+          error instanceof Error
+            ? error.message
+            : 'Unknown v3 propose shadow failure.',
+      }),
+    };
+  }
+}
+
+function investigationV3RoleResult(
+  role: AdmittedRoleResult,
+): InvestigationV3RoleResult {
+  if (role.role !== 'blind-surveyor' && role.role !== 'plan-reviewer') {
+    throw workflowError(
+      'SEMANTIC_COMPLETENESS_FAILURE',
+      'Non-investigation role cannot enter the Investigation v3 Manifest.',
+      ExitCode.guard,
+    );
+  }
+  const provider = role.providerInvocation;
+  const sanitizedProvenance = {
+    schema: 'investigation-v3-role-provenance.v1',
+    form: role.form,
+    role: role.role,
+    targetDigest: role.targetDigest,
+    participant: role.participant,
+    requiredIndependence: role.requiredIndependence,
+    achievedIndependence: role.achievedIndependence,
+    orchestration: role.orchestration,
+    content: {
+      kind: role.content.kind,
+      outputSchema: role.content.outputSchema,
+      evaluator: role.content.evaluator,
+      policyDigest: role.content.policyDigest,
+      contentDigest: role.content.contentDigest,
+      current: role.content.current,
+    },
+    providerInvocation:
+      provider === null
+        ? null
+        : {
+            invocationId: provider.invocationId,
+            requestDigest: provider.requestDigest,
+            outputDigest: provider.outputDigest,
+            providerId: provider.providerId,
+            sessionId: provider.sessionId,
+            targetDigest: provider.targetDigest,
+            engineSpawned: provider.engineSpawned,
+          },
+  };
+  return {
+    role:
+      role.role === 'blind-surveyor'
+        ? 'blind-surveyor'
+        : 'investigation-reviewer',
+    targetDigest: investigationV3BareDigest(role.targetDigest),
+    providerId: role.participant.providerId,
+    sessionId: role.participant.sessionId,
+    principalId: role.participant.principalId,
+    requiredIndependence: role.requiredIndependence,
+    achievedIndependence: role.achievedIndependence,
+    requestDigest:
+      provider === null
+        ? sha256(canonicalJson({ ...sanitizedProvenance, phase: 'request' }))
+        : investigationV3BareDigest(provider.requestDigest),
+    outputDigest:
+      provider === null
+        ? investigationV3BareDigest(role.content.contentDigest)
+        : investigationV3BareDigest(provider.outputDigest),
+    contentDigest: investigationV3BareDigest(role.content.contentDigest),
+    policyDigest: investigationV3BareDigest(role.content.policyDigest),
+    provenanceDigest: sha256(canonicalJson(sanitizedProvenance)),
+  };
+}
+
+function investigationV3AssuranceFacts(
+  assessment: ProposeAssuranceAssessment,
+): InvestigationAssuranceFacts {
+  const {
+    nodeId: _nodeId,
+    resultDigest: _resultDigest,
+    policyDigest,
+    ...domainAssessment
+  } = assessment;
+  const assessmentDigest = sha256(
+    canonicalJson({
+      schema: 'investigation-v3-assurance-facts.v1',
+      assessment: domainAssessment,
+    }),
+  );
+  return {
+    assessmentDigest,
+    coverageTier: assessment.coverageTier,
+    escalated: assessment.escalated,
+    reasons: [...assessment.reasons],
+    provenanceDigest: sha256(
+      canonicalJson({
+        schema: 'investigation-v3-assurance-provenance.v1',
+        assessmentDigest,
+        policyDigest: investigationV3BareDigest(policyDigest),
+      }),
+    ),
+  };
+}
+
+function investigationV3SessionSnapshotDigest(
+  session: InvestigationSession,
+): string {
+  return sha256(`${canonicalJson(session)}\n`);
+}
+
+function investigationV3BareDigest(value: string): string {
+  if (/^[0-9a-f]{64}$/.test(value)) return value;
+  if (/^sha256:[0-9a-f]{64}$/.test(value)) return value.slice(7);
+  throw workflowError(
+    'RECONSTRUCTION_MISMATCH',
+    'A v3 shadow provenance digest is malformed.',
+    ExitCode.verification,
+  );
 }
 
 function createInvestigationSealNode(
