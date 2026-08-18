@@ -95,10 +95,7 @@ test('a critical scan hit forbids even a low-reported ordinary class and persist
       result: { outcome: string; manifest?: { schemaVersion: number } };
     };
     assert.equal(shadow.authorityEligible, false);
-    assert.equal(
-      shadow.cutoverState,
-      'waiting-for-central-fail-grant-contract',
-    );
+    assert.equal(shadow.cutoverState, 'central-fail-grant-covered-shadow');
     assert.equal(shadow.result.outcome, 'matched');
     assert.equal(shadow.result.manifest?.schemaVersion, 3);
     for (const forbidden of [

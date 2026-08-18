@@ -1,6 +1,7 @@
 import {
   createProductionWorkflowGrantCoordinator,
   requestInvestigationGrant,
+  requestInvestigationV3Grant,
 } from './grant-production.ts';
 import type { GrantCoordinator } from './grant-coordinator.ts';
 import { ExitCode, WorkflowError, workflowError } from './errors.ts';
@@ -12,11 +13,17 @@ type HumanGrantCliDependencies = Readonly<{
     investigationId: string,
     proposedReason: string,
   ): Promise<unknown>;
+  requestInvestigationV3(
+    cwd: string,
+    investigationId: string,
+    proposedReason: string,
+  ): Promise<unknown>;
 }>;
 
 const PRODUCTION_DEPENDENCIES: HumanGrantCliDependencies = Object.freeze({
   coordinator: createProductionWorkflowGrantCoordinator,
   requestInvestigation: requestInvestigationGrant,
+  requestInvestigationV3: requestInvestigationV3Grant,
 });
 
 export function isHumanGrantCliInvocation(argv: readonly string[]): boolean {
@@ -31,16 +38,21 @@ export async function dispatchHumanGrantCli(
   if (!isHumanGrantCliInvocation(argv)) throw humanGrantUsage();
   const action = argv[2];
   if (
-    action === 'request-investigation' &&
+    (action === 'request-investigation' ||
+      action === 'request-investigation-v3') &&
     argv.length === 6 &&
     argv[4] === '--reason'
   ) {
+    const request =
+      action === 'request-investigation'
+        ? dependencies.requestInvestigation
+        : dependencies.requestInvestigationV3;
     return {
       command: 'grant',
       family: 'human',
       action,
       ok: true,
-      result: await dependencies.requestInvestigation(cwd, argv[3]!, argv[5]!),
+      result: await request(cwd, argv[3]!, argv[5]!),
     };
   }
   if (action === 'inspect' && argv.length === 4) {
@@ -116,7 +128,7 @@ export async function runHumanGrantCli(
 function humanGrantUsage(): WorkflowError {
   return workflowError(
     'USAGE',
-    'Usage: pnpm workflow grant human <request-investigation <investigation-id> --reason <agent-proposed-reason>|inspect <challenge-id>|decide <challenge-id>|recover <challenge-id>> [--json]',
+    'Usage: pnpm workflow grant human <request-investigation <investigation-id> --reason <agent-proposed-reason>|request-investigation-v3 <investigation-id> --reason <agent-proposed-reason>|inspect <challenge-id>|decide <challenge-id>|recover <challenge-id>> [--json]',
     ExitCode.usage,
   );
 }

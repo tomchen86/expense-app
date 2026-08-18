@@ -41,6 +41,7 @@ import type { NormalizedChangeIntent } from './provider-invocation-store.ts';
 
 const DIGEST = /^[0-9a-f]{64}$/;
 const GIT_OBJECT_ID = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
+const ASSURANCE_FACT_ID = /^[a-z][a-z0-9]*(?:[.-][a-z0-9]+)*$/;
 const MAX_TEXT_BYTES = 16 * 1024;
 const SEMANTIC_ASSURANCE = 'actor-attested-not-engine-verified' as const;
 
@@ -300,6 +301,7 @@ export const INVESTIGATION_V3_KNOWN_FAILURE_CODES = [
   'SOURCE_ANCHOR_UNRESOLVED',
   'REVIEW_TARGET_STALE',
   'PROJECTION_PIPELINE_FORBIDDEN',
+  'INVESTIGATION_V3_SHADOW_MISMATCH',
 ] as const;
 
 /** Diagnostic catalog only. New engine failures remain valid without editing it. */
@@ -343,6 +345,83 @@ export function createInvestigationV3Blocker(input: {
     input.message,
     input.details,
   ).blocker;
+}
+
+/**
+ * Converts an engine exception through the same normalization path used by the
+ * built-in v3 transition emitters.
+ */
+export function createInvestigationV3BlockerFromError(input: {
+  attemptedTransition: InvestigationV3Blocker['attemptedTransition'];
+  candidate: unknown;
+  error: unknown;
+}): InvestigationV3Blocker {
+  return blocked(input.attemptedTransition, input.candidate, input.error)
+    .blocker;
+}
+
+export function parseInvestigationV3Blocker(
+  value: unknown,
+): InvestigationV3Blocker {
+  const record = assertRecord(value);
+  assertExactKeys(record, [
+    'schemaVersion',
+    'kind',
+    'failureIdentity',
+    'attemptedTransition',
+    'candidateDigest',
+    'failureCode',
+    'detailsDigest',
+    'missingAssuranceFacts',
+  ]);
+  if (
+    record.schemaVersion !== 1 ||
+    record.kind !== 'investigation-v3-failure' ||
+    typeof record.failureIdentity !== 'string' ||
+    !DIGEST.test(record.failureIdentity) ||
+    !INVESTIGATION_V3_ATTEMPTED_TRANSITIONS.includes(
+      record.attemptedTransition as InvestigationV3Blocker['attemptedTransition'],
+    ) ||
+    typeof record.candidateDigest !== 'string' ||
+    !DIGEST.test(record.candidateDigest) ||
+    !isSafeInvestigationV3FailureCode(record.failureCode) ||
+    typeof record.detailsDigest !== 'string' ||
+    !DIGEST.test(record.detailsDigest) ||
+    !Array.isArray(record.missingAssuranceFacts) ||
+    !record.missingAssuranceFacts.every(
+      (fact) => typeof fact === 'string' && ASSURANCE_FACT_ID.test(fact),
+    ) ||
+    new Set(record.missingAssuranceFacts).size !==
+      record.missingAssuranceFacts.length ||
+    canonicalJson(record.missingAssuranceFacts) !==
+      canonicalJson([...record.missingAssuranceFacts].sort())
+  ) {
+    throw unrepresentable('Investigation v3 blocker is malformed.');
+  }
+  const blocker = {
+    schemaVersion: 1 as const,
+    kind: 'investigation-v3-failure' as const,
+    failureIdentity: record.failureIdentity,
+    attemptedTransition:
+      record.attemptedTransition as InvestigationV3Blocker['attemptedTransition'],
+    candidateDigest: record.candidateDigest,
+    failureCode: record.failureCode,
+    detailsDigest: record.detailsDigest,
+    missingAssuranceFacts: [...record.missingAssuranceFacts],
+  };
+  const expectedIdentity = digestWithDomain('investigation-v3-failure/v1', {
+    attemptedTransition: blocker.attemptedTransition,
+    candidateDigest: blocker.candidateDigest,
+    failureCode: blocker.failureCode,
+    detailsDigest: blocker.detailsDigest,
+    missingAssuranceFacts: blocker.missingAssuranceFacts,
+  });
+  if (blocker.failureIdentity !== expectedIdentity) {
+    throw unrepresentable(
+      'Investigation v3 blocker identity does not match its facts.',
+    );
+  }
+  return deepFreeze(blocker);
 }
 
 type BuiltResult =
@@ -2108,21 +2187,25 @@ function unrepresentable(message: string): ManifestValidationError {
 
 function failureCode(error: unknown): InvestigationV3FailureCode {
   if (error instanceof ManifestValidationError) return error.code;
-  if (error instanceof WorkflowError) {
-    const directCodes = new Set([
-      'TERM_INTEGRITY_MISMATCH',
-      'REPLAY_INPUT_MISSING',
-      'REPLAY_CLOSURE_UNSUPPORTED',
-      'MANIFEST_UNREPRESENTABLE',
-      'RECONSTRUCTION_MISMATCH',
-      'SEMANTIC_COMPLETENESS_FAILURE',
-      'SOURCE_ANCHOR_UNRESOLVED',
-      'REVIEW_TARGET_STALE',
-      'PROJECTION_PIPELINE_FORBIDDEN',
-    ]);
-    return directCodes.has(error.code) ? error.code : 'RECONSTRUCTION_MISMATCH';
+  if (
+    error instanceof WorkflowError &&
+    isSafeInvestigationV3FailureCode(error.code)
+  ) {
+    return error.code;
   }
   return 'RECONSTRUCTION_MISMATCH';
+}
+
+function isSafeInvestigationV3FailureCode(
+  value: unknown,
+): value is InvestigationV3FailureCode {
+  return (
+    typeof value === 'string' &&
+    value.length > 0 &&
+    value.trim() === value &&
+    Buffer.byteLength(value) <= 256 &&
+    !/[\0\r\n]/.test(value)
+  );
 }
 
 function blocked(

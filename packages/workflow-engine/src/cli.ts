@@ -2908,7 +2908,7 @@ function usageText(): string {
     '  pnpm workflow authority-recover <session-id> [--json]',
     '  pnpm workflow authority-abort <session-id> --reason <text> [--json]',
     '  pnpm workflow human-resolution-state <investigation-id> [--json]',
-    '  pnpm workflow grant human <request-investigation <investigation-id> --reason <agent-proposed-reason>|inspect <challenge-id>|decide <challenge-id>|recover <challenge-id>> [--json]',
+    '  pnpm workflow grant human <request-investigation <investigation-id> --reason <agent-proposed-reason>|request-investigation-v3 <investigation-id> --reason <agent-proposed-reason>|inspect <challenge-id>|decide <challenge-id>|recover <challenge-id>> [--json]',
     '  pnpm workflow documents validate [--json]',
     '  pnpm workflow document-refresh <propose|show|review|apply> ... [--json]',
     '  pnpm workflow handoff validate [--json]',

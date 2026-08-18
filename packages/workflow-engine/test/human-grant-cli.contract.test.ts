@@ -41,6 +41,14 @@ test('human grant CLI requires an agent-proposed reason but cannot submit the hu
       calls.push(`request:${investigationId}:${proposedReason}`);
       return { investigationId, proposedReason };
     },
+    async requestInvestigationV3(
+      _cwd: string,
+      investigationId: string,
+      proposedReason: string,
+    ) {
+      calls.push(`request-v3:${investigationId}:${proposedReason}`);
+      return { investigationId, proposedReason };
+    },
   };
 
   await dispatchHumanGrantCli(
@@ -56,12 +64,25 @@ test('human grant CLI requires an agent-proposed reason but cannot submit the hu
     dependencies,
   );
   await dispatchHumanGrantCli(
+    [
+      'grant',
+      'human',
+      'request-investigation-v3',
+      'investigation-demo',
+      '--reason',
+      'The v3 blocker requires a bounded human continuation.',
+    ],
+    '/repo',
+    dependencies,
+  );
+  await dispatchHumanGrantCli(
     ['grant', 'human', 'decide', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'],
     '/repo',
     dependencies,
   );
   assert.deepEqual(calls, [
     'request:investigation-demo:Reviewer budget is exhausted; human resolution is required.',
+    'request-v3:investigation-demo:The v3 blocker requires a bounded human continuation.',
     'decide:aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
   ]);
 
@@ -96,7 +117,7 @@ test('human grant CLI requires an agent-proposed reason but cannot submit the hu
     ),
     (error) => isWorkflowError(error, 'USAGE'),
   );
-  assert.equal(calls.length, 2);
+  assert.equal(calls.length, 3);
 });
 
 test('legacy human-resolution apply and recovery cannot start a live transition', () => {

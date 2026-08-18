@@ -120,8 +120,8 @@ export type InvestigationV3ShadowBuildResult =
 /**
  * Non-authoritative v3 shadow build from common raw/domain inputs. It never
  * publishes a current ref and contains no grant mechanics. A mismatch or any
- * construction failure is reduced to the same structured v3 failure contract
- * that a future central Grant Core producer adapter will consume.
+ * construction failure is reduced to the structured v3 failure contract
+ * consumed by the central Grant Core producer adapter.
  */
 export function buildInvestigationV3Shadow(
   input: InvestigationV3ShadowBuildInput,

@@ -7485,6 +7485,8 @@ function preparePlanningScaffold(
   if (materializeScaffold) {
     writeInvestigationV3ShadowObservation({
       runtime: context.runtime,
+      repositoryId: context.config.repositoryName,
+      changeId: rebuilt.session.changeId,
       investigationId: rebuilt.session.investigationId,
       sessionRevision: rebuilt.session.revision,
       sessionSnapshotDigest: investigationV3SessionSnapshotDigest(

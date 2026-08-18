@@ -73,14 +73,16 @@ export type InvestigationReplayAuthoringInput = {
  * cannot accidentally become a tracked or durable authority artifact.
  */
 export class MaterializedEvidenceView {
-  readonly scanFacts: InvestigationScanFacts;
-  readonly grouping: InvestigationGroupFacts;
-  readonly finalGroups: InvestigationFinalGroupFact[];
-  readonly dispositions: AppliedInvestigationDisposition[];
-  readonly commitments: InvestigationDerivedCommitments;
-  readonly termSetDigest: string;
-  readonly canonicalTerms: PreviewInvestigationTerm[];
-  readonly limits: InvestigationLimits;
+  readonly #state: {
+    scanFacts: InvestigationScanFacts;
+    grouping: InvestigationGroupFacts;
+    finalGroups: InvestigationFinalGroupFact[];
+    dispositions: AppliedInvestigationDisposition[];
+    commitments: InvestigationDerivedCommitments;
+    termSetDigest: string;
+    canonicalTerms: PreviewInvestigationTerm[];
+    limits: InvestigationLimits;
+  };
 
   constructor(input: {
     scanFacts: InvestigationScanFacts;
@@ -92,15 +94,40 @@ export class MaterializedEvidenceView {
     canonicalTerms: PreviewInvestigationTerm[];
     limits: InvestigationLimits;
   }) {
-    this.scanFacts = input.scanFacts;
-    this.grouping = input.grouping;
-    this.finalGroups = input.finalGroups;
-    this.dispositions = input.dispositions;
-    this.commitments = input.commitments;
-    this.termSetDigest = input.termSetDigest;
-    this.canonicalTerms = input.canonicalTerms;
-    this.limits = input.limits;
+    this.#state = deepFreeze(structuredClone(input));
     Object.freeze(this);
+  }
+
+  get scanFacts(): InvestigationScanFacts {
+    return this.#state.scanFacts;
+  }
+
+  get grouping(): InvestigationGroupFacts {
+    return this.#state.grouping;
+  }
+
+  get finalGroups(): InvestigationFinalGroupFact[] {
+    return this.#state.finalGroups;
+  }
+
+  get dispositions(): AppliedInvestigationDisposition[] {
+    return this.#state.dispositions;
+  }
+
+  get commitments(): InvestigationDerivedCommitments {
+    return this.#state.commitments;
+  }
+
+  get termSetDigest(): string {
+    return this.#state.termSetDigest;
+  }
+
+  get canonicalTerms(): PreviewInvestigationTerm[] {
+    return this.#state.canonicalTerms;
+  }
+
+  get limits(): InvestigationLimits {
+    return this.#state.limits;
   }
 
   toJSON(): never {
@@ -110,6 +137,17 @@ export class MaterializedEvidenceView {
       ExitCode.guard,
     );
   }
+}
+
+function deepFreeze<T>(value: T): T {
+  if (typeof value !== 'object' || value === null || Object.isFrozen(value)) {
+    return value;
+  }
+  Object.freeze(value);
+  for (const child of Object.values(value as Record<string, unknown>)) {
+    deepFreeze(child);
+  }
+  return value;
 }
 
 export function materializeInvestigationEvidenceView(input: {

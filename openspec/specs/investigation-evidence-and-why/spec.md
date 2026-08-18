@@ -258,6 +258,15 @@ Every v3 failure outcome under engine control, including validation, reconstruct
 
 Investigation v3 MUST NOT define a local grant schema, candidate label, callback, signer, trusted UI, authentication step, reservation, consumption rule, audit journal, degraded-reference placement, or resume command. It only emits canonical failure facts and state binding; the central Transition Registry and Grant Core own choices, fresh local device-owner authentication, once-only consumption, recovery, and audit.
 
+#### Scenario: Engine-produced shadow failure enters central Grant Core
+
+- **GIVEN** the private v3 shadow observation contains an exact structured blocker
+- **WHEN** the central Grant producer is asked to create its human challenge
+- **THEN** Grant Core persists the durable challenge with a code-owned non-retry stop transition
+- **AND** transition consumption re-observes the current failure state and rejects drift
+- **AND** the shadow record stores no challenge, approval, Grant reference, or audit state
+- **AND** stopping preserves the failed assurance and current authority without relabelling either as verified
+
 #### Scenario: Central contract is not published for every v3 failure
 
 - **GIVEN** one realized v3 failure has no registered central producer/transition contract

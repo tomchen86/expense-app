@@ -253,6 +253,17 @@ test('MaterializedEvidenceView is process-local and the direct writer has no pro
         'code' in error &&
         error.code === 'PROJECTION_PIPELINE_FORBIDDEN',
     );
+    assert.deepEqual(
+      Object.keys(view),
+      [],
+      'the process-local view must not expose serializable own state',
+    );
+    assert.deepEqual(
+      structuredClone(view),
+      {},
+      'structured cloning the view must not copy evidence into a durable shape',
+    );
+    assert.deepEqual(view.canonicalTerms, state.ordinary.canonicalTerms);
     for (const moduleName of [
       'investigation-manifest.ts',
       'investigation-materializer.ts',

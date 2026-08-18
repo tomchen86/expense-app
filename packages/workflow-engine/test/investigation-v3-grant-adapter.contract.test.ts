@@ -1,24 +1,43 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import test from 'node:test';
 
 import { canonicalJson } from '../src/canonical-json.ts';
+import { ExitCode, workflowError } from '../src/errors.ts';
+import { discoverRepository } from '../src/git.ts';
 import {
   createApprovalSubject,
   createGrantChallenge,
   approvalSubjectDigest,
 } from '../src/grant-core.ts';
+import {
+  createProductionWorkflowGrantCoordinator,
+  requestInvestigationV3Grant,
+} from '../src/grant-production.ts';
+import { HUMAN_GATE_MACOS_V1_CONFIGURATION_DIGEST } from '../src/grant-policy.ts';
+import {
+  grantStorePaths,
+  prepareGrantTransition,
+  readGrantRecord,
+} from '../src/grant-store.ts';
 import { createTransitionRegistry } from '../src/grant-transition-registry.ts';
 import {
   INVESTIGATION_V3_ATTEMPTED_TRANSITIONS,
   INVESTIGATION_V3_KNOWN_FAILURE_CODES,
   createInvestigationV3Blocker,
+  createInvestigationV3BlockerFromError,
 } from '../src/investigation-manifest.ts';
 import {
   createInvestigationV3GrantRequest,
   investigationV3CentralFailureCode,
   investigationV3GrantTransitionDefinitions,
 } from '../src/investigation-v3-grant.ts';
+import { writeInvestigationV3ShadowObservation } from '../src/investigation-shadow-store.ts';
+import { investigationRuntimePaths } from '../src/paths.ts';
+import { runtimePaths } from '../src/session-store.ts';
+import { git } from './fixture.ts';
 
 const PROPOSED_REASON =
   'The v3 transition failed and a human must choose the bounded continuation.';
@@ -37,7 +56,7 @@ test('central adapter covers every v3 transition and non-exhaustive failure code
         message: `Failure ${failureCode}`,
       });
       const request = createInvestigationV3GrantRequest({
-        blocker,
+        failure: failureContext(blocker),
         proposedReason: PROPOSED_REASON,
       });
       assert.equal(request.sourceModuleId, 'investigation.v3');
@@ -49,12 +68,22 @@ test('central adapter covers every v3 transition and non-exhaustive failure code
       assert.deepEqual(request.facts, {
         schemaVersion: 1,
         workflowKind: 'investigation-v3',
+        repositoryId: 'fixture',
+        changeId: 'demo-change',
+        investigationId: 'investigation-demo',
+        sessionRevision: 3,
+        sessionSnapshotDigest: 'c'.repeat(64),
         blocker,
       });
       assert.equal(request.candidates.length, 1);
       assert.equal(
         request.candidates[0]!.transitionId,
-        'investigation.v3.stop-transition.v1',
+        'investigation.v3.stop-transition.v2',
+      );
+      assert.equal(
+        (request.candidates[0]!.parameters as { schemaVersion?: unknown })
+          .schemaVersion,
+        2,
       );
       assert.equal(request.candidates[0]!.proposedReason, PROPOSED_REASON);
       assert.equal('title' in request.candidates[0]!, false);
@@ -68,6 +97,25 @@ test('central adapter covers every v3 transition and non-exhaustive failure code
   );
 });
 
+test('a future engine failure survives the real v3 emitter path into central mapping', () => {
+  const blocker = createInvestigationV3BlockerFromError({
+    attemptedTransition: 'authority-validation',
+    candidate: { revision: 4 },
+    error: workflowError(
+      'FUTURE_ENGINE_FAILURE',
+      'A future engine failure must retain its stable identity.',
+      ExitCode.guard,
+    ),
+  });
+
+  assert.equal(blocker.failureCode, 'FUTURE_ENGINE_FAILURE');
+  const request = createInvestigationV3GrantRequest({
+    failure: failureContext(blocker),
+    proposedReason: PROPOSED_REASON,
+  });
+  assert.equal(request.failureCode, 'investigation.v3.future-engine-failure');
+});
+
 test('central registry owns the safe stop transition without relabelling assurance', async () => {
   const blocker = createInvestigationV3Blocker({
     attemptedTransition: 'publication',
@@ -76,11 +124,11 @@ test('central registry owns the safe stop transition without relabelling assuran
     message: 'The publication target changed.',
   });
   const request = createInvestigationV3GrantRequest({
-    blocker,
+    failure: failureContext(blocker),
     proposedReason: PROPOSED_REASON,
   });
   const registry = createTransitionRegistry(
-    investigationV3GrantTransitionDefinitions(),
+    investigationV3GrantTransitionDefinitions('/repo'),
   );
   const challenge = createGrantChallenge(request, registry, {
     challengeId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
@@ -94,41 +142,10 @@ test('central registry owns the safe stop transition without relabelling assuran
       'Preserves the failed assurance and keeps the current authority unchanged.',
     ],
   });
-  const approvalSubject = createApprovalSubject(
-    challenge,
-    {
-      choiceId: choice.choiceId,
-      approvalMethod: 'human-presence',
-      reasonCode: 'preserve-current-authority',
-      reason: 'Keep the current authority and stop this failed transition.',
-      sessionNonce: 'nonce-55555555555555555555555555555555',
-    },
-    { now: new Date('2026-08-18T05:01:00.000Z') },
+  assert.equal(
+    registry.resolve(choice.transitionId).resolutionKind,
+    'non-retry',
   );
-  const definition = registry.resolve(choice.transitionId);
-  assert.deepEqual(
-    await definition.observeState(choice.parameters),
-    request.stateBinding,
-  );
-  const outcome = await definition.execute({
-    parameters: choice.parameters,
-    approvalSubject,
-    approvalSubjectDigest: approvalSubjectDigest(approvalSubject),
-    challengeId: challenge.challengeId,
-    operationId: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
-    recovered: false,
-    assertLifecycleOwned() {},
-  });
-  assert.deepEqual(outcome, {
-    outcome: 'completed',
-    details: {
-      continuation: 'stop-transition',
-      failureIdentity: blocker.failureIdentity,
-      failurePreserved: true,
-      authorityAdvanced: false,
-    },
-  });
-  assert.equal(canonicalJson(outcome).includes('verified'), false);
 });
 
 test('v3 adapter remains central and introduces no local grant substrate', () => {
@@ -147,3 +164,231 @@ test('v3 adapter remains central and introduces no local grant substrate', () =>
     assert.equal(source.includes(forbidden), false, forbidden);
   }
 });
+
+test('an engine-produced v3 blocker becomes a durable central challenge and state drift is re-observed', async () => {
+  const repository = createGrantFixtureRepository();
+  try {
+    const git = discoverRepository(repository);
+    const investigationRuntime = investigationRuntimePaths(
+      git.gitCommonDirectory,
+      'workflow-engine',
+    );
+    const lifecycleRuntime = runtimePaths(
+      git.gitCommonDirectory,
+      'workflow-engine',
+    );
+    const blocker = createInvestigationV3Blocker({
+      attemptedTransition: 'authority-validation',
+      candidate: { revision: 3 },
+      failureCode: 'FUTURE_ENGINE_FAILURE',
+      message: 'A future engine failure remains centrally consumable.',
+    });
+    const shadowPath = writeInvestigationV3ShadowObservation({
+      runtime: investigationRuntime,
+      repositoryId: 'fixture',
+      changeId: 'demo-change',
+      investigationId: 'investigation-demo',
+      sessionRevision: 3,
+      sessionSnapshotDigest: 'c'.repeat(64),
+      result: { outcome: 'blocked', blocker },
+    });
+
+    const requested = await requestInvestigationV3Grant(
+      repository,
+      'investigation-demo',
+      PROPOSED_REASON,
+    );
+    const stored = readGrantRecord(
+      grantStorePaths(lifecycleRuntime.root),
+      requested.challengeId,
+    );
+    assert.equal(stored.state, 'pending');
+    assert.equal(stored.challenge.sourceModuleId, 'investigation.v3');
+    assert.deepEqual(stored.challenge.facts, {
+      schemaVersion: 1,
+      workflowKind: 'investigation-v3',
+      repositoryId: 'fixture',
+      changeId: 'demo-change',
+      investigationId: 'investigation-demo',
+      sessionRevision: 3,
+      sessionSnapshotDigest: 'c'.repeat(64),
+      blocker,
+    });
+    const shadowBytes = fs.readFileSync(shadowPath, 'utf8');
+    assert.equal(shadowBytes.includes(requested.challengeId), false);
+    assert.equal(shadowBytes.includes('grantChallenge'), false);
+
+    const registry = createTransitionRegistry(
+      investigationV3GrantTransitionDefinitions(repository),
+    );
+    const choice = stored.challenge.choices[0]!;
+    const definition = registry.resolve(choice.transitionId);
+    assert.deepEqual(
+      await definition.observeState(choice.parameters),
+      stored.challenge.stateBinding,
+    );
+    const approvalSubject = createApprovalSubject(
+      stored.challenge,
+      {
+        choiceId: choice.choiceId,
+        approvalMethod: 'human-presence',
+        reasonCode: 'preserve-current-authority',
+        reason: 'Keep the current authority and stop this failed transition.',
+        sessionNonce: 'nonce-55555555555555555555555555555555',
+      },
+      { now: new Date(stored.challenge.issuedAt) },
+    );
+    const transitionContext = {
+      parameters: choice.parameters,
+      approvalSubject,
+      approvalSubjectDigest: approvalSubjectDigest(approvalSubject),
+      challengeId: stored.challenge.challengeId,
+      operationId: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+      recovered: false,
+      assertLifecycleOwned() {},
+    };
+    const outcome = await definition.execute(transitionContext);
+    assert.deepEqual(outcome, {
+      outcome: 'completed',
+      details: {
+        continuation: 'stop-transition',
+        failureIdentity: blocker.failureIdentity,
+        failurePreserved: true,
+        authorityAdvanced: false,
+      },
+    });
+    assert.equal(canonicalJson(outcome).includes('verified'), false);
+    const storePaths = grantStorePaths(lifecycleRuntime.root);
+    prepareGrantTransition(storePaths, {
+      operationId: transitionContext.operationId,
+      challenge: stored.challenge,
+      subject: approvalSubject,
+      proofModules: [
+        {
+          moduleId: 'human-gate-macos',
+          version: '1',
+          claim: 'fresh-local-device-owner',
+          proofDigest: `sha256:${'4'.repeat(64)}`,
+          identity: null,
+        },
+      ],
+      createdAt: stored.challenge.issuedAt,
+    });
+
+    const changedBlocker = createInvestigationV3Blocker({
+      attemptedTransition: 'authority-validation',
+      candidate: { revision: 4 },
+      failureCode: 'FUTURE_ENGINE_FAILURE',
+      message: 'The engine failure changed after challenge creation.',
+    });
+    writeInvestigationV3ShadowObservation({
+      runtime: investigationRuntime,
+      repositoryId: 'fixture',
+      changeId: 'demo-change',
+      investigationId: 'investigation-demo',
+      sessionRevision: 4,
+      sessionSnapshotDigest: 'd'.repeat(64),
+      result: { outcome: 'blocked', blocker: changedBlocker },
+    });
+    assert.notDeepEqual(
+      await definition.observeState(choice.parameters),
+      stored.challenge.stateBinding,
+    );
+    await assert.rejects(
+      definition.execute({ ...transitionContext, recovered: true }),
+      (error) =>
+        typeof error === 'object' &&
+        error !== null &&
+        'code' in error &&
+        error.code === 'INVESTIGATION_V3_GRANT_STATE_CHANGED',
+    );
+    await assert.rejects(
+      createProductionWorkflowGrantCoordinator(repository).recoverChallenge(
+        stored.challenge.challengeId,
+      ),
+      (error) =>
+        typeof error === 'object' &&
+        error !== null &&
+        'code' in error &&
+        error.code === 'INVESTIGATION_V3_GRANT_STATE_CHANGED',
+    );
+    assert.equal(
+      readGrantRecord(storePaths, stored.challenge.challengeId).state,
+      'prepared',
+      'stale recovery must not record a completed transition',
+    );
+  } finally {
+    fs.rmSync(repository, { recursive: true, force: true });
+  }
+});
+
+function failureContext(
+  blocker: ReturnType<typeof createInvestigationV3Blocker>,
+) {
+  return {
+    repositoryId: 'fixture',
+    changeId: 'demo-change',
+    investigationId: 'investigation-demo',
+    sessionRevision: 3,
+    sessionSnapshotDigest: 'c'.repeat(64),
+    blocker,
+  };
+}
+
+function installGrantPolicy(repository: string): void {
+  fs.writeFileSync(
+    path.join(repository, 'workflow/grant-policy.json'),
+    `${canonicalJson({
+      schemaVersion: 2,
+      defaultProfile: 'local-presence',
+      profiles: {
+        'local-presence': {
+          requiredClaims: ['fresh-local-device-owner'],
+        },
+      },
+      approvalModules: [
+        {
+          moduleId: 'human-gate-macos',
+          version: '1',
+          allowedClaims: ['fresh-local-device-owner'],
+          configurationDigest: HUMAN_GATE_MACOS_V1_CONFIGURATION_DIGEST,
+        },
+      ],
+      legacyVerification: { maintainerPolicyV1: 'read-only' },
+    })}\n`,
+  );
+}
+
+function createGrantFixtureRepository(): string {
+  const repository = fs.mkdtempSync(
+    path.join(os.tmpdir(), 'investigation-v3-grant-'),
+  );
+  git(repository, ['init', '-b', 'main']);
+  git(repository, ['config', 'user.email', 'v3-grant@example.test']);
+  git(repository, ['config', 'user.name', 'V3 Grant Test']);
+  fs.mkdirSync(path.join(repository, 'workflow'), { recursive: true });
+  fs.writeFileSync(
+    path.join(repository, 'workflow/config.json'),
+    `${canonicalJson({
+      schemaVersion: 1,
+      repositoryName: 'fixture',
+      changeRoot: 'openspec/changes',
+      runtimeDirectory: 'workflow-engine',
+      protectedBranches: ['main', 'master'],
+      branchTemplate: 'work/{changeId}',
+      taskAuthorization: {
+        pathRoleRegistry: 'workflow/path-roles.json',
+        mandateRequiredRoles: ['control-plane'],
+      },
+    })}\n`,
+  );
+  installGrantPolicy(repository);
+  git(repository, [
+    'add',
+    '--',
+    'workflow/config.json',
+    'workflow/grant-policy.json',
+  ]);
+  git(repository, ['commit', '-m', 'Create v3 Grant fixture']);
+  return repository;
+}

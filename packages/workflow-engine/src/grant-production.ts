@@ -1,5 +1,6 @@
 import { loadWorkflowConfig } from './contracts.ts';
 import { isRecord } from './contract-values.ts';
+import { ExitCode, workflowError } from './errors.ts';
 import { ensurePlainDirectory } from './filesystem-safety.ts';
 import { discoverRepository } from './git.ts';
 import {
@@ -10,7 +11,11 @@ import {
 import { collectSshApprovalProof } from './grant-proof-ssh.ts';
 import { createInvestigationGrantRequest } from './investigation-grant-transitions.ts';
 import { investigationGrantTransitionDefinitions } from './investigation-grant-transitions.ts';
-import { investigationV3GrantTransitionDefinitions } from './investigation-v3-grant.ts';
+import {
+  createInvestigationV3GrantRequest,
+  investigationV3GrantTransitionDefinitions,
+} from './investigation-v3-grant.ts';
+import { readInvestigationV3ShadowFailureObservation } from './investigation-shadow-store.ts';
 import { loadGrantPolicyV2 } from './grant-policy.ts';
 import { grantStorePaths, readGrantRecord } from './grant-store.ts';
 import type { TransitionRegistry } from './grant-transition-registry.ts';
@@ -19,6 +24,7 @@ import {
   inspectMacOsHumanGateRuntime,
   openMacOsHumanGateApprovalSession,
 } from './human-gate-macos.ts';
+import { loadInvestigationRuntimeContext } from './lifecycle-context.ts';
 import { assertChangeId } from './paths.ts';
 import {
   runtimePaths,
@@ -88,7 +94,7 @@ export function createProductionWorkflowGrantCoordinator(
     cwd,
     createTransitionRegistry([
       ...investigationGrantTransitionDefinitions(cwd),
-      ...investigationV3GrantTransitionDefinitions(),
+      ...investigationV3GrantTransitionDefinitions(cwd),
     ]),
   );
 }
@@ -100,6 +106,38 @@ export async function requestInvestigationGrant(
 ) {
   return createProductionWorkflowGrantCoordinator(cwd).requestGrant(
     createInvestigationGrantRequest(cwd, investigationId, proposedReason),
+  );
+}
+
+export async function requestInvestigationV3Grant(
+  cwd: string,
+  investigationId: string,
+  proposedReason: string,
+) {
+  const context = loadInvestigationRuntimeContext(cwd);
+  const observation = readInvestigationV3ShadowFailureObservation(
+    context.runtime,
+    investigationId,
+  );
+  if (observation.repositoryId !== context.config.repositoryName) {
+    throw workflowError(
+      'INVESTIGATION_V3_GRANT_REPOSITORY_MISMATCH',
+      'Investigation v3 failure observation belongs to another repository.',
+      ExitCode.guard,
+    );
+  }
+  return createProductionWorkflowGrantCoordinator(cwd).requestGrant(
+    createInvestigationV3GrantRequest({
+      failure: {
+        repositoryId: observation.repositoryId,
+        changeId: observation.changeId,
+        investigationId: observation.investigationId,
+        sessionRevision: observation.sessionRevision,
+        sessionSnapshotDigest: observation.sessionSnapshotDigest,
+        blocker: observation.result.blocker,
+      },
+      proposedReason,
+    }),
   );
 }
 
