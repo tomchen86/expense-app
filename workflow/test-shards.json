@@ -12,9 +12,9 @@
   },
   "sourceTelemetryRunId": "run-20260813022917744-06e455fe-631a-480c-85b0-d3185b06182f",
   "sourceTelemetryDigest": "sha256:131eae67d081623752dfb1f52b9ecd9356e26b70213b3bfc3c43cc5a8b862c2b",
-  "physicalFileCount": 237,
-  "executionUnitCount": 235,
-  "inventoryDigest": "sha256:d45abf277a3798748c456b7d916b04060e67d1de897e57a66c59620e04aeec18",
+  "physicalFileCount": 247,
+  "executionUnitCount": 245,
+  "inventoryDigest": "sha256:6908e7a724fe9c03769c41be9e018b705e7456b6203e02dcc5ba1b4f3bc07b90",
   "shards": [
     {
       "shardNumber": 1,
@@ -383,11 +383,91 @@
           "estimatedDurationMs": 0
         },
         {
+          "entrypoint": "packages/workflow-engine/test/grant-approval.contract.test.ts",
+          "ownedPhysicalFiles": [
+            "packages/workflow-engine/test/grant-approval.contract.test.ts"
+          ],
+          "legacyOrdinal": 233,
+          "estimatedDurationMs": 0
+        },
+        {
+          "entrypoint": "packages/workflow-engine/test/grant-coordinator.contract.test.ts",
+          "ownedPhysicalFiles": [
+            "packages/workflow-engine/test/grant-coordinator.contract.test.ts"
+          ],
+          "legacyOrdinal": 234,
+          "estimatedDurationMs": 0
+        },
+        {
+          "entrypoint": "packages/workflow-engine/test/grant-core.contract.test.ts",
+          "ownedPhysicalFiles": [
+            "packages/workflow-engine/test/grant-core.contract.test.ts"
+          ],
+          "legacyOrdinal": 235,
+          "estimatedDurationMs": 0
+        },
+        {
+          "entrypoint": "packages/workflow-engine/test/grant-policy.contract.test.ts",
+          "ownedPhysicalFiles": [
+            "packages/workflow-engine/test/grant-policy.contract.test.ts"
+          ],
+          "legacyOrdinal": 236,
+          "estimatedDurationMs": 0
+        },
+        {
+          "entrypoint": "packages/workflow-engine/test/grant-proof-ssh.contract.test.ts",
+          "ownedPhysicalFiles": [
+            "packages/workflow-engine/test/grant-proof-ssh.contract.test.ts"
+          ],
+          "legacyOrdinal": 237,
+          "estimatedDurationMs": 0
+        },
+        {
+          "entrypoint": "packages/workflow-engine/test/grant-store.contract.test.ts",
+          "ownedPhysicalFiles": [
+            "packages/workflow-engine/test/grant-store.contract.test.ts"
+          ],
+          "legacyOrdinal": 238,
+          "estimatedDurationMs": 0
+        },
+        {
+          "entrypoint": "packages/workflow-engine/test/human-gate-macos.contract.test.ts",
+          "ownedPhysicalFiles": [
+            "packages/workflow-engine/test/human-gate-macos.contract.test.ts"
+          ],
+          "legacyOrdinal": 239,
+          "estimatedDurationMs": 0
+        },
+        {
+          "entrypoint": "packages/workflow-engine/test/human-grant-cli.contract.test.ts",
+          "ownedPhysicalFiles": [
+            "packages/workflow-engine/test/human-grant-cli.contract.test.ts"
+          ],
+          "legacyOrdinal": 240,
+          "estimatedDurationMs": 0
+        },
+        {
+          "entrypoint": "packages/workflow-engine/test/investigation-grant-integration.contract.test.ts",
+          "ownedPhysicalFiles": [
+            "packages/workflow-engine/test/investigation-grant-integration.contract.test.ts"
+          ],
+          "legacyOrdinal": 241,
+          "estimatedDurationMs": 0
+        },
+        {
+          "entrypoint": "packages/workflow-engine/test/investigation-grant-transitions.contract.test.ts",
+          "ownedPhysicalFiles": [
+            "packages/workflow-engine/test/investigation-grant-transitions.contract.test.ts"
+          ],
+          "legacyOrdinal": 242,
+          "estimatedDurationMs": 0
+        },
+        {
           "entrypoint": "packages/workflow-engine/test/pre-merge-assurance-store.contract.test.ts",
           "ownedPhysicalFiles": [
             "packages/workflow-engine/test/pre-merge-assurance-store.contract.test.ts"
           ],
-          "legacyOrdinal": 233,
+          "legacyOrdinal": 243,
           "estimatedDurationMs": 0
         },
         {
@@ -395,7 +475,7 @@
           "ownedPhysicalFiles": [
             "packages/workflow-engine/test/pre-merge-assurance.contract.test.ts"
           ],
-          "legacyOrdinal": 234,
+          "legacyOrdinal": 244,
           "estimatedDurationMs": 0
         },
         {
@@ -403,7 +483,7 @@
           "ownedPhysicalFiles": [
             "packages/workflow-engine/test/workflow-test-inventory.contract.test.ts"
           ],
-          "legacyOrdinal": 235,
+          "legacyOrdinal": 245,
           "estimatedDurationMs": 0
         }
       ]

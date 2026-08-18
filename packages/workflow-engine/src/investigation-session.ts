@@ -8,7 +8,7 @@ import {
   quarantineUnsafeEvidenceRefsDocument,
   readInvestigationEvidenceRefsClosure,
 } from './evidence-object-store.ts';
-import { ExitCode, WorkflowError, workflowError } from './errors.ts';
+import { ExitCode, workflowError } from './errors.ts';
 import {
   createReplacementAttempt,
   providerExecutionEnvironmentDigest,
@@ -20,6 +20,7 @@ import {
   preflightProviderRepairRetry,
 } from './provider-execution-governance.ts';
 import { runGit } from './git.ts';
+import { copyGrantDate } from './grant-primitives.ts';
 import {
   assertHumanResolutionDecision,
   assertInvestigationCheckpointEnvelope,
@@ -41,6 +42,7 @@ import {
   investigationCurrentRefDigest,
   investigationCheckpointId,
   investigationResolutionStateDigest,
+  humanResolutionDecisionSchemaDigest,
   investigationSessionExists,
   inspectStoredHumanResolutionGrants,
   scanProviderInvocationLifecycles,
@@ -48,19 +50,14 @@ import {
   quarantineUnsafeInvestigationStartReservation,
   quarantineInterruptedHumanResolutionGrantPublication,
   quarantineUnsafeHumanResolutionRef,
-  readAvailableHumanResolutionGrant,
   readCurrentInvestigationRef,
   readHumanResolutionArchive,
   readHumanResolutionHead,
   readHumanResolutionJournal,
   readHumanResolutionNode,
   readInvestigationSession,
-  readReservedHumanResolutionGrant,
-  readTerminalHumanResolutionGrant,
-  reserveHumanResolutionGrant,
   archiveHumanResolutionSingleton,
   revokeStoredHumanResolutionGrant,
-  terminalizeHumanResolutionGrant,
   withHumanResolutionGrantExecution,
   writeHumanResolutionArchive,
   writeHumanResolutionJournal,
@@ -71,9 +68,13 @@ import {
   type HumanResolutionGrantPublicationStateBinding,
   type HumanResolutionGrantPublicationStoreState,
   type QuarantinedHumanResolutionGrantPublication,
+  type HumanResolutionConsequences,
+  type HumanResolutionDecision,
+  type HumanResolutionExpectedState,
   type HumanResolutionJournal,
   type HumanResolutionGrantStoreEntry,
   type HumanResolutionNode,
+  type HumanResolutionTarget,
   type InvestigationCheckpointEnvelope,
   type InvestigationCheckpointKind,
   type InvestigationResolutionState,
@@ -85,16 +86,14 @@ import {
 } from './investigation-session-store.ts';
 import { loadInvestigationRuntimeContext } from './lifecycle-context.ts';
 import {
-  assertHumanResolutionAuditTag,
-  canonicalHumanResolutionGrantEnvelope,
+  assertResolutionConsequences,
+  assertResolutionDecisionAvailable,
+  assertResolutionDecisionTarget,
+  humanResolutionBlockerBinding,
   loadMaintainerPolicyForResolution,
   parseHumanResolutionGrantEnvelope,
-  validateHumanResolutionGrantPayload,
-  verifyHumanResolutionGrantEnvelope,
   verifyHumanResolutionGrantForRevocation,
-  type HumanResolutionGrantEnvelope,
 } from './maintainer-grant.ts';
-import type { MaintainerSignerProvider } from './maintainer-signer.ts';
 import type { HumanRevocationOptions } from './human-revocation.ts';
 import { IMPLEMENTATION_RECONCILIATION_POLICY_DIGEST } from './implementation-reconciliation-policy.ts';
 import { GLOBAL_PLAN_REVIEW_COVERAGE_POLICY_DIGEST } from './plan-review-coverage.ts';
@@ -102,6 +101,7 @@ import { assertChangeId, assertInvestigationId } from './paths.ts';
 import {
   assertHeldChangeTransitionAuthority,
   type HeldChangeTransitionAuthority,
+  withGrantHumanResolutionTransitionAuthority,
   withHumanResolutionTransitionAuthority,
   withInvestigationTransitionAuthority,
 } from './planning-lock.ts';
@@ -199,7 +199,6 @@ export type RetryInvestigationProviderInput = {
 
 export type HumanResolutionExecutionOptions = {
   now?: Date;
-  verifier?: MaintainerSignerProvider;
   simulateCrashAfter?:
     | 'prepared'
     | 'evidence-refs'
@@ -207,7 +206,7 @@ export type HumanResolutionExecutionOptions = {
     | 'current-ref'
     | 'state-published'
     | 'receipt-written'
-    | 'grant-consumed';
+    | 'completed';
 };
 
 export class SimulatedHumanResolutionCrash extends Error {
@@ -233,6 +232,32 @@ export type HumanResolutionExecutionResult = {
   receiptDigest: string;
   recovered: boolean;
 };
+
+export type GrantCoreHumanResolutionAuthorization = Readonly<{
+  schemaVersion: 1;
+  kind: 'grant-core-human-resolution.v1';
+  challengeId: string;
+  approvalSubjectDigest: `sha256:${string}`;
+  repositoryId: string;
+  repositoryHead: string;
+  repositoryTree: string;
+  target: HumanResolutionTarget;
+  expected: HumanResolutionExpectedState;
+  decision: HumanResolutionDecision;
+  consequences: HumanResolutionConsequences;
+}>;
+
+type HumanResolutionExecutionAuthorization = Readonly<{
+  grantId: string;
+  grantDigest: string;
+  repositoryId: string;
+  repositoryHead: string;
+  repositoryTree: string | null;
+  target: HumanResolutionTarget;
+  expected: HumanResolutionExpectedState;
+  decision: HumanResolutionDecision;
+  consequences: HumanResolutionConsequences;
+}>;
 
 export type HumanResolutionGrantInspection = {
   grantId: string;
@@ -487,234 +512,57 @@ function inspectHumanResolutionGrant(
 }
 
 export function executeHumanResolutionGrant(
-  cwd: string,
-  requestedGrantId: string,
-  options: HumanResolutionExecutionOptions = {},
+  _cwd: string,
+  _requestedGrantId: string,
+  _options: HumanResolutionExecutionOptions = {},
 ): HumanResolutionExecutionResult {
-  const context = loadInvestigationRuntimeContext(cwd);
-  return withHumanResolutionGrantExecution(
-    context.runtime,
-    requestedGrantId,
-    () =>
-      executeHumanResolutionGrantLocked(
-        cwd,
-        context,
-        requestedGrantId,
-        options,
-      ),
-  );
-}
-
-function executeHumanResolutionGrantLocked(
-  cwd: string,
-  context: ReturnType<typeof loadInvestigationRuntimeContext>,
-  requestedGrantId: string,
-  options: HumanResolutionExecutionOptions,
-): HumanResolutionExecutionResult {
-  const availableEnvelopeBytes = readAvailableHumanResolutionGrant(
-    context.runtime,
-    requestedGrantId,
-  );
-  const envelope = parseHumanResolutionGrantEnvelope(availableEnvelopeBytes);
-  return withHumanResolutionTransitionAuthority(
-    context.lifecycleRuntime,
-    envelope.payload.target.changeId,
-    requestedGrantId,
-    (assertOwned) => {
-      let reserved = false;
-      try {
-        const reservedEnvelopeBytes = reserveHumanResolutionGrant(
-          context.runtime,
-          requestedGrantId,
-        );
-        reserved = true;
-        if (reservedEnvelopeBytes !== availableEnvelopeBytes) {
-          throw workflowError(
-            'HUMAN_RESOLUTION_GRANT_UNSAFE',
-            'Human resolution grant bytes changed before reservation.',
-            ExitCode.unsafeEnvironment,
-          );
-        }
-        const prepared = prepareHumanResolutionExecution(
-          cwd,
-          context,
-          envelope,
-          options,
-        );
-        assertOwned();
-        const result = publishHumanResolutionExecution(
-          cwd,
-          context,
-          envelope,
-          prepared,
-          options,
-          false,
-        );
-        assertOwned();
-        return result;
-      } catch (error) {
-        if (
-          reserved &&
-          readHumanResolutionJournal(context.runtime, requestedGrantId) === null
-        ) {
-          terminalizeHumanResolutionGrant(context.runtime, requestedGrantId, {
-            schemaVersion: 1,
-            state: 'revoked',
-            grantId: requestedGrantId,
-            reason:
-              error && typeof error === 'object' && 'code' in error
-                ? String(error.code)
-                : 'HUMAN_RESOLUTION_PREPARATION_FAILED',
-            recordedAt: exactHumanResolutionDate(
-              options.now ?? new Date(),
-            ).toISOString(),
-            envelope,
-          });
-        }
-        throw error;
-      }
-    },
+  throw workflowError(
+    'LEGACY_GRANT_V1_LIVE_TRANSITION_DISABLED',
+    'Legacy V1 human-resolution grants are historical read-only evidence and cannot start a new live transition.',
+    ExitCode.guard,
   );
 }
 
 export function recoverHumanResolutionGrant(
-  cwd: string,
-  requestedGrantId: string,
-  options: Omit<HumanResolutionExecutionOptions, 'simulateCrashAfter'> = {},
+  _cwd: string,
+  _requestedGrantId: string,
+  _options: Omit<HumanResolutionExecutionOptions, 'simulateCrashAfter'> = {},
 ): HumanResolutionExecutionResult {
-  const context = loadInvestigationRuntimeContext(cwd);
-  return withHumanResolutionGrantExecution(
-    context.runtime,
-    requestedGrantId,
-    () =>
-      recoverHumanResolutionGrantLocked(
-        cwd,
-        context,
-        requestedGrantId,
-        options,
-      ),
+  throw workflowError(
+    'LEGACY_GRANT_V1_LIVE_TRANSITION_DISABLED',
+    'Legacy V1 human-resolution grants are historical read-only evidence and cannot recover a live transition.',
+    ExitCode.guard,
   );
 }
 
-function recoverHumanResolutionGrantLocked(
+export type GrantCoreHumanResolutionExecutionOptions = Readonly<{
+  now?: Date;
+  simulateCrashAfter?: NonNullable<
+    HumanResolutionExecutionOptions['simulateCrashAfter']
+  >;
+}>;
+
+export function executeGrantCoreHumanResolution(
   cwd: string,
-  context: ReturnType<typeof loadInvestigationRuntimeContext>,
-  requestedGrantId: string,
-  options: Omit<HumanResolutionExecutionOptions, 'simulateCrashAfter'>,
+  input: GrantCoreHumanResolutionAuthorization,
+  assertRepositoryLifecycleOwned: () => void,
+  options: GrantCoreHumanResolutionExecutionOptions = {},
 ): HumanResolutionExecutionResult {
-  const journal = readHumanResolutionJournal(context.runtime, requestedGrantId);
-  if (journal === null) {
+  const context = loadInvestigationRuntimeContext(cwd);
+  const authorization = grantCoreHumanResolutionAuthorization(input);
+  if (
+    context.git.head !== authorization.repositoryHead ||
+    context.git.tree !== authorization.repositoryTree
+  ) {
     throw workflowError(
-      'HUMAN_RESOLUTION_JOURNAL_MISSING',
-      'Human resolution recovery requires an exact prepared journal.',
+      'GRANT_STATE_CHANGED',
+      'Repository state changed after the human decision; fresh approval is required.',
       ExitCode.staleState,
     );
   }
-  return withHumanResolutionTransitionAuthority(
-    context.lifecycleRuntime,
-    journal.target.changeId,
-    requestedGrantId,
-    (assertOwned) => {
-      const terminal = readTerminalHumanResolutionGrant(
-        context.runtime,
-        requestedGrantId,
-      );
-      let envelope: HumanResolutionGrantEnvelope;
-      if (terminal !== null) {
-        if (
-          terminal.state !== 'consumed' ||
-          !terminal.envelope ||
-          typeof terminal.envelope !== 'object'
-        ) {
-          throw workflowError(
-            'HUMAN_RESOLUTION_RECOVERY_AMBIGUOUS',
-            'Terminal human-resolution grant state is not recoverable.',
-            ExitCode.staleState,
-          );
-        }
-        envelope = parseHumanResolutionGrantEnvelope(
-          canonicalHumanResolutionGrantEnvelope(
-            terminal.envelope as HumanResolutionGrantEnvelope,
-          ),
-        );
-      } else {
-        envelope = parseHumanResolutionGrantEnvelope(
-          readReservedHumanResolutionGrant(context.runtime, requestedGrantId),
-        );
-      }
-      if (
-        envelope.payload.grantId !== journal.grantId ||
-        digest(canonicalHumanResolutionGrantEnvelope(envelope)) !==
-          journal.grantDigest
-      ) {
-        throw workflowError(
-          'HUMAN_RESOLUTION_RECOVERY_AMBIGUOUS',
-          'Human resolution journal and grant do not match.',
-          ExitCode.staleState,
-          {
-            details: {
-              envelopeGrantId: envelope.payload.grantId,
-              journalGrantId: journal.grantId,
-              envelopeDigest: digest(
-                canonicalHumanResolutionGrantEnvelope(envelope),
-              ),
-              journalGrantDigest: journal.grantDigest,
-            },
-          },
-        );
-      }
-      const node = readHumanResolutionNodeForRecovery(context.runtime, journal);
-      const beforeState = readHumanResolutionArchive(
-        context.runtime,
-        journal.evidenceArchiveDigest,
-      );
-      const prepared: PreparedHumanResolutionExecution = {
-        node,
-        journal,
-        receipt: buildHumanResolutionReceipt(
-          envelope,
-          journal,
-          node,
-          journal.afterStateDigest,
-        ),
-        beforeState,
-      };
-      assertOwned();
-      const result = publishHumanResolutionExecution(
-        cwd,
-        context,
-        envelope,
-        prepared,
-        options,
-        true,
-      );
-      assertOwned();
-      return result;
-    },
-  );
-}
-
-type PreparedHumanResolutionExecution = {
-  node: HumanResolutionNode;
-  journal: HumanResolutionJournal;
-  receipt: Record<string, unknown>;
-  beforeState: InvestigationResolutionState;
-};
-
-function prepareHumanResolutionExecution(
-  cwd: string,
-  context: ReturnType<typeof loadInvestigationRuntimeContext>,
-  envelope: HumanResolutionGrantEnvelope,
-  options: HumanResolutionExecutionOptions,
-): PreparedHumanResolutionExecution {
-  const now = exactHumanResolutionDate(options.now ?? new Date());
-  // Grant parsing is intentionally structural so historical bytes remain
-  // inspectable. Executable transitions must always re-admit the current,
-  // reason-bearing decision shape before any state planning or publication.
-  assertHumanResolutionDecision(envelope.payload.decision);
-  const { policy, policyBlob } = loadMaintainerPolicyForResolution(
+  const { policy } = loadMaintainerPolicyForResolution(
     context.git.repositoryRoot,
-    envelope.payload.trustBaseCommit,
+    authorization.repositoryHead,
   );
   const origin = runGit(context.git.repositoryRoot, [
     'remote',
@@ -722,71 +570,249 @@ function prepareHumanResolutionExecution(
     'origin',
   ]).trim();
   if (
-    origin !== policy.repository.origin ||
-    envelope.payload.repositoryOrigin !== policy.repository.origin
+    policy.repository.id !== authorization.repositoryId ||
+    origin !== policy.repository.origin
   ) {
     throw workflowError(
       'HUMAN_RESOLUTION_REPOSITORY_MISMATCH',
-      'The human resolution grant belongs to another repository.',
+      'The Grant Core resolution belongs to another repository.',
       ExitCode.guard,
     );
   }
-  let state: InvestigationResolutionState;
-  try {
-    state =
-      envelope.payload.decision.kind === 'quarantine'
-        ? inspectInvestigationQuarantineState(
-            context.runtime,
-            envelope.payload.target.workflowId,
-            policy.repository.id,
-          )
-        : inspectInvestigationResolutionState(
-            context.runtime,
-            envelope.payload.target.workflowId,
-            policy.repository.id,
-          );
-  } catch (error) {
-    if (
-      envelope.payload.decision.kind !== 'quarantine' &&
-      error instanceof WorkflowError &&
-      error.exitCode === ExitCode.unsafeEnvironment
-    ) {
-      throw workflowError(
-        'HUMAN_RESOLUTION_GRANT_STALE',
-        'Human resolution state became unsafe after the grant was issued.',
-        ExitCode.staleState,
-        { details: { observedCode: error.code } },
+
+  return withGrantHumanResolutionTransitionAuthority(
+    context.lifecycleRuntime,
+    authorization.target.changeId,
+    authorization.grantId,
+    assertRepositoryLifecycleOwned,
+    (authority) => {
+      const assertOwned = assertHeldChangeTransitionAuthority(
+        authority,
+        authorization.target.changeId,
       );
-    }
-    throw error;
+      assertOwned();
+      const existing = readHumanResolutionJournal(
+        context.runtime,
+        authorization.grantId,
+      );
+      let prepared: PreparedHumanResolutionExecution;
+      let recovered: boolean;
+      if (existing === null) {
+        const state = inspectAuthorizedHumanResolutionState(
+          context,
+          authorization,
+        );
+        assertGrantCoreHumanResolutionState(context, authorization, state);
+        assertHumanResolutionProviderQuiescence(
+          context,
+          authorization.target.workflowId,
+        );
+        assertOwned();
+        prepared = prepareAuthorizedHumanResolutionExecution(
+          context,
+          authorization,
+          state,
+          options,
+          exactHumanResolutionDate(options.now ?? new Date()),
+        );
+        recovered = false;
+      } else {
+        if (
+          existing.grantDigest !== authorization.grantDigest ||
+          canonicalJson(existing.target) !== canonicalJson(authorization.target)
+        ) {
+          throw humanResolutionRecoveryAmbiguous();
+        }
+        const node = readHumanResolutionNodeForRecovery(
+          context.runtime,
+          existing,
+        );
+        const beforeState = readHumanResolutionArchive(
+          context.runtime,
+          existing.evidenceArchiveDigest,
+        );
+        prepared = {
+          authorization,
+          node,
+          journal: existing,
+          receipt: buildHumanResolutionReceipt(
+            authorization,
+            existing,
+            node,
+            existing.afterStateDigest,
+          ),
+          beforeState,
+        };
+        recovered = true;
+      }
+      assertOwned();
+      const result = publishHumanResolutionExecution(
+        cwd,
+        context,
+        prepared,
+        options,
+        recovered,
+      );
+      assertOwned();
+      return result;
+    },
+  );
+}
+
+function grantCoreHumanResolutionAuthorization(
+  input: GrantCoreHumanResolutionAuthorization,
+): HumanResolutionExecutionAuthorization {
+  const keys = Object.keys(input as object).sort();
+  const expectedKeys = [
+    'approvalSubjectDigest',
+    'challengeId',
+    'consequences',
+    'decision',
+    'expected',
+    'kind',
+    'repositoryHead',
+    'repositoryId',
+    'repositoryTree',
+    'schemaVersion',
+    'target',
+  ].sort();
+  if (
+    keys.length !== expectedKeys.length ||
+    !keys.every((key, index) => key === expectedKeys[index]) ||
+    input.schemaVersion !== 1 ||
+    input.kind !== 'grant-core-human-resolution.v1' ||
+    !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(
+      input.challengeId,
+    ) ||
+    !/^sha256:[0-9a-f]{64}$/.test(input.approvalSubjectDigest) ||
+    typeof input.repositoryId !== 'string' ||
+    input.repositoryId.trim() !== input.repositoryId ||
+    input.repositoryId.length < 1 ||
+    Buffer.byteLength(input.repositoryId) > 1_024 ||
+    !/^[0-9a-f]{40}(?:[0-9a-f]{24})?$/.test(input.repositoryHead) ||
+    !/^[0-9a-f]{40}(?:[0-9a-f]{24})?$/.test(input.repositoryTree) ||
+    input.target.workflowKind !== 'investigation' ||
+    assertChangeId(input.target.changeId) !== input.target.changeId ||
+    assertInvestigationId(input.target.workflowId) !==
+      input.target.workflowId ||
+    !/^[0-9a-f]{64}$/.test(input.expected.stateDigest) ||
+    (input.expected.currentRefDigest !== null &&
+      !/^[0-9a-f]{64}$/.test(input.expected.currentRefDigest)) ||
+    typeof input.expected.reasonCode !== 'string' ||
+    typeof input.expected.blockedTransition !== 'string'
+  ) {
+    throw workflowError(
+      'GRANT_CORE_HUMAN_RESOLUTION_INVALID',
+      'Grant Core human-resolution authorization is malformed.',
+      ExitCode.guard,
+    );
   }
-  validateHumanResolutionGrantPayload(envelope.payload, policy, {
-    now,
-    expectedTrustBase: envelope.payload.trustBaseCommit,
-    expectedPolicyBlob: policyBlob,
+  const decision = assertHumanResolutionDecision(input.decision);
+  assertResolutionConsequences(decision, input.consequences);
+  const normalized = JSON.parse(
+    canonicalJson({ ...input, decision }),
+  ) as GrantCoreHumanResolutionAuthorization;
+  return {
+    grantId: normalized.challengeId,
+    grantDigest: digest(
+      canonicalJson({
+        schema: 'grant-core-human-resolution-authorization.v1',
+        authorization: normalized,
+      }),
+    ),
+    repositoryId: normalized.repositoryId,
+    repositoryHead: normalized.repositoryHead,
+    repositoryTree: normalized.repositoryTree,
+    target: normalized.target,
+    expected: normalized.expected,
+    decision: normalized.decision,
+    consequences: normalized.consequences,
+  };
+}
+
+function inspectAuthorizedHumanResolutionState(
+  context: ReturnType<typeof loadInvestigationRuntimeContext>,
+  authorization: HumanResolutionExecutionAuthorization,
+): InvestigationResolutionState {
+  return authorization.decision.kind === 'quarantine'
+    ? inspectInvestigationQuarantineState(
+        context.runtime,
+        authorization.target.workflowId,
+        authorization.repositoryId,
+      )
+    : inspectInvestigationResolutionState(
+        context.runtime,
+        authorization.target.workflowId,
+        authorization.repositoryId,
+      );
+}
+
+function assertGrantCoreHumanResolutionState(
+  context: ReturnType<typeof loadInvestigationRuntimeContext>,
+  authorization: HumanResolutionExecutionAuthorization,
+  state: InvestigationResolutionState,
+): void {
+  const blocker = humanResolutionBlockerBinding(state);
+  if (
+    state.envelope.repositoryId !== authorization.repositoryId ||
+    state.envelope.changeId !== authorization.target.changeId ||
+    state.envelope.investigationId !== authorization.target.workflowId ||
+    state.currentStateDigest !== authorization.expected.stateDigest ||
+    state.currentRefDigest !== authorization.expected.currentRefDigest ||
+    blocker.reasonCode !== authorization.expected.reasonCode ||
+    blocker.blockedTransition !== authorization.expected.blockedTransition
+  ) {
+    throw workflowError(
+      'GRANT_STATE_CHANGED',
+      'Investigation state changed after the human decision; fresh approval is required.',
+      ExitCode.staleState,
+    );
+  }
+  assertResolutionDecisionAvailable(state, authorization.decision);
+  assertResolutionDecisionTarget(
+    context.runtime,
     state,
-  });
-  verifyHumanResolutionGrantEnvelope(
-    context.git.repositoryRoot,
-    envelope,
-    policy,
-    options.verifier,
+    authorization.decision,
   );
-  assertHumanResolutionAuditTag(context.git.repositoryRoot, envelope, policy);
-  assertHumanResolutionProviderQuiescence(
-    context,
-    envelope.payload.target.workflowId,
+  const advertised = state.availableResolutions.find(
+    ({ kind }) => kind === authorization.decision.kind,
   );
-  const grantDigest = digest(canonicalHumanResolutionGrantEnvelope(envelope));
+  if (
+    advertised?.parameterSchemaDigest !==
+    humanResolutionDecisionSchemaDigest(authorization.decision.kind)
+  ) {
+    throw workflowError(
+      'GRANT_TRANSITION_DEFINITION_CHANGED',
+      'Investigation resolution schema changed after challenge creation.',
+      ExitCode.staleState,
+    );
+  }
+}
+
+type PreparedHumanResolutionExecution = {
+  authorization: HumanResolutionExecutionAuthorization;
+  node: HumanResolutionNode;
+  journal: HumanResolutionJournal;
+  receipt: Record<string, unknown>;
+  beforeState: InvestigationResolutionState;
+};
+
+function prepareAuthorizedHumanResolutionExecution(
+  context: ReturnType<typeof loadInvestigationRuntimeContext>,
+  authorization: HumanResolutionExecutionAuthorization,
+  state: InvestigationResolutionState,
+  options: HumanResolutionExecutionOptions,
+  now: Date,
+): PreparedHumanResolutionExecution {
   let currentRef: ReturnType<typeof readCurrentInvestigationRef>;
   try {
     currentRef = readCurrentInvestigationRef(
       context.runtime,
-      envelope.payload.target.changeId,
+      authorization.target.changeId,
     );
   } catch (error) {
     if (
-      envelope.payload.decision.kind !== 'quarantine' ||
+      authorization.decision.kind !== 'quarantine' ||
       state.envelope.ambiguityDigest === null ||
       state.currentRefDigest === null
     ) {
@@ -795,17 +821,17 @@ function prepareHumanResolutionExecution(
     currentRef = null;
   }
   const plannedCurrentWorkflowRef = planHumanResolutionCurrentRef(
-    envelope,
+    authorization,
     currentRef?.investigationId ?? null,
   );
   const plannedStartReservation = planHumanResolutionStartReservation(
     context,
-    envelope,
+    authorization,
     state,
   );
   const plannedEvidenceRefs = planHumanResolutionEvidenceRefs(
     context,
-    envelope,
+    authorization,
     state,
   );
   let previousResolutionNodeId: string | null;
@@ -814,11 +840,11 @@ function prepareHumanResolutionExecution(
   try {
     previousResolutionNodeId = readHumanResolutionHead(
       context.runtime,
-      envelope.payload.target.workflowId,
+      authorization.target.workflowId,
     );
   } catch (error) {
     if (
-      envelope.payload.decision.kind !== 'quarantine' ||
+      authorization.decision.kind !== 'quarantine' ||
       state.envelope.ambiguityDigest === null
     ) {
       throw error;
@@ -834,12 +860,12 @@ function prepareHumanResolutionExecution(
     );
   }
   const node = createHumanResolutionNode({
-    target: envelope.payload.target,
-    expected: envelope.payload.expected,
-    decision: envelope.payload.decision,
-    consequences: envelope.payload.consequences,
-    grantId: envelope.payload.grantId,
-    grantDigest,
+    target: authorization.target,
+    expected: authorization.expected,
+    decision: authorization.decision,
+    consequences: authorization.consequences,
+    grantId: authorization.grantId,
+    grantDigest: authorization.grantDigest,
     previousResolutionNodeId,
     createdAt: now.toISOString(),
   });
@@ -864,9 +890,9 @@ function prepareHumanResolutionExecution(
   const afterStateDigest = investigationResolutionStateDigest(afterEnvelope);
   const provisionalJournal = {
     phase: 'prepared' as const,
-    grantId: envelope.payload.grantId,
-    grantDigest,
-    target: envelope.payload.target,
+    grantId: authorization.grantId,
+    grantDigest: authorization.grantDigest,
+    target: authorization.target,
     beforeStateDigest: state.currentStateDigest,
     afterStateDigest,
     beforeResolutionRef: previousResolutionNodeId,
@@ -881,7 +907,7 @@ function prepareHumanResolutionExecution(
   };
   const provisional = createHumanResolutionJournal(provisionalJournal);
   const receipt = buildHumanResolutionReceipt(
-    envelope,
+    authorization,
     provisional,
     node,
     afterStateDigest,
@@ -893,18 +919,17 @@ function prepareHumanResolutionExecution(
   });
   writeHumanResolutionJournal(context.runtime, journal);
   maybeSimulateHumanResolutionCrash(options, 'prepared');
-  return { node, journal, receipt, beforeState: state };
+  return { authorization, node, journal, receipt, beforeState: state };
 }
 
 function publishHumanResolutionExecution(
   cwd: string,
   context: ReturnType<typeof loadInvestigationRuntimeContext>,
-  envelope: HumanResolutionGrantEnvelope,
   prepared: PreparedHumanResolutionExecution,
   options: HumanResolutionExecutionOptions,
   recovered: boolean,
 ): HumanResolutionExecutionResult {
-  const { node, journal, receipt, beforeState } = prepared;
+  const { authorization, node, journal, receipt, beforeState } = prepared;
   if (
     node.nodeId !== journal.plannedResolutionNodeId ||
     digest(canonicalJson(receipt)) !== journal.receiptDigest ||
@@ -917,13 +942,13 @@ function publishHumanResolutionExecution(
     journal,
     node,
     beforeState,
-    envelope.payload.repositoryId,
+    authorization.repositoryId,
   );
   assertRecoverableStateShape(
     context,
     beforeState,
     journal,
-    envelope.payload.repositoryId,
+    authorization.repositoryId,
   );
   publishPlannedEvidenceRefs(context, journal);
   publishHumanResolutionJournalPhase(
@@ -965,12 +990,12 @@ function publishHumanResolutionExecution(
       ? inspectInvestigationQuarantineState(
           context.runtime,
           journal.target.workflowId,
-          envelope.payload.repositoryId,
+          authorization.repositoryId,
         )
       : inspectInvestigationResolutionState(
           context.runtime,
           journal.target.workflowId,
-          envelope.payload.repositoryId,
+          authorization.repositoryId,
         );
   if (afterState.currentStateDigest !== journal.afterStateDigest) {
     throw humanResolutionRecoveryAmbiguous();
@@ -979,7 +1004,7 @@ function publishHumanResolutionExecution(
   maybeSimulateHumanResolutionCrash(options, 'state-published');
   const receiptDigest = writeHumanResolutionReceipt(
     context.runtime,
-    envelope.payload.grantId,
+    authorization.grantId,
     receipt,
   );
   if (receiptDigest !== journal.receiptDigest) {
@@ -987,37 +1012,13 @@ function publishHumanResolutionExecution(
   }
   publishHumanResolutionJournalPhase(context, journal, 'receipt-written');
   maybeSimulateHumanResolutionCrash(options, 'receipt-written');
-  const terminal = {
-    schemaVersion: 1,
-    state: 'consumed',
-    grantId: envelope.payload.grantId,
-    resolutionNodeId: node.nodeId,
-    receiptDigest,
-    recordedAt: journal.createdAt,
-    envelope,
-  };
-  const existingTerminal = readTerminalHumanResolutionGrant(
-    context.runtime,
-    envelope.payload.grantId,
-  );
-  if (
-    existingTerminal !== null &&
-    canonicalJson(existingTerminal) !== canonicalJson(terminal)
-  ) {
-    throw humanResolutionRecoveryAmbiguous();
-  }
-  terminalizeHumanResolutionGrant(
-    context.runtime,
-    envelope.payload.grantId,
-    terminal,
-  );
-  maybeSimulateHumanResolutionCrash(options, 'grant-consumed');
   writeHumanResolutionJournal(
     context.runtime,
-    updateHumanResolutionJournalPhase(journal, 'grant-consumed'),
+    updateHumanResolutionJournalPhase(journal, 'completed'),
   );
+  maybeSimulateHumanResolutionCrash(options, 'completed');
   return {
-    grantId: envelope.payload.grantId,
+    grantId: authorization.grantId,
     investigationId: journal.target.workflowId,
     decision: node.decision,
     beforeStateDigest: journal.beforeStateDigest,
@@ -1095,11 +1096,11 @@ function assertHumanResolutionProviderQuiescence(
 }
 
 function planHumanResolutionCurrentRef(
-  envelope: HumanResolutionGrantEnvelope,
+  authorization: HumanResolutionExecutionAuthorization,
   observedInvestigationId: string | null,
 ): HumanResolutionJournal['plannedCurrentWorkflowRef'] {
-  const targetId = envelope.payload.target.workflowId;
-  const decision = envelope.payload.decision;
+  const targetId = authorization.target.workflowId;
+  const decision = authorization.decision;
   let nextInvestigationId = observedInvestigationId;
   if (decision.kind === 'abort' || decision.kind === 'quarantine') {
     if (observedInvestigationId === targetId) {
@@ -1142,7 +1143,7 @@ function planHumanResolutionCurrentRef(
       observedInvestigationId === null
         ? null
         : {
-            changeId: envelope.payload.target.changeId,
+            changeId: authorization.target.changeId,
             investigationId: observedInvestigationId,
           },
     ),
@@ -1151,7 +1152,7 @@ function planHumanResolutionCurrentRef(
       nextInvestigationId === null
         ? null
         : {
-            changeId: envelope.payload.target.changeId,
+            changeId: authorization.target.changeId,
             investigationId: nextInvestigationId,
           },
     ),
@@ -1171,10 +1172,10 @@ function releasesGenerationNamespace(
 
 function planHumanResolutionStartReservation(
   context: ReturnType<typeof loadInvestigationRuntimeContext>,
-  envelope: HumanResolutionGrantEnvelope,
+  authorization: HumanResolutionExecutionAuthorization,
   state: InvestigationResolutionState,
 ): HumanResolutionJournal['plannedStartReservation'] {
-  const decision = envelope.payload.decision;
+  const decision = authorization.decision;
   if (
     (decision.kind === 'repair' ||
       (decision.kind === 'supersede' &&
@@ -1191,7 +1192,7 @@ function planHumanResolutionStartReservation(
   try {
     snapshot = readInvestigationStartReservationSnapshot(
       context.runtime,
-      envelope.payload.target.changeId,
+      authorization.target.changeId,
     );
   } catch (error) {
     if (
@@ -1224,9 +1225,8 @@ function planHumanResolutionStartReservation(
     };
   }
   if (
-    snapshot.reservation?.changeId !== envelope.payload.target.changeId ||
-    snapshot.reservation.investigationId !==
-      envelope.payload.target.workflowId ||
+    snapshot.reservation?.changeId !== authorization.target.changeId ||
+    snapshot.reservation.investigationId !== authorization.target.workflowId ||
     snapshot.rawDocument === null
   ) {
     throw humanResolutionRecoveryAmbiguous();
@@ -1248,7 +1248,7 @@ function planHumanResolutionStartReservation(
 
 function planHumanResolutionEvidenceRefs(
   context: ReturnType<typeof loadInvestigationRuntimeContext>,
-  envelope: HumanResolutionGrantEnvelope,
+  authorization: HumanResolutionExecutionAuthorization,
   state: InvestigationResolutionState,
 ): HumanResolutionJournal['plannedEvidenceRefs'] {
   const quarantineWhole =
@@ -1263,7 +1263,7 @@ function planHumanResolutionEvidenceRefs(
       archiveDigest: state.envelope.evidenceRefsDigest,
     });
   if (
-    envelope.payload.decision.kind === 'quarantine' &&
+    authorization.decision.kind === 'quarantine' &&
     state.envelope.ambiguityDigest !== null &&
     state.envelope.evidenceRefs === null &&
     state.envelope.evidenceRefsDigest !== null &&
@@ -1275,11 +1275,11 @@ function planHumanResolutionEvidenceRefs(
   try {
     closure = readInvestigationEvidenceRefsClosure(
       context.runtime,
-      envelope.payload.target.changeId,
+      authorization.target.changeId,
     );
   } catch (error) {
     if (
-      envelope.payload.decision.kind !== 'quarantine' ||
+      authorization.decision.kind !== 'quarantine' ||
       state.envelope.ambiguityDigest === null ||
       state.envelope.evidenceRefsDigest === null
     ) {
@@ -1301,7 +1301,7 @@ function planHumanResolutionEvidenceRefs(
     );
   }
   const currentRefs = { ...(snapshot.refs ?? {}) };
-  if (!releasesGenerationNamespace(envelope.payload.decision)) {
+  if (!releasesGenerationNamespace(authorization.decision)) {
     return {
       mode: 'preserve',
       expectedDigest: snapshot.digest,
@@ -1320,7 +1320,7 @@ function planHumanResolutionEvidenceRefs(
     if (owner === undefined) {
       throw humanResolutionRecoveryAmbiguous();
     }
-    if (owner === envelope.payload.target.workflowId) {
+    if (owner === authorization.target.workflowId) {
       retiredRefs[refName] = nodeId;
     } else {
       retainedRefs[refName] = nodeId;
@@ -1354,7 +1354,7 @@ function planHumanResolutionEvidenceRefs(
       : digest(
           canonicalJson({
             schemaVersion: 1,
-            changeId: envelope.payload.target.changeId,
+            changeId: authorization.target.changeId,
             refs: retainedRefs,
           }),
         );
@@ -1362,7 +1362,7 @@ function planHumanResolutionEvidenceRefs(
     Object.keys(retainedRefs).length === 0
       ? null
       : investigationEvidenceRefsClosureDigest(
-          envelope.payload.target.changeId,
+          authorization.target.changeId,
           closure.entries.filter((entry) =>
             Object.hasOwn(retainedRefs, entry.refName),
           ),
@@ -1586,7 +1586,7 @@ function assertRecoverableStateShape(
 }
 
 function buildHumanResolutionReceipt(
-  envelope: HumanResolutionGrantEnvelope,
+  authorization: HumanResolutionExecutionAuthorization,
   journal: HumanResolutionJournal,
   node: HumanResolutionNode,
   afterStateDigest: string,
@@ -1594,9 +1594,9 @@ function buildHumanResolutionReceipt(
   return {
     schemaVersion: 1,
     kind: 'human-resolution-receipt',
-    grantId: envelope.payload.grantId,
+    grantId: authorization.grantId,
     grantDigest: journal.grantDigest,
-    target: envelope.payload.target,
+    target: authorization.target,
     beforeStateDigest: journal.beforeStateDigest,
     afterStateDigest,
     resolutionNodeId: node.nodeId,
@@ -1637,7 +1637,7 @@ function updateHumanResolutionJournalPhase(
 function publishHumanResolutionJournalPhase(
   context: ReturnType<typeof loadInvestigationRuntimeContext>,
   journal: HumanResolutionJournal,
-  phase: HumanResolutionJournal['phase'],
+  phase: Exclude<HumanResolutionJournal['phase'], 'grant-consumed'>,
 ): void {
   if (
     HUMAN_RESOLUTION_JOURNAL_PHASES.indexOf(journal.phase) >=
@@ -1658,6 +1658,7 @@ const HUMAN_RESOLUTION_JOURNAL_PHASES = [
   'current-ref-published',
   'state-published',
   'receipt-written',
+  'completed',
   'grant-consumed',
 ] as const satisfies readonly HumanResolutionJournal['phase'][];
 
@@ -1687,8 +1688,8 @@ function maybeSimulateHumanResolutionCrash(
 }
 
 function exactHumanResolutionDate(value: Date): Date {
-  const date = new Date(value);
-  if (!Number.isFinite(date.getTime())) {
+  const date = copyGrantDate(value);
+  if (date === null) {
     throw workflowError(
       'HUMAN_RESOLUTION_TIME_INVALID',
       'Human resolution requires an exact timestamp.',

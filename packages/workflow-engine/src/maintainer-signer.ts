@@ -30,6 +30,11 @@ export type MaintainerSignerProvider = {
   ): void;
 };
 
+export type SshSigningPolicy = Pick<
+  MaintainerPolicy,
+  'signatureNamespace' | 'trustedSigners'
+>;
+
 type SigningMaterial = {
   identity: string;
   keyPath: string;
@@ -53,7 +58,7 @@ export function assertInteractiveSignerContext(
 
 export function createInteractiveSshSigner(
   repositoryRoot: string,
-  policy: MaintainerPolicy,
+  policy: SshSigningPolicy,
 ): MaintainerSignerProvider {
   const executable = resolveSshKeygenExecutable();
   let material: SigningMaterial | undefined;
@@ -167,7 +172,7 @@ export function verifySshSignatureWithPublicKey(
 
 function resolveSigningMaterial(
   repositoryRoot: string,
-  policy: MaintainerPolicy,
+  policy: SshSigningPolicy,
   executable: string,
 ): SigningMaterial {
   const configured = runGit(

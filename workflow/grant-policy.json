@@ -1,0 +1,39 @@
+{
+  "schemaVersion": 2,
+  "defaultProfile": "local-presence",
+  "profiles": {
+    "local-presence": {
+      "requiredClaims": ["fresh-local-device-owner"]
+    },
+    "ssh": {
+      "requiredClaims": ["ssh-signature"]
+    }
+  },
+  "approvalModules": [
+    {
+      "moduleId": "human-gate-macos",
+      "version": "1",
+      "allowedClaims": ["fresh-local-device-owner"],
+      "configurationDigest": "sha256:507efd54212c8f89b01479daf6839c31a55072ea3372448d7d86885d633756ae"
+    },
+    {
+      "moduleId": "grant-proof-ssh",
+      "version": "1",
+      "allowedClaims": ["ssh-signature"],
+      "configurationDigest": "sha256:49fa3f20b5e10204654c58416d84fe1e6eab54a299856cdc81ccae1ccfe8e5eb"
+    }
+  ],
+  "optionalSsh": {
+    "signatureNamespace": "expense-app.workflow.grant-proof.v1",
+    "trustedSigners": [
+      {
+        "identity": "tomchen86",
+        "publicKey": "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIJL6dVljsgm9EAbjCiOhA/tKsgApOhKmcB/NRewL1uns",
+        "fingerprint": "SHA256:7UB1aHADtIMUJBFt3sjo9RwoBDgCKc1B1GlEucUDL4U"
+      }
+    ]
+  },
+  "legacyVerification": {
+    "maintainerPolicyV1": "read-only"
+  }
+}

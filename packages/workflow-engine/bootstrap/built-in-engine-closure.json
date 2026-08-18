@@ -221,7 +221,7 @@
     {
       "path": "src/cli.ts",
       "mode": "100644",
-      "digest": "sha256:e1b73f43d96bc0d9e36086c01deeb3d8a7bc19540e55373b9d8fd15f1313d67c"
+      "digest": "sha256:ee2d792fb36dce1106cb8b6cd48a9e9318ce6527a9947d45fad037b2bf92d33c"
     },
     {
       "path": "src/codex-provider-adapter.ts",
@@ -261,7 +261,7 @@
     {
       "path": "src/contract-artifacts.ts",
       "mode": "100644",
-      "digest": "sha256:b71a288305de79e4ed782fb88f57967850464e791e00b642b00c30ce7fc1feec"
+      "digest": "sha256:2e9f8ae1e912d44da521beff0ae2d2112e588479fa39e45d51d18dbae3202371"
     },
     {
       "path": "src/contract-digests.ts",
@@ -449,6 +449,51 @@
       "digest": "sha256:7d239cca601d866574fb75551851b1a342b622e6b1b3a5edb40828a2b8ee5865"
     },
     {
+      "path": "src/grant-approval.ts",
+      "mode": "100644",
+      "digest": "sha256:b033b11c67bb112ee083db8fe28e35ce42bb17e9e855b458be710abae58d9b02"
+    },
+    {
+      "path": "src/grant-coordinator.ts",
+      "mode": "100644",
+      "digest": "sha256:6584ee30131750ad8069e757dbe3c100b50a8f14a0bbbee97c4122016d990914"
+    },
+    {
+      "path": "src/grant-core.ts",
+      "mode": "100644",
+      "digest": "sha256:736e7c8eb7226f1d6286087260cdb62df1c4f8db31baeb26e9e68ca7543d6e63"
+    },
+    {
+      "path": "src/grant-policy.ts",
+      "mode": "100644",
+      "digest": "sha256:629f43542c9a7048559b65373184b5c1aa371df136939e3ca400e249c135fc92"
+    },
+    {
+      "path": "src/grant-primitives.ts",
+      "mode": "100644",
+      "digest": "sha256:ff2f764ba5df88e75edcc30115aaf08cbd677075a4b0fa5f7c6e0e5aab87b575"
+    },
+    {
+      "path": "src/grant-production.ts",
+      "mode": "100644",
+      "digest": "sha256:c751b6ed909fb766cb6194050933b87fc7493d5934c445d8e5ae911b225afe97"
+    },
+    {
+      "path": "src/grant-proof-ssh.ts",
+      "mode": "100644",
+      "digest": "sha256:e4a75ac65eee5c83b6b447b5c0f41e7f7c15931d5da5c9c92b8e1341c3c95645"
+    },
+    {
+      "path": "src/grant-store.ts",
+      "mode": "100644",
+      "digest": "sha256:09bf5da645e24f788cb59dcf264f15099296c2bf1ffd8adda792e57d2e04bfe9"
+    },
+    {
+      "path": "src/grant-transition-registry.ts",
+      "mode": "100644",
+      "digest": "sha256:377cb7b8a71bd94f2dd97a8bc365d200f4a6a82d08eb289b7ec17942f0c9cb34"
+    },
+    {
       "path": "src/handoff.ts",
       "mode": "100644",
       "digest": "sha256:14573f1fd2590289b0553aa1594980c32b8baa8fb645d798c602d38fc64f726a"
@@ -467,6 +512,16 @@
       "path": "src/hooks.ts",
       "mode": "100644",
       "digest": "sha256:3b7f91f9fd5feb6b4ced1b75c9059193c12cc3dd06e27f825e21bfc6ad0e0f37"
+    },
+    {
+      "path": "src/human-gate-macos.ts",
+      "mode": "100644",
+      "digest": "sha256:207b7c9345e088af8ed919f7a7adfc7fa7c4f1018c2d3facc169f2febc445ad0"
+    },
+    {
+      "path": "src/human-grant-cli.ts",
+      "mode": "100644",
+      "digest": "sha256:410e6b5c4d8e89afa20e5740f95cbb0f1a77d5366151ae412012780dfd5da59f"
     },
     {
       "path": "src/human-revocation.ts",
@@ -554,6 +609,11 @@
       "digest": "sha256:9dcc0309fe614fd508785d7862b241f1b94368c679b85d257cbe14dcf5d10b79"
     },
     {
+      "path": "src/investigation-grant-transitions.ts",
+      "mode": "100644",
+      "digest": "sha256:2f31c28f09a800beed3b6b288a9f5c9ca77fd85d25c0eb4550eb464697aba8f3"
+    },
+    {
       "path": "src/investigation-groups.ts",
       "mode": "100644",
       "digest": "sha256:0afd86358c69e981ccf9563fa6652564c88984fc9e312d047f25424b78a06b87"
@@ -566,12 +626,12 @@
     {
       "path": "src/investigation-session-store.ts",
       "mode": "100644",
-      "digest": "sha256:f35507ba228ace64be9484695fc18054d0013027581c0df2eaa35b804e9429c5"
+      "digest": "sha256:8337ccf52510e9374a6e59c6114d3df226583642f552ba4de42d69fc446df33d"
     },
     {
       "path": "src/investigation-session.ts",
       "mode": "100644",
-      "digest": "sha256:4dab48597a00a1ab27bf844b65408d2c9fd6d368ee2f35bb2d2a115685cacdcb"
+      "digest": "sha256:5cdb8977c0ebf47deb88b15cdd1f4fcddf7baf590ccad1d3ed82fe8610b5f4a4"
     },
     {
       "path": "src/investigation-term-projection.ts",
@@ -656,7 +716,7 @@
     {
       "path": "src/maintainer-grant.ts",
       "mode": "100644",
-      "digest": "sha256:5e0aca37aad1bece0215f2c73d35ba22c324bc7c113c41e77e3294e11bd1c57c"
+      "digest": "sha256:59dc6bed0785dc05826cba99284a3931ecdf8cc4655f212d8b83ed8b641767d2"
     },
     {
       "path": "src/maintainer-manifest.ts",
@@ -691,7 +751,7 @@
     {
       "path": "src/maintainer-signer.ts",
       "mode": "100644",
-      "digest": "sha256:db47defaaddfca282f44236473a589438921972106d65a4f32a13786b1139c77"
+      "digest": "sha256:e96020270ef31ebd8946f4d2bdedb8652696eed0a52873d4d6c11544dcc6abfc"
     },
     {
       "path": "src/maintainer-store.ts",
@@ -851,7 +911,7 @@
     {
       "path": "src/planning-lock.ts",
       "mode": "100644",
-      "digest": "sha256:0ce6f017f5d80b97a3568bc0f88617cf3e1c43dde6e9f030634d1b201af9b4bf"
+      "digest": "sha256:2f50c919834abdc81391949876b72ec3b41e7436c607110ae0dda8cd6a27de9d"
     },
     {
       "path": "src/planning-paths.ts",
@@ -1116,7 +1176,7 @@
     {
       "path": "src/session-store.ts",
       "mode": "100644",
-      "digest": "sha256:96ce5dfc1238ba42a02a77e0ab1ecb62ea7fca3bc02d8bb5b6787cbcc178ada3"
+      "digest": "sha256:088a3898fc4b15d6f89dd532d2d0516baaa47e1a8b56618c39ec2448bd6e88a5"
     },
     {
       "path": "src/session.ts",

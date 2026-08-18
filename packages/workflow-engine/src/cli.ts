@@ -84,12 +84,12 @@ import { executePublishGrant } from './publish-executor.ts';
 import { discoverRepository, runGit } from './git.ts';
 import { validateHandoff } from './handoff.ts';
 import { runRepositoryHook } from './hooks.ts';
-import { dispatchIssueCommand } from './issue-cli.ts';
 import {
-  assertMaintainerGrantId,
-  issueHumanResolutionGrant,
-  type HumanResolutionGrantRequest,
-} from './maintainer-grant.ts';
+  isHumanGrantCliInvocation,
+  runHumanGrantCli,
+} from './human-grant-cli.ts';
+import { dispatchIssueCommand } from './issue-cli.ts';
+import { assertMaintainerGrantId } from './maintainer-grant.ts';
 import {
   parseMaintainerEvidenceWaivers,
   preflightMaintainerGrantV2,
@@ -147,23 +147,14 @@ import {
   type ControlPlaneApprovalSummaryV2,
   type ControlPlaneUpdaterAuditRecord,
 } from './intervention-control-updater.ts';
-import {
-  assertLegacyGrantV1SigningAllowed,
-  validateWorkflowSupersedeReason,
-} from './intervention-control.ts';
+import { assertLegacyGrantV1SigningAllowed } from './intervention-control.ts';
 import {
   discardHumanResolutionGrantPublication,
-  executeHumanResolutionGrant,
   inspectHumanResolutionGrantPublicationRecoveries,
   inspectHumanResolutionGrants,
-  recoverHumanResolutionGrant,
   revokeHumanResolutionGrant,
 } from './investigation-session.ts';
-import {
-  inspectInvestigationQuarantineState,
-  type HumanResolutionConsequences,
-  type HumanResolutionDecision,
-} from './investigation-session-store.ts';
+import { inspectInvestigationQuarantineState } from './investigation-session-store.ts';
 import {
   inspectImplementationReconciliation,
   recordImplementationReconciliation,
@@ -1448,21 +1439,7 @@ function dispatch(args: string[], cwd: string): CommandResult {
         return assertLegacyGrantV1SigningAllowed();
       }
       if (rest[0] === 'resolution-grant') {
-        const request = parseHumanResolutionGrantArguments(rest);
-        const grant = issueHumanResolutionGrant(cwd, request);
-        return {
-          command,
-          action: 'resolution-grant',
-          ok: true,
-          grantId: grant.grantId,
-          tagRef: grant.tagRef,
-          expiresAt: grant.envelope.payload.expiresAt,
-          target: grant.envelope.payload.target,
-          expected: grant.envelope.payload.expected,
-          decision: grant.envelope.payload.decision,
-          consequences: grant.envelope.payload.consequences,
-          publishCommand: grant.publishCommand,
-        };
+        return assertLegacyGrantV1SigningAllowed();
       }
       if (rest[0] === 'resolution-inspect' && rest.length <= 2) {
         const publicationRecoveries =
@@ -1591,19 +1568,17 @@ function dispatch(args: string[], cwd: string): CommandResult {
       };
     }
     case 'human-resolution-apply':
-      requireArgumentCount(command, rest, 1, 1);
-      return {
-        command,
-        ok: true,
-        result: executeHumanResolutionGrant(cwd, rest[0]),
-      };
+      throw workflowError(
+        'LEGACY_GRANT_V1_LIVE_TRANSITION_DISABLED',
+        'Legacy V1 human-resolution grants are historical read-only evidence and cannot start a new live transition.',
+        ExitCode.guard,
+      );
     case 'human-resolution-recover':
-      requireArgumentCount(command, rest, 1, 1);
-      return {
-        command,
-        ok: true,
-        result: recoverHumanResolutionGrant(cwd, rest[0]),
-      };
+      throw workflowError(
+        'LEGACY_GRANT_V1_LIVE_TRANSITION_DISABLED',
+        'Legacy V1 human-resolution grants are historical read-only evidence and cannot recover a live transition.',
+        ExitCode.guard,
+      );
     case 'authority-start': {
       const changeId = rest[0];
       const grantId = optionValue(rest.slice(1), '--grant');
@@ -2357,143 +2332,6 @@ function maintainerReissueAndApplyUsage(): WorkflowError {
   );
 }
 
-function parseHumanResolutionGrantArguments(
-  args: string[],
-): HumanResolutionGrantRequest {
-  if (args[0] !== 'resolution-grant') {
-    throw humanResolutionGrantUsage();
-  }
-  const values = args.slice(1);
-  const scalar = new Map<string, string>();
-  const claimsWaived: string[] = [];
-  for (let index = 0; index < values.length; index += 2) {
-    const option = values[index];
-    const value = values[index + 1];
-    if (!option || !value || !option.startsWith('--')) {
-      throw humanResolutionGrantUsage();
-    }
-    if (option === '--waive') {
-      claimsWaived.push(value);
-      continue;
-    }
-    if (scalar.has(option)) {
-      throw humanResolutionGrantUsage();
-    }
-    scalar.set(option, value);
-  }
-  const investigationId = scalar.get('--investigation');
-  const decisionKind = scalar.get('--decision');
-  const continuity = scalar.get('--continuity');
-  const assurance = scalar.get('--assurance');
-  const rationale = scalar.get('--rationale');
-  if (
-    !investigationId ||
-    !decisionKind ||
-    !rationale ||
-    !['preserved', 'broken', 'not-applicable'].includes(continuity ?? '') ||
-    !['unchanged', 'human-waived', 'degraded'].includes(assurance ?? '')
-  ) {
-    throw humanResolutionGrantUsage();
-  }
-  const known = new Set([
-    '--investigation',
-    '--decision',
-    '--continuity',
-    '--assurance',
-    '--rationale',
-    '--successor',
-    '--resolution-reason',
-    '--ttl',
-  ]);
-  if ([...scalar.keys()].some((key) => !known.has(key))) {
-    throw humanResolutionGrantUsage();
-  }
-  let ttlMinutes: number | undefined;
-  const ttl = scalar.get('--ttl');
-  if (ttl !== undefined) {
-    if (!/^[1-9][0-9]*m$/.test(ttl)) {
-      throw humanResolutionGrantUsage();
-    }
-    ttlMinutes = Number.parseInt(ttl.slice(0, -1), 10);
-  }
-  let decision: HumanResolutionDecision;
-  switch (decisionKind) {
-    case 'resume-reviewer-terms':
-      decision = {
-        kind: 'resume-with-capability',
-        capability: 'reviewer-term-reopen',
-        parameters: { additionalUses: 1 },
-      };
-      break;
-    case 'close-reviewer-terms':
-      decision = {
-        kind: 'close-input',
-        input: 'reviewer-terms',
-        parameters: {},
-      };
-      break;
-    case 'abort':
-      decision = { kind: 'abort', parameters: {} };
-      break;
-    case 'supersede': {
-      const successor = scalar.get('--successor');
-      const requestedReason = scalar.get('--resolution-reason');
-      if (successor === undefined || requestedReason === undefined) {
-        throw humanResolutionGrantUsage();
-      }
-      decision = {
-        kind: 'supersede',
-        parameters: {
-          successorInvestigationId: successor === 'none' ? null : successor,
-          reason: validateWorkflowSupersedeReason(requestedReason).reason,
-        },
-      };
-      break;
-    }
-    case 'quarantine': {
-      const reason = scalar.get('--resolution-reason');
-      if (!reason) {
-        throw humanResolutionGrantUsage();
-      }
-      decision = {
-        kind: 'quarantine',
-        parameters: { reason },
-      };
-      break;
-    }
-    case 'waive-reviewer-term-incorporation':
-      decision = {
-        kind: 'waive-assurance',
-        claim: 'reviewer-term-incorporation',
-        parameters: {},
-      };
-      if (!claimsWaived.includes('reviewer-term-incorporation')) {
-        claimsWaived.push('reviewer-term-incorporation');
-      }
-      break;
-    default:
-      throw humanResolutionGrantUsage();
-  }
-  const consequences: HumanResolutionConsequences = {
-    continuity: continuity as HumanResolutionConsequences['continuity'],
-    assurance: assurance as HumanResolutionConsequences['assurance'],
-    claimsWaived: [...new Set(claimsWaived)].sort(),
-  };
-  return {
-    investigationId,
-    decision,
-    consequences,
-    rationale,
-    ...(ttlMinutes === undefined ? {} : { ttlMinutes }),
-  };
-}
-
-function humanResolutionGrantUsage(): WorkflowError {
-  return usage(
-    'Usage: pnpm workflow maintainer resolution-grant --investigation <id> --decision <resume-reviewer-terms|close-reviewer-terms|abort|supersede|quarantine|waive-reviewer-term-incorporation> --continuity <preserved|broken|not-applicable> --assurance <unchanged|human-waived|degraded> --rationale <text> [--successor <investigation-id|none>] [--resolution-reason <text>] [--waive <claim> ...] [--ttl <minutes>m] [--json]',
-  );
-}
-
 function parseHumanResolutionPublicationDiscardArguments(args: string[]): {
   grantId: string;
   expectedPublicationStateDigest: string;
@@ -3070,8 +2908,7 @@ function usageText(): string {
     '  pnpm workflow authority-recover <session-id> [--json]',
     '  pnpm workflow authority-abort <session-id> --reason <text> [--json]',
     '  pnpm workflow human-resolution-state <investigation-id> [--json]',
-    '  pnpm workflow human-resolution-apply <grant-id> [--json]',
-    '  pnpm workflow human-resolution-recover <grant-id> [--json]',
+    '  pnpm workflow grant human <request-investigation <investigation-id> --reason <agent-proposed-reason>|inspect <challenge-id>|decide <challenge-id>|recover <challenge-id>> [--json]',
     '  pnpm workflow documents validate [--json]',
     '  pnpm workflow document-refresh <propose|show|review|apply> ... [--json]',
     '  pnpm workflow handoff validate [--json]',
@@ -3144,5 +2981,12 @@ export function dispatchPreparedTaskStrategyProvider(
 
 const entryPath = process.argv[1];
 if (entryPath && import.meta.url === pathToFileURL(entryPath).href) {
-  process.exitCode = runCli(process.argv.slice(2));
+  const argv = process.argv.slice(2);
+  if (isHumanGrantCliInvocation(argv)) {
+    void runHumanGrantCli(argv).then((exitCode) => {
+      process.exitCode = exitCode;
+    });
+  } else {
+    process.exitCode = runCli(argv);
+  }
 }

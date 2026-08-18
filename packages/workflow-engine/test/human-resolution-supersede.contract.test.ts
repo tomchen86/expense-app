@@ -35,6 +35,7 @@ import {
   type BlindSurveyManifest,
 } from '../src/provider-invocation-store.ts';
 import { createFixtureRepository, git, isWorkflowError } from './fixture.ts';
+import { issueLegacyHumanResolutionGrantFixture } from './legacy-human-resolution-grant-fixture.ts';
 
 const EXECUTION_FAILURE_REASONS = [
   'provider-timeout',
@@ -74,7 +75,47 @@ test('supersede admission requires a canonical semantic or product reason', () =
   );
 });
 
-test('human-resolution grant issue and execute enforce supersede reason', () => {
+test('production legacy human-resolution issuance is historical read-only', () => {
+  let signerTouched = false;
+  const signer: MaintainerSignerProvider = {
+    assertHumanPresent() {
+      signerTouched = true;
+    },
+    identity() {
+      signerTouched = true;
+      return 'fixture-maintainer';
+    },
+    sign() {
+      signerTouched = true;
+      return 'unreachable';
+    },
+    verify() {
+      signerTouched = true;
+    },
+  };
+
+  assert.throws(
+    () =>
+      issueHumanResolutionGrant(
+        '/path/that/must/not/be-read',
+        {
+          investigationId: 'investigation-read-only-fixture',
+          decision: { kind: 'abort', parameters: {} },
+          consequences: {
+            continuity: 'broken',
+            assurance: 'degraded',
+            claimsWaived: [],
+          },
+          rationale: 'Legacy issuance must remain disabled.',
+        },
+        { signer },
+      ),
+    (error) => isWorkflowError(error, 'LEGACY_GRANT_V1_NEW_SIGNING_DISABLED'),
+  );
+  assert.equal(signerTouched, false);
+});
+
+test('legacy human-resolution evidence verifies read-only but cannot start a live transition', () => {
   const repository = createFixtureRepository();
   try {
     installMaintainerPolicy(repository);
@@ -82,73 +123,27 @@ test('human-resolution grant issue and execute enforce supersede reason', () => 
     const started = startSupersedeFixture(repository);
     const signer = fixtureSigner();
     const now = new Date('2026-08-03T12:00:00.000Z');
-
-    for (const reason of EXECUTION_FAILURE_REASONS) {
-      assert.throws(
-        () =>
-          issueHumanResolutionGrant(
-            repository,
-            supersedeRequest(started.investigationId, reason),
-            {
-              now,
-              grantId: 'e1111111-1111-4111-8111-111111111111',
-              signer,
-            },
-          ),
-        (error) =>
-          isWorkflowError(error, 'SUPERSEDE_EXECUTION_FAILURE_FORBIDDEN'),
-        reason,
-      );
-    }
-    assert.equal(signer.signedPayloads.length, 0);
-
-    assert.throws(
-      () =>
-        issueHumanResolutionGrant(
-          repository,
-          {
-            ...supersedeRequest(started.investigationId, 'workflow-replaced'),
-            decision: {
-              kind: 'supersede',
-              parameters: { successorInvestigationId: null },
-            } as unknown as HumanResolutionDecision,
-          },
-          {
-            now,
-            grantId: 'e2111111-1111-4111-8111-111111111111',
-            signer,
-          },
-        ),
-      (error) => isWorkflowError(error, 'HUMAN_RESOLUTION_INVALID'),
-    );
-    assert.equal(signer.signedPayloads.length, 0);
-
-    const tampered = issueHumanResolutionGrant(
+    const issued = issueLegacyHumanResolutionGrantFixture(
       repository,
       supersedeRequest(started.investigationId, 'workflow-replaced'),
       {
         now,
-        grantId: 'e3111111-1111-4111-8111-111111111111',
+        grantId: 'e4111111-1111-4111-8111-111111111111',
         signer,
       },
     );
-    const forbiddenEnvelope = structuredClone(tampered.envelope) as {
-      payload: { decision: unknown };
-    } & HumanResolutionGrantEnvelope;
-    forbiddenEnvelope.payload.decision = supersedeDecision('provider-timeout');
-    fs.writeFileSync(
-      tampered.availableTokenPath,
-      canonicalHumanResolutionGrantEnvelope(forbiddenEnvelope),
-      { mode: 0o600 },
+    assert.doesNotThrow(() =>
+      verifyHumanResolutionGrantEnvelope(
+        repository,
+        issued.envelope,
+        {} as MaintainerPolicy,
+        signer,
+      ),
     );
     assert.throws(
-      () =>
-        executeHumanResolutionGrant(repository, tampered.grantId, {
-          now: new Date(now.getTime() + 1_000),
-          verifier: signer,
-        }),
+      () => executeHumanResolutionGrant(repository, issued.grantId),
       (error) =>
-        isWorkflowError(error, 'SUPERSEDE_EXECUTION_FAILURE_FORBIDDEN'),
+        isWorkflowError(error, 'LEGACY_GRANT_V1_LIVE_TRANSITION_DISABLED'),
     );
     assert.equal(
       inspectInvestigationResolutionState(
@@ -157,35 +152,6 @@ test('human-resolution grant issue and execute enforce supersede reason', () => 
         'github:R_fixture',
       ).effectiveState,
       started.state,
-    );
-
-    const issued = issueHumanResolutionGrant(
-      repository,
-      supersedeRequest(started.investigationId, 'workflow-replaced'),
-      {
-        now: new Date(now.getTime() + 2_000),
-        grantId: 'e4111111-1111-4111-8111-111111111111',
-        signer,
-      },
-    );
-    verifyHumanResolutionGrantEnvelope(
-      repository,
-      issued.envelope,
-      {} as MaintainerPolicy,
-      signer,
-    );
-    const executed = executeHumanResolutionGrant(repository, issued.grantId, {
-      now: new Date(now.getTime() + 3_000),
-      verifier: signer,
-    });
-    assert.deepEqual(executed.decision, supersedeDecision('workflow-replaced'));
-    assert.equal(
-      inspectInvestigationResolutionState(
-        runtimePaths(repository),
-        started.investigationId,
-        'github:R_fixture',
-      ).effectiveState,
-      'superseded-by-human-resolution',
     );
   } finally {
     fs.rmSync(repository, { recursive: true, force: true });
@@ -237,7 +203,7 @@ test('human-resolution revocation requires current human presence and preserves 
     git(repository, ['checkout', '-b', 'work/demo-change']);
     const started = startSupersedeFixture(repository);
     const signer = fixtureSigner();
-    const issued = issueHumanResolutionGrant(
+    const issued = issueLegacyHumanResolutionGrantFixture(
       repository,
       supersedeRequest(started.investigationId, 'workflow-replaced'),
       {

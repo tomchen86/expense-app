@@ -13,6 +13,7 @@
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
     "workflow": "node --experimental-strip-types packages/workflow-engine/bootstrap/workflow-launcher.ts",
+    "workflow:build-human-gate-macos": "node --experimental-strip-types scripts/build-human-gate-macos.ts",
     "workflow:test": "node --experimental-strip-types scripts/workflow-full-gate.ts",
     "workflow:test:failures": "node --experimental-strip-types scripts/workflow-full-gate.ts --failures",
     "workflow:test:status": "node --experimental-strip-types scripts/workflow-full-gate.ts --status",
