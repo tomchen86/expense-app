@@ -43,6 +43,7 @@ import '../investigation-manifest-schema-v3.test.ts';
 import '../investigation-manifest-v3.test.ts';
 import '../investigation-publication-v3.test.ts';
 import '../investigation-shadow-parity-v3.test.ts';
+import '../investigation-v3-grant-adapter.contract.test.ts';
 import '../investigation-why-domain-v3.test.ts';
 import '../pre-merge-assurance-store.contract.test.ts';
 import '../pre-merge-assurance.contract.test.ts';

@@ -10,6 +10,7 @@ import {
 import { collectSshApprovalProof } from './grant-proof-ssh.ts';
 import { createInvestigationGrantRequest } from './investigation-grant-transitions.ts';
 import { investigationGrantTransitionDefinitions } from './investigation-grant-transitions.ts';
+import { investigationV3GrantTransitionDefinitions } from './investigation-v3-grant.ts';
 import { loadGrantPolicyV2 } from './grant-policy.ts';
 import { grantStorePaths, readGrantRecord } from './grant-store.ts';
 import type { TransitionRegistry } from './grant-transition-registry.ts';
@@ -85,7 +86,10 @@ export function createProductionWorkflowGrantCoordinator(
 ): GrantCoordinator {
   return createProductionGrantCoordinator(
     cwd,
-    createTransitionRegistry(investigationGrantTransitionDefinitions(cwd)),
+    createTransitionRegistry([
+      ...investigationGrantTransitionDefinitions(cwd),
+      ...investigationV3GrantTransitionDefinitions(),
+    ]),
   );
 }
 

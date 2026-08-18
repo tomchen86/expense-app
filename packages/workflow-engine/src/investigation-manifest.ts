@@ -289,29 +289,36 @@ export type InvestigationManifestV3 = ManifestIdentity & {
   manifestDigest: string;
 };
 
+export const INVESTIGATION_V3_KNOWN_FAILURE_CODES = [
+  'SCHEMA_V1_FORBIDDEN',
+  'TERM_INTEGRITY_MISMATCH',
+  'REPLAY_INPUT_MISSING',
+  'REPLAY_CLOSURE_UNSUPPORTED',
+  'MANIFEST_UNREPRESENTABLE',
+  'RECONSTRUCTION_MISMATCH',
+  'SEMANTIC_COMPLETENESS_FAILURE',
+  'SOURCE_ANCHOR_UNRESOLVED',
+  'REVIEW_TARGET_STALE',
+  'PROJECTION_PIPELINE_FORBIDDEN',
+] as const;
+
+/** Diagnostic catalog only. New engine failures remain valid without editing it. */
 export type InvestigationV3FailureCode =
-  | 'SCHEMA_V1_FORBIDDEN'
-  | 'TERM_INTEGRITY_MISMATCH'
-  | 'REPLAY_INPUT_MISSING'
-  | 'REPLAY_CLOSURE_UNSUPPORTED'
-  | 'MANIFEST_UNREPRESENTABLE'
-  | 'RECONSTRUCTION_MISMATCH'
-  | 'SEMANTIC_COMPLETENESS_FAILURE'
-  | 'SOURCE_ANCHOR_UNRESOLVED'
-  | 'REVIEW_TARGET_STALE'
-  | 'PROJECTION_PIPELINE_FORBIDDEN'
-  | string;
+  (typeof INVESTIGATION_V3_KNOWN_FAILURE_CODES)[number] | (string & {});
+
+export const INVESTIGATION_V3_ATTEMPTED_TRANSITIONS = [
+  'build-draft',
+  'draft-seal',
+  'authority-validation',
+  'historical-inspection',
+  'publication',
+] as const;
 
 export type InvestigationV3Blocker = {
   schemaVersion: 1;
   kind: 'investigation-v3-failure';
   failureIdentity: string;
-  attemptedTransition:
-    | 'build-draft'
-    | 'draft-seal'
-    | 'authority-validation'
-    | 'historical-inspection'
-    | 'publication';
+  attemptedTransition: (typeof INVESTIGATION_V3_ATTEMPTED_TRANSITIONS)[number];
   candidateDigest: string;
   failureCode: InvestigationV3FailureCode;
   detailsDigest: string;

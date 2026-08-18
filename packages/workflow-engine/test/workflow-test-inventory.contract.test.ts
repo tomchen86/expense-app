@@ -35,8 +35,8 @@ test('the tracked shard manifest owns every physical workflow test exactly once'
     'sha256:131eae67d081623752dfb1f52b9ecd9356e26b70213b3bfc3c43cc5a8b862c2b',
   );
   assert.equal(manifest.shards.length, 8);
-  assert.equal(physicalFiles.length, 254);
-  assert.equal(units.length, 252);
+  assert.equal(physicalFiles.length, 255);
+  assert.equal(units.length, 253);
   assert.deepEqual(
     workflowTestShardWrapperPaths(manifest),
     Array.from(

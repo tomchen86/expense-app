@@ -12,9 +12,9 @@
   },
   "sourceTelemetryRunId": "run-20260813022917744-06e455fe-631a-480c-85b0-d3185b06182f",
   "sourceTelemetryDigest": "sha256:131eae67d081623752dfb1f52b9ecd9356e26b70213b3bfc3c43cc5a8b862c2b",
-  "physicalFileCount": 254,
-  "executionUnitCount": 252,
-  "inventoryDigest": "sha256:d15f5c080b07edc8ec75bac75f5481b222f35f2c50070548a10154438e8e58cc",
+  "physicalFileCount": 255,
+  "executionUnitCount": 253,
+  "inventoryDigest": "sha256:5d78bc1560914b19caa9bc2ac756de9d874dccd606ef6218f8c5ba027312d8cd",
   "shards": [
     {
       "shardNumber": 1,
@@ -511,11 +511,19 @@
           "estimatedDurationMs": 0
         },
         {
+          "entrypoint": "packages/workflow-engine/test/investigation-v3-grant-adapter.contract.test.ts",
+          "ownedPhysicalFiles": [
+            "packages/workflow-engine/test/investigation-v3-grant-adapter.contract.test.ts"
+          ],
+          "legacyOrdinal": 249,
+          "estimatedDurationMs": 0
+        },
+        {
           "entrypoint": "packages/workflow-engine/test/investigation-why-domain-v3.test.ts",
           "ownedPhysicalFiles": [
             "packages/workflow-engine/test/investigation-why-domain-v3.test.ts"
           ],
-          "legacyOrdinal": 249,
+          "legacyOrdinal": 250,
           "estimatedDurationMs": 0
         },
         {
@@ -523,7 +531,7 @@
           "ownedPhysicalFiles": [
             "packages/workflow-engine/test/pre-merge-assurance-store.contract.test.ts"
           ],
-          "legacyOrdinal": 250,
+          "legacyOrdinal": 251,
           "estimatedDurationMs": 0
         },
         {
@@ -531,7 +539,7 @@
           "ownedPhysicalFiles": [
             "packages/workflow-engine/test/pre-merge-assurance.contract.test.ts"
           ],
-          "legacyOrdinal": 251,
+          "legacyOrdinal": 252,
           "estimatedDurationMs": 0
         },
         {
@@ -539,7 +547,7 @@
           "ownedPhysicalFiles": [
             "packages/workflow-engine/test/workflow-test-inventory.contract.test.ts"
           ],
-          "legacyOrdinal": 252,
+          "legacyOrdinal": 253,
           "estimatedDurationMs": 0
         }
       ]

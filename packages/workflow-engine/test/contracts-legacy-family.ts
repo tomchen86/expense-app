@@ -102,6 +102,7 @@ import './human-grant-cli.contract.test.ts';
 import './human-resolution-supersede.contract.test.ts';
 import './investigation-grant-integration.contract.test.ts';
 import './investigation-grant-transitions.contract.test.ts';
+import './investigation-v3-grant-adapter.contract.test.ts';
 import './investigation-groups.contract.test.ts';
 import './intervention-control-bootstrap.contract.test.ts';
 import './intervention-control-cli.contract.test.ts';

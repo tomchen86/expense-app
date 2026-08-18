@@ -476,7 +476,7 @@
     {
       "path": "src/grant-production.ts",
       "mode": "100644",
-      "digest": "sha256:c751b6ed909fb766cb6194050933b87fc7493d5934c445d8e5ae911b225afe97"
+      "digest": "sha256:32932fd6df849b8f69b78a9958efe9de177ec0874995fa6a62444e457da13be9"
     },
     {
       "path": "src/grant-proof-ssh.ts",
@@ -631,7 +631,7 @@
     {
       "path": "src/investigation-manifest.ts",
       "mode": "100644",
-      "digest": "sha256:0b7d3ae5ee6dc5e1662abe73a8f97d6bbe8279025ef580b50e47a21e2d74142a"
+      "digest": "sha256:5625fe39c09f4dc54c561824a25ae9115dbec17964091a67cc638df5240c7695"
     },
     {
       "path": "src/investigation-materializer.ts",
@@ -687,6 +687,11 @@
       "path": "src/investigation-terms.ts",
       "mode": "100644",
       "digest": "sha256:985ca3f3464600c9a098d62a39d664245f01396d42cf4e3351a495610d044677"
+    },
+    {
+      "path": "src/investigation-v3-grant.ts",
+      "mode": "100644",
+      "digest": "sha256:d4fbdaba782bb06496833f85da9dc7c8db3e92ebe4bf594d42f21f5e4747f9a3"
     },
     {
       "path": "src/investigation-why-domain.ts",
