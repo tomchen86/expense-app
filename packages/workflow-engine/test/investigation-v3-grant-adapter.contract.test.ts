@@ -78,12 +78,12 @@ test('central adapter covers every v3 transition and non-exhaustive failure code
       assert.equal(request.candidates.length, 1);
       assert.equal(
         request.candidates[0]!.transitionId,
-        'investigation.v3.stop-transition.v2',
+        'investigation.v3.stop-transition.v3',
       );
       assert.equal(
         (request.candidates[0]!.parameters as { schemaVersion?: unknown })
           .schemaVersion,
-        2,
+        3,
       );
       assert.equal(request.candidates[0]!.proposedReason, PROPOSED_REASON);
       assert.equal('title' in request.candidates[0]!, false);
@@ -148,6 +148,20 @@ test('central registry owns the safe stop transition without relabelling assuran
   );
 });
 
+test('the source-bound transition keeps the durable v2 definition registered for recovery', () => {
+  const registry = createTransitionRegistry(
+    investigationV3GrantTransitionDefinitions('/repo'),
+  );
+  assert.equal(
+    registry.resolve('investigation.v3.stop-transition.v2').resolutionKind,
+    'non-retry',
+  );
+  assert.equal(
+    registry.resolve('investigation.v3.stop-transition.v3').resolutionKind,
+    'non-retry',
+  );
+});
+
 test('v3 adapter remains central and introduces no local grant substrate', () => {
   const source = fs.readFileSync(
     new URL('../src/investigation-v3-grant.ts', import.meta.url),
@@ -158,7 +172,6 @@ test('v3 adapter remains central and introduces no local grant substrate', () =>
     'human-gate-macos',
     'grant-proof-ssh',
     'writeFile',
-    'journal',
     'callback',
   ]) {
     assert.equal(source.includes(forbidden), false, forbidden);
@@ -302,20 +315,21 @@ test('an engine-produced v3 blocker becomes a durable central challenge and stat
         'code' in error &&
         error.code === 'INVESTIGATION_V3_GRANT_STATE_CHANGED',
     );
-    await assert.rejects(
-      createProductionWorkflowGrantCoordinator(repository).recoverChallenge(
-        stored.challenge.challengeId,
-      ),
-      (error) =>
-        typeof error === 'object' &&
-        error !== null &&
-        'code' in error &&
-        error.code === 'INVESTIGATION_V3_GRANT_STATE_CHANGED',
+    const recovered = await createProductionWorkflowGrantCoordinator(
+      repository,
+    ).recoverChallenge(stored.challenge.challengeId);
+    assert.equal(recovered.outcome, 'failed');
+    const terminal = readGrantRecord(storePaths, stored.challenge.challengeId);
+    assert.equal(terminal.state, 'failed');
+    if (terminal.state !== 'failed') assert.fail('expected terminal failure');
+    assert.equal(
+      (terminal.outcome.details as { failureCode?: unknown }).failureCode,
+      'GRANT_STATE_CHANGED',
     );
     assert.equal(
       readGrantRecord(storePaths, stored.challenge.challengeId).state,
-      'prepared',
-      'stale recovery must not record a completed transition',
+      'failed',
+      'stale recovery must record a terminal failure without completing the transition',
     );
   } finally {
     fs.rmSync(repository, { recursive: true, force: true });

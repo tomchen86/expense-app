@@ -1,6 +1,6 @@
 import { loadWorkflowConfig } from './contracts.ts';
 import { isRecord } from './contract-values.ts';
-import { ExitCode, workflowError } from './errors.ts';
+import { ExitCode, WorkflowError, workflowError } from './errors.ts';
 import { ensurePlainDirectory } from './filesystem-safety.ts';
 import { discoverRepository } from './git.ts';
 import {
@@ -12,9 +12,11 @@ import { collectSshApprovalProof } from './grant-proof-ssh.ts';
 import { createInvestigationGrantRequest } from './investigation-grant-transitions.ts';
 import { investigationGrantTransitionDefinitions } from './investigation-grant-transitions.ts';
 import {
+  createInvestigationV3PublicationGrantRequest,
   createInvestigationV3GrantRequest,
   investigationV3GrantTransitionDefinitions,
 } from './investigation-v3-grant.ts';
+import type { InvestigationManifestPublicationFailure } from './investigation-publication.ts';
 import { readInvestigationV3ShadowFailureObservation } from './investigation-shadow-store.ts';
 import { loadGrantPolicyV2 } from './grant-policy.ts';
 import { grantStorePaths, readGrantRecord } from './grant-store.ts';
@@ -139,6 +141,106 @@ export async function requestInvestigationV3Grant(
       proposedReason,
     }),
   );
+}
+
+export async function requestInvestigationV3PublicationGrant(
+  cwd: string,
+  input: Readonly<{
+    failure: InvestigationManifestPublicationFailure;
+    proposedReason: string;
+  }>,
+) {
+  const context = loadInvestigationRuntimeContext(cwd);
+  if (input.failure.lifecycle.repositoryId !== context.config.repositoryName) {
+    throw workflowError(
+      'INVESTIGATION_V3_GRANT_REPOSITORY_MISMATCH',
+      'Investigation v3 publication failure belongs to another repository.',
+      ExitCode.guard,
+    );
+  }
+  return createProductionWorkflowGrantCoordinator(cwd).requestGrant(
+    createInvestigationV3PublicationGrantRequest({
+      cwd,
+      failure: input.failure,
+      proposedReason: input.proposedReason,
+    }),
+  );
+}
+
+export type InvestigationV3PublicationOperationResult = Readonly<{
+  outcome: string;
+  recoveryKind?: string;
+  failure?: InvestigationManifestPublicationFailure;
+}>;
+
+export type InvestigationV3PublicationPropagation<
+  T extends InvestigationV3PublicationOperationResult,
+> =
+  | Readonly<{
+      propagationOutcome: 'unchanged';
+      result: T;
+    }>
+  | Readonly<{
+      propagationOutcome: 'grant-free';
+      result: T;
+    }>
+  | Readonly<{
+      propagationOutcome: 'central-grant-requested';
+      result: T;
+      grant: Awaited<ReturnType<typeof requestInvestigationV3PublicationGrant>>;
+    }>;
+
+/**
+ * Production propagation boundary for the real publication operation unions.
+ * Failure-bearing results enter central Grant Core here; successful, empty,
+ * committed, read, and idempotently recoverable results retain their original
+ * operation classification and object identity.
+ */
+export async function propagateInvestigationV3PublicationResult<
+  T extends InvestigationV3PublicationOperationResult,
+>(
+  cwd: string,
+  input: Readonly<{ result: T; proposedReason: string }>,
+): Promise<InvestigationV3PublicationPropagation<T>> {
+  if (input.result.failure !== undefined) {
+    try {
+      const grant = await requestInvestigationV3PublicationGrant(cwd, {
+        failure: input.result.failure,
+        proposedReason: input.proposedReason,
+      });
+      return Object.freeze({
+        propagationOutcome: 'central-grant-requested' as const,
+        result: input.result,
+        grant,
+      });
+    } catch (error) {
+      if (
+        error instanceof WorkflowError &&
+        error.code === 'INVESTIGATION_V3_GRANT_NOT_REQUIRED'
+      ) {
+        return Object.freeze({
+          propagationOutcome: 'grant-free' as const,
+          result: input.result,
+        });
+      }
+      throw error;
+    }
+  }
+  if (
+    input.result.outcome === 'blocked' ||
+    (input.result.outcome === 'recoverable' &&
+      input.result.recoveryKind === 'pre-ref')
+  ) {
+    throw workflowError(
+      'INVESTIGATION_V3_PUBLICATION_RESULT_INVALID',
+      'A failure-bearing Investigation v3 publication result omitted its source envelope.',
+      ExitCode.guard,
+    );
+  }
+  return Object.freeze({
+    propagationOutcome: 'unchanged' as const,
+    result: input.result,
+  });
 }
 
 function humanResolutionLifecycleBinding(
