@@ -8,7 +8,7 @@ import {
   listProviderInvocationLifecycleProjections,
   scanProviderInvocationLifecycles,
 } from '../src/runtime/storage-journal/investigation-session-store.ts';
-import { loadInvestigationRuntimeContext } from '../src/lifecycle-context.ts';
+import { loadInvestigationRuntimeContext } from '../src/composition-root/lifecycle-context.ts';
 import { providerExecutionPolicySnapshotPath } from '../src/runtime/storage-journal/provider-invocation-store.ts';
 import { startPropose } from '../src/application/propose/propose-orchestrator.ts';
 import { prepareExecutionMandate } from './execution-mandate-fixture.ts';

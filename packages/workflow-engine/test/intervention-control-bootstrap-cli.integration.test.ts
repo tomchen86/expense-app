@@ -10,7 +10,7 @@ import {
   bootstrapInterventionUsage,
   dispatchBootstrapInterventionCommand,
   type BootstrapInterventionCliDependencies,
-} from '../src/intervention-control-bootstrap-cli.ts';
+} from '../src/entrypoints/cli/intervention-control-bootstrap-cli.ts';
 import {
   canonicalHarnessMaintenanceGrantPayload,
   createEngineArtifact,

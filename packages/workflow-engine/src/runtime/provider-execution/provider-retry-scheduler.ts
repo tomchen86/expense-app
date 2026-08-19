@@ -29,7 +29,7 @@ import {
   withPrivateRuntimeLock,
   writePrivateCanonicalJsonAtomic,
 } from '../storage-journal/investigation-session-store.ts';
-import { loadInvestigationRuntimeContext } from '../../lifecycle-context.ts';
+import { loadInvestigationRuntimeContext } from '../../composition-root/lifecycle-context.ts';
 import { retryInvestigationProvider } from '../../adapters/compatibility/investigation-v2/investigation-session.ts';
 import {
   createPlanReviewRetryEnvelope,

@@ -19,7 +19,7 @@ import {
   type ImplementationTermDelta,
   type ImplementationTermDisposition,
 } from '../assurance/implementation-term-floor.ts';
-import { runSessionOperation } from '../../lifecycle-context.ts';
+import { runSessionOperation } from '../../composition-root/lifecycle-context.ts';
 import {
   parsePathRoleRegistry,
   resolvePathRole,

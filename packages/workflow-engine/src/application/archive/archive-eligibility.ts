@@ -3,13 +3,13 @@ import path from 'node:path';
 
 import { assertUniqueCollaborationGrantUses } from '../../modules/authority/collaboration-grant.ts';
 import { canonicalJson } from '../../foundation/canonical-json/canonical-json.ts';
-import { collectHistoricalCollaborationGrantUses } from '../../ci-planning.ts';
+import { collectHistoricalCollaborationGrantUses } from '../../entrypoints/ci/ci-planning.ts';
 import {
   loadWorkflowConfig,
   parseTasks,
   type ManagedSchemaName,
 } from '../../adapters/consumer/expense-app/work-registry/contracts.ts';
-import { readFileAtCommit } from '../../ci-git.ts';
+import { readFileAtCommit } from '../../entrypoints/ci/ci-git.ts';
 import { assertDocumentationClosureCommitCurrent } from '../../runtime/managed-documents/contracts/documentation-closure.ts';
 import { documentationClosureActivationAtCommit } from '../../runtime/managed-documents/ownership/documentation-closure-activation.ts';
 import { ExitCode, workflowError } from '../../foundation/errors/errors.ts';
@@ -35,7 +35,7 @@ import {
   requiredPlanningArtifactPaths,
 } from '../../modules/source/planning-paths.ts';
 import { runtimePaths } from '../../runtime/session-workspace/session-store.ts';
-import { loadStableValidatedChangeContract } from '../../validated-contract-context.ts';
+import { loadStableValidatedChangeContract } from '../../composition-root/validated-contract-context.ts';
 import { completionDocumentPaths } from '../../runtime/managed-documents/validation/managed-documents.ts';
 
 export type ArchiveEligibility = {

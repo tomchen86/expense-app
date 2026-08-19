@@ -14,7 +14,7 @@ import {
   ensurePrivateInvestigationDirectory,
   readPrivateCanonicalJson,
 } from './investigation-session-store.ts';
-import { loadInvestigationRuntimeContext } from '../../lifecycle-context.ts';
+import { loadInvestigationRuntimeContext } from '../../composition-root/lifecycle-context.ts';
 import type { ProviderInvocationRecord } from './provider-invocation-store.ts';
 
 const WARNING_FILE = /^[0-9a-f]{64}\.json$/;

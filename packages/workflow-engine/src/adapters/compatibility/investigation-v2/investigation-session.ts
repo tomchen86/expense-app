@@ -84,7 +84,7 @@ import {
   type StoredInvestigationCheckpoint,
   type WhyAnswersPayload,
 } from '../../../runtime/storage-journal/investigation-session-store.ts';
-import { loadInvestigationRuntimeContext } from '../../../lifecycle-context.ts';
+import { loadInvestigationRuntimeContext } from '../../../composition-root/lifecycle-context.ts';
 import {
   assertResolutionConsequences,
   assertResolutionDecisionAvailable,

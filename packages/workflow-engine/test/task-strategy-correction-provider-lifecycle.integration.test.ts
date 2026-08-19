@@ -11,7 +11,7 @@ import { investigationRuntimePaths } from '../src/runtime/session-workspace/path
 import { commitPlanningTransition } from '../src/application/propose/planning-transition.ts';
 import { readProviderInvocationManifest } from '../src/runtime/storage-journal/provider-invocation-store.ts';
 import { PROVIDER_RUNNER_RESIDUALS } from '../src/runtime/provider-execution/provider-runner.ts';
-import { runProviderWorker } from '../src/provider-worker.ts';
+import { runProviderWorker } from '../src/entrypoints/worker/provider-worker.ts';
 import { startSession } from '../src/application/execute-task/session.ts';
 import {
   readCurrentTaskStrategyGreenFailure,

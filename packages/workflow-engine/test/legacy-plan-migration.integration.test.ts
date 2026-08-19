@@ -30,7 +30,7 @@ import {
   PROVIDER_RUNNER_RESIDUALS,
   type ProviderRunnerReport,
 } from '../src/runtime/provider-execution/provider-runner.ts';
-import { runProviderWorker } from '../src/provider-worker.ts';
+import { runProviderWorker } from '../src/entrypoints/worker/provider-worker.ts';
 import { type ProviderInvocationRequest } from '../src/modules/provider-orchestration/provider-contracts.ts';
 import {
   createFixtureRepository,

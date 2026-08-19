@@ -10,7 +10,7 @@ import { assertCurrentImplementationReconciliation } from '../../modules/why-kno
 import {
   loadActiveSessionContext,
   loadInvestigationRuntimeContext,
-} from '../../lifecycle-context.ts';
+} from '../../composition-root/lifecycle-context.ts';
 import { restoreCurrentTaskStrategyImplementationToRedUnderLifecycleLock } from './task-strategy-patch.ts';
 import {
   readTaskStrategyPatchCurrentBinding,

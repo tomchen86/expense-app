@@ -40,7 +40,7 @@ import {
   readProviderInvocationRequest,
 } from '../src/runtime/storage-journal/provider-invocation-store.ts';
 import { PROVIDER_RUNNER_RESIDUALS } from '../src/runtime/provider-execution/provider-runner.ts';
-import { runProviderWorker } from '../src/provider-worker.ts';
+import { runProviderWorker } from '../src/entrypoints/worker/provider-worker.ts';
 import {
   checkSession,
   startSession,

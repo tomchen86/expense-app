@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import { dispatchAuthorityAuditCommand } from '../src/authority-audit-cli.ts';
+import { dispatchAuthorityAuditCommand } from '../src/entrypoints/cli/authority-audit-cli.ts';
 import {
   canonicalAuditDestructionGrantPayload,
   type AuditDestructionGrantEnvelope,

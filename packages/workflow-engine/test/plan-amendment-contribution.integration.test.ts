@@ -28,7 +28,7 @@ import {
   PROVIDER_RUNNER_RESIDUALS,
   type ProviderRunnerReport,
 } from '../src/runtime/provider-execution/provider-runner.ts';
-import { runProviderWorker } from '../src/provider-worker.ts';
+import { runProviderWorker } from '../src/entrypoints/worker/provider-worker.ts';
 import { createFixtureRepository, git, isWorkflowError } from './fixture.ts';
 import { installPlanReviewAuthority } from './plan-review-authority-fixture.ts';
 

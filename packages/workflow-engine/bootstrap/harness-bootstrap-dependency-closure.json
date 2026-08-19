@@ -8,7 +8,7 @@
     {
       "path": "bootstrap/recovery-runtime/bootstrap/built-in-engine-closure-pin.js",
       "mode": "100644",
-      "digest": "sha256:c86f2ff00bd77c88fe2e6d76aa3840dfb69a1ab2206e3722d89e452726eaed11"
+      "digest": "sha256:3cde8f12da1592c59947f90da825e90cc6481c1aa174ca06765d7f455b2d0d74"
     },
     {
       "path": "bootstrap/recovery-runtime/src/adapters/compatibility/investigation-v2/evidence-convergence.js",
@@ -101,6 +101,11 @@
       "digest": "sha256:4e133ddbda165480ba6ad0ebb49e28d4d1a04be75be493a41e270408ce2ab5a3"
     },
     {
+      "path": "bootstrap/recovery-runtime/src/entrypoints/cli/intervention-control-bootstrap-cli.js",
+      "mode": "100644",
+      "digest": "sha256:e32a28f5a92d3908850dfa731bf2e1c43fdedfd1fdf1bbe805311dccf65a67f7"
+    },
+    {
       "path": "bootstrap/recovery-runtime/src/foundation/canonical-json/canonical-json.js",
       "mode": "100644",
       "digest": "sha256:85f3c066dbff399fee17aa88b55a8045398eb5fe8950745ea855886029ceadef"
@@ -118,12 +123,7 @@
     {
       "path": "bootstrap/recovery-runtime/src/harness-bootstrap.js",
       "mode": "100755",
-      "digest": "sha256:3b69e8cc627000b7dd3edd270bdad354be044445eb6d4d075c7177a0488689bf"
-    },
-    {
-      "path": "bootstrap/recovery-runtime/src/intervention-control-bootstrap-cli.js",
-      "mode": "100644",
-      "digest": "sha256:b1501bcef8ac3aed6f15fa14634b0f2b8d08dab3a201949e7f47254694e357f6"
+      "digest": "sha256:2289759670aa7ee0b3d602026614ec0b33cb481e18b7f1ee09d645d9ff831c07"
     },
     {
       "path": "bootstrap/recovery-runtime/src/modules/assurance/plan-review.js",

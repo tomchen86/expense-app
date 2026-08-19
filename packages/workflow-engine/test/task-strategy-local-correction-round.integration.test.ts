@@ -14,7 +14,7 @@ import {
   checkSession,
   inspectSession,
 } from '../src/application/finalize/verification.ts';
-import { loadInvestigationRuntimeContext } from '../src/lifecycle-context.ts';
+import { loadInvestigationRuntimeContext } from '../src/composition-root/lifecycle-context.ts';
 import {
   configureChecks,
   createFixtureRepository,

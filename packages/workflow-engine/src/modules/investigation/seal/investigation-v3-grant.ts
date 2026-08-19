@@ -26,7 +26,7 @@ import {
   type InvestigationV3FailureSource,
   type InvestigationV3ObservedFailureSource,
 } from './investigation-v3-failure-source.ts';
-import { loadInvestigationRuntimeContext } from '../../../lifecycle-context.ts';
+import { loadInvestigationRuntimeContext } from '../../../composition-root/lifecycle-context.ts';
 import {
   parseInvestigationV3Blocker,
   type InvestigationV3Blocker,

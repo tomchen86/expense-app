@@ -28,7 +28,7 @@ import {
 } from '../../modules/authority/execution-governance.ts';
 import { ExitCode, workflowError } from '../../foundation/errors/errors.ts';
 import { listProviderInvocationLifecycleProjections } from '../storage-journal/investigation-session-store.ts';
-import { loadInvestigationRuntimeContext } from '../../lifecycle-context.ts';
+import { loadInvestigationRuntimeContext } from '../../composition-root/lifecycle-context.ts';
 import {
   providerOutputSchemaGeneration,
   providerResidualsGeneration,

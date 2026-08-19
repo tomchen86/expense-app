@@ -6,8 +6,8 @@ import test from 'node:test';
 
 import { commitArchiveTransition } from '../src/application/archive/archive-transition.ts';
 import { canonicalJson } from '../src/foundation/canonical-json/canonical-json.ts';
-import { validateCiArchiveCommit } from '../src/ci-archive.ts';
-import { verifyPullRequest } from '../src/ci.ts';
+import { validateCiArchiveCommit } from '../src/entrypoints/ci/ci-archive.ts';
+import { verifyPullRequest } from '../src/entrypoints/ci/ci.ts';
 import { createEvidenceNode } from '../src/adapters/compatibility/investigation-v2/evidence-node.ts';
 import {
   createFixtureRepository,

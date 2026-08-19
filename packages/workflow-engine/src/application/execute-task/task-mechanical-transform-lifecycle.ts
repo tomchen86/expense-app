@@ -17,7 +17,7 @@ import {
   readPrivateCanonicalJson,
   writePrivateCanonicalJsonAtomic,
 } from '../../runtime/storage-journal/investigation-session-store.ts';
-import { loadActiveSessionContext } from '../../lifecycle-context.ts';
+import { loadActiveSessionContext } from '../../composition-root/lifecycle-context.ts';
 import { classifyMutationPath } from '../../modules/source/mutation-class-policy.ts';
 import {
   investigationRuntimePaths,

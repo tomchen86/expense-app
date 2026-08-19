@@ -5,7 +5,7 @@ import path from 'node:path';
 import test from 'node:test';
 
 import { canonicalJson } from '../src/foundation/canonical-json/canonical-json.ts';
-import { validateCiPlanningCommit } from '../src/ci-planning.ts';
+import { validateCiPlanningCommit } from '../src/entrypoints/ci/ci-planning.ts';
 import { commitFacts } from '../src/runtime/repository-transaction/git-transitions.ts';
 import { renderHandoff } from '../src/adapters/consumer/expense-app/handoff/handoff.ts';
 import {

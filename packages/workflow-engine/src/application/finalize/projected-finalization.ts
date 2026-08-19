@@ -34,7 +34,7 @@ import {
   fingerprintUnstagedRepositoryProjection,
   runGit,
 } from '../../runtime/repository-transaction/git.ts';
-import { loadActiveSessionContext } from '../../lifecycle-context.ts';
+import { loadActiveSessionContext } from '../../composition-root/lifecycle-context.ts';
 import {
   applyGeneratedDocumentMutations,
   planCompletionDocuments,

@@ -26,7 +26,7 @@ import {
 import {
   listProviderWorkerMaintenanceWarnings,
   runProviderWorker,
-} from '../src/provider-worker.ts';
+} from '../src/entrypoints/worker/provider-worker.ts';
 import { prepareExecutionMandate } from './execution-mandate-fixture.ts';
 import { createFixtureRepository, git } from './fixture.ts';
 
@@ -301,7 +301,8 @@ test('environment probe failure schedules only the probe and never republishes p
     const dispatched: string[] = [];
     const probe = {
       kind: 'file-read' as const,
-      target: 'packages/workflow-engine/src/provider-worker.ts',
+      target:
+        'packages/workflow-engine/src/entrypoints/worker/provider-worker.ts',
       timeoutMs: 1_000,
     };
     runProviderWorker(fixture.repository, fixture.invocationId, {
@@ -854,7 +855,8 @@ function startProbeScheduleFixture(changeId: string) {
             retryAfterMs: 1_000,
             probe: {
               kind: 'file-read',
-              target: 'packages/workflow-engine/src/provider-worker.ts',
+              target:
+                'packages/workflow-engine/src/entrypoints/worker/provider-worker.ts',
               timeoutMs: 250,
             },
           },
@@ -923,7 +925,9 @@ function intent() {
   return {
     schemaVersion: 1 as const,
     summary: 'Exercise production automatic provider retry routing.',
-    explicitPaths: ['packages/workflow-engine/src/provider-worker.ts'],
+    explicitPaths: [
+      'packages/workflow-engine/src/entrypoints/worker/provider-worker.ts',
+    ],
     explicitSymbols: ['runProviderWorker'],
     explicitConfigKeys: [],
     renamePairs: [],

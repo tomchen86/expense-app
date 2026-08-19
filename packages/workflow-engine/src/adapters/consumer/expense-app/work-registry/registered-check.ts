@@ -1,5 +1,5 @@
 import type { CheckEvidence } from './check-runner.ts';
-import { runCiChecks } from '../../../../ci-checks.ts';
+import { runCiChecks } from '../../../../entrypoints/ci/ci-checks.ts';
 import { loadChecksConfig } from './contracts.ts';
 import {
   ExitCode,

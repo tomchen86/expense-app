@@ -9,7 +9,7 @@ import test from 'node:test';
 import {
   dispatchBootstrapInterventionCommand,
   type BootstrapInterventionCliDependencies,
-} from '../src/intervention-control-bootstrap-cli.ts';
+} from '../src/entrypoints/cli/intervention-control-bootstrap-cli.ts';
 import { createEngineArtifact } from '../src/modules/authority/intervention-control.ts';
 import {
   readPersistedBootstrapSidecarWorkflow,

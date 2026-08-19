@@ -203,7 +203,7 @@ import {
   legacyMigrationMetadataBytes,
   type LegacyPlanMigrationSubject,
 } from '../../adapters/compatibility/investigation-v2/legacy-plan-migration.ts';
-import { loadInvestigationRuntimeContext } from '../../lifecycle-context.ts';
+import { loadInvestigationRuntimeContext } from '../../composition-root/lifecycle-context.ts';
 import { parseMaintainerPolicy } from '../../modules/authority/maintainer-policy.ts';
 import {
   createInteractiveSshSigner,

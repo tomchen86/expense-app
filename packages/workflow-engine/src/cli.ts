@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-import { dispatchAiAdapterCommand } from './ai-adapter-cli.ts';
+import { dispatchAiAdapterCommand } from './entrypoints/cli/ai-adapter-cli.ts';
 import { commitArchiveTransition } from './application/archive/archive-transition.ts';
 import {
   approveAndApplyAuthorityPlan,
@@ -14,7 +14,7 @@ import {
   resumeAuthorityPlan,
   type AuthorityPlanIntent,
 } from './application/control-plane/authority-plan.ts';
-import { dispatchAuthorityAuditCommand } from './authority-audit-cli.ts';
+import { dispatchAuthorityAuditCommand } from './entrypoints/cli/authority-audit-cli.ts';
 import {
   deriveAuthorityAuditRepositoryId,
   type AuthorityAuditEventType,
@@ -24,7 +24,7 @@ import { recordAuthorityAuditEvent } from './runtime/storage-journal/authority-a
 import {
   dispatchCollaborationGrantCommand,
   isCollaborationGrantCommand,
-} from './collaboration-grant-cli.ts';
+} from './entrypoints/cli/collaboration-grant-cli.ts';
 import { inspectChangeAssurance } from './runtime/repository-transaction/assurance-inspection.ts';
 import { loadWorkflowConfig } from './adapters/consumer/expense-app/work-registry/contracts.ts';
 import {
@@ -41,9 +41,9 @@ import {
 import {
   completePreparedPullRequestPreMergeAssurance,
   preparePullRequestPreMergeAssurance,
-} from './pre-merge-assurance-git.ts';
+} from './entrypoints/ci/pre-merge-assurance-git.ts';
 import type { IntegrationDeltaReviewSubmission } from './modules/assurance/pre-merge-assurance.ts';
-import { dispatchDocumentRefreshCommand } from './document-refresh-cli.ts';
+import { dispatchDocumentRefreshCommand } from './entrypoints/cli/document-refresh-cli.ts';
 import { collectEngineMetrics } from './application/control-plane/engine-metrics.ts';
 import {
   ExitCode,
@@ -54,7 +54,7 @@ import {
   inspectIssuedExecutionBudgetGrant,
   issueExecutionBudgetGrant,
   revokeIssuedExecutionBudgetGrant,
-} from './execution-grant-cli.ts';
+} from './entrypoints/cli/execution-grant-cli.ts';
 import { parseExecutionBudgetGrantRequest } from './modules/authority/execution-governance.ts';
 import {
   EXTERNAL_EFFECT_MAX_TTL_SECONDS,
@@ -90,12 +90,12 @@ import {
   runGit,
 } from './runtime/repository-transaction/git.ts';
 import { validateHandoff } from './adapters/consumer/expense-app/handoff/handoff.ts';
-import { runRepositoryHook } from './hooks.ts';
+import { runRepositoryHook } from './entrypoints/hooks/hooks.ts';
 import {
   isHumanGrantCliInvocation,
   runHumanGrantCli,
-} from './human-grant-cli.ts';
-import { dispatchIssueCommand } from './issue-cli.ts';
+} from './entrypoints/cli/human-grant-cli.ts';
+import { dispatchIssueCommand } from './entrypoints/cli/issue-cli.ts';
 import { assertMaintainerGrantId } from './modules/authority/maintainer-grant.ts';
 import {
   parseMaintainerEvidenceWaivers,
@@ -137,13 +137,13 @@ import type { CandidateExternalEffect } from './modules/authority/maintainer-can
 import {
   bootstrapInterventionStateRoot,
   dispatchBootstrapInterventionCommand,
-} from './intervention-control-bootstrap-cli.ts';
+} from './entrypoints/cli/intervention-control-bootstrap-cli.ts';
 import { createHarnessBootstrapDependencies } from './harness-bootstrap.ts';
-import { dispatchInterventionControlCommand } from './intervention-control-cli.ts';
+import { dispatchInterventionControlCommand } from './entrypoints/cli/intervention-control-cli.ts';
 import {
   controlPlaneTaskMandateBindingFromTaskMandate,
   dispatchProductionControlPlaneUpdaterCommand,
-} from './intervention-control-updater-cli.ts';
+} from './entrypoints/cli/intervention-control-updater-cli.ts';
 import {
   produceControlPlaneApprovalCandidateV2,
   type ControlPlanePromotionReviewSummaryV2,
@@ -166,7 +166,7 @@ import {
   inspectImplementationReconciliation,
   recordImplementationReconciliation,
 } from './modules/why-knowledge/implementation-reconciliation.ts';
-import { loadInvestigationRuntimeContext } from './lifecycle-context.ts';
+import { loadInvestigationRuntimeContext } from './composition-root/lifecycle-context.ts';
 import {
   cancelFinalizeRecovery,
   commitSession,
@@ -236,7 +236,7 @@ import {
 import {
   dispatchProviderWorker,
   runProviderWorker,
-} from './provider-worker.ts';
+} from './entrypoints/worker/provider-worker.ts';
 import { readProviderInvocation } from './runtime/storage-journal/provider-invocation-store.ts';
 import {
   listProviderAutomaticRetrySchedules,
@@ -244,7 +244,7 @@ import {
   pumpProviderRetrySchedules,
 } from './runtime/provider-execution/provider-retry-scheduler.ts';
 import { runRegisteredCheck } from './adapters/consumer/expense-app/work-registry/registered-check.ts';
-import { loadStableValidatedChangeContract } from './validated-contract-context.ts';
+import { loadStableValidatedChangeContract } from './composition-root/validated-contract-context.ts';
 import {
   authorizeTaskMandate,
   inspectActiveTaskMandateBinding,

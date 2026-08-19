@@ -9,7 +9,7 @@ import {
   createPlanningCommitObject,
   planningCommitMessage,
 } from '../src/runtime/repository-transaction/git-transitions.ts';
-import { runRepositoryHook } from '../src/hooks.ts';
+import { runRepositoryHook } from '../src/entrypoints/hooks/hooks.ts';
 import { startSession } from '../src/application/execute-task/session.ts';
 import {
   createFixtureRepository,

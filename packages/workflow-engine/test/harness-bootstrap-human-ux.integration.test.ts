@@ -9,7 +9,7 @@ import test from 'node:test';
 
 import { BUILT_IN_ENGINE_CLOSURE_MANIFEST_DIGEST } from '../bootstrap/built-in-engine-closure-pin.ts';
 import { createEngineArtifact } from '../src/modules/authority/intervention-control.ts';
-import { bootstrapInterventionStateRoot } from '../src/intervention-control-bootstrap-cli.ts';
+import { bootstrapInterventionStateRoot } from '../src/entrypoints/cli/intervention-control-bootstrap-cli.ts';
 import { readPersistedIntervention } from '../src/runtime/storage-journal/intervention-control-persistence.ts';
 import {
   persistInterventionEngineArtifact,

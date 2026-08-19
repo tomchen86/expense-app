@@ -15,7 +15,7 @@ import {
   readInvestigationSession,
   storeAvailableHumanResolutionGrant,
 } from '../src/runtime/storage-journal/investigation-session-store.ts';
-import { loadInvestigationRuntimeContext } from '../src/lifecycle-context.ts';
+import { loadInvestigationRuntimeContext } from '../src/composition-root/lifecycle-context.ts';
 import {
   HUMAN_RESOLUTION_SIGNATURE_NAMESPACE,
   assertResolutionDecisionAvailable,

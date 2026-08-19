@@ -82,7 +82,7 @@ import {
   withRepositoryLifecycleOperation,
 } from '../../runtime/session-workspace/session-store.ts';
 import type { TaskMandateBinding } from '../../modules/authority/task-mandate.ts';
-import { loadStableValidatedChangeContract } from '../../validated-contract-context.ts';
+import { loadStableValidatedChangeContract } from '../../composition-root/validated-contract-context.ts';
 
 export type AuthorityPinnedCheck = {
   checkId: string;

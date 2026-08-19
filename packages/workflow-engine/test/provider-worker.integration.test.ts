@@ -54,7 +54,7 @@ import { PROVIDER_RUNNER_RESIDUALS } from '../src/runtime/provider-execution/pro
 import {
   createProviderWorkerDispatcherForTesting,
   runProviderWorker,
-} from '../src/provider-worker.ts';
+} from '../src/entrypoints/worker/provider-worker.ts';
 import {
   createFixtureRepository,
   git,

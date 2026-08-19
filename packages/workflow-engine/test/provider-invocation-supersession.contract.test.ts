@@ -7,7 +7,7 @@ import test from 'node:test';
 import { loadAiAdapterPolicy } from '../src/runtime/provider-execution/ai-adapter-policy.ts';
 import { canonicalJson } from '../src/foundation/canonical-json/canonical-json.ts';
 import { isWorkflowError } from './fixture.ts';
-import { loadInvestigationRuntimeContext } from '../src/lifecycle-context.ts';
+import { loadInvestigationRuntimeContext } from '../src/composition-root/lifecycle-context.ts';
 import {
   createProviderInvocationRequest,
   type ProviderInvocationRequest,

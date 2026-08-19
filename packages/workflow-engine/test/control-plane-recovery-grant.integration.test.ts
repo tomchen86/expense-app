@@ -41,7 +41,7 @@ import {
   type ProtectedCapabilityEntry,
 } from '../src/modules/authority/intervention-control.ts';
 import { produceControlPlaneApprovalCandidateV2 } from '../src/application/control-plane/control-plane-promotion-producer.ts';
-import { dispatchProductionControlPlaneUpdaterCommand } from '../src/intervention-control-updater-cli.ts';
+import { dispatchProductionControlPlaneUpdaterCommand } from '../src/entrypoints/cli/intervention-control-updater-cli.ts';
 import {
   persistInterventionPlan,
   readPersistedControlPlaneUpdate,

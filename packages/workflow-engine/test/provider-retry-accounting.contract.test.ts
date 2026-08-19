@@ -11,7 +11,7 @@ import { canonicalJson } from '../src/foundation/canonical-json/canonical-json.t
 import { projectProviderInvocationExecution } from '../src/modules/provider-orchestration/execution-core.ts';
 import { readExecutionJobState } from '../src/runtime/storage-journal/execution-store.ts';
 import { preflightProviderRepairRetry } from '../src/runtime/provider-execution/provider-execution-governance.ts';
-import { loadInvestigationRuntimeContext } from '../src/lifecycle-context.ts';
+import { loadInvestigationRuntimeContext } from '../src/composition-root/lifecycle-context.ts';
 import { listProviderInvocationLifecycleProjections } from '../src/runtime/storage-journal/investigation-session-store.ts';
 import {
   createProviderInvocationRequest,

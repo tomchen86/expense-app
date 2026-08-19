@@ -7,7 +7,7 @@ import path from 'node:path';
 import test from 'node:test';
 
 import { canonicalJson } from '../src/foundation/canonical-json/canonical-json.ts';
-import { parseCollaborationGrantArguments } from '../src/collaboration-grant-cli.ts';
+import { parseCollaborationGrantArguments } from '../src/entrypoints/cli/collaboration-grant-cli.ts';
 import {
   COLLABORATION_GRANT_AUTHORIZED_EFFECT,
   COLLABORATION_GRANT_POLICY_DIGEST,
@@ -67,7 +67,7 @@ import {
   PROVIDER_RUNNER_RESIDUALS,
   type ProviderRunnerReport,
 } from '../src/runtime/provider-execution/provider-runner.ts';
-import { runProviderWorker } from '../src/provider-worker.ts';
+import { runProviderWorker } from '../src/entrypoints/worker/provider-worker.ts';
 import {
   claimProviderInvocation,
   completeProviderInvocation,

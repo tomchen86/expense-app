@@ -8,7 +8,7 @@ import { loadAiAdapterPolicy } from '../src/runtime/provider-execution/ai-adapte
 import { canonicalJson } from '../src/foundation/canonical-json/canonical-json.ts';
 import { listExecutionJobs } from '../src/runtime/provider-execution/execution-runtime.ts';
 import { discoverRepository } from '../src/runtime/repository-transaction/git.ts';
-import { loadInvestigationRuntimeContext } from '../src/lifecycle-context.ts';
+import { loadInvestigationRuntimeContext } from '../src/composition-root/lifecycle-context.ts';
 import { investigationRuntimePaths } from '../src/runtime/session-workspace/paths.ts';
 import {
   createProviderInvocationRequest,

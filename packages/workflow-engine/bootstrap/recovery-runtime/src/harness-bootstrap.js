@@ -12,7 +12,7 @@ import { HARNESS_RECOVERY_SIGNATURE_NAMESPACE, canonicalControlPlaneRecoveryGran
 import { loadWorkflowConfig } from './adapters/consumer/expense-app/work-registry/contracts.js';
 import { ExitCode, WorkflowError, workflowError, } from './foundation/errors/errors.js';
 import { discoverRepository, runGit, } from './runtime/repository-transaction/git.js';
-import { bootstrapInterventionStateRoot, bootstrapInterventionUsage, dispatchBootstrapInterventionCommand, } from './intervention-control-bootstrap-cli.js';
+import { bootstrapInterventionStateRoot, bootstrapInterventionUsage, dispatchBootstrapInterventionCommand, } from './entrypoints/cli/intervention-control-bootstrap-cli.js';
 import { persistTrustedBootstrapSessionSnapshot, readLocalEngineBinding, } from './application/control-plane/intervention-control-bootstrap.js';
 import { executeControlPlaneRecoveryRollback, preflightControlPlaneRecoveryRollback, readControlPlaneSupervisorState, } from './application/control-plane/intervention-control-updater.js';
 import { parseMaintainerPolicy } from './modules/authority/maintainer-policy.js';

@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import { verifyBaseAuthorityAttestations } from '../src/ci-attestation.ts';
+import { verifyBaseAuthorityAttestations } from '../src/entrypoints/ci/ci-attestation.ts';
 import { WorkflowError } from '../src/foundation/errors/errors.ts';
 import {
   canonicalHumanResolutionGrantEnvelope,

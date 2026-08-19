@@ -6,9 +6,9 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import { assertExactPlanningBootstrap } from '../src/ci-bootstrap.ts';
-import { loadPlanningBootstrapPolicy } from '../src/ci-policy.ts';
-import { verifyPullRequest } from '../src/ci.ts';
+import { assertExactPlanningBootstrap } from '../src/entrypoints/ci/ci-bootstrap.ts';
+import { loadPlanningBootstrapPolicy } from '../src/entrypoints/ci/ci-policy.ts';
+import { verifyPullRequest } from '../src/entrypoints/ci/ci.ts';
 import {
   createFixtureRepository,
   git,

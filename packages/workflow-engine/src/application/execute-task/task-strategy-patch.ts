@@ -19,7 +19,7 @@ import {
 import {
   loadActiveSessionContext,
   runSessionOperation,
-} from '../../lifecycle-context.ts';
+} from '../../composition-root/lifecycle-context.ts';
 import {
   investigationRuntimePaths,
   matchesAllowedPath,

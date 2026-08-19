@@ -75,7 +75,7 @@ import { assertTaskStrategyExecutionGate } from '../../modules/assurance/task-st
 import { recordTaskStrategyGreenFailure } from '../execute-task/task-strategy-correction.ts';
 import { ensureTaskMechanicalTransformationEvidence } from '../execute-task/task-mechanical-transform.ts';
 import { assertTaskProjectionSourceDigest } from '../../runtime/managed-documents/transaction/task-projection.ts';
-import { loadStableValidatedChangeContract } from '../../validated-contract-context.ts';
+import { loadStableValidatedChangeContract } from '../../composition-root/validated-contract-context.ts';
 
 export type SessionCheck = {
   sessionId: string;

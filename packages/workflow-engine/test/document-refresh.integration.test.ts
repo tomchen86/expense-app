@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
 
-import { dispatchDocumentRefreshCommand } from '../src/document-refresh-cli.ts';
+import { dispatchDocumentRefreshCommand } from '../src/entrypoints/cli/document-refresh-cli.ts';
 import {
   applyDocumentRefresh,
   proposeDocumentRefresh,

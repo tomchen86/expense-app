@@ -31,7 +31,7 @@ import {
   readProposeExemptionSession,
 } from '../../../runtime/storage-journal/propose-exemption-store.ts';
 import { readInvestigationV3ShadowFailureObservation } from '../../../runtime/storage-journal/investigation-shadow-store.ts';
-import { loadInvestigationRuntimeContext } from '../../../lifecycle-context.ts';
+import { loadInvestigationRuntimeContext } from '../../../composition-root/lifecycle-context.ts';
 
 export const INVESTIGATION_V3_SHADOW_FAILURE_OBSERVER =
   'investigation-v3.shadow-failure.v1' as const;

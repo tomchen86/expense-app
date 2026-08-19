@@ -28,7 +28,7 @@ import {
   withSessionOperation,
   writeJsonAtomic,
 } from '../../runtime/session-workspace/session-store.ts';
-import { loadStableValidatedChangeContract } from '../../validated-contract-context.ts';
+import { loadStableValidatedChangeContract } from '../../composition-root/validated-contract-context.ts';
 import {
   authorizeTaskMandateOperation,
   type TaskMandateBinding,

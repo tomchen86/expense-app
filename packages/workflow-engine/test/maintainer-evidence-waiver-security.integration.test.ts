@@ -13,8 +13,8 @@ import {
   type AuthorityApplicationReceiptEnvelope,
   type AuthorityApplicationReceiptPayload,
 } from '../src/modules/authority/authority-application-receipt.ts';
-import { listRangeCommits } from '../src/ci-git.ts';
-import { validateCiAuthorityCommit } from '../src/ci-authority.ts';
+import { listRangeCommits } from '../src/entrypoints/ci/ci-git.ts';
+import { validateCiAuthorityCommit } from '../src/entrypoints/ci/ci-authority.ts';
 import {
   canonicalMaintainerGrantV2Envelope,
   canonicalMaintainerGrantV2Payload,

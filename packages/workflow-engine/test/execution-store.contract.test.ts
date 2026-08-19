@@ -21,7 +21,7 @@ import {
   materializeLegacyExecutionInvestigation,
   reconcileLegacyProviderInvocation,
 } from '../src/runtime/provider-execution/execution-recovery.ts';
-import { loadInvestigationRuntimeContext } from '../src/lifecycle-context.ts';
+import { loadInvestigationRuntimeContext } from '../src/composition-root/lifecycle-context.ts';
 import {
   createProviderInvocationRequest,
   evaluateProviderProcess,

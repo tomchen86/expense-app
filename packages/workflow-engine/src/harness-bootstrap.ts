@@ -41,7 +41,7 @@ import {
   dispatchBootstrapInterventionCommand,
   type BootstrapInterventionCliDependencies,
   type DurableInterventionParentState,
-} from './intervention-control-bootstrap-cli.ts';
+} from './entrypoints/cli/intervention-control-bootstrap-cli.ts';
 import {
   persistTrustedBootstrapSessionSnapshot,
   readLocalEngineBinding,

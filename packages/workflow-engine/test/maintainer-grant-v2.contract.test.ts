@@ -32,10 +32,10 @@ import {
   issueAuthorityAttestation,
   projectAuthorityAttestationRelay,
 } from '../src/application/control-plane/maintainer-attestation.ts';
-import { validateCiAuthorityCommit } from '../src/ci-authority.ts';
-import { verifyBaseAuthorityAttestations } from '../src/ci-attestation.ts';
-import { listRangeCommits } from '../src/ci-git.ts';
-import { replayCommitSequence } from '../src/ci-sequence.ts';
+import { validateCiAuthorityCommit } from '../src/entrypoints/ci/ci-authority.ts';
+import { verifyBaseAuthorityAttestations } from '../src/entrypoints/ci/ci-attestation.ts';
+import { listRangeCommits } from '../src/entrypoints/ci/ci-git.ts';
+import { replayCommitSequence } from '../src/entrypoints/ci/ci-sequence.ts';
 import {
   commitAuthoritySession as commitAuthoritySessionProduction,
   SimulatedAuthorityCrash,

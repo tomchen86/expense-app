@@ -8,7 +8,7 @@ import {
   inspectExternalEffectGrant,
   issueExternalEffectGrant,
 } from '../src/modules/authority/external-effect-grant.ts';
-import { runRepositoryHook } from '../src/hooks.ts';
+import { runRepositoryHook } from '../src/entrypoints/hooks/hooks.ts';
 import {
   executePublishGrant,
   publishPoststateDigest,

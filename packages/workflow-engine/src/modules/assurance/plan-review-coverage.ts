@@ -1,7 +1,7 @@
 import crypto from 'node:crypto';
 
 import { canonicalJson } from '../../foundation/canonical-json/canonical-json.ts';
-import { readFileAtCommit } from '../../ci-git.ts';
+import { readFileAtCommit } from '../../entrypoints/ci/ci-git.ts';
 import {
   assertStoredEvidenceNode,
   createEvidenceNode,

@@ -5,7 +5,7 @@ import test from 'node:test';
 import {
   dispatchInterventionControlCommand,
   parseInterventionControlCommand,
-} from '../src/intervention-control-cli.ts';
+} from '../src/entrypoints/cli/intervention-control-cli.ts';
 import {
   REQUIRED_PROTECTED_CAPABILITIES,
   controlPlaneCandidateDigest,

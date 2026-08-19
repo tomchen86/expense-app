@@ -315,7 +315,9 @@ test('repository publishes the complete typed control-plane capability closure',
   assert.equal(
     (
       byCapability.get('authorization.verify')?.entrypoints as unknown[]
-    ).includes('packages/workflow-engine/src/pre-merge-assurance-git.ts'),
+    ).includes(
+      'packages/workflow-engine/src/entrypoints/ci/pre-merge-assurance-git.ts',
+    ),
     true,
   );
   assert.equal(

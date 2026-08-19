@@ -5,7 +5,7 @@ import test from 'node:test';
 import { inspectDurableRetentionCatalog } from '../src/modules/authority/execution-governance.ts';
 import { listExecutionJobStates } from '../src/runtime/storage-journal/execution-store.ts';
 import { listProviderInvocationLifecycleProjections } from '../src/runtime/storage-journal/investigation-session-store.ts';
-import { loadInvestigationRuntimeContext } from '../src/lifecycle-context.ts';
+import { loadInvestigationRuntimeContext } from '../src/composition-root/lifecycle-context.ts';
 import { startPropose } from '../src/application/propose/propose-orchestrator.ts';
 import { inspectProviderPromptContextRetentionBinding } from '../src/runtime/provider-execution/provider-execution-governance.ts';
 import {

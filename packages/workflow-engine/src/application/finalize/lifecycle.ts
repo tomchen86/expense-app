@@ -10,7 +10,7 @@ import {
   type DocumentationReviewCapture,
 } from '../../runtime/managed-documents/contracts/documentation-closure.ts';
 import { documentationClosureActivationAtCommit } from '../../runtime/managed-documents/ownership/documentation-closure-activation.ts';
-import { readFileAtCommit } from '../../ci-git.ts';
+import { readFileAtCommit } from '../../entrypoints/ci/ci-git.ts';
 import {
   loadWorkflowConfig,
   parseTasks,
@@ -60,7 +60,7 @@ import {
   assertFinishProjection,
   loadActiveSessionContext,
   runSessionOperation,
-} from '../../lifecycle-context.ts';
+} from '../../composition-root/lifecycle-context.ts';
 import { reconcilePredecessor } from './predecessor-reconciliation.ts';
 import {
   removeFinalizeTransaction,

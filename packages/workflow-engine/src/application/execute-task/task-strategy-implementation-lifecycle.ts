@@ -31,7 +31,7 @@ import { runGit } from '../../runtime/repository-transaction/git.ts';
 import {
   loadActiveSessionContext,
   loadInvestigationRuntimeContext,
-} from '../../lifecycle-context.ts';
+} from '../../composition-root/lifecycle-context.ts';
 import { parseMaintainerPolicy } from '../../modules/authority/maintainer-policy.ts';
 import {
   createInteractiveSshSigner,

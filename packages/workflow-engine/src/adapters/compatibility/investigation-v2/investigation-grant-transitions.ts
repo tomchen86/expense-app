@@ -32,7 +32,7 @@ import {
   WORKFLOW_SUPERSEDE_REASONS,
   type WorkflowSupersedeReason,
 } from '../../../modules/authority/intervention-control.ts';
-import { loadInvestigationRuntimeContext } from '../../../lifecycle-context.ts';
+import { loadInvestigationRuntimeContext } from '../../../composition-root/lifecycle-context.ts';
 import {
   humanResolutionBlockerBinding,
   loadMaintainerPolicyForResolution,

@@ -67,10 +67,10 @@ import {
   recoverAuthorityCommit,
 } from '../src/application/control-plane/maintainer-recovery.ts';
 import { commitFacts } from '../src/runtime/repository-transaction/git-transitions.ts';
-import { validateCiAuthorityCommit } from '../src/ci-authority.ts';
-import { listRangeCommits } from '../src/ci-git.ts';
-import { replayCommitSequence } from '../src/ci-sequence.ts';
-import { canonicalCheckDefinition } from '../src/ci-historical-contract.ts';
+import { validateCiAuthorityCommit } from '../src/entrypoints/ci/ci-authority.ts';
+import { listRangeCommits } from '../src/entrypoints/ci/ci-git.ts';
+import { replayCommitSequence } from '../src/entrypoints/ci/ci-sequence.ts';
+import { canonicalCheckDefinition } from '../src/entrypoints/ci/ci-historical-contract.ts';
 import { resolveCheckRunner } from '../src/adapters/consumer/expense-app/work-registry/runner-resolution.ts';
 
 const POLICY: MaintainerPolicy = {

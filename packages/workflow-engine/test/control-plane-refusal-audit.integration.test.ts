@@ -13,7 +13,7 @@ import {
   WorkflowError,
   workflowError,
 } from '../src/foundation/errors/errors.ts';
-import { dispatchProductionControlPlaneUpdaterCommand } from '../src/intervention-control-updater-cli.ts';
+import { dispatchProductionControlPlaneUpdaterCommand } from '../src/entrypoints/cli/intervention-control-updater-cli.ts';
 import { controlPlaneApprovalCandidatePath } from '../src/application/control-plane/intervention-control-updater.ts';
 import type { ControlPlaneTaskMandateValidationPhase } from '../src/application/control-plane/intervention-control-updater.ts';
 import {

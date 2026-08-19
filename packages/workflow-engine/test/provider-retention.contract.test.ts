@@ -19,7 +19,7 @@ import {
   executionJobStatePath,
   readExecutionJobState,
 } from '../src/runtime/storage-journal/execution-store.ts';
-import { loadInvestigationRuntimeContext } from '../src/lifecycle-context.ts';
+import { loadInvestigationRuntimeContext } from '../src/composition-root/lifecycle-context.ts';
 import {
   createPlanReviewTargetSnapshotNode,
   PLAN_REVIEW_COVERAGE,

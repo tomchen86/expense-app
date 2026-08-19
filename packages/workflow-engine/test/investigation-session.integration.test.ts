@@ -71,7 +71,7 @@ import {
   type ProviderRunnerHost,
   type ProviderRunnerReport,
 } from '../src/runtime/provider-execution/provider-runner.ts';
-import { runProviderWorker } from '../src/provider-worker.ts';
+import { runProviderWorker } from '../src/entrypoints/worker/provider-worker.ts';
 import {
   checkpointContributionDigest,
   compareAndSwapInvestigationSession,
@@ -7833,7 +7833,9 @@ test('propose retry envelope authorizes one idempotent replacement survey', () =
       {
         schemaVersion: 1,
         summary: 'Exercise the explicit provider retry transition.',
-        explicitPaths: ['packages/workflow-engine/src/provider-worker.ts'],
+        explicitPaths: [
+          'packages/workflow-engine/src/entrypoints/worker/provider-worker.ts',
+        ],
         explicitSymbols: ['runProviderWorker'],
         explicitConfigKeys: [],
         renamePairs: [],

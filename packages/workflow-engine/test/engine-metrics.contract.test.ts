@@ -25,7 +25,7 @@ import {
   createExecutionBudgetGrantRequest,
   storeExecutionBudgetGrant,
 } from '../src/modules/authority/execution-governance.ts';
-import { loadInvestigationRuntimeContext } from '../src/lifecycle-context.ts';
+import { loadInvestigationRuntimeContext } from '../src/composition-root/lifecycle-context.ts';
 import {
   compareAndSwapHumanResolutionHead,
   createHumanResolutionNode,

@@ -2,7 +2,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 
-import { readFileAtCommit } from '../../ci-git.ts';
+import { readFileAtCommit } from '../../entrypoints/ci/ci-git.ts';
 import { ExitCode, workflowError } from '../../foundation/errors/errors.ts';
 
 type ArchiveDeltaSource = { changeId: string; head: string };

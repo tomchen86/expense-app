@@ -14,10 +14,10 @@ import {
   inspectIssuedExecutionBudgetGrant,
   issueExecutionBudgetGrant,
   revokeIssuedExecutionBudgetGrant,
-} from '../src/execution-grant-cli.ts';
+} from '../src/entrypoints/cli/execution-grant-cli.ts';
 import { ExitCode, workflowError } from '../src/foundation/errors/errors.ts';
 import { listExecutionJobs } from '../src/runtime/provider-execution/execution-runtime.ts';
-import { loadInvestigationRuntimeContext } from '../src/lifecycle-context.ts';
+import { loadInvestigationRuntimeContext } from '../src/composition-root/lifecycle-context.ts';
 import { startPropose } from '../src/application/propose/propose-orchestrator.ts';
 import { revokeTaskMandate } from '../src/modules/authority/task-mandate.ts';
 import { prepareExecutionMandate } from './execution-mandate-fixture.ts';

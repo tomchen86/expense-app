@@ -13,7 +13,7 @@ import {
 import { readExecutionJobState } from '../storage-journal/execution-store.ts';
 import { WorkflowError } from '../../foundation/errors/errors.ts';
 import { runGitBuffer } from '../repository-transaction/git.ts';
-import { loadInvestigationRuntimeContext } from '../../lifecycle-context.ts';
+import { loadInvestigationRuntimeContext } from '../../composition-root/lifecycle-context.ts';
 import {
   readProviderInvocation,
   readProviderInvocationRequest,

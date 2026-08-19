@@ -32,7 +32,7 @@ import {
   privatePathExists,
   readProviderInvocationLifecycleProjection,
 } from '../storage-journal/investigation-session-store.ts';
-import { loadInvestigationRuntimeContext } from '../../lifecycle-context.ts';
+import { loadInvestigationRuntimeContext } from '../../composition-root/lifecycle-context.ts';
 import type { InvestigationRuntimePaths } from '../session-workspace/paths.ts';
 import {
   readProviderInvocation,

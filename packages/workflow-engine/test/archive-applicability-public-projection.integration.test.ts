@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
 
-import { validateCiPlanningCommit } from '../src/ci-planning.ts';
+import { validateCiPlanningCommit } from '../src/entrypoints/ci/ci-planning.ts';
 import { commitPlanningTransition } from '../src/application/propose/planning-transition.ts';
 import {
   createFixtureRepository,

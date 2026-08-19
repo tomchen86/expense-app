@@ -11,7 +11,7 @@ import {
   readExecutionJobState,
 } from '../src/runtime/storage-journal/execution-store.ts';
 import { listExecutionJobs } from '../src/runtime/provider-execution/execution-runtime.ts';
-import { loadInvestigationRuntimeContext } from '../src/lifecycle-context.ts';
+import { loadInvestigationRuntimeContext } from '../src/composition-root/lifecycle-context.ts';
 import {
   createProviderInvocationRequest,
   type ProviderInvocationRequest,

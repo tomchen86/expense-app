@@ -6,7 +6,7 @@ import test from 'node:test';
 
 import { canonicalJson } from '../src/foundation/canonical-json/canonical-json.ts';
 import { withArchiveEligibility } from '../src/application/archive/archive-eligibility.ts';
-import { verifyPullRequest } from '../src/ci.ts';
+import { verifyPullRequest } from '../src/entrypoints/ci/ci.ts';
 import {
   assertDocumentationClosureCommitCurrent,
   parseDocumentationClosureFromCommitMessage,
@@ -16,7 +16,7 @@ import { ExitCode, workflowError } from '../src/foundation/errors/errors.ts';
 import { discoverRepository } from '../src/runtime/repository-transaction/git.ts';
 import { commitFacts } from '../src/runtime/repository-transaction/git-transitions.ts';
 import { renderHandoff } from '../src/adapters/consumer/expense-app/handoff/handoff.ts';
-import { loadActiveSessionContext } from '../src/lifecycle-context.ts';
+import { loadActiveSessionContext } from '../src/composition-root/lifecycle-context.ts';
 import {
   cancelFinalizeRecovery,
   finalizeSession,
@@ -32,12 +32,12 @@ import {
 } from '../src/runtime/storage-journal/provider-invocation-store.ts';
 import { PROVIDER_RUNNER_RESIDUALS } from '../src/runtime/provider-execution/provider-runner.ts';
 import { readProviderAutomaticRetrySchedule } from '../src/runtime/provider-execution/provider-retry-scheduler.ts';
-import { runProviderWorker } from '../src/provider-worker.ts';
+import { runProviderWorker } from '../src/entrypoints/worker/provider-worker.ts';
 import { listProviderWorkerMaintenanceWarnings } from '../src/runtime/storage-journal/provider-worker-maintenance.ts';
 import {
   preparePullRequestPreMergeAssurance,
   verifyPullRequestWithPreMergeAssurance,
-} from '../src/pre-merge-assurance-git.ts';
+} from '../src/entrypoints/ci/pre-merge-assurance-git.ts';
 import { runCli } from '../src/cli.ts';
 import { startSession } from '../src/application/execute-task/session.ts';
 import {

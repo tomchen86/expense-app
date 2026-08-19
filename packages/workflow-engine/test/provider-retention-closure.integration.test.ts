@@ -10,7 +10,7 @@ import { loadAiAdapterPolicy } from '../src/runtime/provider-execution/ai-adapte
 import { canonicalJson } from '../src/foundation/canonical-json/canonical-json.ts';
 import { listExecutionJobStates } from '../src/runtime/storage-journal/execution-store.ts';
 import { listProviderInvocationLifecycleProjections } from '../src/runtime/storage-journal/investigation-session-store.ts';
-import { loadInvestigationRuntimeContext } from '../src/lifecycle-context.ts';
+import { loadInvestigationRuntimeContext } from '../src/composition-root/lifecycle-context.ts';
 import { startPropose } from '../src/application/propose/propose-orchestrator.ts';
 import {
   createProviderInvocationRequest,

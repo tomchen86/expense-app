@@ -12,7 +12,7 @@ import {
   commitPlanAmendment,
   commitPlanningTransition,
 } from '../src/application/propose/planning-transition.ts';
-import { validateCiPlanningCommit } from '../src/ci-planning.ts';
+import { validateCiPlanningCommit } from '../src/entrypoints/ci/ci-planning.ts';
 import { validateOpenSpecPlanning } from '../src/adapters/planning/openspec/documents/planning-contract.ts';
 import { readPlanningTransitionReport } from '../src/runtime/storage-journal/planning-report.ts';
 import { loadWorkflowConfig } from '../src/adapters/consumer/expense-app/work-registry/contracts.ts';

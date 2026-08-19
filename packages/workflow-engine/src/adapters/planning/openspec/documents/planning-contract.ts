@@ -27,7 +27,7 @@ import {
   assertPlanningPaths,
   requiredPlanningArtifactPaths,
 } from '../../../../modules/source/planning-paths.ts';
-import { loadStableValidatedChangeContract } from '../../../../validated-contract-context.ts';
+import { loadStableValidatedChangeContract } from '../../../../composition-root/validated-contract-context.ts';
 import type {
   PlanningTaskState,
   PlanningTransitionReport,

@@ -8,7 +8,7 @@ import type {
 } from '../../adapters/consumer/expense-app/work-registry/contracts.ts';
 import { ExitCode, workflowError } from '../../foundation/errors/errors.ts';
 import { discoverRepository } from '../../runtime/repository-transaction/git.ts';
-import { loadInvestigationRuntimeContext } from '../../lifecycle-context.ts';
+import { loadInvestigationRuntimeContext } from '../../composition-root/lifecycle-context.ts';
 import {
   providerInvocationExists,
   readProviderInvocation,
@@ -54,7 +54,7 @@ import {
   readTaskStrategyTransaction,
   type TaskStrategyTransaction,
 } from '../../runtime/storage-journal/task-strategy-store.ts';
-import { loadStableValidatedChangeContract } from '../../validated-contract-context.ts';
+import { loadStableValidatedChangeContract } from '../../composition-root/validated-contract-context.ts';
 import { inspectSession } from '../finalize/verification.ts';
 
 type TddStrategy = 'cross-agent-tdd' | 'tdd-single-agent';

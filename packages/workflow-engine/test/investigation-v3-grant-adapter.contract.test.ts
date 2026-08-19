@@ -15,7 +15,7 @@ import {
 import {
   createProductionWorkflowGrantCoordinator,
   requestInvestigationV3Grant,
-} from '../src/grant-production.ts';
+} from '../src/composition-root/grant-production.ts';
 import { HUMAN_GATE_MACOS_V1_CONFIGURATION_DIGEST } from '../src/modules/authority/grant-policy.ts';
 import {
   grantStorePaths,

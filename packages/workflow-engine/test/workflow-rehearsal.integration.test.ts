@@ -4,7 +4,7 @@ import path from 'node:path';
 import test from 'node:test';
 
 import { commitArchiveTransition } from '../src/application/archive/archive-transition.ts';
-import { verifyPullRequest } from '../src/ci.ts';
+import { verifyPullRequest } from '../src/entrypoints/ci/ci.ts';
 import {
   commitSession,
   completeTask,

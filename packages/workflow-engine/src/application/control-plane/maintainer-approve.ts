@@ -102,7 +102,7 @@ import {
   terminallyRevokeAvailableMaintainerGrantV2UnderLifecycleLock,
 } from '../../runtime/storage-journal/maintainer-store.ts';
 import { listProviderInvocationLifecycleProjections } from '../../runtime/storage-journal/investigation-session-store.ts';
-import { loadInvestigationRuntimeContext } from '../../lifecycle-context.ts';
+import { loadInvestigationRuntimeContext } from '../../composition-root/lifecycle-context.ts';
 import { readProviderInvocation } from '../../runtime/storage-journal/provider-invocation-store.ts';
 import {
   listConflictingActiveWorkflowSessionIds,
@@ -112,7 +112,7 @@ import {
   inspectActiveTaskMandateBinding,
   type TaskMandateBinding,
 } from '../../modules/authority/task-mandate.ts';
-import { loadStableValidatedChangeContract } from '../../validated-contract-context.ts';
+import { loadStableValidatedChangeContract } from '../../composition-root/validated-contract-context.ts';
 
 export type ApproveAndApplyMaintainerGrantV2Request = {
   changeId: string;

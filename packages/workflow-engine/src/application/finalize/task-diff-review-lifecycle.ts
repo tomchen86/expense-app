@@ -57,7 +57,7 @@ import {
 import {
   loadActiveSessionContext,
   loadInvestigationRuntimeContext,
-} from '../../lifecycle-context.ts';
+} from '../../composition-root/lifecycle-context.ts';
 import { parseMaintainerPolicy } from '../../modules/authority/maintainer-policy.ts';
 import { completionDocumentPaths } from '../../runtime/managed-documents/validation/managed-documents.ts';
 import {
@@ -5311,7 +5311,8 @@ function documentationHints(
   for (const changedPath of changedPaths) {
     if (
       changedPath.startsWith('packages/workflow-engine/src/cli') ||
-      changedPath === 'packages/workflow-engine/src/lifecycle-context.ts' ||
+      changedPath ===
+        'packages/workflow-engine/src/composition-root/lifecycle-context.ts' ||
       changedPath.startsWith(
         'packages/workflow-engine/src/application/finalize/lifecycle',
       ) ||

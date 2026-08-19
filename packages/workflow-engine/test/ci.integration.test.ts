@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
 
-import { verifyPullRequest } from '../src/ci.ts';
+import { verifyPullRequest } from '../src/entrypoints/ci/ci.ts';
 import { INVESTIGATION_PLANNING_ACTIVATION_MARKER } from '../src/adapters/planning/openspec/documents/openspec-schema-contract.ts';
 import {
   activateInvestigationPlanning,

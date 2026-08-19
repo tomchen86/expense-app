@@ -3,12 +3,12 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 import { canonicalJson } from '../../foundation/canonical-json/canonical-json.ts';
-import { readFileAtCommit } from '../../ci-git.ts';
+import { readFileAtCommit } from '../../entrypoints/ci/ci-git.ts';
 import {
   loadChangeContract,
   loadWorkflowConfig,
 } from '../../adapters/consumer/expense-app/work-registry/contracts.ts';
-import { validateCiPlanningCommit } from '../../ci-planning.ts';
+import { validateCiPlanningCommit } from '../../entrypoints/ci/ci-planning.ts';
 import { engineProjectionPathsForTransition } from '../../modules/projection/engine-projection-registry.ts';
 import {
   ExitCode,

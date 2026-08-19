@@ -19,7 +19,7 @@ import { runGit } from '../../runtime/repository-transaction/git.ts';
 import {
   loadInvestigationRuntimeContext,
   runSessionOperation,
-} from '../../lifecycle-context.ts';
+} from '../../composition-root/lifecycle-context.ts';
 import { matchesAllowedPath } from '../../runtime/session-workspace/paths.ts';
 import {
   createTaskStrategyTransaction,

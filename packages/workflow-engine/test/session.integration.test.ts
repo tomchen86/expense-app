@@ -4,8 +4,8 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import { validateCiPlanningCommit } from '../src/ci-planning.ts';
-import { verifyPullRequest } from '../src/ci.ts';
+import { validateCiPlanningCommit } from '../src/entrypoints/ci/ci-planning.ts';
+import { verifyPullRequest } from '../src/entrypoints/ci/ci.ts';
 import { WorkflowError } from '../src/foundation/errors/errors.ts';
 import {
   commitSession,

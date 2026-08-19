@@ -17,7 +17,7 @@ import {
 } from '../../foundation/errors/errors.ts';
 import { discoverRepository, runGit } from '../repository-transaction/git.ts';
 import { listProviderInvocationLifecycleProjections } from '../storage-journal/investigation-session-store.ts';
-import { loadInvestigationRuntimeContext } from '../../lifecycle-context.ts';
+import { loadInvestigationRuntimeContext } from '../../composition-root/lifecycle-context.ts';
 import { parseMaintainerPolicy } from '../../modules/authority/maintainer-policy.ts';
 import {
   createInteractiveSshSigner,

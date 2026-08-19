@@ -1,6 +1,9 @@
-import { replayCommitSequence } from '../../ci-sequence.ts';
-import { listRangeCommits, readFileAtCommit } from '../../ci-git.ts';
-import { validateCiPlanningCommit } from '../../ci-planning.ts';
+import { replayCommitSequence } from '../../entrypoints/ci/ci-sequence.ts';
+import {
+  listRangeCommits,
+  readFileAtCommit,
+} from '../../entrypoints/ci/ci-git.ts';
+import { validateCiPlanningCommit } from '../../entrypoints/ci/ci-planning.ts';
 import { preEpochCompletedTaskIds } from '../../adapters/compatibility/investigation-v2/bootstrap-task-exemption.ts';
 import { parseTasks } from '../../adapters/consumer/expense-app/work-registry/contracts.ts';
 import { ExitCode, workflowError } from '../../foundation/errors/errors.ts';
