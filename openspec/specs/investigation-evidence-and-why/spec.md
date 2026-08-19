@@ -274,12 +274,39 @@ Investigation v3 MUST NOT define a local grant schema, candidate label, callback
 - **THEN** v3 may continue in non-authoritative shadow
 - **AND** v2 authority, readers, and fallback remain in place
 
+#### Scenario: Publication failure enters central Grant Core from its real source
+
+- **GIVEN** a v3 publish, inspect, resume, or current-ref read returns one emitter-bound failure envelope containing its structured publication blocker
+- **WHEN** the central Grant producer creates a challenge from that envelope
+- **THEN** the registered source observer re-reads the current durable investigation session/current ref and binds the lifecycle-owned publication namespace, exact journal, candidate, installed Manifest, publication current-ref, branch, Git baseline, index/worktree content fingerprint, and lifecycle identity
+- **AND** a blocker/source or lifecycle/source cross-wire is rejected before any challenge is persisted
+- **AND** changing any bound publication source before direct execution or recovery rejects the stop transition as stale
+- **AND** deterministic prepared-state drift records a central audited terminal failure without applying or relabelling the v3 transition, while an effect-applied-before-receipt crash remains recoverable through the same idempotent transition
+- **AND** no publication-specific Grant store, signer, authentication, or resume surface is created
+
+#### Scenario: File publication crashes before current-ref installation
+
+- **GIVEN** v3 publication wrote a candidate, journal, or Manifest but did not install the intended current ref
+- **WHEN** restart inspection classifies the residue
+- **THEN** it returns a precise `PUBLICATION_RECOVERY_REQUIRED` blocker consumable by the central producer
+- **AND** a later source mutation invalidates any already-issued challenge
+
 #### Scenario: File publication crashes after current-ref installation
 
 - **GIVEN** the exact v3 Manifest and current ref were installed but the file-publication journal remains prepared
 - **WHEN** recovery reacquires the lifecycle lock
-- **THEN** it accepts only the transaction-installed ref with unchanged lifecycle identity
+- **THEN** it accepts Grant-free recovery only when the failing invocation itself reached the post-ref phase and the fully revalidated transaction-installed Manifest and ref both match the journal with unchanged lifecycle identity
 - **AND** it completes idempotently without creating or consuming a Grant
+- **AND** a missing or corrupt installed Manifest returns a central-consumable blocker instead of being classified as Grant-free
+
+#### Scenario: Publication parent moves while the lifecycle lock is held
+
+- **GIVEN** every cooperating publication writer holds the lifecycle lock
+- **WHEN** a publication parent is relocated during one synchronous pathname replacement
+- **THEN** the writer immediately revalidates repository containment and the complete parent identity chain
+- **AND** it compensates a newly installed basename or restores the exact prior bytes before returning a structured blocker
+- **AND** immutable candidates remain as recovery evidence instead of being destructively removed
+- **AND** this is a fail-detecting compensating transaction, not a claim that POSIX can atomically prevent a hostile same-UID relocation or process crash
 
 ### Requirement: Reusable Knowledge Remains Separate From Per-Change WHY
 
