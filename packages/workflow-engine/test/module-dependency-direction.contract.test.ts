@@ -11,10 +11,13 @@ const EXPECTED_FROZEN_MAP_DIGEST =
 const EXPECTED_FROZEN_EDGE_COUNT = 774;
 const EXPECTED_FROZEN_IDENTITY_DIGEST =
   'sha256:6c60e39c31cb378f79d8ed9f5f78f80cd85b38423c7210617eb413a86b757ad1';
+const EXPECTED_T3_BOUNDARY_INVENTORY_DIGEST =
+  'sha256:1cab3937c223d45f6a91285dbd5eddc99301d13ec3be85ad1c9f895ee5415266';
 const SRC_PREFIX = 'packages/workflow-engine/src/';
 const BOOTSTRAP_PREFIX = 'packages/workflow-engine/bootstrap/';
 const MAP_FILE = 'workflow-engine-module-map.tsv';
 const BASELINE_FILE = 'module-dependency-baseline.json';
+const T3_BOUNDARY_INVENTORY_FILE = 't3-boundary-inventory.json';
 const ORGANIZED_ROOTS = new Set([
   'adapters',
   'application',
@@ -57,6 +60,31 @@ const KNOWN_RULES = new Set([
   'src-to-bootstrap',
   'why-to-investigation',
 ]);
+const EXPECTED_T3_COUPLING_IDS = Object.freeze([
+  'agent-provider-identity',
+  'availability-pilot',
+  'central-grant-shadow-authority',
+  'collaboration-grant',
+  'data-egress-authorization',
+  'execution-substrate',
+  'openspec-direct-dependency',
+  'package-topology',
+  'planning-provider-binding',
+  'policy-path-literals',
+  'provider-plane-separation',
+  'provider-runner',
+  'recovery-mirror',
+  'role-assurance',
+  'runtime-distribution',
+  'schema-signature-namespace',
+]);
+const KNOWN_T3_COUPLING_STATES = new Set([
+  'coupled',
+  'landed',
+  'missing',
+  'partial',
+  'unresolved',
+]);
 
 type MapRow = {
   source: string;
@@ -96,18 +124,58 @@ type SnapshotTopology = {
   organizedAdditions: string[];
 };
 
-type ImportedFile = {
-  fileName: string;
-  pos: number;
-  end: number;
+type T3BoundaryEvidence = {
+  path: string;
+  contains: string[];
 };
 
-type TypeScriptApi = {
-  preProcessFile(
-    sourceText: string,
-    readImportFiles?: boolean,
-    detectJavaScriptImports?: boolean,
-  ): { importedFiles: readonly ImportedFile[] };
+type T3StaticLiteralFinding = {
+  path: string;
+  start: number;
+  length: number;
+  normalizedValue: string;
+  syntaxForm: 'exact-string' | 'embedded-string' | 'template-static' | 'folded';
+};
+
+type T3NegativeEvidence = {
+  absentPaths: string[];
+  absentSymbols: string[];
+  searchRoots: string[];
+};
+
+type T3BoundaryCoupling = {
+  id: string;
+  plane: string;
+  state: string;
+  t3Disposition: string;
+  evidence: T3BoundaryEvidence[];
+  negativeEvidence: T3NegativeEvidence | null;
+};
+
+type T3BoundaryInventory = {
+  kind: 'jigwright.workflow.t3-boundary-inventory.v1';
+  schemaVersion: 1;
+  observedAtCommit: string;
+  architectureDocument: string;
+  namespaceBaseline: {
+    legacyPrefix: 'expense-app.workflow.';
+    sourceOccurrences: number;
+    sourceFileCount: number;
+    sourceIdentityDigest: string;
+    recoveryOccurrences: number;
+    recoveryFileCount: number;
+    recoveryIdentityDigest: string;
+    jsonSchemaIdHosts: Record<string, number>;
+  };
+  policyLiteralBaseline: {
+    sourceOccurrences: number;
+    sourceFileCount: number;
+    sourceIdentityDigest: string;
+    uniqueLiterals: string[];
+    splitPathJoinEvidence: T3BoundaryEvidence[];
+    dynamicDirectoryEvidence: T3BoundaryEvidence[];
+  };
+  couplings: T3BoundaryCoupling[];
 };
 
 const repositoryRoot = resolveRepositoryRoot(
@@ -116,7 +184,7 @@ const repositoryRoot = resolveRepositoryRoot(
 const repositoryRequire = createRequire(
   path.join(repositoryRoot, 'package.json'),
 );
-const ts = repositoryRequire('typescript') as TypeScriptApi;
+const ts = repositoryRequire('typescript') as typeof import('typescript');
 const mapPath = resolveAssetPath(
   process.env.WORKFLOW_ENGINE_MODULE_MAP,
   MAP_FILE,
@@ -139,6 +207,124 @@ test('module map and exact dependency baseline are frozen', () => {
     baseline.edges.filter((edge) => edge.status === 'active').length,
     EXPECTED_FROZEN_EDGE_COUNT,
   );
+});
+
+test('T3 boundary coupling inventory is tracked beside the frozen module map', () => {
+  const inventoryPath = resolveAssetPath(
+    process.env.WORKFLOW_ENGINE_T3_BOUNDARY_INVENTORY,
+    T3_BOUNDARY_INVENTORY_FILE,
+  );
+  const inventorySource = fs.readFileSync(inventoryPath, 'utf8');
+  assert.equal(
+    digestText(inventorySource),
+    EXPECTED_T3_BOUNDARY_INVENTORY_DIGEST,
+  );
+  const inventory = parseT3BoundaryInventory(inventorySource);
+  assert.deepEqual(
+    inventory.couplings.map((coupling) => coupling.id),
+    EXPECTED_T3_COUPLING_IDS,
+  );
+
+  const sourceLiterals = scanTypeScriptBoundaryLiterals(
+    repositoryRoot,
+    'packages/workflow-engine/src',
+    '.ts',
+  );
+  assert.deepEqual(
+    {
+      occurrences: sourceLiterals.namespace.length,
+      fileCount: new Set(sourceLiterals.namespace.map((entry) => entry.path))
+        .size,
+      identityDigest: digestStaticFindings(sourceLiterals.namespace),
+    },
+    {
+      occurrences: inventory.namespaceBaseline.sourceOccurrences,
+      fileCount: inventory.namespaceBaseline.sourceFileCount,
+      identityDigest: inventory.namespaceBaseline.sourceIdentityDigest,
+    },
+  );
+
+  const recoveryLiterals = scanTypeScriptBoundaryLiterals(
+    repositoryRoot,
+    'packages/workflow-engine/bootstrap/recovery-runtime/src',
+    '.js',
+  );
+  assert.deepEqual(
+    {
+      occurrences: recoveryLiterals.namespace.length,
+      fileCount: new Set(recoveryLiterals.namespace.map((entry) => entry.path))
+        .size,
+      identityDigest: digestStaticFindings(recoveryLiterals.namespace),
+    },
+    {
+      occurrences: inventory.namespaceBaseline.recoveryOccurrences,
+      fileCount: inventory.namespaceBaseline.recoveryFileCount,
+      identityDigest: inventory.namespaceBaseline.recoveryIdentityDigest,
+    },
+  );
+  assert.deepEqual(
+    scanJsonSchemaIdHosts(repositoryRoot),
+    inventory.namespaceBaseline.jsonSchemaIdHosts,
+  );
+
+  assert.deepEqual(
+    {
+      occurrences: sourceLiterals.workflowPaths.length,
+      fileCount: new Set(
+        sourceLiterals.workflowPaths.map((entry) => entry.path),
+      ).size,
+      identityDigest: digestStaticFindings(sourceLiterals.workflowPaths),
+      uniqueLiterals: [
+        ...new Set(
+          sourceLiterals.workflowPaths.map((entry) => entry.normalizedValue),
+        ),
+      ].sort(compareText),
+    },
+    {
+      occurrences: inventory.policyLiteralBaseline.sourceOccurrences,
+      fileCount: inventory.policyLiteralBaseline.sourceFileCount,
+      identityDigest: inventory.policyLiteralBaseline.sourceIdentityDigest,
+      uniqueLiterals: inventory.policyLiteralBaseline.uniqueLiterals,
+    },
+  );
+
+  for (const coupling of inventory.couplings) {
+    for (const evidence of coupling.evidence) {
+      assertBoundaryEvidence(repositoryRoot, coupling.id, evidence);
+    }
+    if (coupling.state === 'missing') {
+      assert.ok(
+        coupling.negativeEvidence,
+        `${coupling.id} needs two-method negative evidence`,
+      );
+      assertNegativeEvidence(
+        repositoryRoot,
+        coupling.id,
+        coupling.negativeEvidence,
+      );
+    } else {
+      assert.equal(coupling.negativeEvidence, null);
+    }
+  }
+
+  for (const evidence of [
+    ...inventory.policyLiteralBaseline.splitPathJoinEvidence,
+    ...inventory.policyLiteralBaseline.dynamicDirectoryEvidence,
+  ]) {
+    assertBoundaryEvidence(repositoryRoot, 'policy-path-literals', evidence);
+  }
+
+  const architectureDocument = path.join(
+    repositoryRoot,
+    inventory.architectureDocument,
+  );
+  const architectureSource = fs.readFileSync(architectureDocument, 'utf8');
+  for (const couplingId of EXPECTED_T3_COUPLING_IDS) {
+    assert.match(
+      architectureSource,
+      new RegExp(`<!-- coupling:${escapeRegex(couplingId)} -->`, 'u'),
+    );
+  }
 });
 
 test('module map target and disposition mutations fail closed', () => {
@@ -429,6 +615,637 @@ function resolveAssetPath(explicit: string | undefined, name: string): string {
     throw new Error(`Missing module-boundary asset: ${name}`);
   }
   return fs.realpathSync(observed);
+}
+
+function parseT3BoundaryInventory(text: string): T3BoundaryInventory {
+  let value: unknown;
+  try {
+    value = JSON.parse(text);
+  } catch (error) {
+    throw new Error('T3 boundary inventory is malformed JSON.', {
+      cause: error,
+    });
+  }
+  assertPlainObject(value, 'T3 boundary inventory');
+  assertExactKeys(value, [
+    'architectureDocument',
+    'couplings',
+    'kind',
+    'namespaceBaseline',
+    'observedAtCommit',
+    'policyLiteralBaseline',
+    'schemaVersion',
+  ]);
+  if (
+    value.kind !== 'jigwright.workflow.t3-boundary-inventory.v1' ||
+    value.schemaVersion !== 1 ||
+    typeof value.observedAtCommit !== 'string' ||
+    !/^[0-9a-f]{40}$/u.test(value.observedAtCommit) ||
+    typeof value.architectureDocument !== 'string' ||
+    !isSafeRepositoryRelativePath(value.architectureDocument) ||
+    !Array.isArray(value.couplings)
+  ) {
+    throw new Error('T3 boundary inventory header is invalid.');
+  }
+
+  assertPlainObject(value.namespaceBaseline, 'T3 namespace baseline');
+  assertExactKeys(value.namespaceBaseline, [
+    'jsonSchemaIdHosts',
+    'legacyPrefix',
+    'recoveryFileCount',
+    'recoveryIdentityDigest',
+    'recoveryOccurrences',
+    'sourceFileCount',
+    'sourceIdentityDigest',
+    'sourceOccurrences',
+  ]);
+  assertPlainObject(
+    value.namespaceBaseline.jsonSchemaIdHosts,
+    'T3 JSON Schema host baseline',
+  );
+  if (
+    value.namespaceBaseline.legacyPrefix !== 'expense-app.workflow.' ||
+    !isNonNegativeInteger(value.namespaceBaseline.sourceOccurrences) ||
+    !isNonNegativeInteger(value.namespaceBaseline.sourceFileCount) ||
+    !isSha256Digest(value.namespaceBaseline.sourceIdentityDigest) ||
+    !isNonNegativeInteger(value.namespaceBaseline.recoveryOccurrences) ||
+    !isNonNegativeInteger(value.namespaceBaseline.recoveryFileCount) ||
+    !isSha256Digest(value.namespaceBaseline.recoveryIdentityDigest)
+  ) {
+    throw new Error('T3 namespace baseline is invalid.');
+  }
+  const jsonSchemaIdHosts: Record<string, number> = {};
+  for (const [host, count] of Object.entries(
+    value.namespaceBaseline.jsonSchemaIdHosts,
+  )) {
+    if (!/^[a-z0-9.-]+$/u.test(host) || !isNonNegativeInteger(count)) {
+      throw new Error('T3 JSON Schema host baseline is invalid.');
+    }
+    jsonSchemaIdHosts[host] = count;
+  }
+
+  assertPlainObject(value.policyLiteralBaseline, 'T3 policy literal baseline');
+  assertExactKeys(value.policyLiteralBaseline, [
+    'dynamicDirectoryEvidence',
+    'sourceFileCount',
+    'sourceIdentityDigest',
+    'sourceOccurrences',
+    'splitPathJoinEvidence',
+    'uniqueLiterals',
+  ]);
+  if (
+    !isNonNegativeInteger(value.policyLiteralBaseline.sourceOccurrences) ||
+    !isNonNegativeInteger(value.policyLiteralBaseline.sourceFileCount) ||
+    !isSha256Digest(value.policyLiteralBaseline.sourceIdentityDigest) ||
+    !Array.isArray(value.policyLiteralBaseline.uniqueLiterals) ||
+    !Array.isArray(value.policyLiteralBaseline.splitPathJoinEvidence) ||
+    !Array.isArray(value.policyLiteralBaseline.dynamicDirectoryEvidence)
+  ) {
+    throw new Error('T3 policy literal baseline is invalid.');
+  }
+  const uniqueLiterals = value.policyLiteralBaseline.uniqueLiterals.map(
+    (literal) => {
+      if (
+        typeof literal !== 'string' ||
+        !/^workflow\/[A-Za-z0-9._/-]+\.json$/u.test(literal)
+      ) {
+        throw new Error('T3 policy literal baseline contains an invalid path.');
+      }
+      return literal;
+    },
+  );
+  assert.deepEqual(
+    uniqueLiterals,
+    [...new Set(uniqueLiterals)].sort(compareText),
+    'T3 policy literals must be sorted and unique.',
+  );
+
+  const couplings = value.couplings.map((candidate, index) => {
+    assertPlainObject(candidate, `T3 coupling ${index + 1}`);
+    assertExactKeys(candidate, [
+      'evidence',
+      'id',
+      'negativeEvidence',
+      'plane',
+      'state',
+      't3Disposition',
+    ]);
+    if (
+      typeof candidate.id !== 'string' ||
+      !/^[a-z0-9]+(?:-[a-z0-9]+)*$/u.test(candidate.id) ||
+      typeof candidate.plane !== 'string' ||
+      candidate.plane.length === 0 ||
+      typeof candidate.state !== 'string' ||
+      !KNOWN_T3_COUPLING_STATES.has(candidate.state) ||
+      typeof candidate.t3Disposition !== 'string' ||
+      candidate.t3Disposition.length === 0 ||
+      !Array.isArray(candidate.evidence)
+    ) {
+      throw new Error(`T3 coupling ${index + 1} is invalid.`);
+    }
+    const evidence = candidate.evidence.map((entry, evidenceIndex) =>
+      parseT3BoundaryEvidence(
+        entry,
+        `T3 coupling ${candidate.id} evidence ${evidenceIndex + 1}`,
+      ),
+    );
+    let negativeEvidence: T3NegativeEvidence | null = null;
+    if (candidate.negativeEvidence !== null) {
+      assertPlainObject(
+        candidate.negativeEvidence,
+        `T3 coupling ${candidate.id} negative evidence`,
+      );
+      assertExactKeys(candidate.negativeEvidence, [
+        'absentPaths',
+        'absentSymbols',
+        'searchRoots',
+      ]);
+      const absentPaths = parseStringList(
+        candidate.negativeEvidence.absentPaths,
+        'absent path',
+      );
+      const absentSymbols = parseStringList(
+        candidate.negativeEvidence.absentSymbols,
+        'absent symbol',
+      );
+      const searchRoots = parseStringList(
+        candidate.negativeEvidence.searchRoots,
+        'search root',
+      );
+      if (
+        absentPaths.length === 0 ||
+        absentSymbols.length === 0 ||
+        searchRoots.length === 0 ||
+        [...absentPaths, ...searchRoots].some(
+          (entry) => !isSafeRepositoryRelativePath(entry),
+        )
+      ) {
+        throw new Error(
+          `T3 coupling ${candidate.id} lacks two-method negative evidence.`,
+        );
+      }
+      negativeEvidence = { absentPaths, absentSymbols, searchRoots };
+    }
+    return {
+      id: candidate.id,
+      plane: candidate.plane,
+      state: candidate.state,
+      t3Disposition: candidate.t3Disposition,
+      evidence,
+      negativeEvidence,
+    };
+  });
+  assert.deepEqual(
+    couplings.map((coupling) => coupling.id),
+    [...new Set(couplings.map((coupling) => coupling.id))].sort(compareText),
+    'T3 coupling IDs must be sorted and unique.',
+  );
+
+  return {
+    kind: 'jigwright.workflow.t3-boundary-inventory.v1',
+    schemaVersion: 1,
+    observedAtCommit: value.observedAtCommit,
+    architectureDocument: value.architectureDocument,
+    namespaceBaseline: {
+      legacyPrefix: 'expense-app.workflow.',
+      sourceOccurrences: value.namespaceBaseline.sourceOccurrences,
+      sourceFileCount: value.namespaceBaseline.sourceFileCount,
+      sourceIdentityDigest: value.namespaceBaseline.sourceIdentityDigest,
+      recoveryOccurrences: value.namespaceBaseline.recoveryOccurrences,
+      recoveryFileCount: value.namespaceBaseline.recoveryFileCount,
+      recoveryIdentityDigest: value.namespaceBaseline.recoveryIdentityDigest,
+      jsonSchemaIdHosts,
+    },
+    policyLiteralBaseline: {
+      sourceOccurrences: value.policyLiteralBaseline.sourceOccurrences,
+      sourceFileCount: value.policyLiteralBaseline.sourceFileCount,
+      sourceIdentityDigest: value.policyLiteralBaseline.sourceIdentityDigest,
+      uniqueLiterals,
+      splitPathJoinEvidence:
+        value.policyLiteralBaseline.splitPathJoinEvidence.map((entry, index) =>
+          parseT3BoundaryEvidence(entry, `T3 split path evidence ${index + 1}`),
+        ),
+      dynamicDirectoryEvidence:
+        value.policyLiteralBaseline.dynamicDirectoryEvidence.map(
+          (entry, index) =>
+            parseT3BoundaryEvidence(
+              entry,
+              `T3 dynamic path evidence ${index + 1}`,
+            ),
+        ),
+    },
+    couplings,
+  };
+}
+
+function parseT3BoundaryEvidence(
+  value: unknown,
+  label: string,
+): T3BoundaryEvidence {
+  assertPlainObject(value, label);
+  assertExactKeys(value, ['contains', 'path']);
+  if (
+    typeof value.path !== 'string' ||
+    !isSafeRepositoryRelativePath(value.path)
+  ) {
+    throw new Error(`${label} has an invalid path.`);
+  }
+  const contains = parseStringList(value.contains, `${label} substring`);
+  if (contains.length === 0) {
+    throw new Error(`${label} must name at least one substring.`);
+  }
+  return { path: value.path, contains };
+}
+
+function parseStringList(value: unknown, label: string): string[] {
+  if (
+    !Array.isArray(value) ||
+    value.some(
+      (entry) =>
+        typeof entry !== 'string' || entry.length === 0 || entry.includes('\0'),
+    )
+  ) {
+    throw new Error(`T3 ${label} list is invalid.`);
+  }
+  return value as string[];
+}
+
+function isNonNegativeInteger(value: unknown): value is number {
+  return Number.isSafeInteger(value) && (value as number) >= 0;
+}
+
+function isSha256Digest(value: unknown): value is string {
+  return typeof value === 'string' && /^sha256:[0-9a-f]{64}$/u.test(value);
+}
+
+function isSafeRepositoryRelativePath(value: string): boolean {
+  return (
+    value.length > 0 &&
+    !path.posix.isAbsolute(value) &&
+    !value.includes('\\') &&
+    path.posix.normalize(value) === value &&
+    value
+      .split('/')
+      .every((part) => part.length > 0 && part !== '.' && part !== '..')
+  );
+}
+
+function scanTypeScriptBoundaryLiterals(
+  root: string,
+  relativeRoot: string,
+  extension: string,
+): {
+  workflowPaths: T3StaticLiteralFinding[];
+  namespace: T3StaticLiteralFinding[];
+} {
+  const result: {
+    workflowPaths: T3StaticLiteralFinding[];
+    namespace: T3StaticLiteralFinding[];
+  } = {
+    workflowPaths: [],
+    namespace: [],
+  };
+  for (const file of listRegularFiles(root, relativeRoot)) {
+    if (!file.endsWith(extension)) continue;
+    const source = fs.readFileSync(path.join(root, file), 'utf8');
+    const sourceFile = ts.createSourceFile(
+      file,
+      source,
+      ts.ScriptTarget.Latest,
+      true,
+      extension === '.js' ? ts.ScriptKind.JS : ts.ScriptKind.TS,
+    );
+    const bindings = collectStaticStringBindings(sourceFile);
+    const visit = (node: import('typescript').Node): void => {
+      if (ts.isStringLiteral(node)) {
+        recordWorkflowPathMatches(
+          result.workflowPaths,
+          file,
+          node.getStart(sourceFile),
+          node.getWidth(sourceFile),
+          node.text,
+          'string',
+        );
+      } else if (ts.isNoSubstitutionTemplateLiteral(node)) {
+        recordWorkflowPathMatches(
+          result.workflowPaths,
+          file,
+          node.getStart(sourceFile),
+          node.getWidth(sourceFile),
+          node.text,
+          'template',
+        );
+      } else if (ts.isTemplateExpression(node)) {
+        const fragments = [
+          node.head,
+          ...node.templateSpans.map((span) => span.literal),
+        ];
+        for (const fragment of fragments) {
+          recordWorkflowPathMatches(
+            result.workflowPaths,
+            file,
+            fragment.getStart(sourceFile),
+            fragment.getWidth(sourceFile),
+            fragment.text,
+            'template',
+          );
+        }
+      }
+
+      if (
+        isOutermostStaticStringExpression(node, bindings) &&
+        source
+          .slice(node.getStart(sourceFile), node.getEnd())
+          .includes('expense-app.workflow.')
+      ) {
+        const folded = foldStaticString(node, bindings, new Set());
+        if (folded !== null) {
+          const matches = folded.matchAll(
+            /expense-app\.workflow\.[A-Za-z0-9._-]+/gu,
+          );
+          let matched = false;
+          for (const match of matches) {
+            matched = true;
+            result.namespace.push({
+              path: file,
+              start: node.getStart(sourceFile),
+              length: node.getWidth(sourceFile),
+              normalizedValue: match[0],
+              syntaxForm:
+                ts.isStringLiteral(node) ||
+                ts.isNoSubstitutionTemplateLiteral(node)
+                  ? 'exact-string'
+                  : 'folded',
+            });
+          }
+          if (!matched && folded.includes('expense-app.workflow.')) {
+            result.namespace.push({
+              path: file,
+              start: node.getStart(sourceFile),
+              length: node.getWidth(sourceFile),
+              normalizedValue: 'expense-app.workflow.',
+              syntaxForm: 'folded',
+            });
+          }
+        }
+      }
+      ts.forEachChild(node, visit);
+    };
+    visit(sourceFile);
+  }
+  result.workflowPaths.sort(compareStaticFinding);
+  result.namespace.sort(compareStaticFinding);
+  return result;
+}
+
+function recordWorkflowPathMatches(
+  findings: T3StaticLiteralFinding[],
+  file: string,
+  start: number,
+  length: number,
+  text: string,
+  sourceKind: 'string' | 'template',
+): void {
+  for (const match of text.matchAll(/workflow\/[A-Za-z0-9._-]+\.json/gu)) {
+    findings.push({
+      path: file,
+      start: start + (match.index ?? 0),
+      length: match[0].length,
+      normalizedValue: match[0],
+      syntaxForm:
+        sourceKind === 'template'
+          ? 'template-static'
+          : text === match[0]
+            ? 'exact-string'
+            : 'embedded-string',
+    });
+  }
+}
+
+function collectStaticStringBindings(
+  sourceFile: import('typescript').SourceFile,
+): ReadonlyMap<string, import('typescript').Expression> {
+  const result = new Map<string, import('typescript').Expression>();
+  const visit = (node: import('typescript').Node): void => {
+    if (
+      ts.isVariableDeclaration(node) &&
+      ts.isIdentifier(node.name) &&
+      node.initializer !== undefined
+    ) {
+      result.set(node.name.text, node.initializer);
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sourceFile);
+  return result;
+}
+
+function isOutermostStaticStringExpression(
+  node: import('typescript').Node,
+  bindings: ReadonlyMap<string, import('typescript').Expression>,
+): node is import('typescript').Expression {
+  if (!isStaticStringExpression(node, bindings)) return false;
+  const parent = node.parent;
+  return !(
+    parent !== undefined &&
+    isStaticStringComposition(parent) &&
+    foldStaticString(parent, bindings, new Set()) !== null
+  );
+}
+
+function isStaticStringExpression(
+  node: import('typescript').Node,
+  bindings: ReadonlyMap<string, import('typescript').Expression>,
+): node is import('typescript').Expression {
+  return (
+    (ts.isStringLiteral(node) ||
+      ts.isNoSubstitutionTemplateLiteral(node) ||
+      ts.isTemplateExpression(node) ||
+      ts.isBinaryExpression(node) ||
+      ts.isParenthesizedExpression(node) ||
+      ts.isIdentifier(node)) &&
+    foldStaticString(node, bindings, new Set()) !== null
+  );
+}
+
+function isStaticStringComposition(
+  node: import('typescript').Node,
+): node is
+  | import('typescript').BinaryExpression
+  | import('typescript').TemplateExpression
+  | import('typescript').ParenthesizedExpression {
+  return (
+    ts.isBinaryExpression(node) ||
+    ts.isTemplateExpression(node) ||
+    ts.isParenthesizedExpression(node)
+  );
+}
+
+function foldStaticString(
+  expression: import('typescript').Expression,
+  bindings: ReadonlyMap<string, import('typescript').Expression>,
+  seen: Set<string>,
+): string | null {
+  if (
+    ts.isStringLiteral(expression) ||
+    ts.isNoSubstitutionTemplateLiteral(expression)
+  ) {
+    return expression.text;
+  }
+  if (ts.isParenthesizedExpression(expression)) {
+    return foldStaticString(expression.expression, bindings, seen);
+  }
+  if (
+    ts.isBinaryExpression(expression) &&
+    expression.operatorToken.kind === ts.SyntaxKind.PlusToken
+  ) {
+    const left = foldStaticString(expression.left, bindings, new Set(seen));
+    const right = foldStaticString(expression.right, bindings, new Set(seen));
+    return left === null || right === null ? null : `${left}${right}`;
+  }
+  if (ts.isTemplateExpression(expression)) {
+    let result = expression.head.text;
+    for (const span of expression.templateSpans) {
+      const value = foldStaticString(span.expression, bindings, new Set(seen));
+      if (value === null) return null;
+      result += value + span.literal.text;
+    }
+    return result;
+  }
+  if (ts.isIdentifier(expression)) {
+    if (seen.has(expression.text)) return null;
+    const binding = bindings.get(expression.text);
+    if (!binding) return null;
+    const nextSeen = new Set(seen);
+    nextSeen.add(expression.text);
+    return foldStaticString(binding, bindings, nextSeen);
+  }
+  return null;
+}
+
+function compareStaticFinding(
+  left: T3StaticLiteralFinding,
+  right: T3StaticLiteralFinding,
+): number {
+  return (
+    compareText(left.path, right.path) ||
+    left.start - right.start ||
+    compareText(left.normalizedValue, right.normalizedValue) ||
+    compareText(left.syntaxForm, right.syntaxForm)
+  );
+}
+
+function digestStaticFindings(
+  findings: readonly T3StaticLiteralFinding[],
+): string {
+  return digestText(
+    findings
+      .map((finding) =>
+        [finding.path, finding.normalizedValue, finding.syntaxForm].join('\0'),
+      )
+      .sort(compareText)
+      .join('\n'),
+  );
+}
+
+function compareText(left: string, right: string): number {
+  return left < right ? -1 : left > right ? 1 : 0;
+}
+
+function scanJsonSchemaIdHosts(root: string): Record<string, number> {
+  const result: Record<string, number> = {};
+  for (const file of listRegularFiles(root, 'workflow/schemas')) {
+    if (!file.endsWith('.json')) continue;
+    const value = JSON.parse(
+      fs.readFileSync(path.join(root, file), 'utf8'),
+    ) as unknown;
+    assertPlainObject(value, `JSON Schema ${file}`);
+    if (typeof value.$id !== 'string') continue;
+    let host: string;
+    try {
+      host = new URL(value.$id).host;
+    } catch {
+      throw new Error(`JSON Schema ${file} has an invalid $id.`);
+    }
+    result[host] = (result[host] ?? 0) + 1;
+  }
+  return Object.fromEntries(
+    Object.entries(result).sort(([left], [right]) => compareText(left, right)),
+  );
+}
+
+function assertBoundaryEvidence(
+  root: string,
+  couplingId: string,
+  evidence: T3BoundaryEvidence,
+): void {
+  const absolute = path.join(root, evidence.path);
+  const stats = fs.lstatSync(absolute, { throwIfNoEntry: false });
+  assert.ok(
+    stats?.isFile() && !stats.isSymbolicLink(),
+    `${couplingId} evidence must be a plain file: ${evidence.path}`,
+  );
+  const source = fs.readFileSync(absolute, 'utf8');
+  for (const expected of evidence.contains) {
+    assert.ok(
+      source.includes(expected),
+      `${couplingId} evidence drifted: ${evidence.path} lacks ${JSON.stringify(expected)}`,
+    );
+  }
+}
+
+function assertNegativeEvidence(
+  root: string,
+  couplingId: string,
+  evidence: T3NegativeEvidence,
+): void {
+  for (const absentPath of evidence.absentPaths) {
+    assert.equal(
+      fs.lstatSync(path.join(root, absentPath), { throwIfNoEntry: false }),
+      undefined,
+      `${couplingId} path absence changed: ${absentPath}`,
+    );
+  }
+
+  const searchable = evidence.searchRoots
+    .flatMap((searchRoot) => listRegularFiles(root, searchRoot))
+    .filter((file) => /\.(?:ts|js|json|md)$/u.test(file))
+    .map((file) => fs.readFileSync(path.join(root, file), 'utf8'))
+    .join('\n');
+  for (const absentSymbol of evidence.absentSymbols) {
+    assert.equal(
+      searchable.includes(absentSymbol),
+      false,
+      `${couplingId} symbol absence changed: ${absentSymbol}`,
+    );
+  }
+}
+
+function listRegularFiles(root: string, relativeRoot: string): string[] {
+  const absoluteRoot = path.join(root, relativeRoot);
+  const rootStats = fs.lstatSync(absoluteRoot, { throwIfNoEntry: false });
+  if (!rootStats?.isDirectory() || rootStats.isSymbolicLink()) {
+    throw new Error(`T3 inventory scan root is unavailable: ${relativeRoot}`);
+  }
+  const result: string[] = [];
+  const visit = (directory: string): void => {
+    for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+      const absolute = path.join(directory, entry.name);
+      if (entry.isSymbolicLink()) {
+        throw new Error(`T3 inventory scan refuses symlink: ${absolute}`);
+      }
+      if (entry.isDirectory()) visit(absolute);
+      else if (entry.isFile()) {
+        result.push(path.relative(root, absolute).split(path.sep).join('/'));
+      }
+    }
+  };
+  visit(absoluteRoot);
+  return result.sort(compareText);
+}
+
+function escapeRegex(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&');
 }
 
 function parseFrozenModuleMap(text: string): MapRow[] {
