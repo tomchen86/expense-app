@@ -6,6 +6,8 @@ import path from 'node:path';
 import test from 'node:test';
 
 const EXPECTED_MAP_ROWS = 280;
+const EXPECTED_FROZEN_MAP_DIGEST =
+  'sha256:8ef62fbb0658d245e4fe068659709538ae3e3ac6757cbb8e5e69672f02beafc7';
 const EXPECTED_FROZEN_EDGE_COUNT = 774;
 const EXPECTED_FROZEN_IDENTITY_DIGEST =
   'sha256:6c60e39c31cb378f79d8ed9f5f78f80cd85b38423c7210617eb413a86b757ad1';
@@ -21,6 +23,13 @@ const ORGANIZED_ROOTS = new Set([
   'foundation',
   'modules',
   'runtime',
+]);
+const KNOWN_DISPOSITIONS = new Set([
+  'KEEP_BOOTSTRAP',
+  'KEEP_RECOVERY',
+  'KEEP_STABLE_ENTRYPOINT',
+  'MOVE',
+  'MOVE_PRIMARY_OWNER_MIXED',
 ]);
 const GREEN_ORGANIZED_SOURCE = `${SRC_PREFIX}modules/source/generated-module-boundary-contract.ts`;
 
@@ -117,16 +126,50 @@ const baselinePath = resolveAssetPath(
   BASELINE_FILE,
 );
 
-const moduleMap = parseModuleMap(fs.readFileSync(mapPath, 'utf8'));
+const moduleMapSource = fs.readFileSync(mapPath, 'utf8');
+const moduleMap = parseFrozenModuleMap(moduleMapSource);
 const baseline = parseBaseline(fs.readFileSync(baselinePath, 'utf8'));
 
 test('module map and exact dependency baseline are frozen', () => {
   assert.equal(moduleMap.length, EXPECTED_MAP_ROWS);
+  assert.equal(digestText(moduleMapSource), EXPECTED_FROZEN_MAP_DIGEST);
   assert.equal(baseline.edges.length, EXPECTED_FROZEN_EDGE_COUNT);
   assert.equal(baseline.frozenIdentityDigest, EXPECTED_FROZEN_IDENTITY_DIGEST);
   assert.equal(
     baseline.edges.filter((edge) => edge.status === 'active').length,
     EXPECTED_FROZEN_EDGE_COUNT,
+  );
+});
+
+test('module map target and disposition mutations fail closed', () => {
+  const targetMutation = moduleMapSource.replace(
+    'foundation/canonical-json/canonical-json.ts',
+    'foundation/canonical-json/canonical-json-renamed.ts',
+  );
+  assert.notEqual(targetMutation, moduleMapSource);
+  assert.throws(
+    () => parseFrozenModuleMap(targetMutation),
+    /module map identity digest/i,
+  );
+
+  const allowedDispositionMutation = moduleMapSource.replace(
+    '\tMOVE\n',
+    '\tMOVE_PRIMARY_OWNER_MIXED\n',
+  );
+  assert.notEqual(allowedDispositionMutation, moduleMapSource);
+  assert.throws(
+    () => parseFrozenModuleMap(allowedDispositionMutation),
+    /module map identity digest/i,
+  );
+
+  const unknownDispositionMutation = moduleMapSource.replace(
+    '\tMOVE\n',
+    '\tMOVE_UNKNOWN\n',
+  );
+  assert.notEqual(unknownDispositionMutation, moduleMapSource);
+  assert.throws(
+    () => parseModuleMap(unknownDispositionMutation),
+    /unknown module map disposition/i,
   );
 });
 
@@ -382,6 +425,15 @@ function resolveAssetPath(explicit: string | undefined, name: string): string {
   return fs.realpathSync(observed);
 }
 
+function parseFrozenModuleMap(text: string): MapRow[] {
+  if (digestText(text) !== EXPECTED_FROZEN_MAP_DIGEST) {
+    throw new Error(
+      'Module map identity digest does not match the frozen map.',
+    );
+  }
+  return parseModuleMap(text);
+}
+
 function parseModuleMap(text: string): MapRow[] {
   const lines = text.trimEnd().split('\n');
   if (lines.shift() !== 'source\ttarget\tdisposition') {
@@ -397,6 +449,9 @@ function parseModuleMap(text: string): MapRow[] {
     assertExactTypeScriptPath(target!, 'map target');
     if (!source!.startsWith(SRC_PREFIX) || !target!.startsWith(SRC_PREFIX)) {
       throw new Error('Module map paths must remain in workflow-engine src.');
+    }
+    if (!KNOWN_DISPOSITIONS.has(disposition!)) {
+      throw new Error(`Unknown module map disposition: ${disposition}`);
     }
     return { source: source!, target: target!, disposition: disposition! };
   });
@@ -588,10 +643,30 @@ function readRepositorySnapshot(root: string): MutableSnapshot {
 
 function withGreenOrganizedSource(snapshot: Snapshot): MutableSnapshot {
   const extended = new Map(snapshot);
+  const actorIdentity = moduleMap.find(
+    (row) => row.source === `${SRC_PREFIX}actor-identity.ts`,
+  );
+  assert.ok(actorIdentity, 'actor identity must remain in the migration map');
+  const physicalCandidates = [
+    actorIdentity.source,
+    actorIdentity.target,
+  ].filter((candidate) => snapshot.has(candidate));
+  assert.equal(
+    physicalCandidates.length,
+    1,
+    'actor identity must have one current physical path',
+  );
+  let actorSpecifier = path.posix.relative(
+    path.posix.dirname(GREEN_ORGANIZED_SOURCE),
+    physicalCandidates[0]!,
+  );
+  if (!actorSpecifier.startsWith('.')) {
+    actorSpecifier = `./${actorSpecifier}`;
+  }
   extended.set(
     GREEN_ORGANIZED_SOURCE,
     [
-      'import type { ActorResolution } from "../../actor-identity.ts";',
+      `import type { ActorResolution } from "${actorSpecifier}";`,
       'export type GeneratedActorResolution = ActorResolution;',
       '',
     ].join('\n'),
@@ -993,6 +1068,10 @@ function digestEdgeIdentities(edges: readonly ObservedEdge[]): string {
     .createHash('sha256')
     .update(`${edges.map(edgeIdentity).join('\n')}\n`)
     .digest('hex')}`;
+}
+
+function digestText(value: string): string {
+  return `sha256:${crypto.createHash('sha256').update(value).digest('hex')}`;
 }
 
 function compareObservedEdges(left: ObservedEdge, right: ObservedEdge): number {
