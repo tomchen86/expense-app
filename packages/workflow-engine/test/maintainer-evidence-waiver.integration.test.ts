@@ -45,6 +45,9 @@ const FAKE_SIGNATURE = [
   '-----END SSH SIGNATURE-----',
   '',
 ].join('\n');
+const STABLE_POST_APPROVAL_TEST_BUDGET = Object.freeze({
+  monotonicNow: () => 0,
+});
 
 test('a human-signed named waiver admits stale retained evidence without deleting the required check', () => {
   const repository = prepareCandidate();
@@ -77,6 +80,7 @@ test('a human-signed named waiver admits stale retained evidence without deletin
             now: issuedAt,
             signer,
             commitClock: () => commitClock,
+            testPostApprovalBudget: STABLE_POST_APPROVAL_TEST_BUDGET,
             testBeforeRefUpdate: () => {
               commitClock = new Date(issuedAt.getTime() + 60_001);
             },
@@ -154,7 +158,11 @@ test('a human-signed named waiver admits stale retained evidence without deletin
     const applied = reissueAndApplyMaintainerGrantV2(
       repository,
       waivedRequest,
-      { now: staleAt, signer },
+      {
+        now: staleAt,
+        signer,
+        testPostApprovalBudget: STABLE_POST_APPROVAL_TEST_BUDGET,
+      },
     );
 
     const terminal = readTerminalMaintainerGrant(
@@ -338,6 +346,7 @@ test('session admission ignores caller-side waivers and rejects waiver tampering
           {
             now: issuedAt,
             signer,
+            testPostApprovalBudget: STABLE_POST_APPROVAL_TEST_BUDGET,
             testAfterGrantIssued: () => {
               throw new Error('interrupt after signed grant publication');
             },

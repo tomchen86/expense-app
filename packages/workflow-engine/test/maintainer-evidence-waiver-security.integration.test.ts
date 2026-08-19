@@ -48,6 +48,9 @@ const EVIDENCE_WAIVERS: MaintainerEvidenceWaiver[] = [
   },
 ];
 const temporaryAuditRoots = new Set<string>();
+const STABLE_POST_APPROVAL_TEST_BUDGET = Object.freeze({
+  monotonicNow: () => 0,
+});
 
 test.after(() => {
   for (const auditRoot of temporaryAuditRoots) {
@@ -72,7 +75,10 @@ test('CI rejects a trusted receipt whose waiver projection differs from its sign
         message: 'Apply exact waived candidate',
         evidenceWaivers: EVIDENCE_WAIVERS,
       },
-      { signer },
+      {
+        signer,
+        testPostApprovalBudget: STABLE_POST_APPROVAL_TEST_BUDGET,
+      },
     );
     const [commit] = listRangeCommits(repository, base, applied.commitHash);
     assert.ok(commit);
