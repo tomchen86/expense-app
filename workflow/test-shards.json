@@ -12,9 +12,9 @@
   },
   "sourceTelemetryRunId": "run-20260813022917744-06e455fe-631a-480c-85b0-d3185b06182f",
   "sourceTelemetryDigest": "sha256:131eae67d081623752dfb1f52b9ecd9356e26b70213b3bfc3c43cc5a8b862c2b",
-  "physicalFileCount": 256,
-  "executionUnitCount": 254,
-  "inventoryDigest": "sha256:e585ec23748b9fcb7ee0c14a6a811a7dd9122a284cb99def1809618b3f549c80",
+  "physicalFileCount": 257,
+  "executionUnitCount": 255,
+  "inventoryDigest": "sha256:4021295f2a1e97b9675bf7b020f208b406e9fc697fc401b7f0e20b6c240ca4ca",
   "shards": [
     {
       "shardNumber": 1,
@@ -535,11 +535,19 @@
           "estimatedDurationMs": 0
         },
         {
+          "entrypoint": "packages/workflow-engine/test/module-dependency-direction.contract.test.ts",
+          "ownedPhysicalFiles": [
+            "packages/workflow-engine/test/module-dependency-direction.contract.test.ts"
+          ],
+          "legacyOrdinal": 252,
+          "estimatedDurationMs": 0
+        },
+        {
           "entrypoint": "packages/workflow-engine/test/pre-merge-assurance-store.contract.test.ts",
           "ownedPhysicalFiles": [
             "packages/workflow-engine/test/pre-merge-assurance-store.contract.test.ts"
           ],
-          "legacyOrdinal": 252,
+          "legacyOrdinal": 253,
           "estimatedDurationMs": 0
         },
         {
@@ -547,7 +555,7 @@
           "ownedPhysicalFiles": [
             "packages/workflow-engine/test/pre-merge-assurance.contract.test.ts"
           ],
-          "legacyOrdinal": 253,
+          "legacyOrdinal": 254,
           "estimatedDurationMs": 0
         },
         {
@@ -555,7 +563,7 @@
           "ownedPhysicalFiles": [
             "packages/workflow-engine/test/workflow-test-inventory.contract.test.ts"
           ],
-          "legacyOrdinal": 254,
+          "legacyOrdinal": 255,
           "estimatedDurationMs": 0
         }
       ]

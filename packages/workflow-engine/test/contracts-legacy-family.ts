@@ -56,6 +56,7 @@ import './predicate-discrimination.contract.test.ts';
 import './scan-hit-context-window.contract.test.ts';
 import './assurance-inspection.integration.test.ts';
 import './change-class-floors.contract.test.ts';
+import './module-dependency-direction.contract.test.ts';
 import './path-role-registry.contract.test.ts';
 import './spec-delta-applicability.contract.test.ts';
 import './spec-scenario-preservation.contract.test.ts';

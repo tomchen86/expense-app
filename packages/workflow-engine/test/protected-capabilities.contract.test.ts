@@ -1,7 +1,9 @@
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
+import { spawnSync } from 'node:child_process';
 import test from 'node:test';
 
 import { canonicalJson } from '../src/canonical-json.ts';
@@ -16,6 +18,8 @@ import { createFixtureRepository, git, isWorkflowError } from './fixture.ts';
 
 const MANIFEST_PATH = 'workflow/protected-capabilities.json';
 const LOADER_PATH = 'packages/workflow-engine/src/protected-capabilities.ts';
+const GENERATOR_PATH =
+  'packages/workflow-engine/bootstrap/generate-protected-capabilities.ts';
 const SOURCE_REPOSITORY_ROOT = path.resolve(import.meta.dirname, '../../..');
 
 function installTypedManifest(repository: string): string {
@@ -325,4 +329,177 @@ test('repository publishes the complete typed control-plane capability closure',
     ).includes('packages/workflow-engine/src/intervention-control-updater.ts'),
     true,
   );
+  assert.equal(
+    (
+      byCapability.get('control-plane.update')?.entrypoints as unknown[]
+    ).includes(GENERATOR_PATH),
+    true,
+  );
+  assert.equal(
+    (byCapability.get('policy.classify')?.entrypoints as unknown[]).includes(
+      GENERATOR_PATH,
+    ),
+    true,
+  );
 });
+
+test('repository protected capability manifest is generator-current', () => {
+  const result = runProtectedCapabilityGenerator(
+    path.join(SOURCE_REPOSITORY_ROOT, GENERATOR_PATH),
+    SOURCE_REPOSITORY_ROOT,
+    '--check',
+  );
+  assert.equal(result.status, 0, `${result.stdout}${result.stderr}`);
+});
+
+test('repository-owned protected capability generator writes, checks, and preserves the manifest-self sentinel', () => {
+  const repository = fs.mkdtempSync(
+    path.join(os.tmpdir(), 'protected-capability-generator-'),
+  );
+  const generator = path.join(SOURCE_REPOSITORY_ROOT, GENERATOR_PATH);
+  const protectedDependency = 'src/protected.ts';
+  try {
+    git(repository, ['init', '--quiet']);
+    git(repository, ['config', 'user.name', 'Workflow Test']);
+    git(repository, ['config', 'user.email', 'workflow@example.test']);
+    for (const [filePath, content] of [
+      [LOADER_PATH, 'export const protectedLoader = true;\n'],
+      [protectedDependency, 'export const protectedValue = true;\n'],
+    ] as const) {
+      const absolute = path.join(repository, filePath);
+      fs.mkdirSync(path.dirname(absolute), { recursive: true });
+      fs.writeFileSync(absolute, content);
+    }
+    const staleDigest = `sha256:${'0'.repeat(64)}`;
+    const manifest = {
+      kind: 'protected-capability-manifest.v1',
+      schemaVersion: 1,
+      manifestPath: MANIFEST_PATH,
+      entries: REQUIRED_PROTECTED_CAPABILITIES.map((capability) => ({
+        capability,
+        entrypoints: [LOADER_PATH],
+        dependencies: [protectedDependency, MANIFEST_PATH],
+        contentDigest: staleDigest,
+        closureDigest: staleDigest,
+      })),
+    };
+    const manifestAbsolute = path.join(repository, MANIFEST_PATH);
+    fs.mkdirSync(path.dirname(manifestAbsolute), { recursive: true });
+    fs.writeFileSync(
+      manifestAbsolute,
+      `${JSON.stringify(manifest, null, 2)}\n`,
+    );
+    git(repository, ['add', '.']);
+
+    const staleCheck = runProtectedCapabilityGenerator(
+      generator,
+      repository,
+      '--check',
+    );
+    assert.notEqual(staleCheck.status, 0);
+    assert.match(`${staleCheck.stdout}${staleCheck.stderr}`, /stale/i);
+
+    const write = runProtectedCapabilityGenerator(
+      generator,
+      repository,
+      '--write',
+    );
+    assert.equal(write.status, 0, write.stderr);
+    const firstProjection = fs.readFileSync(manifestAbsolute, 'utf8');
+    const projected = JSON.parse(firstProjection) as {
+      entries: Array<{
+        capability: string;
+        entrypoints: string[];
+        dependencies: string[];
+        contentDigest: string;
+        closureDigest: string;
+      }>;
+    };
+    assert.deepEqual(Object.keys(projected), [
+      'kind',
+      'schemaVersion',
+      'manifestPath',
+      'entries',
+    ]);
+    assert.deepEqual(
+      projected.entries.map(({ capability }) => capability),
+      [...REQUIRED_PROTECTED_CAPABILITIES],
+    );
+    for (const entry of projected.entries) {
+      assert.deepEqual(entry.entrypoints, [LOADER_PATH]);
+      assert.deepEqual(entry.dependencies, [
+        protectedDependency,
+        MANIFEST_PATH,
+      ]);
+      assert.notEqual(entry.contentDigest, staleDigest);
+      assert.notEqual(entry.closureDigest, staleDigest);
+    }
+    const currentCheck = runProtectedCapabilityGenerator(
+      generator,
+      repository,
+      '--check',
+    );
+    assert.equal(currentCheck.status, 0, currentCheck.stderr);
+    git(repository, ['add', '.']);
+    git(repository, ['commit', '--quiet', '-m', 'Generate protected closure']);
+    const trustBase = git(repository, ['rev-parse', 'HEAD']).trim();
+    assert.equal(
+      loadProtectedCapabilitiesFromTrustBase(repository, trustBase).entries
+        .length,
+      REQUIRED_PROTECTED_CAPABILITIES.length,
+    );
+
+    for (const entry of projected.entries) {
+      entry.contentDigest = staleDigest;
+      entry.closureDigest = staleDigest;
+    }
+    fs.writeFileSync(
+      manifestAbsolute,
+      `${JSON.stringify(projected, null, 2)}\n`,
+    );
+    const rewrite = runProtectedCapabilityGenerator(
+      generator,
+      repository,
+      '--write',
+    );
+    assert.equal(rewrite.status, 0, rewrite.stderr);
+    assert.equal(fs.readFileSync(manifestAbsolute, 'utf8'), firstProjection);
+
+    fs.writeFileSync(
+      path.join(repository, protectedDependency),
+      'export const protectedValue = false;\n',
+    );
+    const changedClosure = runProtectedCapabilityGenerator(
+      generator,
+      repository,
+      '--check',
+    );
+    assert.notEqual(changedClosure.status, 0);
+    assert.match(`${changedClosure.stdout}${changedClosure.stderr}`, /stale/i);
+
+    const invalidMode = runProtectedCapabilityGenerator(
+      generator,
+      repository,
+      '--unknown',
+    );
+    assert.notEqual(invalidMode.status, 0);
+    assert.match(
+      `${invalidMode.stdout}${invalidMode.stderr}`,
+      /--check\|--write/,
+    );
+  } finally {
+    fs.rmSync(repository, { recursive: true, force: true });
+  }
+});
+
+function runProtectedCapabilityGenerator(
+  generator: string,
+  repository: string,
+  mode: '--check' | '--write' | '--unknown',
+) {
+  return spawnSync(
+    process.execPath,
+    ['--experimental-strip-types', generator, mode],
+    { cwd: repository, encoding: 'utf8' },
+  );
+}

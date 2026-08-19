@@ -1041,7 +1041,7 @@
     {
       "path": "src/protected-capabilities.ts",
       "mode": "100644",
-      "digest": "sha256:d28ed1b4f5442651c33a89137e28a8fd289f36e78c6cfb853e341a5fa2aa0730"
+      "digest": "sha256:6200d169e9203e9d7b13e6968a7993bd2cce23c0f6845057bb733a117425be6d"
     },
     {
       "path": "src/provider-availability-pilot.ts",

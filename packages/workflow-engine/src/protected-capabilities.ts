@@ -54,6 +54,11 @@ export type ProtectedCapabilitiesManifest = {
   manifestDigest: Sha256Digest;
 };
 
+export type ProtectedCapabilitiesManifestSource = Omit<
+  ProtectedCapabilitiesManifest,
+  'manifestDigest'
+>;
+
 type TreeEntry = {
   path: string;
   mode: string;
@@ -150,6 +155,34 @@ export function loadProtectedCapabilitiesFromTrustBase(
       'The trust base has no readable protected capability manifest.',
     );
   }
+  const payload = parseProtectedCapabilitiesManifestSource(parsed);
+  for (const entry of payload.entries) {
+    const observed = computeProtectedCapabilityEntryDigests(
+      repositoryRoot,
+      trustBaseCommit,
+      entry,
+    );
+    if (
+      observed.contentDigest !== entry.contentDigest ||
+      observed.closureDigest !== entry.closureDigest
+    ) {
+      throw workflowError(
+        'PROTECTED_CAPABILITY_CLOSURE_DIGEST_MISMATCH',
+        `Protected capability ${entry.capability} no longer matches its trust-base dependency closure.`,
+        ExitCode.verification,
+      );
+    }
+  }
+
+  return {
+    ...payload,
+    manifestDigest: digest(canonicalJson(payload)),
+  };
+}
+
+export function parseProtectedCapabilitiesManifestSource(
+  parsed: unknown,
+): ProtectedCapabilitiesManifestSource {
   if (
     !isRecord(parsed) ||
     !hasExactKeys(parsed, [
@@ -196,33 +229,11 @@ export function loadProtectedCapabilitiesFromTrustBase(
     );
   }
 
-  for (const entry of entries) {
-    const observed = computeProtectedCapabilityEntryDigests(
-      repositoryRoot,
-      trustBaseCommit,
-      entry,
-    );
-    if (
-      observed.contentDigest !== entry.contentDigest ||
-      observed.closureDigest !== entry.closureDigest
-    ) {
-      throw workflowError(
-        'PROTECTED_CAPABILITY_CLOSURE_DIGEST_MISMATCH',
-        `Protected capability ${entry.capability} no longer matches its trust-base dependency closure.`,
-        ExitCode.verification,
-      );
-    }
-  }
-
-  const payload: Omit<ProtectedCapabilitiesManifest, 'manifestDigest'> = {
+  return {
     kind: 'protected-capability-manifest.v1' as const,
     schemaVersion: 1 as const,
     manifestPath: MANIFEST_PATH,
     entries,
-  };
-  return {
-    ...payload,
-    manifestDigest: digest(canonicalJson(payload)),
   };
 }
 
