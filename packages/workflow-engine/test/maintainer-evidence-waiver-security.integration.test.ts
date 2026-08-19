@@ -333,6 +333,17 @@ function installTrustBase(
   fs.mkdirSync(path.join(repository, 'packages/workflow-engine/src'), {
     recursive: true,
   });
+  fs.mkdirSync(
+    path.join(repository, 'packages/workflow-engine/src/modules/authority'),
+    { recursive: true },
+  );
+  fs.mkdirSync(
+    path.join(
+      repository,
+      'packages/workflow-engine/src/adapters/consumer/expense-app/work-registry',
+    ),
+    { recursive: true },
+  );
   fs.mkdirSync(path.join(repository, 'packages/workflow-engine/test'), {
     recursive: true,
   });

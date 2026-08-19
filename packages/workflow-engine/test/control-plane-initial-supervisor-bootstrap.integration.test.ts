@@ -67,6 +67,8 @@ const BOOTSTRAP_RUNTIME_NAMES = [
   'canonical-json.ts',
   'control-plane-trust.ts',
 ] as const;
+const FIXTURE_PROTECTED_CAPABILITY_LOADER_PATH =
+  'src/adapters/consumer/expense-app/work-registry/protected-capabilities.ts';
 
 test('sealed launcher initializes generation-one supervisor from the verified built-in closure and replays exactly', () => {
   const engineRoot = createSealedEnginePackage();
@@ -1322,11 +1324,12 @@ function createSealedEnginePackage(): string {
   fs.writeFileSync(path.join(source, 'cli.ts'), entrypointBytes, {
     mode: 0o644,
   });
-  fs.writeFileSync(
-    path.join(source, 'protected-capabilities.ts'),
-    protectedLoaderBytes,
-    { mode: 0o644 },
+  const protectedLoaderPath = path.join(
+    root,
+    FIXTURE_PROTECTED_CAPABILITY_LOADER_PATH,
   );
+  fs.mkdirSync(path.dirname(protectedLoaderPath), { recursive: true });
+  fs.writeFileSync(protectedLoaderPath, protectedLoaderBytes, { mode: 0o644 });
   const manifest = {
     kind: 'built-in-engine-closure-manifest.v1',
     entrypoint: 'src/cli.ts',
@@ -1338,14 +1341,14 @@ function createSealedEnginePackage(): string {
         digest: digest(packageBytes),
       },
       {
+        path: FIXTURE_PROTECTED_CAPABILITY_LOADER_PATH,
+        mode: '100644',
+        digest: digest(protectedLoaderBytes),
+      },
+      {
         path: 'src/cli.ts',
         mode: '100644',
         digest: digest(entrypointBytes),
-      },
-      {
-        path: 'src/protected-capabilities.ts',
-        mode: '100644',
-        digest: digest(protectedLoaderBytes),
       },
     ],
   };
@@ -1422,8 +1425,8 @@ function regenerateFixtureEngineClosure(repository: string): void {
   const packageRoot = repositoryEngineRoot(repository);
   const files = [
     'package.json',
+    FIXTURE_PROTECTED_CAPABILITY_LOADER_PATH,
     'src/cli.ts',
-    'src/protected-capabilities.ts',
   ].map((filePath) => {
     const bytes = fs.readFileSync(path.join(packageRoot, filePath));
     return {

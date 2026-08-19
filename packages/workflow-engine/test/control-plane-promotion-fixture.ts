@@ -52,6 +52,8 @@ const BOOTSTRAP_RUNTIME_NAMES = [
   'canonical-json.ts',
   'control-plane-trust.ts',
 ] as const;
+const FIXTURE_PROTECTED_CAPABILITY_LOADER_PATH =
+  'src/adapters/consumer/expense-app/work-registry/protected-capabilities.ts';
 
 export interface ControlPlaneFixtureSigning {
   trustedSigners: TrustedMaintainerSigner[];
@@ -653,10 +655,12 @@ function createSealedEnginePackage(builtInEntrypointBytes?: string): string {
     "export const fixtureProtectedCapabilitiesLoader = 'v1';\n";
   fs.writeFileSync(path.join(root, 'package.json'), packageBytes);
   fs.writeFileSync(path.join(source, 'cli.ts'), entrypointBytes);
-  fs.writeFileSync(
-    path.join(source, 'protected-capabilities.ts'),
-    protectedLoaderBytes,
+  const protectedLoaderPath = path.join(
+    root,
+    FIXTURE_PROTECTED_CAPABILITY_LOADER_PATH,
   );
+  fs.mkdirSync(path.dirname(protectedLoaderPath), { recursive: true });
+  fs.writeFileSync(protectedLoaderPath, protectedLoaderBytes);
   const manifest = {
     kind: 'built-in-engine-closure-manifest.v1',
     entrypoint: 'src/cli.ts',
@@ -668,14 +672,14 @@ function createSealedEnginePackage(builtInEntrypointBytes?: string): string {
         digest: controlPlaneFixtureDigest(packageBytes),
       },
       {
+        path: FIXTURE_PROTECTED_CAPABILITY_LOADER_PATH,
+        mode: '100644',
+        digest: controlPlaneFixtureDigest(protectedLoaderBytes),
+      },
+      {
         path: 'src/cli.ts',
         mode: '100644',
         digest: controlPlaneFixtureDigest(entrypointBytes),
-      },
-      {
-        path: 'src/protected-capabilities.ts',
-        mode: '100644',
-        digest: controlPlaneFixtureDigest(protectedLoaderBytes),
       },
     ],
   };

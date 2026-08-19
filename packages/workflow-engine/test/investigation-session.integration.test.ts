@@ -143,6 +143,20 @@ const FIRST_INSTANT = '2026-07-24T00:00:00.000Z';
 const DURING_COMPLETION_GRACE = '2026-07-24T00:00:01.100Z';
 const BEFORE_EXPIRY = '2026-07-24T00:00:30.999Z';
 const AT_EXPIRY = '2026-07-24T00:00:31.000Z';
+const WORKFLOW_SOURCE_MODULE_PATHS = {
+  'session-store.ts': 'runtime/session-workspace/session-store.ts',
+  'planning-lock.ts': 'runtime/session-workspace/planning-lock.ts',
+  'investigation-session-store.ts':
+    'runtime/storage-journal/investigation-session-store.ts',
+  'investigation-session.ts':
+    'adapters/compatibility/investigation-v2/investigation-session.ts',
+  'propose-orchestrator.ts': 'application/propose/propose-orchestrator.ts',
+  'evidence-object-store.ts':
+    'runtime/storage-journal/evidence-object-store.ts',
+  'filesystem-safety.ts': 'runtime/repository-transaction/filesystem-safety.ts',
+  'paths.ts': 'runtime/session-workspace/paths.ts',
+  'session.ts': 'application/execute-task/session.ts',
+} as const;
 const SESSION_STORE_MODULE_URL = workflowSourceModuleUrl('session-store.ts');
 const PLANNING_LOCK_MODULE_URL = workflowSourceModuleUrl('planning-lock.ts');
 const INVESTIGATION_STORE_MODULE_URL = workflowSourceModuleUrl(
@@ -8631,9 +8645,15 @@ function providerOutcome(
   };
 }
 
-function workflowSourceModuleUrl(fileName: string): string {
+function workflowSourceModuleUrl(
+  fileName: keyof typeof WORKFLOW_SOURCE_MODULE_PATHS,
+): string {
   return pathToFileURL(
-    path.join(sourceRepositoryRoot, 'packages/workflow-engine/src', fileName),
+    path.join(
+      sourceRepositoryRoot,
+      'packages/workflow-engine/src',
+      WORKFLOW_SOURCE_MODULE_PATHS[fileName],
+    ),
   ).href;
 }
 
