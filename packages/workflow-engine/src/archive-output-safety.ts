@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
-import { ExitCode, workflowError } from './errors.ts';
+import { ExitCode, workflowError } from './foundation/errors/errors.ts';
 
 export function assertPlainArchiveOutputFile(
   repository: string,

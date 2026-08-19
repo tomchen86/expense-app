@@ -10,21 +10,21 @@ import type {
   FailureDescriptor,
   JobRecord,
   WorkflowRecord,
-} from '../src/execution-core.ts';
+} from '../src/modules/provider-orchestration/execution-core.ts';
 import type { ExecutionJobInspection } from '../src/execution-runtime.ts';
-import { canonicalJson } from '../src/canonical-json.ts';
+import { canonicalJson } from '../src/foundation/canonical-json/canonical-json.ts';
 import {
   collectEngineMetrics,
   computeEngineMetrics,
   inspectEngineSupersedeReason,
   type EngineMetricsSnapshot,
-} from '../src/engine-metrics.ts';
+} from '../src/application/control-plane/engine-metrics.ts';
 import {
   canonicalExecutionBudgetGrantRequest,
   createExecutionBudgetGrantEnvelope,
   createExecutionBudgetGrantRequest,
   storeExecutionBudgetGrant,
-} from '../src/execution-governance.ts';
+} from '../src/modules/authority/execution-governance.ts';
 import { loadInvestigationRuntimeContext } from '../src/lifecycle-context.ts';
 import {
   compareAndSwapHumanResolutionHead,
@@ -32,7 +32,7 @@ import {
   writeHumanResolutionNode,
 } from '../src/investigation-session-store.ts';
 import type { ProviderRetentionMetrics } from '../src/provider-retention.ts';
-import type { TaskMandateBinding } from '../src/task-mandate.ts';
+import type { TaskMandateBinding } from '../src/modules/authority/task-mandate.ts';
 import { createFixtureRepository, sourceRepositoryRoot } from './fixture.ts';
 
 const NOW = '2026-08-03T10:00:00.000Z';

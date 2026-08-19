@@ -6,11 +6,11 @@ import path from 'node:path';
 import test from 'node:test';
 
 import { createEvidenceNode, type EvidenceNode } from '../src/evidence-node.ts';
-import { WorkflowError } from '../src/errors.ts';
+import { WorkflowError } from '../src/foundation/errors/errors.ts';
 import {
   projectPlanReviewTerms,
   type PlanReviewTermProjection,
-} from '../src/investigation-term-projection.ts';
+} from '../src/modules/projection/investigation-term-projection.ts';
 import {
   createPlanReviewDispositionNode,
   createPlanReviewNode,
@@ -25,22 +25,25 @@ import {
   readPlanReviewDispositionNode,
   readPlanReviewNode,
   type PlanReviewSubmission,
-} from '../src/plan-review.ts';
-import { validatePlanReview } from '../src/plan-review-validation.ts';
+} from '../src/modules/assurance/plan-review.ts';
+import { validatePlanReview } from '../src/modules/assurance/plan-review-validation.ts';
 import {
   resolvePlanReviewPlanningEvidence,
   resolvePlanReviewRepositoryEvidence,
-} from '../src/planning-assurance-validator.ts';
+} from '../src/modules/assurance/planning-assurance-validator.ts';
 import {
   createPlanTarget,
   type PlanTarget,
   type PlanTargetInput,
-} from '../src/plan-target.ts';
+} from '../src/modules/assurance/plan-target.ts';
 import {
   createPlanningGeneration,
   type PlanningGeneration,
-} from '../src/planning-generation.ts';
-import { admitRoleResult, type RoleAssignment } from '../src/role-scheduler.ts';
+} from '../src/modules/lifecycle/planning-generation.ts';
+import {
+  admitRoleResult,
+  type RoleAssignment,
+} from '../src/modules/provider-orchestration/role-scheduler.ts';
 import { createFixtureRepository, git } from './fixture.ts';
 
 const DIGESTS = {

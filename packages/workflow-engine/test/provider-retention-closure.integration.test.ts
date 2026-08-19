@@ -7,16 +7,16 @@ import test from 'node:test';
 import { pathToFileURL } from 'node:url';
 
 import { loadAiAdapterPolicy } from '../src/ai-adapter-policy.ts';
-import { canonicalJson } from '../src/canonical-json.ts';
+import { canonicalJson } from '../src/foundation/canonical-json/canonical-json.ts';
 import { listExecutionJobStates } from '../src/execution-store.ts';
 import { listProviderInvocationLifecycleProjections } from '../src/investigation-session-store.ts';
 import { loadInvestigationRuntimeContext } from '../src/lifecycle-context.ts';
-import { startPropose } from '../src/propose-orchestrator.ts';
+import { startPropose } from '../src/application/propose/propose-orchestrator.ts';
 import {
   createProviderInvocationRequest,
   type ProviderInvocationRequest,
   type ProviderProcessOutcome,
-} from '../src/provider-contracts.ts';
+} from '../src/modules/provider-orchestration/provider-contracts.ts';
 import { inspectProviderPromptContextRetentionBinding } from '../src/provider-execution-governance.ts';
 import {
   claimProviderInvocation,

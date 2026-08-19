@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { resolveSampleAudits } from '../src/class-sample-audit.ts';
+import { resolveSampleAudits } from '../src/modules/investigation/domain/class-sample-audit.ts';
 import { isWorkflowError } from './fixture.ts';
 
 test('a sampled member cannot overwrite an earlier audit outcome', () => {

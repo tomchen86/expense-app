@@ -5,7 +5,11 @@ import path from 'node:path';
 import { performance } from 'node:perf_hooks';
 import { spawnSync } from 'node:child_process';
 
-import { ExitCode, WorkflowError, workflowError } from './errors.ts';
+import {
+  ExitCode,
+  WorkflowError,
+  workflowError,
+} from './foundation/errors/errors.ts';
 import { createTrustedExecutionEnvironment } from './execution-environment.ts';
 import { normalizeChangedPath } from './paths.ts';
 

@@ -4,36 +4,36 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import { canonicalJson } from '../src/canonical-json.ts';
-import { ExitCode, workflowError } from '../src/errors.ts';
+import { canonicalJson } from '../src/foundation/canonical-json/canonical-json.ts';
+import { ExitCode, workflowError } from '../src/foundation/errors/errors.ts';
 import { discoverRepository } from '../src/git.ts';
 import {
   createApprovalSubject,
   createGrantChallenge,
   approvalSubjectDigest,
-} from '../src/grant-core.ts';
+} from '../src/modules/authority/grant-core.ts';
 import {
   createProductionWorkflowGrantCoordinator,
   requestInvestigationV3Grant,
 } from '../src/grant-production.ts';
-import { HUMAN_GATE_MACOS_V1_CONFIGURATION_DIGEST } from '../src/grant-policy.ts';
+import { HUMAN_GATE_MACOS_V1_CONFIGURATION_DIGEST } from '../src/modules/authority/grant-policy.ts';
 import {
   grantStorePaths,
   prepareGrantTransition,
   readGrantRecord,
 } from '../src/grant-store.ts';
-import { createTransitionRegistry } from '../src/grant-transition-registry.ts';
+import { createTransitionRegistry } from '../src/modules/authority/grant-transition-registry.ts';
 import {
   INVESTIGATION_V3_ATTEMPTED_TRANSITIONS,
   INVESTIGATION_V3_KNOWN_FAILURE_CODES,
   createInvestigationV3Blocker,
   createInvestigationV3BlockerFromError,
-} from '../src/investigation-manifest.ts';
+} from '../src/modules/investigation/manifest/investigation-manifest.ts';
 import {
   createInvestigationV3GrantRequest,
   investigationV3CentralFailureCode,
   investigationV3GrantTransitionDefinitions,
-} from '../src/investigation-v3-grant.ts';
+} from '../src/modules/investigation/seal/investigation-v3-grant.ts';
 import { writeInvestigationV3ShadowObservation } from '../src/investigation-shadow-store.ts';
 import { investigationRuntimePaths } from '../src/paths.ts';
 import { runtimePaths } from '../src/session-store.ts';
@@ -164,7 +164,10 @@ test('the source-bound transition keeps the durable v2 definition registered for
 
 test('v3 adapter remains central and introduces no local grant substrate', () => {
   const source = fs.readFileSync(
-    new URL('../src/investigation-v3-grant.ts', import.meta.url),
+    new URL(
+      '../src/modules/investigation/seal/investigation-v3-grant.ts',
+      import.meta.url,
+    ),
     'utf8',
   );
   for (const forbidden of [

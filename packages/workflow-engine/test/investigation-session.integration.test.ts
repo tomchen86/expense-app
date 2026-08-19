@@ -8,12 +8,12 @@ import test from 'node:test';
 import { pathToFileURL } from 'node:url';
 
 import { loadAiAdapterPolicy } from '../src/ai-adapter-policy.ts';
-import { canonicalJson } from '../src/canonical-json.ts';
+import { canonicalJson } from '../src/foundation/canonical-json/canonical-json.ts';
 import {
   loadChangeContract,
   parseInvestigationArtifact,
 } from '../src/contracts.ts';
-import { projectProviderInvocationExecution } from '../src/execution-core.ts';
+import { projectProviderInvocationExecution } from '../src/modules/provider-orchestration/execution-core.ts';
 import { readExecutionJobState } from '../src/execution-store.ts';
 import {
   compareAndSwapEvidenceRefsDocument,
@@ -32,7 +32,7 @@ import {
   reclaimDeadPreparedLock,
 } from '../src/filesystem-safety.ts';
 import { discoverRepository } from '../src/git.ts';
-import { readInvestigationGroupNode } from '../src/investigation-groups.ts';
+import { readInvestigationGroupNode } from '../src/modules/investigation/domain/investigation-groups.ts';
 import {
   createInvestigationCheckpointEnvelope,
   discardHumanResolutionGrantPublication,
@@ -58,12 +58,12 @@ import {
   resumePropose,
   startPropose,
   startProposeFromFile,
-} from '../src/propose-orchestrator.ts';
+} from '../src/application/propose/propose-orchestrator.ts';
 import { readCurrentProposeExemptionSession } from '../src/propose-exemption-store.ts';
 import {
   PLAN_REVIEW_COVERAGE,
   readPlanReviewNode,
-} from '../src/plan-review.ts';
+} from '../src/modules/assurance/plan-review.ts';
 import {
   createProviderRunnerForTesting,
   PROVIDER_RUNNER_RESIDUALS,
@@ -98,8 +98,8 @@ import {
   PROPOSE_POLICY_DIGEST,
   type ProviderInvocationRequest,
   type ProviderProcessOutcome,
-} from '../src/provider-contracts.ts';
-import { authorizeAutomaticProviderRetry } from '../src/provider-retry-decision.ts';
+} from '../src/modules/provider-orchestration/provider-contracts.ts';
+import { authorizeAutomaticProviderRetry } from '../src/modules/provider-orchestration/provider-retry-decision.ts';
 import {
   BLIND_SURVEY_OUTPUT_SCHEMA,
   claimProviderInvocation,
@@ -118,8 +118,11 @@ import {
   storeProviderExecutionPolicySnapshot,
   type BlindSurveyManifest,
 } from '../src/provider-invocation-store.ts';
-import { humanResolutionBlockerBinding } from '../src/maintainer-grant.ts';
-import { abortSession, startSession } from '../src/session.ts';
+import { humanResolutionBlockerBinding } from '../src/modules/authority/maintainer-grant.ts';
+import {
+  abortSession,
+  startSession,
+} from '../src/application/execute-task/session.ts';
 import {
   createFixtureRepository,
   git,

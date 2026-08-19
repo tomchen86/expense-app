@@ -5,31 +5,34 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import { canonicalJson } from '../src/canonical-json.ts';
+import { canonicalJson } from '../src/foundation/canonical-json/canonical-json.ts';
 import { runGitWithEnvironment } from '../src/git.ts';
 import { investigationRuntimePaths } from '../src/paths.ts';
-import { commitPlanningTransition } from '../src/planning-transition.ts';
+import { commitPlanningTransition } from '../src/application/propose/planning-transition.ts';
 import { readProviderInvocationManifest } from '../src/provider-invocation-store.ts';
 import { PROVIDER_RUNNER_RESIDUALS } from '../src/provider-runner.ts';
 import { runProviderWorker } from '../src/provider-worker.ts';
-import { startSession } from '../src/session.ts';
+import { startSession } from '../src/application/execute-task/session.ts';
 import {
   readCurrentTaskStrategyGreenFailure,
   resolveCurrentTaskStrategyCorrection,
-} from '../src/task-strategy-correction.ts';
+} from '../src/application/execute-task/task-strategy-correction.ts';
 import { readTaskStrategyCorrectionRound } from '../src/task-strategy-correction-round-store.ts';
 import {
   assertTaskStrategyImplementationProviderOwnerCurrent,
   beginTaskStrategyImplementation,
   inspectTaskStrategyImplementation,
-} from '../src/task-strategy-implementation-lifecycle.ts';
+} from '../src/application/execute-task/task-strategy-implementation-lifecycle.ts';
 import {
   inspectTaskStrategyLifecycle,
   resumeTaskStrategy,
-} from '../src/task-strategy-lifecycle.ts';
+} from '../src/application/execute-task/task-strategy-lifecycle.ts';
 import { readTaskStrategyImplementationResultBinding } from '../src/task-strategy-provider-store.ts';
-import { sealTaskStrategyRed } from '../src/task-strategy-execution.ts';
-import { checkSession, inspectSession } from '../src/verification.ts';
+import { sealTaskStrategyRed } from '../src/application/execute-task/task-strategy-execution.ts';
+import {
+  checkSession,
+  inspectSession,
+} from '../src/application/finalize/verification.ts';
 import {
   configureChecks,
   createFixtureRepository,

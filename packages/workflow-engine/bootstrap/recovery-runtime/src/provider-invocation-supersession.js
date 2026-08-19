@@ -1,9 +1,9 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import { canonicalJson } from './canonical-json.js';
-import { projectProviderInvocationExecution } from './execution-core.js';
-import { ExitCode, WorkflowError } from './errors.js';
+import { canonicalJson } from './foundation/canonical-json/canonical-json.js';
+import { projectProviderInvocationExecution } from './modules/provider-orchestration/execution-core.js';
+import { ExitCode, WorkflowError } from './foundation/errors/errors.js';
 import { assertPrivateInvestigationDirectory, createPrivateCanonicalJson, privatePathExists, readPrivateCanonicalJson, withPrivateRuntimeLock, } from './investigation-session-store.js';
 import { assertInvocationId } from './paths.js';
 import { providerRetentionArtifact, readCompleteProviderRetentionReceipt, } from './provider-retention-receipt.js';

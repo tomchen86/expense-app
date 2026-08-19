@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import test from 'node:test';
 
-import { WorkflowError } from '../src/errors.ts';
+import { WorkflowError } from '../src/foundation/errors/errors.ts';
 import {
   REQUIRED_PROTECTED_CAPABILITIES,
   advanceEngineAdoption,
@@ -32,7 +32,7 @@ import {
   type HarnessMaintenanceGrantEnvelope,
   type ParentChangeState,
   type ProtectedCapabilityEntry,
-} from '../src/intervention-control.ts';
+} from '../src/modules/authority/intervention-control.ts';
 
 const NOW = new Date('2026-08-03T10:00:00.000Z');
 

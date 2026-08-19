@@ -14,7 +14,7 @@ import {
   buildCodexProviderInvocation,
   CODEX_EXECUTABLE_CANDIDATES,
 } from '../src/codex-provider-adapter.ts';
-import { canonicalJson } from '../src/canonical-json.ts';
+import { canonicalJson } from '../src/foundation/canonical-json/canonical-json.ts';
 import { DEFAULT_AI_ADAPTER_RETRY_ACCOUNTING } from '../src/ai-adapter-policy.ts';
 import { createProviderExecutionEnvironment } from '../src/execution-environment.ts';
 import {
@@ -23,8 +23,8 @@ import {
   inspectDurableRetentionCatalog,
   rolloverDurableEpochContextStore,
   storeDurableEvidence,
-} from '../src/execution-governance.ts';
-import { WorkflowError } from '../src/errors.ts';
+} from '../src/modules/authority/execution-governance.ts';
+import { WorkflowError } from '../src/foundation/errors/errors.ts';
 import {
   captureGovernedProviderProjection,
   compareGovernedProviderProjections,
@@ -33,7 +33,7 @@ import {
   createProviderInvocationRequest,
   type ProviderInvocationRequest,
   type ProviderInvocationRequestInput,
-} from '../src/provider-contracts.ts';
+} from '../src/modules/provider-orchestration/provider-contracts.ts';
 import {
   BLIND_SURVEY_OUTPUT_SCHEMA,
   BLIND_SURVEY_PROVIDER_OUTPUT_SCHEMA,
@@ -42,7 +42,7 @@ import {
 import {
   PLAN_REVIEW_OUTPUT_SCHEMA,
   PLAN_REVIEW_PROVIDER_OUTPUT_SCHEMA,
-} from '../src/plan-review.ts';
+} from '../src/modules/assurance/plan-review.ts';
 import {
   assembleProviderPromptManifest,
   ensureProviderPromptContext,

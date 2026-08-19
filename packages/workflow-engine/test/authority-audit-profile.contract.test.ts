@@ -24,7 +24,7 @@ import {
   type Sha256Digest,
 } from '../src/authority-audit-ledger.ts';
 import { recordAuthorityAuditEvent } from '../src/authority-audit-service.ts';
-import { canonicalJson } from '../src/canonical-json.ts';
+import { canonicalJson } from '../src/foundation/canonical-json/canonical-json.ts';
 import { isWorkflowError } from './fixture.ts';
 
 function digest(seed: string): Sha256Digest {

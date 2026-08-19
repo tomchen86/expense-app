@@ -1,4 +1,4 @@
-import { ExitCode, workflowError } from './errors.js';
+import { ExitCode, workflowError } from './foundation/errors/errors.js';
 import { encodeDocumentationClosure, } from './documentation-closure.js';
 import fs from 'node:fs';
 import os from 'node:os';

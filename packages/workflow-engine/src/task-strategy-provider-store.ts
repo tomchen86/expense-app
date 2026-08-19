@@ -1,13 +1,13 @@
 import crypto from 'node:crypto';
 import path from 'node:path';
 
-import { canonicalJson } from './canonical-json.ts';
-import { COLLABORATION_GRANT_AUTHORIZED_EFFECT } from './collaboration-grant.ts';
+import { canonicalJson } from './foundation/canonical-json/canonical-json.ts';
+import { COLLABORATION_GRANT_AUTHORIZED_EFFECT } from './modules/authority/collaboration-grant.ts';
 import {
   readEvidenceNode,
   resolveTaskStrategyImplementationInvocationOwner,
 } from './evidence-object-store.ts';
-import { ExitCode, workflowError } from './errors.ts';
+import { ExitCode, workflowError } from './foundation/errors/errors.ts';
 import {
   createPrivateCanonicalJson,
   privatePathExists,
@@ -23,7 +23,7 @@ import {
   isProviderRoleAssignment,
   recreateProviderInvocationRequest,
   type ProviderInvocationRequest,
-} from './provider-contracts.ts';
+} from './modules/provider-orchestration/provider-contracts.ts';
 import {
   providerInvocationManifestDigest,
   providerInvocationExists,
@@ -36,7 +36,7 @@ import {
   type ProviderRetryReservationV2,
   type ProviderRetryReservationV3,
 } from './provider-invocation-store.ts';
-import type { TaskMandateBinding } from './task-mandate.ts';
+import type { TaskMandateBinding } from './modules/authority/task-mandate.ts';
 import {
   TASK_STRATEGY_IMPLEMENTATION_OUTPUT_SCHEMA,
   TASK_STRATEGY_IMPLEMENTATION_POLICY_DIGEST,
@@ -46,13 +46,13 @@ import {
   type TaskStrategyImplementationManifest,
   type TaskStrategyImplementationOutput,
   type TaskStrategyImplementationSubject,
-} from './task-strategy-provider-contract.ts';
+} from './modules/provider-orchestration/task-strategy-provider-contract.ts';
 import {
   type AdmittedRoleResult,
   type GrantedRoleAssignment,
   type ProviderRoleAssignment,
   type RecordedRoleParticipant,
-} from './role-scheduler.ts';
+} from './modules/provider-orchestration/role-scheduler.ts';
 import type { TaskStrategyTransaction } from './task-strategy-store.ts';
 
 const DIGEST = /^[0-9a-f]{64}$/;

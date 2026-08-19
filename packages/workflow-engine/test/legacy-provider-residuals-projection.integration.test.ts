@@ -5,7 +5,7 @@ import path from 'node:path';
 import test from 'node:test';
 
 import { loadAiAdapterPolicy } from '../src/ai-adapter-policy.ts';
-import { canonicalJson } from '../src/canonical-json.ts';
+import { canonicalJson } from '../src/foundation/canonical-json/canonical-json.ts';
 import { listExecutionJobs } from '../src/execution-runtime.ts';
 import { discoverRepository } from '../src/git.ts';
 import { loadInvestigationRuntimeContext } from '../src/lifecycle-context.ts';
@@ -14,7 +14,7 @@ import {
   createProviderInvocationRequest,
   type ProviderInvocationRequest,
   type ProviderProcessOutcome,
-} from '../src/provider-contracts.ts';
+} from '../src/modules/provider-orchestration/provider-contracts.ts';
 import {
   BLIND_SURVEY_OUTPUT_SCHEMA,
   blindSurveyIntentDigest,
@@ -33,7 +33,7 @@ import {
   type BlindSurveyManifest,
 } from '../src/provider-invocation-store.ts';
 import { PROVIDER_RUNNER_RESIDUALS } from '../src/provider-runner.ts';
-import { startPropose } from '../src/propose-orchestrator.ts';
+import { startPropose } from '../src/application/propose/propose-orchestrator.ts';
 import { createFixtureRepository, git, isWorkflowError } from './fixture.ts';
 
 const CHANGE_ID = 'demo-change';

@@ -5,13 +5,16 @@ import path from 'node:path';
 import test from 'node:test';
 
 import { loadChangeContract } from '../src/contracts.ts';
-import { completeTask, finishSession } from '../src/lifecycle.ts';
+import {
+  completeTask,
+  finishSession,
+} from '../src/application/finalize/lifecycle.ts';
 import {
   abortSession,
   checkSession,
   getSession,
   startSession,
-} from '../src/session.ts';
+} from '../src/application/execute-task/session.ts';
 import {
   configureChecks,
   createFixtureRepository,

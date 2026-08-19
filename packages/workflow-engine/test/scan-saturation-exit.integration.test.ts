@@ -5,12 +5,12 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import { INVESTIGATION_LIMITS } from '../src/investigation-terms.ts';
+import { INVESTIGATION_LIMITS } from '../src/modules/investigation/domain/investigation-terms.ts';
 import {
   scanInvestigationTree,
   type ScanInvestigationTerm,
-} from '../src/investigation-scanner.ts';
-import { normalizeInvestigationTerm } from '../src/investigation-terms.ts';
+} from '../src/modules/investigation/domain/investigation-scanner.ts';
+import { normalizeInvestigationTerm } from '../src/modules/investigation/domain/investigation-terms.ts';
 
 function repository(): string {
   const root = fs.realpathSync(

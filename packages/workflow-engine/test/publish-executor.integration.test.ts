@@ -7,7 +7,7 @@ import { showAuthorityAuditTask } from '../src/authority-audit-service.ts';
 import {
   inspectExternalEffectGrant,
   issueExternalEffectGrant,
-} from '../src/external-effect-grant.ts';
+} from '../src/modules/authority/external-effect-grant.ts';
 import { runRepositoryHook } from '../src/hooks.ts';
 import {
   executePublishGrant,

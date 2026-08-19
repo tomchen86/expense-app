@@ -4,19 +4,19 @@ import fs from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
 
-import { canonicalJson } from '../src/canonical-json.ts';
+import { canonicalJson } from '../src/foundation/canonical-json/canonical-json.ts';
 import {
   classSampleSize,
   planClassSampleAudits,
   type SampleAudit,
-} from '../src/class-sample-audit.ts';
-import { WorkflowError } from '../src/errors.ts';
+} from '../src/modules/investigation/domain/class-sample-audit.ts';
+import { WorkflowError } from '../src/foundation/errors/errors.ts';
 import { createInvestigationCheckpointEnvelope } from '../src/investigation-session.ts';
 import {
   PLAN_REVIEW_COVERAGE,
   readPlanReviewNode,
-} from '../src/plan-review.ts';
-import type { ProviderInvocationRequest } from '../src/provider-contracts.ts';
+} from '../src/modules/assurance/plan-review.ts';
+import type { ProviderInvocationRequest } from '../src/modules/provider-orchestration/provider-contracts.ts';
 import {
   PROVIDER_RUNNER_RESIDUALS,
   type ProviderRunnerReport,
@@ -29,7 +29,7 @@ import {
   getProposeStatus,
   resumePropose,
   type OrdinaryProposeOutput,
-} from '../src/propose-orchestrator.ts';
+} from '../src/application/propose/propose-orchestrator.ts';
 import { installPlanReviewAuthority } from './plan-review-authority-fixture.ts';
 import { driveProposeToDispositions } from './propose-drive-fixture.ts';
 

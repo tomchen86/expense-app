@@ -1,7 +1,7 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import { ExitCode, workflowError } from './errors.js';
+import { ExitCode, workflowError } from './foundation/errors/errors.js';
 import { ensurePlainDirectory, publishPreparedExclusiveLock, reclaimDeadPreparedLock, } from './filesystem-safety.js';
 import { assertHumanResolutionLifecycleBarrier } from './investigation-session-store.js';
 import { assertOwnedLock, listConflictingActiveWorkflowSessionIds, readSessionFile, releaseOwnedLock, withRepositoryLifecycleOperation, } from './session-store.js';

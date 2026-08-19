@@ -2,7 +2,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { isPlanningAssuranceBinding, } from './contracts.js';
-import { ExitCode, workflowError } from './errors.js';
+import { ExitCode, workflowError } from './foundation/errors/errors.js';
 import { ensurePlainDirectory, publishPreparedExclusiveLock, reclaimDeadPreparedLock, withPreparedLockCleanupClaim, } from './filesystem-safety.js';
 import { assertHumanResolutionLifecycleBarrier, reclaimHumanResolutionJournalTemporaries, } from './investigation-session-store.js';
 import { assertGrantLifecycleBarrier } from './grant-store.js';

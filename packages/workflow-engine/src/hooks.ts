@@ -2,15 +2,15 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 import { loadWorkflowConfig } from './contracts.ts';
-import { ExitCode, workflowError } from './errors.ts';
+import { ExitCode, workflowError } from './foundation/errors/errors.ts';
 import { discoverRepository, runGit } from './git.ts';
 import { listStagedPaths } from './git-transitions.ts';
 import { validateWorkflowIntegrationAssets } from './integration-assets.ts';
-import { hasManagedTrailerLine } from './managed-trailers.ts';
-import { assertActivePublishTransaction } from './external-effect-grant.ts';
+import { hasManagedTrailerLine } from './modules/lifecycle/managed-trailers.ts';
+import { assertActivePublishTransaction } from './modules/authority/external-effect-grant.ts';
 import type { MaintainerSignerProvider } from './maintainer-signer.ts';
 import { validateRepositoryState } from './repository-validation.ts';
-import { listSessions } from './session.ts';
+import { listSessions } from './application/execute-task/session.ts';
 
 export type HookResult = {
   hook: string;

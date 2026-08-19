@@ -2,8 +2,8 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 
-import { canonicalJson } from './canonical-json.ts';
-import { ExitCode, workflowError } from './errors.ts';
+import { canonicalJson } from './foundation/canonical-json/canonical-json.ts';
+import { ExitCode, workflowError } from './foundation/errors/errors.ts';
 import type { PersistenceHumanSignatureVerifier } from './intervention-control-persistence.ts';
 import {
   assertRecoveryAuthorityDomain,

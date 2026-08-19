@@ -24,8 +24,8 @@ import {
   type JobRecord,
   type ProviderInvocationProjection,
   type WorkflowRecord,
-} from '../src/execution-core.ts';
-import { WorkflowError } from '../src/errors.ts';
+} from '../src/modules/provider-orchestration/execution-core.ts';
+import { WorkflowError } from '../src/foundation/errors/errors.ts';
 import type { ProviderInvocationRecord } from '../src/provider-invocation-store.ts';
 
 const digest = (character: string): string => `sha256:${character.repeat(64)}`;

@@ -9,20 +9,20 @@ import {
   type LoadedAiAdapterPolicy,
   type LoadedLegacyAiAdapterPolicy,
 } from './ai-adapter-policy.ts';
-import { canonicalJson } from './canonical-json.ts';
+import { canonicalJson } from './foundation/canonical-json/canonical-json.ts';
 import {
   resolvePlanReviewInvocationOwner,
   resolveTaskDiffReviewInvocationOwner,
   resolveTaskStrategyImplementationInvocationOwner,
 } from './evidence-object-store.ts';
-import { ExitCode, workflowError } from './errors.ts';
+import { ExitCode, workflowError } from './foundation/errors/errors.ts';
 import {
   assertReadOnlyProbe,
   projectProviderInvocationExecution,
   type ExecutionFailureKind,
   type ReadOnlyProbeRequest,
   type RetryMode,
-} from './execution-core.ts';
+} from './modules/provider-orchestration/execution-core.ts';
 import {
   acceptLegacyProviderAttemptResult,
   materializeLegacyProviderExecutionJob,
@@ -56,7 +56,7 @@ import {
   type ProviderProcessOutcome,
   type ProviderProcessResult,
   type ProviderRuntimeObservation,
-} from './provider-contracts.ts';
+} from './modules/provider-orchestration/provider-contracts.ts';
 import {
   PROVIDER_RUNNER_RESIDUALS,
   type ProviderRunnerReport,
@@ -65,7 +65,7 @@ import {
   INVESTIGATION_LIMITS,
   normalizeInvestigationTerm,
   type InvestigationTermKind,
-} from './investigation-terms.ts';
+} from './modules/investigation/domain/investigation-terms.ts';
 import {
   assertChangeId,
   assertInvestigationId,
@@ -74,8 +74,11 @@ import {
   assertTaskId,
   type InvestigationRuntimePaths,
 } from './paths.ts';
-import type { CapabilityPurpose, ProviderId } from './provider-registry.ts';
-import type { TaskMandateBinding } from './task-mandate.ts';
+import type {
+  CapabilityPurpose,
+  ProviderId,
+} from './modules/provider-orchestration/provider-registry.ts';
+import type { TaskMandateBinding } from './modules/authority/task-mandate.ts';
 import { registerProviderRetentionInvocation } from './provider-retention-catalog.ts';
 import {
   providerRetentionArtifact,
@@ -114,7 +117,7 @@ import {
   planReviewSnapshotLineCount,
   type PlanReviewTargetSnapshot,
   type PlanReviewSubject,
-} from './plan-review.ts';
+} from './modules/assurance/plan-review.ts';
 import {
   assertTaskDiffReviewChallengeResponseCurrent,
   parseTaskDiffReviewChallengeResponseRecord,
@@ -125,19 +128,19 @@ import {
   TASK_DIFF_REVIEW_OUTPUT_VALIDATOR,
   type TaskDiffReviewChallengeResponseRecord,
   type TaskDiffReviewRecord,
-} from './task-diff-review-artifact.ts';
+} from './modules/assurance/task-diff-review-artifact.ts';
 import {
   parseTaskDiffReviewScope,
   parseTaskDiffReviewSubject,
   type TaskDiffReviewScope,
   type TaskDiffReviewSubject,
-} from './task-diff-review.ts';
+} from './modules/assurance/task-diff-review.ts';
 import {
   TASK_STRATEGY_IMPLEMENTATION_OUTPUT_SCHEMA,
   TASK_STRATEGY_IMPLEMENTATION_OUTPUT_VALIDATOR,
   assertTaskStrategyImplementationManifest,
   type TaskStrategyImplementationManifest,
-} from './task-strategy-provider-contract.ts';
+} from './modules/provider-orchestration/task-strategy-provider-contract.ts';
 import {
   runtimePaths,
   withRepositoryLifecycleOperation,

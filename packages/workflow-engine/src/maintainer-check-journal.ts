@@ -2,17 +2,17 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 
-import { canonicalJson } from './canonical-json.ts';
+import { canonicalJson } from './foundation/canonical-json/canonical-json.ts';
 import type { CheckEvidence } from './check-runner.ts';
-import { isRecord } from './contract-values.ts';
-import { ExitCode, workflowError } from './errors.ts';
+import { isRecord } from './foundation/canonical-json/contract-values.ts';
+import { ExitCode, workflowError } from './foundation/errors/errors.ts';
 import { ensurePlainDirectory } from './filesystem-safety.ts';
 import type {
   MaintainerChecksAttestation,
   MaintainerChecksAttestationV2,
   MaintainerPreapprovalCheck,
-} from './maintainer-grant-v2.ts';
-import type { CheckDependency } from './maintainer-manifest.ts';
+} from './modules/authority/maintainer-grant-v2.ts';
+import type { CheckDependency } from './modules/authority/maintainer-manifest.ts';
 import { writeJsonAtomic } from './session-store.ts';
 
 const DIGEST = /^[0-9a-f]{64}$/;

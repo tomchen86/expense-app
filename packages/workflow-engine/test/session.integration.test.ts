@@ -6,15 +6,15 @@ import test from 'node:test';
 
 import { validateCiPlanningCommit } from '../src/ci-planning.ts';
 import { verifyPullRequest } from '../src/ci.ts';
-import { WorkflowError } from '../src/errors.ts';
+import { WorkflowError } from '../src/foundation/errors/errors.ts';
 import {
   commitSession,
   completeTask,
   finalizeTask,
   finishSession,
-} from '../src/lifecycle.ts';
+} from '../src/application/finalize/lifecycle.ts';
 import { INVESTIGATION_PLANNING_ACTIVATION_MARKER } from '../src/openspec-schema-contract.ts';
-import { commitPlanningTransition } from '../src/planning-transition.ts';
+import { commitPlanningTransition } from '../src/application/propose/planning-transition.ts';
 import { runRegisteredCheck } from '../src/registered-check.ts';
 import {
   readImmutableReport,
@@ -25,7 +25,7 @@ import {
   checkSession,
   getSession,
   startSession,
-} from '../src/session.ts';
+} from '../src/application/execute-task/session.ts';
 import {
   activateInvestigationPlanning,
   addFixtureScripts,

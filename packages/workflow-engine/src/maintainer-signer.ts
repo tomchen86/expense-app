@@ -4,13 +4,13 @@ import os from 'node:os';
 import path from 'node:path';
 
 import { createTrustedExecutionEnvironment } from './execution-environment.ts';
-import { ExitCode, workflowError } from './errors.ts';
+import { ExitCode, workflowError } from './foundation/errors/errors.ts';
 import {
   normalizePostApprovalSubprocessError,
   postApprovalSubprocessBudget,
   runGit,
 } from './git.ts';
-import type { MaintainerPolicy } from './maintainer-policy.ts';
+import type { MaintainerPolicy } from './modules/authority/maintainer-policy.ts';
 
 export type InteractiveSignerContext = {
   stdinIsTty: boolean;

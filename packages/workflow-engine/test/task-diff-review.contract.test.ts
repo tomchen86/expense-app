@@ -16,7 +16,7 @@ import {
   taskDiffReviewCandidateIdentityDigest,
   TASK_DIFF_REVIEW_POLICY_DIGEST,
   type CreateTaskDiffReviewSubjectInput,
-} from '../src/task-diff-review.ts';
+} from '../src/modules/assurance/task-diff-review.ts';
 
 const OID = {
   baseCommit: 'a'.repeat(40),
@@ -378,7 +378,7 @@ test('TaskDiffReview policy requires explicit, behavioral, risky, and unregister
       strategy: 'mechanical-transform',
       paths: [
         {
-          path: 'packages/workflow-engine/src/lifecycle.ts',
+          path: 'packages/workflow-engine/src/application/finalize/lifecycle.ts',
           role: 'lifecycle',
         },
       ],
@@ -388,7 +388,7 @@ test('TaskDiffReview policy requires explicit, behavioral, risky, and unregister
       basis: 'risk-role',
       riskPaths: [
         {
-          path: 'packages/workflow-engine/src/lifecycle.ts',
+          path: 'packages/workflow-engine/src/application/finalize/lifecycle.ts',
           role: 'lifecycle',
         },
       ],

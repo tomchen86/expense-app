@@ -9,7 +9,7 @@ import {
   leaseAttempt,
   type ExecutionPolicySnapshot,
   type WorkflowRecord,
-} from '../src/execution-core.ts';
+} from '../src/modules/provider-orchestration/execution-core.ts';
 
 const digest = (character: string): string => `sha256:${character.repeat(64)}`;
 

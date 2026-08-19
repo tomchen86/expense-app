@@ -6,7 +6,10 @@ import path from 'node:path';
 import test from 'node:test';
 
 import { resolveCheckRunner } from '../src/runner-resolution.ts';
-import { checkSession, startSession } from '../src/session.ts';
+import {
+  checkSession,
+  startSession,
+} from '../src/application/execute-task/session.ts';
 import './runner-closure.integration.test.ts';
 import './runner-package-security.integration.test.ts';
 import {

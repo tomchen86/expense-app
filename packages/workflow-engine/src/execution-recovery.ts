@@ -1,6 +1,6 @@
 import path from 'node:path';
 
-import { projectProviderInvocationExecution } from './execution-core.ts';
+import { projectProviderInvocationExecution } from './modules/provider-orchestration/execution-core.ts';
 import {
   listExecutionJobStates,
   materializeLegacyProviderExecutionJob,

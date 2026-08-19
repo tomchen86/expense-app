@@ -7,7 +7,7 @@ import {
   loadAiAdapterPolicy,
   MAX_AI_ADAPTER_LIMITS,
 } from './ai-adapter-policy.ts';
-import { canonicalJson } from './canonical-json.ts';
+import { canonicalJson } from './foundation/canonical-json/canonical-json.ts';
 import {
   buildClaudeProviderInvocation,
   CLAUDE_EXECUTABLE_CANDIDATES,
@@ -20,7 +20,11 @@ import {
   CODEX_REQUIRED_ROOT_HELP_FLAGS,
 } from './codex-provider-adapter.ts';
 import { loadWorkflowConfig } from './contracts.ts';
-import { ExitCode, workflowError, WorkflowError } from './errors.ts';
+import {
+  ExitCode,
+  workflowError,
+  WorkflowError,
+} from './foundation/errors/errors.ts';
 import { createProviderExecutionEnvironment } from './execution-environment.ts';
 import { executionJobStatePath } from './execution-store.ts';
 import {
@@ -47,7 +51,7 @@ import {
   readProviderInvocationRequest,
   type ProviderInvocationAcceptanceBinding,
 } from './provider-invocation-store.ts';
-import type { ProviderId } from './provider-registry.ts';
+import type { ProviderId } from './modules/provider-orchestration/provider-registry.ts';
 import {
   assembleProviderPromptManifest,
   assertProviderPromptContextCurrent,
@@ -60,7 +64,7 @@ import {
   type ProviderInvocationRequest,
   type ProviderOutputValidator,
   type ProviderProcessOutcome,
-} from './provider-contracts.ts';
+} from './modules/provider-orchestration/provider-contracts.ts';
 
 /**
  * The canonical identity of a resolved provider executable: its reviewed

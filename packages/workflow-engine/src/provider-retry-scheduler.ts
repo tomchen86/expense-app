@@ -3,18 +3,22 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 import { loadAiAdapterPolicy } from './ai-adapter-policy.ts';
-import { canonicalJson } from './canonical-json.ts';
+import { canonicalJson } from './foundation/canonical-json/canonical-json.ts';
 import {
   assertReadOnlyProbe,
   projectProviderInvocationExecution,
   type ExecutionFailureKind,
   type ReadOnlyProbeRequest,
   type RetryMode,
-} from './execution-core.ts';
-import type { GrantRequest } from './execution-governance.ts';
+} from './modules/provider-orchestration/execution-core.ts';
+import type { GrantRequest } from './modules/authority/execution-governance.ts';
 import { inspectExecutionJob } from './execution-runtime.ts';
 import { readExecutionJobState } from './execution-store.ts';
-import { ExitCode, WorkflowError, workflowError } from './errors.ts';
+import {
+  ExitCode,
+  WorkflowError,
+  workflowError,
+} from './foundation/errors/errors.ts';
 import {
   assertPrivateInvestigationDirectory,
   createPrivateCanonicalJson,
@@ -31,11 +35,11 @@ import {
   createPlanReviewRetryEnvelope,
   getProposeStatus,
   resumePropose,
-} from './propose-orchestrator.ts';
+} from './application/propose/propose-orchestrator.ts';
 import {
   createProviderInvocationRequest,
   type ProviderInvocationRequest,
-} from './provider-contracts.ts';
+} from './modules/provider-orchestration/provider-contracts.ts';
 import {
   readProviderInvocation,
   readProviderInvocationRequest,

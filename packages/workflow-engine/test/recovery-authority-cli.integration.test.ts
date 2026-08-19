@@ -10,7 +10,7 @@ import {
   bootstrapRecoveryAuthorityStateRoot,
   resolveRecoveryQuarantineMarker,
 } from '../bootstrap/control-plane-trust.ts';
-import { canonicalJson } from '../src/canonical-json.ts';
+import { canonicalJson } from '../src/foundation/canonical-json/canonical-json.ts';
 import { runHarnessBootstrapCli } from '../src/harness-bootstrap.ts';
 import {
   recoveryAuthorityDescriptorDigest,

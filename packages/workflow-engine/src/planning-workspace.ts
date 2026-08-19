@@ -2,16 +2,16 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 import { replaceTextAtomic } from './atomic-text.ts';
-import { canonicalJson } from './canonical-json.ts';
+import { canonicalJson } from './foundation/canonical-json/canonical-json.ts';
 import { loadWorkflowConfig } from './contracts.ts';
-import { ExitCode, workflowError } from './errors.ts';
+import { ExitCode, workflowError } from './foundation/errors/errors.ts';
 import {
   assertPlainDirectory,
   ensurePlainDirectory,
 } from './filesystem-safety.ts';
 import { discoverRepository, listChangedPaths, runGit } from './git.ts';
 import { assertChangeId } from './paths.ts';
-import { assertPlanningPaths } from './planning-paths.ts';
+import { assertPlanningPaths } from './modules/source/planning-paths.ts';
 import {
   runtimePaths,
   withRepositoryLifecycleOperation,

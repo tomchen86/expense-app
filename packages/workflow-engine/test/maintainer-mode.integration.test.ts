@@ -14,7 +14,7 @@ import {
   validateGrantPayload,
   type MaintainerGrantEnvelope,
   type MaintainerGrantPayload,
-} from '../src/maintainer-grant.ts';
+} from '../src/modules/authority/maintainer-grant.ts';
 import {
   assertInteractiveSignerContext,
   type MaintainerSignerProvider,
@@ -25,25 +25,29 @@ import {
   reserveMaintainerGrant,
   storeAvailableMaintainerGrant,
 } from '../src/maintainer-store.ts';
-import { revokeLegacyMaintainerGrant } from '../src/maintainer-revoke.ts';
+import { revokeLegacyMaintainerGrant } from '../src/application/control-plane/maintainer-revoke.ts';
 import {
   loadMaintainerPolicy,
   parseMaintainerPolicy,
   type MaintainerPolicy,
-} from '../src/maintainer-policy.ts';
+} from '../src/modules/authority/maintainer-policy.ts';
 import {
   createFixtureRepository,
   git,
   isWorkflowError,
   sourceRepositoryRoot,
 } from './fixture.ts';
-import { abortSession, checkSession, startSession } from '../src/session.ts';
+import {
+  abortSession,
+  checkSession,
+  startSession,
+} from '../src/application/execute-task/session.ts';
 import {
   commitSession,
   completeTask,
   finishSession,
-} from '../src/lifecycle.ts';
-import { commitPlanningTransition } from '../src/planning-transition.ts';
+} from '../src/application/finalize/lifecycle.ts';
+import { commitPlanningTransition } from '../src/application/propose/planning-transition.ts';
 import {
   runtimePaths,
   withRepositoryLifecycleOperation,
@@ -52,16 +56,16 @@ import {
   checkAuthoritySession,
   readAuthoritySession,
   startAuthoritySession,
-} from '../src/maintainer-session.ts';
+} from '../src/application/control-plane/maintainer-session.ts';
 import { readImmutableReport } from '../src/report-store.ts';
 import {
   commitAuthoritySession,
   SimulatedAuthorityCrash,
-} from '../src/maintainer-commit.ts';
+} from '../src/application/control-plane/maintainer-commit.ts';
 import {
   readAuthorityCommitJournal,
   recoverAuthorityCommit,
-} from '../src/maintainer-recovery.ts';
+} from '../src/application/control-plane/maintainer-recovery.ts';
 import { commitFacts } from '../src/git-transitions.ts';
 import { validateCiAuthorityCommit } from '../src/ci-authority.ts';
 import { listRangeCommits } from '../src/ci-git.ts';
@@ -87,7 +91,7 @@ const POLICY: MaintainerPolicy = {
     'workflow/schemas/**',
   ],
   sealedImmutablePaths: [
-    'packages/workflow-engine/src/maintainer-policy.ts',
+    'packages/workflow-engine/src/modules/authority/maintainer-policy.ts',
     'workflow/maintainer-policy.json',
     'workflow/schemas/maintainer-policy.schema.json',
   ],
@@ -151,7 +155,7 @@ test('repository maintainer policy is strict, stable, and bootstrap-scoped', () 
   );
   assert.ok(
     policy.sealedImmutablePaths.includes(
-      'packages/workflow-engine/src/maintainer-policy.ts',
+      'packages/workflow-engine/src/modules/authority/maintainer-policy.ts',
     ),
   );
 });

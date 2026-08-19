@@ -2,7 +2,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { parseCheckCommand, } from './contracts.js';
-import { ExitCode, WorkflowError, workflowError } from './errors.js';
+import { ExitCode, WorkflowError, workflowError, } from './foundation/errors/errors.js';
 import { collectWorkspacePackageClosure, resolveDeclaredPackage, } from './package-closure.js';
 export function resolveCheckRunner(repositoryRoot, checkId, definition) {
     const command = parseCheckCommand(definition.command);

@@ -4,13 +4,16 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import type { VerifiedApprovalProof } from '../src/grant-approval.ts';
+import type { VerifiedApprovalProof } from '../src/modules/authority/grant-approval.ts';
 import {
   createGrantCoordinatorKernel,
   type GrantApprovalSession,
   type TrustedGrantPresentation,
-} from '../src/grant-coordinator.ts';
-import type { GrantRequestInput, StateBinding } from '../src/grant-core.ts';
+} from '../src/modules/authority/grant-coordinator.ts';
+import type {
+  GrantRequestInput,
+  StateBinding,
+} from '../src/modules/authority/grant-core.ts';
 import {
   assertGrantLifecycleBarrier,
   grantStorePaths,
@@ -21,13 +24,13 @@ import {
   GRANT_PROOF_SSH_V1_CONFIGURATION_DIGEST,
   HUMAN_GATE_MACOS_V1_CONFIGURATION_DIGEST,
   parseGrantPolicyV2,
-} from '../src/grant-policy.ts';
+} from '../src/modules/authority/grant-policy.ts';
 import {
   createTransitionRegistry,
   grantTransitionPreconditionChanged,
   type TransitionDefinition,
-} from '../src/grant-transition-registry.ts';
-import { ExitCode, workflowError } from '../src/errors.ts';
+} from '../src/modules/authority/grant-transition-registry.ts';
+import { ExitCode, workflowError } from '../src/foundation/errors/errors.ts';
 import { isWorkflowError } from './fixture.ts';
 
 const NOW = new Date('2026-08-18T04:00:00.000Z');

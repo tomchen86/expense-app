@@ -11,9 +11,13 @@ import {
   recordAuthorityRefusal,
   withAuthorityRefusalAudit,
   type AuthorityRefusalAuditBinding,
-} from '../src/authority-refusal-audit.ts';
+} from '../src/modules/authority/authority-refusal-audit.ts';
 import { verifyAuthorityAuditEvents } from '../src/authority-audit-service.ts';
-import { ExitCode, WorkflowError, workflowError } from '../src/errors.ts';
+import {
+  ExitCode,
+  WorkflowError,
+  workflowError,
+} from '../src/foundation/errors/errors.ts';
 
 function fixture(): {
   root: string;

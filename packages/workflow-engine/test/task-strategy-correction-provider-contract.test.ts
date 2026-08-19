@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import test from 'node:test';
 
-import { canonicalJson } from '../src/canonical-json.ts';
+import { canonicalJson } from '../src/foundation/canonical-json/canonical-json.ts';
 import type {
   CheckEvidence,
   ObservedCheckFailure,
@@ -14,7 +14,7 @@ import {
   createTaskStrategyCorrectionSubject,
   createTaskStrategyImplementationManifest,
   createTaskStrategyImplementationSubject,
-} from '../src/task-strategy-provider-contract.ts';
+} from '../src/modules/provider-orchestration/task-strategy-provider-contract.ts';
 
 const SESSION_ID =
   'session-20260813000000000-00000000-0000-4000-8000-000000000001';

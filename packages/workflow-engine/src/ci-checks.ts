@@ -8,7 +8,7 @@ import {
   assertDisposableDatabase,
   createCheckEnvironment,
 } from './database-policy.ts';
-import { ExitCode, workflowError } from './errors.ts';
+import { ExitCode, workflowError } from './foundation/errors/errors.ts';
 import { discoverRepository, fingerprintWorkingState } from './git.ts';
 import { validateRepositoryState } from './repository-validation.ts';
 

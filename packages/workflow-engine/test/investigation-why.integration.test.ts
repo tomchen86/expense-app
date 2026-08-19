@@ -10,11 +10,11 @@ import {
   readInvestigationGroupNode,
   type DeclaredInvestigationRoot,
   type InvestigationDispositionInput,
-} from '../src/investigation-groups.ts';
+} from '../src/modules/investigation/domain/investigation-groups.ts';
 import {
   projectInvestigationLedger,
   validateInvestigationLedgerProjection,
-} from '../src/investigation-design-projection.ts';
+} from '../src/modules/projection/investigation-design-projection.ts';
 import {
   createInvestigationWhyNodes,
   deriveInvestigationFullBlobManifest,
@@ -22,7 +22,7 @@ import {
   validateInvestigationWhyEvidence,
   type InvestigationWhyAnswer,
 } from '../src/investigation-why.ts';
-import { createMutationClassPolicy } from '../src/mutation-class-policy.ts';
+import { createMutationClassPolicy } from '../src/modules/source/mutation-class-policy.ts';
 import type {
   TrackedTreeEntry,
   TrackedTreeSnapshot,

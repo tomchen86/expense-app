@@ -1,11 +1,11 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { canonicalJson } from './canonical-json.js';
-import { isRecord } from './contract-values.js';
-import { ExitCode, workflowError } from './errors.js';
+import { canonicalJson } from './foundation/canonical-json/canonical-json.js';
+import { isRecord } from './foundation/canonical-json/contract-values.js';
+import { ExitCode, workflowError } from './foundation/errors/errors.js';
 import { ensurePlainDirectory } from './filesystem-safety.js';
-import { assertApprovalSubject, assertGrantChallenge, createApprovalSubject, } from './grant-core.js';
-import { freezeGrantCanonical, GRANT_SHA256_DIGEST, GRANT_STABLE_ID, GRANT_UUID_V4, grantHasExactKeys, grantSameStrings, parseGrantTimestamp, } from './grant-primitives.js';
+import { assertApprovalSubject, assertGrantChallenge, createApprovalSubject, } from './modules/authority/grant-core.js';
+import { freezeGrantCanonical, GRANT_SHA256_DIGEST, GRANT_STABLE_ID, GRANT_UUID_V4, grantHasExactKeys, grantSameStrings, parseGrantTimestamp, } from './modules/authority/grant-primitives.js';
 const MODULE_VERSION = /^[1-9][0-9]*$/;
 const IDENTITY = /^[A-Za-z0-9][A-Za-z0-9._@+-]{0,127}$/;
 const RECORD_FILE = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\.json$/;

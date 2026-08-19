@@ -1,13 +1,13 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { assessSemanticFreshness } from '../src/semantic-freshness.ts';
+import { assessSemanticFreshness } from '../src/modules/why-knowledge/semantic-freshness.ts';
 import {
   assertLedgerEntry,
   createLedgerEntry,
   dependencySetDigest,
   type LedgerEntryInput,
-} from '../src/semantic-ledger.ts';
+} from '../src/modules/why-knowledge/semantic-ledger.ts';
 import { isWorkflowError } from './fixture.ts';
 
 const POLICY = `sha256:${'1'.repeat(64)}`;
@@ -19,7 +19,7 @@ function input(overrides: Partial<LedgerEntryInput> = {}): LedgerEntryInput {
     subject: {
       subjectId: 'investigation.resume-propose',
       kind: 'symbol',
-      path: 'packages/workflow-engine/src/propose-orchestrator.ts',
+      path: 'packages/workflow-engine/src/application/propose/propose-orchestrator.ts',
       symbol: 'resumePropose',
     },
     binding: {

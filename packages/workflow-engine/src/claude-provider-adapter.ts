@@ -1,5 +1,5 @@
-import { canonicalJson } from './canonical-json.ts';
-import type { ProviderInvocationPlan } from './provider-contracts.ts';
+import { canonicalJson } from './foundation/canonical-json/canonical-json.ts';
+import type { ProviderInvocationPlan } from './modules/provider-orchestration/provider-contracts.ts';
 
 /**
  * Fixed, code-owned absolute Claude executable candidates per platform. Deeply

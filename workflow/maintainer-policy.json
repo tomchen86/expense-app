@@ -24,10 +24,10 @@
     ".github/workflows/workflow-assurance.yml",
     "packages/workflow-engine/src/ci-authority.ts",
     "packages/workflow-engine/src/ci.ts",
-    "packages/workflow-engine/src/maintainer-grant.ts",
-    "packages/workflow-engine/src/maintainer-policy.ts",
     "packages/workflow-engine/src/maintainer-signer.ts",
-    "packages/workflow-engine/src/managed-trailers.ts",
+    "packages/workflow-engine/src/modules/authority/maintainer-grant.ts",
+    "packages/workflow-engine/src/modules/authority/maintainer-policy.ts",
+    "packages/workflow-engine/src/modules/lifecycle/managed-trailers.ts",
     "workflow/maintainer-policy.json",
     "workflow/schemas/maintainer-grant.schema.json",
     "workflow/schemas/maintainer-policy.schema.json"

@@ -10,7 +10,7 @@ import {
   EXTERNAL_EFFECT_SIGNATURE_NAMESPACE,
   issueExternalEffectGrant,
   type ExternalEffectGrantRequest,
-} from '../src/external-effect-grant.ts';
+} from '../src/modules/authority/external-effect-grant.ts';
 import {
   EFFECT_GRANT_ID,
   EFFECT_ISSUED_AT,

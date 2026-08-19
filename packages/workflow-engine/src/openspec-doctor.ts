@@ -1,6 +1,6 @@
 import path from 'node:path';
 
-import { WorkflowError } from './errors.ts';
+import { WorkflowError } from './foundation/errors/errors.ts';
 import { assertOpenSpecSchemaDirectory } from './openspec-adapter.ts';
 import {
   createOpenSpecProcess,

@@ -11,7 +11,7 @@ import {
   canonicalAuthorityApplicationReceiptPayload,
   parseAuthorityApplicationReceiptEnvelope,
   type AuthorityApplicationReceiptEnvelope,
-} from '../src/authority-application-receipt.ts';
+} from '../src/modules/authority/authority-application-receipt.ts';
 import {
   canonicalMaintainerGrantV2Envelope,
   canonicalMaintainerGrantV2Payload,
@@ -21,17 +21,17 @@ import {
   validateMaintainerGrantV2AuthorityBinding,
   type MaintainerGrantV2Envelope,
   type MaintainerGrantV2Payload,
-} from '../src/maintainer-grant-v2.ts';
+} from '../src/modules/authority/maintainer-grant-v2.ts';
 import {
   approveAndApplyMaintainerGrantV2 as approveAndApplyMaintainerGrantV2Production,
   prepareMaintainerGrantV2Checks,
   reissueAndApplyMaintainerGrantV2 as reissueAndApplyMaintainerGrantV2Production,
   revokeMaintainerGrantV2,
-} from '../src/maintainer-approve.ts';
+} from '../src/application/control-plane/maintainer-approve.ts';
 import {
   issueAuthorityAttestation,
   projectAuthorityAttestationRelay,
-} from '../src/maintainer-attestation.ts';
+} from '../src/application/control-plane/maintainer-attestation.ts';
 import { validateCiAuthorityCommit } from '../src/ci-authority.ts';
 import { verifyBaseAuthorityAttestations } from '../src/ci-attestation.ts';
 import { listRangeCommits } from '../src/ci-git.ts';
@@ -39,11 +39,11 @@ import { replayCommitSequence } from '../src/ci-sequence.ts';
 import {
   commitAuthoritySession as commitAuthoritySessionProduction,
   SimulatedAuthorityCrash,
-} from '../src/maintainer-commit.ts';
+} from '../src/application/control-plane/maintainer-commit.ts';
 import {
   readAuthorityCommitJournal,
   recoverAuthorityCommit as recoverAuthorityCommitProduction,
-} from '../src/maintainer-recovery.ts';
+} from '../src/application/control-plane/maintainer-recovery.ts';
 import {
   authorityAuditLedgerPaths,
   deriveAuthorityAuditRepositoryId,
@@ -62,21 +62,21 @@ import {
   storeImmutableCandidateBundle,
   type CandidateChecksAttestation,
   type CandidateChecksAttestationV3,
-} from '../src/maintainer-candidate.ts';
+} from '../src/modules/authority/maintainer-candidate.ts';
 import type { MaintainerSignerProvider } from '../src/maintainer-signer.ts';
-import { parseMaintainerPolicy } from '../src/maintainer-policy.ts';
+import { parseMaintainerPolicy } from '../src/modules/authority/maintainer-policy.ts';
 import {
   abortAuthoritySession,
   checkAuthoritySession,
   readAuthoritySession,
   startAuthoritySession,
-} from '../src/maintainer-session.ts';
+} from '../src/application/control-plane/maintainer-session.ts';
 import { inspectMaintainerGrants } from '../src/maintainer-store.ts';
 import {
   authorizeTaskMandate,
   inspectActiveTaskMandateBinding,
   revokeTaskMandate,
-} from '../src/task-mandate.ts';
+} from '../src/modules/authority/task-mandate.ts';
 import {
   REQUIRED_PROTECTED_CAPABILITIES,
   computeProtectedCapabilityEntryDigests,
@@ -232,7 +232,9 @@ function installV2TrustBase(repository: string): void {
         evidencePaths: ['packages/workflow-engine/test/**'],
         policyPaths: ['workflow/**'],
         verificationInfrastructurePaths: ['.github/workflows/**'],
-        forbiddenPaths: ['packages/workflow-engine/src/maintainer-grant.ts'],
+        forbiddenPaths: [
+          'packages/workflow-engine/src/modules/authority/maintainer-grant.ts',
+        ],
         constraints: {
           evidenceOnlyGrantForbidden: true,
           samePackageRequired: true,
@@ -252,7 +254,9 @@ function installV2TrustBase(repository: string): void {
         evidencePaths: ['packages/workflow-engine/test/**'],
         policyPaths: ['workflow/**'],
         verificationInfrastructurePaths: ['.github/workflows/**'],
-        forbiddenPaths: ['packages/workflow-engine/src/maintainer-grant.ts'],
+        forbiddenPaths: [
+          'packages/workflow-engine/src/modules/authority/maintainer-grant.ts',
+        ],
         constraints: {
           evidenceOnlyGrantForbidden: true,
           samePackageRequired: true,
@@ -279,7 +283,7 @@ function installV2TrustBase(repository: string): void {
   fs.writeFileSync(
     path.join(
       repository,
-      'packages/workflow-engine/src/execution-governance.ts',
+      'packages/workflow-engine/src/modules/authority/execution-governance.ts',
     ),
     'export const GRANT_LIMIT = 1;\n',
   );
@@ -321,7 +325,9 @@ function installV2TrustBase(repository: string): void {
   git(repository, ['commit', '-m', 'Install maintainer v2 trust base files']);
 
   const contentBase = git(repository, ['rev-parse', 'HEAD']).trim();
-  const entrypoints = ['packages/workflow-engine/src/execution-governance.ts'];
+  const entrypoints = [
+    'packages/workflow-engine/src/modules/authority/execution-governance.ts',
+  ];
   const dependencies = [
     'packages/workflow-engine/src/protected-capabilities.ts',
     'workflow/protected-capabilities.json',
@@ -877,13 +883,13 @@ test('repository publishes the trust-base capability profile used by v2', () => 
   );
   assert.equal(
     value.profiles[PROFILE_ID]?.forbiddenPaths.includes(
-      'packages/workflow-engine/src/maintainer-approve.ts',
+      'packages/workflow-engine/src/application/control-plane/maintainer-approve.ts',
     ),
     true,
   );
   assert.equal(
     value.profiles[PROFILE_ID]?.forbiddenPaths.includes(
-      'packages/workflow-engine/src/task-mandate.ts',
+      'packages/workflow-engine/src/modules/authority/task-mandate.ts',
     ),
     true,
   );
@@ -910,13 +916,13 @@ test('repository publishes a protected capability dependency closure', () => {
   );
   assert.equal(
     protectedPaths.includes(
-      'packages/workflow-engine/src/execution-governance.ts',
+      'packages/workflow-engine/src/modules/authority/execution-governance.ts',
     ),
     true,
   );
   assert.equal(
     protectedPaths.includes(
-      'packages/workflow-engine/src/maintainer-candidate.ts',
+      'packages/workflow-engine/src/modules/authority/maintainer-candidate.ts',
     ),
     true,
   );
@@ -965,7 +971,7 @@ test('protected dependency closure cannot pass as ordinary implementation', () =
     fs.writeFileSync(
       path.join(
         repository,
-        'packages/workflow-engine/src/execution-governance.ts',
+        'packages/workflow-engine/src/modules/authority/execution-governance.ts',
       ),
       'export const GRANT_LIMIT = 2;\n',
     );
@@ -1107,7 +1113,7 @@ test('approve-and-apply preflight refusal is task-bound, durable, and retry-idem
     fs.writeFileSync(
       path.join(
         repository,
-        'packages/workflow-engine/src/execution-governance.ts',
+        'packages/workflow-engine/src/modules/authority/execution-governance.ts',
       ),
       'export const GRANT_LIMIT = 2;\n',
     );

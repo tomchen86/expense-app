@@ -1,5 +1,5 @@
-import { canonicalJson } from './canonical-json.ts';
-import { projectProviderInvocationExecution } from './execution-core.ts';
+import { canonicalJson } from './foundation/canonical-json/canonical-json.ts';
+import { projectProviderInvocationExecution } from './modules/provider-orchestration/execution-core.ts';
 import {
   compactDurableEpochTransitionReceipts,
   inspectDurableEpochContextStore,
@@ -9,12 +9,16 @@ import {
   pruneDurableEvidence,
   type DurablePruneReceipt,
   type EvidenceRetentionRecord,
-} from './execution-governance.ts';
-import { ExitCode, WorkflowError, workflowError } from './errors.ts';
+} from './modules/authority/execution-governance.ts';
+import {
+  ExitCode,
+  WorkflowError,
+  workflowError,
+} from './foundation/errors/errors.ts';
 import { discoverRepository, runGit } from './git.ts';
 import { listProviderInvocationLifecycleProjections } from './investigation-session-store.ts';
 import { loadInvestigationRuntimeContext } from './lifecycle-context.ts';
-import { parseMaintainerPolicy } from './maintainer-policy.ts';
+import { parseMaintainerPolicy } from './modules/authority/maintainer-policy.ts';
 import {
   createInteractiveSshSigner,
   type MaintainerSignerProvider,
@@ -35,7 +39,7 @@ import {
 import {
   withActiveTaskMandateBinding,
   type TaskMandateBinding,
-} from './task-mandate.ts';
+} from './modules/authority/task-mandate.ts';
 
 export const RETENTION_MAINTENANCE_MAX_WORKFLOWS = 100;
 

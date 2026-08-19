@@ -21,9 +21,9 @@ import {
   storeImmutableCandidateBundle,
   type CandidateChecksAttestation,
   type CandidateChecksAttestationV3,
-} from '../src/maintainer-candidate.ts';
-import type { PatchManifest } from '../src/maintainer-manifest.ts';
-import { canonicalPatchManifest } from '../src/maintainer-manifest.ts';
+} from '../src/modules/authority/maintainer-candidate.ts';
+import type { PatchManifest } from '../src/modules/authority/maintainer-manifest.ts';
+import { canonicalPatchManifest } from '../src/modules/authority/maintainer-manifest.ts';
 import { isWorkflowError } from './fixture.ts';
 
 const OID_A = 'a'.repeat(40);

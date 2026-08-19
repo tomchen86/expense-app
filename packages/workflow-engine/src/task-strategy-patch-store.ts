@@ -1,8 +1,8 @@
 import crypto from 'node:crypto';
 import path from 'node:path';
 
-import { canonicalJson } from './canonical-json.ts';
-import { ExitCode, workflowError } from './errors.ts';
+import { canonicalJson } from './foundation/canonical-json/canonical-json.ts';
+import { ExitCode, workflowError } from './foundation/errors/errors.ts';
 import {
   createPrivateCanonicalJson,
   privatePathExists,
@@ -13,7 +13,10 @@ import {
   normalizeChangedPath,
   type InvestigationRuntimePaths,
 } from './paths.ts';
-import { isProviderId, type ProviderId } from './provider-registry.ts';
+import {
+  isProviderId,
+  type ProviderId,
+} from './modules/provider-orchestration/provider-registry.ts';
 
 const DIGEST = /^[0-9a-f]{64}$/;
 const GIT_OBJECT_ID = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;

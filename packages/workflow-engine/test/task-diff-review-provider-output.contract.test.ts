@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import test from 'node:test';
 
-import { canonicalJson } from '../src/canonical-json.ts';
+import { canonicalJson } from '../src/foundation/canonical-json/canonical-json.ts';
 import {
   parseTaskDiffReviewContinuationSubmission,
   parseTaskDiffReviewSubmission,
@@ -13,8 +13,8 @@ import {
   TASK_DIFF_REVIEW_OUTPUT_VALIDATOR,
   TASK_DIFF_REVIEW_PROVIDER_OUTPUT_SCHEMA,
   type TaskDiffReviewSubmission,
-} from '../src/task-diff-review-artifact.ts';
-import { TASK_DIFF_REVIEW_COVERAGE } from '../src/task-diff-review.ts';
+} from '../src/modules/assurance/task-diff-review-artifact.ts';
+import { TASK_DIFF_REVIEW_COVERAGE } from '../src/modules/assurance/task-diff-review.ts';
 
 test('TaskDiffReview provider output schema and validator bind the complete semantic grammar', () => {
   const submission = validSubmission();

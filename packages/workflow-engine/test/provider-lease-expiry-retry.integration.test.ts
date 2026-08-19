@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import test from 'node:test';
 
-import { projectProviderInvocationExecution } from '../src/execution-core.ts';
+import { projectProviderInvocationExecution } from '../src/modules/provider-orchestration/execution-core.ts';
 import { readExecutionJobState } from '../src/execution-store.ts';
 import { discoverRepository } from '../src/git.ts';
 import {
@@ -10,7 +10,7 @@ import {
   getInvestigationStatus,
 } from '../src/investigation-session.ts';
 import { investigationRuntimePaths } from '../src/paths.ts';
-import { startPropose } from '../src/propose-orchestrator.ts';
+import { startPropose } from '../src/application/propose/propose-orchestrator.ts';
 import {
   claimProviderInvocation,
   failProviderInvocation,

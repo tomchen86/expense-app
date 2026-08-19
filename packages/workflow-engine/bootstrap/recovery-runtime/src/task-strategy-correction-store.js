@@ -1,9 +1,9 @@
 import crypto from 'node:crypto';
 import path from 'node:path';
 import { DEFAULT_AI_ADAPTER_RETRY_ACCOUNTING } from './ai-adapter-policy.js';
-import { canonicalJson } from './canonical-json.js';
+import { canonicalJson } from './foundation/canonical-json/canonical-json.js';
 import { parseObservedCheckFailure, } from './check-runner.js';
-import { ExitCode, workflowError } from './errors.js';
+import { ExitCode, workflowError } from './foundation/errors/errors.js';
 import { createPrivateCanonicalJson, privatePathExists, readPrivateCanonicalJson, withPrivateRuntimeLock, } from './investigation-session-store.js';
 import { assertSessionId } from './paths.js';
 const DIGEST = /^[0-9a-f]{64}$/u;

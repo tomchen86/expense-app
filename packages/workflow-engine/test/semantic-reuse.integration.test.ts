@@ -4,15 +4,21 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import type { FreshnessObservation } from '../src/semantic-freshness.ts';
-import { createLedgerEntry, type LedgerEntry } from '../src/semantic-ledger.ts';
+import type { FreshnessObservation } from '../src/modules/why-knowledge/semantic-freshness.ts';
+import {
+  createLedgerEntry,
+  type LedgerEntry,
+} from '../src/modules/why-knowledge/semantic-ledger.ts';
 import {
   readLedgerEntry,
   readLedgerIndex,
   updateLedgerIndex,
   writeLedgerEntry,
 } from '../src/semantic-ledger-store.ts';
-import { planSemanticReuse, subjectsOwedDepth } from '../src/semantic-reuse.ts';
+import {
+  planSemanticReuse,
+  subjectsOwedDepth,
+} from '../src/modules/why-knowledge/semantic-reuse.ts';
 import { isWorkflowError } from './fixture.ts';
 
 const POLICY = `sha256:${'1'.repeat(64)}`;

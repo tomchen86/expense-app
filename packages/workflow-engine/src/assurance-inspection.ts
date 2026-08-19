@@ -7,19 +7,22 @@ import {
   type AssuranceFloors,
   type CoverageTier,
   type InvestigationChangeClass,
-} from './assurance-assessment-chain.ts';
+} from './modules/assurance/assurance-assessment-chain.ts';
 import { loadWorkflowConfig, parseInvestigationArtifact } from './contracts.ts';
-import { ExitCode, workflowError } from './errors.ts';
+import { ExitCode, workflowError } from './foundation/errors/errors.ts';
 import { discoverRepository } from './git.ts';
-import { parsePathRoleRegistry } from './path-role-registry.ts';
+import { parsePathRoleRegistry } from './modules/source/path-role-registry.ts';
 import {
   inspectPlanningShadowMetrics,
   type PlanningShadowMetrics,
-} from './planning-shadow-metrics.ts';
+} from './modules/assurance/planning-shadow-metrics.ts';
 import { readLedgerIndex, readLedgerEntry } from './semantic-ledger-store.ts';
-import { planSemanticReuse, type ReusePlan } from './semantic-reuse.ts';
-import type { FreshnessObservation } from './semantic-freshness.ts';
-import type { LedgerEntry } from './semantic-ledger.ts';
+import {
+  planSemanticReuse,
+  type ReusePlan,
+} from './modules/why-knowledge/semantic-reuse.ts';
+import type { FreshnessObservation } from './modules/why-knowledge/semantic-freshness.ts';
+import type { LedgerEntry } from './modules/why-knowledge/semantic-ledger.ts';
 
 export type AssuranceInspection = Readonly<{
   schemaVersion: 1;

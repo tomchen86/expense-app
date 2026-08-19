@@ -10,10 +10,13 @@ import {
   workflowCommandGuidance,
   workflowFailureRecoveryCommand,
   workflowResultNextSteps,
-} from '../src/workflow-guidance.ts';
-import { ExitCode, workflowError } from '../src/errors.ts';
-import { reviseTask } from '../src/task-revision.ts';
-import { getSession, startSession } from '../src/session.ts';
+} from '../src/modules/guidance/next-steps/workflow-guidance.ts';
+import { ExitCode, workflowError } from '../src/foundation/errors/errors.ts';
+import { reviseTask } from '../src/application/revise/task-revision.ts';
+import {
+  getSession,
+  startSession,
+} from '../src/application/execute-task/session.ts';
 import {
   configureChecks,
   createFixtureRepository,

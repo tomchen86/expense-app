@@ -10,12 +10,12 @@ import {
   dispatchBootstrapInterventionCommand,
   type BootstrapInterventionCliDependencies,
 } from '../src/intervention-control-bootstrap-cli.ts';
-import { createEngineArtifact } from '../src/intervention-control.ts';
+import { createEngineArtifact } from '../src/modules/authority/intervention-control.ts';
 import { recoverPersistedEngineAdoption } from '../src/intervention-control-persistence.ts';
 import {
   persistInterventionEngineArtifact,
   readMaintenanceGrantForParent,
-} from '../src/intervention-maintenance.ts';
+} from '../src/application/control-plane/intervention-maintenance.ts';
 
 const NOW = new Date('2026-08-03T10:00:00.000Z');
 const AFTER_EXPIRY = new Date('2026-08-03T10:31:00.000Z');

@@ -7,34 +7,34 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 import { bootstrapInterventionStateRoot } from '../bootstrap/control-plane-trust.ts';
-import { canonicalJson } from '../src/canonical-json.ts';
-import { produceControlPlaneApprovalCandidateV2 } from '../src/control-plane-promotion-producer.ts';
+import { canonicalJson } from '../src/foundation/canonical-json/canonical-json.ts';
+import { produceControlPlaneApprovalCandidateV2 } from '../src/application/control-plane/control-plane-promotion-producer.ts';
 import {
   createEngineArtifact,
   createProtectedCapabilityManifest,
   protectedCapabilityClosureDigest,
   REQUIRED_PROTECTED_CAPABILITIES,
   type ProtectedCapabilityEntry,
-} from '../src/intervention-control.ts';
+} from '../src/modules/authority/intervention-control.ts';
 import { persistInterventionPlan } from '../src/intervention-control-persistence.ts';
 import { dispatchProductionControlPlaneUpdaterCommand } from '../src/intervention-control-updater-cli.ts';
 import {
   readControlPlaneSupervisorState,
   type ControlPlaneApprovalSummaryV2,
   type ControlPlaneApprovalSummaryV3,
-} from '../src/intervention-control-updater.ts';
-import { persistInterventionEngineArtifact } from '../src/intervention-maintenance.ts';
+} from '../src/application/control-plane/intervention-control-updater.ts';
+import { persistInterventionEngineArtifact } from '../src/application/control-plane/intervention-maintenance.ts';
 import {
   buildImmutableCandidateBundle,
   storeCandidateSupportingArtifacts,
   storeImmutableCandidateBundle,
   type CandidateSupportingArtifactSet,
-} from '../src/maintainer-candidate.ts';
+} from '../src/modules/authority/maintainer-candidate.ts';
 import {
   buildMaintainerPatchManifest,
   type CapabilityProfile,
-} from '../src/maintainer-manifest.ts';
-import type { TrustedMaintainerSigner } from '../src/maintainer-policy.ts';
+} from '../src/modules/authority/maintainer-manifest.ts';
+import type { TrustedMaintainerSigner } from '../src/modules/authority/maintainer-policy.ts';
 import type { MaintainerSignerProvider } from '../src/maintainer-signer.ts';
 import { loadProtectedCapabilitiesFromTrustBase } from '../src/protected-capabilities.ts';
 import { createFixtureRepository, git } from './fixture.ts';

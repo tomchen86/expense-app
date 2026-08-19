@@ -9,7 +9,7 @@ import {
   readStoredCandidateSupportingArtifact,
   storeCandidateSupportingArtifacts,
   type CandidateSupportingArtifactSet,
-} from '../src/maintainer-candidate.ts';
+} from '../src/modules/authority/maintainer-candidate.ts';
 import { isWorkflowError } from './fixture.ts';
 
 const CHANGE_ID = 'demo-change';

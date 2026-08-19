@@ -6,8 +6,12 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import { canonicalJson } from '../src/canonical-json.ts';
-import { ExitCode, WorkflowError, workflowError } from '../src/errors.ts';
+import { canonicalJson } from '../src/foundation/canonical-json/canonical-json.ts';
+import {
+  ExitCode,
+  WorkflowError,
+  workflowError,
+} from '../src/foundation/errors/errors.ts';
 import {
   controlPlaneCandidateDigest,
   controlPlaneIndependentReviewAttestationDigest,
@@ -19,7 +23,7 @@ import {
   type ControlPlaneIndependentReviewAttestationEnvelope,
   type ExactControlPlaneChange,
   type ProtectedCapabilityEntry,
-} from '../src/intervention-control.ts';
+} from '../src/modules/authority/intervention-control.ts';
 import {
   createControlPlanePromotionBundle,
   createControlPlaneRecoveryBundle,
@@ -29,7 +33,7 @@ import {
   readControlPlaneSupervisorState,
   recoverControlPlanePromotion,
   type ControlPlaneUpdaterAuditRecord,
-} from '../src/intervention-control-updater.ts';
+} from '../src/application/control-plane/intervention-control-updater.ts';
 import {
   REQUIRED_PROTECTED_CAPABILITIES as TYPED_REQUIRED_PROTECTED_CAPABILITIES,
   type ProtectedCapabilitiesManifest as TypedProtectedCapabilitiesManifest,

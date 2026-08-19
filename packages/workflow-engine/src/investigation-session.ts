@@ -1,26 +1,26 @@
 import crypto from 'node:crypto';
 
 import { loadAiAdapterPolicy } from './ai-adapter-policy.ts';
-import { canonicalJson } from './canonical-json.ts';
+import { canonicalJson } from './foundation/canonical-json/canonical-json.ts';
 import {
   compareAndSwapEvidenceRefsDocument,
   investigationEvidenceRefsClosureDigest,
   quarantineUnsafeEvidenceRefsDocument,
   readInvestigationEvidenceRefsClosure,
 } from './evidence-object-store.ts';
-import { ExitCode, workflowError } from './errors.ts';
+import { ExitCode, workflowError } from './foundation/errors/errors.ts';
 import {
   createReplacementAttempt,
   providerExecutionEnvironmentDigest,
   providerExecutionPolicySnapshot,
   type RetryMode,
-} from './execution-core.ts';
+} from './modules/provider-orchestration/execution-core.ts';
 import {
   loadProviderExecutionRepairContext,
   preflightProviderRepairRetry,
 } from './provider-execution-governance.ts';
 import { runGit } from './git.ts';
-import { copyGrantDate } from './grant-primitives.ts';
+import { copyGrantDate } from './modules/authority/grant-primitives.ts';
 import {
   assertHumanResolutionDecision,
   assertInvestigationCheckpointEnvelope,
@@ -93,10 +93,10 @@ import {
   loadMaintainerPolicyForResolution,
   parseHumanResolutionGrantEnvelope,
   verifyHumanResolutionGrantForRevocation,
-} from './maintainer-grant.ts';
-import type { HumanRevocationOptions } from './human-revocation.ts';
-import { IMPLEMENTATION_RECONCILIATION_POLICY_DIGEST } from './implementation-reconciliation-policy.ts';
-import { GLOBAL_PLAN_REVIEW_COVERAGE_POLICY_DIGEST } from './plan-review-coverage.ts';
+} from './modules/authority/maintainer-grant.ts';
+import type { HumanRevocationOptions } from './application/control-plane/human-revocation.ts';
+import { IMPLEMENTATION_RECONCILIATION_POLICY_DIGEST } from './modules/why-knowledge/implementation-reconciliation-policy.ts';
+import { GLOBAL_PLAN_REVIEW_COVERAGE_POLICY_DIGEST } from './modules/assurance/plan-review-coverage.ts';
 import { assertChangeId, assertInvestigationId } from './paths.ts';
 import {
   assertHeldChangeTransitionAuthority,
@@ -105,7 +105,7 @@ import {
   withHumanResolutionTransitionAuthority,
   withInvestigationTransitionAuthority,
 } from './planning-lock.ts';
-import type { ProviderInvocationRequest } from './provider-contracts.ts';
+import type { ProviderInvocationRequest } from './modules/provider-orchestration/provider-contracts.ts';
 import {
   assertProviderWorkersQuiescentUnderLifecycleLock,
   blindSurveyIntentDigest,
@@ -133,12 +133,12 @@ import {
   assertProviderExecutionGrantAuthorization,
   authorizeAutomaticProviderRetry,
   type ProviderExecutionGrantAuthorization,
-} from './provider-retry-decision.ts';
+} from './modules/provider-orchestration/provider-retry-decision.ts';
 import {
   assertActiveTaskMandateBindingUnderLifecycleLock,
   authorizeTaskMandateProviderReservationUnderLifecycleLock,
   type TaskMandateBinding,
-} from './task-mandate.ts';
+} from './modules/authority/task-mandate.ts';
 
 export type InvestigationStatus = {
   kind: 'investigation';

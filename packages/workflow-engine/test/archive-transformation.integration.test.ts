@@ -3,8 +3,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
 
-import { withArchiveEligibility } from '../src/archive-eligibility.ts';
-import { createArchiveTransformation } from '../src/archive-transformation.ts';
+import { withArchiveEligibility } from '../src/application/archive/archive-eligibility.ts';
+import { createArchiveTransformation } from '../src/application/archive/archive-transformation.ts';
 import {
   createFixtureRepository,
   git,

@@ -4,20 +4,20 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import { canonicalJson } from '../src/canonical-json.ts';
-import { deriveInvestigationGroupFacts } from '../src/investigation-groups.ts';
-import { materializeInvestigationEvidenceView } from '../src/investigation-materializer.ts';
-import { scanInvestigationTreeFacts } from '../src/investigation-scanner.ts';
+import { canonicalJson } from '../src/foundation/canonical-json/canonical-json.ts';
+import { deriveInvestigationGroupFacts } from '../src/modules/investigation/domain/investigation-groups.ts';
+import { materializeInvestigationEvidenceView } from '../src/modules/investigation/manifest/investigation-materializer.ts';
+import { scanInvestigationTreeFacts } from '../src/modules/investigation/domain/investigation-scanner.ts';
 import {
   buildInvestigationV3WhyAuthoring,
   deriveInvestigationV3WhyRequirements,
   mapLegacyWhyAuthoringToV3Sources,
-} from '../src/investigation-why-domain.ts';
+} from '../src/modules/investigation/manifest/investigation-why-domain.ts';
 import {
   previewInvestigationTermUnion,
   type InvestigationTermContribution,
-} from '../src/investigation-terms.ts';
-import { createMutationClassPolicy } from '../src/mutation-class-policy.ts';
+} from '../src/modules/investigation/domain/investigation-terms.ts';
+import { createMutationClassPolicy } from '../src/modules/source/mutation-class-policy.ts';
 import { git } from './fixture.ts';
 
 test('WHY authoring is derived from domain facts and raw source anchors without evidence envelopes', () => {

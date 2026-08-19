@@ -1,7 +1,7 @@
 import crypto from 'node:crypto';
 
-import { canonicalJson } from './canonical-json.ts';
-import { ExitCode, workflowError } from './errors.ts';
+import { canonicalJson } from './foundation/canonical-json/canonical-json.ts';
+import { ExitCode, workflowError } from './foundation/errors/errors.ts';
 import { runGit } from './git.ts';
 import { normalizePolicyPath } from './paths.ts';
 import {
@@ -10,11 +10,11 @@ import {
   type TaskDiffDocumentationAssessment,
   type TaskDiffFinalAssuranceRecord,
   type TaskDiffReviewRecord,
-} from './task-diff-review-artifact.ts';
+} from './modules/assurance/task-diff-review-artifact.ts';
 import {
   parseTaskDiffDocumentationClosureRequirement,
   type TaskDiffDocumentationClosureRequirement,
-} from './task-diff-review.ts';
+} from './modules/assurance/task-diff-review.ts';
 
 const DIGEST = /^[0-9a-f]{64}$/;
 const OBJECT_ID = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;

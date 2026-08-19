@@ -1,8 +1,8 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import { canonicalJson } from './canonical-json.js';
-import { ExitCode, workflowError } from './errors.js';
+import { canonicalJson } from './foundation/canonical-json/canonical-json.js';
+import { ExitCode, workflowError } from './foundation/errors/errors.js';
 import { assertRecoveryAuthorityDomain, } from './recovery-authority.js';
 export const RECOVERY_QUARANTINE_ENTER_NAMESPACE = 'HARNESS_RECOVERY_ENTER_QUARANTINE_V1';
 export const RECOVERY_QUARANTINE_RELEASE_NAMESPACE = 'HARNESS_RECOVERY_RELEASE_QUARANTINE_V1';

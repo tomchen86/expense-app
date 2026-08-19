@@ -2,8 +2,12 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 
-import { canonicalJson } from './canonical-json.ts';
-import { ExitCode, workflowError, type WorkflowError } from './errors.ts';
+import { canonicalJson } from './foundation/canonical-json/canonical-json.ts';
+import {
+  ExitCode,
+  workflowError,
+  type WorkflowError,
+} from './foundation/errors/errors.ts';
 import {
   assertPrivateInvestigationDirectory,
   createPrivateCanonicalJson,
@@ -12,7 +16,7 @@ import {
   writePrivateCanonicalJsonAtomic,
 } from './investigation-session-store.ts';
 import { assertSessionId, type InvestigationRuntimePaths } from './paths.ts';
-import { isProviderId } from './provider-registry.ts';
+import { isProviderId } from './modules/provider-orchestration/provider-registry.ts';
 import {
   isSameReviewedTaskStrategyLineage,
   parseTaskStrategyTransaction,

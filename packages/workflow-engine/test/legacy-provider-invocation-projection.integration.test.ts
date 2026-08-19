@@ -3,14 +3,14 @@ import fs from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
 
-import { canonicalJson } from '../src/canonical-json.ts';
+import { canonicalJson } from '../src/foundation/canonical-json/canonical-json.ts';
 import {
   listProviderInvocationLifecycleProjections,
   scanProviderInvocationLifecycles,
 } from '../src/investigation-session-store.ts';
 import { loadInvestigationRuntimeContext } from '../src/lifecycle-context.ts';
 import { providerExecutionPolicySnapshotPath } from '../src/provider-invocation-store.ts';
-import { startPropose } from '../src/propose-orchestrator.ts';
+import { startPropose } from '../src/application/propose/propose-orchestrator.ts';
 import { prepareExecutionMandate } from './execution-mandate-fixture.ts';
 import { createFixtureRepository, git } from './fixture.ts';
 

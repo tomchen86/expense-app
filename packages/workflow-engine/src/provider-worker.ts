@@ -1,20 +1,24 @@
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 
-import { canonicalJson } from './canonical-json.ts';
-import { ExitCode, WorkflowError, workflowError } from './errors.ts';
+import { canonicalJson } from './foundation/canonical-json/canonical-json.ts';
+import {
+  ExitCode,
+  WorkflowError,
+  workflowError,
+} from './foundation/errors/errors.ts';
 import {
   assertReadOnlyProbe,
   type ExecutionFailureKind,
   type ReadOnlyProbeRequest,
-} from './execution-core.ts';
+} from './modules/provider-orchestration/execution-core.ts';
 import { readInvestigationSession } from './investigation-session-store.ts';
 import { loadInvestigationRuntimeContext } from './lifecycle-context.ts';
 import {
   PLAN_REVIEW_OUTPUT_SCHEMA,
   PLAN_REVIEW_OUTPUT_VALIDATOR,
   PLAN_REVIEW_PROVIDER_OUTPUT_SCHEMA,
-} from './plan-review.ts';
+} from './modules/assurance/plan-review.ts';
 import {
   TASK_DIFF_REVIEW_CONTINUATION_OUTPUT_SCHEMA,
   TASK_DIFF_REVIEW_CONTINUATION_OUTPUT_VALIDATOR,
@@ -22,14 +26,14 @@ import {
   TASK_DIFF_REVIEW_OUTPUT_SCHEMA,
   TASK_DIFF_REVIEW_OUTPUT_VALIDATOR,
   TASK_DIFF_REVIEW_PROVIDER_OUTPUT_SCHEMA,
-} from './task-diff-review-artifact.ts';
-import { assertTaskDiffReviewProviderOwnerCurrent } from './task-diff-review-lifecycle.ts';
+} from './modules/assurance/task-diff-review-artifact.ts';
+import { assertTaskDiffReviewProviderOwnerCurrent } from './application/finalize/task-diff-review-lifecycle.ts';
 import {
   TASK_STRATEGY_IMPLEMENTATION_OUTPUT_SCHEMA,
   TASK_STRATEGY_IMPLEMENTATION_OUTPUT_VALIDATOR,
   TASK_STRATEGY_IMPLEMENTATION_PROVIDER_OUTPUT_SCHEMA,
-} from './task-strategy-provider-contract.ts';
-import { assertTaskStrategyImplementationProviderOwnerCurrent } from './task-strategy-implementation-lifecycle.ts';
+} from './modules/provider-orchestration/task-strategy-provider-contract.ts';
+import { assertTaskStrategyImplementationProviderOwnerCurrent } from './application/execute-task/task-strategy-implementation-lifecycle.ts';
 import {
   BLIND_SURVEY_OUTPUT_SCHEMA,
   BLIND_SURVEY_PROVIDER_OUTPUT_SCHEMA,
@@ -69,7 +73,7 @@ import { withRepositoryLifecycleOperation } from './session-store.ts';
 import {
   recordTaskMandateProviderInvocationUnderLifecycleLock,
   withActiveTaskMandateBinding,
-} from './task-mandate.ts';
+} from './modules/authority/task-mandate.ts';
 import { recordProviderWorkerMaintenanceWarning } from './provider-worker-maintenance.ts';
 
 export {
@@ -363,7 +367,7 @@ function createProviderWorkerDispatcher(host: ProviderDispatcherHost) {
       process.execPath,
       [
         '--experimental-strip-types',
-        path.join(import.meta.dirname, 'cli.ts'),
+        path.join(import.meta.dirname, './cli.ts'),
         'provider-worker',
         record.invocationId,
         '--json',

@@ -5,19 +5,19 @@ import path from 'node:path';
 import test from 'node:test';
 
 import type { TransformationTerm } from '../src/contracts.ts';
-import { WorkflowError } from '../src/errors.ts';
-import { finalizeTask } from '../src/lifecycle.ts';
-import { commitPlanningTransition } from '../src/planning-transition.ts';
-import { startSession } from '../src/session.ts';
-import { beginTaskDiffReview } from '../src/task-diff-review-lifecycle.ts';
+import { WorkflowError } from '../src/foundation/errors/errors.ts';
+import { finalizeTask } from '../src/application/finalize/lifecycle.ts';
+import { commitPlanningTransition } from '../src/application/propose/planning-transition.ts';
+import { startSession } from '../src/application/execute-task/session.ts';
+import { beginTaskDiffReview } from '../src/application/finalize/task-diff-review-lifecycle.ts';
 import {
   inspectTaskMechanicalTransformLifecycle,
   resumeTaskMechanicalTransformation,
-} from '../src/task-mechanical-transform-lifecycle.ts';
+} from '../src/application/execute-task/task-mechanical-transform-lifecycle.ts';
 import {
   inspectTaskStrategyLifecycle,
   resumeTaskStrategy,
-} from '../src/task-strategy-lifecycle.ts';
+} from '../src/application/execute-task/task-strategy-lifecycle.ts';
 import {
   createFixtureRepository,
   git,

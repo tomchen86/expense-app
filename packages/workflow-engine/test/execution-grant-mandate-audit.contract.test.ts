@@ -18,8 +18,8 @@ import {
   revokeExecutionBudgetGrant,
   storeExecutionBudgetGrant,
   type ExecutionBudgetGrantAuditContext,
-} from '../src/execution-governance.ts';
-import type { TaskMandateBinding } from '../src/task-mandate.ts';
+} from '../src/modules/authority/execution-governance.ts';
+import type { TaskMandateBinding } from '../src/modules/authority/task-mandate.ts';
 import { isWorkflowError } from './fixture.ts';
 
 const NOW = new Date('2026-08-04T03:00:00.000Z');

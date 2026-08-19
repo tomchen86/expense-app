@@ -1,7 +1,7 @@
 import crypto from 'node:crypto';
 import { performance } from 'node:perf_hooks';
-import { canonicalJson } from './canonical-json.js';
-import { ExitCode, workflowError } from './errors.js';
+import { canonicalJson } from './foundation/canonical-json/canonical-json.js';
+import { ExitCode, workflowError } from './foundation/errors/errors.js';
 import { runGitBuffer } from './git.js';
 const OBJECT_ID_PATTERN = /^([0-9a-f]{40}|[0-9a-f]{64})$/;
 const TREE_DIGEST_SCHEMA = 'investigation-tree-v1';

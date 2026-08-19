@@ -11,15 +11,15 @@ import {
   listExecutionJobs,
   prepareLegacyReplacement,
 } from '../src/execution-runtime.ts';
-import { requestExecutionReplacement } from '../src/execution-replacement.ts';
-import { canonicalExecutionBudgetGrantRequest } from '../src/execution-governance.ts';
+import { requestExecutionReplacement } from '../src/application/control-plane/execution-replacement.ts';
+import { canonicalExecutionBudgetGrantRequest } from '../src/modules/authority/execution-governance.ts';
 import { readExecutionJobState } from '../src/execution-store.ts';
 import { loadInvestigationRuntimeContext } from '../src/lifecycle-context.ts';
 import {
   createProviderInvocationRequest,
   type ProviderInvocationRequest,
   type ProviderProcessOutcome,
-} from '../src/provider-contracts.ts';
+} from '../src/modules/provider-orchestration/provider-contracts.ts';
 import {
   BLIND_SURVEY_OUTPUT_SCHEMA,
   blindSurveyIntentDigest,

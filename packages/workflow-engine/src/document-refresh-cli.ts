@@ -4,7 +4,7 @@ import {
   proposeDocumentRefresh,
   reviewDocumentRefresh,
 } from './document-refresh.ts';
-import { ExitCode, workflowError } from './errors.ts';
+import { ExitCode, workflowError } from './foundation/errors/errors.ts';
 
 export function dispatchDocumentRefreshCommand(
   args: string[],

@@ -6,7 +6,7 @@ import path from 'node:path';
 import test from 'node:test';
 
 import type { InvestigationFullBlobManifestEntry } from '../src/investigation-why.ts';
-import { createLedgerEntry } from '../src/semantic-ledger.ts';
+import { createLedgerEntry } from '../src/modules/why-knowledge/semantic-ledger.ts';
 import {
   updateLedgerIndex,
   writeLedgerEntry,
@@ -15,11 +15,11 @@ import {
   applyLedgerToFullBlobManifest,
   recordReuseCoverage,
   reviewTargetsFromManifestReuse,
-} from '../src/semantic-manifest-reuse.ts';
+} from '../src/modules/why-knowledge/semantic-manifest-reuse.ts';
 import {
   buildCoverageManifest,
   requiredReviewSet,
-} from '../src/review-coverage.ts';
+} from '../src/modules/assurance/review-coverage.ts';
 
 const POLICY = `sha256:${'1'.repeat(64)}`;
 

@@ -1,20 +1,20 @@
 import crypto from 'node:crypto';
 
-import { canonicalJson } from './canonical-json.ts';
+import { canonicalJson } from './foundation/canonical-json/canonical-json.ts';
 import type { EvidenceNode } from './evidence-node.ts';
-import { ExitCode, workflowError } from './errors.ts';
+import { ExitCode, workflowError } from './foundation/errors/errors.ts';
 import {
   readInvestigationCoverageNode,
   readInvestigationDispositionNode,
   readInvestigationGroupNode,
-} from './investigation-groups.ts';
+} from './modules/investigation/domain/investigation-groups.ts';
 import type {
   InvestigationManifestDraftV3,
   InvestigationWhyOverlayV3,
-} from './investigation-manifest.ts';
-import type { MaterializedEvidenceView } from './investigation-materializer.ts';
-import type { ScanInventoryFacts } from './investigation-scanner.ts';
-import type { PreviewInvestigationTerm } from './investigation-terms.ts';
+} from './modules/investigation/manifest/investigation-manifest.ts';
+import type { MaterializedEvidenceView } from './modules/investigation/manifest/investigation-materializer.ts';
+import type { ScanInventoryFacts } from './modules/investigation/domain/investigation-scanner.ts';
+import type { PreviewInvestigationTerm } from './modules/investigation/domain/investigation-terms.ts';
 import { readInvestigationWhyNode } from './investigation-why.ts';
 
 const DIGEST = /^[0-9a-f]{64}$/;

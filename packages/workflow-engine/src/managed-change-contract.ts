@@ -11,7 +11,7 @@ import {
   readManagedSchemaName,
 } from './contracts.ts';
 import { workflowContractArtifactPaths } from './contract-artifacts.ts';
-import { ExitCode, workflowError } from './errors.ts';
+import { ExitCode, workflowError } from './foundation/errors/errors.ts';
 import {
   createOpenSpecAdapter,
   resolveOpenSpecInstallation,
@@ -22,11 +22,11 @@ import {
 } from './openspec-schema-contract.ts';
 import { collectInstalledPackageClosure } from './package-closure.ts';
 import { assertChangeId, normalizeChangedPath } from './paths.ts';
-import { assertPlanningPaths } from './planning-paths.ts';
+import { assertPlanningPaths } from './modules/source/planning-paths.ts';
 import {
   validateInvestigationFirstPlanningReadiness,
   type InvestigationFirstPlanningAssuranceSummary,
-} from './planning-assurance-validator.ts';
+} from './modules/assurance/planning-assurance-validator.ts';
 
 export type ManagedChangeDiagnostic = {
   level: 'ERROR' | 'WARNING' | 'INFO';

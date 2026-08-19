@@ -1,19 +1,19 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import { canonicalJson } from './canonical-json.js';
-import { ExitCode, workflowError } from './errors.js';
-import { assertInvestigationApplicability, } from './investigation-applicability.js';
+import { canonicalJson } from './foundation/canonical-json/canonical-json.js';
+import { ExitCode, workflowError } from './foundation/errors/errors.js';
+import { assertInvestigationApplicability, } from './modules/investigation/domain/investigation-applicability.js';
 import { materializeProjectedInvestigationArtifact } from './investigation-artifact-projection.js';
 import { workflowContractArtifactPaths } from './contract-artifacts.js';
-import { isRecord, isStringArray } from './contract-values.js';
+import { isRecord, isStringArray, } from './foundation/canonical-json/contract-values.js';
 import { assertStoredEvidenceNode, } from './evidence-node.js';
 import { validateClosedEvidenceDag } from './evidence-currentness.js';
 import { createConvergenceRecord, createDescendantReuseProof, readConvergenceBinding, readReuseProofBinding, } from './evidence-convergence.js';
-import { engineProjectionDefinitions } from './engine-projection-registry.js';
+import { engineProjectionDefinitions } from './modules/projection/engine-projection-registry.js';
 import { validateTrackedEvidenceReusePaths } from './evidence-reuse-path.js';
 import { assertChangeId, assertPolicyPathInsideRepository, assertTaskId, matchesAllowedPath, normalizePolicyPath, } from './paths.js';
-import { PATH_ROLES } from './path-role-registry.js';
+import { PATH_ROLES, } from './modules/source/path-role-registry.js';
 const CHECK_ID_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 export function isPlanningAssuranceBinding(value) {
     if (!isRecord(value) ||

@@ -1,9 +1,9 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { boundedArchiveCauseDiagnostic } from '../src/archive-transformation.ts';
-import { canonicalJson } from '../src/canonical-json.ts';
-import { ExitCode, workflowError } from '../src/errors.ts';
+import { boundedArchiveCauseDiagnostic } from '../src/application/archive/archive-transformation.ts';
+import { canonicalJson } from '../src/foundation/canonical-json/canonical-json.ts';
+import { ExitCode, workflowError } from '../src/foundation/errors/errors.ts';
 
 const MAX_CAUSE_ENVELOPE_BYTES = 8_192;
 

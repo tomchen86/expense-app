@@ -9,7 +9,7 @@ import {
   resolvePathRole,
   compressionEligible,
   type PathRoleRegistry,
-} from '../src/path-role-registry.ts';
+} from '../src/modules/source/path-role-registry.ts';
 import { isWorkflowError } from './fixture.ts';
 
 function repositoryRoot(): string {
@@ -21,8 +21,12 @@ const REGISTRY: PathRoleRegistry = parsePathRoleRegistry({
   kind: 'path-role-registry',
   roles: {
     'control-plane': ['packages/workflow-engine/bootstrap/**'],
-    grant: ['packages/workflow-engine/src/maintainer-candidate.ts'],
-    lifecycle: ['packages/workflow-engine/src/planning-transition.ts'],
+    grant: [
+      'packages/workflow-engine/src/modules/authority/maintainer-candidate.ts',
+    ],
+    lifecycle: [
+      'packages/workflow-engine/src/application/propose/planning-transition.ts',
+    ],
     policy: ['workflow/**'],
     'verification-infrastructure': ['packages/workflow-engine/test/**'],
     'contract-surface': ['openspec/specs/**'],
@@ -52,13 +56,15 @@ test('an exact registration outranks a prefix that also covers it', () => {
   assert.equal(
     resolvePathRole(
       REGISTRY,
-      'packages/workflow-engine/src/maintainer-candidate.ts',
+      'packages/workflow-engine/src/modules/authority/maintainer-candidate.ts',
     ).role,
     'grant',
   );
   assert.equal(
-    resolvePathRole(REGISTRY, 'packages/workflow-engine/src/execution-core.ts')
-      .role,
+    resolvePathRole(
+      REGISTRY,
+      'packages/workflow-engine/src/modules/provider-orchestration/execution-core.ts',
+    ).role,
     'ordinary',
   );
 });
@@ -73,8 +79,8 @@ test('only ordinary and unregistered-free paths may be compressed', () => {
   for (const risky of [
     'workflow/checks.json',
     'openspec/specs/workflow-assurance/spec.md',
-    'packages/workflow-engine/src/maintainer-candidate.ts',
-    'packages/workflow-engine/src/planning-transition.ts',
+    'packages/workflow-engine/src/modules/authority/maintainer-candidate.ts',
+    'packages/workflow-engine/src/application/propose/planning-transition.ts',
     'packages/workflow-engine/bootstrap/canonical-json.ts',
     'packages/workflow-engine/test/fixture.ts',
   ]) {
@@ -138,13 +144,15 @@ test('resolution is deterministic regardless of role declaration order', () => {
     kind: 'path-role-registry',
     roles: {
       ordinary: ['packages/workflow-engine/src/**'],
-      grant: ['packages/workflow-engine/src/maintainer-candidate.ts'],
+      grant: [
+        'packages/workflow-engine/src/modules/authority/maintainer-candidate.ts',
+      ],
     },
   });
   assert.equal(
     resolvePathRole(
       reversed,
-      'packages/workflow-engine/src/maintainer-candidate.ts',
+      'packages/workflow-engine/src/modules/authority/maintainer-candidate.ts',
     ).role,
     'grant',
   );
@@ -164,9 +172,18 @@ test('the repository registry classifies its own risky substrate', () => {
     ['workflow/checks.json', 'policy'],
     ['workflow/maintainer-policy.json', 'control-plane'],
     ['packages/workflow-engine/bootstrap/canonical-json.ts', 'control-plane'],
-    ['packages/workflow-engine/src/maintainer-candidate.ts', 'grant'],
-    ['packages/workflow-engine/src/planning-transition.ts', 'lifecycle'],
-    ['packages/workflow-engine/src/plan-review.ts', 'contract-surface'],
+    [
+      'packages/workflow-engine/src/modules/authority/maintainer-candidate.ts',
+      'grant',
+    ],
+    [
+      'packages/workflow-engine/src/application/propose/planning-transition.ts',
+      'lifecycle',
+    ],
+    [
+      'packages/workflow-engine/src/modules/assurance/plan-review.ts',
+      'contract-surface',
+    ],
     ['packages/workflow-engine/test/fixture.ts', 'verification-infrastructure'],
     ['openspec/specs/workflow-assurance/spec.md', 'contract-surface'],
   ] as const) {

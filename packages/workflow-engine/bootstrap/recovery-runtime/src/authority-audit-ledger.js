@@ -1,8 +1,8 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import { canonicalJson } from './canonical-json.js';
-import { ExitCode, workflowError } from './errors.js';
+import { canonicalJson } from './foundation/canonical-json/canonical-json.js';
+import { ExitCode, workflowError } from './foundation/errors/errors.js';
 import { publishPreparedExclusiveLock, reclaimDeadPreparedLock, } from './filesystem-safety.js';
 const SHA256_DIGEST = /^sha256:[0-9a-f]{64}$/;
 const UUID_V4 = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;

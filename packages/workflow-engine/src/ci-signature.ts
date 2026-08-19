@@ -3,9 +3,9 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-import { ExitCode, workflowError } from './errors.ts';
+import { ExitCode, workflowError } from './foundation/errors/errors.ts';
 import { runGit } from './git.ts';
-import type { TrustedMaintainerSigner } from './maintainer-policy.ts';
+import type { TrustedMaintainerSigner } from './modules/authority/maintainer-policy.ts';
 
 export function verifySshDataSignature(
   payload: string,

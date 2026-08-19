@@ -11,7 +11,7 @@ import { loadInvestigationRuntimeContext } from '../src/lifecycle-context.ts';
 import {
   createProviderInvocationRequest,
   type ProviderInvocationRequest,
-} from '../src/provider-contracts.ts';
+} from '../src/modules/provider-orchestration/provider-contracts.ts';
 import {
   BLIND_SURVEY_OUTPUT_SCHEMA,
   blindSurveyIntentDigest,
@@ -134,7 +134,9 @@ function createManifest(
     normalizedIntent: {
       schemaVersion: 1,
       summary: `Project the ${scenario} execution blocker.`,
-      explicitPaths: ['packages/workflow-engine/src/execution-core.ts'],
+      explicitPaths: [
+        'packages/workflow-engine/src/modules/provider-orchestration/execution-core.ts',
+      ],
       explicitSymbols: ['projectExecutionFailureState'],
       explicitConfigKeys: [],
       renamePairs: [],

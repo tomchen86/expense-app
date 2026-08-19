@@ -14,9 +14,9 @@ import {
 import {
   authorityRefusalDigest,
   recordAuthorityRefusal,
-} from './authority-refusal-audit.ts';
+} from './modules/authority/authority-refusal-audit.ts';
 import { recordAuthorityAuditEvent } from './authority-audit-service.ts';
-import { canonicalJson } from './canonical-json.ts';
+import { canonicalJson } from './foundation/canonical-json/canonical-json.ts';
 import {
   HARNESS_RECOVERY_SIGNATURE_NAMESPACE,
   canonicalControlPlaneRecoveryGrantPayload,
@@ -24,9 +24,13 @@ import {
   throwControlPlaneRecoveryAlreadyConsumed,
   type ControlPlaneRecoveryAuditRecord,
   type ControlPlaneRecoveryGrantEnvelope,
-} from './control-plane-recovery-grant.ts';
+} from './modules/authority/control-plane-recovery-grant.ts';
 import { loadWorkflowConfig } from './contracts.ts';
-import { ExitCode, WorkflowError, workflowError } from './errors.ts';
+import {
+  ExitCode,
+  WorkflowError,
+  workflowError,
+} from './foundation/errors/errors.ts';
 import { discoverRepository, runGit } from './git.ts';
 import {
   bootstrapInterventionStateRoot,
@@ -38,7 +42,7 @@ import {
 import {
   persistTrustedBootstrapSessionSnapshot,
   readLocalEngineBinding,
-} from './intervention-control-bootstrap.ts';
+} from './application/control-plane/intervention-control-bootstrap.ts';
 import {
   executeControlPlaneRecoveryRollback,
   preflightControlPlaneRecoveryRollback,
@@ -47,9 +51,9 @@ import {
   type ControlPlaneRecoveryExecutorDependencies,
   type ControlPlaneRecoveryRollbackResult,
   type ControlPlaneUpdaterAuditRecord,
-} from './intervention-control-updater.ts';
-import type { MaintenanceApprovalSummary } from './intervention-maintenance.ts';
-import { parseMaintainerPolicy } from './maintainer-policy.ts';
+} from './application/control-plane/intervention-control-updater.ts';
+import type { MaintenanceApprovalSummary } from './application/control-plane/intervention-maintenance.ts';
+import { parseMaintainerPolicy } from './modules/authority/maintainer-policy.ts';
 import {
   createInteractiveSshSigner,
   type MaintainerSignerProvider,

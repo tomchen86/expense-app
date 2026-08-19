@@ -5,8 +5,8 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import { canonicalJson } from '../src/canonical-json.ts';
-import { deriveInvestigationGroupFacts } from '../src/investigation-groups.ts';
+import { canonicalJson } from '../src/foundation/canonical-json/canonical-json.ts';
+import { deriveInvestigationGroupFacts } from '../src/modules/investigation/domain/investigation-groups.ts';
 import {
   buildInvestigationManifestDraft,
   inspectHistorical,
@@ -15,15 +15,15 @@ import {
   validateForAuthority,
   type InvestigationAuthoringState,
   type OrdinaryInvestigationAuthoringState,
-} from '../src/investigation-manifest.ts';
-import { materializeInvestigationEvidenceView } from '../src/investigation-materializer.ts';
+} from '../src/modules/investigation/manifest/investigation-manifest.ts';
+import { materializeInvestigationEvidenceView } from '../src/modules/investigation/manifest/investigation-materializer.ts';
 import { runGitBuffer } from '../src/git.ts';
-import { scanInvestigationTreeFacts } from '../src/investigation-scanner.ts';
+import { scanInvestigationTreeFacts } from '../src/modules/investigation/domain/investigation-scanner.ts';
 import {
   previewInvestigationTermUnion,
   type InvestigationTermContribution,
-} from '../src/investigation-terms.ts';
-import { createMutationClassPolicy } from '../src/mutation-class-policy.ts';
+} from '../src/modules/investigation/domain/investigation-terms.ts';
+import { createMutationClassPolicy } from '../src/modules/source/mutation-class-policy.ts';
 import { git } from './fixture.ts';
 
 test('ordinary v3 is built directly, sealed separately, and replayed from pinned Git', () => {
@@ -264,14 +264,17 @@ test('MaterializedEvidenceView is process-local and the direct writer has no pro
       'structured cloning the view must not copy evidence into a durable shape',
     );
     assert.deepEqual(view.canonicalTerms, state.ordinary.canonicalTerms);
-    for (const moduleName of [
-      'investigation-manifest.ts',
-      'investigation-materializer.ts',
+    for (const sourceUrl of [
+      new URL(
+        '../src/modules/investigation/manifest/investigation-manifest.ts',
+        import.meta.url,
+      ),
+      new URL(
+        '../src/modules/investigation/manifest/investigation-materializer.ts',
+        import.meta.url,
+      ),
     ]) {
-      const source = fs.readFileSync(
-        new URL(`../src/${moduleName}`, import.meta.url),
-        'utf8',
-      );
+      const source = fs.readFileSync(sourceUrl, 'utf8');
       assert.equal(source.includes('investigation-artifact-projection'), false);
       assert.equal(source.includes('createEvidenceNode'), false);
       assert.equal(source.includes("from './evidence-node.ts'"), false);

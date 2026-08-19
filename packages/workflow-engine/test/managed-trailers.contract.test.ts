@@ -4,7 +4,7 @@ import test from 'node:test';
 import {
   ManagedTrailerSyntaxError,
   parseManagedTrailers,
-} from '../src/managed-trailers.ts';
+} from '../src/modules/lifecycle/managed-trailers.ts';
 
 test('managed trailer parser returns one canonical transition kind', () => {
   assert.deepEqual(

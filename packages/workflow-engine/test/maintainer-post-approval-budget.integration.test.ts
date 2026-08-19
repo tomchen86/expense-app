@@ -8,9 +8,9 @@ import test from 'node:test';
 import {
   commitAuthoritySession as commitAuthoritySessionProduction,
   SimulatedAuthorityCrash,
-} from '../src/maintainer-commit.ts';
-import { readDurableRefGenerationLedger } from '../src/maintainer-candidate.ts';
-import { approveAndApplyMaintainerGrantV2 as approveAndApplyMaintainerGrantV2Production } from '../src/maintainer-approve.ts';
+} from '../src/application/control-plane/maintainer-commit.ts';
+import { readDurableRefGenerationLedger } from '../src/modules/authority/maintainer-candidate.ts';
+import { approveAndApplyMaintainerGrantV2 as approveAndApplyMaintainerGrantV2Production } from '../src/application/control-plane/maintainer-approve.ts';
 import {
   armPostApprovalAdmissionDeadline,
   createPostApprovalAdmissionDeadline,
@@ -20,9 +20,9 @@ import {
 import {
   readAuthorityCommitJournal,
   recoverAuthorityCommit as recoverAuthorityCommitProduction,
-} from '../src/maintainer-recovery.ts';
-import { parseMaintainerPolicy } from '../src/maintainer-policy.ts';
-import { startAuthoritySession } from '../src/maintainer-session.ts';
+} from '../src/application/control-plane/maintainer-recovery.ts';
+import { parseMaintainerPolicy } from '../src/modules/authority/maintainer-policy.ts';
+import { startAuthoritySession } from '../src/application/control-plane/maintainer-session.ts';
 import {
   verifySshSignatureWithPublicKey,
   type MaintainerSignerProvider,
@@ -35,7 +35,7 @@ import {
 import {
   authorizeTaskMandate,
   TASK_MANDATE_SIGNATURE_NAMESPACE_V2,
-} from '../src/task-mandate.ts';
+} from '../src/modules/authority/task-mandate.ts';
 import {
   computeProtectedCapabilityEntryDigests,
   REQUIRED_PROTECTED_CAPABILITIES,
@@ -1794,7 +1794,7 @@ function installV2TrustBase(repository: string): void {
   fs.writeFileSync(
     path.join(
       repository,
-      'packages/workflow-engine/src/execution-governance.ts',
+      'packages/workflow-engine/src/modules/authority/execution-governance.ts',
     ),
     'export const GRANT_LIMIT = 1;\n',
   );
@@ -1841,7 +1841,9 @@ function installV2TrustBase(repository: string): void {
         evidencePaths: ['packages/workflow-engine/test/**'],
         policyPaths: ['workflow/**'],
         verificationInfrastructurePaths: ['.github/workflows/**'],
-        forbiddenPaths: ['packages/workflow-engine/src/maintainer-grant.ts'],
+        forbiddenPaths: [
+          'packages/workflow-engine/src/modules/authority/maintainer-grant.ts',
+        ],
         constraints: {
           evidenceOnlyGrantForbidden: true,
           samePackageRequired: true,
@@ -1881,7 +1883,9 @@ function installV2TrustBase(repository: string): void {
   git(repository, ['commit', '-m', 'Install maintainer v2 trust base files']);
 
   const contentBase = git(repository, ['rev-parse', 'HEAD']).trim();
-  const entrypoints = ['packages/workflow-engine/src/execution-governance.ts'];
+  const entrypoints = [
+    'packages/workflow-engine/src/modules/authority/execution-governance.ts',
+  ];
   const dependencies = [
     'packages/workflow-engine/src/protected-capabilities.ts',
     'workflow/protected-capabilities.json',

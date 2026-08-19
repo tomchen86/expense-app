@@ -11,7 +11,7 @@ import {
   type AuthorityAuditAppendInput,
   type AuthorityAuditLedgerScope,
 } from '../src/authority-audit-ledger.ts';
-import { canonicalJson } from '../src/canonical-json.ts';
+import { canonicalJson } from '../src/foundation/canonical-json/canonical-json.ts';
 import { isWorkflowError } from './fixture.ts';
 
 function digest(seed: string): `sha256:${string}` {

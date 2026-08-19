@@ -10,7 +10,10 @@ import {
   fingerprintRepositoryProjection,
   fingerprintWorkingState,
 } from '../src/git.ts';
-import { checkSession, startSession } from '../src/session.ts';
+import {
+  checkSession,
+  startSession,
+} from '../src/application/execute-task/session.ts';
 import { loadStableValidatedChangeContract } from '../src/validated-contract-context.ts';
 import {
   configureChecks,

@@ -1,7 +1,7 @@
 import type { CheckEvidence } from './check-runner.ts';
 import { runCiChecks } from './ci-checks.ts';
 import { loadChecksConfig } from './contracts.ts';
-import { ExitCode, workflowError } from './errors.ts';
+import { ExitCode, workflowError } from './foundation/errors/errors.ts';
 import { discoverRepository } from './git.ts';
 
 export type RegisteredCheckResult = {

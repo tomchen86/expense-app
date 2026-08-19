@@ -1,8 +1,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
-import { canonicalJson } from './canonical-json.ts';
-import { ExitCode, workflowError } from './errors.ts';
+import { canonicalJson } from './foundation/canonical-json/canonical-json.ts';
+import { ExitCode, workflowError } from './foundation/errors/errors.ts';
 import { ensurePlainDirectory } from './filesystem-safety.ts';
 import { discoverRepository, runGit } from './git.ts';
 import {
@@ -12,15 +12,15 @@ import {
   parseMaintainerGrantEnvelope,
   validateGrantPayload,
   type MaintainerGrantEnvelope,
-} from './maintainer-grant.ts';
-import { parseMaintainerPolicy } from './maintainer-policy.ts';
+} from './modules/authority/maintainer-grant.ts';
+import { parseMaintainerPolicy } from './modules/authority/maintainer-policy.ts';
 import { createInteractiveSshSigner } from './maintainer-signer.ts';
 import {
   canonicalMaintainerGrantV2Envelope,
   isMaintainerGrantV2Envelope,
   parseMaintainerGrantV2Envelope,
   type MaintainerGrantV2Envelope,
-} from './maintainer-grant-v2.ts';
+} from './modules/authority/maintainer-grant-v2.ts';
 import {
   listConflictingActiveWorkflowSessionIds,
   runtimePaths,
@@ -33,7 +33,7 @@ import {
   digestHumanRevocationSubject,
   type HumanRevocationAuthorization,
   type HumanRevocationOptions,
-} from './human-revocation.ts';
+} from './application/control-plane/human-revocation.ts';
 
 export type AnyMaintainerGrantEnvelope =
   MaintainerGrantEnvelope | MaintainerGrantV2Envelope;

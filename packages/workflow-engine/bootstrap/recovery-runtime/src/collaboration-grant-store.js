@@ -1,17 +1,17 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import { canonicalJson } from './canonical-json.js';
-import { COLLABORATION_GRANT_AUTHORIZED_EFFECT, COLLABORATION_GRANT_REPLAY_SCOPE, COLLABORATION_GRANT_RESIDUALS, COLLABORATION_GRANT_RETAINED_OBLIGATIONS, assertCollaborationGrantId, canonicalCollaborationGrantEnvelope, collaborationGrantEnvelopeDigest, directHumanReviewAttestationDigest, bindingFromPayload, parseCollaborationGrantEnvelope, parseDirectHumanReviewAttestation, validateCollaborationGrantEnvelope, validateDirectHumanReviewAttestation, } from './collaboration-grant.js';
+import { canonicalJson } from './foundation/canonical-json/canonical-json.js';
+import { COLLABORATION_GRANT_AUTHORIZED_EFFECT, COLLABORATION_GRANT_REPLAY_SCOPE, COLLABORATION_GRANT_RESIDUALS, COLLABORATION_GRANT_RETAINED_OBLIGATIONS, assertCollaborationGrantId, canonicalCollaborationGrantEnvelope, collaborationGrantEnvelopeDigest, directHumanReviewAttestationDigest, bindingFromPayload, parseCollaborationGrantEnvelope, parseDirectHumanReviewAttestation, validateCollaborationGrantEnvelope, validateDirectHumanReviewAttestation, } from './modules/authority/collaboration-grant.js';
 import { deriveAuthorityAuditRepositoryId } from './authority-audit-ledger.js';
-import { ExitCode, workflowError } from './errors.js';
+import { ExitCode, workflowError } from './foundation/errors/errors.js';
 import { ensurePlainDirectory } from './filesystem-safety.js';
 import { discoverRepository, runGit } from './git.js';
-import { parseMaintainerPolicy, } from './maintainer-policy.js';
+import { parseMaintainerPolicy, } from './modules/authority/maintainer-policy.js';
 import { createInteractiveSshSigner, } from './maintainer-signer.js';
 import { runtimePaths, withRepositoryLifecycleOperation, } from './session-store.js';
-import { assertHumanRevocationAuthorization, authorizeHumanRevocation, canonicalHumanRevocationAuthorization, digestHumanRevocationSubject, } from './human-revocation.js';
-import { inspectTaskMandate } from './task-mandate.js';
+import { assertHumanRevocationAuthorization, authorizeHumanRevocation, canonicalHumanRevocationAuthorization, digestHumanRevocationSubject, } from './application/control-plane/human-revocation.js';
+import { inspectTaskMandate } from './modules/authority/task-mandate.js';
 const DIGEST = /^[0-9a-f]{64}$/;
 const STATE_FILE = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\.json$/;
 export function collaborationGrantStorePaths(gitCommonDirectory) {

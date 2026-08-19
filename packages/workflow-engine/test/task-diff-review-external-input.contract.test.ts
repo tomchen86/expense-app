@@ -1,13 +1,13 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { WorkflowError } from '../src/errors.ts';
+import { WorkflowError } from '../src/foundation/errors/errors.ts';
 import {
   parseTaskDiffReviewExternalClosureRequestInput,
   parseTaskDiffReviewExternalClosureInput,
   parseTaskDiffReviewExternalSubmissionInput,
-} from '../src/task-diff-review-input.ts';
-import { TASK_DIFF_REVIEW_COVERAGE } from '../src/task-diff-review.ts';
+} from '../src/modules/assurance/task-diff-review-input.ts';
+import { TASK_DIFF_REVIEW_COVERAGE } from '../src/modules/assurance/task-diff-review.ts';
 
 const SUBJECT = 'a'.repeat(64);
 const REVIEW = 'b'.repeat(64);

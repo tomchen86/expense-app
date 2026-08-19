@@ -13,7 +13,7 @@ import {
 } from '../bootstrap/control-plane-trust.ts';
 import { deriveAuthorityAuditRepositoryId } from '../src/authority-audit-ledger.ts';
 import { verifyAuthorityAuditEvents } from '../src/authority-audit-service.ts';
-import { canonicalJson } from '../src/canonical-json.ts';
+import { canonicalJson } from '../src/foundation/canonical-json/canonical-json.ts';
 import { runHarnessBootstrapCli } from '../src/harness-bootstrap.ts';
 import {
   recoveryAuthorityDescriptorDigest,

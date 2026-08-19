@@ -3,12 +3,12 @@ import fs from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
 
-import { canonicalJson } from '../src/canonical-json.ts';
+import { canonicalJson } from '../src/foundation/canonical-json/canonical-json.ts';
 import {
   createInvestigationCheckpointEnvelope,
   getInvestigationStatus,
 } from '../src/investigation-session.ts';
-import type { ProviderInvocationRequest } from '../src/provider-contracts.ts';
+import type { ProviderInvocationRequest } from '../src/modules/provider-orchestration/provider-contracts.ts';
 import {
   claimProviderInvocation,
   completeProviderInvocation,
@@ -19,7 +19,7 @@ import {
   resumePropose,
   startPropose,
   type PlanningContributionPayload,
-} from '../src/propose-orchestrator.ts';
+} from '../src/application/propose/propose-orchestrator.ts';
 import { createFixtureRepository, git, isWorkflowError } from './fixture.ts';
 import { driveProposeToDispositions } from './propose-drive-fixture.ts';
 

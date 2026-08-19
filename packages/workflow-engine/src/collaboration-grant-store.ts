@@ -2,7 +2,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 
-import { canonicalJson } from './canonical-json.ts';
+import { canonicalJson } from './foundation/canonical-json/canonical-json.ts';
 import {
   COLLABORATION_GRANT_AUTHORIZED_EFFECT,
   COLLABORATION_GRANT_REPLAY_SCOPE,
@@ -22,15 +22,15 @@ import {
   type CollaborationGrantExpectedBinding,
   type CollaborationLifecyclePhase,
   type DirectHumanReviewAttestation,
-} from './collaboration-grant.ts';
+} from './modules/authority/collaboration-grant.ts';
 import { deriveAuthorityAuditRepositoryId } from './authority-audit-ledger.ts';
-import { ExitCode, workflowError } from './errors.ts';
+import { ExitCode, workflowError } from './foundation/errors/errors.ts';
 import { ensurePlainDirectory } from './filesystem-safety.ts';
 import { discoverRepository, runGit } from './git.ts';
 import {
   parseMaintainerPolicy,
   type MaintainerPolicy,
-} from './maintainer-policy.ts';
+} from './modules/authority/maintainer-policy.ts';
 import {
   createInteractiveSshSigner,
   type MaintainerSignerProvider,
@@ -46,8 +46,8 @@ import {
   digestHumanRevocationSubject,
   type HumanRevocationAuthorization,
   type HumanRevocationOptions,
-} from './human-revocation.ts';
-import { inspectTaskMandate } from './task-mandate.ts';
+} from './application/control-plane/human-revocation.ts';
+import { inspectTaskMandate } from './modules/authority/task-mandate.ts';
 
 const DIGEST = /^[0-9a-f]{64}$/;
 const STATE_FILE =

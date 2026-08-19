@@ -8,13 +8,13 @@ import { pathToFileURL } from 'node:url';
 import test from 'node:test';
 
 import { BUILT_IN_ENGINE_CLOSURE_MANIFEST_DIGEST } from '../bootstrap/built-in-engine-closure-pin.ts';
-import { createEngineArtifact } from '../src/intervention-control.ts';
+import { createEngineArtifact } from '../src/modules/authority/intervention-control.ts';
 import { bootstrapInterventionStateRoot } from '../src/intervention-control-bootstrap-cli.ts';
 import { readPersistedIntervention } from '../src/intervention-control-persistence.ts';
 import {
   persistInterventionEngineArtifact,
   readMaintenanceGrantForParent,
-} from '../src/intervention-maintenance.ts';
+} from '../src/application/control-plane/intervention-maintenance.ts';
 
 const NOW = new Date('2026-08-03T10:00:00.000Z');
 const SOURCE_REPOSITORY_ROOT = path.resolve(import.meta.dirname, '../../..');

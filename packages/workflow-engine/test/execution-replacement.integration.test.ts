@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
 
-import { canonicalJson } from '../src/canonical-json.ts';
+import { canonicalJson } from '../src/foundation/canonical-json/canonical-json.ts';
 import { loadAiAdapterPolicy } from '../src/ai-adapter-policy.ts';
 import {
   readEvidenceNode,
@@ -15,14 +15,14 @@ import {
   executeGrantedReplacement,
   requestExecutionReplacement,
   SimulatedExecutionReplacementCrash,
-} from '../src/execution-replacement.ts';
+} from '../src/application/control-plane/execution-replacement.ts';
 import {
   createExecutionBudgetGrantEnvelope,
   createExecutionBudgetGrantRequest,
   inspectExecutionBudgetGrant,
   storeExecutionBudgetGrant,
   type ExecutionBudgetConsumeReceipt,
-} from '../src/execution-governance.ts';
+} from '../src/modules/authority/execution-governance.ts';
 import { issueExecutionBudgetGrant } from '../src/execution-grant-cli.ts';
 import { listExecutionJobs } from '../src/execution-runtime.ts';
 import { discoverRepository } from '../src/git.ts';
@@ -37,8 +37,8 @@ import {
   getProposeStatus,
   resumePropose,
   startPropose,
-} from '../src/propose-orchestrator.ts';
-import type { ProviderInvocationRequest } from '../src/provider-contracts.ts';
+} from '../src/application/propose/propose-orchestrator.ts';
+import type { ProviderInvocationRequest } from '../src/modules/provider-orchestration/provider-contracts.ts';
 import {
   claimProviderInvocation,
   completeProviderInvocation,
@@ -74,7 +74,7 @@ test('granted Survey retries raise a 300s policy ceiling through 600s to the 360
         schemaVersion: 1,
         summary: 'Exercise one real execution-budget replacement dispatch.',
         explicitPaths: [
-          'packages/workflow-engine/src/execution-replacement.ts',
+          'packages/workflow-engine/src/application/control-plane/execution-replacement.ts',
         ],
         explicitSymbols: ['executeGrantedReplacement'],
         explicitConfigKeys: [],

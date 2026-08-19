@@ -6,11 +6,11 @@ import {
   createApprovalSubject,
   createGrantChallenge,
   type GrantRequestInput,
-} from '../src/grant-core.ts';
+} from '../src/modules/authority/grant-core.ts';
 import {
   createTransitionRegistry,
   type TransitionDefinition,
-} from '../src/grant-transition-registry.ts';
+} from '../src/modules/authority/grant-transition-registry.ts';
 import { isWorkflowError } from './fixture.ts';
 
 const NOW = new Date('2026-08-18T01:00:00.000Z');

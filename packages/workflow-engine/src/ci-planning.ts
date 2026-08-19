@@ -1,18 +1,18 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
-import { canonicalJson } from './canonical-json.ts';
+import { canonicalJson } from './foundation/canonical-json/canonical-json.ts';
 import {
   assertCollaborationGrantId,
   assertUniqueCollaborationGrantUses,
   type CollaborationGrantUseIdentity,
-} from './collaboration-grant.ts';
+} from './modules/authority/collaboration-grant.ts';
 import { readFileAtCommit } from './ci-git.ts';
-import { isRecord } from './contract-values.ts';
+import { isRecord } from './foundation/canonical-json/contract-values.ts';
 import {
   parseManagedTrailers,
   type AmendPlanManagedTrailers,
-} from './managed-trailers.ts';
+} from './modules/lifecycle/managed-trailers.ts';
 import {
   loadChangeContract,
   parseInvestigationArtifact,
@@ -23,14 +23,14 @@ import {
   type ParsedTask,
 } from './contracts.ts';
 import { createTrustedExecutionEnvironment } from './execution-environment.ts';
-import { engineProjectionPathsForTransition } from './engine-projection-registry.ts';
-import { ExitCode, workflowError } from './errors.ts';
+import { engineProjectionPathsForTransition } from './modules/projection/engine-projection-registry.ts';
+import { ExitCode, workflowError } from './foundation/errors/errors.ts';
 import {
   commitChangedPaths,
   commitFacts,
   planningCommitMessage,
 } from './git-transitions.ts';
-import { createArchiveApplicabilityProjection } from './archive-transformation.ts';
+import { createArchiveApplicabilityProjection } from './application/archive/archive-transformation.ts';
 import { runGit } from './git.ts';
 import { validateHandoffForChange } from './handoff.ts';
 import {
@@ -41,16 +41,16 @@ import {
 import {
   validateInvestigationFirstPlanningReadiness,
   type InvestigationFirstPlanningAssuranceSummary,
-} from './planning-assurance-validator.ts';
+} from './modules/assurance/planning-assurance-validator.ts';
 import { committedPlanningGeneration } from './planning-generation-history.ts';
-import { readPlanningAmendmentDecision } from './planning-amendment-decision.ts';
+import { readPlanningAmendmentDecision } from './modules/lifecycle/planning-amendment-decision.ts';
 import {
   amendmentLeftWorkMarkedDone,
   assertPlanningPaths,
   assertPlanningTaskHistory,
   taskStates,
 } from './planning-contract.ts';
-import { requiredPlanningArtifactPaths } from './planning-paths.ts';
+import { requiredPlanningArtifactPaths } from './modules/source/planning-paths.ts';
 import type { PlanningTaskState } from './planning-report.ts';
 import { normalizeChangedPath } from './paths.ts';
 

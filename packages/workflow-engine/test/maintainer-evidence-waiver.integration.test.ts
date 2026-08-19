@@ -6,35 +6,35 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import { readAuthorityApplicationReceiptTag } from '../src/authority-application-receipt.ts';
+import { readAuthorityApplicationReceiptTag } from '../src/modules/authority/authority-application-receipt.ts';
 import { deriveAuthorityAuditRepositoryId } from '../src/authority-audit-ledger.ts';
 import { verifyAuthorityAuditEvents } from '../src/authority-audit-service.ts';
-import { canonicalJson } from '../src/canonical-json.ts';
-import { assertCandidateV2ChecksFresh } from '../src/maintainer-candidate.ts';
+import { canonicalJson } from '../src/foundation/canonical-json/canonical-json.ts';
+import { assertCandidateV2ChecksFresh } from '../src/modules/authority/maintainer-candidate.ts';
 import {
   canonicalMaintainerGrantV2Envelope,
   isMaintainerGrantV2Envelope,
   preflightMaintainerGrantV2,
   validateMaintainerGrantV2AuthorityBinding,
   type MaintainerEvidenceWaiver,
-} from '../src/maintainer-grant-v2.ts';
+} from '../src/modules/authority/maintainer-grant-v2.ts';
 import {
   approveAndApplyMaintainerGrantV2,
   prepareMaintainerGrantV2Checks,
   reissueAndApplyMaintainerGrantV2,
-} from '../src/maintainer-approve.ts';
+} from '../src/application/control-plane/maintainer-approve.ts';
 import {
   computeProtectedCapabilityEntryDigests,
   REQUIRED_PROTECTED_CAPABILITIES,
 } from '../src/protected-capabilities.ts';
-import { parseMaintainerPolicy } from '../src/maintainer-policy.ts';
+import { parseMaintainerPolicy } from '../src/modules/authority/maintainer-policy.ts';
 import type { MaintainerSignerProvider } from '../src/maintainer-signer.ts';
 import {
   maintainerGrantStorePaths,
   readTerminalMaintainerGrant,
 } from '../src/maintainer-store.ts';
-import { startAuthoritySession } from '../src/maintainer-session.ts';
-import { authorizeTaskMandate } from '../src/task-mandate.ts';
+import { startAuthoritySession } from '../src/application/control-plane/maintainer-session.ts';
+import { authorizeTaskMandate } from '../src/modules/authority/task-mandate.ts';
 import { createFixtureRepository, git, isWorkflowError } from './fixture.ts';
 
 const PROFILE_ID = 'workflow-engine-bootstrap';
@@ -502,7 +502,9 @@ function installTrustBase(repository: string): void {
         evidencePaths: ['packages/workflow-engine/test/**'],
         policyPaths: ['workflow/**'],
         verificationInfrastructurePaths: ['.github/workflows/**'],
-        forbiddenPaths: ['packages/workflow-engine/src/maintainer-grant.ts'],
+        forbiddenPaths: [
+          'packages/workflow-engine/src/modules/authority/maintainer-grant.ts',
+        ],
         constraints: {
           evidenceOnlyGrantForbidden: true,
           samePackageRequired: true,
@@ -529,7 +531,7 @@ function installTrustBase(repository: string): void {
   fs.writeFileSync(
     path.join(
       repository,
-      'packages/workflow-engine/src/execution-governance.ts',
+      'packages/workflow-engine/src/modules/authority/execution-governance.ts',
     ),
     'export const GRANT_LIMIT = 1;\n',
   );
@@ -570,7 +572,9 @@ function installTrustBase(repository: string): void {
   git(repository, ['commit', '-m', 'Install maintainer v2 trust base files']);
 
   const contentBase = git(repository, ['rev-parse', 'HEAD']).trim();
-  const entrypoints = ['packages/workflow-engine/src/execution-governance.ts'];
+  const entrypoints = [
+    'packages/workflow-engine/src/modules/authority/execution-governance.ts',
+  ];
   const dependencies = [
     'packages/workflow-engine/src/protected-capabilities.ts',
     'workflow/protected-capabilities.json',

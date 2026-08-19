@@ -11,7 +11,7 @@ import {
   HUMAN_GATE_MACOS_V1_CONFIGURATION_DIGEST,
   loadGrantPolicyV2,
   parseGrantPolicyV2,
-} from '../src/grant-policy.ts';
+} from '../src/modules/authority/grant-policy.ts';
 import { isWorkflowError } from './fixture.ts';
 
 test('tracked GrantPolicyV2 defaults to local presence and offers SSH separately', () => {

@@ -8,7 +8,7 @@ import {
   compressionEligible,
   parsePathRoleRegistry,
   resolvePathRole,
-} from '../src/path-role-registry.ts';
+} from '../src/modules/source/path-role-registry.ts';
 
 type ProtectedCapabilityManifest = Readonly<{
   manifestPath: string;

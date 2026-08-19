@@ -2,11 +2,11 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import test from 'node:test';
 
-import { inspectDurableRetentionCatalog } from '../src/execution-governance.ts';
+import { inspectDurableRetentionCatalog } from '../src/modules/authority/execution-governance.ts';
 import { listExecutionJobStates } from '../src/execution-store.ts';
 import { listProviderInvocationLifecycleProjections } from '../src/investigation-session-store.ts';
 import { loadInvestigationRuntimeContext } from '../src/lifecycle-context.ts';
-import { startPropose } from '../src/propose-orchestrator.ts';
+import { startPropose } from '../src/application/propose/propose-orchestrator.ts';
 import { inspectProviderPromptContextRetentionBinding } from '../src/provider-execution-governance.ts';
 import {
   inspectProviderRetentionMetrics,
@@ -142,7 +142,9 @@ function prepareWorkflow(changeId: string) {
     {
       schemaVersion: 1,
       summary: `Create ${changeId} retention evidence.`,
-      explicitPaths: ['packages/workflow-engine/src/execution-core.ts'],
+      explicitPaths: [
+        'packages/workflow-engine/src/modules/provider-orchestration/execution-core.ts',
+      ],
       explicitSymbols: ['createExecutionJob'],
       explicitConfigKeys: [],
       renamePairs: [],

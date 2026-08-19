@@ -12,8 +12,8 @@ import {
   initializeLocalEngineBinding,
   localEngineArtifactPath,
   materializeInterventionChildWorktree,
-} from '../src/intervention-control-bootstrap.ts';
-import { createEngineArtifact } from '../src/intervention-control.ts';
+} from '../src/application/control-plane/intervention-control-bootstrap.ts';
+import { createEngineArtifact } from '../src/modules/authority/intervention-control.ts';
 import {
   advanceBootstrapSidecarPromotionPin,
   preparePersistedEngineAdoption,
@@ -26,7 +26,7 @@ import {
 import {
   persistInterventionEngineArtifact,
   readInterventionEngineArtifact,
-} from '../src/intervention-maintenance.ts';
+} from '../src/application/control-plane/intervention-maintenance.ts';
 
 const NOW = new Date('2026-08-10T01:00:00.000Z');
 

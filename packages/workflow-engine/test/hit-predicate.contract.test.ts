@@ -5,7 +5,7 @@ import {
   HIT_PREDICATE_LIMITS,
   evaluateHitPredicate,
   parseHitPredicate,
-} from '../src/hit-predicate.ts';
+} from '../src/modules/investigation/domain/hit-predicate.ts';
 import { isWorkflowError } from './fixture.ts';
 
 function windowFor(text: string, needle: string) {

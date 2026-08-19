@@ -3,8 +3,8 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import test from 'node:test';
 
-import { canonicalJson } from '../src/canonical-json.ts';
-import { produceControlPlaneApprovalCandidateV2 } from '../src/control-plane-promotion-producer.ts';
+import { canonicalJson } from '../src/foundation/canonical-json/canonical-json.ts';
+import { produceControlPlaneApprovalCandidateV2 } from '../src/application/control-plane/control-plane-promotion-producer.ts';
 import { interventionEngineArtifactRecordPath } from '../src/intervention-engine-artifact-store.ts';
 import {
   persistedBootstrapSidecarSessionPath,
@@ -16,7 +16,7 @@ import {
   readControlPlaneSupervisorState,
   recoverControlPlanePromotion,
   type ControlPlaneUpdaterAuditRecord,
-} from '../src/intervention-control-updater.ts';
+} from '../src/application/control-plane/intervention-control-updater.ts';
 import {
   CONTROL_PLANE_FIXTURE_GRANT_SIGNER,
   CONTROL_PLANE_FIXTURE_REVIEWER,

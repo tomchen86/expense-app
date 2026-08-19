@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import { canonicalJson } from '../src/canonical-json.ts';
+import { canonicalJson } from '../src/foundation/canonical-json/canonical-json.ts';
 import { investigationRuntimePaths } from '../src/paths.ts';
 import {
   assertTaskDiffExternalReviewStoreInventory,
@@ -46,12 +46,12 @@ import type {
   TaskDiffReviewChallengeResponseRecord,
   TaskDiffReviewContinuationSubmission,
   TaskDiffReviewSubmission,
-} from '../src/task-diff-review-artifact.ts';
+} from '../src/modules/assurance/task-diff-review-artifact.ts';
 import {
   createTaskDiffReviewSubject,
   deriveTaskDiffReviewCandidatePlan,
   type TaskDiffReviewSubject,
-} from '../src/task-diff-review.ts';
+} from '../src/modules/assurance/task-diff-review.ts';
 
 test('external review reservation and binding are session-free exact authority references', () => {
   for (const degradedForm of [

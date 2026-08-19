@@ -22,7 +22,7 @@ import {
   type ContextManifest,
   type EvidenceRetentionRecord,
   type WorkflowContextState,
-} from '../src/execution-governance.ts';
+} from '../src/modules/authority/execution-governance.ts';
 import { isWorkflowError } from './fixture.ts';
 
 const NOW = new Date('2026-08-03T09:00:00.000Z');

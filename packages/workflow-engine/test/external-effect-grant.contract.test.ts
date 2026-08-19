@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
 
-import { canonicalJson } from '../src/canonical-json.ts';
+import { canonicalJson } from '../src/foundation/canonical-json/canonical-json.ts';
 import {
   deriveAuthorityAuditRepositoryId,
   type AuthorityAuditLedgerScope,
@@ -23,7 +23,7 @@ import {
   reserveExternalEffectGrant,
   revokeExternalEffectGrant,
   type ExternalEffectKind,
-} from '../src/external-effect-grant.ts';
+} from '../src/modules/authority/external-effect-grant.ts';
 import {
   EFFECT_GRANT_ID as GRANT_ID,
   EFFECT_ISSUED_AT as ISSUED_AT,
@@ -33,7 +33,7 @@ import {
   publishGrantRequest,
 } from './external-effect-fixture.ts';
 import { isWorkflowError } from './fixture.ts';
-import { revokeTaskMandate } from '../src/task-mandate.ts';
+import { revokeTaskMandate } from '../src/modules/authority/task-mandate.ts';
 
 test('a human issues one domain-separated five-minute grant bound to the exact mandate and effect', () => {
   const fixture = prepareFixture();

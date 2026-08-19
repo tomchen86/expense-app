@@ -4,23 +4,23 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import { canonicalJson } from '../src/canonical-json.ts';
+import { canonicalJson } from '../src/foundation/canonical-json/canonical-json.ts';
 import {
   applyInvestigationDispositionDecisions,
   applyInvestigationSemanticGroupDecisions,
-} from '../src/investigation-domain.ts';
-import { deriveInvestigationGroupFacts } from '../src/investigation-groups.ts';
+} from '../src/modules/investigation/domain/investigation-domain.ts';
+import { deriveInvestigationGroupFacts } from '../src/modules/investigation/domain/investigation-groups.ts';
 import {
   deriveInvestigationCommitments,
   investigationTermSetDigest,
-} from '../src/investigation-roots.ts';
-import { scanInvestigationTreeFacts } from '../src/investigation-scanner.ts';
+} from '../src/modules/investigation/domain/investigation-roots.ts';
+import { scanInvestigationTreeFacts } from '../src/modules/investigation/domain/investigation-scanner.ts';
 import {
   normalizeInvestigationTerm,
   previewInvestigationTermUnion,
   type InvestigationTermContribution,
-} from '../src/investigation-terms.ts';
-import { createMutationClassPolicy } from '../src/mutation-class-policy.ts';
+} from '../src/modules/investigation/domain/investigation-terms.ts';
+import { createMutationClassPolicy } from '../src/modules/source/mutation-class-policy.ts';
 import { git, isWorkflowError } from './fixture.ts';
 
 test('v3 domain decisions partition hits and derive compact commitments without evidence envelopes', () => {

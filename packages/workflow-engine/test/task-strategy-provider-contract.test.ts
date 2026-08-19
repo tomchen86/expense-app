@@ -2,19 +2,19 @@ import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import test from 'node:test';
 
-import { canonicalJson } from '../src/canonical-json.ts';
+import { canonicalJson } from '../src/foundation/canonical-json/canonical-json.ts';
 import { parseCollaborationGrantArguments } from '../src/collaboration-grant-cli.ts';
-import { createProviderInvocationRequest } from '../src/provider-contracts.ts';
+import { createProviderInvocationRequest } from '../src/modules/provider-orchestration/provider-contracts.ts';
 import { providerOutputSchemaGeneration } from '../src/provider-invocation-store.ts';
 import { runGit } from '../src/git.ts';
-import { scheduleOrdinaryRole } from '../src/role-scheduler.ts';
+import { scheduleOrdinaryRole } from '../src/modules/provider-orchestration/role-scheduler.ts';
 import {
   TASK_STRATEGY_IMPLEMENTATION_OUTPUT_SCHEMA,
   TASK_STRATEGY_IMPLEMENTATION_OUTPUT_VALIDATOR,
   assertTaskStrategyImplementationManifest,
   createTaskStrategyImplementationManifest,
   createTaskStrategyImplementationSubject,
-} from '../src/task-strategy-provider-contract.ts';
+} from '../src/modules/provider-orchestration/task-strategy-provider-contract.ts';
 
 const OID = 'a'.repeat(40);
 const TREE = 'b'.repeat(40);

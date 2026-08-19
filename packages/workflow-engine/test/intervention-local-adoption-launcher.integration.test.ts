@@ -6,16 +6,16 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import { canonicalJson } from '../src/canonical-json.ts';
+import { canonicalJson } from '../src/foundation/canonical-json/canonical-json.ts';
 import {
   capturePersistedWipIntervention,
   executePersistedAdoptionStep,
   initializeLocalEngineBinding,
   materializeInterventionChildWorktree,
   readLocalEngineBinding,
-} from '../src/intervention-control-bootstrap.ts';
-import { createEngineArtifact } from '../src/intervention-control.ts';
-import { persistInterventionEngineArtifact } from '../src/intervention-maintenance.ts';
+} from '../src/application/control-plane/intervention-control-bootstrap.ts';
+import { createEngineArtifact } from '../src/modules/authority/intervention-control.ts';
+import { persistInterventionEngineArtifact } from '../src/application/control-plane/intervention-maintenance.ts';
 import { preparePersistedEngineAdoption } from '../src/intervention-control-persistence.ts';
 import { setupInitialControlPlaneBootstrapFixture } from './control-plane-promotion-fixture.ts';
 

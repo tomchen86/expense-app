@@ -16,7 +16,7 @@ import {
 import {
   authorizeTaskMandate,
   TASK_MANDATE_SIGNATURE_NAMESPACE_V2,
-} from '../src/task-mandate.ts';
+} from '../src/modules/authority/task-mandate.ts';
 import {
   createFixtureRepository,
   git,

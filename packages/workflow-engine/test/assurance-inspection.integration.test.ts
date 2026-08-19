@@ -5,7 +5,7 @@ import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 
 import { inspectChangeAssurance } from '../src/assurance-inspection.ts';
-import { parsePathRoleRegistry } from '../src/path-role-registry.ts';
+import { parsePathRoleRegistry } from '../src/modules/source/path-role-registry.ts';
 import { isWorkflowError } from './fixture.ts';
 
 function repositoryRoot(): string {

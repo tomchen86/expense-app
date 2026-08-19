@@ -6,16 +6,20 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import { canonicalJson } from '../src/canonical-json.ts';
+import { canonicalJson } from '../src/foundation/canonical-json/canonical-json.ts';
 import {
   createDirectHumanReviewAttestation,
   issueCollaborationGrant,
-} from '../src/collaboration-grant.ts';
+} from '../src/modules/authority/collaboration-grant.ts';
 import { inspectCollaborationGrants } from '../src/collaboration-grant-store.ts';
 import { loadWorkflowConfig } from '../src/contracts.ts';
 import { discoverRepository } from '../src/git.ts';
 import { renderHandoff } from '../src/handoff.ts';
-import { completeTask, finalizeTask, finishSession } from '../src/lifecycle.ts';
+import {
+  completeTask,
+  finalizeTask,
+  finishSession,
+} from '../src/application/finalize/lifecycle.ts';
 import {
   readFinalizeTransaction,
   removeFinalizeTransaction,
@@ -25,8 +29,8 @@ import {
   type MaintainerSignerProvider,
 } from '../src/maintainer-signer.ts';
 import { investigationRuntimePaths } from '../src/paths.ts';
-import { commitPlanningTransition } from '../src/planning-transition.ts';
-import { restoreFinalizeTransactionProjection } from '../src/projected-finalization.ts';
+import { commitPlanningTransition } from '../src/application/propose/planning-transition.ts';
+import { restoreFinalizeTransactionProjection } from '../src/application/finalize/projected-finalization.ts';
 import {
   claimProviderInvocation,
   completeProviderInvocation,
@@ -37,7 +41,10 @@ import {
 } from '../src/provider-invocation-store.ts';
 import { PROVIDER_RUNNER_RESIDUALS } from '../src/provider-runner.ts';
 import { runProviderWorker } from '../src/provider-worker.ts';
-import { checkSession, startSession } from '../src/session.ts';
+import {
+  checkSession,
+  startSession,
+} from '../src/application/execute-task/session.ts';
 import {
   assertCurrentTaskDiffReviewSatisfied,
   beginTaskDiffReviewContinuation,
@@ -47,18 +54,18 @@ import {
   reconcileTaskDiffReviewContinuation,
   reconcileTaskDiffReview,
   submitExternalTaskDiffReview,
-} from '../src/task-diff-review-lifecycle.ts';
+} from '../src/application/finalize/task-diff-review-lifecycle.ts';
 import {
   createTaskDiffReviewChallengeResponse,
   createTaskDiffReviewRecord,
   type TaskDiffReviewSubmission,
-} from '../src/task-diff-review-artifact.ts';
+} from '../src/modules/assurance/task-diff-review-artifact.ts';
 import {
   listTaskDiffReviewLineageSupersessions,
   listTaskDiffReviewSupersessions,
   taskDiffReviewLineageSupersessionPath,
 } from '../src/task-diff-review-store.ts';
-import { TASK_DIFF_REVIEW_COVERAGE } from '../src/task-diff-review.ts';
+import { TASK_DIFF_REVIEW_COVERAGE } from '../src/modules/assurance/task-diff-review.ts';
 import {
   configureChecks,
   createFixtureRepository,

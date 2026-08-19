@@ -1,9 +1,9 @@
 import { spawnSync } from 'node:child_process';
 import crypto from 'node:crypto';
 
-import { canonicalJson } from './canonical-json.ts';
+import { canonicalJson } from './foundation/canonical-json/canonical-json.ts';
 import type { CheckDefinition } from './contracts.ts';
-import { ExitCode, workflowError } from './errors.ts';
+import { ExitCode, workflowError } from './foundation/errors/errors.ts';
 import { normalizeChangedPath } from './paths.ts';
 import {
   resolveCheckRunner,

@@ -8,19 +8,25 @@ import {
   parsePathRoleRegistry,
   resolvePathRole,
   type PathRole,
-} from '../src/path-role-registry.ts';
+} from '../src/modules/source/path-role-registry.ts';
 import { loadWorkflowConfig } from '../src/contracts.ts';
 import { resolveTaskAuthorizationRequirement } from '../src/task-authorization-policy.ts';
 
 const EXPECTED_ROLES: ReadonlyArray<
   readonly [repositoryPath: string, role: PathRole]
 > = [
-  ['packages/workflow-engine/src/plan-review-coverage.ts', 'control-plane'],
+  [
+    'packages/workflow-engine/src/modules/assurance/plan-review-coverage.ts',
+    'control-plane',
+  ],
   [
     'packages/workflow-engine/src/intervention-engine-artifact-store.ts',
     'control-plane',
   ],
-  ['packages/workflow-engine/src/planning-shadow-metrics.ts', 'control-plane'],
+  [
+    'packages/workflow-engine/src/modules/assurance/planning-shadow-metrics.ts',
+    'control-plane',
+  ],
   ['packages/workflow-engine/src/recovery-trust-root-restore.ts', 'grant'],
   ['packages/workflow-engine/src/contract-artifacts.ts', 'control-plane'],
   ['packages/workflow-engine/src/task-authorization-policy.ts', 'lifecycle'],
@@ -60,7 +66,7 @@ test('task authorization distinguishes ordinary, protected, and unclassified sco
   const protectedScope = resolveTaskAuthorizationRequirement(
     repositoryRoot,
     config,
-    ['packages/workflow-engine/src/lifecycle.ts'],
+    ['packages/workflow-engine/src/application/finalize/lifecycle.ts'],
   );
   assert.equal(protectedScope.requiresMandate, true);
   assert.deepEqual(protectedScope.roles, ['lifecycle']);

@@ -2,15 +2,18 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 
-import { canonicalJson } from './canonical-json.ts';
-import { ExitCode, workflowError } from './errors.ts';
+import { canonicalJson } from './foundation/canonical-json/canonical-json.ts';
+import { ExitCode, workflowError } from './foundation/errors/errors.ts';
 import {
   assertInvestigationApplicability,
   type InvestigationApplicability,
-} from './investigation-applicability.ts';
+} from './modules/investigation/domain/investigation-applicability.ts';
 import { materializeProjectedInvestigationArtifact } from './investigation-artifact-projection.ts';
 import { workflowContractArtifactPaths } from './contract-artifacts.ts';
-import { isRecord, isStringArray } from './contract-values.ts';
+import {
+  isRecord,
+  isStringArray,
+} from './foundation/canonical-json/contract-values.ts';
 import {
   assertStoredEvidenceNode,
   type EvidenceNode,
@@ -22,7 +25,7 @@ import {
   readConvergenceBinding,
   readReuseProofBinding,
 } from './evidence-convergence.ts';
-import { engineProjectionDefinitions } from './engine-projection-registry.ts';
+import { engineProjectionDefinitions } from './modules/projection/engine-projection-registry.ts';
 import { validateTrackedEvidenceReusePaths } from './evidence-reuse-path.ts';
 import {
   assertChangeId,
@@ -31,7 +34,10 @@ import {
   matchesAllowedPath,
   normalizePolicyPath,
 } from './paths.ts';
-import { PATH_ROLES, type PathRole } from './path-role-registry.ts';
+import {
+  PATH_ROLES,
+  type PathRole,
+} from './modules/source/path-role-registry.ts';
 
 const CHECK_ID_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 

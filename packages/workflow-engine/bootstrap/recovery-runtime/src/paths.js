@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { ExitCode, workflowError } from './errors.js';
+import { ExitCode, workflowError } from './foundation/errors/errors.js';
 const CHANGE_ID_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 const TASK_ID_PATTERN = /^\d+(?:\.\d+)+$/;
 const SESSION_ID_PATTERN = /^session-[a-zA-Z0-9-]+$/;

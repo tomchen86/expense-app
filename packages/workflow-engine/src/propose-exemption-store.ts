@@ -1,8 +1,8 @@
 import crypto from 'node:crypto';
 import path from 'node:path';
 
-import type { ActorSignal } from './actor-identity.ts';
-import { canonicalJson } from './canonical-json.ts';
+import type { ActorSignal } from './modules/provider-orchestration/actor-identity.ts';
+import { canonicalJson } from './foundation/canonical-json/canonical-json.ts';
 import {
   readContentRecord,
   writeContentRecord,
@@ -21,19 +21,19 @@ import {
   createEvidenceNode,
   type EvidenceNode,
 } from './evidence-node.ts';
-import { ExitCode, workflowError } from './errors.ts';
+import { ExitCode, workflowError } from './foundation/errors/errors.ts';
 import {
   assertInvestigationApplicability,
   type InvestigationExemption,
-} from './investigation-applicability.ts';
+} from './modules/investigation/domain/investigation-applicability.ts';
 import type { NormalizedChangeIntent } from './provider-invocation-store.ts';
 import { assertChangeId, type InvestigationRuntimePaths } from './paths.ts';
 import {
   assertHeldChangeTransitionAuthority,
   type HeldChangeTransitionAuthority,
 } from './planning-lock.ts';
-import { PROPOSE_EXEMPTION_SESSION_STORE_POLICY_DIGEST } from './provider-contracts.ts';
-import type { TaskMandateBinding } from './task-mandate.ts';
+import { PROPOSE_EXEMPTION_SESSION_STORE_POLICY_DIGEST } from './modules/provider-orchestration/provider-contracts.ts';
+import type { TaskMandateBinding } from './modules/authority/task-mandate.ts';
 
 const DIGEST = /^[0-9a-f]{64}$/;
 const GIT_OBJECT_ID = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;

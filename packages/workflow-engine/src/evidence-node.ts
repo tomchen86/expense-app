@@ -1,7 +1,11 @@
 import crypto from 'node:crypto';
 
-import { canonicalJson } from './canonical-json.ts';
-import { ExitCode, workflowError, type WorkflowError } from './errors.ts';
+import { canonicalJson } from './foundation/canonical-json/canonical-json.ts';
+import {
+  ExitCode,
+  workflowError,
+  type WorkflowError,
+} from './foundation/errors/errors.ts';
 
 const DIGEST_PATTERN = /^[0-9a-f]{64}$/;
 const DIGEST_ROLE_PATTERN = /^[a-zA-Z0-9]+(?:[._:/-][a-zA-Z0-9]+)*$/;

@@ -5,8 +5,11 @@ import test from 'node:test';
 
 import { createInvestigationCheckpointEnvelope } from '../src/investigation-session.ts';
 import { readPlanningDraftWorkspace } from '../src/planning-workspace.ts';
-import { resumePropose, startPropose } from '../src/propose-orchestrator.ts';
-import type { ProviderInvocationRequest } from '../src/provider-contracts.ts';
+import {
+  resumePropose,
+  startPropose,
+} from '../src/application/propose/propose-orchestrator.ts';
+import type { ProviderInvocationRequest } from '../src/modules/provider-orchestration/provider-contracts.ts';
 import {
   claimProviderInvocation,
   completeProviderInvocation,

@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 import type { AiAdapterRetryAccounting } from './ai-adapter-policy.ts';
-import { canonicalJson } from './canonical-json.ts';
+import { canonicalJson } from './foundation/canonical-json/canonical-json.ts';
 import {
   acceptAttemptResult,
   assertAttemptRecord,
@@ -25,9 +25,13 @@ import {
   type RetryMode,
   type RetryPolicy,
   type WorkflowRecord,
-} from './execution-core.ts';
-import { createExecutionBudgetGrantRequest } from './execution-governance.ts';
-import { ExitCode, WorkflowError, workflowError } from './errors.ts';
+} from './modules/provider-orchestration/execution-core.ts';
+import { createExecutionBudgetGrantRequest } from './modules/authority/execution-governance.ts';
+import {
+  ExitCode,
+  WorkflowError,
+  workflowError,
+} from './foundation/errors/errors.ts';
 import {
   assertPrivateInvestigationDirectory,
   createPrivateCanonicalJson,
@@ -37,7 +41,7 @@ import {
   writePrivateCanonicalJsonAtomic,
 } from './investigation-session-store.ts';
 import type { InvestigationRuntimePaths } from './paths.ts';
-import type { ProviderInvocationRequest } from './provider-contracts.ts';
+import type { ProviderInvocationRequest } from './modules/provider-orchestration/provider-contracts.ts';
 import type {
   ProviderInvocationRecord,
   ProviderRetryAccountingSnapshot,

@@ -1,6 +1,6 @@
 import type { CheckEvidence } from './check-runner.ts';
-import { ExitCode, workflowError } from './errors.ts';
-import type { AuthoritySession } from './maintainer-session.ts';
+import { ExitCode, workflowError } from './foundation/errors/errors.ts';
+import type { AuthoritySession } from './application/control-plane/maintainer-session.ts';
 import {
   readImmutableReport,
   writeImmutableReport,

@@ -7,7 +7,7 @@ import path from 'node:path';
 import type {
   ExternalEffectAuditEvent,
   ExternalEffectGrantRequest,
-} from '../src/external-effect-grant.ts';
+} from '../src/modules/authority/external-effect-grant.ts';
 import type { MaintainerSignerProvider } from '../src/maintainer-signer.ts';
 import {
   publishArtifactDigest,
@@ -17,7 +17,7 @@ import {
   authorizeTaskMandate,
   inspectActiveTaskMandateBinding,
   type TaskMandateBinding,
-} from '../src/task-mandate.ts';
+} from '../src/modules/authority/task-mandate.ts';
 import { createFixtureRepository, git } from './fixture.ts';
 
 export const EFFECT_ISSUED_AT = new Date('2026-08-04T01:00:00.000Z');

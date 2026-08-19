@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
 
-import { canonicalJson } from '../src/canonical-json.ts';
+import { canonicalJson } from '../src/foundation/canonical-json/canonical-json.ts';
 import type { EvidenceNode } from '../src/evidence-node.ts';
 import { discoverRepository } from '../src/git.ts';
 import { investigationRuntimePaths } from '../src/paths.ts';
@@ -12,30 +12,33 @@ import {
   PLAN_REVIEW_COVERAGE,
   type PlanReviewReport,
   type PlanReviewSubmission,
-} from '../src/plan-review.ts';
-import { assertPlanReviewCoverageRequirementSatisfied } from '../src/plan-review-coverage.ts';
-import type { ProviderInvocationRequest } from '../src/provider-contracts.ts';
-import { PROPOSE_POLICY_DIGEST } from '../src/provider-contracts.ts';
+} from '../src/modules/assurance/plan-review.ts';
+import { assertPlanReviewCoverageRequirementSatisfied } from '../src/modules/assurance/plan-review-coverage.ts';
+import type { ProviderInvocationRequest } from '../src/modules/provider-orchestration/provider-contracts.ts';
+import { PROPOSE_POLICY_DIGEST } from '../src/modules/provider-orchestration/provider-contracts.ts';
 import {
   PROVIDER_RUNNER_RESIDUALS,
   type ProviderRunnerReport,
 } from '../src/provider-runner.ts';
 import { runProviderWorker } from '../src/provider-worker.ts';
-import { commitPlanningTransition } from '../src/planning-transition.ts';
+import { commitPlanningTransition } from '../src/application/propose/planning-transition.ts';
 import {
   createPlanningContributionEnvelope,
   createPlanReviewDispositionsEnvelope,
   createPlanReviewProgressEnvelope,
   getProposeStatus,
   resumePropose,
-} from '../src/propose-orchestrator.ts';
-import { startSession } from '../src/session.ts';
-import { resumeTask, reviseTask } from '../src/task-revision.ts';
+} from '../src/application/propose/propose-orchestrator.ts';
+import { startSession } from '../src/application/execute-task/session.ts';
+import {
+  resumeTask,
+  reviseTask,
+} from '../src/application/revise/task-revision.ts';
 import {
   ledgerIndexPath,
   ledgerObjectPath,
 } from '../src/semantic-ledger-store.ts';
-import { createLedgerEntry } from '../src/semantic-ledger.ts';
+import { createLedgerEntry } from '../src/modules/why-knowledge/semantic-ledger.ts';
 import {
   createFixtureRepository,
   git,

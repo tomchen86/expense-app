@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { boundedArchiveCauseDiagnostic } from '../src/archive-transformation.ts';
-import { ExitCode, workflowError } from '../src/errors.ts';
+import { boundedArchiveCauseDiagnostic } from '../src/application/archive/archive-transformation.ts';
+import { ExitCode, workflowError } from '../src/foundation/errors/errors.ts';
 
 test('a workflow cause keeps the code, message, and structured details', () => {
   const cause = workflowError(

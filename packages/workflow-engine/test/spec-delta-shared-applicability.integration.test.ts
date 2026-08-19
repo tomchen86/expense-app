@@ -9,7 +9,7 @@ import {
   assertSpecDeltaScenarioPreservation,
   verifyArchiveDeltaOutcomes,
 } from '../src/archive-delta-verifier.ts';
-import { WorkflowError } from '../src/errors.ts';
+import { WorkflowError } from '../src/foundation/errors/errors.ts';
 
 function git(repository: string, args: string[]): string {
   return execFileSync('git', args, { cwd: repository, encoding: 'utf8' });

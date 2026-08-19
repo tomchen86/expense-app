@@ -4,7 +4,7 @@ import path from 'node:path';
 import test from 'node:test';
 
 import { loadAiAdapterPolicy } from '../src/ai-adapter-policy.ts';
-import { canonicalJson } from '../src/canonical-json.ts';
+import { canonicalJson } from '../src/foundation/canonical-json/canonical-json.ts';
 import { discoverRepository } from '../src/git.ts';
 import {
   executeHumanResolutionGrant,
@@ -23,11 +23,11 @@ import {
   verifyHumanResolutionGrantEnvelope,
   verifyLegacyHumanResolutionGrantEnvelopeReadOnly,
   type HumanResolutionGrantEnvelope,
-} from '../src/maintainer-grant.ts';
-import type { MaintainerPolicy } from '../src/maintainer-policy.ts';
+} from '../src/modules/authority/maintainer-grant.ts';
+import type { MaintainerPolicy } from '../src/modules/authority/maintainer-policy.ts';
 import type { MaintainerSignerProvider } from '../src/maintainer-signer.ts';
 import { investigationRuntimePaths } from '../src/paths.ts';
-import { createProviderInvocationRequest } from '../src/provider-contracts.ts';
+import { createProviderInvocationRequest } from '../src/modules/provider-orchestration/provider-contracts.ts';
 import {
   BLIND_SURVEY_OUTPUT_SCHEMA,
   blindSurveyIntentDigest,

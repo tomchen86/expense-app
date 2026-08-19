@@ -5,13 +5,13 @@ import { createRequire } from 'node:module';
 import { performance } from 'node:perf_hooks';
 
 import { loadAiAdapterPolicy } from './ai-adapter-policy.ts';
-import { canonicalJson } from './canonical-json.ts';
+import { canonicalJson } from './foundation/canonical-json/canonical-json.ts';
 import {
   assertReadOnlyProbe,
   type ReadOnlyProbeRequest,
-} from './execution-core.ts';
+} from './modules/provider-orchestration/execution-core.ts';
 import { readExecutionJobState } from './execution-store.ts';
-import { WorkflowError } from './errors.ts';
+import { WorkflowError } from './foundation/errors/errors.ts';
 import { runGitBuffer } from './git.ts';
 import { loadInvestigationRuntimeContext } from './lifecycle-context.ts';
 import {

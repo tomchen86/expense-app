@@ -2,8 +2,12 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 
-import { canonicalJson } from './canonical-json.ts';
-import { ExitCode, workflowError, type WorkflowError } from './errors.ts';
+import { canonicalJson } from './foundation/canonical-json/canonical-json.ts';
+import {
+  ExitCode,
+  workflowError,
+  type WorkflowError,
+} from './foundation/errors/errors.ts';
 import {
   createPrivateCanonicalJson,
   readPrivateCanonicalJson,
@@ -12,7 +16,7 @@ import type { InvestigationRuntimePaths } from './paths.ts';
 import {
   parsePreMergeAssuranceNode,
   type PreMergeAssuranceNode,
-} from './pre-merge-assurance.ts';
+} from './modules/assurance/pre-merge-assurance.ts';
 
 const OBJECT_ID = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
 const DIGEST = /^[0-9a-f]{64}$/;

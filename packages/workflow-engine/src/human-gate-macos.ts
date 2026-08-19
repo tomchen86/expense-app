@@ -4,16 +4,16 @@ import fs from 'node:fs';
 import path from 'node:path';
 import readline from 'node:readline';
 
-import { canonicalJson } from './canonical-json.ts';
-import { isRecord } from './contract-values.ts';
-import { ExitCode, workflowError } from './errors.ts';
-import type { VerifiedApprovalProof } from './grant-approval.ts';
+import { canonicalJson } from './foundation/canonical-json/canonical-json.ts';
+import { isRecord } from './foundation/canonical-json/contract-values.ts';
+import { ExitCode, workflowError } from './foundation/errors/errors.ts';
+import type { VerifiedApprovalProof } from './modules/authority/grant-approval.ts';
 import type {
   GrantApprovalSession,
   GrantAuthenticationRequest,
   GrantHumanDecision,
   TrustedGrantPresentation,
-} from './grant-coordinator.ts';
+} from './modules/authority/grant-coordinator.ts';
 import {
   copyGrantDate,
   freezeGrantCanonical,
@@ -24,7 +24,7 @@ import {
   grantHasExactKeys,
   grantSha256,
   parseGrantTimestamp,
-} from './grant-primitives.ts';
+} from './modules/authority/grant-primitives.ts';
 
 const MAX_PROTOCOL_BYTES = 262_144;
 const MAX_PROOF_AGE_MS = 2 * 60_000;

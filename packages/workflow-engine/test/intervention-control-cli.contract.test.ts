@@ -14,8 +14,8 @@ import {
   type ControlPlaneGrantEnvelope,
   type ExactControlPlaneChange,
   type ProtectedCapabilityEntry,
-} from '../src/intervention-control.ts';
-import { WorkflowError } from '../src/errors.ts';
+} from '../src/modules/authority/intervention-control.ts';
+import { WorkflowError } from '../src/foundation/errors/errors.ts';
 
 const NOW = new Date('2026-08-03T10:00:00.000Z');
 

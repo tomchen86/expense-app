@@ -6,7 +6,7 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import test from 'node:test';
 
-import { canonicalJson } from '../src/canonical-json.ts';
+import { canonicalJson } from '../src/foundation/canonical-json/canonical-json.ts';
 import {
   REQUIRED_PROTECTED_CAPABILITIES,
   classifyProtectedCapabilityPaths,
@@ -301,13 +301,13 @@ test('repository publishes the complete typed control-plane capability closure',
   );
   assert.equal(
     (byCapability.get('apply.journal')?.entrypoints as unknown[]).includes(
-      'packages/workflow-engine/src/maintainer-recovery.ts',
+      'packages/workflow-engine/src/application/control-plane/maintainer-recovery.ts',
     ),
     true,
   );
   assert.equal(
     (byCapability.get('apply.journal')?.entrypoints as unknown[]).includes(
-      'packages/workflow-engine/src/authority-plan.ts',
+      'packages/workflow-engine/src/application/control-plane/authority-plan.ts',
     ),
     true,
   );
@@ -320,13 +320,17 @@ test('repository publishes the complete typed control-plane capability closure',
   assert.equal(
     (
       byCapability.get('authorization.verify')?.dependencies as unknown[]
-    ).includes('packages/workflow-engine/src/pre-merge-assurance.ts'),
+    ).includes(
+      'packages/workflow-engine/src/modules/assurance/pre-merge-assurance.ts',
+    ),
     true,
   );
   assert.equal(
     (
       byCapability.get('control-plane.update')?.entrypoints as unknown[]
-    ).includes('packages/workflow-engine/src/intervention-control-updater.ts'),
+    ).includes(
+      'packages/workflow-engine/src/application/control-plane/intervention-control-updater.ts',
+    ),
     true,
   );
   assert.equal(

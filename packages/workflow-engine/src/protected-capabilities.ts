@@ -2,9 +2,15 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 
-import { canonicalJson, compareCanonicalStrings } from './canonical-json.ts';
-import { isRecord, isStringArray } from './contract-values.ts';
-import { ExitCode, workflowError } from './errors.ts';
+import {
+  canonicalJson,
+  compareCanonicalStrings,
+} from './foundation/canonical-json/canonical-json.ts';
+import {
+  isRecord,
+  isStringArray,
+} from './foundation/canonical-json/contract-values.ts';
+import { ExitCode, workflowError } from './foundation/errors/errors.ts';
 import { runGit, runGitBuffer } from './git.ts';
 import {
   matchesAllowedPath,

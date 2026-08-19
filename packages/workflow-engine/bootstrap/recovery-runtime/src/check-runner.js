@@ -1,7 +1,7 @@
 import { spawnSync } from 'node:child_process';
 import crypto from 'node:crypto';
-import { canonicalJson } from './canonical-json.js';
-import { ExitCode, workflowError } from './errors.js';
+import { canonicalJson } from './foundation/canonical-json/canonical-json.js';
+import { ExitCode, workflowError } from './foundation/errors/errors.js';
 import { normalizeChangedPath } from './paths.js';
 import { resolveCheckRunner, } from './runner-resolution.js';
 export const OBSERVED_CHECK_FAILURE_EXCERPT_BYTES = 8 * 1024;

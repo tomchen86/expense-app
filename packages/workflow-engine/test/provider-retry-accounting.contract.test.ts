@@ -7,8 +7,8 @@ import {
   DEFAULT_AI_ADAPTER_RETRY_ACCOUNTING,
   loadAiAdapterPolicy,
 } from '../src/ai-adapter-policy.ts';
-import { canonicalJson } from '../src/canonical-json.ts';
-import { projectProviderInvocationExecution } from '../src/execution-core.ts';
+import { canonicalJson } from '../src/foundation/canonical-json/canonical-json.ts';
+import { projectProviderInvocationExecution } from '../src/modules/provider-orchestration/execution-core.ts';
 import { readExecutionJobState } from '../src/execution-store.ts';
 import { preflightProviderRepairRetry } from '../src/provider-execution-governance.ts';
 import { loadInvestigationRuntimeContext } from '../src/lifecycle-context.ts';
@@ -16,7 +16,7 @@ import { listProviderInvocationLifecycleProjections } from '../src/investigation
 import {
   createProviderInvocationRequest,
   type ProviderInvocationRequest,
-} from '../src/provider-contracts.ts';
+} from '../src/modules/provider-orchestration/provider-contracts.ts';
 import {
   BLIND_SURVEY_OUTPUT_SCHEMA,
   BLIND_SURVEY_PROVIDER_OUTPUT_SCHEMA,
@@ -33,7 +33,7 @@ import {
   storeProviderExecutionPolicySnapshot,
   type BlindSurveyManifest,
 } from '../src/provider-invocation-store.ts';
-import { authorizeAutomaticProviderRetry } from '../src/provider-retry-decision.ts';
+import { authorizeAutomaticProviderRetry } from '../src/modules/provider-orchestration/provider-retry-decision.ts';
 import { createFixtureRepository, git, isWorkflowError } from './fixture.ts';
 
 const CREATED_AT = '2026-08-03T08:00:00.000Z';

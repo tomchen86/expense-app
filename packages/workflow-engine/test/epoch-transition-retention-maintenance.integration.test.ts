@@ -13,7 +13,7 @@ import {
   rolloverDurableEpochContextStore,
   type ContextManifest,
   type WorkflowContextState,
-} from '../src/execution-governance.ts';
+} from '../src/modules/authority/execution-governance.ts';
 import { runDurableContextRetentionMaintenance } from '../src/retention-control.ts';
 
 function manifest(epoch: number, content: string): ContextManifest {

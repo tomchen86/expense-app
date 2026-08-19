@@ -7,7 +7,7 @@ import path from 'node:path';
 import test from 'node:test';
 import { pathToFileURL } from 'node:url';
 
-import { canonicalJson } from '../src/canonical-json.ts';
+import { canonicalJson } from '../src/foundation/canonical-json/canonical-json.ts';
 import {
   recoveryAuthorityDescriptorDigest,
   recoveryAuthorityRepositoryIdentityDigest,
@@ -36,14 +36,14 @@ import {
   type ControlPlaneIndependentReviewAttestationEnvelope,
   type ExactControlPlaneChange,
   type ProtectedCapabilityEntry,
-} from '../src/intervention-control.ts';
+} from '../src/modules/authority/intervention-control.ts';
 import {
   createControlPlanePromotionBundle,
   createControlPlaneRecoveryBundle,
   initializeControlPlaneSupervisorState,
   persistControlPlaneApprovalCandidate,
   preflightControlPlaneApprovalCandidate,
-} from '../src/intervention-control-updater.ts';
+} from '../src/application/control-plane/intervention-control-updater.ts';
 import { loadProtectedCapabilitiesFromTrustBase } from '../src/protected-capabilities.ts';
 import {
   bootstrapInterventionStateRoot,

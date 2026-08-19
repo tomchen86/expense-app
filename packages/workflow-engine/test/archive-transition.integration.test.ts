@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
 
-import { commitArchiveTransition } from '../src/archive-transition.ts';
+import { commitArchiveTransition } from '../src/application/archive/archive-transition.ts';
 import { runCli } from '../src/cli.ts';
 import {
   createFixtureRepository,

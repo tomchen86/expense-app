@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import { canonicalJson } from '../src/canonical-json.ts';
+import { canonicalJson } from '../src/foundation/canonical-json/canonical-json.ts';
 import {
   parseInvestigationArtifact,
   type InvestigationArtifact,
@@ -19,43 +19,48 @@ import {
   deriveInvestigationGroupFacts,
   deriveInvestigationGroups,
   readInvestigationGroupNode,
-} from '../src/investigation-groups.ts';
+} from '../src/modules/investigation/domain/investigation-groups.ts';
 import { projectInvestigationArtifactForTracking } from '../src/investigation-artifact-projection.ts';
 import {
   deriveEngineFloor,
   derivePinnedDiffPathFacts,
   validateEngineFloor,
   type EngineFloorFacts,
-} from '../src/investigation-floor.ts';
+} from '../src/modules/investigation/domain/investigation-floor.ts';
 import {
   adaptInvestigationScanFactsResult,
   scanInvestigationTreeFacts,
   scanInvestigationTree,
   type InvestigationScanResult,
   type ScanSkippedObject,
-} from '../src/investigation-scanner.ts';
+} from '../src/modules/investigation/domain/investigation-scanner.ts';
 import {
   INVESTIGATION_APPLICABILITY_POLICY_DIGEST,
   createInvestigationApplicability,
-} from '../src/investigation-applicability.ts';
+} from '../src/modules/investigation/domain/investigation-applicability.ts';
 import {
   INVESTIGATION_LIMITS,
   normalizeInvestigationTerm,
   previewInvestigationTermUnion,
   type InvestigationTermContribution,
-} from '../src/investigation-terms.ts';
+} from '../src/modules/investigation/domain/investigation-terms.ts';
 import { runGitBuffer } from '../src/git.ts';
 import {
   readPinnedTrackedTree,
   TRACKED_TREE_LIMITS,
 } from '../src/tracked-tree-reader.ts';
-import { createMutationClassPolicy } from '../src/mutation-class-policy.ts';
+import { createMutationClassPolicy } from '../src/modules/source/mutation-class-policy.ts';
 import { git, isWorkflowError } from './fixture.ts';
 
 test('typed terms preserve exact bytes, deduplicate semantics, and retain every provenance', () => {
   assert.equal(
     fs
-      .readFileSync(new URL('../src/investigation-terms.ts', import.meta.url))
+      .readFileSync(
+        new URL(
+          '../src/modules/investigation/domain/investigation-terms.ts',
+          import.meta.url,
+        ),
+      )
       .includes(0),
     false,
   );

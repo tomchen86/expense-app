@@ -6,11 +6,11 @@ import test from 'node:test';
 import {
   commitPlanAmendment,
   commitPlanningTransition,
-} from '../src/planning-transition.ts';
+} from '../src/application/propose/planning-transition.ts';
 import {
   createPlanningAmendmentDecision,
   replacePlanningAmendmentDecisionMarker,
-} from '../src/planning-amendment-decision.ts';
+} from '../src/modules/lifecycle/planning-amendment-decision.ts';
 import { committedPlanningGeneration } from '../src/planning-generation-history.ts';
 import {
   createFixtureRepository,

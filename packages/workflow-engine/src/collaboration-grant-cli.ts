@@ -5,15 +5,15 @@ import {
   type CollaborationGrantRequest,
   type CollaborationLifecyclePhase,
   type CollaborationRolePair,
-} from './collaboration-grant.ts';
+} from './modules/authority/collaboration-grant.ts';
 import {
   inspectCollaborationGrants,
   revokeCollaborationGrant,
 } from './collaboration-grant-store.ts';
-import type { ActorAssurance } from './actor-identity.ts';
-import { ExitCode, workflowError } from './errors.ts';
+import type { ActorAssurance } from './modules/provider-orchestration/actor-identity.ts';
+import { ExitCode, workflowError } from './foundation/errors/errors.ts';
 import { discoverRepository, runGit } from './git.ts';
-import { isProviderId } from './provider-registry.ts';
+import { isProviderId } from './modules/provider-orchestration/provider-registry.ts';
 
 type CollaborationGrantCommandResult = Record<string, unknown>;
 const GIT_OBJECT_ID_PATTERN = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;

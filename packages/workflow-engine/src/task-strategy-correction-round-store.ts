@@ -2,8 +2,8 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 
-import { canonicalJson } from './canonical-json.ts';
-import { ExitCode, workflowError } from './errors.ts';
+import { canonicalJson } from './foundation/canonical-json/canonical-json.ts';
+import { ExitCode, workflowError } from './foundation/errors/errors.ts';
 import {
   assertPrivateInvestigationDirectory,
   createPrivateCanonicalJson,
@@ -21,7 +21,7 @@ import {
   type TaskStrategyPatchHead,
 } from './task-strategy-correction-store.ts';
 import type { TaskStrategyPatchImplementer } from './task-strategy-patch-store.ts';
-import { isProviderId } from './provider-registry.ts';
+import { isProviderId } from './modules/provider-orchestration/provider-registry.ts';
 
 const DIGEST = /^[0-9a-f]{64}$/u;
 const GIT_OBJECT_ID = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/u;

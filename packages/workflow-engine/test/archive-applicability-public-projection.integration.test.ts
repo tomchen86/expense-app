@@ -4,7 +4,7 @@ import path from 'node:path';
 import test from 'node:test';
 
 import { validateCiPlanningCommit } from '../src/ci-planning.ts';
-import { commitPlanningTransition } from '../src/planning-transition.ts';
+import { commitPlanningTransition } from '../src/application/propose/planning-transition.ts';
 import {
   createFixtureRepository,
   git,

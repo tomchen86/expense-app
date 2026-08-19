@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import test from 'node:test';
 
-import { startPropose } from '../src/propose-orchestrator.ts';
+import { startPropose } from '../src/application/propose/propose-orchestrator.ts';
 import { prepareExecutionMandate } from './execution-mandate-fixture.ts';
 import { createFixtureRepository, git } from './fixture.ts';
 
@@ -56,7 +56,9 @@ function prepareWorkflow(changeId: string) {
     {
       schemaVersion: 1,
       summary: `Report ${changeId} semantic reuse.`,
-      explicitPaths: ['packages/workflow-engine/src/execution-core.ts'],
+      explicitPaths: [
+        'packages/workflow-engine/src/modules/provider-orchestration/execution-core.ts',
+      ],
       explicitSymbols: ['createExecutionJob'],
       explicitConfigKeys: [],
       renamePairs: [],

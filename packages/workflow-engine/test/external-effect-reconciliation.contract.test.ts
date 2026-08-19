@@ -22,9 +22,9 @@ import {
   terminalizeExternalEffectGrant,
   type ExternalEffectReconciliationOutcome,
   type Sha256Digest,
-} from '../src/external-effect-grant.ts';
+} from '../src/modules/authority/external-effect-grant.ts';
 import { executePublishGrant } from '../src/publish-executor.ts';
-import { revokeTaskMandate } from '../src/task-mandate.ts';
+import { revokeTaskMandate } from '../src/modules/authority/task-mandate.ts';
 import {
   EFFECT_GRANT_ID as GRANT_ID,
   EFFECT_ISSUED_AT as ISSUED_AT,

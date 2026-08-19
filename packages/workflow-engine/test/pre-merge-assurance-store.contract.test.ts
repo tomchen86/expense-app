@@ -10,7 +10,7 @@ import {
   createRequiredPreMergeCoverage,
   completePreMergeAssurance,
   preparePreMergeAssurance,
-} from '../src/pre-merge-assurance.ts';
+} from '../src/modules/assurance/pre-merge-assurance.ts';
 import {
   readPreMergeAssurance,
   storePreMergeAssurance,

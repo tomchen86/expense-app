@@ -6,7 +6,11 @@ import {
   isPlanningAssuranceBinding,
   type PlanningAssuranceBinding,
 } from './contracts.ts';
-import { ExitCode, WorkflowError, workflowError } from './errors.ts';
+import {
+  ExitCode,
+  WorkflowError,
+  workflowError,
+} from './foundation/errors/errors.ts';
 import {
   assertPlainDirectory as assertSafePlainDirectory,
   ensurePlainDirectory,

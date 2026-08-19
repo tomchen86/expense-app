@@ -18,9 +18,9 @@ import {
   showAuthorityAuditTask,
   verifyAuthorityAuditEvents,
 } from './authority-audit-service.ts';
-import { ExitCode, workflowError } from './errors.ts';
+import { ExitCode, workflowError } from './foundation/errors/errors.ts';
 import { discoverRepository, runGit } from './git.ts';
-import { parseMaintainerPolicy } from './maintainer-policy.ts';
+import { parseMaintainerPolicy } from './modules/authority/maintainer-policy.ts';
 
 const MAX_AUDIT_INPUT_PATH_BYTES = 4_096;
 const MAX_AUDIT_INPUT_FILE_BYTES = 32_768;

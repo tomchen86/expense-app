@@ -10,7 +10,7 @@ import {
   planningCommitMessage,
 } from '../src/git-transitions.ts';
 import { runRepositoryHook } from '../src/hooks.ts';
-import { startSession } from '../src/session.ts';
+import { startSession } from '../src/application/execute-task/session.ts';
 import {
   createFixtureRepository,
   git,

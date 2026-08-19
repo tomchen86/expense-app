@@ -1,8 +1,8 @@
 import { spawnSync } from 'node:child_process';
 import crypto from 'node:crypto';
 
-import { canonicalJson } from './canonical-json.ts';
-import { ExitCode, workflowError } from './errors.ts';
+import { canonicalJson } from './foundation/canonical-json/canonical-json.ts';
+import { ExitCode, workflowError } from './foundation/errors/errors.ts';
 import {
   consumeExternalEffectGrant,
   inspectExternalEffectGrantForExecutor,
@@ -15,7 +15,7 @@ import {
   type ExternalEffectGrantInspection,
   type ExternalEffectTransitionOptions,
   type Sha256Digest,
-} from './external-effect-grant.ts';
+} from './modules/authority/external-effect-grant.ts';
 import { discoverRepository, runGit } from './git.ts';
 import type { MaintainerSignerProvider } from './maintainer-signer.ts';
 

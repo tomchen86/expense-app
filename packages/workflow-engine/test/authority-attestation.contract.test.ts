@@ -12,8 +12,8 @@ import {
   type AttestedCommitFacts,
   type AuthorityAttestationEnvelope,
   type AuthorityAttestationPayload,
-} from '../src/authority-attestation.ts';
-import { WorkflowError } from '../src/errors.ts';
+} from '../src/modules/authority/authority-attestation.ts';
+import { WorkflowError } from '../src/foundation/errors/errors.ts';
 
 const PRIMARY_GRANT = '402b4c86-4b97-4c69-8c5c-bba5995b4387';
 const BASE_GRANT_A = '049a929b-2b42-47f1-bbbb-3327e8df4350';

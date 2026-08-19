@@ -1,5 +1,5 @@
 import { evaluateAiAdapter } from './ai-adapter-evaluation.ts';
-import { ExitCode, workflowError } from './errors.ts';
+import { ExitCode, workflowError } from './foundation/errors/errors.ts';
 import {
   runProviderAvailabilityPilot,
   verifyProviderAvailabilityPilot,

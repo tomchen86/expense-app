@@ -1,9 +1,9 @@
 import crypto from 'node:crypto';
 import path from 'node:path';
-import { canonicalJson } from './canonical-json.js';
-import { createReplacementAttempt, projectProviderInvocationExecution, providerExecutionEnvironmentDigest, providerExecutionPolicySnapshot, } from './execution-core.js';
-import { assembleCurrentPromptFromStore, buildContextManifest, buildRepairContext, canonicalRepairBudget, canonicalRepairContext, createRepairBudget, initializeDurableEpochContextStore, inspectDurableEpochContextStore, inspectDurableRetentionCatalog, parseRepairBudget, parseRepairContext, rolloverDurableEpochContextStore, storeDurableEvidence, consumeRepairBudget, withCurrentDurableEpochContextStore, } from './execution-governance.js';
-import { ExitCode, WorkflowError, workflowError } from './errors.js';
+import { canonicalJson } from './foundation/canonical-json/canonical-json.js';
+import { createReplacementAttempt, projectProviderInvocationExecution, providerExecutionEnvironmentDigest, providerExecutionPolicySnapshot, } from './modules/provider-orchestration/execution-core.js';
+import { assembleCurrentPromptFromStore, buildContextManifest, buildRepairContext, canonicalRepairBudget, canonicalRepairContext, createRepairBudget, initializeDurableEpochContextStore, inspectDurableEpochContextStore, inspectDurableRetentionCatalog, parseRepairBudget, parseRepairContext, rolloverDurableEpochContextStore, storeDurableEvidence, consumeRepairBudget, withCurrentDurableEpochContextStore, } from './modules/authority/execution-governance.js';
+import { ExitCode, WorkflowError, workflowError, } from './foundation/errors/errors.js';
 import { createPrivateCanonicalJson, privatePathExists, readPrivateCanonicalJson, } from './investigation-session-store.js';
 import { assertInvestigationId, } from './paths.js';
 const MAX_REPAIR_VALUE_BYTES = 262_144;

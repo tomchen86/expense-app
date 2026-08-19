@@ -22,13 +22,13 @@ import {
   parseTaskDiffReviewRecord,
   type CreateTaskDiffReviewRecordInput,
   type TaskDiffReviewAssignment,
-} from '../src/task-diff-review-artifact.ts';
+} from '../src/modules/assurance/task-diff-review-artifact.ts';
 import {
   createTaskDiffDocumentationClosureRequirement,
   createTaskDiffReviewSubject,
   deriveTaskDiffReviewCandidatePlan,
   TASK_DIFF_REVIEW_COVERAGE,
-} from '../src/task-diff-review.ts';
+} from '../src/modules/assurance/task-diff-review.ts';
 
 test('TaskDiffReview record canonically binds a fresh provider-independent assignment and complete coverage', () => {
   const input = reviewInput();

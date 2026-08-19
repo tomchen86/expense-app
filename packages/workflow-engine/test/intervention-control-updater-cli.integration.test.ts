@@ -6,9 +6,13 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import { canonicalJson } from '../src/canonical-json.ts';
-import { produceControlPlaneApprovalCandidateV2 } from '../src/control-plane-promotion-producer.ts';
-import { ExitCode, WorkflowError, workflowError } from '../src/errors.ts';
+import { canonicalJson } from '../src/foundation/canonical-json/canonical-json.ts';
+import { produceControlPlaneApprovalCandidateV2 } from '../src/application/control-plane/control-plane-promotion-producer.ts';
+import {
+  ExitCode,
+  WorkflowError,
+  workflowError,
+} from '../src/foundation/errors/errors.ts';
 import {
   canonicalControlPlaneGrantPayloadV2,
   CONTROL_PLANE_SIGNATURE_NAMESPACE_V2,
@@ -23,7 +27,7 @@ import {
   type ControlPlaneTaskMandateBinding,
   type ExactControlPlaneChange,
   type ProtectedCapabilityEntry,
-} from '../src/intervention-control.ts';
+} from '../src/modules/authority/intervention-control.ts';
 import {
   createControlPlanePromotionBundle,
   createControlPlaneRecoveryBundle,
@@ -36,7 +40,7 @@ import {
   type ControlPlaneApprovalSummaryV2,
   type ControlPlaneTaskMandateValidationPhase,
   type ControlPlaneUpdaterAuditRecord,
-} from '../src/intervention-control-updater.ts';
+} from '../src/application/control-plane/intervention-control-updater.ts';
 import {
   controlPlaneUpdaterUsage,
   dispatchControlPlaneUpdaterCommand,

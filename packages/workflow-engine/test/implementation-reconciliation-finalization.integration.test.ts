@@ -4,17 +4,21 @@ import fs from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
 
-import { canonicalJson } from '../src/canonical-json.ts';
+import { canonicalJson } from '../src/foundation/canonical-json/canonical-json.ts';
 import {
   inspectImplementationReconciliation,
   recordImplementationReconciliation,
-} from '../src/implementation-reconciliation.ts';
-import { completeTask, finalizeTask, finishSession } from '../src/lifecycle.ts';
+} from '../src/modules/why-knowledge/implementation-reconciliation.ts';
+import {
+  completeTask,
+  finalizeTask,
+  finishSession,
+} from '../src/application/finalize/lifecycle.ts';
 import {
   PLAN_REVIEW_COVERAGE,
   type PlanReviewSubmission,
-} from '../src/plan-review.ts';
-import type { ProviderInvocationRequest } from '../src/provider-contracts.ts';
+} from '../src/modules/assurance/plan-review.ts';
+import type { ProviderInvocationRequest } from '../src/modules/provider-orchestration/provider-contracts.ts';
 import {
   PROVIDER_RUNNER_RESIDUALS,
   type ProviderRunnerReport,
@@ -25,13 +29,16 @@ import {
   createPlanReviewProgressEnvelope,
   getProposeStatus,
   resumePropose,
-} from '../src/propose-orchestrator.ts';
+} from '../src/application/propose/propose-orchestrator.ts';
 import {
   ledgerIndexPath,
   readLedgerEntry,
   readLedgerIndex,
 } from '../src/semantic-ledger-store.ts';
-import { checkSession, startSession } from '../src/session.ts';
+import {
+  checkSession,
+  startSession,
+} from '../src/application/execute-task/session.ts';
 import { isWorkflowError } from './fixture.ts';
 import { driveProposeToDispositions } from './propose-drive-fixture.ts';
 

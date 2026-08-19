@@ -1,13 +1,17 @@
 import { loadWorkflowConfig } from './contracts.ts';
-import { isRecord } from './contract-values.ts';
-import { ExitCode, WorkflowError, workflowError } from './errors.ts';
+import { isRecord } from './foundation/canonical-json/contract-values.ts';
+import {
+  ExitCode,
+  WorkflowError,
+  workflowError,
+} from './foundation/errors/errors.ts';
 import { ensurePlainDirectory } from './filesystem-safety.ts';
 import { discoverRepository } from './git.ts';
 import {
   createGrantCoordinatorKernel,
   type GrantApprovalSession,
   type GrantCoordinator,
-} from './grant-coordinator.ts';
+} from './modules/authority/grant-coordinator.ts';
 import { collectSshApprovalProof } from './grant-proof-ssh.ts';
 import { createInvestigationGrantRequest } from './investigation-grant-transitions.ts';
 import { investigationGrantTransitionDefinitions } from './investigation-grant-transitions.ts';
@@ -15,13 +19,13 @@ import {
   createInvestigationV3PublicationGrantRequest,
   createInvestigationV3GrantRequest,
   investigationV3GrantTransitionDefinitions,
-} from './investigation-v3-grant.ts';
+} from './modules/investigation/seal/investigation-v3-grant.ts';
 import type { InvestigationManifestPublicationFailure } from './investigation-publication.ts';
 import { readInvestigationV3ShadowFailureObservation } from './investigation-shadow-store.ts';
-import { loadGrantPolicyV2 } from './grant-policy.ts';
+import { loadGrantPolicyV2 } from './modules/authority/grant-policy.ts';
 import { grantStorePaths, readGrantRecord } from './grant-store.ts';
-import type { TransitionRegistry } from './grant-transition-registry.ts';
-import { createTransitionRegistry } from './grant-transition-registry.ts';
+import type { TransitionRegistry } from './modules/authority/grant-transition-registry.ts';
+import { createTransitionRegistry } from './modules/authority/grant-transition-registry.ts';
 import {
   inspectMacOsHumanGateRuntime,
   openMacOsHumanGateApprovalSession,

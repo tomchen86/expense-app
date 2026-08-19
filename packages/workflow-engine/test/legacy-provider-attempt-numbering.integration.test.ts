@@ -4,14 +4,14 @@ import path from 'node:path';
 import test from 'node:test';
 
 import { loadAiAdapterPolicy } from '../src/ai-adapter-policy.ts';
-import { canonicalJson } from '../src/canonical-json.ts';
+import { canonicalJson } from '../src/foundation/canonical-json/canonical-json.ts';
 import { executionStorePaths } from '../src/execution-store.ts';
 import { listExecutionJobs } from '../src/execution-runtime.ts';
 import { loadInvestigationRuntimeContext } from '../src/lifecycle-context.ts';
 import {
   createProviderInvocationRequest,
   type ProviderInvocationRequest,
-} from '../src/provider-contracts.ts';
+} from '../src/modules/provider-orchestration/provider-contracts.ts';
 import {
   BLIND_SURVEY_OUTPUT_SCHEMA,
   blindSurveyIntentDigest,

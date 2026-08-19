@@ -2,8 +2,8 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 
-import { canonicalJson } from './canonical-json.ts';
-import { ExitCode, workflowError } from './errors.ts';
+import { canonicalJson } from './foundation/canonical-json/canonical-json.ts';
+import { ExitCode, workflowError } from './foundation/errors/errors.ts';
 import {
   interventionEngineArtifactRecordPath,
   readStoredInterventionEngineArtifact,
@@ -46,7 +46,7 @@ import {
   type Sha256Digest,
   type WipCheckpoint,
   type WipCheckpointInput,
-} from './intervention-control.ts';
+} from './modules/authority/intervention-control.ts';
 
 const MAX_RECORD_BYTES = 4 * 1024 * 1024;
 const PRIVATE_FILE_MODE = 0o600;

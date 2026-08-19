@@ -5,28 +5,28 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import { canonicalJson } from '../src/canonical-json.ts';
+import { canonicalJson } from '../src/foundation/canonical-json/canonical-json.ts';
 import { discoverRepository } from '../src/git.ts';
 import {
   createApprovalSubject,
   approvalSubjectDigest,
-} from '../src/grant-core.ts';
+} from '../src/modules/authority/grant-core.ts';
 import {
   createProductionWorkflowGrantCoordinator,
   propagateInvestigationV3PublicationResult,
 } from '../src/grant-production.ts';
-import { HUMAN_GATE_MACOS_V1_CONFIGURATION_DIGEST } from '../src/grant-policy.ts';
+import { HUMAN_GATE_MACOS_V1_CONFIGURATION_DIGEST } from '../src/modules/authority/grant-policy.ts';
 import {
   grantStorePaths,
   prepareGrantTransition,
   readGrantRecord,
 } from '../src/grant-store.ts';
-import { createTransitionRegistry } from '../src/grant-transition-registry.ts';
+import { createTransitionRegistry } from '../src/modules/authority/grant-transition-registry.ts';
 import {
   buildInvestigationManifestDraft,
   sealInvestigationManifestDraft,
   type ExemptionInvestigationAuthoringState,
-} from '../src/investigation-manifest.ts';
+} from '../src/modules/investigation/manifest/investigation-manifest.ts';
 import {
   inspectInvestigationManifestPublication,
   investigationManifestPublicationNamespace,
@@ -36,7 +36,7 @@ import {
   type InvestigationManifestPublicationFailure,
   type InvestigationManifestPublicationPaths,
 } from '../src/investigation-publication.ts';
-import { investigationV3GrantTransitionDefinitions } from '../src/investigation-v3-grant.ts';
+import { investigationV3GrantTransitionDefinitions } from '../src/modules/investigation/seal/investigation-v3-grant.ts';
 import {
   compareAndSwapInvestigationSession,
   createCurrentInvestigationRef,

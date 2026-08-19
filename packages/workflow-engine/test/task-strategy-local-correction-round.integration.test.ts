@@ -3,14 +3,17 @@ import fs from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
 
-import { commitPlanningTransition } from '../src/planning-transition.ts';
-import { startSession } from '../src/session.ts';
-import { resolveCurrentTaskStrategyCorrection } from '../src/task-strategy-correction.ts';
+import { commitPlanningTransition } from '../src/application/propose/planning-transition.ts';
+import { startSession } from '../src/application/execute-task/session.ts';
+import { resolveCurrentTaskStrategyCorrection } from '../src/application/execute-task/task-strategy-correction.ts';
 import { listTaskStrategyCorrectionRounds } from '../src/task-strategy-correction-round-store.ts';
-import { adoptCurrentTaskStrategyImplementation } from '../src/task-strategy-patch.ts';
-import { sealTaskStrategyRed } from '../src/task-strategy-execution.ts';
-import { resumeTaskStrategy } from '../src/task-strategy-lifecycle.ts';
-import { checkSession, inspectSession } from '../src/verification.ts';
+import { adoptCurrentTaskStrategyImplementation } from '../src/application/execute-task/task-strategy-patch.ts';
+import { sealTaskStrategyRed } from '../src/application/execute-task/task-strategy-execution.ts';
+import { resumeTaskStrategy } from '../src/application/execute-task/task-strategy-lifecycle.ts';
+import {
+  checkSession,
+  inspectSession,
+} from '../src/application/finalize/verification.ts';
 import { loadInvestigationRuntimeContext } from '../src/lifecycle-context.ts';
 import {
   configureChecks,

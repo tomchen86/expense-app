@@ -2,8 +2,8 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { parseAiAdapterPolicyDocument, parseLegacyAiAdapterPolicyDocument, } from './ai-adapter-policy.js';
-import { canonicalJson } from './canonical-json.js';
-import { parseClassDisposition, } from './class-disposition.js';
+import { canonicalJson } from './foundation/canonical-json/canonical-json.js';
+import { parseClassDisposition, } from './modules/investigation/domain/class-disposition.js';
 const SAMPLE_AUDIT_OUTCOMES = new Set([
     'passed',
     'member-misclassified',
@@ -12,13 +12,13 @@ const SAMPLE_AUDIT_OUTCOMES = new Set([
 ]);
 import { deriveAuthorityAuditRepositoryId } from './authority-audit-ledger.js';
 import { exactUnsafePathObservationDigest, readEvidenceNode, readEvidenceRefs, readInvestigationEvidenceRefsClosure, observeInvestigationEvidenceRefsAmbiguities, resolvePlanReviewInvocationOwner, } from './evidence-object-store.js';
-import { ExitCode, workflowError } from './errors.js';
-import { assertReadOnlyProbe } from './execution-core.js';
-import { assertHumanRevocationAuthorization, authorizeHumanRevocation, canonicalHumanRevocationAuthorization, digestHumanRevocationSubject, } from './human-revocation.js';
+import { ExitCode, workflowError, } from './foundation/errors/errors.js';
+import { assertReadOnlyProbe } from './modules/provider-orchestration/execution-core.js';
+import { assertHumanRevocationAuthorization, authorizeHumanRevocation, canonicalHumanRevocationAuthorization, digestHumanRevocationSubject, } from './application/control-plane/human-revocation.js';
 import { publishPreparedExclusiveLock, reclaimDeadPreparedLock, } from './filesystem-safety.js';
-import { INVESTIGATION_LIMITS, previewInvestigationTermUnion, } from './investigation-terms.js';
-import { WORKFLOW_SUPERSEDE_REASONS, validateWorkflowSupersedeReason, } from './intervention-control.js';
-import { recreateProviderInvocationRequest, } from './provider-contracts.js';
+import { INVESTIGATION_LIMITS, previewInvestigationTermUnion, } from './modules/investigation/domain/investigation-terms.js';
+import { WORKFLOW_SUPERSEDE_REASONS, validateWorkflowSupersedeReason, } from './modules/authority/intervention-control.js';
+import { recreateProviderInvocationRequest, } from './modules/provider-orchestration/provider-contracts.js';
 import { inspectProviderInvocationSupersessionRelations } from './provider-invocation-supersession-schema.js';
 import { assertDurableProviderExecutionBudgetAuthority, validateProviderExecutionBudgetAuthority, } from './provider-execution-policy-authority.js';
 import { providerRetentionArtifact, providerRetentionReviewRootArtifact, readCompleteProviderRetentionReceipt, readProviderRetentionReceipt, } from './provider-retention-receipt.js';

@@ -3,8 +3,8 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 import { AtomicTextSafetyError, replaceTextAtomic } from './atomic-text.ts';
-import { ExitCode, workflowError } from './errors.ts';
-import { engineProjectionPathsForTransition } from './engine-projection-registry.ts';
+import { ExitCode, workflowError } from './foundation/errors/errors.ts';
+import { engineProjectionPathsForTransition } from './modules/projection/engine-projection-registry.ts';
 import {
   projectHandoff,
   projectHandoffForTaskProjection,

@@ -2,13 +2,13 @@ import {
   readContentRecord,
   writeContentRecord,
 } from './content-record-store.ts';
-import { ExitCode, workflowError } from './errors.ts';
+import { ExitCode, workflowError } from './foundation/errors/errors.ts';
 import {
   createPlanningAmendmentDecision,
   planningAmendmentDecisionDigest,
-} from './planning-amendment-decision.ts';
-import { engineProjectionPathsForTransition } from './engine-projection-registry.ts';
-import type { InvestigationFirstPlanningAssuranceSummary } from './planning-assurance-validator.ts';
+} from './modules/lifecycle/planning-amendment-decision.ts';
+import { engineProjectionPathsForTransition } from './modules/projection/engine-projection-registry.ts';
+import type { InvestigationFirstPlanningAssuranceSummary } from './modules/assurance/planning-assurance-validator.ts';
 
 export type PlanningTaskState = {
   id: string;

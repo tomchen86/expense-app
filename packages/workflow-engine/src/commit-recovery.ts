@@ -2,7 +2,7 @@ import path from 'node:path';
 
 import { assertCommitObject } from './commit-object-validation.ts';
 import { parseDocumentationClosureFromCommitMessage } from './documentation-closure.ts';
-import { ExitCode, workflowError } from './errors.ts';
+import { ExitCode, workflowError } from './foundation/errors/errors.ts';
 import { commitFacts, updateManagedRef } from './git-transitions.ts';
 import { type loadActiveSessionContext } from './lifecycle-context.ts';
 import { readImmutableReport } from './report-store.ts';

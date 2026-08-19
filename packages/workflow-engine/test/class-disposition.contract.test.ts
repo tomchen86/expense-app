@@ -4,15 +4,17 @@ import test from 'node:test';
 import {
   expandClassDispositions,
   parseClassDisposition,
-} from '../src/class-disposition.ts';
-import { parsePathRoleRegistry } from '../src/path-role-registry.ts';
+} from '../src/modules/investigation/domain/class-disposition.ts';
+import { parsePathRoleRegistry } from '../src/modules/source/path-role-registry.ts';
 import { isWorkflowError } from './fixture.ts';
 
 const REGISTRY = parsePathRoleRegistry({
   schemaVersion: 1,
   kind: 'path-role-registry',
   roles: {
-    lifecycle: ['packages/workflow-engine/src/planning-transition.ts'],
+    lifecycle: [
+      'packages/workflow-engine/src/application/propose/planning-transition.ts',
+    ],
     ordinary: ['apps/**'],
   },
 });
@@ -151,7 +153,7 @@ test('a group whose path forbids compression cannot join a class', () => {
       groupId: 'g-lifecycle',
       hits: [
         hit(
-          'packages/workflow-engine/src/planning-transition.ts',
+          'packages/workflow-engine/src/application/propose/planning-transition.ts',
           'spawn(cmd, { timeoutMs });',
         ),
       ],

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { createGrantChallenge } from '../src/grant-core.ts';
+import { createGrantChallenge } from '../src/modules/authority/grant-core.ts';
 import {
   createInvestigationGrantRequestFromState,
   investigationGrantTransitionDefinitions,
@@ -10,7 +10,7 @@ import {
   humanResolutionDecisionSchemaDigest,
   type InvestigationResolutionState,
 } from '../src/investigation-session-store.ts';
-import { createTransitionRegistry } from '../src/grant-transition-registry.ts';
+import { createTransitionRegistry } from '../src/modules/authority/grant-transition-registry.ts';
 
 test('investigation producer submits stable choices while registry owns presentation and execution', () => {
   const state = resolutionState();

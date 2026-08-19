@@ -4,8 +4,11 @@ import path from 'node:path';
 import test from 'node:test';
 
 import { renderHandoff } from '../src/handoff.ts';
-import { finalizeTask } from '../src/lifecycle.ts';
-import { getSession, startSession } from '../src/session.ts';
+import { finalizeTask } from '../src/application/finalize/lifecycle.ts';
+import {
+  getSession,
+  startSession,
+} from '../src/application/execute-task/session.ts';
 import {
   configureChecks,
   createFixtureRepository,

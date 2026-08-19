@@ -3,7 +3,7 @@ import { Buffer } from 'node:buffer';
 import test from 'node:test';
 
 import { createEvidenceNode } from '../src/evidence-node.ts';
-import { projectPlanReviewTerms } from '../src/investigation-term-projection.ts';
+import { projectPlanReviewTerms } from '../src/modules/projection/investigation-term-projection.ts';
 import {
   createPlanReviewDispositionNode,
   createPlanReviewNode,
@@ -12,10 +12,13 @@ import {
   createPlanReviewSubject,
   PLAN_REVIEW_COVERAGE,
   readPlanReviewNode,
-} from '../src/plan-review.ts';
-import { validatePlanReview } from '../src/plan-review-validation.ts';
-import { createPlanTarget, type PlanTargetInput } from '../src/plan-target.ts';
-import { createPlanningGeneration } from '../src/planning-generation.ts';
+} from '../src/modules/assurance/plan-review.ts';
+import { validatePlanReview } from '../src/modules/assurance/plan-review-validation.ts';
+import {
+  createPlanTarget,
+  type PlanTargetInput,
+} from '../src/modules/assurance/plan-target.ts';
+import { createPlanningGeneration } from '../src/modules/lifecycle/planning-generation.ts';
 
 test('exact PlanReview composes target, generation, challenge, terms, and advisory eligibility', () => {
   const targetInput = integrationTargetInput();

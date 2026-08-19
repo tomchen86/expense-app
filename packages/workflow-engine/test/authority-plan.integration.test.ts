@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
 
-import { canonicalJson } from '../src/canonical-json.ts';
+import { canonicalJson } from '../src/foundation/canonical-json/canonical-json.ts';
 import {
   approveAndApplyAuthorityPlan,
   attestAuthorityPlan,
@@ -13,7 +13,7 @@ import {
   inspectAuthorityPlan,
   resumeAuthorityPlan,
   type AuthorityPlanIntent,
-} from '../src/authority-plan.ts';
+} from '../src/application/control-plane/authority-plan.ts';
 import {
   createFixtureRepository,
   git,

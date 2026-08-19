@@ -10,12 +10,12 @@ import {
   dispatchBootstrapInterventionCommand,
   type BootstrapInterventionCliDependencies,
 } from '../src/intervention-control-bootstrap-cli.ts';
-import { createEngineArtifact } from '../src/intervention-control.ts';
+import { createEngineArtifact } from '../src/modules/authority/intervention-control.ts';
 import {
   readPersistedBootstrapSidecarWorkflow,
   readPersistedEngineAdoption,
 } from '../src/intervention-control-persistence.ts';
-import { persistInterventionEngineArtifact } from '../src/intervention-maintenance.ts';
+import { persistInterventionEngineArtifact } from '../src/application/control-plane/intervention-maintenance.ts';
 
 const NOW = new Date('2026-08-03T10:00:00.000Z');
 

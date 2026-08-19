@@ -4,8 +4,8 @@ import test from 'node:test';
 import {
   DISCRIMINATION_THRESHOLD,
   assessPredicateDiscrimination,
-} from '../src/predicate-discrimination.ts';
-import { parseHitPredicate } from '../src/hit-predicate.ts';
+} from '../src/modules/investigation/domain/predicate-discrimination.ts';
+import { parseHitPredicate } from '../src/modules/investigation/domain/hit-predicate.ts';
 
 function subject(text: string, needle = 'timeoutMs') {
   const matchOffset = Math.max(0, text.indexOf(needle));

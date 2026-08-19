@@ -4,8 +4,8 @@ import {
   authorityRefusalDigest,
   withAuthorityRefusalAudit,
   type AuthorityRefusalAuditBinding,
-} from './authority-refusal-audit.ts';
-import { ExitCode, workflowError } from './errors.ts';
+} from './modules/authority/authority-refusal-audit.ts';
+import { ExitCode, workflowError } from './foundation/errors/errors.ts';
 import { discoverRepository } from './git.ts';
 import {
   executeControlPlanePromotion,
@@ -26,7 +26,7 @@ import {
   type PersistedControlPlaneApprovalCandidateV3,
   type ControlPlaneSupervisorState,
   type ControlPlaneUpdaterDependencies,
-} from './intervention-control-updater.ts';
+} from './application/control-plane/intervention-control-updater.ts';
 import {
   readPersistedControlPlaneUpdate,
   type PersistedControlPlaneUpdateRecord,
@@ -40,16 +40,16 @@ import type {
   ControlPlanePromotionBundleV2,
   ControlPlanePromotionBundleV3,
   ControlPlaneTaskMandateBinding,
-} from './intervention-control.ts';
+} from './modules/authority/intervention-control.ts';
 import {
   canonicalControlPlaneGrantPayloadV2,
   canonicalControlPlaneGrantPayloadV3,
   CONTROL_PLANE_SIGNATURE_NAMESPACE_V2,
   CONTROL_PLANE_SIGNATURE_NAMESPACE_V3,
   normalizeControlPlaneTaskMandateBinding,
-} from './intervention-control.ts';
+} from './modules/authority/intervention-control.ts';
 import type { MaintainerSignerProvider } from './maintainer-signer.ts';
-import type { TaskMandateBinding } from './task-mandate.ts';
+import type { TaskMandateBinding } from './modules/authority/task-mandate.ts';
 
 const CONTROL_PLANE_GRANT_TTL_MS = 5 * 60 * 1000;
 

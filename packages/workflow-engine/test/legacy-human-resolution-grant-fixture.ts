@@ -28,7 +28,7 @@ import {
   type HumanResolutionGrantIssueResult,
   type HumanResolutionGrantPayload,
   type HumanResolutionGrantRequest,
-} from '../src/maintainer-grant.ts';
+} from '../src/modules/authority/maintainer-grant.ts';
 
 /**
  * Historical-fixture constructor only. Production V1 issuance is deliberately

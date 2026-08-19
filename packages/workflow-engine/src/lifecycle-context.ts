@@ -1,7 +1,7 @@
 import path from 'node:path';
 
 import { loadWorkflowConfig } from './contracts.ts';
-import { ExitCode, workflowError } from './errors.ts';
+import { ExitCode, workflowError } from './foundation/errors/errors.ts';
 import { listStagedPaths } from './git-transitions.ts';
 import { discoverRepository, runGit } from './git.ts';
 import {
@@ -20,7 +20,7 @@ import {
   runtimePaths,
   withSessionOperation,
 } from './session-store.ts';
-import type { SessionInspection } from './verification.ts';
+import type { SessionInspection } from './application/finalize/verification.ts';
 
 export function loadActiveSessionContext(
   cwd: string,

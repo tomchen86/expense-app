@@ -2,8 +2,8 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 
-import { canonicalJson } from './canonical-json.ts';
-import { ExitCode, workflowError } from './errors.ts';
+import { canonicalJson } from './foundation/canonical-json/canonical-json.ts';
+import { ExitCode, workflowError } from './foundation/errors/errors.ts';
 import {
   publishPreparedExclusiveLock,
   reclaimDeadPreparedLock,
@@ -16,11 +16,11 @@ import {
 import {
   assertInvestigationApplicability,
   INVESTIGATION_APPLICABILITY_POLICY_DIGEST,
-} from './investigation-applicability.ts';
+} from './modules/investigation/domain/investigation-applicability.ts';
 import {
   assertPlanReviewSubject,
   readPlanReviewTargetSnapshotNode,
-} from './plan-review.ts';
+} from './modules/assurance/plan-review.ts';
 import {
   assertChangeId,
   assertInvestigationId,
@@ -31,16 +31,16 @@ import {
   PROPOSE_POLICY_DIGEST,
   isProviderRoleAssignment,
   recreateProviderInvocationRequest,
-} from './provider-contracts.ts';
+} from './modules/provider-orchestration/provider-contracts.ts';
 import {
   parseTaskDiffReviewSubject,
   TASK_DIFF_REVIEW_POLICY_DIGEST,
-} from './task-diff-review.ts';
+} from './modules/assurance/task-diff-review.ts';
 import {
   TASK_STRATEGY_IMPLEMENTATION_POLICY_DIGEST,
   assertTaskStrategyImplementationSubject,
-} from './task-strategy-provider-contract.ts';
-import type { TaskMandateBinding } from './task-mandate.ts';
+} from './modules/provider-orchestration/task-strategy-provider-contract.ts';
+import type { TaskMandateBinding } from './modules/authority/task-mandate.ts';
 
 const DIGEST_PATTERN = /^[0-9a-f]{64}$/;
 const REF_NAME_PATTERN =

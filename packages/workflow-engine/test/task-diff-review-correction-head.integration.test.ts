@@ -5,24 +5,24 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import { canonicalJson } from '../src/canonical-json.ts';
+import { canonicalJson } from '../src/foundation/canonical-json/canonical-json.ts';
 import { runGitWithEnvironment } from '../src/git.ts';
-import { finalizeTask } from '../src/lifecycle.ts';
+import { finalizeTask } from '../src/application/finalize/lifecycle.ts';
 import { loadInvestigationRuntimeContext } from '../src/lifecycle-context.ts';
-import { commitPlanningTransition } from '../src/planning-transition.ts';
+import { commitPlanningTransition } from '../src/application/propose/planning-transition.ts';
 import { PROVIDER_RUNNER_RESIDUALS } from '../src/provider-runner.ts';
 import { runProviderWorker } from '../src/provider-worker.ts';
-import { startSession } from '../src/session.ts';
-import { readCurrentTaskStrategyGreenFailure } from '../src/task-strategy-correction.ts';
-import { sealTaskStrategyRed } from '../src/task-strategy-execution.ts';
-import { beginTaskStrategyImplementation } from '../src/task-strategy-implementation-lifecycle.ts';
+import { startSession } from '../src/application/execute-task/session.ts';
+import { readCurrentTaskStrategyGreenFailure } from '../src/application/execute-task/task-strategy-correction.ts';
+import { sealTaskStrategyRed } from '../src/application/execute-task/task-strategy-execution.ts';
+import { beginTaskStrategyImplementation } from '../src/application/execute-task/task-strategy-implementation-lifecycle.ts';
 import { readTaskStrategyImplementationResultBinding } from '../src/task-strategy-provider-store.ts';
-import { beginTaskDiffReview } from '../src/task-diff-review-lifecycle.ts';
+import { beginTaskDiffReview } from '../src/application/finalize/task-diff-review-lifecycle.ts';
 import {
   checkSession,
   inspectSession,
   persistSession,
-} from '../src/verification.ts';
+} from '../src/application/finalize/verification.ts';
 import {
   configureChecks,
   createFixtureRepository,

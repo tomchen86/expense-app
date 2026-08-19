@@ -3,7 +3,7 @@ import path from 'node:path';
 
 import { verifyArchiveDeltaOutcomes } from './archive-delta-verifier.ts';
 import { preEpochCompletedTaskIds } from './bootstrap-task-exemption.ts';
-import { assertUniqueCollaborationGrantUses } from './collaboration-grant.ts';
+import { assertUniqueCollaborationGrantUses } from './modules/authority/collaboration-grant.ts';
 import { canonicalCheckDefinition } from './ci-historical-contract.ts';
 import { collectHistoricalCollaborationGrantUses } from './ci-planning.ts';
 import {
@@ -17,7 +17,7 @@ import {
   loadChecksConfig,
   loadWorkflowConfig,
 } from './contracts.ts';
-import { ExitCode, workflowError } from './errors.ts';
+import { ExitCode, workflowError } from './foundation/errors/errors.ts';
 import { createTrustedExecutionEnvironment } from './execution-environment.ts';
 import {
   archiveCommitMessage,

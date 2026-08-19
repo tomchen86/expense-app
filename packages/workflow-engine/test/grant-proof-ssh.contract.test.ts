@@ -6,11 +6,11 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import { canonicalJson } from '../src/canonical-json.ts';
+import { canonicalJson } from '../src/foundation/canonical-json/canonical-json.ts';
 import {
   approvalSubjectDigest,
   type ApprovalSubject,
-} from '../src/grant-core.ts';
+} from '../src/modules/authority/grant-core.ts';
 import {
   collectSshApprovalProof,
   type SshApprovalSigner,
@@ -21,7 +21,7 @@ import {
   GRANT_PROOF_SSH_V1_CONFIGURATION_DIGEST,
   HUMAN_GATE_MACOS_V1_CONFIGURATION_DIGEST,
   parseGrantPolicyV2,
-} from '../src/grant-policy.ts';
+} from '../src/modules/authority/grant-policy.ts';
 import { isWorkflowError } from './fixture.ts';
 
 test('optional SSH proof is interactive, identity-bearing, and bound to the exact approval subject', () => {

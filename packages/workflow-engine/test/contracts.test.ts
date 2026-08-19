@@ -26,7 +26,7 @@ import {
   descendantReuseProofEvidenceRef,
 } from '../src/evidence-reuse-path.ts';
 import { createEvidenceNode } from '../src/evidence-node.ts';
-import { WorkflowError } from '../src/errors.ts';
+import { WorkflowError } from '../src/foundation/errors/errors.ts';
 import {
   assertPolicyPathInsideRepository,
   matchesAllowedPath,

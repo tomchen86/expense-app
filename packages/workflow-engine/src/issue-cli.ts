@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 import { AtomicTextSafetyError, replaceTextAtomic } from './atomic-text.ts';
-import { ExitCode, workflowError } from './errors.ts';
+import { ExitCode, workflowError } from './foundation/errors/errors.ts';
 import { renderHandoff } from './handoff.ts';
 import {
   addIssue,

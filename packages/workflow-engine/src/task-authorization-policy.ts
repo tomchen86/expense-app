@@ -2,15 +2,15 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 
-import { canonicalJson } from './canonical-json.ts';
+import { canonicalJson } from './foundation/canonical-json/canonical-json.ts';
 import type { WorkflowConfig } from './contracts.ts';
-import { ExitCode, workflowError } from './errors.ts';
+import { ExitCode, workflowError } from './foundation/errors/errors.ts';
 import {
   parsePathRoleRegistry,
   resolvePathRole,
   type PathRole,
   type PathRoleRegistry,
-} from './path-role-registry.ts';
+} from './modules/source/path-role-registry.ts';
 import { matchesAllowedPath, normalizePolicyPath } from './paths.ts';
 
 export type TaskAuthorizationRequirement = Readonly<{

@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import { canonicalJson } from '../src/canonical-json.ts';
+import { canonicalJson } from '../src/foundation/canonical-json/canonical-json.ts';
 import { parseInvestigationArtifact } from '../src/contracts.ts';
 import { readReuseProofBinding } from '../src/evidence-convergence.ts';
 import type { EvidenceNode } from '../src/evidence-node.ts';
@@ -15,8 +15,8 @@ import {
   resumePropose,
   startPropose,
   type OrdinaryProposeOutput,
-} from '../src/propose-orchestrator.ts';
-import type { ProviderInvocationRequest } from '../src/provider-contracts.ts';
+} from '../src/application/propose/propose-orchestrator.ts';
+import type { ProviderInvocationRequest } from '../src/modules/provider-orchestration/provider-contracts.ts';
 import {
   claimProviderInvocation,
   completeProviderInvocation,

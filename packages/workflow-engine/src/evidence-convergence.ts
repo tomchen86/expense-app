@@ -1,6 +1,6 @@
 import crypto from 'node:crypto';
 
-import { ExitCode, workflowError } from './errors.ts';
+import { ExitCode, workflowError } from './foundation/errors/errors.ts';
 import {
   assertStoredEvidenceNode,
   createEvidenceNode,

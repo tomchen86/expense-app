@@ -3,8 +3,12 @@ import {
   requestInvestigationGrant,
   requestInvestigationV3Grant,
 } from './grant-production.ts';
-import type { GrantCoordinator } from './grant-coordinator.ts';
-import { ExitCode, WorkflowError, workflowError } from './errors.ts';
+import type { GrantCoordinator } from './modules/authority/grant-coordinator.ts';
+import {
+  ExitCode,
+  WorkflowError,
+  workflowError,
+} from './foundation/errors/errors.ts';
 
 type HumanGrantCliDependencies = Readonly<{
   coordinator(cwd: string): GrantCoordinator;

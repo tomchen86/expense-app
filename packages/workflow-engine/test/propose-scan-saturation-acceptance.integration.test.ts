@@ -3,14 +3,14 @@ import fs from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
 
-import { canonicalJson } from '../src/canonical-json.ts';
+import { canonicalJson } from '../src/foundation/canonical-json/canonical-json.ts';
 import { readInvestigationSession } from '../src/investigation-session-store.ts';
 import { loadInvestigationRuntimeContext } from '../src/lifecycle-context.ts';
 import {
   createScanSaturationAcceptanceEnvelope,
   getProposeStatus,
   resumePropose,
-} from '../src/propose-orchestrator.ts';
+} from '../src/application/propose/propose-orchestrator.ts';
 import { isWorkflowError } from './fixture.ts';
 import { driveProposeToDispositions } from './propose-drive-fixture.ts';
 

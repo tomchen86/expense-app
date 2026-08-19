@@ -22,7 +22,8 @@ test(
   { skip: process.platform === 'win32' },
   async () => {
     const { projectTasksCompleted } = await import('../src/task-projection.ts');
-    const { WorkflowError } = await import('../src/errors.ts');
+    const { WorkflowError } =
+      await import('../src/foundation/errors/errors.ts');
     const root = fs.mkdtempSync(
       path.join(os.tmpdir(), 'workflow-atomic-text-'),
     );

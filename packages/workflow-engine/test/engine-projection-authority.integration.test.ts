@@ -8,15 +8,23 @@ import {
   classifyProjectionPaths,
   engineProjectionDefinitions,
   engineProjectionPathsForTransition,
-} from '../src/engine-projection-registry.ts';
+} from '../src/modules/projection/engine-projection-registry.ts';
 import { loadChangeContract } from '../src/contracts.ts';
 import { renderHandoff } from '../src/handoff.ts';
-import { completeTask, finalizeTask, finishSession } from '../src/lifecycle.ts';
+import {
+  completeTask,
+  finalizeTask,
+  finishSession,
+} from '../src/application/finalize/lifecycle.ts';
 import {
   readImmutableReport,
   type WorkflowReport,
 } from '../src/report-store.ts';
-import { checkSession, getSession, startSession } from '../src/session.ts';
+import {
+  checkSession,
+  getSession,
+  startSession,
+} from '../src/application/execute-task/session.ts';
 import {
   createFixtureRepository,
   git,

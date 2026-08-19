@@ -11,12 +11,16 @@ import {
   executePersistedAdoptionStep,
   initializeLocalEngineBinding,
   localEngineArtifactPath,
-} from '../src/intervention-control-bootstrap.ts';
-import { createEngineArtifact } from '../src/intervention-control.ts';
-import { persistInterventionEngineArtifact } from '../src/intervention-maintenance.ts';
+} from '../src/application/control-plane/intervention-control-bootstrap.ts';
+import { createEngineArtifact } from '../src/modules/authority/intervention-control.ts';
+import { persistInterventionEngineArtifact } from '../src/application/control-plane/intervention-maintenance.ts';
 import { preparePersistedEngineAdoption } from '../src/intervention-control-persistence.ts';
 import { resolveHarnessBootstrapParentState } from '../src/harness-bootstrap.ts';
-import { checkSession, getSession, startSession } from '../src/session.ts';
+import {
+  checkSession,
+  getSession,
+  startSession,
+} from '../src/application/execute-task/session.ts';
 import {
   configureChecks,
   createFixtureRepository,

@@ -3,7 +3,7 @@ import crypto from 'node:crypto';
 import { readFileAtCommit } from './ci-git.ts';
 import type { PlanningBootstrapException } from './ci-policy.ts';
 import { parseTasks } from './contracts.ts';
-import { ExitCode, workflowError } from './errors.ts';
+import { ExitCode, workflowError } from './foundation/errors/errors.ts';
 import { commitChangedPaths, commitFacts } from './git-transitions.ts';
 import { runGit } from './git.ts';
 

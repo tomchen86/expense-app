@@ -3,13 +3,13 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 import { replaceTextAtomic } from './atomic-text.ts';
-import { ExitCode, workflowError } from './errors.ts';
+import { ExitCode, workflowError } from './foundation/errors/errors.ts';
 import {
   assertPlainDirectory,
   ensurePlainDirectory,
 } from './filesystem-safety.ts';
 import { PINNED_OPENSPEC_VERSION } from './openspec-executor.ts';
-import { workflowCommandGuidance } from './workflow-guidance.ts';
+import { workflowCommandGuidance } from './modules/guidance/next-steps/workflow-guidance.ts';
 
 export const OPENSPEC_ASSET_MANIFEST_PATH =
   'workflow/openspec-assets/manifest.json';

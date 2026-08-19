@@ -1,7 +1,11 @@
 import crypto from 'node:crypto';
 
-import { canonicalJson } from './canonical-json.ts';
-import { ExitCode, WorkflowError, workflowError } from './errors.ts';
+import { canonicalJson } from './foundation/canonical-json/canonical-json.ts';
+import {
+  ExitCode,
+  WorkflowError,
+  workflowError,
+} from './foundation/errors/errors.ts';
 import {
   assertStoredEvidenceNode,
   createEvidenceNode,
@@ -11,8 +15,8 @@ import {
   readInvestigationDispositionNode,
   readInvestigationGroupNode,
   readInvestigationHitNode,
-} from './investigation-groups.ts';
-import { assertPathIdentity as assertCanonicalPathIdentity } from './mutation-class-policy.ts';
+} from './modules/investigation/domain/investigation-groups.ts';
+import { assertPathIdentity as assertCanonicalPathIdentity } from './modules/source/mutation-class-policy.ts';
 import type { TrackedTreeSnapshot } from './tracked-tree-reader.ts';
 
 const WHY_TYPE = 'investigation-why';

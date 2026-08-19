@@ -22,8 +22,12 @@ import {
   type WipCheckpoint,
   type WipCheckpointInput,
   type WorkflowSupersedeReason,
-} from './intervention-control.ts';
-import { ExitCode, WorkflowError, workflowError } from './errors.ts';
+} from './modules/authority/intervention-control.ts';
+import {
+  ExitCode,
+  WorkflowError,
+  workflowError,
+} from './foundation/errors/errors.ts';
 
 const MAX_REQUEST_BYTES = 1024 * 1024;
 

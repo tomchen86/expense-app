@@ -4,7 +4,7 @@ import test from 'node:test';
 import {
   assertPlanningPaths,
   assertPlanningTaskHistory,
-} from '../src/planning-transition.ts';
+} from '../src/application/propose/planning-transition.ts';
 import { isWorkflowError } from './fixture.ts';
 
 test('planning paths accept only the exact named OpenSpec planning grammar', () => {

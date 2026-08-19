@@ -2,11 +2,11 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 
-import { canonicalJson } from './canonical-json.ts';
+import { canonicalJson } from './foundation/canonical-json/canonical-json.ts';
 import {
   projectProviderInvocationExecution,
   type AttemptRecord,
-} from './execution-core.ts';
+} from './modules/provider-orchestration/execution-core.ts';
 import {
   readExecutionJobState,
   type DurableExecutionJobState,
@@ -15,13 +15,17 @@ import {
   inspectDurableRetentionCatalog,
   readDurableEvidence,
   type EvidenceRetentionRecord,
-} from './execution-governance.ts';
+} from './modules/authority/execution-governance.ts';
 import {
   inspectProviderPromptContextRetentionBinding,
   providerRuntimeEvidenceId,
   type ProviderPromptContextRetentionBinding,
 } from './provider-execution-governance.ts';
-import { ExitCode, WorkflowError, workflowError } from './errors.ts';
+import {
+  ExitCode,
+  WorkflowError,
+  workflowError,
+} from './foundation/errors/errors.ts';
 import {
   assertPrivateInvestigationDirectory,
   listProviderInvocationLifecycleProjections,

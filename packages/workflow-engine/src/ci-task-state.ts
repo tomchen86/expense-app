@@ -1,5 +1,5 @@
 import type { ParsedTask } from './contracts.ts';
-import { ExitCode, workflowError } from './errors.ts';
+import { ExitCode, workflowError } from './foundation/errors/errors.ts';
 
 export type CompletedTask = { changeId: string; taskId: string };
 

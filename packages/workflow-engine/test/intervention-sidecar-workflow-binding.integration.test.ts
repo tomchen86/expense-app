@@ -6,7 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import { canonicalJson } from '../src/canonical-json.ts';
+import { canonicalJson } from '../src/foundation/canonical-json/canonical-json.ts';
 import {
   abandonPersistedIntervention,
   capturePersistedWipIntervention,
@@ -14,9 +14,9 @@ import {
   initializeLocalEngineBinding,
   localEngineArtifactPath,
   materializeInterventionChildWorktree,
-} from '../src/intervention-control-bootstrap.ts';
+} from '../src/application/control-plane/intervention-control-bootstrap.ts';
 import { resolveLocalEngineSelection } from '../bootstrap/control-plane-trust.ts';
-import { createEngineArtifact } from '../src/intervention-control.ts';
+import { createEngineArtifact } from '../src/modules/authority/intervention-control.ts';
 import { interventionEngineArtifactRecordPath } from '../src/intervention-engine-artifact-store.ts';
 import {
   advancePersistedEngineAdoption,
@@ -33,7 +33,7 @@ import {
   persistInterventionEngineArtifact,
   preparePersistedEngineAdoptionFromArtifactRecord,
   readInterventionEngineArtifact,
-} from '../src/intervention-maintenance.ts';
+} from '../src/application/control-plane/intervention-maintenance.ts';
 
 const CAPTURED_AT = new Date('2026-08-10T03:00:00.000Z');
 

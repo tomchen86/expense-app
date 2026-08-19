@@ -1,4 +1,4 @@
-import type { ProviderInvocationPlan } from './provider-contracts.ts';
+import type { ProviderInvocationPlan } from './modules/provider-orchestration/provider-contracts.ts';
 
 /**
  * Fixed, code-owned absolute Codex executable candidates per platform. The list

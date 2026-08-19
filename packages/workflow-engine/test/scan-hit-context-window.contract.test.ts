@@ -4,8 +4,8 @@ import test from 'node:test';
 import {
   SCAN_HIT_MAX_CONTEXT_BYTES,
   hitContextWindow,
-} from '../src/investigation-scanner.ts';
-import { parseHitForTest } from '../src/investigation-groups.ts';
+} from '../src/modules/investigation/domain/investigation-scanner.ts';
+import { parseHitForTest } from '../src/modules/investigation/domain/investigation-groups.ts';
 
 function content(text: string): Buffer {
   return Buffer.from(text, 'utf8');

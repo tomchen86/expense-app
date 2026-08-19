@@ -2,10 +2,10 @@ import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import test from 'node:test';
 
-import { canonicalJson } from '../src/canonical-json.ts';
+import { canonicalJson } from '../src/foundation/canonical-json/canonical-json.ts';
 import { validateClosedEvidenceDag } from '../src/evidence-currentness.ts';
 import { createEvidenceNode, type EvidenceNode } from '../src/evidence-node.ts';
-import { WorkflowError } from '../src/errors.ts';
+import { WorkflowError } from '../src/foundation/errors/errors.ts';
 import {
   createInvestigationCoverageNode,
   createInvestigationDispositionNodes,
@@ -19,13 +19,13 @@ import {
   type InvestigationDispositionInput,
   type InvestigationGroupException,
   type ReviewedPathRelationship,
-} from '../src/investigation-groups.ts';
+} from '../src/modules/investigation/domain/investigation-groups.ts';
 import {
   MUTATION_CLASSES,
   classifyMutationPath,
   createMutationClassPolicy,
   type MutationClassPolicy,
-} from '../src/mutation-class-policy.ts';
+} from '../src/modules/source/mutation-class-policy.ts';
 
 const POLICY_DIGEST = '1'.repeat(64);
 const TREE_DIGEST = '2'.repeat(64);

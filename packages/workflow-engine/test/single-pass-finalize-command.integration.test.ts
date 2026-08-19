@@ -6,8 +6,11 @@ import test from 'node:test';
 
 import { commitFacts } from '../src/git-transitions.ts';
 import { renderHandoff } from '../src/handoff.ts';
-import { finalizeSession } from '../src/lifecycle.ts';
-import { getSession, startSession } from '../src/session.ts';
+import { finalizeSession } from '../src/application/finalize/lifecycle.ts';
+import {
+  getSession,
+  startSession,
+} from '../src/application/execute-task/session.ts';
 import {
   configureChecks,
   createFixtureRepository,

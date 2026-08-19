@@ -7,7 +7,7 @@ import { spawnSync } from 'node:child_process';
 import test from 'node:test';
 
 import { loadAiAdapterPolicy } from '../src/ai-adapter-policy.ts';
-import { canonicalJson } from '../src/canonical-json.ts';
+import { canonicalJson } from '../src/foundation/canonical-json/canonical-json.ts';
 import { loadChangeContract } from '../src/contracts.ts';
 import { createEvidenceNode } from '../src/evidence-node.ts';
 import { writeEvidenceNode } from '../src/evidence-object-store.ts';
@@ -25,14 +25,14 @@ import {
   PLAN_REVIEW_COVERAGE,
   PLAN_REVIEW_OUTPUT_SCHEMA,
   readPlanReviewTargetSnapshotNode,
-} from '../src/plan-review.ts';
-import { deriveInvestigationFirstPlanningSubject } from '../src/planning-assurance-validator.ts';
+} from '../src/modules/assurance/plan-review.ts';
+import { deriveInvestigationFirstPlanningSubject } from '../src/modules/assurance/planning-assurance-validator.ts';
 import {
   createProviderInvocationRequest,
   PROPOSE_POLICY_DIGEST,
   type ProviderInvocationRequest,
   type ProviderProcessOutcome,
-} from '../src/provider-contracts.ts';
+} from '../src/modules/provider-orchestration/provider-contracts.ts';
 import {
   BLIND_SURVEY_OUTPUT_SCHEMA,
   blindSurveyIntentDigest,

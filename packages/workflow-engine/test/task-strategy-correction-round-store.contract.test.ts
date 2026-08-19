@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import { canonicalJson } from '../src/canonical-json.ts';
+import { canonicalJson } from '../src/foundation/canonical-json/canonical-json.ts';
 import type { ObservedCheckFailure } from '../src/check-runner.ts';
 import {
   createTaskStrategyGreenFailureRecord,
@@ -23,7 +23,7 @@ import {
 import {
   createTaskStrategyCorrectionSubject,
   createTaskStrategyImplementationSubject,
-} from '../src/task-strategy-provider-contract.ts';
+} from '../src/modules/provider-orchestration/task-strategy-provider-contract.ts';
 import type { InvestigationRuntimePaths } from '../src/paths.ts';
 
 const SESSION_ID = 'session-correction-round-store';

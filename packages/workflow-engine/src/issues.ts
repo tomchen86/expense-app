@@ -2,7 +2,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 
-import { ExitCode, workflowError } from './errors.ts';
+import { ExitCode, workflowError } from './foundation/errors/errors.ts';
 import { renderIssueLog } from './issue-renderer.ts';
 
 export type IssueCategory = 'feature' | 'bug' | 'enhancement';

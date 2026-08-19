@@ -2,7 +2,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 
-import { canonicalJson } from './canonical-json.ts';
+import { canonicalJson } from './foundation/canonical-json/canonical-json.ts';
 import {
   discoverRepository,
   fingerprintRepositoryProjection,
@@ -14,7 +14,7 @@ import {
   type InvestigationManifestV3,
   type InvestigationV3Blocker,
   type InvestigationV3FailureCode,
-} from './investigation-manifest.ts';
+} from './modules/investigation/manifest/investigation-manifest.ts';
 
 const DIGEST = /^[0-9a-f]{64}$/;
 

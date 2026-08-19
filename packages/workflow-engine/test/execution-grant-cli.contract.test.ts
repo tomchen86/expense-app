@@ -9,17 +9,17 @@ import {
   createExecutionBudgetGrantEnvelope,
   createExecutionBudgetGrantRequest,
   storeExecutionBudgetGrant,
-} from '../src/execution-governance.ts';
+} from '../src/modules/authority/execution-governance.ts';
 import {
   inspectIssuedExecutionBudgetGrant,
   issueExecutionBudgetGrant,
   revokeIssuedExecutionBudgetGrant,
 } from '../src/execution-grant-cli.ts';
-import { ExitCode, workflowError } from '../src/errors.ts';
+import { ExitCode, workflowError } from '../src/foundation/errors/errors.ts';
 import { listExecutionJobs } from '../src/execution-runtime.ts';
 import { loadInvestigationRuntimeContext } from '../src/lifecycle-context.ts';
-import { startPropose } from '../src/propose-orchestrator.ts';
-import { revokeTaskMandate } from '../src/task-mandate.ts';
+import { startPropose } from '../src/application/propose/propose-orchestrator.ts';
+import { revokeTaskMandate } from '../src/modules/authority/task-mandate.ts';
 import { prepareExecutionMandate } from './execution-mandate-fixture.ts';
 import { createFixtureRepository, git, isWorkflowError } from './fixture.ts';
 
@@ -269,7 +269,9 @@ function prepareMandatedExecutionJob(changeId: string) {
     {
       schemaVersion: 1,
       summary: `Create the exact ${changeId} execution Job.`,
-      explicitPaths: ['packages/workflow-engine/src/execution-core.ts'],
+      explicitPaths: [
+        'packages/workflow-engine/src/modules/provider-orchestration/execution-core.ts',
+      ],
       explicitSymbols: ['createExecutionJob'],
       explicitConfigKeys: [],
       renamePairs: [],

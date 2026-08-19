@@ -2,8 +2,11 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 
-import { ExitCode, workflowError } from './errors.ts';
-import { listBuiltInProviders, type ProviderId } from './provider-registry.ts';
+import { ExitCode, workflowError } from './foundation/errors/errors.ts';
+import {
+  listBuiltInProviders,
+  type ProviderId,
+} from './modules/provider-orchestration/provider-registry.ts';
 
 export const REQUIRED_AI_ADAPTER_CONTROLS = [
   'separate-security-principal',

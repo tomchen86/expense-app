@@ -8,7 +8,11 @@ import {
   type ContentRecord,
 } from './content-record-store.ts';
 import { loadWorkflowConfig } from './contracts.ts';
-import { ExitCode, workflowError, type ExitCodeValue } from './errors.ts';
+import {
+  ExitCode,
+  workflowError,
+  type ExitCodeValue,
+} from './foundation/errors/errors.ts';
 import { discoverRepository } from './git.ts';
 import { markdownHeadings } from './markdown-sections.ts';
 import { normalizeChangedPath } from './paths.ts';

@@ -14,8 +14,8 @@ import {
   type AuthorityAuditResult,
   type Sha256Digest,
 } from './authority-audit-ledger.ts';
-import { canonicalJson } from './canonical-json.ts';
-import { ExitCode, workflowError } from './errors.ts';
+import { canonicalJson } from './foundation/canonical-json/canonical-json.ts';
+import { ExitCode, workflowError } from './foundation/errors/errors.ts';
 
 const DIGEST = /^sha256:[0-9a-f]{64}$/;
 const IDENTITY = /^[A-Za-z0-9][A-Za-z0-9._:@/+-]{0,191}$/;

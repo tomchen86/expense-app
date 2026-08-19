@@ -1,10 +1,16 @@
-import { canonicalJson } from './canonical-json.ts';
-import { ExitCode, workflowError } from './errors.ts';
-import type { VerifiedApprovalProof } from './grant-approval.ts';
-import { approvalSubjectDigest, assertApprovalSubject } from './grant-core.ts';
-import type { GrantAuthenticationRequest } from './grant-coordinator.ts';
-import type { GrantPolicyV2 } from './grant-policy.ts';
-import { copyGrantDate, grantSha256 } from './grant-primitives.ts';
+import { canonicalJson } from './foundation/canonical-json/canonical-json.ts';
+import { ExitCode, workflowError } from './foundation/errors/errors.ts';
+import type { VerifiedApprovalProof } from './modules/authority/grant-approval.ts';
+import {
+  approvalSubjectDigest,
+  assertApprovalSubject,
+} from './modules/authority/grant-core.ts';
+import type { GrantAuthenticationRequest } from './modules/authority/grant-coordinator.ts';
+import type { GrantPolicyV2 } from './modules/authority/grant-policy.ts';
+import {
+  copyGrantDate,
+  grantSha256,
+} from './modules/authority/grant-primitives.ts';
 import {
   createInteractiveSshSigner,
   type MaintainerSignerProvider,

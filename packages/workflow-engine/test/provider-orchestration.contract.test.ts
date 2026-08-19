@@ -2,19 +2,19 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import test from 'node:test';
 
-import { resolveActorIdentity } from '../src/actor-identity.ts';
-import { canonicalJson } from '../src/canonical-json.ts';
+import { resolveActorIdentity } from '../src/modules/provider-orchestration/actor-identity.ts';
+import { canonicalJson } from '../src/foundation/canonical-json/canonical-json.ts';
 import {
   createProviderInvocationRequest,
   evaluateProviderProcess,
   MAX_PROVIDER_LIMITS,
   type ProviderInvocationRequest,
   type ProviderProcessOutcome,
-} from '../src/provider-contracts.ts';
+} from '../src/modules/provider-orchestration/provider-contracts.ts';
 import {
   listBuiltInProviders,
   requireProviderCapability,
-} from '../src/provider-registry.ts';
+} from '../src/modules/provider-orchestration/provider-registry.ts';
 import {
   admitRoleResult,
   assessRoleIndependence,
@@ -23,8 +23,8 @@ import {
   type ProviderRoleAssignment,
   type RoleAssignment,
   type RoleParticipant,
-} from '../src/role-scheduler.ts';
-import { WorkflowError } from '../src/errors.ts';
+} from '../src/modules/provider-orchestration/role-scheduler.ts';
+import { WorkflowError } from '../src/foundation/errors/errors.ts';
 
 const DIGESTS = {
   authorization: '1'.repeat(64),

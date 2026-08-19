@@ -1,7 +1,7 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import { ExitCode, workflowError } from './errors.js';
+import { ExitCode, workflowError } from './foundation/errors/errors.js';
 import { assertPlainDirectory, ensurePlainDirectory, } from './filesystem-safety.js';
 export function writeContentRecord(directory, record) {
     const content = `${JSON.stringify(record, null, 2)}\n`;

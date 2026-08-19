@@ -5,14 +5,14 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import { canonicalJson } from '../src/canonical-json.ts';
-import { issueCollaborationGrant } from '../src/collaboration-grant.ts';
-import { ExitCode, workflowError } from '../src/errors.ts';
+import { canonicalJson } from '../src/foundation/canonical-json/canonical-json.ts';
+import { issueCollaborationGrant } from '../src/modules/authority/collaboration-grant.ts';
+import { ExitCode, workflowError } from '../src/foundation/errors/errors.ts';
 import { readExecutionJobState } from '../src/execution-store.ts';
 import { runGitWithEnvironment } from '../src/git.ts';
 import { loadInvestigationRuntimeContext } from '../src/lifecycle-context.ts';
 import type { MaintainerSignerProvider } from '../src/maintainer-signer.ts';
-import { commitPlanningTransition } from '../src/planning-transition.ts';
+import { commitPlanningTransition } from '../src/application/propose/planning-transition.ts';
 import {
   readProviderInvocation,
   readProviderInvocationManifest,
@@ -21,24 +21,27 @@ import {
 } from '../src/provider-invocation-store.ts';
 import { PROVIDER_RUNNER_RESIDUALS } from '../src/provider-runner.ts';
 import { runProviderWorker } from '../src/provider-worker.ts';
-import { startSession } from '../src/session.ts';
+import { startSession } from '../src/application/execute-task/session.ts';
 import {
   assertTaskStrategyImplementationProviderOwnerCurrent,
   beginTaskStrategyImplementation,
   inspectTaskStrategyImplementation,
   type TaskStrategyImplementationStatus,
-} from '../src/task-strategy-implementation-lifecycle.ts';
+} from '../src/application/execute-task/task-strategy-implementation-lifecycle.ts';
 import {
   inspectTaskStrategyLifecycle,
   resumeTaskStrategy,
-} from '../src/task-strategy-lifecycle.ts';
-import { sealTaskStrategyRed } from '../src/task-strategy-execution.ts';
+} from '../src/application/execute-task/task-strategy-lifecycle.ts';
+import { sealTaskStrategyRed } from '../src/application/execute-task/task-strategy-execution.ts';
 import {
   readCurrentTaskStrategyGreenFailure,
   resolveCurrentTaskStrategyCorrection,
-} from '../src/task-strategy-correction.ts';
+} from '../src/application/execute-task/task-strategy-correction.ts';
 import { readTaskStrategyCorrectionRound } from '../src/task-strategy-correction-round-store.ts';
-import { checkSession, inspectSession } from '../src/verification.ts';
+import {
+  checkSession,
+  inspectSession,
+} from '../src/application/finalize/verification.ts';
 import {
   configureChecks,
   createFixtureRepository,

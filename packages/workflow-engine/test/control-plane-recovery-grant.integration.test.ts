@@ -7,7 +7,7 @@ import path from 'node:path';
 import test from 'node:test';
 
 import { resolveControlPlaneEngineSelection } from '../bootstrap/control-plane-trust.ts';
-import { canonicalJson } from '../src/canonical-json.ts';
+import { canonicalJson } from '../src/foundation/canonical-json/canonical-json.ts';
 import { deriveAuthorityAuditRepositoryId } from '../src/authority-audit-ledger.ts';
 import { verifyAuthorityAuditEvents } from '../src/authority-audit-service.ts';
 import {
@@ -20,7 +20,7 @@ import {
   reservePersistedControlPlaneRecoveryGrant,
   type ControlPlaneRecoveryAuditRecord,
   type ControlPlaneRecoveryGrantEnvelope,
-} from '../src/control-plane-recovery-grant.ts';
+} from '../src/modules/authority/control-plane-recovery-grant.ts';
 import { runHarnessBootstrapCli } from '../src/harness-bootstrap.ts';
 import {
   CONTROL_PLANE_REVIEW_SIGNATURE_NAMESPACE_V2,
@@ -39,14 +39,14 @@ import {
   type ControlPlaneIndependentReviewAttestationEnvelopeV2,
   type ExactControlPlaneChangeV2,
   type ProtectedCapabilityEntry,
-} from '../src/intervention-control.ts';
-import { produceControlPlaneApprovalCandidateV2 } from '../src/control-plane-promotion-producer.ts';
+} from '../src/modules/authority/intervention-control.ts';
+import { produceControlPlaneApprovalCandidateV2 } from '../src/application/control-plane/control-plane-promotion-producer.ts';
 import { dispatchProductionControlPlaneUpdaterCommand } from '../src/intervention-control-updater-cli.ts';
 import {
   persistInterventionPlan,
   readPersistedControlPlaneUpdate,
 } from '../src/intervention-control-persistence.ts';
-import { persistInterventionEngineArtifact } from '../src/intervention-maintenance.ts';
+import { persistInterventionEngineArtifact } from '../src/application/control-plane/intervention-maintenance.ts';
 import {
   executeControlPlanePromotion,
   executeControlPlaneRecoveryRollback,
@@ -56,7 +56,7 @@ import {
   readControlPlaneSupervisorState,
   type ControlPlaneUpdaterAuditRecord,
   type ControlPlaneRecoveryExecutorDependencies,
-} from '../src/intervention-control-updater.ts';
+} from '../src/application/control-plane/intervention-control-updater.ts';
 import {
   CONTROL_PLANE_FIXTURE_GRANT_SIGNER,
   CONTROL_PLANE_FIXTURE_REVIEWER,

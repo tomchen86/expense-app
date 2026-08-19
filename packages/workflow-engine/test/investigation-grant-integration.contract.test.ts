@@ -4,14 +4,14 @@ import path from 'node:path';
 import test from 'node:test';
 
 import { loadAiAdapterPolicy } from '../src/ai-adapter-policy.ts';
-import { canonicalJson } from '../src/canonical-json.ts';
+import { canonicalJson } from '../src/foundation/canonical-json/canonical-json.ts';
 import { discoverRepository } from '../src/git.ts';
-import type { VerifiedApprovalProof } from '../src/grant-approval.ts';
+import type { VerifiedApprovalProof } from '../src/modules/authority/grant-approval.ts';
 import {
   createGrantCoordinatorKernel,
   type GrantApprovalSession,
   type TrustedGrantPresentation,
-} from '../src/grant-coordinator.ts';
+} from '../src/modules/authority/grant-coordinator.ts';
 import {
   createInvestigationGrantRequest,
   investigationGrantTransitionDefinitions,
@@ -21,8 +21,8 @@ import {
   codeOwnedApprovalModuleRegistry,
   HUMAN_GATE_MACOS_V1_CONFIGURATION_DIGEST,
   parseGrantPolicyV2,
-} from '../src/grant-policy.ts';
-import { createTransitionRegistry } from '../src/grant-transition-registry.ts';
+} from '../src/modules/authority/grant-policy.ts';
+import { createTransitionRegistry } from '../src/modules/authority/grant-transition-registry.ts';
 import { startInvestigationSession } from '../src/investigation-session.ts';
 import {
   inspectInvestigationResolutionState,
@@ -30,7 +30,7 @@ import {
   readTerminalHumanResolutionGrant,
 } from '../src/investigation-session-store.ts';
 import { investigationRuntimePaths } from '../src/paths.ts';
-import { createProviderInvocationRequest } from '../src/provider-contracts.ts';
+import { createProviderInvocationRequest } from '../src/modules/provider-orchestration/provider-contracts.ts';
 import {
   BLIND_SURVEY_OUTPUT_SCHEMA,
   blindSurveyIntentDigest,

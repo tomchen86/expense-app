@@ -15,7 +15,7 @@ import {
   type ExactControlPlaneChange,
   type HarnessMaintenanceGrantEnvelope,
   type ProtectedCapabilityEntry,
-} from '../src/intervention-control.ts';
+} from '../src/modules/authority/intervention-control.ts';
 import {
   advancePersistedControlPlaneUpdate,
   advancePersistedEngineAdoption,
@@ -30,7 +30,7 @@ import {
   recoverPersistedEngineAdoption,
   rollbackPersistedEngineAdoption,
 } from '../src/intervention-control-persistence.ts';
-import { WorkflowError } from '../src/errors.ts';
+import { WorkflowError } from '../src/foundation/errors/errors.ts';
 
 const NOW = new Date('2026-08-03T10:00:00.000Z');
 

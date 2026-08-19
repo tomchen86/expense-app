@@ -16,7 +16,7 @@ import {
   type CompletedTask,
 } from './ci-task-state.ts';
 import { parseTasks, type ChangeContract } from './contracts.ts';
-import { ExitCode, workflowError } from './errors.ts';
+import { ExitCode, workflowError } from './foundation/errors/errors.ts';
 import { completionDocumentPaths } from './managed-documents.ts';
 import { matchesAllowedPath } from './paths.ts';
 

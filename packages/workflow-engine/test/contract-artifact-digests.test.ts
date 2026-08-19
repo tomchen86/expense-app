@@ -7,7 +7,7 @@ import path from 'node:path';
 import test from 'node:test';
 
 import { digestArtifacts } from '../src/contracts.ts';
-import { WorkflowError } from '../src/errors.ts';
+import { WorkflowError } from '../src/foundation/errors/errors.ts';
 
 test(
   'artifact digests preserve legacy 100644 values and bind logical Git mode',

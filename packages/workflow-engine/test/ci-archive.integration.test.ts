@@ -4,8 +4,8 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import { commitArchiveTransition } from '../src/archive-transition.ts';
-import { canonicalJson } from '../src/canonical-json.ts';
+import { commitArchiveTransition } from '../src/application/archive/archive-transition.ts';
+import { canonicalJson } from '../src/foundation/canonical-json/canonical-json.ts';
 import { validateCiArchiveCommit } from '../src/ci-archive.ts';
 import { verifyPullRequest } from '../src/ci.ts';
 import { createEvidenceNode } from '../src/evidence-node.ts';

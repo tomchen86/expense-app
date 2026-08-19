@@ -1,14 +1,14 @@
-import { ExitCode, workflowError } from './errors.ts';
+import { ExitCode, workflowError } from './foundation/errors/errors.ts';
 import { commitChangedPaths, commitFacts } from './git-transitions.ts';
 import { runGit } from './git.ts';
 import {
   ManagedTrailerSyntaxError,
   parseManagedTrailers,
   type ManagedTrailers,
-} from './managed-trailers.ts';
+} from './modules/lifecycle/managed-trailers.ts';
 import { normalizeChangedPath } from './paths.ts';
 
-export type { ManagedTrailers } from './managed-trailers.ts';
+export type { ManagedTrailers } from './modules/lifecycle/managed-trailers.ts';
 
 export type RangeCommit = {
   hash: string;

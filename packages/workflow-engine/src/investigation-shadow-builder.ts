@@ -2,9 +2,9 @@ import {
   applyInvestigationDispositionDecisions,
   applyInvestigationSemanticGroupDecisions,
   type InvestigationDispositionDecision,
-} from './investigation-domain.ts';
-import type { FloorOverflowDecision } from './floor-overflow-pruning.ts';
-import type { InvestigationGroupFacts } from './investigation-groups.ts';
+} from './modules/investigation/domain/investigation-domain.ts';
+import type { FloorOverflowDecision } from './modules/investigation/domain/floor-overflow-pruning.ts';
+import type { InvestigationGroupFacts } from './modules/investigation/domain/investigation-groups.ts';
 import {
   buildInvestigationManifestDraft,
   createInvestigationV3Blocker,
@@ -15,17 +15,17 @@ import {
   type InvestigationManifestV3,
   type InvestigationV3Blocker,
   type InvestigationV3RoleResult,
-} from './investigation-manifest.ts';
+} from './modules/investigation/manifest/investigation-manifest.ts';
 import {
   MaterializedEvidenceView,
   type InvestigationScanSaturationDecision,
   type InvestigationV3Baseline,
-} from './investigation-materializer.ts';
+} from './modules/investigation/manifest/investigation-materializer.ts';
 import {
   deriveInvestigationCommitments,
   investigationTermSetDigest,
-} from './investigation-roots.ts';
-import type { InvestigationScanFacts } from './investigation-scanner.ts';
+} from './modules/investigation/domain/investigation-roots.ts';
+import type { InvestigationScanFacts } from './modules/investigation/domain/investigation-scanner.ts';
 import {
   compareInvestigationV2V3Shadow,
   type InvestigationShadowParityReport,
@@ -34,15 +34,15 @@ import {
 import type {
   InvestigationTermContribution,
   PreviewInvestigationTerm,
-} from './investigation-terms.ts';
+} from './modules/investigation/domain/investigation-terms.ts';
 import {
   INVESTIGATION_LIMITS,
   type InvestigationLimits,
-} from './investigation-terms.ts';
+} from './modules/investigation/domain/investigation-terms.ts';
 import type {
   InvestigationKnowledgeReuseDecision,
   InvestigationWhyOverlayV3,
-} from './investigation-manifest.ts';
+} from './modules/investigation/manifest/investigation-manifest.ts';
 import {
   buildInvestigationV3WhyAuthoring,
   deriveInvestigationV3WhyRequirements,
@@ -50,14 +50,14 @@ import {
   type LegacyKnowledgeCarry,
   type LegacyWhyAuthoringAnswer,
   type LegacyWhyAuthoringRow,
-} from './investigation-why-domain.ts';
-import type { InvestigationSemanticAuthor } from './investigation-applicability.ts';
-import type { MutationClassPolicy } from './mutation-class-policy.ts';
+} from './modules/investigation/manifest/investigation-why-domain.ts';
+import type { InvestigationSemanticAuthor } from './modules/investigation/domain/investigation-applicability.ts';
+import type { MutationClassPolicy } from './modules/source/mutation-class-policy.ts';
 import type { NormalizedChangeIntent } from './provider-invocation-store.ts';
 import type {
   DeclaredInvestigationRoot,
   ReviewedPathRelationship,
-} from './investigation-groups.ts';
+} from './modules/investigation/domain/investigation-groups.ts';
 
 export type InvestigationV3ShadowBuildInput = {
   repositoryRoot: string;

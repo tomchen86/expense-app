@@ -8,7 +8,7 @@ import test from 'node:test';
 import {
   parseAuthorityAttestationEnvelope,
   canonicalAttestationEnvelope,
-} from '../src/authority-attestation.ts';
+} from '../src/modules/authority/authority-attestation.ts';
 import {
   canonicalHumanResolutionGrantEnvelope,
   canonicalHumanResolutionGrantPayload,
@@ -18,14 +18,14 @@ import {
   type HumanResolutionGrantPayload,
   type MaintainerGrantEnvelope,
   type MaintainerGrantPayload,
-} from '../src/maintainer-grant.ts';
+} from '../src/modules/authority/maintainer-grant.ts';
 import {
   AUTHORITY_ATTESTATION_SIGNATURE_NAMESPACE,
   issueAuthorityAttestation,
   projectAuthorityAttestationRelay,
-} from '../src/maintainer-attestation.ts';
+} from '../src/application/control-plane/maintainer-attestation.ts';
 import type { MaintainerSignerProvider } from '../src/maintainer-signer.ts';
-import type { MaintainerPolicy } from '../src/maintainer-policy.ts';
+import type { MaintainerPolicy } from '../src/modules/authority/maintainer-policy.ts';
 import { createFixtureRepository, git, isWorkflowError } from './fixture.ts';
 
 const PRIMARY_GRANT = '11111111-1111-4111-8111-111111111111';
@@ -53,7 +53,7 @@ const POLICY_TEMPLATE: Omit<MaintainerPolicy, 'trustedSigners'> = {
     'workflow/schemas/**',
   ],
   sealedImmutablePaths: [
-    'packages/workflow-engine/src/maintainer-policy.ts',
+    'packages/workflow-engine/src/modules/authority/maintainer-policy.ts',
     'workflow/maintainer-policy.json',
     'workflow/schemas/maintainer-policy.schema.json',
   ],

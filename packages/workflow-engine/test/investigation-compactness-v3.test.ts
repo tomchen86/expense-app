@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import { canonicalJson } from '../src/canonical-json.ts';
+import { canonicalJson } from '../src/foundation/canonical-json/canonical-json.ts';
 import { parseInvestigationArtifact } from '../src/contracts.ts';
 import { createEvidenceNode } from '../src/evidence-node.ts';
 import {
@@ -13,23 +13,23 @@ import {
   createInvestigationDispositionNodes,
   deriveInvestigationGroupFacts,
   deriveInvestigationGroups,
-} from '../src/investigation-groups.ts';
+} from '../src/modules/investigation/domain/investigation-groups.ts';
 import {
   buildInvestigationManifestDraft,
   sealInvestigationManifestDraft,
   validateForAuthority,
   type OrdinaryInvestigationAuthoringState,
-} from '../src/investigation-manifest.ts';
-import { materializeInvestigationEvidenceView } from '../src/investigation-materializer.ts';
+} from '../src/modules/investigation/manifest/investigation-manifest.ts';
+import { materializeInvestigationEvidenceView } from '../src/modules/investigation/manifest/investigation-materializer.ts';
 import {
   projectInvestigationArtifactForTracking,
   type ProjectedInvestigationArtifact,
 } from '../src/investigation-artifact-projection.ts';
-import { createInvestigationApplicability } from '../src/investigation-applicability.ts';
+import { createInvestigationApplicability } from '../src/modules/investigation/domain/investigation-applicability.ts';
 import {
   adaptInvestigationScanFactsResult,
   scanInvestigationTreeFacts,
-} from '../src/investigation-scanner.ts';
+} from '../src/modules/investigation/domain/investigation-scanner.ts';
 import {
   compareInvestigationV2V3Shadow,
   type InvestigationV2ShadowOracle,
@@ -37,8 +37,8 @@ import {
 import {
   previewInvestigationTermUnion,
   type InvestigationTermContribution,
-} from '../src/investigation-terms.ts';
-import { createMutationClassPolicy } from '../src/mutation-class-policy.ts';
+} from '../src/modules/investigation/domain/investigation-terms.ts';
+import { createMutationClassPolicy } from '../src/modules/source/mutation-class-policy.ts';
 import { git } from './fixture.ts';
 
 const PRODUCTION_SCALE_HIT_COUNT = 400;

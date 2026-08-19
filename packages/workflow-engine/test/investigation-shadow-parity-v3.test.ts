@@ -5,25 +5,25 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import { canonicalJson } from '../src/canonical-json.ts';
+import { canonicalJson } from '../src/foundation/canonical-json/canonical-json.ts';
 import {
   createInvestigationCoverageNode,
   createInvestigationDispositionNodes,
   deriveInvestigationGroupFacts,
   deriveInvestigationGroups,
-} from '../src/investigation-groups.ts';
+} from '../src/modules/investigation/domain/investigation-groups.ts';
 import {
   buildInvestigationManifestDraft,
   type OrdinaryInvestigationAuthoringState,
-} from '../src/investigation-manifest.ts';
+} from '../src/modules/investigation/manifest/investigation-manifest.ts';
 import {
   materializeInvestigationEvidenceView,
   type InvestigationReplayAuthoringInput,
-} from '../src/investigation-materializer.ts';
+} from '../src/modules/investigation/manifest/investigation-materializer.ts';
 import {
   adaptInvestigationScanFactsResult,
   scanInvestigationTreeFacts,
-} from '../src/investigation-scanner.ts';
+} from '../src/modules/investigation/domain/investigation-scanner.ts';
 import {
   compareInvestigationV2V3Shadow,
   type InvestigationV2ShadowOracle,
@@ -32,7 +32,7 @@ import { buildInvestigationV3Shadow } from '../src/investigation-shadow-builder.
 import {
   buildInvestigationV3WhyAuthoring,
   deriveInvestigationV3WhyRequirements,
-} from '../src/investigation-why-domain.ts';
+} from '../src/modules/investigation/manifest/investigation-why-domain.ts';
 import {
   createInvestigationWhyNodes,
   deriveInvestigationFullBlobManifest,
@@ -40,8 +40,8 @@ import {
 import {
   previewInvestigationTermUnion,
   type InvestigationTermContribution,
-} from '../src/investigation-terms.ts';
-import { createMutationClassPolicy } from '../src/mutation-class-policy.ts';
+} from '../src/modules/investigation/domain/investigation-terms.ts';
+import { createMutationClassPolicy } from '../src/modules/source/mutation-class-policy.ts';
 import { readPinnedTrackedTree } from '../src/tracked-tree-reader.ts';
 import { git, isWorkflowError } from './fixture.ts';
 

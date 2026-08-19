@@ -1,14 +1,14 @@
 import crypto from 'node:crypto';
 
-import { canonicalJson } from './canonical-json.ts';
+import { canonicalJson } from './foundation/canonical-json/canonical-json.ts';
 import { parseTasks, type ParsedTask } from './contracts.ts';
-import { ExitCode, workflowError } from './errors.ts';
+import { ExitCode, workflowError } from './foundation/errors/errors.ts';
 import { commitFacts } from './git-transitions.ts';
 import { runGit, runGitBuffer } from './git.ts';
 import {
   ManagedTrailerSyntaxError,
   parseManagedTrailers,
-} from './managed-trailers.ts';
+} from './modules/lifecycle/managed-trailers.ts';
 import { normalizeChangedPath } from './paths.ts';
 
 /**

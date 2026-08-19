@@ -8,8 +8,8 @@ import {
   signedGrantEnvelopeDigest,
   verifyAuthorityApplicationReceiptSignature,
   type AuthorityApplicationReceiptTag,
-} from './authority-application-receipt.ts';
-import { canonicalJson } from './canonical-json.ts';
+} from './modules/authority/authority-application-receipt.ts';
+import { canonicalJson } from './foundation/canonical-json/canonical-json.ts';
 import { canonicalCheckDefinition } from './ci-historical-contract.ts';
 import {
   listCommitPaths,
@@ -25,7 +25,7 @@ import {
   parseTasks,
   type CheckDefinition,
 } from './contracts.ts';
-import { ExitCode, workflowError } from './errors.ts';
+import { ExitCode, workflowError } from './foundation/errors/errors.ts';
 import { commitFacts } from './git-transitions.ts';
 import { runGit } from './git.ts';
 import {
@@ -34,23 +34,23 @@ import {
   parseMaintainerGrantEnvelope,
   validateGrantPayload,
   type MaintainerGrantEnvelope,
-} from './maintainer-grant.ts';
+} from './modules/authority/maintainer-grant.ts';
 import {
   MAINTAINER_GRANT_V2_SIGNATURE_NAMESPACE,
   canonicalMaintainerGrantV2Envelope,
   canonicalMaintainerGrantV2Payload,
   parseMaintainerGrantV2Envelope,
   type MaintainerGrantV2Envelope,
-} from './maintainer-grant-v2.ts';
+} from './modules/authority/maintainer-grant-v2.ts';
 import {
   parseMaintainerPolicy,
   type MaintainerPolicy,
   type TrustedMaintainerSigner,
-} from './maintainer-policy.ts';
+} from './modules/authority/maintainer-policy.ts';
 import {
   ManagedTrailerSyntaxError,
   parseManagedTrailers,
-} from './managed-trailers.ts';
+} from './modules/lifecycle/managed-trailers.ts';
 
 export type CiAuthorityResult = {
   grantId: string;

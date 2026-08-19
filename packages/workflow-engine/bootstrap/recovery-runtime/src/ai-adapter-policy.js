@@ -1,8 +1,8 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import { ExitCode, workflowError } from './errors.js';
-import { listBuiltInProviders } from './provider-registry.js';
+import { ExitCode, workflowError } from './foundation/errors/errors.js';
+import { listBuiltInProviders, } from './modules/provider-orchestration/provider-registry.js';
 export const REQUIRED_AI_ADAPTER_CONTROLS = [
     'separate-security-principal',
     'kernel-enforced-write-boundary',

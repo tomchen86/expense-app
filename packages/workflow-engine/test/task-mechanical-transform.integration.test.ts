@@ -7,10 +7,14 @@ import type {
   TransformationRetainedDisposition,
   TransformationTerm,
 } from '../src/contracts.ts';
-import { completeTask, finalizeTask, finishSession } from '../src/lifecycle.ts';
-import { commitPlanningTransition } from '../src/planning-transition.ts';
-import { startSession } from '../src/session.ts';
-import { checkSession } from '../src/verification.ts';
+import {
+  completeTask,
+  finalizeTask,
+  finishSession,
+} from '../src/application/finalize/lifecycle.ts';
+import { commitPlanningTransition } from '../src/application/propose/planning-transition.ts';
+import { startSession } from '../src/application/execute-task/session.ts';
+import { checkSession } from '../src/application/finalize/verification.ts';
 import {
   createFixtureRepository,
   git,

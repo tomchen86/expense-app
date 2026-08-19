@@ -5,7 +5,7 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 import { dispatchAiAdapterCommand } from './ai-adapter-cli.ts';
-import { commitArchiveTransition } from './archive-transition.ts';
+import { commitArchiveTransition } from './application/archive/archive-transition.ts';
 import {
   approveAndApplyAuthorityPlan,
   attestAuthorityPlan,
@@ -13,7 +13,7 @@ import {
   inspectAuthorityPlan,
   resumeAuthorityPlan,
   type AuthorityPlanIntent,
-} from './authority-plan.ts';
+} from './application/control-plane/authority-plan.ts';
 import { dispatchAuthorityAuditCommand } from './authority-audit-cli.ts';
 import {
   deriveAuthorityAuditRepositoryId,
@@ -32,7 +32,7 @@ import {
   findOpenTaskLifecycleStatus,
   openTask,
   resolveOpenTaskId,
-} from './open-task.ts';
+} from './application/execute-task/open-task.ts';
 import {
   checkOpenSpecPlanningAssets,
   generateOpenSpecPlanningAssets,
@@ -42,16 +42,20 @@ import {
   completePreparedPullRequestPreMergeAssurance,
   preparePullRequestPreMergeAssurance,
 } from './pre-merge-assurance-git.ts';
-import type { IntegrationDeltaReviewSubmission } from './pre-merge-assurance.ts';
+import type { IntegrationDeltaReviewSubmission } from './modules/assurance/pre-merge-assurance.ts';
 import { dispatchDocumentRefreshCommand } from './document-refresh-cli.ts';
-import { collectEngineMetrics } from './engine-metrics.ts';
-import { ExitCode, WorkflowError, workflowError } from './errors.ts';
+import { collectEngineMetrics } from './application/control-plane/engine-metrics.ts';
+import {
+  ExitCode,
+  WorkflowError,
+  workflowError,
+} from './foundation/errors/errors.ts';
 import {
   inspectIssuedExecutionBudgetGrant,
   issueExecutionBudgetGrant,
   revokeIssuedExecutionBudgetGrant,
 } from './execution-grant-cli.ts';
-import { parseExecutionBudgetGrantRequest } from './execution-governance.ts';
+import { parseExecutionBudgetGrantRequest } from './modules/authority/execution-governance.ts';
 import {
   EXTERNAL_EFFECT_MAX_TTL_SECONDS,
   externalEffectStorePaths,
@@ -64,11 +68,11 @@ import {
   type ExternalEffectReconciliationRequest,
   type ExternalEffectRollbackPlan,
   type ExternalEffectTarget,
-} from './external-effect-grant.ts';
+} from './modules/authority/external-effect-grant.ts';
 import {
   executeGrantedReplacement,
   requestExecutionReplacement,
-} from './execution-replacement.ts';
+} from './application/control-plane/execution-replacement.ts';
 import {
   inspectExecutionJob,
   listExecutionJobs,
@@ -89,44 +93,44 @@ import {
   runHumanGrantCli,
 } from './human-grant-cli.ts';
 import { dispatchIssueCommand } from './issue-cli.ts';
-import { assertMaintainerGrantId } from './maintainer-grant.ts';
+import { assertMaintainerGrantId } from './modules/authority/maintainer-grant.ts';
 import {
   parseMaintainerEvidenceWaivers,
   preflightMaintainerGrantV2,
   type MaintainerEvidenceWaiver,
   type MaintainerGrantV2PreflightRequest,
-} from './maintainer-grant-v2.ts';
+} from './modules/authority/maintainer-grant-v2.ts';
 import {
   issueAuthorityAttestation,
   projectAuthorityAttestationRelay,
   type AuthorityAttestationRequest,
-} from './maintainer-attestation.ts';
+} from './application/control-plane/maintainer-attestation.ts';
 import {
   inspectMaintainerGrants,
   maintainerGrantStorePaths,
 } from './maintainer-store.ts';
-import { revokeLegacyMaintainerGrant } from './maintainer-revoke.ts';
+import { revokeLegacyMaintainerGrant } from './application/control-plane/maintainer-revoke.ts';
 import {
   assertInteractiveSignerContext,
   createInteractiveSshSigner,
   type MaintainerSignerProvider,
 } from './maintainer-signer.ts';
-import { commitAuthoritySession } from './maintainer-commit.ts';
-import { recoverAuthorityCommit } from './maintainer-recovery.ts';
+import { commitAuthoritySession } from './application/control-plane/maintainer-commit.ts';
+import { recoverAuthorityCommit } from './application/control-plane/maintainer-recovery.ts';
 import {
   abortAuthoritySession,
   checkAuthoritySession,
   startAuthoritySession,
-} from './maintainer-session.ts';
-import { parseMaintainerPolicy } from './maintainer-policy.ts';
+} from './application/control-plane/maintainer-session.ts';
+import { parseMaintainerPolicy } from './modules/authority/maintainer-policy.ts';
 import {
   approveAndApplyMaintainerGrantV2,
   reissueAndApplyMaintainerGrantV2,
   revokeMaintainerGrantV2,
   type ApproveAndApplyMaintainerGrantV2Request,
   type ReissueAndApplyMaintainerGrantV2Request,
-} from './maintainer-approve.ts';
-import type { CandidateExternalEffect } from './maintainer-candidate.ts';
+} from './application/control-plane/maintainer-approve.ts';
+import type { CandidateExternalEffect } from './modules/authority/maintainer-candidate.ts';
 import {
   bootstrapInterventionStateRoot,
   dispatchBootstrapInterventionCommand,
@@ -140,14 +144,14 @@ import {
 import {
   produceControlPlaneApprovalCandidateV2,
   type ControlPlanePromotionReviewSummaryV2,
-} from './control-plane-promotion-producer.ts';
+} from './application/control-plane/control-plane-promotion-producer.ts';
 import {
   assertSameControlPlaneTaskMandateBinding,
   type ControlPlaneTaskMandateValidationPhase,
   type ControlPlaneApprovalSummaryV2,
   type ControlPlaneUpdaterAuditRecord,
-} from './intervention-control-updater.ts';
-import { assertLegacyGrantV1SigningAllowed } from './intervention-control.ts';
+} from './application/control-plane/intervention-control-updater.ts';
+import { assertLegacyGrantV1SigningAllowed } from './modules/authority/intervention-control.ts';
 import {
   discardHumanResolutionGrantPublication,
   inspectHumanResolutionGrantPublicationRecoveries,
@@ -158,7 +162,7 @@ import { inspectInvestigationQuarantineState } from './investigation-session-sto
 import {
   inspectImplementationReconciliation,
   recordImplementationReconciliation,
-} from './implementation-reconciliation.ts';
+} from './modules/why-knowledge/implementation-reconciliation.ts';
 import { loadInvestigationRuntimeContext } from './lifecycle-context.ts';
 import {
   cancelFinalizeRecovery,
@@ -171,7 +175,7 @@ import {
   inspectFinalizeRecoveryStatus,
   recoverFinalize,
   rollbackCompletion,
-} from './lifecycle.ts';
+} from './application/finalize/lifecycle.ts';
 import {
   abortSession,
   checkSession,
@@ -179,19 +183,19 @@ import {
   listSessions,
   startMandatedSession,
   startSession,
-} from './session.ts';
+} from './application/execute-task/session.ts';
 import { runtimePaths } from './session-store.ts';
 import {
   inspectTaskRevisionStatus,
   prepareTaskRevisionApprovalBinding,
   resumeTask,
   reviseTask,
-} from './task-revision.ts';
+} from './application/revise/task-revision.ts';
 import {
   inspectTaskStrategyLifecycle,
   resumeTaskStrategy,
   type TaskStrategyLifecycleStatus,
-} from './task-strategy-lifecycle.ts';
+} from './application/execute-task/task-strategy-lifecycle.ts';
 import { parseTaskStrategyRedRevisionRequest } from './task-strategy-red-revision-store.ts';
 import {
   beginTaskDiffReviewContinuationFromInput,
@@ -204,8 +208,8 @@ import {
   resumeDirectHumanTaskDiffReview,
   submitExternalTaskDiffReview,
   submitExternalTaskDiffReviewContinuation,
-} from './task-diff-review-lifecycle.ts';
-import { createTaskDiffReviewChallengeResponse } from './task-diff-review-artifact.ts';
+} from './application/finalize/task-diff-review-lifecycle.ts';
+import { createTaskDiffReviewChallengeResponse } from './modules/assurance/task-diff-review-artifact.ts';
 import {
   parseTaskDiffReviewChallengeResponseInput,
   parseTaskDiffReviewExternalClosureRequestInput,
@@ -213,19 +217,19 @@ import {
   type TaskDiffReviewChallengeResponseInput,
   type TaskDiffReviewExternalClosureRequestInput,
   type TaskDiffReviewExternalSubmissionInput,
-} from './task-diff-review-input.ts';
-import { issueTaskRevisionApproval } from './task-revision-approval.ts';
+} from './modules/assurance/task-diff-review-input.ts';
+import { issueTaskRevisionApproval } from './modules/authority/task-revision-approval.ts';
 import { validateManagedDocuments } from './managed-documents.ts';
 import { diagnoseOpenSpec } from './openspec-doctor.ts';
 import {
   commitPlanAmendment,
   commitPlanningTransition,
-} from './planning-transition.ts';
+} from './application/propose/planning-transition.ts';
 import {
   getProposeStatus,
   resumeProposeFromFile,
   startProposeFromFile,
-} from './propose-orchestrator.ts';
+} from './application/propose/propose-orchestrator.ts';
 import {
   dispatchProviderWorker,
   runProviderWorker,
@@ -244,14 +248,14 @@ import {
   inspectTaskMandate,
   parseTaskMandateRequest,
   revokeTaskMandate,
-} from './task-mandate.ts';
+} from './modules/authority/task-mandate.ts';
 import {
   WORKFLOW_GUIDANCE_CATALOG,
   workflowCommandGuidance,
   workflowFailureRecoveryCommand,
   workflowGuidanceUsageLines,
   workflowResultNextSteps,
-} from './workflow-guidance.ts';
+} from './modules/guidance/next-steps/workflow-guidance.ts';
 
 type CommandResult = Record<string, unknown>;
 const STANDALONE_COMMAND_FLAGS = new Set(['--migrate-legacy', '--resume']);

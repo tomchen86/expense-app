@@ -5,17 +5,17 @@ import path from 'node:path';
 import test from 'node:test';
 
 import { loadAiAdapterPolicy } from '../src/ai-adapter-policy.ts';
-import { canonicalJson } from '../src/canonical-json.ts';
+import { canonicalJson } from '../src/foundation/canonical-json/canonical-json.ts';
 import { loadChangeContract } from '../src/contracts.ts';
-import { ExitCode, workflowError } from '../src/errors.ts';
+import { ExitCode, workflowError } from '../src/foundation/errors/errors.ts';
 import { createEvidenceNode } from '../src/evidence-node.ts';
 import { writeEvidenceNode } from '../src/evidence-object-store.ts';
-import { projectProviderInvocationExecution } from '../src/execution-core.ts';
+import { projectProviderInvocationExecution } from '../src/modules/provider-orchestration/execution-core.ts';
 import {
   buildContextManifest,
   inspectDurableEpochContextStore,
   rolloverDurableEpochContextStore,
-} from '../src/execution-governance.ts';
+} from '../src/modules/authority/execution-governance.ts';
 import {
   executionJobStatePath,
   readExecutionJobState,
@@ -25,13 +25,13 @@ import { investigationRuntimePaths } from '../src/paths.ts';
 import {
   PLAN_REVIEW_COVERAGE,
   PLAN_REVIEW_OUTPUT_SCHEMA,
-} from '../src/plan-review.ts';
-import { deriveInvestigationFirstPlanningSubject } from '../src/planning-assurance-validator.ts';
+} from '../src/modules/assurance/plan-review.ts';
+import { deriveInvestigationFirstPlanningSubject } from '../src/modules/assurance/planning-assurance-validator.ts';
 import {
   createProviderInvocationRequest,
   PROPOSE_POLICY_DIGEST,
   type ProviderInvocationRequest,
-} from '../src/provider-contracts.ts';
+} from '../src/modules/provider-orchestration/provider-contracts.ts';
 import {
   claimProviderInvocationForWorker,
   completeProviderInvocationFromRunner,
@@ -49,7 +49,7 @@ import {
   ensureProviderPromptContext,
   providerPromptContextStoreRoot,
 } from '../src/provider-execution-governance.ts';
-import { startPropose } from '../src/propose-orchestrator.ts';
+import { startPropose } from '../src/application/propose/propose-orchestrator.ts';
 import { PROVIDER_RUNNER_RESIDUALS } from '../src/provider-runner.ts';
 import {
   createProviderWorkerDispatcherForTesting,

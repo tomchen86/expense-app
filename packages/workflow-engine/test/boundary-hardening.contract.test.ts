@@ -5,7 +5,7 @@ import path from 'node:path';
 import test from 'node:test';
 
 import { runCli } from '../src/cli.ts';
-import { ExitCode, WorkflowError } from '../src/errors.ts';
+import { ExitCode, WorkflowError } from '../src/foundation/errors/errors.ts';
 import { withChangeTransitionAuthority } from '../src/planning-lock.ts';
 import { assertCompletionTaskIds } from '../src/report-validation.ts';
 import {

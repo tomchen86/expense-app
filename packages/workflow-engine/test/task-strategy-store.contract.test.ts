@@ -5,19 +5,19 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import { canonicalJson } from '../src/canonical-json.ts';
+import { canonicalJson } from '../src/foundation/canonical-json/canonical-json.ts';
 import {
   COLLABORATION_GRANT_AUTHORIZED_EFFECT,
   COLLABORATION_GRANT_REPLAY_SCOPE,
   COLLABORATION_GRANT_RESIDUALS,
   COLLABORATION_GRANT_RETAINED_OBLIGATIONS,
-} from '../src/collaboration-grant.ts';
+} from '../src/modules/authority/collaboration-grant.ts';
 import type { InvestigationRuntimePaths } from '../src/paths.ts';
-import { createProviderInvocationRequest } from '../src/provider-contracts.ts';
+import { createProviderInvocationRequest } from '../src/modules/provider-orchestration/provider-contracts.ts';
 import {
   admitRoleResult,
   scheduleOrdinaryRole,
-} from '../src/role-scheduler.ts';
+} from '../src/modules/provider-orchestration/role-scheduler.ts';
 import {
   createTaskStrategyPatchCurrentBinding,
   createTaskStrategyPatchImportReceipt,
@@ -34,7 +34,7 @@ import {
   createTaskStrategyImplementationManifest,
   createTaskStrategyImplementationSubject,
   type TaskStrategyImplementationSubject,
-} from '../src/task-strategy-provider-contract.ts';
+} from '../src/modules/provider-orchestration/task-strategy-provider-contract.ts';
 import {
   createTaskStrategyCallerImplementationBinding,
   createTaskStrategyCallerImplementationReservation,

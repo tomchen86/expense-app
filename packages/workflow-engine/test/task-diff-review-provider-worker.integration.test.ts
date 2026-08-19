@@ -4,15 +4,15 @@ import fs from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
 
-import { canonicalJson } from '../src/canonical-json.ts';
-import { withArchiveEligibility } from '../src/archive-eligibility.ts';
+import { canonicalJson } from '../src/foundation/canonical-json/canonical-json.ts';
+import { withArchiveEligibility } from '../src/application/archive/archive-eligibility.ts';
 import { verifyPullRequest } from '../src/ci.ts';
 import {
   assertDocumentationClosureCommitCurrent,
   parseDocumentationClosureFromCommitMessage,
 } from '../src/documentation-closure.ts';
 import { DOCUMENTATION_CLOSURE_ACTIVATION_MARKER } from '../src/documentation-closure-activation.ts';
-import { ExitCode, workflowError } from '../src/errors.ts';
+import { ExitCode, workflowError } from '../src/foundation/errors/errors.ts';
 import { discoverRepository } from '../src/git.ts';
 import { commitFacts } from '../src/git-transitions.ts';
 import { renderHandoff } from '../src/handoff.ts';
@@ -22,9 +22,9 @@ import {
   finalizeSession,
   finalizeTask,
   inspectFinalizeRecoveryStatus,
-} from '../src/lifecycle.ts';
+} from '../src/application/finalize/lifecycle.ts';
 import { investigationRuntimePaths } from '../src/paths.ts';
-import { commitPlanningTransition } from '../src/planning-transition.ts';
+import { commitPlanningTransition } from '../src/application/propose/planning-transition.ts';
 import {
   readProviderInvocation,
   readProviderInvocationManifest,
@@ -39,20 +39,20 @@ import {
   verifyPullRequestWithPreMergeAssurance,
 } from '../src/pre-merge-assurance-git.ts';
 import { runCli } from '../src/cli.ts';
-import { startSession } from '../src/session.ts';
+import { startSession } from '../src/application/execute-task/session.ts';
 import {
   TASK_DIFF_REVIEW_OUTPUT_SCHEMA,
   type TaskDiffReviewContinuationSubmission,
   type TaskDiffReviewSubmission,
-} from '../src/task-diff-review-artifact.ts';
+} from '../src/modules/assurance/task-diff-review-artifact.ts';
 import {
   beginTaskDiffReview,
   beginTaskDiffReviewContinuationFromInput,
   reconcileTaskDiffReview,
   reconcileTaskDiffReviewContinuation,
-} from '../src/task-diff-review-lifecycle.ts';
-import { TASK_DIFF_REVIEW_COVERAGE } from '../src/task-diff-review.ts';
-import { inspectSession } from '../src/verification.ts';
+} from '../src/application/finalize/task-diff-review-lifecycle.ts';
+import { TASK_DIFF_REVIEW_COVERAGE } from '../src/modules/assurance/task-diff-review.ts';
+import { inspectSession } from '../src/application/finalize/verification.ts';
 import {
   configureChecks,
   createFixtureRepository,

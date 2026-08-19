@@ -6,7 +6,7 @@ import test from 'node:test';
 import {
   authorizeTaskMandateProviderReservation,
   type TaskMandateProviderReservationOperation,
-} from '../src/task-mandate.ts';
+} from '../src/modules/authority/task-mandate.ts';
 import { createFixtureRepository, isWorkflowError } from './fixture.ts';
 import { prepareExecutionMandate } from './execution-mandate-fixture.ts';
 

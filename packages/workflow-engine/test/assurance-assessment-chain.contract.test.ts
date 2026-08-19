@@ -8,8 +8,8 @@ import {
   floorsForHitPaths,
   startAssuranceChain,
   type AssuranceFloors,
-} from '../src/assurance-assessment-chain.ts';
-import { parsePathRoleRegistry } from '../src/path-role-registry.ts';
+} from '../src/modules/assurance/assurance-assessment-chain.ts';
+import { parsePathRoleRegistry } from '../src/modules/source/path-role-registry.ts';
 import { isWorkflowError } from './fixture.ts';
 
 const LOW: AssuranceFloors = {
@@ -174,7 +174,9 @@ test('a risky hit path raises the floors the scan stage records', () => {
     schemaVersion: 1,
     kind: 'path-role-registry',
     roles: {
-      grant: ['packages/workflow-engine/src/maintainer-candidate.ts'],
+      grant: [
+        'packages/workflow-engine/src/modules/authority/maintainer-candidate.ts',
+      ],
       ordinary: ['apps/**'],
     },
   });
@@ -191,11 +193,11 @@ test('a risky hit path raises the floors the scan stage records', () => {
   });
   const risky = floorsForHitPaths(registry, [
     'apps/mobile/App.tsx',
-    'packages/workflow-engine/src/maintainer-candidate.ts',
+    'packages/workflow-engine/src/modules/authority/maintainer-candidate.ts',
   ]);
   assert.equal(risky.floors.planning, 'individual-only');
   assert.deepEqual(risky.reasons, [
-    'hit-path-role:grant:packages/workflow-engine/src/maintainer-candidate.ts',
+    'hit-path-role:grant:packages/workflow-engine/src/modules/authority/maintainer-candidate.ts',
   ]);
 });
 

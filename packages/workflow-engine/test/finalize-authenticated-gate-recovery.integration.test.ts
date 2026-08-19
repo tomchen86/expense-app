@@ -4,29 +4,29 @@ import fs from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
 
-import { canonicalJson } from '../src/canonical-json.ts';
-import { commitPlanningTransition } from '../src/planning-transition.ts';
+import { canonicalJson } from '../src/foundation/canonical-json/canonical-json.ts';
+import { commitPlanningTransition } from '../src/application/propose/planning-transition.ts';
 import { renderHandoff } from '../src/handoff.ts';
 import {
   cancelFinalizeRecovery,
   finalizeTask,
   inspectFinalizeRecoveryStatus,
-} from '../src/lifecycle.ts';
+} from '../src/application/finalize/lifecycle.ts';
 import { PROVIDER_RUNNER_RESIDUALS } from '../src/provider-runner.ts';
 import { runProviderWorker } from '../src/provider-worker.ts';
-import { startSession } from '../src/session.ts';
+import { startSession } from '../src/application/execute-task/session.ts';
 import {
   beginTaskDiffReview,
   beginTaskDiffReviewContinuation,
   reconcileTaskDiffReview,
   reconcileTaskDiffReviewContinuation,
-} from '../src/task-diff-review-lifecycle.ts';
+} from '../src/application/finalize/task-diff-review-lifecycle.ts';
 import {
   createTaskDiffReviewChallengeResponse,
   type TaskDiffReviewSubmission,
-} from '../src/task-diff-review-artifact.ts';
-import { TASK_DIFF_REVIEW_COVERAGE } from '../src/task-diff-review.ts';
-import { workflowResultNextSteps } from '../src/workflow-guidance.ts';
+} from '../src/modules/assurance/task-diff-review-artifact.ts';
+import { TASK_DIFF_REVIEW_COVERAGE } from '../src/modules/assurance/task-diff-review.ts';
+import { workflowResultNextSteps } from '../src/modules/guidance/next-steps/workflow-guidance.ts';
 import {
   configureChecks,
   createFixtureRepository,

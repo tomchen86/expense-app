@@ -2,18 +2,18 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 
-import { canonicalJson } from './canonical-json.ts';
+import { canonicalJson } from './foundation/canonical-json/canonical-json.ts';
 import type { EvidenceNode } from './evidence-node.ts';
-import { ExitCode, workflowError } from './errors.ts';
+import { ExitCode, workflowError } from './foundation/errors/errors.ts';
 import { readInvestigationWhyNode } from './investigation-why.ts';
 import { normalizeExactRepositoryPath } from './paths.ts';
-import type { ActualMutation } from './semantic-reconciliation.ts';
+import type { ActualMutation } from './modules/why-knowledge/semantic-reconciliation.ts';
 import {
   createLedgerEntry,
   semanticFileSubjectId,
   type LedgerEntry,
   type LedgerEntryInput,
-} from './semantic-ledger.ts';
+} from './modules/why-knowledge/semantic-ledger.ts';
 import {
   readLedgerEntry,
   readLedgerIndex,

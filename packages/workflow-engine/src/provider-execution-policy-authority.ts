@@ -2,19 +2,19 @@ import crypto from 'node:crypto';
 import path from 'node:path';
 
 import type { LoadedAiAdapterPolicy } from './ai-adapter-policy.ts';
-import { canonicalJson } from './canonical-json.ts';
+import { canonicalJson } from './foundation/canonical-json/canonical-json.ts';
 import {
   canonicalExecutionBudgetGrantRequest,
   inspectExecutionBudgetGrantAuthorization,
   parseExecutionBudgetGrantRequest,
   type ExecutionBudgetConsumeReceipt,
   type ExecutionBudgetGrantRequest,
-} from './execution-governance.ts';
-import { ExitCode, workflowError } from './errors.ts';
+} from './modules/authority/execution-governance.ts';
+import { ExitCode, workflowError } from './foundation/errors/errors.ts';
 import {
   MAX_PROVIDER_LIMITS,
   type ProviderInvocationRequest,
-} from './provider-contracts.ts';
+} from './modules/provider-orchestration/provider-contracts.ts';
 
 const SHA256 = /^sha256:[0-9a-f]{64}$/;
 const UUID_V4 =

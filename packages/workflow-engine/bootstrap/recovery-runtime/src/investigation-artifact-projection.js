@@ -1,12 +1,12 @@
 import crypto from 'node:crypto';
-import { canonicalJson } from './canonical-json.js';
+import { canonicalJson } from './foundation/canonical-json/canonical-json.js';
 import { assertStoredEvidenceNode, } from './evidence-node.js';
-import { ExitCode, workflowError } from './errors.js';
+import { ExitCode, workflowError } from './foundation/errors/errors.js';
 import { runGit } from './git.js';
-import { createInvestigationCoverageNode, createInvestigationDispositionNodes, deriveInvestigationHitNodes, readInvestigationCoverageNode, readInvestigationDispositionNode, readInvestigationGroupNode, replayInvestigationGroupNodes, } from './investigation-groups.js';
-import { assertInvestigationApplicability, } from './investigation-applicability.js';
-import { scanInvestigationTree, } from './investigation-scanner.js';
-import { normalizeInvestigationTerm } from './investigation-terms.js';
+import { createInvestigationCoverageNode, createInvestigationDispositionNodes, deriveInvestigationHitNodes, readInvestigationCoverageNode, readInvestigationDispositionNode, readInvestigationGroupNode, replayInvestigationGroupNodes, } from './modules/investigation/domain/investigation-groups.js';
+import { assertInvestigationApplicability, } from './modules/investigation/domain/investigation-applicability.js';
+import { scanInvestigationTree, } from './modules/investigation/domain/investigation-scanner.js';
+import { normalizeInvestigationTerm } from './modules/investigation/domain/investigation-terms.js';
 const DIGEST = /^[0-9a-f]{64}$/;
 const GIT_OID = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
 const REPLAYED_NODE_TYPES = new Set([

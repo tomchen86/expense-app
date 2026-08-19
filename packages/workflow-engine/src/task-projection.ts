@@ -2,7 +2,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 
 import { AtomicTextSafetyError, replaceTextAtomic } from './atomic-text.ts';
-import { ExitCode, workflowError } from './errors.ts';
+import { ExitCode, workflowError } from './foundation/errors/errors.ts';
 
 export function projectTasksCompleted(
   tasksPath: string,

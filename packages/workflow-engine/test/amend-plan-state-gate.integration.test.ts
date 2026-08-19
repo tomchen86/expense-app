@@ -11,21 +11,21 @@ import {
 import {
   commitPlanAmendment,
   commitPlanningTransition,
-} from '../src/planning-transition.ts';
+} from '../src/application/propose/planning-transition.ts';
 import { validateCiPlanningCommit } from '../src/ci-planning.ts';
 import { validateOpenSpecPlanning } from '../src/planning-contract.ts';
 import { readPlanningTransitionReport } from '../src/planning-report.ts';
 import { loadWorkflowConfig } from '../src/contracts.ts';
 import { discoverRepository } from '../src/git.ts';
 import { committedPlanningGeneration } from '../src/planning-generation-history.ts';
-import { inspectPlanningExecutionEpoch } from '../src/planning-execution-epoch.ts';
-import { withArchiveEligibility } from '../src/archive-eligibility.ts';
+import { inspectPlanningExecutionEpoch } from '../src/modules/lifecycle/planning-execution-epoch.ts';
+import { withArchiveEligibility } from '../src/application/archive/archive-eligibility.ts';
 import {
   createPlanningAmendmentDecision,
   readPlanningAmendmentDecision,
   renderPlanningAmendmentDecisionMarker,
   replacePlanningAmendmentDecisionMarker,
-} from '../src/planning-amendment-decision.ts';
+} from '../src/modules/lifecycle/planning-amendment-decision.ts';
 import {
   activateInvestigationPlanning,
   createFixtureRepository,

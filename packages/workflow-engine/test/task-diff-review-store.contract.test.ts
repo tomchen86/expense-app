@@ -5,14 +5,14 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import { canonicalJson } from '../src/canonical-json.ts';
+import { canonicalJson } from '../src/foundation/canonical-json/canonical-json.ts';
 import { investigationRuntimePaths } from '../src/paths.ts';
-import { createProviderInvocationRequest } from '../src/provider-contracts.ts';
+import { createProviderInvocationRequest } from '../src/modules/provider-orchestration/provider-contracts.ts';
 import {
   createTaskDiffReviewChallengeResponse,
   createTaskDiffReviewRecord,
   TASK_DIFF_REVIEW_CONTINUATION_OUTPUT_SCHEMA,
-} from '../src/task-diff-review-artifact.ts';
+} from '../src/modules/assurance/task-diff-review-artifact.ts';
 import {
   createTaskDiffReviewContinuationReservation,
   createTaskDiffReviewContinuationResultBinding,
@@ -25,7 +25,7 @@ import {
   createTaskDiffReviewSubject,
   deriveTaskDiffReviewCandidatePlan,
   TASK_DIFF_REVIEW_COVERAGE,
-} from '../src/task-diff-review.ts';
+} from '../src/modules/assurance/task-diff-review.ts';
 
 test('provider continuation inventory spans sessions and excludes exact global namespaces', () => {
   const base = fs.mkdtempSync(

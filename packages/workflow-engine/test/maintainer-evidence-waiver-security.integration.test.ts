@@ -12,7 +12,7 @@ import {
   readAuthorityApplicationReceiptTag,
   type AuthorityApplicationReceiptEnvelope,
   type AuthorityApplicationReceiptPayload,
-} from '../src/authority-application-receipt.ts';
+} from '../src/modules/authority/authority-application-receipt.ts';
 import { listRangeCommits } from '../src/ci-git.ts';
 import { validateCiAuthorityCommit } from '../src/ci-authority.ts';
 import {
@@ -22,10 +22,10 @@ import {
   MAINTAINER_GRANT_V2_SIGNATURE_NAMESPACE,
   parseMaintainerGrantV2Envelope,
   type MaintainerEvidenceWaiver,
-} from '../src/maintainer-grant-v2.ts';
-import { assertCandidateV2ChecksFresh } from '../src/maintainer-candidate.ts';
-import { approveAndApplyMaintainerGrantV2 } from '../src/maintainer-approve.ts';
-import { parseMaintainerPolicy } from '../src/maintainer-policy.ts';
+} from '../src/modules/authority/maintainer-grant-v2.ts';
+import { assertCandidateV2ChecksFresh } from '../src/modules/authority/maintainer-candidate.ts';
+import { approveAndApplyMaintainerGrantV2 } from '../src/application/control-plane/maintainer-approve.ts';
+import { parseMaintainerPolicy } from '../src/modules/authority/maintainer-policy.ts';
 import type { MaintainerSignerProvider } from '../src/maintainer-signer.ts';
 import {
   maintainerGrantStorePaths,
@@ -35,7 +35,7 @@ import {
   computeProtectedCapabilityEntryDigests,
   REQUIRED_PROTECTED_CAPABILITIES,
 } from '../src/protected-capabilities.ts';
-import { authorizeTaskMandate } from '../src/task-mandate.ts';
+import { authorizeTaskMandate } from '../src/modules/authority/task-mandate.ts';
 import { createFixtureRepository, git, isWorkflowError } from './fixture.ts';
 
 const PROFILE_ID = 'workflow-engine-bootstrap';
@@ -313,7 +313,9 @@ function installTrustBase(
         evidencePaths: ['packages/workflow-engine/test/**'],
         policyPaths: ['workflow/**'],
         verificationInfrastructurePaths: ['.github/workflows/**'],
-        forbiddenPaths: ['packages/workflow-engine/src/maintainer-grant.ts'],
+        forbiddenPaths: [
+          'packages/workflow-engine/src/modules/authority/maintainer-grant.ts',
+        ],
         constraints: {
           evidenceOnlyGrantForbidden: true,
           samePackageRequired: true,
@@ -341,7 +343,7 @@ function installTrustBase(
   fs.writeFileSync(
     path.join(
       repository,
-      'packages/workflow-engine/src/execution-governance.ts',
+      'packages/workflow-engine/src/modules/authority/execution-governance.ts',
     ),
     'export const GRANT_LIMIT = 1;\n',
   );
@@ -378,7 +380,9 @@ function installTrustBase(
   git(repository, ['commit', '-m', 'Install maintainer v2 trust base files']);
 
   const contentBase = git(repository, ['rev-parse', 'HEAD']).trim();
-  const entrypoints = ['packages/workflow-engine/src/execution-governance.ts'];
+  const entrypoints = [
+    'packages/workflow-engine/src/modules/authority/execution-governance.ts',
+  ];
   const closureDependencies = [
     'packages/workflow-engine/src/protected-capabilities.ts',
     'workflow/protected-capabilities.json',

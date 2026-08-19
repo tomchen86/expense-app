@@ -5,11 +5,11 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import { TASK_DIFF_REVIEW_COVERAGE } from '../src/task-diff-review.ts';
+import { TASK_DIFF_REVIEW_COVERAGE } from '../src/modules/assurance/task-diff-review.ts';
 import {
   workflowCommandGuidance,
   workflowResultNextSteps,
-} from '../src/workflow-guidance.ts';
+} from '../src/modules/guidance/next-steps/workflow-guidance.ts';
 import { sourceRepositoryRoot } from './fixture.ts';
 
 const cli = path.join(

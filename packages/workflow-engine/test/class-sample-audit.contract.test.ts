@@ -5,7 +5,7 @@ import {
   classSampleSize,
   planClassSampleAudits,
   resolveSampleAudits,
-} from '../src/class-sample-audit.ts';
+} from '../src/modules/investigation/domain/class-sample-audit.ts';
 import { isWorkflowError } from './fixture.ts';
 
 const SEED = 'a'.repeat(64);

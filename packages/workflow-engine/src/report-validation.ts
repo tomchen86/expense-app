@@ -1,10 +1,10 @@
-import { digestRequiredCheckDefinitions } from './contract-digests.ts';
+import { digestRequiredCheckDefinitions } from './modules/lifecycle/contract-digests.ts';
 import { parseTasks } from './contracts.ts';
-import { ExitCode, workflowError } from './errors.ts';
-import type { ProjectionPathClassification } from './engine-projection-registry.ts';
+import { ExitCode, workflowError } from './foundation/errors/errors.ts';
+import type { ProjectionPathClassification } from './modules/projection/engine-projection-registry.ts';
 import { readImmutableReport, type WorkflowReport } from './report-store.ts';
 import { runtimePaths } from './session-store.ts';
-import type { SessionInspection } from './verification.ts';
+import type { SessionInspection } from './application/finalize/verification.ts';
 
 export function readSessionReport(
   inspection: SessionInspection,

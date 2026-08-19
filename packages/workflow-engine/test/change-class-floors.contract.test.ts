@@ -4,16 +4,18 @@ import test from 'node:test';
 import {
   floorsForChangeClass,
   reconcileDeclaredClass,
-} from '../src/assurance-assessment-chain.ts';
-import { INVESTIGATION_CHANGE_CLASSES } from '../src/investigation-applicability.ts';
-import { parsePathRoleRegistry } from '../src/path-role-registry.ts';
+} from '../src/modules/assurance/assurance-assessment-chain.ts';
+import { INVESTIGATION_CHANGE_CLASSES } from '../src/modules/investigation/domain/investigation-applicability.ts';
+import { parsePathRoleRegistry } from '../src/modules/source/path-role-registry.ts';
 import { isWorkflowError } from './fixture.ts';
 
 const REGISTRY = parsePathRoleRegistry({
   schemaVersion: 1,
   kind: 'path-role-registry',
   roles: {
-    grant: ['packages/workflow-engine/src/maintainer-candidate.ts'],
+    grant: [
+      'packages/workflow-engine/src/modules/authority/maintainer-candidate.ts',
+    ],
     ordinary: ['apps/**', 'docs/**'],
   },
 });
@@ -70,7 +72,7 @@ test('an unknown change class is refused rather than defaulted', () => {
 test('a light declaration contradicted by where the hits landed escalates', () => {
   const result = reconcileDeclaredClass('documentation-only', REGISTRY, [
     'docs/WORKFLOW.md',
-    'packages/workflow-engine/src/maintainer-candidate.ts',
+    'packages/workflow-engine/src/modules/authority/maintainer-candidate.ts',
   ]);
   assert.equal(result.escalated, true);
   assert.equal(result.floors.planning, 'individual-only');
@@ -83,7 +85,9 @@ test('a light declaration contradicted by where the hits landed escalates', () =
   );
   assert.ok(
     result.reasons.some((reason) =>
-      reason.includes('packages/workflow-engine/src/maintainer-candidate.ts'),
+      reason.includes(
+        'packages/workflow-engine/src/modules/authority/maintainer-candidate.ts',
+      ),
     ),
     JSON.stringify(result.reasons),
   );
@@ -102,7 +106,7 @@ test('an honestly heavy declaration is not escalated by its own consequences', (
   // Declaring rename-removal already buys individual-only; the hit paths
   // agreeing with that is not a contradiction to report.
   const result = reconcileDeclaredClass('rename-removal', REGISTRY, [
-    'packages/workflow-engine/src/maintainer-candidate.ts',
+    'packages/workflow-engine/src/modules/authority/maintainer-candidate.ts',
   ]);
   assert.equal(result.escalated, false);
   assert.equal(result.floors.planning, 'individual-only');

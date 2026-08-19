@@ -6,12 +6,12 @@ import {
   buildCoverageManifest,
   requiredReviewSet,
   type ReviewTarget,
-} from '../src/review-coverage.ts';
+} from '../src/modules/assurance/review-coverage.ts';
 import {
   assertChallengesClosed,
   deltaReviewRequired,
   type Challenge,
-} from '../src/review-challenge.ts';
+} from '../src/modules/assurance/review-challenge.ts';
 import { isWorkflowError } from './fixture.ts';
 
 const SEED = 'a'.repeat(64);

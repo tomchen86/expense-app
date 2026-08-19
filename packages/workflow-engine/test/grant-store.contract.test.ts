@@ -7,7 +7,7 @@ import test from 'node:test';
 import {
   createApprovalSubject,
   createGrantChallenge,
-} from '../src/grant-core.ts';
+} from '../src/modules/authority/grant-core.ts';
 import {
   assertGrantLifecycleBarrier,
   grantStorePaths,
@@ -19,7 +19,7 @@ import {
 import {
   createTransitionRegistry,
   type TransitionDefinition,
-} from '../src/grant-transition-registry.ts';
+} from '../src/modules/authority/grant-transition-registry.ts';
 import {
   runtimePaths,
   withRepositoryLifecycleOperation,

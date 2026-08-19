@@ -6,7 +6,7 @@ import {
   writeContentRecord,
   type ContentRecord,
 } from './content-record-store.ts';
-import { ExitCode, workflowError } from './errors.ts';
+import { ExitCode, workflowError } from './foundation/errors/errors.ts';
 
 export type ArchiveTransitionReport = ContentRecord & {
   kind: 'archive-transition';

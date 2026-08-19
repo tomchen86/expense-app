@@ -2,9 +2,9 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 
-import { canonicalJson } from './canonical-json.ts';
-import { projectProviderInvocationExecution } from './execution-core.ts';
-import { ExitCode, WorkflowError } from './errors.ts';
+import { canonicalJson } from './foundation/canonical-json/canonical-json.ts';
+import { projectProviderInvocationExecution } from './modules/provider-orchestration/execution-core.ts';
+import { ExitCode, WorkflowError } from './foundation/errors/errors.ts';
 import {
   assertPrivateInvestigationDirectory,
   createPrivateCanonicalJson,
@@ -13,7 +13,7 @@ import {
   withPrivateRuntimeLock,
 } from './investigation-session-store.ts';
 import { assertInvocationId, type InvestigationRuntimePaths } from './paths.ts';
-import type { ProviderInvocationRequest } from './provider-contracts.ts';
+import type { ProviderInvocationRequest } from './modules/provider-orchestration/provider-contracts.ts';
 import type { ProviderInvocationRecord } from './provider-invocation-store.ts';
 import {
   providerRetentionArtifact,

@@ -12,7 +12,7 @@ import {
   findTaskCommits,
   finishSession,
   rollbackCompletion,
-} from '../src/lifecycle.ts';
+} from '../src/application/finalize/lifecycle.ts';
 import {
   hasExactTrailers,
   previewExactStaging,
@@ -26,9 +26,13 @@ import {
   type WorkflowReport,
 } from '../src/report-store.ts';
 import { readFinalizeTransaction } from '../src/finalize-transaction.ts';
-import { resolveFinalizeCheckPolicy } from '../src/finalize-check-policy.ts';
+import { resolveFinalizeCheckPolicy } from '../src/modules/assurance/finalize-check-policy.ts';
 import { writeJsonAtomic } from '../src/session-store.ts';
-import { checkSession, getSession, startSession } from '../src/session.ts';
+import {
+  checkSession,
+  getSession,
+  startSession,
+} from '../src/application/execute-task/session.ts';
 import {
   configureChecks,
   createFixtureRepository,

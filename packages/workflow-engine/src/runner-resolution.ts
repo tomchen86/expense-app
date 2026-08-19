@@ -7,7 +7,11 @@ import {
   type CheckDefinition,
   type ParsedCheckCommand,
 } from './contracts.ts';
-import { ExitCode, WorkflowError, workflowError } from './errors.ts';
+import {
+  ExitCode,
+  WorkflowError,
+  workflowError,
+} from './foundation/errors/errors.ts';
 import {
   collectWorkspacePackageClosure,
   resolveDeclaredPackage,

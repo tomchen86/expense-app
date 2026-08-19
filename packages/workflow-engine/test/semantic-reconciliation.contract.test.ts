@@ -7,7 +7,7 @@ import {
   type ActualMutation,
   type ChangedRange,
   type PlannedMutation,
-} from '../src/semantic-reconciliation.ts';
+} from '../src/modules/why-knowledge/semantic-reconciliation.ts';
 import { isWorkflowError } from './fixture.ts';
 
 const RANGE: ChangedRange = { path: 'src/a.ts', startLine: 10, endLine: 20 };

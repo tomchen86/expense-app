@@ -1,4 +1,4 @@
-import { ExitCode, workflowError } from './errors.js';
+import { ExitCode, workflowError } from './foundation/errors/errors.js';
 import { parentsCompatible, readConvergenceBinding, readReuseProofBinding, } from './evidence-convergence.js';
 import { assertStoredEvidenceNode, } from './evidence-node.js';
 const IDENTITY_FIELDS = [

@@ -9,10 +9,10 @@ import {
   authorityRefusalDigest,
   withAuthorityRefusalAudit,
   type AuthorityRefusalAuditBinding,
-} from './authority-refusal-audit.ts';
-import { canonicalJson } from './canonical-json.ts';
+} from './modules/authority/authority-refusal-audit.ts';
+import { canonicalJson } from './foundation/canonical-json/canonical-json.ts';
 import { loadWorkflowConfig } from './contracts.ts';
-import { requireExecutionJobMandateBinding } from './execution-core.ts';
+import { requireExecutionJobMandateBinding } from './modules/provider-orchestration/execution-core.ts';
 import {
   canonicalExecutionBudgetGrantEnvelope,
   canonicalExecutionBudgetGrantSigningBytes,
@@ -26,11 +26,11 @@ import {
   canonicalExecutionBudgetGrantRequest,
   type ExecutionBudgetGrantEnvelope,
   type ExecutionBudgetGrantRequest,
-} from './execution-governance.ts';
+} from './modules/authority/execution-governance.ts';
 import { inspectExecutionJob } from './execution-runtime.ts';
-import { ExitCode, workflowError } from './errors.ts';
+import { ExitCode, workflowError } from './foundation/errors/errors.ts';
 import { discoverRepository, runGit } from './git.ts';
-import { parseMaintainerPolicy } from './maintainer-policy.ts';
+import { parseMaintainerPolicy } from './modules/authority/maintainer-policy.ts';
 import {
   createInteractiveSshSigner,
   type MaintainerSignerProvider,
@@ -43,7 +43,7 @@ import {
   inspectActiveTaskMandateBinding,
   withActiveTaskMandateBinding,
   type TaskMandateBinding,
-} from './task-mandate.ts';
+} from './modules/authority/task-mandate.ts';
 
 export type IssueExecutionBudgetGrantOptions = {
   grantId?: string;

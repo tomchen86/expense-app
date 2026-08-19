@@ -2,8 +2,8 @@ import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import test from 'node:test';
 
-import { canonicalJson } from '../src/canonical-json.ts';
-import { WorkflowError } from '../src/errors.ts';
+import { canonicalJson } from '../src/foundation/canonical-json/canonical-json.ts';
+import { WorkflowError } from '../src/foundation/errors/errors.ts';
 import {
   CONTROL_PLANE_REVIEW_SIGNATURE_NAMESPACE_V2,
   CONTROL_PLANE_SIGNATURE_NAMESPACE_V2,
@@ -29,7 +29,7 @@ import {
   type ControlPlanePromotionBundleV2,
   type ControlPlanePromotionMaterial,
   type ProtectedCapabilityEntry,
-} from '../src/intervention-control.ts';
+} from '../src/modules/authority/intervention-control.ts';
 
 const REVIEWED_AT = '2026-08-10T09:50:00.000Z';
 const ISSUED_AT = '2026-08-10T09:55:00.000Z';

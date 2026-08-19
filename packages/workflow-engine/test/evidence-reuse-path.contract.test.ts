@@ -13,7 +13,7 @@ import {
   projectConvergedEvidenceGraph,
 } from '../src/evidence-reuse-path.ts';
 import { createEvidenceNode } from '../src/evidence-node.ts';
-import { WorkflowError } from '../src/errors.ts';
+import { WorkflowError } from '../src/foundation/errors/errors.ts';
 
 test('tracked evidence reuse requires an exact current-parent and proof ref pair', () => {
   const oldParent = createEvidenceNode({

@@ -4,14 +4,14 @@ import fs from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
 
-import { canonicalJson } from '../src/canonical-json.ts';
-import { ExitCode, workflowError } from '../src/errors.ts';
-import { projectProviderInvocationExecution } from '../src/execution-core.ts';
+import { canonicalJson } from '../src/foundation/canonical-json/canonical-json.ts';
+import { ExitCode, workflowError } from '../src/foundation/errors/errors.ts';
+import { projectProviderInvocationExecution } from '../src/modules/provider-orchestration/execution-core.ts';
 import { inspectExecutionJob } from '../src/execution-runtime.ts';
 import { readExecutionJobState } from '../src/execution-store.ts';
 import { discoverRepository } from '../src/git.ts';
 import { investigationRuntimePaths } from '../src/paths.ts';
-import { startPropose } from '../src/propose-orchestrator.ts';
+import { startPropose } from '../src/application/propose/propose-orchestrator.ts';
 import {
   readProviderInvocation,
   readProviderInvocationRequest,

@@ -15,11 +15,11 @@ import {
   readLocalEngineBinding,
   readPersistedWipBundle,
   restorePersistedWipBundle,
-} from '../src/intervention-control-bootstrap.ts';
-import { createEngineArtifact } from '../src/intervention-control.ts';
-import { persistInterventionEngineArtifact } from '../src/intervention-maintenance.ts';
+} from '../src/application/control-plane/intervention-control-bootstrap.ts';
+import { createEngineArtifact } from '../src/modules/authority/intervention-control.ts';
+import { persistInterventionEngineArtifact } from '../src/application/control-plane/intervention-maintenance.ts';
 import { preparePersistedEngineAdoption } from '../src/intervention-control-persistence.ts';
-import { WorkflowError } from '../src/errors.ts';
+import { WorkflowError } from '../src/foundation/errors/errors.ts';
 
 const NOW = new Date('2026-08-03T10:00:00.000Z');
 

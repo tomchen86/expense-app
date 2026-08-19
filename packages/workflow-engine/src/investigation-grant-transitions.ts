@@ -1,12 +1,19 @@
-import { canonicalJson } from './canonical-json.ts';
-import { isRecord } from './contract-values.ts';
-import { ExitCode, WorkflowError, workflowError } from './errors.ts';
-import type { GrantRequestInput, StateBinding } from './grant-core.ts';
+import { canonicalJson } from './foundation/canonical-json/canonical-json.ts';
+import { isRecord } from './foundation/canonical-json/contract-values.ts';
+import {
+  ExitCode,
+  WorkflowError,
+  workflowError,
+} from './foundation/errors/errors.ts';
+import type {
+  GrantRequestInput,
+  StateBinding,
+} from './modules/authority/grant-core.ts';
 import {
   freezeGrantCanonical as freezeCanonical,
   grantHasExactKeys as hasExactKeys,
   grantSha256 as sha256,
-} from './grant-primitives.ts';
+} from './modules/authority/grant-primitives.ts';
 import {
   executeGrantCoreHumanResolution,
   type GrantCoreHumanResolutionAuthorization,
@@ -24,19 +31,19 @@ import {
 import {
   WORKFLOW_SUPERSEDE_REASONS,
   type WorkflowSupersedeReason,
-} from './intervention-control.ts';
+} from './modules/authority/intervention-control.ts';
 import { loadInvestigationRuntimeContext } from './lifecycle-context.ts';
 import {
   humanResolutionBlockerBinding,
   loadMaintainerPolicyForResolution,
-} from './maintainer-grant.ts';
+} from './modules/authority/maintainer-grant.ts';
 import { assertChangeId, assertInvestigationId } from './paths.ts';
 import { runGit } from './git.ts';
 import type {
   TransitionDefinition,
   TransitionOutcome,
   TrustedChoicePresentation,
-} from './grant-transition-registry.ts';
+} from './modules/authority/grant-transition-registry.ts';
 
 const GIT_OBJECT_ID = /^[0-9a-f]{40}(?:[0-9a-f]{24})?$/;
 const RAW_DIGEST = /^[0-9a-f]{64}$/;

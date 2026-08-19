@@ -5,29 +5,29 @@ import fs from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
 
-import { WorkflowError } from '../src/errors.ts';
+import { WorkflowError } from '../src/foundation/errors/errors.ts';
 import { listChangedPaths } from '../src/git.ts';
 import {
   inspectTaskRevisionStatus,
   prepareTaskRevisionApprovalBinding,
   resumeTask,
   reviseTask,
-} from '../src/task-revision.ts';
+} from '../src/application/revise/task-revision.ts';
 import {
   issueTaskRevisionApproval,
   taskRevisionApprovalTargetDigest,
-} from '../src/task-revision-approval.ts';
+} from '../src/modules/authority/task-revision-approval.ts';
 import type { MaintainerSignerProvider } from '../src/maintainer-signer.ts';
 import { commitChangedPaths } from '../src/git-transitions.ts';
-import { commitPlanningTransition } from '../src/planning-transition.ts';
-import { startPropose } from '../src/propose-orchestrator.ts';
+import { commitPlanningTransition } from '../src/application/propose/planning-transition.ts';
+import { startPropose } from '../src/application/propose/propose-orchestrator.ts';
 import {
   abortSession,
   checkSession,
   getSession,
   listSessions,
   startSession,
-} from '../src/session.ts';
+} from '../src/application/execute-task/session.ts';
 import {
   createFixtureRepository,
   git,

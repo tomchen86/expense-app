@@ -2,10 +2,14 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 
-import { canonicalJson } from './canonical-json.ts';
-import { ExitCode, WorkflowError, workflowError } from './errors.ts';
+import { canonicalJson } from './foundation/canonical-json/canonical-json.ts';
+import {
+  ExitCode,
+  WorkflowError,
+  workflowError,
+} from './foundation/errors/errors.ts';
 import { discoverRepository, runGit } from './git.ts';
-import { parseMaintainerPolicy } from './maintainer-policy.ts';
+import { parseMaintainerPolicy } from './modules/authority/maintainer-policy.ts';
 import {
   recordAuthorityAuditEvent,
   verifyAuthorityAuditEvents,
@@ -28,7 +32,7 @@ import {
   rebindLocalEngineAfterRolledBackAdoption,
   type BootstrapDependencies,
   type LocalEngineBinding,
-} from './intervention-control-bootstrap.ts';
+} from './application/control-plane/intervention-control-bootstrap.ts';
 import {
   engineAdoptionRecordPath,
   recordBootstrapSidecarAdopted,
@@ -47,7 +51,7 @@ import {
   type HarnessMaintenanceGrantEnvelope,
   type ParentChangeState,
   type Sha256Digest,
-} from './intervention-control.ts';
+} from './modules/authority/intervention-control.ts';
 import {
   buildAndPersistInterventionEngineArtifact,
   maintenanceApprovalSummary,
@@ -61,7 +65,7 @@ import {
   type MaintenanceApprovalSummary,
   type PersistedInterventionEngineArtifact,
   type PersistedMaintenanceGrantRecord,
-} from './intervention-maintenance.ts';
+} from './application/control-plane/intervention-maintenance.ts';
 import type { MaintainerSignerProvider } from './maintainer-signer.ts';
 import { runtimePaths } from './session-store.ts';
 

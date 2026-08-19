@@ -4,8 +4,11 @@ import path from 'node:path';
 import test from 'node:test';
 
 import { renderHandoff, validateHandoff } from '../src/handoff.ts';
-import { completeTask } from '../src/lifecycle.ts';
-import { checkSession, startSession } from '../src/session.ts';
+import { completeTask } from '../src/application/finalize/lifecycle.ts';
+import {
+  checkSession,
+  startSession,
+} from '../src/application/execute-task/session.ts';
 import { createFixtureRepository, git } from './fixture.ts';
 
 test('repository handoff has exactly six semantic sections and no hashes', () => {

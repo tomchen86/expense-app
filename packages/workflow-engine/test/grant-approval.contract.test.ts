@@ -4,13 +4,13 @@ import test from 'node:test';
 import {
   evaluateApprovalProfile,
   type VerifiedApprovalProof,
-} from '../src/grant-approval.ts';
+} from '../src/modules/authority/grant-approval.ts';
 import {
   codeOwnedApprovalModuleRegistry,
   GRANT_PROOF_SSH_V1_CONFIGURATION_DIGEST,
   HUMAN_GATE_MACOS_V1_CONFIGURATION_DIGEST,
   parseGrantPolicyV2,
-} from '../src/grant-policy.ts';
+} from '../src/modules/authority/grant-policy.ts';
 import { isWorkflowError } from './fixture.ts';
 
 const SUBJECT_DIGEST = digest('1');

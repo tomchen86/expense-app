@@ -6,8 +6,8 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import { canonicalJson } from '../src/canonical-json.ts';
-import { assertUniqueCollaborationGrantUses } from '../src/collaboration-grant.ts';
+import { canonicalJson } from '../src/foundation/canonical-json/canonical-json.ts';
+import { assertUniqueCollaborationGrantUses } from '../src/modules/authority/collaboration-grant.ts';
 import {
   collectHistoricalCollaborationGrantUses,
   validateCiPlanningCommit,
@@ -21,10 +21,10 @@ import {
   createPlanReviewTargetSnapshotNode,
   PLAN_REVIEW_COVERAGE,
   PLAN_REVIEW_OUTPUT_SCHEMA,
-} from '../src/plan-review.ts';
-import { deriveInvestigationFirstPlanningSubject } from '../src/planning-assurance-validator.ts';
-import { commitPlanningTransition } from '../src/planning-transition.ts';
-import { admitRoleResult } from '../src/role-scheduler.ts';
+} from '../src/modules/assurance/plan-review.ts';
+import { deriveInvestigationFirstPlanningSubject } from '../src/modules/assurance/planning-assurance-validator.ts';
+import { commitPlanningTransition } from '../src/application/propose/planning-transition.ts';
+import { admitRoleResult } from '../src/modules/provider-orchestration/role-scheduler.ts';
 import {
   createFixtureRepository,
   git,

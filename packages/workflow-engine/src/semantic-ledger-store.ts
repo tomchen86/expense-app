@@ -2,13 +2,13 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 import { replaceTextAtomic } from './atomic-text.ts';
-import { canonicalJson } from './canonical-json.ts';
-import { ExitCode, workflowError } from './errors.ts';
+import { canonicalJson } from './foundation/canonical-json/canonical-json.ts';
+import { ExitCode, workflowError } from './foundation/errors/errors.ts';
 import {
   assertLedgerEntry,
   isSemanticSubjectId,
   type LedgerEntry,
-} from './semantic-ledger.ts';
+} from './modules/why-knowledge/semantic-ledger.ts';
 
 /**
  * Where the ledger lives.

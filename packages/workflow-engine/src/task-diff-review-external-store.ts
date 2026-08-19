@@ -2,8 +2,8 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 
-import { canonicalJson } from './canonical-json.ts';
-import { ExitCode, workflowError } from './errors.ts';
+import { canonicalJson } from './foundation/canonical-json/canonical-json.ts';
+import { ExitCode, workflowError } from './foundation/errors/errors.ts';
 import {
   assertPrivateInvestigationDirectory,
   createPrivateCanonicalJson,
@@ -18,14 +18,14 @@ import {
   type TaskDiffReviewChallengeResponseRecord,
   type TaskDiffReviewContinuationSubmission,
   type TaskDiffReviewSubmission,
-} from './task-diff-review-artifact.ts';
+} from './modules/assurance/task-diff-review-artifact.ts';
 import {
   parseTaskDiffReviewScope,
   parseTaskDiffReviewSubject,
   type TaskDiffReviewScope,
   type TaskDiffReviewSubject,
-} from './task-diff-review.ts';
-import type { RecordedRoleParticipant } from './role-scheduler.ts';
+} from './modules/assurance/task-diff-review.ts';
+import type { RecordedRoleParticipant } from './modules/provider-orchestration/role-scheduler.ts';
 
 const DIGEST = /^[0-9a-f]{64}$/u;
 const GRANT_ID =

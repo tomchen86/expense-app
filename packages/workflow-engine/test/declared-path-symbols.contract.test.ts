@@ -4,7 +4,7 @@ import test from 'node:test';
 import {
   DECLARED_SYMBOL_LIMIT,
   deriveDeclaredPathSymbols,
-} from '../src/declared-path-symbols.ts';
+} from '../src/modules/source/declared-path-symbols.ts';
 
 test('exported declarations of every form are extracted', () => {
   const symbols = deriveDeclaredPathSymbols(

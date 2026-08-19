@@ -16,7 +16,7 @@ import {
   readControlPlaneSupervisorHistory,
   readControlPlaneSupervisorHistoryProgress,
 } from '../src/control-plane-supervisor-history.ts';
-import { WorkflowError } from '../src/errors.ts';
+import { WorkflowError } from '../src/foundation/errors/errors.ts';
 
 test('append publishes private records and reads only a terminal leaf', () => {
   const fixture = stateRoot();

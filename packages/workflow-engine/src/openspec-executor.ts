@@ -2,7 +2,11 @@ import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 
-import { ExitCode, WorkflowError, workflowError } from './errors.ts';
+import {
+  ExitCode,
+  WorkflowError,
+  workflowError,
+} from './foundation/errors/errors.ts';
 import { createTrustedExecutionEnvironment } from './execution-environment.ts';
 import { resolveDeclaredPackage } from './package-closure.ts';
 import {

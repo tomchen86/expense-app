@@ -4,14 +4,14 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-import { canonicalJson } from '../src/canonical-json.ts';
+import { canonicalJson } from '../src/foundation/canonical-json/canonical-json.ts';
 import { loadChangeContract, type ExecutionTask } from '../src/contracts.ts';
 import { createEvidenceNode } from '../src/evidence-node.ts';
-import { WorkflowError } from '../src/errors.ts';
+import { WorkflowError } from '../src/foundation/errors/errors.ts';
 import {
   createInvestigationApplicability,
   INVESTIGATION_APPLICABILITY_POLICY_DIGEST,
-} from '../src/investigation-applicability.ts';
+} from '../src/modules/investigation/domain/investigation-applicability.ts';
 import { OPENSPEC_REPOSITORY_REVIEWED_SOURCES } from '../src/openspec-planning-asset-contract.ts';
 import { generateOpenSpecPlanningAssets } from '../src/openspec-planning-assets.ts';
 import { INVESTIGATION_PLANNING_ACTIVATION_MARKER } from '../src/openspec-schema-contract.ts';
@@ -21,12 +21,12 @@ import {
   createPlanReviewTargetSnapshotNode,
   PLAN_REVIEW_COVERAGE,
   PLAN_REVIEW_OUTPUT_SCHEMA,
-} from '../src/plan-review.ts';
+} from '../src/modules/assurance/plan-review.ts';
 import {
   deriveInvestigationFirstPlanningSubject,
   validateInvestigationFirstPlanningReadiness,
-} from '../src/planning-assurance-validator.ts';
-import { admitRoleResult } from '../src/role-scheduler.ts';
+} from '../src/modules/assurance/planning-assurance-validator.ts';
+import { admitRoleResult } from '../src/modules/provider-orchestration/role-scheduler.ts';
 
 export const sourceRepositoryRoot = path.resolve(
   import.meta.dirname,

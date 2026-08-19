@@ -12,11 +12,11 @@ import {
   type EvidenceNode,
   type EvidenceNodeInput,
 } from '../src/evidence-node.ts';
-import { WorkflowError } from '../src/errors.ts';
+import { WorkflowError } from '../src/foundation/errors/errors.ts';
 import {
   evaluatePlanningAssurance,
   type PlanningAssuranceValidator,
-} from '../src/planning-assurance-validator.ts';
+} from '../src/modules/assurance/planning-assurance-validator.ts';
 
 const DIGESTS = {
   policy: '1'.repeat(64),

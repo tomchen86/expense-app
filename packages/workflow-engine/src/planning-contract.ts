@@ -9,7 +9,7 @@ import {
   type ManagedSchemaName,
   type ParsedTask,
 } from './contracts.ts';
-import { ExitCode, workflowError } from './errors.ts';
+import { ExitCode, workflowError } from './foundation/errors/errors.ts';
 import { discoverRepository, runGit } from './git.ts';
 import {
   assertInvestigationPlanningActivation,
@@ -20,7 +20,7 @@ import { normalizeChangedPath } from './paths.ts';
 import {
   assertPlanningPaths,
   requiredPlanningArtifactPaths,
-} from './planning-paths.ts';
+} from './modules/source/planning-paths.ts';
 import { loadStableValidatedChangeContract } from './validated-contract-context.ts';
 import type {
   PlanningTaskState,
@@ -38,7 +38,7 @@ export type PlanningInspection = {
   artifactDigests: Record<string, string>;
 };
 
-export { assertPlanningPaths } from './planning-paths.ts';
+export { assertPlanningPaths } from './modules/source/planning-paths.ts';
 
 export function inspectPlanningTransition(
   repositoryRoot: string,

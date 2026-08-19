@@ -16,7 +16,7 @@ import {
   generateOpenSpecPlanningAssets,
   installOpenSpecPlanningPrompts,
 } from '../src/openspec-planning-assets.ts';
-import { workflowCommandGuidance } from '../src/workflow-guidance.ts';
+import { workflowCommandGuidance } from '../src/modules/guidance/next-steps/workflow-guidance.ts';
 import {
   installFakeOpenSpec,
   isWorkflowError,

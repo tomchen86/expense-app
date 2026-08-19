@@ -5,21 +5,24 @@ import fs from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
 
-import { canonicalJson } from '../src/canonical-json.ts';
+import { canonicalJson } from '../src/foundation/canonical-json/canonical-json.ts';
 import {
   readContentRecord,
   writeContentRecord,
 } from '../src/content-record-store.ts';
 import { loadChangeContract } from '../src/contracts.ts';
 import { commitFacts } from '../src/git-transitions.ts';
-import { deriveInvestigationFirstPlanningSubject } from '../src/planning-assurance-validator.ts';
+import { deriveInvestigationFirstPlanningSubject } from '../src/modules/assurance/planning-assurance-validator.ts';
 import { readPlanningTransitionReport } from '../src/planning-report.ts';
 import {
   commitPlanningTransition,
   type PlanningTransitionTestHooks,
-} from '../src/planning-transition.ts';
+} from '../src/application/propose/planning-transition.ts';
 import { inspectPlanningTransition } from '../src/planning-contract.ts';
-import { abortSession, startSession } from '../src/session.ts';
+import {
+  abortSession,
+  startSession,
+} from '../src/application/execute-task/session.ts';
 import { INVESTIGATION_PLANNING_ACTIVATION_MARKER } from '../src/openspec-schema-contract.ts';
 import {
   activateInvestigationPlanning,

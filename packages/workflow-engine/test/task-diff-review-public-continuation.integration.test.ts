@@ -6,33 +6,33 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import { canonicalJson } from '../src/canonical-json.ts';
+import { canonicalJson } from '../src/foundation/canonical-json/canonical-json.ts';
 import { loadWorkflowConfig } from '../src/contracts.ts';
 import { discoverRepository } from '../src/git.ts';
 import { renderHandoff } from '../src/handoff.ts';
-import { finalizeTask } from '../src/lifecycle.ts';
+import { finalizeTask } from '../src/application/finalize/lifecycle.ts';
 import { investigationRuntimePaths } from '../src/paths.ts';
-import { commitPlanningTransition } from '../src/planning-transition.ts';
+import { commitPlanningTransition } from '../src/application/propose/planning-transition.ts';
 import { readProviderInvocation } from '../src/provider-invocation-store.ts';
 import { PROVIDER_RUNNER_RESIDUALS } from '../src/provider-runner.ts';
 import { runProviderWorker } from '../src/provider-worker.ts';
-import { startSession } from '../src/session.ts';
+import { startSession } from '../src/application/execute-task/session.ts';
 import {
   assertCurrentTaskDiffReviewSatisfied,
   beginTaskDiffReview,
   inspectTaskDiffReviewStatus,
   reconcileTaskDiffReview,
-} from '../src/task-diff-review-lifecycle.ts';
-import { parseTaskDiffReviewChallengeResponseInput } from '../src/task-diff-review-input.ts';
+} from '../src/application/finalize/task-diff-review-lifecycle.ts';
+import { parseTaskDiffReviewChallengeResponseInput } from '../src/modules/assurance/task-diff-review-input.ts';
 import { readTaskDiffFinalAssuranceBinding } from '../src/task-diff-review-store.ts';
 import {
   TASK_DIFF_REVIEW_COVERAGE,
   type TaskDiffReviewSubject,
-} from '../src/task-diff-review.ts';
+} from '../src/modules/assurance/task-diff-review.ts';
 import type {
   TaskDiffReviewContinuationSubmission,
   TaskDiffReviewSubmission,
-} from '../src/task-diff-review-artifact.ts';
+} from '../src/modules/assurance/task-diff-review-artifact.ts';
 import {
   configureChecks,
   createFixtureRepository,

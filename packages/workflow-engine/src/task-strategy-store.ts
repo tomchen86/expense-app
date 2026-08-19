@@ -1,12 +1,12 @@
 import crypto from 'node:crypto';
 import path from 'node:path';
 
-import { canonicalJson } from './canonical-json.ts';
+import { canonicalJson } from './foundation/canonical-json/canonical-json.ts';
 import {
   assertStoredEvidenceNode,
   type EvidenceNode,
 } from './evidence-node.ts';
-import { ExitCode, workflowError } from './errors.ts';
+import { ExitCode, workflowError } from './foundation/errors/errors.ts';
 import {
   createPrivateCanonicalJson,
   privatePathExists,
@@ -17,7 +17,10 @@ import {
   normalizeChangedPath,
   type InvestigationRuntimePaths,
 } from './paths.ts';
-import { isProviderId, type ProviderId } from './provider-registry.ts';
+import {
+  isProviderId,
+  type ProviderId,
+} from './modules/provider-orchestration/provider-registry.ts';
 import { readTaskStrategyCurrentRef } from './task-strategy-red-revision-store.ts';
 
 const DIGEST = /^[0-9a-f]{64}$/;

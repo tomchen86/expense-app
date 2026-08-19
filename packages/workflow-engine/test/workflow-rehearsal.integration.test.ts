@@ -3,15 +3,18 @@ import fs from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
 
-import { commitArchiveTransition } from '../src/archive-transition.ts';
+import { commitArchiveTransition } from '../src/application/archive/archive-transition.ts';
 import { verifyPullRequest } from '../src/ci.ts';
 import {
   commitSession,
   completeTask,
   finishSession,
-} from '../src/lifecycle.ts';
-import { commitPlanningTransition } from '../src/planning-transition.ts';
-import { checkSession, startSession } from '../src/session.ts';
+} from '../src/application/finalize/lifecycle.ts';
+import { commitPlanningTransition } from '../src/application/propose/planning-transition.ts';
+import {
+  checkSession,
+  startSession,
+} from '../src/application/execute-task/session.ts';
 import {
   createFixtureRepository,
   git,

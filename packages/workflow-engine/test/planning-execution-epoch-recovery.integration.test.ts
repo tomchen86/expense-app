@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
 
-import { ensurePlanningExecutionEpochCompleteForArchive } from '../src/planning-execution-epoch.ts';
+import { ensurePlanningExecutionEpochCompleteForArchive } from '../src/modules/lifecycle/planning-execution-epoch.ts';
 import { createFixtureRepository, git, isWorkflowError } from './fixture.ts';
 
 const GENERATION = 'a'.repeat(64);

@@ -10,8 +10,8 @@ import {
   verifyAuthorityAuditEvents,
 } from '../src/authority-audit-service.ts';
 import { deriveAuthorityAuditRepositoryId } from '../src/authority-audit-ledger.ts';
-import { canonicalJson } from '../src/canonical-json.ts';
-import { ExitCode, workflowError } from '../src/errors.ts';
+import { canonicalJson } from '../src/foundation/canonical-json/canonical-json.ts';
+import { ExitCode, workflowError } from '../src/foundation/errors/errors.ts';
 import { discoverRepository } from '../src/git.ts';
 import { createInvestigationCheckpointEnvelope } from '../src/investigation-session.ts';
 import { investigationRuntimePaths } from '../src/paths.ts';
@@ -22,7 +22,7 @@ import {
   getProposeStatus,
   resumePropose,
   startPropose,
-} from '../src/propose-orchestrator.ts';
+} from '../src/application/propose/propose-orchestrator.ts';
 import { readProposeExemptionSession } from '../src/propose-exemption-store.ts';
 import {
   claimProviderInvocation,
@@ -31,7 +31,10 @@ import {
   readProviderRetryReservation,
 } from '../src/provider-invocation-store.ts';
 import type { MaintainerSignerProvider } from '../src/maintainer-signer.ts';
-import { getSession, startMandatedSession } from '../src/session.ts';
+import {
+  getSession,
+  startMandatedSession,
+} from '../src/application/execute-task/session.ts';
 import {
   authorizeTaskMandate,
   authorizeTaskMandateOperation,
@@ -46,7 +49,7 @@ import {
   TASK_MANDATE_SIGNATURE_NAMESPACE_V2,
   type TaskMandateEnvelope,
   type TaskMandateRequest,
-} from '../src/task-mandate.ts';
+} from '../src/modules/authority/task-mandate.ts';
 import { resolveTaskAuthorizationRequirement } from '../src/task-authorization-policy.ts';
 import {
   createFixtureRepository,
@@ -1029,7 +1032,9 @@ test('protected propose CLI requires a task mandate before durable planning', ()
       `${canonicalJson({
         schemaVersion: 1,
         summary: 'Change protected workflow lifecycle behavior.',
-        explicitPaths: ['packages/workflow-engine/src/lifecycle.ts'],
+        explicitPaths: [
+          'packages/workflow-engine/src/application/finalize/lifecycle.ts',
+        ],
         explicitSymbols: [],
         explicitConfigKeys: [],
         renamePairs: [],

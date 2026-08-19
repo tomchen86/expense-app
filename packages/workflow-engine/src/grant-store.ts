@@ -1,9 +1,9 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
-import { canonicalJson } from './canonical-json.ts';
-import { isRecord } from './contract-values.ts';
-import { ExitCode, workflowError } from './errors.ts';
+import { canonicalJson } from './foundation/canonical-json/canonical-json.ts';
+import { isRecord } from './foundation/canonical-json/contract-values.ts';
+import { ExitCode, workflowError } from './foundation/errors/errors.ts';
 import { ensurePlainDirectory } from './filesystem-safety.ts';
 import {
   assertApprovalSubject,
@@ -11,8 +11,8 @@ import {
   createApprovalSubject,
   type ApprovalSubject,
   type GrantChallenge,
-} from './grant-core.ts';
-import type { ApprovalClaim } from './grant-policy.ts';
+} from './modules/authority/grant-core.ts';
+import type { ApprovalClaim } from './modules/authority/grant-policy.ts';
 import {
   freezeGrantCanonical,
   GRANT_SHA256_DIGEST,
@@ -21,8 +21,8 @@ import {
   grantHasExactKeys,
   grantSameStrings,
   parseGrantTimestamp,
-} from './grant-primitives.ts';
-import type { TransitionOutcome } from './grant-transition-registry.ts';
+} from './modules/authority/grant-primitives.ts';
+import type { TransitionOutcome } from './modules/authority/grant-transition-registry.ts';
 
 const MODULE_VERSION = /^[1-9][0-9]*$/;
 const IDENTITY = /^[A-Za-z0-9][A-Za-z0-9._@+-]{0,127}$/;

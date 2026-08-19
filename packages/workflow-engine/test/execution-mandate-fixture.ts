@@ -7,7 +7,7 @@ import type { MaintainerSignerProvider } from '../src/maintainer-signer.ts';
 import {
   authorizeTaskMandate,
   inspectActiveTaskMandateBinding,
-} from '../src/task-mandate.ts';
+} from '../src/modules/authority/task-mandate.ts';
 import { git, sourceRepositoryRoot } from './fixture.ts';
 
 export function prepareExecutionMandate(repository: string, changeId: string) {

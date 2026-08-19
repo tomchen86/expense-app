@@ -11,11 +11,11 @@ import {
   executePersistedAdoptionStep,
   initializeLocalEngineBinding,
   materializeInterventionChildWorktree,
-} from '../src/intervention-control-bootstrap.ts';
-import { canonicalJson } from '../src/canonical-json.ts';
-import { createEngineArtifact } from '../src/intervention-control.ts';
+} from '../src/application/control-plane/intervention-control-bootstrap.ts';
+import { canonicalJson } from '../src/foundation/canonical-json/canonical-json.ts';
+import { createEngineArtifact } from '../src/modules/authority/intervention-control.ts';
 import { preparePersistedEngineAdoption } from '../src/intervention-control-persistence.ts';
-import { persistInterventionEngineArtifact } from '../src/intervention-maintenance.ts';
+import { persistInterventionEngineArtifact } from '../src/application/control-plane/intervention-maintenance.ts';
 import { setupFinalizedControlPlanePromotionFixture } from './control-plane-promotion-fixture.ts';
 
 const NOW = new Date('2026-08-09T10:00:00.000Z');

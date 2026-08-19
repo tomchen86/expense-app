@@ -4,7 +4,7 @@ import test from 'node:test';
 import {
   pruneFloorToLimit,
   type FloorCandidate,
-} from '../src/floor-overflow-pruning.ts';
+} from '../src/modules/investigation/domain/floor-overflow-pruning.ts';
 import { isWorkflowError } from './fixture.ts';
 
 function candidates(...entries: Array<[string, FloorCandidate['kind']]>) {

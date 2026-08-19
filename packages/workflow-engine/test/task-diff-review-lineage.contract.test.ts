@@ -4,13 +4,13 @@ import test from 'node:test';
 import {
   resolveTaskDiffReviewLineage,
   type TaskDiffReviewLineageEntry,
-} from '../src/task-diff-review-lineage.ts';
+} from '../src/modules/assurance/task-diff-review-lineage.ts';
 import {
   createTaskDiffReviewSubject,
   deriveTaskDiffReviewCandidatePlan,
   type TaskDiffReviewScope,
   type TaskDiffReviewSubject,
-} from '../src/task-diff-review.ts';
+} from '../src/modules/assurance/task-diff-review.ts';
 
 const DIGEST = {
   baseCommit: 'a'.repeat(40),

@@ -4,12 +4,12 @@ import fs from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
 
-import { commitPlanningTransition } from '../src/planning-transition.ts';
+import { commitPlanningTransition } from '../src/application/propose/planning-transition.ts';
 import { committedPlanningGeneration } from '../src/planning-generation-history.ts';
 import {
   createPlanningAmendmentDecision,
   replacePlanningAmendmentDecisionMarker,
-} from '../src/planning-amendment-decision.ts';
+} from '../src/modules/lifecycle/planning-amendment-decision.ts';
 import {
   createFixtureRepository,
   git,

@@ -3,11 +3,11 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { loadAiAdapterPolicy, MAX_AI_ADAPTER_LIMITS, } from './ai-adapter-policy.js';
-import { canonicalJson } from './canonical-json.js';
+import { canonicalJson } from './foundation/canonical-json/canonical-json.js';
 import { buildClaudeProviderInvocation, CLAUDE_EXECUTABLE_CANDIDATES, CLAUDE_REQUIRED_HELP_FLAGS, } from './claude-provider-adapter.js';
 import { buildCodexProviderInvocation, CODEX_EXECUTABLE_CANDIDATES, CODEX_REQUIRED_EXEC_HELP_FLAGS, CODEX_REQUIRED_ROOT_HELP_FLAGS, } from './codex-provider-adapter.js';
 import { loadWorkflowConfig } from './contracts.js';
-import { ExitCode, workflowError, WorkflowError } from './errors.js';
+import { ExitCode, workflowError, WorkflowError, } from './foundation/errors/errors.js';
 import { createProviderExecutionEnvironment } from './execution-environment.js';
 import { executionJobStatePath } from './execution-store.js';
 import { captureGovernedProviderProjection, compareGovernedProviderProjections, discoverRepository, runGit, } from './git.js';
@@ -15,7 +15,7 @@ import { ensurePrivateInvestigationDirectory, readPrivateCanonicalJson, withPriv
 import { assertInvocationId, investigationRuntimePaths, } from './paths.js';
 import { providerExecutionPolicySnapshotPath, readProviderExecutionPolicySnapshot, readProviderInvocationRequest, } from './provider-invocation-store.js';
 import { assembleProviderPromptManifest, assertProviderPromptContextCurrent, providerPromptContextStoreRoot, readProviderRepairPrompt, } from './provider-execution-governance.js';
-import { assertProviderProcessSucceeded, } from './provider-contracts.js';
+import { assertProviderProcessSucceeded, } from './modules/provider-orchestration/provider-contracts.js';
 const PROBE_TIMEOUT_MS = 10_000;
 const PROBE_OUTPUT_BYTES = 64 * 1024;
 /**

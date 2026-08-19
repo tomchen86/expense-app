@@ -8,12 +8,16 @@ import {
   parseAiAdapterPolicyDocument,
   type AiAdapterProviderReservation,
 } from './ai-adapter-policy.ts';
-import { canonicalJson } from './canonical-json.ts';
-import { isRecord } from './contract-values.ts';
+import { canonicalJson } from './foundation/canonical-json/canonical-json.ts';
+import { isRecord } from './foundation/canonical-json/contract-values.ts';
 import { loadWorkflowConfig } from './contracts.ts';
 import { createEvidenceNode } from './evidence-node.ts';
 import { writeEvidenceNode } from './evidence-object-store.ts';
-import { ExitCode, WorkflowError, workflowError } from './errors.ts';
+import {
+  ExitCode,
+  WorkflowError,
+  workflowError,
+} from './foundation/errors/errors.ts';
 import { discoverRepository, runGit } from './git.ts';
 import {
   investigationRuntimePaths,
@@ -22,7 +26,7 @@ import {
 import {
   createProviderInvocationRequest,
   type ProviderInvocationRequest,
-} from './provider-contracts.ts';
+} from './modules/provider-orchestration/provider-contracts.ts';
 import {
   BLIND_SURVEY_OUTPUT_SCHEMA,
   BLIND_SURVEY_PROVIDER_OUTPUT_SCHEMA,
@@ -38,7 +42,10 @@ import {
   readProviderInvocation,
   type BlindSurveyManifest,
 } from './provider-invocation-store.ts';
-import { listBuiltInProviders, type ProviderId } from './provider-registry.ts';
+import {
+  listBuiltInProviders,
+  type ProviderId,
+} from './modules/provider-orchestration/provider-registry.ts';
 import {
   preflightBuiltInProvider,
   runBuiltInProvider,
@@ -48,7 +55,7 @@ import {
   type ProviderRunInput,
   type ProviderRunOptions,
 } from './provider-runner.ts';
-import { scheduleOrdinaryRole } from './role-scheduler.ts';
+import { scheduleOrdinaryRole } from './modules/provider-orchestration/role-scheduler.ts';
 
 const SHA256 = /^[0-9a-f]{64}$/u;
 const GIT_OBJECT_ID = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/u;

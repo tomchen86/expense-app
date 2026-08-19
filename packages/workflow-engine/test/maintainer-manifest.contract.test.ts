@@ -11,7 +11,7 @@ import {
   parseCapabilityProfile,
   parsePatchManifest,
   verifyPatchManifestAgainstWorktree,
-} from '../src/maintainer-manifest.ts';
+} from '../src/modules/authority/maintainer-manifest.ts';
 import { createFixtureRepository, git, isWorkflowError } from './fixture.ts';
 
 const PROFILE = {
@@ -27,7 +27,9 @@ const PROFILE = {
   ],
   // The grant verifier itself must never be reachable from an ordinary
   // profile, even though it sits under the implementation root.
-  forbiddenPaths: ['packages/workflow-engine/src/maintainer-grant.ts'],
+  forbiddenPaths: [
+    'packages/workflow-engine/src/modules/authority/maintainer-grant.ts',
+  ],
   constraints: {
     evidenceOnlyGrantForbidden: true,
     samePackageRequired: true,
@@ -230,7 +232,7 @@ test('file roles classify by profile roots with forbidden and policy precedence'
   assert.equal(
     classifyFileRole(
       profile,
-      'packages/workflow-engine/src/maintainer-grant.ts',
+      'packages/workflow-engine/src/modules/authority/maintainer-grant.ts',
     ),
     'forbidden',
   );

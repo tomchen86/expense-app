@@ -4,13 +4,13 @@ import fs from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
 
-import { canonicalJson } from '../src/canonical-json.ts';
+import { canonicalJson } from '../src/foundation/canonical-json/canonical-json.ts';
 import type { ExecutionArtifact } from '../src/contracts.ts';
 import { createInvestigationCheckpointEnvelope } from '../src/investigation-session.ts';
 import {
   PLAN_REVIEW_COVERAGE,
   readPlanReviewNode,
-} from '../src/plan-review.ts';
+} from '../src/modules/assurance/plan-review.ts';
 import {
   createPlanningContributionEnvelope,
   createPlanReviewDispositionsEnvelope,
@@ -18,8 +18,8 @@ import {
   getProposeStatus,
   resumePropose,
   startPropose,
-} from '../src/propose-orchestrator.ts';
-import type { ProviderInvocationRequest } from '../src/provider-contracts.ts';
+} from '../src/application/propose/propose-orchestrator.ts';
+import type { ProviderInvocationRequest } from '../src/modules/provider-orchestration/provider-contracts.ts';
 import {
   claimProviderInvocation,
   completeProviderInvocation,

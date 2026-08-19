@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import type { GrantCoordinator } from '../src/grant-coordinator.ts';
+import type { GrantCoordinator } from '../src/modules/authority/grant-coordinator.ts';
 import { dispatchHumanGrantCli } from '../src/human-grant-cli.ts';
 import {
   executeHumanResolutionGrant,

@@ -6,28 +6,28 @@ import {
   evaluateProviderProcess,
   type ProviderInvocationRequest,
   type ProviderProcessOutcome,
-} from '../src/provider-contracts.ts';
+} from '../src/modules/provider-orchestration/provider-contracts.ts';
 import {
   providerInvocationManifestDigest,
   type TaskDiffReviewManifest,
 } from '../src/provider-invocation-store.ts';
-import { requireProviderCapability } from '../src/provider-registry.ts';
+import { requireProviderCapability } from '../src/modules/provider-orchestration/provider-registry.ts';
 import {
   admitRoleResult,
   scheduleOrdinaryRole,
   type RoleAssignment,
   type RoleParticipant,
-} from '../src/role-scheduler.ts';
+} from '../src/modules/provider-orchestration/role-scheduler.ts';
 import {
   TASK_DIFF_REVIEW_OUTPUT_SCHEMA,
   TASK_DIFF_REVIEW_OUTPUT_VALIDATOR,
   type TaskDiffReviewSubmission,
-} from '../src/task-diff-review-artifact.ts';
+} from '../src/modules/assurance/task-diff-review-artifact.ts';
 import {
   createTaskDiffReviewSubject,
   deriveTaskDiffReviewCandidatePlan,
   TASK_DIFF_REVIEW_COVERAGE,
-} from '../src/task-diff-review.ts';
+} from '../src/modules/assurance/task-diff-review.ts';
 
 const TARGET = '3'.repeat(64);
 

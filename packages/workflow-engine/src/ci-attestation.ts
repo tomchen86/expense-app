@@ -9,15 +9,19 @@ import {
   validateAuthorityTransitionIdentity,
   type AttestedCommitFacts,
   type AuthorityAttestationEnvelope,
-} from './authority-attestation.ts';
-import { authorityApplicationReceiptTagPrefix } from './authority-application-receipt.ts';
+} from './modules/authority/authority-attestation.ts';
+import { authorityApplicationReceiptTagPrefix } from './modules/authority/authority-application-receipt.ts';
 import { validateCiAuthorityCommit } from './ci-authority.ts';
 import { readFileAtCommit, type RangeCommit } from './ci-git.ts';
 import {
   verifySshDataSignature,
   verifyTrustedCommitSignature,
 } from './ci-signature.ts';
-import { ExitCode, WorkflowError, workflowError } from './errors.ts';
+import {
+  ExitCode,
+  WorkflowError,
+  workflowError,
+} from './foundation/errors/errors.ts';
 import { commitFacts } from './git-transitions.ts';
 import { runGit } from './git.ts';
 import {
@@ -29,25 +33,25 @@ import {
   readHistoricalHumanResolutionAuditTagReadOnly,
   validateGrantPayload,
   type MaintainerGrantEnvelope,
-} from './maintainer-grant.ts';
+} from './modules/authority/maintainer-grant.ts';
 import {
   MAINTAINER_GRANT_V2_SIGNATURE_NAMESPACE,
   canonicalMaintainerGrantV2Payload,
   parseMaintainerGrantV2Envelope,
   type MaintainerGrantV2Envelope,
-} from './maintainer-grant-v2.ts';
+} from './modules/authority/maintainer-grant-v2.ts';
 import {
   parseMaintainerPolicy,
   type MaintainerPolicy,
   type TrustedMaintainerSigner,
-} from './maintainer-policy.ts';
-import { AUTHORITY_ATTESTATION_SIGNATURE_NAMESPACE } from './maintainer-attestation.ts';
+} from './modules/authority/maintainer-policy.ts';
+import { AUTHORITY_ATTESTATION_SIGNATURE_NAMESPACE } from './application/control-plane/maintainer-attestation.ts';
 import {
   ManagedTrailerSyntaxError,
   parseManagedTrailers,
   type AuthorityCandidateManagedTrailers,
   type AuthorityManagedTrailers,
-} from './managed-trailers.ts';
+} from './modules/lifecycle/managed-trailers.ts';
 
 const MAINTAINER_POLICY_PATH = 'workflow/maintainer-policy.json';
 const WORKFLOW_CONFIG_PATH = 'workflow/config.json';

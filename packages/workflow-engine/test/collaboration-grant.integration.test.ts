@@ -6,7 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import { canonicalJson } from '../src/canonical-json.ts';
+import { canonicalJson } from '../src/foundation/canonical-json/canonical-json.ts';
 import { parseCollaborationGrantArguments } from '../src/collaboration-grant-cli.ts';
 import {
   COLLABORATION_GRANT_AUTHORIZED_EFFECT,
@@ -27,7 +27,7 @@ import {
   type CollaborationGrantEnvelope,
   type CollaborationGrantExpectedBinding,
   type CollaborationGrantRequest,
-} from '../src/collaboration-grant.ts';
+} from '../src/modules/authority/collaboration-grant.ts';
 import {
   collaborationGrantStorePaths,
   consumeCollaborationGrant,
@@ -47,10 +47,10 @@ import {
   createInvestigationCheckpointEnvelope,
   resumeInvestigationSession,
 } from '../src/investigation-session.ts';
-import type { MaintainerPolicy } from '../src/maintainer-policy.ts';
+import type { MaintainerPolicy } from '../src/modules/authority/maintainer-policy.ts';
 import type { MaintainerSignerProvider } from '../src/maintainer-signer.ts';
 import { investigationRuntimePaths } from '../src/paths.ts';
-import { PLAN_REVIEW_COVERAGE } from '../src/plan-review.ts';
+import { PLAN_REVIEW_COVERAGE } from '../src/modules/assurance/plan-review.ts';
 import {
   createPlanningContributionEnvelope,
   createPlanReviewProgressEnvelope,
@@ -58,11 +58,11 @@ import {
   getProposeStatus,
   resumePropose,
   startPropose,
-} from '../src/propose-orchestrator.ts';
+} from '../src/application/propose/propose-orchestrator.ts';
 import type {
   ProviderInvocationRequest,
   ProviderProcessOutcome,
-} from '../src/provider-contracts.ts';
+} from '../src/modules/provider-orchestration/provider-contracts.ts';
 import {
   PROVIDER_RUNNER_RESIDUALS,
   type ProviderRunnerReport,
@@ -78,7 +78,7 @@ import {
   authorizeGrantedOrdinaryRole,
   scheduleOrdinaryRole,
   type RoleParticipant,
-} from '../src/role-scheduler.ts';
+} from '../src/modules/provider-orchestration/role-scheduler.ts';
 import { withRepositoryLifecycleOperation } from '../src/session-store.ts';
 import {
   createFixtureRepository,
@@ -110,7 +110,7 @@ const POLICY: MaintainerPolicy = {
     'workflow/maintainer-policy.json',
   ],
   sealedImmutablePaths: [
-    'packages/workflow-engine/src/maintainer-policy.ts',
+    'packages/workflow-engine/src/modules/authority/maintainer-policy.ts',
     'workflow/maintainer-policy.json',
   ],
   requiredChecks: ['fixture'],

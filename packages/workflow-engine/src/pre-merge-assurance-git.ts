@@ -1,6 +1,6 @@
 import crypto from 'node:crypto';
 
-import { canonicalJson } from './canonical-json.ts';
+import { canonicalJson } from './foundation/canonical-json/canonical-json.ts';
 import { verifyPullRequest } from './ci.ts';
 import { listRangeCommits, type RangeCommit } from './ci-git.ts';
 import { loadChangeContract, loadWorkflowConfig } from './contracts.ts';
@@ -8,13 +8,13 @@ import {
   parseDocumentationClosureFromCommitMessage,
   type DocumentationClosureRecord,
 } from './documentation-closure.ts';
-import { ExitCode, workflowError } from './errors.ts';
+import { ExitCode, workflowError } from './foundation/errors/errors.ts';
 import { discoverRepository, runGit } from './git.ts';
 import { commitChangedPaths, commitFacts } from './git-transitions.ts';
 import {
   ManagedTrailerSyntaxError,
   parseManagedTrailers,
-} from './managed-trailers.ts';
+} from './modules/lifecycle/managed-trailers.ts';
 import { normalizePolicyPath } from './paths.ts';
 import {
   completePreMergeAssurance,
@@ -30,9 +30,9 @@ import {
   type PreMergeAssuranceNode,
   type PreMergeCoverageEntry,
   type PreparedPreMergeAssurance,
-} from './pre-merge-assurance.ts';
+} from './modules/assurance/pre-merge-assurance.ts';
 import { committedPlanningGeneration } from './planning-generation-history.ts';
-import { validateInvestigationFirstPlanningReadiness } from './planning-assurance-validator.ts';
+import { validateInvestigationFirstPlanningReadiness } from './modules/assurance/planning-assurance-validator.ts';
 import { investigationRuntimePaths } from './paths.ts';
 import {
   readPreMergeAssurance,

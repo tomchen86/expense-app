@@ -4,10 +4,10 @@ import fs from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
 
-import { withArchiveEligibility } from '../src/archive-eligibility.ts';
+import { withArchiveEligibility } from '../src/application/archive/archive-eligibility.ts';
 import { DOCUMENTATION_CLOSURE_ACTIVATION_MARKER } from '../src/documentation-closure-activation.ts';
 import { INVESTIGATION_PLANNING_ACTIVATION_MARKER } from '../src/openspec-schema-contract.ts';
-import { startSession } from '../src/session.ts';
+import { startSession } from '../src/application/execute-task/session.ts';
 import {
   activateInvestigationPlanning,
   createFixtureRepository,

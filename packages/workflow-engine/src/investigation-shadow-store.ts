@@ -1,11 +1,11 @@
 import path from 'node:path';
 
-import { isRecord } from './contract-values.ts';
-import { ExitCode, workflowError } from './errors.ts';
+import { isRecord } from './foundation/canonical-json/contract-values.ts';
+import { ExitCode, workflowError } from './foundation/errors/errors.ts';
 import {
   parseInvestigationV3Blocker,
   type InvestigationV3Blocker,
-} from './investigation-manifest.ts';
+} from './modules/investigation/manifest/investigation-manifest.ts';
 import type { InvestigationV3ShadowBuildResult } from './investigation-shadow-builder.ts';
 import {
   readPrivateCanonicalJson,

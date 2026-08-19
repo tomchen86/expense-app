@@ -1,10 +1,10 @@
 import crypto from 'node:crypto';
-import { canonicalJson } from './canonical-json.js';
+import { canonicalJson } from './foundation/canonical-json/canonical-json.js';
 import { parseTasks } from './contracts.js';
-import { ExitCode, workflowError } from './errors.js';
+import { ExitCode, workflowError } from './foundation/errors/errors.js';
 import { commitFacts } from './git-transitions.js';
 import { runGit, runGitBuffer } from './git.js';
-import { ManagedTrailerSyntaxError, parseManagedTrailers, } from './managed-trailers.js';
+import { ManagedTrailerSyntaxError, parseManagedTrailers, } from './modules/lifecycle/managed-trailers.js';
 import { normalizeChangedPath } from './paths.js';
 /**
  * The single change whose authored plan predates investigation-first planning.

@@ -9,7 +9,7 @@ import {
   type ChangeContract,
   type ParsedTask,
 } from './contracts.ts';
-import { ExitCode, workflowError } from './errors.ts';
+import { ExitCode, workflowError } from './foundation/errors/errors.ts';
 import { readIssueData } from './issues.ts';
 import { assertChangeId } from './paths.ts';
 

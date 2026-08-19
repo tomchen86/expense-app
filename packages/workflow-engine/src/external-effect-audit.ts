@@ -8,12 +8,12 @@ import {
   type AuthorityAuditRecordedEvent,
   type AuthorityAuditServiceHooks,
 } from './authority-audit-service.ts';
-import { canonicalJson } from './canonical-json.ts';
-import { ExitCode, workflowError } from './errors.ts';
+import { canonicalJson } from './foundation/canonical-json/canonical-json.ts';
+import { ExitCode, workflowError } from './foundation/errors/errors.ts';
 import type {
   ExternalEffectAuditEvent,
   Sha256Digest,
-} from './external-effect-grant.ts';
+} from './modules/authority/external-effect-grant.ts';
 
 export type ExternalEffectAuthorityAuditOptions = {
   serviceHooks?: AuthorityAuditServiceHooks;

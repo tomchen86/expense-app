@@ -5,12 +5,12 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import { canonicalJson } from '../src/canonical-json.ts';
+import { canonicalJson } from '../src/foundation/canonical-json/canonical-json.ts';
 import type { EvidenceNode } from '../src/evidence-node.ts';
 import {
   getProposeStatus,
   type OrdinaryProposeOutput,
-} from '../src/propose-orchestrator.ts';
+} from '../src/application/propose/propose-orchestrator.ts';
 import {
   ledgerIndexPath,
   ledgerObjectPath,
@@ -21,9 +21,9 @@ import {
   assertLedgerEntry,
   createLedgerEntry,
   type LedgerEntryInput,
-} from '../src/semantic-ledger.ts';
+} from '../src/modules/why-knowledge/semantic-ledger.ts';
 import { projectInvestigationWhyToLedger } from '../src/semantic-ledger-projection.ts';
-import { PROPOSE_POLICY_DIGEST } from '../src/provider-contracts.ts';
+import { PROPOSE_POLICY_DIGEST } from '../src/modules/provider-orchestration/provider-contracts.ts';
 import { isWorkflowError } from './fixture.ts';
 import { driveProposeToDispositions } from './propose-drive-fixture.ts';
 

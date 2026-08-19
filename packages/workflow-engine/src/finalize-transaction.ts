@@ -2,8 +2,8 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 
-import { canonicalJson } from './canonical-json.ts';
-import { ExitCode, workflowError } from './errors.ts';
+import { canonicalJson } from './foundation/canonical-json/canonical-json.ts';
+import { ExitCode, workflowError } from './foundation/errors/errors.ts';
 import {
   parseDocumentationReviewCapture,
   type DocumentationReviewCapture,
@@ -14,7 +14,7 @@ import {
 } from './filesystem-safety.ts';
 import { assertSessionId } from './paths.ts';
 import { writeJsonAtomic } from './session-store.ts';
-import type { FinalizeCheckEscalation } from './finalize-check-policy.ts';
+import type { FinalizeCheckEscalation } from './modules/assurance/finalize-check-policy.ts';
 
 const DIGEST = /^[0-9a-f]{64}$/;
 const OBJECT_ID = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;

@@ -28,7 +28,7 @@ import {
   loadWorkflowConfig,
   type ChangeContract,
 } from './contracts.ts';
-import { ExitCode, workflowError } from './errors.ts';
+import { ExitCode, workflowError } from './foundation/errors/errors.ts';
 import { discoverRepository } from './git.ts';
 import { validateWorkflowIntegrationAssets } from './integration-assets.ts';
 import { validateRepositoryState } from './repository-validation.ts';

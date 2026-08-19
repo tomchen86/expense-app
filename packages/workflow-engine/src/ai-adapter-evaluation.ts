@@ -10,7 +10,7 @@ import {
   type CapabilityProfile,
   type CapabilityPurpose,
   type ProviderId,
-} from './provider-registry.ts';
+} from './modules/provider-orchestration/provider-registry.ts';
 import {
   preflightBuiltInProvider,
   PROVIDER_RUNNER_RESIDUALS,

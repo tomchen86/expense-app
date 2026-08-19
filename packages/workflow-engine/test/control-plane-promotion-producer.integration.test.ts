@@ -6,10 +6,10 @@ import { resolveControlPlaneEngineSelection } from '../bootstrap/control-plane-t
 import {
   produceControlPlaneApprovalCandidateV2,
   type ControlPlanePromotionReviewSummaryV2,
-} from '../src/control-plane-promotion-producer.ts';
-import { WorkflowError } from '../src/errors.ts';
+} from '../src/application/control-plane/control-plane-promotion-producer.ts';
+import { WorkflowError } from '../src/foundation/errors/errors.ts';
 import { dispatchProductionControlPlaneUpdaterCommand } from '../src/intervention-control-updater-cli.ts';
-import type { ControlPlaneApprovalSummaryV2 } from '../src/intervention-control-updater.ts';
+import type { ControlPlaneApprovalSummaryV2 } from '../src/application/control-plane/intervention-control-updater.ts';
 import {
   CONTROL_PLANE_FIXTURE_GRANT_SIGNER as GRANT_SIGNER,
   CONTROL_PLANE_FIXTURE_REPOSITORY_ID as REPOSITORY_ID,

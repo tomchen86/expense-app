@@ -1,14 +1,14 @@
 import crypto from 'node:crypto';
 import path from 'node:path';
 
-import { canonicalJson } from './canonical-json.ts';
+import { canonicalJson } from './foundation/canonical-json/canonical-json.ts';
 import {
   createReplacementAttempt,
   projectProviderInvocationExecution,
   providerExecutionEnvironmentDigest,
   providerExecutionPolicySnapshot,
   type RepairContext as ExecutionRepairContext,
-} from './execution-core.ts';
+} from './modules/provider-orchestration/execution-core.ts';
 import {
   assembleCurrentPromptFromStore,
   buildContextManifest,
@@ -31,8 +31,12 @@ import {
   type RepairKind,
   type StructuredValidationError,
   type WorkflowContextState,
-} from './execution-governance.ts';
-import { ExitCode, WorkflowError, workflowError } from './errors.ts';
+} from './modules/authority/execution-governance.ts';
+import {
+  ExitCode,
+  WorkflowError,
+  workflowError,
+} from './foundation/errors/errors.ts';
 import {
   createPrivateCanonicalJson,
   privatePathExists,
@@ -42,7 +46,7 @@ import {
   assertInvestigationId,
   type InvestigationRuntimePaths,
 } from './paths.ts';
-import type { ProviderInvocationRequest } from './provider-contracts.ts';
+import type { ProviderInvocationRequest } from './modules/provider-orchestration/provider-contracts.ts';
 import type {
   ProviderInvocationFailure,
   ProviderInvocationRecord,

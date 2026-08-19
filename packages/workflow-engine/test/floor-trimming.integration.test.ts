@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { INVESTIGATION_LIMITS } from '../src/investigation-terms.ts';
+import { INVESTIGATION_LIMITS } from '../src/modules/investigation/domain/investigation-terms.ts';
 import { driveProposeToDispositions } from './propose-drive-fixture.ts';
 
 test('an ordinary floor is not trimmed and says so', () => {

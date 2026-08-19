@@ -7,11 +7,15 @@ import test from 'node:test';
 
 import { deriveAuthorityAuditRepositoryId } from '../src/authority-audit-ledger.ts';
 import { verifyAuthorityAuditEvents } from '../src/authority-audit-service.ts';
-import { produceControlPlaneApprovalCandidateV2 } from '../src/control-plane-promotion-producer.ts';
-import { ExitCode, WorkflowError, workflowError } from '../src/errors.ts';
+import { produceControlPlaneApprovalCandidateV2 } from '../src/application/control-plane/control-plane-promotion-producer.ts';
+import {
+  ExitCode,
+  WorkflowError,
+  workflowError,
+} from '../src/foundation/errors/errors.ts';
 import { dispatchProductionControlPlaneUpdaterCommand } from '../src/intervention-control-updater-cli.ts';
-import { controlPlaneApprovalCandidatePath } from '../src/intervention-control-updater.ts';
-import type { ControlPlaneTaskMandateValidationPhase } from '../src/intervention-control-updater.ts';
+import { controlPlaneApprovalCandidatePath } from '../src/application/control-plane/intervention-control-updater.ts';
+import type { ControlPlaneTaskMandateValidationPhase } from '../src/application/control-plane/intervention-control-updater.ts';
 import {
   CONTROL_PLANE_FIXTURE_GRANT_SIGNER as GRANT_SIGNER,
   CONTROL_PLANE_FIXTURE_REPOSITORY_ID as REPOSITORY_ID,

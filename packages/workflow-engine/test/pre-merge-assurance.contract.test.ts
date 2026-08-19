@@ -10,7 +10,7 @@ import {
   preparePreMergeAssurance,
   resolvePreMergeAssurance,
   type IntegrationDeltaReviewSubmission,
-} from '../src/pre-merge-assurance.ts';
+} from '../src/modules/assurance/pre-merge-assurance.ts';
 
 const digest = (character: string): string => character.repeat(64);
 const objectId = (character: string): string => character.repeat(40);
@@ -30,7 +30,9 @@ function coverageFixture() {
     category: 'implementation',
     changeId: 'complete-t2-assurance-gaps',
     subjectDigest: digest('3'),
-    paths: ['packages/workflow-engine/src/pre-merge-assurance.ts'],
+    paths: [
+      'packages/workflow-engine/src/modules/assurance/pre-merge-assurance.ts',
+    ],
     contextDigests: [digest('4'), digest('5')],
   });
   const baseContext = createPreMergeCoverageEntry({

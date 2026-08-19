@@ -6,16 +6,16 @@ import {
   evaluateProviderProcess,
   type ProviderInvocationRequest,
   type ProviderProcessOutcome,
-} from '../src/provider-contracts.ts';
+} from '../src/modules/provider-orchestration/provider-contracts.ts';
 import {
   projectProviderInvocationExecution,
   type RetryDecision,
-} from '../src/execution-core.ts';
+} from '../src/modules/provider-orchestration/execution-core.ts';
 import { inspectExecutionJob } from '../src/execution-runtime.ts';
 import { readExecutionJobState } from '../src/execution-store.ts';
 import { discoverRepository } from '../src/git.ts';
 import { investigationRuntimePaths } from '../src/paths.ts';
-import { startPropose } from '../src/propose-orchestrator.ts';
+import { startPropose } from '../src/application/propose/propose-orchestrator.ts';
 import {
   readProviderInvocation,
   readProviderInvocationRequest,
@@ -209,7 +209,9 @@ function intent() {
   return {
     schemaVersion: 1 as const,
     summary: 'Require a real strategy change before provider replacement.',
-    explicitPaths: ['packages/workflow-engine/src/execution-core.ts'],
+    explicitPaths: [
+      'packages/workflow-engine/src/modules/provider-orchestration/execution-core.ts',
+    ],
     explicitSymbols: ['decideRetry'],
     explicitConfigKeys: [],
     renamePairs: [],

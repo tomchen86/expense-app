@@ -6,17 +6,17 @@ import path from 'node:path';
 import test from 'node:test';
 
 import { inspectChangeAssurance } from '../src/assurance-inspection.ts';
-import { planClassSampleAudits } from '../src/class-sample-audit.ts';
-import { canonicalJson } from '../src/canonical-json.ts';
-import { projectReviewShadowMetrics } from '../src/planning-shadow-metrics.ts';
+import { planClassSampleAudits } from '../src/modules/investigation/domain/class-sample-audit.ts';
+import { canonicalJson } from '../src/foundation/canonical-json/canonical-json.ts';
+import { projectReviewShadowMetrics } from '../src/modules/assurance/planning-shadow-metrics.ts';
 import {
   ledgerIndexPath,
   ledgerObjectPath,
   updateLedgerIndex,
   writeLedgerEntry,
 } from '../src/semantic-ledger-store.ts';
-import { createLedgerEntry } from '../src/semantic-ledger.ts';
-import { PROPOSE_POLICY_DIGEST } from '../src/provider-contracts.ts';
+import { createLedgerEntry } from '../src/modules/why-knowledge/semantic-ledger.ts';
+import { PROPOSE_POLICY_DIGEST } from '../src/modules/provider-orchestration/provider-contracts.ts';
 import { driveProposeToDispositions } from './propose-drive-fixture.ts';
 
 const TERM = 'PlanningShadowMetricNeedle';

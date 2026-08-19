@@ -1,6 +1,6 @@
 import crypto from 'node:crypto';
 
-import { canonicalJson } from './canonical-json.ts';
+import { canonicalJson } from './foundation/canonical-json/canonical-json.ts';
 import {
   assertAttemptRecord,
   assertJobRecord,
@@ -16,7 +16,7 @@ import {
   type RetryDecision,
   type RetryPolicy,
   type WorkflowRecord,
-} from './execution-core.ts';
+} from './modules/provider-orchestration/execution-core.ts';
 import {
   decideLegacyExecutionFailure,
   readExecutionJobState,
@@ -25,8 +25,8 @@ import {
 import {
   type ExecutionBudgetConsumeReceipt,
   type GrantRequest,
-} from './execution-governance.ts';
-import { ExitCode, workflowError } from './errors.ts';
+} from './modules/authority/execution-governance.ts';
+import { ExitCode, workflowError } from './foundation/errors/errors.ts';
 import { listProviderInvocationLifecycleProjections } from './investigation-session-store.ts';
 import { loadInvestigationRuntimeContext } from './lifecycle-context.ts';
 import {
@@ -38,7 +38,7 @@ import {
   type ProviderOutputSchemaGeneration,
   type ProviderResidualsGeneration,
 } from './provider-invocation-store.ts';
-import type { ProviderInvocationRequest } from './provider-contracts.ts';
+import type { ProviderInvocationRequest } from './modules/provider-orchestration/provider-contracts.ts';
 
 const JOB_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,191}$/;
 const MAX_PROVIDER_TIMEOUT_MS = 3_600_000;

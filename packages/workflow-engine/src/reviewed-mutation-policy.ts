@@ -1,14 +1,14 @@
 import crypto from 'node:crypto';
 import path from 'node:path';
 
-import { canonicalJson } from './canonical-json.ts';
-import { ExitCode, workflowError } from './errors.ts';
+import { canonicalJson } from './foundation/canonical-json/canonical-json.ts';
+import { ExitCode, workflowError } from './foundation/errors/errors.ts';
 import {
   createMutationClassPolicy,
   type MutationClass,
   type MutationClassPolicy,
   type MutationClassRule,
-} from './mutation-class-policy.ts';
+} from './modules/source/mutation-class-policy.ts';
 import {
   OPENSPEC_ASSET_DEFINITIONS,
   OPENSPEC_ASSET_MANIFEST_PATH,

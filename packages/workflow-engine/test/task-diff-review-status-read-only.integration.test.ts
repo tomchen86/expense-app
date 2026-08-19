@@ -5,22 +5,22 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import { issueCollaborationGrant } from '../src/collaboration-grant.ts';
+import { issueCollaborationGrant } from '../src/modules/authority/collaboration-grant.ts';
 import { collaborationGrantStorePaths } from '../src/collaboration-grant-store.ts';
 import { discoverRepository } from '../src/git.ts';
 import { renderHandoff } from '../src/handoff.ts';
-import { finalizeTask } from '../src/lifecycle.ts';
+import { finalizeTask } from '../src/application/finalize/lifecycle.ts';
 import type { MaintainerSignerProvider } from '../src/maintainer-signer.ts';
-import { commitPlanningTransition } from '../src/planning-transition.ts';
-import { startSession } from '../src/session.ts';
+import { commitPlanningTransition } from '../src/application/propose/planning-transition.ts';
+import { startSession } from '../src/application/execute-task/session.ts';
 import {
   assertCurrentTaskDiffReviewSatisfied,
   beginTaskDiffReview,
   inspectTaskDiffReviewStatus,
   submitExternalTaskDiffReview,
-} from '../src/task-diff-review-lifecycle.ts';
-import type { TaskDiffReviewSubmission } from '../src/task-diff-review-artifact.ts';
-import { TASK_DIFF_REVIEW_COVERAGE } from '../src/task-diff-review.ts';
+} from '../src/application/finalize/task-diff-review-lifecycle.ts';
+import type { TaskDiffReviewSubmission } from '../src/modules/assurance/task-diff-review-artifact.ts';
+import { TASK_DIFF_REVIEW_COVERAGE } from '../src/modules/assurance/task-diff-review.ts';
 import {
   createFixtureRepository,
   git,

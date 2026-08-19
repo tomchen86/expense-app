@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
-import type { ProviderId } from './provider-registry.ts';
+import type { ProviderId } from './modules/provider-orchestration/provider-registry.ts';
 
 /**
  * Build the minimized, provider-specific environment for a bounded read-only

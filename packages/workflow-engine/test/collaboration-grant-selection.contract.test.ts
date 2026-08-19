@@ -4,14 +4,14 @@ import fs from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
 
-import { canonicalJson } from '../src/canonical-json.ts';
+import { canonicalJson } from '../src/foundation/canonical-json/canonical-json.ts';
 import {
   COLLABORATION_GRANT_SIGNATURE_NAMESPACE,
   collaborationGrantEnvelopeDigest,
   collaborationPolicyDigestForPhase,
   issueCollaborationGrant,
   type CollaborationGrantRequest,
-} from '../src/collaboration-grant.ts';
+} from '../src/modules/authority/collaboration-grant.ts';
 import {
   collaborationGrantStorePaths,
   consumeCollaborationGrant,
@@ -21,9 +21,9 @@ import {
   selectAndReserveCollaborationGrantUnderLifecycleLock,
   type CollaborationGrantSelectionCoreBinding,
 } from '../src/collaboration-grant-store.ts';
-import type { MaintainerPolicy } from '../src/maintainer-policy.ts';
+import type { MaintainerPolicy } from '../src/modules/authority/maintainer-policy.ts';
 import type { MaintainerSignerProvider } from '../src/maintainer-signer.ts';
-import { authorizeGrantedOrdinaryRole } from '../src/role-scheduler.ts';
+import { authorizeGrantedOrdinaryRole } from '../src/modules/provider-orchestration/role-scheduler.ts';
 import { withRepositoryLifecycleOperation } from '../src/session-store.ts';
 import { createFixtureRepository, git, isWorkflowError } from './fixture.ts';
 
@@ -50,7 +50,7 @@ const POLICY: MaintainerPolicy = {
     'workflow/maintainer-policy.json',
   ],
   sealedImmutablePaths: [
-    'packages/workflow-engine/src/maintainer-policy.ts',
+    'packages/workflow-engine/src/modules/authority/maintainer-policy.ts',
     'workflow/maintainer-policy.json',
   ],
   requiredChecks: ['fixture'],

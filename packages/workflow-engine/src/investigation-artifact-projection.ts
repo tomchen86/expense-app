@@ -1,12 +1,12 @@
 import crypto from 'node:crypto';
 
-import { canonicalJson } from './canonical-json.ts';
+import { canonicalJson } from './foundation/canonical-json/canonical-json.ts';
 import type { InvestigationArtifact } from './contracts.ts';
 import {
   assertStoredEvidenceNode,
   type EvidenceNode,
 } from './evidence-node.ts';
-import { ExitCode, workflowError } from './errors.ts';
+import { ExitCode, workflowError } from './foundation/errors/errors.ts';
 import { runGit } from './git.ts';
 import {
   createInvestigationCoverageNode,
@@ -17,16 +17,16 @@ import {
   readInvestigationGroupNode,
   replayInvestigationGroupNodes,
   type InvestigationGroupReplayRecord,
-} from './investigation-groups.ts';
+} from './modules/investigation/domain/investigation-groups.ts';
 import {
   assertInvestigationApplicability,
   type SealedInvestigationApplicability,
-} from './investigation-applicability.ts';
+} from './modules/investigation/domain/investigation-applicability.ts';
 import {
   scanInvestigationTree,
   type ScanInvestigationTerm,
-} from './investigation-scanner.ts';
-import { normalizeInvestigationTerm } from './investigation-terms.ts';
+} from './modules/investigation/domain/investigation-scanner.ts';
+import { normalizeInvestigationTerm } from './modules/investigation/domain/investigation-terms.ts';
 
 const DIGEST = /^[0-9a-f]{64}$/;
 const GIT_OID = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;

@@ -2,8 +2,12 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 
-import { canonicalJson } from './canonical-json.ts';
-import { ExitCode, workflowError, type WorkflowError } from './errors.ts';
+import { canonicalJson } from './foundation/canonical-json/canonical-json.ts';
+import {
+  ExitCode,
+  workflowError,
+  type WorkflowError,
+} from './foundation/errors/errors.ts';
 import {
   createPrivateCanonicalJson,
   assertPrivateInvestigationDirectory,
@@ -19,13 +23,13 @@ import {
 import {
   recreateProviderInvocationRequest,
   type ProviderInvocationRequest,
-} from './provider-contracts.ts';
-import type { ProviderId } from './provider-registry.ts';
+} from './modules/provider-orchestration/provider-contracts.ts';
+import type { ProviderId } from './modules/provider-orchestration/provider-registry.ts';
 import type {
   AdmittedRoleResult,
   ProviderRoleAssignment,
   RecordedRoleParticipant,
-} from './role-scheduler.ts';
+} from './modules/provider-orchestration/role-scheduler.ts';
 import {
   assertTaskDiffReviewChallengeResponseCurrent,
   parseTaskDiffFinalAssuranceRecord,
@@ -38,14 +42,14 @@ import {
   type TaskDiffFinalAssuranceRecord,
   type TaskDiffReviewContinuationSubmission,
   type TaskDiffReviewRecord,
-} from './task-diff-review-artifact.ts';
+} from './modules/assurance/task-diff-review-artifact.ts';
 import {
   parseTaskDiffReviewScope,
   parseTaskDiffReviewSubject,
   type TaskDiffReviewScope,
   type TaskDiffReviewSubject,
-} from './task-diff-review.ts';
-import type { TaskMandateBinding } from './task-mandate.ts';
+} from './modules/assurance/task-diff-review.ts';
+import type { TaskMandateBinding } from './modules/authority/task-mandate.ts';
 
 const DIGEST = /^[0-9a-f]{64}$/;
 const IDENTITY = /^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,511}$/;

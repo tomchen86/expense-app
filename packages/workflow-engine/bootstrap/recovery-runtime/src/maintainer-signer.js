@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { createTrustedExecutionEnvironment } from './execution-environment.js';
-import { ExitCode, workflowError } from './errors.js';
+import { ExitCode, workflowError } from './foundation/errors/errors.js';
 import { normalizePostApprovalSubprocessError, postApprovalSubprocessBudget, runGit, } from './git.js';
 export function assertInteractiveSignerContext(context) {
     if (!context.stdinIsTty || !context.stdoutIsTty || !context.stderrIsTty) {

@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import test from 'node:test';
 
 import { resolveControlPlaneEngineSelection } from '../bootstrap/control-plane-trust.ts';
-import { canonicalJson } from '../src/canonical-json.ts';
+import { canonicalJson } from '../src/foundation/canonical-json/canonical-json.ts';
 import {
   canonicalControlPlaneGrantPayloadV3,
   canonicalControlPlaneIndependentReviewAttestationPayloadV3,
@@ -16,11 +16,11 @@ import {
   verifyControlPlaneGrantV3,
   CONTROL_PLANE_REVIEW_SIGNATURE_NAMESPACE_V3,
   CONTROL_PLANE_SIGNATURE_NAMESPACE_V3,
-} from '../src/intervention-control.ts';
+} from '../src/modules/authority/intervention-control.ts';
 import {
   produceControlPlaneApprovalCandidateV2,
   produceControlPlaneApprovalCandidateV3,
-} from '../src/control-plane-promotion-producer.ts';
+} from '../src/application/control-plane/control-plane-promotion-producer.ts';
 import {
   readControlPlaneSupervisorHistory,
   readControlPlaneSupervisorHistoryProgress,
@@ -30,7 +30,7 @@ import {
   preflightControlPlaneApprovalCandidateV3,
   readControlPlaneSupervisorState,
   readPersistedControlPlaneApprovalCandidateV3,
-} from '../src/intervention-control-updater.ts';
+} from '../src/application/control-plane/intervention-control-updater.ts';
 import { readPersistedControlPlaneUpdate } from '../src/intervention-control-persistence.ts';
 import { dispatchProductionControlPlaneUpdaterCommand } from '../src/intervention-control-updater-cli.ts';
 import {

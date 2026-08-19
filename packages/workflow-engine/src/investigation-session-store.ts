@@ -6,12 +6,12 @@ import {
   parseAiAdapterPolicyDocument,
   parseLegacyAiAdapterPolicyDocument,
 } from './ai-adapter-policy.ts';
-import { canonicalJson } from './canonical-json.ts';
+import { canonicalJson } from './foundation/canonical-json/canonical-json.ts';
 import {
   parseClassDisposition,
   type ClassDisposition,
-} from './class-disposition.ts';
-import type { SampleAudit } from './class-sample-audit.ts';
+} from './modules/investigation/domain/class-disposition.ts';
+import type { SampleAudit } from './modules/investigation/domain/class-sample-audit.ts';
 
 const SAMPLE_AUDIT_OUTCOMES = new Set([
   'passed',
@@ -29,8 +29,12 @@ import {
   resolvePlanReviewInvocationOwner,
   type InvestigationEvidenceRefsClosure,
 } from './evidence-object-store.ts';
-import { ExitCode, type WorkflowError, workflowError } from './errors.ts';
-import { assertReadOnlyProbe } from './execution-core.ts';
+import {
+  ExitCode,
+  type WorkflowError,
+  workflowError,
+} from './foundation/errors/errors.ts';
+import { assertReadOnlyProbe } from './modules/provider-orchestration/execution-core.ts';
 import {
   assertHumanRevocationAuthorization,
   authorizeHumanRevocation,
@@ -38,28 +42,28 @@ import {
   digestHumanRevocationSubject,
   type HumanRevocationAuthorization,
   type HumanRevocationOptions,
-} from './human-revocation.ts';
+} from './application/control-plane/human-revocation.ts';
 import {
   publishPreparedExclusiveLock,
   reclaimDeadPreparedLock,
 } from './filesystem-safety.ts';
-import type { InvestigationDispositionInput } from './investigation-groups.ts';
+import type { InvestigationDispositionInput } from './modules/investigation/domain/investigation-groups.ts';
 import type { InvestigationWhyAnswer } from './investigation-why.ts';
 import {
   INVESTIGATION_LIMITS,
   previewInvestigationTermUnion,
   type InvestigationMainTermInput,
   type InvestigationTermKind,
-} from './investigation-terms.ts';
+} from './modules/investigation/domain/investigation-terms.ts';
 import {
   WORKFLOW_SUPERSEDE_REASONS,
   validateWorkflowSupersedeReason,
   type WorkflowSupersedeReason,
-} from './intervention-control.ts';
+} from './modules/authority/intervention-control.ts';
 import {
   recreateProviderInvocationRequest,
   type ProviderInvocationRequest,
-} from './provider-contracts.ts';
+} from './modules/provider-orchestration/provider-contracts.ts';
 import { inspectProviderInvocationSupersessionRelations } from './provider-invocation-supersession-schema.ts';
 import {
   assertDurableProviderExecutionBudgetAuthority,
