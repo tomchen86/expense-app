@@ -2,7 +2,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 
-import { loadAiAdapterPolicy } from '../../ai-adapter-policy.ts';
+import { loadAiAdapterPolicy } from '../../runtime/provider-execution/ai-adapter-policy.ts';
 import { canonicalJson } from '../../foundation/canonical-json/canonical-json.ts';
 import { requireExecutionJobMandateBinding } from '../../modules/provider-orchestration/execution-core.ts';
 import {
@@ -18,19 +18,19 @@ import {
   inspectExecutionJob,
   inspectLegacyExecutionJobSource,
   previewLegacyReplacementGrantDelta,
-} from '../../execution-runtime.ts';
+} from '../../runtime/provider-execution/execution-runtime.ts';
 import { ExitCode, workflowError } from '../../foundation/errors/errors.ts';
-import { runGit } from '../../git.ts';
+import { runGit } from '../../runtime/repository-transaction/git.ts';
 import {
   assertPrivateInvestigationDirectory,
   createPrivateCanonicalJson,
   privatePathExists,
   readPrivateCanonicalJson,
   writePrivateCanonicalJsonAtomic,
-} from '../../investigation-session-store.ts';
+} from '../../runtime/storage-journal/investigation-session-store.ts';
 import { loadInvestigationRuntimeContext } from '../../lifecycle-context.ts';
 import { parseMaintainerPolicy } from '../../modules/authority/maintainer-policy.ts';
-import type { InvestigationRuntimePaths } from '../../paths.ts';
+import type { InvestigationRuntimePaths } from '../../runtime/session-workspace/paths.ts';
 import {
   completeInterruptedPlanReviewReplacement,
   createPlanReviewRetryEnvelope,
@@ -47,8 +47,8 @@ import {
   providerInvocationExists,
   readProviderInvocation,
   readProviderInvocationRequest,
-} from '../../provider-invocation-store.ts';
-import { withRepositoryLifecycleOperation } from '../../session-store.ts';
+} from '../../runtime/storage-journal/provider-invocation-store.ts';
+import { withRepositoryLifecycleOperation } from '../../runtime/session-workspace/session-store.ts';
 import { assertActiveTaskMandateBindingUnderLifecycleLock } from '../../modules/authority/task-mandate.ts';
 
 export type ExecutionRetryRequestResult = Readonly<{

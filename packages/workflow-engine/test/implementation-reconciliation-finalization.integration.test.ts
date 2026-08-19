@@ -22,7 +22,7 @@ import type { ProviderInvocationRequest } from '../src/modules/provider-orchestr
 import {
   PROVIDER_RUNNER_RESIDUALS,
   type ProviderRunnerReport,
-} from '../src/provider-runner.ts';
+} from '../src/runtime/provider-execution/provider-runner.ts';
 import { runProviderWorker } from '../src/provider-worker.ts';
 import {
   createPlanningContributionEnvelope,
@@ -34,7 +34,7 @@ import {
   ledgerIndexPath,
   readLedgerEntry,
   readLedgerIndex,
-} from '../src/semantic-ledger-store.ts';
+} from '../src/runtime/storage-journal/semantic-ledger-store.ts';
 import {
   checkSession,
   startSession,

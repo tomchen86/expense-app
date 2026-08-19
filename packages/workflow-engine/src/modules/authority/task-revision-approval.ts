@@ -3,15 +3,18 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 import { canonicalJson } from '../../foundation/canonical-json/canonical-json.ts';
-import { loadWorkflowConfig } from '../../contracts.ts';
+import { loadWorkflowConfig } from '../../adapters/consumer/expense-app/work-registry/contracts.ts';
 import { ExitCode, workflowError } from '../../foundation/errors/errors.ts';
-import { ensurePlainDirectory } from '../../filesystem-safety.ts';
-import { discoverRepository, runGit } from '../../git.ts';
+import { ensurePlainDirectory } from '../../runtime/repository-transaction/filesystem-safety.ts';
+import {
+  discoverRepository,
+  runGit,
+} from '../../runtime/repository-transaction/git.ts';
 import {
   createInteractiveSshSigner,
   verifySshSignatureWithPublicKey,
   type MaintainerSignerProvider,
-} from '../../maintainer-signer.ts';
+} from '../../adapters/signing/ssh/maintainer-signer.ts';
 import {
   parseMaintainerPolicy,
   type MaintainerPolicy,
@@ -21,12 +24,12 @@ import {
   assertSessionId,
   assertTaskId,
   normalizePolicyPath,
-} from '../../paths.ts';
+} from '../../runtime/session-workspace/paths.ts';
 import {
   readContentRecord,
   writeContentRecord,
-} from '../../content-record-store.ts';
-import { runtimePaths } from '../../session-store.ts';
+} from '../../runtime/storage-journal/content-record-store.ts';
+import { runtimePaths } from '../../runtime/session-workspace/session-store.ts';
 
 export const TASK_REVISION_APPROVAL_SIGNATURE_NAMESPACE =
   'expense-app.workflow.task-revision-approval.v1' as const;

@@ -9,8 +9,8 @@ import {
   WorkflowError,
   workflowError,
 } from '../../foundation/errors/errors.ts';
-import { ensurePlainDirectory } from '../../filesystem-safety.ts';
-import { readStoredInterventionEngineArtifact } from '../../intervention-engine-artifact-store.ts';
+import { ensurePlainDirectory } from '../../runtime/repository-transaction/filesystem-safety.ts';
+import { readStoredInterventionEngineArtifact } from '../../runtime/storage-journal/intervention-engine-artifact-store.ts';
 import {
   createWipCheckpoint,
   verifyHarnessMaintenanceGrant,
@@ -34,7 +34,7 @@ import {
   withInterventionParentOperation,
   type PersistedEngineAdoptionRecord,
   type PersistedInterventionRecord,
-} from '../../intervention-control-persistence.ts';
+} from '../../runtime/storage-journal/intervention-control-persistence.ts';
 
 const MAX_PATCH_BYTES = 16 * 1024 * 1024;
 const MAX_UNTRACKED_FILE_BYTES = 4 * 1024 * 1024;

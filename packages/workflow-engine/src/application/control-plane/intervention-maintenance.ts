@@ -5,8 +5,11 @@ import path from 'node:path';
 
 import { canonicalJson } from '../../foundation/canonical-json/canonical-json.ts';
 import { ExitCode, workflowError } from '../../foundation/errors/errors.ts';
-import { discoverRepository, runGit } from '../../git.ts';
-import { deriveAuthorityAuditRepositoryId } from '../../authority-audit-ledger.ts';
+import {
+  discoverRepository,
+  runGit,
+} from '../../runtime/repository-transaction/git.ts';
+import { deriveAuthorityAuditRepositoryId } from '../../runtime/storage-journal/authority-audit-ledger.ts';
 import {
   assertHumanRevocationAuthorization,
   authorizeHumanRevocation,
@@ -27,7 +30,7 @@ import {
 import {
   interventionEngineArtifactRecordPath as storedArtifactRecordPath,
   readStoredInterventionEngineArtifact,
-} from '../../intervention-engine-artifact-store.ts';
+} from '../../runtime/storage-journal/intervention-engine-artifact-store.ts';
 import { parseMaintainerPolicy } from '../../modules/authority/maintainer-policy.ts';
 import {
   activeBootstrapMaintenanceWorkflowBindingDigest,
@@ -36,7 +39,7 @@ import {
   recordBootstrapSidecarArtifactReady,
   readPersistedBootstrapSidecarWorkflow,
   readPersistedIntervention,
-} from '../../intervention-control-persistence.ts';
+} from '../../runtime/storage-journal/intervention-control-persistence.ts';
 
 const PRIVATE_DIRECTORY_MODE = 0o700;
 const PRIVATE_FILE_MODE = 0o600;

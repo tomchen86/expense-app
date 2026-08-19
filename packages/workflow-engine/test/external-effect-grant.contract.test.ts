@@ -7,11 +7,11 @@ import { canonicalJson } from '../src/foundation/canonical-json/canonical-json.t
 import {
   deriveAuthorityAuditRepositoryId,
   type AuthorityAuditLedgerScope,
-} from '../src/authority-audit-ledger.ts';
+} from '../src/runtime/storage-journal/authority-audit-ledger.ts';
 import {
   showAuthorityAuditTask,
   verifyAuthorityAuditEvents,
-} from '../src/authority-audit-service.ts';
+} from '../src/runtime/storage-journal/authority-audit-service.ts';
 import {
   canonicalExternalEffectGrantEnvelope,
   canonicalExternalEffectGrantPayload,

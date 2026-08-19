@@ -22,8 +22,8 @@ import {
   type AuthorityAuditAppendInput,
   type AuthorityAuditLedgerScope,
   type Sha256Digest,
-} from '../src/authority-audit-ledger.ts';
-import { recordAuthorityAuditEvent } from '../src/authority-audit-service.ts';
+} from '../src/runtime/storage-journal/authority-audit-ledger.ts';
+import { recordAuthorityAuditEvent } from '../src/runtime/storage-journal/authority-audit-service.ts';
 import { canonicalJson } from '../src/foundation/canonical-json/canonical-json.ts';
 import { isWorkflowError } from './fixture.ts';
 

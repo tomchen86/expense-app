@@ -3,8 +3,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
 
-import { createInvestigationCheckpointEnvelope } from '../src/investigation-session.ts';
-import { readPlanningDraftWorkspace } from '../src/planning-workspace.ts';
+import { createInvestigationCheckpointEnvelope } from '../src/adapters/compatibility/investigation-v2/investigation-session.ts';
+import { readPlanningDraftWorkspace } from '../src/runtime/session-workspace/planning-workspace.ts';
 import {
   resumePropose,
   startPropose,
@@ -13,7 +13,7 @@ import type { ProviderInvocationRequest } from '../src/modules/provider-orchestr
 import {
   claimProviderInvocation,
   completeProviderInvocation,
-} from '../src/provider-invocation-store.ts';
+} from '../src/runtime/storage-journal/provider-invocation-store.ts';
 import { createFixtureRepository, git, isWorkflowError } from './fixture.ts';
 
 const CHANGE_ID = 'branch-rename-change';

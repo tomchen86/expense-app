@@ -3,9 +3,9 @@ import fs from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
 
-import { loadAiAdapterPolicy } from '../src/ai-adapter-policy.ts';
+import { loadAiAdapterPolicy } from '../src/runtime/provider-execution/ai-adapter-policy.ts';
 import { canonicalJson } from '../src/foundation/canonical-json/canonical-json.ts';
-import { discoverRepository } from '../src/git.ts';
+import { discoverRepository } from '../src/runtime/repository-transaction/git.ts';
 import type { VerifiedApprovalProof } from '../src/modules/authority/grant-approval.ts';
 import {
   createGrantCoordinatorKernel,
@@ -15,32 +15,35 @@ import {
 import {
   createInvestigationGrantRequest,
   investigationGrantTransitionDefinitions,
-} from '../src/investigation-grant-transitions.ts';
-import { grantStorePaths, readGrantRecord } from '../src/grant-store.ts';
+} from '../src/adapters/compatibility/investigation-v2/investigation-grant-transitions.ts';
+import {
+  grantStorePaths,
+  readGrantRecord,
+} from '../src/runtime/storage-journal/grant-store.ts';
 import {
   codeOwnedApprovalModuleRegistry,
   HUMAN_GATE_MACOS_V1_CONFIGURATION_DIGEST,
   parseGrantPolicyV2,
 } from '../src/modules/authority/grant-policy.ts';
 import { createTransitionRegistry } from '../src/modules/authority/grant-transition-registry.ts';
-import { startInvestigationSession } from '../src/investigation-session.ts';
+import { startInvestigationSession } from '../src/adapters/compatibility/investigation-v2/investigation-session.ts';
 import {
   inspectInvestigationResolutionState,
   readHumanResolutionJournal,
   readTerminalHumanResolutionGrant,
-} from '../src/investigation-session-store.ts';
-import { investigationRuntimePaths } from '../src/paths.ts';
+} from '../src/runtime/storage-journal/investigation-session-store.ts';
+import { investigationRuntimePaths } from '../src/runtime/session-workspace/paths.ts';
 import { createProviderInvocationRequest } from '../src/modules/provider-orchestration/provider-contracts.ts';
 import {
   BLIND_SURVEY_OUTPUT_SCHEMA,
   blindSurveyIntentDigest,
   blindSurveyManifestDigest,
   type BlindSurveyManifest,
-} from '../src/provider-invocation-store.ts';
+} from '../src/runtime/storage-journal/provider-invocation-store.ts';
 import {
   runtimePaths,
   withRepositoryLifecycleOperationAsync,
-} from '../src/session-store.ts';
+} from '../src/runtime/session-workspace/session-store.ts';
 import { createFixtureRepository, git } from './fixture.ts';
 
 const NOW = new Date('2026-08-18T04:00:00.000Z');

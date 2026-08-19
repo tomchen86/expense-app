@@ -6,11 +6,11 @@ import path from 'node:path';
 import test from 'node:test';
 
 import { canonicalJson } from '../src/foundation/canonical-json/canonical-json.ts';
-import { loadAiAdapterPolicy } from '../src/ai-adapter-policy.ts';
+import { loadAiAdapterPolicy } from '../src/runtime/provider-execution/ai-adapter-policy.ts';
 import {
   readEvidenceNode,
   readInvestigationEvidenceRefsClosure,
-} from '../src/evidence-object-store.ts';
+} from '../src/runtime/storage-journal/evidence-object-store.ts';
 import {
   executeGrantedReplacement,
   requestExecutionReplacement,
@@ -24,12 +24,12 @@ import {
   type ExecutionBudgetConsumeReceipt,
 } from '../src/modules/authority/execution-governance.ts';
 import { issueExecutionBudgetGrant } from '../src/execution-grant-cli.ts';
-import { listExecutionJobs } from '../src/execution-runtime.ts';
-import { discoverRepository } from '../src/git.ts';
-import { listProviderInvocationLifecycleProjections } from '../src/investigation-session-store.ts';
-import { createInvestigationCheckpointEnvelope } from '../src/investigation-session.ts';
+import { listExecutionJobs } from '../src/runtime/provider-execution/execution-runtime.ts';
+import { discoverRepository } from '../src/runtime/repository-transaction/git.ts';
+import { listProviderInvocationLifecycleProjections } from '../src/runtime/storage-journal/investigation-session-store.ts';
+import { createInvestigationCheckpointEnvelope } from '../src/adapters/compatibility/investigation-v2/investigation-session.ts';
 import { loadInvestigationRuntimeContext } from '../src/lifecycle-context.ts';
-import { investigationRuntimePaths } from '../src/paths.ts';
+import { investigationRuntimePaths } from '../src/runtime/session-workspace/paths.ts';
 import {
   createPlanningContributionEnvelope,
   createPlanReviewRetryEnvelope,
@@ -50,7 +50,7 @@ import {
   createProviderExecutionPolicySnapshot,
   providerExecutionPolicySnapshotPath,
   validateProviderExecutionPolicySnapshot,
-} from '../src/provider-invocation-store.ts';
+} from '../src/runtime/storage-journal/provider-invocation-store.ts';
 import {
   createFixtureRepository,
   git,

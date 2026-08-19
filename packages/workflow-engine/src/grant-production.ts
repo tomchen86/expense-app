@@ -1,42 +1,45 @@
-import { loadWorkflowConfig } from './contracts.ts';
+import { loadWorkflowConfig } from './adapters/consumer/expense-app/work-registry/contracts.ts';
 import { isRecord } from './foundation/canonical-json/contract-values.ts';
 import {
   ExitCode,
   WorkflowError,
   workflowError,
 } from './foundation/errors/errors.ts';
-import { ensurePlainDirectory } from './filesystem-safety.ts';
-import { discoverRepository } from './git.ts';
+import { ensurePlainDirectory } from './runtime/repository-transaction/filesystem-safety.ts';
+import { discoverRepository } from './runtime/repository-transaction/git.ts';
 import {
   createGrantCoordinatorKernel,
   type GrantApprovalSession,
   type GrantCoordinator,
 } from './modules/authority/grant-coordinator.ts';
-import { collectSshApprovalProof } from './grant-proof-ssh.ts';
-import { createInvestigationGrantRequest } from './investigation-grant-transitions.ts';
-import { investigationGrantTransitionDefinitions } from './investigation-grant-transitions.ts';
+import { collectSshApprovalProof } from './adapters/signing/ssh/grant-proof-ssh.ts';
+import { createInvestigationGrantRequest } from './adapters/compatibility/investigation-v2/investigation-grant-transitions.ts';
+import { investigationGrantTransitionDefinitions } from './adapters/compatibility/investigation-v2/investigation-grant-transitions.ts';
 import {
   createInvestigationV3PublicationGrantRequest,
   createInvestigationV3GrantRequest,
   investigationV3GrantTransitionDefinitions,
 } from './modules/investigation/seal/investigation-v3-grant.ts';
-import type { InvestigationManifestPublicationFailure } from './investigation-publication.ts';
-import { readInvestigationV3ShadowFailureObservation } from './investigation-shadow-store.ts';
+import type { InvestigationManifestPublicationFailure } from './runtime/managed-documents/transaction/investigation-publication.ts';
+import { readInvestigationV3ShadowFailureObservation } from './runtime/storage-journal/investigation-shadow-store.ts';
 import { loadGrantPolicyV2 } from './modules/authority/grant-policy.ts';
-import { grantStorePaths, readGrantRecord } from './grant-store.ts';
+import {
+  grantStorePaths,
+  readGrantRecord,
+} from './runtime/storage-journal/grant-store.ts';
 import type { TransitionRegistry } from './modules/authority/grant-transition-registry.ts';
 import { createTransitionRegistry } from './modules/authority/grant-transition-registry.ts';
 import {
   inspectMacOsHumanGateRuntime,
   openMacOsHumanGateApprovalSession,
-} from './human-gate-macos.ts';
+} from './adapters/human/macos/human-gate-macos.ts';
 import { loadInvestigationRuntimeContext } from './lifecycle-context.ts';
-import { assertChangeId } from './paths.ts';
+import { assertChangeId } from './runtime/session-workspace/paths.ts';
 import {
   runtimePaths,
   withRepositoryLifecycleOperationAsync,
   type RepositoryLifecycleOperationOptions,
-} from './session-store.ts';
+} from './runtime/session-workspace/session-store.ts';
 
 /**
  * Production composition root. Unlike the testable kernel, this surface does

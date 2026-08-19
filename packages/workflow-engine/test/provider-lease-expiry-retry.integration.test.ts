@@ -3,24 +3,24 @@ import fs from 'node:fs';
 import test from 'node:test';
 
 import { projectProviderInvocationExecution } from '../src/modules/provider-orchestration/execution-core.ts';
-import { readExecutionJobState } from '../src/execution-store.ts';
-import { discoverRepository } from '../src/git.ts';
+import { readExecutionJobState } from '../src/runtime/storage-journal/execution-store.ts';
+import { discoverRepository } from '../src/runtime/repository-transaction/git.ts';
 import {
   expireInvestigationProviderLease,
   getInvestigationStatus,
-} from '../src/investigation-session.ts';
-import { investigationRuntimePaths } from '../src/paths.ts';
+} from '../src/adapters/compatibility/investigation-v2/investigation-session.ts';
+import { investigationRuntimePaths } from '../src/runtime/session-workspace/paths.ts';
 import { startPropose } from '../src/application/propose/propose-orchestrator.ts';
 import {
   claimProviderInvocation,
   failProviderInvocation,
   readProviderInvocation,
   readProviderInvocationRequest,
-} from '../src/provider-invocation-store.ts';
+} from '../src/runtime/storage-journal/provider-invocation-store.ts';
 import {
   processProviderFailureRetry,
   readProviderAutomaticRetrySchedule,
-} from '../src/provider-retry-scheduler.ts';
+} from '../src/runtime/provider-execution/provider-retry-scheduler.ts';
 import { createFixtureRepository, git, isWorkflowError } from './fixture.ts';
 
 test('an expired provider lease schedules one freshly fenced replacement Attempt', () => {
@@ -164,7 +164,9 @@ function intent() {
   return {
     schemaVersion: 1 as const,
     summary: 'Exercise automatic replacement after a provider lease expires.',
-    explicitPaths: ['packages/workflow-engine/src/provider-retry-scheduler.ts'],
+    explicitPaths: [
+      'packages/workflow-engine/src/runtime/provider-execution/provider-retry-scheduler.ts',
+    ],
     explicitSymbols: ['processProviderFailureRetry'],
     explicitConfigKeys: [],
     renamePairs: [],

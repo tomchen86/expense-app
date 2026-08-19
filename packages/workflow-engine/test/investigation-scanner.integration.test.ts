@@ -8,11 +8,11 @@ import { canonicalJson } from '../src/foundation/canonical-json/canonical-json.t
 import {
   parseInvestigationArtifact,
   type InvestigationArtifact,
-} from '../src/contracts.ts';
+} from '../src/adapters/consumer/expense-app/work-registry/contracts.ts';
 import {
   canonicalEvidenceNodeEnvelope,
   createEvidenceNode,
-} from '../src/evidence-node.ts';
+} from '../src/adapters/compatibility/investigation-v2/evidence-node.ts';
 import {
   createInvestigationCoverageNode,
   createInvestigationDispositionNodes,
@@ -20,7 +20,7 @@ import {
   deriveInvestigationGroups,
   readInvestigationGroupNode,
 } from '../src/modules/investigation/domain/investigation-groups.ts';
-import { projectInvestigationArtifactForTracking } from '../src/investigation-artifact-projection.ts';
+import { projectInvestigationArtifactForTracking } from '../src/adapters/compatibility/investigation-v2/investigation-artifact-projection.ts';
 import {
   deriveEngineFloor,
   derivePinnedDiffPathFacts,
@@ -44,11 +44,11 @@ import {
   previewInvestigationTermUnion,
   type InvestigationTermContribution,
 } from '../src/modules/investigation/domain/investigation-terms.ts';
-import { runGitBuffer } from '../src/git.ts';
+import { runGitBuffer } from '../src/runtime/repository-transaction/git.ts';
 import {
   readPinnedTrackedTree,
   TRACKED_TREE_LIMITS,
-} from '../src/tracked-tree-reader.ts';
+} from '../src/runtime/repository-transaction/tracked-tree-reader.ts';
 import { createMutationClassPolicy } from '../src/modules/source/mutation-class-policy.ts';
 import { git, isWorkflowError } from './fixture.ts';
 

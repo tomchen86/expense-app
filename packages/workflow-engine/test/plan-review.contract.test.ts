@@ -5,7 +5,10 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import { createEvidenceNode, type EvidenceNode } from '../src/evidence-node.ts';
+import {
+  createEvidenceNode,
+  type EvidenceNode,
+} from '../src/adapters/compatibility/investigation-v2/evidence-node.ts';
 import { WorkflowError } from '../src/foundation/errors/errors.ts';
 import {
   projectPlanReviewTerms,

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { findMissingScenarioIdentities } from '../src/archive-delta-verifier.ts';
+import { findMissingScenarioIdentities } from '../src/runtime/repository-transaction/archive-delta-verifier.ts';
 
 const BEFORE = [
   '### Requirement: Serialized Completion Authority',

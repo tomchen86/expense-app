@@ -1,4 +1,7 @@
-import type { ParsedTask, WorkflowConfig } from '../../contracts.ts';
+import type {
+  ParsedTask,
+  WorkflowConfig,
+} from '../../adapters/consumer/expense-app/work-registry/contracts.ts';
 
 export type FinalizeCheckEscalation = 'all-tasks-terminal' | 'explicit' | null;
 

@@ -6,8 +6,8 @@ import path from 'node:path';
 import test from 'node:test';
 
 import { canonicalJson } from '../src/foundation/canonical-json/canonical-json.ts';
-import { parseInvestigationArtifact } from '../src/contracts.ts';
-import { createEvidenceNode } from '../src/evidence-node.ts';
+import { parseInvestigationArtifact } from '../src/adapters/consumer/expense-app/work-registry/contracts.ts';
+import { createEvidenceNode } from '../src/adapters/compatibility/investigation-v2/evidence-node.ts';
 import {
   createInvestigationCoverageNode,
   createInvestigationDispositionNodes,
@@ -24,7 +24,7 @@ import { materializeInvestigationEvidenceView } from '../src/modules/investigati
 import {
   projectInvestigationArtifactForTracking,
   type ProjectedInvestigationArtifact,
-} from '../src/investigation-artifact-projection.ts';
+} from '../src/adapters/compatibility/investigation-v2/investigation-artifact-projection.ts';
 import { createInvestigationApplicability } from '../src/modules/investigation/domain/investigation-applicability.ts';
 import {
   adaptInvestigationScanFactsResult,
@@ -33,7 +33,7 @@ import {
 import {
   compareInvestigationV2V3Shadow,
   type InvestigationV2ShadowOracle,
-} from '../src/investigation-shadow-parity.ts';
+} from '../src/adapters/compatibility/investigation-v2/investigation-shadow-parity.ts';
 import {
   previewInvestigationTermUnion,
   type InvestigationTermContribution,

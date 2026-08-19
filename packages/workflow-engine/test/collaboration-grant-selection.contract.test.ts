@@ -20,11 +20,11 @@ import {
   readCollaborationGrantInspection,
   selectAndReserveCollaborationGrantUnderLifecycleLock,
   type CollaborationGrantSelectionCoreBinding,
-} from '../src/collaboration-grant-store.ts';
+} from '../src/runtime/storage-journal/collaboration-grant-store.ts';
 import type { MaintainerPolicy } from '../src/modules/authority/maintainer-policy.ts';
-import type { MaintainerSignerProvider } from '../src/maintainer-signer.ts';
+import type { MaintainerSignerProvider } from '../src/adapters/signing/ssh/maintainer-signer.ts';
 import { authorizeGrantedOrdinaryRole } from '../src/modules/provider-orchestration/role-scheduler.ts';
-import { withRepositoryLifecycleOperation } from '../src/session-store.ts';
+import { withRepositoryLifecycleOperation } from '../src/runtime/session-workspace/session-store.ts';
 import { createFixtureRepository, git, isWorkflowError } from './fixture.ts';
 
 const NOW = new Date('2026-08-13T00:00:00.000Z');

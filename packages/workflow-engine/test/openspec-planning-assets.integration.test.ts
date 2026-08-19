@@ -10,12 +10,12 @@ import {
   OPENSPEC_ASSET_MANIFEST_PATH,
   applyOpenSpecPlanningAssetOverlay,
   verifyOpenSpecPlanningAssetContent,
-} from '../src/openspec-planning-asset-contract.ts';
+} from '../src/adapters/planning/openspec/documents/openspec-planning-asset-contract.ts';
 import {
   checkOpenSpecPlanningAssets,
   generateOpenSpecPlanningAssets,
   installOpenSpecPlanningPrompts,
-} from '../src/openspec-planning-assets.ts';
+} from '../src/adapters/planning/openspec/documents/openspec-planning-assets.ts';
 import { workflowCommandGuidance } from '../src/modules/guidance/next-steps/workflow-guidance.ts';
 import {
   installFakeOpenSpec,

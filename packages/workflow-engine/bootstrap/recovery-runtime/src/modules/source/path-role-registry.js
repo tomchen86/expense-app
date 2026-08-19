@@ -1,6 +1,6 @@
 import { isRecord, isStringArray, } from '../../foundation/canonical-json/contract-values.js';
 import { ExitCode, workflowError } from '../../foundation/errors/errors.js';
-import { matchesAllowedPath, normalizePolicyPath } from '../../paths.js';
+import { matchesAllowedPath, normalizePolicyPath, } from '../../runtime/session-workspace/paths.js';
 /**
  * What a repository path is, for the purpose of deciding how much planning
  * evidence it owes. Planning compression attributes one hand-written rationale

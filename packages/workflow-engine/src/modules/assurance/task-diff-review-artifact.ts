@@ -2,7 +2,7 @@ import crypto from 'node:crypto';
 
 import { canonicalJson } from '../../foundation/canonical-json/canonical-json.ts';
 import { ExitCode, workflowError } from '../../foundation/errors/errors.ts';
-import { normalizePolicyPath } from '../../paths.ts';
+import { normalizePolicyPath } from '../../runtime/session-workspace/paths.ts';
 import {
   assertAuthorizedReviewChallengeClosure,
   type Challenge,

@@ -2,21 +2,24 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 
-import { assertCommitObject } from '../../commit-object-validation.ts';
+import { assertCommitObject } from '../../runtime/repository-transaction/commit-object-validation.ts';
 import {
   createDocumentationClosureRecord,
   parseDocumentationReviewCapture,
   parseDocumentationClosureFromCommitMessage,
   type DocumentationReviewCapture,
-} from '../../documentation-closure.ts';
-import { documentationClosureActivationAtCommit } from '../../documentation-closure-activation.ts';
+} from '../../runtime/managed-documents/contracts/documentation-closure.ts';
+import { documentationClosureActivationAtCommit } from '../../runtime/managed-documents/ownership/documentation-closure-activation.ts';
 import { readFileAtCommit } from '../../ci-git.ts';
-import { loadWorkflowConfig, parseTasks } from '../../contracts.ts';
+import {
+  loadWorkflowConfig,
+  parseTasks,
+} from '../../adapters/consumer/expense-app/work-registry/contracts.ts';
 import {
   finalizeCommittedSession,
   resumePendingCommit,
   type CommitSessionResult,
-} from '../../commit-recovery.ts';
+} from '../../runtime/repository-transaction/commit-recovery.ts';
 import { digestRequiredCheckDefinitions } from '../../modules/lifecycle/contract-digests.ts';
 import {
   ExitCode,
@@ -44,9 +47,15 @@ import {
   updateManagedRef,
   validateCommitSubject,
   type TaskCommit,
-} from '../../git-transitions.ts';
-import { discoverRepository, listChangedPaths } from '../../git.ts';
-import { assertChangeId, assertTaskId } from '../../paths.ts';
+} from '../../runtime/repository-transaction/git-transitions.ts';
+import {
+  discoverRepository,
+  listChangedPaths,
+} from '../../runtime/repository-transaction/git.ts';
+import {
+  assertChangeId,
+  assertTaskId,
+} from '../../runtime/session-workspace/paths.ts';
 import {
   assertFinishProjection,
   loadActiveSessionContext,
@@ -57,7 +66,7 @@ import {
   removeFinalizeTransaction,
   readFinalizeTransaction,
   type FinalizeTransaction,
-} from '../../finalize-transaction.ts';
+} from '../../runtime/repository-transaction/finalize-transaction.ts';
 import {
   finalizeTaskUnlocked,
   PROJECTED_SINGLE_PASS_ASSURANCE,
@@ -71,7 +80,7 @@ import { assertCurrentImplementationReconciliation } from '../../modules/why-kno
 import {
   readImmutableReport,
   type WorkflowReport,
-} from '../../report-store.ts';
+} from '../../runtime/storage-journal/report-store.ts';
 import {
   assertCompletionTaskIds,
   assertInspectionReport,
@@ -82,14 +91,14 @@ import {
   reportStringArray,
   reportTaskIds,
   staleReport,
-} from '../../report-validation.ts';
+} from '../../runtime/storage-journal/report-validation.ts';
 import {
   assertOwnedLock,
   readSessionFile,
   runtimePaths,
   writeJsonAtomic,
   type WorkflowSession,
-} from '../../session-store.ts';
+} from '../../runtime/session-workspace/session-store.ts';
 import { getSession } from '../execute-task/session.ts';
 import {
   executeChecks,
@@ -104,18 +113,18 @@ import {
   rollbackGeneratedDocuments,
   validateManagedDocuments,
   type GeneratedDocumentMutation,
-} from '../../managed-documents.ts';
+} from '../../runtime/managed-documents/validation/managed-documents.ts';
 import {
   assertExactTaskProjection,
   projectTasksCompleted,
   digestTaskContent,
   restoreTaskProjection,
-} from '../../task-projection.ts';
+} from '../../runtime/managed-documents/transaction/task-projection.ts';
 import {
   assertTaskDiffReviewCompletionGateSatisfied,
   loadTaskDiffDocumentationReviewCapture,
 } from './task-diff-review-lifecycle.ts';
-import { resolveTaskAuthorizationRequirement } from '../../task-authorization-policy.ts';
+import { resolveTaskAuthorizationRequirement } from '../../adapters/consumer/expense-app/work-registry/task-authorization-policy.ts';
 
 export type CompleteTaskResult = {
   session: WorkflowSession;
@@ -139,7 +148,7 @@ export type RollbackCompletionResult = {
   reason: string;
 };
 
-export type { CommitSessionResult } from '../../commit-recovery.ts';
+export type { CommitSessionResult } from '../../runtime/repository-transaction/commit-recovery.ts';
 export type { FinalizeTaskResult } from './projected-finalization.ts';
 
 export type FinalizeSessionResult = Omit<FinalizeTaskResult, 'session'> & {

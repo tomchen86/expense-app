@@ -8,13 +8,13 @@ import test from 'node:test';
 import {
   showAuthorityAuditTask,
   verifyAuthorityAuditEvents,
-} from '../src/authority-audit-service.ts';
-import { deriveAuthorityAuditRepositoryId } from '../src/authority-audit-ledger.ts';
+} from '../src/runtime/storage-journal/authority-audit-service.ts';
+import { deriveAuthorityAuditRepositoryId } from '../src/runtime/storage-journal/authority-audit-ledger.ts';
 import { canonicalJson } from '../src/foundation/canonical-json/canonical-json.ts';
 import { ExitCode, workflowError } from '../src/foundation/errors/errors.ts';
-import { discoverRepository } from '../src/git.ts';
-import { createInvestigationCheckpointEnvelope } from '../src/investigation-session.ts';
-import { investigationRuntimePaths } from '../src/paths.ts';
+import { discoverRepository } from '../src/runtime/repository-transaction/git.ts';
+import { createInvestigationCheckpointEnvelope } from '../src/adapters/compatibility/investigation-v2/investigation-session.ts';
+import { investigationRuntimePaths } from '../src/runtime/session-workspace/paths.ts';
 import {
   createPlanningContributionEnvelope,
   createPlanReviewRetryEnvelope,
@@ -23,14 +23,14 @@ import {
   resumePropose,
   startPropose,
 } from '../src/application/propose/propose-orchestrator.ts';
-import { readProposeExemptionSession } from '../src/propose-exemption-store.ts';
+import { readProposeExemptionSession } from '../src/runtime/storage-journal/propose-exemption-store.ts';
 import {
   claimProviderInvocation,
   failProviderInvocation,
   readProviderInvocation,
   readProviderRetryReservation,
-} from '../src/provider-invocation-store.ts';
-import type { MaintainerSignerProvider } from '../src/maintainer-signer.ts';
+} from '../src/runtime/storage-journal/provider-invocation-store.ts';
+import type { MaintainerSignerProvider } from '../src/adapters/signing/ssh/maintainer-signer.ts';
 import {
   getSession,
   startMandatedSession,
@@ -50,7 +50,7 @@ import {
   type TaskMandateEnvelope,
   type TaskMandateRequest,
 } from '../src/modules/authority/task-mandate.ts';
-import { resolveTaskAuthorizationRequirement } from '../src/task-authorization-policy.ts';
+import { resolveTaskAuthorizationRequirement } from '../src/adapters/consumer/expense-app/work-registry/task-authorization-policy.ts';
 import {
   createFixtureRepository,
   git,

@@ -2,14 +2,17 @@ import {
   pinCheckRunner,
   runCheck,
   type CheckEvidence,
-} from './check-runner.ts';
-import { loadChecksConfig } from './contracts.ts';
+} from './adapters/consumer/expense-app/work-registry/check-runner.ts';
+import { loadChecksConfig } from './adapters/consumer/expense-app/work-registry/contracts.ts';
 import {
   assertDisposableDatabase,
   createCheckEnvironment,
-} from './database-policy.ts';
+} from './adapters/consumer/expense-app/work-registry/database-policy.ts';
 import { ExitCode, workflowError } from './foundation/errors/errors.ts';
-import { discoverRepository, fingerprintWorkingState } from './git.ts';
+import {
+  discoverRepository,
+  fingerprintWorkingState,
+} from './runtime/repository-transaction/git.ts';
 import { validateRepositoryState } from './repository-validation.ts';
 
 export function runCiChecks(

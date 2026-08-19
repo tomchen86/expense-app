@@ -6,7 +6,7 @@ import test from 'node:test';
 import type {
   TransformationRetainedDisposition,
   TransformationTerm,
-} from '../src/contracts.ts';
+} from '../src/adapters/consumer/expense-app/work-registry/contracts.ts';
 import {
   completeTask,
   finalizeTask,

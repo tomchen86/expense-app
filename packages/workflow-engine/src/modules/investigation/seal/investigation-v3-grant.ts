@@ -35,9 +35,12 @@ import {
 import {
   investigationManifestPublicationFailureEmissionDigest,
   type InvestigationManifestPublicationFailure,
-} from '../../../investigation-publication.ts';
-import { readInvestigationV3ShadowFailureObservation } from '../../../investigation-shadow-store.ts';
-import { assertChangeId, assertInvestigationId } from '../../../paths.ts';
+} from '../../../runtime/managed-documents/transaction/investigation-publication.ts';
+import { readInvestigationV3ShadowFailureObservation } from '../../../runtime/storage-journal/investigation-shadow-store.ts';
+import {
+  assertChangeId,
+  assertInvestigationId,
+} from '../../../runtime/session-workspace/paths.ts';
 
 const RAW_DIGEST = /^[0-9a-f]{64}$/;
 const FAILURE_CODE = /^[A-Z][A-Z0-9_]{0,255}$/;

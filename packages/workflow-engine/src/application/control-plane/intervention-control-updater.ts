@@ -31,7 +31,7 @@ import {
   ensurePlainDirectory,
   publishPreparedExclusiveLock,
   reclaimDeadPreparedLock,
-} from '../../filesystem-safety.ts';
+} from '../../runtime/repository-transaction/filesystem-safety.ts';
 import {
   classifyProtectedCandidateImpact,
   classifyProtectedCandidateImpactV2,
@@ -81,7 +81,7 @@ import {
   reserveBootstrapSidecarPromotion,
   type PersistedControlPlaneUpdateRecord,
   type PersistenceHumanSignatureVerifier,
-} from '../../intervention-control-persistence.ts';
+} from '../../runtime/storage-journal/intervention-control-persistence.ts';
 import {
   appendControlPlaneSupervisorHistoryRecord,
   createControlPlaneSupervisorHistoryTerminal,
@@ -89,7 +89,7 @@ import {
   readControlPlaneSupervisorHistory,
   readControlPlaneSupervisorHistoryProgress,
   type ControlPlaneSupervisorHistoryTransition,
-} from '../../control-plane-supervisor-history.ts';
+} from '../../runtime/storage-journal/control-plane-supervisor-history.ts';
 
 const SUPPORTED_UPDATER_VERSION = 1;
 const SUPPORTED_UPDATER_VERSION_V2 = 2;

@@ -6,7 +6,7 @@ import path from 'node:path';
 import test from 'node:test';
 
 import { canonicalJson } from '../src/foundation/canonical-json/canonical-json.ts';
-import type { EvidenceNode } from '../src/evidence-node.ts';
+import type { EvidenceNode } from '../src/adapters/compatibility/investigation-v2/evidence-node.ts';
 import {
   getProposeStatus,
   type OrdinaryProposeOutput,
@@ -16,13 +16,13 @@ import {
   ledgerObjectPath,
   readLedgerEntry,
   readLedgerIndex,
-} from '../src/semantic-ledger-store.ts';
+} from '../src/runtime/storage-journal/semantic-ledger-store.ts';
 import {
   assertLedgerEntry,
   createLedgerEntry,
   type LedgerEntryInput,
 } from '../src/modules/why-knowledge/semantic-ledger.ts';
-import { projectInvestigationWhyToLedger } from '../src/semantic-ledger-projection.ts';
+import { projectInvestigationWhyToLedger } from '../src/runtime/managed-documents/transaction/semantic-ledger-projection.ts';
 import { PROPOSE_POLICY_DIGEST } from '../src/modules/provider-orchestration/provider-contracts.ts';
 import { isWorkflowError } from './fixture.ts';
 import { driveProposeToDispositions } from './propose-drive-fixture.ts';

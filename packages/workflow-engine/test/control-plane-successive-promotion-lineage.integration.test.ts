@@ -9,7 +9,7 @@ import {
   createControlPlaneSupervisorHistoryTransition,
   verifyControlPlaneSupervisorHistory,
   verifyControlPlaneSupervisorHistoryProgress,
-} from '../src/control-plane-supervisor-history.ts';
+} from '../src/runtime/storage-journal/control-plane-supervisor-history.ts';
 import { WorkflowError } from '../src/foundation/errors/errors.ts';
 
 const AT = '2026-08-10T10:00:00.000Z';

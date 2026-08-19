@@ -1,12 +1,12 @@
 import { bootstrapInterventionStateRoot } from '../bootstrap/control-plane-trust.ts';
-import { deriveAuthorityAuditRepositoryId } from './authority-audit-ledger.ts';
+import { deriveAuthorityAuditRepositoryId } from './runtime/storage-journal/authority-audit-ledger.ts';
 import {
   authorityRefusalDigest,
   withAuthorityRefusalAudit,
   type AuthorityRefusalAuditBinding,
 } from './modules/authority/authority-refusal-audit.ts';
 import { ExitCode, workflowError } from './foundation/errors/errors.ts';
-import { discoverRepository } from './git.ts';
+import { discoverRepository } from './runtime/repository-transaction/git.ts';
 import {
   executeControlPlanePromotion,
   assertSameControlPlaneTaskMandateBinding,
@@ -31,7 +31,7 @@ import {
   readPersistedControlPlaneUpdate,
   type PersistedControlPlaneUpdateRecord,
   type PersistedControlPlaneUpdateRecordV1,
-} from './intervention-control-persistence.ts';
+} from './runtime/storage-journal/intervention-control-persistence.ts';
 import type {
   ControlPlaneGrantEnvelopeV2,
   ControlPlaneGrantEnvelopeV3,
@@ -48,7 +48,7 @@ import {
   CONTROL_PLANE_SIGNATURE_NAMESPACE_V3,
   normalizeControlPlaneTaskMandateBinding,
 } from './modules/authority/intervention-control.ts';
-import type { MaintainerSignerProvider } from './maintainer-signer.ts';
+import type { MaintainerSignerProvider } from './adapters/signing/ssh/maintainer-signer.ts';
 import type { TaskMandateBinding } from './modules/authority/task-mandate.ts';
 
 const CONTROL_PLANE_GRANT_TTL_MS = 5 * 60 * 1000;

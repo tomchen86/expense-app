@@ -1,12 +1,15 @@
 import { ExitCode, workflowError } from './foundation/errors/errors.ts';
-import { commitChangedPaths, commitFacts } from './git-transitions.ts';
-import { runGit } from './git.ts';
+import {
+  commitChangedPaths,
+  commitFacts,
+} from './runtime/repository-transaction/git-transitions.ts';
+import { runGit } from './runtime/repository-transaction/git.ts';
 import {
   ManagedTrailerSyntaxError,
   parseManagedTrailers,
   type ManagedTrailers,
 } from './modules/lifecycle/managed-trailers.ts';
-import { normalizeChangedPath } from './paths.ts';
+import { normalizeChangedPath } from './runtime/session-workspace/paths.ts';
 
 export type { ManagedTrailers } from './modules/lifecycle/managed-trailers.ts';
 

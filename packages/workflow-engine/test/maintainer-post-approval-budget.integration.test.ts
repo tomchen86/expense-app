@@ -16,7 +16,7 @@ import {
   createPostApprovalAdmissionDeadline,
   enterPostApprovalCompletionObligation,
   enterPostApprovalTerminalCleanup,
-} from '../src/git.ts';
+} from '../src/runtime/repository-transaction/git.ts';
 import {
   readAuthorityCommitJournal,
   recoverAuthorityCommit as recoverAuthorityCommitProduction,
@@ -26,12 +26,12 @@ import { startAuthoritySession } from '../src/application/control-plane/maintain
 import {
   verifySshSignatureWithPublicKey,
   type MaintainerSignerProvider,
-} from '../src/maintainer-signer.ts';
+} from '../src/adapters/signing/ssh/maintainer-signer.ts';
 import {
   inspectMaintainerGrants,
   maintainerGrantStorePaths,
   terminallyFailMaintainerReservation,
-} from '../src/maintainer-store.ts';
+} from '../src/runtime/storage-journal/maintainer-store.ts';
 import {
   authorizeTaskMandate,
   TASK_MANDATE_SIGNATURE_NAMESPACE_V2,
@@ -39,7 +39,7 @@ import {
 import {
   computeProtectedCapabilityEntryDigests,
   REQUIRED_PROTECTED_CAPABILITIES,
-} from '../src/protected-capabilities.ts';
+} from '../src/adapters/consumer/expense-app/work-registry/protected-capabilities.ts';
 import { createFixtureRepository, git, isWorkflowError } from './fixture.ts';
 
 const PROFILE_ID = 'workflow-engine-bootstrap';
@@ -1801,7 +1801,7 @@ function installV2TrustBase(repository: string): void {
   fs.writeFileSync(
     path.join(
       repository,
-      'packages/workflow-engine/src/protected-capabilities.ts',
+      'packages/workflow-engine/src/adapters/consumer/expense-app/work-registry/protected-capabilities.ts',
     ),
     'export const PROTECTED_CAPABILITY_LOADER = true;\n',
   );
@@ -1887,7 +1887,7 @@ function installV2TrustBase(repository: string): void {
     'packages/workflow-engine/src/modules/authority/execution-governance.ts',
   ];
   const dependencies = [
-    'packages/workflow-engine/src/protected-capabilities.ts',
+    'packages/workflow-engine/src/adapters/consumer/expense-app/work-registry/protected-capabilities.ts',
     'workflow/protected-capabilities.json',
   ];
   const closure = computeProtectedCapabilityEntryDigests(

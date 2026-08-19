@@ -8,7 +8,7 @@ import test from 'node:test';
 import {
   assertSpecDeltaScenarioPreservation,
   verifyArchiveDeltaOutcomes,
-} from '../src/archive-delta-verifier.ts';
+} from '../src/runtime/repository-transaction/archive-delta-verifier.ts';
 import { WorkflowError } from '../src/foundation/errors/errors.ts';
 
 function git(repository: string, args: string[]): string {

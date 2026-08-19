@@ -16,14 +16,14 @@ import { readFileAtCommit, type RangeCommit } from './ci-git.ts';
 import {
   verifySshDataSignature,
   verifyTrustedCommitSignature,
-} from './ci-signature.ts';
+} from './adapters/signing/ssh/ci-signature.ts';
 import {
   ExitCode,
   WorkflowError,
   workflowError,
 } from './foundation/errors/errors.ts';
-import { commitFacts } from './git-transitions.ts';
-import { runGit } from './git.ts';
+import { commitFacts } from './runtime/repository-transaction/git-transitions.ts';
+import { runGit } from './runtime/repository-transaction/git.ts';
 import {
   HUMAN_RESOLUTION_SIGNATURE_NAMESPACE,
   canonicalHumanResolutionGrantPayload,

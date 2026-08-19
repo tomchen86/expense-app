@@ -10,18 +10,18 @@ import {
   assertStoredEvidenceNode,
   createEvidenceNode,
   type EvidenceNode,
-} from '../../evidence-node.ts';
+} from '../../adapters/compatibility/investigation-v2/evidence-node.ts';
 import {
   normalizeInvestigationTerm,
   type InvestigationTermKind,
 } from '../investigation/domain/investigation-terms.ts';
-import type { LegacyPlanMigrationSubject } from '../../legacy-plan-migration.ts';
+import type { LegacyPlanMigrationSubject } from '../../adapters/compatibility/investigation-v2/legacy-plan-migration.ts';
 import type { MaintainerPolicy } from '../authority/maintainer-policy.ts';
 import {
   verifySshSignatureWithPublicKey,
   type MaintainerSignerProvider,
-} from '../../maintainer-signer.ts';
-import { normalizeExactRepositoryPath } from '../../paths.ts';
+} from '../../adapters/signing/ssh/maintainer-signer.ts';
+import { normalizeExactRepositoryPath } from '../../runtime/session-workspace/paths.ts';
 import { isProviderId } from '../provider-orchestration/provider-registry.ts';
 import { isProviderRoleAssignment } from '../provider-orchestration/provider-contracts.ts';
 import type {

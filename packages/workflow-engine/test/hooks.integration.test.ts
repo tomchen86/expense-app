@@ -8,7 +8,7 @@ import {
   commitFacts,
   createPlanningCommitObject,
   planningCommitMessage,
-} from '../src/git-transitions.ts';
+} from '../src/runtime/repository-transaction/git-transitions.ts';
 import { runRepositoryHook } from '../src/hooks.ts';
 import { startSession } from '../src/application/execute-task/session.ts';
 import {

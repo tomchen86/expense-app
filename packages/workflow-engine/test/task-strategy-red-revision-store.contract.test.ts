@@ -6,8 +6,8 @@ import path from 'node:path';
 import test from 'node:test';
 
 import { canonicalJson } from '../src/foundation/canonical-json/canonical-json.ts';
-import { createEvidenceNode } from '../src/evidence-node.ts';
-import { investigationRuntimePaths } from '../src/paths.ts';
+import { createEvidenceNode } from '../src/adapters/compatibility/investigation-v2/evidence-node.ts';
+import { investigationRuntimePaths } from '../src/runtime/session-workspace/paths.ts';
 import {
   compareAndSwapTaskStrategyCurrentRef,
   createTaskStrategyCurrentRef,
@@ -24,7 +24,7 @@ import {
   updateTaskStrategyRedRevisionJournal,
   type TaskStrategyRedRevisionJournal,
   type TaskStrategyRedRevisionPhase,
-} from '../src/task-strategy-red-revision-store.ts';
+} from '../src/runtime/storage-journal/task-strategy-red-revision-store.ts';
 import {
   createContentAddressedTaskStrategyTransaction,
   createTaskStrategyTransaction,
@@ -32,7 +32,7 @@ import {
   readTaskStrategyTransaction,
   readTaskStrategyTransactionByDigest,
   type TaskStrategyTransaction,
-} from '../src/task-strategy-store.ts';
+} from '../src/runtime/storage-journal/task-strategy-store.ts';
 
 test('current ref makes RED authoring effective-null while preserving the predecessor by digest', () => {
   const fixture = createStoreFixture();

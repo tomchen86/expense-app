@@ -14,8 +14,8 @@ import {
 import {
   collectSshApprovalProof,
   type SshApprovalSigner,
-} from '../src/grant-proof-ssh.ts';
-import { createInteractiveSshSigner } from '../src/maintainer-signer.ts';
+} from '../src/adapters/signing/ssh/grant-proof-ssh.ts';
+import { createInteractiveSshSigner } from '../src/adapters/signing/ssh/maintainer-signer.ts';
 import {
   codeOwnedApprovalModuleRegistry,
   GRANT_PROOF_SSH_V1_CONFIGURATION_DIGEST,
@@ -136,7 +136,10 @@ test(
       );
 
       const implementation = fs.readFileSync(
-        path.resolve(import.meta.dirname, '../src/maintainer-signer.ts'),
+        path.resolve(
+          import.meta.dirname,
+          '../src/adapters/signing/ssh/maintainer-signer.ts',
+        ),
         'utf8',
       );
       for (const variable of [

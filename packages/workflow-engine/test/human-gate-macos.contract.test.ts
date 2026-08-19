@@ -10,7 +10,7 @@ import {
   inspectMacOsHumanGateRuntime,
   parseHumanGateDecisionDocument,
   verifyHumanGateProofDocument,
-} from '../src/human-gate-macos.ts';
+} from '../src/adapters/human/macos/human-gate-macos.ts';
 import { isWorkflowError } from './fixture.ts';
 
 const SUBJECT_DIGEST = digest('1');
@@ -32,7 +32,10 @@ const REBUILD_SCRIPT = path.resolve(
 
 test('Lite Human Gate is one local helper without XPC, App signing, or peer identity', () => {
   const implementation = fs.readFileSync(
-    path.resolve(import.meta.dirname, '../src/human-gate-macos.ts'),
+    path.resolve(
+      import.meta.dirname,
+      '../src/adapters/human/macos/human-gate-macos.ts',
+    ),
     'utf8',
   );
   assert.equal(HUMAN_GATE_MACOS_PROTOCOL_VERSION, 1);
@@ -106,7 +109,10 @@ test('Lite Human Gate launches one fixed executable without installation artifac
   assert.deepEqual(inspectMacOsHumanGateRuntime(REPOSITORY_ROOT), prepared);
 
   const implementation = fs.readFileSync(
-    path.resolve(import.meta.dirname, '../src/human-gate-macos.ts'),
+    path.resolve(
+      import.meta.dirname,
+      '../src/adapters/human/macos/human-gate-macos.ts',
+    ),
     'utf8',
   );
   assert.doesNotMatch(

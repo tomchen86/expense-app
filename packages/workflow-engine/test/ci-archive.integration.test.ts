@@ -8,7 +8,7 @@ import { commitArchiveTransition } from '../src/application/archive/archive-tran
 import { canonicalJson } from '../src/foundation/canonical-json/canonical-json.ts';
 import { validateCiArchiveCommit } from '../src/ci-archive.ts';
 import { verifyPullRequest } from '../src/ci.ts';
-import { createEvidenceNode } from '../src/evidence-node.ts';
+import { createEvidenceNode } from '../src/adapters/compatibility/investigation-v2/evidence-node.ts';
 import {
   createFixtureRepository,
   git,

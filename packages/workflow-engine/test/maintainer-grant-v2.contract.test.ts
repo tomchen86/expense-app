@@ -48,11 +48,11 @@ import {
   authorityAuditLedgerPaths,
   deriveAuthorityAuditRepositoryId,
   scanAuthorityAuditLedger,
-} from '../src/authority-audit-ledger.ts';
+} from '../src/runtime/storage-journal/authority-audit-ledger.ts';
 import {
   showAuthorityAuditTask,
   verifyAuthorityAuditEvents,
-} from '../src/authority-audit-service.ts';
+} from '../src/runtime/storage-journal/authority-audit-service.ts';
 import {
   buildImmutableCandidateBundle,
   buildImmutableCandidateBundleV2,
@@ -63,7 +63,7 @@ import {
   type CandidateChecksAttestation,
   type CandidateChecksAttestationV3,
 } from '../src/modules/authority/maintainer-candidate.ts';
-import type { MaintainerSignerProvider } from '../src/maintainer-signer.ts';
+import type { MaintainerSignerProvider } from '../src/adapters/signing/ssh/maintainer-signer.ts';
 import { parseMaintainerPolicy } from '../src/modules/authority/maintainer-policy.ts';
 import {
   abortAuthoritySession,
@@ -71,7 +71,7 @@ import {
   readAuthoritySession,
   startAuthoritySession,
 } from '../src/application/control-plane/maintainer-session.ts';
-import { inspectMaintainerGrants } from '../src/maintainer-store.ts';
+import { inspectMaintainerGrants } from '../src/runtime/storage-journal/maintainer-store.ts';
 import {
   authorizeTaskMandate,
   inspectActiveTaskMandateBinding,
@@ -80,7 +80,7 @@ import {
 import {
   REQUIRED_PROTECTED_CAPABILITIES,
   computeProtectedCapabilityEntryDigests,
-} from '../src/protected-capabilities.ts';
+} from '../src/adapters/consumer/expense-app/work-registry/protected-capabilities.ts';
 import {
   createFixtureRepository,
   git,
@@ -290,7 +290,7 @@ function installV2TrustBase(repository: string): void {
   fs.writeFileSync(
     path.join(
       repository,
-      'packages/workflow-engine/src/protected-capabilities.ts',
+      'packages/workflow-engine/src/adapters/consumer/expense-app/work-registry/protected-capabilities.ts',
     ),
     'export const PROTECTED_CAPABILITY_LOADER = true;\n',
   );
@@ -329,7 +329,7 @@ function installV2TrustBase(repository: string): void {
     'packages/workflow-engine/src/modules/authority/execution-governance.ts',
   ];
   const dependencies = [
-    'packages/workflow-engine/src/protected-capabilities.ts',
+    'packages/workflow-engine/src/adapters/consumer/expense-app/work-registry/protected-capabilities.ts',
     'workflow/protected-capabilities.json',
   ];
   const closure = computeProtectedCapabilityEntryDigests(

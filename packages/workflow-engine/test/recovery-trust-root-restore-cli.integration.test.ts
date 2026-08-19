@@ -11,8 +11,8 @@ import {
   resolveRecoveryOperationalTrustRootFence,
   resolveRecoveryQuarantineMarker,
 } from '../bootstrap/control-plane-trust.ts';
-import { deriveAuthorityAuditRepositoryId } from '../src/authority-audit-ledger.ts';
-import { verifyAuthorityAuditEvents } from '../src/authority-audit-service.ts';
+import { deriveAuthorityAuditRepositoryId } from '../src/runtime/storage-journal/authority-audit-ledger.ts';
+import { verifyAuthorityAuditEvents } from '../src/runtime/storage-journal/authority-audit-service.ts';
 import { canonicalJson } from '../src/foundation/canonical-json/canonical-json.ts';
 import { runHarnessBootstrapCli } from '../src/harness-bootstrap.ts';
 import {
@@ -43,7 +43,7 @@ import {
   type RecoveryOperationalTrustRootRestoreAuditRecord,
   type RecoveryOperationalTrustRootRestoreGrantPayload,
 } from '../src/recovery-trust-root-restore.ts';
-import { verifySshSignatureWithPublicKey } from '../src/maintainer-signer.ts';
+import { verifySshSignatureWithPublicKey } from '../src/adapters/signing/ssh/maintainer-signer.ts';
 import { createFixtureRepository, git } from './fixture.ts';
 
 const REPOSITORY_ID = 'github:R_recovery_trust_root_cli_fixture';

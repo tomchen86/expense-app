@@ -8,35 +8,35 @@ import {
   loadWorkflowConfig,
   parseTasks,
   type ManagedSchemaName,
-} from '../../contracts.ts';
+} from '../../adapters/consumer/expense-app/work-registry/contracts.ts';
 import { readFileAtCommit } from '../../ci-git.ts';
-import { assertDocumentationClosureCommitCurrent } from '../../documentation-closure.ts';
-import { documentationClosureActivationAtCommit } from '../../documentation-closure-activation.ts';
+import { assertDocumentationClosureCommitCurrent } from '../../runtime/managed-documents/contracts/documentation-closure.ts';
+import { documentationClosureActivationAtCommit } from '../../runtime/managed-documents/ownership/documentation-closure-activation.ts';
 import { ExitCode, workflowError } from '../../foundation/errors/errors.ts';
 import {
   assertInvestigationPlanningActivation,
   readActivationMarkerFile,
-} from '../../openspec-schema-contract.ts';
+} from '../../adapters/planning/openspec/documents/openspec-schema-contract.ts';
 import { validateInvestigationFirstPlanningReadiness } from '../../modules/assurance/planning-assurance-validator.ts';
 import {
   discoverRepository,
   fingerprintRepositoryWorktree,
   protectedBranchRef,
   runGit,
-} from '../../git.ts';
-import { preEpochCompletedTaskIds } from '../../bootstrap-task-exemption.ts';
-import type { TaskCommit } from '../../git-transitions.ts';
-import { committedPlanningGeneration } from '../../planning-generation-history.ts';
+} from '../../runtime/repository-transaction/git.ts';
+import { preEpochCompletedTaskIds } from '../../adapters/compatibility/investigation-v2/bootstrap-task-exemption.ts';
+import type { TaskCommit } from '../../runtime/repository-transaction/git-transitions.ts';
+import { committedPlanningGeneration } from '../../runtime/repository-transaction/planning-generation-history.ts';
 import { ensurePlanningExecutionEpochCompleteForArchive } from '../../modules/lifecycle/planning-execution-epoch.ts';
 import { resolveTaskExecutionGenerationEvidence } from '../../modules/assurance/task-execution-evidence.ts';
-import { withChangeTransitionAuthority } from '../../planning-lock.ts';
+import { withChangeTransitionAuthority } from '../../runtime/session-workspace/planning-lock.ts';
 import {
   assertPlanningPaths,
   requiredPlanningArtifactPaths,
 } from '../../modules/source/planning-paths.ts';
-import { runtimePaths } from '../../session-store.ts';
+import { runtimePaths } from '../../runtime/session-workspace/session-store.ts';
 import { loadStableValidatedChangeContract } from '../../validated-contract-context.ts';
-import { completionDocumentPaths } from '../../managed-documents.ts';
+import { completionDocumentPaths } from '../../runtime/managed-documents/validation/managed-documents.ts';
 
 export type ArchiveEligibility = {
   changeId: string;

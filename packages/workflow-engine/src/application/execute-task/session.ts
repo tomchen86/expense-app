@@ -2,18 +2,22 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 
-import { loadWorkflowConfig } from '../../contracts.ts';
+import { loadWorkflowConfig } from '../../adapters/consumer/expense-app/work-registry/contracts.ts';
 import { digestRequiredCheckDefinitions } from '../../modules/lifecycle/contract-digests.ts';
 import { ExitCode, workflowError } from '../../foundation/errors/errors.ts';
 import {
   ensurePlainDirectory,
   publishPreparedExclusiveLock,
-} from '../../filesystem-safety.ts';
-import { discoverRepository } from '../../git.ts';
-import type { ValidatedChangeContract } from '../../managed-change-contract.ts';
-import { assertChangeId, assertSessionId, assertTaskId } from '../../paths.ts';
+} from '../../runtime/repository-transaction/filesystem-safety.ts';
+import { discoverRepository } from '../../runtime/repository-transaction/git.ts';
+import type { ValidatedChangeContract } from '../../adapters/planning/openspec/documents/managed-change-contract.ts';
+import {
+  assertChangeId,
+  assertSessionId,
+  assertTaskId,
+} from '../../runtime/session-workspace/paths.ts';
 import { createTaskPlanningAssuranceBinding } from '../../modules/assurance/planning-assurance-validator.ts';
-import { reclaimDeadChangeTransitionLock } from '../../planning-lock.ts';
+import { reclaimDeadChangeTransitionLock } from '../../runtime/session-workspace/planning-lock.ts';
 import {
   createSessionId,
   readSessionFile,
@@ -23,20 +27,20 @@ import {
   withRepositoryLifecycleOperation,
   withSessionOperation,
   writeJsonAtomic,
-} from '../../session-store.ts';
+} from '../../runtime/session-workspace/session-store.ts';
 import { loadStableValidatedChangeContract } from '../../validated-contract-context.ts';
 import {
   authorizeTaskMandateOperation,
   type TaskMandateBinding,
   type TaskMandateOptions,
 } from '../../modules/authority/task-mandate.ts';
-import { assertTaskMandateOptional } from '../../task-authorization-policy.ts';
+import { assertTaskMandateOptional } from '../../adapters/consumer/expense-app/work-registry/task-authorization-policy.ts';
 import {
   completeTaskRevisionAbort,
   prepareTaskRevisionAbort,
 } from '../revise/task-revision.ts';
 
-export type { WorkflowSession } from '../../session-store.ts';
+export type { WorkflowSession } from '../../runtime/session-workspace/session-store.ts';
 
 export { checkSession } from '../finalize/verification.ts';
 export type {

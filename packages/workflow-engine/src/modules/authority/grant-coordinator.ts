@@ -37,7 +37,7 @@ import {
   type GrantAuditRecord,
   type PreparedGrantRecord,
   type TerminalGrantRecord,
-} from '../../grant-store.ts';
+} from '../../runtime/storage-journal/grant-store.ts';
 import type {
   RegisteredTransitionDefinition,
   TransitionOutcome,

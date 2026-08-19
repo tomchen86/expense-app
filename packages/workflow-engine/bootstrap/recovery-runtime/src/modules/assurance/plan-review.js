@@ -1,10 +1,10 @@
 import crypto from 'node:crypto';
 import { canonicalJson } from '../../foundation/canonical-json/canonical-json.js';
 import { ExitCode, workflowError, } from '../../foundation/errors/errors.js';
-import { assertStoredEvidenceNode, createEvidenceNode, } from '../../evidence-node.js';
+import { assertStoredEvidenceNode, createEvidenceNode, } from '../../adapters/compatibility/investigation-v2/evidence-node.js';
 import { normalizeInvestigationTerm, } from '../investigation/domain/investigation-terms.js';
-import { verifySshSignatureWithPublicKey, } from '../../maintainer-signer.js';
-import { normalizeExactRepositoryPath } from '../../paths.js';
+import { verifySshSignatureWithPublicKey, } from '../../adapters/signing/ssh/maintainer-signer.js';
+import { normalizeExactRepositoryPath } from '../../runtime/session-workspace/paths.js';
 import { isProviderId } from '../provider-orchestration/provider-registry.js';
 import { isProviderRoleAssignment } from '../provider-orchestration/provider-contracts.js';
 import { assertPlanningGeneration, } from '../lifecycle/planning-generation.js';

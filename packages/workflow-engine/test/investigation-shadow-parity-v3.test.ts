@@ -27,8 +27,8 @@ import {
 import {
   compareInvestigationV2V3Shadow,
   type InvestigationV2ShadowOracle,
-} from '../src/investigation-shadow-parity.ts';
-import { buildInvestigationV3Shadow } from '../src/investigation-shadow-builder.ts';
+} from '../src/adapters/compatibility/investigation-v2/investigation-shadow-parity.ts';
+import { buildInvestigationV3Shadow } from '../src/adapters/compatibility/investigation-v2/investigation-shadow-builder.ts';
 import {
   buildInvestigationV3WhyAuthoring,
   deriveInvestigationV3WhyRequirements,
@@ -36,13 +36,13 @@ import {
 import {
   createInvestigationWhyNodes,
   deriveInvestigationFullBlobManifest,
-} from '../src/investigation-why.ts';
+} from '../src/adapters/compatibility/investigation-v2/investigation-why.ts';
 import {
   previewInvestigationTermUnion,
   type InvestigationTermContribution,
 } from '../src/modules/investigation/domain/investigation-terms.ts';
 import { createMutationClassPolicy } from '../src/modules/source/mutation-class-policy.ts';
-import { readPinnedTrackedTree } from '../src/tracked-tree-reader.ts';
+import { readPinnedTrackedTree } from '../src/runtime/repository-transaction/tracked-tree-reader.ts';
 import { git, isWorkflowError } from './fixture.ts';
 
 test('independent v2/v3 shadow views match every governed semantic facet', () => {

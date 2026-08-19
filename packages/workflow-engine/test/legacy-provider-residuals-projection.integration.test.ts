@@ -4,12 +4,12 @@ import fs from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
 
-import { loadAiAdapterPolicy } from '../src/ai-adapter-policy.ts';
+import { loadAiAdapterPolicy } from '../src/runtime/provider-execution/ai-adapter-policy.ts';
 import { canonicalJson } from '../src/foundation/canonical-json/canonical-json.ts';
-import { listExecutionJobs } from '../src/execution-runtime.ts';
-import { discoverRepository } from '../src/git.ts';
+import { listExecutionJobs } from '../src/runtime/provider-execution/execution-runtime.ts';
+import { discoverRepository } from '../src/runtime/repository-transaction/git.ts';
 import { loadInvestigationRuntimeContext } from '../src/lifecycle-context.ts';
-import { investigationRuntimePaths } from '../src/paths.ts';
+import { investigationRuntimePaths } from '../src/runtime/session-workspace/paths.ts';
 import {
   createProviderInvocationRequest,
   type ProviderInvocationRequest,
@@ -31,8 +31,8 @@ import {
   releaseProviderInvocationWorkerFence,
   storeProviderExecutionPolicySnapshot,
   type BlindSurveyManifest,
-} from '../src/provider-invocation-store.ts';
-import { PROVIDER_RUNNER_RESIDUALS } from '../src/provider-runner.ts';
+} from '../src/runtime/storage-journal/provider-invocation-store.ts';
+import { PROVIDER_RUNNER_RESIDUALS } from '../src/runtime/provider-execution/provider-runner.ts';
 import { startPropose } from '../src/application/propose/propose-orchestrator.ts';
 import { createFixtureRepository, git, isWorkflowError } from './fixture.ts';
 

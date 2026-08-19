@@ -23,16 +23,16 @@ import {
 import {
   authorityAttestCommand,
   authorityTagPublishCommand,
-} from '../../authority-relay-command.ts';
-import { loadWorkflowConfig } from '../../contracts.ts';
+} from '../../adapters/remote/github/authority-relay-command.ts';
+import { loadWorkflowConfig } from '../../adapters/consumer/expense-app/work-registry/contracts.ts';
 import { ExitCode, workflowError } from '../../foundation/errors/errors.ts';
-import { commitFacts } from '../../git-transitions.ts';
+import { commitFacts } from '../../runtime/repository-transaction/git-transitions.ts';
 import {
   discoverRepository,
   protectedBranchRef,
   runGit,
   runGitWithEnvironment,
-} from '../../git.ts';
+} from '../../runtime/repository-transaction/git.ts';
 import {
   canonicalGrantPayload,
   parseMaintainerGrantEnvelope,
@@ -55,7 +55,7 @@ import { parseManagedTrailers } from '../../modules/lifecycle/managed-trailers.t
 import {
   createInteractiveSshSigner,
   type MaintainerSignerProvider,
-} from '../../maintainer-signer.ts';
+} from '../../adapters/signing/ssh/maintainer-signer.ts';
 
 export const AUTHORITY_ATTESTATION_SIGNATURE_NAMESPACE =
   'expense-app.workflow.authority-attestation.v1';

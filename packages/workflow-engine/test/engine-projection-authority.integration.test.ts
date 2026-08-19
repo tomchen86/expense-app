@@ -9,8 +9,8 @@ import {
   engineProjectionDefinitions,
   engineProjectionPathsForTransition,
 } from '../src/modules/projection/engine-projection-registry.ts';
-import { loadChangeContract } from '../src/contracts.ts';
-import { renderHandoff } from '../src/handoff.ts';
+import { loadChangeContract } from '../src/adapters/consumer/expense-app/work-registry/contracts.ts';
+import { renderHandoff } from '../src/adapters/consumer/expense-app/handoff/handoff.ts';
 import {
   completeTask,
   finalizeTask,
@@ -19,7 +19,7 @@ import {
 import {
   readImmutableReport,
   type WorkflowReport,
-} from '../src/report-store.ts';
+} from '../src/runtime/storage-journal/report-store.ts';
 import {
   checkSession,
   getSession,

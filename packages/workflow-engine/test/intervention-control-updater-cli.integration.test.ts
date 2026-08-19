@@ -46,7 +46,7 @@ import {
   dispatchControlPlaneUpdaterCommand,
   dispatchProductionControlPlaneUpdaterCommand,
 } from '../src/intervention-control-updater-cli.ts';
-import type { MaintainerSignerProvider } from '../src/maintainer-signer.ts';
+import type { MaintainerSignerProvider } from '../src/adapters/signing/ssh/maintainer-signer.ts';
 import {
   CONTROL_PLANE_FIXTURE_GRANT_SIGNER,
   CONTROL_PLANE_FIXTURE_REVIEWER,

@@ -5,7 +5,7 @@ import {
   authorityAttestationRelayProjectionCommand,
   authorityAttestCommand,
   authorityTagPublishCommand,
-} from '../src/authority-relay-command.ts';
+} from '../src/adapters/remote/github/authority-relay-command.ts';
 import { WorkflowError } from '../src/foundation/errors/errors.ts';
 
 test('authority tag publication uses the human-custody SSH remote', () => {

@@ -1,0 +1,681 @@
+import {
+  readContentRecord,
+  writeContentRecord,
+} from './content-record-store.ts';
+import { ExitCode, workflowError } from '../../foundation/errors/errors.ts';
+import {
+  createPlanningAmendmentDecision,
+  planningAmendmentDecisionDigest,
+} from '../../modules/lifecycle/planning-amendment-decision.ts';
+import { engineProjectionPathsForTransition } from '../../modules/projection/engine-projection-registry.ts';
+import type { InvestigationFirstPlanningAssuranceSummary } from '../../modules/assurance/planning-assurance-validator.ts';
+
+export type PlanningTaskState = {
+  id: string;
+  completed: boolean;
+};
+
+export type PlanningCarryForwardTaskEvidence = Readonly<{
+  taskId: string;
+  source: 'managed-task-commit' | 'pre-epoch-exemption';
+  commitHash: string | null;
+}>;
+
+export type PlanningAmendmentRecord =
+  | null
+  | Readonly<{ status: 'not-recorded' }>
+  | Readonly<{
+      status: 'recorded';
+      reason: string;
+      executionImpact: 'none' | 'required';
+      rationale: string;
+      decisionDigest: string;
+      planningGeneration: string;
+      amendsPlanningGeneration: string;
+      planReview: string;
+      executionDisposition:
+        | Readonly<{
+            kind: 'carried-forward';
+            tasks: readonly PlanningCarryForwardTaskEvidence[];
+          }>
+        | Readonly<{
+            kind: 'reopened';
+            taskIds: readonly string[];
+          }>;
+    }>;
+
+export type PlanningTransitionReport = {
+  schemaVersion: 1;
+  reportVersion: 1 | 2 | 3;
+  kind: 'planning-transition';
+  createdAt: string;
+  changeId: string;
+  // An amendment is a planning transition that also records what it replaces,
+  // so its report is the same record with a wider trailer block.
+  transition: 'plan' | 'amend-plan';
+  transitionKind: 'introduction' | 'revision';
+  subject: string;
+  message: string;
+  trailers: string[];
+  branch: string;
+  headRef: string;
+  parent: { head: string; tree: string };
+  tree: string;
+  commitHash: string;
+  changedPaths: string[];
+  /** Human-authored planning inputs changed by this transition. */
+  planningPaths: string[];
+  /** Fixed-registry engine outputs changed by this transition. */
+  engineProjectionPaths: string[];
+  artifactDigests: Record<string, string>;
+  fingerprint: string;
+  tasks: {
+    before: PlanningTaskState[] | null;
+    after: PlanningTaskState[];
+    /** Completed tasks an amendment sent back to be redone, named. */
+    reopened?: string[];
+  };
+  openspec: {
+    version: '1.6.0';
+    schemaName: string;
+    statusComplete: true;
+    validationValid: true;
+  };
+  planningAssurance: InvestigationFirstPlanningAssuranceSummary | null;
+  /**
+   * Version 2 records the amendment decision and exact execution disposition.
+   * A version 1 amendment is projected as `not-recorded`; that compatibility
+   * marker is never accepted as carry-forward evidence for a new record.
+   */
+  amendment: PlanningAmendmentRecord;
+  archiveApplicability: ArchiveApplicabilityRecord;
+};
+
+/**
+ * What the plan-time archive preflight was checked against.
+ *
+ * Archive re-validates against whatever the base is when it runs; this record
+ * says which base the plan was accepted over, so a later failure can be read
+ * as drift rather than as a plan that was always wrong. A generation written
+ * before the preflight existed reports `not-recorded` rather than a
+ * reassuring `passed` it never earned.
+ */
+export type ArchiveApplicabilityRecord =
+  | Readonly<{ status: 'not-recorded' }>
+  | Readonly<{
+      status: 'passed';
+      validatedAt: string;
+      validatedBaseCommit: string;
+      validatedBaseSpecDigests: Record<string, string>;
+      validatorVersion: string;
+    }>;
+
+export function writePlanningTransitionReport(
+  directory: string,
+  report: PlanningTransitionInput,
+): string {
+  // Normalized on the way in as well as out: a caller that predates a field
+  // should not have to know it exists to write a valid record.
+  const normalized = normalizeLegacyPlanningTransitionReport(report);
+  assertPlanningTransitionReport(normalized);
+  return writeContentRecord(directory, normalized);
+}
+
+/** What a caller must supply; engine-defaulted fields may be omitted. */
+export type PlanningTransitionInput = Omit<
+  PlanningTransitionReport,
+  | 'amendment'
+  | 'archiveApplicability'
+  | 'engineProjectionPaths'
+  | 'planningPaths'
+  | 'reportVersion'
+> &
+  Partial<
+    Pick<
+      PlanningTransitionReport,
+      | 'amendment'
+      | 'archiveApplicability'
+      | 'engineProjectionPaths'
+      | 'planningPaths'
+      | 'reportVersion'
+    >
+  >;
+
+export function readPlanningTransitionReport(
+  directory: string,
+  reportId: string,
+): PlanningTransitionReport {
+  const report = normalizeLegacyPlanningTransitionReport(
+    readContentRecord(directory, reportId),
+  );
+  assertPlanningTransitionReport(report);
+  return report;
+}
+
+/**
+ * The trailer block a record of this transition must carry, exactly.
+ *
+ * Checking the block rather than a prefix of it is what keeps a report from
+ * describing an amendment while carrying a plan's provenance, which would make
+ * the record read as settled work that nobody had actually replaced.
+ */
+function isExactTrailerBlock(
+  value: Record<string, unknown>,
+  trailers: unknown[],
+): boolean {
+  if (!trailers.every((line): line is string => typeof line === 'string')) {
+    return false;
+  }
+  if (value.transition === 'plan') {
+    return (
+      trailers.length === 2 &&
+      trailers[0] === `Change: ${value.changeId}` &&
+      trailers[1] === 'Transition: plan'
+    );
+  }
+  return (
+    trailers.length === 6 &&
+    trailers[0] === `Change: ${value.changeId}` &&
+    trailers[1] === 'Transition: amend-plan' &&
+    /^Planning-Generation: [0-9a-f]{64}$/.test(trailers[2] ?? '') &&
+    /^Amends-Planning-Generation: [0-9a-f]{64}$/.test(trailers[3] ?? '') &&
+    /^Execution-Impact: (?:none|required)$/.test(trailers[4] ?? '') &&
+    /^Plan-Review: [0-9a-f]{64}$/.test(trailers[5] ?? '') &&
+    trailers[2] !==
+      trailers[3].replace('Amends-Planning-Generation', 'Planning-Generation')
+  );
+}
+
+function normalizeLegacyPlanningTransitionReport(value: unknown): unknown {
+  if (
+    !isRecord(value) ||
+    value.schemaVersion !== 1 ||
+    value.kind !== 'planning-transition'
+  ) {
+    return value;
+  }
+  // Each field is defaulted only when it is genuinely absent. Filling a field
+  // that is already present would rewrite a real record with a placeholder,
+  // which is worse than the missing field it was meant to cover.
+  const normalized: Record<string, unknown> = { ...value };
+  if (!Object.hasOwn(value, 'reportVersion')) {
+    normalized.reportVersion = 1;
+  }
+  if (!Object.hasOwn(value, 'planningAssurance')) {
+    normalized.planningAssurance = null;
+  }
+  if (
+    (value.reportVersion === undefined || value.reportVersion === 1) &&
+    !Object.hasOwn(value, 'amendment')
+  ) {
+    normalized.amendment =
+      value.transition === 'amend-plan' ? { status: 'not-recorded' } : null;
+  }
+  if (!Object.hasOwn(value, 'archiveApplicability')) {
+    normalized.archiveApplicability = { status: 'not-recorded' };
+  }
+  if (
+    Number(normalized.reportVersion) < 3 &&
+    !Object.hasOwn(value, 'planningPaths')
+  ) {
+    normalized.planningPaths = Array.isArray(value.changedPaths)
+      ? [...value.changedPaths]
+      : value.changedPaths;
+  }
+  if (
+    Number(normalized.reportVersion) < 3 &&
+    !Object.hasOwn(value, 'engineProjectionPaths')
+  ) {
+    normalized.engineProjectionPaths = [];
+  }
+  return normalized;
+}
+
+function assertPlanningTransitionReport(
+  value: unknown,
+): asserts value is PlanningTransitionReport {
+  if (!isRecord(value)) {
+    throw invalidPlanningReport();
+  }
+  const exactKeys = [
+    'amendment',
+    'archiveApplicability',
+    'artifactDigests',
+    'branch',
+    'changeId',
+    'changedPaths',
+    'commitHash',
+    'createdAt',
+    'engineProjectionPaths',
+    'fingerprint',
+    'headRef',
+    'kind',
+    'message',
+    'openspec',
+    'parent',
+    'planningPaths',
+    'planningAssurance',
+    'reportVersion',
+    'schemaVersion',
+    'subject',
+    'tasks',
+    'trailers',
+    'transition',
+    'transitionKind',
+    'tree',
+  ];
+  if (
+    !hasExactKeys(value, exactKeys) ||
+    value.schemaVersion !== 1 ||
+    ![1, 2, 3].includes(Number(value.reportVersion)) ||
+    value.kind !== 'planning-transition' ||
+    !['plan', 'amend-plan'].includes(String(value.transition)) ||
+    !['introduction', 'revision'].includes(String(value.transitionKind)) ||
+    !isIsoDate(value.createdAt) ||
+    !isChangeId(value.changeId) ||
+    // The subject, message, and trailer block are checked against the exact
+    // transition the record claims, so an amendment cannot be recorded as a
+    // plan or the other way round.
+    value.subject !==
+      `${value.transition === 'plan' ? 'Plan' : 'Amend plan'} ${value.changeId}` ||
+    !Array.isArray(value.trailers) ||
+    !isExactTrailerBlock(value, value.trailers) ||
+    value.message !== `${value.subject}\n\n${value.trailers.join('\n')}` ||
+    typeof value.branch !== 'string' ||
+    value.headRef !== `refs/heads/${value.branch}` ||
+    !isGitObject(value.tree) ||
+    !isGitObject(value.commitHash) ||
+    !isDigest(value.fingerprint) ||
+    !isSortedUniqueStrings(value.changedPaths) ||
+    !isPlanningPathPartition(value) ||
+    !isDigestRecord(value.artifactDigests) ||
+    !isParent(value.parent) ||
+    !isTaskProjection(value.tasks) ||
+    !isOpenSpecEvidence(value.openspec) ||
+    !isPlanningAssurance(value.planningAssurance) ||
+    !isAmendmentRecord(value.amendment, value) ||
+    !isArchiveApplicability(value.archiveApplicability)
+  ) {
+    throw invalidPlanningReport();
+  }
+}
+
+function isAmendmentRecord(
+  value: unknown,
+  report: Record<string, unknown>,
+): value is PlanningAmendmentRecord {
+  if (report.transition === 'plan') return value === null;
+  if (report.transition !== 'amend-plan' || !isRecord(value)) return false;
+  if (value.status === 'not-recorded') {
+    return report.reportVersion === 1 && hasExactKeys(value, ['status']);
+  }
+  if (
+    ![2, 3].includes(Number(report.reportVersion)) ||
+    value.status !== 'recorded' ||
+    !hasExactKeys(value, [
+      'amendsPlanningGeneration',
+      'decisionDigest',
+      'executionDisposition',
+      'executionImpact',
+      'planReview',
+      'planningGeneration',
+      'rationale',
+      'reason',
+      'status',
+    ]) ||
+    !/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(String(value.reason)) ||
+    !['none', 'required'].includes(String(value.executionImpact)) ||
+    !isDigest(value.planningGeneration) ||
+    !isDigest(value.amendsPlanningGeneration) ||
+    value.planningGeneration === value.amendsPlanningGeneration ||
+    !isDigest(value.planReview) ||
+    !isRecordedAmendmentDecisionBinding(value)
+  ) {
+    return false;
+  }
+  const trailers = Array.isArray(report.trailers) ? report.trailers : [];
+  const planningAssurance = report.planningAssurance;
+  if (
+    trailers[2] !== `Planning-Generation: ${value.planningGeneration}` ||
+    trailers[3] !==
+      `Amends-Planning-Generation: ${value.amendsPlanningGeneration}` ||
+    trailers[4] !== `Execution-Impact: ${value.executionImpact}` ||
+    trailers[5] !== `Plan-Review: ${value.planReview}` ||
+    !isRecord(planningAssurance) ||
+    planningAssurance.planningGenerationId !== value.planningGeneration ||
+    planningAssurance.reviewNodeId !== value.planReview ||
+    !isRecord(report.tasks)
+  ) {
+    return false;
+  }
+  const reopened = Array.isArray(report.tasks.reopened)
+    ? report.tasks.reopened
+    : [];
+  const after = Array.isArray(report.tasks.after) ? report.tasks.after : [];
+  const afterTaskIds = after
+    .filter(isRecord)
+    .map((task) => task.id)
+    .filter((id): id is string => typeof id === 'string');
+  if (value.executionImpact === 'required') {
+    return (
+      isRecord(value.executionDisposition) &&
+      hasExactKeys(value.executionDisposition, ['kind', 'taskIds']) &&
+      value.executionDisposition.kind === 'reopened' &&
+      isSortedUniqueTaskIds(value.executionDisposition.taskIds) &&
+      JSON.stringify(value.executionDisposition.taskIds) ===
+        JSON.stringify(reopened) &&
+      reopened.length > 0
+    );
+  }
+  return (
+    reopened.length === 0 &&
+    isRecord(value.executionDisposition) &&
+    hasExactKeys(value.executionDisposition, ['kind', 'tasks']) &&
+    value.executionDisposition.kind === 'carried-forward' &&
+    isCarryForwardTaskEvidence(value.executionDisposition.tasks) &&
+    JSON.stringify(
+      value.executionDisposition.tasks.map(({ taskId }) => taskId),
+    ) === JSON.stringify(afterTaskIds)
+  );
+}
+
+function isRecordedAmendmentDecisionBinding(
+  value: Record<string, unknown>,
+): boolean {
+  if (
+    typeof value.rationale !== 'string' ||
+    typeof value.decisionDigest !== 'string'
+  ) {
+    return false;
+  }
+  try {
+    const decision = createPlanningAmendmentDecision({
+      reason: String(value.reason),
+      executionImpact: value.executionImpact as 'none' | 'required',
+      rationale: value.rationale,
+      amendsPlanningGeneration: String(value.amendsPlanningGeneration),
+    });
+    return planningAmendmentDecisionDigest(decision) === value.decisionDigest;
+  } catch {
+    return false;
+  }
+}
+
+function isCarryForwardTaskEvidence(
+  value: unknown,
+): value is PlanningCarryForwardTaskEvidence[] {
+  if (!Array.isArray(value) || value.length === 0) return false;
+  const taskIds: string[] = [];
+  for (const task of value) {
+    if (
+      !isRecord(task) ||
+      !hasExactKeys(task, ['commitHash', 'source', 'taskId']) ||
+      !/^\d+(?:\.\d+)+$/.test(String(task.taskId)) ||
+      !['managed-task-commit', 'pre-epoch-exemption'].includes(
+        String(task.source),
+      ) ||
+      (task.source === 'managed-task-commit'
+        ? !isGitObject(task.commitHash)
+        : task.commitHash !== null)
+    ) {
+      return false;
+    }
+    taskIds.push(String(task.taskId));
+  }
+  return (
+    JSON.stringify(taskIds) === JSON.stringify([...new Set(taskIds)].sort())
+  );
+}
+
+function isSortedUniqueTaskIds(value: unknown): value is string[] {
+  return (
+    Array.isArray(value) &&
+    value.length > 0 &&
+    value.every((taskId) => /^\d+(?:\.\d+)+$/.test(String(taskId))) &&
+    JSON.stringify(value) === JSON.stringify([...new Set(value)].sort())
+  );
+}
+
+function isArchiveApplicability(
+  value: unknown,
+): value is ArchiveApplicabilityRecord {
+  if (!isRecord(value)) return false;
+  if (value.status === 'not-recorded') {
+    return hasExactKeys(value, ['status']);
+  }
+  return (
+    value.status === 'passed' &&
+    hasExactKeys(value, [
+      'status',
+      'validatedAt',
+      'validatedBaseCommit',
+      'validatedBaseSpecDigests',
+      'validatorVersion',
+    ]) &&
+    isIsoDate(value.validatedAt) &&
+    isGitObject(value.validatedBaseCommit) &&
+    isPossiblyEmptyDigestRecord(value.validatedBaseSpecDigests) &&
+    typeof value.validatorVersion === 'string' &&
+    value.validatorVersion !== ''
+  );
+}
+
+function isPlanningAssurance(
+  value: unknown,
+): value is InvestigationFirstPlanningAssuranceSummary | null {
+  if (value === null) return true;
+  if (
+    !isRecord(value) ||
+    !hasExactKeys(value, [
+      'achievedIndependence',
+      'advisoryVerdict',
+      'applicabilityDigest',
+      'applicabilityKind',
+      'applicabilityNodeId',
+      'degradationAuthorized',
+      'investigationBaseline',
+      'planningGenerationId',
+      'planTargetDigest',
+      'requiredIndependence',
+      'reviewDispositionNodeId',
+      'reviewNodeId',
+      'reviewOrchestration',
+      'reviewResultDigest',
+      'reviewRoleResultDigest',
+      'reviewRoleResultForm',
+    ])
+  ) {
+    return false;
+  }
+  return (
+    ['sealed-investigation', 'investigation-exemption'].includes(
+      String(value.applicabilityKind),
+    ) &&
+    isDigest(value.applicabilityDigest) &&
+    isDigest(value.applicabilityNodeId) &&
+    isParent(value.investigationBaseline) &&
+    isDigest(value.planningGenerationId) &&
+    isDigest(value.planTargetDigest) &&
+    isDigest(value.reviewNodeId) &&
+    isDigest(value.reviewResultDigest) &&
+    (value.reviewDispositionNodeId === null ||
+      isDigest(value.reviewDispositionNodeId)) &&
+    isDigest(value.reviewRoleResultDigest) &&
+    [
+      'ordinary-provider',
+      'granted-same-provider',
+      'granted-caller-supplied',
+      'direct-human-attestation',
+    ].includes(String(value.reviewRoleResultForm)) &&
+    [
+      'engine-spawned-provider',
+      'caller-supplied',
+      'direct-human-review',
+    ].includes(String(value.reviewOrchestration)) &&
+    value.requiredIndependence === 'provider-independent' &&
+    [
+      'provider-independent',
+      'principal-independent',
+      'session-independent',
+      'none',
+    ].includes(String(value.achievedIndependence)) &&
+    typeof value.degradationAuthorized === 'boolean' &&
+    ['advisory-approve', 'advisory-reject'].includes(
+      String(value.advisoryVerdict),
+    )
+  );
+}
+
+function isParent(value: unknown): value is { head: string; tree: string } {
+  return (
+    isRecord(value) &&
+    hasExactKeys(value, ['head', 'tree']) &&
+    isGitObject(value.head) &&
+    isGitObject(value.tree)
+  );
+}
+
+function isTaskProjection(
+  value: unknown,
+): value is PlanningTransitionReport['tasks'] {
+  return (
+    isRecord(value) &&
+    // A record written before amendments existed carries two keys; one that
+    // reopened work carries the named list as well.
+    (hasExactKeys(value, ['after', 'before']) ||
+      hasExactKeys(value, ['after', 'before', 'reopened'])) &&
+    (value.before === null || isTaskStates(value.before)) &&
+    isTaskStates(value.after) &&
+    (value.reopened === undefined ||
+      (Array.isArray(value.reopened) &&
+        value.reopened.every((id) => /^\d+(?:\.\d+)+$/.test(String(id)))))
+  );
+}
+
+function isTaskStates(value: unknown): value is PlanningTaskState[] {
+  return (
+    Array.isArray(value) &&
+    value.every(
+      (task) =>
+        isRecord(task) &&
+        hasExactKeys(task, ['completed', 'id']) &&
+        /^\d+(?:\.\d+)+$/.test(String(task.id)) &&
+        typeof task.completed === 'boolean',
+    ) &&
+    new Set(value.map((task) => task.id)).size === value.length
+  );
+}
+
+function isOpenSpecEvidence(
+  value: unknown,
+): value is PlanningTransitionReport['openspec'] {
+  return (
+    isRecord(value) &&
+    hasExactKeys(value, [
+      'schemaName',
+      'statusComplete',
+      'validationValid',
+      'version',
+    ]) &&
+    value.version === '1.6.0' &&
+    /^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(String(value.schemaName)) &&
+    value.statusComplete === true &&
+    value.validationValid === true
+  );
+}
+
+function isSortedUniqueStrings(value: unknown): value is string[] {
+  return (
+    Array.isArray(value) &&
+    value.every((entry) => typeof entry === 'string') &&
+    value.length > 0 &&
+    JSON.stringify(value) === JSON.stringify([...new Set(value)].sort())
+  );
+}
+
+function isPlanningPathPartition(value: Record<string, unknown>): boolean {
+  if (
+    !isSortedUniqueStrings(value.planningPaths) ||
+    !Array.isArray(value.engineProjectionPaths) ||
+    value.engineProjectionPaths.some((entry) => typeof entry !== 'string') ||
+    JSON.stringify(value.engineProjectionPaths) !==
+      JSON.stringify([...new Set(value.engineProjectionPaths)].sort())
+  ) {
+    return false;
+  }
+  const allowedEnginePaths = new Set(
+    engineProjectionPathsForTransition('plan'),
+  );
+  const planningPaths = value.planningPaths as string[];
+  const engineProjectionPaths = value.engineProjectionPaths as string[];
+  if (
+    planningPaths.some((planningPath) =>
+      allowedEnginePaths.has(planningPath),
+    ) ||
+    engineProjectionPaths.some(
+      (projectionPath) =>
+        !allowedEnginePaths.has(projectionPath) ||
+        planningPaths.includes(projectionPath),
+    )
+  ) {
+    return false;
+  }
+  return (
+    JSON.stringify(value.changedPaths) ===
+    JSON.stringify([...planningPaths, ...engineProjectionPaths].sort())
+  );
+}
+
+/** A genuinely spec-less planning tree has no base-spec digest to record. */
+function isPossiblyEmptyDigestRecord(
+  value: unknown,
+): value is Record<string, string> {
+  return isRecord(value) && Object.values(value).every(isDigest);
+}
+
+function isDigestRecord(value: unknown): value is Record<string, string> {
+  return (
+    isRecord(value) &&
+    Object.keys(value).length > 0 &&
+    Object.values(value).every(isDigest)
+  );
+}
+
+function hasExactKeys(value: Record<string, unknown>, keys: string[]): boolean {
+  const actual = Object.keys(value).sort();
+  return JSON.stringify(actual) === JSON.stringify([...keys].sort());
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function isChangeId(value: unknown): value is string {
+  return typeof value === 'string' && /^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(value);
+}
+
+function isDigest(value: unknown): value is string {
+  return typeof value === 'string' && /^[0-9a-f]{64}$/.test(value);
+}
+
+function isGitObject(value: unknown): value is string {
+  return (
+    typeof value === 'string' && /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(value)
+  );
+}
+
+function isIsoDate(value: unknown): value is string {
+  return (
+    typeof value === 'string' &&
+    !Number.isNaN(Date.parse(value)) &&
+    new Date(Date.parse(value)).toISOString() === value
+  );
+}
+
+function invalidPlanningReport() {
+  return workflowError(
+    'PLANNING_REPORT_INVALID',
+    'Planning transition report does not match its strict contract.',
+    ExitCode.staleState,
+  );
+}

@@ -44,7 +44,7 @@ import {
   persistControlPlaneApprovalCandidate,
   preflightControlPlaneApprovalCandidate,
 } from '../src/application/control-plane/intervention-control-updater.ts';
-import { loadProtectedCapabilitiesFromTrustBase } from '../src/protected-capabilities.ts';
+import { loadProtectedCapabilitiesFromTrustBase } from '../src/adapters/consumer/expense-app/work-registry/protected-capabilities.ts';
 import {
   bootstrapInterventionStateRoot,
   readBuiltInControlPlaneEngineArtifact,
@@ -1477,7 +1477,9 @@ function createFixtureProtectedManifest(
           ? ['workflow/protected-capabilities.json']
           : []),
         ...(capability === 'policy.classify'
-          ? ['packages/workflow-engine/src/protected-capabilities.ts']
+          ? [
+              'packages/workflow-engine/src/adapters/consumer/expense-app/work-registry/protected-capabilities.ts',
+            ]
           : []),
         ...(capability === 'control-plane.update'
           ? BOOTSTRAP_RUNTIME_NAMES.map(

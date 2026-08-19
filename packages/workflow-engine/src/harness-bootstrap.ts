@@ -10,12 +10,12 @@ import {
   deriveAuthorityAuditRepositoryId,
   type AuthorityAuditEventType,
   type AuthorityAuditResult,
-} from './authority-audit-ledger.ts';
+} from './runtime/storage-journal/authority-audit-ledger.ts';
 import {
   authorityRefusalDigest,
   recordAuthorityRefusal,
 } from './modules/authority/authority-refusal-audit.ts';
-import { recordAuthorityAuditEvent } from './authority-audit-service.ts';
+import { recordAuthorityAuditEvent } from './runtime/storage-journal/authority-audit-service.ts';
 import { canonicalJson } from './foundation/canonical-json/canonical-json.ts';
 import {
   HARNESS_RECOVERY_SIGNATURE_NAMESPACE,
@@ -25,13 +25,16 @@ import {
   type ControlPlaneRecoveryAuditRecord,
   type ControlPlaneRecoveryGrantEnvelope,
 } from './modules/authority/control-plane-recovery-grant.ts';
-import { loadWorkflowConfig } from './contracts.ts';
+import { loadWorkflowConfig } from './adapters/consumer/expense-app/work-registry/contracts.ts';
 import {
   ExitCode,
   WorkflowError,
   workflowError,
 } from './foundation/errors/errors.ts';
-import { discoverRepository, runGit } from './git.ts';
+import {
+  discoverRepository,
+  runGit,
+} from './runtime/repository-transaction/git.ts';
 import {
   bootstrapInterventionStateRoot,
   bootstrapInterventionUsage,
@@ -58,7 +61,7 @@ import {
   createInteractiveSshSigner,
   type MaintainerSignerProvider,
   verifySshSignatureWithPublicKey,
-} from './maintainer-signer.ts';
+} from './adapters/signing/ssh/maintainer-signer.ts';
 import {
   importRecoveryAuthorityDescriptor,
   readRecoveryAuthorityDescriptor,
@@ -89,7 +92,7 @@ import {
   listActiveWorkflowSessionIds,
   readSessionFile,
   runtimePaths,
-} from './session-store.ts';
+} from './runtime/session-workspace/session-store.ts';
 
 interface HarnessBootstrapResult {
   kind: 'harness-bootstrap-cli-result.v1';

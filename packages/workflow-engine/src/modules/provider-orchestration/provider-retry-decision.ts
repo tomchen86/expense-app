@@ -3,7 +3,7 @@ import crypto from 'node:crypto';
 import {
   parseAiAdapterPolicyDocument,
   type LoadedAiAdapterPolicy,
-} from '../../ai-adapter-policy.ts';
+} from '../../runtime/provider-execution/ai-adapter-policy.ts';
 import { canonicalJson } from '../../foundation/canonical-json/canonical-json.ts';
 import {
   decideRetry,
@@ -22,17 +22,17 @@ import {
 import {
   providerRetryPolicyFromAccounting,
   readExecutionJobState,
-} from '../../execution-store.ts';
+} from '../../runtime/storage-journal/execution-store.ts';
 import { ExitCode, workflowError } from '../../foundation/errors/errors.ts';
-import type { InvestigationRuntimePaths } from '../../paths.ts';
+import type { InvestigationRuntimePaths } from '../../runtime/session-workspace/paths.ts';
 import type { ProviderInvocationRequest } from './provider-contracts.ts';
 import {
   readProviderExecutionPolicySnapshot,
   readProviderInvocationRequest,
   type ProviderAttemptBudgetReservation,
   type ProviderInvocationRecord,
-} from '../../provider-invocation-store.ts';
-import { createProviderExecutionBudgetAuthority } from '../../provider-execution-policy-authority.ts';
+} from '../../runtime/storage-journal/provider-invocation-store.ts';
+import { createProviderExecutionBudgetAuthority } from '../../runtime/provider-execution/provider-execution-policy-authority.ts';
 
 export type AuthorizedProviderRetry = Readonly<{
   workflow: WorkflowRecord;

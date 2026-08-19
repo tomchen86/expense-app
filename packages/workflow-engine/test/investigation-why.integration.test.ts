@@ -2,7 +2,10 @@ import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import test from 'node:test';
 
-import { createEvidenceNode, type EvidenceNode } from '../src/evidence-node.ts';
+import {
+  createEvidenceNode,
+  type EvidenceNode,
+} from '../src/adapters/compatibility/investigation-v2/evidence-node.ts';
 import {
   createInvestigationDispositionNodes,
   deriveInvestigationGroups,
@@ -21,12 +24,12 @@ import {
   readInvestigationWhyNode,
   validateInvestigationWhyEvidence,
   type InvestigationWhyAnswer,
-} from '../src/investigation-why.ts';
+} from '../src/adapters/compatibility/investigation-v2/investigation-why.ts';
 import { createMutationClassPolicy } from '../src/modules/source/mutation-class-policy.ts';
 import type {
   TrackedTreeEntry,
   TrackedTreeSnapshot,
-} from '../src/tracked-tree-reader.ts';
+} from '../src/runtime/repository-transaction/tracked-tree-reader.ts';
 import { isWorkflowError } from './fixture.ts';
 
 const SCANNER_POLICY_DIGEST = '1'.repeat(64);

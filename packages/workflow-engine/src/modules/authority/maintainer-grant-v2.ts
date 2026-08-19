@@ -3,20 +3,20 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 import { canonicalJson } from '../../foundation/canonical-json/canonical-json.ts';
-import { authorityTagPublishCommand } from '../../authority-relay-command.ts';
-import type { CheckEvidence } from '../../check-runner.ts';
+import { authorityTagPublishCommand } from '../../adapters/remote/github/authority-relay-command.ts';
+import type { CheckEvidence } from '../../adapters/consumer/expense-app/work-registry/check-runner.ts';
 import {
   isRecord,
   isStringArray,
 } from '../../foundation/canonical-json/contract-values.ts';
-import { assertDisposableDatabase } from '../../database-policy.ts';
+import { assertDisposableDatabase } from '../../adapters/consumer/expense-app/work-registry/database-policy.ts';
 import { ExitCode, workflowError } from '../../foundation/errors/errors.ts';
 import {
   discoverRepository,
   enterActivePostApprovalTerminalCleanup,
   isPostApprovalAdmissionFailure,
   runGit,
-} from '../../git.ts';
+} from '../../runtime/repository-transaction/git.ts';
 import {
   assertMaintainerGrantId,
   createMaintainerAuditTag,
@@ -49,15 +49,15 @@ import {
 import {
   createInteractiveSshSigner,
   type MaintainerSignerProvider,
-} from '../../maintainer-signer.ts';
+} from '../../adapters/signing/ssh/maintainer-signer.ts';
 import {
   maintainerGrantStorePaths,
   storeCanonicalAvailableMaintainerGrantUnderLifecycleLock,
   terminallyFailSignedMaintainerGrantV2UnderLifecycleLock,
-} from '../../maintainer-store.ts';
-import { assertChangeId } from '../../paths.ts';
-import { classifyProtectedCapabilityPaths } from '../../protected-capabilities.ts';
-import { withRepositoryLifecycleOperation } from '../../session-store.ts';
+} from '../../runtime/storage-journal/maintainer-store.ts';
+import { assertChangeId } from '../../runtime/session-workspace/paths.ts';
+import { classifyProtectedCapabilityPaths } from '../../adapters/consumer/expense-app/work-registry/protected-capabilities.ts';
+import { withRepositoryLifecycleOperation } from '../../runtime/session-workspace/session-store.ts';
 import {
   assertActiveTaskMandateBindingUnderLifecycleLock,
   inspectActiveTaskMandateBinding,

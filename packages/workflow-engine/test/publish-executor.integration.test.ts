@@ -2,8 +2,8 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import test from 'node:test';
 
-import { deriveAuthorityAuditRepositoryId } from '../src/authority-audit-ledger.ts';
-import { showAuthorityAuditTask } from '../src/authority-audit-service.ts';
+import { deriveAuthorityAuditRepositoryId } from '../src/runtime/storage-journal/authority-audit-ledger.ts';
+import { showAuthorityAuditTask } from '../src/runtime/storage-journal/authority-audit-service.ts';
 import {
   inspectExternalEffectGrant,
   issueExternalEffectGrant,
@@ -15,7 +15,7 @@ import {
   type PublishRunner,
   type PublishRunnerObservation,
   type PublishRunnerRequest,
-} from '../src/publish-executor.ts';
+} from '../src/adapters/remote/github/publish-executor.ts';
 import { git, isWorkflowError } from './fixture.ts';
 import {
   EFFECT_GRANT_ID as GRANT_ID,

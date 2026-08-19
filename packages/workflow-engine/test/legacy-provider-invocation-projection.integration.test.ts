@@ -7,9 +7,9 @@ import { canonicalJson } from '../src/foundation/canonical-json/canonical-json.t
 import {
   listProviderInvocationLifecycleProjections,
   scanProviderInvocationLifecycles,
-} from '../src/investigation-session-store.ts';
+} from '../src/runtime/storage-journal/investigation-session-store.ts';
 import { loadInvestigationRuntimeContext } from '../src/lifecycle-context.ts';
-import { providerExecutionPolicySnapshotPath } from '../src/provider-invocation-store.ts';
+import { providerExecutionPolicySnapshotPath } from '../src/runtime/storage-journal/provider-invocation-store.ts';
 import { startPropose } from '../src/application/propose/propose-orchestrator.ts';
 import { prepareExecutionMandate } from './execution-mandate-fixture.ts';
 import { createFixtureRepository, git } from './fixture.ts';

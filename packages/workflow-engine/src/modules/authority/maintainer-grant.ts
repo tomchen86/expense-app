@@ -8,7 +8,7 @@ import {
   isPostApprovalAdmissionFailure,
   runGit,
   runGitWithEnvironment,
-} from '../../git.ts';
+} from '../../runtime/repository-transaction/git.ts';
 import {
   isAuthorityPathEligible,
   parseMaintainerPolicy,
@@ -17,7 +17,7 @@ import {
 import {
   createInteractiveSshSigner,
   type MaintainerSignerProvider,
-} from '../../maintainer-signer.ts';
+} from '../../adapters/signing/ssh/maintainer-signer.ts';
 import {
   assertHumanResolutionConsequences,
   assertHumanResolutionDecision,
@@ -29,14 +29,14 @@ import {
   type HumanResolutionExpectedState,
   type HumanResolutionTarget,
   type InvestigationResolutionState,
-} from '../../investigation-session-store.ts';
+} from '../../runtime/storage-journal/investigation-session-store.ts';
 import { loadInvestigationRuntimeContext } from '../../lifecycle-context.ts';
 import {
   assertChangeId,
   assertInvestigationId,
   assertPolicyPathInsideRepository,
   normalizeExactRepositoryPath,
-} from '../../paths.ts';
+} from '../../runtime/session-workspace/paths.ts';
 
 const COMMIT_OID = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
 const DIGEST = /^[0-9a-f]{64}$/;

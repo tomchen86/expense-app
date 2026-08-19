@@ -26,15 +26,15 @@ import {
 import { assertCandidateV2ChecksFresh } from '../src/modules/authority/maintainer-candidate.ts';
 import { approveAndApplyMaintainerGrantV2 } from '../src/application/control-plane/maintainer-approve.ts';
 import { parseMaintainerPolicy } from '../src/modules/authority/maintainer-policy.ts';
-import type { MaintainerSignerProvider } from '../src/maintainer-signer.ts';
+import type { MaintainerSignerProvider } from '../src/adapters/signing/ssh/maintainer-signer.ts';
 import {
   maintainerGrantStorePaths,
   readTerminalMaintainerGrant,
-} from '../src/maintainer-store.ts';
+} from '../src/runtime/storage-journal/maintainer-store.ts';
 import {
   computeProtectedCapabilityEntryDigests,
   REQUIRED_PROTECTED_CAPABILITIES,
-} from '../src/protected-capabilities.ts';
+} from '../src/adapters/consumer/expense-app/work-registry/protected-capabilities.ts';
 import { authorizeTaskMandate } from '../src/modules/authority/task-mandate.ts';
 import { createFixtureRepository, git, isWorkflowError } from './fixture.ts';
 
@@ -350,7 +350,7 @@ function installTrustBase(
   fs.writeFileSync(
     path.join(
       repository,
-      'packages/workflow-engine/src/protected-capabilities.ts',
+      'packages/workflow-engine/src/adapters/consumer/expense-app/work-registry/protected-capabilities.ts',
     ),
     'export const PROTECTED_CAPABILITY_LOADER = true;\n',
   );
@@ -384,7 +384,7 @@ function installTrustBase(
     'packages/workflow-engine/src/modules/authority/execution-governance.ts',
   ];
   const closureDependencies = [
-    'packages/workflow-engine/src/protected-capabilities.ts',
+    'packages/workflow-engine/src/adapters/consumer/expense-app/work-registry/protected-capabilities.ts',
     'workflow/protected-capabilities.json',
   ];
   const closure = computeProtectedCapabilityEntryDigests(

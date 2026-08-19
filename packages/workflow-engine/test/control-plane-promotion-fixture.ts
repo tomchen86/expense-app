@@ -16,7 +16,7 @@ import {
   REQUIRED_PROTECTED_CAPABILITIES,
   type ProtectedCapabilityEntry,
 } from '../src/modules/authority/intervention-control.ts';
-import { persistInterventionPlan } from '../src/intervention-control-persistence.ts';
+import { persistInterventionPlan } from '../src/runtime/storage-journal/intervention-control-persistence.ts';
 import { dispatchProductionControlPlaneUpdaterCommand } from '../src/intervention-control-updater-cli.ts';
 import {
   readControlPlaneSupervisorState,
@@ -35,8 +35,8 @@ import {
   type CapabilityProfile,
 } from '../src/modules/authority/maintainer-manifest.ts';
 import type { TrustedMaintainerSigner } from '../src/modules/authority/maintainer-policy.ts';
-import type { MaintainerSignerProvider } from '../src/maintainer-signer.ts';
-import { loadProtectedCapabilitiesFromTrustBase } from '../src/protected-capabilities.ts';
+import type { MaintainerSignerProvider } from '../src/adapters/signing/ssh/maintainer-signer.ts';
+import { loadProtectedCapabilitiesFromTrustBase } from '../src/adapters/consumer/expense-app/work-registry/protected-capabilities.ts';
 import { createFixtureRepository, git } from './fixture.ts';
 
 const SOURCE_ENGINE_ROOT = path.resolve(import.meta.dirname, '..');
@@ -746,7 +746,9 @@ function createFixtureProtectedManifest(repository: string) {
           ? ['workflow/protected-capabilities.json']
           : []),
         ...(capability === 'policy.classify'
-          ? ['packages/workflow-engine/src/protected-capabilities.ts']
+          ? [
+              'packages/workflow-engine/src/adapters/consumer/expense-app/work-registry/protected-capabilities.ts',
+            ]
           : []),
         ...(capability === 'control-plane.update'
           ? BOOTSTRAP_RUNTIME_NAMES.map(

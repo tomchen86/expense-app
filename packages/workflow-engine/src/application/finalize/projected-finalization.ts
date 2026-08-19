@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 import { digestRequiredCheckDefinitions } from '../../modules/lifecycle/contract-digests.ts';
-import { parseTasks } from '../../contracts.ts';
+import { parseTasks } from '../../adapters/consumer/expense-app/work-registry/contracts.ts';
 import { classifyProjectionPaths } from '../../modules/projection/engine-projection-registry.ts';
 import {
   ExitCode,
@@ -17,7 +17,7 @@ import {
   removeFinalizeTransaction,
   type FinalizeTransaction,
   type FinalizeTransactionPhase,
-} from '../../finalize-transaction.ts';
+} from '../../runtime/repository-transaction/finalize-transaction.ts';
 import {
   resolveExplicitFinalizeChecks,
   resolveFinalizeCheckPolicy,
@@ -28,37 +28,37 @@ import {
   previewExactStaging,
   rollbackExactStaging,
   stageExactPaths,
-} from '../../git-transitions.ts';
+} from '../../runtime/repository-transaction/git-transitions.ts';
 import {
   fingerprintRepositoryProjectionExcludingPaths,
   fingerprintUnstagedRepositoryProjection,
   runGit,
-} from '../../git.ts';
+} from '../../runtime/repository-transaction/git.ts';
 import { loadActiveSessionContext } from '../../lifecycle-context.ts';
 import {
   applyGeneratedDocumentMutations,
   planCompletionDocuments,
-} from '../../managed-documents.ts';
+} from '../../runtime/managed-documents/validation/managed-documents.ts';
 import { assertCurrentImplementationReconciliation } from '../../modules/why-knowledge/implementation-reconciliation.ts';
 import { reconcilePredecessor } from './predecessor-reconciliation.ts';
-import type { WorkflowReport } from '../../report-store.ts';
+import type { WorkflowReport } from '../../runtime/storage-journal/report-store.ts';
 import {
   assertInspectionReport,
   assertReportChecks,
   readSessionReport,
-} from '../../report-validation.ts';
-import type { WorkflowSession } from '../../session-store.ts';
+} from '../../runtime/storage-journal/report-validation.ts';
+import type { WorkflowSession } from '../../runtime/session-workspace/session-store.ts';
 import {
   applyTaskProjection,
   digestTaskContent,
   planTasksCompleted,
   restoreTaskProjection,
-} from '../../task-projection.ts';
+} from '../../runtime/managed-documents/transaction/task-projection.ts';
 import {
   assertTaskDiffReviewCompletionGateSatisfied,
   loadTaskDiffDocumentationReviewCapture,
 } from './task-diff-review-lifecycle.ts';
-import type { DocumentationReviewCapture } from '../../documentation-closure.ts';
+import type { DocumentationReviewCapture } from '../../runtime/managed-documents/contracts/documentation-closure.ts';
 import { assertTaskStrategyExecutionGate } from '../../modules/assurance/task-strategy-gate.ts';
 import { ensureTaskMechanicalTransformationEvidence } from '../execute-task/task-mechanical-transform.ts';
 import {

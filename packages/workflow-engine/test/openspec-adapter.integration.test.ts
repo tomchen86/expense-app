@@ -7,8 +7,8 @@ import test from 'node:test';
 import {
   createOpenSpecAdapter,
   resolveOpenSpecInstallation,
-} from '../src/openspec-adapter.ts';
-import { parseInstructions } from '../src/openspec-payloads.ts';
+} from '../src/adapters/planning/openspec/documents/openspec-adapter.ts';
+import { parseInstructions } from '../src/adapters/planning/openspec/documents/openspec-payloads.ts';
 import { isWorkflowError, sourceRepositoryRoot } from './fixture.ts';
 
 test('repository base specs satisfy pinned strict validation', () => {

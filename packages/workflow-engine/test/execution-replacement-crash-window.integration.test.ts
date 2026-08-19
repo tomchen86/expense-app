@@ -2,16 +2,16 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import test from 'node:test';
 
-import { listExecutionJobs } from '../src/execution-runtime.ts';
+import { listExecutionJobs } from '../src/runtime/provider-execution/execution-runtime.ts';
 import {
   executeGrantedReplacement,
   requestExecutionReplacement,
   SimulatedExecutionReplacementCrash,
 } from '../src/application/control-plane/execution-replacement.ts';
 import { issueExecutionBudgetGrant } from '../src/execution-grant-cli.ts';
-import { discoverRepository } from '../src/git.ts';
-import { createInvestigationCheckpointEnvelope } from '../src/investigation-session.ts';
-import { investigationRuntimePaths } from '../src/paths.ts';
+import { discoverRepository } from '../src/runtime/repository-transaction/git.ts';
+import { createInvestigationCheckpointEnvelope } from '../src/adapters/compatibility/investigation-v2/investigation-session.ts';
+import { investigationRuntimePaths } from '../src/runtime/session-workspace/paths.ts';
 import {
   createPlanningContributionEnvelope,
   createPlanReviewRetryEnvelope,
@@ -26,7 +26,7 @@ import {
   failProviderInvocation,
   providerInvocationExists,
   readProviderInvocationRequest,
-} from '../src/provider-invocation-store.ts';
+} from '../src/runtime/storage-journal/provider-invocation-store.ts';
 import { createFixtureRepository, git, isWorkflowError } from './fixture.ts';
 import { prepareExecutionMandate } from './execution-mandate-fixture.ts';
 

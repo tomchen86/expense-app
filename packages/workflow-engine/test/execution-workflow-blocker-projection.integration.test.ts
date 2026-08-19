@@ -2,11 +2,11 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import test from 'node:test';
 
-import { loadAiAdapterPolicy } from '../src/ai-adapter-policy.ts';
+import { loadAiAdapterPolicy } from '../src/runtime/provider-execution/ai-adapter-policy.ts';
 import {
   listExecutionJobStates,
   readExecutionJobState,
-} from '../src/execution-store.ts';
+} from '../src/runtime/storage-journal/execution-store.ts';
 import { loadInvestigationRuntimeContext } from '../src/lifecycle-context.ts';
 import {
   createProviderInvocationRequest,
@@ -22,7 +22,7 @@ import {
   storeProviderExecutionPolicySnapshot,
   type BlindSurveyManifest,
   type ProviderInvocationFailure,
-} from '../src/provider-invocation-store.ts';
+} from '../src/runtime/storage-journal/provider-invocation-store.ts';
 import { createFixtureRepository, git } from './fixture.ts';
 
 const OBSERVED_AT = '2026-08-10T09:05:00.000Z';

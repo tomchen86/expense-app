@@ -11,7 +11,7 @@ import type {
   JobRecord,
   WorkflowRecord,
 } from '../src/modules/provider-orchestration/execution-core.ts';
-import type { ExecutionJobInspection } from '../src/execution-runtime.ts';
+import type { ExecutionJobInspection } from '../src/runtime/provider-execution/execution-runtime.ts';
 import { canonicalJson } from '../src/foundation/canonical-json/canonical-json.ts';
 import {
   collectEngineMetrics,
@@ -30,8 +30,8 @@ import {
   compareAndSwapHumanResolutionHead,
   createHumanResolutionNode,
   writeHumanResolutionNode,
-} from '../src/investigation-session-store.ts';
-import type { ProviderRetentionMetrics } from '../src/provider-retention.ts';
+} from '../src/runtime/storage-journal/investigation-session-store.ts';
+import type { ProviderRetentionMetrics } from '../src/runtime/provider-execution/provider-retention.ts';
 import type { TaskMandateBinding } from '../src/modules/authority/task-mandate.ts';
 import { createFixtureRepository, sourceRepositoryRoot } from './fixture.ts';
 

@@ -7,7 +7,7 @@ import path from 'node:path';
 import {
   verifySshSignatureWithPublicKey,
   type MaintainerSignerProvider,
-} from '../src/maintainer-signer.ts';
+} from '../src/adapters/signing/ssh/maintainer-signer.ts';
 
 export type PlanReviewAuthorityFixture = {
   identity: string;

@@ -6,7 +6,10 @@ import {
   isStringArray,
 } from '../../foundation/canonical-json/contract-values.ts';
 import { ExitCode, workflowError } from '../../foundation/errors/errors.ts';
-import { matchesAllowedPath, normalizePolicyPath } from '../../paths.ts';
+import {
+  matchesAllowedPath,
+  normalizePolicyPath,
+} from '../../runtime/session-workspace/paths.ts';
 
 const CHECK_ID = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 const SIGNER_ID = /^[a-zA-Z0-9][a-zA-Z0-9._@+-]{0,127}$/;

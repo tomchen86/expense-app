@@ -6,10 +6,10 @@ import path from 'node:path';
 import test from 'node:test';
 
 import { canonicalJson } from '../src/foundation/canonical-json/canonical-json.ts';
-import { parseInvestigationArtifact } from '../src/contracts.ts';
-import { readReuseProofBinding } from '../src/evidence-convergence.ts';
-import type { EvidenceNode } from '../src/evidence-node.ts';
-import { createInvestigationCheckpointEnvelope } from '../src/investigation-session.ts';
+import { parseInvestigationArtifact } from '../src/adapters/consumer/expense-app/work-registry/contracts.ts';
+import { readReuseProofBinding } from '../src/adapters/compatibility/investigation-v2/evidence-convergence.ts';
+import type { EvidenceNode } from '../src/adapters/compatibility/investigation-v2/evidence-node.ts';
+import { createInvestigationCheckpointEnvelope } from '../src/adapters/compatibility/investigation-v2/investigation-session.ts';
 import {
   createPlanningContributionEnvelope,
   resumePropose,
@@ -20,7 +20,7 @@ import type { ProviderInvocationRequest } from '../src/modules/provider-orchestr
 import {
   claimProviderInvocation,
   completeProviderInvocation,
-} from '../src/provider-invocation-store.ts';
+} from '../src/runtime/storage-journal/provider-invocation-store.ts';
 import { createFixtureRepository, git } from './fixture.ts';
 
 const CHANGE_ID = 'reuse-evidence-generation';

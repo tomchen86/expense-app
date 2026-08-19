@@ -19,7 +19,7 @@ import {
   type MaintainerGrantPayload,
 } from '../src/modules/authority/maintainer-grant.ts';
 import { issueAuthorityAttestation } from '../src/application/control-plane/maintainer-attestation.ts';
-import type { MaintainerSignerProvider } from '../src/maintainer-signer.ts';
+import type { MaintainerSignerProvider } from '../src/adapters/signing/ssh/maintainer-signer.ts';
 import type { MaintainerPolicy } from '../src/modules/authority/maintainer-policy.ts';
 import { createFixtureRepository, git, isWorkflowError } from './fixture.ts';
 

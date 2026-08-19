@@ -9,10 +9,13 @@ import {
 import {
   inspectCollaborationGrants,
   revokeCollaborationGrant,
-} from './collaboration-grant-store.ts';
+} from './runtime/storage-journal/collaboration-grant-store.ts';
 import type { ActorAssurance } from './modules/provider-orchestration/actor-identity.ts';
 import { ExitCode, workflowError } from './foundation/errors/errors.ts';
-import { discoverRepository, runGit } from './git.ts';
+import {
+  discoverRepository,
+  runGit,
+} from './runtime/repository-transaction/git.ts';
 import { isProviderId } from './modules/provider-orchestration/provider-registry.ts';
 
 type CollaborationGrantCommandResult = Record<string, unknown>;

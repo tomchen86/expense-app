@@ -17,9 +17,9 @@ import {
   type CollaborationGrantUseProjection,
   type CollaborationGrantUseValidationOptions,
   type CollaborationReservationRecord,
-} from '../../collaboration-grant-store.ts';
+} from '../../runtime/storage-journal/collaboration-grant-store.ts';
 import type { MaintainerPolicy } from '../authority/maintainer-policy.ts';
-import type { MaintainerSignerProvider } from '../../maintainer-signer.ts';
+import type { MaintainerSignerProvider } from '../../adapters/signing/ssh/maintainer-signer.ts';
 import {
   isProviderId,
   requireProviderCapability,

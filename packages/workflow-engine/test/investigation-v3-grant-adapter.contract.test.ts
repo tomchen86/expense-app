@@ -6,7 +6,7 @@ import test from 'node:test';
 
 import { canonicalJson } from '../src/foundation/canonical-json/canonical-json.ts';
 import { ExitCode, workflowError } from '../src/foundation/errors/errors.ts';
-import { discoverRepository } from '../src/git.ts';
+import { discoverRepository } from '../src/runtime/repository-transaction/git.ts';
 import {
   createApprovalSubject,
   createGrantChallenge,
@@ -21,7 +21,7 @@ import {
   grantStorePaths,
   prepareGrantTransition,
   readGrantRecord,
-} from '../src/grant-store.ts';
+} from '../src/runtime/storage-journal/grant-store.ts';
 import { createTransitionRegistry } from '../src/modules/authority/grant-transition-registry.ts';
 import {
   INVESTIGATION_V3_ATTEMPTED_TRANSITIONS,
@@ -34,9 +34,9 @@ import {
   investigationV3CentralFailureCode,
   investigationV3GrantTransitionDefinitions,
 } from '../src/modules/investigation/seal/investigation-v3-grant.ts';
-import { writeInvestigationV3ShadowObservation } from '../src/investigation-shadow-store.ts';
-import { investigationRuntimePaths } from '../src/paths.ts';
-import { runtimePaths } from '../src/session-store.ts';
+import { writeInvestigationV3ShadowObservation } from '../src/runtime/storage-journal/investigation-shadow-store.ts';
+import { investigationRuntimePaths } from '../src/runtime/session-workspace/paths.ts';
+import { runtimePaths } from '../src/runtime/session-workspace/session-store.ts';
 import { git } from './fixture.ts';
 
 const PROPOSED_REASON =

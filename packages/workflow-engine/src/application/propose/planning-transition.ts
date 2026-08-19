@@ -3,9 +3,9 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 import { createArchiveApplicabilityProjection } from '../archive/archive-transformation.ts';
-import { preEpochCompletedTaskIds } from '../../bootstrap-task-exemption.ts';
-import type { ArchiveApplicabilityRecord } from '../../planning-report.ts';
-import { loadWorkflowConfig } from '../../contracts.ts';
+import { preEpochCompletedTaskIds } from '../../adapters/compatibility/investigation-v2/bootstrap-task-exemption.ts';
+import type { ArchiveApplicabilityRecord } from '../../runtime/storage-journal/planning-report.ts';
+import { loadWorkflowConfig } from '../../adapters/consumer/expense-app/work-registry/contracts.ts';
 import {
   ExitCode,
   WorkflowError,
@@ -23,46 +23,49 @@ import {
   stageExactPaths,
   stageExactPathsPreservingUnstaged,
   updateManagedRef,
-} from '../../git-transitions.ts';
+} from '../../runtime/repository-transaction/git-transitions.ts';
 import {
   discoverRepository,
   fingerprintRepositoryWorktree,
   listChangedPaths,
   runGit,
-} from '../../git.ts';
-import { assertChangeId, normalizeChangedPath } from '../../paths.ts';
+} from '../../runtime/repository-transaction/git.ts';
+import {
+  assertChangeId,
+  normalizeChangedPath,
+} from '../../runtime/session-workspace/paths.ts';
 import {
   amendmentLeftWorkMarkedDone,
   inspectPlanningTransition,
   taskStates,
   validateOpenSpecPlanning,
-} from '../../planning-contract.ts';
+} from '../../adapters/planning/openspec/documents/planning-contract.ts';
 import {
   readPlanningTransitionReport,
   writePlanningTransitionReport,
   type PlanningCarryForwardTaskEvidence,
   type PlanningTransitionReport,
-} from '../../planning-report.ts';
-import { runtimePaths } from '../../session-store.ts';
+} from '../../runtime/storage-journal/planning-report.ts';
+import { runtimePaths } from '../../runtime/session-workspace/session-store.ts';
 import {
   assertHeldChangeTransitionAuthority,
   type HeldChangeTransitionAuthority,
   withPlanningAuthority,
-} from '../../planning-lock.ts';
+} from '../../runtime/session-workspace/planning-lock.ts';
 import type { InvestigationFirstPlanningAssuranceSummary } from '../../modules/assurance/planning-assurance-validator.ts';
 import {
   planningAmendmentDecisionDigest,
   readPlanningAmendmentDecision,
   type PlanningAmendmentDecision,
 } from '../../modules/lifecycle/planning-amendment-decision.ts';
-import { committedPlanningGeneration } from '../../planning-generation-history.ts';
+import { committedPlanningGeneration } from '../../runtime/repository-transaction/planning-generation-history.ts';
 import { recordPlanningExecutionEpochTransition } from '../../modules/lifecycle/planning-execution-epoch.ts';
 import { resolveTaskExecutionGenerationEvidence } from '../../modules/assurance/task-execution-evidence.ts';
 import {
   refreshPlanningDocuments,
   rollbackGeneratedDocuments,
   type GeneratedDocumentMutation,
-} from '../../managed-documents.ts';
+} from '../../runtime/managed-documents/validation/managed-documents.ts';
 
 export type AmendmentRequest = {
   reason: string;
@@ -127,7 +130,7 @@ export type PlanningTransitionTestHooks = {
 export {
   assertPlanningPaths,
   assertPlanningTaskHistory,
-} from '../../planning-contract.ts';
+} from '../../adapters/planning/openspec/documents/planning-contract.ts';
 
 /**
  * Amends an already-committed plan.

@@ -37,7 +37,7 @@ import {
   type PreviewInvestigationTerm,
 } from '../domain/investigation-terms.ts';
 import type { MutationClassPolicy } from '../../source/mutation-class-policy.ts';
-import type { NormalizedChangeIntent } from '../../../provider-invocation-store.ts';
+import type { NormalizedChangeIntent } from '../../../runtime/storage-journal/provider-invocation-store.ts';
 
 const DIGEST = /^[0-9a-f]{64}$/;
 const GIT_OBJECT_ID = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;

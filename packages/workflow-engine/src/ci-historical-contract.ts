@@ -4,13 +4,17 @@ import {
   parseTasks,
   type CheckDefinition,
   type ParsedTask,
-} from './contracts.ts';
+} from './adapters/consumer/expense-app/work-registry/contracts.ts';
 import { ExitCode, workflowError } from './foundation/errors/errors.ts';
 import {
   assertInvestigationPlanningActivation,
   INVESTIGATION_PLANNING_ACTIVATION_MARKER,
-} from './openspec-schema-contract.ts';
-import { assertChangeId, assertTaskId, normalizePolicyPath } from './paths.ts';
+} from './adapters/planning/openspec/documents/openspec-schema-contract.ts';
+import {
+  assertChangeId,
+  assertTaskId,
+  normalizePolicyPath,
+} from './runtime/session-workspace/paths.ts';
 
 export type HistoricalTaskAuthority = {
   changeId: string;

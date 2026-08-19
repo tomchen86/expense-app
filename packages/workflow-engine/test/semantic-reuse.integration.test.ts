@@ -14,7 +14,7 @@ import {
   readLedgerIndex,
   updateLedgerIndex,
   writeLedgerEntry,
-} from '../src/semantic-ledger-store.ts';
+} from '../src/runtime/storage-journal/semantic-ledger-store.ts';
 import {
   planSemanticReuse,
   subjectsOwedDepth,

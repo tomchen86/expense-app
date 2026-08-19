@@ -6,7 +6,7 @@ import {
   encodeDocumentationClosure,
   parseDocumentationClosureFromCommitMessage,
   parseDocumentationClosureRecord,
-} from '../src/documentation-closure.ts';
+} from '../src/runtime/managed-documents/contracts/documentation-closure.ts';
 
 import {
   assertTaskDiffReviewChallengeResponseCurrent,

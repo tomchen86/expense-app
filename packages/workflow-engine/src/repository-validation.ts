@@ -1,9 +1,12 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
-import { loadChangeContract, loadWorkflowConfig } from './contracts.ts';
-import { discoverRepository } from './git.ts';
-import { validateManagedDocuments } from './managed-documents.ts';
+import {
+  loadChangeContract,
+  loadWorkflowConfig,
+} from './adapters/consumer/expense-app/work-registry/contracts.ts';
+import { discoverRepository } from './runtime/repository-transaction/git.ts';
+import { validateManagedDocuments } from './runtime/managed-documents/validation/managed-documents.ts';
 
 export type RepositoryValidation = {
   repositoryRoot: string;

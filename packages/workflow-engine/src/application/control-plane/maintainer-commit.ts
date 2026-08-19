@@ -5,7 +5,7 @@ import {
   deriveAuthorityAuditRepositoryId,
   scanAuthorityAuditLedger,
   type AuthorityAuditLedgerScope,
-} from '../../authority-audit-ledger.ts';
+} from '../../runtime/storage-journal/authority-audit-ledger.ts';
 import {
   authorityRefusalDigest,
   withAuthorityRefusalAudit,
@@ -18,7 +18,7 @@ import {
   rollbackExactStaging,
   stageExactPaths,
   updateManagedRef,
-} from '../../git-transitions.ts';
+} from '../../runtime/repository-transaction/git-transitions.ts';
 import {
   armPostApprovalAdmissionDeadline,
   assertPostApprovalAdmissionDeadline,
@@ -33,7 +33,7 @@ import {
   runGit,
   withPostApprovalAdmissionDeadline,
   type PostApprovalBudgetTestOptions,
-} from '../../git.ts';
+} from '../../runtime/repository-transaction/git.ts';
 import {
   beginAuthorityCommitJournal,
   failAuthorityCommitBeforeCas,
@@ -52,7 +52,7 @@ import {
   readDurableRefGenerationLedger,
   recordDurableRefGenerationTransitionUnderLifecycleLock,
 } from '../../modules/authority/maintainer-candidate.ts';
-import { readCurrentAuthorityCheckReport } from '../../maintainer-report.ts';
+import { readCurrentAuthorityCheckReport } from '../../runtime/storage-journal/maintainer-report.ts';
 import {
   failAuthoritySession,
   inspectActiveAuthoritySession,
@@ -61,9 +61,9 @@ import {
   type AuthoritySession,
   type AuthoritySessionOptions,
 } from './maintainer-session.ts';
-import { maintainerGrantStorePaths } from '../../maintainer-store.ts';
-import { createInteractiveSshSigner } from '../../maintainer-signer.ts';
-import { withRepositoryLifecycleOperation } from '../../session-store.ts';
+import { maintainerGrantStorePaths } from '../../runtime/storage-journal/maintainer-store.ts';
+import { createInteractiveSshSigner } from '../../adapters/signing/ssh/maintainer-signer.ts';
+import { withRepositoryLifecycleOperation } from '../../runtime/session-workspace/session-store.ts';
 
 export type AuthorityCommitOptions = AuthoritySessionOptions & {
   testCrashAfter?:

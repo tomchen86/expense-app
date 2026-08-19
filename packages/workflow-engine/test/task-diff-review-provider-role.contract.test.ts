@@ -10,7 +10,7 @@ import {
 import {
   providerInvocationManifestDigest,
   type TaskDiffReviewManifest,
-} from '../src/provider-invocation-store.ts';
+} from '../src/runtime/storage-journal/provider-invocation-store.ts';
 import { requireProviderCapability } from '../src/modules/provider-orchestration/provider-registry.ts';
 import {
   admitRoleResult,

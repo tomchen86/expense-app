@@ -6,7 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import { digestArtifacts } from '../src/contracts.ts';
+import { digestArtifacts } from '../src/adapters/consumer/expense-app/work-registry/contracts.ts';
 import { WorkflowError } from '../src/foundation/errors/errors.ts';
 
 test(

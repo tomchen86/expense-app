@@ -9,7 +9,7 @@ import {
   parseExecutionArtifact,
   parseInvestigationArtifact,
   parsePlanReviewArtifact,
-} from '../src/contracts.ts';
+} from '../src/adapters/consumer/expense-app/work-registry/contracts.ts';
 import {
   EXPENSE_APP_SCHEMA_GRAPH,
   EXPENSE_APP_V2_SCHEMA_GRAPH,
@@ -23,8 +23,11 @@ import {
   inspectOpenSpecSchemaContract,
   protectedActivationBaselines,
   resolveInvestigationPlanningActivation,
-} from '../src/openspec-schema-contract.ts';
-import { parseInstructions, parseStatus } from '../src/openspec-payloads.ts';
+} from '../src/adapters/planning/openspec/documents/openspec-schema-contract.ts';
+import {
+  parseInstructions,
+  parseStatus,
+} from '../src/adapters/planning/openspec/documents/openspec-payloads.ts';
 import { git, isWorkflowError, sourceRepositoryRoot } from './fixture.ts';
 
 test('schema contract pins package provenance and the project graph', () => {

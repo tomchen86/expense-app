@@ -8,18 +8,18 @@ import test from 'node:test';
 import { canonicalJson } from '../src/foundation/canonical-json/canonical-json.ts';
 import { issueCollaborationGrant } from '../src/modules/authority/collaboration-grant.ts';
 import { ExitCode, workflowError } from '../src/foundation/errors/errors.ts';
-import { readExecutionJobState } from '../src/execution-store.ts';
-import { runGitWithEnvironment } from '../src/git.ts';
+import { readExecutionJobState } from '../src/runtime/storage-journal/execution-store.ts';
+import { runGitWithEnvironment } from '../src/runtime/repository-transaction/git.ts';
 import { loadInvestigationRuntimeContext } from '../src/lifecycle-context.ts';
-import type { MaintainerSignerProvider } from '../src/maintainer-signer.ts';
+import type { MaintainerSignerProvider } from '../src/adapters/signing/ssh/maintainer-signer.ts';
 import { commitPlanningTransition } from '../src/application/propose/planning-transition.ts';
 import {
   readProviderInvocation,
   readProviderInvocationManifest,
   readProviderInvocationRequest,
   readProviderRetryReservation,
-} from '../src/provider-invocation-store.ts';
-import { PROVIDER_RUNNER_RESIDUALS } from '../src/provider-runner.ts';
+} from '../src/runtime/storage-journal/provider-invocation-store.ts';
+import { PROVIDER_RUNNER_RESIDUALS } from '../src/runtime/provider-execution/provider-runner.ts';
 import { runProviderWorker } from '../src/provider-worker.ts';
 import { startSession } from '../src/application/execute-task/session.ts';
 import {
@@ -37,7 +37,7 @@ import {
   readCurrentTaskStrategyGreenFailure,
   resolveCurrentTaskStrategyCorrection,
 } from '../src/application/execute-task/task-strategy-correction.ts';
-import { readTaskStrategyCorrectionRound } from '../src/task-strategy-correction-round-store.ts';
+import { readTaskStrategyCorrectionRound } from '../src/runtime/storage-journal/task-strategy-correction-round-store.ts';
 import {
   checkSession,
   inspectSession,

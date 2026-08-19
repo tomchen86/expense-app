@@ -4,32 +4,32 @@ import { canonicalJson } from '../../foundation/canonical-json/canonical-json.ts
 import type {
   CheckEvidence,
   ObservedCheckFailure,
-} from '../../check-runner.ts';
+} from '../../adapters/consumer/expense-app/work-registry/check-runner.ts';
 import type {
   CrossAgentTddExecution,
   TddSingleAgentExecution,
-} from '../../contracts.ts';
+} from '../../adapters/consumer/expense-app/work-registry/contracts.ts';
 import { ExitCode, workflowError } from '../../foundation/errors/errors.ts';
-import { pinCheckRunner } from '../../check-runner.ts';
-import { investigationRuntimePaths } from '../../paths.ts';
+import { pinCheckRunner } from '../../adapters/consumer/expense-app/work-registry/check-runner.ts';
+import { investigationRuntimePaths } from '../../runtime/session-workspace/paths.ts';
 import {
   DEFAULT_TASK_STRATEGY_CORRECTION_POLICY,
   createTaskStrategyGreenFailureRecord,
   readTaskStrategyGreenFailureRecord,
   type TaskStrategyGreenFailureRecord,
-} from '../../task-strategy-correction-store.ts';
+} from '../../runtime/storage-journal/task-strategy-correction-store.ts';
 import {
   deriveTaskStrategyCorrectionState,
   listTaskStrategyCorrectionRounds,
   type TaskStrategyCorrectionRound,
   type TaskStrategyCorrectionState,
-} from '../../task-strategy-correction-round-store.ts';
-import { readProviderInvocation } from '../../provider-invocation-store.ts';
+} from '../../runtime/storage-journal/task-strategy-correction-round-store.ts';
+import { readProviderInvocation } from '../../runtime/storage-journal/provider-invocation-store.ts';
 import {
   readTaskStrategyPatchCurrentBinding,
   readTaskStrategyPatchImportReceipt,
   readTaskStrategyPatchRecord,
-} from '../../task-strategy-patch-store.ts';
+} from '../../runtime/storage-journal/task-strategy-patch-store.ts';
 import {
   createTaskStrategyCorrectionSubject,
   createTaskStrategyImplementationSubject,
@@ -45,9 +45,9 @@ import {
   readTaskStrategyImplementationProviderAttempt,
   taskStrategyImplementationReservationForAttempt,
   taskStrategyImplementationProviderAttemptReservationDigest,
-} from '../../task-strategy-provider-store.ts';
-import { readTaskStrategyTransaction } from '../../task-strategy-store.ts';
-import type { TaskStrategyTransaction } from '../../task-strategy-store.ts';
+} from '../../runtime/storage-journal/task-strategy-provider-store.ts';
+import { readTaskStrategyTransaction } from '../../runtime/storage-journal/task-strategy-store.ts';
+import type { TaskStrategyTransaction } from '../../runtime/storage-journal/task-strategy-store.ts';
 import type { SessionInspection } from '../finalize/verification.ts';
 
 export type CurrentTaskStrategyPatchHead = Readonly<{

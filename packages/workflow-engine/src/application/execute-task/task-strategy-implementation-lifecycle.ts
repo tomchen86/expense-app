@@ -1,6 +1,6 @@
 import crypto from 'node:crypto';
 
-import { parseAiAdapterPolicyDocument } from '../../ai-adapter-policy.ts';
+import { parseAiAdapterPolicyDocument } from '../../runtime/provider-execution/ai-adapter-policy.ts';
 import { canonicalJson } from '../../foundation/canonical-json/canonical-json.ts';
 import {
   bindingFromPayload,
@@ -14,20 +14,20 @@ import {
   readReservedCollaborationGrantUnderLifecycleLock,
   reserveCollaborationGrantUnderLifecycleLock,
   type CollaborationGrantUseProjection,
-} from '../../collaboration-grant-store.ts';
-import { createEvidenceNode } from '../../evidence-node.ts';
+} from '../../runtime/storage-journal/collaboration-grant-store.ts';
+import { createEvidenceNode } from '../../adapters/compatibility/investigation-v2/evidence-node.ts';
 import {
   readEvidenceNode,
   writeEvidenceNode,
-} from '../../evidence-object-store.ts';
+} from '../../runtime/storage-journal/evidence-object-store.ts';
 import { ExitCode, workflowError } from '../../foundation/errors/errors.ts';
 import {
   createReplacementAttempt,
   providerExecutionEnvironmentDigest,
   providerExecutionPolicySnapshot,
 } from '../../modules/provider-orchestration/execution-core.ts';
-import { previewExactStaging } from '../../git-transitions.ts';
-import { runGit } from '../../git.ts';
+import { previewExactStaging } from '../../runtime/repository-transaction/git-transitions.ts';
+import { runGit } from '../../runtime/repository-transaction/git.ts';
 import {
   loadActiveSessionContext,
   loadInvestigationRuntimeContext,
@@ -36,7 +36,7 @@ import { parseMaintainerPolicy } from '../../modules/authority/maintainer-policy
 import {
   createInteractiveSshSigner,
   type MaintainerSignerProvider,
-} from '../../maintainer-signer.ts';
+} from '../../adapters/signing/ssh/maintainer-signer.ts';
 import { createProviderInvocationRequest } from '../../modules/provider-orchestration/provider-contracts.ts';
 import {
   createProviderInvocation,
@@ -49,7 +49,7 @@ import {
   storeProviderExecutionPolicySnapshot,
   type ProviderRetryDecisionBinding,
   type ProviderRetryReservationV2,
-} from '../../provider-invocation-store.ts';
+} from '../../runtime/storage-journal/provider-invocation-store.ts';
 import { authorizeAutomaticProviderRetry } from '../../modules/provider-orchestration/provider-retry-decision.ts';
 import type { ProviderId } from '../../modules/provider-orchestration/provider-registry.ts';
 import {
@@ -65,7 +65,7 @@ import {
 import {
   withRepositoryLifecycleOperation,
   withSessionOperation,
-} from '../../session-store.ts';
+} from '../../runtime/session-workspace/session-store.ts';
 import {
   TASK_STRATEGY_IMPLEMENTATION_OUTPUT_SCHEMA,
   TASK_STRATEGY_IMPLEMENTATION_POLICY_DIGEST,
@@ -84,7 +84,7 @@ import {
   DEFAULT_TASK_STRATEGY_CORRECTION_POLICY,
   readTaskStrategyGreenFailureRecord,
   type TaskStrategyGreenFailureRecord,
-} from '../../task-strategy-correction-store.ts';
+} from '../../runtime/storage-journal/task-strategy-correction-store.ts';
 import {
   listTaskStrategyCorrectionRounds,
   publishTaskStrategyCorrectionRoundImport,
@@ -93,7 +93,7 @@ import {
   reserveTaskStrategyCorrectionRound,
   type TaskStrategyCorrectionReservationAuthority,
   type TaskStrategyCorrectionResultAuthority,
-} from '../../task-strategy-correction-round-store.ts';
+} from '../../runtime/storage-journal/task-strategy-correction-round-store.ts';
 import {
   assertTaskStrategyCallerImplementationAuthorityCurrent,
   assertTaskStrategyCallerImplementationReservationAuthorityCurrent,
@@ -115,7 +115,7 @@ import {
   type TaskStrategyImplementationResultBinding,
   type TaskStrategyImplementationReservation,
   type TaskStrategyImplementationProviderAttempt,
-} from '../../task-strategy-provider-store.ts';
+} from '../../runtime/storage-journal/task-strategy-provider-store.ts';
 import {
   importTaskStrategyCallerPatchUnderLifecycleLock,
   importTaskStrategyProviderPatchUnderLifecycleLock,
@@ -126,8 +126,8 @@ import {
 import {
   readTaskStrategyPatchCurrentBinding,
   readTaskStrategyPatchRecord,
-} from '../../task-strategy-patch-store.ts';
-import { readTaskStrategyTransaction } from '../../task-strategy-store.ts';
+} from '../../runtime/storage-journal/task-strategy-patch-store.ts';
+import { readTaskStrategyTransaction } from '../../runtime/storage-journal/task-strategy-store.ts';
 import {
   authorizeTaskMandateProviderReservationUnderLifecycleLock,
   type TaskMandateBinding,

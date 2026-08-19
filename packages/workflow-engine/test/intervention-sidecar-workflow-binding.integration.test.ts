@@ -17,7 +17,7 @@ import {
 } from '../src/application/control-plane/intervention-control-bootstrap.ts';
 import { resolveLocalEngineSelection } from '../bootstrap/control-plane-trust.ts';
 import { createEngineArtifact } from '../src/modules/authority/intervention-control.ts';
-import { interventionEngineArtifactRecordPath } from '../src/intervention-engine-artifact-store.ts';
+import { interventionEngineArtifactRecordPath } from '../src/runtime/storage-journal/intervention-engine-artifact-store.ts';
 import {
   advancePersistedEngineAdoption,
   persistedBootstrapSidecarSessionPath,
@@ -27,7 +27,7 @@ import {
   recoverPersistedEngineAdoption,
   rollbackPersistedEngineAdoption,
   recordBootstrapSidecarAbandoned,
-} from '../src/intervention-control-persistence.ts';
+} from '../src/runtime/storage-journal/intervention-control-persistence.ts';
 import {
   buildAndPersistInterventionEngineArtifact,
   persistInterventionEngineArtifact,

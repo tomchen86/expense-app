@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
 
-import type { TransformationTerm } from '../src/contracts.ts';
+import type { TransformationTerm } from '../src/adapters/consumer/expense-app/work-registry/contracts.ts';
 import { WorkflowError } from '../src/foundation/errors/errors.ts';
 import { finalizeTask } from '../src/application/finalize/lifecycle.ts';
 import { commitPlanningTransition } from '../src/application/propose/planning-transition.ts';

@@ -5,8 +5,8 @@ import path from 'node:path';
 import test from 'node:test';
 
 import { canonicalJson } from '../src/foundation/canonical-json/canonical-json.ts';
-import type { ExecutionArtifact } from '../src/contracts.ts';
-import { createInvestigationCheckpointEnvelope } from '../src/investigation-session.ts';
+import type { ExecutionArtifact } from '../src/adapters/consumer/expense-app/work-registry/contracts.ts';
+import { createInvestigationCheckpointEnvelope } from '../src/adapters/compatibility/investigation-v2/investigation-session.ts';
 import {
   PLAN_REVIEW_COVERAGE,
   readPlanReviewNode,
@@ -23,11 +23,11 @@ import type { ProviderInvocationRequest } from '../src/modules/provider-orchestr
 import {
   claimProviderInvocation,
   completeProviderInvocation,
-} from '../src/provider-invocation-store.ts';
+} from '../src/runtime/storage-journal/provider-invocation-store.ts';
 import {
   PROVIDER_RUNNER_RESIDUALS,
   type ProviderRunnerReport,
-} from '../src/provider-runner.ts';
+} from '../src/runtime/provider-execution/provider-runner.ts';
 import { runProviderWorker } from '../src/provider-worker.ts';
 import { createFixtureRepository, git, isWorkflowError } from './fixture.ts';
 import { installPlanReviewAuthority } from './plan-review-authority-fixture.ts';

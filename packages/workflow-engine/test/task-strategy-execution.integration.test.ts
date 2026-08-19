@@ -12,14 +12,14 @@ import {
   issueCollaborationGrant,
   type CollaborationGrantRequest,
 } from '../src/modules/authority/collaboration-grant.ts';
-import { inspectCollaborationGrants } from '../src/collaboration-grant-store.ts';
-import { runGitWithEnvironment } from '../src/git.ts';
+import { inspectCollaborationGrants } from '../src/runtime/storage-journal/collaboration-grant-store.ts';
+import { runGitWithEnvironment } from '../src/runtime/repository-transaction/git.ts';
 import { finalizeTask } from '../src/application/finalize/lifecycle.ts';
 import { loadInvestigationRuntimeContext } from '../src/lifecycle-context.ts';
-import type { MaintainerSignerProvider } from '../src/maintainer-signer.ts';
+import type { MaintainerSignerProvider } from '../src/adapters/signing/ssh/maintainer-signer.ts';
 import { commitPlanningTransition } from '../src/application/propose/planning-transition.ts';
-import { PROVIDER_RUNNER_RESIDUALS } from '../src/provider-runner.ts';
-import { readProviderInvocation } from '../src/provider-invocation-store.ts';
+import { PROVIDER_RUNNER_RESIDUALS } from '../src/runtime/provider-execution/provider-runner.ts';
+import { readProviderInvocation } from '../src/runtime/storage-journal/provider-invocation-store.ts';
 import { runProviderWorker } from '../src/provider-worker.ts';
 import { startSession } from '../src/application/execute-task/session.ts';
 import {
@@ -34,7 +34,7 @@ import {
   inspectTaskStrategyPatchState,
   validateTaskStrategyPatch,
 } from '../src/application/execute-task/task-strategy-patch.ts';
-import { readTaskStrategyPatchCurrentBinding } from '../src/task-strategy-patch-store.ts';
+import { readTaskStrategyPatchCurrentBinding } from '../src/runtime/storage-journal/task-strategy-patch-store.ts';
 import {
   inspectTaskStrategyTransaction,
   sealTaskStrategyRed,
@@ -44,7 +44,7 @@ import {
   inspectTaskStrategyImplementation,
 } from '../src/application/execute-task/task-strategy-implementation-lifecycle.ts';
 import { TASK_STRATEGY_IMPLEMENTATION_OUTPUT_SCHEMA } from '../src/modules/provider-orchestration/task-strategy-provider-contract.ts';
-import { parseTaskStrategyRedRevisionRequest } from '../src/task-strategy-red-revision-store.ts';
+import { parseTaskStrategyRedRevisionRequest } from '../src/runtime/storage-journal/task-strategy-red-revision-store.ts';
 import { beginTaskStrategyRedRevision } from '../src/application/execute-task/task-strategy-red-revision.ts';
 import {
   checkSession,

@@ -4,8 +4,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
 
-import { commitFacts } from '../src/git-transitions.ts';
-import { renderHandoff } from '../src/handoff.ts';
+import { commitFacts } from '../src/runtime/repository-transaction/git-transitions.ts';
+import { renderHandoff } from '../src/adapters/consumer/expense-app/handoff/handoff.ts';
 import { finalizeSession } from '../src/application/finalize/lifecycle.ts';
 import {
   getSession,

@@ -6,19 +6,22 @@ import type {
   MechanicalTransformExecution,
   TransformationRetainedDisposition,
   TransformationTerm,
-} from '../../contracts.ts';
-import { createEvidenceNode, type EvidenceNode } from '../../evidence-node.ts';
+} from '../../adapters/consumer/expense-app/work-registry/contracts.ts';
+import {
+  createEvidenceNode,
+  type EvidenceNode,
+} from '../../adapters/compatibility/investigation-v2/evidence-node.ts';
 import {
   readEvidenceNode,
   writeEvidenceNode,
-} from '../../evidence-object-store.ts';
+} from '../../runtime/storage-journal/evidence-object-store.ts';
 import { ExitCode, workflowError } from '../../foundation/errors/errors.ts';
-import { previewExactStaging } from '../../git-transitions.ts';
+import { previewExactStaging } from '../../runtime/repository-transaction/git-transitions.ts';
 import {
   createPrivateCanonicalJson,
   privatePathExists,
   readPrivateCanonicalJson,
-} from '../../investigation-session-store.ts';
+} from '../../runtime/storage-journal/investigation-session-store.ts';
 import {
   classifyMutationPath,
   type MutationClass,
@@ -27,12 +30,12 @@ import {
   investigationRuntimePaths,
   matchesAllowedPath,
   normalizeChangedPath,
-} from '../../paths.ts';
-import { deriveReviewedMutationClassPolicy } from '../../reviewed-mutation-policy.ts';
+} from '../../runtime/session-workspace/paths.ts';
+import { deriveReviewedMutationClassPolicy } from '../../runtime/managed-documents/ownership/reviewed-mutation-policy.ts';
 import {
   readPinnedTrackedTree,
   type TrackedTreeEntry,
-} from '../../tracked-tree-reader.ts';
+} from '../../runtime/repository-transaction/tracked-tree-reader.ts';
 import type { SessionInspection } from '../finalize/verification.ts';
 
 const DIGEST = /^[0-9a-f]{64}$/;

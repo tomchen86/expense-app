@@ -4,7 +4,7 @@ import test from 'node:test';
 import {
   classifyProviderRetentionEligibility,
   providerRuntimeEvidenceId,
-} from '../src/provider-retention.ts';
+} from '../src/runtime/provider-execution/provider-retention.ts';
 
 // An old-epoch accepted Attempt whose TTL has expired: the ordinary schedule
 // would delete its private runtime.

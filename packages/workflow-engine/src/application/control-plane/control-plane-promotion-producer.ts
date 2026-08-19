@@ -18,7 +18,11 @@ import {
   workflowError,
   type ExitCodeValue,
 } from '../../foundation/errors/errors.ts';
-import { discoverRepository, runGit, runGitBuffer } from '../../git.ts';
+import {
+  discoverRepository,
+  runGit,
+  runGitBuffer,
+} from '../../runtime/repository-transaction/git.ts';
 import {
   canonicalControlPlaneIndependentReviewAttestationPayloadV2,
   canonicalControlPlaneIndependentReviewAttestationPayloadV3,
@@ -48,12 +52,12 @@ import {
   createControlPlaneSupervisorHistoryAnchor,
   readControlPlaneSupervisorHistory,
   type VerifiedControlPlaneSupervisorHistory,
-} from '../../control-plane-supervisor-history.ts';
+} from '../../runtime/storage-journal/control-plane-supervisor-history.ts';
 import {
   findPersistedBootstrapSidecarSessionForIntervention,
   readPersistedControlPlaneUpdate,
   type PersistenceHumanSignatureVerifier,
-} from '../../intervention-control-persistence.ts';
+} from '../../runtime/storage-journal/intervention-control-persistence.ts';
 import {
   findPersistedControlPlaneApprovalCandidateV2ByMaterialDigestAndReviewer,
   findPersistedControlPlaneApprovalCandidateV3ByMaterialLineageAndReviewer,
@@ -71,8 +75,8 @@ import {
   readStoredImmutableCandidateBundle,
   type AnyImmutableCandidateBundle,
 } from '../../modules/authority/maintainer-candidate.ts';
-import type { MaintainerSignerProvider } from '../../maintainer-signer.ts';
-import { loadProtectedCapabilitiesFromTrustBase } from '../../protected-capabilities.ts';
+import type { MaintainerSignerProvider } from '../../adapters/signing/ssh/maintainer-signer.ts';
+import { loadProtectedCapabilitiesFromTrustBase } from '../../adapters/consumer/expense-app/work-registry/protected-capabilities.ts';
 
 const MAX_EXECUTABLE_BYTES = 16 * 1024 * 1024;
 const MAX_PROCESS_OUTPUT_BYTES = 1024 * 1024;

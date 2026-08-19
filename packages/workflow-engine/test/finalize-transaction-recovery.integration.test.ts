@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
 
-import { renderHandoff } from '../src/handoff.ts';
+import { renderHandoff } from '../src/adapters/consumer/expense-app/handoff/handoff.ts';
 import { finalizeTask } from '../src/application/finalize/lifecycle.ts';
 import {
   getSession,

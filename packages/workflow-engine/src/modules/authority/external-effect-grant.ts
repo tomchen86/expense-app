@@ -2,7 +2,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 
-import { deriveAuthorityAuditRepositoryId } from '../../authority-audit-ledger.ts';
+import { deriveAuthorityAuditRepositoryId } from '../../runtime/storage-journal/authority-audit-ledger.ts';
 import {
   authorityRefusalDigest,
   withAuthorityRefusalAudit,
@@ -14,18 +14,21 @@ import { ExitCode, workflowError } from '../../foundation/errors/errors.ts';
 import {
   appendExternalEffectAuthorityAudit,
   type ExternalEffectAuthorityAuditOptions,
-} from '../../external-effect-audit.ts';
-import { ensurePlainDirectory } from '../../filesystem-safety.ts';
-import { discoverRepository, runGit } from '../../git.ts';
+} from '../../runtime/storage-journal/external-effect-audit.ts';
+import { ensurePlainDirectory } from '../../runtime/repository-transaction/filesystem-safety.ts';
+import {
+  discoverRepository,
+  runGit,
+} from '../../runtime/repository-transaction/git.ts';
 import { parseMaintainerPolicy } from './maintainer-policy.ts';
 import {
   createInteractiveSshSigner,
   type MaintainerSignerProvider,
-} from '../../maintainer-signer.ts';
+} from '../../adapters/signing/ssh/maintainer-signer.ts';
 import {
   runtimePaths,
   withRepositoryLifecycleOperation,
-} from '../../session-store.ts';
+} from '../../runtime/session-workspace/session-store.ts';
 import {
   inspectActiveTaskMandateBinding,
   withActiveTaskMandateBinding,

@@ -20,17 +20,17 @@ import {
   observeInvestigationManifestPublicationState,
   type InvestigationManifestPublicationFailure,
   type InvestigationManifestPublicationObservationSource,
-} from '../../../investigation-publication.ts';
+} from '../../../runtime/managed-documents/transaction/investigation-publication.ts';
 import {
   readCurrentInvestigationRef,
   readInvestigationSession,
-} from '../../../investigation-session-store.ts';
+} from '../../../runtime/storage-journal/investigation-session-store.ts';
 import {
   isProposeExemptionInvestigationId,
   readCurrentProposeExemptionSession,
   readProposeExemptionSession,
-} from '../../../propose-exemption-store.ts';
-import { readInvestigationV3ShadowFailureObservation } from '../../../investigation-shadow-store.ts';
+} from '../../../runtime/storage-journal/propose-exemption-store.ts';
+import { readInvestigationV3ShadowFailureObservation } from '../../../runtime/storage-journal/investigation-shadow-store.ts';
 import { loadInvestigationRuntimeContext } from '../../../lifecycle-context.ts';
 
 export const INVESTIGATION_V3_SHADOW_FAILURE_OBSERVER =

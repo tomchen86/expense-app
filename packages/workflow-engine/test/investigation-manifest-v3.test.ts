@@ -17,7 +17,7 @@ import {
   type OrdinaryInvestigationAuthoringState,
 } from '../src/modules/investigation/manifest/investigation-manifest.ts';
 import { materializeInvestigationEvidenceView } from '../src/modules/investigation/manifest/investigation-materializer.ts';
-import { runGitBuffer } from '../src/git.ts';
+import { runGitBuffer } from '../src/runtime/repository-transaction/git.ts';
 import { scanInvestigationTreeFacts } from '../src/modules/investigation/domain/investigation-scanner.ts';
 import {
   previewInvestigationTermUnion,

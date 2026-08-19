@@ -12,7 +12,7 @@ import {
   WorkflowError,
   workflowError,
 } from '../../../foundation/errors/errors.ts';
-import { runGit } from '../../../git.ts';
+import { runGit } from '../../../runtime/repository-transaction/git.ts';
 import {
   deriveInvestigationGroupFacts,
   type DeclaredInvestigationRoot,

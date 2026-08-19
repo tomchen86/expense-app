@@ -15,7 +15,7 @@ import {
   prepareGrantTransition,
   readGrantRecord,
   recordGrantTransitionOutcome,
-} from '../src/grant-store.ts';
+} from '../src/runtime/storage-journal/grant-store.ts';
 import {
   createTransitionRegistry,
   type TransitionDefinition,
@@ -24,7 +24,7 @@ import {
   runtimePaths,
   withRepositoryLifecycleOperation,
   withRepositoryLifecycleOperationAsync,
-} from '../src/session-store.ts';
+} from '../src/runtime/session-workspace/session-store.ts';
 import { isWorkflowError } from './fixture.ts';
 
 const NOW = new Date('2026-08-18T02:00:00.000Z');

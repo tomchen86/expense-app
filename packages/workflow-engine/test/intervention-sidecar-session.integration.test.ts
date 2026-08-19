@@ -22,7 +22,7 @@ import {
   recoverPersistedEngineAdoption,
   recordBootstrapSidecarPromotionIfPresent,
   reserveBootstrapSidecarPromotion,
-} from '../src/intervention-control-persistence.ts';
+} from '../src/runtime/storage-journal/intervention-control-persistence.ts';
 import {
   persistInterventionEngineArtifact,
   readInterventionEngineArtifact,

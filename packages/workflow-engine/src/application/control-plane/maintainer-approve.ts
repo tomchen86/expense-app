@@ -5,24 +5,27 @@ import {
   scanAuthorityAuditLedger,
   type AuthorityAuditLedgerScope,
   type Sha256Digest,
-} from '../../authority-audit-ledger.ts';
+} from '../../runtime/storage-journal/authority-audit-ledger.ts';
 import {
   recordAuthorityAuditEvent,
   type AuthorityAuditServiceHooks,
-} from '../../authority-audit-service.ts';
+} from '../../runtime/storage-journal/authority-audit-service.ts';
 import {
   authorityRefusalDigest,
   withAuthorityRefusalAudit,
   type AuthorityRefusalAuditBinding,
 } from '../../modules/authority/authority-refusal-audit.ts';
 import { authorityApplicationReceiptTagRef } from '../../modules/authority/authority-application-receipt.ts';
-import { pinCheckRunner, runCheck } from '../../check-runner.ts';
+import {
+  pinCheckRunner,
+  runCheck,
+} from '../../adapters/consumer/expense-app/work-registry/check-runner.ts';
 import { canonicalJson } from '../../foundation/canonical-json/canonical-json.ts';
-import type { CheckDefinition } from '../../contracts.ts';
+import type { CheckDefinition } from '../../adapters/consumer/expense-app/work-registry/contracts.ts';
 import {
   assertDisposableDatabase,
   createCheckEnvironment,
-} from '../../database-policy.ts';
+} from '../../adapters/consumer/expense-app/work-registry/database-policy.ts';
 import { ExitCode, workflowError } from '../../foundation/errors/errors.ts';
 import {
   armPostApprovalAdmissionDeadline,
@@ -36,14 +39,14 @@ import {
   withPostApprovalAdmissionDeadline,
   type PostApprovalAdmissionDeadline,
   type PostApprovalBudgetTestOptions,
-} from '../../git.ts';
+} from '../../runtime/repository-transaction/git.ts';
 import {
   authorityCandidateCommitMessage,
   createSignedAuthorityCandidateCommitObject,
   previewExactStaging,
   resolveCommitIdentity,
   validateCommitSubject,
-} from '../../git-transitions.ts';
+} from '../../runtime/repository-transaction/git-transitions.ts';
 import {
   assertStoredCandidateSupportingArtifacts,
   buildCandidateExternalEffectsManifest,
@@ -66,7 +69,7 @@ import {
   completeMaintainerCheckJournal,
   openMaintainerCheckJournal,
   type MaintainerCheckJournalIdentity,
-} from '../../maintainer-check-journal.ts';
+} from '../../runtime/storage-journal/maintainer-check-journal.ts';
 import { commitAuthoritySession } from './maintainer-commit.ts';
 import {
   MAINTAINER_GRANT_V2_SIGNATURE_NAMESPACE,
@@ -88,7 +91,7 @@ import { parseMaintainerPolicy } from '../../modules/authority/maintainer-policy
 import {
   createInteractiveSshSigner,
   type MaintainerSignerProvider,
-} from '../../maintainer-signer.ts';
+} from '../../adapters/signing/ssh/maintainer-signer.ts';
 import { startAuthoritySession } from './maintainer-session.ts';
 import {
   maintainerGrantStorePaths,
@@ -97,14 +100,14 @@ import {
   terminallyFailAvailableMaintainerGrantV2UnderLifecycleLock,
   terminallyFailMaintainerReservationUnderLifecycleLock,
   terminallyRevokeAvailableMaintainerGrantV2UnderLifecycleLock,
-} from '../../maintainer-store.ts';
-import { listProviderInvocationLifecycleProjections } from '../../investigation-session-store.ts';
+} from '../../runtime/storage-journal/maintainer-store.ts';
+import { listProviderInvocationLifecycleProjections } from '../../runtime/storage-journal/investigation-session-store.ts';
 import { loadInvestigationRuntimeContext } from '../../lifecycle-context.ts';
-import { readProviderInvocation } from '../../provider-invocation-store.ts';
+import { readProviderInvocation } from '../../runtime/storage-journal/provider-invocation-store.ts';
 import {
   listConflictingActiveWorkflowSessionIds,
   withRepositoryLifecycleOperation,
-} from '../../session-store.ts';
+} from '../../runtime/session-workspace/session-store.ts';
 import {
   inspectActiveTaskMandateBinding,
   type TaskMandateBinding,

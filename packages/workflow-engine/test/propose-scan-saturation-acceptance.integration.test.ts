@@ -4,7 +4,7 @@ import path from 'node:path';
 import test from 'node:test';
 
 import { canonicalJson } from '../src/foundation/canonical-json/canonical-json.ts';
-import { readInvestigationSession } from '../src/investigation-session-store.ts';
+import { readInvestigationSession } from '../src/runtime/storage-journal/investigation-session-store.ts';
 import { loadInvestigationRuntimeContext } from '../src/lifecycle-context.ts';
 import {
   createScanSaturationAcceptanceEnvelope,

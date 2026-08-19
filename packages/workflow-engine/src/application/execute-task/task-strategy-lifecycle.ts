@@ -5,14 +5,14 @@ import type {
   CrossAgentTddExecution,
   ExecutionTask,
   TddSingleAgentExecution,
-} from '../../contracts.ts';
+} from '../../adapters/consumer/expense-app/work-registry/contracts.ts';
 import { ExitCode, workflowError } from '../../foundation/errors/errors.ts';
-import { discoverRepository } from '../../git.ts';
+import { discoverRepository } from '../../runtime/repository-transaction/git.ts';
 import { loadInvestigationRuntimeContext } from '../../lifecycle-context.ts';
 import {
   providerInvocationExists,
   readProviderInvocation,
-} from '../../provider-invocation-store.ts';
+} from '../../runtime/storage-journal/provider-invocation-store.ts';
 import { getSession, type WorkflowSession } from './session.ts';
 import {
   inspectTaskMechanicalTransformLifecycle,
@@ -33,7 +33,7 @@ import {
   readCurrentTaskStrategyImplementationProviderAttempt,
   readTaskStrategyImplementationReservation,
   readTaskStrategyImplementationResultBinding,
-} from '../../task-strategy-provider-store.ts';
+} from '../../runtime/storage-journal/task-strategy-provider-store.ts';
 import { sealTaskStrategyRed } from './task-strategy-execution.ts';
 import {
   adoptCurrentTaskStrategyCorrection,
@@ -48,12 +48,12 @@ import {
   beginTaskStrategyRedRevision,
   continueTaskStrategyRedRevision,
 } from './task-strategy-red-revision.ts';
-import type { TaskStrategyRedRevisionRequest } from '../../task-strategy-red-revision-store.ts';
-import { readTaskStrategyPatchCurrentBinding } from '../../task-strategy-patch-store.ts';
+import type { TaskStrategyRedRevisionRequest } from '../../runtime/storage-journal/task-strategy-red-revision-store.ts';
+import { readTaskStrategyPatchCurrentBinding } from '../../runtime/storage-journal/task-strategy-patch-store.ts';
 import {
   readTaskStrategyTransaction,
   type TaskStrategyTransaction,
-} from '../../task-strategy-store.ts';
+} from '../../runtime/storage-journal/task-strategy-store.ts';
 import { loadStableValidatedChangeContract } from '../../validated-contract-context.ts';
 import { inspectSession } from '../finalize/verification.ts';
 

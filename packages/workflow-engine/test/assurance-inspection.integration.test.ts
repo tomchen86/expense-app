@@ -4,7 +4,7 @@ import path from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 
-import { inspectChangeAssurance } from '../src/assurance-inspection.ts';
+import { inspectChangeAssurance } from '../src/runtime/repository-transaction/assurance-inspection.ts';
 import { parsePathRoleRegistry } from '../src/modules/source/path-role-registry.ts';
 import { isWorkflowError } from './fixture.ts';
 

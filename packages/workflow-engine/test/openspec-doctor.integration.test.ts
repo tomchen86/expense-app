@@ -5,8 +5,8 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import { diagnoseOpenSpec } from '../src/openspec-doctor.ts';
-import { parseDoctor } from '../src/openspec-doctor-payload.ts';
+import { diagnoseOpenSpec } from '../src/adapters/planning/openspec/documents/openspec-doctor.ts';
+import { parseDoctor } from '../src/adapters/planning/openspec/documents/openspec-doctor-payload.ts';
 import { isWorkflowError, sourceRepositoryRoot } from './fixture.ts';
 
 test('OpenSpec doctor validates payload health instead of trusting exit zero', () => {

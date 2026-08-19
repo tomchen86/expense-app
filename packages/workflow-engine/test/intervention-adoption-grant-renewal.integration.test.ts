@@ -11,7 +11,7 @@ import {
   type BootstrapInterventionCliDependencies,
 } from '../src/intervention-control-bootstrap-cli.ts';
 import { createEngineArtifact } from '../src/modules/authority/intervention-control.ts';
-import { recoverPersistedEngineAdoption } from '../src/intervention-control-persistence.ts';
+import { recoverPersistedEngineAdoption } from '../src/runtime/storage-journal/intervention-control-persistence.ts';
 import {
   persistInterventionEngineArtifact,
   readMaintenanceGrantForParent,

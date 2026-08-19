@@ -2,7 +2,7 @@ import path from 'node:path';
 
 import { canonicalJson } from '../../../foundation/canonical-json/canonical-json.ts';
 import { ExitCode, workflowError } from '../../../foundation/errors/errors.ts';
-import { runGitBuffer } from '../../../git.ts';
+import { runGitBuffer } from '../../../runtime/repository-transaction/git.ts';
 import {
   normalizeInvestigationTerm,
   type InvestigationTermKind,

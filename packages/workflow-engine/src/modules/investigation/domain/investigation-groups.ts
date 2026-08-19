@@ -16,8 +16,8 @@ import {
   assertStoredEvidenceNode,
   createEvidenceNode,
   type EvidenceNode,
-} from '../../../evidence-node.ts';
-import { validateClosedEvidenceDag } from '../../../evidence-currentness.ts';
+} from '../../../adapters/compatibility/investigation-v2/evidence-node.ts';
+import { validateClosedEvidenceDag } from '../../../adapters/compatibility/investigation-v2/evidence-currentness.ts';
 import {
   assertMutationClassPolicy,
   assertPathIdentity,

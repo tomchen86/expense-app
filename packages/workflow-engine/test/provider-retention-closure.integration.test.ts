@@ -6,10 +6,10 @@ import path from 'node:path';
 import test from 'node:test';
 import { pathToFileURL } from 'node:url';
 
-import { loadAiAdapterPolicy } from '../src/ai-adapter-policy.ts';
+import { loadAiAdapterPolicy } from '../src/runtime/provider-execution/ai-adapter-policy.ts';
 import { canonicalJson } from '../src/foundation/canonical-json/canonical-json.ts';
-import { listExecutionJobStates } from '../src/execution-store.ts';
-import { listProviderInvocationLifecycleProjections } from '../src/investigation-session-store.ts';
+import { listExecutionJobStates } from '../src/runtime/storage-journal/execution-store.ts';
+import { listProviderInvocationLifecycleProjections } from '../src/runtime/storage-journal/investigation-session-store.ts';
 import { loadInvestigationRuntimeContext } from '../src/lifecycle-context.ts';
 import { startPropose } from '../src/application/propose/propose-orchestrator.ts';
 import {
@@ -17,7 +17,7 @@ import {
   type ProviderInvocationRequest,
   type ProviderProcessOutcome,
 } from '../src/modules/provider-orchestration/provider-contracts.ts';
-import { inspectProviderPromptContextRetentionBinding } from '../src/provider-execution-governance.ts';
+import { inspectProviderPromptContextRetentionBinding } from '../src/runtime/provider-execution/provider-execution-governance.ts';
 import {
   claimProviderInvocation,
   completeProviderInvocation,
@@ -27,15 +27,15 @@ import {
   readProviderInvocationManifest,
   readProviderInvocationRequest,
   storeProviderExecutionPolicySnapshot,
-} from '../src/provider-invocation-store.ts';
-import { PROVIDER_RUNNER_RESIDUALS } from '../src/provider-runner.ts';
+} from '../src/runtime/storage-journal/provider-invocation-store.ts';
+import { PROVIDER_RUNNER_RESIDUALS } from '../src/runtime/provider-execution/provider-runner.ts';
 import {
   inspectProviderRetentionMetrics,
   providerRuntimeEvidenceId,
   pruneProviderRuntime,
   readProviderRetentionReceipt,
-} from '../src/provider-retention.ts';
-import { pinWorkflowEvidence } from '../src/retention-control.ts';
+} from '../src/runtime/provider-execution/provider-retention.ts';
+import { pinWorkflowEvidence } from '../src/runtime/provider-execution/retention-control.ts';
 import { prepareExecutionMandate } from './execution-mandate-fixture.ts';
 import {
   createFixtureRepository,
@@ -193,7 +193,9 @@ function preparePrunableProviderRuntime(changeId: string) {
       {
         schemaVersion: 1,
         summary: `Create ${changeId} retention evidence.`,
-        explicitPaths: ['packages/workflow-engine/src/provider-retention.ts'],
+        explicitPaths: [
+          'packages/workflow-engine/src/runtime/provider-execution/provider-retention.ts',
+        ],
         explicitSymbols: ['pruneProviderRuntime'],
         explicitConfigKeys: [],
         renamePairs: [],
@@ -426,7 +428,7 @@ function spawnPinAttempt(input: {
   const retentionControlUrl = pathToFileURL(
     path.join(
       sourceRepositoryRoot,
-      'packages/workflow-engine/src/retention-control.ts',
+      'packages/workflow-engine/src/runtime/provider-execution/retention-control.ts',
     ),
   ).href;
   const script = `

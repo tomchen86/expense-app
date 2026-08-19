@@ -9,7 +9,7 @@ import {
   discoverRepository,
   fingerprintRepositoryProjection,
   fingerprintWorkingState,
-} from '../src/git.ts';
+} from '../src/runtime/repository-transaction/git.ts';
 import {
   checkSession,
   startSession,

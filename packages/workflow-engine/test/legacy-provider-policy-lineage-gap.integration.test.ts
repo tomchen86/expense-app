@@ -3,14 +3,14 @@ import fs from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
 
-import { loadAiAdapterPolicy } from '../src/ai-adapter-policy.ts';
+import { loadAiAdapterPolicy } from '../src/runtime/provider-execution/ai-adapter-policy.ts';
 import { canonicalJson } from '../src/foundation/canonical-json/canonical-json.ts';
-import { materializeLegacyExecutionInvestigation } from '../src/execution-recovery.ts';
+import { materializeLegacyExecutionInvestigation } from '../src/runtime/provider-execution/execution-recovery.ts';
 import {
   executionStorePaths,
   readExecutionJobState,
-} from '../src/execution-store.ts';
-import { listExecutionJobs } from '../src/execution-runtime.ts';
+} from '../src/runtime/storage-journal/execution-store.ts';
+import { listExecutionJobs } from '../src/runtime/provider-execution/execution-runtime.ts';
 import { loadInvestigationRuntimeContext } from '../src/lifecycle-context.ts';
 import {
   createProviderInvocationRequest,
@@ -25,7 +25,7 @@ import {
   providerInvocationManifestDigest,
   storeProviderExecutionPolicySnapshot,
   type BlindSurveyManifest,
-} from '../src/provider-invocation-store.ts';
+} from '../src/runtime/storage-journal/provider-invocation-store.ts';
 import { createFixtureRepository, git } from './fixture.ts';
 
 const CHANGE_ID = 'policy-lineage-gap';

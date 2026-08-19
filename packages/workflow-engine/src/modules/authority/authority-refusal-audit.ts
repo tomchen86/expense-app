@@ -4,13 +4,13 @@ import {
   scanAuthorityAuditLedger,
   type AuthorityAuditLedgerScope,
   type Sha256Digest,
-} from '../../authority-audit-ledger.ts';
+} from '../../runtime/storage-journal/authority-audit-ledger.ts';
 import {
   recordAuthorityAuditEvent,
   type AuthorityAuditActor,
   type AuthorityAuditRecordedEvent,
   type AuthorityAuditServiceHooks,
-} from '../../authority-audit-service.ts';
+} from '../../runtime/storage-journal/authority-audit-service.ts';
 import { canonicalJson } from '../../foundation/canonical-json/canonical-json.ts';
 import { WorkflowError } from '../../foundation/errors/errors.ts';
 

@@ -19,14 +19,14 @@ import {
   deriveAuthorityAuditRepositoryId,
   type AuthorityAuditEventType,
   type AuthorityAuditResult,
-} from './authority-audit-ledger.ts';
-import { recordAuthorityAuditEvent } from './authority-audit-service.ts';
+} from './runtime/storage-journal/authority-audit-ledger.ts';
+import { recordAuthorityAuditEvent } from './runtime/storage-journal/authority-audit-service.ts';
 import {
   dispatchCollaborationGrantCommand,
   isCollaborationGrantCommand,
 } from './collaboration-grant-cli.ts';
-import { inspectChangeAssurance } from './assurance-inspection.ts';
-import { loadWorkflowConfig } from './contracts.ts';
+import { inspectChangeAssurance } from './runtime/repository-transaction/assurance-inspection.ts';
+import { loadWorkflowConfig } from './adapters/consumer/expense-app/work-registry/contracts.ts';
 import {
   contextualizeOpenTaskError,
   findOpenTaskLifecycleStatus,
@@ -37,7 +37,7 @@ import {
   checkOpenSpecPlanningAssets,
   generateOpenSpecPlanningAssets,
   installOpenSpecPlanningPrompts,
-} from './openspec-planning-assets.ts';
+} from './adapters/planning/openspec/documents/openspec-planning-assets.ts';
 import {
   completePreparedPullRequestPreMergeAssurance,
   preparePullRequestPreMergeAssurance,
@@ -77,16 +77,19 @@ import {
   inspectExecutionJob,
   listExecutionJobs,
   prepareLegacyReplacement,
-} from './execution-runtime.ts';
-import { pruneProviderRuntime } from './provider-retention.ts';
+} from './runtime/provider-execution/execution-runtime.ts';
+import { pruneProviderRuntime } from './runtime/provider-execution/provider-retention.ts';
 import {
   inspectEvidenceRetention,
   pinWorkflowEvidence,
   runEvidenceRetentionMaintenance,
-} from './retention-control.ts';
-import { executePublishGrant } from './publish-executor.ts';
-import { discoverRepository, runGit } from './git.ts';
-import { validateHandoff } from './handoff.ts';
+} from './runtime/provider-execution/retention-control.ts';
+import { executePublishGrant } from './adapters/remote/github/publish-executor.ts';
+import {
+  discoverRepository,
+  runGit,
+} from './runtime/repository-transaction/git.ts';
+import { validateHandoff } from './adapters/consumer/expense-app/handoff/handoff.ts';
 import { runRepositoryHook } from './hooks.ts';
 import {
   isHumanGrantCliInvocation,
@@ -108,13 +111,13 @@ import {
 import {
   inspectMaintainerGrants,
   maintainerGrantStorePaths,
-} from './maintainer-store.ts';
+} from './runtime/storage-journal/maintainer-store.ts';
 import { revokeLegacyMaintainerGrant } from './application/control-plane/maintainer-revoke.ts';
 import {
   assertInteractiveSignerContext,
   createInteractiveSshSigner,
   type MaintainerSignerProvider,
-} from './maintainer-signer.ts';
+} from './adapters/signing/ssh/maintainer-signer.ts';
 import { commitAuthoritySession } from './application/control-plane/maintainer-commit.ts';
 import { recoverAuthorityCommit } from './application/control-plane/maintainer-recovery.ts';
 import {
@@ -157,8 +160,8 @@ import {
   inspectHumanResolutionGrantPublicationRecoveries,
   inspectHumanResolutionGrants,
   revokeHumanResolutionGrant,
-} from './investigation-session.ts';
-import { inspectInvestigationQuarantineState } from './investigation-session-store.ts';
+} from './adapters/compatibility/investigation-v2/investigation-session.ts';
+import { inspectInvestigationQuarantineState } from './runtime/storage-journal/investigation-session-store.ts';
 import {
   inspectImplementationReconciliation,
   recordImplementationReconciliation,
@@ -184,7 +187,7 @@ import {
   startMandatedSession,
   startSession,
 } from './application/execute-task/session.ts';
-import { runtimePaths } from './session-store.ts';
+import { runtimePaths } from './runtime/session-workspace/session-store.ts';
 import {
   inspectTaskRevisionStatus,
   prepareTaskRevisionApprovalBinding,
@@ -196,7 +199,7 @@ import {
   resumeTaskStrategy,
   type TaskStrategyLifecycleStatus,
 } from './application/execute-task/task-strategy-lifecycle.ts';
-import { parseTaskStrategyRedRevisionRequest } from './task-strategy-red-revision-store.ts';
+import { parseTaskStrategyRedRevisionRequest } from './runtime/storage-journal/task-strategy-red-revision-store.ts';
 import {
   beginTaskDiffReviewContinuationFromInput,
   beginTaskDiffReview,
@@ -219,8 +222,8 @@ import {
   type TaskDiffReviewExternalSubmissionInput,
 } from './modules/assurance/task-diff-review-input.ts';
 import { issueTaskRevisionApproval } from './modules/authority/task-revision-approval.ts';
-import { validateManagedDocuments } from './managed-documents.ts';
-import { diagnoseOpenSpec } from './openspec-doctor.ts';
+import { validateManagedDocuments } from './runtime/managed-documents/validation/managed-documents.ts';
+import { diagnoseOpenSpec } from './adapters/planning/openspec/documents/openspec-doctor.ts';
 import {
   commitPlanAmendment,
   commitPlanningTransition,
@@ -234,13 +237,13 @@ import {
   dispatchProviderWorker,
   runProviderWorker,
 } from './provider-worker.ts';
-import { readProviderInvocation } from './provider-invocation-store.ts';
+import { readProviderInvocation } from './runtime/storage-journal/provider-invocation-store.ts';
 import {
   listProviderAutomaticRetrySchedules,
   listProviderRetryScheduleReceipts,
   pumpProviderRetrySchedules,
-} from './provider-retry-scheduler.ts';
-import { runRegisteredCheck } from './registered-check.ts';
+} from './runtime/provider-execution/provider-retry-scheduler.ts';
+import { runRegisteredCheck } from './adapters/consumer/expense-app/work-registry/registered-check.ts';
 import { loadStableValidatedChangeContract } from './validated-contract-context.ts';
 import {
   authorizeTaskMandate,

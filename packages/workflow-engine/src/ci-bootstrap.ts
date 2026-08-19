@@ -2,10 +2,13 @@ import crypto from 'node:crypto';
 
 import { readFileAtCommit } from './ci-git.ts';
 import type { PlanningBootstrapException } from './ci-policy.ts';
-import { parseTasks } from './contracts.ts';
+import { parseTasks } from './adapters/consumer/expense-app/work-registry/contracts.ts';
 import { ExitCode, workflowError } from './foundation/errors/errors.ts';
-import { commitChangedPaths, commitFacts } from './git-transitions.ts';
-import { runGit } from './git.ts';
+import {
+  commitChangedPaths,
+  commitFacts,
+} from './runtime/repository-transaction/git-transitions.ts';
+import { runGit } from './runtime/repository-transaction/git.ts';
 
 const OPENSPEC_VERSION = '1.6.0';
 const EXACT_BOOTSTRAP_COMMIT = '648ae2405567ea0db830e7fb4b49dbebeecf56bb';

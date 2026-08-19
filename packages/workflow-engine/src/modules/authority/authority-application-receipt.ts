@@ -1,17 +1,17 @@
 import crypto from 'node:crypto';
 
 import { canonicalJson } from '../../foundation/canonical-json/canonical-json.ts';
-import { verifySshDataSignature } from '../../ci-signature.ts';
+import { verifySshDataSignature } from '../../adapters/signing/ssh/ci-signature.ts';
 import { isRecord } from '../../foundation/canonical-json/contract-values.ts';
 import { ExitCode, workflowError } from '../../foundation/errors/errors.ts';
-import { runGit } from '../../git.ts';
+import { runGit } from '../../runtime/repository-transaction/git.ts';
 import {
   parseMaintainerEvidenceWaivers,
   type MaintainerEvidenceWaiver,
 } from './maintainer-grant-v2.ts';
 import { createMaintainerAuditTag } from './maintainer-grant.ts';
 import type { MaintainerPolicy } from './maintainer-policy.ts';
-import type { MaintainerSignerProvider } from '../../maintainer-signer.ts';
+import type { MaintainerSignerProvider } from '../../adapters/signing/ssh/maintainer-signer.ts';
 
 export const AUTHORITY_APPLICATION_RECEIPT_SIGNATURE_NAMESPACE =
   'expense-app.workflow.authority-application-receipt.v1';

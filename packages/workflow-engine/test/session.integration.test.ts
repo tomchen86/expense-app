@@ -13,13 +13,13 @@ import {
   finalizeTask,
   finishSession,
 } from '../src/application/finalize/lifecycle.ts';
-import { INVESTIGATION_PLANNING_ACTIVATION_MARKER } from '../src/openspec-schema-contract.ts';
+import { INVESTIGATION_PLANNING_ACTIVATION_MARKER } from '../src/adapters/planning/openspec/documents/openspec-schema-contract.ts';
 import { commitPlanningTransition } from '../src/application/propose/planning-transition.ts';
-import { runRegisteredCheck } from '../src/registered-check.ts';
+import { runRegisteredCheck } from '../src/adapters/consumer/expense-app/work-registry/registered-check.ts';
 import {
   readImmutableReport,
   writeImmutableReport,
-} from '../src/report-store.ts';
+} from '../src/runtime/storage-journal/report-store.ts';
 import {
   abortSession,
   checkSession,

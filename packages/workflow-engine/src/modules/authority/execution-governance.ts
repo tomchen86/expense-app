@@ -5,13 +5,13 @@ import path from 'node:path';
 import {
   deriveAuthorityAuditRepositoryId,
   type Sha256Digest,
-} from '../../authority-audit-ledger.ts';
+} from '../../runtime/storage-journal/authority-audit-ledger.ts';
 import {
   recordAuthorityAuditEvent,
   type AuthorityAuditActor,
   type AuthorityAuditRecordedEvent,
   type AuthorityAuditServiceHooks,
-} from '../../authority-audit-service.ts';
+} from '../../runtime/storage-journal/authority-audit-service.ts';
 import {
   authorityRefusalDigest,
   withAuthorityRefusalAudit,

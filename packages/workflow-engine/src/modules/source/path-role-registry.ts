@@ -3,7 +3,10 @@ import {
   isStringArray,
 } from '../../foundation/canonical-json/contract-values.ts';
 import { ExitCode, workflowError } from '../../foundation/errors/errors.ts';
-import { matchesAllowedPath, normalizePolicyPath } from '../../paths.ts';
+import {
+  matchesAllowedPath,
+  normalizePolicyPath,
+} from '../../runtime/session-workspace/paths.ts';
 
 /**
  * What a repository path is, for the purpose of deciding how much planning

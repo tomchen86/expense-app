@@ -5,12 +5,12 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import type { InvestigationFullBlobManifestEntry } from '../src/investigation-why.ts';
+import type { InvestigationFullBlobManifestEntry } from '../src/adapters/compatibility/investigation-v2/investigation-why.ts';
 import { createLedgerEntry } from '../src/modules/why-knowledge/semantic-ledger.ts';
 import {
   updateLedgerIndex,
   writeLedgerEntry,
-} from '../src/semantic-ledger-store.ts';
+} from '../src/runtime/storage-journal/semantic-ledger-store.ts';
 import {
   applyLedgerToFullBlobManifest,
   recordReuseCoverage,

@@ -7,7 +7,7 @@ import test from 'node:test';
 import {
   preparePlanningDraftWorkspace,
   readPlanningDraftWorkspace,
-} from '../src/planning-workspace.ts';
+} from '../src/runtime/session-workspace/planning-workspace.ts';
 import { createFixtureRepository, git, isWorkflowError } from './fixture.ts';
 
 test('planning workspace creates and exactly reuses one durable draft owner', () => {

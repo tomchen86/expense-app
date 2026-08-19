@@ -7,11 +7,11 @@ import {
   assertSpecDeltaPreconditions,
   verifyProjectedSpecDeltaOutcome,
   type SpecDeltaPreflightRecord,
-} from '../../archive-delta-verifier.ts';
+} from '../../runtime/repository-transaction/archive-delta-verifier.ts';
 import {
   assertPlainArchiveOutputFile,
   listPlainArchiveFiles,
-} from '../../archive-output-safety.ts';
+} from '../../runtime/repository-transaction/archive-output-safety.ts';
 import {
   canonicalJson,
   compareCanonicalStrings,
@@ -22,23 +22,26 @@ import {
   WorkflowError,
   workflowError,
 } from '../../foundation/errors/errors.ts';
-import { createTrustedExecutionEnvironment } from '../../execution-environment.ts';
+import { createTrustedExecutionEnvironment } from '../../runtime/provider-execution/execution-environment.ts';
 import {
   discoverRepository,
   fingerprintRepositoryWorktree,
   listChangedPaths,
   runGit,
-} from '../../git.ts';
+} from '../../runtime/repository-transaction/git.ts';
 import {
   createOpenSpecProcess,
   resolveOpenSpecInstallation,
-} from '../../openspec-executor.ts';
-import { parseValidation } from '../../openspec-payloads.ts';
+} from '../../adapters/planning/openspec/documents/openspec-executor.ts';
+import { parseValidation } from '../../adapters/planning/openspec/documents/openspec-payloads.ts';
 import {
   assertPlanningPaths,
   requiredPlanningArtifactPaths,
 } from '../../modules/source/planning-paths.ts';
-import { assertChangeId, normalizeChangedPath } from '../../paths.ts';
+import {
+  assertChangeId,
+  normalizeChangedPath,
+} from '../../runtime/session-workspace/paths.ts';
 
 export type ArchiveTransformation = {
   changeId: string;

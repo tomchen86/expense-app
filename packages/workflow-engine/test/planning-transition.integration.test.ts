@@ -9,21 +9,21 @@ import { canonicalJson } from '../src/foundation/canonical-json/canonical-json.t
 import {
   readContentRecord,
   writeContentRecord,
-} from '../src/content-record-store.ts';
-import { loadChangeContract } from '../src/contracts.ts';
-import { commitFacts } from '../src/git-transitions.ts';
+} from '../src/runtime/storage-journal/content-record-store.ts';
+import { loadChangeContract } from '../src/adapters/consumer/expense-app/work-registry/contracts.ts';
+import { commitFacts } from '../src/runtime/repository-transaction/git-transitions.ts';
 import { deriveInvestigationFirstPlanningSubject } from '../src/modules/assurance/planning-assurance-validator.ts';
-import { readPlanningTransitionReport } from '../src/planning-report.ts';
+import { readPlanningTransitionReport } from '../src/runtime/storage-journal/planning-report.ts';
 import {
   commitPlanningTransition,
   type PlanningTransitionTestHooks,
 } from '../src/application/propose/planning-transition.ts';
-import { inspectPlanningTransition } from '../src/planning-contract.ts';
+import { inspectPlanningTransition } from '../src/adapters/planning/openspec/documents/planning-contract.ts';
 import {
   abortSession,
   startSession,
 } from '../src/application/execute-task/session.ts';
-import { INVESTIGATION_PLANNING_ACTIVATION_MARKER } from '../src/openspec-schema-contract.ts';
+import { INVESTIGATION_PLANNING_ACTIVATION_MARKER } from '../src/adapters/planning/openspec/documents/openspec-schema-contract.ts';
 import {
   activateInvestigationPlanning,
   createFixtureRepository,

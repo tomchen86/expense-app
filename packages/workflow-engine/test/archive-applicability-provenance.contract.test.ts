@@ -4,11 +4,11 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import { writeContentRecord } from '../src/content-record-store.ts';
+import { writeContentRecord } from '../src/runtime/storage-journal/content-record-store.ts';
 import {
   readPlanningTransitionReport,
   writePlanningTransitionReport,
-} from '../src/planning-report.ts';
+} from '../src/runtime/storage-journal/planning-report.ts';
 
 const BASE_REPORT = {
   schemaVersion: 1 as const,

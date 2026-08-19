@@ -2,8 +2,8 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import test from 'node:test';
 
-import { deriveAuthorityAuditRepositoryId } from '../src/authority-audit-ledger.ts';
-import { verifyAuthorityAuditEvents } from '../src/authority-audit-service.ts';
+import { deriveAuthorityAuditRepositoryId } from '../src/runtime/storage-journal/authority-audit-ledger.ts';
+import { verifyAuthorityAuditEvents } from '../src/runtime/storage-journal/authority-audit-service.ts';
 import {
   canonicalExecutionBudgetGrantSigningBytes,
   createExecutionBudgetGrantEnvelope,
@@ -16,7 +16,7 @@ import {
   revokeIssuedExecutionBudgetGrant,
 } from '../src/execution-grant-cli.ts';
 import { ExitCode, workflowError } from '../src/foundation/errors/errors.ts';
-import { listExecutionJobs } from '../src/execution-runtime.ts';
+import { listExecutionJobs } from '../src/runtime/provider-execution/execution-runtime.ts';
 import { loadInvestigationRuntimeContext } from '../src/lifecycle-context.ts';
 import { startPropose } from '../src/application/propose/propose-orchestrator.ts';
 import { revokeTaskMandate } from '../src/modules/authority/task-mandate.ts';

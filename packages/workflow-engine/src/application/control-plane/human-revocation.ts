@@ -5,20 +5,23 @@ import path from 'node:path';
 import {
   type AuthorityAuditLedgerScope,
   type Sha256Digest,
-} from '../../authority-audit-ledger.ts';
+} from '../../runtime/storage-journal/authority-audit-ledger.ts';
 import {
   recordAuthorityAuditEvent,
   verifyAuthorityAuditEvents,
-} from '../../authority-audit-service.ts';
+} from '../../runtime/storage-journal/authority-audit-service.ts';
 import { canonicalJson } from '../../foundation/canonical-json/canonical-json.ts';
 import { ExitCode, workflowError } from '../../foundation/errors/errors.ts';
-import { ensurePlainDirectory } from '../../filesystem-safety.ts';
-import { discoverRepository, runGit } from '../../git.ts';
+import { ensurePlainDirectory } from '../../runtime/repository-transaction/filesystem-safety.ts';
+import {
+  discoverRepository,
+  runGit,
+} from '../../runtime/repository-transaction/git.ts';
 import { parseMaintainerPolicy } from '../../modules/authority/maintainer-policy.ts';
 import {
   createInteractiveSshSigner,
   type MaintainerSignerProvider,
-} from '../../maintainer-signer.ts';
+} from '../../adapters/signing/ssh/maintainer-signer.ts';
 
 const SHA256 = /^sha256:[0-9a-f]{64}$/;
 const SUBJECT = /^[A-Za-z0-9][A-Za-z0-9._:@/+-]{0,255}$/;

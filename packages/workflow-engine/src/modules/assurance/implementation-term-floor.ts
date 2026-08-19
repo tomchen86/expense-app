@@ -4,13 +4,16 @@ import os from 'node:os';
 import path from 'node:path';
 
 import { canonicalJson } from '../../foundation/canonical-json/canonical-json.ts';
-import type { InvestigationArtifact } from '../../contracts.ts';
+import type { InvestigationArtifact } from '../../adapters/consumer/expense-app/work-registry/contracts.ts';
 import {
   assertStoredEvidenceNode,
   type EvidenceNode,
-} from '../../evidence-node.ts';
+} from '../../adapters/compatibility/investigation-v2/evidence-node.ts';
 import { ExitCode, workflowError } from '../../foundation/errors/errors.ts';
-import { runGit, runGitWithEnvironment } from '../../git.ts';
+import {
+  runGit,
+  runGitWithEnvironment,
+} from '../../runtime/repository-transaction/git.ts';
 import {
   deriveInvestigationGroups,
   readInvestigationGroupNode,

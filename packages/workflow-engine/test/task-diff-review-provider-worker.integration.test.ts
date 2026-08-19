@@ -10,12 +10,12 @@ import { verifyPullRequest } from '../src/ci.ts';
 import {
   assertDocumentationClosureCommitCurrent,
   parseDocumentationClosureFromCommitMessage,
-} from '../src/documentation-closure.ts';
-import { DOCUMENTATION_CLOSURE_ACTIVATION_MARKER } from '../src/documentation-closure-activation.ts';
+} from '../src/runtime/managed-documents/contracts/documentation-closure.ts';
+import { DOCUMENTATION_CLOSURE_ACTIVATION_MARKER } from '../src/runtime/managed-documents/ownership/documentation-closure-activation.ts';
 import { ExitCode, workflowError } from '../src/foundation/errors/errors.ts';
-import { discoverRepository } from '../src/git.ts';
-import { commitFacts } from '../src/git-transitions.ts';
-import { renderHandoff } from '../src/handoff.ts';
+import { discoverRepository } from '../src/runtime/repository-transaction/git.ts';
+import { commitFacts } from '../src/runtime/repository-transaction/git-transitions.ts';
+import { renderHandoff } from '../src/adapters/consumer/expense-app/handoff/handoff.ts';
 import { loadActiveSessionContext } from '../src/lifecycle-context.ts';
 import {
   cancelFinalizeRecovery,
@@ -23,17 +23,17 @@ import {
   finalizeTask,
   inspectFinalizeRecoveryStatus,
 } from '../src/application/finalize/lifecycle.ts';
-import { investigationRuntimePaths } from '../src/paths.ts';
+import { investigationRuntimePaths } from '../src/runtime/session-workspace/paths.ts';
 import { commitPlanningTransition } from '../src/application/propose/planning-transition.ts';
 import {
   readProviderInvocation,
   readProviderInvocationManifest,
   readProviderInvocationRequest,
-} from '../src/provider-invocation-store.ts';
-import { PROVIDER_RUNNER_RESIDUALS } from '../src/provider-runner.ts';
-import { readProviderAutomaticRetrySchedule } from '../src/provider-retry-scheduler.ts';
+} from '../src/runtime/storage-journal/provider-invocation-store.ts';
+import { PROVIDER_RUNNER_RESIDUALS } from '../src/runtime/provider-execution/provider-runner.ts';
+import { readProviderAutomaticRetrySchedule } from '../src/runtime/provider-execution/provider-retry-scheduler.ts';
 import { runProviderWorker } from '../src/provider-worker.ts';
-import { listProviderWorkerMaintenanceWarnings } from '../src/provider-worker-maintenance.ts';
+import { listProviderWorkerMaintenanceWarnings } from '../src/runtime/storage-journal/provider-worker-maintenance.ts';
 import {
   preparePullRequestPreMergeAssurance,
   verifyPullRequestWithPreMergeAssurance,

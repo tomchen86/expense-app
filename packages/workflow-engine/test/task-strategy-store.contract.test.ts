@@ -12,7 +12,7 @@ import {
   COLLABORATION_GRANT_RESIDUALS,
   COLLABORATION_GRANT_RETAINED_OBLIGATIONS,
 } from '../src/modules/authority/collaboration-grant.ts';
-import type { InvestigationRuntimePaths } from '../src/paths.ts';
+import type { InvestigationRuntimePaths } from '../src/runtime/session-workspace/paths.ts';
 import { createProviderInvocationRequest } from '../src/modules/provider-orchestration/provider-contracts.ts';
 import {
   admitRoleResult,
@@ -27,7 +27,7 @@ import {
   readTaskStrategyPatchImportReceipt,
   readTaskStrategyPatchRecord,
   readTaskStrategyPatchReservation,
-} from '../src/task-strategy-patch-store.ts';
+} from '../src/runtime/storage-journal/task-strategy-patch-store.ts';
 import {
   TASK_STRATEGY_IMPLEMENTATION_OUTPUT_SCHEMA,
   TASK_STRATEGY_IMPLEMENTATION_POLICY_DIGEST,
@@ -46,7 +46,7 @@ import {
   readTaskStrategyImplementationResultBinding,
   type TaskStrategyCallerImplementationReservation,
   type TaskStrategyImplementationReservation,
-} from '../src/task-strategy-provider-store.ts';
+} from '../src/runtime/storage-journal/task-strategy-provider-store.ts';
 
 const SESSION_ID = 'session-repeated-red';
 const SOURCE_A = '1'.repeat(40);

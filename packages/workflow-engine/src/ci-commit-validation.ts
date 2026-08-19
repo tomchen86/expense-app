@@ -15,10 +15,13 @@ import {
   taskKey,
   type CompletedTask,
 } from './ci-task-state.ts';
-import { parseTasks, type ChangeContract } from './contracts.ts';
+import {
+  parseTasks,
+  type ChangeContract,
+} from './adapters/consumer/expense-app/work-registry/contracts.ts';
 import { ExitCode, workflowError } from './foundation/errors/errors.ts';
-import { completionDocumentPaths } from './managed-documents.ts';
-import { matchesAllowedPath } from './paths.ts';
+import { completionDocumentPaths } from './runtime/managed-documents/validation/managed-documents.ts';
+import { matchesAllowedPath } from './runtime/session-workspace/paths.ts';
 
 export function validateCommitSequence(
   repositoryRoot: string,

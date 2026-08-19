@@ -3,19 +3,28 @@ import crypto from 'node:crypto';
 import { canonicalJson } from './foundation/canonical-json/canonical-json.ts';
 import { verifyPullRequest } from './ci.ts';
 import { listRangeCommits, type RangeCommit } from './ci-git.ts';
-import { loadChangeContract, loadWorkflowConfig } from './contracts.ts';
+import {
+  loadChangeContract,
+  loadWorkflowConfig,
+} from './adapters/consumer/expense-app/work-registry/contracts.ts';
 import {
   parseDocumentationClosureFromCommitMessage,
   type DocumentationClosureRecord,
-} from './documentation-closure.ts';
+} from './runtime/managed-documents/contracts/documentation-closure.ts';
 import { ExitCode, workflowError } from './foundation/errors/errors.ts';
-import { discoverRepository, runGit } from './git.ts';
-import { commitChangedPaths, commitFacts } from './git-transitions.ts';
+import {
+  discoverRepository,
+  runGit,
+} from './runtime/repository-transaction/git.ts';
+import {
+  commitChangedPaths,
+  commitFacts,
+} from './runtime/repository-transaction/git-transitions.ts';
 import {
   ManagedTrailerSyntaxError,
   parseManagedTrailers,
 } from './modules/lifecycle/managed-trailers.ts';
-import { normalizePolicyPath } from './paths.ts';
+import { normalizePolicyPath } from './runtime/session-workspace/paths.ts';
 import {
   completePreMergeAssurance,
   createPlanningGenerationCurrentnessProof,
@@ -31,13 +40,13 @@ import {
   type PreMergeCoverageEntry,
   type PreparedPreMergeAssurance,
 } from './modules/assurance/pre-merge-assurance.ts';
-import { committedPlanningGeneration } from './planning-generation-history.ts';
+import { committedPlanningGeneration } from './runtime/repository-transaction/planning-generation-history.ts';
 import { validateInvestigationFirstPlanningReadiness } from './modules/assurance/planning-assurance-validator.ts';
-import { investigationRuntimePaths } from './paths.ts';
+import { investigationRuntimePaths } from './runtime/session-workspace/paths.ts';
 import {
   readPreMergeAssurance,
   storePreMergeAssurance,
-} from './pre-merge-assurance-store.ts';
+} from './runtime/storage-journal/pre-merge-assurance-store.ts';
 
 type PullRequestVerification = ReturnType<typeof verifyPullRequest>;
 

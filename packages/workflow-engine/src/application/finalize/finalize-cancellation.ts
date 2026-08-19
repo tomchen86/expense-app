@@ -7,12 +7,12 @@ import { ExitCode, workflowError } from '../../foundation/errors/errors.ts';
 import {
   assertPlainDirectory,
   ensurePlainDirectory,
-} from '../../filesystem-safety.ts';
+} from '../../runtime/repository-transaction/filesystem-safety.ts';
 import {
   parseFinalizeTransaction,
   type FinalizeTransaction,
-} from '../../finalize-transaction.ts';
-import { writeJsonAtomic } from '../../session-store.ts';
+} from '../../runtime/repository-transaction/finalize-transaction.ts';
+import { writeJsonAtomic } from '../../runtime/session-workspace/session-store.ts';
 
 const DIGEST = /^[0-9a-f]{64}$/;
 const MAX_RECORD_BYTES = 16 * 1024 * 1024;

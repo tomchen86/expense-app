@@ -13,25 +13,28 @@ import type {
   ChangeContract,
   PlanningAssuranceBinding,
   PlanningAssuranceSummary,
-} from '../../contracts.ts';
-import { isPlanningAssuranceBinding } from '../../contracts.ts';
+} from '../../adapters/consumer/expense-app/work-registry/contracts.ts';
+import { isPlanningAssuranceBinding } from '../../adapters/consumer/expense-app/work-registry/contracts.ts';
 import { ExitCode, workflowError } from '../../foundation/errors/errors.ts';
 import {
   assertStoredEvidenceNode,
   type EvidenceNode,
-} from '../../evidence-node.ts';
-import { resolveTrackedEvidenceCurrentParents } from '../../evidence-reuse-path.ts';
+} from '../../adapters/compatibility/investigation-v2/evidence-node.ts';
+import { resolveTrackedEvidenceCurrentParents } from '../../adapters/compatibility/investigation-v2/evidence-reuse-path.ts';
 import {
   assertInvestigationApplicability,
   type InvestigationApplicability,
 } from '../investigation/domain/investigation-applicability.ts';
 import { validateInvestigationLedgerProjection } from '../projection/investigation-design-projection.ts';
-import { runGit, runGitBuffer } from '../../git.ts';
+import {
+  runGit,
+  runGitBuffer,
+} from '../../runtime/repository-transaction/git.ts';
 import {
   loadMaintainerPolicy,
   parseMaintainerPolicy,
 } from '../authority/maintainer-policy.ts';
-import { createInteractiveSshSigner } from '../../maintainer-signer.ts';
+import { createInteractiveSshSigner } from '../../adapters/signing/ssh/maintainer-signer.ts';
 import {
   assertAuthorizedPlanReviewChallengeClosure,
   createPlanReviewSubject,

@@ -6,7 +6,7 @@ import path from 'node:path';
 import test from 'node:test';
 
 import { canonicalJson } from '../src/foundation/canonical-json/canonical-json.ts';
-import { investigationRuntimePaths } from '../src/paths.ts';
+import { investigationRuntimePaths } from '../src/runtime/session-workspace/paths.ts';
 import {
   createTaskDiffExternalClosureSubmission,
   createTaskDiffExternalContinuationBinding,
@@ -14,7 +14,7 @@ import {
   listAllTaskDiffExternalContinuationBindings,
   listAllTaskDiffExternalContinuationReservations,
   taskDiffExternalContinuationBindingPath,
-} from '../src/task-diff-review-external-store.ts';
+} from '../src/runtime/storage-journal/task-diff-review-external-store.ts';
 import { createTaskDiffReviewSubject } from '../src/modules/assurance/task-diff-review.ts';
 
 test('global external continuation inventory is read-only, sorted, and canonical-binding only', () => {

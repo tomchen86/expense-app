@@ -4,12 +4,12 @@ import fs from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
 
-import { loadAiAdapterPolicy } from '../src/ai-adapter-policy.ts';
+import { loadAiAdapterPolicy } from '../src/runtime/provider-execution/ai-adapter-policy.ts';
 import { canonicalJson } from '../src/foundation/canonical-json/canonical-json.ts';
-import { loadChangeContract } from '../src/contracts.ts';
+import { loadChangeContract } from '../src/adapters/consumer/expense-app/work-registry/contracts.ts';
 import { ExitCode, workflowError } from '../src/foundation/errors/errors.ts';
-import { createEvidenceNode } from '../src/evidence-node.ts';
-import { writeEvidenceNode } from '../src/evidence-object-store.ts';
+import { createEvidenceNode } from '../src/adapters/compatibility/investigation-v2/evidence-node.ts';
+import { writeEvidenceNode } from '../src/runtime/storage-journal/evidence-object-store.ts';
 import { projectProviderInvocationExecution } from '../src/modules/provider-orchestration/execution-core.ts';
 import {
   buildContextManifest,
@@ -19,9 +19,9 @@ import {
 import {
   executionJobStatePath,
   readExecutionJobState,
-} from '../src/execution-store.ts';
-import { discoverRepository } from '../src/git.ts';
-import { investigationRuntimePaths } from '../src/paths.ts';
+} from '../src/runtime/storage-journal/execution-store.ts';
+import { discoverRepository } from '../src/runtime/repository-transaction/git.ts';
+import { investigationRuntimePaths } from '../src/runtime/session-workspace/paths.ts';
 import {
   PLAN_REVIEW_COVERAGE,
   PLAN_REVIEW_OUTPUT_SCHEMA,
@@ -44,13 +44,13 @@ import {
   readProviderInvocationRequest,
   storeProviderExecutionPolicySnapshot,
   type PlanReviewManifest,
-} from '../src/provider-invocation-store.ts';
+} from '../src/runtime/storage-journal/provider-invocation-store.ts';
 import {
   ensureProviderPromptContext,
   providerPromptContextStoreRoot,
-} from '../src/provider-execution-governance.ts';
+} from '../src/runtime/provider-execution/provider-execution-governance.ts';
 import { startPropose } from '../src/application/propose/propose-orchestrator.ts';
-import { PROVIDER_RUNNER_RESIDUALS } from '../src/provider-runner.ts';
+import { PROVIDER_RUNNER_RESIDUALS } from '../src/runtime/provider-execution/provider-runner.ts';
 import {
   createProviderWorkerDispatcherForTesting,
   runProviderWorker,

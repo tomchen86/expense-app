@@ -1,7 +1,7 @@
 import crypto from 'node:crypto';
 import { canonicalJson } from '../../foundation/canonical-json/canonical-json.js';
 import { ExitCode, workflowError } from '../../foundation/errors/errors.js';
-import { normalizePolicyPath } from '../../paths.js';
+import { normalizePolicyPath } from '../../runtime/session-workspace/paths.js';
 const DIGEST = /^[0-9a-f]{64}$/;
 const OBJECT_ID = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
 const CHANGE_ID = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;

@@ -4,20 +4,23 @@ import path from 'node:path';
 
 import { canonicalJson } from '../../foundation/canonical-json/canonical-json.ts';
 import { isRecord } from '../../foundation/canonical-json/contract-values.ts';
-import { loadWorkflowConfig } from '../../contracts.ts';
-import { authorityTagPublishCommand } from '../../authority-relay-command.ts';
+import { loadWorkflowConfig } from '../../adapters/consumer/expense-app/work-registry/contracts.ts';
+import { authorityTagPublishCommand } from '../../adapters/remote/github/authority-relay-command.ts';
 import {
   ExitCode,
   workflowError,
   type WorkflowError,
 } from '../../foundation/errors/errors.ts';
-import { discoverRepository, runGit } from '../../git.ts';
+import {
+  discoverRepository,
+  runGit,
+} from '../../runtime/repository-transaction/git.ts';
 import {
   createPrivateCanonicalJson,
   readPrivateCanonicalJson,
   assertPrivateInvestigationDirectory,
   withPrivateRuntimeLock,
-} from '../../investigation-session-store.ts';
+} from '../../runtime/storage-journal/investigation-session-store.ts';
 import {
   issueAuthorityAttestation,
   projectAuthorityAttestationRelay,
@@ -42,7 +45,7 @@ import {
   assertTaskId,
   investigationRuntimePaths,
   normalizeExactRepositoryPath,
-} from '../../paths.ts';
+} from '../../runtime/session-workspace/paths.ts';
 
 const SHA256 = /^[0-9a-f]{64}$/;
 const COMMIT_OID = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;

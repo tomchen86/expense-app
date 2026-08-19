@@ -6,13 +6,13 @@ import test from 'node:test';
 
 import { canonicalJson } from '../src/foundation/canonical-json/canonical-json.ts';
 import { commitPlanningTransition } from '../src/application/propose/planning-transition.ts';
-import { renderHandoff } from '../src/handoff.ts';
+import { renderHandoff } from '../src/adapters/consumer/expense-app/handoff/handoff.ts';
 import {
   cancelFinalizeRecovery,
   finalizeTask,
   inspectFinalizeRecoveryStatus,
 } from '../src/application/finalize/lifecycle.ts';
-import { PROVIDER_RUNNER_RESIDUALS } from '../src/provider-runner.ts';
+import { PROVIDER_RUNNER_RESIDUALS } from '../src/runtime/provider-execution/provider-runner.ts';
 import { runProviderWorker } from '../src/provider-worker.ts';
 import { startSession } from '../src/application/execute-task/session.ts';
 import {

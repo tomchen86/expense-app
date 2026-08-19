@@ -18,7 +18,7 @@ import {
   publishInvestigationManifestV3,
   readInvestigationPublicationRefState,
   resumeInvestigationManifestPublication,
-} from '../src/investigation-publication.ts';
+} from '../src/runtime/managed-documents/transaction/investigation-publication.ts';
 import { git } from './fixture.ts';
 
 test('v3 publication performs lock-scoped CAS and publishes Manifest before its current ref', () => {

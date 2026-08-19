@@ -1,8 +1,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
-import { verifyArchiveDeltaOutcomes } from './archive-delta-verifier.ts';
-import { preEpochCompletedTaskIds } from './bootstrap-task-exemption.ts';
+import { verifyArchiveDeltaOutcomes } from './runtime/repository-transaction/archive-delta-verifier.ts';
+import { preEpochCompletedTaskIds } from './adapters/compatibility/investigation-v2/bootstrap-task-exemption.ts';
 import { assertUniqueCollaborationGrantUses } from './modules/authority/collaboration-grant.ts';
 import { canonicalCheckDefinition } from './ci-historical-contract.ts';
 import { collectHistoricalCollaborationGrantUses } from './ci-planning.ts';
@@ -16,27 +16,30 @@ import {
   loadChangeContract,
   loadChecksConfig,
   loadWorkflowConfig,
-} from './contracts.ts';
+} from './adapters/consumer/expense-app/work-registry/contracts.ts';
 import { ExitCode, workflowError } from './foundation/errors/errors.ts';
-import { createTrustedExecutionEnvironment } from './execution-environment.ts';
+import { createTrustedExecutionEnvironment } from './runtime/provider-execution/execution-environment.ts';
 import {
   archiveCommitMessage,
   commitChangedPaths,
   commitFacts,
   findExactTaskCommits,
-} from './git-transitions.ts';
-import { listChangedPaths, runGit } from './git.ts';
+} from './runtime/repository-transaction/git-transitions.ts';
+import {
+  listChangedPaths,
+  runGit,
+} from './runtime/repository-transaction/git.ts';
 import {
   createOpenSpecProcess,
   resolveOpenSpecInstallation,
-} from './openspec-executor.ts';
+} from './adapters/planning/openspec/documents/openspec-executor.ts';
 import {
   parseSchemaResolution,
   parseSchemaValidation,
   parseStatus,
   parseValidation,
-} from './openspec-payloads.ts';
-import { inspectOpenSpecSchemaContract } from './openspec-schema-contract.ts';
+} from './adapters/planning/openspec/documents/openspec-payloads.ts';
+import { inspectOpenSpecSchemaContract } from './adapters/planning/openspec/documents/openspec-schema-contract.ts';
 
 type ArchiveTotals = {
   added: number;

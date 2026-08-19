@@ -14,7 +14,7 @@ import {
   type ContextManifest,
   type WorkflowContextState,
 } from '../src/modules/authority/execution-governance.ts';
-import { runDurableContextRetentionMaintenance } from '../src/retention-control.ts';
+import { runDurableContextRetentionMaintenance } from '../src/runtime/provider-execution/retention-control.ts';
 
 function manifest(epoch: number, content: string): ContextManifest {
   return buildContextManifest({

@@ -9,8 +9,8 @@ import {
   resolvePathRole,
   type PathRole,
 } from '../src/modules/source/path-role-registry.ts';
-import { loadWorkflowConfig } from '../src/contracts.ts';
-import { resolveTaskAuthorizationRequirement } from '../src/task-authorization-policy.ts';
+import { loadWorkflowConfig } from '../src/adapters/consumer/expense-app/work-registry/contracts.ts';
+import { resolveTaskAuthorizationRequirement } from '../src/adapters/consumer/expense-app/work-registry/task-authorization-policy.ts';
 
 const EXPECTED_ROLES: ReadonlyArray<
   readonly [repositoryPath: string, role: PathRole]
@@ -20,7 +20,7 @@ const EXPECTED_ROLES: ReadonlyArray<
     'control-plane',
   ],
   [
-    'packages/workflow-engine/src/intervention-engine-artifact-store.ts',
+    'packages/workflow-engine/src/runtime/storage-journal/intervention-engine-artifact-store.ts',
     'control-plane',
   ],
   [
@@ -28,8 +28,14 @@ const EXPECTED_ROLES: ReadonlyArray<
     'control-plane',
   ],
   ['packages/workflow-engine/src/recovery-trust-root-restore.ts', 'grant'],
-  ['packages/workflow-engine/src/contract-artifacts.ts', 'control-plane'],
-  ['packages/workflow-engine/src/task-authorization-policy.ts', 'lifecycle'],
+  [
+    'packages/workflow-engine/src/adapters/consumer/expense-app/work-registry/contract-artifacts.ts',
+    'control-plane',
+  ],
+  [
+    'packages/workflow-engine/src/adapters/consumer/expense-app/work-registry/task-authorization-policy.ts',
+    'lifecycle',
+  ],
 ];
 
 test('new unified-plan authority modules have exact non-compressible roles', () => {

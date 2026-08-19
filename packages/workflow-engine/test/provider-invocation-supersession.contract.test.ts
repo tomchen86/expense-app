@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
 
-import { loadAiAdapterPolicy } from '../src/ai-adapter-policy.ts';
+import { loadAiAdapterPolicy } from '../src/runtime/provider-execution/ai-adapter-policy.ts';
 import { canonicalJson } from '../src/foundation/canonical-json/canonical-json.ts';
 import { isWorkflowError } from './fixture.ts';
 import { loadInvestigationRuntimeContext } from '../src/lifecycle-context.ts';
@@ -25,8 +25,8 @@ import {
   storeProviderExecutionPolicySnapshot,
   type BlindSurveyManifest,
   type ProviderInvocationRecord,
-} from '../src/provider-invocation-store.ts';
-import { listProviderInvocationLifecycleProjections } from '../src/investigation-session-store.ts';
+} from '../src/runtime/storage-journal/provider-invocation-store.ts';
+import { listProviderInvocationLifecycleProjections } from '../src/runtime/storage-journal/investigation-session-store.ts';
 import { createFixtureRepository, git } from './fixture.ts';
 
 const FIRST_CREATED_AT = '2026-08-04T01:00:00.000Z';
@@ -532,7 +532,7 @@ function createManifest(
       schemaVersion: 1,
       summary: `Exercise provider supersession ${label}.`,
       explicitPaths: [
-        'packages/workflow-engine/src/provider-invocation-supersession.ts',
+        'packages/workflow-engine/src/runtime/provider-execution/provider-invocation-supersession.ts',
       ],
       explicitSymbols: ['readProviderInvocationEvidence'],
       explicitConfigKeys: [],

@@ -6,7 +6,7 @@ import path from 'node:path';
 import test from 'node:test';
 
 import { canonicalJson } from '../src/foundation/canonical-json/canonical-json.ts';
-import { investigationRuntimePaths } from '../src/paths.ts';
+import { investigationRuntimePaths } from '../src/runtime/session-workspace/paths.ts';
 import { createProviderInvocationRequest } from '../src/modules/provider-orchestration/provider-contracts.ts';
 import {
   createTaskDiffReviewChallengeResponse,
@@ -20,7 +20,7 @@ import {
   listAllTaskDiffReviewContinuationResultBindings,
   listAllTaskDiffReviewReservations,
   listAllTaskDiffReviewResultBindings,
-} from '../src/task-diff-review-store.ts';
+} from '../src/runtime/storage-journal/task-diff-review-store.ts';
 import {
   createTaskDiffReviewSubject,
   deriveTaskDiffReviewCandidatePlan,

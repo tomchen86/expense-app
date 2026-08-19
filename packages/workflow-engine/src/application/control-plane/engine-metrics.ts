@@ -11,14 +11,14 @@ import { listExecutionReplacementGrantRequestDigests } from './execution-replace
 import {
   listExecutionJobs,
   type ExecutionJobInspection,
-} from '../../execution-runtime.ts';
+} from '../../runtime/provider-execution/execution-runtime.ts';
 import {
   assertHumanResolutionConsequences,
   assertLegacySupersedeHumanResolutionDecisionReadOnly,
   privatePathExists,
   readHumanResolutionNode,
   readPrivateCanonicalJson,
-} from '../../investigation-session-store.ts';
+} from '../../runtime/storage-journal/investigation-session-store.ts';
 import {
   WORKFLOW_SUPERSEDE_REASONS,
   type WorkflowSupersedeReason,
@@ -27,11 +27,11 @@ import { loadInvestigationRuntimeContext } from '../../lifecycle-context.ts';
 import {
   assertInvestigationId,
   type InvestigationRuntimePaths,
-} from '../../paths.ts';
+} from '../../runtime/session-workspace/paths.ts';
 import {
   inspectProviderRetentionMetrics,
   type ProviderRetentionMetrics,
-} from '../../provider-retention.ts';
+} from '../../runtime/provider-execution/provider-retention.ts';
 import { ExitCode, workflowError } from '../../foundation/errors/errors.ts';
 
 type Rate = Readonly<{

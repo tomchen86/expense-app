@@ -5,13 +5,13 @@ import test from 'node:test';
 import {
   createConvergenceRecord,
   createDescendantReuseProof,
-} from '../src/evidence-convergence.ts';
-import { evaluateEvidenceCurrentness } from '../src/evidence-currentness.ts';
+} from '../src/adapters/compatibility/investigation-v2/evidence-convergence.ts';
+import { evaluateEvidenceCurrentness } from '../src/adapters/compatibility/investigation-v2/evidence-currentness.ts';
 import {
   createEvidenceNode,
   type EvidenceNode,
   type EvidenceNodeInput,
-} from '../src/evidence-node.ts';
+} from '../src/adapters/compatibility/investigation-v2/evidence-node.ts';
 import { WorkflowError } from '../src/foundation/errors/errors.ts';
 import {
   evaluatePlanningAssurance,

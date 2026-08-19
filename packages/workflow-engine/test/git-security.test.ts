@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import { discoverRepository } from '../src/git.ts';
+import { discoverRepository } from '../src/runtime/repository-transaction/git.ts';
 import { createFixtureRepository, git, isWorkflowError } from './fixture.ts';
 
 test(

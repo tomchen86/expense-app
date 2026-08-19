@@ -1,4 +1,4 @@
-import type { ParsedTask } from './contracts.ts';
+import type { ParsedTask } from './adapters/consumer/expense-app/work-registry/contracts.ts';
 import { ExitCode, workflowError } from './foundation/errors/errors.ts';
 
 export type CompletedTask = { changeId: string; taskId: string };

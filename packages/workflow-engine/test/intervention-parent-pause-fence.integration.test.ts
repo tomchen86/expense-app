@@ -14,7 +14,7 @@ import {
 } from '../src/application/control-plane/intervention-control-bootstrap.ts';
 import { canonicalJson } from '../src/foundation/canonical-json/canonical-json.ts';
 import { createEngineArtifact } from '../src/modules/authority/intervention-control.ts';
-import { preparePersistedEngineAdoption } from '../src/intervention-control-persistence.ts';
+import { preparePersistedEngineAdoption } from '../src/runtime/storage-journal/intervention-control-persistence.ts';
 import { persistInterventionEngineArtifact } from '../src/application/control-plane/intervention-maintenance.ts';
 import { setupFinalizedControlPlanePromotionFixture } from './control-plane-promotion-fixture.ts';
 

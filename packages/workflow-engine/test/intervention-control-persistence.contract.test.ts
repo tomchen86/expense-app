@@ -29,7 +29,7 @@ import {
   recoverPersistedControlPlaneUpdate,
   recoverPersistedEngineAdoption,
   rollbackPersistedEngineAdoption,
-} from '../src/intervention-control-persistence.ts';
+} from '../src/runtime/storage-journal/intervention-control-persistence.ts';
 import { WorkflowError } from '../src/foundation/errors/errors.ts';
 
 const NOW = new Date('2026-08-03T10:00:00.000Z');

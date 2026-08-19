@@ -9,7 +9,7 @@ import { dispatchHumanGrantCli } from '../src/human-grant-cli.ts';
 import {
   executeHumanResolutionGrant,
   recoverHumanResolutionGrant,
-} from '../src/investigation-session.ts';
+} from '../src/adapters/compatibility/investigation-v2/investigation-session.ts';
 import { isWorkflowError } from './fixture.ts';
 
 test('human grant CLI requires an agent-proposed reason but cannot submit the human decision', async () => {

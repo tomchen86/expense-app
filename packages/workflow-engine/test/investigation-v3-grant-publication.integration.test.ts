@@ -6,7 +6,7 @@ import path from 'node:path';
 import test from 'node:test';
 
 import { canonicalJson } from '../src/foundation/canonical-json/canonical-json.ts';
-import { discoverRepository } from '../src/git.ts';
+import { discoverRepository } from '../src/runtime/repository-transaction/git.ts';
 import {
   createApprovalSubject,
   approvalSubjectDigest,
@@ -20,7 +20,7 @@ import {
   grantStorePaths,
   prepareGrantTransition,
   readGrantRecord,
-} from '../src/grant-store.ts';
+} from '../src/runtime/storage-journal/grant-store.ts';
 import { createTransitionRegistry } from '../src/modules/authority/grant-transition-registry.ts';
 import {
   buildInvestigationManifestDraft,
@@ -35,16 +35,16 @@ import {
   resumeInvestigationManifestPublication,
   type InvestigationManifestPublicationFailure,
   type InvestigationManifestPublicationPaths,
-} from '../src/investigation-publication.ts';
+} from '../src/runtime/managed-documents/transaction/investigation-publication.ts';
 import { investigationV3GrantTransitionDefinitions } from '../src/modules/investigation/seal/investigation-v3-grant.ts';
 import {
   compareAndSwapInvestigationSession,
   createCurrentInvestigationRef,
   createInvestigationSessionRecord,
   readInvestigationSession,
-} from '../src/investigation-session-store.ts';
-import { investigationRuntimePaths } from '../src/paths.ts';
-import { runtimePaths } from '../src/session-store.ts';
+} from '../src/runtime/storage-journal/investigation-session-store.ts';
+import { investigationRuntimePaths } from '../src/runtime/session-workspace/paths.ts';
+import { runtimePaths } from '../src/runtime/session-workspace/session-store.ts';
 import { git } from './fixture.ts';
 
 const REASON =

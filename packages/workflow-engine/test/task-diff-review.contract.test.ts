@@ -6,7 +6,7 @@ import test from 'node:test';
 import {
   DOCUMENTATION_CLOSURE_ACTIVATION_MARKER,
   parseDocumentationClosureActivationMarker,
-} from '../src/documentation-closure-activation.ts';
+} from '../src/runtime/managed-documents/ownership/documentation-closure-activation.ts';
 import {
   createTaskDiffDocumentationClosureRequirement,
   createTaskDiffReviewSubject,

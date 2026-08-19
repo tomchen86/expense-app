@@ -4,7 +4,7 @@ import path from 'node:path';
 import test from 'node:test';
 
 import { verifyPullRequest } from '../src/ci.ts';
-import { INVESTIGATION_PLANNING_ACTIVATION_MARKER } from '../src/openspec-schema-contract.ts';
+import { INVESTIGATION_PLANNING_ACTIVATION_MARKER } from '../src/adapters/planning/openspec/documents/openspec-schema-contract.ts';
 import {
   activateInvestigationPlanning,
   configureChecks,

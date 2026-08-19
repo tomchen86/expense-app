@@ -4,7 +4,7 @@ import path from 'node:path';
 
 import { canonicalJson } from './foundation/canonical-json/canonical-json.ts';
 import { ExitCode, workflowError } from './foundation/errors/errors.ts';
-import type { PersistenceHumanSignatureVerifier } from './intervention-control-persistence.ts';
+import type { PersistenceHumanSignatureVerifier } from './runtime/storage-journal/intervention-control-persistence.ts';
 import {
   assertRecoveryAuthorityDomain,
   type RecoveryAuthorityDescriptorV1,

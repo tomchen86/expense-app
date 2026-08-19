@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import { loadChangeContract } from '../src/contracts.ts';
+import { loadChangeContract } from '../src/adapters/consumer/expense-app/work-registry/contracts.ts';
 import {
   completeTask,
   finishSession,

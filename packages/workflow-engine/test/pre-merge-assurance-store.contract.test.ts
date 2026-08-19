@@ -14,8 +14,8 @@ import {
 import {
   readPreMergeAssurance,
   storePreMergeAssurance,
-} from '../src/pre-merge-assurance-store.ts';
-import { investigationRuntimePaths } from '../src/paths.ts';
+} from '../src/runtime/storage-journal/pre-merge-assurance-store.ts';
+import { investigationRuntimePaths } from '../src/runtime/session-workspace/paths.ts';
 
 const digest = (character: string): string => character.repeat(64);
 const objectId = (character: string): string => character.repeat(40);

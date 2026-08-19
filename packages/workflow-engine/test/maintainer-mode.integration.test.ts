@@ -18,13 +18,13 @@ import {
 import {
   assertInteractiveSignerContext,
   type MaintainerSignerProvider,
-} from '../src/maintainer-signer.ts';
+} from '../src/adapters/signing/ssh/maintainer-signer.ts';
 import {
   inspectMaintainerGrants,
   maintainerGrantStorePaths,
   reserveMaintainerGrant,
   storeAvailableMaintainerGrant,
-} from '../src/maintainer-store.ts';
+} from '../src/runtime/storage-journal/maintainer-store.ts';
 import { revokeLegacyMaintainerGrant } from '../src/application/control-plane/maintainer-revoke.ts';
 import {
   loadMaintainerPolicy,
@@ -51,13 +51,13 @@ import { commitPlanningTransition } from '../src/application/propose/planning-tr
 import {
   runtimePaths,
   withRepositoryLifecycleOperation,
-} from '../src/session-store.ts';
+} from '../src/runtime/session-workspace/session-store.ts';
 import {
   checkAuthoritySession,
   readAuthoritySession,
   startAuthoritySession,
 } from '../src/application/control-plane/maintainer-session.ts';
-import { readImmutableReport } from '../src/report-store.ts';
+import { readImmutableReport } from '../src/runtime/storage-journal/report-store.ts';
 import {
   commitAuthoritySession,
   SimulatedAuthorityCrash,
@@ -66,12 +66,12 @@ import {
   readAuthorityCommitJournal,
   recoverAuthorityCommit,
 } from '../src/application/control-plane/maintainer-recovery.ts';
-import { commitFacts } from '../src/git-transitions.ts';
+import { commitFacts } from '../src/runtime/repository-transaction/git-transitions.ts';
 import { validateCiAuthorityCommit } from '../src/ci-authority.ts';
 import { listRangeCommits } from '../src/ci-git.ts';
 import { replayCommitSequence } from '../src/ci-sequence.ts';
 import { canonicalCheckDefinition } from '../src/ci-historical-contract.ts';
-import { resolveCheckRunner } from '../src/runner-resolution.ts';
+import { resolveCheckRunner } from '../src/adapters/consumer/expense-app/work-registry/runner-resolution.ts';
 
 const POLICY: MaintainerPolicy = {
   schemaVersion: 1,
@@ -964,11 +964,13 @@ test('repository authority check entrypoints remain pinned across workflow CLI e
   const expectedChecks = {
     'managed-documents': {
       command: 'documents',
-      entrypoint: 'packages/workflow-engine/src/managed-documents.ts',
+      entrypoint:
+        'packages/workflow-engine/src/runtime/managed-documents/validation/managed-documents.ts',
     },
     'openspec-assets': {
       command: 'openspec-assets',
-      entrypoint: 'packages/workflow-engine/src/openspec-planning-assets.ts',
+      entrypoint:
+        'packages/workflow-engine/src/adapters/planning/openspec/documents/openspec-planning-assets.ts',
     },
   } as const;
   const scratch = fs.mkdtempSync(

@@ -63,7 +63,10 @@
       "destructiveDatabase": false
     },
     "managed-documents": {
-      "command": ["node", "packages/workflow-engine/src/managed-documents.ts"],
+      "command": [
+        "node",
+        "packages/workflow-engine/src/runtime/managed-documents/validation/managed-documents.ts"
+      ],
       "destructiveDatabase": false
     },
     "workflow-format": {
@@ -99,7 +102,7 @@
     "openspec-assets": {
       "command": [
         "node",
-        "packages/workflow-engine/src/openspec-planning-assets.ts"
+        "packages/workflow-engine/src/adapters/planning/openspec/documents/openspec-planning-assets.ts"
       ],
       "destructiveDatabase": false
     }

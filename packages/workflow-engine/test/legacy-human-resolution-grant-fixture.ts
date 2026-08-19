@@ -1,7 +1,10 @@
 import crypto from 'node:crypto';
 
-import { authorityTagPublishCommand } from '../src/authority-relay-command.ts';
-import { discoverRepository, runGit } from '../src/git.ts';
+import { authorityTagPublishCommand } from '../src/adapters/remote/github/authority-relay-command.ts';
+import {
+  discoverRepository,
+  runGit,
+} from '../src/runtime/repository-transaction/git.ts';
 import {
   assertHumanResolutionConsequences,
   assertHumanResolutionDecision,
@@ -11,7 +14,7 @@ import {
   readActiveHumanResolutionJournal,
   readInvestigationSession,
   storeAvailableHumanResolutionGrant,
-} from '../src/investigation-session-store.ts';
+} from '../src/runtime/storage-journal/investigation-session-store.ts';
 import { loadInvestigationRuntimeContext } from '../src/lifecycle-context.ts';
 import {
   HUMAN_RESOLUTION_SIGNATURE_NAMESPACE,

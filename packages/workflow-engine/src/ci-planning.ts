@@ -21,38 +21,38 @@ import {
   readChangeSchemaName,
   type ManagedSchemaName,
   type ParsedTask,
-} from './contracts.ts';
-import { createTrustedExecutionEnvironment } from './execution-environment.ts';
+} from './adapters/consumer/expense-app/work-registry/contracts.ts';
+import { createTrustedExecutionEnvironment } from './runtime/provider-execution/execution-environment.ts';
 import { engineProjectionPathsForTransition } from './modules/projection/engine-projection-registry.ts';
 import { ExitCode, workflowError } from './foundation/errors/errors.ts';
 import {
   commitChangedPaths,
   commitFacts,
   planningCommitMessage,
-} from './git-transitions.ts';
+} from './runtime/repository-transaction/git-transitions.ts';
 import { createArchiveApplicabilityProjection } from './application/archive/archive-transformation.ts';
-import { runGit } from './git.ts';
-import { validateHandoffForChange } from './handoff.ts';
+import { runGit } from './runtime/repository-transaction/git.ts';
+import { validateHandoffForChange } from './adapters/consumer/expense-app/handoff/handoff.ts';
 import {
   assertInvestigationPlanningActivation,
   readActivationMarkerFile,
   protectedActivationBaselines,
-} from './openspec-schema-contract.ts';
+} from './adapters/planning/openspec/documents/openspec-schema-contract.ts';
 import {
   validateInvestigationFirstPlanningReadiness,
   type InvestigationFirstPlanningAssuranceSummary,
 } from './modules/assurance/planning-assurance-validator.ts';
-import { committedPlanningGeneration } from './planning-generation-history.ts';
+import { committedPlanningGeneration } from './runtime/repository-transaction/planning-generation-history.ts';
 import { readPlanningAmendmentDecision } from './modules/lifecycle/planning-amendment-decision.ts';
 import {
   amendmentLeftWorkMarkedDone,
   assertPlanningPaths,
   assertPlanningTaskHistory,
   taskStates,
-} from './planning-contract.ts';
+} from './adapters/planning/openspec/documents/planning-contract.ts';
 import { requiredPlanningArtifactPaths } from './modules/source/planning-paths.ts';
-import type { PlanningTaskState } from './planning-report.ts';
-import { normalizeChangedPath } from './paths.ts';
+import type { PlanningTaskState } from './runtime/storage-journal/planning-report.ts';
+import { normalizeChangedPath } from './runtime/session-workspace/paths.ts';
 
 export type CiPlanningCommitValidation = {
   changeId: string;

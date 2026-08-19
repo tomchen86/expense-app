@@ -4,23 +4,26 @@ import { canonicalJson } from '../../foundation/canonical-json/canonical-json.ts
 import type {
   CrossAgentTddExecution,
   TddSingleAgentExecution,
-} from '../../contracts.ts';
+} from '../../adapters/consumer/expense-app/work-registry/contracts.ts';
 import { ExitCode, workflowError } from '../../foundation/errors/errors.ts';
-import { previewExactStaging } from '../../git-transitions.ts';
-import { runGit } from '../../git.ts';
-import { investigationRuntimePaths, matchesAllowedPath } from '../../paths.ts';
+import { previewExactStaging } from '../../runtime/repository-transaction/git-transitions.ts';
+import { runGit } from '../../runtime/repository-transaction/git.ts';
+import {
+  investigationRuntimePaths,
+  matchesAllowedPath,
+} from '../../runtime/session-workspace/paths.ts';
 import { resolveCurrentTaskStrategyCorrection } from '../../application/execute-task/task-strategy-correction.ts';
-import { readTaskStrategyGreenFailureRecord } from '../../task-strategy-correction-store.ts';
+import { readTaskStrategyGreenFailureRecord } from '../../runtime/storage-journal/task-strategy-correction-store.ts';
 import {
   readTaskStrategyPatchCurrentBinding,
   readTaskStrategyPatchImportReceipt,
   readTaskStrategyPatchRecord,
   readTaskStrategyPatchReservation,
-} from '../../task-strategy-patch-store.ts';
+} from '../../runtime/storage-journal/task-strategy-patch-store.ts';
 import {
   readTaskStrategyTransaction,
   type TaskStrategyFrozenFile,
-} from '../../task-strategy-store.ts';
+} from '../../runtime/storage-journal/task-strategy-store.ts';
 import {
   createTaskStrategyCorrectionSubject,
   createTaskStrategyImplementationSubject,
@@ -28,7 +31,7 @@ import {
 import {
   readTaskStrategyCallerImplementationBinding,
   readTaskStrategyImplementationResultBinding,
-} from '../../task-strategy-provider-store.ts';
+} from '../../runtime/storage-journal/task-strategy-provider-store.ts';
 import { assertTaskMechanicalTransformationEvidence } from '../../application/execute-task/task-mechanical-transform.ts';
 import type { SessionInspection } from '../../application/finalize/verification.ts';
 

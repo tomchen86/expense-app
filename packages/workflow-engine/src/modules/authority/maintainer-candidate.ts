@@ -14,7 +14,7 @@ import {
 import {
   runtimePaths,
   withRepositoryLifecycleOperation,
-} from '../../session-store.ts';
+} from '../../runtime/session-workspace/session-store.ts';
 import type { TaskMandateBinding } from './task-mandate.ts';
 
 const DIGEST = /^[0-9a-f]{64}$/;

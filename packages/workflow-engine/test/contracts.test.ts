@@ -8,7 +8,7 @@ import test from 'node:test';
 import {
   assertDisposableDatabase,
   createCheckEnvironment,
-} from '../src/database-policy.ts';
+} from '../src/adapters/consumer/expense-app/work-registry/database-policy.ts';
 import {
   loadChangeContract,
   loadWorkflowConfig,
@@ -16,24 +16,24 @@ import {
   parseInvestigationArtifact,
   parsePlanReviewArtifact,
   parseTasks,
-} from '../src/contracts.ts';
+} from '../src/adapters/consumer/expense-app/work-registry/contracts.ts';
 import {
   createConvergenceRecord,
   createDescendantReuseProof,
-} from '../src/evidence-convergence.ts';
+} from '../src/adapters/compatibility/investigation-v2/evidence-convergence.ts';
 import {
   currentParentEvidenceRef,
   descendantReuseProofEvidenceRef,
-} from '../src/evidence-reuse-path.ts';
-import { createEvidenceNode } from '../src/evidence-node.ts';
+} from '../src/adapters/compatibility/investigation-v2/evidence-reuse-path.ts';
+import { createEvidenceNode } from '../src/adapters/compatibility/investigation-v2/evidence-node.ts';
 import { WorkflowError } from '../src/foundation/errors/errors.ts';
 import {
   assertPolicyPathInsideRepository,
   matchesAllowedPath,
   normalizeChangedPath,
   normalizePolicyPath,
-} from '../src/paths.ts';
-import { workflowContractArtifactPaths } from '../src/contract-artifacts.ts';
+} from '../src/runtime/session-workspace/paths.ts';
+import { workflowContractArtifactPaths } from '../src/adapters/consumer/expense-app/work-registry/contract-artifacts.ts';
 import { createFixtureRepository, writeV2ChangeArtifacts } from './fixture.ts';
 
 if (import.meta.main) await import('./contracts-legacy-family.ts');

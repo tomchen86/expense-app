@@ -9,15 +9,15 @@ import {
   canonicalEvidenceNodeEnvelope,
   createEvidenceNode,
   type EvidenceNodeInput,
-} from '../src/evidence-node.ts';
+} from '../src/adapters/compatibility/investigation-v2/evidence-node.ts';
 import {
   compareAndSwapEvidenceRef,
   readEvidenceNode,
   readEvidenceRefs,
   writeEvidenceNode,
-} from '../src/evidence-object-store.ts';
+} from '../src/runtime/storage-journal/evidence-object-store.ts';
 import { WorkflowError } from '../src/foundation/errors/errors.ts';
-import { investigationRuntimePaths } from '../src/paths.ts';
+import { investigationRuntimePaths } from '../src/runtime/session-workspace/paths.ts';
 
 const DIGESTS = {
   policy: '1'.repeat(64),

@@ -9,14 +9,14 @@ import {
   buildClaudeProviderInvocation,
   CLAUDE_EXECUTABLE_CANDIDATES,
   CLAUDE_REQUIRED_HELP_FLAGS,
-} from '../src/claude-provider-adapter.ts';
+} from '../src/adapters/providers/claude/claude-provider-adapter.ts';
 import {
   buildCodexProviderInvocation,
   CODEX_EXECUTABLE_CANDIDATES,
-} from '../src/codex-provider-adapter.ts';
+} from '../src/adapters/providers/codex/codex-provider-adapter.ts';
 import { canonicalJson } from '../src/foundation/canonical-json/canonical-json.ts';
-import { DEFAULT_AI_ADAPTER_RETRY_ACCOUNTING } from '../src/ai-adapter-policy.ts';
-import { createProviderExecutionEnvironment } from '../src/execution-environment.ts';
+import { DEFAULT_AI_ADAPTER_RETRY_ACCOUNTING } from '../src/runtime/provider-execution/ai-adapter-policy.ts';
+import { createProviderExecutionEnvironment } from '../src/runtime/provider-execution/execution-environment.ts';
 import {
   buildContextManifest,
   inspectDurableEpochContextStore,
@@ -28,7 +28,7 @@ import { WorkflowError } from '../src/foundation/errors/errors.ts';
 import {
   captureGovernedProviderProjection,
   compareGovernedProviderProjections,
-} from '../src/git.ts';
+} from '../src/runtime/repository-transaction/git.ts';
 import {
   createProviderInvocationRequest,
   type ProviderInvocationRequest,
@@ -38,7 +38,7 @@ import {
   BLIND_SURVEY_OUTPUT_SCHEMA,
   BLIND_SURVEY_PROVIDER_OUTPUT_SCHEMA,
   type ProviderInvocationAcceptanceBinding,
-} from '../src/provider-invocation-store.ts';
+} from '../src/runtime/storage-journal/provider-invocation-store.ts';
 import {
   PLAN_REVIEW_OUTPUT_SCHEMA,
   PLAN_REVIEW_PROVIDER_OUTPUT_SCHEMA,
@@ -49,14 +49,14 @@ import {
   extractProviderRepairFailure,
   prepareProviderPromptContextForInvocation,
   providerPromptContextStoreRoot,
-} from '../src/provider-execution-governance.ts';
+} from '../src/runtime/provider-execution/provider-execution-governance.ts';
 import {
   createProviderRunnerForTesting,
   preflightBuiltInProvider,
   type ProviderExecutableIdentity,
   type ProviderRunInput,
   type ProviderRunnerHost,
-} from '../src/provider-runner.ts';
+} from '../src/runtime/provider-execution/provider-runner.ts';
 import {
   createFixtureRepository,
   git,

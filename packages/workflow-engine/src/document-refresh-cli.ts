@@ -3,7 +3,7 @@ import {
   inspectDocumentRefreshProposal,
   proposeDocumentRefresh,
   reviewDocumentRefresh,
-} from './document-refresh.ts';
+} from './runtime/managed-documents/transaction/document-refresh.ts';
 import { ExitCode, workflowError } from './foundation/errors/errors.ts';
 
 export function dispatchDocumentRefreshCommand(

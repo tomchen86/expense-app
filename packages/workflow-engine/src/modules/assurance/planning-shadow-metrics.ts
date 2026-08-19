@@ -9,7 +9,7 @@ import {
 import {
   type InvestigationArtifact,
   parsePlanReviewArtifact,
-} from '../../contracts.ts';
+} from '../../adapters/consumer/expense-app/work-registry/contracts.ts';
 import {
   deriveClassGroupsWithContext,
   readInvestigationGroupNode,
@@ -18,12 +18,12 @@ import {
   readCurrentInvestigationRef,
   readInvestigationSession,
   type InvestigationSession,
-} from '../../investigation-session-store.ts';
-import { investigationRuntimePaths } from '../../paths.ts';
+} from '../../runtime/storage-journal/investigation-session-store.ts';
+import { investigationRuntimePaths } from '../../runtime/session-workspace/paths.ts';
 import { readPlanReviewCoverageRequirementNode } from './plan-review-coverage.ts';
 import { readPlanReviewNode } from './plan-review.ts';
 import { assessPredicateDiscrimination } from '../investigation/domain/predicate-discrimination.ts';
-import { readPinnedTrackedTree } from '../../tracked-tree-reader.ts';
+import { readPinnedTrackedTree } from '../../runtime/repository-transaction/tracked-tree-reader.ts';
 
 type Recorded<T> = Readonly<{ status: 'recorded'; value: T }>;
 type NotRecorded = Readonly<{

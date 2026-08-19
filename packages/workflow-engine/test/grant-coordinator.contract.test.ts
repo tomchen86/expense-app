@@ -18,7 +18,7 @@ import {
   assertGrantLifecycleBarrier,
   grantStorePaths,
   readGrantRecord,
-} from '../src/grant-store.ts';
+} from '../src/runtime/storage-journal/grant-store.ts';
 import {
   codeOwnedApprovalModuleRegistry,
   GRANT_PROOF_SSH_V1_CONFIGURATION_DIGEST,

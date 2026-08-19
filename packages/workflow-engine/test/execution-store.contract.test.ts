@@ -4,10 +4,10 @@ import fs from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
 
-import { loadAiAdapterPolicy } from '../src/ai-adapter-policy.ts';
+import { loadAiAdapterPolicy } from '../src/runtime/provider-execution/ai-adapter-policy.ts';
 import { canonicalJson } from '../src/foundation/canonical-json/canonical-json.ts';
 import { projectProviderInvocationExecution } from '../src/modules/provider-orchestration/execution-core.ts';
-import { inspectExecutionJob } from '../src/execution-runtime.ts';
+import { inspectExecutionJob } from '../src/runtime/provider-execution/execution-runtime.ts';
 import {
   acceptLegacyProviderAttemptResult,
   executionJobStatePath,
@@ -15,12 +15,12 @@ import {
   listExecutionJobStates,
   materializeLegacyProviderExecutionJob,
   readExecutionJobState,
-} from '../src/execution-store.ts';
+} from '../src/runtime/storage-journal/execution-store.ts';
 import {
   materializeAllLegacyExecution,
   materializeLegacyExecutionInvestigation,
   reconcileLegacyProviderInvocation,
-} from '../src/execution-recovery.ts';
+} from '../src/runtime/provider-execution/execution-recovery.ts';
 import { loadInvestigationRuntimeContext } from '../src/lifecycle-context.ts';
 import {
   createProviderInvocationRequest,
@@ -45,7 +45,7 @@ import {
   storeProviderExecutionPolicySnapshot,
   type BlindSurveyManifest,
   type ProviderLeaseClaim,
-} from '../src/provider-invocation-store.ts';
+} from '../src/runtime/storage-journal/provider-invocation-store.ts';
 import { createFixtureRepository, git, isWorkflowError } from './fixture.ts';
 
 const CHANGE_ID = 'demo-change';
@@ -844,7 +844,9 @@ function createManifest(repository: string): BlindSurveyManifest {
     normalizedIntent: {
       schemaVersion: 1,
       summary: 'Exercise the durable execution store.',
-      explicitPaths: ['packages/workflow-engine/src/execution-store.ts'],
+      explicitPaths: [
+        'packages/workflow-engine/src/runtime/storage-journal/execution-store.ts',
+      ],
       explicitSymbols: ['readExecutionJobState'],
       explicitConfigKeys: [],
       renamePairs: [],

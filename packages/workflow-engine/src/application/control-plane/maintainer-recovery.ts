@@ -11,14 +11,14 @@ import {
   type AuthorityAuditLedgerEntry,
   type AuthorityAuditLedgerScope,
   type Sha256Digest,
-} from '../../authority-audit-ledger.ts';
+} from '../../runtime/storage-journal/authority-audit-ledger.ts';
 import {
   authorityAuditAppendInputForEvent,
   buildAuthorityAuditEvent,
   recordAuthorityAuditEvent,
   verifyAuthorityAuditEvents,
   type AuthorityAuditEventInput,
-} from '../../authority-audit-service.ts';
+} from '../../runtime/storage-journal/authority-audit-service.ts';
 import {
   authorityApplicationReceiptTagRef,
   createAuthorityApplicationReceiptPayload,
@@ -26,7 +26,7 @@ import {
   signedGrantEnvelopeDigest,
 } from '../../modules/authority/authority-application-receipt.ts';
 import { canonicalJson } from '../../foundation/canonical-json/canonical-json.ts';
-import { authorityAttestationRelayProjectionCommand } from '../../authority-relay-command.ts';
+import { authorityAttestationRelayProjectionCommand } from '../../adapters/remote/github/authority-relay-command.ts';
 import { ExitCode, workflowError } from '../../foundation/errors/errors.ts';
 import {
   authorityCandidateCommitMessage,
@@ -35,7 +35,7 @@ import {
   commitFacts,
   rollbackExactStaging,
   updateManagedRef,
-} from '../../git-transitions.ts';
+} from '../../runtime/repository-transaction/git-transitions.ts';
 import {
   armPostApprovalAdmissionDeadline,
   assertPostApprovalAdmissionDeadline,
@@ -50,7 +50,7 @@ import {
   withPostApprovalAdmissionDeadline,
   type PostApprovalAdmissionDeadline,
   type PostApprovalBudgetTestOptions,
-} from '../../git.ts';
+} from '../../runtime/repository-transaction/git.ts';
 import {
   canonicalMaintainerGrantV2Envelope,
   isMaintainerGrantV2Envelope,
@@ -59,7 +59,7 @@ import { parseMaintainerPolicy } from '../../modules/authority/maintainer-policy
 import {
   createInteractiveSshSigner,
   type MaintainerSignerProvider,
-} from '../../maintainer-signer.ts';
+} from '../../adapters/signing/ssh/maintainer-signer.ts';
 import {
   failAuthoritySession,
   markAuthoritySessionCommitted,
@@ -79,10 +79,10 @@ import {
   terminallyExpireMaintainerReservationUnderLifecycleLock,
   terminallyFailMaintainerReservationUnderLifecycleLock,
   terminallyInvalidateMaintainerReservationUnderLifecycleLock,
-} from '../../maintainer-store.ts';
+} from '../../runtime/storage-journal/maintainer-store.ts';
 import { parseManagedTrailers } from '../../modules/lifecycle/managed-trailers.ts';
-import { assertSessionId } from '../../paths.ts';
-import { withRepositoryLifecycleOperation } from '../../session-store.ts';
+import { assertSessionId } from '../../runtime/session-workspace/paths.ts';
+import { withRepositoryLifecycleOperation } from '../../runtime/session-workspace/session-store.ts';
 import {
   assertActiveTaskMandateBindingUnderLifecycleLock,
   type TaskMandateBinding,

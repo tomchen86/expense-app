@@ -1,1 +1,1 @@
-export { revokeLegacyMaintainerGrant } from '../../maintainer-store.ts';
+export { revokeLegacyMaintainerGrant } from '../../runtime/storage-journal/maintainer-store.ts';

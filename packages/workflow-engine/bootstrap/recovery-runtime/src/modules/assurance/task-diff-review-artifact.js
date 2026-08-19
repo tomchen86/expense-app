@@ -1,7 +1,7 @@
 import crypto from 'node:crypto';
 import { canonicalJson } from '../../foundation/canonical-json/canonical-json.js';
 import { ExitCode, workflowError } from '../../foundation/errors/errors.js';
-import { normalizePolicyPath } from '../../paths.js';
+import { normalizePolicyPath } from '../../runtime/session-workspace/paths.js';
 import { assertAuthorizedReviewChallengeClosure, } from './review-challenge.js';
 import { deriveTaskDiffReviewCandidatePlan, parseTaskDiffReviewScope, parseTaskDiffReviewSubject, taskDiffReviewCandidateIdentityDigest, TASK_DIFF_REVIEW_COVERAGE, } from './task-diff-review.js';
 const DIGEST = /^[0-9a-f]{64}$/;

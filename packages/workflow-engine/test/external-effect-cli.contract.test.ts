@@ -6,13 +6,13 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import { deriveAuthorityAuditRepositoryId } from '../src/authority-audit-ledger.ts';
-import { verifyAuthorityAuditEvents } from '../src/authority-audit-service.ts';
-import type { MaintainerSignerProvider } from '../src/maintainer-signer.ts';
+import { deriveAuthorityAuditRepositoryId } from '../src/runtime/storage-journal/authority-audit-ledger.ts';
+import { verifyAuthorityAuditEvents } from '../src/runtime/storage-journal/authority-audit-service.ts';
+import type { MaintainerSignerProvider } from '../src/adapters/signing/ssh/maintainer-signer.ts';
 import {
   publishArtifactDigest,
   publishPrestateDigest,
-} from '../src/publish-executor.ts';
+} from '../src/adapters/remote/github/publish-executor.ts';
 import {
   authorizeTaskMandate,
   TASK_MANDATE_SIGNATURE_NAMESPACE_V2,

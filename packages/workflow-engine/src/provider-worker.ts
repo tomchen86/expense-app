@@ -12,7 +12,7 @@ import {
   type ExecutionFailureKind,
   type ReadOnlyProbeRequest,
 } from './modules/provider-orchestration/execution-core.ts';
-import { readInvestigationSession } from './investigation-session-store.ts';
+import { readInvestigationSession } from './runtime/storage-journal/investigation-session-store.ts';
 import { loadInvestigationRuntimeContext } from './lifecycle-context.ts';
 import {
   PLAN_REVIEW_OUTPUT_SCHEMA,
@@ -51,35 +51,35 @@ import {
   readProviderInvocationRequest,
   type ProviderInvocationFailure,
   type ProviderInvocationRecord,
-} from './provider-invocation-store.ts';
+} from './runtime/storage-journal/provider-invocation-store.ts';
 import {
   isProposeExemptionInvestigationId,
   readProposeExemptionSession,
-} from './propose-exemption-store.ts';
+} from './runtime/storage-journal/propose-exemption-store.ts';
 import {
   runBuiltInProvider,
   type ProviderRunInput,
   type ProviderRunOptions,
   type ProviderRunnerReport,
-} from './provider-runner.ts';
-import { extractProviderRepairFailure } from './provider-execution-governance.ts';
+} from './runtime/provider-execution/provider-runner.ts';
+import { extractProviderRepairFailure } from './runtime/provider-execution/provider-execution-governance.ts';
 import {
   processProviderFailureRetry,
   pumpProviderRetrySchedules,
   type ProviderRetrySchedulePumpOptions,
-} from './provider-retry-scheduler.ts';
-import { runEvidenceRetentionMaintenance } from './retention-control.ts';
-import { withRepositoryLifecycleOperation } from './session-store.ts';
+} from './runtime/provider-execution/provider-retry-scheduler.ts';
+import { runEvidenceRetentionMaintenance } from './runtime/provider-execution/retention-control.ts';
+import { withRepositoryLifecycleOperation } from './runtime/session-workspace/session-store.ts';
 import {
   recordTaskMandateProviderInvocationUnderLifecycleLock,
   withActiveTaskMandateBinding,
 } from './modules/authority/task-mandate.ts';
-import { recordProviderWorkerMaintenanceWarning } from './provider-worker-maintenance.ts';
+import { recordProviderWorkerMaintenanceWarning } from './runtime/storage-journal/provider-worker-maintenance.ts';
 
 export {
   listProviderWorkerMaintenanceWarnings,
   type ProviderWorkerMaintenanceWarning,
-} from './provider-worker-maintenance.ts';
+} from './runtime/storage-journal/provider-worker-maintenance.ts';
 
 export type ProviderWorkerResult = {
   schemaVersion: 1;

@@ -2,28 +2,31 @@ import crypto from 'node:crypto';
 
 import { resolveActorIdentity } from '../../modules/provider-orchestration/actor-identity.ts';
 import { canonicalJson } from '../../foundation/canonical-json/canonical-json.ts';
-import { pinCheckRunner, runExpectedRedCheck } from '../../check-runner.ts';
+import {
+  pinCheckRunner,
+  runExpectedRedCheck,
+} from '../../adapters/consumer/expense-app/work-registry/check-runner.ts';
 import type {
   CrossAgentTddExecution,
   TddSingleAgentExecution,
-} from '../../contracts.ts';
-import { createCheckEnvironment } from '../../database-policy.ts';
-import { createEvidenceNode } from '../../evidence-node.ts';
-import { writeEvidenceNode } from '../../evidence-object-store.ts';
+} from '../../adapters/consumer/expense-app/work-registry/contracts.ts';
+import { createCheckEnvironment } from '../../adapters/consumer/expense-app/work-registry/database-policy.ts';
+import { createEvidenceNode } from '../../adapters/compatibility/investigation-v2/evidence-node.ts';
+import { writeEvidenceNode } from '../../runtime/storage-journal/evidence-object-store.ts';
 import { ExitCode, workflowError } from '../../foundation/errors/errors.ts';
-import { previewExactStaging } from '../../git-transitions.ts';
-import { runGit } from '../../git.ts';
+import { previewExactStaging } from '../../runtime/repository-transaction/git-transitions.ts';
+import { runGit } from '../../runtime/repository-transaction/git.ts';
 import {
   loadInvestigationRuntimeContext,
   runSessionOperation,
 } from '../../lifecycle-context.ts';
-import { matchesAllowedPath } from '../../paths.ts';
+import { matchesAllowedPath } from '../../runtime/session-workspace/paths.ts';
 import {
   createTaskStrategyTransaction,
   readTaskStrategyTransaction,
   type TaskStrategyFrozenFile,
   type TaskStrategyTransaction,
-} from '../../task-strategy-store.ts';
+} from '../../runtime/storage-journal/task-strategy-store.ts';
 import { inspectSession } from '../finalize/verification.ts';
 
 const TASK_STRATEGY_RED_POLICY = Object.freeze({

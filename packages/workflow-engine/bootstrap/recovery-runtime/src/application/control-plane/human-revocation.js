@@ -1,13 +1,13 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import { recordAuthorityAuditEvent, verifyAuthorityAuditEvents, } from '../../authority-audit-service.js';
+import { recordAuthorityAuditEvent, verifyAuthorityAuditEvents, } from '../../runtime/storage-journal/authority-audit-service.js';
 import { canonicalJson } from '../../foundation/canonical-json/canonical-json.js';
 import { ExitCode, workflowError } from '../../foundation/errors/errors.js';
-import { ensurePlainDirectory } from '../../filesystem-safety.js';
-import { discoverRepository, runGit } from '../../git.js';
+import { ensurePlainDirectory } from '../../runtime/repository-transaction/filesystem-safety.js';
+import { discoverRepository, runGit, } from '../../runtime/repository-transaction/git.js';
 import { parseMaintainerPolicy } from '../../modules/authority/maintainer-policy.js';
-import { createInteractiveSshSigner, } from '../../maintainer-signer.js';
+import { createInteractiveSshSigner, } from '../../adapters/signing/ssh/maintainer-signer.js';
 const SHA256 = /^sha256:[0-9a-f]{64}$/;
 const SUBJECT = /^[A-Za-z0-9][A-Za-z0-9._:@/+-]{0,255}$/;
 const SUBJECT_KINDS = [

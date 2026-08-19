@@ -1,7 +1,7 @@
 import crypto from 'node:crypto';
 
 import { resolveActorIdentity } from '../../modules/provider-orchestration/actor-identity.ts';
-import { parseAiAdapterPolicyDocument } from '../../ai-adapter-policy.ts';
+import { parseAiAdapterPolicyDocument } from '../../runtime/provider-execution/ai-adapter-policy.ts';
 import { canonicalJson } from '../../foundation/canonical-json/canonical-json.ts';
 import {
   collaborationGrantEnvelopeDigest,
@@ -26,42 +26,45 @@ import {
   validateCollaborationGrantUseProjection,
   type CollaborationGrantUseProjection,
   type CollaborationGrantSelectionCoreBinding,
-} from '../../collaboration-grant-store.ts';
+} from '../../runtime/storage-journal/collaboration-grant-store.ts';
 import { digestRequiredCheckDefinitions } from '../../modules/lifecycle/contract-digests.ts';
 import {
   readEvidenceNode,
   writeEvidenceNode,
-} from '../../evidence-object-store.ts';
-import { createEvidenceNode } from '../../evidence-node.ts';
-import type { DocumentationReviewCapture } from '../../documentation-closure.ts';
+} from '../../runtime/storage-journal/evidence-object-store.ts';
+import { createEvidenceNode } from '../../adapters/compatibility/investigation-v2/evidence-node.ts';
+import type { DocumentationReviewCapture } from '../../runtime/managed-documents/contracts/documentation-closure.ts';
 import {
   ExitCode,
   WorkflowError,
   workflowError,
 } from '../../foundation/errors/errors.ts';
-import { readFinalizeTransaction } from '../../finalize-transaction.ts';
+import { readFinalizeTransaction } from '../../runtime/repository-transaction/finalize-transaction.ts';
 import {
   assertDocumentationClosureActivation,
   documentationClosureActivationAtCommit,
   readDocumentationClosureActivationMarkerFile,
-} from '../../documentation-closure-activation.ts';
+} from '../../runtime/managed-documents/ownership/documentation-closure-activation.ts';
 import {
   findExactTaskCommits,
   listStagedPaths,
   previewExactStaging,
-} from '../../git-transitions.ts';
-import { fingerprintUnstagedRepositoryProjection, runGit } from '../../git.ts';
+} from '../../runtime/repository-transaction/git-transitions.ts';
+import {
+  fingerprintUnstagedRepositoryProjection,
+  runGit,
+} from '../../runtime/repository-transaction/git.ts';
 import {
   loadActiveSessionContext,
   loadInvestigationRuntimeContext,
 } from '../../lifecycle-context.ts';
 import { parseMaintainerPolicy } from '../../modules/authority/maintainer-policy.ts';
-import { completionDocumentPaths } from '../../managed-documents.ts';
+import { completionDocumentPaths } from '../../runtime/managed-documents/validation/managed-documents.ts';
 import {
   createInteractiveSshSigner,
   type MaintainerSignerProvider,
   verifySshSignatureWithPublicKey,
-} from '../../maintainer-signer.ts';
+} from '../../adapters/signing/ssh/maintainer-signer.ts';
 import {
   parsePathRoleRegistry,
   resolvePathRole,
@@ -77,7 +80,7 @@ import {
   storeProviderExecutionPolicySnapshot,
   type TaskDiffReviewContinuationManifest,
   type TaskDiffReviewManifest,
-} from '../../provider-invocation-store.ts';
+} from '../../runtime/storage-journal/provider-invocation-store.ts';
 import type { ProviderId } from '../../modules/provider-orchestration/provider-registry.ts';
 import {
   assertAuthorizedReviewChallengeClosure,
@@ -88,7 +91,7 @@ import {
   assertInspectionReport,
   assertReportChecks,
   readSessionReport,
-} from '../../report-validation.ts';
+} from '../../runtime/storage-journal/report-validation.ts';
 import {
   admitRoleResult,
   authorizeGrantedOrdinaryRole,
@@ -103,7 +106,7 @@ import {
 import {
   withRepositoryLifecycleOperation,
   withSessionOperation,
-} from '../../session-store.ts';
+} from '../../runtime/session-workspace/session-store.ts';
 import {
   assertTaskDiffReviewChallengeResponseCurrent,
   assertTaskDiffFinalAssuranceCurrent,
@@ -156,7 +159,7 @@ import {
   type TaskDiffExternalContinuationReservation,
   type TaskDiffExternalReviewBinding,
   type TaskDiffExternalReviewReservation,
-} from '../../task-diff-review-external-store.ts';
+} from '../../runtime/storage-journal/task-diff-review-external-store.ts';
 import {
   createTaskDiffFinalAssuranceBinding,
   createTaskDiffReviewLineageSupersession,
@@ -181,7 +184,7 @@ import {
   type TaskDiffReviewContinuationResultBinding,
   type TaskDiffReviewReservationRecord,
   type TaskDiffReviewResultBinding,
-} from '../../task-diff-review-store.ts';
+} from '../../runtime/storage-journal/task-diff-review-store.ts';
 import {
   resolveTaskDiffReviewLineage,
   type TaskDiffReviewLineageEntry,
@@ -199,7 +202,7 @@ import {
   type TaskDiffTreeEntry,
 } from '../../modules/assurance/task-diff-review.ts';
 import { resolveCurrentTaskStrategyCorrection } from '../execute-task/task-strategy-correction.ts';
-import { readTaskStrategyGreenFailureRecord } from '../../task-strategy-correction-store.ts';
+import { readTaskStrategyGreenFailureRecord } from '../../runtime/storage-journal/task-strategy-correction-store.ts';
 import {
   createTaskStrategyCorrectionSubject,
   createTaskStrategyImplementationSubject,
@@ -207,8 +210,8 @@ import {
 import {
   readTaskStrategyCallerImplementationBinding,
   readTaskStrategyImplementationResultBinding,
-} from '../../task-strategy-provider-store.ts';
-import { readTaskStrategyTransaction } from '../../task-strategy-store.ts';
+} from '../../runtime/storage-journal/task-strategy-provider-store.ts';
+import { readTaskStrategyTransaction } from '../../runtime/storage-journal/task-strategy-store.ts';
 import {
   authorizeTaskMandateProviderReservationUnderLifecycleLock,
   type TaskMandateBinding,

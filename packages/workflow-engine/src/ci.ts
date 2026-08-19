@@ -27,10 +27,10 @@ import {
   loadChecksConfig,
   loadWorkflowConfig,
   type ChangeContract,
-} from './contracts.ts';
+} from './adapters/consumer/expense-app/work-registry/contracts.ts';
 import { ExitCode, workflowError } from './foundation/errors/errors.ts';
-import { discoverRepository } from './git.ts';
-import { validateWorkflowIntegrationAssets } from './integration-assets.ts';
+import { discoverRepository } from './runtime/repository-transaction/git.ts';
+import { validateWorkflowIntegrationAssets } from './adapters/consumer/expense-app/work-registry/integration-assets.ts';
 import { validateRepositoryState } from './repository-validation.ts';
 
 export type { CompletedTask } from './ci-task-state.ts';

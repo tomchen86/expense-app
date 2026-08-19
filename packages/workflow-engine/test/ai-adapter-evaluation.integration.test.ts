@@ -6,14 +6,14 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import { DEFAULT_AI_ADAPTER_RETRY_ACCOUNTING } from '../src/ai-adapter-policy.ts';
+import { DEFAULT_AI_ADAPTER_RETRY_ACCOUNTING } from '../src/runtime/provider-execution/ai-adapter-policy.ts';
 import { canonicalJson } from '../src/foundation/canonical-json/canonical-json.ts';
-import { evaluateAiAdapter } from '../src/ai-adapter-evaluation.ts';
+import { evaluateAiAdapter } from '../src/runtime/provider-execution/ai-adapter-evaluation.ts';
 import {
   createProviderAvailabilityPilotRunnerForTesting,
   verifyProviderAvailabilityPilot,
-} from '../src/provider-availability-pilot.ts';
-import { PROVIDER_RUNNER_RESIDUALS } from '../src/provider-runner.ts';
+} from '../src/runtime/provider-execution/provider-availability-pilot.ts';
+import { PROVIDER_RUNNER_RESIDUALS } from '../src/runtime/provider-execution/provider-runner.ts';
 import {
   createFixtureRepository,
   git,

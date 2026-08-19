@@ -8,7 +8,7 @@ import {
   grantHasExactKeys as hasExactKeys,
   grantSameStrings as sameStrings,
 } from './grant-primitives.ts';
-import type { GrantProofModuleSummary } from '../../grant-store.ts';
+import type { GrantProofModuleSummary } from '../../runtime/storage-journal/grant-store.ts';
 
 const MODULE_VERSION = /^[1-9][0-9]*$/;
 

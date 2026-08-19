@@ -6,19 +6,19 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import test from 'node:test';
 
-import { loadAiAdapterPolicy } from '../src/ai-adapter-policy.ts';
+import { loadAiAdapterPolicy } from '../src/runtime/provider-execution/ai-adapter-policy.ts';
 import { canonicalJson } from '../src/foundation/canonical-json/canonical-json.ts';
-import { loadChangeContract } from '../src/contracts.ts';
-import { createEvidenceNode } from '../src/evidence-node.ts';
-import { writeEvidenceNode } from '../src/evidence-object-store.ts';
+import { loadChangeContract } from '../src/adapters/consumer/expense-app/work-registry/contracts.ts';
+import { createEvidenceNode } from '../src/adapters/compatibility/investigation-v2/evidence-node.ts';
+import { writeEvidenceNode } from '../src/runtime/storage-journal/evidence-object-store.ts';
 import {
   inspectExecutionJob,
   listExecutionJobs,
-} from '../src/execution-runtime.ts';
+} from '../src/runtime/provider-execution/execution-runtime.ts';
 import {
   executionJobStatePath,
   readExecutionJobState,
-} from '../src/execution-store.ts';
+} from '../src/runtime/storage-journal/execution-store.ts';
 import { loadInvestigationRuntimeContext } from '../src/lifecycle-context.ts';
 import {
   createPlanReviewTargetSnapshotNode,
@@ -44,8 +44,8 @@ import {
   storeProviderExecutionPolicySnapshot,
   type BlindSurveyManifest,
   type PlanReviewManifest,
-} from '../src/provider-invocation-store.ts';
-import { PROVIDER_RUNNER_RESIDUALS } from '../src/provider-runner.ts';
+} from '../src/runtime/storage-journal/provider-invocation-store.ts';
+import { PROVIDER_RUNNER_RESIDUALS } from '../src/runtime/provider-execution/provider-runner.ts';
 import {
   PROVIDER_RETENTION_MAX_LIMIT,
   PROVIDER_RETENTION_MAX_RECEIPT_BYTES,
@@ -54,8 +54,8 @@ import {
   providerRetentionReceiptPath,
   pruneProviderRuntime,
   readProviderRetentionReceipt,
-} from '../src/provider-retention.ts';
-import { providerRetentionStagingDirectory } from '../src/provider-retention-receipt.ts';
+} from '../src/runtime/provider-execution/provider-retention.ts';
+import { providerRetentionStagingDirectory } from '../src/runtime/storage-journal/provider-retention-receipt.ts';
 import {
   createFixtureRepository,
   git,
@@ -1119,7 +1119,9 @@ function createManifest(
     normalizedIntent: {
       schemaVersion: 1,
       summary: `Retain provider history for ${investigationId}.`,
-      explicitPaths: ['packages/workflow-engine/src/provider-retention.ts'],
+      explicitPaths: [
+        'packages/workflow-engine/src/runtime/provider-execution/provider-retention.ts',
+      ],
       explicitSymbols: ['pruneProviderRuntime'],
       explicitConfigKeys: [],
       renamePairs: [],

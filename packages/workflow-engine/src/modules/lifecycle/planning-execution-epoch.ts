@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 import { canonicalJson } from '../../foundation/canonical-json/canonical-json.ts';
-import { loadWorkflowConfig } from '../../contracts.ts';
+import { loadWorkflowConfig } from '../../adapters/consumer/expense-app/work-registry/contracts.ts';
 import {
   buildContextManifest,
   initializeDurableEpochContextStore,
@@ -19,17 +19,20 @@ import {
   WorkflowError,
   workflowError,
 } from '../../foundation/errors/errors.ts';
-import { discoverRepository, runGit } from '../../git.ts';
-import { commitFacts } from '../../git-transitions.ts';
+import {
+  discoverRepository,
+  runGit,
+} from '../../runtime/repository-transaction/git.ts';
+import { commitFacts } from '../../runtime/repository-transaction/git-transitions.ts';
 import { parseManagedTrailers } from './managed-trailers.ts';
-import { assertChangeId } from '../../paths.ts';
+import { assertChangeId } from '../../runtime/session-workspace/paths.ts';
 import {
   readPlanningTransitionReport,
   type PlanningCarryForwardTaskEvidence,
   type PlanningTransitionReport,
-} from '../../planning-report.ts';
-import { runtimePaths } from '../../session-store.ts';
-import { preEpochCompletedTaskIds } from '../../bootstrap-task-exemption.ts';
+} from '../../runtime/storage-journal/planning-report.ts';
+import { runtimePaths } from '../../runtime/session-workspace/session-store.ts';
+import { preEpochCompletedTaskIds } from '../../adapters/compatibility/investigation-v2/bootstrap-task-exemption.ts';
 import { resolveTaskExecutionGenerationEvidence } from '../assurance/task-execution-evidence.ts';
 
 const SOURCE_CHECKPOINT = 'execution-complete';

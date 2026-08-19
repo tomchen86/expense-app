@@ -9,7 +9,7 @@ import {
   type ExitCodeValue,
 } from '../../foundation/errors/errors.ts';
 import type { Sha256Digest } from './intervention-control.ts';
-import type { PersistenceHumanSignatureVerifier } from '../../intervention-control-persistence.ts';
+import type { PersistenceHumanSignatureVerifier } from '../../runtime/storage-journal/intervention-control-persistence.ts';
 
 export const HARNESS_RECOVERY_SIGNATURE_NAMESPACE = 'HARNESS_RECOVERY_GRANT_V1';
 export const CONTROL_PLANE_RECOVERY_GRANT_TTL_MS = 5 * 60 * 1000;

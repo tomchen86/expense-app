@@ -13,13 +13,16 @@ import {
   verifyProtectedAuthorityAuditAnchors,
   type AuditDestructionGrantEnvelope,
   type AuthorityAuditLedgerScope,
-} from './authority-audit-ledger.ts';
+} from './runtime/storage-journal/authority-audit-ledger.ts';
 import {
   showAuthorityAuditTask,
   verifyAuthorityAuditEvents,
-} from './authority-audit-service.ts';
+} from './runtime/storage-journal/authority-audit-service.ts';
 import { ExitCode, workflowError } from './foundation/errors/errors.ts';
-import { discoverRepository, runGit } from './git.ts';
+import {
+  discoverRepository,
+  runGit,
+} from './runtime/repository-transaction/git.ts';
 import { parseMaintainerPolicy } from './modules/authority/maintainer-policy.ts';
 
 const MAX_AUDIT_INPUT_PATH_BYTES = 4_096;

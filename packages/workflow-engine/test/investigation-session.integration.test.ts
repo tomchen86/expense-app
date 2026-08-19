@@ -7,31 +7,31 @@ import path from 'node:path';
 import test from 'node:test';
 import { pathToFileURL } from 'node:url';
 
-import { loadAiAdapterPolicy } from '../src/ai-adapter-policy.ts';
+import { loadAiAdapterPolicy } from '../src/runtime/provider-execution/ai-adapter-policy.ts';
 import { canonicalJson } from '../src/foundation/canonical-json/canonical-json.ts';
 import {
   loadChangeContract,
   parseInvestigationArtifact,
-} from '../src/contracts.ts';
+} from '../src/adapters/consumer/expense-app/work-registry/contracts.ts';
 import { projectProviderInvocationExecution } from '../src/modules/provider-orchestration/execution-core.ts';
-import { readExecutionJobState } from '../src/execution-store.ts';
+import { readExecutionJobState } from '../src/runtime/storage-journal/execution-store.ts';
 import {
   compareAndSwapEvidenceRefsDocument,
   readEvidenceNode,
   readInvestigationEvidenceRefsClosure,
   writeEvidenceNode,
-} from '../src/evidence-object-store.ts';
+} from '../src/runtime/storage-journal/evidence-object-store.ts';
 import {
   canonicalEvidenceNodeEnvelope,
   createEvidenceNode,
   type EvidenceNode,
-} from '../src/evidence-node.ts';
+} from '../src/adapters/compatibility/investigation-v2/evidence-node.ts';
 import {
   preparedLockTemporaryPath,
   publishPreparedExclusiveLock,
   reclaimDeadPreparedLock,
-} from '../src/filesystem-safety.ts';
-import { discoverRepository } from '../src/git.ts';
+} from '../src/runtime/repository-transaction/filesystem-safety.ts';
+import { discoverRepository } from '../src/runtime/repository-transaction/git.ts';
 import { readInvestigationGroupNode } from '../src/modules/investigation/domain/investigation-groups.ts';
 import {
   createInvestigationCheckpointEnvelope,
@@ -47,7 +47,7 @@ import {
   startInvestigationSession,
   type GrantCoreHumanResolutionAuthorization,
   type GrantCoreHumanResolutionExecutionOptions,
-} from '../src/investigation-session.ts';
+} from '../src/adapters/compatibility/investigation-v2/investigation-session.ts';
 import {
   createPlanningContributionEnvelope,
   createPlanReviewDispositionsEnvelope,
@@ -59,7 +59,7 @@ import {
   startPropose,
   startProposeFromFile,
 } from '../src/application/propose/propose-orchestrator.ts';
-import { readCurrentProposeExemptionSession } from '../src/propose-exemption-store.ts';
+import { readCurrentProposeExemptionSession } from '../src/runtime/storage-journal/propose-exemption-store.ts';
 import {
   PLAN_REVIEW_COVERAGE,
   readPlanReviewNode,
@@ -70,7 +70,7 @@ import {
   type ProviderExecutableIdentity,
   type ProviderRunnerHost,
   type ProviderRunnerReport,
-} from '../src/provider-runner.ts';
+} from '../src/runtime/provider-execution/provider-runner.ts';
 import { runProviderWorker } from '../src/provider-worker.ts';
 import {
   checkpointContributionDigest,
@@ -86,13 +86,13 @@ import {
   writeHumanResolutionJournal,
   type HumanResolutionConsequences,
   type HumanResolutionDecision,
-} from '../src/investigation-session-store.ts';
-import { investigationRuntimePaths } from '../src/paths.ts';
+} from '../src/runtime/storage-journal/investigation-session-store.ts';
+import { investigationRuntimePaths } from '../src/runtime/session-workspace/paths.ts';
 import {
   withChangeTransitionAuthority,
   withHumanResolutionTransitionAuthority,
   withInvestigationTransitionAuthority,
-} from '../src/planning-lock.ts';
+} from '../src/runtime/session-workspace/planning-lock.ts';
 import {
   createProviderInvocationRequest,
   PROPOSE_POLICY_DIGEST,
@@ -117,7 +117,7 @@ import {
   readProviderRetryReservation,
   storeProviderExecutionPolicySnapshot,
   type BlindSurveyManifest,
-} from '../src/provider-invocation-store.ts';
+} from '../src/runtime/storage-journal/provider-invocation-store.ts';
 import { humanResolutionBlockerBinding } from '../src/modules/authority/maintainer-grant.ts';
 import {
   abortSession,
@@ -137,7 +137,7 @@ import {
   runtimePaths as workflowRuntimePaths,
   withRepositoryLifecycleOperation,
   withSessionOperation,
-} from '../src/session-store.ts';
+} from '../src/runtime/session-workspace/session-store.ts';
 
 const FIRST_INSTANT = '2026-07-24T00:00:00.000Z';
 const DURING_COMPLETION_GRACE = '2026-07-24T00:00:01.100Z';

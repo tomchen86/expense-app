@@ -1,9 +1,9 @@
-import type { InvestigationFullBlobManifestEntry } from '../../investigation-why.ts';
+import type { InvestigationFullBlobManifestEntry } from '../../adapters/compatibility/investigation-v2/investigation-why.ts';
 import type { FreshnessObservation } from './semantic-freshness.ts';
 import {
   readLedgerEntry,
   readLedgerIndex,
-} from '../../semantic-ledger-store.ts';
+} from '../../runtime/storage-journal/semantic-ledger-store.ts';
 import type { LedgerEntry } from './semantic-ledger.ts';
 import type { ReviewTarget } from '../assurance/review-coverage.ts';
 import { planSemanticReuse, type ReusePlan } from './semantic-reuse.ts';

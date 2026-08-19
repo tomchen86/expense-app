@@ -8,22 +8,22 @@ import test from 'node:test';
 import type { CollaborationGrantRequest } from '../src/modules/authority/collaboration-grant.ts';
 import { issueCollaborationGrant } from '../src/modules/authority/collaboration-grant.ts';
 import { canonicalJson } from '../src/foundation/canonical-json/canonical-json.ts';
-import { runGitWithEnvironment } from '../src/git.ts';
-import type { MaintainerSignerProvider } from '../src/maintainer-signer.ts';
-import { investigationRuntimePaths } from '../src/paths.ts';
+import { runGitWithEnvironment } from '../src/runtime/repository-transaction/git.ts';
+import type { MaintainerSignerProvider } from '../src/adapters/signing/ssh/maintainer-signer.ts';
+import { investigationRuntimePaths } from '../src/runtime/session-workspace/paths.ts';
 import { commitPlanningTransition } from '../src/application/propose/planning-transition.ts';
 import { startSession } from '../src/application/execute-task/session.ts';
 import {
   readCurrentTaskStrategyGreenFailure,
   resolveCurrentTaskStrategyCorrection,
 } from '../src/application/execute-task/task-strategy-correction.ts';
-import { readTaskStrategyCorrectionRound } from '../src/task-strategy-correction-round-store.ts';
+import { readTaskStrategyCorrectionRound } from '../src/runtime/storage-journal/task-strategy-correction-round-store.ts';
 import { beginTaskStrategyImplementation } from '../src/application/execute-task/task-strategy-implementation-lifecycle.ts';
 import { resumeTaskStrategy } from '../src/application/execute-task/task-strategy-lifecycle.ts';
 import {
   readTaskStrategyCallerImplementationBinding,
   readTaskStrategyCallerImplementationReservation,
-} from '../src/task-strategy-provider-store.ts';
+} from '../src/runtime/storage-journal/task-strategy-provider-store.ts';
 import { sealTaskStrategyRed } from '../src/application/execute-task/task-strategy-execution.ts';
 import {
   checkSession,

@@ -1,25 +1,28 @@
 import path from 'node:path';
 
-import { loadWorkflowConfig } from './contracts.ts';
+import { loadWorkflowConfig } from './adapters/consumer/expense-app/work-registry/contracts.ts';
 import { ExitCode, workflowError } from './foundation/errors/errors.ts';
-import { listStagedPaths } from './git-transitions.ts';
-import { discoverRepository, runGit } from './git.ts';
+import { listStagedPaths } from './runtime/repository-transaction/git-transitions.ts';
+import {
+  discoverRepository,
+  runGit,
+} from './runtime/repository-transaction/git.ts';
 import {
   assertInvestigationId,
   assertSessionId,
   investigationRuntimePaths,
-} from './paths.ts';
-import type { WorkflowReport } from './report-store.ts';
+} from './runtime/session-workspace/paths.ts';
+import type { WorkflowReport } from './runtime/storage-journal/report-store.ts';
 import {
   reportString,
   reportStringArray,
   staleReport,
-} from './report-validation.ts';
+} from './runtime/storage-journal/report-validation.ts';
 import {
   readSessionFile,
   runtimePaths,
   withSessionOperation,
-} from './session-store.ts';
+} from './runtime/session-workspace/session-store.ts';
 import type { SessionInspection } from './application/finalize/verification.ts';
 
 export function loadActiveSessionContext(

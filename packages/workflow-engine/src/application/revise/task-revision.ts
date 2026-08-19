@@ -4,33 +4,37 @@ import path from 'node:path';
 
 import { canonicalJson } from '../../foundation/canonical-json/canonical-json.ts';
 import { digestRequiredCheckDefinitions } from '../../modules/lifecycle/contract-digests.ts';
-import { loadWorkflowConfig } from '../../contracts.ts';
+import { loadWorkflowConfig } from '../../adapters/consumer/expense-app/work-registry/contracts.ts';
 import { ExitCode, workflowError } from '../../foundation/errors/errors.ts';
-import { ensurePlainDirectory } from '../../filesystem-safety.ts';
-import { discoverRepository, listChangedPaths, runGit } from '../../git.ts';
+import { ensurePlainDirectory } from '../../runtime/repository-transaction/filesystem-safety.ts';
+import {
+  discoverRepository,
+  listChangedPaths,
+  runGit,
+} from '../../runtime/repository-transaction/git.ts';
 import {
   commitChangedPaths,
   commitFacts,
   stageExactPathsPreservingUnstaged,
   updateManagedRef,
-} from '../../git-transitions.ts';
+} from '../../runtime/repository-transaction/git-transitions.ts';
 import {
   refreshPlanningDocuments,
   rollbackGeneratedDocuments,
-} from '../../managed-documents.ts';
+} from '../../runtime/managed-documents/validation/managed-documents.ts';
 import {
   assertSessionId,
   matchesAllowedPath,
   normalizeChangedPath,
   normalizePolicyPath,
-} from '../../paths.ts';
+} from '../../runtime/session-workspace/paths.ts';
 import { createTaskPlanningAssuranceBinding } from '../../modules/assurance/planning-assurance-validator.ts';
-import { readPlanningTransitionReport } from '../../planning-report.ts';
+import { readPlanningTransitionReport } from '../../runtime/storage-journal/planning-report.ts';
 import { commitTaskRevisionPlanningTransitionUnderAuthority } from '../propose/planning-transition.ts';
 import {
   withTaskRevisionPlanningAuthority,
   type HeldChangeTransitionAuthority,
-} from '../../planning-lock.ts';
+} from '../../runtime/session-workspace/planning-lock.ts';
 import {
   assertOwnedLock,
   readSessionFile,
@@ -39,7 +43,7 @@ import {
   withRepositoryLifecycleOperation,
   withSessionOperation,
   writeJsonAtomic,
-} from '../../session-store.ts';
+} from '../../runtime/session-workspace/session-store.ts';
 import { loadStableValidatedChangeContract } from '../../validated-contract-context.ts';
 import { inspectSession } from '../finalize/verification.ts';
 import {

@@ -4,10 +4,10 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import { loadChangeContract } from '../src/contracts.ts';
+import { loadChangeContract } from '../src/adapters/consumer/expense-app/work-registry/contracts.ts';
 import { WorkflowError } from '../src/foundation/errors/errors.ts';
-import { loadValidatedChangeContract } from '../src/managed-change-contract.ts';
-import { parseValidation } from '../src/openspec-payloads.ts';
+import { loadValidatedChangeContract } from '../src/adapters/planning/openspec/documents/managed-change-contract.ts';
+import { parseValidation } from '../src/adapters/planning/openspec/documents/openspec-payloads.ts';
 import {
   createFixtureRepository,
   sourceRepositoryRoot,

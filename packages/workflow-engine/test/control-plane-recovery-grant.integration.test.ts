@@ -8,8 +8,8 @@ import test from 'node:test';
 
 import { resolveControlPlaneEngineSelection } from '../bootstrap/control-plane-trust.ts';
 import { canonicalJson } from '../src/foundation/canonical-json/canonical-json.ts';
-import { deriveAuthorityAuditRepositoryId } from '../src/authority-audit-ledger.ts';
-import { verifyAuthorityAuditEvents } from '../src/authority-audit-service.ts';
+import { deriveAuthorityAuditRepositoryId } from '../src/runtime/storage-journal/authority-audit-ledger.ts';
+import { verifyAuthorityAuditEvents } from '../src/runtime/storage-journal/authority-audit-service.ts';
 import {
   HARNESS_RECOVERY_SIGNATURE_NAMESPACE,
   canonicalControlPlaneRecoveryGrantPayload,
@@ -45,7 +45,7 @@ import { dispatchProductionControlPlaneUpdaterCommand } from '../src/interventio
 import {
   persistInterventionPlan,
   readPersistedControlPlaneUpdate,
-} from '../src/intervention-control-persistence.ts';
+} from '../src/runtime/storage-journal/intervention-control-persistence.ts';
 import { persistInterventionEngineArtifact } from '../src/application/control-plane/intervention-maintenance.ts';
 import {
   executeControlPlanePromotion,

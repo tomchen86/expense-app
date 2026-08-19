@@ -4,7 +4,10 @@ import path from 'node:path';
 
 import { canonicalJson } from '../../foundation/canonical-json/canonical-json.ts';
 import { readFileAtCommit } from '../../ci-git.ts';
-import { loadChangeContract, loadWorkflowConfig } from '../../contracts.ts';
+import {
+  loadChangeContract,
+  loadWorkflowConfig,
+} from '../../adapters/consumer/expense-app/work-registry/contracts.ts';
 import { validateCiPlanningCommit } from '../../ci-planning.ts';
 import { engineProjectionPathsForTransition } from '../../modules/projection/engine-projection-registry.ts';
 import {
@@ -12,27 +15,30 @@ import {
   WorkflowError,
   workflowError,
 } from '../../foundation/errors/errors.ts';
-import { ensurePlainDirectory } from '../../filesystem-safety.ts';
+import { ensurePlainDirectory } from '../../runtime/repository-transaction/filesystem-safety.ts';
 import {
   commitChangedPaths,
   commitFacts,
   rollbackExactStaging,
   stageExactPaths,
   updateManagedRef,
-} from '../../git-transitions.ts';
-import { discoverRepository, runGit } from '../../git.ts';
-import { validateHandoffForChange } from '../../handoff.ts';
+} from '../../runtime/repository-transaction/git-transitions.ts';
+import {
+  discoverRepository,
+  runGit,
+} from '../../runtime/repository-transaction/git.ts';
+import { validateHandoffForChange } from '../../adapters/consumer/expense-app/handoff/handoff.ts';
 import { parseManagedTrailers } from '../../modules/lifecycle/managed-trailers.ts';
 import {
   refreshPlanningDocuments,
   rollbackGeneratedDocuments,
   type GeneratedDocumentMutation,
-} from '../../managed-documents.ts';
+} from '../../runtime/managed-documents/validation/managed-documents.ts';
 import {
   assertChangeId,
   assertTaskId,
   normalizeChangedPath,
-} from '../../paths.ts';
+} from '../../runtime/session-workspace/paths.ts';
 import {
   commitPlanningTransitionUnderAuthority,
   type PlanningTransitionResult,
@@ -40,12 +46,12 @@ import {
 import {
   reclaimDeadChangeTransitionLock,
   withOpenTaskPlanningAuthority,
-} from '../../planning-lock.ts';
-import { readPlanningTransitionReport } from '../../planning-report.ts';
+} from '../../runtime/session-workspace/planning-lock.ts';
+import { readPlanningTransitionReport } from '../../runtime/storage-journal/planning-report.ts';
 import {
   inspectPlanningDraftWorkspace,
   readPlanningDraftWorkspace,
-} from '../../planning-workspace.ts';
+} from '../../runtime/session-workspace/planning-workspace.ts';
 import {
   assertOwnedLock,
   createSessionId,
@@ -53,7 +59,7 @@ import {
   runtimePaths,
   withRepositoryLifecycleOperation,
   type WorkflowSession,
-} from '../../session-store.ts';
+} from '../../runtime/session-workspace/session-store.ts';
 import {
   startSession,
   startSessionUnderLifecycleLock,
@@ -69,7 +75,7 @@ import {
 import {
   assertTaskMandateOptional,
   resolveTaskAuthorizationRequirement,
-} from '../../task-authorization-policy.ts';
+} from '../../adapters/consumer/expense-app/work-registry/task-authorization-policy.ts';
 
 const COMMIT_OID = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
 const SHA256 = /^[0-9a-f]{64}$/;

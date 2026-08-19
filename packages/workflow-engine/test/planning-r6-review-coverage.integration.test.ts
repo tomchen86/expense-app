@@ -5,9 +5,9 @@ import path from 'node:path';
 import test from 'node:test';
 
 import { canonicalJson } from '../src/foundation/canonical-json/canonical-json.ts';
-import type { EvidenceNode } from '../src/evidence-node.ts';
-import { discoverRepository } from '../src/git.ts';
-import { investigationRuntimePaths } from '../src/paths.ts';
+import type { EvidenceNode } from '../src/adapters/compatibility/investigation-v2/evidence-node.ts';
+import { discoverRepository } from '../src/runtime/repository-transaction/git.ts';
+import { investigationRuntimePaths } from '../src/runtime/session-workspace/paths.ts';
 import {
   PLAN_REVIEW_COVERAGE,
   type PlanReviewReport,
@@ -19,7 +19,7 @@ import { PROPOSE_POLICY_DIGEST } from '../src/modules/provider-orchestration/pro
 import {
   PROVIDER_RUNNER_RESIDUALS,
   type ProviderRunnerReport,
-} from '../src/provider-runner.ts';
+} from '../src/runtime/provider-execution/provider-runner.ts';
 import { runProviderWorker } from '../src/provider-worker.ts';
 import { commitPlanningTransition } from '../src/application/propose/planning-transition.ts';
 import {
@@ -37,7 +37,7 @@ import {
 import {
   ledgerIndexPath,
   ledgerObjectPath,
-} from '../src/semantic-ledger-store.ts';
+} from '../src/runtime/storage-journal/semantic-ledger-store.ts';
 import { createLedgerEntry } from '../src/modules/why-knowledge/semantic-ledger.ts';
 import {
   createFixtureRepository,

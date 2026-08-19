@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { Buffer } from 'node:buffer';
 import test from 'node:test';
 
-import { createEvidenceNode } from '../src/evidence-node.ts';
+import { createEvidenceNode } from '../src/adapters/compatibility/investigation-v2/evidence-node.ts';
 import { projectPlanReviewTerms } from '../src/modules/projection/investigation-term-projection.ts';
 import {
   createPlanReviewDispositionNode,

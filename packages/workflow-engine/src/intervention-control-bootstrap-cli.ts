@@ -8,17 +8,20 @@ import {
   WorkflowError,
   workflowError,
 } from './foundation/errors/errors.ts';
-import { discoverRepository, runGit } from './git.ts';
+import {
+  discoverRepository,
+  runGit,
+} from './runtime/repository-transaction/git.ts';
 import { parseMaintainerPolicy } from './modules/authority/maintainer-policy.ts';
 import {
   recordAuthorityAuditEvent,
   verifyAuthorityAuditEvents,
-} from './authority-audit-service.ts';
+} from './runtime/storage-journal/authority-audit-service.ts';
 import {
   deriveAuthorityAuditRepositoryId,
   type AuthorityAuditLedgerScope,
   type AuthorityAuditResult,
-} from './authority-audit-ledger.ts';
+} from './runtime/storage-journal/authority-audit-ledger.ts';
 import {
   abandonPersistedIntervention,
   assertPersistedInterventionAbandonable,
@@ -41,7 +44,7 @@ import {
   renewPersistedEngineAdoptionAuthority,
   type PersistedEngineAdoptionRecord,
   type PersistedInterventionRecord,
-} from './intervention-control-persistence.ts';
+} from './runtime/storage-journal/intervention-control-persistence.ts';
 import {
   type EngineAdoptionRecoveryDecision,
   type EngineArtifact,
@@ -66,8 +69,8 @@ import {
   type PersistedInterventionEngineArtifact,
   type PersistedMaintenanceGrantRecord,
 } from './application/control-plane/intervention-maintenance.ts';
-import type { MaintainerSignerProvider } from './maintainer-signer.ts';
-import { runtimePaths } from './session-store.ts';
+import type { MaintainerSignerProvider } from './adapters/signing/ssh/maintainer-signer.ts';
+import { runtimePaths } from './runtime/session-workspace/session-store.ts';
 
 const MAX_REQUEST_BYTES = 1024 * 1024;
 

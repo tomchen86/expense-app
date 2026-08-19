@@ -6,10 +6,10 @@ import {
   assertStoredEvidenceNode,
   createEvidenceNode,
   type EvidenceNode,
-} from '../../evidence-node.ts';
+} from '../../adapters/compatibility/investigation-v2/evidence-node.ts';
 import { ExitCode, workflowError } from '../../foundation/errors/errors.ts';
 import type { PlanReviewReport } from './plan-review.ts';
-import { normalizeExactRepositoryPath } from '../../paths.ts';
+import { normalizeExactRepositoryPath } from '../../runtime/session-workspace/paths.ts';
 import {
   assertReviewSetHonoured,
   buildCoverageManifest,
@@ -19,7 +19,7 @@ import {
 } from './review-coverage.ts';
 import { deltaReviewRequired } from './review-challenge.ts';
 import type { ReuseCoverageRecord } from '../why-knowledge/semantic-manifest-reuse.ts';
-import { readLedgerEntry } from '../../semantic-ledger-store.ts';
+import { readLedgerEntry } from '../../runtime/storage-journal/semantic-ledger-store.ts';
 import type { CoverageTier } from './assurance-assessment-chain.ts';
 
 const NODE_TYPE = 'plan-review-coverage-requirement';

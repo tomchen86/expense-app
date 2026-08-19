@@ -13,11 +13,12 @@ import {
   computeProtectedCapabilityEntryDigests,
   computeProtectedCapabilityEntryDigestsFromWorktree,
   loadProtectedCapabilitiesFromTrustBase,
-} from '../src/protected-capabilities.ts';
+} from '../src/adapters/consumer/expense-app/work-registry/protected-capabilities.ts';
 import { createFixtureRepository, git, isWorkflowError } from './fixture.ts';
 
 const MANIFEST_PATH = 'workflow/protected-capabilities.json';
-const LOADER_PATH = 'packages/workflow-engine/src/protected-capabilities.ts';
+const LOADER_PATH =
+  'packages/workflow-engine/src/adapters/consumer/expense-app/work-registry/protected-capabilities.ts';
 const GENERATOR_PATH =
   'packages/workflow-engine/bootstrap/generate-protected-capabilities.ts';
 const SOURCE_REPOSITORY_ROOT = path.resolve(import.meta.dirname, '../../..');
@@ -295,7 +296,7 @@ test('repository publishes the complete typed control-plane capability closure',
   );
   assert.equal(
     (byCapability.get('audit.append')?.entrypoints as unknown[]).includes(
-      'packages/workflow-engine/src/authority-audit-ledger.ts',
+      'packages/workflow-engine/src/runtime/storage-journal/authority-audit-ledger.ts',
     ),
     true,
   );

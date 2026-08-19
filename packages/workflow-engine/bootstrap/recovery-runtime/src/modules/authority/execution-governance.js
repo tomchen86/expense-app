@@ -1,8 +1,8 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import { deriveAuthorityAuditRepositoryId, } from '../../authority-audit-ledger.js';
-import { recordAuthorityAuditEvent, } from '../../authority-audit-service.js';
+import { deriveAuthorityAuditRepositoryId, } from '../../runtime/storage-journal/authority-audit-ledger.js';
+import { recordAuthorityAuditEvent, } from '../../runtime/storage-journal/authority-audit-service.js';
 import { authorityRefusalDigest, withAuthorityRefusalAudit, } from './authority-refusal-audit.js';
 import { canonicalJson } from '../../foundation/canonical-json/canonical-json.js';
 import { ExitCode, workflowError, } from '../../foundation/errors/errors.js';

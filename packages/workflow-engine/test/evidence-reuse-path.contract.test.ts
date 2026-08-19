@@ -2,17 +2,17 @@ import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import test from 'node:test';
 
-import { parseInvestigationArtifact } from '../src/contracts.ts';
+import { parseInvestigationArtifact } from '../src/adapters/consumer/expense-app/work-registry/contracts.ts';
 import {
   createConvergenceRecord,
   createDescendantReuseProof,
-} from '../src/evidence-convergence.ts';
+} from '../src/adapters/compatibility/investigation-v2/evidence-convergence.ts';
 import {
   currentParentEvidenceRef,
   descendantReuseProofEvidenceRef,
   projectConvergedEvidenceGraph,
-} from '../src/evidence-reuse-path.ts';
-import { createEvidenceNode } from '../src/evidence-node.ts';
+} from '../src/adapters/compatibility/investigation-v2/evidence-reuse-path.ts';
+import { createEvidenceNode } from '../src/adapters/compatibility/investigation-v2/evidence-node.ts';
 import { WorkflowError } from '../src/foundation/errors/errors.ts';
 
 test('tracked evidence reuse requires an exact current-parent and proof ref pair', () => {

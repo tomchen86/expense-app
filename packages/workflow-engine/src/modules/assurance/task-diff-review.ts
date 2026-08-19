@@ -2,7 +2,7 @@ import crypto from 'node:crypto';
 
 import { canonicalJson } from '../../foundation/canonical-json/canonical-json.ts';
 import { ExitCode, workflowError } from '../../foundation/errors/errors.ts';
-import { normalizePolicyPath } from '../../paths.ts';
+import { normalizePolicyPath } from '../../runtime/session-workspace/paths.ts';
 import type { PathRole } from '../source/path-role-registry.ts';
 
 const DIGEST = /^[0-9a-f]{64}$/;

@@ -13,7 +13,7 @@ import {
 import {
   inspectProviderPromptContextRetentionBinding,
   prepareProviderPromptContextForInvocation,
-} from '../src/provider-execution-governance.ts';
+} from '../src/runtime/provider-execution/provider-execution-governance.ts';
 
 const FIRST_AT = new Date('2026-08-10T02:00:00.000Z');
 const SECOND_AT = new Date('2026-08-10T02:01:00.000Z');

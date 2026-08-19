@@ -4,16 +4,16 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import test from 'node:test';
 
-import { loadAiAdapterPolicy } from '../src/ai-adapter-policy.ts';
+import { loadAiAdapterPolicy } from '../src/runtime/provider-execution/ai-adapter-policy.ts';
 import {
   authorizeLegacyReplacement,
   inspectExecutionJob,
   listExecutionJobs,
   prepareLegacyReplacement,
-} from '../src/execution-runtime.ts';
+} from '../src/runtime/provider-execution/execution-runtime.ts';
 import { requestExecutionReplacement } from '../src/application/control-plane/execution-replacement.ts';
 import { canonicalExecutionBudgetGrantRequest } from '../src/modules/authority/execution-governance.ts';
-import { readExecutionJobState } from '../src/execution-store.ts';
+import { readExecutionJobState } from '../src/runtime/storage-journal/execution-store.ts';
 import { loadInvestigationRuntimeContext } from '../src/lifecycle-context.ts';
 import {
   createProviderInvocationRequest,
@@ -31,7 +31,7 @@ import {
   storeProviderExecutionPolicySnapshot,
   type BlindSurveyManifest,
   type ProviderInvocationFailure,
-} from '../src/provider-invocation-store.ts';
+} from '../src/runtime/storage-journal/provider-invocation-store.ts';
 import {
   createFixtureRepository,
   git,
@@ -559,7 +559,9 @@ function createManifest(repository: string): BlindSurveyManifest {
     normalizedIntent: {
       schemaVersion: 1,
       summary: 'Inspect legacy provider retries through one stable Job.',
-      explicitPaths: ['packages/workflow-engine/src/execution-runtime.ts'],
+      explicitPaths: [
+        'packages/workflow-engine/src/runtime/provider-execution/execution-runtime.ts',
+      ],
       explicitSymbols: ['inspectExecutionJob'],
       explicitConfigKeys: [],
       renamePairs: [],

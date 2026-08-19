@@ -8,10 +8,14 @@ import { canonicalJson } from '../../foundation/canonical-json/canonical-json.ts
 import type {
   CrossAgentTddExecution,
   TddSingleAgentExecution,
-} from '../../contracts.ts';
+} from '../../adapters/consumer/expense-app/work-registry/contracts.ts';
 import { ExitCode, workflowError } from '../../foundation/errors/errors.ts';
-import { previewExactStaging } from '../../git-transitions.ts';
-import { runGit, runGitBuffer, runGitWithEnvironment } from '../../git.ts';
+import { previewExactStaging } from '../../runtime/repository-transaction/git-transitions.ts';
+import {
+  runGit,
+  runGitBuffer,
+  runGitWithEnvironment,
+} from '../../runtime/repository-transaction/git.ts';
 import {
   loadActiveSessionContext,
   runSessionOperation,
@@ -20,27 +24,27 @@ import {
   investigationRuntimePaths,
   matchesAllowedPath,
   normalizeChangedPath,
-} from '../../paths.ts';
+} from '../../runtime/session-workspace/paths.ts';
 import {
   readTaskStrategyTransaction,
   type TaskStrategyTransaction,
-} from '../../task-strategy-store.ts';
+} from '../../runtime/storage-journal/task-strategy-store.ts';
 import {
   createCurrentTaskStrategyCorrectionSubject,
   resolveCurrentTaskStrategyCorrection,
   resolveCurrentTaskStrategyImplementationAuthority,
 } from './task-strategy-correction.ts';
-import { readTaskStrategyGreenFailureRecord } from '../../task-strategy-correction-store.ts';
+import { readTaskStrategyGreenFailureRecord } from '../../runtime/storage-journal/task-strategy-correction-store.ts';
 import {
   publishTaskStrategyCorrectionRoundImport,
   publishTaskStrategyCorrectionRoundResult,
   reserveTaskStrategyCorrectionRound,
-} from '../../task-strategy-correction-round-store.ts';
-import { DEFAULT_TASK_STRATEGY_CORRECTION_POLICY } from '../../task-strategy-correction-store.ts';
+} from '../../runtime/storage-journal/task-strategy-correction-round-store.ts';
+import { DEFAULT_TASK_STRATEGY_CORRECTION_POLICY } from '../../runtime/storage-journal/task-strategy-correction-store.ts';
 import {
   withRepositoryLifecycleOperation,
   withSessionOperation,
-} from '../../session-store.ts';
+} from '../../runtime/session-workspace/session-store.ts';
 import {
   readTaskStrategyCallerImplementationBinding,
   readTaskStrategyCallerImplementationReservation,
@@ -48,7 +52,7 @@ import {
   readTaskStrategyImplementationProviderAttempt,
   readTaskStrategyImplementationReservation,
   readTaskStrategyImplementationResultBinding,
-} from '../../task-strategy-provider-store.ts';
+} from '../../runtime/storage-journal/task-strategy-provider-store.ts';
 import {
   createTaskStrategyPatchCurrentBinding,
   createTaskStrategyPatchImportReceipt,
@@ -65,7 +69,7 @@ import {
   type TaskStrategyPatchImportReceipt,
   type TaskStrategyPatchRecord,
   type TaskStrategyPatchReservation,
-} from '../../task-strategy-patch-store.ts';
+} from '../../runtime/storage-journal/task-strategy-patch-store.ts';
 import {
   inspectSession,
   type SessionInspection,

@@ -4,8 +4,11 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import { loadChangeContract, parseTasks } from '../src/contracts.ts';
-import { normalizeChangedPath } from '../src/paths.ts';
+import {
+  loadChangeContract,
+  parseTasks,
+} from '../src/adapters/consumer/expense-app/work-registry/contracts.ts';
+import { normalizeChangedPath } from '../src/runtime/session-workspace/paths.ts';
 import {
   createFixtureRepository,
   isWorkflowError,

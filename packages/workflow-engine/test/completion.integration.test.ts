@@ -17,17 +17,17 @@ import {
   hasExactTrailers,
   previewExactStaging,
   stageExactPaths,
-} from '../src/git-transitions.ts';
-import { renderHandoff } from '../src/handoff.ts';
-import { projectTasksCompleted } from '../src/task-projection.ts';
+} from '../src/runtime/repository-transaction/git-transitions.ts';
+import { renderHandoff } from '../src/adapters/consumer/expense-app/handoff/handoff.ts';
+import { projectTasksCompleted } from '../src/runtime/managed-documents/transaction/task-projection.ts';
 import {
   readImmutableReport,
   writeImmutableReport,
   type WorkflowReport,
-} from '../src/report-store.ts';
-import { readFinalizeTransaction } from '../src/finalize-transaction.ts';
+} from '../src/runtime/storage-journal/report-store.ts';
+import { readFinalizeTransaction } from '../src/runtime/repository-transaction/finalize-transaction.ts';
 import { resolveFinalizeCheckPolicy } from '../src/modules/assurance/finalize-check-policy.ts';
-import { writeJsonAtomic } from '../src/session-store.ts';
+import { writeJsonAtomic } from '../src/runtime/session-workspace/session-store.ts';
 import {
   checkSession,
   getSession,

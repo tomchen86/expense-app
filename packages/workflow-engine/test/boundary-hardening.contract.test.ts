@@ -6,17 +6,17 @@ import test from 'node:test';
 
 import { runCli } from '../src/cli.ts';
 import { ExitCode, WorkflowError } from '../src/foundation/errors/errors.ts';
-import { withChangeTransitionAuthority } from '../src/planning-lock.ts';
-import { assertCompletionTaskIds } from '../src/report-validation.ts';
+import { withChangeTransitionAuthority } from '../src/runtime/session-workspace/planning-lock.ts';
+import { assertCompletionTaskIds } from '../src/runtime/storage-journal/report-validation.ts';
 import {
   readImmutableReport,
   writeImmutableReport,
   type WorkflowReport,
-} from '../src/report-store.ts';
+} from '../src/runtime/storage-journal/report-store.ts';
 import {
   runtimePaths,
   withRepositoryLifecycleOperation,
-} from '../src/session-store.ts';
+} from '../src/runtime/session-workspace/session-store.ts';
 import { createFixtureRepository } from './fixture.ts';
 
 const SESSION_ID = 'session-report-boundary-hardening';

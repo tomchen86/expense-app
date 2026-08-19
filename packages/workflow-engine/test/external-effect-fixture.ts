@@ -8,11 +8,11 @@ import type {
   ExternalEffectAuditEvent,
   ExternalEffectGrantRequest,
 } from '../src/modules/authority/external-effect-grant.ts';
-import type { MaintainerSignerProvider } from '../src/maintainer-signer.ts';
+import type { MaintainerSignerProvider } from '../src/adapters/signing/ssh/maintainer-signer.ts';
 import {
   publishArtifactDigest,
   publishPrestateDigest,
-} from '../src/publish-executor.ts';
+} from '../src/adapters/remote/github/publish-executor.ts';
 import {
   authorizeTaskMandate,
   inspectActiveTaskMandateBinding,

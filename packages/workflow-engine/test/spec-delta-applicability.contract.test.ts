@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { findDeltaApplicabilityFaults } from '../src/archive-delta-verifier.ts';
+import { findDeltaApplicabilityFaults } from '../src/runtime/repository-transaction/archive-delta-verifier.ts';
 
 const BASE = [
   '# workflow-assurance',

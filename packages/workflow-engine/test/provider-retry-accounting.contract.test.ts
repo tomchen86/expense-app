@@ -6,13 +6,13 @@ import test from 'node:test';
 import {
   DEFAULT_AI_ADAPTER_RETRY_ACCOUNTING,
   loadAiAdapterPolicy,
-} from '../src/ai-adapter-policy.ts';
+} from '../src/runtime/provider-execution/ai-adapter-policy.ts';
 import { canonicalJson } from '../src/foundation/canonical-json/canonical-json.ts';
 import { projectProviderInvocationExecution } from '../src/modules/provider-orchestration/execution-core.ts';
-import { readExecutionJobState } from '../src/execution-store.ts';
-import { preflightProviderRepairRetry } from '../src/provider-execution-governance.ts';
+import { readExecutionJobState } from '../src/runtime/storage-journal/execution-store.ts';
+import { preflightProviderRepairRetry } from '../src/runtime/provider-execution/provider-execution-governance.ts';
 import { loadInvestigationRuntimeContext } from '../src/lifecycle-context.ts';
-import { listProviderInvocationLifecycleProjections } from '../src/investigation-session-store.ts';
+import { listProviderInvocationLifecycleProjections } from '../src/runtime/storage-journal/investigation-session-store.ts';
 import {
   createProviderInvocationRequest,
   type ProviderInvocationRequest,
@@ -32,7 +32,7 @@ import {
   readProviderRetryReservation,
   storeProviderExecutionPolicySnapshot,
   type BlindSurveyManifest,
-} from '../src/provider-invocation-store.ts';
+} from '../src/runtime/storage-journal/provider-invocation-store.ts';
 import { authorizeAutomaticProviderRetry } from '../src/modules/provider-orchestration/provider-retry-decision.ts';
 import { createFixtureRepository, git, isWorkflowError } from './fixture.ts';
 
@@ -361,7 +361,9 @@ function createManifest(repository: string): BlindSurveyManifest {
     normalizedIntent: {
       schemaVersion: 1,
       summary: 'Exercise retry accounting.',
-      explicitPaths: ['packages/workflow-engine/src/execution-store.ts'],
+      explicitPaths: [
+        'packages/workflow-engine/src/runtime/storage-journal/execution-store.ts',
+      ],
       explicitSymbols: ['authorizeAutomaticProviderRetry'],
       explicitConfigKeys: [],
       renamePairs: [],

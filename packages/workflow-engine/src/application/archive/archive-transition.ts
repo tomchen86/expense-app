@@ -6,24 +6,24 @@ import {
   withArchiveEligibility,
   type ArchiveEligibility,
 } from './archive-eligibility.ts';
-import { verifyArchiveDeltaOutcomes } from '../../archive-delta-verifier.ts';
+import { verifyArchiveDeltaOutcomes } from '../../runtime/repository-transaction/archive-delta-verifier.ts';
 import {
   listArchiveReports,
   readArchiveReport,
   writeArchiveReport,
   type ArchiveTransitionReport,
-} from '../../archive-report.ts';
+} from '../../runtime/storage-journal/archive-report.ts';
 import {
   createArchiveTransformation,
   type ArchiveTransformation,
 } from './archive-transformation.ts';
-import { loadWorkflowConfig } from '../../contracts.ts';
+import { loadWorkflowConfig } from '../../adapters/consumer/expense-app/work-registry/contracts.ts';
 import {
   ExitCode,
   WorkflowError,
   workflowError,
 } from '../../foundation/errors/errors.ts';
-import { ensurePlainDirectory } from '../../filesystem-safety.ts';
+import { ensurePlainDirectory } from '../../runtime/repository-transaction/filesystem-safety.ts';
 import {
   archiveCommitMessage,
   commitChangedPaths,
@@ -31,14 +31,14 @@ import {
   createArchiveCommitObject,
   listStagedPaths,
   updateManagedRef,
-} from '../../git-transitions.ts';
+} from '../../runtime/repository-transaction/git-transitions.ts';
 import {
   discoverRepository,
   fingerprintRepositoryWorktree,
   listChangedPaths,
   runGit,
-} from '../../git.ts';
-import { runtimePaths } from '../../session-store.ts';
+} from '../../runtime/repository-transaction/git.ts';
+import { runtimePaths } from '../../runtime/session-workspace/session-store.ts';
 
 export type ArchiveTransitionResult = {
   status: 'committed' | 'already-archived';

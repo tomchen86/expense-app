@@ -10,13 +10,13 @@ import {
   createDirectHumanReviewAttestation,
   issueCollaborationGrant,
 } from '../src/modules/authority/collaboration-grant.ts';
-import { discoverRepository } from '../src/git.ts';
-import { renderHandoff } from '../src/handoff.ts';
+import { discoverRepository } from '../src/runtime/repository-transaction/git.ts';
+import { renderHandoff } from '../src/adapters/consumer/expense-app/handoff/handoff.ts';
 import { finalizeTask } from '../src/application/finalize/lifecycle.ts';
 import {
   verifySshSignatureWithPublicKey,
   type MaintainerSignerProvider,
-} from '../src/maintainer-signer.ts';
+} from '../src/adapters/signing/ssh/maintainer-signer.ts';
 import { commitPlanningTransition } from '../src/application/propose/planning-transition.ts';
 import { startSession } from '../src/application/execute-task/session.ts';
 import {
@@ -30,7 +30,7 @@ import {
   createTaskDiffReviewChallengeResponse,
   type TaskDiffReviewSubmission,
 } from '../src/modules/assurance/task-diff-review-artifact.ts';
-import { taskDiffExternalContinuationTargetDigest } from '../src/task-diff-review-external-store.ts';
+import { taskDiffExternalContinuationTargetDigest } from '../src/runtime/storage-journal/task-diff-review-external-store.ts';
 import {
   TASK_DIFF_REVIEW_COVERAGE,
   type TaskDiffReviewSubject,

@@ -5,12 +5,12 @@ import test from 'node:test';
 
 import { canonicalJson } from '../src/foundation/canonical-json/canonical-json.ts';
 import { produceControlPlaneApprovalCandidateV2 } from '../src/application/control-plane/control-plane-promotion-producer.ts';
-import { interventionEngineArtifactRecordPath } from '../src/intervention-engine-artifact-store.ts';
+import { interventionEngineArtifactRecordPath } from '../src/runtime/storage-journal/intervention-engine-artifact-store.ts';
 import {
   persistedBootstrapSidecarSessionPath,
   readBootstrapSidecarPromotionPin,
   readPersistedControlPlaneUpdate,
-} from '../src/intervention-control-persistence.ts';
+} from '../src/runtime/storage-journal/intervention-control-persistence.ts';
 import { dispatchProductionControlPlaneUpdaterCommand } from '../src/intervention-control-updater-cli.ts';
 import {
   readControlPlaneSupervisorState,

@@ -11,7 +11,7 @@ import {
   type SampleAudit,
 } from '../src/modules/investigation/domain/class-sample-audit.ts';
 import { WorkflowError } from '../src/foundation/errors/errors.ts';
-import { createInvestigationCheckpointEnvelope } from '../src/investigation-session.ts';
+import { createInvestigationCheckpointEnvelope } from '../src/adapters/compatibility/investigation-v2/investigation-session.ts';
 import {
   PLAN_REVIEW_COVERAGE,
   readPlanReviewNode,
@@ -20,7 +20,7 @@ import type { ProviderInvocationRequest } from '../src/modules/provider-orchestr
 import {
   PROVIDER_RUNNER_RESIDUALS,
   type ProviderRunnerReport,
-} from '../src/provider-runner.ts';
+} from '../src/runtime/provider-execution/provider-runner.ts';
 import { runProviderWorker } from '../src/provider-worker.ts';
 import {
   createPlanningContributionEnvelope,

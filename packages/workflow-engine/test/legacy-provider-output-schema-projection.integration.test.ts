@@ -3,9 +3,9 @@ import fs from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
 
-import { loadAiAdapterPolicy } from '../src/ai-adapter-policy.ts';
+import { loadAiAdapterPolicy } from '../src/runtime/provider-execution/ai-adapter-policy.ts';
 import { canonicalJson } from '../src/foundation/canonical-json/canonical-json.ts';
-import { listExecutionJobs } from '../src/execution-runtime.ts';
+import { listExecutionJobs } from '../src/runtime/provider-execution/execution-runtime.ts';
 import { loadInvestigationRuntimeContext } from '../src/lifecycle-context.ts';
 import {
   createProviderInvocationRequest,
@@ -24,7 +24,7 @@ import {
   readProviderInvocation,
   storeProviderExecutionPolicySnapshot,
   type BlindSurveyManifest,
-} from '../src/provider-invocation-store.ts';
+} from '../src/runtime/storage-journal/provider-invocation-store.ts';
 import { createFixtureRepository, git, isWorkflowError } from './fixture.ts';
 
 const INVESTIGATION_ID = 'investigation-output-schema-generation';

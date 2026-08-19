@@ -13,25 +13,25 @@ import {
   loadWorkflowConfig,
   parseTasks,
   type TaskPolicy,
-} from '../../contracts.ts';
+} from '../../adapters/consumer/expense-app/work-registry/contracts.ts';
 import { digestRequiredCheckDefinitions } from '../../modules/lifecycle/contract-digests.ts';
 import {
   pinCheckRunner,
   runObservedCheck,
   type CheckEvidence,
   type CheckEvidenceMetadata,
-} from '../../check-runner.ts';
+} from '../../adapters/consumer/expense-app/work-registry/check-runner.ts';
 import {
   assertDisposableDatabase,
   createCheckEnvironment,
-} from '../../database-policy.ts';
+} from '../../adapters/consumer/expense-app/work-registry/database-policy.ts';
 import { ExitCode, workflowError } from '../../foundation/errors/errors.ts';
-import { completionDocumentPaths } from '../../managed-documents.ts';
+import { completionDocumentPaths } from '../../runtime/managed-documents/validation/managed-documents.ts';
 import {
   readLocalEngineBinding,
   readPersistedWipBundle,
 } from '../control-plane/intervention-control-bootstrap.ts';
-import { readPersistedEngineAdoption } from '../../intervention-control-persistence.ts';
+import { readPersistedEngineAdoption } from '../../runtime/storage-journal/intervention-control-persistence.ts';
 import {
   loadCapabilityProfileFromTrustBase,
   type CheckDependency,
@@ -43,23 +43,26 @@ import {
   listChangedPaths,
   runGit,
   type GitState,
-} from '../../git.ts';
-import { type ValidatedChangeContract } from '../../managed-change-contract.ts';
+} from '../../runtime/repository-transaction/git.ts';
+import { type ValidatedChangeContract } from '../../adapters/planning/openspec/documents/managed-change-contract.ts';
 import {
   assertInvestigationPlanningActivation,
   readActivationMarkerFile,
-} from '../../openspec-schema-contract.ts';
-import { assertSessionId, matchesAllowedPath } from '../../paths.ts';
+} from '../../adapters/planning/openspec/documents/openspec-schema-contract.ts';
+import {
+  assertSessionId,
+  matchesAllowedPath,
+} from '../../runtime/session-workspace/paths.ts';
 import { createTaskPlanningAssuranceBinding } from '../../modules/assurance/planning-assurance-validator.ts';
 import {
   readImmutableReport,
   writeImmutableReport,
   type WorkflowReport,
-} from '../../report-store.ts';
+} from '../../runtime/storage-journal/report-store.ts';
 import {
   assertInspectionReport,
   assertReportChecks,
-} from '../../report-validation.ts';
+} from '../../runtime/storage-journal/report-validation.ts';
 import {
   assertOwnedLock,
   readSessionFile,
@@ -67,11 +70,11 @@ import {
   type WorkflowSession,
   withSessionOperation,
   writeJsonAtomic,
-} from '../../session-store.ts';
+} from '../../runtime/session-workspace/session-store.ts';
 import { assertTaskStrategyExecutionGate } from '../../modules/assurance/task-strategy-gate.ts';
 import { recordTaskStrategyGreenFailure } from '../execute-task/task-strategy-correction.ts';
 import { ensureTaskMechanicalTransformationEvidence } from '../execute-task/task-mechanical-transform.ts';
-import { assertTaskProjectionSourceDigest } from '../../task-projection.ts';
+import { assertTaskProjectionSourceDigest } from '../../runtime/managed-documents/transaction/task-projection.ts';
 import { loadStableValidatedChangeContract } from '../../validated-contract-context.ts';
 
 export type SessionCheck = {
@@ -1204,7 +1207,7 @@ function isTask32BootstrapArtifactSet(
     return false;
   }
   const bootstrapModule =
-    'packages/workflow-engine/src/managed-change-contract.ts';
+    'packages/workflow-engine/src/adapters/planning/openspec/documents/managed-change-contract.ts';
   const baselinePaths = runGit(session.repositoryRoot, [
     'ls-tree',
     '-r',

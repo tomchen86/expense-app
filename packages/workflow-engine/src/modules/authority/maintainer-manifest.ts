@@ -8,12 +8,15 @@ import {
   isStringArray,
 } from '../../foundation/canonical-json/contract-values.ts';
 import { ExitCode, workflowError } from '../../foundation/errors/errors.ts';
-import { listChangedPaths, runGit } from '../../git.ts';
+import {
+  listChangedPaths,
+  runGit,
+} from '../../runtime/repository-transaction/git.ts';
 import {
   matchesAllowedPath,
   normalizeExactRepositoryPath,
   normalizePolicyPath,
-} from '../../paths.ts';
+} from '../../runtime/session-workspace/paths.ts';
 
 /**
  * Maintainer grant v2 binds authority to an exact patch rather than to a path

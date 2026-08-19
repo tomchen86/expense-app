@@ -24,14 +24,14 @@ import {
 import {
   readControlPlaneSupervisorHistory,
   readControlPlaneSupervisorHistoryProgress,
-} from '../src/control-plane-supervisor-history.ts';
+} from '../src/runtime/storage-journal/control-plane-supervisor-history.ts';
 import {
   persistControlPlaneApprovalCandidateV3,
   preflightControlPlaneApprovalCandidateV3,
   readControlPlaneSupervisorState,
   readPersistedControlPlaneApprovalCandidateV3,
 } from '../src/application/control-plane/intervention-control-updater.ts';
-import { readPersistedControlPlaneUpdate } from '../src/intervention-control-persistence.ts';
+import { readPersistedControlPlaneUpdate } from '../src/runtime/storage-journal/intervention-control-persistence.ts';
 import { dispatchProductionControlPlaneUpdaterCommand } from '../src/intervention-control-updater-cli.ts';
 import {
   CONTROL_PLANE_FIXTURE_GRANT_SIGNER,

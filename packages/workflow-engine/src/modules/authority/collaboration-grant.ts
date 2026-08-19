@@ -8,7 +8,10 @@ import {
   WorkflowError,
   workflowError,
 } from '../../foundation/errors/errors.ts';
-import { discoverRepository, runGit } from '../../git.ts';
+import {
+  discoverRepository,
+  runGit,
+} from '../../runtime/repository-transaction/git.ts';
 import {
   parseMaintainerPolicy,
   type MaintainerPolicy,
@@ -16,16 +19,19 @@ import {
 import {
   createInteractiveSshSigner,
   type MaintainerSignerProvider,
-} from '../../maintainer-signer.ts';
+} from '../../adapters/signing/ssh/maintainer-signer.ts';
 import {
   collaborationGrantStorePaths,
   storeAvailableCollaborationGrant,
-} from '../../collaboration-grant-store.ts';
+} from '../../runtime/storage-journal/collaboration-grant-store.ts';
 import {
   isProviderId,
   type ProviderId,
 } from '../provider-orchestration/provider-registry.ts';
-import { assertChangeId, assertTaskId } from '../../paths.ts';
+import {
+  assertChangeId,
+  assertTaskId,
+} from '../../runtime/session-workspace/paths.ts';
 
 export const COLLABORATION_GRANT_SIGNATURE_NAMESPACE =
   'expense-app.workflow.collaboration-grant.v1' as const;

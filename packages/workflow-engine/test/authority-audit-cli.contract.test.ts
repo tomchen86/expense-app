@@ -10,9 +10,9 @@ import {
   canonicalAuditDestructionGrantPayload,
   type AuditDestructionGrantEnvelope,
   type AuditDestructionGrantPayload,
-} from '../src/authority-audit-ledger.ts';
+} from '../src/runtime/storage-journal/authority-audit-ledger.ts';
 import { canonicalJson } from '../src/foundation/canonical-json/canonical-json.ts';
-import { recordAuthorityAuditEvent } from '../src/authority-audit-service.ts';
+import { recordAuthorityAuditEvent } from '../src/runtime/storage-journal/authority-audit-service.ts';
 import { git, isWorkflowError, sourceRepositoryRoot } from './fixture.ts';
 
 function fixture() {

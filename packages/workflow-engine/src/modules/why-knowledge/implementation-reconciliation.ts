@@ -3,15 +3,15 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 import { canonicalJson } from '../../foundation/canonical-json/canonical-json.ts';
-import type { InvestigationArtifact } from '../../contracts.ts';
+import type { InvestigationArtifact } from '../../adapters/consumer/expense-app/work-registry/contracts.ts';
 import {
   assertStoredEvidenceNode,
   createEvidenceNode,
   type EvidenceNode,
-} from '../../evidence-node.ts';
+} from '../../adapters/compatibility/investigation-v2/evidence-node.ts';
 import { ExitCode, workflowError } from '../../foundation/errors/errors.ts';
-import { runGit } from '../../git.ts';
-import { readInvestigationWhyNode } from '../../investigation-why.ts';
+import { runGit } from '../../runtime/repository-transaction/git.ts';
+import { readInvestigationWhyNode } from '../../adapters/compatibility/investigation-v2/investigation-why.ts';
 import { IMPLEMENTATION_RECONCILIATION_POLICY_DIGEST } from './implementation-reconciliation-policy.ts';
 import {
   assertImplementationTermDispositions,
@@ -25,12 +25,12 @@ import {
   resolvePathRole,
   type PathRoleRegistry,
 } from '../source/path-role-registry.ts';
-import { normalizeExactRepositoryPath } from '../../paths.ts';
-import type { NormalizedChangeIntent } from '../../provider-invocation-store.ts';
+import { normalizeExactRepositoryPath } from '../../runtime/session-workspace/paths.ts';
+import type { NormalizedChangeIntent } from '../../runtime/storage-journal/provider-invocation-store.ts';
 import {
   readImmutableReport,
   type WorkflowReport,
-} from '../../report-store.ts';
+} from '../../runtime/storage-journal/report-store.ts';
 import {
   semanticFileSubjectId,
   isSemanticSubjectId,
@@ -39,7 +39,7 @@ import {
   assertReconciledLedgerProjection,
   projectReconciledInvestigationWhyToLedger,
   type ReconciledLedgerProjection,
-} from '../../semantic-ledger-projection.ts';
+} from '../../runtime/managed-documents/transaction/semantic-ledger-projection.ts';
 import {
   assertImplementationReconciled,
   reconcileImplementation,
@@ -50,7 +50,10 @@ import {
   type ReconciliationVerdict,
 } from './semantic-reconciliation.ts';
 import { listSessions } from '../../application/execute-task/session.ts';
-import { runtimePaths, type WorkflowSession } from '../../session-store.ts';
+import {
+  runtimePaths,
+  type WorkflowSession,
+} from '../../runtime/session-workspace/session-store.ts';
 import {
   inspectSession,
   persistSession,

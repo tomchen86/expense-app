@@ -2,8 +2,8 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 
-import { deriveAuthorityAuditRepositoryId } from '../../authority-audit-ledger.ts';
-import type { AuthorityAuditServiceHooks } from '../../authority-audit-service.ts';
+import { deriveAuthorityAuditRepositoryId } from '../../runtime/storage-journal/authority-audit-ledger.ts';
+import type { AuthorityAuditServiceHooks } from '../../runtime/storage-journal/authority-audit-service.ts';
 import {
   authorityRefusalDigest,
   withAuthorityRefusalAudit,
@@ -15,12 +15,12 @@ import {
   runCheck,
   type CheckEvidence,
   type PinnedCheckRunner,
-} from '../../check-runner.ts';
-import type { CheckDefinition } from '../../contracts.ts';
+} from '../../adapters/consumer/expense-app/work-registry/check-runner.ts';
+import type { CheckDefinition } from '../../adapters/consumer/expense-app/work-registry/contracts.ts';
 import {
   assertDisposableDatabase,
   createCheckEnvironment,
-} from '../../database-policy.ts';
+} from '../../adapters/consumer/expense-app/work-registry/database-policy.ts';
 import {
   ExitCode,
   WorkflowError,
@@ -35,8 +35,11 @@ import {
   listChangedPaths,
   runGit,
   type PostApprovalAdmissionDeadline,
-} from '../../git.ts';
-import { commitFacts, previewExactStaging } from '../../git-transitions.ts';
+} from '../../runtime/repository-transaction/git.ts';
+import {
+  commitFacts,
+  previewExactStaging,
+} from '../../runtime/repository-transaction/git-transitions.ts';
 import {
   acceptApplyPrestate,
   assertCandidateV2ChecksFresh,
@@ -54,8 +57,8 @@ import {
   parseMaintainerPolicy,
   type MaintainerPolicy,
 } from '../../modules/authority/maintainer-policy.ts';
-import type { MaintainerSignerProvider } from '../../maintainer-signer.ts';
-import { writeAuthorityCheckReport } from '../../maintainer-report.ts';
+import type { MaintainerSignerProvider } from '../../adapters/signing/ssh/maintainer-signer.ts';
+import { writeAuthorityCheckReport } from '../../runtime/storage-journal/maintainer-report.ts';
 import {
   canonicalAnyMaintainerGrantEnvelope,
   inspectMaintainerGrants,
@@ -68,13 +71,16 @@ import {
   terminallyInvalidateMaintainerReservation,
   terminallyRevokeMaintainerReservation,
   type AnyMaintainerGrantEnvelope,
-} from '../../maintainer-store.ts';
-import { assertChangeId, assertSessionId } from '../../paths.ts';
+} from '../../runtime/storage-journal/maintainer-store.ts';
+import {
+  assertChangeId,
+  assertSessionId,
+} from '../../runtime/session-workspace/paths.ts';
 import {
   createSessionId,
   runtimePaths,
   withRepositoryLifecycleOperation,
-} from '../../session-store.ts';
+} from '../../runtime/session-workspace/session-store.ts';
 import type { TaskMandateBinding } from '../../modules/authority/task-mandate.ts';
 import { loadStableValidatedChangeContract } from '../../validated-contract-context.ts';
 

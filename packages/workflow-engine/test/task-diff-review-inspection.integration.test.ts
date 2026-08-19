@@ -11,10 +11,10 @@ import {
   createDirectHumanReviewAttestation,
   issueCollaborationGrant,
 } from '../src/modules/authority/collaboration-grant.ts';
-import { inspectCollaborationGrants } from '../src/collaboration-grant-store.ts';
-import { loadWorkflowConfig } from '../src/contracts.ts';
-import { discoverRepository } from '../src/git.ts';
-import { renderHandoff } from '../src/handoff.ts';
+import { inspectCollaborationGrants } from '../src/runtime/storage-journal/collaboration-grant-store.ts';
+import { loadWorkflowConfig } from '../src/adapters/consumer/expense-app/work-registry/contracts.ts';
+import { discoverRepository } from '../src/runtime/repository-transaction/git.ts';
+import { renderHandoff } from '../src/adapters/consumer/expense-app/handoff/handoff.ts';
 import {
   completeTask,
   finalizeTask,
@@ -23,12 +23,12 @@ import {
 import {
   readFinalizeTransaction,
   removeFinalizeTransaction,
-} from '../src/finalize-transaction.ts';
+} from '../src/runtime/repository-transaction/finalize-transaction.ts';
 import {
   verifySshSignatureWithPublicKey,
   type MaintainerSignerProvider,
-} from '../src/maintainer-signer.ts';
-import { investigationRuntimePaths } from '../src/paths.ts';
+} from '../src/adapters/signing/ssh/maintainer-signer.ts';
+import { investigationRuntimePaths } from '../src/runtime/session-workspace/paths.ts';
 import { commitPlanningTransition } from '../src/application/propose/planning-transition.ts';
 import { restoreFinalizeTransactionProjection } from '../src/application/finalize/projected-finalization.ts';
 import {
@@ -38,8 +38,8 @@ import {
   readProviderInvocation,
   readProviderInvocationManifest,
   readProviderInvocationRequest,
-} from '../src/provider-invocation-store.ts';
-import { PROVIDER_RUNNER_RESIDUALS } from '../src/provider-runner.ts';
+} from '../src/runtime/storage-journal/provider-invocation-store.ts';
+import { PROVIDER_RUNNER_RESIDUALS } from '../src/runtime/provider-execution/provider-runner.ts';
 import { runProviderWorker } from '../src/provider-worker.ts';
 import {
   checkSession,
@@ -64,7 +64,7 @@ import {
   listTaskDiffReviewLineageSupersessions,
   listTaskDiffReviewSupersessions,
   taskDiffReviewLineageSupersessionPath,
-} from '../src/task-diff-review-store.ts';
+} from '../src/runtime/storage-journal/task-diff-review-store.ts';
 import { TASK_DIFF_REVIEW_COVERAGE } from '../src/modules/assurance/task-diff-review.ts';
 import {
   configureChecks,

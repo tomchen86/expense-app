@@ -13,16 +13,16 @@ import {
   runObservedCheck,
   type CheckEvidence,
   type ObservedCheckFailure,
-} from '../src/check-runner.ts';
-import type { CheckDefinition } from '../src/contracts.ts';
-import type { InvestigationRuntimePaths } from '../src/paths.ts';
+} from '../src/adapters/consumer/expense-app/work-registry/check-runner.ts';
+import type { CheckDefinition } from '../src/adapters/consumer/expense-app/work-registry/contracts.ts';
+import type { InvestigationRuntimePaths } from '../src/runtime/session-workspace/paths.ts';
 import {
   DEFAULT_TASK_STRATEGY_CORRECTION_POLICY,
   createTaskStrategyGreenFailureRecord,
   parseTaskStrategyCorrectionPolicy,
   prepareTaskStrategyGreenFailureRecord,
   readTaskStrategyGreenFailureRecord,
-} from '../src/task-strategy-correction-store.ts';
+} from '../src/runtime/storage-journal/task-strategy-correction-store.ts';
 
 const SESSION_ID = 'session-correction-store';
 

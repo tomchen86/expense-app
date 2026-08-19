@@ -12,9 +12,9 @@ import {
   collectHistoricalCollaborationGrantUses,
   validateCiPlanningCommit,
 } from '../src/ci-planning.ts';
-import { loadChangeContract } from '../src/contracts.ts';
-import { createEvidenceNode } from '../src/evidence-node.ts';
-import { INVESTIGATION_PLANNING_ACTIVATION_MARKER as ACTIVATION_MARKER } from '../src/openspec-schema-contract.ts';
+import { loadChangeContract } from '../src/adapters/consumer/expense-app/work-registry/contracts.ts';
+import { createEvidenceNode } from '../src/adapters/compatibility/investigation-v2/evidence-node.ts';
+import { INVESTIGATION_PLANNING_ACTIVATION_MARKER as ACTIVATION_MARKER } from '../src/adapters/planning/openspec/documents/openspec-schema-contract.ts';
 import {
   createPlanReviewNode,
   createPlanReviewProviderResultNode,

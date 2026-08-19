@@ -42,14 +42,14 @@ import {
   validateCollaborationGrantUseSet,
   validateCollaborationGrantUseProjection,
   type CollaborationConsumptionRequest,
-} from '../src/collaboration-grant-store.ts';
+} from '../src/runtime/storage-journal/collaboration-grant-store.ts';
 import {
   createInvestigationCheckpointEnvelope,
   resumeInvestigationSession,
-} from '../src/investigation-session.ts';
+} from '../src/adapters/compatibility/investigation-v2/investigation-session.ts';
 import type { MaintainerPolicy } from '../src/modules/authority/maintainer-policy.ts';
-import type { MaintainerSignerProvider } from '../src/maintainer-signer.ts';
-import { investigationRuntimePaths } from '../src/paths.ts';
+import type { MaintainerSignerProvider } from '../src/adapters/signing/ssh/maintainer-signer.ts';
+import { investigationRuntimePaths } from '../src/runtime/session-workspace/paths.ts';
 import { PLAN_REVIEW_COVERAGE } from '../src/modules/assurance/plan-review.ts';
 import {
   createPlanningContributionEnvelope,
@@ -66,20 +66,20 @@ import type {
 import {
   PROVIDER_RUNNER_RESIDUALS,
   type ProviderRunnerReport,
-} from '../src/provider-runner.ts';
+} from '../src/runtime/provider-execution/provider-runner.ts';
 import { runProviderWorker } from '../src/provider-worker.ts';
 import {
   claimProviderInvocation,
   completeProviderInvocation,
   readProviderInvocationRequest,
-} from '../src/provider-invocation-store.ts';
+} from '../src/runtime/storage-journal/provider-invocation-store.ts';
 import {
   admitRoleResult,
   authorizeGrantedOrdinaryRole,
   scheduleOrdinaryRole,
   type RoleParticipant,
 } from '../src/modules/provider-orchestration/role-scheduler.ts';
-import { withRepositoryLifecycleOperation } from '../src/session-store.ts';
+import { withRepositoryLifecycleOperation } from '../src/runtime/session-workspace/session-store.ts';
 import {
   createFixtureRepository,
   git,

@@ -7,14 +7,14 @@ import path from 'node:path';
 import test from 'node:test';
 
 import { canonicalJson } from '../src/foundation/canonical-json/canonical-json.ts';
-import { loadWorkflowConfig } from '../src/contracts.ts';
-import { discoverRepository } from '../src/git.ts';
-import { renderHandoff } from '../src/handoff.ts';
+import { loadWorkflowConfig } from '../src/adapters/consumer/expense-app/work-registry/contracts.ts';
+import { discoverRepository } from '../src/runtime/repository-transaction/git.ts';
+import { renderHandoff } from '../src/adapters/consumer/expense-app/handoff/handoff.ts';
 import { finalizeTask } from '../src/application/finalize/lifecycle.ts';
-import { investigationRuntimePaths } from '../src/paths.ts';
+import { investigationRuntimePaths } from '../src/runtime/session-workspace/paths.ts';
 import { commitPlanningTransition } from '../src/application/propose/planning-transition.ts';
-import { readProviderInvocation } from '../src/provider-invocation-store.ts';
-import { PROVIDER_RUNNER_RESIDUALS } from '../src/provider-runner.ts';
+import { readProviderInvocation } from '../src/runtime/storage-journal/provider-invocation-store.ts';
+import { PROVIDER_RUNNER_RESIDUALS } from '../src/runtime/provider-execution/provider-runner.ts';
 import { runProviderWorker } from '../src/provider-worker.ts';
 import { startSession } from '../src/application/execute-task/session.ts';
 import {
@@ -24,7 +24,7 @@ import {
   reconcileTaskDiffReview,
 } from '../src/application/finalize/task-diff-review-lifecycle.ts';
 import { parseTaskDiffReviewChallengeResponseInput } from '../src/modules/assurance/task-diff-review-input.ts';
-import { readTaskDiffFinalAssuranceBinding } from '../src/task-diff-review-store.ts';
+import { readTaskDiffFinalAssuranceBinding } from '../src/runtime/storage-journal/task-diff-review-store.ts';
 import {
   TASK_DIFF_REVIEW_COVERAGE,
   type TaskDiffReviewSubject,

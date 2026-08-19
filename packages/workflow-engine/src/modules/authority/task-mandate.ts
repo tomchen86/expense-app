@@ -7,11 +7,11 @@ import {
   scanAuthorityAuditLedger,
   type AuthorityAuditLedgerScope,
   type Sha256Digest,
-} from '../../authority-audit-ledger.ts';
+} from '../../runtime/storage-journal/authority-audit-ledger.ts';
 import {
   recordAuthorityAuditEvent,
   type AuthorityAuditRecordedEvent,
-} from '../../authority-audit-service.ts';
+} from '../../runtime/storage-journal/authority-audit-service.ts';
 import {
   authorityRefusalDigest,
   withAuthorityRefusalAudit,
@@ -20,26 +20,26 @@ import {
 import { canonicalJson } from '../../foundation/canonical-json/canonical-json.ts';
 import { isRecord } from '../../foundation/canonical-json/contract-values.ts';
 import { ExitCode, workflowError } from '../../foundation/errors/errors.ts';
-import { ensurePlainDirectory } from '../../filesystem-safety.ts';
+import { ensurePlainDirectory } from '../../runtime/repository-transaction/filesystem-safety.ts';
 import {
   discoverRepository,
   isPostApprovalAdmissionFailure,
   runGit,
-} from '../../git.ts';
+} from '../../runtime/repository-transaction/git.ts';
 import { parseMaintainerPolicy } from './maintainer-policy.ts';
 import {
   createInteractiveSshSigner,
   type MaintainerSignerProvider,
-} from '../../maintainer-signer.ts';
+} from '../../adapters/signing/ssh/maintainer-signer.ts';
 import {
   isProviderId,
   type ProviderId,
 } from '../provider-orchestration/provider-registry.ts';
-import { assertChangeId } from '../../paths.ts';
+import { assertChangeId } from '../../runtime/session-workspace/paths.ts';
 import {
   runtimePaths,
   withRepositoryLifecycleOperation,
-} from '../../session-store.ts';
+} from '../../runtime/session-workspace/session-store.ts';
 
 export const TASK_MANDATE_SIGNATURE_NAMESPACE =
   'HARNESS_TASK_MANDATE_V1' as const;

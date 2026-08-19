@@ -22,9 +22,9 @@
   ],
   "sealedImmutablePaths": [
     ".github/workflows/workflow-assurance.yml",
+    "packages/workflow-engine/src/adapters/signing/ssh/maintainer-signer.ts",
     "packages/workflow-engine/src/ci-authority.ts",
     "packages/workflow-engine/src/ci.ts",
-    "packages/workflow-engine/src/maintainer-signer.ts",
     "packages/workflow-engine/src/modules/authority/maintainer-grant.ts",
     "packages/workflow-engine/src/modules/authority/maintainer-policy.ts",
     "packages/workflow-engine/src/modules/lifecycle/managed-trailers.ts",

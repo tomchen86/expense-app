@@ -6,11 +6,11 @@ import test from 'node:test';
 import {
   deriveAuthorityAuditRepositoryId,
   type AuthorityAuditLedgerScope,
-} from '../src/authority-audit-ledger.ts';
+} from '../src/runtime/storage-journal/authority-audit-ledger.ts';
 import {
   showAuthorityAuditTask,
   verifyAuthorityAuditEvents,
-} from '../src/authority-audit-service.ts';
+} from '../src/runtime/storage-journal/authority-audit-service.ts';
 import {
   consumeExternalEffectGrant,
   issueExternalEffectGrant,

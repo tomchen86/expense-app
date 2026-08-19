@@ -2,7 +2,11 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 import { ExitCode, workflowError } from './foundation/errors/errors.ts';
-import { assertChangeId, assertTaskId, normalizePolicyPath } from './paths.ts';
+import {
+  assertChangeId,
+  assertTaskId,
+  normalizePolicyPath,
+} from './runtime/session-workspace/paths.ts';
 
 export type BootstrapException = {
   changeId: string;

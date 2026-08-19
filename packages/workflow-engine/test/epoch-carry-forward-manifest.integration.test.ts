@@ -15,7 +15,7 @@ import {
 } from '../src/modules/authority/execution-governance.ts';
 import { canonicalJson } from '../src/foundation/canonical-json/canonical-json.ts';
 import { createProviderInvocationRequest } from '../src/modules/provider-orchestration/provider-contracts.ts';
-import { prepareProviderPromptContextForInvocation } from '../src/provider-execution-governance.ts';
+import { prepareProviderPromptContextForInvocation } from '../src/runtime/provider-execution/provider-execution-governance.ts';
 import { isWorkflowError } from './fixture.ts';
 
 const FIRST_AT = new Date('2026-08-10T01:00:00.000Z');

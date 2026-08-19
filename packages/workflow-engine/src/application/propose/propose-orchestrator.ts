@@ -6,13 +6,13 @@ import {
   resolveActorIdentity,
   type ActorSignal,
 } from '../../modules/provider-orchestration/actor-identity.ts';
-import { loadAiAdapterPolicy } from '../../ai-adapter-policy.ts';
+import { loadAiAdapterPolicy } from '../../runtime/provider-execution/ai-adapter-policy.ts';
 import {
   assessAssurance,
   ASSURANCE_ASSESSMENT_POLICY_DIGEST,
   type AssuranceAssessmentReport,
 } from '../../modules/assurance/assurance-assessment-chain.ts';
-import { replaceTextAtomic } from '../../atomic-text.ts';
+import { replaceTextAtomic } from '../../runtime/repository-transaction/atomic-text.ts';
 import { canonicalJson } from '../../foundation/canonical-json/canonical-json.ts';
 import {
   COLLABORATION_GRANT_POLICY_DIGEST,
@@ -25,7 +25,7 @@ import {
   readExactConsumedCollaborationGrantUse,
   reserveCollaborationGrantUnderLifecycleLock,
   type CollaborationGrantUseProjection,
-} from '../../collaboration-grant-store.ts';
+} from '../../runtime/storage-journal/collaboration-grant-store.ts';
 import {
   loadChecksConfig,
   loadWorkflowConfig,
@@ -37,26 +37,26 @@ import {
   type ChangeContract,
   type ExecutionArtifact,
   type GuardContract,
-} from '../../contracts.ts';
+} from '../../adapters/consumer/expense-app/work-registry/contracts.ts';
 import {
   compareAndSwapEvidenceRef,
   computeInvestigationEvidenceRefsClosure,
   readEvidenceNode,
   readEvidenceRefs,
   writeEvidenceNode,
-} from '../../evidence-object-store.ts';
+} from '../../runtime/storage-journal/evidence-object-store.ts';
 import {
   assertStoredEvidenceNode,
   createEvidenceNode,
   type EvidenceNode,
-} from '../../evidence-node.ts';
+} from '../../adapters/compatibility/investigation-v2/evidence-node.ts';
 import {
   createInvestigationInventoryCurrentnessNode,
   projectConvergedEvidenceGraph,
   SEALED_INVESTIGATION_REUSE_EVALUATOR,
   SEALED_INVESTIGATION_REUSE_OUTPUT_SCHEMA,
   SEALED_INVESTIGATION_REUSE_SCHEMA,
-} from '../../evidence-reuse-path.ts';
+} from '../../adapters/compatibility/investigation-v2/evidence-reuse-path.ts';
 import {
   ExitCode,
   WorkflowError,
@@ -70,8 +70,12 @@ import {
 import {
   loadProviderExecutionRepairContext,
   preflightProviderRepairRetry,
-} from '../../provider-execution-governance.ts';
-import { discoverRepository, protectedBranchRef, runGit } from '../../git.ts';
+} from '../../runtime/provider-execution/provider-execution-governance.ts';
+import {
+  discoverRepository,
+  protectedBranchRef,
+  runGit,
+} from '../../runtime/repository-transaction/git.ts';
 import {
   expandClassDispositions,
   parseClassDisposition,
@@ -101,7 +105,7 @@ import {
   recordReuseCoverage,
   type ReuseCoverageRecord,
 } from '../../modules/why-knowledge/semantic-manifest-reuse.ts';
-import { readLedgerEntry } from '../../semantic-ledger-store.ts';
+import { readLedgerEntry } from '../../runtime/storage-journal/semantic-ledger-store.ts';
 import {
   deriveEngineFloor,
   derivePinnedDiffPathFacts,
@@ -119,7 +123,7 @@ import {
   type InvestigationGroupFacts,
   type ReviewedPathRelationship,
 } from '../../modules/investigation/domain/investigation-groups.ts';
-import { projectInvestigationArtifactForTracking } from '../../investigation-artifact-projection.ts';
+import { projectInvestigationArtifactForTracking } from '../../adapters/compatibility/investigation-v2/investigation-artifact-projection.ts';
 import {
   createInvestigationV3Blocker,
   type InvestigationAssuranceFacts,
@@ -128,9 +132,9 @@ import {
 import {
   buildInvestigationV3Shadow,
   type InvestigationV3ShadowBuildResult,
-} from '../../investigation-shadow-builder.ts';
-import { writeInvestigationV3ShadowObservation } from '../../investigation-shadow-store.ts';
-import type { InvestigationV2ShadowOracle } from '../../investigation-shadow-parity.ts';
+} from '../../adapters/compatibility/investigation-v2/investigation-shadow-builder.ts';
+import { writeInvestigationV3ShadowObservation } from '../../runtime/storage-journal/investigation-shadow-store.ts';
+import type { InvestigationV2ShadowOracle } from '../../adapters/compatibility/investigation-v2/investigation-shadow-parity.ts';
 import {
   adaptInvestigationScanFactsResult,
   scanInvestigationTreeFacts,
@@ -147,7 +151,7 @@ import {
   retryInvestigationProvider,
   startInvestigationSessionUnderLifecycleLock,
   type InvestigationStatus,
-} from '../../investigation-session.ts';
+} from '../../adapters/compatibility/investigation-v2/investigation-session.ts';
 import {
   assertStoredReviewerTermDelta,
   deriveReviewerTermDelta,
@@ -167,7 +171,7 @@ import {
   type InvestigationSession,
   type StoredInvestigationCheckpoint,
   type GroupDispositionsPayload,
-} from '../../investigation-session-store.ts';
+} from '../../runtime/storage-journal/investigation-session-store.ts';
 import {
   INVESTIGATION_LIMITS,
   normalizeInvestigationTerm,
@@ -182,7 +186,7 @@ import {
   readInvestigationWhyNode,
   type InvestigationFullBlobManifestEntry,
   type InvestigationWhyAnswer,
-} from '../../investigation-why.ts';
+} from '../../adapters/compatibility/investigation-v2/investigation-why.ts';
 import { projectInvestigationLedger } from '../../modules/projection/investigation-design-projection.ts';
 import {
   createInvestigationApplicability,
@@ -198,30 +202,30 @@ import {
   isReplaceableLegacyArtifact,
   legacyMigrationMetadataBytes,
   type LegacyPlanMigrationSubject,
-} from '../../legacy-plan-migration.ts';
+} from '../../adapters/compatibility/investigation-v2/legacy-plan-migration.ts';
 import { loadInvestigationRuntimeContext } from '../../lifecycle-context.ts';
 import { parseMaintainerPolicy } from '../../modules/authority/maintainer-policy.ts';
 import {
   createInteractiveSshSigner,
   type MaintainerSignerProvider,
-} from '../../maintainer-signer.ts';
-import { createOpenSpecAdapter } from '../../openspec-adapter.ts';
-import { OPENSPEC_ASSET_DEFINITIONS } from '../../openspec-planning-asset-contract.ts';
+} from '../../adapters/signing/ssh/maintainer-signer.ts';
+import { createOpenSpecAdapter } from '../../adapters/planning/openspec/documents/openspec-adapter.ts';
+import { OPENSPEC_ASSET_DEFINITIONS } from '../../adapters/planning/openspec/documents/openspec-planning-asset-contract.ts';
 import {
   assertChangeId,
   normalizeExactRepositoryPath,
   normalizePolicyPath,
-} from '../../paths.ts';
+} from '../../runtime/session-workspace/paths.ts';
 import {
   assertPlanningTaskHistory,
   readFileAtCommit,
-} from '../../planning-contract.ts';
+} from '../../adapters/planning/openspec/documents/planning-contract.ts';
 import {
   projectWorkflowPlanDigest,
   type WorkflowPlanDigest,
   type WorkflowPlanDigestTouchedFile,
 } from '../../modules/guidance/renderers/plan-digest.ts';
-import { deriveReviewedMutationClassPolicy } from '../../reviewed-mutation-policy.ts';
+import { deriveReviewedMutationClassPolicy } from '../../runtime/managed-documents/ownership/reviewed-mutation-policy.ts';
 import {
   assertActiveTaskMandateBindingUnderLifecycleLock,
   authorizeTaskMandateOperation,
@@ -231,11 +235,11 @@ import {
   type TaskMandateBinding,
   type TaskMandateOptions,
 } from '../../modules/authority/task-mandate.ts';
-import { assertTaskMandateOptional } from '../../task-authorization-policy.ts';
+import { assertTaskMandateOptional } from '../../adapters/consumer/expense-app/work-registry/task-authorization-policy.ts';
 import {
   type HeldChangeTransitionAuthority,
   withInvestigationTransitionAuthority,
-} from '../../planning-lock.ts';
+} from '../../runtime/session-workspace/planning-lock.ts';
 import {
   commitPlanningTransitionUnderAuthority,
   type PlanningTransitionResult,
@@ -244,7 +248,7 @@ import {
   inspectPlanningDraftWorkspace,
   preparePlanningDraftWorkspace,
   readPlanningDraftWorkspace,
-} from '../../planning-workspace.ts';
+} from '../../runtime/session-workspace/planning-workspace.ts';
 import { listSessions } from '../execute-task/session.ts';
 import { withTaskRevisionPlanningOperation } from '../revise/task-revision.ts';
 import {
@@ -294,7 +298,7 @@ import {
   readProposeExemptionSession,
   retireCurrentProposeExemptionSession,
   type ProposeExemptionSession,
-} from '../../propose-exemption-store.ts';
+} from '../../runtime/storage-journal/propose-exemption-store.ts';
 import {
   BLIND_SURVEY_OUTPUT_SCHEMA,
   blindSurveyIntentDigest,
@@ -318,7 +322,7 @@ import {
   type PlanReviewManifest,
   type ProviderRetryDecisionBinding,
   type ProviderExecutionPolicySnapshotCurrent,
-} from '../../provider-invocation-store.ts';
+} from '../../runtime/storage-journal/provider-invocation-store.ts';
 import {
   assertProviderExecutionGrantAuthorization,
   authorizeAutomaticProviderRetry,
@@ -337,7 +341,7 @@ import {
 import {
   readPinnedTrackedTree,
   type TrackedTreeSnapshot,
-} from '../../tracked-tree-reader.ts';
+} from '../../runtime/repository-transaction/tracked-tree-reader.ts';
 
 const MAX_CALLER_JSON_BYTES = 4 * 1024 * 1024;
 const DIGEST = /^[0-9a-f]{64}$/;

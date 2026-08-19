@@ -1,19 +1,19 @@
 import crypto from 'node:crypto';
 
 import { canonicalJson } from '../../foundation/canonical-json/canonical-json.ts';
-import type { BehaviorContractRef } from '../../contracts.ts';
+import type { BehaviorContractRef } from '../../adapters/consumer/expense-app/work-registry/contracts.ts';
 import { ExitCode, workflowError } from '../../foundation/errors/errors.ts';
 import {
   assertSessionId,
   normalizeChangedPath,
   normalizePolicyPath,
-} from '../../paths.ts';
+} from '../../runtime/session-workspace/paths.ts';
 import type { ProviderOutputValidator } from './provider-contracts.ts';
 import {
   parseTaskStrategyGreenFailureRecord,
   type TaskStrategyGreenFailureRecord,
   type TaskStrategyPatchHead,
-} from '../../task-strategy-correction-store.ts';
+} from '../../runtime/storage-journal/task-strategy-correction-store.ts';
 
 const DIGEST = /^[0-9a-f]{64}$/;
 const GIT_OBJECT_ID = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;

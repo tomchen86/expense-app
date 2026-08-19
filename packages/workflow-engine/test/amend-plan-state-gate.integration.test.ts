@@ -7,17 +7,17 @@ import test from 'node:test';
 import {
   readContentRecord,
   writeContentRecord,
-} from '../src/content-record-store.ts';
+} from '../src/runtime/storage-journal/content-record-store.ts';
 import {
   commitPlanAmendment,
   commitPlanningTransition,
 } from '../src/application/propose/planning-transition.ts';
 import { validateCiPlanningCommit } from '../src/ci-planning.ts';
-import { validateOpenSpecPlanning } from '../src/planning-contract.ts';
-import { readPlanningTransitionReport } from '../src/planning-report.ts';
-import { loadWorkflowConfig } from '../src/contracts.ts';
-import { discoverRepository } from '../src/git.ts';
-import { committedPlanningGeneration } from '../src/planning-generation-history.ts';
+import { validateOpenSpecPlanning } from '../src/adapters/planning/openspec/documents/planning-contract.ts';
+import { readPlanningTransitionReport } from '../src/runtime/storage-journal/planning-report.ts';
+import { loadWorkflowConfig } from '../src/adapters/consumer/expense-app/work-registry/contracts.ts';
+import { discoverRepository } from '../src/runtime/repository-transaction/git.ts';
+import { committedPlanningGeneration } from '../src/runtime/repository-transaction/planning-generation-history.ts';
 import { inspectPlanningExecutionEpoch } from '../src/modules/lifecycle/planning-execution-epoch.ts';
 import { withArchiveEligibility } from '../src/application/archive/archive-eligibility.ts';
 import {

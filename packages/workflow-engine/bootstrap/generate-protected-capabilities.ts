@@ -6,8 +6,8 @@ import {
   computeProtectedCapabilityEntryDigestsFromWorktree,
   parseProtectedCapabilitiesManifestSource,
   type ProtectedCapabilitiesManifestSource,
-} from '../src/protected-capabilities.ts';
-import { replaceTextAtomic } from '../src/atomic-text.ts';
+} from '../src/adapters/consumer/expense-app/work-registry/protected-capabilities.ts';
+import { replaceTextAtomic } from '../src/runtime/repository-transaction/atomic-text.ts';
 
 const MANIFEST_PATH = 'workflow/protected-capabilities.json';
 

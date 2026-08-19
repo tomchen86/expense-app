@@ -5,8 +5,8 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import { createInvestigationCheckpointEnvelope } from '../src/investigation-session.ts';
-import { readPlanningDraftWorkspace } from '../src/planning-workspace.ts';
+import { createInvestigationCheckpointEnvelope } from '../src/adapters/compatibility/investigation-v2/investigation-session.ts';
+import { readPlanningDraftWorkspace } from '../src/runtime/session-workspace/planning-workspace.ts';
 import { prepareExecutionMandate } from './execution-mandate-fixture.ts';
 import {
   createFixtureRepository,

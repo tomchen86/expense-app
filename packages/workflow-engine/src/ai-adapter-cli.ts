@@ -1,9 +1,9 @@
-import { evaluateAiAdapter } from './ai-adapter-evaluation.ts';
+import { evaluateAiAdapter } from './runtime/provider-execution/ai-adapter-evaluation.ts';
 import { ExitCode, workflowError } from './foundation/errors/errors.ts';
 import {
   runProviderAvailabilityPilot,
   verifyProviderAvailabilityPilot,
-} from './provider-availability-pilot.ts';
+} from './runtime/provider-execution/provider-availability-pilot.ts';
 
 export function dispatchAiAdapterCommand(
   args: string[],

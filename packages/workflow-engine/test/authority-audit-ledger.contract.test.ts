@@ -10,7 +10,7 @@ import {
   scanAuthorityAuditLedger,
   type AuthorityAuditAppendInput,
   type AuthorityAuditLedgerScope,
-} from '../src/authority-audit-ledger.ts';
+} from '../src/runtime/storage-journal/authority-audit-ledger.ts';
 import { canonicalJson } from '../src/foundation/canonical-json/canonical-json.ts';
 import { isWorkflowError } from './fixture.ts';
 

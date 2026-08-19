@@ -7,8 +7,8 @@ import path from 'node:path';
 import test from 'node:test';
 
 import { readAuthorityApplicationReceiptTag } from '../src/modules/authority/authority-application-receipt.ts';
-import { deriveAuthorityAuditRepositoryId } from '../src/authority-audit-ledger.ts';
-import { verifyAuthorityAuditEvents } from '../src/authority-audit-service.ts';
+import { deriveAuthorityAuditRepositoryId } from '../src/runtime/storage-journal/authority-audit-ledger.ts';
+import { verifyAuthorityAuditEvents } from '../src/runtime/storage-journal/authority-audit-service.ts';
 import { canonicalJson } from '../src/foundation/canonical-json/canonical-json.ts';
 import { assertCandidateV2ChecksFresh } from '../src/modules/authority/maintainer-candidate.ts';
 import {
@@ -26,13 +26,13 @@ import {
 import {
   computeProtectedCapabilityEntryDigests,
   REQUIRED_PROTECTED_CAPABILITIES,
-} from '../src/protected-capabilities.ts';
+} from '../src/adapters/consumer/expense-app/work-registry/protected-capabilities.ts';
 import { parseMaintainerPolicy } from '../src/modules/authority/maintainer-policy.ts';
-import type { MaintainerSignerProvider } from '../src/maintainer-signer.ts';
+import type { MaintainerSignerProvider } from '../src/adapters/signing/ssh/maintainer-signer.ts';
 import {
   maintainerGrantStorePaths,
   readTerminalMaintainerGrant,
-} from '../src/maintainer-store.ts';
+} from '../src/runtime/storage-journal/maintainer-store.ts';
 import { startAuthoritySession } from '../src/application/control-plane/maintainer-session.ts';
 import { authorizeTaskMandate } from '../src/modules/authority/task-mandate.ts';
 import { createFixtureRepository, git, isWorkflowError } from './fixture.ts';
@@ -538,7 +538,7 @@ function installTrustBase(repository: string): void {
   fs.writeFileSync(
     path.join(
       repository,
-      'packages/workflow-engine/src/protected-capabilities.ts',
+      'packages/workflow-engine/src/adapters/consumer/expense-app/work-registry/protected-capabilities.ts',
     ),
     'export const PROTECTED_CAPABILITY_LOADER = true;\n',
   );
@@ -576,7 +576,7 @@ function installTrustBase(repository: string): void {
     'packages/workflow-engine/src/modules/authority/execution-governance.ts',
   ];
   const dependencies = [
-    'packages/workflow-engine/src/protected-capabilities.ts',
+    'packages/workflow-engine/src/adapters/consumer/expense-app/work-registry/protected-capabilities.ts',
     'workflow/protected-capabilities.json',
   ];
   const closure = computeProtectedCapabilityEntryDigests(

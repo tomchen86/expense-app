@@ -3,8 +3,11 @@ import crypto from 'node:crypto';
 import test from 'node:test';
 
 import { canonicalJson } from '../src/foundation/canonical-json/canonical-json.ts';
-import { validateClosedEvidenceDag } from '../src/evidence-currentness.ts';
-import { createEvidenceNode, type EvidenceNode } from '../src/evidence-node.ts';
+import { validateClosedEvidenceDag } from '../src/adapters/compatibility/investigation-v2/evidence-currentness.ts';
+import {
+  createEvidenceNode,
+  type EvidenceNode,
+} from '../src/adapters/compatibility/investigation-v2/evidence-node.ts';
 import { WorkflowError } from '../src/foundation/errors/errors.ts';
 import {
   createInvestigationCoverageNode,

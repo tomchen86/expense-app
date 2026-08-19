@@ -1,10 +1,10 @@
 import crypto from 'node:crypto';
 import { performance } from 'node:perf_hooks';
 import { canonicalJson } from '../../../foundation/canonical-json/canonical-json.js';
-import { createEvidenceNode, } from '../../../evidence-node.js';
+import { createEvidenceNode, } from '../../../adapters/compatibility/investigation-v2/evidence-node.js';
 import { ExitCode, workflowError } from '../../../foundation/errors/errors.js';
 import { assertInvestigationLimits, INVESTIGATION_LIMITS, normalizeInvestigationTerm, } from './investigation-terms.js';
-import { readPinnedTrackedTree, } from '../../../tracked-tree-reader.js';
+import { readPinnedTrackedTree, } from '../../../runtime/repository-transaction/tracked-tree-reader.js';
 const NODE_TYPE = 'investigation-term-scan';
 const NODE_SCHEMA = 'investigation.term-scan.v1';
 const NODE_EVALUATOR = 'investigation-scanner.v1';

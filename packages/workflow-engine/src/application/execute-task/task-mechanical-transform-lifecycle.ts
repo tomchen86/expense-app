@@ -6,33 +6,33 @@ import { canonicalJson } from '../../foundation/canonical-json/canonical-json.ts
 import type {
   MechanicalTransformExecution,
   TransformationTerm,
-} from '../../contracts.ts';
+} from '../../adapters/consumer/expense-app/work-registry/contracts.ts';
 import { ExitCode, workflowError } from '../../foundation/errors/errors.ts';
-import { readFinalizeTransaction } from '../../finalize-transaction.ts';
-import { listStagedPaths } from '../../git-transitions.ts';
-import { listChangedPaths } from '../../git.ts';
+import { readFinalizeTransaction } from '../../runtime/repository-transaction/finalize-transaction.ts';
+import { listStagedPaths } from '../../runtime/repository-transaction/git-transitions.ts';
+import { listChangedPaths } from '../../runtime/repository-transaction/git.ts';
 import {
   createPrivateCanonicalJson,
   privatePathExists,
   readPrivateCanonicalJson,
   writePrivateCanonicalJsonAtomic,
-} from '../../investigation-session-store.ts';
+} from '../../runtime/storage-journal/investigation-session-store.ts';
 import { loadActiveSessionContext } from '../../lifecycle-context.ts';
 import { classifyMutationPath } from '../../modules/source/mutation-class-policy.ts';
 import {
   investigationRuntimePaths,
   matchesAllowedPath,
   normalizeChangedPath,
-} from '../../paths.ts';
-import { deriveReviewedMutationClassPolicy } from '../../reviewed-mutation-policy.ts';
+} from '../../runtime/session-workspace/paths.ts';
+import { deriveReviewedMutationClassPolicy } from '../../runtime/managed-documents/ownership/reviewed-mutation-policy.ts';
 import {
   withRepositoryLifecycleOperation,
   withSessionOperation,
-} from '../../session-store.ts';
+} from '../../runtime/session-workspace/session-store.ts';
 import {
   readPinnedTrackedTree,
   type TrackedTreeEntry,
-} from '../../tracked-tree-reader.ts';
+} from '../../runtime/repository-transaction/tracked-tree-reader.ts';
 import {
   inspectSession,
   type SessionInspection,

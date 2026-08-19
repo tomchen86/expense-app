@@ -6,7 +6,7 @@ import path from 'node:path';
 import test from 'node:test';
 import { pathToFileURL } from 'node:url';
 
-import { resolveCheckRunner } from '../src/runner-resolution.ts';
+import { resolveCheckRunner } from '../src/adapters/consumer/expense-app/work-registry/runner-resolution.ts';
 import {
   addFixturePackage,
   createFixtureRepository,
@@ -141,7 +141,10 @@ test(
       fs.chmodSync(alternateExecutable, 0o755);
 
       const moduleUrl = pathToFileURL(
-        path.join(import.meta.dirname, '../src/runner-resolution.ts'),
+        path.join(
+          import.meta.dirname,
+          '../src/adapters/consumer/expense-app/work-registry/runner-resolution.ts',
+        ),
       ).href;
       const script = [
         `import { resolveCheckRunner } from ${JSON.stringify(moduleUrl)};`,

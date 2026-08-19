@@ -8,13 +8,13 @@ import {
   appendAuthorityAuditRecord,
   deriveAuthorityAuditRepositoryId,
   type AuthorityAuditLedgerScope,
-} from '../src/authority-audit-ledger.ts';
+} from '../src/runtime/storage-journal/authority-audit-ledger.ts';
 import {
   recordAuthorityAuditEvent,
   showAuthorityAuditTask,
   verifyAuthorityAuditEvents,
   type AuthorityAuditEventInput,
-} from '../src/authority-audit-service.ts';
+} from '../src/runtime/storage-journal/authority-audit-service.ts';
 import { isWorkflowError } from './fixture.ts';
 
 function fixture(): {

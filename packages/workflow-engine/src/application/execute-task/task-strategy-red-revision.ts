@@ -2,10 +2,10 @@ import crypto from 'node:crypto';
 import path from 'node:path';
 
 import { canonicalJson } from '../../foundation/canonical-json/canonical-json.ts';
-import { pinCheckRunner } from '../../check-runner.ts';
-import { writeEvidenceNode } from '../../evidence-object-store.ts';
+import { pinCheckRunner } from '../../adapters/consumer/expense-app/work-registry/check-runner.ts';
+import { writeEvidenceNode } from '../../runtime/storage-journal/evidence-object-store.ts';
 import { ExitCode, workflowError } from '../../foundation/errors/errors.ts';
-import { readFinalizeTransaction } from '../../finalize-transaction.ts';
+import { readFinalizeTransaction } from '../../runtime/repository-transaction/finalize-transaction.ts';
 import { assertCurrentImplementationReconciliation } from '../../modules/why-knowledge/implementation-reconciliation.ts';
 import {
   loadActiveSessionContext,
@@ -15,7 +15,7 @@ import { restoreCurrentTaskStrategyImplementationToRedUnderLifecycleLock } from 
 import {
   readTaskStrategyPatchCurrentBinding,
   readTaskStrategyPatchRecord,
-} from '../../task-strategy-patch-store.ts';
+} from '../../runtime/storage-journal/task-strategy-patch-store.ts';
 import {
   createTaskStrategyCurrentRef,
   createTaskStrategyRedRevisionJournal,
@@ -31,7 +31,7 @@ import {
   type TaskStrategyRedRevisionJournal,
   type TaskStrategyRedRevisionJournalState,
   type TaskStrategyRedRevisionRequest,
-} from '../../task-strategy-red-revision-store.ts';
+} from '../../runtime/storage-journal/task-strategy-red-revision-store.ts';
 import { prepareTaskStrategyRedSuccessorUnlocked } from './task-strategy-execution.ts';
 import {
   persistTaskStrategyTransaction,
@@ -39,14 +39,14 @@ import {
   readTaskStrategyTransaction,
   readTaskStrategyTransactionByDigest,
   type TaskStrategyTransaction,
-} from '../../task-strategy-store.ts';
+} from '../../runtime/storage-journal/task-strategy-store.ts';
 import {
   readSessionFile,
   withRepositoryLifecycleOperation,
   withSessionOperation,
   writeJsonAtomic,
   type WorkflowSession,
-} from '../../session-store.ts';
+} from '../../runtime/session-workspace/session-store.ts';
 import {
   inspectSession,
   type SessionInspection,

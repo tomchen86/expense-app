@@ -5,16 +5,19 @@ import os from 'node:os';
 import path from 'node:path';
 
 import { canonicalJson } from '../src/foundation/canonical-json/canonical-json.ts';
-import { loadChangeContract, type ExecutionTask } from '../src/contracts.ts';
-import { createEvidenceNode } from '../src/evidence-node.ts';
+import {
+  loadChangeContract,
+  type ExecutionTask,
+} from '../src/adapters/consumer/expense-app/work-registry/contracts.ts';
+import { createEvidenceNode } from '../src/adapters/compatibility/investigation-v2/evidence-node.ts';
 import { WorkflowError } from '../src/foundation/errors/errors.ts';
 import {
   createInvestigationApplicability,
   INVESTIGATION_APPLICABILITY_POLICY_DIGEST,
 } from '../src/modules/investigation/domain/investigation-applicability.ts';
-import { OPENSPEC_REPOSITORY_REVIEWED_SOURCES } from '../src/openspec-planning-asset-contract.ts';
-import { generateOpenSpecPlanningAssets } from '../src/openspec-planning-assets.ts';
-import { INVESTIGATION_PLANNING_ACTIVATION_MARKER } from '../src/openspec-schema-contract.ts';
+import { OPENSPEC_REPOSITORY_REVIEWED_SOURCES } from '../src/adapters/planning/openspec/documents/openspec-planning-asset-contract.ts';
+import { generateOpenSpecPlanningAssets } from '../src/adapters/planning/openspec/documents/openspec-planning-assets.ts';
+import { INVESTIGATION_PLANNING_ACTIVATION_MARKER } from '../src/adapters/planning/openspec/documents/openspec-schema-contract.ts';
 import {
   createPlanReviewNode,
   createPlanReviewProviderResultNode,

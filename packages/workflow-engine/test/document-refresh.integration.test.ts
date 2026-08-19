@@ -9,7 +9,7 @@ import {
   applyDocumentRefresh,
   proposeDocumentRefresh,
   reviewDocumentRefresh,
-} from '../src/document-refresh.ts';
+} from '../src/runtime/managed-documents/transaction/document-refresh.ts';
 import { createFixtureRepository, git, isWorkflowError } from './fixture.ts';
 
 test('approved refresh replaces exactly one reviewed document section', () => {

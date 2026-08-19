@@ -3,20 +3,20 @@ import fs from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
 
-import { loadAiAdapterPolicy } from '../src/ai-adapter-policy.ts';
+import { loadAiAdapterPolicy } from '../src/runtime/provider-execution/ai-adapter-policy.ts';
 import { canonicalJson } from '../src/foundation/canonical-json/canonical-json.ts';
-import { discoverRepository } from '../src/git.ts';
+import { discoverRepository } from '../src/runtime/repository-transaction/git.ts';
 import {
   executeHumanResolutionGrant,
   inspectHumanResolutionGrants,
   revokeHumanResolutionGrant,
   startInvestigationSession,
-} from '../src/investigation-session.ts';
+} from '../src/adapters/compatibility/investigation-v2/investigation-session.ts';
 import {
   assertHumanResolutionDecision,
   inspectInvestigationResolutionState,
   type HumanResolutionDecision,
-} from '../src/investigation-session-store.ts';
+} from '../src/runtime/storage-journal/investigation-session-store.ts';
 import {
   canonicalHumanResolutionGrantEnvelope,
   issueHumanResolutionGrant,
@@ -25,15 +25,15 @@ import {
   type HumanResolutionGrantEnvelope,
 } from '../src/modules/authority/maintainer-grant.ts';
 import type { MaintainerPolicy } from '../src/modules/authority/maintainer-policy.ts';
-import type { MaintainerSignerProvider } from '../src/maintainer-signer.ts';
-import { investigationRuntimePaths } from '../src/paths.ts';
+import type { MaintainerSignerProvider } from '../src/adapters/signing/ssh/maintainer-signer.ts';
+import { investigationRuntimePaths } from '../src/runtime/session-workspace/paths.ts';
 import { createProviderInvocationRequest } from '../src/modules/provider-orchestration/provider-contracts.ts';
 import {
   BLIND_SURVEY_OUTPUT_SCHEMA,
   blindSurveyIntentDigest,
   blindSurveyManifestDigest,
   type BlindSurveyManifest,
-} from '../src/provider-invocation-store.ts';
+} from '../src/runtime/storage-journal/provider-invocation-store.ts';
 import { createFixtureRepository, git, isWorkflowError } from './fixture.ts';
 import { issueLegacyHumanResolutionGrantFixture } from './legacy-human-resolution-grant-fixture.ts';
 

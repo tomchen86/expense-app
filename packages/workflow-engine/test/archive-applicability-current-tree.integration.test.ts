@@ -11,7 +11,7 @@ import {
   createPlanningAmendmentDecision,
   replacePlanningAmendmentDecisionMarker,
 } from '../src/modules/lifecycle/planning-amendment-decision.ts';
-import { committedPlanningGeneration } from '../src/planning-generation-history.ts';
+import { committedPlanningGeneration } from '../src/runtime/repository-transaction/planning-generation-history.ts';
 import {
   createFixtureRepository,
   git,

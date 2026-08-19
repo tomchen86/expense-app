@@ -3,11 +3,11 @@ import {
   discoverRepository,
   fingerprintRepositoryProjection,
   type GitState,
-} from './git.ts';
+} from './runtime/repository-transaction/git.ts';
 import {
   loadValidatedChangeContract,
   type ValidatedChangeContract,
-} from './managed-change-contract.ts';
+} from './adapters/planning/openspec/documents/managed-change-contract.ts';
 
 export function loadStableValidatedChangeContract(
   initialGit: GitState,

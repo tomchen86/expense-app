@@ -5,7 +5,7 @@ import path from 'node:path';
 import test from 'node:test';
 
 import { commitPlanningTransition } from '../src/application/propose/planning-transition.ts';
-import { committedPlanningGeneration } from '../src/planning-generation-history.ts';
+import { committedPlanningGeneration } from '../src/runtime/repository-transaction/planning-generation-history.ts';
 import {
   createPlanningAmendmentDecision,
   replacePlanningAmendmentDecisionMarker,

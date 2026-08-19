@@ -1,14 +1,17 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
-import { loadWorkflowConfig } from './contracts.ts';
+import { loadWorkflowConfig } from './adapters/consumer/expense-app/work-registry/contracts.ts';
 import { ExitCode, workflowError } from './foundation/errors/errors.ts';
-import { discoverRepository, runGit } from './git.ts';
-import { listStagedPaths } from './git-transitions.ts';
-import { validateWorkflowIntegrationAssets } from './integration-assets.ts';
+import {
+  discoverRepository,
+  runGit,
+} from './runtime/repository-transaction/git.ts';
+import { listStagedPaths } from './runtime/repository-transaction/git-transitions.ts';
+import { validateWorkflowIntegrationAssets } from './adapters/consumer/expense-app/work-registry/integration-assets.ts';
 import { hasManagedTrailerLine } from './modules/lifecycle/managed-trailers.ts';
 import { assertActivePublishTransaction } from './modules/authority/external-effect-grant.ts';
-import type { MaintainerSignerProvider } from './maintainer-signer.ts';
+import type { MaintainerSignerProvider } from './adapters/signing/ssh/maintainer-signer.ts';
 import { validateRepositoryState } from './repository-validation.ts';
 import { listSessions } from './application/execute-task/session.ts';
 

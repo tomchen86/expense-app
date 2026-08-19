@@ -5,7 +5,7 @@ import { assertTaskHistory } from '../src/ci-task-state.ts';
 import {
   amendmentLeftWorkMarkedDone,
   assertPlanningTaskHistory,
-} from '../src/planning-contract.ts';
+} from '../src/adapters/planning/openspec/documents/planning-contract.ts';
 
 const DONE = [
   { id: '1.1', completed: true },

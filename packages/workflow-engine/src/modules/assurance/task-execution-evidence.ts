@@ -1,15 +1,15 @@
 import { replayCommitSequence } from '../../ci-sequence.ts';
 import { listRangeCommits, readFileAtCommit } from '../../ci-git.ts';
 import { validateCiPlanningCommit } from '../../ci-planning.ts';
-import { preEpochCompletedTaskIds } from '../../bootstrap-task-exemption.ts';
-import { parseTasks } from '../../contracts.ts';
+import { preEpochCompletedTaskIds } from '../../adapters/compatibility/investigation-v2/bootstrap-task-exemption.ts';
+import { parseTasks } from '../../adapters/consumer/expense-app/work-registry/contracts.ts';
 import { ExitCode, workflowError } from '../../foundation/errors/errors.ts';
 import {
   commitFacts,
   findExactTaskCommits,
   type TaskCommit,
-} from '../../git-transitions.ts';
-import { runGit } from '../../git.ts';
+} from '../../runtime/repository-transaction/git-transitions.ts';
+import { runGit } from '../../runtime/repository-transaction/git.ts';
 import { parseManagedTrailers } from '../lifecycle/managed-trailers.ts';
 
 export type TaskExecutionGenerationEvidence = {

@@ -26,18 +26,24 @@ import {
   taskKey,
   type CompletedTask,
 } from './ci-task-state.ts';
-import { parseTasks, type ChangeContract } from './contracts.ts';
+import {
+  parseTasks,
+  type ChangeContract,
+} from './adapters/consumer/expense-app/work-registry/contracts.ts';
 import { ExitCode, workflowError } from './foundation/errors/errors.ts';
 import {
   assertDocumentationClosureCommitCurrent,
   parseDocumentationClosureFromCommitMessage,
-} from './documentation-closure.ts';
-import { documentationClosureActivationAtCommit } from './documentation-closure-activation.ts';
-import { commitFacts, findExactTaskCommits } from './git-transitions.ts';
-import { runGit } from './git.ts';
-import { completionDocumentPaths } from './managed-documents.ts';
-import { matchesAllowedPath } from './paths.ts';
-import { assertExactTaskProjection } from './task-projection.ts';
+} from './runtime/managed-documents/contracts/documentation-closure.ts';
+import { documentationClosureActivationAtCommit } from './runtime/managed-documents/ownership/documentation-closure-activation.ts';
+import {
+  commitFacts,
+  findExactTaskCommits,
+} from './runtime/repository-transaction/git-transitions.ts';
+import { runGit } from './runtime/repository-transaction/git.ts';
+import { completionDocumentPaths } from './runtime/managed-documents/validation/managed-documents.ts';
+import { matchesAllowedPath } from './runtime/session-workspace/paths.ts';
+import { assertExactTaskProjection } from './runtime/managed-documents/transaction/task-projection.ts';
 
 export type CommitSequenceResult = {
   completedTasks: CompletedTask[];

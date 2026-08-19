@@ -6,7 +6,7 @@ import path from 'node:path';
 import test from 'node:test';
 
 import { WorkflowError } from '../src/foundation/errors/errors.ts';
-import { listChangedPaths } from '../src/git.ts';
+import { listChangedPaths } from '../src/runtime/repository-transaction/git.ts';
 import {
   inspectTaskRevisionStatus,
   prepareTaskRevisionApprovalBinding,
@@ -17,8 +17,8 @@ import {
   issueTaskRevisionApproval,
   taskRevisionApprovalTargetDigest,
 } from '../src/modules/authority/task-revision-approval.ts';
-import type { MaintainerSignerProvider } from '../src/maintainer-signer.ts';
-import { commitChangedPaths } from '../src/git-transitions.ts';
+import type { MaintainerSignerProvider } from '../src/adapters/signing/ssh/maintainer-signer.ts';
+import { commitChangedPaths } from '../src/runtime/repository-transaction/git-transitions.ts';
 import { commitPlanningTransition } from '../src/application/propose/planning-transition.ts';
 import { startPropose } from '../src/application/propose/propose-orchestrator.ts';
 import {

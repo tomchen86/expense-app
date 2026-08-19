@@ -6,16 +6,16 @@ import test from 'node:test';
 
 import { canonicalJson } from '../src/foundation/canonical-json/canonical-json.ts';
 import { validateCiPlanningCommit } from '../src/ci-planning.ts';
-import { commitFacts } from '../src/git-transitions.ts';
-import { renderHandoff } from '../src/handoff.ts';
+import { commitFacts } from '../src/runtime/repository-transaction/git-transitions.ts';
+import { renderHandoff } from '../src/adapters/consumer/expense-app/handoff/handoff.ts';
 import {
   openTask,
   readOpenTaskJournal,
 } from '../src/application/execute-task/open-task.ts';
-import { readPlanningTransitionReport } from '../src/planning-report.ts';
-import { preparePlanningDraftWorkspace } from '../src/planning-workspace.ts';
+import { readPlanningTransitionReport } from '../src/runtime/storage-journal/planning-report.ts';
+import { preparePlanningDraftWorkspace } from '../src/runtime/session-workspace/planning-workspace.ts';
 import { abortSession } from '../src/application/execute-task/session.ts';
-import { readSessionFile } from '../src/session-store.ts';
+import { readSessionFile } from '../src/runtime/session-workspace/session-store.ts';
 import { revokeTaskMandate } from '../src/modules/authority/task-mandate.ts';
 import {
   createFixtureRepository,

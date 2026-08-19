@@ -1,6 +1,6 @@
 import crypto from 'node:crypto';
 
-import { deriveAuthorityAuditRepositoryId } from './authority-audit-ledger.ts';
+import { deriveAuthorityAuditRepositoryId } from './runtime/storage-journal/authority-audit-ledger.ts';
 import {
   authorityApplicationReceiptTagRef,
   listAuthorityApplicationReceiptTagRefs,
@@ -19,15 +19,15 @@ import {
 import {
   verifySshDataSignature,
   verifyTrustedCommitSignature,
-} from './ci-signature.ts';
+} from './adapters/signing/ssh/ci-signature.ts';
 import {
   parseCheckCommand,
   parseTasks,
   type CheckDefinition,
-} from './contracts.ts';
+} from './adapters/consumer/expense-app/work-registry/contracts.ts';
 import { ExitCode, workflowError } from './foundation/errors/errors.ts';
-import { commitFacts } from './git-transitions.ts';
-import { runGit } from './git.ts';
+import { commitFacts } from './runtime/repository-transaction/git-transitions.ts';
+import { runGit } from './runtime/repository-transaction/git.ts';
 import {
   canonicalGrantEnvelope,
   canonicalGrantPayload,

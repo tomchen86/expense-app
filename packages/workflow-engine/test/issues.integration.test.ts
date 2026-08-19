@@ -13,9 +13,9 @@ import {
   validateIssueLog,
   writeIssueData,
   type IssueData,
-} from '../src/issues.ts';
+} from '../src/adapters/consumer/expense-app/documents/issues.ts';
 import { dispatchIssueCommand } from '../src/issue-cli.ts';
-import { renderHandoff } from '../src/handoff.ts';
+import { renderHandoff } from '../src/adapters/consumer/expense-app/handoff/handoff.ts';
 import { createFixtureRepository, sourceRepositoryRoot } from './fixture.ts';
 
 test('issue commands preserve structured fields and deterministic rendering', () => {

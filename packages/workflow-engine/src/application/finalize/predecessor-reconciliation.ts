@@ -1,13 +1,13 @@
-import type { CheckEvidence } from '../../check-runner.ts';
-import type { TaskPolicy } from '../../contracts.ts';
+import type { CheckEvidence } from '../../adapters/consumer/expense-app/work-registry/check-runner.ts';
+import type { TaskPolicy } from '../../adapters/consumer/expense-app/work-registry/contracts.ts';
 import { ExitCode, workflowError } from '../../foundation/errors/errors.ts';
 import {
   commitChangedPaths,
   commitFacts,
   hasExactTrailers,
-} from '../../git-transitions.ts';
-import { runGit } from '../../git.ts';
-import { matchesAllowedPath } from '../../paths.ts';
+} from '../../runtime/repository-transaction/git-transitions.ts';
+import { runGit } from '../../runtime/repository-transaction/git.ts';
+import { matchesAllowedPath } from '../../runtime/session-workspace/paths.ts';
 import { executeChecks, type SessionInspection } from './verification.ts';
 
 export type ReconciledTask = {

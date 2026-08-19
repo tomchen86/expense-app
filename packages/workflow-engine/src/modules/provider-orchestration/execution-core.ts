@@ -5,7 +5,7 @@ import { canonicalJson } from '../../foundation/canonical-json/canonical-json.ts
 import { ExitCode, workflowError } from '../../foundation/errors/errors.ts';
 import type { GrantRequest } from '../authority/execution-governance.ts';
 import type { ProviderInvocationRequest } from './provider-contracts.ts';
-import type { ProviderInvocationRecord } from '../../provider-invocation-store.ts';
+import type { ProviderInvocationRecord } from '../../runtime/storage-journal/provider-invocation-store.ts';
 import type { TaskMandateBinding } from '../authority/task-mandate.ts';
 
 const DIGEST = /^sha256:[0-9a-f]{64}$/;

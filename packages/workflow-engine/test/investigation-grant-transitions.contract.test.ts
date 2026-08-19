@@ -5,11 +5,11 @@ import { createGrantChallenge } from '../src/modules/authority/grant-core.ts';
 import {
   createInvestigationGrantRequestFromState,
   investigationGrantTransitionDefinitions,
-} from '../src/investigation-grant-transitions.ts';
+} from '../src/adapters/compatibility/investigation-v2/investigation-grant-transitions.ts';
 import {
   humanResolutionDecisionSchemaDigest,
   type InvestigationResolutionState,
-} from '../src/investigation-session-store.ts';
+} from '../src/runtime/storage-journal/investigation-session-store.ts';
 import { createTransitionRegistry } from '../src/modules/authority/grant-transition-registry.ts';
 
 test('investigation producer submits stable choices while registry owns presentation and execution', () => {

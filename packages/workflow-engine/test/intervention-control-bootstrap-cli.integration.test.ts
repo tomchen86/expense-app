@@ -21,12 +21,12 @@ import {
   readMaintenanceGrantRecord,
   readMaintenanceGrantForParent,
 } from '../src/application/control-plane/intervention-maintenance.ts';
-import { readPersistedIntervention } from '../src/intervention-control-persistence.ts';
+import { readPersistedIntervention } from '../src/runtime/storage-journal/intervention-control-persistence.ts';
 import {
   deriveAuthorityAuditRepositoryId,
   scanAuthorityAuditLedger,
-} from '../src/authority-audit-ledger.ts';
-import { verifyAuthorityAuditEvents } from '../src/authority-audit-service.ts';
+} from '../src/runtime/storage-journal/authority-audit-ledger.ts';
+import { verifyAuthorityAuditEvents } from '../src/runtime/storage-journal/authority-audit-service.ts';
 import {
   ExitCode,
   WorkflowError,

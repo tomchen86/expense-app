@@ -3,7 +3,7 @@ import path from 'node:path';
 
 import { readFileAtCommit } from './ci-git.ts';
 import { ExitCode, workflowError } from './foundation/errors/errors.ts';
-import { runGit } from './git.ts';
+import { runGit } from './runtime/repository-transaction/git.ts';
 
 type TreeEntry = {
   mode: string;

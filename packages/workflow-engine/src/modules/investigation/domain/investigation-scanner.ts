@@ -5,7 +5,7 @@ import { canonicalJson } from '../../../foundation/canonical-json/canonical-json
 import {
   createEvidenceNode,
   type EvidenceNode,
-} from '../../../evidence-node.ts';
+} from '../../../adapters/compatibility/investigation-v2/evidence-node.ts';
 import { ExitCode, workflowError } from '../../../foundation/errors/errors.ts';
 import {
   assertInvestigationLimits,
@@ -22,7 +22,7 @@ import {
   type TrackedTreePathIdentity,
   type TrackedTreeSkipReason,
   type TrackedTreeSnapshot,
-} from '../../../tracked-tree-reader.ts';
+} from '../../../runtime/repository-transaction/tracked-tree-reader.ts';
 
 const NODE_TYPE = 'investigation-term-scan';
 const NODE_SCHEMA = 'investigation.term-scan.v1';

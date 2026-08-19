@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import { readImmutableReport } from '../src/report-store.ts';
+import { readImmutableReport } from '../src/runtime/storage-journal/report-store.ts';
 import {
   capturePersistedWipIntervention,
   executePersistedAdoptionStep,
@@ -14,7 +14,7 @@ import {
 } from '../src/application/control-plane/intervention-control-bootstrap.ts';
 import { createEngineArtifact } from '../src/modules/authority/intervention-control.ts';
 import { persistInterventionEngineArtifact } from '../src/application/control-plane/intervention-maintenance.ts';
-import { preparePersistedEngineAdoption } from '../src/intervention-control-persistence.ts';
+import { preparePersistedEngineAdoption } from '../src/runtime/storage-journal/intervention-control-persistence.ts';
 import { resolveHarnessBootstrapParentState } from '../src/harness-bootstrap.ts';
 import {
   checkSession,

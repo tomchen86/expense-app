@@ -3,15 +3,15 @@ import crypto from 'node:crypto';
 import type {
   AuthorityAuditRecordedEvent,
   AuthorityAuditServiceHooks,
-} from './authority-audit-service.ts';
-import { deriveAuthorityAuditRepositoryId } from './authority-audit-ledger.ts';
+} from './runtime/storage-journal/authority-audit-service.ts';
+import { deriveAuthorityAuditRepositoryId } from './runtime/storage-journal/authority-audit-ledger.ts';
 import {
   authorityRefusalDigest,
   withAuthorityRefusalAudit,
   type AuthorityRefusalAuditBinding,
 } from './modules/authority/authority-refusal-audit.ts';
 import { canonicalJson } from './foundation/canonical-json/canonical-json.ts';
-import { loadWorkflowConfig } from './contracts.ts';
+import { loadWorkflowConfig } from './adapters/consumer/expense-app/work-registry/contracts.ts';
 import { requireExecutionJobMandateBinding } from './modules/provider-orchestration/execution-core.ts';
 import {
   canonicalExecutionBudgetGrantEnvelope,
@@ -27,18 +27,21 @@ import {
   type ExecutionBudgetGrantEnvelope,
   type ExecutionBudgetGrantRequest,
 } from './modules/authority/execution-governance.ts';
-import { inspectExecutionJob } from './execution-runtime.ts';
+import { inspectExecutionJob } from './runtime/provider-execution/execution-runtime.ts';
 import { ExitCode, workflowError } from './foundation/errors/errors.ts';
-import { discoverRepository, runGit } from './git.ts';
+import {
+  discoverRepository,
+  runGit,
+} from './runtime/repository-transaction/git.ts';
 import { parseMaintainerPolicy } from './modules/authority/maintainer-policy.ts';
 import {
   createInteractiveSshSigner,
   type MaintainerSignerProvider,
-} from './maintainer-signer.ts';
+} from './adapters/signing/ssh/maintainer-signer.ts';
 import {
   runtimePaths,
   withRepositoryLifecycleOperation,
-} from './session-store.ts';
+} from './runtime/session-workspace/session-store.ts';
 import {
   inspectActiveTaskMandateBinding,
   withActiveTaskMandateBinding,

@@ -7,7 +7,7 @@ import path from 'node:path';
 import test from 'node:test';
 
 import { canonicalJson } from '../src/foundation/canonical-json/canonical-json.ts';
-import { createInvestigationCheckpointEnvelope } from '../src/investigation-session.ts';
+import { createInvestigationCheckpointEnvelope } from '../src/adapters/compatibility/investigation-v2/investigation-session.ts';
 import {
   createPlanningContributionEnvelope,
   createPlanReviewDispositionsEnvelope,
@@ -25,11 +25,11 @@ import {
 import {
   claimProviderInvocation,
   completeProviderInvocation,
-} from '../src/provider-invocation-store.ts';
+} from '../src/runtime/storage-journal/provider-invocation-store.ts';
 import {
   PROVIDER_RUNNER_RESIDUALS,
   type ProviderRunnerReport,
-} from '../src/provider-runner.ts';
+} from '../src/runtime/provider-execution/provider-runner.ts';
 import { runProviderWorker } from '../src/provider-worker.ts';
 import { type ProviderInvocationRequest } from '../src/modules/provider-orchestration/provider-contracts.ts';
 import {

@@ -327,10 +327,16 @@ test('new flat sources and unknown organized roots fail topology validation', ()
 
 test('a forbidden edge from a new organized file is unlisted and fails closed', () => {
   const current = new Map(readRepositorySnapshot(repositoryRoot));
+  const forbiddenSource = `${SRC_PREFIX}modules/source/generated-forbidden-edge.ts`;
+  const sessionStoreSpecifier = mappedRelativeSpecifier(
+    current,
+    forbiddenSource,
+    `${SRC_PREFIX}session-store.ts`,
+  );
   current.set(
-    `${SRC_PREFIX}modules/source/generated-forbidden-edge.ts`,
+    forbiddenSource,
     [
-      'import { runtimePaths } from "../../session-store.ts";',
+      `import { runtimePaths } from "${sessionStoreSpecifier}";`,
       'export { runtimePaths };',
       '',
     ].join('\n'),
@@ -643,26 +649,11 @@ function readRepositorySnapshot(root: string): MutableSnapshot {
 
 function withGreenOrganizedSource(snapshot: Snapshot): MutableSnapshot {
   const extended = new Map(snapshot);
-  const actorIdentity = moduleMap.find(
-    (row) => row.source === `${SRC_PREFIX}actor-identity.ts`,
+  const actorSpecifier = mappedRelativeSpecifier(
+    snapshot,
+    GREEN_ORGANIZED_SOURCE,
+    `${SRC_PREFIX}actor-identity.ts`,
   );
-  assert.ok(actorIdentity, 'actor identity must remain in the migration map');
-  const physicalCandidates = [
-    actorIdentity.source,
-    actorIdentity.target,
-  ].filter((candidate) => snapshot.has(candidate));
-  assert.equal(
-    physicalCandidates.length,
-    1,
-    'actor identity must have one current physical path',
-  );
-  let actorSpecifier = path.posix.relative(
-    path.posix.dirname(GREEN_ORGANIZED_SOURCE),
-    physicalCandidates[0]!,
-  );
-  if (!actorSpecifier.startsWith('.')) {
-    actorSpecifier = `./${actorSpecifier}`;
-  }
   extended.set(
     GREEN_ORGANIZED_SOURCE,
     [
@@ -672,6 +663,31 @@ function withGreenOrganizedSource(snapshot: Snapshot): MutableSnapshot {
     ].join('\n'),
   );
   return extended;
+}
+
+function mappedRelativeSpecifier(
+  snapshot: Snapshot,
+  importer: string,
+  mappedSource: string,
+): string {
+  const row = moduleMap.find((candidate) => candidate.source === mappedSource);
+  assert.ok(row, `${mappedSource} must remain in the migration map`);
+  const physicalCandidates = [row.source, row.target].filter((candidate) =>
+    snapshot.has(candidate),
+  );
+  assert.equal(
+    physicalCandidates.length,
+    1,
+    `${mappedSource} must have one current physical path`,
+  );
+  let specifier = path.posix.relative(
+    path.posix.dirname(importer),
+    physicalCandidates[0]!,
+  );
+  if (!specifier.startsWith('.')) {
+    specifier = `./${specifier}`;
+  }
+  return specifier;
 }
 
 function readTypeScriptTree(

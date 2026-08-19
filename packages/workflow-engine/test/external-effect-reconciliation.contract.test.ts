@@ -7,11 +7,11 @@ import test from 'node:test';
 import {
   deriveAuthorityAuditRepositoryId,
   type AuthorityAuditLedgerScope,
-} from '../src/authority-audit-ledger.ts';
+} from '../src/runtime/storage-journal/authority-audit-ledger.ts';
 import {
   showAuthorityAuditTask,
   verifyAuthorityAuditEvents,
-} from '../src/authority-audit-service.ts';
+} from '../src/runtime/storage-journal/authority-audit-service.ts';
 import {
   externalEffectStorePaths,
   inspectExternalEffectGrant,
@@ -23,7 +23,7 @@ import {
   type ExternalEffectReconciliationOutcome,
   type Sha256Digest,
 } from '../src/modules/authority/external-effect-grant.ts';
-import { executePublishGrant } from '../src/publish-executor.ts';
+import { executePublishGrant } from '../src/adapters/remote/github/publish-executor.ts';
 import { revokeTaskMandate } from '../src/modules/authority/task-mandate.ts';
 import {
   EFFECT_GRANT_ID as GRANT_ID,

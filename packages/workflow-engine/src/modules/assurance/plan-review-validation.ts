@@ -1,5 +1,5 @@
 import { ExitCode, workflowError } from '../../foundation/errors/errors.ts';
-import type { EvidenceNode } from '../../evidence-node.ts';
+import type { EvidenceNode } from '../../adapters/compatibility/investigation-v2/evidence-node.ts';
 import { assertPlanTarget, type PlanTarget } from './plan-target.ts';
 import {
   assertPlanningGeneration,
@@ -16,7 +16,7 @@ import {
   type PlanReviewSuggestion,
   type PlanReviewVerdict,
 } from './plan-review.ts';
-import { normalizeExactRepositoryPath } from '../../paths.ts';
+import { normalizeExactRepositoryPath } from '../../runtime/session-workspace/paths.ts';
 import {
   isProviderId,
   type ProviderId,

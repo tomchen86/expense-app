@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import { replaceTextAtomic } from '../src/atomic-text.ts';
+import { replaceTextAtomic } from '../src/runtime/repository-transaction/atomic-text.ts';
 
 test('replacement without create authority does not create parent directories', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'workflow-atomic-text-'));
@@ -21,7 +21,8 @@ test(
   'task projection keeps its workflow error taxonomy for an unsafe target',
   { skip: process.platform === 'win32' },
   async () => {
-    const { projectTasksCompleted } = await import('../src/task-projection.ts');
+    const { projectTasksCompleted } =
+      await import('../src/runtime/managed-documents/transaction/task-projection.ts');
     const { WorkflowError } =
       await import('../src/foundation/errors/errors.ts');
     const root = fs.mkdtempSync(
