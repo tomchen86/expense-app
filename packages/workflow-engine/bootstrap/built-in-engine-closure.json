@@ -306,7 +306,7 @@
     {
       "path": "src/application/control-plane/maintainer-recovery.ts",
       "mode": "100644",
-      "digest": "sha256:f1c28bd628934cad0c8e9a324cd7ad076c4a1933623aba4bb165348553ca1da3"
+      "digest": "sha256:8953739230a2396d86e0f0db32a65e3901e1cc6b869d26ae5bca8dc4bfddfa1b"
     },
     {
       "path": "src/application/control-plane/maintainer-revoke.ts",

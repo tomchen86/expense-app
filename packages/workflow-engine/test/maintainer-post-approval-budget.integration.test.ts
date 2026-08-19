@@ -173,6 +173,55 @@ test('elapsed equal to the code-owned limit is rejected before CAS', () => {
   }
 });
 
+test('grant-expiry cleanup leaves the exhausted admission phase without enabling CAS', () => {
+  const repository = prepareCandidate();
+  const signed: string[] = [];
+  const signer = recordingSigner(signed);
+  const issuedAt = new Date('2026-08-03T09:00:00.000Z');
+  let commitClock = issuedAt;
+  let monotonicNow = 0;
+  const base = git(repository, ['rev-parse', 'HEAD']).trim();
+  const baseTree = git(repository, ['rev-parse', `${base}^{tree}`]).trim();
+  try {
+    assert.throws(
+      () =>
+        approveAndApplyMaintainerGrantV2(
+          repository,
+          { ...request(), ttlMinutes: 1 },
+          {
+            now: issuedAt,
+            signer,
+            commitClock: () => commitClock,
+            testBeforeRefUpdate: () => {
+              commitClock = new Date(issuedAt.getTime() + 60_001);
+              monotonicNow = 10;
+            },
+            testPostApprovalBudget: {
+              limitMs: 10,
+              monotonicNow: () => monotonicNow,
+            },
+          },
+        ),
+      (error) => isWorkflowError(error, 'AUTHORITY_GRANT_EXPIRED_BEFORE_CAS'),
+    );
+
+    const { grantId, sessionId } = interruptedAuthority(repository, signed);
+    assert.equal(git(repository, ['rev-parse', 'HEAD']).trim(), base);
+    assert.equal(git(repository, ['write-tree']).trim(), baseTree);
+    assert.equal(refLedger(repository).generation, 0);
+    assert.equal(
+      inspectMaintainerGrants(gitCommon(repository), grantId)[0]?.state,
+      'expired',
+    );
+    assert.equal(
+      readAuthorityCommitJournal(gitCommon(repository), sessionId).state,
+      'revoked',
+    );
+  } finally {
+    cleanupRepository(repository);
+  }
+});
+
 test('post-approval Git receives only remaining time and normalizes ETIMEDOUT', () => {
   const repository = prepareCandidate();
   const signer = recordingSigner([]);

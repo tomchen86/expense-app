@@ -777,6 +777,7 @@ export function expireAuthorityCommitBeforeCas(
   requestedSessionId: string,
   now = new Date(),
 ): void {
+  enterActivePostApprovalTerminalCleanup();
   const session = readAuthoritySession(cwd, requestedSessionId);
   const timestamp = exactDate(now);
   const expiryError = recoveryError(

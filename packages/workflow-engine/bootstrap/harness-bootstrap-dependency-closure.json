@@ -8,7 +8,7 @@
     {
       "path": "bootstrap/recovery-runtime/bootstrap/built-in-engine-closure-pin.js",
       "mode": "100644",
-      "digest": "sha256:3cde8f12da1592c59947f90da825e90cc6481c1aa174ca06765d7f455b2d0d74"
+      "digest": "sha256:2241636b94c2ea0960d5cceaa8d15ac8a86e5542dd495eec885b86f405758812"
     },
     {
       "path": "bootstrap/recovery-runtime/src/adapters/compatibility/investigation-v2/evidence-convergence.js",
