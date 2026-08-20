@@ -1,28 +1,43 @@
 # Workflow Engine Boundary Inventory
 
-This document freezes the T3 extraction starting point observed at
-`749616aa6e77ece5bcc3aa590a8b145d00c40e11`. It is a characterization of
-landed code, not evidence that the planned package boundaries already exist.
-When this inventory and the repository disagree, landed code is authoritative.
+The extraction anchor is
+`749616aa6e77ece5bcc3aa590a8b145d00c40e11`. This document now also records
+the bounded T3 slices present in the current checkpoint; the anchor is not a
+claim that those later slices existed in that commit. The companion fixture
+freezes exact current-tree identities. When this inventory and the repository
+disagree, code is authoritative.
 
 ## Scanner baseline
 
 The companion contract test parses TypeScript and JavaScript syntax rather than
-counting comments. Its primary-source baseline is 125 direct
-`workflow/*.json` literal occurrences in 48 files, covering 10 unique paths.
-It separately records three split `path.join` sites and one dynamic enumeration
-of the workflow JSON directory. The legacy signature/record namespace
-`expense-app.workflow.*` occurs 25 times in 15 primary TypeScript files and 17
-times in 9 generated recovery JavaScript files. JSON Schema `$id` hosts are a
-separate compatibility surface: 17 `expense-app.local`, one `expense.local`,
-and one `example.local`.
+counting comments. Its primary-source baseline is 154 direct
+`workflow/*.json` literal occurrences in 49 files, covering 10 unique paths.
+AST provenance separately freezes three split `path.join`/`path.resolve` sites
+and one workflow-root directory enumeration. Bootstrap TypeScript contributes
+nine direct references in three files, and root tooling scripts contribute one.
+The generated recovery projection contains 29 direct references in 11 files
+and three split path joins in three files; these are pinned separately from the
+primary extraction workload.
+
+The legacy signature/record namespace `expense-app.workflow.*` occurs 24 times
+in 15 primary TypeScript files, once in bootstrap TypeScript, 16 times in 9
+generated recovery JavaScript files, and three times in three workflow JSON
+artifacts. JSON Schema `$id` values are a separate compatibility surface: 17
+`expense-app.local`, one `expense.local`, and one `example.local`; the complete
+URI identities, not only host counts, are frozen.
+
+Top-level workflow artifacts contain a different path surface. Across
+`workflow/*.json`, 1,090 string leaves in seven files are equal to
+`packages/workflow-engine` or begin with that package prefix. This scope
+includes authority-sensitive policies and generated test shards; it does not
+label every value as authority. Their file, JSON Pointer, and raw value
+identities are frozen for mechanical remapping.
 
 These numbers are scope-qualified. Generated recovery files are not counted as
-additional extraction work, and JSON Schema URIs are not signature namespaces.
-The 125-occurrence baseline covers source references to workflow JSON files; it
-is not a count of path-bearing values inside authority policy artifacts. The
-machine-readable fixture beside the module migration map contains the exact
-scope, paths, and evidence strings.
+additional extraction work, JSON Schema URIs are not signature namespaces, and
+source references to workflow JSON files are not conflated with path-bearing
+values inside workflow artifacts. The machine-readable fixture beside the
+module migration map contains the exact scopes and identity digests.
 
 ## Coupling dispositions
 
@@ -30,9 +45,11 @@ scope, paths, and evidence strings.
 
 ### Agent provider identity — coupled
 
-The runtime still defines the fixed `codex | claude` identity inside the
-workflow-engine package. T3.3c moves that identity behind the agent-runtime
-boundary while retaining the reviewed provider profiles.
+The bounded process/protocol slice of `@jigwright/agent-runtime` now exists,
+but the runtime still defines the fixed `codex | claude` identity and
+provider-specific policy inside the workflow-engine package. Later T3.3c work
+must move that ownership behind the package boundary while retaining the
+reviewed provider profiles.
 
 <!-- coupling:availability-pilot -->
 
@@ -55,83 +72,111 @@ outside decoupling work.
 
 <!-- coupling:collaboration-grant -->
 
-### Collaboration Grant — landed
+### Collaboration Grant — partial
 
-The exact signed envelope, role-independence-only scope, TTL, verification, and
-historical readers are production behavior. T3.3d extracts those contracts; it
-does not replace them with a broader grant.
+The generic exact-envelope verifier, exact historical/current envelope reader,
+and one-use reserve/consume/expire/revoke lifecycle reducer are extracted to
+`@jigwright/grants` and are used by Collaboration Grant. The exact
+role-independence-only scope, TTL, durable bytes, and error mapping remain
+intact. Expense-specific payload semantics, locking, durable schema, and
+storage remain in the engine; no broader blanket grant was introduced.
 
 <!-- coupling:data-egress-authorization -->
 
 ### Data-egress authorization — landed
 
-`workflow/ai-adapter-policy.json` schema v4 is the repository-owned provider
-authorization surface. Extraction introduces a policy port around it without a
-second authority source.
+`workflow/ai-adapter-policy.json` schema v4 remains the repository-owned
+provider authorization surface. A strict-v4 current-policy port now fronts it;
+the v3 parser is replay-only and cannot become a second live authority source.
 
 <!-- coupling:execution-substrate -->
 
-### Execution substrate — landed
+### Execution substrate — partial
 
-Workflow, Job, Attempt, lease, retry, and fencing are the existing execution
-state machine. T3 changes interface and storage ownership, not lifecycle
-semantics.
+`@jigwright/core` now owns the exact Job/Attempt status vocabulary and the
+AttemptResult acceptance-binding codec. Workflow, Job, Attempt, lease, retry,
+and fencing in `execution-store` remain the existing sole aggregate and
+transition authority. Broader Git/session/check/record ownership has not yet
+moved, and no second lifecycle reducer was introduced.
 
 <!-- coupling:openspec-direct-dependency -->
 
 ### OpenSpec direct dependency — coupled
 
-Application and entrypoint code still imports OpenSpec planning and archive
-logic directly. T3.3a-b puts validation and projection behind the core-owned
-planning-provider port.
+Planning inspection now crosses `PlanningProviderPort`, but propose, archive,
+and several CI paths still import the in-engine OpenSpec adapter directly. The
+remaining coupling is the standalone adapter extraction and those direct
+archive/propose seams, not absence of the planning port.
+
+The planning seam retains all eight planning-provider responsibilities:
+provider provenance, artifact inventory, task/source anchors, readiness
+diagnostics, spec and archive targets, archive projection, error normalization,
+and historical replay. Agent-runtime extraction does not absorb or weaken any
+of them.
 
 <!-- coupling:package-topology -->
 
-### Package topology — missing
+### Package topology — partial
 
-The organized `modules/`, `runtime/`, `adapters/`, and related folders remain
-one `@expense/workflow-engine` package. The planned `@jigwright/*` packages do
-not exist at this baseline.
+`@jigwright/core`, `@jigwright/grants`, `@jigwright/fixture-adapter`, and a
+bounded `@jigwright/agent-runtime` process/protocol slice now exist, and the
+workflow engine declares its runtime workspace dependencies. The fixture
+adapter consumes public CheckRegistry, repository-path, and tracked-object
+reader contracts. Only the standalone `@jigwright/openspec-adapter` package
+remains absent; its absence is checked independently by path and symbol scans.
 
 <!-- coupling:planning-provider-binding -->
 
-### Planning-provider binding — missing
+### Planning-provider binding — partial
 
-There is no committed `workflow/change-providers` binding or
-`PlanningProviderPort`. T3.3a must add a versioned binding, digest contract,
-archive retention, and explicit v1 migration refusal.
+The v1 binding contract, digest, current and pinned readers, history check,
+composition wiring, archive retention, and explicit migration refusal are
+landed. No tracked per-change `workflow/change-providers` document has yet
+activated that path; path absence and workflow-document content are checked
+independently.
 
 <!-- coupling:policy-path-literals -->
 
 ### Policy-path literals — coupled
 
 Direct strings, split joins, and dynamic workflow-directory enumeration bind
-the engine to the consumer repository layout. T3 replaces them with validated
-repository configuration and keeps scanner coverage for all three forms.
+the engine to the consumer repository layout. Path-bearing values in checks,
+maintainer policy/profiles, path roles, protected capabilities, CI policy, and
+test shards form a second remap surface. T3 replaces these with validated
+repository configuration and keeps identity coverage for both surfaces.
 
 <!-- coupling:provider-plane-separation -->
 
-### Provider-plane separation — missing
+### Provider-plane separation — partial
 
-Planning providers, agent runtimes, and grant verification do not yet have
-separate ports. T3 must keep required planning bindings separate from optional
-agent plans.
+Planning providers, agent runtimes, and grant verification have distinct engine
+contracts. Required planning-binding paths and optional agent-role-plan paths
+also have separate readers; an absent optional agent plan does not weaken or
+replace the required planning contract. Core ownership of these ports and
+direct adoption of a public `@jigwright/agent-runtime` execution port remain
+incomplete.
 
 <!-- coupling:provider-runner -->
 
 ### Provider runner — partial
 
-Provider execution already preserves executable identity, a sanitized
+The bounded async process primitive and strict JSONL wrapper protocol are now
+owned by `@jigwright/agent-runtime` and consumed through engine compatibility
+facades. Provider execution still preserves executable identity, a sanitized
 environment, private runtime state, bounded execution, and governed evidence.
-The provider invocation path is still synchronous and remains part of T3.3c.
+Reviewed provider identity and policy binding, synchronous compatibility,
+non-resumable sessions, and the documented containment residuals remain in the
+engine.
 
 <!-- coupling:recovery-mirror -->
 
 ### Recovery mirror — partial
 
-The TS-to-JS recovery closure, manifest, pin, and generator `--check` mode
-already exist. T3.3d must register and preserve that drift check rather than
-create a second mirror system.
+The recovery generator now compiles the reachable workspace source closure and
+projects dependency packages into path-stable runtime locations while
+retaining exact `--check`/`--write` tree comparison. The generated recovery
+bytes are intentionally deferred to the final one-shot regeneration, so this
+surface remains partial rather than claimed complete.
 
 <!-- coupling:role-assurance -->
 
@@ -151,17 +196,24 @@ the later distribution phase.
 
 <!-- coupling:schema-signature-namespace -->
 
-### Schema and signature namespace — coupled
+### Schema and signature namespace — partial
 
-Legacy consumer-specific namespaces remain in signatures, records, recovery
-code, and JSON Schema URIs. Extraction adds neutral writers and allowlisted
-legacy readers; historical records are never re-signed.
+`@jigwright/grants` now performs exact version dispatch between the historical
+V1 Collaboration Grant namespace and the neutral current V2 namespace, with no
+namespace retry or fallback. Other consumer-specific namespaces remain in
+signatures, records, recovery code, and JSON Schema URIs. Historical records
+are never re-signed.
 
 ## Mechanical-move discipline
 
 Each extraction batch follows the landed refactor precedent: add guardrails,
 freeze an exact migration map, move one bounded ownership slice, regenerate
 path-derived policy and recovery artifacts mechanically, then run targeted
-contract checks. A move must not silently strengthen authority, weaken
+contract checks. `mechanical-move` applies only where exact remap and blob
+identity prove a byte-identical move. Import or content edits remain a separate
+semantic commit with normal review. Each phase regenerates its authority remap
+and projections once; identity or role-continuity failure keeps the ordinary
+risk floor in force, and required-check migration is a definition transition,
+never a suspension. A move must not silently strengthen authority, weaken
 historical verification, duplicate the execution state machine, or add new
 ordinary-change governance requirements.

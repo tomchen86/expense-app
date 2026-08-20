@@ -5,14 +5,17 @@ import { createRequire } from 'node:module';
 import path from 'node:path';
 import test from 'node:test';
 
+import { scanT3BoundarySource } from './support/t3-boundary-scanner.ts';
+
 const EXPECTED_MAP_ROWS = 280;
 const EXPECTED_FROZEN_MAP_DIGEST =
   'sha256:8ef62fbb0658d245e4fe068659709538ae3e3ac6757cbb8e5e69672f02beafc7';
-const EXPECTED_FROZEN_EDGE_COUNT = 774;
+const EXPECTED_FROZEN_EDGE_COUNT = 775;
+const EXPECTED_ACTIVE_EDGE_COUNT = 770;
 const EXPECTED_FROZEN_IDENTITY_DIGEST =
-  'sha256:6c60e39c31cb378f79d8ed9f5f78f80cd85b38423c7210617eb413a86b757ad1';
+  'sha256:4cac2c455369247bd867740f545332841a4784f8f006b4907dd1fcff274e18a5';
 const EXPECTED_T3_BOUNDARY_INVENTORY_DIGEST =
-  'sha256:1cab3937c223d45f6a91285dbd5eddc99301d13ec3be85ad1c9f895ee5415266';
+  'sha256:b730be789ad0b6302d59d25db071a0804baba1fe5d31471162792c92824cb09e';
 const SRC_PREFIX = 'packages/workflow-engine/src/';
 const BOOTSTRAP_PREFIX = 'packages/workflow-engine/bootstrap/';
 const MAP_FILE = 'workflow-engine-module-map.tsv';
@@ -134,13 +137,35 @@ type T3StaticLiteralFinding = {
   start: number;
   length: number;
   normalizedValue: string;
-  syntaxForm: 'exact-string' | 'embedded-string' | 'template-static' | 'folded';
+  syntaxForm:
+    | 'exact-string'
+    | 'embedded-string'
+    | 'template-static'
+    | 'folded'
+    | 'path-join'
+    | 'path-resolve'
+    | 'fs-readdir'
+    | 'fs-readdir-sync'
+    | 'namespace-fragment';
+};
+
+type T3BoundarySourceFindings = {
+  workflowPaths: T3StaticLiteralFinding[];
+  splitWorkflowPaths: T3StaticLiteralFinding[];
+  dynamicWorkflowDirectories: T3StaticLiteralFinding[];
+  namespace: T3StaticLiteralFinding[];
 };
 
 type T3NegativeEvidence = {
   absentPaths: string[];
   absentSymbols: string[];
   searchRoots: string[];
+};
+
+type T3JsonStringFinding = {
+  path: string;
+  jsonPointer: string;
+  normalizedValue: string;
 };
 
 type T3BoundaryCoupling = {
@@ -162,18 +187,47 @@ type T3BoundaryInventory = {
     sourceOccurrences: number;
     sourceFileCount: number;
     sourceIdentityDigest: string;
+    bootstrapOccurrences: number;
+    bootstrapFileCount: number;
+    bootstrapIdentityDigest: string;
     recoveryOccurrences: number;
     recoveryFileCount: number;
     recoveryIdentityDigest: string;
+    workflowJsonOccurrences: number;
+    workflowJsonFileCount: number;
+    workflowJsonIdentityDigest: string;
     jsonSchemaIdHosts: Record<string, number>;
+    jsonSchemaIdIdentityDigest: string;
   };
-  policyLiteralBaseline: {
+  workflowJsonReferenceBaseline: {
     sourceOccurrences: number;
     sourceFileCount: number;
     sourceIdentityDigest: string;
+    bootstrapOccurrences: number;
+    bootstrapFileCount: number;
+    bootstrapIdentityDigest: string;
+    scriptsOccurrences: number;
+    scriptsFileCount: number;
+    scriptsIdentityDigest: string;
+    recoveryOccurrences: number;
+    recoveryFileCount: number;
+    recoveryIdentityDigest: string;
+    recoverySplitPathJoinOccurrences: number;
+    recoverySplitPathJoinFileCount: number;
+    recoverySplitPathJoinIdentityDigest: string;
     uniqueLiterals: string[];
-    splitPathJoinEvidence: T3BoundaryEvidence[];
-    dynamicDirectoryEvidence: T3BoundaryEvidence[];
+    splitPathJoinOccurrences: number;
+    splitPathJoinFileCount: number;
+    splitPathJoinIdentityDigest: string;
+    dynamicDirectoryOccurrences: number;
+    dynamicDirectoryFileCount: number;
+    dynamicDirectoryIdentityDigest: string;
+  };
+  workflowArtifactPathBaseline: {
+    packagePrefix: 'packages/workflow-engine';
+    occurrences: number;
+    fileCount: number;
+    identityDigest: string;
   };
   couplings: T3BoundaryCoupling[];
 };
@@ -205,7 +259,7 @@ test('module map and exact dependency baseline are frozen', () => {
   assert.equal(baseline.frozenIdentityDigest, EXPECTED_FROZEN_IDENTITY_DIGEST);
   assert.equal(
     baseline.edges.filter((edge) => edge.status === 'active').length,
-    EXPECTED_FROZEN_EDGE_COUNT,
+    EXPECTED_ACTIVE_EDGE_COUNT,
   );
 });
 
@@ -244,6 +298,61 @@ test('T3 boundary coupling inventory is tracked beside the frozen module map', (
     },
   );
 
+  const scriptLiterals = scanTypeScriptBoundaryLiterals(
+    repositoryRoot,
+    'scripts',
+    '.ts',
+  );
+  assert.deepEqual(
+    {
+      occurrences: scriptLiterals.workflowPaths.length,
+      fileCount: new Set(
+        scriptLiterals.workflowPaths.map((entry) => entry.path),
+      ).size,
+      identityDigest: digestStaticFindings(scriptLiterals.workflowPaths),
+    },
+    {
+      occurrences: inventory.workflowJsonReferenceBaseline.scriptsOccurrences,
+      fileCount: inventory.workflowJsonReferenceBaseline.scriptsFileCount,
+      identityDigest:
+        inventory.workflowJsonReferenceBaseline.scriptsIdentityDigest,
+    },
+  );
+  assert.equal(
+    scriptLiterals.namespace.length,
+    0,
+    'root scripts must not add a legacy workflow namespace',
+  );
+  assert.equal(
+    scriptLiterals.splitWorkflowPaths.length,
+    0,
+    'root scripts must not add split workflow JSON paths',
+  );
+  assert.equal(
+    scriptLiterals.dynamicWorkflowDirectories.length,
+    0,
+    'root scripts must not enumerate the workflow root dynamically',
+  );
+
+  const bootstrapLiterals = scanTypeScriptBoundaryLiterals(
+    repositoryRoot,
+    'packages/workflow-engine/bootstrap',
+    '.ts',
+  );
+  assert.deepEqual(
+    {
+      occurrences: bootstrapLiterals.namespace.length,
+      fileCount: new Set(bootstrapLiterals.namespace.map((entry) => entry.path))
+        .size,
+      identityDigest: digestStaticFindings(bootstrapLiterals.namespace),
+    },
+    {
+      occurrences: inventory.namespaceBaseline.bootstrapOccurrences,
+      fileCount: inventory.namespaceBaseline.bootstrapFileCount,
+      identityDigest: inventory.namespaceBaseline.bootstrapIdentityDigest,
+    },
+  );
+
   const recoveryLiterals = scanTypeScriptBoundaryLiterals(
     repositoryRoot,
     'packages/workflow-engine/bootstrap/recovery-runtime/src',
@@ -263,8 +372,61 @@ test('T3 boundary coupling inventory is tracked beside the frozen module map', (
     },
   );
   assert.deepEqual(
-    scanJsonSchemaIdHosts(repositoryRoot),
-    inventory.namespaceBaseline.jsonSchemaIdHosts,
+    {
+      occurrences: recoveryLiterals.workflowPaths.length,
+      fileCount: new Set(
+        recoveryLiterals.workflowPaths.map((entry) => entry.path),
+      ).size,
+      identityDigest: digestStaticFindings(recoveryLiterals.workflowPaths),
+    },
+    {
+      occurrences: inventory.workflowJsonReferenceBaseline.recoveryOccurrences,
+      fileCount: inventory.workflowJsonReferenceBaseline.recoveryFileCount,
+      identityDigest:
+        inventory.workflowJsonReferenceBaseline.recoveryIdentityDigest,
+    },
+  );
+  assert.deepEqual(
+    {
+      occurrences: recoveryLiterals.splitWorkflowPaths.length,
+      fileCount: new Set(
+        recoveryLiterals.splitWorkflowPaths.map((entry) => entry.path),
+      ).size,
+      identityDigest: digestStaticFindings(recoveryLiterals.splitWorkflowPaths),
+    },
+    {
+      occurrences:
+        inventory.workflowJsonReferenceBaseline
+          .recoverySplitPathJoinOccurrences,
+      fileCount:
+        inventory.workflowJsonReferenceBaseline.recoverySplitPathJoinFileCount,
+      identityDigest:
+        inventory.workflowJsonReferenceBaseline
+          .recoverySplitPathJoinIdentityDigest,
+    },
+  );
+  assert.equal(
+    recoveryLiterals.dynamicWorkflowDirectories.length,
+    0,
+    'generated recovery runtime must not enumerate the workflow root dynamically',
+  );
+
+  const workflowJsonNamespaces = scanWorkflowJsonNamespaces(repositoryRoot);
+  assert.deepEqual(summarizeJsonFindings(workflowJsonNamespaces), {
+    occurrences: inventory.namespaceBaseline.workflowJsonOccurrences,
+    fileCount: inventory.namespaceBaseline.workflowJsonFileCount,
+    identityDigest: inventory.namespaceBaseline.workflowJsonIdentityDigest,
+  });
+  const jsonSchemaIds = scanJsonSchemaIds(repositoryRoot);
+  assert.deepEqual(
+    {
+      hosts: summarizeJsonSchemaIdHosts(jsonSchemaIds),
+      identityDigest: digestJsonFindings(jsonSchemaIds),
+    },
+    {
+      hosts: inventory.namespaceBaseline.jsonSchemaIdHosts,
+      identityDigest: inventory.namespaceBaseline.jsonSchemaIdIdentityDigest,
+    },
   );
 
   assert.deepEqual(
@@ -281,10 +443,80 @@ test('T3 boundary coupling inventory is tracked beside the frozen module map', (
       ].sort(compareText),
     },
     {
-      occurrences: inventory.policyLiteralBaseline.sourceOccurrences,
-      fileCount: inventory.policyLiteralBaseline.sourceFileCount,
-      identityDigest: inventory.policyLiteralBaseline.sourceIdentityDigest,
-      uniqueLiterals: inventory.policyLiteralBaseline.uniqueLiterals,
+      occurrences: inventory.workflowJsonReferenceBaseline.sourceOccurrences,
+      fileCount: inventory.workflowJsonReferenceBaseline.sourceFileCount,
+      identityDigest:
+        inventory.workflowJsonReferenceBaseline.sourceIdentityDigest,
+      uniqueLiterals: inventory.workflowJsonReferenceBaseline.uniqueLiterals,
+    },
+  );
+
+  assert.deepEqual(
+    {
+      occurrences: bootstrapLiterals.workflowPaths.length,
+      fileCount: new Set(
+        bootstrapLiterals.workflowPaths.map((entry) => entry.path),
+      ).size,
+      identityDigest: digestStaticFindings(bootstrapLiterals.workflowPaths),
+    },
+    {
+      occurrences: inventory.workflowJsonReferenceBaseline.bootstrapOccurrences,
+      fileCount: inventory.workflowJsonReferenceBaseline.bootstrapFileCount,
+      identityDigest:
+        inventory.workflowJsonReferenceBaseline.bootstrapIdentityDigest,
+    },
+  );
+  assert.equal(
+    bootstrapLiterals.splitWorkflowPaths.length,
+    0,
+    'bootstrap TypeScript must not add split workflow JSON paths',
+  );
+  assert.equal(
+    bootstrapLiterals.dynamicWorkflowDirectories.length,
+    0,
+    'bootstrap TypeScript must not enumerate the workflow root dynamically',
+  );
+
+  assert.deepEqual(
+    {
+      occurrences: sourceLiterals.splitWorkflowPaths.length,
+      fileCount: new Set(
+        sourceLiterals.splitWorkflowPaths.map((entry) => entry.path),
+      ).size,
+      identityDigest: digestStaticFindings(sourceLiterals.splitWorkflowPaths),
+    },
+    {
+      occurrences:
+        inventory.workflowJsonReferenceBaseline.splitPathJoinOccurrences,
+      fileCount: inventory.workflowJsonReferenceBaseline.splitPathJoinFileCount,
+      identityDigest:
+        inventory.workflowJsonReferenceBaseline.splitPathJoinIdentityDigest,
+    },
+  );
+
+  const workflowArtifactPaths = scanWorkflowArtifactPaths(repositoryRoot);
+  assert.deepEqual(summarizeJsonFindings(workflowArtifactPaths), {
+    occurrences: inventory.workflowArtifactPathBaseline.occurrences,
+    fileCount: inventory.workflowArtifactPathBaseline.fileCount,
+    identityDigest: inventory.workflowArtifactPathBaseline.identityDigest,
+  });
+  assert.deepEqual(
+    {
+      occurrences: sourceLiterals.dynamicWorkflowDirectories.length,
+      fileCount: new Set(
+        sourceLiterals.dynamicWorkflowDirectories.map((entry) => entry.path),
+      ).size,
+      identityDigest: digestStaticFindings(
+        sourceLiterals.dynamicWorkflowDirectories,
+      ),
+    },
+    {
+      occurrences:
+        inventory.workflowJsonReferenceBaseline.dynamicDirectoryOccurrences,
+      fileCount:
+        inventory.workflowJsonReferenceBaseline.dynamicDirectoryFileCount,
+      identityDigest:
+        inventory.workflowJsonReferenceBaseline.dynamicDirectoryIdentityDigest,
     },
   );
 
@@ -297,21 +529,18 @@ test('T3 boundary coupling inventory is tracked beside the frozen module map', (
         coupling.negativeEvidence,
         `${coupling.id} needs two-method negative evidence`,
       );
+    }
+    if (coupling.negativeEvidence !== null) {
+      assert.ok(
+        coupling.state === 'missing' || coupling.state === 'partial',
+        `${coupling.id} negative evidence is only valid for a missing or partial surface`,
+      );
       assertNegativeEvidence(
         repositoryRoot,
         coupling.id,
         coupling.negativeEvidence,
       );
-    } else {
-      assert.equal(coupling.negativeEvidence, null);
     }
-  }
-
-  for (const evidence of [
-    ...inventory.policyLiteralBaseline.splitPathJoinEvidence,
-    ...inventory.policyLiteralBaseline.dynamicDirectoryEvidence,
-  ]) {
-    assertBoundaryEvidence(repositoryRoot, 'policy-path-literals', evidence);
   }
 
   const architectureDocument = path.join(
@@ -325,6 +554,302 @@ test('T3 boundary coupling inventory is tracked beside the frozen module map', (
       new RegExp(`<!-- coupling:${escapeRegex(couplingId)} -->`, 'u'),
     );
   }
+});
+
+test('T3 scanner finds syntax-bound direct, split, and dynamic workflow paths', () => {
+  const source = [
+    "import nodePath from 'node:path';",
+    "import { readdirSync as listDirectory } from 'node:fs';",
+    "const exact = 'workflow/exact.json';",
+    "const embedded = 'HEAD:workflow/embedded.json';",
+    'const suffix = getSuffix();',
+    'const template = `prefix:workflow/template.json:${suffix}`;',
+    "const folded = 'workflow/' + 'folded.json';",
+    "const sentence = 'Unable to read workflow/sentence.json.';",
+    "const workflowRoot = nodePath.join(repositoryRoot, 'workflow');",
+    "const joined = nodePath.join(workflowRoot, 'joined.json');",
+    "const sameCall = nodePath.resolve(repositoryRoot, 'workflow', 'same.json');",
+    'const entries = listDirectory(workflowRoot);',
+    "const nearPrefix = 'myworkflow/not-a-match.json';",
+    "const nearSuffix = 'workflow/not-a-match.json.bak';",
+    "const nested = 'workflow/nested/not-a-match.json';",
+    "// nodePath.join(repositoryRoot, 'workflow', 'comment.json');",
+    "// listDirectory(nodePath.join(repositoryRoot, 'workflow'));",
+  ].join('\n');
+
+  const findings = scanT3BoundarySource(
+    ts,
+    'synthetic/t3-scanner.ts',
+    source,
+    '.ts',
+  );
+
+  assert.deepEqual(
+    findings.workflowPaths.map((finding) => finding.normalizedValue).sort(),
+    [
+      'workflow/embedded.json',
+      'workflow/exact.json',
+      'workflow/folded.json',
+      'workflow/sentence.json',
+      'workflow/template.json',
+    ],
+  );
+  assert.deepEqual(
+    findings.splitWorkflowPaths
+      .map((finding) => finding.normalizedValue)
+      .sort(),
+    ['workflow/joined.json', 'workflow/same.json'],
+  );
+  assert.deepEqual(
+    findings.dynamicWorkflowDirectories.map(
+      (finding) => finding.normalizedValue,
+    ),
+    ['workflow/'],
+  );
+
+  const sameCountReplacement = scanT3BoundarySource(
+    ts,
+    'synthetic/t3-scanner.ts',
+    source.replace('workflow/exact.json', 'workflow/other.json'),
+    '.ts',
+  );
+  assert.equal(
+    sameCountReplacement.workflowPaths.length,
+    findings.workflowPaths.length,
+  );
+  assert.notEqual(
+    digestStaticFindings(sameCountReplacement.workflowPaths),
+    digestStaticFindings(findings.workflowPaths),
+  );
+});
+
+test('T3 scanner follows imported aliases and rejects shadowed lookalikes', () => {
+  const first = scanT3BoundarySource(
+    ts,
+    'synthetic/alias.ts',
+    [
+      "import nodePath from 'node:path';",
+      "import nodeFs from 'node:fs';",
+      "const workflowRoot = nodePath.join(input.repositoryRoot, 'workflow');",
+      "const policy = nodePath.join(workflowRoot, 'config.json');",
+      'const entries = nodeFs.readdirSync(workflowRoot);',
+    ].join('\n'),
+    '.ts',
+  );
+  const renamed = scanT3BoundarySource(
+    ts,
+    'synthetic/alias.ts',
+    [
+      "import p from 'node:path';",
+      "import fsApi from 'node:fs';",
+      "const root = p.join(input.repositoryRoot, 'workflow');",
+      "const policy = p.join(root, 'config.json');",
+      'const entries = fsApi.readdirSync(root);',
+    ].join('\n'),
+    '.ts',
+  );
+  assert.equal(
+    digestStaticFindings(first.splitWorkflowPaths),
+    digestStaticFindings(renamed.splitWorkflowPaths),
+  );
+  assert.equal(
+    digestStaticFindings(first.dynamicWorkflowDirectories),
+    digestStaticFindings(renamed.dynamicWorkflowDirectories),
+  );
+
+  const shadowed = scanT3BoundarySource(
+    ts,
+    'synthetic/shadowed.ts',
+    [
+      "import p from 'node:path';",
+      'function run(p: FakePath) {',
+      "  return p.join(repositoryRoot, 'workflow', 'fake.json');",
+      '}',
+    ].join('\n'),
+    '.ts',
+  );
+  assert.equal(shadowed.splitWorkflowPaths.length, 0);
+
+  const destructuredShadow = scanT3BoundarySource(
+    ts,
+    'synthetic/destructured-shadow.ts',
+    [
+      "import p from 'node:path';",
+      'function run() {',
+      '  const { p } = fakePathApi;',
+      "  return p.join(repositoryRoot, 'workflow', 'fake.json');",
+      '}',
+    ].join('\n'),
+    '.ts',
+  );
+  assert.equal(destructuredShadow.splitWorkflowPaths.length, 0);
+
+  const functionScopedVar = scanT3BoundarySource(
+    ts,
+    'synthetic/var-shadow.ts',
+    [
+      "import p from 'node:path';",
+      'function run() {',
+      '  if (condition) { var p = fakePathApi; }',
+      "  return p.join(repositoryRoot, 'workflow', 'fake.json');",
+      '}',
+    ].join('\n'),
+    '.ts',
+  );
+  assert.equal(functionScopedVar.splitWorkflowPaths.length, 0);
+
+  const fakeRepositoryRoot = scanT3BoundarySource(
+    ts,
+    'synthetic/fake-root.ts',
+    [
+      "import p from 'node:path';",
+      "const repositoryRoot = '/tmp/not-the-repository';",
+      "const policy = p.join(repositoryRoot, 'workflow', 'fake.json');",
+    ].join('\n'),
+    '.ts',
+  );
+  assert.equal(fakeRepositoryRoot.splitWorkflowPaths.length, 0);
+
+  const inlineDynamic = scanT3BoundarySource(
+    ts,
+    'synthetic/inline.ts',
+    [
+      "import p from 'node:path';",
+      "import fsApi from 'node:fs';",
+      "const entries = fsApi.promises.readdir(p.resolve(repositoryRoot, 'workflow'));",
+    ].join('\n'),
+    '.ts',
+  );
+  assert.deepEqual(
+    inlineDynamic.dynamicWorkflowDirectories.map(
+      (finding) => finding.syntaxForm,
+    ),
+    ['fs-readdir'],
+  );
+
+  const promisesImport = scanT3BoundarySource(
+    ts,
+    'synthetic/promises.ts',
+    [
+      "import p from 'node:path';",
+      "import fsPromises from 'node:fs/promises';",
+      "const entries = fsPromises.readdir(p.join(repositoryRoot, 'workflow'));",
+    ].join('\n'),
+    '.ts',
+  );
+  assert.equal(promisesImport.dynamicWorkflowDirectories.length, 1);
+
+  const invalidPromisesSync = scanT3BoundarySource(
+    ts,
+    'synthetic/promises-sync.ts',
+    [
+      "import p from 'node:path';",
+      "import fsPromises from 'node:fs/promises';",
+      "const entries = fsPromises.readdirSync(p.join(repositoryRoot, 'workflow'));",
+    ].join('\n'),
+    '.ts',
+  );
+  assert.equal(invalidPromisesSync.dynamicWorkflowDirectories.length, 0);
+
+  const propertyAliases = scanT3BoundarySource(
+    ts,
+    'synthetic/property-aliases.ts',
+    [
+      "import p from 'node:path';",
+      "import fsApi from 'node:fs';",
+      'const fsPromises = fsApi.promises;',
+      "const entries = fsPromises.readdir(p.posix.join(repositoryRoot, 'workflow'));",
+    ].join('\n'),
+    '.ts',
+  );
+  assert.equal(propertyAliases.dynamicWorkflowDirectories.length, 1);
+
+  const namedPropertyImports = scanT3BoundarySource(
+    ts,
+    'synthetic/named-property-imports.ts',
+    [
+      "import { posix as pathApi } from 'node:path';",
+      "import { promises as fsPromises } from 'node:fs';",
+      "const entries = fsPromises.readdir(pathApi.join(repositoryRoot, 'workflow'));",
+    ].join('\n'),
+    '.ts',
+  );
+  assert.equal(namedPropertyImports.dynamicWorkflowDirectories.length, 1);
+
+  const destructuredRoot = scanT3BoundarySource(
+    ts,
+    'synthetic/destructured-root.ts',
+    [
+      "import p from 'node:path';",
+      'const { repositoryRoot } = input;',
+      "const policy = p.join(repositoryRoot, 'workflow', 'config.json');",
+    ].join('\n'),
+    '.ts',
+  );
+  assert.equal(destructuredRoot.splitWorkflowPaths.length, 1);
+});
+
+test('T3 scanner records folded namespaces and dynamic fragments', () => {
+  const findings = scanT3BoundarySource(
+    ts,
+    'synthetic/namespaces.ts',
+    [
+      "const exact = 'expense-app.workflow.exact.v1';",
+      "const folded = 'expense-app.workflow.' + 'folded.v1';",
+      "const wrapped = ('expense-app.workflow.' as const) + 'wrapped.v1';",
+      "const suffix = 'template.v1';",
+      'const staticTemplate = `expense-app.workflow.${suffix}`;',
+      'const dynamic = `expense-app.workflow.${kind}`;',
+      "// const ignored = 'expense-app.workflow.comment.v1';",
+    ].join('\n'),
+    '.ts',
+  );
+  assert.deepEqual(
+    findings.namespace.map((finding) => finding.normalizedValue).sort(),
+    [
+      'expense-app.workflow.',
+      'expense-app.workflow.exact.v1',
+      'expense-app.workflow.folded.v1',
+      'expense-app.workflow.template.v1',
+      'expense-app.workflow.wrapped.v1',
+    ],
+  );
+});
+
+test('T3 JSON identity catches same-host replacements and canonicalizes finding order', () => {
+  const schemaIds: T3JsonStringFinding[] = [
+    {
+      path: 'workflow/schemas/first.schema.json',
+      jsonPointer: '/$id',
+      normalizedValue: 'https://expense-app.local/workflow/first.schema.json',
+    },
+    {
+      path: 'workflow/schemas/second.schema.json',
+      jsonPointer: '/$id',
+      normalizedValue: 'https://expense-app.local/workflow/second.schema.json',
+    },
+  ];
+  const replacement = schemaIds.map((finding, index) =>
+    index === 0
+      ? {
+          ...finding,
+          normalizedValue:
+            'http://expense-app.local/workflow/replaced.schema.json',
+        }
+      : finding,
+  );
+  assert.deepEqual(
+    summarizeJsonSchemaIdHosts(replacement),
+    summarizeJsonSchemaIdHosts(schemaIds),
+  );
+  assert.notEqual(
+    digestJsonFindings(replacement),
+    digestJsonFindings(schemaIds),
+  );
+  assert.equal(
+    digestJsonFindings([...schemaIds].reverse()),
+    digestJsonFindings(schemaIds),
+  );
 });
 
 test('module map target and disposition mutations fail closed', () => {
@@ -441,7 +966,9 @@ test('baseline rejects growth, replacement, duplicate identities, and wildcard p
 });
 
 test('matching rejects unlisted, stale, and retired-reappearing violations', () => {
-  const observed = baseline.edges.map(observedEdge);
+  const observed = baseline.edges
+    .filter((edge) => edge.status === 'active')
+    .map(observedEdge);
 
   const unlisted = [
     ...observed,
@@ -470,12 +997,12 @@ test('matching rejects unlisted, stale, and retired-reappearing violations', () 
   );
 });
 
-test('current repository matches the exact 774-edge active baseline', () => {
+test('current repository matches the exact active dependency baseline', () => {
   const current = readRepositorySnapshot(repositoryRoot);
   const violations = scanViolations(current, moduleMap, {
     requireFinal: false,
   });
-  assert.equal(violations.length, EXPECTED_FROZEN_EDGE_COUNT);
+  assert.equal(violations.length, EXPECTED_ACTIVE_EDGE_COUNT);
   assertObservedMatchesBaseline(violations, baseline);
 });
 
@@ -486,7 +1013,7 @@ test('a new file under a recognized organized root is scanned with self identity
   const violations = scanViolations(current, moduleMap, {
     requireFinal: false,
   });
-  assert.equal(violations.length, EXPECTED_FROZEN_EDGE_COUNT);
+  assert.equal(violations.length, EXPECTED_ACTIVE_EDGE_COUNT);
   assertObservedMatchesBaseline(violations, baseline);
 });
 
@@ -530,7 +1057,7 @@ test('a forbidden edge from a new organized file is unlisted and fails closed', 
   const violations = scanViolations(current, moduleMap, {
     requireFinal: false,
   });
-  assert.equal(violations.length, EXPECTED_FROZEN_EDGE_COUNT + 1);
+  assert.equal(violations.length, EXPECTED_ACTIVE_EDGE_COUNT + 1);
   assert.throws(
     () => assertObservedMatchesBaseline(violations, baseline),
     /unlisted dependency violation.*generated-forbidden-edge.*module-to-runtime/i,
@@ -629,11 +1156,12 @@ function parseT3BoundaryInventory(text: string): T3BoundaryInventory {
   assertPlainObject(value, 'T3 boundary inventory');
   assertExactKeys(value, [
     'architectureDocument',
+    'workflowArtifactPathBaseline',
     'couplings',
     'kind',
     'namespaceBaseline',
     'observedAtCommit',
-    'policyLiteralBaseline',
+    'workflowJsonReferenceBaseline',
     'schemaVersion',
   ]);
   if (
@@ -650,6 +1178,10 @@ function parseT3BoundaryInventory(text: string): T3BoundaryInventory {
 
   assertPlainObject(value.namespaceBaseline, 'T3 namespace baseline');
   assertExactKeys(value.namespaceBaseline, [
+    'bootstrapFileCount',
+    'bootstrapIdentityDigest',
+    'bootstrapOccurrences',
+    'jsonSchemaIdIdentityDigest',
     'jsonSchemaIdHosts',
     'legacyPrefix',
     'recoveryFileCount',
@@ -658,6 +1190,9 @@ function parseT3BoundaryInventory(text: string): T3BoundaryInventory {
     'sourceFileCount',
     'sourceIdentityDigest',
     'sourceOccurrences',
+    'workflowJsonFileCount',
+    'workflowJsonIdentityDigest',
+    'workflowJsonOccurrences',
   ]);
   assertPlainObject(
     value.namespaceBaseline.jsonSchemaIdHosts,
@@ -668,9 +1203,16 @@ function parseT3BoundaryInventory(text: string): T3BoundaryInventory {
     !isNonNegativeInteger(value.namespaceBaseline.sourceOccurrences) ||
     !isNonNegativeInteger(value.namespaceBaseline.sourceFileCount) ||
     !isSha256Digest(value.namespaceBaseline.sourceIdentityDigest) ||
+    !isNonNegativeInteger(value.namespaceBaseline.bootstrapOccurrences) ||
+    !isNonNegativeInteger(value.namespaceBaseline.bootstrapFileCount) ||
+    !isSha256Digest(value.namespaceBaseline.bootstrapIdentityDigest) ||
     !isNonNegativeInteger(value.namespaceBaseline.recoveryOccurrences) ||
     !isNonNegativeInteger(value.namespaceBaseline.recoveryFileCount) ||
-    !isSha256Digest(value.namespaceBaseline.recoveryIdentityDigest)
+    !isSha256Digest(value.namespaceBaseline.recoveryIdentityDigest) ||
+    !isNonNegativeInteger(value.namespaceBaseline.workflowJsonOccurrences) ||
+    !isNonNegativeInteger(value.namespaceBaseline.workflowJsonFileCount) ||
+    !isSha256Digest(value.namespaceBaseline.workflowJsonIdentityDigest) ||
+    !isSha256Digest(value.namespaceBaseline.jsonSchemaIdIdentityDigest)
   ) {
     throw new Error('T3 namespace baseline is invalid.');
   }
@@ -684,30 +1226,105 @@ function parseT3BoundaryInventory(text: string): T3BoundaryInventory {
     jsonSchemaIdHosts[host] = count;
   }
 
-  assertPlainObject(value.policyLiteralBaseline, 'T3 policy literal baseline');
-  assertExactKeys(value.policyLiteralBaseline, [
-    'dynamicDirectoryEvidence',
+  assertPlainObject(
+    value.workflowJsonReferenceBaseline,
+    'T3 workflow JSON reference baseline',
+  );
+  assertExactKeys(value.workflowJsonReferenceBaseline, [
+    'bootstrapFileCount',
+    'bootstrapIdentityDigest',
+    'bootstrapOccurrences',
+    'dynamicDirectoryFileCount',
+    'dynamicDirectoryIdentityDigest',
+    'dynamicDirectoryOccurrences',
+    'recoveryFileCount',
+    'recoveryIdentityDigest',
+    'recoveryOccurrences',
+    'recoverySplitPathJoinFileCount',
+    'recoverySplitPathJoinIdentityDigest',
+    'recoverySplitPathJoinOccurrences',
+    'scriptsFileCount',
+    'scriptsIdentityDigest',
+    'scriptsOccurrences',
     'sourceFileCount',
     'sourceIdentityDigest',
     'sourceOccurrences',
-    'splitPathJoinEvidence',
+    'splitPathJoinFileCount',
+    'splitPathJoinIdentityDigest',
+    'splitPathJoinOccurrences',
     'uniqueLiterals',
   ]);
   if (
-    !isNonNegativeInteger(value.policyLiteralBaseline.sourceOccurrences) ||
-    !isNonNegativeInteger(value.policyLiteralBaseline.sourceFileCount) ||
-    !isSha256Digest(value.policyLiteralBaseline.sourceIdentityDigest) ||
-    !Array.isArray(value.policyLiteralBaseline.uniqueLiterals) ||
-    !Array.isArray(value.policyLiteralBaseline.splitPathJoinEvidence) ||
-    !Array.isArray(value.policyLiteralBaseline.dynamicDirectoryEvidence)
+    !isNonNegativeInteger(
+      value.workflowJsonReferenceBaseline.sourceOccurrences,
+    ) ||
+    !isNonNegativeInteger(
+      value.workflowJsonReferenceBaseline.sourceFileCount,
+    ) ||
+    !isSha256Digest(value.workflowJsonReferenceBaseline.sourceIdentityDigest) ||
+    !isNonNegativeInteger(
+      value.workflowJsonReferenceBaseline.bootstrapOccurrences,
+    ) ||
+    !isNonNegativeInteger(
+      value.workflowJsonReferenceBaseline.bootstrapFileCount,
+    ) ||
+    !isSha256Digest(
+      value.workflowJsonReferenceBaseline.bootstrapIdentityDigest,
+    ) ||
+    !isNonNegativeInteger(
+      value.workflowJsonReferenceBaseline.scriptsOccurrences,
+    ) ||
+    !isNonNegativeInteger(
+      value.workflowJsonReferenceBaseline.scriptsFileCount,
+    ) ||
+    !isSha256Digest(
+      value.workflowJsonReferenceBaseline.scriptsIdentityDigest,
+    ) ||
+    !isNonNegativeInteger(
+      value.workflowJsonReferenceBaseline.recoveryOccurrences,
+    ) ||
+    !isNonNegativeInteger(
+      value.workflowJsonReferenceBaseline.recoveryFileCount,
+    ) ||
+    !isSha256Digest(
+      value.workflowJsonReferenceBaseline.recoveryIdentityDigest,
+    ) ||
+    !isNonNegativeInteger(
+      value.workflowJsonReferenceBaseline.recoverySplitPathJoinOccurrences,
+    ) ||
+    !isNonNegativeInteger(
+      value.workflowJsonReferenceBaseline.recoverySplitPathJoinFileCount,
+    ) ||
+    !isSha256Digest(
+      value.workflowJsonReferenceBaseline.recoverySplitPathJoinIdentityDigest,
+    ) ||
+    !Array.isArray(value.workflowJsonReferenceBaseline.uniqueLiterals) ||
+    !isNonNegativeInteger(
+      value.workflowJsonReferenceBaseline.splitPathJoinOccurrences,
+    ) ||
+    !isNonNegativeInteger(
+      value.workflowJsonReferenceBaseline.splitPathJoinFileCount,
+    ) ||
+    !isSha256Digest(
+      value.workflowJsonReferenceBaseline.splitPathJoinIdentityDigest,
+    ) ||
+    !isNonNegativeInteger(
+      value.workflowJsonReferenceBaseline.dynamicDirectoryOccurrences,
+    ) ||
+    !isNonNegativeInteger(
+      value.workflowJsonReferenceBaseline.dynamicDirectoryFileCount,
+    ) ||
+    !isSha256Digest(
+      value.workflowJsonReferenceBaseline.dynamicDirectoryIdentityDigest,
+    )
   ) {
-    throw new Error('T3 policy literal baseline is invalid.');
+    throw new Error('T3 workflow JSON reference baseline is invalid.');
   }
-  const uniqueLiterals = value.policyLiteralBaseline.uniqueLiterals.map(
+  const uniqueLiterals = value.workflowJsonReferenceBaseline.uniqueLiterals.map(
     (literal) => {
       if (
         typeof literal !== 'string' ||
-        !/^workflow\/[A-Za-z0-9._/-]+\.json$/u.test(literal)
+        !/^workflow\/[A-Za-z0-9][A-Za-z0-9._-]*\.json$/u.test(literal)
       ) {
         throw new Error('T3 policy literal baseline contains an invalid path.');
       }
@@ -719,6 +1336,26 @@ function parseT3BoundaryInventory(text: string): T3BoundaryInventory {
     [...new Set(uniqueLiterals)].sort(compareText),
     'T3 policy literals must be sorted and unique.',
   );
+
+  assertPlainObject(
+    value.workflowArtifactPathBaseline,
+    'T3 workflow artifact path baseline',
+  );
+  assertExactKeys(value.workflowArtifactPathBaseline, [
+    'fileCount',
+    'identityDigest',
+    'occurrences',
+    'packagePrefix',
+  ]);
+  if (
+    value.workflowArtifactPathBaseline.packagePrefix !==
+      'packages/workflow-engine' ||
+    !isNonNegativeInteger(value.workflowArtifactPathBaseline.occurrences) ||
+    !isNonNegativeInteger(value.workflowArtifactPathBaseline.fileCount) ||
+    !isSha256Digest(value.workflowArtifactPathBaseline.identityDigest)
+  ) {
+    throw new Error('T3 workflow artifact path baseline is invalid.');
+  }
 
   const couplings = value.couplings.map((candidate, index) => {
     assertPlainObject(candidate, `T3 coupling ${index + 1}`);
@@ -811,28 +1448,66 @@ function parseT3BoundaryInventory(text: string): T3BoundaryInventory {
       sourceOccurrences: value.namespaceBaseline.sourceOccurrences,
       sourceFileCount: value.namespaceBaseline.sourceFileCount,
       sourceIdentityDigest: value.namespaceBaseline.sourceIdentityDigest,
+      bootstrapOccurrences: value.namespaceBaseline.bootstrapOccurrences,
+      bootstrapFileCount: value.namespaceBaseline.bootstrapFileCount,
+      bootstrapIdentityDigest: value.namespaceBaseline.bootstrapIdentityDigest,
       recoveryOccurrences: value.namespaceBaseline.recoveryOccurrences,
       recoveryFileCount: value.namespaceBaseline.recoveryFileCount,
       recoveryIdentityDigest: value.namespaceBaseline.recoveryIdentityDigest,
+      workflowJsonOccurrences: value.namespaceBaseline.workflowJsonOccurrences,
+      workflowJsonFileCount: value.namespaceBaseline.workflowJsonFileCount,
+      workflowJsonIdentityDigest:
+        value.namespaceBaseline.workflowJsonIdentityDigest,
       jsonSchemaIdHosts,
+      jsonSchemaIdIdentityDigest:
+        value.namespaceBaseline.jsonSchemaIdIdentityDigest,
     },
-    policyLiteralBaseline: {
-      sourceOccurrences: value.policyLiteralBaseline.sourceOccurrences,
-      sourceFileCount: value.policyLiteralBaseline.sourceFileCount,
-      sourceIdentityDigest: value.policyLiteralBaseline.sourceIdentityDigest,
+    workflowJsonReferenceBaseline: {
+      sourceOccurrences: value.workflowJsonReferenceBaseline.sourceOccurrences,
+      sourceFileCount: value.workflowJsonReferenceBaseline.sourceFileCount,
+      sourceIdentityDigest:
+        value.workflowJsonReferenceBaseline.sourceIdentityDigest,
+      bootstrapOccurrences:
+        value.workflowJsonReferenceBaseline.bootstrapOccurrences,
+      bootstrapFileCount:
+        value.workflowJsonReferenceBaseline.bootstrapFileCount,
+      bootstrapIdentityDigest:
+        value.workflowJsonReferenceBaseline.bootstrapIdentityDigest,
+      scriptsOccurrences:
+        value.workflowJsonReferenceBaseline.scriptsOccurrences,
+      scriptsFileCount: value.workflowJsonReferenceBaseline.scriptsFileCount,
+      scriptsIdentityDigest:
+        value.workflowJsonReferenceBaseline.scriptsIdentityDigest,
+      recoveryOccurrences:
+        value.workflowJsonReferenceBaseline.recoveryOccurrences,
+      recoveryFileCount: value.workflowJsonReferenceBaseline.recoveryFileCount,
+      recoveryIdentityDigest:
+        value.workflowJsonReferenceBaseline.recoveryIdentityDigest,
+      recoverySplitPathJoinOccurrences:
+        value.workflowJsonReferenceBaseline.recoverySplitPathJoinOccurrences,
+      recoverySplitPathJoinFileCount:
+        value.workflowJsonReferenceBaseline.recoverySplitPathJoinFileCount,
+      recoverySplitPathJoinIdentityDigest:
+        value.workflowJsonReferenceBaseline.recoverySplitPathJoinIdentityDigest,
       uniqueLiterals,
-      splitPathJoinEvidence:
-        value.policyLiteralBaseline.splitPathJoinEvidence.map((entry, index) =>
-          parseT3BoundaryEvidence(entry, `T3 split path evidence ${index + 1}`),
-        ),
-      dynamicDirectoryEvidence:
-        value.policyLiteralBaseline.dynamicDirectoryEvidence.map(
-          (entry, index) =>
-            parseT3BoundaryEvidence(
-              entry,
-              `T3 dynamic path evidence ${index + 1}`,
-            ),
-        ),
+      splitPathJoinOccurrences:
+        value.workflowJsonReferenceBaseline.splitPathJoinOccurrences,
+      splitPathJoinFileCount:
+        value.workflowJsonReferenceBaseline.splitPathJoinFileCount,
+      splitPathJoinIdentityDigest:
+        value.workflowJsonReferenceBaseline.splitPathJoinIdentityDigest,
+      dynamicDirectoryOccurrences:
+        value.workflowJsonReferenceBaseline.dynamicDirectoryOccurrences,
+      dynamicDirectoryFileCount:
+        value.workflowJsonReferenceBaseline.dynamicDirectoryFileCount,
+      dynamicDirectoryIdentityDigest:
+        value.workflowJsonReferenceBaseline.dynamicDirectoryIdentityDigest,
+    },
+    workflowArtifactPathBaseline: {
+      packagePrefix: 'packages/workflow-engine',
+      occurrences: value.workflowArtifactPathBaseline.occurrences,
+      fileCount: value.workflowArtifactPathBaseline.fileCount,
+      identityDigest: value.workflowArtifactPathBaseline.identityDigest,
     },
     couplings,
   };
@@ -894,233 +1569,29 @@ function scanTypeScriptBoundaryLiterals(
   root: string,
   relativeRoot: string,
   extension: string,
-): {
-  workflowPaths: T3StaticLiteralFinding[];
-  namespace: T3StaticLiteralFinding[];
-} {
-  const result: {
-    workflowPaths: T3StaticLiteralFinding[];
-    namespace: T3StaticLiteralFinding[];
-  } = {
+): T3BoundarySourceFindings {
+  const result: T3BoundarySourceFindings = {
     workflowPaths: [],
+    splitWorkflowPaths: [],
+    dynamicWorkflowDirectories: [],
     namespace: [],
   };
   for (const file of listRegularFiles(root, relativeRoot)) {
     if (!file.endsWith(extension)) continue;
     const source = fs.readFileSync(path.join(root, file), 'utf8');
-    const sourceFile = ts.createSourceFile(
-      file,
-      source,
-      ts.ScriptTarget.Latest,
-      true,
-      extension === '.js' ? ts.ScriptKind.JS : ts.ScriptKind.TS,
+    const structural = scanT3BoundarySource(ts, file, source, extension);
+    result.workflowPaths.push(...structural.workflowPaths);
+    result.namespace.push(...structural.namespace);
+    result.splitWorkflowPaths.push(...structural.splitWorkflowPaths);
+    result.dynamicWorkflowDirectories.push(
+      ...structural.dynamicWorkflowDirectories,
     );
-    const bindings = collectStaticStringBindings(sourceFile);
-    const visit = (node: import('typescript').Node): void => {
-      if (ts.isStringLiteral(node)) {
-        recordWorkflowPathMatches(
-          result.workflowPaths,
-          file,
-          node.getStart(sourceFile),
-          node.getWidth(sourceFile),
-          node.text,
-          'string',
-        );
-      } else if (ts.isNoSubstitutionTemplateLiteral(node)) {
-        recordWorkflowPathMatches(
-          result.workflowPaths,
-          file,
-          node.getStart(sourceFile),
-          node.getWidth(sourceFile),
-          node.text,
-          'template',
-        );
-      } else if (ts.isTemplateExpression(node)) {
-        const fragments = [
-          node.head,
-          ...node.templateSpans.map((span) => span.literal),
-        ];
-        for (const fragment of fragments) {
-          recordWorkflowPathMatches(
-            result.workflowPaths,
-            file,
-            fragment.getStart(sourceFile),
-            fragment.getWidth(sourceFile),
-            fragment.text,
-            'template',
-          );
-        }
-      }
-
-      if (
-        isOutermostStaticStringExpression(node, bindings) &&
-        source
-          .slice(node.getStart(sourceFile), node.getEnd())
-          .includes('expense-app.workflow.')
-      ) {
-        const folded = foldStaticString(node, bindings, new Set());
-        if (folded !== null) {
-          const matches = folded.matchAll(
-            /expense-app\.workflow\.[A-Za-z0-9._-]+/gu,
-          );
-          let matched = false;
-          for (const match of matches) {
-            matched = true;
-            result.namespace.push({
-              path: file,
-              start: node.getStart(sourceFile),
-              length: node.getWidth(sourceFile),
-              normalizedValue: match[0],
-              syntaxForm:
-                ts.isStringLiteral(node) ||
-                ts.isNoSubstitutionTemplateLiteral(node)
-                  ? 'exact-string'
-                  : 'folded',
-            });
-          }
-          if (!matched && folded.includes('expense-app.workflow.')) {
-            result.namespace.push({
-              path: file,
-              start: node.getStart(sourceFile),
-              length: node.getWidth(sourceFile),
-              normalizedValue: 'expense-app.workflow.',
-              syntaxForm: 'folded',
-            });
-          }
-        }
-      }
-      ts.forEachChild(node, visit);
-    };
-    visit(sourceFile);
   }
   result.workflowPaths.sort(compareStaticFinding);
+  result.splitWorkflowPaths.sort(compareStaticFinding);
+  result.dynamicWorkflowDirectories.sort(compareStaticFinding);
   result.namespace.sort(compareStaticFinding);
   return result;
-}
-
-function recordWorkflowPathMatches(
-  findings: T3StaticLiteralFinding[],
-  file: string,
-  start: number,
-  length: number,
-  text: string,
-  sourceKind: 'string' | 'template',
-): void {
-  for (const match of text.matchAll(/workflow\/[A-Za-z0-9._-]+\.json/gu)) {
-    findings.push({
-      path: file,
-      start: start + (match.index ?? 0),
-      length: match[0].length,
-      normalizedValue: match[0],
-      syntaxForm:
-        sourceKind === 'template'
-          ? 'template-static'
-          : text === match[0]
-            ? 'exact-string'
-            : 'embedded-string',
-    });
-  }
-}
-
-function collectStaticStringBindings(
-  sourceFile: import('typescript').SourceFile,
-): ReadonlyMap<string, import('typescript').Expression> {
-  const result = new Map<string, import('typescript').Expression>();
-  const visit = (node: import('typescript').Node): void => {
-    if (
-      ts.isVariableDeclaration(node) &&
-      ts.isIdentifier(node.name) &&
-      node.initializer !== undefined
-    ) {
-      result.set(node.name.text, node.initializer);
-    }
-    ts.forEachChild(node, visit);
-  };
-  visit(sourceFile);
-  return result;
-}
-
-function isOutermostStaticStringExpression(
-  node: import('typescript').Node,
-  bindings: ReadonlyMap<string, import('typescript').Expression>,
-): node is import('typescript').Expression {
-  if (!isStaticStringExpression(node, bindings)) return false;
-  const parent = node.parent;
-  return !(
-    parent !== undefined &&
-    isStaticStringComposition(parent) &&
-    foldStaticString(parent, bindings, new Set()) !== null
-  );
-}
-
-function isStaticStringExpression(
-  node: import('typescript').Node,
-  bindings: ReadonlyMap<string, import('typescript').Expression>,
-): node is import('typescript').Expression {
-  return (
-    (ts.isStringLiteral(node) ||
-      ts.isNoSubstitutionTemplateLiteral(node) ||
-      ts.isTemplateExpression(node) ||
-      ts.isBinaryExpression(node) ||
-      ts.isParenthesizedExpression(node) ||
-      ts.isIdentifier(node)) &&
-    foldStaticString(node, bindings, new Set()) !== null
-  );
-}
-
-function isStaticStringComposition(
-  node: import('typescript').Node,
-): node is
-  | import('typescript').BinaryExpression
-  | import('typescript').TemplateExpression
-  | import('typescript').ParenthesizedExpression {
-  return (
-    ts.isBinaryExpression(node) ||
-    ts.isTemplateExpression(node) ||
-    ts.isParenthesizedExpression(node)
-  );
-}
-
-function foldStaticString(
-  expression: import('typescript').Expression,
-  bindings: ReadonlyMap<string, import('typescript').Expression>,
-  seen: Set<string>,
-): string | null {
-  if (
-    ts.isStringLiteral(expression) ||
-    ts.isNoSubstitutionTemplateLiteral(expression)
-  ) {
-    return expression.text;
-  }
-  if (ts.isParenthesizedExpression(expression)) {
-    return foldStaticString(expression.expression, bindings, seen);
-  }
-  if (
-    ts.isBinaryExpression(expression) &&
-    expression.operatorToken.kind === ts.SyntaxKind.PlusToken
-  ) {
-    const left = foldStaticString(expression.left, bindings, new Set(seen));
-    const right = foldStaticString(expression.right, bindings, new Set(seen));
-    return left === null || right === null ? null : `${left}${right}`;
-  }
-  if (ts.isTemplateExpression(expression)) {
-    let result = expression.head.text;
-    for (const span of expression.templateSpans) {
-      const value = foldStaticString(span.expression, bindings, new Set(seen));
-      if (value === null) return null;
-      result += value + span.literal.text;
-    }
-    return result;
-  }
-  if (ts.isIdentifier(expression)) {
-    if (seen.has(expression.text)) return null;
-    const binding = bindings.get(expression.text);
-    if (!binding) return null;
-    const nextSeen = new Set(seen);
-    nextSeen.add(expression.text);
-    return foldStaticString(binding, bindings, nextSeen);
-  }
-  return null;
 }
 
 function compareStaticFinding(
@@ -1152,25 +1623,162 @@ function compareText(left: string, right: string): number {
   return left < right ? -1 : left > right ? 1 : 0;
 }
 
-function scanJsonSchemaIdHosts(root: string): Record<string, number> {
-  const result: Record<string, number> = {};
+function scanWorkflowJsonNamespaces(root: string): T3JsonStringFinding[] {
+  const result: T3JsonStringFinding[] = [];
+  for (const finding of scanJsonStringLeaves(
+    root,
+    'workflow',
+    (_file, _pointer, value) => value.includes('expense-app.workflow.'),
+  )) {
+    let matched = false;
+    for (const match of finding.normalizedValue.matchAll(
+      /expense-app\.workflow\.[A-Za-z0-9._-]+/gu,
+    )) {
+      matched = true;
+      result.push({ ...finding, normalizedValue: match[0] });
+    }
+    if (!matched) {
+      result.push({
+        ...finding,
+        normalizedValue: 'expense-app.workflow.',
+      });
+    }
+  }
+  return result.sort(compareJsonFindings);
+}
+
+function scanWorkflowArtifactPaths(root: string): T3JsonStringFinding[] {
+  return scanJsonStringLeaves(
+    root,
+    'workflow',
+    (file, _pointer, value) =>
+      path.posix.dirname(file) === 'workflow' &&
+      (value === 'packages/workflow-engine' ||
+        value.startsWith('packages/workflow-engine/')),
+  );
+}
+
+function scanJsonSchemaIds(root: string): T3JsonStringFinding[] {
+  const result: T3JsonStringFinding[] = [];
   for (const file of listRegularFiles(root, 'workflow/schemas')) {
     if (!file.endsWith('.json')) continue;
     const value = JSON.parse(
       fs.readFileSync(path.join(root, file), 'utf8'),
     ) as unknown;
     assertPlainObject(value, `JSON Schema ${file}`);
-    if (typeof value.$id !== 'string') continue;
-    let host: string;
+    if (
+      !Object.prototype.hasOwnProperty.call(value, '$id') ||
+      typeof value.$id !== 'string'
+    ) {
+      throw new Error(`JSON Schema ${file} must have a root string $id.`);
+    }
     try {
-      host = new URL(value.$id).host;
+      new URL(value.$id);
     } catch {
       throw new Error(`JSON Schema ${file} has an invalid $id.`);
     }
+    result.push({
+      path: file,
+      jsonPointer: '/$id',
+      normalizedValue: value.$id,
+    });
+  }
+  return result.sort(compareJsonFindings);
+}
+
+function scanJsonStringLeaves(
+  root: string,
+  relativeRoot: string,
+  include: (file: string, jsonPointer: string, value: string) => boolean,
+): T3JsonStringFinding[] {
+  const result: T3JsonStringFinding[] = [];
+  for (const file of listRegularFiles(root, relativeRoot)) {
+    if (!file.endsWith('.json')) continue;
+    const value = JSON.parse(
+      fs.readFileSync(path.join(root, file), 'utf8'),
+    ) as unknown;
+    visitJsonStrings(value, '', (jsonPointer, leaf) => {
+      if (include(file, jsonPointer, leaf)) {
+        result.push({ path: file, jsonPointer, normalizedValue: leaf });
+      }
+    });
+  }
+  return result.sort(compareJsonFindings);
+}
+
+function visitJsonStrings(
+  value: unknown,
+  jsonPointer: string,
+  visit: (jsonPointer: string, value: string) => void,
+): void {
+  if (typeof value === 'string') {
+    visit(jsonPointer, value);
+    return;
+  }
+  if (Array.isArray(value)) {
+    value.forEach((entry, index) =>
+      visitJsonStrings(entry, `${jsonPointer}/${index}`, visit),
+    );
+    return;
+  }
+  if (value === null || typeof value !== 'object') return;
+  for (const [key, entry] of Object.entries(value)) {
+    visitJsonStrings(
+      entry,
+      `${jsonPointer}/${escapeJsonPointerSegment(key)}`,
+      visit,
+    );
+  }
+}
+
+function escapeJsonPointerSegment(value: string): string {
+  return value.replace(/~/gu, '~0').replace(/\//gu, '~1');
+}
+
+function summarizeJsonSchemaIdHosts(
+  findings: readonly T3JsonStringFinding[],
+): Record<string, number> {
+  const result: Record<string, number> = {};
+  for (const finding of findings) {
+    const host = new URL(finding.normalizedValue).host;
     result[host] = (result[host] ?? 0) + 1;
   }
   return Object.fromEntries(
     Object.entries(result).sort(([left], [right]) => compareText(left, right)),
+  );
+}
+
+function summarizeJsonFindings(findings: readonly T3JsonStringFinding[]): {
+  occurrences: number;
+  fileCount: number;
+  identityDigest: string;
+} {
+  return {
+    occurrences: findings.length,
+    fileCount: new Set(findings.map((finding) => finding.path)).size,
+    identityDigest: digestJsonFindings(findings),
+  };
+}
+
+function digestJsonFindings(findings: readonly T3JsonStringFinding[]): string {
+  return digestText(
+    findings
+      .map((finding) =>
+        [finding.path, finding.jsonPointer, finding.normalizedValue].join('\0'),
+      )
+      .sort(compareText)
+      .join('\n'),
+  );
+}
+
+function compareJsonFindings(
+  left: T3JsonStringFinding,
+  right: T3JsonStringFinding,
+): number {
+  return (
+    compareText(left.path, right.path) ||
+    compareText(left.jsonPointer, right.jsonPointer) ||
+    compareText(left.normalizedValue, right.normalizedValue)
   );
 }
 

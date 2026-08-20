@@ -1,6 +1,5 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { format, resolveConfig } from 'prettier';
 
 import {
   computeProtectedCapabilityEntryDigestsFromWorktree,
@@ -39,16 +38,11 @@ export function projectProtectedCapabilitiesManifest(
 export async function renderProtectedCapabilitiesManifest(
   repositoryRoot: string,
 ): Promise<string> {
-  const manifestPath = path.join(repositoryRoot, MANIFEST_PATH);
-  const config = (await resolveConfig(manifestPath)) ?? {};
-  return format(
-    JSON.stringify(projectProtectedCapabilitiesManifest(repositoryRoot)),
-    {
-      ...config,
-      filepath: manifestPath,
-      parser: 'json',
-    },
-  );
+  return `${JSON.stringify(
+    projectProtectedCapabilitiesManifest(repositoryRoot),
+    null,
+    2,
+  )}\n`;
 }
 
 export async function generateProtectedCapabilitiesManifest(

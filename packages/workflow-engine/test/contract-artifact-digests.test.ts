@@ -5,9 +5,49 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
+import { pathToFileURL } from 'node:url';
 
 import { digestArtifacts } from '../src/adapters/consumer/expense-app/work-registry/contracts.ts';
+import { canonicalJson } from '../src/foundation/canonical-json/canonical-json.ts';
+import { canonicalJson as bootstrapCanonicalJson } from '../bootstrap/canonical-json.ts';
 import { WorkflowError } from '../src/foundation/errors/errors.ts';
+import {
+  conformanceVectorPayload,
+  loadWorkflowConformanceVectors,
+} from './support/conformance-vectors.ts';
+
+const EXPECTED_VECTOR_SET_DIGEST =
+  'sha256:a1c3bdc559b893e66aae14946006c34e00bf9b42361bfa39fcb6754edff9d136';
+
+test('language-neutral canonical JSON and SHA-256 vectors match every landed implementation', async () => {
+  const vectors = loadWorkflowConformanceVectors(import.meta.dirname);
+  const recoveryModulePath = path.join(
+    import.meta.dirname,
+    '../bootstrap/recovery-runtime/src/foundation/canonical-json/canonical-json.js',
+  );
+  const recoveryCanonicalJson = (
+    (await import(pathToFileURL(recoveryModulePath).href)) as {
+      canonicalJson(value: unknown): string;
+    }
+  ).canonicalJson;
+  const vectorSetDigest = `sha256:${crypto
+    .createHash('sha256')
+    .update(canonicalJson(conformanceVectorPayload(vectors)), 'utf8')
+    .digest('hex')}`;
+  assert.equal(vectors.vectorSetDigest, EXPECTED_VECTOR_SET_DIGEST);
+  assert.equal(vectorSetDigest, EXPECTED_VECTOR_SET_DIGEST);
+
+  for (const vector of vectors.canonicalJson) {
+    const observed = canonicalJson(vector.input);
+    assert.equal(observed, vector.canonical, vector.id);
+    assert.equal(bootstrapCanonicalJson(vector.input), observed, vector.id);
+    assert.equal(recoveryCanonicalJson(vector.input), observed, vector.id);
+    assert.equal(sha256(observed), vector.sha256, vector.id);
+  }
+  for (const vector of vectors.sha256) {
+    assert.equal(sha256(vector.utf8), vector.digest, vector.id);
+  }
+});
 
 test(
   'artifact digests preserve legacy 100644 values and bind logical Git mode',
@@ -126,4 +166,8 @@ function isUnsafeContractArtifact(error: unknown): boolean {
   return (
     error instanceof WorkflowError && error.code === 'UNSAFE_CONTRACT_ARTIFACT'
   );
+}
+
+function sha256(value: string): string {
+  return crypto.createHash('sha256').update(value, 'utf8').digest('hex');
 }

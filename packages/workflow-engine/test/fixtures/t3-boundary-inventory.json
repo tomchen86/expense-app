@@ -5,22 +5,41 @@
   "architectureDocument": "docs/architecture/WORKFLOW_ENGINE_BOUNDARY_INVENTORY.md",
   "namespaceBaseline": {
     "legacyPrefix": "expense-app.workflow.",
-    "sourceOccurrences": 25,
+    "sourceOccurrences": 24,
     "sourceFileCount": 15,
-    "sourceIdentityDigest": "sha256:d9d3c66bf41223610e05fe656c2f4a36cb06dfa99bdd16b3649b397ff239896f",
-    "recoveryOccurrences": 17,
+    "sourceIdentityDigest": "sha256:81119969634437eb3e316b5e9c64653103cccd72695cf3289e7fcd64b97856b7",
+    "bootstrapOccurrences": 1,
+    "bootstrapFileCount": 1,
+    "bootstrapIdentityDigest": "sha256:cfb22a249b4fb89899b743dad600d47759dbd2888b589eed540b064cda97d9ea",
+    "recoveryOccurrences": 16,
     "recoveryFileCount": 9,
-    "recoveryIdentityDigest": "sha256:efc9d8a070ecd344f791f77eb697434a7a88ddab906dec16f786e77a077a8294",
+    "recoveryIdentityDigest": "sha256:8bdf1599eafd8a568f4d19717c6599c23a99d3474ea33546f653d863119f2632",
+    "workflowJsonOccurrences": 3,
+    "workflowJsonFileCount": 3,
+    "workflowJsonIdentityDigest": "sha256:c55e929de39d7f6ad471342058c47fff52d13de6a85ab8e24983a8d51b9fab56",
     "jsonSchemaIdHosts": {
       "example.local": 1,
       "expense-app.local": 17,
       "expense.local": 1
-    }
+    },
+    "jsonSchemaIdIdentityDigest": "sha256:9d5df405aa296be8599a20eab56655c7939f974a4d23ec2939dd416b88b600a3"
   },
-  "policyLiteralBaseline": {
-    "sourceOccurrences": 125,
-    "sourceFileCount": 48,
-    "sourceIdentityDigest": "sha256:f857ab4013243a9339b9d718ddd3f8aa4c5dd5fca62aa948bc5ce5aaebc42ca5",
+  "workflowJsonReferenceBaseline": {
+    "sourceOccurrences": 154,
+    "sourceFileCount": 49,
+    "sourceIdentityDigest": "sha256:f91bfa6c7a3474caf36391fe14483fb1e65d942b7c7929b6c5e18399c6b92f31",
+    "bootstrapOccurrences": 9,
+    "bootstrapFileCount": 3,
+    "bootstrapIdentityDigest": "sha256:2a9c1ce34fa5d37fa5217d04ec4e6f34d3e9abd1a79864b767d95d927432c3b5",
+    "scriptsOccurrences": 1,
+    "scriptsFileCount": 1,
+    "scriptsIdentityDigest": "sha256:2d9fced89d040cc0673bddf643f343dd8da2cc6550aff22d4d3d9c26b5a7e377",
+    "recoveryOccurrences": 29,
+    "recoveryFileCount": 11,
+    "recoveryIdentityDigest": "sha256:77cd8b8f93a7a1b41ac9dfc650adf5485633a6e5b374b9655d93620ab6afe163",
+    "recoverySplitPathJoinOccurrences": 3,
+    "recoverySplitPathJoinFileCount": 3,
+    "recoverySplitPathJoinIdentityDigest": "sha256:56e2cf70b8f616978ba284ab1545216f9e73b9087470220f66a59ecbde560233",
     "uniqueLiterals": [
       "workflow/ai-adapter-policy.json",
       "workflow/checks.json",
@@ -33,45 +52,25 @@
       "workflow/path-roles.json",
       "workflow/protected-capabilities.json"
     ],
-    "splitPathJoinEvidence": [
-      {
-        "path": "packages/workflow-engine/src/modules/authority/grant-policy.ts",
-        "contains": [
-          "const workflowDirectory = path.join(repositoryRoot, 'workflow');",
-          "path.join(workflowDirectory, 'grant-policy.json')"
-        ]
-      },
-      {
-        "path": "packages/workflow-engine/src/runtime/provider-execution/ai-adapter-policy.ts",
-        "contains": [
-          "const workflowDirectory = path.join(repositoryRoot, 'workflow');",
-          "path.join(workflowDirectory, 'ai-adapter-policy.json')"
-        ]
-      },
-      {
-        "path": "packages/workflow-engine/src/runtime/provider-execution/provider-runner.ts",
-        "contains": [
-          "path.join(input.repositoryRoot, 'workflow', 'config.json')"
-        ]
-      }
-    ],
-    "dynamicDirectoryEvidence": [
-      {
-        "path": "packages/workflow-engine/src/adapters/planning/openspec/documents/managed-change-contract.ts",
-        "contains": [
-          "const workflowRoot = path.join(repositoryRoot, 'workflow');",
-          ".readdirSync(workflowRoot, { withFileTypes: true })",
-          ".filter(({ name }) => name.endsWith('.json'))"
-        ]
-      }
-    ]
+    "splitPathJoinOccurrences": 3,
+    "splitPathJoinFileCount": 3,
+    "splitPathJoinIdentityDigest": "sha256:92fb63cb08331dff67bc5d839ba2eb9225e495fec22df3c8674e6dc21990a4ec",
+    "dynamicDirectoryOccurrences": 1,
+    "dynamicDirectoryFileCount": 1,
+    "dynamicDirectoryIdentityDigest": "sha256:736dfa179a68623f188b12dfa6f2b62e1e5a1b04ee099e0fd777362f1ee45c7a"
+  },
+  "workflowArtifactPathBaseline": {
+    "packagePrefix": "packages/workflow-engine",
+    "occurrences": 1090,
+    "fileCount": 7,
+    "identityDigest": "sha256:7a7c154f0dfc4c7f9dd3ff9aeb6ff4f3c1ce3047633957b665dfa8cc7366379c"
   },
   "couplings": [
     {
       "id": "agent-provider-identity",
       "plane": "agent-runtime",
       "state": "coupled",
-      "t3Disposition": "3.3c moves fixed Codex and Claude identity behind @jigwright/agent-runtime definitions without weakening reviewed profiles.",
+      "t3Disposition": "The process/protocol package is present, but fixed Codex and Claude identity still belongs to the workflow-engine registry and provider-specific policy; later 3.3c work must move that ownership without weakening reviewed profiles.",
       "evidence": [
         {
           "path": "packages/workflow-engine/src/modules/provider-orchestration/provider-registry.ts",
@@ -133,15 +132,49 @@
     {
       "id": "collaboration-grant",
       "plane": "grants",
-      "state": "landed",
-      "t3Disposition": "3.3d extracts the existing exact envelope and historical readers; it does not replace them with a weaker blanket grant.",
+      "state": "partial",
+      "t3Disposition": "The generic verifier, historical/current envelope reader, and one-use lifecycle reducer are extracted to @jigwright/grants and consumed by Collaboration Grant; expense-specific semantics, durable schema, locks, and storage remain in the engine.",
       "evidence": [
+        {
+          "path": "packages/grants/src/grant-envelope-verifier.ts",
+          "contains": [
+            "GRANT_ENVELOPE_VERIFIER_CONTRACT_VERSION_V1",
+            "allowedSignatureNamespaces: readonly string[];",
+            "allowedAuthorizedEffects: readonly string[];",
+            "export function verifyGrantEnvelopeV1<"
+          ]
+        },
+        {
+          "path": "packages/grants/src/collaboration-grant-envelope-reader.ts",
+          "contains": [
+            "COLLABORATION_GRANT_V1_SIGNATURE_NAMESPACE",
+            "COLLABORATION_GRANT_V2_SIGNATURE_NAMESPACE",
+            "export function parseCollaborationGrantEnvelopeV1<",
+            "export function readAndVerifyCollaborationGrantEnvelopeV1<"
+          ]
+        },
+        {
+          "path": "packages/grants/src/grant-lifecycle.ts",
+          "contains": [
+            "GRANT_LIFECYCLE_CONTRACT_VERSION_V1",
+            "GrantLifecycleStoragePortV1<Validation, Persisted>",
+            "export function executeGrantLifecycleTransitionV1<"
+          ]
+        },
         {
           "path": "packages/workflow-engine/src/modules/authority/collaboration-grant.ts",
           "contains": [
-            "COLLABORATION_GRANT_SIGNATURE_NAMESPACE",
+            "from '@jigwright/grants/collaboration-grant-envelope-reader';",
+            "from '@jigwright/grants/grant-envelope-verifier';",
             "'role-independence-degradation-only' as const",
             "COLLABORATION_GRANT_MAX_TTL_MINUTES = 30"
+          ]
+        },
+        {
+          "path": "packages/workflow-engine/src/runtime/storage-journal/collaboration-grant-store.ts",
+          "contains": [
+            "from '@jigwright/grants/grant-lifecycle';",
+            "executeGrantLifecycleTransitionV1"
           ]
         }
       ],
@@ -151,14 +184,22 @@
       "id": "data-egress-authorization",
       "plane": "core-policy-port",
       "state": "landed",
-      "t3Disposition": "Contractualize workflow/ai-adapter-policy.json schema v4 as the single repo-owned data-authorization policy port.",
+      "t3Disposition": "The strict-v4 current-policy port and repository reader are landed; historical v3 parsing remains a separate replay-only adapter and no second authorization source is introduced.",
       "evidence": [
+        {
+          "path": "packages/workflow-engine/src/modules/provider-orchestration/data-authorization-policy-port.ts",
+          "contains": [
+            "export type DataAuthorizationPolicyV4<ProviderId extends string> = {",
+            "schemaVersion: 4;",
+            "export type DataAuthorizationPolicyPort<ProviderId extends string>"
+          ]
+        },
         {
           "path": "packages/workflow-engine/src/runtime/provider-execution/ai-adapter-policy.ts",
           "contains": [
-            "schemaVersion: 4;",
-            "providers: Record<ProviderId, AiAdapterProviderPolicy>;",
-            "export function loadAiAdapterPolicy"
+            "export function loadAiAdapterPolicy(",
+            "AI_ADAPTER_DATA_AUTHORIZATION_POLICY_PORT",
+            "readCurrent: loadAiAdapterPolicy"
           ]
         }
       ],
@@ -167,15 +208,25 @@
     {
       "id": "execution-substrate",
       "plane": "core",
-      "state": "landed",
-      "t3Disposition": "Move interface and storage ownership only; Workflow, Job, Attempt, lease, retry, and fencing remain the sole execution state machine.",
+      "state": "partial",
+      "t3Disposition": "@jigwright/core now owns the exact Job/Attempt status vocabulary and AttemptResult acceptance codec; workflow-engine execution-store remains the unique aggregate and transition authority, and broader Git/session/check/record ownership is not yet extracted.",
       "evidence": [
+        {
+          "path": "packages/core/src/job-attempt-runtime.ts",
+          "contains": [
+            "JOB_ATTEMPT_RUNTIME_CONTRACT_VERSION",
+            "export const JOB_STATUSES_V2",
+            "export const ATTEMPT_STATUSES_V2",
+            "export function createAttemptAcceptanceBindingV1("
+          ]
+        },
         {
           "path": "packages/workflow-engine/src/modules/provider-orchestration/execution-core.ts",
           "contains": [
+            "from '@jigwright/core/job-attempt-runtime';",
             "export type WorkflowRecord = {",
             "export type JobRecord = {",
-            "export type AttemptStatus ="
+            "Compatibility name for the public core-owned V2 Job state vocabulary."
           ]
         }
       ],
@@ -185,13 +236,20 @@
       "id": "openspec-direct-dependency",
       "plane": "planning-provider",
       "state": "coupled",
-      "t3Disposition": "3.3a-b introduces the core-owned planning port and moves OpenSpec validation and archive projection into the planning adapter.",
+      "t3Disposition": "The planning inspection seam now uses PlanningProviderPort, while propose, archive, and several CI paths still import the in-engine OpenSpec adapter directly; standalone adapter extraction remains.",
       "evidence": [
         {
-          "path": "packages/workflow-engine/src/application/propose/planning-transition.ts",
+          "path": "packages/workflow-engine/src/modules/planning-provider/planning-provider-port.ts",
           "contains": [
-            "validateOpenSpecPlanning,",
-            "../../adapters/planning/openspec/documents/planning-contract.ts"
+            "export interface PlanningProviderPort {",
+            "export function evaluatePlanningProvider("
+          ]
+        },
+        {
+          "path": "packages/workflow-engine/src/application/archive/archive-transformation.ts",
+          "contains": [
+            "createOpenSpecProcess,",
+            "../../adapters/planning/openspec/documents/openspec-executor.ts"
           ]
         }
       ],
@@ -200,47 +258,67 @@
     {
       "id": "package-topology",
       "plane": "composition",
-      "state": "missing",
-      "t3Disposition": "3.3 creates internal package boundaries for core, agent-runtime, grants, OpenSpec adapter, and fixture adapter before publication.",
+      "state": "partial",
+      "t3Disposition": "@jigwright/core, @jigwright/grants, @jigwright/fixture-adapter, and a bounded @jigwright/agent-runtime process/protocol slice are present; the standalone OpenSpec adapter package remains absent.",
       "evidence": [
         {
           "path": "packages/workflow-engine/package.json",
-          "contains": ["\"name\": \"@expense/workflow-engine\""]
+          "contains": [
+            "\"name\": \"@expense/workflow-engine\"",
+            "\"@jigwright/core\": \"workspace:*\"",
+            "\"@jigwright/grants\": \"workspace:*\""
+          ]
+        },
+        {
+          "path": "packages/fixture-adapter/package.json",
+          "contains": [
+            "\"name\": \"@jigwright/fixture-adapter\"",
+            "\"@jigwright/core\": \"workspace:*\""
+          ]
+        },
+        {
+          "path": "packages/agent-runtime/package.json",
+          "contains": [
+            "\"name\": \"@jigwright/agent-runtime\"",
+            "\"./bounded-provider-process\"",
+            "\"./harness-jsonl-v1\"",
+            "\"@jigwright/core\": \"workspace:*\""
+          ]
         }
       ],
       "negativeEvidence": {
-        "absentPaths": [
-          "packages/agent-runtime",
-          "packages/core",
-          "packages/fixture-adapter",
-          "packages/grants",
-          "packages/openspec-adapter"
-        ],
-        "absentSymbols": [
-          "@jigwright/agent-runtime",
-          "@jigwright/core",
-          "@jigwright/fixture-adapter",
-          "@jigwright/grants",
-          "@jigwright/openspec-adapter"
-        ],
+        "absentPaths": ["packages/openspec-adapter"],
+        "absentSymbols": ["@jigwright/openspec-adapter"],
         "searchRoots": ["packages/workflow-engine/src"]
       }
     },
     {
       "id": "planning-provider-binding",
       "plane": "planning-provider",
-      "state": "missing",
-      "t3Disposition": "3.3a restores committed workflow/change-providers bindings, planning-contract digests, archive retention, and v1 migration refusal.",
+      "state": "partial",
+      "t3Disposition": "The v1 binding contract, current/pinned reader, digest, history check, composition wiring, archive retention, and migration refusal are landed; no tracked per-change binding has activated the repository path yet.",
       "evidence": [
         {
-          "path": "packages/workflow-engine/src/application/propose/planning-transition.ts",
-          "contains": ["validateOpenSpecPlanning,"]
+          "path": "packages/workflow-engine/src/modules/planning-provider/planning-provider-binding.ts",
+          "contains": [
+            "export type PlanningProviderBindingV1 = Readonly<{",
+            "export function planningProviderBindingDigest(",
+            "export function assertPlanningProviderV1Migration("
+          ]
+        },
+        {
+          "path": "packages/workflow-engine/src/runtime/repository-transaction/planning-provider-binding-store.ts",
+          "contains": [
+            "export function readCurrentPlanningProviderBinding(",
+            "export function readPinnedPlanningProviderBinding(",
+            "pinnedHistoryContainsPlanningProviderPath"
+          ]
         }
       ],
       "negativeEvidence": {
         "absentPaths": ["workflow/change-providers"],
-        "absentSymbols": ["PlanningProviderPort", "workflow/change-providers"],
-        "searchRoots": ["packages/workflow-engine/src", "workflow"]
+        "absentSymbols": ["adapterContractVersion"],
+        "searchRoots": ["workflow"]
       }
     },
     {
@@ -262,33 +340,64 @@
     {
       "id": "provider-plane-separation",
       "plane": "core-ports",
-      "state": "missing",
-      "t3Disposition": "3.3a defines separate PlanningProviderPort, AgentRuntimePort, and GrantVerifierPort types and separates change-providers from optional agent-plans.",
+      "state": "partial",
+      "t3Disposition": "PlanningProviderPort, AgentRuntimePort, and GrantVerifierPort are distinct engine contracts, and planning bindings remain separate from optional agent-role plans; core ownership of those ports and direct @jigwright/agent-runtime port adoption remain incomplete.",
       "evidence": [
         {
-          "path": "packages/workflow-engine/src/modules/provider-orchestration/provider-registry.ts",
-          "contains": ["export type ProviderId = 'codex' | 'claude';"]
+          "path": "packages/workflow-engine/src/modules/planning-provider/planning-provider-port.ts",
+          "contains": ["export interface PlanningProviderPort {"]
+        },
+        {
+          "path": "packages/workflow-engine/src/modules/provider-orchestration/agent-runtime-port.ts",
+          "contains": ["export interface AgentRuntimePort {"]
+        },
+        {
+          "path": "packages/workflow-engine/src/modules/authority/grant-verifier-port.ts",
+          "contains": ["export type GrantVerifierPort = Readonly<{"]
+        },
+        {
+          "path": "packages/workflow-engine/src/runtime/repository-transaction/agent-role-plan-store.ts",
+          "contains": ["return `workflow/agent-plans/${changeId}.json`;"]
         }
       ],
-      "negativeEvidence": {
-        "absentPaths": ["workflow/agent-plans"],
-        "absentSymbols": ["AgentRuntimePort", "GrantVerifierPort"],
-        "searchRoots": ["packages/workflow-engine/src"]
-      }
+      "negativeEvidence": null
     },
     {
       "id": "provider-runner",
       "plane": "agent-runtime",
       "state": "partial",
-      "t3Disposition": "3.3c preserves executable identity, sanitized environment, private runtime, bounds, and governed projections while replacing the provider invocation spawnSync path with observable async execution.",
+      "t3Disposition": "The bounded async process primitive and strict JSONL wrapper protocol are extracted to @jigwright/agent-runtime through compatibility facades; reviewed provider identity, policy binding, synchronous compatibility, non-resumable sessions, and documented containment residuals remain in workflow-engine.",
       "evidence": [
+        {
+          "path": "packages/agent-runtime/src/bounded-provider-process.ts",
+          "contains": [
+            "BOUNDED_PROVIDER_PROCESS_CONTRACT_VERSION",
+            "export function spawnBoundedProviderProcess(",
+            "shell: false",
+            "terminationReason: BoundedProviderProcessTermination"
+          ]
+        },
+        {
+          "path": "packages/workflow-engine/src/runtime/provider-execution/bounded-provider-process.ts",
+          "contains": [
+            "Compatibility facade for the public agent-runtime process package.",
+            "export * from '@jigwright/agent-runtime/bounded-provider-process';"
+          ]
+        },
         {
           "path": "packages/workflow-engine/src/runtime/provider-execution/provider-runner.ts",
           "contains": [
+            "export async function runBuiltInProviderAsync(",
+            "spawnBoundedProviderProcess",
             "import { spawnSync } from 'node:child_process';",
-            "shell: false,",
-            "sha256: sha256Digest",
             "PROVIDER_RUNNER_RESIDUALS"
+          ]
+        },
+        {
+          "path": "packages/workflow-engine/src/composition-root/agent-runtime-production.ts",
+          "contains": [
+            "runSingleShotAsync(input, options)",
+            "return runBuiltInProviderAsync(input, options);"
           ]
         }
       ],
@@ -298,14 +407,14 @@
       "id": "recovery-mirror",
       "plane": "recovery",
       "state": "partial",
-      "t3Disposition": "Preserve the existing generated TS-to-JS closure, pin, and check mode; 3.3d registers drift checking before package moves.",
+      "t3Disposition": "The recovery generator now compiles the workspace source closure with path-stable package projection and retains exact check/write comparison; generated recovery bytes remain pending final one-shot regeneration.",
       "evidence": [
         {
           "path": "packages/workflow-engine/bootstrap/generate-harness-bootstrap-runtime.ts",
           "contains": [
-            "if (!['--write', '--check'].includes(mode ?? ''))",
-            "assertSameTree(staging, RUNTIME_ROOT);",
-            "harness-bootstrap-dependency-closure.v1"
+            "resolveWorkspaceSourceClosure,",
+            "const paths = workspaceCompilerPaths(repositoryRoot, workspacePackages);",
+            "assertSameTree(staging, runtimeRoot);"
           ]
         },
         {
@@ -353,12 +462,16 @@
     {
       "id": "schema-signature-namespace",
       "plane": "contracts-and-history",
-      "state": "coupled",
-      "t3Disposition": "Introduce neutral writer namespaces plus consumer namespace config and allowlisted legacy readers; never re-sign historical records.",
+      "state": "partial",
+      "t3Disposition": "@jigwright/grants now dispatches exact historical V1 and neutral current V2 Collaboration Grant namespaces without fallback; other consumer-specific record namespaces and JSON Schema hosts remain compatibility debt, and historical records are never re-signed.",
       "evidence": [
         {
-          "path": "packages/workflow-engine/src/modules/authority/collaboration-grant.ts",
-          "contains": ["'expense-app.workflow.collaboration-grant.v1' as const"]
+          "path": "packages/grants/src/collaboration-grant-envelope-reader.ts",
+          "contains": [
+            "'expense-app.workflow.collaboration-grant.v1' as const",
+            "'workflow.collaboration-grant.v2' as const",
+            "No namespace retry or fallback is"
+          ]
         },
         {
           "path": "workflow/schemas/session.schema.json",

@@ -1,8 +1,8 @@
 {
   "kind": "workflow-engine-module-dependency-baseline.v1",
   "schemaVersion": 1,
-  "frozenEdgeCount": 774,
-  "frozenIdentityDigest": "sha256:6c60e39c31cb378f79d8ed9f5f78f80cd85b38423c7210617eb413a86b757ad1",
+  "frozenEdgeCount": 775,
+  "frozenIdentityDigest": "sha256:4cac2c455369247bd867740f545332841a4784f8f006b4907dd1fcff274e18a5",
   "reasonCatalog": {
     "legacy.adapter-to-application": {
       "summary": "Pre-layout adapter-to-application coupling retained by the layout-only migration; no semantic inversion is performed in this change.",
@@ -3048,6 +3048,14 @@
     },
     {
       "from": "packages/workflow-engine/src/application/propose/planning-transition.ts",
+      "to": "packages/workflow-engine/src/composition-root/planning-provider-production.ts",
+      "rule": "application-to-composition-root",
+      "reasonId": "legacy.application-to-composition-root",
+      "retirementPhase": "post-layout-application-port-inversion",
+      "status": "active"
+    },
+    {
+      "from": "packages/workflow-engine/src/application/propose/planning-transition.ts",
       "to": "packages/workflow-engine/src/runtime/managed-documents/validation/managed-documents.ts",
       "rule": "application-to-runtime",
       "reasonId": "legacy.application-to-runtime",
@@ -3724,7 +3732,7 @@
       "rule": "entrypoint-bypass-composition-root",
       "reasonId": "legacy.entrypoint-bypass-composition-root",
       "retirementPhase": "post-layout-composition-root-extraction",
-      "status": "active"
+      "status": "retired"
     },
     {
       "from": "packages/workflow-engine/src/entrypoints/ci/ci-checks.ts",
@@ -4668,7 +4676,7 @@
       "rule": "entrypoint-bypass-composition-root",
       "reasonId": "legacy.entrypoint-bypass-composition-root",
       "retirementPhase": "post-layout-composition-root-extraction",
-      "status": "active"
+      "status": "retired"
     },
     {
       "from": "packages/workflow-engine/src/entrypoints/worker/provider-worker.ts",
@@ -5732,7 +5740,7 @@
       "rule": "module-to-runtime",
       "reasonId": "legacy.module-to-runtime",
       "retirementPhase": "post-layout-module-port-inversion",
-      "status": "active"
+      "status": "retired"
     },
     {
       "from": "packages/workflow-engine/src/modules/provider-orchestration/provider-retry-decision.ts",
@@ -5772,7 +5780,7 @@
       "rule": "module-to-adapters",
       "reasonId": "legacy.module-to-adapters",
       "retirementPhase": "post-layout-module-port-inversion",
-      "status": "active"
+      "status": "retired"
     },
     {
       "from": "packages/workflow-engine/src/modules/provider-orchestration/role-scheduler.ts",
@@ -5812,7 +5820,7 @@
       "rule": "module-to-runtime",
       "reasonId": "legacy.module-to-runtime",
       "retirementPhase": "post-layout-module-port-inversion",
-      "status": "active"
+      "status": "retired"
     },
     {
       "from": "packages/workflow-engine/src/modules/source/planning-paths.ts",

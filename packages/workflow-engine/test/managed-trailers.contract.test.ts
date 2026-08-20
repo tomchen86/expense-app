@@ -5,6 +5,59 @@ import {
   ManagedTrailerSyntaxError,
   parseManagedTrailers,
 } from '../src/modules/lifecycle/managed-trailers.ts';
+import {
+  amendPlanCommitMessage,
+  amendPlanCommitTrailers,
+  archiveCommitMessage,
+  authorityCandidateCommitMessage,
+  authorityCommitMessage,
+  managedCommitMessage,
+  planningCommitMessage,
+  type AmendmentProvenance,
+} from '../src/runtime/repository-transaction/git-transitions.ts';
+import {
+  loadWorkflowConformanceVectors,
+  type ManagedMessageConformanceVector,
+} from './support/conformance-vectors.ts';
+
+test('language-neutral managed trailer vectors preserve historical parsing', () => {
+  const vectors = loadWorkflowConformanceVectors(import.meta.dirname);
+  for (const vector of vectors.managedTrailers) {
+    if (vector.outcome.state === 'parsed') {
+      assert.deepEqual(
+        parseManagedTrailers(vector.message),
+        vector.outcome.value,
+        vector.id,
+      );
+    } else if (vector.outcome.state === 'unmanaged') {
+      assert.equal(parseManagedTrailers(vector.message), undefined, vector.id);
+    } else {
+      assert.throws(
+        () => parseManagedTrailers(vector.message),
+        ManagedTrailerSyntaxError,
+        vector.id,
+      );
+    }
+  }
+});
+
+test('landed managed message renderers preserve exact bytes and round-trip', () => {
+  const vectors = loadWorkflowConformanceVectors(import.meta.dirname);
+  for (const vector of vectors.managedMessages) {
+    const rendered = renderManagedMessage(vector);
+    assert.equal(rendered, vector.message, vector.id);
+    assert.equal(rendered.endsWith('\n'), false, vector.id);
+    assert.deepEqual(parseManagedTrailers(rendered), vector.parsed, vector.id);
+    if (vector.renderer === 'amend-plan') {
+      const provenance = amendmentProvenance(vector.input);
+      assert.equal(
+        amendPlanCommitTrailers(field(vector.input, 'changeId'), provenance),
+        vector.message.split('\n\n')[1],
+        vector.id,
+      );
+    }
+  }
+});
 
 test('managed trailer parser returns one canonical transition kind', () => {
   assert.deepEqual(
@@ -95,6 +148,59 @@ test('managed trailer parser rejects every non-canonical reserved block', () => 
     );
   }
 });
+
+function renderManagedMessage(vector: ManagedMessageConformanceVector): string {
+  const input = vector.input;
+  switch (vector.renderer) {
+    case 'task':
+      return managedCommitMessage(
+        field(input, 'subject'),
+        field(input, 'changeId'),
+        field(input, 'taskId'),
+      );
+    case 'plan':
+      return planningCommitMessage(field(input, 'changeId'));
+    case 'amend-plan':
+      return amendPlanCommitMessage(
+        field(input, 'changeId'),
+        amendmentProvenance(input),
+      );
+    case 'archive':
+      return archiveCommitMessage(field(input, 'changeId'));
+    case 'authority':
+      return authorityCommitMessage(
+        field(input, 'subject'),
+        field(input, 'changeId'),
+        field(input, 'grantId'),
+      );
+    case 'authority-candidate':
+      return authorityCandidateCommitMessage(
+        field(input, 'subject'),
+        field(input, 'changeId'),
+      );
+  }
+}
+
+function amendmentProvenance(
+  input: Readonly<Record<string, string>>,
+): AmendmentProvenance {
+  const executionImpact = field(input, 'executionImpact');
+  if (executionImpact !== 'none' && executionImpact !== 'required') {
+    throw new Error('Amend-plan vector execution impact is invalid.');
+  }
+  return {
+    planningGeneration: field(input, 'planningGeneration'),
+    amendsPlanningGeneration: field(input, 'amendsPlanningGeneration'),
+    executionImpact,
+    planReview: field(input, 'planReview'),
+  };
+}
+
+function field(input: Readonly<Record<string, string>>, key: string): string {
+  const value = input[key];
+  assert.equal(typeof value, 'string');
+  return value;
+}
 
 test('managed trailer identifiers use their exact canonical grammar', () => {
   for (const message of [

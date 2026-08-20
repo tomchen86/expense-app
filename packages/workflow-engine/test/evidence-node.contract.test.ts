@@ -6,6 +6,7 @@ import test from 'node:test';
 
 import { canonicalJson } from '../src/foundation/canonical-json/canonical-json.ts';
 import {
+  assertStoredEvidenceNode,
   canonicalEvidenceNodeEnvelope,
   createEvidenceNode,
   type EvidenceNodeInput,
@@ -16,8 +17,9 @@ import {
   readEvidenceRefs,
   writeEvidenceNode,
 } from '../src/runtime/storage-journal/evidence-object-store.ts';
-import { WorkflowError } from '../src/foundation/errors/errors.ts';
+import { ExitCode, WorkflowError } from '../src/foundation/errors/errors.ts';
 import { investigationRuntimePaths } from '../src/runtime/session-workspace/paths.ts';
+import { loadWorkflowConformanceVectors } from './support/conformance-vectors.ts';
 
 const DIGESTS = {
   policy: '1'.repeat(64),
@@ -148,6 +150,56 @@ test('evidence nodeId binds exact inputs and provenance while resultDigest binds
   assert.equal(changedProvenance.resultDigest, original.resultDigest);
   assert.equal(changedOutput.nodeId, original.nodeId);
   assert.notEqual(changedOutput.resultDigest, original.resultDigest);
+});
+
+test('language-neutral evidence vectors preserve identity and stored envelope behavior', () => {
+  const vectors = loadWorkflowConformanceVectors(import.meta.dirname);
+  const vector = vectors.evidenceNodes[0];
+  assert.ok(vector);
+  const baseline = createEvidenceNode(
+    structuredClone(vector.input) as EvidenceNodeInput,
+  );
+  assert.equal(baseline.nodeId, vector.expected.nodeId);
+  assert.equal(baseline.resultDigest, vector.expected.resultDigest);
+  assert.equal(
+    Buffer.from(canonicalEvidenceNodeEnvelope(baseline), 'utf8').toString(
+      'base64',
+    ),
+    vector.expected.canonicalEnvelopeUtf8Base64,
+  );
+  assert.deepEqual(
+    assertStoredEvidenceNode(
+      JSON.parse(canonicalEvidenceNodeEnvelope(baseline)) as unknown,
+      invalidVectorEvidence,
+    ),
+    baseline,
+  );
+
+  for (const [field, mutation] of Object.entries(vector.mutations)) {
+    const input = structuredClone(vector.input) as EvidenceNodeInput &
+      Record<string, unknown>;
+    input[field] = structuredClone(mutation.value);
+    const observed = createEvidenceNode(input);
+    assert.equal(observed.nodeId, mutation.nodeId, field);
+    assert.equal(observed.resultDigest, mutation.resultDigest, field);
+  }
+
+  assert.throws(
+    () =>
+      assertStoredEvidenceNode(
+        { ...baseline, unexpected: true },
+        invalidVectorEvidence,
+      ),
+    (error) => isWorkflowError(error, 'VECTOR_EVIDENCE_INVALID'),
+  );
+  assert.throws(
+    () =>
+      assertStoredEvidenceNode(
+        { ...baseline, resultDigest: 'f'.repeat(64) },
+        invalidVectorEvidence,
+      ),
+    (error) => isWorkflowError(error, 'VECTOR_EVIDENCE_INVALID'),
+  );
 });
 
 test('evidence creation validates digest inputs and snapshots canonical data', () => {
@@ -536,4 +588,12 @@ function temporaryDirectory(t: test.TestContext): string {
 
 function isWorkflowError(error: unknown, code: string): boolean {
   return error instanceof WorkflowError && error.code === code;
+}
+
+function invalidVectorEvidence(): WorkflowError {
+  return new WorkflowError({
+    code: 'VECTOR_EVIDENCE_INVALID',
+    message: 'Vector evidence is invalid.',
+    exitCode: ExitCode.verification,
+  });
 }
