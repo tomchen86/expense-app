@@ -22,6 +22,9 @@
         "../core/src/check-registry-port.ts"
       ],
       "@jigwright/core/contract-values": ["../core/src/contract-values.ts"],
+      "@jigwright/core/data-authorization-policy-port": [
+        "../core/src/data-authorization-policy-port.ts"
+      ],
       "@jigwright/core/job-attempt-runtime": [
         "../core/src/job-attempt-runtime.ts"
       ],

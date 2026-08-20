@@ -32,7 +32,7 @@ import { createProviderExecutionBudgetAuthority } from '../../runtime/provider-e
 import type {
   DataAuthorizationPolicyPort,
   LoadedDataAuthorizationPolicyV4,
-} from './data-authorization-policy-port.ts';
+} from '@jigwright/core/data-authorization-policy-port';
 
 type ProviderDataAuthorizationPolicy = LoadedDataAuthorizationPolicyV4<
   ProviderInvocationRequest['providerId']

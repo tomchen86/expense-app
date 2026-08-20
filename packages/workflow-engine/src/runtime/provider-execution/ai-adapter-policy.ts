@@ -11,7 +11,7 @@ import type {
   DataAuthorizationProviderReservation,
   DataAuthorizationRetryAccounting,
   LoadedDataAuthorizationPolicyV4,
-} from '../../modules/provider-orchestration/data-authorization-policy-port.ts';
+} from '@jigwright/core/data-authorization-policy-port';
 import {
   listBuiltInProviders,
   type ProviderId,

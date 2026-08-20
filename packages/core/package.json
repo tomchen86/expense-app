@@ -7,6 +7,7 @@
     "./check-command": "./src/check-command.ts",
     "./check-registry-port": "./src/check-registry-port.ts",
     "./contract-values": "./src/contract-values.ts",
+    "./data-authorization-policy-port": "./src/data-authorization-policy-port.ts",
     "./job-attempt-runtime": "./src/job-attempt-runtime.ts",
     "./repository-path": "./src/repository-path.ts",
     "./tracked-object-reader-port": "./src/tracked-object-reader-port.ts"
