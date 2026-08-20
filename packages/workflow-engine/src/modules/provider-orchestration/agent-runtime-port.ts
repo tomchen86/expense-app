@@ -159,21 +159,46 @@ export type AgentRuntimeCompletionReceiptV1 =
  * An opt-in wrapper run carries the exact validated terminal/progress receipt
  * inside the same ProviderInvocation/Attempt completion projection.
  */
-export type AgentRuntimeCompletionReceiptV2 =
-  AgentRuntimeCompletionReceiptFields &
-    Readonly<{
-      schemaVersion: 2;
-      protocolReceipt: ProviderWrapperProtocolReceipt;
-    }>;
+export type AgentRuntimeCompletionReceiptV2 = Omit<
+  AgentRuntimeCompletionReceiptFields,
+  'terminalState'
+> &
+  Readonly<{
+    schemaVersion: 2;
+    terminalState: 'succeeded';
+    protocolReceipt: ProviderWrapperProtocolReceipt;
+  }>;
+
+/**
+ * A wrapper-reported error or bounded cancellation remains a failed
+ * ProviderInvocation/Attempt while retaining the validated terminal receipt.
+ * Keeping this separate from v2 preserves the already-landed success reader.
+ */
+export type AgentRuntimeCompletionReceiptV3 = Omit<
+  AgentRuntimeCompletionReceiptFields,
+  'terminalState'
+> &
+  Readonly<{
+    schemaVersion: 3;
+    terminalState: 'failed';
+    protocolReceipt: ProviderWrapperProtocolReceipt;
+  }>;
 
 export type AgentRuntimeCompletionReceipt =
-  AgentRuntimeCompletionReceiptV1 | AgentRuntimeCompletionReceiptV2;
+  | AgentRuntimeCompletionReceiptV1
+  | AgentRuntimeCompletionReceiptV2
+  | AgentRuntimeCompletionReceiptV3;
 
 /** Additive async controls for the single-shot compatibility launch. */
 export type AgentRuntimeAsyncSingleShotOptions = AgentRuntimeSingleShotOptions &
   Readonly<{
     signal?: AbortSignal;
     onActivity?: (event: AgentRuntimeProcessActivity) => void;
+    /**
+     * Validated aggregate receipt only; never raw wrapper output. Observer
+     * failure has no process-control or terminal-classification authority.
+     */
+    onProtocolReceipt?: (receipt: ProviderWrapperProtocolReceipt) => void;
   }>;
 
 /** The existing runner report is the single-shot compatibility result. */

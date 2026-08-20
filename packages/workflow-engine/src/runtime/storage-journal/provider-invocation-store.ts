@@ -1012,7 +1012,7 @@ export function readProviderInvocationRuntimeReceipt(
     attempt.jobId !== receipt.executionJobId ||
     attempt.legacyInvocation?.invocationId !== receipt.invocationId ||
     attempt.legacyInvocation.legacyRevision !== receipt.terminalRevision ||
-    (receipt.schemaVersion === 2 &&
+    ((receipt.schemaVersion === 2 || receipt.schemaVersion === 3) &&
       (receipt.protocolReceipt.invocationId !== receipt.invocationId ||
         receipt.protocolReceipt.requestDigest !== receipt.requestDigest ||
         receipt.protocolReceipt.attemptId !== attempt.attemptId)) ||
@@ -2854,6 +2854,7 @@ export function failProviderInvocation(
     runtimeEvidence?: Readonly<{
       acceptanceBinding: ProviderInvocationAcceptanceBinding;
       progress: AgentRuntimeProcessProgressProjection;
+      protocolReceipt?: ProviderWrapperProtocolReceipt;
     }>;
     repair?: ProviderRepairFailureInput;
     now?: string;
@@ -2892,6 +2893,11 @@ export function failProviderInvocation(
                 acceptanceBinding: input.runtimeEvidence.acceptanceBinding,
                 terminalState: 'failed',
                 progress: input.runtimeEvidence.progress,
+                ...(input.runtimeEvidence.protocolReceipt === undefined
+                  ? {}
+                  : {
+                      protocolReceipt: input.runtimeEvidence.protocolReceipt,
+                    }),
               });
         return {
           ...current,
@@ -2945,18 +2951,36 @@ function createAgentRuntimeCompletionReceipt(input: {
     launched: true as const,
     progress,
   };
-  const payload =
+  const protocolReceipt =
     input.protocolReceipt === undefined
-      ? { schemaVersion: 1 as const, ...fields }
-      : {
-          schemaVersion: 2 as const,
-          ...fields,
-          protocolReceipt: assertSuccessfulRunnerProtocolReceipt(
+      ? undefined
+      : input.terminalState === 'succeeded'
+        ? assertSuccessfulRunnerProtocolReceipt(
             input.protocolReceipt,
             input.request,
             input.acceptanceBinding,
-          )!,
-        };
+          )
+        : assertFailedRunnerProtocolReceipt(
+            input.protocolReceipt,
+            input.request,
+            input.acceptanceBinding,
+          );
+  const payload =
+    protocolReceipt === undefined
+      ? { schemaVersion: 1 as const, ...fields }
+      : input.terminalState === 'succeeded'
+        ? {
+            schemaVersion: 2 as const,
+            ...fields,
+            terminalState: 'succeeded' as const,
+            protocolReceipt,
+          }
+        : {
+            schemaVersion: 3 as const,
+            ...fields,
+            terminalState: 'failed' as const,
+            protocolReceipt,
+          };
   return assertAgentRuntimeCompletionReceipt({
     ...payload,
     receiptDigest: sha256(canonicalJson(payload)),
@@ -2986,6 +3010,40 @@ function assertSuccessfulRunnerProtocolReceipt(
     receipt.cancellation.requested ||
     receipt.cancellation.acknowledged ||
     receipt.cancellation.forced
+  ) {
+    throw invocationInvalid();
+  }
+  return receipt;
+}
+
+function assertFailedRunnerProtocolReceipt(
+  value: ProviderWrapperProtocolReceipt | undefined,
+  request: ProviderInvocationRequest,
+  acceptanceBinding: ProviderInvocationAcceptanceBinding,
+): ProviderWrapperProtocolReceipt | undefined {
+  if (value === undefined) return undefined;
+  let receipt: ProviderWrapperProtocolReceipt;
+  try {
+    receipt = assertProviderWrapperProtocolReceipt(value, {
+      invocationId: request.invocationId,
+      requestDigest: request.requestDigest,
+      attemptId: acceptanceBinding.executionAttemptId,
+    });
+  } catch {
+    throw invocationInvalid();
+  }
+  if (
+    (receipt.terminal === 'error' &&
+      (receipt.outputSlot !== null ||
+        receipt.errorCode === null ||
+        receipt.cancellation.requested ||
+        receipt.cancellation.acknowledged ||
+        receipt.cancellation.forced)) ||
+    (receipt.terminal === 'cancelled' &&
+      (receipt.outputSlot !== null ||
+        receipt.errorCode !== null ||
+        !receipt.cancellation.requested)) ||
+    receipt.terminal === 'result'
   ) {
     throw invocationInvalid();
   }
@@ -4282,10 +4340,14 @@ function assertAgentRuntimeCompletionReceipt(
       'terminalState',
       'launched',
       'progress',
-      ...(value.schemaVersion === 2 ? ['protocolReceipt'] : []),
+      ...(value.schemaVersion === 2 || value.schemaVersion === 3
+        ? ['protocolReceipt']
+        : []),
       'receiptDigest',
     ]) ||
-    (value.schemaVersion !== 1 && value.schemaVersion !== 2) ||
+    (value.schemaVersion !== 1 &&
+      value.schemaVersion !== 2 &&
+      value.schemaVersion !== 3) ||
     value.kind !== 'agent-runtime-completion-receipt' ||
     typeof value.invocationId !== 'string' ||
     !isDigest(value.requestDigest) ||
@@ -4312,7 +4374,7 @@ function assertAgentRuntimeCompletionReceipt(
   assertInvocationId(value.invocationId);
   const progress = assertAgentRuntimeProcessProgress(value.progress);
   let protocolReceipt: ProviderWrapperProtocolReceipt | undefined;
-  if (value.schemaVersion === 2) {
+  if (value.schemaVersion === 2 || value.schemaVersion === 3) {
     try {
       protocolReceipt = assertProviderWrapperProtocolReceipt(
         value.protocolReceipt,
@@ -4330,13 +4392,21 @@ function assertAgentRuntimeCompletionReceipt(
     (value.terminalState === 'succeeded' &&
       progress.processState !== 'exited') ||
     (protocolReceipt !== undefined &&
-      (value.terminalState !== 'succeeded' ||
-        protocolReceipt.terminal !== 'result' ||
-        protocolReceipt.outputSlot !== 'primary' ||
-        protocolReceipt.errorCode !== null ||
-        protocolReceipt.cancellation.requested ||
-        protocolReceipt.cancellation.acknowledged ||
-        protocolReceipt.cancellation.forced ||
+      ((value.schemaVersion === 2 &&
+        (value.terminalState !== 'succeeded' ||
+          protocolReceipt.terminal !== 'result' ||
+          protocolReceipt.outputSlot !== 'primary' ||
+          protocolReceipt.errorCode !== null ||
+          protocolReceipt.cancellation.requested ||
+          protocolReceipt.cancellation.acknowledged ||
+          protocolReceipt.cancellation.forced)) ||
+        (value.schemaVersion === 3 &&
+          (value.terminalState !== 'failed' ||
+            protocolReceipt.terminal === 'result' ||
+            (protocolReceipt.terminal === 'error' &&
+              progress.processState !== 'exited') ||
+            (protocolReceipt.terminal === 'cancelled' &&
+              progress.processState !== 'cancelled'))) ||
         progress.lastProviderActivityElapsedMs === null ||
         progress.stdoutBytes < protocolReceipt.aggregateBytes)) ||
     sha256(

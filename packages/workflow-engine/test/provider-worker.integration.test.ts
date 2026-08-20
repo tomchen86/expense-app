@@ -392,7 +392,7 @@ test('async provider worker durably binds a wrapper protocol receipt to its acce
     const unknownVersion = JSON.parse(originalState) as {
       runtimeReceipt: Record<string, unknown>;
     };
-    unknownVersion.runtimeReceipt.schemaVersion = 3;
+    unknownVersion.runtimeReceipt.schemaVersion = 4;
     const unknownVersionPayload = { ...unknownVersion.runtimeReceipt };
     delete unknownVersionPayload.receiptDigest;
     unknownVersion.runtimeReceipt.receiptDigest = sha256(
@@ -441,6 +441,204 @@ test('async provider worker durably binds a wrapper protocol receipt to its acce
     fs.rmSync(repository, { recursive: true, force: true });
   }
 });
+
+for (const fixture of [
+  {
+    mode: 'error',
+    failureCode: 'PROVIDER_WRAPPER_REPORTED_ERROR',
+    processState: 'exited',
+    acknowledged: false,
+    forced: false,
+  },
+  {
+    mode: 'cancel-ack',
+    failureCode: 'PROVIDER_PROCESS_CRASH',
+    processState: 'cancelled',
+    acknowledged: true,
+    forced: false,
+  },
+  {
+    mode: 'cancel-forced',
+    failureCode: 'PROVIDER_PROCESS_CRASH',
+    processState: 'cancelled',
+    acknowledged: false,
+    forced: true,
+  },
+] as const) {
+  test(`async provider worker durably records wrapper ${fixture.mode} terminal evidence as failure`, async () => {
+    const repository = createFixtureRepository();
+    const changeId = `worker-wrapper-${fixture.mode}-receipt`;
+    try {
+      git(repository, ['checkout', '-b', `work/${changeId}`]);
+      const started = startPropose(repository, changeId, intent(), {
+        explicitActor: 'codex',
+        environment: {},
+      });
+      const invocationId = started.investigation!.providerInvocationId;
+      const locator = discoverRepository(repository);
+      const runtime = investigationRuntimePaths(
+        locator.gitCommonDirectory,
+        'workflow-engine',
+      );
+      const request = readProviderInvocationRequest(runtime, invocationId);
+      let launches = 0;
+      let protocolReceipt: ProviderWrapperProtocolReceipt | null = null;
+      const agentRuntime: AgentRuntimePort = {
+        runSingleShot() {
+          assert.fail('async worker must not call the sync runtime');
+        },
+        async runSingleShotAsync(input, options) {
+          launches += 1;
+          const parser = createProviderWrapperProtocolParser({
+            binding: {
+              invocationId,
+              requestDigest: request.requestDigest,
+              attemptId: input.acceptanceBinding.executionAttemptId,
+            },
+          });
+          const frames = [
+            renderProviderWrapperFrame({
+              schemaVersion: 1,
+              type: 'hello',
+              sequence: 1,
+              protocol: 'harness-jsonl-v1',
+            }),
+          ];
+          if (fixture.mode === 'error') {
+            frames.push(
+              renderProviderWrapperFrame({
+                schemaVersion: 1,
+                type: 'error',
+                sequence: 2,
+                code: 'FIXTURE_REJECTED',
+              }),
+            );
+          }
+          const initialStream = Buffer.from(frames.join(''), 'utf8');
+          parser.push(initialStream);
+          if (fixture.mode !== 'error') {
+            parser.requestCancellation();
+            if (fixture.acknowledged) {
+              const acknowledgement = Buffer.from(
+                renderProviderWrapperFrame({
+                  schemaVersion: 1,
+                  type: 'cancel-ack',
+                  sequence: 2,
+                }),
+                'utf8',
+              );
+              parser.push(acknowledgement);
+              frames.push(acknowledgement.toString('utf8'));
+            }
+          }
+          const stream = Buffer.from(frames.join(''), 'utf8');
+          protocolReceipt = parser.finish({
+            cancellationForced: fixture.forced,
+          });
+          options.onActivity?.({ type: 'spawned', elapsedMs: 0 });
+          options.onActivity?.({
+            type: 'stdout',
+            elapsedMs: 1,
+            bytes: stream.length,
+          });
+          options.onActivity?.({
+            type: fixture.processState,
+            elapsedMs: 2,
+          });
+          (
+            options as typeof options & {
+              onProtocolReceipt?: (
+                receipt: ProviderWrapperProtocolReceipt,
+              ) => void;
+            }
+          ).onProtocolReceipt?.(protocolReceipt);
+          throw workflowError(
+            fixture.failureCode,
+            'Fixture wrapper terminated without a successful result.',
+            ExitCode.verification,
+          );
+        },
+      };
+
+      const failed = await runProviderWorkerAsync(repository, invocationId, {
+        agentRuntime,
+      });
+      assert.equal(failed.state, 'failed');
+      assert.equal(failed.failure?.code, fixture.failureCode);
+      assert.equal(failed.completionReceipt?.schemaVersion, 3);
+      assert.equal(failed.completionReceipt?.terminalState, 'failed');
+      assert.equal(
+        failed.completionReceipt?.progress.processState,
+        fixture.processState,
+      );
+      assert.ok(
+        failed.completionReceipt !== null &&
+          'protocolReceipt' in failed.completionReceipt,
+      );
+      assert.deepEqual(
+        (
+          failed.completionReceipt as unknown as {
+            protocolReceipt: ProviderWrapperProtocolReceipt;
+          }
+        ).protocolReceipt,
+        protocolReceipt,
+      );
+      assert.deepEqual(
+        (
+          failed.completionReceipt as unknown as {
+            protocolReceipt: ProviderWrapperProtocolReceipt;
+          }
+        ).protocolReceipt.cancellation,
+        {
+          requested: fixture.mode !== 'error',
+          acknowledged: fixture.acknowledged,
+          forced: fixture.forced,
+        },
+      );
+      const durable = readProviderInvocation(runtime, invocationId);
+      assert.deepEqual(durable.runtimeReceipt, failed.completionReceipt);
+
+      const replayed = await runProviderWorkerAsync(repository, invocationId, {
+        agentRuntime,
+      });
+      assert.equal(replayed.state, 'failed');
+      assert.equal(replayed.launched, false);
+      assert.deepEqual(replayed.completionReceipt, durable.runtimeReceipt);
+      assert.equal(launches, 1);
+
+      if (fixture.mode === 'error') {
+        const statePath = path.join(
+          runtime.invocations,
+          invocationId,
+          'state.json',
+        );
+        const unknownVersion = JSON.parse(
+          fs.readFileSync(statePath, 'utf8'),
+        ) as {
+          runtimeReceipt: Record<string, unknown>;
+        };
+        unknownVersion.runtimeReceipt.schemaVersion = 4;
+        const receiptPayload = { ...unknownVersion.runtimeReceipt };
+        delete receiptPayload.receiptDigest;
+        unknownVersion.runtimeReceipt.receiptDigest = sha256(
+          canonicalJson(receiptPayload),
+        );
+        fs.writeFileSync(statePath, `${canonicalJson(unknownVersion)}\n`);
+        await assert.rejects(
+          () =>
+            runProviderWorkerAsync(repository, invocationId, { agentRuntime }),
+          (error: unknown) =>
+            error instanceof Error &&
+            'code' in error &&
+            error.code === 'PROVIDER_INVOCATION_INVALID',
+        );
+        assert.equal(launches, 1, 'unknown versions must not relaunch');
+      }
+    } finally {
+      fs.rmSync(repository, { recursive: true, force: true });
+    }
+  });
+}
 
 test('provider worker records launch and admission failure durably', () => {
   const repository = createFixtureRepository();

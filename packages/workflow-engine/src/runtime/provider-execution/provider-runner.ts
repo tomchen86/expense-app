@@ -433,14 +433,18 @@ function createProviderRunner(host: ProviderRunnerHost): ProviderRunner {
       throw new TypeError('Async provider execution host is unavailable.');
     }
     const wrapperProtocol = createWrapperProtocolExecution(input);
-    return await runWithExecution(input, options, (executeInput) =>
-      host.executeAsync!(executeInput, {
-        ...(options.signal === undefined ? {} : { signal: options.signal }),
-        ...(options.onActivity === undefined
-          ? {}
-          : { onActivity: options.onActivity }),
-        ...(wrapperProtocol === null ? {} : { wrapperProtocol }),
-      }),
+    return await runWithExecution(
+      input,
+      options,
+      (executeInput) =>
+        host.executeAsync!(executeInput, {
+          ...(options.signal === undefined ? {} : { signal: options.signal }),
+          ...(options.onActivity === undefined
+            ? {}
+            : { onActivity: options.onActivity }),
+          ...(wrapperProtocol === null ? {} : { wrapperProtocol }),
+        }),
+      options.onProtocolReceipt,
     );
   }
 
@@ -450,6 +454,7 @@ function createProviderRunner(host: ProviderRunnerHost): ProviderRunner {
     execute: (
       executeInput: ProviderExecuteInput,
     ) => ProviderProcessOutcome | Promise<ProviderProcessOutcome>,
+    onProtocolReceipt?: AgentRuntimeAsyncSingleShotOptions['onProtocolReceipt'],
   ): ProviderRunnerReport | Promise<ProviderRunnerReport> {
     const git = discoverRepository(input.repositoryRoot);
     const config = loadWorkflowConfig(input.repositoryRoot);
@@ -748,7 +753,24 @@ function createProviderRunner(host: ProviderRunnerHost): ProviderRunner {
         );
         const projection = compareGovernedProviderProjections(before, after);
 
-        enforceProcessOutcome(completedOutcome, input.request.limits.timeoutMs);
+        const failureProtocolReceipt = tryReadWrapperProtocolReceipt(
+          input,
+          completedOutcome,
+        );
+        try {
+          enforceProcessOutcome(
+            completedOutcome,
+            input.request.limits.timeoutMs,
+          );
+        } catch (error) {
+          if (
+            failureProtocolReceipt !== null &&
+            failureProtocolReceipt.terminal !== 'result'
+          ) {
+            observeProtocolReceipt(onProtocolReceipt, failureProtocolReceipt);
+          }
+          throw error;
+        }
         enforceRawOutputLimit(
           completedOutcome,
           input.request.limits.aggregateOutputBytes,
@@ -762,6 +784,19 @@ function createProviderRunner(host: ProviderRunnerHost): ProviderRunner {
           input,
           completedOutcome,
         );
+        if (wrapperProtocolReceipt !== null) {
+          if (wrapperProtocolReceipt.terminal === 'error') {
+            observeProtocolReceipt(onProtocolReceipt, wrapperProtocolReceipt);
+            throw wrapperReportedError();
+          }
+          if (
+            wrapperProtocolReceipt.terminal !== 'result' ||
+            wrapperProtocolReceipt.outputSlot !== 'primary'
+          ) {
+            observeProtocolReceipt(onProtocolReceipt, wrapperProtocolReceipt);
+            throw wrapperProtocolInvalid();
+          }
+        }
 
         const semanticOutput =
           wrapperProtocolReceipt === null
@@ -1262,11 +1297,50 @@ function readWrapperProtocolReceipt(
     }
     throw error;
   }
-  if (receipt.terminal === 'error') throw wrapperReportedError();
-  if (receipt.terminal !== 'result' || receipt.outputSlot !== 'primary') {
-    throw wrapperProtocolInvalid();
-  }
   return receipt;
+}
+
+/**
+ * A process failure keeps its historical classification. If the wrapper also
+ * produced a valid, exactly bound terminal receipt, retain that independent
+ * evidence without letting malformed protocol output replace the process
+ * failure that already occurred.
+ */
+function tryReadWrapperProtocolReceipt(
+  input: ProviderRunInput,
+  outcome: ProviderProcessOutcome,
+): ProviderWrapperProtocolReceipt | null {
+  if (
+    input.wrapperProtocol === undefined ||
+    input.acceptanceBinding === undefined ||
+    outcome.wrapperProtocolReceipt === undefined
+  ) {
+    return null;
+  }
+  try {
+    return assertProviderWrapperProtocolReceipt(
+      outcome.wrapperProtocolReceipt,
+      {
+        invocationId: input.request.invocationId,
+        requestDigest: input.request.requestDigest,
+        attemptId: input.acceptanceBinding.executionAttemptId,
+      },
+    );
+  } catch {
+    return null;
+  }
+}
+
+function observeProtocolReceipt(
+  observer: AgentRuntimeAsyncSingleShotOptions['onProtocolReceipt'],
+  receipt: ProviderWrapperProtocolReceipt,
+): void {
+  try {
+    observer?.(receipt);
+  } catch {
+    // Receipt observation has no process-control or failure-classification
+    // authority. The original terminal failure remains the durable cause.
+  }
 }
 
 function readWrapperSemanticOutput(

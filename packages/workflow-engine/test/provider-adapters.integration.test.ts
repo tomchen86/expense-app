@@ -61,6 +61,7 @@ import {
   type ProviderRunnerHost,
 } from '../src/runtime/provider-execution/provider-runner.ts';
 import { spawnBoundedProviderProcess } from '../src/runtime/provider-execution/bounded-provider-process.ts';
+import type { ProviderWrapperProtocolReceipt } from '../src/modules/provider-orchestration/agent-runtime-protocol.ts';
 import {
   createFixtureRepository,
   git,
@@ -1028,6 +1029,82 @@ test('async runner consumes harness-jsonl-v1 only after explicit adapter opt-in'
     fixture.cleanup();
   }
 });
+
+for (const fixtureMode of ['error', 'cancel-ack', 'cancel-ignore'] as const) {
+  test(`async runner exposes the validated ${fixtureMode} wrapper receipt on its failure channel`, async () => {
+    const fixture = createRunnerFixture();
+    const input = {
+      ...bindRunnerInputToInvestigationOwner(
+        fixture.input,
+        `investigation-provider-wrapper-${fixtureMode}`,
+      ),
+      wrapperProtocol: { protocol: 'harness-jsonl-v1' as const },
+    };
+    const controller = new AbortController();
+    const observed: ProviderWrapperProtocolReceipt[] = [];
+    try {
+      const host = claudeRunnerHost(() => {
+        assert.fail('wrapper protocol execution must remain asynchronous');
+      });
+      host.executeAsync = async (executeInput, control) =>
+        await spawnBoundedProviderProcess({
+          executable: process.execPath,
+          args: [providerWrapperFixture, fixtureMode],
+          cwd: executeInput.cwd,
+          environment: executeInput.environment,
+          timeoutMs: executeInput.timeoutMs,
+          maxOutputBytes: executeInput.maxOutputBytes,
+          ...(fixtureMode === 'error' ? {} : { signal: controller.signal }),
+          wrapperProtocol: {
+            ...control.wrapperProtocol!,
+            ...(fixtureMode === 'error'
+              ? {}
+              : {
+                  onFrame(receipt) {
+                    if (receipt.frame.type === 'hello') controller.abort();
+                  },
+                }),
+          },
+        });
+
+      await assert.rejects(
+        createProviderRunnerForTesting(host).runAsync(input, {
+          platform: 'darwin',
+          ...(fixtureMode === 'error' ? {} : { signal: controller.signal }),
+          onProtocolReceipt(receipt: ProviderWrapperProtocolReceipt) {
+            observed.push(receipt);
+            if (fixtureMode === 'error') {
+              throw new Error('receipt observer must be non-authoritative');
+            }
+          },
+        }),
+        (error: unknown) =>
+          error instanceof WorkflowError &&
+          error.code ===
+            (fixtureMode === 'error'
+              ? 'PROVIDER_WRAPPER_REPORTED_ERROR'
+              : 'PROVIDER_PROCESS_CRASH'),
+      );
+
+      assert.equal(observed.length, 1);
+      assert.equal(
+        observed[0]!.terminal,
+        fixtureMode === 'error' ? 'error' : 'cancelled',
+      );
+      assert.deepEqual(observed[0]!.cancellation, {
+        requested: fixtureMode !== 'error',
+        acknowledged: fixtureMode === 'cancel-ack',
+        forced: fixtureMode === 'cancel-ignore',
+      });
+      assert.equal(
+        observed[0]!.attemptId,
+        input.acceptanceBinding!.executionAttemptId,
+      );
+    } finally {
+      fixture.cleanup();
+    }
+  });
+}
 
 test('async runner releases its concurrency slot after execution rejects', async () => {
   const fixture = createRunnerFixture();

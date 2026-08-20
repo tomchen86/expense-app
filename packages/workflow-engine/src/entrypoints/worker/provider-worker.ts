@@ -22,6 +22,7 @@ import type {
   AgentRuntimeSingleShotReport,
   ProviderInvocationAcceptanceBinding,
 } from '../../composition-root/agent-runtime-production.ts';
+import type { ProviderWrapperProtocolReceipt } from '../../modules/provider-orchestration/agent-runtime-protocol.ts';
 import { readInvestigationSession } from '../../runtime/storage-journal/investigation-session-store.ts';
 import { loadInvestigationRuntimeContext } from '../../composition-root/lifecycle-context.ts';
 import { productionAgentRuntime } from '../../composition-root/agent-runtime-production.ts';
@@ -191,6 +192,7 @@ export async function runProviderWorkerAsync(
   options: ProviderWorkerOptions = {},
 ): Promise<AsyncProviderWorkerResult> {
   const progress = createAgentRuntimeProgressTracker();
+  let failureProtocolReceipt: ProviderWrapperProtocolReceipt | null = null;
   const result = await runProviderWorkerWithExecution(
     cwd,
     requestedInvocationId,
@@ -208,6 +210,14 @@ export async function runProviderWorkerAsync(
           ...runtimeOptions,
           ...(options.signal === undefined ? {} : { signal: options.signal }),
           onActivity: progress.record,
+          onProtocolReceipt(receipt) {
+            if (failureProtocolReceipt !== null) {
+              throw new TypeError(
+                'Agent Runtime emitted more than one terminal failure receipt.',
+              );
+            }
+            failureProtocolReceipt = receipt;
+          },
         })
         .then((report) => {
           progress.assertSuccessfulCompletion();
@@ -215,6 +225,7 @@ export async function runProviderWorkerAsync(
         });
     },
     () => progress.snapshot(),
+    () => failureProtocolReceipt,
   );
   const context = loadInvestigationRuntimeContext(cwd);
   return Object.freeze({
@@ -238,6 +249,7 @@ function runProviderWorkerWithExecution(
   options: ProviderWorkerOptions,
   execute: ProviderWorkerExecution,
   runtimeProgress?: () => AgentRuntimeProcessProgressProjection,
+  runtimeFailureProtocolReceipt?: () => ProviderWrapperProtocolReceipt | null,
 ): ProviderWorkerResult | Promise<ProviderWorkerResult> {
   const context = loadInvestigationRuntimeContext(cwd);
   const initial = readProviderInvocation(
@@ -413,6 +425,7 @@ function runProviderWorkerWithExecution(
   ): ProviderInvocationRecord => {
     const failure = classifyProviderFailure(error);
     const repair = extractProviderRepairFailure(error, semantic.schema);
+    const protocolReceipt = runtimeFailureProtocolReceipt?.() ?? null;
     return failProviderInvocation(context.runtime, request.invocationId, {
       expectedRevision: claim.record.revision,
       leaseGeneration: claim.record.leaseGeneration,
@@ -424,6 +437,7 @@ function runProviderWorkerWithExecution(
             runtimeEvidence: {
               acceptanceBinding,
               progress: runtimeProgress(),
+              ...(protocolReceipt === null ? {} : { protocolReceipt }),
             },
           }),
       ...(repair === null ? {} : { repair }),
