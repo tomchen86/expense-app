@@ -2,20 +2,22 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { loadAiAdapterPolicy, MAX_AI_ADAPTER_LIMITS, } from './ai-adapter-policy.js';
-import { canonicalJson } from '../../foundation/canonical-json/canonical-json.js';
-import { buildClaudeProviderInvocation, CLAUDE_EXECUTABLE_CANDIDATES, CLAUDE_REQUIRED_HELP_FLAGS, } from '../../adapters/providers/claude/claude-provider-adapter.js';
-import { buildCodexProviderInvocation, CODEX_EXECUTABLE_CANDIDATES, CODEX_REQUIRED_EXEC_HELP_FLAGS, CODEX_REQUIRED_ROOT_HELP_FLAGS, } from '../../adapters/providers/codex/codex-provider-adapter.js';
-import { loadWorkflowConfig } from '../../adapters/consumer/expense-app/work-registry/contracts.js';
-import { ExitCode, workflowError, WorkflowError, } from '../../foundation/errors/errors.js';
-import { createProviderExecutionEnvironment } from './execution-environment.js';
-import { executionJobStatePath } from '../storage-journal/execution-store.js';
-import { captureGovernedProviderProjection, compareGovernedProviderProjections, discoverRepository, runGit, } from '../repository-transaction/git.js';
-import { ensurePrivateInvestigationDirectory, readPrivateCanonicalJson, withPrivateRuntimeLock, } from '../storage-journal/investigation-session-store.js';
-import { assertInvocationId, investigationRuntimePaths, } from '../session-workspace/paths.js';
-import { providerExecutionPolicySnapshotPath, readProviderExecutionPolicySnapshot, readProviderInvocationRequest, } from '../storage-journal/provider-invocation-store.js';
-import { assembleProviderPromptManifest, assertProviderPromptContextCurrent, providerPromptContextStoreRoot, readProviderRepairPrompt, } from './provider-execution-governance.js';
-import { assertProviderProcessSucceeded, } from '../../modules/provider-orchestration/provider-contracts.js';
+import { AI_ADAPTER_DATA_AUTHORIZATION_POLICY_PORT, MAX_AI_ADAPTER_LIMITS, } from "./ai-adapter-policy.js";
+import { canonicalJson } from "../../foundation/canonical-json/canonical-json.js";
+import { buildClaudeProviderInvocation, CLAUDE_EXECUTABLE_CANDIDATES, CLAUDE_REQUIRED_HELP_FLAGS, } from "../../adapters/providers/claude/claude-provider-adapter.js";
+import { buildCodexProviderInvocation, CODEX_EXECUTABLE_CANDIDATES, CODEX_REQUIRED_EXEC_HELP_FLAGS, CODEX_REQUIRED_ROOT_HELP_FLAGS, } from "../../adapters/providers/codex/codex-provider-adapter.js";
+import { loadWorkflowConfig } from "../../adapters/consumer/expense-app/work-registry/contracts.js";
+import { ExitCode, workflowError, WorkflowError, } from "../../foundation/errors/errors.js";
+import { createProviderExecutionEnvironment } from "./execution-environment.js";
+import { executionJobStatePath } from "../storage-journal/execution-store.js";
+import { captureGovernedProviderProjection, compareGovernedProviderProjections, discoverRepository, runGit, } from "../repository-transaction/git.js";
+import { ensurePrivateInvestigationDirectory, readPrivateCanonicalJson, withPrivateRuntimeLock, } from "../storage-journal/investigation-session-store.js";
+import { assertInvocationId, investigationRuntimePaths, } from "../session-workspace/paths.js";
+import { providerExecutionPolicySnapshotPath, readProviderExecutionPolicySnapshot, readProviderInvocationRequest, } from "../storage-journal/provider-invocation-store.js";
+import { assembleProviderPromptManifest, assertProviderPromptContextCurrent, providerPromptContextStoreRoot, readProviderRepairPrompt, } from "./provider-execution-governance.js";
+import { assertProviderProcessSucceeded, } from "../../modules/provider-orchestration/provider-contracts.js";
+import { ProviderWrapperProtocolError, assertProviderWrapperProtocolReceipt, } from "../../modules/provider-orchestration/agent-runtime-protocol.js";
+import { spawnBoundedProviderProcess } from "./bounded-provider-process.js";
 const PROBE_TIMEOUT_MS = 10_000;
 const PROBE_OUTPUT_BYTES = 64 * 1024;
 /**
@@ -105,6 +107,16 @@ export function runBuiltInProvider(input, options) {
     }
     return createProviderRunner(realProviderRunnerHost()).run(input, options);
 }
+/**
+ * Async production launch preserving the exact single-shot validation and
+ * projection contract while replacing only the model process wait with spawn.
+ */
+export async function runBuiltInProviderAsync(input, options) {
+    if (input.acceptanceBinding === undefined) {
+        throw requestUnbound();
+    }
+    return await createProviderRunner(realProviderRunnerHost()).runAsync(input, options);
+}
 function createProviderRunner(host) {
     function preflight(providerId, options) {
         if (!options.enabled) {
@@ -179,6 +191,29 @@ function createProviderRunner(host) {
         });
     }
     function run(input, options) {
+        if (input.wrapperProtocol !== undefined) {
+            throw wrapperProtocolAsyncRequired();
+        }
+        const result = runWithExecution(input, options, host.execute);
+        if (isPromiseLike(result)) {
+            throw new TypeError('Synchronous provider execution returned a promise.');
+        }
+        return result;
+    }
+    async function runAsync(input, options) {
+        if (host.executeAsync === undefined) {
+            throw new TypeError('Async provider execution host is unavailable.');
+        }
+        const wrapperProtocol = createWrapperProtocolExecution(input);
+        return await runWithExecution(input, options, (executeInput) => host.executeAsync(executeInput, {
+            ...(options.signal === undefined ? {} : { signal: options.signal }),
+            ...(options.onActivity === undefined
+                ? {}
+                : { onActivity: options.onActivity }),
+            ...(wrapperProtocol === null ? {} : { wrapperProtocol }),
+        }));
+    }
+    function runWithExecution(input, options, execute) {
         const git = discoverRepository(input.repositoryRoot);
         const config = loadWorkflowConfig(input.repositoryRoot);
         if (fileDigestAtBaseline(input.repositoryRoot, git.head, 'workflow/config.json') !==
@@ -238,7 +273,7 @@ function createProviderRunner(host) {
         //    baseline, then load the separately durable per-Attempt execution policy.
         //    This lets a retry adopt newly authorized execution limits without
         //    rebasing the repository content it is reviewing.
-        const baselinePolicy = loadAiAdapterPolicy(input.repositoryRoot);
+        const baselinePolicy = AI_ADAPTER_DATA_AUTHORIZATION_POLICY_PORT.readCurrent(input.repositoryRoot);
         if (fileDigestAtBaseline(input.repositoryRoot, git.head, 'workflow/ai-adapter-policy.json') !== baselinePolicy.digest) {
             throw policyBaselineMismatch();
         }
@@ -267,6 +302,7 @@ function createProviderRunner(host) {
         // 4. Acquire a repository-wide concurrency slot before launch; release it in
         //    finally so a failure never leaks the owned slot.
         const slot = acquireProviderSlot(paths, loaded.policy.limits.maxConcurrent, invocationId);
+        let releaseSynchronously = true;
         try {
             // 5. Create a fresh private runtime directory and engine files with
             //    exclusive no-follow 0600 single-link ownership so a preplanted
@@ -341,7 +377,7 @@ function createProviderRunner(host) {
                 semanticOutputPath,
             });
             const environment = createProviderExecutionEnvironment(input.providerId, process.execPath, runtimeDirectory, input.sourceEnvironment);
-            const outcome = host.execute({
+            const outcome = execute({
                 executable: plan.executable,
                 args: plan.args,
                 cwd: plan.cwd,
@@ -351,44 +387,60 @@ function createProviderRunner(host) {
                 timeoutMs: input.request.limits.timeoutMs,
                 maxOutputBytes: input.request.limits.aggregateOutputBytes,
             });
-            if (input.acceptanceBinding !== undefined) {
-                assertProviderPromptContextCurrent(contextStoreRoot, input.acceptanceBinding.context);
-            }
-            // Re-check executable identity around the launch.
-            const identityAfter = host.inspectCandidate(identityBefore.candidatePath);
-            if (!identityAfter || !sameIdentity(identityBefore, identityAfter)) {
-                throw executableIdentityDrift();
-            }
-            const after = captureGovernedProviderProjection(input.repositoryRoot, governedRuntimeInputs);
-            const projection = compareGovernedProviderProjections(before, after);
-            enforceProcessOutcome(outcome, input.request.limits.timeoutMs);
-            enforceRawOutputLimit(outcome, input.request.limits.aggregateOutputBytes);
-            if (!projection.unchanged) {
-                throw governedProjectionDrift(projection.changedCategories);
-            }
-            const semanticOutput = readNativeSemanticOutput(input.providerId, outcome, semanticOutputPath, input.request.limits.aggregateOutputBytes);
-            validateSemanticOutput(input, semanticOutput);
-            const report = {
-                invocationId: input.request.invocationId,
-                providerId: input.providerId,
-                purpose: input.request.purpose,
-                requestDigest: input.request.requestDigest,
-                semanticOutput,
-                semanticOutputDigest: sha256(canonicalJson(semanticOutput)),
-                assurance: 'unchanged-governed-projection',
-                projection,
-                sameUserProcessConfined: false,
-                residuals: [...PROVIDER_RUNNER_RESIDUALS],
-                executable: identityAfter,
-                elapsedMs: outcome.elapsedMs,
+            const finalizeOutcome = (completedOutcome) => {
+                if (input.acceptanceBinding !== undefined) {
+                    assertProviderPromptContextCurrent(contextStoreRoot, input.acceptanceBinding.context);
+                }
+                // Re-check executable identity around the launch.
+                const identityAfter = host.inspectCandidate(identityBefore.candidatePath);
+                if (!identityAfter || !sameIdentity(identityBefore, identityAfter)) {
+                    throw executableIdentityDrift();
+                }
+                const after = captureGovernedProviderProjection(input.repositoryRoot, governedRuntimeInputs);
+                const projection = compareGovernedProviderProjections(before, after);
+                enforceProcessOutcome(completedOutcome, input.request.limits.timeoutMs);
+                enforceRawOutputLimit(completedOutcome, input.request.limits.aggregateOutputBytes);
+                if (!projection.unchanged) {
+                    throw governedProjectionDrift(projection.changedCategories);
+                }
+                const wrapperProtocolReceipt = readWrapperProtocolReceipt(input, completedOutcome);
+                const semanticOutput = wrapperProtocolReceipt === null
+                    ? readNativeSemanticOutput(input.providerId, completedOutcome, semanticOutputPath, input.request.limits.aggregateOutputBytes)
+                    : readWrapperSemanticOutput(completedOutcome, semanticOutputPath, input.request.limits.aggregateOutputBytes);
+                validateSemanticOutput(input, semanticOutput);
+                const report = {
+                    invocationId: input.request.invocationId,
+                    providerId: input.providerId,
+                    purpose: input.request.purpose,
+                    requestDigest: input.request.requestDigest,
+                    semanticOutput,
+                    semanticOutputDigest: sha256(canonicalJson(semanticOutput)),
+                    assurance: 'unchanged-governed-projection',
+                    projection,
+                    sameUserProcessConfined: false,
+                    residuals: [...PROVIDER_RUNNER_RESIDUALS],
+                    executable: identityAfter,
+                    elapsedMs: completedOutcome.elapsedMs,
+                    ...(wrapperProtocolReceipt === null
+                        ? {}
+                        : { wrapperProtocolReceipt }),
+                };
+                return deepFreeze(report);
             };
-            return deepFreeze(report);
+            if (isPromiseLike(outcome)) {
+                releaseSynchronously = false;
+                return Promise.resolve(outcome)
+                    .then(finalizeOutcome)
+                    .finally(slot.release);
+            }
+            return finalizeOutcome(outcome);
         }
         finally {
-            slot.release();
+            if (releaseSynchronously)
+                slot.release();
         }
     }
-    return { preflight, run };
+    return { preflight, run, runAsync };
 }
 function providerAcceptanceGovernedRuntimeInputs(paths, binding) {
     const inputs = [
@@ -412,6 +464,23 @@ function providerAcceptanceGovernedRuntimeInputs(paths, binding) {
         });
     }
     return inputs;
+}
+function createWrapperProtocolExecution(input) {
+    if (input.wrapperProtocol === undefined)
+        return null;
+    if (input.wrapperProtocol.protocol !== 'harness-jsonl-v1') {
+        throw wrapperProtocolInvalid();
+    }
+    if (input.acceptanceBinding === undefined)
+        throw requestUnbound();
+    return Object.freeze({
+        protocol: 'harness-jsonl-v1',
+        binding: Object.freeze({
+            invocationId: input.request.invocationId,
+            requestDigest: input.request.requestDigest,
+            attemptId: input.acceptanceBinding.executionAttemptId,
+        }),
+    });
 }
 function buildInvocationPlan(input, executable, paths) {
     if (input.providerId === 'codex') {
@@ -706,6 +775,57 @@ function readNativeSemanticOutput(providerId, outcome, semanticOutputPath, aggre
         nativeBytes +
         Buffer.byteLength(normalized, 'utf8');
     if (aggregate > aggregateOutputBytes) {
+        throw outputLimitExceeded();
+    }
+    return output;
+}
+function readWrapperProtocolReceipt(input, outcome) {
+    if (input.wrapperProtocol === undefined) {
+        if (outcome.wrapperProtocolReceipt !== undefined) {
+            throw wrapperProtocolInvalid();
+        }
+        return null;
+    }
+    if (input.acceptanceBinding === undefined)
+        throw requestUnbound();
+    let receipt;
+    try {
+        receipt = assertProviderWrapperProtocolReceipt(outcome.wrapperProtocolReceipt, {
+            invocationId: input.request.invocationId,
+            requestDigest: input.request.requestDigest,
+            attemptId: input.acceptanceBinding.executionAttemptId,
+        });
+    }
+    catch (error) {
+        if (error instanceof ProviderWrapperProtocolError) {
+            throw wrapperProtocolInvalid();
+        }
+        throw error;
+    }
+    if (receipt.terminal === 'error')
+        throw wrapperReportedError();
+    if (receipt.terminal !== 'result' || receipt.outputSlot !== 'primary') {
+        throw wrapperProtocolInvalid();
+    }
+    return receipt;
+}
+function readWrapperSemanticOutput(outcome, semanticOutputPath, aggregateOutputBytes) {
+    const stdoutBytes = Buffer.byteLength(outcome.stdout, 'utf8');
+    const stderrBytes = Buffer.byteLength(outcome.stderr, 'utf8');
+    const file = readCodexSemanticFile(semanticOutputPath, stdoutBytes + stderrBytes, aggregateOutputBytes);
+    const output = parseJsonOrInvalid(file.content);
+    let normalized;
+    try {
+        normalized = canonicalJson(output);
+    }
+    catch {
+        throw nativeOutputInvalid();
+    }
+    if (stdoutBytes +
+        stderrBytes +
+        file.bytes +
+        Buffer.byteLength(normalized, 'utf8') >
+        aggregateOutputBytes) {
         throw outputLimitExceeded();
     }
     return output;
@@ -1162,6 +1282,22 @@ function realProviderRunnerHost() {
         inspectCandidate: inspectRealCandidate,
         runProbe: (input) => spawnBoundedProcess(input),
         execute: (input) => spawnBoundedProcess(input, input.stdinContent),
+        executeAsync: (input, control) => spawnBoundedProviderProcess({
+            executable: input.executable,
+            args: input.args,
+            cwd: input.cwd,
+            environment: input.environment,
+            stdinContent: input.stdinContent,
+            timeoutMs: input.timeoutMs,
+            maxOutputBytes: input.maxOutputBytes,
+            ...(control.signal === undefined ? {} : { signal: control.signal }),
+            ...(control.onActivity === undefined
+                ? {}
+                : { onActivity: control.onActivity }),
+            ...(control.wrapperProtocol === undefined
+                ? {}
+                : { wrapperProtocol: control.wrapperProtocol }),
+        }),
     };
 }
 function inspectRealCandidate(candidatePath) {
@@ -1358,6 +1494,12 @@ function sha256(value) {
 function isRecord(value) {
     return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
+function isPromiseLike(value) {
+    return (typeof value === 'object' &&
+        value !== null &&
+        'then' in value &&
+        typeof value.then === 'function');
+}
 function isNodeError(error) {
     return error instanceof Error && 'code' in error;
 }
@@ -1376,6 +1518,15 @@ function providerUnavailable(providerId, status) {
 }
 function requestUnbound() {
     return workflowError('PROVIDER_REQUEST_UNBOUND', 'Provider invocation input is not bound to the request provider.', ExitCode.guard);
+}
+function wrapperProtocolAsyncRequired() {
+    return workflowError('PROVIDER_WRAPPER_PROTOCOL_ASYNC_REQUIRED', 'Provider wrapper protocol execution requires the asynchronous Agent Runtime path.', ExitCode.guard);
+}
+function wrapperProtocolInvalid() {
+    return workflowError('PROVIDER_WRAPPER_PROTOCOL_INVALID', 'Provider wrapper protocol evidence is missing, malformed, or does not match the bound invocation.', ExitCode.guard);
+}
+function wrapperReportedError() {
+    return workflowError('PROVIDER_WRAPPER_REPORTED_ERROR', 'Provider wrapper reported a terminal execution error.', ExitCode.verification);
 }
 function repositoryMismatch() {
     return workflowError('PROVIDER_REPOSITORY_MISMATCH', 'Provider request repository identity does not match this repository.', ExitCode.guard);

@@ -1,9 +1,9 @@
 import crypto from 'node:crypto';
-import { canonicalJson } from '../../foundation/canonical-json/canonical-json.js';
-import { ExitCode, workflowError } from '../../foundation/errors/errors.js';
-import { COLLABORATION_GRANT_AUTHORIZED_EFFECT, canonicalCollaborationGrantEnvelope, directHumanReviewAttestationDigest, parseCollaborationGrantEnvelope, validateDirectHumanReviewAttestation, } from '../authority/collaboration-grant.js';
-import { validateCollaborationGrantUseProjection, } from '../../runtime/storage-journal/collaboration-grant-store.js';
-import { isProviderId, requireProviderCapability, } from './provider-registry.js';
+import { canonicalJson } from "../../foundation/canonical-json/canonical-json.js";
+import { ExitCode, workflowError } from "../../foundation/errors/errors.js";
+import { COLLABORATION_GRANT_AUTHORIZED_EFFECT, canonicalCollaborationGrantEnvelope, directHumanReviewAttestationDigest, parseCollaborationGrantEnvelope, validateDirectHumanReviewAttestation, } from "../authority/collaboration-grant.js";
+import { validateCollaborationGrantUseProjection, } from "../../runtime/storage-journal/collaboration-grant-store.js";
+import { isProviderId, requireProviderCapability, } from "./provider-registry.js";
 const ORDINARY_ASSIGNMENT_KEYS = [
     'role',
     'providerId',

@@ -1,13 +1,13 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { ExitCode, workflowError } from '../../foundation/errors/errors.js';
+import { ExitCode, workflowError } from "../../foundation/errors/errors.js";
+import { matchesAllowedPath, normalizeChangedPath, normalizeExactRepositoryPath, normalizePolicyPath, } from "../../foundation/repository-path/repository-path.js";
+export { matchesAllowedPath, normalizeChangedPath, normalizeExactRepositoryPath, normalizePolicyPath, };
 const CHANGE_ID_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 const TASK_ID_PATTERN = /^\d+(?:\.\d+)+$/;
 const SESSION_ID_PATTERN = /^session-[a-zA-Z0-9-]+$/;
 const INVESTIGATION_ID_PATTERN = /^investigation-[a-zA-Z0-9-]+$/;
 const INVOCATION_ID_PATTERN = /^invocation-[a-zA-Z0-9-]+$/;
-const WINDOWS_ABSOLUTE_PATTERN = /^[a-zA-Z]:[\\/]/;
-const UNSUPPORTED_GLOB_PATTERN = /[*?[\]{}!]/;
 /**
  * Resolve the investigation runtime layout beneath the configured Git-common
  * runtime root: content-addressed objects, current refs, sessions, and
@@ -61,75 +61,6 @@ export function assertInvocationId(value) {
     }
     return value;
 }
-export function normalizePolicyPath(value) {
-    if (!value ||
-        value.trim() !== value ||
-        value.includes('\\') ||
-        containsControlCharacter(value)) {
-        throw invalidPolicyPath(value);
-    }
-    const isPrefix = value.endsWith('/**');
-    const candidate = isPrefix ? value.slice(0, -3) : value;
-    if (!candidate ||
-        candidate.normalize('NFC') !== candidate ||
-        path.posix.isAbsolute(candidate) ||
-        WINDOWS_ABSOLUTE_PATTERN.test(candidate) ||
-        candidate.startsWith('./') ||
-        candidate.endsWith('/') ||
-        UNSUPPORTED_GLOB_PATTERN.test(candidate)) {
-        throw invalidPolicyPath(value);
-    }
-    const segments = candidate.split('/');
-    if (segments.some((segment) => !segment ||
-        segment === '.' ||
-        segment === '..' ||
-        segment.toLowerCase() === '.git')) {
-        throw invalidPolicyPath(value);
-    }
-    return isPrefix ? `${candidate}/**` : candidate;
-}
-export function normalizeChangedPath(value) {
-    if (!value ||
-        value.includes('\\') ||
-        containsControlCharacter(value) ||
-        path.posix.isAbsolute(value) ||
-        WINDOWS_ABSOLUTE_PATTERN.test(value) ||
-        value.startsWith('./') ||
-        value.endsWith('/')) {
-        throw invalidRepositoryPath(value);
-    }
-    const segments = value.split('/');
-    if (segments.some((segment) => !segment ||
-        segment === '.' ||
-        segment === '..' ||
-        segment.toLowerCase() === '.git')) {
-        throw invalidRepositoryPath(value);
-    }
-    return value;
-}
-export function normalizeExactRepositoryPath(value) {
-    const normalized = normalizeChangedPath(value);
-    if (UNSUPPORTED_GLOB_PATTERN.test(normalized) ||
-        normalized.normalize('NFC') !== normalized) {
-        throw invalidRepositoryPath(value);
-    }
-    return normalized;
-}
-function containsControlCharacter(value) {
-    return [...value].some((character) => {
-        const codePoint = character.codePointAt(0) ?? 0;
-        return codePoint <= 31 || (codePoint >= 127 && codePoint <= 159);
-    });
-}
-export function matchesAllowedPath(changedPath, allowedPath) {
-    const changed = normalizeChangedPath(changedPath);
-    const allowed = normalizePolicyPath(allowedPath);
-    if (!allowed.endsWith('/**')) {
-        return changed === allowed;
-    }
-    const base = allowed.slice(0, -3);
-    return changed === base || changed.startsWith(`${base}/`);
-}
 export function assertPolicyPathInsideRepository(repositoryRoot, policyPath) {
     const normalized = normalizePolicyPath(policyPath);
     const relative = normalized.endsWith('/**')
@@ -170,12 +101,6 @@ function assertInside(repositoryRoot, targetPath, policyPath) {
         throw workflowError('PATH_ESCAPES_REPOSITORY', `Policy path escapes the repository: ${policyPath}`, ExitCode.guard, { details: { policyPath } });
     }
 }
-function invalidPolicyPath(value) {
-    return workflowError('INVALID_POLICY_PATH', `Invalid policy path: ${value}`, ExitCode.guard, {
-        details: { path: value },
-        recovery: 'Use a repository-relative exact path or a directory prefix ending in /**.',
-    });
-}
 function invalidPolicySymlink(repositoryRoot, symlinkPath, policyPath) {
     return workflowError('SYMLINK_POLICY_PATH', `Policy path crosses a symbolic link: ${policyPath}`, ExitCode.guard, {
         details: {
@@ -184,7 +109,4 @@ function invalidPolicySymlink(repositoryRoot, symlinkPath, policyPath) {
         },
         recovery: 'Use a direct repository path without symbolic-link aliases.',
     });
-}
-function invalidRepositoryPath(value) {
-    return workflowError('INVALID_REPOSITORY_PATH', `Invalid repository path reported by Git: ${value}`, ExitCode.guard, { details: { path: value } });
 }

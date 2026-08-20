@@ -1,8 +1,8 @@
 import crypto from 'node:crypto';
-import { canonicalJson } from '../../foundation/canonical-json/canonical-json.js';
-import { isRecord } from '../../foundation/canonical-json/contract-values.js';
-import { ExitCode, workflowError } from '../../foundation/errors/errors.js';
-import { copyGrantDate, deepFreezeGrant as deepFreeze, freezeGrantCanonical as freezeCanonical, GRANT_SESSION_NONCE as SESSION_NONCE, GRANT_SHA256_DIGEST as SHA256_DIGEST, GRANT_STABLE_ID as STABLE_ID, GRANT_UUID_V4 as UUID_V4, grantHasExactKeys as hasExactKeys, grantSha256 as sha256, parseGrantTimestamp, } from './grant-primitives.js';
+import { canonicalJson } from "../../foundation/canonical-json/canonical-json.js";
+import { isRecord } from "../../foundation/canonical-json/contract-values.js";
+import { ExitCode, workflowError } from "../../foundation/errors/errors.js";
+import { copyGrantDate, deepFreezeGrant as deepFreeze, freezeGrantCanonical as freezeCanonical, GRANT_SESSION_NONCE as SESSION_NONCE, GRANT_SHA256_DIGEST as SHA256_DIGEST, GRANT_STABLE_ID as STABLE_ID, GRANT_UUID_V4 as UUID_V4, grantHasExactKeys as hasExactKeys, grantSha256 as sha256, parseGrantTimestamp, } from "./grant-primitives.js";
 const MAX_CHALLENGE_TTL_MS = 30 * 60_000;
 const MAX_REASON_LENGTH = 2048;
 export const GRANT_APPROVAL_METHODS = ['human-presence', 'ssh'];

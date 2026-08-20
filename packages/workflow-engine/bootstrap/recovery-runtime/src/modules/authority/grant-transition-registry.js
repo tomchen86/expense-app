@@ -1,6 +1,6 @@
-import { canonicalJson } from '../../foundation/canonical-json/canonical-json.js';
-import { ExitCode, WorkflowError, workflowError, } from '../../foundation/errors/errors.js';
-import { freezeGrantCanonical, GRANT_SHA256_DIGEST as SHA256_DIGEST, GRANT_STABLE_ID as STABLE_ID, } from './grant-primitives.js';
+import { canonicalJson } from "../../foundation/canonical-json/canonical-json.js";
+import { ExitCode, WorkflowError, workflowError, } from "../../foundation/errors/errors.js";
+import { freezeGrantCanonical, GRANT_SHA256_DIGEST as SHA256_DIGEST, GRANT_STABLE_ID as STABLE_ID, } from "./grant-primitives.js";
 export class GrantTransitionPreconditionError extends WorkflowError {
     constructor(code, message) {
         super({ code, message, exitCode: ExitCode.staleState });

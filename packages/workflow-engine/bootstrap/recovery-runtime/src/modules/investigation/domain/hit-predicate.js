@@ -1,4 +1,4 @@
-import { ExitCode, workflowError } from '../../../foundation/errors/errors.js';
+import { ExitCode, workflowError } from "../../../foundation/errors/errors.js";
 /**
  * A deliberately small language for saying what a scan hit looks like.
  *

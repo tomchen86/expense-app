@@ -1,5 +1,5 @@
-import { ExitCode, workflowError } from '../../../foundation/errors/errors.js';
-import { evaluateHitPredicate, } from './hit-predicate.js';
+import { ExitCode, workflowError } from "../../../foundation/errors/errors.js";
+import { evaluateHitPredicate, } from "./hit-predicate.js";
 /**
  * Whether a class predicate says anything.
  *

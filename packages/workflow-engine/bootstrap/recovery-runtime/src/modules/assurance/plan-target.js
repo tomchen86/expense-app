@@ -1,7 +1,7 @@
 import crypto from 'node:crypto';
 import path from 'node:path';
-import { canonicalJson } from '../../foundation/canonical-json/canonical-json.js';
-import { ExitCode, workflowError } from '../../foundation/errors/errors.js';
+import { canonicalJson } from "../../foundation/canonical-json/canonical-json.js";
+import { ExitCode, workflowError } from "../../foundation/errors/errors.js";
 const TARGET_SCHEMA = 'plan-target.v1';
 const CHANGE_ID_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 const DIGEST_PATTERN = /^[0-9a-f]{64}$/;

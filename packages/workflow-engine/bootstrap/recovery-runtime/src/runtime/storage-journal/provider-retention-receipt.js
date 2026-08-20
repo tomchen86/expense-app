@@ -1,9 +1,9 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import { canonicalJson } from '../../foundation/canonical-json/canonical-json.js';
-import { ExitCode, workflowError } from '../../foundation/errors/errors.js';
-import { assertInvocationId, } from '../session-workspace/paths.js';
+import { canonicalJson } from "../../foundation/canonical-json/canonical-json.js";
+import { ExitCode, workflowError } from "../../foundation/errors/errors.js";
+import { assertInvocationId, } from "../session-workspace/paths.js";
 const DIGEST = /^[0-9a-f]{64}$/;
 const NORMALIZED_DIGEST = /^sha256:[0-9a-f]{64}$/;
 const RETENTION_ARTIFACTS = new Set([

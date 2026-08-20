@@ -1,29 +1,29 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import { parseAiAdapterPolicyDocument, parseLegacyAiAdapterPolicyDocument, } from '../provider-execution/ai-adapter-policy.js';
-import { canonicalJson } from '../../foundation/canonical-json/canonical-json.js';
-import { parseClassDisposition, } from '../../modules/investigation/domain/class-disposition.js';
+import { parseAiAdapterPolicyDocument, parseLegacyAiAdapterPolicyDocument, } from "../provider-execution/ai-adapter-policy.js";
+import { canonicalJson } from "../../foundation/canonical-json/canonical-json.js";
+import { parseClassDisposition, } from "../../modules/investigation/domain/class-disposition.js";
 const SAMPLE_AUDIT_OUTCOMES = new Set([
     'passed',
     'member-misclassified',
     'rationale-wrong',
     'type-wrong',
 ]);
-import { deriveAuthorityAuditRepositoryId } from './authority-audit-ledger.js';
-import { exactUnsafePathObservationDigest, readEvidenceNode, readEvidenceRefs, readInvestigationEvidenceRefsClosure, observeInvestigationEvidenceRefsAmbiguities, resolvePlanReviewInvocationOwner, } from './evidence-object-store.js';
-import { ExitCode, workflowError, } from '../../foundation/errors/errors.js';
-import { assertReadOnlyProbe } from '../../modules/provider-orchestration/execution-core.js';
-import { assertHumanRevocationAuthorization, authorizeHumanRevocation, canonicalHumanRevocationAuthorization, digestHumanRevocationSubject, } from '../../application/control-plane/human-revocation.js';
-import { publishPreparedExclusiveLock, reclaimDeadPreparedLock, } from '../repository-transaction/filesystem-safety.js';
-import { INVESTIGATION_LIMITS, previewInvestigationTermUnion, } from '../../modules/investigation/domain/investigation-terms.js';
-import { WORKFLOW_SUPERSEDE_REASONS, validateWorkflowSupersedeReason, } from '../../modules/authority/intervention-control.js';
-import { recreateProviderInvocationRequest, } from '../../modules/provider-orchestration/provider-contracts.js';
-import { inspectProviderInvocationSupersessionRelations } from '../provider-execution/provider-invocation-supersession-schema.js';
-import { assertDurableProviderExecutionBudgetAuthority, validateProviderExecutionBudgetAuthority, } from '../provider-execution/provider-execution-policy-authority.js';
-import { providerRetentionArtifact, providerRetentionReviewRootArtifact, readCompleteProviderRetentionReceipt, readProviderRetentionReceipt, } from './provider-retention-receipt.js';
-import { isProposeExemptionInvestigationId, readProposeExemptionSession, } from './propose-exemption-store.js';
-import { assertChangeId, assertInvestigationId, assertInvocationId, } from '../session-workspace/paths.js';
+import { deriveAuthorityAuditRepositoryId } from "./authority-audit-ledger.js";
+import { exactUnsafePathObservationDigest, readEvidenceNode, readEvidenceRefs, readInvestigationEvidenceRefsClosure, observeInvestigationEvidenceRefsAmbiguities, resolvePlanReviewInvocationOwner, } from "./evidence-object-store.js";
+import { ExitCode, workflowError, } from "../../foundation/errors/errors.js";
+import { assertReadOnlyProbe } from "../../modules/provider-orchestration/execution-core.js";
+import { assertHumanRevocationAuthorization, authorizeHumanRevocation, canonicalHumanRevocationAuthorization, digestHumanRevocationSubject, } from "../../application/control-plane/human-revocation.js";
+import { publishPreparedExclusiveLock, reclaimDeadPreparedLock, } from "../repository-transaction/filesystem-safety.js";
+import { INVESTIGATION_LIMITS, previewInvestigationTermUnion, } from "../../modules/investigation/domain/investigation-terms.js";
+import { WORKFLOW_SUPERSEDE_REASONS, validateWorkflowSupersedeReason, } from "../../modules/authority/intervention-control.js";
+import { recreateProviderInvocationRequest, } from "../../modules/provider-orchestration/provider-contracts.js";
+import { inspectProviderInvocationSupersessionRelations } from "../provider-execution/provider-invocation-supersession-schema.js";
+import { assertDurableProviderExecutionBudgetAuthority, validateProviderExecutionBudgetAuthority, } from "../provider-execution/provider-execution-policy-authority.js";
+import { providerRetentionArtifact, providerRetentionReviewRootArtifact, readCompleteProviderRetentionReceipt, readProviderRetentionReceipt, } from "./provider-retention-receipt.js";
+import { isProposeExemptionInvestigationId, readProposeExemptionSession, } from "./propose-exemption-store.js";
+import { assertChangeId, assertInvestigationId, assertInvocationId, } from "../session-workspace/paths.js";
 const DIGEST = /^[0-9a-f]{64}$/;
 const PROVIDER_REPAIR_DIGEST = /^sha256:[0-9a-f]{64}$/;
 const GIT_OBJECT_ID = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;

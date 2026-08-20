@@ -1,12 +1,12 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import { canonicalJson } from '../../foundation/canonical-json/canonical-json.js';
-import { acceptAttemptResult, assertAttemptRecord, assertAttemptResult, assertJobRecord, assertWorkflowRecord, createReplacementAttempt, createAttemptResult, decideRetry, executionPolicyChangedFields, projectExecutionFailureState, projectProviderInvocationExecution, requireExecutionJobMandateBinding, } from '../../modules/provider-orchestration/execution-core.js';
-import { createExecutionBudgetGrantRequest } from '../../modules/authority/execution-governance.js';
-import { ExitCode, WorkflowError, workflowError, } from '../../foundation/errors/errors.js';
-import { assertPrivateInvestigationDirectory, createPrivateCanonicalJson, privatePathExists, readPrivateCanonicalJson, withPrivateRuntimeLock, writePrivateCanonicalJsonAtomic, } from './investigation-session-store.js';
-import { readProviderRepairLineage, } from '../provider-execution/provider-execution-governance.js';
+import { canonicalJson } from "../../foundation/canonical-json/canonical-json.js";
+import { acceptAttemptResult, assertAttemptRecord, assertAttemptResult, assertJobRecord, assertWorkflowRecord, createReplacementAttempt, createAttemptResult, decideRetry, executionPolicyChangedFields, projectExecutionFailureState, projectProviderInvocationExecution, requireExecutionJobMandateBinding, } from "../../modules/provider-orchestration/execution-core.js";
+import { createExecutionBudgetGrantRequest } from "../../modules/authority/execution-governance.js";
+import { ExitCode, WorkflowError, workflowError, } from "../../foundation/errors/errors.js";
+import { assertPrivateInvestigationDirectory, createPrivateCanonicalJson, privatePathExists, readPrivateCanonicalJson, withPrivateRuntimeLock, writePrivateCanonicalJsonAtomic, } from "./investigation-session-store.js";
+import { readProviderRepairLineage, } from "../provider-execution/provider-execution-governance.js";
 const EXECUTION_JOB_ID = /^[a-z0-9][a-z0-9._:-]{0,255}$/;
 const DIGEST = /^sha256:[0-9a-f]{64}$/;
 const LEGACY_DIGEST = /^[0-9a-f]{64}$/;

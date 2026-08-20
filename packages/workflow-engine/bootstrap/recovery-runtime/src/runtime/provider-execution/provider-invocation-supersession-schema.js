@@ -1,8 +1,8 @@
 import crypto from 'node:crypto';
 import path from 'node:path';
-import { canonicalJson } from '../../foundation/canonical-json/canonical-json.js';
-import { ExitCode, workflowError } from '../../foundation/errors/errors.js';
-import { assertInvocationId, } from '../session-workspace/paths.js';
+import { canonicalJson } from "../../foundation/canonical-json/canonical-json.js";
+import { ExitCode, workflowError } from "../../foundation/errors/errors.js";
+import { assertInvocationId, } from "../session-workspace/paths.js";
 const DIGEST = /^(?:sha256:)?[0-9a-f]{64}$/;
 const FILE_DIGEST = /^[0-9a-f]{64}$/;
 export function providerInvocationSupersessionPaths(paths) {

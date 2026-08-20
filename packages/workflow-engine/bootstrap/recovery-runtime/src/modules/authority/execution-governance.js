@@ -1,11 +1,11 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import { deriveAuthorityAuditRepositoryId, } from '../../runtime/storage-journal/authority-audit-ledger.js';
-import { recordAuthorityAuditEvent, } from '../../runtime/storage-journal/authority-audit-service.js';
-import { authorityRefusalDigest, withAuthorityRefusalAudit, } from './authority-refusal-audit.js';
-import { canonicalJson } from '../../foundation/canonical-json/canonical-json.js';
-import { ExitCode, workflowError, } from '../../foundation/errors/errors.js';
+import { deriveAuthorityAuditRepositoryId, } from "../../runtime/storage-journal/authority-audit-ledger.js";
+import { recordAuthorityAuditEvent, } from "../../runtime/storage-journal/authority-audit-service.js";
+import { authorityRefusalDigest, withAuthorityRefusalAudit, } from "./authority-refusal-audit.js";
+import { canonicalJson } from "../../foundation/canonical-json/canonical-json.js";
+import { ExitCode, workflowError, } from "../../foundation/errors/errors.js";
 export const EXECUTION_BUDGET_GRANT_SIGNATURE_NAMESPACE = 'HARNESS_EXECUTION_BUDGET_GRANT_V1';
 const SHA256 = /^sha256:[0-9a-f]{64}$/;
 const UUID_V4 = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;

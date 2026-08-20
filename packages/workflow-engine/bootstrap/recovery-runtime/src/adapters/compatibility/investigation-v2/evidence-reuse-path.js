@@ -1,9 +1,9 @@
 import crypto from 'node:crypto';
-import { canonicalJson } from '../../../foundation/canonical-json/canonical-json.js';
-import { createConvergenceRecord, createDescendantReuseProof, parentsCompatible, readConvergenceBinding, readReuseProofBinding, } from './evidence-convergence.js';
-import { evaluateEvidenceCurrentness, validateClosedEvidenceDag, } from './evidence-currentness.js';
-import { assertStoredEvidenceNode, createEvidenceNode, } from './evidence-node.js';
-import { ExitCode, workflowError } from '../../../foundation/errors/errors.js';
+import { canonicalJson } from "../../../foundation/canonical-json/canonical-json.js";
+import { createConvergenceRecord, createDescendantReuseProof, parentsCompatible, readConvergenceBinding, readReuseProofBinding, } from "./evidence-convergence.js";
+import { evaluateEvidenceCurrentness, validateClosedEvidenceDag, } from "./evidence-currentness.js";
+import { assertStoredEvidenceNode, createEvidenceNode, } from "./evidence-node.js";
+import { ExitCode, workflowError } from "../../../foundation/errors/errors.js";
 export const EVIDENCE_CURRENTNESS_VALIDATOR_VERSION = 'evidence-currentness.v1';
 const INVENTORY_CURRENTNESS_TYPE = 'investigation-inventory-currentness';
 const INVENTORY_CURRENTNESS_SCHEMA = 'investigation.inventory-currentness.v1';

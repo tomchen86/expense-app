@@ -1,4 +1,4 @@
-import { ExitCode, workflowError } from '../../foundation/errors/errors.js';
+import { ExitCode, workflowError } from "../../foundation/errors/errors.js";
 const REGISTRY = Object.freeze([
     Object.freeze({
         path: 'docs/CURRENT_AND_NEXT_STEPS.md',

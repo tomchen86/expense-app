@@ -1,10 +1,10 @@
 import crypto from 'node:crypto';
 import { performance } from 'node:perf_hooks';
-import { canonicalJson } from '../../../foundation/canonical-json/canonical-json.js';
-import { createEvidenceNode, } from '../../../adapters/compatibility/investigation-v2/evidence-node.js';
-import { ExitCode, workflowError } from '../../../foundation/errors/errors.js';
-import { assertInvestigationLimits, INVESTIGATION_LIMITS, normalizeInvestigationTerm, } from './investigation-terms.js';
-import { readPinnedTrackedTree, } from '../../../runtime/repository-transaction/tracked-tree-reader.js';
+import { canonicalJson } from "../../../foundation/canonical-json/canonical-json.js";
+import { createEvidenceNode, } from "../../../adapters/compatibility/investigation-v2/evidence-node.js";
+import { ExitCode, workflowError } from "../../../foundation/errors/errors.js";
+import { assertInvestigationLimits, INVESTIGATION_LIMITS, normalizeInvestigationTerm, } from "./investigation-terms.js";
+import { workflowTrackedObjectReaderPort, } from "../../../runtime/repository-transaction/tracked-tree-reader.js";
 const NODE_TYPE = 'investigation-term-scan';
 const NODE_SCHEMA = 'investigation.term-scan.v1';
 const NODE_EVALUATOR = 'investigation-scanner.v1';
@@ -77,7 +77,7 @@ export function scanInvestigationTreeFacts(request) {
         expiresAtMonotonicMillis: performance.now() + limits.maxScanCpuMillis,
     };
     const scanCpuStart = process.cpuUsage();
-    const snapshot = readPinnedTrackedTree({
+    const snapshot = readTrackedTreeForScan(request.trackedObjectReader ?? workflowTrackedObjectReaderPort, {
         repositoryRoot,
         treeOid,
         limits: {
@@ -168,6 +168,54 @@ export function scanInvestigationTreeFacts(request) {
  */
 export function scanInvestigationTree(request) {
     return adaptInvestigationScanFactsResult(scanInvestigationTreeFacts(request));
+}
+function readTrackedTreeForScan(reader, request) {
+    if (reader?.contractVersion !== 'jigwright.tracked-object-reader-port.v1' ||
+        typeof reader.readPinnedTree !== 'function') {
+        throw workflowError('TRACKED_OBJECT_READER_UNSUPPORTED', 'Tracked-object reader contract version is unsupported.', ExitCode.guard);
+    }
+    const snapshot = reader.readPinnedTree(request);
+    if (!isTrackedObjectSnapshot(snapshot) ||
+        snapshot.treeOid !== request.treeOid) {
+        throw workflowError('TRACKED_OBJECT_READER_INVALID', 'Tracked-object reader returned an invalid snapshot.', ExitCode.guard);
+    }
+    return {
+        treeOid: snapshot.treeOid,
+        treeDigest: snapshot.treeDigest,
+        entries: snapshot.entries.map(adaptTrackedObjectEntry),
+        totalScannedBlobBytes: snapshot.totalScannedBlobBytes,
+        budgetExceeded: snapshot.budgetExceeded,
+    };
+}
+function adaptTrackedObjectEntry(entry) {
+    return {
+        path: { rawBase64: entry.path.rawBase64, utf8: entry.path.utf8 },
+        objectId: entry.objectId,
+        objectType: entry.objectType,
+        mode: entry.mode,
+        byteSize: entry.byteSize,
+        ...(entry.content === undefined
+            ? {}
+            : {
+                content: Buffer.isBuffer(entry.content)
+                    ? entry.content
+                    : Buffer.from(entry.content),
+            }),
+        ...(entry.contentSha256 === undefined
+            ? {}
+            : { contentSha256: entry.contentSha256 }),
+        ...(entry.skipReason === undefined ? {} : { skipReason: entry.skipReason }),
+    };
+}
+function isTrackedObjectSnapshot(value) {
+    return (typeof value === 'object' &&
+        value !== null &&
+        /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(value.treeOid) &&
+        /^[0-9a-f]{64}$/.test(value.treeDigest) &&
+        Array.isArray(value.entries) &&
+        Number.isSafeInteger(value.totalScannedBlobBytes) &&
+        value.totalScannedBlobBytes >= 0 &&
+        typeof value.budgetExceeded === 'boolean');
 }
 /**
  * Build the temporary schema-v2 evidence view from one already-computed domain

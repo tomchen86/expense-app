@@ -1,12 +1,12 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import { isPlanningAssuranceBinding, } from '../../adapters/consumer/expense-app/work-registry/contracts.js';
-import { ExitCode, workflowError } from '../../foundation/errors/errors.js';
-import { ensurePlainDirectory, publishPreparedExclusiveLock, reclaimDeadPreparedLock, withPreparedLockCleanupClaim, } from '../repository-transaction/filesystem-safety.js';
-import { assertHumanResolutionLifecycleBarrier, reclaimHumanResolutionJournalTemporaries, } from '../storage-journal/investigation-session-store.js';
-import { assertGrantLifecycleBarrier } from '../storage-journal/grant-store.js';
-import { normalizePolicyPath } from './paths.js';
+import { isPlanningAssuranceBinding, } from "../../adapters/consumer/expense-app/work-registry/contracts.js";
+import { ExitCode, workflowError } from "../../foundation/errors/errors.js";
+import { ensurePlainDirectory, publishPreparedExclusiveLock, reclaimDeadPreparedLock, withPreparedLockCleanupClaim, } from "../repository-transaction/filesystem-safety.js";
+import { assertHumanResolutionLifecycleBarrier, reclaimHumanResolutionJournalTemporaries, } from "../storage-journal/investigation-session-store.js";
+import { assertGrantLifecycleBarrier } from "../storage-journal/grant-store.js";
+import { normalizePolicyPath } from "./paths.js";
 const MAINTAINER_GRANT_STATE_FILE = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\.json$/;
 const SESSION_LOCK_OWNER_TOKEN = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const TASK_REVISION_LEASE_ID = /^revision-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;

@@ -1,6 +1,6 @@
 import crypto from 'node:crypto';
-import { canonicalJson } from '../../../foundation/canonical-json/canonical-json.js';
-import { ExitCode, workflowError } from '../../../foundation/errors/errors.js';
+import { canonicalJson } from "../../../foundation/canonical-json/canonical-json.js";
+import { ExitCode, workflowError } from "../../../foundation/errors/errors.js";
 export const INVESTIGATION_TERM_MATCHING = 'case-sensitive-literal-v1';
 const TERM_KINDS = new Set([
     'literal-content',

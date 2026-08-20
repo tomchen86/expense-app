@@ -1,5 +1,5 @@
 import crypto from 'node:crypto';
-import { ExitCode, workflowError } from '../../../foundation/errors/errors.js';
+import { ExitCode, workflowError } from "../../../foundation/errors/errors.js";
 /**
  * Spot-checking the classes an author drew.
  *

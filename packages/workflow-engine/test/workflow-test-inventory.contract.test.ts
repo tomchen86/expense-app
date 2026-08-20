@@ -21,6 +21,15 @@ import {
 
 const repositoryRoot = path.resolve(import.meta.dirname, '../../..');
 
+const PACKAGE_TEST_PROJECTION_ROOT =
+  'packages/workflow-engine/test/generated/package-tests';
+const PACKAGE_TEST_ROOTS = Object.freeze([
+  'agent-runtime',
+  'core',
+  'fixture-adapter',
+  'grants',
+] as const);
+
 test('the tracked shard manifest owns every physical workflow test exactly once', () => {
   const manifest = loadWorkflowTestShardManifest(repositoryRoot);
   const physicalFiles = expectedPhysicalFiles(manifest);
@@ -32,11 +41,11 @@ test('the tracked shard manifest owns every physical workflow test exactly once'
   assert.equal(manifest.algorithm.version, 1);
   assert.equal(
     manifest.sourceTelemetryDigest,
-    'sha256:131eae67d081623752dfb1f52b9ecd9356e26b70213b3bfc3c43cc5a8b862c2b',
+    'sha256:40adc432e37bdd9eb615012f1d3e5a501b496e43455c6de34cefcad9ddfa0b2b',
   );
   assert.equal(manifest.shards.length, 8);
-  assert.equal(physicalFiles.length, 257);
-  assert.equal(units.length, 255);
+  assert.equal(physicalFiles.length, 282);
+  assert.equal(units.length, 280);
   assert.deepEqual(
     workflowTestShardWrapperPaths(manifest),
     Array.from(
@@ -79,6 +88,48 @@ test('the tracked shard manifest owns every physical workflow test exactly once'
     coverage.expectedFileSetDigest,
     digestWorkflowTestFileSet(physicalFiles),
   );
+});
+
+test('generated package-test wrappers project every extracted package test exactly once', () => {
+  const projections = PACKAGE_TEST_ROOTS.flatMap((packageName) => {
+    const packageRoot = `packages/${packageName}/test`;
+    return listRegularTestFiles(packageRoot).map((source) => {
+      const relative = path.posix.relative(packageRoot, source);
+      return {
+        source,
+        wrapper: path.posix.join(
+          PACKAGE_TEST_PROJECTION_ROOT,
+          packageName,
+          relative,
+        ),
+      };
+    });
+  }).sort((left, right) => left.wrapper.localeCompare(right.wrapper, 'en'));
+  const expectedWrappers = projections.map(({ wrapper }) => wrapper);
+  const observedWrappers = listRegularTestFiles(PACKAGE_TEST_PROJECTION_ROOT);
+
+  assert.equal(
+    new Set(projections.map(({ source }) => source)).size,
+    projections.length,
+  );
+  assert.equal(new Set(expectedWrappers).size, projections.length);
+  assert.deepEqual(observedWrappers, expectedWrappers);
+  const manifest = loadWorkflowTestShardManifest(repositoryRoot);
+  const unitsByEntrypoint = new Map(
+    manifest.shards
+      .flatMap((shard) => shard.units)
+      .map((unit) => [unit.entrypoint, unit] as const),
+  );
+  for (const projection of projections) {
+    assert.equal(
+      fs.readFileSync(path.join(repositoryRoot, projection.wrapper), 'utf8'),
+      projectPackageTestWrapper(projection),
+    );
+    assert.deepEqual(
+      unitsByEntrypoint.get(projection.wrapper)?.ownedPhysicalFiles,
+      [projection.wrapper],
+    );
+  }
 });
 
 test('manifest validation rejects duplicate, missing, and unknown ownership', () => {
@@ -262,6 +313,58 @@ test('a direct root loads its legacy family while a wrapper imports only its bod
 
 function cloneManifest(manifest: WorkflowTestShardManifest): MutableManifest {
   return structuredClone(manifest) as MutableManifest;
+}
+
+function listRegularTestFiles(repositoryRelativeRoot: string): string[] {
+  const absoluteRoot = path.join(repositoryRoot, repositoryRelativeRoot);
+  if (!fs.existsSync(absoluteRoot)) return [];
+  const files: string[] = [];
+  const visit = (directory: string): void => {
+    for (const entry of fs
+      .readdirSync(directory, { withFileTypes: true })
+      .sort((left, right) => left.name.localeCompare(right.name, 'en'))) {
+      const absolute = path.join(directory, entry.name);
+      assert.equal(
+        entry.isSymbolicLink(),
+        false,
+        `test projection cannot contain symlink ${absolute}`,
+      );
+      if (entry.isDirectory()) visit(absolute);
+      else if (entry.isFile() && entry.name.endsWith('.test.ts')) {
+        files.push(
+          path.relative(repositoryRoot, absolute).split(path.sep).join('/'),
+        );
+      }
+    }
+  };
+  visit(absoluteRoot);
+  return files.sort((left, right) => left.localeCompare(right, 'en'));
+}
+
+function projectPackageTestWrapper(
+  projection: Readonly<{ source: string; wrapper: string }>,
+): string {
+  let runnerSpecifier = path.posix.relative(
+    path.posix.dirname(projection.wrapper),
+    `${path.posix.dirname(PACKAGE_TEST_PROJECTION_ROOT)}/package-test-runner.ts`,
+  );
+  if (!runnerSpecifier.startsWith('.'))
+    runnerSpecifier = `./${runnerSpecifier}`;
+  return [
+    '/**',
+    ' * Generated package-test projection.',
+    ` * Source: ${projection.source}`,
+    ' * Do not edit by hand; the workflow test inventory owns this bijection.',
+    ' */',
+    "import test from 'node:test';",
+    '',
+    `import { runProjectedPackageTest } from '${runnerSpecifier}';`,
+    '',
+    "test('projected package test', () => {",
+    '  runProjectedPackageTest(import.meta.url);',
+    '});',
+    '',
+  ].join('\n');
 }
 
 type MutableManifest = {

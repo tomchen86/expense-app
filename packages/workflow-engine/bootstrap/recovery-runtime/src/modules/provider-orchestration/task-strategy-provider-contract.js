@@ -1,8 +1,8 @@
 import crypto from 'node:crypto';
-import { canonicalJson } from '../../foundation/canonical-json/canonical-json.js';
-import { ExitCode, workflowError } from '../../foundation/errors/errors.js';
-import { assertSessionId, normalizeChangedPath, normalizePolicyPath, } from '../../runtime/session-workspace/paths.js';
-import { parseTaskStrategyGreenFailureRecord, } from '../../runtime/storage-journal/task-strategy-correction-store.js';
+import { canonicalJson } from "../../foundation/canonical-json/canonical-json.js";
+import { ExitCode, workflowError } from "../../foundation/errors/errors.js";
+import { assertSessionId, normalizeChangedPath, normalizePolicyPath, } from "../../runtime/session-workspace/paths.js";
+import { parseTaskStrategyGreenFailureRecord, } from "../../runtime/storage-journal/task-strategy-correction-store.js";
 const DIGEST = /^[0-9a-f]{64}$/;
 const GIT_OBJECT_ID = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
 const CHANGE_ID = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;

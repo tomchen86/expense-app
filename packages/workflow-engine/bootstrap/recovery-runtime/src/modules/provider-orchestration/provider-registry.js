@@ -1,4 +1,4 @@
-import { ExitCode, workflowError } from '../../foundation/errors/errors.js';
+import { ExitCode, workflowError } from "../../foundation/errors/errors.js";
 function readOnlyCapabilities() {
     return [
         Object.freeze({ purpose: 'survey', profile: 'repository-read-only' }),

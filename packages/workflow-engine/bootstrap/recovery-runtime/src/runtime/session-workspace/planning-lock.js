@@ -1,10 +1,10 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import { ExitCode, workflowError } from '../../foundation/errors/errors.js';
-import { ensurePlainDirectory, publishPreparedExclusiveLock, reclaimDeadPreparedLock, } from '../repository-transaction/filesystem-safety.js';
-import { assertHumanResolutionLifecycleBarrier } from '../storage-journal/investigation-session-store.js';
-import { assertOwnedLock, listConflictingActiveWorkflowSessionIds, readSessionFile, releaseOwnedLock, withRepositoryLifecycleOperation, } from './session-store.js';
+import { ExitCode, workflowError } from "../../foundation/errors/errors.js";
+import { ensurePlainDirectory, publishPreparedExclusiveLock, reclaimDeadPreparedLock, } from "../repository-transaction/filesystem-safety.js";
+import { assertHumanResolutionLifecycleBarrier } from "../storage-journal/investigation-session-store.js";
+import { assertOwnedLock, listConflictingActiveWorkflowSessionIds, readSessionFile, releaseOwnedLock, withRepositoryLifecycleOperation, } from "./session-store.js";
 const HELD_CHANGE_TRANSITION_AUTHORITY = Symbol('held-change-transition-authority');
 export function withPlanningAuthority(runtime, changeId, operation) {
     return withChangeTransitionAuthority(runtime, changeId, 'plan', operation);

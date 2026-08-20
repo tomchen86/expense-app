@@ -1,7 +1,7 @@
-import { ExitCode, workflowError } from '../../../foundation/errors/errors.js';
-import { evaluateHitPredicate, parseHitPredicate, } from './hit-predicate.js';
-import { compressionEligible, resolvePathRole, } from '../../source/path-role-registry.js';
-import { assessPredicateDiscrimination } from './predicate-discrimination.js';
+import { ExitCode, workflowError } from "../../../foundation/errors/errors.js";
+import { evaluateHitPredicate, parseHitPredicate, } from "./hit-predicate.js";
+import { compressionEligible, resolvePathRole, } from "../../source/path-role-registry.js";
+import { assessPredicateDiscrimination } from "./predicate-discrimination.js";
 /**
  * One written judgement covering a set of scan hits that are the same kind of
  * thing.

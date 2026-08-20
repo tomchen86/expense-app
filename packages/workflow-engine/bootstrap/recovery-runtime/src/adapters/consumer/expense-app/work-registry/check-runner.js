@@ -1,9 +1,9 @@
 import { spawnSync } from 'node:child_process';
 import crypto from 'node:crypto';
-import { canonicalJson } from '../../../../foundation/canonical-json/canonical-json.js';
-import { ExitCode, workflowError, } from '../../../../foundation/errors/errors.js';
-import { normalizeChangedPath } from '../../../../runtime/session-workspace/paths.js';
-import { resolveCheckRunner, } from './runner-resolution.js';
+import { canonicalJson } from "../../../../foundation/canonical-json/canonical-json.js";
+import { ExitCode, workflowError, } from "../../../../foundation/errors/errors.js";
+import { normalizeChangedPath } from "../../../../runtime/session-workspace/paths.js";
+import { resolveCheckRunner, } from "./runner-resolution.js";
 export const OBSERVED_CHECK_FAILURE_EXCERPT_BYTES = 8 * 1024;
 const RED_RESULT_PREFIX = 'WORKFLOW_RED_CHECK_RESULT ';
 export function pinCheckRunner(repositoryRoot, checkId, definition) {

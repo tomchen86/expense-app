@@ -1,7 +1,8 @@
 import crypto from 'node:crypto';
 import path from 'node:path';
-import { canonicalJson } from '../../foundation/canonical-json/canonical-json.js';
-import { ExitCode, workflowError } from '../../foundation/errors/errors.js';
+import { ATTEMPT_STATUSES_V2, JOB_STATUSES_V2, AttemptResultCodecError, assertAttemptAcceptanceBindingV1, createAttemptAcceptanceBindingV1, } from '@jigwright/core/job-attempt-runtime';
+import { canonicalJson } from "../../foundation/canonical-json/canonical-json.js";
+import { ExitCode, workflowError } from "../../foundation/errors/errors.js";
 const DIGEST = /^sha256:[0-9a-f]{64}$/;
 const LEGACY_DIGEST = /^[0-9a-f]{64}$/;
 const GIT_OBJECT_ID = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
@@ -1269,45 +1270,14 @@ export function assertAttemptRecord(value) {
     return deepFreeze(structuredClone(value));
 }
 export function assertAttemptResult(value) {
-    if (!isPlainObject(value) ||
-        !hasExactKeys(value, [
-            'acceptance',
-            'attemptId',
-            'completedAt',
-            'contextDigest',
-            'epoch',
-            'jobId',
-            'outputDigest',
-            'resultId',
-            'schemaVersion',
-            'workflowId',
-        ]) ||
-        value.schemaVersion !== 1 ||
-        !['accepted', 'stale', 'late-duplicate'].includes(String(value.acceptance))) {
+    try {
+        return assertAttemptAcceptanceBindingV1(value);
+    }
+    catch (error) {
+        if (!(error instanceof AttemptResultCodecError))
+            throw error;
         throw executionInvalid('Attempt result is invalid.');
     }
-    assertDigest(value.resultId);
-    assertIdentifier(value.workflowId, 'result workflowId');
-    assertPositiveInteger(value.epoch, 'result epoch');
-    assertDigest(value.contextDigest);
-    assertIdentifier(value.jobId, 'result jobId');
-    assertIdentifier(value.attemptId, 'result attemptId');
-    assertDigest(value.outputDigest);
-    assertTimestamp(value.completedAt);
-    const identity = {
-        workflowId: value.workflowId,
-        epoch: value.epoch,
-        contextDigest: value.contextDigest,
-        jobId: value.jobId,
-        attemptId: value.attemptId,
-        outputDigest: value.outputDigest,
-        acceptance: value.acceptance,
-        completedAt: value.completedAt,
-    };
-    if (digestCanonical(identity) !== value.resultId) {
-        throw executionInvalid('Attempt result identity digest is invalid.');
-    }
-    return deepFreeze(structuredClone(value));
 }
 function assertSemanticJobSpec(value) {
     if (!isPlainObject(value) ||
@@ -1685,7 +1655,7 @@ export function createAttemptResult(inputAttempt, inputOutputDigest, acceptance,
     if (!['accepted', 'stale', 'late-duplicate'].includes(acceptance)) {
         throw executionInvalid('Attempt result acceptance is invalid.');
     }
-    const identity = {
+    return assertAttemptResult(createAttemptAcceptanceBindingV1({
         workflowId: attempt.workflowId,
         epoch: attempt.epoch,
         contextDigest: attempt.contextDigest,
@@ -1694,12 +1664,7 @@ export function createAttemptResult(inputAttempt, inputOutputDigest, acceptance,
         outputDigest,
         acceptance,
         completedAt,
-    };
-    return assertAttemptResult({
-        schemaVersion: 1,
-        resultId: digestCanonical(identity),
-        ...identity,
-    });
+    }));
 }
 function isWithinAutomaticBudget(input) {
     const { job, attempt, failure } = input;
@@ -2154,29 +2119,8 @@ const WORKFLOW_BLOCKERS = new Set([
     'manual-reconciliation',
     'harness-intervention',
 ]);
-const JOB_STATUSES = new Set([
-    'queued',
-    'running',
-    'waiting-retry',
-    'waiting-grant',
-    'waiting-human-input',
-    'succeeded',
-    'failed-terminal',
-    'stale',
-    'cancelled',
-]);
-const ATTEMPT_STATUSES = new Set([
-    'created',
-    'leased',
-    'running',
-    'succeeded',
-    'failed-retryable',
-    'failed-terminal',
-    'timed-out',
-    'stale',
-    'late-duplicate',
-    'cancelled',
-]);
+const JOB_STATUSES = new Set(JOB_STATUSES_V2);
+const ATTEMPT_STATUSES = new Set(ATTEMPT_STATUSES_V2);
 const RETRY_MODES = new Set([
     'same-input',
     'execution-policy-change',

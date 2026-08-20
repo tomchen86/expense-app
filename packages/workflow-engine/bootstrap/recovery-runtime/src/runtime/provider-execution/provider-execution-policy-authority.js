@@ -1,9 +1,9 @@
 import crypto from 'node:crypto';
 import path from 'node:path';
-import { canonicalJson } from '../../foundation/canonical-json/canonical-json.js';
-import { canonicalExecutionBudgetGrantRequest, inspectExecutionBudgetGrantAuthorization, parseExecutionBudgetGrantRequest, } from '../../modules/authority/execution-governance.js';
-import { ExitCode, workflowError } from '../../foundation/errors/errors.js';
-import { MAX_PROVIDER_LIMITS, } from '../../modules/provider-orchestration/provider-contracts.js';
+import { canonicalJson } from "../../foundation/canonical-json/canonical-json.js";
+import { canonicalExecutionBudgetGrantRequest, inspectExecutionBudgetGrantAuthorization, parseExecutionBudgetGrantRequest, } from "../../modules/authority/execution-governance.js";
+import { ExitCode, workflowError } from "../../foundation/errors/errors.js";
+import { MAX_PROVIDER_LIMITS, } from "../../modules/provider-orchestration/provider-contracts.js";
 const SHA256 = /^sha256:[0-9a-f]{64}$/;
 const UUID_V4 = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 /**

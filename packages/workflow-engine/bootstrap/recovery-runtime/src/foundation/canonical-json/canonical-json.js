@@ -1,4 +1,5 @@
-import { ExitCode, workflowError } from '../errors/errors.js';
+import { CanonicalJsonError, canonicalJson as encodeCanonicalJson, compareCanonicalStrings as compareCoreCanonicalStrings, } from '@jigwright/core/canonical-json';
+import { ExitCode, workflowError } from "../errors/errors.js";
 /**
  * Serialize a value to a canonical JSON string: object keys are sorted
  * recursively, array order is preserved, and anything that is not true finite
@@ -8,7 +9,14 @@ import { ExitCode, workflowError } from '../errors/errors.js';
  * CANONICAL_JSON_INVALID instead of being coerced or overflowing the stack.
  */
 export function canonicalJson(value) {
-    return serialize(value, new Set());
+    try {
+        return encodeCanonicalJson(value);
+    }
+    catch (error) {
+        if (error instanceof CanonicalJsonError)
+            throw invalidCanonicalJson();
+        throw error;
+    }
 }
 /**
  * Compare strings by ECMAScript UTF-16 code units. Unlike locale-aware
@@ -16,64 +24,7 @@ export function canonicalJson(value) {
  * by an argument-less Array.prototype.sort().
  */
 export function compareCanonicalStrings(left, right) {
-    return left < right ? -1 : left > right ? 1 : 0;
-}
-function serialize(value, ancestors) {
-    if (value === null) {
-        return 'null';
-    }
-    switch (typeof value) {
-        case 'string':
-            return JSON.stringify(value);
-        case 'boolean':
-            return value ? 'true' : 'false';
-        case 'number':
-            if (!Number.isFinite(value)) {
-                throw invalidCanonicalJson();
-            }
-            return JSON.stringify(value);
-        case 'object': {
-            const container = value;
-            if (ancestors.has(container)) {
-                throw invalidCanonicalJson();
-            }
-            ancestors.add(container);
-            try {
-                return Array.isArray(container)
-                    ? serializeArray(container, ancestors)
-                    : serializeObject(container, ancestors);
-            }
-            finally {
-                ancestors.delete(container);
-            }
-        }
-        default:
-            // undefined, function, symbol, bigint are not JSON data.
-            throw invalidCanonicalJson();
-    }
-}
-function serializeArray(value, ancestors) {
-    const parts = [];
-    for (let index = 0; index < value.length; index += 1) {
-        if (!Object.prototype.hasOwnProperty.call(value, index)) {
-            // A sparse hole is not JSON data.
-            throw invalidCanonicalJson();
-        }
-        parts.push(serialize(value[index], ancestors));
-    }
-    return `[${parts.join(',')}]`;
-}
-function serializeObject(value, ancestors) {
-    const prototype = Object.getPrototypeOf(value);
-    if (prototype !== Object.prototype && prototype !== null) {
-        // Only plain string-keyed objects are canonical JSON data.
-        throw invalidCanonicalJson();
-    }
-    const record = value;
-    const parts = Object.keys(record)
-        .sort(compareCanonicalStrings)
-        .map((key) => `${JSON.stringify(key)}:${serialize(record[key], ancestors)}`);
-    return `{${parts.join(',')}}`;
+    return compareCoreCanonicalStrings(left, right);
 }
 function invalidCanonicalJson() {
     return workflowError('CANONICAL_JSON_INVALID', 'Value cannot be encoded as canonical JSON data.', ExitCode.usage);

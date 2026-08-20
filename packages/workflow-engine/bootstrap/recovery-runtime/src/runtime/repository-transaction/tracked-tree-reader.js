@@ -1,8 +1,8 @@
 import crypto from 'node:crypto';
 import { performance } from 'node:perf_hooks';
-import { canonicalJson } from '../../foundation/canonical-json/canonical-json.js';
-import { ExitCode, workflowError } from '../../foundation/errors/errors.js';
-import { runGitBuffer } from './git.js';
+import { canonicalJson } from "../../foundation/canonical-json/canonical-json.js";
+import { ExitCode, workflowError } from "../../foundation/errors/errors.js";
+import { runGitBuffer } from "./git.js";
 const OBJECT_ID_PATTERN = /^([0-9a-f]{40}|[0-9a-f]{64})$/;
 const TREE_DIGEST_SCHEMA = 'investigation-tree-v1';
 const TAB = 0x09;
@@ -45,6 +45,30 @@ const SENSITIVE_SUFFIXES = [
 export const TRACKED_TREE_LIMITS = {
     maxBlobBytes: 2 * 1024 * 1024,
     maxTotalScannedBytes: 64 * 1024 * 1024,
+};
+export const workflowTrackedObjectReaderPort = {
+    contractVersion: 'jigwright.tracked-object-reader-port.v1',
+    readPinnedTree(request) {
+        return readPinnedTrackedTree({
+            repositoryRoot: request.repositoryRoot,
+            treeOid: request.treeOid,
+            ...(request.limits === undefined
+                ? {}
+                : {
+                    limits: {
+                        maxBlobBytes: request.limits.maxBlobBytes,
+                        maxTotalScannedBytes: request.limits.maxTotalScannedBytes,
+                    },
+                }),
+            ...(request.operationalDeadline === undefined
+                ? {}
+                : {
+                    operationalDeadline: {
+                        expiresAtMonotonicMillis: request.operationalDeadline.expiresAtMonotonicMillis,
+                    },
+                }),
+        });
+    },
 };
 /**
  * Enumerate a pinned Git tree NUL-safely and read the eligible regular text

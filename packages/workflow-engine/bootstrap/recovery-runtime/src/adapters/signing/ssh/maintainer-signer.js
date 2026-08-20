@@ -2,9 +2,9 @@ import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { createTrustedExecutionEnvironment } from '../../../runtime/provider-execution/execution-environment.js';
-import { ExitCode, workflowError } from '../../../foundation/errors/errors.js';
-import { normalizePostApprovalSubprocessError, postApprovalSubprocessBudget, runGit, } from '../../../runtime/repository-transaction/git.js';
+import { createTrustedExecutionEnvironment } from "../../../runtime/provider-execution/execution-environment.js";
+import { ExitCode, workflowError } from "../../../foundation/errors/errors.js";
+import { normalizePostApprovalSubprocessError, postApprovalSubprocessBudget, runGit, } from "../../../runtime/repository-transaction/git.js";
 export function assertInteractiveSignerContext(context) {
     if (!context.stdinIsTty || !context.stdoutIsTty || !context.stderrIsTty) {
         throw workflowError('MAINTAINER_INTERACTIVE_REQUIRED', 'Maintainer grant signing requires controlling input, output, and error terminals.', ExitCode.unsafeEnvironment, {

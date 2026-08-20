@@ -1,17 +1,17 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import { canonicalJson } from '../../foundation/canonical-json/canonical-json.js';
-import { ExitCode, WorkflowError, workflowError, } from '../../foundation/errors/errors.js';
-import { discoverRepository, runGit, } from '../../runtime/repository-transaction/git.js';
-import { parseMaintainerPolicy } from '../../modules/authority/maintainer-policy.js';
-import { recordAuthorityAuditEvent, verifyAuthorityAuditEvents, } from '../../runtime/storage-journal/authority-audit-service.js';
-import { deriveAuthorityAuditRepositoryId, } from '../../runtime/storage-journal/authority-audit-ledger.js';
-import { abandonPersistedIntervention, assertPersistedInterventionAbandonable, capturePersistedWipIntervention, discoverBootstrapUntrackedAllowlist, executePersistedAdoptionStep, initializeLocalEngineBinding, localEngineArtifactPath, materializeInterventionChildWorktree, readLocalEngineBinding, rebindLocalEngineAfterRolledBackAdoption, } from '../../application/control-plane/intervention-control-bootstrap.js';
-import { engineAdoptionRecordPath, recordBootstrapSidecarAdopted, readPersistedIntervention, recoverPersistedEngineAdoption, renewPersistedEngineAdoptionAuthority, } from '../../runtime/storage-journal/intervention-control-persistence.js';
-import { canonicalHarnessMaintenanceGrantPayload, HARNESS_MAINTENANCE_SIGNATURE_NAMESPACE, verifyHarnessMaintenanceGrant, } from '../../modules/authority/intervention-control.js';
-import { buildAndPersistInterventionEngineArtifact, maintenanceApprovalSummary, maintenanceGrantId, persistMaintenanceGrantRecord, preparePersistedEngineAdoptionFromArtifactRecord, readInterventionEngineArtifact, readMaintenanceGrantForParent, revokeMaintenanceGrantForParent, terminalizeExpiredMaintenanceGrantForParent, } from '../../application/control-plane/intervention-maintenance.js';
-import { runtimePaths } from '../../runtime/session-workspace/session-store.js';
+import { canonicalJson } from "../../foundation/canonical-json/canonical-json.js";
+import { ExitCode, WorkflowError, workflowError, } from "../../foundation/errors/errors.js";
+import { discoverRepository, runGit, } from "../../runtime/repository-transaction/git.js";
+import { parseMaintainerPolicy } from "../../modules/authority/maintainer-policy.js";
+import { recordAuthorityAuditEvent, verifyAuthorityAuditEvents, } from "../../runtime/storage-journal/authority-audit-service.js";
+import { deriveAuthorityAuditRepositoryId, } from "../../runtime/storage-journal/authority-audit-ledger.js";
+import { abandonPersistedIntervention, assertPersistedInterventionAbandonable, capturePersistedWipIntervention, discoverBootstrapUntrackedAllowlist, executePersistedAdoptionStep, initializeLocalEngineBinding, localEngineArtifactPath, materializeInterventionChildWorktree, readLocalEngineBinding, rebindLocalEngineAfterRolledBackAdoption, } from "../../application/control-plane/intervention-control-bootstrap.js";
+import { engineAdoptionRecordPath, recordBootstrapSidecarAdopted, readPersistedIntervention, recoverPersistedEngineAdoption, renewPersistedEngineAdoptionAuthority, } from "../../runtime/storage-journal/intervention-control-persistence.js";
+import { canonicalHarnessMaintenanceGrantPayload, HARNESS_MAINTENANCE_SIGNATURE_NAMESPACE, verifyHarnessMaintenanceGrant, } from "../../modules/authority/intervention-control.js";
+import { buildAndPersistInterventionEngineArtifact, maintenanceApprovalSummary, maintenanceGrantId, persistMaintenanceGrantRecord, preparePersistedEngineAdoptionFromArtifactRecord, readInterventionEngineArtifact, readMaintenanceGrantForParent, revokeMaintenanceGrantForParent, terminalizeExpiredMaintenanceGrantForParent, } from "../../application/control-plane/intervention-maintenance.js";
+import { runtimePaths } from "../../runtime/session-workspace/session-store.js";
 const MAX_REQUEST_BYTES = 1024 * 1024;
 /**
  * Effectful local-only harness-bootstrap CLI. The repository-default engine

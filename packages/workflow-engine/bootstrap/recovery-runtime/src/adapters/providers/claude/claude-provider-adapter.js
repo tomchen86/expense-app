@@ -1,4 +1,4 @@
-import { canonicalJson } from '../../../foundation/canonical-json/canonical-json.js';
+import { canonicalJson } from "../../../foundation/canonical-json/canonical-json.js";
 /**
  * Fixed, code-owned absolute Claude executable candidates per platform. Deeply
  * frozen and limited to the canonical Homebrew and `/usr/local` locations; the

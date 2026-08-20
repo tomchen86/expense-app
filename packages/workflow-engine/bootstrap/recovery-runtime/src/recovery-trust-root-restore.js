@@ -1,9 +1,9 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import { canonicalJson } from './foundation/canonical-json/canonical-json.js';
-import { ExitCode, workflowError } from './foundation/errors/errors.js';
-import { assertRecoveryAuthorityDomain, verifyRecoveryAuthorityDescriptor, } from './recovery-authority.js';
+import { canonicalJson } from "./foundation/canonical-json/canonical-json.js";
+import { ExitCode, workflowError } from "./foundation/errors/errors.js";
+import { assertRecoveryAuthorityDomain, verifyRecoveryAuthorityDescriptor, } from "./recovery-authority.js";
 /**
  * Recovery substrate only. This module does not inspect HEAD, load the tracked
  * maintainer policy, replace repository files, or wire the operational root

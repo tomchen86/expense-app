@@ -1,8 +1,8 @@
 import crypto from 'node:crypto';
-import { scanAuthorityAuditLedger, } from '../../runtime/storage-journal/authority-audit-ledger.js';
-import { recordAuthorityAuditEvent, } from '../../runtime/storage-journal/authority-audit-service.js';
-import { canonicalJson } from '../../foundation/canonical-json/canonical-json.js';
-import { WorkflowError } from '../../foundation/errors/errors.js';
+import { scanAuthorityAuditLedger, } from "../../runtime/storage-journal/authority-audit-ledger.js";
+import { recordAuthorityAuditEvent, } from "../../runtime/storage-journal/authority-audit-service.js";
+import { canonicalJson } from "../../foundation/canonical-json/canonical-json.js";
+import { WorkflowError } from "../../foundation/errors/errors.js";
 /**
  * Audit one refusal only after a caller has independently verified the
  * durable authority binding used to construct `binding`. The idempotency key

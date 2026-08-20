@@ -1,8 +1,8 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import { ExitCode, workflowError } from '../../foundation/errors/errors.js';
-import { listBuiltInProviders, } from '../../modules/provider-orchestration/provider-registry.js';
+import { ExitCode, workflowError } from "../../foundation/errors/errors.js";
+import { listBuiltInProviders, } from "../../modules/provider-orchestration/provider-registry.js";
 export const REQUIRED_AI_ADAPTER_CONTROLS = [
     'separate-security-principal',
     'kernel-enforced-write-boundary',
@@ -81,6 +81,10 @@ export function parseLegacyAiAdapterPolicyDocument(content) {
         document: content,
     };
 }
+export const AI_ADAPTER_DATA_AUTHORIZATION_POLICY_PORT = Object.freeze({
+    readCurrent: loadAiAdapterPolicy,
+    parseCurrentDocument: parseAiAdapterPolicyDocument,
+});
 function parsePolicyJson(content) {
     if (typeof content !== 'string' || Buffer.byteLength(content) > 1_048_576) {
         throw invalidPolicy();

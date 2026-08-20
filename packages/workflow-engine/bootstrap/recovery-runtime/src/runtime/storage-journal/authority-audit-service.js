@@ -1,9 +1,9 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import { appendAuthorityAuditRecord, authorityAuditLedgerPaths, scanAuthorityAuditLedger, } from './authority-audit-ledger.js';
-import { canonicalJson } from '../../foundation/canonical-json/canonical-json.js';
-import { ExitCode, workflowError } from '../../foundation/errors/errors.js';
+import { appendAuthorityAuditRecord, authorityAuditLedgerPaths, scanAuthorityAuditLedger, } from "./authority-audit-ledger.js";
+import { canonicalJson } from "../../foundation/canonical-json/canonical-json.js";
+import { ExitCode, workflowError } from "../../foundation/errors/errors.js";
 const DIGEST = /^sha256:[0-9a-f]{64}$/;
 const IDENTITY = /^[A-Za-z0-9][A-Za-z0-9._:@/+-]{0,191}$/;
 const SUBJECT = /^[A-Za-z0-9][A-Za-z0-9._:@/+-]{0,255}$/;

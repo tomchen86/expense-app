@@ -1,11 +1,11 @@
 import crypto from 'node:crypto';
-import { canonicalJson } from '../../../foundation/canonical-json/canonical-json.js';
-import { parseTasks, } from '../../consumer/expense-app/work-registry/contracts.js';
-import { ExitCode, workflowError } from '../../../foundation/errors/errors.js';
-import { commitFacts } from '../../../runtime/repository-transaction/git-transitions.js';
-import { runGit, runGitBuffer, } from '../../../runtime/repository-transaction/git.js';
-import { ManagedTrailerSyntaxError, parseManagedTrailers, } from '../../../modules/lifecycle/managed-trailers.js';
-import { normalizeChangedPath } from '../../../runtime/session-workspace/paths.js';
+import { canonicalJson } from "../../../foundation/canonical-json/canonical-json.js";
+import { parseTasks, } from "../../consumer/expense-app/work-registry/contracts.js";
+import { ExitCode, workflowError } from "../../../foundation/errors/errors.js";
+import { commitFacts } from "../../../runtime/repository-transaction/git-transitions.js";
+import { runGit, runGitBuffer, } from "../../../runtime/repository-transaction/git.js";
+import { ManagedTrailerSyntaxError, parseManagedTrailers, } from "../../../modules/lifecycle/managed-trailers.js";
+import { normalizeChangedPath } from "../../../runtime/session-workspace/paths.js";
 /**
  * The single change whose authored plan predates investigation-first planning.
  * The migration is deliberately not a general capability: a legacy plan may be

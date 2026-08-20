@@ -1,9 +1,9 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { canonicalJson } from '../../foundation/canonical-json/canonical-json.js';
-import { isRecord } from '../../foundation/canonical-json/contract-values.js';
-import { ExitCode, workflowError } from '../../foundation/errors/errors.js';
-import { freezeGrantCanonical as freezeCanonical, GRANT_SHA256_DIGEST as SHA256_DIGEST, grantHasAllowedKeys as hasAllowedExactKeys, grantHasExactKeys as hasExactKeys, grantSameStrings as sameStrings, grantSha256 as sha256, } from './grant-primitives.js';
+import { canonicalJson } from "../../foundation/canonical-json/canonical-json.js";
+import { isRecord } from "../../foundation/canonical-json/contract-values.js";
+import { ExitCode, workflowError } from "../../foundation/errors/errors.js";
+import { freezeGrantCanonical as freezeCanonical, GRANT_SHA256_DIGEST as SHA256_DIGEST, grantHasAllowedKeys as hasAllowedExactKeys, grantHasExactKeys as hasExactKeys, grantSameStrings as sameStrings, grantSha256 as sha256, } from "./grant-primitives.js";
 const PROFILE_ID = /^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/;
 const MODULE_ID = PROFILE_ID;
 const MODULE_VERSION = /^[1-9][0-9]*$/;

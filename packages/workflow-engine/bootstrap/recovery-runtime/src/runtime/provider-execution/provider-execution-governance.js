@@ -1,11 +1,11 @@
 import crypto from 'node:crypto';
 import path from 'node:path';
-import { canonicalJson } from '../../foundation/canonical-json/canonical-json.js';
-import { createReplacementAttempt, projectProviderInvocationExecution, providerExecutionEnvironmentDigest, providerExecutionPolicySnapshot, } from '../../modules/provider-orchestration/execution-core.js';
-import { assembleCurrentPromptFromStore, buildContextManifest, buildRepairContext, canonicalRepairBudget, canonicalRepairContext, createRepairBudget, initializeDurableEpochContextStore, inspectDurableEpochContextStore, inspectDurableRetentionCatalog, parseRepairBudget, parseRepairContext, rolloverDurableEpochContextStore, storeDurableEvidence, consumeRepairBudget, withCurrentDurableEpochContextStore, } from '../../modules/authority/execution-governance.js';
-import { ExitCode, WorkflowError, workflowError, } from '../../foundation/errors/errors.js';
-import { createPrivateCanonicalJson, privatePathExists, readPrivateCanonicalJson, } from '../storage-journal/investigation-session-store.js';
-import { assertInvestigationId, } from '../session-workspace/paths.js';
+import { canonicalJson } from "../../foundation/canonical-json/canonical-json.js";
+import { createReplacementAttempt, projectProviderInvocationExecution, providerExecutionEnvironmentDigest, providerExecutionPolicySnapshot, } from "../../modules/provider-orchestration/execution-core.js";
+import { assembleCurrentPromptFromStore, buildContextManifest, buildRepairContext, canonicalRepairBudget, canonicalRepairContext, createRepairBudget, initializeDurableEpochContextStore, inspectDurableEpochContextStore, inspectDurableRetentionCatalog, parseRepairBudget, parseRepairContext, rolloverDurableEpochContextStore, storeDurableEvidence, consumeRepairBudget, withCurrentDurableEpochContextStore, } from "../../modules/authority/execution-governance.js";
+import { ExitCode, WorkflowError, workflowError, } from "../../foundation/errors/errors.js";
+import { createPrivateCanonicalJson, privatePathExists, readPrivateCanonicalJson, } from "../storage-journal/investigation-session-store.js";
+import { assertInvestigationId, } from "../session-workspace/paths.js";
 const MAX_REPAIR_VALUE_BYTES = 262_144;
 const MAX_REPAIR_ERRORS = 64;
 const MAX_REPAIR_ERROR_MESSAGE_BYTES = 4_096;

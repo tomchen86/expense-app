@@ -1,4 +1,4 @@
-import { ExitCode, workflowError } from '../../foundation/errors/errors.js';
+import { ExitCode, workflowError } from "../../foundation/errors/errors.js";
 /**
  * The single authority boundary shared by review domains. Callers must first
  * authenticate the closer through their domain-specific mechanism (for

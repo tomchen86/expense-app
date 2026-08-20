@@ -1,5 +1,5 @@
 import crypto from 'node:crypto';
-import { canonicalJson } from '../../foundation/canonical-json/canonical-json.js';
+import { canonicalJson } from "../../foundation/canonical-json/canonical-json.js";
 export const GRANT_STABLE_ID = /^[a-z][a-z0-9]*(?:[.-][a-z0-9]+)*$/;
 export const GRANT_SHA256_DIGEST = /^sha256:[0-9a-f]{64}$/;
 export const GRANT_UUID_V4 = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;

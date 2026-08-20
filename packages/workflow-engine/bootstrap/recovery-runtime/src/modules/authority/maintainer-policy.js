@@ -1,8 +1,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { isRecord, isStringArray, } from '../../foundation/canonical-json/contract-values.js';
-import { ExitCode, workflowError } from '../../foundation/errors/errors.js';
-import { matchesAllowedPath, normalizePolicyPath, } from '../../runtime/session-workspace/paths.js';
+import { isRecord, isStringArray, } from "../../foundation/canonical-json/contract-values.js";
+import { ExitCode, workflowError } from "../../foundation/errors/errors.js";
+import { matchesAllowedPath, normalizePolicyPath, } from "../../runtime/session-workspace/paths.js";
 const CHECK_ID = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 const SIGNER_ID = /^[a-zA-Z0-9][a-zA-Z0-9._@+-]{0,127}$/;
 const SSH_PUBLIC_KEY = /^ssh-(?:ed25519|ed25519-sk|rsa|ecdsa-[^ ]+) [A-Za-z0-9+/]+={0,2}$/;

@@ -1,27 +1,27 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import { parseAiAdapterPolicyDocument, parseLegacyAiAdapterPolicyDocument, } from '../provider-execution/ai-adapter-policy.js';
-import { canonicalJson } from '../../foundation/canonical-json/canonical-json.js';
-import { resolvePlanReviewInvocationOwner, resolveTaskDiffReviewInvocationOwner, resolveTaskStrategyImplementationInvocationOwner, } from './evidence-object-store.js';
-import { ExitCode, workflowError } from '../../foundation/errors/errors.js';
-import { assertReadOnlyProbe, projectProviderInvocationExecution, } from '../../modules/provider-orchestration/execution-core.js';
-import { acceptLegacyProviderAttemptResult, materializeLegacyProviderExecutionJob, readExecutionJobState, } from './execution-store.js';
-import { assertPrivateInvestigationDirectory, createPrivateCanonicalJson, ensurePrivateInvestigationDirectory, listProviderInvocationLifecycleProjections, privatePathExists, readHumanResolutionHead, readHumanResolutionNode, readPrivateCanonicalJson, scanProviderInvocationLifecycles, withPrivateRuntimeLock, writePrivateCanonicalJsonAtomic, } from './investigation-session-store.js';
-import { assertDurableProviderExecutionBudgetAuthority as assertStoredProviderExecutionBudgetAuthority, createProviderExecutionBudgetAuthority, validateProviderExecutionBudgetAuthority, } from '../provider-execution/provider-execution-policy-authority.js';
-import { createProviderInvocationRequest, evaluateProviderProcess, } from '../../modules/provider-orchestration/provider-contracts.js';
-import { PROVIDER_RUNNER_RESIDUALS, } from '../provider-execution/provider-runner.js';
-import { INVESTIGATION_LIMITS, normalizeInvestigationTerm, } from '../../modules/investigation/domain/investigation-terms.js';
-import { assertChangeId, assertInvestigationId, assertInvocationId, assertSessionId, assertTaskId, } from '../session-workspace/paths.js';
-import { registerProviderRetentionInvocation } from './provider-retention-catalog.js';
-import { providerRetentionArtifact, providerRetentionReviewRootArtifact, readCompleteProviderRetentionReceipt, } from './provider-retention-receipt.js';
-import { assertProviderPromptContextCurrent, assertProviderRepairAuthorityCurrent, createProviderRepairLineage, ensureProviderPromptContext, persistProviderRepairEvidence, prepareProviderPromptContextForInvocation, readProviderRepairAuthorityBinding, registerProviderRuntimeEvidence, withCurrentProviderPromptContext, } from '../provider-execution/provider-execution-governance.js';
-import { assertProviderInvocationSupersessionEndpointCurrent, finalizeProviderInvocationSupersession, prepareProviderInvocationSupersession, readProviderInvocationEvidenceRecord, recoverProviderInvocationSupersessionTransaction, resumePreparedProviderInvocationSupersession, } from '../provider-execution/provider-invocation-supersession.js';
-import { PLAN_REVIEW_OUTPUT_SCHEMA, PLAN_REVIEW_OUTPUT_VALIDATOR, assertPlanReviewTargetSnapshot, assertPlanReviewSubject, planReviewSnapshotLineCount, } from '../../modules/assurance/plan-review.js';
-import { assertTaskDiffReviewChallengeResponseCurrent, parseTaskDiffReviewChallengeResponseRecord, parseTaskDiffReviewRecord, TASK_DIFF_REVIEW_CONTINUATION_OUTPUT_SCHEMA, TASK_DIFF_REVIEW_CONTINUATION_OUTPUT_VALIDATOR, TASK_DIFF_REVIEW_OUTPUT_SCHEMA, TASK_DIFF_REVIEW_OUTPUT_VALIDATOR, } from '../../modules/assurance/task-diff-review-artifact.js';
-import { parseTaskDiffReviewScope, parseTaskDiffReviewSubject, } from '../../modules/assurance/task-diff-review.js';
-import { TASK_STRATEGY_IMPLEMENTATION_OUTPUT_SCHEMA, TASK_STRATEGY_IMPLEMENTATION_OUTPUT_VALIDATOR, assertTaskStrategyImplementationManifest, } from '../../modules/provider-orchestration/task-strategy-provider-contract.js';
-import { runtimePaths, withRepositoryLifecycleOperation, } from '../session-workspace/session-store.js';
+import { parseAiAdapterPolicyDocument, parseLegacyAiAdapterPolicyDocument, } from "../provider-execution/ai-adapter-policy.js";
+import { canonicalJson } from "../../foundation/canonical-json/canonical-json.js";
+import { resolvePlanReviewInvocationOwner, resolveTaskDiffReviewInvocationOwner, resolveTaskStrategyImplementationInvocationOwner, } from "./evidence-object-store.js";
+import { ExitCode, workflowError } from "../../foundation/errors/errors.js";
+import { assertReadOnlyProbe, projectProviderInvocationExecution, } from "../../modules/provider-orchestration/execution-core.js";
+import { acceptLegacyProviderAttemptResult, materializeLegacyProviderExecutionJob, readExecutionJobState, } from "./execution-store.js";
+import { assertPrivateInvestigationDirectory, createPrivateCanonicalJson, ensurePrivateInvestigationDirectory, listProviderInvocationLifecycleProjections, privatePathExists, readHumanResolutionHead, readHumanResolutionNode, readPrivateCanonicalJson, scanProviderInvocationLifecycles, withPrivateRuntimeLock, writePrivateCanonicalJsonAtomic, } from "./investigation-session-store.js";
+import { assertDurableProviderExecutionBudgetAuthority as assertStoredProviderExecutionBudgetAuthority, createProviderExecutionBudgetAuthority, validateProviderExecutionBudgetAuthority, } from "../provider-execution/provider-execution-policy-authority.js";
+import { createProviderInvocationRequest, evaluateProviderProcess, } from "../../modules/provider-orchestration/provider-contracts.js";
+import { PROVIDER_RUNNER_RESIDUALS } from "../provider-execution/provider-runner.js";
+import { INVESTIGATION_LIMITS, normalizeInvestigationTerm, } from "../../modules/investigation/domain/investigation-terms.js";
+import { assertChangeId, assertInvestigationId, assertInvocationId, assertSessionId, assertTaskId, } from "../session-workspace/paths.js";
+import { registerProviderRetentionInvocation } from "./provider-retention-catalog.js";
+import { providerRetentionArtifact, providerRetentionReviewRootArtifact, readCompleteProviderRetentionReceipt, } from "./provider-retention-receipt.js";
+import { assertProviderPromptContextCurrent, assertProviderRepairAuthorityCurrent, createProviderRepairLineage, ensureProviderPromptContext, persistProviderRepairEvidence, prepareProviderPromptContextForInvocation, readProviderRepairAuthorityBinding, registerProviderRuntimeEvidence, withCurrentProviderPromptContext, } from "../provider-execution/provider-execution-governance.js";
+import { assertProviderInvocationSupersessionEndpointCurrent, finalizeProviderInvocationSupersession, prepareProviderInvocationSupersession, readProviderInvocationEvidenceRecord, recoverProviderInvocationSupersessionTransaction, resumePreparedProviderInvocationSupersession, } from "../provider-execution/provider-invocation-supersession.js";
+import { PLAN_REVIEW_OUTPUT_SCHEMA, PLAN_REVIEW_OUTPUT_VALIDATOR, assertPlanReviewTargetSnapshot, assertPlanReviewSubject, planReviewSnapshotLineCount, } from "../../modules/assurance/plan-review.js";
+import { assertTaskDiffReviewChallengeResponseCurrent, parseTaskDiffReviewChallengeResponseRecord, parseTaskDiffReviewRecord, TASK_DIFF_REVIEW_CONTINUATION_OUTPUT_SCHEMA, TASK_DIFF_REVIEW_CONTINUATION_OUTPUT_VALIDATOR, TASK_DIFF_REVIEW_OUTPUT_SCHEMA, TASK_DIFF_REVIEW_OUTPUT_VALIDATOR, } from "../../modules/assurance/task-diff-review-artifact.js";
+import { parseTaskDiffReviewScope, parseTaskDiffReviewSubject, } from "../../modules/assurance/task-diff-review.js";
+import { TASK_STRATEGY_IMPLEMENTATION_OUTPUT_SCHEMA, TASK_STRATEGY_IMPLEMENTATION_OUTPUT_VALIDATOR, assertTaskStrategyImplementationManifest, } from "../../modules/provider-orchestration/task-strategy-provider-contract.js";
+import { runtimePaths, withRepositoryLifecycleOperation, } from "../session-workspace/session-store.js";
 const DIGEST = /^[0-9a-f]{64}$/;
 const GIT_OBJECT_ID = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
 const MAX_BLIND_MANIFEST_BYTES = 262_144;
@@ -348,6 +348,39 @@ export function readProviderInvocation(paths, requestedInvocationId) {
     }));
     return record;
 }
+/**
+ * Read one optional async receipt only after re-admitting its durable
+ * Job/Attempt projection. Historical and synchronous records intentionally
+ * return null instead of being rewritten.
+ */
+export function readProviderInvocationRuntimeReceipt(paths, requestedInvocationId) {
+    const record = readProviderInvocation(paths, requestedInvocationId);
+    const receipt = record.runtimeReceipt;
+    if (receipt === undefined)
+        return null;
+    const execution = readExecutionJobState(paths, receipt.executionJobId);
+    const attempt = execution?.attempts.find(({ attemptId }) => attemptId === receipt.executionAttemptId);
+    const terminalStatusMatches = receipt.terminalState === 'succeeded'
+        ? attempt?.status === 'succeeded' || attempt?.status === 'late-duplicate'
+        : attempt !== undefined &&
+            [
+                'failed-retryable',
+                'failed-terminal',
+                'timed-out',
+                'stale',
+                'cancelled',
+            ].includes(attempt.status);
+    if (execution === null ||
+        execution.revision <= receipt.executionRevision ||
+        attempt === undefined ||
+        attempt.jobId !== receipt.executionJobId ||
+        attempt.legacyInvocation?.invocationId !== receipt.invocationId ||
+        attempt.legacyInvocation.legacyRevision !== receipt.terminalRevision ||
+        !terminalStatusMatches) {
+        throw invocationInvalid();
+    }
+    return receipt;
+}
 function readProviderInvocationCore(paths, requestedInvocationId) {
     const invocationId = assertInvocationId(requestedInvocationId);
     const value = readPrivateCanonicalJson(paths, providerInvocationStatePath(paths, invocationId), invocationUnsafe);
@@ -366,6 +399,13 @@ function readProviderInvocationCore(paths, requestedInvocationId) {
         (record.result !== null &&
             canonicalJson(assertProviderResult(request, record.result, providerOutputSchemaGeneration(request), 'legacy-subset')) !== canonicalJson(record.result))) {
         throw invocationInvalid();
+    }
+    if (record.runtimeReceipt !== undefined) {
+        const projection = projectProviderInvocationExecution({ record, request });
+        if (record.runtimeReceipt.executionJobId !== projection.job.jobId ||
+            record.runtimeReceipt.executionAttemptId !== projection.attempt.attemptId) {
+            throw invocationInvalid();
+        }
     }
     if (manifest.kind === 'plan-review-manifest' &&
         resolvePlanReviewInvocationOwner(paths, {
@@ -1102,6 +1142,15 @@ export function completeProviderInvocationFromRunnerUnderLifecycleLock(paths, re
     const completed = withCurrentProviderPromptContext(paths.root, input.acceptanceBinding.context, () => updateProviderInvocation(paths, invocationId, input.expectedRevision, (current) => {
         assertCurrentLease(current, input.leaseGeneration, input.leaseToken, now);
         assertProviderInvocationAcceptanceBindingCurrent(paths, input.acceptanceBinding);
+        const runtimeReceipt = input.runtimeProgress === undefined
+            ? undefined
+            : createAgentRuntimeCompletionReceipt({
+                current,
+                request,
+                acceptanceBinding: input.acceptanceBinding,
+                terminalState: 'succeeded',
+                progress: input.runtimeProgress,
+            });
         persistProviderCompletionCandidate(paths, {
             current,
             request,
@@ -1109,6 +1158,7 @@ export function completeProviderInvocationFromRunnerUnderLifecycleLock(paths, re
             leaseToken: input.leaseToken,
             result,
             completedAt: new Date(now).toISOString(),
+            ...(runtimeReceipt === undefined ? {} : { runtimeReceipt }),
         });
         persistProviderExecutionResult(paths, current, request, input.leaseGeneration, input.leaseToken, result.outputDigest, now, input.acceptanceBinding.executionRevision);
         if (input.simulateCrashAfterExecutionAcceptance === true) {
@@ -1121,6 +1171,7 @@ export function completeProviderInvocationFromRunnerUnderLifecycleLock(paths, re
             lease: null,
             result,
             failure: null,
+            ...(runtimeReceipt === undefined ? {} : { runtimeReceipt }),
             updatedAt: new Date(now).toISOString(),
         };
     }));
@@ -1156,7 +1207,9 @@ export function recoverProviderInvocationCompletionUnderLifecycleLock(paths, req
         if (current.state === 'succeeded' && current.result !== null) {
             const candidateMatches = candidate === null ||
                 (current.revision === candidate.expectedLegacyRevision + 1 &&
-                    canonicalJson(current.result) === canonicalJson(candidate.result));
+                    canonicalJson(current.result) === canonicalJson(candidate.result) &&
+                    canonicalJson(current.runtimeReceipt ?? null) ===
+                        canonicalJson(candidate.runtimeReceipt ?? null));
             const expectedRevisionMatches = current.revision === input.expectedLegacyRevision ||
                 candidate?.expectedLegacyRevision === input.expectedLegacyRevision;
             if (candidateMatches &&
@@ -1192,6 +1245,9 @@ export function recoverProviderInvocationCompletionUnderLifecycleLock(paths, req
             lease: null,
             result: candidate.result,
             failure: null,
+            ...(candidate.runtimeReceipt === undefined
+                ? {}
+                : { runtimeReceipt: candidate.runtimeReceipt }),
             updatedAt: candidate.completedAt,
         });
         assertMonotonicInvocationTransition(current, next);
@@ -1241,6 +1297,9 @@ function persistProviderCompletionCandidate(paths, input) {
         leaseGeneration: input.leaseGeneration,
         leaseTokenDigest: sha256(input.leaseToken),
         result,
+        ...(input.runtimeReceipt === undefined
+            ? {}
+            : { runtimeReceipt: input.runtimeReceipt }),
         completedAt: input.completedAt,
     };
     const candidate = {
@@ -1271,6 +1330,9 @@ function readProviderCompletionCandidate(paths, invocationId, request) {
             'leaseTokenDigest',
             'requestDigest',
             'result',
+            ...(Object.prototype.hasOwnProperty.call(value, 'runtimeReceipt')
+                ? ['runtimeReceipt']
+                : []),
             'schemaVersion',
         ]) ||
         value.schemaVersion !== 1 ||
@@ -1287,6 +1349,17 @@ function readProviderCompletionCandidate(paths, invocationId, request) {
         throw invocationUnsafe();
     }
     const result = assertProviderResult(request, value.result, providerOutputSchemaGeneration(request), 'legacy-subset');
+    const runtimeReceipt = Object.prototype.hasOwnProperty.call(value, 'runtimeReceipt')
+        ? assertAgentRuntimeCompletionReceipt(value.runtimeReceipt)
+        : undefined;
+    if (runtimeReceipt !== undefined &&
+        (runtimeReceipt.invocationId !== invocationId ||
+            runtimeReceipt.requestDigest !== request.requestDigest ||
+            runtimeReceipt.leasedRevision !== value.expectedLegacyRevision ||
+            runtimeReceipt.leaseGeneration !== value.leaseGeneration ||
+            runtimeReceipt.terminalState !== 'succeeded')) {
+        throw invocationUnsafe();
+    }
     const payload = { ...value };
     delete payload.candidateDigest;
     if (sha256(canonicalJson(payload)) !== value.candidateDigest) {
@@ -1295,6 +1368,7 @@ function readProviderCompletionCandidate(paths, invocationId, request) {
     return deepFreeze({
         ...value,
         result,
+        ...(runtimeReceipt === undefined ? {} : { runtimeReceipt }),
     });
 }
 function materializeProviderExecutionState(paths, current, request) {
@@ -1373,6 +1447,15 @@ export function failProviderInvocation(paths, requestedInvocationId, input) {
                 recordedAt: new Date(now).toISOString(),
             });
         }
+        const runtimeReceipt = input.runtimeEvidence === undefined
+            ? undefined
+            : createAgentRuntimeCompletionReceipt({
+                current,
+                request: readProviderInvocationRequest(paths, invocationId),
+                acceptanceBinding: input.runtimeEvidence.acceptanceBinding,
+                terminalState: 'failed',
+                progress: input.runtimeEvidence.progress,
+            });
         return {
             ...current,
             revision: current.revision + 1,
@@ -1380,9 +1463,44 @@ export function failProviderInvocation(paths, requestedInvocationId, input) {
             lease: null,
             result: null,
             failure,
+            ...(runtimeReceipt === undefined ? {} : { runtimeReceipt }),
             updatedAt: new Date(now).toISOString(),
         };
     }));
+}
+function createAgentRuntimeCompletionReceipt(input) {
+    assertProviderAcceptanceBinding(input.acceptanceBinding);
+    if (input.current.state !== 'leased' ||
+        input.current.lease === null ||
+        input.acceptanceBinding.invocationId !== input.current.invocationId ||
+        input.acceptanceBinding.requestDigest !== input.request.requestDigest ||
+        input.acceptanceBinding.requestDigest !== input.current.requestDigest ||
+        input.acceptanceBinding.legacyRevision !== input.current.revision ||
+        input.acceptanceBinding.leaseGeneration !== input.current.leaseGeneration) {
+        throw providerAcceptanceBindingStale();
+    }
+    const progress = assertAgentRuntimeProcessProgress(input.progress);
+    const payload = {
+        schemaVersion: 1,
+        kind: 'agent-runtime-completion-receipt',
+        invocationId: input.current.invocationId,
+        requestDigest: input.request.requestDigest,
+        leasedRevision: input.current.revision,
+        terminalRevision: input.current.revision + 1,
+        leaseGeneration: input.current.leaseGeneration,
+        executionJobId: input.acceptanceBinding.executionJobId,
+        executionAttemptId: input.acceptanceBinding.executionAttemptId,
+        executionRevision: input.acceptanceBinding.executionRevision,
+        executionStateDigest: input.acceptanceBinding.executionStateDigest,
+        acceptanceBindingDigest: input.acceptanceBinding.bindingDigest,
+        terminalState: input.terminalState,
+        launched: true,
+        progress,
+    };
+    return assertAgentRuntimeCompletionReceipt({
+        ...payload,
+        receiptDigest: sha256(canonicalJson(payload)),
+    });
 }
 function withProviderWorkerLifecycle(paths, operation) {
     const runtimeRoot = path.dirname(paths.root);
@@ -2355,6 +2473,9 @@ function assertProviderInvocationRecord(value) {
             'lease',
             'result',
             'failure',
+            ...(Object.prototype.hasOwnProperty.call(value, 'runtimeReceipt')
+                ? ['runtimeReceipt']
+                : []),
             'createdAt',
             'updatedAt',
         ]) ||
@@ -2388,6 +2509,9 @@ function assertProviderInvocationRecord(value) {
     assertInvocationId(value.invocationId);
     assertInvestigationId(value.investigationId);
     assertChangeId(value.changeId);
+    const runtimeReceipt = Object.prototype.hasOwnProperty.call(value, 'runtimeReceipt')
+        ? assertAgentRuntimeCompletionReceipt(value.runtimeReceipt)
+        : undefined;
     if ((value.state === 'prepared' &&
         (value.lease !== null ||
             value.result !== null ||
@@ -2404,10 +2528,114 @@ function assertProviderInvocationRecord(value) {
             (value.lease !== null ||
                 value.result !== null ||
                 value.failure === null)) ||
-        (value.lease !== null && value.lease.generation !== value.leaseGeneration)) {
+        (value.lease !== null &&
+            value.lease.generation !== value.leaseGeneration) ||
+        (runtimeReceipt !== undefined &&
+            (value.state !== runtimeReceipt.terminalState ||
+                value.invocationId !== runtimeReceipt.invocationId ||
+                value.requestDigest !== runtimeReceipt.requestDigest ||
+                value.revision !== runtimeReceipt.terminalRevision ||
+                value.leaseGeneration !== runtimeReceipt.leaseGeneration))) {
         throw invocationInvalid();
     }
-    return value;
+    return (runtimeReceipt === undefined ? value : { ...value, runtimeReceipt });
+}
+function assertAgentRuntimeCompletionReceipt(value) {
+    if (!isRecord(value) ||
+        !hasExactKeys(value, [
+            'schemaVersion',
+            'kind',
+            'invocationId',
+            'requestDigest',
+            'leasedRevision',
+            'terminalRevision',
+            'leaseGeneration',
+            'executionJobId',
+            'executionAttemptId',
+            'executionRevision',
+            'executionStateDigest',
+            'acceptanceBindingDigest',
+            'terminalState',
+            'launched',
+            'progress',
+            'receiptDigest',
+        ]) ||
+        value.schemaVersion !== 1 ||
+        value.kind !== 'agent-runtime-completion-receipt' ||
+        typeof value.invocationId !== 'string' ||
+        !isDigest(value.requestDigest) ||
+        !Number.isSafeInteger(value.leasedRevision) ||
+        value.leasedRevision < 0 ||
+        !Number.isSafeInteger(value.terminalRevision) ||
+        value.terminalRevision !== value.leasedRevision + 1 ||
+        !Number.isSafeInteger(value.leaseGeneration) ||
+        value.leaseGeneration < 1 ||
+        typeof value.executionJobId !== 'string' ||
+        !/^[a-z0-9][a-z0-9._:-]{0,255}$/.test(value.executionJobId) ||
+        typeof value.executionAttemptId !== 'string' ||
+        !/^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,511}$/u.test(value.executionAttemptId) ||
+        !Number.isSafeInteger(value.executionRevision) ||
+        value.executionRevision < 0 ||
+        !isDigest(value.executionStateDigest) ||
+        !isDigest(value.acceptanceBindingDigest) ||
+        (value.terminalState !== 'succeeded' && value.terminalState !== 'failed') ||
+        value.launched !== true ||
+        !isDigest(value.receiptDigest)) {
+        throw invocationInvalid();
+    }
+    assertInvocationId(value.invocationId);
+    const progress = assertAgentRuntimeProcessProgress(value.progress);
+    if ((value.terminalState === 'succeeded' &&
+        progress.processState !== 'exited') ||
+        sha256(canonicalJson(Object.fromEntries(Object.entries(value).filter(([key]) => key !== 'receiptDigest')))) !== value.receiptDigest) {
+        throw invocationInvalid();
+    }
+    return deepFreeze(structuredClone({ ...value, progress }));
+}
+function assertAgentRuntimeProcessProgress(value) {
+    if (!isRecord(value) ||
+        !hasExactKeys(value, [
+            'schemaVersion',
+            'kind',
+            'processState',
+            'eventCount',
+            'stdoutBytes',
+            'stderrBytes',
+            'lastProcessActivityElapsedMs',
+            'lastProviderActivityElapsedMs',
+        ]) ||
+        value.schemaVersion !== 1 ||
+        value.kind !== 'agent-runtime-process-progress' ||
+        ![
+            'not-started',
+            'running',
+            'exited',
+            'timed-out',
+            'cancelled',
+            'output-limit',
+            'spawn-error',
+            'protocol-error',
+        ].includes(String(value.processState)) ||
+        !Number.isSafeInteger(value.eventCount) ||
+        value.eventCount < 0 ||
+        !Number.isSafeInteger(value.stdoutBytes) ||
+        value.stdoutBytes < 0 ||
+        !Number.isSafeInteger(value.stderrBytes) ||
+        value.stderrBytes < 0 ||
+        !isNullableNonnegativeInteger(value.lastProcessActivityElapsedMs) ||
+        !isNullableNonnegativeInteger(value.lastProviderActivityElapsedMs) ||
+        (value.eventCount === 0) !==
+            (value.lastProcessActivityElapsedMs === null) ||
+        (value.lastProviderActivityElapsedMs !== null &&
+            (value.lastProcessActivityElapsedMs === null ||
+                value.lastProviderActivityElapsedMs >
+                    value.lastProcessActivityElapsedMs))) {
+        throw invocationInvalid();
+    }
+    return deepFreeze(structuredClone(value));
+}
+function isNullableNonnegativeInteger(value) {
+    return (value === null || (Number.isSafeInteger(value) && value >= 0));
 }
 function assertMonotonicInvocationTransition(current, next) {
     for (const key of [

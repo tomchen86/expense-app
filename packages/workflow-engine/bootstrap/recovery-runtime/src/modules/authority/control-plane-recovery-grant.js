@@ -1,8 +1,8 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import { canonicalJson } from '../../foundation/canonical-json/canonical-json.js';
-import { ExitCode, workflowError, } from '../../foundation/errors/errors.js';
+import { canonicalJson } from "../../foundation/canonical-json/canonical-json.js";
+import { ExitCode, workflowError, } from "../../foundation/errors/errors.js";
 export const HARNESS_RECOVERY_SIGNATURE_NAMESPACE = 'HARNESS_RECOVERY_GRANT_V1';
 export const CONTROL_PLANE_RECOVERY_GRANT_TTL_MS = 5 * 60 * 1000;
 const PRIVATE_DIRECTORY_MODE = 0o700;

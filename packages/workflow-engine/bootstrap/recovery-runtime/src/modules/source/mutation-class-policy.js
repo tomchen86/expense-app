@@ -1,6 +1,6 @@
 import crypto from 'node:crypto';
-import { canonicalJson } from '../../foundation/canonical-json/canonical-json.js';
-import { ExitCode, workflowError, } from '../../foundation/errors/errors.js';
+import { canonicalJson } from "../../foundation/canonical-json/canonical-json.js";
+import { ExitCode, workflowError, } from "../../foundation/errors/errors.js";
 /**
  * The exact governed mutation classes the scanner and grouping projection see.
  * The list is explicit and ordered so it is reviewed with the engine source. It

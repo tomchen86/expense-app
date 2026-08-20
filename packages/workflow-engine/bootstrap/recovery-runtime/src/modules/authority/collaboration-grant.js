@@ -1,14 +1,18 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import { ExitCode, WorkflowError, workflowError, } from '../../foundation/errors/errors.js';
-import { discoverRepository, runGit, } from '../../runtime/repository-transaction/git.js';
-import { parseMaintainerPolicy, } from './maintainer-policy.js';
-import { createInteractiveSshSigner, } from '../../adapters/signing/ssh/maintainer-signer.js';
-import { collaborationGrantStorePaths, storeAvailableCollaborationGrant, } from '../../runtime/storage-journal/collaboration-grant-store.js';
-import { isProviderId, } from '../provider-orchestration/provider-registry.js';
-import { assertChangeId, assertTaskId, } from '../../runtime/session-workspace/paths.js';
-export const COLLABORATION_GRANT_SIGNATURE_NAMESPACE = 'expense-app.workflow.collaboration-grant.v1';
+import { COLLABORATION_GRANT_ENVELOPE_READER_CONTRACT_VERSION_V1, COLLABORATION_GRANT_V1_SIGNATURE_NAMESPACE as PACKAGE_COLLABORATION_GRANT_V1_SIGNATURE_NAMESPACE, COLLABORATION_GRANT_V2_SIGNATURE_NAMESPACE as PACKAGE_COLLABORATION_GRANT_V2_SIGNATURE_NAMESPACE, CollaborationGrantEnvelopeReaderError, canonicalCollaborationGrantEnvelopeBytesV1, canonicalCollaborationGrantPayloadBytesV1, parseCollaborationGrantEnvelopeV1, readAndVerifyCollaborationGrantEnvelopeV1, selectCollaborationGrantSignatureNamespaceV1, } from '@jigwright/grants/collaboration-grant-envelope-reader';
+import { ExitCode, WorkflowError, workflowError, } from "../../foundation/errors/errors.js";
+import { discoverRepository, runGit, } from "../../runtime/repository-transaction/git.js";
+import { parseMaintainerPolicy, } from "./maintainer-policy.js";
+import { createInteractiveSshSigner, } from "../../adapters/signing/ssh/maintainer-signer.js";
+import { collaborationGrantStorePaths, storeAvailableCollaborationGrant, } from "../../runtime/storage-journal/collaboration-grant-store.js";
+import { isProviderId, } from "../provider-orchestration/provider-registry.js";
+import { assertChangeId, assertTaskId, } from "../../runtime/session-workspace/paths.js";
+export const COLLABORATION_GRANT_V1_SIGNATURE_NAMESPACE = PACKAGE_COLLABORATION_GRANT_V1_SIGNATURE_NAMESPACE;
+export const COLLABORATION_GRANT_V2_SIGNATURE_NAMESPACE = PACKAGE_COLLABORATION_GRANT_V2_SIGNATURE_NAMESPACE;
+/** Historical compatibility alias. New grants are issued as V2. */
+export const COLLABORATION_GRANT_SIGNATURE_NAMESPACE = COLLABORATION_GRANT_V1_SIGNATURE_NAMESPACE;
 export const DIRECT_HUMAN_REVIEW_SIGNATURE_NAMESPACE = 'expense-app.workflow.direct-human-review.v1';
 export const COLLABORATION_GRANT_AUTHORIZED_EFFECT = 'role-independence-degradation-only';
 export const COLLABORATION_GRANT_REPLAY_SCOPE = 'repository-common-dir-local';
@@ -73,7 +77,7 @@ const FULL_OID = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
 const DIGEST = /^[0-9a-f]{64}$/;
 const GRANT_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const IDENTITY = /^[A-Za-z0-9][A-Za-z0-9._@:+/-]{0,127}$/;
-const PAYLOAD_KEYS = [
+const V1_PAYLOAD_KEYS = [
     'version',
     'grantId',
     'repositoryId',
@@ -96,6 +100,11 @@ const PAYLOAD_KEYS = [
     'maxUses',
     'signer',
 ];
+const V2_PAYLOAD_KEYS = [
+    'version',
+    'signatureNamespace',
+    ...V1_PAYLOAD_KEYS.slice(1),
+];
 const DIRECT_HUMAN_PAYLOAD_KEYS = [
     'version',
     'grantId',
@@ -107,34 +116,39 @@ const DIRECT_HUMAN_PAYLOAD_KEYS = [
     'signedAt',
     'signer',
 ];
+const COLLABORATION_GRANT_PAYLOAD_CODEC = {
+    v1PayloadKeys: V1_PAYLOAD_KEYS,
+    v2PayloadKeys: V2_PAYLOAD_KEYS,
+    parsePayload(value) {
+        assertCollaborationPayloadShape(value);
+        return value;
+    },
+    projectPayloadFields: collaborationGrantPayloadFields,
+    validateSignature: assertArmoredSignature,
+};
 export function canonicalCollaborationGrantPayload(payload) {
-    return `${JSON.stringify({
-        version: payload.version,
-        grantId: payload.grantId,
-        repositoryId: payload.repositoryId,
-        repositoryOrigin: payload.repositoryOrigin,
-        policyBlob: payload.policyBlob,
-        collaborationPolicyDigest: payload.collaborationPolicyDigest,
-        changeId: payload.changeId,
-        taskId: payload.taskId,
-        baselineCommit: payload.baselineCommit,
-        baselineTree: payload.baselineTree,
-        targetDigest: payload.targetDigest,
-        lifecyclePhase: payload.lifecyclePhase,
-        rolePair: canonicalRolePair(payload.rolePair),
-        availableActor: canonicalAvailableActor(payload.availableActor),
-        degradedForm: payload.degradedForm,
-        authorizedEffect: payload.authorizedEffect,
-        reason: payload.reason,
-        issuedAt: payload.issuedAt,
-        expiresAt: payload.expiresAt,
-        maxUses: payload.maxUses,
-        signer: payload.signer,
-    })}\n`;
+    try {
+        return canonicalCollaborationGrantPayloadBytesV1(payload, COLLABORATION_GRANT_PAYLOAD_CODEC);
+    }
+    catch (error) {
+        throw collaborationReaderInvalid(error, 'Collaboration grant payload version or signature namespace is invalid.');
+    }
+}
+export function collaborationGrantSignatureNamespace(payload) {
+    try {
+        return selectCollaborationGrantSignatureNamespaceV1(payload);
+    }
+    catch (error) {
+        throw collaborationReaderInvalid(error, 'Collaboration grant payload version or signature namespace is invalid.');
+    }
 }
 export function canonicalCollaborationGrantEnvelope(envelope) {
-    const payload = JSON.parse(canonicalCollaborationGrantPayload(envelope.payload));
-    return `${JSON.stringify({ payload, signature: envelope.signature })}\n`;
+    try {
+        return canonicalCollaborationGrantEnvelopeBytesV1(envelope, COLLABORATION_GRANT_PAYLOAD_CODEC);
+    }
+    catch (error) {
+        throw collaborationReaderInvalid(error, 'Collaboration grant envelope is invalid.');
+    }
 }
 export function collaborationGrantEnvelopeDigest(envelope) {
     return crypto
@@ -205,34 +219,14 @@ export function assertCollaborationGrantId(value) {
 }
 export function parseCollaborationGrantEnvelope(raw) {
     try {
-        if (typeof raw !== 'string' || raw.length > 32_768) {
-            throw new Error('invalid envelope size');
-        }
-        const value = JSON.parse(raw);
-        if (!isPlainRecord(value) ||
-            !hasExactDataKeys(value, ['payload', 'signature']) ||
-            !isPlainRecord(value.payload) ||
-            !hasExactDataKeys(value.payload, PAYLOAD_KEYS) ||
-            typeof value.signature !== 'string') {
-            throw new Error('invalid envelope shape');
-        }
-        const envelope = {
-            payload: value.payload,
-            signature: value.signature,
-        };
-        assertArmoredSignature(envelope.signature);
+        const envelope = parseCollaborationGrantEnvelopeV1(raw, COLLABORATION_GRANT_PAYLOAD_CODEC);
         assertCollaborationGrantId(envelope.payload.grantId);
-        assertCollaborationPayloadShape(envelope.payload);
-        if (canonicalCollaborationGrantEnvelope(envelope) !== raw) {
-            throw new Error('non-canonical envelope');
-        }
-        return deepFreeze(envelope);
+        return envelope;
     }
     catch (error) {
-        if (error instanceof WorkflowError) {
-            throw error.code === 'COLLABORATION_SIGNATURE_INVALID'
-                ? error
-                : collaborationInvalid('Collaboration grant envelope is invalid.');
+        const signatureError = collaborationReaderSignatureCause(error);
+        if (signatureError) {
+            throw signatureError;
         }
         throw collaborationInvalid('Collaboration grant envelope is invalid.');
     }
@@ -288,7 +282,8 @@ export function issueCollaborationGrant(cwd, request, options = {}) {
     signer.assertHumanPresent();
     const signerIdentity = signer.identity();
     const payload = {
-        version: 1,
+        version: 2,
+        signatureNamespace: COLLABORATION_GRANT_V2_SIGNATURE_NAMESPACE,
         grantId,
         repositoryId: policy.repository.id,
         repositoryOrigin: policy.repository.origin,
@@ -323,9 +318,9 @@ export function issueCollaborationGrant(cwd, request, options = {}) {
     const canonicalPayload = canonicalCollaborationGrantPayload(payload);
     let signature;
     try {
-        signature = signer.sign(canonicalPayload, COLLABORATION_GRANT_SIGNATURE_NAMESPACE);
+        signature = signer.sign(canonicalPayload, COLLABORATION_GRANT_V2_SIGNATURE_NAMESPACE);
         assertArmoredSignature(signature);
-        signer.verify(canonicalPayload, signature, signerIdentity, COLLABORATION_GRANT_SIGNATURE_NAMESPACE);
+        signer.verify(canonicalPayload, signature, signerIdentity, COLLABORATION_GRANT_V2_SIGNATURE_NAMESPACE);
     }
     catch (error) {
         throw collaborationSignatureInvalid(error);
@@ -432,30 +427,52 @@ export function validateDirectHumanReviewAttestation(attestation, options) {
     return parsed;
 }
 export function validateCollaborationGrantEnvelope(envelope, policy, options) {
+    return verifyCollaborationGrantCapability(envelope, policy, options).envelope;
+}
+export function verifyCollaborationGrantCapability(envelope, policy, options) {
     if (!isPlainRecord(envelope) ||
         !hasExactDataKeys(envelope, ['payload', 'signature']) ||
         !isPlainRecord(envelope.payload) ||
-        !hasExactDataKeys(envelope.payload, PAYLOAD_KEYS) ||
+        !hasExactCollaborationPayloadKeys(envelope.payload) ||
         typeof envelope.signature !== 'string') {
         throw collaborationInvalid('Collaboration grant envelope shape is invalid.');
     }
-    const parsed = parseCollaborationGrantEnvelope(canonicalCollaborationGrantEnvelope(envelope));
-    validateCollaborationGrantPayload(parsed.payload, policy, {
-        now: options.now,
-        expectedPolicyBlob: options.expected.policyBlob,
-        allowExpired: options.allowExpired,
-    });
-    if (canonicalExpectedBinding(bindingFromPayload(parsed.payload)) !==
-        canonicalExpectedBinding(options.expected)) {
-        throw collaborationBindingMismatch('Collaboration grant does not match the exact requested transition.');
-    }
     try {
-        options.verifier.verify(canonicalCollaborationGrantPayload(parsed.payload), parsed.signature, parsed.payload.signer, COLLABORATION_GRANT_SIGNATURE_NAMESPACE);
+        const verified = readAndVerifyCollaborationGrantEnvelopeV1({
+            readerContractVersion: COLLABORATION_GRANT_ENVELOPE_READER_CONTRACT_VERSION_V1,
+            raw: canonicalCollaborationGrantEnvelope(envelope),
+            codec: COLLABORATION_GRANT_PAYLOAD_CODEC,
+            validatePayload(payload) {
+                validateCollaborationGrantPayload(payload, policy, {
+                    now: options.now,
+                    expectedPolicyBlob: options.expected.policyBlob,
+                    allowExpired: options.allowExpired,
+                });
+                if (canonicalExpectedBinding(bindingFromPayload(payload)) !==
+                    canonicalExpectedBinding(options.expected)) {
+                    throw collaborationBindingMismatch('Collaboration grant does not match the exact requested transition.');
+                }
+            },
+            authorizedEffect: (payload) => payload.authorizedEffect,
+            signer: (payload) => payload.signer,
+            allowedAuthorizedEffects: [COLLABORATION_GRANT_AUTHORIZED_EFFECT],
+            verifier: options.verifier,
+        });
+        return deepFreeze(verified);
     }
     catch (error) {
+        if (error instanceof WorkflowError) {
+            throw error;
+        }
+        const signatureError = collaborationReaderSignatureCause(error);
+        if (signatureError) {
+            throw signatureError;
+        }
+        if (error instanceof CollaborationGrantEnvelopeReaderError) {
+            throw collaborationInvalid('Collaboration grant envelope is invalid.');
+        }
         throw collaborationSignatureInvalid(error);
     }
-    return parsed;
 }
 export function validateCollaborationGrantPayload(payload, policy, options) {
     assertCollaborationPayloadShape(payload);
@@ -522,24 +539,44 @@ export function bindingFromPayload(payload) {
         reason: payload.reason,
     };
 }
-function assertCollaborationPayloadShape(payload) {
-    if (!isPlainRecord(payload) ||
-        !hasExactDataKeys(payload, PAYLOAD_KEYS) ||
-        payload.version !== 1 ||
+function assertCollaborationPayloadShape(candidate) {
+    if (!isPlainRecord(candidate)) {
+        throw collaborationInvalid('Collaboration grant payload shape is invalid.');
+    }
+    const payload = candidate;
+    if (!hasExactCollaborationPayloadKeys(payload) ||
+        (payload.version !== 1 && payload.version !== 2) ||
+        (payload.version === 2 &&
+            payload.signatureNamespace !==
+                COLLABORATION_GRANT_V2_SIGNATURE_NAMESPACE) ||
+        typeof payload.grantId !== 'string' ||
         !GRANT_ID.test(payload.grantId) ||
         typeof payload.repositoryId !== 'string' ||
         payload.repositoryId.length === 0 ||
         typeof payload.repositoryOrigin !== 'string' ||
         payload.repositoryOrigin.length === 0 ||
+        typeof payload.policyBlob !== 'string' ||
         !FULL_OID.test(payload.policyBlob) ||
+        typeof payload.collaborationPolicyDigest !== 'string' ||
         !DIGEST.test(payload.collaborationPolicyDigest) ||
+        typeof payload.changeId !== 'string' ||
+        (payload.taskId !== null && typeof payload.taskId !== 'string') ||
+        typeof payload.baselineCommit !== 'string' ||
         !FULL_OID.test(payload.baselineCommit) ||
+        typeof payload.baselineTree !== 'string' ||
         !FULL_OID.test(payload.baselineTree) ||
         payload.baselineCommit.length !== payload.baselineTree.length ||
+        typeof payload.targetDigest !== 'string' ||
         !DIGEST.test(payload.targetDigest) ||
+        !isCollaborationLifecyclePhase(payload.lifecyclePhase) ||
+        !isCollaborationDegradedForm(payload.degradedForm) ||
         payload.authorizedEffect !== COLLABORATION_GRANT_AUTHORIZED_EFFECT ||
+        typeof payload.reason !== 'string' ||
+        typeof payload.issuedAt !== 'string' ||
+        typeof payload.expiresAt !== 'string' ||
         payload.maxUses !== 1 ||
         !validReason(payload.reason) ||
+        typeof payload.signer !== 'string' ||
         !IDENTITY.test(payload.signer)) {
         throw collaborationInvalid('Collaboration grant payload shape is invalid.');
     }
@@ -556,7 +593,10 @@ function assertCollaborationPayloadShape(payload) {
     if (!collaborationPermittedForms(payload.lifecyclePhase).includes(payload.degradedForm)) {
         throw collaborationInvalid('Collaboration policy does not permit this degraded form.');
     }
-    assertAvailableActor(payload.availableActor, payload.degradedForm, payload);
+    assertAvailableActor(payload.availableActor, payload.degradedForm, {
+        lifecyclePhase: payload.lifecyclePhase,
+        signer: payload.signer,
+    });
 }
 export function collaborationPolicyDigestForPhase(phase) {
     return phase === 'task-diff-review'
@@ -646,6 +686,30 @@ function canonicalAvailableActor(actor) {
         assurance: 'maintainer-signed',
     };
 }
+function collaborationGrantPayloadFields(payload) {
+    return {
+        grantId: payload.grantId,
+        repositoryId: payload.repositoryId,
+        repositoryOrigin: payload.repositoryOrigin,
+        policyBlob: payload.policyBlob,
+        collaborationPolicyDigest: payload.collaborationPolicyDigest,
+        changeId: payload.changeId,
+        taskId: payload.taskId,
+        baselineCommit: payload.baselineCommit,
+        baselineTree: payload.baselineTree,
+        targetDigest: payload.targetDigest,
+        lifecyclePhase: payload.lifecyclePhase,
+        rolePair: canonicalRolePair(payload.rolePair),
+        availableActor: canonicalAvailableActor(payload.availableActor),
+        degradedForm: payload.degradedForm,
+        authorizedEffect: payload.authorizedEffect,
+        reason: payload.reason,
+        issuedAt: payload.issuedAt,
+        expiresAt: payload.expiresAt,
+        maxUses: payload.maxUses,
+        signer: payload.signer,
+    };
+}
 function canonicalExpectedBinding(binding) {
     return JSON.stringify({
         repositoryId: binding.repositoryId,
@@ -725,6 +789,17 @@ function isActorAssurance(value) {
         value === 'runtime-hint' ||
         value === 'adapter-assigned');
 }
+function isCollaborationLifecyclePhase(value) {
+    return (value === 'blind-survey' ||
+        value === 'plan-review' ||
+        value === 'task-diff-review' ||
+        value === 'task-implementation');
+}
+function isCollaborationDegradedForm(value) {
+    return (value === 'same-provider-fresh-session' ||
+        value === 'caller-supplied' ||
+        value === 'direct-human-review');
+}
 function validReason(value) {
     return (typeof value === 'string' &&
         value.length >= 12 &&
@@ -766,6 +841,15 @@ function hasExactDataKeys(value, expected) {
     return (actual.length === keys.length &&
         actual.every((entry, index) => entry === keys[index]));
 }
+function hasExactCollaborationPayloadKeys(value) {
+    if (value.version === 1) {
+        return hasExactDataKeys(value, V1_PAYLOAD_KEYS);
+    }
+    if (value.version === 2) {
+        return hasExactDataKeys(value, V2_PAYLOAD_KEYS);
+    }
+    return false;
+}
 function deepFreeze(value) {
     if (value && typeof value === 'object' && !Object.isFrozen(value)) {
         for (const child of Object.values(value)) {
@@ -790,6 +874,18 @@ function collaborationSignatureInvalid(cause) {
             cause: cause instanceof Error ? cause.message : String(cause),
         },
     });
+}
+function collaborationReaderInvalid(error, message) {
+    return (collaborationReaderSignatureCause(error) ?? collaborationInvalid(message));
+}
+function collaborationReaderSignatureCause(error) {
+    if (error instanceof WorkflowError &&
+        error.code === 'COLLABORATION_SIGNATURE_INVALID') {
+        return error;
+    }
+    return error instanceof Error && error.cause !== undefined
+        ? collaborationReaderSignatureCause(error.cause)
+        : null;
 }
 function directHumanReviewInvalid() {
     return workflowError('DIRECT_HUMAN_REVIEW_INVALID', 'Direct-human review attestation is invalid.', ExitCode.guard);

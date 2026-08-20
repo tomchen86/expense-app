@@ -1,10 +1,10 @@
-import { ExitCode, workflowError } from '../../foundation/errors/errors.js';
-import { encodeDocumentationClosure, } from '../managed-documents/contracts/documentation-closure.js';
+import { ExitCode, workflowError } from "../../foundation/errors/errors.js";
+import { encodeDocumentationClosure, } from "../managed-documents/contracts/documentation-closure.js";
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { listChangedPaths, runGit, runGitWithEnvironment } from './git.js';
-import { normalizeChangedPath } from '../session-workspace/paths.js';
+import { listChangedPaths, runGit, runGitWithEnvironment } from "./git.js";
+import { normalizeChangedPath } from "../session-workspace/paths.js";
 /**
  * Compute the prospective checked tree and the current real index tree using an
  * isolated temporary index, enforcing the same expected-changed-path and

@@ -1,7 +1,7 @@
 import crypto from 'node:crypto';
 import path from 'node:path';
-import { canonicalJson, compareCanonicalStrings, } from '../../foundation/canonical-json/canonical-json.js';
-import { ExitCode, workflowError } from '../../foundation/errors/errors.js';
+import { canonicalJson, compareCanonicalStrings, } from "../../foundation/canonical-json/canonical-json.js";
+import { ExitCode, workflowError } from "../../foundation/errors/errors.js";
 export const HARNESS_MAINTENANCE_SIGNATURE_NAMESPACE = 'expense-app.harness-maintenance-grant.v1';
 export const CONTROL_PLANE_SIGNATURE_NAMESPACE = 'expense-app.control-plane-grant.v1';
 export const CONTROL_PLANE_REVIEW_SIGNATURE_NAMESPACE = 'expense-app.control-plane-independent-review.v1';

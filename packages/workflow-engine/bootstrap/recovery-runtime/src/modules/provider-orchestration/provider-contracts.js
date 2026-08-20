@@ -1,7 +1,7 @@
 import crypto from 'node:crypto';
-import { canonicalJson } from '../../foundation/canonical-json/canonical-json.js';
-import { ExitCode, workflowError, } from '../../foundation/errors/errors.js';
-import { isProviderId, requireProviderCapability, } from './provider-registry.js';
+import { canonicalJson } from "../../foundation/canonical-json/canonical-json.js";
+import { ExitCode, workflowError, } from "../../foundation/errors/errors.js";
+import { isProviderId, requireProviderCapability, } from "./provider-registry.js";
 const HEX64 = /^[0-9a-f]{64}$/;
 const GIT_OBJECT_ID = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
 const REQUEST_SCHEMA_VERSION = 1;

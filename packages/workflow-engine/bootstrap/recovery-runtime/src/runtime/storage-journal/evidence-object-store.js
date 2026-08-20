@@ -1,16 +1,16 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import { canonicalJson } from '../../foundation/canonical-json/canonical-json.js';
-import { ExitCode, workflowError } from '../../foundation/errors/errors.js';
-import { publishPreparedExclusiveLock, reclaimDeadPreparedLock, } from '../repository-transaction/filesystem-safety.js';
-import { assertStoredEvidenceNode, canonicalEvidenceNodeEnvelope, } from '../../adapters/compatibility/investigation-v2/evidence-node.js';
-import { assertInvestigationApplicability, INVESTIGATION_APPLICABILITY_POLICY_DIGEST, } from '../../modules/investigation/domain/investigation-applicability.js';
-import { assertPlanReviewSubject, readPlanReviewTargetSnapshotNode, } from '../../modules/assurance/plan-review.js';
-import { assertChangeId, assertInvestigationId, } from '../session-workspace/paths.js';
-import { PROPOSE_EXEMPTION_SESSION_STORE_POLICY_DIGEST, PROPOSE_POLICY_DIGEST, isProviderRoleAssignment, recreateProviderInvocationRequest, } from '../../modules/provider-orchestration/provider-contracts.js';
-import { parseTaskDiffReviewSubject, TASK_DIFF_REVIEW_POLICY_DIGEST, } from '../../modules/assurance/task-diff-review.js';
-import { TASK_STRATEGY_IMPLEMENTATION_POLICY_DIGEST, assertTaskStrategyImplementationSubject, } from '../../modules/provider-orchestration/task-strategy-provider-contract.js';
+import { canonicalJson } from "../../foundation/canonical-json/canonical-json.js";
+import { ExitCode, workflowError } from "../../foundation/errors/errors.js";
+import { publishPreparedExclusiveLock, reclaimDeadPreparedLock, } from "../repository-transaction/filesystem-safety.js";
+import { assertStoredEvidenceNode, canonicalEvidenceNodeEnvelope, } from "../../adapters/compatibility/investigation-v2/evidence-node.js";
+import { assertInvestigationApplicability, INVESTIGATION_APPLICABILITY_POLICY_DIGEST, } from "../../modules/investigation/domain/investigation-applicability.js";
+import { assertPlanReviewSubject, readPlanReviewTargetSnapshotNode, } from "../../modules/assurance/plan-review.js";
+import { assertChangeId, assertInvestigationId, } from "../session-workspace/paths.js";
+import { PROPOSE_EXEMPTION_SESSION_STORE_POLICY_DIGEST, PROPOSE_POLICY_DIGEST, isProviderRoleAssignment, recreateProviderInvocationRequest, } from "../../modules/provider-orchestration/provider-contracts.js";
+import { parseTaskDiffReviewSubject, TASK_DIFF_REVIEW_POLICY_DIGEST, } from "../../modules/assurance/task-diff-review.js";
+import { TASK_STRATEGY_IMPLEMENTATION_POLICY_DIGEST, assertTaskStrategyImplementationSubject, } from "../../modules/provider-orchestration/task-strategy-provider-contract.js";
 const DIGEST_PATTERN = /^[0-9a-f]{64}$/;
 const REF_NAME_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*(?:\/[a-z0-9]+(?:-[a-z0-9]+)*)*$/;
 const NO_FOLLOW_CREATE = fs.constants.O_RDWR |

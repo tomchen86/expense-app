@@ -1,9 +1,9 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import { canonicalJson } from '../../foundation/canonical-json/canonical-json.js';
-import { ExitCode, workflowError } from '../../foundation/errors/errors.js';
-import { createEngineArtifact, } from '../../modules/authority/intervention-control.js';
+import { canonicalJson } from "../../foundation/canonical-json/canonical-json.js";
+import { ExitCode, workflowError } from "../../foundation/errors/errors.js";
+import { createEngineArtifact, } from "../../modules/authority/intervention-control.js";
 const MAX_RECORD_BYTES = 4 * 1024 * 1024;
 export function interventionEngineArtifactRecordPath(storageRoot, artifactId) {
     assertDigest(artifactId);
