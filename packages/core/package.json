@@ -9,6 +9,7 @@
     "./contract-values": "./src/contract-values.ts",
     "./data-authorization-policy-port": "./src/data-authorization-policy-port.ts",
     "./job-attempt-runtime": "./src/job-attempt-runtime.ts",
+    "./managed-transition-trailers": "./src/managed-transition-trailers.ts",
     "./planning-provider-binding": "./src/planning-provider-binding.ts",
     "./planning-provider-port": "./src/planning-provider-port.ts",
     "./repository-path": "./src/repository-path.ts",

@@ -15,6 +15,9 @@
         "../core/src/check-registry-port.ts"
       ],
       "@jigwright/core/contract-values": ["../core/src/contract-values.ts"],
+      "@jigwright/core/managed-transition-trailers": [
+        "../core/src/managed-transition-trailers.ts"
+      ],
       "@jigwright/core/repository-path": ["../core/src/repository-path.ts"],
       "@jigwright/core/session-runtime-layout-port": [
         "../core/src/session-runtime-layout-port.ts"

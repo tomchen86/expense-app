@@ -28,6 +28,9 @@
       "@jigwright/core/job-attempt-runtime": [
         "../core/src/job-attempt-runtime.ts"
       ],
+      "@jigwright/core/managed-transition-trailers": [
+        "../core/src/managed-transition-trailers.ts"
+      ],
       "@jigwright/core/planning-provider-binding": [
         "../core/src/planning-provider-binding.ts"
       ],
