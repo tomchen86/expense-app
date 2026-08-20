@@ -1,11 +1,11 @@
 {
-  "name": "@jigwright/fixture-adapter",
+  "name": "@jigwright/openspec-adapter",
   "private": true,
   "type": "module",
   "exports": {
-    ".": "./src/fixture-check-registry.ts",
-    "./session-runtime-layout": "./src/fixture-session-runtime-layout.ts",
-    "./tracked-object-reader": "./src/fixture-tracked-object-reader.ts"
+    ".": "./src/index.ts",
+    "./planning-provider": "./src/planning-provider.ts",
+    "./provider-binding": "./src/provider-binding.ts"
   },
   "scripts": {
     "test": "node --experimental-strip-types --test test/*.test.ts",

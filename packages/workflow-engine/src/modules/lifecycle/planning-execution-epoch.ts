@@ -2,6 +2,8 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 
+import { defaultSessionRuntimeLayoutPort } from '@jigwright/core/session-runtime-layout-port';
+
 import { canonicalJson } from '../../foundation/canonical-json/canonical-json.ts';
 import { loadWorkflowConfig } from '../../adapters/consumer/expense-app/work-registry/contracts.ts';
 import {
@@ -31,7 +33,6 @@ import {
   type PlanningCarryForwardTaskEvidence,
   type PlanningTransitionReport,
 } from '../../runtime/storage-journal/planning-report.ts';
-import { runtimePaths } from '../../runtime/session-workspace/session-store.ts';
 import { preEpochCompletedTaskIds } from '../../adapters/compatibility/investigation-v2/bootstrap-task-exemption.ts';
 import { resolveTaskExecutionGenerationEvidence } from '../assurance/task-execution-evidence.ts';
 
@@ -70,10 +71,10 @@ export function recordPlanningExecutionEpochTransition(
   const changeId = assertChangeId(input.changeId);
   const repository = discoverRepository(cwd);
   const config = loadWorkflowConfig(repository.repositoryRoot);
-  const storeRoot = runtimePaths(
-    repository.gitCommonDirectory,
-    config.runtimeDirectory,
-  ).root;
+  const storeRoot = defaultSessionRuntimeLayoutPort.resolve({
+    gitCommonDirectory: repository.gitCommonDirectory,
+    runtimeDirectory: config.runtimeDirectory,
+  }).root;
   const workflowId = planningExecutionWorkflowId(changeId);
   const sourceItems = taskEvidenceItems(input.taskEvidence);
   let current: DurableEpochContextState;
@@ -280,10 +281,10 @@ export function inspectPlanningExecutionEpoch(
   const changeId = assertChangeId(requestedChangeId);
   const repository = discoverRepository(cwd);
   const config = loadWorkflowConfig(repository.repositoryRoot);
-  const storeRoot = runtimePaths(
-    repository.gitCommonDirectory,
-    config.runtimeDirectory,
-  ).root;
+  const storeRoot = defaultSessionRuntimeLayoutPort.resolve({
+    gitCommonDirectory: repository.gitCommonDirectory,
+    runtimeDirectory: config.runtimeDirectory,
+  }).root;
   const workflowId = planningExecutionWorkflowId(changeId);
   return Object.freeze({
     workflowId,
@@ -312,10 +313,10 @@ export function ensurePlanningExecutionEpochCompleteForArchive(
   const changeId = assertChangeId(input.changeId);
   const repository = discoverRepository(cwd);
   const config = loadWorkflowConfig(repository.repositoryRoot);
-  const storeRoot = runtimePaths(
-    repository.gitCommonDirectory,
-    config.runtimeDirectory,
-  ).root;
+  const storeRoot = defaultSessionRuntimeLayoutPort.resolve({
+    gitCommonDirectory: repository.gitCommonDirectory,
+    runtimeDirectory: config.runtimeDirectory,
+  }).root;
   const workflowId = planningExecutionWorkflowId(changeId);
   let current: DurableEpochContextState;
   try {

@@ -2,6 +2,8 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 
+import { defaultSessionRuntimeLayoutPort } from '@jigwright/core/session-runtime-layout-port';
+
 import {
   isPlanningAssuranceBinding,
   type PlanningAssuranceBinding,
@@ -83,15 +85,10 @@ export function runtimePaths(
   gitCommonDirectory: string,
   runtimeDirectory: string,
 ) {
-  const root = path.join(gitCommonDirectory, runtimeDirectory);
-  return {
-    root,
-    locks: path.join(root, 'locks'),
-    operations: path.join(root, 'operations'),
-    sessions: path.join(root, 'sessions'),
-    reports: path.join(root, 'reports'),
-    taskRevisions: path.join(root, 'task-revisions'),
-  };
+  return defaultSessionRuntimeLayoutPort.resolve({
+    gitCommonDirectory,
+    runtimeDirectory,
+  });
 }
 
 export function withSessionOperation<T>(

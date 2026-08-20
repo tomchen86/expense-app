@@ -28,7 +28,16 @@
       "@jigwright/core/job-attempt-runtime": [
         "../core/src/job-attempt-runtime.ts"
       ],
+      "@jigwright/core/planning-provider-binding": [
+        "../core/src/planning-provider-binding.ts"
+      ],
+      "@jigwright/core/planning-provider-port": [
+        "../core/src/planning-provider-port.ts"
+      ],
       "@jigwright/core/repository-path": ["../core/src/repository-path.ts"],
+      "@jigwright/core/session-runtime-layout-port": [
+        "../core/src/session-runtime-layout-port.ts"
+      ],
       "@jigwright/core/tracked-object-reader-port": [
         "../core/src/tracked-object-reader-port.ts"
       ],
@@ -38,7 +47,14 @@
       "@jigwright/grants/grant-envelope-verifier": [
         "../grants/src/grant-envelope-verifier.ts"
       ],
-      "@jigwright/grants/grant-lifecycle": ["../grants/src/grant-lifecycle.ts"]
+      "@jigwright/grants/grant-lifecycle": ["../grants/src/grant-lifecycle.ts"],
+      "@jigwright/openspec-adapter": ["../openspec-adapter/src/index.ts"],
+      "@jigwright/openspec-adapter/planning-provider": [
+        "../openspec-adapter/src/planning-provider.ts"
+      ],
+      "@jigwright/openspec-adapter/provider-binding": [
+        "../openspec-adapter/src/provider-binding.ts"
+      ]
     }
   },
   "include": ["bootstrap/**/*.ts", "src/**/*.ts", "test/**/*.ts"]

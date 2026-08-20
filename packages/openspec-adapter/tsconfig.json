@@ -1,0 +1,21 @@
+{
+  "compilerOptions": {
+    "target": "ES2023",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "strict": true,
+    "noEmit": true,
+    "allowImportingTsExtensions": true,
+    "types": ["node"],
+    "skipLibCheck": true,
+    "paths": {
+      "@jigwright/core/planning-provider-binding": [
+        "../core/src/planning-provider-binding.ts"
+      ],
+      "@jigwright/core/planning-provider-port": [
+        "../core/src/planning-provider-port.ts"
+      ]
+    }
+  },
+  "include": ["src/**/*.ts", "test/**/*.ts"]
+}
